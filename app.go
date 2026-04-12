@@ -1,0 +1,553 @@
+package main
+
+import (
+	"context"
+	"encoding/base64"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	goruntime "runtime"
+	"strings"
+	"time"
+
+	"stash/logger"
+	"stash/vault"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+)
+
+// App is the Wails application backend.
+type App struct {
+	ctx       context.Context
+	vaultPath string
+	vault     *vault.Vault
+	settings  vault.Settings
+	watcher   *notesWatcher
+	closing   bool // prevents OnBeforeClose loop
+}
+
+func NewApp(vaultPath string) *App {
+	return &App{vaultPath: vaultPath}
+}
+
+// startup is called by Wails when the application window is ready.
+func (a *App) startup(ctx context.Context) {
+	a.ctx = ctx
+
+	abs, _ := filepath.Abs(a.vaultPath)
+	logger.Info("startup", "vault_raw", a.vaultPath, "vault_abs", abs)
+
+	v, err := vault.Open(a.vaultPath)
+	if err != nil {
+		logger.Error("vault open failed", "err", err)
+		return
+	}
+
+	a.vault = v
+	a.settings = vault.LoadSettings(v.SettingsPath())
+
+	logger.Info("vault ready",
+		"root", v.Root,
+		"hostname", v.Hostname,
+		"tier", a.settings.Tier(),
+		"autosave_debounce", a.settings.AutosaveDebounce,
+		"debug", a.settings.Debug,
+	)
+
+	// Write a startup probe so the vault path is easily confirmed on disk
+	probe := filepath.Join(v.Root, ".startup-probe")
+	_ = os.WriteFile(probe, []byte(fmt.Sprintf("started at %s\nvault: %s\nhost:  %s\n",
+		time.Now().Format(time.RFC3339), v.Root, v.Hostname)), 0o644)
+
+	// Restore window size and position from last session.
+	// Position is stored in absolute screen coordinates, so it works across
+	// multi-monitor setups. If the saved position is negative (off the primary
+	// monitor to the left/above) we still restore it — Wails/the WM will keep
+	// it on whatever monitor owns that coordinate space. We only skip positions
+	// that look completely bogus (both axes deeply negative), which would
+	// indicate a monitor that no longer exists.
+	savedSession := vault.LoadSession(v.SessionPath())
+	if savedSession.Window.Width >= 800 && savedSession.Window.Height >= 500 {
+		runtime.WindowSetSize(ctx, savedSession.Window.Width, savedSession.Window.Height)
+		logger.Debug("window size restored", "w", savedSession.Window.Width, "h", savedSession.Window.Height)
+	}
+	win := savedSession.Window
+	if win.X > -4000 && win.Y > -4000 && (win.X != 0 || win.Y != 0) {
+		runtime.WindowSetPosition(ctx, win.X, win.Y)
+		logger.Debug("window position restored", "x", win.X, "y", win.Y)
+	}
+
+	// Start watching vault/notes/ for filesystem changes
+	w, err := newNotesWatcher(v.NotesPath(), func() {
+		logger.Debug("notes changed — emitting event")
+		runtime.EventsEmit(a.ctx, "notes:changed")
+	})
+	if err != nil {
+		logger.Warn("could not start notes watcher", "err", err)
+	} else {
+		a.watcher = w
+	}
+}
+
+// beforeClose emits an event so the frontend can flush before the process exits.
+func (a *App) beforeClose(ctx context.Context) bool {
+	if a.closing {
+		logger.Debug("beforeClose: allowing (second call)")
+		if a.watcher != nil {
+			a.watcher.Close()
+			a.watcher = nil
+		}
+		return false
+	}
+	a.closing = true
+
+	// Save window state into the existing session so it's available on next launch
+	if a.vault != nil {
+		x, y := runtime.WindowGetPosition(ctx)
+		w, h := runtime.WindowGetSize(ctx)
+		session := vault.LoadSession(a.vault.SessionPath())
+		session.Window = vault.Window{X: x, Y: y, Width: w, Height: h}
+		if err := session.Save(a.vault.SessionPath()); err != nil {
+			logger.Warn("could not save window state", "err", err)
+		} else {
+			logger.Debug("window state saved", "x", x, "y", y, "w", w, "h", h)
+		}
+	}
+
+	logger.Info("beforeClose: flushing frontend then quitting")
+	runtime.EventsEmit(ctx, "app:closing")
+	return true
+}
+
+// ── Vault info ────────────────────────────────────────────────────────────────
+
+type VaultInfo struct {
+	Root             string     `json:"root"`
+	Hostname         string     `json:"hostname"`
+	BuffersPath      string     `json:"buffersPath"`
+	NotesPath        string     `json:"notesPath"`
+	IsNew            bool       `json:"isNew"`
+	Tier             vault.Tier `json:"tier"`
+	Cli              string     `json:"cli"`
+	Debug            bool       `json:"debug"`
+	AutosaveDebounce int        `json:"autosaveDebounce"`
+}
+
+func (a *App) GetVaultInfo() VaultInfo {
+	if a.vault == nil {
+		logger.Warn("GetVaultInfo: vault not open")
+		return VaultInfo{}
+	}
+
+	liveSettings := vault.LoadSettings(a.vault.SettingsPath())
+
+	return VaultInfo{
+		Root:             a.vault.Root,
+		Hostname:         a.vault.Hostname,
+		BuffersPath:      a.vault.BuffersPath(),
+		NotesPath:        a.vault.NotesPath(),
+		IsNew:            a.vault.IsNewVault(),
+		Tier:             liveSettings.Tier(),
+		Cli:              liveSettings.CLI,
+		Debug:            liveSettings.Debug,
+		AutosaveDebounce: liveSettings.AutosaveDebounce,
+	}
+}
+
+// ── Sidebar ───────────────────────────────────────────────────────────────────
+
+func (a *App) SaveSidebarWidth(width int) error {
+	if a.vault == nil {
+		return fmt.Errorf("vault not open")
+	}
+	session := vault.LoadSession(a.vault.SessionPath())
+	session.SidebarWidth = width
+	if err := session.Save(a.vault.SessionPath()); err != nil {
+		logger.Error("SaveSidebarWidth failed", "err", err)
+		return err
+	}
+	logger.Debug("sidebar width saved", "width", width)
+	return nil
+}
+
+func (a *App) SaveMetaWidth(width int) error {
+	if a.vault == nil {
+		return fmt.Errorf("vault not open")
+	}
+	session := vault.LoadSession(a.vault.SessionPath())
+	session.MetaWidth = width
+	if err := session.Save(a.vault.SessionPath()); err != nil {
+		logger.Error("SaveMetaWidth failed", "err", err)
+		return err
+	}
+	logger.Debug("meta width saved", "width", width)
+	return nil
+}
+
+// ── Notes ─────────────────────────────────────────────────────────────────────
+
+func (a *App) GetNotes() []vault.NoteEntry {
+	if a.vault == nil {
+		logger.Warn("GetNotes: vault not open")
+		return nil
+	}
+	entries := vault.ScanNotes(a.vault.Root, a.vault.NotesPath())
+	logger.Debug("GetNotes", "entries", len(entries))
+	return entries
+}
+
+func (a *App) SearchVault(query string) []vault.SearchResult {
+	if a.vault == nil {
+		logger.Warn("SearchVault: vault not open")
+		return nil
+	}
+	searchDirs := []string{a.vault.NotesPath(), a.vault.BuffersPath()}
+	results := vault.SearchVault(a.vault.Root, searchDirs, query)
+	logger.Debug("SearchVault", "query", query, "results", len(results))
+	return results
+}
+
+
+// ── Session ───────────────────────────────────────────────────────────────────
+
+func (a *App) GetSession() vault.Session {
+	if a.vault == nil {
+		logger.Warn("GetSession: vault not open")
+		return vault.Session{}
+	}
+
+	session := vault.LoadSession(a.vault.SessionPath())
+	logger.Debug("session loaded", "tabs", len(session.Tabs))
+
+	// Prune tabs whose files no longer exist
+	live := session.Tabs[:0]
+	for _, t := range session.Tabs {
+		if _, err := os.Stat(a.resolvePath(t.Path)); err == nil {
+			live = append(live, t)
+		} else {
+			logger.Warn("session: skipping missing file", "path", t.Path)
+		}
+	}
+	session.Tabs = live
+
+	if len(session.Tabs) == 0 {
+		path, err := a.vault.NewBuffer()
+		if err != nil {
+			logger.Error("new buffer failed", "err", err)
+			return vault.Session{}
+		}
+		logger.Info("session: no tabs — created default buffer", "path", path)
+		session.Tabs = []vault.Tab{{Path: path, Active: true, Mode: "wysiwyg"}}
+		if err := session.Save(a.vault.SessionPath()); err != nil {
+			logger.Error("session save failed", "err", err)
+		}
+	} else {
+		hasActive := false
+		for _, t := range session.Tabs {
+			if t.Active {
+				hasActive = true
+				break
+			}
+		}
+		if !hasActive {
+			session.Tabs[0].Active = true
+			logger.Debug("session: no active tab — defaulting to first")
+		}
+	}
+
+	return session
+}
+
+func (a *App) SaveSession(session vault.Session) error {
+	if a.vault == nil {
+		return fmt.Errorf("vault not open")
+	}
+	if err := session.Save(a.vault.SessionPath()); err != nil {
+		logger.Error("SaveSession failed", "err", err)
+		return err
+	}
+	logger.Debug("session saved", "tabs", len(session.Tabs))
+	return nil
+}
+
+func (a *App) NewBuffer() (string, error) {
+	if a.vault == nil {
+		return "", fmt.Errorf("vault not open")
+	}
+	path, err := a.vault.NewBuffer()
+	if err != nil {
+		logger.Error("NewBuffer failed", "err", err)
+		return "", err
+	}
+	logger.Info("buffer created", "path", path)
+	return path, nil
+}
+
+// ── Buffer I/O ────────────────────────────────────────────────────────────────
+
+func (a *App) LoadBuffer(path string) (string, error) {
+	resolved := a.resolvePath(path)
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		logger.Error("LoadBuffer failed", "path", path, "err", err)
+		return "", err
+	}
+	logger.Debug("buffer loaded", "path", path, "bytes", len(data))
+	return string(data), nil
+}
+
+func (a *App) SaveBuffer(path string, content string) error {
+	// Safety guard: never write back content that has lost its frontmatter.
+	// This prevents a race condition during hot reload from silently stripping meta.
+	if !strings.HasPrefix(content, "---\n") {
+		logger.Error("SaveBuffer rejected — missing frontmatter", "path", path, "preview", content[:min(40, len(content))])
+		return fmt.Errorf("save rejected: content missing frontmatter block")
+	}
+	resolved := a.resolvePath(path)
+	if err := os.WriteFile(resolved, []byte(content), 0o644); err != nil {
+		logger.Error("SaveBuffer failed", "path", path, "err", err)
+		return err
+	}
+	logger.Debug("buffer saved", "path", path, "bytes", len(content))
+	return nil
+}
+
+func (a *App) EvaluateBuffer(path string) (*vault.FilingRecommendation, error) {
+	if a.vault == nil {
+		return nil, fmt.Errorf("vault not open")
+	}
+
+	resolved := a.resolvePath(path)
+	currentSettings := vault.LoadSettings(a.vault.SettingsPath())
+	
+	rec, err := a.vault.EvaluateBuffer(resolved, currentSettings)
+	if err != nil {
+		logger.Warn("EvaluateBuffer failed", "path", path, "err", err)
+		return nil, err
+	}
+
+	logger.Info("EvaluateBuffer success", "path", path)
+	return rec, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func (a *App) FileBuffer(path string) (string, error) {
+	if a.vault == nil {
+		return "", fmt.Errorf("vault not open")
+	}
+	resolved := a.resolvePath(path)
+	newPath, err := a.vault.FileBuffer(resolved)
+	if err != nil {
+		logger.Error("FileBuffer failed", "path", path, "err", err)
+		return "", err
+	}
+	logger.Info("buffer filed", "from", path, "to", newPath)
+	return newPath, nil
+}
+
+func (a *App) DiscardBuffer(path string) error {
+	if a.vault == nil {
+		return fmt.Errorf("vault not open")
+	}
+	resolved := a.resolvePath(path)
+	if err := a.vault.DiscardBuffer(resolved); err != nil {
+		logger.Error("DiscardBuffer failed", "path", path, "err", err)
+		return err
+	}
+	logger.Info("buffer discarded", "path", path)
+	return nil
+}
+
+// ShowInFiles opens the OS file manager at the given vault-relative path.
+// On macOS it uses "open -R" to reveal files; on Linux it uses xdg-open on
+// the containing directory. Directories are opened directly on both platforms.
+func (a *App) ShowInFiles(path string) error {
+	resolved := a.resolvePath(path)
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return err
+	}
+
+	var cmd *exec.Cmd
+	if goruntime.GOOS == "darwin" {
+		if info.IsDir() {
+			cmd = exec.Command("open", resolved)
+		} else {
+			cmd = exec.Command("open", "-R", resolved)
+		}
+	} else {
+		// Linux — xdg-open the directory; revealing a specific file is not
+		// portable across file managers.
+		dir := resolved
+		if !info.IsDir() {
+			dir = filepath.Dir(resolved)
+		}
+		cmd = exec.Command("xdg-open", dir)
+	}
+
+	logger.Debug("ShowInFiles", "path", resolved, "os", goruntime.GOOS)
+	return cmd.Start()
+}
+
+// RefineLanguage asks the configured CLI to identify the programming language of
+// a code snippet. Returns empty string in dumb mode or when the CLI response is
+// unrecognised.
+func (a *App) RefineLanguage(content string) (string, error) {
+	if a.vault == nil {
+		return "", fmt.Errorf("vault not open")
+	}
+	settings := vault.LoadSettings(a.vault.SettingsPath())
+	if settings.Tier() == vault.TierDumb {
+		return "", fmt.Errorf("dumb mode")
+	}
+	lang, err := vault.RefineLanguage(content, settings)
+	if err != nil {
+		logger.Warn("RefineLanguage failed", "err", err)
+		return "", err
+	}
+	logger.Debug("RefineLanguage", "lang", lang)
+	return lang, nil
+}
+
+// FileBufferWithName moves a buffer to vault/notes/ using the supplied name as
+// user_suggested_name so the filer picks it up as the filename.
+func (a *App) FileBufferWithName(path, name string) (string, error) {
+	if a.vault == nil {
+		return "", fmt.Errorf("vault not open")
+	}
+	resolved := a.resolvePath(path)
+	newPath, err := a.vault.FileBufferWithName(resolved, name)
+	if err != nil {
+		logger.Error("FileBufferWithName failed", "path", path, "err", err)
+		return "", err
+	}
+	logger.Info("buffer filed with name", "from", path, "to", newPath, "name", name)
+	return newPath, nil
+}
+
+// Explain asks the configured CLI to explain the given content (selected text or
+// full buffer body). Returns the response as a markdown string for inline insertion.
+// Returns an error in dumb mode or if the CLI times out.
+func (a *App) Explain(content string) (string, error) {
+	if a.vault == nil {
+		return "", fmt.Errorf("vault not open")
+	}
+	settings := vault.LoadSettings(a.vault.SettingsPath())
+	if settings.Tier() == vault.TierDumb {
+		return "", fmt.Errorf("explain not available in dumb mode")
+	}
+	resp, err := a.vault.RunExplain(content, settings)
+	if err != nil {
+		logger.Warn("Explain failed", "err", err)
+		return "", err
+	}
+	logger.Debug("Explain complete", "resp_len", len(resp))
+	return resp, nil
+}
+
+// Ask asks the configured CLI a question with the given content as context.
+// history may be empty for first-turn asks. Returns the response as a markdown string.
+func (a *App) Ask(content, history, question string) (string, error) {
+	if a.vault == nil {
+		return "", fmt.Errorf("vault not open")
+	}
+	settings := vault.LoadSettings(a.vault.SettingsPath())
+	if settings.Tier() == vault.TierDumb {
+		return "", fmt.Errorf("ask not available in dumb mode")
+	}
+	resp, err := a.vault.RunAsk(content, history, question, settings)
+	if err != nil {
+		logger.Warn("Ask failed", "err", err)
+		return "", err
+	}
+	logger.Debug("Ask complete", "resp_len", len(resp))
+	return resp, nil
+}
+
+func (a *App) resolvePath(path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	if a.vault != nil {
+		return filepath.Join(a.vault.Root, path)
+	}
+	return path
+}
+
+func (a *App) SaveBufferAsset(id string, dataBase64 string) (string, error) {
+	if a.vault == nil {
+		return "", fmt.Errorf("vault not open")
+	}
+
+	idx := strings.Index(dataBase64, ",")
+	if idx >= 0 {
+		dataBase64 = dataBase64[idx+1:]
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(dataBase64)
+	if err != nil {
+		logger.Error("SaveBufferAsset decode failed", "err", err)
+		return "", err
+	}
+
+	filename := fmt.Sprintf("%s.png", id)
+	path := filepath.Join(a.vault.BufferAssetsPath(), filename)
+
+	if err := os.WriteFile(path, decoded, 0o644); err != nil {
+		logger.Error("SaveBufferAsset write failed", "path", path, "err", err)
+		return "", err
+	}
+
+	// Return vault-relative path so frontend can construct display URL and markdown path
+	rel, err := filepath.Rel(a.vault.Root, path)
+	if err != nil {
+		return filename, nil
+	}
+	rel = filepath.ToSlash(rel) // always forward slashes for frontend
+	logger.Info("buffer asset saved", "vaultRelPath", rel)
+	return rel, nil
+}
+
+// SaveNoteAsset saves a pasted image directly to vault/assets/ for use in filed notes.
+// It uses the note's filename as a prefix (e.g. "note-20250101-blk-xxx.png") to avoid global collisions.
+// Returns vault-relative path (e.g. "assets/note-20250101-blk-xxx.png").
+func (a *App) SaveNoteAsset(notePath string, id string, dataBase64 string) (string, error) {
+	if a.vault == nil {
+		return "", fmt.Errorf("vault not open")
+	}
+
+	idx := strings.Index(dataBase64, ",")
+	if idx >= 0 {
+		dataBase64 = dataBase64[idx+1:]
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(dataBase64)
+	if err != nil {
+		logger.Error("SaveNoteAsset decode failed", "err", err)
+		return "", err
+	}
+
+	noteName := strings.TrimSuffix(filepath.Base(notePath), filepath.Ext(notePath))
+	filename := fmt.Sprintf("%s-%s.png", noteName, id)
+	path := filepath.Join(a.vault.AssetsPath(), filename)
+
+	if err := os.WriteFile(path, decoded, 0o644); err != nil {
+		logger.Error("SaveNoteAsset write failed", "path", path, "err", err)
+		return "", err
+	}
+
+	rel, err := filepath.Rel(a.vault.Root, path)
+	if err != nil {
+		return "assets/" + filename, nil
+	}
+	rel = filepath.ToSlash(rel)
+	logger.Info("note asset saved", "vaultRelPath", rel)
+	return rel, nil
+}

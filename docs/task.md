@@ -1,0 +1,40 @@
+# Stash Tasks
+
+- [x] Milestone 1: Asset promotion
+  - [x] Implement asset promotion in `FileBuffer` (copy image files & update markdown refs)
+  - [x] Implement asset cleanup in `DiscardBuffer`
+  - [x] Add tests or verify asset promotion logic
+- [x] Milestone 2: Paste intelligence
+  - [x] Heuristic text paste detection & language tag
+  - [x] Block ID assignment on code block paste
+  - [x] Image paste saving to `buffers/assets/` with `detect="pending"`
+- [x] Milestone 3: Close all buffers / Close all tabs
+  - [x] Keyboard shortcuts logic for 'close all buffers' & 'close all tabs'
+  - [x] Dumb mode tab discard logic
+- [x] Milestone 4: In-buffer search
+  - [x] Implement `Ctrl+F` using CodeMirror native search
+- [x] Milestone 5: Quick switcher
+  - [x] Implement `Ctrl+P` modal with fuzzy search of open tabs and all notes
+- [x] Milestone 6: Vault search
+  - [x] Implement `Ctrl+Shift+F` vault-wide text search
+- [x] Milestone 7: Right-click Show in Files
+  - [x] Sidebar context menu `Show in Files` using OS explorer (Linux: xdg-open, Mac: open -R)
+- [x] Milestone 8: AI Evaluation & Background Refinement
+  - [x] Implement CLI interaction layer in Go backend
+  - [x] AI Naming on Force Save (Ctrl+S) (filename, tags, summary, folder)
+  - [x] Background CLI refinement on pasted code blocks & images (`detect="heuristic"` -> `detect="cli"`)
+  - [x] Smart Tab Close evaluation (Keep/Discard decisions, timeout popups)
+  - [x] Re-evaluate AI on filed notes (Ctrl+Shift+Return / Ctrl+Shift+E)
+  - [x] User intent (keep/trash) — right-click tab context menu, dot colours, correct close behaviour
+  - [x] Fix: CLI prompt passed via stdin (was sh -c which broke backticks/code blocks)
+  - [x] Fix: tier-4 HTML code pastes now intercepted (get block ID + RefineLanguage)
+  - [x] Fix: RefineLanguage write-back uses editor.commands.command() for React NodeView update
+  - [x] Fix: user_intent: keep on close now fires AI evaluation (was calling FileBuffer directly)
+- [ ] Milestone 9: Ask & Explain Gestures
+  - [ ] Implement Explain gesture (Ctrl+E) and inline UI block
+  - [ ] Implement Ask gesture (Ctrl+Shift+A) with floating popup
+  - [ ] AI block ID scope resolution for context injection
+- [ ] Milestone 10: Settings, UI Polishing & Debug
+  - [ ] Prompt Management UI in Sidebar (virtual entries, edit/restore defaults)
+  - [x] Hook up raw Markdown per-tab toggle (Ctrl+Shift+M)
+  - [x] Debug Meta Panel complete feature mapping
