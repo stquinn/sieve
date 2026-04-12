@@ -1,3 +1,4 @@
+import { DOMParser as ProseMirrorDOMParser, Fragment } from '@tiptap/pm/model'
 import { useEditor, EditorContent, BubbleMenu } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
@@ -16,6 +17,7 @@ import { CodeBlockWithAttrs } from './extensions/CodeBlockWithAttrs'
 import { BlockIdMark } from './extensions/BlockIdMark'
 import { ImageWithAttrs } from './extensions/ImageWithAttrs'
 import { AiBlockDecoration } from './extensions/AiBlockDecoration'
+import { AiBlock } from './extensions/AiBlock'
 import { detectLanguage } from './utils/pasteHeuristics'
 import { TabBar } from './components/TabBar'
 import { HelpModal } from './components/HelpModal'
@@ -268,6 +270,7 @@ export default function App() {
       TableCell,
       ImageWithAttrs,
       Search,
+      AiBlock,
       AiBlockDecoration,
       Markdown.configure({
         html: true,
@@ -1069,10 +1072,7 @@ export default function App() {
 
   // ── AI Explain / Ask gestures ─────────────────────────────────────────────
 
-  // Insert a placeholder AI response blockquote after the active block/selection.
-  // For ask gestures, a plain "Ask: {question}" paragraph is inserted immediately
-  // before the blockquote — kept outside the blockquote to avoid markdown
-  // round-trip escaping issues with italic marks inside blockquotes.
+  // Insert a placeholder aiBlock node after the active block/selection.
   function insertAiPlaceholder(aiId: string, blockRef: string, question?: string) {
     if (!editor) return
     queueMicrotask(() => {
@@ -1080,74 +1080,102 @@ export default function App() {
         const { schema, selection } = state
         const { to } = selection
 
-        // Find the end of the top-level block that contains the selection end.
+        // Find the end of the top-level block containing the cursor.
         let insertPos = state.doc.content.size
         let offset = 0
         for (let i = 0; i < state.doc.childCount; i++) {
           const child = state.doc.child(i)
           const end = offset + child.nodeSize
-          if (offset <= to && to <= end) {
-            insertPos = end
-            break
-          }
+          if (offset <= to && to <= end) { insertPos = end; break }
           offset = end
         }
 
-        const headerPara = schema.nodes.paragraph.create(
-          null, schema.text(`[!ai] id="${aiId}" ref="${blockRef}"`)
-        )
-        const paras: any[] = [headerPara]
-
+        const members: any[] = []
         if (question) {
-          // Plain text — no marks — so it round-trips cleanly through markdown.
-          paras.push(schema.nodes.paragraph.create(null, schema.text(`Ask: ${question}`)))
+          members.push(schema.nodes.paragraph.create(null, [
+            schema.text('Ask:', [schema.marks.bold.create()]),
+            schema.text(` ${question}`),
+          ]))
         }
-
-        paras.push(
+        members.push(
           schema.nodes.paragraph.create(
             null, schema.text('(thinking…)', [schema.marks.italic.create()])
           )
         )
-        tr.insert(insertPos, schema.nodes.blockquote.create(null, paras))
+
+        const aiNode = schema.nodes.aiBlock.create(
+          { id: aiId, ref: blockRef },
+          Fragment.from(members)
+        )
+        tr.insert(insertPos, aiNode)
         return true
       })
     })
   }
 
-  // Replace the placeholder blockquote (identified by aiId) with the response text.
-  // Keeps all existing paragraphs (header, Ask: line, etc.) except the thinking
-  // indicator, then appends the response lines.
+  // Replace the placeholder aiBlock (identified by aiId) with the AI response.
+  // Parses response markdown via markdown-it → HTML → ProseMirror DOMParser so
+  // bold, italic, lists, and code blocks all become proper marks/nodes and
+  // round-trip cleanly through the vault without any blockquote serializer issues.
   function replaceAiPlaceholder(aiId: string, responseText: string) {
     if (!editor) return
-    editor.commands.command(({ tr, state }) => {
-      let found = false
-      state.doc.descendants((node, pos) => {
-        if (found) return false
-        if (node.type.name === 'blockquote') {
-          const firstLine = node.firstChild?.textContent ?? ''
-          if (firstLine.includes(`id="${aiId}"`)) {
-            const { schema } = state
 
-            // Preserve every paragraph except the thinking indicator.
-            const keptParas: any[] = []
-            node.forEach(child => {
-              if (child.textContent !== '(thinking…)') keptParas.push(child)
-            })
+    let targetPos = -1
+    let targetEnd = -1
+    let askText = ''
+    let existingRef = 'doc'
 
-            const responseParas = responseText.trim().split('\n').map(line =>
-              line.trim()
-                ? schema.nodes.paragraph.create(null, schema.text(line))
-                : schema.nodes.paragraph.create(null)
-            )
-            tr.replaceWith(
-              pos, pos + node.nodeSize,
-              schema.nodes.blockquote.create(null, [...keptParas, ...responseParas])
-            )
-            found = true
+    editor.state.doc.descendants((node: any, pos: number) => {
+      if (targetPos !== -1) return false
+      if (node.type.name === 'aiBlock' && node.attrs.id === aiId) {
+        targetPos = pos
+        targetEnd = pos + node.nodeSize
+        existingRef = node.attrs.ref ?? 'doc'
+        node.forEach((child: any) => {
+          if (child.type.name === 'paragraph' && child.textContent.startsWith('Ask: ')) {
+            askText = child.textContent
           }
-        }
-      })
-      return found
+        })
+        return false
+      }
+    })
+
+    if (targetPos === -1) return
+
+    // Parse response markdown → HTML → ProseMirror nodes.
+    const { schema } = editor.state
+    const responseHtml = editor.storage.markdown.parser.md.render(responseText.trim())
+    const tempDiv = document.createElement('div')
+    tempDiv.innerHTML = responseHtml
+    const parsedDoc = ProseMirrorDOMParser.fromSchema(schema).parse(tempDiv)
+
+    const responseNodes: any[] = []
+    parsedDoc.forEach((child: any) => {
+      // Skip empty paragraphs the DOMParser appends as document padding.
+      if (child.type.name === 'paragraph' && child.childCount === 0) return
+      responseNodes.push(child)
+    })
+
+    const members: any[] = []
+    if (askText) {
+      const question = askText.replace(/^Ask:\s*/, '')
+      members.push(schema.nodes.paragraph.create(null, [
+        schema.text('Ask:', [schema.marks.bold.create()]),
+        schema.text(` ${question}`),
+      ]))
+    }
+    members.push(...responseNodes)
+    // Guard: aiBlock requires block+ content — ensure at least one node.
+    if (members.length === 0) members.push(schema.nodes.paragraph.create())
+
+    const newAiNode = schema.nodes.aiBlock.create(
+      { id: aiId, ref: existingRef },
+      Fragment.from(members)
+    )
+
+    editor.commands.command(({ tr }) => {
+      tr.replaceWith(targetPos, targetEnd, newAiNode)
+      return true
     })
   }
 
@@ -1160,20 +1188,14 @@ export default function App() {
     const { selection, doc } = editor.state
     const { from, to, empty } = selection
 
-    // Threading: detect if cursor/selection is inside an AI response blockquote.
-    let aiBlockHeader = ''
+    // Threading: detect if cursor is inside an aiBlock node.
     let aiBlockRef = ''
     let aiBlockId = ''
-    doc.nodesBetween(from, to, (node) => {
-      if (node.type.name === 'blockquote') {
-        const first = node.firstChild?.textContent ?? ''
-        if (first.startsWith('[!ai]')) {
-          const idMatch = first.match(/id="([^"]+)"/)
-          const refMatch = first.match(/ref="([^"]+)"/)
-          aiBlockHeader = first
-          aiBlockId = idMatch?.[1] ?? ''
-          aiBlockRef = refMatch?.[1] ?? ''
-        }
+    doc.nodesBetween(from, to, (node: any) => {
+      if (node.type.name === 'aiBlock') {
+        aiBlockId = node.attrs.id ?? ''
+        aiBlockRef = node.attrs.ref ?? ''
+        return false
       }
     })
 

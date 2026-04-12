@@ -352,23 +352,22 @@
 }
 
 /* ── AI response blocks ──────────────────────────────────────────────── */
-/* Overrides the plain blockquote style for [!ai] callouts.              */
+/* AiBlock is a proper ProseMirror node rendered via a React NodeView.   */
+/* The container div owns the border/padding — content renders naturally  */
+/* inside it with no interference to list, code block, or other styles.  */
 
-.tiptap blockquote.ai-block {
-  border-left: none;
+.ai-block {
   border: 1px solid rgba(122, 162, 247, 0.28);
   border-radius: 6px;
   background: rgba(122, 162, 247, 0.04);
   padding: 20px 16px 12px;
   margin: 16px 0;
-  color: #c0caf5;
-  font-style: normal;
   position: relative;
+  color: #c0caf5;
 }
 
-/* "AI" badge sits in the top-left of the border */
-.tiptap blockquote.ai-block::before {
-  content: 'AI';
+/* "AI" badge sits in the top border */
+.ai-block__badge {
   position: absolute;
   top: -9px;
   left: 12px;
@@ -378,38 +377,21 @@
   font-weight: 700;
   letter-spacing: 0.08em;
   color: rgba(122, 162, 247, 0.55);
-  font-style: normal;
   font-family: ui-monospace, 'Cascadia Code', monospace;
 }
 
-/* Hide the raw [!ai] id=… metadata line — shown in raw markdown mode */
-.tiptap blockquote.ai-block > p:first-child {
-  display: none;
-}
-
-/* "Ask:" question line — only paragraphs decorated with .ai-question */
-.tiptap blockquote.ai-block > p.ai-question {
+/* Ask line — applied via AiBlockDecoration to paragraphs starting with "Ask: " */
+.tiptap .ai-block-ask {
   color: #9aa5ce;
   font-style: italic;
   font-size: 0.93em;
-  margin-bottom: 8px;
   padding-bottom: 8px;
   border-bottom: 1px solid rgba(122, 162, 247, 0.12);
-}
-
-/* Response paragraphs */
-.tiptap blockquote.ai-block > p {
-  color: #c0caf5;
-  margin: 0 0 0.4em;
-  line-height: 1.6;
-}
-
-.tiptap blockquote.ai-block > p:last-child {
-  margin-bottom: 0;
+  margin-bottom: 4px;
 }
 
 /* Inline code inside AI blocks */
-.tiptap blockquote.ai-block code {
+.ai-block code {
   background: rgba(122, 162, 247, 0.1);
   border: 1px solid rgba(122, 162, 247, 0.2);
   border-radius: 3px;
