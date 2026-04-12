@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -24,7 +25,8 @@ func (v *Vault) NewBuffer() (string, error) {
 		absPath = filepath.Join(v.BuffersPath(), filename)
 	}
 
-	if err := os.WriteFile(absPath, []byte(newBufferMeta(now)), 0o644); err != nil {
+	n := v.nextUntitledNumber()
+	if err := os.WriteFile(absPath, []byte(newBufferMeta(now, n)), 0o644); err != nil {
 		return "", fmt.Errorf("create buffer: %w", err)
 	}
 
@@ -33,6 +35,32 @@ func (v *Vault) NewBuffer() (string, error) {
 		return "", err
 	}
 	return rel, nil
+}
+
+// nextUntitledNumber scans existing buffers for "display_name: Untitled N"
+// entries and returns max(N)+1, so each new buffer gets a unique label.
+func (v *Vault) nextUntitledNumber() int {
+	files, err := os.ReadDir(v.BuffersPath())
+	if err != nil {
+		return 1
+	}
+	rx := regexp.MustCompile(`display_name:\s*Untitled\s+(\d+)`)
+	max := 0
+	for _, f := range files {
+		if f.IsDir() || !strings.HasSuffix(f.Name(), ".md") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(v.BuffersPath(), f.Name()))
+		if err != nil {
+			continue
+		}
+		if m := rx.FindSubmatch(data); m != nil {
+			if n, err := strconv.Atoi(string(m[1])); err == nil && n > max {
+				max = n
+			}
+		}
+	}
+	return max + 1
 }
 
 // DiscardBuffer removes a buffer file from disk and deletes unfiled assets.
@@ -100,6 +128,14 @@ func (v *Vault) FileBuffer(absPath string) (string, error) {
 	rx := regexp.MustCompile(`(?:(?:\.\./)*buffers/)?assets/(blk-[a-zA-Z0-9-]+\.[a-zA-Z0-9]+)`)
 	var copiedFiles []string
 
+	// Compute the relative prefix from the note to vault/assets/.
+	// A note at notes/ needs "../assets/", at notes/sub/ needs "../../assets/", etc.
+	depth := 1 // always one level up from notes/
+	if folder != "" {
+		depth += len(strings.Split(filepath.ToSlash(folder), "/"))
+	}
+	assetPrefix := strings.Repeat("../", depth) + "assets/"
+
 	content = rx.ReplaceAllStringFunc(content, func(match string) string {
 		filename := rx.FindStringSubmatch(match)[1]
 		srcPath := filepath.Join(v.BufferAssetsPath(), filename)
@@ -125,7 +161,7 @@ func (v *Vault) FileBuffer(absPath string) (string, error) {
 			}
 		}
 
-		return "../assets/" + destFilename
+		return assetPrefix + destFilename
 	})
 
 	if err := os.WriteFile(dest, []byte(content), 0o644); err != nil {
@@ -255,7 +291,7 @@ func replaceFmField(content, key, value string) string {
 	return strings.Join(lines, "\n")
 }
 
-func newBufferMeta(t time.Time) string {
+func newBufferMeta(t time.Time, untitledN int) string {
 	ts := t.Format("2006-01-02T15:04:05")
 	return fmt.Sprintf(`---
 status: unfiled
@@ -266,6 +302,7 @@ ai_eval: none
 ai_last_evaluated: null
 ai_folder_suggestion: null
 user_suggested_name: null
+display_name: Untitled %d
 filename: null
 summary: null
 tags: []
@@ -273,7 +310,7 @@ created: %s
 modified: %s
 cli: null
 ---
-`, ts, ts)
+`, untitledN, ts, ts)
 }
 
 func deriveFolderPath(content string) string {

@@ -4,13 +4,13 @@ import { TabState } from '../types'
 import { FileText, FileEdit } from 'lucide-react'
 
 // Flattens a nested NoteEntry tree into an array of file paths / names
-function flattenNotes(entries: NoteEntry[], currentPath = ''): { name: string; path: string }[] {
-  let list: { name: string; path: string }[] = []
+function flattenNotes(entries: NoteEntry[], currentPath = ''): { name: string; displayName?: string; path: string }[] {
+  let list: { name: string; displayName?: string; path: string }[] = []
   for (const entry of entries) {
     if (entry.isDir && entry.children) {
       list = [...list, ...flattenNotes(entry.children, currentPath + entry.name + '/')]
     } else if (!entry.isDir && entry.path) {
-      list.push({ name: entry.name, path: entry.path })
+      list.push({ name: entry.name, displayName: entry.displayName, path: entry.path })
     }
   }
   return list
@@ -56,7 +56,8 @@ export function QuickSwitcher({ isOpen, onClose, onSelect, tabs, notesTree }: Qu
     
     // 2. All Notes
     const allNotes = flattenNotes(notesTree).map(n => ({
-      name: n.name.replace('.md', ''),
+      name: n.displayName || n.name,
+      filename: n.name,
       path: n.path,
       icon: 'note' as const,
       isOpen: activePaths.has(n.path),
@@ -147,7 +148,12 @@ export function QuickSwitcher({ isOpen, onClose, onSelect, tabs, notesTree }: Qu
                   {item.name}
                   {item.isOpen && <span className="quick-switch__badge">open</span>}
                 </div>
-                <div className="quick-switch__path">{item.path}</div>
+                <div className="quick-switch__path">
+                  {item.filename && item.name !== item.filename && (
+                    <span className="opacity-60 mr-2">{item.filename}.md</span>
+                  )}
+                  {item.path}
+                </div>
               </div>
             </div>
           ))}

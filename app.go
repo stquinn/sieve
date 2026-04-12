@@ -290,6 +290,18 @@ func (a *App) SaveSession(session vault.Session) error {
 	if a.vault == nil {
 		return fmt.Errorf("vault not open")
 	}
+	// Merge with existing session so fields saved independently (widths, window)
+	// are not overwritten when the frontend sends partial session state.
+	existing := vault.LoadSession(a.vault.SessionPath())
+	if session.SidebarWidth == 0 {
+		session.SidebarWidth = existing.SidebarWidth
+	}
+	if session.MetaWidth == 0 {
+		session.MetaWidth = existing.MetaWidth
+	}
+	if session.Window == (vault.Window{}) {
+		session.Window = existing.Window
+	}
 	if err := session.Save(a.vault.SessionPath()); err != nil {
 		logger.Error("SaveSession failed", "err", err)
 		return err

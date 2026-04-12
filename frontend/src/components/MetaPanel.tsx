@@ -1,5 +1,5 @@
 interface Props {
-  frontmatter: string
+  meta: string
   path: string
   width: number
 }
@@ -13,6 +13,7 @@ interface ParsedMeta {
   ai_last_evaluated: string | null
   ai_folder_suggestion: string | null
   user_suggested_name: string | null
+  display_name: string | null
   filename: string | null
   summary: string | null
   tags: string[] | null
@@ -43,6 +44,7 @@ function parseMeta(fm: string): ParsedMeta {
     ai_last_evaluated:    str('ai_last_evaluated'),
     ai_folder_suggestion: str('ai_folder_suggestion'),
     user_suggested_name:  str('user_suggested_name'),
+    display_name:         str('display_name'),
     filename:             str('filename'),
     summary:              str('summary'),
     tags,
@@ -83,9 +85,9 @@ function evalColour(v: string | null): string {
   return '#565f89'
 }
 
-export function MetaPanel({ frontmatter, path, width }: Props) {
-  const hasFrontmatter = frontmatter.trim().startsWith('---')
-  const meta = hasFrontmatter ? parseMeta(frontmatter) : null
+export function MetaPanel({ meta: metaStr, path, width }: Props) {
+  const hasMeta = metaStr.trim().startsWith('---')
+  const meta = hasMeta ? parseMeta(metaStr) : null
 
   const fileName = path.split('/').pop() ?? path
 
@@ -95,8 +97,8 @@ export function MetaPanel({ frontmatter, path, width }: Props) {
 
       <div className="meta-panel__path" title={path}>{fileName}</div>
 
-      {!hasFrontmatter ? (
-        <div className="meta-panel__empty">No frontmatter</div>
+      {!hasMeta ? (
+        <div className="meta-panel__empty">No meta</div>
       ) : (
         <div className="meta-panel__fields">
           <Row label="Status">
@@ -120,6 +122,7 @@ export function MetaPanel({ frontmatter, path, width }: Props) {
 
           <Divider />
 
+          <Row label="Display name">{meta!.display_name ?? '—'}</Row>
           <Row label="Filename">{meta!.filename ?? '—'}</Row>
           <Row label="User name">{meta!.user_suggested_name ?? '—'}</Row>
           <Row label="CLI">{meta!.cli ?? '—'}</Row>

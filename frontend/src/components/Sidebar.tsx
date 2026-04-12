@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 // Mirrors vault.NoteEntry from Go
 export interface NoteEntry {
   name: string
+  displayName?: string
   path?: string   // vault-relative, present on files
   isDir: boolean
   children?: NoteEntry[]
@@ -175,6 +176,7 @@ interface FileEntryProps {
 }
 
 function FileEntry({ entry, depth, open, active, onOpen, onContextMenu }: FileEntryProps) {
+  const hasDisplay = entry.displayName && entry.displayName !== entry.name
   return (
     <button
       className={cn(
@@ -187,7 +189,12 @@ function FileEntry({ entry, depth, open, active, onOpen, onContextMenu }: FileEn
       onContextMenu={e => onContextMenu(e, entry.path!)}
       title={entry.path}
     >
-      {entry.name}
+      <div className="flex flex-col items-start leading-tight py-0.5">
+        <span className="truncate w-full">{entry.displayName || entry.name}</span>
+        {hasDisplay && (
+          <span className="text-[10px] opacity-60 truncate w-full font-mono mt-0.5">{entry.name}.md</span>
+        )}
+      </div>
     </button>
   )
 }

@@ -12,6 +12,7 @@ import (
 // FilingRecommendation mirrors the expected JSON structure from the AI.
 type FilingRecommendation struct {
 	Keep      bool     `json:"keep"`
+	Title     string   `json:"title"`
 	Filename  string   `json:"filename"`
 	Folder    string   `json:"folder"`
 	NewFolder bool     `json:"new_folder"`

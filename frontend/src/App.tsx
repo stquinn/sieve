@@ -79,7 +79,9 @@ function parseMeta(fm: string, body: string) {
   const status = (fm.match(/^status:\s*(\w+)/m)?.[1] ?? 'unfiled') as TabState['status']
   const userIntent = fm.match(/^user_intent:\s*(keep|trash)/m)?.[1] as any || null
   const isEvaluating = /^ai_eval:\s*evaluating\b/m.test(fm)
-  return { status, userIntent, isEmpty: body.trim().length === 0, isEvaluating }
+  const displayName = fm.match(/^display_name:\s*(.+)/m)?.[1]?.trim()?.replace(/^['"]|['"]$/g, '')
+  if (displayName === 'null' || displayName === '') return { status, userIntent, displayName: undefined, isEmpty: body.trim().length === 0, isEvaluating }
+  return { status, userIntent, displayName: displayName || undefined, isEmpty: body.trim().length === 0, isEvaluating }
 }
 
 // Update a single YAML frontmatter field in-place. Handles null, arrays, and strings.
@@ -98,7 +100,8 @@ function setYamlField(yaml: string, key: string, val: any): string {
   if (regex.test(yaml)) {
     return yaml.replace(regex, `${key}: ${strVal}`)
   } else {
-    return yaml.replace(/\n---\n$/, `${key}: ${strVal}\n---\n`)
+    // Append before the closing marker, ensuring a leading newline
+    return yaml.replace(/\n---\n?$/, `\n${key}: ${strVal}\n---\n`)
   }
 }
 
@@ -193,7 +196,6 @@ export default function App() {
         setTabs([newTab])
         setActiveIdx(0)
         H.current.loadTab(newTab)
-        saveSession([newTab], 0)
       }).catch(console.error)
       return
     }
@@ -203,7 +205,6 @@ export default function App() {
     setTabs(newTabs)
     setActiveIdx(newIdx)
     H.current.loadTab(newTabs[newIdx])
-    saveSession(newTabs, newIdx)
   }
 
   // Smart-mode background evaluation for a closing tab.
@@ -215,12 +216,13 @@ export default function App() {
 
     EvaluateBuffer(path)
       .then(rec => {
-        console.log('[stash:ai] smartClose: eval complete', { path, keep: rec.keep, filename: rec.filename, forceKeep })
+        console.log('[stash:ai] smartClose: eval complete', { path, keep: rec.keep, filename: rec.filename, title: rec.title, forceKeep })
         const shouldKeep = forceKeep || rec.keep
         if (shouldKeep) {
           let fm = fmCache.current[path] || ''
           fm = setYamlField(fm, 'ai_eval', 'complete')
           fm = setYamlField(fm, 'ai_last_evaluated', getLocalISOString())
+          if (rec.title)    fm = setYamlField(fm, 'display_name', rec.title)
           if (rec.filename) fm = setYamlField(fm, 'filename', rec.filename)
           if (rec.folder)   fm = setYamlField(fm, 'ai_folder_suggestion', rec.folder)
           if (rec.summary)  fm = setYamlField(fm, 'summary', rec.summary)
@@ -658,13 +660,26 @@ export default function App() {
   }, [editor])
 
   // ── Session save ───────────────────────────────────────────────────────────
+  // Reactive: any time tabs or activeIdx changes, persist to disk automatically.
 
-  const saveSession = useCallback((updatedTabs: TabState[], newActiveIdx: number) => {
-    const toSave = updatedTabs.map((t, i) => ({
-      path: t.path, scroll: t.scroll, active: i === newActiveIdx, mode: t.mode,
+  useEffect(() => {
+    if (tabs.length === 0) return
+    const toSave = tabs.map((t, i) => ({
+      path: t.path, scroll: t.scroll, active: i === activeIdx, mode: t.mode,
+      displayName: t.displayName, status: t.status, userIntent: t.userIntent,
     }))
     SaveSession(vault.Session.createFrom({ tabs: toSave })).catch(console.error)
-  }, [])
+  }, [tabs, activeIdx])
+
+  // Called from close handler where we need to save synchronously from refs
+  // (React state may not have flushed yet at that point).
+  const saveSessionFromRefs = () => {
+    const toSave = tabsRef.current.map((t, i) => ({
+      path: t.path, scroll: t.scroll, active: i === activeIdxRef.current, mode: t.mode,
+      displayName: t.displayName, status: t.status, userIntent: t.userIntent,
+    }))
+    return SaveSession(vault.Session.createFrom({ tabs: toSave }))
+  }
 
   // ── Flush active tab to disk immediately ───────────────────────────────────
 
@@ -710,7 +725,6 @@ export default function App() {
     setTabs(updatedTabs)
     setActiveIdx(idx)
     H.current.loadTab(updatedTabs[idx])
-    saveSession(updatedTabs, idx)
   }
 
   function newTab() {
@@ -723,7 +737,6 @@ export default function App() {
       setTabs(newTabs)
       setActiveIdx(newIdx)
       H.current.loadTab(tab)
-      saveSession(newTabs, newIdx)
     }).catch(console.error)
   }
 
@@ -761,7 +774,6 @@ export default function App() {
         fireSmartClose(path, suggested)
         return  // finishCloseTab called by fireSmartClose when done
       }
-      // user_intent: null + unfiled + not empty + dumb → leave buffer on disk, close tab
     }
 
     delete fmCache.current[path]
@@ -775,7 +787,6 @@ export default function App() {
       setTabs([newTab])
       setActiveIdx(0)
       H.current.loadTab(newTab)
-      saveSession([newTab], 0)
       return
     }
 
@@ -787,7 +798,6 @@ export default function App() {
     setTabs(newTabs)
     setActiveIdx(newIdx)
     H.current.loadTab(newTabs[newIdx])
-    saveSession(newTabs, newIdx)
   }
 
   function reorderTab(fromIdx: number, toPos: number) {
@@ -805,7 +815,6 @@ export default function App() {
     }
     setTabs(next)
     setActiveIdx(newActive)
-    saveSession(next, newActive)
   }
 
   function setTabIntent(idx: number, intent: 'keep' | 'trash' | null) {
@@ -877,7 +886,6 @@ export default function App() {
     
     setTabs(finalTabs)
     setActiveIdx(currentActiveIdx)
-    saveSession(finalTabs, currentActiveIdx)
   }
 
   function closeAllTabs() {
@@ -943,7 +951,7 @@ export default function App() {
 
          try {
              const rec = await EvaluateBuffer(path)
-             console.log('[stash:ai] EvaluateBuffer result', { path, keep: rec.keep, filename: rec.filename, folder: rec.folder, tags: rec.tags?.length })
+             console.log('[stash:ai] EvaluateBuffer result', { path, keep: rec.keep, filename: rec.filename, title: rec.title, folder: rec.folder, tags: rec.tags?.length })
              if (rec) {
                 finalFm = setYamlLocal(finalFm, 'ai_eval', 'complete')
                 finalFm = setYamlLocal(finalFm, 'ai_last_evaluated', getLocalISOString())
@@ -951,6 +959,7 @@ export default function App() {
                 const info = await GetVaultInfo()
                 finalFm = setYamlLocal(finalFm, 'cli', info.cli)
 
+                if (rec.title)    finalFm = setYamlLocal(finalFm, 'display_name', rec.title)
                 if (rec.filename) finalFm = setYamlLocal(finalFm, 'filename', rec.filename)
                 if (rec.folder)   finalFm = setYamlLocal(finalFm, 'ai_folder_suggestion', rec.folder)
                 if (rec.summary)  finalFm = setYamlLocal(finalFm, 'summary', rec.summary)
@@ -986,8 +995,6 @@ export default function App() {
             const newTabs = prev.map(t => 
               t.path === path ? { ...t, path: newPath, ...parseMeta(filedFm, body), status: 'filed' as TabState['status'] } : t
             )
-            const curActive = newTabs.findIndex(t => t.active)
-            saveSession(newTabs, Math.max(0, curActive))
             return newTabs
          })
       } else {
@@ -1014,7 +1021,6 @@ export default function App() {
     const newMode = isMarkdownMode ? 'wysiwyg' : 'markdown'
     const newTabs = tabs.map((t, i) => i === activeIdx ? { ...t, mode: newMode as TabState['mode'] } : t)
     setTabs(newTabs)
-    saveSession(newTabs, activeIdx)
 
     if (newMode === 'markdown') {
       // Show full file: frontmatter + body
@@ -1024,13 +1030,17 @@ export default function App() {
       mdCache.current[activeTab.path] = full
       setRawMd(full)
     } else {
-      // Strip frontmatter before feeding back to editor
-      // Fall back to rawMd (current textarea) if mdCache somehow wasn't populated
+      // Strip frontmatter before feeding back to editor.
+      // Fall back to rawMd (current textarea) if mdCache somehow wasn't populated.
       const full = mdCache.current[activeTab.path] ?? rawMd
       const { frontmatter, body } = splitFrontmatter(full)
       if (frontmatter) fmCache.current[activeTab.path] = frontmatter
-      editor?.commands.setContent(body)
       savedBodyCache.current[activeTab.path] = body
+      // EditorContent is not in the DOM yet — it only mounts after setTabs triggers
+      // a re-render. Defer setContent until the next frame so the view exists.
+      requestAnimationFrame(() => {
+        editor?.commands.setContent(body)
+      })
     }
   }
 
@@ -1103,7 +1113,6 @@ export default function App() {
     setTabs(newTabs)
     setActiveIdx(newIdx)
     H.current.loadTab(tab)
-    saveSession(newTabs, newIdx)
   }
 
   async function handleRefileWithAI(path: string) {
@@ -1119,6 +1128,7 @@ export default function App() {
         const rec = await EvaluateBuffer(path)
         frontmatter = setYamlField(frontmatter, 'ai_eval', 'complete')
         frontmatter = setYamlField(frontmatter, 'ai_last_evaluated', getLocalISOString())
+        if (rec.title)    frontmatter = setYamlField(frontmatter, 'display_name', rec.title)
         if (rec.filename) frontmatter = setYamlField(frontmatter, 'filename', rec.filename)
         if (rec.folder)   frontmatter = setYamlField(frontmatter, 'ai_folder_suggestion', rec.folder)
         if (rec.summary)  frontmatter = setYamlField(frontmatter, 'summary', rec.summary)
@@ -1148,8 +1158,6 @@ export default function App() {
         const newTabs = prev.map(t => 
            t.path === path ? { ...t, path: newPath, ...parseMeta(frontmatter, body) } : t
         )
-        const activeIdxNow = newTabs.findIndex(t => t.active)
-        if (activeIdxNow !== -1) saveSession(newTabs, activeIdxNow)
         return newTabs
       })
     } catch (e) {
@@ -1578,7 +1586,7 @@ export default function App() {
     const unlistenClosing = EventsOn('app:closing', () => {
       if (isMarkdownMode && activeTabRef.current) mdCache.current[activeTabRef.current.path] = rawMd
       flushRef.current()
-      Quit()
+      saveSessionFromRefs().catch(console.error).finally(() => Quit())
     })
 
     return () => {
@@ -1777,7 +1785,7 @@ export default function App() {
               onMouseDown={startMetaResize}
             />
             <MetaPanel
-              frontmatter={fmCache.current[activeTab.path] ?? ''}
+              meta={fmCache.current[activeTab.path] ?? ''}
               path={activeTab.path}
               width={metaWidth}
             />

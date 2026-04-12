@@ -169,7 +169,7 @@ export function TabBar({ tabs, activeIdx, onSelect, onClose, onNew, onHelp, onSe
                     )}
                   >
                     {dot && <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', dot)} />}
-                    <span className="truncate">{tabLabel(tab.path)}</span>
+                    <span className="truncate">{tabLabel(tab)}</span>
                   </button>
                 )
               })}
@@ -252,9 +252,10 @@ const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
   }, [menu])
 
   const tooltip = [
+    tab.displayName ?? null,
     tab.path,
-    tab.status === 'filed' ? 'Status: Filed by AI' : '',
-    tab.isModified ? '* Unsaved Changes' : '',
+    tab.status === 'filed' ? 'Status: Filed' : '',
+    tab.isModified ? '* Unsaved changes' : '',
     tab.userIntent === 'keep' ? 'Intent: Keep' : tab.userIntent === 'trash' ? 'Intent: Trash' : ''
   ].filter(Boolean).join('\n')
 
@@ -288,10 +289,10 @@ const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
       >
         {dot && <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', dot)} />}
         <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap min-w-0 text-left">
-          {tabLabel(tab.path)}
+          {tabLabel(tab)}
         </span>
         {tab.mode === 'markdown' && (
-          <span className="text-[10px] text-tn-muted font-mono bg-[#1e2030] px-1 rounded shrink-0">M</span>
+          <span className="text-[12px] text-tn-blue font-bold font-mono bg-[#1e2030] px-1.5 rounded shrink-0">M</span>
         )}
         <button
           onClick={e => { e.stopPropagation(); onClose() }}
@@ -374,7 +375,8 @@ function tabDot(tab: TabState): string | null {
   return 'bg-yellow-500'
 }
 
-function tabLabel(path: string): string {
-  const parts = path.replace(/\\/g, '/').split('/')
+function tabLabel(tab: TabState): string {
+  if (tab.displayName) return tab.displayName
+  const parts = tab.path.replace(/\\/g, '/').split('/')
   return parts[parts.length - 1].replace(/\.md$/, '')
 }

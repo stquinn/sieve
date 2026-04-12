@@ -7,9 +7,10 @@ export interface TabState {
   scroll: number
   active: boolean
   mode: TabMode
-  // Populated on first load from buffer frontmatter
+  // Populated on first load from buffer meta block
   status?: BufferStatus
   userIntent?: UserIntent
+  displayName?: string    // "Untitled N" label from display_name meta field
   isEmpty?: boolean       // body has no non-whitespace content
   isModified?: boolean    // true if body has unsaved edits
   isEvaluating?: boolean  // true if executing backend smart AI evaluations (force-file)

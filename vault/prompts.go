@@ -28,6 +28,7 @@ Respond ONLY with valid JSON. No preamble. No markdown fences.
 
 {
   "keep": true,
+  "title": "Short human-readable title, max 20 chars",
   "filename": "meaningful-kebab-case-name.md",
   "folder": "suggested-folder-name",
   "new_folder": true, // set to true ONLY if suggesting a folder not in the Existing folders list

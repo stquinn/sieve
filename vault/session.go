@@ -8,10 +8,13 @@ import (
 // Tab represents one open tab in a session.
 // Path is relative to the vault root.
 type Tab struct {
-	Path   string `json:"path"`
-	Scroll int    `json:"scroll"`
-	Active bool   `json:"active"`
-	Mode   string `json:"mode"` // "wysiwyg" or "markdown"
+	Path        string `json:"path"`
+	Scroll      int    `json:"scroll"`
+	Active      bool   `json:"active"`
+	Mode        string `json:"mode"`                  // "wysiwyg" or "markdown"
+	DisplayName string `json:"displayName,omitempty"` // cached display name — avoids blank label on startup
+	Status      string `json:"status,omitempty"`      // "unfiled" or "filed"
+	UserIntent  string `json:"userIntent,omitempty"`  // "keep" or "trash"
 }
 
 // Window holds the saved window position and size.

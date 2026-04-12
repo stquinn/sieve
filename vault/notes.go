@@ -4,16 +4,46 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+var displayNameRegex = regexp.MustCompile(`(?m)^display_name:\s*(.+)`)
+
+func extractDisplayName(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	// Read first 2KB — frontmatter is usually at the start
+	buf := make([]byte, 2048)
+	n, _ := f.Read(buf)
+	if n == 0 {
+		return ""
+	}
+
+	content := string(buf[:n])
+	if m := displayNameRegex.FindStringSubmatch(content); len(m) > 1 {
+		val := strings.TrimSpace(m[1])
+		val = strings.Trim(val, `"'`)
+		if val == "null" || val == "" {
+			return ""
+		}
+		return val
+	}
+	return ""
+}
 
 // NoteEntry represents a single node in the vault/notes/ tree.
 // Directories have IsDir=true and a Children slice; files have a vault-relative Path.
 type NoteEntry struct {
-	Name     string      `json:"name"`
-	Path     string      `json:"path,omitempty"` // vault-relative, empty for directories
-	IsDir    bool        `json:"isDir"`
-	Children []NoteEntry `json:"children,omitempty"`
+	Name        string      `json:"name"`
+	DisplayName string      `json:"displayName,omitempty"` // from frontmatter
+	Path        string      `json:"path,omitempty"`        // vault-relative, empty for directories
+	IsDir       bool        `json:"isDir"`
+	Children    []NoteEntry `json:"children,omitempty"`
 }
 
 // ScanNotes walks notesRoot and returns an alphabetically-ordered tree of
@@ -65,10 +95,12 @@ func readDir(vaultRoot, dir string) ([]NoteEntry, error) {
 			rel = fullPath
 		}
 		// Always use forward slashes for cross-platform consistency
+		name := strings.TrimSuffix(info.Name(), filepath.Ext(info.Name()))
 		entries = append(entries, NoteEntry{
-			Name: strings.TrimSuffix(info.Name(), filepath.Ext(info.Name())),
-			Path: filepath.ToSlash(rel),
-			IsDir: false,
+			Name:        name,
+			DisplayName: extractDisplayName(fullPath),
+			Path:        filepath.ToSlash(rel),
+			IsDir:       false,
 		})
 	}
 

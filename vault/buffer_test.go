@@ -30,7 +30,7 @@ func TestFileBuffer_AssetPromotion(t *testing.T) {
 	}
 
 	// Write content to buffer
-	content := newBufferMeta(time.Now()) + "\n# Test Note\nThis is a test image: ![alt](../../buffers/assets/blk-a1b2.png)\n"
+	content := newBufferMeta(time.Now(), 1) + "\n# Test Note\nThis is a test image: ![alt](../../buffers/assets/blk-a1b2.png)\n"
 	if err := os.WriteFile(absPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write buffer failed: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestDiscardBuffer_AssetCleanup(t *testing.T) {
 	}
 
 	// Write content to buffer
-	content := newBufferMeta(time.Now()) + "\n# Trash Note\nReference to image: ![alt](../../buffers/assets/blk-x9y8.png)\n"
+	content := newBufferMeta(time.Now(), 1) + "\n# Trash Note\nReference to image: ![alt](../../buffers/assets/blk-x9y8.png)\n"
 	if err := os.WriteFile(absPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write buffer failed: %v", err)
 	}
