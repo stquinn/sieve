@@ -218,12 +218,24 @@ export default function App() {
         console.log('[stash:ai] smartClose: eval complete', { path, keep: rec.keep, filename: rec.filename, forceKeep })
         const shouldKeep = forceKeep || rec.keep
         if (shouldKeep) {
+          let fm = fmCache.current[path] || ''
+          fm = setYamlField(fm, 'ai_eval', 'complete')
+          fm = setYamlField(fm, 'ai_last_evaluated', getLocalISOString())
+          if (rec.filename) fm = setYamlField(fm, 'filename', rec.filename)
+          if (rec.folder)   fm = setYamlField(fm, 'ai_folder_suggestion', rec.folder)
+          if (rec.summary)  fm = setYamlField(fm, 'summary', rec.summary)
+          if (rec.tags && rec.tags.length > 0) fm = setYamlField(fm, 'tags', rec.tags)
+          
           const filename = rec.filename || suggestedName
-          const fileFn = filename ? FileBufferWithName(path, filename) : FileBuffer(path)
-          return fileFn.then(newPath => {
-            const oldFm = fmCache.current[path]
-            if (oldFm && newPath) {
-              fmCache.current[newPath] = oldFm.replace(/^status:\s*.+/m, 'status: filed')
+          if (filename) fm = setYamlField(fm, 'user_suggested_name', filename)
+
+          const body = savedBodyCache.current[path] ?? ''
+          
+          return SaveBuffer(path, fm + body).then(() => {
+            return FileBuffer(path)
+          }).then(newPath => {
+            if (newPath) {
+              fmCache.current[newPath] = fm.replace(/^status:\s*.+/m, 'status: filed')
             }
           })
         } else {
@@ -772,6 +784,24 @@ export default function App() {
     saveSession(newTabs, newIdx)
   }
 
+  function reorderTab(fromIdx: number, toPos: number) {
+    if (fromIdx === toPos || fromIdx === toPos - 1) return
+    const next = [...tabs]
+    const [moved] = next.splice(fromIdx, 1)
+    const insertAt = toPos > fromIdx ? toPos - 1 : toPos
+    next.splice(insertAt, 0, moved)
+    let newActive = activeIdx
+    if (activeIdx === fromIdx) {
+      newActive = insertAt
+    } else {
+      if (activeIdx > fromIdx) newActive -= 1
+      if (newActive >= insertAt) newActive += 1
+    }
+    setTabs(next)
+    setActiveIdx(newActive)
+    saveSession(next, newActive)
+  }
+
   function setTabIntent(idx: number, intent: 'keep' | 'trash' | null) {
     const tab = tabs[idx]
     if (!tab) return
@@ -1068,6 +1098,57 @@ export default function App() {
     setActiveIdx(newIdx)
     H.current.loadTab(tab)
     saveSession(newTabs, newIdx)
+  }
+
+  async function handleRefileWithAI(path: string) {
+    if (tier !== 'smart') return
+    try {
+      const content = await LoadBuffer(path)
+      let { frontmatter, body } = splitFrontmatter(content)
+      
+      const hasAiResult = /^ai_eval:\s*complete\b/m.test(frontmatter) || /^ai_folder_suggestion:/m.test(frontmatter)
+
+      if (!hasAiResult) {
+        console.log('[stash:ai] handleRefileWithAI: evaluating', { path })
+        const rec = await EvaluateBuffer(path)
+        frontmatter = setYamlField(frontmatter, 'ai_eval', 'complete')
+        frontmatter = setYamlField(frontmatter, 'ai_last_evaluated', getLocalISOString())
+        if (rec.filename) frontmatter = setYamlField(frontmatter, 'filename', rec.filename)
+        if (rec.folder)   frontmatter = setYamlField(frontmatter, 'ai_folder_suggestion', rec.folder)
+        if (rec.summary)  frontmatter = setYamlField(frontmatter, 'summary', rec.summary)
+        if (rec.tags && rec.tags.length > 0) frontmatter = setYamlField(frontmatter, 'tags', rec.tags)
+        
+        await SaveBuffer(path, frontmatter + body)
+      } else {
+        console.log('[stash:ai] handleRefileWithAI: using existing AI result', { path })
+      }
+      
+      const newPath = await FileBuffer(path)
+
+      if (fmCache.current[path]) {
+        fmCache.current[newPath] = fmCache.current[path]
+        delete fmCache.current[path]
+      }
+      if (mdCache.current[path]) {
+        mdCache.current[newPath] = mdCache.current[path]
+        delete mdCache.current[path]
+      }
+      if (savedBodyCache.current[path] !== undefined) {
+        savedBodyCache.current[newPath] = savedBodyCache.current[path]
+        delete savedBodyCache.current[path]
+      }
+
+      setTabs(prev => {
+        const newTabs = prev.map(t => 
+           t.path === path ? { ...t, path: newPath, ...parseMeta(frontmatter, body) } : t
+        )
+        const activeIdxNow = newTabs.findIndex(t => t.active)
+        if (activeIdxNow !== -1) saveSession(newTabs, activeIdxNow)
+        return newTabs
+      })
+    } catch (e) {
+      console.error('[stash:ai] refile failed', e)
+    }
   }
 
   // ── AI Explain / Ask gestures ─────────────────────────────────────────────
@@ -1553,8 +1634,10 @@ export default function App() {
             <Sidebar
               entries={notes}
               openPaths={openPaths}
+              activePath={activeTab?.path}
               onOpen={openNote}
               onShowInFiles={path => ShowInFiles(path).catch(console.error)}
+              onRefileAI={handleRefileWithAI}
               width={sidebarWidth}
             />
           ) : (
@@ -1579,6 +1662,7 @@ export default function App() {
           onNew={newTab}
           onHelp={() => setShowHelp(v => !v)}
           onSetIntent={setTabIntent}
+          onReorder={reorderTab}
         />
         {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
         <QuickSwitcher

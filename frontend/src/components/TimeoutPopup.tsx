@@ -27,14 +27,14 @@ export function TimeoutPopup({ suggestedName, onAccept, onRetry, onDelete, onCan
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-tn-bg-dark border border-tn-border rounded-md shadow-xl w-[420px] p-5 flex flex-col gap-4">
+      <div className="bg-tn-bg-dark border border-[#3b4261] rounded-md shadow-2xl w-[420px] p-5 flex flex-col gap-4">
         <div className="text-tn-text text-[13px] font-medium">AI naming timed out</div>
         <div className="text-tn-muted text-[12px] leading-relaxed">
           Enter a name for this buffer, or choose what to do with it.
         </div>
         <input
           ref={inputRef}
-          className="bg-tn-bg border border-tn-border rounded px-3 py-1.5 text-[13px] text-tn-text outline-none focus:border-tn-blue w-full font-mono"
+          className="bg-tn-bg border border-[#3b4261] rounded px-3 py-1.5 text-[13px] text-tn-text outline-none focus:border-tn-blue w-full font-mono"
           value={name}
           onChange={e => setName(e.target.value)}
           placeholder="kebab-case-name"
@@ -46,21 +46,21 @@ export function TimeoutPopup({ suggestedName, onAccept, onRetry, onDelete, onCan
         )}
         <div className="flex gap-2 justify-end">
           <button
-            className="px-3 py-1.5 text-[12px] text-tn-muted hover:text-tn-text border border-tn-border rounded hover:bg-tn-bg-alt transition-colors"
+            className="px-3 py-1.5 text-[12px] text-tn-muted hover:text-tn-text border border-[#3b4261] rounded hover:bg-tn-bg-alt transition-colors"
             onClick={onCancel}
             disabled={retrying}
           >
             Cancel
           </button>
           <button
-            className="px-3 py-1.5 text-[12px] text-red-400 hover:text-red-300 border border-tn-border rounded hover:bg-tn-bg-alt transition-colors"
+            className="px-3 py-1.5 text-[12px] text-red-400 hover:text-red-300 border border-[#3b4261] rounded hover:bg-tn-bg-alt transition-colors"
             onClick={onDelete}
             disabled={retrying}
           >
             Delete
           </button>
           <button
-            className="px-3 py-1.5 text-[12px] text-tn-blue hover:text-blue-300 border border-tn-border rounded hover:bg-tn-bg-alt transition-colors"
+            className="px-3 py-1.5 text-[12px] text-tn-blue hover:text-blue-300 border border-[#3b4261] rounded hover:bg-tn-bg-alt transition-colors"
             onClick={handleRetry}
             disabled={retrying}
           >

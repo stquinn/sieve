@@ -8,9 +8,9 @@ const DefaultFilingPrompt = `Given the following content, decide if it is worth 
 as a permanent note.
 
 Existing folders: {folder_list}
-Only suggest a new folder if content strongly belongs to a
-topic not represented above. Otherwise use closest existing
-folder. If nothing fits well — leave folder empty for root.
+Select the most appropriate existing folder for this content.
+If the content belongs to a distinct topic not covered by existing folders, suggest a new, appropriately named folder.
+If the content is too generic, leave the folder empty for root.
 
 Importance signals:
 - version: {version} — higher means more curation by user
@@ -29,8 +29,8 @@ Respond ONLY with valid JSON. No preamble. No markdown fences.
 {
   "keep": true,
   "filename": "meaningful-kebab-case-name.md",
-  "folder": "folder-name or empty string",
-  "new_folder": false,
+  "folder": "suggested-folder-name",
+  "new_folder": true, // set to true ONLY if suggesting a folder not in the Existing folders list
   "type": "detected language or content type",
   "summary": "one line description",
   "tags": ["tag1", "tag2", "tag3"]

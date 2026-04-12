@@ -15,15 +15,17 @@ interface ContextMenuState {
   vaultPath: string   // vault-relative path for ShowInFiles
 }
 
-interface SidebarProps {
+export interface SidebarProps {
   entries: NoteEntry[]
   openPaths: Set<string>
+  activePath?: string
   onOpen: (path: string) => void
   onShowInFiles: (path: string) => void
+  onRefileAI?: (path: string) => void
   width: number
 }
 
-export function Sidebar({ entries, openPaths, onOpen, onShowInFiles, width }: SidebarProps) {
+export function Sidebar({ entries, openPaths, activePath, onOpen, onShowInFiles, onRefileAI, width }: SidebarProps) {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -54,6 +56,7 @@ export function Sidebar({ entries, openPaths, onOpen, onShowInFiles, width }: Si
             entries={entries}
             depth={0}
             openPaths={openPaths}
+            activePath={activePath}
             onOpen={onOpen}
             onContextMenu={openMenu}
             basePath="notes"
@@ -63,14 +66,20 @@ export function Sidebar({ entries, openPaths, onOpen, onShowInFiles, width }: Si
       {contextMenu && (
         <div
           ref={menuRef}
-          className="fixed z-50 bg-tn-bg-dark border border-tn-border rounded shadow-lg py-1 min-w-[160px]"
+          className="fixed z-50 bg-[#1c1d2a] border border-solid border-white/20 rounded-md shadow-2xl py-1 min-w-[160px]"
           style={{ top: contextMenu.y, left: contextMenu.x }}
         >
           <button
-            className="w-full text-left px-3 py-1.5 text-[12px] text-tn-text hover:bg-tn-bg-alt transition-colors"
+            className="w-full bg-transparent border-none text-left px-3 py-1.5 text-[14px] text-[#c0caf5] hover:bg-[#2a2b3d] hover:text-white transition-colors"
             onClick={() => { onShowInFiles(contextMenu.vaultPath); setContextMenu(null) }}
           >
             Show in Files
+          </button>
+          <button
+            className="w-full bg-transparent border-none text-left px-3 py-1.5 text-[14px] text-[#c0caf5] hover:bg-[#2a2b3d] hover:text-white transition-colors"
+            onClick={() => { onRefileAI?.(contextMenu.vaultPath); setContextMenu(null) }}
+          >
+            Refile with AI
           </button>
         </div>
       )}
@@ -82,12 +91,13 @@ interface EntryListProps {
   entries: NoteEntry[]
   depth: number
   openPaths: Set<string>
+  activePath?: string
   onOpen: (path: string) => void
   onContextMenu: (e: React.MouseEvent, vaultPath: string) => void
   basePath: string    // vault-relative path prefix for computing dir paths
 }
 
-function EntryList({ entries, depth, openPaths, onOpen, onContextMenu, basePath }: EntryListProps) {
+function EntryList({ entries, depth, openPaths, activePath, onOpen, onContextMenu, basePath }: EntryListProps) {
   return (
     <>
       {entries.map(entry =>
@@ -97,6 +107,7 @@ function EntryList({ entries, depth, openPaths, onOpen, onContextMenu, basePath 
               entry={entry}
               depth={depth}
               openPaths={openPaths}
+              activePath={activePath}
               onOpen={onOpen}
               onContextMenu={onContextMenu}
               basePath={`${basePath}/${entry.name}`}
@@ -106,6 +117,7 @@ function EntryList({ entries, depth, openPaths, onOpen, onContextMenu, basePath 
               entry={entry}
               depth={depth}
               open={openPaths.has(entry.path!)}
+              active={activePath === entry.path}
               onOpen={onOpen}
               onContextMenu={onContextMenu}
             />
@@ -118,12 +130,13 @@ interface DirEntryProps {
   entry: NoteEntry
   depth: number
   openPaths: Set<string>
+  activePath?: string
   onOpen: (path: string) => void
   onContextMenu: (e: React.MouseEvent, vaultPath: string) => void
   basePath: string
 }
 
-function DirEntry({ entry, depth, openPaths, onOpen, onContextMenu, basePath }: DirEntryProps) {
+function DirEntry({ entry, depth, openPaths, activePath, onOpen, onContextMenu, basePath }: DirEntryProps) {
   const [expanded, setExpanded] = useState(true)
 
   return (
@@ -142,6 +155,7 @@ function DirEntry({ entry, depth, openPaths, onOpen, onContextMenu, basePath }: 
           entries={entry.children}
           depth={depth + 1}
           openPaths={openPaths}
+          activePath={activePath}
           onOpen={onOpen}
           onContextMenu={onContextMenu}
           basePath={basePath}
@@ -155,14 +169,19 @@ interface FileEntryProps {
   entry: NoteEntry
   depth: number
   open: boolean
+  active: boolean
   onOpen: (path: string) => void
   onContextMenu: (e: React.MouseEvent, vaultPath: string) => void
 }
 
-function FileEntry({ entry, depth, open, onOpen, onContextMenu }: FileEntryProps) {
+function FileEntry({ entry, depth, open, active, onOpen, onContextMenu }: FileEntryProps) {
   return (
     <button
-      className={cn('sidebar__file', open && 'sidebar__file--open')}
+      className={cn(
+        'sidebar__file relative',
+        open && 'sidebar__file--open',
+        active && 'bg-[#1e2030] !text-white font-semibold shadow-[inset_2px_0_0_#7aa2f7]'
+      )}
       style={{ paddingLeft: `${1.5 + depth * 1}rem` }}
       onClick={() => onOpen(entry.path!)}
       onContextMenu={e => onContextMenu(e, entry.path!)}

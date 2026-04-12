@@ -156,79 +156,11 @@
   background: #7aa2f7;
 }
 
-/* ── Tab bar ─────────────────────────────────────────────────────────── */
-
-.tab-bar {
-  display: flex;
-  align-items: center;
-  background: #16161e;
-  border-bottom: 1px solid #2a2b3d;
-  height: 36px;
-  flex-shrink: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.tab-bar::-webkit-scrollbar { display: none; }
-
-.tab-bar__tab {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0 0.75rem;
-  height: 100%;
-  cursor: pointer;
-  border-right: 1px solid #2a2b3d;
-  color: #a9b1d6;
-  font-size: 16px;
-  white-space: nowrap;
-  user-select: none;
-  min-width: 0;
-  flex-shrink: 0;
-}
-
-.tab-bar__tab:hover { background: #1e2030; color: #c0caf5; }
-
-.tab-bar__tab--active {
-  background: #1a1b26;
-  color: #ffffff;
-  border-bottom: 2px solid #7aa2f7;
-  font-weight: 500;
-}
-
-.tab-bar__label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 160px;
-}
-
-.tab-bar__close {
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-  padding: 0 0.1rem;
-  opacity: 0.4;
-  flex-shrink: 0;
-}
-
-.tab-bar__close:hover { opacity: 1; color: #f7768e; }
-
-.tab-bar__new {
-  background: none;
-  border: none;
-  color: #565f89;
-  cursor: pointer;
-  font-size: 18px;
-  line-height: 1;
-  padding: 0 0.75rem;
-  height: 100%;
-  flex-shrink: 0;
-}
-
-.tab-bar__new:hover { color: #c0caf5; background: #1e2030; }
+/* ── Tab bar — legacy class rules removed; tab bar is now Tailwind-only ── */
+/* The 2px border-[#3b4261] bottom on the tab bar div creates clear         */
+/* visual separation from the editor. Active tab uses bg-tn-bg (#1a1b26)   */
+/* matching the editor surface, making it feel "open". Inactive tabs use    */
+/* #13131a so there's contrast between the bar chrome and active tab.       */
 
 /* ── Editor ──────────────────────────────────────────────────────────── */
 
@@ -244,6 +176,7 @@
   /* 3rem for gutter numbers, 0.5rem gap after separator, then content */
   /* padding: 1.5rem 3rem 6rem 4rem; */
   padding-left: 2.8rem;
+  padding-right: 1rem;
 
   
   counter-reset: docline;

@@ -69,7 +69,29 @@ func (v *Vault) FileBuffer(absPath string) (string, error) {
 	}
 	content := replaceFmField(string(data), "status", "filed")
 	name := deriveKebabName(content)
-	dest := uniqueNotesPath(v.NotesPath(), name)
+	
+	folder := deriveFolderPath(content)
+	destDir := v.NotesPath()
+	if folder != "" {
+		destDir = filepath.Join(v.NotesPath(), folder)
+		if err := os.MkdirAll(destDir, 0o755); err != nil {
+			return "", fmt.Errorf("file buffer: mkdir: %w", err)
+		}
+	}
+
+	dest := uniqueNotesPath(destDir, name)
+
+	// Avoid deleting if same path
+	if absPath == dest {
+		if err := os.WriteFile(dest, []byte(content), 0o644); err != nil {
+			return "", fmt.Errorf("file buffer: write in-place: %w", err)
+		}
+		rel, err := filepath.Rel(v.Root, dest)
+		if err != nil {
+			return dest, nil
+		}
+		return rel, nil
+	}
 
 	// Asset promotion: scan for images linking to buffer assets.
 	// Matches both:
@@ -252,4 +274,38 @@ modified: %s
 cli: null
 ---
 `, ts, ts)
+}
+
+func deriveFolderPath(content string) string {
+	for _, line := range strings.SplitN(content, "\n", 200) {
+		if strings.HasPrefix(line, "ai_folder_suggestion:") {
+			folder := strings.TrimSpace(strings.TrimPrefix(line, "ai_folder_suggestion:"))
+			folder = strings.Trim(folder, `"'`)
+			if folder != "null" && folder != "" {
+				return cleanFolderPath(folder)
+			}
+		} else if strings.HasPrefix(line, "folder:") {
+			folder := strings.TrimSpace(strings.TrimPrefix(line, "folder:"))
+			folder = strings.Trim(folder, `"'`)
+			if folder != "null" && folder != "" {
+				return cleanFolderPath(folder)
+			}
+		}
+	}
+	return ""
+}
+
+func cleanFolderPath(folder string) string {
+	segments := strings.Split(filepath.ToSlash(folder), "/")
+	var valid []string
+	for _, seg := range segments {
+		k := toKebab(seg)
+		if k != "untitled" && k != "" {
+			valid = append(valid, k)
+		}
+	}
+	if len(valid) > 0 {
+		return filepath.Join(valid...)
+	}
+	return ""
 }
