@@ -21,6 +21,7 @@ type Settings struct {
 	CLITimeout       int     `json:"cli_timeout,omitempty"`
 	AutosaveDebounce int     `json:"autosave_debounce,omitempty"`
 	Debug            bool    `json:"debug,omitempty"`
+	Theme            string  `json:"theme,omitempty"`
 	Prompts          Prompts `json:"prompts,omitempty"`
 }
 
@@ -90,6 +91,9 @@ func LoadSettings(path string) Settings {
 	if loaded.Prompts.Ask != "" {
 		s.Prompts.Ask = loaded.Prompts.Ask
 	}
+	if loaded.Theme != "" {
+		s.Theme = loaded.Theme
+	}
 
 	return s
 }
@@ -98,5 +102,6 @@ func defaults() Settings {
 	return Settings{
 		CLITimeout:       20,
 		AutosaveDebounce: 30,
+		Theme:            "tokyonight",
 	}
 }

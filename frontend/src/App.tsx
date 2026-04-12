@@ -608,6 +608,11 @@ export default function App() {
         autosaveMs.current = info.autosaveDebounce * 1000
         console.debug('[stash] autosave debounce', info.autosaveDebounce + 's')
       }
+      // Mark the active theme on the root element for potential CSS-selector use.
+      // CSS variables themselves are served synchronously via /theme.css by Go.
+      if (info.themeName) {
+        document.documentElement.setAttribute('data-theme', info.themeName)
+      }
     }).catch(console.error)
 
     const fetchNotes = () => GetNotes().then(res => setNotes(res || [])).catch(console.error)
@@ -619,6 +624,7 @@ export default function App() {
     })
     return unlisten
   }, [])
+
 
   // ── Load a tab's content from disk ────────────────────────────────────────
 

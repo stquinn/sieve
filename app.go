@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,16 +20,38 @@ import (
 
 // App is the Wails application backend.
 type App struct {
-	ctx       context.Context
-	vaultPath string
-	vault     *vault.Vault
-	settings  vault.Settings
-	watcher   *notesWatcher
-	closing   bool // prevents OnBeforeClose loop
+	ctx          context.Context
+	vaultPath    string
+	settingsPath string
+	vault        *vault.Vault
+	settings     vault.Settings
+	themesFS     fs.FS
+	watcher      *notesWatcher
+	closing      bool // prevents OnBeforeClose loop
 }
 
-func NewApp(vaultPath string) *App {
-	return &App{vaultPath: vaultPath}
+func NewApp(vaultPath string, themesFS fs.FS) *App {
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "localhost"
+	}
+	return &App{
+		vaultPath:    vaultPath,
+		settingsPath: filepath.Join(vaultPath, hostname, "settings.json"),
+		themesFS:     themesFS,
+	}
+}
+
+func (a *App) SettingsPath() string {
+	return a.settingsPath
+}
+
+func (a *App) GetThemesFS() fs.FS {
+	return a.themesFS
+}
+
+func (a *App) GetVaultPath() string {
+	return a.vaultPath
 }
 
 // startup is called by Wails when the application window is ready.
@@ -123,15 +146,17 @@ func (a *App) beforeClose(ctx context.Context) bool {
 // ── Vault info ────────────────────────────────────────────────────────────────
 
 type VaultInfo struct {
-	Root             string     `json:"root"`
-	Hostname         string     `json:"hostname"`
-	BuffersPath      string     `json:"buffersPath"`
-	NotesPath        string     `json:"notesPath"`
-	IsNew            bool       `json:"isNew"`
-	Tier             vault.Tier `json:"tier"`
-	Cli              string     `json:"cli"`
-	Debug            bool       `json:"debug"`
-	AutosaveDebounce int        `json:"autosaveDebounce"`
+	Root             string          `json:"root"`
+	Hostname         string          `json:"hostname"`
+	BuffersPath      string          `json:"buffersPath"`
+	NotesPath        string          `json:"notesPath"`
+	IsNew            bool            `json:"isNew"`
+	Tier             vault.Tier      `json:"tier"`
+	Cli              string          `json:"cli"`
+	Debug            bool            `json:"debug"`
+	AutosaveDebounce int             `json:"autosaveDebounce"`
+	ThemeName        string          `json:"themeName"`
+	ThemeVars        vault.ThemeVars `json:"themeVars"`
 }
 
 func (a *App) GetVaultInfo() VaultInfo {
@@ -152,6 +177,8 @@ func (a *App) GetVaultInfo() VaultInfo {
 		Cli:              liveSettings.CLI,
 		Debug:            liveSettings.Debug,
 		AutosaveDebounce: liveSettings.AutosaveDebounce,
+		ThemeName:        liveSettings.Theme,
+		ThemeVars:        vault.LoadTheme(a.vault.Root, liveSettings.Theme, a.themesFS),
 	}
 }
 
