@@ -40,7 +40,11 @@ func RunCLI(cli string, prompt string, timeoutSecs int) (string, error) {
 		cmd = exec.CommandContext(ctx, cli, "--prompt", "", "--yolo")
 		cmd.Stdin = bytes.NewBufferString(prompt)
 	} else if strings.Contains(cli, "copilot") {
-		cmd = exec.CommandContext(ctx, "gh", "copilot", "explain", prompt)
+		// --prompt "": triggers non-interactive mode via stdin.
+		// --yolo: auto-accepts tool actions.
+		// --silent: ensures clean markdown/JSON response without usage stats.
+		cmd = exec.CommandContext(ctx, cli, "--prompt", "", "--yolo", "--silent")
+		cmd.Stdin = bytes.NewBufferString(prompt)
 	} else {
 		cmd = exec.CommandContext(ctx, cli)
 		cmd.Stdin = bytes.NewBufferString(prompt)
