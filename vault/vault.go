@@ -47,9 +47,8 @@ func Open(rootPath string) (*Vault, error) {
 // IsNewVault returns true when the vault was freshly created (no notes and no
 // host settings exist yet). Used to decide whether to show a welcome message.
 func (v *Vault) IsNewVault() bool {
-	_, notesErr := os.Stat(v.NotesPath())
-	_, settingsErr := os.Stat(v.SettingsPath())
-	return os.IsNotExist(notesErr) && os.IsNotExist(settingsErr)
+	files, _ := os.ReadDir(v.NotesPath())
+	return len(files) == 0
 }
 
 // ── Path helpers ──────────────────────────────────────────────────────────────

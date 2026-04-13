@@ -102,6 +102,6 @@ func defaults() Settings {
 	return Settings{
 		CLITimeout:       20,
 		AutosaveDebounce: 30,
-		Theme:            "tokyonight",
+		Theme:            "sublime",
 	}
 }

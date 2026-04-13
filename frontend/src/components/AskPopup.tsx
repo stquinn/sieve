@@ -46,7 +46,7 @@ export function AskPopup({ contextLabel, onSend, onClose }: AskPopupProps) {
   return (
     <div className="ask-popup">
       <div className="ask-popup__header">
-        <span className="ask-popup__label">Ask about {contextLabel}</span>
+        <span className="ask-popup__label">{contextLabel} Inquiry</span>
         <button className="ask-popup__close" onClick={onClose} title="Close (Esc)">✕</button>
       </div>
       <textarea

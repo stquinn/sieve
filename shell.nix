@@ -29,10 +29,16 @@ pkgs.mkShell {
 
     # CGo needs these for linking
     glibc
+
+    # Required for the directory picker (GIO/GTK settings)
+    gsettings-desktop-schemas
   ];
 
   shellHook = ''
     export CGO_ENABLED=1
+
+    # Ensure GTK/GIO can find the schemas for the file chooser
+    export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:$XDG_DATA_DIRS"
 
     export PKG_CONFIG_PATH="${pkgs.lib.makeSearchPathOutput "dev" "lib/pkgconfig" [
       pkgs.webkitgtk_4_1

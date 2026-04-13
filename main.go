@@ -21,8 +21,7 @@ var assets embed.FS
 //go:embed themes/*.json
 var themes embed.FS
 
-// vaultHandler serves files from the vault root directory at the /vault/ URL prefix.
-type vaultHandler struct{ root string }
+type vaultHandler struct{ app *App }
 
 func (h *vaultHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	const prefix = "/vault/"
@@ -30,13 +29,23 @@ func (h *vaultHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+
+	root := h.app.GetVaultPath()
+	if root == "" {
+		http.Error(w, "vault not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	abs, _ := filepath.Abs(root)
+
 	rel := filepath.FromSlash(strings.TrimPrefix(r.URL.Path, prefix))
-	abs := filepath.Join(h.root, filepath.Clean(rel))
-	if !strings.HasPrefix(abs+string(filepath.Separator), h.root+string(filepath.Separator)) {
+	filePath := filepath.Join(abs, filepath.Clean(rel))
+
+	// Ensure we're still inside the vault root
+	if !strings.HasPrefix(filePath+string(filepath.Separator), abs+string(filepath.Separator)) {
 		http.NotFound(w, r)
 		return
 	}
-	http.ServeFile(w, r, abs)
+	http.ServeFile(w, r, filePath)
 }
 
 // muxHandler sits in front of vaultHandler and intercepts /theme.css so that
@@ -59,14 +68,18 @@ func (m *muxHandler) serveThemeCSS(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 
-	vaultRoot := m.app.GetVaultPath()
-	settingsPath := m.app.SettingsPath()
-	if vaultRoot == "" || settingsPath == "" {
-		w.WriteHeader(http.StatusNoContent)
-		return
+	var settings vault.Settings
+	var vaultRoot string
+
+	if m.app.GetVaultPath() != "" {
+		vaultRoot = m.app.GetVaultPath()
+		settings = vault.LoadSettings(m.app.SettingsPath())
+	} else {
+		// Fallback: show the default theme (Sublime) for the splash screen
+		settings = vault.LoadSettings("") // load defaults
+		vaultRoot = ""
 	}
 
-	settings := vault.LoadSettings(settingsPath)
 	vars := vault.LoadTheme(vaultRoot, settings.Theme, m.app.GetThemesFS())
 
 	w.WriteHeader(http.StatusOK)
@@ -79,17 +92,13 @@ func (m *muxHandler) serveThemeCSS(w http.ResponseWriter, _ *http.Request) {
 
 func main() {
 	// Resolve vault path.
-	// Priority: CLI arg > STASH_VAULT env var > PWD.
-	// The env var is the reliable path in `wails dev` (which doesn't forward -- args).
-	vaultPath := "."
-	if v := os.Getenv("STASH_VAULT"); v != "" {
-		vaultPath = v
-	}
+	cliArg := ""
 	if len(os.Args) > 1 {
-		vaultPath = os.Args[1]
+		cliArg = os.Args[1]
 	}
+	vaultPath := vault.FindBestVaultPath(cliArg, os.Getenv("STASH_VAULT"))
 
-	absVaultPath, _ := filepath.Abs(vaultPath)
+
 	app := NewApp(vaultPath, themes)
 
 	err := wails.Run(&options.App{
@@ -104,7 +113,7 @@ func main() {
 			Assets: assets,
 			Handler: &muxHandler{
 				app:   app,
-				vault: &vaultHandler{root: absVaultPath},
+				vault: &vaultHandler{app: app},
 			},
 		},
 		OnStartup:     app.startup,

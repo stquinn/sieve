@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"stash/logger"
@@ -28,6 +29,7 @@ type App struct {
 	themesFS     fs.FS
 	watcher      *notesWatcher
 	closing      bool // prevents OnBeforeClose loop
+	mu           sync.Mutex
 }
 
 func NewApp(vaultPath string, themesFS fs.FS) *App {
@@ -56,10 +58,24 @@ func (a *App) GetVaultPath() string {
 
 // startup is called by Wails when the application window is ready.
 func (a *App) startup(ctx context.Context) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	a.ctx = ctx
 
 	abs, _ := filepath.Abs(a.vaultPath)
 	logger.Info("startup", "vault_raw", a.vaultPath, "vault_abs", abs)
+
+	if a.vaultPath == "" {
+		logger.Info("startup: no vault path specified — entering bootstrap mode")
+		return
+	}
+
+	// Close old watcher if any
+	if a.watcher != nil {
+		a.watcher.Close()
+		a.watcher = nil
+	}
 
 	v, err := vault.Open(a.vaultPath)
 	if err != nil {
@@ -69,6 +85,13 @@ func (a *App) startup(ctx context.Context) {
 
 	a.vault = v
 	a.settings = vault.LoadSettings(v.SettingsPath())
+
+	// Save this vault path as the last used one
+	config := vault.LoadGlobalConfig()
+	config.LastVaultPath = v.Root
+	if err := config.Save(); err != nil {
+		logger.Warn("could not save global config", "err", err)
+	}
 
 	logger.Info("vault ready",
 		"root", v.Root,
@@ -113,34 +136,34 @@ func (a *App) startup(ctx context.Context) {
 	}
 }
 
-// beforeClose emits an event so the frontend can flush before the process exits.
 func (a *App) beforeClose(ctx context.Context) bool {
+	// a.closing guard is technically not needed here if we return false,
+	// but kept for consistency as a'shutdown in progress' flag.
 	if a.closing {
-		logger.Debug("beforeClose: allowing (second call)")
-		if a.watcher != nil {
-			a.watcher.Close()
-			a.watcher = nil
-		}
 		return false
 	}
 	a.closing = true
 
-	// Save window state into the existing session so it's available on next launch
+	// Save window state so it's available on next launch
 	if a.vault != nil {
 		x, y := runtime.WindowGetPosition(ctx)
 		w, h := runtime.WindowGetSize(ctx)
 		session := vault.LoadSession(a.vault.SessionPath())
 		session.Window = vault.Window{X: x, Y: y, Width: w, Height: h}
 		if err := session.Save(a.vault.SessionPath()); err != nil {
-			logger.Warn("could not save window state", "err", err)
+			logger.Warn("beforeClose: could not save window state", "err", err)
 		} else {
-			logger.Debug("window state saved", "x", x, "y", y, "w", w, "h", h)
+			logger.Debug("beforeClose: window state saved", "x", x, "y", y, "w", w, "h", h)
 		}
 	}
 
-	logger.Info("beforeClose: flushing frontend then quitting")
-	runtime.EventsEmit(ctx, "app:closing")
-	return true
+	if a.watcher != nil {
+		a.watcher.Close()
+		a.watcher = nil
+	}
+
+	logger.Info("beforeClose: window cleanup complete — allowing close")
+	return false
 }
 
 // ── Vault info ────────────────────────────────────────────────────────────────
@@ -165,6 +188,7 @@ func (a *App) GetVaultInfo() VaultInfo {
 		return VaultInfo{}
 	}
 
+	logger.Info("GetVaultInfo", "root", a.vault.Root)
 	liveSettings := vault.LoadSettings(a.vault.SettingsPath())
 
 	return VaultInfo{
@@ -212,6 +236,95 @@ func (a *App) SaveMetaWidth(width int) error {
 	return nil
 }
 
+// ── Bootstrapping ─────────────────────────────────────────────────────────────
+
+func (a *App) SelectVault() (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("app context not initialized")
+	}
+
+	path, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select Stash Vault",
+	})
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		return "", nil // user cancelled
+	}
+
+	// Try to validate it.
+	if err := vault.ValidateVault(path); err != nil {
+		return "", fmt.Errorf("this directory does not look like a Stash vault: %w", err)
+	}
+
+	// Save to global config so it's found on reload
+	config := vault.LoadGlobalConfig()
+	config.LastVaultPath = path
+	if err := config.Save(); err != nil {
+		return "", fmt.Errorf("could not update global config: %w", err)
+	}
+
+	a.vaultPath = path
+	a.startup(a.ctx)
+
+	logger.Info("vault selected", "path", path)
+	return path, nil
+}
+
+func (a *App) CreateVault() (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("app context not initialized")
+	}
+
+	path, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select Folder to Initialize Vault",
+	})
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		return "", nil // user cancelled
+	}
+	// vault.Open will create the directories
+	a.vaultPath = path
+	a.startup(a.ctx)
+
+	logger.Info("vault creation initialized", "path", path)
+	return path, nil
+}
+
+func (a *App) InitVault(path string) error {
+	if path == "" {
+		return fmt.Errorf("path cannot be empty")
+	}
+
+	// Expand ~ if present
+	if strings.HasPrefix(path, "~") {
+		home, _ := os.UserHomeDir()
+		path = filepath.Join(home, path[1:])
+	}
+
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("invalid path: %w", err)
+	}
+
+	// Save to global config
+	config := vault.LoadGlobalConfig()
+	config.LastVaultPath = abs
+	if err := config.Save(); err != nil {
+		return fmt.Errorf("could not update global config: %w", err)
+	}
+
+	a.vaultPath = abs
+	a.startup(a.ctx)
+
+	logger.Info("vault initialized manually — READY", "path", abs)
+	return nil
+}
+
+
 // ── Notes ─────────────────────────────────────────────────────────────────────
 
 func (a *App) GetNotes() []vault.NoteEntry {
@@ -244,6 +357,7 @@ func (a *App) GetSession() vault.Session {
 		return vault.Session{}
 	}
 
+	logger.Info("GetSession", "path", a.vault.SessionPath())
 	session := vault.LoadSession(a.vault.SessionPath())
 	logger.Debug("session loaded", "tabs", len(session.Tabs))
 

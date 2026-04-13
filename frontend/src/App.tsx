@@ -130,6 +130,7 @@ export default function App() {
   const [showAskPopup, setShowAskPopup] = useState(false)
   // Captures the context for the pending ask — set when popup opens, read on send.
   const askContextRef = useRef<{ content: string; blockRef: string; history: string; contextLabel: string } | null>(null)
+  const [vaultInfo, setVaultInfo] = useState<{ root: string; themeName: string; } | null>(null)
   const autosaveMs                = useRef(30_000)  // updated from settings on mount
   const sidebarWidthRef           = useRef(240)
   const metaWidthRef              = useRef(260)
@@ -579,55 +580,6 @@ export default function App() {
 
   // ── Session restore ────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    if (!editor) return
-    GetSession().then(session => {
-      if ((session as any).sidebarWidth > 0) {
-        setSidebarWidth((session as any).sidebarWidth)
-        sidebarWidthRef.current = (session as any).sidebarWidth
-      }
-      if ((session as any).metaWidth > 0) {
-        setMetaWidth((session as any).metaWidth)
-        metaWidthRef.current = (session as any).metaWidth
-      }
-      const st = session.tabs as TabState[]
-      if (!st?.length) return
-      console.debug('[stash] session restored', { tabs: st.length, active: st.findIndex(t => t.active) })
-      setTabs(st)
-      const idx = Math.max(0, st.findIndex(t => t.active))
-      setActiveIdx(idx)
-      loadTab(st[idx])
-      setReady(true)
-    }).catch(console.error)
-  }, [editor])
-
-  // ── Vault info + notes load ────────────────────────────────────────────────
-
-  useEffect(() => {
-    GetVaultInfo().then(info => {
-      setTier(info.tier === 1 ? 'dumb' : 'smart')
-      if (info.autosaveDebounce > 0) {
-        autosaveMs.current = info.autosaveDebounce * 1000
-        console.debug('[stash] autosave debounce', info.autosaveDebounce + 's')
-      }
-      // Mark the active theme on the root element for potential CSS-selector use.
-      // CSS variables themselves are served synchronously via /theme.css by Go.
-      if (info.themeName) {
-        document.documentElement.setAttribute('data-theme', info.themeName)
-      }
-    }).catch(console.error)
-
-    const fetchNotes = () => GetNotes().then(res => setNotes(res || [])).catch(console.error)
-    fetchNotes()
-
-    const unlisten = EventsOn('notes:changed', () => {
-      console.debug('[stash] notes:changed — refreshing sidebar')
-      fetchNotes()
-    })
-    return unlisten
-  }, [])
-
-
   // ── Load a tab's content from disk ────────────────────────────────────────
 
   const loadTab = useCallback((tab: TabState) => {
@@ -640,16 +592,14 @@ export default function App() {
       console.debug('[stash] loadTab', { path: tab.path, mode: tab.mode, scroll: tab.scroll })
 
       if (tab.mode === 'markdown') {
-        // Use full content (fm + body) as fallback — mdCache should always include frontmatter
         const cached = mdCache.current[tab.path] ?? content
-        mdCache.current[tab.path] = cached  // ensure cache is populated for mode switch
+        mdCache.current[tab.path] = cached
         setRawMd(cached)
       } else {
         editor.commands.setContent(body)
       }
       savedBodyCache.current[tab.path] = body
 
-      // Restore scroll after DOM updates
       requestAnimationFrame(() => {
         const el = document.getElementById('app')
         if (el) el.scrollTop = tab.scroll ?? 0
@@ -658,6 +608,53 @@ export default function App() {
       editor.commands.setContent('')
     })
   }, [editor])
+
+  // ── Bootstrap: Vault info + Session restore ──────────────────────────────
+
+  useEffect(() => {
+    if (!editor) return
+
+    GetVaultInfo().then(info => {
+      setVaultInfo(info)
+      setTier(info.tier === 1 ? 'dumb' : 'smart')
+      if (info.autosaveDebounce > 0) autosaveMs.current = info.autosaveDebounce
+
+      if (!info.root) {
+        setReady(true)
+        return
+      }
+
+      GetSession().then(session => {
+        if ((session as any).sidebarWidth > 0) {
+          setSidebarWidth((session as any).sidebarWidth)
+          sidebarWidthRef.current = (session as any).sidebarWidth
+        }
+        if ((session as any).metaWidth > 0) {
+          setMetaWidth((session as any).metaWidth)
+          metaWidthRef.current = (session as any).metaWidth
+        }
+        const st = session.tabs as TabState[]
+        if (st?.length) {
+          setTabs(st)
+          const idx = Math.max(0, st.findIndex(t => t.active))
+          setActiveIdx(idx)
+          loadTab(st[idx])
+        }
+        setReady(true)
+      })
+    }).catch(console.error)
+
+    const fetchNotes = () => GetNotes().then(res => setNotes(res || [])).catch(console.error)
+    fetchNotes()
+
+    const unlisten = EventsOn('notes:changed', () => {
+      console.debug('[stash] notes:changed — refreshing sidebar')
+      fetchNotes()
+    })
+    return unlisten
+  }, [editor, loadTab])
+
+
 
   // ── Session save ───────────────────────────────────────────────────────────
   // Reactive: any time tabs or activeIdx changes, persist to disk automatically.
@@ -728,6 +725,7 @@ export default function App() {
   }
 
   function newTab() {
+    if (!vaultInfo?.root) return
     if (isMarkdownMode && activeTab) mdCache.current[activeTab.path] = rawMd
     flush()
     NewBuffer().then(path => {
@@ -739,6 +737,20 @@ export default function App() {
       H.current.loadTab(tab)
     }).catch(console.error)
   }
+  function handleSelectVault() {
+    // @ts-ignore
+    import('../wailsjs/go/main/App').then(m => m.SelectVault()).then(path => {
+      if (path) window.location.reload()
+    }).catch(err => alert(err))
+  }
+
+  function handleCreateVault() {
+    // @ts-ignore
+    import('../wailsjs/go/main/App').then(m => m.CreateVault()).then(path => {
+      if (path) window.location.reload()
+    }).catch(err => alert(err))
+  }
+
 
   async function closeTab(idx: number) {
     const tab = tabs[idx]
@@ -1308,7 +1320,7 @@ export default function App() {
         content: sourceContent || editor.storage.markdown.getMarkdown(),
         blockRef: newRef,
         history: doc.textBetween(from, to, '\n'),
-        contextLabel: 'AI response',
+        contextLabel: 'Follow-up',
       }
     }
 
@@ -1324,9 +1336,9 @@ export default function App() {
         }
       })
       if (codeContent) {
-        return { content: codeContent, blockRef: codeId || 'doc', history: '', contextLabel: 'code block' }
+        return { content: codeContent, blockRef: codeId || 'doc', history: '', contextLabel: 'Code Block' }
       }
-      return { content: editor.storage.markdown.getMarkdown(), blockRef: 'doc', history: '', contextLabel: 'document' }
+      return { content: editor.storage.markdown.getMarkdown(), blockRef: 'doc', history: '', contextLabel: 'Document' }
     }
 
     // Text selection — use selected text as content.
@@ -1336,7 +1348,7 @@ export default function App() {
       if (node.type.name === 'codeBlock' && node.attrs.id) selectedCodeBlockId = node.attrs.id
     })
     const blockRef = selectedCodeBlockId || 'blk-' + Math.random().toString(16).substring(2, 6)
-    return { content: selectedText, blockRef, history: '', contextLabel: 'selection' }
+    return { content: selectedText, blockRef, history: '', contextLabel: 'Selection' }
   }
 
   // Update ai_last_evaluated in frontmatter and persist the active tab.
@@ -1636,12 +1648,38 @@ export default function App() {
 
   useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current) }, [])
 
-  // ── Render ─────────────────────────────────────────────────────────────────
-
   const openPaths = new Set(tabs.map(t => t.path))
 
+  if (!ready) return <div className="loading-screen" />
+
+  if (!vaultInfo?.root) {
+    return (
+      <div className="bootstrap-screen">
+        <div className="bootstrap-card">
+          <h1>Welcome to Stash</h1>
+          <p>Specify where your notes should live. Enter an absolute path to an existing folder or a new one to initialize it.</p>
+          <div className="bootstrap-manual">
+            <input 
+              type="text" 
+              placeholder="Enter absolute path (e.g. ~/Stash)" 
+              id="manual-path-input"
+              className="bootstrap-input"
+            />
+            <button className="btn btn--primary" onClick={() => {
+              const el = document.getElementById('manual-path-input') as HTMLInputElement
+              if (el?.value) {
+                // @ts-ignore
+                import('../wailsjs/go/main/App').then(m => m.InitVault(el.value)).then(() => window.location.reload()).catch(err => alert(err))
+              }
+            }}>Get Started</button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div id="app-root" style={{ '--sidebar-w': showSidebar ? `${sidebarWidth + 4}px` : '0px' } as React.CSSProperties}>
+    <div id="app-root" className={`theme-${vaultInfo?.themeName || 'default'}`} style={{ '--sidebar-w': showSidebar ? `${sidebarWidth + 4}px` : '0px' } as React.CSSProperties}>
       {showSidebar && (
         <>
           {sidebarMode === 'files' ? (
