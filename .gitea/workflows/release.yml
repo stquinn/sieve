@@ -32,17 +32,16 @@ jobs:
 
       - name: Create Gitea release
         env:
-          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
-          GITEA_URL: ${{ vars.GITEA_URL }}
+          GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG=${{ github.ref_name }}
           RELEASE_ID=$(curl -sf -X POST \
             -H "Authorization: token $GITEA_TOKEN" \
             -H "Content-Type: application/json" \
             -d "{\"tag_name\": \"$TAG\", \"name\": \"$TAG\", \"draft\": false}" \
-            "$GITEA_URL/api/v1/repos/${{ github.repository }}/releases" | jq -r '.id')
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases" | jq -r '.id')
           curl -sf -X POST \
             -H "Authorization: token $GITEA_TOKEN" \
             -F "attachment=@stash-linux-amd64.tar.gz" \
-            "$GITEA_URL/api/v1/repos/${{ github.repository }}/releases/$RELEASE_ID/assets"
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/$RELEASE_ID/assets"
 
