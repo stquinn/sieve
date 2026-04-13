@@ -1405,6 +1405,11 @@ export default function App() {
   // Resolve a document's current file path from its UUID.
   // Checks open tabs first (most up-to-date after renames), then falls back to
   // the uuidToPath index populated on each loadTab.
+  //
+  // TODO: add a Go-side FindBufferByUuid(uuid) vault scan as a third fallback.
+  // The current two sources cover all realistic in-app scenarios but would miss
+  // an external rename of a file whose tab was closed before the AI job completed.
+  // See: vault/buffer.go — scan all .md files for `uuid: <value>` in frontmatter.
   function resolvePathByUuid(uuid: string): string | undefined {
     return tabsRef.current.find(t => t.uuid === uuid)?.path ?? uuidToPath.current.get(uuid)
   }
