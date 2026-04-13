@@ -515,13 +515,14 @@
 
 .tiptap .code-block code {
   flex: 1;
+  min-width: 0;
   display: block;
   padding: 0.85em 1.1em;
   background: transparent;
   color: inherit;
   border-radius: 0;
   font-size: inherit;
-  white-space: pre;
+  white-space: pre !important; /* ProseMirror injects white-space: pre-wrap inline via the schema whitespace:"pre" setting — !important is required to prevent wrapping */
   overflow-x: auto;
 }
 
