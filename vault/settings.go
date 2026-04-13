@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"stash/logger"
 )
 
 // Tier represents the capability level of the app based on CLI availability.
@@ -37,17 +39,38 @@ type Prompts struct {
 // Tier returns the capability tier based on whether the configured CLI is
 // reachable on PATH. Failing to find it degrades silently to Tier 1.
 func (s Settings) Tier() Tier {
+	logger.Debug("tier check start", "cli", s.CLI, "inherited_path", os.Getenv("PATH"))
+
 	if s.CLI == "" {
+		logger.Debug("tier check: no CLI configured, returning TierDumb")
 		return TierDumb
 	}
+
 	// LookPath respects PATH from the environment. When launched from the Dock
 	// on macOS the inherited PATH is minimal, so we resolve the login shell PATH
 	// first to find tools installed in /usr/local/bin, /opt/homebrew/bin, etc.
-	if err := os.Setenv("PATH", LoginPath()); err == nil {
-		if _, err := exec.LookPath(s.CLI); err != nil {
-			return TierDumb
+	resolved := LoginPath()
+	if err := os.Setenv("PATH", resolved); err != nil {
+		logger.Error("tier check: failed to set PATH", "err", err)
+		return TierDumb
+	}
+
+	// Log which-results for all supported CLIs so we can see what's visible.
+	for _, name := range []string{"claude", "gemini", "copilot"} {
+		if p, err := exec.LookPath(name); err == nil {
+			logger.Debug("which "+name, "path", p)
+		} else {
+			logger.Debug("which "+name, "path", "not found", "err", err)
 		}
 	}
+
+	p, err := exec.LookPath(s.CLI)
+	if err != nil {
+		logger.Warn("tier check: CLI not found on resolved PATH",
+			"cli", s.CLI, "err", err, "resolved_path", resolved)
+		return TierDumb
+	}
+	logger.Debug("tier check: CLI found", "cli", s.CLI, "resolved_to", p)
 	return TierSmart
 }
 
@@ -117,20 +140,30 @@ func LoadSettings(path string) Settings {
 // that .zshrc is read in addition to .zprofile — tools installed via npm/nvm
 // typically add themselves only to .zshrc.
 func LoginPath() string {
+	inherited := os.Getenv("PATH")
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/zsh"
 	}
+
 	args := []string{"-l", "-c", "echo $PATH"}
 	if strings.Contains(shell, "zsh") {
 		args = []string{"-l", "-i", "-c", "echo $PATH"}
 	}
+
+	logger.Debug("LoginPath: resolving", "shell", shell, "args", args, "inherited_path", inherited)
+
 	cmd := exec.Command(shell, args...)
 	out, err := cmd.Output()
 	if err != nil {
-		return os.Getenv("PATH")
+		logger.Warn("LoginPath: shell invocation failed, falling back to inherited PATH",
+			"shell", shell, "err", err, "inherited_path", inherited)
+		return inherited
 	}
-	return strings.TrimSpace(string(out))
+
+	resolved := strings.TrimSpace(string(out))
+	logger.Debug("LoginPath: resolved", "path", resolved)
+	return resolved
 }
 
 func defaults() Settings {
