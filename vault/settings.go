@@ -98,6 +98,7 @@ func LoadSettings(path string) Settings {
 
 	var loaded Settings
 	if err := json.Unmarshal(data, &loaded); err != nil {
+		logger.Warn("LoadSettings: corrupt settings file, using defaults", "path", path, "err", err)
 		return s // corrupt — use defaults
 	}
 
@@ -127,6 +128,19 @@ func LoadSettings(path string) Settings {
 	if loaded.Theme != "" {
 		s.Theme = loaded.Theme
 	}
+
+	logger.Debug("LoadSettings: loaded",
+		"path", path,
+		"cli", s.CLI,
+		"cli_timeout", s.CLITimeout,
+		"cli_timeout_long", s.CLITimeoutLong,
+		"autosave_debounce", s.AutosaveDebounce,
+		"debug", s.Debug,
+		"theme", s.Theme,
+		"prompts_file", s.Prompts.File,
+		"prompts_explain", s.Prompts.Explain,
+		"prompts_ask", s.Prompts.Ask,
+	)
 
 	return s
 }
