@@ -5,6 +5,7 @@ interface Props {
 }
 
 interface ParsedMeta {
+  uuid: string | null
   status: string | null
   version: string | null
   focus_count: string | null
@@ -36,6 +37,7 @@ function parseMeta(fm: string): ParsedMeta {
     : null
 
   return {
+    uuid:                 str('uuid'),
     status:               str('status'),
     version:              str('version'),
     focus_count:          str('focus_count'),
@@ -151,6 +153,12 @@ export function MetaPanel({ meta: metaStr, path, width }: Props) {
 
           <Row label="Created">{fmtDate(meta!.created) ?? '—'}</Row>
           <Row label="Modified">{fmtDate(meta!.modified) ?? '—'}</Row>
+
+          <Divider />
+
+          <Row label="UUID">
+            <span className="meta-panel__uuid">{meta!.uuid ?? '—'}</span>
+          </Row>
         </div>
       )}
     </div>

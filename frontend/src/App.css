@@ -65,6 +65,28 @@
   --theme-aiBlockBorder: rgba(122, 162, 247, 0.28);
 }
 
+/* ── Global scrollbar styling (WebKit) ───────────────────────────────── */
+/* Prevents WebKit from showing its large native overlay scrollbar on     */
+/* hover, which ignores scrollbar-width: thin.                            */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--theme-border2);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--theme-muted);
+}
+
 /* ── Text selection ───────────────────────────────────────────────────── */
 
 ::selection {
@@ -524,6 +546,7 @@
   font-size: inherit;
   white-space: pre !important; /* ProseMirror injects white-space: pre-wrap inline via the schema whitespace:"pre" setting — !important is required to prevent wrapping */
   overflow-x: auto;
+  overflow-y: visible;
 }
 
 /* ── Tables ──────────────────────────────────────────────────────────── */
@@ -654,6 +677,14 @@
   font-style: italic;
   font-size: 15px;
   line-height: 1.5;
+}
+
+.meta-panel__uuid {
+  font-family: var(--theme-monoFont);
+  font-size: 11px;
+  color: var(--theme-muted);
+  word-break: break-all;
+  user-select: all;
 }
 
 .meta-panel__divider {

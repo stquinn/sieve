@@ -47,6 +47,10 @@ function assetMarkdownPath(tabPath: string, assetVaultPath: string): string {
   return [...ups, ...downs].join('/')
 }
 
+function newTabUuid(): string {
+  return crypto.randomUUID()
+}
+
 function splitFrontmatter(content: string): { frontmatter: string; body: string } {
   const match = content.match(/^(---\n[\s\S]*?\n---\n?)/)
   if (match) return { frontmatter: match[1], body: content.slice(match[1].length) }
@@ -142,6 +146,9 @@ export default function App() {
   const fmCache  = useRef<Record<string, string>>({})  // frontmatter per path
   const mdCache  = useRef<Record<string, string>>({})  // raw markdown per path (when in markdown mode)
   const savedBodyCache = useRef<Record<string, string>>({}) // clean WYSIWYG body per path
+  // UUID → path index — populated whenever a tab is loaded; used by async AI callbacks
+  // to resolve a document's current file path from its permanent UUID identity.
+  const uuidToPath = useRef<Map<string, string>>(new Map())
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Always-current active tab ref — avoids stale closures inside long-lived effects
   const activeTabRef = useRef<TabState | undefined>(undefined)
@@ -198,7 +205,7 @@ export default function App() {
 
     if (currentTabs.length === 1) {
       NewBuffer().then(newPath => {
-        const newTab: TabState = { path: newPath, scroll: 0, active: true, mode: 'wysiwyg', status: 'unfiled', userIntent: null, isEmpty: true, isModified: false }
+        const newTab: TabState = { uuid: newTabUuid(), path: newPath, scroll: 0, active: true, mode: 'wysiwyg', status: 'unfiled', userIntent: null, isEmpty: true, isModified: false }
         setTabs([newTab])
         setActiveIdx(0)
         H.current.loadTab(newTab)
@@ -330,9 +337,10 @@ export default function App() {
           console.debug('[stash] paste: intercepting as image', { isFile: !!imageFile, imgSrc })
           event.preventDefault()
 
+          const capturedTab = activeTabRef.current  // capture at dispatch time, not in async callback
           const saveDataUrl = async (dataUrl: string, fallbackSrc?: string) => {
             const id = 'blk-' + Math.random().toString(16).substring(2, 6)
-            const tab = activeTabRef.current
+            const tab = capturedTab
             if (!tab) { console.error('[stash] paste: no active tab'); return }
             try {
               const isBuffer = tab.status !== 'filed'
@@ -592,10 +600,22 @@ export default function App() {
   const loadTab = useCallback((tab: TabState) => {
     if (!editor) return
     LoadBuffer(tab.path).then(content => {
-      const { frontmatter, body } = splitFrontmatter(content)
+      let { frontmatter, body } = splitFrontmatter(content)
+
+      // Ensure the file has a persistent UUID in frontmatter.
+      // This UUID is the document's permanent identity — used to route async
+      // AI callbacks back to the correct tab or file, surviving renames/moves.
+      let fileUuid = frontmatter.match(/^uuid:\s*(\S+)/m)?.[1]?.trim() ?? ''
+      if (!fileUuid) {
+        fileUuid = crypto.randomUUID()
+        frontmatter = setYamlField(frontmatter, 'uuid', fileUuid)
+        SaveBuffer(tab.path, frontmatter + body).catch(console.error)
+      }
+
       fmCache.current[tab.path] = frontmatter
+      uuidToPath.current.set(fileUuid, tab.path)
       const meta = parseMeta(frontmatter, body)
-      setTabs(prev => prev.map(t => t.path === tab.path ? { ...t, ...meta } : t))
+      setTabs(prev => prev.map(t => t.path === tab.path ? { ...t, ...meta, uuid: fileUuid } : t))
       console.debug('[stash] loadTab', { path: tab.path, mode: tab.mode, scroll: tab.scroll })
 
       if (tab.mode === 'markdown') {
@@ -642,7 +662,8 @@ export default function App() {
         }
         if (session.hasOwnProperty('showSidebar')) setShowSidebar(session.showSidebar)
         if (session.hasOwnProperty('showMeta')) setShowMeta(session.showMeta)
-        const st = session.tabs as TabState[]
+        // UUIDs are runtime-only — assign fresh ones when restoring from session.
+        const st = (session.tabs as TabState[]).map(t => ({ ...t, uuid: newTabUuid() }))
         if (st?.length) {
           setTabs(st)
           const idx = Math.max(0, st.findIndex(t => t.active))
@@ -750,10 +771,10 @@ export default function App() {
     if (isMarkdownMode && activeTab) mdCache.current[activeTab.path] = rawMd
     flush()
     NewBuffer().then(path => {
-      const tab: TabState = { path, scroll: 0, active: true, mode: 'wysiwyg', status: 'unfiled', userIntent: null, isEmpty: true, isModified: false }
-      const newTabs = [...tabs, tab]
-      const newIdx = newTabs.length - 1
-      setTabs(newTabs)
+      const tab: TabState = { uuid: newTabUuid(), path, scroll: 0, active: true, mode: 'wysiwyg', status: 'unfiled', userIntent: null, isEmpty: true, isModified: false }
+      // Use functional update so we append to the latest tabs, not the stale closure.
+      let newIdx = 0
+      setTabs(prev => { newIdx = prev.length; return [...prev, tab] })
       setActiveIdx(newIdx)
       H.current.loadTab(tab)
     }).catch(console.error)
@@ -777,6 +798,11 @@ export default function App() {
     const tab = tabs[idx]
     if (tab.isClosing) return  // AI eval already in flight for this tab
     const path = tab.path
+    // Capture volatile state synchronously before any awaits — these could be
+    // stale by the time async branches complete if the user switches tabs.
+    const capturedActivePath = activeTabRef.current?.path
+    const capturedMarkdownMode = isMarkdownMode
+    const capturedRawMd = rawMd
 
     if (tab.status !== 'filed') {
       if (tab.isEmpty) {
@@ -787,8 +813,8 @@ export default function App() {
         await DiscardBuffer(path).catch(console.error)
       } else if (tab.userIntent === 'keep') {
         // Save latest content first, then fire AI in background (always files — AI vote skipped).
-        const body = (isMarkdownMode && tab.path === activeTab?.path)
-            ? splitFrontmatter(rawMd).body
+        const body = (capturedMarkdownMode && tab.path === capturedActivePath)
+            ? splitFrontmatter(capturedRawMd).body
             : editor?.storage.markdown.getMarkdown() ?? ''
 
         if (body !== savedBodyCache.current[path]) {
@@ -816,7 +842,7 @@ export default function App() {
       // Always keep at least one tab — open a fresh buffer
       const newPath = await NewBuffer().catch(() => null)
       if (!newPath) return
-      const newTab: TabState = { path: newPath, scroll: 0, active: true, mode: 'wysiwyg', status: 'unfiled', userIntent: null, isEmpty: true, isModified: false }
+      const newTab: TabState = { uuid: newTabUuid(), path: newPath, scroll: 0, active: true, mode: 'wysiwyg', status: 'unfiled', userIntent: null, isEmpty: true, isModified: false }
       setTabs([newTab])
       setActiveIdx(0)
       H.current.loadTab(newTab)
@@ -824,7 +850,7 @@ export default function App() {
     }
 
     const scroll = currentScroll()
-    if (isMarkdownMode && tab.path === activeTab?.path) mdCache.current[path] = rawMd
+    if (capturedMarkdownMode && tab.path === capturedActivePath) mdCache.current[path] = capturedRawMd
     const withScroll = tabs.map((t, i) => i === activeIdx ? { ...t, scroll } : t)
     const newTabs = withScroll.filter((_, i) => i !== idx)
     const newIdx = Math.min(idx, newTabs.length - 1)
@@ -869,19 +895,23 @@ export default function App() {
     const sorted = [...indices].sort((a, b) => b - a)
     let finalTabs = [...tabs]
     let currentActiveIdx = activeIdx
-    
+    // Capture volatile state before any awaits — async map callbacks would see stale closures.
+    const capturedActivePath = activeTabRef.current?.path
+    const capturedMarkdownMode = isMarkdownMode
+    const capturedRawMd = rawMd
+
     const promises = sorted.map(async (idx) => {
         const tab = finalTabs[idx]
         const path = tab.path
         if (tab.status !== 'filed') {
-            if (tab.path === activeTab?.path) flush()
-            
+            if (tab.path === capturedActivePath) flush()
+
             if (tab.isEmpty || tab.userIntent === 'trash' || (tab.userIntent === null && tier === 'dumb')) {
                await DiscardBuffer(path).catch(console.error)
             } else if (tab.userIntent === 'keep') {
-               const body = (isMarkdownMode && tab.path === activeTab?.path)
-                  ? splitFrontmatter(rawMd).body
-                  : (tab.path === activeTab?.path ? editor?.storage.markdown.getMarkdown() : savedBodyCache.current[path]) ?? ''
+               const body = (capturedMarkdownMode && tab.path === capturedActivePath)
+                  ? splitFrontmatter(capturedRawMd).body
+                  : (tab.path === capturedActivePath ? editor?.storage.markdown.getMarkdown() : savedBodyCache.current[path]) ?? ''
                
                if (body !== savedBodyCache.current[path]) {
                  const fm = bumpFm(fmCache.current[path] ?? '')
@@ -907,7 +937,7 @@ export default function App() {
     if (finalTabs.length === 0) {
         const newPath = await NewBuffer().catch(() => null)
         if (newPath) {
-           const newTab: TabState = { path: newPath, scroll: 0, active: true, mode: 'wysiwyg', status: 'unfiled', userIntent: null, isEmpty: true, isModified: false }
+           const newTab: TabState = { uuid: newTabUuid(), path: newPath, scroll: 0, active: true, mode: 'wysiwyg', status: 'unfiled', userIntent: null, isEmpty: true, isModified: false }
            finalTabs = [newTab]
            currentActiveIdx = 0
            H.current.loadTab(newTab)
@@ -1140,7 +1170,7 @@ export default function App() {
     // Otherwise open a new tab
     if (isMarkdownMode && activeTab) mdCache.current[activeTab.path] = rawMd
     flush()
-    const tab: TabState = { path, scroll: 0, active: true, mode: 'wysiwyg', status: 'filed', userIntent: null, isEmpty: false, isModified: false }
+    const tab: TabState = { uuid: newTabUuid(), path, scroll: 0, active: true, mode: 'wysiwyg', status: 'filed', userIntent: null, isEmpty: false, isModified: false }
     const newTabs = [...tabs, tab]
     const newIdx = newTabs.length - 1
     setTabs(newTabs)
@@ -1372,17 +1402,64 @@ export default function App() {
     return { content: selectedText, blockRef, history: '', contextLabel: 'Selection' }
   }
 
+  // Resolve a document's current file path from its UUID.
+  // Checks open tabs first (most up-to-date after renames), then falls back to
+  // the uuidToPath index populated on each loadTab.
+  function resolvePathByUuid(uuid: string): string | undefined {
+    return tabsRef.current.find(t => t.uuid === uuid)?.path ?? uuidToPath.current.get(uuid)
+  }
+
+  // Apply an AI response directly to a file on disk without touching the editor.
+  // Used when the user switches tabs while an AI call is in-flight — the response
+  // still lands in the correct file rather than being lost or corrupting the new tab.
+  // Takes the document UUID (permanent identity) — path is resolved internally.
+  async function applyAiResponseInBackground(uuid: string, aiId: string, responseText: string) {
+    const path = resolvePathByUuid(uuid)
+    if (!path) {
+      console.warn('[stash:ai] background update: no path found for UUID', { uuid, aiId })
+      return
+    }
+    try {
+      // Load fresh from disk — don't use any in-memory state captured at dispatch time.
+      const content = await LoadBuffer(path)
+      const { frontmatter, body } = splitFrontmatter(content)
+
+      // Find the [!ai] block by id and replace only its content, preserving the
+      // original header line (which carries the ref= already written to disk).
+      const idEscaped = aiId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const pattern = new RegExp(`(\\[!ai\\] id="${idEscaped}"[^\\n]*)\\n\\n[\\s\\S]*?\\n\\n\\[!ai-end\\]`)
+      const updatedBody = body.replace(pattern, `$1\n\n${responseText}\n\n[!ai-end]`)
+
+      if (updatedBody === body) {
+        console.warn('[stash:ai] background update: placeholder not found in file', { uuid, path, aiId })
+        return
+      }
+
+      const newFm = frontmatter ? setYamlField(frontmatter, 'ai_last_evaluated', getLocalISOString()) : frontmatter
+      await SaveBuffer(path, newFm + updatedBody)
+
+      // Keep caches consistent so the next loadTab for this path is correct.
+      savedBodyCache.current[path] = updatedBody
+      if (newFm) fmCache.current[path] = newFm
+
+      console.log('[stash:ai] background update: response saved', { uuid, path, aiId })
+    } catch (err) {
+      console.error('[stash:ai] background update: failed', { uuid, path, aiId, err })
+    }
+  }
+
   // Update ai_last_evaluated in frontmatter and persist the active tab.
-  function touchAiLastEvaluated() {
-    if (!activeTab || !editor) return
-    const path = activeTab.path
+  // Only called when the user is still on the originating tab, so the editor
+  // is guaranteed to hold that tab's content (including the just-applied AI response).
+  // Takes the document UUID — path is resolved internally.
+  function touchAiLastEvaluated(uuid: string) {
+    const path = resolvePathByUuid(uuid)
+    if (!path) return
     const fm = fmCache.current[path]
     if (!fm) return
     const newFm = setYamlField(fm, 'ai_last_evaluated', getLocalISOString())
     fmCache.current[path] = newFm
-    const body = isMarkdownMode
-      ? splitFrontmatter(mdCache.current[path] ?? rawMd).body
-      : editor.storage.markdown.getMarkdown()
+    const body = editor?.storage.markdown.getMarkdown() ?? savedBodyCache.current[path] ?? ''
     SaveBuffer(path, newFm + body).catch(console.error)
   }
 
@@ -1391,17 +1468,26 @@ export default function App() {
     const ctx = buildAiContext()
     if (!ctx.content) return
 
+    const capturedUuid = activeTabRef.current?.uuid!
     const aiId = 'ai-' + Math.random().toString(16).substring(2, 6)
     insertAiPlaceholder(aiId, ctx.blockRef)
 
-    console.log('[stash:ai] explain: firing', { aiId, blockRef: ctx.blockRef, contentLen: ctx.content.length })
+    console.log('[stash:ai] explain: firing', { aiId, uuid: capturedUuid, blockRef: ctx.blockRef, contentLen: ctx.content.length })
     Explain(ctx.content)
       .then(resp => {
-        console.log('[stash:ai] explain: response received', { aiId, len: resp.length })
-        replaceAiPlaceholder(aiId, resp.trim())
-        touchAiLastEvaluated()
+        const trimmed = resp.trim()
+        const isActive = activeTabRef.current?.uuid === capturedUuid
+        if (!isActive) {
+          console.log('[stash:ai] explain: tab not active — applying response to file', { uuid: capturedUuid, aiId })
+          applyAiResponseInBackground(capturedUuid, aiId, trimmed)
+          return
+        }
+        console.log('[stash:ai] explain: response received', { aiId, len: trimmed.length })
+        replaceAiPlaceholder(aiId, trimmed)
+        touchAiLastEvaluated(capturedUuid)
       })
       .catch(err => {
+        if (activeTabRef.current?.uuid !== capturedUuid) return
         console.warn('[stash:ai] explain: failed', err)
         replaceAiPlaceholder(aiId, '_(explain timed out — Ctrl+E to retry)_')
       })
@@ -1418,17 +1504,26 @@ export default function App() {
     const ctx = askContextRef.current
     if (!ctx || !editor) return
 
+    const capturedUuid = activeTabRef.current?.uuid!
     const aiId = 'ai-' + Math.random().toString(16).substring(2, 6)
     insertAiPlaceholder(aiId, ctx.blockRef, question)
 
-    console.log('[stash:ai] ask: firing', { aiId, blockRef: ctx.blockRef, question: question.slice(0, 60) })
+    console.log('[stash:ai] ask: firing', { aiId, uuid: capturedUuid, blockRef: ctx.blockRef, question: question.slice(0, 60) })
     Ask(ctx.content, ctx.history, question)
       .then(resp => {
-        console.log('[stash:ai] ask: response received', { aiId, len: resp.length })
-        replaceAiPlaceholder(aiId, resp.trim())
-        touchAiLastEvaluated()
+        const trimmed = resp.trim()
+        const isActive = activeTabRef.current?.uuid === capturedUuid
+        if (!isActive) {
+          console.log('[stash:ai] ask: tab not active — applying response to file', { uuid: capturedUuid, aiId })
+          applyAiResponseInBackground(capturedUuid, aiId, trimmed)
+          return
+        }
+        console.log('[stash:ai] ask: response received', { aiId, len: trimmed.length })
+        replaceAiPlaceholder(aiId, trimmed)
+        touchAiLastEvaluated(capturedUuid)
       })
       .catch(err => {
+        if (activeTabRef.current?.uuid !== capturedUuid) return
         console.warn('[stash:ai] ask: failed', err)
         replaceAiPlaceholder(aiId, '_(ask timed out — Ctrl+Shift+A to retry)_')
       })
