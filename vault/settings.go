@@ -108,11 +108,24 @@ func LoadSettings(path string) Settings {
 	return s
 }
 
-// LoginPATH returns the PATH as seen by a login shell, which includes paths
-// like /usr/local/bin and /opt/homebrew/bin that are absent when macOS launches
-// an app from the Dock or Finder.
+// LoginPath returns the PATH as seen by the user's login shell, which includes
+// paths like /usr/local/bin and /opt/homebrew/bin that are absent when macOS
+// launches an app from the Dock or Finder.
+//
+// We use $SHELL (defaulting to /bin/zsh) rather than /bin/bash so that the
+// correct shell config is sourced. For zsh we also pass -i (interactive) so
+// that .zshrc is read in addition to .zprofile — tools installed via npm/nvm
+// typically add themselves only to .zshrc.
 func LoginPath() string {
-	cmd := exec.Command("/bin/bash", "-l", "-c", "echo $PATH")
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/zsh"
+	}
+	args := []string{"-l", "-c", "echo $PATH"}
+	if strings.Contains(shell, "zsh") {
+		args = []string{"-l", "-i", "-c", "echo $PATH"}
+	}
+	cmd := exec.Command(shell, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		return os.Getenv("PATH")
