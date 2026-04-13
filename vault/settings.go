@@ -129,18 +129,9 @@ func LoadSettings(path string) Settings {
 		s.Theme = loaded.Theme
 	}
 
-	logger.Debug("LoadSettings: loaded",
-		"path", path,
-		"cli", s.CLI,
-		"cli_timeout", s.CLITimeout,
-		"cli_timeout_long", s.CLITimeoutLong,
-		"autosave_debounce", s.AutosaveDebounce,
-		"debug", s.Debug,
-		"theme", s.Theme,
-		"prompts_file", s.Prompts.File,
-		"prompts_explain", s.Prompts.Explain,
-		"prompts_ask", s.Prompts.Ask,
-	)
+	if pretty, err := json.MarshalIndent(s, "", "  "); err == nil {
+		logger.Debug("LoadSettings: loaded", "path", path, "settings", string(pretty))
+	}
 
 	return s
 }
