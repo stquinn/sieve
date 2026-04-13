@@ -46,12 +46,3 @@ jobs:
             -F "attachment=@stash-linux-amd64.tar.gz" \
             "$GITEA_URL/api/v1/repos/${{ github.repository }}/releases/$RELEASE_ID/assets"
 
-      - name: Upload to GitHub release
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: |
-          # Wait briefly for the GitHub Actions release to be created from the mirrored tag
-          sleep 30
-          gh release upload ${{ github.ref_name }} stash-linux-amd64.tar.gz \
-            --repo ${{ vars.GITHUB_REPO }} \
-            --clobber
