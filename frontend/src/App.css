@@ -511,7 +511,6 @@
 .tiptap .code-block__gutter span {
   display: block;
   line-height: 1.6;
-  font-size: 0.82em;
 }
 
 .tiptap .code-block code {
