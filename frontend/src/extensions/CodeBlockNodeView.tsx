@@ -7,6 +7,13 @@ export function CodeBlockNodeView({ node }: NodeViewProps) {
   // Trailing newline produces an empty last element — don't count it
   const lineCount = lines[lines.length - 1] === '' ? lines.length - 1 : lines.length
 
+  console.debug('[stash] CodeBlockNodeView', {
+    lineCount,
+    splitLen: lines.length,
+    textLen: text.length,
+    preview: JSON.stringify(text.slice(0, 120)),
+  })
+
   return (
     <NodeViewWrapper as="div" className="code-block">
       <div className="code-block__gutter" contentEditable={false} aria-hidden="true">

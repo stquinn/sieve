@@ -107,7 +107,7 @@ func main() {
 		Height:           800,
 		MinWidth:         800,
 		MinHeight:        500,
-		EnableDefaultContextMenu: false,
+		EnableDefaultContextMenu: true,
 		BackgroundColour: &options.RGBA{R: 26, G: 27, B: 38, A: 1},
 		AssetServer: &assetserver.Options{
 			Assets: assets,
