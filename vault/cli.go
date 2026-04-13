@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -49,6 +50,11 @@ func RunCLI(cli string, prompt string, timeoutSecs int) (string, error) {
 		cmd = exec.CommandContext(ctx, cli)
 		cmd.Stdin = bytes.NewBufferString(prompt)
 	}
+
+	// Inherit the full login shell PATH so the subprocess can find tools
+	// installed in /usr/local/bin, /opt/homebrew/bin, etc. when the app is
+	// launched from the Dock or Finder with a minimal inherited PATH.
+	cmd.Env = append(os.Environ(), "PATH="+LoginPath())
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

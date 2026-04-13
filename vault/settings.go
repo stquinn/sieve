@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // Tier represents the capability level of the app based on CLI availability.
@@ -39,8 +40,13 @@ func (s Settings) Tier() Tier {
 	if s.CLI == "" {
 		return TierDumb
 	}
-	if _, err := exec.LookPath(s.CLI); err != nil {
-		return TierDumb
+	// LookPath respects PATH from the environment. When launched from the Dock
+	// on macOS the inherited PATH is minimal, so we resolve the login shell PATH
+	// first to find tools installed in /usr/local/bin, /opt/homebrew/bin, etc.
+	if err := os.Setenv("PATH", LoginPath()); err == nil {
+		if _, err := exec.LookPath(s.CLI); err != nil {
+			return TierDumb
+		}
 	}
 	return TierSmart
 }
@@ -100,6 +106,18 @@ func LoadSettings(path string) Settings {
 	}
 
 	return s
+}
+
+// LoginPATH returns the PATH as seen by a login shell, which includes paths
+// like /usr/local/bin and /opt/homebrew/bin that are absent when macOS launches
+// an app from the Dock or Finder.
+func LoginPath() string {
+	cmd := exec.Command("/bin/bash", "-l", "-c", "echo $PATH")
+	out, err := cmd.Output()
+	if err != nil {
+		return os.Getenv("PATH")
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func defaults() Settings {

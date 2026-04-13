@@ -282,7 +282,9 @@ export default function App() {
       StarterKit.configure({ codeBlock: false }),
       CodeBlockWithAttrs.configure({ lowlight }),
       Link.configure({ openOnClick: false }),
-      Placeholder.configure({ placeholder: 'Start writing…' }),
+      Placeholder.configure({
+        placeholder: ({ editor }) => editor.isEmpty ? 'Start writing…' : '',
+      }),
       BlockIdMark,
       Table.configure({ resizable: false }),
       TableRow,
