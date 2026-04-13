@@ -19,6 +19,7 @@ const (
 type Settings struct {
 	CLI              string  `json:"cli,omitempty"`
 	CLITimeout       int     `json:"cli_timeout,omitempty"`
+	CLITimeoutLong   int     `json:"cli_timeout_long,omitempty"`
 	AutosaveDebounce int     `json:"autosave_debounce,omitempty"`
 	Debug            bool    `json:"debug,omitempty"`
 	Theme            string  `json:"theme,omitempty"`
@@ -78,6 +79,9 @@ func LoadSettings(path string) Settings {
 	if loaded.CLITimeout > 0 {
 		s.CLITimeout = loaded.CLITimeout
 	}
+	if loaded.CLITimeoutLong > 0 {
+		s.CLITimeoutLong = loaded.CLITimeoutLong
+	}
 	if loaded.AutosaveDebounce > 0 {
 		s.AutosaveDebounce = loaded.AutosaveDebounce
 	}
@@ -101,6 +105,7 @@ func LoadSettings(path string) Settings {
 func defaults() Settings {
 	return Settings{
 		CLITimeout:       20,
+		CLITimeoutLong:   60,
 		AutosaveDebounce: 30,
 		Theme:            "sublime",
 	}

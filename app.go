@@ -137,33 +137,44 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) beforeClose(ctx context.Context) bool {
-	// a.closing guard is technically not needed here if we return false,
-	// but kept for consistency as a'shutdown in progress' flag.
 	if a.closing {
-		return false
+		return false // final exit allowed
 	}
-	a.closing = true
 
-	// Save window state so it's available on next launch
+	// Save window state Go-side (fast synchronously)
 	if a.vault != nil {
 		x, y := runtime.WindowGetPosition(ctx)
 		w, h := runtime.WindowGetSize(ctx)
 		session := vault.LoadSession(a.vault.SessionPath())
 		session.Window = vault.Window{X: x, Y: y, Width: w, Height: h}
-		if err := session.Save(a.vault.SessionPath()); err != nil {
-			logger.Warn("beforeClose: could not save window state", "err", err)
-		} else {
-			logger.Debug("beforeClose: window state saved", "x", x, "y", y, "w", w, "h", h)
-		}
+		_ = session.Save(a.vault.SessionPath())
 	}
 
+	// Signpost frontend to flush state
+	logger.Info("beforeClose: vetoing and requesting flush")
+	runtime.EventsEmit(ctx, "app:closing")
+	return true 
+}
+
+// Quit terminates the app. Frontend calls this after flushing its state.
+func (a *App) Quit() {
+	if a.closing { return }
+	a.closing = true
+	
+	logger.Info("App.Quit: exiting")
 	if a.watcher != nil {
 		a.watcher.Close()
-		a.watcher = nil
 	}
-
-	logger.Info("beforeClose: window cleanup complete — allowing close")
-	return false
+	
+	// Try graceful runtime quit first, then force exit
+	runtime.Quit(a.ctx)
+	
+	// Fallback to os.Exit if runtime.Quit is somehow blocked for more than 500ms
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		logger.Warn("App.Quit: runtime.Quit timed out, forcing os.Exit")
+		os.Exit(0)
+	}()
 }
 
 // ── Vault info ────────────────────────────────────────────────────────────────

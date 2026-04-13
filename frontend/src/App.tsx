@@ -10,7 +10,7 @@ import Table from '@tiptap/extension-table'
 import TableRow from '@tiptap/extension-table-row'
 import TableHeader from '@tiptap/extension-table-header'
 import TableCell from '@tiptap/extension-table-cell'
-import { Ask, DiscardBuffer, Explain, FileBuffer, FileBufferWithName, GetNotes, GetSession, GetVaultInfo, LoadBuffer, NewBuffer, RefineLanguage, SaveBuffer, SaveBufferAsset, SaveNoteAsset, SaveSession, SaveSidebarWidth, SaveMetaWidth, ShowInFiles, EvaluateBuffer } from '../wailsjs/go/main/App'
+import { Ask, DiscardBuffer, Explain, FileBuffer, FileBufferWithName, GetNotes, GetSession, GetVaultInfo, LoadBuffer, NewBuffer, RefineLanguage, SaveBuffer, SaveBufferAsset, SaveNoteAsset, SaveSession, SaveSidebarWidth, SaveMetaWidth, ShowInFiles, EvaluateBuffer, Quit as AppQuit } from '../wailsjs/go/main/App'
 import { vault } from '../wailsjs/go/models'
 import { BrowserOpenURL, EventsOn, EventsOff, Quit } from '../wailsjs/runtime/runtime'
 import { CodeBlockWithAttrs } from './extensions/CodeBlockWithAttrs'
@@ -134,6 +134,8 @@ export default function App() {
   const autosaveMs                = useRef(30_000)  // updated from settings on mount
   const sidebarWidthRef           = useRef(240)
   const metaWidthRef              = useRef(260)
+  const showSidebarRef           = useRef(true)
+  const showMetaRef              = useRef(false)
   const focusTimer                = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Caches keyed by path — survive tab switches without triggering re-renders
@@ -148,6 +150,9 @@ export default function App() {
   const tabsRef      = useRef<TabState[]>([])
   const activeIdxRef = useRef(0)
   const tierRef      = useRef<'dumb' | 'smart'>('dumb')
+
+  useEffect(() => { showSidebarRef.current = showSidebar }, [showSidebar])
+  useEffect(() => { showMetaRef.current = showMeta }, [showMeta])
 
   // Stable ref to always-current handlers — prevents stale closures in event listeners
   const H = useRef({
@@ -633,6 +638,8 @@ export default function App() {
           setMetaWidth((session as any).metaWidth)
           metaWidthRef.current = (session as any).metaWidth
         }
+        if (session.hasOwnProperty('showSidebar')) setShowSidebar(session.showSidebar)
+        if (session.hasOwnProperty('showMeta')) setShowMeta(session.showMeta)
         const st = session.tabs as TabState[]
         if (st?.length) {
           setTabs(st)
@@ -660,22 +667,34 @@ export default function App() {
   // Reactive: any time tabs or activeIdx changes, persist to disk automatically.
 
   useEffect(() => {
-    if (tabs.length === 0) return
+    if (!ready || tabs.length === 0) return
     const toSave = tabs.map((t, i) => ({
       path: t.path, scroll: t.scroll, active: i === activeIdx, mode: t.mode,
       displayName: t.displayName, status: t.status, userIntent: t.userIntent,
     }))
-    SaveSession(vault.Session.createFrom({ tabs: toSave })).catch(console.error)
-  }, [tabs, activeIdx])
+    SaveSession(vault.Session.createFrom({ 
+      tabs: toSave,
+      sidebarWidth,
+      metaWidth,
+      showSidebar,
+      showMeta
+    })).catch(console.error)
+  }, [tabs, activeIdx, showSidebar, showMeta, sidebarWidth, metaWidth])
 
   // Called from close handler where we need to save synchronously from refs
   // (React state may not have flushed yet at that point).
-  const saveSessionFromRefs = () => {
+  const saveSessionFromRefs = async () => {
     const toSave = tabsRef.current.map((t, i) => ({
       path: t.path, scroll: t.scroll, active: i === activeIdxRef.current, mode: t.mode,
       displayName: t.displayName, status: t.status, userIntent: t.userIntent,
     }))
-    return SaveSession(vault.Session.createFrom({ tabs: toSave }))
+    return await SaveSession(vault.Session.createFrom({ 
+      tabs: toSave,
+      sidebarWidth: sidebarWidthRef.current,
+      metaWidth: metaWidthRef.current,
+      showSidebar: showSidebarRef.current,
+      showMeta: showMetaRef.current
+    }))
   }
 
   // ── Flush active tab to disk immediately ───────────────────────────────────
@@ -1596,9 +1615,21 @@ export default function App() {
 
   useEffect(() => {
     const unlistenClosing = EventsOn('app:closing', () => {
+      console.log('[stash] shutdown: app:closing received, flushing state...')
       if (isMarkdownMode && activeTabRef.current) mdCache.current[activeTabRef.current.path] = rawMd
+      
+      // Attempt to save session
       flushRef.current()
-      saveSessionFromRefs().catch(console.error).finally(() => Quit())
+      saveSessionFromRefs()
+        .then(() => console.log('[stash] shutdown: session saved'))
+        .catch(err => console.error('[stash] shutdown: save failed', err))
+        .finally(() => {
+          console.log('[stash] shutdown: calling backend AppQuit')
+          AppQuit().catch(err => {
+            console.error('[stash] shutdown: AppQuit failed, forcing runtime Quit', err)
+            Quit() // last resort fallback
+          })
+        })
     })
 
     return () => {
