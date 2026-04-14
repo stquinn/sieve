@@ -131,6 +131,7 @@ export default function App() {
   const [isDragging, setIsDragging]         = useState(false)
   const [showMeta, setShowMeta]             = useState(false)
   const [metaWidth, setMetaWidth]           = useState(260)
+  const lastSavedSessionRef = useRef<string | null>(null)
   const [isMetaDragging, setIsMetaDragging] = useState(false)
   const [showSearch, setShowSearch]         = useState(false)
   const [pendingClose, setPendingClose]     = useState(false)  // true while waiting for AI jobs before quit
@@ -724,13 +725,26 @@ export default function App() {
       path: t.path, scroll: t.scroll, active: i === activeIdx, mode: t.mode,
       displayName: t.displayName, status: t.status, userIntent: t.userIntent,
     }))
-    SaveSession(vault.Session.createFrom({ 
-      tabs: toSave,
-      sidebarWidth,
-      metaWidth,
-      showSidebar,
-      showMeta
-    })).catch(console.error)
+    
+    // De-dupe: only save if structural session data has changed.
+    // This avoids saving on every keystroke (which only flips the 'isModified' flag).
+    const sessionStr = JSON.stringify({ toSave, showSidebar, showMeta, sidebarWidth, metaWidth })
+    if (sessionStr === lastSavedSessionRef.current) return
+
+    // Debounce: only save if structural session data stays stable for 1s.
+    // Prevents disk pounding during rapid scrolling or UI toggles.
+    const timer = setTimeout(() => {
+      lastSavedSessionRef.current = sessionStr
+      SaveSession(vault.Session.createFrom({ 
+        tabs: toSave,
+        sidebarWidth,
+        metaWidth,
+        showSidebar,
+        showMeta
+      })).catch(console.error)
+    }, 1000)
+
+    return () => clearTimeout(timer)
   }, [tabs, activeIdx, showSidebar, showMeta, sidebarWidth, metaWidth])
 
   // Called from close handler where we need to save synchronously from refs
