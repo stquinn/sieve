@@ -1172,6 +1172,53 @@
   to { transform: rotate(360deg); }
 }
 
+/* ── Pending-close blocking dialog ──────────────────────────────────── */
+
+.pending-close-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(13, 13, 26, 0.75);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pending-close-dialog {
+  background: #1c1d2a;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 12px;
+  padding: 36px 40px;
+  min-width: 320px;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+}
+
+.pending-close-spinner {
+  width: 36px;
+  height: 36px;
+  margin-bottom: 20px;
+}
+
+.pending-close-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #c0caf5;
+  margin-bottom: 8px;
+}
+
+.pending-close-body {
+  font-size: 13px;
+  color: #565f89;
+  text-align: center;
+  line-height: 1.5;
+}
+
 /* ── Ask Popup ───────────────────────────────────────────────────────── */
 /* Width tracks 90% of the editor panel (total viewport minus sidebar).  */
 /* --sidebar-w is set on #app-root and inherited here.                   */

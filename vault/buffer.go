@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"crypto/rand"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,9 +12,17 @@ import (
 	"unicode"
 )
 
+// NewBufferResult is returned by NewBuffer so the caller has both the
+// vault-relative path and the permanent UUID in one call.
+type NewBufferResult struct {
+	Path string `json:"path"`
+	UUID string `json:"uuid"`
+}
+
 // NewBuffer creates a new empty buffer file in {hostname}/buffers/ with an
-// initial meta block. Returns the path relative to the vault root.
-func (v *Vault) NewBuffer() (string, error) {
+// initial meta block including a freshly generated UUID.
+// Returns the vault-relative path and the UUID.
+func (v *Vault) NewBuffer() (NewBufferResult, error) {
 	now := time.Now()
 	filename := fmt.Sprintf("buf-%s.md", now.Format("20060102-1504"))
 
@@ -25,16 +34,27 @@ func (v *Vault) NewBuffer() (string, error) {
 		absPath = filepath.Join(v.BuffersPath(), filename)
 	}
 
+	uuid := newUUID()
 	n := v.nextUntitledNumber()
-	if err := os.WriteFile(absPath, []byte(newBufferMeta(now, n)), 0o644); err != nil {
-		return "", fmt.Errorf("create buffer: %w", err)
+	if err := os.WriteFile(absPath, []byte(newBufferMeta(now, n, uuid)), 0o644); err != nil {
+		return NewBufferResult{}, fmt.Errorf("create buffer: %w", err)
 	}
 
 	rel, err := filepath.Rel(v.Root, absPath)
 	if err != nil {
-		return "", err
+		return NewBufferResult{}, err
 	}
-	return rel, nil
+	return NewBufferResult{Path: rel, UUID: uuid}, nil
+}
+
+// newUUID generates a random UUID (v4).
+func newUUID() string {
+	var b [16]byte
+	rand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant bits
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
 // nextUntitledNumber scans existing buffers for "display_name: Untitled N"
@@ -63,7 +83,7 @@ func (v *Vault) nextUntitledNumber() int {
 	return max + 1
 }
 
-// DiscardBuffer removes a buffer file from disk and deletes unfiled assets.
+// DiscardBuffer removes a buffer file from disk and deletes unfiled assets and version history.
 func (v *Vault) DiscardBuffer(absPath string) error {
 	data, err := os.ReadFile(absPath)
 	if err == nil {
@@ -81,6 +101,10 @@ func (v *Vault) DiscardBuffer(absPath string) error {
 					os.Remove(candidate)
 				}
 			}
+		}
+		// Delete version history keyed by UUID
+		if m := regexp.MustCompile(`(?m)^uuid:\s*(\S+)`).FindSubmatch(data); m != nil {
+			v.DeleteHistory(strings.TrimSpace(string(m[1])))
 		}
 	}
 	return os.Remove(absPath)
@@ -291,9 +315,10 @@ func replaceFmField(content, key, value string) string {
 	return strings.Join(lines, "\n")
 }
 
-func newBufferMeta(t time.Time, untitledN int) string {
+func newBufferMeta(t time.Time, untitledN int, uuid string) string {
 	ts := t.Format("2006-01-02T15:04:05")
 	return fmt.Sprintf(`---
+uuid: %s
 status: unfiled
 version: 0
 focus_count: 0
@@ -310,7 +335,7 @@ created: %s
 modified: %s
 cli: null
 ---
-`, untitledN, ts, ts)
+`, uuid, untitledN, ts, ts)
 }
 
 func deriveFolderPath(content string) string {

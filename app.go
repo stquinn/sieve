@@ -180,17 +180,19 @@ func (a *App) Quit() {
 // ── Vault info ────────────────────────────────────────────────────────────────
 
 type VaultInfo struct {
-	Root             string          `json:"root"`
-	Hostname         string          `json:"hostname"`
-	BuffersPath      string          `json:"buffersPath"`
-	NotesPath        string          `json:"notesPath"`
-	IsNew            bool            `json:"isNew"`
-	Tier             vault.Tier      `json:"tier"`
-	Cli              string          `json:"cli"`
-	Debug            bool            `json:"debug"`
-	AutosaveDebounce int             `json:"autosaveDebounce"`
-	ThemeName        string          `json:"themeName"`
-	ThemeVars        vault.ThemeVars `json:"themeVars"`
+	Root               string          `json:"root"`
+	Hostname           string          `json:"hostname"`
+	BuffersPath        string          `json:"buffersPath"`
+	NotesPath          string          `json:"notesPath"`
+	IsNew              bool            `json:"isNew"`
+	Tier               vault.Tier      `json:"tier"`
+	Cli                string          `json:"cli"`
+	Debug              bool            `json:"debug"`
+	AutosaveDebounce   int             `json:"autosaveDebounce"`
+	ThemeName          string          `json:"themeName"`
+	ThemeVars          vault.ThemeVars `json:"themeVars"`
+	MaxHistoryVersions int             `json:"maxHistoryVersions"`
+	CLITimeoutLong     int             `json:"cliTimeoutLong"`
 }
 
 func (a *App) GetVaultInfo() VaultInfo {
@@ -203,17 +205,19 @@ func (a *App) GetVaultInfo() VaultInfo {
 	liveSettings := vault.LoadSettings(a.vault.SettingsPath())
 
 	return VaultInfo{
-		Root:             a.vault.Root,
-		Hostname:         a.vault.Hostname,
-		BuffersPath:      a.vault.BuffersPath(),
-		NotesPath:        a.vault.NotesPath(),
-		IsNew:            a.vault.IsNewVault(),
-		Tier:             liveSettings.Tier(),
-		Cli:              liveSettings.CLI,
-		Debug:            liveSettings.Debug,
-		AutosaveDebounce: liveSettings.AutosaveDebounce,
-		ThemeName:        liveSettings.Theme,
-		ThemeVars:        vault.LoadTheme(a.vault.Root, liveSettings.Theme, a.themesFS),
+		Root:               a.vault.Root,
+		Hostname:           a.vault.Hostname,
+		BuffersPath:        a.vault.BuffersPath(),
+		NotesPath:          a.vault.NotesPath(),
+		IsNew:              a.vault.IsNewVault(),
+		Tier:               liveSettings.Tier(),
+		Cli:                liveSettings.CLI,
+		Debug:              liveSettings.Debug,
+		AutosaveDebounce:   liveSettings.AutosaveDebounce,
+		ThemeName:          liveSettings.Theme,
+		ThemeVars:          vault.LoadTheme(a.vault.Root, liveSettings.Theme, a.themesFS),
+		MaxHistoryVersions: liveSettings.MaxHistoryVersions,
+		CLITimeoutLong:     liveSettings.CLITimeoutLong,
 	}
 }
 
@@ -384,13 +388,13 @@ func (a *App) GetSession() vault.Session {
 	session.Tabs = live
 
 	if len(session.Tabs) == 0 {
-		path, err := a.vault.NewBuffer()
+		result, err := a.vault.NewBuffer()
 		if err != nil {
 			logger.Error("new buffer failed", "err", err)
 			return vault.Session{}
 		}
-		logger.Info("session: no tabs — created default buffer", "path", path)
-		session.Tabs = []vault.Tab{{Path: path, Active: true, Mode: "wysiwyg"}}
+		logger.Info("session: no tabs — created default buffer", "path", result.Path, "uuid", result.UUID)
+		session.Tabs = []vault.Tab{{Path: result.Path, Active: true, Mode: "wysiwyg"}}
 		if err := session.Save(a.vault.SessionPath()); err != nil {
 			logger.Error("session save failed", "err", err)
 		}
@@ -435,17 +439,17 @@ func (a *App) SaveSession(session vault.Session) error {
 	return nil
 }
 
-func (a *App) NewBuffer() (string, error) {
+func (a *App) NewBuffer() (vault.NewBufferResult, error) {
 	if a.vault == nil {
-		return "", fmt.Errorf("vault not open")
+		return vault.NewBufferResult{}, fmt.Errorf("vault not open")
 	}
-	path, err := a.vault.NewBuffer()
+	result, err := a.vault.NewBuffer()
 	if err != nil {
 		logger.Error("NewBuffer failed", "err", err)
-		return "", err
+		return vault.NewBufferResult{}, err
 	}
-	logger.Info("buffer created", "path", path)
-	return path, nil
+	logger.Info("buffer created", "path", result.Path, "uuid", result.UUID)
+	return result, nil
 }
 
 // ── Buffer I/O ────────────────────────────────────────────────────────────────
@@ -633,6 +637,27 @@ func (a *App) Ask(content, history, question string) (string, error) {
 	}
 	logger.Debug("Ask complete", "resp_len", len(resp))
 	return resp, nil
+}
+
+// SaveVersionSnapshot writes a full content snapshot to .history/{uuid}.{version}.md.
+// Called from the frontend after every meaningful save (version bump). Never blocks
+// the save path — prune runs in a background goroutine.
+func (a *App) SaveVersionSnapshot(uuid string, version int, content string) error {
+	if a.vault == nil {
+		return fmt.Errorf("vault not open")
+	}
+	maxVersions := a.settings.MaxHistoryVersions
+	if err := a.vault.SaveVersionSnapshot(uuid, version, content); err != nil {
+		logger.Error("SaveVersionSnapshot failed", "uuid", uuid, "version", version, "err", err)
+		return err
+	}
+	go func() {
+		if err := a.vault.PruneHistory(uuid, maxVersions); err != nil {
+			logger.Warn("PruneHistory failed", "uuid", uuid, "err", err)
+		}
+	}()
+	logger.Debug("version snapshot saved", "uuid", uuid, "version", version)
+	return nil
 }
 
 func (a *App) resolvePath(path string) string {

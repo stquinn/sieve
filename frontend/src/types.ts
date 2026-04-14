@@ -15,5 +15,5 @@ export interface TabState {
   isEmpty?: boolean       // body has no non-whitespace content
   isModified?: boolean    // true if body has unsaved edits
   isEvaluating?: boolean  // true if executing backend smart AI evaluations (force-file)
-  isClosing?: boolean     // true while smart-close AI evaluation is in flight
+  isWaitingAI?: boolean   // true during Explain/Ask AI calls (tab spinner only, no editor overlay)
 }

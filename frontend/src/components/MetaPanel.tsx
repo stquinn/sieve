@@ -2,6 +2,7 @@ interface Props {
   meta: string
   path: string
   width: number
+  isModified: boolean
 }
 
 interface ParsedMeta {
@@ -87,7 +88,7 @@ function evalColour(v: string | null): string {
   return '#565f89'
 }
 
-export function MetaPanel({ meta: metaStr, path, width }: Props) {
+export function MetaPanel({ meta: metaStr, path, width, isModified }: Props) {
   const hasMeta = metaStr.trim().startsWith('---')
   const meta = hasMeta ? parseMeta(metaStr) : null
 
@@ -103,6 +104,9 @@ export function MetaPanel({ meta: metaStr, path, width }: Props) {
         <div className="meta-panel__empty">No meta</div>
       ) : (
         <div className="meta-panel__fields">
+          <Row label="Dirty">
+            <span style={{ color: isModified ? '#e0af68' : '#9ece6a' }}>{isModified ? 'true' : 'false'}</span>
+          </Row>
           <Row label="Status">
             <span style={{ color: statusColour(meta!.status) }}>{meta!.status ?? '—'}</span>
           </Row>

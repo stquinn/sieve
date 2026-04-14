@@ -168,7 +168,10 @@ export function TabBar({ tabs, activeIdx, onSelect, onClose, onNew, onHelp, onSe
                         : 'text-tn-text-dim hover:bg-[#1e2030] hover:text-tn-text'
                     )}
                   >
-                    {dot && <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', dot)} />}
+                    {tab.isEvaluating
+                      ? <span className="w-2 h-2 rounded-full border-2 border-solid border-[#e0af68] border-t-transparent animate-spin shrink-0" />
+                      : dot ? <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', dot)} /> : null
+                    }
                     <span className="truncate">{tabLabel(tab)}</span>
                   </button>
                 )
@@ -287,7 +290,10 @@ const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
             : 'bg-[#13131a] text-tn-text-dim hover:bg-[#1a1b2e] hover:text-tn-text border-t-2 border-t-transparent border-b-2 border-b-transparent -mb-[2px]',
         )}
       >
-        {dot && <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', dot)} />}
+        {(tab.isEvaluating || tab.isWaitingAI)
+          ? <span className="w-2 h-2 rounded-full border-2 border-solid border-[#e0af68] border-t-transparent animate-spin shrink-0" />
+          : dot ? <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', dot)} /> : null
+        }
         <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap min-w-0 text-left">
           {tabLabel(tab)}
         </span>

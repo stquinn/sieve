@@ -20,13 +20,14 @@ const (
 // Settings mirrors vault/{hostname}/settings.json.
 // All fields are optional — missing keys fall back to defaults.
 type Settings struct {
-	CLI              string  `json:"cli,omitempty"`
-	CLITimeout       int     `json:"cli_timeout,omitempty"`
-	CLITimeoutLong   int     `json:"cli_timeout_long,omitempty"`
-	AutosaveDebounce int     `json:"autosave_debounce,omitempty"`
-	Debug            bool    `json:"debug,omitempty"`
-	Theme            string  `json:"theme,omitempty"`
-	Prompts          Prompts `json:"prompts,omitempty"`
+	CLI                string  `json:"cli,omitempty"`
+	CLITimeout         int     `json:"cli_timeout,omitempty"`
+	CLITimeoutLong     int     `json:"cli_timeout_long,omitempty"`
+	AutosaveDebounce   int     `json:"autosave_debounce,omitempty"`
+	Debug              bool    `json:"debug,omitempty"`
+	Theme              string  `json:"theme,omitempty"`
+	Prompts            Prompts `json:"prompts,omitempty"`
+	MaxHistoryVersions int     `json:"max_history_versions,omitempty"`
 }
 
 // Prompts holds paths to the three prompt template files.
@@ -128,6 +129,9 @@ func LoadSettings(path string) Settings {
 	if loaded.Theme != "" {
 		s.Theme = loaded.Theme
 	}
+	if loaded.MaxHistoryVersions > 0 {
+		s.MaxHistoryVersions = loaded.MaxHistoryVersions
+	}
 
 	if pretty, err := json.MarshalIndent(s, "", "  "); err == nil {
 		logger.Debug("LoadSettings: loaded", "path", path, "settings", string(pretty))
@@ -173,9 +177,10 @@ func LoginPath() string {
 
 func defaults() Settings {
 	return Settings{
-		CLITimeout:       20,
-		CLITimeoutLong:   60,
-		AutosaveDebounce: 30,
-		Theme:            "sublime",
+		CLITimeout:         20,
+		CLITimeoutLong:     60,
+		AutosaveDebounce:   30,
+		Theme:              "sublime",
+		MaxHistoryVersions: 200,
 	}
 }
