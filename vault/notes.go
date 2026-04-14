@@ -10,7 +10,19 @@ import (
 
 var displayNameRegex = regexp.MustCompile(`(?m)^display_name:\s*(.+)`)
 
-func extractDisplayName(path string) string {
+func ExtractDisplayName(path string) string {
+	return ExtractFromFm(path, `(?m)^display_name:\s*(.+)`)
+}
+
+func ExtractUuid(path string) string {
+	return ExtractFromFm(path, `(?m)^uuid:\s*(.+)`)
+}
+
+func ExtractUserIntent(path string) string {
+	return ExtractFromFm(path, `(?m)^user_intent:\s*(.+)`)
+}
+
+func ExtractFromFm(path string, pattern string) string {
 	f, err := os.Open(path)
 	if err != nil {
 		return ""
@@ -25,7 +37,8 @@ func extractDisplayName(path string) string {
 	}
 
 	content := string(buf[:n])
-	if m := displayNameRegex.FindStringSubmatch(content); len(m) > 1 {
+	re := regexp.MustCompile(pattern)
+	if m := re.FindStringSubmatch(content); len(m) > 1 {
 		val := strings.TrimSpace(m[1])
 		val = strings.Trim(val, `"'`)
 		if val == "null" || val == "" {
@@ -42,6 +55,7 @@ type NoteEntry struct {
 	Name        string      `json:"name"`
 	DisplayName string      `json:"displayName,omitempty"` // from frontmatter
 	Path        string      `json:"path,omitempty"`        // vault-relative, empty for directories
+	UserIntent  string      `json:"userIntent,omitempty"`  // from frontmatter: "keep", "trash", or ""
 	IsDir       bool        `json:"isDir"`
 	Children    []NoteEntry `json:"children,omitempty"`
 }
@@ -98,8 +112,9 @@ func readDir(vaultRoot, dir string) ([]NoteEntry, error) {
 		name := strings.TrimSuffix(info.Name(), filepath.Ext(info.Name()))
 		entries = append(entries, NoteEntry{
 			Name:        name,
-			DisplayName: extractDisplayName(fullPath),
+			DisplayName: ExtractDisplayName(fullPath),
 			Path:        filepath.ToSlash(rel),
+			UserIntent:  ExtractUserIntent(fullPath),
 			IsDir:       false,
 		})
 	}

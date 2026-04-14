@@ -533,6 +533,108 @@ func (a *App) DiscardBuffer(path string) error {
 	return nil
 }
 
+func (a *App) DeleteNote(path string) error {
+	if a.vault == nil {
+		return fmt.Errorf("vault not open")
+	}
+	resolved := a.resolvePath(path)
+	uuid := vault.ExtractUuid(resolved)
+
+	if err := os.Remove(resolved); err != nil {
+		logger.Error("DeleteNote failed", "path", path, "err", err)
+		return err
+	}
+
+	if uuid != "" {
+		if err := a.vault.DeleteHistory(uuid); err != nil {
+			logger.Warn("DeleteHistory failed during note deletion", "uuid", uuid, "err", err)
+		}
+	}
+
+	logger.Info("note deleted", "path", path, "uuid", uuid)
+	return nil
+}
+
+func (a *App) MoveNote(oldPath, newPath string) error {
+	if a.vault == nil {
+		return fmt.Errorf("vault not open")
+	}
+	oldResolved := a.resolvePath(oldPath)
+	newResolved := a.resolvePath(newPath)
+
+	// Ensure destination directory exists
+	if err := os.MkdirAll(filepath.Dir(newResolved), 0755); err != nil {
+		return err
+	}
+
+	if err := os.Rename(oldResolved, newResolved); err != nil {
+		logger.Error("MoveNote failed", "from", oldPath, "to", newPath, "err", err)
+		return err
+	}
+
+	logger.Info("note moved", "from", oldPath, "to", newPath)
+	return nil
+}
+
+func (a *App) CreateFolder(path string) error {
+	if a.vault == nil {
+		return fmt.Errorf("vault not open")
+	}
+	resolved := a.resolvePath(path)
+	if err := os.MkdirAll(resolved, 0755); err != nil {
+		logger.Error("CreateFolder failed", "path", path, "err", err)
+		return err
+	}
+	logger.Info("folder created", "path", path)
+	return nil
+}
+
+func (a *App) DeleteFolder(path string) error {
+	if a.vault == nil {
+		return fmt.Errorf("vault not open")
+	}
+	resolved := a.resolvePath(path)
+	
+	// Ensure it's a directory
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("not a directory")
+	}
+
+	// Check if empty
+	entries, err := os.ReadDir(resolved)
+	if err != nil {
+		return err
+	}
+	if len(entries) > 0 {
+		return fmt.Errorf("directory not empty")
+	}
+
+	if err := os.Remove(resolved); err != nil {
+		logger.Error("DeleteFolder failed", "path", path, "err", err)
+		return err
+	}
+	logger.Info("folder deleted", "path", path)
+	return nil
+}
+
+func (a *App) RenameFolder(oldPath, newPath string) error {
+	if a.vault == nil {
+		return fmt.Errorf("vault not open")
+	}
+	oldResolved := a.resolvePath(oldPath)
+	newResolved := a.resolvePath(newPath)
+
+	if err := os.Rename(oldResolved, newResolved); err != nil {
+		logger.Error("RenameFolder failed", "from", oldPath, "to", newPath, "err", err)
+		return err
+	}
+	return nil
+}
+
 // ShowInFiles opens the OS file manager at the given vault-relative path.
 // On macOS it uses "open -R" to reveal files; on Linux it uses xdg-open on
 // the containing directory. Directories are opened directly on both platforms.

@@ -296,7 +296,9 @@
 }
 
 .sidebar__file {
-  display: block;
+  display: flex !important;
+  align-items: center;
+  gap: 0.5rem;
   width: 100%;
   background: none;
   border: none;

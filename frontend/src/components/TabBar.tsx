@@ -1,6 +1,8 @@
 import { cn } from '@/lib/utils'
 import { forwardRef, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { TabState, UserIntent } from '../types'
+import { NoteContextMenu } from './NoteContextMenu'
+import { FileText } from 'lucide-react'
 
 interface TabBarProps {
   tabs: TabState[]
@@ -11,9 +13,14 @@ interface TabBarProps {
   onHelp: () => void
   onSetIntent: (idx: number, intent: UserIntent) => void
   onReorder: (fromIdx: number, toPos: number) => void
+  onShowInFiles: (path: string) => void
+  onSmartFile: (path: string) => void
+  onSmartMetadata: (path: string) => void
+  onDelete: (path: string) => void
+  onRename: (path: string, name: string, isDir: boolean) => void
 }
 
-export function TabBar({ tabs, activeIdx, onSelect, onClose, onNew, onHelp, onSetIntent, onReorder }: TabBarProps) {
+export function TabBar({ tabs, activeIdx, onSelect, onClose, onNew, onHelp, onSetIntent, onReorder, onShowInFiles, onSmartFile, onSmartMetadata, onDelete, onRename }: TabBarProps) {
   const tabsAreaRef = useRef<HTMLDivElement>(null)
   const tabRefs = useRef<(HTMLDivElement | null)[]>([])
   const [hiddenStart, setHiddenStart] = useState(tabs.length)
@@ -100,7 +107,7 @@ export function TabBar({ tabs, activeIdx, onSelect, onClose, onNew, onHelp, onSe
     pos !== dragIdx + 1
 
   return (
-    <div className="flex items-stretch bg-[#13131a] border-0 border-b-2 border-solid border-[#3b4261] h-[44px] shrink-0">
+    <div className="flex items-stretch bg-tn-bg-dark border-0 border-b-2 border-solid border-tn-border-2 h-[44px] shrink-0">
 
       {/* Tab scroll area — clips overflowing tabs */}
       <div
@@ -118,6 +125,11 @@ export function TabBar({ tabs, activeIdx, onSelect, onClose, onNew, onHelp, onSe
               onSelect={() => onSelect(idx)}
               onClose={() => onClose(idx)}
               onSetIntent={intent => onSetIntent(idx, intent)}
+              onShowInFiles={() => onShowInFiles(tab.path)}
+              onSmartFile={() => onSmartFile(tab.path)}
+              onSmartMetadata={() => onSmartMetadata(tab.path)}
+              onDelete={() => onDelete(tab.path)}
+              onRename={() => onRename(tab.path, tabLabel(tab), false)}
               onDragStart={() => {
                 dragIdxRef.current = idx
                 setDragIdx(idx)
@@ -153,7 +165,7 @@ export function TabBar({ tabs, activeIdx, onSelect, onClose, onNew, onHelp, onSe
             ▾ {hiddenCount}
           </button>
           {showOverflow && (
-            <div className="absolute right-0 top-full mt-px z-50 bg-[#1c1d2a] border border-solid border-white/20 rounded-md shadow-2xl py-1 min-w-[200px]">
+            <div className="absolute right-0 top-full mt-px z-50 bg-tn-bg-alt border border-solid border-white/20 rounded-md shadow-2xl py-1 min-w-[200px]">
               {tabs.slice(hiddenStart).map((tab, i) => {
                 const realIdx = hiddenStart + i
                 const dot = tabDot(tab)
@@ -164,12 +176,12 @@ export function TabBar({ tabs, activeIdx, onSelect, onClose, onNew, onHelp, onSe
                     className={cn(
                       'w-full bg-transparent border-none text-left px-3 py-1.5 text-[14px] flex items-center gap-2 transition-colors',
                       realIdx === activeIdx
-                        ? 'text-tn-blue bg-[#1e2030]'
-                        : 'text-tn-text-dim hover:bg-[#1e2030] hover:text-tn-text'
+                        ? 'text-tn-blue bg-tn-bg-alt'
+                        : 'text-tn-text-dim hover:bg-tn-bg-alt hover:text-tn-text'
                     )}
                   >
                     {tab.isEvaluating
-                      ? <span className="w-2 h-2 rounded-full border-2 border-solid border-[#e0af68] border-t-transparent animate-spin shrink-0" />
+                      ? <span className="w-2 h-2 rounded-full border-2 border-solid border-tn-orange border-t-transparent animate-spin shrink-0" />
                       : dot ? <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', dot)} /> : null
                     }
                     <span className="truncate">{tabLabel(tab)}</span>
@@ -231,6 +243,11 @@ interface TabItemProps {
   onSelect: () => void
   onClose: () => void
   onSetIntent: (intent: UserIntent) => void
+  onShowInFiles: () => void
+  onSmartFile: () => void
+  onSmartMetadata: () => void
+  onDelete: () => void
+  onRename: () => void
   onDragStart: () => void
   onDragOver: (e: React.DragEvent) => void
   onDrop: (e: React.DragEvent) => void
@@ -238,21 +255,11 @@ interface TabItemProps {
 }
 
 const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
-  { tab, active, isDragging, onSelect, onClose, onSetIntent, onDragStart, onDragOver, onDrop, onDragEnd },
+  { tab, active, isDragging, onSelect, onClose, onSetIntent, onShowInFiles, onSmartFile, onSmartMetadata, onDelete, onRename, onDragStart, onDragOver, onDrop, onDragEnd },
   ref
 ) {
   const dot = tabDot(tab)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!menu) return
-    const close = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenu(null)
-    }
-    window.addEventListener('mousedown', close)
-    return () => window.removeEventListener('mousedown', close)
-  }, [menu])
 
   const tooltip = [
     tab.displayName ?? null,
@@ -287,18 +294,19 @@ const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
           isDragging && 'opacity-40',
           active
             ? 'bg-tn-bg text-tn-text border-t-2 border-t-tn-blue border-b-2 border-b-tn-bg -mb-[2px]'
-            : 'bg-[#13131a] text-tn-text-dim hover:bg-[#1a1b2e] hover:text-tn-text border-t-2 border-t-transparent border-b-2 border-b-transparent -mb-[2px]',
+            : 'bg-tn-bg-dark text-tn-text-dim hover:bg-tn-bg hover:text-tn-text border-t-2 border-t-transparent border-b-2 border-b-transparent -mb-[2px]',
         )}
       >
         {(tab.isEvaluating || tab.isWaitingAI)
-          ? <span className="w-2 h-2 rounded-full border-2 border-solid border-[#e0af68] border-t-transparent animate-spin shrink-0" />
-          : dot ? <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', dot)} /> : null
+          ? <span className="w-2 h-2 rounded-full border-2 border-solid border-tn-orange border-t-transparent animate-spin shrink-0" />
+          : dot ? <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', dot)} /> 
+          : <FileText className="w-3.5 h-3.5 opacity-40 shrink-0" />
         }
         <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap min-w-0 text-left">
           {tabLabel(tab)}
         </span>
         {tab.mode === 'markdown' && (
-          <span className="text-[12px] text-tn-blue font-bold font-mono bg-[#1e2030] px-1.5 rounded shrink-0">M</span>
+          <span className="text-[12px] text-tn-blue font-bold font-mono bg-tn-bg-alt px-1.5 rounded shrink-0">M</span>
         )}
         <button
           onClick={e => { e.stopPropagation(); onClose() }}
@@ -316,56 +324,21 @@ const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
         </button>
       </div>
 
-      {/* Right-click context menu */}
+      {/* Unified Right-click context menu */}
       {menu && (
-        <div
-          ref={menuRef}
-          className="fixed z-50 py-1 min-w-[160px]"
-          style={{
-            left: menu.x,
-            top: menu.y,
-            background: '#1c1d2a',
-            border: '1px solid rgba(255,255,255,0.2)',
-            borderRadius: '6px',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-          }}
-        >
-          <button
-            className={cn(
-              "w-full bg-transparent border-none text-left px-3 py-1.5 text-[14px] transition-colors flex items-center gap-2",
-              "text-[#7aa2f7] hover:bg-[#2a2b3d] hover:text-[#c0caf5]",
-              "disabled:text-[#565f89] disabled:opacity-35 disabled:cursor-default disabled:hover:bg-transparent"
-            )}
-            disabled={tab.userIntent === 'keep'}
-            onClick={() => { setMenu(null); onSetIntent('keep') }}
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-tn-blue shrink-0" />
-            Mark as Keep
-          </button>
-          <button
-            className={cn(
-              "w-full bg-transparent border-none text-left px-3 py-1.5 text-[14px] transition-colors flex items-center gap-2",
-              "text-[#f7768e] hover:bg-[#2a2b3d] hover:text-[#c0caf5]",
-              "disabled:text-[#565f89] disabled:opacity-35 disabled:cursor-default disabled:hover:bg-transparent"
-            )}
-            disabled={tab.userIntent === 'trash'}
-            onClick={() => { setMenu(null); onSetIntent('trash') }}
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-tn-red shrink-0" />
-            Mark as Trash
-          </button>
-          {tab.userIntent !== null && (
-            <>
-              <div className="my-1 border-0 border-t border-solid border-white/10" />
-              <button
-                className="w-full bg-transparent border-none text-left px-3 py-1.5 text-[14px] text-[#565f89] hover:bg-[#2a2b3d] hover:text-white transition-colors"
-                onClick={() => { setMenu(null); onSetIntent(null) }}
-              >
-                Clear Intent
-              </button>
-            </>
-          )}
-        </div>
+        <NoteContextMenu
+          x={menu.x}
+          y={menu.y}
+          path={tab.path}
+          intent={tab.userIntent || null}
+          onClose={() => setMenu(null)}
+          onSetIntent={onSetIntent}
+          onShowInFiles={onShowInFiles}
+          onSmartFile={onSmartFile}
+          onSmartMetadata={onSmartMetadata}
+          onDelete={onDelete}
+          onRename={onRename}
+        />
       )}
     </>
   )

@@ -70,22 +70,22 @@ function fmtDate(v: string | null): string | null {
 }
 
 function statusColour(v: string | null): string {
-  if (v === 'filed') return '#9ece6a'
-  if (v === 'unfiled') return '#e0af68'
-  return '#565f89'
+  if (v === 'filed') return 'var(--theme-accentGreen)'
+  if (v === 'unfiled') return 'var(--theme-accentYellow)'
+  return 'var(--theme-muted)'
 }
 
 function intentColour(v: string | null): string {
-  if (v === 'keep') return '#7aa2f7'
-  if (v === 'trash') return '#f7768e'
-  return '#565f89'
+  if (v === 'keep') return 'var(--theme-accentPrimary)'
+  if (v === 'trash') return 'var(--theme-accentRed)'
+  return 'var(--theme-muted)'
 }
 
 function evalColour(v: string | null): string {
-  if (v === 'complete') return '#9ece6a'
-  if (v === 'timeout') return '#f7768e'
-  if (v === 'none') return '#565f89'
-  return '#565f89'
+  if (v === 'complete') return 'var(--theme-accentGreen)'
+  if (v === 'timeout') return 'var(--theme-accentRed)'
+  if (v === 'none') return 'var(--theme-muted)'
+  return 'var(--theme-muted)'
 }
 
 export function MetaPanel({ meta: metaStr, path, width, isModified }: Props) {
@@ -105,7 +105,7 @@ export function MetaPanel({ meta: metaStr, path, width, isModified }: Props) {
       ) : (
         <div className="meta-panel__fields">
           <Row label="Dirty">
-            <span style={{ color: isModified ? '#e0af68' : '#9ece6a' }}>{isModified ? 'true' : 'false'}</span>
+            <span style={{ color: isModified ? 'var(--theme-accentYellow)' : 'var(--theme-accentGreen)' }}>{isModified ? 'true' : 'false'}</span>
           </Row>
           <Row label="Status">
             <span style={{ color: statusColour(meta!.status) }}>{meta!.status ?? '—'}</span>

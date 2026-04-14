@@ -10,8 +10,9 @@ import Table from '@tiptap/extension-table'
 import TableRow from '@tiptap/extension-table-row'
 import TableHeader from '@tiptap/extension-table-header'
 import TableCell from '@tiptap/extension-table-cell'
-import { Ask, DiscardBuffer, Explain, FileBuffer, FileBufferWithName, GetNotes, GetSession, GetVaultInfo, LoadBuffer, NewBuffer, RefineLanguage, SaveBuffer, SaveBufferAsset, SaveNoteAsset, SaveSession, SaveSidebarWidth, SaveMetaWidth, ShowInFiles, EvaluateBuffer, Quit as AppQuit, SaveVersionSnapshot } from '../wailsjs/go/main/App'
+import { Ask, DiscardBuffer, Explain, FileBuffer, FileBufferWithName, GetNotes, GetSession, GetVaultInfo, LoadBuffer, NewBuffer, RefineLanguage, SaveBuffer, SaveBufferAsset, SaveNoteAsset, SaveSession, SaveSidebarWidth, SaveMetaWidth, ShowInFiles, EvaluateBuffer, Quit as AppQuit, SaveVersionSnapshot, DeleteNote, MoveNote, CreateFolder, DeleteFolder, RenameFolder } from '../wailsjs/go/main/App'
 import { vault } from '../wailsjs/go/models'
+import { UserIntent } from './types'
 import { BrowserOpenURL, EventsOn, EventsOff, Quit } from '../wailsjs/runtime/runtime'
 import { CodeBlockWithAttrs } from './extensions/CodeBlockWithAttrs'
 import { BlockIdMark } from './extensions/BlockIdMark'
@@ -28,6 +29,7 @@ import { QuickSwitcher } from './components/QuickSwitcher'
 import { TimeoutPopup } from './components/TimeoutPopup'
 import { AskPopup } from './components/AskPopup'
 import { TabState } from './types'
+import { ConfirmModal, PromptModal } from './components/Modal'
 import { ChevronUp, ChevronDown, X } from 'lucide-react'
 import { Search } from './extensions/Search'
 import './App.css'
@@ -137,6 +139,8 @@ export default function App() {
   const [pendingClose, setPendingClose]     = useState(false)  // true while waiting for AI jobs before quit
   const [showQuickSwitch, setShowQuickSwitch] = useState(false)
   const [sidebarMode, setSidebarMode]       = useState<'files'|'search'>('files')
+  const [confirmModal, setConfirmModal] = useState<{ title: string, message: string, onConfirm: () => void, isDestructive?: boolean } | null>(null)
+  const [promptModal, setPromptModal] = useState<{ title: string, message: string, placeholder?: string, initialValue?: string, onSubmit: (val: string) => void } | null>(null)
   const [searchTerm, setSearchTerm]         = useState('')
   const [searchResults, setSearchResults]   = useState<{from: number, to: number}[]>([])
   const [searchIndex, setSearchIndex]       = useState(0)
@@ -1281,49 +1285,242 @@ export default function App() {
     H.current.loadTab(tab)
   }
 
-  async function handleRefileWithAI(path: string) {
-    if (tier !== 'smart') return
+  async function handleDeleteNote(path: string) {
+    setConfirmModal({
+      title: 'Delete Note',
+      message: `Are you sure you want to delete "${path.split('/').pop()}"? This will also remove its version history.`,
+      isDestructive: true,
+      onConfirm: async () => {
+        setConfirmModal(null)
+        try {
+          await DeleteNote(path)
+          // Close tab if open
+          const idx = tabs.findIndex(t => t.path === path)
+          if (idx !== -1) {
+            setTabs(prev => prev.filter((_, i) => i !== idx))
+            if (activeIdx >= idx) {
+              setActiveIdx(Math.max(0, activeIdx - 1))
+            }
+          }
+          await GetNotes().then(res => setNotes(res || [])).catch(console.error)
+        } catch (err) {
+          console.error('Failed to delete note', err)
+          alert(`Failed to delete note: ${err}`)
+        }
+      }
+    })
+  }
+
+  async function handleMoveNote(oldPath: string, newPath: string) {
     try {
-      // Resolve UUID from open tabs — used as cache key (survives path change)
-      const tabUuid = tabsRef.current.find(t => t.path === path)?.uuid ?? ''
+      await MoveNote(oldPath, newPath)
+      // Update tabs if open
+      setTabs(prev => prev.map(t => t.path === oldPath ? { ...t, path: newPath } : t))
+      // Refetch notes
+      await GetNotes().then(res => setNotes(res || [])).catch(console.error)
+    } catch (err) {
+      console.error('Failed to move note', err)
+      alert(`Failed to move note: ${err}`)
+    }
+  }
+
+  async function handleSmartFile(path: string) {
+    if (tier !== 'smart') return
+    console.log('[stash:ai] Smart File: start', { path })
+    const tabIdx = tabs.findIndex(t => t.path === path)
+    if (tabIdx !== -1) {
+      setTabs(prev => prev.map((t, i) => i === tabIdx ? { ...t, isEvaluating: true } : t))
+    }
+
+    try {
+      console.log('[stash:ai] Smart File: evaluating...')
+      const rec = await EvaluateBuffer(path)
       const content = await LoadBuffer(path)
       let { frontmatter, body } = splitFrontmatter(content)
+      const tabUuid = tabsRef.current.find(t => t.path === path)?.uuid ?? ''
 
-      const hasAiResult = /^ai_eval:\s*complete\b/m.test(frontmatter) || /^ai_folder_suggestion:/m.test(frontmatter)
+      frontmatter = setYamlField(frontmatter, 'ai_eval', 'complete')
+      frontmatter = setYamlField(frontmatter, 'ai_last_evaluated', getLocalISOString())
+      if (rec.title)    frontmatter = setYamlField(frontmatter, 'display_name', rec.title)
+      if (rec.filename) frontmatter = setYamlField(frontmatter, 'filename', rec.filename)
+      if (rec.folder)   frontmatter = setYamlField(frontmatter, 'ai_folder_suggestion', rec.folder)
+      if (rec.summary)  frontmatter = setYamlField(frontmatter, 'summary', rec.summary)
+      if (rec.tags && rec.tags.length > 0) frontmatter = setYamlField(frontmatter, 'tags', rec.tags)
 
-      if (!hasAiResult) {
-        console.log('[stash:ai] handleRefileWithAI: evaluating', { path })
-        const rec = await EvaluateBuffer(path)
-        frontmatter = setYamlField(frontmatter, 'ai_eval', 'complete')
-        frontmatter = setYamlField(frontmatter, 'ai_last_evaluated', getLocalISOString())
-        if (rec.title)    frontmatter = setYamlField(frontmatter, 'display_name', rec.title)
-        if (rec.filename) frontmatter = setYamlField(frontmatter, 'filename', rec.filename)
-        if (rec.folder)   frontmatter = setYamlField(frontmatter, 'ai_folder_suggestion', rec.folder)
-        if (rec.summary)  frontmatter = setYamlField(frontmatter, 'summary', rec.summary)
-        if (rec.tags && rec.tags.length > 0) frontmatter = setYamlField(frontmatter, 'tags', rec.tags)
+      console.log('[stash:ai] Smart File: saving updated meta', { folder: rec.folder })
+      await SaveBuffer(path, frontmatter + body)
+      if (tabUuid) fmCache.current[tabUuid] = frontmatter
 
-        await SaveBuffer(path, frontmatter + body)
-      } else {
-        console.log('[stash:ai] handleRefileWithAI: using existing AI result', { path })
-      }
-
+      console.log('[stash:ai] Smart File: calling backend FileBuffer')
       const newPath = await FileBuffer(path)
+      console.log('[stash:ai] Smart File: result', { newPath })
 
-      // Cache is UUID-keyed — path change requires no surgery
       if (tabUuid) {
-        fmCache.current[tabUuid] = frontmatter
         uuidToPath.current.set(tabUuid, newPath)
       }
 
-      setTabs(prev => {
-        const newTabs = prev.map(t =>
-           t.path === path ? { ...t, path: newPath, ...parseMeta(frontmatter, body) } : t
-        )
-        return newTabs
-      })
+      setTabs(prev => prev.map(t =>
+        t.path === path ? { 
+          ...t, 
+          path: newPath, 
+          ...parseMeta(frontmatter, body),
+          isEvaluating: false 
+        } : t
+      ))
+      await GetNotes().then(res => setNotes(res || [])).catch(console.error)
     } catch (e) {
-      console.error('[stash:ai] refile failed', e)
+      console.error('[stash:ai] Smart File failed', e)
+      alert(`Smart File failed: ${e}`)
+      if (tabIdx !== -1) {
+        setTabs(prev => prev.map((t, i) => i === tabIdx ? { ...t, isEvaluating: false } : t))
+      }
     }
+  }
+
+  async function handleSmartMetadata(path: string) {
+    if (tier !== 'smart') return
+    const tabIdx = tabs.findIndex(t => t.path === path)
+    if (tabIdx !== -1) {
+      setTabs(prev => prev.map((t, i) => i === tabIdx ? { ...t, isEvaluating: true } : t))
+    }
+
+    try {
+      console.log('[stash:ai] Smart Metadata: evaluating', { path })
+      const rec = await EvaluateBuffer(path)
+      const content = await LoadBuffer(path)
+      let { frontmatter, body } = splitFrontmatter(content)
+      
+      frontmatter = setYamlField(frontmatter, 'ai_eval', 'complete')
+      frontmatter = setYamlField(frontmatter, 'ai_last_evaluated', getLocalISOString())
+      if (rec.title)    frontmatter = setYamlField(frontmatter, 'display_name', rec.title)
+      if (rec.filename) frontmatter = setYamlField(frontmatter, 'filename', rec.filename)
+      if (rec.folder)   frontmatter = setYamlField(frontmatter, 'ai_folder_suggestion', rec.folder)
+      if (rec.summary)  frontmatter = setYamlField(frontmatter, 'summary', rec.summary)
+      if (rec.tags && rec.tags.length > 0) frontmatter = setYamlField(frontmatter, 'tags', rec.tags)
+
+      await SaveBuffer(path, frontmatter + body)
+      await GetNotes().then(res => setNotes(res || [])).catch(console.error)
+
+      if (tabIdx !== -1) {
+        const tabUuid = tabs[tabIdx].uuid
+        fmCache.current[tabUuid] = frontmatter
+        const meta = parseMeta(frontmatter, body)
+        setTabs(prev => prev.map((t, i) => i === tabIdx ? { 
+          ...t, 
+          ...meta,
+          isEvaluating: false
+        } : t))
+      }
+    } catch (err) {
+      console.error('Smart Metadata failed', err)
+      if (tabIdx !== -1) {
+        setTabs(prev => prev.map((t, i) => i === tabIdx ? { ...t, isEvaluating: false } : t))
+      }
+    }
+  }
+
+  async function handleSetIntentByPath(path: string, intent: UserIntent) {
+    const tabIdx = tabs.findIndex(t => t.path === path)
+    if (tabIdx !== -1) {
+      setTabIntent(tabIdx, intent)
+    } else {
+      try {
+        const content = await LoadBuffer(path)
+        const { frontmatter, body } = splitFrontmatter(content)
+        const updatedFm = setYamlField(frontmatter, 'user_intent', intent)
+        await SaveBuffer(path, updatedFm + body)
+        await GetNotes().then(res => setNotes(res || [])).catch(console.error)
+      } catch (err) {
+        console.error('Failed to set intent by path', err)
+      }
+    }
+  }
+
+  async function handleCreateFolder(parentPath: string) {
+    setPromptModal({
+      title: 'New Folder',
+      message: `Create a new folder in ${parentPath}:`,
+      placeholder: 'folder-name',
+      onSubmit: async (name: string) => {
+        setPromptModal(null)
+        if (!name) return
+        const path = `${parentPath}/${name}`
+        try {
+          await CreateFolder(path)
+          await GetNotes().then(res => setNotes(res || [])).catch(console.error)
+        } catch (err) {
+          console.error('Failed to create folder', err)
+          alert(`Failed to create folder: ${err}`)
+        }
+      }
+    })
+  }
+
+  async function handleDeleteFolder(path: string) {
+    setConfirmModal({
+      title: 'Delete Folder',
+      message: `Are you sure you want to delete the folder "${path.split('/').pop()}"?`,
+      isDestructive: true,
+      onConfirm: async () => {
+        setConfirmModal(null)
+        try {
+          await DeleteFolder(path)
+          await GetNotes().then(res => setNotes(res || [])).catch(console.error)
+        } catch (err) {
+          console.error('Failed to delete folder', err)
+          alert(`Failed to delete folder: ${err}`)
+        }
+      }
+    })
+  }
+
+  async function handleRename(path: string, currentName: string, isDir: boolean) {
+    setPromptModal({
+      title: isDir ? 'Rename Folder' : 'Rename Note',
+      message: `Enter new name for "${currentName}":`,
+      initialValue: isDir ? currentName : currentName.replace(/\.md$/, ''),
+      placeholder: isDir ? currentName : currentName.replace(/\.md$/, ''),
+      onSubmit: async (newName: string) => {
+        setPromptModal(null)
+        if (!newName || newName === currentName) return
+        const parentDir = path.substring(0, path.lastIndexOf('/'))
+        const fileName = isDir ? newName : (newName.endsWith('.md') ? newName : newName + '.md')
+        const newPath = parentDir ? `${parentDir}/${fileName}` : fileName
+        try {
+          if (isDir) {
+            await RenameFolder(path, newPath)
+          } else {
+            await MoveNote(path, newPath)
+            
+            // Sync metadata
+            try {
+              const content = await LoadBuffer(newPath)
+              let { frontmatter, body } = splitFrontmatter(content)
+              const pureName = fileName.replace(/\.md$/, '')
+              const oldPureName = path.split('/').pop()?.replace(/\.md$/, '') || ''
+              
+              frontmatter = setYamlField(frontmatter, 'filename', pureName)
+              frontmatter = setYamlField(frontmatter, 'user_suggested_name', pureName)
+              
+              await SaveBuffer(newPath, frontmatter + body)
+              
+              // Update frontmatter cache to avoid it being overwritten by an autosave
+              const tab = tabsRef.current.find(t => t.path === path)
+              if (tab && tab.uuid) {
+                fmCache.current[tab.uuid] = frontmatter
+              }
+            } catch (metaErr) {
+              console.warn('Metdata sync failed after rename', metaErr)
+            }
+          }
+          await GetNotes().then(res => setNotes(res || [])).catch(console.error)
+          setTabs(prev => prev.map(t => t.path === path ? { ...t, path: newPath } : t))
+        } catch (err) {
+          console.error('Rename failed', err)
+          alert(`Rename failed: ${err}`)
+        }
+      }
+    })
   }
 
   // ── AI Explain / Ask gestures ─────────────────────────────────────────────
@@ -2019,7 +2216,14 @@ export default function App() {
               activePath={activeTab?.path}
               onOpen={openNote}
               onShowInFiles={path => ShowInFiles(path).catch(console.error)}
-              onRefileAI={handleRefileWithAI}
+              onSmartFile={handleSmartFile}
+              onSmartMetadata={handleSmartMetadata}
+              onDelete={handleDeleteNote}
+              onMove={handleMoveNote}
+              onSetIntent={handleSetIntentByPath}
+              onCreateFolder={handleCreateFolder}
+              onDeleteFolder={handleDeleteFolder}
+              onRename={handleRename}
               width={sidebarWidth}
             />
           ) : (
@@ -2044,9 +2248,33 @@ export default function App() {
           onNew={newTab}
           onHelp={() => setShowHelp(v => !v)}
           onSetIntent={setTabIntent}
+          onRename={handleRename}
           onReorder={reorderTab}
+          onShowInFiles={path => ShowInFiles(path).catch(console.error)}
+          onSmartFile={handleSmartFile}
+          onSmartMetadata={handleSmartMetadata}
+          onDelete={handleDeleteNote}
         />
         {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+        {confirmModal && (
+          <ConfirmModal
+            title={confirmModal.title}
+            message={confirmModal.message}
+            isDestructive={confirmModal.isDestructive}
+            onConfirm={confirmModal.onConfirm}
+            onClose={() => setConfirmModal(null)}
+          />
+        )}
+        {promptModal && (
+          <PromptModal
+            title={promptModal.title}
+            message={promptModal.message}
+            placeholder={promptModal.placeholder}
+            initialValue={promptModal.initialValue}
+            onSubmit={promptModal.onSubmit}
+            onClose={() => setPromptModal(null)}
+          />
+        )}
         <QuickSwitcher
           isOpen={showQuickSwitch}
           onClose={() => setShowQuickSwitch(false)}

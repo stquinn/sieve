@@ -361,13 +361,37 @@ func cleanFolderPath(folder string) string {
 	segments := strings.Split(filepath.ToSlash(folder), "/")
 	var valid []string
 	for _, seg := range segments {
-		k := toKebab(seg)
-		if k != "untitled" && k != "" {
-			valid = append(valid, k)
+		clean := cleanFolderSegment(seg)
+		if clean != "" {
+			valid = append(valid, clean)
 		}
 	}
 	if len(valid) > 0 {
 		return filepath.Join(valid...)
 	}
 	return ""
+}
+
+func cleanFolderSegment(s string) string {
+	s = strings.TrimSpace(s)
+	
+	var b strings.Builder
+	prevSpace := false
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '.' || r == '-' || r == '_' {
+			b.WriteRune(r)
+			prevSpace = false
+		} else if r == ' ' {
+			if !prevSpace {
+				b.WriteRune(r)
+				prevSpace = true
+			}
+		}
+	}
+	
+	result := strings.TrimSpace(b.String())
+	if result == "." || result == ".." {
+		return ""
+	}
+	return result
 }

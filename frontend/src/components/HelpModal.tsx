@@ -14,7 +14,7 @@ const SHORTCUTS = [
   { keys: ['Ctrl', 'Shift', '↵'],  desc: 'Save & file now (move buffer to notes)' },
   { keys: ['Ctrl', 'E'],             desc: 'Explain selection or current buffer (smart mode)' },
   { keys: ['Ctrl', 'Shift', 'A'],   desc: 'Ask about selection or buffer (smart mode)' },
-  { keys: ['Ctrl', 'Shift', 'E'],   desc: 'Re-evaluate AI (summary, tags, folder)' },
+  { keys: ['Ctrl', 'Shift', 'E'],   desc: 'Smart Metadata (summary, tags, name)' },
   { keys: ['Tab'],                  desc: 'Indent 4 spaces' },
   { keys: ['Ctrl', 'Shift', 'M'],   desc: 'Toggle markdown / WYSIWYG mode' },
   { keys: ['Ctrl', '\\'],           desc: 'Toggle sidebar' },
