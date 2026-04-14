@@ -84,7 +84,7 @@ func (v *Vault) EvaluateBuffer(path string, settings Settings) (*FilingRecommend
 	prompt = strings.Replace(prompt, "{focus_count}", focusCountStr, 1)
 	prompt = strings.Replace(prompt, "{content}", content, 1)
 
-	respText, err := RunCLI(settings.CLI, prompt, settings.CLITimeout)
+	respText, err := RunCLI(settings.CLI, prompt, settings.Model, settings.CLITimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +142,7 @@ func (v *Vault) RunExplain(content string, settings Settings) (string, error) {
 	prompt = strings.Replace(prompt, "{type}", contentType, 1)
 	prompt = strings.Replace(prompt, "{content}", content, 1)
 
-	return RunCLI(settings.CLI, prompt, settings.CLITimeoutLong)
+	return RunCLI(settings.CLI, prompt, settings.Model, settings.CLITimeoutLong)
 }
 
 // RunAsk asks the CLI a question with the given content as context. history may
@@ -159,7 +159,7 @@ func (v *Vault) RunAsk(content, history, question string, settings Settings) (st
 	prompt = strings.Replace(prompt, "{history}", history, 1)
 	prompt = strings.Replace(prompt, "{question}", question, 1)
 
-	return RunCLI(settings.CLI, prompt, settings.CLITimeoutLong)
+	return RunCLI(settings.CLI, prompt, settings.Model, settings.CLITimeoutLong)
 }
 
 // detectContentType returns a simple content type label for use in prompts.
@@ -193,7 +193,7 @@ func RefineLanguage(content string, settings Settings) (string, error) {
 		"If you cannot identify a specific language confidently, reply with exactly: text\n\n" +
 		"Code:\n" + content
 
-	resp, err := RunCLI(settings.CLI, prompt, 10)
+	resp, err := RunCLI(settings.CLI, prompt, settings.Model, 10)
 	if err != nil {
 		return "", err
 	}

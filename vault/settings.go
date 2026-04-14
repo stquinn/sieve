@@ -21,6 +21,7 @@ const (
 // All fields are optional — missing keys fall back to defaults.
 type Settings struct {
 	CLI                string  `json:"cli,omitempty"`
+	Model              string  `json:"model,omitempty"`
 	CLITimeout         int     `json:"cli_timeout,omitempty"`
 	CLITimeoutLong     int     `json:"cli_timeout_long,omitempty"`
 	AutosaveDebounce   int     `json:"autosave_debounce,omitempty"`
@@ -106,6 +107,9 @@ func LoadSettings(path string) Settings {
 	// Overlay loaded values, keeping defaults for zero values
 	if loaded.CLI != "" {
 		s.CLI = loaded.CLI
+	}
+	if loaded.Model != "" {
+		s.Model = loaded.Model
 	}
 	if loaded.CLITimeout > 0 {
 		s.CLITimeout = loaded.CLITimeout

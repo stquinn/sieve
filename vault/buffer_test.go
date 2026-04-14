@@ -16,11 +16,11 @@ func TestFileBuffer_AssetPromotion(t *testing.T) {
 	}
 
 	// Create a new buffer
-	relPath, err := v.NewBuffer()
+	res, err := v.NewBuffer()
 	if err != nil {
 		t.Fatalf("NewBuffer failed: %v", err)
 	}
-	absPath := filepath.Join(v.Root, relPath)
+	absPath := filepath.Join(v.Root, res.Path)
 
 	// Create a fake asset in buffers/assets
 	assetName := "blk-a1b2.png"
@@ -30,7 +30,7 @@ func TestFileBuffer_AssetPromotion(t *testing.T) {
 	}
 
 	// Write content to buffer
-	content := newBufferMeta(time.Now(), 1) + "\n# Test Note\nThis is a test image: ![alt](../../buffers/assets/blk-a1b2.png)\n"
+	content := newBufferMeta(time.Now(), 1, "test-uuid-promote") + "\n# Test Note\nThis is a test image: ![alt](../../buffers/assets/blk-a1b2.png)\n"
 	if err := os.WriteFile(absPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write buffer failed: %v", err)
 	}
@@ -89,11 +89,11 @@ func TestDiscardBuffer_AssetCleanup(t *testing.T) {
 	}
 
 	// Create a new buffer
-	relPath, err := v.NewBuffer()
+	res, err := v.NewBuffer()
 	if err != nil {
 		t.Fatalf("NewBuffer failed: %v", err)
 	}
-	absPath := filepath.Join(v.Root, relPath)
+	absPath := filepath.Join(v.Root, res.Path)
 
 	// Create a fake asset in buffers/assets
 	assetName := "blk-x9y8.png"
@@ -103,7 +103,7 @@ func TestDiscardBuffer_AssetCleanup(t *testing.T) {
 	}
 
 	// Write content to buffer
-	content := newBufferMeta(time.Now(), 1) + "\n# Trash Note\nReference to image: ![alt](../../buffers/assets/blk-x9y8.png)\n"
+	content := newBufferMeta(time.Now(), 1, "test-uuid-cleanup") + "\n# Trash Note\nReference to image: ![alt](../../buffers/assets/blk-x9y8.png)\n"
 	if err := os.WriteFile(absPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write buffer failed: %v", err)
 	}

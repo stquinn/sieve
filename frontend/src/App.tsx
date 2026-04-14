@@ -53,6 +53,13 @@ function splitFrontmatter(content: string): { frontmatter: string; body: string 
   return { frontmatter: '', body: content }
 }
 
+// getCleanMarkdown strips all AI blocks from the markdown string to provide
+// a "pure" document context for follow-up questions.
+function getCleanMarkdown(fullMd: string): string {
+  const regex = /\n*\[!ai\] id="[^"]+" ref="[^"]+"[\s\S]*?\[!ai-end\]\n*/g
+  return fullMd.replace(regex, '\n\n').trim()
+}
+
 function getLocalISOString(d = new Date()): string {
   const pad = (n: number) => n.toString().padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
@@ -1435,19 +1442,64 @@ export default function App() {
     })
 
     if (aiBlockId) {
-      // Threading: find source content via first ref in the chain.
-      const sourceRef = aiBlockRef.split(',')[0]
+      // Threading: gather the full conversation history from the ref chain.
+      const refs = aiBlockRef.split(',')
+      const sourceRef = refs[0]
       let sourceContent = ''
       if (sourceRef && sourceRef !== 'doc') {
         doc.descendants((node) => {
           if (node.attrs?.id === sourceRef) { sourceContent = node.textContent; return false }
         })
+      } else {
+        sourceContent = getCleanMarkdown(editor.storage.markdown.getMarkdown())
       }
+
+      // Collect all intermediate AI responses in the chain
+      const intermediateHistory: string[] = []
+      const serializer = editor.storage.markdown.serializer
+      const seenIds = new Set<string>()
+      let turnCount = 1
+
+      for (let i = 1; i < refs.length; i++) {
+        const refId = (refs[i] || '').trim()
+        if (!refId || seenIds.has(refId)) continue
+        seenIds.add(refId)
+
+        doc.descendants((node) => {
+          if (node.attrs?.id === refId) {
+            const md = serializer.serialize(node)
+            intermediateHistory.push(`[Turn ${turnCount++}]\n${md}`)
+            return false
+          }
+        })
+      }
+
+      let currentBlockText = ''
+      doc.nodesBetween(from, to, (node) => {
+        if (node.type.name === 'aiBlock' && node.attrs?.id === aiBlockId) {
+          if (!seenIds.has(node.attrs.id)) {
+            currentBlockText = serializer.serialize(node)
+            seenIds.add(node.attrs.id)
+          }
+          return false
+        }
+      })
+
+      // If selection was non-empty and NOT an aiBlock, or if we couldn't find the parent aiBlock
+      if (!currentBlockText && !empty) {
+        currentBlockText = doc.textBetween(from, to, '\n')
+      }
+
+      const fullHistory = [
+        ...intermediateHistory,
+        currentBlockText ? `[Turn ${turnCount}]\n${currentBlockText}` : ''
+      ].filter(Boolean).join('\n\n---\n\n')
+
       const newRef = aiBlockRef ? `${aiBlockRef},${aiBlockId}` : aiBlockId
       return {
-        content: sourceContent || editor.storage.markdown.getMarkdown(),
+        content: sourceContent,
         blockRef: newRef,
-        history: doc.textBetween(from, to, '\n'),
+        history: fullHistory,
         contextLabel: 'Follow-up',
       }
     }
@@ -1466,7 +1518,7 @@ export default function App() {
       if (codeContent) {
         return { content: codeContent, blockRef: codeId || 'doc', history: '', contextLabel: 'Code Block' }
       }
-      return { content: editor.storage.markdown.getMarkdown(), blockRef: 'doc', history: '', contextLabel: 'Document' }
+      return { content: getCleanMarkdown(editor.storage.markdown.getMarkdown()), blockRef: 'doc', history: '', contextLabel: 'Document' }
     }
 
     // Text selection — use selected text as content.
@@ -1509,7 +1561,7 @@ export default function App() {
       // Find the [!ai] block by id and replace only its content, preserving the
       // original header line (which carries the ref= already written to disk).
       const idEscaped = aiId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      const pattern = new RegExp(`(\\[!ai\\] id="${idEscaped}"[^\\n]*)\\n\\n[\\s\\S]*?\\n\\n\\[!ai-end\\]`)
+      const pattern = new RegExp(`(\\[!ai\\] id="${idEscaped}"[^\\n]*)\\s*[\\s\\S]*?\\s*\\[!ai-end\\]`)
       const updatedBody = body.replace(pattern, `$1\n\n${responseText}\n\n[!ai-end]`)
 
       if (updatedBody === body) {
@@ -1572,9 +1624,14 @@ export default function App() {
         touchAiLastEvaluated(capturedUuid)
       })
       .catch(err => {
-        if (activeTabRef.current?.uuid !== capturedUuid) return
         console.warn('[stash:ai] explain: failed', err)
-        replaceAiPlaceholder(aiId, '_(explain timed out — Ctrl+E to retry)_')
+        const errorMsg = '_(explain timed out — Ctrl+E to retry)_'
+        const isActive = activeTabRef.current?.uuid === capturedUuid
+        if (!isActive) {
+          applyAiResponseInBackground(capturedUuid, aiId, errorMsg)
+          return
+        }
+        replaceAiPlaceholder(aiId, errorMsg)
       })
       .finally(() => {
         pendingAiCount.current--
@@ -1615,9 +1672,14 @@ export default function App() {
         touchAiLastEvaluated(capturedUuid)
       })
       .catch(err => {
-        if (activeTabRef.current?.uuid !== capturedUuid) return
         console.warn('[stash:ai] ask: failed', err)
-        replaceAiPlaceholder(aiId, '_(ask timed out — Ctrl+Shift+A to retry)_')
+        const errorMsg = '_(ask timed out — Ctrl+Shift+A to retry)_'
+        const isActive = activeTabRef.current?.uuid === capturedUuid
+        if (!isActive) {
+          applyAiResponseInBackground(capturedUuid, aiId, errorMsg)
+          return
+        }
+        replaceAiPlaceholder(aiId, errorMsg)
       })
       .finally(() => {
         pendingAiCount.current--
