@@ -312,7 +312,7 @@
   text-overflow: ellipsis;
 }
 .sidebar__file:hover { background: var(--theme-bgAlt); color: var(--theme-text); }
-.sidebar__file--open { color: var(--theme-accentPrimary); }
+.sidebar__file--open { color: var(--theme-accentCyan); }
 
 /* ── Sidebar resize handle ───────────────────────────────────────────── */
 
