@@ -200,6 +200,17 @@ func (v *Vault) FileBuffer(absPath string) (string, error) {
 		os.Remove(f)
 	}
 
+	// History promotion
+	if uuidMatch := regexp.MustCompile(`(?m)^uuid:\s*(\S+)`).FindSubmatch([]byte(content)); uuidMatch != nil {
+		uuidStr := strings.TrimSpace(string(uuidMatch[1]))
+		if err := os.MkdirAll(v.VaultHistoryDir(), 0o755); err == nil {
+			matches, _ := filepath.Glob(filepath.Join(v.HostHistoryDir(), uuidStr+".*.md"))
+			for _, m := range matches {
+				os.Rename(m, filepath.Join(v.VaultHistoryDir(), filepath.Base(m)))
+			}
+		}
+	}
+
 	rel, err := filepath.Rel(v.Root, dest)
 	if err != nil {
 		return dest, nil

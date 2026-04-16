@@ -119,7 +119,7 @@ func (a *App) startup(ctx context.Context) {
 		logger.Debug("window size restored", "w", savedSession.Window.Width, "h", savedSession.Window.Height)
 	}
 	win := savedSession.Window
-	if win.X > -4000 && win.Y > -4000 && (win.X != 0 || win.Y != 0) {
+	if win.X > -4000 && win.Y > -4000 {
 		runtime.WindowSetPosition(ctx, win.X, win.Y)
 		logger.Debug("window position restored", "x", win.X, "y", win.Y)
 	}

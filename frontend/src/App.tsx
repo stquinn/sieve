@@ -95,8 +95,17 @@ function parseMeta(fm: string, body: string) {
   const userIntent = fm.match(/^user_intent:\s*(keep|trash)/m)?.[1] as any || null
   const isEvaluating = /^ai_eval:\s*evaluating\b/m.test(fm)
   const displayName = fm.match(/^display_name:\s*(.+)/m)?.[1]?.trim()?.replace(/^['"]|['"]$/g, '')
-  if (displayName === 'null' || displayName === '') return { status, userIntent, displayName: undefined, isEmpty: body.trim().length === 0, isEvaluating }
-  return { status, userIntent, displayName: displayName || undefined, isEmpty: body.trim().length === 0, isEvaluating }
+  const scrollMatch = fm.match(/^scroll:\s*(\d+)/m)
+  const scroll = scrollMatch ? parseInt(scrollMatch[1], 10) : 0
+  const isEmpty = body.trim().length === 0
+  return { 
+    status, 
+    userIntent, 
+    displayName: (displayName === 'null' || displayName === '') ? undefined : displayName, 
+    isEmpty, 
+    isEvaluating, 
+    scroll 
+  }
 }
 
 // Update a single YAML frontmatter field in-place. Handles null, arrays, and strings.
@@ -698,9 +707,25 @@ export default function App() {
       }
       savedBodyCache.current[fileUuid] = body
 
-      requestAnimationFrame(() => {
+      const applyScroll = () => {
         const el = document.getElementById('app')
-        if (el) el.scrollTop = tab.scroll ?? 0
+        const ta = document.querySelector('.markdown-raw') as HTMLTextAreaElement
+        let fmPixelHeight = 0
+        if (tab.mode === 'markdown') {
+          const fmStr = fmCache.current[fileUuid] ?? ''
+          fmPixelHeight = fmStr.split('\n').length * 24.5
+          if (ta) ta.scrollTop = (meta.scroll ?? 0) + fmPixelHeight
+        } else {
+          if (el) el.scrollTop = (meta.scroll ?? 0)
+        }
+      }
+
+      requestAnimationFrame(() => {
+        applyScroll()
+        setTimeout(applyScroll, 30)
+        setTimeout(applyScroll, 100)
+        setTimeout(applyScroll, 250)
+        setTimeout(applyScroll, 500)
       })
     }).catch(() => {
       editor.commands.setContent('')
@@ -831,30 +856,62 @@ export default function App() {
     // Guard: fmCache not populated yet means loadTab hasn't resolved — skip.
     if (fmCache.current[uuid] === undefined) return
     if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null }
+
+    let fm = fmCache.current[uuid] ?? ''
+    const currentScrollValue = currentScroll()
+    const savedScrollStr = fm.match(/^scroll:\s*(\d+)/m)?.[1]
+    const savedScroll = savedScrollStr ? parseInt(savedScrollStr, 10) : 0
+    let fmHasChanged = false
+    
+    if (currentScrollValue !== savedScroll) {
+      fm = setYamlField(fm, 'scroll', currentScrollValue)
+      fmCache.current[uuid] = fm
+      fmHasChanged = true
+    }
+
     if (isMarkdownMode) {
-      if (rawMd === mdCache.current[uuid]) return
+      if (rawMd === mdCache.current[uuid] && !fmHasChanged) return
       // Raw mode shows full file — save as-is, but re-sync frontmatter cache
-      const { frontmatter } = splitFrontmatter(rawMd)
+      let { frontmatter, body } = splitFrontmatter(rawMd)
+      if (frontmatter && fmHasChanged) {
+        frontmatter = setYamlField(frontmatter, 'scroll', currentScrollValue)
+      }
+      const fullContent = frontmatter ? frontmatter + body : rawMd
       if (frontmatter) fmCache.current[uuid] = frontmatter
-      saveBufferSafe(uuid, rawMd)
-      mdCache.current[uuid] = rawMd
+      saveBufferSafe(uuid, fullContent)
+      mdCache.current[uuid] = fullContent
       setTabs(prev => prev.map(t => t.path === path ? { ...t, isModified: false } : t))
     } else {
       const body = editor?.storage.markdown.getMarkdown() ?? ''
-      if (body === savedBodyCache.current[uuid]) return
-      const fm = bumpFm(fmCache.current[uuid] ?? '')
-      fmCache.current[uuid] = fm
+      const bodyChanged = body !== savedBodyCache.current[uuid]
+      if (!bodyChanged && !fmHasChanged) return
+      
+      let fmToSave = fm
+      if (bodyChanged) {
+        fmToSave = bumpFm(fmToSave)
+      }
+      fmCache.current[uuid] = fmToSave
       savedBodyCache.current[uuid] = body
-      saveBufferSafe(uuid, fm + body)
+      saveBufferSafe(uuid, fmToSave + body)
       setTabs(prev => prev.map(t => t.path === path ? { ...t, isModified: false } : t))
-      const version = versionFromFm(fm)
-      SaveVersionSnapshot(uuid, version, fm + body).catch(console.error)
+      if (bodyChanged) {
+        const version = versionFromFm(fmToSave)
+        SaveVersionSnapshot(uuid, version, fmToSave + body).catch(console.error)
+      }
     }
   }
 
   // ── Tab operations ─────────────────────────────────────────────────────────
 
   function currentScroll(): number {
+    const activeTabObj = tabsRef.current[activeIdxRef.current]
+    if (activeTabObj?.mode === 'markdown') {
+      const ta = document.querySelector('.markdown-raw') as HTMLTextAreaElement
+      const unadjusted = ta?.scrollTop ?? 0
+      const fmStr = fmCache.current[activeTabObj.uuid ?? ''] ?? ''
+      const fmLineCount = fmStr.split('\n').length
+      return Math.max(0, unadjusted - (fmLineCount * 24.5))
+    }
     return document.getElementById('app')?.scrollTop ?? 0
   }
 
@@ -1231,31 +1288,91 @@ export default function App() {
   function toggleMode() {
     if (!activeTab) return
     const uuid = activeTab.uuid
+    
+    // Capture cursor before toggling
+    let cursorMdPos = 0
+    if (!isMarkdownMode) {
+      if (editor) {
+        const ratio = editor.state.selection.from / Math.max(1, editor.state.doc.content.size)
+        const bodyContent = editor.storage.markdown.getMarkdown() || ''
+        const fmLen = (fmCache.current[uuid] ?? '').length
+        cursorMdPos = fmLen + Math.floor(ratio * bodyContent.length)
+      }
+    } else {
+      const ta = document.querySelector('.markdown-raw') as HTMLTextAreaElement
+      if (ta) cursorMdPos = ta.selectionStart
+    }
+
     if (isMarkdownMode) mdCache.current[uuid] = rawMd
+    
+    const oldBodyScroll = currentScroll()
     flush()
 
     const newMode = isMarkdownMode ? 'wysiwyg' : 'markdown'
     const newTabs = tabs.map((t, i) => i === activeIdx ? { ...t, mode: newMode as TabState['mode'] } : t)
     setTabs(newTabs)
 
+    const applyViewScroll = () => {
+      const el = document.getElementById('app')
+      const ta = document.querySelector('.markdown-raw') as HTMLTextAreaElement
+      let fmPixelHeight = 0
+      if (newMode === 'markdown') {
+        const fmStr = fmCache.current[uuid] ?? ''
+        fmPixelHeight = fmStr.split('\n').length * 24.5
+      }
+      
+      if (newMode === 'markdown' && ta) {
+         ta.scrollTop = oldBodyScroll + fmPixelHeight
+      } else if (el) {
+         el.scrollTop = oldBodyScroll
+      }
+    }
+
     if (newMode === 'markdown') {
-      // Show full file: frontmatter + body
       const body = editor?.storage.markdown.getMarkdown() ?? ''
       const fm = fmCache.current[uuid] ?? ''
       const full = fm + body
       mdCache.current[uuid] = full
       setRawMd(full)
+      
+      requestAnimationFrame(() => {
+        const ta = document.querySelector('.markdown-raw') as HTMLTextAreaElement
+        if (ta) {
+          ta.setSelectionRange(cursorMdPos, cursorMdPos)
+          ta.focus()
+        }
+        applyViewScroll()
+        setTimeout(applyViewScroll, 30)
+        setTimeout(applyViewScroll, 100)
+        setTimeout(applyViewScroll, 250)
+        setTimeout(applyViewScroll, 500)
+      })
     } else {
-      // Strip frontmatter before feeding back to editor.
-      // Fall back to rawMd (current textarea) if mdCache somehow wasn't populated.
       const full = mdCache.current[uuid] ?? rawMd
       const { frontmatter, body } = splitFrontmatter(full)
       if (frontmatter) fmCache.current[uuid] = frontmatter
       savedBodyCache.current[uuid] = body
-      // EditorContent is not in the DOM yet — it only mounts after setTabs triggers
-      // a re-render. Defer setContent until the next frame so the view exists.
+      
       requestAnimationFrame(() => {
         editor?.commands.setContent(body)
+        if (editor) {
+          const fmLen = (frontmatter || '').length
+          const bodyLen = body.length
+          const bodyOffset = Math.max(0, cursorMdPos - fmLen)
+          const ratio = bodyOffset / Math.max(1, bodyLen)
+          // Use Math.min to avoid exceeding doc size padding limits
+          const pmPos = Math.min(
+             editor.state.doc.content.size - 1, 
+             Math.max(0, Math.floor(ratio * editor.state.doc.content.size))
+          )
+          try { editor.commands.setTextSelection(pmPos) } catch(e) {}
+          editor.commands.focus()
+        }
+        applyViewScroll()
+        setTimeout(applyViewScroll, 30)
+        setTimeout(applyViewScroll, 100)
+        setTimeout(applyViewScroll, 250)
+        setTimeout(applyViewScroll, 500)
       })
     }
   }
@@ -2199,17 +2316,23 @@ export default function App() {
 
   useEffect(() => {
     const el = document.getElementById('app')
-    if (!el) return
+    const ta = document.querySelector('.markdown-raw')
+    if (!el && !ta) return
     const onScroll = () => {
       if (scrollTimer.current) clearTimeout(scrollTimer.current)
       scrollTimer.current = setTimeout(() => {
-        const scroll = el.scrollTop
-        setTabs(prev => prev.map((t, i) => i === activeIdx ? { ...t, scroll } : t))
+        const scroll = currentScroll()
+        setTabs(prev => prev.map((t, i) => i === activeIdxRef.current ? { ...t, scroll } : t))
       }, 250)
     }
-    el.addEventListener('scroll', onScroll, { passive: true })
-    return () => { el.removeEventListener('scroll', onScroll); if (scrollTimer.current) clearTimeout(scrollTimer.current) }
-  }, [activeIdx])
+    if (el) el.addEventListener('scroll', onScroll, { passive: true })
+    if (ta) ta.addEventListener('scroll', onScroll, { passive: true })
+    return () => { 
+      if (el) el.removeEventListener('scroll', onScroll)
+      if (ta) ta.removeEventListener('scroll', onScroll)
+      if (scrollTimer.current) clearTimeout(scrollTimer.current) 
+    }
+  }, [activeIdx, isMarkdownMode])
 
   // ── Cleanup ────────────────────────────────────────────────────────────────
 

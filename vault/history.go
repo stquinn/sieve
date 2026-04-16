@@ -9,30 +9,44 @@ import (
 	"strconv"
 )
 
-func (v *Vault) HistoryDir() string {
+func (v *Vault) HostHistoryDir() string {
 	return filepath.Join(v.HostDir, ".history")
+}
+
+func (v *Vault) VaultHistoryDir() string {
+	return filepath.Join(v.Root, ".history")
 }
 
 // SaveVersionSnapshot writes {uuid}.{version}.md to the history dir.
 // content is the full fm+body that was just saved to the live file.
 func (v *Vault) SaveVersionSnapshot(uuid string, version int, content string) error {
-	if err := os.MkdirAll(v.HistoryDir(), 0o755); err != nil {
+	isFiled := regexp.MustCompile(`(?m)^status:\s*filed`).MatchString(content)
+	dir := v.HostHistoryDir()
+	if isFiled {
+		dir = v.VaultHistoryDir()
+	}
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	name := fmt.Sprintf("%s.%d.md", uuid, version)
-	return os.WriteFile(filepath.Join(v.HistoryDir(), name), []byte(content), 0o644)
+	return os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
 }
 
 // PruneHistory deletes the oldest snapshot files for a UUID,
-// keeping only the newest maxVersions entries.
+// keeping only the newest maxVersions entries across all history dirs.
 func (v *Vault) PruneHistory(uuid string, maxVersions int) error {
 	if maxVersions <= 0 {
 		return nil
 	}
-	pattern := filepath.Join(v.HistoryDir(), uuid+".*.md")
-	matches, err := filepath.Glob(pattern)
-	if err != nil || len(matches) <= maxVersions {
-		return err
+	p1 := filepath.Join(v.HostHistoryDir(), uuid+".*.md")
+	p2 := filepath.Join(v.VaultHistoryDir(), uuid+".*.md")
+	m1, _ := filepath.Glob(p1)
+	m2, _ := filepath.Glob(p2)
+	matches := append(m1, m2...)
+
+	if len(matches) <= maxVersions {
+		return nil
 	}
 	// Sort by version number ascending so we delete the oldest first
 	sort.Slice(matches, func(i, j int) bool {
@@ -46,9 +60,11 @@ func (v *Vault) PruneHistory(uuid string, maxVersions int) error {
 
 // DeleteHistory removes all snapshot files for a UUID (called on DiscardBuffer).
 func (v *Vault) DeleteHistory(uuid string) error {
-	pattern := filepath.Join(v.HistoryDir(), uuid+".*.md")
-	matches, _ := filepath.Glob(pattern)
-	for _, f := range matches {
+	p1 := filepath.Join(v.HostHistoryDir(), uuid+".*.md")
+	p2 := filepath.Join(v.VaultHistoryDir(), uuid+".*.md")
+	m1, _ := filepath.Glob(p1)
+	m2, _ := filepath.Glob(p2)
+	for _, f := range append(m1, m2...) {
 		os.Remove(f)
 	}
 	return nil

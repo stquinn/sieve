@@ -71,7 +71,8 @@ func (v *Vault) ensureDirs() error {
 		v.BuffersPath(),
 		v.BufferAssetsPath(),
 		v.PromptsPath(),
-		v.HistoryDir(),
+		v.HostHistoryDir(),
+		v.VaultHistoryDir(),
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0o755); err != nil {

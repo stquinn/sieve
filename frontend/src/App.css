@@ -742,6 +742,8 @@ textarea::selection {
   resize: none;
   caret-color: #c0caf5;
   tab-size: 2;
+  white-space: pre;
+  overflow-x: auto;
 }
 
 /* ── Help modal ──────────────────────────────────────────────────────── */
