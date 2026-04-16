@@ -10,7 +10,7 @@ import Table from '@tiptap/extension-table'
 import TableRow from '@tiptap/extension-table-row'
 import TableHeader from '@tiptap/extension-table-header'
 import TableCell from '@tiptap/extension-table-cell'
-import { Ask, DiscardBuffer, Explain, FileBuffer, FileBufferWithName, GetNotes, GetSession, GetVaultInfo, LoadBuffer, NewBuffer, RefineLanguage, SaveBuffer, SaveBufferAsset, SaveNoteAsset, SaveSession, SaveSidebarWidth, SaveMetaWidth, ShowInFiles, EvaluateBuffer, Quit as AppQuit, SaveVersionSnapshot, DeleteNote, MoveNote, CreateFolder, DeleteFolder, RenameFolder } from '../wailsjs/go/main/App'
+import { Ask, DiscardBuffer, Explain, FileBuffer, FileBufferWithName, GetNotes, GetSession, GetVaultInfo, LoadBuffer, NewBuffer, RefineLanguage, SaveBuffer, SaveBufferAsset, SaveNoteAsset, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, ShowInFiles, EvaluateBuffer, Quit as AppQuit, SaveVersionSnapshot, DeleteNote, MoveNote, CreateFolder, DeleteFolder, RenameFolder, LoadPrompt, SavePrompt, GetPrompts, RestorePrompt, TogglePrompts } from '../wailsjs/go/main/App'
 import { vault } from '../wailsjs/go/models'
 import { UserIntent } from './types'
 import { BrowserOpenURL, EventsOn, EventsOff, Quit } from '../wailsjs/runtime/runtime'
@@ -22,7 +22,7 @@ import { AiBlock } from './extensions/AiBlock'
 import { detectLanguage } from './utils/pasteHeuristics'
 import { TabBar } from './components/TabBar'
 import { HelpModal } from './components/HelpModal'
-import { Sidebar, NoteEntry } from './components/Sidebar'
+import { Sidebar, NoteEntry, PromptEntry } from './components/Sidebar'
 import { MetaPanel } from './components/MetaPanel'
 import { VaultSearch } from './components/VaultSearch'
 import { QuickSwitcher } from './components/QuickSwitcher'
@@ -176,7 +176,9 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth]     = useState(240)
   const [isDragging, setIsDragging]         = useState(false)
   const [showMeta, setShowMeta]             = useState(false)
+  const [showPrompts, setShowPrompts]       = useState(true)
   const [metaWidth, setMetaWidth]           = useState(260)
+  const [promptsHeight, setPromptsHeight]   = useState(180)
   const lastSavedSessionRef = useRef<string | null>(null)
   const [isMetaDragging, setIsMetaDragging] = useState(false)
   const [showSearch, setShowSearch]         = useState(false)
@@ -189,6 +191,7 @@ export default function App() {
   const [searchResults, setSearchResults]   = useState<{from: number, to: number}[]>([])
   const [searchIndex, setSearchIndex]       = useState(0)
   const [notes, setNotes]         = useState<NoteEntry[]>([])
+  const [prompts, setPrompts]     = useState<PromptEntry[]>([])
   const [timeoutPopup, setTimeoutPopup] = useState<{ path: string; suggestedName: string } | null>(null)
   const [showAskPopup, setShowAskPopup] = useState(false)
   const [aiTick, setAiTick]             = useState(0)  // increments every second while AI tasks run
@@ -199,8 +202,10 @@ export default function App() {
   const cliTimeoutLongMs          = useRef(60_000)  // updated from settings on mount (default 60s)
   const sidebarWidthRef           = useRef(240)
   const metaWidthRef              = useRef(260)
+  const promptsHeightRef          = useRef(180)
   const showSidebarRef           = useRef(true)
   const showMetaRef              = useRef(false)
+  const showPromptsRef           = useRef(true)
   const focusTimer                = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Caches keyed by UUID — survive tab switches without triggering re-renders
@@ -227,6 +232,7 @@ export default function App() {
 
   useEffect(() => { showSidebarRef.current = showSidebar }, [showSidebar])
   useEffect(() => { showMetaRef.current = showMeta }, [showMeta])
+  useEffect(() => { showPromptsRef.current = showPrompts }, [showPrompts])
 
   // Stable ref to always-current handlers — prevents stale closures in event listeners
   const H = useRef({
@@ -242,6 +248,7 @@ export default function App() {
     loadTab:    (_: TabState) => {},
     explain:    () => {},   // Ctrl+E — explain gesture
     ask:        () => {},   // Ctrl+Shift+A — ask gesture
+    editPrompt: (name: string) => {}, // Open a prompt for editing
   })
 
   const activeTab      = tabs[activeIdx]
@@ -353,6 +360,7 @@ export default function App() {
   // Keep refs in sync so resize mouseup handlers read latest widths
   useEffect(() => { sidebarWidthRef.current = sidebarWidth }, [sidebarWidth])
   useEffect(() => { metaWidthRef.current = metaWidth }, [metaWidth])
+  useEffect(() => { promptsHeightRef.current = promptsHeight }, [promptsHeight])
 
   // Suppress text selection globally while dragging either handle
   useEffect(() => {
@@ -682,6 +690,21 @@ export default function App() {
 
   const loadTab = useCallback((tab: TabState) => {
     if (!editor) return
+
+    if (tab.path.startsWith('prompt:')) {
+      const name = tab.path.split(':')[1]
+      LoadPrompt(name).then((content: string) => {
+        const uuid = `prompt-${name}`
+        fmCache.current[uuid] = '' 
+        setTabs(prev => prev.map(t => t.path === tab.path ? { ...t, status: 'filed', uuid: uuid, isVirtual: tab.isVirtual } : t))
+        setRawMd(content)
+        mdCache.current[uuid] = content
+        savedBodyCache.current[uuid] = content
+        setActiveIdx(tabsRef.current.findIndex(t => t.path === tab.path))
+      }).catch(console.error)
+      return
+    }
+
     LoadBuffer(tab.path).then(content => {
       let { frontmatter, body } = splitFrontmatter(content)
 
@@ -760,8 +783,13 @@ export default function App() {
           setMetaWidth((session as any).metaWidth)
           metaWidthRef.current = (session as any).metaWidth
         }
+        if ((session as any).promptsHeight > 0) {
+          setPromptsHeight((session as any).promptsHeight)
+          promptsHeightRef.current = (session as any).promptsHeight
+        }
         if (session.hasOwnProperty('showSidebar')) setShowSidebar(session.showSidebar)
         if (session.hasOwnProperty('showMeta')) setShowMeta(session.showMeta)
+        if (session.hasOwnProperty('showPrompts')) setShowPrompts(session.showPrompts)
         // Keep stored UUIDs — they come from frontmatter and are the document's permanent identity.
         const st = (session.tabs as TabState[])
         if (st?.length) {
@@ -777,11 +805,18 @@ export default function App() {
     const fetchNotes = () => GetNotes().then(res => setNotes(res || [])).catch(console.error)
     fetchNotes()
 
-    const unlisten = EventsOn('notes:changed', () => {
+    const fetchPrompts = () => GetPrompts().then((res: vault.PromptEntry[]) => setPrompts(res || [])).catch(console.error)
+    fetchPrompts()
+
+    const unlistenNotes = EventsOn('notes:changed', () => {
       console.debug('[stash] notes:changed — refreshing sidebar')
       fetchNotes()
     })
-    return unlisten
+    const unlistenPrompts = EventsOn('prompts:changed', () => {
+      console.debug('[stash] prompts:changed — refreshing sidebar')
+      fetchPrompts()
+    })
+    return () => { unlistenNotes(); unlistenPrompts(); }
   }, [editor, loadTab])
 
 
@@ -798,7 +833,8 @@ export default function App() {
     
     // De-dupe: only save if structural session data has changed.
     // This avoids saving on every keystroke (which only flips the 'isModified' flag).
-    const sessionStr = JSON.stringify({ toSave, showSidebar, showMeta, sidebarWidth, metaWidth })
+    // Update: also include showPrompts in the de-dupe logic
+    const sessionStr = JSON.stringify({ toSave, showSidebar, showMeta, showPrompts, sidebarWidth, metaWidth })
     if (sessionStr === lastSavedSessionRef.current) return
 
     // Debounce: only save if structural session data stays stable for 1s.
@@ -810,7 +846,8 @@ export default function App() {
         sidebarWidth,
         metaWidth,
         showSidebar,
-        showMeta
+        showMeta,
+        showPrompts
       })).catch(console.error)
     }, 1000)
 
@@ -829,7 +866,8 @@ export default function App() {
       sidebarWidth: sidebarWidthRef.current,
       metaWidth: metaWidthRef.current,
       showSidebar: showSidebarRef.current,
-      showMeta: showMetaRef.current
+      showMeta: showMetaRef.current,
+      showPrompts: showPromptsRef.current
     }))
   }
 
@@ -847,7 +885,28 @@ export default function App() {
       console.warn('[stash] saveBufferSafe: abort — UUID not in open tabs', uuid)
       return
     }
+    if (tab.path.startsWith('prompt:')) {
+      const name = tab.path.split(':').pop()!
+      SavePrompt(name, content).then(async () => {
+         const p = await GetPrompts()
+         setPrompts(p || [])
+      }).catch(console.error)
+      return
+    }
     SaveBuffer(tab.path, content).catch(console.error)
+  }
+
+  function savePromptSafe(name: string, content: string) {
+    SavePrompt(name, content).then((path: string) => {
+      // Update the tab path to the real file path so it's no longer virtual
+      // Wait, SPEC says prompts in sidebar always show as virtual if not on disk.
+      // Actually, if it's open, we keep the "prompt:name" path for simplicity
+      // and just ensure SavePrompt handles it.
+      const uuid = `prompt-${name}`
+      fmCache.current[uuid] = ''
+      savedBodyCache.current[uuid] = content
+      setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isModified: false } : t))
+    }).catch(console.error)
   }
 
   // ── Flush active tab to disk immediately ───────────────────────────────────
@@ -1137,7 +1196,7 @@ export default function App() {
   // fileAfter=true means move the buffer to notes/ when evaluation completes.
   // Guard: at most one job per UUID — additional calls are silently dropped.
 
-  async function runBackgroundEval(uuid: string, initialPath: string, fileAfter: boolean) {
+  async function runBackgroundEval(uuid: string, initialPath: string, fileAfter: boolean, allowDiscard: boolean = true) {
     if (evaluatingUuids.current.has(uuid)) {
       console.debug('[stash:ai] runBackgroundEval: already running for UUID, dropping', uuid)
       return
@@ -1171,6 +1230,7 @@ export default function App() {
     if (rec) {
       finalFm = setYamlField(finalFm, 'ai_eval', 'complete')
       finalFm = setYamlField(finalFm, 'ai_last_evaluated', getLocalISOString())
+      finalFm = setYamlField(finalFm, 'ai_keep', rec.keep)
       const info = await GetVaultInfo()
       finalFm = setYamlField(finalFm, 'cli', info.cli)
       if (rec.title)    finalFm = setYamlField(finalFm, 'display_name', rec.title)
@@ -1191,6 +1251,17 @@ export default function App() {
     SaveVersionSnapshot(uuid, versionFromFm(finalFm), finalFm + currentBody).catch(console.error)
 
     if (fileAfter) {
+      if (rec && !rec.keep) {
+        if (allowDiscard) {
+          console.log('[stash:ai] runBackgroundEval: discard recommended', { uuid })
+          await DiscardBuffer(currentPath)
+          finishCloseTab(currentPath)
+        } else {
+          console.log('[stash:ai] runBackgroundEval: keep:false but discard disallowed, aborting filing', { uuid })
+          setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isEvaluating: false } : t))
+        }
+        return
+      }
       try {
         const newPath = await FileBuffer(currentPath)
         const filedFm = finalFm.replace(/^status:\s*.+/m, 'status: filed')
@@ -1268,7 +1339,8 @@ export default function App() {
     if (willEval) {
       // Hand off to background — returns immediately, spinner already visible
       const fileAfter = activeTab.status === 'unfiled' && !skipFile
-      runBackgroundEval(uuid, path, fileAfter)
+      // allowDiscard: true if filing/saving unfiled, false if ad-hoc re-eval (forceEval)
+      runBackgroundEval(uuid, path, fileAfter, /* allowDiscard */ !forceEval)
       return
     }
 
@@ -1513,6 +1585,12 @@ export default function App() {
     try {
       const rec = await EvaluateBuffer(path)
       const content = await LoadBuffer(path)
+      if (rec && !rec.keep) {
+        console.log('[stash:ai] handleSmartFile (no tab): discard recommended', { path })
+        await DiscardBuffer(path)
+        await GetNotes().then(res => setNotes(res || [])).catch(console.error)
+        return
+      }
       let { frontmatter, body } = splitFrontmatter(content)
       frontmatter = setYamlField(frontmatter, 'ai_eval', 'complete')
       frontmatter = setYamlField(frontmatter, 'ai_last_evaluated', getLocalISOString())
@@ -1543,7 +1621,7 @@ export default function App() {
           await SaveBuffer(path, fm + body).catch(console.error)
         }
       }
-      runBackgroundEval(tab.uuid, path, /* fileAfter */ false)
+      runBackgroundEval(tab.uuid, path, /* fileAfter */ false, /* allowDiscard */ false)
       return
     }
 
@@ -1552,6 +1630,7 @@ export default function App() {
     try {
       const rec = await EvaluateBuffer(path)
       const content = await LoadBuffer(path)
+      // (No discard check here for Metadata fallback)
       let { frontmatter, body } = splitFrontmatter(content)
       frontmatter = setYamlField(frontmatter, 'ai_eval', 'complete')
       frontmatter = setYamlField(frontmatter, 'ai_last_evaluated', getLocalISOString())
@@ -1564,6 +1643,51 @@ export default function App() {
       await GetNotes().then(res => setNotes(res || [])).catch(console.error)
     } catch (err) {
       console.error('[stash:ai] Smart Metadata (no tab) failed', err)
+    }
+  }
+
+  const onEditPrompt = (name: string) => {
+    const existing = tabsRef.current.find(t => t.path === `prompt:${name}`)
+    if (existing) {
+      const idx = tabsRef.current.indexOf(existing)
+      setActiveIdx(idx)
+      loadTab(existing)
+      return
+    }
+
+    const promptMeta = prompts.find(p => p.name === name)
+    const uuid = `prompt-${name}`
+    const newTab: TabState = {
+      uuid,
+      path: `prompt:${name}`,
+      scroll: 0,
+      active: true,
+      mode: 'markdown',
+      status: 'filed',
+      isEmpty: false,
+      isModified: false,
+      displayName: promptMeta?.displayName || `${name}.md`
+    }
+
+    const newTabs = [...tabsRef.current.map(t => ({ ...t, active: false })), newTab]
+    setTabs(newTabs)
+    setActiveIdx(newTabs.length - 1)
+    loadTab(newTab)
+  }
+
+  const onRestorePrompt = async (name: string) => {
+    try {
+      await RestorePrompt(name)
+      // Check if it's currently open
+      const tab = tabsRef.current.find(t => t.path === `prompt:${name}`)
+      if (tab) {
+        // Reload the tab content to show defaults
+        loadTab(tab)
+      }
+      const p = await GetPrompts()
+      setPrompts(p || [])
+    } catch (err) {
+      console.error('Failed to restore prompt', err)
     }
   }
 
@@ -2066,6 +2190,7 @@ export default function App() {
       loadTab:    loadTab,
       explain:    explainGesture,
       ask:        askGesture,
+      editPrompt: onEditPrompt,
     }
   })
 
@@ -2081,6 +2206,11 @@ export default function App() {
       if (e.ctrlKey && !e.shiftKey && !e.altKey && key === 's') { e.preventDefault(); H.current.smartSave() }
       if (e.ctrlKey && e.shiftKey && !e.altKey && e.key === 'Enter') { e.preventDefault(); H.current.forceFile() }
       if (e.ctrlKey && e.shiftKey && !e.altKey && key === 'e') { e.preventDefault(); H.current.reEval() }
+      if (e.ctrlKey && e.shiftKey && !e.altKey && key === 'p') { 
+        e.preventDefault(); 
+        TogglePrompts().then((res: boolean) => setShowPrompts(res)).catch(console.error)
+        return 
+      }
       if (e.ctrlKey && e.shiftKey && !e.altKey && key === 'm') { e.preventDefault(); H.current.toggleMode() }
       if (e.ctrlKey && !e.shiftKey && !e.altKey && key === '/') { e.preventDefault(); setShowHelp(v => !v) }
       if (e.ctrlKey && !e.shiftKey && !e.altKey && key === 'p') { e.preventDefault(); setShowQuickSwitch(v => !v) }
@@ -2277,30 +2407,55 @@ export default function App() {
     }
   }, [])
 
-  // ── Focus count timer ─────────────────────────────────────────────────────
-  // Increments focus_count in frontmatter after the tab has held focus for 2 min.
+  // ── Focus count tracking ──────────────────────────────────────────────────
+  // Increments focus_count at two levels:
+  // 1. Visit: After tab has held focus for 30s (visit signal).
+  // 2. Duration: Every 5min during continuous active focus (dwell signal).
 
   useEffect(() => {
     if (focusTimer.current) clearTimeout(focusTimer.current)
     const tab = tabs[activeIdx]
-    if (!tab || tab.status === 'filed') return
+    if (!tab) return
     const path = tab.path
+    const uuid = tab.uuid
+
+    // Level 1: Debounced "Visit" increment (30s)
     focusTimer.current = setTimeout(() => {
-      // At 2-min fire time loadTab has long resolved, so tab.uuid IS the file UUID.
-      // Look up the tab by path (captured at setup) to get current UUID.
       const currentTab = tabsRef.current.find(t => t.path === path)
-      if (!currentTab) return  // tab was closed before timer fired
+      if (!currentTab || !currentTab.uuid) return
+      
       const fm = fmCache.current[currentTab.uuid]
       if (!fm) return
+      
       const newFm = bumpFocusCount(fm)
       fmCache.current[currentTab.uuid] = newFm
-      // Use savedBodyCache — editor.getMarkdown() reads the currently visible
-      // tab which may be different after 2 minutes of focus dwell time.
       const body = savedBodyCache.current[currentTab.uuid] ?? ''
       saveBufferSafe(currentTab.uuid, newFm + body)
-      console.debug('[stash] focus_count bumped', { path })
-    }, 2 * 60 * 1000)
-    return () => { if (focusTimer.current) { clearTimeout(focusTimer.current); focusTimer.current = null } }
+      console.debug('[stash] focus_count: visit incremented', { path })
+    }, 30 * 1000)
+
+    // Level 2: Periodic "Dwell" increment (5min)
+    const dwellInterval = setInterval(() => {
+      // Re-read current tab from and refs to ensure we only increment if THIS tab is still active
+      if (activeIdxRef.current !== activeIdx) return
+
+      const currentTab = tabsRef.current[activeIdx]
+      if (!currentTab || !currentTab.uuid) return
+      
+      const fm = fmCache.current[currentTab.uuid]
+      if (!fm) return
+      
+      const newFm = bumpFocusCount(fm)
+      fmCache.current[currentTab.uuid] = newFm
+      const body = savedBodyCache.current[currentTab.uuid] ?? ''
+      saveBufferSafe(currentTab.uuid, newFm + body)
+      console.debug('[stash] focus_count: dwell interval incremented', { path })
+    }, 5 * 60 * 1000)
+
+    return () => { 
+      if (focusTimer.current) { clearTimeout(focusTimer.current); focusTimer.current = null }
+      clearInterval(dwellInterval)
+    }
   }, [activeIdx])
 
   // ── AI status bar tick — 1s interval while any task is running ───────────────
@@ -2391,6 +2546,15 @@ export default function App() {
               onDeleteFolder={handleDeleteFolder}
               onRename={handleRename}
               width={sidebarWidth}
+              showPrompts={showPrompts && tier === 'smart'}
+              prompts={prompts}
+              onEditPrompt={onEditPrompt}
+              onRestorePrompt={onRestorePrompt}
+              promptsHeight={promptsHeight}
+              onPromptsResize={(h) => {
+                setPromptsHeight(h)
+                SavePromptsHeight(h).catch(console.error)
+              }}
             />
           ) : (
             <VaultSearch
@@ -2420,6 +2584,7 @@ export default function App() {
           onSmartFile={handleSmartFile}
           onSmartMetadata={handleSmartMetadata}
           onDelete={handleDeleteNote}
+          onRestorePrompt={onRestorePrompt}
         />
         {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
         {confirmModal && (

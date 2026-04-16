@@ -18,9 +18,10 @@ interface TabBarProps {
   onSmartMetadata: (path: string) => void
   onDelete: (path: string) => void
   onRename: (path: string, name: string, isDir: boolean) => void
+  onRestorePrompt?: (name: string) => void
 }
 
-export function TabBar({ tabs, activeIdx, onSelect, onClose, onNew, onHelp, onSetIntent, onReorder, onShowInFiles, onSmartFile, onSmartMetadata, onDelete, onRename }: TabBarProps) {
+export function TabBar({ tabs, activeIdx, onSelect, onClose, onNew, onHelp, onSetIntent, onReorder, onShowInFiles, onSmartFile, onSmartMetadata, onDelete, onRename, onRestorePrompt }: TabBarProps) {
   const tabsAreaRef = useRef<HTMLDivElement>(null)
   const tabRefs = useRef<(HTMLDivElement | null)[]>([])
   const [hiddenStart, setHiddenStart] = useState(tabs.length)
@@ -130,6 +131,8 @@ export function TabBar({ tabs, activeIdx, onSelect, onClose, onNew, onHelp, onSe
               onSmartMetadata={() => onSmartMetadata(tab.path)}
               onDelete={() => onDelete(tab.path)}
               onRename={() => onRename(tab.path, tabLabel(tab), false)}
+              isVirtual={tab.isVirtual}
+              onRestore={onRestorePrompt ? () => onRestorePrompt(tab.path.split(':').pop()!) : undefined}
               onDragStart={() => {
                 dragIdxRef.current = idx
                 setDragIdx(idx)
@@ -248,6 +251,8 @@ interface TabItemProps {
   onSmartMetadata: () => void
   onDelete: () => void
   onRename: () => void
+  isVirtual?: boolean
+  onRestore?: () => void
   onDragStart: () => void
   onDragOver: (e: React.DragEvent) => void
   onDrop: (e: React.DragEvent) => void
@@ -255,7 +260,7 @@ interface TabItemProps {
 }
 
 const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
-  { tab, active, isDragging, onSelect, onClose, onSetIntent, onShowInFiles, onSmartFile, onSmartMetadata, onDelete, onRename, onDragStart, onDragOver, onDrop, onDragEnd },
+  { tab, active, isDragging, onSelect, onClose, onSetIntent, onShowInFiles, onSmartFile, onSmartMetadata, onDelete, onRename, isVirtual, onRestore, onDragStart, onDragOver, onDrop, onDragEnd },
   ref
 ) {
   const dot = tabDot(tab)
@@ -338,6 +343,8 @@ const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
           onSmartMetadata={onSmartMetadata}
           onDelete={onDelete}
           onRename={onRename}
+          isVirtual={isVirtual}
+          onRestore={onRestore}
         />
       )}
     </>

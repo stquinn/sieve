@@ -25,6 +25,7 @@ interface ParsedMeta {
   created: string | null
   modified: string | null
   cli: string | null
+  ai_keep?: boolean
 }
 
 function parseMeta(fm: string): ParsedMeta {
@@ -57,6 +58,7 @@ function parseMeta(fm: string): ParsedMeta {
     created:              str('created'),
     modified:             str('modified'),
     cli:                  str('cli'),
+    ai_keep:              str('ai_keep') === 'true' ? true : str('ai_keep') === 'false' ? false : undefined
   }
 }
 
@@ -98,6 +100,12 @@ export function MetaPanel({ meta: metaStr, path, width, isModified, isEvaluating
   const fileName = path.split('/').pop() ?? path
   const [activeTab, setActiveTab] = React.useState<'meta'|'history'>('meta')
   const [history, setHistory] = React.useState<any[]>([])
+  const [now, setNow] = React.useState(new Date())
+
+  React.useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000)
+    return () => clearInterval(timer)
+  }, [])
 
   React.useEffect(() => {
     if (activeTab === 'history' && meta?.uuid) {
@@ -113,10 +121,12 @@ export function MetaPanel({ meta: metaStr, path, width, isModified, isEvaluating
              style={{ cursor: 'pointer', color: activeTab === 'meta' ? 'var(--theme-text)' : 'var(--theme-muted)', borderBottom: activeTab === 'meta' ? '2px solid var(--theme-accentPrimary)' : '2px solid transparent', paddingBottom: '0.4rem', marginBottom: '-0.42rem' }} 
              onClick={() => setActiveTab('meta')}
           >Meta</span>
-          <span 
-             style={{ cursor: 'pointer', color: activeTab === 'history' ? 'var(--theme-text)' : 'var(--theme-muted)', borderBottom: activeTab === 'history' ? '2px solid var(--theme-accentPrimary)' : '2px solid transparent', paddingBottom: '0.4rem', marginBottom: '-0.42rem' }} 
-             onClick={() => setActiveTab('history')}
-          >History</span>
+          {!path.startsWith('prompt:') && (
+            <span 
+               style={{ cursor: 'pointer', color: activeTab === 'history' ? 'var(--theme-text)' : 'var(--theme-muted)', borderBottom: activeTab === 'history' ? '2px solid var(--theme-accentPrimary)' : '2px solid transparent', paddingBottom: '0.4rem', marginBottom: '-0.42rem' }} 
+               onClick={() => setActiveTab('history')}
+            >History</span>
+          )}
         </div>
         {(isEvaluating || isWaitingAI) && (
           <span className="meta-panel__ai-badge">
@@ -126,11 +136,14 @@ export function MetaPanel({ meta: metaStr, path, width, isModified, isEvaluating
         )}
       </div>
 
-      <div className="meta-panel__path" title={path}>{fileName}</div>
+      <div className="meta-panel__path !text-white/80 border-b border-tn-bg px-[0.9rem] font-medium" title={path}>{fileName}</div>
 
       {activeTab === 'meta' && (
         !hasMeta ? (
-          <div className="meta-panel__empty">No meta</div>
+          <>
+            <div className="meta-panel__empty !text-white/90">No meta</div>
+            <PromptReference path={path} />
+          </>
         ) : (
         <div className="meta-panel__fields">
           <Row label="Dirty">
@@ -141,12 +154,20 @@ export function MetaPanel({ meta: metaStr, path, width, isModified, isEvaluating
           </Row>
           <Row label="Version">{meta!.version ?? '—'}</Row>
           <Row label="Focus count">{meta!.focus_count ?? '—'}</Row>
+          <Row label="Now">
+            <span style={{ color: 'var(--theme-accentPrimary)' }}>{fmtDate(now.toISOString())}</span>
+          </Row>
 
           <Divider />
 
           <Row label="User intent">
             <span style={{ color: intentColour(meta!.user_intent) }}>
               {meta!.user_intent ?? 'null'}
+            </span>
+          </Row>
+          <Row label="AI keep">
+            <span style={{ color: meta!.ai_keep === true ? 'var(--theme-accentGreen)' : meta!.ai_keep === false ? 'var(--theme-accentRed)' : 'inherit', fontWeight: meta!.ai_keep === false ? 'bold' : 'normal' }}>
+              {meta!.ai_keep === true ? 'keep' : meta!.ai_keep === false ? 'discard' : '—'}
             </span>
           </Row>
           <Row label="AI eval">
@@ -192,6 +213,7 @@ export function MetaPanel({ meta: metaStr, path, width, isModified, isEvaluating
           <Row label="UUID">
             <span className="meta-panel__uuid">{meta!.uuid ?? '—'}</span>
           </Row>
+          <PromptReference path={path} />
         </div>
         )
       )}
@@ -205,7 +227,7 @@ export function MetaPanel({ meta: metaStr, path, width, isModified, isEvaluating
               <div key={snapshot.version} style={{ padding: '0.6rem 0.9rem', borderBottom: '1px solid var(--theme-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
                   <span style={{ color: 'var(--theme-text)', fontWeight: 600, fontSize: '14px' }}>Version {snapshot.version}</span>
-                  <span style={{ color: 'var(--theme-muted)', fontSize: '12px' }}>{fmtDate(snapshot.modified)} • {Math.round(snapshot.size / 1024)} KB</span>
+                  <span style={{ color: 'var(--theme-textDim)', fontSize: '12px' }}>{fmtDate(snapshot.modified)} • {Math.round(snapshot.size / 1024)} KB</span>
                 </div>
                 <button
                   style={{ background: 'var(--theme-bgAlt)', border: '1px solid var(--theme-border2)', color: 'var(--theme-text)', padding: '0.25rem 0.6rem', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}
@@ -242,6 +264,68 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 function Divider() {
   return <div className="meta-panel__divider" />
+}
+
+function PromptReference({ path }: { path: string }) {
+  if (!path.startsWith('prompt:')) return null
+  const type = path.split(':').pop()
+  
+  interface VarDef { name: string; desc: string }
+  const vars: Record<string, VarDef[]> = {
+    'file': [
+      { name: '{content}', desc: 'Note body text' },
+      { name: '{folder_list}', desc: 'Existing vault folders' },
+      { name: '{version}', desc: 'Doc version number' },
+      { name: '{focus_count}', desc: 'Open frequency' },
+      { name: '{created}', desc: 'Creation timestamp' },
+      { name: '{modified}', desc: 'Last modified timestamp' },
+      { name: '{now}', desc: 'Current timestamp' }
+    ],
+    'explain': [
+      { name: '{content}', desc: 'Selected/document text' },
+      { name: '{type}', desc: 'Detected content type' }
+    ],
+    'ask': [
+      { name: '{content}', desc: 'Context document content' },
+      { name: '{type}', desc: 'Detected content type' },
+      { name: '{history}', desc: 'Previous chat messages' },
+      { name: '{question}', desc: 'User\'s latest question' }
+    ],
+    'refine': [
+      { name: '{content}', desc: 'Code snippet to identify' }
+    ]
+  }
+
+  const list = vars[type || ''] || []
+  if (list.length === 0) return null
+
+  return (
+    <>
+      <Divider />
+      <div className="px-[0.9rem] py-[0.5rem]">
+        <div className="text-[11px] text-white/40 uppercase tracking-widest font-bold mb-3">Template Reference</div>
+        <table className="w-full text-[12px] border-collapse">
+          <tbody>
+            {list.map(v => (
+              <tr key={v.name} className="border-b border-tn-bg-alt/30 last:border-0">
+                <td className="py-1.5 pr-2 align-top">
+                  <code className="bg-tn-orange/10 text-tn-orange px-1 rounded font-mono whitespace-nowrap">
+                    {v.name}
+                  </code>
+                </td>
+                <td className="py-1.5 text-white/50 leading-tight">
+                  {v.desc}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="text-[10px] text-white/20 italic mt-4 leading-relaxed">
+          Tokens are replaced with live data when the feature is triggered.
+        </div>
+      </div>
+    </>
+  )
 }
 
 // React needed for JSX

@@ -195,6 +195,7 @@ type VaultInfo struct {
 	ThemeVars          vault.ThemeVars `json:"themeVars"`
 	MaxHistoryVersions int             `json:"maxHistoryVersions"`
 	CLITimeoutLong     int             `json:"cliTimeoutLong"`
+	ShowPrompts        bool            `json:"showPrompts"`
 }
 
 func (a *App) GetVaultInfo() VaultInfo {
@@ -220,6 +221,7 @@ func (a *App) GetVaultInfo() VaultInfo {
 		ThemeVars:          vault.LoadTheme(a.vault.Root, liveSettings.Theme, a.themesFS),
 		MaxHistoryVersions: liveSettings.MaxHistoryVersions,
 		CLITimeoutLong:     liveSettings.CLITimeoutLong,
+		ShowPrompts:        vault.LoadSession(a.vault.SessionPath()).ShowPrompts,
 	}
 }
 
@@ -250,6 +252,20 @@ func (a *App) SaveMetaWidth(width int) error {
 		return err
 	}
 	logger.Debug("meta width saved", "width", width)
+	return nil
+}
+
+func (a *App) SavePromptsHeight(height int) error {
+	if a.vault == nil {
+		return fmt.Errorf("vault not open")
+	}
+	session := vault.LoadSession(a.vault.SessionPath())
+	session.PromptsHeight = height
+	if err := session.Save(a.vault.SessionPath()); err != nil {
+		logger.Error("SavePromptsHeight failed", "err", err)
+		return err
+	}
+	logger.Debug("prompts height saved", "height", height)
 	return nil
 }
 
@@ -339,6 +355,114 @@ func (a *App) InitVault(path string) error {
 
 	logger.Info("vault initialized manually — READY", "path", abs)
 	return nil
+}
+
+// ── Prompts ───────────────────────────────────────────────────────────────────
+
+func (a *App) GetPrompts() []vault.PromptEntry {
+	if a.vault == nil {
+		return nil
+	}
+	settings := vault.LoadSettings(a.vault.SettingsPath())
+	prompts := []vault.PromptEntry{
+		{Name: "file", DisplayName: "Smart Filing", Path: settings.Prompts.File, IsVirtual: settings.Prompts.File == ""},
+		{Name: "explain", DisplayName: "Explain Content", Path: settings.Prompts.Explain, IsVirtual: settings.Prompts.Explain == ""},
+		{Name: "ask", DisplayName: "In-context Chat", Path: settings.Prompts.Ask, IsVirtual: settings.Prompts.Ask == ""},
+		{Name: "refine", DisplayName: "Language Detection", Path: settings.Prompts.Refine, IsVirtual: settings.Prompts.Refine == ""},
+	}
+	return prompts
+}
+
+func (a *App) LoadPrompt(name string) (string, error) {
+	if a.vault == nil {
+		return "", fmt.Errorf("vault not open")
+	}
+	settings := vault.LoadSettings(a.vault.SettingsPath())
+	return vault.GetPromptContent(name, settings)
+}
+
+func (a *App) SavePrompt(name string, content string) (string, error) {
+	if a.vault == nil {
+		return "", fmt.Errorf("vault not open")
+	}
+	
+	// Ensure the prompts directory exists
+	promptsDir := a.vault.PromptsPath()
+	if err := os.MkdirAll(promptsDir, 0755); err != nil {
+		return "", err
+	}
+
+	path := filepath.Join(promptsDir, name+".md")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		return "", err
+	}
+
+	// Update settings
+	settings := vault.LoadSettings(a.vault.SettingsPath())
+	switch name {
+	case "file":
+		settings.Prompts.File = path
+	case "explain":
+		settings.Prompts.Explain = path
+	case "ask":
+		settings.Prompts.Ask = path
+	case "refine":
+		settings.Prompts.Refine = path
+	}
+	if err := settings.Save(a.vault.SettingsPath()); err != nil {
+		return "", err
+	}
+
+	logger.Info("prompt saved", "name", name, "path", path)
+	runtime.EventsEmit(a.ctx, "prompts:changed")
+	return path, nil
+}
+
+func (a *App) RestorePrompt(name string) error {
+	if a.vault == nil {
+		return fmt.Errorf("vault not open")
+	}
+
+	settings := vault.LoadSettings(a.vault.SettingsPath())
+	var path string
+	switch name {
+	case "file":
+		path = settings.Prompts.File
+		settings.Prompts.File = ""
+	case "explain":
+		path = settings.Prompts.Explain
+		settings.Prompts.Explain = ""
+	case "ask":
+		path = settings.Prompts.Ask
+		settings.Prompts.Ask = ""
+	case "refine":
+		path = settings.Prompts.Refine
+		settings.Prompts.Refine = ""
+	}
+
+	if path != "" {
+		_ = os.Remove(path)
+	}
+
+	if err := settings.Save(a.vault.SettingsPath()); err != nil {
+		return err
+	}
+
+	logger.Info("prompt restored to default", "name", name)
+	runtime.EventsEmit(a.ctx, "prompts:changed")
+	return nil
+}
+
+func (a *App) TogglePrompts() (bool, error) {
+	if a.vault == nil {
+		return false, fmt.Errorf("vault not open")
+	}
+	session := vault.LoadSession(a.vault.SessionPath())
+	session.ShowPrompts = !session.ShowPrompts
+	if err := session.Save(a.vault.SessionPath()); err != nil {
+		return false, err
+	}
+	return session.ShowPrompts, nil
 }
 
 

@@ -18,6 +18,7 @@ const SHORTCUTS = [
   { keys: ['Tab'],                  desc: 'Indent 4 spaces' },
   { keys: ['Ctrl', 'Shift', 'M'],   desc: 'Toggle markdown / WYSIWYG mode' },
   { keys: ['Ctrl', '\\'],           desc: 'Toggle sidebar' },
+  { keys: ['Ctrl', 'Shift', 'P'],   desc: 'Toggle prompts section' },
   { keys: ['Ctrl', 'Shift', 'I'],   desc: 'Toggle meta panel' },
   { keys: ['Ctrl', '/'],            desc: 'Toggle this cheatsheet' },
   { keys: ['Ctrl', 'Click'],        desc: 'Open link in browser' },

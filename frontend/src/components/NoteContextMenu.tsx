@@ -17,9 +17,11 @@ interface Props {
   onSmartMetadata: () => void
   isDir?: boolean
   childCount?: number
+  isVirtual?: boolean
+  onRestore?: () => void
 }
 
-export function NoteContextMenu({ x, y, path, intent, onClose, onSetIntent, onDelete, onRename, onShowInFiles, onSmartFile, onSmartMetadata, isDir, childCount }: Props) {
+export function NoteContextMenu({ x, y, path, intent, onClose, onSetIntent, onDelete, onRename, onShowInFiles, onSmartFile, onSmartMetadata, isDir, childCount, isVirtual, onRestore }: Props) {
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -32,23 +34,40 @@ export function NoteContextMenu({ x, y, path, intent, onClose, onSetIntent, onDe
     return () => window.removeEventListener('mousedown', handler)
   }, [onClose])
 
+  const isPrompt = path.startsWith('prompt:')
+
+  if (isPrompt) {
+    return (
+      <div
+        ref={ref}
+        className="fixed z-[100] bg-tn-bg-alt border border-solid border-tn-border-2 rounded-md shadow-2xl py-1 min-w-[200px]"
+        style={{ top: y, left: x }}
+      >
+        <div className="px-3 py-1.5 text-[11px] text-white/70 font-mono bg-tn-bg-dark border-0 border-b border-solid border-white/20 uppercase tracking-wider truncate mb-1">
+          {path.split(':').pop()}.md
+        </div>
+        {!isVirtual && onRestore && (
+          <button
+            className="w-full bg-transparent border-none text-left px-3 py-1.5 text-[14px] text-tn-orange hover:bg-tn-border hover:text-white transition-colors flex items-center gap-2"
+            onClick={() => { onRestore(); onClose() }}
+          >
+            <RotateCcw className="w-4 h-4 opacity-70" />
+            Restore to Default
+          </button>
+        )}
+        <div className="px-3 py-1.5 text-[10px] text-white/50 uppercase tracking-[0.1em] font-bold italic border-t border-white/10 mt-1">
+          AI Instruction Template
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div
       ref={ref}
       className="fixed z-[100] bg-tn-bg-alt border border-solid border-tn-border-2 rounded-md shadow-2xl py-1 min-w-[200px]"
       style={{ top: y, left: x }}
     >
-      <div className="px-3 py-1.5 text-[11px] text-tn-muted font-mono bg-tn-bg-dark border-0 border-b border-solid border-white/20 uppercase tracking-wider truncate mb-1">
-        {path.split('/').pop()}
-      </div>
-
-      <button
-        className="w-full bg-transparent border-none text-left px-3 py-1.5 text-[14px] text-tn-text hover:bg-tn-border hover:text-white transition-colors flex items-center gap-2"
-        onClick={() => { onShowInFiles(); onClose() }}
-      >
-        <FolderOpen className="w-4 h-4 opacity-70" />
-        Show in Files
-      </button>
       {!isDir && (
         <>
           <button
@@ -121,7 +140,7 @@ export function NoteContextMenu({ x, y, path, intent, onClose, onSetIntent, onDe
       <button
         className={cn(
           "w-full bg-transparent border-none text-left px-3 py-1.5 text-[14px] text-tn-red transition-colors flex items-center gap-2",
-          isDir && childCount! > 0 ? "opacity-30 cursor-not-allowed" : "hover:bg-tn-red/10 hover:text-tn-red"
+          isDir && childCount! > 0 ? "opacity-30 cursor-not-allowed" : "hover:bg-tn-red hover:text-white"
         )}
         onClick={() => {
           if (isDir && childCount! > 0) return

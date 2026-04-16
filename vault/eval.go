@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // FilingRecommendation mirrors the expected JSON structure from the AI.
@@ -21,16 +21,9 @@ type FilingRecommendation struct {
 	Tags      []string `json:"tags"`
 }
 
-// getFilingPrompt retrieves the filing prompt template, substituting from
-// vault/{hostname}/prompts/file.md if exists.
 func (v *Vault) getFilingPrompt(settings Settings) string {
-	if settings.Prompts.File != "" {
-		b, err := os.ReadFile(filepath.Join(v.Root, settings.Prompts.File))
-		if err == nil && len(b) > 0 {
-			return string(b)
-		}
-	}
-	return DefaultFilingPrompt
+	p, _ := GetPromptContent("file", settings)
+	return p
 }
 
 // EvaluateBuffer executes the AI evaluation over a buffer on disk and returns the
@@ -48,7 +41,9 @@ func (v *Vault) EvaluateBuffer(path string, settings Settings) (*FilingRecommend
 
 	// Extract frontmatter meta specifically for version and focus_count via regex
 	versionStr := "1"
-	focusCountStr := "1"
+	focusCountStr := "0"
+	createdStr := "unknown"
+	modifiedStr := "unknown"
 	
 	if strings.HasPrefix(content, "---\n") {
 		parts := strings.SplitN(content[4:], "\n---\n", 2)
@@ -60,6 +55,12 @@ func (v *Vault) EvaluateBuffer(path string, settings Settings) (*FilingRecommend
 			}
 			if m := regexp.MustCompile(`(?m)^focus_count:\s*(\d+)`).FindStringSubmatch(metaStr); len(m) > 1 {
 				focusCountStr = m[1]
+			}
+			if m := regexp.MustCompile(`(?m)^created:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})`).FindStringSubmatch(metaStr); len(m) > 1 {
+				createdStr = m[1]
+			}
+			if m := regexp.MustCompile(`(?m)^modified:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})`).FindStringSubmatch(metaStr); len(m) > 1 {
+				modifiedStr = m[1]
 			}
 			content = parts[1]
 		}
@@ -82,6 +83,9 @@ func (v *Vault) EvaluateBuffer(path string, settings Settings) (*FilingRecommend
 	prompt := strings.Replace(promptTmpl, "{folder_list}", folderList, 1)
 	prompt = strings.Replace(prompt, "{version}", versionStr, 1)
 	prompt = strings.Replace(prompt, "{focus_count}", focusCountStr, 1)
+	prompt = strings.Replace(prompt, "{created}", createdStr, 1)
+	prompt = strings.Replace(prompt, "{modified}", modifiedStr, 1)
+	prompt = strings.Replace(prompt, "{now}", time.Now().Format(time.RFC3339), 1)
 	prompt = strings.Replace(prompt, "{content}", content, 1)
 
 	respText, err := RunCLI(settings.CLI, prompt, settings.Model, settings.CLITimeout)
@@ -105,28 +109,14 @@ func (v *Vault) EvaluateBuffer(path string, settings Settings) (*FilingRecommend
 	return &rec, nil
 }
 
-// getExplainPrompt retrieves the explain prompt template from disk or falls back to
-// the baked-in default.
 func (v *Vault) getExplainPrompt(settings Settings) string {
-	if settings.Prompts.Explain != "" {
-		b, err := os.ReadFile(filepath.Join(v.Root, settings.Prompts.Explain))
-		if err == nil && len(b) > 0 {
-			return string(b)
-		}
-	}
-	return DefaultExplainPrompt
+	p, _ := GetPromptContent("explain", settings)
+	return p
 }
 
-// getAskPrompt retrieves the ask prompt template from disk or falls back to the
-// baked-in default.
 func (v *Vault) getAskPrompt(settings Settings) string {
-	if settings.Prompts.Ask != "" {
-		b, err := os.ReadFile(filepath.Join(v.Root, settings.Prompts.Ask))
-		if err == nil && len(b) > 0 {
-			return string(b)
-		}
-	}
-	return DefaultAskPrompt
+	p, _ := GetPromptContent("ask", settings)
+	return p
 }
 
 // RunExplain asks the CLI to explain the given content and returns the response
@@ -188,10 +178,8 @@ func detectContentType(content string) string {
 // code snippet. Returns the lowercase language name or an empty string if the CLI
 // returns something unrecognised or if the call fails.
 func RefineLanguage(content string, settings Settings) (string, error) {
-	prompt := "Identify the programming language of this code snippet.\n" +
-		"Reply with ONLY the lowercase language name (e.g. python, go, javascript, typescript, rust, java, c, cpp, sql, bash, yaml, json, xml, html, css, ruby, php, swift, kotlin, dart).\n" +
-		"If you cannot identify a specific language confidently, reply with exactly: text\n\n" +
-		"Code:\n" + content
+	promptTmpl, _ := GetPromptContent("refine", settings)
+	prompt := strings.Replace(promptTmpl, "{content}", content, 1)
 
 	resp, err := RunCLI(settings.CLI, prompt, settings.Model, 10)
 	if err != nil {
@@ -222,15 +210,13 @@ func RefineLanguage(content string, settings Settings) (string, error) {
 // in markdown or conversational chatter.
 func extractJSONFallback(text string) string {
 	text = strings.TrimSpace(text)
-	if strings.HasPrefix(text, "{") && strings.HasSuffix(text, "}") {
-		return text // Already raw valid json
-	}
+	
+	// Remove markdown code fences if present
+	text = regexp.MustCompile(`(?s)^?(\x60\x60\x60(json)?\n?)(.*?)(\n?\x60\x60\x60)?$`).ReplaceAllString(text, "$3")
+	text = strings.TrimSpace(text)
 
-	// Hunt for fenced JSON blocks
-	re := regexp.MustCompile(`(?s)\x60\x60\x60(?:json)?\s*(\{.*?\})\s*\x60\x60\x60`)
-	matches := re.FindStringSubmatch(text)
-	if len(matches) > 1 {
-		return matches[1]
+	if strings.HasPrefix(text, "{") && strings.HasSuffix(text, "}") {
+		return text 
 	}
 
 	// Desperate heuristic for the first `{` to the last `}`

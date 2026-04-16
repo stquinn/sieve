@@ -1,40 +1,62 @@
 package vault
 
+import (
+	"os"
+)
+
+// PromptEntry represents a prompt available in the system.
+type PromptEntry struct {
+	Name        string `json:"name"`        // e.g. "file", "explain", "ask"
+	DisplayName string `json:"displayName"` // e.g. "file.md"
+	Path        string `json:"path"`        // absolute path if override exists, otherwise empty
+	IsVirtual   bool   `json:"isVirtual"`   // true if using baked-in default
+}
+
 // DefaultPrompts baked into the binary to provide zero-config AI interactions.
 // Users can override these by editing the copies written to vault/{hostname}/prompts/
 // and modifying settings.json.
 
 const DefaultFilingPrompt = `Given the following content, decide if it is worth keeping
-as a permanent note.
+as a permanent note in a knowledge vault.
 
 Existing folders: {folder_list}
 Select the most appropriate existing folder for this content.
 If the content belongs to a distinct topic not covered by existing folders, suggest a new, appropriately named folder.
 If the content is too generic, leave the folder empty for root.
 
-Importance signals:
-- version: {version} — higher means more curation by user
-- focus_count: {focus_count} — higher means repeatedly returned to
-- v1 with focus_count 0 is almost certainly throwaway
-- v10+ with focus_count 4+ is almost certainly worth keeping
+### Document Context:
+- Current Time: {now}
+- Created: {created}
+- Modified: {modified}
+- Focus Signal: {focus_count} (Indicates active engagement time)
+- Iteration: {version} (Indicates manual user refinement)
 
-Generate rich semantic tags — not just literal terms but related
-concepts, technologies, and topics that would help find this note
-later. Err on the side of more tags rather than fewer.
+### Evaluation Criteria (BE CRITICAL):
+- Information Density: Is the content substantial? Gibberish, single sentences, or trivial tests should be discarded.
+- Age/Staleness: Take into account how old the document is relative to 'Current Time'.
+- Engagement: Look at 'Focus Signal' and the duration between 'Created' and 'Modified'.
+- Refinement: Use 'Iteration' (version) to gauge if the note has been improved by the user over time.
 
-CRITICAL: You MUST provide a descriptive kebab-case filename even if you decide the note is not worth keeping.
+### Voting Logic:
+- keep:false IF content is low-density or gibberish.
+- keep:false IF version is 1 AND focus_count is 0 AND the content is trivial.
+- keep:true IF content contains useful info, code, or structured thoughts.
+- keep:true IF version > 2 OR focus_count > 1 (indicates intent to preserve).
 
-Respond ONLY with valid JSON. No preamble. No markdown fences.
+Generate rich semantic tags — relate it to broader technologies and topics.
 
+CRITICAL: You MUST provide a descriptive kebab-case filename even if you decide keep:false.
+
+Respond ONLY with raw JSON. DO NOT use markdown code fences (triple backticks). No preamble or explanation.
 {
   "keep": true,
-  "title": "Short human-readable title, max 20 chars",
-  "filename": "meaningful-kebab-case-name.md",
-  "folder": "suggested-folder-name",
-  "new_folder": true, // set to true ONLY if suggesting a folder not in the Existing folders list
-  "type": "detected language or content type",
-  "summary": "one line description",
-  "tags": ["tag1", "tag2", "tag3"]
+  "title": "Short title",
+  "filename": "meaningful-name.md",
+  "folder": "folder-name",
+  "new_folder": true,
+  "type": "content type",
+  "summary": "brief summary",
+  "tags": ["tag1", "tag2"]
 }
 
 Content:
@@ -75,3 +97,47 @@ Respond ONLY with valid JSON. No preamble.
   "description": "brief description for alt text"
 }
 `
+
+const DefaultRefinePrompt = `Identify the programming language of this code snippet.
+Reply with ONLY the lowercase language name (e.g. python, go, javascript, typescript, rust, java, c, cpp, sql, bash, yaml, json, xml, html, css, ruby, php, swift, kotlin, dart).
+If you cannot identify a specific language confidently, reply with exactly: text
+
+Code:
+{content}
+`
+// GetPromptContent returns the content of the requested prompt.
+// It checks settings for an override path first, then falls back to baked-in defaults.
+func GetPromptContent(name string, settings Settings) (string, error) {
+	var path string
+	var defaultContent string
+
+	switch name {
+	case "file":
+		path = settings.Prompts.File
+		defaultContent = DefaultFilingPrompt
+	case "explain":
+		path = settings.Prompts.Explain
+		defaultContent = DefaultExplainPrompt
+	case "ask":
+		path = settings.Prompts.Ask
+		defaultContent = DefaultAskPrompt
+	case "image":
+		defaultContent = DefaultImagePrompt
+	case "refine":
+		path = settings.Prompts.Refine
+		defaultContent = DefaultRefinePrompt
+	default:
+		return "", os.ErrNotExist
+	}
+
+	if path != "" {
+		// Try reading override from disk
+		data, err := os.ReadFile(path)
+		if err == nil {
+			return string(data), nil
+		}
+		// If path is set but file is missing, we fall back to default silently per spec
+	}
+
+	return defaultContent, nil
+}

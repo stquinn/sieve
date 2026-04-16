@@ -36,6 +36,7 @@ type Prompts struct {
 	File    string `json:"file,omitempty"`
 	Explain string `json:"explain,omitempty"`
 	Ask     string `json:"ask,omitempty"`
+	Refine  string `json:"refine,omitempty"`
 }
 
 // Tier returns the capability tier based on whether the configured CLI is
@@ -129,6 +130,9 @@ func LoadSettings(path string) Settings {
 	}
 	if loaded.Prompts.Ask != "" {
 		s.Prompts.Ask = loaded.Prompts.Ask
+	}
+	if loaded.Prompts.Refine != "" {
+		s.Prompts.Refine = loaded.Prompts.Refine
 	}
 	if loaded.Theme != "" {
 		s.Theme = loaded.Theme

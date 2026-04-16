@@ -29,16 +29,18 @@ type Window struct {
 type Session struct {
 	Tabs         []Tab  `json:"tabs"`
 	Window       Window `json:"window,omitempty"`
-	SidebarWidth int    `json:"sidebarWidth,omitempty"`
-	MetaWidth    int    `json:"metaWidth,omitempty"`
-	ShowSidebar  bool   `json:"showSidebar"`
-	ShowMeta     bool   `json:"showMeta"`
+	SidebarWidth  int    `json:"sidebarWidth,omitempty"`
+	MetaWidth     int    `json:"metaWidth,omitempty"`
+	ShowSidebar   bool   `json:"showSidebar"`
+	ShowMeta      bool   `json:"showMeta"`
+	ShowPrompts   bool   `json:"showPrompts"`
+	PromptsHeight int    `json:"promptsHeight,omitempty"`
 }
 
 // LoadSession reads session.json at path. Missing or corrupt file returns an
 // empty session — caller is responsible for opening a default tab.
 func LoadSession(path string) Session {
-	s := Session{ShowSidebar: true}
+	s := Session{ShowSidebar: true, ShowPrompts: true, PromptsHeight: 180}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return s

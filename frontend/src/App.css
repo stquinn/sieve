@@ -316,6 +316,18 @@ textarea::selection {
 .sidebar__file:hover { background: var(--theme-bgAlt); color: var(--theme-text); }
 .sidebar__file--open { color: var(--theme-accentCyan); }
 
+/* ── Sidebar Prompts ────────────────────────────────────────────────── */
+
+.sidebar__prompts-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar__prompts-list .sidebar__file {
+  font-size: 14px;
+  padding: 0.25rem 1rem 0.25rem 1.5rem;
+}
+
 /* ── Sidebar resize handle ───────────────────────────────────────────── */
 
 .sidebar-handle {

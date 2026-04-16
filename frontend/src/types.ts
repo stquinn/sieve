@@ -16,6 +16,7 @@ export interface TabState {
   isModified?: boolean    // true if body has unsaved edits
   isEvaluating?: boolean  // true if executing backend smart AI evaluations (force-file)
   isWaitingAI?: boolean   // true during Explain/Ask AI calls (tab spinner only, no editor overlay)
+  isVirtual?: boolean     // true for prompt templates without disk overrides
   aiJobName?: string      // the specific name of the job e.g. 'Ask', 'Explain', 'Filing'
 }
 
