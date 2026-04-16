@@ -23,10 +23,25 @@ import { ReactNodeViewRenderer, NodeViewWrapper, NodeViewContent } from '@tiptap
  * into a <div data-type="aiBlock"> before Tiptap's ProseMirror parser runs.
  */
 
-function AiBlockView() {
+function AiBlockView({ node }: any) {
+  const getTargetBlock = (): HTMLElement | null => {
+    const ref = node.attrs.ref
+    if (!ref || ref === 'doc') return null
+    return document.querySelector(`[data-block-id="${ref}"]`) as HTMLElement | null
+  }
+
+  const activate = () => getTargetBlock()?.classList.add('block-ref-active')
+  const deactivate = () => getTargetBlock()?.classList.remove('block-ref-active')
+
   return (
     <NodeViewWrapper>
-      <div className="ai-block">
+      <div
+        className="ai-block"
+        onMouseEnter={activate}
+        onMouseLeave={deactivate}
+        onFocus={activate}
+        onBlur={deactivate}
+      >
         <span className="ai-block__badge">AI</span>
         <NodeViewContent className="ai-block__content" />
       </div>

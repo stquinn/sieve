@@ -1,4 +1,5 @@
 import { DOMParser as ProseMirrorDOMParser, Fragment } from '@tiptap/pm/model'
+import { wrapIn } from '@tiptap/pm/commands'
 import { useEditor, EditorContent, BubbleMenu, Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
@@ -15,10 +16,10 @@ import { vault } from '../wailsjs/go/models'
 import { UserIntent } from './types'
 import { BrowserOpenURL, EventsOn, EventsOff, Quit } from '../wailsjs/runtime/runtime'
 import { CodeBlockWithAttrs } from './extensions/CodeBlockWithAttrs'
-import { BlockIdMark } from './extensions/BlockIdMark'
 import { ImageWithAttrs } from './extensions/ImageWithAttrs'
 import { AiBlockDecoration } from './extensions/AiBlockDecoration'
 import { AiBlock } from './extensions/AiBlock'
+import { BlockNode } from './extensions/BlockNode'
 import { detectLanguage } from './utils/pasteHeuristics'
 import { TabBar } from './components/TabBar'
 import { HelpModal } from './components/HelpModal'
@@ -377,7 +378,7 @@ export default function App() {
       Placeholder.configure({
         placeholder: ({ editor }) => editor.isEmpty ? 'Start writing…' : '',
       }),
-      BlockIdMark,
+      BlockNode,
       Table.configure({ resizable: false }),
       TableRow,
       TableHeader,
@@ -1930,6 +1931,8 @@ export default function App() {
       const sourceRef = refs[0]
       let sourceContent = ''
       if (sourceRef && sourceRef !== 'doc') {
+        // Scan for the node whose id matches sourceRef — covers [!block] nodes,
+        // code blocks, and any other node type that carries an id attribute.
         doc.descendants((node) => {
           if (node.attrs?.id === sourceRef) { sourceContent = node.textContent; return false }
         })
@@ -2006,11 +2009,28 @@ export default function App() {
 
     // Text selection — use selected text as content.
     const selectedText = doc.textBetween(from, to, '\n')
-    let selectedCodeBlockId = ''
+
+    // Check if the selection is already inside a [!block] node — if so, reuse
+    // its id so re-asking the same selection doesn't create a nested wrapper.
+    let existingBlockId = ''
     doc.nodesBetween(from, to, (node) => {
-      if (node.type.name === 'codeBlock' && node.attrs.id) selectedCodeBlockId = node.attrs.id
+      if (!existingBlockId && node.type.name === 'blockRef' && node.attrs.id) {
+        existingBlockId = node.attrs.id
+        return false
+      }
     })
-    const blockRef = selectedCodeBlockId || 'blk-' + Math.random().toString(16).substring(2, 6)
+
+    const blockRef = existingBlockId || 'blk-' + Math.random().toString(16).substring(2, 6)
+
+    if (!existingBlockId) {
+      // Wrap the selected block(s) in a [!block] node so the AI response can
+      // link back to this exact content in the document.
+      editor.chain()
+        .command(({ state, dispatch }) =>
+          wrapIn(state.schema.nodes.blockRef, { id: blockRef })(state, dispatch)
+        )
+        .run()
+    }
     return { content: selectedText, blockRef, history: '', contextLabel: 'Selection' }
   }
 

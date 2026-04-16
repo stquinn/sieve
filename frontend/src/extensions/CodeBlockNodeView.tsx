@@ -15,7 +15,7 @@ export function CodeBlockNodeView({ node }: NodeViewProps) {
   })
 
   return (
-    <NodeViewWrapper as="div" className="code-block">
+    <NodeViewWrapper as="div" className="code-block" data-block-id={node.attrs.id}>
       <div className="code-block__gutter" contentEditable={false} aria-hidden="true">
         {Array.from({ length: Math.max(lineCount, 1) }, (_, i) => (
           <span key={i}>{i + 1}</span>

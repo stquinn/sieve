@@ -469,6 +469,27 @@ textarea::selection {
   font-style: italic;
 }
 
+/* ── Block target nodes ──────────────────────────────────────────────── */
+/* BlockNode is a transparent wrapper — content looks identical to        */
+/* unwrapped content at rest.  When the cursor is inside or hovering over */
+/* a referencing aiBlock, the class `block-ref-active` is toggled via     */
+/* direct DOM manipulation in AiBlockView, fading in a subtle highlight.  */
+
+.block-node {
+  border-radius: 4px;
+  transition: background-color 0.2s ease;
+}
+
+.block-node.block-ref-active {
+  background-color: color-mix(in srgb, var(--theme-accentPrimary) 8%, transparent);
+}
+
+.block-node.block-ref-active .code-block,
+.tiptap .code-block.block-ref-active {
+  background: color-mix(in srgb, var(--theme-accentPrimary) 10%, var(--theme-bgDark));
+  border-color: color-mix(in srgb, var(--theme-accentPrimary) 30%, var(--theme-border));
+}
+
 /* ── AI response blocks ──────────────────────────────────────────────── */
 /* AiBlock is a proper ProseMirror node rendered via a React NodeView.   */
 /* The container div owns the border/padding — content renders naturally  */
@@ -531,6 +552,7 @@ textarea::selection {
   font-family: var(--theme-monoFont);
   font-size: 0.85em;
   line-height: 1.6;
+  transition: background 0.2s ease, border-color 0.2s ease;
 }
 
 .tiptap .code-block__gutter {
