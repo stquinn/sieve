@@ -5,6 +5,7 @@ interface Props {
   isModified: boolean
   isEvaluating?: boolean
   isWaitingAI?: boolean
+  onRestoreRequested?: (body: string) => void
 }
 
 interface ParsedMeta {
@@ -90,16 +91,33 @@ function evalColour(v: string | null): string {
   return 'var(--theme-muted)'
 }
 
-export function MetaPanel({ meta: metaStr, path, width, isModified, isEvaluating, isWaitingAI }: Props) {
+export function MetaPanel({ meta: metaStr, path, width, isModified, isEvaluating, isWaitingAI, onRestoreRequested }: Props) {
   const hasMeta = metaStr.trim().startsWith('---')
   const meta = hasMeta ? parseMeta(metaStr) : null
 
   const fileName = path.split('/').pop() ?? path
+  const [activeTab, setActiveTab] = React.useState<'meta'|'history'>('meta')
+  const [history, setHistory] = React.useState<any[]>([])
+
+  React.useEffect(() => {
+    if (activeTab === 'history' && meta?.uuid) {
+      GetBufferHistory(meta.uuid).then(res => setHistory(res || []))
+    }
+  }, [activeTab, meta?.uuid, meta?.version])
 
   return (
     <div className="meta-panel" style={{ width }}>
-      <div className="meta-panel__header">
-        Meta
+      <div className="meta-panel__header" style={{ display: 'flex', gap: '0.8rem', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '1rem', flex: 1, position: 'relative', top: '1px' }}>
+          <span 
+             style={{ cursor: 'pointer', color: activeTab === 'meta' ? 'var(--theme-text)' : 'var(--theme-muted)', borderBottom: activeTab === 'meta' ? '2px solid var(--theme-accentPrimary)' : '2px solid transparent', paddingBottom: '0.4rem', marginBottom: '-0.42rem' }} 
+             onClick={() => setActiveTab('meta')}
+          >Meta</span>
+          <span 
+             style={{ cursor: 'pointer', color: activeTab === 'history' ? 'var(--theme-text)' : 'var(--theme-muted)', borderBottom: activeTab === 'history' ? '2px solid var(--theme-accentPrimary)' : '2px solid transparent', paddingBottom: '0.4rem', marginBottom: '-0.42rem' }} 
+             onClick={() => setActiveTab('history')}
+          >History</span>
+        </div>
         {(isEvaluating || isWaitingAI) && (
           <span className="meta-panel__ai-badge">
             <span className="meta-panel__ai-spinner" />
@@ -110,9 +128,10 @@ export function MetaPanel({ meta: metaStr, path, width, isModified, isEvaluating
 
       <div className="meta-panel__path" title={path}>{fileName}</div>
 
-      {!hasMeta ? (
-        <div className="meta-panel__empty">No meta</div>
-      ) : (
+      {activeTab === 'meta' && (
+        !hasMeta ? (
+          <div className="meta-panel__empty">No meta</div>
+        ) : (
         <div className="meta-panel__fields">
           <Row label="Dirty">
             <span style={{ color: isModified ? 'var(--theme-accentYellow)' : 'var(--theme-accentGreen)' }}>{isModified ? 'true' : 'false'}</span>
@@ -174,7 +193,40 @@ export function MetaPanel({ meta: metaStr, path, width, isModified, isEvaluating
             <span className="meta-panel__uuid">{meta!.uuid ?? '—'}</span>
           </Row>
         </div>
+        )
       )}
+
+      {activeTab === 'history' && (
+        <div className="meta-panel__fields">
+          {history.filter(h => h.version !== Number(meta?.version)).length === 0 ? (
+            <div className="meta-panel__empty">No historical snapshots found.</div>
+          ) : (
+            history.filter(h => h.version !== Number(meta?.version)).map(snapshot => (
+              <div key={snapshot.version} style={{ padding: '0.6rem 0.9rem', borderBottom: '1px solid var(--theme-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                  <span style={{ color: 'var(--theme-text)', fontWeight: 600, fontSize: '14px' }}>Version {snapshot.version}</span>
+                  <span style={{ color: 'var(--theme-muted)', fontSize: '12px' }}>{fmtDate(snapshot.modified)} • {Math.round(snapshot.size / 1024)} KB</span>
+                </div>
+                <button
+                  style={{ background: 'var(--theme-bgAlt)', border: '1px solid var(--theme-border2)', color: 'var(--theme-text)', padding: '0.25rem 0.6rem', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--theme-accentPrimary)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'var(--theme-bgAlt)'}
+                  onClick={() => {
+                    if (window.confirm(`Restore version ${snapshot.version}?\n\nThis will safely overwrite your current text body, but preserve your live tags and document status. The canonical version will be bumped up.`)) {
+                       GetBufferHistoryBody(meta!.uuid!, snapshot.version)
+                         .then((body) => onRestoreRequested?.(body))
+                         .catch(console.error)
+                    }
+                  }}
+                >
+                  Restore
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
     </div>
   )
 }
@@ -194,3 +246,4 @@ function Divider() {
 
 // React needed for JSX
 import React from 'react'
+import { GetBufferHistory, GetBufferHistoryBody } from '../../wailsjs/go/main/App'

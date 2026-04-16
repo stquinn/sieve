@@ -385,6 +385,9 @@ export default function App() {
     ],
     content: '',
     editorProps: {
+      attributes: {
+        spellcheck: 'true',
+      },
       handlePaste(view, event) {
         if (!event.clipboardData || !editor) return false
 
@@ -2504,7 +2507,7 @@ export default function App() {
           )}
 
           {isMarkdownMode
-            ? <textarea className="markdown-raw" value={rawMd} onChange={e => {
+            ? <textarea spellCheck={true} className="markdown-raw" value={rawMd} onChange={e => {
                 const val = e.target.value
                 setRawMd(val)
                 if (activeTab) {
@@ -2521,8 +2524,8 @@ export default function App() {
                   })
                 }
               }}
-                        placeholder="Raw markdown — Ctrl+Shift+M to return" spellCheck={false} autoFocus />
-            : <EditorContent editor={editor} />
+                        placeholder="Raw markdown — Ctrl+Shift+M to return" autoFocus />
+            : <div spellCheck={true} lang="en-US" style={{ display: 'contents' }}><EditorContent editor={editor} /></div>
           }
         </div>
         {showMeta && activeTab && (
@@ -2538,6 +2541,35 @@ export default function App() {
               isModified={activeTab.isModified ?? false}
               isEvaluating={activeTab.isEvaluating}
               isWaitingAI={activeTab.isWaitingAI}
+              onRestoreRequested={(body) => {
+                if (!activeTab) return
+                const uuid = activeTab.uuid
+
+                if (isMarkdownMode) {
+                  const fm = fmCache.current[uuid] ?? ''
+                  const full = fm + body
+                  setRawMd(full)
+                  
+                  // Force modified state since setRawMd doesn't trigger textarea onChange
+                  setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isModified: true, isEmpty: body.trim().length === 0 } : t))
+                  
+                  // Manually trigger autosave since Raw mode currently lacks auto-trigger on state change
+                  if (saveTimer.current) clearTimeout(saveTimer.current)
+                  saveTimer.current = setTimeout(() => {
+                    const finalFm = bumpFm(fm)
+                    fmCache.current[uuid] = finalFm
+                    savedBodyCache.current[uuid] = body
+                    const finalFull = finalFm + body
+                    saveBufferSafe(uuid, finalFull)
+                    mdCache.current[uuid] = finalFull
+                    const version = versionFromFm(finalFm)
+                    SaveVersionSnapshot(uuid, version, finalFull).catch(console.error)
+                  }, autosaveMs.current)
+                } else if (editor) {
+                  // This SHOULD trigger onUpdate if emitUpdate is true
+                  editor.commands.setContent(body, true)
+                }
+              }}
             />
           </>
         )}

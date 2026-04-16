@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	goruntime "runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -479,6 +481,55 @@ func (a *App) SaveBuffer(path string, content string) error {
 	}
 	logger.Debug("buffer saved", "path", path, "bytes", len(content))
 	return nil
+}
+
+func (a *App) GetBufferHistory(uuid string) []vault.HistorySnapshot {
+	if a.vault == nil {
+		return nil
+	}
+	return a.vault.ListHistory(uuid)
+}
+
+func splitFrontmatter(content string) (fm string, body string) {
+	if !strings.HasPrefix(content, "---\n") {
+		return "", content
+	}
+	end := strings.Index(content[4:], "\n---\n")
+	if end == -1 {
+		return "", content
+	}
+	return content[:end+9], content[end+9:]
+}
+
+func replaceAndBumpVersion(fm string) string {
+	versionRe := regexp.MustCompile(`(?m)^version:\s*(\d+)`)
+	m := versionRe.FindStringSubmatch(fm)
+	if m != nil {
+		if v, err := strconv.Atoi(m[1]); err == nil {
+			return versionRe.ReplaceAllString(fm, fmt.Sprintf("version: %d", v+1))
+		}
+	}
+	return fm
+}
+
+func (a *App) GetBufferHistoryBody(uuid string, targetVersion int) (string, error) {
+	if a.vault == nil {
+		return "", fmt.Errorf("vault not open")
+	}
+
+	p1 := filepath.Join(a.vault.HostHistoryDir(), fmt.Sprintf("%s.%d.md", uuid, targetVersion))
+	p2 := filepath.Join(a.vault.VaultHistoryDir(), fmt.Sprintf("%s.%d.md", uuid, targetVersion))
+
+	histData, err := os.ReadFile(p1)
+	if err != nil {
+		histData, err = os.ReadFile(p2)
+		if err != nil {
+			return "", fmt.Errorf("history file not found for version %d (checked global and local space)", targetVersion)
+		}
+	}
+
+	_, histBody := splitFrontmatter(string(histData))
+	return histBody, nil
 }
 
 func (a *App) EvaluateBuffer(path string) (*vault.FilingRecommendation, error) {

@@ -38,3 +38,9 @@
   - [ ] Prompt Management UI in Sidebar (virtual entries, edit/restore defaults)
   - [x] Hook up raw Markdown per-tab toggle (Ctrl+Shift+M)
   - [x] Debug Meta Panel complete feature mapping
+
+- [ ] Milestone 11: Feature Backlog (Discussion & Future Planning)
+  - [x] **Version History UI**: View `.history/` snapshots and restore content (preserving live frontmatter variables, bumping version counter).
+  - [ ] **Multimodal AI for Images**: "Ask" gesture support containing image contexts, plus automatic background generation of alt-text and semantic file names to enable diagram search indexing.
+  - [ ] **Diagram Rendering**: Native Mermaid.js / PlantUML code block rendering toggle (e.g. via Ctrl+P overlay inside Tiptap).
+  - [x] **Doc-wide Spell Check**: AI-driven grammar/spelling correction gesture or native editor configuration.

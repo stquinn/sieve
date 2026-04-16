@@ -17,6 +17,39 @@ func (v *Vault) VaultHistoryDir() string {
 	return filepath.Join(v.Root, ".history")
 }
 
+type HistorySnapshot struct {
+	Version int    `json:"version"`
+	ModTime string `json:"modified"`
+	Size    int64  `json:"size"`
+}
+
+// ListHistory returns all available historical snapshots for a UUID
+// in descending order (newest first).
+func (v *Vault) ListHistory(uuid string) []HistorySnapshot {
+	p1 := filepath.Join(v.HostHistoryDir(), uuid+".*.md")
+	p2 := filepath.Join(v.VaultHistoryDir(), uuid+".*.md")
+	m1, _ := filepath.Glob(p1)
+	m2, _ := filepath.Glob(p2)
+	matches := append(m1, m2...)
+
+	var res []HistorySnapshot
+	for _, f := range matches {
+		info, err := os.Stat(f)
+		if err != nil {
+			continue
+		}
+		res = append(res, HistorySnapshot{
+			Version: versionFromName(f),
+			ModTime: info.ModTime().Format("2006-01-02T15:04:05Z07:00"),
+			Size:    info.Size(),
+		})
+	}
+	sort.Slice(res, func(i, j int) bool {
+		return res[i].Version > res[j].Version
+	})
+	return res
+}
+
 // SaveVersionSnapshot writes {uuid}.{version}.md to the history dir.
 // content is the full fm+body that was just saved to the live file.
 func (v *Vault) SaveVersionSnapshot(uuid string, version int, content string) error {
