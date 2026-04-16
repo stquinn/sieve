@@ -32,7 +32,7 @@ export function ImageNodeView({ node, extension }: any) {
   const displaySrc = resolveDisplaySrc(src, activeTabPath)
 
   return (
-    <NodeViewWrapper as="span" style={{ display: 'inline-block' }}>
+    <NodeViewWrapper as="div" style={{ display: 'inline-block' }} data-block-id={node.attrs.id}>
       <img
         src={displaySrc}
         alt={alt ?? ''}
