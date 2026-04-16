@@ -1,5 +1,5 @@
 import { DOMParser as ProseMirrorDOMParser, Fragment } from '@tiptap/pm/model'
-import { useEditor, EditorContent, BubbleMenu } from '@tiptap/react'
+import { useEditor, EditorContent, BubbleMenu, Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -118,6 +118,41 @@ function setYamlField(yaml: string, key: string, val: any): string {
     // Append before the closing marker, ensuring a leading newline
     return yaml.replace(/\n---\n?$/, `\n${key}: ${strVal}\n---\n`)
   }
+}
+
+function EditorStats({ editor, isMarkdownMode, rawMd }: { editor: Editor | null, isMarkdownMode: boolean, rawMd: string }) {
+  const [stats, setStats] = useState({ chars: 0, lines: 0 })
+
+  useEffect(() => {
+    if (isMarkdownMode) {
+      const text = splitFrontmatter(rawMd).body
+      const chars = text.length
+      const lines = text === '' ? 0 : text.split('\n').length
+      setStats({ chars, lines })
+      return
+    }
+
+    if (!editor) return
+
+    const updateStats = () => {
+      const text = editor.state.doc.textBetween(0, editor.state.doc.content.size, '\n')
+      const chars = text.length
+      const lines = text === '' ? 0 : text.split('\n').length
+      setStats({ chars, lines })
+    }
+
+    updateStats()
+    editor.on('update', updateStats)
+    return () => { editor.off('update', updateStats) }
+  }, [editor, isMarkdownMode, rawMd])
+
+  return (
+    <>
+      <span title="Characters">{stats.chars} chars</span>
+      <span className="status-bar__sep">|</span>
+      <span title="Lines">{stats.lines} lines</span>
+    </>
+  )
 }
 
 export default function App() {
@@ -1049,7 +1084,7 @@ export default function App() {
     }
     evaluatingUuids.current.add(uuid)
     evalStartTimes.current[uuid] = Date.now()
-    setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isEvaluating: true } : t))
+    setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isEvaluating: true, aiJobName: 'Evaluating' } : t))
 
     // Write ai_eval:evaluating to disk so the state survives a reload
     const currentFmStart = fmCache.current[uuid] ?? ''
@@ -1150,7 +1185,7 @@ export default function App() {
     // before any await — otherwise the I/O round-trip delays the visual feedback.
     const willEval = tier === 'smart' && (forceEval || activeTab.status === 'unfiled')
     if (willEval && !evaluatingUuids.current.has(uuid)) {
-      setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isEvaluating: true } : t))
+      setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isEvaluating: true, aiJobName: 'Evaluating' } : t))
     }
 
     // Flush latest content to disk before evaluation reads it
@@ -1812,7 +1847,7 @@ export default function App() {
 
     pendingAiCount.current++
     evalStartTimes.current[capturedUuid] = Date.now()
-    setTabs(prev => prev.map(t => t.uuid === capturedUuid ? { ...t, isWaitingAI: true } : t))
+    setTabs(prev => prev.map(t => t.uuid === capturedUuid ? { ...t, isWaitingAI: true, aiJobName: 'Explain' } : t))
 
     console.log('[stash:ai] explain: firing', { aiId, uuid: capturedUuid, blockRef: ctx.blockRef, contentLen: ctx.content.length })
     Explain(ctx.content)
@@ -1861,7 +1896,7 @@ export default function App() {
 
     pendingAiCount.current++
     evalStartTimes.current[capturedUuid] = Date.now()
-    setTabs(prev => prev.map(t => t.uuid === capturedUuid ? { ...t, isWaitingAI: true } : t))
+    setTabs(prev => prev.map(t => t.uuid === capturedUuid ? { ...t, isWaitingAI: true, aiJobName: 'Ask' } : t))
 
     console.log('[stash:ai] ask: firing', { aiId, uuid: capturedUuid, blockRef: ctx.blockRef, question: question.slice(0, 60) })
     Ask(ctx.content, ctx.history, question)
@@ -2385,30 +2420,33 @@ export default function App() {
         )}
         </div>
 
-        {/* AI Status Bar — shown when any tab has a background AI task running */}
-        {hasActiveAiTasks && (
-          <div className="ai-status-bar">
+        {/* Status Bar */}
+        <div className="status-bar">
+          <div className="status-bar__left">
             {tabs.filter(t => t.isEvaluating || t.isWaitingAI).map(t => {
               const label = t.displayName || t.path.split('/').pop()?.replace(/\.md$/, '') || 'note'
-              const task  = t.isWaitingAI ? 'Thinking' : 'Evaluating'
+              const task  = t.aiJobName || (t.isWaitingAI ? 'Thinking' : 'Evaluating')
               const secs  = evalStartTimes.current[t.uuid]
                 ? Math.floor((Date.now() - evalStartTimes.current[t.uuid]) / 1000)
                 : null
               void aiTick  // consumed so the component re-renders each tick
               return (
-                <div key={t.uuid} className="ai-status-bar__item">
-                  <span className="ai-status-bar__spinner" />
-                  <span className="ai-status-bar__task">{task}</span>
-                  <span className="ai-status-bar__sep">—</span>
-                  <span className="ai-status-bar__note">{label}</span>
+                <div key={t.uuid} className="status-bar__item">
+                  <span className="status-bar__spinner" />
+                  <span className="status-bar__task">{task}</span>
+                  <span className="status-bar__sep">—</span>
+                  <span className="status-bar__note">{label}</span>
                   {secs !== null && secs > 0 && (
-                    <span className="ai-status-bar__elapsed">{secs}s</span>
+                    <span className="status-bar__elapsed">{secs}s</span>
                   )}
                 </div>
               )
             })}
           </div>
-        )}
+          <div className="status-bar__right">
+            <EditorStats editor={editor} isMarkdownMode={isMarkdownMode} rawMd={rawMd} />
+          </div>
+        </div>
       </div>
 
       {showAskPopup && askContextRef.current && (
