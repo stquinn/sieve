@@ -3,6 +3,8 @@ interface Props {
   path: string
   width: number
   isModified: boolean
+  isEvaluating?: boolean
+  isWaitingAI?: boolean
 }
 
 interface ParsedMeta {
@@ -88,7 +90,7 @@ function evalColour(v: string | null): string {
   return 'var(--theme-muted)'
 }
 
-export function MetaPanel({ meta: metaStr, path, width, isModified }: Props) {
+export function MetaPanel({ meta: metaStr, path, width, isModified, isEvaluating, isWaitingAI }: Props) {
   const hasMeta = metaStr.trim().startsWith('---')
   const meta = hasMeta ? parseMeta(metaStr) : null
 
@@ -96,7 +98,15 @@ export function MetaPanel({ meta: metaStr, path, width, isModified }: Props) {
 
   return (
     <div className="meta-panel" style={{ width }}>
-      <div className="meta-panel__header">Meta</div>
+      <div className="meta-panel__header">
+        Meta
+        {(isEvaluating || isWaitingAI) && (
+          <span className="meta-panel__ai-badge">
+            <span className="meta-panel__ai-spinner" />
+            {isWaitingAI ? 'Thinking' : 'Evaluating'}
+          </span>
+        )}
+      </div>
 
       <div className="meta-panel__path" title={path}>{fileName}</div>
 

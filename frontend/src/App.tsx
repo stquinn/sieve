@@ -147,6 +147,7 @@ export default function App() {
   const [notes, setNotes]         = useState<NoteEntry[]>([])
   const [timeoutPopup, setTimeoutPopup] = useState<{ path: string; suggestedName: string } | null>(null)
   const [showAskPopup, setShowAskPopup] = useState(false)
+  const [aiTick, setAiTick]             = useState(0)  // increments every second while AI tasks run
   // Captures the context for the pending ask — set when popup opens, read on send.
   const askContextRef = useRef<{ content: string; blockRef: string; history: string; contextLabel: string } | null>(null)
   const [vaultInfo, setVaultInfo] = useState<{ root: string; themeName: string; } | null>(null)
@@ -177,6 +178,8 @@ export default function App() {
   const evaluatingUuids = useRef<Set<string>>(new Set())
   // Count of in-flight Explain/Ask calls (no per-UUID exclusivity needed, just close-blocking)
   const pendingAiCount  = useRef(0)
+  // Timestamps (ms) when each AI task started — keyed by tab UUID
+  const evalStartTimes  = useRef<Record<string, number>>({})
 
   useEffect(() => { showSidebarRef.current = showSidebar }, [showSidebar])
   useEffect(() => { showMetaRef.current = showMeta }, [showMeta])
@@ -1045,6 +1048,7 @@ export default function App() {
       return
     }
     evaluatingUuids.current.add(uuid)
+    evalStartTimes.current[uuid] = Date.now()
     setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isEvaluating: true } : t))
 
     // Write ai_eval:evaluating to disk so the state survives a reload
@@ -1142,6 +1146,13 @@ export default function App() {
       ? splitFrontmatter(mdCache.current[uuid] ?? rawMd).body
       : (editor?.storage.markdown.getMarkdown() ?? '')
 
+    // If we already know a background eval is coming, show the spinner immediately
+    // before any await — otherwise the I/O round-trip delays the visual feedback.
+    const willEval = tier === 'smart' && (forceEval || activeTab.status === 'unfiled')
+    if (willEval && !evaluatingUuids.current.has(uuid)) {
+      setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isEvaluating: true } : t))
+    }
+
     // Flush latest content to disk before evaluation reads it
     if (isMarkdownMode) {
       if (rawMd !== mdCache.current[uuid]) {
@@ -1159,8 +1170,8 @@ export default function App() {
       }
     }
 
-    if (tier === 'smart' && (forceEval || activeTab.status === 'unfiled')) {
-      // Hand off to background — returns immediately, tab shows spinner
+    if (willEval) {
+      // Hand off to background — returns immediately, spinner already visible
       const fileAfter = activeTab.status === 'unfiled' && !skipFile
       runBackgroundEval(uuid, path, fileAfter)
       return
@@ -1326,19 +1337,28 @@ export default function App() {
 
   async function handleSmartFile(path: string) {
     if (tier !== 'smart') return
-    console.log('[stash:ai] Smart File: start', { path })
-    const tabIdx = tabs.findIndex(t => t.path === path)
-    if (tabIdx !== -1) {
-      setTabs(prev => prev.map((t, i) => i === tabIdx ? { ...t, isEvaluating: true } : t))
+    const tab = tabsRef.current.find(t => t.path === path)
+    if (tab) {
+      // Tab is open — flush unsaved active content then hand off to background eval
+      if (tab === activeTab) {
+        const body = editor?.storage.markdown.getMarkdown() ?? ''
+        if (body !== savedBodyCache.current[tab.uuid]) {
+          const fm = bumpFm(fmCache.current[tab.uuid] ?? '')
+          fmCache.current[tab.uuid] = fm
+          savedBodyCache.current[tab.uuid] = body
+          await SaveBuffer(path, fm + body).catch(console.error)
+        }
+      }
+      runBackgroundEval(tab.uuid, path, /* fileAfter */ true)
+      return
     }
 
+    // Fallback: note not open in any tab — evaluate directly from disk
+    console.log('[stash:ai] Smart File (no tab): evaluating', { path })
     try {
-      console.log('[stash:ai] Smart File: evaluating...')
       const rec = await EvaluateBuffer(path)
       const content = await LoadBuffer(path)
       let { frontmatter, body } = splitFrontmatter(content)
-      const tabUuid = tabsRef.current.find(t => t.path === path)?.uuid ?? ''
-
       frontmatter = setYamlField(frontmatter, 'ai_eval', 'complete')
       frontmatter = setYamlField(frontmatter, 'ai_last_evaluated', getLocalISOString())
       if (rec.title)    frontmatter = setYamlField(frontmatter, 'display_name', rec.title)
@@ -1346,50 +1366,38 @@ export default function App() {
       if (rec.folder)   frontmatter = setYamlField(frontmatter, 'ai_folder_suggestion', rec.folder)
       if (rec.summary)  frontmatter = setYamlField(frontmatter, 'summary', rec.summary)
       if (rec.tags && rec.tags.length > 0) frontmatter = setYamlField(frontmatter, 'tags', rec.tags)
-
-      console.log('[stash:ai] Smart File: saving updated meta', { folder: rec.folder })
       await SaveBuffer(path, frontmatter + body)
-      if (tabUuid) fmCache.current[tabUuid] = frontmatter
-
-      console.log('[stash:ai] Smart File: calling backend FileBuffer')
-      const newPath = await FileBuffer(path)
-      console.log('[stash:ai] Smart File: result', { newPath })
-
-      if (tabUuid) {
-        uuidToPath.current.set(tabUuid, newPath)
-      }
-
-      setTabs(prev => prev.map(t =>
-        t.path === path ? { 
-          ...t, 
-          path: newPath, 
-          ...parseMeta(frontmatter, body),
-          isEvaluating: false 
-        } : t
-      ))
+      await FileBuffer(path)
       await GetNotes().then(res => setNotes(res || [])).catch(console.error)
     } catch (e) {
-      console.error('[stash:ai] Smart File failed', e)
-      alert(`Smart File failed: ${e}`)
-      if (tabIdx !== -1) {
-        setTabs(prev => prev.map((t, i) => i === tabIdx ? { ...t, isEvaluating: false } : t))
-      }
+      console.error('[stash:ai] Smart File (no tab) failed', e)
     }
   }
 
   async function handleSmartMetadata(path: string) {
     if (tier !== 'smart') return
-    const tabIdx = tabs.findIndex(t => t.path === path)
-    if (tabIdx !== -1) {
-      setTabs(prev => prev.map((t, i) => i === tabIdx ? { ...t, isEvaluating: true } : t))
+    const tab = tabsRef.current.find(t => t.path === path)
+    if (tab) {
+      // Tab is open — flush unsaved active content then hand off to background eval
+      if (tab === activeTab) {
+        const body = editor?.storage.markdown.getMarkdown() ?? ''
+        if (body !== savedBodyCache.current[tab.uuid]) {
+          const fm = bumpFm(fmCache.current[tab.uuid] ?? '')
+          fmCache.current[tab.uuid] = fm
+          savedBodyCache.current[tab.uuid] = body
+          await SaveBuffer(path, fm + body).catch(console.error)
+        }
+      }
+      runBackgroundEval(tab.uuid, path, /* fileAfter */ false)
+      return
     }
 
+    // Fallback: note not open in any tab — evaluate directly from disk
+    console.log('[stash:ai] Smart Metadata (no tab): evaluating', { path })
     try {
-      console.log('[stash:ai] Smart Metadata: evaluating', { path })
       const rec = await EvaluateBuffer(path)
       const content = await LoadBuffer(path)
       let { frontmatter, body } = splitFrontmatter(content)
-      
       frontmatter = setYamlField(frontmatter, 'ai_eval', 'complete')
       frontmatter = setYamlField(frontmatter, 'ai_last_evaluated', getLocalISOString())
       if (rec.title)    frontmatter = setYamlField(frontmatter, 'display_name', rec.title)
@@ -1397,25 +1405,10 @@ export default function App() {
       if (rec.folder)   frontmatter = setYamlField(frontmatter, 'ai_folder_suggestion', rec.folder)
       if (rec.summary)  frontmatter = setYamlField(frontmatter, 'summary', rec.summary)
       if (rec.tags && rec.tags.length > 0) frontmatter = setYamlField(frontmatter, 'tags', rec.tags)
-
       await SaveBuffer(path, frontmatter + body)
       await GetNotes().then(res => setNotes(res || [])).catch(console.error)
-
-      if (tabIdx !== -1) {
-        const tabUuid = tabs[tabIdx].uuid
-        fmCache.current[tabUuid] = frontmatter
-        const meta = parseMeta(frontmatter, body)
-        setTabs(prev => prev.map((t, i) => i === tabIdx ? { 
-          ...t, 
-          ...meta,
-          isEvaluating: false
-        } : t))
-      }
     } catch (err) {
-      console.error('Smart Metadata failed', err)
-      if (tabIdx !== -1) {
-        setTabs(prev => prev.map((t, i) => i === tabIdx ? { ...t, isEvaluating: false } : t))
-      }
+      console.error('[stash:ai] Smart Metadata (no tab) failed', err)
     }
   }
 
@@ -1818,6 +1811,7 @@ export default function App() {
     insertAiPlaceholder(aiId, ctx.blockRef)
 
     pendingAiCount.current++
+    evalStartTimes.current[capturedUuid] = Date.now()
     setTabs(prev => prev.map(t => t.uuid === capturedUuid ? { ...t, isWaitingAI: true } : t))
 
     console.log('[stash:ai] explain: firing', { aiId, uuid: capturedUuid, blockRef: ctx.blockRef, contentLen: ctx.content.length })
@@ -1866,6 +1860,7 @@ export default function App() {
     insertAiPlaceholder(aiId, ctx.blockRef, question)
 
     pendingAiCount.current++
+    evalStartTimes.current[capturedUuid] = Date.now()
     setTabs(prev => prev.map(t => t.uuid === capturedUuid ? { ...t, isWaitingAI: true } : t))
 
     console.log('[stash:ai] ask: firing', { aiId, uuid: capturedUuid, blockRef: ctx.blockRef, question: question.slice(0, 60) })
@@ -2153,6 +2148,16 @@ export default function App() {
     return () => { if (focusTimer.current) { clearTimeout(focusTimer.current); focusTimer.current = null } }
   }, [activeIdx])
 
+  // ── AI status bar tick — 1s interval while any task is running ───────────────
+
+  const hasActiveAiTasks = tabs.some(t => t.isEvaluating || t.isWaitingAI)
+
+  useEffect(() => {
+    if (!hasActiveAiTasks) return
+    const id = setInterval(() => setAiTick(n => n + 1), 1000)
+    return () => clearInterval(id)
+  }, [hasActiveAiTasks])
+
   // ── Scroll position tracking ───────────────────────────────────────────────
 
   const scrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -2283,12 +2288,6 @@ export default function App() {
           notesTree={notes}
         />
         <div id="editor-area">
-          {activeTab?.isEvaluating && (
-            <div className="ai-eval-overlay">
-               <div className="ai-eval-spinner" />
-               <div className="ai-eval-text">AI is evaluating...</div>
-            </div>
-          )}
           {showSearch && (
             <div className="search-bar">
               <input
@@ -2379,10 +2378,37 @@ export default function App() {
               path={activeTab.path}
               width={metaWidth}
               isModified={activeTab.isModified ?? false}
+              isEvaluating={activeTab.isEvaluating}
+              isWaitingAI={activeTab.isWaitingAI}
             />
           </>
         )}
         </div>
+
+        {/* AI Status Bar — shown when any tab has a background AI task running */}
+        {hasActiveAiTasks && (
+          <div className="ai-status-bar">
+            {tabs.filter(t => t.isEvaluating || t.isWaitingAI).map(t => {
+              const label = t.displayName || t.path.split('/').pop()?.replace(/\.md$/, '') || 'note'
+              const task  = t.isWaitingAI ? 'Thinking' : 'Evaluating'
+              const secs  = evalStartTimes.current[t.uuid]
+                ? Math.floor((Date.now() - evalStartTimes.current[t.uuid]) / 1000)
+                : null
+              void aiTick  // consumed so the component re-renders each tick
+              return (
+                <div key={t.uuid} className="ai-status-bar__item">
+                  <span className="ai-status-bar__spinner" />
+                  <span className="ai-status-bar__task">{task}</span>
+                  <span className="ai-status-bar__sep">—</span>
+                  <span className="ai-status-bar__note">{label}</span>
+                  {secs !== null && secs > 0 && (
+                    <span className="ai-status-bar__elapsed">{secs}s</span>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
 
       {showAskPopup && askContextRef.current && (

@@ -53,7 +53,7 @@
 
   "_comment_ui": "--- TipTap / editor chrome ---",
 
-  "selectionBg":         "rgba(122, 162, 247, 0.25)",
+  "selectionBg":         "rgba(122, 162, 247, 0.60)",
   "selectionFg":         "#c0caf5",
   "nodeSelectionOutline": "#7aa2f7",
   "cursorColor":          "#c0caf5",
