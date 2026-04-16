@@ -2545,30 +2545,35 @@ export default function App() {
                 if (!activeTab) return
                 const uuid = activeTab.uuid
 
-                if (isMarkdownMode) {
-                  const fm = fmCache.current[uuid] ?? ''
-                  const full = fm + body
-                  setRawMd(full)
-                  
-                  // Force modified state since setRawMd doesn't trigger textarea onChange
-                  setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isModified: true, isEmpty: body.trim().length === 0 } : t))
-                  
-                  // Manually trigger autosave since Raw mode currently lacks auto-trigger on state change
-                  if (saveTimer.current) clearTimeout(saveTimer.current)
-                  saveTimer.current = setTimeout(() => {
-                    const finalFm = bumpFm(fm)
-                    fmCache.current[uuid] = finalFm
-                    savedBodyCache.current[uuid] = body
-                    const finalFull = finalFm + body
-                    saveBufferSafe(uuid, finalFull)
-                    mdCache.current[uuid] = finalFull
-                    const version = versionFromFm(finalFm)
-                    SaveVersionSnapshot(uuid, version, finalFull).catch(console.error)
-                  }, autosaveMs.current)
-                } else if (editor) {
-                  // This SHOULD trigger onUpdate if emitUpdate is true
-                  editor.commands.setContent(body, true)
+                // 1. Cancel any pending autosave for this file
+                if (saveTimer.current) {
+                  clearTimeout(saveTimer.current)
+                  saveTimer.current = null
                 }
+
+                // 2. Compute the new state
+                const currentFm = fmCache.current[uuid] ?? ''
+                const finalFm = bumpFm(currentFm)
+                const fullContent = finalFm + body
+                const version = versionFromFm(finalFm)
+
+                // 3. Update all caches and refs synchronously
+                fmCache.current[uuid] = finalFm
+                savedBodyCache.current[uuid] = body
+                if (isMarkdownMode) {
+                  mdCache.current[uuid] = fullContent
+                  setRawMd(fullContent)
+                } else if (editor) {
+                  // Set content in editor - false suppresses onUpdate because we are saving manually now
+                  editor.commands.setContent(body, false)
+                }
+
+                // 4. Save to disk and cut history snapshot IMMEDIATELY
+                saveBufferSafe(uuid, fullContent)
+                SaveVersionSnapshot(uuid, version, fullContent).catch(console.error)
+
+                // 5. Clear "isModified" state immediately as it's now flushed
+                setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isModified: false, isEmpty: body.trim().length === 0 } : t))
               }}
             />
           </>
