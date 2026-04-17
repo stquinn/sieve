@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1016,4 +1019,67 @@ func (a *App) SaveNoteAsset(notePath string, id string, dataBase64 string) (stri
 	rel = filepath.ToSlash(rel)
 	logger.Info("note asset saved", "vaultRelPath", rel)
 	return rel, nil
+}
+// DownloadImageAsset fetches an image from a URL and saves it directly to the vault.
+// This bypasses browser-level CORS/401 issues during the paste flow.
+func (a *App) DownloadImageAsset(targetURL string, notePath string, id string) (string, error) {
+	if a.vault == nil {
+		return "", fmt.Errorf("vault not open")
+	}
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+		Timeout: 30 * time.Second,
+	}
+	req, err := http.NewRequest(http.MethodGet, targetURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("server returned status %d", resp.StatusCode)
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	if !strings.HasPrefix(contentType, "image/") {
+		return "", fmt.Errorf("not an image (Content-Type: %s)", contentType)
+	}
+
+	// Determine destination path (buffer or assets)
+	// Buffers are stored in a hostname-specific directory containing "buffers"
+	var destPath string
+	isBuffer := notePath == "" || notePath == "new" || strings.Contains(notePath, "buffers")
+
+	if isBuffer {
+		destPath = filepath.Join(a.vault.BufferAssetsPath(), fmt.Sprintf("%s.png", id))
+	} else {
+		noteName := strings.TrimSuffix(filepath.Base(notePath), filepath.Ext(notePath))
+		destPath = filepath.Join(a.vault.AssetsPath(), fmt.Sprintf("%s-%s.png", noteName, id))
+	}
+
+	out, err := os.Create(destPath)
+	if err != nil {
+		return "", err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	rel, err := filepath.Rel(a.vault.Root, destPath)
+	if err != nil {
+		return destPath, nil
+	}
+	return filepath.ToSlash(rel), nil
 }

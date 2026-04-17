@@ -1,12 +1,15 @@
 package main
 
 import (
+	"crypto/tls"
 	"embed"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"stash/vault"
 
@@ -57,11 +60,77 @@ type muxHandler struct {
 }
 
 func (m *muxHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	fmt.Printf("[stash] request: %s %s (URI: %s)\n", r.Method, r.URL.Path, r.RequestURI)
+	
+	// Intercept proxy requests early.
+	if strings.Contains(r.URL.Path, "/stash-image-proxy") {
+		m.serveProxy(w, r)
+		return
+	}
+
 	if r.URL.Path == "/theme.css" {
 		m.serveThemeCSS(w, r)
 		return
 	}
 	m.vault.ServeHTTP(w, r)
+}
+
+func (m *muxHandler) serveProxy(w http.ResponseWriter, r *http.Request) {
+	targetURL := r.URL.Query().Get("url")
+	if targetURL == "" {
+		http.Error(w, "missing url parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Always allow CORS for the proxy itself
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "*")
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	fmt.Printf("[stash:proxy] fetching: %s\n", targetURL)
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+		Timeout: 30 * time.Second,
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL, nil)
+	if err != nil {
+		fmt.Printf("[stash:proxy] request creation failed: %v\n", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Use a standard browser User-Agent to avoid being blocked as a bot
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("[stash:proxy] fetch failed: %v\n", err)
+		http.Error(w, fmt.Sprintf("failed to fetch url: %v", err), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	fmt.Printf("[stash:proxy] status: %d, type: %s\n", resp.StatusCode, resp.Header.Get("Content-Type"))
+
+	// Forward selective response headers — don't blindly forward everything (e.g. security/CORS headers from target)
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	if ce := resp.Header.Get("Content-Encoding"); ce != "" {
+		w.Header().Set("Content-Encoding", ce)
+	}
+	w.Header().Set("Cache-Control", "public, max-age=31536000")
+
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 func (m *muxHandler) serveThemeCSS(w http.ResponseWriter, _ *http.Request) {

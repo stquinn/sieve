@@ -164,13 +164,17 @@ func (v *Vault) FileBuffer(absPath string) (string, error) {
 		filename := rx.FindStringSubmatch(match)[1]
 		srcPath := filepath.Join(v.BufferAssetsPath(), filename)
 
+		fmt.Printf("[stash:vault] FileBuffer promotion check: match=%s, src=%s\n", match, srcPath)
+
 		// Only promote assets that still exist in buffers/assets/
 		if _, err := os.Stat(srcPath); err != nil {
+			fmt.Printf("[stash:vault] FileBuffer promotion: src not found locally\n")
 			return match // not found — leave unchanged
 		}
 
 		destFilename := name + "-" + filename
 		destPath := filepath.Join(v.AssetsPath(), destFilename)
+		fmt.Printf("[stash:vault] FileBuffer promotion: moving to %s\n", destPath)
 
 		// Collision check
 		if _, err := os.Stat(destPath); err == nil {
@@ -182,7 +186,11 @@ func (v *Vault) FileBuffer(absPath string) (string, error) {
 		if err == nil {
 			if err := os.WriteFile(destPath, srcData, 0o644); err == nil {
 				copiedFiles = append(copiedFiles, srcPath)
+			} else {
+				fmt.Printf("[stash:vault] FileBuffer promotion: write fail: %v\n", err)
 			}
+		} else {
+			fmt.Printf("[stash:vault] FileBuffer promotion: read fail: %v\n", err)
 		}
 
 		return assetPrefix + destFilename

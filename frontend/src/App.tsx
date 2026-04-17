@@ -11,7 +11,7 @@ import Table from '@tiptap/extension-table'
 import TableRow from '@tiptap/extension-table-row'
 import TableHeader from '@tiptap/extension-table-header'
 import TableCell from '@tiptap/extension-table-cell'
-import { Ask, DiscardBuffer, Explain, FileBuffer, FileBufferWithName, GetNotes, GetSession, GetVaultInfo, LoadBuffer, NewBuffer, RefineLanguage, SaveBuffer, SaveBufferAsset, SaveNoteAsset, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, ShowInFiles, EvaluateBuffer, Quit as AppQuit, SaveVersionSnapshot, DeleteNote, MoveNote, CreateFolder, DeleteFolder, RenameFolder, LoadPrompt, SavePrompt, GetPrompts, RestorePrompt, TogglePrompts } from '../wailsjs/go/main/App'
+import { Ask, DiscardBuffer, Explain, FileBuffer, FileBufferWithName, GetNotes, GetSession, GetVaultInfo, LoadBuffer, NewBuffer, RefineLanguage, SaveBuffer, SaveBufferAsset, SaveNoteAsset, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, ShowInFiles, EvaluateBuffer, Quit as AppQuit, SaveVersionSnapshot, DeleteNote, MoveNote, CreateFolder, DeleteFolder, RenameFolder, LoadPrompt, SavePrompt, GetPrompts, RestorePrompt, TogglePrompts, DownloadImageAsset } from '../wailsjs/go/main/App'
 import { vault } from '../wailsjs/go/models'
 import { UserIntent } from './types'
 import { BrowserOpenURL, EventsOn, EventsOff, Quit } from '../wailsjs/runtime/runtime'
@@ -318,8 +318,10 @@ export default function App() {
     ;(async () => {
       try {
         const rec = await EvaluateBuffer(path)
-        console.log('[stash:ai] smartClose: eval complete', { path, keep: rec.keep, forceKeep })
-        const shouldKeep = forceKeep || rec.keep
+        const userIntentMatch = savedFm.match(/^user_intent:\s*(keep|trash)/m)
+        const userIntent = userIntentMatch ? userIntentMatch[1] : null
+        
+        const shouldKeep = forceKeep || userIntent === 'keep' || (userIntent !== 'trash' && rec.keep)
         if (shouldKeep) {
           let fm = savedFm
           fm = setYamlField(fm, 'ai_eval', 'complete')
@@ -440,15 +442,19 @@ export default function App() {
               const mdPath = assetMarkdownPath(tab.path, vaultRelPath)
               console.debug('[stash] paste: image saved', { id, vaultRelPath, mdPath })
               
-              editor.commands.insertContent({
-                type: 'image',
-                attrs: { src: mdPath, id, detect: 'pending' }
+              queueMicrotask(() => {
+                editor.commands.insertContent({
+                  type: 'image',
+                  attrs: { src: mdPath, id, detect: 'pending' }
+                })
               })
             } catch (err) {
               console.error('[stash] paste: save asset failed', err)
               // Fallback: insert with original src so content isn't lost
               if (fallbackSrc) {
-                editor.commands.insertContent({ type: 'image', attrs: { src: fallbackSrc } })
+                queueMicrotask(() => {
+                  editor.commands.insertContent({ type: 'image', attrs: { src: fallbackSrc } })
+                })
               }
             }
           }
@@ -472,45 +478,28 @@ export default function App() {
               console.debug('[stash] paste: skipping extraction for data URI')
               saveDataUrl(imgSrc, imgSrc)
             } else {
-              // First try fetch() — works for regular blob: and data: URLs
-              // For blob:wails:// URLs in WebKitGTK, fetch() is blocked, so we fall back
-              // to drawing the image into a canvas and extracting pixel data via toDataURL().
-              const extractViaCanvas = () => new Promise<Blob>((resolve, reject) => {
-                const img = new Image()
-                img.onload = () => {
-                  try {
-                    const canvas = document.createElement('canvas')
-                    canvas.width = img.naturalWidth
-                    canvas.height = img.naturalHeight
-                    const ctx = canvas.getContext('2d')
-                    if (!ctx) { reject(new Error('no canvas context')); return }
-                    ctx.drawImage(img, 0, 0)
-                    canvas.toBlob(blob => {
-                      if (blob) { console.debug('[stash] paste: canvas extracted blob', blob.size); resolve(blob) }
-                      else reject(new Error('canvas toBlob returned null'))
-                    }, 'image/png')
-                  } catch (e) {
-                    reject(e)
-                  }
-                }
-                img.onerror = (e) => reject(e)
-                img.src = imgSrc!
-              })
-
-              fetch(imgSrc)
-                .then(r => r.blob())
-                .then(blob => {
-                  console.debug('[stash] paste: fetched blob from imgSrc', blob.size, blob.type)
-                  return processBlob(blob, imgSrc ?? undefined)
-                })
-                .catch(() => {
-                  console.debug('[stash] paste: fetch failed (CORS?), trying canvas extraction for', imgSrc)
-                  return extractViaCanvas().then(blob => processBlob(blob, imgSrc ?? undefined))
+              // NEW: Use the backend to download the image directly to the vault.
+              // This is much more robust than frontend fetch + data URL conversion.
+              const id = 'blk-' + Math.random().toString(16).substring(2, 6)
+              console.log('[stash] paste: downloading external image via backend', { id, imgSrc })
+              
+              DownloadImageAsset(imgSrc, capturedTab?.path ?? 'new', id)
+                .then(vaultRelPath => {
+                  const mdPath = assetMarkdownPath(capturedTab?.path ?? 'new', vaultRelPath)
+                  console.debug('[stash] paste: external image downloaded', { id, vaultRelPath, mdPath })
+                  queueMicrotask(() => {
+                    editor.commands.insertContent({
+                      type: 'image',
+                      attrs: { src: mdPath, id, detect: 'pending' }
+                    })
+                  })
                 })
                 .catch(err => {
-                  console.error('[stash] paste: all image extraction methods failed', imgSrc, err)
-                  // Fallback: Just insert the remote URL directly if we can't download it
-                  editor.commands.insertContent({ type: 'image', attrs: { src: imgSrc } })
+                  console.error('[stash] paste: backend download failed', err)
+                  // Fallback: Just insert the remote URL directly (will render via proxy)
+                  queueMicrotask(() => {
+                    editor.commands.insertContent({ type: 'image', attrs: { src: imgSrc } })
+                  })
                 })
             }
           }
@@ -661,12 +650,15 @@ export default function App() {
       const body = editor.storage.markdown.getMarkdown()
       const isMod = (body !== savedBodyCache.current[uuid])
       const empty = body.trim().length === 0
-      setTabs(prev => {
-        return prev.map(x => {
-          if (x.path === path && (x.isModified !== isMod || x.isEmpty !== empty)) {
-             return { ...x, isModified: isMod, isEmpty: empty }
-          }
-          return x
+
+      queueMicrotask(() => {
+        setTabs(prev => {
+          return prev.map(x => {
+            if (x.path === path && (x.isModified !== isMod || x.isEmpty !== empty)) {
+               return { ...x, isModified: isMod, isEmpty: empty }
+            }
+            return x
+          })
         })
       })
 
@@ -730,7 +722,9 @@ export default function App() {
         mdCache.current[fileUuid] = cached
         setRawMd(cached)
       } else {
-        editor.commands.setContent(body)
+        queueMicrotask(() => {
+          editor.commands.setContent(body)
+        })
       }
       savedBodyCache.current[fileUuid] = body
 
@@ -1252,7 +1246,20 @@ export default function App() {
     SaveVersionSnapshot(uuid, versionFromFm(finalFm), finalFm + currentBody).catch(console.error)
 
     if (fileAfter) {
-      if (rec && !rec.keep) {
+      const userIntentMatch = finalFm.match(/^user_intent:\s*(keep|trash)/m)
+      const userIntent = userIntentMatch ? userIntentMatch[1] : null
+
+      if (userIntent === 'trash') {
+        console.log('[stash:ai] runBackgroundEval: user_intent=trash, discarding', { uuid })
+        await DiscardBuffer(currentPath)
+        finishCloseTab(currentPath)
+        return
+      }
+
+      const forceKeep = userIntent === 'keep'
+      const aiDiscard = rec && !rec.keep
+
+      if (aiDiscard && !forceKeep) {
         if (allowDiscard) {
           console.log('[stash:ai] runBackgroundEval: discard recommended', { uuid })
           await DiscardBuffer(currentPath)
@@ -2817,7 +2824,14 @@ export default function App() {
             const { path, suggestedName } = timeoutPopup
             const rec = await EvaluateBuffer(path)  // throws on timeout
             setTimeoutPopup(null)
-            if (rec.keep) {
+            
+            // Get current content to check user_intent
+            const tab = tabsRef.current.find(t => t.path === path)
+            const fm = (tab && fmCache.current[tab.uuid]) || ''
+            const userIntentMatch = fm.match(/^user_intent:\s*(keep|trash)/m)
+            const userIntent = userIntentMatch ? userIntentMatch[1] : null
+
+            if (userIntent === 'keep' || (userIntent !== 'trash' && rec.keep)) {
               await FileBuffer(path)
             } else {
               await DiscardBuffer(path)

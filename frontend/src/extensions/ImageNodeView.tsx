@@ -9,7 +9,10 @@ import { NodeViewWrapper } from '@tiptap/react'
  */
 function resolveDisplaySrc(src: string, activeTabPath: string): string {
   if (!src) return ''
-  if (src.startsWith('/vault/') || src.startsWith('blob:') || src.startsWith('data:') || src.startsWith('http')) {
+  if (src.startsWith('http')) {
+    return window.location.origin + '/stash-image-proxy?url=' + encodeURIComponent(src)
+  }
+  if (src.startsWith('/vault/') || src.startsWith('blob:') || src.startsWith('data:')) {
     return src
   }
   if (!activeTabPath) return src
