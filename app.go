@@ -560,6 +560,9 @@ func (a *App) SaveSession(session vault.Session) error {
 	if session.Window == (vault.Window{}) {
 		session.Window = existing.Window
 	}
+	if len(session.OpenFolders) == 0 {
+		session.OpenFolders = existing.OpenFolders
+	}
 	if err := session.Save(a.vault.SessionPath()); err != nil {
 		logger.Error("SaveSession failed", "err", err)
 		return err

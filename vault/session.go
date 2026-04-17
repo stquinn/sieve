@@ -27,14 +27,15 @@ type Window struct {
 
 // Session is the full contents of vault/{hostname}/session.json.
 type Session struct {
-	Tabs         []Tab  `json:"tabs"`
-	Window       Window `json:"window,omitempty"`
-	SidebarWidth  int    `json:"sidebarWidth,omitempty"`
-	MetaWidth     int    `json:"metaWidth,omitempty"`
-	ShowSidebar   bool   `json:"showSidebar"`
-	ShowMeta      bool   `json:"showMeta"`
-	ShowPrompts   bool   `json:"showPrompts"`
-	PromptsHeight int    `json:"promptsHeight,omitempty"`
+	Tabs          []Tab    `json:"tabs"`
+	Window        Window   `json:"window,omitempty"`
+	SidebarWidth  int      `json:"sidebarWidth,omitempty"`
+	MetaWidth     int      `json:"metaWidth,omitempty"`
+	ShowSidebar   bool     `json:"showSidebar"`
+	ShowMeta      bool     `json:"showMeta"`
+	ShowPrompts   bool     `json:"showPrompts"`
+	PromptsHeight int      `json:"promptsHeight,omitempty"`
+	OpenFolders   []string `json:"openFolders,omitempty"`
 }
 
 // LoadSession reads session.json at path. Missing or corrupt file returns an

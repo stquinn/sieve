@@ -145,6 +145,19 @@ function setYamlField(yaml: string, key: string, val: any): string {
   }
 }
 
+function getAncestorPaths(path: string): string[] {
+  // Strip "notes/" prefix to treat the notes directory as a virtual root.
+  const prefix = 'notes/'
+  const workingPath = path.startsWith(prefix) ? path.substring(prefix.length) : path
+  
+  const parts = workingPath.split('/')
+  const ancestors: string[] = []
+  for (let i = 0; i < parts.length - 1; i++) {
+    ancestors.push(parts.slice(0, i + 1).join('/'))
+  }
+  return ancestors
+}
+
 function EditorStats({ editor, isMarkdownMode, rawMd }: { editor: Editor | null, isMarkdownMode: boolean, rawMd: string }) {
   const [stats, setStats] = useState({ chars: 0, lines: 0 })
 
@@ -214,6 +227,8 @@ export default function App() {
   // Captures the context for the pending ask — set when popup opens, read on send.
   const askContextRef = useRef<{ content: string; blockRef: string; history: string; contextLabel: string } | null>(null)
   const [vaultInfo, setVaultInfo] = useState<{ root: string; themeName: string; } | null>(null)
+  const [openFolders, setOpenFolders] = useState<Set<string>>(new Set())
+  const openFoldersRef = useRef<Set<string>>(new Set())
   const autosaveMs                = useRef(30_000)  // updated from settings on mount
   const cliTimeoutLongMs          = useRef(60_000)  // updated from settings on mount (default 60s)
   const sidebarWidthRef           = useRef(240)
@@ -249,6 +264,7 @@ export default function App() {
   useEffect(() => { showSidebarRef.current = showSidebar }, [showSidebar])
   useEffect(() => { showMetaRef.current = showMeta }, [showMeta])
   useEffect(() => { showPromptsRef.current = showPrompts }, [showPrompts])
+  useEffect(() => { openFoldersRef.current = openFolders }, [openFolders])
 
   // Stable ref to always-current handlers — prevents stale closures in event listeners
   const H = useRef({
@@ -366,12 +382,12 @@ export default function App() {
         } else {
           // Timeout without explicit keep: leave file on disk as unfiled and restore to session
           // so it re-opens on next launch rather than being silently orphaned.
-          console.warn('[stash:ai] smartClose: eval timed out, restoring to session', { path })
-          GetSession().then(session => {
-            const orphanTab = { path, scroll: 0, active: false, mode: 'wysiwyg', status: 'unfiled' }
-            session.tabs = [...(session.tabs ?? []), orphanTab as any]
-            return SaveSession(session)
-          }).catch(console.error)
+          console.warn('[stash:ai] smartClose: eval timed out, restoring to tabs for next session', { path })
+          setTabs(prev => {
+            if (prev.some(t => t.path === path)) return prev
+            const orphanTab: TabState = { uuid: '', path, scroll: 0, active: false, mode: 'wysiwyg', status: 'unfiled', userIntent: null, isEmpty: false, isModified: false }
+            return [...prev, orphanTab]
+          })
         }
       }
     })()
@@ -795,6 +811,9 @@ export default function App() {
           setActiveIdx(idx)
           loadTab(st[idx])
         }
+        if (session.openFolders) {
+          setOpenFolders(new Set(session.openFolders))
+        }
         setReady(true)
       })
     }).catch(console.error)
@@ -816,44 +835,30 @@ export default function App() {
     return () => { unlistenNotes(); unlistenPrompts(); }
   }, [editor, loadTab])
 
-
-
-  // ── Session save ───────────────────────────────────────────────────────────
-  // Reactive: any time tabs or activeIdx changes, persist to disk automatically.
-
+  // Automatically expand folders to reveal the active note
   useEffect(() => {
-    if (!ready || tabs.length === 0) return
-    const toSave = tabs.map((t, i) => ({
-      path: t.path, scroll: t.scroll, active: i === activeIdx, mode: t.mode,
-      displayName: t.displayName, status: t.status, userIntent: t.userIntent,
-    }))
-    
-    // De-dupe: only save if structural session data has changed.
-    // This avoids saving on every keystroke (which only flips the 'isModified' flag).
-    // Update: also include showPrompts in the de-dupe logic
-    const sessionStr = JSON.stringify({ toSave, showSidebar, showMeta, showPrompts, sidebarWidth, metaWidth })
-    if (sessionStr === lastSavedSessionRef.current) return
+    if (!activeTab?.path || !activeTab.path.startsWith('notes/')) return
+    const ancestors = getAncestorPaths(activeTab.path)
+    if (ancestors.length === 0) return
 
-    // Debounce: only save if structural session data stays stable for 1s.
-    // Prevents disk pounding during rapid scrolling or UI toggles.
-    const timer = setTimeout(() => {
-      lastSavedSessionRef.current = sessionStr
-      SaveSession(vault.Session.createFrom({ 
-        tabs: toSave,
-        sidebarWidth,
-        metaWidth,
-        showSidebar,
-        showMeta,
-        showPrompts
-      })).catch(console.error)
-    }, 1000)
+    setOpenFolders(prev => {
+      let changed = false
+      const next = new Set(prev)
+      for (const p of ancestors) {
+        if (!next.has(p)) {
+          next.add(p)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [activeTab?.path])
 
-    return () => clearTimeout(timer)
-  }, [tabs, activeIdx, showSidebar, showMeta, sidebarWidth, metaWidth])
 
-  // Called from close handler where we need to save synchronously from refs
-  // (React state may not have flushed yet at that point).
-  const saveSessionFromRefs = async () => {
+
+  // Unified session persistence helper. Pulls from Refs to ensure absolute consistency
+  // across all call sites (reactive saves, emergency close-saves, and backgrounds).
+  const persistSession = async () => {
     const toSave = tabsRef.current.map((t, i) => ({
       path: t.path, scroll: t.scroll, active: i === activeIdxRef.current, mode: t.mode,
       displayName: t.displayName, status: t.status, userIntent: t.userIntent,
@@ -864,9 +869,32 @@ export default function App() {
       metaWidth: metaWidthRef.current,
       showSidebar: showSidebarRef.current,
       showMeta: showMetaRef.current,
-      showPrompts: showPromptsRef.current
+      showPrompts: showPromptsRef.current,
+      openFolders: Array.from(openFoldersRef.current)
     }))
   }
+
+  // Reactive: any time tabs, layout, or sidebar folders change, persist to disk automatically.
+  useEffect(() => {
+    if (!ready || tabs.length === 0) return
+    const toSave = tabs.map((t, i) => ({
+      path: t.path, scroll: t.scroll, active: i === activeIdx, mode: t.mode,
+      displayName: t.displayName, status: t.status, userIntent: t.userIntent,
+    }))
+    
+    // De-dupe: only save if structural session data has changed.
+    const openFoldersArr = Array.from(openFolders).sort()
+    const sessionStr = JSON.stringify({ toSave, showSidebar, showMeta, showPrompts, sidebarWidth, metaWidth, openFolders: openFoldersArr })
+    if (sessionStr === lastSavedSessionRef.current) return
+
+    // Debounce: only save if structural session data stays stable for 1s.
+    const timer = setTimeout(() => {
+      lastSavedSessionRef.current = sessionStr
+      persistSession().catch(console.error)
+    }, 1000)
+
+    return () => clearTimeout(timer)
+  }, [tabs, activeIdx, showSidebar, showMeta, showPrompts, sidebarWidth, metaWidth, openFolders])
 
   // ── Safe save wrapper ─────────────────────────────────────────────────────
   // Every ambient save (autosave timer, flush, focus bump) must go through here.
@@ -2417,8 +2445,8 @@ export default function App() {
       console.log('[stash] shutdown: app:closing received, flushing state...')
       flushRef.current()
 
-      const doQuit = () => {
-        saveSessionFromRefs()
+      const doQuit = async () => {
+        await persistSession()
           .then(() => console.log('[stash] shutdown: session saved'))
           .catch(err => console.error('[stash] shutdown: save failed', err))
           .finally(() => {
@@ -2586,6 +2614,15 @@ export default function App() {
             <Sidebar
               entries={notes}
               openPaths={openPaths}
+              openFolders={openFolders}
+              onToggleFolder={(path) => {
+                setOpenFolders(prev => {
+                  const next = new Set(prev)
+                  if (next.has(path)) next.delete(path)
+                  else next.add(path)
+                  return next
+                })
+              }}
               activePath={activeTab?.path}
               onOpen={openNote}
               onShowInFiles={path => ShowInFiles(path).catch(console.error)}

@@ -34,6 +34,8 @@ interface ContextMenuState {
 export interface SidebarProps {
   entries: NoteEntry[]
   openPaths: Set<string>
+  openFolders: Set<string>
+  onToggleFolder: (path: string) => void
   activePath?: string
   onOpen: (path: string) => void
   onShowInFiles: (path: string) => void
@@ -55,7 +57,7 @@ export interface SidebarProps {
 }
 
 export function Sidebar({ 
-  entries, openPaths, activePath, onOpen, onShowInFiles, onSmartFile, onSmartMetadata, onDelete, onMove, onSetIntent, onCreateFolder, onDeleteFolder, onRename, width,
+  entries, openPaths, openFolders, onToggleFolder, activePath, onOpen, onShowInFiles, onSmartFile, onSmartMetadata, onDelete, onMove, onSetIntent, onCreateFolder, onDeleteFolder, onRename, width,
   showPrompts, prompts, onEditPrompt, onRestorePrompt, promptsHeight, onPromptsResize
 }: SidebarProps) {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
@@ -120,7 +122,7 @@ export function Sidebar({
         <span>Notes</span>
         <button 
           className="opacity-0 group-hover:opacity-100 hover:text-tn-blue transition-all bg-transparent border-none p-0 cursor-pointer flex items-center justify-center leading-none"
-          onClick={(e) => { e.stopPropagation(); onCreateFolder('notes') }}
+          onClick={(e) => { e.stopPropagation(); onCreateFolder('') }}
           title="New Folder"
         >
           <FolderPlus className="w-4 h-4" />
@@ -132,11 +134,13 @@ export function Sidebar({
             entries={entries}
             depth={0}
             openPaths={openPaths}
+            openFolders={openFolders}
+            onToggleFolder={onToggleFolder}
             activePath={activePath}
             onOpen={onOpen}
             onContextMenu={openMenu}
             onMove={onMove}
-            basePath="notes"
+            basePath=""
           />
       }
       </div>
@@ -206,6 +210,8 @@ interface EntryListProps {
   entries: NoteEntry[]
   depth: number
   openPaths: Set<string>
+  openFolders: Set<string>
+  onToggleFolder: (path: string) => void
   activePath?: string
   onOpen: (path: string) => void
   onContextMenu: (e: React.MouseEvent, path: string, intent: UserIntent, isDir?: boolean, childCount?: number) => void
@@ -213,21 +219,23 @@ interface EntryListProps {
   basePath: string    // vault-relative path prefix for computing dir paths
 }
 
-function EntryList({ entries, depth, openPaths, activePath, onOpen, onContextMenu, onMove, basePath }: EntryListProps) {
+function EntryList({ entries, depth, openPaths, openFolders, onToggleFolder, activePath, onOpen, onContextMenu, onMove, basePath }: EntryListProps) {
   return (
     <>
       {entries.map(entry =>
         entry.isDir
-          ? <DirEntry
+            ? <DirEntry
               key={entry.name}
               entry={entry}
               depth={depth}
               openPaths={openPaths}
+              openFolders={openFolders}
+              onToggleFolder={onToggleFolder}
               activePath={activePath}
               onOpen={onOpen}
               onContextMenu={onContextMenu}
               onMove={onMove}
-              basePath={`${basePath}/${entry.name}`}
+              basePath={basePath ? `${basePath}/${entry.name}` : entry.name}
             />
           : <FileEntry
               key={entry.path}
@@ -247,6 +255,8 @@ interface DirEntryProps {
   entry: NoteEntry
   depth: number
   openPaths: Set<string>
+  openFolders: Set<string>
+  onToggleFolder: (path: string) => void
   activePath?: string
   onOpen: (path: string) => void
   onContextMenu: (e: React.MouseEvent, path: string, intent: UserIntent, isDir?: boolean, childCount?: number) => void
@@ -254,8 +264,8 @@ interface DirEntryProps {
   basePath: string
 }
 
-function DirEntry({ entry, depth, openPaths, activePath, onOpen, onContextMenu, onMove, basePath }: DirEntryProps) {
-  const [expanded, setExpanded] = useState(true)
+function DirEntry({ entry, depth, openPaths, openFolders, onToggleFolder, activePath, onOpen, onContextMenu, onMove, basePath }: DirEntryProps) {
+  const expanded = openFolders.has(basePath)
   const [isDragOver, setIsDragOver] = useState(false)
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -292,7 +302,7 @@ function DirEntry({ entry, depth, openPaths, activePath, onOpen, onContextMenu, 
           isDragOver && 'bg-tn-bg-alt ring-1 ring-tn-blue rounded'
         )}
         style={{ paddingLeft: `${0.75 + depth * 1}rem` }}
-        onClick={() => setExpanded(v => !v)}
+        onClick={() => onToggleFolder(basePath)}
         onContextMenu={e => onContextMenu(e, basePath, null, true, entry.children?.length || 0)}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -309,6 +319,8 @@ function DirEntry({ entry, depth, openPaths, activePath, onOpen, onContextMenu, 
           entries={entry.children}
           depth={depth + 1}
           openPaths={openPaths}
+          openFolders={openFolders}
+          onToggleFolder={onToggleFolder}
           activePath={activePath}
           onOpen={onOpen}
           onContextMenu={onContextMenu}
