@@ -1,4 +1,3 @@
-import React from 'react'
 import { Node, mergeAttributes } from '@tiptap/core'
 import { ReactNodeViewRenderer, NodeViewWrapper, NodeViewContent } from '@tiptap/react'
 
@@ -23,20 +22,50 @@ import { ReactNodeViewRenderer, NodeViewWrapper, NodeViewContent } from '@tiptap
  * into a <div data-type="aiBlock"> before Tiptap's ProseMirror parser runs.
  */
 
-function AiBlockView({ node }: any) {
-  const getTargetBlock = (): HTMLElement | null => {
-    const ref = node.attrs.ref
-    if (!ref || ref === 'doc') return null
-    return document.querySelector(`[data-block-id="${ref}"]`) as HTMLElement | null
+// Traverses the full chain of AI blocks connected to the hovered block.
+// data-ai-id / data-ai-ref are placed directly on .ai-block divs (not on the
+// outer ProseMirror wrapper) so queries are reliable regardless of how Tiptap
+// layers its wrapper elements.
+function gatherChain(startId: string, startRefs: string[]): Set<string> {
+  const ids = new Set<string>()
+
+  function visit(id: string) {
+    if (!id || id === 'doc' || ids.has(id)) return
+    ids.add(id)
+    // Follow refs downward only — source blocks and any AI blocks they chain to
+    const el = document.querySelector(`.ai-block[data-ai-id="${id}"]`)
+    if (el) {
+      el.getAttribute('data-ai-ref')?.split(',').forEach(r => visit(r.trim()))
+    }
   }
 
-  const activate = () => getTargetBlock()?.classList.add('block-ref-active')
-  const deactivate = () => getTargetBlock()?.classList.remove('block-ref-active')
+  visit(startId)
+  startRefs.forEach(visit)
+  return ids
+}
+
+function AiBlockView({ node }: any) {
+  const applyChain = (action: 'add' | 'remove') => {
+    const refs = (node.attrs.ref ?? '').split(',').map((r: string) => r.trim()).filter(Boolean)
+    const ids = gatherChain(node.attrs.id, refs)
+    ids.forEach(id => {
+      if (id === node.attrs.id) return
+      document.querySelector(`[data-block-id="${id}"]`)
+        ?.classList[action]('block-ref-active')
+      document.querySelector(`.ai-block[data-ai-id="${id}"]`)
+        ?.classList[action]('ai-block--chain-active')
+    })
+  }
+
+  const activate   = () => applyChain('add')
+  const deactivate = () => applyChain('remove')
 
   return (
     <NodeViewWrapper>
       <div
         className="ai-block"
+        data-ai-id={node.attrs.id}
+        data-ai-ref={node.attrs.ref}
         onMouseEnter={activate}
         onMouseLeave={deactivate}
         onFocus={activate}

@@ -2037,13 +2037,31 @@ export default function App() {
     const blockRef = existingBlockId || 'blk-' + Math.random().toString(16).substring(2, 6)
 
     if (!existingBlockId) {
-      // Wrap the selected block(s) in a [!block] node so the AI response can
-      // link back to this exact content in the document.
-      editor.chain()
+      // Try to wrap the selected block(s) directly. This fails for content
+      // nested inside lists, table cells, etc. where the parent node doesn't
+      // accept blockRef as a child.
+      const wrapped = editor.chain()
         .command(({ state, dispatch }) =>
           wrapIn(state.schema.nodes.blockRef, { id: blockRef })(state, dispatch)
         )
         .run()
+
+      if (!wrapped) {
+        // Fall back: wrap the nearest top-level ancestor (direct child of doc).
+        // For a list item this is the whole bulletList/orderedList — it's a
+        // block node so blockRef can always contain it.
+        editor.chain()
+          .command(({ state, dispatch }) => {
+            const { $from } = state.selection
+            if ($from.depth < 1 || !dispatch) return false
+            const topPos  = $from.before(1)
+            const topNode = $from.node(1)
+            const wrapper = state.schema.nodes.blockRef.create({ id: blockRef }, topNode)
+            dispatch(state.tr.replaceWith(topPos, topPos + topNode.nodeSize, wrapper))
+            return true
+          })
+          .run()
+      }
     }
     return { content: selectedText, blockRef, history: '', contextLabel: 'Selection' }
   }
