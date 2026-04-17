@@ -334,8 +334,15 @@ export default function App() {
           const filename = rec.filename || suggestedName
           if (filename) fm = setYamlField(fm, 'user_suggested_name', filename)
           await SaveBuffer(path, fm + savedBody)
-          await FileBuffer(path)
-          console.log('[stash:ai] smartClose: filed', { path })
+          const result = await FileBuffer(path)
+          const { newPath, content: filedContent } = result
+          const { frontmatter: filedFm, body: filedBody } = splitFrontmatter(filedContent)
+          
+          fmCache.current[tabUuid] = filedFm
+          savedBodyCache.current[tabUuid] = filedBody
+          uuidToPath.current.set(tabUuid, newPath)
+          
+          console.log('[stash:ai] smartClose: filed', { path, newPath })
         } else {
           await DiscardBuffer(path)
           console.log('[stash:ai] smartClose: discarded', { path })
@@ -344,8 +351,11 @@ export default function App() {
         if (forceKeep) {
           // user said keep — file with suggestedName even without AI naming
           console.warn('[stash:ai] smartClose: eval timed out, filing with suggestedName', err)
-          const fileFn = suggestedName ? FileBufferWithName(path, suggestedName) : FileBuffer(path)
-          fileFn.catch(console.error)
+          if (suggestedName) {
+            FileBufferWithName(path, suggestedName).catch(console.error)
+          } else {
+            FileBuffer(path).catch(console.error)
+          }
         } else {
           // Timeout without explicit keep: leave file on disk as unfiled and restore to session
           // so it re-opens on next launch rather than being silently orphaned.
@@ -1142,7 +1152,7 @@ export default function App() {
                  await SaveBuffer(path, fm + body).catch(console.error)
                  SaveVersionSnapshot(tab.uuid, versionFromFm(fm), fm + body).catch(console.error)
                }
-               await FileBuffer(path).catch(console.error)
+               FileBuffer(path).catch(console.error)
             }
             // If Smart mode and userIntent === null, defer (leave on disk)
         }
@@ -1271,13 +1281,28 @@ export default function App() {
         return
       }
       try {
-        const newPath = await FileBuffer(currentPath)
-        const filedFm = finalFm.replace(/^status:\s*.+/m, 'status: filed')
+        const result = await FileBuffer(currentPath)
+        const { newPath, content: filedContent } = result
+        const { frontmatter: filedFm, body: filedBody } = splitFrontmatter(filedContent)
+        
         fmCache.current[uuid] = filedFm
+        savedBodyCache.current[uuid] = filedBody
         uuidToPath.current.set(uuid, newPath)
+        
         setTabs(prev => prev.map(t => t.uuid === uuid ? {
-          ...t, path: newPath, ...parseMeta(filedFm, currentBody), status: 'filed' as TabState['status'], isEvaluating: false
+          ...t, path: newPath, ...parseMeta(filedFm, filedBody), status: 'filed' as TabState['status'], isEvaluating: false
         } : t))
+
+        // If this is the active tab, we MUST update the editor content to match the promoted asset paths
+        if (activeTab?.uuid === uuid) {
+          if (isMarkdownMode) {
+            setRawMd(filedContent)
+          } else if (editor) {
+            queueMicrotask(() => {
+              editor.commands.setContent(filedBody)
+            })
+          }
+        }
       } catch(e) {
         console.error('[stash:ai] runBackgroundEval: FileBuffer failed', e)
         setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, ...parseMeta(finalFm, currentBody), isEvaluating: false } : t))
@@ -1355,7 +1380,7 @@ export default function App() {
     // Dumb mode or already-filed without forceEval: just file if needed, no AI
     if (activeTab.status === 'unfiled' && !skipFile) {
       try {
-        const newPath = await FileBuffer(path)
+        const { newPath } = await FileBuffer(path)
         const filedFm = (fmCache.current[uuid] ?? fm).replace(/^status:\s*.+/m, 'status: filed')
         fmCache.current[uuid] = filedFm
         uuidToPath.current.set(uuid, newPath)
@@ -1593,8 +1618,12 @@ export default function App() {
     try {
       const rec = await EvaluateBuffer(path)
       const content = await LoadBuffer(path)
-      if (rec && !rec.keep) {
-        console.log('[stash:ai] handleSmartFile (no tab): discard recommended', { path })
+      let { frontmatter, body } = splitFrontmatter(content)
+      const userIntentMatch = frontmatter.match(/^user_intent:\s*(keep|trash)/m)
+      const userIntent = userIntentMatch ? userIntentMatch[1] : null
+
+      if (userIntent === 'trash' || (rec && !rec.keep && userIntent !== 'keep')) {
+        console.log('[stash:ai] handleSmartFile (no tab): discard recommended/intended', { path })
         await DiscardBuffer(path)
         await GetNotes().then(res => setNotes(res || [])).catch(console.error)
         return
@@ -2813,12 +2842,12 @@ export default function App() {
         <TimeoutPopup
           path={timeoutPopup.path}
           suggestedName={timeoutPopup.suggestedName}
-          onAccept={name => {
+          onAccept={async name => {
             const { path } = timeoutPopup
             setTimeoutPopup(null)
-            FileBufferWithName(path, name)
-              .then(() => finishCloseTab(path))
-              .catch(e => console.error('[stash] TimeoutPopup accept failed', e))
+            const result = await FileBufferWithName(path, name)
+            const { newPath } = result
+            finishCloseTab(path)
           }}
           onRetry={async () => {
             const { path, suggestedName } = timeoutPopup

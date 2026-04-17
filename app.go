@@ -684,17 +684,17 @@ func min(a, b int) int {
 	return b
 }
 
-func (a *App) FileBuffer(path string) (string, error) {
+func (a *App) FileBuffer(path string) (vault.FileBufferResult, error) {
 	if a.vault == nil {
-		return "", fmt.Errorf("vault not open")
+		return vault.FileBufferResult{}, fmt.Errorf("vault not open")
 	}
 	resolved := a.resolvePath(path)
 	newPath, err := a.vault.FileBuffer(resolved)
 	if err != nil {
 		logger.Error("FileBuffer failed", "path", path, "err", err)
-		return "", err
+		return vault.FileBufferResult{}, err
 	}
-	logger.Info("buffer filed", "from", path, "to", newPath)
+	logger.Info("buffer filed", "from", path, "to", newPath.NewPath)
 	return newPath, nil
 }
 
@@ -866,17 +866,17 @@ func (a *App) RefineLanguage(content string) (string, error) {
 
 // FileBufferWithName moves a buffer to vault/notes/ using the supplied name as
 // user_suggested_name so the filer picks it up as the filename.
-func (a *App) FileBufferWithName(path, name string) (string, error) {
+func (a *App) FileBufferWithName(path, name string) (vault.FileBufferResult, error) {
 	if a.vault == nil {
-		return "", fmt.Errorf("vault not open")
+		return vault.FileBufferResult{}, fmt.Errorf("vault not open")
 	}
 	resolved := a.resolvePath(path)
 	newPath, err := a.vault.FileBufferWithName(resolved, name)
 	if err != nil {
 		logger.Error("FileBufferWithName failed", "path", path, "err", err)
-		return "", err
+		return vault.FileBufferResult{}, err
 	}
-	logger.Info("buffer filed with name", "from", path, "to", newPath, "name", name)
+	logger.Info("buffer filed with name", "from", path, "to", newPath.NewPath, "name", name)
 	return newPath, nil
 }
 

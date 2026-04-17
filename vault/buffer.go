@@ -110,14 +110,20 @@ func (v *Vault) DiscardBuffer(absPath string) error {
 	return os.Remove(absPath)
 }
 
+// FileBufferResult is returned by FileBuffer so the frontend can sync the updated content.
+type FileBufferResult struct {
+	NewPath string `json:"newPath"`
+	Content string `json:"content"`
+}
+
 // FileBuffer moves a buffer to vault/notes/ using a kebab-case filename derived
 // from user_suggested_name, the first heading, or a timestamp fallback.
 // The frontmatter status field is updated to "filed" before writing.
-// Returns the new path relative to the vault root.
-func (v *Vault) FileBuffer(absPath string) (string, error) {
+// Returns the result containing new path and updated content.
+func (v *Vault) FileBuffer(absPath string) (FileBufferResult, error) {
 	data, err := os.ReadFile(absPath)
 	if err != nil {
-		return "", fmt.Errorf("file buffer: read: %w", err)
+		return FileBufferResult{}, fmt.Errorf("file buffer: read: %w", err)
 	}
 	content := replaceFmField(string(data), "status", "filed")
 	name := deriveKebabName(content)
@@ -127,7 +133,7 @@ func (v *Vault) FileBuffer(absPath string) (string, error) {
 	if folder != "" {
 		destDir = filepath.Join(v.NotesPath(), folder)
 		if err := os.MkdirAll(destDir, 0o755); err != nil {
-			return "", fmt.Errorf("file buffer: mkdir: %w", err)
+			return FileBufferResult{}, fmt.Errorf("file buffer: mkdir: %w", err)
 		}
 	}
 
@@ -136,13 +142,13 @@ func (v *Vault) FileBuffer(absPath string) (string, error) {
 	// Avoid deleting if same path
 	if absPath == dest {
 		if err := os.WriteFile(dest, []byte(content), 0o644); err != nil {
-			return "", fmt.Errorf("file buffer: write in-place: %w", err)
+			return FileBufferResult{}, fmt.Errorf("file buffer: write in-place: %w", err)
 		}
 		rel, err := filepath.Rel(v.Root, dest)
 		if err != nil {
-			return dest, nil
+			return FileBufferResult{NewPath: dest, Content: content}, nil
 		}
-		return rel, nil
+		return FileBufferResult{NewPath: rel, Content: content}, nil
 	}
 
 	// Asset promotion: scan for images linking to buffer assets.
@@ -197,10 +203,10 @@ func (v *Vault) FileBuffer(absPath string) (string, error) {
 	})
 
 	if err := os.WriteFile(dest, []byte(content), 0o644); err != nil {
-		return "", fmt.Errorf("file buffer: write: %w", err)
+		return FileBufferResult{}, fmt.Errorf("file buffer: write: %w", err)
 	}
 	if err := os.Remove(absPath); err != nil {
-		return "", fmt.Errorf("file buffer: remove source: %w", err)
+		return FileBufferResult{}, fmt.Errorf("file buffer: remove source: %w", err)
 	}
 
 	// Clean up old assets
@@ -221,21 +227,21 @@ func (v *Vault) FileBuffer(absPath string) (string, error) {
 
 	rel, err := filepath.Rel(v.Root, dest)
 	if err != nil {
-		return dest, nil
+		return FileBufferResult{NewPath: dest, Content: content}, nil
 	}
-	return rel, nil
+	return FileBufferResult{NewPath: rel, Content: content}, nil
 }
 
 // FileBufferWithName is like FileBuffer but first writes name into the
 // user_suggested_name frontmatter field so deriveKebabName will pick it up.
-func (v *Vault) FileBufferWithName(absPath, name string) (string, error) {
+func (v *Vault) FileBufferWithName(absPath, name string) (FileBufferResult, error) {
 	data, err := os.ReadFile(absPath)
 	if err != nil {
-		return "", fmt.Errorf("file buffer with name: read: %w", err)
+		return FileBufferResult{}, fmt.Errorf("file buffer with name: read: %w", err)
 	}
 	updated := replaceFmField(string(data), "user_suggested_name", name)
 	if err := os.WriteFile(absPath, []byte(updated), 0o644); err != nil {
-		return "", fmt.Errorf("file buffer with name: write fm: %w", err)
+		return FileBufferResult{}, fmt.Errorf("file buffer with name: write fm: %w", err)
 	}
 	return v.FileBuffer(absPath)
 }
