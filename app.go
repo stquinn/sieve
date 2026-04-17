@@ -867,6 +867,27 @@ func (a *App) RefineLanguage(content string) (string, error) {
 	return lang, nil
 }
 
+// DescribeImage asks the configured CLI to generate alt text, a summary, and a
+// suggested filename for an image. storeRelPath is the path relative to the store
+// root (e.g. "hostname/buffers/assets/blk-1234.png"). Returns an error in dumb mode.
+func (a *App) DescribeImage(storeRelPath string) (stash.ImageDesc, error) {
+	if a.stash == nil {
+		return stash.ImageDesc{}, fmt.Errorf("store not open")
+	}
+	settings := stash.LoadSettings(a.stash.SettingsPath())
+	if settings.Tier() == stash.TierDumb {
+		return stash.ImageDesc{}, fmt.Errorf("dumb mode")
+	}
+	absPath := filepath.Join(a.stash.Root, storeRelPath)
+	desc, err := stash.DescribeImage(absPath, settings)
+	if err != nil {
+		logger.Warn("DescribeImage failed", "err", err)
+		return stash.ImageDesc{}, err
+	}
+	logger.Debug("DescribeImage", "filename", desc.Filename)
+	return desc, nil
+}
+
 // FileBufferWithName moves a buffer to store/notes/ using the supplied name as
 // user_suggested_name so the filer picks it up as the filename.
 func (a *App) FileBufferWithName(path, name string) (stash.FileBufferResult, error) {
@@ -884,9 +905,10 @@ func (a *App) FileBufferWithName(path, name string) (stash.FileBufferResult, err
 }
 
 // Explain asks the configured CLI to explain the given content (selected text or
-// full buffer body). Returns the response as a markdown string for inline insertion.
-// Returns an error in dumb mode or if the CLI times out.
-func (a *App) Explain(content string) (string, error) {
+// full buffer body). notePath is the store-relative path of the active note/buffer
+// and is used to set the CLI's CWD so relative asset paths resolve correctly.
+// Returns the response as a markdown string for inline insertion.
+func (a *App) Explain(content string, notePath string, imageStorePaths []string) (string, error) {
 	if a.stash == nil {
 		return "", fmt.Errorf("store not open")
 	}
@@ -894,18 +916,25 @@ func (a *App) Explain(content string) (string, error) {
 	if settings.Tier() == stash.TierDumb {
 		return "", fmt.Errorf("explain not available in dumb mode")
 	}
-	resp, err := a.stash.RunExplain(content, settings)
+	cwd := filepath.Dir(a.resolvePath(notePath))
+	var absImages []string
+	for _, p := range imageStorePaths {
+		absImages = append(absImages, filepath.Join(a.stash.Root, p))
+	}
+	resp, err := a.stash.RunExplain(content, settings, cwd, absImages)
 	if err != nil {
 		logger.Warn("Explain failed", "err", err)
 		return "", err
 	}
-	logger.Debug("Explain complete", "resp_len", len(resp))
+	logger.Debug("Explain complete", "resp_len", len(resp), "images", len(absImages))
 	return resp, nil
 }
 
 // Ask asks the configured CLI a question with the given content as context.
+// notePath is the store-relative path of the active note/buffer, used to set the
+// CLI's CWD so relative asset paths in the content resolve correctly.
 // history may be empty for first-turn asks. Returns the response as a markdown string.
-func (a *App) Ask(content, history, question string) (string, error) {
+func (a *App) Ask(content string, history string, question string, notePath string, imageStorePaths []string) (string, error) {
 	if a.stash == nil {
 		return "", fmt.Errorf("store not open")
 	}
@@ -913,12 +942,17 @@ func (a *App) Ask(content, history, question string) (string, error) {
 	if settings.Tier() == stash.TierDumb {
 		return "", fmt.Errorf("ask not available in dumb mode")
 	}
-	resp, err := a.stash.RunAsk(content, history, question, settings)
+	cwd := filepath.Dir(a.resolvePath(notePath))
+	var absImages []string
+	for _, p := range imageStorePaths {
+		absImages = append(absImages, filepath.Join(a.stash.Root, p))
+	}
+	resp, err := a.stash.RunAsk(content, history, question, settings, cwd, absImages)
 	if err != nil {
 		logger.Warn("Ask failed", "err", err)
 		return "", err
 	}
-	logger.Debug("Ask complete", "resp_len", len(resp))
+	logger.Debug("Ask complete", "resp_len", len(resp), "images", len(absImages))
 	return resp, nil
 }
 

@@ -1,11 +1,8 @@
-import React from 'react'
+import React, { useRef } from 'react'
 import { NodeViewWrapper } from '@tiptap/react'
 
 /**
  * Resolves a store-relative or markdown-relative image src to a /store/... display URL.
- * - src starting with /store/ → used as-is
- * - src starting with blob:, data:, http → used as-is
- * - relative src (e.g. "assets/blk.png", "../assets/blk.png") → resolved using activeTabPath
  */
 function resolveDisplaySrc(src: string, activeTabPath: string): string {
   if (!src) return ''
@@ -17,7 +14,6 @@ function resolveDisplaySrc(src: string, activeTabPath: string): string {
   }
   if (!activeTabPath) return src
 
-  // Compute absolute store-relative path from the tab's directory
   const tabDir = activeTabPath.split('/').slice(0, -1)
   const srcParts = src.split('/')
   const parts = [...tabDir]
@@ -28,20 +24,68 @@ function resolveDisplaySrc(src: string, activeTabPath: string): string {
   return '/store/' + parts.join('/')
 }
 
-export function ImageNodeView({ node, extension }: any) {
-  const { src, alt, title } = node.attrs
+export function ImageNodeView({ node, updateAttributes, selected }: any) {
+  const { src, alt, title, width, height } = node.attrs
+  const imgRef = useRef<HTMLImageElement>(null)
+
   // Read synchronously from the global set by App.tsx during tab render
   const activeTabPath = (window as any).__stashActiveTabPath ?? ''
   const displaySrc = resolveDisplaySrc(src, activeTabPath)
 
+  const onMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+
+    const startX = e.clientX
+    const startY = e.clientY
+    const startWidth = imgRef.current?.clientWidth || 0
+    const startHeight = imgRef.current?.clientHeight || 0
+    const aspectRatio = startWidth / startHeight
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.clientX - startX
+      const currentWidth = Math.max(40, startWidth + deltaX)
+      // Lock aspect ratio by default for images
+      const currentHeight = Math.round(currentWidth / aspectRatio)
+
+      updateAttributes({ 
+        width: String(currentWidth), 
+        height: String(currentHeight) 
+      })
+    }
+
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+      document.body.style.cursor = ''
+    }
+
+    document.body.style.cursor = 'nwse-resize'
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }
+
+  const imgStyle: React.CSSProperties = {
+    maxWidth: '100%',
+    display: 'block',
+  }
+  if (width) {
+    imgStyle.width = width.match(/^[0-9]+$/) ? width + 'px' : width
+  }
+  if (height) {
+    imgStyle.height = height.match(/^[0-9]+$/) ? height + 'px' : height
+  }
+
   return (
-    <NodeViewWrapper as="div" style={{ display: 'inline-block' }} data-block-id={node.attrs.id}>
+    <NodeViewWrapper as="div" className={`image-block node-image ${selected ? 'ProseMirror-selectednode' : ''}`} style={{ display: 'inline-block' }} data-block-id={node.attrs.id}>
       <img
+        ref={imgRef}
         src={displaySrc}
         alt={alt ?? ''}
         title={title ?? undefined}
-        style={{ maxWidth: '100%', display: 'block' }}
+        style={imgStyle}
       />
+      <div className="image-resizer" onMouseDown={onMouseDown} />
     </NodeViewWrapper>
   )
 }

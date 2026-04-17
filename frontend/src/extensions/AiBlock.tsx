@@ -115,9 +115,11 @@ export const AiBlock = Node.create({
     return {
       markdown: {
         serialize(state: any, node: any) {
+          state.ensureNewLine()
           state.write(`[!ai] id="${node.attrs.id}" ref="${node.attrs.ref}"`)
           state.closeBlock(node)
           state.renderContent(node)
+          state.ensureNewLine()
           state.write('[!ai-end]')
           state.closeBlock(node)
         },
@@ -133,7 +135,7 @@ export const AiBlock = Node.create({
               for (let i = 0; i < children.length; i++) {
                 const child = children[i]
                 if (child.tagName !== 'P') continue
-                const text = child.textContent ?? ''
+                const text = (child.textContent ?? '').trim()
                 if (!text.startsWith('[!ai]') || text.startsWith('[!ai-end]')) continue
 
                 // Find matching [!ai-end] paragraph.

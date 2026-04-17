@@ -1,5 +1,6 @@
-import { DOMParser as ProseMirrorDOMParser, Fragment } from '@tiptap/pm/model'
+import { DOMParser as ProseMirrorDOMParser, Fragment, NodeRange } from '@tiptap/pm/model'
 import { wrapIn } from '@tiptap/pm/commands'
+import { NodeSelection, TextSelection } from '@tiptap/pm/state'
 import { useEditor, EditorContent, BubbleMenu, Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
@@ -11,7 +12,7 @@ import Table from '@tiptap/extension-table'
 import TableRow from '@tiptap/extension-table-row'
 import TableHeader from '@tiptap/extension-table-header'
 import TableCell from '@tiptap/extension-table-cell'
-import { Ask, DiscardBuffer, Explain, FileBuffer, FileBufferWithName, GetNotes, GetSession, GetStoreInfo, LoadBuffer, NewBuffer, RefineLanguage, SaveBuffer, SaveBufferAsset, SaveNoteAsset, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, ShowInFiles, EvaluateBuffer, Quit as AppQuit, SaveVersionSnapshot, DeleteNote, MoveNote, CreateFolder, DeleteFolder, RenameFolder, LoadPrompt, SavePrompt, GetPrompts, RestorePrompt, TogglePrompts, DownloadImageAsset } from '../wailsjs/go/main/App'
+import { Ask, DescribeImage, DiscardBuffer, Explain, FileBuffer, FileBufferWithName, GetNotes, GetSession, GetStoreInfo, LoadBuffer, NewBuffer, RefineLanguage, SaveBuffer, SaveBufferAsset, SaveNoteAsset, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, ShowInFiles, EvaluateBuffer, Quit as AppQuit, SaveVersionSnapshot, DeleteNote, MoveNote, CreateFolder, DeleteFolder, RenameFolder, LoadPrompt, SavePrompt, GetPrompts, RestorePrompt, TogglePrompts, DownloadImageAsset } from '../wailsjs/go/main/App'
 import { stash } from '../wailsjs/go/models'
 import { UserIntent } from './types'
 import { BrowserOpenURL, EventsOn, EventsOff, Quit } from '../wailsjs/runtime/runtime'
@@ -225,7 +226,7 @@ export default function App() {
   const [showAskPopup, setShowAskPopup] = useState(false)
   const [aiTick, setAiTick]             = useState(0)  // increments every second while AI tasks run
   // Captures the context for the pending ask — set when popup opens, read on send.
-  const askContextRef = useRef<{ content: string; blockRef: string; history: string; contextLabel: string } | null>(null)
+  const askContextRef = useRef<{ content: string; blockRef: string; history: string; contextLabel: string; imagePaths: string[] } | null>(null)
   const [storeInfo, setStoreInfo] = useState<{ root: string; themeName: string; } | null>(null)
   const [openFolders, setOpenFolders] = useState<Set<string>>(new Set())
   const openFoldersRef = useRef<Set<string>>(new Set())
@@ -474,13 +475,54 @@ export default function App() {
 
               const mdPath = assetMarkdownPath(tab.path, storeRelPath)
               console.debug('[stash] paste: image saved', { id, storeRelPath, mdPath })
-              
+
               queueMicrotask(() => {
                 editor.commands.insertContent({
                   type: 'image',
                   attrs: { src: mdPath, id, detect: 'pending' }
                 })
               })
+
+              if (tierRef.current === 'smart') {
+                const capturedId = id
+                pendingAiCount.current++
+                DescribeImage(storeRelPath)
+                  .then((desc: stash.ImageDesc) => {
+                    console.log('[stash:ai] DescribeImage: response', { id: capturedId, desc })
+                    if (!desc || !editor) return
+                    let found = false
+                    editor.commands.command(({ tr, state }) => {
+                      state.doc.descendants((node, pos) => {
+                        if (node.type.name === 'image' && node.attrs.id === capturedId) {
+                          found = true
+                          if (node.attrs.detect !== 'user') {
+                            tr.setNodeMarkup(pos, null, { ...node.attrs, alt: desc.alt, summary: desc.summary, detect: 'cli' })
+                          }
+                          return false
+                        }
+                      })
+                      return found
+                    })
+                    if (!found) console.warn('[stash:ai] DescribeImage: node not found', { id: capturedId })
+                  })
+                  .catch((e: unknown) => {
+                    console.error('[stash:ai] DescribeImage: call failed', e)
+                    editor.commands.command(({ tr, state }) => {
+                      let found = false
+                      state.doc.descendants((node, pos) => {
+                        if (node.type.name === 'image' && node.attrs.id === capturedId && node.attrs.detect === 'pending') {
+                          found = true
+                          tr.setNodeMarkup(pos, null, { ...node.attrs, detect: 'heuristic' })
+                          return false
+                        }
+                      })
+                      return found
+                    })
+                  })
+                  .finally(() => {
+                    pendingAiCount.current--
+                  })
+              }
             } catch (err) {
               console.error('[stash] paste: save asset failed', err)
               // Fallback: insert with original src so content isn't lost
@@ -517,7 +559,7 @@ export default function App() {
               console.log('[stash] paste: downloading external image via backend', { id, imgSrc })
               
               DownloadImageAsset(imgSrc, capturedTab?.path ?? 'new', id)
-                .then(storeRelPath => {
+                .then((storeRelPath: string) => {
                   const mdPath = assetMarkdownPath(capturedTab?.path ?? 'new', storeRelPath)
                   console.debug('[stash] paste: external image downloaded', { id, storeRelPath, mdPath })
                   queueMicrotask(() => {
@@ -526,6 +568,46 @@ export default function App() {
                       attrs: { src: mdPath, id, detect: 'pending' }
                     })
                   })
+                  if (tierRef.current === 'smart') {
+                    const capturedId = id
+                    pendingAiCount.current++
+                    DescribeImage(storeRelPath)
+                      .then((desc: stash.ImageDesc) => {
+                        console.log('[stash:ai] DescribeImage: response', { id: capturedId, desc })
+                        if (!desc || !editor) return
+                        let found = false
+                        editor.commands.command(({ tr, state }) => {
+                          state.doc.descendants((node, pos) => {
+                            if (node.type.name === 'image' && node.attrs.id === capturedId) {
+                              found = true
+                              if (node.attrs.detect !== 'user') {
+                                tr.setNodeMarkup(pos, null, { ...node.attrs, alt: desc.alt, summary: desc.summary, detect: 'cli' })
+                              }
+                              return false
+                            }
+                          })
+                          return found
+                        })
+                        if (!found) console.warn('[stash:ai] DescribeImage: node not found', { id: capturedId })
+                      })
+                      .catch((e: unknown) => {
+                        console.error('[stash:ai] DescribeImage: call failed', e)
+                        editor.commands.command(({ tr, state }) => {
+                          let found = false
+                          state.doc.descendants((node, pos) => {
+                            if (node.type.name === 'image' && node.attrs.id === capturedId && node.attrs.detect === 'pending') {
+                              found = true
+                              tr.setNodeMarkup(pos, null, { ...node.attrs, detect: 'heuristic' })
+                              return false
+                            }
+                          })
+                          return found
+                        })
+                      })
+                      .finally(() => {
+                        pendingAiCount.current--
+                      })
+                  }
                 })
                 .catch(err => {
                   console.error('[stash] paste: backend download failed', err)
@@ -588,6 +670,7 @@ export default function App() {
               const capturedId   = id
               const capturedText = text
               console.log('[stash:ai] RefineLanguage: queuing background refinement', { id: capturedId, heuristic: language })
+              pendingAiCount.current++
               RefineLanguage(capturedText)
                 .then(lang => {
                   console.log('[stash:ai] RefineLanguage: response', { id: capturedId, lang: lang || '(empty — no change)' })
@@ -599,8 +682,6 @@ export default function App() {
                         found = true
                         if (node.attrs.detect !== 'user') {
                           tr.setNodeMarkup(pos, null, { ...node.attrs, language: lang, detect: 'ai' })
-                        } else {
-                          console.debug('[stash:ai] RefineLanguage: detect=user, skipping', { id: capturedId })
                         }
                         return false
                       }
@@ -610,6 +691,9 @@ export default function App() {
                   if (!found) console.warn('[stash:ai] RefineLanguage: block not found in doc', { id: capturedId })
                 })
                 .catch(e => console.error('[stash:ai] RefineLanguage: call failed', e))
+                .finally(() => {
+                  pendingAiCount.current--
+                })
             } else {
               console.debug('[stash:ai] paste: skipping refinement (dumb mode)')
             }
@@ -915,10 +999,15 @@ export default function App() {
       SavePrompt(name, content).then(async () => {
          const p = await GetPrompts()
          setPrompts(p || [])
+         // Clear dirty flag for the prompt tab
+         setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isModified: false } : t))
       }).catch(console.error)
       return
     }
-    SaveBuffer(tab.path, content).catch(console.error)
+    SaveBuffer(tab.path, content).then(() => {
+      // Single authoritative point to clear 'dirty' flag on successful save
+      setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isModified: false } : t))
+    }).catch(console.error)
   }
 
   function savePromptSafe(name: string, content: string) {
@@ -967,7 +1056,6 @@ export default function App() {
       if (frontmatter) fmCache.current[uuid] = frontmatter
       saveBufferSafe(uuid, fullContent)
       mdCache.current[uuid] = fullContent
-      setTabs(prev => prev.map(t => t.path === path ? { ...t, isModified: false } : t))
     } else {
       const body = editor?.storage.markdown.getMarkdown() ?? ''
       const bodyChanged = body !== savedBodyCache.current[uuid]
@@ -980,7 +1068,6 @@ export default function App() {
       fmCache.current[uuid] = fmToSave
       savedBodyCache.current[uuid] = body
       saveBufferSafe(uuid, fmToSave + body)
-      setTabs(prev => prev.map(t => t.path === path ? { ...t, isModified: false } : t))
       if (bodyChanged) {
         const version = versionFromFm(fmToSave)
         SaveVersionSnapshot(uuid, version, fmToSave + body).catch(console.error)
@@ -1365,12 +1452,14 @@ export default function App() {
     }
 
     // Flush latest content to disk before evaluation reads it
+    let saved = false
     if (isMarkdownMode) {
       if (rawMd !== mdCache.current[uuid]) {
         const { frontmatter } = splitFrontmatter(rawMd)
         if (frontmatter) fmCache.current[uuid] = frontmatter
         await SaveBuffer(path, rawMd).catch(console.error)
         mdCache.current[uuid] = rawMd
+        saved = true
       }
     } else {
       if (body !== savedBodyCache.current[uuid]) {
@@ -1378,7 +1467,12 @@ export default function App() {
         fmCache.current[uuid] = fm
         savedBodyCache.current[uuid] = body
         await SaveBuffer(path, fm + body).catch(console.error)
+        saved = true
       }
+    }
+
+    if (saved) {
+      // Handled by SaveBuffer .then in saveBufferSafe
     }
 
     if (willEval) {
@@ -1947,25 +2041,99 @@ export default function App() {
     })
   }
 
+  // Convert a markdown-relative image src to a store-relative path the backend
+  // can resolve. Mirrors resolveDisplaySrc but returns store-relative not /store/...
+  function mdSrcToStoreRelPath(src: string, tabPath: string): string {
+    if (!src || src.startsWith('http') || src.startsWith('blob:') || src.startsWith('data:')) return ''
+    if (src.startsWith('/')) return src.substring(1)
+    const tabDir = tabPath.split('/').slice(0, -1)
+    const parts = [...tabDir]
+    for (const part of src.split('/')) {
+      if (part === '..') parts.pop()
+      else if (part !== '.') parts.push(part)
+    }
+    return parts.join('/')
+  }
+
+  // Collect store-relative paths for all image nodes reachable from the given
+  // chain ref IDs. blockRef='doc' → scan whole document. Otherwise walk chain.
+  function collectChainImagePaths(doc: any, refs: string[], tabPath: string): string[] {
+    console.log('[stash:ai] collectChainImagePaths', { refs, tabPath })
+    const paths: string[] = []
+    const seen = new Set<string>()
+
+    if (refs.length === 0 || refs.includes('doc')) {
+      doc.descendants((node: any) => {
+        if (node.type.name === 'image' && node.attrs?.src) {
+          const p = mdSrcToStoreRelPath(node.attrs.src, tabPath)
+          if (p && !seen.has(p)) { seen.add(p); paths.push(p) }
+        }
+      })
+    } else {
+      for (const refId of refs) {
+        doc.descendants((node: any) => {
+          if (node.attrs?.id === refId) {
+            console.log('[stash:ai] matched block anchor', { refId, type: node.type.name, src: node.attrs?.src })
+            
+            // 1. Check if the matched node itself is an image
+            if (node.type.name === 'image' && node.attrs?.src) {
+              const p = mdSrcToStoreRelPath(node.attrs.src, tabPath)
+              console.log('[stash:ai] anchor is image', { p })
+              if (p && !seen.has(p)) { seen.add(p); paths.push(p) }
+            }
+
+            // 2. Scan descendants (e.g. if the matched node is a blockRef wrapper)
+            node.descendants?.((child: any) => {
+              if (child.type.name === 'image' && child.attrs?.src) {
+                const p = mdSrcToStoreRelPath(child.attrs.src, tabPath)
+                console.log('[stash:ai] child is image', { p })
+                if (p && !seen.has(p)) { seen.add(p); paths.push(p) }
+              }
+            })
+            return false
+          }
+        })
+      }
+    }
+    console.log('[stash:ai] collectChainImagePaths result', paths)
+    return paths
+  }
+
   // Build explain/ask context from current editor selection or cursor position.
   // Returns content string, a blockRef id, conversation history (for threading),
-  // and a human-readable label for the ask popup.
-  function buildAiContext(): { content: string; blockRef: string; history: string; contextLabel: string } {
-    if (!editor) return { content: '', blockRef: 'doc', history: '', contextLabel: 'document' }
+  // image paths for any images in the chain, and a human-readable label.
+  function buildAiContext(): { content: string; blockRef: string; history: string; contextLabel: string; imagePaths: string[] } {
+    if (!editor) return { content: '', blockRef: 'doc', history: '', contextLabel: 'document', imagePaths: [] }
 
     const { selection, doc } = editor.state
     const { from, to, empty } = selection
+    const serializer = editor.storage.markdown.serializer
 
-    // Threading: detect if cursor is inside an aiBlock node.
+    // Threading: detect if cursor is inside or selecting an aiBlock node.
     let aiBlockRef = ''
     let aiBlockId = ''
-    doc.nodesBetween(from, to, (node: any) => {
+    
+    // 1. Check parent hierarchy (best for point selections)
+    const $from = editor!.state.selection.$from
+    for (let d = $from.depth; d >= 0; d--) {
+      const node = $from.node(d)
       if (node.type.name === 'aiBlock') {
         aiBlockId = node.attrs.id ?? ''
         aiBlockRef = node.attrs.ref ?? ''
-        return false
+        break
       }
-    })
+    }
+
+    // 2. Fall back to range scan (best for larger selections)
+    if (!aiBlockId) {
+      doc.nodesBetween(from, to, (node: any) => {
+        if (node.type.name === 'aiBlock') {
+          aiBlockId = node.attrs.id ?? ''
+          aiBlockRef = node.attrs.ref ?? ''
+          return false
+        }
+      })
+    }
 
     if (aiBlockId) {
       // Threading: gather the full conversation history from the ref chain.
@@ -1973,18 +2141,15 @@ export default function App() {
       const sourceRef = refs[0]
       let sourceContent = ''
       if (sourceRef && sourceRef !== 'doc') {
-        // Scan for the node whose id matches sourceRef — covers [!block] nodes,
-        // code blocks, and any other node type that carries an id attribute.
         doc.descendants((node) => {
-          if (node.attrs?.id === sourceRef) { sourceContent = node.textContent; return false }
+          if (node.attrs?.id === sourceRef) { sourceContent = serializer.serialize(node); return false }
         })
       } else {
-        sourceContent = getCleanMarkdown(editor.storage.markdown.getMarkdown())
+        sourceContent = getCleanMarkdown(editor!.storage.markdown.getMarkdown())
       }
 
       // Collect all intermediate AI responses in the chain
       const intermediateHistory: string[] = []
-      const serializer = editor.storage.markdown.serializer
       const seenIds = new Set<string>()
       let turnCount = 1
 
@@ -2024,74 +2189,120 @@ export default function App() {
       ].filter(Boolean).join('\n\n---\n\n')
 
       const newRef = aiBlockRef ? `${aiBlockRef},${aiBlockId}` : aiBlockId
+      const tabPath = activeTabRef.current?.path ?? ''
+      const chainRefs = aiBlockRef ? aiBlockRef.split(',') : ['doc']
       return {
         content: sourceContent,
         blockRef: newRef,
         history: fullHistory,
         contextLabel: 'Follow-up',
+        imagePaths: collectChainImagePaths(doc, chainRefs, tabPath),
       }
     }
 
-    if (empty) {
-      // No selection — check if cursor is inside a code block.
-      let codeContent = ''
-      let codeId = ''
-      doc.descendants((node, pos) => {
-        if (node.type.name === 'codeBlock' && pos <= from && from <= pos + node.nodeSize) {
-          codeContent = node.textContent
-          codeId = node.attrs.id ?? ''
-          return false
-        }
-      })
-      if (codeContent) {
-        return { content: codeContent, blockRef: codeId || 'doc', history: '', contextLabel: 'Code Block' }
-      }
-      return { content: getCleanMarkdown(editor.storage.markdown.getMarkdown()), blockRef: 'doc', history: '', contextLabel: 'Document' }
-    }
-
-    // Text selection — use selected text as content.
-    const selectedText = doc.textBetween(from, to, '\n')
-
-    // Check if the selection is already inside a [!block] node — if so, reuse
-    // its id so re-asking the same selection doesn't create a nested wrapper.
-    let existingBlockId = ''
-    doc.nodesBetween(from, to, (node) => {
-      if (!existingBlockId && node.type.name === 'blockRef' && node.attrs.id) {
-        existingBlockId = node.attrs.id
+    // Default target detection: check if we are on/selecting an inherent block target (image, codeBlock)
+    let targetNode: any = null
+    let targetPos: number = -1
+    const scanFrom = (from === to) ? Math.max(0, from - 1) : from
+    const scanTo   = (from === to) ? Math.min(doc.content.size, to + 1) : to
+    
+    doc.nodesBetween(scanFrom, scanTo, (node, pos) => {
+      if (!targetNode && (node.type.name === 'image' || node.type.name === 'codeBlock')) {
+        targetNode = node
+        targetPos = pos
         return false
       }
     })
 
-    const blockRef = existingBlockId || 'blk-' + Math.random().toString(16).substring(2, 6)
+    // Calculate content and identify wrapping target.
+    // If not a target node, we identify the top-level block at depth 1 as the context.
+    let selectedText = ''
+    let blockRange: NodeRange | null = null
+    let contextLabel = ''
 
-    if (!existingBlockId) {
-      // Try to wrap the selected block(s) directly. This fails for content
-      // nested inside lists, table cells, etc. where the parent node doesn't
-      // accept blockRef as a child.
-      const wrapped = editor.chain()
-        .command(({ state, dispatch }) =>
-          wrapIn(state.schema.nodes.blockRef, { id: blockRef })(state, dispatch)
-        )
-        .run()
-
-      if (!wrapped) {
-        // Fall back: wrap the nearest top-level ancestor (direct child of doc).
-        // For a list item this is the whole bulletList/orderedList — it's a
-        // block node so blockRef can always contain it.
-        editor.chain()
-          .command(({ state, dispatch }) => {
-            const { $from } = state.selection
-            if ($from.depth < 1 || !dispatch) return false
-            const topPos  = $from.before(1)
-            const topNode = $from.node(1)
-            const wrapper = state.schema.nodes.blockRef.create({ id: blockRef }, topNode)
-            dispatch(state.tr.replaceWith(topPos, topPos + topNode.nodeSize, wrapper))
-            return true
-          })
-          .run()
+    if (targetNode && from === targetPos && to === targetPos + targetNode.nodeSize) {
+      // Precise node selection (Image or Code Block)
+      selectedText = serializer.serialize(targetNode).trim()
+      contextLabel = targetNode.type.name === 'image' ? 'Image' : 'Code Block'
+    } else if (from !== to) {
+      const slice = doc.slice(from, to)
+      selectedText = serializer.serialize(slice.content).trim()
+      blockRange = selection.$from.blockRange(selection.$to)
+      contextLabel = 'Selection'
+    } else if (targetNode) {
+      // Cursor is on a node (no range)
+      selectedText = serializer.serialize(targetNode).trim()
+      contextLabel = targetNode.type.name === 'image' ? 'Image' : 'Code Block'
+    } else {
+      // Cursor fallback: find the top-level node (depth 1) containing the cursor
+      const $from = selection.$from
+      const topNode = $from.node(1)
+      if (topNode) {
+        selectedText = serializer.serialize(topNode).trim()
+        blockRange = new NodeRange($from, $from, 0)
+        contextLabel = 'Block'
+      } else {
+        selectedText = getCleanMarkdown(editor!.storage.markdown.getMarkdown())
+        contextLabel = 'Document'
       }
     }
-    return { content: selectedText, blockRef, history: '', contextLabel: 'Selection' }
+
+    let existingBlockId = ''
+    if (targetNode && from >= targetPos && to <= targetPos + targetNode.nodeSize) {
+      existingBlockId = targetNode.attrs.id
+    } else if (blockRange) {
+      // Not a pure target — check if explicitly wrapped in an existing blockRef
+      doc.nodesBetween(blockRange.start, blockRange.end, (node) => {
+        if (!existingBlockId && node.type.name === 'blockRef' && node.attrs.id) {
+          existingBlockId = node.attrs.id
+          return false
+        }
+      })
+    }
+
+    let blockRef = existingBlockId || 'blk-' + Math.random().toString(16).substring(2, 6)
+    const tabPath = activeTabRef.current?.path ?? ''
+    const tr = editor!.state.tr
+    
+    if (!existingBlockId) {
+      if (targetNode && from >= targetPos && to <= targetPos + targetNode.nodeSize) {
+        tr.setNodeMarkup(targetPos, undefined, { ...targetNode.attrs, id: blockRef })
+      } else if (blockRange) {
+        // Highlighting/Cursor fallback: wrap the top-level node at depth 1.
+        // new NodeRange(..., 0) covers the children of depth 0 (i.e. nodes at depth 1).
+        const topRange = new NodeRange(blockRange.$from, blockRange.$to, 0)
+        tr.wrap(topRange, [{ type: editor!.state.schema.nodes.blockRef, attrs: { id: blockRef } }])
+      }
+    }
+
+    let finalImagePaths: string[] = []
+    // Collect paths. Always scan the selection/block range explicitly.
+    if (from !== to || targetNode || blockRange) {
+      const seen = new Set<string>()
+      const scanRangeFrom = targetNode ? targetPos : (blockRange ? blockRange.start : from)
+      const scanRangeTo   = targetNode ? targetPos + targetNode.nodeSize : (blockRange ? blockRange.end : to)
+      
+      doc.nodesBetween(scanRangeFrom, scanRangeTo, (node) => {
+        if (node.type.name === 'image' && node.attrs?.src) {
+          const p = mdSrcToStoreRelPath(node.attrs.src, tabPath)
+          if (p && !seen.has(p)) { seen.add(p); finalImagePaths.push(p) }
+        }
+      })
+    } else {
+      finalImagePaths = collectChainImagePaths(tr.doc, [blockRef], tabPath)
+    }
+
+    if (tr.docChanged) {
+      editor!.view.dispatch(tr)
+    }
+
+    return {
+      content: selectedText,
+      blockRef: (from === to && !targetNode && !blockRange) ? 'doc' : blockRef,
+      history: '',
+      contextLabel: contextLabel,
+      imagePaths: finalImagePaths,
+    }
   }
 
   // Resolve a document's current file path from its UUID.
@@ -2173,8 +2384,8 @@ export default function App() {
     evalStartTimes.current[capturedUuid] = Date.now()
     setTabs(prev => prev.map(t => t.uuid === capturedUuid ? { ...t, isWaitingAI: true, aiJobName: 'Explain' } : t))
 
-    console.log('[stash:ai] explain: firing', { aiId, uuid: capturedUuid, blockRef: ctx.blockRef, contentLen: ctx.content.length })
-    Explain(ctx.content)
+    console.log('[stash:ai] explain: firing', { aiId, uuid: capturedUuid, blockRef: ctx.blockRef, imagePaths: ctx.imagePaths })
+    Explain(ctx.content, activeTabRef.current?.path ?? '', Array.from(ctx.imagePaths))
       .then(resp => {
         const trimmed = resp.trim()
         const isActive = activeTabRef.current?.uuid === capturedUuid
@@ -2206,6 +2417,7 @@ export default function App() {
   function askGesture() {
     if (!editor || tier !== 'smart') return
     const ctx = buildAiContext()
+    console.log('[stash:ai] ask: ', { images: ctx.imagePaths })
     askContextRef.current = ctx
     setShowAskPopup(true)
   }
@@ -2222,8 +2434,8 @@ export default function App() {
     evalStartTimes.current[capturedUuid] = Date.now()
     setTabs(prev => prev.map(t => t.uuid === capturedUuid ? { ...t, isWaitingAI: true, aiJobName: 'Ask' } : t))
 
-    console.log('[stash:ai] ask: firing', { aiId, uuid: capturedUuid, blockRef: ctx.blockRef, question: question.slice(0, 60) })
-    Ask(ctx.content, ctx.history, question)
+    console.log('[stash:ai] ask: firing', { aiId, uuid: capturedUuid, blockRef: ctx.blockRef, question, imagePaths: ctx.imagePaths })
+    Ask(ctx.content, ctx.history, question, activeTabRef.current?.path ?? '', Array.from(ctx.imagePaths))
       .then(resp => {
         const trimmed = resp.trim()
         const isActive = activeTabRef.current?.uuid === capturedUuid
@@ -2267,7 +2479,14 @@ export default function App() {
       smartSave,
       reEval:     () => forceFile(true),   // Ctrl+Shift+E — force AI re-evaluation
       toggleMode,
-      loadTab:    loadTab,
+      loadTab: async (tab: TabState) => {
+        // If we are switching to a DIFFERENT tab, flush the current one first.
+        // This ensures inactive tabs always have fresh content on disk.
+        if (activeTabRef.current && activeTabRef.current.path !== tab.path) {
+          await flush()
+        }
+        loadTab(tab)
+      },
       explain:    explainGesture,
       ask:        askGesture,
       editPrompt: onEditPrompt,
@@ -2409,6 +2628,47 @@ export default function App() {
                   return true
                 })
                 .run()
+
+              if (tierRef.current === 'smart') {
+                const capturedId = id
+                pendingAiCount.current++
+                DescribeImage(storeRelPath)
+                  .then((desc: stash.ImageDesc) => {
+                    console.log('[stash:ai] DescribeImage (mutation): response', { id: capturedId, desc })
+                    if (!desc || !editor) return
+                    let found = false
+                    editor.commands.command(({ tr, state }) => {
+                      state.doc.descendants((node, pos) => {
+                        if (node.type.name === 'image' && node.attrs.id === capturedId) {
+                          found = true
+                          if (node.attrs.detect !== 'user') {
+                            tr.setNodeMarkup(pos, null, { ...node.attrs, alt: desc.alt, summary: desc.summary, detect: 'cli' })
+                          }
+                          return false
+                        }
+                      })
+                      return found
+                    })
+                    if (!found) console.warn('[stash:ai] DescribeImage (mutation): node not found', { id: capturedId })
+                  })
+                  .catch((e: unknown) => {
+                    console.error('[stash:ai] DescribeImage (mutation): call failed', e)
+                    editor.commands.command(({ tr, state }) => {
+                      let found = false
+                      state.doc.descendants((node, pos) => {
+                        if (node.type.name === 'image' && node.attrs.id === capturedId && node.attrs.detect === 'pending') {
+                          found = true
+                          tr.setNodeMarkup(pos, null, { ...node.attrs, detect: 'heuristic' })
+                          return false
+                        }
+                      })
+                      return found
+                    })
+                  })
+                  .finally(() => {
+                    pendingAiCount.current--
+                  })
+              }
             } catch (err) {
               console.error('[stash] mutation: save asset failed', err)
             }
@@ -2441,9 +2701,29 @@ export default function App() {
   // ── App close ──────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    const unlistenClosing = EventsOn('app:closing', () => {
+    const unlistenClosing = EventsOn('app:closing', async () => {
       console.log('[stash] shutdown: app:closing received, flushing state...')
-      flushRef.current()
+      
+      // 1. Flush active tab (from editor state)
+      await flushRef.current()
+
+      // 2. Flush all other background tabs (from cached states)
+      const otherTabs = tabsRef.current.filter(t => t.uuid !== activeTabRef.current?.uuid && !t.isVirtual)
+      if (otherTabs.length > 0) {
+        console.log('[stash] shutdown: flushing', otherTabs.length, 'background tab(s)...')
+        await Promise.all(otherTabs.map(async (t) => {
+          const uuid = t.uuid
+          const body = savedBodyCache.current[uuid] ?? ''
+          const fm   = fmCache.current[uuid] ?? ''
+          const raw  = mdCache.current[uuid]
+          
+          if (raw) {
+            await SaveBuffer(t.path, raw).catch(console.error)
+          } else if (body || fm) {
+            await SaveBuffer(t.path, fm + body).catch(console.error)
+          }
+        }))
+      }
 
       const doQuit = async () => {
         await persistSession()

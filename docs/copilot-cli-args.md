@@ -1,0 +1,62 @@
+
+Option	Purpose
+--acp	Start the Agent Client Protocol server.
+--add-dir=PATH	Add a directory to the allowed list for file access (can be used multiple times).
+--add-github-mcp-tool=TOOL	Add a tool to enable for the GitHub MCP server, instead of the default CLI subset (can be used multiple times). Use * for all tools.
+--add-github-mcp-toolset=TOOLSET	Add a toolset to enable for the GitHub MCP server, instead of the default CLI subset (can be used multiple times). Use all for all toolsets.
+--additional-mcp-config=JSON	Add an MCP server for this session only. The server configuration can be supplied as a JSON string or a file path (prefix with @). Augments the configuration from ~/.copilot/mcp-config.json. Overrides any installed MCP server configuration with the same name. See Adding MCP servers for GitHub Copilot CLI.
+--agent=AGENT	Specify a custom agent to use. See About custom agents.
+--allow-all	Enable all permissions (equivalent to --allow-all-tools --allow-all-paths --allow-all-urls).
+--allow-all-paths	Disable file path verification and allow access to any path.
+--allow-all-tools	Allow all tools to run automatically without confirmation. Required when using the CLI programmatically (env: COPILOT_ALLOW_ALL).
+--allow-all-urls	Allow access to all URLs without confirmation.
+--allow-tool=TOOL ...	Tools the CLI has permission to use. Will not prompt for permission. For multiple tools, use a quoted, comma-separated list. See Allowing and denying tool use.
+--allow-url=URL ...	Allow access to specific URLs or domains. For multiple URLs, use a quoted, comma-separated list.
+--autopilot	Enable autopilot continuation in prompt mode. See Allowing GitHub Copilot CLI to work autonomously.
+--available-tools=TOOL ...	Only these tools will be available to the model. For multiple tools, use a quoted, comma-separated list. See Allowing and denying tool use.
+--banner	Show the startup banner.
+--bash-env	Enable BASH_ENV support for bash shells.
+--config-dir=PATH	Set the configuration directory (default: ~/.copilot).
+--continue	Resume the most recent session.
+--deny-tool=TOOL ...	Tools the CLI does not have permission to use. Will not prompt for permission. For multiple tools, use a quoted, comma-separated list.
+--deny-url=URL ...	Deny access to specific URLs or domains, takes precedence over --allow-url. For multiple URLs, use a quoted, comma-separated list.
+--disable-builtin-mcps	Disable all built-in MCP servers (currently: github-mcp-server).
+--disable-mcp-server=SERVER-NAME	Disable a specific MCP server (can be used multiple times).
+--disable-parallel-tools-execution	Disable parallel execution of tools (LLM can still make parallel tool calls, but they will be executed sequentially).
+--disallow-temp-dir	Prevent automatic access to the system temporary directory.
+--effort=LEVEL, --reasoning-effort=LEVEL	Set the reasoning effort level (low, medium, high).
+--enable-all-github-mcp-tools	Enable all GitHub MCP server tools, instead of the default CLI subset. Overrides the --add-github-mcp-toolset and --add-github-mcp-tool options.
+--enable-reasoning-summaries	Request reasoning summaries for OpenAI models that support it.
+--excluded-tools=TOOL ...	These tools will not be available to the model. For multiple tools, use a quoted, comma-separated list.
+--experimental	Enable experimental features (use --no-experimental to disable).
+-h, --help	Display help.
+-i PROMPT, --interactive=PROMPT	Start an interactive session and automatically execute this prompt.
+--log-dir=DIRECTORY	Set the log file directory (default: ~/.copilot/logs/).
+--log-level=LEVEL	Set the log level (choices: none, error, warning, info, debug, all, default).
+--max-autopilot-continues=COUNT	Maximum number of continuation messages in autopilot mode (default: unlimited). See Allowing GitHub Copilot CLI to work autonomously.
+--mode=MODE	Set the initial agent mode (choices: interactive, plan, autopilot). Cannot be combined with --autopilot or --plan.
+--model=MODEL	Set the AI model you want to use.
+--mouse[=VALUE]	Enable mouse support in alt screen mode. VALUE can be on (default) or off. When enabled, the CLI captures mouse events in alt screen mode—scroll wheel, clicks, etc. When disabled, the terminal's native mouse behavior is preserved. Once set the setting is persisted by being written to your configuration file.
+--no-ask-user	Disable the ask_user tool (the agent works autonomously without asking questions).
+--no-auto-update	Disable downloading CLI updates automatically.
+--no-bash-env	Disable BASH_ENV support for bash shells.
+--no-color	Disable all color output.
+--no-custom-instructions	Disable loading of custom instructions from AGENTS.md and related files.
+--no-experimental	Disable experimental features.
+--no-mouse	Disable mouse support.
+--no-remote	Disable remote access for this session.
+--output-format=FORMAT	FORMAT can be text (default) or json (outputs JSONL: one JSON object per line).
+-p PROMPT, --prompt=PROMPT	Execute a prompt programmatically (exits after completion). See Running GitHub Copilot CLI programmatically.
+--plan	Start in plan mode. Shorthand for --mode plan. Cannot be combined with --mode or --autopilot.
+--plain-diff	Disable rich diff rendering (syntax highlighting via the diff tool specified by your git config).
+--plugin-dir=DIRECTORY	Load a plugin from a local directory (can be used multiple times).
+--remote	Enable remote access to this session from GitHub.com and GitHub Mobile. See Steering a GitHub Copilot CLI session from another device.
+--resume=SESSION-ID	Resume a previous interactive session by choosing from a list (optionally specify a session ID).
+-s, --silent	Output only the agent response (without usage statistics), useful for scripting with -p.
+--screen-reader	Enable screen reader optimizations.
+--secret-env-vars=VAR ...	Redact an environment variable from shell and MCP server environments (can be used multiple times). For multiple variables, use a quoted, comma-separated list. The values in the GITHUB_TOKEN and COPILOT_GITHUB_TOKEN environment variables are redacted from output by default.
+--share=PATH	Share a session to a Markdown file after completion of a programmatic session (default path: ./copilot-session-<ID>.md).
+--share-gist	Share a session to a secret GitHub gist after completion of a programmatic session.
+--stream=MODE	Enable or disable streaming mode (mode choices: on or off).
+-v, --version	Show version information.
+--yolo	Enable all permissions (equivalent to --allow-all).

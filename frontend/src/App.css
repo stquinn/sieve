@@ -103,6 +103,23 @@ textarea::selection {
   outline-offset: 2px;
 }
 
+/* Blocks are transparent containers; don't show the selection outline across the whole screen */
+.block-node.ProseMirror-selectednode {
+  outline: none !important;
+}
+
+/* Fix ghost selection bars in WebKit around images */
+.node-image,
+.node-image * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+.node-image::selection,
+.node-image *::selection {
+  background: transparent !important;
+}
+
 /* ── Syntax highlighting (.hljs-* classes from lowlight/highlight.js) ─── */
 /* lowlight tokenises code and wraps spans in .hljs-<type>. No colours    */
 /* are applied by default — we map every meaningful class here.           */
@@ -482,12 +499,55 @@ textarea::selection {
 
 .block-node.block-ref-active {
   background-color: color-mix(in srgb, var(--theme-accentPrimary) 8%, transparent);
+  padding-left: 3px;
+  padding-right: 3px;
 }
 
 .block-node.block-ref-active .code-block,
 .tiptap .code-block.block-ref-active {
   background: color-mix(in srgb, var(--theme-accentPrimary) 10%, var(--theme-bgDark));
   border-color: color-mix(in srgb, var(--theme-accentPrimary) 30%, var(--theme-border));
+  box-shadow: 0 0 0 2px var(--theme-accentPrimary); 
+}
+
+div.node-image.ProseMirror-selectednode {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.image-block img {
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px var(--theme-aiBlockBorder);
+  transition: box-shadow 0.2s ease;
+}
+
+.image-block.block-ref-active img {
+  box-shadow: 0 0 0 2px var(--theme-accentPrimary);
+}
+
+.image-block {
+  position: relative;
+  line-height: 0;
+}
+
+.image-resizer {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 12px;
+  height: 12px;
+  background: var(--theme-accentPrimary);
+  border: 1px solid var(--theme-bg);
+  border-radius: 2px;
+  cursor: nwse-resize;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 10;
+}
+
+.image-block:hover .image-resizer,
+.image-block.ProseMirror-selectednode .image-resizer {
+  opacity: 1;
 }
 
 /* ── AI response blocks ──────────────────────────────────────────────── */
@@ -503,12 +563,17 @@ textarea::selection {
   margin-bottom: 2rem;
   padding: 1.25rem 1.5rem;
   position: relative;
-  transition: border-color 0.2s ease, background 0.2s ease;
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
 }
 
+.ai-block:hover,
+.ai-block:focus-within {
+  /* border-color: var(--theme-accentPrimary); */
+}
 .ai-block.ai-block--chain-active {
-  border-color: color-mix(in srgb, var(--theme-accentPrimary) 50%, var(--theme-aiBlockBorder));
-  background: color-mix(in srgb, var(--theme-accentPrimary) 8%, var(--theme-aiBlockBg));
+  border-color: var(--theme-accentPrimary);
+  box-shadow: 0 0 0 1px var(--theme-accentPrimary);
+  background: color-mix(in srgb, var(--theme-accentPrimary) 4%, var(--theme-aiBlockBg));
 }
 
 /* "AI" badge sits in the top border */
