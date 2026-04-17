@@ -110,6 +110,21 @@ function parseMeta(fm: string, body: string) {
 }
 
 // Update a single YAML frontmatter field in-place. Handles null, arrays, and strings.
+function applyFilingRec(fm: string, rec: vault.FilingRecommendation, cli: string): string {
+  fm = setYamlField(fm, 'ai_eval', 'complete')
+  fm = setYamlField(fm, 'ai_last_evaluated', getLocalISOString())
+  fm = setYamlField(fm, 'ai_keep', rec.keep)
+  fm = setYamlField(fm, 'cli', cli)
+  if (rec.title)            fm = setYamlField(fm, 'display_name', rec.title)
+  if (rec.filename)         fm = setYamlField(fm, 'filename', rec.filename)
+  if (rec.folder)           fm = setYamlField(fm, 'ai_folder_suggestion', rec.folder)
+  if (rec.summary)          fm = setYamlField(fm, 'summary', rec.summary)
+  if (rec.tags?.length)     fm = setYamlField(fm, 'tags', rec.tags)
+  if (rec.ai_justification) fm = setYamlField(fm, 'ai_justification', rec.ai_justification)
+  if (rec.density_signals?.length) fm = setYamlField(fm, 'density_signals', rec.density_signals)
+  return fm
+}
+
 function setYamlField(yaml: string, key: string, val: any): string {
   let strVal: string
   if (Array.isArray(val)) {
@@ -323,16 +338,8 @@ export default function App() {
         
         const shouldKeep = forceKeep || userIntent === 'keep' || (userIntent !== 'trash' && rec.keep)
         if (shouldKeep) {
-          let fm = savedFm
-          fm = setYamlField(fm, 'ai_eval', 'complete')
-          fm = setYamlField(fm, 'ai_last_evaluated', getLocalISOString())
-          if (rec.title)    fm = setYamlField(fm, 'display_name', rec.title)
-          if (rec.filename) fm = setYamlField(fm, 'filename', rec.filename)
-          if (rec.folder)   fm = setYamlField(fm, 'ai_folder_suggestion', rec.folder)
-          if (rec.summary)  fm = setYamlField(fm, 'summary', rec.summary)
-          if (rec.tags?.length) fm = setYamlField(fm, 'tags', rec.tags)
-          const filename = rec.filename || suggestedName
-          if (filename) fm = setYamlField(fm, 'user_suggested_name', filename)
+          const info = await GetVaultInfo()
+          const fm = applyFilingRec(savedFm, rec, info.cli)
           await SaveBuffer(path, fm + savedBody)
           const result = await FileBuffer(path)
           const { newPath, content: filedContent } = result
@@ -575,7 +582,7 @@ export default function App() {
                       if (node.type.name === 'codeBlock' && node.attrs.id === capturedId) {
                         found = true
                         if (node.attrs.detect !== 'user') {
-                          tr.setNodeMarkup(pos, null, { ...node.attrs, language: lang, detect: 'cli' })
+                          tr.setNodeMarkup(pos, null, { ...node.attrs, language: lang, detect: 'ai' })
                         } else {
                           console.debug('[stash:ai] RefineLanguage: detect=user, skipping', { id: capturedId })
                         }
@@ -599,53 +606,38 @@ export default function App() {
       handleKeyDown(view, event) {
         if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
           event.preventDefault()
-          event.stopPropagation()
           const { state } = view
           const { from, to, empty } = state.selection
 
-          if (empty) {
-            if (!event.shiftKey) {
-              view.dispatch(state.tr.insertText('    '))
-              return true
+          // List item: let Tiptap's ListItem extension handle Tab/Shift-Tab
+          // (sinkListItem / liftListItem) — do not intercept
+          if (editor?.isActive('listItem')) return false
+
+          // Multi-line selection across prose blocks: space-indent each block
+          if (!empty) {
+            const tr = state.tr
+            const positions: number[] = []
+            state.doc.nodesBetween(from, to, (node, pos) => {
+              if (node.isTextblock) positions.push(pos + 1)
+            })
+            if (event.shiftKey) {
+              let offset = 0
+              for (const pos of positions) {
+                const adjustedPos = pos + offset
+                const nodeText = state.doc.textBetween(adjustedPos, adjustedPos + 4)
+                const spaces = nodeText.match(/^ {1,4}/)?.[0].length ?? 0
+                if (spaces > 0) { tr.delete(adjustedPos, adjustedPos + spaces); offset -= spaces }
+              }
+            } else {
+              let offset = 0
+              for (const pos of positions) { tr.insertText('    ', pos + offset); offset += 4 }
             }
-            // Shift+Tab with no selection: dedent current line
-            const blockStart = state.selection.$from.start()
-            const lineText = state.doc.textBetween(blockStart, blockStart + 4)
-            const spaces = lineText.match(/^ {1,4}/)?.[0].length ?? 0
-            if (spaces > 0) view.dispatch(state.tr.delete(blockStart, blockStart + spaces))
+            view.dispatch(tr)
             return true
           }
 
-          // Multi-line: indent or dedent each block in the selection
-          const tr = state.tr
-          const positions: number[] = []
-          state.doc.nodesBetween(from, to, (node, pos) => {
-            if (node.isTextblock) positions.push(pos + 1)
-          })
-
-          if (event.shiftKey) {
-            // Dedent: remove up to 4 leading spaces from each block
-            let offset = 0
-            for (const pos of positions) {
-              const adjustedPos = pos + offset
-              const nodeText = state.doc.textBetween(adjustedPos, adjustedPos + 4)
-              const spaces = nodeText.match(/^ {1,4}/)?.[0].length ?? 0
-              if (spaces > 0) {
-                tr.delete(adjustedPos, adjustedPos + spaces)
-                offset -= spaces
-              }
-            }
-          } else {
-            // Indent: prepend 4 spaces to each block
-            let offset = 0
-            for (const pos of positions) {
-              tr.insertText('    ', pos + offset)
-              offset += 4
-            }
-          }
-
-          view.dispatch(tr)
-          return true
+          // Plain prose cursor: don't intercept — let the OS/browser handle focus navigation
+          return false
         }
         return false
       },
@@ -1220,7 +1212,7 @@ export default function App() {
     setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, ...parseMeta(evalFm, body0) } : t))
 
     // ── Long-running AI call ──────────────────────────────────────────────────
-    let rec: { keep: boolean; title: string; filename: string; folder: string; summary: string; tags: string[] } | null = null
+    let rec: vault.FilingRecommendation | null = null
     try {
       rec = await EvaluateBuffer(path0)
       console.log('[stash:ai] runBackgroundEval: complete', { uuid, keep: rec?.keep, filename: rec?.filename })
@@ -1233,16 +1225,8 @@ export default function App() {
     // Apply results to the CURRENT fm (autosave may have bumped version during eval)
     let finalFm = fmCache.current[uuid] ?? evalFm
     if (rec) {
-      finalFm = setYamlField(finalFm, 'ai_eval', 'complete')
-      finalFm = setYamlField(finalFm, 'ai_last_evaluated', getLocalISOString())
-      finalFm = setYamlField(finalFm, 'ai_keep', rec.keep)
       const info = await GetVaultInfo()
-      finalFm = setYamlField(finalFm, 'cli', info.cli)
-      if (rec.title)    finalFm = setYamlField(finalFm, 'display_name', rec.title)
-      if (rec.filename) finalFm = setYamlField(finalFm, 'filename', rec.filename)
-      if (rec.folder)   finalFm = setYamlField(finalFm, 'ai_folder_suggestion', rec.folder)
-      if (rec.summary)  finalFm = setYamlField(finalFm, 'summary', rec.summary)
-      if (rec.tags && rec.tags.length > 0) finalFm = setYamlField(finalFm, 'tags', rec.tags)
+      finalFm = applyFilingRec(finalFm, rec, info.cli)
     } else {
       finalFm = setYamlField(finalFm, 'ai_eval', 'timeout')
     }
@@ -1628,14 +1612,8 @@ export default function App() {
         await GetNotes().then(res => setNotes(res || [])).catch(console.error)
         return
       }
-      let { frontmatter, body } = splitFrontmatter(content)
-      frontmatter = setYamlField(frontmatter, 'ai_eval', 'complete')
-      frontmatter = setYamlField(frontmatter, 'ai_last_evaluated', getLocalISOString())
-      if (rec.title)    frontmatter = setYamlField(frontmatter, 'display_name', rec.title)
-      if (rec.filename) frontmatter = setYamlField(frontmatter, 'filename', rec.filename)
-      if (rec.folder)   frontmatter = setYamlField(frontmatter, 'ai_folder_suggestion', rec.folder)
-      if (rec.summary)  frontmatter = setYamlField(frontmatter, 'summary', rec.summary)
-      if (rec.tags && rec.tags.length > 0) frontmatter = setYamlField(frontmatter, 'tags', rec.tags)
+      const info = await GetVaultInfo()
+      frontmatter = applyFilingRec(frontmatter, rec, info.cli)
       await SaveBuffer(path, frontmatter + body)
       await FileBuffer(path)
       await GetNotes().then(res => setNotes(res || [])).catch(console.error)

@@ -11,14 +11,16 @@ import (
 
 // FilingRecommendation mirrors the expected JSON structure from the AI.
 type FilingRecommendation struct {
-	Keep      bool     `json:"keep"`
-	Title     string   `json:"title"`
-	Filename  string   `json:"filename"`
-	Folder    string   `json:"folder"`
-	NewFolder bool     `json:"new_folder"`
-	Type      string   `json:"type"`
-	Summary   string   `json:"summary"`
-	Tags      []string `json:"tags"`
+	Keep             bool     `json:"keep"`
+	Title            string   `json:"title"`
+	Filename         string   `json:"filename"`
+	Folder           string   `json:"folder"`
+	NewFolder        bool     `json:"new_folder"`
+	Type             string   `json:"type"`
+	Summary          string   `json:"summary"`
+	Tags             []string `json:"tags"`
+	AiJustification  string   `json:"ai_justification"`
+	DensitySignals   []string `json:"density_signals"`
 }
 
 func (v *Vault) getFilingPrompt(settings Settings) string {
@@ -104,6 +106,9 @@ func (v *Vault) EvaluateBuffer(path string, settings Settings) (*FilingRecommend
 	// Backfill missing critical arrays with empty defaults avoiding nulls
 	if rec.Tags == nil {
 		rec.Tags = []string{}
+	}
+	if rec.DensitySignals == nil {
+		rec.DensitySignals = []string{}
 	}
 
 	return &rec, nil

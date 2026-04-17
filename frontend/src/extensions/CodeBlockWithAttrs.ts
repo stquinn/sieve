@@ -4,8 +4,8 @@ import { CodeBlockNodeView } from './CodeBlockNodeView'
 
 /**
  * Parse a fenced code block info string into its parts.
- * Input:  'python id="blk-test" detect="heuristic"'
- * Output: { language: 'python', id: 'blk-test', detect: 'heuristic' }
+ * Input:  'python id="blk-test" detect="ai"'
+ * Output: { language: 'python', id: 'blk-test', detect: 'ai' }
  */
 function parseInfoString(info: string) {
   const trimmed = info.trim()
@@ -44,6 +44,30 @@ export const CodeBlockWithAttrs = CodeBlockLowlight.extend({
         default: null,
         parseHTML: (element) => element.getAttribute('data-detect'),
         renderHTML: (attrs) => (attrs.detect ? { 'data-detect': attrs.detect } : {}),
+      },
+    }
+  },
+
+  addKeyboardShortcuts() {
+    return {
+      Tab: () => {
+        if (!this.editor.isActive(this.name)) return false
+        return this.editor.commands.command(({ tr, state }) => {
+          tr.insertText('\t', state.selection.from, state.selection.to)
+          return true
+        })
+      },
+      'Shift-Tab': () => {
+        if (!this.editor.isActive(this.name)) return false
+        return this.editor.commands.command(({ tr, state }) => {
+          const blockStart = state.selection.$from.start()
+          const cursorPos  = state.selection.$from.pos
+          const textBefore = state.doc.textBetween(blockStart, cursorPos)
+          const lineStart  = blockStart + textBefore.lastIndexOf('\n') + 1
+          if (state.doc.textBetween(lineStart, lineStart + 1) !== '\t') return false
+          tr.delete(lineStart, lineStart + 1)
+          return true
+        })
       },
     }
   },

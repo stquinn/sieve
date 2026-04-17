@@ -46,6 +46,27 @@ If the content is too generic, leave the folder empty for root.
 Generate rich semantic tags — relate it to broader technologies and topics.
 
 CRITICAL: You MUST provide a descriptive kebab-case filename even if you decide keep:false.
+CRITICAL: You MUST provide an appropriate folder name even if you decide keep:false.
+
+After making the keep/discard decision, generate a short, plain‑language justification
+explaining which signals most influenced the outcome.
+
+Constraints for the justification:
+- One sentence only.
+- Descriptive, not evaluative (do NOT use words like “important”, “valuable”, “high quality”).
+- Refer only to observed signals (e.g. focus signal, iteration, refinement, explicit user intent, convergence).
+- Do NOT restate the content.
+- Do NOT explain the rules themselves.
+
+Additionally, include a compact "density_signals" object that captures the specific cues used to judge information density.
+Constraints:
+- Only include 3–6 short bullet-like strings (each ≤ 8 words).
+- Refer to observable cues (e.g., code blocks present, number of distinct points, presence of headings/lists, presence of actionable decisions, specificity of nouns, duplication/boilerplate).
+- Do not quote the content.
+- Do not use evaluative language ("good", "important", "high quality").
+- If keep:false due primarily to triviality/gibberish, set density_signals to ["low-density", "<why>"].
+- Otherwise always include it.
+
 
 Respond ONLY with raw JSON. DO NOT use markdown code fences (triple backticks). No preamble or explanation.
 {
@@ -56,7 +77,9 @@ Respond ONLY with raw JSON. DO NOT use markdown code fences (triple backticks). 
   "new_folder": true,
   "type": "content type",
   "summary": "brief summary",
-  "tags": ["tag1", "tag2"]
+  "tags": ["tag1", "tag2"],
+  "ai_justification": "brief heuristic explanation of why this was kept or discarded",
+  "density_signals": ["signal1", "signal2"]
 }
 
 Content:

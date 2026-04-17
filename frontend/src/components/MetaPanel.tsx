@@ -22,6 +22,8 @@ interface ParsedMeta {
   filename: string | null
   summary: string | null
   tags: string[] | null
+  ai_justification: string | null
+  density_signals: string[] | null
   created: string | null
   modified: string | null
   cli: string | null
@@ -41,6 +43,11 @@ function parseMeta(fm: string): ParsedMeta {
     ? tagsRaw.split(',').map(t => t.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean)
     : null
 
+  const densityRaw = fm.match(/^density_signals:\s*\[([^\]]*)\]/m)?.[1] ?? null
+  const density_signals = densityRaw
+    ? densityRaw.split(',').map(t => t.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean)
+    : null
+
   return {
     uuid:                 str('uuid'),
     status:               str('status'),
@@ -55,6 +62,8 @@ function parseMeta(fm: string): ParsedMeta {
     filename:             str('filename'),
     summary:              str('summary'),
     tags,
+    ai_justification:     str('ai_justification'),
+    density_signals,
     created:              str('created'),
     modified:             str('modified'),
     cli:                  str('cli'),
@@ -201,6 +210,24 @@ export function MetaPanel({ meta: metaStr, path, width, isModified, isEvaluating
           )}
           {(!meta!.tags || meta!.tags.length === 0) && (
             <Row label="Tags">—</Row>
+          )}
+
+          <Row label="AI why">
+            <span className="meta-panel__summary">{meta!.ai_justification ?? '—'}</span>
+          </Row>
+
+          {meta!.density_signals && meta!.density_signals.length > 0 && (
+            <div className="meta-panel__tags-row">
+              <span className="meta-panel__label">Density</span>
+              <div className="meta-panel__tags">
+                {meta!.density_signals.map(s => (
+                  <span key={s} className="meta-panel__tag">{s}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {(!meta!.density_signals || meta!.density_signals.length === 0) && (
+            <Row label="Density">—</Row>
           )}
 
           <Divider />

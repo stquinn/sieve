@@ -356,6 +356,8 @@ display_name: Untitled %d
 filename: null
 summary: null
 tags: []
+ai_justification: null
+density_signals: []
 created: %s
 modified: %s
 cli: null
