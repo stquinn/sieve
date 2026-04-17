@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"stash/logger"
-	"stash/vault"
+	"stash/stash"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -27,24 +27,24 @@ import (
 // App is the Wails application backend.
 type App struct {
 	ctx          context.Context
-	vaultPath    string
+	storePath    string
 	settingsPath string
-	vault        *vault.Vault
-	settings     vault.Settings
+	stash        *stash.Store
+	settings     stash.Settings
 	themesFS     fs.FS
 	watcher      *notesWatcher
 	closing      bool // prevents OnBeforeClose loop
 	mu           sync.Mutex
 }
 
-func NewApp(vaultPath string, themesFS fs.FS) *App {
+func NewApp(storePath string, themesFS fs.FS) *App {
 	hostname, _ := os.Hostname()
 	if hostname == "" {
 		hostname = "localhost"
 	}
 	return &App{
-		vaultPath:    vaultPath,
-		settingsPath: filepath.Join(vaultPath, hostname, "settings.json"),
+		storePath:    storePath,
+		settingsPath: filepath.Join(storePath, hostname, "settings.json"),
 		themesFS:     themesFS,
 	}
 }
@@ -57,8 +57,8 @@ func (a *App) GetThemesFS() fs.FS {
 	return a.themesFS
 }
 
-func (a *App) GetVaultPath() string {
-	return a.vaultPath
+func (a *App) GetStorePath() string {
+	return a.storePath
 }
 
 // startup is called by Wails when the application window is ready.
@@ -68,11 +68,11 @@ func (a *App) startup(ctx context.Context) {
 
 	a.ctx = ctx
 
-	abs, _ := filepath.Abs(a.vaultPath)
-	logger.Info("startup", "vault_raw", a.vaultPath, "vault_abs", abs)
+	abs, _ := filepath.Abs(a.storePath)
+	logger.Info("startup", "vault_raw", a.storePath, "vault_abs", abs)
 
-	if a.vaultPath == "" {
-		logger.Info("startup: no vault path specified — entering bootstrap mode")
+	if a.storePath == "" {
+		logger.Info("startup: no store path specified — entering bootstrap mode")
 		return
 	}
 
@@ -82,23 +82,23 @@ func (a *App) startup(ctx context.Context) {
 		a.watcher = nil
 	}
 
-	v, err := vault.Open(a.vaultPath)
+	v, err := stash.Open(a.storePath)
 	if err != nil {
-		logger.Error("vault open failed", "err", err)
+		logger.Error("store open failed", "err", err)
 		return
 	}
 
-	a.vault = v
-	a.settings = vault.LoadSettings(v.SettingsPath())
+	a.stash = v
+	a.settings = stash.LoadSettings(v.SettingsPath())
 
-	// Save this vault path as the last used one
-	config := vault.LoadGlobalConfig()
-	config.LastVaultPath = v.Root
+	// Save this store path as the last used one
+	config := stash.LoadGlobalConfig()
+	config.LastStorePath = v.Root
 	if err := config.Save(); err != nil {
 		logger.Warn("could not save global config", "err", err)
 	}
 
-	logger.Info("vault ready",
+	logger.Info("store ready",
 		"root", v.Root,
 		"hostname", v.Hostname,
 		"tier", a.settings.Tier(),
@@ -106,7 +106,7 @@ func (a *App) startup(ctx context.Context) {
 		"debug", a.settings.Debug,
 	)
 
-	// Write a startup probe so the vault path is easily confirmed on disk
+	// Write a startup probe so the store path is easily confirmed on disk
 	probe := filepath.Join(v.Root, ".startup-probe")
 	_ = os.WriteFile(probe, []byte(fmt.Sprintf("started at %s\nvault: %s\nhost:  %s\n",
 		time.Now().Format(time.RFC3339), v.Root, v.Hostname)), 0o644)
@@ -118,7 +118,7 @@ func (a *App) startup(ctx context.Context) {
 	// it on whatever monitor owns that coordinate space. We only skip positions
 	// that look completely bogus (both axes deeply negative), which would
 	// indicate a monitor that no longer exists.
-	savedSession := vault.LoadSession(v.SessionPath())
+	savedSession := stash.LoadSession(v.SessionPath())
 	if savedSession.Window.Width >= 800 && savedSession.Window.Height >= 500 {
 		runtime.WindowSetSize(ctx, savedSession.Window.Width, savedSession.Window.Height)
 		logger.Debug("window size restored", "w", savedSession.Window.Width, "h", savedSession.Window.Height)
@@ -129,7 +129,7 @@ func (a *App) startup(ctx context.Context) {
 		logger.Debug("window position restored", "x", win.X, "y", win.Y)
 	}
 
-	// Start watching vault/notes/ for filesystem changes
+	// Start watching store/notes/ for filesystem changes
 	w, err := newNotesWatcher(v.NotesPath(), func() {
 		logger.Debug("notes changed — emitting event")
 		runtime.EventsEmit(a.ctx, "notes:changed")
@@ -147,12 +147,12 @@ func (a *App) beforeClose(ctx context.Context) bool {
 	}
 
 	// Save window state Go-side (fast synchronously)
-	if a.vault != nil {
+	if a.stash != nil {
 		x, y := runtime.WindowGetPosition(ctx)
 		w, h := runtime.WindowGetSize(ctx)
-		session := vault.LoadSession(a.vault.SessionPath())
-		session.Window = vault.Window{X: x, Y: y, Width: w, Height: h}
-		_ = session.Save(a.vault.SessionPath())
+		session := stash.LoadSession(a.stash.SessionPath())
+		session.Window = stash.Window{X: x, Y: y, Width: w, Height: h}
+		_ = session.Save(a.stash.SessionPath())
 	}
 
 	// Signpost frontend to flush state
@@ -182,61 +182,61 @@ func (a *App) Quit() {
 	}()
 }
 
-// ── Vault info ────────────────────────────────────────────────────────────────
+// ── Store info ────────────────────────────────────────────────────────────────
 
-type VaultInfo struct {
+type StoreInfo struct {
 	Root               string          `json:"root"`
 	Hostname           string          `json:"hostname"`
 	BuffersPath        string          `json:"buffersPath"`
 	NotesPath          string          `json:"notesPath"`
 	IsNew              bool            `json:"isNew"`
-	Tier               vault.Tier      `json:"tier"`
+	Tier               stash.Tier      `json:"tier"`
 	Cli                string          `json:"cli"`
 	Debug              bool            `json:"debug"`
 	AutosaveDebounce   int             `json:"autosaveDebounce"`
 	ThemeName          string          `json:"themeName"`
-	ThemeVars          vault.ThemeVars `json:"themeVars"`
+	ThemeVars          stash.ThemeVars `json:"themeVars"`
 	MaxHistoryVersions int             `json:"maxHistoryVersions"`
 	CLITimeoutLong     int             `json:"cliTimeoutLong"`
 	ShowPrompts        bool            `json:"showPrompts"`
 }
 
-func (a *App) GetVaultInfo() VaultInfo {
-	if a.vault == nil {
-		logger.Warn("GetVaultInfo: vault not open")
-		return VaultInfo{}
+func (a *App) GetStoreInfo() StoreInfo {
+	if a.stash == nil {
+		logger.Warn("GetStoreInfo: store not open")
+		return StoreInfo{}
 	}
 
-	logger.Info("GetVaultInfo", "root", a.vault.Root)
-	liveSettings := vault.LoadSettings(a.vault.SettingsPath())
+	logger.Info("GetStoreInfo", "root", a.stash.Root)
+	liveSettings := stash.LoadSettings(a.stash.SettingsPath())
 
-	return VaultInfo{
-		Root:               a.vault.Root,
-		Hostname:           a.vault.Hostname,
-		BuffersPath:        a.vault.BuffersPath(),
-		NotesPath:          a.vault.NotesPath(),
-		IsNew:              a.vault.IsNewVault(),
+	return StoreInfo{
+		Root:               a.stash.Root,
+		Hostname:           a.stash.Hostname,
+		BuffersPath:        a.stash.BuffersPath(),
+		NotesPath:          a.stash.NotesPath(),
+		IsNew:              a.stash.IsNewStore(),
 		Tier:               liveSettings.Tier(),
 		Cli:                liveSettings.CLI,
 		Debug:              liveSettings.Debug,
 		AutosaveDebounce:   liveSettings.AutosaveDebounce,
 		ThemeName:          liveSettings.Theme,
-		ThemeVars:          vault.LoadTheme(a.vault.Root, liveSettings.Theme, a.themesFS),
+		ThemeVars:          stash.LoadTheme(a.stash.Root, liveSettings.Theme, a.themesFS),
 		MaxHistoryVersions: liveSettings.MaxHistoryVersions,
 		CLITimeoutLong:     liveSettings.CLITimeoutLong,
-		ShowPrompts:        vault.LoadSession(a.vault.SessionPath()).ShowPrompts,
+		ShowPrompts:        stash.LoadSession(a.stash.SessionPath()).ShowPrompts,
 	}
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 
 func (a *App) SaveSidebarWidth(width int) error {
-	if a.vault == nil {
-		return fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return fmt.Errorf("store not open")
 	}
-	session := vault.LoadSession(a.vault.SessionPath())
+	session := stash.LoadSession(a.stash.SessionPath())
 	session.SidebarWidth = width
-	if err := session.Save(a.vault.SessionPath()); err != nil {
+	if err := session.Save(a.stash.SessionPath()); err != nil {
 		logger.Error("SaveSidebarWidth failed", "err", err)
 		return err
 	}
@@ -245,12 +245,12 @@ func (a *App) SaveSidebarWidth(width int) error {
 }
 
 func (a *App) SaveMetaWidth(width int) error {
-	if a.vault == nil {
-		return fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return fmt.Errorf("store not open")
 	}
-	session := vault.LoadSession(a.vault.SessionPath())
+	session := stash.LoadSession(a.stash.SessionPath())
 	session.MetaWidth = width
-	if err := session.Save(a.vault.SessionPath()); err != nil {
+	if err := session.Save(a.stash.SessionPath()); err != nil {
 		logger.Error("SaveMetaWidth failed", "err", err)
 		return err
 	}
@@ -259,12 +259,12 @@ func (a *App) SaveMetaWidth(width int) error {
 }
 
 func (a *App) SavePromptsHeight(height int) error {
-	if a.vault == nil {
-		return fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return fmt.Errorf("store not open")
 	}
-	session := vault.LoadSession(a.vault.SessionPath())
+	session := stash.LoadSession(a.stash.SessionPath())
 	session.PromptsHeight = height
-	if err := session.Save(a.vault.SessionPath()); err != nil {
+	if err := session.Save(a.stash.SessionPath()); err != nil {
 		logger.Error("SavePromptsHeight failed", "err", err)
 		return err
 	}
@@ -280,7 +280,7 @@ func (a *App) SelectVault() (string, error) {
 	}
 
 	path, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select Stash Vault",
+		Title: "Select Stash Store",
 	})
 	if err != nil {
 		return "", err
@@ -290,21 +290,21 @@ func (a *App) SelectVault() (string, error) {
 	}
 
 	// Try to validate it.
-	if err := vault.ValidateVault(path); err != nil {
-		return "", fmt.Errorf("this directory does not look like a Stash vault: %w", err)
+	if err := stash.ValidateStore(path); err != nil {
+		return "", fmt.Errorf("this directory does not look like a Stash store: %w", err)
 	}
 
 	// Save to global config so it's found on reload
-	config := vault.LoadGlobalConfig()
-	config.LastVaultPath = path
+	config := stash.LoadGlobalConfig()
+	config.LastStorePath = path
 	if err := config.Save(); err != nil {
 		return "", fmt.Errorf("could not update global config: %w", err)
 	}
 
-	a.vaultPath = path
+	a.storePath = path
 	a.startup(a.ctx)
 
-	logger.Info("vault selected", "path", path)
+	logger.Info("store selected", "path", path)
 	return path, nil
 }
 
@@ -314,7 +314,7 @@ func (a *App) CreateVault() (string, error) {
 	}
 
 	path, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select Folder to Initialize Vault",
+		Title: "Select Folder to Initialize Store",
 	})
 	if err != nil {
 		return "", err
@@ -322,11 +322,11 @@ func (a *App) CreateVault() (string, error) {
 	if path == "" {
 		return "", nil // user cancelled
 	}
-	// vault.Open will create the directories
-	a.vaultPath = path
+	// stash.Open will create the directories
+	a.storePath = path
 	a.startup(a.ctx)
 
-	logger.Info("vault creation initialized", "path", path)
+	logger.Info("store creation initialized", "path", path)
 	return path, nil
 }
 
@@ -347,27 +347,27 @@ func (a *App) InitVault(path string) error {
 	}
 
 	// Save to global config
-	config := vault.LoadGlobalConfig()
-	config.LastVaultPath = abs
+	config := stash.LoadGlobalConfig()
+	config.LastStorePath = abs
 	if err := config.Save(); err != nil {
 		return fmt.Errorf("could not update global config: %w", err)
 	}
 
-	a.vaultPath = abs
+	a.storePath = abs
 	a.startup(a.ctx)
 
-	logger.Info("vault initialized manually — READY", "path", abs)
+	logger.Info("store initialized manually — READY", "path", abs)
 	return nil
 }
 
 // ── Prompts ───────────────────────────────────────────────────────────────────
 
-func (a *App) GetPrompts() []vault.PromptEntry {
-	if a.vault == nil {
+func (a *App) GetPrompts() []stash.PromptEntry {
+	if a.stash == nil {
 		return nil
 	}
-	settings := vault.LoadSettings(a.vault.SettingsPath())
-	prompts := []vault.PromptEntry{
+	settings := stash.LoadSettings(a.stash.SettingsPath())
+	prompts := []stash.PromptEntry{
 		{Name: "file", DisplayName: "Smart Filing", Path: settings.Prompts.File, IsVirtual: settings.Prompts.File == ""},
 		{Name: "explain", DisplayName: "Explain Content", Path: settings.Prompts.Explain, IsVirtual: settings.Prompts.Explain == ""},
 		{Name: "ask", DisplayName: "In-context Chat", Path: settings.Prompts.Ask, IsVirtual: settings.Prompts.Ask == ""},
@@ -377,20 +377,20 @@ func (a *App) GetPrompts() []vault.PromptEntry {
 }
 
 func (a *App) LoadPrompt(name string) (string, error) {
-	if a.vault == nil {
-		return "", fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return "", fmt.Errorf("store not open")
 	}
-	settings := vault.LoadSettings(a.vault.SettingsPath())
-	return vault.GetPromptContent(name, settings)
+	settings := stash.LoadSettings(a.stash.SettingsPath())
+	return stash.GetPromptContent(name, settings)
 }
 
 func (a *App) SavePrompt(name string, content string) (string, error) {
-	if a.vault == nil {
-		return "", fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return "", fmt.Errorf("store not open")
 	}
 	
 	// Ensure the prompts directory exists
-	promptsDir := a.vault.PromptsPath()
+	promptsDir := a.stash.PromptsPath()
 	if err := os.MkdirAll(promptsDir, 0755); err != nil {
 		return "", err
 	}
@@ -401,7 +401,7 @@ func (a *App) SavePrompt(name string, content string) (string, error) {
 	}
 
 	// Update settings
-	settings := vault.LoadSettings(a.vault.SettingsPath())
+	settings := stash.LoadSettings(a.stash.SettingsPath())
 	switch name {
 	case "file":
 		settings.Prompts.File = path
@@ -412,7 +412,7 @@ func (a *App) SavePrompt(name string, content string) (string, error) {
 	case "refine":
 		settings.Prompts.Refine = path
 	}
-	if err := settings.Save(a.vault.SettingsPath()); err != nil {
+	if err := settings.Save(a.stash.SettingsPath()); err != nil {
 		return "", err
 	}
 
@@ -422,11 +422,11 @@ func (a *App) SavePrompt(name string, content string) (string, error) {
 }
 
 func (a *App) RestorePrompt(name string) error {
-	if a.vault == nil {
-		return fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return fmt.Errorf("store not open")
 	}
 
-	settings := vault.LoadSettings(a.vault.SettingsPath())
+	settings := stash.LoadSettings(a.stash.SettingsPath())
 	var path string
 	switch name {
 	case "file":
@@ -447,7 +447,7 @@ func (a *App) RestorePrompt(name string) error {
 		_ = os.Remove(path)
 	}
 
-	if err := settings.Save(a.vault.SettingsPath()); err != nil {
+	if err := settings.Save(a.stash.SettingsPath()); err != nil {
 		return err
 	}
 
@@ -457,12 +457,12 @@ func (a *App) RestorePrompt(name string) error {
 }
 
 func (a *App) TogglePrompts() (bool, error) {
-	if a.vault == nil {
-		return false, fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return false, fmt.Errorf("store not open")
 	}
-	session := vault.LoadSession(a.vault.SessionPath())
+	session := stash.LoadSession(a.stash.SessionPath())
 	session.ShowPrompts = !session.ShowPrompts
-	if err := session.Save(a.vault.SessionPath()); err != nil {
+	if err := session.Save(a.stash.SessionPath()); err != nil {
 		return false, err
 	}
 	return session.ShowPrompts, nil
@@ -471,38 +471,38 @@ func (a *App) TogglePrompts() (bool, error) {
 
 // ── Notes ─────────────────────────────────────────────────────────────────────
 
-func (a *App) GetNotes() []vault.NoteEntry {
-	if a.vault == nil {
-		logger.Warn("GetNotes: vault not open")
+func (a *App) GetNotes() []stash.NoteEntry {
+	if a.stash == nil {
+		logger.Warn("GetNotes: store not open")
 		return nil
 	}
-	entries := vault.ScanNotes(a.vault.Root, a.vault.NotesPath())
+	entries := stash.ScanNotes(a.stash.Root, a.stash.NotesPath())
 	logger.Debug("GetNotes", "entries", len(entries))
 	return entries
 }
 
-func (a *App) SearchVault(query string) []vault.SearchResult {
-	if a.vault == nil {
-		logger.Warn("SearchVault: vault not open")
+func (a *App) SearchStore(query string) []stash.SearchResult {
+	if a.stash == nil {
+		logger.Warn("SearchStore: store not open")
 		return nil
 	}
-	searchDirs := []string{a.vault.NotesPath(), a.vault.BuffersPath()}
-	results := vault.SearchVault(a.vault.Root, searchDirs, query)
-	logger.Debug("SearchVault", "query", query, "results", len(results))
+	searchDirs := []string{a.stash.NotesPath(), a.stash.BuffersPath()}
+	results := stash.SearchStore(a.stash.Root, searchDirs, query)
+	logger.Debug("SearchStore", "query", query, "results", len(results))
 	return results
 }
 
 
 // ── Session ───────────────────────────────────────────────────────────────────
 
-func (a *App) GetSession() vault.Session {
-	if a.vault == nil {
-		logger.Warn("GetSession: vault not open")
-		return vault.Session{}
+func (a *App) GetSession() stash.Session {
+	if a.stash == nil {
+		logger.Warn("GetSession: store not open")
+		return stash.Session{}
 	}
 
-	logger.Info("GetSession", "path", a.vault.SessionPath())
-	session := vault.LoadSession(a.vault.SessionPath())
+	logger.Info("GetSession", "path", a.stash.SessionPath())
+	session := stash.LoadSession(a.stash.SessionPath())
 	logger.Debug("session loaded", "tabs", len(session.Tabs))
 
 	// Prune tabs whose files no longer exist
@@ -517,14 +517,14 @@ func (a *App) GetSession() vault.Session {
 	session.Tabs = live
 
 	if len(session.Tabs) == 0 {
-		result, err := a.vault.NewBuffer()
+		result, err := a.stash.NewBuffer()
 		if err != nil {
 			logger.Error("new buffer failed", "err", err)
-			return vault.Session{}
+			return stash.Session{}
 		}
 		logger.Info("session: no tabs — created default buffer", "path", result.Path, "uuid", result.UUID)
-		session.Tabs = []vault.Tab{{Path: result.Path, Active: true, Mode: "wysiwyg"}}
-		if err := session.Save(a.vault.SessionPath()); err != nil {
+		session.Tabs = []stash.Tab{{Path: result.Path, Active: true, Mode: "wysiwyg"}}
+		if err := session.Save(a.stash.SessionPath()); err != nil {
 			logger.Error("session save failed", "err", err)
 		}
 	} else {
@@ -544,26 +544,26 @@ func (a *App) GetSession() vault.Session {
 	return session
 }
 
-func (a *App) SaveSession(session vault.Session) error {
-	if a.vault == nil {
-		return fmt.Errorf("vault not open")
+func (a *App) SaveSession(session stash.Session) error {
+	if a.stash == nil {
+		return fmt.Errorf("store not open")
 	}
 	// Merge with existing session so fields saved independently (widths, window)
 	// are not overwritten when the frontend sends partial session state.
-	existing := vault.LoadSession(a.vault.SessionPath())
+	existing := stash.LoadSession(a.stash.SessionPath())
 	if session.SidebarWidth == 0 {
 		session.SidebarWidth = existing.SidebarWidth
 	}
 	if session.MetaWidth == 0 {
 		session.MetaWidth = existing.MetaWidth
 	}
-	if session.Window == (vault.Window{}) {
+	if session.Window == (stash.Window{}) {
 		session.Window = existing.Window
 	}
 	if len(session.OpenFolders) == 0 {
 		session.OpenFolders = existing.OpenFolders
 	}
-	if err := session.Save(a.vault.SessionPath()); err != nil {
+	if err := session.Save(a.stash.SessionPath()); err != nil {
 		logger.Error("SaveSession failed", "err", err)
 		return err
 	}
@@ -571,14 +571,14 @@ func (a *App) SaveSession(session vault.Session) error {
 	return nil
 }
 
-func (a *App) NewBuffer() (vault.NewBufferResult, error) {
-	if a.vault == nil {
-		return vault.NewBufferResult{}, fmt.Errorf("vault not open")
+func (a *App) NewBuffer() (stash.NewBufferResult, error) {
+	if a.stash == nil {
+		return stash.NewBufferResult{}, fmt.Errorf("store not open")
 	}
-	result, err := a.vault.NewBuffer()
+	result, err := a.stash.NewBuffer()
 	if err != nil {
 		logger.Error("NewBuffer failed", "err", err)
-		return vault.NewBufferResult{}, err
+		return stash.NewBufferResult{}, err
 	}
 	logger.Info("buffer created", "path", result.Path, "uuid", result.UUID)
 	return result, nil
@@ -613,11 +613,11 @@ func (a *App) SaveBuffer(path string, content string) error {
 	return nil
 }
 
-func (a *App) GetBufferHistory(uuid string) []vault.HistorySnapshot {
-	if a.vault == nil {
+func (a *App) GetBufferHistory(uuid string) []stash.HistorySnapshot {
+	if a.stash == nil {
 		return nil
 	}
-	return a.vault.ListHistory(uuid)
+	return a.stash.ListHistory(uuid)
 }
 
 func splitFrontmatter(content string) (fm string, body string) {
@@ -643,12 +643,12 @@ func replaceAndBumpVersion(fm string) string {
 }
 
 func (a *App) GetBufferHistoryBody(uuid string, targetVersion int) (string, error) {
-	if a.vault == nil {
-		return "", fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return "", fmt.Errorf("store not open")
 	}
 
-	p1 := filepath.Join(a.vault.HostHistoryDir(), fmt.Sprintf("%s.%d.md", uuid, targetVersion))
-	p2 := filepath.Join(a.vault.VaultHistoryDir(), fmt.Sprintf("%s.%d.md", uuid, targetVersion))
+	p1 := filepath.Join(a.stash.HostHistoryDir(), fmt.Sprintf("%s.%d.md", uuid, targetVersion))
+	p2 := filepath.Join(a.stash.StoreHistoryDir(), fmt.Sprintf("%s.%d.md", uuid, targetVersion))
 
 	histData, err := os.ReadFile(p1)
 	if err != nil {
@@ -662,15 +662,15 @@ func (a *App) GetBufferHistoryBody(uuid string, targetVersion int) (string, erro
 	return histBody, nil
 }
 
-func (a *App) EvaluateBuffer(path string) (*vault.FilingRecommendation, error) {
-	if a.vault == nil {
-		return nil, fmt.Errorf("vault not open")
+func (a *App) EvaluateBuffer(path string) (*stash.FilingRecommendation, error) {
+	if a.stash == nil {
+		return nil, fmt.Errorf("store not open")
 	}
 
 	resolved := a.resolvePath(path)
-	currentSettings := vault.LoadSettings(a.vault.SettingsPath())
+	currentSettings := stash.LoadSettings(a.stash.SettingsPath())
 	
-	rec, err := a.vault.EvaluateBuffer(resolved, currentSettings)
+	rec, err := a.stash.EvaluateBuffer(resolved, currentSettings)
 	if err != nil {
 		logger.Warn("EvaluateBuffer failed", "path", path, "err", err)
 		return nil, err
@@ -687,26 +687,26 @@ func min(a, b int) int {
 	return b
 }
 
-func (a *App) FileBuffer(path string) (vault.FileBufferResult, error) {
-	if a.vault == nil {
-		return vault.FileBufferResult{}, fmt.Errorf("vault not open")
+func (a *App) FileBuffer(path string) (stash.FileBufferResult, error) {
+	if a.stash == nil {
+		return stash.FileBufferResult{}, fmt.Errorf("store not open")
 	}
 	resolved := a.resolvePath(path)
-	newPath, err := a.vault.FileBuffer(resolved)
+	newPath, err := a.stash.FileBuffer(resolved)
 	if err != nil {
 		logger.Error("FileBuffer failed", "path", path, "err", err)
-		return vault.FileBufferResult{}, err
+		return stash.FileBufferResult{}, err
 	}
 	logger.Info("buffer filed", "from", path, "to", newPath.NewPath)
 	return newPath, nil
 }
 
 func (a *App) DiscardBuffer(path string) error {
-	if a.vault == nil {
-		return fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return fmt.Errorf("store not open")
 	}
 	resolved := a.resolvePath(path)
-	if err := a.vault.DiscardBuffer(resolved); err != nil {
+	if err := a.stash.DiscardBuffer(resolved); err != nil {
 		logger.Error("DiscardBuffer failed", "path", path, "err", err)
 		return err
 	}
@@ -715,11 +715,11 @@ func (a *App) DiscardBuffer(path string) error {
 }
 
 func (a *App) DeleteNote(path string) error {
-	if a.vault == nil {
-		return fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return fmt.Errorf("store not open")
 	}
 	resolved := a.resolvePath(path)
-	uuid := vault.ExtractUuid(resolved)
+	uuid := stash.ExtractUuid(resolved)
 
 	if err := os.Remove(resolved); err != nil {
 		logger.Error("DeleteNote failed", "path", path, "err", err)
@@ -727,7 +727,7 @@ func (a *App) DeleteNote(path string) error {
 	}
 
 	if uuid != "" {
-		if err := a.vault.DeleteHistory(uuid); err != nil {
+		if err := a.stash.DeleteHistory(uuid); err != nil {
 			logger.Warn("DeleteHistory failed during note deletion", "uuid", uuid, "err", err)
 		}
 	}
@@ -737,8 +737,8 @@ func (a *App) DeleteNote(path string) error {
 }
 
 func (a *App) MoveNote(oldPath, newPath string) error {
-	if a.vault == nil {
-		return fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return fmt.Errorf("store not open")
 	}
 	oldResolved := a.resolvePath(oldPath)
 	newResolved := a.resolvePath(newPath)
@@ -758,8 +758,8 @@ func (a *App) MoveNote(oldPath, newPath string) error {
 }
 
 func (a *App) CreateFolder(path string) error {
-	if a.vault == nil {
-		return fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return fmt.Errorf("store not open")
 	}
 	resolved := a.resolvePath(path)
 	if err := os.MkdirAll(resolved, 0755); err != nil {
@@ -771,8 +771,8 @@ func (a *App) CreateFolder(path string) error {
 }
 
 func (a *App) DeleteFolder(path string) error {
-	if a.vault == nil {
-		return fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return fmt.Errorf("store not open")
 	}
 	resolved := a.resolvePath(path)
 	
@@ -803,8 +803,8 @@ func (a *App) DeleteFolder(path string) error {
 }
 
 func (a *App) RenameFolder(oldPath, newPath string) error {
-	if a.vault == nil {
-		return fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return fmt.Errorf("store not open")
 	}
 	oldResolved := a.resolvePath(oldPath)
 	newResolved := a.resolvePath(newPath)
@@ -816,7 +816,7 @@ func (a *App) RenameFolder(oldPath, newPath string) error {
 	return nil
 }
 
-// ShowInFiles opens the OS file manager at the given vault-relative path.
+// ShowInFiles opens the OS file manager at the given store-relative path.
 // On macOS it uses "open -R" to reveal files; on Linux it uses xdg-open on
 // the containing directory. Directories are opened directly on both platforms.
 func (a *App) ShowInFiles(path string) error {
@@ -851,14 +851,14 @@ func (a *App) ShowInFiles(path string) error {
 // a code snippet. Returns empty string in dumb mode or when the CLI response is
 // unrecognised.
 func (a *App) RefineLanguage(content string) (string, error) {
-	if a.vault == nil {
-		return "", fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return "", fmt.Errorf("store not open")
 	}
-	settings := vault.LoadSettings(a.vault.SettingsPath())
-	if settings.Tier() == vault.TierDumb {
+	settings := stash.LoadSettings(a.stash.SettingsPath())
+	if settings.Tier() == stash.TierDumb {
 		return "", fmt.Errorf("dumb mode")
 	}
-	lang, err := vault.RefineLanguage(content, settings)
+	lang, err := stash.RefineLanguage(content, settings)
 	if err != nil {
 		logger.Warn("RefineLanguage failed", "err", err)
 		return "", err
@@ -867,17 +867,17 @@ func (a *App) RefineLanguage(content string) (string, error) {
 	return lang, nil
 }
 
-// FileBufferWithName moves a buffer to vault/notes/ using the supplied name as
+// FileBufferWithName moves a buffer to store/notes/ using the supplied name as
 // user_suggested_name so the filer picks it up as the filename.
-func (a *App) FileBufferWithName(path, name string) (vault.FileBufferResult, error) {
-	if a.vault == nil {
-		return vault.FileBufferResult{}, fmt.Errorf("vault not open")
+func (a *App) FileBufferWithName(path, name string) (stash.FileBufferResult, error) {
+	if a.stash == nil {
+		return stash.FileBufferResult{}, fmt.Errorf("store not open")
 	}
 	resolved := a.resolvePath(path)
-	newPath, err := a.vault.FileBufferWithName(resolved, name)
+	newPath, err := a.stash.FileBufferWithName(resolved, name)
 	if err != nil {
 		logger.Error("FileBufferWithName failed", "path", path, "err", err)
-		return vault.FileBufferResult{}, err
+		return stash.FileBufferResult{}, err
 	}
 	logger.Info("buffer filed with name", "from", path, "to", newPath.NewPath, "name", name)
 	return newPath, nil
@@ -887,14 +887,14 @@ func (a *App) FileBufferWithName(path, name string) (vault.FileBufferResult, err
 // full buffer body). Returns the response as a markdown string for inline insertion.
 // Returns an error in dumb mode or if the CLI times out.
 func (a *App) Explain(content string) (string, error) {
-	if a.vault == nil {
-		return "", fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return "", fmt.Errorf("store not open")
 	}
-	settings := vault.LoadSettings(a.vault.SettingsPath())
-	if settings.Tier() == vault.TierDumb {
+	settings := stash.LoadSettings(a.stash.SettingsPath())
+	if settings.Tier() == stash.TierDumb {
 		return "", fmt.Errorf("explain not available in dumb mode")
 	}
-	resp, err := a.vault.RunExplain(content, settings)
+	resp, err := a.stash.RunExplain(content, settings)
 	if err != nil {
 		logger.Warn("Explain failed", "err", err)
 		return "", err
@@ -906,14 +906,14 @@ func (a *App) Explain(content string) (string, error) {
 // Ask asks the configured CLI a question with the given content as context.
 // history may be empty for first-turn asks. Returns the response as a markdown string.
 func (a *App) Ask(content, history, question string) (string, error) {
-	if a.vault == nil {
-		return "", fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return "", fmt.Errorf("store not open")
 	}
-	settings := vault.LoadSettings(a.vault.SettingsPath())
-	if settings.Tier() == vault.TierDumb {
+	settings := stash.LoadSettings(a.stash.SettingsPath())
+	if settings.Tier() == stash.TierDumb {
 		return "", fmt.Errorf("ask not available in dumb mode")
 	}
-	resp, err := a.vault.RunAsk(content, history, question, settings)
+	resp, err := a.stash.RunAsk(content, history, question, settings)
 	if err != nil {
 		logger.Warn("Ask failed", "err", err)
 		return "", err
@@ -926,16 +926,16 @@ func (a *App) Ask(content, history, question string) (string, error) {
 // Called from the frontend after every meaningful save (version bump). Never blocks
 // the save path — prune runs in a background goroutine.
 func (a *App) SaveVersionSnapshot(uuid string, version int, content string) error {
-	if a.vault == nil {
-		return fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return fmt.Errorf("store not open")
 	}
 	maxVersions := a.settings.MaxHistoryVersions
-	if err := a.vault.SaveVersionSnapshot(uuid, version, content); err != nil {
+	if err := a.stash.SaveVersionSnapshot(uuid, version, content); err != nil {
 		logger.Error("SaveVersionSnapshot failed", "uuid", uuid, "version", version, "err", err)
 		return err
 	}
 	go func() {
-		if err := a.vault.PruneHistory(uuid, maxVersions); err != nil {
+		if err := a.stash.PruneHistory(uuid, maxVersions); err != nil {
 			logger.Warn("PruneHistory failed", "uuid", uuid, "err", err)
 		}
 	}()
@@ -947,15 +947,15 @@ func (a *App) resolvePath(path string) string {
 	if filepath.IsAbs(path) {
 		return path
 	}
-	if a.vault != nil {
-		return filepath.Join(a.vault.Root, path)
+	if a.stash != nil {
+		return filepath.Join(a.stash.Root, path)
 	}
 	return path
 }
 
 func (a *App) SaveBufferAsset(id string, dataBase64 string) (string, error) {
-	if a.vault == nil {
-		return "", fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return "", fmt.Errorf("store not open")
 	}
 
 	idx := strings.Index(dataBase64, ",")
@@ -970,15 +970,15 @@ func (a *App) SaveBufferAsset(id string, dataBase64 string) (string, error) {
 	}
 
 	filename := fmt.Sprintf("%s.png", id)
-	path := filepath.Join(a.vault.BufferAssetsPath(), filename)
+	path := filepath.Join(a.stash.BufferAssetsPath(), filename)
 
 	if err := os.WriteFile(path, decoded, 0o644); err != nil {
 		logger.Error("SaveBufferAsset write failed", "path", path, "err", err)
 		return "", err
 	}
 
-	// Return vault-relative path so frontend can construct display URL and markdown path
-	rel, err := filepath.Rel(a.vault.Root, path)
+	// Return store-relative path so frontend can construct display URL and markdown path
+	rel, err := filepath.Rel(a.stash.Root, path)
 	if err != nil {
 		return filename, nil
 	}
@@ -987,12 +987,12 @@ func (a *App) SaveBufferAsset(id string, dataBase64 string) (string, error) {
 	return rel, nil
 }
 
-// SaveNoteAsset saves a pasted image directly to vault/assets/ for use in filed notes.
+// SaveNoteAsset saves a pasted image directly to store/assets/ for use in filed notes.
 // It uses the note's filename as a prefix (e.g. "note-20250101-blk-xxx.png") to avoid global collisions.
-// Returns vault-relative path (e.g. "assets/note-20250101-blk-xxx.png").
+// Returns store-relative path (e.g. "assets/note-20250101-blk-xxx.png").
 func (a *App) SaveNoteAsset(notePath string, id string, dataBase64 string) (string, error) {
-	if a.vault == nil {
-		return "", fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return "", fmt.Errorf("store not open")
 	}
 
 	idx := strings.Index(dataBase64, ",")
@@ -1008,14 +1008,14 @@ func (a *App) SaveNoteAsset(notePath string, id string, dataBase64 string) (stri
 
 	noteName := strings.TrimSuffix(filepath.Base(notePath), filepath.Ext(notePath))
 	filename := fmt.Sprintf("%s-%s.png", noteName, id)
-	path := filepath.Join(a.vault.AssetsPath(), filename)
+	path := filepath.Join(a.stash.AssetsPath(), filename)
 
 	if err := os.WriteFile(path, decoded, 0o644); err != nil {
 		logger.Error("SaveNoteAsset write failed", "path", path, "err", err)
 		return "", err
 	}
 
-	rel, err := filepath.Rel(a.vault.Root, path)
+	rel, err := filepath.Rel(a.stash.Root, path)
 	if err != nil {
 		return "assets/" + filename, nil
 	}
@@ -1023,11 +1023,11 @@ func (a *App) SaveNoteAsset(notePath string, id string, dataBase64 string) (stri
 	logger.Info("note asset saved", "vaultRelPath", rel)
 	return rel, nil
 }
-// DownloadImageAsset fetches an image from a URL and saves it directly to the vault.
+// DownloadImageAsset fetches an image from a URL and saves it directly to the stash.
 // This bypasses browser-level CORS/401 issues during the paste flow.
 func (a *App) DownloadImageAsset(targetURL string, notePath string, id string) (string, error) {
-	if a.vault == nil {
-		return "", fmt.Errorf("vault not open")
+	if a.stash == nil {
+		return "", fmt.Errorf("store not open")
 	}
 
 	client := &http.Client{
@@ -1063,10 +1063,10 @@ func (a *App) DownloadImageAsset(targetURL string, notePath string, id string) (
 	isBuffer := notePath == "" || notePath == "new" || strings.Contains(notePath, "buffers")
 
 	if isBuffer {
-		destPath = filepath.Join(a.vault.BufferAssetsPath(), fmt.Sprintf("%s.png", id))
+		destPath = filepath.Join(a.stash.BufferAssetsPath(), fmt.Sprintf("%s.png", id))
 	} else {
 		noteName := strings.TrimSuffix(filepath.Base(notePath), filepath.Ext(notePath))
-		destPath = filepath.Join(a.vault.AssetsPath(), fmt.Sprintf("%s-%s.png", noteName, id))
+		destPath = filepath.Join(a.stash.AssetsPath(), fmt.Sprintf("%s-%s.png", noteName, id))
 	}
 
 	out, err := os.Create(destPath)
@@ -1080,7 +1080,7 @@ func (a *App) DownloadImageAsset(targetURL string, notePath string, id string) (
 		return "", err
 	}
 
-	rel, err := filepath.Rel(a.vault.Root, destPath)
+	rel, err := filepath.Rel(a.stash.Root, destPath)
 	if err != nil {
 		return destPath, nil
 	}

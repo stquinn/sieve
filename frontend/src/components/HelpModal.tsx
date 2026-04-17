@@ -9,7 +9,7 @@ const SHORTCUTS = [
   { keys: ['Ctrl', 'W'],            desc: 'Close tab' },
   { keys: ['Ctrl', 'P'],            desc: 'Quick switcher (files & tabs)' },
   { keys: ['Ctrl', 'F'],            desc: 'Find in document' },
-  { keys: ['Ctrl', 'Shift', 'F'],   desc: 'Vault-wide search' },
+  { keys: ['Ctrl', 'Shift', 'F'],   desc: 'Store-wide search' },
   { keys: ['Ctrl', 'S'],            desc: 'Save & evaluate (AI fills metadata, stays unfiled)' },
   { keys: ['Ctrl', 'Shift', '↵'],  desc: 'Save & file now (move buffer to notes)' },
   { keys: ['Ctrl', 'E'],             desc: 'Explain selection or current buffer (smart mode)' },

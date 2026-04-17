@@ -903,9 +903,9 @@ textarea::selection {
 
 .help-modal__desc { color: var(--theme-text); opacity: 0.8; padding-left: 0.8rem; }
 
-/* ── Vault Search Sidebar ──────────────────────────────────────────────────────── */
+/* ── Store Search Sidebar ──────────────────────────────────────────────────────── */
 
-.vault-search {
+.store-search {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -914,7 +914,7 @@ textarea::selection {
   box-sizing: border-box;
 }
 
-.vault-search__header {
+.store-search__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -922,7 +922,7 @@ textarea::selection {
   border-bottom: 1px solid var(--theme-border);
 }
 
-.vault-search__title {
+.store-search__title {
   color: var(--theme-accentPrimary);
   font-size: 13px;
   font-weight: 600;
@@ -934,7 +934,7 @@ textarea::selection {
   letter-spacing: 0.5px;
 }
 
-.vault-search__close {
+.store-search__close {
   background: transparent;
   border: none;
   color: var(--theme-muted);
@@ -943,14 +943,14 @@ textarea::selection {
   padding: 2px;
   border-radius: 4px;
 }
-.vault-search__close:hover { background: var(--theme-border); color: var(--theme-text); }
+.store-search__close:hover { background: var(--theme-border); color: var(--theme-text); }
 
-.vault-search__input-wrapper {
+.store-search__input-wrapper {
   padding: 0.8rem 1rem;
   border-bottom: 1px solid var(--theme-border);
 }
 
-.vault-search__input {
+.store-search__input {
   width: 100%;
   background: var(--theme-bgAlt);
   border: 1px solid var(--theme-border2);
@@ -961,15 +961,15 @@ textarea::selection {
   box-sizing: border-box;
   outline: none;
 }
-.vault-search__input:focus { border-color: var(--theme-accentPrimary); }
+.store-search__input:focus { border-color: var(--theme-accentPrimary); }
 
-.vault-search__results {
+.store-search__results {
   flex: 1;
   overflow-y: auto;
   padding: 0.5rem 0;
 }
 
-.vault-search__msg {
+.store-search__msg {
   color: var(--theme-muted);
   padding: 1rem;
   font-size: 12px;
@@ -977,28 +977,28 @@ textarea::selection {
   text-align: center;
 }
 
-.vault-search__item {
+.store-search__item {
   padding: 0.6rem 1rem;
   cursor: pointer;
   border-bottom: 1px solid var(--theme-border);
 }
-.vault-search__item:hover { background: var(--theme-subtle); }
+.store-search__item:hover { background: var(--theme-subtle); }
 
-.vault-search__item-top {
+.store-search__item-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 0.3rem;
 }
 
-.vault-search__item-info {
+.store-search__item-info {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   overflow: hidden;
 }
 
-.vault-search__item-name {
+.store-search__item-name {
   color: var(--theme-text);
   font-size: 13px;
   white-space: nowrap;
@@ -1006,15 +1006,15 @@ textarea::selection {
   text-overflow: ellipsis;
 }
 
-.vault-search__item-icon { color: var(--theme-accentPurple); flex-shrink: 0; }
+.store-search__item-icon { color: var(--theme-accentPurple); flex-shrink: 0; }
 
-.vault-search__item-badges {
+.store-search__item-badges {
   display: flex;
   gap: 0.3rem;
   flex-shrink: 0;
 }
 
-.vault-search__badge {
+.store-search__badge {
   background: color-mix(in srgb, var(--theme-accentPrimary) 15%, transparent);
   color: var(--theme-accentPrimary);
   font-size: 9px;
@@ -1023,9 +1023,9 @@ textarea::selection {
   text-transform: uppercase;
   font-weight: 600;
 }
-.vault-search__badge--text { background: var(--theme-border); color: var(--theme-textDim); }
+.store-search__badge--text { background: var(--theme-border); color: var(--theme-textDim); }
 
-.vault-search__item-snippet {
+.store-search__item-snippet {
   color: var(--theme-muted);
   font-size: 11px;
   line-height: 1.4;

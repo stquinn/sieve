@@ -4,9 +4,9 @@ A lightweight, portable, cross-platform scratchpad that bridges the gap between 
 
 ## What it is
 
-Stash is a tabbed markdown scratchpad with local vault storage. You paste code, jot ideas, capture snippets — then Stash handles the rest. In its smarter modes it files, tags, names, summarises, and answers questions about your content using whatever AI CLI you already have configured.
+Stash is a tabbed markdown scratchpad with local store storage. You paste code, jot ideas, capture snippets — then Stash handles the rest. In its smarter modes it files, tags, names, summarises, and answers questions about your content using whatever AI CLI you already have configured.
 
-No API keys in the app. No cloud dependency. No account. Just a binary, a vault folder, and your existing CLI toolchain.
+No API keys in the app. No cloud dependency. No account. Just a binary, a store folder, and your existing CLI toolchain.
 
 ## Tiers
 
@@ -23,11 +23,11 @@ Stash has three capability tiers, controlled entirely by `settings.json`. No rei
 - **WYSIWYG markdown** — Tiptap editor, renders as you type
 - **Persistent tabs** — session restores on relaunch; unsaved buffers survive crashes
 - **Smart paste** — detects code language and wraps in a fenced block automatically
-- **AI filing** — when you close a tab, the AI evaluates, names, tags, summarises, and files the note into the vault
+- **AI filing** — when you close a tab, the AI evaluates, names, tags, summarises, and files the note into the store
 - **Explain (Ctrl+E)** — asks the AI to explain the current selection, code block, or document inline
 - **Ask (Ctrl+Shift+A)** — floating prompt attached to the current context; threads follow-up questions
 - **AI blocks** — responses appear inline as styled blockquotes, persisted to markdown, round-trip safe
-- **Vault structure** — `notes/` shared across devices, `{hostname}/` strictly local; sync is your responsibility
+- **Store structure** — `notes/` shared across devices, `{hostname}/` strictly local; sync is your responsibility
 - **CLI-agnostic** — works with Claude, Gemini, GitHub Copilot, or any custom CLI
 
 ## Data safety
@@ -41,10 +41,10 @@ Stash never discards content in Smart mode without a conscious decision from the
 - **Tiptap** — ProseMirror-based WYSIWYG markdown editor
 - **shadcn/ui + Tailwind** — component library and styling
 
-## Vault structure
+## Store structure
 
 ```
-vault/
+store/
 ├── notes/                    # shared across all devices (sync this)
 │   └── topic/
 │       └── filed-note.md
@@ -56,23 +56,23 @@ vault/
     └── buffers/
 ```
 
-Point different machines at the same synced vault folder. Each host keeps its own settings, session, and buffers without conflicting with others.
+Point different machines at the same synced store folder. Each host keeps its own settings, session, and buffers without conflicting with others.
 
 ## Getting started
 
 ```bash
-# Launch with a vault path
-stash /path/to/your/vault
+# Launch with a store path
+stash /path/to/your/store
 
-# Or launch from within a vault directory
-cd /path/to/your/vault && stash
+# Or launch from within a store directory
+cd /path/to/your/store && stash
 ```
 
-On first launch in a new vault, Stash creates the required directory structure and a default `settings.json` for your hostname.
+On first launch in a new store, Stash creates the required directory structure and a default `settings.json` for your hostname.
 
 ## Settings
 
-Settings live at `vault/{hostname}/settings.json`:
+Settings live at `store/{hostname}/settings.json`:
 
 ```json
 {
@@ -128,7 +128,7 @@ wails build
 | `Ctrl+Shift+A` | Ask question in context |
 | `Ctrl+Shift+E` | Force AI re-evaluation of current note |
 | `Ctrl+M` | Toggle markdown / editor mode |
-| `Ctrl+F` | Search vault |
+| `Ctrl+F` | Search store |
 | `Ctrl+?` | Help |
 
 ## CLI integration

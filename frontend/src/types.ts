@@ -4,7 +4,7 @@ export type UserIntent = 'trash' | 'keep' | null
 
 export interface TabState {
   uuid: string            // stable identity for this tab instance — used to route async AI callbacks to the right tab without relying on current state
-  path: string            // relative to vault root
+  path: string            // relative to store root
   scroll: number
   active: boolean
   mode: TabMode

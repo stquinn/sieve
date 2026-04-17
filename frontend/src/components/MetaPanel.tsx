@@ -301,7 +301,7 @@ function PromptReference({ path }: { path: string }) {
   const vars: Record<string, VarDef[]> = {
     'file': [
       { name: '{content}', desc: 'Note body text' },
-      { name: '{folder_list}', desc: 'Existing vault folders' },
+      { name: '{folder_list}', desc: 'Existing store folders' },
       { name: '{version}', desc: 'Doc version number' },
       { name: '{focus_count}', desc: 'Open frequency' },
       { name: '{created}', desc: 'Creation timestamp' },

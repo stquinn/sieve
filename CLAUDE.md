@@ -17,6 +17,6 @@ Current milestone: Milestone 9 (Ask & Explain Gestures)
 
 ## CLI integration
 
-- `vault/cli.go` `RunCLI` passes prompt via **stdin** to `claude --print --no-session-persistence`
+- `store/cli.go` `RunCLI` passes prompt via **stdin** to `claude --print --no-session-persistence`
 - Never use `sh -c` with a double-quoted prompt — backticks in fenced code blocks get interpreted as shell command substitution and the content is silently erased
 - Timeout default: 20s (configurable via `cli_timeout` in settings.json)

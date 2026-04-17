@@ -8,10 +8,10 @@
 | Version | Summary |
 |---|---|
 | 0.1 | Initial concept — lightweight scratchpad with AI filing |
-| 0.2 | Added buffer persistence to disk, vault structure |
+| 0.2 | Added buffer persistence to disk, store structure |
 | 0.3 | Added versioning, focus counter, session persistence, full decision matrix |
 | 0.4 | Refined buffer lifecycle, folder intelligence, timeout popup, shortcuts, meta fields, app name Stash |
-| 0.5 | Sidebar design, prompt management, session.json in vault root, defensive settings handling, OS file explorer integration |
+| 0.5 | Sidebar design, prompt management, session.json in store root, defensive settings handling, OS file explorer integration |
 | 0.6 | Per-host subdirectory structure, host-local buffers and settings, shared notes and assets, asset promotion on filing, block ID scope resolution |
 | 0.7 | Core data safety principle, clarified discard paths, uncertainty always resolves to keep |
 | 0.8 | user_intent field, per-tab view mode, search, rich tags as search index, revised shortcuts, onboarding, filed note re-evaluation model, ai_last_evaluated, debug meta panel, future enhancements appendix |
@@ -78,21 +78,21 @@ In Tier 1 dumb mode this guarantee does not apply — tab close discards silentl
 - **Wails** — Go backend, webview frontend, native app feel, Mac and Linux
 - **CodeMirror 6** — editor surface, WYSIWYG markdown, syntax highlighting, image rendering
 - **CLI delegation** — Claude / Gemini / Copilot CLI for all intelligence, no embedded API keys, no network dependency in the app itself
-- **Vault** — a local folder with a shared notes area and per-host subdirectories for settings, session, buffers, and prompts. Sync is the user's responsibility and out of scope.
+- **Store** — a local folder with a shared notes area and per-host subdirectories for settings, session, buffers, and prompts. Sync is the user's responsibility and out of scope.
 
 **Portability**
 - Single binary, no daemon, no server, no installer
 - Works on corporate laptop, air-gapped if necessary
 - No API keys stored in the app
-- Different vault per context — home vault points to Claude CLI, work vault points to Copilot CLI
-- Per-host configuration travels with the vault but never conflicts with other hosts
+- Different store per context — home store points to Claude CLI, work store points to Copilot CLI
+- Per-host configuration travels with the store but never conflicts with other hosts
 
 ---
 
-## Vault Structure
+## Store Structure
 
 ```
-vault/
+store/
 ├── notes/                              # shared across all devices
 │   ├── kubernetes/
 │   │   └── k8s-ingress-fix.md
@@ -131,27 +131,27 @@ vault/
 
 **{hostname}/buffers/** — every unsaved scratch tab continuously written here. Only unfiled content. Deleted on discard, promoted to notes/ on filing.
 
-**{hostname}/buffers/assets/** — images pasted into buffers. Host-local, ephemeral. Promoted to vault/assets/ on filing with note filename prefix. Cleaned up on buffer discard.
+**{hostname}/buffers/assets/** — images pasted into buffers. Host-local, ephemeral. Promoted to store/assets/ on filing with note filename prefix. Cleaned up on buffer discard.
 
 ---
 
 ## Startup Sequence
 
 **CLI launch:**
-1. Stash checks for a vault path argument — `stash /path/to/vault`
-2. If no argument — uses PWD as vault path
-3. If PWD is not a valid vault — folder picker shown
+1. Stash checks for a store path argument — `stash /path/to/store`
+2. If no argument — uses PWD as store path
+3. If PWD is not a valid store — folder picker shown
 4. Determines current hostname
-5. Looks for `vault/{hostname}/` — creates if missing
-6. Reads `vault/{hostname}/settings.json` — falls back to defaults if missing or unparseable
+5. Looks for `store/{hostname}/` — creates if missing
+6. Reads `store/{hostname}/settings.json` — falls back to defaults if missing or unparseable
 7. Checks configured CLI is available on PATH — drops to Tier 1 silently if not
-8. Restores session from `vault/{hostname}/session.json` — opens with empty tab if missing
+8. Restores session from `store/{hostname}/session.json` — opens with empty tab if missing
 9. Creates any missing subdirectories silently — buffers/, buffers/assets/, prompts/
 10. Cleans up any orphaned `.tmp` files in buffers/ from a previous crash
-11. Watches vault/notes/ and vault/{hostname}/ for filesystem changes
+11. Watches store/notes/ and store/{hostname}/ for filesystem changes
 
-**First launch / new vault:**
-- If vault path contains no notes/, no settings.json — treat as new vault
+**First launch / new store:**
+- If store path contains no notes/, no settings.json — treat as new store
 - Create directory structure silently
 - Open with single empty tab
 - If Tier 2+ — show subtle welcome note explaining CLI is configured and Stash is ready
@@ -160,7 +160,7 @@ vault/
 
 ## Defensive Handling
 
-Stash never crashes or shows an unrecoverable error due to vault configuration issues. The core data safety principle governs all discard decisions. All other failures fall back gracefully.
+Stash never crashes or shows an unrecoverable error due to store configuration issues. The core data safety principle governs all discard decisions. All other failures fall back gracefully.
 
 **The guiding rules:**
 - Create what is missing
@@ -187,13 +187,13 @@ Stash never crashes or shows an unrecoverable error due to vault configuration i
 | CLI returns unparseable response | Treat as timeout — fall back to human decision |
 | Any ambiguous discard situation in Smart Mode | Buffer stays open — never silently discard |
 | Orphaned .tmp files on startup | Delete silently |
-| Vault path does not exist and no PWD context | Folder picker shown — only interactive startup moment |
+| Store path does not exist and no PWD context | Folder picker shown — only interactive startup moment |
 
 ---
 
 ## Settings
 
-**`vault/{hostname}/settings.json`**
+**`store/{hostname}/settings.json`**
 
 ```json
 {
@@ -215,7 +215,7 @@ Stash never crashes or shows an unrecoverable error due to vault configuration i
 - `cli_timeout` defaults to 20 seconds
 - `autosave_debounce` defaults to 30 seconds — configurable for user risk tolerance
 - `debug: true` enables the debug meta panel
-- Prompt paths relative to `vault/{hostname}/`
+- Prompt paths relative to `store/{hostname}/`
 - Prompt entry added to settings.json automatically when user edits a default prompt
 - Prompt entry removed from settings.json automatically when user restores to default
 - User can hand-edit settings.json freely — Stash handles mismatches defensively
@@ -225,7 +225,7 @@ Stash never crashes or shows an unrecoverable error due to vault configuration i
 
 ## Session State
 
-**`vault/{hostname}/session.json`** — managed entirely by Stash. User can inspect but need not edit.
+**`store/{hostname}/session.json`** — managed entirely by Stash. User can inspect but need not edit.
 
 ```json
 {
@@ -246,7 +246,7 @@ Stash never crashes or shows an unrecoverable error due to vault configuration i
 }
 ```
 
-Paths relative to vault root. Written on every tab change, open, close, scroll, or mode toggle. Host-specific — each machine maintains its own open tabs, scroll positions, and view modes independently.
+Paths relative to store root. Written on every tab change, open, close, scroll, or mode toggle. Host-specific — each machine maintains its own open tabs, scroll positions, and view modes independently.
 
 ---
 
@@ -374,7 +374,7 @@ Small control in toolbar or right click on tab:
 A piece of content is always in exactly one place. No duplication, no sync between locations.
 
 **State 1 — Unsaved scratch**
-- Lives in `vault/{hostname}/buffers/`
+- Lives in `store/{hostname}/buffers/`
 - Named by creation timestamp — `buf-20260411-1023.md`
 - Written to disk on debounce or explicit save event
 - Version increments on each write
@@ -385,14 +385,14 @@ A piece of content is always in exactly one place. No duplication, no sync betwe
 
 **State 2 — Force saved by user (Ctrl+S or Ctrl+Shift+Return)**
 - User explicitly saves regardless of AI opinion
-- File moves immediately from buffers/ to vault/notes/ root with kebab fallback name
-- Buffer assets promoted from buffers/assets/ to vault/assets/ with note filename prefix
-- Markdown references in note updated to point at vault/assets/
+- File moves immediately from buffers/ to store/notes/ root with kebab fallback name
+- Buffer assets promoted from buffers/assets/ to store/assets/ with note filename prefix
+- Markdown references in note updated to point at store/assets/
 - AI naming runs in background — suggests better filename, tags, summary, folder
 - `ai_last_evaluated` written to meta on AI response
 - Subtle notification with suggestion — accept or ignore, no pressure
 - If accepted — file renamed and moved to suggested folder
-- Tab remains open pointing at vault/notes/ file
+- Tab remains open pointing at store/notes/ file
 
 **State 3 — AI filed on tab close**
 - User closes an unfiled tab with `user_intent: null`
@@ -405,9 +405,9 @@ A piece of content is always in exactly one place. No duplication, no sync betwe
 - `user_intent: trash` — buffer deleted silently on close, no AI, no popup
 - `user_intent: keep` — AI runs fully for naming/tagging/summary/folder, files silently, `ai_last_evaluated` written, tab closes
 
-**State 5 — Opened from vault**
+**State 5 — Opened from store**
 - User opens existing note via Ctrl+P or sidebar
-- Tab points directly at vault/notes/ file
+- Tab points directly at store/notes/ file
 - Edits write directly to file in place
 - No buffer copy created
 - Tab, scroll position, and view mode remembered in session.json
@@ -436,16 +436,16 @@ When a buffer is filed its assets are promoted from host-local to shared.
 **Promotion flow:**
 1. Buffer filed — destination note filename known
 2. Stash scans note content for asset references in buffers/assets/
-3. For each asset — copy to vault/assets/ prefixed with note filename
-   - `buffers/assets/blk-a3f9.png` → `vault/assets/k8s-ingress-fix-blk-a3f9.png`
-4. Update all markdown references in note to point at vault/assets/
+3. For each asset — copy to store/assets/ prefixed with note filename
+   - `buffers/assets/blk-a3f9.png` → `store/assets/k8s-ingress-fix-blk-a3f9.png`
+4. Update all markdown references in note to point at store/assets/
 5. Delete originals from buffers/assets/
 
 **On buffer discard:**
 - All assets in buffers/assets/ referenced by that buffer deleted silently
 
 **Naming collision defence:**
-- Note filename prefix makes vault/assets/ collisions practically impossible
+- Note filename prefix makes store/assets/ collisions practically impossible
 - If collision occurs — append short random suffix
 
 ---
@@ -524,7 +524,7 @@ Displays filed notes and prompt management only. Buffers never appear — they e
 **Behaviour:**
 - Collapsible folders
 - Click note to open in new tab or focus existing tab
-- Stash watches vault/notes/ for filesystem changes — sidebar updates automatically
+- Stash watches store/notes/ for filesystem changes — sidebar updates automatically
 - Assets not shown — use OS file explorer
 
 **Right click menu on any item:**
@@ -546,8 +546,8 @@ Displays filed notes and prompt management only. Buffers never appear — they e
 **In-buffer search — Ctrl+F**
 Standard find behaviour within the current tab. CodeMirror handles this natively.
 
-**Vault-wide search — Ctrl+Shift+F**
-Searches across all content in vault/notes/. Results panel opens in sidebar.
+**Store-wide search — Ctrl+Shift+F**
+Searches across all content in store/notes/. Results panel opens in sidebar.
 
 **Search sources:**
 - Full text of all markdown files in notes/
@@ -585,9 +585,9 @@ The filing prompt instructs generous semantic tagging — related concepts, tech
 | Force save | Ctrl+S |
 | File this now | Ctrl+Shift+Return |
 | Quick switcher | Ctrl+P |
-| Open vault file | Ctrl+O |
+| Open store file | Ctrl+O |
 | In-buffer search | Ctrl+F |
-| Vault search | Ctrl+Shift+F |
+| Store search | Ctrl+Shift+F |
 | Toggle sidebar | Ctrl+\ |
 | Toggle raw markdown | Ctrl+Shift+M |
 | Explain | Ctrl+E |
@@ -792,7 +792,7 @@ The only system-initiated popup in Stash. Appears only when a CLI is configured,
 
 ## Folder Intelligence
 
-Notes filed into subfolders of vault/notes/. Folders created organically — none imposed at start.
+Notes filed into subfolders of store/notes/. Folders created organically — none imposed at start.
 
 **AI folder selection:**
 - Filing prompt includes list of existing folders
@@ -804,7 +804,7 @@ Notes filed into subfolders of vault/notes/. Folders created organically — non
 **Folder rules:**
 - `ai_folder_suggestion` updated in meta on re-evaluation — never acted on automatically after initial filing
 - User moving note after filing is canonical — AI never moves a filed note
-- Folders are plain subfolders in vault/notes/ — no magic, no database
+- Folders are plain subfolders in store/notes/ — no magic, no database
 
 ---
 
@@ -891,7 +891,7 @@ Any MCP servers, agents, global prompts, or tools in the user's CLI are automati
 7. On timeout — stays as block ID filename, `detect="heuristic"`
 
 **On filing:**
-- Assets promoted from buffers/assets/ to vault/assets/ with note filename prefix
+- Assets promoted from buffers/assets/ to store/assets/ with note filename prefix
 - Markdown references updated in note
 - Originals deleted from buffers/assets/
 
@@ -1052,7 +1052,7 @@ Available in v1 as a development and debugging tool. Enabled via `"debug": true`
 | Ctrl+S / Ctrl+Shift+Return force save | ✓ | ✓ |
 | Ctrl+P quick switcher | ✓ | ✓ |
 | Ctrl+F in-buffer search | ✓ | ✓ |
-| Ctrl+Shift+F vault search — full text | ✓ | ✓ |
+| Ctrl+Shift+F store search — full text | ✓ | ✓ |
 | All shortcuts available | ✓ | ✓ |
 | Defensive settings and session handling | ✓ | ✓ |
 | Per-host configuration and buffers | ✓ | ✓ |
@@ -1065,7 +1065,7 @@ Available in v1 as a development and debugging tool. Enabled via `"debug": true`
 | AI filing decision on tab close | ✗ | ✓ |
 | AI naming/tagging on force save | ✗ | ✓ |
 | AI folder suggestion | ✗ | ✓ |
-| Ctrl+Shift+F vault search — tags and summary | ✗ | ✓ |
+| Ctrl+Shift+F store search — tags and summary | ✗ | ✓ |
 | Explain gesture Ctrl+E | ✗ | ✓ |
 | Ask gesture Ctrl+Shift+A with threading | ✗ | ✓ |
 | Image description and rename | ✗ | ✓ |
@@ -1078,7 +1078,7 @@ Available in v1 as a development and debugging tool. Enabled via `"debug": true`
 ---
 
 ## What Stash Is Not
-- Not a sync tool — vault is a folder, sync is the user's problem
+- Not a sync tool — store is a folder, sync is the user's problem
 - Not an AI product — CLI tools own auth, keys, models, and integrations
 - Not a knowledge base — no hierarchy, no database, no forced structure
 - Not a chat app — the note is the conversation, not a sidebar
@@ -1089,7 +1089,7 @@ Available in v1 as a development and debugging tool. Enabled via `"debug": true`
 
 ## Known Limitations
 - On an unplanned crash (OOM, force kill), up to one autosave debounce interval of content may be lost. Default is 30 seconds. Planned close events always write immediately. This is an accepted tradeoff.
-- Sync conflict on session.json is theoretically possible if the same vault is open on two machines simultaneously and both write session.json at the same moment — last write wins, some tab state may be lost. Note content is never affected. Mitigated by per-host subdirectory structure making this practically impossible in normal use.
+- Sync conflict on session.json is theoretically possible if the same store is open on two machines simultaneously and both write session.json at the same moment — last write wins, some tab state may be lost. Note content is never affected. Mitigated by per-host subdirectory structure making this practically impossible in normal use.
 - Exact CLI flags and invocation patterns for ClaudeCLI, GeminiCLI, and CopilotCLI require verification against current CLI documentation before v1 ships.
 
 ---
@@ -1101,8 +1101,8 @@ Features deliberately deferred from v1. Considered and designed around but not b
 | Feature | Notes |
 |---|---|
 | Drag and drop folder organisation in sidebar | Quality of life — OS file explorer covers this for now |
-| GUI vault folder picker on launch | v1 is CLI only — folder picker for non-CLI launch deferred |
-| Recent vaults list | Useful once multiple vaults exist |
+| GUI store folder picker on launch | v1 is CLI only — folder picker for non-CLI launch deferred |
+| Recent stores list | Useful once multiple stores exist |
 | Shortcut remapping | Shortcuts hardcoded in v1 — remapping via settings.json in future |
 | AI-powered semantic search | Tags and summary search covers most cases — full AI semantic search deferred |
 | Web clipper / browser extension | Different surface, different complexity — v2 |
@@ -1244,8 +1244,8 @@ The right panel in v1 displays meta. In v2 it becomes a full margin — a parall
 Every buffer and note has a sibling file:
 
 ```
-vault/notes/kubernetes/k8s-ingress-fix.md       ← primary content, pure markdown
-vault/notes/kubernetes/k8s-ingress-fix._margin  ← all annotations
+store/notes/kubernetes/k8s-ingress-fix.md       ← primary content, pure markdown
+store/notes/kubernetes/k8s-ingress-fix._margin  ← all annotations
 ```
 
 The `_margin` file contains structured annotations anchored to block IDs in the primary file. Block IDs are the join key. The primary file is unaffected — it remains pure markdown with no AI noise, no annotation markers, no embedded metadata beyond the meta frontmatter.

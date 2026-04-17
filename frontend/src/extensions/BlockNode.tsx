@@ -16,7 +16,7 @@ import { ReactNodeViewRenderer, NodeViewWrapper, NodeViewContent } from '@tiptap
  *     `block-ref-active` via direct DOM manipulation in AiBlockView, which
  *     fades in a subtle background highlight.
  *
- * Vault markdown:
+ * Store markdown:
  *   [!block] id="blk-abc"
  *
  *   Content lives here as normal markdown blocks.

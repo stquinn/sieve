@@ -24,7 +24,7 @@ frontend/.cache/
 *.tsbuildinfo
 package.json.md5
 
-# ── Vault / runtime data ──────────────────────────────────────────────────────
+# ── Store / runtime data ──────────────────────────────────────────────────────
 tmp/
 settings.json
 

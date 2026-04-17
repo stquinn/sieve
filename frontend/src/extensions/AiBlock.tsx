@@ -8,7 +8,7 @@ import { ReactNodeViewRenderer, NodeViewWrapper, NodeViewContent } from '@tiptap
  * all content inside gets normal markdown styling without any padding/margin
  * interference from decoration classes on individual child nodes.
  *
- * In the vault markdown file the node serializes as:
+ * In the store markdown file the node serializes as:
  *
  *   \[!ai\] id="ai-xxx" ref="doc"
  *

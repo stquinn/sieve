@@ -11,8 +11,8 @@ import Table from '@tiptap/extension-table'
 import TableRow from '@tiptap/extension-table-row'
 import TableHeader from '@tiptap/extension-table-header'
 import TableCell from '@tiptap/extension-table-cell'
-import { Ask, DiscardBuffer, Explain, FileBuffer, FileBufferWithName, GetNotes, GetSession, GetVaultInfo, LoadBuffer, NewBuffer, RefineLanguage, SaveBuffer, SaveBufferAsset, SaveNoteAsset, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, ShowInFiles, EvaluateBuffer, Quit as AppQuit, SaveVersionSnapshot, DeleteNote, MoveNote, CreateFolder, DeleteFolder, RenameFolder, LoadPrompt, SavePrompt, GetPrompts, RestorePrompt, TogglePrompts, DownloadImageAsset } from '../wailsjs/go/main/App'
-import { vault } from '../wailsjs/go/models'
+import { Ask, DiscardBuffer, Explain, FileBuffer, FileBufferWithName, GetNotes, GetSession, GetStoreInfo, LoadBuffer, NewBuffer, RefineLanguage, SaveBuffer, SaveBufferAsset, SaveNoteAsset, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, ShowInFiles, EvaluateBuffer, Quit as AppQuit, SaveVersionSnapshot, DeleteNote, MoveNote, CreateFolder, DeleteFolder, RenameFolder, LoadPrompt, SavePrompt, GetPrompts, RestorePrompt, TogglePrompts, DownloadImageAsset } from '../wailsjs/go/main/App'
+import { stash } from '../wailsjs/go/models'
 import { UserIntent } from './types'
 import { BrowserOpenURL, EventsOn, EventsOff, Quit } from '../wailsjs/runtime/runtime'
 import { CodeBlockWithAttrs } from './extensions/CodeBlockWithAttrs'
@@ -25,7 +25,7 @@ import { TabBar } from './components/TabBar'
 import { HelpModal } from './components/HelpModal'
 import { Sidebar, NoteEntry, PromptEntry } from './components/Sidebar'
 import { MetaPanel } from './components/MetaPanel'
-import { VaultSearch } from './components/VaultSearch'
+import { StoreSearch } from './components/StoreSearch'
 import { QuickSwitcher } from './components/QuickSwitcher'
 import { TimeoutPopup } from './components/TimeoutPopup'
 import { AskPopup } from './components/AskPopup'
@@ -37,12 +37,12 @@ import './App.css'
 
 const lowlight = createLowlight(common)
 
-// Compute markdown-relative path from a tab's vault-relative path to an asset's vault-relative path.
+// Compute markdown-relative path from a tab's store-relative path to an asset's store-relative path.
 // e.g. tabPath="dash/buffers/buf.md", assetPath="dash/buffers/assets/blk.png" → "assets/blk.png"
-// e.g. tabPath="notes/note.md", assetPath="assets/blk.png" → "../assets/blk.png"
-function assetMarkdownPath(tabPath: string, assetVaultPath: string): string {
+// e.g. tabPath="store/note.md", assetPath="store/assets/blk.png" → "assets/blk.png"
+function assetMarkdownPath(tabPath: string, assetStorePath: string): string {
   const fromDir = tabPath.split('/').slice(0, -1)
-  const toParts = assetVaultPath.split('/')
+  const toParts = assetStorePath.split('/')
   let common = 0
   while (common < fromDir.length && common < toParts.length && fromDir[common] === toParts[common]) common++
   const ups = Array(fromDir.length - common).fill('..')
@@ -110,7 +110,7 @@ function parseMeta(fm: string, body: string) {
 }
 
 // Update a single YAML frontmatter field in-place. Handles null, arrays, and strings.
-function applyFilingRec(fm: string, rec: vault.FilingRecommendation, cli: string): string {
+function applyFilingRec(fm: string, rec: stash.FilingRecommendation, cli: string): string {
   fm = setYamlField(fm, 'ai_eval', 'complete')
   fm = setYamlField(fm, 'ai_last_evaluated', getLocalISOString())
   fm = setYamlField(fm, 'ai_keep', rec.keep)
@@ -146,8 +146,8 @@ function setYamlField(yaml: string, key: string, val: any): string {
 }
 
 function getAncestorPaths(path: string): string[] {
-  // Strip "notes/" prefix to treat the notes directory as a virtual root.
-  const prefix = 'notes/'
+  // Strip "store/" prefix to treat the store directory as a virtual root.
+  const prefix = 'store/'
   const workingPath = path.startsWith(prefix) ? path.substring(prefix.length) : path
   
   const parts = workingPath.split('/')
@@ -226,7 +226,7 @@ export default function App() {
   const [aiTick, setAiTick]             = useState(0)  // increments every second while AI tasks run
   // Captures the context for the pending ask — set when popup opens, read on send.
   const askContextRef = useRef<{ content: string; blockRef: string; history: string; contextLabel: string } | null>(null)
-  const [vaultInfo, setVaultInfo] = useState<{ root: string; themeName: string; } | null>(null)
+  const [storeInfo, setStoreInfo] = useState<{ root: string; themeName: string; } | null>(null)
   const [openFolders, setOpenFolders] = useState<Set<string>>(new Set())
   const openFoldersRef = useRef<Set<string>>(new Set())
   const autosaveMs                = useRef(30_000)  // updated from settings on mount
@@ -354,7 +354,7 @@ export default function App() {
         
         const shouldKeep = forceKeep || userIntent === 'keep' || (userIntent !== 'trash' && rec.keep)
         if (shouldKeep) {
-          const info = await GetVaultInfo()
+          const info = await GetStoreInfo()
           const fm = applyFilingRec(savedFm, rec, info.cli)
           await SaveBuffer(path, fm + savedBody)
           const result = await FileBuffer(path)
@@ -468,12 +468,12 @@ export default function App() {
             if (!tab) { console.error('[stash] paste: no active tab'); return }
             try {
               const isBuffer = tab.status !== 'filed'
-              const vaultRelPath = isBuffer
+              const storeRelPath = isBuffer
                 ? await SaveBufferAsset(id, dataUrl)
                 : await SaveNoteAsset(tab.path, id, dataUrl)
 
-              const mdPath = assetMarkdownPath(tab.path, vaultRelPath)
-              console.debug('[stash] paste: image saved', { id, vaultRelPath, mdPath })
+              const mdPath = assetMarkdownPath(tab.path, storeRelPath)
+              console.debug('[stash] paste: image saved', { id, storeRelPath, mdPath })
               
               queueMicrotask(() => {
                 editor.commands.insertContent({
@@ -511,15 +511,15 @@ export default function App() {
               console.debug('[stash] paste: skipping extraction for data URI')
               saveDataUrl(imgSrc, imgSrc)
             } else {
-              // NEW: Use the backend to download the image directly to the vault.
+              // NEW: Use the backend to download the image directly to the stash.
               // This is much more robust than frontend fetch + data URL conversion.
               const id = 'blk-' + Math.random().toString(16).substring(2, 6)
               console.log('[stash] paste: downloading external image via backend', { id, imgSrc })
               
               DownloadImageAsset(imgSrc, capturedTab?.path ?? 'new', id)
-                .then(vaultRelPath => {
-                  const mdPath = assetMarkdownPath(capturedTab?.path ?? 'new', vaultRelPath)
-                  console.debug('[stash] paste: external image downloaded', { id, vaultRelPath, mdPath })
+                .then(storeRelPath => {
+                  const mdPath = assetMarkdownPath(capturedTab?.path ?? 'new', storeRelPath)
+                  console.debug('[stash] paste: external image downloaded', { id, storeRelPath, mdPath })
                   queueMicrotask(() => {
                     editor.commands.insertContent({
                       type: 'image',
@@ -771,13 +771,13 @@ export default function App() {
     })
   }, [editor])
 
-  // ── Bootstrap: Vault info + Session restore ──────────────────────────────
+  // ── Bootstrap: Store info + Session restore ──────────────────────────────
 
   useEffect(() => {
     if (!editor) return
 
-    GetVaultInfo().then(info => {
-      setVaultInfo(info)
+    GetStoreInfo().then(info => {
+      setStoreInfo(info)
       setTier(info.tier === 1 ? 'dumb' : 'smart')
       if (info.autosaveDebounce > 0) autosaveMs.current = info.autosaveDebounce * 1000  // setting is in seconds
       if (info.cliTimeoutLong > 0) cliTimeoutLongMs.current = info.cliTimeoutLong * 1000
@@ -821,7 +821,7 @@ export default function App() {
     const fetchNotes = () => GetNotes().then(res => setNotes(res || [])).catch(console.error)
     fetchNotes()
 
-    const fetchPrompts = () => GetPrompts().then((res: vault.PromptEntry[]) => setPrompts(res || [])).catch(console.error)
+    const fetchPrompts = () => GetPrompts().then((res: stash.PromptEntry[]) => setPrompts(res || [])).catch(console.error)
     fetchPrompts()
 
     const unlistenNotes = EventsOn('notes:changed', () => {
@@ -837,7 +837,7 @@ export default function App() {
 
   // Automatically expand folders to reveal the active note
   useEffect(() => {
-    if (!activeTab?.path || !activeTab.path.startsWith('notes/')) return
+    if (!activeTab?.path || !activeTab.path.startsWith('store/')) return
     const ancestors = getAncestorPaths(activeTab.path)
     if (ancestors.length === 0) return
 
@@ -863,7 +863,7 @@ export default function App() {
       path: t.path, scroll: t.scroll, active: i === activeIdxRef.current, mode: t.mode,
       displayName: t.displayName, status: t.status, userIntent: t.userIntent,
     }))
-    return await SaveSession(vault.Session.createFrom({ 
+    return await SaveSession(stash.Session.createFrom({ 
       tabs: toSave,
       sidebarWidth: sidebarWidthRef.current,
       metaWidth: metaWidthRef.current,
@@ -1016,7 +1016,7 @@ export default function App() {
   }
 
   function newTab() {
-    if (!vaultInfo?.root) return
+    if (!storeInfo?.root) return
     if (isMarkdownMode && activeTab) mdCache.current[activeTab.uuid] = rawMd
     flush()
     NewBuffer().then(({ path, uuid }) => {
@@ -1029,16 +1029,16 @@ export default function App() {
       H.current.loadTab(tab)
     }).catch(console.error)
   }
-  function handleSelectVault() {
+  function handleSelectStore() {
     // @ts-ignore
-    import('../wailsjs/go/main/App').then(m => m.SelectVault()).then(path => {
+    import('../wailsjs/go/main/App').then(m => m.SelectStore()).then(path => {
       if (path) window.location.reload()
     }).catch(err => alert(err))
   }
 
-  function handleCreateVault() {
+  function handleCreateStore() {
     // @ts-ignore
-    import('../wailsjs/go/main/App').then(m => m.CreateVault()).then(path => {
+    import('../wailsjs/go/main/App').then(m => m.CreateStore()).then(path => {
       if (path) window.location.reload()
     }).catch(err => alert(err))
   }
@@ -1218,7 +1218,7 @@ export default function App() {
 
   // ── Background AI evaluation ───────────────────────────────────────────────
   // Runs EvaluateBuffer off the main call-stack so the UI stays responsive.
-  // fileAfter=true means move the buffer to notes/ when evaluation completes.
+  // fileAfter=true means move the buffer to store/ when evaluation completes.
   // Guard: at most one job per UUID — additional calls are silently dropped.
 
   async function runBackgroundEval(uuid: string, initialPath: string, fileAfter: boolean, allowDiscard: boolean = true) {
@@ -1240,7 +1240,7 @@ export default function App() {
     setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, ...parseMeta(evalFm, body0) } : t))
 
     // ── Long-running AI call ──────────────────────────────────────────────────
-    let rec: vault.FilingRecommendation | null = null
+    let rec: stash.FilingRecommendation | null = null
     try {
       rec = await EvaluateBuffer(path0)
       console.log('[stash:ai] runBackgroundEval: complete', { uuid, keep: rec?.keep, filename: rec?.filename })
@@ -1253,7 +1253,7 @@ export default function App() {
     // Apply results to the CURRENT fm (autosave may have bumped version during eval)
     let finalFm = fmCache.current[uuid] ?? evalFm
     if (rec) {
-      const info = await GetVaultInfo()
+      const info = await GetStoreInfo()
       finalFm = applyFilingRec(finalFm, rec, info.cli)
     } else {
       finalFm = setYamlField(finalFm, 'ai_eval', 'timeout')
@@ -1640,7 +1640,7 @@ export default function App() {
         await GetNotes().then(res => setNotes(res || [])).catch(console.error)
         return
       }
-      const info = await GetVaultInfo()
+      const info = await GetStoreInfo()
       frontmatter = applyFilingRec(frontmatter, rec, info.cli)
       await SaveBuffer(path, frontmatter + body)
       await FileBuffer(path)
@@ -1884,7 +1884,7 @@ export default function App() {
   // Replace the placeholder aiBlock (identified by aiId) with the AI response.
   // Parses response markdown via markdown-it → HTML → ProseMirror DOMParser so
   // bold, italic, lists, and code blocks all become proper marks/nodes and
-  // round-trip cleanly through the vault without any blockquote serializer issues.
+  // round-trip cleanly through the store without any blockquote serializer issues.
   function replaceAiPlaceholder(aiId: string, responseText: string) {
     if (!editor) return
 
@@ -2098,10 +2098,10 @@ export default function App() {
   // Checks open tabs first (most up-to-date after renames), then falls back to
   // the uuidToPath index populated on each loadTab.
   //
-  // TODO: add a Go-side FindBufferByUuid(uuid) vault scan as a third fallback.
+  // TODO: add a Go-side FindBufferByUuid(uuid) store scan as a third fallback.
   // The current two sources cover all realistic in-app scenarios but would miss
   // an external rename of a file whose tab was closed before the AI job completed.
-  // See: vault/buffer.go — scan all .md files for `uuid: <value>` in frontmatter.
+  // See: store/buffer.go — scan all .md files for `uuid: <value>` in frontmatter.
   function resolvePathByUuid(uuid: string): string | undefined {
     return tabsRef.current.find(t => t.uuid === uuid)?.path ?? uuidToPath.current.get(uuid)
   }
@@ -2350,7 +2350,7 @@ export default function App() {
   // editor DOM for newly added <img> elements with blob: src and retroactively
   // save them to disk via canvas → SaveBufferAsset / SaveNoteAsset.
   // The img src stored in Tiptap is the MARKDOWN-RELATIVE path — ImageNodeView
-  // resolves it to a /vault/... display URL at render time.
+  // resolves it to a /store/... display URL at render time.
 
   useEffect(() => {
     if (!editor) return
@@ -2383,17 +2383,17 @@ export default function App() {
             if (!tab) { console.error('[stash] mutation: no active tab'); return }
 
             try {
-              // Save to buffer assets or vault assets depending on tab type
+              // Save to buffer assets or store assets depending on tab type
               const isBuffer = tab.status !== 'filed'
-              const vaultRelPath = isBuffer
+              const storeRelPath = isBuffer
                 ? await SaveBufferAsset(id, dataUrl)
                 : await SaveNoteAsset(tab.path, id, dataUrl)
 
               // Compute the markdown-relative path from the tab file to the asset
-              const mdPath = assetMarkdownPath(tab.path, vaultRelPath)
-              console.debug('[stash] mutation: image saved', { id, vaultRelPath, mdPath })
+              const mdPath = assetMarkdownPath(tab.path, storeRelPath)
+              console.debug('[stash] mutation: image saved', { id, storeRelPath, mdPath })
 
-              // Update Tiptap node: src = markdown path (ImageNodeView resolves /vault/ for display)
+              // Update Tiptap node: src = markdown path (ImageNodeView resolves /store/ for display)
               editor.chain()
                 .command(({ tr, state }) => {
                   state.doc.descendants((node, pos) => {
@@ -2580,7 +2580,7 @@ export default function App() {
 
   if (!ready) return <div className="loading-screen" />
 
-  if (!vaultInfo?.root) {
+  if (!storeInfo?.root) {
     return (
       <div className="bootstrap-screen">
         <div className="bootstrap-card">
@@ -2597,7 +2597,7 @@ export default function App() {
               const el = document.getElementById('manual-path-input') as HTMLInputElement
               if (el?.value) {
                 // @ts-ignore
-                import('../wailsjs/go/main/App').then(m => m.InitVault(el.value)).then(() => window.location.reload()).catch(err => alert(err))
+                import('../wailsjs/go/main/App').then(m => m.InitStore(el.value)).then(() => window.location.reload()).catch(err => alert(err))
               }
             }}>Get Started</button>
           </div>
@@ -2607,7 +2607,7 @@ export default function App() {
   }
 
   return (
-    <div id="app-root" className={`theme-${vaultInfo?.themeName || 'default'}`} style={{ '--sidebar-w': showSidebar ? `${sidebarWidth + 4}px` : '0px' } as React.CSSProperties}>
+    <div id="app-root" className={`theme-${storeInfo?.themeName || 'default'}`} style={{ '--sidebar-w': showSidebar ? `${sidebarWidth + 4}px` : '0px' } as React.CSSProperties}>
       {showSidebar && (
         <>
           {sidebarMode === 'files' ? (
@@ -2646,7 +2646,7 @@ export default function App() {
               }}
             />
           ) : (
-            <VaultSearch
+            <StoreSearch
               width={sidebarWidth}
               onOpen={(p) => { openNote(p); setSidebarMode('files') }}
               onClose={() => setSidebarMode('files')}

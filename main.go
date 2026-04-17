@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"stash/vault"
+	"stash/stash"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -24,18 +24,18 @@ var assets embed.FS
 //go:embed themes/*.json
 var themes embed.FS
 
-type vaultHandler struct{ app *App }
+type storeHandler struct{ app *App }
 
-func (h *vaultHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	const prefix = "/vault/"
+func (h *storeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	const prefix = "/store/"
 	if !strings.HasPrefix(r.URL.Path, prefix) {
 		http.NotFound(w, r)
 		return
 	}
 
-	root := h.app.GetVaultPath()
+	root := h.app.GetStorePath()
 	if root == "" {
-		http.Error(w, "vault not initialized", http.StatusServiceUnavailable)
+		http.Error(w, "store not initialized", http.StatusServiceUnavailable)
 		return
 	}
 	abs, _ := filepath.Abs(root)
@@ -43,7 +43,7 @@ func (h *vaultHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rel := filepath.FromSlash(strings.TrimPrefix(r.URL.Path, prefix))
 	filePath := filepath.Join(abs, filepath.Clean(rel))
 
-	// Ensure we're still inside the vault root
+	// Ensure we're still inside the store root
 	if !strings.HasPrefix(filePath+string(filepath.Separator), abs+string(filepath.Separator)) {
 		http.NotFound(w, r)
 		return
@@ -51,12 +51,12 @@ func (h *vaultHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filePath)
 }
 
-// muxHandler sits in front of vaultHandler and intercepts /theme.css so that
+// muxHandler sits in front of storeHandler and intercepts /theme.css so that
 // the Go backend can serve the active theme as a proper stylesheet before the
 // browser renders a single pixel — no JS injection required.
 type muxHandler struct {
 	app   *App
-	vault *vaultHandler
+	stash *storeHandler
 }
 
 func (m *muxHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -72,7 +72,7 @@ func (m *muxHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		m.serveThemeCSS(w, r)
 		return
 	}
-	m.vault.ServeHTTP(w, r)
+	m.stash.ServeHTTP(w, r)
 }
 
 func (m *muxHandler) serveProxy(w http.ResponseWriter, r *http.Request) {
@@ -137,19 +137,19 @@ func (m *muxHandler) serveThemeCSS(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 
-	var settings vault.Settings
-	var vaultRoot string
+	var settings stash.Settings
+	var storeRoot string
 
-	if m.app.GetVaultPath() != "" {
-		vaultRoot = m.app.GetVaultPath()
-		settings = vault.LoadSettings(m.app.SettingsPath())
+	if m.app.GetStorePath() != "" {
+		storeRoot = m.app.GetStorePath()
+		settings = stash.LoadSettings(m.app.SettingsPath())
 	} else {
 		// Fallback: show the default theme (Sublime) for the splash screen
-		settings = vault.LoadSettings("") // load defaults
-		vaultRoot = ""
+		settings = stash.LoadSettings("") // load defaults
+		storeRoot = ""
 	}
 
-	vars := vault.LoadTheme(vaultRoot, settings.Theme, m.app.GetThemesFS())
+	vars := stash.LoadTheme(storeRoot, settings.Theme, m.app.GetThemesFS())
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("html:root {\n"))
@@ -160,15 +160,15 @@ func (m *muxHandler) serveThemeCSS(w http.ResponseWriter, _ *http.Request) {
 }
 
 func main() {
-	// Resolve vault path.
+	// Resolve store path.
 	cliArg := ""
 	if len(os.Args) > 1 {
 		cliArg = os.Args[1]
 	}
-	vaultPath := vault.FindBestVaultPath(cliArg, os.Getenv("STASH_VAULT"))
+	storePath := stash.FindBestStorePath(cliArg, os.Getenv("STASH_STORE"))
 
 
-	app := NewApp(vaultPath, themes)
+	app := NewApp(storePath, themes)
 
 	err := wails.Run(&options.App{
 		Title:            "Stash",
@@ -182,7 +182,7 @@ func main() {
 			Assets: assets,
 			Handler: &muxHandler{
 				app:   app,
-				vault: &vaultHandler{app: app},
+				stash: &storeHandler{app: app},
 			},
 		},
 		OnStartup:     app.startup,

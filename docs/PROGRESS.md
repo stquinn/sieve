@@ -9,10 +9,10 @@ Generated: 2026-04-11
 
 Stack: **Wails v2 + Go + Tiptap + React + TypeScript + Tailwind (shadcn/ui)**  
 Platform: Linux (WebKitGTK). Also targets macOS/Windows.  
-Vault path: `STASH_VAULT` env var (reliable in `wails dev`) or CLI arg or PWD fallback.
+Store path: `STASH_STORE` env var (reliable in `wails dev`) or CLI arg or PWD fallback.
 
-Dev server: `STASH_VAULT=tmp/test-vault wails dev`  
-Test vault: `tmp/test-vault/` — 3 buffers in `dash/buffers/`, 1 filed note in `notes/`
+Dev server: `STASH_STORE=tmp/test-store wails dev`  
+Test store: `tmp/test-store/` — 3 buffers in `dash/buffers/`, 1 filed note in `notes/`
 
 ---
 
@@ -29,18 +29,18 @@ Test vault: `tmp/test-vault/` — 3 buffers in `dash/buffers/`, 1 filed note in 
 
 ### Milestone 2 — Session & Tabs ✓ Complete
 - Multi-tab UI (`TabBar` component)
-- Session persisted to `vault/{hostname}/session.json` on every tab change, open, close, scroll, mode toggle
+- Session persisted to `store/{hostname}/session.json` on every tab change, open, close, scroll, mode toggle
 - Scroll position saved and restored per tab
 - Tab dot indicators: amber = unfiled, green = filed, blue = keep, red = trash, none = empty
 - `M` badge on tab when in raw markdown mode
 
 ---
 
-### Milestone 3 — Vault & Settings ✓ Complete
-- `vault/vault.go`: `Open`, hostname detection, directory creation
-- `vault/settings.go`: `Settings` struct, `autosave_debounce`, `debug`, `tier` (dumb/smart)
-- `vault/buffer.go`: `NewBuffer` creates `buf-YYYYMMDD-HHMM.md` with full 14-field YAML frontmatter
-- `VaultInfo` exposed to frontend
+### Milestone 3 — Store & Settings ✓ Complete
+- `store/store.go`: `Open`, hostname detection, directory creation
+- `store/settings.go`: `Settings` struct, `autosave_debounce`, `debug`, `tier` (dumb/smart)
+- `store/buffer.go`: `NewBuffer` creates `buf-YYYYMMDD-HHMM.md` with full 14-field YAML frontmatter
+- `StoreInfo` exposed to frontend
 
 ---
 
@@ -56,7 +56,7 @@ Test vault: `tmp/test-vault/` — 3 buffers in `dash/buffers/`, 1 filed note in 
 ### Milestone 5 — Sidebar ⚠️ Partially Complete
 
 #### Done
-- `vault/notes.go`: `ScanNotes` recursive walk, `NoteEntry` tree struct
+- `store/notes.go`: `ScanNotes` recursive walk, `NoteEntry` tree struct
 - `Sidebar` React component: collapsible folder tree
 - Click note → open in new tab, or focus existing tab if already open
 - `fsnotify` watcher (`watcher.go`): 350ms debounce, recursive, emits `notes:changed` → sidebar live-updates
@@ -85,7 +85,7 @@ The `MetaPanel` component (`Ctrl+Shift+I`) we built is **not a spec feature for 
 #### State 2 — Force Save (Ctrl+S / Ctrl+Shift+Return) ⚠️ Partial
 - ✓ File moves to `notes/` with kebab name (from `user_suggested_name` → first heading → timestamp)
 - ✓ Tab stays open pointing at the new `notes/` path, status updates to `filed`
-- ✗ **Asset promotion not implemented** — buffers/assets/ images are NOT copied to vault/assets/, markdown refs NOT updated. Any buffer with pasted images will have broken image links after filing.
+- ✗ **Asset promotion not implemented** — buffers/assets/ images are NOT copied to store/assets/, markdown refs NOT updated. Any buffer with pasted images will have broken image links after filing.
 - ✗ AI naming / background suggestion — deferred to AI milestone
 - ✗ Subtle notification UI — deferred to AI milestone
 
@@ -100,7 +100,7 @@ The `MetaPanel` component (`Ctrl+Shift+I`) we built is **not a spec feature for 
 - ✗ Asset promotion on keep-filing — same gap as State 2
 - ✗ AI naming/tagging/summary on keep-filing — deferred
 
-#### State 5 — Opened from Vault ✓ Done
+#### State 5 — Opened from Store ✓ Done
 - Open via sidebar click
 - Direct edit in-place, no buffer copy
 - Tab/scroll/mode persisted
@@ -108,7 +108,7 @@ The `MetaPanel` component (`Ctrl+Shift+I`) we built is **not a spec feature for 
 #### Asset Promotion ✗ Not Done
 This is a hard dependency for States 2 and 4. Without it, any buffer containing pasted images will lose those images when filed.
 
-**Required implementation (Go `vault/buffer.go` or new `vault/assets.go`):**
+**Required implementation (Go `store/buffer.go` or new `store/assets.go`):**
 1. After `FileBuffer` determines the destination note name, scan the note content for image refs matching `buffers/assets/`
 2. For each ref: copy file from `{hostname}/buffers/assets/blk-xxx.png` → `assets/{note-name}-blk-xxx.png`
 3. Update the markdown ref in the note content to point at `../../assets/` (relative path)
@@ -133,7 +133,7 @@ These are all required for a complete dumb-mode v1 and have nothing built:
 |---|---|
 | **Ctrl+P quick switcher** — fuzzy search open tabs + all notes | §Keyboard Shortcuts |
 | **Ctrl+F in-buffer search** — find within current tab | §Search |
-| **Ctrl+Shift+F vault search** — full text across notes/ | §Search |
+| **Ctrl+Shift+F store search** — full text across notes/ | §Search |
 | **Heuristic paste detection** — 4-tier local classification, instant | §Paste Intelligence |
 | **Block IDs assigned on paste** — code blocks get `id=` + `detect="heuristic"` | §Paste Intelligence + §Block ID System |
 | **Image paste** — save to `buffers/assets/`, insert markdown ref with `detect="pending"` | §Paste Intelligence |
@@ -160,7 +160,7 @@ Do not implement these until dumb mode is complete and the CLI strategy pattern 
 | Image description + rename via AI | §Image Handling |
 | Prompt management in sidebar | §Prompt Management |
 | Close all — parallel AI evaluation with toasts | §Close All Operations (Smart Mode) |
-| Ctrl+Shift+F vault search — tags + summary | §Search (Smart Mode) |
+| Ctrl+Shift+F store search — tags + summary | §Search (Smart Mode) |
 
 ---
 
@@ -171,7 +171,7 @@ Do not implement these until dumb mode is complete and the CLI strategy pattern 
 3. **Close all buffers / Close all tabs** — required dumb-mode feature
 4. **Ctrl+F in-buffer search** — basic editor feature, should have been in earlier
 5. **Ctrl+P quick switcher** — high-value UX, pure frontend
-6. **Ctrl+Shift+F vault search (full text)** — Go-side ripgrep or walk + scan
+6. **Ctrl+Shift+F store search (full text)** — Go-side ripgrep or walk + scan
 7. **Right-click Show in Files** on sidebar
 8. Then: CLI strategy pattern → AI integration
 
@@ -182,14 +182,14 @@ Do not implement these until dumb mode is complete and the CLI strategy pattern 
 ### Go
 | File | Purpose |
 |---|---|
-| `main.go` | Wails entry point, vault path resolution |
-| `app.go` | `App` struct, all Wails-bound methods: `GetVaultInfo`, `GetSession`, `SaveSession`, `GetNotes`, `LoadBuffer`, `SaveBuffer`, `NewBuffer`, `FileBuffer`, `DiscardBuffer`, `SaveSidebarWidth`, `SaveMetaWidth` |
+| `main.go` | Wails entry point, store path resolution |
+| `app.go` | `App` struct, all Wails-bound methods: `GetStoreInfo`, `GetSession`, `SaveSession`, `GetNotes`, `LoadBuffer`, `SaveBuffer`, `NewBuffer`, `FileBuffer`, `DiscardBuffer`, `SaveSidebarWidth`, `SaveMetaWidth` |
 | `watcher.go` | `notesWatcher` — fsnotify + 350ms debounce, recursive dir watching |
-| `vault/vault.go` | `Vault` struct, `Open`, path helpers, dir creation, `.tmp` cleanup |
-| `vault/buffer.go` | `NewBuffer`, `FileBuffer`, `DiscardBuffer`, kebab name helpers, `replaceFmField` |
-| `vault/notes.go` | `ScanNotes`, `NoteEntry` |
-| `vault/session.go` | `Session`, `Tab`, `Window` structs, JSON load/save |
-| `vault/settings.go` | `Settings`, `Tier` |
+| `store/store.go` | `Store` struct, `Open`, path helpers, dir creation, `.tmp` cleanup |
+| `store/buffer.go` | `NewBuffer`, `FileBuffer`, `DiscardBuffer`, kebab name helpers, `replaceFmField` |
+| `store/notes.go` | `ScanNotes`, `NoteEntry` |
+| `store/session.go` | `Session`, `Tab`, `Window` structs, JSON load/save |
+| `store/settings.go` | `Settings`, `Tier` |
 | `logger/logger.go` | Structured logger wrapping `log/slog` |
 
 ### Frontend

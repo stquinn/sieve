@@ -15,8 +15,8 @@
   - [x] Implement `Ctrl+F` using CodeMirror native search
 - [x] Milestone 5: Quick switcher
   - [x] Implement `Ctrl+P` modal with fuzzy search of open tabs and all notes
-- [x] Milestone 6: Vault search
-  - [x] Implement `Ctrl+Shift+F` vault-wide text search
+- [x] Milestone 6: Store search
+  - [x] Implement `Ctrl+Shift+F` store-wide text search
 - [x] Milestone 7: Right-click Show in Files
   - [x] Sidebar context menu `Show in Files` using OS explorer (Linux: xdg-open, Mac: open -R)
 - [x] Milestone 8: AI Evaluation & Background Refinement

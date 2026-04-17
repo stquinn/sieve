@@ -4,11 +4,11 @@ import { NoteContextMenu } from './NoteContextMenu'
 import { UserIntent } from '../types'
 import { FolderPlus, Folder, FileText, ChevronRight, ChevronDown, X } from 'lucide-react'
 
-// Mirrors vault.NoteEntry from Go
+// Mirrors stash.NoteEntry from Go
 export interface NoteEntry {
   name: string
   displayName?: string
-  path?: string      // vault-relative, present on files
+  path?: string      // store-relative, present on files
   userIntent?: string // from frontmatter: "keep", "trash", or ""
   isDir: boolean
   children?: NoteEntry[]
@@ -112,14 +112,14 @@ export function Sidebar({
           const oldPath = e.dataTransfer.getData('text/plain')
           if (oldPath) {
             const fileName = oldPath.split('/').pop()
-            const newPath = `notes/${fileName}`
+            const newPath = `store/${fileName}`
             if (oldPath !== newPath) {
               onMove(oldPath, newPath)
             }
           }
         }}
       >
-        <span>Notes</span>
+        <span>Library</span>
         <button 
           className="opacity-0 group-hover:opacity-100 hover:text-tn-blue transition-all bg-transparent border-none p-0 cursor-pointer flex items-center justify-center leading-none"
           onClick={(e) => { e.stopPropagation(); onCreateFolder('') }}
@@ -129,7 +129,7 @@ export function Sidebar({
         </button>
       </div>
       {entries.length === 0
-        ? <div className="sidebar__empty">No filed notes yet</div>
+        ? <div className="sidebar__empty">No filed documents yet</div>
         : <EntryList
             entries={entries}
             depth={0}
@@ -216,7 +216,7 @@ interface EntryListProps {
   onOpen: (path: string) => void
   onContextMenu: (e: React.MouseEvent, path: string, intent: UserIntent, isDir?: boolean, childCount?: number) => void
   onMove: (oldPath: string, newPath: string) => void
-  basePath: string    // vault-relative path prefix for computing dir paths
+  basePath: string    // store-relative path prefix for computing dir paths
 }
 
 function EntryList({ entries, depth, openPaths, openFolders, onToggleFolder, activePath, onOpen, onContextMenu, onMove, basePath }: EntryListProps) {
