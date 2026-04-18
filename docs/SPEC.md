@@ -17,6 +17,7 @@
 | 0.8 | user_intent field, per-tab view mode, search, rich tags as search index, revised shortcuts, onboarding, filed note re-evaluation model, ai_last_evaluated, debug meta panel, future enhancements appendix |
 | 0.9 | Close all buffers/tabs, CLI strategy pattern, CLI args and multi-file handling, autosave debounce, user_intent keep AI naming clarification |
 | 1.0 | Design aesthetic defined — Sublime Text, right panel as meta display v1, margin paradigm as v2, tech stack decided — Wails + Go + Tiptap + TypeScript + React + shadcn/ui |
+| 1.1 | Added Diagram Blocks (Mermaid) specification — mode-driven interaction, draggable sizing, and state persistence |
 
 ---
 
@@ -467,6 +468,7 @@ When a buffer is filed its assets are promoted from host-local to shared.
 - Small `M` badge on tab header when in raw markdown mode
 
 **Tab indicators:**
+**Tab indicators:**
 - **Amber dot** — unfiled, AI will decide on close
 - **Green dot** — filed, living in notes/
 - **Red dot** — marked as Trash, will be dumped on close
@@ -475,6 +477,15 @@ When a buffer is filed its assets are promoted from host-local to shared.
 - **M badge** — tab currently in raw markdown mode
 
 ---
+
+## Diagram Blocks (Mermaid)
+
+Stash supports interactive diagramming via Mermaid.js. For full details see [spec-diagram-blocks.md](file:///home/stephen/Development/projects/stash/docs/spec-diagram-blocks.md).
+
+**Core Features:**
+- **Mode-Driven Interaction**: Blocks stay in "View Mode" (SVG) unless explicitly toggled to "Edit Mode" (Text).
+- **Draggable Sizing**: Diagrams can be resized in View Mode via a drag handle; dimensions are persisted to Markdown.
+- **Serialization**: the `mode`, `width`, and `height` attributes are stored in the fenced code info string.
 
 ## Close All Operations
 
@@ -1042,7 +1053,8 @@ Available in v1 as a development and debugging tool. Enabled via `"debug": true`
 | Heuristic paste detection | ✓ | ✓ |
 | Block IDs assigned on paste | ✓ | ✓ |
 | Image paste saved to host buffers/assets/ | ✓ | ✓ |
-| Asset promotion on filing | ✓ | ✓ |
+| **Asset promotion on filing** | §Asset Promotion |
+| **Diagram Blocks (Mermaid)** | [spec-diagram-blocks.md](file:///home/stephen/Development/projects/stash/docs/spec-diagram-blocks.md) |
 | user_intent trash and keep | ✓ | ✓ |
 | No system prompts except timeout popup | ✓ | ✓ |
 | No are-you-sure prompts ever | ✓ | ✓ |

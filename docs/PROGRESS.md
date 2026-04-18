@@ -140,6 +140,7 @@ These are all required for a complete dumb-mode v1 and have nothing built:
 | **Right-click Show in Files** on sidebar items | §Sidebar |
 | **Close all buffers / Close all tabs** | §Close All Operations |
 | **Asset promotion on filing** | §Asset Promotion |
+| **Diagram Blocks (Mermaid)** | [spec-diagram-blocks.md](file:///home/stephen/Development/projects/stash/docs/spec-diagram-blocks.md) |
 
 ---
 
