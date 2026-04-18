@@ -1,7 +1,8 @@
 # App.tsx Refactor — Progress Tracker
 
 Branch: `feature/js_tsx_refactor`
-Plan: [refactor-app-tsx.md](refactor-app-tsx.md)
+Plan: [refactor-app-tsx.md](refactor-app-tsx.md) — **ABANDONED** (based on partial file read)
+New plan: [refactor-app-tsx-v2.md](refactor-app-tsx-v2.md) — full-file analysis, in progress
 Started: 2026-04-18
 
 ## Status Legend
