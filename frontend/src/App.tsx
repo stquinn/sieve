@@ -1,4 +1,4 @@
-import { DOMParser as ProseMirrorDOMParser, Fragment, NodeRange } from '@tiptap/pm/model'
+import { DOMParser as ProseMirrorDOMParser, Fragment } from '@tiptap/pm/model'
 import { wrapIn } from '@tiptap/pm/commands'
 import { NodeSelection, TextSelection } from '@tiptap/pm/state'
 import { useEditor, EditorContent, BubbleMenu, Editor } from '@tiptap/react'
@@ -34,7 +34,8 @@ import { TabState } from './types'
 import { ConfirmModal, PromptModal } from './components/Modal'
 import { ChevronUp, ChevronDown, X } from 'lucide-react'
 import { Search } from './extensions/Search'
-import { mdSrcToStoreRelPath } from './lib/imageUtils'
+import { splitFrontmatter } from './lib/markdown'
+import { buildAiContext } from './lib/aiContextBuilder'
 import './App.css'
 
 const lowlight = createLowlight(common)
@@ -52,18 +53,6 @@ function assetMarkdownPath(tabPath: string, assetStorePath: string): string {
   return [...ups, ...downs].join('/')
 }
 
-function splitFrontmatter(content: string): { frontmatter: string; body: string } {
-  const match = content.match(/^(---\n[\s\S]*?\n---\n?)/)
-  if (match) return { frontmatter: match[1], body: content.slice(match[1].length) }
-  return { frontmatter: '', body: content }
-}
-
-// getCleanMarkdown strips all AI blocks from the markdown string to provide
-// a "pure" document context for follow-up questions.
-function getCleanMarkdown(fullMd: string): string {
-  const regex = /\n*\[!ai\] id="[^"]+" ref="[^"]+"[\s\S]*?\[!ai-end\]\n*/g
-  return fullMd.replace(regex, '\n\n').trim()
-}
 
 function getLocalISOString(d = new Date()): string {
   const pad = (n: number) => n.toString().padStart(2, '0')
@@ -2053,274 +2042,6 @@ export default function App() {
   }
 
 
-  // Collect store-relative paths for all image nodes reachable from the given
-  // chain ref IDs. blockRef='doc' → scan whole document. Otherwise walk chain.
-  function collectChainImagePaths(doc: any, refs: string[], tabPath: string): string[] {
-    console.log('[stash:ai] collectChainImagePaths', { refs, tabPath })
-    const paths: string[] = []
-    const seen = new Set<string>()
-
-    if (refs.length === 0 || refs.includes('doc')) {
-      doc.descendants((node: any) => {
-        if (node.type.name === 'image' && node.attrs?.src) {
-          const p = mdSrcToStoreRelPath(node.attrs.src, tabPath)
-          if (p && !seen.has(p)) { seen.add(p); paths.push(p) }
-        }
-      })
-    } else {
-      for (const refId of refs) {
-        doc.descendants((node: any) => {
-          if (node.attrs?.id === refId) {
-            console.log('[stash:ai] matched block anchor', { refId, type: node.type.name, src: node.attrs?.src })
-            
-            // 1. Check if the matched node itself is an image
-            if (node.type.name === 'image' && node.attrs?.src) {
-              const p = mdSrcToStoreRelPath(node.attrs.src, tabPath)
-              console.log('[stash:ai] anchor is image', { p })
-              if (p && !seen.has(p)) { seen.add(p); paths.push(p) }
-            }
-
-            // 2. Scan descendants (e.g. if the matched node is a blockRef wrapper)
-            node.descendants?.((child: any) => {
-              if (child.type.name === 'image' && child.attrs?.src) {
-                const p = mdSrcToStoreRelPath(child.attrs.src, tabPath)
-                console.log('[stash:ai] child is image', { p })
-                if (p && !seen.has(p)) { seen.add(p); paths.push(p) }
-              }
-            })
-            return false
-          }
-        })
-      }
-    }
-    console.log('[stash:ai] collectChainImagePaths result', paths)
-    return paths
-  }
-
-  // Build explain/ask context from current editor selection or cursor position.
-  // Returns content string, a blockRef id, conversation history (for threading),
-  // image paths for any images in the chain, and a human-readable label.
-  function buildAiContext(): { content: string; blockRef: string; history: string; contextLabel: string; imagePaths: string[] } {
-    if (!editor) return { content: '', blockRef: 'doc', history: '', contextLabel: 'document', imagePaths: [] }
-
-    if (isMarkdownMode) {
-      const ta = document.querySelector('.markdown-raw') as HTMLTextAreaElement
-      const body = splitFrontmatter(rawMd).body
-      const cleanBody = getCleanMarkdown(body)
-      
-      if (ta && ta.selectionStart !== ta.selectionEnd) {
-        return {
-          content: ta.value.substring(ta.selectionStart, ta.selectionEnd).trim(),
-          blockRef: 'doc',
-          history: '',
-          contextLabel: 'Selection',
-          imagePaths: []
-        }
-      }
-
-      return {
-        content: cleanBody,
-        blockRef: 'doc',
-        history: '',
-        contextLabel: 'Document',
-        imagePaths: []
-      }
-    }
-
-    const { selection, doc } = editor.state
-    const { from, to, empty } = selection
-    const serializer = editor.storage.markdown.serializer
-
-    // Threading: detect if cursor is inside or selecting an aiBlock node.
-    let aiBlockRef = ''
-    let aiBlockId = ''
-    
-    // 1. Check parent hierarchy (best for point selections)
-    const $from = editor!.state.selection.$from
-    for (let d = $from.depth; d >= 0; d--) {
-      const node = $from.node(d)
-      if (node.type.name === 'aiBlock') {
-        aiBlockId = node.attrs.id ?? ''
-        aiBlockRef = node.attrs.ref ?? ''
-        break
-      }
-    }
-
-    // 2. Fall back to range scan (best for larger selections)
-    if (!aiBlockId) {
-      doc.nodesBetween(from, to, (node: any) => {
-        if (node.type.name === 'aiBlock') {
-          aiBlockId = node.attrs.id ?? ''
-          aiBlockRef = node.attrs.ref ?? ''
-          return false
-        }
-      })
-    }
-
-    if (aiBlockId) {
-      // Threading: gather the full conversation history from the ref chain.
-      const refs = aiBlockRef.split(',')
-      const sourceRef = refs[0]
-      let sourceContent = ''
-      if (sourceRef && sourceRef !== 'doc') {
-        doc.descendants((node) => {
-          if (node.attrs?.id === sourceRef) { sourceContent = serializer.serialize(node); return false }
-        })
-      } else {
-        sourceContent = getCleanMarkdown(editor!.storage.markdown.getMarkdown())
-      }
-
-      // Collect all intermediate AI responses in the chain
-      const intermediateHistory: string[] = []
-      const seenIds = new Set<string>()
-      let turnCount = 1
-
-      for (let i = 1; i < refs.length; i++) {
-        const refId = (refs[i] || '').trim()
-        if (!refId || seenIds.has(refId)) continue
-        seenIds.add(refId)
-
-        doc.descendants((node) => {
-          if (node.attrs?.id === refId) {
-            const md = serializer.serialize(node)
-            intermediateHistory.push(`[Turn ${turnCount++}]\n${md}`)
-            return false
-          }
-        })
-      }
-
-      let currentBlockText = ''
-      doc.nodesBetween(from, to, (node) => {
-        if (node.type.name === 'aiBlock' && node.attrs?.id === aiBlockId) {
-          if (!seenIds.has(node.attrs.id)) {
-            currentBlockText = serializer.serialize(node)
-            seenIds.add(node.attrs.id)
-          }
-          return false
-        }
-      })
-
-      // If selection was non-empty and NOT an aiBlock, or if we couldn't find the parent aiBlock
-      if (!currentBlockText && !empty) {
-        currentBlockText = doc.textBetween(from, to, '\n')
-      }
-
-      // Construct the conversation history to include the root source and all preceding turns.
-      const historyTurns = [
-        sourceContent ? `[Source Context]\n${sourceContent}` : '',
-        ...intermediateHistory
-      ].filter(Boolean).join('\n\n---\n\n')
-
-      const newRef = aiBlockRef ? `${aiBlockRef},${aiBlockId}` : aiBlockId
-      const tabPath = activeTabRef.current?.path ?? ''
-      const chainRefs = aiBlockRef ? aiBlockRef.split(',') : ['doc']
-      
-      return {
-        content: currentBlockText || sourceContent,
-        blockRef: newRef,
-        history: historyTurns,
-        contextLabel: 'Follow-up',
-        imagePaths: collectChainImagePaths(doc, chainRefs, tabPath),
-      }
-    }
-
-    // Default target detection: check if we are on/selecting an inherent block target (image, codeBlock)
-    let targetNode: any = null
-    let targetPos: number = -1
-    const scanFrom = (from === to) ? Math.max(0, from - 1) : from
-    const scanTo   = (from === to) ? Math.min(doc.content.size, to + 1) : to
-    
-    doc.nodesBetween(scanFrom, scanTo, (node, pos) => {
-      if (!targetNode && (node.type.name === 'image' || node.type.name === 'codeBlock')) {
-        targetNode = node
-        targetPos = pos
-        return false
-      }
-    })
-
-    // Calculate content and identify wrapping target.
-    // If not a target node, we identify the top-level block at depth 1 as the context.
-    let selectedText = ''
-    let blockRange: NodeRange | null = null
-    let contextLabel = ''
-
-    if (targetNode && from === targetPos && to === targetPos + targetNode.nodeSize) {
-      // Precise node selection (Image or Code Block)
-      selectedText = serializer.serialize(targetNode).trim()
-      contextLabel = targetNode.type.name === 'image' ? 'Image' : 'Code Block'
-    } else if (from !== to) {
-      const slice = doc.slice(from, to)
-      selectedText = serializer.serialize(slice.content).trim()
-      blockRange = selection.$from.blockRange(selection.$to)
-      contextLabel = 'Selection'
-    } else if (targetNode) {
-      // Cursor is on a node (no range)
-      selectedText = serializer.serialize(targetNode).trim()
-      contextLabel = targetNode.type.name === 'image' ? 'Image' : 'Code Block'
-    } else {
-      // Fallback: prioritize Document when nothing is selected.
-      selectedText = getCleanMarkdown(editor!.storage.markdown.getMarkdown())
-      contextLabel = 'Document'
-    }
-
-
-    let existingBlockId = ''
-    if (targetNode && from >= targetPos && to <= targetPos + targetNode.nodeSize) {
-      existingBlockId = targetNode.attrs.id
-    } else if (blockRange) {
-      // Not a pure target — check if explicitly wrapped in an existing blockRef
-      doc.nodesBetween(blockRange.start, blockRange.end, (node) => {
-        if (!existingBlockId && node.type.name === 'blockRef' && node.attrs.id) {
-          existingBlockId = node.attrs.id
-          return false
-        }
-      })
-    }
-
-    let blockRef = existingBlockId || 'blk-' + Math.random().toString(16).substring(2, 6)
-    const tabPath = activeTabRef.current?.path ?? ''
-    const tr = editor!.state.tr
-    
-    if (!existingBlockId) {
-      if (targetNode && from >= targetPos && to <= targetPos + targetNode.nodeSize) {
-        tr.setNodeMarkup(targetPos, undefined, { ...targetNode.attrs, id: blockRef })
-      } else if (blockRange) {
-        // Highlighting/Cursor fallback: wrap the top-level node at depth 1.
-        // new NodeRange(..., 0) covers the children of depth 0 (i.e. nodes at depth 1).
-        const topRange = new NodeRange(blockRange.$from, blockRange.$to, 0)
-        tr.wrap(topRange, [{ type: editor!.state.schema.nodes.blockRef, attrs: { id: blockRef } }])
-      }
-    }
-
-    let finalImagePaths: string[] = []
-    // Collect paths. Always scan the selection/block range explicitly.
-    if (from !== to || targetNode || blockRange) {
-      const seen = new Set<string>()
-      const scanRangeFrom = targetNode ? targetPos : (blockRange ? blockRange.start : from)
-      const scanRangeTo   = targetNode ? targetPos + targetNode.nodeSize : (blockRange ? blockRange.end : to)
-      
-      doc.nodesBetween(scanRangeFrom, scanRangeTo, (node) => {
-        if (node.type.name === 'image' && node.attrs?.src) {
-          const p = mdSrcToStoreRelPath(node.attrs.src, tabPath)
-          if (p && !seen.has(p)) { seen.add(p); finalImagePaths.push(p) }
-        }
-      })
-    } else {
-      finalImagePaths = collectChainImagePaths(tr.doc, [blockRef], tabPath)
-    }
-
-    if (tr.docChanged) {
-      editor!.view.dispatch(tr)
-    }
-
-    return {
-      content: selectedText,
-      blockRef: (from === to && !targetNode && !blockRange) ? 'doc' : blockRef,
-      history: '',
-      contextLabel: contextLabel,
-      imagePaths: finalImagePaths,
-    }
-  }
 
   // Resolve a document's current file path from its UUID.
   // Checks open tabs first (most up-to-date after renames), then falls back to
@@ -2390,7 +2111,7 @@ export default function App() {
 
   function explainGesture() {
     if (!editor || tier !== 'smart') return
-    const ctx = buildAiContext()
+    const ctx = buildAiContext(editor, isMarkdownMode, rawMd, activeTabRef.current?.path ?? '')
     if (!ctx.content) return
 
     const capturedUuid = activeTabRef.current?.uuid!
@@ -2433,7 +2154,7 @@ export default function App() {
 
   function askGesture() {
     if (!editor || tier !== 'smart') return
-    const ctx = buildAiContext()
+    const ctx = buildAiContext(editor, isMarkdownMode, rawMd, activeTabRef.current?.path ?? '')
     console.log('[stash:ai] ask: ', { images: ctx.imagePaths })
     askContextRef.current = ctx
     setShowAskPopup(true)

@@ -16,7 +16,7 @@ Started: 2026-04-18
 | # | Task | File | Status | Commit |
 |---|---|---|---|---|
 | G | Image utils dedup | `lib/imageUtils.ts` | `[x]` | `refactor: extract mdSrcToStoreRelPath into lib/imageUtils` |
-| B | AI context builder | `lib/aiContextBuilder.ts` | `[ ]` | — |
+| B | AI context builder | `lib/aiContextBuilder.ts` | `[x]` | `refactor: extract buildAiContext and markdown utils into lib/` |
 | F | Settings hook | `hooks/useSettings.ts` | `[ ]` | — |
 | D | Persistence hook | `hooks/usePersistence.ts` | `[ ]` | — |
 | C | Tabs hook | `hooks/useTabs.ts` | `[ ]` | — |
@@ -50,7 +50,7 @@ it handles threading, conversation history chains, and block ref tagging.
 
 ## Task B — `lib/aiContextBuilder.ts`
 
-**Status:** `[ ]` Not started
+**Status:** `[x]` Complete — also extracted `splitFrontmatter`/`getCleanMarkdown` into `lib/markdown.ts`
 
 **What to do:**
 1. Read App.tsx lines 903–1040 carefully
