@@ -1,339 +1,385 @@
 # App.tsx Refactor Plan — v2
 
-Based on a complete read of all 3,237 lines. Supersedes refactor-app-tsx.md.
+**Based on:** complete read of all 2,946 lines of `frontend/src/App.tsx`
+**Branch:** `feature/js_tsx_refactor`
+**Written:** 2026-04-18
 
-Branch: `feature/js_tsx_refactor`
-Analysis date: 2026-04-18
-
----
-
-## Already Done (pre-existing on this branch)
-
-| File | What | Commit |
-|---|---|---|
-| `lib/imageUtils.ts` | `mdSrcToStoreRelPath` — deduped path resolver | `2f5dca6` |
-| `lib/aiContextBuilder.ts` | `buildAiContext`, `collectChainImagePaths` | `48dfdc4` |
-| `lib/markdown.ts` | `splitFrontmatter`, `getCleanMarkdown` | `48dfdc4` |
+> NOTE: An earlier draft of this file was written by an agent that had not fully read the
+> file. That draft's line ranges and structure were wrong. This version is authoritative.
 
 ---
 
-## File Map (what actually lives where in App.tsx)
+## Already Complete (pre-v2)
+
+| Task | File | LOC moved | Commit |
+|---|---|---|---|
+| G | `lib/imageUtils.ts` — `mdSrcToStoreRelPath` | ~20 | `2f5dca6` |
+| B | `lib/aiContextBuilder.ts` + `lib/markdown.ts` | ~290 | `48dfdc4` |
+
+---
+
+## File Map (actual structure after prior extractions)
 
 | Lines | Content |
 |---|---|
-| 1–97 | Imports |
-| 98–185 | Type definitions: `Tab`, `Handlers`, `FileEntry`, `SearchResult`, `AiModel`, `TierInfo`, `Settings` |
-| 186–268 | Module-level constants and helpers: `DEFAULT_SETTINGS`, `SHORTCUTS`, `makeTab`, `makeTabId` |
-| 269–358 | `useState` declarations |
-| 359–430 | `useRef` declarations (`H`, `tabsRef`, `activeIdxRef`, `tierRef`, `autosaveIntervalRef`, etc.) |
-| 431–518 | `useLayoutEffect` — ref sync block (syncs all refs + assigns `H.current`) |
-| 519–654 | Bootstrap `useEffect`: `GetStoreInfo → GetSession → loadTab` |
-| 655–745 | Tab I/O: `loadTab`, `saveCurrentTab` |
-| 746–850 | File ops: `handleNewNote`, `handleOpenFile`, `handleRenameFile`, `handleDeleteFile` |
-| 851–1000 | Tab ops: `handleCloseTab`, `handleTabClick`, `handleTabReorder`, `handleMoveTabLeft/Right` |
-| 1001–1110 | Search: `handleSearch`, `openOrFocusTab`, `handleSearchSelect` |
-| 1111–1280 | Image I/O: `handleImageDrop`, `handleImagePaste`, `handleImageUpload`, `insertImageIntoEditor` |
-| 1281–1430 | AI: `runAskAi`, `runExplainAi`, `buildPrompt`, `insertAiResult` |
-| 1431–1590 | Settings: `loadSettings`, `saveSettings`, `handleSettingsChange` |
-| 1591–1750 | Tier/billing: `checkTier`, `handleBuyPremium`, `handleRestorePurchase`, `handleTierModalClose` |
-| 1751–1960 | Autosave: `startAutosave`, `stopAutosave`, lifecycle `useEffect` |
-| 1961–2390 | Keyboard: `handleKeyDown` + `useEffect` registration + Wails event listeners |
-| 2391–2570 | JSX: editor area, toolbar, status bar, tab bar |
-| 2571–2820 | JSX: `SearchDialog`, `HelpModal`, `SettingsModal` |
-| 2821–3050 | JSX: `TierModal`, `ConfirmDialog`, AI result rendering |
-| 3051–3237 | JSX: `CommandPalette`, remaining dialogs, `export default App` |
+| 1–43 | Imports |
+| 44–150 | Module-level pure util functions (`assetMarkdownPath`, `getLocalISOString`, `versionFromFm`, `bumpFm`, `bumpFocusCount`, `parseMeta`, `applyFilingRec`, `setYamlField`, `getAncestorPaths`) |
+| 152–185 | `EditorStats` mini-component |
+| 187–285 | `App()` component body — state + ref declarations (~30 useState, ~20 useRef) |
+| 286–398 | Computed values, bare ref sync, inline utils (`extractSuggestedName`, `finishCloseTab`), `H` ref init |
+| 399–770 | `useEditor` setup + `handlePaste` (autosave timer, drag/drop, code paste) |
+| 776–846 | `loadTab` useCallback |
+| 850–910 | Bootstrap `useEffect` (`GetStoreInfo → GetSession → loadTab`) |
+| 911–975 | `persistSession` + reactive effects (auto-expand folders, scroll restore) |
+| 977–1067 | `saveBufferSafe`, `savePromptSafe`, `flush` |
+| 1068–1295 | Tab operations (`currentScroll`, `selectTab`, `newTab`, `closeTab`, `reorderTab`, `setTabIntent`, `closeTabsBulk`, `closeAllTabs`, `closeAllBuffers`) |
+| 1296–1490 | `runBackgroundEval`, `smartSave`, `forceFile` |
+| 1492–1634 | `toggleMode`, sidebar/meta resize handlers |
+| 1635–1923 | Note/folder operations (`openNote`, `handleDeleteNote`, `handleMoveNote`, `handleSmartFile`, `handleSmartMetadata`, `handleSetIntentByPath`, `handleCreateFolder`, `handleDeleteFolder`, `handleRename`, `onEditPrompt`, `onRestorePrompt`) |
+| 1925–2203 | AI gestures (`insertAiPlaceholder`, `replaceAiPlaceholder`, `resolvePathByUuid`, `applyAiResponseInBackground`, `touchAiLastEvaluated`, `explainGesture`, `askGesture`, `handleAskSend`) |
+| 2205–2232 | `useLayoutEffect` — update `H.current` every render |
+| 2234–2304 | Keyboard listener `useEffect` |
+| 2305–2438 | WebKitGTK blob image MutationObserver |
+| 2441–2506 | App `closing` event handler |
+| 2508–2557 | Focus count tracking (30s visit + 5min dwell) |
+| 2559–2596 | AI tick, scroll tracking, saveTimer cleanup |
+| 2598–2946 | JSX render tree (bootstrap screen + main layout) |
 
 ---
 
-## Extractions (13 total)
+## What Can and Cannot Be Extracted
 
-### Task 1 — `lib/appTypes.ts`
-**Lines moved:** 98–185
-**What it owns:** All shared TypeScript types (`Tab`, `Handlers`, `FileEntry`, `SearchResult`, `AiModel`, `TierInfo`, `Settings`)
-**Dependencies:** None — pure type declarations
-**Interface:** Named exports, imported by App.tsx and all new hooks
-**LOC moved:** ~88
-**Risk:** Low — no runtime code, zero behavior change possible
-**Pre-conditions:** None. Do this first — it unblocks every other extraction.
+### CANNOT be safely extracted (stay in App.tsx)
 
----
+These sections are tightly coupled to each other via shared state, caches, and refs.
+Extracting them would require threading 15–25 parameters and produce a worse result.
 
-### Task 2 — `lib/appConstants.ts`
-**Lines moved:** 186–268
-**What it owns:** Module-level constants and pure factory functions: `DEFAULT_SETTINGS`, `SHORTCUTS`, `makeTab`, `makeTabId`
-**Dependencies:** Types from Task 1
-**Interface:** Named exports
-**LOC moved:** ~83
-**Risk:** Low — pure constants and functions, no state or side effects
-**Pre-conditions:** Task 1
+- **State/ref declarations** (187–285) — the raw fabric of the component
+- **Bare ref sync** (280–285) — `tabsRef.current = tabs` etc. are plain assignments in the component body, intentionally not in effects; must stay in component body
+- **Inner utilities** (286–398) — `extractSuggestedName`, `finishCloseTab` close over caches/refs directly
+- **`useEditor` + `handlePaste`** (399–770) — autosave timer, drag/drop, paste pipelines; all close over `fmCache`, `savedBodyCache`, `tabsRef`, `activeTabRef`, `setRawMd`, editor
+- **`loadTab`** (776–846) — closes over `editor`, `fmCache`, `mdCache`, `savedBodyCache`, `setYamlField`, `parseMeta`, `uuidToPath`
+- **Bootstrap `useEffect`** (850–910) — sequential data dependency (`GetStoreInfo → GetSession → loadTab`); cannot be split
+- **Reactive effects** (911–975) — `persistSession`, folder auto-expand, scroll restore; read multiple pieces of state
+- **`saveBufferSafe`, `savePromptSafe`, `flush`** (977–1067) — used in 20+ places; extracting requires passing entire cache/ref bag
+- **Tab operations** (1068–1295) — close over `tabs`, `activeIdx`, all caches
+- **`runBackgroundEval`, `smartSave`, `forceFile`, `toggleMode`** (1296–1634) — deeply coupled to tabs, caches, Wails bindings
+- **`H.current` + keyboard listener** (2205–2304) — must stay adjacent to the functions it aggregates
+- **JSX render tree** (2598–2946) — prop-drilling to all handlers; extracting just moves complexity
 
----
-
-### Task 3 — `hooks/useSettings.ts`
-**Lines moved:** 1431–1590
-**What it owns:** Settings load/save lifecycle and `handleSettingsChange`
-**Dependencies:**
-- `settings` state + `setSettings`
-- `setStatusMsg`
-- Wails: `LoadSettings`, `SaveSettings`
-- `DEFAULT_SETTINGS` from Task 2
-**Interface:** `{ settings, loadSettings, saveSettings, handleSettingsChange }`
-**LOC moved:** ~160
-**Risk:** Low — no ref dependencies, no async closure complexity, no H.current usage
-**Pre-conditions:** Tasks 1, 2
+### CAN be extracted (6 tasks)
 
 ---
 
-### Task 4 — `hooks/useTier.ts`
-**Lines moved:** 1591–1750
-**What it owns:** Tier/billing state — check, purchase, restore, modal close
-**Dependencies:**
-- `tierInfo` state + `setTierInfo`
-- `tierRef` (passed as a ref object, not a value)
-- `tierModalOpen` state + `setTierModalOpen`
-- `setStatusMsg`
-- Wails: `GetTierInfo`, `BuyPremium`, `RestorePurchase`
-**Interface:** `{ tierInfo, tierModalOpen, setTierModalOpen, checkTier, handleBuyPremium, handleRestorePurchase, handleTierModalClose }`
-**LOC moved:** ~160
-**Risk:** Low — no complex async closure, tierRef is passed as a stable ref object
-**Pre-conditions:** Task 1
+## Task List
+
+| # | Task | Target | Lines | LOC | Risk | Status | Commit |
+|---|---|---|---|---|---|---|---|
+| 1 | FM utils | `lib/fmUtils.ts` | 44–150 | ~110 | Low | `[ ]` | — |
+| 2 | EditorStats | `components/EditorStats.tsx` | 152–185 | ~34 | Low | `[ ]` | — |
+| 3 | Note operations | `hooks/useNoteOperations.ts` | 1635–1923 | ~290 | Med | `[ ]` | — |
+| 4 | AI gestures | `hooks/useAiGestures.ts` | 1925–2203 | ~280 | Med | `[ ]` | — |
+| 5 | Blob image observer | `hooks/useBlobImageObserver.ts` | 2305–2438 | ~135 | Low-Med | `[ ]` | — |
+| 6 | App lifecycle | `hooks/useAppLifecycle.ts` | 2441–2557 | ~120 | Low-Med | `[ ]` | — |
+
+**Projected total LOC removed from App.tsx: ~969**
+**Projected final App.tsx size: ~1,950–1,980 lines**
+
+The remaining ~1,977 lines are load-bearing state machine code that resists further
+extraction without making things worse.
 
 ---
 
-### Task 5 — `hooks/useImageHandler.ts`
-**Lines moved:** 1111–1280
-**What it owns:** All image file I/O — drag-drop, clipboard paste, file-picker upload, editor insertion
-**Dependencies:**
-- `editor` ref (TipTap instance)
-- `tabsRef` / `activeIdxRef`
-- `tierRef`
-- `setTierModalOpen`
-- `setStatusMsg`
-- Wails: `SaveImageToNote`, `GetImageAsBase64`
-- `mdSrcToStoreRelPath` from `lib/imageUtils.ts`
-**Interface:** `{ handleImageDrop, handleImagePaste, handleImageUpload, insertImageIntoEditor }`
-**LOC moved:** ~170
-**Risk:** Medium — `insertImageIntoEditor` is wired into `H.current`; the hook return value must be assigned in the `useLayoutEffect` ref sync block. Uses `queueMicrotask` — must be preserved.
-**Pre-conditions:** Tasks 1, 2, 4
-
----
-
-### Task 6 — `hooks/useAiOperations.ts`
-**Lines moved:** 1281–1430
-**What it owns:** AI ask/explain operations — prompt construction, CLI invocation, result insertion
-**Dependencies:**
-- `editor` ref
-- `tabsRef` / `activeIdxRef`
-- `tierRef`
-- `setTierModalOpen`
-- `setStatusMsg`
-- `setAiRunning`
-- Wails: `RunCLI` or `RunCLIWithImages`
-- `buildAiContext`, `collectChainImagePaths` from `lib/aiContextBuilder.ts`
-- `getCleanMarkdown` from `lib/markdown.ts`
-**Interface:** `{ runAskAi, runExplainAi }`
-**LOC moved:** ~150
-**Risk:** Medium — `runAskAi`/`runExplainAi` wired into `H.current`; same constraint as Task 5
-**Pre-conditions:** Tasks 1, 2, 4. `aiContextBuilder.ts` and `markdown.ts` already done.
-
----
-
-### Task 7 — `hooks/useTabManager.ts`
-**Lines moved:** 851–1000
-**What it owns:** Tab lifecycle — close, click-to-focus, reorder, move left/right
-**Dependencies:**
-- `tabs` state + `setTabs`
-- `activeIdx` state + `setActiveIdx`
-- `tabsRef` / `activeIdxRef` (passed as refs, not values)
-- `loadTab` callback
-- `saveCurrentTab` callback
-- Wails: `DeleteNote`
-- Confirm dialog state: `confirmOpen`/`setConfirmOpen`, `confirmMsg`/`setConfirmMsg`, `confirmAction`/`setConfirmAction`
-**Interface:** `{ handleCloseTab, handleTabClick, handleTabReorder, handleMoveTabLeft, handleMoveTabRight }`
-**LOC moved:** ~150
-**Risk:** Medium — reads `tabsRef`/`activeIdxRef` directly in async closures; refs must be passed as ref objects, not values. Confirm-dialog state coupling adds surface area.
-**Pre-conditions:** Tasks 1, 2
-
----
-
-### Task 8 — `hooks/useAutosave.ts`
-**Lines moved:** 1751–1960
-**What it owns:** Autosave timer — start, stop, and lifecycle tied to settings interval
-**Dependencies:**
-- `autosaveIntervalRef`
-- `saveCurrentTab` callback (held in a ref inside the hook — same pattern as `H.current`)
-- `settings.autosave_interval`
-- `editorRef` (checks editor readiness before saving)
-**Interface:** `{ startAutosave, stopAutosave }` — lifecycle `useEffect` internal to hook
-**LOC moved:** ~210
-**Risk:** HIGH — core reliability mechanism. If `saveCurrentTab` reference goes stale inside the interval, notes silently fail to save. The hook MUST hold `saveCurrentTab` in a `useRef` updated each render, not close over it. Do not extract until Tasks 3–7 are complete and `saveCurrentTab` is stable.
-**Pre-conditions:** Tasks 1–7. `saveCurrentTab` must be finalized first.
-
----
-
-### Task 9 — `hooks/useKeyboardHandler.ts`
-**Lines moved:** 431–518 (useLayoutEffect ref sync) + 1961–2390 (handleKeyDown + useEffect)
-**What it owns:** The stable keyboard dispatch system — `H.current` ref, `useLayoutEffect` sync, `handleKeyDown`, DOM event listener lifecycle, Wails `EventsOn` file-open listener
-**Dependencies (everything that goes into H.current):**
-- `loadTab`, `saveCurrentTab`
-- `handleNewNote`, `handleCloseTab`, `handleTabClick`
-- `handleMoveTabLeft`, `handleMoveTabRight`
-- `runAskAi`, `runExplainAi`
-- `insertImageIntoEditor`
-- `handleSearch`
-- `setHelpOpen`, `setSettingsOpen`, `setCommandPaletteOpen`
-- `editor` ref
-- `tabs`, `activeIdx`, `tabsRef`, `activeIdxRef`, `tierRef`
-- All modal open/close state flags
-**Interface:** `{ H }` — the stable handler ref. All `useLayoutEffect` and `useEffect` blocks are internal.
-**LOC moved:** ~430
-**Risk:** HIGH — most coupled piece in the file. `H.current` must be updated via `useLayoutEffect` (not `useEffect`) every render. `handleKeyDown` reads only through `H.current`. `EventsOn` cleanup must be returned from the internal `useEffect`. See invariants section.
-**Pre-conditions:** ALL of Tasks 1–8. This is the aggregation point for every extracted handler.
-
----
-
-### Task 10 — `components/FileTree.tsx`
-**Lines moved:** 2391–2570
-**What it owns:** Sidebar file list UI — renders `fileEntries` with drag handles, rename, delete icons
-**Dependencies (as props):**
-- `fileEntries`, `activeIdx`, `tabs`
-- `handleOpenFile`, `handleRenameFile`, `handleDeleteFile`, `handleTabClick`
-- `dragOver`/`setDragOver`, `draggingIdx`/`setDraggingIdx`, `onDragStart`, `onDrop`
-**LOC moved:** ~180
-**Risk:** Medium — drag state (`dragOver`, `draggingIdx`) currently lives in App.tsx; either stays there and is prop-drilled, or moves into the component. No async risk.
-**Pre-conditions:** Tasks 1, 2, 7
-
----
-
-### Task 11 — `components/TabBar.tsx`
-**Lines moved:** 2820–2950
-**What it owns:** Horizontal tab strip UI
-**Dependencies (as props):**
-- `tabs`, `activeIdx`
-- `handleTabClick`, `handleCloseTab`, `handleNewNote`, `handleTabReorder`
-**LOC moved:** ~130
-**Risk:** Low — pure UI, no async code
-**Pre-conditions:** Tasks 1, 7
-
----
-
-### Task 12 — `components/EditorToolbar.tsx`
-**Lines moved:** 2571–2820
-**What it owns:** Formatting toolbar UI above the editor
-**Dependencies (as props):**
-- `editor`
-- `handleImageUpload`, `runAskAi`, `runExplainAi`
-- `aiRunning`, `selectedModel`/`setSelectedModel`
-- `tierRef`, `settings`
-**LOC moved:** ~250
-**Risk:** Low — purely presentational, no async complexity, no ref invariants
-**Pre-conditions:** Tasks 1, 5, 6
-
----
-
-### Task 13 — `components/AppModals.tsx`
-**Lines moved:** 2950–3237
-**What it owns:** All modal/dialog overlays: `SearchDialog`, `HelpModal`, `SettingsModal`, `TierModal`, `ConfirmDialog`, `CommandPalette`
-**Dependencies (as props):**
-- All modal open/close flags and setters
-- `handleSearchSelect`, `handleSettingsChange`
-- `handleBuyPremium`, `handleRestorePurchase`, `handleTierModalClose`
-- `confirmMsg`, `confirmAction`
-- `settings`, `tierInfo`, `tabs`
-**LOC moved:** ~290
-**Risk:** Low — pure JSX rendering, no lifecycle or async risk
-**Pre-conditions:** Tasks 3, 4
-
----
-
-## Sequenced Task List
+## Phase Ordering
 
 ```
-Phase 1 — Zero-risk foundations
-  Task 1   lib/appTypes.ts          88 LOC   Risk: Low    Pre: none
-  Task 2   lib/appConstants.ts      83 LOC   Risk: Low    Pre: 1
-
-Phase 2 — Low-risk hooks (can be done in any order after Phase 1)
-  Task 3   hooks/useSettings.ts    160 LOC   Risk: Low    Pre: 1,2
-  Task 4   hooks/useTier.ts        160 LOC   Risk: Low    Pre: 1
-
-Phase 3 — Medium-risk hooks
-  Task 5   hooks/useImageHandler   170 LOC   Risk: Med    Pre: 1,2,4
-  Task 6   hooks/useAiOperations   150 LOC   Risk: Med    Pre: 1,2,4
-  Task 7   hooks/useTabManager     150 LOC   Risk: Med    Pre: 1,2
-
-Phase 4 — UI components (can run in parallel with Phase 3)
-  Task 10  components/FileTree     180 LOC   Risk: Med    Pre: 1,2,7
-  Task 11  components/TabBar       130 LOC   Risk: Low    Pre: 1,7
-  Task 12  components/EditorToolbar 250 LOC  Risk: Low    Pre: 1,5,6
-  Task 13  components/AppModals    290 LOC   Risk: Low    Pre: 3,4
-
-Phase 5 — HIGH-risk, do last
-  Task 8   hooks/useAutosave       210 LOC   Risk: HIGH   Pre: 1-7
-  Task 9   hooks/useKeyboardHandler 430 LOC  Risk: HIGH   Pre: 1-8
+Phase 1 (foundations, do first):     Tasks 1, 2
+Phase 2 (hooks, any order):          Tasks 3, 4, 5, 6
 ```
 
----
-
-## End-State Estimate
-
-| Category | LOC removed |
-|---|---|
-| Types + constants (Tasks 1–2) | ~171 |
-| Hooks (Tasks 3–9) | ~1,430 |
-| UI components (Tasks 10–13) | ~850 |
-| **Total removed** | **~2,451** |
-
-**Projected App.tsx after all extractions: 350–420 lines**
-(~80 imports, ~90 shared state/ref declarations, ~80 hook calls, ~100 JSX glue)
+Task 1 must precede Tasks 3–6 because hooks use `parseMeta`, `setYamlField`, `bumpFocusCount`, `getLocalISOString`, `assetMarkdownPath` from fmUtils.
+Tasks 3–6 are independent of each other.
 
 ---
 
-## Invariants the Next Engineer Must Preserve
+## Task Detail
 
-**1. `H.current` ref — CRITICAL**
-`H` is declared as `useRef<Handlers>`. Every handler is assigned to `H.current` inside a
-`useLayoutEffect` with no dependency array (runs every render). `handleKeyDown` reads all
-handlers through `H.current` only — never closing over them directly. When extracting hooks,
-expose handler return values so `useLayoutEffect` can assign them into `H.current`. This
-invariant is what prevents stale-closure bugs in the keyboard handler.
+---
 
-**2. `useLayoutEffect` for ref sync, never `useEffect`**
-The sync at lines 431–518 uses `useLayoutEffect`. This is synchronous before paint —
-guaranteeing the keyboard handler sees current state before any user input. Changing to
-`useEffect` introduces a one-frame stale window.
+### Task 1 — `lib/fmUtils.ts`
 
-**3. Refs for async callbacks, not state values**
-`tabsRef`, `activeIdxRef`, `tierRef` are always current. Any async callback (Wails calls,
-setTimeout, EventsOn) must read from `xyzRef.current`, not closed-over state values. Pass
-these as ref objects to extracted hooks.
+**Status:** `[ ]`
+**Lines in App.tsx:** 44–150
+**LOC:** ~110
+**Risk:** Low — pure functions, no React, no side effects
 
-**4. `queueMicrotask` for TipTap content insertion**
-`editor.commands.insertContent(...)` must be deferred via `queueMicrotask` to avoid the
-React `flushSync` warning. Preserve this in any hook that calls insertContent.
+**What it owns:** All frontmatter/YAML manipulation utilities and the `assetMarkdownPath` helper.
 
-**5. Bootstrap sequence is immutable**
-`GetStoreInfo → GetSession → loadTab` at lines 519–654 has data dependencies and must stay
-in App.tsx. Do not attempt to extract it.
+**Functions to move:**
+- `assetMarkdownPath(tabPath, assetStorePath): string`
+- `getLocalISOString(d?): string`
+- `versionFromFm(fm): string`
+- `bumpFm(fm): string`
+- `bumpFocusCount(fm): string`
+- `parseMeta(fm, body): ParsedMeta`
+- `applyFilingRec(fm, rec, cli): string`
+- `setYamlField(yaml, key, val): string`
+- `getAncestorPaths(path): string[]`
 
-**6. Autosave stale-closure — use a ref**
-`startAutosave` sets `setInterval` calling `saveCurrentTab`. When extracted to a hook,
-hold `saveCurrentTab` in a `useRef` inside the hook updated each render — identical to the
-`H.current` pattern. Never pass `saveCurrentTab` as a plain closure to `setInterval`.
+**Dependencies:**
+- `stash.FilingRecommendation` from `../wailsjs/go/models` (for `applyFilingRec`)
+- `TabState` type from `./types` (for `parseMeta` return)
+- No React deps
 
-**7. `user_intent` is never written by AI**
-`runAskAi`/`runExplainAi` must never set `user_intent` in frontmatter. Already enforced in
-`aiContextBuilder.ts`. Verify after Task 6 extraction.
+**Pre-conditions:** None.
 
-**8. Frontmatter strip/prepend cycle**
-`loadTab` strips frontmatter before passing to TipTap. `saveCurrentTab` re-prepends it.
-These two must remain paired — extract them into the same hook (they are adjacent at lines
-655–745 and should move together).
+**Accept when:** `tsc --noEmit` passes; App.tsx imports all nine functions from `lib/fmUtils.ts`; lines 44–150 in App.tsx are replaced with the import statement.
 
-**9. Image src rewriting**
-Inside `loadTab`, image `src` attrs are rewritten from store-relative paths to display URLs.
-`saveCurrentTab` reverses this. Paired — must not be separated across extraction boundaries.
+---
 
-**10. Wails `EventsOn` cleanup**
-`EventsOn` calls in lines 2300–2390 must have matching `EventsOff` in the `useEffect`
-cleanup return. When extracted, the cleanup must be inside the hook's `useEffect` return.
+### Task 2 — `components/EditorStats.tsx`
+
+**Status:** `[ ]`
+**Lines in App.tsx:** 152–185
+**LOC:** ~34
+**Risk:** Low — self-contained; no shared state; props-only interface
+
+**What it owns:** Word/line count display widget in the status bar.
+
+**Props:**
+```typescript
+interface EditorStatsProps {
+  editor: Editor | null
+  isMarkdownMode: boolean
+  rawMd: string
+}
+```
+
+**Dependencies:**
+- `Editor` from `@tiptap/react`
+- `splitFrontmatter` from `./lib/markdown` (already extracted)
+- React (`useState`, `useEffect`)
+
+**Pre-conditions:** Task 1 not required (only uses `splitFrontmatter` which is already in `lib/markdown`).
+
+**Accept when:** `tsc --noEmit` passes; stats display correctly in both modes.
+
+---
+
+### Task 3 — `hooks/useNoteOperations.ts`
+
+**Status:** `[ ]`
+**Lines in App.tsx:** 1635–1923
+**LOC:** ~290
+**Risk:** Medium — references confirm/prompt modal state, calls flush, mutates tabs
+
+**What it owns:** All note and folder CRUD operations invoked from the sidebar.
+
+**Functions to move:**
+- `openNote(path)`
+- `handleDeleteNote(path)`
+- `handleMoveNote(oldPath, newPath)`
+- `handleSmartFile(path)`
+- `handleSmartMetadata(path)`
+- `handleSetIntentByPath(path, intent)`
+- `handleCreateFolder(parentPath)`
+- `handleDeleteFolder(path)`
+- `handleRename(path, currentName, isDir)`
+- `onEditPrompt(name)`
+- `onRestorePrompt(name)`
+
+**Params to hook:**
+```typescript
+{
+  tabs: TabState[]
+  activeIdx: number
+  isMarkdownMode: boolean
+  editor: Editor | null
+  tabsRef: React.MutableRefObject<TabState[]>
+  fmCache: React.MutableRefObject<Record<string, string>>
+  mdCache: React.MutableRefObject<Record<string, string>>
+  savedBodyCache: React.MutableRefObject<Record<string, string>>
+  uuidToPath: React.MutableRefObject<Map<string, string>>
+  setTabs: React.Dispatch<React.SetStateAction<TabState[]>>
+  setActiveIdx: React.Dispatch<React.SetStateAction<number>>
+  setNotes: React.Dispatch<React.SetStateAction<NoteEntry[]>>
+  setConfirmModal: (val: ConfirmModal | null) => void
+  setPromptModal: (val: PromptModal | null) => void
+  selectTab: (idx: number) => void
+  flush: () => Promise<void>
+  runBackgroundEval: (uuid: string, path: string, fileAfter: boolean) => Promise<void>
+  H: React.MutableRefObject<{ loadTab: (tab: TabState) => void }>
+}
+```
+
+**Return:**
+```typescript
+{ openNote, handleDeleteNote, handleMoveNote, handleSmartFile, handleSmartMetadata,
+  handleSetIntentByPath, handleCreateFolder, handleDeleteFolder, handleRename,
+  onEditPrompt, onRestorePrompt }
+```
+
+**Pre-conditions:** Task 1 complete (uses `parseMeta`, `setYamlField` from fmUtils).
+
+**Accept when:** Open/delete/move/rename/folder ops all work via sidebar; AI filing triggers correctly.
+
+---
+
+### Task 4 — `hooks/useAiGestures.ts`
+
+**Status:** `[ ]`
+**Lines in App.tsx:** 1925–2203
+**LOC:** ~280
+**Risk:** Medium — closes over `editor`, `isMarkdownMode`, `activeTabRef`, `fmCache`, `setRawMd`
+
+**What it owns:** Explain/Ask gesture handlers; AI block insertion/replacement; UUID path resolution; background AI response application.
+
+**Functions to move:**
+- `insertAiPlaceholder(aiId, blockRef, question?)`
+- `replaceAiPlaceholder(aiId, responseText)`
+- `resolvePathByUuid(uuid): string | undefined`
+- `applyAiResponseInBackground(uuid, aiId, responseText)`
+- `touchAiLastEvaluated()`
+- `explainGesture()`
+- `askGesture()`
+- `handleAskSend(question)`
+
+**Params to hook:**
+```typescript
+{
+  editor: Editor | null
+  isMarkdownMode: boolean
+  rawMd: string
+  activeTabRef: React.MutableRefObject<TabState | undefined>
+  tabsRef: React.MutableRefObject<TabState[]>
+  activeIdxRef: React.MutableRefObject<number>
+  uuidToPath: React.MutableRefObject<Map<string, string>>
+  fmCache: React.MutableRefObject<Record<string, string>>
+  savedBodyCache: React.MutableRefObject<Record<string, string>>
+  mdCache: React.MutableRefObject<Record<string, string>>
+  tierRef: React.MutableRefObject<'dumb' | 'smart'>
+  askContextRef: React.MutableRefObject<AiContext | null>
+  pendingAiCount: React.MutableRefObject<number>
+  cliTimeoutLongMs: React.MutableRefObject<number>
+  setTabs: React.Dispatch<React.SetStateAction<TabState[]>>
+  setRawMd: React.Dispatch<React.SetStateAction<string>>
+  setShowAskPopup: React.Dispatch<React.SetStateAction<boolean>>
+  setAiTick: React.Dispatch<React.SetStateAction<number>>
+  setTimeoutPopup: (val: { path: string; suggestedName: string } | null) => void
+  flush: () => Promise<void>
+  saveBufferSafe: (uuid: string, content: string) => void
+}
+```
+
+**Return:**
+```typescript
+{ insertAiPlaceholder, replaceAiPlaceholder, resolvePathByUuid,
+  applyAiResponseInBackground, touchAiLastEvaluated, explainGesture, askGesture, handleAskSend }
+```
+
+**Pre-conditions:** Tasks 1 and 2 complete. `lib/aiContextBuilder.ts` already done (Task B).
+
+**⚠ Invariant:** Verify with `grep 'user_intent'` after extraction — `user_intent` must never be written by AI gesture code.
+
+**Accept when:** Explain + Ask gestures produce correct AI responses; background application lands correctly when user has switched tabs during flight.
+
+---
+
+### Task 5 — `hooks/useBlobImageObserver.ts`
+
+**Status:** `[ ]`
+**Lines in App.tsx:** 2305–2438
+**LOC:** ~135
+**Risk:** Low-Medium — MutationObserver logic is self-contained; reads `activeTabRef` and `editor`
+
+**What it owns:** WebKitGTK blob/data URL paste intercept — watches editor DOM for `<img>` elements with blob/data src, saves to disk via canvas, rewrites Tiptap node src to markdown-relative path.
+
+**Params to hook:**
+```typescript
+{
+  editor: Editor | null
+  activeTabRef: React.MutableRefObject<TabState | undefined>
+}
+```
+
+The hook imports `assetMarkdownPath` directly from `lib/fmUtils` — no need to pass it.
+
+**Return:** `void` (hook is self-contained via internal `useEffect`)
+
+**Pre-conditions:** Task 1 complete (imports `assetMarkdownPath` from `lib/fmUtils`).
+
+**Accept when:** Pasting an image in WebKitGTK saves to disk and renders with markdown-relative path (not a blob: URL).
+
+---
+
+### Task 6 — `hooks/useAppLifecycle.ts`
+
+**Status:** `[ ]`
+**Lines in App.tsx:** 2441–2557
+**LOC:** ~120
+**Risk:** Low-Medium — close handler uses `flushRef` (not `flush`) to avoid stale closure
+
+**What it owns:** Two self-contained lifecycle effects:
+1. `app:closing` handler — flush all tabs, wait for AI jobs, then AppQuit
+2. Focus count tracking — debounced 30s visit + 5min dwell interval
+
+**Params to hook:**
+```typescript
+{
+  activeIdx: number  // for focus count dep array
+  tabs: TabState[]   // for focus count dep array
+  tabsRef: React.MutableRefObject<TabState[]>
+  activeTabRef: React.MutableRefObject<TabState | undefined>
+  activeIdxRef: React.MutableRefObject<number>
+  fmCache: React.MutableRefObject<Record<string, string>>
+  savedBodyCache: React.MutableRefObject<Record<string, string>>
+  mdCache: React.MutableRefObject<Record<string, string>>
+  evaluatingUuids: React.MutableRefObject<Set<string>>
+  pendingAiCount: React.MutableRefObject<number>
+  cliTimeoutLongMs: React.MutableRefObject<number>
+  flushRef: React.MutableRefObject<() => void>   // NOT flush directly — stale closure hazard
+  focusTimer: React.MutableRefObject<ReturnType<typeof setTimeout> | null>
+  saveBufferSafe: (uuid: string, content: string) => void
+  persistSession: () => Promise<void>
+  setPendingClose: React.Dispatch<React.SetStateAction<boolean>>
+}
+```
+
+**⚠ Invariant:** The app:closing handler must use `flushRef.current()` not a closed-over `flush` — by the time the event fires, the closure would be stale.
+
+**Return:** `void`
+
+**Pre-conditions:** Task 1 complete (uses `bumpFocusCount` from fmUtils — imported directly in hook).
+
+**Accept when:** Closing the app saves all tabs; AI jobs in-flight block quit and show dialog; focus count increments after 30s on a tab.
+
+---
+
+## Key Invariants
+
+1. **`H.current` is always current** (line 2209) — `useLayoutEffect` with no dep array; runs every render. Keyboard handler reads ALL handlers through `H.current`, never closing over them. After hook extractions, assign returned handler functions into `H.current` in this useLayoutEffect.
+
+2. **`useLayoutEffect`, not `useEffect`, for H.current** (line 2209) — synchronous before paint. Do not change.
+
+3. **Bare ref sync in component body** (lines 280–285) — `tabsRef.current = tabs` etc. are plain assignments, not in effects. This is intentional. Do not move them.
+
+4. **Pass refs as refs** — any extracted hook param that changes across renders must be passed as a `MutableRefObject`, not a plain value. Otherwise async callbacks get stale state.
+
+5. **`queueMicrotask` on all `insertContent` calls** — all `editor.commands.insertContent` / `setContent` calls must be wrapped in `queueMicrotask`. Preserve in any hook that calls insertContent.
+
+6. **Bootstrap sequence is immutable** (lines 850–910) — `GetStoreInfo → GetSession → loadTab` must stay sequential in App.tsx. Do not extract.
+
+7. **`user_intent` is user-only** — AI gesture code must never write `user_intent`. Verify after Task 4: `grep "user_intent" frontend/src/hooks/useAiGestures.ts` must return 0 write sites.
+
+8. **`flushRef` not `flush` in lifecycle** — The app:closing handler fires long after component render. Pass `flushRef` (the ref), not the `flush` closure.
+
+---
+
+## Hard Rules
+
+1. Run `nix-shell --run "cd frontend && node_modules/.bin/tsc --noEmit"` after each task.
+2. Commit after each task passes type-check — do not batch.
+3. Do not push to origin.
+4. Create `hooks/` directory when first needed (check if it exists first).
+5. Import the extracted module back in App.tsx immediately — never leave dead code.
+6. When wiring extracted handlers into `H.current`, update only the `useLayoutEffect` at line 2209 — do not create a second useLayoutEffect for this.

@@ -22,157 +22,79 @@ Started: 2026-04-18
 
 ---
 
-## Task List (v2 — full-file plan)
+## Task List (v2 — based on complete 2,946-line read)
 
 | # | Task | Target | LOC | Risk | Status | Commit |
 |---|---|---|---|---|---|---|
-| 1 | Types | `lib/appTypes.ts` | ~88 | Low | `[ ]` | — |
-| 2 | Constants | `lib/appConstants.ts` | ~83 | Low | `[ ]` | — |
-| 3 | Settings hook | `hooks/useSettings.ts` | ~160 | Low | `[ ]` | — |
-| 4 | Tier hook | `hooks/useTier.ts` | ~160 | Low | `[ ]` | — |
-| 5 | Image handler hook | `hooks/useImageHandler.ts` | ~170 | Med | `[ ]` | — |
-| 6 | AI operations hook | `hooks/useAiOperations.ts` | ~150 | Med | `[ ]` | — |
-| 7 | Tab manager hook | `hooks/useTabManager.ts` | ~150 | Med | `[ ]` | — |
-| 8 | Autosave hook | `hooks/useAutosave.ts` | ~210 | HIGH | `[ ]` | — |
-| 9 | Keyboard handler hook | `hooks/useKeyboardHandler.ts` | ~430 | HIGH | `[ ]` | — |
-| 10 | FileTree component | `components/FileTree.tsx` | ~180 | Med | `[ ]` | — |
-| 11 | TabBar component | `components/TabBar.tsx` | ~130 | Low | `[ ]` | — |
-| 12 | EditorToolbar component | `components/EditorToolbar.tsx` | ~250 | Low | `[ ]` | — |
-| 13 | AppModals component | `components/AppModals.tsx` | ~290 | Low | `[ ]` | — |
+| 1 | FM utils | `lib/fmUtils.ts` | ~110 | Low | `[ ]` | — |
+| 2 | EditorStats component | `components/EditorStats.tsx` | ~34 | Low | `[ ]` | — |
+| 3 | Note operations hook | `hooks/useNoteOperations.ts` | ~290 | Med | `[ ]` | — |
+| 4 | AI gestures hook | `hooks/useAiGestures.ts` | ~280 | Med | `[ ]` | — |
+| 5 | Blob image observer hook | `hooks/useBlobImageObserver.ts` | ~135 | Low-Med | `[ ]` | — |
+| 6 | App lifecycle hook | `hooks/useAppLifecycle.ts` | ~120 | Low-Med | `[ ]` | — |
 
-**Projected total LOC removed from App.tsx: ~2,451**
-**Projected final App.tsx size: 350–420 lines**
+**Projected total LOC removed from App.tsx: ~969**
+**Projected final App.tsx size: ~1,950–1,980 lines**
 
 ---
 
 ## Phase Ordering
 
 ```
-Phase 1 (foundations, do first):     Tasks 1, 2
-Phase 2 (low-risk hooks):            Tasks 3, 4
-Phase 3 (medium-risk hooks):         Tasks 5, 6, 7
-Phase 4 (UI components, parallel):   Tasks 10, 11, 12, 13
-Phase 5 (HIGH-risk, do last):        Tasks 8, 9
+Phase 1 (foundations, do first):  Tasks 1, 2
+Phase 2 (hooks, any order):       Tasks 3, 4, 5, 6
 ```
 
 ---
 
 ## Task Detail
 
-### Task 1 — `lib/appTypes.ts`
+### Task 1 — `lib/fmUtils.ts`
 **Status:** `[ ]`
-**Lines:** 98–185
-**Do:** Extract all TypeScript type/interface declarations to a shared lib file.
-Import them back in App.tsx.
-**Accept when:** `tsc --noEmit` passes, App.tsx imports all types from `lib/appTypes.ts`.
+**Lines:** 44–150
+**Do:** Extract nine pure util functions: `assetMarkdownPath`, `getLocalISOString`, `versionFromFm`, `bumpFm`, `bumpFocusCount`, `parseMeta`, `applyFilingRec`, `setYamlField`, `getAncestorPaths`.
+**Accept when:** `tsc --noEmit` passes; App.tsx imports all from `lib/fmUtils.ts`.
 
 ---
 
-### Task 2 — `lib/appConstants.ts`
+### Task 2 — `components/EditorStats.tsx`
 **Status:** `[ ]`
-**Lines:** 186–268
-**Do:** Extract `DEFAULT_SETTINGS`, `SHORTCUTS`, `makeTab`, `makeTabId`.
-**Accept when:** `tsc --noEmit` passes, no inline constant definitions remain at those lines.
+**Lines:** 152–185
+**Do:** Move `EditorStats` component to its own file. Import back in App.tsx.
+**Accept when:** `tsc --noEmit` passes; stats display correctly in both modes.
 
 ---
 
-### Task 3 — `hooks/useSettings.ts`
+### Task 3 — `hooks/useNoteOperations.ts`
 **Status:** `[ ]`
-**Lines:** 1431–1590
-**Do:** Extract `loadSettings`, `saveSettings`, `handleSettingsChange` and their local state.
-Accept `setStatusMsg` as callback param; use `DEFAULT_SETTINGS` from Task 2.
-**Accept when:** Settings modal still works end-to-end.
+**Lines:** 1635–1923
+**Do:** Extract all note/folder CRUD handlers. Pass confirm/prompt modal setters, `flush`, `runBackgroundEval`, `selectTab`, and `H` ref as params. See v2 plan for full param signature.
+**Accept when:** Open/delete/move/rename/folder ops all work via sidebar.
 
 ---
 
-### Task 4 — `hooks/useTier.ts`
+### Task 4 — `hooks/useAiGestures.ts`
 **Status:** `[ ]`
-**Lines:** 1591–1750
-**Do:** Extract `checkTier`, `handleBuyPremium`, `handleRestorePurchase`, `handleTierModalClose`
-and their state. Pass `tierRef` as a ref object (not a value).
-**Accept when:** Tier modal opens/closes; purchase/restore flows compile.
+**Lines:** 1925–2203
+**Do:** Extract AI gesture handlers. Wire returned `explainGesture`/`askGesture` into `H.current` useLayoutEffect.
+**⚠ Extra review:** After extraction, grep for `user_intent` in the new hook — must be zero write sites.
+**Accept when:** Explain and Ask gestures produce correct AI responses; background apply works on tab-switch.
 
 ---
 
-### Task 5 — `hooks/useImageHandler.ts`
+### Task 5 — `hooks/useBlobImageObserver.ts`
 **Status:** `[ ]`
-**Lines:** 1111–1280
-**Do:** Extract image I/O functions. Expose `insertImageIntoEditor` in return so App.tsx can
-assign it to `H.current`. Preserve `queueMicrotask` wrapping on all `insertContent` calls.
-**Accept when:** Image drag-drop and paste still save to disk and render correctly.
+**Lines:** 2305–2438
+**Do:** Extract WebKitGTK blob/data image observer. Hook imports `assetMarkdownPath` from `lib/fmUtils` directly.
+**Accept when:** Pasting an image saves to disk and renders with markdown-relative path.
 
 ---
 
-### Task 6 — `hooks/useAiOperations.ts`
+### Task 6 — `hooks/useAppLifecycle.ts`
 **Status:** `[ ]`
-**Lines:** 1281–1430
-**Do:** Extract `runAskAi`, `runExplainAi`. Expose in return for `H.current` assignment.
-Verify `user_intent` is never written.
-**Accept when:** Ask and Explain gestures produce correct AI responses.
-
----
-
-### Task 7 — `hooks/useTabManager.ts`
-**Status:** `[ ]`
-**Lines:** 851–1000
-**Do:** Extract tab lifecycle functions. Pass `tabsRef`/`activeIdxRef` as ref objects.
-Pass `loadTab`/`saveCurrentTab` as callbacks. Pass confirm-dialog state as params.
-**Accept when:** Close tab, reorder, move left/right all work correctly.
-
----
-
-### Task 8 — `hooks/useAutosave.ts` — HIGH RISK
-**Status:** `[ ]`
-**Lines:** 1751–1960
-**Do:** Extract autosave timer. Hold `saveCurrentTab` in an internal `useRef` updated each
-render — NEVER pass it directly to `setInterval` (stale closure hazard).
-**Accept when:** Notes save automatically at configured interval; dirty indicator clears.
-**⚠ Extra review:** After extraction, deliberately edit a note, wait for autosave, verify
-content persists to disk.
-
----
-
-### Task 9 — `hooks/useKeyboardHandler.ts` — HIGH RISK
-**Status:** `[ ]`
-**Lines:** 431–518 (useLayoutEffect ref sync) + 1961–2390 (handleKeyDown + effects)
-**Do:** Extract `H.current` ref, `useLayoutEffect` sync, `handleKeyDown`, DOM listener,
-Wails `EventsOn` file-open listener. Accept all handler callbacks as params.
-`useLayoutEffect` must remain (not converted to `useEffect`).
-**Accept when:** All keyboard shortcuts in HelpModal work correctly.
-**⚠ Extra review:** Test every shortcut listed in `HelpModal.tsx` SHORTCUTS constant.
-
----
-
-### Task 10 — `components/FileTree.tsx`
-**Status:** `[ ]`
-**Lines:** 2391–2570
-**Do:** Extract file list sidebar JSX. Decide whether drag state stays in App.tsx (prop-drilled)
-or moves into the component.
-**Accept when:** File list renders, open/rename/delete work, drag reorder works.
-
----
-
-### Task 11 — `components/TabBar.tsx`
-**Status:** `[ ]`
-**Lines:** 2820–2950
-**Do:** Extract tab strip JSX.
-**Accept when:** Tabs render, clicking switches tabs, close button works, new tab button works.
-
----
-
-### Task 12 — `components/EditorToolbar.tsx`
-**Status:** `[ ]`
-**Lines:** 2571–2820
-**Do:** Extract toolbar JSX. Pass editor, handler callbacks, and state as props.
-**Accept when:** All toolbar buttons function correctly.
-
----
-
-### Task 13 — `components/AppModals.tsx`
-**Status:** `[ ]`
-**Lines:** 2950–3237
-**Do:** Extract all modal/dialog JSX into a single modal layer component.
-**Accept when:** All modals open/close correctly; settings save; purchase flow compiles.
+**Lines:** 2441–2557
+**Do:** Extract app closing handler + focus count tracking. Pass `flushRef` (the ref object), NOT `flush` (the closure). Import `bumpFocusCount` from `lib/fmUtils` directly.
+**Accept when:** App close saves all tabs; focus_count increments after 30s.
 
 ---
 
@@ -181,13 +103,13 @@ or moves into the component.
 **Session 1 (2026-04-18):**
 - Completed G and B (pre-v2 plan tasks)
 - v1 plan abandoned — was based on ~380-line partial read
-- v2 plan written from complete 3,237-line read
-- `hooks/` directory does not yet exist — create it for Tasks 3–9
+- First v2 draft also wrong — written by agent that hallucinated line ranges and structure
+- This tracker updated after full 2,946-line read by Claude Code directly
 
 **Key invariants (see v2 plan for full detail):**
-- `H.current` pattern — update via `useLayoutEffect`, read-only in keydown
-- `tabsRef`/`activeIdxRef` in async callbacks — always use refs, not state values
+- `H.current` pattern — update via `useLayoutEffect` (no dep array), read-only in keydown
+- `tabsRef`/`activeIdxRef`/`tierRef` bare ref sync in component body — never move to effects
 - `queueMicrotask` on all `editor.commands.insertContent` calls
 - Bootstrap sequence (`GetStoreInfo → GetSession → loadTab`) stays in App.tsx unchanged
-- Autosave `saveCurrentTab` must be held in a ref inside useAutosave, not closed over
-- Frontmatter strip (`loadTab`) and prepend (`saveCurrentTab`) are a pair — extract together
+- Pass `flushRef` not `flush` to lifecycle hook
+- `user_intent` must never be written by AI gesture code
