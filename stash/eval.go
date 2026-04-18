@@ -130,7 +130,7 @@ func (v *Store) getAskPrompt(settings Settings) string {
 // as a markdown string for inline insertion. noteCwd is the directory of the note
 // file being explained — sets the CLI's working directory so relative asset paths
 // in the content resolve correctly. Pass "" to inherit the process working directory.
-func (v *Store) RunExplain(content string, settings Settings, noteCwd string, imagePaths []string) (string, error) {
+func (v *Store) RunExplain(content, history string, settings Settings, noteCwd string, imagePaths []string) (string, error) {
 	if settings.Tier() == TierDumb {
 		return "", fmt.Errorf("explain not available in dumb mode")
 	}
@@ -138,6 +138,7 @@ func (v *Store) RunExplain(content string, settings Settings, noteCwd string, im
 	contentType := detectContentType(content)
 	prompt := v.getExplainPrompt(settings)
 	prompt = strings.Replace(prompt, "{type}", contentType, 1)
+	prompt = strings.Replace(prompt, "{history}", history, 1)
 	prompt = strings.Replace(prompt, "{content}", content, 1)
 
 	imageNames := []string{}

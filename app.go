@@ -914,7 +914,7 @@ func (a *App) FileBufferWithName(path, name string) (stash.FileBufferResult, err
 // full buffer body). notePath is the store-relative path of the active note/buffer
 // and is used to set the CLI's CWD so relative asset paths resolve correctly.
 // Returns the response as a markdown string for inline insertion.
-func (a *App) Explain(content string, notePath string, imageStorePaths []string) (string, error) {
+func (a *App) Explain(content string, history string, notePath string, imageStorePaths []string) (string, error) {
 	if a.stash == nil {
 		return "", fmt.Errorf("store not open")
 	}
@@ -927,7 +927,7 @@ func (a *App) Explain(content string, notePath string, imageStorePaths []string)
 	for _, p := range imageStorePaths {
 		absImages = append(absImages, filepath.Join(a.stash.Root, p))
 	}
-	resp, err := a.stash.RunExplain(content, settings, cwd, absImages)
+	resp, err := a.stash.RunExplain(content, history, settings, cwd, absImages)
 	if err != nil {
 		logger.Warn("Explain failed", "err", err)
 		return "", err

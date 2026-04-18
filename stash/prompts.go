@@ -100,6 +100,7 @@ Act as a highly efficient research assistant. Provide the answer concisely with 
 
 [TASK]
 Explain the following content clearly and concisely.
+Use the supplied conversation history as context, but focus your explanation on the provided content rather than the full history.
 Respond in plain markdown suitable for inline display.
 Do not repeat the content. Just explain it.
 
@@ -112,6 +113,10 @@ You are encouraged to use available tools/MCP servers to fulfill the request, pr
 
 Content type: {type}
 Image List: {images}
+
+Conversation History:
+{history}
+
 Content:
 {content}
 `

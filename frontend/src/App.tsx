@@ -1972,6 +1972,11 @@ export default function App() {
         tr.insert(insertPos, aiNode)
         return true
       })
+      if (isMarkdownMode && activeTabRef.current) {
+        const body = editor.storage.markdown.getMarkdown()
+        const fm = fmCache.current[activeTabRef.current.uuid] ?? ''
+        setRawMd(fm + body)
+      }
     })
   }
 
@@ -2039,6 +2044,11 @@ export default function App() {
       tr.replaceWith(targetPos, targetEnd, newAiNode)
       return true
     })
+    if (isMarkdownMode && activeTabRef.current) {
+      const body = editor.storage.markdown.getMarkdown()
+      const fm = fmCache.current[activeTabRef.current.uuid] ?? ''
+      setRawMd(fm + body)
+    }
   }
 
   // Convert a markdown-relative image src to a store-relative path the backend
@@ -2104,6 +2114,30 @@ export default function App() {
   // image paths for any images in the chain, and a human-readable label.
   function buildAiContext(): { content: string; blockRef: string; history: string; contextLabel: string; imagePaths: string[] } {
     if (!editor) return { content: '', blockRef: 'doc', history: '', contextLabel: 'document', imagePaths: [] }
+
+    if (isMarkdownMode) {
+      const ta = document.querySelector('.markdown-raw') as HTMLTextAreaElement
+      const body = splitFrontmatter(rawMd).body
+      const cleanBody = getCleanMarkdown(body)
+      
+      if (ta && ta.selectionStart !== ta.selectionEnd) {
+        return {
+          content: ta.value.substring(ta.selectionStart, ta.selectionEnd).trim(),
+          blockRef: 'doc',
+          history: '',
+          contextLabel: 'Selection',
+          imagePaths: []
+        }
+      }
+
+      return {
+        content: cleanBody,
+        blockRef: 'doc',
+        history: '',
+        contextLabel: 'Document',
+        imagePaths: []
+      }
+    }
 
     const { selection, doc } = editor.state
     const { from, to, empty } = selection
@@ -2183,18 +2217,20 @@ export default function App() {
         currentBlockText = doc.textBetween(from, to, '\n')
       }
 
-      const fullHistory = [
-        ...intermediateHistory,
-        currentBlockText ? `[Turn ${turnCount}]\n${currentBlockText}` : ''
+      // Construct the conversation history to include the root source and all preceding turns.
+      const historyTurns = [
+        sourceContent ? `[Source Context]\n${sourceContent}` : '',
+        ...intermediateHistory
       ].filter(Boolean).join('\n\n---\n\n')
 
       const newRef = aiBlockRef ? `${aiBlockRef},${aiBlockId}` : aiBlockId
       const tabPath = activeTabRef.current?.path ?? ''
       const chainRefs = aiBlockRef ? aiBlockRef.split(',') : ['doc']
+      
       return {
-        content: sourceContent,
+        content: currentBlockText || sourceContent,
         blockRef: newRef,
-        history: fullHistory,
+        history: historyTurns,
         contextLabel: 'Follow-up',
         imagePaths: collectChainImagePaths(doc, chainRefs, tabPath),
       }
@@ -2234,18 +2270,11 @@ export default function App() {
       selectedText = serializer.serialize(targetNode).trim()
       contextLabel = targetNode.type.name === 'image' ? 'Image' : 'Code Block'
     } else {
-      // Cursor fallback: find the top-level node (depth 1) containing the cursor
-      const $from = selection.$from
-      const topNode = $from.node(1)
-      if (topNode) {
-        selectedText = serializer.serialize(topNode).trim()
-        blockRange = new NodeRange($from, $from, 0)
-        contextLabel = 'Block'
-      } else {
-        selectedText = getCleanMarkdown(editor!.storage.markdown.getMarkdown())
-        contextLabel = 'Document'
-      }
+      // Fallback: prioritize Document when nothing is selected.
+      selectedText = getCleanMarkdown(editor!.storage.markdown.getMarkdown())
+      contextLabel = 'Document'
     }
+
 
     let existingBlockId = ''
     if (targetNode && from >= targetPos && to <= targetPos + targetNode.nodeSize) {
@@ -2385,7 +2414,7 @@ export default function App() {
     setTabs(prev => prev.map(t => t.uuid === capturedUuid ? { ...t, isWaitingAI: true, aiJobName: 'Explain' } : t))
 
     console.log('[stash:ai] explain: firing', { aiId, uuid: capturedUuid, blockRef: ctx.blockRef, imagePaths: ctx.imagePaths })
-    Explain(ctx.content, activeTabRef.current?.path ?? '', Array.from(ctx.imagePaths))
+    Explain(ctx.content, ctx.history, activeTabRef.current?.path ?? '', Array.from(ctx.imagePaths))
       .then(resp => {
         const trimmed = resp.trim()
         const isActive = activeTabRef.current?.uuid === capturedUuid
