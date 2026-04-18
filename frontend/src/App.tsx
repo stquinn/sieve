@@ -37,6 +37,7 @@ import { assetMarkdownPath, versionFromFm, bumpFm, bumpFocusCount, parseMeta, ap
 import { EditorStats } from './components/EditorStats'
 import { useNoteOperations } from './hooks/useNoteOperations'
 import { useAiGestures } from './hooks/useAiGestures'
+import { useBlobImageObserver } from './hooks/useBlobImageObserver'
 import './App.css'
 
 const lowlight = createLowlight(common)
@@ -1628,138 +1629,7 @@ export default function App() {
   }, [showSearch, searchTerm, editor])
 
   // ── WebKitGTK blob image paste interceptor ────────────────────────────────
-  // WebKitGTK's native paste inserts images directly as blob:wails:// URLs,
-  // bypassing the JS clipboardData API (which arrives empty). We watch the
-  // editor DOM for newly added <img> elements with blob: src and retroactively
-  // save them to disk via canvas → SaveBufferAsset / SaveNoteAsset.
-  // The img src stored in Tiptap is the MARKDOWN-RELATIVE path — ImageNodeView
-  // resolves it to a /store/... display URL at render time.
-
-  useEffect(() => {
-    if (!editor) return
-    const editorEl = editor.view.dom as HTMLElement
-
-    const processImg = (img: HTMLImageElement) => {
-      const blobSrc = img.getAttribute('src') || ''
-      if (!blobSrc.startsWith('blob:') && !blobSrc.startsWith('data:')) return
-      if ((img as any).__stashProcessing) return
-      ;(img as any).__stashProcessing = true
-
-      console.debug('[stash] mutation observer: intercepting img', blobSrc.substring(0, 60))
-
-      const canvas = document.createElement('canvas')
-      const image = new Image()
-      image.onload = () => {
-        canvas.width = image.naturalWidth
-        canvas.height = image.naturalHeight
-        const ctx = canvas.getContext('2d')
-        if (!ctx) { console.error('[stash] mutation: no canvas ctx'); return }
-        ctx.drawImage(image, 0, 0)
-        canvas.toBlob(async (blob) => {
-          if (!blob) { console.error('[stash] mutation: toBlob returned null'); return }
-          const reader = new FileReader()
-          reader.onload = async (e) => {
-            const dataUrl = e.target?.result as string
-            const id = 'blk-' + Math.random().toString(16).substring(2, 6)
-            // Use ref (not closure) to always read the current active tab
-            const tab = activeTabRef.current
-            if (!tab) { console.error('[stash] mutation: no active tab'); return }
-
-            try {
-              // Save to buffer assets or store assets depending on tab type
-              const isBuffer = tab.status !== 'filed'
-              const storeRelPath = isBuffer
-                ? await SaveBufferAsset(id, dataUrl)
-                : await SaveNoteAsset(tab.path, id, dataUrl)
-
-              // Compute the markdown-relative path from the tab file to the asset
-              const mdPath = assetMarkdownPath(tab.path, storeRelPath)
-              console.debug('[stash] mutation: image saved', { id, storeRelPath, mdPath })
-
-              // Update Tiptap node: src = markdown path (ImageNodeView resolves /store/ for display)
-              editor.chain()
-                .command(({ tr, state }) => {
-                  state.doc.descendants((node, pos) => {
-                    if (node.type.name === 'image' && (node.attrs.src === blobSrc || node.attrs.src === img.src)) {
-                      tr.setNodeMarkup(pos, undefined, {
-                        ...node.attrs,
-                        src: mdPath,
-                        id,
-                        detect: 'pending',
-                      })
-                    }
-                  })
-                  return true
-                })
-                .run()
-
-              if (tierRef.current === 'smart') {
-                const capturedId = id
-                pendingAiCount.current++
-                DescribeImage(storeRelPath)
-                  .then((desc: stash.ImageDesc) => {
-                    console.log('[stash:ai] DescribeImage (mutation): response', { id: capturedId, desc })
-                    if (!desc || !editor) return
-                    let found = false
-                    editor.commands.command(({ tr, state }) => {
-                      state.doc.descendants((node, pos) => {
-                        if (node.type.name === 'image' && node.attrs.id === capturedId) {
-                          found = true
-                          if (node.attrs.detect !== 'user') {
-                            tr.setNodeMarkup(pos, null, { ...node.attrs, alt: desc.alt, summary: desc.summary, detect: 'cli' })
-                          }
-                          return false
-                        }
-                      })
-                      return found
-                    })
-                    if (!found) console.warn('[stash:ai] DescribeImage (mutation): node not found', { id: capturedId })
-                  })
-                  .catch((e: unknown) => {
-                    console.error('[stash:ai] DescribeImage (mutation): call failed', e)
-                    editor.commands.command(({ tr, state }) => {
-                      let found = false
-                      state.doc.descendants((node, pos) => {
-                        if (node.type.name === 'image' && node.attrs.id === capturedId && node.attrs.detect === 'pending') {
-                          found = true
-                          tr.setNodeMarkup(pos, null, { ...node.attrs, detect: 'heuristic' })
-                          return false
-                        }
-                      })
-                      return found
-                    })
-                  })
-                  .finally(() => {
-                    pendingAiCount.current--
-                  })
-              }
-            } catch (err) {
-              console.error('[stash] mutation: save asset failed', err)
-            }
-          }
-          reader.readAsDataURL(blob)
-        }, 'image/png')
-      }
-      image.onerror = (e) => console.error('[stash] mutation: image load failed', e)
-      image.src = blobSrc
-    }
-
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        for (const node of Array.from(mutation.addedNodes)) {
-          if (node instanceof HTMLImageElement) {
-            processImg(node)
-          } else if (node instanceof Element) {
-            node.querySelectorAll('img').forEach(processImg)
-          }
-        }
-      }
-    })
-
-    observer.observe(editorEl, { childList: true, subtree: true })
-    console.debug('[stash] blob img observer attached')
-    return () => observer.disconnect()
-  }, [editor])
+  useBlobImageObserver({ editor, activeTabRef, tierRef, pendingAiCount })
 
 
   // ── App close ──────────────────────────────────────────────────────────────
