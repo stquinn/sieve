@@ -34,6 +34,7 @@ import { TabState } from './types'
 import { ConfirmModal, PromptModal } from './components/Modal'
 import { ChevronUp, ChevronDown, X } from 'lucide-react'
 import { Search } from './extensions/Search'
+import { mdSrcToStoreRelPath } from './lib/imageUtils'
 import './App.css'
 
 const lowlight = createLowlight(common)
@@ -2051,19 +2052,6 @@ export default function App() {
     }
   }
 
-  // Convert a markdown-relative image src to a store-relative path the backend
-  // can resolve. Mirrors resolveDisplaySrc but returns store-relative not /store/...
-  function mdSrcToStoreRelPath(src: string, tabPath: string): string {
-    if (!src || src.startsWith('http') || src.startsWith('blob:') || src.startsWith('data:')) return ''
-    if (src.startsWith('/')) return src.substring(1)
-    const tabDir = tabPath.split('/').slice(0, -1)
-    const parts = [...tabDir]
-    for (const part of src.split('/')) {
-      if (part === '..') parts.pop()
-      else if (part !== '.') parts.push(part)
-    }
-    return parts.join('/')
-  }
 
   // Collect store-relative paths for all image nodes reachable from the given
   // chain ref IDs. blockRef='doc' → scan whole document. Otherwise walk chain.

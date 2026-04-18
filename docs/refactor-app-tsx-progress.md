@@ -15,7 +15,7 @@ Started: 2026-04-18
 
 | # | Task | File | Status | Commit |
 |---|---|---|---|---|
-| G | Image utils dedup | `lib/imageUtils.ts` | `[ ]` | — |
+| G | Image utils dedup | `lib/imageUtils.ts` | `[x]` | `refactor: extract mdSrcToStoreRelPath into lib/imageUtils` |
 | B | AI context builder | `lib/aiContextBuilder.ts` | `[ ]` | — |
 | F | Settings hook | `hooks/useSettings.ts` | `[ ]` | — |
 | D | Persistence hook | `hooks/usePersistence.ts` | `[ ]` | — |
@@ -27,17 +27,24 @@ Started: 2026-04-18
 
 ## Task G — `lib/imageUtils.ts`
 
-**Status:** `[ ]` Not started
+**Status:** `[x]` Complete
+
+**Correction from initial plan:** The shared utility is `mdSrcToStoreRelPath(src, tabPath)` (lines 2056–2066),
+not a `file://` stripper. It resolves markdown-relative image src values to store-relative paths,
+filtering out `http`, `blob:`, and `data:` URLs. Used in 4 call sites — 3 inside
+`collectChainImagePaths` (lines 2078, 2090, 2098) and 1 inline in `buildAiContext` (line 2316).
+`buildAiContext` is also far more sophisticated than the initial partial-read analysis described —
+it handles threading, conversation history chains, and block ref tagging.
 
 **What to do:**
-1. Find all instances of image path resolution in App.tsx (at least 3 locations)
-2. Create `frontend/src/lib/imageUtils.ts` with `resolveLocalImagePath(src)`
-3. Replace all call sites in App.tsx with the utility import
-4. Verify app still builds and image paste/drop works
+1. Create `frontend/src/lib/imageUtils.ts` exporting `mdSrcToStoreRelPath(src, tabPath)`
+2. Import it in App.tsx; remove the inline function definition (lines 2054–2066)
+3. Verify app builds
 
 **Acceptance criteria:**
-- No duplicate image path logic remains in App.tsx
-- `resolveLocalImagePath` handles `data:`, `http`, and `file://` prefixes correctly
+- `mdSrcToStoreRelPath` defined once in `lib/imageUtils.ts`
+- All 4 call sites in App.tsx use the import
+- App builds cleanly
 
 ---
 
