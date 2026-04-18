@@ -1,7 +1,7 @@
 import { DOMParser as ProseMirrorDOMParser, Fragment } from '@tiptap/pm/model'
 import { wrapIn } from '@tiptap/pm/commands'
 import { NodeSelection, TextSelection } from '@tiptap/pm/state'
-import { useEditor, EditorContent, BubbleMenu, Editor } from '@tiptap/react'
+import { useEditor, EditorContent, BubbleMenu } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -37,44 +37,10 @@ import { Search } from './extensions/Search'
 import { splitFrontmatter } from './lib/markdown'
 import { buildAiContext } from './lib/aiContextBuilder'
 import { assetMarkdownPath, getLocalISOString, versionFromFm, bumpFm, bumpFocusCount, parseMeta, applyFilingRec, setYamlField, getAncestorPaths } from './lib/fmUtils'
+import { EditorStats } from './components/EditorStats'
 import './App.css'
 
 const lowlight = createLowlight(common)
-
-function EditorStats({ editor, isMarkdownMode, rawMd }: { editor: Editor | null, isMarkdownMode: boolean, rawMd: string }) {
-  const [stats, setStats] = useState({ chars: 0, lines: 0 })
-
-  useEffect(() => {
-    if (isMarkdownMode) {
-      const text = splitFrontmatter(rawMd).body
-      const chars = text.length
-      const lines = text === '' ? 0 : text.split('\n').length
-      setStats({ chars, lines })
-      return
-    }
-
-    if (!editor) return
-
-    const updateStats = () => {
-      const text = editor.state.doc.textBetween(0, editor.state.doc.content.size, '\n')
-      const chars = text.length
-      const lines = text === '' ? 0 : text.split('\n').length
-      setStats({ chars, lines })
-    }
-
-    updateStats()
-    editor.on('update', updateStats)
-    return () => { editor.off('update', updateStats) }
-  }, [editor, isMarkdownMode, rawMd])
-
-  return (
-    <>
-      <span title="Characters">{stats.chars} chars</span>
-      <span className="status-bar__sep">|</span>
-      <span title="Lines">{stats.lines} lines</span>
-    </>
-  )
-}
 
 export default function App() {
   const [tabs, setTabs]           = useState<TabState[]>([])
