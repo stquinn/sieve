@@ -11,9 +11,9 @@ import Table from '@tiptap/extension-table'
 import TableRow from '@tiptap/extension-table-row'
 import TableHeader from '@tiptap/extension-table-header'
 import TableCell from '@tiptap/extension-table-cell'
-import { DescribeImage, DiscardBuffer, FileBuffer, FileBufferWithName, GetNotes, GetSession, GetStoreInfo, LoadBuffer, NewBuffer, RefineLanguage, SaveBuffer, SaveBufferAsset, SaveNoteAsset, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, ShowInFiles, EvaluateBuffer, Quit as AppQuit, SaveVersionSnapshot, LoadPrompt, SavePrompt, GetPrompts, TogglePrompts, DownloadImageAsset } from '../wailsjs/go/main/App'
+import { DescribeImage, DiscardBuffer, FileBuffer, FileBufferWithName, GetNotes, GetSession, GetStoreInfo, LoadBuffer, NewBuffer, RefineLanguage, SaveBuffer, SaveBufferAsset, SaveNoteAsset, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, ShowInFiles, EvaluateBuffer, SaveVersionSnapshot, LoadPrompt, SavePrompt, GetPrompts, TogglePrompts, DownloadImageAsset } from '../wailsjs/go/main/App'
 import { stash } from '../wailsjs/go/models'
-import { BrowserOpenURL, EventsOn, EventsOff, Quit } from '../wailsjs/runtime/runtime'
+import { BrowserOpenURL, EventsOn } from '../wailsjs/runtime/runtime'
 import { CodeBlockWithAttrs } from './extensions/CodeBlockWithAttrs'
 import { ImageWithAttrs } from './extensions/ImageWithAttrs'
 import { AiBlockDecoration } from './extensions/AiBlockDecoration'
@@ -33,11 +33,12 @@ import { ConfirmModal, PromptModal } from './components/Modal'
 import { ChevronUp, ChevronDown, X } from 'lucide-react'
 import { Search } from './extensions/Search'
 import { splitFrontmatter } from './lib/markdown'
-import { assetMarkdownPath, versionFromFm, bumpFm, bumpFocusCount, parseMeta, applyFilingRec, setYamlField, getAncestorPaths } from './lib/fmUtils'
+import { assetMarkdownPath, versionFromFm, bumpFm, parseMeta, applyFilingRec, setYamlField, getAncestorPaths } from './lib/fmUtils'
 import { EditorStats } from './components/EditorStats'
 import { useNoteOperations } from './hooks/useNoteOperations'
 import { useAiGestures } from './hooks/useAiGestures'
 import { useBlobImageObserver } from './hooks/useBlobImageObserver'
+import { useAppLifecycle } from './hooks/useAppLifecycle'
 import './App.css'
 
 const lowlight = createLowlight(common)
@@ -1634,123 +1635,13 @@ export default function App() {
 
   // ── App close ──────────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    const unlistenClosing = EventsOn('app:closing', async () => {
-      console.log('[stash] shutdown: app:closing received, flushing state...')
-      
-      // 1. Flush active tab (from editor state)
-      await flushRef.current()
-
-      // 2. Flush all other background tabs (from cached states)
-      const otherTabs = tabsRef.current.filter(t => t.uuid !== activeTabRef.current?.uuid && !t.isVirtual)
-      if (otherTabs.length > 0) {
-        console.log('[stash] shutdown: flushing', otherTabs.length, 'background tab(s)...')
-        await Promise.all(otherTabs.map(async (t) => {
-          const uuid = t.uuid
-          const body = savedBodyCache.current[uuid] ?? ''
-          const fm   = fmCache.current[uuid] ?? ''
-          const raw  = mdCache.current[uuid]
-          
-          if (raw) {
-            await SaveBuffer(t.path, raw).catch(console.error)
-          } else if (body || fm) {
-            await SaveBuffer(t.path, fm + body).catch(console.error)
-          }
-        }))
-      }
-
-      const doQuit = async () => {
-        await persistSession()
-          .then(() => console.log('[stash] shutdown: session saved'))
-          .catch(err => console.error('[stash] shutdown: save failed', err))
-          .finally(() => {
-            console.log('[stash] shutdown: calling backend AppQuit')
-            AppQuit().catch(err => {
-              console.error('[stash] shutdown: AppQuit failed, forcing runtime Quit', err)
-              Quit()
-            })
-          })
-      }
-
-      const totalJobs = evaluatingUuids.current.size + pendingAiCount.current
-      if (totalJobs === 0) {
-        // No outstanding AI jobs — quit immediately
-        doQuit()
-        return
-      }
-
-      // Outstanding AI jobs — show blocking dialog, then quit when all done (or timeout)
-      console.log('[stash] shutdown: waiting for', totalJobs, 'AI job(s)...')
-      setPendingClose(true)
-      const deadline = Date.now() + cliTimeoutLongMs.current
-      const poll = setInterval(() => {
-        const remaining = evaluatingUuids.current.size + pendingAiCount.current
-        if (remaining === 0 || Date.now() >= deadline) {
-          clearInterval(poll)
-          setPendingClose(false)
-          if (remaining > 0) {
-            console.warn('[stash] shutdown: timed out waiting for AI jobs, quitting anyway')
-          }
-          doQuit()
-        }
-      }, 200)
-    })
-
-    return () => {
-      EventsOff('app:closing')
-    }
-  }, [])
-
-  // ── Focus count tracking ──────────────────────────────────────────────────
-  // Increments focus_count at two levels:
-  // 1. Visit: After tab has held focus for 30s (visit signal).
-  // 2. Duration: Every 5min during continuous active focus (dwell signal).
-
-  useEffect(() => {
-    if (focusTimer.current) clearTimeout(focusTimer.current)
-    const tab = tabs[activeIdx]
-    if (!tab) return
-    const path = tab.path
-    const uuid = tab.uuid
-
-    // Level 1: Debounced "Visit" increment (30s)
-    focusTimer.current = setTimeout(() => {
-      const currentTab = tabsRef.current.find(t => t.path === path)
-      if (!currentTab || !currentTab.uuid) return
-      
-      const fm = fmCache.current[currentTab.uuid]
-      if (!fm) return
-      
-      const newFm = bumpFocusCount(fm)
-      fmCache.current[currentTab.uuid] = newFm
-      const body = savedBodyCache.current[currentTab.uuid] ?? ''
-      saveBufferSafe(currentTab.uuid, newFm + body)
-      console.debug('[stash] focus_count: visit incremented', { path })
-    }, 30 * 1000)
-
-    // Level 2: Periodic "Dwell" increment (5min)
-    const dwellInterval = setInterval(() => {
-      // Re-read current tab from and refs to ensure we only increment if THIS tab is still active
-      if (activeIdxRef.current !== activeIdx) return
-
-      const currentTab = tabsRef.current[activeIdx]
-      if (!currentTab || !currentTab.uuid) return
-      
-      const fm = fmCache.current[currentTab.uuid]
-      if (!fm) return
-      
-      const newFm = bumpFocusCount(fm)
-      fmCache.current[currentTab.uuid] = newFm
-      const body = savedBodyCache.current[currentTab.uuid] ?? ''
-      saveBufferSafe(currentTab.uuid, newFm + body)
-      console.debug('[stash] focus_count: dwell interval incremented', { path })
-    }, 5 * 60 * 1000)
-
-    return () => { 
-      if (focusTimer.current) { clearTimeout(focusTimer.current); focusTimer.current = null }
-      clearInterval(dwellInterval)
-    }
-  }, [activeIdx])
+  useAppLifecycle({
+    activeIdx, tabs, tabsRef, activeTabRef, activeIdxRef,
+    fmCache, savedBodyCache, mdCache,
+    evaluatingUuids, pendingAiCount, cliTimeoutLongMs,
+    flushRef, focusTimer,
+    saveBufferSafe, persistSession, setPendingClose,
+  })
 
   // ── AI status bar tick — 1s interval while any task is running ───────────────
 
