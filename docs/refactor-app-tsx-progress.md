@@ -17,8 +17,8 @@ Started: 2026-04-18
 |---|---|---|---|---|
 | G | Image utils dedup | `lib/imageUtils.ts` | `[x]` | `refactor: extract mdSrcToStoreRelPath into lib/imageUtils` |
 | B | AI context builder | `lib/aiContextBuilder.ts` | `[x]` | `refactor: extract buildAiContext and markdown utils into lib/` |
-| F | Settings hook | `hooks/useSettings.ts` | `[ ]` | — |
-| D | Persistence hook | `hooks/usePersistence.ts` | `[ ]` | — |
+| F | Settings hook | `hooks/useSettings.ts` | `[!]` | — |
+| D | Persistence hook | `hooks/usePersistence.ts` | `[!]` | — |
 | C | Tabs hook | `hooks/useTabs.ts` | `[ ]` | — |
 | A | AI orchestration hook | `hooks/useAiOrchestration.ts` | `[ ]` | — |
 | E | Keyboard router hook | `hooks/useKeyboardRouter.ts` | `[ ]` | — |
@@ -72,7 +72,13 @@ it handles threading, conversation history chains, and block ref tagging.
 
 ## Task F — `hooks/useSettings.ts`
 
-**Status:** `[ ]` Not started
+**Status:** `[!]` Blocked — re-assess before starting
+
+**Note from code review:** The bootstrap `useEffect` (lines ~850–910) chains `GetStoreInfo` →
+`GetSession` → `loadTab` sequentially. Session restore includes tab state and active index —
+not just settings. Extracting "settings" without breaking tab restore requires carefully
+threading the `loadTab` callback into the hook. Risk is **Medium-High**, not Low as initially
+estimated. Recommend tackling after Task C (useTabs) when the tab-restore boundary is clear.
 
 **What to do:**
 1. Create `frontend/src/hooks/` directory
@@ -90,7 +96,13 @@ it handles threading, conversation history chains, and block ref tagging.
 
 ## Task D — `hooks/usePersistence.ts`
 
-**Status:** `[ ]` Not started
+**Status:** `[!]` Blocked — re-assess before starting
+
+**Note from code review:** `SaveBuffer` is called from 20+ locations throughout App.tsx —
+AI response handlers, filing flows, meta updates, rename callbacks, etc. The `saveBufferSafe`
+wrapper is the ambient save path, but the many direct `SaveBuffer` calls are in domain-specific
+flows that would each need to import the hook. Risk is **Medium-High**. Recommend tackling
+after Task C when tab state boundaries are clearer.
 
 **What to do:**
 1. Identify save/autosave code in App.tsx
@@ -127,42 +139,51 @@ it handles threading, conversation history chains, and block ref tagging.
 
 ## Task A — `hooks/useAiOrchestration.ts`
 
-**Status:** `[ ]` Not started
+**Status:** `[ ]` Not started — revised scope needed
+
+**Note from code review:** `explainGesture`, `askGesture`, `handleAskSend` are ~90 lines, but
+depend on `insertAiPlaceholder`, `replaceAiPlaceholder`, `applyAiResponseInBackground`,
+`touchAiLastEvaluated` — each of which uses deep editor + React state. Extracting cleanly
+requires either:
+- A grouped params interface (2 objects: `AiGestureContext` + `AiGestureCallbacks`)
+- Or first moving `insertAiPlaceholder`/`replaceAiPlaceholder` to `AiBlock.addCommands()`
+  (already noted in MEMORY.md — do this first)
+
+**Recommended pre-step:** Move `insertAiPlaceholder`/`replaceAiPlaceholder` into `AiBlock.tsx`
+`addCommands()`. Then the gesture functions only need `editor`, `tier`, and a few refs.
 
 **What to do:**
-1. Identify all AI runner code in App.tsx
-2. Create `hooks/useAiOrchestration.ts`
-3. Move: `runAsk`, `runExplain`, `runInlineEdit`, `pasteAiResult`, `streamingAiBlock` state
-4. Import `buildAiContext` from Task B
-5. Accept `editor`, `settings` as params; return `{ streamingAiBlock, runAsk, runExplain, runInlineEdit }`
-6. Wire `streamingAiBlock` back into JSX conditional rendering
-7. Test Ask and Explain end-to-end
-
-**Acceptance criteria:**
-- All AI runner logic in hook
-- `streamingAiBlock` still drives loading UI correctly
+1. Move `insertAiPlaceholder`/`replaceAiPlaceholder` to `AiBlock.addCommands()` — but note
+   `insertAiPlaceholder` uses `isMarkdownMode`, `fmCache`, `activeTabRef`, `setRawMd` which
+   are React state. The markdown-mode update portion must stay in the gesture caller.
+2. Design `AiGestureContext` and `AiGestureCallbacks` interfaces
+3. Create `hooks/useAiOrchestration.ts`
+4. Wire back into App.tsx
 
 ---
 
 ## Task E — `hooks/useKeyboardRouter.ts`
 
-**Status:** `[ ]` Not started
+**Status:** `[ ]` Not started — low priority, low value
 
-**What to do:**
-1. Read `handleKeyDown` fully — list every action it dispatches
-2. Define `KeyboardActions` interface with all action callbacks
-3. Create `hooks/useKeyboardRouter.ts`
-4. Move `handleKeyDown` and its `useEffect` registration
-5. Wire all callbacks from other hooks (save, tabs, AI, settings, modals)
-6. Test all keyboard shortcuts listed in HelpModal
+**Note from code review:** The keyboard handler (lines ~2236–2270) is already only ~30 lines.
+It fully delegates to `H.current` (for tab/AI actions) or calls `setState` setters directly
+(for modal toggles). The `H.current` ref pattern already provides the decoupling that a
+`useKeyboardRouter` hook would provide. This task delivers minimal LOC reduction.
 
-**Acceptance criteria:**
-- `handleKeyDown` fully in hook
-- All shortcuts verified against HelpModal shortcut list
-- No keyboard handler code inline in App.tsx
+**Recommendation:** Skip or defer. Revisit only if the keyboard handler grows significantly.
 
 ---
 
 ## Notes / Blockers
 
-_(add session notes here as work progresses)_
+**Session 1 (2026-04-18):** Completed G and B. F and D are harder than the initial plan
+estimated (based on a partial file read of only ~380 lines out of 3,237). The real code has:
+- Settings/session bootstrap chains `GetStoreInfo → GetSession → loadTab` sequentially
+- `SaveBuffer` called from 20+ locations — not a single centralised persistence path
+- Keyboard handler already clean via `H.current` delegation
+- AI gestures need `insertAiPlaceholder`/`replaceAiPlaceholder` moved to AiBlock first
+
+**Next session entry point:** Start with Task A pre-step — move `insertAiPlaceholder` and
+`replaceAiPlaceholder` into `AiBlock.addCommands()` (per existing MEMORY.md note). Then
+reassess Task A extraction with the simpler dependencies.
