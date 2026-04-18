@@ -310,16 +310,21 @@ function PromptReference({ path }: { path: string }) {
     ],
     'explain': [
       { name: '{content}', desc: 'Selected/document text' },
-      { name: '{type}', desc: 'Detected content type' }
+      { name: '{type}', desc: 'Detected content type' },
+      { name: '{images}', desc: 'List of images in selection' }
     ],
     'ask': [
       { name: '{content}', desc: 'Context document content' },
       { name: '{type}', desc: 'Detected content type' },
+      { name: '{images}', desc: 'List of images in selection' },
       { name: '{history}', desc: 'Previous chat messages' },
       { name: '{question}', desc: 'User\'s latest question' }
     ],
     'refine': [
       { name: '{content}', desc: 'Code snippet to identify' }
+    ],
+    'image': [
+      { name: '{image_filename}', desc: 'Current image filename' }
     ]
   }
 

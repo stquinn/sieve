@@ -372,6 +372,7 @@ func (a *App) GetPrompts() []stash.PromptEntry {
 		{Name: "explain", DisplayName: "Explain Content", Path: settings.Prompts.Explain, IsVirtual: settings.Prompts.Explain == ""},
 		{Name: "ask", DisplayName: "In-context Chat", Path: settings.Prompts.Ask, IsVirtual: settings.Prompts.Ask == ""},
 		{Name: "refine", DisplayName: "Language Detection", Path: settings.Prompts.Refine, IsVirtual: settings.Prompts.Refine == ""},
+		{Name: "image", DisplayName: "Describe Image", Path: settings.Prompts.Image, IsVirtual: settings.Prompts.Image == ""},
 	}
 	return prompts
 }
@@ -411,6 +412,8 @@ func (a *App) SavePrompt(name string, content string) (string, error) {
 		settings.Prompts.Ask = path
 	case "refine":
 		settings.Prompts.Refine = path
+	case "image":
+		settings.Prompts.Image = path
 	}
 	if err := settings.Save(a.stash.SettingsPath()); err != nil {
 		return "", err
@@ -441,6 +444,9 @@ func (a *App) RestorePrompt(name string) error {
 	case "refine":
 		path = settings.Prompts.Refine
 		settings.Prompts.Refine = ""
+	case "image":
+		path = settings.Prompts.Image
+		settings.Prompts.Image = ""
 	}
 
 	if path != "" {
