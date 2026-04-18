@@ -26,15 +26,14 @@ Started: 2026-04-18
 
 | # | Task | Target | LOC | Risk | Status | Commit |
 |---|---|---|---|---|---|---|
-| 1 | FM utils | `lib/fmUtils.ts` | ~110 | Low | `[ ]` | — |
-| 2 | EditorStats component | `components/EditorStats.tsx` | ~34 | Low | `[ ]` | — |
-| 3 | Note operations hook | `hooks/useNoteOperations.ts` | ~290 | Med | `[ ]` | — |
-| 4 | AI gestures hook | `hooks/useAiGestures.ts` | ~280 | Med | `[ ]` | — |
-| 5 | Blob image observer hook | `hooks/useBlobImageObserver.ts` | ~135 | Low-Med | `[ ]` | — |
-| 6 | App lifecycle hook | `hooks/useAppLifecycle.ts` | ~120 | Low-Med | `[ ]` | — |
+| 1 | FM utils | `lib/fmUtils.ts` | ~110 | Low | `[x]` | `f76fd78` |
+| 2 | EditorStats component | `components/EditorStats.tsx` | ~34 | Low | `[x]` | `54b9bf0` |
+| 3 | Note operations hook | `hooks/useNoteOperations.ts` | ~290 | Med | `[x]` | `3a4055e` |
+| 4 | AI gestures hook | `hooks/useAiGestures.ts` | ~280 | Med | `[x]` | `57f3f0b` |
+| 5 | Blob image observer hook | `hooks/useBlobImageObserver.ts` | ~135 | Low-Med | `[x]` | `58dfc25` |
+| 6 | App lifecycle hook | `hooks/useAppLifecycle.ts` | ~120 | Low-Med | `[x]` | `4dfe9ef` |
 
-**Projected total LOC removed from App.tsx: ~969**
-**Projected final App.tsx size: ~1,950–1,980 lines**
+**Actual LOC removed from App.tsx: ~913 (2,946 → 2,033)**
 
 ---
 
@@ -105,6 +104,15 @@ Phase 2 (hooks, any order):       Tasks 3, 4, 5, 6
 - v1 plan abandoned — was based on ~380-line partial read
 - First v2 draft also wrong — written by agent that hallucinated line ranges and structure
 - This tracker updated after full 2,946-line read by Claude Code directly
+
+**Session 2 (2026-04-18):**
+- All 6 v2 tasks complete — App.tsx reduced from 2,946 → 2,033 lines (~31%)
+- New files: lib/fmUtils.ts, components/EditorStats.tsx, hooks/useNoteOperations.ts,
+  hooks/useAiGestures.ts, hooks/useBlobImageObserver.ts, hooks/useAppLifecycle.ts
+- Remaining ~2,033 lines are load-bearing state machine (tab lifecycle, useEditor, bootstrap,
+  flush/save machinery) — resist extraction without context-object rearchitecture
+- Next step: context-object rearchitecture on a new branch (TabContext, EditorContext, etc.)
+  to eliminate the long parameter lists that resulted from flat state in a monolithic component
 
 **Key invariants (see v2 plan for full detail):**
 - `H.current` pattern — update via `useLayoutEffect` (no dep array), read-only in keydown
