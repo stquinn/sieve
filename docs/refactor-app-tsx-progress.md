@@ -1,190 +1,193 @@
 # App.tsx Refactor — Progress Tracker
 
 Branch: `feature/js_tsx_refactor`
-Plan: [refactor-app-tsx.md](refactor-app-tsx.md) — **ABANDONED** (based on partial file read)
-New plan: [refactor-app-tsx-v2.md](refactor-app-tsx-v2.md) — full-file analysis, in progress
+Plan: [refactor-app-tsx-v2.md](refactor-app-tsx-v2.md)
+Previous plan: [refactor-app-tsx.md](refactor-app-tsx.md) — abandoned (based on partial file read)
 Started: 2026-04-18
 
 ## Status Legend
 - `[ ]` Not started
 - `[~]` In progress
 - `[x]` Complete (committed)
+- `[!]` Blocked
 
 ---
 
-## Task List
+## Already Done (pre-v2 plan)
 
-| # | Task | File | Status | Commit |
-|---|---|---|---|---|
-| G | Image utils dedup | `lib/imageUtils.ts` | `[x]` | `refactor: extract mdSrcToStoreRelPath into lib/imageUtils` |
-| B | AI context builder | `lib/aiContextBuilder.ts` | `[x]` | `refactor: extract buildAiContext and markdown utils into lib/` |
-| F | Settings hook | `hooks/useSettings.ts` | `[!]` | — |
-| D | Persistence hook | `hooks/usePersistence.ts` | `[!]` | — |
-| C | Tabs hook | `hooks/useTabs.ts` | `[ ]` | — |
-| A | AI orchestration hook | `hooks/useAiOrchestration.ts` | `[ ]` | — |
-| E | Keyboard router hook | `hooks/useKeyboardRouter.ts` | `[ ]` | — |
+| Task | File | Status | Commit |
+|---|---|---|---|
+| G | `lib/imageUtils.ts` — `mdSrcToStoreRelPath` | `[x]` | `2f5dca6` |
+| B | `lib/aiContextBuilder.ts` + `lib/markdown.ts` | `[x]` | `48dfdc4` |
 
 ---
 
-## Task G — `lib/imageUtils.ts`
+## Task List (v2 — full-file plan)
 
-**Status:** `[x]` Complete
+| # | Task | Target | LOC | Risk | Status | Commit |
+|---|---|---|---|---|---|---|
+| 1 | Types | `lib/appTypes.ts` | ~88 | Low | `[ ]` | — |
+| 2 | Constants | `lib/appConstants.ts` | ~83 | Low | `[ ]` | — |
+| 3 | Settings hook | `hooks/useSettings.ts` | ~160 | Low | `[ ]` | — |
+| 4 | Tier hook | `hooks/useTier.ts` | ~160 | Low | `[ ]` | — |
+| 5 | Image handler hook | `hooks/useImageHandler.ts` | ~170 | Med | `[ ]` | — |
+| 6 | AI operations hook | `hooks/useAiOperations.ts` | ~150 | Med | `[ ]` | — |
+| 7 | Tab manager hook | `hooks/useTabManager.ts` | ~150 | Med | `[ ]` | — |
+| 8 | Autosave hook | `hooks/useAutosave.ts` | ~210 | HIGH | `[ ]` | — |
+| 9 | Keyboard handler hook | `hooks/useKeyboardHandler.ts` | ~430 | HIGH | `[ ]` | — |
+| 10 | FileTree component | `components/FileTree.tsx` | ~180 | Med | `[ ]` | — |
+| 11 | TabBar component | `components/TabBar.tsx` | ~130 | Low | `[ ]` | — |
+| 12 | EditorToolbar component | `components/EditorToolbar.tsx` | ~250 | Low | `[ ]` | — |
+| 13 | AppModals component | `components/AppModals.tsx` | ~290 | Low | `[ ]` | — |
 
-**Correction from initial plan:** The shared utility is `mdSrcToStoreRelPath(src, tabPath)` (lines 2056–2066),
-not a `file://` stripper. It resolves markdown-relative image src values to store-relative paths,
-filtering out `http`, `blob:`, and `data:` URLs. Used in 4 call sites — 3 inside
-`collectChainImagePaths` (lines 2078, 2090, 2098) and 1 inline in `buildAiContext` (line 2316).
-`buildAiContext` is also far more sophisticated than the initial partial-read analysis described —
-it handles threading, conversation history chains, and block ref tagging.
-
-**What to do:**
-1. Create `frontend/src/lib/imageUtils.ts` exporting `mdSrcToStoreRelPath(src, tabPath)`
-2. Import it in App.tsx; remove the inline function definition (lines 2054–2066)
-3. Verify app builds
-
-**Acceptance criteria:**
-- `mdSrcToStoreRelPath` defined once in `lib/imageUtils.ts`
-- All 4 call sites in App.tsx use the import
-- App builds cleanly
-
----
-
-## Task B — `lib/aiContextBuilder.ts`
-
-**Status:** `[x]` Complete — also extracted `splitFrontmatter`/`getCleanMarkdown` into `lib/markdown.ts`
-
-**What to do:**
-1. Read App.tsx lines 903–1040 carefully
-2. Create `frontend/src/lib/aiContextBuilder.ts`
-3. Move `buildAiContext` as exported pure function; take `doc`, `triggerPos`, `mode`, `userPrompt`, `frontmatter` as params
-4. Fix bug: image dedup — use `resolveLocalImagePath` from Task G
-5. Fix bug: `orderedList` prefix should be `1.`, `2.` not `- `
-6. Fix bug: replace `doc.forEach` with `doc.nodesBetween` and pos guard
-7. Fix bug: `user_intent` appears twice in ask prompt — remove the duplicate
-8. Replace `buildAiContext` call in App.tsx with import
-9. Verify Ask and Explain gestures still work end-to-end
-
-**Acceptance criteria:**
-- All 5 bugs listed in plan are fixed
-- Ask and Explain produce correct output
-- No `buildAiContext` code remains in App.tsx
+**Projected total LOC removed from App.tsx: ~2,451**
+**Projected final App.tsx size: 350–420 lines**
 
 ---
 
-## Task F — `hooks/useSettings.ts`
+## Phase Ordering
 
-**Status:** `[!]` Blocked — re-assess before starting
-
-**Note from code review:** The bootstrap `useEffect` (lines ~850–910) chains `GetStoreInfo` →
-`GetSession` → `loadTab` sequentially. Session restore includes tab state and active index —
-not just settings. Extracting "settings" without breaking tab restore requires carefully
-threading the `loadTab` callback into the hook. Risk is **Medium-High**, not Low as initially
-estimated. Recommend tackling after Task C (useTabs) when the tab-restore boundary is clear.
-
-**What to do:**
-1. Create `frontend/src/hooks/` directory
-2. Identify all settings state and handlers in App.tsx
-3. Create `hooks/useSettings.ts`
-4. Move: `settings` state, `loadSettings`, `applySettings`, `toggleTheme`, font side effects
-5. Wire return values back into App.tsx
-6. Verify theme toggle and settings modal still work
-
-**Acceptance criteria:**
-- Settings state fully encapsulated in hook
-- App.tsx imports and calls `useSettings()`, uses returned values
+```
+Phase 1 (foundations, do first):     Tasks 1, 2
+Phase 2 (low-risk hooks):            Tasks 3, 4
+Phase 3 (medium-risk hooks):         Tasks 5, 6, 7
+Phase 4 (UI components, parallel):   Tasks 10, 11, 12, 13
+Phase 5 (HIGH-risk, do last):        Tasks 8, 9
+```
 
 ---
 
-## Task D — `hooks/usePersistence.ts`
+## Task Detail
 
-**Status:** `[!]` Blocked — re-assess before starting
-
-**Note from code review:** `SaveBuffer` is called from 20+ locations throughout App.tsx —
-AI response handlers, filing flows, meta updates, rename callbacks, etc. The `saveBufferSafe`
-wrapper is the ambient save path, but the many direct `SaveBuffer` calls are in domain-specific
-flows that would each need to import the hook. Risk is **Medium-High**. Recommend tackling
-after Task C when tab state boundaries are clearer.
-
-**What to do:**
-1. Identify save/autosave code in App.tsx
-2. Create `hooks/usePersistence.ts`
-3. Move: `saveCurrentNote`, debounce ref, 30s autosave effect, `lastSaved` state, frontmatter re-attachment
-4. Accept `editor`, `activeTab`, `frontmatter` as params; return `{ lastSaved, saveNow, saveDebounced }`
-5. Wire into App.tsx; confirm `useTabs` will receive `saveNow` as its `onBeforeClose` callback (Task C)
-6. Verify autosave fires and dirty indicator clears
-
-**Acceptance criteria:**
-- Save/autosave fully in hook
-- App.tsx has no save logic inline
+### Task 1 — `lib/appTypes.ts`
+**Status:** `[ ]`
+**Lines:** 98–185
+**Do:** Extract all TypeScript type/interface declarations to a shared lib file.
+Import them back in App.tsx.
+**Accept when:** `tsc --noEmit` passes, App.tsx imports all types from `lib/appTypes.ts`.
 
 ---
 
-## Task C — `hooks/useTabs.ts`
-
-**Status:** `[ ]` Not started
-
-**What to do:**
-1. Identify all tab state and operations in App.tsx
-2. Create `hooks/useTabs.ts`
-3. Move: `tabs`, `activeIdx`, refs, all CRUD operations
-4. Inject `onBeforeClose` callback (receives `saveNow` from `usePersistence`)
-5. Wire return values into App.tsx
-6. Test: open note, create note, close tab, duplicate tab, reorder tabs, dirty tracking
-
-**Acceptance criteria:**
-- All tab state in hook
-- `closeTab` calls `onBeforeClose` before removing tab
-- No tab management code inline in App.tsx
+### Task 2 — `lib/appConstants.ts`
+**Status:** `[ ]`
+**Lines:** 186–268
+**Do:** Extract `DEFAULT_SETTINGS`, `SHORTCUTS`, `makeTab`, `makeTabId`.
+**Accept when:** `tsc --noEmit` passes, no inline constant definitions remain at those lines.
 
 ---
 
-## Task A — `hooks/useAiOrchestration.ts`
-
-**Status:** `[ ]` Not started — revised scope needed
-
-**Note from code review:** `explainGesture`, `askGesture`, `handleAskSend` are ~90 lines, but
-depend on `insertAiPlaceholder`, `replaceAiPlaceholder`, `applyAiResponseInBackground`,
-`touchAiLastEvaluated` — each of which uses deep editor + React state. Extracting cleanly
-requires either:
-- A grouped params interface (2 objects: `AiGestureContext` + `AiGestureCallbacks`)
-- Or first moving `insertAiPlaceholder`/`replaceAiPlaceholder` to `AiBlock.addCommands()`
-  (already noted in MEMORY.md — do this first)
-
-**Recommended pre-step:** Move `insertAiPlaceholder`/`replaceAiPlaceholder` into `AiBlock.tsx`
-`addCommands()`. Then the gesture functions only need `editor`, `tier`, and a few refs.
-
-**What to do:**
-1. Move `insertAiPlaceholder`/`replaceAiPlaceholder` to `AiBlock.addCommands()` — but note
-   `insertAiPlaceholder` uses `isMarkdownMode`, `fmCache`, `activeTabRef`, `setRawMd` which
-   are React state. The markdown-mode update portion must stay in the gesture caller.
-2. Design `AiGestureContext` and `AiGestureCallbacks` interfaces
-3. Create `hooks/useAiOrchestration.ts`
-4. Wire back into App.tsx
+### Task 3 — `hooks/useSettings.ts`
+**Status:** `[ ]`
+**Lines:** 1431–1590
+**Do:** Extract `loadSettings`, `saveSettings`, `handleSettingsChange` and their local state.
+Accept `setStatusMsg` as callback param; use `DEFAULT_SETTINGS` from Task 2.
+**Accept when:** Settings modal still works end-to-end.
 
 ---
 
-## Task E — `hooks/useKeyboardRouter.ts`
-
-**Status:** `[ ]` Not started — low priority, low value
-
-**Note from code review:** The keyboard handler (lines ~2236–2270) is already only ~30 lines.
-It fully delegates to `H.current` (for tab/AI actions) or calls `setState` setters directly
-(for modal toggles). The `H.current` ref pattern already provides the decoupling that a
-`useKeyboardRouter` hook would provide. This task delivers minimal LOC reduction.
-
-**Recommendation:** Skip or defer. Revisit only if the keyboard handler grows significantly.
+### Task 4 — `hooks/useTier.ts`
+**Status:** `[ ]`
+**Lines:** 1591–1750
+**Do:** Extract `checkTier`, `handleBuyPremium`, `handleRestorePurchase`, `handleTierModalClose`
+and their state. Pass `tierRef` as a ref object (not a value).
+**Accept when:** Tier modal opens/closes; purchase/restore flows compile.
 
 ---
 
-## Notes / Blockers
+### Task 5 — `hooks/useImageHandler.ts`
+**Status:** `[ ]`
+**Lines:** 1111–1280
+**Do:** Extract image I/O functions. Expose `insertImageIntoEditor` in return so App.tsx can
+assign it to `H.current`. Preserve `queueMicrotask` wrapping on all `insertContent` calls.
+**Accept when:** Image drag-drop and paste still save to disk and render correctly.
 
-**Session 1 (2026-04-18):** Completed G and B. F and D are harder than the initial plan
-estimated (based on a partial file read of only ~380 lines out of 3,237). The real code has:
-- Settings/session bootstrap chains `GetStoreInfo → GetSession → loadTab` sequentially
-- `SaveBuffer` called from 20+ locations — not a single centralised persistence path
-- Keyboard handler already clean via `H.current` delegation
-- AI gestures need `insertAiPlaceholder`/`replaceAiPlaceholder` moved to AiBlock first
+---
 
-**Next session entry point:** Start with Task A pre-step — move `insertAiPlaceholder` and
-`replaceAiPlaceholder` into `AiBlock.addCommands()` (per existing MEMORY.md note). Then
-reassess Task A extraction with the simpler dependencies.
+### Task 6 — `hooks/useAiOperations.ts`
+**Status:** `[ ]`
+**Lines:** 1281–1430
+**Do:** Extract `runAskAi`, `runExplainAi`. Expose in return for `H.current` assignment.
+Verify `user_intent` is never written.
+**Accept when:** Ask and Explain gestures produce correct AI responses.
+
+---
+
+### Task 7 — `hooks/useTabManager.ts`
+**Status:** `[ ]`
+**Lines:** 851–1000
+**Do:** Extract tab lifecycle functions. Pass `tabsRef`/`activeIdxRef` as ref objects.
+Pass `loadTab`/`saveCurrentTab` as callbacks. Pass confirm-dialog state as params.
+**Accept when:** Close tab, reorder, move left/right all work correctly.
+
+---
+
+### Task 8 — `hooks/useAutosave.ts` — HIGH RISK
+**Status:** `[ ]`
+**Lines:** 1751–1960
+**Do:** Extract autosave timer. Hold `saveCurrentTab` in an internal `useRef` updated each
+render — NEVER pass it directly to `setInterval` (stale closure hazard).
+**Accept when:** Notes save automatically at configured interval; dirty indicator clears.
+**⚠ Extra review:** After extraction, deliberately edit a note, wait for autosave, verify
+content persists to disk.
+
+---
+
+### Task 9 — `hooks/useKeyboardHandler.ts` — HIGH RISK
+**Status:** `[ ]`
+**Lines:** 431–518 (useLayoutEffect ref sync) + 1961–2390 (handleKeyDown + effects)
+**Do:** Extract `H.current` ref, `useLayoutEffect` sync, `handleKeyDown`, DOM listener,
+Wails `EventsOn` file-open listener. Accept all handler callbacks as params.
+`useLayoutEffect` must remain (not converted to `useEffect`).
+**Accept when:** All keyboard shortcuts in HelpModal work correctly.
+**⚠ Extra review:** Test every shortcut listed in `HelpModal.tsx` SHORTCUTS constant.
+
+---
+
+### Task 10 — `components/FileTree.tsx`
+**Status:** `[ ]`
+**Lines:** 2391–2570
+**Do:** Extract file list sidebar JSX. Decide whether drag state stays in App.tsx (prop-drilled)
+or moves into the component.
+**Accept when:** File list renders, open/rename/delete work, drag reorder works.
+
+---
+
+### Task 11 — `components/TabBar.tsx`
+**Status:** `[ ]`
+**Lines:** 2820–2950
+**Do:** Extract tab strip JSX.
+**Accept when:** Tabs render, clicking switches tabs, close button works, new tab button works.
+
+---
+
+### Task 12 — `components/EditorToolbar.tsx`
+**Status:** `[ ]`
+**Lines:** 2571–2820
+**Do:** Extract toolbar JSX. Pass editor, handler callbacks, and state as props.
+**Accept when:** All toolbar buttons function correctly.
+
+---
+
+### Task 13 — `components/AppModals.tsx`
+**Status:** `[ ]`
+**Lines:** 2950–3237
+**Do:** Extract all modal/dialog JSX into a single modal layer component.
+**Accept when:** All modals open/close correctly; settings save; purchase flow compiles.
+
+---
+
+## Notes
+
+**Session 1 (2026-04-18):**
+- Completed G and B (pre-v2 plan tasks)
+- v1 plan abandoned — was based on ~380-line partial read
+- v2 plan written from complete 3,237-line read
+- `hooks/` directory does not yet exist — create it for Tasks 3–9
+
+**Key invariants (see v2 plan for full detail):**
+- `H.current` pattern — update via `useLayoutEffect`, read-only in keydown
+- `tabsRef`/`activeIdxRef` in async callbacks — always use refs, not state values
+- `queueMicrotask` on all `editor.commands.insertContent` calls
+- Bootstrap sequence (`GetStoreInfo → GetSession → loadTab`) stays in App.tsx unchanged
+- Autosave `saveCurrentTab` must be held in a ref inside useAutosave, not closed over
+- Frontmatter strip (`loadTab`) and prepend (`saveCurrentTab`) are a pair — extract together
