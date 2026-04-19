@@ -14,18 +14,52 @@ Nothing in the business layer, UI, or editor constructs paths, reads files, or w
 
 ---
 
-## Scope
+## Category
 
-Every piece of data that Stash persists belongs to exactly one scope.
+Every Storable belongs to exactly one Category. Categories are defined by the business layer — not by the Store. The Store executes, the business layer decides what categories exist and what they mean.
 
+```go
+type IsolationLevel int
+const (
+    Shared   IsolationLevel = iota  // cross-context — all hosts, all users
+    Isolated                         // context-scoped — this host, this user
+)
+
+type Category struct {
+    Name        string
+    DisplayName string
+    Isolation   IsolationLevel
+}
 ```
-Committed    → in the Library — canonical, permanent, shared
-Uncommitted  → working copy — in progress, not yet committed
+
+Stash defines three:
+
+```go
+var (
+    Library     = Category{Name: "library",      DisplayName: "Library",      Isolation: Shared}
+    WorkingCopy = Category{Name: "working-copy",  DisplayName: "Working Copy", Isolation: Isolated}
+    State       = Category{Name: "state",         DisplayName: "State",        Isolation: Isolated}
+)
 ```
 
-The naming is deliberate. Promotion is a commit. The Library is the committed store. Buffers are the working copy. The git analogy is not accidental — a git-backed Store implementation is a natural consequence of this abstraction.
+`IsolationLevel` is meaningful across all backends:
+- `FileStore` — Shared → global path, Isolated → host-prefixed path
+- `SQLiteStore` — Shared → global rows, Isolated → host/user-scoped rows
+- `HTTPStore` — Shared → global endpoint, Isolated → user-scoped endpoint
 
-Scope is an internal Store concept. Nothing above the Store needs to reason about it directly. The domain type already encodes scope implicitly — a Buffer is always Uncommitted, a Note is always Committed. The business layer speaks in domain terms; the Store translates to scope internally.
+Category is stamped onto every Storable at creation by the Store. Immutable after that — no setter. To change category, call `store.Move()` which returns a new Storable.
+
+FileStore is configured at construction with a category-to-path mapping:
+
+```go
+store := NewFileStore(storePath, hostname, map[Category]string{
+    Library:     "notes",
+    WorkingCopy: "buffers",
+    State:       "",
+})
+```
+
+Isolation drives whether `{hostname}/` is prepended. The path suffix is FileStore configuration — not part of Category or the Store interface.
 
 ---
 
@@ -35,37 +69,73 @@ The base contract for anything the Store can persist. A pure value object — no
 
 ```go
 type Storable interface {
-    Key()         string       // logical identity within its scope
-    Scope()       Scope        // Committed or Uncommitted
+    Key()         string       // logical identity within its category
+    Category()    Category     // stamped at creation — immutable
     Body()        []byte       // raw content — opaque to the Store
-    ExternalRef() string       // backend-injected reference — path, URL, or identifier
+    ExternalRef() string       // derived from ownership graph — never stored
     Versions()    []VersionRef // lightweight history refs — no content
 }
 ```
 
 **Rules:**
-- Every Storable is created by the Store, not by the caller
-- `ExternalRef()` is injected at creation time by the Store — the Storable carries it but did not compute it
-- The caller never constructs or interprets `ExternalRef()` — it is used as an opaque string
-- `Versions()` returns lightweight refs only — dates, sizes, identifiers — not content
-- A Storable has no methods beyond these five
+- Every Storable is created by the Store — never by the caller
+- `Category()` is stamped at creation — immutable, no setter
+- `ExternalRef()` is derived by walking the ownership graph at read time — never stored, always computed
+- `Versions()` returns lightweight refs only — dates, sizes, identifiers, no content
+- Storable is immutable except for two surfaces the editor may touch: Body and Meta
 
 ---
 
-## MetaBasedStorable
+## Three Storable Types
 
-A specialisation of Storable for content that carries structured metadata. Notes and buffers are MetaBasedStorables. Binary assets are plain Storables.
+Store understands three interfaces. The type determines how Store handles serialisation.
+
+### Storable — base
+
+Used for settings and session state. Opaque body bytes. No meta, no ownership. FileStore stores as-is.
+
+### MetaBasedStorable
+
+Used for notes and buffers. Extends Storable with structured metadata and asset ownership.
 
 ```go
 type MetaBasedStorable interface {
     Storable
-    Meta() Meta
+    Meta()  Meta
+    Owns()  []AssetStorable
 }
 ```
 
-### Meta
+`Owns()` is the third mutable surface alongside Body and Meta — grows as assets are added during editing. All three are reconciled to Store on `Save()`.
 
-The base metadata contract. Underneath it is a flat map of string to string — the simplest possible wire format between the meta object and the Store.
+FileStore serialises Meta as YAML frontmatter. No code outside Store ever parses frontmatter or constructs YAML.
+
+### AssetStorable
+
+Used for images, voice notes, and future binary content. A storage hint — tells Store the body is binary and how it is encoded.
+
+```go
+type AssetStorable interface {
+    Storable
+    Encoding() Encoding
+}
+
+type Encoding int
+const (
+    Raw          Encoding = iota
+    Base64
+    LZCompressed
+    Zipped
+)
+```
+
+Store infers and stamps `Encoding` from the raw bytes at creation — the caller never declares it. The key carries the file extension; the encoding tells Store how the bytes are packaged. Together that is everything Store needs. No mime type, no sidecar meta.
+
+---
+
+## Meta
+
+The base metadata contract. Underneath it is a flat map of string to string — the wire format between the meta object and the Store.
 
 ```go
 type Meta interface {
@@ -76,7 +146,7 @@ type Meta interface {
 }
 ```
 
-Typed accessors are built on top of the base interface, per content type:
+Typed domain accessors are built on top per content type:
 
 ```go
 type NoteMeta interface {
@@ -84,6 +154,7 @@ type NoteMeta interface {
     Status() string
     FocusCount() int
     UserIntent() *string
+    SetUserIntent(v *string)
     AiEval() string
     Tags() []string
     Summary() string
@@ -92,19 +163,54 @@ type NoteMeta interface {
 }
 ```
 
-Business logic and the UI use typed accessors exclusively. String key access is an implementation detail of the Store.
+Business logic and the UI use typed accessors exclusively. `Set()` marks Meta dirty. On `Save()`, Store checks `IsDirty()` and re-serialises. The UI never constructs YAML, never parses strings, never knows frontmatter exists.
 
-`Set()` marks the Meta as dirty. On `Save()`, the Store checks `IsDirty()` and re-serializes meta if needed. The UI never constructs YAML, never mangles strings, never knows frontmatter exists.
+**Note:** the `version` field previously tracked in frontmatter is removed. Versioning is a by-product of saving — owned entirely by the Store, not a meta field.
 
-**How Meta is stored is entirely backend-specific:**
-- `FileStore` — YAML frontmatter, stripped from body on load, re-prepended on save
-- `SQLiteStore` — separate metadata column or table, no parsing cost at query time
-- `HTTPStore` — JSON sidecar or API fields
-- `GitStore` — YAML frontmatter in committed files, same as FileStore
+---
 
-No code outside the Store ever parses frontmatter or constructs YAML.
+## FolderStorable
 
-**Note:** the `version` field previously tracked in frontmatter is removed. Versioning is a by-product of saving — owned by the Store, expressed through `Versions()` on the Storable, not stored as a meta field.
+A first-class node in the ownership graph. Folders are not path prefixes or naming conventions — they are Storables that own other Storables.
+
+```go
+type FolderStorable interface {
+    Storable
+    Owns() []Storable  // MetaBasedStorable or FolderStorable — recursive
+}
+```
+
+Stash v1 supports one level of folders. Arbitrary depth is structurally free — FolderStorable owning FolderStorable requires no Store changes, just business layer permission to create nested folders.
+
+---
+
+## Ownership Graph
+
+The ownership hierarchy:
+
+```
+FolderStorable
+  └── FolderStorable  (future — not v1)
+        └── MetaBasedStorable
+              └── AssetStorable
+```
+
+**The graph generates the path.** ExternalRef is computed by walking the ownership chain at read time — never stored. Store injects it into the Storable on every load or create.
+
+```
+Library
+  └── FolderStorable  key="kubernetes"
+        └── MetaBasedStorable  key="k8s-fix.md"
+              └── AssetStorable  key="blk-a3f9.png"
+```
+
+Walk → `notes/kubernetes/k8s-fix.md`. No special knowledge required. The structure produces the path.
+
+**Rename** — Store returns a new FolderStorable with a new key. Children are unchanged. Their ExternalRefs are correct on next read because the graph above them changed.
+
+**Reparent** — change a node's parent. In FileStore this physically moves the file. The graph is then reconstructed from the directory scan. No cascade, no content rewriting, no reference updates. The graph walk produces correct refs automatically.
+
+**FileStore and the graph** — for FileStore, the filesystem IS the ownership graph. Reading the directory tree reconstructs the hierarchy. No separate graph database, no manifest file. The Store scans the folder structure and the graph emerges.
 
 ---
 
@@ -114,31 +220,40 @@ The single persistence boundary. Factory, serialiser, and lifecycle manager for 
 
 ```go
 type Store interface {
-    Create(scope Scope, kind Kind, body []byte) (Storable, error)
-    Save(s Storable) error
-    Load(scope Scope, key string) (Storable, error)
-    Delete(scope Scope, key string) error
-    List(scope Scope, prefix string) ([]Storable, error)
-    Commit(s Storable) (Storable, error)
+    Create(category Category, key string, body []byte) (Storable, error)
+    Save(s Storable) (Storable, error)
+    Load(category Category, key string) (Storable, error)
+    Delete(s Storable) error
+    List(category Category, prefix string) ([]Storable, error)
+    Move(s Storable, to Category) (Storable, error)
+    Reparent(s Storable, folder FolderStorable) (Storable, error)
+    Rename(s Storable, name string) (Storable, error)
     RetrieveVersion(s Storable, ref VersionRef) (VersionedStorable, error)
 }
 ```
 
-`Promote` is renamed `Commit` — the naming aligns with the Committed/Uncommitted scope model and the git mental model.
-
 **The Store is responsible for:**
-- Generating keys and assigning them at creation
-- Computing and injecting `ExternalRef()` into every Storable it creates or loads
-- Marshaling and unmarshaling content — including meta serialisation
-- Resolving ownership — which Storables belong to which (derived from content)
-- Scope transition on commit — cascading owned items, re-forming external refs, updating content
-- Versioning — creating a version record on every `Save()`, maintaining history
+- Generating keys and stamping Category at creation
+- Deriving and injecting ExternalRef by walking the ownership graph
+- Inferring and stamping Encoding on AssetStorables from raw bytes
+- Marshaling and unmarshaling — including meta serialisation and frontmatter handling
+- Versioning — creating a version record on every `Save()`, unconditionally
 - All filesystem, database, or VCS operations
 
 **The Store is not responsible for:**
 - Domain decisions (whether to keep or discard a buffer)
 - Business rules (which folder a note belongs in)
 - Editor state
+
+**Immutability** — every Store operation returns a new Storable. The old one is stale the moment the operation completes. Business layer and UI replace their reference. The only surfaces that change in place are Body, Meta, and Owns — the three editor-mutable surfaces of a MetaBasedStorable.
+
+**Optimistic locking** — `Save()` compares the version of the incoming Storable against what is currently in the Store. If stale, the operation fails:
+
+```go
+var ErrStaleStorable = errors.New("storable is stale — reload and retry")
+```
+
+The caller reloads from Store, gets the current version, reapplies changes, and retries. No silent overwrites. No going back.
 
 ---
 
@@ -154,25 +269,21 @@ type VersionRef struct {
 }
 ```
 
-`Storable.Versions()` returns a list of lightweight refs — enough to display a history list. Content is not included.
+`Storable.Versions()` returns lightweight refs — enough to display a history list. Content is not included.
 
-To retrieve a specific version:
+`RetrieveVersion` returns a `VersionedStorable` — a distinct type from Storable. A versioned snapshot cannot be accidentally saved back as the current document.
 
 ```go
 type VersionedStorable struct {
-    Ref VersionRef
-    Storable          // deserialized snapshot — not the live object
+    Ref      VersionRef
+    Storable            // deserialized snapshot — not the live object
 }
 ```
 
-`RetrieveVersion` returns a `VersionedStorable`, not a `Storable`. The type distinction is intentional — a versioned snapshot cannot be accidentally saved back as the current document. The caller can read from it, diff against it, or offer a restore — but the type signals clearly that it is historical.
-
 **Backend implementations:**
-- `FileStore` — numbered snapshot files, same format as live files (frontmatter + body)
+- `FileStore` — numbered snapshot files, same format as live files
 - `GitStore` — `git log` for history, `git show <hash>:path` for retrieval — free
 - `SQLiteStore` — versions table with content column
-
-The FileStore deserializer reads a versioned snapshot identically to a live file. The format is the same.
 
 ---
 
@@ -182,80 +293,59 @@ The string that leaves the Store boundary and is used by everything above it —
 
 ```
 FileStore  →  ../../buffers/assets/blk-a3f9.png
-             ../../assets/note-name-blk-a3f9.png
 HTTPStore  →  https://xyz.com/assets/blk-a3f9.png
 GitStore   →  relative path within repo
 ```
 
-The UI and business layer treat this as an opaque string. They pass it where a path or URL is needed, without knowing which form it takes.
+Derived by walking the ownership graph. Never stored. Always correct. The UI treats it as an opaque string — passes it where a path or URL is needed without knowing which form it takes.
 
-This means:
-- The UI never constructs paths
-- Markdown on disk always contains real, externally-resolvable references — other editors and AI CLIs can open files and follow image links without any Stash-specific tooling
-- Switching backends changes what `ExternalRef()` returns, nothing else
+Markdown on disk always contains real, externally-resolvable references. Other editors and AI CLIs can open files and follow image links without any Stash-specific tooling.
 
 ---
 
-## Commit (formerly Promote)
+## Business Layer
 
-When a buffer is committed its scope changes from `Uncommitted` to `Committed`. The Store owns this entirely.
+Domain types (Note, Buffer, ImageAsset, Settings, Session) are business layer constructs. They wrap or hold a Storable and either embed it or can produce one for Store calls. The Store interface never knows about Note or Buffer — only Storable, MetaBasedStorable, AssetStorable, FolderStorable.
 
-On `Commit`:
-1. Store resolves owned items (e.g. image assets referenced by the buffer)
-2. Each owned item is re-created at the new scope with a new key and new `ExternalRef()`
-3. Content is re-marshaled with updated external refs injected
-4. Originals are deleted
-5. A new Storable is returned — same content, Committed scope, correct refs
+The business layer defines Categories and interprets them semantically. Stash reads WorkingCopy as buffers and Library as filed notes. Another application using the same Store abstraction defines its own categories.
 
-The caller receives a fully formed Storable with correct `ExternalRef()`. No path surgery in the business layer.
+Domain types add typed domain APIs above the base Storable. A Note wraps a MetaBasedStorable and exposes `NoteMeta` with typed accessors. Because it embeds or holds a Storable it can be handed directly to Store calls.
+
+---
+
+## Paste Flow — End to End
+
+The image paste flow demonstrates the design working together:
+
+1. Paste handler receives raw image bytes from clipboard
+2. `store.Create(WorkingCopy, "blk-a3f9.png", imageBytes)` — Store infers encoding from bytes, stamps it, derives ExternalRef from ownership graph, returns `AssetStorable`
+3. Asset added to current buffer's `Owns()` list
+4. Editor inserts `![](asset.ExternalRef())` into body
+
+The paste handler never constructs a path, never decides an encoding, never knows where the file went. It calls Store and uses what comes back.
 
 ---
 
 ## Frontend Simplification
 
-The Store boundary eliminates a class of accidental complexity that currently exists in the TypeScript layer.
+The Store boundary eliminates accidental complexity in the TypeScript layer.
 
-**Before:** `splitFrontmatter` in App.tsx strips YAML frontmatter from raw markdown before passing content to Tiptap. The two things arrive mixed and must be pulled apart in the frontend.
+**Before:** `splitFrontmatter` in App.tsx strips YAML frontmatter from raw markdown before passing content to Tiptap. Two things arrive mixed and must be pulled apart in the frontend.
 
-**After:** The Store separates them on load. The frontend receives:
+**After:** Store separates them on load. The frontend receives:
 - `storable.Body()` — pure markdown, no frontmatter, straight into Tiptap
 - `storable.Meta()` — typed meta object, straight into the Meta panel
 
 The frontend never sees frontmatter. The raw markdown view shows clean body content only. The Meta panel binds to typed accessors. Nothing is mixed.
 
-Meta changes go through the API:
-```typescript
-meta.setUserIntent("keep")  // marks dirty, Store re-serializes on next Save
-```
-
-The UI never constructs YAML, never parses strings, never touches frontmatter.
-
----
-
-## Scope Visibility
-
-Scope does not leak above the Store boundary in any meaningful way.
-
-The domain type encodes scope implicitly — you do not need to ask a Note what scope it is in. The business layer calls `store.List(Committed, ...)` or `store.Create(Uncommitted, ...)` internally, but those calls happen inside domain services, not in the UI.
-
-The UI is entirely scope-agnostic. It works with Storables and their typed APIs. Scope is an internal routing mechanism for the Store.
-
----
-
-## Content Handler (separate concern)
-
-Content classification and transformation — paste detection, language identification, content-type tagging — is a separate layer above the Store. Handlers are prioritised, first-match wins, and logic is delegated to Go for testability.
-
-This is distinct from persistence and is not part of this document.
-
 ---
 
 ## What This Enables
 
-**Today:** `FileStore` backed by the local store folder structure. External refs are relative filesystem paths. Markdown files are readable by any editor or AI CLI.
+**Today:** `FileStore` backed by the local store folder structure. The filesystem is the ownership graph — directory scan reconstructs it. Markdown files are readable by any editor or AI CLI.
 
-**Later:** `SQLiteStore`, `HTTPStore`, or `GitStore` can be introduced by implementing the `Store` interface. No business logic changes. No TypeScript changes. The `ExternalRef()` values change form — the callers do not.
+**Later:** `SQLiteStore`, `HTTPStore`, or `GitStore` introduced by implementing the Store interface. No business logic changes. No TypeScript changes. ExternalRef values change form — callers do not.
 
-**GitStore** is a natural implementation. Uncommitted = working tree. Committed = git history. `Save()` stages. `Commit()` commits. `Versions()` is `git log`. `RetrieveVersion()` is `git show`. The abstraction maps cleanly onto git primitives with no forcing.
+**GitStore** is a natural implementation. WorkingCopy = working tree. Library = committed history. `Save()` stages. `Move()` commits. `Versions()` is `git log`. `RetrieveVersion()` is `git show`. The abstraction maps cleanly onto git primitives.
 
 **The invariant:** everything above the Store boundary is backend-agnostic. TypeScript is UI only.
