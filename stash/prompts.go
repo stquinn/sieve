@@ -16,7 +16,8 @@ type PromptEntry struct {
 // Users can override these by editing the copies written to store/{hostname}/prompts/
 // and modifying settings.json.
 
-const DefaultFilingPrompt = `Given the following content, decide if it is worth keeping
+const DefaultFilingPrompt = `
+Given the following content, decide if it is worth keeping
 as a permanent note in a knowledge stash.
 
 Existing folders: {folder_list}
@@ -28,7 +29,7 @@ If the content is too generic, leave the folder empty for root.
 - Current Time: {now}
 - Created: {created}
 - Modified: {modified}
-- Focus Signal: {focus_count} (Indicates active engagement time)
+- Focus Signal: {focus_count} (Indicates number of times the file has been opened or 5 minute incrememtns of it being in focus)
 - Iteration: {version} (Indicates manual user refinement)
 
 ### Evaluation Criteria (BE CRITICAL):
@@ -37,11 +38,10 @@ If the content is too generic, leave the folder empty for root.
 - Engagement: Look at 'Focus Signal' and the duration between 'Created' and 'Modified'.
 - Refinement: Use 'Iteration' (version) to gauge if the note has been improved by the user over time.
 
-### Voting Logic:
-- keep:false IF content is low-density or gibberish.
-- keep:false IF version is 1 AND focus_count is 0 AND the content is trivial.
-- keep:true IF content contains useful info, code, or structured thoughts.
-- keep:true IF version > 2 OR focus_count > 1 (indicates intent to preserve).
+### Voting Logic (STRICT HIERARCHY):
+1. DISCARD (keep:false) if content is low-density, meta-talk about the test itself, or gibberish.
+2. DISCARD (keep:false) if version < 3 AND focus_count < 2, unless the content contains a complex code block or > 3 distinct data points.
+3. KEEP (keep:true) only if the content provides specific, non-obvious information AND has been refined (version > 2) or shows sustained engagement (focus_count > 3).
 
 Generate rich semantic tags — relate it to broader technologies and topics.
 
@@ -84,6 +84,7 @@ Respond ONLY with raw JSON. DO NOT use markdown code fences (triple backticks). 
 
 Content:
 {content}
+
 `
 
 const DefaultExplainPrompt = `
