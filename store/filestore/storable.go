@@ -1,0 +1,57 @@
+package filestore
+
+import "stash/store"
+
+// fileStorable is the base concrete type that satisfies store.Storable.
+// It is a pure value object — no I/O, no business logic.
+// All fields are stamped by FileStore at creation time and are immutable
+// after the Storable is returned to the caller.
+type fileStorable struct {
+	key      string
+	category store.Category
+	body     []byte
+	extRef   string
+	versions []store.VersionRef
+}
+
+func (s *fileStorable) Key() string                  { return s.key }
+func (s *fileStorable) Category() store.Category     { return s.category }
+func (s *fileStorable) Body() []byte                 { return s.body }
+func (s *fileStorable) ExternalRef() string          { return s.extRef }
+func (s *fileStorable) Versions() []store.VersionRef { return s.versions }
+
+// fileMetaStorable extends fileStorable with a structured metadata map.
+// It satisfies store.MetaStorable.
+//
+// SetBody and SetMeta are the only in-place mutations. Changes are local until
+// FileStore.Save is called, which returns a new Storable with updated version
+// and modified timestamps. The input is stale after Save returns.
+type fileMetaStorable struct {
+	fileStorable
+	meta map[string]string
+}
+
+func (s *fileMetaStorable) Meta() map[string]string     { return s.meta }
+func (s *fileMetaStorable) SetBody(body []byte)         { s.body = body }
+func (s *fileMetaStorable) SetMeta(m map[string]string) { s.meta = m }
+
+// fileAssetStorable extends fileStorable for binary content such as images.
+// Encoding is inferred by FileStore at Create time from magic bytes — never
+// declared by the caller.
+// It satisfies store.AssetStorable.
+type fileAssetStorable struct {
+	fileStorable
+	encoding store.Encoding
+}
+
+func (s *fileAssetStorable) Encoding() store.Encoding { return s.encoding }
+
+// fileFolderStorable extends fileStorable for directory nodes in the ownership
+// graph. Owns is populated by FileStore.List when scanning the tree.
+// It satisfies store.FolderStorable.
+type fileFolderStorable struct {
+	fileStorable
+	owns []store.Storable
+}
+
+func (s *fileFolderStorable) Owns() []store.Storable { return s.owns }

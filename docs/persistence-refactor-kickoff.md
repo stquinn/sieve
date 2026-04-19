@@ -2,6 +2,9 @@
 
 Use this to resume work in a fresh session. Read this file and `docs/architecture-persistence-plan.md` before doing anything.
 
+> **Current status: Phases 1 and 2 complete. Start at Phase 3 — Business layer.**
+> Branch: `feature/store_refactor`
+
 ---
 
 ## What This Is
@@ -33,19 +36,19 @@ A full replacement of the current persistence layer. Today `stash.Store` is a pa
 
 ## Task List
 
-### Phase 1 — Core interfaces (no behaviour change)
-- [ ] `store/category.go` — `IsolationLevel`, `Category` struct, `Library`/`WorkingCopy`/`State` vars
-- [ ] `store/interfaces.go` — `Storable`, `MetaStorable`, `AssetStorable`, `FolderStorable`, `Store` interface
-- [ ] `store/version.go` — `VersionRef`, `VersionedStorable`, `ErrStaleStorable`
-- [ ] `store/encoding.go` — `Encoding` type and constants
+### Phase 1 — Core interfaces (no behaviour change) ✅
+- [x] `store/category.go` — `IsolationLevel`, `Category` struct, `Library`/`WorkingCopy`/`State` vars
+- [x] `store/interfaces.go` — `Storable`, `MetaStorable`, `AssetStorable`, `FolderStorable`, `Store` interface
+- [x] `store/version.go` — `VersionRef`, `VersionedStorable`, `ErrStaleStorable`
+- [x] `store/encoding.go` — `Encoding` type and constants
 
-### Phase 2 — FileStore implementation
-- [ ] `store/filestore/encoding.go` — magic byte sniffing to infer `Encoding`
-- [ ] `store/filestore/storable.go` — concrete `fileStorable`, `fileMetaStorable`, `fileAssetStorable`, `fileFolderStorable`
-- [ ] `store/filestore/meta.go` — `fileDocumentMeta` over `map[string]string`, YAML parse/serialise, unknown key preservation, dirty tracking
-- [ ] `store/filestore/graph.go` — directory scan, ownership graph reconstruction, `ExternalRef` computation
-- [ ] `store/filestore/version.go` — snapshot writes on every `Save()`, pruning, `IsolationLevel` routing, optimistic lock check
-- [ ] `store/filestore/filestore.go` — `FileStore` struct, `NewFileStore(root, hostname)`, full `Store` interface implementation
+### Phase 2 — FileStore implementation ✅
+- [x] `store/filestore/encoding.go` — magic byte sniffing to infer `Encoding`
+- [x] `store/filestore/storable.go` — concrete `fileStorable`, `fileMetaStorable`, `fileAssetStorable`, `fileFolderStorable`
+- [x] `store/filestore/meta.go` — YAML frontmatter parse/serialise via yaml.v2, unknown key preservation, canonical key order
+- [x] `store/filestore/graph.go` — directory scan, ownership graph reconstruction, `ExternalRef` computation
+- [x] `store/filestore/version.go` — snapshot writes on every `Save()`, pruning, `IsolationLevel` routing, optimistic lock check
+- [x] `store/filestore/filestore.go` — `FileStore` struct, `NewFileStore(root, hostname)`, full `Store` interface implementation, 30 tests
 
 ### Phase 3 — Business layer
 - [ ] `stash/document_meta.go` — `DocumentMeta` interface
