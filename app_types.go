@@ -159,6 +159,19 @@ func toBufferDTO(b *stash.Buffer) BufferDTO {
 	}
 }
 
+// toNoteBufferDTO converts a Note to a BufferDTO so the frontend can use a
+// single LoadBuffer/SaveBuffer API regardless of category.
+func toNoteBufferDTO(n *stash.Note) BufferDTO {
+	return BufferDTO{
+		UUID:     n.UUID(),
+		Path:     n.Path(),
+		Slug:     n.Slug(),
+		Body:     string(n.Body()),
+		Meta:     toDocumentMetaDTO(n.Meta()),
+		Versions: toVersionRefDTOs(n.Versions()),
+	}
+}
+
 func toNoteDTO(n *stash.Note) NoteDTO {
 	return NoteDTO{
 		UUID:     n.UUID(),

@@ -596,11 +596,21 @@ func (a *App) NewBuffer() (BufferDTO, error) {
 	return toBufferDTO(b), nil
 }
 
-// LoadBuffer loads a buffer by its store-relative path and returns a typed DTO.
+// LoadBuffer loads any document by its store-relative path and returns a typed DTO.
+// Routes to NoteService for Library paths ("store/...") and BufferService otherwise.
 // The returned Body is pure markdown — frontmatter is never included.
 func (a *App) LoadBuffer(path string) (BufferDTO, error) {
 	if a.buffers == nil {
 		return BufferDTO{}, fmt.Errorf("store not open")
+	}
+	if isLibraryPath(path) {
+		n, err := a.notes.Load(path)
+		if err != nil {
+			logger.Error("LoadBuffer(note) failed", "path", path, "err", err)
+			return BufferDTO{}, err
+		}
+		logger.Debug("note loaded via LoadBuffer", "path", path)
+		return toNoteBufferDTO(n), nil
 	}
 	b, err := a.buffers.Load(path)
 	if err != nil {
@@ -618,6 +628,22 @@ func (a *App) SaveBuffer(dto BufferDTO) (BufferDTO, error) {
 	if a.buffers == nil {
 		return BufferDTO{}, fmt.Errorf("store not open")
 	}
+	if isLibraryPath(dto.Path) {
+		n, err := a.notes.Load(dto.Path)
+		if err != nil {
+			logger.Error("SaveBuffer(note): load failed", "path", dto.Path, "err", err)
+			return BufferDTO{}, err
+		}
+		n.SetBody([]byte(dto.Body))
+		applyDTOToMeta(dto.Meta, n.Meta())
+		saved, err := a.notes.Save(n)
+		if err != nil {
+			logger.Error("SaveBuffer(note): save failed", "path", dto.Path, "err", err)
+			return BufferDTO{}, err
+		}
+		logger.Debug("note saved via SaveBuffer", "path", dto.Path)
+		return toNoteBufferDTO(saved), nil
+	}
 	b, err := a.buffers.Load(dto.Path)
 	if err != nil {
 		logger.Error("SaveBuffer: load failed", "path", dto.Path, "err", err)
@@ -632,6 +658,12 @@ func (a *App) SaveBuffer(dto BufferDTO) (BufferDTO, error) {
 	}
 	logger.Debug("buffer saved", "path", dto.Path)
 	return toBufferDTO(saved), nil
+}
+
+// isLibraryPath reports whether path refers to a Library (filed note) document.
+// Library paths are store-relative and begin with "store/".
+func isLibraryPath(path string) bool {
+	return strings.HasPrefix(path, "store/") || path == "store"
 }
 
 // DiscardBuffer deletes a buffer and its version history.
