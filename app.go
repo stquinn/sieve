@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -1042,24 +1043,74 @@ func (a *App) resolvePath(path string) string {
 }
 
 // migrateStateFiles moves settings.json and session.json from hostDir to
-// configDir on first run with the new layout. Safe to call repeatedly — only
-// moves files that exist in the old location and are absent in the new one.
+// configDir. For settings.json it uses a smart merge: if the old file has a
+// "cli" field and the new file does not, the old file wins (it carries real
+// user configuration; the new file was likely written with defaults on the
+// first startup before migration ran). session.json is only moved if absent
+// in the new location.
 func migrateStateFiles(hostDir, configDir string) {
-	for _, name := range []string{"settings.json", "session.json"} {
-		old := filepath.Join(hostDir, name)
-		nw := filepath.Join(configDir, name)
-		if _, err := os.Stat(old); err != nil {
-			continue // old file doesn't exist
+	// settings.json — smart merge: old wins if it has a cli field the new lacks
+	migrateSettings(
+		filepath.Join(hostDir, "settings.json"),
+		filepath.Join(configDir, "settings.json"),
+	)
+
+	// session.json — simple: only move if the new location is absent
+	oldSession := filepath.Join(hostDir, "session.json")
+	nwSession := filepath.Join(configDir, "session.json")
+	if _, err := os.Stat(oldSession); err != nil {
+		return // old file doesn't exist
+	}
+	if _, err := os.Stat(nwSession); err == nil {
+		return // new file already exists
+	}
+	if err := os.Rename(oldSession, nwSession); err != nil {
+		logger.Warn("state migration failed", "file", "session.json", "err", err)
+	} else {
+		logger.Info("migrated state file", "from", oldSession, "to", nwSession)
+	}
+}
+
+// migrateSettings handles the settings.json migration. If the old file has a
+// "cli" field and the new file is absent or has no "cli", the old file is
+// copied to the new location (overwriting defaults-only stubs).
+func migrateSettings(oldPath, newPath string) {
+	oldData, err := os.ReadFile(oldPath)
+	if err != nil {
+		return // old file doesn't exist — nothing to do
+	}
+
+	// Check whether the old settings has a cli field.
+	var oldSettings stash.Settings
+	if err := json.Unmarshal(oldData, &oldSettings); err != nil || oldSettings.CLI == "" {
+		// Old file has no cli — not worth migrating settings over new defaults.
+		// Still move the file if the new location is absent.
+		if _, err := os.Stat(newPath); os.IsNotExist(err) {
+			if err := os.Rename(oldPath, newPath); err != nil {
+				logger.Warn("migrateSettings: rename failed", "err", err)
+			} else {
+				logger.Info("migrated settings.json", "from", oldPath, "to", newPath)
+			}
 		}
-		if _, err := os.Stat(nw); err == nil {
-			continue // new file already exists — don't overwrite
-		}
-		if err := os.Rename(old, nw); err != nil {
-			logger.Warn("state migration failed", "file", name, "err", err)
-		} else {
-			logger.Info("migrated state file", "from", old, "to", nw)
+		return
+	}
+
+	// Old file has a cli field. Check if the new file already has one.
+	if newData, err := os.ReadFile(newPath); err == nil {
+		var newSettings stash.Settings
+		if json.Unmarshal(newData, &newSettings) == nil && newSettings.CLI != "" {
+			// New file already has cli configured — leave it alone.
+			return
 		}
 	}
+
+	// New file is absent or has no cli — copy old over new.
+	if err := os.WriteFile(newPath, oldData, 0o644); err != nil {
+		logger.Warn("migrateSettings: write failed", "err", err)
+		return
+	}
+	os.Remove(oldPath) // clean up old location
+	logger.Info("migrated settings.json (cli merge)", "from", oldPath, "to", newPath)
 }
 
 // downloadURL fetches a URL and returns the body bytes. Used by DownloadAsset.
