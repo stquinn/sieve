@@ -33,7 +33,13 @@ func newTestStore(t *testing.T) *filestore.FileStore {
 
 func mustCreate(t *testing.T, fs *filestore.FileStore, cat store.Category, key string, body []byte) store.Storable {
 	t.Helper()
-	s, err := fs.Create(cat, key, body)
+	var s store.Storable
+	var err error
+	if strings.Contains(key, "assets/") || strings.HasSuffix(key, ".png") || strings.HasSuffix(key, ".b64") {
+		s, err = fs.CreateAsset(cat, key, body)
+	} else {
+		s, err = fs.CreateMetaText(cat, key, body)
+	}
 	if err != nil {
 		t.Fatalf("Create(%s, %q): %v", cat.Key, key, err)
 	}

@@ -42,7 +42,13 @@ func (s *stubFolderStorable) Owns() []store.Storable { return nil }
 // stubStore satisfies the Store interface.
 type stubStore struct{}
 
-func (s *stubStore) Create(_ store.Category, _ string, _ []byte) (store.Storable, error) {
+func (s *stubStore) CreateText(_ store.Category, _ string, _ []byte) (store.Storable, error) {
+	return nil, nil
+}
+func (s *stubStore) CreateMetaText(_ store.Category, _ string, _ []byte) (store.MetaStorable, error) {
+	return nil, nil
+}
+func (s *stubStore) CreateAsset(_ store.Category, _ string, _ []byte) (store.AssetStorable, error) {
 	return nil, nil
 }
 func (s *stubStore) Save(_ store.Storable) (store.Storable, error) { return nil, nil }
