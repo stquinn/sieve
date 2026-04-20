@@ -228,6 +228,29 @@ func (ns *NoteService) RetrieveVersion(n *Note, ref store.VersionRef) (store.Ver
 	return ns.st.RetrieveVersion(n.s, ref)
 }
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+// NoteEntry represents a single node in the Library tree.
+// Directories have IsDir=true and a Children slice; files have a store-relative Path.
+type NoteEntry struct {
+	Name        string      `json:"name"`
+	DisplayName string      `json:"displayName,omitempty"`
+	Path        string      `json:"path,omitempty"`
+	UserIntent  string      `json:"userIntent,omitempty"`
+	IsDir       bool        `json:"isDir"`
+	Children    []NoteEntry `json:"children,omitempty"`
+}
+
+// SearchResult represents a single Library search match.
+type SearchResult struct {
+	Path           string `json:"path"`
+	Name           string `json:"name"`
+	IsTagMatch     bool   `json:"isTagMatch"`
+	IsSummaryMatch bool   `json:"isSummaryMatch"`
+	IsBodyMatch    bool   `json:"isBodyMatch"`
+	Snippet        string `json:"snippet"`
+}
+
 // ── Tree builder ──────────────────────────────────────────────────────────────
 
 // buildNoteTree converts a flat []store.Storable (from Store.List) into the
