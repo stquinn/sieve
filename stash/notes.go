@@ -8,8 +8,6 @@ import (
 	"strings"
 )
 
-var displayNameRegex = regexp.MustCompile(`(?m)^display_name:\s*(.+)`)
-
 func ExtractDisplayName(path string) string {
 	return ExtractFromFm(path, `(?m)^display_name:\s*(.+)`)
 }
