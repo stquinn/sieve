@@ -31,14 +31,9 @@ type App struct {
 	storePath string
 	hostname  string // resolved at startup from os.Hostname
 
-	// Phase 3/4 services — the Store-backed persistence layer.
 	buffers *stash.BufferService
 	notes   *stash.NoteService
 	assets  *stash.AssetService
-
-	// Kept for EvaluateBuffer, RunExplain, RunAsk, and prompt management.
-	// Will be removed once those are refactored to standalone functions.
-	stash *stash.Store
 
 	settings stash.Settings
 	themesFS fs.FS
@@ -121,14 +116,6 @@ func (a *App) startup(ctx context.Context) {
 		a.watcher.Close()
 		a.watcher = nil
 	}
-
-	// ── Legacy path-bag store (kept for EvaluateBuffer / RunExplain / RunAsk) ──
-	v, err := stash.Open(a.storePath)
-	if err != nil {
-		logger.Error("store open failed", "err", err)
-		return
-	}
-	a.stash = v
 
 	// ── One-time state migration: move settings/session to config/ ────────────
 	migrateStateFiles(
@@ -932,12 +919,22 @@ func assetLocation(context, id string) (store.Category, string) {
 // future cleanup once the *Store dependency is fully removed.
 
 func (a *App) EvaluateBuffer(path string) (*stash.FilingRecommendation, error) {
-	if a.stash == nil {
+	if a.buffers == nil {
 		return nil, fmt.Errorf("store not open")
 	}
-	resolved := a.resolvePath(path)
-	currentSettings := stash.LoadSettings(a.settingsFilePath())
-	rec, err := a.stash.EvaluateBuffer(resolved, currentSettings)
+	settings := stash.LoadSettings(a.settingsFilePath())
+
+	var meta stash.DocumentMeta
+	var body []byte
+	if b, err := a.buffers.Load(path); err == nil {
+		meta, body = b.Meta(), b.Body()
+	} else if n, err := a.notes.Load(path); err == nil {
+		meta, body = n.Meta(), n.Body()
+	} else {
+		return nil, fmt.Errorf("document not found: %s", path)
+	}
+
+	rec, err := stash.EvaluateBuffer(meta, body, a.libraryFolders(), settings)
 	if err != nil {
 		logger.Warn("EvaluateBuffer failed", "path", path, "err", err)
 		return nil, err
@@ -947,7 +944,7 @@ func (a *App) EvaluateBuffer(path string) (*stash.FilingRecommendation, error) {
 }
 
 func (a *App) RefineLanguage(content string) (string, error) {
-	if a.stash == nil {
+	if a.buffers == nil {
 		return "", fmt.Errorf("store not open")
 	}
 	settings := stash.LoadSettings(a.settingsFilePath())
@@ -963,15 +960,14 @@ func (a *App) RefineLanguage(content string) (string, error) {
 }
 
 func (a *App) DescribeImage(storeRelPath string) (stash.ImageDesc, error) {
-	if a.stash == nil {
+	if a.buffers == nil {
 		return stash.ImageDesc{}, fmt.Errorf("store not open")
 	}
 	settings := stash.LoadSettings(a.settingsFilePath())
 	if settings.Tier() == stash.TierDumb {
 		return stash.ImageDesc{}, fmt.Errorf("dumb mode")
 	}
-	absPath := filepath.Join(a.storePath, storeRelPath)
-	desc, err := stash.DescribeImage(absPath, settings)
+	desc, err := stash.DescribeImage(filepath.Join(a.storePath, storeRelPath), settings)
 	if err != nil {
 		logger.Warn("DescribeImage failed", "err", err)
 		return stash.ImageDesc{}, err
@@ -980,19 +976,15 @@ func (a *App) DescribeImage(storeRelPath string) (stash.ImageDesc, error) {
 }
 
 func (a *App) Explain(content string, history string, notePath string, imageStorePaths []string) (string, error) {
-	if a.stash == nil {
+	if a.buffers == nil {
 		return "", fmt.Errorf("store not open")
 	}
 	settings := stash.LoadSettings(a.settingsFilePath())
 	if settings.Tier() == stash.TierDumb {
 		return "", fmt.Errorf("explain not available in dumb mode")
 	}
-	cwd := filepath.Dir(a.resolvePath(notePath))
-	var absImages []string
-	for _, p := range imageStorePaths {
-		absImages = append(absImages, filepath.Join(a.storePath, p))
-	}
-	resp, err := a.stash.RunExplain(content, history, settings, cwd, absImages)
+	resp, err := stash.RunExplain(content, history, settings,
+		filepath.Dir(a.resolvePath(notePath)), a.absImagePaths(imageStorePaths))
 	if err != nil {
 		logger.Warn("Explain failed", "err", err)
 		return "", err
@@ -1001,24 +993,42 @@ func (a *App) Explain(content string, history string, notePath string, imageStor
 }
 
 func (a *App) Ask(content string, history string, question string, notePath string, imageStorePaths []string) (string, error) {
-	if a.stash == nil {
+	if a.buffers == nil {
 		return "", fmt.Errorf("store not open")
 	}
 	settings := stash.LoadSettings(a.settingsFilePath())
 	if settings.Tier() == stash.TierDumb {
 		return "", fmt.Errorf("ask not available in dumb mode")
 	}
-	cwd := filepath.Dir(a.resolvePath(notePath))
-	var absImages []string
-	for _, p := range imageStorePaths {
-		absImages = append(absImages, filepath.Join(a.storePath, p))
-	}
-	resp, err := a.stash.RunAsk(content, history, question, settings, cwd, absImages)
+	resp, err := stash.RunAsk(content, history, question, settings,
+		filepath.Dir(a.resolvePath(notePath)), a.absImagePaths(imageStorePaths))
 	if err != nil {
 		logger.Warn("Ask failed", "err", err)
 		return "", err
 	}
 	return resp, nil
+}
+
+// libraryFolders returns the names of top-level folders in the Library,
+// used to seed the AI's folder suggestions in EvaluateBuffer.
+func (a *App) libraryFolders() []string {
+	entries, _ := a.notes.List()
+	var folders []string
+	for _, e := range entries {
+		if e.IsDir {
+			folders = append(folders, e.Name)
+		}
+	}
+	return folders
+}
+
+// absImagePaths converts store-relative image paths to absolute filesystem paths.
+func (a *App) absImagePaths(storePaths []string) []string {
+	abs := make([]string, len(storePaths))
+	for i, p := range storePaths {
+		abs[i] = filepath.Join(a.storePath, p)
+	}
+	return abs
 }
 
 // ── File manager ──────────────────────────────────────────────────────────────
