@@ -36,11 +36,11 @@ func TestFileBuffer_AssetPromotion(t *testing.T) {
 	}
 
 	// File the buffer
-	destRelPath, err := v.FileBuffer(absPath)
+	result, err := v.FileBuffer(absPath)
 	if err != nil {
 		t.Fatalf("FileBuffer failed: %v", err)
 	}
-	destAbsPath := filepath.Join(v.Root, destRelPath)
+	destAbsPath := filepath.Join(v.Root, result.NewPath)
 
 	// Check buffer was moved
 	if _, err := os.Stat(absPath); !os.IsNotExist(err) {
@@ -52,18 +52,21 @@ func TestFileBuffer_AssetPromotion(t *testing.T) {
 
 	destContentTmp, _ := os.ReadFile(destAbsPath)
 
-	// Determine the name that FileBuffer will actually use
+	// Extract the promoted asset filename from the markdown link in the filed note.
+	// A root-level note (no subfolder) references assets as ".assets/<name>".
 	contentStr := string(destContentTmp)
-	// We extract the actual name from the markdown output to know what it used
-	destAssetPathPrefix := ""
-	if idx := strings.Index(contentStr, "../assets/"); idx != -1 {
+	destAssetFilename := ""
+	if idx := strings.Index(contentStr, ".assets/"); idx != -1 {
 		endIdx := strings.Index(contentStr[idx:], ")")
 		if endIdx != -1 {
-			destAssetPathPrefix = contentStr[idx+len("../assets/") : idx+endIdx]
+			destAssetFilename = contentStr[idx+len(".assets/") : idx+endIdx]
 		}
 	}
+	if destAssetFilename == "" {
+		t.Fatalf("could not find .assets/ reference in filed note content:\n%s", contentStr)
+	}
 
-	destAssetPath := filepath.Join(v.AssetsPath(), destAssetPathPrefix)
+	destAssetPath := filepath.Join(v.AssetsPath(), destAssetFilename)
 	if _, err := os.Stat(destAssetPath); err != nil {
 		t.Errorf("expected promoted asset %s to exist", destAssetPath)
 	}
@@ -71,13 +74,12 @@ func TestFileBuffer_AssetPromotion(t *testing.T) {
 		t.Errorf("expected source asset %s to be deleted", assetSrc)
 	}
 
-	// Read it before to grab the file name, actually we do it here:
 	destContent, err := os.ReadFile(destAbsPath)
 	if err != nil {
 		t.Fatalf("read dest file failed: %v", err)
 	}
-	if !strings.Contains(string(destContent), "../assets/"+destAssetPathPrefix) {
-		t.Errorf("expected markdown to contain updated asset path, got:\n%s", string(destContent))
+	if !strings.Contains(string(destContent), ".assets/"+destAssetFilename) {
+		t.Errorf("expected markdown to contain .assets/ path, got:\n%s", string(destContent))
 	}
 }
 

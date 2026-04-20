@@ -2,7 +2,7 @@
 
 Use this to resume work in a fresh session. Read this file and `docs/architecture-persistence-plan.md` before doing anything.
 
-> **Current status: Phases 1 and 2 complete. Start at Phase 3 — Business layer.**
+> **Current status: Phases 1, 2, and 3 complete. Start at Phase 4 — Wire up.**
 > Branch: `feature/store_refactor`
 
 ---
@@ -50,16 +50,16 @@ A full replacement of the current persistence layer. Today `stash.Store` is a pa
 - [x] `store/filestore/version.go` — snapshot writes on every `Save()`, pruning, `IsolationLevel` routing, optimistic lock check
 - [x] `store/filestore/filestore.go` — `FileStore` struct, `NewFileStore(root, hostname)`, full `Store` interface implementation, 30 tests
 
-### Phase 3 — Business layer
-- [ ] `stash/document_meta.go` — `DocumentMeta` interface
-- [ ] `stash/image_asset.go` — `ImageAsset` wrapping `AssetStorable`
-- [ ] `stash/note.go` — `Note` wrapping `MetaStorable`
-- [ ] `stash/buffer.go` — rewrite: `Buffer` wrapping `MetaStorable`
-- [ ] `stash/asset_service.go` — `AssetService.Save(category, key, data)`
-- [ ] `stash/buffer_service.go` — `New`, `Load`, `Save`, `Discard`, `File`, `FileWithName`, `List`
-- [ ] `stash/note_service.go` — `Load`, `Save`, `Delete`, `Move`, `Rename`, `List`, `Search`
-- [ ] `stash/session.go` — redirect to `FileStore` `State` category
-- [ ] `stash/settings.go` — redirect to `FileStore` `State` category
+### Phase 3 — Business layer ✅
+- [x] `stash/document_meta.go` — `DocumentMeta` interface + `documentMeta` impl
+- [x] `stash/image_asset.go` — `ImageAsset` wrapping `AssetStorable`
+- [x] `stash/note.go` — `Note` wrapping `MetaStorable`
+- [x] `stash/buffer.go` — `Buffer` type added (old `*Store` methods coexist until Phase 4)
+- [x] `stash/asset_service.go` — `AssetService.Save(category, key, data)`
+- [x] `stash/buffer_service.go` — `New`, `Load`, `Save`, `Discard`, `File`, `FileWithName`, `List`
+- [x] `stash/note_service.go` — `Load`, `Save`, `Delete`, `Move`, `Rename`, `List`, `Search`
+- [ ] `stash/session.go` — redirect to `FileStore` `State` category  (Phase 4)
+- [ ] `stash/settings.go` — redirect to `FileStore` `State` category  (Phase 4)
 
 ### Phase 4 — Wire up (riskiest phase — keep app compiling throughout)
 - [ ] Manual store migration — move `settings.json`, `session.json` to `{hostname}/config/`

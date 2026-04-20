@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"stash/store"
 )
 
 // NewBufferResult is returned by NewBuffer so the caller has both the
@@ -398,6 +400,64 @@ func cleanFolderPath(folder string) string {
 	}
 	return ""
 }
+
+// ── New Buffer type (Phase 3) — wraps store.MetaStorable ─────────────────────
+
+// Buffer is a working-copy document in the WorkingCopy category.
+// It wraps a MetaStorable returned by the Store — never constructed directly.
+// Use BufferService to create, load, save, and discard buffers.
+type Buffer struct {
+	s        store.MetaStorable
+	filename string // base filename without extension, e.g. "buf-20240102-1504"
+}
+
+// newBuffer constructs a Buffer and parses the filename once from the Store key.
+func newBuffer(s store.MetaStorable) *Buffer {
+	return &Buffer{
+		s:        s,
+		filename: strings.TrimSuffix(filepath.Base(s.Key()), filepath.Ext(s.Key())),
+	}
+}
+
+// UUID returns the frontmatter uuid field, which is the stable identity of
+// this document across renames and history. Falls back to the Store key if the
+// uuid field is absent (should not happen in practice).
+// Filename returns the base filename without extension, e.g. "buf-20240102-1504".
+// Parsed once at construction — use for tab labels and sidebar display.
+func (b *Buffer) Filename() string { return b.filename }
+
+func (b *Buffer) UUID() string {
+	if u := b.s.Meta()["uuid"]; u != "" {
+		return u
+	}
+	return b.s.Key()
+}
+
+// Path returns the store-relative path (ExternalRef) — e.g.
+// "{hostname}/buffers/buf-20240102-1504.md". This is the identifier used by
+// the frontend to address the buffer.
+func (b *Buffer) Path() string { return b.s.ExternalRef() }
+
+// Body returns the pure markdown content with frontmatter stripped.
+func (b *Buffer) Body() []byte { return b.s.Body() }
+
+// SetBody replaces the body content. The change is local until
+// BufferService.Save is called.
+func (b *Buffer) SetBody(v []byte) { b.s.SetBody(v) }
+
+// Meta returns a typed view over the underlying meta map. Mutations through
+// the returned DocumentMeta are visible immediately and persist on the next
+// BufferService.Save call.
+func (b *Buffer) Meta() DocumentMeta {
+	return newDocumentMeta(b.s.Meta(), b.s.SetMeta)
+}
+
+// Versions returns lightweight history refs ordered newest-first. Fetch a
+// snapshot with BufferService.RetrieveVersion.
+func (b *Buffer) Versions() []store.VersionRef { return b.s.Versions() }
+
+// Storable returns the underlying MetaStorable for direct Store operations.
+func (b *Buffer) Storable() store.MetaStorable { return b.s }
 
 func cleanFolderSegment(s string) string {
 	s = strings.TrimSpace(s)
