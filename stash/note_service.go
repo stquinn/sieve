@@ -11,16 +11,12 @@ import (
 // NoteService manages filed documents (Library category) through the Store
 // interface. Create one with NewNoteService — do not construct directly.
 type NoteService struct {
-	st         store.Store
-	storeRoot  string // absolute path to the store root — used for ScanNotes and Search
-	libraryDir string // absolute path to the Library directory
+	st store.Store
 }
 
 // NewNoteService creates a NoteService backed by st.
-// storeRoot is the absolute path to the store root (used for path relativisation
-// in List and Search). libraryDir is the absolute path to the Library directory.
-func NewNoteService(st store.Store, storeRoot, libraryDir string) *NoteService {
-	return &NoteService{st: st, storeRoot: storeRoot, libraryDir: libraryDir}
+func NewNoteService(st store.Store) *NoteService {
+	return &NoteService{st: st}
 }
 
 // Load retrieves a note by its store-relative path (ExternalRef), e.g.
@@ -134,17 +130,190 @@ func (ns *NoteService) Refile(n *Note) (*Note, error) {
 }
 
 // List returns the Library tree as a []NoteEntry (the same projection used
-// by the sidebar). Backed by ScanNotes which walks the filesystem.
+// by the sidebar). Backed by the Store — no direct filesystem access.
 func (ns *NoteService) List() ([]NoteEntry, error) {
-	return ScanNotes(ns.storeRoot, ns.libraryDir), nil
+	storables, err := ns.st.List(store.Library, "")
+	if err != nil {
+		return nil, err
+	}
+	return buildNoteTree(storables), nil
+}
+
+// Count returns the number of notes in the Library.
+func (ns *NoteService) Count() int {
+	storables, err := ns.st.List(store.Library, "")
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, s := range storables {
+		if _, ok := s.(store.MetaStorable); ok {
+			if strings.HasSuffix(s.Key(), ".md") {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // Search performs a full-text and frontmatter search over the Library.
+// Backed by the Store — no direct filesystem access.
 func (ns *NoteService) Search(query string) ([]SearchResult, error) {
-	return SearchStore(ns.storeRoot, []string{ns.libraryDir}, query), nil
+	if query == "" {
+		return nil, nil
+	}
+	storables, err := ns.st.List(store.Library, "")
+	if err != nil {
+		return nil, err
+	}
+
+	queryLower := strings.ToLower(query)
+	var results []SearchResult
+
+	for _, s := range storables {
+		ms, ok := s.(store.MetaStorable)
+		if !ok {
+			continue
+		}
+		if !strings.HasSuffix(s.Key(), ".md") {
+			continue
+		}
+
+		meta := ms.Meta()
+		body := string(ms.Body())
+		bodyLower := strings.ToLower(body)
+
+		isTagMatch := strings.Contains(strings.ToLower(meta["tags"]), queryLower)
+		isSummaryMatch := strings.Contains(strings.ToLower(meta["summary"]), queryLower)
+		isBodyMatch := strings.Contains(bodyLower, queryLower)
+
+		if !isTagMatch && !isSummaryMatch && !isBodyMatch {
+			continue
+		}
+
+		var snippet string
+		if isBodyMatch {
+			idx := strings.Index(bodyLower, queryLower)
+			start := max(0, idx-30)
+			end := min(len(body), idx+len(query)+30)
+			snippet = strings.ReplaceAll(body[start:end], "\n", " ")
+			if start > 0 {
+				snippet = "..." + snippet
+			}
+			if end < len(body) {
+				snippet = snippet + "..."
+			}
+		} else if isSummaryMatch {
+			sn := metaString(meta, "summary")
+			if len(sn) > 60 {
+				sn = sn[:60] + "..."
+			}
+			snippet = sn
+		}
+
+		results = append(results, SearchResult{
+			Path:           s.ExternalRef(),
+			Name:           strings.TrimSuffix(filepath.Base(s.Key()), ".md"),
+			IsTagMatch:     isTagMatch,
+			IsSummaryMatch: isSummaryMatch,
+			IsBodyMatch:    isBodyMatch,
+			Snippet:        strings.TrimSpace(snippet),
+		})
+	}
+	return results, nil
 }
 
 // RetrieveVersion fetches a historical snapshot of n identified by ref.
 func (ns *NoteService) RetrieveVersion(n *Note, ref store.VersionRef) (store.VersionedStorable, error) {
 	return ns.st.RetrieveVersion(n.s, ref)
+}
+
+// ── Tree builder ──────────────────────────────────────────────────────────────
+
+// buildNoteTree converts a flat []store.Storable (from Store.List) into the
+// hierarchical []NoteEntry the sidebar expects. Only root-level items are
+// processed; nested MetaStorables (key contains "/") are already owned by their
+// parent FolderStorable and are skipped in the top-level pass.
+func buildNoteTree(storables []store.Storable) []NoteEntry {
+	var entries []NoteEntry
+	for _, s := range storables {
+		key := s.Key()
+		// Only process root-level items. Nested entries (key contains "/") are
+		// surfaced by their parent FolderStorable.Owns().
+		if strings.Contains(key, "/") {
+			continue
+		}
+		// Skip hidden entries (e.g. .assets directory).
+		if strings.HasPrefix(key, ".") {
+			continue
+		}
+
+		switch v := s.(type) {
+		case store.FolderStorable:
+			entries = append(entries, NoteEntry{
+				Name:     key,
+				IsDir:    true,
+				Children: buildFolderChildren(v.Owns()),
+			})
+		case store.MetaStorable:
+			if !strings.HasSuffix(key, ".md") {
+				continue
+			}
+			entries = append(entries, NoteEntry{
+				Name:        strings.TrimSuffix(key, ".md"),
+				DisplayName: metaString(v.Meta(), "display_name"),
+				Path:        s.ExternalRef(),
+				UserIntent:  metaString(v.Meta(), "user_intent"),
+				IsDir:       false,
+			})
+		}
+	}
+	return entries
+}
+
+func buildFolderChildren(owns []store.Storable) []NoteEntry {
+	var children []NoteEntry
+	for _, s := range owns {
+		ms, ok := s.(store.MetaStorable)
+		if !ok {
+			continue
+		}
+		key := ms.Key()
+		if !strings.HasSuffix(key, ".md") {
+			continue
+		}
+		children = append(children, NoteEntry{
+			Name:        strings.TrimSuffix(filepath.Base(key), ".md"),
+			DisplayName: metaString(ms.Meta(), "display_name"),
+			Path:        ms.ExternalRef(),
+			UserIntent:  metaString(ms.Meta(), "user_intent"),
+			IsDir:       false,
+		})
+	}
+	return children
+}
+
+// metaString extracts a value from a raw metadata map, normalising YAML "null"
+// and bare quote characters to the empty string.
+func metaString(meta map[string]string, key string) string {
+	v := strings.TrimSpace(meta[key])
+	v = strings.Trim(v, `"'`)
+	if v == "null" {
+		return ""
+	}
+	return v
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

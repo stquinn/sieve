@@ -44,12 +44,6 @@ func Open(rootPath string) (*Store, error) {
 	return v, nil
 }
 
-// IsNewStore returns true when the store was freshly created (no notes and no
-// host settings exist yet). Used to decide whether to show a welcome message.
-func (v *Store) IsNewStore() bool {
-	return CountNotes(v.NotesPath()) == 0
-}
-
 // ── Path helpers ──────────────────────────────────────────────────────────────
 
 func (v *Store) StorePath() string        { return filepath.Join(v.Root, "store") }

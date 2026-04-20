@@ -143,7 +143,7 @@ func (a *App) startup(ctx context.Context) {
 		return
 	}
 	a.buffers = stash.NewBufferService(fs)
-	a.notes = stash.NewNoteService(fs, a.storePath, a.notesDir())
+	a.notes = stash.NewNoteService(fs)
 	a.assets = stash.NewAssetService(fs)
 
 	a.settings = stash.LoadSettings(a.settingsFilePath())
@@ -258,7 +258,7 @@ func (a *App) GetStoreInfo() StoreInfo {
 		Hostname:           a.hostname,
 		BuffersPath:        a.buffersDir(),
 		NotesPath:          a.notesDir(),
-		IsNew:              stash.CountNotes(a.notesDir()) == 0,
+		IsNew:              a.notes.Count() == 0,
 		Tier:               liveSettings.Tier(),
 		Cli:                liveSettings.CLI,
 		Debug:              liveSettings.Debug,

@@ -70,12 +70,13 @@ func (v *Store) EvaluateBuffer(path string, settings Settings) (*FilingRecommend
 		}
 	}
 
-	// Read existing folders in store/
+	// Read existing top-level folders in store/
 	var folders []string
-	entries := ScanNotes(v.Root, v.NotesPath())
-	for _, e := range entries {
-		if e.IsDir {
-			folders = append(folders, e.Name)
+	if infos, err := os.ReadDir(v.NotesPath()); err == nil {
+		for _, info := range infos {
+			if info.IsDir() && !strings.HasPrefix(info.Name(), ".") {
+				folders = append(folders, info.Name())
+			}
 		}
 	}
 	folderList := strings.Join(folders, ", ")
