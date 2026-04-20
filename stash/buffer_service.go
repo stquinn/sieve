@@ -27,7 +27,7 @@ func (bs *BufferService) New() (*Buffer, error) {
 	n := bs.nextUntitledNumber()
 	body := bs.defaultMetaBody(n)
 
-	s, err := bs.st.Create(store.WorkingCopy, "", []byte(body))
+	s, err := bs.st.CreateMetaText(WorkingCopy, "", []byte(body))
 	if err != nil {
 		return nil, fmt.Errorf("buffer: new: %w", err)
 	}
@@ -41,8 +41,8 @@ func (bs *BufferService) New() (*Buffer, error) {
 // Load retrieves a buffer by its store-relative path (ExternalRef), e.g.
 // "{hostname}/buffers/buf-20240102-1504.md".
 func (bs *BufferService) Load(path string) (*Buffer, error) {
-	key := keyFromPath(path, store.WorkingCopy)
-	s, err := bs.st.Load(store.WorkingCopy, key)
+	key := keyFromPath(path, WorkingCopy)
+	s, err := bs.st.Load(WorkingCopy, key)
 	if err != nil {
 		return nil, fmt.Errorf("buffer: load %s: %w", path, err)
 	}
@@ -115,7 +115,7 @@ func (bs *BufferService) doFile(b *Buffer, overrideName string) (*Note, error) {
 	}
 
 	// Move to Library category (FileStore migrates version history automatically).
-	moved, err := bs.st.Move(renamed, store.Library)
+	moved, err := bs.st.Move(renamed, Library)
 	if err != nil {
 		return nil, fmt.Errorf("buffer: file: move to Library: %w", err)
 	}
@@ -130,7 +130,7 @@ func (bs *BufferService) doFile(b *Buffer, overrideName string) (*Note, error) {
 // List returns all buffers in the WorkingCopy category. Non-MetaStorable
 // entries (e.g. asset files, folders) are silently skipped.
 func (bs *BufferService) List() ([]*Buffer, error) {
-	storables, err := bs.st.List(store.WorkingCopy, "")
+	storables, err := bs.st.List(WorkingCopy, "")
 	if err != nil {
 		return nil, fmt.Errorf("buffer: list: %w", err)
 	}
@@ -154,8 +154,9 @@ func (bs *BufferService) RetrieveVersion(b *Buffer, ref store.VersionRef) (store
 
 // nextUntitledNumber scans existing WorkingCopy buffers to find the highest
 // "Untitled N" display_name and returns N+1.
+//TODO Store creates the Buffer - why isnt it telling you the name?
 func (bs *BufferService) nextUntitledNumber() int {
-	storables, err := bs.st.List(store.WorkingCopy, "")
+	storables, err := bs.st.List(WorkingCopy, "")
 	if err != nil {
 		return 1
 	}

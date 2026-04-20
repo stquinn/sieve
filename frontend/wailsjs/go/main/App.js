@@ -90,12 +90,12 @@ export function LoadPrompt(arg1) {
   return window['go']['main']['App']['LoadPrompt'](arg1);
 }
 
-export function MoveNote(arg1, arg2) {
-  return window['go']['main']['App']['MoveNote'](arg1, arg2);
+export function LoadSettings() {
+  return window['go']['main']['App']['LoadSettings']();
 }
 
-export function RefileNote(arg1) {
-  return window['go']['main']['App']['RefileNote'](arg1);
+export function MoveNote(arg1, arg2) {
+  return window['go']['main']['App']['MoveNote'](arg1, arg2);
 }
 
 export function NewBuffer() {
@@ -156,10 +156,6 @@ export function SearchStore(arg1) {
 
 export function SelectVault() {
   return window['go']['main']['App']['SelectVault']();
-}
-
-export function SettingsPath() {
-  return window['go']['main']['App']['SettingsPath']();
 }
 
 export function ShowInFiles(arg1) {

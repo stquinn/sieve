@@ -34,8 +34,8 @@ type App struct {
 	buffers *stash.BufferService
 	notes   *stash.NoteService
 	assets  *stash.AssetService
+	state   *stash.StateService
 
-	settings stash.Settings
 	themesFS fs.FS
 	watcher  *notesWatcher
 	closing  bool
@@ -57,17 +57,9 @@ func NewApp(storePath string, themesFS fs.FS) *App {
 // ── Path helpers ──────────────────────────────────────────────────────────────
 
 // configDir returns the absolute path to the per-host config directory
-// ({storePath}/{hostname}/config/). Settings and session live here.
+// ({storePath}/{hostname}/config/). Used for state migration only.
 func (a *App) configDir() string {
 	return filepath.Join(a.storePath, a.hostname, "config")
-}
-
-func (a *App) settingsFilePath() string {
-	return filepath.Join(a.configDir(), "settings.json")
-}
-
-func (a *App) sessionFilePath() string {
-	return filepath.Join(a.configDir(), "session.json")
 }
 
 func (a *App) notesDir() string {
@@ -78,14 +70,20 @@ func (a *App) promptsDir() string {
 	return filepath.Join(a.storePath, a.hostname, "prompts")
 }
 
-func (a *App) buffersDir() string {
-	return filepath.Join(a.storePath, a.hostname, "buffers")
-}
+// GetThemesFS returns the embedded themes filesystem.
+func (a *App) GetThemesFS() fs.FS { return a.themesFS }
 
-// SettingsPath is exported for Wails startup config injection.
-func (a *App) SettingsPath() string { return a.settingsFilePath() }
-func (a *App) GetThemesFS() fs.FS   { return a.themesFS }
+// GetStorePath returns the active store root path.
 func (a *App) GetStorePath() string { return a.storePath }
+
+// LoadSettings returns the current settings via the StateService, or defaults
+// if the store is not yet open.
+func (a *App) LoadSettings() stash.Settings {
+	if a.state != nil {
+		return a.state.LoadSettings()
+	}
+	return stash.DefaultSettings()
+}
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
@@ -132,11 +130,12 @@ func (a *App) startup(ctx context.Context) {
 	a.buffers = stash.NewBufferService(fs)
 	a.notes = stash.NewNoteService(fs)
 	a.assets = stash.NewAssetService(fs)
+	a.state = stash.NewStateService(fs)
 
-	a.settings = stash.LoadSettings(a.settingsFilePath())
+	settings := a.state.LoadSettings()
 
 	// Save last-used store path.
-	config := stash.LoadGlobalConfig()
+	config := LoadGlobalConfig()
 	config.LastStorePath = a.storePath
 	if err := config.Save(); err != nil {
 		logger.Warn("could not save global config", "err", err)
@@ -145,9 +144,9 @@ func (a *App) startup(ctx context.Context) {
 	logger.Info("store ready",
 		"root", a.storePath,
 		"hostname", a.hostname,
-		"tier", a.settings.Tier(),
-		"autosave_debounce", a.settings.AutosaveDebounce,
-		"debug", a.settings.Debug,
+		"tier", settings.Tier(),
+		"autosave_debounce", settings.AutosaveDebounce,
+		"debug", settings.Debug,
 	)
 
 	// Startup probe.
@@ -156,7 +155,7 @@ func (a *App) startup(ctx context.Context) {
 		time.Now().Format(time.RFC3339), a.storePath, a.hostname)), 0o644)
 
 	// Restore window geometry.
-	savedSession := stash.LoadSession(a.sessionFilePath())
+	savedSession := a.state.LoadSession()
 	if savedSession.Window.Width >= 800 && savedSession.Window.Height >= 500 {
 		runtime.WindowSetSize(ctx, savedSession.Window.Width, savedSession.Window.Height)
 		logger.Debug("window size restored", "w", savedSession.Window.Width, "h", savedSession.Window.Height)
@@ -183,12 +182,12 @@ func (a *App) beforeClose(ctx context.Context) bool {
 	if a.closing {
 		return false
 	}
-	if a.storePath != "" {
+	if a.state != nil {
 		x, y := runtime.WindowGetPosition(ctx)
 		w, h := runtime.WindowGetSize(ctx)
-		session := stash.LoadSession(a.sessionFilePath())
+		session := a.state.LoadSession()
 		session.Window = stash.Window{X: x, Y: y, Width: w, Height: h}
-		_ = session.Save(a.sessionFilePath())
+		_ = a.state.SaveSession(session)
 	}
 	logger.Info("beforeClose: vetoing and requesting flush")
 	runtime.EventsEmit(ctx, "app:closing")
@@ -238,12 +237,12 @@ func (a *App) GetStoreInfo() StoreInfo {
 	}
 
 	logger.Info("GetStoreInfo", "root", a.storePath)
-	liveSettings := stash.LoadSettings(a.settingsFilePath())
+	liveSettings := a.state.LoadSettings()
 
 	return StoreInfo{
 		Root:               a.storePath,
 		Hostname:           a.hostname,
-		BuffersPath:        a.buffersDir(),
+		BuffersPath:        filepath.Join(a.storePath, a.hostname, "buffers"),
 		NotesPath:          a.notesDir(),
 		IsNew:              a.notes.Count() == 0,
 		Tier:               liveSettings.Tier(),
@@ -251,22 +250,22 @@ func (a *App) GetStoreInfo() StoreInfo {
 		Debug:              liveSettings.Debug,
 		AutosaveDebounce:   liveSettings.AutosaveDebounce,
 		ThemeName:          liveSettings.Theme,
-		ThemeVars:          stash.LoadTheme(a.storePath, liveSettings.Theme, a.themesFS),
+		ThemeVars:          stash.LoadTheme(liveSettings.Theme, a.loadThemeOverride(liveSettings.Theme), a.themesFS),
 		MaxHistoryVersions: liveSettings.MaxHistoryVersions,
 		CLITimeoutLong:     liveSettings.CLITimeoutLong,
-		ShowPrompts:        stash.LoadSession(a.sessionFilePath()).ShowPrompts,
+		ShowPrompts:        a.state.LoadSession().ShowPrompts,
 	}
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 
 func (a *App) SaveSidebarWidth(width int) error {
-	if a.storePath == "" {
+	if a.state == nil {
 		return fmt.Errorf("store not open")
 	}
-	session := stash.LoadSession(a.sessionFilePath())
+	session := a.state.LoadSession()
 	session.SidebarWidth = width
-	if err := session.Save(a.sessionFilePath()); err != nil {
+	if err := a.state.SaveSession(session); err != nil {
 		logger.Error("SaveSidebarWidth failed", "err", err)
 		return err
 	}
@@ -274,21 +273,21 @@ func (a *App) SaveSidebarWidth(width int) error {
 }
 
 func (a *App) SaveMetaWidth(width int) error {
-	if a.storePath == "" {
+	if a.state == nil {
 		return fmt.Errorf("store not open")
 	}
-	session := stash.LoadSession(a.sessionFilePath())
+	session := a.state.LoadSession()
 	session.MetaWidth = width
-	return session.Save(a.sessionFilePath())
+	return a.state.SaveSession(session)
 }
 
 func (a *App) SavePromptsHeight(height int) error {
-	if a.storePath == "" {
+	if a.state == nil {
 		return fmt.Errorf("store not open")
 	}
-	session := stash.LoadSession(a.sessionFilePath())
+	session := a.state.LoadSession()
 	session.PromptsHeight = height
-	return session.Save(a.sessionFilePath())
+	return a.state.SaveSession(session)
 }
 
 // ── Bootstrapping ─────────────────────────────────────────────────────────────
@@ -306,10 +305,10 @@ func (a *App) SelectVault() (string, error) {
 	if path == "" {
 		return "", nil
 	}
-	if err := stash.ValidateStore(path); err != nil {
+	if err := ValidateStore(path); err != nil {
 		return "", fmt.Errorf("this directory does not look like a Stash store: %w", err)
 	}
-	config := stash.LoadGlobalConfig()
+	config := LoadGlobalConfig()
 	config.LastStorePath = path
 	if err := config.Save(); err != nil {
 		return "", fmt.Errorf("could not update global config: %w", err)
@@ -351,7 +350,7 @@ func (a *App) InitVault(path string) error {
 	if err != nil {
 		return fmt.Errorf("invalid path: %w", err)
 	}
-	config := stash.LoadGlobalConfig()
+	config := LoadGlobalConfig()
 	config.LastStorePath = abs
 	if err := config.Save(); err != nil {
 		return fmt.Errorf("could not update global config: %w", err)
@@ -365,10 +364,10 @@ func (a *App) InitVault(path string) error {
 // ── Prompts ───────────────────────────────────────────────────────────────────
 
 func (a *App) GetPrompts() []stash.PromptEntry {
-	if a.storePath == "" {
+	if a.state == nil {
 		return nil
 	}
-	settings := stash.LoadSettings(a.settingsFilePath())
+	settings := a.state.LoadSettings()
 	return []stash.PromptEntry{
 		{Name: "file", DisplayName: "Smart Filing", Path: settings.Prompts.File, IsVirtual: settings.Prompts.File == ""},
 		{Name: "explain", DisplayName: "Explain Content", Path: settings.Prompts.Explain, IsVirtual: settings.Prompts.Explain == ""},
@@ -379,15 +378,16 @@ func (a *App) GetPrompts() []stash.PromptEntry {
 }
 
 func (a *App) LoadPrompt(name string) (string, error) {
-	if a.storePath == "" {
+	if a.state == nil {
 		return "", fmt.Errorf("store not open")
 	}
-	settings := stash.LoadSettings(a.settingsFilePath())
-	return stash.GetPromptContent(name, settings)
+	settings := a.state.LoadSettings()
+	override := a.loadPromptOverride(name, settings)
+	return stash.GetPromptContent(name, override)
 }
 
 func (a *App) SavePrompt(name string, content string) (string, error) {
-	if a.storePath == "" {
+	if a.state == nil {
 		return "", fmt.Errorf("store not open")
 	}
 	if err := os.MkdirAll(a.promptsDir(), 0o755); err != nil {
@@ -397,7 +397,7 @@ func (a *App) SavePrompt(name string, content string) (string, error) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return "", err
 	}
-	settings := stash.LoadSettings(a.settingsFilePath())
+	settings := a.state.LoadSettings()
 	switch name {
 	case "file":
 		settings.Prompts.File = path
@@ -410,7 +410,7 @@ func (a *App) SavePrompt(name string, content string) (string, error) {
 	case "image":
 		settings.Prompts.Image = path
 	}
-	if err := settings.Save(a.settingsFilePath()); err != nil {
+	if err := a.state.SaveSettings(settings); err != nil {
 		return "", err
 	}
 	logger.Info("prompt saved", "name", name, "path", path)
@@ -419,10 +419,10 @@ func (a *App) SavePrompt(name string, content string) (string, error) {
 }
 
 func (a *App) RestorePrompt(name string) error {
-	if a.storePath == "" {
+	if a.state == nil {
 		return fmt.Errorf("store not open")
 	}
-	settings := stash.LoadSettings(a.settingsFilePath())
+	settings := a.state.LoadSettings()
 	var path string
 	switch name {
 	case "file":
@@ -444,7 +444,7 @@ func (a *App) RestorePrompt(name string) error {
 	if path != "" {
 		_ = os.Remove(path)
 	}
-	if err := settings.Save(a.settingsFilePath()); err != nil {
+	if err := a.state.SaveSettings(settings); err != nil {
 		return err
 	}
 	logger.Info("prompt restored to default", "name", name)
@@ -453,12 +453,12 @@ func (a *App) RestorePrompt(name string) error {
 }
 
 func (a *App) TogglePrompts() (bool, error) {
-	if a.storePath == "" {
+	if a.state == nil {
 		return false, fmt.Errorf("store not open")
 	}
-	session := stash.LoadSession(a.sessionFilePath())
+	session := a.state.LoadSession()
 	session.ShowPrompts = !session.ShowPrompts
-	if err := session.Save(a.sessionFilePath()); err != nil {
+	if err := a.state.SaveSession(session); err != nil {
 		return false, err
 	}
 	return session.ShowPrompts, nil
@@ -497,13 +497,12 @@ func (a *App) SearchStore(query string) []stash.SearchResult {
 // ── Session ───────────────────────────────────────────────────────────────────
 
 func (a *App) GetSession() stash.Session {
-	if a.storePath == "" {
+	if a.state == nil {
 		logger.Warn("GetSession: store not open")
 		return stash.Session{}
 	}
 
-	logger.Info("GetSession", "path", a.sessionFilePath())
-	session := stash.LoadSession(a.sessionFilePath())
+	session := a.state.LoadSession()
 	logger.Debug("session loaded", "tabs", len(session.Tabs))
 
 	// Prune tabs whose files no longer exist.
@@ -525,7 +524,7 @@ func (a *App) GetSession() stash.Session {
 		}
 		logger.Info("session: no tabs — created default buffer", "path", b.Path(), "uuid", b.UUID())
 		session.Tabs = []stash.Tab{{Path: b.Path(), Active: true, Mode: "wysiwyg"}}
-		if err := session.Save(a.sessionFilePath()); err != nil {
+		if err := a.state.SaveSession(session); err != nil {
 			logger.Error("session save failed", "err", err)
 		}
 	} else {
@@ -545,10 +544,10 @@ func (a *App) GetSession() stash.Session {
 }
 
 func (a *App) SaveSession(session stash.Session) error {
-	if a.storePath == "" {
+	if a.state == nil {
 		return fmt.Errorf("store not open")
 	}
-	existing := stash.LoadSession(a.sessionFilePath())
+	existing := a.state.LoadSession()
 	if session.SidebarWidth == 0 {
 		session.SidebarWidth = existing.SidebarWidth
 	}
@@ -561,7 +560,7 @@ func (a *App) SaveSession(session stash.Session) error {
 	if len(session.OpenFolders) == 0 {
 		session.OpenFolders = existing.OpenFolders
 	}
-	if err := session.Save(a.sessionFilePath()); err != nil {
+	if err := a.state.SaveSession(session); err != nil {
 		logger.Error("SaveSession failed", "err", err)
 		return err
 	}
@@ -906,23 +905,19 @@ func (a *App) DownloadAsset(context, targetURL, id string) (AssetDTO, error) {
 func assetLocation(context, id string) (store.Category, string) {
 	isBuffer := context == "" || context == "new" || strings.Contains(context, "/buffers/")
 	if isBuffer {
-		return store.WorkingCopy, fmt.Sprintf("assets/%s.png", id)
+		return stash.WorkingCopy, fmt.Sprintf("assets/%s.png", id)
 	}
 	noteName := strings.TrimSuffix(filepath.Base(context), filepath.Ext(context))
-	return store.Library, fmt.Sprintf(".assets/%s-%s.png", noteName, id)
+	return stash.Library, fmt.Sprintf(".assets/%s-%s.png", noteName, id)
 }
 
 // ── AI / CLI operations ───────────────────────────────────────────────────────
-//
-// These still delegate to *stash.Store methods which are thin wrappers over
-// standalone functions. They will be refactored to standalone calls in a
-// future cleanup once the *Store dependency is fully removed.
 
 func (a *App) EvaluateBuffer(path string) (*stash.FilingRecommendation, error) {
 	if a.buffers == nil {
 		return nil, fmt.Errorf("store not open")
 	}
-	settings := stash.LoadSettings(a.settingsFilePath())
+	settings := a.state.LoadSettings()
 
 	var meta stash.DocumentMeta
 	var body []byte
@@ -934,7 +929,8 @@ func (a *App) EvaluateBuffer(path string) (*stash.FilingRecommendation, error) {
 		return nil, fmt.Errorf("document not found: %s", path)
 	}
 
-	rec, err := stash.EvaluateBuffer(meta, body, a.libraryFolders(), settings)
+	override := a.loadPromptOverride("file", settings)
+	rec, err := stash.EvaluateBuffer(meta, body, a.libraryFolders(), settings, override)
 	if err != nil {
 		logger.Warn("EvaluateBuffer failed", "path", path, "err", err)
 		return nil, err
@@ -947,11 +943,12 @@ func (a *App) RefineLanguage(content string) (string, error) {
 	if a.buffers == nil {
 		return "", fmt.Errorf("store not open")
 	}
-	settings := stash.LoadSettings(a.settingsFilePath())
+	settings := a.state.LoadSettings()
 	if settings.Tier() == stash.TierDumb {
 		return "", fmt.Errorf("dumb mode")
 	}
-	lang, err := stash.RefineLanguage(content, settings)
+	override := a.loadPromptOverride("refine", settings)
+	lang, err := stash.RefineLanguage(content, settings, override)
 	if err != nil {
 		logger.Warn("RefineLanguage failed", "err", err)
 		return "", err
@@ -963,11 +960,12 @@ func (a *App) DescribeImage(storeRelPath string) (stash.ImageDesc, error) {
 	if a.buffers == nil {
 		return stash.ImageDesc{}, fmt.Errorf("store not open")
 	}
-	settings := stash.LoadSettings(a.settingsFilePath())
+	settings := a.state.LoadSettings()
 	if settings.Tier() == stash.TierDumb {
 		return stash.ImageDesc{}, fmt.Errorf("dumb mode")
 	}
-	desc, err := stash.DescribeImage(filepath.Join(a.storePath, storeRelPath), settings)
+	override := a.loadPromptOverride("image", settings)
+	desc, err := stash.DescribeImage(filepath.Join(a.storePath, storeRelPath), settings, override)
 	if err != nil {
 		logger.Warn("DescribeImage failed", "err", err)
 		return stash.ImageDesc{}, err
@@ -979,12 +977,13 @@ func (a *App) Explain(content string, history string, notePath string, imageStor
 	if a.buffers == nil {
 		return "", fmt.Errorf("store not open")
 	}
-	settings := stash.LoadSettings(a.settingsFilePath())
+	settings := a.state.LoadSettings()
 	if settings.Tier() == stash.TierDumb {
 		return "", fmt.Errorf("explain not available in dumb mode")
 	}
+	override := a.loadPromptOverride("explain", settings)
 	resp, err := stash.RunExplain(content, history, settings,
-		filepath.Dir(a.resolvePath(notePath)), a.absImagePaths(imageStorePaths))
+		filepath.Dir(a.resolvePath(notePath)), a.absImagePaths(imageStorePaths), override)
 	if err != nil {
 		logger.Warn("Explain failed", "err", err)
 		return "", err
@@ -996,12 +995,13 @@ func (a *App) Ask(content string, history string, question string, notePath stri
 	if a.buffers == nil {
 		return "", fmt.Errorf("store not open")
 	}
-	settings := stash.LoadSettings(a.settingsFilePath())
+	settings := a.state.LoadSettings()
 	if settings.Tier() == stash.TierDumb {
 		return "", fmt.Errorf("ask not available in dumb mode")
 	}
+	override := a.loadPromptOverride("ask", settings)
 	resp, err := stash.RunAsk(content, history, question, settings,
-		filepath.Dir(a.resolvePath(notePath)), a.absImagePaths(imageStorePaths))
+		filepath.Dir(a.resolvePath(notePath)), a.absImagePaths(imageStorePaths), override)
 	if err != nil {
 		logger.Warn("Ask failed", "err", err)
 		return "", err
@@ -1029,6 +1029,31 @@ func (a *App) absImagePaths(storePaths []string) []string {
 		abs[i] = filepath.Join(a.storePath, p)
 	}
 	return abs
+}
+
+// loadThemeOverride reads the store-local theme override file for name, if any.
+// Returns nil when no override exists or the store is not open.
+func (a *App) loadThemeOverride(name string) []byte {
+	if a.storePath == "" || name == "" {
+		return nil
+	}
+	data, _ := os.ReadFile(filepath.Join(a.storePath, "themes", name+".json"))
+	return data
+}
+
+// loadPromptOverride reads the prompt override file path stored in settings for
+// name. Returns the file content, or "" if no override is configured or the
+// file cannot be read.
+func (a *App) loadPromptOverride(name string, settings stash.Settings) string {
+	path := stash.PromptOverridePath(name, settings)
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 // ── File manager ──────────────────────────────────────────────────────────────

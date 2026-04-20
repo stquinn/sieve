@@ -11,6 +11,14 @@ import (
 	"stash/store/filestore"
 )
 
+// testLibrary / testWorkingCopy mirror the business-layer category definitions.
+// They are defined here rather than imported from stash/ to avoid a circular
+// dependency (stash imports store; filestore is a sub-package of store).
+var (
+	testLibrary     = store.Category{Key: "store", DisplayName: "Library", Isolation: store.Shared}
+	testWorkingCopy = store.Category{Key: "buffers", DisplayName: "Working Copy", Isolation: store.Isolated}
+)
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func newTestStore(t *testing.T) *filestore.FileStore {
@@ -62,7 +70,7 @@ func TestNewFileStoreCreatesDirectories(t *testing.T) {
 
 func TestCreateBufferGeneratesKey(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, store.WorkingCopy, "", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "", nil)
 
 	ms, ok := s.(store.MetaStorable)
 	if !ok {
@@ -78,7 +86,7 @@ func TestCreateBufferGeneratesKey(t *testing.T) {
 
 func TestCreateBufferStampsUUID(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, store.WorkingCopy, "", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "", nil)
 	ms := s.(store.MetaStorable)
 	if ms.Meta()["uuid"] == "" {
 		t.Error("uuid must be stamped by Create")
@@ -87,7 +95,7 @@ func TestCreateBufferStampsUUID(t *testing.T) {
 
 func TestCreateBufferStampsTimestamps(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, store.WorkingCopy, "", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "", nil)
 	ms := s.(store.MetaStorable)
 	if ms.Meta()["created"] == "" {
 		t.Error("created must be set")
@@ -99,7 +107,7 @@ func TestCreateBufferStampsTimestamps(t *testing.T) {
 
 func TestCreateBufferVersionIsZero(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, store.WorkingCopy, "", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "", nil)
 	ms := s.(store.MetaStorable)
 	if ms.Meta()["version"] != "0" {
 		t.Errorf("version = %q, want 0", ms.Meta()["version"])
@@ -108,7 +116,7 @@ func TestCreateBufferVersionIsZero(t *testing.T) {
 
 func TestCreateWithExplicitKey(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, store.WorkingCopy, "my-buf.md", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "my-buf.md", nil)
 	if s.Key() != "my-buf.md" {
 		t.Errorf("key = %q, want my-buf.md", s.Key())
 	}
@@ -117,7 +125,7 @@ func TestCreateWithExplicitKey(t *testing.T) {
 func TestCreateWithBodyContainsFrontmatter(t *testing.T) {
 	fs := newTestStore(t)
 	body := []byte("---\nuuid: abc123\nstatus: unfiled\n---\nhello world\n")
-	s := mustCreate(t, fs, store.WorkingCopy, "existing.md", body)
+	s := mustCreate(t, fs, testWorkingCopy, "existing.md", body)
 	ms := s.(store.MetaStorable)
 
 	if ms.Meta()["uuid"] != "abc123" {
@@ -133,7 +141,7 @@ func TestCreateWithBodyContainsFrontmatter(t *testing.T) {
 
 func TestCreateLibraryNote(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, store.Library, "my-note.md", nil)
+	s := mustCreate(t, fs, testLibrary, "my-note.md", nil)
 	ms := s.(store.MetaStorable)
 	if ms.Meta()["uuid"] == "" {
 		t.Error("uuid must be stamped")
@@ -146,7 +154,7 @@ func TestCreateLibraryNote(t *testing.T) {
 
 func TestCreateBufferExternalRef(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, store.WorkingCopy, "buf.md", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
 	want := "testhost/buffers/buf.md"
 	if s.ExternalRef() != want {
 		t.Errorf("ExternalRef = %q, want %q", s.ExternalRef(), want)
@@ -159,7 +167,7 @@ func TestCreateAssetInfersPNG(t *testing.T) {
 	fs := newTestStore(t)
 	// PNG magic bytes
 	pngBytes := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00}
-	s := mustCreate(t, fs, store.WorkingCopy, "assets/img.png", pngBytes)
+	s := mustCreate(t, fs, testWorkingCopy, "assets/img.png", pngBytes)
 
 	as, ok := s.(store.AssetStorable)
 	if !ok {
@@ -174,7 +182,7 @@ func TestCreateAssetBase64(t *testing.T) {
 	fs := newTestStore(t)
 	// Valid base64 data (multiple of 4, all base64 chars)
 	b64 := []byte("aGVsbG8gd29ybGQ=")
-	s := mustCreate(t, fs, store.WorkingCopy, "assets/img.b64", b64)
+	s := mustCreate(t, fs, testWorkingCopy, "assets/img.b64", b64)
 
 	as, ok := s.(store.AssetStorable)
 	if !ok {
@@ -189,8 +197,8 @@ func TestCreateAssetBase64(t *testing.T) {
 
 func TestLoadReturnsMetaStorable(t *testing.T) {
 	fs := newTestStore(t)
-	created := mustCreate(t, fs, store.WorkingCopy, "buf.md", nil)
-	loaded, err := fs.Load(store.WorkingCopy, "buf.md")
+	created := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
+	loaded, err := fs.Load(testWorkingCopy, "buf.md")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -206,8 +214,8 @@ func TestLoadReturnsMetaStorable(t *testing.T) {
 func TestLoadBodyStripped(t *testing.T) {
 	fs := newTestStore(t)
 	body := []byte("---\nuuid: x\n---\nhello\n")
-	mustCreate(t, fs, store.WorkingCopy, "buf.md", body)
-	loaded, err := fs.Load(store.WorkingCopy, "buf.md")
+	mustCreate(t, fs, testWorkingCopy, "buf.md", body)
+	loaded, err := fs.Load(testWorkingCopy, "buf.md")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -218,7 +226,7 @@ func TestLoadBodyStripped(t *testing.T) {
 
 func TestLoadNotFound(t *testing.T) {
 	fs := newTestStore(t)
-	_, err := fs.Load(store.WorkingCopy, "nonexistent.md")
+	_, err := fs.Load(testWorkingCopy, "nonexistent.md")
 	if err == nil {
 		t.Error("expected error for nonexistent key")
 	}
@@ -228,7 +236,7 @@ func TestLoadNotFound(t *testing.T) {
 
 func TestSaveIncrementsVersion(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, store.WorkingCopy, "buf.md", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
 	ms := s.(store.MetaStorable)
 
 	ms.SetBody([]byte("updated body"))
@@ -246,7 +254,7 @@ func TestSaveIncrementsVersion(t *testing.T) {
 
 func TestSaveUpdatesModified(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, store.WorkingCopy, "buf.md", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
 	ms := s.(store.MetaStorable)
 	originalModified := ms.Meta()["modified"]
 
@@ -266,7 +274,7 @@ func TestSaveUpdatesModified(t *testing.T) {
 
 func TestSaveBodyPersisted(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, store.WorkingCopy, "buf.md", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
 	ms := s.(store.MetaStorable)
 	ms.SetBody([]byte("# My Title\n\nSome content.\n"))
 
@@ -274,7 +282,7 @@ func TestSaveBodyPersisted(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	loaded, err := fs.Load(store.WorkingCopy, "buf.md")
+	loaded, err := fs.Load(testWorkingCopy, "buf.md")
 	if err != nil {
 		t.Fatalf("Load after save: %v", err)
 	}
@@ -285,7 +293,7 @@ func TestSaveBodyPersisted(t *testing.T) {
 
 func TestSaveMetaMutationPersisted(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, store.WorkingCopy, "buf.md", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
 	ms := s.(store.MetaStorable)
 	m := cloneMeta(ms.Meta())
 	m["display_name"] = "Test Note"
@@ -295,7 +303,7 @@ func TestSaveMetaMutationPersisted(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	loaded, err := fs.Load(store.WorkingCopy, "buf.md")
+	loaded, err := fs.Load(testWorkingCopy, "buf.md")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -306,7 +314,7 @@ func TestSaveMetaMutationPersisted(t *testing.T) {
 
 func TestSaveWritesVersionSnapshot(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, store.WorkingCopy, "buf.md", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
 	ms := s.(store.MetaStorable)
 	ms.SetBody([]byte("v1 content"))
 
@@ -321,7 +329,7 @@ func TestSaveWritesVersionSnapshot(t *testing.T) {
 
 func TestSaveStaleReturnsError(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, store.WorkingCopy, "buf.md", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
 	ms := s.(store.MetaStorable)
 
 	// Perform a save to advance the on-disk version.
@@ -344,19 +352,19 @@ func TestSaveStaleReturnsError(t *testing.T) {
 
 func TestDeleteRemovesFile(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, store.WorkingCopy, "buf.md", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
 
 	if err := fs.Delete(s); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, err := fs.Load(store.WorkingCopy, "buf.md"); err == nil {
+	if _, err := fs.Load(testWorkingCopy, "buf.md"); err == nil {
 		t.Error("expected error loading deleted file")
 	}
 }
 
 func TestDeleteRemovesHistory(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, store.WorkingCopy, "buf.md", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
 	ms := s.(store.MetaStorable)
 	ms.SetBody([]byte("v1"))
 	saved, _ := fs.Save(ms)
@@ -373,10 +381,10 @@ func TestDeleteRemovesHistory(t *testing.T) {
 
 func TestListReturnsCreatedStorables(t *testing.T) {
 	fs := newTestStore(t)
-	mustCreate(t, fs, store.WorkingCopy, "a.md", nil)
-	mustCreate(t, fs, store.WorkingCopy, "b.md", nil)
+	mustCreate(t, fs, testWorkingCopy, "a.md", nil)
+	mustCreate(t, fs, testWorkingCopy, "b.md", nil)
 
-	list, err := fs.List(store.WorkingCopy, "")
+	list, err := fs.List(testWorkingCopy, "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -394,10 +402,10 @@ func TestListReturnsCreatedStorables(t *testing.T) {
 
 func TestListWithPrefixFilters(t *testing.T) {
 	fs := newTestStore(t)
-	mustCreate(t, fs, store.WorkingCopy, "alpha.md", nil)
-	mustCreate(t, fs, store.WorkingCopy, "beta.md", nil)
+	mustCreate(t, fs, testWorkingCopy, "alpha.md", nil)
+	mustCreate(t, fs, testWorkingCopy, "beta.md", nil)
 
-	list, err := fs.List(store.WorkingCopy, "alpha")
+	list, err := fs.List(testWorkingCopy, "alpha")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -412,7 +420,7 @@ func TestListWithPrefixFilters(t *testing.T) {
 
 func TestRenameChangesKey(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, store.Library, "old-name.md", nil)
+	s := mustCreate(t, fs, testLibrary, "old-name.md", nil)
 
 	renamed, err := fs.Rename(s, "new-name")
 	if err != nil {
@@ -427,7 +435,7 @@ func TestRenameChangesKey(t *testing.T) {
 
 func TestRetrieveVersionRoundTrip(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, store.WorkingCopy, "buf.md", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
 	ms := s.(store.MetaStorable)
 	ms.SetBody([]byte("snapshot content"))
 
@@ -455,9 +463,9 @@ func TestRetrieveVersionRoundTrip(t *testing.T) {
 func TestFrontmatterUnknownKeysPreserved(t *testing.T) {
 	fs := newTestStore(t)
 	body := []byte("---\nuuid: x\ncustom_field: hello\n---\nbody\n")
-	mustCreate(t, fs, store.WorkingCopy, "buf.md", body)
+	mustCreate(t, fs, testWorkingCopy, "buf.md", body)
 
-	loaded, err := fs.Load(store.WorkingCopy, "buf.md")
+	loaded, err := fs.Load(testWorkingCopy, "buf.md")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -470,9 +478,9 @@ func TestFrontmatterUnknownKeysPreserved(t *testing.T) {
 func TestFrontmatterNullPreserved(t *testing.T) {
 	fs := newTestStore(t)
 	body := []byte("---\nuuid: x\nuser_intent: null\n---\n")
-	mustCreate(t, fs, store.WorkingCopy, "buf.md", body)
+	mustCreate(t, fs, testWorkingCopy, "buf.md", body)
 
-	loaded, _ := fs.Load(store.WorkingCopy, "buf.md")
+	loaded, _ := fs.Load(testWorkingCopy, "buf.md")
 	ms := loaded.(store.MetaStorable)
 	if ms.Meta()["user_intent"] != "null" {
 		t.Errorf("user_intent = %q, want null", ms.Meta()["user_intent"])
@@ -482,9 +490,9 @@ func TestFrontmatterNullPreserved(t *testing.T) {
 func TestFrontmatterTagsPreserved(t *testing.T) {
 	fs := newTestStore(t)
 	body := []byte("---\nuuid: x\ntags: []\n---\n")
-	mustCreate(t, fs, store.WorkingCopy, "buf.md", body)
+	mustCreate(t, fs, testWorkingCopy, "buf.md", body)
 
-	loaded, _ := fs.Load(store.WorkingCopy, "buf.md")
+	loaded, _ := fs.Load(testWorkingCopy, "buf.md")
 	ms := loaded.(store.MetaStorable)
 	if ms.Meta()["tags"] != "[]" {
 		t.Errorf("tags = %q, want []", ms.Meta()["tags"])

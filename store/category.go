@@ -58,28 +58,15 @@ type Category struct {
 	Key string
 	// DisplayName is the user-facing label for the category.
 	DisplayName string
+
+	//INdicator that the category is for Storeables that Contain Meta Blocks
+	MetaEnabled bool
 	// Isolation determines whether data is shared across hosts or scoped to
 	// the current host and user.
 	Isolation IsolationLevel
 }
 
-// The three categories used by Stash. Key values match the existing on-disk
-// layout so FileStore requires no translation layer.
-//
-//	Constant     Isolation  Key       FileStore resolved path
-//	──────────   ─────────  ───       ──────────────────────────────────
-//	Library      Shared     "store"   {root}/store/
-//	WorkingCopy  Isolated   "buffers" {root}/{hostname}/buffers/
-//	State        Isolated   "config"  {root}/{hostname}/config/
-//
-// Note: Library uses Key "store" rather than "notes" (as in the architecture
-// reference doc) to match the existing on-disk layout. Renaming requires a
-// storage migration — decision deferred.
-var (
-	// Library holds filed notes. Shared across all hosts.
-	Library = Category{Key: "store", DisplayName: "Library", Isolation: Shared}
-	// WorkingCopy holds in-progress buffers. Scoped to the current host.
-	WorkingCopy = Category{Key: "buffers", DisplayName: "Working Copy", Isolation: Isolated}
-	// State holds application state (settings, session). Scoped to the current host.
-	State = Category{Key: "config", DisplayName: "State", Isolation: Isolated}
-)
+// The concrete Category values (Library, WorkingCopy, State) are defined in the
+// business layer (stash package) — they are application concepts, not store
+// infrastructure. The store package only defines the Category type and the
+// IsolationLevel constants that govern how data is partitioned.

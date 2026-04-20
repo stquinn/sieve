@@ -48,9 +48,9 @@ export function LoadBuffer(arg1:string):Promise<main.BufferDTO>;
 
 export function LoadPrompt(arg1:string):Promise<string>;
 
-export function MoveNote(arg1:string,arg2:string):Promise<main.NoteDTO>;
+export function LoadSettings():Promise<stash.Settings>;
 
-export function RefileNote(arg1:main.BufferDTO):Promise<main.BufferDTO>;
+export function MoveNote(arg1:string,arg2:string):Promise<main.NoteDTO>;
 
 export function NewBuffer():Promise<main.BufferDTO>;
 
@@ -81,8 +81,6 @@ export function SaveSidebarWidth(arg1:number):Promise<void>;
 export function SearchStore(arg1:string):Promise<Array<stash.SearchResult>>;
 
 export function SelectVault():Promise<string>;
-
-export function SettingsPath():Promise<string>;
 
 export function ShowInFiles(arg1:string):Promise<void>;
 

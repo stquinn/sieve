@@ -38,7 +38,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"stash/store"
@@ -87,7 +86,7 @@ func (fs *FileStore) SetMaxVersions(n int) { fs.maxVersions = n }
 //   - .md extension (or empty key generating .md)  → MetaStorable
 //   - files under assets/ or .assets/              → AssetStorable
 //   - State category non-.md files                 → plain Storable
-func (fs *FileStore) Create(cat store.Category, key string, body []byte) (store.Storable, error) {
+func (fs *FileStore) CreateMetaText(cat store.Category, key string, body []byte) (store.MetaStorable, error) {
 	if key == "" {
 		key = fs.generateKey(cat)
 	}
@@ -97,16 +96,37 @@ func (fs *FileStore) Create(cat store.Category, key string, body []byte) (store.
 		return nil, fmt.Errorf("filestore: create dir for %s: %w", key, err)
 	}
 
-	// Route to the appropriate create helper based on key and category.
-	if isAssetKey(key) {
-		return fs.createAsset(cat, key, absPath, body)
+	return fs.createMeta(cat, key, absPath, body)
+}
+
+
+func (fs *FileStore) CreateAsset(cat store.Category, key string, body []byte) (store.AssetStorable, error) {
+	if key == "" {
+		key = fs.generateKey(cat)
 	}
-	if strings.HasSuffix(key, ".md") {
-		return fs.createMeta(cat, key, absPath, body)
+
+	absPath := fs.absPath(cat, key)
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+		return nil, fmt.Errorf("filestore: create dir for %s: %w", key, err)
+	}
+
+	return fs.createAsset(cat, key, absPath, body);
+}
+
+
+func (fs *FileStore) CreateText(cat store.Category, key string, body []byte) (store.Storable, error) {
+	if key == "" {
+		key = fs.generateKey(cat)
+	}
+
+	absPath := fs.absPath(cat, key)
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+		return nil, fmt.Errorf("filestore: create dir for %s: %w", key, err)
 	}
 	// Plain file (e.g. settings.json, session.json for State category).
 	return fs.createPlain(cat, key, absPath, body)
 }
+
 
 // Save persists the current state of s. It:
 //  1. Reads the current file to check the optimistic lock.
@@ -280,7 +300,7 @@ func (fs *FileStore) externalRef(cat store.Category, key string) string {
 
 // ── Internal create helpers ───────────────────────────────────────────────────
 
-func (fs *FileStore) createMeta(cat store.Category, key, absPath string, body []byte) (store.Storable, error) {
+func (fs *FileStore) createMeta(cat store.Category, key, absPath string, body []byte) (store.MetaStorable, error) {
 	// If body contains frontmatter, parse it; otherwise start with an empty map.
 	meta, pureBody, err := parseFrontmatter(body)
 	if err != nil {
@@ -310,7 +330,7 @@ func (fs *FileStore) createMeta(cat store.Category, key, absPath string, body []
 	}, nil
 }
 
-func (fs *FileStore) createAsset(cat store.Category, key, absPath string, body []byte) (store.Storable, error) {
+func (fs *FileStore) createAsset(cat store.Category, key, absPath string, body []byte) (store.AssetStorable, error) {
 	if err := os.WriteFile(absPath, body, 0o644); err != nil {
 		return nil, fmt.Errorf("filestore: create asset %s: %w", key, err)
 	}
@@ -454,22 +474,13 @@ func (fs *FileStore) migrateHistory(from, to store.Category, uuid string) {
 // with an empty key. The prefix depends on the category.
 func (fs *FileStore) generateKey(cat store.Category) string {
 	now := time.Now()
-	var prefix string
-	switch cat.Key {
-	case "buffers":
-		prefix = "buf"
-	case "store":
-		prefix = "note"
-	default:
-		prefix = "doc"
-	}
-	base := fmt.Sprintf("%s-%s.md", prefix, now.Format("20060102-1504"))
+	base := fmt.Sprintf("%s-%s.md", cat.Key, now.Format("20060102-1504"))
 	absPath := fs.absPath(cat, base)
 	if _, err := os.Stat(absPath); os.IsNotExist(err) {
 		return base
 	}
 	// Collision: append nanoseconds suffix.
-	return fmt.Sprintf("%s-%s-%d.md", prefix, now.Format("20060102-1504"), now.UnixNano()%10000)
+	return fmt.Sprintf("%s-%s-%d.md", cat.Key, now.Format("20060102-1504"), now.UnixNano()%10000)
 }
 
 // ── Stamp helpers ─────────────────────────────────────────────────────────────
@@ -544,15 +555,25 @@ func writeAtomic(path string, data []byte) error {
 
 // ── Directory setup ───────────────────────────────────────────────────────────
 
+// fsLibrary, fsWorkingCopy, fsState are local copies of the business-layer
+// category values used only within FileStore initialisation. The canonical
+// constants live in the stash package; they cannot be imported here without
+// creating a circular dependency (stash → store → filestore → stash).
+var (
+	fsLibrary     = store.Category{Key: "store", DisplayName: "Library", Isolation: store.Shared}
+	fsWorkingCopy = store.Category{Key: "buffers", DisplayName: "Working Copy", Isolation: store.Isolated}
+	fsState       = store.Category{Key: "config", DisplayName: "State", Isolation: store.Isolated}
+)
+
 func (fs *FileStore) ensureDirs() error {
 	dirs := []string{
-		fs.categoryDir(store.Library),
-		filepath.Join(fs.categoryDir(store.Library), ".assets"),
-		fs.historyDir(store.Library),
-		fs.categoryDir(store.WorkingCopy),
-		filepath.Join(fs.categoryDir(store.WorkingCopy), "assets"),
-		fs.historyDir(store.WorkingCopy),
-		fs.categoryDir(store.State),
+		fs.categoryDir(fsLibrary),
+		filepath.Join(fs.categoryDir(fsLibrary), ".assets"),
+		fs.historyDir(fsLibrary),
+		fs.categoryDir(fsWorkingCopy),
+		filepath.Join(fs.categoryDir(fsWorkingCopy), "assets"),
+		fs.historyDir(fsWorkingCopy),
+		fs.categoryDir(fsState),
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0o755); err != nil {

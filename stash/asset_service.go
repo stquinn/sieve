@@ -34,7 +34,7 @@ func NewAssetService(st store.Store) *AssetService {
 //	asset, err := svc.Save(store.WorkingCopy, "assets/blk-abc.png", data)
 //	editor.InsertContent("![](" + asset.ExternalRef() + ")")
 func (as *AssetService) Save(category store.Category, key string, data []byte) (*ImageAsset, error) {
-	s, err := as.st.Create(category, key, data)
+	s, err := as.st.CreateAsset(category, key, data)
 	if err != nil {
 		return nil, fmt.Errorf("asset: save %s: %w", key, err)
 	}

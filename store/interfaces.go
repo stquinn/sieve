@@ -86,11 +86,17 @@ type FolderStorable interface {
 // Versioning is automatic: every Save call writes a snapshot unconditionally.
 // No business layer involvement and no UI action required.
 type Store interface {
+
+	CreateText(category Category, key string, body []byte) (Storable, error)
+
 	// Create makes a new Storable in category with the given key and body. If
 	// key is empty the Store generates one. The Store stamps Category, derives
 	// ExternalRef, and infers Encoding for AssetStorables. Returns the created
 	// Storable.
-	Create(category Category, key string, body []byte) (Storable, error)
+	CreateMetaText(category Category, key string, body []byte) (MetaStorable, error)
+
+	
+	CreateAsset(category Category, key string, body []byte) (AssetStorable, error)
 
 	// Save persists the current state of s. The Store stamps the version and
 	// modified timestamp, writes a snapshot unconditionally, and checks the

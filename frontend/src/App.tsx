@@ -1243,15 +1243,11 @@ export default function App() {
     }
   }
 
-  // smartSave: Ctrl+S behaviour — evaluate without filing for unfiled buffers,
-  // flush only for already-filed notes. forceFile (Ctrl+Shift+Enter) still files immediately.
+  // smartSave: Ctrl+S behaviour — flush content to disk.
+  // AI evaluation is now only explicitly triggered via Ctrl+Shift+E or on filing.
   function smartSave() {
     if (!activeTab || activeTab.isEmpty) return
-    if (activeTab.status === 'filed') {
-      flush()
-      return
-    }
-    forceFile(false, /* skipFile */ true)
+    flush()
   }
 
   async function forceFile(forceEval: boolean = false, skipFile: boolean = false) {
@@ -1271,6 +1267,14 @@ export default function App() {
     if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null }
     const path = activeTab.path
     const uuid = activeTab.uuid
+
+    // If this is a primary filing action (Ctrl+Shift+Enter), mark intent as KEEP.
+    // This makes it a "Promote" action — AI cannot quash/discard it anymore.
+    if (!forceEval && !skipFile && activeTab.status === 'unfiled') {
+      const meta = metaCache.current[uuid]
+      if (meta) meta.userIntent = 'keep'
+      setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, userIntent: 'keep' } : t))
+    }
     // In markdown mode rawMd is the body; in wysiwyg get it from the editor
     const body = isMarkdownMode
       ? (mdCache.current[uuid] ?? rawMd)

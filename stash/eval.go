@@ -26,9 +26,9 @@ type FilingRecommendation struct {
 
 // EvaluateBuffer executes the AI evaluation over a document and returns the
 // unmarshaled filing recommendation. meta and body come from the Store-loaded
-// document; folders is the current list of top-level Library folder names used
-// to guide the AI's categorisation suggestions.
-func EvaluateBuffer(meta DocumentMeta, body []byte, folders []string, settings Settings) (*FilingRecommendation, error) {
+// document; folders is the current list of top-level Library folder names;
+// promptOverride is the already-loaded prompt template (empty = use default).
+func EvaluateBuffer(meta DocumentMeta, body []byte, folders []string, settings Settings, promptOverride string) (*FilingRecommendation, error) {
 	if settings.Tier() == TierDumb {
 		return nil, fmt.Errorf("AI evaluation not available in Dumb mode")
 	}
@@ -53,7 +53,7 @@ func EvaluateBuffer(meta DocumentMeta, body []byte, folders []string, settings S
 		folderList = "(none yet)"
 	}
 
-	promptTmpl, _ := GetPromptContent("file", settings)
+	promptTmpl, _ := GetPromptContent("file", promptOverride)
 	prompt := strings.Replace(promptTmpl, "{folder_list}", folderList, 1)
 	prompt = strings.Replace(prompt, "{version}", versionStr, 1)
 	prompt = strings.Replace(prompt, "{focus_count}", focusCountStr, 1)
@@ -88,13 +88,14 @@ func EvaluateBuffer(meta DocumentMeta, body []byte, folders []string, settings S
 // as a markdown string for inline insertion. noteCwd is the directory of the
 // note file — sets the CLI's working directory so relative asset paths resolve
 // correctly. Pass "" to inherit the process working directory.
-func RunExplain(content, history string, settings Settings, noteCwd string, imagePaths []string) (string, error) {
+// promptOverride is the already-loaded prompt template (empty = use default).
+func RunExplain(content, history string, settings Settings, noteCwd string, imagePaths []string, promptOverride string) (string, error) {
 	if settings.Tier() == TierDumb {
 		return "", fmt.Errorf("explain not available in dumb mode")
 	}
 
 	contentType := detectContentType(content)
-	promptTmpl, _ := GetPromptContent("explain", settings)
+	promptTmpl, _ := GetPromptContent("explain", promptOverride)
 	prompt := strings.Replace(promptTmpl, "{type}", contentType, 1)
 	prompt = strings.Replace(prompt, "{history}", history, 1)
 	prompt = strings.Replace(prompt, "{content}", content, 1)
@@ -109,13 +110,14 @@ func RunExplain(content, history string, settings Settings, noteCwd string, imag
 // RunAsk asks the CLI a question with the given content as context. history may
 // be empty for first-turn asks. noteCwd is the directory of the note/buffer
 // file — sets the CLI's working directory so relative asset paths resolve.
-func RunAsk(content, history, question string, settings Settings, noteCwd string, imagePaths []string) (string, error) {
+// promptOverride is the already-loaded prompt template (empty = use default).
+func RunAsk(content, history, question string, settings Settings, noteCwd string, imagePaths []string, promptOverride string) (string, error) {
 	if settings.Tier() == TierDumb {
 		return "", fmt.Errorf("ask not available in dumb mode")
 	}
 
 	contentType := detectContentType(content)
-	promptTmpl, _ := GetPromptContent("ask", settings)
+	promptTmpl, _ := GetPromptContent("ask", promptOverride)
 	prompt := strings.Replace(promptTmpl, "{type}", contentType, 1)
 	prompt = strings.Replace(prompt, "{content}", content, 1)
 	prompt = strings.Replace(prompt, "{history}", history, 1)
@@ -138,8 +140,9 @@ type ImageDesc struct {
 
 // DescribeImage sends an image to the configured CLI and returns alt text, a
 // summary, and a suggested filename. imagePath must be an absolute filesystem path.
-func DescribeImage(imagePath string, settings Settings) (ImageDesc, error) {
-	promptTmpl, _ := GetPromptContent("image", settings)
+// promptOverride is the already-loaded prompt template (empty = use default).
+func DescribeImage(imagePath string, settings Settings, promptOverride string) (ImageDesc, error) {
+	promptTmpl, _ := GetPromptContent("image", promptOverride)
 	prompt := strings.Replace(promptTmpl, "{image_filename}", filepath.Base(imagePath), 1)
 	cwd := filepath.Dir(imagePath)
 
@@ -158,8 +161,9 @@ func DescribeImage(imagePath string, settings Settings) (ImageDesc, error) {
 
 // RefineLanguage asks the configured CLI to identify the programming language of
 // a code snippet. Returns the lowercase language name or empty string.
-func RefineLanguage(content string, settings Settings) (string, error) {
-	promptTmpl, _ := GetPromptContent("refine", settings)
+// promptOverride is the already-loaded prompt template (empty = use default).
+func RefineLanguage(content string, settings Settings, promptOverride string) (string, error) {
+	promptTmpl, _ := GetPromptContent("refine", promptOverride)
 	prompt := strings.Replace(promptTmpl, "{content}", content, 1)
 
 	resp, err := RunCLI(settings.CLI, prompt, settings.Model, 10, "")

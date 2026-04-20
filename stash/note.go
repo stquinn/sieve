@@ -18,10 +18,12 @@ type Note struct {
 
 // newNote constructs a Note and derives the slug once from the Store key.
 func newNote(s store.MetaStorable) *Note {
-	return &Note{
+	note := &Note{
 		s:    s,
 		slug: strings.TrimSuffix(filepath.Base(s.Key()), filepath.Ext(s.Key())),
 	}
+	note.s.Meta()["status"] = "filed"
+	return note
 }
 
 // Slug returns the key-derived short identifier without extension, e.g. "my-note".

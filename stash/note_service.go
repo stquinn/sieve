@@ -22,8 +22,8 @@ func NewNoteService(st store.Store) *NoteService {
 // Load retrieves a note by its store-relative path (ExternalRef), e.g.
 // "store/my-note.md" or "store/sub/my-note.md".
 func (ns *NoteService) Load(path string) (*Note, error) {
-	key := keyFromPath(path, store.Library)
-	s, err := ns.st.Load(store.Library, key)
+	key := keyFromPath(path, Library)
+	s, err := ns.st.Load(Library, key)
 	if err != nil {
 		return nil, fmt.Errorf("note: load %s: %w", path, err)
 	}
@@ -132,7 +132,7 @@ func (ns *NoteService) Refile(n *Note) (*Note, error) {
 // List returns the Library tree as a []NoteEntry (the same projection used
 // by the sidebar). Backed by the Store — no direct filesystem access.
 func (ns *NoteService) List() ([]NoteEntry, error) {
-	storables, err := ns.st.List(store.Library, "")
+	storables, err := ns.st.List(Library, "")
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func (ns *NoteService) List() ([]NoteEntry, error) {
 
 // Count returns the number of notes in the Library.
 func (ns *NoteService) Count() int {
-	storables, err := ns.st.List(store.Library, "")
+	storables, err := ns.st.List(Library, "")
 	if err != nil {
 		return 0
 	}
@@ -162,7 +162,7 @@ func (ns *NoteService) Search(query string) ([]SearchResult, error) {
 	if query == "" {
 		return nil, nil
 	}
-	storables, err := ns.st.List(store.Library, "")
+	storables, err := ns.st.List(Library, "")
 	if err != nil {
 		return nil, err
 	}

@@ -504,7 +504,9 @@ textarea::selection {
 }
 
 .block-node.block-ref-active .code-block,
-.tiptap .code-block.block-ref-active {
+.tiptap .code-block.block-ref-active,
+.block-node.block-ref-active table,
+.tiptap table.block-ref-active {
   background: color-mix(in srgb, var(--theme-accentPrimary) 10%, var(--theme-bgDark));
   border-color: color-mix(in srgb, var(--theme-accentPrimary) 30%, var(--theme-border));
   box-shadow: 0 0 0 2px var(--theme-accentPrimary); 

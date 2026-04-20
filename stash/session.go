@@ -2,7 +2,6 @@ package stash
 
 import (
 	"encoding/json"
-	"os"
 )
 
 // Tab represents one open tab in a session.
@@ -38,12 +37,12 @@ type Session struct {
 	OpenFolders   []string `json:"openFolders,omitempty"`
 }
 
-// LoadSession reads session.json at path. Missing or corrupt file returns an
-// empty session — caller is responsible for opening a default tab.
-func LoadSession(path string) Session {
+// ParseSession decodes session JSON bytes into a Session.
+// Nil/empty data or a corrupt file returns a sensible default — caller is
+// responsible for opening a default tab.
+func ParseSession(data []byte) Session {
 	s := Session{ShowSidebar: true, ShowPrompts: true, PromptsHeight: 180}
-	data, err := os.ReadFile(path)
-	if err != nil {
+	if len(data) == 0 {
 		return s
 	}
 	if err := json.Unmarshal(data, &s); err != nil {
@@ -52,11 +51,7 @@ func LoadSession(path string) Session {
 	return s
 }
 
-// Save writes the session to disk, creating or replacing the file.
-func (s Session) Save(path string) error {
-	data, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o644)
+// Marshal serialises the session to indented JSON.
+func (s Session) Marshal() ([]byte, error) {
+	return json.MarshalIndent(s, "", "  ")
 }

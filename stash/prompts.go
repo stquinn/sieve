@@ -1,8 +1,6 @@
 package stash
 
-import (
-	"os"
-)
+import "fmt"
 
 // PromptEntry represents a prompt available in the system.
 type PromptEntry struct {
@@ -53,7 +51,7 @@ explaining which signals most influenced the outcome.
 
 Constraints for the justification:
 - One sentence only.
-- Descriptive, not evaluative (do NOT use words like “important”, “valuable”, “high quality”).
+- Descriptive, not evaluative (do NOT use words like "important", "valuable", "high quality").
 - Refer only to observed signals (e.g. focus signal, iteration, refinement, explicit user intent, convergence).
 - Do NOT restate the content.
 - Do NOT explain the rules themselves.
@@ -105,11 +103,11 @@ Use the supplied conversation history as context, but focus your explanation on 
 Respond in plain markdown suitable for inline display.
 Do not repeat the content. Just explain it.
 
-File Access Scope: 
+File Access Scope:
 You are  authorized to access and process the specific files or paths named within the user's prompt. Do not perform exploratory file system operations, recursive directory walks, or search for "relevant" files on the local disk unless they are specifically targeted by name.
 Do not draw any conclusion based on file names or paths.  Use only content of referenced file or this prompt to derive meaning.
 
-Tool Usage: 
+Tool Usage:
 You are encouraged to use available tools/MCP servers to fulfill the request, provided they do not involve unauthorized local disk scanning.
 
 Content type: {type}
@@ -139,11 +137,11 @@ Given the following content and conversation history,
 answer the user's question clearly and concisely.
 Respond in plain markdown suitable for inline display.
 
-File Access Scope: 
+File Access Scope:
 You are  authorized to access and process the specific files or paths named within the user's prompt. Do not perform exploratory file system operations, recursive directory walks, or search for "relevant" files on the local disk unless they are specifically targeted by name.
 Do not draw any conclusion based on file names or paths.  Use only content of referenced file or this prompt to derive meaning.
 
-Tool Usage: 
+Tool Usage:
 You are encouraged to use available tools/MCP servers to fulfill the request, provided they do not involve unauthorized local disk scanning.
 
 Content type: {type}
@@ -175,39 +173,45 @@ If you cannot identify a specific language confidently, reply with exactly: text
 Code:
 {content}
 `
-// GetPromptContent returns the content of the requested prompt.
-// It checks settings for an override path first, then falls back to baked-in defaults.
-func GetPromptContent(name string, settings Settings) (string, error) {
-	var path string
-	var defaultContent string
 
+// GetPromptContent returns the prompt template for name. If override is
+// non-empty it is used as-is (the caller already loaded the override file);
+// otherwise the baked-in default is returned.
+func GetPromptContent(name string, override string) (string, error) {
+	if override != "" {
+		return override, nil
+	}
 	switch name {
 	case "file":
-		path = settings.Prompts.File
-		defaultContent = DefaultFilingPrompt
+		return DefaultFilingPrompt, nil
 	case "explain":
-		path = settings.Prompts.Explain
-		defaultContent = DefaultExplainPrompt
+		return DefaultExplainPrompt, nil
 	case "ask":
-		path = settings.Prompts.Ask
-		defaultContent = DefaultAskPrompt
+		return DefaultAskPrompt, nil
 	case "image":
-		defaultContent = DefaultImagePrompt
+		return DefaultImagePrompt, nil
 	case "refine":
-		path = settings.Prompts.Refine
-		defaultContent = DefaultRefinePrompt
+		return DefaultRefinePrompt, nil
 	default:
-		return "", os.ErrNotExist
+		return "", fmt.Errorf("unknown prompt: %s", name)
 	}
+}
 
-	if path != "" {
-		// Try reading override from disk
-		data, err := os.ReadFile(path)
-		if err == nil {
-			return string(data), nil
-		}
-		// If path is set but file is missing, we fall back to default silently per spec
+// PromptOverridePath returns the configured override file path for name from
+// settings (empty string if none configured). The caller is responsible for
+// reading the file and passing the content to GetPromptContent.
+func PromptOverridePath(name string, s Settings) string {
+	switch name {
+	case "file":
+		return s.Prompts.File
+	case "explain":
+		return s.Prompts.Explain
+	case "ask":
+		return s.Prompts.Ask
+	case "refine":
+		return s.Prompts.Refine
+	case "image":
+		return s.Prompts.Image
 	}
-
-	return defaultContent, nil
+	return ""
 }

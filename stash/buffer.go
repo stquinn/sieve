@@ -20,10 +20,12 @@ type Buffer struct {
 
 // newBuffer constructs a Buffer and derives the slug once from the Store key.
 func newBuffer(s store.MetaStorable) *Buffer {
-	return &Buffer{
+	buffer := &Buffer{
 		s:    s,
 		slug: strings.TrimSuffix(filepath.Base(s.Key()), filepath.Ext(s.Key())),
 	}
+	buffer.s.Meta()["status"] = "unfiled"
+	return buffer
 }
 
 // Slug returns the key-derived short identifier without extension, e.g. "buf-20240102-1504".
