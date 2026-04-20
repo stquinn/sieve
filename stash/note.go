@@ -12,21 +12,21 @@ import (
 // The business type (Note vs Buffer) is the authoritative signal for filed
 // status; the status frontmatter field is a pass-through for external editors.
 type Note struct {
-	s        store.MetaStorable
-	filename string // base filename without extension, e.g. "my-note"
+	s    store.MetaStorable
+	slug string // key-derived short identifier, e.g. "my-note"
 }
 
-// newNote constructs a Note and parses the filename once from the Store key.
+// newNote constructs a Note and derives the slug once from the Store key.
 func newNote(s store.MetaStorable) *Note {
 	return &Note{
-		s:        s,
-		filename: strings.TrimSuffix(filepath.Base(s.Key()), filepath.Ext(s.Key())),
+		s:    s,
+		slug: strings.TrimSuffix(filepath.Base(s.Key()), filepath.Ext(s.Key())),
 	}
 }
 
-// Filename returns the base filename without extension, e.g. "my-note".
-// Parsed once at construction — use for tab labels and sidebar display.
-func (n *Note) Filename() string { return n.filename }
+// Slug returns the key-derived short identifier without extension, e.g. "my-note".
+// Derived once at construction — use for tab labels and sidebar display.
+func (n *Note) Slug() string { return n.slug }
 
 // UUID returns the frontmatter uuid field, which is the stable identity of
 // this document across renames, moves, and history. Falls back to the Store

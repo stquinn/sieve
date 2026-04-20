@@ -11,8 +11,8 @@ import Table from '@tiptap/extension-table'
 import TableRow from '@tiptap/extension-table-row'
 import TableHeader from '@tiptap/extension-table-header'
 import TableCell from '@tiptap/extension-table-cell'
-import { DescribeImage, DiscardBuffer, FileBuffer, FileBufferWithName, GetNotes, GetSession, GetStoreInfo, LoadBuffer, NewBuffer, RefineLanguage, SaveBuffer, SaveBufferAsset, SaveNoteAsset, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, ShowInFiles, EvaluateBuffer, SaveVersionSnapshot, LoadPrompt, SavePrompt, GetPrompts, TogglePrompts, DownloadImageAsset } from '../wailsjs/go/main/App'
-import { stash } from '../wailsjs/go/models'
+import { DescribeImage, DiscardBuffer, FileBuffer, FileBufferWithName, GetNotes, GetSession, GetStoreInfo, LoadBuffer, NewBuffer, RefineLanguage, SaveBuffer, SaveAsset, DownloadAsset, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, ShowInFiles, EvaluateBuffer, LoadPrompt, SavePrompt, GetPrompts, TogglePrompts } from '../wailsjs/go/main/App'
+import { stash, main } from '../wailsjs/go/models'
 import { BrowserOpenURL, EventsOn } from '../wailsjs/runtime/runtime'
 import { CodeBlockWithAttrs } from './extensions/CodeBlockWithAttrs'
 import { ImageWithAttrs } from './extensions/ImageWithAttrs'
@@ -32,8 +32,7 @@ import { TabState } from './types'
 import { ConfirmModal, PromptModal } from './components/Modal'
 import { ChevronUp, ChevronDown, X } from 'lucide-react'
 import { Search } from './extensions/Search'
-import { splitFrontmatter } from './lib/markdown'
-import { assetMarkdownPath, versionFromFm, bumpFm, parseMeta, applyFilingRec, setYamlField, getAncestorPaths } from './lib/fmUtils'
+import { assetMarkdownPath, applyFilingRecToMeta, getAncestorPaths } from './lib/fmUtils'
 import { EditorStats } from './components/EditorStats'
 import { useNoteOperations } from './hooks/useNoteOperations'
 import { useAiGestures } from './hooks/useAiGestures'
@@ -90,8 +89,9 @@ export default function App() {
   const focusTimer                = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Caches keyed by UUID — survive tab switches without triggering re-renders
-  const fmCache  = useRef<Record<string, string>>({})  // frontmatter per uuid
-  const mdCache  = useRef<Record<string, string>>({})  // raw markdown per uuid (when in markdown mode)
+  const metaCache    = useRef<Record<string, main.DocumentMetaDTO>>({})  // meta DTO per uuid
+  const versionsCache = useRef<Record<string, main.VersionRefDTO[]>>({})  // version list per uuid
+  const mdCache      = useRef<Record<string, string>>({})  // raw markdown per uuid (when in markdown mode)
   const savedBodyCache = useRef<Record<string, string>>({}) // clean WYSIWYG body per uuid
   // UUID → path index — populated whenever a tab is loaded; used by async AI callbacks
   // to resolve a document's current file path from its permanent UUID identity.
@@ -143,12 +143,9 @@ export default function App() {
   tierRef.current      = tier
   ;(window as any).__stashActiveTabPath = activeTab?.path ?? ''
 
-  // Extract user_suggested_name from frontmatter string for timeout popup pre-fill.
-  function extractSuggestedName(fm: string): string {
-    const match = fm.match(/^user_suggested_name:\s*(.+)/m)
-    const val = match?.[1]?.trim()
-    if (val && val !== 'null') return val
-    return ''
+  // Extract user_suggested_name from the meta cache for timeout popup pre-fill.
+  function extractSuggestedName(uuid: string): string {
+    return metaCache.current[uuid]?.userSuggestedName ?? ''
   }
 
   // Remove a tab by path using the latest tabsRef state (safe to call from async callbacks).
@@ -159,14 +156,17 @@ export default function App() {
 
     const closingUuid = currentTabs[idx].uuid
     if (closingUuid) {
-      delete fmCache.current[closingUuid]
+      delete metaCache.current[closingUuid]
+      delete versionsCache.current[closingUuid]
       delete mdCache.current[closingUuid]
       delete savedBodyCache.current[closingUuid]
     }
 
     if (currentTabs.length === 1) {
-      NewBuffer().then(({ path: newPath, uuid }) => {
-        const newTab: TabState = { uuid, path: newPath, scroll: 0, active: true, mode: 'wysiwyg', status: 'unfiled', userIntent: null, isEmpty: true, isModified: false }
+      NewBuffer().then(dto => {
+        metaCache.current[dto.uuid] = dto.meta
+        savedBodyCache.current[dto.uuid] = dto.body
+        const newTab: TabState = { uuid: dto.uuid, path: dto.path, scroll: 0, active: true, mode: 'wysiwyg', status: 'unfiled', userIntent: null, isEmpty: true, isModified: false, displayName: dto.meta.displayName }
         setTabs([newTab])
         setActiveIdx(0)
         H.current.loadTab(newTab)
@@ -188,9 +188,9 @@ export default function App() {
   function fireSmartClose(path: string, suggestedName: string, forceKeep = false) {
     console.log('[stash:ai] smartClose: closing tab immediately, eval in background', { path, forceKeep })
     // Capture UUID and content before finishCloseTab wipes the caches
-    const tabUuid = tabsRef.current.find(t => t.path === path)?.uuid ?? ''
-    const savedFm   = fmCache.current[tabUuid] ?? ''
-    const savedBody = savedBodyCache.current[tabUuid] ?? ''
+    const tabUuid    = tabsRef.current.find(t => t.path === path)?.uuid ?? ''
+    const savedMeta  = metaCache.current[tabUuid]
+    const savedBody  = savedBodyCache.current[tabUuid] ?? ''
 
     // Close tab immediately — user doesn't wait
     finishCloseTab(path)
@@ -199,30 +199,24 @@ export default function App() {
     ;(async () => {
       try {
         const rec = await EvaluateBuffer(path)
-        const userIntentMatch = savedFm.match(/^user_intent:\s*(keep|trash)/m)
-        const userIntent = userIntentMatch ? userIntentMatch[1] : null
-        
+        const userIntent = savedMeta?.userIntent ?? null
         const shouldKeep = forceKeep || userIntent === 'keep' || (userIntent !== 'trash' && rec.keep)
         if (shouldKeep) {
           const info = await GetStoreInfo()
-          const fm = applyFilingRec(savedFm, rec, info.cli)
-          await SaveBuffer(path, fm + savedBody)
-          const result = await FileBuffer(path)
-          const { newPath, content: filedContent } = result
-          const { frontmatter: filedFm, body: filedBody } = splitFrontmatter(filedContent)
-          
-          fmCache.current[tabUuid] = filedFm
-          savedBodyCache.current[tabUuid] = filedBody
-          uuidToPath.current.set(tabUuid, newPath)
-          
-          console.log('[stash:ai] smartClose: filed', { path, newPath })
+          const updatedMeta = applyFilingRecToMeta(savedMeta ?? {} as any, rec, info.cli)
+          const dto = { uuid: tabUuid, path, slug: '', body: savedBody, meta: updatedMeta, versions: [] }
+          await SaveBuffer(dto as any)
+          const note = await FileBuffer(path)
+          metaCache.current[tabUuid] = note.meta
+          savedBodyCache.current[tabUuid] = note.body
+          uuidToPath.current.set(tabUuid, note.path)
+          console.log('[stash:ai] smartClose: filed', { path, newPath: note.path })
         } else {
           await DiscardBuffer(path)
           console.log('[stash:ai] smartClose: discarded', { path })
         }
       } catch(err) {
         if (forceKeep) {
-          // user said keep — file with suggestedName even without AI naming
           console.warn('[stash:ai] smartClose: eval timed out, filing with suggestedName', err)
           if (suggestedName) {
             FileBufferWithName(path, suggestedName).catch(console.error)
@@ -230,8 +224,6 @@ export default function App() {
             FileBuffer(path).catch(console.error)
           }
         } else {
-          // Timeout without explicit keep: leave file on disk as unfiled and restore to session
-          // so it re-opens on next launch rather than being silently orphaned.
           console.warn('[stash:ai] smartClose: eval timed out, restoring to tabs for next session', { path })
           setTabs(prev => {
             if (prev.some(t => t.path === path)) return prev
@@ -317,10 +309,8 @@ export default function App() {
             const tab = capturedTab
             if (!tab) { console.error('[stash] paste: no active tab'); return }
             try {
-              const isBuffer = tab.status !== 'filed'
-              const storeRelPath = isBuffer
-                ? await SaveBufferAsset(id, dataUrl)
-                : await SaveNoteAsset(tab.path, id, dataUrl)
+              const asset = await SaveAsset(tab.path, id, dataUrl)
+              const storeRelPath = asset.externalRef
 
               const mdPath = assetMarkdownPath(tab.path, storeRelPath)
               console.debug('[stash] paste: image saved', { id, storeRelPath, mdPath })
@@ -407,8 +397,9 @@ export default function App() {
               const id = 'blk-' + Math.random().toString(16).substring(2, 6)
               console.log('[stash] paste: downloading external image via backend', { id, imgSrc })
               
-              DownloadImageAsset(imgSrc, capturedTab?.path ?? 'new', id)
-                .then((storeRelPath: string) => {
+              DownloadAsset(capturedTab?.path ?? 'new', imgSrc, id)
+                .then(asset => {
+                  const storeRelPath = asset.externalRef
                   const mdPath = assetMarkdownPath(capturedTab?.path ?? 'new', storeRelPath)
                   console.debug('[stash] paste: external image downloaded', { id, storeRelPath, mdPath })
                   queueMicrotask(() => {
@@ -595,8 +586,8 @@ export default function App() {
       if (!ready || !activeTab || isMarkdownMode) return
       const uuid = activeTab.uuid  // permanent file identity — captured at update time
       const path = activeTab.path
-      // Guard: if fmCache hasn't been populated yet, loadTab hasn't resolved — skip
-      if (fmCache.current[uuid] === undefined) return
+      // Guard: if metaCache hasn't been populated yet, loadTab hasn't resolved — skip
+      if (!metaCache.current[uuid]) return
 
       const body = editor.storage.markdown.getMarkdown()
       const isMod = (body !== savedBodyCache.current[uuid])
@@ -618,12 +609,8 @@ export default function App() {
         // uuid captured at update time — never re-read activeTab here.
         const body = editor.storage.markdown.getMarkdown()
         if (body === savedBodyCache.current[uuid]) return
-        const fm = bumpFm(fmCache.current[uuid] ?? '')
-        fmCache.current[uuid] = fm
         savedBodyCache.current[uuid] = body
-        saveBufferSafe(uuid, fm + body)
-        const version = versionFromFm(fm)
-        SaveVersionSnapshot(uuid, version, fm + body).catch(console.error)
+        saveBufferSafe(uuid)
       }, autosaveMs.current)
     },
   })
@@ -639,7 +626,6 @@ export default function App() {
       const name = tab.path.split(':')[1]
       LoadPrompt(name).then((content: string) => {
         const uuid = `prompt-${name}`
-        fmCache.current[uuid] = '' 
         setTabs(prev => prev.map(t => t.path === tab.path ? { ...t, status: 'filed', uuid: uuid, isVirtual: tab.isVirtual } : t))
         setRawMd(content)
         mdCache.current[uuid] = content
@@ -649,27 +635,29 @@ export default function App() {
       return
     }
 
-    LoadBuffer(tab.path).then(content => {
-      let { frontmatter, body } = splitFrontmatter(content)
+    LoadBuffer(tab.path).then(dto => {
+      const { uuid: fileUuid, body, meta } = dto
 
-      // Ensure the file has a persistent UUID in frontmatter.
-      // This UUID is the document's permanent identity — used to route async
-      // AI callbacks back to the correct tab or file, surviving renames/moves.
-      let fileUuid = frontmatter.match(/^uuid:\s*(\S+)/m)?.[1]?.trim() ?? ''
-      if (!fileUuid) {
-        fileUuid = crypto.randomUUID()
-        frontmatter = setYamlField(frontmatter, 'uuid', fileUuid)
-        SaveBuffer(tab.path, frontmatter + body).catch(console.error)
-      }
-
-      fmCache.current[fileUuid] = frontmatter
+      metaCache.current[fileUuid] = meta
+      versionsCache.current[fileUuid] = dto.versions ?? []
+      savedBodyCache.current[fileUuid] = body
       uuidToPath.current.set(fileUuid, tab.path)
-      const meta = parseMeta(frontmatter, body)
-      setTabs(prev => prev.map(t => t.path === tab.path ? { ...t, ...meta, uuid: fileUuid } : t))
-      console.debug('[stash] loadTab', { path: tab.path, mode: tab.mode, scroll: tab.scroll })
+
+      const tabMeta = {
+        uuid:         fileUuid,
+        status:       meta.status as TabState['status'],
+        userIntent:   (meta.userIntent as TabState['userIntent']) ?? null,
+        displayName:  meta.displayName || undefined,
+        isEmpty:      body.trim().length === 0,
+        isEvaluating: meta.aiEval === 'evaluating',
+        scroll:       meta.scroll ?? 0,
+      }
+      setTabs(prev => prev.map(t => t.path === tab.path ? { ...t, ...tabMeta } : t))
+      console.debug('[stash] loadTab', { path: tab.path, mode: tab.mode })
 
       if (tab.mode === 'markdown') {
-        const cached = mdCache.current[fileUuid] ?? content
+        // Markdown mode shows body only — no frontmatter in the textarea
+        const cached = mdCache.current[fileUuid] ?? body
         mdCache.current[fileUuid] = cached
         setRawMd(cached)
       } else {
@@ -677,18 +665,15 @@ export default function App() {
           editor.commands.setContent(body)
         })
       }
-      savedBodyCache.current[fileUuid] = body
 
+      const scroll = meta.scroll ?? 0
       const applyScroll = () => {
         const el = document.getElementById('app')
         const ta = document.querySelector('.markdown-raw') as HTMLTextAreaElement
-        let fmPixelHeight = 0
         if (tab.mode === 'markdown') {
-          const fmStr = fmCache.current[fileUuid] ?? ''
-          fmPixelHeight = fmStr.split('\n').length * 24.5
-          if (ta) ta.scrollTop = (meta.scroll ?? 0) + fmPixelHeight
+          if (ta) ta.scrollTop = scroll
         } else {
-          if (el) el.scrollTop = (meta.scroll ?? 0)
+          if (el) el.scrollTop = scroll
         }
       }
 
@@ -837,7 +822,7 @@ export default function App() {
   // uuid is the permanent file identity (from frontmatter).
   // We resolve the current path from open tabs at call time — so renames are
   // followed automatically and we can never write to a closed or wrong document.
-  function saveBufferSafe(uuid: string, content: string) {
+  function saveBufferSafe(uuid: string) {
     const tab = tabsRef.current.find(t => t.uuid === uuid)
     if (!tab) {
       console.warn('[stash] saveBufferSafe: abort — UUID not in open tabs', uuid)
@@ -845,28 +830,31 @@ export default function App() {
     }
     if (tab.path.startsWith('prompt:')) {
       const name = tab.path.split(':').pop()!
+      const content = savedBodyCache.current[uuid] ?? ''
       SavePrompt(name, content).then(async () => {
          const p = await GetPrompts()
          setPrompts(p || [])
-         // Clear dirty flag for the prompt tab
          setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isModified: false } : t))
       }).catch(console.error)
       return
     }
-    SaveBuffer(tab.path, content).then(() => {
-      // Single authoritative point to clear 'dirty' flag on successful save
+    const meta = metaCache.current[uuid]
+    const body = savedBodyCache.current[uuid] ?? ''
+    if (!meta) {
+      console.warn('[stash] saveBufferSafe: no meta in cache for', uuid)
+      return
+    }
+    const dto = { uuid, path: tab.path, slug: tab.path.split('/').pop()?.replace('.md','') ?? '', body, meta, versions: [] }
+    SaveBuffer(dto as any).then(saved => {
+      // Update cache with Store-bumped version/modified
+      metaCache.current[uuid] = saved.meta
       setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isModified: false } : t))
     }).catch(console.error)
   }
 
   function savePromptSafe(name: string, content: string) {
-    SavePrompt(name, content).then((path: string) => {
-      // Update the tab path to the real file path so it's no longer virtual
-      // Wait, SPEC says prompts in sidebar always show as virtual if not on disk.
-      // Actually, if it's open, we keep the "prompt:name" path for simplicity
-      // and just ensure SavePrompt handles it.
+    SavePrompt(name, content).then(() => {
       const uuid = `prompt-${name}`
-      fmCache.current[uuid] = ''
       savedBodyCache.current[uuid] = content
       setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isModified: false } : t))
     }).catch(console.error)
@@ -876,51 +864,32 @@ export default function App() {
 
   function flush() {
     if (!activeTab) return
-    const uuid = activeTab.uuid  // permanent file identity
-    const path = activeTab.path
-    // Guard: fmCache not populated yet means loadTab hasn't resolved — skip.
-    if (fmCache.current[uuid] === undefined) return
+    const uuid = activeTab.uuid
+    // Guard: metaCache not populated yet means loadTab hasn't resolved — skip.
+    if (metaCache.current[uuid] === undefined) return
     if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null }
 
-    let fm = fmCache.current[uuid] ?? ''
     const currentScrollValue = currentScroll()
-    const savedScrollStr = fm.match(/^scroll:\s*(\d+)/m)?.[1]
-    const savedScroll = savedScrollStr ? parseInt(savedScrollStr, 10) : 0
-    let fmHasChanged = false
-    
-    if (currentScrollValue !== savedScroll) {
-      fm = setYamlField(fm, 'scroll', currentScrollValue)
-      fmCache.current[uuid] = fm
-      fmHasChanged = true
+    const savedScroll = metaCache.current[uuid]?.scroll ?? 0
+    let scrollChanged = currentScrollValue !== savedScroll
+
+    if (scrollChanged) {
+      metaCache.current[uuid] = { ...metaCache.current[uuid], scroll: currentScrollValue }
     }
 
     if (isMarkdownMode) {
-      if (rawMd === mdCache.current[uuid] && !fmHasChanged) return
-      // Raw mode shows full file — save as-is, but re-sync frontmatter cache
-      let { frontmatter, body } = splitFrontmatter(rawMd)
-      if (frontmatter && fmHasChanged) {
-        frontmatter = setYamlField(frontmatter, 'scroll', currentScrollValue)
-      }
-      const fullContent = frontmatter ? frontmatter + body : rawMd
-      if (frontmatter) fmCache.current[uuid] = frontmatter
-      saveBufferSafe(uuid, fullContent)
-      mdCache.current[uuid] = fullContent
+      // Markdown mode shows body only — rawMd IS the body
+      const bodyChanged = rawMd !== mdCache.current[uuid]
+      if (!bodyChanged && !scrollChanged) return
+      savedBodyCache.current[uuid] = rawMd
+      mdCache.current[uuid] = rawMd
+      saveBufferSafe(uuid)
     } else {
       const body = editor?.storage.markdown.getMarkdown() ?? ''
       const bodyChanged = body !== savedBodyCache.current[uuid]
-      if (!bodyChanged && !fmHasChanged) return
-      
-      let fmToSave = fm
-      if (bodyChanged) {
-        fmToSave = bumpFm(fmToSave)
-      }
-      fmCache.current[uuid] = fmToSave
+      if (!bodyChanged && !scrollChanged) return
       savedBodyCache.current[uuid] = body
-      saveBufferSafe(uuid, fmToSave + body)
-      if (bodyChanged) {
-        const version = versionFromFm(fmToSave)
-        SaveVersionSnapshot(uuid, version, fmToSave + body).catch(console.error)
-      }
+      saveBufferSafe(uuid)
     }
   }
 
@@ -930,10 +899,7 @@ export default function App() {
     const activeTabObj = tabsRef.current[activeIdxRef.current]
     if (activeTabObj?.mode === 'markdown') {
       const ta = document.querySelector('.markdown-raw') as HTMLTextAreaElement
-      const unadjusted = ta?.scrollTop ?? 0
-      const fmStr = fmCache.current[activeTabObj.uuid ?? ''] ?? ''
-      const fmLineCount = fmStr.split('\n').length
-      return Math.max(0, unadjusted - (fmLineCount * 24.5))
+      return ta?.scrollTop ?? 0
     }
     return document.getElementById('app')?.scrollTop ?? 0
   }
@@ -955,10 +921,10 @@ export default function App() {
     if (!storeInfo?.root) return
     if (isMarkdownMode && activeTab) mdCache.current[activeTab.uuid] = rawMd
     flush()
-    NewBuffer().then(({ path, uuid }) => {
-      const tab: TabState = { uuid, path, scroll: 0, active: true, mode: 'wysiwyg', status: 'unfiled', userIntent: null, isEmpty: true, isModified: false }
-      // tabsRef.current is always current (updated every render); use it to get
-      // the correct new index before the setTabs updater has a chance to run.
+    NewBuffer().then(dto => {
+      metaCache.current[dto.uuid] = dto.meta
+      savedBodyCache.current[dto.uuid] = dto.body
+      const tab: TabState = { uuid: dto.uuid, path: dto.path, scroll: 0, active: true, mode: 'wysiwyg', status: 'unfiled', userIntent: null, isEmpty: true, isModified: false, displayName: dto.meta.displayName }
       const newIdx = tabsRef.current.length
       setTabs(prev => [...prev, tab])
       setActiveIdx(newIdx)
@@ -999,29 +965,26 @@ export default function App() {
       } else if (tab.userIntent === 'keep') {
         // Save latest content first, then fire AI in background (always files — AI vote skipped).
         const body = (capturedMarkdownMode && tab.path === capturedActivePath)
-            ? splitFrontmatter(capturedRawMd).body
+            ? capturedRawMd
             : editor?.storage.markdown.getMarkdown() ?? ''
 
         if (body !== savedBodyCache.current[tab.uuid]) {
-            const fm = bumpFm(fmCache.current[tab.uuid] ?? '')
-            fmCache.current[tab.uuid] = fm
             savedBodyCache.current[tab.uuid] = body
-            await SaveBuffer(path, fm + body).catch(console.error)
-            SaveVersionSnapshot(tab.uuid, versionFromFm(fm), fm + body).catch(console.error)
+            saveBufferSafe(tab.uuid)
         }
-        const suggested = extractSuggestedName(fmCache.current[tab.uuid] ?? '')
+        const suggested = extractSuggestedName(tab.uuid)
         fireSmartClose(path, suggested, true)
         return  // finishCloseTab called by fireSmartClose
       } else if (tier === 'smart') {
         // Smart mode, user_intent: null, not empty — evaluate in background then file/discard.
-        const suggested = extractSuggestedName(fmCache.current[tab.uuid] ?? '')
+        const suggested = extractSuggestedName(tab.uuid)
         fireSmartClose(path, suggested)
         return  // finishCloseTab called by fireSmartClose when done
       }
     }
 
     if (tab.uuid) {
-      delete fmCache.current[tab.uuid]
+      delete metaCache.current[tab.uuid]
       delete mdCache.current[tab.uuid]
       delete savedBodyCache.current[tab.uuid]
     }
@@ -1030,7 +993,9 @@ export default function App() {
       // Always keep at least one tab — open a fresh buffer
       const result = await NewBuffer().catch(() => null)
       if (!result) return
-      const newTab: TabState = { uuid: result.uuid, path: result.path, scroll: 0, active: true, mode: 'wysiwyg', status: 'unfiled', userIntent: null, isEmpty: true, isModified: false }
+      metaCache.current[result.uuid] = result.meta
+      savedBodyCache.current[result.uuid] = result.body
+      const newTab: TabState = { uuid: result.uuid, path: result.path, scroll: 0, active: true, mode: 'wysiwyg', status: 'unfiled', userIntent: null, isEmpty: true, isModified: false, displayName: result.meta.displayName }
       setTabs([newTab])
       setActiveIdx(0)
       H.current.loadTab(newTab)
@@ -1067,13 +1032,13 @@ export default function App() {
   function setTabIntent(idx: number, intent: 'keep' | 'trash' | null) {
     const tab = tabs[idx]
     if (!tab) return
-    const fm = fmCache.current[tab.uuid] ?? ''
-    const updatedFm = setYamlField(fm, 'user_intent', intent)
-    fmCache.current[tab.uuid] = updatedFm
+    const meta = metaCache.current[tab.uuid]
+    if (meta) {
+      metaCache.current[tab.uuid] = { ...meta, userIntent: intent ?? undefined }
+    }
     setTabs(prev => prev.map((t, i) => i === idx ? { ...t, userIntent: intent } : t))
-    // Persist to disk using latest saved body (don't bump version — not a content edit)
-    const body = savedBodyCache.current[tab.uuid] ?? ''
-    SaveBuffer(tab.path, updatedFm + body).catch(console.error)
+    // Persist to disk without bumping version — not a content edit
+    saveBufferSafe(tab.uuid)
     console.debug('[stash] user_intent set', { path: tab.path, intent })
   }
 
@@ -1098,38 +1063,37 @@ export default function App() {
                await DiscardBuffer(path).catch(console.error)
             } else if (tab.userIntent === 'keep') {
                const body = (capturedMarkdownMode && tab.path === capturedActivePath)
-                  ? splitFrontmatter(capturedRawMd).body
+                  ? capturedRawMd
                   : (tab.path === capturedActivePath ? editor?.storage.markdown.getMarkdown() : savedBodyCache.current[tab.uuid]) ?? ''
 
                if (body !== savedBodyCache.current[tab.uuid]) {
-                 const fm = bumpFm(fmCache.current[tab.uuid] ?? '')
-                 fmCache.current[tab.uuid] = fm
                  savedBodyCache.current[tab.uuid] = body
-                 await SaveBuffer(path, fm + body).catch(console.error)
-                 SaveVersionSnapshot(tab.uuid, versionFromFm(fm), fm + body).catch(console.error)
+                 saveBufferSafe(tab.uuid)
                }
                FileBuffer(path).catch(console.error)
             }
             // If Smart mode and userIntent === null, defer (leave on disk)
         }
         if (tab.uuid) {
-          delete fmCache.current[tab.uuid]
+          delete metaCache.current[tab.uuid]
           delete mdCache.current[tab.uuid]
           delete savedBodyCache.current[tab.uuid]
         }
     })
-    
+
     await Promise.all(promises)
-    
+
     for (const idx of sorted) {
         finalTabs.splice(idx, 1)
         if (currentActiveIdx >= idx && currentActiveIdx > 0) currentActiveIdx--
     }
-    
+
     if (finalTabs.length === 0) {
         const result = await NewBuffer().catch(() => null)
         if (result) {
-           const newTab: TabState = { uuid: result.uuid, path: result.path, scroll: 0, active: true, mode: 'wysiwyg', status: 'unfiled', userIntent: null, isEmpty: true, isModified: false }
+           metaCache.current[result.uuid] = result.meta
+           savedBodyCache.current[result.uuid] = result.body
+           const newTab: TabState = { uuid: result.uuid, path: result.path, scroll: 0, active: true, mode: 'wysiwyg', status: 'unfiled', userIntent: null, isEmpty: true, isModified: false, displayName: result.meta.displayName }
            finalTabs = [newTab]
            currentActiveIdx = 0
            H.current.loadTab(newTab)
@@ -1167,13 +1131,16 @@ export default function App() {
     setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isEvaluating: true, aiJobName: 'Evaluating' } : t))
 
     // Write ai_eval:evaluating to disk so the state survives a reload
-    const currentFmStart = fmCache.current[uuid] ?? ''
-    let evalFm = setYamlField(currentFmStart, 'ai_eval', 'evaluating')
-    fmCache.current[uuid] = evalFm
+    const metaStart = metaCache.current[uuid] ?? {} as main.DocumentMetaDTO
+    const evalMeta = { ...metaStart, aiEval: 'evaluating' }
+    metaCache.current[uuid] = evalMeta
     const body0 = savedBodyCache.current[uuid] ?? ''
     const path0 = resolvePathByUuid(uuid) ?? initialPath
-    await SaveBuffer(path0, evalFm + body0).catch(console.error)
-    setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, ...parseMeta(evalFm, body0) } : t))
+    {
+      const dto = { uuid, path: path0, slug: '', body: body0, meta: evalMeta, versions: [] }
+      await SaveBuffer(dto as any).catch(console.error)
+    }
+    setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isEvaluating: true } : t))
 
     // ── Long-running AI call ──────────────────────────────────────────────────
     let rec: stash.FilingRecommendation | null = null
@@ -1186,26 +1153,25 @@ export default function App() {
     evaluatingUuids.current.delete(uuid)
     // ─────────────────────────────────────────────────────────────────────────
 
-    // Apply results to the CURRENT fm (autosave may have bumped version during eval)
-    let finalFm = fmCache.current[uuid] ?? evalFm
+    // Apply results to the CURRENT meta (autosave may have updated it during eval)
+    let finalMeta = metaCache.current[uuid] ?? evalMeta
     if (rec) {
       const info = await GetStoreInfo()
-      finalFm = applyFilingRec(finalFm, rec, info.cli)
+      finalMeta = applyFilingRecToMeta(finalMeta, rec, info.cli)
     } else {
-      finalFm = setYamlField(finalFm, 'ai_eval', 'timeout')
+      finalMeta = { ...finalMeta, aiEval: 'timeout' }
     }
-    fmCache.current[uuid] = finalFm
+    metaCache.current[uuid] = finalMeta
 
-    // Use the freshest body available (autosave may have written newer content)
     const currentBody = savedBodyCache.current[uuid] ?? body0
     const currentPath = resolvePathByUuid(uuid) ?? initialPath
-
-    await SaveBuffer(currentPath, finalFm + currentBody).catch(console.error)
-    SaveVersionSnapshot(uuid, versionFromFm(finalFm), finalFm + currentBody).catch(console.error)
+    {
+      const dto = { uuid, path: currentPath, slug: '', body: currentBody, meta: finalMeta, versions: [] }
+      await SaveBuffer(dto as any).catch(console.error)
+    }
 
     if (fileAfter) {
-      const userIntentMatch = finalFm.match(/^user_intent:\s*(keep|trash)/m)
-      const userIntent = userIntentMatch ? userIntentMatch[1] : null
+      const userIntent = finalMeta.userIntent ?? null
 
       if (userIntent === 'trash') {
         console.log('[stash:ai] runBackgroundEval: user_intent=trash, discarding', { uuid })
@@ -1229,34 +1195,42 @@ export default function App() {
         return
       }
       try {
-        const result = await FileBuffer(currentPath)
-        const { newPath, content: filedContent } = result
-        const { frontmatter: filedFm, body: filedBody } = splitFrontmatter(filedContent)
-        
-        fmCache.current[uuid] = filedFm
-        savedBodyCache.current[uuid] = filedBody
-        uuidToPath.current.set(uuid, newPath)
-        
+        const note = await FileBuffer(currentPath)
+        metaCache.current[uuid] = note.meta
+        savedBodyCache.current[uuid] = note.body
+        uuidToPath.current.set(uuid, note.path)
+
         setTabs(prev => prev.map(t => t.uuid === uuid ? {
-          ...t, path: newPath, ...parseMeta(filedFm, filedBody), status: 'filed' as TabState['status'], isEvaluating: false
+          ...t,
+          path: note.path,
+          status: 'filed' as TabState['status'],
+          displayName: note.meta.displayName || undefined,
+          userIntent: (note.meta.userIntent as TabState['userIntent']) ?? null,
+          isEmpty: note.body.trim().length === 0,
+          isEvaluating: false,
         } : t))
 
-        // If this is the active tab, we MUST update the editor content to match the promoted asset paths
         if (activeTab?.uuid === uuid) {
           if (isMarkdownMode) {
-            setRawMd(filedContent)
+            setRawMd(note.body)
           } else if (editor) {
-            queueMicrotask(() => {
-              editor.commands.setContent(filedBody)
-            })
+            queueMicrotask(() => { editor.commands.setContent(note.body) })
           }
         }
       } catch(e) {
         console.error('[stash:ai] runBackgroundEval: FileBuffer failed', e)
-        setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, ...parseMeta(finalFm, currentBody), isEvaluating: false } : t))
+        setTabs(prev => prev.map(t => t.uuid === uuid ? {
+          ...t,
+          displayName: finalMeta.displayName || undefined,
+          isEvaluating: false,
+        } : t))
       }
     } else {
-      setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, ...parseMeta(finalFm, currentBody), isEvaluating: false } : t))
+      setTabs(prev => prev.map(t => t.uuid === uuid ? {
+        ...t,
+        displayName: finalMeta.displayName || undefined,
+        isEvaluating: false,
+      } : t))
     }
   }
 
@@ -1287,60 +1261,48 @@ export default function App() {
 
     if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null }
     const path = activeTab.path
-    const uuid = activeTab.uuid  // permanent file identity — survives renames/moves
-    let fm = fmCache.current[uuid] ?? ''
+    const uuid = activeTab.uuid
+    // In markdown mode rawMd is the body; in wysiwyg get it from the editor
     const body = isMarkdownMode
-      ? splitFrontmatter(mdCache.current[uuid] ?? rawMd).body
+      ? (mdCache.current[uuid] ?? rawMd)
       : (editor?.storage.markdown.getMarkdown() ?? '')
 
-    // If we already know a background eval is coming, show the spinner immediately
-    // before any await — otherwise the I/O round-trip delays the visual feedback.
     const willEval = tier === 'smart' && (forceEval || activeTab.status === 'unfiled')
     if (willEval && !evaluatingUuids.current.has(uuid)) {
       setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isEvaluating: true, aiJobName: 'Evaluating' } : t))
     }
 
     // Flush latest content to disk before evaluation reads it
-    let saved = false
-    if (isMarkdownMode) {
-      if (rawMd !== mdCache.current[uuid]) {
-        const { frontmatter } = splitFrontmatter(rawMd)
-        if (frontmatter) fmCache.current[uuid] = frontmatter
-        await SaveBuffer(path, rawMd).catch(console.error)
-        mdCache.current[uuid] = rawMd
-        saved = true
+    if (body !== savedBodyCache.current[uuid]) {
+      savedBodyCache.current[uuid] = body
+      if (isMarkdownMode) mdCache.current[uuid] = body
+      // await so EvaluateBuffer sees the updated content
+      const meta = metaCache.current[uuid]
+      if (meta) {
+        const dto = { uuid, path, slug: '', body, meta, versions: [] }
+        await SaveBuffer(dto as any).catch(console.error)
       }
-    } else {
-      if (body !== savedBodyCache.current[uuid]) {
-        fm = bumpFm(fm)
-        fmCache.current[uuid] = fm
-        savedBodyCache.current[uuid] = body
-        await SaveBuffer(path, fm + body).catch(console.error)
-        saved = true
-      }
-    }
-
-    if (saved) {
-      // Handled by SaveBuffer .then in saveBufferSafe
     }
 
     if (willEval) {
-      // Hand off to background — returns immediately, spinner already visible
       const fileAfter = activeTab.status === 'unfiled' && !skipFile
-      // allowDiscard: true if filing/saving unfiled, false if ad-hoc re-eval (forceEval)
       runBackgroundEval(uuid, path, fileAfter, /* allowDiscard */ !forceEval)
       return
     }
 
-    // Dumb mode or already-filed without forceEval: just file if needed, no AI
     if (activeTab.status === 'unfiled' && !skipFile) {
       try {
-        const { newPath } = await FileBuffer(path)
-        const filedFm = (fmCache.current[uuid] ?? fm).replace(/^status:\s*.+/m, 'status: filed')
-        fmCache.current[uuid] = filedFm
-        uuidToPath.current.set(uuid, newPath)
+        const note = await FileBuffer(path)
+        metaCache.current[uuid] = note.meta
+        savedBodyCache.current[uuid] = note.body
+        uuidToPath.current.set(uuid, note.path)
         setTabs(prev => prev.map(t =>
-          t.path === path ? { ...t, path: newPath, ...parseMeta(filedFm, body), status: 'filed' as TabState['status'] } : t
+          t.path === path ? {
+            ...t, path: note.path,
+            status: 'filed' as TabState['status'],
+            displayName: note.meta.displayName || undefined,
+            userIntent: (note.meta.userIntent as TabState['userIntent']) ?? null,
+          } : t
         ))
       } catch(err) {
         console.error('[stash] forceFile: FileBuffer failed', err)
@@ -1353,21 +1315,21 @@ export default function App() {
     const uuid = activeTab.uuid
     
     // Capture cursor before toggling
-    let cursorMdPos = 0
+    // Markdown mode shows body only — cursor position maps directly to body offset
+    let cursorBodyPos = 0
     if (!isMarkdownMode) {
       if (editor) {
         const ratio = editor.state.selection.from / Math.max(1, editor.state.doc.content.size)
         const bodyContent = editor.storage.markdown.getMarkdown() || ''
-        const fmLen = (fmCache.current[uuid] ?? '').length
-        cursorMdPos = fmLen + Math.floor(ratio * bodyContent.length)
+        cursorBodyPos = Math.floor(ratio * bodyContent.length)
       }
     } else {
       const ta = document.querySelector('.markdown-raw') as HTMLTextAreaElement
-      if (ta) cursorMdPos = ta.selectionStart
+      if (ta) cursorBodyPos = ta.selectionStart
     }
 
     if (isMarkdownMode) mdCache.current[uuid] = rawMd
-    
+
     const oldBodyScroll = currentScroll()
     flush()
 
@@ -1378,30 +1340,23 @@ export default function App() {
     const applyViewScroll = () => {
       const el = document.getElementById('app')
       const ta = document.querySelector('.markdown-raw') as HTMLTextAreaElement
-      let fmPixelHeight = 0
-      if (newMode === 'markdown') {
-        const fmStr = fmCache.current[uuid] ?? ''
-        fmPixelHeight = fmStr.split('\n').length * 24.5
-      }
-      
       if (newMode === 'markdown' && ta) {
-         ta.scrollTop = oldBodyScroll + fmPixelHeight
+        ta.scrollTop = oldBodyScroll
       } else if (el) {
-         el.scrollTop = oldBodyScroll
+        el.scrollTop = oldBodyScroll
       }
     }
 
     if (newMode === 'markdown') {
+      // Switching to markdown: show body only (no frontmatter)
       const body = editor?.storage.markdown.getMarkdown() ?? ''
-      const fm = fmCache.current[uuid] ?? ''
-      const full = fm + body
-      mdCache.current[uuid] = full
-      setRawMd(full)
-      
+      mdCache.current[uuid] = body
+      setRawMd(body)
+
       requestAnimationFrame(() => {
         const ta = document.querySelector('.markdown-raw') as HTMLTextAreaElement
         if (ta) {
-          ta.setSelectionRange(cursorMdPos, cursorMdPos)
+          ta.setSelectionRange(cursorBodyPos, cursorBodyPos)
           ta.focus()
         }
         applyViewScroll()
@@ -1411,22 +1366,18 @@ export default function App() {
         setTimeout(applyViewScroll, 500)
       })
     } else {
-      const full = mdCache.current[uuid] ?? rawMd
-      const { frontmatter, body } = splitFrontmatter(full)
-      if (frontmatter) fmCache.current[uuid] = frontmatter
+      // Switching to wysiwyg: body is what was in the markdown textarea
+      const body = mdCache.current[uuid] ?? rawMd
       savedBodyCache.current[uuid] = body
-      
+
       requestAnimationFrame(() => {
         editor?.commands.setContent(body)
         if (editor) {
-          const fmLen = (frontmatter || '').length
           const bodyLen = body.length
-          const bodyOffset = Math.max(0, cursorMdPos - fmLen)
-          const ratio = bodyOffset / Math.max(1, bodyLen)
-          // Use Math.min to avoid exceeding doc size padding limits
+          const ratio = cursorBodyPos / Math.max(1, bodyLen)
           const pmPos = Math.min(
-             editor.state.doc.content.size - 1, 
-             Math.max(0, Math.floor(ratio * editor.state.doc.content.size))
+            editor.state.doc.content.size - 1,
+            Math.max(0, Math.floor(ratio * editor.state.doc.content.size))
           )
           try { editor.commands.setTextSelection(pmPos) } catch(e) {}
           editor.commands.focus()
@@ -1507,7 +1458,7 @@ export default function App() {
     handleRename,
   } = useNoteOperations({
     tabs, activeIdx, activeTab, isMarkdownMode, rawMd, tier, prompts, editor,
-    tabsRef, fmCache, savedBodyCache, mdCache,
+    tabsRef, metaCache, savedBodyCache, mdCache,
     setTabs, setActiveIdx, setNotes, setPrompts,
     setConfirmModal, setPromptModal,
     selectTab, flush,
@@ -1525,7 +1476,7 @@ export default function App() {
     handleAskSend,
   } = useAiGestures({
     editor, isMarkdownMode, rawMd, tier,
-    activeTabRef, tabsRef, uuidToPath, fmCache, savedBodyCache,
+    activeTabRef, tabsRef, uuidToPath, metaCache, savedBodyCache,
     pendingAiCount, evalStartTimes, askContextRef,
     setTabs, setRawMd, setShowAskPopup,
   })
@@ -1637,7 +1588,7 @@ export default function App() {
 
   useAppLifecycle({
     activeIdx, tabs, tabsRef, activeTabRef, activeIdxRef,
-    fmCache, savedBodyCache, mdCache,
+    metaCache, savedBodyCache, mdCache,
     evaluatingUuids, pendingAiCount, cliTimeoutLongMs,
     flushRef, focusTimer,
     saveBufferSafe, persistSession, setPendingClose,
@@ -1871,8 +1822,7 @@ export default function App() {
                 setRawMd(val)
                 if (activeTab) {
                   const isMod = (val !== mdCache.current[activeTab.uuid])
-                  const body = splitFrontmatter(val).body
-                  const empty = body.trim().length === 0
+                  const empty = val.trim().length === 0
                   setTabs(prev => {
                     return prev.map(x => {
                       if (x.path === activeTab.path && (x.isModified !== isMod || x.isEmpty !== empty)) {
@@ -1894,7 +1844,8 @@ export default function App() {
               onMouseDown={startMetaResize}
             />
             <MetaPanel
-              meta={fmCache.current[activeTab.uuid] ?? ''}
+              meta={metaCache.current[activeTab.uuid] ?? null}
+              versions={versionsCache.current[activeTab.uuid] ?? []}
               path={activeTab.path}
               width={metaWidth}
               isModified={activeTab.isModified ?? false}
@@ -1910,28 +1861,19 @@ export default function App() {
                   saveTimer.current = null
                 }
 
-                // 2. Compute the new state
-                const currentFm = fmCache.current[uuid] ?? ''
-                const finalFm = bumpFm(currentFm)
-                const fullContent = finalFm + body
-                const version = versionFromFm(finalFm)
-
-                // 3. Update all caches and refs synchronously
-                fmCache.current[uuid] = finalFm
+                // 2. Update body caches — Store handles version snapshot automatically on save
                 savedBodyCache.current[uuid] = body
                 if (isMarkdownMode) {
-                  mdCache.current[uuid] = fullContent
-                  setRawMd(fullContent)
+                  mdCache.current[uuid] = body
+                  setRawMd(body)
                 } else if (editor) {
-                  // Set content in editor - false suppresses onUpdate because we are saving manually now
                   editor.commands.setContent(body, false)
                 }
 
-                // 4. Save to disk and cut history snapshot IMMEDIATELY
-                saveBufferSafe(uuid, fullContent)
-                SaveVersionSnapshot(uuid, version, fullContent).catch(console.error)
+                // 3. Save to disk (Store bumps version and saves snapshot automatically)
+                saveBufferSafe(uuid)
 
-                // 5. Clear "isModified" state immediately as it's now flushed
+                // 4. Clear "isModified" state immediately
                 setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isModified: false, isEmpty: body.trim().length === 0 } : t))
               }}
             />
@@ -1983,8 +1925,7 @@ export default function App() {
           onAccept={async name => {
             const { path } = timeoutPopup
             setTimeoutPopup(null)
-            const result = await FileBufferWithName(path, name)
-            const { newPath } = result
+            await FileBufferWithName(path, name)
             finishCloseTab(path)
           }}
           onRetry={async () => {
@@ -1994,9 +1935,7 @@ export default function App() {
             
             // Get current content to check user_intent
             const tab = tabsRef.current.find(t => t.path === path)
-            const fm = (tab && fmCache.current[tab.uuid]) || ''
-            const userIntentMatch = fm.match(/^user_intent:\s*(keep|trash)/m)
-            const userIntent = userIntentMatch ? userIntentMatch[1] : null
+            const userIntent = tab ? (metaCache.current[tab.uuid]?.userIntent ?? null) : null
 
             if (userIntent === 'keep' || (userIntent !== 'trash' && rec.keep)) {
               await FileBuffer(path)

@@ -407,24 +407,24 @@ func cleanFolderPath(folder string) string {
 // It wraps a MetaStorable returned by the Store — never constructed directly.
 // Use BufferService to create, load, save, and discard buffers.
 type Buffer struct {
-	s        store.MetaStorable
-	filename string // base filename without extension, e.g. "buf-20240102-1504"
+	s    store.MetaStorable
+	slug string // key-derived short identifier, e.g. "buf-20240102-1504"
 }
 
-// newBuffer constructs a Buffer and parses the filename once from the Store key.
+// newBuffer constructs a Buffer and derives the slug once from the Store key.
 func newBuffer(s store.MetaStorable) *Buffer {
 	return &Buffer{
-		s:        s,
-		filename: strings.TrimSuffix(filepath.Base(s.Key()), filepath.Ext(s.Key())),
+		s:    s,
+		slug: strings.TrimSuffix(filepath.Base(s.Key()), filepath.Ext(s.Key())),
 	}
 }
 
 // UUID returns the frontmatter uuid field, which is the stable identity of
 // this document across renames and history. Falls back to the Store key if the
 // uuid field is absent (should not happen in practice).
-// Filename returns the base filename without extension, e.g. "buf-20240102-1504".
-// Parsed once at construction — use for tab labels and sidebar display.
-func (b *Buffer) Filename() string { return b.filename }
+// Slug returns the key-derived short identifier without extension, e.g. "buf-20240102-1504".
+// Derived once at construction — use for tab labels and sidebar display.
+func (b *Buffer) Slug() string { return b.slug }
 
 func (b *Buffer) UUID() string {
 	if u := b.s.Meta()["uuid"]; u != "" {

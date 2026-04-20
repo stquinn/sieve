@@ -3,8 +3,8 @@ import { DOMParser as ProseMirrorDOMParser, Fragment } from '@tiptap/pm/model'
 import type { Editor } from '@tiptap/core'
 import { Ask, Explain, LoadBuffer, SaveBuffer } from '../../wailsjs/go/main/App'
 import type { TabState } from '../types'
-import { splitFrontmatter } from '../lib/markdown'
-import { setYamlField, getLocalISOString } from '../lib/fmUtils'
+import type { main } from '../../wailsjs/go/models'
+import { getLocalISOString } from '../lib/fmUtils'
 import { buildAiContext, type AiContext } from '../lib/aiContextBuilder'
 
 interface UseAiGesturesParams {
@@ -15,7 +15,7 @@ interface UseAiGesturesParams {
   activeTabRef: React.MutableRefObject<TabState | undefined>
   tabsRef: React.MutableRefObject<TabState[]>
   uuidToPath: React.MutableRefObject<Map<string, string>>
-  fmCache: React.MutableRefObject<Record<string, string>>
+  metaCache: React.MutableRefObject<Record<string, main.DocumentMetaDTO>>
   savedBodyCache: React.MutableRefObject<Record<string, string>>
   pendingAiCount: React.MutableRefObject<number>
   evalStartTimes: React.MutableRefObject<Record<string, number>>
@@ -33,7 +33,7 @@ export function useAiGestures({
   activeTabRef,
   tabsRef,
   uuidToPath,
-  fmCache,
+  metaCache,
   savedBodyCache,
   pendingAiCount,
   evalStartTimes,
@@ -83,17 +83,12 @@ export function useAiGestures({
         return true
       })
       if (isMarkdownMode && activeTabRef.current) {
-        const body = editor.storage.markdown.getMarkdown()
-        const fm = fmCache.current[activeTabRef.current.uuid] ?? ''
-        setRawMd(fm + body)
+        // Markdown mode shows body only — update rawMd to reflect the inserted block
+        setRawMd(editor.storage.markdown.getMarkdown())
       }
     })
   }
 
-  // Replace the placeholder aiBlock with the AI response.
-  // Parses response markdown via markdown-it → HTML → ProseMirror DOMParser so
-  // bold, italic, lists, and code blocks all become proper marks/nodes and
-  // round-trip cleanly through the store without any blockquote serializer issues.
   function replaceAiPlaceholder(aiId: string, responseText: string) {
     if (!editor) return
 
@@ -152,14 +147,11 @@ export function useAiGestures({
       return true
     })
     if (isMarkdownMode && activeTabRef.current) {
-      const body = editor.storage.markdown.getMarkdown()
-      const fm = fmCache.current[activeTabRef.current.uuid] ?? ''
-      setRawMd(fm + body)
+      setRawMd(editor.storage.markdown.getMarkdown())
     }
   }
 
   // Apply an AI response directly to a file on disk without touching the editor.
-  // Used when the user switches tabs while an AI call is in-flight.
   async function applyAiResponseInBackground(uuid: string, aiId: string, responseText: string) {
     const path = resolvePathByUuid(uuid)
     if (!path) {
@@ -167,23 +159,22 @@ export function useAiGestures({
       return
     }
     try {
-      const content = await LoadBuffer(path)
-      const { frontmatter, body } = splitFrontmatter(content)
-
+      const dto = await LoadBuffer(path)
       const idEscaped = aiId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       const pattern = new RegExp(`(\\[!ai\\] id="${idEscaped}"[^\\n]*)\\s*[\\s\\S]*?\\s*\\[!ai-end\\]`)
-      const updatedBody = body.replace(pattern, `$1\n\n${responseText}\n\n[!ai-end]`)
+      const updatedBody = dto.body.replace(pattern, `$1\n\n${responseText}\n\n[!ai-end]`)
 
-      if (updatedBody === body) {
+      if (updatedBody === dto.body) {
         console.warn('[stash:ai] background update: placeholder not found in file', { uuid, path, aiId })
         return
       }
 
-      const newFm = frontmatter ? setYamlField(frontmatter, 'ai_last_evaluated', getLocalISOString()) : frontmatter
-      await SaveBuffer(path, newFm + updatedBody)
+      const updatedMeta = { ...dto.meta, aiLastEvaluated: getLocalISOString() }
+      const updatedDto = { ...dto, body: updatedBody, meta: updatedMeta }
+      await SaveBuffer(updatedDto as any)
 
       savedBodyCache.current[uuid] = updatedBody
-      if (newFm) fmCache.current[uuid] = newFm
+      metaCache.current[uuid] = updatedMeta
 
       console.log('[stash:ai] background update: response saved', { uuid, path, aiId })
     } catch (err) {
@@ -192,14 +183,17 @@ export function useAiGestures({
   }
 
   function touchAiLastEvaluated(uuid: string) {
+    const meta = metaCache.current[uuid]
+    if (!meta) return
     const path = resolvePathByUuid(uuid)
     if (!path) return
-    const fm = fmCache.current[uuid]
-    if (!fm) return
-    const newFm = setYamlField(fm, 'ai_last_evaluated', getLocalISOString())
-    fmCache.current[uuid] = newFm
+    const updatedMeta = { ...meta, aiLastEvaluated: getLocalISOString() }
+    metaCache.current[uuid] = updatedMeta
     const body = editor?.storage.markdown.getMarkdown() ?? savedBodyCache.current[uuid] ?? ''
-    SaveBuffer(path, newFm + body).catch(console.error)
+    const tab = tabsRef.current.find(t => t.uuid === uuid)
+    if (!tab) return
+    const dto = { uuid, path, slug: path.split('/').pop()?.replace('.md','') ?? '', body, meta: updatedMeta, versions: [] }
+    SaveBuffer(dto as any).catch(console.error)
   }
 
   function explainGesture() {

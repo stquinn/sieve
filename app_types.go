@@ -45,11 +45,11 @@ type DocumentMetaDTO struct {
 
 // BufferDTO is a working-copy document as seen by the frontend.
 // Path is the store-relative ExternalRef (e.g. "{hostname}/buffers/buf-xxx.md").
-// Filename is the base name without extension (e.g. "buf-20240102-1504").
+// Slug is the key-derived short identifier without extension (e.g. "buf-20240102-1504").
 type BufferDTO struct {
 	UUID     string          `json:"uuid"`
 	Path     string          `json:"path"`
-	Filename string          `json:"filename"`
+	Slug     string          `json:"slug"`
 	Body     string          `json:"body"`
 	Meta     DocumentMetaDTO `json:"meta"`
 	Versions []VersionRefDTO `json:"versions"`
@@ -59,7 +59,7 @@ type BufferDTO struct {
 type NoteDTO struct {
 	UUID     string          `json:"uuid"`
 	Path     string          `json:"path"`
-	Filename string          `json:"filename"`
+	Slug     string          `json:"slug"`
 	Body     string          `json:"body"`
 	Meta     DocumentMetaDTO `json:"meta"`
 	Versions []VersionRefDTO `json:"versions"`
@@ -152,7 +152,7 @@ func toBufferDTO(b *stash.Buffer) BufferDTO {
 	return BufferDTO{
 		UUID:     b.UUID(),
 		Path:     b.Path(),
-		Filename: b.Filename(),
+		Slug:     b.Slug(),
 		Body:     string(b.Body()),
 		Meta:     toDocumentMetaDTO(b.Meta()),
 		Versions: toVersionRefDTOs(b.Versions()),
@@ -163,7 +163,7 @@ func toNoteDTO(n *stash.Note) NoteDTO {
 	return NoteDTO{
 		UUID:     n.UUID(),
 		Path:     n.Path(),
-		Filename: n.Filename(),
+		Slug:     n.Slug(),
 		Body:     string(n.Body()),
 		Meta:     toDocumentMetaDTO(n.Meta()),
 		Versions: toVersionRefDTOs(n.Versions()),

@@ -1,7 +1,7 @@
 import { NodeRange } from '@tiptap/pm/model'
 import type { Editor } from '@tiptap/core'
 import { mdSrcToStoreRelPath } from './imageUtils'
-import { splitFrontmatter, getCleanMarkdown } from './markdown'
+import { getCleanMarkdown } from './markdown'
 
 export type AiContext = {
   content: string
@@ -66,8 +66,7 @@ export function buildAiContext(
 ): AiContext {
   if (isMarkdownMode) {
     const ta = document.querySelector('.markdown-raw') as HTMLTextAreaElement
-    const body = splitFrontmatter(rawMd).body
-    const cleanBody = getCleanMarkdown(body)
+    const cleanBody = getCleanMarkdown(rawMd)
 
     if (ta && ta.selectionStart !== ta.selectionEnd) {
       return {

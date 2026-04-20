@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import type React from 'react'
 import type { Editor } from '@tiptap/core'
-import { SaveBufferAsset, SaveNoteAsset, DescribeImage } from '../../wailsjs/go/main/App'
+import { SaveAsset, DescribeImage } from '../../wailsjs/go/main/App'
 import { stash } from '../../wailsjs/go/models'
 import type { TabState } from '../types'
 import { assetMarkdownPath } from '../lib/fmUtils'
@@ -49,13 +49,9 @@ export function useBlobImageObserver({
             if (!tab) { console.error('[stash] mutation: no active tab'); return }
 
             try {
-              const isBuffer = tab.status !== 'filed'
-              const storeRelPath = isBuffer
-                ? await SaveBufferAsset(id, dataUrl)
-                : await SaveNoteAsset(tab.path, id, dataUrl)
-
-              const mdPath = assetMarkdownPath(tab.path, storeRelPath)
-              console.debug('[stash] mutation: image saved', { id, storeRelPath, mdPath })
+              const asset = await SaveAsset(tab.path, id, dataUrl)
+              const mdPath = assetMarkdownPath(tab.path, asset.externalRef)
+              console.debug('[stash] mutation: image saved', { id, externalRef: asset.externalRef, mdPath })
 
               editor.chain()
                 .command(({ tr, state }) => {
@@ -76,7 +72,7 @@ export function useBlobImageObserver({
               if (tierRef.current === 'smart') {
                 const capturedId = id
                 pendingAiCount.current++
-                DescribeImage(storeRelPath)
+                DescribeImage(asset.externalRef)
                   .then((desc: stash.ImageDesc) => {
                     console.log('[stash:ai] DescribeImage (mutation): response', { id: capturedId, desc })
                     if (!desc || !editor) return

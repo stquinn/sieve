@@ -8,8 +8,8 @@ import {
 import type { NoteEntry, PromptEntry } from '../components/Sidebar'
 import type { TabState } from '../types'
 import type { UserIntent } from '../types'
-import { splitFrontmatter } from '../lib/markdown'
-import { applyFilingRec, bumpFm, setYamlField, getLocalISOString } from '../lib/fmUtils'
+import type { main } from '../../wailsjs/go/models'
+import { applyFilingRecToMeta } from '../lib/fmUtils'
 
 type ConfirmModalState = { title: string; message: string; onConfirm: () => void; isDestructive?: boolean }
 type PromptModalState = { title: string; message: string; placeholder?: string; initialValue?: string; onSubmit: (val: string) => void }
@@ -24,7 +24,7 @@ interface UseNoteOperationsParams {
   prompts: PromptEntry[]
   editor: Editor | null
   tabsRef: React.MutableRefObject<TabState[]>
-  fmCache: React.MutableRefObject<Record<string, string>>
+  metaCache: React.MutableRefObject<Record<string, main.DocumentMetaDTO>>
   savedBodyCache: React.MutableRefObject<Record<string, string>>
   mdCache: React.MutableRefObject<Record<string, string>>
   setTabs: React.Dispatch<React.SetStateAction<TabState[]>>
@@ -50,7 +50,7 @@ export function useNoteOperations({
   prompts,
   editor,
   tabsRef,
-  fmCache,
+  metaCache,
   savedBodyCache,
   mdCache,
   setTabs,
@@ -108,8 +108,12 @@ export function useNoteOperations({
 
   async function handleMoveNote(oldPath: string, newPath: string) {
     try {
-      await MoveNote(oldPath, newPath)
-      setTabs(prev => prev.map(t => t.path === oldPath ? { ...t, path: newPath } : t))
+      const note = await MoveNote(oldPath, newPath)
+      setTabs(prev => prev.map(t => {
+        if (t.path !== oldPath) return t
+        // Update path and slug in tab state
+        return { ...t, path: note.path }
+      }))
       await GetNotes().then(res => setNotes(res || [])).catch(console.error)
     } catch (err) {
       console.error('Failed to move note', err)
@@ -124,10 +128,12 @@ export function useNoteOperations({
       if (tab === activeTab) {
         const body = editor?.storage.markdown.getMarkdown() ?? ''
         if (body !== savedBodyCache.current[tab.uuid]) {
-          const fm = bumpFm(fmCache.current[tab.uuid] ?? '')
-          fmCache.current[tab.uuid] = fm
-          savedBodyCache.current[tab.uuid] = body
-          await SaveBuffer(path, fm + body).catch(console.error)
+          const meta = metaCache.current[tab.uuid]
+          if (meta) {
+            savedBodyCache.current[tab.uuid] = body
+            const dto = { uuid: tab.uuid, path, slug: tab.path.split('/').pop()?.replace('.md','') ?? '', body, meta, versions: [] }
+            await SaveBuffer(dto as any).catch(console.error)
+          }
         }
       }
       runBackgroundEval(tab.uuid, path, true)
@@ -137,10 +143,8 @@ export function useNoteOperations({
     console.log('[stash:ai] Smart File (no tab): evaluating', { path })
     try {
       const rec = await EvaluateBuffer(path)
-      const content = await LoadBuffer(path)
-      let { frontmatter, body } = splitFrontmatter(content)
-      const userIntentMatch = frontmatter.match(/^user_intent:\s*(keep|trash)/m)
-      const userIntent = userIntentMatch ? userIntentMatch[1] : null
+      const dto = await LoadBuffer(path)
+      const userIntent = dto.meta.userIntent
 
       if (userIntent === 'trash' || (rec && !rec.keep && userIntent !== 'keep')) {
         console.log('[stash:ai] handleSmartFile (no tab): discard recommended/intended', { path })
@@ -149,8 +153,9 @@ export function useNoteOperations({
         return
       }
       const info = await GetStoreInfo()
-      frontmatter = applyFilingRec(frontmatter, rec, info.cli)
-      await SaveBuffer(path, frontmatter + body)
+      const updatedMeta = applyFilingRecToMeta(dto.meta, rec, info.cli)
+      const updatedDto = { ...dto, meta: updatedMeta }
+      await SaveBuffer(updatedDto as any)
       await FileBuffer(path)
       await GetNotes().then(res => setNotes(res || [])).catch(console.error)
     } catch (e) {
@@ -165,10 +170,12 @@ export function useNoteOperations({
       if (tab === activeTab) {
         const body = editor?.storage.markdown.getMarkdown() ?? ''
         if (body !== savedBodyCache.current[tab.uuid]) {
-          const fm = bumpFm(fmCache.current[tab.uuid] ?? '')
-          fmCache.current[tab.uuid] = fm
-          savedBodyCache.current[tab.uuid] = body
-          await SaveBuffer(path, fm + body).catch(console.error)
+          const meta = metaCache.current[tab.uuid]
+          if (meta) {
+            savedBodyCache.current[tab.uuid] = body
+            const dto = { uuid: tab.uuid, path, slug: tab.path.split('/').pop()?.replace('.md','') ?? '', body, meta, versions: [] }
+            await SaveBuffer(dto as any).catch(console.error)
+          }
         }
       }
       runBackgroundEval(tab.uuid, path, false, false)
@@ -178,16 +185,11 @@ export function useNoteOperations({
     console.log('[stash:ai] Smart Metadata (no tab): evaluating', { path })
     try {
       const rec = await EvaluateBuffer(path)
-      const content = await LoadBuffer(path)
-      let { frontmatter, body } = splitFrontmatter(content)
-      frontmatter = setYamlField(frontmatter, 'ai_eval', 'complete')
-      frontmatter = setYamlField(frontmatter, 'ai_last_evaluated', getLocalISOString())
-      if (rec.title)    frontmatter = setYamlField(frontmatter, 'display_name', rec.title)
-      if (rec.filename) frontmatter = setYamlField(frontmatter, 'filename', rec.filename)
-      if (rec.folder)   frontmatter = setYamlField(frontmatter, 'ai_folder_suggestion', rec.folder)
-      if (rec.summary)  frontmatter = setYamlField(frontmatter, 'summary', rec.summary)
-      if (rec.tags && rec.tags.length > 0) frontmatter = setYamlField(frontmatter, 'tags', rec.tags)
-      await SaveBuffer(path, frontmatter + body)
+      const dto = await LoadBuffer(path)
+      const info = await GetStoreInfo()
+      const updatedMeta = applyFilingRecToMeta(dto.meta, rec, info.cli)
+      const updatedDto = { ...dto, meta: { ...updatedMeta, aiEval: 'complete' } }
+      await SaveBuffer(updatedDto as any)
       await GetNotes().then(res => setNotes(res || [])).catch(console.error)
     } catch (err) {
       console.error('[stash:ai] Smart Metadata (no tab) failed', err)
@@ -243,10 +245,9 @@ export function useNoteOperations({
       setTabIntent(tabIdx, intent)
     } else {
       try {
-        const content = await LoadBuffer(path)
-        const { frontmatter, body } = splitFrontmatter(content)
-        const updatedFm = setYamlField(frontmatter, 'user_intent', intent)
-        await SaveBuffer(path, updatedFm + body)
+        const dto = await LoadBuffer(path)
+        const updatedDto = { ...dto, meta: { ...dto.meta, userIntent: intent ?? undefined } }
+        await SaveBuffer(updatedDto as any)
         await GetNotes().then(res => setNotes(res || [])).catch(console.error)
       } catch (err) {
         console.error('Failed to set intent by path', err)
@@ -308,23 +309,18 @@ export function useNoteOperations({
           if (isDir) {
             await RenameFolder(path, newPath)
           } else {
-            await MoveNote(path, newPath)
-            try {
-              const content = await LoadBuffer(newPath)
-              let { frontmatter, body } = splitFrontmatter(content)
-              const pureName = fileName.replace(/\.md$/, '')
-
-              frontmatter = setYamlField(frontmatter, 'filename', pureName)
-              frontmatter = setYamlField(frontmatter, 'user_suggested_name', pureName)
-
-              await SaveBuffer(newPath, frontmatter + body)
-
-              const tab = tabsRef.current.find(t => t.path === path)
-              if (tab && tab.uuid) {
-                fmCache.current[tab.uuid] = frontmatter
+            const noteDto = await MoveNote(path, newPath)
+            // Update filename/userSuggestedName in meta after rename
+            const pureName = fileName.replace(/\.md$/, '')
+            const tab = tabsRef.current.find(t => t.path === path)
+            if (tab?.uuid) {
+              const meta = metaCache.current[tab.uuid]
+              if (meta) {
+                const updatedMeta = { ...meta, filename: pureName, userSuggestedName: pureName }
+                metaCache.current[tab.uuid] = updatedMeta
+                const updatedDto = { ...noteDto, meta: updatedMeta }
+                await SaveBuffer(updatedDto as any).catch(console.warn)
               }
-            } catch (metaErr) {
-              console.warn('Metdata sync failed after rename', metaErr)
             }
           }
           await GetNotes().then(res => setNotes(res || [])).catch(console.error)
