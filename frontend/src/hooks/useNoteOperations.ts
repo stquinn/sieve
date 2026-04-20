@@ -2,7 +2,7 @@ import React from 'react'
 import type { Editor } from '@tiptap/core'
 import {
   DeleteNote, MoveNote, EvaluateBuffer, LoadBuffer, SaveBuffer,
-  FileBuffer, DiscardBuffer, GetStoreInfo, GetNotes,
+  FileBuffer, RefileNote, DiscardBuffer, GetStoreInfo, GetNotes,
   CreateFolder, DeleteFolder, RenameFolder, RestorePrompt, GetPrompts,
 } from '../../wailsjs/go/main/App'
 import type { NoteEntry, PromptEntry } from '../components/Sidebar'
@@ -155,8 +155,14 @@ export function useNoteOperations({
       const info = await GetStoreInfo()
       const updatedMeta = applyFilingRecToMeta(dto.meta, rec, info.cli)
       const updatedDto = { ...dto, meta: updatedMeta }
-      await SaveBuffer(updatedDto as any)
-      await FileBuffer(path)
+      // Route by status: filed notes use RefileNote (rename within Library);
+      // unfiled buffers use SaveBuffer + FileBuffer (promote to Library).
+      if (dto.meta.status === 'filed') {
+        await RefileNote(updatedDto as any)
+      } else {
+        await SaveBuffer(updatedDto as any)
+        await FileBuffer(path)
+      }
       await GetNotes().then(res => setNotes(res || [])).catch(console.error)
     } catch (e) {
       console.error('[stash:ai] Smart File (no tab) failed', e)

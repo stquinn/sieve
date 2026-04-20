@@ -107,6 +107,32 @@ func (ns *NoteService) Rename(n *Note, name string) (*Note, error) {
 	return newNote(ms), nil
 }
 
+// Refile applies the filing recommendation already stored in n's metadata —
+// deriving the target filename and folder — and renames/moves the note within
+// the Library accordingly. This is the "re-file" path for notes that are
+// already in the Library: it does NOT move across categories.
+func (ns *NoteService) Refile(n *Note) (*Note, error) {
+	folder := deriveFolderFromMeta(n.Meta())
+	kebab := deriveKebabNameFromMeta(n.Meta(), n.Body())
+
+	var targetName string
+	if folder != "" {
+		targetName = cleanFolderPath(folder) + "/" + kebab
+	} else {
+		targetName = kebab
+	}
+
+	renamed, err := ns.st.Rename(n.s, targetName)
+	if err != nil {
+		return nil, fmt.Errorf("note: refile to %q: %w", targetName, err)
+	}
+	ms, ok := renamed.(store.MetaStorable)
+	if !ok {
+		return nil, fmt.Errorf("note: refile: renamed storable is not MetaStorable")
+	}
+	return newNote(ms), nil
+}
+
 // List returns the Library tree as a []NoteEntry (the same projection used
 // by the sidebar). Backed by ScanNotes which walks the filesystem.
 func (ns *NoteService) List() ([]NoteEntry, error) {

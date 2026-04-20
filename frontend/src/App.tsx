@@ -11,7 +11,7 @@ import Table from '@tiptap/extension-table'
 import TableRow from '@tiptap/extension-table-row'
 import TableHeader from '@tiptap/extension-table-header'
 import TableCell from '@tiptap/extension-table-cell'
-import { DescribeImage, DiscardBuffer, FileBuffer, FileBufferWithName, GetNotes, GetSession, GetStoreInfo, LoadBuffer, NewBuffer, RefineLanguage, SaveBuffer, SaveAsset, DownloadAsset, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, ShowInFiles, EvaluateBuffer, LoadPrompt, SavePrompt, GetPrompts, TogglePrompts } from '../wailsjs/go/main/App'
+import { DescribeImage, DiscardBuffer, FileBuffer, FileBufferWithName, GetNotes, GetSession, GetStoreInfo, LoadBuffer, NewBuffer, RefineLanguage, RefileNote, SaveBuffer, SaveAsset, DownloadAsset, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, ShowInFiles, EvaluateBuffer, LoadPrompt, SavePrompt, GetPrompts, TogglePrompts } from '../wailsjs/go/main/App'
 import { stash, main } from '../wailsjs/go/models'
 import { BrowserOpenURL, EventsOn } from '../wailsjs/runtime/runtime'
 import { CodeBlockWithAttrs } from './extensions/CodeBlockWithAttrs'
@@ -1195,7 +1195,16 @@ export default function App() {
         return
       }
       try {
-        const note = await FileBuffer(currentPath)
+        // Route by status: already-filed notes use RefileNote (rename within Library);
+        // unfiled buffers use FileBuffer (promote to Library).
+        const currentStatus = finalMeta.status ?? 'unfiled'
+        let note: main.BufferDTO | main.NoteDTO
+        if (currentStatus === 'filed') {
+          const dto = { uuid, path: currentPath, slug: '', body: currentBody, meta: finalMeta, versions: [] }
+          note = await RefileNote(dto as any)
+        } else {
+          note = await FileBuffer(currentPath)
+        }
         metaCache.current[uuid] = note.meta
         savedBodyCache.current[uuid] = note.body
         uuidToPath.current.set(uuid, note.path)
@@ -1218,7 +1227,7 @@ export default function App() {
           }
         }
       } catch(e) {
-        console.error('[stash:ai] runBackgroundEval: FileBuffer failed', e)
+        console.error('[stash:ai] runBackgroundEval: file/refile failed', e)
         setTabs(prev => prev.map(t => t.uuid === uuid ? {
           ...t,
           displayName: finalMeta.displayName || undefined,

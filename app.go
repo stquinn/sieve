@@ -598,38 +598,35 @@ func (a *App) NewBuffer() (BufferDTO, error) {
 }
 
 // LoadBuffer loads any document by its store-relative path and returns a typed DTO.
-// Routes to NoteService for Library paths ("store/...") and BufferService otherwise.
+// Tries BufferService first; falls back to NoteService so routing is not
+// coupled to the path prefix convention of any particular Store implementation.
 // The returned Body is pure markdown — frontmatter is never included.
 func (a *App) LoadBuffer(path string) (BufferDTO, error) {
 	if a.buffers == nil {
 		return BufferDTO{}, fmt.Errorf("store not open")
 	}
-	if isLibraryPath(path) {
-		n, err := a.notes.Load(path)
-		if err != nil {
-			logger.Error("LoadBuffer(note) failed", "path", path, "err", err)
-			return BufferDTO{}, err
-		}
-		logger.Debug("note loaded via LoadBuffer", "path", path)
-		return toNoteBufferDTO(n), nil
+	if b, err := a.buffers.Load(path); err == nil {
+		logger.Debug("buffer loaded", "path", path)
+		return toBufferDTO(b), nil
 	}
-	b, err := a.buffers.Load(path)
+	n, err := a.notes.Load(path)
 	if err != nil {
-		logger.Error("LoadBuffer failed", "path", path, "err", err)
+		logger.Error("LoadBuffer: not found in buffers or notes", "path", path, "err", err)
 		return BufferDTO{}, err
 	}
-	logger.Debug("buffer loaded", "path", path)
-	return toBufferDTO(b), nil
+	logger.Debug("note loaded via LoadBuffer", "path", path)
+	return toNoteBufferDTO(n), nil
 }
 
 // SaveBuffer persists the body and writable meta fields from dto. The Store
 // bumps the version and modified timestamp automatically. Returns the updated
 // DTO with Store-stamped fields reflecting the saved state.
+// Routes by dto.Meta.Status: "filed" → NoteService, anything else → BufferService.
 func (a *App) SaveBuffer(dto BufferDTO) (BufferDTO, error) {
 	if a.buffers == nil {
 		return BufferDTO{}, fmt.Errorf("store not open")
 	}
-	if isLibraryPath(dto.Path) {
+	if dto.Meta.Status == "filed" {
 		n, err := a.notes.Load(dto.Path)
 		if err != nil {
 			logger.Error("SaveBuffer(note): load failed", "path", dto.Path, "err", err)
@@ -661,10 +658,31 @@ func (a *App) SaveBuffer(dto BufferDTO) (BufferDTO, error) {
 	return toBufferDTO(saved), nil
 }
 
-// isLibraryPath reports whether path refers to a Library (filed note) document.
-// Library paths are store-relative and begin with "store/".
-func isLibraryPath(path string) bool {
-	return strings.HasPrefix(path, "store/") || path == "store"
+// RefileNote applies the filing recommendation already persisted in dto's
+// metadata to a Library note: saves the updated meta, then renames/moves the
+// note within the Library based on the filename and folder fields.
+// Used when the user runs "Smart File" on a note that is already filed.
+func (a *App) RefileNote(dto BufferDTO) (BufferDTO, error) {
+	if a.notes == nil {
+		return BufferDTO{}, fmt.Errorf("store not open")
+	}
+	n, err := a.notes.Load(dto.Path)
+	if err != nil {
+		return BufferDTO{}, fmt.Errorf("refile: load %s: %w", dto.Path, err)
+	}
+	n.SetBody([]byte(dto.Body))
+	applyDTOToMeta(dto.Meta, n.Meta())
+	// Save updated metadata first so Refile derives the correct name.
+	saved, err := a.notes.Save(n)
+	if err != nil {
+		return BufferDTO{}, fmt.Errorf("refile: save %s: %w", dto.Path, err)
+	}
+	refiled, err := a.notes.Refile(saved)
+	if err != nil {
+		return BufferDTO{}, fmt.Errorf("refile: rename %s: %w", dto.Path, err)
+	}
+	logger.Info("note refiled", "from", dto.Path, "to", refiled.Path())
+	return toNoteBufferDTO(refiled), nil
 }
 
 // DiscardBuffer deletes a buffer and its version history.
