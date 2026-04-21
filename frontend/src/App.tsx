@@ -1647,7 +1647,7 @@ export default function App() {
               const el = document.getElementById('manual-path-input') as HTMLInputElement
               if (el?.value) {
                 // @ts-ignore
-                import('../wailsjs/go/main/App').then(m => m.InitStore(el.value)).then(() => window.location.reload()).catch(err => alert(err))
+                import('../wailsjs/go/main/App').then(m => m.InitVault(el.value)).then(() => window.location.reload()).catch(err => alert(err))
               }
             }}>Get Started</button>
           </div>

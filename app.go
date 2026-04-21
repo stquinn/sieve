@@ -97,9 +97,13 @@ func (a *App) startup(ctx context.Context) {
 
 	if a.storePath == "" && isFirstStartup {
 		config := LoadGlobalConfig()
-		if config.LastStorePath != "" && ValidateStore(config.LastStorePath) == nil {
-			a.storePath = config.LastStorePath
-			logger.Info("startup: using LastStorePath", "path", a.storePath)
+		if config.LastStorePath != "" {
+			if err := ValidateStore(config.LastStorePath); err == nil {
+				a.storePath = config.LastStorePath
+				logger.Info("startup: using LastStorePath", "path", a.storePath)
+			} else {
+				logger.Warn("startup: LastStorePath rejected", "path", config.LastStorePath, "err", err)
+			}
 		}
 	}
 
@@ -123,9 +127,16 @@ func (a *App) startup(ctx context.Context) {
 			logger.Warn("startup: path is neither a valid store nor empty", "path", abs)
 			if isFirstStartup {
 				config := LoadGlobalConfig()
-				if config.LastStorePath != "" && ValidateStore(config.LastStorePath) == nil {
-					abs = config.LastStorePath
-					logger.Info("startup: falling back to LastStorePath", "path", abs)
+				if config.LastStorePath != "" {
+					if fallbackErr := ValidateStore(config.LastStorePath); fallbackErr == nil {
+						abs = config.LastStorePath
+						logger.Info("startup: falling back to LastStorePath", "path", abs)
+					} else {
+						logger.Warn("startup: fallback LastStorePath rejected", "path", config.LastStorePath, "err", fallbackErr)
+						a.storePath = ""
+						logger.Info("startup: entering bootstrap mode from invalid implicit path")
+						return
+					}
 				} else {
 					a.storePath = ""
 					logger.Info("startup: entering bootstrap mode from invalid implicit path")

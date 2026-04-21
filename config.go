@@ -73,9 +73,9 @@ func ValidateStore(path string) error {
 // environment variable, or the global config's last-used path.
 func FindBestStorePath(cliArg, envVar string) string {
 	if cliArg != "" {
-		if err := ValidateStore(cliArg); err == nil {
-			return cliArg
-		}
+		// If the user explicitly provides a CLI argument, we trust it and pass it directly.
+		// startup() handles checking if it is a valid store, an empty directory, or invalid.
+		return cliArg
 	}
 	if envVar != "" {
 		if err := ValidateStore(envVar); err == nil {
@@ -86,6 +86,8 @@ func FindBestStorePath(cliArg, envVar string) string {
 	if config.LastStorePath != "" {
 		if err := ValidateStore(config.LastStorePath); err == nil {
 			return config.LastStorePath
+		} else {
+			fmt.Printf("[stash] FindBestStorePath: LastStorePath rejected: %v\n", err)
 		}
 	}
 	pwd, _ := os.Getwd()
