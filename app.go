@@ -26,7 +26,7 @@ import (
 
 // App is the Wails application backend.
 type App struct {
-	ctx      context.Context
+	ctx       context.Context
 	storePath string
 	hostname  string // resolved at startup from os.Hostname
 
@@ -92,7 +92,16 @@ func (a *App) startup(ctx context.Context) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	isFirstStartup := a.ctx == nil
 	a.ctx = ctx
+
+	if a.storePath == "" && isFirstStartup {
+		config := LoadGlobalConfig()
+		if config.LastStorePath != "" && ValidateStore(config.LastStorePath) == nil {
+			a.storePath = config.LastStorePath
+			logger.Info("startup: using LastStorePath", "path", a.storePath)
+		}
+	}
 
 	abs, _ := filepath.Abs(a.storePath)
 	logger.Info("startup", "vault_raw", a.storePath, "vault_abs", abs)
@@ -100,6 +109,25 @@ func (a *App) startup(ctx context.Context) {
 	if a.storePath == "" {
 		logger.Info("startup: no store path specified — entering bootstrap mode")
 		return
+	}
+
+	if isFirstStartup {
+		if err := ValidateStore(abs); err != nil {
+			entries, readErr := os.ReadDir(abs)
+			isEmpty := readErr == nil && len(entries) == 0
+			if !isEmpty {
+				logger.Info("startup: path is neither a valid store nor empty", "path", abs, "err", err)
+				config := LoadGlobalConfig()
+				if config.LastStorePath != "" && ValidateStore(config.LastStorePath) == nil {
+					abs = config.LastStorePath
+					logger.Info("startup: falling back to LastStorePath", "path", abs)
+				} else {
+					a.storePath = ""
+					logger.Info("startup: entering bootstrap mode")
+					return
+				}
+			}
+		}
 	}
 
 	a.storePath = abs
@@ -848,7 +876,7 @@ func (a *App) SaveAsset(context, id, dataBase64 string) (AssetDTO, error) {
 		logger.Error("SaveAsset failed", "id", id, "err", err)
 		return AssetDTO{}, err
 	}
-	
+
 	if context != "" && context != "new" {
 		if b, err := a.buffers.Load(context); err == nil {
 			b.Storable().AttachAsset(asset.Storable())
@@ -862,7 +890,7 @@ func (a *App) SaveAsset(context, id, dataBase64 string) (AssetDTO, error) {
 			}
 		}
 	}
-	
+
 	logger.Info("asset saved", "externalRef", asset.ExternalRef())
 	return toAssetDTO(asset), nil
 }
@@ -906,8 +934,6 @@ func (a *App) DownloadAsset(context, targetURL, id string) (AssetDTO, error) {
 	logger.Info("asset downloaded", "url", targetURL, "externalRef", asset.ExternalRef())
 	return toAssetDTO(asset), nil
 }
-
-
 
 // ── AI / CLI operations ───────────────────────────────────────────────────────
 
