@@ -678,11 +678,12 @@ export default function App() {
         isEmpty:      body.trim().length === 0,
         isEvaluating: meta.aiEval === 'evaluating',
         scroll:       meta.scroll ?? 0,
+        mode:         (meta.status === 'error') ? 'markdown' : tab.mode,
       }
       setTabs(prev => prev.map(t => t.path === tab.path ? { ...t, ...tabMeta } : t))
-      console.debug('[stash] loadTab', { path: tab.path, mode: tab.mode })
+      console.debug('[stash] loadTab', { path: tab.path, mode: tabMeta.mode })
 
-      if (tab.mode === 'markdown') {
+      if (tabMeta.mode === 'markdown') {
         // Markdown mode shows body only — no frontmatter in the textarea
         const cached = mdCache.current[fileUuid] ?? body
         mdCache.current[fileUuid] = cached
@@ -777,7 +778,12 @@ export default function App() {
       console.debug('[stash] prompts:changed — refreshing sidebar')
       fetchPrompts()
     })
-    return () => { unlistenNotes(); unlistenPrompts(); }
+    const unlistenShutdown = EventsOn('wails:before-close', () => {
+      console.debug('[stash] emergency shutdown flush starting...')
+      flush()
+      return false
+    })
+    return () => { unlistenNotes(); unlistenPrompts(); unlistenShutdown() }
   }, [editor, loadTab])
 
   // Automatically expand folders to reveal the active note
@@ -849,7 +855,7 @@ export default function App() {
   // uuid is the permanent file identity (from frontmatter).
   // We resolve the current path from open tabs at call time — so renames are
   // followed automatically and we can never write to a closed or wrong document.
-  function saveBufferSafe(uuid: string) {
+  function saveBufferSafe(uuid: string, options?: { force?: boolean }) {
     const tab = tabsRef.current.find(t => t.uuid === uuid)
     if (!tab) {
       console.warn('[stash] saveBufferSafe: abort — UUID not in open tabs', uuid)
@@ -861,20 +867,29 @@ export default function App() {
       SavePrompt(name, content).then(async () => {
          const p = await GetPrompts()
          setPrompts(p || [])
+         mdCache.current[uuid] = content
          setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isModified: false } : t))
       }).catch(console.error)
       return
     }
-    const meta = metaCache.current[uuid]
     const body = savedBodyCache.current[uuid] ?? ''
+    const meta = metaCache.current[uuid]
     if (!meta) {
       console.warn('[stash] saveBufferSafe: no meta in cache for', uuid)
       return
+    }
+
+    // Dirty check: only save if forced or if content has actually changed from the last disk sync
+    const lastSavedBody = mdCache.current[uuid]
+    const isBodyDirty = body !== lastSavedBody
+    if (!options?.force && !isBodyDirty && !tab.isModified) {
+       return
     }
     const dto = { uuid, path: tab.path, slug: tab.path.split('/').pop()?.replace('.md','') ?? '', body, meta, versions: [] }
     SaveBuffer(dto as any).then(saved => {
       // Update cache with Store-bumped version/modified
       metaCache.current[uuid] = saved.meta
+      mdCache.current[uuid] = body
       setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isModified: false } : t))
     }).catch(console.error)
   }
@@ -883,6 +898,7 @@ export default function App() {
     SavePrompt(name, content).then(() => {
       const uuid = `prompt-${name}`
       savedBodyCache.current[uuid] = content
+      mdCache.current[uuid] = content
       setTabs(prev => prev.map(t => t.uuid === uuid ? { ...t, isModified: false } : t))
     }).catch(console.error)
   }
@@ -1025,21 +1041,18 @@ export default function App() {
         const uuid = tab.uuid
 
         if (tab.status !== 'filed') {
-            if (tab.path === capturedActivePath) flush()
+            if (tab.path === capturedActivePath) {
+               flush()
+            } else if (savedBodyCache.current[uuid] !== mdCache.current[uuid]) {
+               // Non-active tab is dirty: flush its cache
+               saveBufferSafe(uuid)
+            }
 
             if (tab.isEmpty || tab.userIntent === 'trash' || (tab.userIntent === null && tier === 'dumb')) {
                await DiscardBuffer(path).catch(console.error)
             } else if (tier === 'smart' && tab.userIntent === null) {
                fireSmartClose(path, tab.displayName || '')
             } else if (tab.userIntent === 'keep') {
-               const body = (capturedMarkdownMode && tab.path === capturedActivePath)
-                  ? capturedRawMd
-                  : (tab.path === capturedActivePath ? editor?.storage.markdown.getMarkdown() : savedBodyCache.current[tab.uuid]) ?? ''
-
-               if (body !== savedBodyCache.current[tab.uuid]) {
-                 savedBodyCache.current[tab.uuid] = body
-                 saveBufferSafe(tab.uuid)
-               }
                FileBuffer(path).catch(console.error)
             }
         }

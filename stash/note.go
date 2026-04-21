@@ -22,7 +22,10 @@ func newNote(s store.MetaStorable) *Note {
 		s:    s,
 		slug: strings.TrimSuffix(filepath.Base(s.Key()), filepath.Ext(s.Key())),
 	}
-	note.s.Meta()["status"] = "filed"
+	// Only set as "filed" if we haven't already marked it as an error file.
+	if note.s.Meta()["status"] != "error" {
+		note.s.Meta()["status"] = "filed"
+	}
 	return note
 }
 

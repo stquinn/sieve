@@ -72,8 +72,8 @@ func TestFrontmatterRoundTrip(t *testing.T) {
 }
 
 func TestRecoveryMode(t *testing.T) {
-	// A corrupt YAML block that will cause a parsing error.
-	corruptData := []byte("---\ninvalid: : yaml: error\n---\nraw body")
+	// A truly unfixable YAML block (unclosed bracket).
+	corruptData := []byte("---\ninvalid: [unclosed bracket\n---\nraw body")
 
 	// 1. Simulate buildStorable detecting the error.
 	_, _, err := parseFrontmatter(corruptData)
@@ -91,5 +91,28 @@ func TestRecoveryMode(t *testing.T) {
 	out := serialiseFrontmatter(meta, body)
 	if string(out) != string(corruptData) {
 		t.Errorf("recovery serialisation failed\ngot:  %s\nwant: %s", string(out), string(corruptData))
+	}
+}
+
+func TestAutoResurrection(t *testing.T) {
+	// The exact "infected" content from the user's report.
+	infected := []byte(`---
+summary: Design spec for LEAP Scheme Assignment data provider: scheme dataset lifecycle
+---
+Body content`)
+
+	meta, body, err := parseFrontmatter(infected)
+	if err != nil {
+		t.Fatalf("Auto-resurrection failed: %v", err)
+	}
+
+	if meta["summary"] != "Design spec for LEAP Scheme Assignment data provider: scheme dataset lifecycle" {
+		t.Errorf("summary mismatch: %q", meta["summary"])
+	}
+	if meta["_recovery"] == "" {
+		t.Error("expected _recovery metadata to be present")
+	}
+	if string(body) != "Body content" {
+		t.Errorf("body mismatch: %q", string(body))
 	}
 }

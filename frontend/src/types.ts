@@ -1,5 +1,5 @@
 export type TabMode = 'wysiwyg' | 'markdown'
-export type BufferStatus = 'unfiled' | 'filed'
+export type BufferStatus = 'unfiled' | 'filed' | 'error'
 export type UserIntent = 'trash' | 'keep' | null
 
 export interface TabState {

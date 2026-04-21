@@ -245,6 +245,7 @@ func (ns *NoteService) RetrieveVersion(n *Note, ref store.VersionRef) (store.Ver
 type NoteEntry struct {
 	Name        string      `json:"name"`
 	DisplayName string      `json:"displayName,omitempty"`
+	Status      string      `json:"status,omitempty"`
 	Path        string      `json:"path,omitempty"`
 	UserIntent  string      `json:"userIntent,omitempty"`
 	IsDir       bool        `json:"isDir"`
@@ -281,23 +282,24 @@ func buildNoteTree(storables []store.Storable) []NoteEntry {
 			continue
 		}
 
-		switch v := s.(type) {
-		case store.FolderStorable:
-			entries = append(entries, NoteEntry{
-				Name:     key,
-				IsDir:    true,
-				Children: buildFolderChildren(v.Owns()),
-			})
+		switch s := s.(type) {
 		case store.MetaStorable:
 			if !strings.HasSuffix(key, ".md") {
 				continue
 			}
 			entries = append(entries, NoteEntry{
 				Name:        strings.TrimSuffix(key, ".md"),
-				DisplayName: metaString(v.Meta(), "display_name"),
+				DisplayName: metaString(s.Meta(), "display_name"),
+				Status:      s.Meta()["status"],
 				Path:        s.ExternalRef(),
-				UserIntent:  metaString(v.Meta(), "user_intent"),
+				UserIntent:  metaString(s.Meta(), "user_intent"),
 				IsDir:       false,
+			})
+		case store.FolderStorable:
+			entries = append(entries, NoteEntry{
+				Name:     key,
+				IsDir:    true,
+				Children: buildFolderChildren(s.Owns()),
 			})
 		}
 	}
@@ -318,6 +320,7 @@ func buildFolderChildren(owns []store.Storable) []NoteEntry {
 		children = append(children, NoteEntry{
 			Name:        strings.TrimSuffix(filepath.Base(key), ".md"),
 			DisplayName: metaString(ms.Meta(), "display_name"),
+			Status:      ms.Meta()["status"],
 			Path:        ms.ExternalRef(),
 			UserIntent:  metaString(ms.Meta(), "user_intent"),
 			IsDir:       false,

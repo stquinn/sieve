@@ -367,7 +367,10 @@ function tabDot(tab: TabState): string | null {
 }
 
 function tabLabel(tab: TabState): string {
-  if (tab.displayName) return tab.displayName
-  const parts = tab.path.replace(/\\/g, '/').split('/')
-  return parts[parts.length - 1].replace(/\.md$/, '')
+  let label = tab.displayName
+  if (!label) {
+    const parts = tab.path.replace(/\\/g, '/').split('/')
+    label = parts[parts.length - 1].replace(/\.md$/, '')
+  }
+  return tab.status === 'error' ? `⚠️ ${label}` : label
 }

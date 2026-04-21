@@ -9,6 +9,7 @@ export interface NoteEntry {
   name: string
   displayName?: string
   path?: string      // store-relative, present on files
+  status?: string
   userIntent?: string // from frontmatter: "keep", "trash", or ""
   isDir: boolean
   children?: NoteEntry[]
@@ -364,6 +365,7 @@ function FileEntry({ entry, depth, open, active, onOpen, onContextMenu }: FileEn
         <div className="flex items-center gap-2 w-full">
           <FileText className="w-3.5 h-3.5 opacity-40 shrink-0" />
           <div className="flex items-center gap-1.5 flex-1 min-w-0">
+            {entry.status === 'error' && <span title="Malformed YAML: check file on disk">⚠️</span>}
             {entry.userIntent && (
               <span className={cn(
                 'w-1.5 h-1.5 rounded-full shrink-0',

@@ -151,8 +151,7 @@ func (fs *FileStore) buildStorable(cat store.Category, key string, catDir string
 					extRef:   extRef,
 				},
 				meta: map[string]string{
-					"status":       "error",
-					"display_name": "⚠️ ERROR: " + filepath.Base(key),
+					"status": "error",
 				},
 			}
 		}
