@@ -61,7 +61,7 @@ func EvaluateBuffer(meta DocumentMeta, body []byte, folders []string, settings S
 	prompt = strings.Replace(prompt, "{now}", time.Now().Format(time.RFC3339), 1)
 	prompt = strings.Replace(prompt, "{content}", string(body), 1)
 
-	respText, err := RunCLI(settings.CLI, prompt, settings.Model, settings.CLITimeout, "")
+	respText, err := RunCLI(settings.CLI, prompt, settings.Model, settings.CLITimeoutLong, "")
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +142,7 @@ func DescribeImage(imagePath string, settings Settings, promptTmpl string) (Imag
 	prompt := strings.Replace(promptTmpl, "{image_filename}", filepath.Base(imagePath), 1)
 	cwd := filepath.Dir(imagePath)
 
-	resp, err := RunCLIWithImages(settings.CLI, prompt, []string{imagePath}, settings.Model, 15, cwd)
+	resp, err := RunCLIWithImages(settings.CLI, prompt, []string{imagePath}, settings.Model, settings.CLITimeoutLong, cwd)
 	if err != nil {
 		return ImageDesc{}, err
 	}
@@ -161,7 +161,7 @@ func DescribeImage(imagePath string, settings Settings, promptTmpl string) (Imag
 func RefineLanguage(content string, settings Settings, promptTmpl string) (string, error) {
 	prompt := strings.Replace(promptTmpl, "{content}", content, 1)
 
-	resp, err := RunCLI(settings.CLI, prompt, settings.Model, 10, "")
+	resp, err := RunCLI(settings.CLI, prompt, settings.Model, settings.CLITimeout, "")
 	if err != nil {
 		return "", err
 	}

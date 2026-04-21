@@ -960,14 +960,14 @@ export default function App() {
   }
   function handleSelectStore() {
     // @ts-ignore
-    import('../wailsjs/go/main/App').then(m => m.SelectStore()).then(path => {
+    import('../wailsjs/go/main/App').then(m => m.SelectVault()).then(path => {
       if (path) window.location.reload()
     }).catch(err => alert(err))
   }
 
   function handleCreateStore() {
     // @ts-ignore
-    import('../wailsjs/go/main/App').then(m => m.CreateStore()).then(path => {
+    import('../wailsjs/go/main/App').then(m => m.CreateVault()).then(path => {
       if (path) window.location.reload()
     }).catch(err => alert(err))
   }
