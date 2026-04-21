@@ -24,7 +24,7 @@ interface UseNoteOperationsParams {
   prompts: PromptEntry[]
   editor: Editor | null
   tabsRef: React.MutableRefObject<TabState[]>
-  metaCache: React.MutableRefObject<Record<string, main.DocumentMetaDTO>>
+  metaCache: React.MutableRefObject<Record<string, main.DocumentMetaDTO | null>>
   savedBodyCache: React.MutableRefObject<Record<string, string>>
   mdCache: React.MutableRefObject<Record<string, string>>
   setTabs: React.Dispatch<React.SetStateAction<TabState[]>>
