@@ -15,7 +15,7 @@ interface UseAiGesturesParams {
   activeTabRef: React.MutableRefObject<TabState | undefined>
   tabsRef: React.MutableRefObject<TabState[]>
   uuidToPath: React.MutableRefObject<Map<string, string>>
-  metaCache: React.MutableRefObject<Record<string, main.DocumentMetaDTO>>
+  metaCache: React.MutableRefObject<Record<string, main.DocumentMetaDTO | null>>
   savedBodyCache: React.MutableRefObject<Record<string, string>>
   pendingAiCount: React.MutableRefObject<number>
   evalStartTimes: React.MutableRefObject<Record<string, number>>

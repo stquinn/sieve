@@ -89,7 +89,7 @@ export default function App() {
   const focusTimer                = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Caches keyed by UUID — survive tab switches without triggering re-renders
-  const metaCache    = useRef<Record<string, main.DocumentMetaDTO>>({})  // meta DTO per uuid
+  const metaCache    = useRef<Record<string, main.DocumentMetaDTO | null>>({})  // meta DTO per uuid
   const versionsCache = useRef<Record<string, main.VersionRefDTO[]>>({})  // version list per uuid
   const mdCache      = useRef<Record<string, string>>({})  // raw markdown per uuid (when in markdown mode)
   const savedBodyCache = useRef<Record<string, string>>({}) // clean WYSIWYG body per uuid
@@ -901,7 +901,7 @@ export default function App() {
     let scrollChanged = currentScrollValue !== savedScroll
 
     if (scrollChanged) {
-      metaCache.current[uuid] = { ...metaCache.current[uuid], scroll: currentScrollValue }
+      metaCache.current[uuid] = { ...(metaCache.current[uuid] || {}), scroll: currentScrollValue } as main.DocumentMetaDTO
     }
 
     if (isMarkdownMode) {

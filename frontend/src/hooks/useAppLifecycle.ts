@@ -11,7 +11,7 @@ interface UseAppLifecycleParams {
   tabsRef: React.MutableRefObject<TabState[]>
   activeTabRef: React.MutableRefObject<TabState | undefined>
   activeIdxRef: React.MutableRefObject<number>
-  metaCache: React.MutableRefObject<Record<string, main.DocumentMetaDTO>>
+  metaCache: React.MutableRefObject<Record<string, main.DocumentMetaDTO | null>>
   savedBodyCache: React.MutableRefObject<Record<string, string>>
   mdCache: React.MutableRefObject<Record<string, string>>
   evaluatingUuids: React.MutableRefObject<Set<string>>
