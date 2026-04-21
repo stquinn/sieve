@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react'
 import { cn } from '@/lib/utils'
 import { UserIntent } from '../types'
-import { FolderOpen, Rocket, Sparkles, Trash2, CheckCircle2, XCircle, RotateCcw, Pencil } from 'lucide-react'
+import { FolderOpen, Rocket, Sparkles, Trash2, CheckCircle2, XCircle, RotateCcw, Pencil, X } from 'lucide-react'
 
 interface Props {
   x: number
@@ -19,9 +19,11 @@ interface Props {
   childCount?: number
   isVirtual?: boolean
   onRestore?: () => void
+  onCloseTab?: () => void
+  onCloseAllTabs?: () => void
 }
 
-export function NoteContextMenu({ x, y, path, intent, onClose, onSetIntent, onDelete, onRename, onShowInFiles, onSmartFile, onSmartMetadata, isDir, childCount, isVirtual, onRestore }: Props) {
+export function NoteContextMenu({ x, y, path, intent, onClose, onSetIntent, onDelete, onRename, onShowInFiles, onSmartFile, onSmartMetadata, isDir, childCount, isVirtual, onRestore, onCloseTab, onCloseAllTabs }: Props) {
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -152,6 +154,29 @@ export function NoteContextMenu({ x, y, path, intent, onClose, onSetIntent, onDe
         <Trash2 className="w-4 h-4 opacity-70" />
         {isDir ? 'Delete Folder' : 'Delete Note...'}
       </button>
+
+      {onCloseTab && (
+        <>
+          <div className="my-1 border-0 border-t border-solid border-white/20" />
+          <button
+            className="w-full bg-transparent border-none text-left px-3 py-1.5 text-[14px] text-tn-text hover:bg-tn-border hover:text-white transition-colors flex items-center gap-2"
+            onClick={() => { onCloseTab(); onClose() }}
+          >
+            <X className="w-4 h-4 opacity-70" />
+            Close This Tab
+          </button>
+        </>
+      )}
+
+      {onCloseAllTabs && (
+        <button
+          className="w-full bg-transparent border-none text-left px-3 py-1.5 text-[14px] text-tn-text hover:bg-tn-border hover:text-white transition-colors flex items-center gap-2"
+          onClick={() => { onCloseAllTabs(); onClose() }}
+        >
+          <X className="w-4 h-4 opacity-70" />
+          Close All Tabs
+        </button>
+      )}
     </div>
   )
 }

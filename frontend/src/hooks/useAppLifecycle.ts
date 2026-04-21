@@ -3,7 +3,7 @@ import type React from 'react'
 import { SaveBuffer, Quit as AppQuit } from '../../wailsjs/go/main/App'
 import { EventsOn, EventsOff, Quit } from '../../wailsjs/runtime/runtime'
 import type { TabState } from '../types'
-import { bumpFocusCount } from '../lib/fmUtils'
+import type { main } from '../../wailsjs/go/models'
 
 interface UseAppLifecycleParams {
   activeIdx: number
@@ -11,7 +11,7 @@ interface UseAppLifecycleParams {
   tabsRef: React.MutableRefObject<TabState[]>
   activeTabRef: React.MutableRefObject<TabState | undefined>
   activeIdxRef: React.MutableRefObject<number>
-  fmCache: React.MutableRefObject<Record<string, string>>
+  metaCache: React.MutableRefObject<Record<string, main.DocumentMetaDTO>>
   savedBodyCache: React.MutableRefObject<Record<string, string>>
   mdCache: React.MutableRefObject<Record<string, string>>
   evaluatingUuids: React.MutableRefObject<Set<string>>
@@ -20,7 +20,7 @@ interface UseAppLifecycleParams {
   // Pass the ref, not the closure — app:closing fires long after render
   flushRef: React.MutableRefObject<() => void>
   focusTimer: React.MutableRefObject<ReturnType<typeof setTimeout> | null>
-  saveBufferSafe: (uuid: string, content: string) => void
+  saveBufferSafe: (uuid: string) => void
   persistSession: () => Promise<void>
   setPendingClose: React.Dispatch<React.SetStateAction<boolean>>
 }
@@ -31,7 +31,7 @@ export function useAppLifecycle({
   tabsRef,
   activeTabRef,
   activeIdxRef,
-  fmCache,
+  metaCache,
   savedBodyCache,
   mdCache,
   evaluatingUuids,
@@ -55,15 +55,11 @@ export function useAppLifecycle({
         console.log('[stash] shutdown: flushing', otherTabs.length, 'background tab(s)...')
         await Promise.all(otherTabs.map(async (t) => {
           const uuid = t.uuid
-          const body = savedBodyCache.current[uuid] ?? ''
-          const fm   = fmCache.current[uuid] ?? ''
-          const raw  = mdCache.current[uuid]
-
-          if (raw) {
-            await SaveBuffer(t.path, raw).catch(console.error)
-          } else if (body || fm) {
-            await SaveBuffer(t.path, fm + body).catch(console.error)
-          }
+          const meta = metaCache.current[uuid]
+          const body = mdCache.current[uuid] ?? savedBodyCache.current[uuid] ?? ''
+          if (!meta && !body) return
+          const dto = { uuid, path: t.path, slug: t.path.split('/').pop()?.replace('.md', '') ?? '', body, meta: meta ?? {}, versions: [] }
+          await SaveBuffer(dto as any).catch(console.error)
         }))
       }
 
@@ -112,29 +108,21 @@ export function useAppLifecycle({
     if (!tab) return
     const path = tab.path
 
-    focusTimer.current = setTimeout(() => {
+    const bumpFocusCount = () => {
       const currentTab = tabsRef.current.find(t => t.path === path)
       if (!currentTab || !currentTab.uuid) return
-      const fm = fmCache.current[currentTab.uuid]
-      if (!fm) return
-      const newFm = bumpFocusCount(fm)
-      fmCache.current[currentTab.uuid] = newFm
-      const body = savedBodyCache.current[currentTab.uuid] ?? ''
-      saveBufferSafe(currentTab.uuid, newFm + body)
-      console.debug('[stash] focus_count: visit incremented', { path })
-    }, 30 * 1000)
+      const meta = metaCache.current[currentTab.uuid]
+      if (!meta) return
+      metaCache.current[currentTab.uuid] = { ...meta, focusCount: (meta.focusCount ?? 0) + 1 }
+      saveBufferSafe(currentTab.uuid)
+      console.debug('[stash] focus_count: incremented', { path })
+    }
+
+    focusTimer.current = setTimeout(bumpFocusCount, 30 * 1000)
 
     const dwellInterval = setInterval(() => {
       if (activeIdxRef.current !== activeIdx) return
-      const currentTab = tabsRef.current[activeIdx]
-      if (!currentTab || !currentTab.uuid) return
-      const fm = fmCache.current[currentTab.uuid]
-      if (!fm) return
-      const newFm = bumpFocusCount(fm)
-      fmCache.current[currentTab.uuid] = newFm
-      const body = savedBodyCache.current[currentTab.uuid] ?? ''
-      saveBufferSafe(currentTab.uuid, newFm + body)
-      console.debug('[stash] focus_count: dwell interval incremented', { path })
+      bumpFocusCount()
     }, 5 * 60 * 1000)
 
     return () => {

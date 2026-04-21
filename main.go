@@ -61,7 +61,7 @@ type muxHandler struct {
 
 func (m *muxHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("[stash] request: %s %s (URI: %s)\n", r.Method, r.URL.Path, r.RequestURI)
-	
+
 	// Intercept proxy requests early.
 	if strings.Contains(r.URL.Path, "/stash-image-proxy") {
 		m.serveProxy(w, r)
@@ -137,19 +137,9 @@ func (m *muxHandler) serveThemeCSS(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 
-	var settings stash.Settings
-	var storeRoot string
+	settings := m.app.LoadSettings()
 
-	if m.app.GetStorePath() != "" {
-		storeRoot = m.app.GetStorePath()
-		settings = stash.LoadSettings(m.app.SettingsPath())
-	} else {
-		// Fallback: show the default theme (Sublime) for the splash screen
-		settings = stash.LoadSettings("") // load defaults
-		storeRoot = ""
-	}
-
-	vars := stash.LoadTheme(storeRoot, settings.Theme, m.app.GetThemesFS())
+	vars := stash.LoadTheme(settings.Theme, m.app.loadThemeOverride(settings.Theme), m.app.GetThemesFS())
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("html:root {\n"))
@@ -165,19 +155,18 @@ func main() {
 	if len(os.Args) > 1 {
 		cliArg = os.Args[1]
 	}
-	storePath := stash.FindBestStorePath(cliArg, os.Getenv("STASH_STORE"))
-
+	storePath := FindBestStorePath(cliArg, os.Getenv("STASH_STORE"))
 
 	app := NewApp(storePath, themes)
 
 	err := wails.Run(&options.App{
-		Title:            "Stash",
-		Width:            1200,
-		Height:           800,
-		MinWidth:         800,
-		MinHeight:        500,
+		Title:                    "Stash",
+		Width:                    1200,
+		Height:                   800,
+		MinWidth:                 800,
+		MinHeight:                500,
 		EnableDefaultContextMenu: true,
-		BackgroundColour: &options.RGBA{R: 26, G: 27, B: 38, A: 1},
+		BackgroundColour:         &options.RGBA{R: 26, G: 27, B: 38, A: 1},
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 			Handler: &muxHandler{
@@ -196,4 +185,3 @@ func main() {
 		println("Error:", err.Error())
 	}
 }
-

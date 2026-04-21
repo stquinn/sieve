@@ -3,101 +3,69 @@ package stash
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
+
 	"stash/logger"
 )
 
 // FilingRecommendation mirrors the expected JSON structure from the AI.
 type FilingRecommendation struct {
-	Keep             bool     `json:"keep"`
-	Title            string   `json:"title"`
-	Filename         string   `json:"filename"`
-	Folder           string   `json:"folder"`
-	NewFolder        bool     `json:"new_folder"`
-	Type             string   `json:"type"`
-	Summary          string   `json:"summary"`
-	Tags             []string `json:"tags"`
-	AiJustification  string   `json:"ai_justification"`
-	DensitySignals   []string `json:"density_signals"`
+	Keep            bool     `json:"keep"`
+	Title           string   `json:"title"`
+	Filename        string   `json:"filename"`
+	Folder          string   `json:"folder"`
+	NewFolder       bool     `json:"new_folder"`
+	Type            string   `json:"type"`
+	Summary         string   `json:"summary"`
+	Tags            []string `json:"tags"`
+	AiJustification string   `json:"ai_justification"`
+	DensitySignals  []string `json:"density_signals"`
 }
 
-func (v *Store) getFilingPrompt(settings Settings) string {
-	p, _ := GetPromptContent("file", settings)
-	return p
-}
-
-// EvaluateBuffer executes the AI evaluation over a buffer on disk and returns the
-// unmarshaled recommendation.
-func (v *Store) EvaluateBuffer(path string, settings Settings) (*FilingRecommendation, error) {
+// EvaluateBuffer executes the AI evaluation over a document and returns the
+// unmarshaled filing recommendation. meta and body come from the Store-loaded
+// document; folders is the current list of top-level Library folder names;
+// promptOverride is the already-loaded prompt template (empty = use default).
+func EvaluateBuffer(meta DocumentMeta, body []byte, folders []string, settings Settings, promptTmpl string) (*FilingRecommendation, error) {
 	if settings.Tier() == TierDumb {
 		return nil, fmt.Errorf("AI evaluation not available in Dumb mode")
 	}
 
-	contentBytes, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
+	versionStr := fmt.Sprintf("%d", meta.Version())
+	if versionStr == "0" {
+		versionStr = "1"
 	}
-	content := string(contentBytes)
+	focusCountStr := fmt.Sprintf("%d", meta.FocusCount())
 
-	// Extract frontmatter meta specifically for version and focus_count via regex
-	versionStr := "1"
-	focusCountStr := "0"
 	createdStr := "unknown"
+	if c := meta.Created(); !c.IsZero() {
+		createdStr = c.Format("2006-01-02T15:04:05")
+	}
 	modifiedStr := "unknown"
-	
-	if strings.HasPrefix(content, "---\n") {
-		parts := strings.SplitN(content[4:], "\n---\n", 2)
-		if len(parts) == 2 {
-			metaStr := "---" + parts[0]
-			
-			if m := regexp.MustCompile(`(?m)^version:\s*(\d+)`).FindStringSubmatch(metaStr); len(m) > 1 {
-				versionStr = m[1]
-			}
-			if m := regexp.MustCompile(`(?m)^focus_count:\s*(\d+)`).FindStringSubmatch(metaStr); len(m) > 1 {
-				focusCountStr = m[1]
-			}
-			if m := regexp.MustCompile(`(?m)^created:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})`).FindStringSubmatch(metaStr); len(m) > 1 {
-				createdStr = m[1]
-			}
-			if m := regexp.MustCompile(`(?m)^modified:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})`).FindStringSubmatch(metaStr); len(m) > 1 {
-				modifiedStr = m[1]
-			}
-			content = parts[1]
-		}
+	if m := meta.Modified(); !m.IsZero() {
+		modifiedStr = m.Format("2006-01-02T15:04:05")
 	}
 
-	// Read existing folders in store/
-	var folders []string
-	entries := ScanNotes(v.Root, v.NotesPath())
-	for _, e := range entries {
-		if e.IsDir {
-			folders = append(folders, e.Name)
-		}
-	}
 	folderList := strings.Join(folders, ", ")
 	if folderList == "" {
 		folderList = "(none yet)"
 	}
 
-	promptTmpl := v.getFilingPrompt(settings)
 	prompt := strings.Replace(promptTmpl, "{folder_list}", folderList, 1)
 	prompt = strings.Replace(prompt, "{version}", versionStr, 1)
 	prompt = strings.Replace(prompt, "{focus_count}", focusCountStr, 1)
 	prompt = strings.Replace(prompt, "{created}", createdStr, 1)
 	prompt = strings.Replace(prompt, "{modified}", modifiedStr, 1)
 	prompt = strings.Replace(prompt, "{now}", time.Now().Format(time.RFC3339), 1)
-	prompt = strings.Replace(prompt, "{content}", content, 1)
+	prompt = strings.Replace(prompt, "{content}", string(body), 1)
 
-	respText, err := RunCLI(settings.CLI, prompt, settings.Model, settings.CLITimeout, filepath.Dir(path))
+	respText, err := RunCLI(settings.CLI, prompt, settings.Model, settings.CLITimeout, "")
 	if err != nil {
 		return nil, err
 	}
 
-	// Extract JSON purely defensively (sometimes LLMs ignore instructions and wrap in markdown)
 	jsonBlock := extractJSONFallback(respText)
 
 	var rec FilingRecommendation
@@ -105,7 +73,6 @@ func (v *Store) EvaluateBuffer(path string, settings Settings) (*FilingRecommend
 		return nil, fmt.Errorf("could not parse AI json response: %v\nJSON was: %s", err, jsonBlock)
 	}
 
-	// Backfill missing critical arrays with empty defaults avoiding nulls
 	if rec.Tags == nil {
 		rec.Tags = []string{}
 	}
@@ -116,46 +83,21 @@ func (v *Store) EvaluateBuffer(path string, settings Settings) (*FilingRecommend
 	return &rec, nil
 }
 
-func (v *Store) getExplainPrompt(settings Settings) string {
-	p, _ := GetPromptContent("explain", settings)
-	return p
-}
-
-func (v *Store) getAskPrompt(settings Settings) string {
-	p, _ := GetPromptContent("ask", settings)
-	return p
-}
-
 // RunExplain asks the CLI to explain the given content and returns the response
-// as a markdown string for inline insertion. noteCwd is the directory of the note
-// file being explained — sets the CLI's working directory so relative asset paths
-// in the content resolve correctly. Pass "" to inherit the process working directory.
-func (v *Store) RunExplain(content, history string, settings Settings, noteCwd string, imagePaths []string) (string, error) {
+// as a markdown string for inline insertion. noteCwd is the directory of the
+// note file — sets the CLI's working directory so relative asset paths resolve
+// correctly. Pass "" to inherit the process working directory.
+// promptOverride is the already-loaded prompt template (empty = use default).
+func RunExplain(content, history string, settings Settings, noteCwd string, imagePaths []string, promptTmpl string) (string, error) {
 	if settings.Tier() == TierDumb {
 		return "", fmt.Errorf("explain not available in dumb mode")
 	}
 
 	contentType := detectContentType(content)
-	prompt := v.getExplainPrompt(settings)
-	prompt = strings.Replace(prompt, "{type}", contentType, 1)
+	prompt := strings.Replace(promptTmpl, "{type}", contentType, 1)
 	prompt = strings.Replace(prompt, "{history}", history, 1)
 	prompt = strings.Replace(prompt, "{content}", content, 1)
-
-	imageNames := []string{}
-	for _, p := range imagePaths {
-		rel, err := filepath.Rel(noteCwd, p)
-		if err == nil {
-			imageNames = append(imageNames, rel)
-		} else {
-			imageNames = append(imageNames, filepath.Base(p))
-		}
-	}
-	replacement := "N/A"
-	if len(imageNames) > 0 {
-		replacement = strings.Join(imageNames, ", ")
-	}
-
-	prompt = strings.Replace(prompt, "{images}", replacement, 1)
+	prompt = strings.Replace(prompt, "{images}", imageNameList(imagePaths, noteCwd), 1)
 
 	if len(imagePaths) > 0 {
 		return RunCLIWithImages(settings.CLI, prompt, imagePaths, settings.Model, settings.CLITimeoutLong, noteCwd)
@@ -163,71 +105,60 @@ func (v *Store) RunExplain(content, history string, settings Settings, noteCwd s
 	return RunCLI(settings.CLI, prompt, settings.Model, settings.CLITimeoutLong, noteCwd)
 }
 
-// RunAsk asks the CLI a question with the given content as context. history may be
-// empty for first-turn asks. noteCwd is the directory of the note/buffer file —
-// sets the CLI's working directory so relative asset paths resolve correctly.
-func (v *Store) RunAsk(content, history, question string, settings Settings, noteCwd string, imagePaths []string) (string, error) {
+// RunAsk asks the CLI a question with the given content as context. history may
+// be empty for first-turn asks. noteCwd is the directory of the note/buffer
+// file — sets the CLI's working directory so relative asset paths resolve.
+// promptOverride is the already-loaded prompt template (empty = use default).
+func RunAsk(content, history, question string, settings Settings, noteCwd string, imagePaths []string, promptTmpl string) (string, error) {
 	if settings.Tier() == TierDumb {
 		return "", fmt.Errorf("ask not available in dumb mode")
 	}
 
 	contentType := detectContentType(content)
-	prompt := v.getAskPrompt(settings)
-	prompt = strings.Replace(prompt, "{type}", contentType, 1)
+	prompt := strings.Replace(promptTmpl, "{type}", contentType, 1)
 	prompt = strings.Replace(prompt, "{content}", content, 1)
 	prompt = strings.Replace(prompt, "{history}", history, 1)
 	prompt = strings.Replace(prompt, "{question}", question, 1)
-	imageNames := []string{}
-	for _, p := range imagePaths {
-		rel, err := filepath.Rel(noteCwd, p)
-		if err == nil {
-			imageNames = append(imageNames, rel)
-		} else {
-			imageNames = append(imageNames, filepath.Base(p))
-		}
-	}
-	replacement := "N/A"
-	if len(imageNames) > 0 {
-		replacement = strings.Join(imageNames, ", ")
-	}
-
-	prompt = strings.Replace(prompt, "{images}", replacement, 1)
+	prompt = strings.Replace(prompt, "{images}", imageNameList(imagePaths, noteCwd), 1)
 
 	if len(imagePaths) > 0 {
-		logger.Info("has Images")
+		logger.Info("RunAsk: has images", "count", len(imagePaths))
 		return RunCLIWithImages(settings.CLI, prompt, imagePaths, settings.Model, settings.CLITimeoutLong, noteCwd)
 	}
-	logger.Info("has ZERO Images")
 	return RunCLI(settings.CLI, prompt, settings.Model, settings.CLITimeoutLong, noteCwd)
 }
 
-// detectContentType returns a simple content type label for use in prompts.
-func detectContentType(content string) string {
-	trimmed := strings.TrimSpace(content)
-	if strings.HasPrefix(trimmed, "```") {
-		// Fenced code block — extract language from first line
-		firstLine := strings.SplitN(trimmed, "\n", 2)[0]
-		lang := strings.TrimPrefix(firstLine, "```")
-		lang = strings.TrimSpace(lang)
-		if lang != "" {
-			return lang
-		}
-		return "code"
-	}
-	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
-		return "json"
-	}
-	if strings.HasPrefix(trimmed, "apiVersion:") || strings.HasPrefix(trimmed, "kind:") {
-		return "kubernetes yaml"
-	}
-	return "markdown"
+// ImageDesc is the structured response from DescribeImage.
+type ImageDesc struct {
+	Filename string `json:"filename"`
+	Alt      string `json:"alt"`
+	Summary  string `json:"summary"`
 }
 
-// RefineLanguage asks the configured CLI to identify the programming language of a
-// code snippet. Returns the lowercase language name or an empty string if the CLI
-// returns something unrecognised or if the call fails.
-func RefineLanguage(content string, settings Settings) (string, error) {
-	promptTmpl, _ := GetPromptContent("refine", settings)
+// DescribeImage sends an image to the configured CLI and returns alt text, a
+// summary, and a suggested filename. imagePath must be an absolute filesystem path.
+// promptOverride is the already-loaded prompt template (empty = use default).
+func DescribeImage(imagePath string, settings Settings, promptTmpl string) (ImageDesc, error) {
+	prompt := strings.Replace(promptTmpl, "{image_filename}", filepath.Base(imagePath), 1)
+	cwd := filepath.Dir(imagePath)
+
+	resp, err := RunCLIWithImages(settings.CLI, prompt, []string{imagePath}, settings.Model, 15, cwd)
+	if err != nil {
+		return ImageDesc{}, err
+	}
+
+	cleaned := extractJSONFallback(resp)
+	var desc ImageDesc
+	if err := json.Unmarshal([]byte(cleaned), &desc); err != nil {
+		return ImageDesc{}, fmt.Errorf("parse image desc: %w", err)
+	}
+	return desc, nil
+}
+
+// RefineLanguage asks the configured CLI to identify the programming language of
+// a code snippet. Returns the lowercase language name or empty string.
+// promptOverride is the already-loaded prompt template (empty = use default).
+func RefineLanguage(content string, settings Settings, promptTmpl string) (string, error) {
 	prompt := strings.Replace(promptTmpl, "{content}", content, 1)
 
 	resp, err := RunCLI(settings.CLI, prompt, settings.Model, 10, "")
@@ -235,7 +166,6 @@ func RefineLanguage(content string, settings Settings) (string, error) {
 		return "", err
 	}
 
-	// Take only the first word to strip any accidental explanation text
 	lang := strings.ToLower(strings.TrimSpace(resp))
 	if fields := strings.Fields(lang); len(fields) > 0 {
 		lang = fields[0]
@@ -255,60 +185,59 @@ func RefineLanguage(content string, settings Settings) (string, error) {
 	return "", nil
 }
 
-// ImageDesc is the structured response from DescribeImage.
-type ImageDesc struct {
-	Filename string `json:"filename"`
-	Alt      string `json:"alt"`
-	Summary  string `json:"summary"`
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+func detectContentType(content string) string {
+	trimmed := strings.TrimSpace(content)
+	if strings.HasPrefix(trimmed, "```") {
+		firstLine := strings.SplitN(trimmed, "\n", 2)[0]
+		lang := strings.TrimSpace(strings.TrimPrefix(firstLine, "```"))
+		if lang != "" {
+			return lang
+		}
+		return "code"
+	}
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		return "json"
+	}
+	if strings.HasPrefix(trimmed, "apiVersion:") || strings.HasPrefix(trimmed, "kind:") {
+		return "kubernetes yaml"
+	}
+	return "markdown"
 }
 
-// DescribeImage sends an image to the configured CLI and returns alt text, a
-// summary, and a suggested filename. imagePath must be an absolute filesystem path.
-// The CLI's working directory is set to the image's directory so relative paths
-// in the prompt resolve correctly.
-//
-// For Claude/Copilot: explicit --image flags carry the binary.
-// For Gemini: no --image flag exists; instead the image is base64-encoded and
-// appended to the prompt body so the model receives it as inline multimodal data
-// rather than via its file-reading tools (which fail against the Code Assist API).
-func DescribeImage(imagePath string, settings Settings) (ImageDesc, error) {
-	promptTmpl, _ := GetPromptContent("image", settings)
-	filename := filepath.Base(imagePath)
-	prompt := strings.Replace(promptTmpl, "{image_filename}", filename, 1)
-	cwd := filepath.Dir(imagePath)
-
-	resp, err := RunCLIWithImages(settings.CLI, prompt, []string{imagePath}, settings.Model, 15, cwd)
-	if err != nil {
-		return ImageDesc{}, err
-	}
-
-	cleaned := extractJSONFallback(resp)
-	var desc ImageDesc
-	if err := json.Unmarshal([]byte(cleaned), &desc); err != nil {
-		return ImageDesc{}, fmt.Errorf("parse image desc: %w", err)
-	}
-	return desc, nil
-}
-
-// extractJSONFallback attempts to find a JSON object in the text if it's wrapped
-// in markdown or conversational chatter.
 func extractJSONFallback(text string) string {
 	text = strings.TrimSpace(text)
-	
-	// Remove markdown code fences if present
-	text = regexp.MustCompile(`(?s)^?(\x60\x60\x60(json)?\n?)(.*?)(\n?\x60\x60\x60)?$`).ReplaceAllString(text, "$3")
-	text = strings.TrimSpace(text)
+	// Remove markdown code fences if present.
+	text = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(
+		strings.TrimSpace(text), "```json\n"), "\n```"))
+	text = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(
+		strings.TrimSpace(text), "```\n"), "\n```"))
 
 	if strings.HasPrefix(text, "{") && strings.HasSuffix(text, "}") {
-		return text 
+		return text
 	}
-
-	// Desperate heuristic for the first `{` to the last `}`
 	first := strings.Index(text, "{")
 	last := strings.LastIndex(text, "}")
 	if first >= 0 && last >= 0 && last > first {
 		return text[first : last+1]
 	}
-
 	return text
+}
+
+// imageNameList builds the {images} prompt substitution: relative paths from
+// noteCwd where possible, otherwise just the base filename.
+func imageNameList(imagePaths []string, noteCwd string) string {
+	if len(imagePaths) == 0 {
+		return "N/A"
+	}
+	names := make([]string, len(imagePaths))
+	for i, p := range imagePaths {
+		if rel, err := filepath.Rel(noteCwd, p); err == nil {
+			names[i] = rel
+		} else {
+			names[i] = filepath.Base(p)
+		}
+	}
+	return strings.Join(names, ", ")
 }

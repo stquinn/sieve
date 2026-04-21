@@ -27,18 +27,9 @@ type Settings struct {
 	AutosaveDebounce   int     `json:"autosave_debounce,omitempty"`
 	Debug              bool    `json:"debug,omitempty"`
 	Theme              string  `json:"theme,omitempty"`
-	Prompts            Prompts `json:"prompts,omitempty"`
 	MaxHistoryVersions int     `json:"max_history_versions,omitempty"`
 }
 
-// Prompts holds paths to the three prompt template files.
-type Prompts struct {
-	File    string `json:"file,omitempty"`
-	Explain string `json:"explain,omitempty"`
-	Ask     string `json:"ask,omitempty"`
-	Refine  string `json:"refine,omitempty"`
-	Image   string `json:"image,omitempty"`
-}
 
 // Tier returns the capability tier based on whether the configured CLI is
 // reachable on PATH. Failing to find it degrades silently to Tier 1.
@@ -78,35 +69,21 @@ func (s Settings) Tier() Tier {
 	return TierSmart
 }
 
-// Save writes the settings to path as indented JSON.
-func (s Settings) Save(path string) error {
-	data, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o644)
-}
-
-// LoadSettings reads settings.json at path and merges it with defaults.
-// If the file is missing it writes defaults to disk so the user can see
-// all available options. A corrupt file returns defaults without writing.
-func LoadSettings(path string) Settings {
-	s := defaults()
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		// File missing — write defaults so the user can inspect and edit them
-		_ = s.Save(path)
+// ParseSettings decodes settings JSON bytes and merges with defaults.
+// Nil/empty data or a corrupt payload returns defaults without error.
+func ParseSettings(data []byte) Settings {
+	s := DefaultSettings()
+	if len(data) == 0 {
 		return s
 	}
 
 	var loaded Settings
 	if err := json.Unmarshal(data, &loaded); err != nil {
-		logger.Warn("LoadSettings: corrupt settings file, using defaults", "path", path, "err", err)
-		return s // corrupt — use defaults
+		logger.Warn("ParseSettings: corrupt settings, using defaults", "err", err)
+		return s
 	}
 
-	// Overlay loaded values, keeping defaults for zero values
+	// Overlay loaded values, keeping defaults for zero values.
 	if loaded.CLI != "" {
 		s.CLI = loaded.CLI
 	}
@@ -123,21 +100,6 @@ func LoadSettings(path string) Settings {
 		s.AutosaveDebounce = loaded.AutosaveDebounce
 	}
 	s.Debug = loaded.Debug
-	if loaded.Prompts.File != "" {
-		s.Prompts.File = loaded.Prompts.File
-	}
-	if loaded.Prompts.Explain != "" {
-		s.Prompts.Explain = loaded.Prompts.Explain
-	}
-	if loaded.Prompts.Ask != "" {
-		s.Prompts.Ask = loaded.Prompts.Ask
-	}
-	if loaded.Prompts.Refine != "" {
-		s.Prompts.Refine = loaded.Prompts.Refine
-	}
-	if loaded.Prompts.Image != "" {
-		s.Prompts.Image = loaded.Prompts.Image
-	}
 	if loaded.Theme != "" {
 		s.Theme = loaded.Theme
 	}
@@ -146,10 +108,26 @@ func LoadSettings(path string) Settings {
 	}
 
 	if pretty, err := json.MarshalIndent(s, "", "  "); err == nil {
-		logger.Debug("LoadSettings: loaded", "path", path, "settings", string(pretty))
+		logger.Debug("ParseSettings: loaded", "settings", string(pretty))
 	}
 
 	return s
+}
+
+// Marshal serialises settings to indented JSON.
+func (s Settings) Marshal() ([]byte, error) {
+	return json.MarshalIndent(s, "", "  ")
+}
+
+// DefaultSettings returns the out-of-the-box settings with sensible defaults.
+func DefaultSettings() Settings {
+	return Settings{
+		CLITimeout:         20,
+		CLITimeoutLong:     60,
+		AutosaveDebounce:   30,
+		Theme:              "sublime",
+		MaxHistoryVersions: 200,
+	}
 }
 
 // LoginPath returns the PATH as seen by the user's login shell, which includes
@@ -185,14 +163,4 @@ func LoginPath() string {
 	resolved := strings.TrimSpace(string(out))
 	logger.Debug("LoginPath: resolved", "path", resolved)
 	return resolved
-}
-
-func defaults() Settings {
-	return Settings{
-		CLITimeout:         20,
-		CLITimeoutLong:     60,
-		AutosaveDebounce:   30,
-		Theme:              "sublime",
-		MaxHistoryVersions: 200,
-	}
 }

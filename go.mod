@@ -7,6 +7,7 @@ require (
 	github.com/wailsapp/wails/v2 v2.11.0
 	golang.org/x/term v0.42.0
 	gopkg.in/lumberjack.v2 v2.0.0
+	gopkg.in/yaml.v2 v2.4.0
 )
 
 require (
@@ -39,5 +40,4 @@ require (
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/text v0.22.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
-	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
