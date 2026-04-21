@@ -292,7 +292,9 @@ type StoreInfo struct {
 func (a *App) GetStoreInfo() StoreInfo {
 	if a.storePath == "" {
 		logger.Warn("GetStoreInfo: store not open")
-		return StoreInfo{}
+		return StoreInfo{
+			ThemeVars: stash.ThemeVars{},
+		}
 	}
 
 	logger.Info("GetStoreInfo", "root", a.storePath)
@@ -467,7 +469,7 @@ func (a *App) InitVault(path string) error {
 
 func (a *App) GetPrompts() []stash.PromptEntry {
 	if a.prompts == nil {
-		return nil
+		return []stash.PromptEntry{}
 	}
 	return a.prompts.ListPrompts()
 }
@@ -522,12 +524,12 @@ func (a *App) TogglePrompts() (bool, error) {
 func (a *App) GetNotes() []stash.NoteEntry {
 	if a.notes == nil {
 		logger.Warn("GetNotes: store not open")
-		return nil
+		return []stash.NoteEntry{}
 	}
 	entries, err := a.notes.List()
 	if err != nil {
 		logger.Error("GetNotes failed", "err", err)
-		return nil
+		return []stash.NoteEntry{}
 	}
 	logger.Debug("GetNotes", "entries", len(entries))
 	return entries
@@ -536,12 +538,12 @@ func (a *App) GetNotes() []stash.NoteEntry {
 func (a *App) SearchStore(query string) []stash.SearchResult {
 	if a.notes == nil {
 		logger.Warn("SearchStore: store not open")
-		return nil
+		return []stash.SearchResult{}
 	}
 	results, err := a.notes.Search(query)
 	if err != nil {
 		logger.Error("SearchStore failed", "err", err)
-		return nil
+		return []stash.SearchResult{}
 	}
 	logger.Debug("SearchStore", "query", query, "results", len(results))
 	return results
@@ -552,7 +554,9 @@ func (a *App) SearchStore(query string) []stash.SearchResult {
 func (a *App) GetSession() stash.Session {
 	if a.state == nil {
 		logger.Warn("GetSession: store not open")
-		return stash.Session{}
+		return stash.Session{
+			Tabs: []stash.Tab{},
+		}
 	}
 
 	session := a.state.LoadSession()
