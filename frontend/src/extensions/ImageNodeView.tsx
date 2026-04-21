@@ -12,8 +12,15 @@ function resolveDisplaySrc(src: string, activeTabPath: string): string {
   if (src.startsWith('/store/') || src.startsWith('blob:') || src.startsWith('data:')) {
     return src
   }
+
+  // New standard: Absolute store-root ExternalRefs
+  if (src.startsWith('store/') || src.includes('/buffers/')) {
+    return '/store/' + src
+  }
+
   if (!activeTabPath) return src
 
+  // Legacy fallback: resolve markdown-relative paths
   const tabDir = activeTabPath.split('/').slice(0, -1)
   const srcParts = src.split('/')
   const parts = [...tabDir]

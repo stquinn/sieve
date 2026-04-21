@@ -35,7 +35,7 @@ func TestExplicitCreateAsset(t *testing.T) {
 	
 	t.Run("PNG_Raw", func(t *testing.T) {
 		png := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
-		as, err := fs.CreateAsset(testWorkingCopy, "img.png", png)
+		as, err := fs.CreateAsset(testWorkingCopy, "", "img.png", png)
 		if err != nil {
 			t.Fatalf("CreateAsset: %v", err)
 		}
@@ -46,7 +46,7 @@ func TestExplicitCreateAsset(t *testing.T) {
 
 	t.Run("Base64_Text", func(t *testing.T) {
 		b64 := []byte("aGVsbG8=") // "hello"
-		as, err := fs.CreateAsset(testWorkingCopy, "img.txt", b64)
+		as, err := fs.CreateAsset(testWorkingCopy, "", "img.txt", b64)
 		if err != nil {
 			t.Fatalf("CreateAsset: %v", err)
 		}

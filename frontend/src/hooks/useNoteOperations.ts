@@ -3,7 +3,7 @@ import type { Editor } from '@tiptap/core'
 import {
   DeleteNote, MoveNote, EvaluateBuffer, LoadBuffer, SaveBuffer,
   FileBuffer, RefileNote, DiscardBuffer, GetStoreInfo, GetNotes,
-  CreateFolder, DeleteFolder, RenameFolder, RestorePrompt, GetPrompts,
+  CreateFolder, DeleteFolder, RenameFolder, DeletePrompt, GetPrompts,
 } from '../../wailsjs/go/main/App'
 import type { NoteEntry, PromptEntry } from '../components/Sidebar'
 import type { TabState } from '../types'
@@ -233,7 +233,7 @@ export function useNoteOperations({
 
   async function onRestorePrompt(name: string) {
     try {
-      await RestorePrompt(name)
+      await DeletePrompt(name)
       const tab = tabsRef.current.find(t => t.path === `prompt:${name}`)
       if (tab) {
         loadTab(tab)

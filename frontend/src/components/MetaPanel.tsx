@@ -46,7 +46,7 @@ function evalColour(v: string | null | undefined): string {
 
 export function MetaPanel({ meta, path, width, isModified, isEvaluating, isWaitingAI, versions = [], onRestoreRequested }: Props) {
   const fileName = path.split('/').pop() ?? path
-  const [activeTab, setActiveTab] = React.useState<'meta'|'history'>('meta')
+  const [activeTab, setActiveTab] = React.useState<'meta'|'history'|'assets'>('meta')
   const [now, setNow] = React.useState(new Date())
 
   React.useEffect(() => {
@@ -67,6 +67,12 @@ export function MetaPanel({ meta, path, width, isModified, isEvaluating, isWaiti
                style={{ cursor: 'pointer', color: activeTab === 'history' ? 'var(--theme-text)' : 'var(--theme-muted)', borderBottom: activeTab === 'history' ? '2px solid var(--theme-accentPrimary)' : '2px solid transparent', paddingBottom: '0.4rem', marginBottom: '-0.42rem' }}
                onClick={() => setActiveTab('history')}
             >History</span>
+          )}
+          {meta?.assets && meta.assets.length > 0 && (
+             <span
+             style={{ cursor: 'pointer', color: activeTab === 'assets' ? 'var(--theme-text)' : 'var(--theme-muted)', borderBottom: activeTab === 'assets' ? '2px solid var(--theme-accentPrimary)' : '2px solid transparent', paddingBottom: '0.4rem', marginBottom: '-0.42rem' }}
+             onClick={() => setActiveTab('assets')}
+          >Assets</span>
           )}
         </div>
         {(isEvaluating || isWaitingAI) && (
@@ -208,6 +214,27 @@ export function MetaPanel({ meta, path, width, isModified, isEvaluating, isWaiti
         </div>
       )}
 
+      {activeTab === 'assets' && meta && (
+        <div className="meta-panel__fields">
+          {!meta.assets || meta.assets.length === 0 ? (
+            <div className="meta-panel__empty">No owned assets found.</div>
+          ) : (
+            meta.assets.map(asset => {
+              const name = asset.externalRef.split('/').pop() ?? asset.externalRef
+              return (
+                <div key={asset.externalRef} style={{ padding: '0.6rem 0.9rem', borderBottom: '1px solid var(--theme-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                    <span style={{ color: 'var(--theme-text)', fontWeight: 600, fontSize: '14px' }}>{name}</span>
+                    <span style={{ color: 'var(--theme-textDim)', fontSize: '12px' }}>{asset.encoding}</span>
+                  </div>
+                  <code style={{ fontSize: '11px', color: 'var(--theme-muted)' }}>{asset.externalRef}</code>
+                </div>
+              )
+            })
+          )}
+        </div>
+      )}
+
     </div>
   )
 }
@@ -239,6 +266,25 @@ function PromptReference({ path }: { path: string }) {
       { name: '{created}', desc: 'Creation timestamp' },
       { name: '{modified}', desc: 'Last modified timestamp' },
       { name: '{now}', desc: 'Current timestamp' },
+    ],
+    'explain': [
+      { name: '{type}', desc: 'Detected content type' },
+      { name: '{history}', desc: 'Relevant conversation context' },
+      { name: '{content}', desc: 'Target text to explain' },
+      { name: '{images}', desc: 'List of relevant asset names' },
+    ],
+    'ask': [
+      { name: '{type}', desc: 'Detected content type' },
+      { name: '{content}', desc: 'Context document text' },
+      { name: '{history}', desc: 'Conversation history' },
+      { name: '{question}', desc: 'User question' },
+      { name: '{images}', desc: 'List of relevant asset names' },
+    ],
+    'refine': [
+      { name: '{content}', desc: 'The code block text to identify' },
+    ],
+    'image': [
+      { name: '{image_filename}', desc: 'The original filename of the image' },
     ],
   }
 

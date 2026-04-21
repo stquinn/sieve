@@ -50,8 +50,8 @@ export function useBlobImageObserver({
 
             try {
               const asset = await SaveAsset(tab.path, id, dataUrl)
-              const mdPath = assetMarkdownPath(tab.path, asset.externalRef)
-              console.debug('[stash] mutation: image saved', { id, externalRef: asset.externalRef, mdPath })
+              const mdSrc = asset.externalRef
+              console.debug('[stash] mutation: image saved', { id, externalRef: asset.externalRef, mdSrc })
 
               editor.chain()
                 .command(({ tr, state }) => {
@@ -59,7 +59,7 @@ export function useBlobImageObserver({
                     if (node.type.name === 'image' && (node.attrs.src === blobSrc || node.attrs.src === img.src)) {
                       tr.setNodeMarkup(pos, undefined, {
                         ...node.attrs,
-                        src: mdPath,
+                        src: mdSrc,
                         id,
                         detect: 'pending',
                       })

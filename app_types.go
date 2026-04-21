@@ -40,6 +40,7 @@ type DocumentMetaDTO struct {
 	CLI                *string           `json:"cli"`
 	AiKeep             *bool             `json:"aiKeep"`
 	Scroll             int               `json:"scroll"`
+	Assets             []map[string]string `json:"assets"`
 	All                map[string]string `json:"all"` // full raw map — every key including unknowns
 }
 
@@ -88,7 +89,7 @@ type VersionedStorableDTO struct {
 
 // ── Business-type → DTO ───────────────────────────────────────────────────────
 
-func toDocumentMetaDTO(m stash.DocumentMeta) DocumentMetaDTO {
+func toDocumentMetaDTO(m stash.DocumentMeta, owns []store.Storable) DocumentMetaDTO {
 	tags := m.Tags()
 	if tags == nil {
 		tags = []string{}
@@ -97,6 +98,24 @@ func toDocumentMetaDTO(m stash.DocumentMeta) DocumentMetaDTO {
 	if ds == nil {
 		ds = []string{}
 	}
+
+	assets := []map[string]string{}
+	if owns != nil {
+		for _, s := range owns {
+			if as, ok := s.(store.AssetStorable); ok {
+				assets = append(assets, map[string]string{
+					"externalRef": as.ExternalRef(),
+					"encoding":    string(as.Encoding()),
+				})
+			}
+		}
+	} else if assetsStr := m.All()["assets"]; assetsStr != "" {
+		// Fallback for snapshots: parse the frontmatter shorthand
+		for _, p := range rawList(assetsStr) {
+			assets = append(assets, map[string]string{"externalRef": p})
+		}
+	}
+
 	created := ""
 	if t := m.Created(); !t.IsZero() {
 		created = t.Format("2006-01-02T15:04:05")
@@ -125,6 +144,7 @@ func toDocumentMetaDTO(m stash.DocumentMeta) DocumentMetaDTO {
 		CLI:                m.CLI(),
 		AiKeep:             m.AiKeep(),
 		Scroll:             m.Scroll(),
+		Assets:             assets,
 		All:                m.All(),
 	}
 }
@@ -154,7 +174,7 @@ func toBufferDTO(b *stash.Buffer) BufferDTO {
 		Path:     b.Path(),
 		Slug:     b.Slug(),
 		Body:     string(b.Body()),
-		Meta:     toDocumentMetaDTO(b.Meta()),
+		Meta:     toDocumentMetaDTO(b.Meta(), b.Storable().Owns()),
 		Versions: toVersionRefDTOs(b.Versions()),
 	}
 }
@@ -167,7 +187,7 @@ func toNoteBufferDTO(n *stash.Note) BufferDTO {
 		Path:     n.Path(),
 		Slug:     n.Slug(),
 		Body:     string(n.Body()),
-		Meta:     toDocumentMetaDTO(n.Meta()),
+		Meta:     toDocumentMetaDTO(n.Meta(), n.Storable().Owns()),
 		Versions: toVersionRefDTOs(n.Versions()),
 	}
 }
@@ -178,7 +198,7 @@ func toNoteDTO(n *stash.Note) NoteDTO {
 		Path:     n.Path(),
 		Slug:     n.Slug(),
 		Body:     string(n.Body()),
-		Meta:     toDocumentMetaDTO(n.Meta()),
+		Meta:     toDocumentMetaDTO(n.Meta(), n.Storable().Owns()),
 		Versions: toVersionRefDTOs(n.Versions()),
 	}
 }
@@ -215,8 +235,16 @@ func toVersionedStorableDTO(v store.VersionedStorable) VersionedStorableDTO {
 // Used for VersionedStorable which does not go through the business types.
 func rawMapToMetaDTO(m map[string]string) DocumentMetaDTO {
 	if m == nil {
-		return DocumentMetaDTO{Tags: []string{}, DensitySignals: []string{}}
+		return DocumentMetaDTO{Tags: []string{}, DensitySignals: []string{}, Assets: []map[string]string{}}
 	}
+
+	assets := []map[string]string{}
+	if assetsStr := m["assets"]; assetsStr != "" {
+		for _, p := range rawList(assetsStr) {
+			assets = append(assets, map[string]string{"externalRef": p})
+		}
+	}
+
 	return DocumentMetaDTO{
 		Status:             m["status"],
 		Version:            rawInt(m, "version"),
@@ -237,6 +265,7 @@ func rawMapToMetaDTO(m map[string]string) DocumentMetaDTO {
 		CLI:                rawNullableStr(m["cli"]),
 		AiKeep:             rawNullableBool(m["ai_keep"]),
 		Scroll:             rawInt(m, "scroll"),
+		Assets:             assets,
 		All:                m,
 	}
 }

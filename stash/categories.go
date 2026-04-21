@@ -19,4 +19,6 @@ var (
 	WorkingCopy = store.Category{Key: "buffers", DisplayName: "Working Copy", MetaEnabled: true, Isolation: store.Isolated}
 	// State holds application state (settings, session). Scoped to the current host.
 	State = store.Category{Key: "config", DisplayName: "State", MetaEnabled: false,  Isolation: store.Isolated}
+	// Prompts holds prompt template overrides. Scoped to the current host.
+	Prompts = store.Category{Key: "prompts", DisplayName: "Prompts", MetaEnabled: false, Isolation: store.Isolated}
 )

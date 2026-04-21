@@ -33,11 +33,13 @@
 package filestore
 
 import (
+	"bytes"
 	"crypto/rand"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"stash/store"
@@ -63,9 +65,6 @@ func NewFileStore(root, hostname string) (*FileStore, error) {
 		root:        abs,
 		hostname:    hostname,
 		maxVersions: 200,
-	}
-	if err := fs.ensureDirs(); err != nil {
-		return nil, err
 	}
 	return fs, nil
 }
@@ -100,17 +99,25 @@ func (fs *FileStore) CreateMetaText(cat store.Category, key string, body []byte)
 }
 
 
-func (fs *FileStore) CreateAsset(cat store.Category, key string, body []byte) (store.AssetStorable, error) {
-	if key == "" {
-		key = fs.generateKey(cat)
-	}
+func (fs *FileStore) CreateAsset(cat store.Category, parentKey string, assetID string, body []byte) (store.AssetStorable, error) {
+	key := fs.generateAssetKey(parentKey, assetID)
 
 	absPath := fs.absPath(cat, key)
 	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
 		return nil, fmt.Errorf("filestore: create dir for %s: %w", key, err)
 	}
+	return fs.createAsset(cat, key, absPath, body)
+}
 
-	return fs.createAsset(cat, key, absPath, body);
+// generateAssetKey returns a structurally appropriate key for an asset.
+// Unifying the .assets prefix within FileStore explicitly.
+func (fs *FileStore) generateAssetKey(parentKey, assetID string) string {
+	if parentKey == "" || parentKey == "new" {
+		return fmt.Sprintf(".assets/%s.png", assetID)
+	}
+	// For files (e.g., Library), prefix the asset ID with the document name.
+	noteName := strings.TrimSuffix(filepath.Base(parentKey), filepath.Ext(parentKey))
+	return fmt.Sprintf(".assets/%s-%s.png", noteName, assetID)
 }
 
 
@@ -199,32 +206,54 @@ func (fs *FileStore) List(cat store.Category, prefix string) ([]store.Storable, 
 
 // Move transfers s to a different category. The source file is removed and a
 // new file is created at the destination. Version history follows the UUID.
+// It also cascades the move to any owned children automatically.
 func (fs *FileStore) Move(s store.Storable, to store.Category) (store.Storable, error) {
-	ms, ok := s.(store.MetaStorable)
-	if !ok {
-		return nil, fmt.Errorf("filestore: Move: only MetaStorable supports category move")
-	}
-
-	// Write to new location.
-	newKey := s.Key() // preserve filename
+	newKey := s.Key()
 	destPath := fs.absPath(to, newKey)
 	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 		return nil, fmt.Errorf("filestore: Move mkdir: %w", err)
 	}
 
-	content := serialiseFrontmatter(ms.Meta(), ms.Body())
-	if err := os.WriteFile(destPath, content, 0o644); err != nil {
-		return nil, fmt.Errorf("filestore: Move write: %w", err)
+	if ms, ok := s.(store.MetaStorable); ok {
+		// New logic: Use centralized cascade helper to move assets and update body links
+		newOwns, newBody, err := fs.cascadeAssetUpdates(ms, s.Key(), newKey, s.Category(), to)
+		if err != nil {
+			return nil, err
+		}
+
+		// Clear and reset Owns with moved assets so meta['assets'] is written correctly
+		ms.ClearOwns()
+		for _, a := range newOwns {
+			ms.AttachAsset(a)
+		}
+
+		meta := ms.Meta()
+		syncOwnsToMeta(newKey, newOwns, meta)
+		ms.SetMeta(meta)
+		ms.SetBody(newBody)
+
+		content := serialiseFrontmatter(ms.Meta(), ms.Body())
+		if err := os.WriteFile(destPath, content, 0o644); err != nil {
+			return nil, fmt.Errorf("filestore: Move write: %w", err)
+		}
+
+		// Move version history between history dirs.
+		uuid := ms.Meta()["uuid"]
+		if uuid != "" {
+			fs.migrateHistory(s.Category(), to, uuid)
+		}
+	} else if _, ok := s.(store.AssetStorable); ok {
+		if err := os.Rename(fs.absPath(s.Category(), s.Key()), destPath); err != nil {
+			return nil, fmt.Errorf("filestore: Move asset rename: %w", err)
+		}
+	} else {
+		return nil, fmt.Errorf("filestore: Move: unsupported storable type %T", s)
 	}
 
-	// Move version history between history dirs.
-	uuid := ms.Meta()["uuid"]
-	if uuid != "" {
-		fs.migrateHistory(s.Category(), to, uuid)
+	// Remove source if we wrote a new file (MetaStorable)
+	if _, ok := s.(store.MetaStorable); ok {
+		os.Remove(fs.absPath(s.Category(), s.Key()))
 	}
-
-	// Remove source.
-	os.Remove(fs.absPath(s.Category(), s.Key()))
 
 	// Return a fresh Storable from the new location.
 	return fs.Load(to, newKey)
@@ -375,6 +404,10 @@ func (fs *FileStore) saveMeta(s *fileMetaStorable) (store.Storable, error) {
 
 	// Stamp version and modified timestamp.
 	meta := cloneMeta(s.meta)
+	
+	// Derive meta["assets"] shorthand from the Owns array for next load.
+	syncOwnsToMeta(s.key, s.owns, meta)
+	
 	nextVer := metaVersionInt(meta) + 1
 	meta["version"] = strconv.Itoa(nextVer)
 	meta["modified"] = time.Now().Format("2006-01-02T15:04:05")
@@ -440,6 +473,41 @@ func (fs *FileStore) savePlain(s *fileStorable) (store.Storable, error) {
 // ── Rename / Move helpers ─────────────────────────────────────────────────────
 
 func (fs *FileStore) renameKey(s store.Storable, newKey string) (store.Storable, error) {
+	if ms, ok := s.(store.MetaStorable); ok {
+		// New logic: Use centralized cascade helper to move assets and update body links
+		newOwns, newBody, err := fs.cascadeAssetUpdates(ms, s.Key(), newKey, s.Category(), s.Category())
+		if err != nil {
+			return nil, err
+		}
+
+		// Clear and reset Owns with moved assets so meta['assets'] is written correctly
+		ms.ClearOwns()
+		for _, a := range newOwns {
+			ms.AttachAsset(a)
+		}
+
+		meta := ms.Meta()
+		syncOwnsToMeta(newKey, newOwns, meta)
+		ms.SetMeta(meta)
+		ms.SetBody(newBody)
+
+		// Physically rename the parent file
+		srcPath := fs.absPath(s.Category(), s.Key())
+		dstPath := fs.absPath(s.Category(), newKey)
+		if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
+			return nil, fmt.Errorf("filestore: rename mkdir: %w", err)
+		}
+
+		content := serialiseFrontmatter(ms.Meta(), ms.Body())
+		if err := os.WriteFile(dstPath, content, 0o644); err != nil {
+			return nil, fmt.Errorf("filestore: rename write: %w", err)
+		}
+		os.Remove(srcPath)
+
+		return fs.Load(s.Category(), newKey)
+	}
+
+	// Plain storable or asset storable (no body recursion)
 	srcPath := fs.absPath(s.Category(), s.Key())
 	dstPath := fs.absPath(s.Category(), newKey)
 	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
@@ -449,6 +517,71 @@ func (fs *FileStore) renameKey(s store.Storable, newKey string) (store.Storable,
 		return nil, fmt.Errorf("filestore: rename %s → %s: %w", s.Key(), newKey, err)
 	}
 	return fs.Load(s.Category(), newKey)
+}
+
+// cascadeAssetUpdates handles the recursive moving/renaming of owned assets and
+// performs body find-and-replace for both ExternalRefs and relative paths.
+func (fs *FileStore) cascadeAssetUpdates(ms store.MetaStorable, oldParentKey, newParentKey string, oldCat, newCat store.Category) ([]store.Storable, []byte, error) {
+	kebab := strings.TrimSuffix(filepath.Base(newParentKey), filepath.Ext(newParentKey))
+	body := ms.Body()
+	var newOwns []store.Storable
+
+	for _, asset := range ms.Owns() {
+		// 1. Calculate strings to replace in body
+		oldExtRef := asset.ExternalRef()
+		oldRel, err := filepath.Rel(filepath.Dir(oldParentKey), asset.Key())
+		if err != nil {
+			oldRel = asset.Key()
+		}
+		oldRel = filepath.ToSlash(oldRel)
+
+		// 2. Determine new asset key
+		var newAssetKey string
+		if newCat.Isolation == store.Shared {
+			oldDocName := strings.TrimSuffix(filepath.Base(oldParentKey), filepath.Ext(oldParentKey))
+			assetBase := filepath.Base(asset.Key())
+			// e.g. note-img.png -> newnote-img.png
+			if strings.HasPrefix(assetBase, oldDocName+"-") {
+				assetBase = kebab + "-" + strings.TrimPrefix(assetBase, oldDocName+"-")
+			} else if !strings.HasPrefix(assetBase, kebab+"-") {
+				assetBase = kebab + "-" + assetBase
+			}
+			newAssetKey = ".assets/" + assetBase
+		} else {
+			newAssetKey = ".assets/" + filepath.Base(asset.Key())
+		}
+
+		// 3. Physically move/rename the asset
+		var movedAsset store.Storable
+		if oldCat.Key != newCat.Key || oldCat.Isolation != newCat.Isolation {
+			movedAsset, err = fs.Move(asset, newCat)
+			if err != nil {
+				return nil, nil, fmt.Errorf("filestore: cascade move asset: %w", err)
+			}
+		} else {
+			movedAsset = asset
+		}
+
+		if movedAsset.Key() != newAssetKey {
+			movedAsset, err = fs.renameKey(movedAsset, newAssetKey)
+			if err != nil {
+				return nil, nil, fmt.Errorf("filestore: cascade rename asset: %w", err)
+			}
+		}
+
+		newOwns = append(newOwns, movedAsset)
+
+		// 4. Calculate replacement strings
+		newExtRef := movedAsset.ExternalRef()
+
+		// 5. Perform replacement in body using a safe placeholder
+		placeholder := []byte("##STASH_ASSET_LINK_PLACEHOLDER##")
+		body = bytes.ReplaceAll(body, []byte(oldExtRef), placeholder)
+		body = bytes.ReplaceAll(body, []byte(oldRel), placeholder)
+		body = bytes.ReplaceAll(body, placeholder, []byte(newExtRef))
+	}
+
+	return newOwns, body, nil
 }
 
 // migrateHistory moves snapshot files from the old category's history dir to
@@ -542,6 +675,21 @@ func cloneMeta(m map[string]string) map[string]string {
 	return out
 }
 
+// syncOwnsToMeta derives the meta["assets"] shorthand from the Owns array 
+// for the next load phase, modifying the given metadata map in-place. 
+func syncOwnsToMeta(key string, owns []store.Storable, meta map[string]string) {
+	if len(owns) > 0 {
+		var parts []string
+		for _, child := range owns {
+			// New standard: Use ExternalRef (absolute store-root path)
+			parts = append(parts, child.ExternalRef())
+		}
+		meta["assets"] = "[" + strings.Join(parts, ", ") + "]"
+	} else {
+		delete(meta, "assets")
+	}
+}
+
 // ── Atomic write ──────────────────────────────────────────────────────────────
 
 // writeAtomic writes data to path via a .tmp sibling to avoid partial writes.
@@ -555,29 +703,20 @@ func writeAtomic(path string, data []byte) error {
 
 // ── Directory setup ───────────────────────────────────────────────────────────
 
-// fsLibrary, fsWorkingCopy, fsState are local copies of the business-layer
-// category values used only within FileStore initialisation. The canonical
-// constants live in the stash package; they cannot be imported here without
-// creating a circular dependency (stash → store → filestore → stash).
-var (
-	fsLibrary     = store.Category{Key: "store", DisplayName: "Library", Isolation: store.Shared}
-	fsWorkingCopy = store.Category{Key: "buffers", DisplayName: "Working Copy", Isolation: store.Isolated}
-	fsState       = store.Category{Key: "config", DisplayName: "State", Isolation: store.Isolated}
-)
+// Root returns the base directory where the store is persisted on disk.
+func (fs *FileStore) Root() string { return fs.root }
 
-func (fs *FileStore) ensureDirs() error {
+// PrepareCategory creates the foundational directories needed for a category,
+// including its root directory, its .assets folder, and its .history folder.
+func (fs *FileStore) PrepareCategory(cat store.Category) error {
 	dirs := []string{
-		fs.categoryDir(fsLibrary),
-		filepath.Join(fs.categoryDir(fsLibrary), ".assets"),
-		fs.historyDir(fsLibrary),
-		fs.categoryDir(fsWorkingCopy),
-		filepath.Join(fs.categoryDir(fsWorkingCopy), "assets"),
-		fs.historyDir(fsWorkingCopy),
-		fs.categoryDir(fsState),
+		fs.categoryDir(cat),
+		filepath.Join(fs.categoryDir(cat), ".assets"),
+		fs.historyDir(cat),
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0o755); err != nil {
-			return fmt.Errorf("filestore: ensure dir %s: %w", d, err)
+			return fmt.Errorf("filestore: prepare category %s: %w", cat.DisplayName, err)
 		}
 	}
 	return nil

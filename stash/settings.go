@@ -27,18 +27,9 @@ type Settings struct {
 	AutosaveDebounce   int     `json:"autosave_debounce,omitempty"`
 	Debug              bool    `json:"debug,omitempty"`
 	Theme              string  `json:"theme,omitempty"`
-	Prompts            Prompts `json:"prompts,omitempty"`
 	MaxHistoryVersions int     `json:"max_history_versions,omitempty"`
 }
 
-// Prompts holds paths to the prompt template override files.
-type Prompts struct {
-	File    string `json:"file,omitempty"`
-	Explain string `json:"explain,omitempty"`
-	Ask     string `json:"ask,omitempty"`
-	Refine  string `json:"refine,omitempty"`
-	Image   string `json:"image,omitempty"`
-}
 
 // Tier returns the capability tier based on whether the configured CLI is
 // reachable on PATH. Failing to find it degrades silently to Tier 1.
@@ -109,21 +100,6 @@ func ParseSettings(data []byte) Settings {
 		s.AutosaveDebounce = loaded.AutosaveDebounce
 	}
 	s.Debug = loaded.Debug
-	if loaded.Prompts.File != "" {
-		s.Prompts.File = loaded.Prompts.File
-	}
-	if loaded.Prompts.Explain != "" {
-		s.Prompts.Explain = loaded.Prompts.Explain
-	}
-	if loaded.Prompts.Ask != "" {
-		s.Prompts.Ask = loaded.Prompts.Ask
-	}
-	if loaded.Prompts.Refine != "" {
-		s.Prompts.Refine = loaded.Prompts.Refine
-	}
-	if loaded.Prompts.Image != "" {
-		s.Prompts.Image = loaded.Prompts.Image
-	}
 	if loaded.Theme != "" {
 		s.Theme = loaded.Theme
 	}

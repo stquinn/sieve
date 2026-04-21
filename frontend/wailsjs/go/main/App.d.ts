@@ -14,6 +14,8 @@ export function DeleteFolder(arg1:string):Promise<void>;
 
 export function DeleteNote(arg1:string):Promise<void>;
 
+export function DeletePrompt(arg1:string):Promise<void>;
+
 export function DescribeImage(arg1:string):Promise<stash.ImageDesc>;
 
 export function DiscardBuffer(arg1:string):Promise<void>;
@@ -61,8 +63,6 @@ export function RefileNote(arg1:main.BufferDTO):Promise<main.BufferDTO>;
 export function RefineLanguage(arg1:string):Promise<string>;
 
 export function RenameFolder(arg1:string,arg2:string):Promise<void>;
-
-export function RestorePrompt(arg1:string):Promise<void>;
 
 export function SaveAsset(arg1:string,arg2:string,arg3:string):Promise<main.AssetDTO>;
 

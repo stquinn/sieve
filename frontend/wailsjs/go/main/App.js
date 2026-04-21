@@ -22,6 +22,10 @@ export function DeleteNote(arg1) {
   return window['go']['main']['App']['DeleteNote'](arg1);
 }
 
+export function DeletePrompt(arg1) {
+  return window['go']['main']['App']['DeletePrompt'](arg1);
+}
+
 export function DescribeImage(arg1) {
   return window['go']['main']['App']['DescribeImage'](arg1);
 }
@@ -116,10 +120,6 @@ export function RefineLanguage(arg1) {
 
 export function RenameFolder(arg1, arg2) {
   return window['go']['main']['App']['RenameFolder'](arg1, arg2);
-}
-
-export function RestorePrompt(arg1) {
-  return window['go']['main']['App']['RestorePrompt'](arg1);
 }
 
 export function SaveAsset(arg1, arg2, arg3) {

@@ -16,8 +16,11 @@ type BufferService struct {
 }
 
 // NewBufferService creates a BufferService backed by st.
-func NewBufferService(st store.Store) *BufferService {
-	return &BufferService{st: st}
+func NewBufferService(st store.Store) (*BufferService, error) {
+	if err := st.PrepareCategory(WorkingCopy); err != nil {
+		return nil, err
+	}
+	return &BufferService{st: st}, nil
 }
 
 // New creates a new empty buffer in the WorkingCopy category with an
@@ -148,6 +151,13 @@ func (bs *BufferService) List() ([]*Buffer, error) {
 // RetrieveVersion fetches a historical snapshot of b identified by ref.
 func (bs *BufferService) RetrieveVersion(b *Buffer, ref store.VersionRef) (store.VersionedStorable, error) {
 	return bs.st.RetrieveVersion(b.s, ref)
+}
+
+// AttachAsset attaches an asset Storable to the buffer and saves it.
+func (bs *BufferService) AttachAsset(b *Buffer, a store.AssetStorable) error {
+	b.s.AttachAsset(a)
+	_, err := bs.st.Save(b.s)
+	return err
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────

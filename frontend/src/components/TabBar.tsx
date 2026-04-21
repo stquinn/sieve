@@ -19,9 +19,10 @@ interface TabBarProps {
   onDelete: (path: string) => void
   onRename: (path: string, name: string, isDir: boolean) => void
   onRestorePrompt?: (name: string) => void
+  onCloseAll: () => void
 }
 
-export function TabBar({ tabs, activeIdx, onSelect, onClose, onNew, onHelp, onSetIntent, onReorder, onShowInFiles, onSmartFile, onSmartMetadata, onDelete, onRename, onRestorePrompt }: TabBarProps) {
+export function TabBar({ tabs, activeIdx, onSelect, onClose, onNew, onHelp, onSetIntent, onReorder, onShowInFiles, onSmartFile, onSmartMetadata, onDelete, onRename, onRestorePrompt, onCloseAll }: TabBarProps) {
   const tabsAreaRef = useRef<HTMLDivElement>(null)
   const tabRefs = useRef<(HTMLDivElement | null)[]>([])
   const [hiddenStart, setHiddenStart] = useState(tabs.length)
@@ -131,6 +132,7 @@ export function TabBar({ tabs, activeIdx, onSelect, onClose, onNew, onHelp, onSe
               onSmartMetadata={() => onSmartMetadata(tab.path)}
               onDelete={() => onDelete(tab.path)}
               onRename={() => onRename(tab.path, tabLabel(tab), false)}
+              onCloseAll={onCloseAll}
               isVirtual={tab.isVirtual}
               onRestore={onRestorePrompt ? () => onRestorePrompt(tab.path.split(':').pop()!) : undefined}
               onDragStart={() => {
@@ -257,10 +259,11 @@ interface TabItemProps {
   onDragOver: (e: React.DragEvent) => void
   onDrop: (e: React.DragEvent) => void
   onDragEnd: () => void
+  onCloseAll: () => void
 }
 
 const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
-  { tab, active, isDragging, onSelect, onClose, onSetIntent, onShowInFiles, onSmartFile, onSmartMetadata, onDelete, onRename, isVirtual, onRestore, onDragStart, onDragOver, onDrop, onDragEnd },
+  { tab, active, isDragging, onSelect, onClose, onSetIntent, onShowInFiles, onSmartFile, onSmartMetadata, onDelete, onRename, isVirtual, onRestore, onDragStart, onDragOver, onDrop, onDragEnd, onCloseAll },
   ref
 ) {
   const dot = tabDot(tab)
@@ -345,6 +348,8 @@ const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
           onRename={onRename}
           isVirtual={isVirtual}
           onRestore={onRestore}
+          onCloseTab={onClose}
+          onCloseAllTabs={onCloseAll}
         />
       )}
     </>

@@ -11,7 +11,7 @@ import Table from '@tiptap/extension-table'
 import TableRow from '@tiptap/extension-table-row'
 import TableHeader from '@tiptap/extension-table-header'
 import TableCell from '@tiptap/extension-table-cell'
-import { DescribeImage, DiscardBuffer, FileBuffer, FileBufferWithName, GetNotes, GetSession, GetStoreInfo, LoadBuffer, NewBuffer, RefineLanguage, RefileNote, SaveBuffer, SaveAsset, DownloadAsset, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, ShowInFiles, EvaluateBuffer, LoadPrompt, SavePrompt, GetPrompts, TogglePrompts } from '../wailsjs/go/main/App'
+import { DescribeImage, DiscardBuffer, FileBuffer, FileBufferWithName, GetNotes, GetSession, GetStoreInfo, LoadBuffer, NewBuffer, RefineLanguage, RefileNote, SaveBuffer, SaveAsset, DownloadAsset, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, ShowInFiles, EvaluateBuffer, LoadPrompt, SavePrompt, GetPrompts, TogglePrompts, DeletePrompt } from '../wailsjs/go/main/App'
 import { stash, main } from '../wailsjs/go/models'
 import { BrowserOpenURL, EventsOn } from '../wailsjs/runtime/runtime'
 import { CodeBlockWithAttrs } from './extensions/CodeBlockWithAttrs'
@@ -178,7 +178,33 @@ export default function App() {
     const newIdx  = Math.min(idx, newTabs.length - 1)
     setTabs(newTabs)
     setActiveIdx(newIdx)
-    H.current.loadTab(newTabs[newIdx])
+    if (newTabs.length > 0) {
+      H.current.loadTab(newTabs[newIdx])
+    }
+  }
+
+  function resurrectTab({ uuid, path, meta, body }: { uuid: string, path: string, meta: main.DocumentMetaDTO, body: string }) {
+    console.warn('[stash:ai] resurrecting tab after evaluation failure', { uuid, path })
+    metaCache.current[uuid] = meta
+    savedBodyCache.current[uuid] = body
+    
+    setTabs(prev => {
+      if (prev.find(t => t.uuid === uuid)) return prev
+      const newTab: TabState = {
+        uuid,
+        path,
+        scroll: 0,
+        active: false,
+        mode: 'wysiwyg',
+        status: (meta.status as any) || 'unfiled',
+        userIntent: (meta.userIntent as any) || null,
+        displayName: meta.displayName,
+        isEvaluating: false,
+        isEmpty: body.trim().length === 0,
+        isModified: false
+      }
+      return [...prev, newTab]
+    })
   }
 
   // Smart-mode background evaluation for a closing tab.
@@ -630,6 +656,7 @@ export default function App() {
         setRawMd(content)
         mdCache.current[uuid] = content
         savedBodyCache.current[uuid] = content
+        metaCache.current[uuid] = null // Unblock flush()
         setActiveIdx(tabsRef.current.findIndex(t => t.path === tab.path))
       }).catch(console.error)
       return
@@ -947,69 +974,7 @@ export default function App() {
 
 
   async function closeTab(idx: number) {
-    const tab = tabs[idx]
-    const path = tab.path
-    // Capture volatile state synchronously before any awaits — these could be
-    // stale by the time async branches complete if the user switches tabs.
-    const capturedActivePath = activeTabRef.current?.path
-    const capturedMarkdownMode = isMarkdownMode
-    const capturedRawMd = rawMd
-
-    if (tab.status !== 'filed') {
-      if (tab.isEmpty) {
-        // Silently discard empty scratch buffers
-        await DiscardBuffer(path).catch(console.error)
-      } else if (tab.userIntent === 'trash' || (tab.userIntent === null && tier === 'dumb')) {
-        // Trash or dumb mode default
-        await DiscardBuffer(path).catch(console.error)
-      } else if (tab.userIntent === 'keep') {
-        // Save latest content first, then fire AI in background (always files — AI vote skipped).
-        const body = (capturedMarkdownMode && tab.path === capturedActivePath)
-            ? capturedRawMd
-            : editor?.storage.markdown.getMarkdown() ?? ''
-
-        if (body !== savedBodyCache.current[tab.uuid]) {
-            savedBodyCache.current[tab.uuid] = body
-            saveBufferSafe(tab.uuid)
-        }
-        const suggested = extractSuggestedName(tab.uuid)
-        fireSmartClose(path, suggested, true)
-        return  // finishCloseTab called by fireSmartClose
-      } else if (tier === 'smart') {
-        // Smart mode, user_intent: null, not empty — evaluate in background then file/discard.
-        const suggested = extractSuggestedName(tab.uuid)
-        fireSmartClose(path, suggested)
-        return  // finishCloseTab called by fireSmartClose when done
-      }
-    }
-
-    if (tab.uuid) {
-      delete metaCache.current[tab.uuid]
-      delete mdCache.current[tab.uuid]
-      delete savedBodyCache.current[tab.uuid]
-    }
-
-    if (tabs.length === 1) {
-      // Always keep at least one tab — open a fresh buffer
-      const result = await NewBuffer().catch(() => null)
-      if (!result) return
-      metaCache.current[result.uuid] = result.meta
-      savedBodyCache.current[result.uuid] = result.body
-      const newTab: TabState = { uuid: result.uuid, path: result.path, scroll: 0, active: true, mode: 'wysiwyg', status: 'unfiled', userIntent: null, isEmpty: true, isModified: false, displayName: result.meta.displayName }
-      setTabs([newTab])
-      setActiveIdx(0)
-      H.current.loadTab(newTab)
-      return
-    }
-
-    const scroll = currentScroll()
-    if (capturedMarkdownMode && tab.path === capturedActivePath) mdCache.current[tab.uuid] = capturedRawMd
-    const withScroll = tabs.map((t, i) => i === activeIdx ? { ...t, scroll } : t)
-    const newTabs = withScroll.filter((_, i) => i !== idx)
-    const newIdx = Math.min(idx, newTabs.length - 1)
-    setTabs(newTabs)
-    setActiveIdx(newIdx)
-    H.current.loadTab(newTabs[newIdx])
+    closeTabsBulk([idx])
   }
 
   function reorderTab(fromIdx: number, toPos: number) {
@@ -1048,7 +1013,8 @@ export default function App() {
     const sorted = [...indices].sort((a, b) => b - a)
     let finalTabs = [...tabs]
     let currentActiveIdx = activeIdx
-    // Capture volatile state before any awaits — async map callbacks would see stale closures.
+    
+    // Capture volatile state synchronously
     const capturedActivePath = activeTabRef.current?.path
     const capturedMarkdownMode = isMarkdownMode
     const capturedRawMd = rawMd
@@ -1056,11 +1022,15 @@ export default function App() {
     const promises = sorted.map(async (idx) => {
         const tab = finalTabs[idx]
         const path = tab.path
+        const uuid = tab.uuid
+
         if (tab.status !== 'filed') {
             if (tab.path === capturedActivePath) flush()
 
             if (tab.isEmpty || tab.userIntent === 'trash' || (tab.userIntent === null && tier === 'dumb')) {
                await DiscardBuffer(path).catch(console.error)
+            } else if (tier === 'smart' && tab.userIntent === null) {
+               fireSmartClose(path, tab.displayName || '')
             } else if (tab.userIntent === 'keep') {
                const body = (capturedMarkdownMode && tab.path === capturedActivePath)
                   ? capturedRawMd
@@ -1072,17 +1042,15 @@ export default function App() {
                }
                FileBuffer(path).catch(console.error)
             }
-            // If Smart mode and userIntent === null, defer (leave on disk)
         }
-        if (tab.uuid) {
-          delete metaCache.current[tab.uuid]
-          delete mdCache.current[tab.uuid]
-          delete savedBodyCache.current[tab.uuid]
+        if (uuid) {
+          delete metaCache.current[uuid]
+          delete mdCache.current[uuid]
+          delete savedBodyCache.current[uuid]
         }
     })
 
-    await Promise.all(promises)
-
+    // Remove from UI immediately
     for (const idx of sorted) {
         finalTabs.splice(idx, 1)
         if (currentActiveIdx >= idx && currentActiveIdx > 0) currentActiveIdx--
@@ -1105,6 +1073,8 @@ export default function App() {
     
     setTabs(finalTabs)
     setActiveIdx(currentActiveIdx)
+
+    await Promise.all(promises)
   }
 
   function closeAllTabs() {
@@ -1153,6 +1123,9 @@ export default function App() {
     evaluatingUuids.current.delete(uuid)
     // ─────────────────────────────────────────────────────────────────────────
 
+    const currentBody = savedBodyCache.current[uuid] ?? body0
+    const currentPath = resolvePathByUuid(uuid) ?? initialPath
+
     // Apply results to the CURRENT meta (autosave may have updated it during eval)
     let finalMeta = metaCache.current[uuid] ?? evalMeta
     if (rec) {
@@ -1160,11 +1133,14 @@ export default function App() {
       finalMeta = applyFilingRecToMeta(finalMeta, rec, info.cli)
     } else {
       finalMeta = { ...finalMeta, aiEval: 'timeout' }
+      // Resurrection: if we were supposed to file/discard this closed tab but AI timed out, 
+      // we must bring it back so the user doesn't lose it.
+      if (fileAfter) {
+        resurrectTab({ uuid, path: currentPath, meta: finalMeta, body: currentBody })
+        return
+      }
     }
     metaCache.current[uuid] = finalMeta
-
-    const currentBody = savedBodyCache.current[uuid] ?? body0
-    const currentPath = resolvePathByUuid(uuid) ?? initialPath
     {
       const dto = { uuid, path: currentPath, slug: '', body: currentBody, meta: finalMeta, versions: [] }
       await SaveBuffer(dto as any).catch(console.error)
@@ -1228,11 +1204,16 @@ export default function App() {
         }
       } catch(e) {
         console.error('[stash:ai] runBackgroundEval: file/refile failed', e)
-        setTabs(prev => prev.map(t => t.uuid === uuid ? {
-          ...t,
-          displayName: finalMeta.displayName || undefined,
-          isEvaluating: false,
-        } : t))
+        // Resurrection on error
+        if (fileAfter) {
+           resurrectTab({ uuid, path: currentPath, meta: finalMeta, body: currentBody })
+        } else {
+          setTabs(prev => prev.map(t => t.uuid === uuid ? {
+            ...t,
+            displayName: finalMeta.displayName || undefined,
+            isEvaluating: false,
+          } : t))
+        }
       }
     } else {
       setTabs(prev => prev.map(t => t.uuid === uuid ? {
@@ -1743,6 +1724,7 @@ export default function App() {
           onSmartMetadata={handleSmartMetadata}
           onDelete={handleDeleteNote}
           onRestorePrompt={onRestorePrompt}
+          onCloseAll={closeAllTabs}
         />
         {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
         {confirmModal && (

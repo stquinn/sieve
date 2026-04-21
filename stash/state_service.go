@@ -13,8 +13,16 @@ type StateService struct {
 }
 
 // NewStateService creates a StateService backed by st.
-func NewStateService(st store.Store) *StateService {
-	return &StateService{st: st}
+// Store returns the underlying Store.
+func (ss *StateService) Store() store.Store {
+	return ss.st
+}
+
+func NewStateService(st store.Store) (*StateService, error) {
+	if err := st.PrepareCategory(State); err != nil {
+		return nil, err
+	}
+	return &StateService{st: st}, nil
 }
 
 // LoadSession returns the current session. If no session exists in the Store

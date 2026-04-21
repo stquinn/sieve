@@ -15,8 +15,11 @@ type NoteService struct {
 }
 
 // NewNoteService creates a NoteService backed by st.
-func NewNoteService(st store.Store) *NoteService {
-	return &NoteService{st: st}
+func NewNoteService(st store.Store) (*NoteService, error) {
+	if err := st.PrepareCategory(Library); err != nil {
+		return nil, err
+	}
+	return &NoteService{st: st}, nil
 }
 
 // Load retrieves a note by its store-relative path (ExternalRef), e.g.
@@ -137,6 +140,13 @@ func (ns *NoteService) List() ([]NoteEntry, error) {
 		return nil, err
 	}
 	return buildNoteTree(storables), nil
+}
+
+// AttachAsset attaches an asset Storable to the note and saves it.
+func (ns *NoteService) AttachAsset(n *Note, a store.AssetStorable) error {
+	n.s.AttachAsset(a)
+	_, err := ns.st.Save(n.s)
+	return err
 }
 
 // Count returns the number of notes in the Library.

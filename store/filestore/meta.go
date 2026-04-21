@@ -17,7 +17,7 @@ var canonicalKeyOrder = []string{
 	"uuid", "status", "version", "focus_count", "user_intent",
 	"ai_eval", "ai_last_evaluated", "ai_folder_suggestion",
 	"user_suggested_name", "display_name", "filename", "summary",
-	"tags", "ai_justification", "density_signals",
+	"tags", "assets", "ai_justification", "density_signals",
 	"created", "modified", "cli", "ai_keep", "scroll",
 }
 

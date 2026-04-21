@@ -151,6 +151,44 @@ func (fs *FileStore) buildStorable(cat store.Category, key string, catDir string
 		}
 		uuid := meta["uuid"]
 		versions := fs.loadVersions(uuid, cat)
+
+		var owns []store.Storable
+		if assetsStr := meta["assets"]; assetsStr != "" && assetsStr != "[]" {
+			assetsStr = strings.TrimPrefix(assetsStr, "[")
+			assetsStr = strings.TrimSuffix(assetsStr, "]")
+
+			for _, part := range strings.Split(assetsStr, ",") {
+				link := strings.TrimSpace(part)
+				if link == "" {
+					continue
+				}
+
+				// Resolve absolute store-root references or markdown-relative paths
+				var assetKey string
+				if strings.HasPrefix(link, "store/") || strings.Contains(link, "/buffers/") {
+					// It's an ExternalRef. We need the true Category-relative Key.
+					if strings.HasPrefix(link, cat.Key+"/") {
+						assetKey = strings.TrimPrefix(link, cat.Key+"/")
+					} else if cat.Isolation == store.Isolated && strings.HasPrefix(link, fs.hostname+"/"+cat.Key+"/") {
+						assetKey = strings.TrimPrefix(link, fs.hostname+"/"+cat.Key+"/")
+					} else {
+						// Link belongs to another category; skip ownership graph inclusion.
+						continue
+					}
+				} else {
+					assetKey = filepath.Join(filepath.Dir(key), link)
+				}
+
+				assetKey = filepath.ToSlash(filepath.Clean(assetKey))
+				if isAssetKey(assetKey) {
+					child := fs.buildStorable(cat, assetKey, catDir)
+					if child != nil {
+						owns = append(owns, child)
+					}
+				}
+			}
+		}
+
 		return &fileMetaStorable{
 			fileStorable: fileStorable{
 				key:      key,
@@ -160,6 +198,7 @@ func (fs *FileStore) buildStorable(cat store.Category, key string, catDir string
 				versions: versions,
 			},
 			meta: meta,
+			owns: owns,
 		}
 	}
 
@@ -175,11 +214,8 @@ func (fs *FileStore) buildStorable(cat store.Category, key string, catDir string
 // isAssetKey reports whether key refers to a file inside an assets subdirectory.
 // The recognised patterns are:
 //
-//	assets/...      — WorkingCopy buffer assets
-//	.assets/...     — Library note assets
+//	.assets/...     — Universal asset storage
 func isAssetKey(key string) bool {
-	return strings.HasPrefix(key, "assets/") ||
-		strings.HasPrefix(key, ".assets/") ||
-		strings.Contains(key, "/assets/") ||
+	return strings.HasPrefix(key, ".assets/") ||
 		strings.Contains(key, "/.assets/")
 }

@@ -28,6 +28,8 @@ func newTestStore(t *testing.T) *filestore.FileStore {
 	if err != nil {
 		t.Fatalf("NewFileStore: %v", err)
 	}
+	fs.PrepareCategory(testLibrary)
+	fs.PrepareCategory(testWorkingCopy)
 	return fs
 }
 
@@ -35,8 +37,10 @@ func mustCreate(t *testing.T, fs *filestore.FileStore, cat store.Category, key s
 	t.Helper()
 	var s store.Storable
 	var err error
-	if strings.Contains(key, "assets/") || strings.HasSuffix(key, ".png") || strings.HasSuffix(key, ".b64") {
-		s, err = fs.CreateAsset(cat, key, body)
+	if strings.Contains(key, ".assets/") || strings.HasSuffix(key, ".png") || strings.HasSuffix(key, ".b64") {
+		// Key in this test context is something like ".assets/img.png"
+		// or "assets/img.png". We use key as assetID for the mock.
+		s, err = fs.CreateAsset(cat, "", key, body)
 	} else {
 		s, err = fs.CreateMetaText(cat, key, body)
 	}
@@ -48,22 +52,28 @@ func mustCreate(t *testing.T, fs *filestore.FileStore, cat store.Category, key s
 
 // ── NewFileStore ──────────────────────────────────────────────────────────────
 
-func TestNewFileStoreCreatesDirectories(t *testing.T) {
+func TestPrepareCategoryCreatesDirectories(t *testing.T) {
 	dir := t.TempDir()
-	_, err := filestore.NewFileStore(dir, "host1")
+	fs, err := filestore.NewFileStore(dir, "host1")
 	if err != nil {
 		t.Fatalf("NewFileStore: %v", err)
 	}
 
-	// Each required directory should exist after construction.
+	if err := fs.PrepareCategory(testLibrary); err != nil {
+		t.Fatalf("PrepareCategory(Library): %v", err)
+	}
+	if err := fs.PrepareCategory(testWorkingCopy); err != nil {
+		t.Fatalf("PrepareCategory(WorkingCopy): %v", err)
+	}
+
+	// Each required directory should exist dynamically after preparation.
 	required := []string{
 		filepath.Join(dir, "store"),
 		filepath.Join(dir, "store", ".assets"),
 		filepath.Join(dir, "store", ".history"),
 		filepath.Join(dir, "host1", "buffers"),
-		filepath.Join(dir, "host1", "buffers", "assets"),
+		filepath.Join(dir, "host1", "buffers", ".assets"),
 		filepath.Join(dir, "host1", ".history"),
-		filepath.Join(dir, "host1", "config"),
 	}
 	for _, d := range required {
 		if _, err := os.Stat(d); os.IsNotExist(err) {
@@ -510,11 +520,95 @@ func TestFrontmatterTagsPreserved(t *testing.T) {
 var _ store.Store = (*filestore.FileStore)(nil)
 
 // ── test helper ──────────────────────────────────────────────────────────────
-
 func cloneMeta(m map[string]string) map[string]string {
 	out := make(map[string]string, len(m))
 	for k, v := range m {
 		out[k] = v
 	}
 	return out
+}
+
+func TestMoveUpdatesAssetLinks(t *testing.T) {
+	fs := newTestStore(t)
+
+	// 1. Create a buffer with an asset
+	buf := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
+	asset, err := fs.CreateAsset(testWorkingCopy, buf.Key(), "img1", []byte("fake-png"))
+	if err != nil {
+		t.Fatalf("CreateAsset: %v", err)
+	}
+
+	ms := buf.(store.MetaStorable)
+	ms.AttachAsset(asset)
+
+	// 2. Add links to the body (one relative, one old absolute)
+	oldRel := ".assets/buf-img1.png"
+	oldExt := asset.ExternalRef()
+	body := []byte("Rel: " + oldRel + ", Ext: " + oldExt)
+	ms.SetBody(body)
+
+	// 3. Move to Library (Shared category)
+	moved, err := fs.Move(ms, testLibrary)
+	if err != nil {
+		t.Fatalf("Move: %v", err)
+	}
+
+	newBody := string(moved.(store.MetaStorable).Body())
+	newOwns := moved.(store.MetaStorable).Owns()
+
+	if len(newOwns) == 0 {
+		t.Fatal("owned assets lost during Move")
+	}
+	newExt := newOwns[0].ExternalRef()
+
+	// 4. Verify that BOTH links were updated to the NEW absolute reference.
+	// We expect exactly 2 instances of the new absolute reference.
+	if strings.Count(newBody, newExt) != 2 {
+		t.Errorf("expected 2 instances of %q in body, got %d\nBody: %s", newExt, strings.Count(newBody, newExt), newBody)
+	}
+	// We check that the relative path is NOT found in its original "naked" form.
+	// Since newExt includes oldRel as a suffix, we check that oldRel is only 
+	// found as part of a newExt.
+	bodyWithoutNewExt := strings.ReplaceAll(newBody, newExt, "")
+	if strings.Contains(bodyWithoutNewExt, oldRel) {
+		t.Errorf("body still contains orphaned relative link %q\nBody: %s", oldRel, newBody)
+	}
+}
+
+func TestRenameUpdatesAssetLinks(t *testing.T) {
+	fs := newTestStore(t)
+	s := mustCreate(t, fs, testLibrary, "note.md", nil)
+	asset, _ := fs.CreateAsset(testLibrary, s.Key(), "img", []byte("xxx"))
+	ms := s.(store.MetaStorable)
+	ms.AttachAsset(asset)
+
+	// Relative link in body (migration case)
+	oldRel := ".assets/note-img.png"
+	ms.SetBody([]byte("Link: " + oldRel))
+
+	renamed, err := fs.Rename(ms, "newnote")
+	if err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+
+	newBody := string(renamed.(store.MetaStorable).Body())
+	newExt := renamed.(store.MetaStorable).Owns()[0].ExternalRef()
+	
+	if !strings.Contains(newBody, newExt) {
+		t.Errorf("body link not migrated to new absolute ref during rename: %s", newBody)
+	}
+	if strings.Contains(newBody, oldRel) {
+		t.Error("body still contains old relative link")
+	}
+	
+	// Verify files
+	root := fs.Root()
+	oldAssetPath := filepath.Join(root, "store", ".assets", "note-img.png")
+	if _, err := os.Stat(oldAssetPath); !os.IsNotExist(err) {
+		t.Errorf("old asset file %s should be removed after rename", oldAssetPath)
+	}
+	newAssetPath := filepath.Join(root, "store", ".assets", "newnote-img.png")
+	if _, err := os.Stat(newAssetPath); os.IsNotExist(err) {
+		t.Errorf("new asset file %s should exist after rename", newAssetPath)
+	}
 }

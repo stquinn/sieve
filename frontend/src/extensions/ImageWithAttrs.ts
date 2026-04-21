@@ -46,7 +46,7 @@ export const ImageWithAttrs = Image.extend({
       activeTabPath: '' as string,
       markdown: {
         serialize(state: any, node: any) {
-          // src is the markdown-relative path (e.g. "assets/blk.png" or "../assets/blk.png")
+          // src is the markdown-relative path (e.g. ".assets/blk.png" or "../.assets/blk.png")
           // The node view handles display conversion; serializer writes the path as-is.
           let alt = state.esc(node.attrs.alt || '')
           let src = node.attrs.src || ''

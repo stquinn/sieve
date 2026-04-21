@@ -1,13 +1,98 @@
 package stash
 
-import "fmt"
+import (
+	"fmt"
+	"path/filepath"
+	"stash/store"
+)
 
 // PromptEntry represents a prompt available in the system.
 type PromptEntry struct {
 	Name        string `json:"name"`        // e.g. "file", "explain", "ask"
 	DisplayName string `json:"displayName"` // e.g. "file.md"
-	Path        string `json:"path"`        // absolute path if override exists, otherwise empty
+	Path        string `json:"path"`        // store-relative path if override exists, otherwise empty
 	IsVirtual   bool   `json:"isVirtual"`   // true if using baked-in default
+}
+
+// PromptService manages AI prompt templates through the Store interface.
+// Template overrides live in the Prompts category (store/{hostname}/prompts/).
+type PromptService struct {
+	st store.Store
+}
+
+// NewPromptService creates a PromptService backed by st.
+func NewPromptService(st store.Store) (*PromptService, error) {
+	if err := st.PrepareCategory(Prompts); err != nil {
+		return nil, err
+	}
+	return &PromptService{st: st}, nil
+}
+
+// GetPromptContent returns the prompt template for name. If an override file
+// exists in the Store, it is used; otherwise the baked-in default is returned.
+func (ps *PromptService) GetPromptContent(name string) (string, error) {
+	s, err := ps.st.Load(Prompts, name+".md")
+	if err == nil {
+		return string(s.Body()), nil
+	}
+	// Fallback to default constants
+	switch name {
+	case "file":
+		return DefaultFilingPrompt, nil
+	case "explain":
+		return DefaultExplainPrompt, nil
+	case "ask":
+		return DefaultAskPrompt, nil
+	case "image":
+		return DefaultImagePrompt, nil
+	case "refine":
+		return DefaultRefinePrompt, nil
+	default:
+		return "", fmt.Errorf("unknown prompt: %s", name)
+	}
+}
+
+// SavePrompt persists a prompt override to the Store.
+func (ps *PromptService) SavePrompt(name string, content string) error {
+	_, err := ps.st.CreateText(Prompts, name+".md", []byte(content))
+	return err
+}
+
+// DeletePrompt removes a prompt override from the Store.
+func (ps *PromptService) DeletePrompt(name string) error {
+	s, err := ps.st.Load(Prompts, name+".md")
+	if err != nil {
+		return nil // Already deleted or doesn't exist
+	}
+	return ps.st.Delete(s)
+}
+
+// ListPrompts returns all standard prompts with their virtualization status.
+func (ps *PromptService) ListPrompts() []PromptEntry {
+	names := []string{"file", "explain", "ask", "refine", "image"}
+	displayNames := map[string]string{
+		"file":    "Smart Filing",
+		"explain": "Explain Content",
+		"ask":     "In-context Chat",
+		"refine":  "Language Detection",
+		"image":   "Describe Image",
+	}
+
+	out := make([]PromptEntry, 0, len(names))
+	for _, name := range names {
+		p := PromptEntry{
+			Name:        name,
+			DisplayName: displayNames[name],
+		}
+		if s, err := ps.st.Load(Prompts, name+".md"); err == nil {
+			p.IsVirtual = false
+			p.Path = filepath.ToSlash(s.Key()) // Not strictly needed but helpful
+		} else {
+			p.IsVirtual = true
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 // DefaultPrompts baked into the binary to provide zero-config AI interactions.
@@ -174,44 +259,3 @@ Code:
 {content}
 `
 
-// GetPromptContent returns the prompt template for name. If override is
-// non-empty it is used as-is (the caller already loaded the override file);
-// otherwise the baked-in default is returned.
-func GetPromptContent(name string, override string) (string, error) {
-	if override != "" {
-		return override, nil
-	}
-	switch name {
-	case "file":
-		return DefaultFilingPrompt, nil
-	case "explain":
-		return DefaultExplainPrompt, nil
-	case "ask":
-		return DefaultAskPrompt, nil
-	case "image":
-		return DefaultImagePrompt, nil
-	case "refine":
-		return DefaultRefinePrompt, nil
-	default:
-		return "", fmt.Errorf("unknown prompt: %s", name)
-	}
-}
-
-// PromptOverridePath returns the configured override file path for name from
-// settings (empty string if none configured). The caller is responsible for
-// reading the file and passing the content to GetPromptContent.
-func PromptOverridePath(name string, s Settings) string {
-	switch name {
-	case "file":
-		return s.Prompts.File
-	case "explain":
-		return s.Prompts.Explain
-	case "ask":
-		return s.Prompts.Ask
-	case "refine":
-		return s.Prompts.Refine
-	case "image":
-		return s.Prompts.Image
-	}
-	return ""
-}

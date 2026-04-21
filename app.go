@@ -19,7 +19,6 @@ import (
 
 	"stash/logger"
 	"stash/stash"
-	"stash/store"
 	"stash/store/filestore"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -35,6 +34,7 @@ type App struct {
 	notes   *stash.NoteService
 	assets  *stash.AssetService
 	state   *stash.StateService
+	prompts *stash.PromptService
 
 	themesFS fs.FS
 	watcher  *notesWatcher
@@ -127,10 +127,27 @@ func (a *App) startup(ctx context.Context) {
 		logger.Error("filestore init failed", "err", err)
 		return
 	}
-	a.buffers = stash.NewBufferService(fs)
-	a.notes = stash.NewNoteService(fs)
+	a.buffers, err = stash.NewBufferService(fs)
+	if err != nil {
+		logger.Error("buffers init failed", "err", err)
+		return
+	}
+	a.notes, err = stash.NewNoteService(fs)
+	if err != nil {
+		logger.Error("notes init failed", "err", err)
+		return
+	}
 	a.assets = stash.NewAssetService(fs)
-	a.state = stash.NewStateService(fs)
+	a.state, err = stash.NewStateService(fs)
+	if err != nil {
+		logger.Error("state init failed", "err", err)
+		return
+	}
+	a.prompts, err = stash.NewPromptService(fs)
+	if err != nil {
+		logger.Error("prompts init failed", "err", err)
+		return
+	}
 
 	settings := a.state.LoadSettings()
 
@@ -364,90 +381,41 @@ func (a *App) InitVault(path string) error {
 // ── Prompts ───────────────────────────────────────────────────────────────────
 
 func (a *App) GetPrompts() []stash.PromptEntry {
-	if a.state == nil {
+	if a.prompts == nil {
 		return nil
 	}
-	settings := a.state.LoadSettings()
-	return []stash.PromptEntry{
-		{Name: "file", DisplayName: "Smart Filing", Path: settings.Prompts.File, IsVirtual: settings.Prompts.File == ""},
-		{Name: "explain", DisplayName: "Explain Content", Path: settings.Prompts.Explain, IsVirtual: settings.Prompts.Explain == ""},
-		{Name: "ask", DisplayName: "In-context Chat", Path: settings.Prompts.Ask, IsVirtual: settings.Prompts.Ask == ""},
-		{Name: "refine", DisplayName: "Language Detection", Path: settings.Prompts.Refine, IsVirtual: settings.Prompts.Refine == ""},
-		{Name: "image", DisplayName: "Describe Image", Path: settings.Prompts.Image, IsVirtual: settings.Prompts.Image == ""},
-	}
+	return a.prompts.ListPrompts()
 }
 
 func (a *App) LoadPrompt(name string) (string, error) {
-	if a.state == nil {
+	if a.prompts == nil {
 		return "", fmt.Errorf("store not open")
 	}
-	settings := a.state.LoadSettings()
-	override := a.loadPromptOverride(name, settings)
-	return stash.GetPromptContent(name, override)
+	return a.prompts.GetPromptContent(name)
 }
 
 func (a *App) SavePrompt(name string, content string) (string, error) {
-	if a.state == nil {
+	if a.prompts == nil {
 		return "", fmt.Errorf("store not open")
 	}
-	if err := os.MkdirAll(a.promptsDir(), 0o755); err != nil {
+	err := a.prompts.SavePrompt(name, content)
+	if err != nil {
+		logger.Error("SavePrompt failed", "name", name, "err", err)
 		return "", err
 	}
-	path := filepath.Join(a.promptsDir(), name+".md")
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		return "", err
-	}
-	settings := a.state.LoadSettings()
-	switch name {
-	case "file":
-		settings.Prompts.File = path
-	case "explain":
-		settings.Prompts.Explain = path
-	case "ask":
-		settings.Prompts.Ask = path
-	case "refine":
-		settings.Prompts.Refine = path
-	case "image":
-		settings.Prompts.Image = path
-	}
-	if err := a.state.SaveSettings(settings); err != nil {
-		return "", err
-	}
-	logger.Info("prompt saved", "name", name, "path", path)
+	logger.Info("prompt saved to isolation", "name", name, "host", a.hostname)
 	runtime.EventsEmit(a.ctx, "prompts:changed")
-	return path, nil
+	return name + ".md", nil
 }
 
-func (a *App) RestorePrompt(name string) error {
-	if a.state == nil {
+func (a *App) DeletePrompt(name string) error {
+	if a.prompts == nil {
 		return fmt.Errorf("store not open")
 	}
-	settings := a.state.LoadSettings()
-	var path string
-	switch name {
-	case "file":
-		path = settings.Prompts.File
-		settings.Prompts.File = ""
-	case "explain":
-		path = settings.Prompts.Explain
-		settings.Prompts.Explain = ""
-	case "ask":
-		path = settings.Prompts.Ask
-		settings.Prompts.Ask = ""
-	case "refine":
-		path = settings.Prompts.Refine
-		settings.Prompts.Refine = ""
-	case "image":
-		path = settings.Prompts.Image
-		settings.Prompts.Image = ""
-	}
-	if path != "" {
-		_ = os.Remove(path)
-	}
-	if err := a.state.SaveSettings(settings); err != nil {
+	if err := a.prompts.DeletePrompt(name); err != nil {
+		logger.Warn("DeletePrompt: failed", "name", name, "err", err)
 		return err
 	}
-	logger.Info("prompt restored to default", "name", name)
 	runtime.EventsEmit(a.ctx, "prompts:changed")
 	return nil
 }
@@ -869,12 +837,32 @@ func (a *App) SaveAsset(context, id, dataBase64 string) (AssetDTO, error) {
 		logger.Error("SaveAsset: decode failed", "err", err)
 		return AssetDTO{}, fmt.Errorf("SaveAsset: decode: %w", err)
 	}
-	cat, key := assetLocation(context, id)
-	asset, err := a.assets.Save(cat, key, data)
+	isBuffer := context == "" || context == "new" || strings.Contains(context, "/buffers/")
+	cat := stash.WorkingCopy
+	if !isBuffer {
+		cat = stash.Library
+	}
+
+	asset, err := a.assets.Save(cat, context, id, data)
 	if err != nil {
-		logger.Error("SaveAsset failed", "key", key, "err", err)
+		logger.Error("SaveAsset failed", "id", id, "err", err)
 		return AssetDTO{}, err
 	}
+	
+	if context != "" && context != "new" {
+		if b, err := a.buffers.Load(context); err == nil {
+			b.Storable().AttachAsset(asset.Storable())
+			if _, err := a.buffers.Save(b); err != nil {
+				logger.Warn("SaveAsset: failed to attach to buffer", "err", err)
+			}
+		} else if n, err := a.notes.Load(context); err == nil {
+			n.Storable().AttachAsset(asset.Storable())
+			if _, err := a.notes.Save(n); err != nil {
+				logger.Warn("SaveAsset: failed to attach to note", "err", err)
+			}
+		}
+	}
+	
 	logger.Info("asset saved", "externalRef", asset.ExternalRef())
 	return toAssetDTO(asset), nil
 }
@@ -890,26 +878,36 @@ func (a *App) DownloadAsset(context, targetURL, id string) (AssetDTO, error) {
 		logger.Error("DownloadAsset: fetch failed", "url", targetURL, "err", err)
 		return AssetDTO{}, err
 	}
-	cat, key := assetLocation(context, id)
-	asset, err := a.assets.Save(cat, key, data)
+	isBuffer := context == "" || context == "new" || strings.Contains(context, "/buffers/")
+	cat := stash.WorkingCopy
+	if !isBuffer {
+		cat = stash.Library
+	}
+
+	asset, err := a.assets.Save(cat, context, id, data)
 	if err != nil {
-		logger.Error("DownloadAsset: save failed", "key", key, "err", err)
+		logger.Error("DownloadAsset: save failed", "id", id, "err", err)
 		return AssetDTO{}, err
+	}
+
+	if context != "" && context != "new" {
+		if b, err := a.buffers.Load(context); err == nil {
+			b.Storable().AttachAsset(asset.Storable())
+			if _, err := a.buffers.Save(b); err != nil {
+				logger.Warn("DownloadAsset: failed to attach to buffer", "err", err)
+			}
+		} else if n, err := a.notes.Load(context); err == nil {
+			n.Storable().AttachAsset(asset.Storable())
+			if _, err := a.notes.Save(n); err != nil {
+				logger.Warn("DownloadAsset: failed to attach to note", "err", err)
+			}
+		}
 	}
 	logger.Info("asset downloaded", "url", targetURL, "externalRef", asset.ExternalRef())
 	return toAssetDTO(asset), nil
 }
 
-// assetLocation determines the Store category and key for an asset based on
-// whether the owning document is a buffer (WorkingCopy) or a note (Library).
-func assetLocation(context, id string) (store.Category, string) {
-	isBuffer := context == "" || context == "new" || strings.Contains(context, "/buffers/")
-	if isBuffer {
-		return stash.WorkingCopy, fmt.Sprintf("assets/%s.png", id)
-	}
-	noteName := strings.TrimSuffix(filepath.Base(context), filepath.Ext(context))
-	return stash.Library, fmt.Sprintf(".assets/%s-%s.png", noteName, id)
-}
+
 
 // ── AI / CLI operations ───────────────────────────────────────────────────────
 
@@ -929,8 +927,8 @@ func (a *App) EvaluateBuffer(path string) (*stash.FilingRecommendation, error) {
 		return nil, fmt.Errorf("document not found: %s", path)
 	}
 
-	override := a.loadPromptOverride("file", settings)
-	rec, err := stash.EvaluateBuffer(meta, body, a.libraryFolders(), settings, override)
+	prompt, _ := a.prompts.GetPromptContent("file")
+	rec, err := stash.EvaluateBuffer(meta, body, a.libraryFolders(), settings, prompt)
 	if err != nil {
 		logger.Warn("EvaluateBuffer failed", "path", path, "err", err)
 		return nil, err
@@ -947,8 +945,8 @@ func (a *App) RefineLanguage(content string) (string, error) {
 	if settings.Tier() == stash.TierDumb {
 		return "", fmt.Errorf("dumb mode")
 	}
-	override := a.loadPromptOverride("refine", settings)
-	lang, err := stash.RefineLanguage(content, settings, override)
+	prompt, _ := a.prompts.GetPromptContent("refine")
+	lang, err := stash.RefineLanguage(content, settings, prompt)
 	if err != nil {
 		logger.Warn("RefineLanguage failed", "err", err)
 		return "", err
@@ -964,8 +962,8 @@ func (a *App) DescribeImage(storeRelPath string) (stash.ImageDesc, error) {
 	if settings.Tier() == stash.TierDumb {
 		return stash.ImageDesc{}, fmt.Errorf("dumb mode")
 	}
-	override := a.loadPromptOverride("image", settings)
-	desc, err := stash.DescribeImage(filepath.Join(a.storePath, storeRelPath), settings, override)
+	prompt, _ := a.prompts.GetPromptContent("image")
+	desc, err := stash.DescribeImage(filepath.Join(a.storePath, storeRelPath), settings, prompt)
 	if err != nil {
 		logger.Warn("DescribeImage failed", "err", err)
 		return stash.ImageDesc{}, err
@@ -981,9 +979,9 @@ func (a *App) Explain(content string, history string, notePath string, imageStor
 	if settings.Tier() == stash.TierDumb {
 		return "", fmt.Errorf("explain not available in dumb mode")
 	}
-	override := a.loadPromptOverride("explain", settings)
+	prompt, _ := a.prompts.GetPromptContent("explain")
 	resp, err := stash.RunExplain(content, history, settings,
-		filepath.Dir(a.resolvePath(notePath)), a.absImagePaths(imageStorePaths), override)
+		filepath.Dir(a.resolvePath(notePath)), a.absImagePaths(imageStorePaths), prompt)
 	if err != nil {
 		logger.Warn("Explain failed", "err", err)
 		return "", err
@@ -999,9 +997,9 @@ func (a *App) Ask(content string, history string, question string, notePath stri
 	if settings.Tier() == stash.TierDumb {
 		return "", fmt.Errorf("ask not available in dumb mode")
 	}
-	override := a.loadPromptOverride("ask", settings)
+	prompt, _ := a.prompts.GetPromptContent("ask")
 	resp, err := stash.RunAsk(content, history, question, settings,
-		filepath.Dir(a.resolvePath(notePath)), a.absImagePaths(imageStorePaths), override)
+		filepath.Dir(a.resolvePath(notePath)), a.absImagePaths(imageStorePaths), prompt)
 	if err != nil {
 		logger.Warn("Ask failed", "err", err)
 		return "", err
@@ -1039,21 +1037,6 @@ func (a *App) loadThemeOverride(name string) []byte {
 	}
 	data, _ := os.ReadFile(filepath.Join(a.storePath, "themes", name+".json"))
 	return data
-}
-
-// loadPromptOverride reads the prompt override file path stored in settings for
-// name. Returns the file content, or "" if no override is configured or the
-// file cannot be read.
-func (a *App) loadPromptOverride(name string, settings stash.Settings) string {
-	path := stash.PromptOverridePath(name, settings)
-	if path == "" {
-		return ""
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return string(data)
 }
 
 // ── File manager ──────────────────────────────────────────────────────────────

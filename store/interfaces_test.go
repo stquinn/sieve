@@ -25,9 +25,12 @@ func (s *stubStorable) Versions() []store.VersionRef { return nil }
 // stubMetaStorable satisfies the MetaStorable interface.
 type stubMetaStorable struct{ stubStorable }
 
-func (s *stubMetaStorable) Meta() map[string]string { return nil }
-func (s *stubMetaStorable) SetBody(_ []byte)        {}
-func (s *stubMetaStorable) SetMeta(_ map[string]string) {}
+func (s *stubMetaStorable) Meta() map[string]string          { return nil }
+func (s *stubMetaStorable) SetBody(_ []byte)                 {}
+func (s *stubMetaStorable) SetMeta(_ map[string]string)      {}
+func (s *stubMetaStorable) Owns() []store.Storable           { return nil }
+func (s *stubMetaStorable) AttachAsset(a store.Storable)     {}
+func (s *stubMetaStorable) ClearOwns()                       {}
 
 // stubAssetStorable satisfies the AssetStorable interface.
 type stubAssetStorable struct{ stubStorable }
@@ -48,7 +51,7 @@ func (s *stubStore) CreateText(_ store.Category, _ string, _ []byte) (store.Stor
 func (s *stubStore) CreateMetaText(_ store.Category, _ string, _ []byte) (store.MetaStorable, error) {
 	return nil, nil
 }
-func (s *stubStore) CreateAsset(_ store.Category, _ string, _ []byte) (store.AssetStorable, error) {
+func (s *stubStore) CreateAsset(_ store.Category, _, _ string, _ []byte) (store.AssetStorable, error) {
 	return nil, nil
 }
 func (s *stubStore) Save(_ store.Storable) (store.Storable, error) { return nil, nil }
@@ -62,6 +65,7 @@ func (s *stubStore) List(_ store.Category, _ string) ([]store.Storable, error) {
 func (s *stubStore) Move(_ store.Storable, _ store.Category) (store.Storable, error) {
 	return nil, nil
 }
+func (s *stubStore) PrepareCategory(_ store.Category) error { return nil }
 func (s *stubStore) Reparent(_ store.Storable, _ store.FolderStorable) (store.Storable, error) {
 	return nil, nil
 }

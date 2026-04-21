@@ -48,6 +48,15 @@ type MetaStorable interface {
 
 	// SetMeta replaces the metadata map. The change is local until Store.Save.
 	SetMeta(map[string]string)
+
+	// Owns returns the assets owned by this document.
+	Owns() []Storable
+
+	// AttachAsset adds an asset to the ownership list.
+	AttachAsset(a Storable)
+
+	// ClearOwns removes all owned assets.
+	ClearOwns()
 }
 
 // AssetStorable extends Storable for binary content such as images and voice
@@ -95,8 +104,9 @@ type Store interface {
 	// Storable.
 	CreateMetaText(category Category, key string, body []byte) (MetaStorable, error)
 
-	
-	CreateAsset(category Category, key string, body []byte) (AssetStorable, error)
+	// CreateAsset creates a new AssetStorable. The key is managed internally
+	// by the store based on the parent document that logically owns it.
+	CreateAsset(category Category, parentKey string, assetID string, body []byte) (AssetStorable, error)
 
 	// Save persists the current state of s. The Store stamps the version and
 	// modified timestamp, writes a snapshot unconditionally, and checks the
@@ -117,9 +127,13 @@ type Store interface {
 	// the directory tree and reconstructs the ownership graph.
 	List(category Category, prefix string) ([]Storable, error)
 
-	// Move transfers s to a different Category. Returns a new Storable in the
+	// Move transfers s to a different Category and logic Key. Returns a new Storable in the
 	// target category; the source is removed.
 	Move(s Storable, to Category) (Storable, error)
+
+	// PrepareCategory establishes any necessary directories or infrastructure
+	// for the given category before items can be saved within it.
+	PrepareCategory(category Category) error
 
 	// Reparent moves s under folder. For FileStore this physically relocates
 	// the file; ExternalRefs are correct on next read with no content

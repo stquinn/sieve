@@ -29,11 +29,15 @@ func (s *fileStorable) Versions() []store.VersionRef { return s.versions }
 type fileMetaStorable struct {
 	fileStorable
 	meta map[string]string
+	owns []store.Storable
 }
 
 func (s *fileMetaStorable) Meta() map[string]string     { return s.meta }
 func (s *fileMetaStorable) SetBody(body []byte)         { s.body = body }
 func (s *fileMetaStorable) SetMeta(m map[string]string) { s.meta = m }
+func (s *fileMetaStorable) Owns() []store.Storable             { return s.owns }
+func (s *fileMetaStorable) AttachAsset(a store.Storable)       { s.owns = append(s.owns, a) }
+func (s *fileMetaStorable) ClearOwns()                         { s.owns = nil }
 
 // fileAssetStorable extends fileStorable for binary content such as images.
 // Encoding is inferred by FileStore at Create time from magic bytes — never

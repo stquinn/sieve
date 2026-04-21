@@ -1,8 +1,8 @@
 import type { main, stash } from '../../wailsjs/go/models'
 
 // Compute markdown-relative path from a tab's store-relative path to an asset's store-relative path.
-// e.g. tabPath="dash/buffers/buf.md", assetPath="dash/buffers/assets/blk.png" → "assets/blk.png"
-// e.g. tabPath="store/note.md", assetPath="store/assets/blk.png" → "assets/blk.png"
+// e.g. tabPath="dash/buffers/buf.md", assetPath="dash/buffers/.assets/blk.png" → ".assets/blk.png"
+// e.g. tabPath="store/note.md", assetPath="store/.assets/blk.png" → ".assets/blk.png"
 export function assetMarkdownPath(tabPath: string, assetStorePath: string): string {
   const fromDir = tabPath.split('/').slice(0, -1)
   const toParts = assetStorePath.split('/')
