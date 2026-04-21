@@ -124,6 +124,13 @@ func yamlValueToString(v interface{}) string {
 // Known keys are written in canonicalKeyOrder. Unknown keys follow,
 // sorted alphabetically for deterministic output.
 func serialiseFrontmatter(meta map[string]string, body []byte) []byte {
+	// If the document is in an error state (e.g. frontmatter was corrupted),
+	// the 'body' field contains the raw original file contents. We write it
+	// back as-is so the user's manual repairs are preserved.
+	if meta["status"] == "error" {
+		return body
+	}
+
 	var buf bytes.Buffer
 	buf.WriteString("---\n")
 
@@ -153,11 +160,23 @@ func serialiseFrontmatter(meta map[string]string, body []byte) []byte {
 }
 
 // writeFMLine writes a single "key: value\n" line to buf.
-// Values that came from yamlValueToString are already valid YAML scalars or
-// inline sequences and can be written verbatim.
+// It uses yaml.Marshal for scalar strings to ensure proper quoting (e.g. for
+// values containing colons), while preserving raw notation for null, booleans,
+// and inline lists.
 func writeFMLine(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(key)
 	buf.WriteString(": ")
-	buf.WriteString(value)
+
+	// If it looks like a keyword or an inline list, write it raw to preserve
+	// the internal wire format.
+	if value == "null" || value == "true" || value == "false" || (strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]")) {
+		buf.WriteString(value)
+	} else {
+		// Use the official YAML marshaller for scalar strings. This ensures that
+		// a summary like "Task: Go" is correctly quoted as "Task: Go" (or similar).
+		b, _ := yaml.Marshal(value)
+		// yaml.Marshal appends a newline; trim it before writing.
+		buf.Write(bytes.TrimSpace(b))
+	}
 	buf.WriteByte('\n')
 }

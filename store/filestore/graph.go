@@ -141,12 +141,19 @@ func (fs *FileStore) buildStorable(cat store.Category, key string, catDir string
 	if strings.HasSuffix(key, ".md") {
 		meta, body, err := parseFrontmatter(data)
 		if err != nil {
-			// Unreadable frontmatter — return as plain Storable rather than error.
-			return &fileStorable{
-				key:      key,
-				category: cat,
-				body:     data,
-				extRef:   extRef,
+			// Unreadable frontmatter — return as MetaStorable in an error state
+			// so it still appears in the UI (with a warning) instead of disappearing.
+			return &fileMetaStorable{
+				fileStorable: fileStorable{
+					key:      key,
+					category: cat,
+					body:     data, // Provide the raw unparsed data for manual repair.
+					extRef:   extRef,
+				},
+				meta: map[string]string{
+					"status":       "error",
+					"display_name": "⚠️ ERROR: " + filepath.Base(key),
+				},
 			}
 		}
 		uuid := meta["uuid"]
