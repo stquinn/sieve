@@ -4,44 +4,41 @@ import { SaveBuffer, Quit as AppQuit } from '../../wailsjs/go/main/App'
 import { EventsOn, EventsOff, Quit } from '../../wailsjs/runtime/runtime'
 import type { TabState } from '../types'
 import type { main } from '../../wailsjs/go/models'
+import type { StorableDataService } from '../lib/StorableDataService'
 
 interface UseAppLifecycleParams {
   activeIdx: number
   tabs: TabState[]
   tabsRef: React.MutableRefObject<TabState[]>
-  activeTabRef: React.MutableRefObject<TabState | undefined>
   activeIdxRef: React.MutableRefObject<number>
-  metaCache: React.MutableRefObject<Record<string, main.DocumentMetaDTO | null>>
-  savedBodyCache: React.MutableRefObject<Record<string, string>>
-  mdCache: React.MutableRefObject<Record<string, string>>
+  tierRef: React.MutableRefObject<'dumb' | 'smart'>
   evaluatingUuids: React.MutableRefObject<Set<string>>
   pendingAiCount: React.MutableRefObject<number>
   cliTimeoutLongMs: React.MutableRefObject<number>
   // Pass the ref, not the closure — app:closing fires long after render
   flushRef: React.MutableRefObject<() => void>
   focusTimer: React.MutableRefObject<ReturnType<typeof setTimeout> | null>
-  saveBufferSafe: (uuid: string) => void
   persistSession: () => Promise<void>
+  persistSessionRef: React.MutableRefObject<() => Promise<void>>
   setPendingClose: React.Dispatch<React.SetStateAction<boolean>>
+  ds: StorableDataService
 }
 
 export function useAppLifecycle({
   activeIdx,
   tabs,
   tabsRef,
-  activeTabRef,
   activeIdxRef,
-  metaCache,
-  savedBodyCache,
-  mdCache,
+  tierRef,
   evaluatingUuids,
   pendingAiCount,
   cliTimeoutLongMs,
   flushRef,
   focusTimer,
-  saveBufferSafe,
   persistSession,
+  persistSessionRef,
   setPendingClose,
+  ds,
 }: UseAppLifecycleParams) {
   // ── App close handler ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -50,21 +47,17 @@ export function useAppLifecycle({
 
       await flushRef.current()
 
-      const otherTabs = tabsRef.current.filter(t => t.uuid !== activeTabRef.current?.uuid && !t.isVirtual)
+      const activeTabAtShutdown = tabsRef.current[activeIdxRef.current]
+      const otherTabs = tabsRef.current.filter(t => t.uuid !== activeTabAtShutdown?.uuid && !t.isVirtual)
       if (otherTabs.length > 0) {
         console.log('[stash] shutdown: flushing', otherTabs.length, 'background tab(s)...')
         await Promise.all(otherTabs.map(async (t) => {
-          const uuid = t.uuid
-          const meta = metaCache.current[uuid]
-          const body = mdCache.current[uuid] ?? savedBodyCache.current[uuid] ?? ''
-          if (!meta && !body) return
-          const dto = { uuid, path: t.path, slug: t.path.split('/').pop()?.replace('.md', '') ?? '', body, meta: meta ?? {}, versions: [] }
-          await SaveBuffer(dto as any).catch(console.error)
+          await ds.save(t.uuid).catch(console.error)
         }))
       }
 
       const doQuit = async () => {
-        await persistSession()
+        await persistSessionRef.current()
           .then(() => console.log('[stash] shutdown: session saved'))
           .catch(err => console.error('[stash] shutdown: save failed', err))
           .finally(() => {
@@ -106,16 +99,18 @@ export function useAppLifecycle({
     if (focusTimer.current) clearTimeout(focusTimer.current)
     const tab = tabs[activeIdx]
     if (!tab) return
-    const path = tab.path
+    const uuid = tab.uuid
 
     const bumpFocusCount = () => {
-      const currentTab = tabsRef.current.find(t => t.path === path)
-      if (!currentTab || !currentTab.uuid) return
-      const meta = metaCache.current[currentTab.uuid]
-      if (!meta) return
-      metaCache.current[currentTab.uuid] = { ...meta, focusCount: (meta.focusCount ?? 0) + 1 }
-      saveBufferSafe(currentTab.uuid)
-      console.debug('[stash] focus_count: incremented', { path })
+      const currentTab = tabsRef.current.find(t => t.uuid === uuid)
+      if (!currentTab) return
+      
+      const doc = ds.get(uuid)
+      if (!doc || !doc.meta) return
+
+      ds.setMeta(uuid, { ...doc.meta, focusCount: (doc.meta.focusCount ?? 0) + 1 })
+      ds.save(uuid).catch(console.error)
+      console.debug('[stash] focus_count: incremented', { uuid, path: doc.path })
     }
 
     focusTimer.current = setTimeout(bumpFocusCount, 30 * 1000)

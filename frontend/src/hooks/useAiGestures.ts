@@ -6,50 +6,46 @@ import type { TabState } from '../types'
 import type { main } from '../../wailsjs/go/models'
 import { getLocalISOString } from '../lib/fmUtils'
 import { buildAiContext, type AiContext } from '../lib/aiContextBuilder'
+import type { StorableDataService } from '../lib/StorableDataService'
+
+import { EditorPanelHandle } from '../components/EditorPanel'
 
 interface UseAiGesturesParams {
-  editor: Editor | null
-  isMarkdownMode: boolean
-  rawMd: string
+  getEditor: (uuid: string) => EditorPanelHandle | undefined
   tier: 'dumb' | 'smart'
-  activeTabRef: React.MutableRefObject<TabState | undefined>
+  activeTab: TabState | undefined
   tabsRef: React.MutableRefObject<TabState[]>
   uuidToPath: React.MutableRefObject<Map<string, string>>
-  metaCache: React.MutableRefObject<Record<string, main.DocumentMetaDTO | null>>
-  savedBodyCache: React.MutableRefObject<Record<string, string>>
   pendingAiCount: React.MutableRefObject<number>
   evalStartTimes: React.MutableRefObject<Record<string, number>>
   askContextRef: React.MutableRefObject<AiContext | null>
   setTabs: React.Dispatch<React.SetStateAction<TabState[]>>
-  setRawMd: React.Dispatch<React.SetStateAction<string>>
   setShowAskPopup: React.Dispatch<React.SetStateAction<boolean>>
+  ds: StorableDataService
 }
 
 export function useAiGestures({
-  editor,
-  isMarkdownMode,
-  rawMd,
+  getEditor,
   tier,
-  activeTabRef,
+  activeTab,
   tabsRef,
   uuidToPath,
-  metaCache,
-  savedBodyCache,
   pendingAiCount,
   evalStartTimes,
   askContextRef,
   setTabs,
-  setRawMd,
   setShowAskPopup,
+  ds,
 }: UseAiGesturesParams) {
   function resolvePathByUuid(uuid: string): string | undefined {
-    return tabsRef.current.find(t => t.uuid === uuid)?.path ?? uuidToPath.current.get(uuid)
+    return ds.get(uuid)?.path ?? uuidToPath.current.get(uuid)
   }
 
   function insertAiPlaceholder(aiId: string, blockRef: string, question?: string) {
+    const editor = activeTab ? getEditor(activeTab.uuid)?.getEditor() : null
     if (!editor) return
     queueMicrotask(() => {
-      editor.commands.command(({ tr, state }) => {
+      editor.commands.command(({ tr, state }: { tr: import('@tiptap/pm/state').Transaction, state: import('@tiptap/pm/state').EditorState }) => {
         const { schema, selection } = state
         const { to } = selection
 
@@ -82,14 +78,15 @@ export function useAiGestures({
         tr.insert(insertPos, aiNode)
         return true
       })
-      if (isMarkdownMode && activeTabRef.current) {
-        // Markdown mode shows body only — update rawMd to reflect the inserted block
-        setRawMd(editor.storage.markdown.getMarkdown())
+      if (activeTab && activeTab.mode === 'markdown') {
+        const md = getEditor(activeTab.uuid)?.getMarkdown() || ''
+        ds.setBody(activeTab.uuid, md)
       }
     })
   }
 
   function replaceAiPlaceholder(aiId: string, responseText: string) {
+    const editor = activeTab ? getEditor(activeTab.uuid)?.getEditor() : null
     if (!editor) return
 
     let targetPos = -1
@@ -142,12 +139,13 @@ export function useAiGestures({
       Fragment.from(members)
     )
 
-    editor.commands.command(({ tr }) => {
+    editor.commands.command(({ tr }: { tr: import('@tiptap/pm/state').Transaction }) => {
       tr.replaceWith(targetPos, targetEnd, newAiNode)
       return true
     })
-    if (isMarkdownMode && activeTabRef.current) {
-      setRawMd(editor.storage.markdown.getMarkdown())
+    if (activeTab && activeTab.mode === 'markdown') {
+      const md = getEditor(activeTab.uuid)?.getMarkdown() || ''
+      ds.setBody(activeTab.uuid, md)
     }
   }
 
@@ -159,22 +157,19 @@ export function useAiGestures({
       return
     }
     try {
-      const dto = await LoadBuffer(path)
+      const doc = await ds.load(path)
       const idEscaped = aiId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       const pattern = new RegExp(`(\\[!ai\\] id="${idEscaped}"[^\\n]*)\\s*[\\s\\S]*?\\s*\\[!ai-end\\]`)
-      const updatedBody = dto.body.replace(pattern, `$1\n\n${responseText}\n\n[!ai-end]`)
+      const updatedBody = doc.body.replace(pattern, `$1\n\n${responseText}\n\n[!ai-end]`)
 
-      if (updatedBody === dto.body) {
+      if (updatedBody === doc.body) {
         console.warn('[stash:ai] background update: placeholder not found in file', { uuid, path, aiId })
         return
       }
 
-      const updatedMeta = { ...dto.meta, aiLastEvaluated: getLocalISOString() }
-      const updatedDto = { ...dto, body: updatedBody, meta: updatedMeta }
-      await SaveBuffer(updatedDto as any)
-
-      savedBodyCache.current[uuid] = updatedBody
-      metaCache.current[uuid] = updatedMeta
+      ds.setBody(uuid, updatedBody)
+      ds.setMeta(uuid, { ...doc.meta!, aiLastEvaluated: getLocalISOString() })
+      await ds.save(uuid)
 
       console.log('[stash:ai] background update: response saved', { uuid, path, aiId })
     } catch (err) {
@@ -183,37 +178,32 @@ export function useAiGestures({
   }
 
   function touchAiLastEvaluated(uuid: string) {
-    const meta = metaCache.current[uuid]
-    if (!meta) return
-    const path = resolvePathByUuid(uuid)
-    if (!path) return
-    const updatedMeta = { ...meta, aiLastEvaluated: getLocalISOString() }
-    metaCache.current[uuid] = updatedMeta
-    const body = editor?.storage.markdown.getMarkdown() ?? savedBodyCache.current[uuid] ?? ''
-    const tab = tabsRef.current.find(t => t.uuid === uuid)
-    if (!tab) return
-    const dto = { uuid, path, slug: path.split('/').pop()?.replace('.md','') ?? '', body, meta: updatedMeta, versions: [] }
-    SaveBuffer(dto as any).catch(console.error)
+    const doc = ds.get(uuid)
+    if (!doc || !doc.meta) return
+
+    ds.setMeta(uuid, { ...doc.meta, aiLastEvaluated: getLocalISOString() })
+    ds.save(uuid).catch(console.error)
   }
 
   function explainGesture() {
+    const editor = activeTab ? getEditor(activeTab.uuid)?.getEditor() : null
     if (!editor || tier !== 'smart') return
-    const ctx = buildAiContext(editor, isMarkdownMode, rawMd, activeTabRef.current?.path ?? '')
-    if (!ctx.content) return
-
-    const capturedUuid = activeTabRef.current?.uuid!
+    const capturedUuid = activeTab?.uuid!
+    const capturedPath = ds.get(capturedUuid)?.path || ''
     const aiId = 'ai-' + Math.random().toString(16).substring(2, 6)
+    const ctx = buildAiContext(editor, activeTab?.mode === 'markdown', ds.get(capturedUuid)?.body || '', capturedPath)
+    if (!ctx.content) return
     insertAiPlaceholder(aiId, ctx.blockRef)
 
     pendingAiCount.current++
     evalStartTimes.current[capturedUuid] = Date.now()
-    setTabs(prev => prev.map(t => t.uuid === capturedUuid ? { ...t, isWaitingAI: true, aiJobName: 'Explain' } : t))
+    ds.setTransient(capturedUuid, { isWaitingAI: true, aiJobName: 'Explain' })
 
     console.log('[stash:ai] explain: firing', { aiId, uuid: capturedUuid, blockRef: ctx.blockRef, imagePaths: ctx.imagePaths })
-    Explain(ctx.content, ctx.history, activeTabRef.current?.path ?? '', Array.from(ctx.imagePaths))
+    Explain(ctx.content, ctx.history, capturedPath, Array.from(ctx.imagePaths))
       .then(resp => {
         const trimmed = resp.trim()
-        const isActive = activeTabRef.current?.uuid === capturedUuid
+        const isActive = activeTab?.uuid === capturedUuid
         if (!isActive) {
           console.log('[stash:ai] explain: tab not active — applying response to file', { uuid: capturedUuid, aiId })
           applyAiResponseInBackground(capturedUuid, aiId, trimmed)
@@ -226,7 +216,7 @@ export function useAiGestures({
       .catch(err => {
         console.warn('[stash:ai] explain: failed', err)
         const errorMsg = '_(explain timed out — Ctrl+E to retry)_'
-        const isActive = activeTabRef.current?.uuid === capturedUuid
+        const isActive = activeTab?.uuid === capturedUuid
         if (!isActive) {
           applyAiResponseInBackground(capturedUuid, aiId, errorMsg)
           return
@@ -235,13 +225,16 @@ export function useAiGestures({
       })
       .finally(() => {
         pendingAiCount.current--
-        setTabs(prev => prev.map(t => t.uuid === capturedUuid ? { ...t, isWaitingAI: false } : t))
+        ds.setTransient(capturedUuid, { isWaitingAI: false })
       })
   }
 
   function askGesture() {
-    if (!editor || tier !== 'smart') return
-    const ctx = buildAiContext(editor, isMarkdownMode, rawMd, activeTabRef.current?.path ?? '')
+    if (!activeTab || tier !== 'smart') return
+    const editor = getEditor(activeTab.uuid)?.getEditor()
+    if (!editor) return
+    const path = ds.get(activeTab.uuid)?.path || ''
+    const ctx = buildAiContext(editor, activeTab.mode === 'markdown', ds.get(activeTab.uuid)?.body || '', path)
     console.log('[stash:ai] ask: ', { images: ctx.imagePaths })
     askContextRef.current = ctx
     setShowAskPopup(true)
@@ -249,21 +242,23 @@ export function useAiGestures({
 
   function handleAskSend(question: string) {
     const ctx = askContextRef.current
-    if (!ctx || !editor) return
+    const editor = activeTab ? getEditor(activeTab.uuid)?.getEditor() : null
+    if (!ctx || !editor || !activeTab) return
 
-    const capturedUuid = activeTabRef.current?.uuid!
+    const capturedUuid = activeTab?.uuid!
+    const capturedPath = ds.get(capturedUuid)?.path || ''
     const aiId = 'ai-' + Math.random().toString(16).substring(2, 6)
     insertAiPlaceholder(aiId, ctx.blockRef, question)
 
     pendingAiCount.current++
     evalStartTimes.current[capturedUuid] = Date.now()
-    setTabs(prev => prev.map(t => t.uuid === capturedUuid ? { ...t, isWaitingAI: true, aiJobName: 'Ask' } : t))
+    ds.setTransient(capturedUuid, { isWaitingAI: true, aiJobName: 'Ask' })
 
     console.log('[stash:ai] ask: firing', { aiId, uuid: capturedUuid, blockRef: ctx.blockRef, question, imagePaths: ctx.imagePaths })
-    Ask(ctx.content, ctx.history, question, activeTabRef.current?.path ?? '', Array.from(ctx.imagePaths))
+    Ask(ctx.content, ctx.history, question, capturedPath, Array.from(ctx.imagePaths))
       .then(resp => {
         const trimmed = resp.trim()
-        const isActive = activeTabRef.current?.uuid === capturedUuid
+        const isActive = activeTab?.uuid === capturedUuid
         if (!isActive) {
           console.log('[stash:ai] ask: tab not active — applying response to file', { uuid: capturedUuid, aiId })
           applyAiResponseInBackground(capturedUuid, aiId, trimmed)
@@ -276,7 +271,7 @@ export function useAiGestures({
       .catch(err => {
         console.warn('[stash:ai] ask: failed', err)
         const errorMsg = '_(ask timed out — Ctrl+Shift+A to retry)_'
-        const isActive = activeTabRef.current?.uuid === capturedUuid
+        const isActive = activeTab?.uuid === capturedUuid
         if (!isActive) {
           applyAiResponseInBackground(capturedUuid, aiId, errorMsg)
           return
@@ -285,7 +280,7 @@ export function useAiGestures({
       })
       .finally(() => {
         pendingAiCount.current--
-        setTabs(prev => prev.map(t => t.uuid === capturedUuid ? { ...t, isWaitingAI: false } : t))
+        ds.setTransient(capturedUuid, { isWaitingAI: false })
       })
   }
 

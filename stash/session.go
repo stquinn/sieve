@@ -7,6 +7,7 @@ import (
 // Tab represents one open tab in a session.
 // Path is relative to the store root.
 type Tab struct {
+	ID          string `json:"id"`
 	Path        string `json:"path"`
 	Scroll      int    `json:"scroll"`
 	Active      bool   `json:"active"`
@@ -26,6 +27,7 @@ type Window struct {
 
 // Session is the full contents of store/{hostname}/session.json.
 type Session struct {
+	ActiveIdx     int      `json:"activeIdx"`
 	Tabs          []Tab    `json:"tabs"`
 	Window        Window   `json:"window,omitempty"`
 	SidebarWidth  int      `json:"sidebarWidth,omitempty"`

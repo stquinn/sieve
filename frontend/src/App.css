@@ -260,12 +260,10 @@ textarea::selection {
 
 .sidebar {
   flex-shrink: 0;
-  overflow-y: auto;
+  overflow: hidden;  /* inner sections handle their own scroll */
   background: var(--theme-bgDark);
   border-right: 1px solid var(--theme-border);
   padding: 0.6rem 0;
-  scrollbar-width: thin;
-  scrollbar-color: var(--theme-border) transparent;
 }
 
 .sidebar__section-title {
@@ -292,10 +290,12 @@ textarea::selection {
   background: none;
   border: none;
   cursor: pointer;
+  flex-shrink: 0;       /* prevent vertical squashing in parent flex containers */
+  height: 28px;         /* strict constant height */
   color: var(--theme-accentPrimary);
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 600;
-  padding: 0.35rem 1rem;
+  padding: 0 1rem;      /* use x-padding only, height is fixed */
   text-align: left;
   white-space: nowrap;
   overflow: hidden;
@@ -319,16 +319,19 @@ textarea::selection {
   align-items: center;
   gap: 0.5rem;
   width: 100%;
+  min-width: 0;         /* allow flex children to shrink below content width */
   background: none;
   border: none;
   cursor: pointer;
+  flex-shrink: 0;       /* prevent vertical squashing in parent flex containers */
+  height: 28px;         /* strict constant height */
   color: var(--theme-textDim);
-  font-size: 18px;
-  padding: 0.3rem 1rem;
+  font-size: 14px;
+  padding: 0 1rem;      /* use x-padding only, height is fixed */
   text-align: left;
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  box-sizing: border-box;
 }
 .sidebar__file:hover { background: var(--theme-bgAlt); color: var(--theme-text); }
 .sidebar__file--open { color: var(--theme-accentCyan); }
@@ -700,6 +703,13 @@ div.node-image.ProseMirror-selectednode {
   position: relative;
 }
 
+#editor-wrapper {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 /* ── Meta resize handle ──────────────────────────────────────────────── */
 
 .meta-handle {
@@ -719,37 +729,78 @@ div.node-image.ProseMirror-selectednode {
 /* ── Meta panel ──────────────────────────────────────────────────────── */
 
 .meta-panel {
+  display: flex;
+  flex-direction: column;
   flex-shrink: 0;
-  overflow-y: auto;
+  overflow: hidden;
   background: var(--theme-bgDark);
   border-left: 1px solid var(--theme-border);
   font-size: 16px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--theme-border) transparent;
 }
 
 .meta-panel__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 16px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   color: var(--theme-text);
-  padding: 0.5rem 0.9rem 0.4rem;
+  padding: 0 0.9rem;
+  height: 44px; /* match tab-bar height */
   border-bottom: 1px solid var(--theme-border);
+  flex-shrink: 0;
+  background: var(--theme-bgDark);
 }
 
+.meta-panel__tabs {
+  display: flex;
+  gap: 1.2rem;
+  height: 100%;
+}
+
+.meta-panel__tab {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  color: var(--theme-muted);
+  font-size: 13px;
+  font-weight: 600;
+  position: relative;
+  transition: color 0.2s;
+  height: 100%;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.meta-panel__tab:hover {
+  color: var(--theme-textDim);
+}
+
+.meta-panel__tab--active {
+  color: var(--theme-text);
+  border-bottom-color: var(--theme-accentPrimary);
+}
 .meta-panel__path {
   font-family: var(--theme-monoFont);
   font-size: 11px;
   color: var(--theme-muted);
-  padding: 0.4rem 0.9rem;
+  padding: 0.5rem 0.9rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  border-bottom: 1px solid var(--theme-bg);
+  border-bottom: 1px solid var(--theme-border);
+  flex-shrink: 0;
+  background: var(--theme-bgDark);
+}
+
+.meta-panel__content {
+  flex: 1;
+  min-height: 0; /* Critical for flex overflow handling */
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--theme-border) transparent;
 }
 
 .meta-panel__empty {
@@ -1262,7 +1313,7 @@ div.node-image.ProseMirror-selectednode {
   min-height: 32px;
   background: var(--theme-bgDark);
   border-top: 1px solid var(--theme-border);
-  font-size: 12.5px;
+  font-size: 11.5px;
   color: var(--theme-textDim);
   flex-shrink: 0;
   overflow: hidden;
@@ -1273,6 +1324,7 @@ div.node-image.ProseMirror-selectednode {
   align-items: center;
   gap: 1.5rem;
   overflow: hidden;
+  min-width: 280px;
 }
 
 .status-bar__right {
@@ -1281,6 +1333,21 @@ div.node-image.ProseMirror-selectednode {
   gap: 1.5rem;
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
+  min-width: 280px;
+  justify-content: flex-end;
+}
+
+.status-bar__center {
+  font-family: var(--theme-monoFont);
+  color: var(--theme-accentPrimary);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+  max-width: 35%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
 }
 
 .status-bar__item {

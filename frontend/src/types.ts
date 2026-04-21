@@ -1,22 +1,28 @@
+import { main } from '../wailsjs/go/models'
+
 export type TabMode = 'wysiwyg' | 'markdown'
 export type BufferStatus = 'unfiled' | 'filed' | 'error'
 export type UserIntent = 'trash' | 'keep' | null
 
+// Storable is the unified interface for Notes, Buffers, and Prompts.
+// The "DOC knows" its own state through internal isModified tracking.
+export interface Storable {
+  kind: 'note' | 'prompt'
+  id: string              // UUID for notes/buffers, Name for prompts
+  path: string
+  body: string
+  meta: main.DocumentMetaDTO | null
+  versions: main.VersionRefDTO[]
+  isModified: boolean
+
+  setBody(v: string): void
+  setMeta(m: main.DocumentMetaDTO): void
+  addAsset?(v: main.AssetDTO): void // Optional for prompts
+}
+
 export interface TabState {
-  uuid: string            // stable identity for this tab instance — used to route async AI callbacks to the right tab without relying on current state
-  path: string            // relative to store root
-  scroll: number
-  active: boolean
+  uuid: string
   mode: TabMode
-  // Populated on first load from buffer meta block
-  status?: BufferStatus
-  userIntent?: UserIntent
-  displayName?: string    // "Untitled N" label from display_name meta field
-  isEmpty?: boolean       // body has no non-whitespace content
-  isModified?: boolean    // true if body has unsaved edits
-  isEvaluating?: boolean  // true if executing backend smart AI evaluations (force-file)
-  isWaitingAI?: boolean   // true during Explain/Ask AI calls (tab spinner only, no editor overlay)
-  isVirtual?: boolean     // true for prompt templates without disk overrides
-  aiJobName?: string      // the specific name of the job e.g. 'Ask', 'Explain', 'Filing'
+  isVirtual?: boolean
 }
 

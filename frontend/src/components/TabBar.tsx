@@ -7,22 +7,40 @@ import { FileText } from 'lucide-react'
 interface TabBarProps {
   tabs: TabState[]
   activeIdx: number
+  ds: any
   onSelect: (idx: number) => void
   onClose: (idx: number) => void
   onNew: () => void
   onHelp: () => void
-  onSetIntent: (idx: number, intent: UserIntent) => void
-  onReorder: (fromIdx: number, toPos: number) => void
+  onSetIntent: (uuid: string, intent: UserIntent) => void
+  onReorder: (from: number, to: number) => void
   onShowInFiles: (path: string) => void
   onSmartFile: (path: string) => void
   onSmartMetadata: (path: string) => void
   onDelete: (path: string) => void
   onRename: (path: string, name: string, isDir: boolean) => void
-  onRestorePrompt?: (name: string) => void
+  onRestorePrompt: (name: string) => void
   onCloseAll: () => void
 }
 
-export function TabBar({ tabs, activeIdx, onSelect, onClose, onNew, onHelp, onSetIntent, onReorder, onShowInFiles, onSmartFile, onSmartMetadata, onDelete, onRename, onRestorePrompt, onCloseAll }: TabBarProps) {
+export function TabBar({
+  tabs,
+  activeIdx,
+  ds,
+  onSelect,
+  onClose,
+  onNew,
+  onHelp,
+  onSetIntent,
+  onReorder,
+  onShowInFiles,
+  onSmartFile,
+  onSmartMetadata,
+  onDelete,
+  onRename,
+  onRestorePrompt,
+  onCloseAll
+}: TabBarProps) {
   const tabsAreaRef = useRef<HTMLDivElement>(null)
   const tabRefs = useRef<(HTMLDivElement | null)[]>([])
   const [hiddenStart, setHiddenStart] = useState(tabs.length)
@@ -117,24 +135,25 @@ export function TabBar({ tabs, activeIdx, onSelect, onClose, onNew, onHelp, onSe
         className="flex items-stretch shrink overflow-hidden min-w-0"
       >
         {tabs.map((tab, idx) => (
-          <div key={tab.path} className="flex items-stretch shrink min-w-[80px] w-[250px]">
+          <div key={tab.uuid} className="flex items-stretch shrink min-w-[80px] w-[250px]">
             {showIndicatorAt(idx) && <DropIndicator />}
             <TabItem
               ref={el => { tabRefs.current[idx] = el }}
               tab={tab}
+              ds={ds}
               active={idx === activeIdx}
               isDragging={dragIdx === idx}
               onSelect={() => onSelect(idx)}
               onClose={() => onClose(idx)}
-              onSetIntent={intent => onSetIntent(idx, intent)}
-              onShowInFiles={() => onShowInFiles(tab.path)}
-              onSmartFile={() => onSmartFile(tab.path)}
-              onSmartMetadata={() => onSmartMetadata(tab.path)}
-              onDelete={() => onDelete(tab.path)}
-              onRename={() => onRename(tab.path, tabLabel(tab), false)}
+              onSetIntent={intent => onSetIntent(tab.uuid, intent)}
+              onShowInFiles={() => onShowInFiles(ds.get(tab.uuid)?.path || '')}
+              onSmartFile={() => onSmartFile(ds.get(tab.uuid)?.path || '')}
+              onSmartMetadata={() => onSmartMetadata(ds.get(tab.uuid)?.path || '')}
+              onDelete={() => onDelete(ds.get(tab.uuid)?.path || '')}
+              onRename={() => onRename(ds.get(tab.uuid)?.path || '', tabLabel(tab, ds), false)}
               onCloseAll={onCloseAll}
               isVirtual={tab.isVirtual}
-              onRestore={onRestorePrompt ? () => onRestorePrompt(tab.path.split(':').pop()!) : undefined}
+              onRestore={onRestorePrompt ? () => onRestorePrompt((ds.get(tab.uuid)?.path || '').split(':').pop()!) : undefined}
               onDragStart={() => {
                 dragIdxRef.current = idx
                 setDragIdx(idx)
@@ -171,12 +190,14 @@ export function TabBar({ tabs, activeIdx, onSelect, onClose, onNew, onHelp, onSe
           </button>
           {showOverflow && (
             <div className="absolute right-0 top-full mt-px z-50 bg-tn-bg-alt border border-solid border-white/20 rounded-md shadow-2xl py-1 min-w-[200px]">
-              {tabs.slice(hiddenStart).map((tab, i) => {
+              {tabs.slice(hiddenStart).map((tab: TabState, i: number) => {
                 const realIdx = hiddenStart + i
-                const dot = tabDot(tab)
+                const doc = ds.get(tab.uuid)
+                const dot = tabDot(tab, ds)
+                const isEvaluating = doc?.meta?.status === 'evaluating' // simplified
                 return (
                   <button
-                    key={tab.path}
+                    key={tab.uuid}
                     onClick={() => { onSelect(realIdx); setShowOverflow(false) }}
                     className={cn(
                       'w-full bg-transparent border-none text-left px-3 py-1.5 text-[14px] flex items-center gap-2 transition-colors',
@@ -185,11 +206,11 @@ export function TabBar({ tabs, activeIdx, onSelect, onClose, onNew, onHelp, onSe
                         : 'text-tn-text-dim hover:bg-tn-bg-alt hover:text-tn-text'
                     )}
                   >
-                    {tab.isEvaluating
+                    {isEvaluating
                       ? <span className="w-2 h-2 rounded-full border-2 border-solid border-tn-orange border-t-transparent animate-spin shrink-0" />
                       : dot ? <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', dot)} /> : null
                     }
-                    <span className="truncate">{tabLabel(tab)}</span>
+                    <span className="truncate">{tabLabel(tab, ds)}</span>
                   </button>
                 )
               })}
@@ -260,21 +281,24 @@ interface TabItemProps {
   onDrop: (e: React.DragEvent) => void
   onDragEnd: () => void
   onCloseAll: () => void
+  ds: any
 }
 
 const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
-  { tab, active, isDragging, onSelect, onClose, onSetIntent, onShowInFiles, onSmartFile, onSmartMetadata, onDelete, onRename, isVirtual, onRestore, onDragStart, onDragOver, onDrop, onDragEnd, onCloseAll },
+  { tab, active, isDragging, ds, onSelect, onClose, onSetIntent, onShowInFiles, onSmartFile, onSmartMetadata, onDelete, onRename, isVirtual, onRestore, onDragStart, onDragOver, onDrop, onDragEnd, onCloseAll },
   ref
 ) {
-  const dot = tabDot(tab)
+  const doc = ds.get(tab.uuid)
+  const meta = doc?.meta
+  const dot = tabDot(tab, ds)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
 
   const tooltip = [
-    tab.displayName ?? null,
-    tab.path,
-    tab.status === 'filed' ? 'Status: Filed' : '',
-    tab.isModified ? '* Unsaved changes' : '',
-    tab.userIntent === 'keep' ? 'Intent: Keep' : tab.userIntent === 'trash' ? 'Intent: Trash' : ''
+    meta?.displayName ?? null,
+    doc?.path || tab.uuid,
+    meta?.status === 'filed' ? 'Status: Filed' : '',
+    doc?.isModified ? '* Unsaved changes' : '',
+    meta?.userIntent === 'keep' ? 'Intent: Keep' : meta?.userIntent === 'trash' ? 'Intent: Trash' : ''
   ].filter(Boolean).join('\n')
 
   return (
@@ -286,7 +310,7 @@ const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
         onDragStart={(e) => {
           if (e.dataTransfer) {
             e.dataTransfer.effectAllowed = 'move'
-            e.dataTransfer.setData('text/plain', tab.path)
+            e.dataTransfer.setData('text/plain', doc?.path || tab.uuid)
           }
           onDragStart()
         }}
@@ -305,13 +329,13 @@ const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
             : 'bg-tn-bg-dark text-tn-text-dim hover:bg-tn-bg hover:text-tn-text border-t-2 border-t-transparent border-b-2 border-b-transparent -mb-[2px]',
         )}
       >
-        {(tab.isEvaluating || tab.isWaitingAI)
+        {(meta?.status === 'evaluating' || meta?.status === 'thinking' || ds.getTransient(tab.uuid).isWaitingAI)
           ? <span className="w-2 h-2 rounded-full border-2 border-solid border-tn-orange border-t-transparent animate-spin shrink-0" />
           : dot ? <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', dot)} /> 
           : <FileText className="w-3.5 h-3.5 opacity-40 shrink-0" />
         }
         <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap min-w-0 text-left">
-          {tabLabel(tab)}
+          {tabLabel(tab, ds)}
         </span>
         {tab.mode === 'markdown' && (
           <span className="text-[12px] text-tn-blue font-bold font-mono bg-tn-bg-alt px-1.5 rounded shrink-0">M</span>
@@ -321,7 +345,7 @@ const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
           aria-label="Close tab"
           className="ml-0.5 opacity-0 group-hover:opacity-40 hover:!opacity-100 hover:text-tn-red shrink-0 transition-opacity flex items-center justify-center w-4 h-4 text-[15px] leading-none"
         >
-          {tab.isModified ? (
+          {doc?.isModified ? (
             <>
               <span className="group-hover:hidden text-[10px]">●</span>
               <span className="hidden group-hover:inline">×</span>
@@ -337,8 +361,8 @@ const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
         <NoteContextMenu
           x={menu.x}
           y={menu.y}
-          path={tab.path}
-          intent={tab.userIntent || null}
+          path={doc?.path || ''}
+          intent={meta?.userIntent || null}
           onClose={() => setMenu(null)}
           onSetIntent={onSetIntent}
           onShowInFiles={onShowInFiles}
@@ -358,19 +382,24 @@ const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function tabDot(tab: TabState): string | null {
-  if (tab.isEmpty) return null
-  if (tab.userIntent === 'trash') return 'bg-tn-red'
-  if (tab.status === 'filed') return 'bg-tn-green'
-  if (tab.userIntent === 'keep') return 'bg-tn-blue'
-  return 'bg-yellow-500'
+function tabDot(tab: TabState, ds: any): string | null {
+  const doc = ds.get(tab.uuid)
+  const meta = doc?.meta
+  if (!doc || (doc.body.trim().length === 0)) return null
+  if (meta?.userIntent === 'trash') return 'bg-tn-red'
+  if (meta?.status === 'filed') return 'bg-tn-green'
+  if (meta?.userIntent === 'keep') return 'bg-tn-blue'
+  return doc.isModified ? 'bg-tn-orange' : null
 }
 
-function tabLabel(tab: TabState): string {
-  let label = tab.displayName
+function tabLabel(tab: TabState, ds: any): string {
+  const doc = ds.get(tab.uuid)
+  const meta = doc?.meta
+  let label = meta?.displayName
   if (!label) {
-    const parts = tab.path.replace(/\\/g, '/').split('/')
+    const path = doc?.path || tab.uuid
+    const parts = path.replace(/\\/g, '/').split('/')
     label = parts[parts.length - 1].replace(/\.md$/, '')
   }
-  return tab.status === 'error' ? `⚠️ ${label}` : label
+  return meta?.status === 'error' ? `⚠️ ${label}` : label
 }

@@ -48,6 +48,7 @@ export function MetaPanel({ meta, path, width, isModified, isEvaluating, isWaiti
   const fileName = path.split('/').pop() ?? path
   const [activeTab, setActiveTab] = React.useState<'meta'|'history'|'assets'>('meta')
   const [now, setNow] = React.useState(new Date())
+  const [pendingRestore, setPendingRestore] = React.useState<main.VersionRefDTO | null>(null)
 
   React.useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000)
@@ -56,23 +57,23 @@ export function MetaPanel({ meta, path, width, isModified, isEvaluating, isWaiti
 
   return (
     <div className="meta-panel" style={{ width }}>
-      <div className="meta-panel__header" style={{ display: 'flex', gap: '0.8rem', alignItems: 'center' }}>
-        <div style={{ display: 'flex', gap: '1rem', flex: 1, position: 'relative', top: '1px' }}>
+      <div className="meta-panel__header">
+        <div className="meta-panel__tabs">
           <span
-             style={{ cursor: 'pointer', color: activeTab === 'meta' ? 'var(--theme-text)' : 'var(--theme-muted)', borderBottom: activeTab === 'meta' ? '2px solid var(--theme-accentPrimary)' : '2px solid transparent', paddingBottom: '0.4rem', marginBottom: '-0.42rem' }}
-             onClick={() => setActiveTab('meta')}
+            className={`meta-panel__tab ${activeTab === 'meta' ? 'meta-panel__tab--active' : ''}`}
+            onClick={() => setActiveTab('meta')}
           >Meta</span>
           {!path.startsWith('prompt:') && (
             <span
-               style={{ cursor: 'pointer', color: activeTab === 'history' ? 'var(--theme-text)' : 'var(--theme-muted)', borderBottom: activeTab === 'history' ? '2px solid var(--theme-accentPrimary)' : '2px solid transparent', paddingBottom: '0.4rem', marginBottom: '-0.42rem' }}
-               onClick={() => setActiveTab('history')}
+              className={`meta-panel__tab ${activeTab === 'history' ? 'meta-panel__tab--active' : ''}`}
+              onClick={() => setActiveTab('history')}
             >History</span>
           )}
-          {meta?.assets && meta.assets.length > 0 && (
-             <span
-             style={{ cursor: 'pointer', color: activeTab === 'assets' ? 'var(--theme-text)' : 'var(--theme-muted)', borderBottom: activeTab === 'assets' ? '2px solid var(--theme-accentPrimary)' : '2px solid transparent', paddingBottom: '0.4rem', marginBottom: '-0.42rem' }}
-             onClick={() => setActiveTab('assets')}
-          >Assets</span>
+          {meta && (
+            <span
+              className={`meta-panel__tab ${activeTab === 'assets' ? 'meta-panel__tab--active' : ''}`}
+              onClick={() => setActiveTab('assets')}
+            >Assets</span>
           )}
         </div>
         {(isEvaluating || isWaitingAI) && (
@@ -83,158 +84,171 @@ export function MetaPanel({ meta, path, width, isModified, isEvaluating, isWaiti
         )}
       </div>
 
-      <div className="meta-panel__path !text-white/80 border-b border-tn-bg px-[0.9rem] font-medium" title={path}>{fileName}</div>
+      <div className="meta-panel__path" title={path}>{fileName}</div>
 
-      {activeTab === 'meta' && (
-        !meta ? (
-          <>
-            <div className="meta-panel__empty !text-white/90">No meta</div>
-            <PromptReference path={path} />
-          </>
-        ) : (
-        <div className="meta-panel__fields">
-          <Row label="Dirty">
-            <span style={{ color: isModified ? 'var(--theme-accentYellow)' : 'var(--theme-accentGreen)' }}>{isModified ? 'true' : 'false'}</span>
-          </Row>
-          <Row label="Status">
-            <span style={{ color: statusColour(meta.status) }}>{meta.status ?? '—'}</span>
-          </Row>
-          <Row label="Version">{meta.version ?? '—'}</Row>
-          <Row label="Focus count">{meta.focusCount ?? '—'}</Row>
-          <Row label="Now">
-            <span style={{ color: 'var(--theme-accentPrimary)' }}>{fmtDate(now.toISOString())}</span>
-          </Row>
-
-          <Divider />
-
-          <Row label="User intent">
-            <span style={{ color: intentColour(meta.userIntent) }}>
-              {meta.userIntent ?? 'null'}
-            </span>
-          </Row>
-          <Row label="AI keep">
-            <span style={{ color: meta.aiKeep === true ? 'var(--theme-accentGreen)' : meta.aiKeep === false ? 'var(--theme-accentRed)' : 'inherit', fontWeight: meta.aiKeep === false ? 'bold' : 'normal' }}>
-              {meta.aiKeep === true ? 'keep' : meta.aiKeep === false ? 'discard' : '—'}
-            </span>
-          </Row>
-          <Row label="AI eval">
-            <span style={{ color: evalColour(meta.aiEval) }}>{meta.aiEval ?? '—'}</span>
-          </Row>
-          <Row label="AI evaluated">{fmtDate(meta.aiLastEvaluated) ?? '—'}</Row>
-          <Row label="AI folder">{meta.aiFolderSuggestion ?? '—'}</Row>
-
-          <Divider />
-
-          <Row label="Display name">{meta.displayName ?? '—'}</Row>
-          <Row label="Filename">{meta.filename ?? '—'}</Row>
-          <Row label="User name">{meta.userSuggestedName ?? '—'}</Row>
-          <Row label="CLI">{meta.cli ?? '—'}</Row>
-
-          <Divider />
-
-          <Row label="Summary">
-            <span className="meta-panel__summary">{meta.summary ?? '—'}</span>
-          </Row>
-
-          {meta.tags && meta.tags.length > 0 && (
-            <div className="meta-panel__tags-row">
-              <span className="meta-panel__label">Tags</span>
-              <div className="meta-panel__tags">
-                {meta.tags.map(t => (
-                  <span key={t} className="meta-panel__tag">{t}</span>
-                ))}
-              </div>
-            </div>
-          )}
-          {(!meta.tags || meta.tags.length === 0) && (
-            <Row label="Tags">—</Row>
-          )}
-
-          <Row label="AI why">
-            <span className="meta-panel__summary">{meta.aiJustification ?? '—'}</span>
-          </Row>
-
-          {meta.densitySignals && meta.densitySignals.length > 0 && (
-            <div className="meta-panel__tags-row">
-              <span className="meta-panel__label">Density</span>
-              <div className="meta-panel__tags">
-                {meta.densitySignals.map(s => (
-                  <span key={s} className="meta-panel__tag">{s}</span>
-                ))}
-              </div>
-            </div>
-          )}
-          {(!meta.densitySignals || meta.densitySignals.length === 0) && (
-            <Row label="Density">—</Row>
-          )}
-
-          <Divider />
-
-          <Row label="Created">{fmtDate(meta.created) ?? '—'}</Row>
-          <Row label="Modified">{fmtDate(meta.modified) ?? '—'}</Row>
-
-          <Divider />
-
-          <Row label="UUID">
-            <span className="meta-panel__uuid">{meta.all?.['uuid'] ?? '—'}</span>
-          </Row>
-          <PromptReference path={path} />
-        </div>
-        )
-      )}
-
-      {activeTab === 'history' && (
-        <div className="meta-panel__fields">
-          {versions.length === 0 ? (
-            <div className="meta-panel__empty">No historical snapshots found.</div>
+      <div className="meta-panel__content">
+        {activeTab === 'meta' && (
+          !meta ? (
+            <>
+              <div className="meta-panel__empty">No meta</div>
+              <PromptReference path={path} />
+            </>
           ) : (
-            versions.map(ref => (
-              <div key={ref.id} style={{ padding: '0.6rem 0.9rem', borderBottom: '1px solid var(--theme-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                  <span style={{ color: 'var(--theme-text)', fontWeight: 600, fontSize: '14px' }}>{ref.id}</span>
-                  <span style={{ color: 'var(--theme-textDim)', fontSize: '12px' }}>{fmtDate(ref.created)} • {Math.round(ref.size / 1024)} KB</span>
-                </div>
-                <button
-                  style={{ background: 'var(--theme-bgAlt)', border: '1px solid var(--theme-border2)', color: 'var(--theme-text)', padding: '0.25rem 0.6rem', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}
-                  onMouseEnter={e => e.currentTarget.style.background = 'var(--theme-accentPrimary)'}
-                  onMouseLeave={e => e.currentTarget.style.background = 'var(--theme-bgAlt)'}
-                  onClick={() => {
-                    if (window.confirm(`Restore snapshot ${ref.id}?\n\nThis will safely overwrite your current text body, but preserve your live tags and document status.`)) {
-                      GetDocumentVersion(path, ref)
-                        .then(snap => onRestoreRequested?.(snap.body))
-                        .catch(console.error)
-                    }
-                  }}
-                >
-                  Restore
-                </button>
-              </div>
-            ))
-          )}
-        </div>
-      )}
+            <div className="meta-panel__fields">
+              <Row label="Dirty">
+                <span style={{ color: isModified ? 'var(--theme-accentYellow)' : 'var(--theme-accentGreen)' }}>{isModified ? 'true' : 'false'}</span>
+              </Row>
+              <Row label="Status">
+                <span style={{ color: statusColour(meta.status) }}>{meta.status ?? '—'}</span>
+              </Row>
+              <Row label="Version">{meta.version ?? '—'}</Row>
+              <Row label="Focus count">{meta.focusCount ?? '—'}</Row>
+              <Row label="Now">
+                <span style={{ color: 'var(--theme-accentPrimary)' }}>{fmtDate(now.toISOString())}</span>
+              </Row>
 
-      {activeTab === 'assets' && meta && (
-        <div className="meta-panel__fields">
-          {!meta.assets || meta.assets.length === 0 ? (
-            <div className="meta-panel__empty">No owned assets found.</div>
-          ) : (
-            meta.assets.map(asset => {
-              const name = asset.externalRef.split('/').pop() ?? asset.externalRef
-              return (
-                <div key={asset.externalRef} style={{ padding: '0.6rem 0.9rem', borderBottom: '1px solid var(--theme-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                    <span style={{ color: 'var(--theme-text)', fontWeight: 600, fontSize: '14px' }}>{name}</span>
-                    <span style={{ color: 'var(--theme-textDim)', fontSize: '12px' }}>{asset.encoding}</span>
+              <Divider />
+
+              <Row label="User intent">
+                <span style={{ color: intentColour(meta.userIntent) }}>
+                  {meta.userIntent ?? 'null'}
+                </span>
+              </Row>
+              <Row label="AI keep">
+                <span style={{ color: meta.aiKeep === true ? 'var(--theme-accentGreen)' : meta.aiKeep === false ? 'var(--theme-accentRed)' : 'inherit', fontWeight: meta.aiKeep === false ? 'bold' : 'normal' }}>
+                  {meta.aiKeep === true ? 'keep' : meta.aiKeep === false ? 'discard' : '—'}
+                </span>
+              </Row>
+              <Row label="AI eval">
+                <span style={{ color: evalColour(meta.aiEval) }}>{meta.aiEval ?? '—'}</span>
+              </Row>
+              <Row label="AI evaluated">{fmtDate(meta.aiLastEvaluated) ?? '—'}</Row>
+              <Row label="AI folder">{meta.aiFolderSuggestion ?? '—'}</Row>
+
+              <Divider />
+
+              <Row label="Display name">{meta.displayName ?? '—'}</Row>
+              <Row label="Filename">{meta.filename ?? '—'}</Row>
+              <Row label="User name">{meta.userSuggestedName ?? '—'}</Row>
+              <Row label="CLI">{meta.cli ?? '—'}</Row>
+
+              <Divider />
+
+              <Row label="Summary">
+                <span className="meta-panel__summary">{meta.summary ?? '—'}</span>
+              </Row>
+
+              {meta.tags && meta.tags.length > 0 && (
+                <div className="meta-panel__tags-row">
+                  <span className="meta-panel__label">Tags</span>
+                  <div className="meta-panel__tags">
+                    {meta.tags.map(t => (
+                      <span key={t} className="meta-panel__tag">{t}</span>
+                    ))}
                   </div>
-                  <code style={{ fontSize: '11px', color: 'var(--theme-muted)' }}>{asset.externalRef}</code>
                 </div>
-              )
-            })
-          )}
-        </div>
-      )}
+              )}
+              {(!meta.tags || meta.tags.length === 0) && (
+                <Row label="Tags">—</Row>
+              )}
 
+              <Row label="AI why">
+                <span className="meta-panel__summary">{meta.aiJustification ?? '—'}</span>
+              </Row>
+
+              {meta.densitySignals && meta.densitySignals.length > 0 && (
+                <div className="meta-panel__tags-row">
+                  <span className="meta-panel__label">Density</span>
+                  <div className="meta-panel__tags">
+                    {meta.densitySignals.map(s => (
+                      <span key={s} className="meta-panel__tag">{s}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {(!meta.densitySignals || meta.densitySignals.length === 0) && (
+                <Row label="Density">—</Row>
+              )}
+
+              <Divider />
+
+              <Row label="Created">{fmtDate(meta.created) ?? '—'}</Row>
+              <Row label="Modified">{fmtDate(meta.modified) ?? '—'}</Row>
+
+              <Divider />
+
+              <Row label="UUID">
+                <span className="meta-panel__uuid">{meta.all?.['uuid'] ?? '—'}</span>
+              </Row>
+              <PromptReference path={path} />
+            </div>
+          )
+        )}
+
+        {activeTab === 'history' && (
+          <div className="meta-panel__fields">
+            {versions.length === 0 ? (
+              <div className="meta-panel__empty">No historical snapshots found.</div>
+            ) : (
+              versions.map(ref => (
+                <div key={ref.id} style={{ padding: '0.6rem 0.9rem', borderBottom: '1px solid var(--theme-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                    <span style={{ color: 'var(--theme-text)', fontWeight: 600, fontSize: '14px' }}>{ref.id}</span>
+                    <span style={{ color: 'var(--theme-textDim)', fontSize: '12px' }}>{fmtDate(ref.created)} • {Math.round(ref.size / 1024)} KB</span>
+                  </div>
+                  {pendingRestore?.id === ref.id ? (
+                    <div style={{ display: 'flex', gap: '0.4rem' }}>
+                      <button
+                        style={{ background: 'var(--theme-bgAlt)', border: '1px solid var(--theme-border2)', color: 'var(--theme-textDim)', padding: '0.25rem 0.6rem', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}
+                        onClick={() => setPendingRestore(null)}
+                      >Cancel</button>
+                      <button
+                        style={{ background: 'var(--theme-accentRed, #c0392b)', border: 'none', color: '#fff', padding: '0.25rem 0.6rem', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}
+                        onClick={() => {
+                          setPendingRestore(null)
+                          GetDocumentVersion(path, ref)
+                            .then(snap => onRestoreRequested?.(snap.body))
+                            .catch(console.error)
+                        }}
+                      >Confirm</button>
+                    </div>
+                  ) : (
+                    <button
+                      style={{ background: 'var(--theme-bgAlt)', border: '1px solid var(--theme-border2)', color: 'var(--theme-text)', padding: '0.25rem 0.6rem', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'var(--theme-accentPrimary)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'var(--theme-bgAlt)'}
+                      onClick={() => setPendingRestore(ref)}
+                    >
+                      Restore
+                    </button>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {activeTab === 'assets' && meta && (
+          <div className="meta-panel__fields">
+            {!meta.assets || meta.assets.length === 0 ? (
+              <div className="meta-panel__empty">No owned assets found.</div>
+            ) : (
+              meta.assets.map(asset => {
+                const name = asset.externalRef.split('/').pop() ?? asset.externalRef
+                return (
+                  <div key={asset.externalRef} style={{ padding: '0.6rem 0.9rem', borderBottom: '1px solid var(--theme-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                      <span style={{ color: 'var(--theme-text)', fontWeight: 600, fontSize: '14px' }}>{name}</span>
+                      <span style={{ color: 'var(--theme-textDim)', fontSize: '12px' }}>{asset.encoding}</span>
+                    </div>
+                    <code style={{ fontSize: '11px', color: 'var(--theme-muted)' }}>{asset.externalRef}</code>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

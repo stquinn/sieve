@@ -20,7 +20,7 @@ export interface QuickSwitcherProps {
   isOpen: boolean
   onClose: () => void
   onSelect: (path: string) => void
-  tabs: TabState[]
+  tabs: { uuid: string; path: string; status: string; mode: string }[]
   notesTree: NoteEntry[]
 }
 

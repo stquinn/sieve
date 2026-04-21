@@ -10,6 +10,7 @@ import type { TabState } from '../types'
 import type { UserIntent } from '../types'
 import type { main } from '../../wailsjs/go/models'
 import { applyFilingRecToMeta } from '../lib/fmUtils'
+import type { StorableDataService } from '../lib/StorableDataService'
 
 type ConfirmModalState = { title: string; message: string; onConfirm: () => void; isDestructive?: boolean }
 type PromptModalState = { title: string; message: string; placeholder?: string; initialValue?: string; onSubmit: (val: string) => void }
@@ -18,15 +19,9 @@ interface UseNoteOperationsParams {
   tabs: TabState[]
   activeIdx: number
   activeTab: TabState | undefined
-  isMarkdownMode: boolean
-  rawMd: string
   tier: 'dumb' | 'smart'
   prompts: PromptEntry[]
-  editor: Editor | null
   tabsRef: React.MutableRefObject<TabState[]>
-  metaCache: React.MutableRefObject<Record<string, main.DocumentMetaDTO | null>>
-  savedBodyCache: React.MutableRefObject<Record<string, string>>
-  mdCache: React.MutableRefObject<Record<string, string>>
   setTabs: React.Dispatch<React.SetStateAction<TabState[]>>
   setActiveIdx: React.Dispatch<React.SetStateAction<number>>
   setNotes: React.Dispatch<React.SetStateAction<NoteEntry[]>>
@@ -35,24 +30,18 @@ interface UseNoteOperationsParams {
   setPromptModal: (val: PromptModalState | null) => void
   selectTab: (idx: number) => void
   flush: () => void
-  loadTab: (tab: TabState) => void
-  runBackgroundEval: (uuid: string, path: string, fileAfter: boolean, allowDiscard?: boolean) => Promise<void>
-  setTabIntent: (idx: number, intent: UserIntent) => void
+  runBackgroundEval: (uuid: string, path: string, fileAfter: boolean, allowDiscard?: boolean, originalMode?: 'wysiwyg' | 'markdown') => Promise<void>
+  setTabIntent: (uuid: string, intent: UserIntent) => void
+  ds: StorableDataService
 }
 
 export function useNoteOperations({
   tabs,
   activeIdx,
   activeTab,
-  isMarkdownMode,
-  rawMd,
   tier,
   prompts,
-  editor,
   tabsRef,
-  metaCache,
-  savedBodyCache,
-  mdCache,
   setTabs,
   setActiveIdx,
   setNotes,
@@ -61,25 +50,52 @@ export function useNoteOperations({
   setPromptModal,
   selectTab,
   flush,
-  loadTab,
   runBackgroundEval,
   setTabIntent,
+  ds,
 }: UseNoteOperationsParams) {
-  function openNote(path: string) {
-    const existingIdx = tabs.findIndex(t => t.path === path)
+  async function openNote(path: string) {
+    const existingIdx = tabsRef.current.findIndex(t => ds.get(t.uuid)?.path === path)
     if (existingIdx !== -1) {
       selectTab(existingIdx)
+      // Force focus on re-selection to resolve "second click" issues
+      const uuid = tabsRef.current[existingIdx].uuid
+      setTimeout(() => {
+        const handle = (window as any).editorRefs?.get(uuid)
+        if (handle) handle.focus()
+      }, 0)
       return
     }
-    if (isMarkdownMode && activeTab) mdCache.current[activeTab.uuid] = rawMd
-    flush()
-    const tab: TabState = { uuid: '', path, scroll: 0, active: true, mode: 'wysiwyg', status: 'filed', userIntent: null, isEmpty: false, isModified: false }
-    const newTabs = [...tabs, tab]
-    const newIdx = newTabs.length - 1
-    setTabs(newTabs)
-    setActiveIdx(newIdx)
-    loadTab(tab)
+
+    try {
+      flush()
+      // UUID-First: Get the identity before adding to UI
+      const doc = await ds.load(path)
+      
+      setTabs(prev => {
+        const idx = prev.findIndex(t => t.uuid === doc.id)
+        if (idx !== -1) return prev
+        
+        const newTab: TabState = { 
+          uuid: doc.id, 
+          mode: 'wysiwyg', 
+        }
+        return [...prev, newTab]
+      })
+      
+      // No more manual flush/load — EditorPanel handles its own life when mounted.
+      setTimeout(() => {
+        const currentTabs = tabsRef.current
+        const newIdx = currentTabs.findIndex(t => t.uuid === doc.id)
+        if (newIdx !== -1) {
+          setActiveIdx(newIdx)
+        }
+      }, 0)
+    } catch (err) {
+      console.error('[stash] openNote failed', err)
+    }
   }
+
 
   async function handleDeleteNote(path: string) {
     setConfirmModal({
@@ -90,7 +106,7 @@ export function useNoteOperations({
         setConfirmModal(null)
         try {
           await DeleteNote(path)
-          const idx = tabs.findIndex(t => t.path === path)
+          const idx = tabs.findIndex(t => ds.get(t.uuid)?.path === path)
           if (idx !== -1) {
             setTabs(prev => prev.filter((_, i) => i !== idx))
             if (activeIdx >= idx) {
@@ -109,11 +125,9 @@ export function useNoteOperations({
   async function handleMoveNote(oldPath: string, newPath: string) {
     try {
       const note = await MoveNote(oldPath, newPath)
-      setTabs(prev => prev.map(t => {
-        if (t.path !== oldPath) return t
-        // Update path and slug in tab state
-        return { ...t, path: note.path }
-      }))
+      // When a note moves, the service is notified. Apps list only changes path labels if path was stored in tab.
+      // But we don't store path in tab, so we don't need to update tabs! 
+      // The Sidebar and TabItems will resolve the new path on the next render.
       await GetNotes().then(res => setNotes(res || [])).catch(console.error)
     } catch (err) {
       console.error('Failed to move note', err)
@@ -121,22 +135,15 @@ export function useNoteOperations({
     }
   }
 
-  async function handleSmartFile(path: string) {
+  async function handleSmartFile(path: string, originalMode?: 'wysiwyg' | 'markdown') {
     if (tier !== 'smart') return
-    const tab = tabsRef.current.find(t => t.path === path)
+    const tab = tabsRef.current.find(t => ds.get(t.uuid)?.path === path)
+    
     if (tab) {
-      if (tab === activeTab) {
-        const body = editor?.storage.markdown.getMarkdown() ?? ''
-        if (body !== savedBodyCache.current[tab.uuid]) {
-          const meta = metaCache.current[tab.uuid]
-          if (meta) {
-            savedBodyCache.current[tab.uuid] = body
-            const dto = { uuid: tab.uuid, path, slug: tab.path.split('/').pop()?.replace('.md','') ?? '', body, meta, versions: [] }
-            await SaveBuffer(dto as any).catch(console.error)
-          }
-        }
+      if (tab.uuid === activeTab?.uuid) {
+        await ds.save(tab.uuid).catch(console.error)
       }
-      runBackgroundEval(tab.uuid, path, true)
+      runBackgroundEval(tab.uuid, path, true, true, originalMode || tab.mode)
       return
     }
 
@@ -171,18 +178,10 @@ export function useNoteOperations({
 
   async function handleSmartMetadata(path: string) {
     if (tier !== 'smart') return
-    const tab = tabsRef.current.find(t => t.path === path)
+    const tab = tabsRef.current.find(t => ds.get(t.uuid)?.path === path)
     if (tab) {
-      if (tab === activeTab) {
-        const body = editor?.storage.markdown.getMarkdown() ?? ''
-        if (body !== savedBodyCache.current[tab.uuid]) {
-          const meta = metaCache.current[tab.uuid]
-          if (meta) {
-            savedBodyCache.current[tab.uuid] = body
-            const dto = { uuid: tab.uuid, path, slug: tab.path.split('/').pop()?.replace('.md','') ?? '', body, meta, versions: [] }
-            await SaveBuffer(dto as any).catch(console.error)
-          }
-        }
+      if (tab.uuid === activeTab?.uuid) {
+        await ds.save(tab.uuid).catch(console.error)
       }
       runBackgroundEval(tab.uuid, path, false, false)
       return
@@ -202,42 +201,31 @@ export function useNoteOperations({
     }
   }
 
-  function onEditPrompt(name: string) {
-    const existing = tabsRef.current.find(t => t.path === `prompt:${name}`)
+  async function onEditPrompt(name: string) {
+    const uuid = `prompt:${name}`
+    const existing = tabsRef.current.find(t => t.uuid === uuid)
     if (existing) {
       const idx = tabsRef.current.indexOf(existing)
       setActiveIdx(idx)
-      loadTab(existing)
       return
     }
 
-    const promptMeta = prompts.find(p => p.name === name)
-    const uuid = `prompt-${name}`
+    // Load the prompt content into the data service before mounting the tab
+    await ds.load(`prompt:${name}`).catch(console.error)
+
     const newTab: TabState = {
       uuid,
-      path: `prompt:${name}`,
-      scroll: 0,
-      active: true,
       mode: 'markdown',
-      status: 'filed',
-      isEmpty: false,
-      isModified: false,
-      displayName: promptMeta?.displayName || `${name}.md`
     }
 
-    const newTabs = [...tabsRef.current.map(t => ({ ...t, active: false })), newTab]
+    const newTabs = [...tabsRef.current, newTab]
     setTabs(newTabs)
     setActiveIdx(newTabs.length - 1)
-    loadTab(newTab)
   }
 
   async function onRestorePrompt(name: string) {
     try {
       await DeletePrompt(name)
-      const tab = tabsRef.current.find(t => t.path === `prompt:${name}`)
-      if (tab) {
-        loadTab(tab)
-      }
       const p = await GetPrompts()
       setPrompts(p || [])
     } catch (err) {
@@ -246,14 +234,14 @@ export function useNoteOperations({
   }
 
   async function handleSetIntentByPath(path: string, intent: UserIntent) {
-    const tabIdx = tabs.findIndex(t => t.path === path)
-    if (tabIdx !== -1) {
-      setTabIntent(tabIdx, intent)
+    const tab = tabs.find(t => ds.get(t.uuid)?.path === path)
+    if (tab) {
+      setTabIntent(tab.uuid, intent)
     } else {
       try {
-        const dto = await LoadBuffer(path)
-        const updatedDto = { ...dto, meta: { ...dto.meta, userIntent: intent ?? undefined } }
-        await SaveBuffer(updatedDto as any)
+        const doc = await ds.load(path)
+        ds.setMeta(doc.id, { ...doc.meta!, userIntent: intent ?? undefined })
+        await ds.save(doc.id)
         await GetNotes().then(res => setNotes(res || [])).catch(console.error)
       } catch (err) {
         console.error('Failed to set intent by path', err)
@@ -315,22 +303,20 @@ export function useNoteOperations({
           if (isDir) {
             await RenameFolder(path, newPath)
           } else {
-            const noteDto = await MoveNote(path, newPath)
-            // Update filename/userSuggestedName in meta after rename
-            const pureName = fileName.replace(/\.md$/, '')
-            const tab = tabsRef.current.find(t => t.path === path)
-            if (tab?.uuid) {
-              const meta = metaCache.current[tab.uuid]
-              if (meta) {
-                const updatedMeta = { ...meta, filename: pureName, userSuggestedName: pureName }
-                metaCache.current[tab.uuid] = updatedMeta
-                const updatedDto = { ...noteDto, meta: updatedMeta }
-                await SaveBuffer(updatedDto as any).catch(console.warn)
+            await MoveNote(path, newPath)
+            // Update metadata in the service if indexed
+            const tab = tabsRef.current.find(t => ds.get(t.uuid)?.path === path)
+            if (tab) {
+              const doc = ds.get(tab.uuid)
+              if (doc?.meta) {
+                const pureName = fileName.replace(/\.md$/, '')
+                ds.setMeta(tab.uuid, { ...doc.meta, filename: pureName, userSuggestedName: pureName })
+                await ds.save(tab.uuid).catch(console.warn)
               }
             }
           }
           await GetNotes().then(res => setNotes(res || [])).catch(console.error)
-          setTabs(prev => prev.map(t => t.path === path ? { ...t, path: newPath } : t))
+          // No need to update tabs! UUID didn't change, service will return new path.
         } catch (err) {
           console.error('Rename failed', err)
           alert(`Rename failed: ${err}`)

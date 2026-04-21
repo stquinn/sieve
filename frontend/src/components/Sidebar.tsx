@@ -99,7 +99,7 @@ export function Sidebar({
       className="sidebar flex flex-col h-full bg-tn-bg border-r border-tn-bg-alt select-none transition-all duration-75 relative z-10 !overflow-hidden" 
       style={{ width: `${width}px` }}
     >
-      <div className="flex-1 overflow-y-auto flex flex-col scrollbar-hide">
+      <div className="flex-1 overflow-y-auto flex flex-col scrollbar-hide min-h-0">
       <div 
         className={cn(
           "sidebar__section-title transition-colors rounded group flex items-center justify-between",
@@ -298,7 +298,7 @@ function DirEntry({ entry, depth, openPaths, openFolders, onToggleFolder, active
     <div>
       <button
         className={cn(
-          'sidebar__dir w-full text-left flex items-center gap-1 transition-colors',
+          'sidebar__dir w-full text-left flex items-center gap-1 transition-colors group',
           depth > 0 && 'sidebar__dir--nested',
           isDragOver && 'bg-tn-bg-alt ring-1 ring-tn-blue rounded'
         )}
@@ -312,8 +312,8 @@ function DirEntry({ entry, depth, openPaths, openFolders, onToggleFolder, active
         <span className="sidebar__chevron opacity-70">
           {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
         </span>
-        <Folder className="w-4 h-4 opacity-70 text-tn-blue shrink-0" />
-        <span className="sidebar__dir-name truncate flex-1">{entry.name}</span>
+        <Folder className="w-3.5 h-3.5 opacity-70 text-tn-blue shrink-0" />
+        <span className="sidebar__dir-name truncate flex-1 text-[13px]">{entry.name}</span>
       </button>
       {expanded && entry.children && (
         <EntryList
@@ -357,11 +357,11 @@ function FileEntry({ entry, depth, open, active, onOpen, onContextMenu }: FileEn
         e.dataTransfer.setData('text/plain', entry.path!)
         e.dataTransfer.effectAllowed = 'move'
       }}
-      onClick={() => onOpen(entry.path!)}
+      onMouseDown={() => onOpen(entry.path!)}
       onContextMenu={e => onContextMenu(e, entry.path!, (entry.userIntent || null) as UserIntent, false, 0)}
       title={entry.path}
     >
-      <div className="flex flex-col items-start leading-tight py-0.5 flex-1 min-w-0">
+      <div className="flex flex-col items-start leading-tight flex-1 min-w-0">
         <div className="flex items-center gap-2 w-full">
           <FileText className="w-3.5 h-3.5 opacity-40 shrink-0" />
           <div className="flex items-center gap-1.5 flex-1 min-w-0">
@@ -369,15 +369,12 @@ function FileEntry({ entry, depth, open, active, onOpen, onContextMenu }: FileEn
             {entry.userIntent && (
               <span className={cn(
                 'w-1.5 h-1.5 rounded-full shrink-0',
-                entry.userIntent === 'keep' ? 'bg-tn-blue' : 'bg-tn-red'
+                entry.userIntent === 'keep' ? 'bg-tn-blue' : (entry.userIntent === 'trash' ? 'bg-tn-red' : 'bg-tn-yellow')
               )} />
             )}
-            <span className="truncate flex-1">{entry.displayName || entry.name}</span>
+            <span className="truncate flex-1 text-[13.5px]">{entry.displayName || entry.name}</span>
           </div>
         </div>
-        {hasDisplay && (
-          <span className="text-[10px] opacity-60 truncate w-full font-mono mt-0.5 text-left pl-5.5">{entry.name}</span>
-        )}
       </div>
     </button>
   )
@@ -386,7 +383,7 @@ function FileEntry({ entry, depth, open, active, onOpen, onContextMenu }: FileEn
 function PromptItem({ prompt, active, onEdit, onRestore, onContextMenu }: { prompt: PromptEntry, active: boolean, onEdit: () => void, onRestore: () => void, onContextMenu: (e: React.MouseEvent) => void }) {
   return (
     <div className={cn(
-      "sidebar__file flex items-center justify-between group py-1 pr-2",
+      "sidebar__file flex items-center justify-between group pr-2",
       active && "bg-tn-bg-alt !text-white font-semibold shadow-[inset_2px_0_0_var(--theme-accentPrimary)]"
     )} style={{ paddingLeft: '1.5rem' }} onContextMenu={onContextMenu}>
       <button 

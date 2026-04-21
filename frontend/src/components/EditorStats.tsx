@@ -30,8 +30,8 @@ export function EditorStats({ editor, isMarkdownMode, rawMd }: EditorStatsProps)
     }
 
     updateStats()
-    editor.on('update', updateStats)
-    return () => { editor.off('update', updateStats) }
+    editor.on('transaction', updateStats)
+    return () => { editor.off('transaction', updateStats) }
   }, [editor, isMarkdownMode, rawMd])
 
   return (

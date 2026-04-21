@@ -53,13 +53,13 @@ func EvaluateBuffer(meta DocumentMeta, body []byte, folders []string, settings S
 		folderList = "(none yet)"
 	}
 
-	prompt := strings.Replace(promptTmpl, "{folder_list}", folderList, 1)
-	prompt = strings.Replace(prompt, "{version}", versionStr, 1)
-	prompt = strings.Replace(prompt, "{focus_count}", focusCountStr, 1)
-	prompt = strings.Replace(prompt, "{created}", createdStr, 1)
-	prompt = strings.Replace(prompt, "{modified}", modifiedStr, 1)
-	prompt = strings.Replace(prompt, "{now}", time.Now().Format(time.RFC3339), 1)
-	prompt = strings.Replace(prompt, "{content}", string(body), 1)
+	prompt := strings.ReplaceAll(promptTmpl, "{folder_list}", folderList)
+	prompt = strings.ReplaceAll(prompt, "{version}", versionStr)
+	prompt = strings.ReplaceAll(prompt, "{focus_count}", focusCountStr)
+	prompt = strings.ReplaceAll(prompt, "{created}", createdStr)
+	prompt = strings.ReplaceAll(prompt, "{modified}", modifiedStr)
+	prompt = strings.ReplaceAll(prompt, "{now}", time.Now().Format(time.RFC3339))
+	prompt = strings.ReplaceAll(prompt, "{content}", string(body))
 
 	respText, err := RunCLI(settings.CLI, prompt, settings.Model, settings.CLITimeoutLong, "")
 	if err != nil {
@@ -94,10 +94,10 @@ func RunExplain(content, history string, settings Settings, noteCwd string, imag
 	}
 
 	contentType := detectContentType(content)
-	prompt := strings.Replace(promptTmpl, "{type}", contentType, 1)
-	prompt = strings.Replace(prompt, "{history}", history, 1)
-	prompt = strings.Replace(prompt, "{content}", content, 1)
-	prompt = strings.Replace(prompt, "{images}", imageNameList(imagePaths, noteCwd), 1)
+	prompt := strings.ReplaceAll(promptTmpl, "{type}", contentType)
+	prompt = strings.ReplaceAll(prompt, "{history}", history)
+	prompt = strings.ReplaceAll(prompt, "{content}", content)
+	prompt = strings.ReplaceAll(prompt, "{images}", imageNameList(imagePaths, noteCwd))
 
 	if len(imagePaths) > 0 {
 		return RunCLIWithImages(settings.CLI, prompt, imagePaths, settings.Model, settings.CLITimeoutLong, noteCwd)
@@ -115,11 +115,11 @@ func RunAsk(content, history, question string, settings Settings, noteCwd string
 	}
 
 	contentType := detectContentType(content)
-	prompt := strings.Replace(promptTmpl, "{type}", contentType, 1)
-	prompt = strings.Replace(prompt, "{content}", content, 1)
-	prompt = strings.Replace(prompt, "{history}", history, 1)
-	prompt = strings.Replace(prompt, "{question}", question, 1)
-	prompt = strings.Replace(prompt, "{images}", imageNameList(imagePaths, noteCwd), 1)
+	prompt := strings.ReplaceAll(promptTmpl, "{type}", contentType)
+	prompt = strings.ReplaceAll(prompt, "{content}", content)
+	prompt = strings.ReplaceAll(prompt, "{history}", history)
+	prompt = strings.ReplaceAll(prompt, "{question}", question)
+	prompt = strings.ReplaceAll(prompt, "{images}", imageNameList(imagePaths, noteCwd))
 
 	if len(imagePaths) > 0 {
 		logger.Info("RunAsk: has images", "count", len(imagePaths))
@@ -139,7 +139,7 @@ type ImageDesc struct {
 // summary, and a suggested filename. imagePath must be an absolute filesystem path.
 // promptOverride is the already-loaded prompt template (empty = use default).
 func DescribeImage(imagePath string, settings Settings, promptTmpl string) (ImageDesc, error) {
-	prompt := strings.Replace(promptTmpl, "{image_filename}", filepath.Base(imagePath), 1)
+	prompt := strings.ReplaceAll(promptTmpl, "{image_filename}", filepath.Base(imagePath))
 	cwd := filepath.Dir(imagePath)
 
 	resp, err := RunCLIWithImages(settings.CLI, prompt, []string{imagePath}, settings.Model, settings.CLITimeoutLong, cwd)
@@ -159,7 +159,7 @@ func DescribeImage(imagePath string, settings Settings, promptTmpl string) (Imag
 // a code snippet. Returns the lowercase language name or empty string.
 // promptOverride is the already-loaded prompt template (empty = use default).
 func RefineLanguage(content string, settings Settings, promptTmpl string) (string, error) {
-	prompt := strings.Replace(promptTmpl, "{content}", content, 1)
+	prompt := strings.ReplaceAll(promptTmpl, "{content}", content)
 
 	resp, err := RunCLI(settings.CLI, prompt, settings.Model, settings.CLITimeout, "")
 	if err != nil {
