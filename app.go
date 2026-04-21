@@ -111,23 +111,37 @@ func (a *App) startup(ctx context.Context) {
 		return
 	}
 
-	if isFirstStartup {
-		if err := ValidateStore(abs); err != nil {
-			entries, readErr := os.ReadDir(abs)
-			isEmpty := readErr == nil && len(entries) == 0
-			if !isEmpty {
-				logger.Info("startup: path is neither a valid store nor empty", "path", abs, "err", err)
+	logger.Info("startup: beginning validation", "isFirstStartup", isFirstStartup, "storePath", abs)
+
+	if err := ValidateStore(abs); err != nil {
+		logger.Warn("startup: ValidateStore failed", "path", abs, "err", err)
+		entries, readErr := os.ReadDir(abs)
+		isEmpty := readErr == nil && len(entries) == 0
+		logger.Debug("startup: empty directory check", "isEmpty", isEmpty, "readErr", readErr, "entriesCount", len(entries))
+
+		if !isEmpty {
+			logger.Warn("startup: path is neither a valid store nor empty", "path", abs)
+			if isFirstStartup {
 				config := LoadGlobalConfig()
 				if config.LastStorePath != "" && ValidateStore(config.LastStorePath) == nil {
 					abs = config.LastStorePath
 					logger.Info("startup: falling back to LastStorePath", "path", abs)
 				} else {
 					a.storePath = ""
-					logger.Info("startup: entering bootstrap mode")
+					logger.Info("startup: entering bootstrap mode from invalid implicit path")
 					return
 				}
+			} else {
+				// This is an explicit selection from the UI (CreateVault/InitVault) that is invalid.
+				a.storePath = ""
+				logger.Warn("startup: explicit path is invalid, re-entering bootstrap mode")
+				return
 			}
+		} else {
+			logger.Info("startup: path is empty, proceeding with initialization", "path", abs)
 		}
+	} else {
+		logger.Info("startup: path is a valid store", "path", abs)
 	}
 
 	a.storePath = abs
@@ -338,12 +352,14 @@ func (a *App) SavePromptsHeight(height int) error {
 // ── Bootstrapping ─────────────────────────────────────────────────────────────
 
 func (a *App) SelectVault() (string, error) {
+	logger.Info("SelectVault: triggered")
 	if a.ctx == nil {
 		return "", fmt.Errorf("app context not initialized")
 	}
 	path, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
 		Title: "Select Stash Store",
 	})
+	logger.Debug("SelectVault: dialog returned", "path", path, "err", err)
 	if err != nil {
 		return "", err
 	}
@@ -351,57 +367,98 @@ func (a *App) SelectVault() (string, error) {
 		return "", nil
 	}
 	if err := ValidateStore(path); err != nil {
+		logger.Warn("SelectVault: ValidateStore failed", "path", path, "err", err)
 		return "", fmt.Errorf("this directory does not look like a Stash store: %w", err)
 	}
+
+	logger.Debug("SelectVault: setting storePath and calling startup", "path", path)
+	a.storePath = path
+	a.startup(a.ctx)
+
+	logger.Debug("SelectVault: startup completed", "resulting_storePath", a.storePath)
+	if a.storePath == "" {
+		logger.Warn("SelectVault: startup rejected the folder")
+		return "", fmt.Errorf("failed to load the selected store")
+	}
+
 	config := LoadGlobalConfig()
 	config.LastStorePath = path
 	if err := config.Save(); err != nil {
+		logger.Warn("SelectVault: failed to save global config", "err", err)
 		return "", fmt.Errorf("could not update global config: %w", err)
 	}
-	a.storePath = path
-	a.startup(a.ctx)
 	logger.Info("store selected", "path", path)
 	return path, nil
 }
 
 func (a *App) CreateVault() (string, error) {
+	logger.Info("CreateVault: triggered")
 	if a.ctx == nil {
 		return "", fmt.Errorf("app context not initialized")
 	}
 	path, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
 		Title: "Select Folder to Initialize Store",
 	})
+	logger.Debug("CreateVault: dialog returned", "path", path, "err", err)
 	if err != nil {
 		return "", err
 	}
 	if path == "" {
 		return "", nil
 	}
+
+	logger.Debug("CreateVault: setting storePath and calling startup", "path", path)
 	a.storePath = path
 	a.startup(a.ctx)
+
+	logger.Debug("CreateVault: startup completed", "resulting_storePath", a.storePath)
+	if a.storePath == "" {
+		logger.Warn("CreateVault: startup rejected the folder")
+		return "", fmt.Errorf("selected folder must be empty or an existing Stash store")
+	}
 	logger.Info("store creation initialized", "path", path)
 	return path, nil
 }
 
 func (a *App) InitVault(path string) error {
+	logger.Info("InitVault: triggered", "raw_path", path)
 	if path == "" {
 		return fmt.Errorf("path cannot be empty")
 	}
 	if strings.HasPrefix(path, "~") {
 		home, _ := os.UserHomeDir()
 		path = filepath.Join(home, path[1:])
+		logger.Debug("InitVault: resolved tilde", "new_path", path)
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
+		logger.Error("InitVault: absolute path resolution failed", "err", err)
 		return fmt.Errorf("invalid path: %w", err)
 	}
+	logger.Debug("InitVault: absolute path determined", "abs", abs)
+
+	if err := os.MkdirAll(abs, 0o755); err != nil {
+		logger.Error("InitVault: MkdirAll failed", "abs", abs, "err", err)
+		return fmt.Errorf("could not create directory: %w", err)
+	}
+	logger.Debug("InitVault: directory exists/created", "abs", abs)
+
+	logger.Debug("InitVault: setting storePath and calling startup", "abs", abs)
+	a.storePath = abs
+	a.startup(a.ctx)
+
+	logger.Debug("InitVault: startup completed", "resulting_storePath", a.storePath)
+	if a.storePath == "" {
+		logger.Warn("InitVault: startup rejected the folder")
+		return fmt.Errorf("folder must be empty or an existing Stash store")
+	}
+
 	config := LoadGlobalConfig()
 	config.LastStorePath = abs
 	if err := config.Save(); err != nil {
+		logger.Warn("InitVault: failed to save global config", "err", err)
 		return fmt.Errorf("could not update global config: %w", err)
 	}
-	a.storePath = abs
-	a.startup(a.ctx)
 	logger.Info("store initialized manually — READY", "path", abs)
 	return nil
 }
