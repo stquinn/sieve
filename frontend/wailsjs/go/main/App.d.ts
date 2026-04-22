@@ -46,7 +46,7 @@ export function GetThemesFS():Promise<fs.FS>;
 
 export function InitVault(arg1:string):Promise<void>;
 
-export function LoadBuffer(arg1:string):Promise<main.BufferDTO>;
+export function LoadBuffer(arg1:string):Promise<any>;
 
 export function LoadPrompt(arg1:string):Promise<string>;
 
@@ -58,7 +58,7 @@ export function NewBuffer():Promise<main.BufferDTO>;
 
 export function Quit():Promise<void>;
 
-export function RefileNote(arg1:main.BufferDTO):Promise<main.BufferDTO>;
+export function RefileNote(arg1:main.BufferDTO):Promise<main.NoteDTO>;
 
 export function RefineLanguage(arg1:string):Promise<string>;
 
@@ -66,7 +66,7 @@ export function RenameFolder(arg1:string,arg2:string):Promise<void>;
 
 export function SaveAsset(arg1:string,arg2:string,arg3:string):Promise<main.AssetDTO>;
 
-export function SaveBuffer(arg1:main.BufferDTO):Promise<main.BufferDTO>;
+export function SaveBuffer(arg1:main.BufferDTO):Promise<any>;
 
 export function SaveMetaWidth(arg1:number):Promise<void>;
 

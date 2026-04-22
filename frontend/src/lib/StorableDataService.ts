@@ -1,5 +1,11 @@
+import { 
+  LoadBuffer, SaveBuffer, NewBuffer, FileBuffer, RefileNote, DiscardBuffer,
+  MoveNote, CreateFolder, DeleteFolder, RenameFolder, DeletePrompt,
+  GetNotes, GetPrompts, GetStoreInfo, EvaluateBuffer,
+  GetDocumentVersion, DescribeImage, SaveAsset, DownloadAsset, RefineLanguage,
+  SearchStore, Ask, Explain
+} from '../../wailsjs/go/main/App'
 import { main } from '../../wailsjs/go/models'
-import { LoadBuffer, SaveBuffer, NewBuffer } from '../../wailsjs/go/main/App'
 import { Storable } from '../types'
 
 /**
@@ -11,12 +17,19 @@ import { Storable } from '../types'
  * Architecture:
  * 1. UI (Tabs) only holds a static UUID address.
  * 2. This Service holds the authoritative Storable instance for that UUID.
- * 3. Persistence flow (Save/Load) is managed exclusively here.
+ * 3. Persistence flow (Save/Load/File/Discard) is managed exclusively here.
  */
 export class StorableDataService {
   private registry = new Map<string, Storable>()
   private transientState = new Map<string, { isWaitingAI?: boolean; aiJobName?: string }>()
   private onNotify: (uuid: string) => void
+
+  findIdByPath(path: string): string | undefined {
+    for (const [id, doc] of this.registry.entries()) {
+      if (doc.path === path) return id
+    }
+    return undefined
+  }
 
   constructor(onNotify: (uuid: string) => void) {
     this.onNotify = onNotify
@@ -52,8 +65,16 @@ export class StorableDataService {
       this.onNotify(doc.id)
       return doc
     }
+
+    // Check if we already have this path in registry under another ID?
+    // Unlikely, but let's be safe.
+    const existing = this.findIdByPath(path)
+    if (existing) return this.registry.get(existing)!
+
     const raw = await LoadBuffer(path)
-    const doc = main.BufferDTO.createFrom(raw) as unknown as Storable
+    const doc = (raw.meta?.status === 'filed') 
+      ? main.NoteDTO.createFrom(raw) as any
+      : main.BufferDTO.createFrom(raw) as any
     doc.kind = 'note'
     this.registry.set(doc.id, doc)
     this.onNotify(doc.id)
@@ -76,7 +97,9 @@ export class StorableDataService {
    * Check in a specific DTO
    */
   set(uuid: string, dto: any) {
-    const doc = main.BufferDTO.createFrom(dto) as unknown as Storable
+    const doc = (dto.meta?.status === 'filed') 
+      ? main.NoteDTO.createFrom(dto) as any 
+      : main.BufferDTO.createFrom(dto) as any
     doc.kind = 'note'
     this.registry.set(uuid, doc)
     this.onNotify(uuid)
@@ -117,6 +140,7 @@ export class StorableDataService {
     const doc = this.registry.get(uuid)
     if (!doc || !doc.meta) return
     doc.meta.userIntent = intent
+    doc.isModified = true
     this.onNotify(uuid)
   }
 
@@ -153,7 +177,9 @@ export class StorableDataService {
       }
 
       const saved = await SaveBuffer(doc as any)
-      const updated = main.BufferDTO.createFrom(saved) as unknown as Storable
+      const updated = (doc instanceof main.BufferDTO)
+        ? main.BufferDTO.createFrom(saved) as any
+        : main.NoteDTO.createFrom(saved) as any
       updated.kind = 'note'
 
       // Update the cache with the fresh data from the backend (versions, meta, etc.)
@@ -167,9 +193,228 @@ export class StorableDataService {
   }
 
   /**
+   * Promote a buffer to a permanent note
+   */
+  async file(uuid: string): Promise<Storable | null> {
+    const doc = this.registry.get(uuid)
+    if (!doc) return null
+    try {
+      const saved = await FileBuffer(doc.path)
+      const updated = main.NoteDTO.createFrom(saved) as any
+      updated.kind = 'note'
+      this.registry.set(uuid, updated)
+      this.onNotify(uuid)
+      return updated
+    } catch (err) {
+      console.error(`[StorableDataService] Failed to file ${uuid}:`, err)
+      throw err
+    }
+  }
+
+  /**
+   * Update filing/location for an already filed note
+   */
+  async refile(uuid: string): Promise<Storable | null> {
+    const doc = this.registry.get(uuid)
+    if (!doc) return null
+    try {
+      const saved = await RefileNote(doc as any)
+      const updated = main.NoteDTO.createFrom(saved) as any
+      updated.kind = 'note'
+      this.registry.set(uuid, updated)
+      this.onNotify(uuid)
+      return updated
+    } catch (err) {
+      console.error(`[StorableDataService] Failed to refile ${uuid}:`, err)
+      throw err
+    }
+  }
+
+  /**
+   * Delete a buffer and its history
+   */
+  async discard(uuid: string): Promise<void> {
+    const doc = this.registry.get(uuid)
+    if (!doc) return
+    try {
+      await DiscardBuffer(doc.path)
+      this.evict(uuid)
+    } catch (err) {
+      console.error(`[StorableDataService] Failed to discard ${uuid}:`, err)
+      throw err
+    }
+  }
+
+  /**
    * Explicitly evict a document (e.g. when tab is closed)
    */
   evict(uuid: string) {
     this.registry.delete(uuid)
+  }
+
+  // ── Store Operations ───────────────────────────────────────────────────────
+
+  /**
+   * Move a note or buffer to a new path
+   */
+  async move(oldPath: string, newPath: string): Promise<void> {
+    try {
+      await MoveNote(oldPath, newPath)
+      // Check if any registered storables have this path and update them
+      for (const storable of this.registry.values()) {
+        if (storable.path === oldPath) {
+          storable.path = newPath
+          this.onNotify(storable.id)
+        }
+      }
+    } catch (err) {
+      console.error(`[StorableDataService] Failed to move ${oldPath}:`, err)
+      throw err
+    }
+  }
+
+  /**
+   * Create a new folder
+   */
+  async createFolder(path: string): Promise<void> {
+    try {
+      await CreateFolder(path)
+    } catch (err) {
+      console.error(`[StorableDataService] Failed to create folder ${path}:`, err)
+      throw err
+    }
+  }
+
+  /**
+   * Delete a folder
+   */
+  async deleteFolder(path: string): Promise<void> {
+    try {
+      await DeleteFolder(path)
+    } catch (err) {
+      console.error(`[StorableDataService] Failed to delete folder ${path}:`, err)
+      throw err
+    }
+  }
+
+  /**
+   * Rename a folder or note (low-level rename)
+   */
+  async rename(oldPath: string, newPath: string, isDir: boolean): Promise<void> {
+    try {
+      if (isDir) {
+        await RenameFolder(oldPath, newPath)
+        // CASCADING UPDATE: Any note in this folder must have its path updated in the registry
+        for (const storable of this.registry.values()) {
+          if (storable.path.startsWith(oldPath + '/')) {
+            const relativePart = storable.path.substring(oldPath.length)
+            storable.path = newPath + relativePart
+            this.onNotify(storable.id)
+          }
+        }
+      } else {
+        await MoveNote(oldPath, newPath)
+        // Update registry path for this specific note
+        for (const storable of this.registry.values()) {
+          if (storable.path === oldPath) {
+            storable.path = newPath
+            this.onNotify(storable.id)
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`[StorableDataService] Failed to rename ${oldPath}:`, err)
+      throw err
+    }
+  }
+
+  // ── Prompt Operations ──────────────────────────────────────────────────────
+
+  /**
+   * Delete a prompt template
+   */
+  async deletePrompt(name: string): Promise<void> {
+    try {
+      await DeletePrompt(name)
+      // Evict from registry if open
+      const uuid = `prompt:${name}`
+      if (this.registry.has(uuid)) {
+        this.evict(uuid)
+        this.onNotify(uuid)
+      }
+    } catch (err) {
+      console.error(`[StorableDataService] Failed to delete prompt ${name}:`, err)
+      throw err
+    }
+  }
+
+  // ── Retrieval & Evaluation ─────────────────────────────────────────────────
+
+  /**
+   * Fetch all notes (sidebar tree)
+   */
+  async getNotes() {
+    return GetNotes()
+  }
+
+  /**
+   * Fetch all custom prompts
+   */
+  async getPrompts() {
+    return GetPrompts()
+  }
+
+  /**
+   * Get store information/config
+   */
+  async getStoreInfo() {
+    return GetStoreInfo()
+  }
+
+  /**
+   * Evaluate a buffer for filing recommendations
+   */
+  async evaluate(path: string) {
+    return EvaluateBuffer(path)
+  }
+
+  // ── Document Versions ──────────────────────────────────────────────────────
+
+  async getDocumentVersion(path: string, version: any) {
+    return GetDocumentVersion(path, version)
+  }
+
+  // ── Asset Management ───────────────────────────────────────────────────────
+
+  async saveAsset(path: string, id: string, dataUrl: string) {
+    return SaveAsset(path, id, dataUrl)
+  }
+
+  async downloadAsset(path: string, url: string, id: string) {
+    return DownloadAsset(path, url, id)
+  }
+
+  // // ── AI Operations ──────────────────────────────────────────────────────────
+
+  // async describeImage(path: string) {
+  //   return DescribeImage(path)
+  // }
+
+  // async refineLanguage(content: string) {
+  //   return RefineLanguage(content)
+  // }
+
+  // async ask(content: string, history: string, question: string, path: string, images: string[]) {
+  //   return Ask(content, history, question, path, images)
+  // }
+
+  // async explain(content: string, history: string, path: string, images: string[]) {
+  //   return Explain(content, history, path, images)
+  // }
+
+  // ── Search ─────────────────────────────────────────────────────────────────
+
+  async searchStore(query: string) {
+    return SearchStore(query)
   }
 }

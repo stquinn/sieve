@@ -1,6 +1,7 @@
 import React from 'react'
-import { GetDocumentVersion } from '../../wailsjs/go/main/App'
 import type { main } from '../../wailsjs/go/models'
+import type { StorableDataService } from '../lib/StorableDataService'
+import { UserIntent } from '../types'
 
 interface Props {
   meta: main.DocumentMetaDTO | null
@@ -11,6 +12,9 @@ interface Props {
   isWaitingAI?: boolean
   versions?: main.VersionRefDTO[]
   onRestoreRequested?: (body: string) => void
+  onSetIntent?: (intent: UserIntent) => void
+  onSave?: () => Promise<void>
+  dataService: StorableDataService
 }
 
 function fmtDate(v: string | null | undefined): string | null {
@@ -44,7 +48,10 @@ function evalColour(v: string | null | undefined): string {
   return 'var(--theme-muted)'
 }
 
-export function MetaPanel({ meta, path, width, isModified, isEvaluating, isWaitingAI, versions = [], onRestoreRequested }: Props) {
+export function MetaPanel({ 
+  meta, path, width, isModified, isEvaluating, isWaitingAI, 
+  versions = [], onRestoreRequested, onSetIntent, onSave, dataService 
+}: Props) {
   const fileName = path.split('/').pop() ?? path
   const [activeTab, setActiveTab] = React.useState<'meta'|'history'|'assets'>('meta')
   const [now, setNow] = React.useState(new Date())
@@ -95,9 +102,28 @@ export function MetaPanel({ meta, path, width, isModified, isEvaluating, isWaiti
             </>
           ) : (
             <div className="meta-panel__fields">
-              <Row label="Dirty">
-                <span style={{ color: isModified ? 'var(--theme-accentYellow)' : 'var(--theme-accentGreen)' }}>{isModified ? 'true' : 'false'}</span>
-              </Row>
+              <div className="meta-panel__dirty-indicator" style={{ 
+                padding: '0.5rem 0.9rem', 
+                marginBottom: '0.5rem',
+                border: `1px solid ${isModified ? 'var(--theme-accentYellow)' : 'var(--theme-border)'}`,
+                borderRadius: '6px',
+                background: isModified ? 'color-mix(in srgb, var(--theme-accentYellow) 10%, transparent)' : 'transparent',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+              }}>
+                <span style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', color: isModified ? 'var(--theme-accentYellow)' : 'var(--theme-muted)' }}>
+                  {isModified ? 'Unsaved Changes' : 'All Changes Saved'}
+                </span>
+                <div style={{ 
+                  width: '8px', 
+                  height: '8px', 
+                  borderRadius: '50%', 
+                  background: isModified ? 'var(--theme-accentYellow)' : 'var(--theme-accentGreen)',
+                  boxShadow: isModified ? '0 0 8px var(--theme-accentYellow)' : 'none'
+                }} />
+              </div>
+
               <Row label="Status">
                 <span style={{ color: statusColour(meta.status) }}>{meta.status ?? '—'}</span>
               </Row>
@@ -206,7 +232,7 @@ export function MetaPanel({ meta, path, width, isModified, isEvaluating, isWaiti
                         style={{ background: 'var(--theme-accentRed, #c0392b)', border: 'none', color: '#fff', padding: '0.25rem 0.6rem', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}
                         onClick={() => {
                           setPendingRestore(null)
-                          GetDocumentVersion(path, ref)
+                          dataService.getDocumentVersion(path, ref)
                             .then(snap => onRestoreRequested?.(snap.body))
                             .catch(console.error)
                         }}

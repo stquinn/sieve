@@ -1,4 +1,5 @@
-import { useEditor, EditorContent, BubbleMenu } from '@tiptap/react'
+import { useEditor, EditorContent } from '@tiptap/react'
+import { DOMParser as ProseMirrorDOMParser } from '@tiptap/pm/model'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -10,30 +11,43 @@ import TableRow from '@tiptap/extension-table-row'
 import TableHeader from '@tiptap/extension-table-header'
 import TableCell from '@tiptap/extension-table-cell'
 import { stash } from '../../wailsjs/go/models'
-import { DescribeImage, SaveAsset, DownloadAsset, RefineLanguage } from '../../wailsjs/go/main/App'
 import { CodeBlockWithAttrs } from '../extensions/CodeBlockWithAttrs'
 import { ImageWithAttrs } from '../extensions/ImageWithAttrs'
-import { AiBlockDecoration } from '../extensions/AiBlockDecoration'
-import { AiBlock } from '../extensions/AiBlock'
+import { AiBlock, AiQuestion } from '../extensions/AiBlock'
+import { AiShortcuts } from '../extensions/AiShortcuts'
 import { BlockNode } from '../extensions/BlockNode'
 import { Search } from '../extensions/Search'
+import { AskPopup } from './AskPopup'
 import { detectLanguage } from '../utils/pasteHeuristics'
 import { StorableDataService } from '../lib/StorableDataService'
+import { AiService } from '../lib/AiService'
+import { JobID, AiContext, AiListener } from '../lib/AiJob'
+import { buildAiContext } from '../lib/aiContextBuilder'
+import { useNoteOperations } from '../hooks/useNoteOperations'
+import { MarkdownEditor } from './Editor/MarkdownEditor'
+import { LinkBubbleMenu } from './Editor/LinkBubbleMenu'
+import { BrowserOpenURL } from '../../wailsjs/runtime/runtime'
+import { EditorPasteService } from '../lib/EditorPasteService'
+import { useMemo } from 'react'
 
 const lowlight = createLowlight(common)
 
 interface EditorPanelProps {
   uuid: string
   mode: 'wysiwyg' | 'markdown'
-  ds: StorableDataService
+  dataService: StorableDataService
   isActive: boolean
   tier: 'dumb' | 'smart'
   autosaveMs: number
+  aiService: AiService
   onSearchUpdate?: (results: any[], index: number) => void
   tick: number
 }
 
 export interface EditorPanelHandle {
+  explain: () => void
+  ask: (question?: string) => void
+  getContextLabel: () => string
   getEditor: () => import('@tiptap/react').Editor | null | undefined
   getMarkdown: () => string
   getSelection: () => import('@tiptap/pm/state').Selection | { from: number; to: number }
@@ -51,22 +65,160 @@ export interface EditorPanelHandle {
 export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
   uuid,
   mode: propMode,
-  ds,
+  dataService,
   isActive,
   tier,
   autosaveMs,
+  aiService,
   onSearchUpdate,
   tick
 }, ref) => {
   const isMarkdownInitially = (propMode === 'markdown' || uuid.startsWith('prompt:'))
   const [mode, setMode] = useState<'wysiwyg' | 'markdown'>(isMarkdownInitially ? 'markdown' : 'wysiwyg')
   const [rawMd, setRawMd] = useState('')
-  const [linkUrl, setLinkUrl] = useState('')
+  const [showAskPopup, setShowAskPopup] = useState(false)
+  const [askContext, setAskContext] = useState<{ contextLabel: string } | null>(null)
+  
+  // ── Render ──────────────────────────────────────────────────────────────────
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastSyncedBody = useRef<string>('')
   const isInitialLoad = useRef(true)
   const lastSelection = useRef<{ pos: number; text: string | null } | null>(null)
+  const taRef = useRef<HTMLTextAreaElement>(null)
 
-  const editor = useEditor({
+  const runAiJob = (type: 'explain' | 'ask', question?: string) => {
+    const blkId = 'ai-' + Math.random().toString(16).substring(2, 6)
+    const job: JobID = { docId: uuid, blkId }
+    const doc = dataService.get(uuid)
+    const ctx = buildAiContext(
+      editor!, 
+      mode === 'markdown', 
+      doc?.body || '', 
+      doc?.path || ''
+    )
+
+    // 1. Insert Placeholder
+    if (mode === 'markdown') {
+      const ta = taRef.current
+      if (!ta) return
+      const end = ta.selectionEnd
+      const thinking = `\n\n[!ai] id="${blkId}"\n${question ? `**Ask:** ${question}\n\n` : ''}_(thinking…)_\n[!ai-end]\n\n`
+      const next = ta.value.substring(0, end) + thinking + ta.value.substring(end)
+      dataService.setBody(uuid, next)
+      setRawMd(next)
+    } else if (editor) {
+      let insertPos = editor.state.selection.to
+      
+      // Prevent nesting: if inside an aiBlock, jump to after it
+      const $pos = editor.state.selection.$from
+      for (let d = $pos.depth; d >= 0; d--) {
+        if ($pos.node(d).type.name === 'aiBlock') {
+          insertPos = $pos.after(d)
+          break
+        }
+      }
+
+      const lines = question ? question.split('\n') : []
+      const questionNodes = lines.map((line, idx) => ({
+        type: 'paragraph',
+        content: line.trim().length > 0 ? [{ 
+          type: 'text', 
+          text: idx === 0 ? (line.startsWith('Ask: ') ? line : `Ask: ${line}`) : line, 
+          marks: [{ type: 'bold' }] 
+        }] : []
+      }))
+
+      editor.commands.insertContentAt(insertPos, {
+        type: 'aiBlock',
+        attrs: { id: blkId },
+        content: [
+          ...(questionNodes.length > 0 ? [{ type: 'aiQuestion', content: questionNodes }] : []),
+          { type: 'paragraph', content: [{ type: 'text', text: '(thinking…)', marks: [{ type: 'italic' }] }] }
+        ]
+      })
+    }
+
+    // 2. Trigger Service
+    const listener = {
+      onComplete: (jobId: JobID, response: string) => {
+        if (mode === 'markdown') {
+          const body = dataService.get(uuid)?.body || ''
+          const idEscaped = blkId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+          const pattern = new RegExp(`(\\[!ai\\] id="${idEscaped}"[^\\n]*)\\s*[\\s\\S]*?\\s*\\[!ai-end\\]`)
+          
+          const lines = question ? question.split('\n') : []
+          const qlines = lines.map((l, i) => {
+            if (l.trim().length === 0) return ''
+            return i === 0 ? `**Ask:** ${l}` : `**${l}**`
+          }).join('\n\n')
+          const qBlock = qlines ? `\n\n${qlines}` : ''
+          
+          const updatedBody = body.replace(pattern, `$1${qBlock}\n\n${response}\n\n[!ai-end]`)
+          dataService.setBody(uuid, updatedBody)
+          setRawMd(updatedBody)
+        } else if (editor) {
+          let foundPos = -1
+          let foundSize = 0
+          editor.state.doc.descendants((node: import('@tiptap/pm/model').Node, pos: number) => {
+            if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
+              foundPos = pos
+              foundSize = node.nodeSize
+              return false
+            }
+          })
+          if (foundPos !== -1) {
+            const { schema } = editor.state
+            const md = (editor.storage as any).markdown
+            const html = md.parser.md.render(response.trim())
+            const tempDiv = document.createElement('div')
+            tempDiv.innerHTML = html
+            const parsedDoc = ProseMirrorDOMParser.fromSchema(schema).parse(tempDiv)
+            
+            // Wrap in aiBlock to preserve structure and metadata
+            const lines = question ? question.split('\n') : []
+            const questionNodes = lines.map((line, idx) => ({
+              type: 'paragraph',
+              content: line.trim().length > 0 ? [{ 
+                type: 'text', 
+                text: idx === 0 ? (line.startsWith('Ask: ') ? line : `Ask: ${line}`) : line, 
+                marks: [{ type: 'bold' }] 
+              }] : []
+            }))
+
+            const aiBlockNode = {
+              type: 'aiBlock',
+              attrs: { id: blkId, ref: ctx.blockRef },
+              content: [
+                ...(questionNodes.length > 0 ? [{ type: 'aiQuestion', content: questionNodes }] : []),
+                ...parsedDoc.toJSON().content
+              ]
+            }
+            editor.commands.insertContentAt({ from: foundPos, to: foundPos + foundSize }, aiBlockNode)
+          }
+        }
+        // Scroll to bottom
+        const el = mode === 'markdown' ? taRef.current : document.getElementById(`app-${uuid}`)
+        if (el) el.scrollTop = el.scrollHeight
+      },
+      onError: (jobId: JobID, err: string) => {
+        console.error('AI Job Error:',JSON.stringify(jobId), err)
+      }
+    }
+
+    if (type === 'explain') aiService.explain(job, ctx, listener)
+    else aiService.ask(job, ctx, question || 'Ask AI...', listener)
+  }
+
+  const getContextLabel = () => {
+    const doc = dataService.get(uuid)
+    return buildAiContext(editor!, mode === 'markdown', doc?.body || '', doc?.path || '').contextLabel
+  }
+  
+  const pasteService = useMemo(() => new EditorPasteService(dataService, aiService, tier), [dataService, aiService, tier])
+  const pasteServiceRef = useRef(pasteService)
+  useEffect(() => { pasteServiceRef.current = pasteService }, [pasteService])
+
+  const editor: any = useEditor({
     extensions: [
       StarterKit.configure({ codeBlock: false, history: { depth: 10_000, newGroupDelay: 500 } }),
       CodeBlockWithAttrs.configure({ lowlight }),
@@ -82,126 +234,52 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
       ImageWithAttrs,
       Search,
       AiBlock,
-      AiBlockDecoration,
+      AiQuestion,
       Markdown.configure({
         html: true,
         transformPastedText: false,
+      
       }),
+      AiShortcuts.configure({
+        onExplain: () => runAiJob('explain'),
+        onAsk: () => {
+          const label = getContextLabel()
+          setAskContext({ contextLabel: label })
+          setShowAskPopup(true)
+        },
+        onSmartFile: () => aiService.smartFile(uuid),
+        onKeepAndSmartFile: () => aiService.keepAndFile(uuid),
+      })
     ],
     content: '',
     editorProps: {
       attributes: {
         spellcheck: 'true',
       },
-      handlePaste(view, event) {
-        if (!event.clipboardData || !editor) return false
-
-        const html = event.clipboardData.getData('text/html')
-        const files = Array.from(event.clipboardData.files)
-        const imageFile = files.find(f => f.type.startsWith('image/'))
-
-        let imgSrc: string | null = null
-        if (!imageFile && html) {
-          const div = document.createElement('div')
-          div.innerHTML = html
-          const imgs = div.querySelectorAll('img')
-          if (imgs.length === 1 && imgs[0].src) {
-            imgSrc = imgs[0].src
-          }
-        }
-
-        if (imageFile || imgSrc) {
-          event.preventDefault()
-          const saveDataUrl = async (dataUrl: string) => {
-            const id = 'blk-' + Math.random().toString(16).substring(2, 6)
-            try {
-              const path = ds.get(uuid)?.path || ''
-              const asset = await SaveAsset(path, id, dataUrl)
-              const mdPath = asset.externalRef
-
-              queueMicrotask(() => {
-                editor.commands.insertContent({
-                  type: 'image',
-                  attrs: { src: mdPath, id, detect: 'pending' }
-                })
-              })
-
-              if (tier === 'smart') {
-                DescribeImage(mdPath).then((desc: stash.ImageDesc) => {
-                  if (!desc || !editor) return
-                  editor.commands.command(({ tr, state }) => {
-                    let found = false
-                    state.doc.descendants((node, pos) => {
-                      if (node.type.name === 'image' && node.attrs.id === id) {
-                        found = true
-                        tr.setNodeMarkup(pos, null, { ...node.attrs, alt: desc.alt, summary: desc.summary, detect: 'cli' })
-                        return false
-                      }
-                    })
-                    return found
-                  })
-                }).catch(console.error)
+      handleDOMEvents: {
+        click: (view, event) => {
+          if (event.ctrlKey || event.metaKey) {
+            const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos
+            if (pos !== undefined) {
+              const marks = view.state.doc.resolve(pos).marks()
+              const linkMark = marks.find(m => m.type.name === 'link')
+              if (linkMark) {
+                // Use a tiny timeout to let the click event fully settle in the OS 
+                // before handing off control to the browser.
+                setTimeout(() => {
+                  BrowserOpenURL(linkMark.attrs.href)
+                }, 50)
+                event.preventDefault()
+                event.stopPropagation()
+                return true
               }
-            } catch (err) {
-              console.error('[EditorPanel] paste save failed', err)
             }
           }
-
-          if (imageFile) {
-            const reader = new FileReader()
-            reader.onload = e => saveDataUrl(e.target?.result as string)
-            reader.readAsDataURL(imageFile)
-          } else if (imgSrc) {
-            if (imgSrc.startsWith('data:')) {
-              saveDataUrl(imgSrc)
-            } else {
-              const id = 'blk-' + Math.random().toString(16).substring(2, 6)
-              const path = ds.get(uuid)?.path || 'new'
-              DownloadAsset(path, imgSrc, id).then(asset => {
-                queueMicrotask(() => {
-                  editor.commands.insertContent({
-                    type: 'image',
-                    attrs: { src: asset.externalRef, id, detect: 'pending' }
-                  })
-                })
-              }).catch(console.error)
-            }
-          }
-          return true
+          return false
         }
-
-        // Text paste heuristic
-        const text = event.clipboardData.getData('text/plain')
-        if (text && !editor.isActive('codeBlock')) {
-          const result = detectLanguage(text)
-          if (result.tier <= 3) {
-            event.preventDefault()
-            const id = 'blk-' + Math.random().toString(16).substring(2, 6)
-            queueMicrotask(() => editor.commands.insertContent({
-              type: 'codeBlock',
-              attrs: { language: result.language || '', id, detect: 'heuristic' },
-              content: [{ type: 'text', text }]
-            }))
-            if (tier === 'smart') {
-              RefineLanguage(text).then(lang => {
-                if (!lang || !editor) return
-                editor.commands.command(({ tr, state }) => {
-                  let found = false
-                  state.doc.descendants((node, pos) => {
-                    if (node.type.name === 'codeBlock' && node.attrs.id === id) {
-                      found = true
-                      tr.setNodeMarkup(pos, null, { ...node.attrs, language: lang, detect: 'ai' })
-                      return false
-                    }
-                  })
-                  return found
-                })
-              }).catch(console.error)
-            }
-            return true
-          }
-        }
-        return false
+      },
+      handlePaste(view, event) {
+        return pasteServiceRef.current.handlePaste(editor!, uuid, event)
       },
       handleKeyDown(view, event) {
         if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
@@ -216,13 +294,20 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
       }
     },
     onUpdate: ({ editor }) => {
+      console.log("doc updated")
       const content = editor.storage.markdown.getMarkdown() || ''
-      ds.setBody(uuid, content)
+      
+      if (content === lastSyncedBody.current) return
+      lastSyncedBody.current = content
+      dataService.setBody(uuid, content)
 
       if (saveTimer.current) clearTimeout(saveTimer.current)
+      
+      const delay = autosaveMs || 30000
+      console.log('saveTimer', delay)
       saveTimer.current = setTimeout(() => {
-        ds.save(uuid).catch(console.error)
-      }, autosaveMs)
+        dataService.save(uuid).catch(console.error)
+      }, delay)
     }
   })
 
@@ -230,13 +315,13 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
   useEffect(() => {
     if (editor) {
       editor.storage.imageWithAttrs = editor.storage.imageWithAttrs ?? {}
-      editor.storage.imageWithAttrs.activeTabPath = ds.get(uuid)?.path || ''
+      editor.storage.imageWithAttrs.activeTabPath = dataService.get(uuid)?.path || ''
     }
   }, [editor, uuid])
 
   // Synchronize internal rawMd with authoritative DS content on load/switch
   useEffect(() => {
-    const doc = ds.get(uuid)
+    const doc = dataService.get(uuid)
     if (doc) {
       if (mode === 'markdown' || uuid.startsWith('prompt:')) {
         setRawMd(doc.body)
@@ -273,7 +358,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
         }
       }
     }
-  }, [uuid, mode, editor, ds, tick])
+  }, [uuid, mode, editor, dataService])
 
   // Sync mode state with prop changes, ensuring prompts stay in markdown
   useEffect(() => {
@@ -331,86 +416,13 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
   // Blob Image Paste Interceptor
   useEffect(() => {
     if (!editor || mode === 'markdown') return
-    const editorEl = editor.view.dom as HTMLElement
-
-    const processImg = (img: HTMLImageElement) => {
-      const blobSrc = img.getAttribute('src') || ''
-      if (!blobSrc.startsWith('blob:') && !blobSrc.startsWith('data:')) return
-      if ((img as any).__stashProcessing) return
-      ;(img as any).__stashProcessing = true
-
-      const canvas = document.createElement('canvas')
-      const image = new Image()
-      image.onload = () => {
-        canvas.width = image.naturalWidth
-        canvas.height = image.naturalHeight
-        const ctx = canvas.getContext('2d')
-        if (!ctx) return
-        ctx.drawImage(image, 0, 0)
-        canvas.toBlob(async (blob) => {
-          if (!blob) return
-          const reader = new FileReader()
-          reader.onload = async (e) => {
-            const dataUrl = e.target?.result as string
-            const id = 'blk-' + Math.random().toString(16).substring(2, 6)
-            try {
-              const path = ds.get(uuid)?.path || ''
-              const asset = await SaveAsset(path, id, dataUrl)
-              const mdSrc = asset.externalRef
-
-              editor.chain()
-                .command(({ tr, state }) => {
-                  state.doc.descendants((node, pos) => {
-                    if (node.type.name === 'image' && (node.attrs.src === blobSrc || node.attrs.src === img.src)) {
-                      tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: mdSrc, id, detect: 'pending' })
-                    }
-                  })
-                  return true
-                })
-                .run()
-
-              if (tier === 'smart') {
-                DescribeImage(asset.externalRef).then((desc: stash.ImageDesc) => {
-                  if (!desc || !editor) return
-                  editor.commands.command(({ tr, state }) => {
-                    let found = false
-                    state.doc.descendants((node, pos) => {
-                      if (node.type.name === 'image' && node.attrs.id === id) {
-                        found = true
-                        if (node.attrs.detect !== 'user') {
-                          tr.setNodeMarkup(pos, null, { ...node.attrs, alt: desc.alt, summary: desc.summary, detect: 'cli' })
-                        }
-                        return false
-                      }
-                    })
-                    return found
-                  })
-                }).catch(console.error)
-              }
-            } catch (err) {
-              console.error('[EditorPanel] blob paste save failed', err)
-            }
-          }
-          reader.readAsDataURL(blob)
-        }, 'image/png')
-      }
-      image.src = blobSrc
-    }
-
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        for (const node of Array.from(mutation.addedNodes)) {
-          if (node instanceof HTMLImageElement) processImg(node)
-          else if (node instanceof Element) node.querySelectorAll('img').forEach(processImg)
-        }
-      }
-    })
-
-    observer.observe(editorEl, { childList: true, subtree: true })
-    return () => observer.disconnect()
-  }, [editor, mode, uuid, tier, ds])
+    return pasteService.initBlobInterceptor(editor, uuid)
+  }, [editor, mode, uuid, pasteService])
 
   useImperativeHandle(ref, () => ({
+    explain: () => runAiJob('explain'),
+    ask: (q) => runAiJob('ask', q),
+    getContextLabel,
     getEditor: () => editor,
     getMarkdown: () => editor?.storage.markdown.getMarkdown() || '',
     getSelection: () => editor?.state.selection || { from: 0, to: 0 },
@@ -419,7 +431,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
     setContent: (content: string) => {
       if (mode === 'markdown') {
         setRawMd(content)
-        ds.setBody(uuid, content)
+        dataService.setBody(uuid, content)
       } else {
         editor?.commands.setContent(content)
       }
@@ -443,22 +455,26 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
 
   if (mode === 'markdown') {
     return (
-      <textarea
-        id={`ta-${uuid}`}
-        spellCheck={true}
-        className="markdown-raw"
+      <MarkdownEditor
+        uuid={uuid}
         value={rawMd}
-        onChange={e => {
-          const val = e.target.value
+        isActive={isActive}
+        textareaRef={taRef}
+        onChange={(val) => {
+          if (val === lastSyncedBody.current) return
           setRawMd(val)
-          ds.setBody(uuid, val)
+          lastSyncedBody.current = val
+          dataService.setBody(uuid, val)
           if (saveTimer.current) clearTimeout(saveTimer.current)
-          saveTimer.current = setTimeout(() => ds.save(uuid).catch(console.error), autosaveMs)
+          const delay = autosaveMs || 3000
+          saveTimer.current = setTimeout(() => dataService.save(uuid).catch(console.error), delay)
         }}
-        placeholder="Raw markdown — Ctrl+Shift+M to return"
-        autoFocus={isActive}
-        autoComplete="off"
-        autoCorrect="off"
+        onExplain={() => runAiJob('explain')}
+        onAsk={() => {
+          const label = getContextLabel()
+          setAskContext({ contextLabel: label })
+          setShowAskPopup(true)
+        }}
       />
     )
   }
@@ -475,28 +491,19 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
         overflowY: 'auto' 
       }}
     >
-      {editor && (
-        <BubbleMenu
-          editor={editor}
-          shouldShow={({ editor }) => editor.isActive('link')}
-          tippyOptions={{ placement: 'bottom', onShow: () => setLinkUrl(editor.getAttributes('link').href ?? '') }}
-        >
-          <div className="link-bubble">
-            <input className="link-bubble__input" value={linkUrl}
-              onChange={e => setLinkUrl(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter') editor.chain().focus().extendMarkRange('link').setLink({ href: linkUrl }).run()
-                if (e.key === 'Escape') editor.chain().focus().run()
-              }}
-              placeholder="https://..." />
-            <button className="link-bubble__btn"
-              onClick={() => editor.chain().focus().extendMarkRange('link').setLink({ href: linkUrl }).run()}>Set</button>
-            <button className="link-bubble__btn link-bubble__btn--remove"
-              onClick={() => editor.chain().focus().extendMarkRange('link').unsetLink().run()}>Remove</button>
-          </div>
-        </BubbleMenu>
-      )}
+      {editor && <LinkBubbleMenu editor={editor} />}
       <EditorContent editor={editor} />
+      
+      {showAskPopup && askContext && (
+        <AskPopup
+          contextLabel={askContext.contextLabel}
+          onSend={(question) => {
+            runAiJob('ask', question)
+            setShowAskPopup(false)
+          }}
+          onClose={() => setShowAskPopup(false)}
+        />
+      )}
     </div>
   )
 })

@@ -27,7 +27,7 @@ var themes embed.FS
 type storeHandler struct{ app *App }
 
 func (h *storeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	const prefix = "/store/"
+	const prefix = "/stash/"
 	if !strings.HasPrefix(r.URL.Path, prefix) {
 		http.NotFound(w, r)
 		return

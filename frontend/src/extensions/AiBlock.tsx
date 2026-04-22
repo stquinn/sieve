@@ -2,47 +2,20 @@ import { Node, mergeAttributes } from '@tiptap/core'
 import { ReactNodeViewRenderer, NodeViewWrapper, NodeViewContent } from '@tiptap/react'
 
 /**
- * Custom block node for AI responses.
- *
- * In the editor the node renders as a styled container div via a React NodeView —
- * all content inside gets normal markdown styling without any padding/margin
- * interference from decoration classes on individual child nodes.
- *
- * In the store markdown file the node serializes as:
- *
- *   \[!ai\] id="ai-xxx" ref="doc"
- *
- *   Ask: question
- *
- *   Response content here...
- *
- *   \[!ai-end\]
- *
- * The markdown parser's updateDOM pass wraps the content between those markers
- * into a <div data-type="aiBlock"> before Tiptap's ProseMirror parser runs.
+ * Custom sub-node for the "Question" part of an AI block.
  */
-
-// Traverses the full chain of AI blocks connected to the hovered block.
-// data-ai-id / data-ai-ref are placed directly on .ai-block divs (not on the
-// outer ProseMirror wrapper) so queries are reliable regardless of how Tiptap
-// layers its wrapper elements.
-function gatherChain(startId: string, startRefs: string[]): Set<string> {
-  const ids = new Set<string>()
-
-  function visit(id: string) {
-    if (!id || id === 'doc' || ids.has(id)) return
-    ids.add(id)
-    // Follow refs downward only — source blocks and any AI blocks they chain to
-    const el = document.querySelector(`.ai-block[data-ai-id="${id}"]`)
-    if (el) {
-      el.getAttribute('data-ai-ref')?.split(',').forEach(r => visit(r.trim()))
-    }
-  }
-
-  visit(startId)
-  startRefs.forEach(visit)
-  return ids
-}
+export const AiQuestion = Node.create({
+  name: 'aiQuestion',
+  group: 'block',
+  content: 'block+',
+  selectable: false,
+  parseHTML() {
+    return [{ tag: 'div[data-type="aiQuestion"]' }]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'aiQuestion', class: 'ai-question' }), 0]
+  },
+})
 
 function AiBlockView({ node }: any) {
   const applyChain = (action: 'add' | 'remove') => {
@@ -78,10 +51,25 @@ function AiBlockView({ node }: any) {
   )
 }
 
+function gatherChain(startId: string, startRefs: string[]): Set<string> {
+  const ids = new Set<string>()
+  function visit(id: string) {
+    if (!id || id === 'doc' || ids.has(id)) return
+    ids.add(id)
+    const el = document.querySelector(`.ai-block[data-ai-id="${id}"]`)
+    if (el) {
+      el.getAttribute('data-ai-ref')?.split(',').forEach(r => visit(r.trim()))
+    }
+  }
+  visit(startId)
+  startRefs.forEach(visit)
+  return ids
+}
+
 export const AiBlock = Node.create({
   name: 'aiBlock',
   group: 'block',
-  content: 'block+',
+  content: '(aiQuestion | block)+', // Allow aiQuestion as the first block
   defining: true,
 
   addAttributes() {
@@ -125,8 +113,6 @@ export const AiBlock = Node.create({
         },
         parse: {
           updateDOM(element: HTMLElement) {
-            // Repeatedly scan for [!ai]...[!ai-end] paragraph pairs and wrap
-            // their content in a <div data-type="aiBlock"> for Tiptap to parse.
             let changed = true
             while (changed) {
               changed = false
@@ -138,7 +124,6 @@ export const AiBlock = Node.create({
                 const text = (child.textContent ?? '').trim()
                 if (!text.startsWith('[!ai]') || text.startsWith('[!ai-end]')) continue
 
-                // Find matching [!ai-end] paragraph.
                 let endIdx = -1
                 for (let j = i + 1; j < children.length; j++) {
                   if (
@@ -159,14 +144,26 @@ export const AiBlock = Node.create({
                 wrapper.setAttribute('data-id', idMatch?.[1] ?? '')
                 wrapper.setAttribute('data-ref', refMatch?.[1] ?? 'doc')
 
-                // Move content nodes (between header and end marker) into wrapper.
+                // Move content nodes into wrapper.
                 for (let k = i + 1; k < endIdx; k++) {
                   wrapper.appendChild(children[k])
                 }
 
+                // Heuristic: Wrap the first N paragraphs starting with "Ask: " into an aiQuestion
+                const wrapperChildren = Array.from(wrapper.children) as HTMLElement[]
+                if (wrapperChildren.length > 0 && (wrapperChildren[0].textContent ?? '').startsWith('Ask: ')) {
+                  const qWrapper = document.createElement('div')
+                  qWrapper.setAttribute('data-type', 'aiQuestion')
+                  
+                  // Move only the first child for now (simple heuristic)
+                  // In the editor, we will generate the full multi-line aiQuestion node explicitly.
+                  qWrapper.appendChild(wrapperChildren[0])
+                  wrapper.insertBefore(qWrapper, wrapper.firstChild)
+                }
+
                 element.insertBefore(wrapper, child)
-                child.remove()             // remove [!ai] header paragraph
-                children[endIdx].remove()  // remove [!ai-end] paragraph
+                child.remove()
+                children[endIdx].remove()
 
                 changed = true
                 break

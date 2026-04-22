@@ -1,15 +1,16 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { SearchStore } from '../../wailsjs/go/main/App'
 import { stash } from '../../wailsjs/go/models'
 import { Search, X, FileText } from 'lucide-react'
+import type { StorableDataService } from '../lib/StorableDataService'
 
 interface Props {
   width: number
   onOpen: (path: string) => void
   onClose: () => void
+  dataService: StorableDataService
 }
 
-export function StoreSearch({ width, onOpen, onClose }: Props) {
+export function StoreSearch({ width, onOpen, onClose, dataService }: Props) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<stash.SearchResult[]>([])
   const [isSearching, setIsSearching] = useState(false)
@@ -31,7 +32,7 @@ export function StoreSearch({ width, onOpen, onClose }: Props) {
 
     setIsSearching(true)
     debounceRef.current = setTimeout(() => {
-      SearchStore(query).then(res => {
+      dataService.searchStore(query).then(res => {
         setResults(res || [])
         setIsSearching(false)
       }).catch(console.error)

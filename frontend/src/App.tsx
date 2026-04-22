@@ -2,12 +2,10 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import './lib/SmartStorables'
 import { EditorPanel, EditorPanelHandle } from './components/EditorPanel'
 import { main, stash } from '../wailsjs/go/models'
-import { StorableDataService } from './lib/StorableDataService'
+// Backend service imports moved to line 19-25 block
 import { 
-  DiscardBuffer, FileBuffer, FileBufferWithName, GetNotes, GetSession, 
-  GetStoreInfo, LoadBuffer, NewBuffer, RefileNote, SaveBuffer, 
-  SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, 
-  ShowInFiles, EvaluateBuffer, GetPrompts, TogglePrompts, DeletePrompt
+  GetSession, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, 
+  ShowInFiles, TogglePrompts, SelectVault, InitVault
 } from '../wailsjs/go/main/App'
 import { BrowserOpenURL, EventsOn } from '../wailsjs/runtime/runtime'
 import { TabBar } from './components/TabBar'
@@ -17,14 +15,13 @@ import { MetaPanel } from './components/MetaPanel'
 import { StoreSearch } from './components/StoreSearch'
 import { QuickSwitcher } from './components/QuickSwitcher'
 import { TimeoutPopup } from './components/TimeoutPopup'
-import { AskPopup } from './components/AskPopup'
 import { TabState, UserIntent } from './types'
 import { ConfirmModal, PromptModal } from './components/Modal'
 import { X } from 'lucide-react'
 import { EditorStats } from './components/EditorStats'
-import { useNoteOperations } from './hooks/useNoteOperations'
-import { useAiGestures } from './hooks/useAiGestures'
 import { useAppLifecycle } from './hooks/useAppLifecycle'
+import { StorableDataService } from './lib/StorableDataService'
+import { AiService } from './lib/AiService'
 import { getAncestorPaths, getLocalISOString, applyFilingRecToMeta } from './lib/fmUtils'
 import './App.css'
 
@@ -51,13 +48,12 @@ export default function App() {
   const [searchTerm, setSearchTerm]         = useState('')
   const [notes, setNotes]         = useState<NoteEntry[]>([])
   const [prompts, setPrompts]     = useState<PromptEntry[]>([])
-  const [timeoutPopup, setTimeoutPopup] = useState<{ path: string; suggestedName: string } | null>(null)
-  const [showAskPopup, setShowAskPopup] = useState(false)
   const [tick, setTick]                 = useState(0)
   const [storeInfo, setStoreInfo] = useState<{ root: string; themeName: string; } | null>(null)
   const [openFolders, setOpenFolders] = useState<Set<string>>(new Set())
   
-  const ds = useRef(new StorableDataService(() => setTick(t => t + 1)))
+  const dataService = useRef(new StorableDataService(() => setTick(t => t + 1)))
+  const aiService   = useRef(new AiService(dataService.current, () => setTick(t => t + 1)))
   const editorRefs = useRef<Map<string, EditorPanelHandle>>(new Map())
   const activeTab = tabs[activeIdx]
   const isMarkdownMode = activeTab?.mode === 'markdown'
@@ -68,13 +64,12 @@ export default function App() {
   useEffect(() => {
     const next = new Map<string, string>()
     tabs.forEach(t => {
-      const path = ds.current.get(t.uuid)?.path
+      const path = dataService.current.get(t.uuid)?.path
       if (path) next.set(t.uuid, path)
     })
     uuidToPath.current = next
   }, [tabs, tick])
 
-  const askContextRef = useRef<{ content: string; blockRef: string; history: string; contextLabel: string; imagePaths: string[] } | null>(null)
   const autosaveMs                = useRef(30_000)
   const cliTimeoutLongMs          = useRef(60_000)
   const sidebarWidthRef           = useRef(240)
@@ -83,389 +78,288 @@ export default function App() {
   const tabsRef                  = useRef<TabState[]>([])
   const activeIdxRef             = useRef(0)
   const tierRef                  = useRef<'dumb' | 'smart'>('dumb')
-  const evaluatingUuids          = useRef<Set<string>>(new Set())
-  const pendingAiCount           = useRef(0)
-  const evalStartTimes           = useRef<Record<string, number>>({})
-  const saveTimer                = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => { tabsRef.current = tabs }, [tabs])
   useEffect(() => { activeIdxRef.current = activeIdx }, [activeIdx])
   useEffect(() => { tierRef.current = tier }, [tier])
 
-  const flush = useCallback(async () => {
-    if (!activeTab) return
-    if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null }
-    await ds.current.save(activeTab.uuid).catch(console.error)
-  }, [activeTab])
-
-  const flushRef = useRef(flush)
-  useEffect(() => { flushRef.current = flush }, [flush])
-
   const selectTab = (idx: number) => {
     if (idx === activeIdx) return
     setActiveIdx(idx)
+    persistSession({ activeIdx: idx })
   }
 
   const newTab = async () => {
     try {
-      const dto = await NewBuffer()
-      ds.current.set(dto.uuid, dto)
+      const doc = await dataService.current.create()
       const tab: TabState = {
-        uuid: dto.uuid,
+        uuid: doc.id,
         mode: 'wysiwyg',
       }
-      setTabs(prev => [...prev, tab])
-      setActiveIdx(tabs.length)
+      setTabs(prev => {
+        const next = [...prev, tab]
+        setActiveIdx(next.length - 1)
+        persistSession({ tabs: next.map((t, i) => ({ 
+          id: t.uuid, 
+          path: dataService.current.get(t.uuid)?.path || '',
+          active: i === next.length - 1,
+          mode: t.mode
+        })) as any, activeIdx: next.length - 1 })
+        return next
+      })
     } catch (e) {
       console.error('[App] newTab failed', e)
     }
   }
 
-  const closeTab = async (idx: number) => {
-    const tab = tabs[idx]
+  // smartFileClose is handled via AiService now, see evaluateDocument calls in EditorPanel
+  const smartFileClose = async (idx: number) => {
+    const currentTabs = tabsRef.current
+    const tab = currentTabs[idx]
     if (!tab) return
+
+    const doc = dataService.current.get(tab.uuid)
+    const isBuffer = doc instanceof main.BufferDTO
     
-    const doc = ds.current.get(tab.uuid)
-    const isDirty = doc?.isModified
-    const path = doc?.path
-
-    if (isDirty && path && !tab.isVirtual) {
-      // Capture mode for potential restore before eviction
-      const originalMode = tab.mode
-      // Immediate UI close, followed by background filing
-      const newTabs = tabs.filter((_, i) => i !== idx)
-      setTabs(newTabs)
-      if (newTabs.length === 0) {
-        await newTab()
-      } else {
-        const newIdx = Math.min(idx, newTabs.length - 1)
-        setActiveIdx(newIdx)
-      }
-      noteOps.handleSmartFile(path, originalMode)
-    } else {
-      // Immediate close for clean or virtual tabs
-      const newTabs = tabs.filter((_, i) => i !== idx)
-      if (newTabs.length === 0) {
-        await newTab()
-      } else {
-        const newIdx = Math.min(idx, newTabs.length - 1)
-        setTabs(newTabs)
-        setActiveIdx(newIdx)
-      }
-    }
-  }
-
-  const closeAllTabs = async () => {
-    for (const t of tabs) {
-      await ds.current.save(t.uuid).catch(console.error)
-    }
-    const dto = await NewBuffer()
-    ds.current.set(dto.uuid, dto)
-    const tab: TabState = {
-      uuid: dto.uuid,
-      mode: 'wysiwyg',
-    }
-    setTabs([tab])
-    setActiveIdx(0)
-  }
-
-  const reorderTab = (oldIdx: number, newIdx: number) => {
-    const next = [...tabs]
-    const [moved] = next.splice(oldIdx, 1)
-    next.splice(newIdx, 0, moved)
-    setTabs(next)
-    if (activeIdx === oldIdx) setActiveIdx(newIdx)
-    else if (activeIdx > oldIdx && activeIdx <= newIdx) setActiveIdx(activeIdx - 1)
-    else if (activeIdx < oldIdx && activeIdx >= newIdx) setActiveIdx(activeIdx + 1)
-  }
-
-  const toggleMode = () => {
-    if (!activeTab) return
-    const newMode = isMarkdownMode ? 'wysiwyg' : 'markdown'
-    setTabs(prev => prev.map((t, i) => i === activeIdx ? { ...t, mode: newMode } : t))
-  }
-
-  const setTabIntent = (uuid: string, intent: UserIntent) => {
-    ds.current.setIntent(uuid, intent)
-  }
-
-  const isContentEmpty = (html: string) => {
-    if (!html) return true
-    const stripped = html.replace(/<[^>]*>/g, '').trim()
-    return stripped === ''
-  }
-
-  const runBackgroundEval = async (uuid: string, path: string, fileAfter: boolean, allowDiscard: boolean = true, originalMode?: 'wysiwyg' | 'markdown') => {
-    if (ds.current.getTransient(uuid).isWaitingAI) return
+    // 1. Calculate new state immediately
+    const nextTabs = currentTabs.filter((_, i) => i !== idx)
+    const nextIdx = Math.max(0, Math.min(idx, nextTabs.length - 1))
     
-    ds.current.setTransient(uuid, { isWaitingAI: true, aiJobName: fileAfter ? 'Filing' : 'Metadata' })
-    evaluatingUuids.current.add(uuid)
-    pendingAiCount.current++
-    setTick(t => t + 1)
+    // 2. Commit UI state
+    setTabs(nextTabs)
+    setActiveIdx(nextIdx)
+    persistSession({ 
+      activeIdx: nextIdx, 
+      tabs: nextTabs.map((t, i) => ({
+        id: t.uuid,
+        path: dataService.current.get(t.uuid)?.path || '',
+        active: i === nextIdx,
+        mode: t.mode
+      })) as any 
+    })
+
+    // 3. Trigger Smart Logic if needed (Background)
+    if (doc?.isModified || isBuffer) {
+      console.log('[stash:ai] Closing active buffer/modified doc, triggering evaluation.')
+      aiService.current.evaluateDocument(tab.uuid, true, true, {
+        onComplete: (jobId) => console.log('[stash:ai] Close-evaluation complete', jobId),
+        onError: (jobId, err) => console.error('[stash:ai] Close-evaluation error', jobId, err)
+      })
+    }
+  }
+
+  const toggleFolder = (path: string) => {
+    const next = new Set(openFolders)
+    if (next.has(path)) next.delete(path)
+    else next.add(path)
+    setOpenFolders(next)
+    persistSession({ openFolders: Array.from(next) })
+  }
+
+  const renameOpenFolder = (oldPath: string, newPath: string) => {
+    const next = new Set(openFolders)
+    if (next.has(oldPath)) {
+      next.delete(oldPath)
+      next.add(newPath)
+      setOpenFolders(next)
+      persistSession({ openFolders: Array.from(next) })
+    }
+  }
+
+  // Persistence guard: prevents overwriting saved session with empty initial state on launch
+  const persistSession = async (overrides?: Partial<stash.Session>) => {
+    if (!ready) return
+
+    const session: stash.Session = {
+      activeIdx,
+      tabs: tabs.map((t, i) => ({ 
+        id: t.uuid, 
+        path: dataService.current.get(t.uuid)?.path || '',
+        active: i === activeIdx,
+        mode: t.mode
+      })) as any,
+      sidebarWidth,
+      metaWidth,
+      promptsHeight,
+      showSidebar,
+      showMeta,
+      showPrompts,
+      openFolders: Array.from(openFolders),
+      ...overrides
+    } as stash.Session
+    await SaveSession(session).catch(console.error)
+  }
+
+  const openNote = async (path: string) => {
+    const existingIdx = tabs.findIndex(t => dataService.current.get(t.uuid)?.path === path)
+    if (existingIdx !== -1) {
+      selectTab(existingIdx)
+      return
+    }
 
     try {
-      // Save buffer first so AI reads the latest content from disk
-      await ds.current.save(uuid).catch(console.error)
-
-      const dto = await ds.current.load(path)
-      const body = dto.body || ''
-      const userIntent = dto.meta?.userIntent
-
-      // Silent Drop: If empty and no explicit keep intent, discard immediately
-      if (fileAfter && isContentEmpty(body) && userIntent !== 'keep') {
-        console.log('[stash:ai] Silent drop: empty buffer', { path })
-        await DiscardBuffer(path)
-        setTabs(prev => prev.filter(t => t.uuid !== uuid))
-        await GetNotes().then(res => setNotes(res || []))
-        return
-      }
-
-      const rec = await EvaluateBuffer(path)
-
-      if (fileAfter && (userIntent === 'trash' || (rec && !rec.keep && userIntent !== 'keep' && allowDiscard))) {
-        await DiscardBuffer(path)
-        // Ensure tab is gone (usually already handled by closeTab)
-        setTabs(prev => prev.filter(t => t.uuid !== uuid))
-        await GetNotes().then(res => setNotes(res || []))
-        return
-      }
-
-      const info = await GetStoreInfo()
-      const updatedMeta = applyFilingRecToMeta(dto.meta!, rec, info.cli)
-      ds.current.setMeta(uuid, { ...updatedMeta, aiEval: 'complete', aiLastEvaluated: getLocalISOString() })
-
-      if (fileAfter) {
-        if (dto.meta?.status === 'filed') {
-          await RefileNote(ds.current.get(uuid) as any)
-        } else {
-          await ds.current.save(uuid)
-          await FileBuffer(path)
-        }
-        await GetNotes().then(res => setNotes(res || []))
-        // Success: ensure tab is gone (usually done, but defensive)
-        setTabs(prev => prev.filter(t => t.uuid !== uuid))
-      } else {
-        await ds.current.save(uuid)
-      }
-    } catch (err) {
-      console.error('[stash:ai] background eval failed', err)
-      if (fileAfter && originalMode) {
-        console.warn('[stash:ai] Restoring tab due to eval failure', { uuid, path })
-        setTabs(prev => {
-          if (prev.find(t => t.uuid === uuid)) return prev
-          return [...prev, { uuid, mode: originalMode }]
-        })
-      }
-    } finally {
-      ds.current.setTransient(uuid, { isWaitingAI: false })
-      evaluatingUuids.current.delete(uuid)
-      pendingAiCount.current--
-      setTick(t => t + 1)
+      const doc = await dataService.current.load(path)
+      const tab: TabState = { uuid: doc.id, mode: 'wysiwyg' }
+      const nextTabs = [...tabs, tab]
+      setTabs(nextTabs)
+      setActiveIdx(nextTabs.length - 1)
+      persistSession({ tabs: nextTabs.map((t, i) => ({ 
+        id: t.uuid, 
+        path: dataService.current.get(t.uuid)?.path || '',
+        active: i === nextTabs.length - 1,
+        mode: t.mode
+      })) as any, activeIdx: nextTabs.length - 1 })
+    } catch (e) {
+      console.error('[App] openNote failed', e)
     }
   }
 
-  const persistSession = async (overrides?: Partial<stash.Session>) => {
-    const session = {
-      activeIdx: overrides?.activeIdx ?? activeIdx,
-      tabs: tabs.map((t, i) => ({
-        id: t.uuid,
-        path: ds.current.get(t.uuid)?.path || '',
-        active: i === activeIdx,
-        mode: t.mode,
-        scroll: ds.current.get(t.uuid)?.meta?.scroll || 0
-      })) as any,
-      showSidebar: overrides?.showSidebar ?? showSidebar,
-      showMeta: overrides?.showMeta ?? showMeta,
-      showPrompts: overrides?.showPrompts ?? showPrompts,
-      sidebarWidth: overrides?.sidebarWidth ?? sidebarWidth,
-      metaWidth: overrides?.metaWidth ?? metaWidth,
-      promptsHeight: overrides?.promptsHeight ?? promptsHeight,
-      openFolders: Array.from(openFolders)
-    }
-    await SaveSession(session as any).catch(console.error)
-  }
-
-  const persistSessionRef = useRef(persistSession)
-  useLayoutEffect(() => { persistSessionRef.current = persistSession }, [persistSession])
-
-  const H = useRef<{
+  const handlers = useRef<{
     newTab: () => Promise<void>
     closeTab: () => Promise<void>
-    closeAllTabs: () => Promise<void>
-    closeAllBuffers: () => Promise<void>
-    flush: () => Promise<void>
-    forceFile: () => void
     smartSave: () => Promise<void>
-    reEval: () => void
     toggleMode: () => void
-    explain: () => void
-    ask: () => void
-    editPrompt: (name: string) => void
     smartFile: () => void
+    smartMetadata: () => void
     keepAndSmartFile: () => Promise<void>
   }>({
     newTab,
-    closeTab: () => closeTab(activeIdx),
-    closeAllTabs,
-    closeAllBuffers: closeAllTabs,
-    flush,
-    forceFile: () => {},
-    smartSave: async () => { await ds.current.save(activeTab?.uuid ?? '').catch(console.error) },
-    reEval: () => {},
-    toggleMode,
-    explain: () => {},
-    ask: () => {},
-    editPrompt: (name: string) => {},
-    smartFile: () => {},
-    keepAndSmartFile: async () => {}
-  })
-
-  // Hook initializations moved AFTER isMarkdownMode/activeTab are defined
-  const noteOps = useNoteOperations({
-    tabs, activeIdx, activeTab, 
-    tier, prompts,
-    tabsRef,
-    setTabs, setActiveIdx, setNotes, setPrompts,
-    setConfirmModal, setPromptModal,
-    selectTab, flush,
-    runBackgroundEval: (uuid, path, fileAfter, allowDiscard) => runBackgroundEval(uuid, path, fileAfter, allowDiscard),
-    setTabIntent,
-    ds: ds.current,
-  })
-
-  const aiGestures = useAiGestures({
-    tier,
-    activeTab, tabsRef, 
-    uuidToPath,
-    pendingAiCount, evalStartTimes, askContextRef,
-    setTabs, setShowAskPopup,
-    ds: ds.current,
-    getEditor: (uuid) => editorRefs.current.get(uuid)
-  })
-
-  // Final wrap-up of H ref handlers
-  useLayoutEffect(() => {
-    H.current = {
-      newTab,
-      closeTab: () => closeTab(activeIdx),
-      closeAllTabs,
-      closeAllBuffers: closeAllTabs,
-      flush,
-      forceFile: () => {},
-      smartSave: async () => { await ds.current.save(activeTab?.uuid ?? '').catch(console.error) },
-      reEval: () => {
-        const path = ds.current.get(activeTab?.uuid!)?.path
-        if (path) noteOps.handleSmartMetadata(path)
-      },
-      toggleMode,
-      explain: aiGestures.explainGesture,
-      ask: aiGestures.askGesture,
-      editPrompt: noteOps.onEditPrompt,
-      smartFile: () => {
-        const path = ds.current.get(activeTab?.uuid!)?.path
-        if (path) noteOps.handleSmartFile(path)
-      },
-      keepAndSmartFile: async () => {
-        if (!activeTab) return
-        ds.current.setIntent(activeTab.uuid, 'keep')
-        const path = ds.current.get(activeTab.uuid)?.path
-        if (path) noteOps.handleSmartFile(path)
-      }
+    closeTab: () => smartFileClose(activeIdxRef.current),
+    smartSave: async () => {
+      const uuid = tabsRef.current[activeIdxRef.current]?.uuid
+      if (uuid) await dataService.current.save(uuid).catch(console.error)
+    },
+    toggleMode: () => {
+      const idx = activeIdxRef.current
+      const tab = tabsRef.current[idx]
+      if (!tab) return
+      const newMode = tab.mode === 'wysiwyg' ? 'markdown' : 'wysiwyg'
+      setTabs(prev => prev.map((t, i) => i === idx ? { ...t, mode: newMode } : t))
+    },
+    smartFile: () => {
+      const uuid = tabsRef.current[activeIdxRef.current]?.uuid
+      if (uuid) aiService.current.smartFile(uuid)
+    },
+    smartMetadata: () => {
+      const uuid = tabsRef.current[activeIdxRef.current]?.uuid
+      if (uuid) aiService.current.smartMetadata(uuid)
+    },
+    keepAndSmartFile: async () => {
+      const uuid = tabsRef.current[activeIdxRef.current]?.uuid
+      if (uuid) aiService.current.keepAndFile(uuid)
     }
-  }, [activeTab, activeIdx, tabs, aiGestures, noteOps])
+  })
+
+
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase()
-      if (e.ctrlKey && key === 'n') { e.preventDefault(); H.current.newTab() }
-      if (e.ctrlKey && key === 'w') { e.preventDefault(); H.current.closeTab() }
-      if (e.ctrlKey && key === 's') { e.preventDefault(); H.current.smartSave() }
-      if (e.ctrlKey && e.shiftKey && key === 'm') { e.preventDefault(); H.current.toggleMode() }
-      // AI Shortcuts refined by user feedback
-      if (e.ctrlKey && !e.shiftKey && key === 'e') { 
-        e.preventDefault(); H.current.explain() 
-      }
-      if (e.ctrlKey && e.shiftKey && key === 'e') { 
-        e.preventDefault(); H.current.smartFile() 
-      }
-      if (e.ctrlKey && e.shiftKey && key === 'a') { 
-        e.preventDefault(); H.current.ask() 
-      }
-      if (e.ctrlKey && e.shiftKey && key === 'enter') { 
-        e.preventDefault(); H.current.keepAndSmartFile() 
-      }
-      if (e.ctrlKey && key === 'p' && !e.shiftKey) { e.preventDefault(); setShowQuickSwitch(v => !v) }
-      if (e.ctrlKey && e.shiftKey && key === 'p') { 
+      console.log(`[stash:key] ${e.ctrlKey?'Ctrl+':''}${e.shiftKey?'Shift+':''}${key} (code: ${e.code}, kc: ${e.keyCode})`)
+
+      if (e.ctrlKey && key === 'n') { e.preventDefault(); handlers.current.newTab() }
+      if (e.ctrlKey && (key === 'w' || e.code === 'KeyW')) { 
         e.preventDefault(); 
-        setShowPrompts(prev => { const next = !prev; persistSessionRef.current({ showPrompts: next }); return next; })
+        e.stopImmediatePropagation();
+        handlers.current.closeTab(); 
       }
-      if (e.ctrlKey && key === '\\') { 
+      if (e.ctrlKey && key === 's') { e.preventDefault(); handlers.current.smartSave() }
+      if (e.ctrlKey && e.shiftKey && key === 'm') { e.preventDefault(); handlers.current.toggleMode() }
+      if (e.ctrlKey && (key === 'p' || e.code === 'KeyP') && !e.shiftKey) { e.preventDefault(); setShowQuickSwitch(v => !v) }
+      if (e.ctrlKey && e.shiftKey && (key === 'p' || e.code === 'KeyP')) { 
         e.preventDefault(); 
-        setShowSidebar(prev => { const next = !prev; persistSessionRef.current({ showSidebar: next }); return next; })
+        setShowPrompts(prev => !prev)
       }
-      if (e.ctrlKey && e.shiftKey && key === 'i') { 
+      if (e.ctrlKey && (key === '\\' || e.code === 'Backslash')) { 
         e.preventDefault(); 
-        setShowMeta(prev => { const next = !prev; persistSessionRef.current({ showMeta: next }); return next; })
+        setShowSidebar(prev => !prev)
       }
-      if (e.ctrlKey && key === '/') { e.preventDefault(); setShowHelp(v => !v) }
-      if (e.ctrlKey && !e.shiftKey && key === 'f') { e.preventDefault(); setShowSearch(v => !v) }
+      if (e.ctrlKey && e.shiftKey && (key === 'i' || e.code === 'KeyI')) { 
+        e.preventDefault(); 
+        setShowMeta(prev => !prev)
+      }
+      if (e.ctrlKey && (key === '/' || key === '?' || e.code === 'Slash' || e.keyCode === 191)) { 
+        e.preventDefault(); 
+        e.stopImmediatePropagation();
+        console.log('[stash:ui] Toggling Help Modal...');
+        setShowHelp(v => !v) 
+      }
+      if (e.ctrlKey && key === 'f' && !e.shiftKey) { e.preventDefault(); setShowSearch(v => !v) }
       if (e.ctrlKey && e.shiftKey && key === 'f') { 
         e.preventDefault(); 
         setSidebarMode('search'); 
         setShowSidebar(true); 
-        persistSessionRef.current({ showSidebar: true }) 
+      }
+
+      // AI Gestures (Globalized for focus-independence)
+      if (e.ctrlKey && e.shiftKey && key === 'e') { 
+        e.preventDefault(); 
+        handlers.current.smartFile(); 
+      }
+      if (e.ctrlKey && e.shiftKey && key === 'enter') { 
+        e.preventDefault(); 
+        handlers.current.keepAndSmartFile(); 
       }
     }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    window.addEventListener('keydown', onKeyDown, { capture: true })
+    return () => window.removeEventListener('keydown', onKeyDown, { capture: true })
   }, [])
 
   useEffect(() => {
-    GetStoreInfo().then(info => {
+    dataService.current.getStoreInfo().then(info => {
+      console.log('[App] Store Info loaded:', info)
       setStoreInfo(info)
-      setTier(info.tier === 1 ? 'dumb' : 'smart')
+      tierRef.current = (info.tier === 2 ? 'smart' : 'dumb') as any
+      setTier((info.tier === 2 ? 'smart' : 'dumb') as any)
+      //settings are in seconds convert to milliseconds
+      cliTimeoutLongMs.current = info.cliTimeoutLong * 1000 || 20000
+      autosaveMs.current = info.autosaveDebounce * 1000 || 30000
+      
+      console.log('[App] Initializing session...')
       GetSession().then(async session => {
-        if (session.tabs?.length) {
-          const st = (session.tabs as any[])
-            .map(t => ({ uuid: t.uuid, mode: t.mode || 'wysiwyg' } as TabState))
-            .filter(t => typeof t.uuid === 'string' && t.uuid.length > 0)
-          
-          if (st.length > 0) {
-            setTabs(st)
-            setActiveIdx(Math.max(0, (session.tabs as any[]).findIndex(t => t.active)))
+        try {
+          setPromptsHeight(session.promptsHeight || 180)
+          promptsHeightRef.current = session.promptsHeight || 180
+          if (session.tabs?.length) {
+            console.log('[App] Restoring tabs:', session.tabs.length)
+            const st = (session.tabs as any[])
+              .map(t => ({ uuid: t.id || t.uuid, mode: t.mode || 'wysiwyg' } as TabState))
             
-            for (const t of session.tabs as any[]) {
-              if (!t.uuid || !t.path) continue
-              try {
-                if (t.path.startsWith('prompt:')) {
-                  // Prompt tabs are loaded via the frontend LoadPrompt path, not LoadBuffer
-                  await ds.current.load(t.path)
-                } else {
-                  const dto = await LoadBuffer(t.path)
-                  ds.current.set(t.uuid, dto)
+            if (st.length > 0) {
+              setTabs(st)
+              const restoredIdx = session.activeIdx !== undefined ? session.activeIdx : (session.tabs as any[]).findIndex((t: any) => t.active)
+              setActiveIdx(Math.max(0, Math.min(restoredIdx, st.length - 1)))
+              
+              await Promise.all((session.tabs as any[]).map(async t => {
+                const uuid = t.id || t.uuid
+                try {
+                  if (!uuid) return
+                  if (!dataService.current.get(uuid)) {
+                    await dataService.current.load(t.path)
+                  }
+                } catch (e) {
+                  console.error('[App] restore: failed to load tab', t.path, e)
                 }
-              } catch (e) {
-                console.warn('[App] session restore: failed to load tab', t.path, e)
-              }
+              }))
             }
-          } else {
-            await newTab()
           }
-        } else {
-          await newTab()
+          if (session.openFolders) setOpenFolders(new Set(session.openFolders))
+          if (session.showSidebar !== undefined) setShowSidebar(session.showSidebar)
+          if (session.showMeta !== undefined) setShowMeta(session.showMeta)
+          if (session.showPrompts !== undefined) setShowPrompts(session.showPrompts)
+          if (session.sidebarWidth) { setSidebarWidth(session.sidebarWidth); sidebarWidthRef.current = session.sidebarWidth }
+          if (session.metaWidth) { setMetaWidth(session.metaWidth); metaWidthRef.current = session.metaWidth }
+          if (session.promptsHeight) { setPromptsHeight(session.promptsHeight); promptsHeightRef.current = session.promptsHeight }
+        } catch (e) {
+          console.error('[App] Critical failure during session restoration:', e)
+        } finally {
+          console.log('[App] Startup complete, setting ready.')
+          setReady(true)
         }
-        if (session.openFolders) setOpenFolders(new Set(session.openFolders))
-        if (session.showSidebar !== undefined) setShowSidebar(session.showSidebar)
-        if (session.showMeta !== undefined) setShowMeta(session.showMeta)
-        if (session.showPrompts !== undefined) setShowPrompts(session.showPrompts)
-        if (session.sidebarWidth) { setSidebarWidth(session.sidebarWidth); sidebarWidthRef.current = session.sidebarWidth }
-        if (session.metaWidth) { setMetaWidth(session.metaWidth); metaWidthRef.current = session.metaWidth }
-        if (session.promptsHeight) { setPromptsHeight(session.promptsHeight); promptsHeightRef.current = session.promptsHeight }
-        setReady(true)
       })
     })
-    const fNotes = () => GetNotes().then(res => setNotes(res || []))
-    const fPrompts = () => GetPrompts().then(res => setPrompts(res || []))
+    const fNotes = () => dataService.current.getNotes().then(res => setNotes(res || []))
+    const fPrompts = () => dataService.current.getPrompts().then(res => setPrompts(res || []))
     fNotes(); fPrompts()
     const u1 = EventsOn('notes:changed', fNotes)
     const u2 = EventsOn('prompts:changed', fPrompts)
@@ -473,28 +367,35 @@ export default function App() {
   }, [])
 
   const onRestorePrompt = async (name: string) => {
-    await DeletePrompt(name)
-    await GetPrompts().then(setPrompts)
-    // Hot-reload open tab if it exists
+    await dataService.current.deletePrompt(name)
+    await dataService.current.getPrompts().then(setPrompts)
     const path = `prompt:${name}`
     const entry = tabs.find(t => uuidToPath.current.get(t.uuid) === path)
     if (entry) {
-      await ds.current.evict(entry.uuid)
-      await ds.current.load(path)
+      await dataService.current.evict(entry.uuid)
+      await dataService.current.load(path)
       setTick(t => t + 1)
     }
   }
 
   useAppLifecycle({
-    activeIdx, tabs, tabsRef, activeIdxRef,
-    tierRef, evaluatingUuids, pendingAiCount, cliTimeoutLongMs,
-    flushRef, focusTimer,
-    persistSession, persistSessionRef, setPendingClose,
-    ds: ds.current,
+    activeIdx,
+    tabs,
+    tabsRef,
+    activeIdxRef,
+    tierRef,
+    cliTimeoutLongMs,
+    focusTimer,
+    persistSession,
+    setPendingClose,
+    dataService: dataService.current,
+    aiService: aiService.current
   })
 
   useEffect(() => {
-    const path = ds.current.get(activeTab?.uuid!)?.path
+    if (!activeTab?.uuid) return
+    const doc = dataService.current.get(activeTab.uuid)
+    const path = doc?.path
     if (!path) return
     const ancestors = getAncestorPaths(path)
     if (ancestors.length > 0) {
@@ -512,51 +413,63 @@ export default function App() {
   if (!ready) return <div className="loading-screen" />
 
   if (!storeInfo?.root) {
-    return (
-      <div className="bootstrap-screen">
-        <h1>Welcome to Stash</h1>
-        <p>Specify where your notes should live.</p>
-        <input type="text" placeholder="Enter absolute path" id="manual-path-input" />
-        <button onClick={() => {
-          const el = document.getElementById('manual-path-input') as HTMLInputElement
-          if (el?.value) {
-            import('../wailsjs/go/main/App').then(m => m.InitVault(el.value)).then(() => window.location.reload())
-          }
-        }}>Get Started</button>
-      </div>
-    )
+     return (
+       <div className="bootstrap-screen">
+         <h1>Welcome to Stash</h1>
+         <p>Select a folder to use as your Store.</p>
+         <button onClick={async () => {
+           const path = await SelectVault()
+           if (path) {
+             await InitVault(path)
+             window.location.reload()
+           }
+         }}>Initialize Store</button>
+       </div>
+     )
   }
 
+  console.log('[App] Rendering main UI. Tabs:', tabs.length, 'ActiveIdx:', activeIdx)
+
   return (
-    <div id="app-root" className={`theme-${storeInfo?.themeName || 'default'}`} style={{ '--sidebar-w': showSidebar ? `${sidebarWidth + 4}px` : '0px' } as React.CSSProperties}>
+    <div 
+      id="app-root" 
+      className={`theme-${storeInfo.themeName || 'default'} tier-${tier}`}
+      style={{ 
+        '--sidebar-w': `${showSidebar ? sidebarWidth : 0}px`,
+        '--meta-w': `${showMeta ? metaWidth : 0}px`
+      } as any}
+    >
       {showSidebar && (
         <>
           {sidebarMode === 'files' ? (
             <Sidebar
+              dataService={dataService.current}
+              aiService={aiService.current}
               entries={notes}
-              openPaths={new Set(tabs.map(t => ds.current.get(t.uuid)?.path).filter(Boolean) as string[])}
+              activePath={activeTab ? dataService.current.get(activeTab.uuid)?.path : undefined}
+              openPaths={new Set(tabs.map(t => dataService.current.get(t.uuid)?.path).filter(Boolean) as string[])}
               openFolders={openFolders}
-              onToggleFolder={path => setOpenFolders(prev => {
-                const next = new Set(prev)
-                if (next.has(path)) { next.delete(path) } else { next.add(path) }
-                return next
-              })}
-              activePath={ds.current.get(activeTab?.uuid!)?.path}
-              onOpen={noteOps.openNote}
-              onShowInFiles={p => ShowInFiles(p)}
-              onSmartFile={noteOps.handleSmartFile}
-              onSmartMetadata={noteOps.handleSmartMetadata}
-              onDelete={noteOps.handleDeleteNote}
-              onMove={noteOps.handleMoveNote}
-              onSetIntent={noteOps.handleSetIntentByPath}
-              onCreateFolder={noteOps.handleCreateFolder}
-              onDeleteFolder={noteOps.handleDeleteFolder}
-              onRename={noteOps.handleRename}
+              onToggleFolder={toggleFolder}
+              onRenameFolder={renameOpenFolder}
+              onOpen={openNote}
+              setConfirmModal={setConfirmModal}
+              setPromptModal={setPromptModal}
               width={sidebarWidth}
               showPrompts={showPrompts && tier === 'smart'}
               prompts={prompts}
-              onEditPrompt={noteOps.onEditPrompt}
-              onRestorePrompt={onRestorePrompt}
+              onEditPrompt={async (name) => {
+                const uuid = `prompt:${name}`
+                const existingIdx = tabs.findIndex(t => t.uuid === uuid)
+                if (existingIdx !== -1) {
+                  selectTab(existingIdx)
+                  return
+                }
+                const doc = await dataService.current.load(`prompt:${name}`)
+                const tab: TabState = { uuid: doc.id, mode: 'markdown' }
+                const nextTabs = [...tabs, tab]
+                setTabs(nextTabs)
+                setActiveIdx(nextTabs.length - 1)
+              }}
               promptsHeight={promptsHeight}
               onPromptsResize={h => { 
                 setPromptsHeight(h); 
@@ -564,12 +477,15 @@ export default function App() {
                 SavePromptsHeight(h);
                 persistSession({ promptsHeight: h }); 
               }}
+              setNotes={setNotes}
+              setPrompts={setPrompts}
             />
           ) : (
             <StoreSearch
               width={sidebarWidth}
-              onOpen={p => { noteOps.openNote(p); setSidebarMode('files') }}
+              onOpen={p => { openNote(p); setSidebarMode('files') }}
               onClose={() => setSidebarMode('files')}
+              dataService={dataService.current}
             />
           )}
           <div className={`sidebar-handle ${isDragging ? 'dragging' : ''}`} onMouseDown={e => {
@@ -595,20 +511,42 @@ export default function App() {
         <TabBar
           tabs={tabs}
           activeIdx={activeIdx}
-          ds={ds.current}
+          dataService={dataService.current}
+          aiService={aiService.current}
           onSelect={selectTab}
-          onClose={closeTab}
+          onClose={smartFileClose}
           onNew={newTab}
           onHelp={() => setShowHelp(v => !v)}
-          onSetIntent={setTabIntent}
-          onRename={noteOps.handleRename}
-          onReorder={reorderTab}
-          onShowInFiles={p => ShowInFiles(p)}
-          onSmartFile={noteOps.handleSmartFile}
-          onSmartMetadata={noteOps.handleSmartMetadata}
-          onDelete={noteOps.handleDeleteNote}
-          onRestorePrompt={noteOps.onRestorePrompt}
-          onCloseAll={closeAllTabs}
+          onSetIntent={(uuid, intent) => dataService.current.setIntent(uuid, intent)}
+          onReorder={(oldIdx, newIdx) => {
+            const next = [...tabs]
+            const [moved] = next.splice(oldIdx, 1)
+            next.splice(newIdx, 0, moved)
+            setTabs(next)
+            let finalIdx = activeIdx
+            if (activeIdx === oldIdx) finalIdx = newIdx
+            else if (activeIdx > oldIdx && activeIdx <= newIdx) finalIdx = activeIdx - 1
+            else if (activeIdx < oldIdx && activeIdx >= newIdx) finalIdx = activeIdx + 1
+            setActiveIdx(finalIdx)
+            persistSession({ activeIdx: finalIdx, tabs: next.map((t, i) => ({
+              id: t.uuid,
+              path: dataService.current.get(t.uuid)?.path || '',
+              active: i === finalIdx,
+              mode: t.mode
+            })) as any })
+          }}
+          onCloseAll={async () => {
+             for (const t of tabs) {
+               await dataService.current.save(t.uuid).catch(console.error)
+             }
+             const doc = await dataService.current.create()
+             const tab: TabState = { uuid: doc.id, mode: 'wysiwyg' }
+             setTabs([tab])
+             setActiveIdx(0)
+             persistSession({ activeIdx: 0, tabs: [{ id: doc.id, path: doc.path, active: true, mode: 'wysiwyg' }] as any })
+          }}
+          setConfirmModal={setConfirmModal}
+          setPromptModal={setPromptModal}
         />
 
         {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
@@ -618,39 +556,56 @@ export default function App() {
         <QuickSwitcher
           isOpen={showQuickSwitch}
           onClose={() => setShowQuickSwitch(false)}
-          onSelect={noteOps.openNote}
+          onSelect={openNote}
           tabs={tabs.map(t => {
-            const doc = ds.current.get(t.uuid)
+            const doc = dataService.current.get(t.uuid)
             return {
               uuid: t.uuid,
               mode: t.mode,
               path: doc?.path || t.uuid,
               status: doc?.meta?.status as any,
               isEvaluating: doc?.meta?.status === 'evaluating',
-              isWaitingAI: ds.current.getTransient(t.uuid).isWaitingAI
+              isWaitingAI: dataService.current.getTransient(t.uuid).isWaitingAI
             }
           })}
           notesTree={notes}
         />
 
-        <div id="editor-area">
-          {showSearch && activeTab && (
+        <div className="editor-area">
+           {showSearch && activeTab && (
             <div className="search-bar">
-              <input autoFocus className="search-bar__input" placeholder="Find in note..." value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
+              <input 
+                autoFocus 
+                className="search-bar__input" 
+                placeholder="Find in note..." 
+                value={searchTerm}
+                onChange={e => {
+                  const val = e.target.value
+                  setSearchTerm(val)
+                  const uuid = tabsRef.current[activeIdxRef.current]?.uuid
+                  const editor = uuid ? editorRefs.current.get(uuid) : null
+                  if (editor) editor.setSearchTerm(val)
+                }}
                 onKeyDown={e => {
-                  if (e.key === 'Escape') setShowSearch(false)
-                  if (e.key === 'Enter') {
-                    const ed = editorRefs.current.get(activeTab.uuid)?.getEditor()
-                    if (e.shiftKey) ed?.commands.prevSearchResult()
-                    else ed?.commands.nextSearchResult()
+                  if (e.key === 'Escape') {
+                    setShowSearch(false)
+                    setSearchTerm('')
+                    const uuid = tabsRef.current[activeIdxRef.current]?.uuid
+                    const editor = uuid ? editorRefs.current.get(uuid) : null
+                    if (editor) editor.clearSearch()
                   }
                 }} />
-              <button onClick={() => setShowSearch(false)}><X size={16} /></button>
+              <button onClick={() => {
+                setShowSearch(false)
+                setSearchTerm('')
+                const uuid = tabsRef.current[activeIdxRef.current]?.uuid
+                const editor = uuid ? editorRefs.current.get(uuid) : null
+                if (editor) editor.clearSearch()
+              }}><X size={16} /></button>
             </div>
           )}
 
-          <div id="editor-wrapper">
+          <div id="app" className="editor-wrapper">
             {tabs.filter(t => typeof t.uuid === 'string' && t.uuid.length > 0).map((t, i) => (
               <div 
                 key={t.uuid} 
@@ -660,10 +615,11 @@ export default function App() {
                   ref={ref => { if (ref) editorRefs.current.set(t.uuid, ref); else editorRefs.current.delete(t.uuid) }}
                   uuid={t.uuid}
                   mode={t.mode}
-                  ds={ds.current}
+                  dataService={dataService.current}
                   isActive={i === activeIdx}
                   tick={tick}
                   tier={tier}
+                  aiService={aiService.current}
                   autosaveMs={autosaveMs.current}
                 />
               </div>
@@ -690,52 +646,54 @@ export default function App() {
               }} />
               <MetaPanel
                 key={activeTab.uuid}
-                meta={ds.current.get(activeTab.uuid)?.meta ?? null}
-                versions={ds.current.get(activeTab.uuid)?.versions ?? []}
-                path={ds.current.get(activeTab.uuid)?.path ?? ''}
+                meta={dataService.current.get(activeTab.uuid)?.meta ?? null}
+                versions={dataService.current.get(activeTab.uuid)?.versions ?? []}
+                path={dataService.current.get(activeTab.uuid)?.path ?? ''}
                 width={metaWidth}
-                isModified={ds.current.get(activeTab.uuid)?.isModified ?? false}
-                isEvaluating={ds.current.get(activeTab.uuid)?.meta?.status === 'evaluating'}
-                isWaitingAI={ds.current.getTransient(activeTab.uuid).isWaitingAI}
+                isModified={dataService.current.get(activeTab.uuid)?.isModified ?? false}
+                isEvaluating={dataService.current.get(activeTab.uuid)?.meta?.status === 'evaluating'}
+                isWaitingAI={dataService.current.getTransient(activeTab.uuid).isWaitingAI}
+                dataService={dataService.current}
                 onRestoreRequested={async body => {
-                  if (activeTab.mode === 'wysiwyg') {
-                    editorRefs.current.get(activeTab.uuid)?.setContent(body)
-                  }
-                  ds.current.setBody(activeTab.uuid, body)
-                  await ds.current.save(activeTab.uuid)
+                  dataService.current.setBody(activeTab.uuid, body)
+                }}
+                onSetIntent={(i: UserIntent) => dataService.current.setIntent(activeTab.uuid, i)}
+                onSave={async () => {
+                  await dataService.current.save(activeTab.uuid)
                 }}
               />
             </>
           )}
         </div>
-
         <div className="status-bar">
           <div className="status-bar__left">
-            {tabs.filter(t => ds.current.get(t.uuid)?.meta?.status === 'evaluating' || ds.current.getTransient(t.uuid).isWaitingAI).map(t => (
+            {/* Context-specific tab spinners */}
+            {tabs.filter(t => dataService.current.get(t.uuid)?.meta?.status === 'evaluating' || dataService.current.getTransient(t.uuid).isWaitingAI).map(t => (
               <div key={t.uuid} className="status-bar__item">
                 <span className="status-bar__spinner" />
-                <span className="status-bar__task">AI Processing</span>
-                <span className="status-bar__note">{ds.current.get(t.uuid)?.meta?.displayName || 'note'}</span>
+                {dataService.current.getTransient(t.uuid).aiJobName || 'AI'}...
               </div>
             ))}
+            
+            {/* Global Background Job Count (for tasks whose tabs might be closed) */}
+            {aiService.current.getPendingCount() > 0 && (
+               <div className="status-bar__item status-bar__global-ai">
+                 <span className="status-bar__spinner" />
+                 {aiService.current.getPendingCount()} background task{aiService.current.getPendingCount() > 1 ? 's' : ''}...
+               </div>
+            )}
           </div>
           <div className="status-bar__right">
-             <EditorStats 
-               editor={activeTab ? (editorRefs.current.get(activeTab.uuid)?.getEditor() || null) : null} 
-               isMarkdownMode={activeTab?.mode === 'markdown'} 
-               rawMd={activeTab ? (ds.current.get(activeTab.uuid)?.body || '') : ''} 
-             />
+            {activeTab && (
+              <EditorStats 
+                editor={editorRefs.current.get(activeTab.uuid)?.getEditor() || null} 
+                isMarkdownMode={activeTab.mode === 'markdown'} 
+                rawMd={dataService.current.get(activeTab.uuid)?.body || ''} 
+              />
+            )}
           </div>
         </div>
       </div>
-
-      {showAskPopup && askContextRef.current && (
-        <AskPopup
-          contextLabel={askContextRef.current.contextLabel}
-          onSend={aiGestures.handleAskSend}
-          onClose={() => setShowAskPopup(false)}
-        />
-      )}
 
       {pendingClose && (
         <div className="pending-close-backdrop">

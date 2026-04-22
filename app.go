@@ -584,18 +584,7 @@ func (a *App) GetSession() stash.Session {
 	}
 	session.Tabs = live
 
-	if len(session.Tabs) == 0 {
-		b, err := a.buffers.New()
-		if err != nil {
-			logger.Error("new buffer failed", "err", err)
-			return stash.Session{}
-		}
-		logger.Info("session: no tabs — created default buffer", "path", b.Path(), "uuid", b.UUID())
-		session.Tabs = []stash.Tab{{Path: b.Path(), Active: true, Mode: "wysiwyg"}}
-		if err := a.state.SaveSession(session); err != nil {
-			logger.Error("session save failed", "err", err)
-		}
-	} else {
+	if len(session.Tabs) > 0 {
 		hasActive := false
 		for _, t := range session.Tabs {
 			if t.Active {
@@ -655,9 +644,9 @@ func (a *App) NewBuffer() (BufferDTO, error) {
 // Tries BufferService first; falls back to NoteService so routing is not
 // coupled to the path prefix convention of any particular Store implementation.
 // The returned Body is pure markdown — frontmatter is never included.
-func (a *App) LoadBuffer(path string) (BufferDTO, error) {
+func (a *App) LoadBuffer(path string) (interface{}, error) {
 	if a.buffers == nil {
-		return BufferDTO{}, fmt.Errorf("store not open")
+		return nil, fmt.Errorf("store not open")
 	}
 	if b, err := a.buffers.Load(path); err == nil {
 		logger.Debug("buffer loaded", "path", path)
@@ -666,47 +655,47 @@ func (a *App) LoadBuffer(path string) (BufferDTO, error) {
 	n, err := a.notes.Load(path)
 	if err != nil {
 		logger.Error("LoadBuffer: not found in buffers or notes", "path", path, "err", err)
-		return BufferDTO{}, err
+		return nil, err
 	}
 	logger.Debug("note loaded via LoadBuffer", "path", path)
-	return toNoteBufferDTO(n), nil
+	return toNoteDTO(n), nil
 }
 
 // SaveBuffer persists the body and writable meta fields from dto. The Store
 // bumps the version and modified timestamp automatically. Returns the updated
 // DTO with Store-stamped fields reflecting the saved state.
 // Routes by dto.Meta.Status: "filed" → NoteService, anything else → BufferService.
-func (a *App) SaveBuffer(dto BufferDTO) (BufferDTO, error) {
+func (a *App) SaveBuffer(dto BufferDTO) (interface{}, error) {
 	if a.buffers == nil {
-		return BufferDTO{}, fmt.Errorf("store not open")
+		return nil, fmt.Errorf("store not open")
 	}
 	if dto.Meta.Status == "filed" {
 		n, err := a.notes.Load(dto.Path)
 		if err != nil {
 			logger.Error("SaveBuffer(note): load failed", "path", dto.Path, "err", err)
-			return BufferDTO{}, err
+			return nil, err
 		}
 		n.SetBody([]byte(dto.Body))
 		applyDTOToMeta(dto.Meta, n.Meta())
 		saved, err := a.notes.Save(n)
 		if err != nil {
 			logger.Error("SaveBuffer(note): save failed", "path", dto.Path, "err", err)
-			return BufferDTO{}, err
+			return nil, err
 		}
 		logger.Debug("note saved via SaveBuffer", "path", dto.Path)
-		return toNoteBufferDTO(saved), nil
+		return toNoteDTO(saved), nil
 	}
 	b, err := a.buffers.Load(dto.Path)
 	if err != nil {
 		logger.Error("SaveBuffer: load failed", "path", dto.Path, "err", err)
-		return BufferDTO{}, err
+		return nil, err
 	}
 	b.SetBody([]byte(dto.Body))
 	applyDTOToMeta(dto.Meta, b.Meta())
 	saved, err := a.buffers.Save(b)
 	if err != nil {
 		logger.Error("SaveBuffer: save failed", "path", dto.Path, "err", err)
-		return BufferDTO{}, err
+		return nil, err
 	}
 	logger.Debug("buffer saved", "path", dto.Path)
 	return toBufferDTO(saved), nil
@@ -716,27 +705,27 @@ func (a *App) SaveBuffer(dto BufferDTO) (BufferDTO, error) {
 // metadata to a Library note: saves the updated meta, then renames/moves the
 // note within the Library based on the filename and folder fields.
 // Used when the user runs "Smart File" on a note that is already filed.
-func (a *App) RefileNote(dto BufferDTO) (BufferDTO, error) {
+func (a *App) RefileNote(dto BufferDTO) (NoteDTO, error) {
 	if a.notes == nil {
-		return BufferDTO{}, fmt.Errorf("store not open")
+		return NoteDTO{}, fmt.Errorf("store not open")
 	}
 	n, err := a.notes.Load(dto.Path)
 	if err != nil {
-		return BufferDTO{}, fmt.Errorf("refile: load %s: %w", dto.Path, err)
+		return NoteDTO{}, fmt.Errorf("refile: load %s: %w", dto.Path, err)
 	}
 	n.SetBody([]byte(dto.Body))
 	applyDTOToMeta(dto.Meta, n.Meta())
 	// Save updated metadata first so Refile derives the correct name.
 	saved, err := a.notes.Save(n)
 	if err != nil {
-		return BufferDTO{}, fmt.Errorf("refile: save %s: %w", dto.Path, err)
+		return NoteDTO{}, fmt.Errorf("refile: save %s: %w", dto.Path, err)
 	}
 	refiled, err := a.notes.Refile(saved)
 	if err != nil {
-		return BufferDTO{}, fmt.Errorf("refile: rename %s: %w", dto.Path, err)
+		return NoteDTO{}, fmt.Errorf("refile: rename %s: %w", dto.Path, err)
 	}
 	logger.Info("note refiled", "from", dto.Path, "to", refiled.Path())
-	return toNoteBufferDTO(refiled), nil
+	return toNoteDTO(refiled), nil
 }
 
 // DiscardBuffer deletes a buffer and its version history.

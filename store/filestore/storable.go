@@ -7,11 +7,12 @@ import "stash/store"
 // All fields are stamped by FileStore at creation time and are immutable
 // after the Storable is returned to the caller.
 type fileStorable struct {
-	key      string
-	category store.Category
-	body     []byte
-	extRef   string
-	versions []store.VersionRef
+	key        string
+	category   store.Category
+	body       []byte
+	extRef     string
+	versions   []store.VersionRef
+	isModified bool
 }
 
 func (s *fileStorable) Key() string                  { return s.key }
@@ -19,6 +20,7 @@ func (s *fileStorable) Category() store.Category     { return s.category }
 func (s *fileStorable) Body() []byte                 { return s.body }
 func (s *fileStorable) ExternalRef() string          { return s.extRef }
 func (s *fileStorable) Versions() []store.VersionRef { return s.versions }
+func (s *fileStorable) IsModified() bool             { return s.isModified }
 
 // fileMetaStorable extends fileStorable with a structured metadata map.
 // It satisfies store.MetaStorable.
@@ -33,11 +35,11 @@ type fileMetaStorable struct {
 }
 
 func (s *fileMetaStorable) Meta() map[string]string     { return s.meta }
-func (s *fileMetaStorable) SetBody(body []byte)         { s.body = body }
-func (s *fileMetaStorable) SetMeta(m map[string]string) { s.meta = m }
+func (s *fileMetaStorable) SetBody(body []byte)         { s.body = body; s.isModified = true }
+func (s *fileMetaStorable) SetMeta(m map[string]string) { s.meta = m; s.isModified = true }
 func (s *fileMetaStorable) Owns() []store.Storable             { return s.owns }
-func (s *fileMetaStorable) AttachAsset(a store.Storable)       { s.owns = append(s.owns, a) }
-func (s *fileMetaStorable) ClearOwns()                         { s.owns = nil }
+func (s *fileMetaStorable) AttachAsset(a store.Storable)       { s.owns = append(s.owns, a); s.isModified = true }
+func (s *fileMetaStorable) ClearOwns()                         { s.owns = nil; s.isModified = true }
 
 // fileAssetStorable extends fileStorable for binary content such as images.
 // Encoding is inferred by FileStore at Create time from magic bytes — never
@@ -47,7 +49,7 @@ type fileAssetStorable struct {
 	fileStorable
 	encoding store.Encoding
 }
-
+ 
 func (s *fileAssetStorable) Encoding() store.Encoding { return s.encoding }
 
 // fileFolderStorable extends fileStorable for directory nodes in the ownership

@@ -120,6 +120,40 @@ textarea::selection {
   background: transparent !important;
 }
 
+/* Premium Image Tooltip */
+.node-image {
+  position: relative;
+}
+
+.node-image[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.95);
+  background: #000000;
+  color: #ffffff;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  max-width: 80%;
+  width: max-content;
+  z-index: 10000;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  border: 1px solid rgba(255,255,255,0.1);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+  text-align: center;
+}
+
+.node-image[data-tooltip]:hover::after {
+  opacity: 0.9;
+  transform: translate(-50%, -50%) scale(1);
+}
+
 /* ── Syntax highlighting (.hljs-* classes from lowlight/highlight.js) ─── */
 /* lowlight tokenises code and wraps spans in .hljs-<type>. No colours    */
 /* are applied by default — we map every meaningful class here.           */
@@ -450,6 +484,22 @@ textarea::selection {
 .tiptap > * + * { margin-top: 0.4em; }
 .tiptap p { margin: 0; }
 
+.markdown-editor {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  background: var(--theme-bg);
+  color: var(--theme-text);
+  font-family: var(--theme-monoFont);
+  font-size: 15px;
+  line-height: 1.6;
+  padding: 40px;
+  border: none;
+  resize: none;
+  outline: none;
+  box-sizing: border-box;
+}
+
 /* ── Headings ─────────────────────────────────────────────────────────── */
 
 .tiptap h1, .tiptap h2, .tiptap h3 {
@@ -595,14 +645,14 @@ div.node-image.ProseMirror-selectednode {
   font-family: var(--theme-monoFont);
 }
 
-/* Ask line — applied via AiBlockDecoration */
-.tiptap .ai-block-ask {
+/* Question area inside AI block — formal aiQuestion node */
+.tiptap .ai-question {
   color: var(--theme-textDim);
   font-style: italic;
   font-size: 0.93em;
   padding-bottom: 8px;
   border-bottom: 1px solid color-mix(in srgb, var(--theme-accentPrimary) 12%, transparent);
-  margin-bottom: 4px;
+  margin-bottom: 8px;
 }
 
 /* Inline code inside AI blocks */
@@ -695,7 +745,7 @@ div.node-image.ProseMirror-selectednode {
 
 /* ── Editor area (editor + meta panel side by side) ─────────────────── */
 
-#editor-area {
+.editor-area {
   display: flex;
   flex: 1;
   overflow: hidden;

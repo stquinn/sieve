@@ -6,21 +6,21 @@ interface Props {
 
 const SHORTCUTS = [
   { keys: ['Ctrl', 'N'],            desc: 'New tab' },
-  { keys: ['Ctrl', 'W'],            desc: 'Close tab' },
+  { keys: ['Ctrl', 'W'],            desc: 'Close tab (Smart close)' },
   { keys: ['Ctrl', 'P'],            desc: 'Quick switcher (files & tabs)' },
-  { keys: ['Ctrl', 'F'],            desc: 'Find in document' },
-  { keys: ['Ctrl', 'Shift', 'F'],   desc: 'Store-wide search' },
-  { keys: ['Ctrl', 'S'],            desc: 'Save & evaluate (AI fills metadata, stays unfiled)' },
-  { keys: ['Ctrl', 'Shift', '↵'],  desc: 'Save & file now (move buffer to notes)' },
-  { keys: ['Ctrl', 'E'],             desc: 'Explain selection or current buffer (smart mode)' },
-  { keys: ['Ctrl', 'Shift', 'A'],   desc: 'Ask about selection or buffer (smart mode)' },
-  { keys: ['Ctrl', 'Shift', 'E'],   desc: 'Smart Metadata (summary, tags, name)' },
-  { keys: ['Tab'],                  desc: 'Indent 4 spaces' },
-  { keys: ['Ctrl', 'Shift', 'M'],   desc: 'Toggle markdown / WYSIWYG mode' },
   { keys: ['Ctrl', '\\'],           desc: 'Toggle sidebar' },
-  { keys: ['Ctrl', 'Shift', 'P'],   desc: 'Toggle prompts section' },
-  { keys: ['Ctrl', 'Shift', 'I'],   desc: 'Toggle meta panel' },
-  { keys: ['Ctrl', '/'],            desc: 'Toggle this cheatsheet' },
+  { keys: ['Ctrl', 'Shift', 'P'],   desc: 'Toggle prompt templates section' },
+  { keys: ['Ctrl', 'Shift', 'I'],   desc: 'Toggle meta / info panel' },
+  { keys: ['Ctrl', 'Shift', 'M'],   desc: 'Toggle Markdown / WYSIWYG mode' },
+  { keys: ['Ctrl', 'F'],            desc: 'Find in current document' },
+  { keys: ['Ctrl', 'Shift', 'F'],   desc: 'Store-wide search' },
+  { keys: ['Ctrl', 'S'],            desc: 'Smart Save (AI summary & metadata, stays in Library)' },
+  { keys: ['Mod', 'Shift', 'Enter'],desc: 'Promote (Save & File immediately to Library)' },
+  { keys: ['Ctrl', 'Shift', 'E'],   desc: 'Smart Filing (Evaluate buffer & propose file path)' },
+  { keys: ['Ctrl', 'E'],            desc: 'Explain selection or current block / buffer' },
+  { keys: ['Ctrl', 'Shift', 'A'],   desc: 'Ask about selection or block / buffer' },
+  { keys: ['Tab'],                  desc: 'Indent text (4 spaces)' },
+  { keys: ['Ctrl', '/'],            desc: 'Toggle this cheat sheet' },
   { keys: ['Ctrl', 'Click'],        desc: 'Open link in browser' },
 ]
 
@@ -45,7 +45,7 @@ const MD_ROWS = [
 export function HelpModal({ onClose }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' || (e.ctrlKey && e.key === '/')) {
+      if (e.key === 'Escape') {
         e.preventDefault()
         onClose()
       }

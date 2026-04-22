@@ -2,20 +2,22 @@ import React, { useRef } from 'react'
 import { NodeViewWrapper } from '@tiptap/react'
 
 /**
- * Resolves a store-relative or markdown-relative image src to a /store/... display URL.
+ * Resolves a store-relative or markdown-relative image src to a /stash/... display URL.
  */
 function resolveDisplaySrc(src: string, activeTabPath: string): string {
   if (!src) return ''
   if (src.startsWith('http')) {
     return window.location.origin + '/stash-image-proxy?url=' + encodeURIComponent(src)
   }
-  if (src.startsWith('/store/') || src.startsWith('blob:') || src.startsWith('data:')) {
+  if (src.startsWith('blob:') || src.startsWith('data:') || src.startsWith('/')) {
     return src
   }
 
-  // New standard: Absolute store-root ExternalRefs
-  if (src.startsWith('store/') || src.includes('/buffers/')) {
-    return '/store/' + src
+  // Handle known store-relative prefixes by mapping to our /stash/ asset server.
+  // Note: the URL becomes /stash/PATH (e.g. /stash/store/.assets/img.png)
+  if (src.includes('dash/') || src.includes('store/') || src.startsWith('.assets/') || src.includes('/buffers/')) {
+    const cleanSrc = src.startsWith('/') ? src.substring(1) : src
+    return '/stash/' + cleanSrc
   }
 
   if (!activeTabPath) return src
@@ -28,11 +30,11 @@ function resolveDisplaySrc(src: string, activeTabPath: string): string {
     if (part === '..') { parts.pop() }
     else if (part !== '.') { parts.push(part) }
   }
-  return '/store/' + parts.join('/')
+  return '/stash/' + parts.join('/')
 }
 
 export function ImageNodeView({ node, updateAttributes, selected }: any) {
-  const { src, alt, title, width, height } = node.attrs
+  const { src, alt, title, width, height, summary } = node.attrs
   const imgRef = useRef<HTMLImageElement>(null)
 
   // Read synchronously from the global set by App.tsx during tab render
@@ -84,12 +86,17 @@ export function ImageNodeView({ node, updateAttributes, selected }: any) {
   }
 
   return (
-    <NodeViewWrapper as="div" className={`image-block node-image ${selected ? 'ProseMirror-selectednode' : ''}`} style={{ display: 'inline-block' }} data-block-id={node.attrs.id}>
+    <NodeViewWrapper 
+      as="div" 
+      className={`image-block node-image ${selected ? 'ProseMirror-selectednode' : ''}`} 
+      style={{ display: 'inline-block' }} 
+      data-block-id={node.attrs.id}
+      data-tooltip={summary || undefined}
+    >
       <img
         ref={imgRef}
         src={displaySrc}
         alt={alt ?? ''}
-        title={title ?? undefined}
         style={imgStyle}
       />
       <div className="image-resizer" onMouseDown={onMouseDown} />

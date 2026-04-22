@@ -3,43 +3,40 @@ import { forwardRef, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { TabState, UserIntent } from '../types'
 import { NoteContextMenu } from './NoteContextMenu'
 import { FileText } from 'lucide-react'
+import { StorableDataService } from '../lib/StorableDataService'
+import { AiService } from '../lib/AiService'
+import { ShowInFiles } from '../../wailsjs/go/main/App'
 
 interface TabBarProps {
   tabs: TabState[]
   activeIdx: number
-  ds: any
+  dataService: StorableDataService
+  aiService: AiService
   onSelect: (idx: number) => void
   onClose: (idx: number) => void
   onNew: () => void
   onHelp: () => void
   onSetIntent: (uuid: string, intent: UserIntent) => void
   onReorder: (from: number, to: number) => void
-  onShowInFiles: (path: string) => void
-  onSmartFile: (path: string) => void
-  onSmartMetadata: (path: string) => void
-  onDelete: (path: string) => void
-  onRename: (path: string, name: string, isDir: boolean) => void
-  onRestorePrompt: (name: string) => void
   onCloseAll: () => void
+  setConfirmModal: (m: any) => void
+  setPromptModal: (m: any) => void
 }
 
 export function TabBar({
   tabs,
   activeIdx,
-  ds,
+  dataService,
+  aiService,
   onSelect,
   onClose,
   onNew,
   onHelp,
   onSetIntent,
   onReorder,
-  onShowInFiles,
-  onSmartFile,
-  onSmartMetadata,
-  onDelete,
-  onRename,
-  onRestorePrompt,
-  onCloseAll
+  onCloseAll,
+  setConfirmModal,
+  setPromptModal
 }: TabBarProps) {
   const tabsAreaRef = useRef<HTMLDivElement>(null)
   const tabRefs = useRef<(HTMLDivElement | null)[]>([])
@@ -140,20 +137,53 @@ export function TabBar({
             <TabItem
               ref={el => { tabRefs.current[idx] = el }}
               tab={tab}
-              ds={ds}
+              dataService={dataService}
               active={idx === activeIdx}
               isDragging={dragIdx === idx}
               onSelect={() => onSelect(idx)}
               onClose={() => onClose(idx)}
               onSetIntent={intent => onSetIntent(tab.uuid, intent)}
-              onShowInFiles={() => onShowInFiles(ds.get(tab.uuid)?.path || '')}
-              onSmartFile={() => onSmartFile(ds.get(tab.uuid)?.path || '')}
-              onSmartMetadata={() => onSmartMetadata(ds.get(tab.uuid)?.path || '')}
-              onDelete={() => onDelete(ds.get(tab.uuid)?.path || '')}
-              onRename={() => onRename(ds.get(tab.uuid)?.path || '', tabLabel(tab, ds), false)}
+              onShowInFiles={() => ShowInFiles(dataService.get(tab.uuid)?.path || '')}
+              onSmartFile={() => aiService.smartFile(tab.uuid)}
+              onSmartMetadata={() => aiService.smartMetadata(tab.uuid)}
+              onDelete={() => {
+                const path = dataService.get(tab.uuid)?.path
+                setConfirmModal({
+                  title: 'Delete Note',
+                  message: `Are you sure you want to delete "${path?.split('/').pop()}"?`,
+                  isDestructive: true,
+                  onConfirm: async () => {
+                    setConfirmModal(null)
+                    onClose(idx) // Close the tab first
+                    await dataService.discard(tab.uuid)
+                  }
+                })
+              }}
+              onRename={() => {
+                const path = dataService.get(tab.uuid)?.path || ''
+                const currentName = path.split('/').pop() || ''
+                setPromptModal({
+                  title: 'Rename Note',
+                  message: `Enter new name for "${currentName}":`,
+                  initialValue: currentName.replace(/\.md$/, ''),
+                  onSubmit: async (newName: string) => {
+                    setPromptModal(null)
+                    if (!newName || newName === currentName) return
+                    const parentDir = path.substring(0, path.lastIndexOf('/'))
+                    const fileName = newName.endsWith('.md') ? newName : newName + '.md'
+                    const newPath = parentDir ? `${parentDir}/${fileName}` : fileName
+                    await dataService.rename(path, newPath, false)
+                  }
+                })
+              }}
               onCloseAll={onCloseAll}
               isVirtual={tab.isVirtual}
-              onRestore={onRestorePrompt ? () => onRestorePrompt((ds.get(tab.uuid)?.path || '').split(':').pop()!) : undefined}
+              onRestore={async () => {
+                const path = dataService.get(tab.uuid)?.path || ''
+                if (path.startsWith('prompt:')) {
+                  await dataService.deletePrompt(path.split(':').pop()!)
+                }
+              }}
               onDragStart={() => {
                 dragIdxRef.current = idx
                 setDragIdx(idx)
@@ -192,8 +222,8 @@ export function TabBar({
             <div className="absolute right-0 top-full mt-px z-50 bg-tn-bg-alt border border-solid border-white/20 rounded-md shadow-2xl py-1 min-w-[200px]">
               {tabs.slice(hiddenStart).map((tab: TabState, i: number) => {
                 const realIdx = hiddenStart + i
-                const doc = ds.get(tab.uuid)
-                const dot = tabDot(tab, ds)
+                const doc = dataService.get(tab.uuid)
+                const dot = tabDot(tab, dataService)
                 const isEvaluating = doc?.meta?.status === 'evaluating' // simplified
                 return (
                   <button
@@ -210,7 +240,7 @@ export function TabBar({
                       ? <span className="w-2 h-2 rounded-full border-2 border-solid border-tn-orange border-t-transparent animate-spin shrink-0" />
                       : dot ? <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', dot)} /> : null
                     }
-                    <span className="truncate">{tabLabel(tab, ds)}</span>
+                    <span className="truncate">{tabLabel(tab, dataService)}</span>
                   </button>
                 )
               })}
@@ -281,16 +311,16 @@ interface TabItemProps {
   onDrop: (e: React.DragEvent) => void
   onDragEnd: () => void
   onCloseAll: () => void
-  ds: any
+  dataService: any
 }
 
 const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
-  { tab, active, isDragging, ds, onSelect, onClose, onSetIntent, onShowInFiles, onSmartFile, onSmartMetadata, onDelete, onRename, isVirtual, onRestore, onDragStart, onDragOver, onDrop, onDragEnd, onCloseAll },
+  { tab, active, isDragging, dataService, onSelect, onClose, onSetIntent, onShowInFiles, onSmartFile, onSmartMetadata, onDelete, onRename, isVirtual, onRestore, onDragStart, onDragOver, onDrop, onDragEnd, onCloseAll },
   ref
 ) {
-  const doc = ds.get(tab.uuid)
+  const doc = dataService.get(tab.uuid)
   const meta = doc?.meta
-  const dot = tabDot(tab, ds)
+  const dot = tabDot(tab, dataService)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
 
   const tooltip = [
@@ -329,13 +359,13 @@ const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
             : 'bg-tn-bg-dark text-tn-text-dim hover:bg-tn-bg hover:text-tn-text border-t-2 border-t-transparent border-b-2 border-b-transparent -mb-[2px]',
         )}
       >
-        {(meta?.status === 'evaluating' || meta?.status === 'thinking' || ds.getTransient(tab.uuid).isWaitingAI)
+        {(meta?.status === 'evaluating' || meta?.status === 'thinking' || dataService.getTransient(tab.uuid).isWaitingAI)
           ? <span className="w-2 h-2 rounded-full border-2 border-solid border-tn-orange border-t-transparent animate-spin shrink-0" />
           : dot ? <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', dot)} /> 
           : <FileText className="w-3.5 h-3.5 opacity-40 shrink-0" />
         }
         <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap min-w-0 text-left">
-          {tabLabel(tab, ds)}
+          {tabLabel(tab, dataService)}
         </span>
         {tab.mode === 'markdown' && (
           <span className="text-[12px] text-tn-blue font-bold font-mono bg-tn-bg-alt px-1.5 rounded shrink-0">M</span>
@@ -382,8 +412,8 @@ const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function tabDot(tab: TabState, ds: any): string | null {
-  const doc = ds.get(tab.uuid)
+function tabDot(tab: TabState, dataService: any): string | null {
+  const doc = dataService.get(tab.uuid)
   const meta = doc?.meta
   if (!doc || (doc.body.trim().length === 0)) return null
   if (meta?.userIntent === 'trash') return 'bg-tn-red'
@@ -392,13 +422,14 @@ function tabDot(tab: TabState, ds: any): string | null {
   return doc.isModified ? 'bg-tn-orange' : null
 }
 
-function tabLabel(tab: TabState, ds: any): string {
-  const doc = ds.get(tab.uuid)
+function tabLabel(tab: TabState, dataService: any): string {
+  if (!tab) return 'Loading...'
+  const doc = dataService.get(tab.uuid)
   const meta = doc?.meta
   let label = meta?.displayName
   if (!label) {
-    const path = doc?.path || tab.uuid
-    const parts = path.replace(/\\/g, '/').split('/')
+    const path = doc?.path || tab.uuid || 'Untitled'
+    const parts = (path || '').replace(/\\/g, '/').split('/')
     label = parts[parts.length - 1].replace(/\.md$/, '')
   }
   return meta?.status === 'error' ? `⚠️ ${label}` : label

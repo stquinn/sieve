@@ -140,6 +140,16 @@ export function NoteContextMenu({ x, y, path, intent, onClose, onSetIntent, onDe
       <div className="my-1 border-0 border-t border-solid border-white/20" />
 
       <button
+        className="w-full bg-transparent border-none text-left px-3 py-1.5 text-[14px] text-tn-text hover:bg-tn-border hover:text-white transition-colors flex items-center gap-2"
+        onClick={() => { onShowInFiles(); onClose() }}
+      >
+        <FolderOpen className="w-4 h-4 opacity-70" />
+        Show in Files
+      </button>
+
+      <div className="my-1 border-0 border-t border-solid border-white/20" />
+
+      <button
         className={cn(
           "w-full bg-transparent border-none text-left px-3 py-1.5 text-[14px] text-tn-red transition-colors flex items-center gap-2",
           isDir && childCount! > 0 ? "opacity-30 cursor-not-allowed" : "hover:bg-tn-red hover:text-white"

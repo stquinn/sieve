@@ -1,10 +1,11 @@
 import { useEffect } from 'react'
 import type React from 'react'
-import { SaveBuffer, Quit as AppQuit } from '../../wailsjs/go/main/App'
+import { Quit as AppQuit } from '../../wailsjs/go/main/App'
 import { EventsOn, EventsOff, Quit } from '../../wailsjs/runtime/runtime'
 import type { TabState } from '../types'
 import type { main } from '../../wailsjs/go/models'
 import type { StorableDataService } from '../lib/StorableDataService'
+import type { AiService } from '../lib/AiService'
 
 interface UseAppLifecycleParams {
   activeIdx: number
@@ -12,16 +13,12 @@ interface UseAppLifecycleParams {
   tabsRef: React.MutableRefObject<TabState[]>
   activeIdxRef: React.MutableRefObject<number>
   tierRef: React.MutableRefObject<'dumb' | 'smart'>
-  evaluatingUuids: React.MutableRefObject<Set<string>>
-  pendingAiCount: React.MutableRefObject<number>
   cliTimeoutLongMs: React.MutableRefObject<number>
-  // Pass the ref, not the closure — app:closing fires long after render
-  flushRef: React.MutableRefObject<() => void>
   focusTimer: React.MutableRefObject<ReturnType<typeof setTimeout> | null>
   persistSession: () => Promise<void>
-  persistSessionRef: React.MutableRefObject<() => Promise<void>>
   setPendingClose: React.Dispatch<React.SetStateAction<boolean>>
-  ds: StorableDataService
+  dataService: StorableDataService
+  aiService: AiService
 }
 
 export function useAppLifecycle({
@@ -30,34 +27,28 @@ export function useAppLifecycle({
   tabsRef,
   activeIdxRef,
   tierRef,
-  evaluatingUuids,
-  pendingAiCount,
   cliTimeoutLongMs,
-  flushRef,
   focusTimer,
   persistSession,
-  persistSessionRef,
   setPendingClose,
-  ds,
+  dataService,
+  aiService,
 }: UseAppLifecycleParams) {
   // ── App close handler ──────────────────────────────────────────────────────
   useEffect(() => {
     const unlistenClosing = EventsOn('app:closing', async () => {
       console.log('[stash] shutdown: app:closing received, flushing state...')
 
-      await flushRef.current()
-
       const activeTabAtShutdown = tabsRef.current[activeIdxRef.current]
-      const otherTabs = tabsRef.current.filter(t => t.uuid !== activeTabAtShutdown?.uuid && !t.isVirtual)
-      if (otherTabs.length > 0) {
-        console.log('[stash] shutdown: flushing', otherTabs.length, 'background tab(s)...')
-        await Promise.all(otherTabs.map(async (t) => {
-          await ds.save(t.uuid).catch(console.error)
-        }))
-      }
+      const otherTabs = tabsRef.current.filter(t => t.uuid !== activeTabAtShutdown?.uuid)
+      
+      // Save all open tabs
+      await Promise.all(tabsRef.current.map(async (t) => {
+        await dataService.save(t.uuid).catch(console.error)
+      }))
 
       const doQuit = async () => {
-        await persistSessionRef.current()
+        await persistSession()
           .then(() => console.log('[stash] shutdown: session saved'))
           .catch(err => console.error('[stash] shutdown: save failed', err))
           .finally(() => {
@@ -69,7 +60,7 @@ export function useAppLifecycle({
           })
       }
 
-      const totalJobs = evaluatingUuids.current.size + pendingAiCount.current
+      const totalJobs = aiService.getPendingCount()
       if (totalJobs === 0) {
         doQuit()
         return
@@ -79,7 +70,7 @@ export function useAppLifecycle({
       setPendingClose(true)
       const deadline = Date.now() + cliTimeoutLongMs.current
       const poll = setInterval(() => {
-        const remaining = evaluatingUuids.current.size + pendingAiCount.current
+        const remaining = aiService.getPendingCount()
         if (remaining === 0 || Date.now() >= deadline) {
           clearInterval(poll)
           setPendingClose(false)
@@ -105,11 +96,11 @@ export function useAppLifecycle({
       const currentTab = tabsRef.current.find(t => t.uuid === uuid)
       if (!currentTab) return
       
-      const doc = ds.get(uuid)
+      const doc = dataService.get(uuid)
       if (!doc || !doc.meta) return
 
-      ds.setMeta(uuid, { ...doc.meta, focusCount: (doc.meta.focusCount ?? 0) + 1 })
-      ds.save(uuid).catch(console.error)
+      dataService.setMeta(uuid, { ...doc.meta, focusCount: (doc.meta.focusCount ?? 0) + 1 })
+      dataService.save(uuid).catch(console.error)
       console.debug('[stash] focus_count: incremented', { uuid, path: doc.path })
     }
 

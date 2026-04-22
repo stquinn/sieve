@@ -3,6 +3,11 @@ import { cn } from '@/lib/utils'
 import { NoteContextMenu } from './NoteContextMenu'
 import { UserIntent } from '../types'
 import { FolderPlus, Folder, FileText, ChevronRight, ChevronDown, X } from 'lucide-react'
+import { StorableDataService } from '../lib/StorableDataService'
+import { AiService } from '../lib/AiService'
+import { stash } from '../../wailsjs/go/models'
+import { ShowInFiles } from '../../wailsjs/go/main/App'
+import { AiListener } from '../lib/AiJob'
 
 // Mirrors stash.NoteEntry from Go
 export interface NoteEntry {
@@ -32,38 +37,146 @@ interface ContextMenuState {
   isVirtual?: boolean
 }
 
-export interface SidebarProps {
+interface SidebarProps {
+  dataService: StorableDataService
+  aiService: AiService
   entries: NoteEntry[]
   openPaths: Set<string>
   openFolders: Set<string>
   onToggleFolder: (path: string) => void
   activePath?: string
   onOpen: (path: string) => void
-  onShowInFiles: (path: string) => void
-  onSmartFile: (path: string) => void
-  onSmartMetadata: (path: string) => void
-  onDelete: (path: string) => void
-  onMove: (oldPath: string, newPath: string) => void
-  onSetIntent: (path: string, intent: UserIntent) => void
-  onCreateFolder: (parentPath: string) => void
-  onDeleteFolder: (path: string) => void
-  onRename: (path: string, name: string, isDir: boolean) => void
+  setConfirmModal: (modal: any) => void
+  setPromptModal: (modal: any) => void
   width: number
   showPrompts: boolean
   prompts: PromptEntry[]
   onEditPrompt: (name: string) => void
-  onRestorePrompt: (name: string) => void
   promptsHeight: number
   onPromptsResize: (height: number) => void
+  setNotes: (notes: NoteEntry[]) => void
+  setPrompts: (prompts: PromptEntry[]) => void
+  onRenameFolder?: (oldPath: string, newPath: string) => void
 }
 
 export function Sidebar({ 
-  entries, openPaths, openFolders, onToggleFolder, activePath, onOpen, onShowInFiles, onSmartFile, onSmartMetadata, onDelete, onMove, onSetIntent, onCreateFolder, onDeleteFolder, onRename, width,
-  showPrompts, prompts, onEditPrompt, onRestorePrompt, promptsHeight, onPromptsResize
+  dataService, aiService, entries, openPaths, openFolders, onToggleFolder, activePath, onOpen, 
+  setConfirmModal, setPromptModal, width, showPrompts, prompts, onEditPrompt, 
+  promptsHeight, onPromptsResize, setNotes, setPrompts, onRenameFolder
 }: SidebarProps) {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [isResizingPrompts, setIsResizingPrompts] = useState(false)
   const sidebarRef = useRef<HTMLDivElement>(null)
+
+  // ── Business Logic ──────────────────────────────────────────────────────────
+
+  const refreshNotes = () => dataService.getNotes().then(res => setNotes(res || [])).catch(console.error)
+  const refreshPrompts = () => dataService.getPrompts().then(res => setPrompts(res || [])).catch(console.error)
+
+  const handleSmartFile = async (path: string) => {
+    let uuid = dataService.findIdByPath(path)
+    if (!uuid) {
+      try {
+        const doc = await dataService.load(path)
+        uuid = doc.id
+      } catch (e) {
+        console.error(`[Sidebar] Failed to load ${path} for filing:`, e)
+        return
+      }
+    }
+    aiService.smartFile(uuid)
+  }
+
+  const handleSmartMetadata = async (path: string) => {
+    let uuid = dataService.findIdByPath(path)
+    if (!uuid) {
+      try {
+        const doc = await dataService.load(path)
+        uuid = doc.id
+      } catch (e) {
+        console.error(`[Sidebar] Failed to load ${path} for metadata:`, e)
+        return
+      }
+    }
+    aiService.smartMetadata(uuid)
+  }
+
+  const handleDelete = (path: string) => {
+    setConfirmModal({
+      title: 'Delete Note',
+      message: `Are you sure you want to delete "${path.split('/').pop()}"?`,
+      isDestructive: true,
+      onConfirm: async () => {
+        setConfirmModal(null)
+        try {
+          const uuid = dataService.findIdByPath(path)
+          if (uuid) await dataService.discard(uuid)
+          else {
+            // If not in registry, use a force discard by path if service allows 
+            // or load it first. For now, we assume it might be open.
+          }
+          refreshNotes()
+        } catch (e) { console.error(e) }
+      }
+    })
+  }
+
+  const handleRename = (path: string, currentName: string, isDir: boolean) => {
+    setPromptModal({
+      title: isDir ? 'Rename Folder' : 'Rename Note',
+      message: `Enter new name for "${currentName}":`,
+      initialValue: isDir ? currentName : currentName.replace(/\.md$/, ''),
+      onSubmit: async (newName: string) => {
+        setPromptModal(null)
+        if (!newName || newName === currentName) return
+        const parentDir = path.substring(0, path.lastIndexOf('/'))
+        const fileName = isDir ? newName : (newName.endsWith('.md') ? newName : newName + '.md')
+        const newPath = parentDir ? `${parentDir}/${fileName}` : fileName
+        try {
+          await dataService.rename(path, newPath, isDir)
+          if (isDir && onRenameFolder) {
+            onRenameFolder(path, newPath)
+          }
+          refreshNotes()
+        } catch (e) { console.error(e) }
+      }
+    })
+  }
+
+  const onSetIntent = async (path: string, intent: UserIntent) => {
+    const uuid = dataService.findIdByPath(path)
+    if (uuid) {
+      dataService.setIntent(uuid, intent)
+      await dataService.save(uuid)
+    }
+    refreshNotes()
+  }
+
+  const onCreateFolder = (parentPath: string) => {
+    setPromptModal({
+      title: 'New Folder',
+      message: `Create a new folder in ${parentPath || 'store'}:`,
+      onSubmit: async (name: string) => {
+        setPromptModal(null)
+        if (!name) return
+        const path = `${parentPath || 'store'}/${name}`.replace(/\/+/g, '/')
+        await dataService.createFolder(path)
+        refreshNotes()
+      }
+    })
+  }
+
+  const onRestorePrompt = async (name: string) => {
+    await dataService.deletePrompt(name)
+    refreshPrompts()
+  }
+
+  const onMove = async (oldPath: string, newPath: string) => {
+    await dataService.move(oldPath, newPath)
+    refreshNotes()
+  }
+
+  // ── Render ──────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!isResizingPrompts) return
@@ -191,11 +304,11 @@ export function Sidebar({
           path={contextMenu.path}
           intent={contextMenu.intent}
           onClose={() => setContextMenu(null)}
-          onShowInFiles={() => onShowInFiles(contextMenu.path)}
-          onSmartFile={() => onSmartFile(contextMenu.path)}
-          onSmartMetadata={() => onSmartMetadata(contextMenu.path)}
-          onDelete={() => contextMenu.isDir ? onDeleteFolder(contextMenu.path) : onDelete(contextMenu.path)}
-          onRename={() => onRename(contextMenu.path, contextMenu.path.split('/').pop() || '', !!contextMenu.isDir)}
+          onShowInFiles={() => ShowInFiles(contextMenu.path)}
+          onSmartFile={() => handleSmartFile(contextMenu.path)}
+          onSmartMetadata={() => handleSmartMetadata(contextMenu.path)}
+          onDelete={() => contextMenu.isDir ? handleDelete(contextMenu.path) : handleDelete(contextMenu.path)}
+          onRename={() => handleRename(contextMenu.path, contextMenu.path.split('/').pop() || '', !!contextMenu.isDir)}
           onSetIntent={intent => onSetIntent(contextMenu.path, intent)}
           isDir={contextMenu.isDir}
           childCount={contextMenu.childCount}

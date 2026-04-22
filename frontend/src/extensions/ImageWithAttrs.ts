@@ -34,7 +34,7 @@ export const ImageWithAttrs = Image.extend({
     }
   },
 
-  // Custom node view resolves relative markdown paths to /store/... display URLs.
+  // Custom node view resolves relative markdown paths to /stash/... display URLs.
   // The active tab path is kept in extension.storage.activeTabPath (updated by App.tsx).
   addNodeView() {
     return ReactNodeViewRenderer(ImageNodeView)

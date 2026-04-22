@@ -48,8 +48,8 @@ export function QuickSwitcher({ isOpen, onClose, onSelect, tabs, notesTree }: Qu
       .filter(t => t.status !== 'filed')
       .map(t => ({
         // Name is the basename without '.md' or '.tmp'
-        name: t.path.split('/').pop()?.replace('.md', '') || 'buffer',
-        path: t.path,
+        name: (t.path || '').split('/').pop()?.replace('.md', '') || 'buffer',
+        path: t.path || '',
         icon: 'buffer' as const,
         isOpen: true,
       }))

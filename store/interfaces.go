@@ -27,6 +27,10 @@ type Storable interface {
 	// Versions returns lightweight history refs ordered newest-first. Content
 	// is not included; call Store.RetrieveVersion to fetch a snapshot.
 	Versions() []VersionRef
+
+	// IsModified returns true if the storable has been changed in-place
+	// since creation or loading.
+	IsModified() bool
 }
 
 // MetaStorable extends Storable with structured metadata. Used for notes and
