@@ -185,6 +185,45 @@ func RefineLanguage(content string, settings Settings, promptTmpl string) (strin
 	return "", nil
 }
 
+// ApplyFilingRec applies a FilingRecommendation to DocumentMeta in place.
+// Only non-empty recommendation fields overwrite existing meta values; the
+// eval status and timestamp are always updated.
+func ApplyFilingRec(meta DocumentMeta, rec *FilingRecommendation, cli string) {
+	now := time.Now().Format("2006-01-02T15:04:05")
+	meta.SetAiEval("complete")
+	meta.SetAiLastEvaluated(&now)
+	keep := rec.Keep
+	meta.SetAiKeep(&keep)
+	if cli != "" {
+		meta.SetCLI(&cli)
+	}
+	if rec.Title != "" {
+		meta.SetDisplayName(rec.Title)
+	}
+	if rec.Filename != "" {
+		fn := rec.Filename
+		meta.SetFilename(&fn)
+	}
+	if rec.Folder != "" {
+		folder := rec.Folder
+		meta.SetAiFolderSuggestion(&folder)
+	}
+	if rec.Summary != "" {
+		s := rec.Summary
+		meta.SetSummary(&s)
+	}
+	if len(rec.Tags) > 0 {
+		meta.SetTags(rec.Tags)
+	}
+	if rec.AiJustification != "" {
+		j := rec.AiJustification
+		meta.SetAiJustification(&j)
+	}
+	if len(rec.DensitySignals) > 0 {
+		meta.SetDensitySignals(rec.DensitySignals)
+	}
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 func detectContentType(content string) string {

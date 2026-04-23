@@ -942,8 +942,13 @@ div.node-image.ProseMirror-selectednode {
   flex: 1;
   min-height: 0; /* Critical for flex overflow handling */
   overflow-y: auto;
+  background: var(--theme-bgDark);
   scrollbar-width: thin;
-  scrollbar-color: var(--theme-border) transparent;
+  scrollbar-color: var(--theme-border2) var(--theme-bgDark);
+}
+
+.meta-panel__content::-webkit-scrollbar-track {
+  background: var(--theme-bgDark);
 }
 
 .meta-panel__empty {
@@ -1103,7 +1108,7 @@ div.node-image.ProseMirror-selectednode {
   display: flex;
   gap: 2rem;
   scrollbar-width: thin;
-  scrollbar-color: var(--theme-border2) transparent;
+  scrollbar-color: var(--theme-border2) var(--theme-bgDark);
 }
 
 .help-modal__section { flex: 1; min-width: 0; }
@@ -1331,7 +1336,7 @@ div.node-image.ProseMirror-selectednode {
   overflow-y: auto;
   max-height: 40vh;
   scrollbar-width: thin;
-  scrollbar-color: var(--theme-border2) transparent;
+  scrollbar-color: var(--theme-border2) var(--theme-bgDark);
   padding: 0.5rem 0;
 }
 

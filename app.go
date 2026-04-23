@@ -1263,3 +1263,21 @@ func downloadURL(targetURL string) ([]byte, error) {
 	}
 	return io.ReadAll(resp.Body)
 }
+
+// isBodyEmpty returns true if html contains no visible text content — only
+// tags, whitespace, and self-closing elements. Used to detect blank buffers
+// before discarding them without bothering the AI.
+func isBodyEmpty(html string) bool {
+	inTag := false
+	for _, r := range html {
+		switch {
+		case r == '<':
+			inTag = true
+		case r == '>':
+			inTag = false
+		case !inTag && r != ' ' && r != '\t' && r != '\n' && r != '\r':
+			return false
+		}
+	}
+	return true
+}

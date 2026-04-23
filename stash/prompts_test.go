@@ -17,6 +17,7 @@ func (m *mockStorable) Category() store.Category   { return m.category }
 func (m *mockStorable) Body() []byte               { return m.body }
 func (m *mockStorable) ExternalRef() string        { return "" }
 func (m *mockStorable) Versions() []store.VersionRef { return nil }
+func (m *mockStorable) IsModified() bool             { return false }
 
 type mockStore struct {
 	files map[string]*mockStorable

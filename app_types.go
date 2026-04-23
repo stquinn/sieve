@@ -105,7 +105,7 @@ func toDocumentMetaDTO(m stash.DocumentMeta, owns []store.Storable) DocumentMeta
 			if as, ok := s.(store.AssetStorable); ok {
 				assets = append(assets, map[string]string{
 					"externalRef": as.ExternalRef(),
-					"encoding":    string(as.Encoding()),
+					"encoding":    as.Encoding().String(),
 				})
 			}
 		}
