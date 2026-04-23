@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { NoteContextMenu } from './NoteContextMenu'
 import { UserIntent } from '../types'
-import { FolderPlus, Folder, FileText, ChevronRight, ChevronDown, X } from 'lucide-react'
+import { FolderPlus, Folder, FolderOpen, FileText, ChevronRight, ChevronDown, X } from 'lucide-react'
 import { StorableDataService } from '../lib/StorableDataService'
 import { AiService } from '../lib/AiService'
 import { stash } from '../../wailsjs/go/models'
@@ -425,7 +425,11 @@ function DirEntry({ entry, depth, openPaths, openFolders, onToggleFolder, active
         <span className="sidebar__chevron opacity-70">
           {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
         </span>
-        <Folder className="w-3.5 h-3.5 opacity-70 text-tn-blue shrink-0" />
+        {expanded ? (
+          <FolderOpen className="w-3.5 h-3.5 opacity-70 text-tn-blue shrink-0" />
+        ) : (
+          <Folder className="w-3.5 h-3.5 opacity-70 text-tn-blue shrink-0" />
+        )}
         <span className="sidebar__dir-name truncate flex-1 text-[13px]">{entry.name}</span>
       </button>
       {expanded && entry.children && (

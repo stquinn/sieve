@@ -25,7 +25,7 @@ function BaseModal({ onClose, children, className }: BaseModalProps) {
       <div 
         ref={ref}
         className={cn(
-          "bg-tn-bg-alt border border-solid border-tn-border-2 rounded-lg shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200",
+          "bg-tn-bg-alt border border-solid border-tn-border-2 rounded-xl shadow-2xl w-full max-w-xl overflow-hidden animate-in zoom-in-95 duration-200",
           className
         )}
       >
@@ -48,21 +48,21 @@ interface ConfirmModalProps {
 export function ConfirmModal({ title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', isDestructive = false, onConfirm, onClose }: ConfirmModalProps) {
   return (
     <BaseModal onClose={onClose}>
-      <div className="p-6">
-        <h3 className="text-lg font-semibold text-tn-text mb-2">{title}</h3>
-        <p className="text-tn-text-dim text-sm leading-relaxed">{message}</p>
+      <div className="px-8 pt-6 pb-8">
+        <h3 className="text-xl font-bold text-tn-text mb-3">{title}</h3>
+        <p className="text-tn-text-dim text-base leading-relaxed">{message}</p>
       </div>
-      <div className="bg-tn-bg-dark px-6 py-4 flex justify-end gap-3">
+      <div className="bg-tn-bg-dark px-8 py-5 flex justify-end gap-3">
         <button 
           onClick={onClose}
-          className="px-4 py-2 text-sm font-medium text-tn-text-dim hover:text-tn-text bg-transparent border-none cursor-pointer transition-colors"
+          className="px-6 py-2.5 text-base font-medium text-tn-text-dim hover:text-tn-text bg-transparent border-none cursor-pointer transition-colors"
         >
           {cancelLabel}
         </button>
         <button 
           onClick={onConfirm}
           className={cn(
-            "px-4 py-2 text-sm font-medium text-white rounded cursor-pointer transition-all border-none font-semibold shadow-sm active:scale-95",
+            "px-8 py-2.5 text-base font-bold text-white rounded-lg cursor-pointer transition-all border-none shadow-lg active:scale-95",
             isDestructive ? "bg-tn-red hover:brightness-110" : "bg-tn-blue hover:brightness-110"
           )}
         >
@@ -94,9 +94,9 @@ export function PromptModal({ title, message, placeholder, initialValue = '', su
 
   return (
     <BaseModal onClose={onClose}>
-      <div className="p-6">
-        <h3 className="text-lg font-semibold text-tn-text mb-2">{title}</h3>
-        <p className="text-tn-text-dim text-sm mb-4">{message}</p>
+      <div className="px-8 pt-6 pb-8">
+        <h3 className="text-xl font-bold text-tn-text mb-3">{title}</h3>
+        <p className="text-tn-text-dim text-base mb-5">{message}</p>
         <input 
           ref={inputRef}
           type="text"
@@ -107,19 +107,19 @@ export function PromptModal({ title, message, placeholder, initialValue = '', su
             if (e.key === 'Enter') onSubmit(value)
             if (e.key === 'Escape') onClose()
           }}
-          className="w-full bg-tn-bg-dark border border-solid border-tn-border rounded px-3 py-2 text-tn-text placeholder:text-tn-muted focus:outline-none focus:ring-1 focus:ring-tn-blue transition-all"
+          className="w-full bg-tn-bg-dark border-2 border-solid border-tn-border-2 rounded-xl px-5 py-3.5 text-xl text-tn-text placeholder:text-tn-muted focus:outline-none focus:border-tn-blue focus:ring-4 focus:ring-tn-blue/20 transition-all shadow-inner"
         />
       </div>
-      <div className="bg-tn-bg-dark px-6 py-4 flex justify-end gap-3">
+      <div className="bg-tn-bg-dark px-8 py-5 flex justify-end gap-3">
         <button 
           onClick={onClose}
-          className="px-4 py-2 text-sm font-medium text-tn-text-dim hover:text-tn-text bg-transparent border-none cursor-pointer transition-colors"
+          className="px-6 py-2.5 text-base font-medium text-tn-text-dim hover:text-tn-text bg-transparent border-none cursor-pointer transition-colors"
         >
           Cancel
         </button>
         <button 
           onClick={() => onSubmit(value)}
-          className="px-4 py-2 text-sm font-medium text-white rounded cursor-pointer transition-all border-none bg-tn-blue hover:brightness-110 font-semibold shadow-sm active:scale-95"
+          className="px-8 py-2.5 text-base font-bold text-white rounded-lg cursor-pointer transition-all border-none bg-tn-blue hover:brightness-110 shadow-lg active:scale-95"
         >
           {submitLabel}
         </button>
