@@ -99,19 +99,23 @@ export function Sidebar({
     aiService.smartMetadata(uuid)
   }
 
-  const handleDelete = (path: string) => {
+  const handleDelete = (path: string, isDir: boolean = false) => {
     confirm({
-      title: 'Delete Note',
+      title: isDir ? 'Delete Folder' : 'Delete Note',
       message: `Are you sure you want to delete "${path.split('/').pop()}"?`,
       isDestructive: true,
       onConfirm: async () => {
         try {
-          let uuid = dataService.findIdByPath(path)
-          if (!uuid) {
-            const doc = await dataService.load(path)
-            uuid = doc.id
+          if (isDir) {
+            await dataService.deleteFolder(path)
+          } else {
+            let uuid = dataService.findIdByPath(path)
+            if (!uuid) {
+              const doc = await dataService.load(path)
+              uuid = doc.id
+            }
+            await dataService.discard(uuid)
           }
-          await dataService.discard(uuid)
           refreshNotes()
         } catch (e) { console.error(e) }
       }
@@ -302,7 +306,7 @@ export function Sidebar({
           onShowInFiles={() => ShowInFiles(contextMenu.path)}
           onSmartFile={() => handleSmartFile(contextMenu.path)}
           onSmartMetadata={() => handleSmartMetadata(contextMenu.path)}
-          onDelete={() => contextMenu.isDir ? handleDelete(contextMenu.path) : handleDelete(contextMenu.path)}
+          onDelete={() => handleDelete(contextMenu.path, !!contextMenu.isDir)}
           onRename={() => handleRename(contextMenu.path, contextMenu.path.split('/').pop() || '', !!contextMenu.isDir)}
           onSetIntent={intent => onSetIntent(contextMenu.path, intent)}
           isDir={contextMenu.isDir}

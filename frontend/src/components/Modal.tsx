@@ -60,7 +60,10 @@ export function ConfirmModal({ title, message, confirmLabel = 'Confirm', cancelL
           {cancelLabel}
         </button>
         <button 
-          onClick={onConfirm}
+          onClick={async () => {
+            await onConfirm()
+            onClose()
+          }}
           className={cn(
             "px-8 py-2.5 text-base font-bold text-white rounded-lg cursor-pointer transition-all border-none shadow-lg active:scale-95",
             isDestructive ? "bg-tn-red hover:brightness-110" : "bg-tn-blue hover:brightness-110"
@@ -104,7 +107,12 @@ export function PromptModal({ title, message, placeholder, initialValue = '', su
           onChange={e => setValue(e.target.value)}
           placeholder={placeholder}
           onKeyDown={e => {
-            if (e.key === 'Enter') onSubmit(value)
+            if (e.key === 'Enter') {
+              (async () => {
+                await onSubmit(value)
+                onClose()
+              })()
+            }
             if (e.key === 'Escape') onClose()
           }}
           className="w-full bg-tn-bg-dark border-2 border-solid border-tn-border-2 rounded-xl px-5 py-3.5 text-xl text-tn-text placeholder:text-tn-muted focus:outline-none focus:border-tn-blue focus:ring-4 focus:ring-tn-blue/20 transition-all shadow-inner"
@@ -118,7 +126,10 @@ export function PromptModal({ title, message, placeholder, initialValue = '', su
           Cancel
         </button>
         <button 
-          onClick={() => onSubmit(value)}
+          onClick={async () => {
+            await onSubmit(value)
+            onClose()
+          }}
           className="px-8 py-2.5 text-base font-bold text-white rounded-lg cursor-pointer transition-all border-none bg-tn-blue hover:brightness-110 shadow-lg active:scale-95"
         >
           {submitLabel}

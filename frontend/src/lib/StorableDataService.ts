@@ -1,6 +1,6 @@
 import { 
   LoadBuffer, SaveBuffer, NewBuffer, FileBuffer, RefileNote, DiscardBuffer,
-  MoveNote, CreateFolder, DeleteFolder, RenameFolder, DeletePrompt,
+  MoveNote, CreateFolder, DeleteFolder, RenameFolder, DeletePrompt, DeleteNote,
   GetNotes, GetPrompts, GetStoreInfo, EvaluateBuffer,
   GetDocumentVersion, DescribeImage, SaveAsset, DownloadAsset, RefineLanguage,
   SearchStore, Ask, Explain
@@ -237,7 +237,11 @@ export class StorableDataService {
     const doc = this.registry.get(uuid)
     if (!doc) return
     try {
-      await DiscardBuffer(doc.path)
+      if (doc.meta?.status === 'filed') {
+        await DeleteNote(doc.path)
+      } else {
+        await DiscardBuffer(doc.path)
+      }
       this.evict(uuid)
     } catch (err) {
       console.error(`[StorableDataService] Failed to discard ${uuid}:`, err)

@@ -70,8 +70,8 @@
 /* hover, which ignores scrollbar-width: thin.                            */
 
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -80,11 +80,15 @@
 
 ::-webkit-scrollbar-thumb {
   background: var(--theme-border2);
-  border-radius: 3px;
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--theme-muted);
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 /* ── Text selection ───────────────────────────────────────────────────── */
@@ -869,19 +873,6 @@ div.node-image.ProseMirror-selectednode {
   background: var(--theme-accentPrimary);
 }
 
-/* ── Meta panel scrollbar ────────────────────────────────────────────── */
-/* scrollbar-color overrides ::-webkit-scrollbar-track in newer WebKit,  */
-/* so we set an explicit dark track colour here to prevent white bleed.   */
-
-.meta-content-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: var(--theme-border2) var(--theme-bgDark);
-}
-
-.meta-content-scroll::-webkit-scrollbar-track {
-  background: var(--theme-bgDark);
-}
-
 /* ── Raw markdown mode ───────────────────────────────────────────────── */
 
 .markdown-raw {
@@ -960,8 +951,9 @@ div.node-image.ProseMirror-selectednode {
   padding: 1rem 1.2rem 1.4rem;
   display: flex;
   gap: 2rem;
-  scrollbar-width: thin;
-  scrollbar-color: var(--theme-border2) var(--theme-bgDark);
+  padding: 1rem 1.2rem 1.4rem;
+  display: flex;
+  gap: 2rem;
 }
 
 .help-modal__section { flex: 1; min-width: 0; }
@@ -1188,8 +1180,8 @@ div.node-image.ProseMirror-selectednode {
 .quick-switch__list {
   overflow-y: auto;
   max-height: 40vh;
-  scrollbar-width: thin;
-  scrollbar-color: var(--theme-border2) var(--theme-bgDark);
+  overflow-y: auto;
+  max-height: 40vh;
   padding: 0.5rem 0;
 }
 

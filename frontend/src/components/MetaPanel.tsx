@@ -68,7 +68,7 @@ export function MetaPanel({
       style={{ width }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between text-[13px] font-semibold uppercase tracking-[0.05em] text-tn-text px-[0.9rem] h-[44px] border-b border-tn-border shrink-0 bg-tn-bg-dark">
+      <div className="flex items-center justify-between text-[13px] font-semibold uppercase tracking-[0.05em] text-tn-text px-[0.9rem] h-[44px] border-b border-solid border-tn-border shrink-0 bg-tn-bg-dark">
         <div className="flex gap-[1.2rem] h-full">
           {(['meta', 'history', 'assets'] as const).map(tab => {
             if (tab === 'history' && path.startsWith('prompt:')) return null
@@ -77,7 +77,7 @@ export function MetaPanel({
               <span
                 key={tab}
                 className={cn(
-                  'flex items-center cursor-pointer text-[13px] font-semibold transition-colors h-full border-b-2 -mb-px',
+                  'flex items-center cursor-pointer text-[13px] font-semibold transition-colors h-full border-0 border-b-2 border-solid -mb-px',
                   activeTab === tab
                     ? 'text-tn-text border-tn-blue'
                     : 'text-tn-muted border-transparent hover:text-tn-text-dim'
@@ -98,12 +98,12 @@ export function MetaPanel({
       </div>
 
       {/* Path crumb */}
-      <div className="font-mono text-[11px] text-tn-muted px-[0.9rem] py-2 whitespace-nowrap overflow-hidden text-ellipsis border-b border-tn-border shrink-0 bg-tn-bg-dark" title={path}>
+      <div className="font-mono text-[11px] text-tn-text-dim px-[0.9rem] py-2 whitespace-nowrap overflow-hidden text-ellipsis border-b border-solid border-tn-border shrink-0 bg-tn-bg-dark" title={path}>
         {fileName}
       </div>
 
       {/* Scrollable content */}
-      <div className="flex-1 min-h-0 overflow-y-auto bg-tn-bg-dark meta-content-scroll">
+      <div className="flex-1 min-h-0 overflow-y-auto bg-tn-bg-dark">
         {activeTab === 'meta' && (
           !meta ? (
             <>
@@ -123,7 +123,7 @@ export function MetaPanel({
                 justifyContent: 'space-between',
                 alignItems: 'center',
               }}>
-                <span style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', color: isModified ? 'var(--theme-accentYellow)' : 'var(--theme-muted)' }}>
+                <span style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', color: isModified ? 'var(--theme-accentYellow)' : 'var(--theme-textDim)' }}>
                   {isModified ? 'Unsaved Changes' : 'All Changes Saved'}
                 </span>
                 <div style={{
@@ -163,7 +163,7 @@ export function MetaPanel({
 
               {meta.tags && meta.tags.length > 0 ? (
                 <div className="flex px-[0.9rem] py-[0.18rem] gap-[0.4rem] items-start">
-                  <span className="text-tn-muted shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem]">Tags</span>
+                  <span className="text-tn-text-dim shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem] font-medium">Tags</span>
                   <div className="flex flex-wrap gap-1 flex-1">
                     {meta.tags.map(t => <Tag key={t}>{t}</Tag>)}
                   </div>
@@ -176,7 +176,7 @@ export function MetaPanel({
 
               {meta.densitySignals && meta.densitySignals.length > 0 ? (
                 <div className="flex px-[0.9rem] py-[0.18rem] gap-[0.4rem] items-start">
-                  <span className="text-tn-muted shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem]">Density</span>
+                  <span className="text-tn-text-dim shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem] font-medium">Density</span>
                   <div className="flex flex-wrap gap-1 flex-1">
                     {meta.densitySignals.map(s => <Tag key={s}>{s}</Tag>)}
                   </div>
@@ -269,7 +269,7 @@ export function MetaPanel({
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex px-[0.9rem] py-[0.18rem] gap-[0.4rem] leading-[1.5]">
-      <span className="text-tn-muted shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem]">{label}</span>
+      <span className="text-tn-text-dim shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem] font-medium">{label}</span>
       <span className="text-tn-text text-base break-words flex-1">{children}</span>
     </div>
   )
@@ -281,7 +281,7 @@ function Divider() {
 
 function Tag({ children }: { children: React.ReactNode }) {
   return (
-    <span className="bg-tn-bg-alt border border-tn-border-2 rounded-[3px] text-tn-blue text-[10px] px-[0.35rem] py-[0.05rem] whitespace-nowrap">
+    <span className="bg-tn-bg-alt border border-solid border-tn-border-2 rounded-[3px] text-tn-blue text-[10px] px-[0.35rem] py-[0.05rem] whitespace-nowrap">
       {children}
     </span>
   )

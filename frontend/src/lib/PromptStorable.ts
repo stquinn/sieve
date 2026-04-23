@@ -5,6 +5,7 @@ export class PromptStorable implements Storable {
   kind: 'prompt' = 'prompt'
   id: string
   path: string
+  name: string
   body: string
   meta: main.DocumentMetaDTO | null = null
   versions: main.VersionRefDTO[] = []
@@ -13,6 +14,7 @@ export class PromptStorable implements Storable {
   constructor(name: string, content: string) {
     this.id = `prompt:${name}`
     this.path = `prompt:${name}`
+    this.name = name
     this.body = content
     this.isModified = false
   }

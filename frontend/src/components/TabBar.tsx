@@ -151,8 +151,8 @@ export function TabBar({
                   message: `Are you sure you want to delete "${path?.split('/').pop()}"?`,
                   isDestructive: true,
                   onConfirm: async () => {
-                    onClose(idx)
                     await dataService.discard(tab.uuid)
+                    onClose(idx)
                   }
                 })
               }}
