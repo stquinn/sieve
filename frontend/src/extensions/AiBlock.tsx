@@ -106,7 +106,17 @@ export const AiBlock = Node.create({
           state.ensureNewLine()
           state.write(`[!ai] id="${node.attrs.id}" ref="${node.attrs.ref}"`)
           state.closeBlock(node)
-          state.renderContent(node)
+          
+          node.content.forEach((child: any) => {
+            if (child.type.name === 'aiQuestion') {
+              child.content.forEach((inner: any) => {
+                state.render(inner)
+              })
+            } else {
+              state.render(child)
+            }
+          })
+
           state.ensureNewLine()
           state.write('[!ai-end]')
           state.closeBlock(node)
@@ -148,20 +158,36 @@ export const AiBlock = Node.create({
                 for (let k = i + 1; k < endIdx; k++) {
                   wrapper.appendChild(children[k])
                 }
-
-                // Heuristic: Wrap the first N paragraphs starting with "Ask: " into an aiQuestion
-                const wrapperChildren = Array.from(wrapper.children) as HTMLElement[]
-                if (wrapperChildren.length > 0 && (wrapperChildren[0].textContent ?? '').startsWith('Ask: ')) {
+                
+                // Wrap content in aiQuestion box using HR as the definitive marker
+                const firstChild = wrapper.firstChild as HTMLElement
+                if (firstChild && 
+                    firstChild.getAttribute?.('data-type') !== 'aiQuestion' &&
+                    (firstChild.textContent ?? '').trim().startsWith('Ask: ')) {
+                  
                   const qWrapper = document.createElement('div')
                   qWrapper.setAttribute('data-type', 'aiQuestion')
                   
-                  // Move only the first child for now (simple heuristic)
-                  // In the editor, we will generate the full multi-line aiQuestion node explicitly.
-                  qWrapper.appendChild(wrapperChildren[0])
+                  if (wrapper.querySelector('hr')) {
+                    while (wrapper.firstChild && 
+                           wrapper.firstChild instanceof HTMLElement &&
+                           wrapper.firstChild.tagName !== 'HR') {
+                      qWrapper.appendChild(wrapper.firstChild)
+                    }
+                  } else {
+                    // FALLBACK: For legacy blocks without HR, wrap consecutive short paragraphs
+                    while (wrapper.firstChild && wrapper.firstChild instanceof HTMLElement) {
+                      const text = (wrapper.firstChild.textContent ?? '').trim()
+                      if (text === '' || text.length > 120) break
+                      qWrapper.appendChild(wrapper.firstChild)
+                    }
+                  }
                   wrapper.insertBefore(qWrapper, wrapper.firstChild)
                 }
 
                 element.insertBefore(wrapper, child)
+
+
                 child.remove()
                 children[endIdx].remove()
 

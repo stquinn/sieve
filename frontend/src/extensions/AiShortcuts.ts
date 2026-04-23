@@ -6,6 +6,7 @@ export interface AiShortcutsOptions {
   onAsk: (editor: Editor) => void
   onSmartFile: () => void
   onKeepAndSmartFile: () => void
+  onToggleAiBlocks?: () => void
 }
 
 export const AiShortcuts = Extension.create<AiShortcutsOptions>({
@@ -23,6 +24,14 @@ export const AiShortcuts = Extension.create<AiShortcutsOptions>({
       },
       'Mod-Shift-A': () => {
         this.options.onAsk(this.editor)
+        return true
+      },
+      'Mod-j': () => {
+        this.options.onToggleAiBlocks?.()
+        return true
+      },
+      'Mod-J': () => {
+        this.options.onToggleAiBlocks?.()
         return true
       },
     }

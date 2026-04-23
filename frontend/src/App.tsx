@@ -20,8 +20,10 @@ import { ConfirmModal, PromptModal } from './components/Modal'
 import { X } from 'lucide-react'
 import { EditorStats } from './components/EditorStats'
 import { useAppLifecycle } from './hooks/useAppLifecycle'
+import { useUiState } from './hooks/useUiState'
 import { StorableDataService } from './lib/StorableDataService'
 import { AiService } from './lib/AiService'
+import { isMod } from './utils/platform'
 import { getAncestorPaths, getLocalISOString, applyFilingRecToMeta } from './lib/fmUtils'
 import './App.css'
 
@@ -29,20 +31,22 @@ export default function App() {
   const [tabs, setTabs]           = useState<TabState[]>([])
   const [activeIdx, setActiveIdx] = useState(0)
   const [ready, setReady]         = useState(false)
-  const [showHelp, setShowHelp]   = useState(false)
-  const [showSidebar, setShowSidebar] = useState(true)
-  const [tier, setTier]           = useState<'dumb' | 'smart'>('dumb')
-  const [sidebarWidth, setSidebarWidth]     = useState(240)
-  const [isDragging, setIsDragging]         = useState(false)
-  const [showMeta, setShowMeta]             = useState(false)
-  const [showPrompts, setShowPrompts]       = useState(true)
-  const [metaWidth, setMetaWidth]           = useState(260)
-  const [promptsHeight, setPromptsHeight]   = useState(180)
-  const [isMetaDragging, setIsMetaDragging] = useState(false)
-  const [showSearch, setShowSearch]         = useState(false)
-  const [pendingClose, setPendingClose]     = useState(false)
-  const [showQuickSwitch, setShowQuickSwitch] = useState(false)
-  const [sidebarMode, setSidebarMode]       = useState<'files'|'search'>('files')
+  const {
+    showHelp, setShowHelp, toggleHelp,
+    showSidebar, setShowSidebar, toggleSidebar,
+    showMeta, setShowMeta, toggleMeta,
+    showPrompts, setShowPrompts, togglePrompts,
+    showSearch, setShowSearch, toggleSearch,
+    showQuickSwitch, setShowQuickSwitch, toggleQuickSwitch,
+    sidebarMode, setSidebarMode,
+    tier, setTier,
+    sidebarWidth, setSidebarWidth,
+    metaWidth, setMetaWidth,
+    promptsHeight, setPromptsHeight,
+    isDragging, setIsDragging,
+    isMetaDragging, setIsMetaDragging,
+    pendingClose, setPendingClose,
+  } = useUiState()
   const [confirmModal, setConfirmModal] = useState<{ title: string, message: string, onConfirm: () => void, isDestructive?: boolean } | null>(null)
   const [promptModal, setPromptModal] = useState<{ title: string, message: string, placeholder?: string, initialValue?: string, onSubmit: (val: string) => void } | null>(null)
   const [searchTerm, setSearchTerm]         = useState('')
@@ -217,7 +221,7 @@ export default function App() {
   const handlers = useRef<{
     newTab: () => Promise<void>
     closeTab: () => Promise<void>
-    smartSave: () => Promise<void>
+    save: () => Promise<void>
     toggleMode: () => void
     smartFile: () => void
     smartMetadata: () => void
@@ -225,7 +229,7 @@ export default function App() {
   }>({
     newTab,
     closeTab: () => smartFileClose(activeIdxRef.current),
-    smartSave: async () => {
+    save: async () => {
       const uuid = tabsRef.current[activeIdxRef.current]?.uuid
       if (uuid) await dataService.current.save(uuid).catch(console.error)
     },
@@ -255,48 +259,49 @@ export default function App() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase()
-      console.log(`[stash:key] ${e.ctrlKey?'Ctrl+':''}${e.shiftKey?'Shift+':''}${key} (code: ${e.code}, kc: ${e.keyCode})`)
+      const mod = isMod(e)
+      console.log(`[stash:key] ${mod?'Mod+':''}${e.shiftKey?'Shift+':''}${key} (code: ${e.code}, kc: ${e.keyCode})`)
 
-      if (e.ctrlKey && key === 'n') { e.preventDefault(); handlers.current.newTab() }
-      if (e.ctrlKey && (key === 'w' || e.code === 'KeyW')) { 
+      if (mod && key === 'n') { e.preventDefault(); handlers.current.newTab() }
+      if (mod && (key === 'w' || e.code === 'KeyW')) { 
         e.preventDefault(); 
         e.stopImmediatePropagation();
         handlers.current.closeTab(); 
       }
-      if (e.ctrlKey && key === 's') { e.preventDefault(); handlers.current.smartSave() }
-      if (e.ctrlKey && e.shiftKey && key === 'm') { e.preventDefault(); handlers.current.toggleMode() }
-      if (e.ctrlKey && (key === 'p' || e.code === 'KeyP') && !e.shiftKey) { e.preventDefault(); setShowQuickSwitch(v => !v) }
-      if (e.ctrlKey && e.shiftKey && (key === 'p' || e.code === 'KeyP')) { 
+      if (mod && key === 's') { e.preventDefault(); handlers.current.save() }
+      if (mod && e.shiftKey && key === 'm') { e.preventDefault(); handlers.current.toggleMode() }
+      if (mod && (key === 'p' || e.code === 'KeyP') && !e.shiftKey) { e.preventDefault(); setShowQuickSwitch(v => !v) }
+      if (mod && e.shiftKey && (key === 'p' || e.code === 'KeyP')) { 
         e.preventDefault(); 
         setShowPrompts(prev => !prev)
       }
-      if (e.ctrlKey && (key === '\\' || e.code === 'Backslash')) { 
+      if (mod && (key === '\\' || e.code === 'Backslash')) { 
         e.preventDefault(); 
         setShowSidebar(prev => !prev)
       }
-      if (e.ctrlKey && e.shiftKey && (key === 'i' || e.code === 'KeyI')) { 
+      if (mod && e.shiftKey && (key === 'i' || e.code === 'KeyI')) { 
         e.preventDefault(); 
         setShowMeta(prev => !prev)
       }
-      if (e.ctrlKey && (key === '/' || key === '?' || e.code === 'Slash' || e.keyCode === 191)) { 
+      if (mod && (key === '/' || key === '?' || e.code === 'Slash' || e.keyCode === 191)) { 
         e.preventDefault(); 
         e.stopImmediatePropagation();
         console.log('[stash:ui] Toggling Help Modal...');
-        setShowHelp(v => !v) 
+        toggleHelp() 
       }
-      if (e.ctrlKey && key === 'f' && !e.shiftKey) { e.preventDefault(); setShowSearch(v => !v) }
-      if (e.ctrlKey && e.shiftKey && key === 'f') { 
+      if (mod && key === 'f' && !e.shiftKey) { e.preventDefault(); toggleSearch() }
+      if (mod && e.shiftKey && key === 'f') { 
         e.preventDefault(); 
         setSidebarMode('search'); 
         setShowSidebar(true); 
       }
 
       // AI Gestures (Globalized for focus-independence)
-      if (e.ctrlKey && e.shiftKey && key === 'e') { 
+      if (mod && e.shiftKey && key === 'e') { 
         e.preventDefault(); 
         handlers.current.smartFile(); 
       }
-      if (e.ctrlKey && e.shiftKey && key === 'enter') { 
+      if (mod && e.shiftKey && key === 'enter') { 
         e.preventDefault(); 
         handlers.current.keepAndSmartFile(); 
       }
@@ -433,7 +438,7 @@ export default function App() {
   return (
     <div 
       id="app-root" 
-      className={`theme-${storeInfo.themeName || 'default'} tier-${tier}`}
+      className={`theme-${storeInfo?.themeName || 'default'} tier-${tier}`}
       style={{ 
         '--sidebar-w': `${showSidebar ? sidebarWidth : 0}px`,
         '--meta-w': `${showMeta ? metaWidth : 0}px`

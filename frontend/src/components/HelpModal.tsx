@@ -1,28 +1,11 @@
 import { useEffect } from 'react'
+import { getModKey } from '../utils/platform'
 
 interface Props {
   onClose: () => void
 }
 
-const SHORTCUTS = [
-  { keys: ['Ctrl', 'N'],            desc: 'New tab' },
-  { keys: ['Ctrl', 'W'],            desc: 'Close tab (Smart close)' },
-  { keys: ['Ctrl', 'P'],            desc: 'Quick switcher (files & tabs)' },
-  { keys: ['Ctrl', '\\'],           desc: 'Toggle sidebar' },
-  { keys: ['Ctrl', 'Shift', 'P'],   desc: 'Toggle prompt templates section' },
-  { keys: ['Ctrl', 'Shift', 'I'],   desc: 'Toggle meta / info panel' },
-  { keys: ['Ctrl', 'Shift', 'M'],   desc: 'Toggle Markdown / WYSIWYG mode' },
-  { keys: ['Ctrl', 'F'],            desc: 'Find in current document' },
-  { keys: ['Ctrl', 'Shift', 'F'],   desc: 'Store-wide search' },
-  { keys: ['Ctrl', 'S'],            desc: 'Smart Save (AI summary & metadata, stays in Library)' },
-  { keys: ['Mod', 'Shift', 'Enter'],desc: 'Promote (Save & File immediately to Library)' },
-  { keys: ['Ctrl', 'Shift', 'E'],   desc: 'Smart Filing (Evaluate buffer & propose file path)' },
-  { keys: ['Ctrl', 'E'],            desc: 'Explain selection or current block / buffer' },
-  { keys: ['Ctrl', 'Shift', 'A'],   desc: 'Ask about selection or block / buffer' },
-  { keys: ['Tab'],                  desc: 'Indent text (4 spaces)' },
-  { keys: ['Ctrl', '/'],            desc: 'Toggle this cheat sheet' },
-  { keys: ['Ctrl', 'Click'],        desc: 'Open link in browser' },
-]
+
 
 const MD_ROWS = [
   { syntax: '# Heading 1',            desc: 'H1' },
@@ -43,6 +26,43 @@ const MD_ROWS = [
 ]
 
 export function HelpModal({ onClose }: Props) {
+  const mod = getModKey()
+  const GLOBAL_SHORTCUTS = [
+    { keys: [mod, 'N'],            desc: 'New tab' },
+    { keys: [mod, 'W'],            desc: 'Close tab (Smart close)' },
+    { keys: [mod, 'P'],            desc: 'Quick switcher (files & tabs)' },
+    { keys: [mod, 'F'],            desc: 'Find in current document' },
+    { keys: [mod, 'Shift', 'F'],   desc: 'Store-wide search' },
+    { keys: [mod, '\\'],           desc: 'Toggle sidebar' },
+    { keys: [mod, 'S'],            desc: 'Save document (local persistence)' },
+    { keys: [mod, '/'],            desc: 'Toggle this cheat sheet' },
+    { keys: [mod, 'Click'],        desc: 'Open link in browser' },
+  ]
+  
+  const AI_SHORTCUTS = [
+    { keys: [mod, 'Shift', 'E'],   desc: 'Smart Filing (Analyze & Auto-file)' },
+    { keys: [mod, 'Shift', 'Enter'],desc: 'Promote (Force Keep & Auto-file)' },
+    { keys: [mod, 'E'],            desc: 'Explain selection or current block' },
+    { keys: [mod, 'Shift', 'A'],   desc: 'Ask AI about selection or block' },
+    { keys: [mod, 'Shift', 'P'],   desc: 'Toggle prompt templates section' },
+    { keys: [mod, 'Shift', 'I'],   desc: 'Toggle meta / info panel' },
+    { keys: [mod, 'Shift', 'M'],   desc: 'Toggle Markdown / WYSIWYG mode' },
+    { keys: [mod, 'J'],            desc: 'Toggle AI block visibility' },
+  ]
+
+  const FORMAT_SHORTCUTS = [
+    { keys: [mod, 'B'],            desc: 'Bold' },
+    { keys: [mod, 'I'],            desc: 'Italic' },
+    { keys: [mod, 'Z'],            desc: 'Undo' },
+    { keys: [mod, 'Shift', 'Z'],   desc: 'Redo' },
+    { keys: [mod, 'Alt', '1-6'],   desc: 'Heading levels' },
+    { keys: [mod, 'Shift', '8'],   desc: 'Bullet list' },
+    { keys: [mod, 'Shift', '7'],   desc: 'Numbered list' },
+    { keys: [mod, 'Shift', '9'],   desc: 'Task list' },
+    { keys: [mod, 'Shift', 'B'],   desc: 'Block quote' },
+    { keys: ['Shift', 'Enter'],    desc: 'Hard break (new line)' },
+  ]
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -67,10 +87,52 @@ export function HelpModal({ onClose }: Props) {
 
         <div className="help-modal__body">
           <section className="help-modal__section">
-            <h3 className="help-modal__section-title">Keyboard Shortcuts</h3>
+            <h3 className="help-modal__section-title">Global Shortcuts</h3>
             <table className="help-modal__table">
               <tbody>
-                {SHORTCUTS.map(({ keys, desc }) => (
+                {GLOBAL_SHORTCUTS.map(({ keys, desc }) => (
+                  <tr key={desc}>
+                    <td className="help-modal__keys">
+                      {keys.map((k, i) => (
+                        <span key={k}>
+                          <kbd className="help-modal__kbd">{k}</kbd>
+                          {i < keys.length - 1 && <span className="help-modal__plus">+</span>}
+                        </span>
+                      ))}
+                    </td>
+                    <td className="help-modal__desc">{desc}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+
+          <section className="help-modal__section">
+            <h3 className="help-modal__section-title">AI & View Gestures</h3>
+            <table className="help-modal__table">
+              <tbody>
+                {AI_SHORTCUTS.map(({ keys, desc }) => (
+                  <tr key={desc}>
+                    <td className="help-modal__keys">
+                      {keys.map((k, i) => (
+                        <span key={k}>
+                          <kbd className="help-modal__kbd">{k}</kbd>
+                          {i < keys.length - 1 && <span className="help-modal__plus">+</span>}
+                        </span>
+                      ))}
+                    </td>
+                    <td className="help-modal__desc">{desc}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+
+          <section className="help-modal__section">
+            <h3 className="help-modal__section-title">Formatting Shortcuts</h3>
+            <table className="help-modal__table">
+              <tbody>
+                {FORMAT_SHORTCUTS.map(({ keys, desc }) => (
                   <tr key={desc}>
                     <td className="help-modal__keys">
                       {keys.map((k, i) => (

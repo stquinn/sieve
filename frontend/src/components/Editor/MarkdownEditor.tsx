@@ -1,4 +1,5 @@
 import React from 'react'
+import { isMod } from '../../utils/platform'
 
 interface MarkdownEditorProps {
   uuid: string
@@ -6,7 +7,8 @@ interface MarkdownEditorProps {
   isActive: boolean
   onChange: (value: string) => void
   onExplain?: () => void
-  onAsk?: () => void
+  onAsk?: (question?: string) => void
+  onToggleAiBlocks?: () => void
   textareaRef?: React.RefObject<HTMLTextAreaElement>
 }
 
@@ -17,6 +19,7 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
   onChange,
   onExplain,
   onAsk,
+  onToggleAiBlocks,
   textareaRef
 }) => {
   const lines = value.split('\n').length
@@ -63,24 +66,32 @@ export const MarkdownEditor: React.FC<MarkdownEditorProps> = ({
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
           const key = e.key.toLowerCase()
+          const mod = isMod(e)
           // Note: Filing and Promote are now handled globally in App.tsx
-          if (e.ctrlKey && key === 'e' && !e.shiftKey) { 
+          if (mod && key === 'e' && !e.shiftKey) { 
             if (onExplain) {
               e.preventDefault()
               e.stopPropagation()
               onExplain()
             }
           }
-          if (e.ctrlKey && e.shiftKey && key === 'a') { 
+          if (mod && e.shiftKey && key === 'a') { 
             if (onAsk) {
               e.preventDefault()
               e.stopPropagation()
               onAsk()
             }
           }
+          if (mod && key === 'j') {
+            if (onToggleAiBlocks) {
+              e.preventDefault()
+              e.stopPropagation()
+              onToggleAiBlocks()
+            }
+          }
         }}
         spellCheck="true"
-        placeholder="Raw markdown — Ctrl+Shift+M to return"
+        placeholder="Raw markdown — Mod+Shift+M to return"
         autoFocus={isActive}
         autoComplete="off"
         autoCorrect="off"

@@ -4,8 +4,10 @@ import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Placeholder from '@tiptap/extension-placeholder'
 import { Markdown } from 'tiptap-markdown'
+import TaskList from '@tiptap/extension-task-list'
+import TaskItem from '@tiptap/extension-task-item'
 import { common, createLowlight } from 'lowlight'
-import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react'
+import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef, useCallback } from 'react'
 import Table from '@tiptap/extension-table'
 import TableRow from '@tiptap/extension-table-row'
 import TableHeader from '@tiptap/extension-table-header'
@@ -18,6 +20,7 @@ import { AiShortcuts } from '../extensions/AiShortcuts'
 import { BlockNode } from '../extensions/BlockNode'
 import { Search } from '../extensions/Search'
 import { AskPopup } from './AskPopup'
+import { isMod } from '../utils/platform'
 import { detectLanguage } from '../utils/pasteHeuristics'
 import { StorableDataService } from '../lib/StorableDataService'
 import { AiService } from '../lib/AiService'
@@ -41,6 +44,7 @@ interface EditorPanelProps {
   autosaveMs: number
   aiService: AiService
   onSearchUpdate?: (results: any[], index: number) => void
+  onToggleAiBlocks?: () => void
   tick: number
 }
 
@@ -78,6 +82,9 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
   const [rawMd, setRawMd] = useState('')
   const [showAskPopup, setShowAskPopup] = useState(false)
   const [askContext, setAskContext] = useState<{ contextLabel: string } | null>(null)
+  const [showAiBlocks, setShowAiBlocks] = useState(true)
+  
+  const toggleAiBlocks = useCallback(() => setShowAiBlocks(prev => !prev), [])
   
   // ── Render ──────────────────────────────────────────────────────────────────
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -102,7 +109,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
       const ta = taRef.current
       if (!ta) return
       const end = ta.selectionEnd
-      const thinking = `\n\n[!ai] id="${blkId}"\n${question ? `**Ask:** ${question}\n\n` : ''}_(thinking…)_\n[!ai-end]\n\n`
+      const thinking = `\n\n[!ai] id="${blkId}"\n${question ? `***Ask:*** ${question}\n\n---\n\n` : ''}_(thinking…)_\n[!ai-end]\n\n`
       const next = ta.value.substring(0, end) + thinking + ta.value.substring(end)
       dataService.setBody(uuid, next)
       setRawMd(next)
@@ -121,11 +128,14 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
       const lines = question ? question.split('\n') : []
       const questionNodes = lines.map((line, idx) => ({
         type: 'paragraph',
-        content: line.trim().length > 0 ? [{ 
-          type: 'text', 
-          text: idx === 0 ? (line.startsWith('Ask: ') ? line : `Ask: ${line}`) : line, 
-          marks: [{ type: 'bold' }] 
-        }] : []
+        content: line.trim().length > 0 ? [
+          ...(idx === 0) ? [
+            { type: 'text', text: 'Ask: ', marks: [{ type: 'bold' }, { type: 'italic' }] },
+            { type: 'text', text: (line.startsWith('Ask: ') ? line.substring(5) : line) }
+          ] : [
+            { type: 'text', text: line }
+          ]
+        ] : []
       }))
 
       editor.commands.insertContentAt(insertPos, {
@@ -133,6 +143,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
         attrs: { id: blkId },
         content: [
           ...(questionNodes.length > 0 ? [{ type: 'aiQuestion', content: questionNodes }] : []),
+          { type: 'horizontalRule' },
           { type: 'paragraph', content: [{ type: 'text', text: '(thinking…)', marks: [{ type: 'italic' }] }] }
         ]
       })
@@ -146,14 +157,13 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
           const idEscaped = blkId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
           const pattern = new RegExp(`(\\[!ai\\] id="${idEscaped}"[^\\n]*)\\s*[\\s\\S]*?\\s*\\[!ai-end\\]`)
           
-          const lines = question ? question.split('\n') : []
           const qlines = lines.map((l, i) => {
             if (l.trim().length === 0) return ''
-            return i === 0 ? `**Ask:** ${l}` : `**${l}**`
-          }).join('\n\n')
-          const qBlock = qlines ? `\n\n${qlines}` : ''
+            const cleanL = (i === 0 && l.startsWith('Ask: ')) ? l.substring(5) : l
+            return i === 0 ? `***Ask:*** ${cleanL}` : cleanL
+          }).filter(Boolean).join('\n\n')
           
-          const updatedBody = body.replace(pattern, `$1${qBlock}\n\n${response}\n\n[!ai-end]`)
+          const updatedBody = body.replace(pattern, `$1\n\n${qlines}\n\n---\n\n${response}\n\n[!ai-end]`)
           dataService.setBody(uuid, updatedBody)
           setRawMd(updatedBody)
         } else if (editor) {
@@ -178,11 +188,14 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
             const lines = question ? question.split('\n') : []
             const questionNodes = lines.map((line, idx) => ({
               type: 'paragraph',
-              content: line.trim().length > 0 ? [{ 
-                type: 'text', 
-                text: idx === 0 ? (line.startsWith('Ask: ') ? line : `Ask: ${line}`) : line, 
-                marks: [{ type: 'bold' }] 
-              }] : []
+              content: line.trim().length > 0 ? [
+                ...(idx === 0) ? [
+                  { type: 'text', text: 'Ask: ', marks: [{ type: 'bold' }, { type: 'italic' }] },
+                  { type: 'text', text: (line.startsWith('Ask: ') ? line.substring(5) : line) }
+                ] : [
+                  { type: 'text', text: line }
+                ]
+              ] : []
             }))
 
             const aiBlockNode = {
@@ -190,6 +203,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
               attrs: { id: blkId, ref: ctx.blockRef },
               content: [
                 ...(questionNodes.length > 0 ? [{ type: 'aiQuestion', content: questionNodes }] : []),
+                { type: 'horizontalRule' },
                 ...parsedDoc.toJSON().content
               ]
             }
@@ -235,6 +249,10 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
       Search,
       AiBlock,
       AiQuestion,
+      TaskList,
+      TaskItem.configure({
+        nested: true,
+      }),
       Markdown.configure({
         html: true,
         transformPastedText: false,
@@ -249,6 +267,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
         },
         onSmartFile: () => aiService.smartFile(uuid),
         onKeepAndSmartFile: () => aiService.keepAndFile(uuid),
+        onToggleAiBlocks: toggleAiBlocks,
       })
     ],
     content: '',
@@ -258,7 +277,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
       },
       handleDOMEvents: {
         click: (view, event) => {
-          if (event.ctrlKey || event.metaKey) {
+          if (isMod(event)) {
             const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos
             if (pos !== undefined) {
               const marks = view.state.doc.resolve(pos).marks()
@@ -459,7 +478,10 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
         uuid={uuid}
         value={rawMd}
         isActive={isActive}
+        onToggleAiBlocks={toggleAiBlocks}
         textareaRef={taRef}
+        onExplain={() => runAiJob('explain')}
+        onAsk={(q?: string) => runAiJob('ask', q)}
         onChange={(val) => {
           if (val === lastSyncedBody.current) return
           setRawMd(val)
@@ -469,18 +491,13 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
           const delay = autosaveMs || 3000
           saveTimer.current = setTimeout(() => dataService.save(uuid).catch(console.error), delay)
         }}
-        onExplain={() => runAiJob('explain')}
-        onAsk={() => {
-          const label = getContextLabel()
-          setAskContext({ contextLabel: label })
-          setShowAskPopup(true)
-        }}
       />
     )
   }
 
   return (
     <div 
+      className={`editor-panel ${!showAiBlocks ? 'hide-ai-blocks' : ''}`}
       id={`app-${uuid}`}
       spellCheck={true} 
       lang="en-US" 

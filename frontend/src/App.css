@@ -539,6 +539,89 @@ textarea::selection {
   font-style: italic;
 }
 
+/* ── Lists ───────────────────────────────────────────────────────────── */
+
+.tiptap ul, .tiptap ol {
+  padding-left: 1.25rem;
+  margin: 0.5rem 0;
+}
+
+.tiptap li > p {
+  margin: 0;
+}
+
+/* Task lists */
+.tiptap ul[data-type="taskList"] {
+  list-style: none;
+  padding: 0;
+}
+
+.tiptap ul[data-type="taskList"] li {
+  display: flex !important;
+  align-items: flex-start;
+  margin-bottom: 0.25rem;
+}
+
+/* Override the custom line-numbering from App.tsx/CSS for task items */
+.tiptap ul[data-type="taskList"] li::before {
+  content: none !important;
+}
+
+.tiptap ul[data-type="taskList"] li > label {
+  flex: 0 0 auto;
+  margin-right: 0.6rem;
+  user-select: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding-top: 5px; /* Alignment fix for the checkbox */
+}
+
+.tiptap ul[data-type="taskList"] li > div {
+  flex: 1 1 auto;
+}
+
+.tiptap ul[data-type="taskList"] li > label input[type="checkbox"] {
+  appearance: none;
+  background-color: transparent;
+  width: 1.1rem;
+  height: 1.1rem;
+  border: 1.5px solid var(--theme-border2);
+  border-radius: 0.2rem;
+  cursor: pointer;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.1s ease;
+}
+
+.tiptap ul[data-type="taskList"] li > label input[type="checkbox"]:hover {
+  border-color: var(--theme-accentPrimary);
+  background-color: color-mix(in srgb, var(--theme-accentPrimary) 10%, transparent);
+}
+
+.tiptap ul[data-type="taskList"] li > label input[type="checkbox"]:checked {
+  background-color: var(--theme-accentPrimary);
+  border-color: var(--theme-accentPrimary);
+}
+
+.tiptap ul[data-type="taskList"] li > label input[type="checkbox"]:checked::after {
+  content: '';
+  width: 0.3rem;
+  height: 0.6rem;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) translate(-1px, -1px);
+  display: block;
+}
+
+.tiptap ul[data-type="taskList"] li[data-checked="true"] > div {
+  color: var(--theme-muted);
+  text-decoration: line-through;
+  opacity: 0.8;
+}
+
 /* ── Block target nodes ──────────────────────────────────────────────── */
 /* BlockNode is a transparent wrapper — content looks identical to        */
 /* unwrapped content at rest.  When the cursor is inside or hovering over */
@@ -610,6 +693,10 @@ div.node-image.ProseMirror-selectednode {
 /* The container div owns the border/padding — content renders naturally  */
 /* inside it with no interference to list, code block, or other styles.  */
 
+.hide-ai-blocks .ai-block {
+  display: none !important;
+}
+
 .ai-block {
   border: 1px solid var(--theme-aiBlockBorder);
   border-radius: 6px;
@@ -648,11 +735,17 @@ div.node-image.ProseMirror-selectednode {
 /* Question area inside AI block — formal aiQuestion node */
 .tiptap .ai-question {
   color: var(--theme-textDim);
-  font-style: italic;
-  font-size: 0.93em;
-  padding-bottom: 8px;
   border-bottom: 1px solid color-mix(in srgb, var(--theme-accentPrimary) 12%, transparent);
   margin-bottom: 8px;
+}
+.tiptap .ai-question strong, 
+.tiptap .ai-question em {
+  color: var(--theme-accentPurple);
+}
+
+/* Hide the structural divider in AI blocks - the ai-question border does this job */
+.tiptap .ai-block hr {
+  display: none;
 }
 
 /* Inline code inside AI blocks */
