@@ -25,7 +25,7 @@ function BaseModal({ onClose, children, className }: BaseModalProps) {
       <div 
         ref={ref}
         className={cn(
-          "bg-tn-bg-alt border border-solid border-tn-border-2 rounded-xl shadow-2xl w-full max-w-xl overflow-hidden animate-in zoom-in-95 duration-200",
+          "bg-tn-bg-dark border border-solid border-tn-border-2 rounded-xl shadow-2xl w-full max-w-xl overflow-hidden animate-in zoom-in-95 duration-200",
           className
         )}
       >
@@ -52,7 +52,7 @@ export function ConfirmModal({ title, message, confirmLabel = 'Confirm', cancelL
         <h3 className="text-xl font-bold text-tn-text mb-3">{title}</h3>
         <p className="text-tn-text-dim text-base leading-relaxed">{message}</p>
       </div>
-      <div className="bg-tn-bg-dark px-8 py-5 flex justify-end gap-3">
+      <div className="bg-tn-bg-alt px-8 py-5 flex justify-end gap-3 border-t border-solid border-tn-border-2">
         <button 
           onClick={onClose}
           className="px-6 py-2.5 text-base font-medium text-tn-text-dim hover:text-tn-text bg-transparent border-none cursor-pointer transition-colors"
@@ -118,7 +118,7 @@ export function PromptModal({ title, message, placeholder, initialValue = '', su
           className="w-full bg-tn-bg-dark border-2 border-solid border-tn-border-2 rounded-xl px-5 py-3.5 text-xl text-tn-text placeholder:text-tn-muted focus:outline-none focus:border-tn-blue focus:ring-4 focus:ring-tn-blue/20 transition-all shadow-inner"
         />
       </div>
-      <div className="bg-tn-bg-dark px-8 py-5 flex justify-end gap-3">
+      <div className="bg-tn-bg-alt px-8 py-5 flex justify-end gap-3 border-t border-solid border-tn-border-2">
         <button 
           onClick={onClose}
           className="px-6 py-2.5 text-base font-medium text-tn-text-dim hover:text-tn-text bg-transparent border-none cursor-pointer transition-colors"

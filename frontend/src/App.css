@@ -908,7 +908,7 @@ div.node-image.ProseMirror-selectednode {
 }
 
 .help-modal {
-  background: var(--theme-bgAlt);
+  background: var(--theme-bgDark);
   border: 1px solid var(--theme-border2);
   border-radius: 8px;
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
@@ -925,6 +925,7 @@ div.node-image.ProseMirror-selectednode {
   justify-content: space-between;
   padding: 0.8rem 1.2rem;
   border-bottom: 1px solid var(--theme-border);
+  background: var(--theme-bgAlt);
   flex-shrink: 0;
 }
 
