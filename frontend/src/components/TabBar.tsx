@@ -6,6 +6,7 @@ import { FileText } from 'lucide-react'
 import { StorableDataService } from '../lib/StorableDataService'
 import { AiService } from '../lib/AiService'
 import { ShowInFiles } from '../../wailsjs/go/main/App'
+import { useModal } from '../lib/ModalContext'
 
 interface TabBarProps {
   tabs: TabState[]
@@ -19,8 +20,6 @@ interface TabBarProps {
   onSetIntent: (uuid: string, intent: UserIntent) => void
   onReorder: (from: number, to: number) => void
   onCloseAll: () => void
-  setConfirmModal: (m: any) => void
-  setPromptModal: (m: any) => void
 }
 
 export function TabBar({
@@ -35,9 +34,8 @@ export function TabBar({
   onSetIntent,
   onReorder,
   onCloseAll,
-  setConfirmModal,
-  setPromptModal
 }: TabBarProps) {
+  const { confirm, prompt } = useModal()
   const tabsAreaRef = useRef<HTMLDivElement>(null)
   const tabRefs = useRef<(HTMLDivElement | null)[]>([])
   const [hiddenStart, setHiddenStart] = useState(tabs.length)
@@ -148,13 +146,12 @@ export function TabBar({
               onSmartMetadata={() => aiService.smartMetadata(tab.uuid)}
               onDelete={() => {
                 const path = dataService.get(tab.uuid)?.path
-                setConfirmModal({
+                confirm({
                   title: 'Delete Note',
                   message: `Are you sure you want to delete "${path?.split('/').pop()}"?`,
                   isDestructive: true,
                   onConfirm: async () => {
-                    setConfirmModal(null)
-                    onClose(idx) // Close the tab first
+                    onClose(idx)
                     await dataService.discard(tab.uuid)
                   }
                 })
@@ -162,12 +159,11 @@ export function TabBar({
               onRename={() => {
                 const path = dataService.get(tab.uuid)?.path || ''
                 const currentName = path.split('/').pop() || ''
-                setPromptModal({
+                prompt({
                   title: 'Rename Note',
                   message: `Enter new name for "${currentName}":`,
                   initialValue: currentName.replace(/\.md$/, ''),
                   onSubmit: async (newName: string) => {
-                    setPromptModal(null)
                     if (!newName || newName === currentName) return
                     const parentDir = path.substring(0, path.lastIndexOf('/'))
                     const fileName = newName.endsWith('.md') ? newName : newName + '.md'
@@ -311,7 +307,7 @@ interface TabItemProps {
   onDrop: (e: React.DragEvent) => void
   onDragEnd: () => void
   onCloseAll: () => void
-  dataService: any
+  dataService: StorableDataService
 }
 
 const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
@@ -392,7 +388,7 @@ const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
           x={menu.x}
           y={menu.y}
           path={doc?.path || ''}
-          intent={meta?.userIntent || null}
+          intent={(meta?.userIntent as UserIntent) || null}
           onClose={() => setMenu(null)}
           onSetIntent={onSetIntent}
           onShowInFiles={onShowInFiles}
@@ -412,7 +408,7 @@ const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function tabDot(tab: TabState, dataService: any): string | null {
+function tabDot(tab: TabState, dataService: StorableDataService): string | null {
   const doc = dataService.get(tab.uuid)
   const meta = doc?.meta
   if (!doc || (doc.body.trim().length === 0)) return null
@@ -422,7 +418,7 @@ function tabDot(tab: TabState, dataService: any): string | null {
   return doc.isModified ? 'bg-tn-orange' : null
 }
 
-function tabLabel(tab: TabState, dataService: any): string {
+function tabLabel(tab: TabState, dataService: StorableDataService): string {
   if (!tab) return 'Loading...'
   const doc = dataService.get(tab.uuid)
   const meta = doc?.meta

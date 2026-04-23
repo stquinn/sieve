@@ -5,9 +5,8 @@ import { UserIntent } from '../types'
 import { FolderPlus, Folder, FolderOpen, FileText, ChevronRight, ChevronDown, X } from 'lucide-react'
 import { StorableDataService } from '../lib/StorableDataService'
 import { AiService } from '../lib/AiService'
-import { stash } from '../../wailsjs/go/models'
 import { ShowInFiles } from '../../wailsjs/go/main/App'
-import { AiListener } from '../lib/AiJob'
+import { useModal } from '../lib/ModalContext'
 
 // Mirrors stash.NoteEntry from Go
 export interface NoteEntry {
@@ -46,8 +45,6 @@ interface SidebarProps {
   onToggleFolder: (path: string) => void
   activePath?: string
   onOpen: (path: string) => void
-  setConfirmModal: (modal: any) => void
-  setPromptModal: (modal: any) => void
   width: number
   showPrompts: boolean
   prompts: PromptEntry[]
@@ -59,11 +56,12 @@ interface SidebarProps {
   onRenameFolder?: (oldPath: string, newPath: string) => void
 }
 
-export function Sidebar({ 
-  dataService, aiService, entries, openPaths, openFolders, onToggleFolder, activePath, onOpen, 
-  setConfirmModal, setPromptModal, width, showPrompts, prompts, onEditPrompt, 
+export function Sidebar({
+  dataService, aiService, entries, openPaths, openFolders, onToggleFolder, activePath, onOpen,
+  width, showPrompts, prompts, onEditPrompt,
   promptsHeight, onPromptsResize, setNotes, setPrompts, onRenameFolder
 }: SidebarProps) {
+  const { confirm, prompt } = useModal()
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [isResizingPrompts, setIsResizingPrompts] = useState(false)
   const sidebarRef = useRef<HTMLDivElement>(null)
@@ -102,19 +100,18 @@ export function Sidebar({
   }
 
   const handleDelete = (path: string) => {
-    setConfirmModal({
+    confirm({
       title: 'Delete Note',
       message: `Are you sure you want to delete "${path.split('/').pop()}"?`,
       isDestructive: true,
       onConfirm: async () => {
-        setConfirmModal(null)
         try {
-          const uuid = dataService.findIdByPath(path)
-          if (uuid) await dataService.discard(uuid)
-          else {
-            // If not in registry, use a force discard by path if service allows 
-            // or load it first. For now, we assume it might be open.
+          let uuid = dataService.findIdByPath(path)
+          if (!uuid) {
+            const doc = await dataService.load(path)
+            uuid = doc.id
           }
+          await dataService.discard(uuid)
           refreshNotes()
         } catch (e) { console.error(e) }
       }
@@ -122,12 +119,11 @@ export function Sidebar({
   }
 
   const handleRename = (path: string, currentName: string, isDir: boolean) => {
-    setPromptModal({
+    prompt({
       title: isDir ? 'Rename Folder' : 'Rename Note',
       message: `Enter new name for "${currentName}":`,
       initialValue: isDir ? currentName : currentName.replace(/\.md$/, ''),
       onSubmit: async (newName: string) => {
-        setPromptModal(null)
         if (!newName || newName === currentName) return
         const parentDir = path.substring(0, path.lastIndexOf('/'))
         const fileName = isDir ? newName : (newName.endsWith('.md') ? newName : newName + '.md')
@@ -153,14 +149,13 @@ export function Sidebar({
   }
 
   const onCreateFolder = (parentPath: string) => {
-    setPromptModal({
+    prompt({
       title: 'New Folder',
       message: `Create a new folder in ${parentPath || 'store'}:`,
       onSubmit: async (name: string) => {
-        setPromptModal(null)
         if (!name) return
-        const path = `${parentPath || 'store'}/${name}`.replace(/\/+/g, '/')
-        await dataService.createFolder(path)
+        const folderPath = `${parentPath || 'store'}/${name}`.replace(/\/+/g, '/')
+        await dataService.createFolder(folderPath)
         refreshNotes()
       }
     })

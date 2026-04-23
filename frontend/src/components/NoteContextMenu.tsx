@@ -1,9 +1,89 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { UserIntent } from '../types'
 import { FolderOpen, Rocket, Sparkles, Trash2, CheckCircle2, XCircle, RotateCcw, Pencil, X } from 'lucide-react'
 
-interface Props {
+// ── Shared menu shell ──────────────────────────────────────────────────────
+
+interface MenuShellProps {
+  x: number
+  y: number
+  onClose: () => void
+  children: React.ReactNode
+}
+
+function MenuShell({ x, y, onClose, children }: MenuShellProps) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState({ top: y, left: x })
+
+  // Clamp to viewport after the first paint so we know the menu dimensions.
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const { width, height } = el.getBoundingClientRect()
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    setPos({
+      top:  Math.min(y, vh - height - 8),
+      left: Math.min(x, vw - width  - 8),
+    })
+  }, [x, y])
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    window.addEventListener('mousedown', handler)
+    return () => window.removeEventListener('mousedown', handler)
+  }, [onClose])
+
+  return (
+    <div
+      ref={ref}
+      className="fixed z-[100] bg-tn-bg-alt border border-solid border-tn-border-2 rounded-md shadow-2xl py-1 min-w-[200px]"
+      style={{ top: pos.top, left: pos.left }}
+    >
+      {children}
+    </div>
+  )
+}
+
+// ── Prompt context menu ────────────────────────────────────────────────────
+
+interface PromptContextMenuProps {
+  x: number
+  y: number
+  name: string
+  isVirtual?: boolean
+  onClose: () => void
+  onRestore?: () => void
+}
+
+export function PromptContextMenu({ x, y, name, isVirtual, onClose, onRestore }: PromptContextMenuProps) {
+  return (
+    <MenuShell x={x} y={y} onClose={onClose}>
+      <div className="px-3 py-1.5 text-[11px] text-white/70 font-mono bg-tn-bg-dark border-0 border-b border-solid border-white/20 uppercase tracking-wider truncate mb-1">
+        {name}.md
+      </div>
+      {!isVirtual && onRestore && (
+        <button
+          className="w-full bg-transparent border-none text-left px-3 py-1.5 text-[14px] text-tn-orange hover:bg-tn-border hover:text-white transition-colors flex items-center gap-2"
+          onClick={() => { onRestore(); onClose() }}
+        >
+          <RotateCcw className="w-4 h-4 opacity-70" />
+          Restore to Default
+        </button>
+      )}
+      <div className="px-3 py-1.5 text-[10px] text-white/50 uppercase tracking-[0.1em] font-bold italic border-t border-white/10 mt-1">
+        AI Instruction Template
+      </div>
+    </MenuShell>
+  )
+}
+
+// ── Note / folder context menu ─────────────────────────────────────────────
+
+interface NoteContextMenuProps {
   x: number
   y: number
   path: string
@@ -23,53 +103,24 @@ interface Props {
   onCloseAllTabs?: () => void
 }
 
-export function NoteContextMenu({ x, y, path, intent, onClose, onSetIntent, onDelete, onRename, onShowInFiles, onSmartFile, onSmartMetadata, isDir, childCount, isVirtual, onRestore, onCloseTab, onCloseAllTabs }: Props) {
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        onClose()
-      }
-    }
-    window.addEventListener('mousedown', handler)
-    return () => window.removeEventListener('mousedown', handler)
-  }, [onClose])
-
-  const isPrompt = path.startsWith('prompt:')
-
-  if (isPrompt) {
+export function NoteContextMenu({
+  x, y, path, intent, onClose, onSetIntent, onDelete, onRename,
+  onShowInFiles, onSmartFile, onSmartMetadata,
+  isDir, childCount, isVirtual, onRestore, onCloseTab, onCloseAllTabs,
+}: NoteContextMenuProps) {
+  // Delegate prompt paths to the dedicated component.
+  if (path.startsWith('prompt:')) {
+    const name = path.split(':').pop() ?? path
     return (
-      <div
-        ref={ref}
-        className="fixed z-[100] bg-tn-bg-alt border border-solid border-tn-border-2 rounded-md shadow-2xl py-1 min-w-[200px]"
-        style={{ top: y, left: x }}
-      >
-        <div className="px-3 py-1.5 text-[11px] text-white/70 font-mono bg-tn-bg-dark border-0 border-b border-solid border-white/20 uppercase tracking-wider truncate mb-1">
-          {path.split(':').pop()}.md
-        </div>
-        {!isVirtual && onRestore && (
-          <button
-            className="w-full bg-transparent border-none text-left px-3 py-1.5 text-[14px] text-tn-orange hover:bg-tn-border hover:text-white transition-colors flex items-center gap-2"
-            onClick={() => { onRestore(); onClose() }}
-          >
-            <RotateCcw className="w-4 h-4 opacity-70" />
-            Restore to Default
-          </button>
-        )}
-        <div className="px-3 py-1.5 text-[10px] text-white/50 uppercase tracking-[0.1em] font-bold italic border-t border-white/10 mt-1">
-          AI Instruction Template
-        </div>
-      </div>
+      <PromptContextMenu
+        x={x} y={y} name={name} isVirtual={isVirtual}
+        onClose={onClose} onRestore={onRestore}
+      />
     )
   }
 
   return (
-    <div
-      ref={ref}
-      className="fixed z-[100] bg-tn-bg-alt border border-solid border-tn-border-2 rounded-md shadow-2xl py-1 min-w-[200px]"
-      style={{ top: y, left: x }}
-    >
+    <MenuShell x={x} y={y} onClose={onClose}>
       {!isDir && (
         <>
           <button
@@ -156,8 +207,8 @@ export function NoteContextMenu({ x, y, path, intent, onClose, onSetIntent, onDe
         )}
         onClick={() => {
           if (isDir && childCount! > 0) return
-          onDelete(); 
-          onClose();
+          onDelete()
+          onClose()
         }}
         disabled={isDir && childCount! > 0}
       >
@@ -187,6 +238,6 @@ export function NoteContextMenu({ x, y, path, intent, onClose, onSetIntent, onDe
           Close All Tabs
         </button>
       )}
-    </div>
+    </MenuShell>
   )
 }

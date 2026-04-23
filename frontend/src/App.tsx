@@ -16,7 +16,7 @@ import { StoreSearch } from './components/StoreSearch'
 import { QuickSwitcher } from './components/QuickSwitcher'
 import { TimeoutPopup } from './components/TimeoutPopup'
 import { TabState, UserIntent } from './types'
-import { ConfirmModal, PromptModal } from './components/Modal'
+import { ModalProvider } from './lib/ModalContext'
 import { X } from 'lucide-react'
 import { EditorStats } from './components/EditorStats'
 import { useAppLifecycle } from './hooks/useAppLifecycle'
@@ -24,7 +24,7 @@ import { useUiState } from './hooks/useUiState'
 import { StorableDataService } from './lib/StorableDataService'
 import { AiService } from './lib/AiService'
 import { isMod } from './utils/platform'
-import { getAncestorPaths, getLocalISOString, applyFilingRecToMeta } from './lib/fmUtils'
+import { getAncestorPaths } from './lib/fmUtils'
 import './App.css'
 
 export default function App() {
@@ -47,8 +47,6 @@ export default function App() {
     isMetaDragging, setIsMetaDragging,
     pendingClose, setPendingClose,
   } = useUiState()
-  const [confirmModal, setConfirmModal] = useState<{ title: string, message: string, onConfirm: () => void, isDestructive?: boolean } | null>(null)
-  const [promptModal, setPromptModal] = useState<{ title: string, message: string, placeholder?: string, initialValue?: string, onSubmit: (val: string) => void } | null>(null)
   const [searchTerm, setSearchTerm]         = useState('')
   const [notes, setNotes]         = useState<NoteEntry[]>([])
   const [prompts, setPrompts]     = useState<PromptEntry[]>([])
@@ -436,8 +434,9 @@ export default function App() {
   console.log('[App] Rendering main UI. Tabs:', tabs.length, 'ActiveIdx:', activeIdx)
 
   return (
-    <div 
-      id="app-root" 
+    <ModalProvider>
+    <div
+      id="app-root"
       className={`theme-${storeInfo?.themeName || 'default'} tier-${tier}`}
       style={{ 
         '--sidebar-w': `${showSidebar ? sidebarWidth : 0}px`,
@@ -457,8 +456,6 @@ export default function App() {
               onToggleFolder={toggleFolder}
               onRenameFolder={renameOpenFolder}
               onOpen={openNote}
-              setConfirmModal={setConfirmModal}
-              setPromptModal={setPromptModal}
               width={sidebarWidth}
               showPrompts={showPrompts && tier === 'smart'}
               prompts={prompts}
@@ -550,13 +547,9 @@ export default function App() {
              setActiveIdx(0)
              persistSession({ activeIdx: 0, tabs: [{ id: doc.id, path: doc.path, active: true, mode: 'wysiwyg' }] as any })
           }}
-          setConfirmModal={setConfirmModal}
-          setPromptModal={setPromptModal}
         />
 
         {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
-        {confirmModal && <ConfirmModal {...confirmModal} onClose={() => setConfirmModal(null)} />}
-        {promptModal && <PromptModal {...promptModal} onClose={() => setPromptModal(null)} />}
         
         <QuickSwitcher
           isOpen={showQuickSwitch}
@@ -711,5 +704,6 @@ export default function App() {
         </div>
       )}
     </div>
+    </ModalProvider>
   )
 }
