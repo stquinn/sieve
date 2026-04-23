@@ -13,7 +13,7 @@ import { AiListener } from '../lib/AiJob'
 export interface NoteEntry {
   name: string
   displayName?: string
-  path?: string      // store-relative, present on files
+  path?: string      // store-relative, present on files and folders
   status?: string
   userIntent?: string // from frontmatter: "keep", "trash", or ""
   isDir: boolean
@@ -349,7 +349,7 @@ function EntryList({ entries, depth, openPaths, openFolders, onToggleFolder, act
               onOpen={onOpen}
               onContextMenu={onContextMenu}
               onMove={onMove}
-              basePath={basePath ? `${basePath}/${entry.name}` : entry.name}
+              basePath={entry.path || (basePath ? `${basePath}/${entry.name}` : entry.name)}
             />
           : <FileEntry
               key={entry.path}

@@ -298,6 +298,7 @@ func buildNoteTree(storables []store.Storable) []NoteEntry {
 		case store.FolderStorable:
 			entries = append(entries, NoteEntry{
 				Name:     key,
+				Path:     s.ExternalRef(),
 				IsDir:    true,
 				Children: buildFolderChildren(s.Owns()),
 			})

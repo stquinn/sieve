@@ -104,6 +104,8 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
       doc?.path || ''
     )
 
+    const lines = question ? question.split('\n') : []
+
     // 1. Insert Placeholder
     if (mode === 'markdown') {
       const ta = taRef.current
@@ -124,8 +126,6 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
           break
         }
       }
-
-      const lines = question ? question.split('\n') : []
       const questionNodes = lines.map((line, idx) => ({
         type: 'paragraph',
         content: line.trim().length > 0 ? [
@@ -157,7 +157,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
           const idEscaped = blkId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
           const pattern = new RegExp(`(\\[!ai\\] id="${idEscaped}"[^\\n]*)\\s*[\\s\\S]*?\\s*\\[!ai-end\\]`)
           
-          const qlines = lines.map((l, i) => {
+          const qlines = lines.map((l: string, i: number) => {
             if (l.trim().length === 0) return ''
             const cleanL = (i === 0 && l.startsWith('Ask: ')) ? l.substring(5) : l
             return i === 0 ? `***Ask:*** ${cleanL}` : cleanL
@@ -185,7 +185,6 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
             const parsedDoc = ProseMirrorDOMParser.fromSchema(schema).parse(tempDiv)
             
             // Wrap in aiBlock to preserve structure and metadata
-            const lines = question ? question.split('\n') : []
             const questionNodes = lines.map((line, idx) => ({
               type: 'paragraph',
               content: line.trim().length > 0 ? [
