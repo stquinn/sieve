@@ -732,8 +732,52 @@ div.node-image.ProseMirror-selectednode {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
-  color: color-mix(in srgb, var(--theme-accentPrimary) 55%, transparent);
+  color: var(--theme-accentPrimary);
   font-family: var(--theme-monoFont);
+  border: 1px solid var(--theme-border2);
+  border-radius: 4px;
+  z-index: 10;
+}
+
+.ai-block__badge--thinking {
+  border-color: transparent;
+  background-clip: padding-box;
+  overflow: hidden;
+}
+
+.ai-block__badge--thinking::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0%,
+    var(--theme-accentPrimary) 25%,
+    var(--theme-accentPurple) 50%,
+    transparent 75%
+  );
+  animation: ai-border-trace 2s linear infinite;
+  z-index: -1;
+}
+
+.ai-block__badge--thinking::after {
+  content: 'AI';
+  position: absolute;
+  inset: 1px;
+  background: var(--theme-bg);
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+}
+
+@keyframes ai-border-trace {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* Question area inside AI block — formal aiQuestion node */

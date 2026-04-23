@@ -33,6 +33,8 @@ function AiBlockView({ node }: any) {
   const activate   = () => applyChain('add')
   const deactivate = () => applyChain('remove')
 
+  const isThinking = node.textContent.includes('(thinking…)')
+  
   return (
     <NodeViewWrapper>
       <div
@@ -44,7 +46,7 @@ function AiBlockView({ node }: any) {
         onFocus={activate}
         onBlur={deactivate}
       >
-        <span className="ai-block__badge">AI</span>
+        <span className={`ai-block__badge ${isThinking ? 'ai-block__badge--thinking' : ''}`}>AI</span>
         <NodeViewContent className="ai-block__content" />
       </div>
     </NodeViewWrapper>
