@@ -330,7 +330,7 @@ textarea::selection {
   cursor: pointer;
   flex-shrink: 0;       /* prevent vertical squashing in parent flex containers */
   height: 28px;         /* strict constant height */
-  color: var(--theme-accentPrimary);
+  color: var(--theme-textDim);
   font-size: 14px;
   font-weight: 600;
   padding: 0 1rem;      /* use x-padding only, height is fixed */
@@ -372,7 +372,7 @@ textarea::selection {
   box-sizing: border-box;
 }
 .sidebar__file:hover { background: var(--theme-bgAlt); color: var(--theme-text); }
-.sidebar__file--open { color: var(--theme-accentCyan); }
+.sidebar__file--open { color: var(--theme-text); opacity: 0.8; }
 
 /* ── Sidebar Prompts ────────────────────────────────────────────────── */
 

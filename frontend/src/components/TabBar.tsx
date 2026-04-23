@@ -357,10 +357,13 @@ const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
       >
         {(meta?.status === 'evaluating' || meta?.status === 'thinking' || dataService.getTransient(tab.uuid).isWaitingAI)
           ? <span className="w-2 h-2 rounded-full border-2 border-solid border-tn-orange border-t-transparent animate-spin shrink-0" />
-          : dot ? <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', dot)} /> 
+          : dot ? <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', dot, !active && 'opacity-40')} /> 
           : <FileText className="w-3.5 h-3.5 opacity-40 shrink-0" />
         }
-        <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap min-w-0 text-left">
+        <span className={cn(
+          "flex-1 overflow-hidden text-ellipsis whitespace-nowrap min-w-0 text-left",
+          !active && "opacity-70"
+        )}>
           {tabLabel(tab, dataService)}
         </span>
         {tab.mode === 'markdown' && (

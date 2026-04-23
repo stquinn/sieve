@@ -111,7 +111,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
       const ta = taRef.current
       if (!ta) return
       const end = ta.selectionEnd
-      const thinking = `\n\n[!ai] id="${blkId}"\n${question ? `***Ask:*** ${question}\n\n---\n\n` : ''}_(thinking…)_\n[!ai-end]\n\n`
+      const thinking = `\n\n[!ai] id="${blkId}" thinking="true"\n${question ? `***Ask:*** ${question}\n\n---\n\n` : ''}_(thinking…)_\n[!ai-end]\n\n`
       const next = ta.value.substring(0, end) + thinking + ta.value.substring(end)
       dataService.setBody(uuid, next)
       setRawMd(next)
@@ -140,7 +140,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
 
       editor.commands.insertContentAt(insertPos, {
         type: 'aiBlock',
-        attrs: { id: blkId },
+        attrs: { id: blkId, thinking: true },
         content: [
           ...(questionNodes.length > 0 ? [{ type: 'aiQuestion', content: questionNodes }] : []),
           { type: 'horizontalRule' },
@@ -163,7 +163,8 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
             return i === 0 ? `***Ask:*** ${cleanL}` : cleanL
           }).filter(Boolean).join('\n\n')
           
-          const updatedBody = body.replace(pattern, `$1\n\n${qlines}\n\n---\n\n${response}\n\n[!ai-end]`)
+          const updatedHeader = `$1`.replace(/\s*thinking="true"/g, '')
+          const updatedBody = body.replace(pattern, `${updatedHeader}\n\n${qlines}\n\n---\n\n${response}\n\n[!ai-end]`)
           dataService.setBody(uuid, updatedBody)
           setRawMd(updatedBody)
         } else if (editor) {
@@ -199,7 +200,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
 
             const aiBlockNode = {
               type: 'aiBlock',
-              attrs: { id: blkId, ref: ctx.blockRef },
+              attrs: { id: blkId, ref: ctx.blockRef, thinking: false },
               content: [
                 ...(questionNodes.length > 0 ? [{ type: 'aiQuestion', content: questionNodes }] : []),
                 { type: 'horizontalRule' },
@@ -215,6 +216,23 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
       },
       onError: (jobId: JobID, err: string) => {
         console.error('AI Job Error:',JSON.stringify(jobId), err)
+        // Clear thinking state on error
+        if (mode === 'markdown') {
+          const body = dataService.get(uuid)?.body || ''
+          const idEscaped = blkId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+          const pattern = new RegExp(`(\\[!ai\\] id="${idEscaped}"[^\\n]*)\\s*[\\s\\S]*?\\s*\\[!ai-end\\]`)
+          const updatedBody = body.replace(pattern, (match, p1) => {
+             return p1.replace(/\s*thinking="true"/g, '') + `\n\n**Error:** ${err}\n\n[!ai-end]`
+          })
+          dataService.setBody(uuid, updatedBody)
+          setRawMd(updatedBody)
+        } else if (editor) {
+          editor.state.doc.descendants((node, pos) => {
+            if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
+              editor.commands.updateAttributes(node.type, { thinking: false })
+            }
+          })
+        }
       }
     }
 

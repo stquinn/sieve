@@ -118,6 +118,17 @@ export function SettingsModal({ onClose, dataService, onSettingsChanged }: Props
                 >
                   <option value="tokyonight">Tokyo Night</option>
                   <option value="sublime">Sublime</option>
+                  <option value="nord">Nord</option>
+                  <option value="solarized">Solarized Dark</option>
+                  <option value="vscode">VS Code Dark+</option>
+                  <option value="darcula">IntelliJ Darcula</option>
+                  <option value="onedark">One Dark</option>
+                  <option value="monokai">Monokai Pro</option>
+                  <option value="gruvbox">Gruvbox Dark</option>
+                  <option value="catppuccin">Catppuccin Macchiato</option>
+                  <option value="stardust">Stardust (Neon)</option>
+                  <option value="emerald">Emerald City</option>
+                  <option value="synthwave">SynthWave '84</option>
                 </select>
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-tn-muted">
                   <ChevronDown className="w-4 h-4" />

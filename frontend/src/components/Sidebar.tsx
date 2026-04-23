@@ -233,7 +233,7 @@ export function Sidebar({
           }
         }}
       >
-        <span className="pl-4">Library</span>
+        <span className="pl-4 text-[13px] font-black uppercase tracking-[0.05em] text-tn-muted">Library</span>
         <div className="flex items-center gap-1 pr-1">
           <button
             className="hover:text-tn-text hover:bg-tn-bg-alt/80 transition-all bg-transparent border-none p-1.5 cursor-pointer flex items-center justify-center leading-none text-tn-muted rounded-md"
@@ -296,7 +296,7 @@ export function Sidebar({
           />
 
           <div className="sidebar__prompts flex-1 overflow-y-auto pt-3">
-            <div className="sidebar__section-title px-3 mb-1">
+            <div className="sidebar__section-title px-3 mb-1 text-[13px] font-black uppercase tracking-[0.05em] text-tn-muted">
               <span>Prompts</span>
             </div>
             <div className="sidebar__prompts-list pb-2">
@@ -448,7 +448,7 @@ function DirEntry({ entry, depth, openPaths, openFolders, onToggleFolder, active
         ) : (
           <Folder className="w-3.5 h-3.5 opacity-70 text-tn-blue shrink-0" />
         )}
-        <span className="sidebar__dir-name truncate flex-1 text-[13px]">{entry.name}</span>
+        <span className="sidebar__dir-name truncate flex-1 text-[15px] font-bold text-tn-textDim">{entry.name}</span>
       </button>
       {expanded && entry.children && (
         <EntryList
@@ -484,7 +484,7 @@ function FileEntry({ entry, depth, open, active, onOpen, onContextMenu }: FileEn
       className={cn(
         'sidebar__file relative w-full text-left flex items-center gap-2 group',
         open && 'sidebar__file--open',
-        active && 'bg-tn-bg-alt !text-white font-semibold shadow-[inset_2px_0_0_var(--theme-accentPrimary)]'
+        active && 'bg-tn-bg-alt !text-white font-bold shadow-[inset_2px_0_0_var(--theme-accentPrimary)]'
       )}
       style={{ paddingLeft: `${1.5 + depth * 1}rem` }}
       draggable
@@ -507,7 +507,7 @@ function FileEntry({ entry, depth, open, active, onOpen, onContextMenu }: FileEn
                 entry.userIntent === 'keep' ? 'bg-tn-blue' : (entry.userIntent === 'trash' ? 'bg-tn-red' : 'bg-tn-yellow')
               )} />
             )}
-            <span className="truncate flex-1 text-[13.5px]">{entry.displayName || entry.name}</span>
+            <span className="truncate flex-1 text-[15px] font-medium text-tn-textDim">{entry.displayName || entry.name}</span>
           </div>
         </div>
       </div>
@@ -519,7 +519,7 @@ function PromptItem({ prompt, active, onEdit, onRestore, onContextMenu }: { prom
   return (
     <div className={cn(
       "sidebar__file flex items-center justify-between group pr-2",
-      active && "bg-tn-bg-alt !text-white font-semibold shadow-[inset_2px_0_0_var(--theme-accentPrimary)]"
+      active && "bg-tn-bg-alt !text-white font-bold shadow-[inset_2px_0_0_var(--theme-accentPrimary)]"
     )} style={{ paddingLeft: '1.5rem' }} onContextMenu={onContextMenu}>
       <button
         className="flex items-center gap-2 flex-1 min-w-0 bg-transparent border-none p-0 text-inherit cursor-pointer text-left"
