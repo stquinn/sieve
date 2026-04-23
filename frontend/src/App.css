@@ -301,7 +301,7 @@ textarea::selection {
   overflow: hidden;  /* inner sections handle their own scroll */
   background: var(--theme-bgDark);
   border-right: 1px solid var(--theme-border);
-  padding: 0.6rem 0;
+  padding: 0;
 }
 
 .sidebar__section-title {
@@ -310,7 +310,7 @@ textarea::selection {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--theme-muted);
-  padding: 0.4rem 1rem 0.5rem;
+  padding: 0.5rem 1rem;
 }
 
 .sidebar__empty {

@@ -7,7 +7,7 @@ interface BaseModalProps {
   className?: string
 }
 
-function BaseModal({ onClose, children, className }: BaseModalProps) {
+export function BaseModal({ onClose, children, className }: BaseModalProps) {
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {

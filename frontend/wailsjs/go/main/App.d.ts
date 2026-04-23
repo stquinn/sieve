@@ -76,6 +76,8 @@ export function SavePromptsHeight(arg1:number):Promise<void>;
 
 export function SaveSession(arg1:stash.Session):Promise<void>;
 
+export function SaveSettings(arg1:stash.Settings):Promise<void>;
+
 export function SaveSidebarWidth(arg1:number):Promise<void>;
 
 export function SearchStore(arg1:string):Promise<Array<stash.SearchResult>>;

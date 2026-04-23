@@ -122,7 +122,7 @@ export function TabBar({
     pos !== dragIdx + 1
 
   return (
-    <div className="flex items-stretch bg-tn-bg-dark border-0 border-b-2 border-solid border-tn-border-2 h-[44px] shrink-0">
+    <div className="flex items-stretch bg-tn-bg-dark border-0 border-t border-b border-solid border-tn-border-2 h-[44px] shrink-0">
 
       {/* Tab scroll area — clips overflowing tabs */}
       <div

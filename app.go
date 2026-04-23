@@ -85,6 +85,15 @@ func (a *App) LoadSettings() stash.Settings {
 	return stash.DefaultSettings()
 }
 
+// SaveSettings persists user configuration to the store.
+func (a *App) SaveSettings(settings stash.Settings) error {
+	if a.state == nil {
+		return fmt.Errorf("store not open")
+	}
+	logger.Info("SaveSettings", "cli", settings.CLI, "model", settings.Model, "theme", settings.Theme)
+	return a.state.SaveSettings(settings)
+}
+
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 // startup is called by Wails when the application window is ready.

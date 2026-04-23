@@ -1,7 +1,7 @@
 import { 
   LoadBuffer, SaveBuffer, NewBuffer, FileBuffer, RefileNote, DiscardBuffer,
   MoveNote, CreateFolder, DeleteFolder, RenameFolder, DeletePrompt, DeleteNote,
-  GetNotes, GetPrompts, GetStoreInfo, EvaluateBuffer,
+  GetNotes, GetPrompts, GetStoreInfo, EvaluateBuffer, SaveSettings,
   GetDocumentVersion, DescribeImage, SaveAsset, DownloadAsset, RefineLanguage,
   SearchStore, Ask, Explain
 } from '../../wailsjs/go/main/App'
@@ -420,5 +420,12 @@ export class StorableDataService {
 
   async searchStore(query: string) {
     return SearchStore(query)
+  }
+
+  /**
+   * Save global settings
+   */
+  async saveSettings(settings: any) {
+    return SaveSettings(settings)
   }
 }

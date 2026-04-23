@@ -25,6 +25,7 @@ import { StorableDataService } from './lib/StorableDataService'
 import { AiService } from './lib/AiService'
 import { isMod } from './utils/platform'
 import { getAncestorPaths } from './lib/fmUtils'
+import { SettingsModal } from './components/SettingsModal'
 import './App.css'
 
 export default function App() {
@@ -47,6 +48,7 @@ export default function App() {
     isMetaDragging, setIsMetaDragging,
     pendingClose, setPendingClose,
   } = useUiState()
+  const [showSettings, setShowSettings] = useState(false)
   const [searchTerm, setSearchTerm]         = useState('')
   const [notes, setNotes]         = useState<NoteEntry[]>([])
   const [prompts, setPrompts]     = useState<PromptEntry[]>([])
@@ -267,6 +269,7 @@ export default function App() {
         handlers.current.closeTab(); 
       }
       if (mod && key === 's') { e.preventDefault(); handlers.current.save() }
+      if (mod && key === ',') { e.preventDefault(); setShowSettings(true) }
       if (mod && e.shiftKey && key === 'm') { e.preventDefault(); handlers.current.toggleMode() }
       if (mod && (key === 'p' || e.code === 'KeyP') && !e.shiftKey) { e.preventDefault(); setShowQuickSwitch(v => !v) }
       if (mod && e.shiftKey && (key === 'p' || e.code === 'KeyP')) { 
@@ -317,6 +320,14 @@ export default function App() {
       //settings are in seconds convert to milliseconds
       cliTimeoutLongMs.current = info.cliTimeoutLong * 1000 || 20000
       autosaveMs.current = info.autosaveDebounce * 1000 || 30000
+
+      // Live apply theme variables
+      if (info.themeVars) {
+        const root = document.documentElement;
+        Object.entries(info.themeVars).forEach(([key, value]) => {
+          root.style.setProperty(`--theme-${key}`, value as string);
+        });
+      }
       
       console.log('[App] Initializing session...')
       GetSession().then(async session => {
@@ -481,6 +492,8 @@ export default function App() {
               }}
               setNotes={setNotes}
               setPrompts={setPrompts}
+              onOpenSettings={() => setShowSettings(true)}
+              onNew={newTab}
             />
           ) : (
             <StoreSearch
@@ -550,6 +563,28 @@ export default function App() {
         />
 
         {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+        {showSettings && (
+          <SettingsModal 
+            onClose={() => setShowSettings(false)} 
+            dataService={dataService.current} 
+            onSettingsChanged={() => {
+              dataService.current.getStoreInfo().then(info => {
+                setStoreInfo(info)
+                setTier(info.tier === 2 ? 'smart' : 'dumb')
+                cliTimeoutLongMs.current = info.cliTimeoutLong * 1000 || 20000
+                autosaveMs.current = info.autosaveDebounce * 1000 || 30000
+                
+                // Live apply theme variables
+                if (info.themeVars) {
+                  const root = document.documentElement;
+                  Object.entries(info.themeVars).forEach(([key, value]) => {
+                    root.style.setProperty(`--theme-${key}`, value as string);
+                  });
+                }
+              })
+            }}
+          />
+        )}
         
         <QuickSwitcher
           isOpen={showQuickSwitch}

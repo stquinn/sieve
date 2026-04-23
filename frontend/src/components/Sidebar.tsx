@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { NoteContextMenu } from './NoteContextMenu'
 import { UserIntent } from '../types'
-import { FolderPlus, Folder, FolderOpen, FileText, ChevronRight, ChevronDown, X } from 'lucide-react'
+import { FolderPlus, Plus, Folder, FolderOpen, FileText, ChevronRight, ChevronDown, X, Settings } from 'lucide-react'
 import { StorableDataService } from '../lib/StorableDataService'
 import { AiService } from '../lib/AiService'
 import { ShowInFiles } from '../../wailsjs/go/main/App'
@@ -32,7 +32,7 @@ interface ContextMenuState {
   path: string
   intent: UserIntent
   isDir?: boolean
-  childCount?: number 
+  childCount?: number
   isVirtual?: boolean
 }
 
@@ -54,12 +54,14 @@ interface SidebarProps {
   setNotes: (notes: NoteEntry[]) => void
   setPrompts: (prompts: PromptEntry[]) => void
   onRenameFolder?: (oldPath: string, newPath: string) => void
+  onOpenSettings: () => void
+  onNew: () => void
 }
 
 export function Sidebar({
   dataService, aiService, entries, openPaths, openFolders, onToggleFolder, activePath, onOpen,
   width, showPrompts, prompts, onEditPrompt,
-  promptsHeight, onPromptsResize, setNotes, setPrompts, onRenameFolder
+  promptsHeight, onPromptsResize, setNotes, setPrompts, onRenameFolder, onOpenSettings, onNew
 }: SidebarProps) {
   const { confirm, prompt } = useModal()
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
@@ -206,15 +208,14 @@ export function Sidebar({
   const [isRootDragOver, setIsRootDragOver] = useState(false)
 
   return (
-    <div 
+    <div
       ref={sidebarRef}
-      className="sidebar flex flex-col h-full bg-tn-bg border-r border-tn-bg-alt select-none transition-all duration-75 relative z-10 !overflow-hidden" 
+      className="sidebar flex flex-col h-full bg-tn-bg border-t border-r border-solid border-tn-border-2 select-none transition-all duration-75 relative z-10 !overflow-hidden"
       style={{ width: `${width}px` }}
     >
-      <div className="flex-1 overflow-y-auto flex flex-col scrollbar-hide min-h-0">
-      <div 
+      <div
         className={cn(
-          "sidebar__section-title transition-colors rounded group flex items-center justify-between",
+          "sidebar__section-title transition-colors flex items-center justify-between border-0 border-b border-solid border-tn-border-2 h-[44px] min-h-[44px] p-0 shrink-0",
           isRootDragOver && "bg-tn-bg-alt ring-1 ring-tn-blue text-white"
         )}
         onDragOver={e => { e.preventDefault(); setIsRootDragOver(true) }}
@@ -232,18 +233,36 @@ export function Sidebar({
           }
         }}
       >
-        <span>Library</span>
-        <button 
-          className="opacity-0 group-hover:opacity-100 hover:text-tn-blue transition-all bg-transparent border-none p-0 cursor-pointer flex items-center justify-center leading-none"
-          onClick={(e) => { e.stopPropagation(); onCreateFolder('') }}
-          title="New Folder"
-        >
-          <FolderPlus className="w-4 h-4" />
-        </button>
+        <span className="pl-4">Library</span>
+        <div className="flex items-center gap-1 pr-1">
+          <button
+            className="hover:text-tn-text hover:bg-tn-bg-alt/80 transition-all bg-transparent border-none p-1.5 cursor-pointer flex items-center justify-center leading-none text-tn-muted rounded-md"
+            onClick={(e) => { e.stopPropagation(); onNew() }}
+            title="New Note (Mod + N)"
+          >
+            <Plus className="w-[18px] h-[18px]" />
+          </button>
+          <button
+            className="hover:text-tn-text hover:bg-tn-bg-alt/80 transition-all bg-transparent border-none p-1.5 cursor-pointer flex items-center justify-center leading-none text-tn-muted rounded-md"
+            onClick={(e) => { e.stopPropagation(); onCreateFolder('') }}
+            title="New Folder"
+          >
+            <FolderPlus className="w-[18px] h-[18px]" />
+          </button>
+          <button
+            className="hover:text-tn-text hover:bg-tn-bg-alt/80 transition-all bg-transparent border-none p-0 pr-1.5 cursor-pointer flex items-center justify-center leading-none text-tn-muted rounded-md"
+            onClick={(e) => { e.stopPropagation(); onOpenSettings() }}
+            title="Settings (Mod + ,)"
+          >
+            <Settings className="w-[18px] h-[18px]" />
+          </button>
+        </div>
       </div>
-      {entries.length === 0
-        ? <div className="sidebar__empty">No filed documents yet</div>
-        : <EntryList
+
+      <div className="flex-1 overflow-y-auto flex flex-col scrollbar-hide min-h-0">
+        {entries.length === 0
+          ? <div className="sidebar__empty">No filed documents yet</div>
+          : <EntryList
             entries={entries}
             depth={0}
             openPaths={openPaths}
@@ -255,17 +274,17 @@ export function Sidebar({
             onMove={onMove}
             basePath=""
           />
-      }
+        }
       </div>
 
- 
+
       {showPrompts && prompts.length > 0 && (
-        <div 
+        <div
           className="sidebar__prompts-container flex flex-col border-t border-tn-bg-alt relative shrink-0"
           style={{ height: `${promptsHeight}px`, minHeight: '40px', maxHeight: '70vh' }}
         >
           {/* Vertical Resize Handle */}
-          <div 
+          <div
             className={cn(
               "absolute -top-[1.5px] left-0 right-0 h-[3px] cursor-ns-resize transition-all z-[100]",
               isResizingPrompts ? "bg-tn-orange shadow-[0_0_10px_rgba(255,158,100,0.5)]" : "bg-tn-border-2 hover:bg-tn-orange/40"
@@ -275,19 +294,19 @@ export function Sidebar({
               setIsResizingPrompts(true)
             }}
           />
-          
-          <div className="sidebar__prompts flex-1 overflow-y-auto">
+
+          <div className="sidebar__prompts flex-1 overflow-y-auto pt-3">
             <div className="sidebar__section-title px-3 mb-1">
               <span>Prompts</span>
             </div>
             <div className="sidebar__prompts-list pb-2">
               {prompts.map(p => (
-                <PromptItem 
-                  key={p.name} 
-                  prompt={p} 
+                <PromptItem
+                  key={p.name}
+                  prompt={p}
                   active={activePath === `prompt:${p.name}`}
-                  onEdit={() => onEditPrompt(p.name)} 
-                  onRestore={() => onRestorePrompt(p.name)} 
+                  onEdit={() => onEditPrompt(p.name)}
+                  onRestore={() => onRestorePrompt(p.name)}
                   onContextMenu={(e) => openMenu(e, `prompt:${p.name}`, null, false, 0, p.isVirtual)}
                 />
               ))}
@@ -337,28 +356,28 @@ function EntryList({ entries, depth, openPaths, openFolders, onToggleFolder, act
     <>
       {entries.map(entry =>
         entry.isDir
-            ? <DirEntry
-              key={entry.name}
-              entry={entry}
-              depth={depth}
-              openPaths={openPaths}
-              openFolders={openFolders}
-              onToggleFolder={onToggleFolder}
-              activePath={activePath}
-              onOpen={onOpen}
-              onContextMenu={onContextMenu}
-              onMove={onMove}
-              basePath={entry.path || (basePath ? `${basePath}/${entry.name}` : entry.name)}
-            />
+          ? <DirEntry
+            key={entry.name}
+            entry={entry}
+            depth={depth}
+            openPaths={openPaths}
+            openFolders={openFolders}
+            onToggleFolder={onToggleFolder}
+            activePath={activePath}
+            onOpen={onOpen}
+            onContextMenu={onContextMenu}
+            onMove={onMove}
+            basePath={entry.path || (basePath ? `${basePath}/${entry.name}` : entry.name)}
+          />
           : <FileEntry
-              key={entry.path}
-              entry={entry}
-              depth={depth}
-              open={openPaths.has(entry.path!)}
-              active={activePath === entry.path}
-              onOpen={onOpen}
-              onContextMenu={onContextMenu}
-            />
+            key={entry.path}
+            entry={entry}
+            depth={depth}
+            open={openPaths.has(entry.path!)}
+            active={activePath === entry.path}
+            onOpen={onOpen}
+            onContextMenu={onContextMenu}
+          />
       )}
     </>
   )
@@ -502,7 +521,7 @@ function PromptItem({ prompt, active, onEdit, onRestore, onContextMenu }: { prom
       "sidebar__file flex items-center justify-between group pr-2",
       active && "bg-tn-bg-alt !text-white font-semibold shadow-[inset_2px_0_0_var(--theme-accentPrimary)]"
     )} style={{ paddingLeft: '1.5rem' }} onContextMenu={onContextMenu}>
-      <button 
+      <button
         className="flex items-center gap-2 flex-1 min-w-0 bg-transparent border-none p-0 text-inherit cursor-pointer text-left"
         onClick={onEdit}
       >
@@ -516,7 +535,7 @@ function PromptItem({ prompt, active, onEdit, onRestore, onContextMenu }: { prom
       </button>
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
         {!prompt.isVirtual && (
-          <button 
+          <button
             className="hover:text-tn-red transition-colors bg-transparent border-none p-0 cursor-pointer flex items-center justify-center p-1"
             onClick={(e) => { e.stopPropagation(); onRestore() }}
             title="Restore to Default"

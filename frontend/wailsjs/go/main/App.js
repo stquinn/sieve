@@ -146,6 +146,10 @@ export function SaveSession(arg1) {
   return window['go']['main']['App']['SaveSession'](arg1);
 }
 
+export function SaveSettings(arg1) {
+  return window['go']['main']['App']['SaveSettings'](arg1);
+}
+
 export function SaveSidebarWidth(arg1) {
   return window['go']['main']['App']['SaveSidebarWidth'](arg1);
 }
