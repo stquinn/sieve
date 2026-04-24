@@ -100,7 +100,7 @@ export class AiService {
     try {
       await this.dataService.save(job.docId).catch(console.error)
       const doc = this.dataService.get(job.docId)
-      if (!doc) return
+      if (!doc || doc.kind === 'prompt') return
 
       const result = await EvaluateAndFile(doc.path, fileAfter, allowDiscard)
 

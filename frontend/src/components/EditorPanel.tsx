@@ -226,7 +226,7 @@ export const EditorPanel = forwardRef<EditorPanelHandle, EditorPanelProps>(({
           dataService.setBody(uuid, updatedBody)
           setRawMd(updatedBody)
         } else if (editor) {
-          editor.state.doc.descendants((node, pos) => {
+          editor.state.doc.descendants((node: any, pos: number) => {
             if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
               editor.commands.updateAttributes(node.type, { thinking: false })
             }

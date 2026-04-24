@@ -1078,28 +1078,31 @@ func (a *App) EvaluateAndFile(path string, fileAfter bool, allowDiscard bool) (E
 		return EvaluateAndFileResult{Discarded: true}, nil
 	}
 
-	// Discard when the user explicitly marked the document as trash.
-	if userIntent == "trash" && fileAfter && allowDiscard {
-		if err := a.discardDoc(isNote, b, n); err != nil {
-			return EvaluateAndFileResult{}, fmt.Errorf("EvaluateAndFile: discard trash: %w", err)
+	// User has explicitly chosen to discard — respect it when allowed.
+	if userIntent == "trash" {
+		if allowDiscard {
+			if err := a.discardDoc(isNote, b, n); err != nil {
+				return EvaluateAndFileResult{}, fmt.Errorf("EvaluateAndFile: discard trash: %w", err)
+			}
+			return EvaluateAndFileResult{Discarded: true}, nil
 		}
-		return EvaluateAndFileResult{Discarded: true}, nil
+		// allowDiscard=false means the caller has prevented auto-deletion (e.g. keepAndFile
+		// path). Never run AI or file a document the user has marked as trash — just save.
+		return a.saveOnly(isNote, b, n)
 	}
 
-	// Run AI evaluation unless the user has marked the document as trash.
+	// Run AI evaluation and apply the filing recommendation.
+	settings := a.state.LoadSettings()
 	evalDone := false
-	if userIntent != "trash" {
-		settings := a.state.LoadSettings()
-		if settings.Tier() != stash.TierDumb {
-			prompt, _ := a.prompts.GetPromptContent("file")
-			rec, err := stash.EvaluateBuffer(meta, body, a.libraryFolders(), settings, prompt)
-			if err != nil {
-				logger.Warn("EvaluateAndFile: eval failed", "path", path, "err", err)
-				return EvaluateAndFileResult{}, err
-			}
-			stash.ApplyFilingRec(meta, rec, settings.CLI)
-			evalDone = true
+	if settings.Tier() != stash.TierDumb {
+		prompt, _ := a.prompts.GetPromptContent("file")
+		rec, err := stash.EvaluateBuffer(meta, body, a.libraryFolders(), settings, prompt)
+		if err != nil {
+			logger.Warn("EvaluateAndFile: eval failed", "path", path, "err", err)
+			return EvaluateAndFileResult{}, err
 		}
+		stash.ApplyFilingRec(meta, rec, settings.CLI)
+		evalDone = true
 	}
 
 	// Persist meta changes and optionally file/refile.
@@ -1138,6 +1141,23 @@ func (a *App) EvaluateAndFile(path string, fileAfter bool, allowDiscard bool) (E
 		return EvaluateAndFileResult{Doc: toNoteBufferDTO(note)}, nil
 	}
 	return EvaluateAndFileResult{Doc: toBufferDTO(b)}, nil
+}
+
+// saveOnly persists the current state without filing — used when the document
+// is marked trash but auto-discard is disabled.
+func (a *App) saveOnly(isNote bool, b *stash.Buffer, n *stash.Note) (EvaluateAndFileResult, error) {
+	if isNote {
+		saved, err := a.notes.Save(n)
+		if err != nil {
+			return EvaluateAndFileResult{}, fmt.Errorf("EvaluateAndFile: save-only note: %w", err)
+		}
+		return EvaluateAndFileResult{Doc: toNoteBufferDTO(saved)}, nil
+	}
+	saved, err := a.buffers.Save(b)
+	if err != nil {
+		return EvaluateAndFileResult{}, fmt.Errorf("EvaluateAndFile: save-only buffer: %w", err)
+	}
+	return EvaluateAndFileResult{Doc: toBufferDTO(saved)}, nil
 }
 
 // discardDoc deletes a buffer or note from its respective service.
