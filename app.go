@@ -1041,131 +1041,20 @@ func (a *App) EvaluateAndFile(path string, fileAfter bool, allowDiscard bool) (E
 	if a.buffers == nil {
 		return EvaluateAndFileResult{}, fmt.Errorf("store not open")
 	}
-
-	// Load the document — body was already saved by the frontend.
-	var (
-		b      *stash.Buffer
-		n      *stash.Note
-		isNote bool
-	)
-	if buf, err := a.buffers.Load(path); err == nil {
-		b = buf
-	} else if note, err := a.notes.Load(path); err == nil {
-		n = note
-		isNote = true
-	} else {
-		return EvaluateAndFileResult{}, fmt.Errorf("EvaluateAndFile: document not found: %s", path)
+	settings := a.state.LoadSettings()
+	prompt, _ := a.prompts.GetPromptContent("file")
+	outcome, err := stash.EvaluateAndFileDoc(path, a.buffers, a.notes, settings, a.libraryFolders(), prompt, fileAfter, allowDiscard)
+	if err != nil {
+		return EvaluateAndFileResult{}, err
 	}
-
-	var meta stash.DocumentMeta
-	var body []byte
-	if isNote {
-		meta, body = n.Meta(), n.Body()
-	} else {
-		meta, body = b.Meta(), b.Body()
-	}
-
-	userIntent := ""
-	if ui := meta.UserIntent(); ui != nil {
-		userIntent = *ui
-	}
-
-	// Discard empty unfiled documents (mirrors TS isContentEmpty check).
-	if fileAfter && isBodyEmpty(string(body)) && userIntent != "keep" {
-		if err := a.discardDoc(isNote, b, n); err != nil {
-			return EvaluateAndFileResult{}, fmt.Errorf("EvaluateAndFile: discard empty: %w", err)
-		}
+	if outcome.Discarded {
 		return EvaluateAndFileResult{Discarded: true}, nil
 	}
-
-	// User has explicitly chosen to discard — respect it when allowed.
-	if userIntent == "trash" {
-		if allowDiscard {
-			if err := a.discardDoc(isNote, b, n); err != nil {
-				return EvaluateAndFileResult{}, fmt.Errorf("EvaluateAndFile: discard trash: %w", err)
-			}
-			return EvaluateAndFileResult{Discarded: true}, nil
-		}
-		// allowDiscard=false means the caller has prevented auto-deletion (e.g. keepAndFile
-		// path). Never run AI or file a document the user has marked as trash — just save.
-		return a.saveOnly(isNote, b, n)
+	if outcome.Note != nil {
+		logger.Info("EvaluateAndFile: note outcome", "path", outcome.Note.Path())
+		return EvaluateAndFileResult{Doc: toNoteBufferDTO(outcome.Note)}, nil
 	}
-
-	// Run AI evaluation and apply the filing recommendation.
-	settings := a.state.LoadSettings()
-	evalDone := false
-	if settings.Tier() != stash.TierDumb {
-		prompt, _ := a.prompts.GetPromptContent("file")
-		rec, err := stash.EvaluateBuffer(meta, body, a.libraryFolders(), settings, prompt)
-		if err != nil {
-			logger.Warn("EvaluateAndFile: eval failed", "path", path, "err", err)
-			return EvaluateAndFileResult{}, err
-		}
-		stash.ApplyFilingRec(meta, rec, settings.CLI)
-		evalDone = true
-	}
-
-	// Persist meta changes and optionally file/refile.
-	if isNote {
-		if evalDone {
-			saved, err := a.notes.Save(n)
-			if err != nil {
-				return EvaluateAndFileResult{}, fmt.Errorf("EvaluateAndFile: save note: %w", err)
-			}
-			n = saved
-		}
-		if fileAfter {
-			refiled, err := a.notes.Refile(n)
-			if err != nil {
-				return EvaluateAndFileResult{}, fmt.Errorf("EvaluateAndFile: refile: %w", err)
-			}
-			logger.Info("EvaluateAndFile: refiled", "from", path, "to", refiled.Path())
-			return EvaluateAndFileResult{Doc: toNoteBufferDTO(refiled)}, nil
-		}
-		return EvaluateAndFileResult{Doc: toNoteBufferDTO(n)}, nil
-	}
-
-	if evalDone {
-		saved, err := a.buffers.Save(b)
-		if err != nil {
-			return EvaluateAndFileResult{}, fmt.Errorf("EvaluateAndFile: save buffer: %w", err)
-		}
-		b = saved
-	}
-	if fileAfter {
-		note, err := a.buffers.File(b)
-		if err != nil {
-			return EvaluateAndFileResult{}, fmt.Errorf("EvaluateAndFile: file: %w", err)
-		}
-		logger.Info("EvaluateAndFile: filed", "from", path, "to", note.Path())
-		return EvaluateAndFileResult{Doc: toNoteBufferDTO(note)}, nil
-	}
-	return EvaluateAndFileResult{Doc: toBufferDTO(b)}, nil
-}
-
-// saveOnly persists the current state without filing — used when the document
-// is marked trash but auto-discard is disabled.
-func (a *App) saveOnly(isNote bool, b *stash.Buffer, n *stash.Note) (EvaluateAndFileResult, error) {
-	if isNote {
-		saved, err := a.notes.Save(n)
-		if err != nil {
-			return EvaluateAndFileResult{}, fmt.Errorf("EvaluateAndFile: save-only note: %w", err)
-		}
-		return EvaluateAndFileResult{Doc: toNoteBufferDTO(saved)}, nil
-	}
-	saved, err := a.buffers.Save(b)
-	if err != nil {
-		return EvaluateAndFileResult{}, fmt.Errorf("EvaluateAndFile: save-only buffer: %w", err)
-	}
-	return EvaluateAndFileResult{Doc: toBufferDTO(saved)}, nil
-}
-
-// discardDoc deletes a buffer or note from its respective service.
-func (a *App) discardDoc(isNote bool, b *stash.Buffer, n *stash.Note) error {
-	if isNote {
-		return a.notes.Delete(n)
-	}
-	return a.buffers.Discard(b)
+	return EvaluateAndFileResult{Doc: toBufferDTO(outcome.Buffer)}, nil
 }
 
 func (a *App) RefineLanguage(content string) (string, error) {
@@ -1408,20 +1297,3 @@ func downloadURL(targetURL string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-// isBodyEmpty returns true if html contains no visible text content — only
-// tags, whitespace, and self-closing elements. Used to detect blank buffers
-// before discarding them without bothering the AI.
-func isBodyEmpty(html string) bool {
-	inTag := false
-	for _, r := range html {
-		switch {
-		case r == '<':
-			inTag = true
-		case r == '>':
-			inTag = false
-		case !inTag && r != ' ' && r != '\t' && r != '\n' && r != '\r':
-			return false
-		}
-	}
-	return true
-}
