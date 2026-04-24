@@ -1,4 +1,4 @@
-import { NoteEntry } from '../components/Sidebar'
+import { NoteEntry } from '../types'
 
 export function getAncestorFolderIDs(noteID: string, entries: NoteEntry[]): string[] {
   function search(nodes: NoteEntry[], acc: string[]): string[] | null {

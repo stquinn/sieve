@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react'
-import { NoteEntry } from './Sidebar'
+import { NoteEntry } from '../types'
 import { TabState } from '../types'
 import { FileText, FileEdit } from 'lucide-react'
 

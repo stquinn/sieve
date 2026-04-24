@@ -1,32 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { NoteContextMenu } from './NoteContextMenu'
-import { UserIntent } from '../types'
+import { UserIntent, NoteEntry, PromptEntry } from '../types'
 import { FolderPlus, Plus, Folder, FolderOpen, FileText, ChevronRight, ChevronDown, X, Settings } from 'lucide-react'
 import { StorableDataService } from '../lib/StorableDataService'
 import { AiService } from '../lib/AiService'
 import { ShowInFiles } from '../../wailsjs/go/main/App'
 import { useModal } from '../lib/ModalContext'
 
-// Mirrors stash.NoteEntry from Go
-export interface NoteEntry {
-  id?: string          // UUID for files; opaque folder ID for dirs (ExternalRef — never parsed)
-  name: string
-  displayName?: string
-  path?: string        // ExternalRef label — for ShowInFiles only, never for operations
-  status?: string
-  userIntent?: string
-  isDir: boolean
-  children?: NoteEntry[]
-}
-
-export interface PromptEntry {
-  id: string           // "prompt:name" — opaque, from Go
-  name: string
-  displayName: string
-  path: string
-  isVirtual: boolean
-}
+export type { NoteEntry, PromptEntry }
 
 interface ContextMenuState {
   x: number
