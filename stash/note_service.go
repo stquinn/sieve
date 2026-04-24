@@ -37,6 +37,22 @@ func (ns *NoteService) Load(path string) (*Note, error) {
 	return newNote(ms), nil
 }
 
+// LoadByUUID retrieves a note by its UUID metadata field. This is O(n) over
+// the Library — use sparingly (bridge operations, not hot paths).
+func (ns *NoteService) LoadByUUID(uuid string) (*Note, error) {
+	storables, err := ns.st.List(Library, "")
+	if err != nil {
+		return nil, fmt.Errorf("note: LoadByUUID %s: list failed: %w", uuid, err)
+	}
+	for _, s := range storables {
+		ms, ok := s.(store.MetaStorable)
+		if ok && ms.Meta()["uuid"] == uuid {
+			return newNote(ms), nil
+		}
+	}
+	return nil, fmt.Errorf("note: not found by uuid %q", uuid)
+}
+
 // Save persists the current state of n. The Store bumps the version and
 // modified timestamp and writes a snapshot. Returns a new Note — n is stale
 // after this call.
@@ -243,10 +259,11 @@ func (ns *NoteService) RetrieveVersion(n *Note, ref store.VersionRef) (store.Ver
 // NoteEntry represents a single node in the Library tree.
 // Directories have IsDir=true and a Children slice; files have a store-relative Path.
 type NoteEntry struct {
+	ID          string      `json:"id"`                    // UUID for files; ExternalRef for folders (opaque to frontend)
 	Name        string      `json:"name"`
 	DisplayName string      `json:"displayName,omitempty"`
 	Status      string      `json:"status,omitempty"`
-	Path        string      `json:"path,omitempty"`
+	Path        string      `json:"path,omitempty"`        // ExternalRef label — for ShowInFiles only
 	UserIntent  string      `json:"userIntent,omitempty"`
 	IsDir       bool        `json:"isDir"`
 	Children    []NoteEntry `json:"children,omitempty"`
@@ -288,6 +305,7 @@ func buildNoteTree(storables []store.Storable) []NoteEntry {
 				continue
 			}
 			entries = append(entries, NoteEntry{
+				ID:          s.Meta()["uuid"],
 				Name:        strings.TrimSuffix(key, ".md"),
 				DisplayName: metaString(s.Meta(), "display_name"),
 				Status:      s.Meta()["status"],
@@ -297,6 +315,7 @@ func buildNoteTree(storables []store.Storable) []NoteEntry {
 			})
 		case store.FolderStorable:
 			entries = append(entries, NoteEntry{
+				ID:       s.ExternalRef(),
 				Name:     key,
 				Path:     s.ExternalRef(),
 				IsDir:    true,
@@ -319,6 +338,7 @@ func buildFolderChildren(owns []store.Storable) []NoteEntry {
 			continue
 		}
 		children = append(children, NoteEntry{
+			ID:          ms.Meta()["uuid"],
 			Name:        strings.TrimSuffix(filepath.Base(key), ".md"),
 			DisplayName: metaString(ms.Meta(), "display_name"),
 			Status:      ms.Meta()["status"],

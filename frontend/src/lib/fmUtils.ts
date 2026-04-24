@@ -1,12 +1,16 @@
-export function getAncestorPaths(path: string): string[] {
-  // Strip "store/" prefix to treat the store directory as a virtual root.
-  const prefix = 'store/'
-  const workingPath = path.startsWith(prefix) ? path.substring(prefix.length) : path
+import { NoteEntry } from '../components/Sidebar'
 
-  const parts = workingPath.split('/')
-  const ancestors: string[] = []
-  for (let i = 0; i < parts.length - 1; i++) {
-    ancestors.push(parts.slice(0, i + 1).join('/'))
+export function getAncestorFolderIDs(noteID: string, entries: NoteEntry[]): string[] {
+  function search(nodes: NoteEntry[], acc: string[]): string[] | null {
+    for (const node of nodes) {
+      if (node.isDir && node.children) {
+        const found = search(node.children, [...acc, node.id!])
+        if (found) return found
+      } else if (node.id === noteID) {
+        return acc
+      }
+    }
+    return null
   }
-  return ancestors
+  return search(entries, []) ?? []
 }
