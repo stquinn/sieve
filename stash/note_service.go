@@ -37,6 +37,22 @@ func (ns *NoteService) Load(path string) (*Note, error) {
 	return newNote(ms), nil
 }
 
+// LoadByUUID retrieves a note by its UUID metadata field. This is O(n) over
+// the Library — use sparingly (bridge operations, not hot paths).
+func (ns *NoteService) LoadByUUID(uuid string) (*Note, error) {
+	storables, err := ns.st.List(Library, "")
+	if err != nil {
+		return nil, fmt.Errorf("note: LoadByUUID %s: list failed: %w", uuid, err)
+	}
+	for _, s := range storables {
+		ms, ok := s.(store.MetaStorable)
+		if ok && ms.Meta()["uuid"] == uuid {
+			return newNote(ms), nil
+		}
+	}
+	return nil, fmt.Errorf("note: not found by uuid %q", uuid)
+}
+
 // Save persists the current state of n. The Store bumps the version and
 // modified timestamp and writes a snapshot. Returns a new Note — n is stale
 // after this call.
@@ -62,15 +78,16 @@ func (ns *NoteService) Delete(n *Note) error {
 // moves the note to the Library root. The filename is preserved.
 func (ns *NoteService) Move(n *Note, folder string) (*Note, error) {
 	name := strings.TrimSuffix(filepath.Base(n.s.Key()), filepath.Ext(n.s.Key()))
+	ext := filepath.Ext(n.s.Key())
 
-	var targetName string
+	var newKey string
 	if folder != "" {
-		targetName = cleanFolderPath(folder) + "/" + name
+		newKey = cleanFolderPath(folder) + "/" + name + ext
 	} else {
-		targetName = name
+		newKey = name + ext
 	}
 
-	renamed, err := ns.st.Rename(n.s, targetName)
+	renamed, err := ns.st.MoveToKey(n.s, newKey)
 	if err != nil {
 		return nil, fmt.Errorf("note: move to %q: %w", folder, err)
 	}
@@ -84,18 +101,15 @@ func (ns *NoteService) Move(n *Note, folder string) (*Note, error) {
 // Rename changes the filename of a note. name is the new base name (without
 // extension). The existing folder is preserved. name is converted to kebab-case.
 func (ns *NoteService) Rename(n *Note, name string) (*Note, error) {
-	// Preserve the existing subdirectory if any.
-	dir := filepath.Dir(n.s.Key())
-	kebab := toKebab(name)
+	// Update display_name so the UI reflects the new name even when the old
+	// one was set by AI. Write back via SetMeta so it's persisted.
+	meta := n.s.Meta()
+	meta["display_name"] = name
+	n.s.SetMeta(meta)
 
-	var targetName string
-	if dir == "." {
-		targetName = kebab
-	} else {
-		targetName = filepath.ToSlash(dir) + "/" + kebab
-	}
-
-	renamed, err := ns.st.Rename(n.s, targetName)
+	// FileStore.Rename preserves the current directory automatically — just
+	// pass the bare kebab name; do NOT prepend dir here.
+	renamed, err := ns.st.Rename(n.s, toKebab(name))
 	if err != nil {
 		return nil, fmt.Errorf("note: rename to %q: %w", name, err)
 	}
@@ -113,17 +127,21 @@ func (ns *NoteService) Rename(n *Note, name string) (*Note, error) {
 func (ns *NoteService) Refile(n *Note) (*Note, error) {
 	folder := deriveFolderFromMeta(n.Meta())
 	kebab := deriveKebabNameFromMeta(n.Meta(), n.Body())
-
-	var targetName string
-	if folder != "" {
-		targetName = cleanFolderPath(folder) + "/" + kebab
-	} else {
-		targetName = kebab
+	ext := filepath.Ext(n.s.Key())
+	if ext == "" {
+		ext = ".md"
 	}
 
-	renamed, err := ns.st.Rename(n.s, targetName)
+	var newKey string
+	if folder != "" {
+		newKey = cleanFolderPath(folder) + "/" + kebab + ext
+	} else {
+		newKey = kebab + ext
+	}
+
+	renamed, err := ns.st.MoveToKey(n.s, newKey)
 	if err != nil {
-		return nil, fmt.Errorf("note: refile to %q: %w", targetName, err)
+		return nil, fmt.Errorf("note: refile to %q: %w", newKey, err)
 	}
 	ms, ok := renamed.(store.MetaStorable)
 	if !ok {
@@ -243,10 +261,11 @@ func (ns *NoteService) RetrieveVersion(n *Note, ref store.VersionRef) (store.Ver
 // NoteEntry represents a single node in the Library tree.
 // Directories have IsDir=true and a Children slice; files have a store-relative Path.
 type NoteEntry struct {
+	ID          string      `json:"id"`                    // UUID for files; ExternalRef for folders (opaque to frontend)
 	Name        string      `json:"name"`
 	DisplayName string      `json:"displayName,omitempty"`
 	Status      string      `json:"status,omitempty"`
-	Path        string      `json:"path,omitempty"`
+	Path        string      `json:"path,omitempty"`        // ExternalRef label — for ShowInFiles only
 	UserIntent  string      `json:"userIntent,omitempty"`
 	IsDir       bool        `json:"isDir"`
 	Children    []NoteEntry `json:"children,omitempty"`
@@ -288,6 +307,7 @@ func buildNoteTree(storables []store.Storable) []NoteEntry {
 				continue
 			}
 			entries = append(entries, NoteEntry{
+				ID:          s.Meta()["uuid"],
 				Name:        strings.TrimSuffix(key, ".md"),
 				DisplayName: metaString(s.Meta(), "display_name"),
 				Status:      s.Meta()["status"],
@@ -297,6 +317,7 @@ func buildNoteTree(storables []store.Storable) []NoteEntry {
 			})
 		case store.FolderStorable:
 			entries = append(entries, NoteEntry{
+				ID:       s.ExternalRef(),
 				Name:     key,
 				Path:     s.ExternalRef(),
 				IsDir:    true,
@@ -319,6 +340,7 @@ func buildFolderChildren(owns []store.Storable) []NoteEntry {
 			continue
 		}
 		children = append(children, NoteEntry{
+			ID:          ms.Meta()["uuid"],
 			Name:        strings.TrimSuffix(filepath.Base(key), ".md"),
 			DisplayName: metaString(ms.Meta(), "display_name"),
 			Status:      ms.Meta()["status"],

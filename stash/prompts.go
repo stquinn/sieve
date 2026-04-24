@@ -8,8 +8,9 @@ import (
 
 // PromptEntry represents a prompt available in the system.
 type PromptEntry struct {
+	ID          string `json:"id"`          // "prompt:" + Name — stable opaque ID for the frontend
 	Name        string `json:"name"`        // e.g. "file", "explain", "ask"
-	DisplayName string `json:"displayName"` // e.g. "file.md"
+	DisplayName string `json:"displayName"` // e.g. "Smart Filing"
 	Path        string `json:"path"`        // store-relative path if override exists, otherwise empty
 	IsVirtual   bool   `json:"isVirtual"`   // true if using baked-in default
 }
@@ -81,6 +82,7 @@ func (ps *PromptService) ListPrompts() []PromptEntry {
 	out := make([]PromptEntry, 0, len(names))
 	for _, name := range names {
 		p := PromptEntry{
+			ID:          "prompt:" + name,
 			Name:        name,
 			DisplayName: displayNames[name],
 		}

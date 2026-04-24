@@ -148,6 +148,12 @@ type Store interface {
 	// with the updated key and a corrected ExternalRef.
 	Rename(s Storable, name string) (Storable, error)
 
+	// MoveToKey relocates s to newKey within the same category. newKey is a
+	// full category-relative path (e.g. "target-folder/my-note.md"). Unlike
+	// Rename, which only changes the filename while keeping the current
+	// directory, MoveToKey moves the file to an arbitrary location.
+	MoveToKey(s Storable, newKey string) (Storable, error)
+
 	// RetrieveVersion fetches the snapshot identified by ref. Returns a
 	// VersionedStorable — a distinct type from Storable so a snapshot cannot
 	// be accidentally saved back as the current document.

@@ -582,13 +582,20 @@ func (a *App) GetSession() stash.Session {
 	session := a.state.LoadSession()
 	logger.Debug("session loaded", "tabs", len(session.Tabs))
 
-	// Prune tabs whose files no longer exist.
+	// Prune tabs whose documents no longer exist.
 	live := session.Tabs[:0]
 	for _, t := range session.Tabs {
-		if _, err := os.Stat(a.resolvePath(t.Path)); err == nil {
+		if t.ID == "" {
+			continue
+		}
+		if strings.HasPrefix(t.ID, "prompt:") {
+			live = append(live, t) // prompts are always resolvable
+			continue
+		}
+		if _, err := a.LoadByUUID(t.ID); err == nil {
 			live = append(live, t)
 		} else {
-			logger.Warn("session: skipping missing file", "path", t.Path)
+			logger.Warn("session: skipping missing document", "id", t.ID)
 		}
 	}
 	session.Tabs = live
@@ -822,42 +829,85 @@ func (a *App) GetDocumentVersion(path string, ref VersionRefDTO) (VersionedStora
 
 // ── Notes ─────────────────────────────────────────────────────────────────────
 
-func (a *App) DeleteNote(path string) error {
+// DeleteNote deletes a filed note by its UUID.
+func (a *App) DeleteNote(uuid string) error {
 	if a.notes == nil {
 		return fmt.Errorf("store not open")
 	}
-	n, err := a.notes.Load(path)
+	n, err := a.notes.LoadByUUID(uuid)
 	if err != nil {
-		logger.Error("DeleteNote: load failed", "path", path, "err", err)
+		logger.Error("DeleteNote: load failed", "uuid", uuid, "err", err)
 		return err
 	}
 	if err := a.notes.Delete(n); err != nil {
-		logger.Error("DeleteNote failed", "path", path, "err", err)
+		logger.Error("DeleteNote failed", "uuid", uuid, "err", err)
 		return err
 	}
-	logger.Info("note deleted", "path", path)
+	logger.Info("note deleted", "uuid", uuid, "path", n.Path())
 	return nil
 }
 
 // MoveNote moves a note to a different folder within the Library.
-// targetFolder is a store-relative folder path (e.g. "ai-stuff") or empty
-// to move to the Library root.
-func (a *App) MoveNote(path, targetFolder string) (NoteDTO, error) {
+// uuid identifies the note. folderID is the opaque folder identifier returned
+// by GetNotes — e.g. "store/ai-stuff" or "store" for the Library root.
+func (a *App) MoveNote(uuid, folderID string) (NoteDTO, error) {
 	if a.notes == nil {
 		return NoteDTO{}, fmt.Errorf("store not open")
 	}
-	n, err := a.notes.Load(path)
+	n, err := a.notes.LoadByUUID(uuid)
 	if err != nil {
-		logger.Error("MoveNote: load failed", "path", path, "err", err)
+		logger.Error("MoveNote: load failed", "uuid", uuid, "err", err)
 		return NoteDTO{}, err
 	}
-	moved, err := a.notes.Move(n, targetFolder)
+	// Strip the category prefix to get the bare folder path expected by NoteService.Move.
+	// "store/ai-stuff" → "ai-stuff"; "store" → "" (root).
+	folder := strings.TrimPrefix(folderID, stash.Library.Key+"/")
+	if folder == stash.Library.Key {
+		folder = ""
+	}
+	moved, err := a.notes.Move(n, folder)
 	if err != nil {
-		logger.Error("MoveNote failed", "path", path, "target", targetFolder, "err", err)
+		logger.Error("MoveNote failed", "uuid", uuid, "folderID", folderID, "err", err)
 		return NoteDTO{}, err
 	}
-	logger.Info("note moved", "from", path, "to", moved.Path())
+	logger.Info("note moved", "uuid", uuid, "to", moved.Path())
 	return toNoteDTO(moved), nil
+}
+
+// RenameNote renames a filed note by its UUID. newName is the desired base name
+// (without extension); it will be kebab-cased by the service.
+func (a *App) RenameNote(uuid, newName string) (NoteDTO, error) {
+	if a.notes == nil {
+		return NoteDTO{}, fmt.Errorf("store not open")
+	}
+	n, err := a.notes.LoadByUUID(uuid)
+	if err != nil {
+		logger.Error("RenameNote: load failed", "uuid", uuid, "err", err)
+		return NoteDTO{}, err
+	}
+	renamed, err := a.notes.Rename(n, newName)
+	if err != nil {
+		logger.Error("RenameNote failed", "uuid", uuid, "name", newName, "err", err)
+		return NoteDTO{}, err
+	}
+	logger.Info("note renamed", "uuid", uuid, "to", renamed.Path())
+	return toNoteDTO(renamed), nil
+}
+
+// LoadByUUID loads a note or buffer by its UUID. Prompts are not handled here —
+// the frontend calls LoadPrompt directly for "prompt:" IDs.
+func (a *App) LoadByUUID(id string) (interface{}, error) {
+	if a.notes != nil {
+		if n, err := a.notes.LoadByUUID(id); err == nil {
+			return toNoteDTO(n), nil
+		}
+	}
+	if a.buffers != nil {
+		if b, err := a.buffers.LoadByUUID(id); err == nil {
+			return toBufferDTO(b), nil
+		}
+	}
+	return nil, fmt.Errorf("no document with id %q", id)
 }
 
 // ── Folders ───────────────────────────────────────────────────────────────────
@@ -865,16 +915,25 @@ func (a *App) MoveNote(path, targetFolder string) (NoteDTO, error) {
 // Folder ops use direct file operations — the Store interface does not yet have
 // explicit CreateFolder support (folders are created implicitly by file ops).
 
-func (a *App) CreateFolder(path string) error {
+// CreateFolder creates a new folder. parentFolderID is the opaque folder ID
+// from GetNotes (e.g. "store/projects") or "" / "store" for the Library root.
+// name is the desired folder name.
+func (a *App) CreateFolder(parentFolderID, name string) error {
 	if a.storePath == "" {
 		return fmt.Errorf("store not open")
 	}
-	resolved := a.resolvePath(path)
+	var folderPath string
+	if parentFolderID == "" || parentFolderID == stash.Library.Key {
+		folderPath = stash.Library.Key + "/" + name
+	} else {
+		folderPath = parentFolderID + "/" + name
+	}
+	resolved := a.resolvePath(folderPath)
 	if err := os.MkdirAll(resolved, 0o755); err != nil {
-		logger.Error("CreateFolder failed", "path", path, "err", err)
+		logger.Error("CreateFolder failed", "folderPath", folderPath, "err", err)
 		return err
 	}
-	logger.Info("folder created", "path", path)
+	logger.Info("folder created", "path", folderPath)
 	return nil
 }
 
@@ -905,17 +964,23 @@ func (a *App) DeleteFolder(path string) error {
 	return nil
 }
 
-func (a *App) RenameFolder(oldPath, newPath string) error {
+// RenameFolder renames a folder. folderID is the opaque folder ID from GetNotes
+// (e.g. "store/ai-stuff"). newName is the desired new folder name (not a full path).
+// Returns the new folder ID so the frontend can update its open-folder state.
+func (a *App) RenameFolder(folderID, newName string) (string, error) {
 	if a.storePath == "" {
-		return fmt.Errorf("store not open")
+		return "", fmt.Errorf("store not open")
 	}
-	oldResolved := a.resolvePath(oldPath)
+	parent := filepath.ToSlash(filepath.Dir(folderID))
+	newPath := parent + "/" + newName
+	oldResolved := a.resolvePath(folderID)
 	newResolved := a.resolvePath(newPath)
 	if err := os.Rename(oldResolved, newResolved); err != nil {
-		logger.Error("RenameFolder failed", "from", oldPath, "to", newPath, "err", err)
-		return err
+		logger.Error("RenameFolder failed", "from", folderID, "to", newPath, "err", err)
+		return "", err
 	}
-	return nil
+	logger.Info("folder renamed", "from", folderID, "to", newPath)
+	return newPath, nil
 }
 
 // ── Assets ────────────────────────────────────────────────────────────────────

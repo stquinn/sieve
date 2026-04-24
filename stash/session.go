@@ -5,10 +5,8 @@ import (
 )
 
 // Tab represents one open tab in a session.
-// Path is relative to the store root.
 type Tab struct {
-	ID          string `json:"id"`
-	Path        string `json:"path"`
+	ID          string `json:"id"`                    // UUID (or "prompt:name" for prompts)
 	Scroll      int    `json:"scroll"`
 	Active      bool   `json:"active"`
 	Mode        string `json:"mode"`                  // "wysiwyg" or "markdown"
