@@ -82,10 +82,20 @@ export default function App() {
   const tabsRef                  = useRef<TabState[]>([])
   const activeIdxRef             = useRef(0)
   const tierRef                  = useRef<'dumb' | 'smart'>('dumb')
+  const readyRef                 = useRef(false)
+  const showSidebarRef           = useRef(true)
+  const showMetaRef              = useRef(false)
+  const showPromptsRef           = useRef(true)
+  const openFoldersRef           = useRef<Set<string>>(new Set())
 
   useEffect(() => { tabsRef.current = tabs }, [tabs])
   useEffect(() => { activeIdxRef.current = activeIdx }, [activeIdx])
   useEffect(() => { tierRef.current = tier }, [tier])
+  useEffect(() => { readyRef.current = ready }, [ready])
+  useEffect(() => { showSidebarRef.current = showSidebar }, [showSidebar])
+  useEffect(() => { showMetaRef.current = showMeta }, [showMeta])
+  useEffect(() => { showPromptsRef.current = showPrompts }, [showPrompts])
+  useEffect(() => { openFoldersRef.current = openFolders }, [openFolders])
 
   const selectTab = (idx: number) => {
     if (idx === activeIdx) return
@@ -172,23 +182,23 @@ export default function App() {
 
   // Persistence guard: prevents overwriting saved session with empty initial state on launch
   const persistSession = async (overrides?: Partial<stash.Session>) => {
-    if (!ready) return
+    if (!readyRef.current) return
 
     const session: stash.Session = {
-      activeIdx,
-      tabs: tabs.map((t, i) => ({ 
+      activeIdx: activeIdxRef.current,
+      tabs: tabsRef.current.map((t, i) => ({ 
         id: t.uuid, 
         path: dataService.current.get(t.uuid)?.path || '',
-        active: i === activeIdx,
+        active: i === activeIdxRef.current,
         mode: t.mode
       })) as any,
-      sidebarWidth,
-      metaWidth,
-      promptsHeight,
-      showSidebar,
-      showMeta,
-      showPrompts,
-      openFolders: Array.from(openFolders),
+      sidebarWidth: sidebarWidthRef.current,
+      metaWidth: metaWidthRef.current,
+      promptsHeight: promptsHeightRef.current,
+      showSidebar: showSidebarRef.current,
+      showMeta: showMetaRef.current,
+      showPrompts: showPromptsRef.current,
+      openFolders: Array.from(openFoldersRef.current),
       ...overrides
     } as stash.Session
     await SaveSession(session).catch(console.error)
@@ -226,31 +236,35 @@ export default function App() {
     smartFile: () => void
     smartMetadata: () => void
     keepAndSmartFile: () => Promise<void>
-  }>({
-    newTab,
-    closeTab: () => smartFileClose(activeIdxRef.current),
-    save: async () => {
-      const uuid = tabsRef.current[activeIdxRef.current]?.uuid
-      if (uuid) await dataService.current.save(uuid).catch(console.error)
-    },
-    toggleMode: () => {
-      const idx = activeIdxRef.current
-      const tab = tabsRef.current[idx]
-      if (!tab) return
-      const newMode = tab.mode === 'wysiwyg' ? 'markdown' : 'wysiwyg'
-      setTabs(prev => prev.map((t, i) => i === idx ? { ...t, mode: newMode } : t))
-    },
-    smartFile: () => {
-      const uuid = tabsRef.current[activeIdxRef.current]?.uuid
-      if (uuid) aiService.current.smartFile(uuid)
-    },
-    smartMetadata: () => {
-      const uuid = tabsRef.current[activeIdxRef.current]?.uuid
-      if (uuid) aiService.current.smartMetadata(uuid)
-    },
-    keepAndSmartFile: async () => {
-      const uuid = tabsRef.current[activeIdxRef.current]?.uuid
-      if (uuid) aiService.current.keepAndFile(uuid)
+  }>(null as any)
+
+  useLayoutEffect(() => {
+    handlers.current = {
+      newTab,
+      closeTab: () => smartFileClose(activeIdxRef.current),
+      save: async () => {
+        const uuid = tabsRef.current[activeIdxRef.current]?.uuid
+        if (uuid) await dataService.current.save(uuid).catch(console.error)
+      },
+      toggleMode: () => {
+        const idx = activeIdxRef.current
+        const tab = tabsRef.current[idx]
+        if (!tab) return
+        const newMode = tab.mode === 'wysiwyg' ? 'markdown' : 'wysiwyg'
+        setTabs(prev => prev.map((t, i) => i === idx ? { ...t, mode: newMode } : t))
+      },
+      smartFile: () => {
+        const uuid = tabsRef.current[activeIdxRef.current]?.uuid
+        if (uuid) aiService.current.smartFile(uuid)
+      },
+      smartMetadata: () => {
+        const uuid = tabsRef.current[activeIdxRef.current]?.uuid
+        if (uuid) aiService.current.smartMetadata(uuid)
+      },
+      keepAndSmartFile: async () => {
+        const uuid = tabsRef.current[activeIdxRef.current]?.uuid
+        if (uuid) aiService.current.keepAndFile(uuid)
+      }
     }
   })
 
