@@ -78,15 +78,16 @@ func (ns *NoteService) Delete(n *Note) error {
 // moves the note to the Library root. The filename is preserved.
 func (ns *NoteService) Move(n *Note, folder string) (*Note, error) {
 	name := strings.TrimSuffix(filepath.Base(n.s.Key()), filepath.Ext(n.s.Key()))
+	ext := filepath.Ext(n.s.Key())
 
-	var targetName string
+	var newKey string
 	if folder != "" {
-		targetName = cleanFolderPath(folder) + "/" + name
+		newKey = cleanFolderPath(folder) + "/" + name + ext
 	} else {
-		targetName = name
+		newKey = name + ext
 	}
 
-	renamed, err := ns.st.Rename(n.s, targetName)
+	renamed, err := ns.st.MoveToKey(n.s, newKey)
 	if err != nil {
 		return nil, fmt.Errorf("note: move to %q: %w", folder, err)
 	}
@@ -129,17 +130,21 @@ func (ns *NoteService) Rename(n *Note, name string) (*Note, error) {
 func (ns *NoteService) Refile(n *Note) (*Note, error) {
 	folder := deriveFolderFromMeta(n.Meta())
 	kebab := deriveKebabNameFromMeta(n.Meta(), n.Body())
-
-	var targetName string
-	if folder != "" {
-		targetName = cleanFolderPath(folder) + "/" + kebab
-	} else {
-		targetName = kebab
+	ext := filepath.Ext(n.s.Key())
+	if ext == "" {
+		ext = ".md"
 	}
 
-	renamed, err := ns.st.Rename(n.s, targetName)
+	var newKey string
+	if folder != "" {
+		newKey = cleanFolderPath(folder) + "/" + kebab + ext
+	} else {
+		newKey = kebab + ext
+	}
+
+	renamed, err := ns.st.MoveToKey(n.s, newKey)
 	if err != nil {
-		return nil, fmt.Errorf("note: refile to %q: %w", targetName, err)
+		return nil, fmt.Errorf("note: refile to %q: %w", newKey, err)
 	}
 	ms, ok := renamed.(store.MetaStorable)
 	if !ok {

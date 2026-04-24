@@ -267,6 +267,12 @@ func (fs *FileStore) Reparent(s store.Storable, folder store.FolderStorable) (st
 	return fs.renameKey(s, newKey)
 }
 
+// MoveToKey relocates s to newKey within the same category. newKey is a full
+// category-relative path (e.g. "target-folder/my-note.md").
+func (fs *FileStore) MoveToKey(s store.Storable, newKey string) (store.Storable, error) {
+	return fs.renameKey(s, newKey)
+}
+
 // Rename changes the name component of s's key. Returns a new Storable with
 // the updated key and a corrected ExternalRef.
 func (fs *FileStore) Rename(s store.Storable, name string) (store.Storable, error) {
