@@ -345,11 +345,8 @@ export class StorableDataService {
         return newFolderID
       } else {
         const dto = await RenameNote(id, newName)
-        const existing = this.registry.get(id)
-        if (existing) {
-          existing.path = dto.path
-          this.onNotify(id)
-        }
+        // Replace the full registry entry so meta.displayName and path are both fresh.
+        this.set(id, dto)
       }
     } catch (err) {
       console.error(`[StorableDataService] Failed to rename ${id}:`, err)

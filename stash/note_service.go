@@ -101,18 +101,15 @@ func (ns *NoteService) Move(n *Note, folder string) (*Note, error) {
 // Rename changes the filename of a note. name is the new base name (without
 // extension). The existing folder is preserved. name is converted to kebab-case.
 func (ns *NoteService) Rename(n *Note, name string) (*Note, error) {
-	// Preserve the existing subdirectory if any.
-	dir := filepath.Dir(n.s.Key())
-	kebab := toKebab(name)
+	// Update display_name so the UI reflects the new name even when the old
+	// one was set by AI. Write back via SetMeta so it's persisted.
+	meta := n.s.Meta()
+	meta["display_name"] = name
+	n.s.SetMeta(meta)
 
-	var targetName string
-	if dir == "." {
-		targetName = kebab
-	} else {
-		targetName = filepath.ToSlash(dir) + "/" + kebab
-	}
-
-	renamed, err := ns.st.Rename(n.s, targetName)
+	// FileStore.Rename preserves the current directory automatically — just
+	// pass the bare kebab name; do NOT prepend dir here.
+	renamed, err := ns.st.Rename(n.s, toKebab(name))
 	if err != nil {
 		return nil, fmt.Errorf("note: rename to %q: %w", name, err)
 	}
