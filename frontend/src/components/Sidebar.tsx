@@ -5,7 +5,7 @@ import { UserIntent, NoteEntry, PromptEntry } from '../types'
 import { FolderPlus, Plus, Folder, FolderOpen, FileText, ChevronRight, ChevronDown, X, Settings } from 'lucide-react'
 import { StorableDataService } from '../lib/StorableDataService'
 import { AiService } from '../lib/AiService'
-import { ShowInFiles } from '../../wailsjs/go/main/App'
+import { ShowInFilesByID } from '../../wailsjs/go/main/App'
 import { useModal } from '../lib/ModalContext'
 
 export type { NoteEntry, PromptEntry }
@@ -15,7 +15,6 @@ interface ContextMenuState {
   y: number
   id: string           // opaque: UUID for notes, folderID for dirs, prompt.id for prompts
   name: string         // display name — no parsing needed
-  path?: string        // ExternalRef — only for ShowInFiles
   intent: UserIntent
   isDir?: boolean
   childCount?: number
@@ -300,11 +299,10 @@ export function Sidebar({
           y={contextMenu.y}
           id={contextMenu.id}
           name={contextMenu.name}
-          path={contextMenu.path}
           isPrompt={contextMenu.isPrompt}
           intent={contextMenu.intent}
           onClose={() => setContextMenu(null)}
-          onShowInFiles={() => ShowInFiles(contextMenu.path || '')}
+          onShowInFiles={() => ShowInFilesByID(contextMenu.id)}
           onSmartFile={() => handleSmartFile(contextMenu.id)}
           onSmartMetadata={() => handleSmartMetadata(contextMenu.id)}
           onDelete={() => handleDelete(contextMenu.id, contextMenu.name, !!contextMenu.isDir)}
@@ -350,7 +348,7 @@ function EntryList({ entries, depth, openIDs, openFolders, onToggleFolder, activ
             onMove={onMove}
           />
           : <FileEntry
-            key={entry.id || entry.path}
+            key={entry.id || entry.name}
             entry={entry}
             depth={depth}
             open={openIDs.has(entry.id!)}
@@ -413,7 +411,6 @@ function DirEntry({ entry, depth, openIDs, openFolders, onToggleFolder, activeID
         onContextMenu={e => onContextMenu(e, {
           id: folderID,
           name: entry.name,
-          path: entry.path,
           intent: null,
           isDir: true,
           childCount: entry.children?.length || 0
@@ -477,12 +474,11 @@ function FileEntry({ entry, depth, open, active, onOpen, onContextMenu }: FileEn
       onContextMenu={e => onContextMenu(e, {
         id: entry.id!,
         name: entry.displayName || entry.name,
-        path: entry.path,
         intent: (entry.userIntent || null) as UserIntent,
         isDir: false,
         childCount: 0
       })}
-      title={entry.path}
+      title={entry.displayName || entry.name}
     >
       <div className="flex flex-col items-start leading-tight flex-1 min-w-0">
         <div className="flex items-center gap-2 w-full">

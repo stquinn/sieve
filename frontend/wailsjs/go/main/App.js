@@ -178,6 +178,10 @@ export function ShowInFiles(arg1) {
   return window['go']['main']['App']['ShowInFiles'](arg1);
 }
 
+export function ShowInFilesByID(arg1) {
+  return window['go']['main']['App']['ShowInFilesByID'](arg1);
+}
+
 export function TogglePrompts() {
   return window['go']['main']['App']['TogglePrompts']();
 }

@@ -5,7 +5,7 @@ import { stash } from '../wailsjs/go/models'
 // Backend service imports moved to line 19-25 block
 import { 
   GetSession, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, 
-  ShowInFiles, TogglePrompts, SelectVault, InitVault
+  TogglePrompts, SelectVault, InitVault
 } from '../wailsjs/go/main/App'
 import { BrowserOpenURL, EventsOn } from '../wailsjs/runtime/runtime'
 import { TabBar } from './components/TabBar'
@@ -25,9 +25,23 @@ import { useUiState } from './hooks/useUiState'
 import { StorableDataService } from './lib/StorableDataService'
 import { AiService } from './lib/AiService'
 import { isMod } from './utils/platform'
-import { getAncestorFolderIDs } from './lib/fmUtils'
 import { SettingsModal, SettingsTab } from './components/SettingsModal'
 import './App.css'
+
+function getAncestorFolderIDs(noteID: string, entries: NoteEntry[]): string[] {
+  function search(nodes: NoteEntry[], acc: string[]): string[] | null {
+    for (const node of nodes) {
+      if (node.isDir && node.children) {
+        const found = search(node.children, [...acc, node.id!])
+        if (found) return found
+      } else if (node.id === noteID) {
+        return acc
+      }
+    }
+    return null
+  }
+  return search(entries, []) ?? []
+}
 
 export default function App() {
   const [tabs, setTabs]           = useState<TabState[]>([])
@@ -609,16 +623,14 @@ export default function App() {
         <QuickSwitcher
           isOpen={showQuickSwitch}
           onClose={() => setShowQuickSwitch(false)}
-          onSelect={openByPath}
+          onSelect={openDoc}
           tabs={tabs.map(t => {
             const doc = dataService.current.get(t.uuid)
             return {
               uuid: t.uuid,
               mode: t.mode,
-              path: doc?.path || t.uuid,
+              displayName: doc?.meta?.displayName,
               status: doc?.meta?.status as any,
-              isEvaluating: doc?.meta?.status === 'evaluating',
-              isWaitingAI: dataService.current.getTransient(t.uuid).isWaitingAI
             }
           })}
           notesTree={notes}

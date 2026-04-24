@@ -92,4 +92,6 @@ export function SelectVault():Promise<string>;
 
 export function ShowInFiles(arg1:string):Promise<void>;
 
+export function ShowInFilesByID(arg1:string):Promise<void>;
+
 export function TogglePrompts():Promise<boolean>;

@@ -259,13 +259,12 @@ func (ns *NoteService) RetrieveVersion(n *Note, ref store.VersionRef) (store.Ver
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 // NoteEntry represents a single node in the Library tree.
-// Directories have IsDir=true and a Children slice; files have a store-relative Path.
+// Directories have IsDir=true and a Children slice; files carry a UUID ID.
 type NoteEntry struct {
 	ID          string      `json:"id"`                    // UUID for files; ExternalRef for folders (opaque to frontend)
 	Name        string      `json:"name"`
 	DisplayName string      `json:"displayName,omitempty"`
 	Status      string      `json:"status,omitempty"`
-	Path        string      `json:"path,omitempty"`        // ExternalRef label — for ShowInFiles only
 	UserIntent  string      `json:"userIntent,omitempty"`
 	IsDir       bool        `json:"isDir"`
 	Children    []NoteEntry `json:"children,omitempty"`
@@ -311,7 +310,6 @@ func buildNoteTree(storables []store.Storable) []NoteEntry {
 				Name:        strings.TrimSuffix(key, ".md"),
 				DisplayName: metaString(s.Meta(), "display_name"),
 				Status:      s.Meta()["status"],
-				Path:        s.ExternalRef(),
 				UserIntent:  metaString(s.Meta(), "user_intent"),
 				IsDir:       false,
 			})
@@ -319,7 +317,6 @@ func buildNoteTree(storables []store.Storable) []NoteEntry {
 			entries = append(entries, NoteEntry{
 				ID:       s.ExternalRef(),
 				Name:     key,
-				Path:     s.ExternalRef(),
 				IsDir:    true,
 				Children: buildFolderChildren(s.Owns()),
 			})
@@ -344,7 +341,6 @@ func buildFolderChildren(owns []store.Storable) []NoteEntry {
 			Name:        strings.TrimSuffix(filepath.Base(key), ".md"),
 			DisplayName: metaString(ms.Meta(), "display_name"),
 			Status:      ms.Meta()["status"],
-			Path:        ms.ExternalRef(),
 			UserIntent:  metaString(ms.Meta(), "user_intent"),
 			IsDir:       false,
 		})

@@ -32,7 +32,6 @@ export interface NoteEntry {
   id?: string          // UUID for files; opaque folder ID for dirs (ExternalRef — never parsed)
   name: string
   displayName?: string
-  path?: string        // ExternalRef label — for ShowInFiles only, never for operations
   status?: string
   userIntent?: string
   isDir: boolean

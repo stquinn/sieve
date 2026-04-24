@@ -953,10 +953,12 @@ func (a *App) DeleteFolder(path string) error {
 	if err != nil {
 		return err
 	}
-	if len(entries) > 0 {
-		return fmt.Errorf("directory not empty")
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), ".") {
+			return fmt.Errorf("directory not empty")
+		}
 	}
-	if err := os.Remove(resolved); err != nil {
+	if err := os.RemoveAll(resolved); err != nil {
 		logger.Error("DeleteFolder failed", "path", path, "err", err)
 		return err
 	}
@@ -1225,6 +1227,26 @@ func (a *App) loadThemeOverride(name string) []byte {
 }
 
 // ── File manager ──────────────────────────────────────────────────────────────
+
+// ShowInFilesByID reveals a document or folder in the OS file manager.
+// id is a UUID (note/buffer), an opaque folder ID (ExternalRef), or "prompt:name".
+func (a *App) ShowInFilesByID(id string) error {
+	if strings.HasPrefix(id, "prompt:") {
+		return a.ShowInFiles(a.promptsDir())
+	}
+	if a.notes != nil {
+		if n, err := a.notes.LoadByUUID(id); err == nil {
+			return a.ShowInFiles(n.Path())
+		}
+	}
+	if a.buffers != nil {
+		if b, err := a.buffers.LoadByUUID(id); err == nil {
+			return a.ShowInFiles(b.Path())
+		}
+	}
+	// Folder: id is an ExternalRef (e.g. "store/my-folder") — resolvePath handles it.
+	return a.ShowInFiles(id)
+}
 
 func (a *App) ShowInFiles(path string) error {
 	resolved := a.resolvePath(path)

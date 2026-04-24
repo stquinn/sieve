@@ -5,7 +5,7 @@ import { NoteContextMenu } from './NoteContextMenu'
 import { FileText } from 'lucide-react'
 import { StorableDataService } from '../lib/StorableDataService'
 import { AiService } from '../lib/AiService'
-import { ShowInFiles } from '../../wailsjs/go/main/App'
+import { ShowInFilesByID } from '../../wailsjs/go/main/App'
 import { useModal } from '../lib/ModalContext'
 
 interface TabBarProps {
@@ -141,7 +141,7 @@ export function TabBar({
               onSelect={() => onSelect(idx)}
               onClose={() => onClose(idx)}
               onSetIntent={intent => onSetIntent(tab.uuid, intent)}
-              onShowInFiles={() => ShowInFiles(dataService.get(tab.uuid)?.path || '')}
+              onShowInFiles={() => ShowInFilesByID(tab.uuid)}
               onSmartFile={() => aiService.smartFile(tab.uuid)}
               onSmartMetadata={() => aiService.smartMetadata(tab.uuid)}
               onDelete={() => {
@@ -390,7 +390,6 @@ const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
           y={menu.y}
           id={tab.uuid}
           name={tabLabel(tab, dataService)}
-          path={doc?.path}
           isPrompt={doc?.kind === 'prompt'}
           intent={(meta?.userIntent as UserIntent) || null}
           onClose={() => setMenu(null)}

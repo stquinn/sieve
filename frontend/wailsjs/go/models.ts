@@ -328,7 +328,6 @@ export namespace stash {
 	    name: string;
 	    displayName?: string;
 	    status?: string;
-	    path?: string;
 	    userIntent?: string;
 	    isDir: boolean;
 	    children?: NoteEntry[];
@@ -343,7 +342,6 @@ export namespace stash {
 	        this.name = source["name"];
 	        this.displayName = source["displayName"];
 	        this.status = source["status"];
-	        this.path = source["path"];
 	        this.userIntent = source["userIntent"];
 	        this.isDir = source["isDir"];
 	        this.children = this.convertValues(source["children"], NoteEntry);
