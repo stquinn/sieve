@@ -5,16 +5,17 @@ import { main } from '../../wailsjs/go/models'
 import { getModKey } from '../utils/platform'
 import { ChevronDown } from 'lucide-react'
 
-interface Props {
-  onClose: () => void
-  dataService: StorableDataService
-  onSettingsChanged: () => void
-}
+export type SettingsTab = 'ai' | 'appearance' | 'editor'
+ 
+ interface Props {
+   onClose: () => void
+   dataService: StorableDataService
+   onSettingsChanged: () => void
+   activeTab: SettingsTab
+   onTabChange: (tab: SettingsTab) => void
+ }
 
-type Tab = 'ai' | 'appearance' | 'editor'
-
-export function SettingsModal({ onClose, dataService, onSettingsChanged }: Props) {
-  const [activeTab, setActiveTab] = useState<Tab>('ai')
+export function SettingsModal({ onClose, dataService, onSettingsChanged, activeTab, onTabChange }: Props) {
   const [settings, setSettings] = useState<any>(null)
   const [isSaving, setIsSaving] = useState(false)
   const mod = getModKey()
@@ -59,17 +60,17 @@ export function SettingsModal({ onClose, dataService, onSettingsChanged }: Props
           <h2 className="text-xs font-bold text-tn-muted uppercase tracking-widest mb-4 px-2">Settings</h2>
           <TabButton 
             active={activeTab === 'ai'} 
-            onClick={() => setActiveTab('ai')}
+            onClick={() => onTabChange('ai')}
             label="AI Provider"
           />
           <TabButton 
             active={activeTab === 'appearance'} 
-            onClick={() => setActiveTab('appearance')}
+            onClick={() => onTabChange('appearance')}
             label="Appearance"
           />
           <TabButton 
             active={activeTab === 'editor'} 
-            onClick={() => setActiveTab('editor')}
+            onClick={() => onTabChange('editor')}
             label="Editor"
           />
         </div>

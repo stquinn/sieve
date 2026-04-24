@@ -460,6 +460,7 @@ export namespace stash {
 	    showPrompts: boolean;
 	    promptsHeight?: number;
 	    openFolders?: string[];
+	    lastSettingsPanel?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Session(source);
@@ -477,6 +478,7 @@ export namespace stash {
 	        this.showPrompts = source["showPrompts"];
 	        this.promptsHeight = source["promptsHeight"];
 	        this.openFolders = source["openFolders"];
+	        this.lastSettingsPanel = source["lastSettingsPanel"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

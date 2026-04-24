@@ -25,7 +25,7 @@ import { StorableDataService } from './lib/StorableDataService'
 import { AiService } from './lib/AiService'
 import { isMod } from './utils/platform'
 import { getAncestorPaths } from './lib/fmUtils'
-import { SettingsModal } from './components/SettingsModal'
+import { SettingsModal, SettingsTab } from './components/SettingsModal'
 import './App.css'
 
 export default function App() {
@@ -55,6 +55,7 @@ export default function App() {
   const [tick, setTick]                 = useState(0)
   const [storeInfo, setStoreInfo] = useState<{ root: string; themeName: string; } | null>(null)
   const [openFolders, setOpenFolders] = useState<Set<string>>(new Set())
+  const [lastSettingsPanel, setLastSettingsPanel] = useState<SettingsTab>('ai')
   
   const dataService = useRef(new StorableDataService(() => setTick(t => t + 1)))
   const aiService   = useRef(new AiService(dataService.current, () => setTick(t => t + 1)))
@@ -87,6 +88,7 @@ export default function App() {
   const showMetaRef              = useRef(false)
   const showPromptsRef           = useRef(true)
   const openFoldersRef           = useRef<Set<string>>(new Set())
+  const lastSettingsPanelRef     = useRef('ai')
 
   useEffect(() => { tabsRef.current = tabs }, [tabs])
   useEffect(() => { activeIdxRef.current = activeIdx }, [activeIdx])
@@ -96,6 +98,11 @@ export default function App() {
   useEffect(() => { showMetaRef.current = showMeta }, [showMeta])
   useEffect(() => { showPromptsRef.current = showPrompts }, [showPrompts])
   useEffect(() => { openFoldersRef.current = openFolders }, [openFolders])
+  useEffect(() => { lastSettingsPanelRef.current = lastSettingsPanel }, [lastSettingsPanel])
+
+  useEffect(() => { 
+    if (ready) persistSession() 
+  }, [showSidebar, showMeta, showPrompts])
 
   const selectTab = (idx: number) => {
     if (idx === activeIdx) return
@@ -199,6 +206,7 @@ export default function App() {
       showMeta: showMetaRef.current,
       showPrompts: showPromptsRef.current,
       openFolders: Array.from(openFoldersRef.current),
+      lastSettingsPanel: lastSettingsPanelRef.current,
       ...overrides
     } as stash.Session
     await SaveSession(session).catch(console.error)
@@ -378,6 +386,7 @@ export default function App() {
           if (session.sidebarWidth) { setSidebarWidth(session.sidebarWidth); sidebarWidthRef.current = session.sidebarWidth }
           if (session.metaWidth) { setMetaWidth(session.metaWidth); metaWidthRef.current = session.metaWidth }
           if (session.promptsHeight) { setPromptsHeight(session.promptsHeight); promptsHeightRef.current = session.promptsHeight }
+          if (session.lastSettingsPanel) setLastSettingsPanel(session.lastSettingsPanel as SettingsTab)
         } catch (e) {
           console.error('[App] Critical failure during session restoration:', e)
         } finally {
@@ -581,6 +590,8 @@ export default function App() {
           <SettingsModal 
             onClose={() => setShowSettings(false)} 
             dataService={dataService.current} 
+            activeTab={lastSettingsPanel}
+            onTabChange={tab => { setLastSettingsPanel(tab); persistSession({ lastSettingsPanel: tab }); }}
             onSettingsChanged={() => {
               dataService.current.getStoreInfo().then(info => {
                 setStoreInfo(info)
