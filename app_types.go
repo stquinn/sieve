@@ -48,6 +48,7 @@ type DocumentMetaDTO struct {
 // Path is the store-relative ExternalRef (e.g. "{hostname}/buffers/buf-xxx.md").
 // Slug is the key-derived short identifier without extension (e.g. "buf-20240102-1504").
 type BufferDTO struct {
+	Kind     string          `json:"kind"`
 	UUID     string          `json:"uuid"`
 	Path     string          `json:"path"`
 	Slug     string          `json:"slug"`
@@ -58,12 +59,19 @@ type BufferDTO struct {
 
 // NoteDTO is a filed Library document as seen by the frontend.
 type NoteDTO struct {
+	Kind     string          `json:"kind"`
 	UUID     string          `json:"uuid"`
 	Path     string          `json:"path"`
 	Slug     string          `json:"slug"`
 	Body     string          `json:"body"`
 	Meta     DocumentMetaDTO `json:"meta"`
 	Versions []VersionRefDTO `json:"versions"`
+}
+
+// EvaluateAndFileResult is the return value of the EvaluateAndFile bridge call.
+type EvaluateAndFileResult struct {
+	Discarded bool      `json:"discarded"`
+	Doc       BufferDTO `json:"doc"`
 }
 
 // AssetDTO carries the ExternalRef the frontend inserts directly into markdown.
@@ -170,6 +178,7 @@ func toVersionRefDTOs(refs []store.VersionRef) []VersionRefDTO {
 
 func toBufferDTO(b *stash.Buffer) BufferDTO {
 	return BufferDTO{
+		Kind:     "buffer",
 		UUID:     b.UUID(),
 		Path:     b.Path(),
 		Slug:     b.Slug(),
@@ -183,6 +192,7 @@ func toBufferDTO(b *stash.Buffer) BufferDTO {
 // single LoadBuffer/SaveBuffer API regardless of category.
 func toNoteBufferDTO(n *stash.Note) BufferDTO {
 	return BufferDTO{
+		Kind:     "note",
 		UUID:     n.UUID(),
 		Path:     n.Path(),
 		Slug:     n.Slug(),
@@ -194,6 +204,7 @@ func toNoteBufferDTO(n *stash.Note) BufferDTO {
 
 func toNoteDTO(n *stash.Note) NoteDTO {
 	return NoteDTO{
+		Kind:     "note",
 		UUID:     n.UUID(),
 		Path:     n.Path(),
 		Slug:     n.Slug(),

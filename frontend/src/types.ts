@@ -7,7 +7,7 @@ export type UserIntent = 'trash' | 'keep' | null
 // Storable is the unified interface for Notes, Buffers, and Prompts.
 // The "DOC knows" its own state through internal isModified tracking.
 export interface Storable {
-  kind: 'note' | 'prompt'
+  kind: 'buffer' | 'note' | 'prompt'
   id: string              // UUID for notes/buffers, Name for prompts
   path: string
   body: string

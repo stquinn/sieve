@@ -22,6 +22,8 @@ export function DiscardBuffer(arg1:string):Promise<void>;
 
 export function DownloadAsset(arg1:string,arg2:string,arg3:string):Promise<main.AssetDTO>;
 
+export function EvaluateAndFile(arg1:string,arg2:boolean,arg3:boolean):Promise<main.EvaluateAndFileResult>;
+
 export function EvaluateBuffer(arg1:string):Promise<stash.FilingRecommendation>;
 
 export function Explain(arg1:string,arg2:string,arg3:string,arg4:Array<string>):Promise<string>;

@@ -38,6 +38,10 @@ export function DownloadAsset(arg1, arg2, arg3) {
   return window['go']['main']['App']['DownloadAsset'](arg1, arg2, arg3);
 }
 
+export function EvaluateAndFile(arg1, arg2, arg3) {
+  return window['go']['main']['App']['EvaluateAndFile'](arg1, arg2, arg3);
+}
+
 export function EvaluateBuffer(arg1) {
   return window['go']['main']['App']['EvaluateBuffer'](arg1);
 }

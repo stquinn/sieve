@@ -1033,6 +1033,121 @@ func (a *App) EvaluateBuffer(path string) (*stash.FilingRecommendation, error) {
 	return rec, nil
 }
 
+// EvaluateAndFile loads the document at path, runs AI evaluation, applies the
+// recommendation to its metadata, and optionally promotes it to the Library.
+// The frontend must have already persisted the document body before calling this.
+// Returns EvaluateAndFileResult{Discarded: true} when the document was removed.
+func (a *App) EvaluateAndFile(path string, fileAfter bool, allowDiscard bool) (EvaluateAndFileResult, error) {
+	if a.buffers == nil {
+		return EvaluateAndFileResult{}, fmt.Errorf("store not open")
+	}
+
+	// Load the document — body was already saved by the frontend.
+	var (
+		b      *stash.Buffer
+		n      *stash.Note
+		isNote bool
+	)
+	if buf, err := a.buffers.Load(path); err == nil {
+		b = buf
+	} else if note, err := a.notes.Load(path); err == nil {
+		n = note
+		isNote = true
+	} else {
+		return EvaluateAndFileResult{}, fmt.Errorf("EvaluateAndFile: document not found: %s", path)
+	}
+
+	var meta stash.DocumentMeta
+	var body []byte
+	if isNote {
+		meta, body = n.Meta(), n.Body()
+	} else {
+		meta, body = b.Meta(), b.Body()
+	}
+
+	userIntent := ""
+	if ui := meta.UserIntent(); ui != nil {
+		userIntent = *ui
+	}
+
+	// Discard empty unfiled documents (mirrors TS isContentEmpty check).
+	if fileAfter && isBodyEmpty(string(body)) && userIntent != "keep" {
+		if err := a.discardDoc(isNote, b, n); err != nil {
+			return EvaluateAndFileResult{}, fmt.Errorf("EvaluateAndFile: discard empty: %w", err)
+		}
+		return EvaluateAndFileResult{Discarded: true}, nil
+	}
+
+	// Discard when the user explicitly marked the document as trash.
+	if userIntent == "trash" && fileAfter && allowDiscard {
+		if err := a.discardDoc(isNote, b, n); err != nil {
+			return EvaluateAndFileResult{}, fmt.Errorf("EvaluateAndFile: discard trash: %w", err)
+		}
+		return EvaluateAndFileResult{Discarded: true}, nil
+	}
+
+	// Run AI evaluation unless the user has marked the document as trash.
+	evalDone := false
+	if userIntent != "trash" {
+		settings := a.state.LoadSettings()
+		if settings.Tier() != stash.TierDumb {
+			prompt, _ := a.prompts.GetPromptContent("file")
+			rec, err := stash.EvaluateBuffer(meta, body, a.libraryFolders(), settings, prompt)
+			if err != nil {
+				logger.Warn("EvaluateAndFile: eval failed", "path", path, "err", err)
+				return EvaluateAndFileResult{}, err
+			}
+			stash.ApplyFilingRec(meta, rec, settings.CLI)
+			evalDone = true
+		}
+	}
+
+	// Persist meta changes and optionally file/refile.
+	if isNote {
+		if evalDone {
+			saved, err := a.notes.Save(n)
+			if err != nil {
+				return EvaluateAndFileResult{}, fmt.Errorf("EvaluateAndFile: save note: %w", err)
+			}
+			n = saved
+		}
+		if fileAfter {
+			refiled, err := a.notes.Refile(n)
+			if err != nil {
+				return EvaluateAndFileResult{}, fmt.Errorf("EvaluateAndFile: refile: %w", err)
+			}
+			logger.Info("EvaluateAndFile: refiled", "from", path, "to", refiled.Path())
+			return EvaluateAndFileResult{Doc: toNoteBufferDTO(refiled)}, nil
+		}
+		return EvaluateAndFileResult{Doc: toNoteBufferDTO(n)}, nil
+	}
+
+	if evalDone {
+		saved, err := a.buffers.Save(b)
+		if err != nil {
+			return EvaluateAndFileResult{}, fmt.Errorf("EvaluateAndFile: save buffer: %w", err)
+		}
+		b = saved
+	}
+	if fileAfter {
+		note, err := a.buffers.File(b)
+		if err != nil {
+			return EvaluateAndFileResult{}, fmt.Errorf("EvaluateAndFile: file: %w", err)
+		}
+		logger.Info("EvaluateAndFile: filed", "from", path, "to", note.Path())
+		return EvaluateAndFileResult{Doc: toNoteBufferDTO(note)}, nil
+	}
+	return EvaluateAndFileResult{Doc: toBufferDTO(b)}, nil
+}
+
+// discardDoc deletes a buffer or note from its respective service.
+func (a *App) discardDoc(isNote bool, b *stash.Buffer, n *stash.Note) error {
+	if isNote {
+		return a.notes.Delete(n)
+	}
+	return a.buffers.Discard(b)
+}
+
 func (a *App) RefineLanguage(content string) (string, error) {
 	if a.buffers == nil {
 		return "", fmt.Errorf("store not open")

@@ -72,10 +72,10 @@ export class StorableDataService {
     if (existing) return this.registry.get(existing)!
 
     const raw = await LoadBuffer(path)
-    const doc = (raw.meta?.status === 'filed') 
+    const doc = (raw.meta?.status === 'filed')
       ? main.NoteDTO.createFrom(raw) as any
       : main.BufferDTO.createFrom(raw) as any
-    doc.kind = 'note'
+    doc.kind = raw.meta?.status === 'filed' ? 'note' : 'buffer'
     this.registry.set(doc.id, doc)
     this.onNotify(doc.id)
     return doc
@@ -87,7 +87,7 @@ export class StorableDataService {
   async create(): Promise<Storable> {
     const raw = await NewBuffer()
     const doc = main.BufferDTO.createFrom(raw) as unknown as Storable
-    doc.kind = 'note'
+    doc.kind = 'buffer'
     this.registry.set(doc.id, doc)
     this.onNotify(doc.id)
     return doc
@@ -97,10 +97,10 @@ export class StorableDataService {
    * Check in a specific DTO
    */
   set(uuid: string, dto: any) {
-    const doc = (dto.meta?.status === 'filed') 
-      ? main.NoteDTO.createFrom(dto) as any 
+    const doc = (dto.meta?.status === 'filed')
+      ? main.NoteDTO.createFrom(dto) as any
       : main.BufferDTO.createFrom(dto) as any
-    doc.kind = 'note'
+    doc.kind = dto.meta?.status === 'filed' ? 'note' : 'buffer'
     this.registry.set(uuid, doc)
     this.onNotify(uuid)
   }
@@ -180,7 +180,7 @@ export class StorableDataService {
       const updated = (doc instanceof main.BufferDTO)
         ? main.BufferDTO.createFrom(saved) as any
         : main.NoteDTO.createFrom(saved) as any
-      updated.kind = 'note'
+      updated.kind = (updated instanceof main.BufferDTO) ? 'buffer' : 'note'
 
       // Update the cache with the fresh data from the backend (versions, meta, etc.)
       this.registry.set(uuid, updated)
@@ -330,6 +330,17 @@ export class StorableDataService {
       console.error(`[StorableDataService] Failed to rename ${oldPath}:`, err)
       throw err
     }
+  }
+
+  /**
+   * Derive the new path and rename a document or folder.
+   * Handles .md suffix for notes and parentDir reconstruction.
+   */
+  async renameDoc(path: string, newName: string, isDir: boolean): Promise<void> {
+    const parentDir = path.substring(0, path.lastIndexOf('/'))
+    const fileName = isDir ? newName : (newName.endsWith('.md') ? newName : newName + '.md')
+    const newPath = parentDir ? `${parentDir}/${fileName}` : fileName
+    await this.rename(path, newPath, isDir)
   }
 
   // ── Prompt Operations ──────────────────────────────────────────────────────

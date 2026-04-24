@@ -165,10 +165,7 @@ export function TabBar({
                   initialValue: currentName.replace(/\.md$/, ''),
                   onSubmit: async (newName: string) => {
                     if (!newName || newName === currentName) return
-                    const parentDir = path.substring(0, path.lastIndexOf('/'))
-                    const fileName = newName.endsWith('.md') ? newName : newName + '.md'
-                    const newPath = parentDir ? `${parentDir}/${fileName}` : fileName
-                    await dataService.rename(path, newPath, false)
+                    await dataService.renameDoc(path, newName, false)
                   }
                 })
               }}

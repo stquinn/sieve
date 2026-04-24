@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import './lib/SmartStorables'
 import { EditorPanel, EditorPanelHandle } from './components/EditorPanel'
-import { main, stash } from '../wailsjs/go/models'
+import { stash } from '../wailsjs/go/models'
 // Backend service imports moved to line 19-25 block
 import { 
   GetSession, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, 
@@ -123,7 +123,7 @@ export default function App() {
     if (!tab) return
 
     const doc = dataService.current.get(tab.uuid)
-    const isBuffer = doc instanceof main.BufferDTO
+    const isBuffer = doc?.kind === 'buffer'
     
     // 1. Calculate new state immediately
     const nextTabs = currentTabs.filter((_, i) => i !== idx)

@@ -1,10 +1,8 @@
 
 import { StorableDataService } from './StorableDataService'
-import { EvaluateBuffer, Explain, Ask,DescribeImage,RefineLanguage,GetPrompts } from '../../wailsjs/go/main/App'
+import { EvaluateAndFile, Explain, Ask, DescribeImage, RefineLanguage } from '../../wailsjs/go/main/App'
 import { JobID, AiListener, AiContext } from './AiJob'
-import { Storable } from '../types'
-import { stash, main } from '../../wailsjs/go/models'
-import { getLocalISOString, applyFilingRecToMeta } from './fmUtils'
+import { stash } from '../../wailsjs/go/models'
 
 
 export interface JobState {
@@ -91,50 +89,28 @@ export class AiService {
     }
   }
 
-  async evaluateDocument (docId: string, fileAfter: boolean, allowDiscard: boolean, listener: AiListener) {
+  async evaluateDocument(docId: string, fileAfter: boolean, allowDiscard: boolean, listener: AiListener) {
     const job: JobID = { docId, blkId: '' }
     if (this.getJob(job)) return
-    
+
     const jobState = { isWaiting: true, jobName: fileAfter ? 'Filing' : 'Metadata', startTime: Date.now() }
     this.setJob(job, jobState)
     this.dataService.setTransient(docId, { isWaitingAI: true, aiJobName: jobState.jobName })
-      
+
     try {
       await this.dataService.save(job.docId).catch(console.error)
-      var doc = this.dataService.get(job.docId)
-      if(!doc) return
-      const body = doc.body || ''
-      const userIntent = doc.meta?.userIntent
+      const doc = this.dataService.get(job.docId)
+      if (!doc) return
 
-      if (fileAfter && this.isContentEmpty(body) && userIntent !== 'keep') {
-        await this.dataService.discard(job.docId)
-        return
-      }
-      
-      if(userIntent != 'trash') {
-        const rec: stash.FilingRecommendation = await EvaluateBuffer(doc.path)
-        const info = await this.dataService.getStoreInfo()
-        const updatedMeta = applyFilingRecToMeta(doc.meta!, rec, info.cli)
-        this.dataService.setMeta(job.docId, { ...updatedMeta, aiEval: 'complete', aiLastEvaluated: getLocalISOString() })
-        doc = this.dataService.get(job.docId)
-      } else if(userIntent === 'trash' && fileAfter && allowDiscard) {
-        await this.dataService.discard(job.docId)
+      const result = await EvaluateAndFile(doc.path, fileAfter, allowDiscard)
+
+      if (result.discarded) {
+        this.dataService.evict(job.docId)
         return
       }
 
-      
-  
-      if (fileAfter && doc != null) {
-        if (doc instanceof main.NoteDTO) {
-          await this.dataService.refile(job.docId)
-        } else {
-          await this.dataService.save(job.docId)
-          await this.dataService.file(job.docId)
-        }
-      } else {
-        await this.dataService.save(job.docId)
-      }
-      listener.onComplete(job,JSON.stringify(doc?.meta))
+      this.dataService.set(job.docId, result.doc)
+      listener.onComplete(job, JSON.stringify(result.doc?.meta))
     } catch (err) {
       console.error('[stash:ai] background eval failed', err)
       listener.onError(job, String(err))
@@ -179,12 +155,6 @@ export class AiService {
       onComplete: () => { /* listeners handle refresh */ },
       onError: (err) => console.error(`[AiService] Keep and File failed for ${docId}:`, err)
     })
-  }
-
-  private isContentEmpty(html: string) {
-    if (!html) return true
-    const stripped = html.replace(/<[^>]*>/g, '').trim()
-    return stripped === ''
   }
 
   getPendingCount() {

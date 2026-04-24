@@ -131,12 +131,11 @@ export function Sidebar({
       initialValue: isDir ? currentName : currentName.replace(/\.md$/, ''),
       onSubmit: async (newName: string) => {
         if (!newName || newName === currentName) return
-        const parentDir = path.substring(0, path.lastIndexOf('/'))
-        const fileName = isDir ? newName : (newName.endsWith('.md') ? newName : newName + '.md')
-        const newPath = parentDir ? `${parentDir}/${fileName}` : fileName
         try {
-          await dataService.rename(path, newPath, isDir)
+          await dataService.renameDoc(path, newName, isDir)
           if (isDir && onRenameFolder) {
+            const parentDir = path.substring(0, path.lastIndexOf('/'))
+            const newPath = parentDir ? `${parentDir}/${newName}` : newName
             onRenameFolder(path, newPath)
           }
           refreshNotes()
