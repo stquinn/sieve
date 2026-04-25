@@ -127,6 +127,19 @@ HTMX's built-in SSE extension handles this declaratively: `hx-ext="sse" sse-conn
 
 ## Migration Phases (Strangler Fig)
 
+### Phase 0 — Rename Stash → Sieve (standalone commit, before any migration work)
+
+Mechanical find-and-replace across the Go codebase. Done as one isolated commit so the migration starts with the right name throughout.
+
+- `go.mod`: `module stash` → `module sieve`
+- All Go import paths: `stash/stash` → `sieve/stash` (or rename subdirectory for full consistency)
+- `wails.json`: output binary `stash` → `sieve`
+- `main.go`: app title `"Stash"` → `"Sieve"`
+- `config.go`: env var `STASH_STORE` → `SIEVE_STORE`
+- Leave frontend TypeScript untouched — it's being deleted in Phase 9 anyway
+- Verify with `go build` before committing
+- Rename the repo on Forgejo and GitHub (UI activity — both set up automatic URL redirects), then update local remote: `git remote set-url origin <new-url>`
+
 ### Phase 1 — Infrastructure (no visible change)
 - Add `chi` router into `muxHandler`
 - Add `html/template` rendering helpers in Go
