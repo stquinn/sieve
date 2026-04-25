@@ -529,6 +529,3 @@ export namespace sieve {
 
 }
 
-
-// Compatibility alias: Go package was renamed stash → sieve
-export import stash = sieve;

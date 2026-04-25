@@ -166,6 +166,19 @@ func main() {
 		log.Fatalf("failed to init API handler: %v", err)
 	}
 
+	// Standalone HTTP server so Vite dev proxy can reach API/SSE/static routes.
+	// In production the AssetServer.Handler covers these; this is a no-op there.
+	devPort := os.Getenv("SIEVE_DEV_PORT")
+	if devPort == "" {
+		devPort = "8081"
+	}
+	go func() {
+		mux := &muxHandler{app: app, store: &storeHandler{app: app}, api: api}
+		if err := http.ListenAndServe(":"+devPort, mux); err != nil {
+			log.Printf("dev HTTP server: %v", err)
+		}
+	}()
+
 	err = wails.Run(&options.App{
 		Title:                    "Sieve",
 		Width:                    1200,

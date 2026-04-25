@@ -126,6 +126,12 @@ export default function App() {
     }
   }, [])
 
+  const htmxSidebarRef = useCallback((el: HTMLDivElement | null) => {
+    if (el && (window as any).htmx) {
+      ;(window as any).htmx.ajax('GET', '/api/sidebar', { target: el, swap: 'innerHTML' })
+    }
+  }, [])
+
   const selectTab = (idx: number) => {
     if (idx === activeIdx) return
     setActiveIdx(idx)
@@ -517,11 +523,7 @@ export default function App() {
               id="htmx-sidebar"
               className="sidebar"
               style={{ width: `${sidebarWidth}px` }}
-              {...{
-                'hx-get': '/api/sidebar',
-                'hx-trigger': 'load',
-                'hx-swap': 'innerHTML',
-              } as any}
+              ref={htmxSidebarRef}
             />
           ) : (
             <StoreSearch
