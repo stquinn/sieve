@@ -8,7 +8,6 @@ import {
   TogglePrompts, SelectVault, InitVault, ShowInFilesByID
 } from '../wailsjs/go/main/App'
 import { BrowserOpenURL, EventsOn } from '../wailsjs/runtime/runtime'
-import { TabBar } from './components/TabBar'
 import { HelpModal } from './components/HelpModal'
 import { Sidebar } from './components/Sidebar'
 import { NoteEntry, PromptEntry } from './types'
@@ -80,10 +79,14 @@ export default function App() {
 
   const focusTimer   = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Stable refs for globals exposed to HTMX sidebar
-  const openDocRef    = useRef<((id: string) => Promise<void>) | undefined>(undefined)
-  const newTabRef     = useRef<(() => Promise<void>) | undefined>(undefined)
-  const showSettingsRef = useRef<(() => void) | undefined>(undefined)
+  // Stable refs for globals exposed to HTMX sidebar and tab bar
+  const openDocRef        = useRef<((id: string) => Promise<void>) | undefined>(undefined)
+  const newTabRef         = useRef<(() => Promise<void>) | undefined>(undefined)
+  const showSettingsRef   = useRef<(() => void) | undefined>(undefined)
+  const selectTabByIdRef  = useRef<((id: string) => void) | undefined>(undefined)
+  const closeTabByIdRef   = useRef<((id: string) => void) | undefined>(undefined)
+  const reorderTabsRef    = useRef<((from: number, to: number) => void) | undefined>(undefined)
+  const showHelpRef       = useRef<(() => void) | undefined>(undefined)
 
   const autosaveMs                = useRef(30_000)
   const cliTimeoutLongMs          = useRef(60_000)
@@ -114,14 +117,18 @@ export default function App() {
     if (ready) persistSession()
   }, [showSidebar, showMeta, showPrompts])
 
-  // Expose stable globals so the HTMX sidebar can call into React state
+  // Expose stable globals so the HTMX sidebar and tab bar can call into React state
   useEffect(() => {
-    ;(window as any).sieveOpenNote    = (id: string) => openDocRef.current?.(id)
-    ;(window as any).sieveNewNote     = () => newTabRef.current?.()
-    ;(window as any).sieveOpenSettings = () => showSettingsRef.current?.()
-    ;(window as any).sieveShowInFiles  = (id: string) => ShowInFilesByID(id)
+    ;(window as any).sieveOpenNote      = (id: string) => openDocRef.current?.(id)
+    ;(window as any).sieveNewNote       = () => newTabRef.current?.()
+    ;(window as any).sieveOpenSettings  = () => showSettingsRef.current?.()
+    ;(window as any).sieveShowInFiles   = (id: string) => ShowInFilesByID(id)
     ;(window as any).sieveSmartFile     = (id: string) => aiService.current?.smartFile(id)
     ;(window as any).sieveSmartMetadata = (id: string) => aiService.current?.smartMetadata(id)
+    ;(window as any).sieveSelectTab     = (id: string) => selectTabByIdRef.current?.(id)
+    ;(window as any).sieveCloseTab      = (id: string) => closeTabByIdRef.current?.(id)
+    ;(window as any).sieveReorderTabs   = (from: number, to: number) => reorderTabsRef.current?.(from, to)
+    ;(window as any).sieveHelp          = () => showHelpRef.current?.()
     return () => {
       delete (window as any).sieveOpenNote
       delete (window as any).sieveNewNote
@@ -129,13 +136,16 @@ export default function App() {
       delete (window as any).sieveShowInFiles
       delete (window as any).sieveSmartFile
       delete (window as any).sieveSmartMetadata
+      delete (window as any).sieveSelectTab
+      delete (window as any).sieveCloseTab
+      delete (window as any).sieveReorderTabs
+      delete (window as any).sieveHelp
     }
   }, [])
 
   const htmxSidebarRef = useCallback((el: HTMLDivElement | null) => {
     if (!el || !(window as any).htmx) return
     ;(window as any).htmx.ajax('GET', '/api/sidebar', { target: el, swap: 'innerHTML' })
-    // Load sidebar.js once (positions context menus, handles rename prompts).
     if (!(window as any).sieveCloseMenu) {
       const script = document.createElement('script')
       script.src = '/static/sidebar.js'
@@ -143,10 +153,26 @@ export default function App() {
     }
   }, [])
 
+  const htmxTabbarRef = useCallback((el: HTMLDivElement | null) => {
+    if (!el || !(window as any).htmx) return
+    ;(window as any).htmx.ajax('GET', '/api/tabs', { target: el, swap: 'innerHTML' })
+    if (!(window as any).sieveTabBarInit) {
+      const script = document.createElement('script')
+      script.src = '/static/tabbar.js'
+      document.body.appendChild(script)
+    }
+  }, [])
+
+  const refreshTabBar = () => {
+    const htmx = (window as any).htmx
+    const el = document.getElementById('htmx-tabbar')
+    if (htmx && el) htmx.ajax('GET', '/api/tabs', { target: el, swap: 'innerHTML' })
+  }
+
   const selectTab = (idx: number) => {
     if (idx === activeIdx) return
     setActiveIdx(idx)
-    persistSession({ activeIdx: idx })
+    persistSession({ activeIdx: idx }).then(refreshTabBar)
   }
 
   const newTab = async () => {
@@ -163,7 +189,7 @@ export default function App() {
           id: t.uuid,
           active: i === next.length - 1,
           mode: t.mode
-        })) as any, activeIdx: next.length - 1 })
+        })) as any, activeIdx: next.length - 1 }).then(refreshTabBar)
         return next
       })
     } catch (e) {
@@ -194,7 +220,7 @@ export default function App() {
         active: i === nextIdx,
         mode: t.mode
       })) as any
-    })
+    }).then(refreshTabBar)
 
     // 3. Trigger Smart Logic if needed (Background)
     if (doc?.isModified || isBuffer) {
@@ -233,7 +259,10 @@ export default function App() {
       tabs: tabsRef.current.map((t, i) => ({
         id: t.uuid,
         active: i === activeIdxRef.current,
-        mode: t.mode
+        mode: t.mode,
+        displayName: dataService.current.get(t.uuid)?.meta?.displayName ?? '',
+        status: dataService.current.get(t.uuid)?.meta?.status ?? '',
+        userIntent: dataService.current.get(t.uuid)?.meta?.userIntent ?? '',
       })) as any,
       sidebarWidth: sidebarWidthRef.current,
       metaWidth: metaWidthRef.current,
@@ -265,16 +294,54 @@ export default function App() {
         id: t.uuid,
         active: i === nextTabs.length - 1,
         mode: t.mode
-      })) as any, activeIdx: nextTabs.length - 1 })
+      })) as any, activeIdx: nextTabs.length - 1 }).then(refreshTabBar)
     } catch (e) {
       console.error('[App] openDoc failed', e)
     }
   }
 
-  // Keep HTMX bridge refs current so the sidebar can call into React state
+  // Keep HTMX bridge refs current so the sidebar and tab bar can call into React state
   useEffect(() => { openDocRef.current = openDoc }, [openDoc])
   useEffect(() => { newTabRef.current = newTab }, [newTab])
   useEffect(() => { showSettingsRef.current = () => setShowSettings(true) }, [])
+  useEffect(() => { showHelpRef.current = () => setShowHelp(v => !v) }, [])
+  useEffect(() => {
+    selectTabByIdRef.current = (id: string) => {
+      const idx = tabsRef.current.findIndex(t => t.uuid === id)
+      if (idx === -1 || idx === activeIdxRef.current) return
+      setActiveIdx(idx)
+      persistSession({ activeIdx: idx }).then(refreshTabBar)
+    }
+  }, [])
+  useEffect(() => {
+    closeTabByIdRef.current = (id: string) => {
+      const idx = tabsRef.current.findIndex(t => t.uuid === id)
+      if (idx === -1) return
+      smartFileClose(idx)
+    }
+  }, [smartFileClose])
+  useEffect(() => {
+    reorderTabsRef.current = (oldIdx: number, newIdx: number) => {
+      const current = tabsRef.current
+      const next = [...current]
+      const [moved] = next.splice(oldIdx, 1)
+      next.splice(newIdx, 0, moved)
+      setTabs(next)
+      let finalIdx = activeIdxRef.current
+      if (finalIdx === oldIdx) finalIdx = newIdx
+      else if (finalIdx > oldIdx && finalIdx <= newIdx) finalIdx = finalIdx - 1
+      else if (finalIdx < oldIdx && finalIdx >= newIdx) finalIdx = finalIdx + 1
+      setActiveIdx(finalIdx)
+      persistSession({ activeIdx: finalIdx, tabs: next.map((t, i) => ({
+        id: t.uuid,
+        active: i === finalIdx,
+        mode: t.mode,
+        displayName: dataService.current.get(t.uuid)?.meta?.displayName ?? '',
+        status: dataService.current.get(t.uuid)?.meta?.status ?? '',
+        userIntent: dataService.current.get(t.uuid)?.meta?.userIntent ?? '',
+      })) as any }).then(refreshTabBar)
+    }
+  }, [])
 
   const openByPath = async (path: string) => {
     try {
@@ -559,42 +626,10 @@ export default function App() {
       )}
 
       <div id="right-panel">
-        <TabBar
-          tabs={tabs}
-          activeIdx={activeIdx}
-          dataService={dataService.current}
-          aiService={aiService.current}
-          onSelect={selectTab}
-          onClose={smartFileClose}
-          onNew={newTab}
-          onHelp={() => setShowHelp(v => !v)}
-          onSetIntent={(uuid, intent) => dataService.current.setIntent(uuid, intent)}
-          onReorder={(oldIdx, newIdx) => {
-            const next = [...tabs]
-            const [moved] = next.splice(oldIdx, 1)
-            next.splice(newIdx, 0, moved)
-            setTabs(next)
-            let finalIdx = activeIdx
-            if (activeIdx === oldIdx) finalIdx = newIdx
-            else if (activeIdx > oldIdx && activeIdx <= newIdx) finalIdx = activeIdx - 1
-            else if (activeIdx < oldIdx && activeIdx >= newIdx) finalIdx = activeIdx + 1
-            setActiveIdx(finalIdx)
-            persistSession({ activeIdx: finalIdx, tabs: next.map((t, i) => ({
-              id: t.uuid,
-              active: i === finalIdx,
-              mode: t.mode
-            })) as any })
-          }}
-          onCloseAll={async () => {
-             for (const t of tabs) {
-               await dataService.current.save(t.uuid).catch(console.error)
-             }
-             const doc = await dataService.current.create()
-             const tab: TabState = { uuid: doc.id, mode: 'wysiwyg' }
-             setTabs([tab])
-             setActiveIdx(0)
-             persistSession({ activeIdx: 0, tabs: [{ id: doc.id, active: true, mode: 'wysiwyg' }] as any })
-          }}
+        <div
+          id="htmx-tabbar"
+          ref={htmxTabbarRef}
+          style={{ display: 'flex', alignItems: 'stretch', background: 'var(--theme-bgDark)', borderTop: '1px solid var(--theme-border2)', borderBottom: '1px solid var(--theme-border2)', height: '44px', flexShrink: 0 }}
         />
 
         {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}

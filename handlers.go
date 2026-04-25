@@ -54,6 +54,7 @@ func newAPIHandler(app *App, hub *sseHub) (*apiHandler, error) {
 	}
 	requestHandlers := []requesthandlers.RequestHandler{
 		&requesthandlers.SideBarHandler{Notes: &app.notes, State: &app.state, Tmpl: tmpl},
+		&requesthandlers.TabHandler{State: &app.state, Tmpl: tmpl},
 		&requesthandlers.ContextMenuHandler{
 			Notes: &app.notes,
 			State: &app.state,
