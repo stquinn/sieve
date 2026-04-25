@@ -275,7 +275,7 @@ export namespace main {
 
 }
 
-export namespace stash {
+export namespace sieve {
 	
 	export class FilingRecommendation {
 	    keep: boolean;
@@ -529,3 +529,6 @@ export namespace stash {
 
 }
 
+
+// Compatibility alias: Go package was renamed stash → sieve
+export import stash = sieve;

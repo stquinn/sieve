@@ -3,14 +3,24 @@
 <head>
     <meta charset="UTF-8"/>
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-    <title>stash</title>
-    <!-- Served dynamically by Go from the active theme JSON. 
+    <title>Sieve</title>
+    <!-- Served dynamically by Go from the active theme JSON.
          Must be last in head to override App.css variables. -->
     <link rel="stylesheet" href="/theme.css"/>
 </head>
 <body>
 <div id="root"></div>
+<script src="/static/htmx.min.js"></script>
 <script src="./src/main.tsx" type="module"></script>
+<script>
+window.addEventListener('DOMContentLoaded', function() {
+  var sse = new EventSource('/sse')
+  sse.addEventListener('notes:changed', function() {
+    if (window.htmx) {
+      htmx.ajax('GET', '/api/sidebar', {target: '#htmx-sidebar', swap: 'innerHTML'})
+    }
+  })
+})
+</script>
 </body>
 </html>
-

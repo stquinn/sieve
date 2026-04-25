@@ -80,6 +80,11 @@ export default function App() {
 
   const focusTimer   = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Stable refs for globals exposed to HTMX sidebar
+  const openDocRef    = useRef<((id: string) => Promise<void>) | undefined>(undefined)
+  const newTabRef     = useRef<(() => Promise<void>) | undefined>(undefined)
+  const showSettingsRef = useRef<(() => void) | undefined>(undefined)
+
   const autosaveMs                = useRef(30_000)
   const cliTimeoutLongMs          = useRef(60_000)
   const sidebarWidthRef           = useRef(240)
@@ -105,9 +110,21 @@ export default function App() {
   useEffect(() => { openFoldersRef.current = openFolders }, [openFolders])
   useEffect(() => { lastSettingsPanelRef.current = lastSettingsPanel }, [lastSettingsPanel])
 
-  useEffect(() => { 
-    if (ready) persistSession() 
+  useEffect(() => {
+    if (ready) persistSession()
   }, [showSidebar, showMeta, showPrompts])
+
+  // Expose stable globals so the HTMX sidebar can call into React state
+  useEffect(() => {
+    ;(window as any).sieveOpenNote    = (id: string) => openDocRef.current?.(id)
+    ;(window as any).sieveNewNote     = () => newTabRef.current?.()
+    ;(window as any).sieveOpenSettings = () => showSettingsRef.current?.()
+    return () => {
+      delete (window as any).sieveOpenNote
+      delete (window as any).sieveNewNote
+      delete (window as any).sieveOpenSettings
+    }
+  }, [])
 
   const selectTab = (idx: number) => {
     if (idx === activeIdx) return
@@ -236,6 +253,11 @@ export default function App() {
       console.error('[App] openDoc failed', e)
     }
   }
+
+  // Keep HTMX bridge refs current so the sidebar can call into React state
+  useEffect(() => { openDocRef.current = openDoc }, [openDoc])
+  useEffect(() => { newTabRef.current = newTab }, [newTab])
+  useEffect(() => { showSettingsRef.current = () => setShowSettings(true) }, [])
 
   const openByPath = async (path: string) => {
     try {
@@ -491,42 +513,15 @@ export default function App() {
       {showSidebar && (
         <>
           {sidebarMode === 'files' ? (
-            <Sidebar
-              dataService={dataService.current}
-              aiService={aiService.current}
-              entries={notes}
-              activeID={activeTab?.uuid}
-              openIDs={new Set(tabs.map(t => t.uuid))}
-              openFolders={openFolders}
-              onToggleFolder={toggleFolder}
-              onRenameFolder={renameOpenFolder}
-              onOpen={openDoc}
-              width={sidebarWidth}
-              showPrompts={showPrompts && tier === 'smart'}
-              prompts={prompts}
-              onEditPrompt={async (promptID) => {
-                const existingIdx = tabs.findIndex(t => t.uuid === promptID)
-                if (existingIdx !== -1) {
-                  selectTab(existingIdx)
-                  return
-                }
-                const doc = await dataService.current.loadByID(promptID)
-                const tab: TabState = { uuid: doc.id, mode: 'markdown' }
-                const nextTabs = [...tabs, tab]
-                setTabs(nextTabs)
-                setActiveIdx(nextTabs.length - 1)
-              }}
-              promptsHeight={promptsHeight}
-              onPromptsResize={h => { 
-                setPromptsHeight(h); 
-                promptsHeightRef.current = h;
-                SavePromptsHeight(h);
-                persistSession({ promptsHeight: h }); 
-              }}
-              setNotes={setNotes}
-              setPrompts={setPrompts}
-              onOpenSettings={() => setShowSettings(true)}
-              onNew={newTab}
+            <div
+              id="htmx-sidebar"
+              className="sidebar"
+              style={{ width: `${sidebarWidth}px` }}
+              {...{
+                'hx-get': '/api/sidebar',
+                'hx-trigger': 'load',
+                'hx-swap': 'innerHTML',
+              } as any}
             />
           ) : (
             <StoreSearch

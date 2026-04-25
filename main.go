@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -51,25 +52,30 @@ func (h *storeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filePath)
 }
 
-// muxHandler sits in front of storeHandler and intercepts /theme.css so that
-// the Go backend can serve the active theme as a proper stylesheet before the
-// browser renders a single pixel — no JS injection required.
+// muxHandler routes requests: proxy and theme.css are intercepted first, then
+// API/SSE/static go to apiHandler, store files go to storeHandler, and
+// everything else falls through to the embedded React assets via Wails.
 type muxHandler struct {
 	app   *App
 	store *storeHandler
+	api   *apiHandler
 }
 
 func (m *muxHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf("[sieve] request: %s %s (URI: %s)\n", r.Method, r.URL.Path, r.RequestURI)
+	fmt.Printf("[sieve] request: %s %s\n", r.Method, r.URL.Path)
 
-	// Intercept proxy requests early.
 	if strings.Contains(r.URL.Path, "/sieve-image-proxy") {
 		m.serveProxy(w, r)
 		return
 	}
-
 	if r.URL.Path == "/theme.css" {
 		m.serveThemeCSS(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/") ||
+		r.URL.Path == "/sse" ||
+		strings.HasPrefix(r.URL.Path, "/static/") {
+		m.api.ServeHTTP(w, r)
 		return
 	}
 	m.store.ServeHTTP(w, r)
@@ -82,7 +88,6 @@ func (m *muxHandler) serveProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Always allow CORS for the proxy itself
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "*")
@@ -107,7 +112,6 @@ func (m *muxHandler) serveProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use a standard browser User-Agent to avoid being blocked as a bot
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
 	resp, err := client.Do(req)
@@ -120,7 +124,6 @@ func (m *muxHandler) serveProxy(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Printf("[sieve:proxy] status: %d, type: %s\n", resp.StatusCode, resp.Header.Get("Content-Type"))
 
-	// Forward selective response headers — don't blindly forward everything (e.g. security/CORS headers from target)
 	if ct := resp.Header.Get("Content-Type"); ct != "" {
 		w.Header().Set("Content-Type", ct)
 	}
@@ -138,7 +141,6 @@ func (m *muxHandler) serveThemeCSS(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 
 	settings := m.app.LoadSettings()
-
 	vars := sieve.LoadTheme(settings.Theme, m.app.loadThemeOverride(settings.Theme), m.app.GetThemesFS())
 
 	w.WriteHeader(http.StatusOK)
@@ -150,16 +152,21 @@ func (m *muxHandler) serveThemeCSS(w http.ResponseWriter, _ *http.Request) {
 }
 
 func main() {
-	// Resolve store path.
 	cliArg := ""
 	if len(os.Args) > 1 {
 		cliArg = os.Args[1]
 	}
 	storePath := FindBestStorePath(cliArg, os.Getenv("SIEVE_STORE"))
 
-	app := NewApp(storePath, themes)
+	hub := newSSEHub()
+	app := NewApp(storePath, themes, hub)
 
-	err := wails.Run(&options.App{
+	api, err := newAPIHandler(app, hub)
+	if err != nil {
+		log.Fatalf("failed to init API handler: %v", err)
+	}
+
+	err = wails.Run(&options.App{
 		Title:                    "Sieve",
 		Width:                    1200,
 		Height:                   800,
@@ -167,11 +174,18 @@ func main() {
 		MinHeight:                500,
 		EnableDefaultContextMenu: true,
 		BackgroundColour:         &options.RGBA{R: 26, G: 27, B: 38, A: 1},
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId: "sieve-app-6f3a2b1c",
+			OnSecondInstanceLaunch: func(_ options.SecondInstanceData) {
+				// bring existing window to front
+			},
+		},
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 			Handler: &muxHandler{
 				app:   app,
 				store: &storeHandler{app: app},
+				api:   api,
 			},
 		},
 		OnStartup:     app.startup,

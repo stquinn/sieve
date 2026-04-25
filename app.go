@@ -37,12 +37,13 @@ type App struct {
 	prompts *sieve.PromptService
 
 	themesFS fs.FS
+	hub      *sseHub
 	watcher  *notesWatcher
 	closing  bool
 	mu       sync.Mutex
 }
 
-func NewApp(storePath string, themesFS fs.FS) *App {
+func NewApp(storePath string, themesFS fs.FS, hub *sseHub) *App {
 	hostname, _ := os.Hostname()
 	if hostname == "" {
 		hostname = "localhost"
@@ -51,6 +52,7 @@ func NewApp(storePath string, themesFS fs.FS) *App {
 		storePath: storePath,
 		hostname:  hostname,
 		themesFS:  themesFS,
+		hub:       hub,
 	}
 }
 
@@ -249,6 +251,9 @@ func (a *App) startup(ctx context.Context) {
 	w, err := newNotesWatcher(a.notesDir(), func() {
 		logger.Debug("notes changed — emitting event")
 		runtime.EventsEmit(a.ctx, "notes:changed")
+		if a.hub != nil {
+			a.hub.broadcast("notes:changed", "{}")
+		}
 	})
 	if err != nil {
 		logger.Warn("could not start notes watcher", "err", err)
