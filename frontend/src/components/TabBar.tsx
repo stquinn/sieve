@@ -5,7 +5,7 @@ import { NoteContextMenu } from './NoteContextMenu'
 import { FileText } from 'lucide-react'
 import { StorableDataService } from '../lib/StorableDataService'
 import { AiService } from '../lib/AiService'
-import { ShowInFiles } from '../../wailsjs/go/main/App'
+import { ShowInFilesByID } from '../../wailsjs/go/main/App'
 import { useModal } from '../lib/ModalContext'
 
 interface TabBarProps {
@@ -141,14 +141,15 @@ export function TabBar({
               onSelect={() => onSelect(idx)}
               onClose={() => onClose(idx)}
               onSetIntent={intent => onSetIntent(tab.uuid, intent)}
-              onShowInFiles={() => ShowInFiles(dataService.get(tab.uuid)?.path || '')}
+              onShowInFiles={() => ShowInFilesByID(tab.uuid)}
               onSmartFile={() => aiService.smartFile(tab.uuid)}
               onSmartMetadata={() => aiService.smartMetadata(tab.uuid)}
               onDelete={() => {
-                const path = dataService.get(tab.uuid)?.path
+                const doc = dataService.get(tab.uuid)
+                const label = doc?.meta?.displayName || (doc as any)?.slug || tab.uuid
                 confirm({
                   title: 'Delete Note',
-                  message: `Are you sure you want to delete "${path?.split('/').pop()}"?`,
+                  message: `Are you sure you want to delete "${label}"?`,
                   isDestructive: true,
                   onConfirm: async () => {
                     await dataService.discard(tab.uuid)
@@ -157,24 +158,24 @@ export function TabBar({
                 })
               }}
               onRename={() => {
-                const path = dataService.get(tab.uuid)?.path || ''
-                const currentName = path.split('/').pop() || ''
+                const doc = dataService.get(tab.uuid)
+                const currentName = doc?.meta?.displayName || (doc as any)?.slug || ''
                 prompt({
                   title: 'Rename Note',
                   message: `Enter new name for "${currentName}":`,
-                  initialValue: currentName.replace(/\.md$/, ''),
+                  initialValue: currentName,
                   onSubmit: async (newName: string) => {
                     if (!newName || newName === currentName) return
-                    await dataService.renameDoc(path, newName, false)
+                    await dataService.renameDoc(tab.uuid, newName, false)
                   }
                 })
               }}
               onCloseAll={onCloseAll}
               isVirtual={tab.isVirtual}
               onRestore={async () => {
-                const path = dataService.get(tab.uuid)?.path || ''
-                if (path.startsWith('prompt:')) {
-                  await dataService.deletePrompt(path.split(':').pop()!)
+                const doc = dataService.get(tab.uuid)
+                if (doc?.kind === 'prompt') {
+                  await dataService.deletePrompt(tab.uuid.split(':')[1])
                 }
               }}
               onDragStart={() => {
@@ -387,7 +388,9 @@ const TabItem = forwardRef<HTMLDivElement, TabItemProps>(function TabItem(
         <NoteContextMenu
           x={menu.x}
           y={menu.y}
-          path={doc?.path || ''}
+          id={tab.uuid}
+          name={tabLabel(tab, dataService)}
+          isPrompt={doc?.kind === 'prompt'}
           intent={(meta?.userIntent as UserIntent) || null}
           onClose={() => setMenu(null)}
           onSetIntent={onSetIntent}
@@ -422,11 +425,6 @@ function tabLabel(tab: TabState, dataService: StorableDataService): string {
   if (!tab) return 'Loading...'
   const doc = dataService.get(tab.uuid)
   const meta = doc?.meta
-  let label = meta?.displayName
-  if (!label) {
-    const path = doc?.path || tab.uuid || 'Untitled'
-    const parts = (path || '').replace(/\\/g, '/').split('/')
-    label = parts[parts.length - 1].replace(/\.md$/, '')
-  }
+  const label = meta?.displayName || (doc as any)?.slug || 'Untitled'
   return meta?.status === 'error' ? `⚠️ ${label}` : label
 }

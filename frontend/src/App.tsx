@@ -5,12 +5,13 @@ import { stash } from '../wailsjs/go/models'
 // Backend service imports moved to line 19-25 block
 import { 
   GetSession, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, 
-  ShowInFiles, TogglePrompts, SelectVault, InitVault
+  TogglePrompts, SelectVault, InitVault
 } from '../wailsjs/go/main/App'
 import { BrowserOpenURL, EventsOn } from '../wailsjs/runtime/runtime'
 import { TabBar } from './components/TabBar'
 import { HelpModal } from './components/HelpModal'
-import { Sidebar, NoteEntry, PromptEntry } from './components/Sidebar'
+import { Sidebar } from './components/Sidebar'
+import { NoteEntry, PromptEntry } from './types'
 import { MetaPanel } from './components/MetaPanel'
 import { StoreSearch } from './components/StoreSearch'
 import { QuickSwitcher } from './components/QuickSwitcher'
@@ -24,9 +25,23 @@ import { useUiState } from './hooks/useUiState'
 import { StorableDataService } from './lib/StorableDataService'
 import { AiService } from './lib/AiService'
 import { isMod } from './utils/platform'
-import { getAncestorPaths } from './lib/fmUtils'
 import { SettingsModal, SettingsTab } from './components/SettingsModal'
 import './App.css'
+
+function getAncestorFolderIDs(noteID: string, entries: NoteEntry[]): string[] {
+  function search(nodes: NoteEntry[], acc: string[]): string[] | null {
+    for (const node of nodes) {
+      if (node.isDir && node.children) {
+        const found = search(node.children, [...acc, node.id!])
+        if (found) return found
+      } else if (node.id === noteID) {
+        return acc
+      }
+    }
+    return null
+  }
+  return search(entries, []) ?? []
+}
 
 export default function App() {
   const [tabs, setTabs]           = useState<TabState[]>([])
@@ -63,17 +78,7 @@ export default function App() {
   const activeTab = tabs[activeIdx]
   const isMarkdownMode = activeTab?.mode === 'markdown'
 
-  const uuidToPath = useRef<Map<string, string>>(new Map())
   const focusTimer   = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  useEffect(() => {
-    const next = new Map<string, string>()
-    tabs.forEach(t => {
-      const path = dataService.current.get(t.uuid)?.path
-      if (path) next.set(t.uuid, path)
-    })
-    uuidToPath.current = next
-  }, [tabs, tick])
 
   const autosaveMs                = useRef(30_000)
   const cliTimeoutLongMs          = useRef(60_000)
@@ -120,9 +125,8 @@ export default function App() {
       setTabs(prev => {
         const next = [...prev, tab]
         setActiveIdx(next.length - 1)
-        persistSession({ tabs: next.map((t, i) => ({ 
-          id: t.uuid, 
-          path: dataService.current.get(t.uuid)?.path || '',
+        persistSession({ tabs: next.map((t, i) => ({
+          id: t.uuid,
           active: i === next.length - 1,
           mode: t.mode
         })) as any, activeIdx: next.length - 1 })
@@ -149,14 +153,13 @@ export default function App() {
     // 2. Commit UI state
     setTabs(nextTabs)
     setActiveIdx(nextIdx)
-    persistSession({ 
-      activeIdx: nextIdx, 
+    persistSession({
+      activeIdx: nextIdx,
       tabs: nextTabs.map((t, i) => ({
         id: t.uuid,
-        path: dataService.current.get(t.uuid)?.path || '',
         active: i === nextIdx,
         mode: t.mode
-      })) as any 
+      })) as any
     })
 
     // 3. Trigger Smart Logic if needed (Background)
@@ -193,9 +196,8 @@ export default function App() {
 
     const session: stash.Session = {
       activeIdx: activeIdxRef.current,
-      tabs: tabsRef.current.map((t, i) => ({ 
-        id: t.uuid, 
-        path: dataService.current.get(t.uuid)?.path || '',
+      tabs: tabsRef.current.map((t, i) => ({
+        id: t.uuid,
         active: i === activeIdxRef.current,
         mode: t.mode
       })) as any,
@@ -212,27 +214,35 @@ export default function App() {
     await SaveSession(session).catch(console.error)
   }
 
-  const openNote = async (path: string) => {
-    const existingIdx = tabs.findIndex(t => dataService.current.get(t.uuid)?.path === path)
+  const openDoc = async (id: string) => {
+    const existingIdx = tabs.findIndex(t => t.uuid === id)
     if (existingIdx !== -1) {
       selectTab(existingIdx)
       return
     }
 
     try {
-      const doc = await dataService.current.load(path)
+      const doc = await dataService.current.loadByID(id)
       const tab: TabState = { uuid: doc.id, mode: 'wysiwyg' }
       const nextTabs = [...tabs, tab]
       setTabs(nextTabs)
       setActiveIdx(nextTabs.length - 1)
-      persistSession({ tabs: nextTabs.map((t, i) => ({ 
-        id: t.uuid, 
-        path: dataService.current.get(t.uuid)?.path || '',
+      persistSession({ tabs: nextTabs.map((t, i) => ({
+        id: t.uuid,
         active: i === nextTabs.length - 1,
         mode: t.mode
       })) as any, activeIdx: nextTabs.length - 1 })
     } catch (e) {
-      console.error('[App] openNote failed', e)
+      console.error('[App] openDoc failed', e)
+    }
+  }
+
+  const openByPath = async (path: string) => {
+    try {
+      const doc = await dataService.current.load(path)
+      await openDoc(doc.id)
+    } catch (e) {
+      console.error('[App] openByPath failed', e)
     }
   }
 
@@ -368,13 +378,17 @@ export default function App() {
               
               await Promise.all((session.tabs as any[]).map(async t => {
                 const uuid = t.id || t.uuid
+                if (!uuid) return
+                if (dataService.current.get(uuid)) return
                 try {
-                  if (!uuid) return
-                  if (!dataService.current.get(uuid)) {
-                    await dataService.current.load(t.path)
+                  await dataService.current.loadByID(uuid)
+                } catch {
+                  // fallback for old sessions that only stored path
+                  if (t.path) {
+                    try { await dataService.current.load(t.path) } catch (e2) {
+                      console.error('[App] restore: failed to load tab', uuid, e2)
+                    }
                   }
-                } catch (e) {
-                  console.error('[App] restore: failed to load tab', t.path, e)
                 }
               }))
             }
@@ -406,11 +420,11 @@ export default function App() {
   const onRestorePrompt = async (name: string) => {
     await dataService.current.deletePrompt(name)
     await dataService.current.getPrompts().then(setPrompts)
-    const path = `prompt:${name}`
-    const entry = tabs.find(t => uuidToPath.current.get(t.uuid) === path)
+    const promptID = `prompt:${name}`
+    const entry = tabs.find(t => t.uuid === promptID)
     if (entry) {
-      await dataService.current.evict(entry.uuid)
-      await dataService.current.load(path)
+      dataService.current.evict(entry.uuid)
+      await dataService.current.loadByID(promptID)
       setTick(t => t + 1)
     }
   }
@@ -431,21 +445,18 @@ export default function App() {
 
   useEffect(() => {
     if (!activeTab?.uuid) return
-    const doc = dataService.current.get(activeTab.uuid)
-    const path = doc?.path
-    if (!path) return
-    const ancestors = getAncestorPaths(path)
+    const ancestors = getAncestorFolderIDs(activeTab.uuid, notes)
     if (ancestors.length > 0) {
       setOpenFolders(prev => {
         const next = new Set(prev)
         let changed = false
-        for (const p of ancestors) {
-          if (!next.has(p)) { next.add(p); changed = true }
+        for (const id of ancestors) {
+          if (!next.has(id)) { next.add(id); changed = true }
         }
         return changed ? next : prev
       })
     }
-  }, [activeTab?.uuid, tick])
+  }, [activeTab?.uuid, notes])
 
   if (!ready) return <div className="loading-screen" />
 
@@ -484,23 +495,22 @@ export default function App() {
               dataService={dataService.current}
               aiService={aiService.current}
               entries={notes}
-              activePath={activeTab ? dataService.current.get(activeTab.uuid)?.path : undefined}
-              openPaths={new Set(tabs.map(t => dataService.current.get(t.uuid)?.path).filter(Boolean) as string[])}
+              activeID={activeTab?.uuid}
+              openIDs={new Set(tabs.map(t => t.uuid))}
               openFolders={openFolders}
               onToggleFolder={toggleFolder}
               onRenameFolder={renameOpenFolder}
-              onOpen={openNote}
+              onOpen={openDoc}
               width={sidebarWidth}
               showPrompts={showPrompts && tier === 'smart'}
               prompts={prompts}
-              onEditPrompt={async (name) => {
-                const uuid = `prompt:${name}`
-                const existingIdx = tabs.findIndex(t => t.uuid === uuid)
+              onEditPrompt={async (promptID) => {
+                const existingIdx = tabs.findIndex(t => t.uuid === promptID)
                 if (existingIdx !== -1) {
                   selectTab(existingIdx)
                   return
                 }
-                const doc = await dataService.current.load(`prompt:${name}`)
+                const doc = await dataService.current.loadByID(promptID)
                 const tab: TabState = { uuid: doc.id, mode: 'markdown' }
                 const nextTabs = [...tabs, tab]
                 setTabs(nextTabs)
@@ -521,7 +531,7 @@ export default function App() {
           ) : (
             <StoreSearch
               width={sidebarWidth}
-              onOpen={p => { openNote(p); setSidebarMode('files') }}
+              onOpen={async p => { await openByPath(p); setSidebarMode('files') }}
               onClose={() => setSidebarMode('files')}
               dataService={dataService.current}
             />
@@ -568,7 +578,6 @@ export default function App() {
             setActiveIdx(finalIdx)
             persistSession({ activeIdx: finalIdx, tabs: next.map((t, i) => ({
               id: t.uuid,
-              path: dataService.current.get(t.uuid)?.path || '',
               active: i === finalIdx,
               mode: t.mode
             })) as any })
@@ -581,7 +590,7 @@ export default function App() {
              const tab: TabState = { uuid: doc.id, mode: 'wysiwyg' }
              setTabs([tab])
              setActiveIdx(0)
-             persistSession({ activeIdx: 0, tabs: [{ id: doc.id, path: doc.path, active: true, mode: 'wysiwyg' }] as any })
+             persistSession({ activeIdx: 0, tabs: [{ id: doc.id, active: true, mode: 'wysiwyg' }] as any })
           }}
         />
 
@@ -614,16 +623,14 @@ export default function App() {
         <QuickSwitcher
           isOpen={showQuickSwitch}
           onClose={() => setShowQuickSwitch(false)}
-          onSelect={openNote}
+          onSelect={openDoc}
           tabs={tabs.map(t => {
             const doc = dataService.current.get(t.uuid)
             return {
               uuid: t.uuid,
               mode: t.mode,
-              path: doc?.path || t.uuid,
+              displayName: doc?.meta?.displayName,
               status: doc?.meta?.status as any,
-              isEvaluating: doc?.meta?.status === 'evaluating',
-              isWaitingAI: dataService.current.getTransient(t.uuid).isWaitingAI
             }
           })}
           notesTree={notes}

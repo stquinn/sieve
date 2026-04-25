@@ -6,7 +6,7 @@ import {fs} from '../models';
 
 export function Ask(arg1:string,arg2:string,arg3:string,arg4:string,arg5:Array<string>):Promise<string>;
 
-export function CreateFolder(arg1:string):Promise<void>;
+export function CreateFolder(arg1:string,arg2:string):Promise<void>;
 
 export function CreateVault():Promise<string>;
 
@@ -50,6 +50,8 @@ export function InitVault(arg1:string):Promise<void>;
 
 export function LoadBuffer(arg1:string):Promise<any>;
 
+export function LoadByUUID(arg1:string):Promise<any>;
+
 export function LoadPrompt(arg1:string):Promise<string>;
 
 export function LoadSettings():Promise<stash.Settings>;
@@ -64,7 +66,9 @@ export function RefileNote(arg1:main.BufferDTO):Promise<main.NoteDTO>;
 
 export function RefineLanguage(arg1:string):Promise<string>;
 
-export function RenameFolder(arg1:string,arg2:string):Promise<void>;
+export function RenameFolder(arg1:string,arg2:string):Promise<string>;
+
+export function RenameNote(arg1:string,arg2:string):Promise<main.NoteDTO>;
 
 export function SaveAsset(arg1:string,arg2:string,arg3:string):Promise<main.AssetDTO>;
 
@@ -87,5 +91,7 @@ export function SearchStore(arg1:string):Promise<Array<stash.SearchResult>>;
 export function SelectVault():Promise<string>;
 
 export function ShowInFiles(arg1:string):Promise<void>;
+
+export function ShowInFilesByID(arg1:string):Promise<void>;
 
 export function TogglePrompts():Promise<boolean>;

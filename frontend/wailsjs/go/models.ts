@@ -324,10 +324,10 @@ export namespace stash {
 	    }
 	}
 	export class NoteEntry {
+	    id: string;
 	    name: string;
 	    displayName?: string;
 	    status?: string;
-	    path?: string;
 	    userIntent?: string;
 	    isDir: boolean;
 	    children?: NoteEntry[];
@@ -338,10 +338,10 @@ export namespace stash {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
 	        this.name = source["name"];
 	        this.displayName = source["displayName"];
 	        this.status = source["status"];
-	        this.path = source["path"];
 	        this.userIntent = source["userIntent"];
 	        this.isDir = source["isDir"];
 	        this.children = this.convertValues(source["children"], NoteEntry);
@@ -366,6 +366,7 @@ export namespace stash {
 		}
 	}
 	export class PromptEntry {
+	    id: string;
 	    name: string;
 	    displayName: string;
 	    path: string;
@@ -377,6 +378,7 @@ export namespace stash {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
 	        this.name = source["name"];
 	        this.displayName = source["displayName"];
 	        this.path = source["path"];
@@ -425,7 +427,6 @@ export namespace stash {
 	}
 	export class Tab {
 	    id: string;
-	    path: string;
 	    scroll: number;
 	    active: boolean;
 	    mode: string;
@@ -440,7 +441,6 @@ export namespace stash {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
-	        this.path = source["path"];
 	        this.scroll = source["scroll"];
 	        this.active = source["active"];
 	        this.mode = source["mode"];

@@ -1,19 +1,19 @@
-import { 
+import {
   LoadBuffer, SaveBuffer, NewBuffer, FileBuffer, RefileNote, DiscardBuffer,
-  MoveNote, CreateFolder, DeleteFolder, RenameFolder, DeletePrompt, DeleteNote,
+  MoveNote, CreateFolder, DeleteFolder, RenameFolder, RenameNote, DeletePrompt, DeleteNote,
   GetNotes, GetPrompts, GetStoreInfo, EvaluateBuffer, SaveSettings,
-  GetDocumentVersion, DescribeImage, SaveAsset, DownloadAsset, RefineLanguage,
-  SearchStore, Ask, Explain
+  GetDocumentVersion, SaveAsset, DownloadAsset,
+  SearchStore, Ask, Explain, LoadByUUID
 } from '../../wailsjs/go/main/App'
 import { main } from '../../wailsjs/go/models'
 import { Storable } from '../types'
 
 /**
  * STORABLE DATA SERVICE
- * 
+ *
  * This is the central hub and factory for all document data (Storables).
  * It separates the mutable Data layer from the reactive UI layer (Tabs).
- * 
+ *
  * Architecture:
  * 1. UI (Tabs) only holds a static UUID address.
  * 2. This Service holds the authoritative Storable instance for that UUID.
@@ -52,11 +52,12 @@ export class StorableDataService {
   }
 
   /**
-   * Load a document from disk and check it into the registry
+   * Load a document from disk by its opaque ID (UUID for notes/buffers,
+   * "prompt:name" for prompts) and check it into the registry.
    */
-  async load(path: string): Promise<Storable> {
-    if (path.startsWith('prompt:')) {
-      const name = path.split(':')[1]
+  async loadByID(id: string): Promise<Storable> {
+    if (id.startsWith('prompt:')) {
+      const name = id.split(':')[1]
       const { LoadPrompt } = await import('../../wailsjs/go/main/App')
       const content = await LoadPrompt(name)
       const { PromptStorable } = await import('./PromptStorable')
@@ -66,8 +67,28 @@ export class StorableDataService {
       return doc
     }
 
-    // Check if we already have this path in registry under another ID?
-    // Unlikely, but let's be safe.
+    const existing = this.registry.get(id)
+    if (existing) return existing
+
+    const raw = await LoadByUUID(id)
+    const doc = (raw.meta?.status === 'filed')
+      ? main.NoteDTO.createFrom(raw) as any
+      : main.BufferDTO.createFrom(raw) as any
+    doc.kind = raw.meta?.status === 'filed' ? 'note' : 'buffer'
+    this.registry.set(doc.id, doc)
+    this.onNotify(doc.id)
+    return doc
+  }
+
+  /**
+   * Load a document from disk by path (ExternalRef) — for session restoration only.
+   * Prefer loadByID for all other callers.
+   */
+  async load(path: string): Promise<Storable> {
+    if (path.startsWith('prompt:')) {
+      return this.loadByID(path)
+    }
+
     const existing = this.findIdByPath(path)
     if (existing) return this.registry.get(existing)!
 
@@ -231,14 +252,14 @@ export class StorableDataService {
   }
 
   /**
-   * Delete a buffer and its history
+   * Delete a buffer or filed note by UUID
    */
   async discard(uuid: string): Promise<void> {
     const doc = this.registry.get(uuid)
     if (!doc) return
     try {
       if (doc.meta?.status === 'filed') {
-        await DeleteNote(doc.path)
+        await DeleteNote(uuid)
       } else {
         await DiscardBuffer(doc.path)
       }
@@ -259,88 +280,86 @@ export class StorableDataService {
   // ── Store Operations ───────────────────────────────────────────────────────
 
   /**
-   * Move a note or buffer to a new path
+   * Move a note to a different folder. noteUUID identifies the note;
+   * targetFolderID is the opaque folder ID from GetNotes (e.g. "store/ai-stuff"
+   * or "store" for the Library root).
    */
-  async move(oldPath: string, newPath: string): Promise<void> {
+  async move(noteUUID: string, targetFolderID: string): Promise<void> {
     try {
-      await MoveNote(oldPath, newPath)
-      // Check if any registered storables have this path and update them
-      for (const storable of this.registry.values()) {
-        if (storable.path === oldPath) {
-          storable.path = newPath
-          this.onNotify(storable.id)
-        }
+      const dto = await MoveNote(noteUUID, targetFolderID)
+      // Update registry path to reflect the new location
+      const existing = this.registry.get(noteUUID)
+      if (existing) {
+        existing.path = dto.path
+        this.onNotify(noteUUID)
       }
     } catch (err) {
-      console.error(`[StorableDataService] Failed to move ${oldPath}:`, err)
+      console.error(`[StorableDataService] Failed to move ${noteUUID}:`, err)
       throw err
     }
   }
 
   /**
-   * Create a new folder
+   * Create a new folder. parentFolderID is the opaque folder ID from GetNotes
+   * ("store" or "" for Library root). name is the new folder name.
    */
-  async createFolder(path: string): Promise<void> {
+  async createFolder(parentFolderID: string, name: string): Promise<void> {
     try {
-      await CreateFolder(path)
+      await CreateFolder(parentFolderID, name)
     } catch (err) {
-      console.error(`[StorableDataService] Failed to create folder ${path}:`, err)
+      console.error(`[StorableDataService] Failed to create folder:`, err)
       throw err
     }
   }
 
   /**
-   * Delete a folder
+   * Delete a folder by its opaque ID
    */
-  async deleteFolder(path: string): Promise<void> {
+  async deleteFolder(folderID: string): Promise<void> {
     try {
-      await DeleteFolder(path)
+      await DeleteFolder(folderID)
     } catch (err) {
-      console.error(`[StorableDataService] Failed to delete folder ${path}:`, err)
+      console.error(`[StorableDataService] Failed to delete folder ${folderID}:`, err)
       throw err
     }
   }
 
   /**
-   * Rename a folder or note (low-level rename)
+   * Rename a document or folder by its opaque ID.
+   * For folders: returns the new folder ID (for updating openFolders state).
+   * For notes: updates the registry path from the returned DTO.
    */
-  async rename(oldPath: string, newPath: string, isDir: boolean): Promise<void> {
+  async rename(id: string, newName: string, isDir: boolean): Promise<string | void> {
     try {
       if (isDir) {
-        await RenameFolder(oldPath, newPath)
-        // CASCADING UPDATE: Any note in this folder must have its path updated in the registry
+        const newFolderID = await RenameFolder(id, newName)
+        // Cascade registry path updates for any open docs in this folder
+        const oldPrefix = id + '/'
+        const newPrefix = newFolderID + '/'
         for (const storable of this.registry.values()) {
-          if (storable.path.startsWith(oldPath + '/')) {
-            const relativePart = storable.path.substring(oldPath.length)
-            storable.path = newPath + relativePart
+          if (storable.path.startsWith(oldPrefix)) {
+            storable.path = newPrefix + storable.path.substring(oldPrefix.length)
             this.onNotify(storable.id)
           }
         }
+        return newFolderID
       } else {
-        await MoveNote(oldPath, newPath)
-        // Update registry path for this specific note
-        for (const storable of this.registry.values()) {
-          if (storable.path === oldPath) {
-            storable.path = newPath
-            this.onNotify(storable.id)
-          }
-        }
+        const dto = await RenameNote(id, newName)
+        // Replace the full registry entry so meta.displayName and path are both fresh.
+        this.set(id, dto)
       }
     } catch (err) {
-      console.error(`[StorableDataService] Failed to rename ${oldPath}:`, err)
+      console.error(`[StorableDataService] Failed to rename ${id}:`, err)
       throw err
     }
   }
 
   /**
-   * Derive the new path and rename a document or folder.
-   * Handles .md suffix for notes and parentDir reconstruction.
+   * Rename a document or folder by its opaque ID.
+   * Delegates to rename() — no path construction.
    */
-  async renameDoc(path: string, newName: string, isDir: boolean): Promise<void> {
-    const parentDir = path.substring(0, path.lastIndexOf('/'))
-    const fileName = isDir ? newName : (newName.endsWith('.md') ? newName : newName + '.md')
-    const newPath = parentDir ? `${parentDir}/${fileName}` : fileName
-    await this.rename(path, newPath, isDir)
+  async renameDoc(id: string, newName: string, isDir: boolean): Promise<string | void> {
+    return this.rename(id, newName, isDir)
   }
 
   // ── Prompt Operations ──────────────────────────────────────────────────────
@@ -408,24 +427,6 @@ export class StorableDataService {
   async downloadAsset(path: string, url: string, id: string) {
     return DownloadAsset(path, url, id)
   }
-
-  // // ── AI Operations ──────────────────────────────────────────────────────────
-
-  // async describeImage(path: string) {
-  //   return DescribeImage(path)
-  // }
-
-  // async refineLanguage(content: string) {
-  //   return RefineLanguage(content)
-  // }
-
-  // async ask(content: string, history: string, question: string, path: string, images: string[]) {
-  //   return Ask(content, history, question, path, images)
-  // }
-
-  // async explain(content: string, history: string, path: string, images: string[]) {
-  //   return Explain(content, history, path, images)
-  // }
 
   // ── Search ─────────────────────────────────────────────────────────────────
 

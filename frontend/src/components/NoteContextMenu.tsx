@@ -86,7 +86,9 @@ export function PromptContextMenu({ x, y, name, isVirtual, onClose, onRestore }:
 interface NoteContextMenuProps {
   x: number
   y: number
-  path: string
+  id: string        // opaque: UUID for notes, folderID for dirs, prompt.id for prompts
+  name: string      // display name — no parsing needed
+  isPrompt?: boolean
   intent: UserIntent
   onClose: () => void
   onSetIntent: (intent: UserIntent) => void
@@ -104,13 +106,12 @@ interface NoteContextMenuProps {
 }
 
 export function NoteContextMenu({
-  x, y, path, intent, onClose, onSetIntent, onDelete, onRename,
+  x, y, id, name, isPrompt, intent, onClose, onSetIntent, onDelete, onRename,
   onShowInFiles, onSmartFile, onSmartMetadata,
   isDir, childCount, isVirtual, onRestore, onCloseTab, onCloseAllTabs,
 }: NoteContextMenuProps) {
-  // Delegate prompt paths to the dedicated component.
-  if (path.startsWith('prompt:')) {
-    const name = path.split(':').pop() ?? path
+  // Delegate prompts to the dedicated component.
+  if (isPrompt) {
     return (
       <PromptContextMenu
         x={x} y={y} name={name} isVirtual={isVirtual}

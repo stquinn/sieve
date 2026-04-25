@@ -6,8 +6,8 @@ export function Ask(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['Ask'](arg1, arg2, arg3, arg4, arg5);
 }
 
-export function CreateFolder(arg1) {
-  return window['go']['main']['App']['CreateFolder'](arg1);
+export function CreateFolder(arg1, arg2) {
+  return window['go']['main']['App']['CreateFolder'](arg1, arg2);
 }
 
 export function CreateVault() {
@@ -94,6 +94,10 @@ export function LoadBuffer(arg1) {
   return window['go']['main']['App']['LoadBuffer'](arg1);
 }
 
+export function LoadByUUID(arg1) {
+  return window['go']['main']['App']['LoadByUUID'](arg1);
+}
+
 export function LoadPrompt(arg1) {
   return window['go']['main']['App']['LoadPrompt'](arg1);
 }
@@ -124,6 +128,10 @@ export function RefineLanguage(arg1) {
 
 export function RenameFolder(arg1, arg2) {
   return window['go']['main']['App']['RenameFolder'](arg1, arg2);
+}
+
+export function RenameNote(arg1, arg2) {
+  return window['go']['main']['App']['RenameNote'](arg1, arg2);
 }
 
 export function SaveAsset(arg1, arg2, arg3) {
@@ -168,6 +176,10 @@ export function SelectVault() {
 
 export function ShowInFiles(arg1) {
   return window['go']['main']['App']['ShowInFiles'](arg1);
+}
+
+export function ShowInFilesByID(arg1) {
+  return window['go']['main']['App']['ShowInFilesByID'](arg1);
 }
 
 export function TogglePrompts() {

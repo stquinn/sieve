@@ -26,3 +26,24 @@ export interface TabState {
   isVirtual?: boolean
 }
 
+// Mirrors stash.NoteEntry from Go — the sidebar navigation tree.
+// Files carry a UUID id; folders carry an opaque ExternalRef id.
+export interface NoteEntry {
+  id?: string          // UUID for files; opaque folder ID for dirs (ExternalRef — never parsed)
+  name: string
+  displayName?: string
+  status?: string
+  userIntent?: string
+  isDir: boolean
+  children?: NoteEntry[]
+}
+
+// Mirrors stash.PromptEntry from Go.
+export interface PromptEntry {
+  id: string           // "prompt:name" — opaque, from Go
+  name: string
+  displayName: string
+  path: string
+  isVirtual: boolean
+}
+

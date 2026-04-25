@@ -1,65 +1,51 @@
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { NoteContextMenu } from './NoteContextMenu'
-import { UserIntent } from '../types'
+import { UserIntent, NoteEntry, PromptEntry } from '../types'
 import { FolderPlus, Plus, Folder, FolderOpen, FileText, ChevronRight, ChevronDown, X, Settings } from 'lucide-react'
 import { StorableDataService } from '../lib/StorableDataService'
 import { AiService } from '../lib/AiService'
-import { ShowInFiles } from '../../wailsjs/go/main/App'
+import { ShowInFilesByID } from '../../wailsjs/go/main/App'
 import { useModal } from '../lib/ModalContext'
 
-// Mirrors stash.NoteEntry from Go
-export interface NoteEntry {
-  name: string
-  displayName?: string
-  path?: string      // store-relative, present on files and folders
-  status?: string
-  userIntent?: string // from frontmatter: "keep", "trash", or ""
-  isDir: boolean
-  children?: NoteEntry[]
-}
-
-export interface PromptEntry {
-  name: string
-  displayName: string
-  path: string
-  isVirtual: boolean
-}
+export type { NoteEntry, PromptEntry }
 
 interface ContextMenuState {
   x: number
   y: number
-  path: string
+  id: string           // opaque: UUID for notes, folderID for dirs, prompt.id for prompts
+  name: string         // display name — no parsing needed
   intent: UserIntent
   isDir?: boolean
   childCount?: number
   isVirtual?: boolean
+  isPrompt?: boolean
 }
 
 interface SidebarProps {
   dataService: StorableDataService
   aiService: AiService
   entries: NoteEntry[]
-  openPaths: Set<string>
+  openIDs: Set<string>
   openFolders: Set<string>
-  onToggleFolder: (path: string) => void
-  activePath?: string
-  onOpen: (path: string) => void
+  onToggleFolder: (folderID: string) => void
+  activeID?: string
+  onOpen: (id: string) => void
   width: number
   showPrompts: boolean
   prompts: PromptEntry[]
-  onEditPrompt: (name: string) => void
+  onEditPrompt: (promptID: string) => void
   promptsHeight: number
   onPromptsResize: (height: number) => void
   setNotes: (notes: NoteEntry[]) => void
   setPrompts: (prompts: PromptEntry[]) => void
-  onRenameFolder?: (oldPath: string, newPath: string) => void
+  onRenameFolder?: (oldFolderID: string, newFolderID: string) => void
   onOpenSettings: () => void
   onNew: () => void
 }
 
 export function Sidebar({
-  dataService, aiService, entries, openPaths, openFolders, onToggleFolder, activePath, onOpen,
+  dataService, aiService, entries, openIDs, openFolders, onToggleFolder, activeID, onOpen,
   width, showPrompts, prompts, onEditPrompt,
   promptsHeight, onPromptsResize, setNotes, setPrompts, onRenameFolder, onOpenSettings, onNew
 }: SidebarProps) {
@@ -73,50 +59,45 @@ export function Sidebar({
   const refreshNotes = () => dataService.getNotes().then(res => setNotes(res || [])).catch(console.error)
   const refreshPrompts = () => dataService.getPrompts().then(res => setPrompts(res || [])).catch(console.error)
 
-  const handleSmartFile = async (path: string) => {
-    let uuid = dataService.findIdByPath(path)
+  const handleSmartFile = async (id: string) => {
+    let uuid = dataService.get(id)?.id
     if (!uuid) {
       try {
-        const doc = await dataService.load(path)
+        const doc = await dataService.loadByID(id)
         uuid = doc.id
       } catch (e) {
-        console.error(`[Sidebar] Failed to load ${path} for filing:`, e)
+        console.error(`[Sidebar] Failed to load ${id} for filing:`, e)
         return
       }
     }
     aiService.smartFile(uuid)
   }
 
-  const handleSmartMetadata = async (path: string) => {
-    let uuid = dataService.findIdByPath(path)
+  const handleSmartMetadata = async (id: string) => {
+    let uuid = dataService.get(id)?.id
     if (!uuid) {
       try {
-        const doc = await dataService.load(path)
+        const doc = await dataService.loadByID(id)
         uuid = doc.id
       } catch (e) {
-        console.error(`[Sidebar] Failed to load ${path} for metadata:`, e)
+        console.error(`[Sidebar] Failed to load ${id} for metadata:`, e)
         return
       }
     }
     aiService.smartMetadata(uuid)
   }
 
-  const handleDelete = (path: string, isDir: boolean = false) => {
+  const handleDelete = (id: string, name: string, isDir: boolean = false) => {
     confirm({
       title: isDir ? 'Delete Folder' : 'Delete Note',
-      message: `Are you sure you want to delete "${path.split('/').pop()}"?`,
+      message: `Are you sure you want to delete "${name}"?`,
       isDestructive: true,
       onConfirm: async () => {
         try {
           if (isDir) {
-            await dataService.deleteFolder(path)
+            await dataService.deleteFolder(id)
           } else {
-            let uuid = dataService.findIdByPath(path)
-            if (!uuid) {
-              const doc = await dataService.load(path)
-              uuid = doc.id
-            }
-            await dataService.discard(uuid)
+            await dataService.discard(id)
           }
           refreshNotes()
         } catch (e) { console.error(e) }
@@ -124,19 +105,17 @@ export function Sidebar({
     })
   }
 
-  const handleRename = (path: string, currentName: string, isDir: boolean) => {
+  const handleRename = (id: string, currentName: string, isDir: boolean) => {
     prompt({
       title: isDir ? 'Rename Folder' : 'Rename Note',
       message: `Enter new name for "${currentName}":`,
-      initialValue: isDir ? currentName : currentName.replace(/\.md$/, ''),
+      initialValue: currentName,
       onSubmit: async (newName: string) => {
         if (!newName || newName === currentName) return
         try {
-          await dataService.renameDoc(path, newName, isDir)
-          if (isDir && onRenameFolder) {
-            const parentDir = path.substring(0, path.lastIndexOf('/'))
-            const newPath = parentDir ? `${parentDir}/${newName}` : newName
-            onRenameFolder(path, newPath)
+          const result = await dataService.renameDoc(id, newName, isDir)
+          if (isDir && onRenameFolder && typeof result === 'string') {
+            onRenameFolder(id, result)
           }
           refreshNotes()
         } catch (e) { console.error(e) }
@@ -144,23 +123,20 @@ export function Sidebar({
     })
   }
 
-  const onSetIntent = async (path: string, intent: UserIntent) => {
-    const uuid = dataService.findIdByPath(path)
-    if (uuid) {
-      dataService.setIntent(uuid, intent)
-      await dataService.save(uuid)
-    }
+  const onSetIntent = async (id: string, intent: UserIntent) => {
+    const uuid = dataService.get(id)?.id || id
+    dataService.setIntent(uuid, intent)
+    await dataService.save(uuid)
     refreshNotes()
   }
 
-  const onCreateFolder = (parentPath: string) => {
+  const onCreateFolder = (parentFolderID: string) => {
     prompt({
       title: 'New Folder',
-      message: `Create a new folder in ${parentPath || 'store'}:`,
+      message: `Create a new folder${parentFolderID ? ` in "${parentFolderID.split('/').pop()}"` : ''}:`,
       onSubmit: async (name: string) => {
         if (!name) return
-        const folderPath = `${parentPath || 'store'}/${name}`.replace(/\/+/g, '/')
-        await dataService.createFolder(folderPath)
+        await dataService.createFolder(parentFolderID, name)
         refreshNotes()
       }
     })
@@ -171,8 +147,8 @@ export function Sidebar({
     refreshPrompts()
   }
 
-  const onMove = async (oldPath: string, newPath: string) => {
-    await dataService.move(oldPath, newPath)
+  const onMove = async (noteID: string, targetFolderID: string) => {
+    await dataService.move(noteID, targetFolderID)
     refreshNotes()
   }
 
@@ -198,10 +174,10 @@ export function Sidebar({
     }
   }, [isResizingPrompts, onPromptsResize])
 
-  function openMenu(e: React.MouseEvent, path: string, intent: UserIntent, isDir?: boolean, childCount?: number, isVirtual?: boolean) {
+  function openMenu(e: React.MouseEvent, state: Omit<ContextMenuState, 'x' | 'y'>) {
     e.preventDefault()
     e.stopPropagation()
-    setContextMenu({ x: e.clientX, y: e.clientY, path, intent, isDir, childCount, isVirtual })
+    setContextMenu({ x: e.clientX, y: e.clientY, ...state })
   }
 
   const [isRootDragOver, setIsRootDragOver] = useState(false)
@@ -222,13 +198,9 @@ export function Sidebar({
         onDrop={e => {
           e.preventDefault()
           setIsRootDragOver(false)
-          const oldPath = e.dataTransfer.getData('text/plain')
-          if (oldPath) {
-            const fileName = oldPath.split('/').pop()
-            const newPath = `store/${fileName}`
-            if (oldPath !== newPath) {
-              onMove(oldPath, newPath)
-            }
+          const noteID = e.dataTransfer.getData('text/plain')
+          if (noteID) {
+            onMove(noteID, 'store')
           }
         }}
       >
@@ -264,14 +236,13 @@ export function Sidebar({
           : <EntryList
             entries={entries}
             depth={0}
-            openPaths={openPaths}
+            openIDs={openIDs}
             openFolders={openFolders}
             onToggleFolder={onToggleFolder}
-            activePath={activePath}
+            activeID={activeID}
             onOpen={onOpen}
             onContextMenu={openMenu}
             onMove={onMove}
-            basePath=""
           />
         }
       </div>
@@ -303,10 +274,18 @@ export function Sidebar({
                 <PromptItem
                   key={p.name}
                   prompt={p}
-                  active={activePath === `prompt:${p.name}`}
-                  onEdit={() => onEditPrompt(p.name)}
+                  active={activeID === p.id}
+                  onEdit={() => onEditPrompt(p.id)}
                   onRestore={() => onRestorePrompt(p.name)}
-                  onContextMenu={(e) => openMenu(e, `prompt:${p.name}`, null, false, 0, p.isVirtual)}
+                  onContextMenu={(e) => openMenu(e, {
+                    id: p.id,
+                    name: p.displayName,
+                    intent: null,
+                    isDir: false,
+                    childCount: 0,
+                    isVirtual: p.isVirtual,
+                    isPrompt: true
+                  })}
                 />
               ))}
             </div>
@@ -318,19 +297,21 @@ export function Sidebar({
         <NoteContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          path={contextMenu.path}
+          id={contextMenu.id}
+          name={contextMenu.name}
+          isPrompt={contextMenu.isPrompt}
           intent={contextMenu.intent}
           onClose={() => setContextMenu(null)}
-          onShowInFiles={() => ShowInFiles(contextMenu.path)}
-          onSmartFile={() => handleSmartFile(contextMenu.path)}
-          onSmartMetadata={() => handleSmartMetadata(contextMenu.path)}
-          onDelete={() => handleDelete(contextMenu.path, !!contextMenu.isDir)}
-          onRename={() => handleRename(contextMenu.path, contextMenu.path.split('/').pop() || '', !!contextMenu.isDir)}
-          onSetIntent={intent => onSetIntent(contextMenu.path, intent)}
+          onShowInFiles={() => ShowInFilesByID(contextMenu.id)}
+          onSmartFile={() => handleSmartFile(contextMenu.id)}
+          onSmartMetadata={() => handleSmartMetadata(contextMenu.id)}
+          onDelete={() => handleDelete(contextMenu.id, contextMenu.name, !!contextMenu.isDir)}
+          onRename={() => handleRename(contextMenu.id, contextMenu.name, !!contextMenu.isDir)}
+          onSetIntent={intent => onSetIntent(contextMenu.id, intent)}
           isDir={contextMenu.isDir}
           childCount={contextMenu.childCount}
           isVirtual={contextMenu.isVirtual}
-          onRestore={contextMenu.path.startsWith('prompt:') ? () => onRestorePrompt(contextMenu.path.split(':').pop()!) : undefined}
+          onRestore={contextMenu.isPrompt ? () => onRestorePrompt(contextMenu.name) : undefined}
         />
       )}
     </div>
@@ -340,40 +321,38 @@ export function Sidebar({
 interface EntryListProps {
   entries: NoteEntry[]
   depth: number
-  openPaths: Set<string>
+  openIDs: Set<string>
   openFolders: Set<string>
-  onToggleFolder: (path: string) => void
-  activePath?: string
-  onOpen: (path: string) => void
-  onContextMenu: (e: React.MouseEvent, path: string, intent: UserIntent, isDir?: boolean, childCount?: number) => void
-  onMove: (oldPath: string, newPath: string) => void
-  basePath: string    // store-relative path prefix for computing dir paths
+  onToggleFolder: (folderID: string) => void
+  activeID?: string
+  onOpen: (id: string) => void
+  onContextMenu: (e: React.MouseEvent, state: Omit<ContextMenuState, 'x' | 'y'>) => void
+  onMove: (noteID: string, targetFolderID: string) => void
 }
 
-function EntryList({ entries, depth, openPaths, openFolders, onToggleFolder, activePath, onOpen, onContextMenu, onMove, basePath }: EntryListProps) {
+function EntryList({ entries, depth, openIDs, openFolders, onToggleFolder, activeID, onOpen, onContextMenu, onMove }: EntryListProps) {
   return (
     <>
       {entries.map(entry =>
         entry.isDir
           ? <DirEntry
-            key={entry.name}
+            key={entry.id || entry.name}
             entry={entry}
             depth={depth}
-            openPaths={openPaths}
+            openIDs={openIDs}
             openFolders={openFolders}
             onToggleFolder={onToggleFolder}
-            activePath={activePath}
+            activeID={activeID}
             onOpen={onOpen}
             onContextMenu={onContextMenu}
             onMove={onMove}
-            basePath={entry.path || (basePath ? `${basePath}/${entry.name}` : entry.name)}
           />
           : <FileEntry
-            key={entry.path}
+            key={entry.id || entry.name}
             entry={entry}
             depth={depth}
-            open={openPaths.has(entry.path!)}
-            active={activePath === entry.path}
+            open={openIDs.has(entry.id!)}
+            active={activeID === entry.id}
             onOpen={onOpen}
             onContextMenu={onContextMenu}
           />
@@ -385,18 +364,18 @@ function EntryList({ entries, depth, openPaths, openFolders, onToggleFolder, act
 interface DirEntryProps {
   entry: NoteEntry
   depth: number
-  openPaths: Set<string>
+  openIDs: Set<string>
   openFolders: Set<string>
-  onToggleFolder: (path: string) => void
-  activePath?: string
-  onOpen: (path: string) => void
-  onContextMenu: (e: React.MouseEvent, path: string, intent: UserIntent, isDir?: boolean, childCount?: number) => void
-  onMove: (oldPath: string, newPath: string) => void
-  basePath: string
+  onToggleFolder: (folderID: string) => void
+  activeID?: string
+  onOpen: (id: string) => void
+  onContextMenu: (e: React.MouseEvent, state: Omit<ContextMenuState, 'x' | 'y'>) => void
+  onMove: (noteID: string, targetFolderID: string) => void
 }
 
-function DirEntry({ entry, depth, openPaths, openFolders, onToggleFolder, activePath, onOpen, onContextMenu, onMove, basePath }: DirEntryProps) {
-  const expanded = openFolders.has(basePath)
+function DirEntry({ entry, depth, openIDs, openFolders, onToggleFolder, activeID, onOpen, onContextMenu, onMove }: DirEntryProps) {
+  const folderID = entry.id!
+  const expanded = openFolders.has(folderID)
   const [isDragOver, setIsDragOver] = useState(false)
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -413,14 +392,9 @@ function DirEntry({ entry, depth, openPaths, openFolders, onToggleFolder, active
     e.preventDefault()
     e.stopPropagation()
     setIsDragOver(false)
-    const oldPath = e.dataTransfer.getData('text/plain')
-    if (oldPath && !oldPath.startsWith(basePath)) {
-      // Move to this folder
-      const fileName = oldPath.split('/').pop()
-      const newPath = `${basePath}/${fileName}`
-      if (oldPath !== newPath) {
-        onMove(oldPath, newPath)
-      }
+    const noteID = e.dataTransfer.getData('text/plain')
+    if (noteID && noteID !== folderID) {
+      onMove(noteID, folderID)
     }
   }
 
@@ -433,8 +407,14 @@ function DirEntry({ entry, depth, openPaths, openFolders, onToggleFolder, active
           isDragOver && 'bg-tn-bg-alt ring-1 ring-tn-blue rounded'
         )}
         style={{ paddingLeft: `${0.75 + depth * 1}rem` }}
-        onClick={() => onToggleFolder(basePath)}
-        onContextMenu={e => onContextMenu(e, basePath, null, true, entry.children?.length || 0)}
+        onClick={() => onToggleFolder(folderID)}
+        onContextMenu={e => onContextMenu(e, {
+          id: folderID,
+          name: entry.name,
+          intent: null,
+          isDir: true,
+          childCount: entry.children?.length || 0
+        })}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -453,14 +433,13 @@ function DirEntry({ entry, depth, openPaths, openFolders, onToggleFolder, active
         <EntryList
           entries={entry.children}
           depth={depth + 1}
-          openPaths={openPaths}
+          openIDs={openIDs}
           openFolders={openFolders}
           onToggleFolder={onToggleFolder}
-          activePath={activePath}
+          activeID={activeID}
           onOpen={onOpen}
           onContextMenu={onContextMenu}
           onMove={onMove}
-          basePath={basePath}
         />
       )}
     </div>
@@ -472,8 +451,8 @@ interface FileEntryProps {
   depth: number
   open: boolean
   active: boolean
-  onOpen: (path: string) => void
-  onContextMenu: (e: React.MouseEvent, path: string, intent: UserIntent, isDir?: boolean, childCount?: number) => void
+  onOpen: (id: string) => void
+  onContextMenu: (e: React.MouseEvent, state: Omit<ContextMenuState, 'x' | 'y'>) => void
 }
 
 function FileEntry({ entry, depth, open, active, onOpen, onContextMenu }: FileEntryProps) {
@@ -488,12 +467,18 @@ function FileEntry({ entry, depth, open, active, onOpen, onContextMenu }: FileEn
       style={{ paddingLeft: `${1.5 + depth * 1}rem` }}
       draggable
       onDragStart={e => {
-        e.dataTransfer.setData('text/plain', entry.path!)
+        e.dataTransfer.setData('text/plain', entry.id!)
         e.dataTransfer.effectAllowed = 'move'
       }}
-      onMouseDown={() => onOpen(entry.path!)}
-      onContextMenu={e => onContextMenu(e, entry.path!, (entry.userIntent || null) as UserIntent, false, 0)}
-      title={entry.path}
+      onMouseDown={() => onOpen(entry.id!)}
+      onContextMenu={e => onContextMenu(e, {
+        id: entry.id!,
+        name: entry.displayName || entry.name,
+        intent: (entry.userIntent || null) as UserIntent,
+        isDir: false,
+        childCount: 0
+      })}
+      title={entry.displayName || entry.name}
     >
       <div className="flex flex-col items-start leading-tight flex-1 min-w-0">
         <div className="flex items-center gap-2 w-full">

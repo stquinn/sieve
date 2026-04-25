@@ -72,6 +72,9 @@ func (s *stubStore) Reparent(_ store.Storable, _ store.FolderStorable) (store.St
 func (s *stubStore) Rename(_ store.Storable, _ string) (store.Storable, error) {
 	return nil, nil
 }
+func (s *stubStore) MoveToKey(_ store.Storable, _ string) (store.Storable, error) {
+	return nil, nil
+}
 func (s *stubStore) RetrieveVersion(_ store.Storable, _ store.VersionRef) (store.VersionedStorable, error) {
 	return store.VersionedStorable{}, nil
 }

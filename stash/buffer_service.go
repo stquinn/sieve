@@ -56,6 +56,21 @@ func (bs *BufferService) Load(path string) (*Buffer, error) {
 	return newBuffer(ms), nil
 }
 
+// LoadByUUID retrieves a buffer by its UUID metadata field. O(n) over WorkingCopy.
+func (bs *BufferService) LoadByUUID(uuid string) (*Buffer, error) {
+	storables, err := bs.st.List(WorkingCopy, "")
+	if err != nil {
+		return nil, fmt.Errorf("buffer: LoadByUUID %s: list failed: %w", uuid, err)
+	}
+	for _, s := range storables {
+		ms, ok := s.(store.MetaStorable)
+		if ok && ms.Meta()["uuid"] == uuid {
+			return newBuffer(ms), nil
+		}
+	}
+	return nil, fmt.Errorf("buffer: not found by uuid %q", uuid)
+}
+
 // Save persists the current state of b. The Store bumps the version and
 // modified timestamp and writes a snapshot. Returns a new Buffer — b is stale
 // after this call. Returns ErrStaleStorable if b is based on an outdated version.
