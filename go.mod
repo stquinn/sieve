@@ -1,4 +1,4 @@
-module stash
+module sieve
 
 go 1.25.0
 

@@ -42,7 +42,7 @@ import (
 	"strings"
 	"time"
 
-	"stash/store"
+	"sieve/store"
 )
 
 // FileStore is a filesystem-backed implementation of store.Store.

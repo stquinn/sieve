@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"stash/stash"
+	"sieve/stash"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -155,12 +155,12 @@ func main() {
 	if len(os.Args) > 1 {
 		cliArg = os.Args[1]
 	}
-	storePath := FindBestStorePath(cliArg, os.Getenv("STASH_STORE"))
+	storePath := FindBestStorePath(cliArg, os.Getenv("SIEVE_STORE"))
 
 	app := NewApp(storePath, themes)
 
 	err := wails.Run(&options.App{
-		Title:                    "Stash",
+		Title:                    "Sieve",
 		Width:                    1200,
 		Height:                   800,
 		MinWidth:                 800,

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"stash/store"
+	"sieve/store"
 )
 
 func TestErrStaleStorableIsNotNil(t *testing.T) {

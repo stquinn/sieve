@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"stash/stash"
-	"stash/store/filestore"
+	"sieve/stash"
+	"sieve/store/filestore"
 )
 
 // newTestNoteService creates a NoteService backed by a real FileStore in a

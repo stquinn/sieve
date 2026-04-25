@@ -1,6 +1,6 @@
 package stash
 
-import "stash/store"
+import "sieve/store"
 
 // ImageAsset is a binary asset (image, voice note) stored in the Store.
 // It wraps an AssetStorable returned by the Store — never constructed directly.

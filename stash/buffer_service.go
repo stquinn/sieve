@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"stash/store"
+	"sieve/store"
 )
 
 // BufferService manages working-copy buffers through the Store interface.

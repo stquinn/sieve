@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"stash/store"
+	"sieve/store"
 )
 
 func TestExplicitCreateMetaText(t *testing.T) {

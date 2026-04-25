@@ -1,6 +1,6 @@
 package filestore
 
-import "stash/store"
+import "sieve/store"
 
 // inferEncoding inspects the leading bytes of data to determine its on-disk
 // encoding. FileStore calls this once at Create time and stamps the result on

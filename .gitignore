@@ -5,7 +5,7 @@ frontend/wailsjs/
 
 # ── Go ────────────────────────────────────────────────────────────────────────
 # Compiled binaries
-#stash
+sieve
 *.exe
 *.dll
 *.so

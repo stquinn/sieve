@@ -3,7 +3,7 @@ package stash
 import (
 	"fmt"
 	"path/filepath"
-	"stash/store"
+	"sieve/store"
 )
 
 // PromptEntry represents a prompt available in the system.

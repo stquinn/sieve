@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"stash/store"
+	"sieve/store"
 )
 
 // NoteService manages filed documents (Library category) through the Store

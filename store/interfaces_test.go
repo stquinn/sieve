@@ -1,6 +1,6 @@
 package store_test
 
-import "stash/store"
+import "sieve/store"
 
 // Compile-time interface conformance checks. The stubs below exist solely to
 // verify that the interface signatures are self-consistent and implementable.

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode"
 
-	"stash/store"
+	"sieve/store"
 )
 
 // ── Buffer type (Phase 3) — wraps store.MetaStorable ─────────────────────────

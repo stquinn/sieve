@@ -1,7 +1,7 @@
-// Package logger provides a simple structured logger for Stash.
+// Package logger provides a simple structured logger for Sieve.
 // When stderr is a TTY (terminal) logs go there for dev convenience.
 // When launched from the Dock or Finder (no TTY) logs go to
-// ~/Library/Logs/Stash/stash.log so they are inspectable via Console.app.
+// ~/Library/Logs/Sieve/sieve.log so they are inspectable via Console.app.
 // The log file is rotated at 5 MB and 3 compressed backups are kept.
 package logger
 
@@ -27,10 +27,10 @@ func init() {
 		out = os.Stderr
 		handler = slog.NewTextHandler(out, handlerOpts())
 	} else {
-		logDir := filepath.Join(os.Getenv("HOME"), "Library", "Logs", "Stash")
+		logDir := filepath.Join(os.Getenv("HOME"), "Library", "Logs", "Sieve")
 		_ = os.MkdirAll(logDir, 0o755)
 		rotated := &lumberjack.Logger{
-			Filename:   filepath.Join(logDir, "stash.log"),
+			Filename:   filepath.Join(logDir, "sieve.log"),
 			MaxSize:    5,    // MB before rotation
 			MaxBackups: 3,    // rotated files to keep
 			Compress:   true, // gzip old files
@@ -47,7 +47,7 @@ func handlerOpts() *slog.HandlerOptions {
 		Level: slog.LevelDebug,
 		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.MessageKey {
-				a.Value = slog.StringValue("[stash] " + a.Value.String())
+				a.Value = slog.StringValue("[sieve] " + a.Value.String())
 			}
 			return a
 		},

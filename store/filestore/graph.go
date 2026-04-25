@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"stash/store"
+	"sieve/store"
 )
 
 // scanCategory walks the category directory and returns a flat list of all

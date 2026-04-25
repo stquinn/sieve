@@ -3,8 +3,8 @@ package stash_test
 import (
 	"testing"
 
-	"stash/stash"
-	"stash/store"
+	"sieve/stash"
+	"sieve/store"
 )
 
 func TestLibraryCategory(t *testing.T) {

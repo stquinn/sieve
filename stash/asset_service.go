@@ -3,7 +3,7 @@ package stash
 import (
 	"fmt"
 
-	"stash/store"
+	"sieve/store"
 )
 
 // AssetService manages binary assets (images, voice notes) through the Store

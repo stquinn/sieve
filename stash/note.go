@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"stash/store"
+	"sieve/store"
 )
 
 // Note is a filed document in the Library category.

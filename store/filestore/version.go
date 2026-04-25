@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"stash/store"
+	"sieve/store"
 )
 
 var snapshotRe = regexp.MustCompile(`^(.+)\.(\d+)\.md$`)

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"stash/logger"
+	"sieve/logger"
 )
 
 // RunCLI executes the configured CLI using the provided prompt content via STDIN.

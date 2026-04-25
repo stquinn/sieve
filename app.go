@@ -17,9 +17,9 @@ import (
 	"sync"
 	"time"
 
-	"stash/logger"
-	"stash/stash"
-	"stash/store/filestore"
+	"sieve/logger"
+	"sieve/stash"
+	"sieve/store/filestore"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )

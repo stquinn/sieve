@@ -3,7 +3,7 @@ package stash
 import (
 	"fmt"
 	"testing"
-	"stash/store"
+	"sieve/store"
 )
 
 type mockStorable struct {

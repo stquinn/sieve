@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"stash/stash"
-	"stash/store"
+	"sieve/stash"
+	"sieve/store"
 )
 
 // ── DTOs — serialised across the Wails bridge as JSON ─────────────────────────

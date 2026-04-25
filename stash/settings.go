@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"stash/logger"
+	"sieve/logger"
 )
 
 // Tier represents the capability level of the app based on CLI availability.

@@ -1,6 +1,6 @@
 package stash
 
-import "stash/store"
+import "sieve/store"
 
 // The three categories that define where Stash data lives.
 //

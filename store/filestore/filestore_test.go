@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"stash/store"
-	"stash/store/filestore"
+	"sieve/store"
+	"sieve/store/filestore"
 )
 
 // testLibrary / testWorkingCopy mirror the business-layer category definitions.

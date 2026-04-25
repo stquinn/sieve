@@ -1,8 +1,8 @@
 package stash
 
 import (
-	"stash/logger"
-	"stash/store"
+	"sieve/logger"
+	"sieve/store"
 )
 
 // StateService manages application state (session and settings) through the
