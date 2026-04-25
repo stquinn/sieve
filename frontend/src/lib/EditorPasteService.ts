@@ -3,7 +3,7 @@ import { StorableDataService } from './StorableDataService'
 import { AiService } from './AiService'
 import { JobID, AiListener } from './AiJob'
 import { detectLanguage } from '../utils/pasteHeuristics'
-import { stash } from '../../wailsjs/go/models'
+import { sieve as stash } from '../../wailsjs/go/models'
 
 export class EditorPasteService {
   constructor(

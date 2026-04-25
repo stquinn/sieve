@@ -2,7 +2,7 @@
 import { StorableDataService } from './StorableDataService'
 import { EvaluateAndFile, Explain, Ask, DescribeImage, RefineLanguage } from '../../wailsjs/go/main/App'
 import { JobID, AiListener, AiContext } from './AiJob'
-import { stash } from '../../wailsjs/go/models'
+import { sieve as stash } from '../../wailsjs/go/models'
 
 
 export interface JobState {

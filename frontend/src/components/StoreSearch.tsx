@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { stash } from '../../wailsjs/go/models'
+import { sieve as stash } from '../../wailsjs/go/models'
 import { Search, X, FileText } from 'lucide-react'
 import type { StorableDataService } from '../lib/StorableDataService'
 

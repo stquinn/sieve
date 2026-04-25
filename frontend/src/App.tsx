@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import './lib/SmartStorables'
 import { EditorPanel, EditorPanelHandle } from './components/EditorPanel'
-import { stash } from '../wailsjs/go/models'
+import { sieve as stash } from '../wailsjs/go/models'
 // Backend service imports moved to line 19-25 block
 import { 
   GetSession, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, 
