@@ -3,9 +3,9 @@ import './lib/SmartStorables'
 import { EditorPanel, EditorPanelHandle } from './components/EditorPanel'
 import { sieve as stash } from '../wailsjs/go/models'
 // Backend service imports moved to line 19-25 block
-import { 
-  GetSession, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight, 
-  TogglePrompts, SelectVault, InitVault
+import {
+  GetSession, SaveSession, SaveSidebarWidth, SaveMetaWidth, SavePromptsHeight,
+  TogglePrompts, SelectVault, InitVault, ShowInFilesByID
 } from '../wailsjs/go/main/App'
 import { BrowserOpenURL, EventsOn } from '../wailsjs/runtime/runtime'
 import { TabBar } from './components/TabBar'
@@ -119,16 +119,27 @@ export default function App() {
     ;(window as any).sieveOpenNote    = (id: string) => openDocRef.current?.(id)
     ;(window as any).sieveNewNote     = () => newTabRef.current?.()
     ;(window as any).sieveOpenSettings = () => showSettingsRef.current?.()
+    ;(window as any).sieveShowInFiles  = (id: string) => ShowInFilesByID(id)
+    ;(window as any).sieveSmartFile     = (id: string) => aiService.current?.smartFile(id)
+    ;(window as any).sieveSmartMetadata = (id: string) => aiService.current?.smartMetadata(id)
     return () => {
       delete (window as any).sieveOpenNote
       delete (window as any).sieveNewNote
       delete (window as any).sieveOpenSettings
+      delete (window as any).sieveShowInFiles
+      delete (window as any).sieveSmartFile
+      delete (window as any).sieveSmartMetadata
     }
   }, [])
 
   const htmxSidebarRef = useCallback((el: HTMLDivElement | null) => {
-    if (el && (window as any).htmx) {
-      ;(window as any).htmx.ajax('GET', '/api/sidebar', { target: el, swap: 'innerHTML' })
+    if (!el || !(window as any).htmx) return
+    ;(window as any).htmx.ajax('GET', '/api/sidebar', { target: el, swap: 'innerHTML' })
+    // Load sidebar.js once (positions context menus, handles rename prompts).
+    if (!(window as any).sieveCloseMenu) {
+      const script = document.createElement('script')
+      script.src = '/static/sidebar.js'
+      document.body.appendChild(script)
     }
   }, [])
 
@@ -442,7 +453,16 @@ export default function App() {
     fNotes(); fPrompts()
     const u1 = EventsOn('notes:changed', fNotes)
     const u2 = EventsOn('prompts:changed', fPrompts)
-    return () => { u1(); u2() }
+
+    // SSE connection for HTMX sidebar refresh on notes:changed.
+    const es = new EventSource('/sse')
+    es.addEventListener('notes:changed', () => {
+      const htmx = (window as any).htmx
+      const sidebar = document.getElementById('htmx-sidebar')
+      if (htmx && sidebar) htmx.ajax('GET', '/api/sidebar', { target: sidebar, swap: 'innerHTML' })
+    })
+
+    return () => { u1(); u2(); es.close() }
   }, [])
 
   const onRestorePrompt = async (name: string) => {
@@ -471,20 +491,6 @@ export default function App() {
     aiService: aiService.current
   })
 
-  useEffect(() => {
-    if (!activeTab?.uuid) return
-    const ancestors = getAncestorFolderIDs(activeTab.uuid, notes)
-    if (ancestors.length > 0) {
-      setOpenFolders(prev => {
-        const next = new Set(prev)
-        let changed = false
-        for (const id of ancestors) {
-          if (!next.has(id)) { next.add(id); changed = true }
-        }
-        return changed ? next : prev
-      })
-    }
-  }, [activeTab?.uuid, notes])
 
   if (!ready) return <div className="loading-screen" />
 

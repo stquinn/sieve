@@ -120,6 +120,19 @@ func (ns *NoteService) Rename(n *Note, name string) (*Note, error) {
 	return newNote(ms), nil
 }
 
+// SetIntent writes user_intent to the note's metadata and saves it.
+// intent must be "keep", "trash", or "" (clears the field).
+func (ns *NoteService) SetIntent(n *Note, intent string) (*Note, error) {
+	meta := n.s.Meta()
+	if intent == "" {
+		delete(meta, "user_intent")
+	} else {
+		meta["user_intent"] = intent
+	}
+	n.s.SetMeta(meta)
+	return ns.Save(n)
+}
+
 // Refile applies the filing recommendation already stored in n's metadata —
 // deriving the target filename and folder — and renames/moves the note within
 // the Library accordingly. This is the "re-file" path for notes that are
