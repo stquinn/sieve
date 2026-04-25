@@ -1,4 +1,4 @@
-package stash_test
+package sieve_test
 
 import (
 	"os"
@@ -6,20 +6,20 @@ import (
 	"strings"
 	"testing"
 
-	"sieve/stash"
+	"sieve/sieve"
 	"sieve/store/filestore"
 )
 
 // newTestNoteService creates a NoteService backed by a real FileStore in a
 // temp directory. The returned cleanup func removes the temp dir.
-func newTestNoteService(t *testing.T) (*stash.NoteService, string) {
+func newTestNoteService(t *testing.T) (*sieve.NoteService, string) {
 	t.Helper()
 	dir := t.TempDir()
 	fs, err := filestore.NewFileStore(dir, "testhost")
 	if err != nil {
 		t.Fatalf("NewFileStore: %v", err)
 	}
-	svc, err := stash.NewNoteService(fs)
+	svc, err := sieve.NewNoteService(fs)
 	if err != nil {
 		t.Fatalf("NewNoteService: %v", err)
 	}
@@ -27,7 +27,7 @@ func newTestNoteService(t *testing.T) (*stash.NoteService, string) {
 }
 
 // createTestNote writes a minimal note directly into the store dir and loads it.
-func createTestNote(t *testing.T, svc *stash.NoteService, storeDir, relKey string) *stash.Note {
+func createTestNote(t *testing.T, svc *sieve.NoteService, storeDir, relKey string) *sieve.Note {
 	t.Helper()
 	absDir := filepath.Join(storeDir, "store", filepath.Dir(relKey))
 	if err := os.MkdirAll(absDir, 0o755); err != nil {

@@ -581,7 +581,7 @@ func (fs *FileStore) cascadeAssetUpdates(ms store.MetaStorable, oldParentKey, ne
 		newExtRef := movedAsset.ExternalRef()
 
 		// 5. Perform replacement in body using a safe placeholder
-		placeholder := []byte("##STASH_ASSET_LINK_PLACEHOLDER##")
+		placeholder := []byte("##SIEVE_ASSET_LINK_PLACEHOLDER##")
 		body = bytes.ReplaceAll(body, []byte(oldExtRef), placeholder)
 		body = bytes.ReplaceAll(body, []byte(oldRel), placeholder)
 		body = bytes.ReplaceAll(body, placeholder, []byte(newExtRef))

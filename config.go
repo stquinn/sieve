@@ -17,7 +17,7 @@ func globalConfigPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(configDir, "stash")
+	dir := filepath.Join(configDir, "sieve")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
@@ -52,7 +52,7 @@ func (c GlobalConfig) Save() error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// ValidateStore checks if a directory looks like a Stash store without
+// ValidateStore checks if a directory looks like a Sieve store without
 // creating any files.
 func ValidateStore(path string) error {
 	storePath := filepath.Join(path, "store")
@@ -87,7 +87,7 @@ func FindBestStorePath(cliArg, envVar string) string {
 		if err := ValidateStore(config.LastStorePath); err == nil {
 			return config.LastStorePath
 		} else {
-			fmt.Printf("[stash] FindBestStorePath: LastStorePath rejected: %v\n", err)
+			fmt.Printf("[sieve] FindBestStorePath: LastStorePath rejected: %v\n", err)
 		}
 	}
 	pwd, _ := os.Getwd()

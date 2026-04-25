@@ -1,4 +1,4 @@
-package stash
+package sieve
 
 import (
 	"sieve/logger"

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"sieve/stash"
+	"sieve/sieve"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -27,7 +27,7 @@ var themes embed.FS
 type storeHandler struct{ app *App }
 
 func (h *storeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	const prefix = "/stash/"
+	const prefix = "/sieve/"
 	if !strings.HasPrefix(r.URL.Path, prefix) {
 		http.NotFound(w, r)
 		return
@@ -56,14 +56,14 @@ func (h *storeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // browser renders a single pixel — no JS injection required.
 type muxHandler struct {
 	app   *App
-	stash *storeHandler
+	store *storeHandler
 }
 
 func (m *muxHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf("[stash] request: %s %s (URI: %s)\n", r.Method, r.URL.Path, r.RequestURI)
+	fmt.Printf("[sieve] request: %s %s (URI: %s)\n", r.Method, r.URL.Path, r.RequestURI)
 
 	// Intercept proxy requests early.
-	if strings.Contains(r.URL.Path, "/stash-image-proxy") {
+	if strings.Contains(r.URL.Path, "/sieve-image-proxy") {
 		m.serveProxy(w, r)
 		return
 	}
@@ -72,7 +72,7 @@ func (m *muxHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		m.serveThemeCSS(w, r)
 		return
 	}
-	m.stash.ServeHTTP(w, r)
+	m.store.ServeHTTP(w, r)
 }
 
 func (m *muxHandler) serveProxy(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +92,7 @@ func (m *muxHandler) serveProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Printf("[stash:proxy] fetching: %s\n", targetURL)
+	fmt.Printf("[sieve:proxy] fetching: %s\n", targetURL)
 
 	client := &http.Client{
 		Transport: &http.Transport{
@@ -102,7 +102,7 @@ func (m *muxHandler) serveProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL, nil)
 	if err != nil {
-		fmt.Printf("[stash:proxy] request creation failed: %v\n", err)
+		fmt.Printf("[sieve:proxy] request creation failed: %v\n", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -112,13 +112,13 @@ func (m *muxHandler) serveProxy(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Printf("[stash:proxy] fetch failed: %v\n", err)
+		fmt.Printf("[sieve:proxy] fetch failed: %v\n", err)
 		http.Error(w, fmt.Sprintf("failed to fetch url: %v", err), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
-	fmt.Printf("[stash:proxy] status: %d, type: %s\n", resp.StatusCode, resp.Header.Get("Content-Type"))
+	fmt.Printf("[sieve:proxy] status: %d, type: %s\n", resp.StatusCode, resp.Header.Get("Content-Type"))
 
 	// Forward selective response headers — don't blindly forward everything (e.g. security/CORS headers from target)
 	if ct := resp.Header.Get("Content-Type"); ct != "" {
@@ -139,7 +139,7 @@ func (m *muxHandler) serveThemeCSS(w http.ResponseWriter, _ *http.Request) {
 
 	settings := m.app.LoadSettings()
 
-	vars := stash.LoadTheme(settings.Theme, m.app.loadThemeOverride(settings.Theme), m.app.GetThemesFS())
+	vars := sieve.LoadTheme(settings.Theme, m.app.loadThemeOverride(settings.Theme), m.app.GetThemesFS())
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("html:root {\n"))
@@ -171,7 +171,7 @@ func main() {
 			Assets: assets,
 			Handler: &muxHandler{
 				app:   app,
-				stash: &storeHandler{app: app},
+				store: &storeHandler{app: app},
 			},
 		},
 		OnStartup:     app.startup,

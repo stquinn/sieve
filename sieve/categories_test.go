@@ -1,14 +1,14 @@
-package stash_test
+package sieve_test
 
 import (
 	"testing"
 
-	"sieve/stash"
+	"sieve/sieve"
 	"sieve/store"
 )
 
 func TestLibraryCategory(t *testing.T) {
-	c := stash.Library
+	c := sieve.Library
 	if c.Key != "store" {
 		t.Errorf("Library.Key = %q, want %q", c.Key, "store")
 	}
@@ -21,7 +21,7 @@ func TestLibraryCategory(t *testing.T) {
 }
 
 func TestWorkingCopyCategory(t *testing.T) {
-	c := stash.WorkingCopy
+	c := sieve.WorkingCopy
 	if c.Key != "buffers" {
 		t.Errorf("WorkingCopy.Key = %q, want %q", c.Key, "buffers")
 	}
@@ -34,7 +34,7 @@ func TestWorkingCopyCategory(t *testing.T) {
 }
 
 func TestStateCategory(t *testing.T) {
-	c := stash.State
+	c := sieve.State
 	if c.Key != "config" {
 		t.Errorf("State.Key = %q, want %q", c.Key, "config")
 	}
@@ -47,7 +47,7 @@ func TestStateCategory(t *testing.T) {
 }
 
 func TestCategoryKeysAreDistinct(t *testing.T) {
-	keys := []string{stash.Library.Key, stash.WorkingCopy.Key, stash.State.Key}
+	keys := []string{sieve.Library.Key, sieve.WorkingCopy.Key, sieve.State.Key}
 	seen := make(map[string]bool)
 	for _, k := range keys {
 		if seen[k] {
@@ -58,7 +58,7 @@ func TestCategoryKeysAreDistinct(t *testing.T) {
 }
 
 func TestCategoryDisplayNamesAreDistinct(t *testing.T) {
-	names := []string{stash.Library.DisplayName, stash.WorkingCopy.DisplayName, stash.State.DisplayName}
+	names := []string{sieve.Library.DisplayName, sieve.WorkingCopy.DisplayName, sieve.State.DisplayName}
 	seen := make(map[string]bool)
 	for _, n := range names {
 		if seen[n] {

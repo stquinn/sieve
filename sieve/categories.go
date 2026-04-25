@@ -1,8 +1,8 @@
-package stash
+package sieve
 
 import "sieve/store"
 
-// The three categories that define where Stash data lives.
+// The three categories that define where Sieve data lives.
 //
 //	Constant     Isolation  Key       FileStore resolved path
 //	──────────   ─────────  ───       ──────────────────────────────────

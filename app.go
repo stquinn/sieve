@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"sieve/logger"
-	"sieve/stash"
+	"sieve/sieve"
 	"sieve/store/filestore"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -30,11 +30,11 @@ type App struct {
 	storePath string
 	hostname  string // resolved at startup from os.Hostname
 
-	buffers *stash.BufferService
-	notes   *stash.NoteService
-	assets  *stash.AssetService
-	state   *stash.StateService
-	prompts *stash.PromptService
+	buffers *sieve.BufferService
+	notes   *sieve.NoteService
+	assets  *sieve.AssetService
+	state   *sieve.StateService
+	prompts *sieve.PromptService
 
 	themesFS fs.FS
 	watcher  *notesWatcher
@@ -78,15 +78,15 @@ func (a *App) GetStorePath() string { return a.storePath }
 
 // LoadSettings returns the current settings via the StateService, or defaults
 // if the store is not yet open.
-func (a *App) LoadSettings() stash.Settings {
+func (a *App) LoadSettings() sieve.Settings {
 	if a.state != nil {
 		return a.state.LoadSettings()
 	}
-	return stash.DefaultSettings()
+	return sieve.DefaultSettings()
 }
 
 // SaveSettings persists user configuration to the store.
-func (a *App) SaveSettings(settings stash.Settings) error {
+func (a *App) SaveSettings(settings sieve.Settings) error {
 	if a.state == nil {
 		return fmt.Errorf("store not open")
 	}
@@ -189,23 +189,23 @@ func (a *App) startup(ctx context.Context) {
 		logger.Error("filestore init failed", "err", err)
 		return
 	}
-	a.buffers, err = stash.NewBufferService(fs)
+	a.buffers, err = sieve.NewBufferService(fs)
 	if err != nil {
 		logger.Error("buffers init failed", "err", err)
 		return
 	}
-	a.notes, err = stash.NewNoteService(fs)
+	a.notes, err = sieve.NewNoteService(fs)
 	if err != nil {
 		logger.Error("notes init failed", "err", err)
 		return
 	}
-	a.assets = stash.NewAssetService(fs)
-	a.state, err = stash.NewStateService(fs)
+	a.assets = sieve.NewAssetService(fs)
+	a.state, err = sieve.NewStateService(fs)
 	if err != nil {
 		logger.Error("state init failed", "err", err)
 		return
 	}
-	a.prompts, err = stash.NewPromptService(fs)
+	a.prompts, err = sieve.NewPromptService(fs)
 	if err != nil {
 		logger.Error("prompts init failed", "err", err)
 		return
@@ -265,7 +265,7 @@ func (a *App) beforeClose(ctx context.Context) bool {
 		x, y := runtime.WindowGetPosition(ctx)
 		w, h := runtime.WindowGetSize(ctx)
 		session := a.state.LoadSession()
-		session.Window = stash.Window{X: x, Y: y, Width: w, Height: h}
+		session.Window = sieve.Window{X: x, Y: y, Width: w, Height: h}
 		_ = a.state.SaveSession(session)
 	}
 	logger.Info("beforeClose: vetoing and requesting flush")
@@ -298,12 +298,12 @@ type StoreInfo struct {
 	BuffersPath        string          `json:"buffersPath"`
 	NotesPath          string          `json:"notesPath"`
 	IsNew              bool            `json:"isNew"`
-	Tier               stash.Tier      `json:"tier"`
+	Tier               sieve.Tier      `json:"tier"`
 	Cli                string          `json:"cli"`
 	Debug              bool            `json:"debug"`
 	AutosaveDebounce   int             `json:"autosaveDebounce"`
 	ThemeName          string          `json:"themeName"`
-	ThemeVars          stash.ThemeVars `json:"themeVars"`
+	ThemeVars          sieve.ThemeVars `json:"themeVars"`
 	MaxHistoryVersions int             `json:"maxHistoryVersions"`
 	CLITimeoutLong     int             `json:"cliTimeoutLong"`
 	ShowPrompts        bool            `json:"showPrompts"`
@@ -313,7 +313,7 @@ func (a *App) GetStoreInfo() StoreInfo {
 	if a.storePath == "" {
 		logger.Warn("GetStoreInfo: store not open")
 		return StoreInfo{
-			ThemeVars: stash.ThemeVars{},
+			ThemeVars: sieve.ThemeVars{},
 		}
 	}
 
@@ -331,7 +331,7 @@ func (a *App) GetStoreInfo() StoreInfo {
 		Debug:              liveSettings.Debug,
 		AutosaveDebounce:   liveSettings.AutosaveDebounce,
 		ThemeName:          liveSettings.Theme,
-		ThemeVars:          stash.LoadTheme(liveSettings.Theme, a.loadThemeOverride(liveSettings.Theme), a.themesFS),
+		ThemeVars:          sieve.LoadTheme(liveSettings.Theme, a.loadThemeOverride(liveSettings.Theme), a.themesFS),
 		MaxHistoryVersions: liveSettings.MaxHistoryVersions,
 		CLITimeoutLong:     liveSettings.CLITimeoutLong,
 		ShowPrompts:        a.state.LoadSession().ShowPrompts,
@@ -379,7 +379,7 @@ func (a *App) SelectVault() (string, error) {
 		return "", fmt.Errorf("app context not initialized")
 	}
 	path, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select Stash Store",
+		Title: "Select Sieve Store",
 	})
 	logger.Debug("SelectVault: dialog returned", "path", path, "err", err)
 	if err != nil {
@@ -390,7 +390,7 @@ func (a *App) SelectVault() (string, error) {
 	}
 	if err := ValidateStore(path); err != nil {
 		logger.Warn("SelectVault: ValidateStore failed", "path", path, "err", err)
-		return "", fmt.Errorf("this directory does not look like a Stash store: %w", err)
+		return "", fmt.Errorf("this directory does not look like a Sieve store: %w", err)
 	}
 
 	logger.Debug("SelectVault: setting storePath and calling startup", "path", path)
@@ -436,7 +436,7 @@ func (a *App) CreateVault() (string, error) {
 	logger.Debug("CreateVault: startup completed", "resulting_storePath", a.storePath)
 	if a.storePath == "" {
 		logger.Warn("CreateVault: startup rejected the folder")
-		return "", fmt.Errorf("selected folder must be empty or an existing Stash store")
+		return "", fmt.Errorf("selected folder must be empty or an existing Sieve store")
 	}
 	logger.Info("store creation initialized", "path", path)
 	return path, nil
@@ -472,7 +472,7 @@ func (a *App) InitVault(path string) error {
 	logger.Debug("InitVault: startup completed", "resulting_storePath", a.storePath)
 	if a.storePath == "" {
 		logger.Warn("InitVault: startup rejected the folder")
-		return fmt.Errorf("folder must be empty or an existing Stash store")
+		return fmt.Errorf("folder must be empty or an existing Sieve store")
 	}
 
 	config := LoadGlobalConfig()
@@ -487,9 +487,9 @@ func (a *App) InitVault(path string) error {
 
 // ── Prompts ───────────────────────────────────────────────────────────────────
 
-func (a *App) GetPrompts() []stash.PromptEntry {
+func (a *App) GetPrompts() []sieve.PromptEntry {
 	if a.prompts == nil {
-		return []stash.PromptEntry{}
+		return []sieve.PromptEntry{}
 	}
 	return a.prompts.ListPrompts()
 }
@@ -541,29 +541,29 @@ func (a *App) TogglePrompts() (bool, error) {
 
 // ── Notes ─────────────────────────────────────────────────────────────────────
 
-func (a *App) GetNotes() []stash.NoteEntry {
+func (a *App) GetNotes() []sieve.NoteEntry {
 	if a.notes == nil {
 		logger.Warn("GetNotes: store not open")
-		return []stash.NoteEntry{}
+		return []sieve.NoteEntry{}
 	}
 	entries, err := a.notes.List()
 	if err != nil {
 		logger.Error("GetNotes failed", "err", err)
-		return []stash.NoteEntry{}
+		return []sieve.NoteEntry{}
 	}
 	logger.Debug("GetNotes", "entries", len(entries))
 	return entries
 }
 
-func (a *App) SearchStore(query string) []stash.SearchResult {
+func (a *App) SearchStore(query string) []sieve.SearchResult {
 	if a.notes == nil {
 		logger.Warn("SearchStore: store not open")
-		return []stash.SearchResult{}
+		return []sieve.SearchResult{}
 	}
 	results, err := a.notes.Search(query)
 	if err != nil {
 		logger.Error("SearchStore failed", "err", err)
-		return []stash.SearchResult{}
+		return []sieve.SearchResult{}
 	}
 	logger.Debug("SearchStore", "query", query, "results", len(results))
 	return results
@@ -571,11 +571,11 @@ func (a *App) SearchStore(query string) []stash.SearchResult {
 
 // ── Session ───────────────────────────────────────────────────────────────────
 
-func (a *App) GetSession() stash.Session {
+func (a *App) GetSession() sieve.Session {
 	if a.state == nil {
 		logger.Warn("GetSession: store not open")
-		return stash.Session{
-			Tabs: []stash.Tab{},
+		return sieve.Session{
+			Tabs: []sieve.Tab{},
 		}
 	}
 
@@ -616,7 +616,7 @@ func (a *App) GetSession() stash.Session {
 	return session
 }
 
-func (a *App) SaveSession(session stash.Session) error {
+func (a *App) SaveSession(session sieve.Session) error {
 	if a.state == nil {
 		return fmt.Errorf("store not open")
 	}
@@ -627,7 +627,7 @@ func (a *App) SaveSession(session stash.Session) error {
 	if session.MetaWidth == 0 {
 		session.MetaWidth = existing.MetaWidth
 	}
-	if session.Window == (stash.Window{}) {
+	if session.Window == (sieve.Window{}) {
 		session.Window = existing.Window
 	}
 	if len(session.OpenFolders) == 0 {
@@ -861,8 +861,8 @@ func (a *App) MoveNote(uuid, folderID string) (NoteDTO, error) {
 	}
 	// Strip the category prefix to get the bare folder path expected by NoteService.Move.
 	// "store/ai-stuff" → "ai-stuff"; "store" → "" (root).
-	folder := strings.TrimPrefix(folderID, stash.Library.Key+"/")
-	if folder == stash.Library.Key {
+	folder := strings.TrimPrefix(folderID, sieve.Library.Key+"/")
+	if folder == sieve.Library.Key {
 		folder = ""
 	}
 	moved, err := a.notes.Move(n, folder)
@@ -923,8 +923,8 @@ func (a *App) CreateFolder(parentFolderID, name string) error {
 		return fmt.Errorf("store not open")
 	}
 	var folderPath string
-	if parentFolderID == "" || parentFolderID == stash.Library.Key {
-		folderPath = stash.Library.Key + "/" + name
+	if parentFolderID == "" || parentFolderID == sieve.Library.Key {
+		folderPath = sieve.Library.Key + "/" + name
 	} else {
 		folderPath = parentFolderID + "/" + name
 	}
@@ -1003,9 +1003,9 @@ func (a *App) SaveAsset(context, id, dataBase64 string) (AssetDTO, error) {
 		return AssetDTO{}, fmt.Errorf("SaveAsset: decode: %w", err)
 	}
 	isBuffer := context == "" || context == "new" || strings.Contains(context, "/buffers/")
-	cat := stash.WorkingCopy
+	cat := sieve.WorkingCopy
 	if !isBuffer {
-		cat = stash.Library
+		cat = sieve.Library
 	}
 
 	asset, err := a.assets.Save(cat, context, id, data)
@@ -1044,9 +1044,9 @@ func (a *App) DownloadAsset(context, targetURL, id string) (AssetDTO, error) {
 		return AssetDTO{}, err
 	}
 	isBuffer := context == "" || context == "new" || strings.Contains(context, "/buffers/")
-	cat := stash.WorkingCopy
+	cat := sieve.WorkingCopy
 	if !isBuffer {
-		cat = stash.Library
+		cat = sieve.Library
 	}
 
 	asset, err := a.assets.Save(cat, context, id, data)
@@ -1074,13 +1074,13 @@ func (a *App) DownloadAsset(context, targetURL, id string) (AssetDTO, error) {
 
 // ── AI / CLI operations ───────────────────────────────────────────────────────
 
-func (a *App) EvaluateBuffer(path string) (*stash.FilingRecommendation, error) {
+func (a *App) EvaluateBuffer(path string) (*sieve.FilingRecommendation, error) {
 	if a.buffers == nil {
 		return nil, fmt.Errorf("store not open")
 	}
 	settings := a.state.LoadSettings()
 
-	var meta stash.DocumentMeta
+	var meta sieve.DocumentMeta
 	var body []byte
 	if b, err := a.buffers.Load(path); err == nil {
 		meta, body = b.Meta(), b.Body()
@@ -1091,7 +1091,7 @@ func (a *App) EvaluateBuffer(path string) (*stash.FilingRecommendation, error) {
 	}
 
 	prompt, _ := a.prompts.GetPromptContent("file")
-	rec, err := stash.EvaluateBuffer(meta, body, a.libraryFolders(), settings, prompt)
+	rec, err := sieve.EvaluateBuffer(meta, body, a.libraryFolders(), settings, prompt)
 	if err != nil {
 		logger.Warn("EvaluateBuffer failed", "path", path, "err", err)
 		return nil, err
@@ -1110,7 +1110,7 @@ func (a *App) EvaluateAndFile(path string, fileAfter bool, allowDiscard bool) (E
 	}
 	settings := a.state.LoadSettings()
 	prompt, _ := a.prompts.GetPromptContent("file")
-	outcome, err := stash.EvaluateAndFileDoc(path, a.buffers, a.notes, settings, a.libraryFolders(), prompt, fileAfter, allowDiscard)
+	outcome, err := sieve.EvaluateAndFileDoc(path, a.buffers, a.notes, settings, a.libraryFolders(), prompt, fileAfter, allowDiscard)
 	if err != nil {
 		return EvaluateAndFileResult{}, err
 	}
@@ -1129,11 +1129,11 @@ func (a *App) RefineLanguage(content string) (string, error) {
 		return "", fmt.Errorf("store not open")
 	}
 	settings := a.state.LoadSettings()
-	if settings.Tier() == stash.TierDumb {
+	if settings.Tier() == sieve.TierDumb {
 		return "", fmt.Errorf("dumb mode")
 	}
 	prompt, _ := a.prompts.GetPromptContent("refine")
-	lang, err := stash.RefineLanguage(content, settings, prompt)
+	lang, err := sieve.RefineLanguage(content, settings, prompt)
 	if err != nil {
 		logger.Warn("RefineLanguage failed", "err", err)
 		return "", err
@@ -1141,19 +1141,19 @@ func (a *App) RefineLanguage(content string) (string, error) {
 	return lang, nil
 }
 
-func (a *App) DescribeImage(storeRelPath string) (stash.ImageDesc, error) {
+func (a *App) DescribeImage(storeRelPath string) (sieve.ImageDesc, error) {
 	if a.buffers == nil {
-		return stash.ImageDesc{}, fmt.Errorf("store not open")
+		return sieve.ImageDesc{}, fmt.Errorf("store not open")
 	}
 	settings := a.state.LoadSettings()
-	if settings.Tier() == stash.TierDumb {
-		return stash.ImageDesc{}, fmt.Errorf("dumb mode")
+	if settings.Tier() == sieve.TierDumb {
+		return sieve.ImageDesc{}, fmt.Errorf("dumb mode")
 	}
 	prompt, _ := a.prompts.GetPromptContent("image")
-	desc, err := stash.DescribeImage(filepath.Join(a.storePath, storeRelPath), settings, prompt)
+	desc, err := sieve.DescribeImage(filepath.Join(a.storePath, storeRelPath), settings, prompt)
 	if err != nil {
 		logger.Warn("DescribeImage failed", "err", err)
-		return stash.ImageDesc{}, err
+		return sieve.ImageDesc{}, err
 	}
 	return desc, nil
 }
@@ -1163,11 +1163,11 @@ func (a *App) Explain(content string, history string, notePath string, imageStor
 		return "", fmt.Errorf("store not open")
 	}
 	settings := a.state.LoadSettings()
-	if settings.Tier() == stash.TierDumb {
+	if settings.Tier() == sieve.TierDumb {
 		return "", fmt.Errorf("explain not available in dumb mode")
 	}
 	prompt, _ := a.prompts.GetPromptContent("explain")
-	resp, err := stash.RunExplain(content, history, settings,
+	resp, err := sieve.RunExplain(content, history, settings,
 		filepath.Dir(a.resolvePath(notePath)), a.absImagePaths(imageStorePaths), prompt)
 	if err != nil {
 		logger.Warn("Explain failed", "err", err)
@@ -1181,11 +1181,11 @@ func (a *App) Ask(content string, history string, question string, notePath stri
 		return "", fmt.Errorf("store not open")
 	}
 	settings := a.state.LoadSettings()
-	if settings.Tier() == stash.TierDumb {
+	if settings.Tier() == sieve.TierDumb {
 		return "", fmt.Errorf("ask not available in dumb mode")
 	}
 	prompt, _ := a.prompts.GetPromptContent("ask")
-	resp, err := stash.RunAsk(content, history, question, settings,
+	resp, err := sieve.RunAsk(content, history, question, settings,
 		filepath.Dir(a.resolvePath(notePath)), a.absImagePaths(imageStorePaths), prompt)
 	if err != nil {
 		logger.Warn("Ask failed", "err", err)
@@ -1324,7 +1324,7 @@ func migrateSettings(oldPath, newPath string) {
 	}
 
 	// Check whether the old settings has a cli field.
-	var oldSettings stash.Settings
+	var oldSettings sieve.Settings
 	if err := json.Unmarshal(oldData, &oldSettings); err != nil || oldSettings.CLI == "" {
 		// Old file has no cli — not worth migrating settings over new defaults.
 		// Still move the file if the new location is absent.
@@ -1340,7 +1340,7 @@ func migrateSettings(oldPath, newPath string) {
 
 	// Old file has a cli field. Check if the new file already has one.
 	if newData, err := os.ReadFile(newPath); err == nil {
-		var newSettings stash.Settings
+		var newSettings sieve.Settings
 		if json.Unmarshal(newData, &newSettings) == nil && newSettings.CLI != "" {
 			// New file already has cli configured — leave it alone.
 			return

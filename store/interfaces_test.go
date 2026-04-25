@@ -16,11 +16,12 @@ var (
 // stubStorable satisfies the Storable interface.
 type stubStorable struct{}
 
-func (s *stubStorable) Key() string                { return "" }
-func (s *stubStorable) Category() store.Category   { return store.Category{} }
-func (s *stubStorable) Body() []byte               { return nil }
-func (s *stubStorable) ExternalRef() string        { return "" }
+func (s *stubStorable) Key() string                  { return "" }
+func (s *stubStorable) Category() store.Category     { return store.Category{} }
+func (s *stubStorable) Body() []byte                 { return nil }
+func (s *stubStorable) ExternalRef() string          { return "" }
 func (s *stubStorable) Versions() []store.VersionRef { return nil }
+func (s *stubStorable) IsModified() bool             { return false }
 
 // stubMetaStorable satisfies the MetaStorable interface.
 type stubMetaStorable struct{ stubStorable }

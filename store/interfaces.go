@@ -78,7 +78,7 @@ type AssetStorable interface {
 // Store creates, renames, and reparents folders through the same interface as
 // any other Storable.
 //
-// Stash v1 supports one level of folders. Arbitrary nesting is structurally
+// Sieve v1 supports one level of folders. Arbitrary nesting is structurally
 // free (FolderStorable owning FolderStorable requires no Store changes) but is
 // gated by business layer policy.
 type FolderStorable interface {
