@@ -87,6 +87,8 @@ export default function App() {
   const closeTabByIdRef   = useRef<((id: string) => void) | undefined>(undefined)
   const reorderTabsRef    = useRef<((from: number, to: number) => void) | undefined>(undefined)
   const showHelpRef       = useRef<(() => void) | undefined>(undefined)
+  const closeAllTabsRef   = useRef<(() => void) | undefined>(undefined)
+  const deleteNoteByIdRef = useRef<((id: string) => void) | undefined>(undefined)
 
   const autosaveMs                = useRef(30_000)
   const cliTimeoutLongMs          = useRef(60_000)
@@ -129,6 +131,8 @@ export default function App() {
     ;(window as any).sieveCloseTab      = (id: string) => closeTabByIdRef.current?.(id)
     ;(window as any).sieveReorderTabs   = (from: number, to: number) => reorderTabsRef.current?.(from, to)
     ;(window as any).sieveHelp          = () => showHelpRef.current?.()
+    ;(window as any).sieveCloseAllTabs  = () => closeAllTabsRef.current?.()
+    ;(window as any).sieveDeleteNote    = (id: string) => deleteNoteByIdRef.current?.(id)
     return () => {
       delete (window as any).sieveOpenNote
       delete (window as any).sieveNewNote
@@ -140,6 +144,8 @@ export default function App() {
       delete (window as any).sieveCloseTab
       delete (window as any).sieveReorderTabs
       delete (window as any).sieveHelp
+      delete (window as any).sieveCloseAllTabs
+      delete (window as any).sieveDeleteNote
     }
   }, [])
 
@@ -342,6 +348,26 @@ export default function App() {
       })) as any }).then(refreshTabBar)
     }
   }, [])
+  useEffect(() => {
+    closeAllTabsRef.current = async () => {
+      for (const t of tabsRef.current) {
+        await dataService.current.save(t.uuid).catch(console.error)
+      }
+      const doc = await dataService.current.create()
+      const tab: TabState = { uuid: doc.id, mode: 'wysiwyg' }
+      setTabs([tab])
+      setActiveIdx(0)
+      persistSession({ activeIdx: 0, tabs: [{ id: doc.id, active: true, mode: 'wysiwyg' }] as any })
+        .then(refreshTabBar)
+    }
+  }, [])
+  useEffect(() => {
+    deleteNoteByIdRef.current = async (id: string) => {
+      await dataService.current.discard(id).catch(console.error)
+      const idx = tabsRef.current.findIndex(t => t.uuid === id)
+      if (idx !== -1) smartFileClose(idx)
+    }
+  }, [smartFileClose])
 
   const openByPath = async (path: string) => {
     try {
