@@ -1,78 +1,52 @@
 {{define "tabbar.html"}}
-<style>
-.tab-item {
-  display:flex;align-items:center;gap:6px;
-  padding:0 12px 0 16px;height:100%;cursor:pointer;
-  font-size:14px;white-space:nowrap;user-select:none;
-  border-right:1px solid rgba(255,255,255,0.1);
-  border-top:2px solid transparent;border-bottom:2px solid transparent;
-  margin-bottom:-2px;transition:background 0.1s,color 0.1s;
-  min-width:80px;width:250px;flex-shrink:1;
-  color:var(--theme-textDim);box-sizing:border-box;
-}
-.tab-item:hover { background:var(--theme-bg);color:var(--theme-text); }
-.tab-item--active {
-  background:var(--theme-bg);color:var(--theme-text);
-  border-top-color:var(--theme-accentPrimary);
-  border-bottom-color:var(--theme-bg);
-}
-.tab-item__label { flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:0.7;min-width:0; }
-.tab-item--active .tab-item__label { opacity:1; }
-.tab-close {
-  opacity:0;border:none;background:transparent;padding:0;margin-left:2px;
-  cursor:pointer;color:inherit;font-size:15px;line-height:1;
-  width:16px;height:16px;display:flex;align-items:center;justify-content:center;
-  flex-shrink:0;transition:opacity 0.1s;
-}
-.tab-item:hover .tab-close, .tab-item--active .tab-close { opacity:0.4; }
-.tab-close:hover { opacity:1 !important; color:var(--theme-accentRed); }
-.tab-bar-btn {
-  padding:0 12px;background:transparent;border:none;height:100%;
-  line-height:1;color:var(--theme-muted);cursor:pointer;flex-shrink:0;
-  transition:color 0.1s,background 0.1s;
-  border-left:1px solid rgba(255,255,255,0.1);
-}
-.tab-bar-btn:hover { background:var(--theme-bgAlt);color:var(--theme-text); }
-</style>
-
-<div id="tabs-area" style="display:flex;align-items:stretch;flex-shrink:1;overflow:hidden;min-width:0;">
+<div id="tabs-area" class="flex items-stretch shrink overflow-hidden min-w-0">
 {{range $i, $t := .Tabs}}
-<div
-  role="button"
-  tabindex="0"
-  class="tab-item{{if eq $i $.ActiveIdx}} tab-item--active{{end}}"
-  data-tab-id="{{$t.ID}}"
-  data-tab-idx="{{$i}}"
-  data-tab-name="{{$t.DisplayName}}"
-  draggable="true"
-  onmousedown="if(event.button===0 && !event.target.closest('.tab-close')){window.sieveSelectTab && window.sieveSelectTab('{{$t.ID}}')}"
-  oncontextmenu="event.preventDefault();window.sieveTabContextMenu && window.sieveTabContextMenu('{{$t.ID}}','{{if $t.DisplayName}}{{$t.DisplayName}}{{else}}Untitled{{end}}',event)"
->
-  {{if $t.UserIntent}}
-  <span style="width:6px;height:6px;border-radius:50%;flex-shrink:0;display:inline-block;background:{{if eq $t.UserIntent "keep"}}var(--theme-accentPrimary){{else if eq $t.UserIntent "trash"}}var(--theme-accentRed){{else}}var(--theme-accentYellow){{end}};{{if ne $i $.ActiveIdx}}opacity:0.4;{{end}}"></span>
-  {{else if eq $t.Status "filed"}}
-  <span style="width:6px;height:6px;border-radius:50%;flex-shrink:0;display:inline-block;background:var(--theme-accentGreen);{{if ne $i $.ActiveIdx}}opacity:0.4;{{end}}"></span>
-  {{else}}
-  <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4;flex-shrink:0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-  {{end}}
-  <span class="tab-item__label">{{if $t.DisplayName}}{{$t.DisplayName}}{{else}}Untitled{{end}}</span>
-  {{if eq $t.Mode "markdown"}}
-  <span style="font-size:12px;color:var(--theme-accentPrimary);font-weight:700;font-family:monospace;background:var(--theme-bgAlt);padding:0 6px;border-radius:4px;flex-shrink:0;">M</span>
-  {{end}}
-  <button class="tab-close" onmousedown="event.stopPropagation(); window.sieveCloseTab && window.sieveCloseTab('{{$t.ID}}')" aria-label="Close tab">×</button>
+<div class="flex items-stretch shrink min-w-[80px] w-[250px]">
+  <div
+    class="group flex items-center gap-1.5 px-3 h-full cursor-pointer w-full text-[14px] whitespace-nowrap select-none shrink transition-colors border-solid border-0 border-r-[1px] border-r-white/10 -mb-[2px] border-t-2 border-b-2{{if eq $i $.ActiveIdx}} bg-tn-bg text-tn-text border-t-tn-blue border-b-tn-bg{{else}} bg-tn-bg-dark text-tn-text-dim hover:bg-tn-bg hover:text-tn-text border-t-transparent border-b-transparent{{end}}"
+    data-tab-id="{{$t.ID}}"
+    data-tab-idx="{{$i}}"
+    draggable="true"
+    onmousedown="if(event.button===0 && !event.target.closest('button')){window.sieveSelectTab && window.sieveSelectTab('{{$t.ID}}')}"
+    oncontextmenu="event.preventDefault();window.sieveTabContextMenu && window.sieveTabContextMenu('{{$t.ID}}','{{if $t.DisplayName}}{{$t.DisplayName}}{{else}}Untitled{{end}}',event)"
+  >
+    {{if $t.UserIntent}}
+    <span class="w-1.5 h-1.5 rounded-full shrink-0{{if ne $i $.ActiveIdx}} opacity-40{{end}}{{if eq $t.UserIntent "keep"}} bg-tn-blue{{else if eq $t.UserIntent "trash"}} bg-tn-red{{else}} bg-tn-yellow{{end}}"></span>
+    {{else if eq $t.Status "filed"}}
+    <span class="w-1.5 h-1.5 rounded-full shrink-0 bg-tn-green{{if ne $i $.ActiveIdx}} opacity-40{{end}}"></span>
+    {{else}}
+    <svg viewBox="0 0 24 24" class="w-3.5 h-3.5 opacity-40 shrink-0" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+    {{end}}
+    <span class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap min-w-0 text-left{{if ne $i $.ActiveIdx}} opacity-70{{end}}">{{if $t.DisplayName}}{{$t.DisplayName}}{{else}}Untitled{{end}}</span>
+    {{if eq $t.Mode "markdown"}}
+    <span class="text-[12px] text-tn-blue font-bold font-mono bg-tn-bg-alt px-1.5 rounded shrink-0">M</span>
+    {{end}}
+    <button
+      onmousedown="event.stopPropagation(); window.sieveCloseTab && window.sieveCloseTab('{{$t.ID}}')"
+      aria-label="Close tab"
+      class="ml-0.5 opacity-0 group-hover:opacity-40 hover:!opacity-100 hover:text-tn-red shrink-0 transition-opacity flex items-center justify-center w-4 h-4 text-[15px] leading-none"
+    >×</button>
+  </div>
 </div>
 {{end}}
 </div>
 
-<div id="tab-overflow" style="display:none;position:relative;flex-shrink:0;align-items:stretch;border-left:1px solid rgba(255,255,255,0.1);">
-  <button id="tab-overflow-btn" class="tab-bar-btn" style="border-left:none;font-size:14px;font-family:monospace;">▾ 0</button>
+<div id="tab-overflow" class="relative shrink-0 items-stretch border-0 border-l border-solid border-white/10" style="display:none">
+  <button id="tab-overflow-btn" class="px-2.5 bg-transparent border-none h-full text-[14px] font-mono leading-none transition-colors text-tn-muted hover:text-tn-text hover:bg-tn-bg-alt">▾ 0</button>
 </div>
 
-<button onclick="window.sieveNewNote && window.sieveNewNote()" aria-label="New tab" class="tab-bar-btn" style="font-size:20px;">+</button>
+<button
+  onclick="window.sieveNewNote && window.sieveNewNote()"
+  aria-label="New tab"
+  class="px-3 bg-transparent border-none h-full text-tn-muted hover:text-tn-text hover:bg-tn-bg-alt text-[20px] leading-none shrink-0 transition-colors border-0 border-l border-solid border-white/10"
+>+</button>
 
-<div id="tab-spacer" style="flex:1;min-width:0;"></div>
+<div id="tab-spacer" class="flex-1 min-w-0"></div>
 
-<button onclick="window.sieveHelp && window.sieveHelp()" aria-label="Keyboard shortcuts (Ctrl+/)" title="Shortcuts (Ctrl+/)" class="tab-bar-btn" style="font-size:14px;">?</button>
-
-<script>window.sieveTabBarInit && window.sieveTabBarInit()</script>
+<button
+  onclick="window.sieveHelp && window.sieveHelp()"
+  aria-label="Keyboard shortcuts (Ctrl+/)"
+  title="Shortcuts (Ctrl+/)"
+  class="px-3 bg-transparent border-none h-full text-tn-muted hover:text-tn-text hover:bg-tn-bg-alt text-[14px] leading-none shrink-0 transition-colors"
+>?</button>
 {{end}}

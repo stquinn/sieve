@@ -1,6 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
-  content: ['./src/**/*.{ts,tsx}'],
+  content: ['./src/**/*.{ts,tsx}', '../ui/templates/**/*.html'],
   corePlugins: {
     // Don't let Tailwind's base reset fight our hand-crafted editor CSS
     preflight: false,

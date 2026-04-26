@@ -172,7 +172,8 @@ export default function App() {
   const refreshTabBar = () => {
     const htmx = (window as any).htmx
     const el = document.getElementById('htmx-tabbar')
-    if (htmx && el) htmx.ajax('GET', '/api/tabs', { target: el, swap: 'innerHTML' })
+    if (!htmx || !el) return
+    htmx.ajax('GET', '/api/tabs', { target: el, swap: 'innerHTML' })
   }
 
   const selectTab = (idx: number) => {
@@ -547,15 +548,30 @@ export default function App() {
     const u1 = EventsOn('notes:changed', fNotes)
     const u2 = EventsOn('prompts:changed', fPrompts)
 
-    // SSE connection for HTMX sidebar refresh on notes:changed.
+    // SSE connection for HTMX sidebar + tab bar refresh on notes:changed.
     const es = new EventSource('/sse')
     es.addEventListener('notes:changed', () => {
       const htmx = (window as any).htmx
       const sidebar = document.getElementById('htmx-sidebar')
       if (htmx && sidebar) htmx.ajax('GET', '/api/sidebar', { target: sidebar, swap: 'innerHTML' })
+      refreshTabBar()
     })
 
-    return () => { u1(); u2(); es.close() }
+    // When any sidebar HTMX action settles (intent change, rename, delete),
+    // also refresh the tab bar so labels/dots stay in sync.
+    // When the tab bar itself settles, re-init drag/overflow handlers.
+    const onAfterSettle = (e: Event) => {
+      const target = (e as CustomEvent).detail?.target as HTMLElement | undefined
+      if (!target) return
+      if (target.id === 'htmx-tabbar') {
+        ;(window as any).sieveTabBarInit?.()
+      } else if (target.id === 'htmx-sidebar' || target.closest?.('#htmx-sidebar')) {
+        refreshTabBar()
+      }
+    }
+    document.addEventListener('htmx:afterSettle', onAfterSettle)
+
+    return () => { u1(); u2(); es.close(); document.removeEventListener('htmx:afterSettle', onAfterSettle) }
   }, [])
 
   const onRestorePrompt = async (name: string) => {
@@ -655,7 +671,7 @@ export default function App() {
         <div
           id="htmx-tabbar"
           ref={htmxTabbarRef}
-          style={{ display: 'flex', alignItems: 'stretch', background: 'var(--theme-bgDark)', borderTop: '1px solid var(--theme-border2)', borderBottom: '1px solid var(--theme-border2)', height: '44px', flexShrink: 0 }}
+          className="flex items-stretch bg-tn-bg-dark border-0 border-t border-b border-solid border-tn-border-2 h-[44px] shrink-0"
         />
 
         {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
