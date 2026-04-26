@@ -1,13 +1,12 @@
 {{define "prompts.html"}}
-<div style="padding: 12px; background: var(--theme-bgDark); border-top: 1px solid var(--theme-border2); display: flex; align-items: center; gap: 16px; overflow-x: auto;" class="scrollbar-hide">
-  <span style="font-size: 13px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.05em; color: var(--theme-muted); flex-shrink: 0;">AI Prompts</span>
-  <div style="display: flex; align-items: center; gap: 8px;">
+<div style="display: flex; flex-direction: column; background: var(--theme-bgDark); border-top: 1px solid var(--theme-border2); padding-top: 8px;">
+  <span style="padding-left: 1rem; font-size: 13px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.05em; color: var(--theme-muted); margin-bottom: 4px;">AI Prompts</span>
+  <div style="display: flex; flex-direction: column;">
     {{range .}}
     <button 
       onclick="window.sieveOpenNote('{{.ID}}')"
-      style="background: {{if .IsVirtual}}transparent{{else}}var(--theme-bgAlt){{end}}; border: 1px solid var(--theme-border2); padding: 4px 10px; border-radius: 4px; color: var(--theme-textDim); font-size: 13px; cursor: pointer; transition: all 0.1s; display: flex; align-items: center; gap: 6px;"
-      onmouseover="this.style.background='var(--theme-bgAlt)';this.style.color='var(--theme-text)'"
-      onmouseout="this.style.background='{{if .IsVirtual}}transparent{{else}}var(--theme-bgAlt){{end}}';this.style.color='var(--theme-textDim)'"
+      class="sidebar__file"
+      style="display: flex; align-items: center; gap: 0.5rem; width: 100%; background: none; border: none; cursor: pointer; height: 28px; color: var(--theme-textDim); font-size: 14px; padding: 0 1rem; text-align: left; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box;"
       title="{{if .IsVirtual}}Baked-in Default{{else}}User Override: {{.Path}}{{end}}"
     >
       {{if .IsVirtual}}

@@ -82,7 +82,10 @@
     <div id="app-root" class="theme-{{.ThemeName}} tier-{{.Tier}}" style="--sidebar-w: {{if .ShowSidebar}}{{.SidebarWidth}}{{else}}0{{end}}px; --meta-w: {{if .ShowMeta}}{{.MetaWidth}}{{else}}0{{end}}px;">
         
         {{if .ShowSidebar}}
-        <div id="htmx-sidebar" class="sidebar" style="width: {{.SidebarWidth}}px" hx-get="/api/sidebar" hx-trigger="load"></div>
+        <div id="sidebar-wrapper" style="width: var(--sidebar-w); display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; border-right: 1px solid var(--theme-border);">
+            <div id="htmx-sidebar" class="sidebar" style="flex: 1; min-height: 0; border-right: none;" hx-get="/api/sidebar" hx-trigger="load"></div>
+            <div id="prompts-panel" style="height: {{.PromptsHeight}}px;" hx-get="/api/prompts" hx-trigger="load"></div>
+        </div>
         <div class="sidebar-handle"></div>
         {{end}}
 
@@ -112,7 +115,6 @@
             <div class="editor-area">
                 <div id="htmx-editor" class="editor-wrapper" style="flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column;">
                     <div id="tiptap-mount" data-uuid="{{.ActiveUUID}}" data-mode="wysiwyg" style="flex: 1; min-height: 0; display: flex; flex-direction: column;"></div>
-                    <div id="prompts-panel" style="height: {{.PromptsHeight}}px;" hx-get="/api/prompts" hx-trigger="load"></div>
                 </div>
 
                 {{if .ShowMeta}}
