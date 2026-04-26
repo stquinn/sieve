@@ -44,6 +44,7 @@ func (h *ContextMenuHandler) handleMenu(w http.ResponseWriter, r *http.Request) 
 		Intent: q.Get("intent"),
 		IsDir:  q.Get("isDir") == "true",
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	tplName := "note-context-menu.html"
 	if data.IsDir {

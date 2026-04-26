@@ -56,6 +56,7 @@ func prepSidebarEntries(entries []sieve.NoteEntry, openFolders map[string]bool, 
 // RenderSidebar writes the sidebar HTML fragment to w. It is shared by the
 // sidebar handler and any action handler that needs to return a refreshed tree.
 func RenderSidebar(w http.ResponseWriter, notes *sieve.NoteService, state *sieve.StateService, tmpl *template.Template) {
+	w.Header().Set("Cache-Control", "no-store")
 	if notes == nil {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, `<div class="sidebar__empty">No store open</div>`)

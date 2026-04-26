@@ -19,14 +19,14 @@ func (h *TabHandler) RegisterPaths(r chi.Router) {
 }
 
 func (h *TabHandler) handleTabs(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	state := *h.State
 	if state == nil {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, "")
 		return
 	}
 	session := state.LoadSession()
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.Tmpl.ExecuteTemplate(w, "tabbar.html", session); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
