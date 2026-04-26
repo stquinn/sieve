@@ -182,9 +182,9 @@ No JavaScript bridge, no `refreshTabBar()`, no `persistSession`.
 
 ---
 
-### X-B: `window.sieve*` globals namespace is informal
-**What:** All HTMX↔React bridges are attached to `window` ad-hoc (`window.sieveOpenNote`, `window.sieveCloseTab`, etc.). There's no type safety or discoverability.
+### X-B: `window.sieve*` globals namespace is temporary scaffolding
+**What:** Interactions for tabs, sidebar, settings, and AI operations route through global `window.sieve*` functions (defined in `ui/index.html`). While they now delegate to pure Go HTTP endpoints via `window.htmx.ajax` or `fetch` rather than React state, the intermediate JS layer is tech debt. The ideal state is declarative `hx-post`/`hx-get` attributes directly on the DOM.
 
-**Why acceptable now:** They're transitional scaffolding. Each one disappears as the component it bridges is migrated.
+**Why acceptable now:** Rapidly unhooks React without breaking hardcoded triggers in legacy files (`tabbar.js`, `sidebar.js`), templates, or Wails native menus.
 
-**Retires in:** Progressively through Phases 5–8; gone entirely by Phase 9.
+**Retires in:** Post-migration cleanup pass (Phase 10). Each global wrapper will be retired by upgrading markup to direct HTMX properties.
