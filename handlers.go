@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"sieve/logger"
 	"sieve/requesthandlers"
 
 	"github.com/go-chi/chi/v5"
@@ -17,6 +18,9 @@ var uiTemplates embed.FS
 
 //go:embed ui/static
 var uiStatic embed.FS
+
+//go:embed ui/index.html
+var uiIndexHTML string
 
 // apiHandler owns the chi router, templates, SSE hub, and static files.
 type apiHandler struct {
@@ -136,6 +140,8 @@ func newAPIHandler(app *App, hub *sseHub) (*apiHandler, error) {
 	}
 	r.Get("/sse", h.hub.ServeHTTP)
 	r.Handle("/static/*", http.StripPrefix("/static", h.static))
+	r.Get("/", h.handleIndex)
+	r.NotFound(h.handleIndex)
 	h.routes = r
 
 	return h, nil
@@ -143,4 +149,52 @@ func newAPIHandler(app *App, hub *sseHub) (*apiHandler, error) {
 
 func (h *apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.routes.ServeHTTP(w, r)
+}
+
+func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
+	info := h.app.GetStoreInfo()
+	session := h.app.GetSession()
+
+	activeUUID := ""
+	if session.ActiveIdx >= 0 && session.ActiveIdx < len(session.Tabs) {
+		activeUUID = session.Tabs[session.ActiveIdx].ID
+	}
+
+	tierStr := "dumb"
+	if info.Tier == 2 { // TierSmart
+		tierStr = "smart"
+	}
+
+	data := struct {
+		ThemeName     string
+		Tier          string
+		SidebarWidth  int
+		MetaWidth     int
+		ShowSidebar   bool
+		ShowMeta      bool
+		ShowPrompts   bool
+		PromptsHeight int
+		ActiveUUID    string
+	}{
+		ThemeName:     info.ThemeName,
+		Tier:          tierStr,
+		SidebarWidth:  session.SidebarWidth,
+		MetaWidth:     session.MetaWidth,
+		ShowSidebar:   session.ShowSidebar,
+		ShowMeta:      session.ShowMeta,
+		ShowPrompts:   session.ShowPrompts,
+		PromptsHeight: session.PromptsHeight,
+		ActiveUUID:    activeUUID,
+	}
+
+	tmpl, err := template.New("index").Parse(uiIndexHTML)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := tmpl.Execute(w, data); err != nil {
+		logger.Error("failed to execute index template", "err", err)
+	}
 }

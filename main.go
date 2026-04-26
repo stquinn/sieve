@@ -22,7 +22,7 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-//go:embed all:frontend/dist
+//go:embed all:ui
 var assets embed.FS
 
 //go:embed themes/*.json
@@ -81,7 +81,13 @@ func (m *muxHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		m.api.ServeHTTP(w, r)
 		return
 	}
-	m.store.ServeHTTP(w, r)
+	if strings.HasPrefix(r.URL.Path, "/sieve/") {
+		m.store.ServeHTTP(w, r)
+		return
+	}
+
+	// Fallback to apiHandler (serves index.html via NotFound)
+	m.api.ServeHTTP(w, r)
 }
 
 func (m *muxHandler) serveProxy(w http.ResponseWriter, r *http.Request) {
