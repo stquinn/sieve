@@ -1,18 +1,4 @@
 {{define "sidebar.html"}}
-<style>
-.ctx-item {
-  display:flex;align-items:center;gap:8px;
-  width:100%;background:transparent;border:none;text-align:left;
-  padding:6px 12px;font-size:14px;color:var(--theme-text);
-  cursor:pointer;transition:background 0.1s;
-}
-.ctx-item:hover { background:var(--theme-border2); }
-.ctx-item--keep { color:var(--theme-accentPrimary); }
-.ctx-item--trash { color:var(--theme-accentRed); }
-.ctx-item--danger { color:var(--theme-accentRed); }
-.ctx-item--active { background:var(--theme-border2); font-weight:700; }
-.ctx-separator { height:1px;background:var(--theme-border2);margin:4px 0; }
-</style>
 <div class="sidebar__section-title" style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--theme-border2);height:44px;min-height:44px;padding:0;flex-shrink:0;">
   <span style="padding-left:1rem;font-size:13px;font-weight:900;text-transform:uppercase;letter-spacing:0.05em;color:var(--theme-muted);">Library</span>
   <div style="display:flex;align-items:center;gap:4px;padding-right:4px;">

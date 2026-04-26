@@ -342,6 +342,12 @@ export default function App() {
       document.body.appendChild(script)
     }
   }, [])
+  
+  const htmxPromptsRef = useCallback((el: HTMLDivElement | null) => {
+    if (!el || !(window as any).htmx) return
+    ;(window as any).htmx.ajax('GET', '/api/prompts', { target: el, swap: 'innerHTML' })
+    ;(window as any).htmx.process(el)
+  }, [])
 
   const refreshTabBar = () => {
     const htmx = (window as any).htmx
@@ -810,21 +816,29 @@ export default function App() {
     >
       {showSidebar && (
         <>
-          {sidebarMode === 'files' ? (
+          <div id="sidebar-wrapper" style={{ width: `${sidebarWidth}px`, display: 'flex', flexDirection: 'column', flexShrink: 0, overflow: 'hidden', borderRight: '1px solid var(--theme-border)' }}>
+            {sidebarMode === 'files' ? (
+              <div
+                id="htmx-sidebar"
+                className="sidebar"
+                style={{ flex: 1, minHeight: 0, borderRight: 'none' }}
+                ref={htmxSidebarRef}
+              />
+            ) : (
+              <StoreSearch
+                width={sidebarWidth}
+                onOpen={async p => { await openByPath(p); setSidebarMode('files') }}
+                onClose={() => setSidebarMode('files')}
+                dataService={dataService.current}
+              />
+            )}
             <div
-              id="htmx-sidebar"
-              className="sidebar"
-              style={{ width: `${sidebarWidth}px` }}
-              ref={htmxSidebarRef}
+              id="prompts-panel"
+              style={{ height: `${promptsHeight}px` }}
+              ref={htmxPromptsRef}
+              {...{ 'hx-get': '/api/prompts', 'hx-trigger': 'load, sse:prompts:changed, sse:notes:changed' }}
             />
-          ) : (
-            <StoreSearch
-              width={sidebarWidth}
-              onOpen={async p => { await openByPath(p); setSidebarMode('files') }}
-              onClose={() => setSidebarMode('files')}
-              dataService={dataService.current}
-            />
-          )}
+          </div>
           <div className={`sidebar-handle ${isDragging ? 'dragging' : ''}`} onMouseDown={e => {
             const startX = e.clientX
             const startW = sidebarWidth

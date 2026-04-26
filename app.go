@@ -1105,6 +1105,8 @@ func (a *App) EvaluateBuffer(path string) (*sieve.FilingRecommendation, error) {
 	return rec, nil
 }
 
+
+
 // EvaluateAndFile loads the document at path, runs AI evaluation, applies the
 // recommendation to its metadata, and optionally promotes it to the Library.
 // The frontend must have already persisted the document body before calling this.

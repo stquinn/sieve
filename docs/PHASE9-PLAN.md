@@ -187,16 +187,16 @@ Go handlers call the existing `EvalService`/`PromptService` methods directly. SS
 ## Step 5 — Fix Remaining Tech Debt
 
 ### X-A: `<style>` blocks in `sidebar.html`
-- [ ] 5.1 Move inline `<style>` from `ui/templates/sidebar.html` → `ui/static/sidebar.css`
-- [ ] 5.2 Add `<link rel="stylesheet" href="/static/sidebar.css">` in `ui/index.html`
+- [x] 5.1 Move inline `<style>` from `ui/templates/sidebar.html` → `ui/static/sidebar.css`
+- [x] 5.2 Add `<link rel="stylesheet" href="/static/sidebar.css">` in `ui/index.html`
 
 ### 2-E: Declarative SSE
-- [ ] 5.3 Replace manual `htmx.ajax()` SSE listener with `sse-swap="notes:changed"` on `#htmx-sidebar`
-- [ ] 5.4 Replace manual `htmx.ajax()` SSE listener with `sse-swap="prompts:changed"` on `#prompts-panel`
+- [x] 5.3 Replace manual `htmx.ajax()` SSE listener with `sse-swap="notes:changed"` on `#htmx-sidebar`
+- [x] 5.4 Replace manual `htmx.ajax()` SSE listener with `sse-swap="prompts:changed"` on `#prompts-panel`
 
 ### 6-A: CSS variable copying for dialogs
-- [ ] 5.5 Fix Settings and Help `<dialog>` CSS variable inheritance (remove JS variable-copy loop)
-- [ ] 5.6 Ensure `:root` variables cascade into `<dialog>` via explicit pass-through in `tailwind.css`
+- [x] 5.5 Fix Settings and Help `<dialog>` CSS variable inheritance (remove JS variable-copy loop)
+- [x] 5.6 Ensure `:root` variables cascade into `<dialog>` via explicit pass-through in `tailwind.css` (implemented in index.html)
 
 ---
 

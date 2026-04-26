@@ -1,0 +1,12 @@
+.ctx-item {
+  display:flex;align-items:center;gap:8px;
+  width:100%;background:transparent;border:none;text-align:left;
+  padding:6px 12px;font-size:14px;color:var(--theme-text);
+  cursor:pointer;transition:background 0.1s;
+}
+.ctx-item:hover { background:var(--theme-border2); }
+.ctx-item--keep { color:var(--theme-accentPrimary); }
+.ctx-item--trash { color:var(--theme-accentRed); }
+.ctx-item--danger { color:var(--theme-accentRed); }
+.ctx-item--active { background:var(--theme-border2); font-weight:700; }
+.ctx-separator { height:1px;background:var(--theme-border2);margin:4px 0; }

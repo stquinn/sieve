@@ -6,6 +6,7 @@
     <title>Sieve</title>
     <link rel="stylesheet" href="/static/tailwind.css">
     <link rel="stylesheet" href="/theme.css">
+    <link rel="stylesheet" href="/static/sidebar.css">
     <style>
         /* Basic layout styles to replicate App.css without React wrapper */
         html, body {
@@ -65,10 +66,13 @@
             color: var(--theme-muted);
             flex-shrink: 0;
         }
+        dialog {
+            color: var(--theme-text);
+        }
     </style>
     <style id="layout-overrides">
         #prompts-panel {
-            display: {{if .ShowPrompts}}block{{else}}none{{end}};
+            display: block;
         }
         #htmx-sidebar {
             display: {{if .ShowSidebar}}block{{else}}none{{end}};
@@ -83,8 +87,8 @@
         
         {{if .ShowSidebar}}
         <div id="sidebar-wrapper" style="width: var(--sidebar-w); display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; border-right: 1px solid var(--theme-border);">
-            <div id="htmx-sidebar" class="sidebar" style="flex: 1; min-height: 0; border-right: none;" hx-get="/api/sidebar" hx-trigger="load"></div>
-            <div id="prompts-panel" style="height: {{.PromptsHeight}}px;" hx-get="/api/prompts" hx-trigger="load"></div>
+            <div id="htmx-sidebar" class="sidebar" style="flex: 1; min-height: 0; border-right: none;" hx-get="/api/sidebar" hx-trigger="load, sse:notes:changed"></div>
+            <div id="prompts-panel" style="height: {{.PromptsHeight}}px;" hx-get="/api/prompts" hx-trigger="load, sse:prompts:changed, sse:notes:changed"></div>
         </div>
         <div class="sidebar-handle"></div>
         {{end}}
