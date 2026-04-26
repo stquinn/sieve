@@ -99,21 +99,11 @@ No JavaScript bridge, no `refreshTabBar()`, no `persistSession`.
 
 ## Phase 4 debt — Meta Panel
 
-### 4-A: Meta panel does not auto-refresh after save or AI evaluation
-**What:** `refreshMetaPanel` is only called on tab change and `showMeta` toggle. After autosave (version/modified bump) or AI eval (AI fields update), the meta panel shows stale data until the user switches tabs.
+### ~~4-A~~ RETIRED (Phase 5)
+`editor:saved` event is now dispatched by `SieveEditor` after each autosave. App.tsx listens and calls `refreshMetaPanel`.
 
-**Why deferred:** The SSE infrastructure for post-save events is Phase 5 work (editor island emits `editor:saved`). Once that exists, the meta panel can subscribe to it.
-
-**Retires in:** Phase 5.
-
----
-
-### 4-B: Version restore updates `dataService` but TipTap does not visually reload
-**What:** `editor:restore` event updates `dataService.current.setBody(uuid, body)` but TipTap's in-memory content is not updated. The editor will show stale content until the tab is reloaded.
-
-**Why deferred:** TipTap is still driven by React (EditorPanel). The fix is `editor.commands.setContent(body)` which requires access to the TipTap instance — that's the Phase 5 editor island.
-
-**Retires in:** Phase 5.
+### ~~4-B~~ RETIRED (Phase 5)
+`editor:restore` now calls `window.sieveEditor?.setContent(body)` which delegates to `editor.commands.setContent()` in the vanilla island.
 
 ---
 
@@ -121,6 +111,33 @@ No JavaScript bridge, no `refreshTabBar()`, no `persistSession`.
 **What:** `import { MetaPanel }` replaced with a comment. File still exists at `frontend/src/components/MetaPanel.tsx`.
 
 **Retires in:** Phase 9 — delete import comment and file.
+
+---
+
+## Phase 5 debt — Editor Island
+
+### 5-A: `@tiptap/react` still in package.json
+**What:** `@tiptap/react` is no longer imported by any source file but remains listed in `frontend/package.json`. The dead React NodeView files (`CodeBlockNodeView.tsx`, old `AiBlock.tsx` bits) can also be cleaned up.
+
+**Why deferred:** Removing the package requires a full `npm install` cycle which is low priority.
+
+**Retires in:** Phase 9.
+
+---
+
+### 5-B: Dead React component files not yet deleted
+**What:** `EditorPanel.tsx`, `MarkdownEditor.tsx`, `AskPopup.tsx`, `LinkBubbleMenu.tsx`, `CodeBlockNodeView.tsx` are no longer imported but remain on disk.
+
+**Retires in:** Phase 9.
+
+---
+
+### 5-C: OS file drag-and-drop not implemented
+**What:** Wails `DragAndDrop: &options.DragAndDrop{EnableFileDrop: true}` + `OnFileDrop` Go callback was deferred. Dragging files from Finder/Explorer onto the window does not save them as assets.
+
+**Why deferred:** Requires Go-side Wails config + handler; separate feature.
+
+**Retires in:** Phase 5 follow-up or Phase 9.
 
 ---
 

@@ -1,6 +1,4 @@
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
-import { ReactNodeViewRenderer } from '@tiptap/react'
-import { CodeBlockNodeView } from './CodeBlockNodeView'
 
 /**
  * Parse a fenced code block info string into its parts.
@@ -73,7 +71,44 @@ export const CodeBlockWithAttrs = CodeBlockLowlight.extend({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(CodeBlockNodeView)
+    return ({ node }: any) => {
+      const wrapper = document.createElement('div')
+      wrapper.className = 'code-block'
+      if (node.attrs.id) wrapper.setAttribute('data-block-id', node.attrs.id)
+
+      const gutter = document.createElement('div')
+      gutter.className = 'code-block__gutter'
+      gutter.contentEditable = 'false'
+      gutter.setAttribute('aria-hidden', 'true')
+
+      const code = document.createElement('code')
+
+      const updateGutter = (text: string) => {
+        const lines = text.split('\n')
+        const lineCount = lines[lines.length - 1] === '' ? lines.length - 1 : lines.length
+        gutter.innerHTML = ''
+        for (let i = 0; i < Math.max(lineCount, 1); i++) {
+          const span = document.createElement('span')
+          span.textContent = String(i + 1)
+          gutter.appendChild(span)
+        }
+      }
+
+      updateGutter(node.textContent)
+      wrapper.appendChild(gutter)
+      wrapper.appendChild(code)
+
+      return {
+        dom: wrapper,
+        contentDOM: code,
+        update(updatedNode: any) {
+          if (updatedNode.type.name !== node.type.name) return false
+          if (updatedNode.attrs.id) wrapper.setAttribute('data-block-id', updatedNode.attrs.id)
+          updateGutter(updatedNode.textContent)
+          return true
+        },
+      }
+    }
   },
 
   addStorage() {

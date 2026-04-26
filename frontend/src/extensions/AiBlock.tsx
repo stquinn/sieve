@@ -1,5 +1,4 @@
 import { Node, mergeAttributes } from '@tiptap/core'
-import { ReactNodeViewRenderer, NodeViewWrapper, NodeViewContent } from '@tiptap/react'
 
 /**
  * Custom sub-node for the "Question" part of an AI block.
@@ -17,40 +16,48 @@ export const AiQuestion = Node.create({
   },
 })
 
-function AiBlockView({ node }: any) {
+function makeAiBlockNodeView({ node }: any) {
+  const dom = document.createElement('div')
+  dom.className = 'ai-block'
+  dom.setAttribute('data-ai-id', node.attrs.id ?? '')
+  dom.setAttribute('data-ai-ref', node.attrs.ref ?? 'doc')
+
+  const badge = document.createElement('span')
+  badge.className = `ai-block__badge${node.textContent.includes('(thinking…)') ? ' ai-block__badge--thinking' : ''}`
+  badge.textContent = 'AI'
+
+  const contentEl = document.createElement('div')
+  contentEl.className = 'ai-block__content'
+
+  dom.appendChild(badge)
+  dom.appendChild(contentEl)
+
   const applyChain = (action: 'add' | 'remove') => {
-    const refs = (node.attrs.ref ?? '').split(',').map((r: string) => r.trim()).filter(Boolean)
-    const ids = gatherChain(node.attrs.id, refs)
+    const refs = (dom.getAttribute('data-ai-ref') ?? '').split(',').map((r: string) => r.trim()).filter(Boolean)
+    const ids = gatherChain(dom.getAttribute('data-ai-id') ?? '', refs)
     ids.forEach(id => {
-      if (id === node.attrs.id) return
-      document.querySelector(`[data-block-id="${id}"]`)
-        ?.classList[action]('block-ref-active')
-      document.querySelector(`.ai-block[data-ai-id="${id}"]`)
-        ?.classList[action]('ai-block--chain-active')
+      if (id === dom.getAttribute('data-ai-id')) return
+      document.querySelector(`[data-block-id="${id}"]`)?.classList[action]('block-ref-active')
+      document.querySelector(`.ai-block[data-ai-id="${id}"]`)?.classList[action]('ai-block--chain-active')
     })
   }
 
-  const activate   = () => applyChain('add')
-  const deactivate = () => applyChain('remove')
+  dom.addEventListener('mouseenter', () => applyChain('add'))
+  dom.addEventListener('mouseleave', () => applyChain('remove'))
+  dom.addEventListener('focus',      () => applyChain('add'))
+  dom.addEventListener('blur',       () => applyChain('remove'))
 
-  const isThinking = node.textContent.includes('(thinking…)')
-  
-  return (
-    <NodeViewWrapper>
-      <div
-        className="ai-block"
-        data-ai-id={node.attrs.id}
-        data-ai-ref={node.attrs.ref}
-        onMouseEnter={activate}
-        onMouseLeave={deactivate}
-        onFocus={activate}
-        onBlur={deactivate}
-      >
-        <span className={`ai-block__badge ${isThinking ? 'ai-block__badge--thinking' : ''}`}>AI</span>
-        <NodeViewContent className="ai-block__content" />
-      </div>
-    </NodeViewWrapper>
-  )
+  return {
+    dom,
+    contentDOM: contentEl,
+    update(updatedNode: any) {
+      if (updatedNode.type.name !== 'aiBlock') return false
+      dom.setAttribute('data-ai-id', updatedNode.attrs.id ?? '')
+      dom.setAttribute('data-ai-ref', updatedNode.attrs.ref ?? 'doc')
+      badge.className = `ai-block__badge${updatedNode.textContent.includes('(thinking…)') ? ' ai-block__badge--thinking' : ''}`
+      return true
+    },
+  }
 }
 
 function gatherChain(startId: string, startRefs: string[]): Set<string> {
@@ -98,7 +105,7 @@ export const AiBlock = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(AiBlockView)
+    return makeAiBlockNodeView
   },
 
   addStorage() {

@@ -1,6 +1,5 @@
 import Image from '@tiptap/extension-image'
-import { ReactNodeViewRenderer } from '@tiptap/react'
-import { ImageNodeView } from './ImageNodeView'
+import { resolveDisplaySrc } from './ImageNodeView'
 
 export const ImageWithAttrs = Image.extend({
   addAttributes() {
@@ -34,10 +33,69 @@ export const ImageWithAttrs = Image.extend({
     }
   },
 
-  // Custom node view resolves relative markdown paths to /stash/... display URLs.
-  // The active tab path is kept in extension.storage.activeTabPath (updated by App.tsx).
   addNodeView() {
-    return ReactNodeViewRenderer(ImageNodeView)
+    return ({ node, updateAttributes }: any) => {
+      const wrapper = document.createElement('div')
+      wrapper.style.display = 'inline-block'
+
+      const img = document.createElement('img')
+      const resizer = document.createElement('div')
+      resizer.className = 'image-resizer'
+
+      const applyAttrs = (n: any) => {
+        const { src, alt, width, height, summary, id } = n.attrs
+        const activeTabPath = (window as any).__stashActiveTabPath ?? ''
+        wrapper.className = `image-block node-image`
+        if (id) wrapper.setAttribute('data-block-id', id)
+        else wrapper.removeAttribute('data-block-id')
+        if (summary) wrapper.setAttribute('data-tooltip', summary)
+        else wrapper.removeAttribute('data-tooltip')
+        img.src = resolveDisplaySrc(src, activeTabPath)
+        img.alt = alt ?? ''
+        img.style.maxWidth = '100%'
+        img.style.display = 'block'
+        img.style.width  = width  ? (width.match(/^[0-9]+$/)  ? width + 'px'  : width)  : ''
+        img.style.height = height ? (height.match(/^[0-9]+$/) ? height + 'px' : height) : ''
+      }
+
+      applyAttrs(node)
+
+      resizer.addEventListener('mousedown', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const startX = e.clientX
+        const startW = img.clientWidth
+        const startH = img.clientHeight
+        const ratio = startW / startH
+        const onMove = (ev: MouseEvent) => {
+          const w = Math.max(40, startW + ev.clientX - startX)
+          const h = Math.round(w / ratio)
+          img.style.width = w + 'px'
+          img.style.height = h + 'px'
+          updateAttributes({ width: String(w), height: String(h) })
+        }
+        const onUp = () => {
+          window.removeEventListener('mousemove', onMove)
+          window.removeEventListener('mouseup', onUp)
+          document.body.style.cursor = ''
+        }
+        document.body.style.cursor = 'nwse-resize'
+        window.addEventListener('mousemove', onMove)
+        window.addEventListener('mouseup', onUp)
+      })
+
+      wrapper.appendChild(img)
+      wrapper.appendChild(resizer)
+
+      return {
+        dom: wrapper,
+        update(updatedNode: any) {
+          if (updatedNode.type.name !== node.type.name) return false
+          applyAttrs(updatedNode)
+          return true
+        },
+      }
+    }
   },
 
   addStorage() {

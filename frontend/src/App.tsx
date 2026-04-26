@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import './lib/SmartStorables'
-import { EditorPanel, EditorPanelHandle } from './components/EditorPanel'
+import { SieveEditor } from './editor/SieveEditor'
 import { sieve as stash } from '../wailsjs/go/models'
 // Backend service imports moved to line 19-25 block
 import {
@@ -71,9 +71,10 @@ export default function App() {
   const [openFolders, setOpenFolders] = useState<Set<string>>(new Set())
   const [lastSettingsPanel, setLastSettingsPanel] = useState<SettingsTab>('ai')
   
+  const [editorStats, setEditorStats] = useState({ chars: 0, lines: 0 })
   const dataService = useRef(new StorableDataService(() => setTick(t => t + 1)))
   const aiService   = useRef(new AiService(dataService.current, () => setTick(t => t + 1)))
-  const editorRefs = useRef<Map<string, EditorPanelHandle>>(new Map())
+  const editorInstanceRef = useRef<SieveEditor | null>(null)
   const activeTab = tabs[activeIdx]
   const isMarkdownMode = activeTab?.mode === 'markdown'
 
@@ -129,6 +130,39 @@ export default function App() {
     const isDirty = !!dataService.current.get(uuid)?.isModified
     ;(window as any).sieveSetMetaDirty?.(isDirty)
   }, [tick, showMeta])
+
+  // Mount vanilla editor island once — load/unload via editorInstanceRef
+  useEffect(() => {
+    const container = document.getElementById('editor-container')
+    if (!container) return
+    const inst = new SieveEditor(container, dataService.current, aiService.current, tier as any, autosaveMs.current)
+    editorInstanceRef.current = inst
+    ;(window as any).sieveEditor = inst
+
+    const onStats = (e: Event) => setEditorStats((e as CustomEvent).detail)
+    const onSaved = (e: Event) => {
+      const { uuid } = (e as CustomEvent).detail ?? {}
+      if (uuid) refreshMetaPanel(uuid)
+    }
+    document.addEventListener('editor:stats', onStats)
+    document.addEventListener('editor:saved', onSaved)
+
+    return () => {
+      inst.destroy()
+      editorInstanceRef.current = null
+      delete (window as any).sieveEditor
+      document.removeEventListener('editor:stats', onStats)
+      document.removeEventListener('editor:saved', onSaved)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load the active tab into the editor whenever it changes
+  useEffect(() => {
+    const tab = tabs[activeIdx]
+    if (tab && editorInstanceRef.current) {
+      editorInstanceRef.current.load(tab.uuid, tab.mode as 'wysiwyg' | 'markdown')
+    }
+  }, [activeIdx, tabs.length])
 
   // Expose stable globals so the HTMX sidebar and tab bar can call into React state
   useEffect(() => {
@@ -602,7 +636,10 @@ export default function App() {
       const { body } = (e as CustomEvent).detail ?? {}
       if (typeof body !== 'string') return
       const uuid = tabsRef.current[activeIdxRef.current]?.uuid
-      if (uuid) dataService.current.setBody(uuid, body)
+      if (uuid) {
+        dataService.current.setBody(uuid, body)
+        editorInstanceRef.current?.setContent(body)
+      }
     }
     document.body.addEventListener('editor:restore', onEditorRestore)
 
@@ -767,48 +804,29 @@ export default function App() {
                   const val = e.target.value
                   setSearchTerm(val)
                   const uuid = tabsRef.current[activeIdxRef.current]?.uuid
-                  const editor = uuid ? editorRefs.current.get(uuid) : null
-                  if (editor) editor.setSearchTerm(val)
+                  editorInstanceRef.current?.setSearchTerm(val)
                 }}
                 onKeyDown={e => {
                   if (e.key === 'Escape') {
                     setShowSearch(false)
                     setSearchTerm('')
                     const uuid = tabsRef.current[activeIdxRef.current]?.uuid
-                    const editor = uuid ? editorRefs.current.get(uuid) : null
-                    if (editor) editor.clearSearch()
+                    editorInstanceRef.current?.clearSearch()
                   }
                 }} />
               <button onClick={() => {
                 setShowSearch(false)
                 setSearchTerm('')
-                const uuid = tabsRef.current[activeIdxRef.current]?.uuid
-                const editor = uuid ? editorRefs.current.get(uuid) : null
-                if (editor) editor.clearSearch()
+                editorInstanceRef.current?.clearSearch()
               }}><X size={16} /></button>
             </div>
           )}
 
-          <div id="app" className="editor-wrapper">
-            {tabs.filter(t => typeof t.uuid === 'string' && t.uuid.length > 0).map((t, i) => (
-              <div 
-                key={t.uuid} 
-                style={{ display: i === activeIdx ? 'contents' : 'none' }}
-              >
-                <EditorPanel
-                  ref={ref => { if (ref) editorRefs.current.set(t.uuid, ref); else editorRefs.current.delete(t.uuid) }}
-                  uuid={t.uuid}
-                  mode={t.mode}
-                  dataService={dataService.current}
-                  isActive={i === activeIdx}
-                  tick={tick}
-                  tier={tier}
-                  aiService={aiService.current}
-                  autosaveMs={autosaveMs.current}
-                />
-              </div>
-            ))}
-          </div>
+          <div
+            id="editor-container"
+            className="editor-wrapper"
+            style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+          />
 
           {showMeta && activeTab && (
             <>
@@ -856,11 +874,7 @@ export default function App() {
           </div>
           <div className="status-bar__right">
             {activeTab && (
-              <EditorStats 
-                editor={editorRefs.current.get(activeTab.uuid)?.getEditor() || null} 
-                isMarkdownMode={activeTab.mode === 'markdown'} 
-                rawMd={dataService.current.get(activeTab.uuid)?.body || ''} 
-              />
+              <EditorStats chars={editorStats.chars} lines={editorStats.lines} />
             )}
           </div>
         </div>
