@@ -17,7 +17,6 @@ import { useAppLifecycle } from './hooks/useAppLifecycle'
 import { useUiState } from './hooks/useUiState'
 import { StorableDataService } from './lib/StorableDataService'
 import { AiService } from './lib/AiService'
-import { isMod } from './utils/platform'
 export type SettingsTab = 'ai' | 'appearance' | 'editor'
 import './App.css'
 
@@ -266,8 +265,19 @@ export default function App() {
         }
       })
     }
-    ;(window as any).sieveCloseAllTabs  = () => closeAllTabsRef.current?.()
-    ;(window as any).sieveDeleteNote    = (id: string) => deleteNoteByIdRef.current?.(id)
+    ;(window as any).sieveCloseAllTabs      = () => closeAllTabsRef.current?.()
+    ;(window as any).sieveDeleteNote        = (id: string) => deleteNoteByIdRef.current?.(id)
+    // Globals for Wails native menu shortcuts
+    ;(window as any).sieveCloseActiveTab    = () => handlers.current?.closeTab()
+    ;(window as any).sieveSave              = () => handlers.current?.save()
+    ;(window as any).sieveToggleSidebar     = () => setShowSidebar(prev => !prev)
+    ;(window as any).sieveToggleMeta        = () => setShowMeta(prev => !prev)
+    ;(window as any).sieveTogglePrompts     = () => setShowPrompts(prev => !prev)
+    ;(window as any).sieveToggleSearch      = () => toggleSearch()
+    ;(window as any).sieveSidebarSearch     = () => { setSidebarMode('search'); setShowSidebar(true) }
+    ;(window as any).sieveSmartFileActive   = () => handlers.current?.smartFile()
+    ;(window as any).sieveKeepAndSmartFile  = () => handlers.current?.keepAndSmartFile()
+    ;(window as any).sieveToggleMode        = () => handlers.current?.toggleMode()
     ;(window as any).sieveSetMetaDirty  = (dirty: boolean) => {
       const indicator = document.getElementById('meta-dirty-indicator')
       if (!indicator) return
@@ -300,6 +310,16 @@ export default function App() {
       delete (window as any).sieveCloseAllTabs
       delete (window as any).sieveDeleteNote
       delete (window as any).sieveSetMetaDirty
+      delete (window as any).sieveCloseActiveTab
+      delete (window as any).sieveSave
+      delete (window as any).sieveToggleSidebar
+      delete (window as any).sieveToggleMeta
+      delete (window as any).sieveTogglePrompts
+      delete (window as any).sieveToggleSearch
+      delete (window as any).sieveSidebarSearch
+      delete (window as any).sieveSmartFileActive
+      delete (window as any).sieveKeepAndSmartFile
+      delete (window as any).sieveToggleMode
     }
   }, [])
 
@@ -612,60 +632,6 @@ export default function App() {
 
 
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      const key = e.key.toLowerCase()
-      const mod = isMod(e)
-      console.log(`[stash:key] ${mod?'Mod+':''}${e.shiftKey?'Shift+':''}${key} (code: ${e.code}, kc: ${e.keyCode})`)
-
-      if (mod && key === 'n') { e.preventDefault(); handlers.current.newTab() }
-      if (mod && (key === 'w' || e.code === 'KeyW')) { 
-        e.preventDefault(); 
-        e.stopImmediatePropagation();
-        handlers.current.closeTab(); 
-      }
-      if (mod && key === 's') { e.preventDefault(); handlers.current.save() }
-      if (mod && key === ',') { e.preventDefault(); (window as any).sieveOpenSettings?.() }
-      if (mod && e.shiftKey && key === 'm') { e.preventDefault(); handlers.current.toggleMode() }
-      if (mod && (key === 'p' || e.code === 'KeyP') && !e.shiftKey) { e.preventDefault(); (window as any).sieveOpenQuickSwitcher?.() }
-      if (mod && e.shiftKey && (key === 'p' || e.code === 'KeyP')) { 
-        e.preventDefault(); 
-        setShowPrompts(prev => !prev)
-      }
-      if (mod && (key === '\\' || e.code === 'Backslash')) { 
-        e.preventDefault(); 
-        setShowSidebar(prev => !prev)
-      }
-      if (mod && e.shiftKey && (key === 'i' || e.code === 'KeyI')) { 
-        e.preventDefault(); 
-        setShowMeta(prev => !prev)
-      }
-      if (mod && (key === '/' || key === '?' || e.code === 'Slash' || e.keyCode === 191)) { 
-        e.preventDefault(); 
-        e.stopImmediatePropagation();
-        console.log('[stash:ui] Toggling Help Modal...');
-        (window as any).sieveHelp?.()
-      }
-      if (mod && key === 'f' && !e.shiftKey) { e.preventDefault(); toggleSearch() }
-      if (mod && e.shiftKey && key === 'f') { 
-        e.preventDefault(); 
-        setSidebarMode('search'); 
-        setShowSidebar(true); 
-      }
-
-      // AI Gestures (Globalized for focus-independence)
-      if (mod && e.shiftKey && key === 'e') { 
-        e.preventDefault(); 
-        handlers.current.smartFile(); 
-      }
-      if (mod && e.shiftKey && key === 'enter') { 
-        e.preventDefault(); 
-        handlers.current.keepAndSmartFile(); 
-      }
-    }
-    window.addEventListener('keydown', onKeyDown, { capture: true })
-    return () => window.removeEventListener('keydown', onKeyDown, { capture: true })
-  }, [])
 
   useEffect(() => {
     dataService.current.getStoreInfo().then(info => {

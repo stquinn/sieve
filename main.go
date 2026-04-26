@@ -15,8 +15,11 @@ import (
 	"sieve/sieve"
 
 	"github.com/wailsapp/wails/v2"
+	"github.com/wailsapp/wails/v2/pkg/menu"
+	"github.com/wailsapp/wails/v2/pkg/menu/keys"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 //go:embed all:frontend/dist
@@ -151,6 +154,43 @@ func (m *muxHandler) serveThemeCSS(w http.ResponseWriter, _ *http.Request) {
 	w.Write([]byte("}\n"))
 }
 
+func buildMenu(app *App) *menu.Menu {
+	js := func(script string) func(*menu.CallbackData) {
+		return func(_ *menu.CallbackData) {
+			wailsruntime.WindowExecJS(app.ctx, script)
+		}
+	}
+
+	appMenu := menu.NewMenu()
+
+	file := appMenu.AddSubmenu("File")
+	file.AddText("New Note", keys.CmdOrCtrl("n"), js("window.sieveNewNote?.()"))
+	file.AddText("Save", keys.CmdOrCtrl("s"), js("window.sieveSave?.()"))
+	file.AddText("Close Tab", keys.CmdOrCtrl("w"), js("window.sieveCloseActiveTab?.()"))
+	file.AddSeparator()
+	file.AddText("Quit", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
+		wailsruntime.Quit(app.ctx)
+	})
+
+	view := appMenu.AddSubmenu("View")
+	view.AddText("Toggle Sidebar", keys.CmdOrCtrl("\\"), js("window.sieveToggleSidebar?.()"))
+	view.AddText("Toggle Meta Panel", keys.Combo("i", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveToggleMeta?.()"))
+	view.AddText("Toggle Prompts", keys.Combo("p", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveTogglePrompts?.()"))
+	view.AddText("Toggle Editor Mode", keys.Combo("m", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveToggleMode?.()"))
+	view.AddText("Toggle Search", keys.CmdOrCtrl("f"), js("window.sieveToggleSearch?.()"))
+	view.AddText("Sidebar Search", keys.Combo("f", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveSidebarSearch?.()"))
+	view.AddSeparator()
+	view.AddText("Quick Switcher", keys.CmdOrCtrl("p"), js("window.sieveOpenQuickSwitcher?.()"))
+	view.AddText("Settings", keys.CmdOrCtrl(","), js("window.sieveOpenSettings?.()"))
+	view.AddText("Help", keys.CmdOrCtrl("/"), js("window.sieveHelp?.()"))
+
+	ai := appMenu.AddSubmenu("AI")
+	ai.AddText("Smart File", keys.Combo("e", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveSmartFileActive?.()"))
+	ai.AddText("Keep & Smart File", keys.Combo("return", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveKeepAndSmartFile?.()"))
+
+	return appMenu
+}
+
 func main() {
 	cliArg := ""
 	if len(os.Args) > 1 {
@@ -181,6 +221,7 @@ func main() {
 
 	err = wails.Run(&options.App{
 		Title:                    "Sieve",
+		Menu:                     buildMenu(app),
 		Width:                    1200,
 		Height:                   800,
 		MinWidth:                 800,
