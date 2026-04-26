@@ -291,6 +291,7 @@
   function createAskDialog() {
     var dialog = document.createElement('dialog')
     dialog.className = 'ask-popup'
+    dialog.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);top:auto;margin:0;width:80vh;max-width:90vw;'
 
     var header = document.createElement('div'); header.className = 'ask-popup__header'
     var label = document.createElement('span'); label.className = 'ask-popup__label'
@@ -318,11 +319,18 @@
     return dialog
   }
 
+  var pendingAskCtx = null
+
   function openAskPopup() {
     if (!askDialog) return
+    // Build context NOW while editor still has focus and selection intact.
+    // showModal() will steal DOM focus which can collapse the browser selection.
+    pendingAskCtx = window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentPath)
     var label = askDialog.querySelector('.ask-popup__label')
     var textarea = askDialog.querySelector('.ask-popup__input')
-    label.textContent = (currentPath ? currentPath.split('/').pop() : 'Document') + ' Inquiry'
+    var ctxLabel = (pendingAskCtx && pendingAskCtx.contextLabel) || ''
+    var fileLabel = currentPath ? currentPath.split('/').pop() : 'Document'
+    label.textContent = (ctxLabel && ctxLabel !== 'Document' ? ctxLabel + ' — ' + fileLabel : fileLabel) + ' Inquiry'
     textarea.value = ''
     askDialog.showModal()
     textarea.focus()
@@ -330,24 +338,37 @@
 
   function doAsk(textarea, dialog) {
     var val = textarea.value.trim()
-    if (val) { runAiJob('ask', val); dialog.close() }
+    if (val) { runAiJob('ask', val, pendingAskCtx); pendingAskCtx = null; dialog.close() }
   }
 
   // ── AI jobs ───────────────────────────────────────────────────────────────────
 
-  function runAiJob(type, question) {
+  function runAiJob(type, question, precomputedCtx) {
     var ai = window.__sieveAiService
     if (!ai) return
 
     var blkId = 'ai-' + Math.random().toString(16).substring(2, 6)
     var job = { docId: currentUuid, blkId: blkId }
-    var ctx = window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentPath)
+    var ctx = precomputedCtx || window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentPath)
     var lines = question ? question.split('\n') : []
+
+    // Resolve insert position AFTER buildAiContext, which may have wrapped the selection
+    // in a new blockRef node via tr.wrap(). If so, selection.to lands inside that node;
+    // we must insert the aiBlock AFTER the blockRef, not inside it.
+    var insertPos = currentEditor ? currentEditor.state.selection.to : 0
+    if (ctx && ctx.blockRef && ctx.blockRef !== 'doc' && !ctx.blockRef.includes(',') && currentEditor) {
+      currentEditor.state.doc.descendants(function (node, pos) {
+        if (node.type.name === 'blockRef' && node.attrs.id === ctx.blockRef) {
+          insertPos = pos + node.nodeSize
+          return false
+        }
+      })
+    }
 
     if (currentMode === 'markdown') {
       insertAiPlaceholderMarkdown(blkId, question, lines)
     } else {
-      insertAiPlaceholderWysiwyg(blkId, question, lines)
+      insertAiPlaceholderWysiwyg(blkId, question, lines, insertPos)
     }
 
     var listener = {
@@ -367,7 +388,7 @@
     scheduleSave(currentUuid, lastSyncedBody)
   }
 
-  function insertAiPlaceholderWysiwyg(blkId, question, lines) {
+  function insertAiPlaceholderWysiwyg(blkId, question, lines, insertPos) {
     if (!currentEditor) return
     var qNodes = lines.map(function (l, i) {
       return {
@@ -378,7 +399,7 @@
         ].filter(Boolean) : []
       }
     })
-    var insertPos = currentEditor.state.selection.to
+    if (insertPos === undefined) insertPos = currentEditor.state.selection.to
     currentEditor.commands.insertContentAt(insertPos, {
       type: 'aiBlock',
       attrs: { id: blkId, thinking: true },
