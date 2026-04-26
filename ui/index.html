@@ -101,6 +101,7 @@
             <div class="editor-area">
                 <div id="htmx-editor" class="editor-wrapper" style="flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column;">
                     <div id="tiptap-mount" data-uuid="{{.ActiveUUID}}" data-mode="wysiwyg" style="flex: 1; min-height: 0; height: 100%; display: flex; flex-direction: column;"></div>
+                    <div id="prompts-panel" style="display: {{if .ShowPrompts}}block{{else}}none{{end}}; height: {{.PromptsHeight}}px;" hx-get="/api/prompts" hx-trigger="load"></div>
                 </div>
 
                 {{if .ShowMeta}}

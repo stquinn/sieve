@@ -144,6 +144,7 @@ func newAPIHandler(app *App, hub *sseHub) (*apiHandler, error) {
 	r.Get("/sse", h.hub.ServeHTTP)
 	r.Handle("/static/*", http.StripPrefix("/static", h.static))
 	r.Get("/", h.handleIndex)
+	r.Get("/api/prompts", h.handlePrompts)
 	
 	// Note & Tab operations
 	r.Post("/api/note/open/{id}", h.handleNoteOpen)
@@ -256,6 +257,16 @@ func (h *apiHandler) handleNoteOpen(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `<div id="htmx-editor" hx-swap-oob="true" class="editor-wrapper" style="flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column;">
 		<div id="tiptap-mount" data-uuid="%s" data-mode="wysiwyg" style="flex: 1; min-height: 0; height: 100%; display: flex; flex-direction: column;"></div>
 	</div>`, id)
+}
+
+func (h *apiHandler) handlePrompts(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	prompts := h.app.GetPrompts()
+	if err := h.tmpl.ExecuteTemplate(w, "prompts.html", prompts); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 func (h *apiHandler) handleNoteNew(w http.ResponseWriter, r *http.Request) {
