@@ -46,7 +46,7 @@
         window.__stashActiveTabPath = data.path || ''
         lastSyncedBody = data.body || ''
 
-        var isMarkdown = data.mode === 'markdown' || uuid.startsWith('prompt:')
+        var isMarkdown = mode === 'markdown' || data.mode === 'markdown' || uuid.startsWith('prompt:')
         ensureOverlays()
 
         if (isMarkdown) {

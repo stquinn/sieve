@@ -14,7 +14,7 @@ import { NoteEntry, PromptEntry } from './types'
 import { StoreSearch } from './components/StoreSearch'
 import { QuickSwitcher } from './components/QuickSwitcher'
 import { TimeoutPopup } from './components/TimeoutPopup'
-import { TabState, UserIntent } from './types'
+import { TabMode, TabState, UserIntent } from './types'
 import { ModalProvider } from './lib/ModalContext'
 import { X } from 'lucide-react'
 import { EditorStats } from './components/EditorStats'
@@ -98,6 +98,7 @@ export default function App() {
   const tierRef                  = useRef<'dumb' | 'smart'>('dumb')
   const readyRef                 = useRef(false)
   const lastLoadedUuid           = useRef<string>('')
+  const lastLoadedMode           = useRef<string>('')
   const showSidebarRef           = useRef(true)
   const showMetaRef              = useRef(false)
   const showPromptsRef           = useRef(true)
@@ -251,14 +252,16 @@ export default function App() {
       const el = document.getElementById('htmx-editor')
       if (el) el.innerHTML = ''
       lastLoadedUuid.current = ''
+      lastLoadedMode.current = ''
       ;(window as any).sieveInitEditor?.(null, '', '')
       return
     }
-    if (lastLoadedUuid.current === uuid) {
-      console.log('[App] loadEditor skipping duplicate load for uuid:', uuid)
+    if (lastLoadedUuid.current === uuid && lastLoadedMode.current === mode) {
+      console.log('[App] loadEditor skipping duplicate load for uuid:', uuid, 'mode:', mode)
       return
     }
     lastLoadedUuid.current = uuid
+    lastLoadedMode.current = mode
     const el = document.getElementById('htmx-editor')
     if (el && uuid) {
       console.log('[App] loadEditor creating mount element directly')
@@ -494,8 +497,13 @@ export default function App() {
         const idx = activeIdxRef.current
         const tab = tabsRef.current[idx]
         if (!tab) return
-        const newMode = tab.mode === 'wysiwyg' ? 'markdown' : 'wysiwyg'
-        setTabs(prev => prev.map((t, i) => i === idx ? { ...t, mode: newMode } : t))
+        const newMode = (tab.mode === 'wysiwyg' ? 'markdown' : 'wysiwyg') as TabMode
+        setTabs(prev => {
+          const next = prev.map((t, i) => i === idx ? { ...t, mode: newMode } : t) as TabState[]
+          loadEditor(tab.uuid, newMode)
+          persistSession({ activeIdx: idx, tabs: tabsToSession(next, idx) as any }).then(refreshTabBar)
+          return next
+        })
       },
       smartFile: () => {
         const uuid = tabsRef.current[activeIdxRef.current]?.uuid
