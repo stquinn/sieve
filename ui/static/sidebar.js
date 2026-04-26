@@ -62,22 +62,4 @@
     });
   });
 
-  // Rename helpers — prompt for name then POST to action endpoint.
-  window.sieveRenameNote = function (id, currentName) {
-    var name = window.prompt('Rename note:', currentName);
-    if (!name || name === currentName) return;
-    window.htmx.ajax('POST', '/api/sidebar/rename-note?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name), {
-      target: '#htmx-sidebar',
-      swap: 'innerHTML',
-    });
-  };
-
-  window.sieveRenameFolder = function (id, currentName) {
-    var name = window.prompt('Rename folder:', currentName);
-    if (!name || name === currentName) return;
-    window.htmx.ajax('POST', '/api/sidebar/rename-folder?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name), {
-      target: '#htmx-sidebar',
-      swap: 'innerHTML',
-    });
-  };
 })();

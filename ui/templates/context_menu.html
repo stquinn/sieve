@@ -53,10 +53,7 @@
   <div class="ctx-separator"></div>
 
   <button class="ctx-item ctx-item--danger"
-    hx-post="/api/sidebar/delete-note?id={{.ID}}"
-    hx-target="#htmx-sidebar" hx-swap="innerHTML"
-    hx-confirm="Delete '{{.Name}}'? This cannot be undone."
-    onclick="window.sieveCloseMenu()">
+    onclick="window.sieveOpenDelete('{{.ID}}', '{{.Name}}', 'note'); window.sieveCloseMenu()">
     <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
     Delete Note...
   </button>
@@ -81,10 +78,7 @@
   <div class="ctx-separator"></div>
 
   <button class="ctx-item ctx-item--danger"
-    hx-post="/api/sidebar/delete-folder?id={{.ID}}"
-    hx-target="#htmx-sidebar" hx-swap="innerHTML"
-    hx-confirm="Delete folder '{{.Name}}'? It must be empty."
-    onclick="window.sieveCloseMenu()">
+    onclick="window.sieveOpenDelete('{{.ID}}', '{{.Name}}', 'folder'); window.sieveCloseMenu()">
     <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
     Delete Folder
   </button>

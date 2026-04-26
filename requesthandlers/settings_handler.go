@@ -1,0 +1,76 @@
+package requesthandlers
+
+import (
+	"fmt"
+	"html/template"
+	"net/http"
+	"strconv"
+	"sieve/sieve"
+
+	"github.com/go-chi/chi/v5"
+)
+
+type SettingsHandler struct {
+	State **sieve.StateService
+	Tmpl  *template.Template
+}
+
+func (h *SettingsHandler) RegisterPaths(r chi.Router) {
+	r.Get("/api/settings", h.handleSettings)
+	r.Post("/api/settings", h.handleSettingsSave)
+}
+
+func (h *SettingsHandler) handleSettings(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	state := *h.State
+	if state == nil {
+		fmt.Fprint(w, "")
+		return
+	}
+	settings := state.LoadSettings()
+	if err := h.Tmpl.ExecuteTemplate(w, "settings.html", settings); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	state := *h.State
+	if state == nil {
+		fmt.Fprint(w, "")
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	settings := state.LoadSettings()
+	settings.CLI = r.FormValue("cli")
+	settings.Model = r.FormValue("model")
+	
+	if debounceStr := r.FormValue("autosave_debounce"); debounceStr != "" {
+		if val, err := strconv.Atoi(debounceStr); err == nil {
+			settings.AutosaveDebounce = val
+		}
+	}
+	settings.Theme = r.FormValue("theme")
+	if maxHistStr := r.FormValue("max_history_versions"); maxHistStr != "" {
+		if val, err := strconv.Atoi(maxHistStr); err == nil {
+			settings.MaxHistoryVersions = val
+		}
+	}
+	settings.Debug = r.FormValue("debug") == "on"
+
+	if err := state.SaveSettings(settings); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := h.Tmpl.ExecuteTemplate(w, "settings.html", settings); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}

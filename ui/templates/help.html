@@ -1,0 +1,211 @@
+{{define "help.html"}}
+<div class="help-modal">
+  <div class="help-modal__header">
+    <span class="help-modal__title">Sieve — Quick Reference</span>
+    <button class="help-modal__close" onclick="document.getElementById('help-dialog').close()" title="Close (Esc)">✕</button>
+  </div>
+
+  <div class="help-modal__body">
+    <!-- Column 1: Global -->
+    <section class="help-modal__section">
+      <h3 class="help-modal__section-title">Global Shortcuts</h3>
+      <table class="help-modal__table">
+        <tbody>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">N</kbd></td>
+            <td class="help-modal__desc">New tab</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">W</kbd></td>
+            <td class="help-modal__desc">Close tab</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">P</kbd></td>
+            <td class="help-modal__desc">Quick switcher</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">F</kbd></td>
+            <td class="help-modal__desc">Find in file</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">F</kbd></td>
+            <td class="help-modal__desc">Global search</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">\</kbd></td>
+            <td class="help-modal__desc">Toggle sidebar</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">S</kbd></td>
+            <td class="help-modal__desc">Save note</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">/</kbd></td>
+            <td class="help-modal__desc">Cheat sheet</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Click</kbd></td>
+            <td class="help-modal__desc">Open URL</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Column 2: AI & Views -->
+    <section class="help-modal__section">
+      <h3 class="help-modal__section-title">AI & View Gestures</h3>
+      <table class="help-modal__table">
+        <tbody>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">E</kbd></td>
+            <td class="help-modal__desc">Smart Filing</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Enter</kbd></td>
+            <td class="help-modal__desc">Promote AI</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">E</kbd></td>
+            <td class="help-modal__desc">Explain block</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">A</kbd></td>
+            <td class="help-modal__desc">Ask AI block</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">P</kbd></td>
+            <td class="help-modal__desc">Prompt tray</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">I</kbd></td>
+            <td class="help-modal__desc">Meta drawer</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">M</kbd></td>
+            <td class="help-modal__desc">Markdown view</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">J</kbd></td>
+            <td class="help-modal__desc">Toggle AI visibility</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Column 3: Formatting -->
+    <section class="help-modal__section">
+      <h3 class="help-modal__section-title">Formatting Shortcuts</h3>
+      <table class="help-modal__table">
+        <tbody>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">B</kbd></td>
+            <td class="help-modal__desc">Bold</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">I</kbd></td>
+            <td class="help-modal__desc">Italic</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Z</kbd></td>
+            <td class="help-modal__desc">Undo</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Z</kbd></td>
+            <td class="help-modal__desc">Redo</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Alt</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">1-6</kbd></td>
+            <td class="help-modal__desc">Headings</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">8</kbd></td>
+            <td class="help-modal__desc">Bullet list</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">7</kbd></td>
+            <td class="help-modal__desc">Number list</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">9</kbd></td>
+            <td class="help-modal__desc">Task list</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">B</kbd></td>
+            <td class="help-modal__desc">Block quote</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Enter</kbd></td>
+            <td class="help-modal__desc">Hard break</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Column 4: Markdown Reference -->
+    <section class="help-modal__section">
+      <h3 class="help-modal__section-title">Markdown Reference</h3>
+      <table class="help-modal__table">
+        <tbody>
+          <tr>
+            <td class="help-modal__syntax"><code># H1</code></td>
+            <td class="help-modal__desc">Heading 1</td>
+          </tr>
+          <tr>
+            <td class="help-modal__syntax"><code>**bold**</code></td>
+            <td class="help-modal__desc">Bold</td>
+          </tr>
+          <tr>
+            <td class="help-modal__syntax"><code>*italics*</code></td>
+            <td class="help-modal__desc">Italic</td>
+          </tr>
+          <tr>
+            <td class="help-modal__syntax"><code>~~strike~~</code></td>
+            <td class="help-modal__desc">Strikethrough</td>
+          </tr>
+          <tr>
+            <td class="help-modal__syntax"><code>`code`</code></td>
+            <td class="help-modal__desc">Inline code</td>
+          </tr>
+          <tr>
+            <td class="help-modal__syntax"><code>[title](url)</code></td>
+            <td class="help-modal__desc">Hyperlink</td>
+          </tr>
+          <tr>
+            <td class="help-modal__syntax"><code>&gt; quote</code></td>
+            <td class="help-modal__desc">Blockquote</td>
+          </tr>
+          <tr>
+            <td class="help-modal__syntax"><code>- item</code></td>
+            <td class="help-modal__desc">Bullet</td>
+          </tr>
+          <tr>
+            <td class="help-modal__syntax"><code>1. item</code></td>
+            <td class="help-modal__desc">Numbered</td>
+          </tr>
+          <tr>
+            <td class="help-modal__syntax"><code>- [ ] task</code></td>
+            <td class="help-modal__desc">Task box</td>
+          </tr>
+          <tr>
+            <td class="help-modal__syntax"><code>---</code></td>
+            <td class="help-modal__desc">Divider</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </div>
+</div>
+
+<script>
+(function() {
+  var isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0 || navigator.userAgent.toUpperCase().indexOf('MAC') >= 0;
+  var modKey = isMac ? 'Cmd' : 'Ctrl';
+  var kbds = document.querySelectorAll('.help-modal__kbd');
+  kbds.forEach(function(kbd) {
+    if (kbd.textContent === 'Mod') {
+      kbd.textContent = modKey;
+    }
+  });
+})();
+</script>
+{{end}}

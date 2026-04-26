@@ -7,15 +7,12 @@ import {
   TogglePrompts, SelectVault, InitVault, ShowInFilesByID
 } from '../wailsjs/go/main/App'
 import { BrowserOpenURL, EventsOn } from '../wailsjs/runtime/runtime'
-import { HelpModal } from './components/HelpModal'
-import { Sidebar } from './components/Sidebar'
 import { NoteEntry, PromptEntry } from './types'
 // MetaPanel replaced by HTMX — see #htmx-meta-panel and /api/meta handler
 import { StoreSearch } from './components/StoreSearch'
 import { QuickSwitcher } from './components/QuickSwitcher'
 import { TimeoutPopup } from './components/TimeoutPopup'
 import { TabMode, TabState, UserIntent } from './types'
-import { ModalProvider } from './lib/ModalContext'
 import { X } from 'lucide-react'
 import { EditorStats } from './components/EditorStats'
 import { useAppLifecycle } from './hooks/useAppLifecycle'
@@ -23,7 +20,7 @@ import { useUiState } from './hooks/useUiState'
 import { StorableDataService } from './lib/StorableDataService'
 import { AiService } from './lib/AiService'
 import { isMod } from './utils/platform'
-import { SettingsModal, SettingsTab } from './components/SettingsModal'
+export type SettingsTab = 'ai' | 'appearance' | 'editor'
 import './App.css'
 
 function getAncestorFolderIDs(noteID: string, entries: NoteEntry[]): string[] {
@@ -61,7 +58,6 @@ export default function App() {
     isMetaDragging, setIsMetaDragging,
     pendingClose, setPendingClose,
   } = useUiState()
-  const [showSettings, setShowSettings] = useState(false)
   const [searchTerm, setSearchTerm]         = useState('')
   const [notes, setNotes]         = useState<NoteEntry[]>([])
   const [prompts, setPrompts]     = useState<PromptEntry[]>([])
@@ -80,11 +76,9 @@ export default function App() {
   // Stable refs for globals exposed to HTMX sidebar and tab bar
   const openDocRef        = useRef<((id: string) => Promise<void>) | undefined>(undefined)
   const newTabRef         = useRef<(() => Promise<void>) | undefined>(undefined)
-  const showSettingsRef   = useRef<(() => void) | undefined>(undefined)
   const selectTabByIdRef  = useRef<((id: string) => void) | undefined>(undefined)
   const closeTabByIdRef   = useRef<((id: string) => void) | undefined>(undefined)
   const reorderTabsRef    = useRef<((from: number, to: number) => void) | undefined>(undefined)
-  const showHelpRef       = useRef<(() => void) | undefined>(undefined)
   const closeAllTabsRef   = useRef<(() => void) | undefined>(undefined)
   const deleteNoteByIdRef = useRef<((id: string) => void) | undefined>(undefined)
 
@@ -166,14 +160,101 @@ export default function App() {
   useEffect(() => {
     ;(window as any).sieveOpenNote      = (id: string) => openDocRef.current?.(id)
     ;(window as any).sieveNewNote       = () => newTabRef.current?.()
-    ;(window as any).sieveOpenSettings  = () => showSettingsRef.current?.()
+    ;(window as any).sieveOpenSettings  = () => {
+      const dlg = document.getElementById('settings-dialog') as any
+      if (dlg) {
+        const computed = getComputedStyle(document.documentElement);
+        ['--theme-bg', '--theme-bgDark', '--theme-bgAlt', '--theme-border', '--theme-border2', '--theme-muted', '--theme-text', '--theme-textDim', '--theme-accentPrimary', '--theme-accentCyan', '--theme-accentGreen', '--theme-accentYellow', '--theme-accentOrange', '--theme-accentRed', '--theme-accentPurple'].forEach(v => {
+          dlg.style.setProperty(v, computed.getPropertyValue(v));
+        });
+        dlg.showModal()
+        const htmx = (window as any).htmx
+        const target = document.getElementById('settings-dialog-content')
+        if (htmx && target) {
+          htmx.ajax('GET', '/api/settings', { target: target, swap: 'innerHTML' })
+        }
+      }
+    }
+    ;(window as any).sieveRenameNote = (id: string, currentName: string) => {
+      const dlg = document.getElementById('rename-dialog') as any
+      if (dlg) {
+        const computed = getComputedStyle(document.documentElement);
+        ['--theme-bg', '--theme-bgDark', '--theme-bgAlt', '--theme-border', '--theme-border2', '--theme-muted', '--theme-text', '--theme-textDim', '--theme-accentPrimary', '--theme-accentCyan', '--theme-accentGreen', '--theme-accentYellow', '--theme-accentOrange', '--theme-accentRed', '--theme-accentPurple'].forEach(v => {
+          dlg.style.setProperty(v, computed.getPropertyValue(v));
+        });
+        dlg.showModal()
+        const htmx = (window as any).htmx
+        const target = document.getElementById('rename-dialog-content')
+        if (htmx && target) {
+          htmx.ajax('GET', '/api/sidebar/rename-prompt?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(currentName) + '&type=note', { target: target, swap: 'innerHTML' })
+        }
+      }
+    }
+    ;(window as any).sieveRenameFolder = (id: string, currentName: string) => {
+      const dlg = document.getElementById('rename-dialog') as any
+      if (dlg) {
+        const computed = getComputedStyle(document.documentElement);
+        ['--theme-bg', '--theme-bgDark', '--theme-bgAlt', '--theme-border', '--theme-border2', '--theme-muted', '--theme-text', '--theme-textDim', '--theme-accentPrimary', '--theme-accentCyan', '--theme-accentGreen', '--theme-accentYellow', '--theme-accentOrange', '--theme-accentRed', '--theme-accentPurple'].forEach(v => {
+          dlg.style.setProperty(v, computed.getPropertyValue(v));
+        });
+        dlg.showModal()
+        const htmx = (window as any).htmx
+        const target = document.getElementById('rename-dialog-content')
+        if (htmx && target) {
+          htmx.ajax('GET', '/api/sidebar/rename-prompt?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(currentName) + '&type=folder', { target: target, swap: 'innerHTML' })
+        }
+      }
+    }
+    ;(window as any).sieveOpenDelete = (id: string, name: string, type: string) => {
+      const dlg = document.getElementById('delete-dialog') as any
+      if (dlg) {
+        const computed = getComputedStyle(document.documentElement);
+        ['--theme-bg', '--theme-bgDark', '--theme-bgAlt', '--theme-border', '--theme-border2', '--theme-muted', '--theme-text', '--theme-textDim', '--theme-accentPrimary', '--theme-accentCyan', '--theme-accentGreen', '--theme-accentYellow', '--theme-accentOrange', '--theme-accentRed', '--theme-accentPurple'].forEach(v => {
+          dlg.style.setProperty(v, computed.getPropertyValue(v));
+        });
+        dlg.showModal()
+        const htmx = (window as any).htmx
+        const target = document.getElementById('delete-dialog-content')
+        if (htmx && target) {
+          htmx.ajax('GET', '/api/sidebar/delete-prompt?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&type=' + encodeURIComponent(type), { target: target, swap: 'innerHTML' })
+        }
+      }
+    }
     ;(window as any).sieveShowInFiles   = (id: string) => ShowInFilesByID(id)
     ;(window as any).sieveSmartFile     = (id: string) => aiService.current?.smartFile(id)
     ;(window as any).sieveSmartMetadata = (id: string) => aiService.current?.smartMetadata(id)
     ;(window as any).sieveSelectTab     = (id: string) => selectTabByIdRef.current?.(id)
     ;(window as any).sieveCloseTab      = (id: string) => closeTabByIdRef.current?.(id)
     ;(window as any).sieveReorderTabs   = (from: number, to: number) => reorderTabsRef.current?.(from, to)
-    ;(window as any).sieveHelp          = () => showHelpRef.current?.()
+    ;(window as any).sieveHelp          = () => {
+      const dlg = document.getElementById('help-dialog') as any
+      if (dlg) {
+        const computed = getComputedStyle(document.documentElement);
+        ['--theme-bg', '--theme-bgDark', '--theme-bgAlt', '--theme-border', '--theme-border2', '--theme-muted', '--theme-text', '--theme-textDim', '--theme-accentPrimary', '--theme-accentCyan', '--theme-accentGreen', '--theme-accentYellow', '--theme-accentOrange', '--theme-accentRed', '--theme-accentPurple'].forEach(v => {
+          dlg.style.setProperty(v, computed.getPropertyValue(v));
+        });
+        dlg.showModal()
+        const htmx = (window as any).htmx
+        const target = document.getElementById('help-dialog-content')
+        if (htmx && target) {
+          htmx.ajax('GET', '/api/help', { target: target, swap: 'innerHTML' })
+        }
+      }
+    }
+    ;(window as any).sieveOnSettingsChanged = () => {
+      dataService.current.getStoreInfo().then(info => {
+        setStoreInfo(info)
+        setTier(info.tier === 2 ? 'smart' : 'dumb')
+        cliTimeoutLongMs.current = info.cliTimeoutLong * 1000 || 20000
+        autosaveMs.current = info.autosaveDebounce * 1000 || 30000
+        if (info.themeVars) {
+          const root = document.documentElement;
+          Object.entries(info.themeVars).forEach(([key, value]) => {
+            root.style.setProperty(`--theme-${key}`, value as string);
+          });
+        }
+      })
+    }
     ;(window as any).sieveCloseAllTabs  = () => closeAllTabsRef.current?.()
     ;(window as any).sieveDeleteNote    = (id: string) => deleteNoteByIdRef.current?.(id)
     ;(window as any).sieveSetMetaDirty  = (dirty: boolean) => {
@@ -409,8 +490,6 @@ export default function App() {
   // Keep HTMX bridge refs current so the sidebar and tab bar can call into React state
   useEffect(() => { openDocRef.current = openDoc }, [openDoc])
   useEffect(() => { newTabRef.current = newTab }, [newTab])
-  useEffect(() => { showSettingsRef.current = () => setShowSettings(true) }, [])
-  useEffect(() => { showHelpRef.current = () => setShowHelp(v => !v) }, [])
   useEffect(() => {
     selectTabByIdRef.current = (id: string) => {
       console.log('[App] selectTabByIdRef called with id:', id)
@@ -535,7 +614,7 @@ export default function App() {
         handlers.current.closeTab(); 
       }
       if (mod && key === 's') { e.preventDefault(); handlers.current.save() }
-      if (mod && key === ',') { e.preventDefault(); setShowSettings(true) }
+      if (mod && key === ',') { e.preventDefault(); (window as any).sieveOpenSettings?.() }
       if (mod && e.shiftKey && key === 'm') { e.preventDefault(); handlers.current.toggleMode() }
       if (mod && (key === 'p' || e.code === 'KeyP') && !e.shiftKey) { e.preventDefault(); setShowQuickSwitch(v => !v) }
       if (mod && e.shiftKey && (key === 'p' || e.code === 'KeyP')) { 
@@ -554,7 +633,7 @@ export default function App() {
         e.preventDefault(); 
         e.stopImmediatePropagation();
         console.log('[stash:ui] Toggling Help Modal...');
-        toggleHelp() 
+        (window as any).sieveHelp?.()
       }
       if (mod && key === 'f' && !e.shiftKey) { e.preventDefault(); toggleSearch() }
       if (mod && e.shiftKey && key === 'f') { 
@@ -748,7 +827,6 @@ export default function App() {
   console.log('[App] Rendering main UI. Tabs:', tabs.length, 'ActiveIdx:', activeIdx)
 
   return (
-    <ModalProvider>
     <div
       id="app-root"
       className={`theme-${storeInfo?.themeName || 'default'} tier-${tier}`}
@@ -800,32 +878,6 @@ export default function App() {
           className="flex items-stretch bg-tn-bg-dark border-0 border-t border-b border-solid border-tn-border-2 h-[44px] shrink-0"
         />
 
-        {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
-        {showSettings && (
-          <SettingsModal 
-            onClose={() => setShowSettings(false)} 
-            dataService={dataService.current} 
-            activeTab={lastSettingsPanel}
-            onTabChange={tab => { setLastSettingsPanel(tab); persistSession({ lastSettingsPanel: tab }); }}
-            onSettingsChanged={() => {
-              dataService.current.getStoreInfo().then(info => {
-                setStoreInfo(info)
-                setTier(info.tier === 2 ? 'smart' : 'dumb')
-                cliTimeoutLongMs.current = info.cliTimeoutLong * 1000 || 20000
-                autosaveMs.current = info.autosaveDebounce * 1000 || 30000
-                
-                // Live apply theme variables
-                if (info.themeVars) {
-                  const root = document.documentElement;
-                  Object.entries(info.themeVars).forEach(([key, value]) => {
-                    root.style.setProperty(`--theme-${key}`, value as string);
-                  });
-                }
-              })
-            }}
-          />
-        )}
-        
         <QuickSwitcher
           isOpen={showQuickSwitch}
           onClose={() => setShowQuickSwitch(false)}
@@ -841,6 +893,22 @@ export default function App() {
           })}
           notesTree={notes}
         />
+
+        <dialog id="settings-dialog" style={{ background: 'transparent', border: 'none', padding: 0, outline: 'none' }}>
+          <div id="settings-dialog-content" style={{ background: 'var(--theme-bgDark)', width: '600px', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 8px 40px rgba(0,0,0,0.6)' }} />
+        </dialog>
+
+        <dialog id="help-dialog" style={{ background: 'transparent', border: 'none', padding: 0, outline: 'none' }}>
+          <div id="help-dialog-content" style={{ background: 'var(--theme-bgDark)', width: '90vw', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 8px 40px rgba(0,0,0,0.6)' }} />
+        </dialog>
+
+        <dialog id="rename-dialog" style={{ background: 'transparent', border: 'none', padding: 0, outline: 'none' }}>
+          <div id="rename-dialog-content" style={{ background: 'var(--theme-bgDark)', width: '450px', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 8px 40px rgba(0,0,0,0.6)' }} />
+        </dialog>
+
+        <dialog id="delete-dialog" style={{ background: 'transparent', border: 'none', padding: 0, outline: 'none' }}>
+          <div id="delete-dialog-content" style={{ background: 'var(--theme-bgDark)', width: '450px', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 8px 40px rgba(0,0,0,0.6)' }} />
+        </dialog>
 
         <div className="editor-area">
            {showSearch && activeTab && (
@@ -939,6 +1007,5 @@ export default function App() {
         </div>
       )}
     </div>
-    </ModalProvider>
   )
 }

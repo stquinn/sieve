@@ -23,6 +23,8 @@ func (h *ContextMenuHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/sidebar/intent", h.handleIntent)
 	r.Post("/api/sidebar/delete-note", h.handleDeleteNote)
 	r.Post("/api/sidebar/delete-folder", h.handleDeleteFolder)
+	r.Get("/api/sidebar/delete-prompt", h.handleDeletePrompt)
+	r.Get("/api/sidebar/rename-prompt", h.handleRenamePrompt)
 	r.Post("/api/sidebar/rename-note", h.handleRenameNote)
 	r.Post("/api/sidebar/rename-folder", h.handleRenameFolder)
 }
@@ -95,10 +97,53 @@ func (h *ContextMenuHandler) handleDeleteFolder(w http.ResponseWriter, r *http.R
 	RenderSidebar(w, *h.Notes, state, h.Tmpl)
 }
 
+func (h *ContextMenuHandler) handleRenamePrompt(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	name := r.URL.Query().Get("name")
+	itemType := r.URL.Query().Get("type")
+
+	data := struct {
+		ID   string
+		Name string
+		Type string
+	}{
+		ID:   id,
+		Name: name,
+		Type: itemType,
+	}
+
+	if err := h.Tmpl.ExecuteTemplate(w, "rename.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (h *ContextMenuHandler) handleDeletePrompt(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	name := r.URL.Query().Get("name")
+	itemType := r.URL.Query().Get("type")
+
+	data := struct {
+		ID   string
+		Name string
+		Type string
+	}{
+		ID:   id,
+		Name: name,
+		Type: itemType,
+	}
+
+	if err := h.Tmpl.ExecuteTemplate(w, "delete.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
 func (h *ContextMenuHandler) handleRenameNote(w http.ResponseWriter, r *http.Request) {
 	state := *h.State
 	id := r.URL.Query().Get("id")
-	name := r.URL.Query().Get("name")
+	name := r.FormValue("name")
+	if name == "" {
+		name = r.URL.Query().Get("name")
+	}
 	if err := h.RenameNote(id, name); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -109,7 +154,10 @@ func (h *ContextMenuHandler) handleRenameNote(w http.ResponseWriter, r *http.Req
 func (h *ContextMenuHandler) handleRenameFolder(w http.ResponseWriter, r *http.Request) {
 	state := *h.State
 	id := r.URL.Query().Get("id")
-	name := r.URL.Query().Get("name")
+	name := r.FormValue("name")
+	if name == "" {
+		name = r.URL.Query().Get("name")
+	}
 	if err := h.RenameFolder(id, name); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

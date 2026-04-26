@@ -157,6 +157,20 @@ No JavaScript bridge, no `refreshTabBar()`, no `persistSession`.
 
 ---
 
+## Phase 6 debt — Modals, Settings, Help
+
+### 6-A: CSS variables copied ad-hoc via JS bridge
+**What:** `sieveOpenSettings` and `sieveHelp` in `App.tsx` iterate over computed styles to replicate CSS variables onto the native `<dialog>` wrappers.
+**Why deferred:** Top-layer boundary isolation prevents `:root` cascade inheritance securely.
+**Retires in:** Phase 9.
+
+### 6-B: Client-side UI state toggling
+**What:** `switchSettingsTab` in `settings.html` changes tab selection states purely on the frontend.
+**Why deferred:** Avoids additional Go handlers until global state isolation triggers naturally.
+**Retires in:** Phase 9.
+
+---
+
 ## Cross-cutting debt
 
 ### X-A: `<style>` blocks injected on every HTMX swap

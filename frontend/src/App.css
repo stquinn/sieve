@@ -956,7 +956,7 @@ div.node-image.ProseMirror-selectednode {
   border: 1px solid var(--theme-border2);
   border-radius: 8px;
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
-  width: 80vw;
+  width: 100%;
   max-height: 80vh;
   display: flex;
   flex-direction: column;

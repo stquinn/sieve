@@ -126,6 +126,8 @@ func newAPIHandler(app *App, hub *sseHub) (*apiHandler, error) {
 		},
 		&requesthandlers.MetaHandler{Buffers: &app.buffers, Notes: &app.notes, Tmpl: tmpl},
 		&requesthandlers.EditorHandler{Buffers: &app.buffers, Notes: &app.notes, Prompts: &app.prompts, Tmpl: tmpl},
+		&requesthandlers.SettingsHandler{State: &app.state, Tmpl: tmpl},
+		&requesthandlers.HelpHandler{Tmpl: tmpl},
 	}
 	r := chi.NewRouter()
 	for _, requestHandler := range requestHandlers {
