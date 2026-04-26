@@ -1,0 +1,104 @@
+{{define "quickswitcher.html"}}
+<div class="quick-switch" style="margin-top: 0; border: none; width: 100%; box-shadow: none; background: transparent;">
+  <input 
+    type="text" 
+    name="q"
+    hx-get="/api/search" 
+    hx-trigger="input changed delay:50ms, keyup[key=='Enter']" 
+    hx-target="#quick-switch-list" 
+    hx-swap="innerHTML"
+    placeholder="Search files by name..." 
+    autoFocus
+    class="quick-switch__input"
+    onkeydown="handleQuickSwitchKeys(event)"
+  />
+  
+  <div id="quick-switch-list" class="quick-switch__list">
+    <div style="padding: 1rem; color: var(--theme-textDim); text-align: center;">Type to search...</div>
+  </div>
+</div>
+
+<script>
+  function handleQuickSwitchKeys(e) {
+    const list = document.getElementById('quick-switch-list');
+    if (!list) return;
+    const items = list.querySelectorAll('.quick-switch__item');
+    if (items.length === 0) return;
+
+    let activeIdx = -1;
+    items.forEach((item, idx) => {
+      if (item.classList.contains('quick-switch__item--active')) {
+        activeIdx = idx;
+      }
+    });
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const nextIdx = (activeIdx + 1) % items.length;
+      updateActiveItem(items, activeIdx, nextIdx);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const nextIdx = (activeIdx - 1 + items.length) % items.length;
+      updateActiveItem(items, activeIdx, nextIdx);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (activeIdx >= 0) {
+        items[activeIdx].click();
+      }
+    } else if (e.key === 'Escape') {
+      document.getElementById('quickswitcher-dialog').close();
+    }
+  }
+
+  function updateActiveItem(items, oldIdx, newIdx) {
+    if (oldIdx >= 0) {
+      items[oldIdx].classList.remove('quick-switch__item--active');
+    }
+    items[newIdx].classList.add('quick-switch__item--active');
+    items[newIdx].scrollIntoView({ block: 'nearest' });
+  }
+
+  setTimeout(() => {
+    const input = document.querySelector('input[name="q"]');
+    if (input) {
+       input.focus();
+       const htmx = window.htmx;
+       if (htmx) {
+         htmx.ajax('GET', '/api/search?q=', { target: '#quick-switch-list', swap: 'innerHTML' });
+       }
+    }
+  }, 100);
+</script>
+{{end}}
+
+{{define "quickswitcher_list.html"}}
+  {{if .Items}}
+    {{range .Items}}
+      <div 
+        class="quick-switch__item" 
+        onclick="window.sieveOpenNote && window.sieveOpenNote('{{.ID}}'); document.getElementById('quickswitcher-dialog').close()"
+      >
+        <span class="quick-switch__icon">
+          {{if eq .Icon "buffer"}}
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          {{else}}
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          {{end}}
+        </span>
+        <div class="quick-switch__info">
+          <div class="quick-switch__name">
+            {{.Name}}
+            {{if .IsOpen}}
+              <span class="quick-switch__badge">open</span>
+            {{end}}
+          </div>
+          {{if .DisplayPath}}
+            <span class="quick-switch__path">{{.DisplayPath}}</span>
+          {{end}}
+        </div>
+      </div>
+    {{end}}
+  {{else}}
+    <div class="quick-switch__empty">No files found matching "{{.Query}}"</div>
+  {{end}}
+{{end}}

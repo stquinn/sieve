@@ -8,9 +8,7 @@ import {
 } from '../wailsjs/go/main/App'
 import { BrowserOpenURL, EventsOn } from '../wailsjs/runtime/runtime'
 import { NoteEntry, PromptEntry } from './types'
-// MetaPanel replaced by HTMX — see #htmx-meta-panel and /api/meta handler
 import { StoreSearch } from './components/StoreSearch'
-import { QuickSwitcher } from './components/QuickSwitcher'
 import { TimeoutPopup } from './components/TimeoutPopup'
 import { TabMode, TabState, UserIntent } from './types'
 import { X } from 'lucide-react'
@@ -59,8 +57,6 @@ export default function App() {
     pendingClose, setPendingClose,
   } = useUiState()
   const [searchTerm, setSearchTerm]         = useState('')
-  const [notes, setNotes]         = useState<NoteEntry[]>([])
-  const [prompts, setPrompts]     = useState<PromptEntry[]>([])
   const [tick, setTick]                 = useState(0)
   const [storeInfo, setStoreInfo] = useState<{ root: string; themeName: string; } | null>(null)
   const [openFolders, setOpenFolders] = useState<Set<string>>(new Set())
@@ -238,6 +234,21 @@ export default function App() {
         const target = document.getElementById('help-dialog-content')
         if (htmx && target) {
           htmx.ajax('GET', '/api/help', { target: target, swap: 'innerHTML' })
+        }
+      }
+    }
+    ;(window as any).sieveOpenQuickSwitcher = () => {
+      const dlg = document.getElementById('quickswitcher-dialog') as any
+      if (dlg) {
+        const computed = getComputedStyle(document.documentElement);
+        ['--theme-bg', '--theme-bgDark', '--theme-bgAlt', '--theme-border', '--theme-border2', '--theme-muted', '--theme-text', '--theme-textDim', '--theme-accentPrimary', '--theme-accentCyan', '--theme-accentGreen', '--theme-accentYellow', '--theme-accentOrange', '--theme-accentRed', '--theme-accentPurple'].forEach(v => {
+          dlg.style.setProperty(v, computed.getPropertyValue(v));
+        });
+        dlg.showModal()
+        const htmx = (window as any).htmx
+        const target = document.getElementById('quickswitcher-dialog-content')
+        if (htmx && target) {
+          htmx.ajax('GET', '/api/search-prompt', { target: target, swap: 'innerHTML' })
         }
       }
     }
@@ -616,7 +627,7 @@ export default function App() {
       if (mod && key === 's') { e.preventDefault(); handlers.current.save() }
       if (mod && key === ',') { e.preventDefault(); (window as any).sieveOpenSettings?.() }
       if (mod && e.shiftKey && key === 'm') { e.preventDefault(); handlers.current.toggleMode() }
-      if (mod && (key === 'p' || e.code === 'KeyP') && !e.shiftKey) { e.preventDefault(); setShowQuickSwitch(v => !v) }
+      if (mod && (key === 'p' || e.code === 'KeyP') && !e.shiftKey) { e.preventDefault(); (window as any).sieveOpenQuickSwitcher?.() }
       if (mod && e.shiftKey && (key === 'p' || e.code === 'KeyP')) { 
         e.preventDefault(); 
         setShowPrompts(prev => !prev)
@@ -722,11 +733,7 @@ export default function App() {
         }
       })
     })
-    const fNotes = () => dataService.current.getNotes().then(res => setNotes(res || []))
-    const fPrompts = () => dataService.current.getPrompts().then(res => setPrompts(res || []))
-    fNotes(); fPrompts()
-    const u1 = EventsOn('notes:changed', fNotes)
-    const u2 = EventsOn('prompts:changed', fPrompts)
+
 
     // SSE connection for HTMX sidebar + tab bar refresh on notes:changed.
     const es = new EventSource('/sse')
@@ -773,7 +780,7 @@ export default function App() {
     document.body.addEventListener('editor:restore', onEditorRestore)
 
     return () => {
-      u1(); u2(); es.close()
+      es.close()
       document.removeEventListener('htmx:afterSettle', onAfterSettle)
       document.body.removeEventListener('editor:restore', onEditorRestore)
     }
@@ -781,7 +788,7 @@ export default function App() {
 
   const onRestorePrompt = async (name: string) => {
     await dataService.current.deletePrompt(name)
-    await dataService.current.getPrompts().then(setPrompts)
+    await dataService.current.getPrompts()
     const promptID = `prompt:${name}`
     const entry = tabs.find(t => t.uuid === promptID)
     if (entry) {
@@ -878,21 +885,7 @@ export default function App() {
           className="flex items-stretch bg-tn-bg-dark border-0 border-t border-b border-solid border-tn-border-2 h-[44px] shrink-0"
         />
 
-        <QuickSwitcher
-          isOpen={showQuickSwitch}
-          onClose={() => setShowQuickSwitch(false)}
-          onSelect={openDoc}
-          tabs={tabs.map(t => {
-            const doc = dataService.current.get(t.uuid)
-            return {
-              uuid: t.uuid,
-              mode: t.mode,
-              displayName: doc?.meta?.displayName,
-              status: doc?.meta?.status as any,
-            }
-          })}
-          notesTree={notes}
-        />
+
 
         <dialog id="settings-dialog" style={{ background: 'transparent', border: 'none', padding: 0, outline: 'none' }}>
           <div id="settings-dialog-content" style={{ background: 'var(--theme-bgDark)', width: '600px', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 8px 40px rgba(0,0,0,0.6)' }} />
@@ -908,6 +901,10 @@ export default function App() {
 
         <dialog id="delete-dialog" style={{ background: 'transparent', border: 'none', padding: 0, outline: 'none' }}>
           <div id="delete-dialog-content" style={{ background: 'var(--theme-bgDark)', width: '450px', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 8px 40px rgba(0,0,0,0.6)' }} />
+        </dialog>
+
+        <dialog id="quickswitcher-dialog" style={{ background: 'transparent', border: 'none', padding: 0, outline: 'none', margin: '15vh auto auto' }}>
+          <div id="quickswitcher-dialog-content" style={{ background: 'var(--theme-bgDark)', width: '600px', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 8px 40px rgba(0,0,0,0.6)' }} />
         </dialog>
 
         <div className="editor-area">
