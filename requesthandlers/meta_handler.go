@@ -1,6 +1,7 @@
 package requesthandlers
 
 import (
+	"fmt"
 	"encoding/json"
 	"html/template"
 	"net/http"
@@ -94,6 +95,8 @@ func (h *MetaHandler) handleMeta(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if path == "" {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `<div class="meta-panel__empty">No note selected</div>`)
 		return
 	}
 	data := h.buildMetaPanelData(path, tab)

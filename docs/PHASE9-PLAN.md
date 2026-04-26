@@ -213,8 +213,8 @@ Go handlers call the existing `EvalService`/`PromptService` methods directly. SS
 }
 ```
 
-- [ ] 6.1 Update `wails.json` to blank out frontend build fields
-- [ ] 6.2 Verify `wails dev` starts cleanly without npm errors
+- [x] 6.1 Update `wails.json` to blank out frontend build fields
+- [x] 6.2 Verify `wails dev` starts cleanly without npm errors
 
 ---
 

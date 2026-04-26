@@ -4,9 +4,13 @@
     <meta charset="UTF-8"/>
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
     <title>Sieve</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/tailwind.css">
     <link rel="stylesheet" href="/theme.css">
     <link rel="stylesheet" href="/static/sidebar.css">
+    <link rel="stylesheet" href="/static/editor.css">
     <style>
         /* Basic layout styles to replicate App.css without React wrapper */
         html, body {
@@ -16,7 +20,7 @@
             overflow: hidden;
             background-color: var(--theme-bg);
             color: var(--theme-text);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         }
         #app-root {
             display: flex;
@@ -80,18 +84,22 @@
         #htmx-meta-panel {
             display: {{if .ShowMeta}}flex{{else}}none{{end}};
         }
+        .sidebar-handle {
+            display: {{if .ShowSidebar}}block{{else}}none{{end}};
+        }
+        .meta-handle {
+            display: {{if .ShowMeta}}block{{else}}none{{end}};
+        }
     </style>
 </head>
 <body hx-ext="sse" sse-connect="/sse">
     <div id="app-root" class="theme-{{.ThemeName}} tier-{{.Tier}}" style="--sidebar-w: {{if .ShowSidebar}}{{.SidebarWidth}}{{else}}0{{end}}px; --meta-w: {{if .ShowMeta}}{{.MetaWidth}}{{else}}0{{end}}px;">
         
-        {{if .ShowSidebar}}
         <div id="sidebar-wrapper" style="width: var(--sidebar-w); display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; border-right: 1px solid var(--theme-border);">
             <div id="htmx-sidebar" class="sidebar" style="flex: 1; min-height: 0; border-right: none;" hx-get="/api/sidebar" hx-trigger="load, sse:notes:changed"></div>
             <div id="prompts-panel" style="height: {{.PromptsHeight}}px;" hx-get="/api/prompts" hx-trigger="load, sse:prompts:changed, sse:notes:changed"></div>
         </div>
         <div class="sidebar-handle"></div>
-        {{end}}
 
         <div id="right-panel">
             <div id="htmx-tabbar" class="flex items-stretch bg-tn-bg-dark border-0 border-t border-b border-solid border-tn-border-2 h-[44px] shrink-0" hx-get="/api/tabs" hx-trigger="load"></div>
@@ -117,14 +125,12 @@
             </dialog>
 
             <div class="editor-area">
-                <div id="htmx-editor" class="editor-wrapper" style="flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column;">
+                <div id="htmx-editor" class="editor-wrapper" style="flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column;">
                     <div id="tiptap-mount" data-uuid="{{.ActiveUUID}}" data-mode="wysiwyg" style="flex: 1; min-height: 0; display: flex; flex-direction: column;"></div>
                 </div>
 
-                {{if .ShowMeta}}
                 <div class="meta-handle"></div>
                 <div id="htmx-meta-panel" style="width: {{.MetaWidth}}px;" class="flex flex-col flex-shrink-0 overflow-hidden bg-tn-bg-dark border-l border-tn-border text-base" hx-get="/api/meta?uuid={{.ActiveUUID}}" hx-trigger="load"></div>
-                {{end}}
             </div>
 
             <div class="status-bar">
@@ -146,35 +152,41 @@
     // Initial editor load
     window.addEventListener('DOMContentLoaded', function() {
         var mount = document.getElementById('tiptap-mount');
-        if (mount) {
+        if (mount && mount.dataset.editorInit !== 'true') {
             var uuid = mount.getAttribute('data-uuid');
             var mode = mount.getAttribute('data-mode');
             if (uuid) {
-                console.log('[index.html] Initializing editor for:', uuid);
+                mount.dataset.editorInit = 'true';
+                console.log('[index.html] Initializing editor from DOMContentLoaded for:', uuid);
                 window.sieveInitEditor?.(mount, uuid, mode);
             }
         }
     });
 
-    // Listen for HTMX settle to re-init editor if mount changes
-    document.addEventListener('htmx:afterSettle', function(e) {
-        var target = e.detail.target;
-        if (target && (target.id === 'htmx-editor' || target.querySelector('#tiptap-mount'))) {
-            var mount = document.getElementById('tiptap-mount');
-            if (mount) {
-                var uuid = mount.getAttribute('data-uuid');
-                var mode = mount.getAttribute('data-mode');
-                if (uuid) {
-                    window.sieveInitEditor?.(mount, uuid, mode);
-                }
+    // Listen for HTMX load to re-init editor if mount changes
+    document.addEventListener('htmx:load', function(e) {
+        var mount = document.getElementById('tiptap-mount');
+        if (mount && mount.dataset.editorInit !== 'true') {
+            var uuid = mount.getAttribute('data-uuid');
+            var mode = mount.getAttribute('data-mode');
+            if (uuid) {
+                mount.dataset.editorInit = 'true';
+                console.log('[index.html] Initializing editor from htmx:load for:', uuid);
+                window.sieveInitEditor?.(mount, uuid, mode);
+                window.htmx.ajax('GET', '/api/meta?uuid=' + uuid, { target: '#htmx-meta-panel', swap: 'innerHTML' });
             }
         }
     });
+    </script>
 
+    <script>
     // Globals for tabbar and sidebar
     window.sieveSelectTab = function(id) {
         window.htmx.ajax('POST', '/api/note/open/' + id, { target: '#htmx-tabbar', swap: 'innerHTML' });
+        window.htmx.ajax('GET', '/api/meta?uuid=' + id, { target: '#htmx-meta-panel', swap: 'innerHTML' });
     };
+
+    window.sieveOpenNote = window.sieveSelectTab;
 
     window.sieveNewNote = function() {
         window.htmx.ajax('POST', '/api/note/new', { target: '#htmx-tabbar', swap: 'innerHTML' });

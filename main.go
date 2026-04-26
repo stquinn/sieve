@@ -247,6 +247,16 @@ func main() {
 				store: &storeHandler{app: app},
 				api:   api,
 			},
+			Middleware: func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+						m := &muxHandler{app: app, store: &storeHandler{app: app}, api: api}
+						m.ServeHTTP(w, r)
+						return
+					}
+					next.ServeHTTP(w, r)
+				})
+			},
 		},
 		OnStartup:     app.startup,
 		OnBeforeClose: app.beforeClose,

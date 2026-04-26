@@ -55,8 +55,8 @@ func (h *NoteHandler) handleNoteOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	fmt.Fprintf(w, `<div id="htmx-editor" hx-swap-oob="true" class="editor-wrapper" style="flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column;">
-		<div id="tiptap-mount" data-uuid="%s" data-mode="wysiwyg" style="flex: 1; min-height: 0; height: 100%%; display: flex; flex-direction: column;"></div>
+	fmt.Fprintf(w, `<div id="htmx-editor" hx-swap-oob="true" class="editor-wrapper" style="flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column;">
+		<div id="tiptap-mount" data-uuid="%s" data-mode="wysiwyg" style="flex: 1; min-height: 0; display: flex; flex-direction: column;"></div>
 	</div>`, id)
 }
 
@@ -80,8 +80,8 @@ func (h *NoteHandler) handleNoteNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	fmt.Fprintf(w, `<div id="htmx-editor" hx-swap-oob="true" class="editor-wrapper" style="flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column;">
-		<div id="tiptap-mount" data-uuid="%s" data-mode="wysiwyg" style="flex: 1; min-height: 0; height: 100%%; display: flex; flex-direction: column;"></div>
+	fmt.Fprintf(w, `<div id="htmx-editor" hx-swap-oob="true" class="editor-wrapper" style="flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column;">
+		<div id="tiptap-mount" data-uuid="%s" data-mode="wysiwyg" style="flex: 1; min-height: 0; display: flex; flex-direction: column;"></div>
 	</div>`, uuid)
 }
 

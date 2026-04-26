@@ -137,6 +137,8 @@ func newAPIHandler(app *App, hub *sseHub) (*apiHandler, error) {
 		&requesthandlers.HelpHandler{Tmpl: tmpl},
 		&requesthandlers.SearchHandler{Notes: &app.notes, State: &app.state, Tmpl: tmpl},
 		&requesthandlers.PromptsHandler{Prompts: &app.prompts, Tmpl: tmpl},
+		&requesthandlers.SideBarHandler{Notes: &app.notes, State: &app.state, Tmpl: tmpl},
+		&requesthandlers.TabHandler{State: &app.state, Tmpl: tmpl},
 		&requesthandlers.SessionHandler{
 			GetSession:   func() sieve.Session { return app.GetSession() },
 			SaveSession:  func(s sieve.Session) error { return app.SaveSession(s) },

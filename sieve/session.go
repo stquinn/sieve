@@ -42,12 +42,24 @@ type Session struct {
 // Nil/empty data or a corrupt file returns a sensible default — caller is
 // responsible for opening a default tab.
 func ParseSession(data []byte) Session {
-	s := Session{ShowSidebar: true, ShowPrompts: true, PromptsHeight: 180}
+	s := Session{
+		ShowSidebar:   true,
+		ShowPrompts:   true,
+		PromptsHeight: 180,
+		SidebarWidth:  250,
+		MetaWidth:     300,
+	}
 	if len(data) == 0 {
 		return s
 	}
 	if err := json.Unmarshal(data, &s); err != nil {
 		return s
+	}
+	if s.SidebarWidth <= 0 {
+		s.SidebarWidth = 250
+	}
+	if s.MetaWidth <= 0 {
+		s.MetaWidth = 300
 	}
 	return s
 }

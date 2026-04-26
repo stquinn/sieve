@@ -85,7 +85,7 @@ func (h *EditorHandler) handleEditorLoad(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	http.Error(w, "not found", http.StatusNotFound)
+	json.NewEncoder(w).Encode(loadResponse{Body: "", Mode: "wysiwyg", Path: ""})
 }
 
 func (h *EditorHandler) handleEditorSave(w http.ResponseWriter, r *http.Request) {
