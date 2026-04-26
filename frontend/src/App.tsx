@@ -191,12 +191,9 @@ export default function App() {
       }
       setTabs(prev => {
         const next = [...prev, tab]
-        setActiveIdx(next.length - 1)
-        persistSession({ tabs: next.map((t, i) => ({
-          id: t.uuid,
-          active: i === next.length - 1,
-          mode: t.mode
-        })) as any, activeIdx: next.length - 1 }).then(refreshTabBar)
+        const nextIdx = next.length - 1
+        setActiveIdx(nextIdx)
+        persistSession({ tabs: tabsToSession(next, nextIdx) as any, activeIdx: nextIdx }).then(refreshTabBar)
         return next
       })
     } catch (e) {
@@ -220,14 +217,7 @@ export default function App() {
     // 2. Commit UI state
     setTabs(nextTabs)
     setActiveIdx(nextIdx)
-    persistSession({
-      activeIdx: nextIdx,
-      tabs: nextTabs.map((t, i) => ({
-        id: t.uuid,
-        active: i === nextIdx,
-        mode: t.mode
-      })) as any
-    }).then(refreshTabBar)
+    persistSession({ activeIdx: nextIdx, tabs: tabsToSession(nextTabs, nextIdx) as any }).then(refreshTabBar)
 
     // 3. Trigger Smart Logic if needed (Background)
     if (doc?.isModified || isBuffer) {
@@ -257,20 +247,23 @@ export default function App() {
     }
   }
 
+  const tabsToSession = (tabList: TabState[], activeIndex: number) =>
+    tabList.map((t, i) => ({
+      id: t.uuid,
+      active: i === activeIndex,
+      mode: t.mode,
+      displayName: dataService.current.get(t.uuid)?.meta?.displayName ?? '',
+      status: dataService.current.get(t.uuid)?.meta?.status ?? '',
+      userIntent: dataService.current.get(t.uuid)?.meta?.userIntent ?? '',
+    }))
+
   // Persistence guard: prevents overwriting saved session with empty initial state on launch
   const persistSession = async (overrides?: Partial<stash.Session>) => {
     if (!readyRef.current) return
 
     const session: stash.Session = {
       activeIdx: activeIdxRef.current,
-      tabs: tabsRef.current.map((t, i) => ({
-        id: t.uuid,
-        active: i === activeIdxRef.current,
-        mode: t.mode,
-        displayName: dataService.current.get(t.uuid)?.meta?.displayName ?? '',
-        status: dataService.current.get(t.uuid)?.meta?.status ?? '',
-        userIntent: dataService.current.get(t.uuid)?.meta?.userIntent ?? '',
-      })) as any,
+      tabs: tabsToSession(tabsRef.current, activeIdxRef.current) as any,
       sidebarWidth: sidebarWidthRef.current,
       metaWidth: metaWidthRef.current,
       promptsHeight: promptsHeightRef.current,
@@ -297,11 +290,7 @@ export default function App() {
       const nextTabs = [...tabs, tab]
       setTabs(nextTabs)
       setActiveIdx(nextTabs.length - 1)
-      persistSession({ tabs: nextTabs.map((t, i) => ({
-        id: t.uuid,
-        active: i === nextTabs.length - 1,
-        mode: t.mode
-      })) as any, activeIdx: nextTabs.length - 1 }).then(refreshTabBar)
+      persistSession({ tabs: tabsToSession(nextTabs, nextTabs.length - 1) as any, activeIdx: nextTabs.length - 1 }).then(refreshTabBar)
     } catch (e) {
       console.error('[App] openDoc failed', e)
     }
@@ -339,14 +328,7 @@ export default function App() {
       else if (finalIdx > oldIdx && finalIdx <= newIdx) finalIdx = finalIdx - 1
       else if (finalIdx < oldIdx && finalIdx >= newIdx) finalIdx = finalIdx + 1
       setActiveIdx(finalIdx)
-      persistSession({ activeIdx: finalIdx, tabs: next.map((t, i) => ({
-        id: t.uuid,
-        active: i === finalIdx,
-        mode: t.mode,
-        displayName: dataService.current.get(t.uuid)?.meta?.displayName ?? '',
-        status: dataService.current.get(t.uuid)?.meta?.status ?? '',
-        userIntent: dataService.current.get(t.uuid)?.meta?.userIntent ?? '',
-      })) as any }).then(refreshTabBar)
+      persistSession({ activeIdx: finalIdx, tabs: tabsToSession(next, finalIdx) as any }).then(refreshTabBar)
     }
   }, [])
   useEffect(() => {
@@ -358,8 +340,7 @@ export default function App() {
       const tab: TabState = { uuid: doc.id, mode: 'wysiwyg' }
       setTabs([tab])
       setActiveIdx(0)
-      persistSession({ activeIdx: 0, tabs: [{ id: doc.id, active: true, mode: 'wysiwyg' }] as any })
-        .then(refreshTabBar)
+      persistSession({ activeIdx: 0, tabs: tabsToSession([tab], 0) as any }).then(refreshTabBar)
     }
   }, [])
   useEffect(() => {
