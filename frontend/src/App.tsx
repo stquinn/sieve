@@ -11,7 +11,7 @@ import { BrowserOpenURL, EventsOn } from '../wailsjs/runtime/runtime'
 import { HelpModal } from './components/HelpModal'
 import { Sidebar } from './components/Sidebar'
 import { NoteEntry, PromptEntry } from './types'
-import { MetaPanel } from './components/MetaPanel'
+// MetaPanel replaced by HTMX — see #htmx-meta-panel and /api/meta handler
 import { StoreSearch } from './components/StoreSearch'
 import { QuickSwitcher } from './components/QuickSwitcher'
 import { TimeoutPopup } from './components/TimeoutPopup'
@@ -119,6 +119,17 @@ export default function App() {
     if (ready) persistSession()
   }, [showSidebar, showMeta, showPrompts])
 
+  useEffect(() => {
+    if (showMeta) refreshMetaPanel(getActiveUUID())
+  }, [showMeta, activeIdx])
+
+  useEffect(() => {
+    if (!showMeta) return
+    const uuid = getActiveUUID()
+    const isDirty = !!dataService.current.get(uuid)?.isModified
+    ;(window as any).sieveSetMetaDirty?.(isDirty)
+  }, [tick, showMeta])
+
   // Expose stable globals so the HTMX sidebar and tab bar can call into React state
   useEffect(() => {
     ;(window as any).sieveOpenNote      = (id: string) => openDocRef.current?.(id)
@@ -133,6 +144,24 @@ export default function App() {
     ;(window as any).sieveHelp          = () => showHelpRef.current?.()
     ;(window as any).sieveCloseAllTabs  = () => closeAllTabsRef.current?.()
     ;(window as any).sieveDeleteNote    = (id: string) => deleteNoteByIdRef.current?.(id)
+    ;(window as any).sieveSetMetaDirty  = (dirty: boolean) => {
+      const indicator = document.getElementById('meta-dirty-indicator')
+      if (!indicator) return
+      const label = indicator.querySelector('.meta-dirty-label') as HTMLElement | null
+      const dot   = indicator.querySelector('.meta-dirty-dot')   as HTMLElement | null
+      if (dirty) {
+        indicator.className = indicator.className.replace('border-tn-border', 'border-tn-yellow')
+        if (!indicator.className.includes('border-tn-yellow')) indicator.className += ' border-tn-yellow'
+        indicator.style.background = 'color-mix(in srgb, var(--theme-accentYellow) 10%, transparent)'
+        if (label) { label.className = label.className.replace('text-tn-text-dim', 'text-tn-yellow'); label.textContent = 'Unsaved Changes' }
+        if (dot)   { dot.className   = dot.className.replace('bg-tn-green', 'bg-tn-yellow'); dot.style.boxShadow = '0 0 8px var(--theme-accentYellow)' }
+      } else {
+        indicator.className = indicator.className.replace('border-tn-yellow', 'border-tn-border')
+        indicator.style.background = ''
+        if (label) { label.className = label.className.replace('text-tn-yellow', 'text-tn-text-dim'); label.textContent = 'All Changes Saved' }
+        if (dot)   { dot.className   = dot.className.replace('bg-tn-yellow', 'bg-tn-green'); dot.style.boxShadow = '' }
+      }
+    }
     return () => {
       delete (window as any).sieveOpenNote
       delete (window as any).sieveNewNote
@@ -146,6 +175,7 @@ export default function App() {
       delete (window as any).sieveHelp
       delete (window as any).sieveCloseAllTabs
       delete (window as any).sieveDeleteNote
+      delete (window as any).sieveSetMetaDirty
     }
   }, [])
 
@@ -176,10 +206,22 @@ export default function App() {
     htmx.ajax('GET', '/api/tabs', { target: el, swap: 'innerHTML' })
   }
 
+  const refreshMetaPanel = (uuid: string) => {
+    const htmx = (window as any).htmx
+    const el = document.getElementById('htmx-meta-panel')
+    if (!htmx || !el || !uuid) return
+    htmx.ajax('GET', `/api/meta?uuid=${encodeURIComponent(uuid)}`, { target: el, swap: 'innerHTML' })
+  }
+
+  const getActiveUUID = (): string => tabsRef.current[activeIdxRef.current]?.uuid ?? ''
+
   const selectTab = (idx: number) => {
     if (idx === activeIdx) return
     setActiveIdx(idx)
-    persistSession({ activeIdx: idx }).then(refreshTabBar)
+    persistSession({ activeIdx: idx }).then(() => {
+      refreshTabBar()
+      refreshMetaPanel(tabsRef.current[idx]?.uuid ?? '')
+    })
   }
 
   const newTab = async () => {
@@ -548,11 +590,27 @@ export default function App() {
         ;(window as any).sieveTabBarInit?.()
       } else if (target.id === 'htmx-sidebar' || target.closest?.('#htmx-sidebar')) {
         refreshTabBar()
+      } else if (target.id === 'htmx-meta-panel') {
+        const uuid = tabsRef.current[activeIdxRef.current]?.uuid ?? ''
+        const isDirty = !!dataService.current.get(uuid)?.isModified
+        ;(window as any).sieveSetMetaDirty?.(isDirty)
       }
     }
     document.addEventListener('htmx:afterSettle', onAfterSettle)
 
-    return () => { u1(); u2(); es.close(); document.removeEventListener('htmx:afterSettle', onAfterSettle) }
+    const onEditorRestore = (e: Event) => {
+      const { body } = (e as CustomEvent).detail ?? {}
+      if (typeof body !== 'string') return
+      const uuid = tabsRef.current[activeIdxRef.current]?.uuid
+      if (uuid) dataService.current.setBody(uuid, body)
+    }
+    document.body.addEventListener('editor:restore', onEditorRestore)
+
+    return () => {
+      u1(); u2(); es.close()
+      document.removeEventListener('htmx:afterSettle', onAfterSettle)
+      document.body.removeEventListener('editor:restore', onEditorRestore)
+    }
   }, [])
 
   const onRestorePrompt = async (name: string) => {
@@ -770,23 +828,10 @@ export default function App() {
                 }
                 window.addEventListener('mousemove', mm); window.addEventListener('mouseup', mu)
               }} />
-              <MetaPanel
-                key={activeTab.uuid}
-                meta={dataService.current.get(activeTab.uuid)?.meta ?? null}
-                versions={dataService.current.get(activeTab.uuid)?.versions ?? []}
-                path={dataService.current.get(activeTab.uuid)?.path ?? ''}
-                width={metaWidth}
-                isModified={dataService.current.get(activeTab.uuid)?.isModified ?? false}
-                isEvaluating={dataService.current.get(activeTab.uuid)?.meta?.status === 'evaluating'}
-                isWaitingAI={dataService.current.getTransient(activeTab.uuid).isWaitingAI}
-                dataService={dataService.current}
-                onRestoreRequested={async body => {
-                  dataService.current.setBody(activeTab.uuid, body)
-                }}
-                onSetIntent={(i: UserIntent) => dataService.current.setIntent(activeTab.uuid, i)}
-                onSave={async () => {
-                  await dataService.current.save(activeTab.uuid)
-                }}
+              <div
+                id="htmx-meta-panel"
+                style={{ width: metaWidth }}
+                className="flex flex-col flex-shrink-0 overflow-hidden bg-tn-bg-dark border-l border-tn-border text-base"
               />
             </>
           )}

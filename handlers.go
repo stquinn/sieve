@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"sieve/requesthandlers"
 
 	"github.com/go-chi/chi/v5"
@@ -26,6 +27,50 @@ type apiHandler struct {
 	routes *chi.Mux
 }
 
+type metaRowData struct {
+	Label string
+	Value string
+}
+
+type promptVarDef struct {
+	Name string
+	Desc string
+}
+
+func promptVarsForType(t string) []promptVarDef {
+	m := map[string][]promptVarDef{
+		"file": {
+			{"{content}", "Note body text"},
+			{"{folder_list}", "Existing store folders"},
+			{"{version}", "Doc version number"},
+			{"{focus_count}", "Open frequency"},
+			{"{created}", "Creation timestamp"},
+			{"{modified}", "Last modified timestamp"},
+			{"{now}", "Current timestamp"},
+		},
+		"explain": {
+			{"{type}", "Detected content type"},
+			{"{history}", "Relevant conversation context"},
+			{"{content}", "Target text to explain"},
+			{"{images}", "List of relevant asset names"},
+		},
+		"ask": {
+			{"{type}", "Detected content type"},
+			{"{content}", "Context document text"},
+			{"{history}", "Conversation history"},
+			{"{question}", "User question"},
+			{"{images}", "List of relevant asset names"},
+		},
+		"refine": {
+			{"{content}", "The code block text to identify"},
+		},
+		"image": {
+			{"{image_filename}", "The original filename of the image"},
+		},
+	}
+	return m[t]
+}
+
 func newAPIHandler(app *App, hub *sseHub) (*apiHandler, error) {
 	tmpl := template.New("").Funcs(template.FuncMap{
 		"indent": func(depth int) string {
@@ -34,6 +79,11 @@ func newAPIHandler(app *App, hub *sseHub) (*apiHandler, error) {
 		"fileIndent": func(depth int) string {
 			return fmt.Sprintf("%.2frem", 1.5+float64(depth)*1.0)
 		},
+		"urlenc": url.QueryEscape,
+		"metaRow": func(label, value string) metaRowData {
+			return metaRowData{Label: label, Value: value}
+		},
+		"promptVars": promptVarsForType,
 	})
 	var err error
 	tmpl, err = tmpl.ParseFS(uiTemplates, "ui/templates/*.html")
@@ -74,6 +124,7 @@ func newAPIHandler(app *App, hub *sseHub) (*apiHandler, error) {
 				return err
 			},
 		},
+		&requesthandlers.MetaHandler{Buffers: &app.buffers, Notes: &app.notes, Tmpl: tmpl},
 	}
 	r := chi.NewRouter()
 	for _, requestHandler := range requestHandlers {

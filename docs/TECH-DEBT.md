@@ -45,6 +45,9 @@ Items accumulated during the React → HTMX migration. Each entry records what t
 
 **Retires in:** Phase 7/9.
 
+
+### 2-F: Defects: Prompts Side bar and Shortcut no longer work.  Not sure if defect or tech debt but needs to be fixed.  Hover on sidebar doesnt work
+
 ---
 
 ## Phase 3 debt — Tab Bar
@@ -87,6 +90,37 @@ No JavaScript bridge, no `refreshTabBar()`, no `persistSession`.
 **What:** Six `useRef` + `useEffect` pairs exist solely to give `tabbar.js` stable function handles into React state. This entire pattern disappears when tab operations are server-driven.
 
 **Retires in:** Phase 5.
+
+### 3-F: defects: 
+    - hover on tab doesnt do anything.
+    - close all doesnt do smart save on buffer
+
+---
+
+## Phase 4 debt — Meta Panel
+
+### 4-A: Meta panel does not auto-refresh after save or AI evaluation
+**What:** `refreshMetaPanel` is only called on tab change and `showMeta` toggle. After autosave (version/modified bump) or AI eval (AI fields update), the meta panel shows stale data until the user switches tabs.
+
+**Why deferred:** The SSE infrastructure for post-save events is Phase 5 work (editor island emits `editor:saved`). Once that exists, the meta panel can subscribe to it.
+
+**Retires in:** Phase 5.
+
+---
+
+### 4-B: Version restore updates `dataService` but TipTap does not visually reload
+**What:** `editor:restore` event updates `dataService.current.setBody(uuid, body)` but TipTap's in-memory content is not updated. The editor will show stale content until the tab is reloaded.
+
+**Why deferred:** TipTap is still driven by React (EditorPanel). The fix is `editor.commands.setContent(body)` which requires access to the TipTap instance — that's the Phase 5 editor island.
+
+**Retires in:** Phase 5.
+
+---
+
+### 4-C: `MetaPanel` import comment left in App.tsx
+**What:** `import { MetaPanel }` replaced with a comment. File still exists at `frontend/src/components/MetaPanel.tsx`.
+
+**Retires in:** Phase 9 — delete import comment and file.
 
 ---
 
