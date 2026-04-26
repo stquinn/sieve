@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import './lib/SmartStorables'
-import { SieveEditor } from './editor/SieveEditor'
 import { sieve as stash } from '../wailsjs/go/models'
 // Backend service imports moved to line 19-25 block
 import {
@@ -74,9 +73,7 @@ export default function App() {
   const [editorStats, setEditorStats] = useState({ chars: 0, lines: 0 })
   const dataService = useRef(new StorableDataService(() => setTick(t => t + 1)))
   const aiService   = useRef(new AiService(dataService.current, () => setTick(t => t + 1)))
-  const editorInstanceRef = useRef<SieveEditor | null>(null)
   const activeTab = tabs[activeIdx]
-  const isMarkdownMode = activeTab?.mode === 'markdown'
 
   const focusTimer   = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -100,6 +97,7 @@ export default function App() {
   const activeIdxRef             = useRef(0)
   const tierRef                  = useRef<'dumb' | 'smart'>('dumb')
   const readyRef                 = useRef(false)
+  const lastLoadedUuid           = useRef<string>('')
   const showSidebarRef           = useRef(true)
   const showMetaRef              = useRef(false)
   const showPromptsRef           = useRef(true)
@@ -131,14 +129,8 @@ export default function App() {
     ;(window as any).sieveSetMetaDirty?.(isDirty)
   }, [tick, showMeta])
 
-  // Mount vanilla editor island once — load/unload via editorInstanceRef
+  // Wire editor event listeners and expose AI service for editor.js
   useEffect(() => {
-    const container = document.getElementById('editor-container')
-    if (!container) return
-    const inst = new SieveEditor(container, dataService.current, aiService.current, tier as any, autosaveMs.current)
-    editorInstanceRef.current = inst
-    ;(window as any).sieveEditor = inst
-
     const onStats = (e: Event) => setEditorStats((e as CustomEvent).detail)
     const onSaved = (e: Event) => {
       const { uuid } = (e as CustomEvent).detail ?? {}
@@ -146,23 +138,28 @@ export default function App() {
     }
     document.addEventListener('editor:stats', onStats)
     document.addEventListener('editor:saved', onSaved)
-
+    ;(window as any).__sieveAiService = aiService.current
+    ;(window as any).__sieveAutosaveMs = () => autosaveMs.current
     return () => {
-      inst.destroy()
-      editorInstanceRef.current = null
-      delete (window as any).sieveEditor
       document.removeEventListener('editor:stats', onStats)
       document.removeEventListener('editor:saved', onSaved)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load the active tab into the editor whenever it changes
+  // Load the active tab into the HTMX editor whenever it changes
   useEffect(() => {
     const tab = tabs[activeIdx]
-    if (tab && editorInstanceRef.current) {
-      editorInstanceRef.current.load(tab.uuid, tab.mode as 'wysiwyg' | 'markdown')
+    console.log('[App] useEffect triggered by activeIdx:', activeIdx, 'tab:', tab?.uuid)
+    if (ready) {
+      if (tab) {
+        console.log('[App] useEffect calling loadEditor for tab:', tab.uuid)
+        loadEditor(tab.uuid, tab.mode || 'wysiwyg')
+      } else if (tabs.length === 0) {
+        console.log('[App] useEffect: no active tab, clearing editor.')
+        loadEditor('', '')
+      }
     }
-  }, [activeIdx, tabs.length])
+  }, [activeIdx, tabs.length, ready])
 
   // Expose stable globals so the HTMX sidebar and tab bar can call into React state
   useEffect(() => {
@@ -247,14 +244,48 @@ export default function App() {
     htmx.ajax('GET', `/api/meta?uuid=${encodeURIComponent(uuid)}`, { target: el, swap: 'innerHTML' })
   }
 
+  const loadEditor = (uuid: string, mode: string) => {
+    console.log('[App] loadEditor called with uuid:', uuid, 'mode:', mode)
+    if (!uuid) {
+      console.log('[App] loadEditor: clearing editor.')
+      const el = document.getElementById('htmx-editor')
+      if (el) el.innerHTML = ''
+      lastLoadedUuid.current = ''
+      ;(window as any).sieveInitEditor?.(null, '', '')
+      return
+    }
+    if (lastLoadedUuid.current === uuid) {
+      console.log('[App] loadEditor skipping duplicate load for uuid:', uuid)
+      return
+    }
+    lastLoadedUuid.current = uuid
+    const el = document.getElementById('htmx-editor')
+    if (el && uuid) {
+      console.log('[App] loadEditor creating mount element directly')
+      el.innerHTML = `<div id="tiptap-mount" data-uuid="${uuid}" data-mode="${mode}" style="flex:1;min-height:0;height:100%;display:flex;flex-direction:column"></div>`
+      const mount = el.querySelector('#tiptap-mount') as HTMLElement
+      if (mount) {
+        console.log('[App] loadEditor calling sieveInitEditor directly')
+        ;(window as any).sieveInitEditor?.(mount, uuid, mode)
+      }
+    } else {
+      console.warn('[App] loadEditor missing prerequisites:', { hasEl: !!el, hasUuid: !!uuid })
+    }
+  }
+
   const getActiveUUID = (): string => tabsRef.current[activeIdxRef.current]?.uuid ?? ''
 
   const selectTab = (idx: number) => {
+    console.log('[App] selectTab called with idx:', idx, 'current activeIdx:', activeIdx)
     if (idx === activeIdx) return
     setActiveIdx(idx)
-    persistSession({ activeIdx: idx }).then(() => {
+    
+    const tab = tabs[idx]
+    if (tab) loadEditor(tab.uuid, tab.mode || 'wysiwyg')
+
+    persistSession({ activeIdx: idx, tabs: tabsToSession(tabs, idx) as any }).then(() => {
       refreshTabBar()
-      refreshMetaPanel(tabsRef.current[idx]?.uuid ?? '')
+      refreshMetaPanel(tabs[idx]?.uuid ?? '')
     })
   }
 
@@ -379,10 +410,16 @@ export default function App() {
   useEffect(() => { showHelpRef.current = () => setShowHelp(v => !v) }, [])
   useEffect(() => {
     selectTabByIdRef.current = (id: string) => {
+      console.log('[App] selectTabByIdRef called with id:', id)
       const idx = tabsRef.current.findIndex(t => t.uuid === id)
+      console.log('[App] selectTabByIdRef mapped id to idx:', idx, 'current activeIdxRef:', activeIdxRef.current)
       if (idx === -1 || idx === activeIdxRef.current) return
       setActiveIdx(idx)
-      persistSession({ activeIdx: idx }).then(refreshTabBar)
+      
+      const tab = tabsRef.current[idx]
+      if (tab) loadEditor(tab.uuid, tab.mode || 'wysiwyg')
+
+      persistSession({ activeIdx: idx, tabs: tabsToSession(tabsRef.current, idx) as any }).then(refreshTabBar)
     }
   }, [])
   useEffect(() => {
@@ -451,8 +488,7 @@ export default function App() {
       newTab,
       closeTab: () => smartFileClose(activeIdxRef.current),
       save: async () => {
-        const uuid = tabsRef.current[activeIdxRef.current]?.uuid
-        if (uuid) await dataService.current.save(uuid).catch(console.error)
+        ;(window as any).sieveEditor?.save()
       },
       toggleMode: () => {
         const idx = activeIdxRef.current
@@ -619,6 +655,7 @@ export default function App() {
     // When the tab bar itself settles, re-init drag/overflow handlers.
     const onAfterSettle = (e: Event) => {
       const target = (e as CustomEvent).detail?.target as HTMLElement | undefined
+      console.log('[App] onAfterSettle fired for target:', target?.id, 'classes:', target?.className)
       if (!target) return
       if (target.id === 'htmx-tabbar') {
         ;(window as any).sieveTabBarInit?.()
@@ -628,6 +665,15 @@ export default function App() {
         const uuid = tabsRef.current[activeIdxRef.current]?.uuid ?? ''
         const isDirty = !!dataService.current.get(uuid)?.isModified
         ;(window as any).sieveSetMetaDirty?.(isDirty)
+      } else if (target.id === 'htmx-editor') {
+        const mount = target.querySelector('#tiptap-mount') as HTMLElement | null
+        console.log('[App] onAfterSettle found mount in htmx-editor:', !!mount)
+        if (mount) {
+          const uuid = mount.getAttribute('data-uuid') ?? ''
+          const mode = mount.getAttribute('data-mode') ?? 'wysiwyg'
+          console.log('[App] onAfterSettle calling sieveInitEditor for uuid:', uuid)
+          ;(window as any).sieveInitEditor?.(mount, uuid, mode)
+        }
       }
     }
     document.addEventListener('htmx:afterSettle', onAfterSettle)
@@ -635,11 +681,7 @@ export default function App() {
     const onEditorRestore = (e: Event) => {
       const { body } = (e as CustomEvent).detail ?? {}
       if (typeof body !== 'string') return
-      const uuid = tabsRef.current[activeIdxRef.current]?.uuid
-      if (uuid) {
-        dataService.current.setBody(uuid, body)
-        editorInstanceRef.current?.setContent(body)
-      }
+      ;(window as any).sieveEditor?.setContent(body)
     }
     document.body.addEventListener('editor:restore', onEditorRestore)
 
@@ -803,27 +845,25 @@ export default function App() {
                 onChange={e => {
                   const val = e.target.value
                   setSearchTerm(val)
-                  const uuid = tabsRef.current[activeIdxRef.current]?.uuid
-                  editorInstanceRef.current?.setSearchTerm(val)
+                  ;(window as any).sieveEditor?.setSearchTerm(val)
                 }}
                 onKeyDown={e => {
                   if (e.key === 'Escape') {
                     setShowSearch(false)
                     setSearchTerm('')
-                    const uuid = tabsRef.current[activeIdxRef.current]?.uuid
-                    editorInstanceRef.current?.clearSearch()
+                    ;(window as any).sieveEditor?.clearSearch()
                   }
                 }} />
               <button onClick={() => {
                 setShowSearch(false)
                 setSearchTerm('')
-                editorInstanceRef.current?.clearSearch()
+                ;(window as any).sieveEditor?.clearSearch()
               }}><X size={16} /></button>
             </div>
           )}
 
           <div
-            id="editor-container"
+            id="htmx-editor"
             className="editor-wrapper"
             style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
           />

@@ -1,37 +1,22 @@
-import React from 'react'
 import { Node, mergeAttributes } from '@tiptap/core'
-import { ReactNodeViewRenderer, NodeViewWrapper, NodeViewContent } from '@tiptap/react'
 
-/**
- * Generic block target node — a transparent wrapper with a stable id.
- *
- * When the user selects content and triggers Ask/Explain, the selected
- * block(s) are wrapped in this node.  The inserted aiBlock carries a ref
- * back to the block's id so the threading chain can resolve the original
- * source content.
- *
- * Visual behaviour
- *   • At rest   — renders identically to unwrapped content; no border/badge.
- *   • On hover/focus inside a referencing aiBlock — receives the CSS class
- *     `block-ref-active` via direct DOM manipulation in AiBlockView, which
- *     fades in a subtle background highlight.
- *
- * Store markdown:
- *   [!block] id="blk-abc"
- *
- *   Content lives here as normal markdown blocks.
- *
- *   [!block-end]
- */
+function makeBlockNodeView({ node }: any) {
+  const dom = document.createElement('div')
+  dom.className = 'block-node'
+  dom.setAttribute('data-block-id', node.attrs.id ?? '')
 
-function BlockNodeView({ node }: any) {
-  return (
-    <NodeViewWrapper>
-      <div className="block-node" data-block-id={node.attrs.id}>
-        <NodeViewContent />
-      </div>
-    </NodeViewWrapper>
-  )
+  const contentEl = document.createElement('div')
+  dom.appendChild(contentEl)
+
+  return {
+    dom,
+    contentDOM: contentEl,
+    update(updatedNode: any) {
+      if (updatedNode.type.name !== 'blockRef') return false
+      dom.setAttribute('data-block-id', updatedNode.attrs.id ?? '')
+      return true
+    },
+  }
 }
 
 export const BlockNode = Node.create({
@@ -59,7 +44,7 @@ export const BlockNode = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(BlockNodeView)
+    return makeBlockNodeView
   },
 
   addStorage() {
@@ -74,45 +59,30 @@ export const BlockNode = Node.create({
         },
         parse: {
           updateDOM(element: HTMLElement) {
-            // Repeatedly scan for [!block]...[!block-end] paragraph pairs and
-            // wrap their content in a <div data-type="blockRef"> for Tiptap to parse.
             let changed = true
             while (changed) {
               changed = false
               const children = Array.from(element.children) as HTMLElement[]
-
               for (let i = 0; i < children.length; i++) {
                 const child = children[i]
                 if (child.tagName !== 'P') continue
                 const text = child.textContent ?? ''
                 if (!text.startsWith('[!block]')) continue
-
                 let endIdx = -1
                 for (let j = i + 1; j < children.length; j++) {
-                  if (
-                    children[j].tagName === 'P' &&
-                    (children[j].textContent ?? '').startsWith('[!block-end]')
-                  ) {
-                    endIdx = j
-                    break
+                  if (children[j].tagName === 'P' && (children[j].textContent ?? '').startsWith('[!block-end]')) {
+                    endIdx = j; break
                   }
                 }
                 if (endIdx === -1) break
-
                 const idMatch = text.match(/id="([^"]+)"/)
-
                 const wrapper = document.createElement('div')
                 wrapper.setAttribute('data-type', 'blockRef')
                 wrapper.setAttribute('data-id', idMatch?.[1] ?? '')
-
-                for (let k = i + 1; k < endIdx; k++) {
-                  wrapper.appendChild(children[k])
-                }
-
+                for (let k = i + 1; k < endIdx; k++) wrapper.appendChild(children[k])
                 element.insertBefore(wrapper, child)
                 child.remove()
                 children[endIdx].remove()
-
                 changed = true
                 break
               }

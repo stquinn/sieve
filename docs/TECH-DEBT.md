@@ -132,6 +132,22 @@ No JavaScript bridge, no `refreshTabBar()`, no `persistSession`.
 
 ---
 
+### 5-D: TipTap bundle is a pre-built binary artifact
+**What:** `ui/static/vendor/tiptap.js` is produced by a one-time esbuild run (`npm run bundle:tiptap` in `frontend/`). It must be rebuilt whenever a TipTap extension changes. It is committed to the repo as a static file.
+
+**Why deferred:** The extensions are still TypeScript; esbuild is the bridge until they are rewritten as plain JS and folded directly into `editor.js`.
+
+**Retires in:** Phase 9 — as each extension is rewritten to plain JS it moves into `editor.js`. When all extensions are plain JS the bundle shrinks to TipTap core only, which can be replaced with a pre-built npm artifact and esbuild disappears entirely.
+
+---
+
+### 5-E: `/api/asset/save` endpoint not yet implemented
+**What:** `editor.js` POSTs image-paste data to `/api/asset/save` but no Go handler exists yet. Image paste falls back to embedding the base64 data URL inline.
+
+**Retires in:** Phase 5 follow-up.
+
+---
+
 ### 5-C: OS file drag-and-drop not implemented
 **What:** Wails `DragAndDrop: &options.DragAndDrop{EnableFileDrop: true}` + `OnFileDrop` Go callback was deferred. Dragging files from Finder/Explorer onto the window does not save them as assets.
 

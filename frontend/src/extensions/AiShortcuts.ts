@@ -1,5 +1,5 @@
 import { Extension } from '@tiptap/core'
-import { Editor } from '@tiptap/react'
+import type { Editor } from '@tiptap/core'
 
 export interface AiShortcutsOptions {
   onExplain: (editor: Editor) => void

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "bundle:tiptap": "node_modules/esbuild-linux-64/bin/esbuild src/tiptap-bundle-entry.ts --bundle --format=iife --global-name=TipTap --outfile=../ui/static/vendor/tiptap.js --platform=browser --minify"
   },
   "dependencies": {
     "@tiptap/extension-code-block-lowlight": "^2.11.5",

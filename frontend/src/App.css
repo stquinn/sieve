@@ -1499,8 +1499,12 @@ div.node-image.ProseMirror-selectednode {
   border-radius: 8px;
   box-shadow: 0 12px 48px rgba(0,0,0,0.7), 0 0 0 1px color-mix(in srgb, var(--theme-accentPrimary) 8%, transparent);
   z-index: 200;
-  display: flex;
+  display: none;
   flex-direction: column;
+}
+
+.ask-popup[open] {
+  display: flex;
 }
 
 .ask-popup__header {

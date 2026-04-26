@@ -1,6 +1,7 @@
 package sieve
 
 import (
+	"sync"
 	"sieve/logger"
 	"sieve/store"
 )
@@ -9,7 +10,9 @@ import (
 // Store interface. State items live in the State category (store/{hostname}/config/).
 // Create one with NewStateService — do not construct directly.
 type StateService struct {
-	st store.Store
+	st            store.Store
+	mu            sync.RWMutex
+	cachedSession *Session
 }
 
 // NewStateService creates a StateService backed by st.
@@ -28,15 +31,37 @@ func NewStateService(st store.Store) (*StateService, error) {
 // LoadSession returns the current session. If no session exists in the Store
 // yet, sensible defaults are returned.
 func (ss *StateService) LoadSession() Session {
+	ss.mu.RLock()
+	if ss.cachedSession != nil {
+		defer ss.mu.RUnlock()
+		return *ss.cachedSession
+	}
+	ss.mu.RUnlock()
+
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+
+	if ss.cachedSession != nil {
+		return *ss.cachedSession
+	}
+
 	s, err := ss.st.Load(State, "session.json")
 	if err != nil {
-		return ParseSession(nil)
+		parsed := ParseSession(nil)
+		ss.cachedSession = &parsed
+		return parsed
 	}
-	return ParseSession(s.Body())
+	parsed := ParseSession(s.Body())
+	ss.cachedSession = &parsed
+	return parsed
 }
 
 // SaveSession persists session to the Store, replacing any existing session.
 func (ss *StateService) SaveSession(session Session) error {
+	ss.mu.Lock()
+	ss.cachedSession = &session
+	ss.mu.Unlock()
+
 	data, err := session.Marshal()
 	if err != nil {
 		return err
