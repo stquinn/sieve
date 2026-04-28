@@ -1,18 +1,19 @@
 package sieve
 
 import (
-	"sync"
 	"sieve/logger"
 	"sieve/store"
+	"sync"
 )
 
 // StateService manages application state (session and settings) through the
 // Store interface. State items live in the State category (store/{hostname}/config/).
 // Create one with NewStateService — do not construct directly.
 type StateService struct {
-	st            store.Store
-	mu            sync.RWMutex
-	cachedSession *Session
+	st             store.Store
+	mu             sync.RWMutex
+	cachedSession  *Session
+	cachedSettings *Settings
 }
 
 // NewStateService creates a StateService backed by st.
@@ -74,18 +75,22 @@ func (ss *StateService) SaveSession(session Session) error {
 // settings file exists yet, defaults are written to the Store so the user can
 // inspect and edit them.
 func (ss *StateService) LoadSettings() Settings {
-	s, err := ss.st.Load(State, "settings.json")
-	if err != nil {
-		// First run — write defaults so the user can see all available options.
-		defaults := DefaultSettings()
-		if data, e := defaults.Marshal(); e == nil {
-			if _, e2 := ss.st.CreateText(State, "settings.json", data); e2 != nil {
-				logger.Warn("StateService: could not write default settings", "err", e2)
+	if ss.cachedSettings == nil {
+		s, err := ss.st.Load(State, "settings.json")
+		if err != nil {
+			// First run — write defaults so the user can see all available options.
+			defaults := DefaultSettings()
+			if data, e := defaults.Marshal(); e == nil {
+				if _, e2 := ss.st.CreateText(State, "settings.json", data); e2 != nil {
+					logger.Warn("StateService: could not write default settings", "err", e2)
+				}
 			}
+			return defaults
 		}
-		return defaults
+		temp := ParseSettings(s.Body())
+		ss.cachedSettings = &temp
 	}
-	return ParseSettings(s.Body())
+	return *ss.cachedSettings
 }
 
 // SaveSettings persists settings to the Store, replacing any existing file.
@@ -95,5 +100,6 @@ func (ss *StateService) SaveSettings(settings Settings) error {
 		return err
 	}
 	_, err = ss.st.CreateText(State, "settings.json", data)
+	ss.cachedSettings = nil
 	return err
 }

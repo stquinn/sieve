@@ -9,13 +9,10 @@ import (
 )
 
 type ContextMenuHandler struct {
-	Notes        **sieve.NoteService
-	State        **sieve.StateService
-	Tmpl         *template.Template
-	DeleteNote   func(uuid string) error
-	DeleteFolder func(id string) error
-	RenameNote   func(uuid, name string) error
-	RenameFolder func(id, name string) error
+	ServiceProvider *sieve.ServiceProvider
+	Tmpl            *template.Template
+	DeleteFolder    func(id string) error
+	RenameFolder    func(id, name string) error
 }
 
 func (h *ContextMenuHandler) RegisterPaths(r chi.Router) {
@@ -60,41 +57,45 @@ func (h *ContextMenuHandler) handleMenu(w http.ResponseWriter, r *http.Request) 
 // ── Actions → return refreshed sidebar ───────────────────────────────────────
 
 func (h *ContextMenuHandler) handleIntent(w http.ResponseWriter, r *http.Request) {
-	notes := *h.Notes
-	state := *h.State
+
 	id := r.URL.Query().Get("id")
 	value := r.URL.Query().Get("value")
 
-	n, err := notes.LoadByUUID(id)
+	n, err := h.ServiceProvider.Notes.LoadByUUID(id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	if _, err := notes.SetIntent(n, value); err != nil {
+	if _, err := h.ServiceProvider.Notes.SetIntent(n, value); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	RenderSidebar(w, notes, state, h.Tmpl)
+	RenderSidebar(w, h.ServiceProvider.Notes, h.ServiceProvider.State, h.Tmpl)
 }
 
 func (h *ContextMenuHandler) handleDeleteNote(w http.ResponseWriter, r *http.Request) {
-	state := *h.State
+
 	id := r.URL.Query().Get("id")
-	if err := h.DeleteNote(id); err != nil {
+	note, err := h.ServiceProvider.Notes.LoadByUUID(id)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	RenderSidebar(w, *h.Notes, state, h.Tmpl)
+	if err := h.ServiceProvider.Notes.Delete(note); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	RenderSidebar(w, h.ServiceProvider.Notes, h.ServiceProvider.State, h.Tmpl)
 }
 
 func (h *ContextMenuHandler) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
-	state := *h.State
+
 	id := r.URL.Query().Get("id")
 	if err := h.DeleteFolder(id); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	RenderSidebar(w, *h.Notes, state, h.Tmpl)
+	RenderSidebar(w, h.ServiceProvider.Notes, h.ServiceProvider.State, h.Tmpl)
 }
 
 func (h *ContextMenuHandler) handleRenamePrompt(w http.ResponseWriter, r *http.Request) {
@@ -138,21 +139,27 @@ func (h *ContextMenuHandler) handleDeletePrompt(w http.ResponseWriter, r *http.R
 }
 
 func (h *ContextMenuHandler) handleRenameNote(w http.ResponseWriter, r *http.Request) {
-	state := *h.State
+
 	id := r.URL.Query().Get("id")
 	name := r.FormValue("name")
 	if name == "" {
 		name = r.URL.Query().Get("name")
 	}
-	if err := h.RenameNote(id, name); err != nil {
+	note, err := h.ServiceProvider.Notes.LoadByUUID(id)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	RenderSidebar(w, *h.Notes, state, h.Tmpl)
+	_, err = h.ServiceProvider.Notes.Rename(note, name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	RenderSidebar(w, h.ServiceProvider.Notes, h.ServiceProvider.State, h.Tmpl)
 }
 
 func (h *ContextMenuHandler) handleRenameFolder(w http.ResponseWriter, r *http.Request) {
-	state := *h.State
+
 	id := r.URL.Query().Get("id")
 	name := r.FormValue("name")
 	if name == "" {
@@ -162,5 +169,5 @@ func (h *ContextMenuHandler) handleRenameFolder(w http.ResponseWriter, r *http.R
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	RenderSidebar(w, *h.Notes, state, h.Tmpl)
+	RenderSidebar(w, h.ServiceProvider.Notes, h.ServiceProvider.State, h.Tmpl)
 }

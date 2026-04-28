@@ -10,9 +10,8 @@ import (
 )
 
 type SideBarHandler struct {
-	Notes **sieve.NoteService
-	State **sieve.StateService
-	Tmpl  *template.Template
+	ServiceProvider *sieve.ServiceProvider
+	Tmpl            *template.Template
 }
 
 func (s *SideBarHandler) RegisterPaths(r chi.Router) {
@@ -83,10 +82,7 @@ func RenderSidebar(w http.ResponseWriter, notes *sieve.NoteService, state *sieve
 }
 
 func (s *SideBarHandler) handleSidebar(w http.ResponseWriter, r *http.Request) {
-	notes := *s.Notes
-	state := *s.State
-
-	if notes == nil {
+	if s.ServiceProvider.Notes == nil {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, `<div class="sidebar__empty">No store open</div>`)
@@ -94,12 +90,12 @@ func (s *SideBarHandler) handleSidebar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if toggle := r.URL.Query().Get("toggle"); toggle != "" {
-		session := state.LoadSession()
+		session := s.ServiceProvider.State.LoadSession()
 		session.OpenFolders = toggleFolder(session.OpenFolders, toggle)
-		_ = state.SaveSession(session)
+		_ = s.ServiceProvider.State.SaveSession(session)
 	}
 
-	RenderSidebar(w, notes, state, s.Tmpl)
+	RenderSidebar(w, s.ServiceProvider.Notes, s.ServiceProvider.State, s.Tmpl)
 }
 
 func toggleFolder(folders []string, id string) []string {

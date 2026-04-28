@@ -3,17 +3,15 @@ package requesthandlers
 import (
 	"fmt"
 	"net/http"
-	"strconv"
 	"sieve/sieve"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 )
 
 type SessionHandler struct {
-	GetSession   func() sieve.Session
-	SaveSession  func(sieve.Session) error
-	GetThemeName func() string
-	Broadcast    func(event, data string)
+	ServiceProvider *sieve.ServiceProvider
+	Broadcast       func(event, data string)
 }
 
 func (h *SessionHandler) RegisterPaths(r chi.Router) {
@@ -25,10 +23,10 @@ func (h *SessionHandler) RegisterPaths(r chi.Router) {
 }
 
 func (h *SessionHandler) handleSidebarToggle(w http.ResponseWriter, r *http.Request) {
-	session := h.GetSession()
+	session := h.ServiceProvider.State.LoadSession()
 	session.ShowSidebar = !session.ShowSidebar
-	_ = h.SaveSession(session)
-	
+	_ = h.ServiceProvider.State.SaveSession(session)
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<style id="layout-overrides" hx-swap-oob="true">
 		#app-root {
@@ -42,10 +40,10 @@ func (h *SessionHandler) handleSidebarToggle(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *SessionHandler) handleMetaToggle(w http.ResponseWriter, r *http.Request) {
-	session := h.GetSession()
+	session := h.ServiceProvider.State.LoadSession()
 	session.ShowMeta = !session.ShowMeta
-	_ = h.SaveSession(session)
-	
+	_ = h.ServiceProvider.State.SaveSession(session)
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<style id="layout-overrides" hx-swap-oob="true">
 		#app-root {
@@ -59,14 +57,14 @@ func (h *SessionHandler) handleMetaToggle(w http.ResponseWriter, r *http.Request
 }
 
 func (h *SessionHandler) handlePromptsToggle(w http.ResponseWriter, r *http.Request) {
-	session := h.GetSession()
+	session := h.ServiceProvider.State.LoadSession()
 	session.ShowPrompts = !session.ShowPrompts
-	_ = h.SaveSession(session)
-	
+	_ = h.ServiceProvider.State.SaveSession(session)
+
 	if h.Broadcast != nil {
 		h.Broadcast("prompts:changed", "{}")
 	}
-	
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<style id="layout-overrides" hx-swap-oob="true">
 		#prompts-panel {
@@ -76,8 +74,8 @@ func (h *SessionHandler) handlePromptsToggle(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *SessionHandler) handleSessionLayout(w http.ResponseWriter, r *http.Request) {
-	session := h.GetSession()
-	
+	session := h.ServiceProvider.State.LoadSession()
+
 	if wStr := r.FormValue("sidebarWidth"); wStr != "" {
 		if wInt, err := strconv.Atoi(wStr); err == nil {
 			session.SidebarWidth = wInt
@@ -93,14 +91,14 @@ func (h *SessionHandler) handleSessionLayout(w http.ResponseWriter, r *http.Requ
 			session.PromptsHeight = hInt
 		}
 	}
-	
-	_ = h.SaveSession(session)
+
+	_ = h.ServiceProvider.State.SaveSession(session)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *SessionHandler) handleSessionRefresh(w http.ResponseWriter, r *http.Request) {
-	themeName := h.GetThemeName()
-	
+	themeName := h.ServiceProvider.State.LoadSettings().Theme
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<script hx-swap-oob="true">
 		var root = document.documentElement;

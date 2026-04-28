@@ -12,10 +12,8 @@ import (
 )
 
 type EditorHandler struct {
-	Buffers **sieve.BufferService
-	Notes   **sieve.NoteService
-	Prompts **sieve.PromptService
-	Tmpl    *template.Template
+	ServiceProvider *sieve.ServiceProvider
+	Tmpl            *template.Template
 }
 
 type editorShellData struct {
@@ -55,35 +53,30 @@ func (h *EditorHandler) handleEditorLoad(w http.ResponseWriter, r *http.Request)
 
 	if strings.HasPrefix(uuid, "prompt:") {
 		name := strings.TrimPrefix(uuid, "prompt:")
-		if prompts := *h.Prompts; prompts != nil {
-			if body, err := prompts.GetPromptContent(name); err == nil {
-				json.NewEncoder(w).Encode(loadResponse{Body: body, Mode: "markdown", Path: uuid})
-				return
-			}
+		if body, err := h.ServiceProvider.Prompts.GetPromptContent(name); err == nil {
+			json.NewEncoder(w).Encode(loadResponse{Body: body, Mode: "markdown", Path: uuid})
+			return
 		}
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 
-	if buffers := *h.Buffers; buffers != nil {
-		if b, err := buffers.LoadByUUID(uuid); err == nil {
-			mode := b.Meta().All()["mode"]
-			if mode == "" {
-				mode = "wysiwyg"
-			}
-			json.NewEncoder(w).Encode(loadResponse{Body: string(b.Body()), Mode: mode, Path: b.Path()})
-			return
+	if b, err := h.ServiceProvider.Buffers.LoadByUUID(uuid); err == nil {
+		mode := b.Meta().All()["mode"]
+		if mode == "" {
+			mode = "wysiwyg"
 		}
+		json.NewEncoder(w).Encode(loadResponse{Body: string(b.Body()), Mode: mode, Path: b.Path()})
+		return
 	}
-	if notes := *h.Notes; notes != nil {
-		if n, err := notes.LoadByUUID(uuid); err == nil {
-			mode := n.Meta().All()["mode"]
-			if mode == "" {
-				mode = "wysiwyg"
-			}
-			json.NewEncoder(w).Encode(loadResponse{Body: string(n.Body()), Mode: mode, Path: n.Path()})
-			return
+
+	if n, err := h.ServiceProvider.Notes.LoadByUUID(uuid); err == nil {
+		mode := n.Meta().All()["mode"]
+		if mode == "" {
+			mode = "wysiwyg"
 		}
+		json.NewEncoder(w).Encode(loadResponse{Body: string(n.Body()), Mode: mode, Path: n.Path()})
+		return
 	}
 	json.NewEncoder(w).Encode(loadResponse{Body: "", Mode: "wysiwyg", Path: ""})
 }
@@ -103,33 +96,29 @@ func (h *EditorHandler) handleEditorSave(w http.ResponseWriter, r *http.Request)
 
 	if strings.HasPrefix(uuid, "prompt:") {
 		name := strings.TrimPrefix(uuid, "prompt:")
-		if prompts := *h.Prompts; prompts != nil {
-			if err := prompts.SavePrompt(name, req.Body); err == nil {
-				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]int{"version": 0})
-				return
-			}
+
+		if err := h.ServiceProvider.Prompts.SavePrompt(name, req.Body); err == nil {
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]int{"version": 0})
+			return
 		}
+
 		http.Error(w, "save failed", http.StatusInternalServerError)
 		return
 	}
 
-	if buffers := *h.Buffers; buffers != nil {
-		if b, err := buffers.LoadByUUID(uuid); err == nil {
-			b.SetBody([]byte(req.Body))
-			if saved, err := buffers.Save(b); err == nil {
-				json.NewEncoder(w).Encode(map[string]int{"version": saved.Meta().Version()})
-				return
-			}
+	if b, err := h.ServiceProvider.Buffers.LoadByUUID(uuid); err == nil {
+		b.SetBody([]byte(req.Body))
+		if saved, err := h.ServiceProvider.Buffers.Save(b); err == nil {
+			json.NewEncoder(w).Encode(map[string]int{"version": saved.Meta().Version()})
+			return
 		}
 	}
-	if notes := *h.Notes; notes != nil {
-		if n, err := notes.LoadByUUID(uuid); err == nil {
-			n.SetBody([]byte(req.Body))
-			if saved, err := notes.Save(n); err == nil {
-				json.NewEncoder(w).Encode(map[string]int{"version": saved.Meta().Version()})
-				return
-			}
+	if n, err := h.ServiceProvider.Notes.LoadByUUID(uuid); err == nil {
+		n.SetBody([]byte(req.Body))
+		if saved, err := h.ServiceProvider.Notes.Save(n); err == nil {
+			json.NewEncoder(w).Encode(map[string]int{"version": saved.Meta().Version()})
+			return
 		}
 	}
 	http.Error(w, "save failed", http.StatusInternalServerError)

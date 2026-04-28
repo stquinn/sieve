@@ -205,9 +205,9 @@ func main() {
 	storePath := FindBestStorePath(cliArg, os.Getenv("SIEVE_STORE"))
 
 	hub := newSSEHub()
-	app := NewApp(storePath, themes, hub)
-
-	api, err := newAPIHandler(app, hub)
+	serviceProvider := &sieve.ServiceProvider{}
+	app := NewApp(storePath, themes, hub, serviceProvider)
+	api, err := newAPIHandler(app, hub, serviceProvider)
 	if err != nil {
 		log.Fatalf("failed to init API handler: %v", err)
 	}

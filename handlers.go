@@ -78,7 +78,7 @@ func promptVarsForType(t string) []promptVarDef {
 	return m[t]
 }
 
-func newAPIHandler(app *App, hub *sseHub) (*apiHandler, error) {
+func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandler, error) {
 	tmpl := template.New("").Funcs(template.FuncMap{
 		"indent": func(depth int) string {
 			return fmt.Sprintf("%.2frem", 0.75+float64(depth)*1.0)
@@ -110,59 +110,35 @@ func newAPIHandler(app *App, hub *sseHub) (*apiHandler, error) {
 		static: http.FileServer(http.FS(staticFS)),
 	}
 	requestHandlers := []requesthandlers.RequestHandler{
-		&requesthandlers.SideBarHandler{Notes: &app.notes, State: &app.state, Tmpl: tmpl},
-		&requesthandlers.TabHandler{State: &app.state, Tmpl: tmpl},
+		&requesthandlers.SideBarHandler{ServiceProvider: sp, Tmpl: tmpl},
+		&requesthandlers.TabHandler{ServiceProvider: sp, Tmpl: tmpl},
 		&requesthandlers.ContextMenuHandler{
-			Notes: &app.notes,
-			State: &app.state,
-			Tmpl:  tmpl,
-			DeleteNote: func(uuid string) error {
-				return app.DeleteNote(uuid)
-			},
+			ServiceProvider: sp,
+			Tmpl:            tmpl,
 			DeleteFolder: func(id string) error {
 				return app.DeleteFolder(id)
-			},
-			RenameNote: func(uuid, name string) error {
-				_, err := app.RenameNote(uuid, name)
-				return err
 			},
 			RenameFolder: func(id, name string) error {
 				_, err := app.RenameFolder(id, name)
 				return err
 			},
 		},
-		&requesthandlers.MetaHandler{Buffers: &app.buffers, Notes: &app.notes, Tmpl: tmpl},
-		&requesthandlers.EditorHandler{Buffers: &app.buffers, Notes: &app.notes, Prompts: &app.prompts, Tmpl: tmpl},
-		&requesthandlers.SettingsHandler{State: &app.state, Tmpl: tmpl},
+		&requesthandlers.MetaHandler{ServiceProvider: sp, Tmpl: tmpl},
+		&requesthandlers.EditorHandler{ServiceProvider: sp, Tmpl: tmpl},
+		&requesthandlers.SettingsHandler{ServiceProvider: sp, Tmpl: tmpl},
 		&requesthandlers.HelpHandler{Tmpl: tmpl},
-		&requesthandlers.SearchHandler{Notes: &app.notes, State: &app.state, Tmpl: tmpl},
-		&requesthandlers.PromptsHandler{Prompts: &app.prompts, Tmpl: tmpl},
-		&requesthandlers.SideBarHandler{Notes: &app.notes, State: &app.state, Tmpl: tmpl},
-		&requesthandlers.TabHandler{State: &app.state, Tmpl: tmpl},
+		&requesthandlers.SearchHandler{ServiceProvider: sp, Tmpl: tmpl},
+		&requesthandlers.PromptsHandler{ServiceProvider: sp, Tmpl: tmpl},
 		&requesthandlers.SessionHandler{
-			GetSession:   func() sieve.Session { return app.GetSession() },
-			SaveSession:  func(s sieve.Session) error { return app.SaveSession(s) },
-			GetThemeName: func() string { return app.GetStoreInfo().ThemeName },
-			Broadcast:    hub.broadcast,
+			ServiceProvider: sp,
+			Broadcast:       hub.broadcast,
 		},
 		&requesthandlers.NoteHandler{
-			GetSession: func() sieve.Session { return app.GetSession() },
-			SaveSession: func(s sieve.Session) error { return app.SaveSession(s) },
-			NewBuffer: func() (string, error) {
-				dto, err := app.NewBuffer()
-				if err != nil {
-					return "", err
-				}
-				return dto.UUID, nil
-			},
-			DeleteNote: func(uuid string) error { return app.DeleteNote(uuid) },
-			Tmpl: tmpl,
+			ServiceProvider: sp,
+			Tmpl:            tmpl,
 		},
 		&requesthandlers.AiHandler{
-			Buffers: &app.buffers,
-			Notes:   &app.notes,
-			Prompts: &app.prompts,
-			State:   &app.state,
+			ServiceProvider: sp,
 		},
 	}
 	r := chi.NewRouter()
@@ -233,16 +209,10 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 // ── Note & Tab Operations ───────────────────────────────────────────────────
 
-
-
-
-
-
-
 func (h *apiHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	session := h.app.GetSession()
-	
+
 	newTabs := []sieve.Tab{}
 	for _, t := range session.Tabs {
 		if t.ID != id {
@@ -256,23 +226,23 @@ func (h *apiHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 	if session.ActiveIdx < 0 && len(session.Tabs) > 0 {
 		session.ActiveIdx = 0
 	}
-	
+
 	if len(session.Tabs) == 0 {
 		dto, _ := h.app.NewBuffer()
 		session.Tabs = []sieve.Tab{{ID: dto.UUID, Mode: "wysiwyg"}}
 		session.ActiveIdx = 0
 	}
-	
+
 	_ = h.app.SaveSession(session)
 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	
+
 	if err := h.tmpl.ExecuteTemplate(w, "tabbar.html", session); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	
+
 	activeID := session.Tabs[session.ActiveIdx].ID
 	fmt.Fprintf(w, `<div id="htmx-editor" hx-swap-oob="true" class="editor-wrapper" style="flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column;">
 		<div id="tiptap-mount" data-uuid="%s" data-mode="wysiwyg" style="flex: 1; min-height: 0; height: 100%%; display: flex; flex-direction: column;"></div>
@@ -282,28 +252,28 @@ func (h *apiHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 func (h *apiHandler) handleTabsReorder(w http.ResponseWriter, r *http.Request) {
 	fromStr := r.FormValue("from")
 	toStr := r.FormValue("to")
-	
+
 	fromIdx, _ := strconv.Atoi(fromStr)
 	toIdx, _ := strconv.Atoi(toStr)
-	
+
 	session := h.app.GetSession()
 	if fromIdx < 0 || fromIdx >= len(session.Tabs) || toIdx < 0 || toIdx > len(session.Tabs) {
 		http.Error(w, "invalid indices", http.StatusBadRequest)
 		return
 	}
-	
+
 	tabs := session.Tabs
 	moved := tabs[fromIdx]
-	
+
 	tabs = append(tabs[:fromIdx], tabs[fromIdx+1:]...)
-	
+
 	if toIdx > fromIdx {
 		toIdx--
 	}
-	
+
 	tabs = append(tabs[:toIdx], append([]sieve.Tab{moved}, tabs[toIdx:]...)...)
 	session.Tabs = tabs
-	
+
 	activeIdx := session.ActiveIdx
 	if activeIdx == fromIdx {
 		activeIdx = toIdx
@@ -313,9 +283,9 @@ func (h *apiHandler) handleTabsReorder(w http.ResponseWriter, r *http.Request) {
 		activeIdx++
 	}
 	session.ActiveIdx = activeIdx
-	
+
 	_ = h.app.SaveSession(session)
-	
+
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.tmpl.ExecuteTemplate(w, "tabbar.html", session); err != nil {
@@ -325,14 +295,14 @@ func (h *apiHandler) handleTabsReorder(w http.ResponseWriter, r *http.Request) {
 
 func (h *apiHandler) handleNoteDelete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	
+
 	if err := h.app.DeleteNote(id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	session := h.app.GetSession()
-	
+
 	newTabs := []sieve.Tab{}
 	for _, t := range session.Tabs {
 		if t.ID != id {
@@ -346,25 +316,25 @@ func (h *apiHandler) handleNoteDelete(w http.ResponseWriter, r *http.Request) {
 	if session.ActiveIdx < 0 && len(session.Tabs) > 0 {
 		session.ActiveIdx = 0
 	}
-	
+
 	if len(session.Tabs) == 0 {
 		dto, _ := h.app.NewBuffer()
 		session.Tabs = []sieve.Tab{{ID: dto.UUID, Mode: "wysiwyg"}}
 		session.ActiveIdx = 0
 	}
-	
+
 	_ = h.app.SaveSession(session)
 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	
+
 	if err := h.tmpl.ExecuteTemplate(w, "tabbar.html", session); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	
+
 	fmt.Fprint(w, `<div id="htmx-sidebar" hx-swap-oob="true" class="sidebar" hx-get="/api/sidebar" hx-trigger="load"></div>`)
-	
+
 	activeID := session.Tabs[session.ActiveIdx].ID
 	fmt.Fprintf(w, `<div id="htmx-editor" hx-swap-oob="true" class="editor-wrapper" style="flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column;">
 		<div id="tiptap-mount" data-uuid="%s" data-mode="wysiwyg" style="flex: 1; min-height: 0; height: 100%%; display: flex; flex-direction: column;"></div>
@@ -377,7 +347,7 @@ func (h *apiHandler) handleSidebarToggle(w http.ResponseWriter, r *http.Request)
 	session := h.app.GetSession()
 	session.ShowSidebar = !session.ShowSidebar
 	_ = h.app.SaveSession(session)
-	
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<style id="layout-overrides" hx-swap-oob="true">
 		#app-root {
@@ -394,7 +364,7 @@ func (h *apiHandler) handleMetaToggle(w http.ResponseWriter, r *http.Request) {
 	session := h.app.GetSession()
 	session.ShowMeta = !session.ShowMeta
 	_ = h.app.SaveSession(session)
-	
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<style id="layout-overrides" hx-swap-oob="true">
 		#app-root {
@@ -411,7 +381,7 @@ func (h *apiHandler) handlePromptsToggle(w http.ResponseWriter, r *http.Request)
 	session := h.app.GetSession()
 	session.ShowPrompts = !session.ShowPrompts
 	_ = h.app.SaveSession(session)
-	
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<style id="layout-overrides" hx-swap-oob="true">
 		#prompts-panel {
@@ -422,7 +392,7 @@ func (h *apiHandler) handlePromptsToggle(w http.ResponseWriter, r *http.Request)
 
 func (h *apiHandler) handleSessionLayout(w http.ResponseWriter, r *http.Request) {
 	session := h.app.GetSession()
-	
+
 	if wStr := r.FormValue("sidebarWidth"); wStr != "" {
 		if wInt, err := strconv.Atoi(wStr); err == nil {
 			session.SidebarWidth = wInt
@@ -438,14 +408,14 @@ func (h *apiHandler) handleSessionLayout(w http.ResponseWriter, r *http.Request)
 			session.PromptsHeight = hInt
 		}
 	}
-	
+
 	_ = h.app.SaveSession(session)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *apiHandler) handleSessionRefresh(w http.ResponseWriter, r *http.Request) {
 	info := h.app.GetStoreInfo()
-	
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<script hx-swap-oob="true">
 		var root = document.documentElement;
@@ -537,12 +507,12 @@ func (h *apiHandler) handleAiKeepAndFile(w http.ResponseWriter, r *http.Request)
 		intent := "keep"
 		d.Meta.UserIntent = &intent
 		bufDto := BufferDTO{
-			Kind: "note",
-			UUID: d.UUID,
-			Path: d.Path,
-			Slug: d.Slug,
-			Body: d.Body,
-			Meta: d.Meta,
+			Kind:     "note",
+			UUID:     d.UUID,
+			Path:     d.Path,
+			Slug:     d.Slug,
+			Body:     d.Body,
+			Meta:     d.Meta,
 			Versions: d.Versions,
 		}
 		if _, err := h.app.SaveBuffer(bufDto); err != nil {

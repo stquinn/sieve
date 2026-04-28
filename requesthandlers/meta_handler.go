@@ -1,8 +1,8 @@
 package requesthandlers
 
 import (
-	"fmt"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -17,9 +17,8 @@ import (
 )
 
 type MetaHandler struct {
-	Buffers **sieve.BufferService
-	Notes   **sieve.NoteService
-	Tmpl    *template.Template
+	ServiceProvider *sieve.ServiceProvider
+	Tmpl            *template.Template
 }
 
 func (h *MetaHandler) RegisterPaths(r chi.Router) {
@@ -107,15 +106,11 @@ func (h *MetaHandler) handleMeta(w http.ResponseWriter, r *http.Request) {
 
 // findPathByUUID looks up a document's store path by its UUID frontmatter field.
 func (h *MetaHandler) findPathByUUID(uuid string) string {
-	if buffers := *h.Buffers; buffers != nil {
-		if b, err := buffers.LoadByUUID(uuid); err == nil {
-			return b.Path()
-		}
+	if b, err := h.ServiceProvider.Buffers.LoadByUUID(uuid); err == nil {
+		return b.Path()
 	}
-	if notes := *h.Notes; notes != nil {
-		if n, err := notes.LoadByUUID(uuid); err == nil {
-			return n.Path()
-		}
+	if n, err := h.ServiceProvider.Notes.LoadByUUID(uuid); err == nil {
+		return n.Path()
 	}
 	return ""
 }
@@ -132,20 +127,15 @@ func (h *MetaHandler) handleRestore(w http.ResponseWriter, r *http.Request) {
 	var body string
 	var found bool
 
-	buffers := *h.Buffers
-	notes := *h.Notes
-
-	if buffers != nil {
-		if b, err := buffers.Load(path); err == nil {
-			if v, err := buffers.RetrieveVersion(b, vref); err == nil {
-				body = string(v.Body)
-				found = true
-			}
+	if b, err := h.ServiceProvider.Buffers.Load(path); err == nil {
+		if v, err := h.ServiceProvider.Buffers.RetrieveVersion(b, vref); err == nil {
+			body = string(v.Body)
+			found = true
 		}
 	}
-	if !found && notes != nil {
-		if n, err := notes.Load(path); err == nil {
-			if v, err := notes.RetrieveVersion(n, vref); err == nil {
+	if !found {
+		if n, err := h.ServiceProvider.Notes.Load(path); err == nil {
+			if v, err := h.ServiceProvider.Notes.RetrieveVersion(n, vref); err == nil {
 				body = string(v.Body)
 				found = true
 			}
@@ -184,26 +174,20 @@ func (h *MetaHandler) buildMetaPanelData(path, tab string) metaPanelData {
 	}
 
 	pathEnc := url.QueryEscape(path)
-	buffers := *h.Buffers
-	notes := *h.Notes
 
-	if buffers != nil {
-		if b, err := buffers.Load(path); err == nil {
-			data.Meta = toMetaView(b.Meta())
-			data.Versions = toVersionViews(b.Versions(), pathEnc)
-			data.Assets = toAssetViews(b.Storable().Owns())
-			data.HasAssets = len(data.Assets) > 0
-			return data
-		}
+	if b, err := h.ServiceProvider.Buffers.Load(path); err == nil {
+		data.Meta = toMetaView(b.Meta())
+		data.Versions = toVersionViews(b.Versions(), pathEnc)
+		data.Assets = toAssetViews(b.Storable().Owns())
+		data.HasAssets = len(data.Assets) > 0
+		return data
 	}
-	if notes != nil {
-		if n, err := notes.Load(path); err == nil {
-			data.Meta = toMetaView(n.Meta())
-			data.Versions = toVersionViews(n.Versions(), pathEnc)
-			data.Assets = toAssetViews(n.Storable().Owns())
-			data.HasAssets = len(data.Assets) > 0
-			return data
-		}
+	if n, err := h.ServiceProvider.Notes.Load(path); err == nil {
+		data.Meta = toMetaView(n.Meta())
+		data.Versions = toVersionViews(n.Versions(), pathEnc)
+		data.Assets = toAssetViews(n.Storable().Owns())
+		data.HasAssets = len(data.Assets) > 0
+		return data
 	}
 	return data
 }

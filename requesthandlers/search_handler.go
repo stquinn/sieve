@@ -5,14 +5,14 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"sieve/sieve"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type SearchHandler struct {
-	Notes **sieve.NoteService
-	State **sieve.StateService
-	Tmpl  *template.Template
+	ServiceProvider *sieve.ServiceProvider
+	Tmpl            *template.Template
 }
 
 func (h *SearchHandler) RegisterPaths(r chi.Router) {
@@ -52,7 +52,7 @@ func flattenNotes(entries []sieve.NoteEntry, currentPath string) []switchItem {
 func (h *SearchHandler) handleSearchPrompt(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	
+
 	if err := h.Tmpl.ExecuteTemplate(w, "quickswitcher.html", nil); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -64,15 +64,8 @@ func (h *SearchHandler) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	query := strings.ToLower(r.URL.Query().Get("q"))
 
-	state := *h.State
-	notesService := *h.Notes
-
-	if state == nil || notesService == nil {
-		return
-	}
-
-	session := state.LoadSession()
-	entries, err := notesService.List()
+	session := h.ServiceProvider.State.LoadSession()
+	entries, err := h.ServiceProvider.Notes.List()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

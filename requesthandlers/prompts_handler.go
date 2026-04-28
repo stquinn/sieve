@@ -9,8 +9,8 @@ import (
 )
 
 type PromptsHandler struct {
-	Prompts **sieve.PromptService
-	Tmpl    *template.Template
+	ServiceProvider *sieve.ServiceProvider
+	Tmpl            *template.Template
 }
 
 func (p *PromptsHandler) RegisterPaths(r chi.Router) {
@@ -21,13 +21,7 @@ func (p *PromptsHandler) handlePrompts(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	promptsService := *p.Prompts
-	if promptsService == nil {
-		http.Error(w, "prompts service not available", http.StatusInternalServerError)
-		return
-	}
-
-	prompts := promptsService.ListPrompts()
+	prompts := p.ServiceProvider.Prompts.ListPrompts()
 	if err := p.Tmpl.ExecuteTemplate(w, "prompts.html", prompts); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}

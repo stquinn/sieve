@@ -1,18 +1,17 @@
 package requesthandlers
 
 import (
-	"fmt"
 	"html/template"
 	"net/http"
-	"strconv"
 	"sieve/sieve"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 )
 
 type SettingsHandler struct {
-	State **sieve.StateService
-	Tmpl  *template.Template
+	ServiceProvider *sieve.ServiceProvider
+	Tmpl            *template.Template
 }
 
 func (h *SettingsHandler) RegisterPaths(r chi.Router) {
@@ -23,12 +22,7 @@ func (h *SettingsHandler) RegisterPaths(r chi.Router) {
 func (h *SettingsHandler) handleSettings(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	state := *h.State
-	if state == nil {
-		fmt.Fprint(w, "")
-		return
-	}
-	settings := state.LoadSettings()
+	settings := h.ServiceProvider.State.LoadSettings()
 	if err := h.Tmpl.ExecuteTemplate(w, "settings.html", settings); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -37,21 +31,16 @@ func (h *SettingsHandler) handleSettings(w http.ResponseWriter, r *http.Request)
 func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	state := *h.State
-	if state == nil {
-		fmt.Fprint(w, "")
-		return
-	}
 
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	settings := state.LoadSettings()
+	settings := h.ServiceProvider.State.LoadSettings()
 	settings.CLI = r.FormValue("cli")
 	settings.Model = r.FormValue("model")
-	
+
 	if debounceStr := r.FormValue("autosave_debounce"); debounceStr != "" {
 		if val, err := strconv.Atoi(debounceStr); err == nil {
 			settings.AutosaveDebounce = val
@@ -65,7 +54,7 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 	}
 	settings.Debug = r.FormValue("debug") == "on"
 
-	if err := state.SaveSettings(settings); err != nil {
+	if err := h.ServiceProvider.State.SaveSettings(settings); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
