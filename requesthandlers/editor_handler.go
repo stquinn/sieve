@@ -14,6 +14,7 @@ import (
 type EditorHandler struct {
 	ServiceProvider *sieve.ServiceProvider
 	Tmpl            *template.Template
+	Broadcast       func(event, data string)
 }
 
 type editorShellData struct {
@@ -98,6 +99,9 @@ func (h *EditorHandler) handleEditorSave(w http.ResponseWriter, r *http.Request)
 		name := strings.TrimPrefix(uuid, "prompt:")
 
 		if err := h.ServiceProvider.Prompts.SavePrompt(name, req.Body); err == nil {
+			if h.Broadcast != nil {
+				h.Broadcast("prompts:changed", "{}")
+			}
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]int{"version": 0})
 			return

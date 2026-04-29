@@ -9,13 +9,18 @@ import (
 )
 
 type AiHandler struct {
-	ServiceProvider *sieve.ServiceProvider
+	ServiceProvider  *sieve.ServiceProvider
+	Ask              func(content, history, question, notePath string, imageStorePaths []string) (string, error)
+	Explain          func(content, history, notePath string, imageStorePaths []string) (string, error)
+	EmitNotesChanged func()
 }
 
 func (h *AiHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/ai/smartFile/{id}", h.handleAiSmartFile)
 	r.Post("/api/ai/smartMetadata/{id}", h.handleAiSmartMetadata)
 	r.Post("/api/ai/keepAndFile/{uuid}", h.handleAiKeepAndFile)
+	r.Post("/api/ai/ask", h.handleAiAsk)
+	r.Post("/api/ai/explain", h.handleAiExplain)
 }
 
 func (h *AiHandler) handleAiSmartFile(w http.ResponseWriter, r *http.Request) {
@@ -78,12 +83,32 @@ func (h *AiHandler) evaluateAndFile(w http.ResponseWriter, id string, fileAfter 
 		}
 	}
 
-	//TODO settings hsould be cached.  we should not be calling LoadSettings() every time
 	outcome, err := sieve.EvaluateAndFileDoc(path, h.ServiceProvider.Buffers, h.ServiceProvider.Notes, h.ServiceProvider.State.LoadSettings(), folders, prompt, fileAfter, allowDiscard)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	session := h.ServiceProvider.State.LoadSession()
+	for i := range session.Tabs {
+		if session.Tabs[i].ID == id {
+			if outcome.Buffer != nil {
+				session.Tabs[i].Status = outcome.Buffer.Meta().Status()
+				session.Tabs[i].DisplayName = outcome.Buffer.Meta().DisplayName()
+				if outcome.Buffer.Meta().UserIntent() != nil {
+					session.Tabs[i].UserIntent = *outcome.Buffer.Meta().UserIntent()
+				}
+			} else if outcome.Note != nil {
+				session.Tabs[i].Status = outcome.Note.Meta().Status()
+				session.Tabs[i].DisplayName = outcome.Note.Meta().DisplayName()
+				if outcome.Note.Meta().UserIntent() != nil {
+					session.Tabs[i].UserIntent = *outcome.Note.Meta().UserIntent()
+				}
+			}
+			break
+		}
+	}
+	_ = h.ServiceProvider.State.SaveSession(session)
 
 	type EvaluateAndFileResult struct {
 		Discarded bool        `json:"discarded"`
@@ -118,4 +143,56 @@ func (h *AiHandler) evaluateAndFile(w http.ResponseWriter, id string, fileAfter 
 		Discarded: outcome.Discarded,
 		Doc:       doc,
 	})
+	if h.EmitNotesChanged != nil {
+		h.EmitNotesChanged()
+	}
+}
+
+type askRequest struct {
+	Content         string   `json:"content"`
+	History         string   `json:"history"`
+	Question        string   `json:"question"`
+	NotePath        string   `json:"notePath"`
+	ImageStorePaths []string `json:"imageStorePaths"`
+}
+
+func (h *AiHandler) handleAiAsk(w http.ResponseWriter, r *http.Request) {
+	var req askRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp, err := h.Ask(req.Content, req.History, req.Question, req.NotePath, req.ImageStorePaths)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write([]byte(resp))
+}
+
+type explainRequest struct {
+	Content         string   `json:"content"`
+	History         string   `json:"history"`
+	NotePath        string   `json:"notePath"`
+	ImageStorePaths []string `json:"imageStorePaths"`
+}
+
+func (h *AiHandler) handleAiExplain(w http.ResponseWriter, r *http.Request) {
+	var req explainRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp, err := h.Explain(req.Content, req.History, req.NotePath, req.ImageStorePaths)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write([]byte(resp))
 }

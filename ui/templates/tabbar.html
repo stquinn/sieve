@@ -8,15 +8,20 @@
     data-tab-idx="{{$i}}"
     draggable="true"
     onmousedown="if(event.button===0 && !event.target.closest('button')){window.sieveSelectTab && window.sieveSelectTab('{{$t.ID}}')}"
-    oncontextmenu="event.preventDefault();window.sieveTabContextMenu && window.sieveTabContextMenu('{{$t.ID}}','{{if $t.DisplayName}}{{$t.DisplayName}}{{else}}Untitled{{end}}',event)"
+    oncontextmenu="event.preventDefault();window.sieveTabContextMenu && window.sieveTabContextMenu('{{$t.ID}}','{{if $t.DisplayName}}{{$t.DisplayName}}{{else}}Untitled{{end}}','{{$t.UserIntent}}',event)"
   >
-    {{if $t.UserIntent}}
-    <span class="w-1.5 h-1.5 rounded-full shrink-0{{if ne $i $.ActiveIdx}} opacity-40{{end}}{{if eq $t.UserIntent "keep"}} bg-tn-blue{{else if eq $t.UserIntent "trash"}} bg-tn-red{{else}} bg-tn-yellow{{end}}"></span>
-    {{else if eq $t.Status "filed"}}
-    <span class="w-1.5 h-1.5 rounded-full shrink-0 bg-tn-green{{if ne $i $.ActiveIdx}} opacity-40{{end}}"></span>
-    {{else}}
-    <svg viewBox="0 0 24 24" class="w-3.5 h-3.5 opacity-40 shrink-0" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-    {{end}}
+    <div class="flex items-center justify-center relative w-4 h-4 shrink-0">
+      <div class="tab-icon-normal flex items-center justify-center">
+        {{if $t.UserIntent}}
+        <span class="w-1.5 h-1.5 rounded-full shrink-0{{if ne $i $.ActiveIdx}} opacity-40{{end}}{{if eq $t.UserIntent "keep"}} bg-tn-blue{{else if eq $t.UserIntent "trash"}} bg-tn-red{{else}} bg-tn-yellow{{end}}"></span>
+        {{else if eq $t.Status "filed"}}
+        <span class="w-1.5 h-1.5 rounded-full shrink-0 bg-tn-green{{if ne $i $.ActiveIdx}} opacity-40{{end}}"></span>
+        {{else}}
+        <svg viewBox="0 0 24 24" class="w-3.5 h-3.5 opacity-40 shrink-0" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        {{end}}
+      </div>
+      <span class="tab-spinner absolute hidden w-3.5 h-3.5 shrink-0 rounded-full border-[1.5px] border-solid border-tn-cyan border-t-transparent animate-spin"></span>
+    </div>
     <span class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap min-w-0 text-left{{if ne $i $.ActiveIdx}} opacity-70{{end}}">{{if $t.DisplayName}}{{$t.DisplayName}}{{else}}Untitled{{end}}</span>
     {{if eq $t.Mode "markdown"}}
     <span class="text-[12px] text-tn-blue font-bold font-mono bg-tn-bg-alt px-1.5 rounded shrink-0">M</span>

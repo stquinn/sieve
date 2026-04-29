@@ -39,14 +39,15 @@
   <div class="settings-sidebar" style="width: 12rem; background: var(--theme-bgDark); border-right: 1px solid var(--theme-border); padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
     <h2 style="font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem; padding: 0 0.5rem;">Settings</h2>
     
-    <button class="settings-tab-btn active" onclick="switchSettingsTab(this, 'ai')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: var(--theme-bg); color: var(--theme-accentPrimary); transition: all 0.2s;">AI Provider</button>
-    <button class="settings-tab-btn" onclick="switchSettingsTab(this, 'appearance')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: transparent; color: var(--theme-textDim); transition: all 0.2s;">Appearance</button>
-    <button class="settings-tab-btn" onclick="switchSettingsTab(this, 'editor')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: transparent; color: var(--theme-textDim); transition: all 0.2s;">Editor</button>
+    <button id="settings-tab-btn-ai" class="settings-tab-btn {{if or (eq .LastSettingsPanel "ai") (eq .LastSettingsPanel "")}}active{{end}}" onclick="switchSettingsTab(this, 'ai')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if or (eq .LastSettingsPanel "ai") (eq .LastSettingsPanel "")}}var(--theme-bg){{else}}transparent{{end}}; color: {{if or (eq .LastSettingsPanel "ai") (eq .LastSettingsPanel "")}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">AI Provider</button>
+    <button id="settings-tab-btn-appearance" class="settings-tab-btn {{if eq .LastSettingsPanel "appearance"}}active{{end}}" onclick="switchSettingsTab(this, 'appearance')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "appearance"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "appearance"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Appearance</button>
+    <button id="settings-tab-btn-editor" class="settings-tab-btn {{if eq .LastSettingsPanel "editor"}}active{{end}}" onclick="switchSettingsTab(this, 'editor')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "editor"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "editor"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Editor</button>
   </div>
 
   <!-- Content -->
-  <form id="settings-form" hx-post="/api/settings" hx-target="#settings-dialog-content" style="flex: 1; background: var(--theme-bg); padding: 2rem; overflow-y: auto; display: flex; flex-direction: column; justify-content: space-between;">
-    <div class="settings-tab-content" id="settings-tab-ai" style="display: block;">
+  <form id="settings-form" hx-post="/api/settings" hx-target="#settings-dialog-content" onsubmit="document.getElementById('settings-dialog').close()" style="flex: 1; background: var(--theme-bg); padding: 2rem; overflow-y: auto; display: flex; flex-direction: column; justify-content: space-between;">
+    <input type="hidden" name="last_settings_panel" id="last-settings-panel-input" value="{{.LastSettingsPanel}}">
+    <div class="settings-tab-content" id="settings-tab-ai" style="display: {{if or (eq .LastSettingsPanel "ai") (eq .LastSettingsPanel "")}}block{{else}}none{{end}};">
       <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 1.5rem;">AI Configuration</h3>
       
       <div style="margin-bottom: 1.5rem;">
@@ -64,7 +65,7 @@
       </div>
     </div>
 
-    <div class="settings-tab-content" id="settings-tab-appearance" style="display: none;">
+    <div class="settings-tab-content" id="settings-tab-appearance" style="display: {{if eq .LastSettingsPanel "appearance"}}block{{else}}none{{end}};">
       <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 1.5rem;">Appearance</h3>
       
       <div>
@@ -87,7 +88,7 @@
       </div>
     </div>
 
-    <div class="settings-tab-content" id="settings-tab-editor" style="display: none;">
+    <div class="settings-tab-content" id="settings-tab-editor" style="display: {{if eq .LastSettingsPanel "editor"}}block{{else}}none{{end}};">
       <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 1.5rem;">Editor & History</h3>
       
       <div style="margin-bottom: 1.5rem;">
@@ -135,7 +136,15 @@ function switchSettingsTab(el, tabName) {
     el.style.color = 'var(--theme-accentPrimary)';
     el.classList.add('active');
   }
+  
+  var hidden = document.getElementById('last-settings-panel-input');
+  if (hidden) hidden.value = tabName;
+  
+  fetch('/api/settings/panel?tab=' + encodeURIComponent(tabName), { method: 'POST' });
 }
+
+
+
 if (window.sieveOnSettingsChanged) {
   window.sieveOnSettingsChanged();
 }

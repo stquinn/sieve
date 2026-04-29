@@ -535,7 +535,7 @@
     },
 
     addNodeView() {
-      return function ({ node, updateAttributes }) {
+      return function ({ node, editor, getPos }) {
         var wrapper = document.createElement('div')
         wrapper.style.display = 'inline-block'
 
@@ -570,7 +570,10 @@
             var w = Math.max(40, startW + ev.clientX - startX)
             var h = Math.round(w / ratio)
             img.style.width = w + 'px'; img.style.height = h + 'px'
-            updateAttributes({ width: String(w), height: String(h) })
+            if (typeof getPos === 'function') {
+                var pos = getPos()
+                editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, { width: String(w), height: String(h) })))
+            }
           }
           function onUp() {
             window.removeEventListener('mousemove', onMove)

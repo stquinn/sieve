@@ -143,7 +143,7 @@
       if (e.key === 'Escape') close();
     };
 
-    window.sieveTabContextMenu = (id, name, event) => {
+    window.sieveTabContextMenu = (id, name, intent, event) => {
       close();
 
       menuEl = document.createElement('div');
@@ -152,6 +152,7 @@
         'box-shadow:0 8px 32px rgba(0,0,0,0.5);padding:4px 0;min-width:200px;';
       menuEl.style.left = event.clientX + 'px';
       menuEl.style.top = event.clientY + 'px';
+      document.body.appendChild(menuEl);
 
       const addItem = (label, icon, action, danger) => {
         const btn = document.createElement('button');
@@ -180,33 +181,67 @@
       title.textContent = name || 'Note';
       menuEl.prepend(title);
 
-      // Note actions
-      addItem('Smart File', '<path d="M4.5 16.5c-1.5 1.5-1.5 3 0 3s3-1.5 3-3L19.5 4.5"/><path d="m19.5 4.5-3 3"/>',
-        () => window.sieveSmartFile && window.sieveSmartFile(id));
-      addItem('Smart Metadata', '<path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 8v4l3 3"/><circle cx="18" cy="6" r="3"/>',
-        () => window.sieveSmartMetadata && window.sieveSmartMetadata(id));
+      if (id.startsWith('prompt:')) {
+        addItem('Reset to Default', '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><polyline points="3 3 3 8 8 8"/>', () => {
+          if (window.htmx) {
+            window.htmx.ajax('POST', '/api/sidebar/revert-prompt?id=' + encodeURIComponent(id), { swap: 'none' });
+          }
+        });
 
-      addSep();
+        addSep();
 
-      addItem('Rename...', '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
-        () => window.sieveRenameNote && window.sieveRenameNote(id, name));
-      addItem('Show in Files', '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
-        () => window.sieveShowInFiles && window.sieveShowInFiles(id));
+        addItem('Close Tab', '<path d="M18 6L6 18"/><path d="M6 6l12 12"/>',
+          () => window.sieveCloseTab && window.sieveCloseTab(id));
+        addItem('Close All Tabs', '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>',
+          () => window.sieveCloseAllTabs && window.sieveCloseAllTabs());
+      } else {
+        // Note actions
+        addItem('Smart File', '<path d="M4.5 16.5c-1.5 1.5-1.5 3 0 3s3-1.5 3-3L19.5 4.5"/><path d="m19.5 4.5-3 3"/>',
+          () => window.sieveSmartFile && window.sieveSmartFile(id));
+        addItem('Smart Metadata', '<path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 8v4l3 3"/><circle cx="18" cy="6" r="3"/>',
+          () => window.sieveSmartMetadata && window.sieveSmartMetadata(id));
 
-      addSep();
+        addSep();
 
-      // Tab-specific actions
-      addItem('Close Tab', '<path d="M18 6L6 18"/><path d="M6 6l12 12"/>',
-        () => window.sieveCloseTab && window.sieveCloseTab(id));
-      addItem('Close All Tabs', '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>',
-        () => window.sieveCloseAllTabs && window.sieveCloseAllTabs());
+        const setIntent = (val) => {
+          if (!window.htmx) return;
+          window.htmx.ajax('POST', '/api/sidebar/intent?id='+encodeURIComponent(id)+'&value='+val, { target: '#htmx-sidebar', swap: 'innerHTML' });
+        };
 
-      addSep();
+        const keepBtn = addItem('Mark as Keep', '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>', () => setIntent('keep'));
+        keepBtn.style.color = 'var(--theme-accentPrimary)';
+        if (intent === 'keep') { keepBtn.style.background = 'var(--theme-border2)'; keepBtn.style.fontWeight = '700'; }
 
-      addItem('Delete Note...', '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>',
-        () => {
-          window.sieveOpenDelete && window.sieveOpenDelete(id, name, 'note');
-        }, true);
+        const trashBtn = addItem('Mark as Trash', '<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>', () => setIntent('trash'));
+        trashBtn.style.color = 'var(--theme-accentRed)';
+        if (intent === 'trash') { trashBtn.style.background = 'var(--theme-border2)'; trashBtn.style.fontWeight = '700'; }
+
+        if (intent) {
+          addItem('Clear Intent', '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.78"/>', () => setIntent(''));
+        }
+
+        addSep();
+
+        addItem('Rename...', '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
+          () => window.sieveRenameNote && window.sieveRenameNote(id, name));
+        addItem('Show in Files', '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
+          () => window.sieveShowInFiles && window.sieveShowInFiles(id));
+
+        addSep();
+
+        // Tab-specific actions
+        addItem('Close Tab', '<path d="M18 6L6 18"/><path d="M6 6l12 12"/>',
+          () => window.sieveCloseTab && window.sieveCloseTab(id));
+        addItem('Close All Tabs', '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>',
+          () => window.sieveCloseAllTabs && window.sieveCloseAllTabs());
+
+        addSep();
+
+        addItem('Delete Note...', '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>',
+          () => {
+            window.sieveOpenDelete && window.sieveOpenDelete(id, name, 'note');
+          }, true);
+      }
 
       document.body.appendChild(menuEl);
 

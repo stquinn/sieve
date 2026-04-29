@@ -17,13 +17,24 @@ type SettingsHandler struct {
 func (h *SettingsHandler) RegisterPaths(r chi.Router) {
 	r.Get("/api/settings", h.handleSettings)
 	r.Post("/api/settings", h.handleSettingsSave)
+	r.Post("/api/settings/panel", h.handleSettingsPanel)
 }
 
 func (h *SettingsHandler) handleSettings(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	settings := h.ServiceProvider.State.LoadSettings()
-	if err := h.Tmpl.ExecuteTemplate(w, "settings.html", settings); err != nil {
+	session := h.ServiceProvider.State.LoadSession()
+
+	data := struct {
+		sieve.Settings
+		LastSettingsPanel string
+	}{
+		Settings:          settings,
+		LastSettingsPanel: session.LastSettingsPanel,
+	}
+
+	if err := h.Tmpl.ExecuteTemplate(w, "settings.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -59,7 +70,31 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := h.Tmpl.ExecuteTemplate(w, "settings.html", settings); err != nil {
+	session := h.ServiceProvider.State.LoadSession()
+	if lastPanel := r.FormValue("last_settings_panel"); lastPanel != "" {
+		session.LastSettingsPanel = lastPanel
+		_ = h.ServiceProvider.State.SaveSession(session)
+	}
+
+	data := struct {
+		sieve.Settings
+		LastSettingsPanel string
+	}{
+		Settings:          settings,
+		LastSettingsPanel: session.LastSettingsPanel,
+	}
+
+	if err := h.Tmpl.ExecuteTemplate(w, "settings.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func (h *SettingsHandler) handleSettingsPanel(w http.ResponseWriter, r *http.Request) {
+	tab := r.URL.Query().Get("tab")
+	if tab != "" {
+		session := h.ServiceProvider.State.LoadSession()
+		session.LastSettingsPanel = tab
+		_ = h.ServiceProvider.State.SaveSession(session)
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

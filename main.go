@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/tls"
 	"embed"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"sieve/logger"
 	"sieve/sieve"
 
 	"github.com/wailsapp/wails/v2"
@@ -47,12 +49,22 @@ func (h *storeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rel := filepath.FromSlash(strings.TrimPrefix(r.URL.Path, prefix))
 	filePath := filepath.Join(abs, filepath.Clean(rel))
 
-	// Ensure we're still inside the store root
-	if !strings.HasPrefix(filePath+string(filepath.Separator), abs+string(filepath.Separator)) {
-		http.NotFound(w, r)
+	logger.Info("About to Serve path", "path", filePath)
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	http.ServeFile(w, r, filePath)
+
+	contentType := http.DetectContentType(data)
+	if strings.HasPrefix(contentType, "text/xml") || strings.HasPrefix(contentType, "text/plain") {
+		if bytes.Contains(data, []byte("<svg")) {
+			contentType = "image/svg+xml"
+		}
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 // muxHandler routes requests: proxy and theme.css are intercepted first, then
@@ -84,6 +96,38 @@ func (m *muxHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/sieve/") {
 		m.store.ServeHTTP(w, r)
 		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/stash/") {
+		// Rewrite /stash/ to /sieve/ essentially
+		r.URL.Path = strings.Replace(r.URL.Path, "/stash/", "/sieve/", 1)
+		m.store.ServeHTTP(w, r)
+		return
+	}
+
+	// Try serving from store root as a fallback for relative markdown images
+	storeRoot := m.app.GetStorePath()
+	if storeRoot != "" {
+		abs, _ := filepath.Abs(storeRoot)
+		rel := filepath.FromSlash(strings.TrimPrefix(r.URL.Path, "/"))
+		filePath := filepath.Join(abs, filepath.Clean(rel))
+
+		if strings.HasPrefix(filePath+string(filepath.Separator), abs+string(filepath.Separator)) {
+			if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
+				data, err := os.ReadFile(filePath)
+				if err == nil {
+					contentType := http.DetectContentType(data)
+					if strings.HasPrefix(contentType, "text/xml") || strings.HasPrefix(contentType, "text/plain") {
+						if bytes.Contains(data, []byte("<svg")) {
+							contentType = "image/svg+xml"
+						}
+					}
+					w.Header().Set("Content-Type", contentType)
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write(data)
+					return
+				}
+			}
+		}
 	}
 
 	// Fallback to apiHandler (serves index.html via NotFound)

@@ -24,6 +24,10 @@
         hx-swap="innerHTML">Assets</button>
       {{end}}
     </div>
+    <span id="meta-thinking-spinner" class="flex items-center gap-[5px] text-[10.5px] font-medium text-tn-cyan opacity-90 mr-2{{if not (and .Meta (or (eq .Meta.AiEval "evaluating") (eq .Meta.Status "evaluating")))}} hidden{{end}}">
+      <span class="w-[7px] h-[7px] shrink-0 rounded-full border-[1.5px] border-solid border-tn-cyan border-t-transparent animate-spin"></span>
+      Thinking
+    </span>
   </div>
 
   {{/* Path crumb */}}

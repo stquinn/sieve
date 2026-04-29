@@ -22,7 +22,21 @@ func (p *PromptsHandler) handlePrompts(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	prompts := p.ServiceProvider.Prompts.ListPrompts()
-	if err := p.Tmpl.ExecuteTemplate(w, "prompts.html", prompts); err != nil {
+	session := p.ServiceProvider.State.LoadSession()
+	activeID := ""
+	if len(session.Tabs) > 0 && session.ActiveIdx >= 0 && session.ActiveIdx < len(session.Tabs) {
+		activeID = session.Tabs[session.ActiveIdx].ID
+	}
+
+	data := struct {
+		Prompts  []sieve.PromptEntry
+		ActiveID string
+	}{
+		Prompts:  prompts,
+		ActiveID: activeID,
+	}
+
+	if err := p.Tmpl.ExecuteTemplate(w, "prompts.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

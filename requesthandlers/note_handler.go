@@ -6,13 +6,15 @@ import (
 	"net/http"
 	"sieve/sieve"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
 
 type NoteHandler struct {
-	ServiceProvider *sieve.ServiceProvider
-	Tmpl            *template.Template
+	ServiceProvider    *sieve.ServiceProvider
+	Tmpl               *template.Template
+	EmitSessionChanged func()
 }
 
 func (h *NoteHandler) RegisterPaths(r chi.Router) {
@@ -22,13 +24,39 @@ func (h *NoteHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/tabs/closeAll", h.handleTabsCloseAll)
 	r.Post("/api/tabs/reorder", h.handleTabsReorder)
 	r.Delete("/api/note/{id}", h.handleNoteDelete)
+	r.Post("/api/note/focus/{id}", h.handleNoteFocus)
 }
 
 func (h *NoteHandler) handleNoteOpen(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	note, err := h.ServiceProvider.Notes.LoadByUUID(id)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+
+	var displayName string
+	var status string
+	var userIntent string
+	if note, err := h.ServiceProvider.Notes.LoadByUUID(id); err == nil {
+		displayName = note.Meta().DisplayName()
+		status = note.Meta().Status()
+		if note.Meta().UserIntent() != nil {
+			userIntent = *note.Meta().UserIntent()
+		}
+	} else if buf, err := h.ServiceProvider.Buffers.LoadByUUID(id); err == nil {
+		displayName = buf.Meta().DisplayName()
+		status = buf.Meta().Status()
+		if buf.Meta().UserIntent() != nil {
+			userIntent = *buf.Meta().UserIntent()
+		}
+	} else if strings.HasPrefix(id, "prompt:") {
+		promptName := strings.TrimPrefix(id, "prompt:")
+		displayName = promptName + " Prompt"
+		for _, pe := range h.ServiceProvider.Prompts.ListPrompts() {
+			if pe.ID == id {
+				displayName = pe.DisplayName
+				break
+			}
+		}
+		status = "filed"
+	} else {
+		http.Error(w, "document not found", http.StatusNotFound)
 		return
 	}
 	session := h.ServiceProvider.State.LoadSession()
@@ -43,11 +71,33 @@ func (h *NoteHandler) handleNoteOpen(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !exists {
-		session.Tabs = append(session.Tabs, sieve.Tab{ID: id, Mode: "wysiwyg", DisplayName: note.Meta().DisplayName()})
+		tabMode := "wysiwyg"
+		if strings.HasPrefix(id, "prompt:") {
+			tabMode = "markdown"
+		} else if note, err := h.ServiceProvider.Notes.LoadByUUID(id); err == nil {
+			if m := note.Meta().All()["mode"]; m != "" {
+				tabMode = m
+			}
+		} else if buf, err := h.ServiceProvider.Buffers.LoadByUUID(id); err == nil {
+			if m := buf.Meta().All()["mode"]; m != "" {
+				tabMode = m
+			}
+		}
+
+		session.Tabs = append(session.Tabs, sieve.Tab{
+			ID:          id,
+			Mode:        tabMode,
+			DisplayName: displayName,
+			Status:      status,
+			UserIntent:  userIntent,
+		})
 		session.ActiveIdx = len(session.Tabs) - 1
 	}
 
 	_ = h.ServiceProvider.State.SaveSession(session)
+	if h.EmitSessionChanged != nil {
+		h.EmitSessionChanged()
+	}
 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -69,9 +119,17 @@ func (h *NoteHandler) handleNoteNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session := h.ServiceProvider.State.LoadSession()
-	session.Tabs = append(session.Tabs, sieve.Tab{ID: newNote.UUID(), Mode: "wysiwyg", DisplayName: newNote.Meta().DisplayName()})
+	session.Tabs = append(session.Tabs, sieve.Tab{
+		ID:          newNote.UUID(),
+		Mode:        "wysiwyg",
+		DisplayName: newNote.Meta().DisplayName(),
+		Status:      "unfiled",
+	})
 	session.ActiveIdx = len(session.Tabs) - 1
 	_ = h.ServiceProvider.State.SaveSession(session)
+	if h.EmitSessionChanged != nil {
+		h.EmitSessionChanged()
+	}
 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -94,9 +152,17 @@ func (h *NoteHandler) handleTabsCloseAll(w http.ResponseWriter, r *http.Request)
 	}
 
 	session := h.ServiceProvider.State.LoadSession()
-	session.Tabs = []sieve.Tab{{ID: newNote.UUID(), Mode: "wysiwyg"}}
+	session.Tabs = []sieve.Tab{{
+		ID:          newNote.UUID(),
+		Mode:        "wysiwyg",
+		DisplayName: newNote.Meta().DisplayName(),
+		Status:      "unfiled",
+	}}
 	session.ActiveIdx = 0
 	_ = h.ServiceProvider.State.SaveSession(session)
+	if h.EmitSessionChanged != nil {
+		h.EmitSessionChanged()
+	}
 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -129,13 +195,49 @@ func (h *NoteHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 		session.ActiveIdx = 0
 	}
 
+	// Smart Close background evaluation
+	settings := h.ServiceProvider.State.LoadSettings()
+	if settings.Tier() == sieve.TierSmart {
+		var path string
+		isBuffer := false
+		if buf, err := h.ServiceProvider.Buffers.LoadByUUID(id); err == nil && buf != nil {
+			path = buf.Path()
+			isBuffer = true
+		} else if nt, err := h.ServiceProvider.Notes.LoadByUUID(id); err == nil && nt != nil {
+			path = nt.Path()
+		}
+
+		if path != "" {
+			go func(targetPath string, isBuf bool) {
+				prompt, _ := h.ServiceProvider.Prompts.GetPromptContent("file")
+				entries, _ := h.ServiceProvider.Notes.List()
+				var folders []string
+				for _, e := range entries {
+					if e.IsDir {
+						folders = append(folders, e.Name)
+					}
+				}
+				// Silently evaluate and file unfiled documents
+				_, _ = sieve.EvaluateAndFileDoc(targetPath, h.ServiceProvider.Buffers, h.ServiceProvider.Notes, settings, folders, prompt, true, isBuf)
+			}(path, isBuffer)
+		}
+	}
+
 	if len(session.Tabs) == 0 {
 		newNote, _ := h.ServiceProvider.Buffers.New()
-		session.Tabs = []sieve.Tab{{ID: newNote.UUID(), Mode: "wysiwyg", DisplayName: newNote.Meta().DisplayName()}}
+		session.Tabs = []sieve.Tab{{
+			ID:          newNote.UUID(),
+			Mode:        "wysiwyg",
+			DisplayName: newNote.Meta().DisplayName(),
+			Status:      "unfiled",
+		}}
 		session.ActiveIdx = 0
 	}
 
 	_ = h.ServiceProvider.State.SaveSession(session)
+	if h.EmitSessionChanged != nil {
+		h.EmitSessionChanged()
+	}
 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -187,6 +289,9 @@ func (h *NoteHandler) handleTabsReorder(w http.ResponseWriter, r *http.Request) 
 	session.ActiveIdx = activeIdx
 
 	_ = h.ServiceProvider.State.SaveSession(session)
+	if h.EmitSessionChanged != nil {
+		h.EmitSessionChanged()
+	}
 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -225,11 +330,19 @@ func (h *NoteHandler) handleNoteDelete(w http.ResponseWriter, r *http.Request) {
 
 	if len(session.Tabs) == 0 {
 		newNote, _ := h.ServiceProvider.Buffers.New()
-		session.Tabs = []sieve.Tab{{ID: newNote.UUID(), Mode: "wysiwyg", DisplayName: newNote.Meta().DisplayName()}}
+		session.Tabs = []sieve.Tab{{
+			ID:          newNote.UUID(),
+			Mode:        "wysiwyg",
+			DisplayName: newNote.Meta().DisplayName(),
+			Status:      "unfiled",
+		}}
 		session.ActiveIdx = 0
 	}
 
 	_ = h.ServiceProvider.State.SaveSession(session)
+	if h.EmitSessionChanged != nil {
+		h.EmitSessionChanged()
+	}
 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -245,4 +358,25 @@ func (h *NoteHandler) handleNoteDelete(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `<div id="htmx-editor" hx-swap-oob="true" class="editor-wrapper" style="flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column;">
 		<div id="tiptap-mount" data-uuid="%s" data-mode="wysiwyg" style="flex: 1; min-height: 0; height: 100%%; display: flex; flex-direction: column;"></div>
 	</div>`, activeID)
+}
+
+func (h *NoteHandler) handleNoteFocus(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if strings.HasPrefix(id, "prompt:") {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if note, err := h.ServiceProvider.Notes.LoadByUUID(id); err == nil {
+		note.Meta().SetFocusCount(note.Meta().FocusCount() + 1)
+		_, _ = h.ServiceProvider.Notes.Save(note)
+	} else if buf, err := h.ServiceProvider.Buffers.LoadByUUID(id); err == nil {
+		buf.Meta().SetFocusCount(buf.Meta().FocusCount() + 1)
+		_, _ = h.ServiceProvider.Buffers.Save(buf)
+	} else {
+		http.Error(w, "document not found", http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

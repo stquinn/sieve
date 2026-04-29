@@ -122,12 +122,27 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 				_, err := app.RenameFolder(id, name)
 				return err
 			},
+			CreateFolder: func(parentFolderID, name string) error {
+				return app.CreateFolder(parentFolderID, name)
+			},
+			EmitNotesChanged: func() {
+				hub.broadcast("notes:changed", "{}")
+			},
+			EmitPromptsChanged: func() {
+				hub.broadcast("prompts:changed", "{}")
+			},
 		},
 		&requesthandlers.MetaHandler{ServiceProvider: sp, Tmpl: tmpl},
-		&requesthandlers.EditorHandler{ServiceProvider: sp, Tmpl: tmpl},
+		&requesthandlers.EditorHandler{ServiceProvider: sp, Tmpl: tmpl, Broadcast: hub.broadcast},
 		&requesthandlers.SettingsHandler{ServiceProvider: sp, Tmpl: tmpl},
 		&requesthandlers.HelpHandler{Tmpl: tmpl},
 		&requesthandlers.SearchHandler{ServiceProvider: sp, Tmpl: tmpl},
+		&requesthandlers.AssetHandler{
+			ServiceProvider: sp,
+			SaveAsset: func(context, id, dataUrl string) (interface{}, error) {
+				return app.SaveAsset(context, id, dataUrl)
+			},
+		},
 		&requesthandlers.PromptsHandler{ServiceProvider: sp, Tmpl: tmpl},
 		&requesthandlers.SessionHandler{
 			ServiceProvider: sp,
@@ -136,9 +151,22 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 		&requesthandlers.NoteHandler{
 			ServiceProvider: sp,
 			Tmpl:            tmpl,
+			EmitSessionChanged: func() {
+				hub.broadcast("session:changed", "{}")
+			},
 		},
 		&requesthandlers.AiHandler{
 			ServiceProvider: sp,
+			Ask: func(content, history, question, notePath string, imageStorePaths []string) (string, error) {
+				return app.Ask(content, history, question, notePath, imageStorePaths)
+			},
+			Explain: func(content, history, notePath string, imageStorePaths []string) (string, error) {
+				return app.Explain(content, history, notePath, imageStorePaths)
+			},
+			EmitNotesChanged: func() {
+				logger.Info("AI: notes changed event")
+				hub.broadcast("notes:changed", "{}")
+			},
 		},
 	}
 	r := chi.NewRouter()
@@ -174,25 +202,27 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := struct {
-		ThemeName     string
-		Tier          string
-		SidebarWidth  int
-		MetaWidth     int
-		ShowSidebar   bool
-		ShowMeta      bool
-		ShowPrompts   bool
-		PromptsHeight int
-		ActiveUUID    string
+		ThemeName        string
+		Tier             string
+		SidebarWidth     int
+		MetaWidth        int
+		ShowSidebar      bool
+		ShowMeta         bool
+		ShowPrompts      bool
+		PromptsHeight    int
+		ActiveUUID       string
+		AutosaveDebounce int
 	}{
-		ThemeName:     info.ThemeName,
-		Tier:          tierStr,
-		SidebarWidth:  session.SidebarWidth,
-		MetaWidth:     session.MetaWidth,
-		ShowSidebar:   session.ShowSidebar,
-		ShowMeta:      session.ShowMeta,
-		ShowPrompts:   session.ShowPrompts,
-		PromptsHeight: session.PromptsHeight,
-		ActiveUUID:    activeUUID,
+		ThemeName:        info.ThemeName,
+		Tier:             tierStr,
+		SidebarWidth:     session.SidebarWidth,
+		MetaWidth:        session.MetaWidth,
+		ShowSidebar:      session.ShowSidebar,
+		ShowMeta:         session.ShowMeta,
+		ShowPrompts:      session.ShowPrompts,
+		PromptsHeight:    session.PromptsHeight,
+		ActiveUUID:       activeUUID,
+		AutosaveDebounce: info.AutosaveDebounce,
 	}
 
 	tmpl, err := template.New("index").Parse(uiIndexHTML)

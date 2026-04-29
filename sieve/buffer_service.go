@@ -145,7 +145,30 @@ func (bs *BufferService) doFile(b *Buffer, overrideName string) (*Note, error) {
 	return newNote(ms), nil
 }
 
-// List returns all buffers in the WorkingCopy category. Non-MetaStorable
+// SetIntent writes user_intent to the buffer's metadata and saves it.
+// intent must be "keep", "trash", or "" (clears the field).
+func (bs *BufferService) SetIntent(b *Buffer, intent string) (*Buffer, error) {
+	meta := b.s.Meta()
+	if intent == "" {
+		delete(meta, "user_intent")
+	} else {
+		meta["user_intent"] = intent
+	}
+	b.s.SetMeta(meta)
+	return bs.Save(b)
+}
+
+// Rename updates the display_name of a buffer. It does not change the physical
+// filename since buffers are unfiled.
+func (bs *BufferService) Rename(b *Buffer, name string) (*Buffer, error) {
+	meta := b.s.Meta()
+	meta["display_name"] = name
+	b.s.SetMeta(meta)
+	return bs.Save(b)
+}
+
+// List returns all buffers currently active (stored in the WorkingCopy category).
+// Backed by the Store — no direct filesystem access. Hidden or non-markdown
 // entries (e.g. asset files, folders) are silently skipped.
 func (bs *BufferService) List() ([]*Buffer, error) {
 	storables, err := bs.st.List(WorkingCopy, "")

@@ -311,6 +311,7 @@ export namespace sieve {
 	    filename: string;
 	    alt: string;
 	    summary: string;
+	    detect?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ImageDesc(source);
@@ -321,6 +322,7 @@ export namespace sieve {
 	        this.filename = source["filename"];
 	        this.alt = source["alt"];
 	        this.summary = source["summary"];
+	        this.detect = source["detect"];
 	    }
 	}
 	export class NoteEntry {

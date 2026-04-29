@@ -3,6 +3,7 @@ package sieve
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -133,12 +134,26 @@ type ImageDesc struct {
 	Filename string `json:"filename"`
 	Alt      string `json:"alt"`
 	Summary  string `json:"summary"`
+	Detect   string `json:"detect,omitempty"`
 }
 
 // DescribeImage sends an image to the configured CLI and returns alt text, a
 // summary, and a suggested filename. imagePath must be an absolute filesystem path.
 // promptOverride is the already-loaded prompt template (empty = use default).
 func DescribeImage(imagePath string, settings Settings, promptTmpl string) (ImageDesc, error) {
+	data, err := os.ReadFile(imagePath)
+	if err == nil {
+		if strings.Contains(string(data), "<svg") || strings.Contains(string(data), "<SVG") || strings.Contains(string(data), "<?xml") {
+			logger.Info("DescribeImage bypassed for SVG", "path", imagePath)
+			return ImageDesc{
+				Filename: filepath.Base(imagePath),
+				Alt:      "",
+				Summary:  "",
+				Detect:   "Unsupported SVG",
+			}, nil
+		}
+	}
+
 	prompt := strings.ReplaceAll(promptTmpl, "{image_filename}", filepath.Base(imagePath))
 	cwd := filepath.Dir(imagePath)
 
@@ -152,6 +167,7 @@ func DescribeImage(imagePath string, settings Settings, promptTmpl string) (Imag
 	if err := json.Unmarshal([]byte(cleaned), &desc); err != nil {
 		return ImageDesc{}, fmt.Errorf("parse image desc: %w", err)
 	}
+	desc.Detect = "ai"
 	return desc, nil
 }
 

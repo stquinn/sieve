@@ -417,6 +417,7 @@ textarea::selection {
   font-size: 16px;
   line-height: 1.75;
   color: var(--theme-text);
+  font-family: var(--theme-editorFont, inherit);
   position: relative;
 
   padding-left: 2.8rem;
@@ -927,7 +928,7 @@ div.node-image.ProseMirror-selectednode {
   padding: 1.5rem 1.5rem 6rem 2.8rem;
   background: #1a1b26;
   color: #a9b1d6;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-family: var(--theme-editorFont, 'JetBrains Mono', 'Fira Code', monospace);
   font-size: 14px;
   line-height: 1.75;
   border: none;

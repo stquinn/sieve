@@ -4,13 +4,64 @@
 (function () {
   'use strict'
 
+  window.__sieveAiService = {
+    explain: function(job, ctx, listener) {
+      fetch('/api/ai/explain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: ctx.content,
+          history: ctx.history,
+          notePath: currentPath || '',
+          imageStorePaths: ctx.imagePaths || []
+        })
+      })
+      .then(function(r) {
+        if (!r.ok) throw new Error('Explain failed')
+        return r.text()
+      })
+      .then(function(text) {
+        listener.onComplete(job, text)
+      })
+      .catch(function(err) {
+        listener.onError(job, err.message)
+      })
+    },
+    ask: function(job, ctx, question, listener) {
+      fetch('/api/ai/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: ctx.content,
+          history: ctx.history,
+          question: question,
+          notePath: currentPath || '',
+          imageStorePaths: ctx.imagePaths || []
+        })
+      })
+      .then(function(r) {
+        if (!r.ok) throw new Error('Ask failed')
+        return r.text()
+      })
+      .then(function(text) {
+        listener.onComplete(job, text)
+      })
+      .catch(function(err) {
+        listener.onError(job, err.message)
+      })
+    }
+  }
+
   var currentEditor = null
   var currentUuid = ''
   var currentPath = ''
+  var currentMountEl = null
   var currentMode = 'wysiwyg'
+  var tabModes = {}
   var saveTimer = null
   var lastSyncedBody = ''
   var showAiBlocks = true
+  var blobInterceptorCleanup = null
 
   // Persistent overlay elements — created once, reused across tab switches.
   var linkBubble = null
@@ -35,7 +86,8 @@
     }
 
     currentUuid = uuid
-    currentMode = mode || 'wysiwyg'
+    currentMountEl = mountEl
+    currentMode = mode || tabModes[uuid] || 'wysiwyg'
 
     console.log('[editor.js] initEditor fetching data for uuid:', uuid)
 
@@ -46,14 +98,17 @@
         window.__stashActiveTabPath = data.path || ''
         lastSyncedBody = data.body || ''
 
-        var isMarkdown = mode === 'markdown' || data.mode === 'markdown' || uuid.startsWith('prompt:')
+        var isMarkdown = currentMode === 'markdown' || data.mode === 'markdown' || uuid.startsWith('prompt:')
         ensureOverlays()
 
         if (isMarkdown) {
+          currentMode = 'markdown'
           mountMarkdown(mountEl, uuid, data.body || '')
         } else {
+          currentMode = 'wysiwyg'
           mountWysiwyg(mountEl, uuid, data.body || '')
         }
+        tabModes[uuid] = currentMode
         dispatchStats()
       })
       .catch(function (err) { console.error('[editor] load failed', err) })
@@ -83,7 +138,7 @@
         T.AiQuestion,
         T.TaskList,
         T.TaskItem.configure({ nested: true }),
-        T.Markdown.configure({ html: true, transformPastedText: false }),
+        T.Markdown.configure({ html: true, transformPastedText: true }),
         T.AiShortcuts.configure({
           onExplain: function () { runAiJob('explain') },
           onAsk: function () { openAskPopup() },
@@ -112,9 +167,14 @@
             }
             return false
           },
-          paste: function (_view, event) { return handleImagePaste(event) },
         },
+        handlePaste: function (_view, event) { return handleSmartPaste(event) },
         handleKeyDown: function (view, event) {
+          if (event.key === 's' && isModKey(event)) {
+            event.preventDefault()
+            flushSave()
+            return true
+          }
           if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
             if (currentEditor && currentEditor.isActive('listItem')) return false
             if (event.shiftKey) return false
@@ -139,6 +199,12 @@
 
     currentEditor = editor
     exposePublicApi()
+
+    if (blobInterceptorCleanup) {
+      blobInterceptorCleanup()
+      blobInterceptorCleanup = null
+    }
+    blobInterceptorCleanup = initBlobInterceptor(editor, uuid)
   }
 
   // ── Markdown mode ─────────────────────────────────────────────────────────────
@@ -174,6 +240,12 @@
       updateGutter(gutter, val)
       dispatchStats()
     })
+    textarea.addEventListener('keydown', function (e) {
+      if (e.key === 's' && isModKey(e)) {
+        e.preventDefault()
+        flushSave()
+      }
+    })
     textarea.addEventListener('scroll', function () { gutter.scrollTop = textarea.scrollTop })
 
     wrapper.appendChild(gutter)
@@ -205,11 +277,15 @@
 
   function flushSave() {
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
-    if (currentUuid && lastSyncedBody !== null) doSave(currentUuid, lastSyncedBody)
+    if (currentUuid) {
+      var content = getMarkdown()
+      return doSave(currentUuid, content)
+    }
+    return Promise.resolve()
   }
 
   function doSave(uuid, body) {
-    fetch('/api/editor/save?uuid=' + encodeURIComponent(uuid), {
+    return fetch('/api/editor/save?uuid=' + encodeURIComponent(uuid), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ body: body }),
@@ -356,6 +432,21 @@
     // in a new blockRef node via tr.wrap(). If so, selection.to lands inside that node;
     // we must insert the aiBlock AFTER the blockRef, not inside it.
     var insertPos = currentEditor ? currentEditor.state.selection.to : 0
+    if (currentEditor) {
+      let resolved = currentEditor.state.doc.resolve(insertPos)
+      for (let depth = resolved.depth; depth > 0; depth--) {
+        let node = resolved.node(depth)
+        if (node.type.name === 'aiBlock') {
+          insertPos = resolved.after(depth)
+          resolved = currentEditor.state.doc.resolve(insertPos)
+          break
+        }
+      }
+      if (resolved.depth >= 1) {
+        insertPos = resolved.after(1)
+      }
+    }
+
     if (ctx && ctx.blockRef && ctx.blockRef !== 'doc' && !ctx.blockRef.includes(',') && currentEditor) {
       currentEditor.state.doc.descendants(function (node, pos) {
         if (node.type.name === 'blockRef' && node.attrs.id === ctx.blockRef) {
@@ -365,14 +456,16 @@
       })
     }
 
+    var refId = (ctx && ctx.blockRef) || 'doc'
+
     if (currentMode === 'markdown') {
-      insertAiPlaceholderMarkdown(blkId, question, lines)
+      insertAiPlaceholderMarkdown(blkId, refId, question, lines)
     } else {
-      insertAiPlaceholderWysiwyg(blkId, question, lines, insertPos)
+      insertAiPlaceholderWysiwyg(blkId, refId, question, lines, insertPos)
     }
 
     var listener = {
-      onComplete: function (_jobId, response) { resolveAiBlock(blkId, response, lines) },
+      onComplete: function (_jobId, response) { resolveAiBlock(blkId, refId, response, lines) },
       onError: function (_jobId, err) { console.error('[editor] AI error', err) },
     }
 
@@ -380,15 +473,15 @@
     else ai.ask(job, ctx, question || '', listener)
   }
 
-  function insertAiPlaceholderMarkdown(blkId, question, lines) {
+  function insertAiPlaceholderMarkdown(blkId, ref, question, lines) {
     var qLine = lines.length ? '***Ask:*** ' + lines[0] + '\n\n---\n\n' : ''
-    var block = '\n\n[!ai] id="' + blkId + '" thinking="true"\n' + qLine + '_(thinking\u2026)_\n[!ai-end]\n\n'
+    var block = '\n\n[!ai] id="' + blkId + '" ref="' + ref + '" thinking="true"\n' + qLine + '_(thinking\u2026)_\n[!ai-end]\n\n'
     lastSyncedBody = lastSyncedBody + block
     window.sieveSetMetaDirty && window.sieveSetMetaDirty(true)
     scheduleSave(currentUuid, lastSyncedBody)
   }
 
-  function insertAiPlaceholderWysiwyg(blkId, question, lines, insertPos) {
+  function insertAiPlaceholderWysiwyg(blkId, ref, question, lines, insertPos) {
     if (!currentEditor) return
     var qNodes = lines.map(function (l, i) {
       return {
@@ -402,7 +495,7 @@
     if (insertPos === undefined) insertPos = currentEditor.state.selection.to
     currentEditor.commands.insertContentAt(insertPos, {
       type: 'aiBlock',
-      attrs: { id: blkId, thinking: true },
+      attrs: { id: blkId, ref: ref, thinking: true },
       content: [
         ...(qNodes.length ? [{ type: 'aiQuestion', content: qNodes }] : []),
         { type: 'horizontalRule' },
@@ -411,7 +504,7 @@
     })
   }
 
-  function resolveAiBlock(blkId, response, lines) {
+  function resolveAiBlock(blkId, ref, response, lines) {
     if (currentMode === 'markdown') {
       var escaped = blkId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       var pattern = new RegExp('(\\[!ai\\] id="' + escaped + '"[^\\n]*)\\s*[\\s\\S]*?\\s*\\[!ai-end\\]')
@@ -430,7 +523,7 @@
       var parsed = window.TipTap.ProseMirrorDOMParser.fromSchema(currentEditor.schema).parse(tmp)
       currentEditor.commands.insertContentAt({ from: foundPos, to: foundPos + foundSize }, {
         type: 'aiBlock',
-        attrs: { id: blkId, thinking: false },
+        attrs: { id: blkId, ref: ref, thinking: false },
         content: [
           ...(lines.length ? [{ type: 'aiQuestion', content: lines.map(function (l, i) { return { type: 'paragraph', content: l.trim() ? [i === 0 ? { type: 'text', text: 'Ask: ', marks: [{ type: 'bold' }, { type: 'italic' }] } : null, { type: 'text', text: l }].filter(Boolean) : [] } }) }] : []),
           { type: 'horizontalRule' },
@@ -446,32 +539,380 @@
     if (panel) panel.classList.toggle('hide-ai-blocks', !showAiBlocks)
   }
 
-  // ── Image paste ───────────────────────────────────────────────────────────────
-
-  function handleImagePaste(event) {
+  function handleSmartPaste(event) {
     if (!event.clipboardData || !currentEditor) return false
+
+    var html = event.clipboardData.getData('text/html')
     var files = Array.from(event.clipboardData.files)
     var imageFile = files.find(function (f) { return f.type.startsWith('image/') })
-    if (!imageFile) return false
-    event.preventDefault()
-    var reader = new FileReader()
-    reader.onload = function (e) {
-      var dataUrl = e.target.result
-      var id = 'blk-' + Math.random().toString(16).substring(2, 6)
-      fetch('/api/asset/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: currentPath, id: id, dataUrl: dataUrl }),
-      }).then(function (r) { return r.json() })
-        .then(function (asset) {
-          currentEditor.commands.insertContent({ type: 'image', attrs: { src: asset.externalRef, id: id, detect: 'pending' } })
-        })
-        .catch(function () {
-          currentEditor.commands.insertContent({ type: 'image', attrs: { src: dataUrl } })
-        })
+
+    var imgSrc = null
+    if (!imageFile && html) {
+      var div = document.createElement('div')
+      div.innerHTML = html
+      var imgs = div.querySelectorAll('img')
+      if (imgs.length === 1 && imgs[0].src) {
+        imgSrc = imgs[0].src
+      }
     }
-    reader.readAsDataURL(imageFile)
-    return true
+
+    if (imageFile || imgSrc) {
+      event.preventDefault()
+
+      function processAsset(asset, blkId) {
+        if (!asset || !asset.externalRef) return
+        var mdPath = asset.externalRef
+
+        currentEditor.commands.insertContent({
+          type: 'image',
+          attrs: { src: mdPath, id: blkId, detect: 'pending' }
+        })
+
+        if (window.go && window.go.main && window.go.main.App && window.go.main.App.DescribeImage) {
+          window.go.main.App.DescribeImage(mdPath).then(function(desc) {
+            if (!desc) return
+            currentEditor.commands.command(function(commandProps) {
+              var tr = commandProps.tr
+              var state = commandProps.state
+              var found = false
+              state.doc.descendants(function(node, pos) {
+                if (node.type.name === 'image' && node.attrs.id === blkId) {
+                  found = true
+                  tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, {
+                    alt: desc.alt || '',
+                    summary: desc.summary || '',
+                    detect: desc.detect || 'ai'
+                  }))
+                  return false
+                }
+              })
+              if (found) {
+                currentEditor.view.dispatch(tr)
+                var md = currentEditor.storage.markdown.getMarkdown() || ''
+                lastSyncedBody = md
+                scheduleSave(currentUuid, md)
+                window.sieveSetMetaDirty && window.sieveSetMetaDirty(true)
+              }
+              return found
+            })
+          }).catch(function(err) {
+            console.error('[editor.js] DescribeImage failed', err)
+          })
+        }
+      }
+
+      if (imageFile) {
+        var reader = new FileReader()
+        reader.onload = function (e) {
+          var dataUrl = e.target.result
+          var id = 'blk-' + Math.random().toString(16).substring(2, 6)
+          fetch('/api/asset/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: currentPath, id: id, dataUrl: dataUrl }),
+          }).then(function (r) { return r.json() })
+            .then(function (asset) {
+              processAsset(asset, id)
+            })
+            .catch(function () {
+              currentEditor.commands.insertContent({ type: 'image', attrs: { src: dataUrl } })
+            })
+        }
+        reader.readAsDataURL(imageFile)
+        return true
+      }
+
+      if (imgSrc) {
+        var id = 'blk-' + Math.random().toString(16).substring(2, 6)
+        if (imgSrc.startsWith('data:')) {
+          fetch('/api/asset/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: currentPath, id: id, dataUrl: imgSrc }),
+          }).then(function (r) { return r.json() })
+            .then(function (asset) {
+              processAsset(asset, id)
+            })
+            .catch(function() {
+              currentEditor.commands.insertContent({ type: 'image', attrs: { src: imgSrc } })
+            })
+        } else if (window.go && window.go.main && window.go.main.App && window.go.main.App.DownloadAsset) {
+          window.go.main.App.DownloadAsset(currentPath, imgSrc, id).then(function(asset) {
+            processAsset(asset, id)
+          }).catch(function(err) {
+            console.error('[editor.js] DownloadAsset failed', err)
+            currentEditor.commands.insertContent({ type: 'image', attrs: { src: imgSrc } })
+          })
+        } else {
+          currentEditor.commands.insertContent({ type: 'image', attrs: { src: imgSrc } })
+        }
+        return true
+      }
+    }
+
+    // Text paste heuristic
+    var text = event.clipboardData.getData('text/plain')
+    if (text && !currentEditor.isActive('codeBlock')) {
+      var result = detectLanguage(text)
+      if (result.tier <= 3) {
+        event.preventDefault()
+        var id = 'blk-' + Math.random().toString(16).substring(2, 6)
+
+        currentEditor.commands.insertContent({
+          type: 'codeBlock',
+          attrs: { language: result.language || '', id: id, detect: 'heuristic' },
+          content: [{ type: 'text', text: text }]
+        })
+
+        if (window.go && window.go.main && window.go.main.App && window.go.main.App.RefineLanguage) {
+          window.go.main.App.RefineLanguage(text).then(function(lang) {
+            if (!lang) return
+            currentEditor.commands.command(function(props) {
+              var tr = props.tr
+              var state = props.state
+              var found = false
+              state.doc.descendants(function(node, pos) {
+                if (node.type.name === 'codeBlock' && node.attrs.id === id) {
+                  found = true
+                  tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { language: lang, detect: 'ai' }))
+                  return false
+                }
+              })
+              if (found) {
+                currentEditor.view.dispatch(tr)
+                var md = currentEditor.storage.markdown.getMarkdown() || ''
+                lastSyncedBody = md
+                scheduleSave(currentUuid, md)
+                window.sieveSetMetaDirty && window.sieveSetMetaDirty(true)
+              }
+              return found
+            })
+          }).catch(function(err) {
+            console.error('[editor.js] RefineLanguage failed', err)
+          })
+        }
+        return true
+      }
+    }
+
+    return false
+  }
+
+  function detectLanguage(text) {
+    var trimmed = text.trim()
+    if (!trimmed) return { tier: 4 }
+
+    if (
+      (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+      (trimmed.startsWith('[') && trimmed.endsWith(']'))
+    ) {
+      try { JSON.parse(trimmed); return { tier: 1, language: 'json' } } catch(e) {}
+    }
+
+    var YAML_K8S = /^apiVersion:\s*\S+[\s\S]+^kind:\s*[A-Za-z]+/m
+    if (YAML_K8S.test(trimmed)) return { tier: 1, language: 'yaml' }
+    
+    function scoreYaml(txt) {
+      var lines = txt.split('\n').filter(function(l) { return l.trim() && !l.trim().startsWith('#') })
+      if (lines.length === 0) return 0
+      var kvLines = lines.filter(function(l) { return /^\s*[\w.-]+:\s*/.test(l) }).length
+      var listLines = lines.filter(function(l) { return /^\s*-\s+/.test(l) }).length
+      return (kvLines + listLines) / lines.length
+    }
+    
+    var yamlScore = scoreYaml(trimmed)
+    if (yamlScore >= 0.75 && trimmed.split('\n').length >= 3) {
+      return { tier: yamlScore >= 0.9 ? 1 : 2, language: 'yaml' }
+    }
+
+    var GO_T1 = [
+      /^package\s+\w+/m,
+      /^type\s+\w+\s+struct\s*\{/m,
+      /^type\s+\w+\s+interface\s*\{/m,
+      /`(?:json|yaml|xml|db|bson|form|mapstructure|validate):"[^"]*"`/,
+      /^import\s+\(/m,
+      /^import\s+"/m,
+    ]
+    if (GO_T1.some(function(re) { return re.test(trimmed) })) return { tier: 1, language: 'go' }
+
+    var JAVA_T1 = [
+      /^public\s+(?:class|interface|enum|abstract\s+class)\s+\w+/m,
+      /^private\s+(?:class|interface|enum)\s+\w+/m,
+      /^protected\s+(?:class|interface)\s+\w+/m,
+      /\bpublic\s+static\s+void\s+main\s*\(\s*String/,
+      /^import\s+java\./m,
+      /^import\s+org\.\w+\.\w+/m,
+      /^import\s+com\.\w+\.\w+/m,
+    ]
+    if (JAVA_T1.some(function(re) { return re.test(trimmed) })) return { tier: 1, language: 'java' }
+
+    var DART_T1 = [
+      /^import\s+'package:flutter\//m,
+      /^import\s+'dart:/m,
+      /\bextends\s+(?:StatefulWidget|StatelessWidget|State)\b/,
+      /Widget\s+build\s*\(\s*BuildContext/,
+      /\brunApp\s*\(/,
+    ]
+    if (DART_T1.some(function(re) { return re.test(trimmed) })) return { tier: 1, language: 'dart' }
+
+    var GO_T2 = [
+      /\bfunc\s+\(\s*\w+\s+\*?\w+\s*\)\s+\w+\s*\(/,
+      /\bfunc\s+\w+\s*\(/,
+      /:=\s/,
+      /^var\s+\w+\s+\w+/m,
+      /^const\s+\w+/m,
+      /\bfmt\.\w+\(/,
+      /\berr\s*!=\s*nil\b/,
+    ]
+    var goT2Hits = GO_T2.filter(function(re) { return re.test(trimmed) }).length
+    if (goT2Hits >= 2) return { tier: 2, language: 'go' }
+
+    var JAVA_T2 = [
+      /@(?:Override|SpringBootApplication|Component|Service|Repository|Controller|Autowired|Bean|Test)\b/,
+      /\bthrows\s+\w+(?:Exception|Error)\b/,
+      /\bextends\s+\w+\b/,
+      /\bimplements\s+\w+\b/,
+      /\bSystem\.out\.print/,
+      /new\s+\w+\(.*\);/,
+      /\b(?:String|int|long|double|float|boolean|void|List|Map|Set)\s+\w+\s*=/,
+    ]
+    var javaT2Hits = JAVA_T2.filter(function(re) { return re.test(trimmed) }).length
+    if (javaT2Hits >= 2) return { tier: 2, language: 'java' }
+
+    var DART_T2 = [
+      /^import\s+'package:/m,
+      /\bScaffold\s*\(/,
+      /\bContainer\s*\(/,
+      /\bColumn\s*\(\s*children:/,
+      /\bRow\s*\(\s*children:/,
+      /@override\b/,
+      /\bconst\s+\w+\s*\(/,
+      /\bfinal\s+\w+\s+\w+\s*=/,
+    ]
+    var dartT2Hits = DART_T2.filter(function(re) { return re.test(trimmed) }).length
+    if (dartT2Hits >= 2) return { tier: 2, language: 'dart' }
+
+    if (/^(?:export\s+)?interface\s+\w+/m.test(trimmed) || /^(?:export\s+)?type\s+\w+\s*=/m.test(trimmed)) {
+      return { tier: 2, language: 'typescript' }
+    }
+    if (trimmed.includes('import ') && trimmed.includes('from ') && trimmed.includes('const ')) {
+      return { tier: 2, language: 'typescript' }
+    }
+    if ((trimmed.includes('function(') || trimmed.includes('=>')) && trimmed.includes('const ')) {
+      return { tier: 2, language: 'javascript' }
+    }
+
+    if (/^#!/.test(trimmed) && /bash|sh|zsh/i.test(trimmed.split('\n')[0])) {
+      return { tier: 1, language: 'bash' }
+    }
+
+    if (/^SELECT\s/i.test(trimmed) && /\bFROM\b/i.test(trimmed)) {
+      return { tier: 1, language: 'sql' }
+    }
+
+    if (trimmed.includes('def ') && trimmed.includes('self')) return { tier: 1, language: 'python' }
+
+    var lines = trimmed.split('\n')
+    var braceCount = (trimmed.match(/[{}]/g) || []).length
+    var semicolonCount = (trimmed.match(/;/g) || []).length
+    var indentedLines = lines.filter(function(l) { return /^[ \t]{2,}/.test(l) }).length
+    var anyWeakSignal = goT2Hits >= 1 || javaT2Hits >= 1 || dartT2Hits >= 1
+    if (lines.length > 2 && (braceCount > 2 || semicolonCount > 2 || anyWeakSignal || indentedLines > lines.length * 0.4)) {
+      return { tier: 3 }
+    }
+
+    return { tier: 4 }
+  }
+
+  function initBlobInterceptor(editor, uuid) {
+    var editorEl = editor.view.dom
+    if (!editorEl) return function() {}
+
+    function processImg(img) {
+      var blobSrc = img.getAttribute('src') || ''
+      if (!blobSrc.startsWith('blob:') && !blobSrc.startsWith('data:')) return
+      if (img.__stashProcessing) return
+      img.__stashProcessing = true
+
+      var canvas = document.createElement('canvas')
+      var image = new Image()
+      image.onload = function() {
+        canvas.width = image.naturalWidth
+        canvas.height = image.naturalHeight
+        var ctx = canvas.getContext('2d')
+        if (!ctx) return
+        ctx.drawImage(image, 0, 0)
+        canvas.toBlob(function(blob) {
+          if (!blob) return
+          var reader = new FileReader()
+          reader.onload = function(e) {
+            var dataUrl = e.target.result
+            var id = 'blk-' + Math.random().toString(16).substring(2, 6)
+            
+            fetch('/api/asset/save', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ path: currentPath, id: id, dataUrl: dataUrl }),
+            }).then(function (r) { return r.json() })
+              .then(function (asset) {
+                var mdSrc = asset.externalRef
+                editor.chain()
+                  .command(function(props) {
+                    var tr = props.tr
+                    var state = props.state
+                    state.doc.descendants(function(node, pos) {
+                      if (node.type.name === 'image' && (node.attrs.src === blobSrc || node.attrs.src === img.src)) {
+                        tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, { src: mdSrc, id: id, detect: 'pending' }))
+                      }
+                    })
+                    return true
+                  })
+                  .run()
+
+                if (window.go && window.go.main && window.go.main.App && window.go.main.App.DescribeImage) {
+                  window.go.main.App.DescribeImage(mdSrc).then(function(desc) {
+                    if (!desc || !editor) return
+                    editor.commands.command(function(props) {
+                      var tr = props.tr
+                      var state = props.state
+                      var found = false
+                      state.doc.descendants(function(node, pos) {
+                        if (node.type.name === 'image' && node.attrs.id === id) {
+                          found = true
+                          if (node.attrs.detect !== 'user') {
+                            tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { alt: desc.alt, summary: desc.summary, detect: 'ai' }))
+                          }
+                          return false
+                        }
+                      })
+                      return found
+                    })
+                  }).catch(function(err) { console.error('[editor.js] DescribeImage failed', err) })
+                }
+              }).catch(function(err) { console.error('[editor.js] blob paste save failed', err) })
+          }
+          reader.readAsDataURL(blob)
+        }, 'image/png')
+      }
+      image.src = blobSrc
+    }
+
+    var observer = new MutationObserver(function(mutations) {
+      for (var i = 0; i < mutations.length; i++) {
+        var mutation = mutations[i]
+        for (var j = 0; j < mutation.addedNodes.length; j++) {
+          var node = mutation.addedNodes[j]
+          if (node.nodeName === 'IMG') processImg(node)
+          else if (node.querySelectorAll) {
+            var imgs = node.querySelectorAll('img')
+            for (var k = 0; k < imgs.length; k++) processImg(imgs[k])
+          }
+        }
+      }
+    })
+
+    observer.observe(editorEl, { childList: true, subtree: true })
+    return function() { observer.disconnect() }
   }
 
   // ── Public API ────────────────────────────────────────────────────────────────
@@ -504,6 +945,44 @@
     btn.className = cls; btn.textContent = text
     btn.addEventListener('click', onClick)
     return btn
+  }
+
+  window.sieveSave = flushSave
+
+  window.sieveToggleMode = function() {
+    console.log('[editor.js] sieveToggleMode called. currentMode:', currentMode)
+    if (!currentUuid || !currentMountEl) return
+    
+    var content = ''
+    if (currentMode === 'markdown') {
+      var textarea = currentMountEl.querySelector('.markdown-editor')
+      if (textarea) content = textarea.value
+    } else if (currentEditor) {
+      content = currentEditor.storage.markdown.getMarkdown() || ''
+    } else {
+      content = lastSyncedBody
+    }
+    
+    lastSyncedBody = content
+    flushSave()
+    
+    if (currentMode === 'wysiwyg' && currentEditor) {
+      currentEditor.destroy()
+      currentEditor = null
+    }
+    
+    currentMountEl.innerHTML = ''
+    
+    if (currentMode === 'markdown') {
+      currentMode = 'wysiwyg'
+      mountWysiwyg(currentMountEl, currentUuid, content)
+    } else {
+      currentMode = 'markdown'
+      mountMarkdown(currentMountEl, currentUuid, content)
+    }
+    
+    tabModes[currentUuid] = currentMode
+    dispatchStats()
   }
 
   // ── Export ────────────────────────────────────────────────────────────────────

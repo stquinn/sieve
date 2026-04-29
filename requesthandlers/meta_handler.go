@@ -85,6 +85,14 @@ func (h *MetaHandler) handleMeta(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
+	// Resolve active note from session if no path/uuid provided
+	if path == "" && uuid == "" {
+		session := h.ServiceProvider.State.LoadSession()
+		if len(session.Tabs) > 0 && session.ActiveIdx >= 0 && session.ActiveIdx < len(session.Tabs) {
+			uuid = session.Tabs[session.ActiveIdx].ID
+		}
+	}
+
 	// Resolve path from UUID if only uuid was given
 	if path == "" && uuid != "" {
 		if strings.HasPrefix(uuid, "prompt:") {

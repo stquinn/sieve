@@ -195,9 +195,9 @@ func (a *App) startup(ctx context.Context) {
 		return
 	}
 	a.ServiceProvider.Init(fs)
-
 	a.Notes = a.ServiceProvider.Notes
 	a.Buffers = a.ServiceProvider.Buffers
+	a.Assets = a.ServiceProvider.Assets
 	a.State = a.ServiceProvider.State
 	a.Prompts = a.ServiceProvider.Prompts
 
@@ -575,7 +575,7 @@ func (a *App) GetSession() sieve.Session {
 	session := a.State.LoadSession()
 	logger.Debug("session loaded", "tabs", len(session.Tabs))
 
-	// Prune tabs whose documents no longer exist.
+	// Prune tabs whose documents no longer exist and refresh metadata.
 	live := session.Tabs[:0]
 	for _, t := range session.Tabs {
 		if t.ID == "" {
@@ -585,7 +585,19 @@ func (a *App) GetSession() sieve.Session {
 			live = append(live, t) // prompts are always resolvable
 			continue
 		}
-		if _, err := a.LoadByUUID(t.ID); err == nil {
+		if note, err := a.Notes.LoadByUUID(t.ID); err == nil {
+			t.DisplayName = note.Meta().DisplayName()
+			t.Status = note.Meta().Status()
+			if note.Meta().UserIntent() != nil {
+				t.UserIntent = *note.Meta().UserIntent()
+			}
+			live = append(live, t)
+		} else if buf, err := a.Buffers.LoadByUUID(t.ID); err == nil {
+			t.DisplayName = buf.Meta().DisplayName()
+			t.Status = buf.Meta().Status()
+			if buf.Meta().UserIntent() != nil {
+				t.UserIntent = *buf.Meta().UserIntent()
+			}
 			live = append(live, t)
 		} else {
 			logger.Warn("session: skipping missing document", "id", t.ID)
