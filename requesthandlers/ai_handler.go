@@ -10,8 +10,6 @@ import (
 
 type AiHandler struct {
 	ServiceProvider  *sieve.ServiceProvider
-	Ask              func(content, history, question, notePath string, imageStorePaths []string) (string, error)
-	Explain          func(content, history, notePath string, imageStorePaths []string) (string, error)
 	EmitNotesChanged func()
 }
 
@@ -62,7 +60,6 @@ func (h *AiHandler) handleAiKeepAndFile(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *AiHandler) evaluateAndFile(w http.ResponseWriter, id string, fileAfter bool, allowDiscard bool) {
-
 	var path string
 	if buf, err := h.ServiceProvider.Buffers.LoadByUUID(id); err == nil {
 		path = buf.Path()
@@ -73,17 +70,7 @@ func (h *AiHandler) evaluateAndFile(w http.ResponseWriter, id string, fileAfter 
 		return
 	}
 
-	prompt, _ := h.ServiceProvider.Prompts.GetPromptContent("file")
-
-	entries, _ := h.ServiceProvider.Notes.List()
-	var folders []string
-	for _, e := range entries {
-		if e.IsDir {
-			folders = append(folders, e.Name)
-		}
-	}
-
-	outcome, err := sieve.EvaluateAndFileDoc(path, h.ServiceProvider.Buffers, h.ServiceProvider.Notes, h.ServiceProvider.State.LoadSettings(), folders, prompt, fileAfter, allowDiscard)
+	outcome, err := h.ServiceProvider.AI.EvaluateAndFileDoc(path, fileAfter, allowDiscard)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -163,7 +150,7 @@ func (h *AiHandler) handleAiAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.Ask(req.Content, req.History, req.Question, req.NotePath, req.ImageStorePaths)
+	resp, err := h.ServiceProvider.AI.RunAsk(req.Content, req.History, req.Question, req.NotePath, req.ImageStorePaths)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -187,7 +174,7 @@ func (h *AiHandler) handleAiExplain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.Explain(req.Content, req.History, req.NotePath, req.ImageStorePaths)
+	resp, err := h.ServiceProvider.AI.RunExplain(req.Content, req.History, req.NotePath, req.ImageStorePaths)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

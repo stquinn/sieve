@@ -36,6 +36,7 @@ type App struct {
 	Assets          *sieve.AssetService
 	State           *sieve.StateService
 	Prompts         *sieve.PromptService
+	AI              *sieve.AIService
 
 	themesFS fs.FS
 	hub      *sseHub
@@ -194,12 +195,13 @@ func (a *App) startup(ctx context.Context) {
 		logger.Error("filestore init failed", "err", err)
 		return
 	}
-	a.ServiceProvider.Init(fs)
+	a.ServiceProvider.Init(fs, a.storePath)
 	a.Notes = a.ServiceProvider.Notes
 	a.Buffers = a.ServiceProvider.Buffers
 	a.Assets = a.ServiceProvider.Assets
 	a.State = a.ServiceProvider.State
 	a.Prompts = a.ServiceProvider.Prompts
+	a.AI = a.ServiceProvider.AI
 
 	settings := a.State.LoadSettings()
 
@@ -1080,11 +1082,9 @@ func (a *App) DownloadAsset(context, targetURL, id string) (AssetDTO, error) {
 // ── AI / CLI operations ───────────────────────────────────────────────────────
 
 func (a *App) EvaluateBuffer(path string) (*sieve.FilingRecommendation, error) {
-	if a.Buffers == nil {
+	if a.AI == nil {
 		return nil, fmt.Errorf("store not open")
 	}
-	settings := a.State.LoadSettings()
-
 	var meta sieve.DocumentMeta
 	var body []byte
 	if b, err := a.Buffers.Load(path); err == nil {
@@ -1094,9 +1094,7 @@ func (a *App) EvaluateBuffer(path string) (*sieve.FilingRecommendation, error) {
 	} else {
 		return nil, fmt.Errorf("document not found: %s", path)
 	}
-
-	prompt, _ := a.Prompts.GetPromptContent("file")
-	rec, err := sieve.EvaluateBuffer(meta, body, a.libraryFolders(), settings, prompt)
+	rec, err := a.AI.EvaluateBuffer(meta, body)
 	if err != nil {
 		logger.Warn("EvaluateBuffer failed", "path", path, "err", err)
 		return nil, err
@@ -1110,12 +1108,10 @@ func (a *App) EvaluateBuffer(path string) (*sieve.FilingRecommendation, error) {
 // The frontend must have already persisted the document body before calling this.
 // Returns EvaluateAndFileResult{Discarded: true} when the document was removed.
 func (a *App) EvaluateAndFile(path string, fileAfter bool, allowDiscard bool) (EvaluateAndFileResult, error) {
-	if a.Buffers == nil {
+	if a.AI == nil {
 		return EvaluateAndFileResult{}, fmt.Errorf("store not open")
 	}
-	settings := a.State.LoadSettings()
-	prompt, _ := a.Prompts.GetPromptContent("file")
-	outcome, err := sieve.EvaluateAndFileDoc(path, a.Buffers, a.Notes, settings, a.libraryFolders(), prompt, fileAfter, allowDiscard)
+	outcome, err := a.AI.EvaluateAndFileDoc(path, fileAfter, allowDiscard)
 	if err != nil {
 		return EvaluateAndFileResult{}, err
 	}
@@ -1130,15 +1126,10 @@ func (a *App) EvaluateAndFile(path string, fileAfter bool, allowDiscard bool) (E
 }
 
 func (a *App) RefineLanguage(content string) (string, error) {
-	if a.Buffers == nil {
+	if a.AI == nil {
 		return "", fmt.Errorf("store not open")
 	}
-	settings := a.State.LoadSettings()
-	if settings.Tier() == sieve.TierDumb {
-		return "", fmt.Errorf("dumb mode")
-	}
-	prompt, _ := a.Prompts.GetPromptContent("refine")
-	lang, err := sieve.RefineLanguage(content, settings, prompt)
+	lang, err := a.AI.RefineLanguage(content)
 	if err != nil {
 		logger.Warn("RefineLanguage failed", "err", err)
 		return "", err
@@ -1147,15 +1138,10 @@ func (a *App) RefineLanguage(content string) (string, error) {
 }
 
 func (a *App) DescribeImage(storeRelPath string) (sieve.ImageDesc, error) {
-	if a.Buffers == nil {
+	if a.AI == nil {
 		return sieve.ImageDesc{}, fmt.Errorf("store not open")
 	}
-	settings := a.State.LoadSettings()
-	if settings.Tier() == sieve.TierDumb {
-		return sieve.ImageDesc{}, fmt.Errorf("dumb mode")
-	}
-	prompt, _ := a.Prompts.GetPromptContent("image")
-	desc, err := sieve.DescribeImage(filepath.Join(a.storePath, storeRelPath), settings, prompt)
+	desc, err := a.AI.DescribeImage(storeRelPath)
 	if err != nil {
 		logger.Warn("DescribeImage failed", "err", err)
 		return sieve.ImageDesc{}, err
@@ -1164,16 +1150,10 @@ func (a *App) DescribeImage(storeRelPath string) (sieve.ImageDesc, error) {
 }
 
 func (a *App) Explain(content string, history string, notePath string, imageStorePaths []string) (string, error) {
-	if a.Buffers == nil {
+	if a.AI == nil {
 		return "", fmt.Errorf("store not open")
 	}
-	settings := a.State.LoadSettings()
-	if settings.Tier() == sieve.TierDumb {
-		return "", fmt.Errorf("explain not available in dumb mode")
-	}
-	prompt, _ := a.Prompts.GetPromptContent("explain")
-	resp, err := sieve.RunExplain(content, history, settings,
-		filepath.Dir(a.resolvePath(notePath)), a.absImagePaths(imageStorePaths), prompt)
+	resp, err := a.AI.RunExplain(content, history, notePath, imageStorePaths)
 	if err != nil {
 		logger.Warn("Explain failed", "err", err)
 		return "", err
@@ -1182,16 +1162,10 @@ func (a *App) Explain(content string, history string, notePath string, imageStor
 }
 
 func (a *App) Ask(content string, history string, question string, notePath string, imageStorePaths []string) (string, error) {
-	if a.Buffers == nil {
+	if a.AI == nil {
 		return "", fmt.Errorf("store not open")
 	}
-	settings := a.State.LoadSettings()
-	if settings.Tier() == sieve.TierDumb {
-		return "", fmt.Errorf("ask not available in dumb mode")
-	}
-	prompt, _ := a.Prompts.GetPromptContent("ask")
-	resp, err := sieve.RunAsk(content, history, question, settings,
-		filepath.Dir(a.resolvePath(notePath)), a.absImagePaths(imageStorePaths), prompt)
+	resp, err := a.AI.RunAsk(content, history, question, notePath, imageStorePaths)
 	if err != nil {
 		logger.Warn("Ask failed", "err", err)
 		return "", err
@@ -1199,27 +1173,6 @@ func (a *App) Ask(content string, history string, question string, notePath stri
 	return resp, nil
 }
 
-// libraryFolders returns the names of top-level folders in the Library,
-// used to seed the AI's folder suggestions in EvaluateBuffer.
-func (a *App) libraryFolders() []string {
-	entries, _ := a.Notes.List()
-	var folders []string
-	for _, e := range entries {
-		if e.IsDir {
-			folders = append(folders, e.Name)
-		}
-	}
-	return folders
-}
-
-// absImagePaths converts store-relative image paths to absolute filesystem paths.
-func (a *App) absImagePaths(storePaths []string) []string {
-	abs := make([]string, len(storePaths))
-	for i, p := range storePaths {
-		abs[i] = filepath.Join(a.storePath, p)
-	}
-	return abs
-}
 
 // loadThemeOverride reads the store-local theme override file for name, if any.
 // Returns nil when no override exists or the store is not open.

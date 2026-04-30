@@ -2,71 +2,12 @@ package sieve
 
 import "fmt"
 
-// FilingOutcome is the result of EvaluateAndFileDoc.
+// FilingOutcome is the result of AIService.EvaluateAndFileDoc.
 // Exactly one of Note or Buffer is non-nil when Discarded is false.
 type FilingOutcome struct {
 	Discarded bool
 	Note      *Note
 	Buffer    *Buffer
-}
-
-// EvaluateAndFileDoc runs the full evaluate-and-file pipeline for the document
-// at path. It loads the document, optionally runs AI evaluation, applies the
-// recommendation, and saves or promotes the document.
-//
-// Parameters:
-//   - path:         store-relative path of the document (buffer or note)
-//   - fileAfter:    when true, promote a buffer to the Library (or refile a note)
-//   - allowDiscard: when true, empty bodies and trash-intent docs are deleted
-func EvaluateAndFileDoc(
-	path string,
-	buffers *BufferService,
-	notes *NoteService,
-	settings Settings,
-	folders []string,
-	promptTmpl string,
-	fileAfter bool,
-	allowDiscard bool,
-) (FilingOutcome, error) {
-	b, n, isNote, err := filingLoadDoc(path, buffers, notes)
-	if err != nil {
-		return FilingOutcome{}, err
-	}
-
-	var meta DocumentMeta
-	var body []byte
-	if isNote {
-		meta, body = n.Meta(), n.Body()
-	} else {
-		meta, body = b.Meta(), b.Body()
-	}
-
-	userIntent := ""
-	if ui := meta.UserIntent(); ui != nil {
-		userIntent = *ui
-	}
-
-	// Discard empty unfiled documents (body is blank and user hasn't kept it).
-	if fileAfter && isHTMLBodyEmpty(string(body)) && userIntent != "keep" {
-		return FilingOutcome{Discarded: true}, filingDiscardDoc(isNote, b, n, buffers, notes)
-	}
-
-	// Respect explicit trash intent: discard when allowed, otherwise save-only
-	// (never run AI or file a document the user has explicitly marked for deletion).
-	if userIntent == "trash" {
-		if allowDiscard {
-			return FilingOutcome{Discarded: true}, filingDiscardDoc(isNote, b, n, buffers, notes)
-		}
-		return filingCommitDoc(isNote, b, n, buffers, notes, false, false)
-	}
-
-	// Run AI evaluation and apply the filing recommendation.
-	evaluated, err := filingApplyEval(meta, body, path, settings, folders, promptTmpl)
-	if err != nil {
-		return FilingOutcome{}, err
-	}
-
-	return filingCommitDoc(isNote, b, n, buffers, notes, evaluated, fileAfter)
 }
 
 func filingLoadDoc(path string, buffers *BufferService, notes *NoteService) (*Buffer, *Note, bool, error) {
@@ -77,20 +18,6 @@ func filingLoadDoc(path string, buffers *BufferService, notes *NoteService) (*Bu
 		return nil, n, true, nil
 	}
 	return nil, nil, false, fmt.Errorf("filing: document not found: %s", path)
-}
-
-// filingApplyEval runs EvaluateBuffer and writes the recommendation into meta.
-// Returns false (no-op) when running in dumb-tier (no AI configured).
-func filingApplyEval(meta DocumentMeta, body []byte, path string, settings Settings, folders []string, promptTmpl string) (bool, error) {
-	if settings.Tier() == TierDumb {
-		return false, nil
-	}
-	rec, err := EvaluateBuffer(meta, body, folders, settings, promptTmpl)
-	if err != nil {
-		return false, fmt.Errorf("filing: eval %s: %w", path, err)
-	}
-	ApplyFilingRec(meta, rec, settings.CLI)
-	return true, nil
 }
 
 func filingCommitDoc(isNote bool, b *Buffer, n *Note, buffers *BufferService, notes *NoteService, save bool, fileAfter bool) (FilingOutcome, error) {

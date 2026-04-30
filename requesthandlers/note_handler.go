@@ -11,6 +11,11 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+type editorSwap struct {
+	UUID string
+	Mode string
+}
+
 type NoteHandler struct {
 	ServiceProvider    *sieve.ServiceProvider
 	Tmpl               *template.Template
@@ -107,9 +112,11 @@ func (h *NoteHandler) handleNoteOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Fprintf(w, `<div id="htmx-editor" hx-swap-oob="true" class="editor-wrapper" style="flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column;">
-		<div id="tiptap-mount" data-uuid="%s" data-mode="wysiwyg" style="flex: 1; min-height: 0; display: flex; flex-direction: column;"></div>
-	</div>`, id)
+	activeTab := session.Tabs[session.ActiveIdx]
+	if err := h.Tmpl.ExecuteTemplate(w, "editor.html", editorSwap{UUID: activeTab.ID, Mode: activeTab.Mode}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
 
 func (h *NoteHandler) handleNoteNew(w http.ResponseWriter, r *http.Request) {
@@ -139,9 +146,10 @@ func (h *NoteHandler) handleNoteNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Fprintf(w, `<div id="htmx-editor" hx-swap-oob="true" class="editor-wrapper" style="flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column;">
-		<div id="tiptap-mount" data-uuid="%s" data-mode="wysiwyg" style="flex: 1; min-height: 0; display: flex; flex-direction: column;"></div>
-	</div>`, newNote.UUID())
+	if err := h.Tmpl.ExecuteTemplate(w, "editor.html", editorSwap{UUID: newNote.UUID(), Mode: "wysiwyg"}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
 
 func (h *NoteHandler) handleTabsCloseAll(w http.ResponseWriter, r *http.Request) {
@@ -172,9 +180,10 @@ func (h *NoteHandler) handleTabsCloseAll(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	fmt.Fprintf(w, `<div id="htmx-editor" hx-swap-oob="true" class="editor-wrapper" style="flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column;">
-		<div id="tiptap-mount" data-uuid="%s" data-mode="wysiwyg" style="flex: 1; min-height: 0; height: 100%%; display: flex; flex-direction: column;"></div>
-	</div>`, newNote.UUID())
+	if err := h.Tmpl.ExecuteTemplate(w, "editor.html", editorSwap{UUID: newNote.UUID(), Mode: "wysiwyg"}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
 
 func (h *NoteHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
@@ -209,16 +218,7 @@ func (h *NoteHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 
 		if path != "" {
 			go func(targetPath string, isBuf bool) {
-				prompt, _ := h.ServiceProvider.Prompts.GetPromptContent("file")
-				entries, _ := h.ServiceProvider.Notes.List()
-				var folders []string
-				for _, e := range entries {
-					if e.IsDir {
-						folders = append(folders, e.Name)
-					}
-				}
-				// Silently evaluate and file unfiled documents
-				_, _ = sieve.EvaluateAndFileDoc(targetPath, h.ServiceProvider.Buffers, h.ServiceProvider.Notes, settings, folders, prompt, true, isBuf)
+				_, _ = h.ServiceProvider.AI.EvaluateAndFileDoc(targetPath, true, isBuf)
 			}(path, isBuffer)
 		}
 	}
@@ -247,10 +247,11 @@ func (h *NoteHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	activeID := session.Tabs[session.ActiveIdx].ID
-	fmt.Fprintf(w, `<div id="htmx-editor" hx-swap-oob="true" class="editor-wrapper" style="flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column;">
-		<div id="tiptap-mount" data-uuid="%s" data-mode="wysiwyg" style="flex: 1; min-height: 0; height: 100%%; display: flex; flex-direction: column;"></div>
-	</div>`, activeID)
+	activeTab := session.Tabs[session.ActiveIdx]
+	if err := h.Tmpl.ExecuteTemplate(w, "editor.html", editorSwap{UUID: activeTab.ID, Mode: activeTab.Mode}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
 
 func (h *NoteHandler) handleTabsReorder(w http.ResponseWriter, r *http.Request) {
@@ -354,10 +355,11 @@ func (h *NoteHandler) handleNoteDelete(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Fprint(w, `<div id="htmx-sidebar" hx-swap-oob="true" class="sidebar" hx-get="/api/sidebar" hx-trigger="load"></div>`)
 
-	activeID := session.Tabs[session.ActiveIdx].ID
-	fmt.Fprintf(w, `<div id="htmx-editor" hx-swap-oob="true" class="editor-wrapper" style="flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column;">
-		<div id="tiptap-mount" data-uuid="%s" data-mode="wysiwyg" style="flex: 1; min-height: 0; height: 100%%; display: flex; flex-direction: column;"></div>
-	</div>`, activeID)
+	activeTab := session.Tabs[session.ActiveIdx]
+	if err := h.Tmpl.ExecuteTemplate(w, "editor.html", editorSwap{UUID: activeTab.ID, Mode: activeTab.Mode}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
 
 func (h *NoteHandler) handleNoteFocus(w http.ResponseWriter, r *http.Request) {

@@ -157,12 +157,6 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 		},
 		&requesthandlers.AiHandler{
 			ServiceProvider: sp,
-			Ask: func(content, history, question, notePath string, imageStorePaths []string) (string, error) {
-				return app.Ask(content, history, question, notePath, imageStorePaths)
-			},
-			Explain: func(content, history, notePath string, imageStorePaths []string) (string, error) {
-				return app.Explain(content, history, notePath, imageStorePaths)
-			},
 			EmitNotesChanged: func() {
 				logger.Info("AI: notes changed event")
 				hub.broadcast("notes:changed", "{}")
