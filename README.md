@@ -1,145 +1,168 @@
-# Stash
 
-A lightweight, portable, cross-platform scratchpad that bridges the gap between a code editor and a notes app. Zero-friction WYSIWYG markdown editing at its simplest. A persistent AI conversation surface at its most powerful.
+# Sieve
 
-## What it is
+# Overview
 
-Stash is a tabbed markdown scratchpad with local store storage. You paste code, jot ideas, capture snippets — then Stash handles the rest. In its smarter modes it files, tags, names, summarises, and answers questions about your content using whatever AI CLI you already have configured.
+**Sieve** is a scratchpad‑first thinking tool designed to reduce cognitive and operational overhead when working through ideas, debugging, investigations, and exploratory engineering work.
 
-No API keys in the app. No cloud dependency. No account. Just a binary, a store folder, and your existing CLI toolchain.
+It is built around a simple observation:\
+most working material is temporary, but some moments of understanding are worth keeping — and deciding which is which *while you’re still thinking* is unnecessary friction.
 
-## Tiers
+Sieve lets you work freely in untitled buffers, then applies judgment only when you are finished and close the buffer.
 
-Stash has three capability tiers, controlled entirely by `settings.json`. No reinstall or migration required to move between them.
+> Sieve used to be known as an Applciation called Stash
 
-| Tier | Config | What you get |
-|------|--------|--------------|
-| **Dumb** | No CLI | WYSIWYG markdown editor, tab management, local storage, smart paste detection |
-| **Smart** | CLI configured | Everything above + AI filing, folder suggestions, Explain gesture, Ask gesture |
-| **Unbounded** | CLI + MCP/agents | Ask gesture inherits whatever the CLI can reach — filesystem, APIs, smart home, anything |
+---
 
-## Key features
+## The Problem Sieve Solves
 
-- **WYSIWYG markdown** — Tiptap editor, renders as you type
-- **Persistent tabs** — session restores on relaunch; unsaved buffers survive crashes
-- **Smart paste** — detects code language and wraps in a fenced block automatically
-- **AI filing** — when you close a tab, the AI evaluates, names, tags, summarises, and files the note into the store
-- **Explain (Ctrl+E)** — asks the AI to explain the current selection, code block, or document inline
-- **Ask (Ctrl+Shift+A)** — floating prompt attached to the current context; threads follow-up questions
-- **AI blocks** — responses appear inline as styled blockquotes, persisted to markdown, round-trip safe
-- **Store structure** — `notes/` shared across devices, `{hostname}/` strictly local; sync is your responsibility
-- **CLI-agnostic** — works with Claude, Gemini, GitHub Copilot, or any custom CLI
+Modern development and architecture work generates a lot of *working material*:
 
-## Data safety
+- copied numbers, notes , code blocks or identifiers
+- pasted log excerpts
+- screenshots discussed with colleagues
+- rough pseudocode
+- half‑written explanations
+- AI conversations used to reason something out
 
-Stash never discards content in Smart mode without a conscious decision from the AI or the user. Every unsaved buffer is continuously written to disk. Crashes, timeouts, and unreachable CLIs all resolve to the buffer staying open — never to data loss.
+None of these start life as “documents”.\
+But many editors force you to choose between:
 
-## Stack
+- saving and naming everything, or
+- losing potentially useful context
 
-- **Go + Wails v2** — single native binary, no installer, no daemon
-- **React + TypeScript** — frontend via Wails webview
-- **Tiptap** — ProseMirror-based WYSIWYG markdown editor
-- **shadcn/ui + Tailwind** — component library and styling
+In practice this leads to:
 
-## Store structure
+- dozens of unsaved tabs
+- fear of closing buffers “just in case”
+- accumulating mental clutter
+- unnecessary cognitive load
 
-```
-store/
-├── notes/                    # shared across all devices (sync this)
-│   └── topic/
-│       └── filed-note.md
-├── assets/                   # shared filed note assets
-└── {hostname}/               # strictly local to this machine
-    ├── settings.json
-    ├── session.json
-    ├── prompts/
-    └── buffers/
-```
+Sieve was built to remove that overhead.
 
-Point different machines at the same synced store folder. Each host keeps its own settings, session, and buffers without conflicting with others.
+---
 
-## Getting started
+## Core Model
 
-```bash
-# Launch with a store path
-stash /path/to/your/store
+### 1. Untitled Buffers
 
-# Or launch from within a store directory
-cd /path/to/your/store && stash
-```
+All work in Sieve begins in an **untitled buffer**.
 
-On first launch in a new store, Stash creates the required directory structure and a default `settings.json` for your hostname.
+An untitled buffer:
 
-## Settings
+- has no filename
+- has no folder
+- is not judged
+- cannot be discarded while open
 
-Settings live at `store/{hostname}/settings.json`:
+It is a safe workspace for scratch thinking.
 
-```json
-{
-  "cli": "claude",
-  "cli_timeout": 20
-}
-```
+You can paste anything into it and freely iterate.
 
-| Field | Description |
-|-------|-------------|
-| `cli` | Path or name of the AI CLI (`claude`, `gemini`, `gh`, or a custom binary) |
-| `cli_timeout` | Seconds before a CLI call is abandoned (default: 20) |
+---
 
-Leave `cli` empty or unset to run in Dumb mode.
+### 2. Working and Reasoning
 
-## Building
+While a buffer is open:
 
-### NixOS / Nix (recommended)
+- focus is tracked
+- revisions are tracked
+- AI can be used inline via **Explain** and **ASK**
+- the buffer evolves naturally
 
-```bash
-nix-shell          # enters the dev environment with all dependencies
-wails dev          # dev server with hot reload
-wails build        # production binary → build/bin/stash
-```
+The AI is not there to “organise notes” — it acts as a reasoning partner:
 
-The `shell.nix` handles WebKitGTK 4.1 and the `-tags webkit2_41` flag automatically.
+- explaining pasted material
+- answering questions
+- helping converge on understanding
 
-### Other Linux
+Importantly, *nothing is being filed yet*.
 
-Requirements: Go 1.23+, Node 22+, Wails v2, WebKitGTK 4.1, GTK 3, pkg-config.
+---
 
-```bash
-wails dev -tags webkit2_41
-wails build -tags webkit2_41
-```
+### 3. Closing a Buffer = Intentional Context Release
 
-### macOS
+Judgment only happens when you close the editor tab.
 
-```bash
-wails dev
-wails build
-```
+Closing a buffer is treated as:
 
-## Keyboard shortcuts
+> *“I am done with this line of thought for now.”*
 
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+T` | New tab |
-| `Ctrl+W` | Close tab |
-| `Ctrl+Tab` | Next tab |
-| `Ctrl+Shift+Tab` | Previous tab |
-| `Ctrl+E` | Explain (selection / code block / document) |
-| `Ctrl+Shift+A` | Ask question in context |
-| `Ctrl+Shift+E` | Force AI re-evaluation of current note |
-| `Ctrl+M` | Toggle markdown / editor mode |
-| `Ctrl+F` | Search store |
-| `Ctrl+?` | Help |
+At this point, Sieve evaluates what happened:
 
-## CLI integration
+- Was there sustained engagement?
+- Did the content evolve?
+- Did anything converge into usable understanding?
 
-Stash passes prompts to the configured CLI via stdin — never via shell argument interpolation. This is safe for content containing backticks, angle brackets, and fenced code blocks.
+---
 
-Supported CLIs and how they are invoked:
+### 4. Keep or Discard
 
-| CLI | Invocation |
-|-----|-----------|
-| `claude` | `claude --print --no-session-persistence` (stdin) |
-| `gemini` | `gemini --prompt "" --yolo` (stdin) |
-| `gh copilot` | `gh copilot explain` |
-| Custom | Stdin only |
+When a buffer is closed, one of three things happens:
+
+- **User forces KEEP**\
+  The buffer is retained regardless of quality.
+
+- **User forces TRASH**\
+  The buffer is discarded.
+
+- **No explicit intent**\
+  Sieve decides automatically.
+
+Discarded buffers are intentionally dropped — like throwing away the back of a napkin after thinking something through.
+
+This is an explicit design choice to reduce accumulation and mental noise.
+
+---
+
+### 5. Stored Notes
+
+If a buffer is kept:
+
+- it is written as plain Markdown
+- a descriptive filename is generated
+- optional summary and tags are added as frontmatter
+- it is placed into the store
+
+The store is just files on disk:
+
+- no proprietary format
+- no lock‑in
+- editable by any Markdown‑capable tool
+
+---
+
+## Why This Works
+
+Sieve separates **thinking** from **judgment**.
+
+You don’t decide:
+
+- whether something matters
+- how to name it
+- where it belongs
+
+while you are still reasoning about it.
+
+That decision is deferred until context has finished doing its job.
+
+The result is:
+
+- fewer open tabs
+- lower cognitive overhead
+- a cleaner workspace
+- and a store that contains only material that earned its place.
+
+---
+
+## Design Principles
+
+- Scratch first, judge later
+
+- Discarding is a valid outcome
+
+- Freeform Markdown, not a closed system
+
+- AI as a reasoning partner, not a filing clerk
+
+- Minimise decisions while thinking
