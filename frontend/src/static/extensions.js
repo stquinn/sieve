@@ -110,11 +110,17 @@
       var refs = (dom.getAttribute('data-ai-ref') || '').split(',').map(function (r) { return r.trim() }).filter(Boolean)
       var ids = gatherChain(dom.getAttribute('data-ai-id') || '', refs)
       ids.forEach(function (id) {
-        if (id === dom.getAttribute('data-ai-id')) return
+        if (id === dom.getAttribute('data-ai-id')) 
+          return
         var blockEl = document.querySelector('[data-block-id="' + id + '"]')
-        if (blockEl) blockEl.classList[action]('block-ref-active')
+        if (blockEl) {
+            console.log("Applying block ref active to ", blockEl)
+            blockEl.classList[action]('block-ref-active')
+            console.log([...blockEl.classList]);
+        } 
         var aiEl = document.querySelector('.ai-block[data-ai-id="' + id + '"]')
-        if (aiEl) aiEl.classList[action]('ai-block--chain-active')
+        if (aiEl) 
+          aiEl.classList[action]('ai-block--chain-active')
       })
     }
 
@@ -133,6 +139,13 @@
         badge.className = 'ai-block__badge' + (updatedNode.textContent.includes('(thinking\u2026)') ? ' ai-block__badge--thinking' : '')
         return true
       },
+      ignoreMutation: function (mutation) {
+        // Ignore if only the class attribute changed
+        if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+          return true
+        }
+        return false
+      }
     }
   }
 
@@ -287,6 +300,20 @@
         dom.setAttribute('data-block-id', updatedNode.attrs.id || '')
         return true
       },
+      // This is a custom property we can hook into
+      selectNode: () => {
+        dom.classList.add('block-ref-active')
+      },
+      deselectNode: () => {
+        dom.classList.remove('block-ref-active')
+      },
+      ignoreMutation: function (mutation) {
+        // Ignore if only the class attribute changed
+        if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+          return true
+        }
+        return false
+      }
     }
   }
 
@@ -453,6 +480,13 @@
             updateGutter(updatedNode.textContent)
             return true
           },
+          ignoreMutation: function (mutation) {
+            // Ignore if only the class attribute changed
+            if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+              return true
+            }
+            return false
+          }
         }
       }
     },
@@ -595,6 +629,13 @@
             applyAttrs(updatedNode)
             return true
           },
+          ignoreMutation: function (mutation) {
+            // Ignore if only the class attribute changed
+            if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+              return true
+            }
+            return false
+          }
         }
       }
     },

@@ -24,7 +24,7 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-//go:embed all:ui
+//go:embed all:frontend/src
 var assets embed.FS
 
 //go:embed themes/*.json
@@ -141,7 +141,13 @@ func (m *muxHandler) serveProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	origin := r.Header.Get("Origin")
+	if origin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+	} else {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+	}
 	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "*")
 
@@ -218,6 +224,8 @@ func buildMenu(app *App) *menu.Menu {
 	file.AddText("Save", keys.CmdOrCtrl("s"), js("window.sieveSave?.()"))
 	file.AddText("Close Tab", keys.CmdOrCtrl("w"), js("window.sieveCloseActiveTab?.()"))
 	file.AddSeparator()
+	file.AddText("Settings", keys.CmdOrCtrl(","), js("window.sieveOpenSettings?.()"))
+	file.AddSeparator()
 	file.AddText("Quit", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
 		wailsruntime.Quit(app.ctx)
 	})
@@ -227,16 +235,24 @@ func buildMenu(app *App) *menu.Menu {
 	view.AddText("Toggle Meta Panel", keys.Combo("i", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveToggleMeta?.()"))
 	view.AddText("Toggle Prompts", keys.Combo("p", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveTogglePrompts?.()"))
 	view.AddText("Toggle Editor Mode", keys.Combo("m", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveToggleMode?.()"))
+	view.AddSeparator()
 	view.AddText("Toggle Search", keys.CmdOrCtrl("f"), js("window.sieveToggleSearch?.()"))
 	view.AddText("Sidebar Search", keys.Combo("f", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveSidebarSearch?.()"))
-	view.AddSeparator()
 	view.AddText("Quick Switcher", keys.CmdOrCtrl("p"), js("window.sieveOpenQuickSwitcher?.()"))
-	view.AddText("Settings", keys.CmdOrCtrl(","), js("window.sieveOpenSettings?.()"))
-	view.AddText("Help", keys.CmdOrCtrl("/"), js("window.sieveHelp?.()"))
 
-	ai := appMenu.AddSubmenu("AI")
+	ai := appMenu.AddSubmenu("Tools")
 	ai.AddText("Smart File", keys.Combo("e", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveSmartFileActive?.()"))
 	ai.AddText("Keep & Smart File", keys.Combo("return", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveKeepAndSmartFile?.()"))
+
+	help := appMenu.AddSubmenu("Help")
+	help.AddText("Shortcuts", keys.CmdOrCtrl("/"), js("window.sieveHelp?.()"))
+	help.AddText("About", keys.CmdOrCtrl("a"), func(_ *menu.CallbackData) {
+		wailsruntime.MessageDialog(app.ctx, wailsruntime.MessageDialogOptions{
+			Type:    wailsruntime.InfoDialog,
+			Title:   "About Sieve",
+			Message: "Sieve v1.0",
+		})
+	})
 
 	return appMenu
 }
@@ -260,11 +276,11 @@ func main() {
 	// In production the AssetServer.Handler covers these; this is a no-op there.
 	devPort := os.Getenv("SIEVE_DEV_PORT")
 	if devPort == "" {
-		devPort = "8081"
+		devPort = "0"
 	}
 	go func() {
 		mux := &muxHandler{app: app, store: &storeHandler{app: app}, api: api}
-		if err := http.ListenAndServe(":"+devPort, mux); err != nil {
+		if err := http.ListenAndServe("127.0.0.1:"+devPort, mux); err != nil {
 			log.Printf("dev HTTP server: %v", err)
 		}
 	}()

@@ -125,7 +125,6 @@
       extensions: [
         T.StarterKit.configure({ codeBlock: false, history: { depth: 10000, newGroupDelay: 500 } }),
         T.CodeBlockWithAttrs.configure({ lowlight: lowlight }),
-        T.Link.configure({ openOnClick: false }),
         T.Placeholder.configure({ placeholder: function (p) { return p.editor.isEmpty ? 'Start writing\u2026' : '' } }),
         T.BlockNode,
         T.Table.configure({ resizable: false }),
@@ -138,7 +137,7 @@
         T.AiQuestion,
         T.TaskList,
         T.TaskItem.configure({ nested: true }),
-        T.Markdown.configure({ html: true, transformPastedText: true }),
+        T.Markdown.configure({ html: true, transformPastedText: true, link: { openOnClick: false } }),
         T.AiShortcuts.configure({
           onExplain: function () { runAiJob('explain') },
           onAsk: function () { openAskPopup() },

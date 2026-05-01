@@ -15,13 +15,13 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-//go:embed ui/templates
+//go:embed frontend/src/templates
 var uiTemplates embed.FS
 
-//go:embed ui/static
+//go:embed frontend/src/static
 var uiStatic embed.FS
 
-//go:embed ui/index.html
+//go:embed frontend/src/index.html
 var uiIndexHTML string
 
 // apiHandler owns the chi router, templates, SSE hub, and static files.
@@ -92,12 +92,12 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 		"promptVars": promptVarsForType,
 	})
 	var err error
-	tmpl, err = tmpl.ParseFS(uiTemplates, "ui/templates/*.html")
+	tmpl, err = tmpl.ParseFS(uiTemplates, "frontend/src/templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
 	}
 
-	staticFS, err := fs.Sub(uiStatic, "ui/static")
+	staticFS, err := fs.Sub(uiStatic, "frontend/src/static")
 	if err != nil {
 		return nil, err
 	}
