@@ -18,6 +18,41 @@ type SearchHandler struct {
 func (h *SearchHandler) RegisterPaths(r chi.Router) {
 	r.Get("/api/search", h.handleSearch)
 	r.Get("/api/search-prompt", h.handleSearchPrompt)
+	r.Get("/api/sidebar/search", h.handleSidebarSearch)
+}
+
+func (h *SearchHandler) handleSidebarSearch(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	query := r.URL.Query().Get("q")
+	var results []sieve.SearchResult
+	var err error
+
+	if query != "" {
+		results, err = h.ServiceProvider.Documents.Search(query)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	data := struct {
+		Query   string
+		Results []sieve.SearchResult
+	}{
+		Query:   query,
+		Results: results,
+	}
+
+	templateName := "sidebar_search_results.html"
+	if r.URL.Query().Get("list_only") == "true" {
+		templateName = "sidebar_search_results_list.html"
+	}
+
+	if err := h.Tmpl.ExecuteTemplate(w, templateName, data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 type switchItem struct {

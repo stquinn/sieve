@@ -2,6 +2,9 @@
 <div class="sidebar__section-title" style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--theme-border2);height:44px;min-height:44px;padding:0;flex-shrink:0;">
   <span style="padding-left:1rem;font-size:13px;font-weight:900;text-transform:uppercase;letter-spacing:0.05em;color:var(--theme-muted);">Library</span>
   <div style="display:flex;align-items:center;gap:4px;padding-right:4px;">
+    <button class="sidebar__icon-btn" onclick="window.sieveSidebarSearch && window.sieveSidebarSearch()" title="Search Library (⌘⇧F)" style="background:transparent;border:none;padding:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--theme-muted);border-radius:6px;" onmouseover="this.style.background='var(--theme-bgAlt)';this.style.color='var(--theme-text)'" onmouseout="this.style.background='transparent';this.style.color='var(--theme-muted)'">
+      <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    </button>
     <button class="sidebar__icon-btn" onclick="window.sieveNewNote && window.sieveNewNote()" title="New Note (⌘N)" style="background:transparent;border:none;padding:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--theme-muted);border-radius:6px;" onmouseover="this.style.background='var(--theme-bgAlt)';this.style.color='var(--theme-text)'" onmouseout="this.style.background='transparent';this.style.color='var(--theme-muted)'">
       <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
     </button>
@@ -13,7 +16,7 @@
     </button>
   </div>
 </div>
-<div style="flex:1;overflow-y:auto;display:flex;flex-direction:column;min-height:0;" class="scrollbar-hide">
+<div style="flex:1;overflow-y:auto;display:flex;flex-direction:column;min-height:0;">
   {{if not .}}
   <div class="sidebar__empty">No filed documents yet</div>
   {{else}}

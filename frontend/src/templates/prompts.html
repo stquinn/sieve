@@ -1,7 +1,7 @@
 {{define "prompts.html"}}
-<div style="display: flex; flex-direction: column; background: var(--theme-bgDark); border-top: 1px solid var(--theme-border2); padding-top: 8px;">
+<div style="display: flex; flex-direction: column; background: var(--theme-bgDark); border-top: 1px solid var(--theme-border2); padding-top: 8px; height: 100%; box-sizing: border-box;">
   <span style="padding-left: 1rem; font-size: 13px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.05em; color: var(--theme-muted); margin-bottom: 4px;">AI Prompts</span>
-  <div style="display: flex; flex-direction: column;">
+  <div style="display: flex; flex-direction: column; overflow-y: auto; flex: 1;">
     {{range .Prompts}}
     <button 
       onclick="window.sieveOpenNote('{{.ID}}')"

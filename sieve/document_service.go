@@ -324,6 +324,7 @@ func (ds *DocumentService) Search(query string) ([]SearchResult, error) {
 		}
 
 		results = append(results, SearchResult{
+			ID:             meta["uuid"],
 			Path:           s.ExternalRef(),
 			Name:           strings.TrimSuffix(filepath.Base(s.Key()), ".md"),
 			IsTagMatch:     isTagMatch,
@@ -519,8 +520,8 @@ type NoteEntry struct {
 	Children    []NoteEntry `json:"children,omitempty"`
 }
 
-// SearchResult represents a single Library search match.
 type SearchResult struct {
+	ID             string `json:"id"`
 	Path           string `json:"path"`
 	Name           string `json:"name"`
 	IsTagMatch     bool   `json:"isTagMatch"`

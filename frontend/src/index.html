@@ -55,7 +55,14 @@
             transition: background 0.2s;
             z-index: 10;
         }
-        .sidebar-handle:hover, .meta-handle:hover {
+        .prompts-handle {
+            height: 4px;
+            cursor: row-resize;
+            background: transparent;
+            transition: background 0.2s;
+            z-index: 10;
+        }
+        .sidebar-handle:hover, .meta-handle:hover, .prompts-handle:hover {
             background: var(--theme-accentPrimary);
         }
         .status-bar {
@@ -76,7 +83,10 @@
     </style>
     <style id="layout-overrides">
         #prompts-panel {
-            display: block;
+            display: {{if .ShowPrompts}}block{{else}}none{{end}};
+        }
+        .prompts-handle {
+            display: {{if .ShowPrompts}}block{{else}}none{{end}};
         }
         #htmx-sidebar {
             display: {{if .ShowSidebar}}block{{else}}none{{end}};
@@ -96,8 +106,9 @@
     <div id="app-root" class="theme-{{.ThemeName}} tier-{{.Tier}}" style="--sidebar-w: {{if .ShowSidebar}}{{.SidebarWidth}}{{else}}0{{end}}px; --meta-w: {{if .ShowMeta}}{{.MetaWidth}}{{else}}0{{end}}px;">
         
         <div id="sidebar-wrapper" style="width: var(--sidebar-w); display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; border-right: 1px solid var(--theme-border);">
-            <div id="htmx-sidebar" class="sidebar" style="flex: 1; min-height: 0; border-right: none;" hx-get="/api/sidebar" hx-trigger="load, sse:notes:changed, notes:changed from:body"></div>
-            <div id="prompts-panel" style="height: {{.PromptsHeight}}px;" hx-get="/api/prompts" hx-trigger="load, sse:prompts:changed, sse:notes:changed, prompts:changed from:body, notes:changed from:body"></div>
+            <div id="htmx-sidebar" class="sidebar" style="flex: 1; min-height: 0; border-right: none; display: flex; flex-direction: column;" hx-get="/api/sidebar" hx-trigger="load, sse:notes:changed, notes:changed from:body"></div>
+            <div class="prompts-handle"></div>
+            <div id="prompts-panel" style="height: {{.PromptsHeight}}px; flex-shrink: 0;" hx-get="/api/prompts" hx-trigger="load, sse:prompts:changed, sse:notes:changed, prompts:changed from:body, notes:changed from:body"></div>
         </div>
         <div class="sidebar-handle"></div>
 
@@ -158,8 +169,269 @@
     <script src="/static/editor.js"></script>
     <script src="/static/tabbar.js"></script>
     <script src="/static/sidebar.js"></script>
+    <script src="/static/layout.js"></script>
 
     <script>
+    window.isMod = function(e) {
+        if (!e) return false;
+        return navigator.platform.includes('Mac') ? e.metaKey : e.ctrlKey;
+    };
+
+    // Global sieveX functions defined early
+    window.sieveSelectTab = function(id) {
+        if (!window.htmx) return console.error('htmx not loaded');
+        window.htmx.ajax('POST', '/api/note/open/' + id, { target: '#htmx-tabbar', swap: 'innerHTML' });
+    };
+    window.sieveOpenNote = window.sieveSelectTab;
+    window.sieveNewNote = function() {
+        if (!window.htmx) return console.error('htmx not loaded');
+        window.htmx.ajax('POST', '/api/note/new', { target: '#htmx-tabbar', swap: 'innerHTML' });
+    };
+    window.sieveCloseTab = function(id) {
+        if (!window.htmx) return console.error('htmx not loaded');
+        window.htmx.ajax('POST', '/api/tabs/close/' + id, { target: '#htmx-tabbar', swap: 'innerHTML' });
+    };
+    window.sieveCloseActiveTab = function() {
+        var mount = document.getElementById('tiptap-mount');
+        if (mount) {
+            var uuid = mount.getAttribute('data-uuid');
+            if (uuid) window.sieveCloseTab(uuid);
+        }
+    };
+    window.sieveCloseAllTabs = function() {
+        if (!window.htmx) return console.error('htmx not loaded');
+        window.htmx.ajax('POST', '/api/tabs/closeAll', { target: '#htmx-tabbar', swap: 'innerHTML' });
+    };
+    window.sieveToggleSidebar = function() {
+        if (window.htmx) window.htmx.ajax('POST', '/api/session/sidebar/toggle', { swap: 'none' });
+    };
+    window.sieveToggleMeta = function() {
+        if (window.htmx) window.htmx.ajax('POST', '/api/session/meta/toggle', { swap: 'none' });
+    };
+    window.sieveTogglePrompts = function() {
+        if (window.htmx) window.htmx.ajax('POST', '/api/session/prompts/toggle', { swap: 'none' });
+    };
+    window.sieveOpenSettings = function() {
+        var dlg = document.getElementById('settings-dialog');
+        if (dlg && window.htmx) {
+            dlg.showModal();
+            window.htmx.ajax('GET', '/api/settings', { target: '#settings-dialog-content', swap: 'innerHTML' });
+        }
+    };
+    window.sieveHelp = function() {
+        var dlg = document.getElementById('help-dialog');
+        if (dlg && window.htmx) {
+            dlg.showModal();
+            window.htmx.ajax('GET', '/api/help', { target: '#help-dialog-content', swap: 'innerHTML' });
+        }
+    };
+    window.sieveOpenQuickSwitcher = function() {
+        var dlg = document.getElementById('quickswitcher-dialog');
+        if (dlg && window.htmx) {
+            dlg.showModal();
+            window.htmx.ajax('GET', '/api/search-prompt', { target: '#quickswitcher-dialog-content', swap: 'innerHTML' });
+        }
+    };
+
+    window.sieveReorderTabs = function(from, to) {
+        if (!window.htmx) return console.error('htmx not loaded');
+        window.htmx.ajax('POST', '/api/tabs/reorder', { target: '#htmx-tabbar', swap: 'innerHTML', values: { from: from, to: to } });
+    };
+
+    window.__sieveActiveJobs = 0;
+    window.sieveSetEvaluating = function(id, isEval) {
+        var tab = document.querySelector('.group[data-tab-id="' + id + '"]');
+        if (tab) {
+            var normal = tab.querySelector('.tab-icon-normal');
+            var spinner = tab.querySelector('.tab-spinner');
+            if (isEval) {
+                if (normal) normal.classList.add('hidden');
+                if (spinner) spinner.classList.remove('hidden');
+            } else {
+                if (normal) normal.classList.remove('hidden');
+                if (spinner) spinner.classList.add('hidden');
+            }
+        }
+        var metaSpinner = document.getElementById('meta-thinking-spinner');
+        if (metaSpinner) {
+            var mount = document.getElementById('tiptap-mount');
+            if (mount && mount.getAttribute('data-uuid') === id) {
+                if (isEval) metaSpinner.classList.remove('hidden');
+                else metaSpinner.classList.add('hidden');
+            }
+        }
+        var sbLeft = document.querySelector('.status-bar__left');
+        if (sbLeft) {
+            if (window.__sieveActiveJobs > 0) {
+                sbLeft.innerHTML = '<span class="flex items-center gap-1.5"><span class="w-[10px] h-[10px] shrink-0 rounded-full border-[1.5px] border-solid border-tn-cyan border-t-transparent animate-spin"></span> Evaluating (' + window.__sieveActiveJobs + ')</span>';
+            } else {
+                sbLeft.innerHTML = '';
+            }
+        }
+    };
+
+    window.sieveSmartFile = function(id) {
+        var p = window.sieveSave ? window.sieveSave() : Promise.resolve();
+        p.then(function() {
+            if (!id) {
+                var mount = document.getElementById('tiptap-mount');
+                if (mount) id = mount.getAttribute('data-uuid');
+            }
+            if (id) {
+                window.__sieveActiveJobs++;
+                window.sieveSetEvaluating(id, true);
+                fetch('/api/ai/smartFile/' + id, { method: 'POST' }).finally(function() { 
+                    window.__sieveActiveJobs--; 
+                    window.sieveSetEvaluating(id, false);
+                });
+            }
+        });
+    };
+
+    window.sieveSmartMetadata = function(id) {
+        var p = window.sieveSave ? window.sieveSave() : Promise.resolve();
+        p.then(function() {
+            if (!id) {
+                var mount = document.getElementById('tiptap-mount');
+                if (mount) id = mount.getAttribute('data-uuid');
+            }
+            if (id) {
+                window.__sieveActiveJobs++;
+                window.sieveSetEvaluating(id, true);
+                fetch('/api/ai/smartMetadata/' + id, { method: 'POST' }).finally(function() { 
+                    window.__sieveActiveJobs--; 
+                    window.sieveSetEvaluating(id, false);
+                });
+            }
+        });
+    };
+
+    window.sieveKeepAndSmartFile = function(id) {
+        var p = window.sieveSave ? window.sieveSave() : Promise.resolve();
+        p.then(function() {
+            if (!id) {
+                var mount = document.getElementById('tiptap-mount');
+                if (mount) id = mount.getAttribute('data-uuid');
+            }
+            if (id) {
+                window.__sieveActiveJobs++;
+                window.sieveSetEvaluating(id, true);
+                fetch('/api/ai/keepAndFile/' + id, { method: 'POST' }).finally(function() { 
+                    window.__sieveActiveJobs--; 
+                    window.sieveSetEvaluating(id, false);
+                });
+            }
+        });
+    };
+
+    window.sieveSmartFileActive = function() { window.sieveSmartFile(); };
+    window.sieveKeepAndSmartFileActive = function() { window.sieveKeepAndSmartFile(); };
+
+    window.sieveRenameNote = function(id, currentName) {
+        var dlg = document.getElementById('rename-dialog');
+        if (dlg && window.htmx) {
+            dlg.showModal();
+            window.htmx.ajax('GET', '/api/sidebar/rename-prompt?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(currentName) + '&type=note', { target: '#rename-dialog-content', swap: 'innerHTML' });
+        }
+    };
+
+    window.sieveRenameFolder = function(id, currentName) {
+        var dlg = document.getElementById('rename-dialog');
+        if (dlg && window.htmx) {
+            dlg.showModal();
+            window.htmx.ajax('GET', '/api/sidebar/rename-prompt?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(currentName) + '&type=folder', { target: '#rename-dialog-content', swap: 'innerHTML' });
+        }
+    };
+
+    window.sieveCreateFolder = function(parentId) {
+        var dlg = document.getElementById('rename-dialog');
+        if (dlg && window.htmx) {
+            dlg.showModal();
+            window.htmx.ajax('GET', '/api/sidebar/create-folder-prompt?parentId=' + encodeURIComponent(parentId || ''), { target: '#rename-dialog-content', swap: 'innerHTML' });
+        }
+    };
+
+    window.sieveOpenDelete = function(id, name, type) {
+        var dlg = document.getElementById('delete-dialog');
+        if (dlg && window.htmx) {
+            dlg.showModal();
+            window.htmx.ajax('GET', '/api/sidebar/delete-prompt?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&type=' + type, { target: '#delete-dialog-content', swap: 'innerHTML' });
+        }
+    };
+
+    window.sieveOnSettingsChanged = function() {
+        var link = document.querySelector('link[href^="/theme.css"]');
+        if (link) {
+            link.href = '/theme.css?t=' + new Date().getTime();
+        }
+    };
+
+    window.sieveToggleSearch = function() {
+        if (window.sieveEditor && window.sieveEditor.toggleSearch) window.sieveEditor.toggleSearch();
+        else console.log('Toggle Search not implemented in current mode');
+    };
+
+    window.sieveSidebarSearch = function() {
+        const sidebar = document.getElementById('htmx-sidebar');
+        if (!sidebar) return;
+
+        // If the search input in the tree view exists, focus it
+        const treeInput = document.getElementById('sidebar-search-input');
+        if (treeInput) {
+            treeInput.focus();
+            treeInput.select();
+            return;
+        }
+
+        // If already in search mode results, focus the result input
+        const resultInput = document.querySelector('.store-search__input');
+        if (resultInput) {
+            resultInput.focus();
+            resultInput.select();
+            return;
+        }
+
+        // Toggle to search mode
+        window.htmx.ajax('GET', '/api/sidebar/search?q=', { 
+            target: '#htmx-sidebar', 
+            swap: 'innerHTML' 
+        });
+    };
+
+    window.sieveFilterSidebar = function(query) {
+        query = (query || '').toLowerCase();
+        var items = document.querySelectorAll('.sidebar__file, .sidebar__dir');
+        items.forEach(function(item) {
+            var name = item.getAttribute('data-ctx-name') || '';
+            var match = name.toLowerCase().includes(query);
+            item.style.display = match ? 'flex' : 'none';
+        });
+    };
+
+    window.sieveToggleMode = window.sieveToggleMode || function() {
+        console.log('Toggle Mode placeholder called');
+    };
+
+    window.sieveSetMetaDirty = function(dirty) {
+        var indicator = document.getElementById('meta-dirty-indicator');
+        if (!indicator) return;
+        var label = indicator.querySelector('.meta-dirty-label');
+        var dot   = indicator.querySelector('.meta-dirty-dot');
+        if (dirty) {
+            indicator.classList.remove('border-tn-border');
+            indicator.classList.add('border-tn-yellow');
+            indicator.style.background = 'color-mix(in srgb, var(--theme-accentYellow) 10%, transparent)';
+            if (label) { label.classList.remove('text-tn-text-dim'); label.classList.add('text-tn-yellow'); label.textContent = 'Unsaved Changes'; }
+            if (dot)   { dot.classList.remove('bg-tn-green'); dot.classList.add('bg-tn-yellow'); dot.style.boxShadow = '0 0 8px var(--theme-accentYellow)'; }
+        } else {
+            indicator.classList.remove('border-tn-yellow');
+            indicator.classList.add('border-tn-border');
+            indicator.style.background = '';
+            if (label) { label.classList.remove('text-tn-yellow'); label.classList.add('text-tn-text-dim'); label.textContent = 'All Changes Saved'; }
+            if (dot)   { dot.classList.remove('bg-tn-yellow'); dot.classList.add('bg-tn-green'); dot.style.boxShadow = ''; }
+        }
+    };
+
     // Initial editor load
     window.addEventListener('DOMContentLoaded', function() {
         var mount = document.getElementById('tiptap-mount');
@@ -268,218 +540,10 @@
     </script>
 
     <script>
-    window.sieveSelectTab = function(id) {
-        window.htmx.ajax('POST', '/api/note/open/' + id, { target: '#htmx-tabbar', swap: 'innerHTML' });
-    };
 
-    window.sieveOpenNote = window.sieveSelectTab;
-
-    window.sieveNewNote = function() {
-        window.htmx.ajax('POST', '/api/note/new', { target: '#htmx-tabbar', swap: 'innerHTML' });
-    };
-
-    window.sieveCloseTab = function(id) {
-        window.htmx.ajax('POST', '/api/tabs/close/' + id, { target: '#htmx-tabbar', swap: 'innerHTML' });
-    };
-
-    window.sieveCloseActiveTab = function() {
-        var mount = document.getElementById('tiptap-mount');
-        if (mount) {
-            var uuid = mount.getAttribute('data-uuid');
-            if (uuid) window.sieveCloseTab(uuid);
-        }
-    };
-
-    window.sieveCloseAllTabs = function() {
-        window.htmx.ajax('POST', '/api/tabs/closeAll', { target: '#htmx-tabbar', swap: 'innerHTML' });
-    };
-
-    window.sieveReorderTabs = function(from, to) {
-        window.htmx.ajax('POST', '/api/tabs/reorder', { target: '#htmx-tabbar', swap: 'innerHTML', values: { from: from, to: to } });
-    };
-
-    window.__sieveActiveJobs = 0;
-
-    window.sieveSetEvaluating = function(id, isEval) {
-        var tab = document.querySelector('.group[data-tab-id="' + id + '"]');
-        if (tab) {
-            var normal = tab.querySelector('.tab-icon-normal');
-            var spinner = tab.querySelector('.tab-spinner');
-            if (isEval) {
-                if (normal) normal.classList.add('hidden');
-                if (spinner) spinner.classList.remove('hidden');
-            } else {
-                if (normal) normal.classList.remove('hidden');
-                if (spinner) spinner.classList.add('hidden');
-            }
-        }
-
-        var metaSpinner = document.getElementById('meta-thinking-spinner');
-        if (metaSpinner) {
-            var mount = document.getElementById('tiptap-mount');
-            if (mount && mount.getAttribute('data-uuid') === id) {
-                if (isEval) metaSpinner.classList.remove('hidden');
-                else metaSpinner.classList.add('hidden');
-            }
-        }
-
-        var sbLeft = document.querySelector('.status-bar__left');
-        if (sbLeft) {
-            if (window.__sieveActiveJobs > 0) {
-                sbLeft.innerHTML = '<span class="flex items-center gap-1.5"><span class="w-[10px] h-[10px] shrink-0 rounded-full border-[1.5px] border-solid border-tn-cyan border-t-transparent animate-spin"></span> Evaluating (' + window.__sieveActiveJobs + ')</span>';
-            } else {
-                sbLeft.innerHTML = '';
-            }
-        }
-    };
-
-    window.sieveSmartFile = function(id) {
-        var p = window.sieveSave ? window.sieveSave() : Promise.resolve();
-        p.then(function() {
-            if (!id) {
-                var mount = document.getElementById('tiptap-mount');
-                if (mount) id = mount.getAttribute('data-uuid');
-            }
-            if (id) {
-                window.__sieveActiveJobs++;
-                window.sieveSetEvaluating(id, true);
-                fetch('/api/ai/smartFile/' + id, { method: 'POST' }).finally(function() { 
-                    window.__sieveActiveJobs--; 
-                    window.sieveSetEvaluating(id, false);
-                });
-            }
-        });
-    };
-
-    window.sieveSmartMetadata = function(id) {
-        var p = window.sieveSave ? window.sieveSave() : Promise.resolve();
-        p.then(function() {
-            if (!id) {
-                var mount = document.getElementById('tiptap-mount');
-                if (mount) id = mount.getAttribute('data-uuid');
-            }
-            if (id) {
-                window.__sieveActiveJobs++;
-                window.sieveSetEvaluating(id, true);
-                fetch('/api/ai/smartMetadata/' + id, { method: 'POST' }).finally(function() { 
-                    window.__sieveActiveJobs--; 
-                    window.sieveSetEvaluating(id, false);
-                });
-            }
-        });
-    };
-
-    window.sieveKeepAndSmartFile = function(id) {
-        var p = window.sieveSave ? window.sieveSave() : Promise.resolve();
-        p.then(function() {
-            if (!id) {
-                var mount = document.getElementById('tiptap-mount');
-                if (mount) id = mount.getAttribute('data-uuid');
-            }
-            if (id) {
-                window.__sieveActiveJobs++;
-                window.sieveSetEvaluating(id, true);
-                fetch('/api/ai/keepAndFile/' + id, { method: 'POST' }).finally(function() { 
-                    window.__sieveActiveJobs--; 
-                    window.sieveSetEvaluating(id, false);
-                });
-            }
-        });
-    };
-
-    window.sieveSmartFileActive = function() {
-        window.sieveSmartFile();
-    };
-
-    window.sieveKeepAndSmartFileActive = function() {
-        window.sieveKeepAndSmartFile();
-    };
-
-    window.sieveRenameNote = function(id, currentName) {
-        var dlg = document.getElementById('rename-dialog');
-        if (dlg) {
-            dlg.showModal();
-            window.htmx.ajax('GET', '/api/sidebar/rename-prompt?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(currentName) + '&type=note', { target: '#rename-dialog-content', swap: 'innerHTML' });
-        }
-    };
-
-    window.sieveRenameFolder = function(id, currentName) {
-        var dlg = document.getElementById('rename-dialog');
-        if (dlg) {
-            dlg.showModal();
-            window.htmx.ajax('GET', '/api/sidebar/rename-prompt?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(currentName) + '&type=folder', { target: '#rename-dialog-content', swap: 'innerHTML' });
-        }
-    };
-
-    window.sieveCreateFolder = function(parentId) {
-        var dlg = document.getElementById('rename-dialog');
-        if (dlg) {
-            dlg.showModal();
-            window.htmx.ajax('GET', '/api/sidebar/create-folder-prompt?parentId=' + encodeURIComponent(parentId || ''), { target: '#rename-dialog-content', swap: 'innerHTML' });
-        }
-    };
-
-    window.sieveOpenDelete = function(id, name, type) {
-        var dlg = document.getElementById('delete-dialog');
-        if (dlg) {
-            dlg.showModal();
-            window.htmx.ajax('GET', '/api/sidebar/delete-prompt?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&type=' + type, { target: '#delete-dialog-content', swap: 'innerHTML' });
-        }
-    };
-
-    window.sieveToggleSidebar = function() {
-        window.htmx.ajax('POST', '/api/session/sidebar/toggle', { swap: 'none' });
-    };
-
-    window.sieveToggleMeta = function() {
-        window.htmx.ajax('POST', '/api/session/meta/toggle', { swap: 'none' });
-    };
-
-    window.sieveTogglePrompts = function() {
-        window.htmx.ajax('POST', '/api/session/prompts/toggle', { swap: 'none' });
-    };
-
-    window.sieveOpenQuickSwitcher = function() {
-        var dlg = document.getElementById('quickswitcher-dialog');
-        if (dlg) {
-            dlg.showModal();
-            window.htmx.ajax('GET', '/api/search-prompt', { target: '#quickswitcher-dialog-content', swap: 'innerHTML' });
-        }
-    };
-
-    window.sieveOpenSettings = function() {
-        var dlg = document.getElementById('settings-dialog');
-        if (dlg) {
-            dlg.showModal();
-            window.htmx.ajax('GET', '/api/settings', { target: '#settings-dialog-content', swap: 'innerHTML' });
-        }
-    };
-
-    window.sieveOnSettingsChanged = function() {
-        var link = document.querySelector('link[href^="/theme.css"]');
-        if (link) {
-            link.href = '/theme.css?t=' + new Date().getTime();
-        }
-    };
-
-    window.sieveHelp = function() {
-        var dlg = document.getElementById('help-dialog');
-        if (dlg) {
-            dlg.showModal();
-            window.htmx.ajax('GET', '/api/help', { target: '#help-dialog-content', swap: 'innerHTML' });
-        }
-    };
-
-    window.sieveToggleSearch = function() {
-        console.log('Toggle Search not implemented yet');
-    };
-
-    window.sieveSidebarSearch = function() {
-        console.log('Sidebar Search not implemented yet');
-    };
-
+    // Placeholder until editor.js overrides it
     window.sieveToggleMode = window.sieveToggleMode || function() {
-        console.log('Toggle Mode not implemented yet');
+        console.log('Toggle Mode placeholder called');
     };
 
     window.sieveSetMetaDirty = function(dirty) {

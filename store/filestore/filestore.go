@@ -584,7 +584,7 @@ func (fs *FileStore) cascadeAssetUpdates(ms store.MetaStorable, oldParentKey, ne
 			assetBase := filepath.Base(asset.Key())
 			// e.g. note-img.png -> newnote-img.png
 			if strings.HasPrefix(assetBase, oldDocName+"-") {
-				assetBase = kebab + "-" + strings.TrimPrefix(assetBase, oldDocName+"-")
+				assetBase = kebab + "-" + strings.TrimPrefix(assetBase, "-")
 			} else if !strings.HasPrefix(assetBase, kebab+"-") {
 				assetBase = kebab + "-" + assetBase
 			}

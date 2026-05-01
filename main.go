@@ -213,6 +213,7 @@ func (m *muxHandler) serveThemeCSS(w http.ResponseWriter, _ *http.Request) {
 func buildMenu(app *App) *menu.Menu {
 	js := func(script string) func(*menu.CallbackData) {
 		return func(_ *menu.CallbackData) {
+			logger.Debug("Menu Action: executing JS", "script", script)
 			wailsruntime.WindowExecJS(app.ctx, script)
 		}
 	}
@@ -246,7 +247,7 @@ func buildMenu(app *App) *menu.Menu {
 
 	help := appMenu.AddSubmenu("Help")
 	help.AddText("Shortcuts", keys.CmdOrCtrl("/"), js("window.sieveHelp?.()"))
-	help.AddText("About", keys.CmdOrCtrl("a"), func(_ *menu.CallbackData) {
+	help.AddText("About", nil, func(_ *menu.CallbackData) {
 		wailsruntime.MessageDialog(app.ctx, wailsruntime.MessageDialogOptions{
 			Type:    wailsruntime.InfoDialog,
 			Title:   "About Sieve",

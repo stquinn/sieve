@@ -62,6 +62,7 @@
   var lastSyncedBody = ''
   var showAiBlocks = true
   var blobInterceptorCleanup = null
+  var searchOverlay = null
 
   // Persistent overlay elements — created once, reused across tab switches.
   var linkBubble = null
@@ -151,7 +152,7 @@
         attributes: { spellcheck: 'true' },
         handleDOMEvents: {
           click: function (view, event) {
-            if (!isModKey(event)) return false
+            if (!window.isMod(event)) return false
             var pos = view.posAtCoords({ left: event.clientX, top: event.clientY })
             if (pos) {
               var marks = view.state.doc.resolve(pos.pos).marks()
@@ -169,7 +170,7 @@
         },
         handlePaste: function (_view, event) { return handleSmartPaste(event) },
         handleKeyDown: function (view, event) {
-          if (event.key === 's' && isModKey(event)) {
+          if (event.key === 's' && window.isMod(event)) {
             event.preventDefault()
             flushSave()
             return true
@@ -240,7 +241,7 @@
       dispatchStats()
     })
     textarea.addEventListener('keydown', function (e) {
-      if (e.key === 's' && isModKey(e)) {
+      if (e.key === 's' && window.isMod(e)) {
         e.preventDefault()
         flushSave()
       }
@@ -314,6 +315,7 @@
   function ensureOverlays() {
     if (!linkBubble) linkBubble = createLinkBubble()
     if (!askDialog) askDialog = createAskDialog()
+    if (!searchOverlay) searchOverlay = createSearchOverlay()
   }
 
   function createLinkBubble() {
@@ -409,6 +411,97 @@
     textarea.value = ''
     askDialog.showModal()
     textarea.focus()
+  }
+
+  // ── Search overlay ────────────────────────────────────────────────────────────
+
+  function createSearchOverlay() {
+    var overlay = document.createElement('div')
+    overlay.className = 'editor-search-overlay'
+
+    var topRow = document.createElement('div')
+    topRow.className = 'editor-search__top-row'
+
+    var input = document.createElement('input')
+    input.placeholder = 'Search...'
+    input.className = 'editor-search__input'
+
+    var stats = document.createElement('span')
+    stats.className = 'editor-search__stats'
+    stats.textContent = '0/0'
+
+    topRow.appendChild(input); topRow.appendChild(stats)
+
+    var bottomRow = document.createElement('div')
+    bottomRow.className = 'editor-search__bottom-row'
+
+    var btnPrev = makeBtn('editor-search__btn', '\u2191', function() {
+        if (currentMode === 'markdown') { /* TODO */ }
+        else if (currentEditor) currentEditor.commands.prevSearchResult()
+        updateStats()
+    })
+    
+    var btnNext = makeBtn('editor-search__btn', '\u2193', function() {
+        if (currentMode === 'markdown') { /* TODO */ }
+        else if (currentEditor) currentEditor.commands.nextSearchResult()
+        updateStats()
+    })
+
+    var btnClose = makeBtn('editor-search__close', '\u2715', function() {
+        overlay.style.display = 'none'
+        if (currentEditor) {
+            currentEditor.commands.clearSearch()
+            currentEditor.commands.focus()
+        }
+    })
+
+    bottomRow.appendChild(btnPrev); bottomRow.appendChild(btnNext); bottomRow.appendChild(btnClose)
+    overlay.appendChild(topRow); overlay.appendChild(bottomRow)
+
+    function updateStats() {
+        if (currentMode === 'markdown') {
+            stats.textContent = '0/0'
+            return
+        }
+        if (!currentEditor) return
+        var s = currentEditor.storage.search
+        if (s && s.results) {
+            stats.textContent = (s.results.length > 0 ? (s.currentIndex + 1) : 0) + '/' + s.results.length
+        }
+    }
+
+    input.addEventListener('input', function() {
+        var term = input.value
+        if (currentMode === 'markdown') {
+            // Placeholder
+        } else if (currentEditor) {
+            currentEditor.commands.setSearchTerm(term)
+            updateStats()
+        }
+    })
+
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault()
+            if (e.shiftKey) {
+                if (currentEditor) currentEditor.commands.prevSearchResult()
+            } else {
+                if (currentEditor) currentEditor.commands.nextSearchResult()
+            }
+            updateStats()
+        }
+        if (e.key === 'Escape') {
+            e.preventDefault()
+            overlay.style.display = 'none'
+            if (currentEditor) {
+                currentEditor.commands.clearSearch()
+                currentEditor.commands.focus()
+            }
+        }
+    })
+
+    document.body.appendChild(overlay)
+    return overlay
   }
 
   function doAsk(textarea, dialog) {
@@ -930,14 +1023,25 @@
         }
       },
       save: flushSave,
+      toggleSearch: function() {
+        if (!searchOverlay) ensureOverlays()
+        if (searchOverlay.style.display === 'none') {
+            searchOverlay.style.display = 'flex'
+            var input = searchOverlay.querySelector('input')
+            if (input) {
+                input.focus()
+                input.select()
+            }
+        } else {
+            searchOverlay.style.display = 'none'
+            if (currentEditor) currentEditor.commands.clearSearch()
+        }
+      }
     }
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
 
-  function isModKey(e) {
-    return navigator.platform.includes('Mac') ? e.metaKey : e.ctrlKey
-  }
 
   function makeBtn(cls, text, onClick) {
     var btn = document.createElement('button')

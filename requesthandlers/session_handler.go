@@ -35,7 +35,11 @@ func (h *SessionHandler) handleSidebarToggle(w http.ResponseWriter, r *http.Requ
 		#htmx-sidebar {
 			display: %s;
 		}
+		.sidebar-handle {
+			display: %s;
+		}
 	</style>`, map[bool]int{true: session.SidebarWidth, false: 0}[session.ShowSidebar],
+		map[bool]string{true: "block", false: "none"}[session.ShowSidebar],
 		map[bool]string{true: "block", false: "none"}[session.ShowSidebar])
 }
 
@@ -52,8 +56,12 @@ func (h *SessionHandler) handleMetaToggle(w http.ResponseWriter, r *http.Request
 		#htmx-meta-panel {
 			display: %s;
 		}
+		.meta-handle {
+			display: %s;
+		}
 	</style>`, map[bool]int{true: session.MetaWidth, false: 0}[session.ShowMeta],
-		map[bool]string{true: "flex", false: "none"}[session.ShowMeta])
+		map[bool]string{true: "flex", false: "none"}[session.ShowMeta],
+		map[bool]string{true: "block", false: "none"}[session.ShowMeta])
 }
 
 func (h *SessionHandler) handlePromptsToggle(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +78,11 @@ func (h *SessionHandler) handlePromptsToggle(w http.ResponseWriter, r *http.Requ
 		#prompts-panel {
 			display: %s;
 		}
-	</style>`, map[bool]string{true: "block", false: "none"}[session.ShowPrompts])
+		.prompts-handle {
+			display: %s;
+		}
+	</style>`, map[bool]string{true: "block", false: "none"}[session.ShowPrompts],
+		map[bool]string{true: "block", false: "none"}[session.ShowPrompts])
 }
 
 func (h *SessionHandler) handleSessionLayout(w http.ResponseWriter, r *http.Request) {

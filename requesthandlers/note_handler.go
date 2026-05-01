@@ -139,6 +139,7 @@ func (h *NoteHandler) handleNoteNew(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
 }
 
 func (h *NoteHandler) handleTabsCloseAll(w http.ResponseWriter, r *http.Request) {

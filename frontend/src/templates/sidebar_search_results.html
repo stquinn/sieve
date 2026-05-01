@@ -1,0 +1,73 @@
+{{define "sidebar_search_results.html"}}
+<div class="store-search">
+  <div class="store-search__header">
+    <h3 class="store-search__title">
+      <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      Library Search
+    </h3>
+    <button class="store-search__close" title="Close Search" 
+      hx-get="/api/sidebar" 
+      hx-target="#htmx-sidebar" 
+      hx-swap="innerHTML"
+    >
+      <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+
+  <div class="store-search__input-wrapper">
+    <div style="position:relative; display:flex; align-items:center;">
+      <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="position:absolute; left:8px; color:var(--theme-muted); pointer-events:none;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input 
+        type="text" 
+        name="q" 
+        id="sidebar-search-input"
+        value="{{.Query}}" 
+        placeholder="Search library..." 
+        class="store-search__input"
+        style="padding-left: 28px;"
+        hx-get="/api/sidebar/search?list_only=true" 
+        hx-trigger="input changed delay:100ms, search" 
+        hx-target="#search-results-list" 
+        hx-swap="innerHTML"
+        autoFocus
+        onfocus="this.select()"
+      />
+    </div>
+  </div>
+
+  <div id="search-results-list" class="store-search__results scrollbar-hide">
+    {{template "sidebar_search_results_list.html" .}}
+  </div>
+</div>
+{{end}}
+
+{{define "sidebar_search_results_list.html"}}
+  {{if .Results}}
+    {{range .Results}}
+      <div class="store-search__item" onclick="window.sieveOpenNote && window.sieveOpenNote('{{.ID}}')">
+        <div class="store-search__item-info" style="margin-bottom: 4px;">
+          <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none" class="store-search__item-icon" style="margin-right: 6px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span class="store-search__item-name" style="font-weight: 600; font-size: 14px;">{{.Name}}</span>
+        </div>
+        
+        <div class="store-search__item-badges" style="margin-bottom: 6px; justify-content: flex-start; gap: 6px;">
+          {{if .IsTagMatch}}<span class="store-search__badge">Tag Match</span>{{end}}
+          {{if .IsSummaryMatch}}<span class="store-search__badge">Summary</span>{{end}}
+          {{if .IsBodyMatch}}<span class="store-search__badge store-search__badge--text">Content</span>{{end}}
+        </div>
+
+        {{if .Snippet}}
+          <div class="store-search__item-snippet" style="opacity: 0.8;">{{.Snippet}}</div>
+        {{end}}
+      </div>
+    {{end}}
+  {{else}}
+    <div class="store-search__msg">
+      {{if eq .Query ""}}
+        Enter a query to search the library
+      {{else}}
+        No results found for "{{.Query}}"
+      {{end}}
+    </div>
+  {{end}}
+{{end}}
