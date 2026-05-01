@@ -239,6 +239,7 @@ func buildMenu(app *App) *menu.Menu {
 	view.AddSeparator()
 	view.AddText("Toggle Search", keys.CmdOrCtrl("f"), js("window.sieveToggleSearch?.()"))
 	view.AddText("Sidebar Search", keys.Combo("f", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveSidebarSearch?.()"))
+	view.AddText("Toggle AI Blocks", keys.CmdOrCtrl("j"), js("window.sieveToggleAiBlocks()"))
 	view.AddText("Quick Switcher", keys.CmdOrCtrl("p"), js("window.sieveOpenQuickSwitcher?.()"))
 
 	ai := appMenu.AddSubmenu("Tools")

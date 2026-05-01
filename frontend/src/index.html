@@ -165,7 +165,7 @@
 
             <div class="editor-area">
                 <div id="htmx-editor" class="editor-wrapper" style="flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column;">
-                    <div id="tiptap-mount" data-uuid="{{.ActiveUUID}}" data-mode="wysiwyg" style="flex: 1; min-height: 0; display: flex; flex-direction: column;"></div>
+                    <div id="tiptap-mount" class="editor-panel" data-uuid="{{.ActiveUUID}}" data-mode="wysiwyg" style="flex: 1; min-height: 0; display: flex; flex-direction: column;"></div>
                 </div>
 
                 <div class="meta-handle"></div>
@@ -408,6 +408,12 @@
     window.sieveToggleSearch = function() {
         if (window.sieveEditor && window.sieveEditor.toggleSearch) window.sieveEditor.toggleSearch();
         else console.log('Toggle Search not implemented in current mode');
+    };
+
+    window.sieveToggleAiBlocks = function() {
+        if (window.sieveEditor && window.sieveEditor.toggleAiBlocks) {
+            window.sieveEditor.toggleAiBlocks();
+        }
     };
 
     window.sieveSidebarSearch = function() {

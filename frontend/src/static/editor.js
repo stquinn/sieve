@@ -262,6 +262,10 @@
         e.preventDefault()
         flushSave()
       }
+      if (e.key === 'j' && window.isMod(e)) {
+        e.preventDefault()
+        toggleAiBlocks()
+      }
     })
     textarea.addEventListener('scroll', function () { gutter.scrollTop = textarea.scrollTop })
 
@@ -644,8 +648,10 @@
 
   function toggleAiBlocks() {
     showAiBlocks = !showAiBlocks
-    var panel = document.querySelector('.editor-panel')
-    if (panel) panel.classList.toggle('hide-ai-blocks', !showAiBlocks)
+    var panel = currentMountEl || document.querySelector('.editor-panel')
+    if (panel) {
+      panel.classList.toggle('hide-ai-blocks', !showAiBlocks)
+    }
   }
 
   function handleSmartPaste(event) {
@@ -1053,7 +1059,8 @@
             searchOverlay.style.display = 'none'
             if (currentEditor) currentEditor.commands.clearSearch()
         }
-      }
+      },
+      toggleAiBlocks: toggleAiBlocks
     }
   }
 
