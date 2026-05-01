@@ -3,47 +3,10 @@
   let dragToPos = null;
   let activeRo = null;
 
-  function initDrag(area) {
-    area.addEventListener('dragstart', e => {
-      const tab = e.target.closest('[data-tab-idx]');
-      if (!tab) return;
-      dragFromIdx = parseInt(tab.dataset.tabIdx, 10);
-      dragToPos = null;
-      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+  function clearIndicators() {
+    document.querySelectorAll('.tab-drop-indicator-left, .tab-drop-indicator-right').forEach(el => {
+      el.classList.remove('tab-drop-indicator-left', 'tab-drop-indicator-right');
     });
-
-    area.addEventListener('dragover', e => {
-      e.preventDefault();
-      const tab = e.target.closest('[data-tab-idx]');
-      if (!tab || dragFromIdx === null) return;
-      const rect = tab.getBoundingClientRect();
-      const idx = parseInt(tab.dataset.tabIdx, 10);
-      dragToPos = e.clientX < rect.left + rect.width / 2 ? idx : idx + 1;
-    });
-
-    area.addEventListener('drop', e => {
-      e.preventDefault();
-      commitDrop();
-    });
-
-    area.addEventListener('dragend', () => {
-      dragFromIdx = null;
-      dragToPos = null;
-    });
-
-    const spacer = document.getElementById('tab-spacer');
-    if (spacer) {
-      spacer.addEventListener('dragover', e => {
-        e.preventDefault();
-        if (dragFromIdx !== null) {
-          dragToPos = area.querySelectorAll('[data-tab-idx]').length;
-        }
-      });
-      spacer.addEventListener('drop', e => {
-        e.preventDefault();
-        commitDrop();
-      });
-    }
   }
 
   function commitDrop() {
@@ -53,12 +16,100 @@
     }
     dragFromIdx = null;
     dragToPos = null;
+    clearIndicators();
   }
+
+  document.addEventListener('dragstart', e => {
+    const tab = e.target.closest('[data-tab-idx]');
+    if (!tab || !tab.closest('#tabs-area')) return;
+
+    dragFromIdx = parseInt(tab.dataset.tabIdx, 10);
+    dragToPos = null;
+
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', dragFromIdx.toString());
+      
+      // Use the tab itself as the drag image but slightly translucent
+      // The browser does this by default if we don't set a drag image,
+      // but we want it to look "pleasant".
+      // Let's use the default but make sure it's not "huge" (browser usually takes the closest relative container)
+      // If we want it to be exactly the tab, we can clone it.
+      const ghost = tab.cloneNode(true);
+      ghost.style.width = tab.offsetWidth + 'px';
+      ghost.style.opacity = '0.8';
+      ghost.style.position = 'absolute';
+      ghost.style.top = '-1000px';
+      ghost.style.left = '-1000px';
+      document.body.appendChild(ghost);
+      e.dataTransfer.setDragImage(ghost, e.offsetX, e.offsetY);
+      setTimeout(() => ghost.remove(), 0);
+    }
+    
+    tab.style.opacity = '0.4';
+  });
+
+  document.addEventListener('dragover', e => {
+    if (dragFromIdx === null) return;
+    
+    const tab = e.target.closest('[data-tab-idx]');
+    const spacer = e.target.closest('#tab-spacer');
+    const area = document.getElementById('tabs-area');
+    
+    if (tab && area && area.contains(tab)) {
+      e.preventDefault();
+      clearIndicators();
+      
+      const rect = tab.getBoundingClientRect();
+      const mid = rect.left + rect.width / 2;
+      const idx = parseInt(tab.dataset.tabIdx, 10);
+      
+      if (e.clientX < mid) {
+        dragToPos = idx;
+        tab.classList.add('tab-drop-indicator-left');
+      } else {
+        dragToPos = idx + 1;
+        tab.classList.add('tab-drop-indicator-right');
+      }
+    } else if (spacer && area) {
+      e.preventDefault();
+      clearIndicators();
+      dragToPos = area.querySelectorAll('[data-tab-idx]').length;
+      // Optionally highlight the spacer or the last tab's right side
+      const lastTab = area.querySelector('[data-tab-idx]:last-child');
+      if (lastTab) lastTab.classList.add('tab-drop-indicator-right');
+    }
+  });
+
+  document.addEventListener('dragleave', e => {
+    // Only clear if we are leaving a tab
+    if (e.target.closest('[data-tab-idx]')) {
+      // We don't clear here because dragover will immediately re-apply it on the next tab
+      // But we can clear if we leave the tabs-area entirely
+      if (!e.relatedTarget || !e.relatedTarget.closest('#tabs-bar')) {
+        clearIndicators();
+      }
+    }
+  });
+
+  document.addEventListener('drop', e => {
+    if (dragFromIdx === null) return;
+    e.preventDefault();
+    commitDrop();
+  });
+
+  document.addEventListener('dragend', e => {
+    const tab = e.target.closest('[data-tab-idx]');
+    if (tab) tab.style.opacity = '';
+    dragFromIdx = null;
+    dragToPos = null;
+    clearIndicators();
+  });
 
   function initOverflow(area, overflowWrap, overflowBtn) {
     let showDropdown = false;
-
     const update = () => {
+      if (!area.isConnected) return;
       const areaRight = area.getBoundingClientRect().right;
       const tabs = area.querySelectorAll('[data-tab-idx]');
       let firstHidden = tabs.length;
@@ -76,7 +127,6 @@
         overflowBtn._firstHidden = firstHidden;
       } else {
         overflowWrap.style.display = 'none';
-        if (showDropdown) closeDropdown();
       }
     };
 
@@ -84,195 +134,17 @@
     activeRo = new ResizeObserver(update);
     activeRo.observe(area);
     update();
-
-    const closeDropdown = () => {
-      showDropdown = false;
-      const dd = document.getElementById('tab-overflow-dropdown');
-      if (dd) dd.remove();
-    };
-
-    overflowBtn.addEventListener('click', () => {
-      if (showDropdown) { closeDropdown(); return; }
-      showDropdown = true;
-      const firstHidden = overflowBtn._firstHidden || 0;
-      const tabs = area.querySelectorAll('[data-tab-idx]');
-      const dd = document.createElement('div');
-      dd.id = 'tab-overflow-dropdown';
-      dd.style.cssText = 'position:absolute;right:0;top:100%;margin-top:2px;z-index:50;' +
-        'background:var(--theme-bgAlt);border:1px solid rgba(255,255,255,0.2);' +
-        'border-radius:6px;box-shadow:0 8px 32px rgba(0,0,0,0.4);padding:4px 0;min-width:200px;';
-      for (let i = firstHidden; i < tabs.length; i++) {
-        const tab = tabs[i];
-        const id = tab.dataset.tabId;
-        const labelEl = tab.querySelector('.tab-item__label');
-        const btn = document.createElement('button');
-        btn.style.cssText = 'display:flex;align-items:center;width:100%;background:transparent;border:none;' +
-          'text-align:left;padding:6px 12px;font-size:14px;color:var(--theme-textDim);cursor:pointer;transition:background 0.1s;';
-        btn.textContent = labelEl ? labelEl.textContent.trim() : 'Untitled';
-        btn.onmouseenter = () => { btn.style.background = 'var(--theme-bg)'; };
-        btn.onmouseleave = () => { btn.style.background = 'transparent'; };
-        btn.onclick = () => { window.sieveSelectTab && window.sieveSelectTab(id); closeDropdown(); };
-        dd.appendChild(btn);
-      }
-      overflowWrap.appendChild(dd);
-      setTimeout(() => {
-        document.addEventListener('mousedown', function handler(e) {
-          if (!overflowWrap.contains(e.target)) {
-            closeDropdown();
-            document.removeEventListener('mousedown', handler);
-          }
-        });
-      });
-    });
-  }
-
-  function initContextMenu() {
-    let menuEl = null;
-
-    const close = () => {
-      if (menuEl) { menuEl.remove(); menuEl = null; }
-      document.removeEventListener('mousedown', outsideHandler);
-      document.removeEventListener('keydown', escHandler);
-    };
-
-    const outsideHandler = e => {
-      if (menuEl && !menuEl.contains(e.target)) close();
-    };
-
-    const escHandler = e => {
-      if (e.key === 'Escape') close();
-    };
-
-    window.sieveTabContextMenu = (id, name, intent, event) => {
-      close();
-
-      menuEl = document.createElement('div');
-      menuEl.style.cssText = 'position:fixed;z-index:9999;background:var(--theme-bg);' +
-        'border:1px solid var(--theme-border2);border-radius:6px;' +
-        'box-shadow:0 8px 32px rgba(0,0,0,0.5);padding:4px 0;min-width:200px;';
-      menuEl.style.left = event.clientX + 'px';
-      menuEl.style.top = event.clientY + 'px';
-      document.body.appendChild(menuEl);
-
-      const addItem = (label, icon, action, danger) => {
-        const btn = document.createElement('button');
-        btn.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%;background:transparent;' +
-          'border:none;text-align:left;padding:6px 12px;font-size:14px;cursor:pointer;transition:background 0.1s;' +
-          (danger ? 'color:var(--theme-accentRed);' : 'color:var(--theme-text);');
-        btn.innerHTML = (icon ? '<svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">' + icon + '</svg>' : '') + label;
-        btn.onmouseenter = () => { btn.style.background = 'var(--theme-border2)'; };
-        btn.onmouseleave = () => { btn.style.background = 'transparent'; };
-        btn.onclick = () => { close(); action(); };
-        menuEl.appendChild(btn);
-        return btn;
-      };
-
-      const addSep = () => {
-        const d = document.createElement('div');
-        d.style.cssText = 'height:1px;background:var(--theme-border2);margin:4px 0;';
-        menuEl.appendChild(d);
-      };
-
-      // Title
-      const title = document.createElement('div');
-      title.style.cssText = 'padding:6px 12px;font-size:11px;font-weight:700;color:var(--theme-muted);' +
-        'text-transform:uppercase;letter-spacing:0.05em;border-bottom:1px solid var(--theme-border2);' +
-        'margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-      title.textContent = name || 'Note';
-      menuEl.prepend(title);
-
-      if (id.startsWith('prompt:')) {
-        addItem('Reset to Default', '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><polyline points="3 3 3 8 8 8"/>', () => {
-          if (window.htmx) {
-            window.htmx.ajax('POST', '/api/sidebar/revert-prompt?id=' + encodeURIComponent(id), { swap: 'none' });
-          }
-        });
-
-        addSep();
-
-        addItem('Close Tab', '<path d="M18 6L6 18"/><path d="M6 6l12 12"/>',
-          () => window.sieveCloseTab && window.sieveCloseTab(id));
-        addItem('Close All Tabs', '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>',
-          () => window.sieveCloseAllTabs && window.sieveCloseAllTabs());
-      } else {
-        // Note actions
-        addItem('Smart File', '<path d="M4.5 16.5c-1.5 1.5-1.5 3 0 3s3-1.5 3-3L19.5 4.5"/><path d="m19.5 4.5-3 3"/>',
-          () => window.sieveSmartFile && window.sieveSmartFile(id));
-        addItem('Smart Metadata', '<path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 8v4l3 3"/><circle cx="18" cy="6" r="3"/>',
-          () => window.sieveSmartMetadata && window.sieveSmartMetadata(id));
-
-        addSep();
-
-        const setIntent = (val) => {
-          if (!window.htmx) return;
-          window.htmx.ajax('POST', '/api/sidebar/intent?id='+encodeURIComponent(id)+'&value='+val, { target: '#htmx-sidebar', swap: 'innerHTML' });
-        };
-
-        const keepBtn = addItem('Mark as Keep', '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>', () => setIntent('keep'));
-        keepBtn.style.color = 'var(--theme-accentPrimary)';
-        if (intent === 'keep') { keepBtn.style.background = 'var(--theme-border2)'; keepBtn.style.fontWeight = '700'; }
-
-        const trashBtn = addItem('Mark as Trash', '<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>', () => setIntent('trash'));
-        trashBtn.style.color = 'var(--theme-accentRed)';
-        if (intent === 'trash') { trashBtn.style.background = 'var(--theme-border2)'; trashBtn.style.fontWeight = '700'; }
-
-        if (intent) {
-          addItem('Clear Intent', '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.78"/>', () => setIntent(''));
-        }
-
-        addSep();
-
-        addItem('Rename...', '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
-          () => window.sieveRenameNote && window.sieveRenameNote(id, name));
-        addItem('Show in Files', '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
-          () => window.sieveShowInFiles && window.sieveShowInFiles(id));
-
-        addSep();
-
-        // Tab-specific actions
-        addItem('Close Tab', '<path d="M18 6L6 18"/><path d="M6 6l12 12"/>',
-          () => window.sieveCloseTab && window.sieveCloseTab(id));
-        addItem('Close All Tabs', '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>',
-          () => window.sieveCloseAllTabs && window.sieveCloseAllTabs());
-
-        addSep();
-
-        addItem('Delete Note...', '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>',
-          () => {
-            window.sieveOpenDelete && window.sieveOpenDelete(id, name, 'note');
-          }, true);
-      }
-
-      document.body.appendChild(menuEl);
-
-      // Clamp to viewport
-      requestAnimationFrame(() => {
-        if (!menuEl) return;
-        const r = menuEl.getBoundingClientRect();
-        if (r.right > window.innerWidth - 4) menuEl.style.left = (window.innerWidth - r.width - 4) + 'px';
-        if (r.bottom > window.innerHeight - 4) menuEl.style.top = (window.innerHeight - r.height - 4) + 'px';
-      });
-
-      setTimeout(() => {
-        document.addEventListener('mousedown', outsideHandler);
-        document.addEventListener('keydown', escHandler);
-      });
-    };
-
-    window.sieveCloseTabMenu = close;
   }
 
   function init() {
     const area = document.getElementById('tabs-area');
     const overflowWrap = document.getElementById('tab-overflow');
     const overflowBtn = document.getElementById('tab-overflow-btn');
-    if (!area) return;
-    initDrag(area);
-    if (overflowWrap && overflowBtn) initOverflow(area, overflowWrap, overflowBtn);
-    initContextMenu();
+    if (area && overflowWrap && overflowBtn) initOverflow(area, overflowWrap, overflowBtn);
   }
 
   window.sieveTabBarInit = init;
+  window.sieveCloseTabMenu = window.sieveCloseMenu;
 
   if (document.readyState !== 'loading') init();
   else document.addEventListener('DOMContentLoaded', init);

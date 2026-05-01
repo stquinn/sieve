@@ -115,6 +115,23 @@
       .catch(function (err) { console.error('[editor] load failed', err) })
   }
 
+  // Listen for external changes (e.g. revert prompt or background edits)
+  document.addEventListener('prompts:changed', function() {
+    if (currentUuid && currentUuid.startsWith('prompt:')) {
+      console.log('[editor.js] prompts:changed - reloading current prompt editor:', currentUuid);
+      initEditor(currentMountEl, currentUuid, currentMode);
+    }
+  });
+
+  document.addEventListener('notes:changed', function() {
+    // If we're editing a prompt, notes:changed might also mean the prompt was reverted
+    // (since the backend emits both). For regular notes, we usually don't want to 
+    // force-reload while the user is typing, but for prompts it's safer.
+    if (currentUuid && currentUuid.startsWith('prompt:')) {
+      initEditor(currentMountEl, currentUuid, currentMode);
+    }
+  });
+
   // ── WYSIWYG mode ─────────────────────────────────────────────────────────────
 
   function mountWysiwyg(el, uuid, body) {
@@ -288,7 +305,7 @@
     return fetch('/api/editor/save?uuid=' + encodeURIComponent(uuid), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ body: body }),
+      body: JSON.stringify({ body: body, mode: currentMode }),
     }).then(function () {
       window.sieveSetMetaDirty && window.sieveSetMetaDirty(false)
       document.dispatchEvent(new CustomEvent('editor:saved', { detail: { uuid: uuid } }))
@@ -1056,6 +1073,10 @@
     console.log('[editor.js] sieveToggleMode called. currentMode:', currentMode)
     if (!currentUuid || !currentMountEl) return
     
+    // 1. Determine new mode
+    var newMode = (currentMode === 'markdown') ? 'wysiwyg' : 'markdown'
+    
+    // 2. Capture content from old mode
     var content = ''
     if (currentMode === 'markdown') {
       var textarea = currentMountEl.querySelector('.markdown-editor')
@@ -1066,26 +1087,33 @@
       content = lastSyncedBody
     }
     
+    // 3. Update local state
     lastSyncedBody = content
-    flushSave()
+    currentMode = newMode
+    tabModes[currentUuid] = currentMode
     
-    if (currentMode === 'wysiwyg' && currentEditor) {
+    // 4. Save NEW mode to server immediately
+    doSave(currentUuid, content)
+    
+    // 5. Re-mount UI
+    if (currentEditor) {
       currentEditor.destroy()
       currentEditor = null
     }
-    
     currentMountEl.innerHTML = ''
     
-    if (currentMode === 'markdown') {
-      currentMode = 'wysiwyg'
+    if (currentMode === 'wysiwyg') {
       mountWysiwyg(currentMountEl, currentUuid, content)
     } else {
-      currentMode = 'markdown'
       mountMarkdown(currentMountEl, currentUuid, content)
     }
     
-    tabModes[currentUuid] = currentMode
     dispatchStats()
+
+    // 6. Refresh the tab bar to show/hide the [M] indicator
+    if (window.htmx) {
+      window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' })
+    }
   }
 
   // ── Export ────────────────────────────────────────────────────────────────────

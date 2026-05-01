@@ -238,6 +238,20 @@ func (ds *DocumentService) List() ([]NoteEntry, error) {
 // the target folder path (e.g. "ai-stuff" or "projects/go"). An empty folder
 // moves the note to the Library root. The filename is preserved.
 func (ds *DocumentService) Move(n Document, folderName string) (Document, error) {
+	// Guard: Don't move if target is already the parent
+	currentKey := n.Storable().Key()
+	if idx := strings.LastIndex(currentKey, "/"); idx != -1 {
+		currentParent := currentKey[:idx]
+		// folderName might be "Library/folder" or just "folder" depending on the source.
+		// We normalize it by trimming "Library/" if present.
+		target := strings.TrimPrefix(folderName, Library.Key+"/")
+		if currentParent == target {
+			return n, nil
+		}
+	} else if folderName == "" || folderName == Library.Key {
+		// Already at root
+		return n, nil
+	}
 
 	folder, err := ds.store.CreateOrLoadFolder(n.Storable().Category(), folderName)
 	if err != nil {

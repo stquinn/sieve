@@ -10,3 +10,17 @@
 .ctx-item--danger { color:var(--theme-accentRed); }
 .ctx-item--active { background:var(--theme-border2); font-weight:700; }
 .ctx-separator { height:1px;background:var(--theme-border2);margin:4px 0; }
+
+.sidebar__dir {
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+
+.sidebar__dir--drag-over {
+  background-color: color-mix(in srgb, var(--theme-accentPrimary) 20%, var(--theme-bgAlt)) !important;
+  transform: translateX(4px);
+  color: var(--theme-text) !important;
+}
+
+.sidebar__file[draggable="true"]:active {
+  opacity: 0.5;
+}

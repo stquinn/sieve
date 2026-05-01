@@ -80,11 +80,24 @@ func (h *EditorHandler) handleEditorSave(w http.ResponseWriter, r *http.Request)
 
 	var req struct {
 		Body string `json:"body"`
+		Mode string `json:"mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+
+	// Update session tab mode if present
+	session := h.ServiceProvider.State.LoadSession()
+	for i, t := range session.Tabs {
+		if t.ID == uuid {
+			if req.Mode != "" {
+				session.Tabs[i].Mode = req.Mode
+			}
+			break
+		}
+	}
+	_ = h.ServiceProvider.State.SaveSession(session)
 
 	if strings.HasPrefix(uuid, "prompt:") {
 		name := strings.TrimPrefix(uuid, "prompt:")
@@ -104,6 +117,9 @@ func (h *EditorHandler) handleEditorSave(w http.ResponseWriter, r *http.Request)
 
 	if b, err := h.ServiceProvider.Documents.LoadByUUID(uuid); err == nil {
 		b.SetBody([]byte(req.Body))
+		if req.Mode != "" {
+			b.Meta().SetMode(req.Mode)
+		}
 		if saved, err := h.ServiceProvider.Documents.Save(b); err == nil {
 			json.NewEncoder(w).Encode(map[string]int{"version": saved.Meta().Version()})
 			return

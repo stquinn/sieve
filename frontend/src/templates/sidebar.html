@@ -61,9 +61,11 @@
 {{else}}
 <button
   class="sidebar__file"
+  draggable="true"
   style="position:relative;width:100%;text-align:left;display:flex;align-items:center;gap:8px;padding-left:{{fileIndent .Depth}};"
   onmousedown="window.sieveOpenNote && window.sieveOpenNote('{{.ID}}')"
   data-ctx-id="{{.ID}}"
+  data-ctx-parent-id="{{.ParentID}}"
   data-ctx-type="note"
   data-ctx-name="{{if .DisplayName}}{{.DisplayName}}{{else}}{{.Name}}{{end}}"
   data-ctx-intent="{{.UserIntent}}"

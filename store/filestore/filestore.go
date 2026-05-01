@@ -42,6 +42,7 @@ import (
 	"strings"
 	"time"
 
+	"sieve/logger"
 	"sieve/store"
 )
 
@@ -133,11 +134,13 @@ func (fs *FileStore) CreateText(cat store.Category, key string, body []byte) (st
 }
 
 func (fs *FileStore) CreateOrLoadFolder(category store.Category, name string) (store.FolderStorable, error) {
-
+	name = strings.TrimPrefix(name, category.Key+"/")
+	logger.Debug("CreateOrLoadFolder: %s, %s", category, name)
 	absPath := fs.absPath(category, name)
+	logger.Debug("Loading folder: %s", absPath)
 	_, err := os.ReadDir(absPath)
 	if err != nil {
-		err = os.MkdirAll(filepath.Dir(absPath), 0o755)
+		err = os.MkdirAll(absPath, 0o755)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("filestore: create dir for %s: %w", absPath, err)
@@ -147,7 +150,10 @@ func (fs *FileStore) CreateOrLoadFolder(category store.Category, name string) (s
 }
 
 func (fs *FileStore) LoadFolder(category store.Category, name string) (store.FolderStorable, error) {
+	name = strings.TrimPrefix(name, category.Key+"/")
+	logger.Debug("Loading folder: %s, %s", category, name)
 	absPath := fs.absPath(category, name)
+	logger.Debug("Loading folder: %s", absPath)
 	_, err := os.ReadDir(absPath)
 	if err != nil {
 		return nil, err
@@ -206,7 +212,9 @@ func (fs *FileStore) Load(cat store.Category, key string) (store.Storable, error
 
 // Delete removes s and its entire version history from the Store.
 func (fs *FileStore) Delete(s store.Storable) error {
+	logger.Debug("Deleting: %s", s.ExternalRef())
 	absPath := fs.absPath(s.Category(), s.Key())
+	logger.Debug("Deleting: %s", absPath)
 	if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("filestore: delete %s: %w", s.Key(), err)
 	}
@@ -515,6 +523,9 @@ func (fs *FileStore) savePlain(s *fileStorable) (store.Storable, error) {
 // ── Rename / Move helpers ─────────────────────────────────────────────────────
 
 func (fs *FileStore) renameKey(s store.Storable, newKey string) (store.Storable, error) {
+	if s.Key() == newKey {
+		return s, nil
+	}
 	if ms, ok := s.(store.MetaStorable); ok {
 		// New logic: Use centralized cascade helper to move assets and update body links
 		newOwns, newBody, err := fs.cascadeAssetUpdates(ms, s.Key(), newKey, s.Category(), s.Category())

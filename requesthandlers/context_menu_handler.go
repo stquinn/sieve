@@ -3,6 +3,7 @@ package requesthandlers
 import (
 	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"sieve/sieve"
 	"strings"
@@ -29,6 +30,7 @@ func (h *ContextMenuHandler) RegisterPaths(r chi.Router) {
 	r.Get("/api/sidebar/create-folder-prompt", h.handleCreateFolderPrompt)
 	r.Post("/api/sidebar/create-folder", h.handleCreateFolder)
 	r.Post("/api/sidebar/revert-prompt", h.handleRevertPrompt)
+	r.Post("/api/sidebar/move", h.handleMoveItem)
 }
 
 // ── Menu content ──────────────────────────────────────────────────────────────
@@ -38,6 +40,7 @@ type contextMenuData struct {
 	Name      string
 	Intent    string
 	IsDir     bool
+	IsTab     bool
 	IsPrompt  bool
 	IsVirtual bool
 }
@@ -49,6 +52,7 @@ func (h *ContextMenuHandler) handleMenu(w http.ResponseWriter, r *http.Request) 
 		Name:   q.Get("name"),
 		Intent: q.Get("intent"),
 		IsDir:  q.Get("isDir") == "true",
+		IsTab:  q.Get("isTab") == "true",
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -249,6 +253,7 @@ func (h *ContextMenuHandler) handleCreateFolder(w http.ResponseWriter, r *http.R
 
 func (h *ContextMenuHandler) handleRevertPrompt(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
+	log.Println("Reverting prompt:", id, r.URL.Query())
 	if strings.HasPrefix(id, "prompt:") {
 		name := strings.TrimPrefix(id, "prompt:")
 		_ = h.ServiceProvider.Prompts.DeletePrompt(name)
@@ -256,9 +261,29 @@ func (h *ContextMenuHandler) handleRevertPrompt(w http.ResponseWriter, r *http.R
 			h.EmitPromptsChanged()
 		}
 	}
+
+	w.Header().Set("HX-Trigger", `{"prompts:changed": true, "notes:changed": true}`)
+	w.WriteHeader(http.StatusNoContent)
 	if h.EmitNotesChanged != nil {
 		h.EmitNotesChanged()
 	}
-	w.Header().Set("HX-Trigger", `{"prompts:changed": true, "notes:changed": true}`)
-	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *ContextMenuHandler) handleMoveItem(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	targetFolder := r.URL.Query().Get("target")
+
+	doc, err := h.ServiceProvider.Documents.LoadByUUID(id)
+	if err == nil {
+		if _, err := h.ServiceProvider.Documents.Move(doc, targetFolder); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if h.EmitNotesChanged != nil {
+		h.EmitNotesChanged()
+	}
+	w.Header().Set("HX-Trigger", "notes:changed")
+	RenderSidebar(w, h.ServiceProvider.Documents, h.ServiceProvider.State, h.Tmpl)
 }

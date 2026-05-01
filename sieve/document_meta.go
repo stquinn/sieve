@@ -70,6 +70,9 @@ type DocumentMeta interface {
 	Scroll() int
 	SetScroll(v int)
 
+	Mode() string
+	SetMode(v string)
+
 	// All returns the full underlying meta map. Unknown keys round-trip
 	// untouched. Prefer typed accessors for known fields; use All for
 	// inspection or access to custom/unknown keys.
@@ -150,6 +153,9 @@ func (d *documentMeta) SetAiKeep(v *bool) { d.set("ai_keep", nullableBoolVal(v))
 
 func (d *documentMeta) Scroll() int      { return metaInt(d.m, "scroll") }
 func (d *documentMeta) SetScroll(v int)  { d.set("scroll", strconv.Itoa(v)) }
+
+func (d *documentMeta) Mode() string    { return d.m["mode"] }
+func (d *documentMeta) SetMode(v string) { d.set("mode", v) }
 
 // ── Low-level conversion helpers ─────────────────────────────────────────────
 //

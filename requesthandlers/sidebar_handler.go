@@ -29,9 +29,10 @@ type sidebarEntry struct {
 	IsOpen      bool
 	Children    []sidebarEntry
 	Depth       int
+	ParentID    string
 }
 
-func prepSidebarEntries(entries []sieve.NoteEntry, openFolders map[string]bool, depth int) []sidebarEntry {
+func prepSidebarEntries(entries []sieve.NoteEntry, openFolders map[string]bool, depth int, parentId string) []sidebarEntry {
 	out := make([]sidebarEntry, 0, len(entries))
 	for _, e := range entries {
 		se := sidebarEntry{
@@ -43,9 +44,10 @@ func prepSidebarEntries(entries []sieve.NoteEntry, openFolders map[string]bool, 
 			IsDir:       e.IsDir,
 			IsOpen:      e.IsDir && openFolders[e.ID],
 			Depth:       depth,
+			ParentID:    parentId,
 		}
 		if se.IsOpen && len(e.Children) > 0 {
-			se.Children = prepSidebarEntries(e.Children, openFolders, depth+1)
+			se.Children = prepSidebarEntries(e.Children, openFolders, depth+1, e.ID)
 		}
 		out = append(out, se)
 	}
@@ -74,7 +76,7 @@ func RenderSidebar(w http.ResponseWriter, notes *sieve.DocumentService, state *s
 		return
 	}
 
-	data := prepSidebarEntries(entries, openFolders, 0)
+	data := prepSidebarEntries(entries, openFolders, 0, "")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.ExecuteTemplate(w, "sidebar.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

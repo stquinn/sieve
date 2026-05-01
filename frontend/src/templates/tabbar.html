@@ -1,14 +1,18 @@
 {{define "tabbar.html"}}
 <div id="tabs-area" class="flex items-stretch shrink overflow-hidden min-w-0">
 {{range $i, $t := .Tabs}}
-<div class="flex items-stretch shrink min-w-[80px] w-[250px]">
+<div class="flex items-stretch shrink min-w-[80px] w-[250px]"
+     data-tab-id="{{$t.ID}}"
+     data-tab-idx="{{$i}}"
+     data-ctx-id="{{$t.ID}}"
+     data-ctx-name="{{if $t.DisplayName}}{{$t.DisplayName}}{{else}}Untitled{{end}}"
+     data-ctx-intent="{{$t.UserIntent}}"
+     data-ctx-is-dir="false"
+     data-ctx-is-tab="true"
+     draggable="true">
   <div
-    class="group flex items-center gap-1.5 px-3 h-full cursor-pointer w-full text-[14px] whitespace-nowrap select-none shrink transition-colors border-solid border-0 border-r-[1px] border-r-white/10 -mb-[2px] border-t-2 border-b-2{{if eq $i $.ActiveIdx}} bg-tn-bg text-tn-text border-t-tn-blue border-b-tn-bg{{else}} bg-tn-bg-dark text-tn-text-dim hover:bg-tn-bg hover:text-tn-text border-t-transparent border-b-transparent{{end}}"
-    data-tab-id="{{$t.ID}}"
-    data-tab-idx="{{$i}}"
-    draggable="true"
+    class="group flex items-center gap-1.5 pl-3 pr-1.5 h-full cursor-pointer w-full text-[14px] select-none shrink transition-colors border-solid border-0 border-r-[1px] border-r-white/10 -mb-[2px] border-t-2 border-b-2 overflow-hidden{{if eq $i $.ActiveIdx}} bg-tn-bg text-tn-text border-t-tn-blue border-b-tn-bg{{else}} bg-tn-bg-dark text-tn-text-dim hover:bg-tn-bg hover:text-tn-text border-t-transparent border-b-transparent{{end}}"
     onmousedown="if(event.button===0 && !event.target.closest('button')){window.sieveSelectTab && window.sieveSelectTab('{{$t.ID}}')}"
-    oncontextmenu="event.preventDefault();window.sieveTabContextMenu && window.sieveTabContextMenu('{{$t.ID}}','{{if $t.DisplayName}}{{$t.DisplayName}}{{else}}Untitled{{end}}','{{$t.UserIntent}}',event)"
   >
     <div class="flex items-center justify-center relative w-4 h-4 shrink-0">
       <div class="tab-icon-normal flex items-center justify-center">

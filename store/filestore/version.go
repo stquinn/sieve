@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"time"
 
-	"sieve/logger"
 	"sieve/store"
 )
 
@@ -54,7 +53,6 @@ func (fs *FileStore) writeSnapshot(cat store.Category, uuid string, version int,
 // Returns nil (not an error) if the history dir does not exist.
 func (fs *FileStore) loadVersions(uuid string, cat store.Category) []store.VersionRef {
 	if uuid == "" {
-		logger.Warn("uuid is NUL")
 		return []store.VersionRef{}
 	}
 	dir := fs.historyDir(cat)

@@ -80,6 +80,34 @@
         dialog {
             color: var(--theme-text);
         }
+        .tab-drop-indicator-left {
+            position: relative;
+        }
+        .tab-drop-indicator-left::before {
+            content: "";
+            position: absolute;
+            left: -1px;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            background: var(--theme-accentPrimary);
+            z-index: 50;
+            box-shadow: 0 0 8px var(--theme-accentPrimary);
+        }
+        .tab-drop-indicator-right {
+            position: relative;
+        }
+        .tab-drop-indicator-right::after {
+            content: "";
+            position: absolute;
+            right: -1px;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            background: var(--theme-accentPrimary);
+            z-index: 50;
+            box-shadow: 0 0 8px var(--theme-accentPrimary);
+        }
     </style>
     <style id="layout-overrides">
         #prompts-panel {
@@ -113,7 +141,7 @@
         <div class="sidebar-handle"></div>
 
         <div id="right-panel">
-            <div id="htmx-tabbar" class="flex items-stretch bg-tn-bg-dark border-0 border-t border-b border-solid border-tn-border-2 h-[44px] shrink-0" hx-get="/api/tabs" hx-trigger="load, sse:session:changed, sse:notes:changed, session:changed from:body, notes:changed from:body"></div>
+            <div id="htmx-tabbar" class="flex items-stretch bg-tn-bg-dark border-0 border-t border-b border-solid border-tn-border-2 h-[44px] shrink-0" hx-get="/api/tabs" hx-trigger="load, sse:session:changed, sse:notes:changed, session:changed from:body, notes:changed from:body" hx-on::after-settle="window.sieveTabBarInit && window.sieveTabBarInit()"></div>
 
             <dialog id="settings-dialog" style="background: transparent; border: none; padding: 0; outline: none;">
                 <div id="settings-dialog-content" style="background: var(--theme-bgDark); width: 600px; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.6);"></div>
@@ -351,6 +379,17 @@
         }
     };
 
+    window.sieveCloseMenu = function() {
+        var menu = document.getElementById('sieve-context-menu');
+        if (menu) menu.remove();
+    };
+
+    window.sieveShowInFiles = function(id) {
+        if (window.go && window.go.main && window.go.main.App && window.go.main.App.ShowInFilesByID) {
+            window.go.main.App.ShowInFilesByID(id);
+        }
+    };
+
     window.sieveOpenDelete = function(id, name, type) {
         var dlg = document.getElementById('delete-dialog');
         if (dlg && window.htmx) {
@@ -528,6 +567,7 @@
         if (target.id === 'htmx-tabbar') {
             window.sieveTabBarInit && window.sieveTabBarInit();
         } else if (target.id === 'htmx-sidebar' || (target.closest && target.closest('#htmx-sidebar'))) {
+            window.sieveSidebarInit && window.sieveSidebarInit();
             window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' });
             var mount = document.getElementById('tiptap-mount');
             var activeUuid = mount ? mount.getAttribute('data-uuid') : null;
