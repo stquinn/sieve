@@ -12,7 +12,7 @@
         body: JSON.stringify({
           content: ctx.content,
           history: ctx.history,
-          notePath: currentPath || '',
+          noteUUID: currentUuid || '',
           imageStorePaths: ctx.imagePaths || []
         })
       })
@@ -35,7 +35,7 @@
           content: ctx.content,
           history: ctx.history,
           question: question,
-          notePath: currentPath || '',
+          noteUUID: currentUuid || '',
           imageStorePaths: ctx.imagePaths || []
         })
       })
@@ -609,7 +609,7 @@
           fetch('/api/asset/save', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: currentPath, id: id, dataUrl: dataUrl }),
+            body: JSON.stringify({ uuid: currentUuid, id: id, dataUrl: dataUrl }),
           }).then(function (r) { return r.json() })
             .then(function (asset) {
               processAsset(asset, id)
@@ -628,7 +628,7 @@
           fetch('/api/asset/save', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: currentPath, id: id, dataUrl: imgSrc }),
+            body: JSON.stringify({ uuid: currentUuid, id: id, dataUrl: imgSrc }),
           }).then(function (r) { return r.json() })
             .then(function (asset) {
               processAsset(asset, id)
@@ -637,7 +637,7 @@
               currentEditor.commands.insertContent({ type: 'image', attrs: { src: imgSrc } })
             })
         } else if (window.go && window.go.main && window.go.main.App && window.go.main.App.DownloadAsset) {
-          window.go.main.App.DownloadAsset(currentPath, imgSrc, id).then(function(asset) {
+          window.go.main.App.DownloadAsset(currentUuid, imgSrc, id).then(function(asset) {
             processAsset(asset, id)
           }).catch(function(err) {
             console.error('[editor.js] DownloadAsset failed', err)
@@ -852,7 +852,7 @@
             fetch('/api/asset/save', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ path: currentPath, id: id, dataUrl: dataUrl }),
+              body: JSON.stringify({ uuid: currentUuid, id: id, dataUrl: dataUrl }),
             }).then(function (r) { return r.json() })
               .then(function (asset) {
                 var mdSrc = asset.externalRef

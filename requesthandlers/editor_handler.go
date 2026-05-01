@@ -62,21 +62,12 @@ func (h *EditorHandler) handleEditorLoad(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if b, err := h.ServiceProvider.Buffers.LoadByUUID(uuid); err == nil {
+	if b, err := h.ServiceProvider.Documents.LoadByUUID(uuid); err == nil {
 		mode := b.Meta().All()["mode"]
 		if mode == "" {
 			mode = "wysiwyg"
 		}
 		json.NewEncoder(w).Encode(loadResponse{Body: string(b.Body()), Mode: mode, Path: b.Path()})
-		return
-	}
-
-	if n, err := h.ServiceProvider.Notes.LoadByUUID(uuid); err == nil {
-		mode := n.Meta().All()["mode"]
-		if mode == "" {
-			mode = "wysiwyg"
-		}
-		json.NewEncoder(w).Encode(loadResponse{Body: string(n.Body()), Mode: mode, Path: n.Path()})
 		return
 	}
 	json.NewEncoder(w).Encode(loadResponse{Body: "", Mode: "wysiwyg", Path: ""})
@@ -111,19 +102,13 @@ func (h *EditorHandler) handleEditorSave(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if b, err := h.ServiceProvider.Buffers.LoadByUUID(uuid); err == nil {
+	if b, err := h.ServiceProvider.Documents.LoadByUUID(uuid); err == nil {
 		b.SetBody([]byte(req.Body))
-		if saved, err := h.ServiceProvider.Buffers.Save(b); err == nil {
+		if saved, err := h.ServiceProvider.Documents.Save(b); err == nil {
 			json.NewEncoder(w).Encode(map[string]int{"version": saved.Meta().Version()})
 			return
 		}
 	}
-	if n, err := h.ServiceProvider.Notes.LoadByUUID(uuid); err == nil {
-		n.SetBody([]byte(req.Body))
-		if saved, err := h.ServiceProvider.Notes.Save(n); err == nil {
-			json.NewEncoder(w).Encode(map[string]int{"version": saved.Meta().Version()})
-			return
-		}
-	}
+
 	http.Error(w, "save failed", http.StatusInternalServerError)
 }

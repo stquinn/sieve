@@ -52,7 +52,7 @@ func (fs *FileStore) scanCategory(cat store.Category, prefix string) ([]store.St
 			// can iterate all leaf nodes without recursion.
 			results = append(results, folder.Owns()...)
 		} else {
-			s := fs.buildStorable(cat, key, root)
+			s := fs.buildStorable(cat, key, root, true)
 			if s != nil {
 				results = append(results, s)
 			}
@@ -85,7 +85,7 @@ func (fs *FileStore) scanFolder(cat store.Category, dirKey string) (*fileFolderS
 			continue
 		}
 		childKey := dirKey + "/" + name
-		s := fs.buildStorable(cat, childKey, fs.categoryDir(cat))
+		s := fs.buildStorable(cat, childKey, fs.categoryDir(cat), true)
 		if s != nil {
 			owns = append(owns, s)
 		}
@@ -109,8 +109,12 @@ func (fs *FileStore) scanFolder(cat store.Category, dirKey string) (*fileFolderS
 //   - files in an assets/ dir  → fileAssetStorable (encoding inferred)
 //   - other files              → fileStorable (plain bytes, e.g. JSON)
 //
+// withVersions controls whether version history is loaded from .history.
+// Pass false for scan/list operations (avoids one filepath.Glob per document).
+// Pass true only when loading a single document directly via Load.
+//
 // Returns nil if the file cannot be read or is not relevant (e.g. a .tmp file).
-func (fs *FileStore) buildStorable(cat store.Category, key string, catDir string) store.Storable {
+func (fs *FileStore) buildStorable(cat store.Category, key string, catDir string, withVersions bool) store.Storable {
 	if strings.HasSuffix(key, ".tmp") {
 		return nil
 	}
@@ -122,7 +126,6 @@ func (fs *FileStore) buildStorable(cat store.Category, key string, catDir string
 	}
 
 	extRef := fs.externalRef(cat, key)
-
 	// Asset files: any file whose key contains an assets segment.
 	if isAssetKey(key) {
 		enc := inferEncoding(data)
@@ -156,7 +159,10 @@ func (fs *FileStore) buildStorable(cat store.Category, key string, catDir string
 			}
 		}
 		uuid := meta["uuid"]
-		versions := fs.loadVersions(uuid, cat)
+		var versions []store.VersionRef
+		if withVersions {
+			versions = fs.loadVersions(uuid, cat)
+		}
 
 		var owns []store.Storable
 		if assetsStr := meta["assets"]; assetsStr != "" && assetsStr != "[]" {
@@ -187,7 +193,7 @@ func (fs *FileStore) buildStorable(cat store.Category, key string, catDir string
 
 				assetKey = filepath.ToSlash(filepath.Clean(assetKey))
 				if isAssetKey(assetKey) {
-					child := fs.buildStorable(cat, assetKey, catDir)
+					child := fs.buildStorable(cat, assetKey, catDir, true)
 					if child != nil {
 						owns = append(owns, child)
 					}

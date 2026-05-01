@@ -65,7 +65,7 @@ func (h *SearchHandler) handleSearch(w http.ResponseWriter, r *http.Request) {
 	query := strings.ToLower(r.URL.Query().Get("q"))
 
 	session := h.ServiceProvider.State.LoadSession()
-	entries, err := h.ServiceProvider.Notes.List()
+	entries, err := h.ServiceProvider.Documents.List()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

@@ -54,7 +54,7 @@ func prepSidebarEntries(entries []sieve.NoteEntry, openFolders map[string]bool, 
 
 // RenderSidebar writes the sidebar HTML fragment to w. It is shared by the
 // sidebar handler and any action handler that needs to return a refreshed tree.
-func RenderSidebar(w http.ResponseWriter, notes *sieve.NoteService, state *sieve.StateService, tmpl *template.Template) {
+func RenderSidebar(w http.ResponseWriter, notes *sieve.DocumentService, state *sieve.StateService, tmpl *template.Template) {
 	w.Header().Set("Cache-Control", "no-store")
 	if notes == nil {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -82,7 +82,7 @@ func RenderSidebar(w http.ResponseWriter, notes *sieve.NoteService, state *sieve
 }
 
 func (s *SideBarHandler) handleSidebar(w http.ResponseWriter, r *http.Request) {
-	if s.ServiceProvider.Notes == nil {
+	if s.ServiceProvider.Documents == nil {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, `<div class="sidebar__empty">No store open</div>`)
@@ -95,7 +95,7 @@ func (s *SideBarHandler) handleSidebar(w http.ResponseWriter, r *http.Request) {
 		_ = s.ServiceProvider.State.SaveSession(session)
 	}
 
-	RenderSidebar(w, s.ServiceProvider.Notes, s.ServiceProvider.State, s.Tmpl)
+	RenderSidebar(w, s.ServiceProvider.Documents, s.ServiceProvider.State, s.Tmpl)
 }
 
 func toggleFolder(folders []string, id string) []string {

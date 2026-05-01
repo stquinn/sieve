@@ -98,7 +98,6 @@ func (fs *FileStore) CreateMetaText(cat store.Category, key string, body []byte)
 	return fs.createMeta(cat, key, absPath, body)
 }
 
-
 func (fs *FileStore) CreateAsset(cat store.Category, parentKey string, assetID string, body []byte) (store.AssetStorable, error) {
 	key := fs.generateAssetKey(parentKey, assetID)
 
@@ -120,7 +119,6 @@ func (fs *FileStore) generateAssetKey(parentKey, assetID string) string {
 	return fmt.Sprintf(".assets/%s-%s.png", noteName, assetID)
 }
 
-
 func (fs *FileStore) CreateText(cat store.Category, key string, body []byte) (store.Storable, error) {
 	if key == "" {
 		key = fs.generateKey(cat)
@@ -134,6 +132,29 @@ func (fs *FileStore) CreateText(cat store.Category, key string, body []byte) (st
 	return fs.createPlain(cat, key, absPath, body)
 }
 
+func (fs *FileStore) CreateOrLoadFolder(category store.Category, name string) (store.FolderStorable, error) {
+
+	absPath := fs.absPath(category, name)
+	_, err := os.ReadDir(absPath)
+	if err != nil {
+		err = os.MkdirAll(filepath.Dir(absPath), 0o755)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("filestore: create dir for %s: %w", absPath, err)
+	}
+	return fs.scanFolder(category, name)
+
+}
+
+func (fs *FileStore) LoadFolder(category store.Category, name string) (store.FolderStorable, error) {
+	absPath := fs.absPath(category, name)
+	_, err := os.ReadDir(absPath)
+	if err != nil {
+		return nil, err
+	}
+	return fs.scanFolder(category, name)
+
+}
 
 // Save persists the current state of s. It:
 //  1. Reads the current file to check the optimistic lock.
@@ -169,7 +190,7 @@ func (fs *FileStore) Load(cat store.Category, key string) (store.Storable, error
 		return nil, fmt.Errorf("filestore: load %s: %w", key, err)
 	}
 
-	s := fs.buildStorable(cat, key, fs.categoryDir(cat))
+	s := fs.buildStorable(cat, key, fs.categoryDir(cat), true)
 	if s == nil {
 		// Fallback: return a plain storable with raw bytes.
 		extRef := fs.externalRef(cat, key)
@@ -202,6 +223,20 @@ func (fs *FileStore) Delete(s store.Storable) error {
 // Pass an empty prefix to list the entire category.
 func (fs *FileStore) List(cat store.Category, prefix string) ([]store.Storable, error) {
 	return fs.scanCategory(cat, prefix)
+}
+
+func (fs *FileStore) ListFrom(categories []store.Category, prefix string) ([]store.Storable, error) {
+	var items []store.Storable
+
+	for _, cat := range categories {
+		newItems, err := fs.scanCategory(cat, prefix)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, newItems...)
+	}
+
+	return items, nil
 }
 
 // Move transfers s to a different category. The source file is removed and a
@@ -410,10 +445,10 @@ func (fs *FileStore) saveMeta(s *fileMetaStorable) (store.Storable, error) {
 
 	// Stamp version and modified timestamp.
 	meta := cloneMeta(s.meta)
-	
+
 	// Derive meta["assets"] shorthand from the Owns array for next load.
 	syncOwnsToMeta(s.key, s.owns, meta)
-	
+
 	nextVer := metaVersionInt(meta) + 1
 	meta["version"] = strconv.Itoa(nextVer)
 	meta["modified"] = time.Now().Format("2006-01-02T15:04:05")
@@ -681,8 +716,8 @@ func cloneMeta(m map[string]string) map[string]string {
 	return out
 }
 
-// syncOwnsToMeta derives the meta["assets"] shorthand from the Owns array 
-// for the next load phase, modifying the given metadata map in-place. 
+// syncOwnsToMeta derives the meta["assets"] shorthand from the Owns array
+// for the next load phase, modifying the given metadata map in-place.
 func syncOwnsToMeta(key string, owns []store.Storable, meta map[string]string) {
 	if len(owns) > 0 {
 		var parts []string

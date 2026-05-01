@@ -16,6 +16,7 @@ import (
 type Buffer struct {
 	s    store.MetaStorable
 	slug string // key-derived short identifier, e.g. "buf-20240102-1504"
+	kind DocumentKind
 }
 
 // newBuffer constructs a Buffer and derives the slug once from the Store key.
@@ -23,6 +24,7 @@ func newBuffer(s store.MetaStorable) *Buffer {
 	buffer := &Buffer{
 		s:    s,
 		slug: strings.TrimSuffix(filepath.Base(s.Key()), filepath.Ext(s.Key())),
+		kind: KindBuffer,
 	}
 	buffer.s.Meta()["status"] = "unfiled"
 	return buffer
@@ -67,6 +69,8 @@ func (b *Buffer) Versions() []store.VersionRef { return b.s.Versions() }
 
 // Storable returns the underlying MetaStorable for direct Store operations.
 func (b *Buffer) Storable() store.MetaStorable { return b.s }
+
+func (n *Buffer) Kind() DocumentKind { return n.kind }
 
 // ── Shared string helpers used by BufferService and NoteService ───────────────
 

@@ -14,6 +14,7 @@ import (
 type Note struct {
 	s    store.MetaStorable
 	slug string // key-derived short identifier, e.g. "my-note"
+	kind DocumentKind
 }
 
 // newNote constructs a Note and derives the slug once from the Store key.
@@ -21,6 +22,7 @@ func newNote(s store.MetaStorable) *Note {
 	note := &Note{
 		s:    s,
 		slug: strings.TrimSuffix(filepath.Base(s.Key()), filepath.Ext(s.Key())),
+		kind: KindNote,
 	}
 	// Only set as "filed" if we haven't already marked it as an error file.
 	if note.s.Meta()["status"] != "error" {
@@ -67,3 +69,5 @@ func (n *Note) Versions() []store.VersionRef { return n.s.Versions() }
 
 // Storable returns the underlying MetaStorable for direct Store operations.
 func (n *Note) Storable() store.MetaStorable { return n.s }
+
+func (n *Note) Kind() DocumentKind { return n.kind }

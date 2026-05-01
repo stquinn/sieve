@@ -38,17 +38,11 @@ func (h *NoteHandler) handleNoteOpen(w http.ResponseWriter, r *http.Request) {
 	var displayName string
 	var status string
 	var userIntent string
-	if note, err := h.ServiceProvider.Notes.LoadByUUID(id); err == nil {
+	if note, err := h.ServiceProvider.Documents.LoadByUUID(id); err == nil {
 		displayName = note.Meta().DisplayName()
 		status = note.Meta().Status()
 		if note.Meta().UserIntent() != nil {
 			userIntent = *note.Meta().UserIntent()
-		}
-	} else if buf, err := h.ServiceProvider.Buffers.LoadByUUID(id); err == nil {
-		displayName = buf.Meta().DisplayName()
-		status = buf.Meta().Status()
-		if buf.Meta().UserIntent() != nil {
-			userIntent = *buf.Meta().UserIntent()
 		}
 	} else if strings.HasPrefix(id, "prompt:") {
 		promptName := strings.TrimPrefix(id, "prompt:")
@@ -79,16 +73,11 @@ func (h *NoteHandler) handleNoteOpen(w http.ResponseWriter, r *http.Request) {
 		tabMode := "wysiwyg"
 		if strings.HasPrefix(id, "prompt:") {
 			tabMode = "markdown"
-		} else if note, err := h.ServiceProvider.Notes.LoadByUUID(id); err == nil {
+		} else if note, err := h.ServiceProvider.Documents.LoadByUUID(id); err == nil {
 			if m := note.Meta().All()["mode"]; m != "" {
 				tabMode = m
 			}
-		} else if buf, err := h.ServiceProvider.Buffers.LoadByUUID(id); err == nil {
-			if m := buf.Meta().All()["mode"]; m != "" {
-				tabMode = m
-			}
 		}
-
 		session.Tabs = append(session.Tabs, sieve.Tab{
 			ID:          id,
 			Mode:        tabMode,
@@ -120,7 +109,7 @@ func (h *NoteHandler) handleNoteOpen(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *NoteHandler) handleNoteNew(w http.ResponseWriter, r *http.Request) {
-	newNote, err := h.ServiceProvider.Buffers.New()
+	newNote, err := h.ServiceProvider.Documents.New()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -153,7 +142,7 @@ func (h *NoteHandler) handleNoteNew(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *NoteHandler) handleTabsCloseAll(w http.ResponseWriter, r *http.Request) {
-	newNote, err := h.ServiceProvider.Buffers.New()
+	newNote, err := h.ServiceProvider.Documents.New()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -207,24 +196,16 @@ func (h *NoteHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 	// Smart Close background evaluation
 	settings := h.ServiceProvider.State.LoadSettings()
 	if settings.Tier() == sieve.TierSmart {
-		var path string
 		isBuffer := false
-		if buf, err := h.ServiceProvider.Buffers.LoadByUUID(id); err == nil && buf != nil {
-			path = buf.Path()
-			isBuffer = true
-		} else if nt, err := h.ServiceProvider.Notes.LoadByUUID(id); err == nil && nt != nil {
-			path = nt.Path()
-		}
-
-		if path != "" {
-			go func(targetPath string, isBuf bool) {
-				_, _ = h.ServiceProvider.AI.EvaluateAndFileDoc(targetPath, true, isBuf)
-			}(path, isBuffer)
+		if buf, err := h.ServiceProvider.Documents.LoadByUUID(id); err == nil && buf != nil {
+			go func(id string, isBuf bool) {
+				_, _ = h.ServiceProvider.AI.EvaluateAndFileDoc(id, true, isBuf)
+			}(id, isBuffer)
 		}
 	}
 
 	if len(session.Tabs) == 0 {
-		newNote, _ := h.ServiceProvider.Buffers.New()
+		newNote, _ := h.ServiceProvider.Documents.New()
 		session.Tabs = []sieve.Tab{{
 			ID:          newNote.UUID(),
 			Mode:        "wysiwyg",
@@ -303,12 +284,12 @@ func (h *NoteHandler) handleTabsReorder(w http.ResponseWriter, r *http.Request) 
 
 func (h *NoteHandler) handleNoteDelete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	note, err := h.ServiceProvider.Notes.LoadByUUID(id)
+	note, err := h.ServiceProvider.Documents.LoadByUUID(id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := h.ServiceProvider.Notes.Delete(note); err != nil {
+	if err := h.ServiceProvider.Documents.Delete(note); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -330,7 +311,7 @@ func (h *NoteHandler) handleNoteDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(session.Tabs) == 0 {
-		newNote, _ := h.ServiceProvider.Buffers.New()
+		newNote, _ := h.ServiceProvider.Documents.New()
 		session.Tabs = []sieve.Tab{{
 			ID:          newNote.UUID(),
 			Mode:        "wysiwyg",
@@ -369,12 +350,9 @@ func (h *NoteHandler) handleNoteFocus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if note, err := h.ServiceProvider.Notes.LoadByUUID(id); err == nil {
+	if note, err := h.ServiceProvider.Documents.LoadByUUID(id); err == nil {
 		note.Meta().SetFocusCount(note.Meta().FocusCount() + 1)
-		_, _ = h.ServiceProvider.Notes.Save(note)
-	} else if buf, err := h.ServiceProvider.Buffers.LoadByUUID(id); err == nil {
-		buf.Meta().SetFocusCount(buf.Meta().FocusCount() + 1)
-		_, _ = h.ServiceProvider.Buffers.Save(buf)
+		_, _ = h.ServiceProvider.Documents.Save(note)
 	} else {
 		http.Error(w, "document not found", http.StatusNotFound)
 		return

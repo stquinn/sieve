@@ -11,12 +11,9 @@ import (
 )
 
 type ContextMenuHandler struct {
-	ServiceProvider  *sieve.ServiceProvider
-	Tmpl             *template.Template
-	DeleteFolder     func(id string) error
-	RenameFolder     func(id, name string) error
-	CreateFolder     func(parentFolderID, name string) error
-	EmitNotesChanged func()
+	ServiceProvider    *sieve.ServiceProvider
+	Tmpl               *template.Template
+	EmitNotesChanged   func()
 	EmitPromptsChanged func()
 }
 
@@ -82,19 +79,9 @@ func (h *ContextMenuHandler) handleIntent(w http.ResponseWriter, r *http.Request
 	id := r.URL.Query().Get("id")
 	value := r.URL.Query().Get("value")
 
-	n, err := h.ServiceProvider.Notes.LoadByUUID(id)
+	doc, err := h.ServiceProvider.Documents.LoadByUUID(id)
 	if err == nil {
-		if _, err := h.ServiceProvider.Notes.SetIntent(n, value); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	} else {
-		b, err := h.ServiceProvider.Buffers.LoadByUUID(id)
-		if err != nil {
-			http.Error(w, "not found in notes or buffers", http.StatusNotFound)
-			return
-		}
-		if _, err := h.ServiceProvider.Buffers.SetIntent(b, value); err != nil {
+		if _, err := h.ServiceProvider.Documents.SetIntent(doc, value); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -102,18 +89,11 @@ func (h *ContextMenuHandler) handleIntent(w http.ResponseWriter, r *http.Request
 	session := h.ServiceProvider.State.LoadSession()
 	for i := range session.Tabs {
 		if session.Tabs[i].ID == id {
-			if n, err := h.ServiceProvider.Notes.LoadByUUID(id); err == nil {
-				session.Tabs[i].Status = n.Meta().Status()
-				session.Tabs[i].DisplayName = n.Meta().DisplayName()
-				if n.Meta().UserIntent() != nil {
-					session.Tabs[i].UserIntent = *n.Meta().UserIntent()
-				}
-			} else if b, err := h.ServiceProvider.Buffers.LoadByUUID(id); err == nil {
-				session.Tabs[i].Status = b.Meta().Status()
-				session.Tabs[i].DisplayName = b.Meta().DisplayName()
-				if b.Meta().UserIntent() != nil {
-					session.Tabs[i].UserIntent = *b.Meta().UserIntent()
-				}
+
+			session.Tabs[i].Status = doc.Meta().Status()
+			session.Tabs[i].DisplayName = doc.Meta().DisplayName()
+			if doc.Meta().UserIntent() != nil {
+				session.Tabs[i].UserIntent = *doc.Meta().UserIntent()
 			}
 			break
 		}
@@ -124,46 +104,33 @@ func (h *ContextMenuHandler) handleIntent(w http.ResponseWriter, r *http.Request
 		h.EmitNotesChanged()
 	}
 	w.Header().Set("HX-Trigger", fmt.Sprintf(`{"intent:changed": {"uuid": "%s"}}`, id))
-	RenderSidebar(w, h.ServiceProvider.Notes, h.ServiceProvider.State, h.Tmpl)
+	RenderSidebar(w, h.ServiceProvider.Documents, h.ServiceProvider.State, h.Tmpl)
 }
 
 func (h *ContextMenuHandler) handleDeleteNote(w http.ResponseWriter, r *http.Request) {
 
 	id := r.URL.Query().Get("id")
-	note, err := h.ServiceProvider.Notes.LoadByUUID(id)
+	doc, err := h.ServiceProvider.Documents.LoadByUUID(id)
 	if err == nil {
-		if err := h.ServiceProvider.Notes.Delete(note); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	} else {
-		buf, err := h.ServiceProvider.Buffers.LoadByUUID(id)
-		if err != nil {
-			http.Error(w, "not found in notes or buffers", http.StatusNotFound)
-			return
-		}
-		if err := h.ServiceProvider.Buffers.Discard(buf); err != nil {
+		if err := h.ServiceProvider.Documents.Delete(doc); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
-	if h.EmitNotesChanged != nil {
-		h.EmitNotesChanged()
-	}
-	RenderSidebar(w, h.ServiceProvider.Notes, h.ServiceProvider.State, h.Tmpl)
+	RenderSidebar(w, h.ServiceProvider.Documents, h.ServiceProvider.State, h.Tmpl)
 }
 
 func (h *ContextMenuHandler) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
 
 	id := r.URL.Query().Get("id")
-	if err := h.DeleteFolder(id); err != nil {
+	if err := h.ServiceProvider.Documents.DeleteFolder(id); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if h.EmitNotesChanged != nil {
 		h.EmitNotesChanged()
 	}
-	RenderSidebar(w, h.ServiceProvider.Notes, h.ServiceProvider.State, h.Tmpl)
+	RenderSidebar(w, h.ServiceProvider.Documents, h.ServiceProvider.State, h.Tmpl)
 }
 
 func (h *ContextMenuHandler) handleRenamePrompt(w http.ResponseWriter, r *http.Request) {
@@ -213,19 +180,9 @@ func (h *ContextMenuHandler) handleRenameNote(w http.ResponseWriter, r *http.Req
 	if name == "" {
 		name = r.URL.Query().Get("name")
 	}
-	note, err := h.ServiceProvider.Notes.LoadByUUID(id)
+	note, err := h.ServiceProvider.Documents.LoadByUUID(id)
 	if err == nil {
-		if _, err := h.ServiceProvider.Notes.Rename(note, name); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	} else {
-		buf, err := h.ServiceProvider.Buffers.LoadByUUID(id)
-		if err != nil {
-			http.Error(w, "not found in notes or buffers", http.StatusNotFound)
-			return
-		}
-		if _, err := h.ServiceProvider.Buffers.Rename(buf, name); err != nil {
+		if _, err := h.ServiceProvider.Documents.Rename(note, name); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -233,7 +190,7 @@ func (h *ContextMenuHandler) handleRenameNote(w http.ResponseWriter, r *http.Req
 	if h.EmitNotesChanged != nil {
 		h.EmitNotesChanged()
 	}
-	RenderSidebar(w, h.ServiceProvider.Notes, h.ServiceProvider.State, h.Tmpl)
+	RenderSidebar(w, h.ServiceProvider.Documents, h.ServiceProvider.State, h.Tmpl)
 }
 
 func (h *ContextMenuHandler) handleRenameFolder(w http.ResponseWriter, r *http.Request) {
@@ -243,14 +200,14 @@ func (h *ContextMenuHandler) handleRenameFolder(w http.ResponseWriter, r *http.R
 	if name == "" {
 		name = r.URL.Query().Get("name")
 	}
-	if err := h.RenameFolder(id, name); err != nil {
+	if err := h.ServiceProvider.Documents.RenameFolder(id, name); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if h.EmitNotesChanged != nil {
 		h.EmitNotesChanged()
 	}
-	RenderSidebar(w, h.ServiceProvider.Notes, h.ServiceProvider.State, h.Tmpl)
+	RenderSidebar(w, h.ServiceProvider.Documents, h.ServiceProvider.State, h.Tmpl)
 }
 
 func (h *ContextMenuHandler) handleCreateFolderPrompt(w http.ResponseWriter, r *http.Request) {
@@ -267,20 +224,19 @@ func (h *ContextMenuHandler) handleCreateFolderPrompt(w http.ResponseWriter, r *
 }
 
 func (h *ContextMenuHandler) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
-	parentId := r.URL.Query().Get("parentId")
 	name := r.FormValue("name")
 	if name == "" {
 		name = r.URL.Query().Get("name")
 	}
 
-	if err := h.CreateFolder(parentId, name); err != nil {
+	if err := h.ServiceProvider.Documents.NewFolder(name); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if h.EmitNotesChanged != nil {
 		h.EmitNotesChanged()
 	}
-	RenderSidebar(w, h.ServiceProvider.Notes, h.ServiceProvider.State, h.Tmpl)
+	RenderSidebar(w, h.ServiceProvider.Documents, h.ServiceProvider.State, h.Tmpl)
 }
 
 func (h *ContextMenuHandler) handleRevertPrompt(w http.ResponseWriter, r *http.Request) {

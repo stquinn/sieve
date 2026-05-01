@@ -6,20 +6,20 @@
     <div class="flex gap-[1.2rem] h-full">
       <button
         class="flex items-center bg-transparent border-0 cursor-pointer text-[13px] font-semibold uppercase tracking-[0.05em] transition-colors h-full border-b-2 border-solid -mb-px px-0{{if eq .Tab "meta"}} text-tn-text border-tn-blue{{else}} text-tn-muted border-transparent hover:text-tn-text-dim{{end}}"
-        hx-get="/api/meta?path={{.Path | urlenc}}&tab=meta"
+        hx-get="/api/meta?uuid={{.UUID | urlenc}}&tab=meta"
         hx-target="#htmx-meta-panel"
         hx-swap="innerHTML">Meta</button>
       {{if not .IsPrompt}}
       <button
         class="flex items-center bg-transparent border-0 cursor-pointer text-[13px] font-semibold uppercase tracking-[0.05em] transition-colors h-full border-b-2 border-solid -mb-px px-0{{if eq .Tab "history"}} text-tn-text border-tn-blue{{else}} text-tn-muted border-transparent hover:text-tn-text-dim{{end}}"
-        hx-get="/api/meta?path={{.Path | urlenc}}&tab=history"
+        hx-get="/api/meta?uuid={{.UUID | urlenc}}&tab=history"
         hx-target="#htmx-meta-panel"
         hx-swap="innerHTML">History</button>
       {{end}}
       {{if .Meta}}
       <button
         class="flex items-center bg-transparent border-0 cursor-pointer text-[13px] font-semibold uppercase tracking-[0.05em] transition-colors h-full border-b-2 border-solid -mb-px px-0{{if eq .Tab "assets"}} text-tn-text border-tn-blue{{else}} text-tn-muted border-transparent hover:text-tn-text-dim{{end}}"
-        hx-get="/api/meta?path={{.Path | urlenc}}&tab=assets"
+        hx-get="/api/meta?uuid={{.UUID | urlenc}}&tab=assets"
         hx-target="#htmx-meta-panel"
         hx-swap="innerHTML">Assets</button>
       {{end}}
@@ -167,7 +167,7 @@
     </div>
     <button
       class="bg-tn-bg-alt border border-solid border-tn-border-2 text-tn-text text-[13px] px-[0.6rem] py-[0.25rem] rounded-[4px] cursor-pointer hover:bg-tn-blue hover:border-tn-blue hover:text-white transition-colors"
-      hx-post="/api/meta/restore?path={{.PathEnc}}&version={{.VersionEnc}}"
+      hx-post="/api/meta/restore?uuid={{.UUIDEnc}}&version={{.VersionEnc}}"
       hx-confirm="Restore this version? Any unsaved changes will be lost."
       hx-swap="none"
     >Restore</button>

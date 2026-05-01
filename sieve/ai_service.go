@@ -16,31 +16,25 @@ import (
 type AIService struct {
 	state     *StateService
 	prompts   *PromptService
-	buffers   *BufferService
-	notes     *NoteService
+	documents *DocumentService
 	storePath string
 }
 
-func NewAIService(state *StateService, prompts *PromptService, buffers *BufferService, notes *NoteService, storePath string) *AIService {
-	return &AIService{state: state, prompts: prompts, buffers: buffers, notes: notes, storePath: storePath}
+func NewAIService(state *StateService, prompts *PromptService, documents *DocumentService, storePath string) *AIService {
+	return &AIService{state: state, prompts: prompts, documents: documents, storePath: storePath}
 }
 
 // EvaluateAndFileDoc runs the full evaluate-and-file pipeline for the document
 // at path. fileAfter promotes a buffer to the Library (or refiles a note).
 // allowDiscard permits deletion of empty bodies and trash-intent documents.
-func (s *AIService) EvaluateAndFileDoc(path string, fileAfter, allowDiscard bool) (FilingOutcome, error) {
-	b, n, isNote, err := filingLoadDoc(path, s.buffers, s.notes)
+func (s *AIService) EvaluateAndFileDoc(id string, fileAfter bool, allowDiscard bool) (FilingOutcome, error) {
+	doc, err := s.documents.LoadByUUID(id)
 	if err != nil {
 		return FilingOutcome{}, err
 	}
 
-	var meta DocumentMeta
-	var body []byte
-	if isNote {
-		meta, body = n.Meta(), n.Body()
-	} else {
-		meta, body = b.Meta(), b.Body()
-	}
+	meta := doc.Meta()
+	body := doc.Body()
 
 	userIntent := ""
 	if ui := meta.UserIntent(); ui != nil {
@@ -48,14 +42,13 @@ func (s *AIService) EvaluateAndFileDoc(path string, fileAfter, allowDiscard bool
 	}
 
 	if fileAfter && isHTMLBodyEmpty(string(body)) && userIntent != "keep" {
-		return FilingOutcome{Discarded: true}, filingDiscardDoc(isNote, b, n, s.buffers, s.notes)
+		return FilingOutcome{Discarded: true}, s.documents.Delete(doc)
 	}
 
 	if userIntent == "trash" {
 		if allowDiscard {
-			return FilingOutcome{Discarded: true}, filingDiscardDoc(isNote, b, n, s.buffers, s.notes)
+			return FilingOutcome{Discarded: true}, s.documents.Delete(doc)
 		}
-		return filingCommitDoc(isNote, b, n, s.buffers, s.notes, false, false)
 	}
 
 	settings := s.state.LoadSettings()
@@ -63,13 +56,13 @@ func (s *AIService) EvaluateAndFileDoc(path string, fileAfter, allowDiscard bool
 	if settings.Tier() != TierDumb {
 		rec, err := s.runEvaluateBuffer(meta, body, settings)
 		if err != nil {
-			return FilingOutcome{}, fmt.Errorf("filing: eval %s: %w", path, err)
+			return FilingOutcome{}, fmt.Errorf("filing: eval %s: %w", doc.Path(), err)
 		}
 		s.applyFilingRec(meta, rec, settings.CLI)
 		evaluated = true
 	}
 
-	return filingCommitDoc(isNote, b, n, s.buffers, s.notes, evaluated, fileAfter)
+	return filingCommitDocument(doc, s.documents, evaluated, fileAfter)
 }
 
 // EvaluateBuffer runs the AI evaluation over a loaded document and returns the
@@ -84,15 +77,15 @@ func (s *AIService) EvaluateBuffer(meta DocumentMeta, body []byte) (*FilingRecom
 }
 
 // RunExplain asks the AI to explain the given content and returns a markdown
-// response. notePath is store-relative (or absolute); imageStorePaths are
-// store-relative paths to attached image assets.
-func (s *AIService) RunExplain(content, history, notePath string, imageStorePaths []string) (string, error) {
+// response. noteUUID identifies the owning document (used to resolve the working
+// directory for the CLI process). imageStorePaths are store-relative image paths.
+func (s *AIService) RunExplain(content, history, noteUUID string, imageStorePaths []string) (string, error) {
 	settings := s.state.LoadSettings()
 	if settings.Tier() == TierDumb {
 		return "", fmt.Errorf("explain not available in dumb mode")
 	}
 	prompt, _ := s.prompts.GetPromptContent("explain")
-	noteCwd := filepath.Dir(s.resolvePath(notePath))
+	noteCwd := filepath.Dir(s.resolvePath(s.resolveNotePath(noteUUID)))
 	imagePaths := s.absImagePaths(imageStorePaths)
 
 	contentType := detectContentType(content)
@@ -108,15 +101,15 @@ func (s *AIService) RunExplain(content, history, notePath string, imageStorePath
 }
 
 // RunAsk asks the AI a question with the given content as context. history may
-// be empty for first-turn asks. notePath and imageStorePaths follow the same
+// be empty for first-turn asks. noteUUID and imageStorePaths follow the same
 // conventions as RunExplain.
-func (s *AIService) RunAsk(content, history, question, notePath string, imageStorePaths []string) (string, error) {
+func (s *AIService) RunAsk(content, history, question, noteUUID string, imageStorePaths []string) (string, error) {
 	settings := s.state.LoadSettings()
 	if settings.Tier() == TierDumb {
 		return "", fmt.Errorf("ask not available in dumb mode")
 	}
 	prompt, _ := s.prompts.GetPromptContent("ask")
-	noteCwd := filepath.Dir(s.resolvePath(notePath))
+	noteCwd := filepath.Dir(s.resolvePath(s.resolveNotePath(noteUUID)))
 	imagePaths := s.absImagePaths(imageStorePaths)
 
 	contentType := detectContentType(content)
@@ -288,7 +281,7 @@ func (s *AIService) applyFilingRec(meta DocumentMeta, rec *FilingRecommendation,
 }
 
 func (s *AIService) libraryFolders() []string {
-	entries, _ := s.notes.List()
+	entries, _ := s.documents.List()
 	var folders []string
 	for _, e := range entries {
 		if e.IsDir {
@@ -308,10 +301,67 @@ func (s *AIService) resolvePath(path string) string {
 	return path
 }
 
+// resolveNotePath looks up a document by UUID and returns its store-relative
+// path, used to derive the CLI working directory. Returns empty string if the
+// UUID is empty or the document cannot be found.
+func (s *AIService) resolveNotePath(uuid string) string {
+	if uuid == "" || s.documents == nil {
+		return ""
+	}
+	doc, err := s.documents.LoadByUUID(uuid)
+	if err != nil {
+		return ""
+	}
+	return doc.Path()
+}
+
 func (s *AIService) absImagePaths(storePaths []string) []string {
 	abs := make([]string, len(storePaths))
 	for i, p := range storePaths {
 		abs[i] = filepath.Join(s.storePath, p)
 	}
 	return abs
+}
+
+// FilingOutcome is the result of AIService.EvaluateAndFileDoc.
+// Exactly one of Note or Buffer is non-nil when Discarded is false.
+type FilingOutcome struct {
+	Discarded bool
+	Document  Document
+}
+
+func filingCommitDocument(n Document, documents *DocumentService, save bool, fileAfter bool) (FilingOutcome, error) {
+	if save {
+		saved, err := documents.Save(n)
+		if err != nil {
+			return FilingOutcome{}, fmt.Errorf("filing: save note: %w", err)
+		}
+		n = saved
+	}
+	if fileAfter {
+		refiled, err := documents.File(n)
+		if err != nil {
+			return FilingOutcome{}, fmt.Errorf("filing: refile: %w", err)
+		}
+		return FilingOutcome{Document: refiled}, nil
+	}
+	return FilingOutcome{Document: n}, nil
+}
+
+// isHTMLBodyEmpty returns true if html contains no visible text content —
+// only tags, whitespace, and self-closing elements. Used to detect blank
+// buffers before discarding them without involving the AI.
+func isHTMLBodyEmpty(html string) bool {
+	inTag := false
+	for _, r := range html {
+		switch {
+		case r == '<':
+			inTag = true
+		case r == '>':
+			inTag = false
+		case !inTag && r != ' ' && r != '\t' && r != '\n' && r != '\r':
+			return false
+		}
+	}
+	return true
 }

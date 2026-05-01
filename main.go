@@ -193,7 +193,7 @@ func (m *muxHandler) serveThemeCSS(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 
-	settings := m.app.LoadSettings()
+	settings := m.app.ServiceProvider.State.LoadSettings()
 	vars := sieve.LoadTheme(settings.Theme, m.app.loadThemeOverride(settings.Theme), m.app.GetThemesFS())
 
 	w.WriteHeader(http.StatusOK)

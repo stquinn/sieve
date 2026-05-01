@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,8 +30,7 @@ type App struct {
 	hostname  string // resolved at startup from os.Hostname
 
 	ServiceProvider *sieve.ServiceProvider
-	Buffers         *sieve.BufferService
-	Notes           *sieve.NoteService
+	Documents       *sieve.DocumentService
 	Assets          *sieve.AssetService
 	State           *sieve.StateService
 	Prompts         *sieve.PromptService
@@ -81,24 +79,6 @@ func (a *App) GetThemesFS() fs.FS { return a.themesFS }
 
 // GetStorePath returns the active store root path.
 func (a *App) GetStorePath() string { return a.storePath }
-
-// LoadSettings returns the current settings via the StateService, or defaults
-// if the store is not yet open.
-func (a *App) LoadSettings() sieve.Settings {
-	if a.State != nil {
-		return a.State.LoadSettings()
-	}
-	return sieve.DefaultSettings()
-}
-
-// SaveSettings persists user configuration to the store.
-func (a *App) SaveSettings(settings sieve.Settings) error {
-	if a.State == nil {
-		return fmt.Errorf("store not open")
-	}
-	logger.Info("SaveSettings", "cli", settings.CLI, "model", settings.Model, "theme", settings.Theme)
-	return a.State.SaveSettings(settings)
-}
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
@@ -196,8 +176,7 @@ func (a *App) startup(ctx context.Context) {
 		return
 	}
 	a.ServiceProvider.Init(fs, a.storePath)
-	a.Notes = a.ServiceProvider.Notes
-	a.Buffers = a.ServiceProvider.Buffers
+	a.Documents = a.ServiceProvider.Documents
 	a.Assets = a.ServiceProvider.Assets
 	a.State = a.ServiceProvider.State
 	a.Prompts = a.ServiceProvider.Prompts
@@ -320,7 +299,7 @@ func (a *App) GetStoreInfo() StoreInfo {
 		Hostname:           a.hostname,
 		BuffersPath:        filepath.Join(a.storePath, a.hostname, "buffers"),
 		NotesPath:          a.notesDir(),
-		IsNew:              a.Notes.Count() == 0,
+		IsNew:              a.Documents.Count() == 0,
 		Tier:               liveSettings.Tier(),
 		Cli:                liveSettings.CLI,
 		Debug:              liveSettings.Debug,
@@ -331,39 +310,6 @@ func (a *App) GetStoreInfo() StoreInfo {
 		CLITimeoutLong:     liveSettings.CLITimeoutLong,
 		ShowPrompts:        a.State.LoadSession().ShowPrompts,
 	}
-}
-
-// ── Sidebar ───────────────────────────────────────────────────────────────────
-
-func (a *App) SaveSidebarWidth(width int) error {
-	if a.State == nil {
-		return fmt.Errorf("store not open")
-	}
-	session := a.State.LoadSession()
-	session.SidebarWidth = width
-	if err := a.State.SaveSession(session); err != nil {
-		logger.Error("SaveSidebarWidth failed", "err", err)
-		return err
-	}
-	return nil
-}
-
-func (a *App) SaveMetaWidth(width int) error {
-	if a.State == nil {
-		return fmt.Errorf("store not open")
-	}
-	session := a.State.LoadSession()
-	session.MetaWidth = width
-	return a.State.SaveSession(session)
-}
-
-func (a *App) SavePromptsHeight(height int) error {
-	if a.State == nil {
-		return fmt.Errorf("store not open")
-	}
-	session := a.State.LoadSession()
-	session.PromptsHeight = height
-	return a.State.SaveSession(session)
 }
 
 // ── Bootstrapping ─────────────────────────────────────────────────────────────
@@ -480,568 +426,12 @@ func (a *App) InitVault(path string) error {
 	return nil
 }
 
-// ── Prompts ───────────────────────────────────────────────────────────────────
-
-func (a *App) GetPrompts() []sieve.PromptEntry {
-	if a.Prompts == nil {
-		return []sieve.PromptEntry{}
-	}
-	return a.Prompts.ListPrompts()
-}
-
-func (a *App) LoadPrompt(name string) (string, error) {
-	if a.Prompts == nil {
-		return "", fmt.Errorf("store not open")
-	}
-	return a.Prompts.GetPromptContent(name)
-}
-
-func (a *App) SavePrompt(name string, content string) (string, error) {
-	if a.Prompts == nil {
-		return "", fmt.Errorf("store not open")
-	}
-	err := a.Prompts.SavePrompt(name, content)
-	if err != nil {
-		logger.Error("SavePrompt failed", "name", name, "err", err)
-		return "", err
-	}
-	logger.Info("prompt saved to isolation", "name", name, "host", a.hostname)
-	runtime.EventsEmit(a.ctx, "prompts:changed")
-	return name + ".md", nil
-}
-
-func (a *App) DeletePrompt(name string) error {
-	if a.Prompts == nil {
-		return fmt.Errorf("store not open")
-	}
-	if err := a.Prompts.DeletePrompt(name); err != nil {
-		logger.Warn("DeletePrompt: failed", "name", name, "err", err)
-		return err
-	}
-	runtime.EventsEmit(a.ctx, "prompts:changed")
-	return nil
-}
-
-func (a *App) TogglePrompts() (bool, error) {
-	if a.State == nil {
-		return false, fmt.Errorf("store not open")
-	}
-	session := a.State.LoadSession()
-	session.ShowPrompts = !session.ShowPrompts
-	if err := a.State.SaveSession(session); err != nil {
-		return false, err
-	}
-	return session.ShowPrompts, nil
-}
-
-// ── Notes ─────────────────────────────────────────────────────────────────────
-
-func (a *App) GetNotes() []sieve.NoteEntry {
-	if a.Notes == nil {
-		logger.Warn("GetNotes: store not open")
-		return []sieve.NoteEntry{}
-	}
-	entries, err := a.Notes.List()
-	if err != nil {
-		logger.Error("GetNotes failed", "err", err)
-		return []sieve.NoteEntry{}
-	}
-	logger.Debug("GetNotes", "entries", len(entries))
-	return entries
-}
-
-func (a *App) SearchStore(query string) []sieve.SearchResult {
-	if a.Notes == nil {
-		logger.Warn("SearchStore: store not open")
-		return []sieve.SearchResult{}
-	}
-	results, err := a.Notes.Search(query)
-	if err != nil {
-		logger.Error("SearchStore failed", "err", err)
-		return []sieve.SearchResult{}
-	}
-	logger.Debug("SearchStore", "query", query, "results", len(results))
-	return results
-}
-
-// ── Session ───────────────────────────────────────────────────────────────────
-
-func (a *App) GetSession() sieve.Session {
-	if a.State == nil {
-		logger.Warn("GetSession: store not open")
-		return sieve.Session{
-			Tabs: []sieve.Tab{},
-		}
-	}
-
-	session := a.State.LoadSession()
-	logger.Debug("session loaded", "tabs", len(session.Tabs))
-
-	// Prune tabs whose documents no longer exist and refresh metadata.
-	live := session.Tabs[:0]
-	for _, t := range session.Tabs {
-		if t.ID == "" {
-			continue
-		}
-		if strings.HasPrefix(t.ID, "prompt:") {
-			live = append(live, t) // prompts are always resolvable
-			continue
-		}
-		if note, err := a.Notes.LoadByUUID(t.ID); err == nil {
-			t.DisplayName = note.Meta().DisplayName()
-			t.Status = note.Meta().Status()
-			if note.Meta().UserIntent() != nil {
-				t.UserIntent = *note.Meta().UserIntent()
-			}
-			live = append(live, t)
-		} else if buf, err := a.Buffers.LoadByUUID(t.ID); err == nil {
-			t.DisplayName = buf.Meta().DisplayName()
-			t.Status = buf.Meta().Status()
-			if buf.Meta().UserIntent() != nil {
-				t.UserIntent = *buf.Meta().UserIntent()
-			}
-			live = append(live, t)
-		} else {
-			logger.Warn("session: skipping missing document", "id", t.ID)
-		}
-	}
-	session.Tabs = live
-
-	if len(session.Tabs) > 0 {
-		hasActive := false
-		for _, t := range session.Tabs {
-			if t.Active {
-				hasActive = true
-				break
-			}
-		}
-		if !hasActive {
-			session.Tabs[0].Active = true
-		}
-	}
-
-	return session
-}
-
-func (a *App) SaveSession(session sieve.Session) error {
-	if a.State == nil {
-		return fmt.Errorf("store not open")
-	}
-	existing := a.State.LoadSession()
-	if session.SidebarWidth == 0 {
-		session.SidebarWidth = existing.SidebarWidth
-	}
-	if session.MetaWidth == 0 {
-		session.MetaWidth = existing.MetaWidth
-	}
-	if session.Window == (sieve.Window{}) {
-		session.Window = existing.Window
-	}
-	if len(session.OpenFolders) == 0 {
-		session.OpenFolders = existing.OpenFolders
-	}
-	if err := a.State.SaveSession(session); err != nil {
-		logger.Error("SaveSession failed", "err", err)
-		return err
-	}
-	logger.Debug("session saved", "tabs", len(session.Tabs))
-	return nil
-}
-
-// ── Buffers ───────────────────────────────────────────────────────────────────
-
-func (a *App) NewBuffer() (BufferDTO, error) {
-	if a.Buffers == nil {
-		return BufferDTO{}, fmt.Errorf("store not open")
-	}
-	b, err := a.Buffers.New()
-	if err != nil {
-		logger.Error("NewBuffer failed", "err", err)
-		return BufferDTO{}, err
-	}
-	logger.Info("buffer created", "path", b.Path(), "uuid", b.UUID())
-	return toBufferDTO(b), nil
-}
-
-// LoadBuffer loads any document by its store-relative path and returns a typed DTO.
-// Tries BufferService first; falls back to NoteService so routing is not
-// coupled to the path prefix convention of any particular Store implementation.
-// The returned Body is pure markdown — frontmatter is never included.
-func (a *App) LoadBuffer(path string) (interface{}, error) {
-	if a.Buffers == nil {
-		return nil, fmt.Errorf("store not open")
-	}
-	if b, err := a.Buffers.Load(path); err == nil {
-		logger.Debug("buffer loaded", "path", path)
-		return toBufferDTO(b), nil
-	}
-	n, err := a.Notes.Load(path)
-	if err != nil {
-		logger.Error("LoadBuffer: not found in buffers or notes", "path", path, "err", err)
-		return nil, err
-	}
-	logger.Debug("note loaded via LoadBuffer", "path", path)
-	return toNoteDTO(n), nil
-}
-
-// SaveBuffer persists the body and writable meta fields from dto. The Store
-// bumps the version and modified timestamp automatically. Returns the updated
-// DTO with Store-stamped fields reflecting the saved state.
-// Routes by dto.Meta.Status: "filed" → NoteService, anything else → BufferService.
-func (a *App) SaveBuffer(dto BufferDTO) (interface{}, error) {
-	if a.Buffers == nil {
-		return nil, fmt.Errorf("store not open")
-	}
-	if dto.Meta.Status == "filed" {
-		n, err := a.Notes.Load(dto.Path)
-		if err != nil {
-			logger.Error("SaveBuffer(note): load failed", "path", dto.Path, "err", err)
-			return nil, err
-		}
-		n.SetBody([]byte(dto.Body))
-		applyDTOToMeta(dto.Meta, n.Meta())
-		saved, err := a.Notes.Save(n)
-		if err != nil {
-			logger.Error("SaveBuffer(note): save failed", "path", dto.Path, "err", err)
-			return nil, err
-		}
-		logger.Debug("note saved via SaveBuffer", "path", dto.Path)
-		return toNoteDTO(saved), nil
-	}
-	b, err := a.Buffers.Load(dto.Path)
-	if err != nil {
-		logger.Error("SaveBuffer: load failed", "path", dto.Path, "err", err)
-		return nil, err
-	}
-	b.SetBody([]byte(dto.Body))
-	applyDTOToMeta(dto.Meta, b.Meta())
-	saved, err := a.Buffers.Save(b)
-	if err != nil {
-		logger.Error("SaveBuffer: save failed", "path", dto.Path, "err", err)
-		return nil, err
-	}
-	logger.Debug("buffer saved", "path", dto.Path)
-	return toBufferDTO(saved), nil
-}
-
-// RefileNote applies the filing recommendation already persisted in dto's
-// metadata to a Library note: saves the updated meta, then renames/moves the
-// note within the Library based on the filename and folder fields.
-// Used when the user runs "Smart File" on a note that is already filed.
-func (a *App) RefileNote(dto BufferDTO) (NoteDTO, error) {
-	if a.Notes == nil {
-		return NoteDTO{}, fmt.Errorf("store not open")
-	}
-	n, err := a.Notes.Load(dto.Path)
-	if err != nil {
-		return NoteDTO{}, fmt.Errorf("refile: load %s: %w", dto.Path, err)
-	}
-	n.SetBody([]byte(dto.Body))
-	applyDTOToMeta(dto.Meta, n.Meta())
-	// Save updated metadata first so Refile derives the correct name.
-	saved, err := a.Notes.Save(n)
-	if err != nil {
-		return NoteDTO{}, fmt.Errorf("refile: save %s: %w", dto.Path, err)
-	}
-	refiled, err := a.Notes.Refile(saved)
-	if err != nil {
-		return NoteDTO{}, fmt.Errorf("refile: rename %s: %w", dto.Path, err)
-	}
-	logger.Info("note refiled", "from", dto.Path, "to", refiled.Path())
-	return toNoteDTO(refiled), nil
-}
-
-// DiscardBuffer deletes a buffer and its version history.
-func (a *App) DiscardBuffer(path string) error {
-	if a.Buffers == nil {
-		return fmt.Errorf("store not open")
-	}
-	b, err := a.Buffers.Load(path)
-	if err != nil {
-		logger.Error("DiscardBuffer: load failed", "path", path, "err", err)
-		return err
-	}
-	if err := a.Buffers.Discard(b); err != nil {
-		logger.Error("DiscardBuffer failed", "path", path, "err", err)
-		return err
-	}
-	logger.Info("buffer discarded", "path", path)
-	return nil
-}
-
-// FileBuffer promotes a buffer to the Library using the AI-derived name and
-// folder. Returns the resulting NoteDTO.
-func (a *App) FileBuffer(path string) (NoteDTO, error) {
-	if a.Buffers == nil {
-		return NoteDTO{}, fmt.Errorf("store not open")
-	}
-	b, err := a.Buffers.Load(path)
-	if err != nil {
-		logger.Error("FileBuffer: load failed", "path", path, "err", err)
-		return NoteDTO{}, err
-	}
-	n, err := a.Buffers.File(b)
-	if err != nil {
-		logger.Error("FileBuffer failed", "path", path, "err", err)
-		return NoteDTO{}, err
-	}
-	logger.Info("buffer filed", "from", path, "to", n.Path())
-	return toNoteDTO(n), nil
-}
-
-// FileBufferWithName is like FileBuffer but overrides the filename.
-func (a *App) FileBufferWithName(path, name string) (NoteDTO, error) {
-	if a.Buffers == nil {
-		return NoteDTO{}, fmt.Errorf("store not open")
-	}
-	b, err := a.Buffers.Load(path)
-	if err != nil {
-		logger.Error("FileBufferWithName: load failed", "path", path, "err", err)
-		return NoteDTO{}, err
-	}
-	n, err := a.Buffers.FileWithName(b, name)
-	if err != nil {
-		logger.Error("FileBufferWithName failed", "path", path, "err", err)
-		return NoteDTO{}, err
-	}
-	logger.Info("buffer filed with name", "from", path, "to", n.Path(), "name", name)
-	return toNoteDTO(n), nil
-}
-
-// GetDocumentVersion retrieves a historical snapshot identified by ref.
-// path is the store-relative path of the document (Buffer or Note).
-func (a *App) GetDocumentVersion(path string, ref VersionRefDTO) (VersionedStorableDTO, error) {
-	if a.Buffers == nil {
-		return VersionedStorableDTO{}, fmt.Errorf("store not open")
-	}
-	vref := fromVersionRefDTO(ref)
-
-	// Try as Buffer first, then as Note.
-	if b, err := a.Buffers.Load(path); err == nil {
-		v, err := a.Buffers.RetrieveVersion(b, vref)
-		if err != nil {
-			return VersionedStorableDTO{}, fmt.Errorf("retrieve version: %w", err)
-		}
-		return toVersionedStorableDTO(v), nil
-	}
-	if n, err := a.Notes.Load(path); err == nil {
-		v, err := a.Notes.RetrieveVersion(n, vref)
-		if err != nil {
-			return VersionedStorableDTO{}, fmt.Errorf("retrieve version: %w", err)
-		}
-		return toVersionedStorableDTO(v), nil
-	}
-	return VersionedStorableDTO{}, fmt.Errorf("document not found: %s", path)
-}
-
-// ── Notes ─────────────────────────────────────────────────────────────────────
-
-// DeleteNote deletes a filed note by its UUID.
-func (a *App) DeleteNote(uuid string) error {
-	if a.Notes == nil {
-		return fmt.Errorf("store not open")
-	}
-	n, err := a.Notes.LoadByUUID(uuid)
-	if err != nil {
-		logger.Error("DeleteNote: load failed", "uuid", uuid, "err", err)
-		return err
-	}
-	if err := a.Notes.Delete(n); err != nil {
-		logger.Error("DeleteNote failed", "uuid", uuid, "err", err)
-		return err
-	}
-	logger.Info("note deleted", "uuid", uuid, "path", n.Path())
-	return nil
-}
-
-// MoveNote moves a note to a different folder within the Library.
-// uuid identifies the note. folderID is the opaque folder identifier returned
-// by GetNotes — e.g. "store/ai-stuff" or "store" for the Library root.
-func (a *App) MoveNote(uuid, folderID string) (NoteDTO, error) {
-	if a.Notes == nil {
-		return NoteDTO{}, fmt.Errorf("store not open")
-	}
-	n, err := a.Notes.LoadByUUID(uuid)
-	if err != nil {
-		logger.Error("MoveNote: load failed", "uuid", uuid, "err", err)
-		return NoteDTO{}, err
-	}
-	// Strip the category prefix to get the bare folder path expected by NoteService.Move.
-	// "store/ai-stuff" → "ai-stuff"; "store" → "" (root).
-	folder := strings.TrimPrefix(folderID, sieve.Library.Key+"/")
-	if folder == sieve.Library.Key {
-		folder = ""
-	}
-	moved, err := a.Notes.Move(n, folder)
-	if err != nil {
-		logger.Error("MoveNa.stateote failed", "uuid", uuid, "folderID", folderID, "err", err)
-		return NoteDTO{}, err
-	}
-	logger.Info("note moved", "uuid", uuid, "to", moved.Path())
-	return toNoteDTO(moved), nil
-}
-
-// RenameNote renames a filed note by its UUID. newName is the desired base name
-// (without extension); it will be kebab-cased by the service.
-func (a *App) RenameNote(uuid, newName string) (NoteDTO, error) {
-	if a.Notes == nil {
-		return NoteDTO{}, fmt.Errorf("store not open")
-	}
-	n, err := a.Notes.LoadByUUID(uuid)
-	if err != nil {
-		logger.Error("RenameNote: load failed", "uuid", uuid, "err", err)
-		return NoteDTO{}, err
-	}
-	renamed, err := a.Notes.Rename(n, newName)
-	if err != nil {
-		logger.Error("RenameNote failed", "uuid", uuid, "name", newName, "err", err)
-		return NoteDTO{}, err
-	}
-	logger.Info("note renamed", "uuid", uuid, "to", renamed.Path())
-	return toNoteDTO(renamed), nil
-}
-
-// LoadByUUID loads a note or buffer by its UUID. Prompts are not handled here —
-// the frontend calls LoadPrompt directly for "prompt:" IDs.
-func (a *App) LoadByUUID(id string) (interface{}, error) {
-	if a.Notes != nil {
-		if n, err := a.Notes.LoadByUUID(id); err == nil {
-			return toNoteDTO(n), nil
-		}
-	}
-	if a.Buffers != nil {
-		if b, err := a.Buffers.LoadByUUID(id); err == nil {
-			return toBufferDTO(b), nil
-		}
-	}
-	return nil, fmt.Errorf("no document with id %q", id)
-}
-
-// ── Folders ───────────────────────────────────────────────────────────────────
-//
-// Folder ops use direct file operations — the Store interface does not yet have
-// explicit CreateFolder support (folders are created implicitly by file ops).
-
-// CreateFolder creates a new folder. parentFolderID is the opaque folder ID
-// from GetNotes (e.g. "store/projects") or "" / "store" for the Library root.
-// name is the desired folder name.
-func (a *App) CreateFolder(parentFolderID, name string) error {
-	if a.storePath == "" {
-		return fmt.Errorf("store not open")
-	}
-	var folderPath string
-	if parentFolderID == "" || parentFolderID == sieve.Library.Key {
-		folderPath = sieve.Library.Key + "/" + name
-	} else {
-		folderPath = parentFolderID + "/" + name
-	}
-	resolved := a.resolvePath(folderPath)
-	if err := os.MkdirAll(resolved, 0o755); err != nil {
-		logger.Error("CreateFolder failed", "folderPath", folderPath, "err", err)
-		return err
-	}
-	logger.Info("folder created", "path", folderPath)
-	return nil
-}
-
-func (a *App) DeleteFolder(path string) error {
-	if a.storePath == "" {
-		return fmt.Errorf("store not open")
-	}
-	resolved := a.resolvePath(path)
-	info, err := os.Stat(resolved)
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("not a directory")
-	}
-	entries, err := os.ReadDir(resolved)
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		if !strings.HasPrefix(e.Name(), ".") {
-			return fmt.Errorf("directory not empty")
-		}
-	}
-	if err := os.RemoveAll(resolved); err != nil {
-		logger.Error("DeleteFolder failed", "path", path, "err", err)
-		return err
-	}
-	logger.Info("folder deleted", "path", path)
-	return nil
-}
-
-// RenameFolder renames a folder. folderID is the opaque folder ID from GetNotes
-// (e.g. "store/ai-stuff"). newName is the desired new folder name (not a full path).
-// Returns the new folder ID so the frontend can update its open-folder state.
-func (a *App) RenameFolder(folderID, newName string) (string, error) {
-	if a.storePath == "" {
-		return "", fmt.Errorf("store not open")
-	}
-	parent := filepath.ToSlash(filepath.Dir(folderID))
-	newPath := parent + "/" + newName
-	oldResolved := a.resolvePath(folderID)
-	newResolved := a.resolvePath(newPath)
-	if err := os.Rename(oldResolved, newResolved); err != nil {
-		logger.Error("RenameFolder failed", "from", folderID, "to", newPath, "err", err)
-		return "", err
-	}
-	logger.Info("folder renamed", "from", folderID, "to", newPath)
-	return newPath, nil
-}
-
 // ── Assets ────────────────────────────────────────────────────────────────────
 
-// SaveAsset stores a base64-encoded image and returns an AssetDTO whose
-// ExternalRef can be inserted directly into markdown.
-// context is the store-relative path of the owning document (or "" for a buffer paste).
-func (a *App) SaveAsset(context, id, dataBase64 string) (AssetDTO, error) {
-	if a.Assets == nil {
-		return AssetDTO{}, fmt.Errorf("store not open")
-	}
-	if idx := strings.Index(dataBase64, ","); idx >= 0 {
-		dataBase64 = dataBase64[idx+1:]
-	}
-	data, err := base64.StdEncoding.DecodeString(dataBase64)
-	if err != nil {
-		logger.Error("SaveAsset: decode failed", "err", err)
-		return AssetDTO{}, fmt.Errorf("SaveAsset: decode: %w", err)
-	}
-	isBuffer := context == "" || context == "new" || strings.Contains(context, "/buffers/")
-	cat := sieve.WorkingCopy
-	if !isBuffer {
-		cat = sieve.Library
-	}
-
-	asset, err := a.Assets.Save(cat, context, id, data)
-	if err != nil {
-		logger.Error("SaveAsset failed", "id", id, "err", err)
-		return AssetDTO{}, err
-	}
-
-	if context != "" && context != "new" {
-		if b, err := a.Buffers.Load(context); err == nil {
-			b.Storable().AttachAsset(asset.Storable())
-			if _, err := a.Buffers.Save(b); err != nil {
-				logger.Warn("SaveAsset: failed to attach to buffer", "err", err)
-			}
-		} else if n, err := a.Notes.Load(context); err == nil {
-			n.Storable().AttachAsset(asset.Storable())
-			if _, err := a.Notes.Save(n); err != nil {
-				logger.Warn("SaveAsset: failed to attach to note", "err", err)
-			}
-		}
-	}
-
-	logger.Info("asset saved", "externalRef", asset.ExternalRef())
-	return toAssetDTO(asset), nil
-}
-
 // DownloadAsset fetches an image from a URL and stores it as an asset.
-// context is the store-relative path of the owning document (or "" for buffer paste).
-func (a *App) DownloadAsset(context, targetURL, id string) (AssetDTO, error) {
+// uuid identifies the owning document (or "" when no document is active).
+// Called directly from editor.js via the Wails bridge.
+func (a *App) DownloadAsset(uuid, targetURL, id string) (AssetDTO, error) {
 	if a.Assets == nil {
 		return AssetDTO{}, fmt.Errorf("store not open")
 	}
@@ -1050,29 +440,28 @@ func (a *App) DownloadAsset(context, targetURL, id string) (AssetDTO, error) {
 		logger.Error("DownloadAsset: fetch failed", "url", targetURL, "err", err)
 		return AssetDTO{}, err
 	}
-	isBuffer := context == "" || context == "new" || strings.Contains(context, "/buffers/")
+
 	cat := sieve.WorkingCopy
-	if !isBuffer {
-		cat = sieve.Library
+	var doc sieve.Document
+	if uuid != "" && a.Documents != nil {
+		if d, err := a.Documents.LoadByUUID(uuid); err == nil {
+			doc = d
+			if doc.Kind() == sieve.KindNote {
+				cat = sieve.Library
+			}
+		}
 	}
 
-	asset, err := a.Assets.Save(cat, context, id, data)
+	asset, err := a.Assets.Save(cat, uuid, id, data)
 	if err != nil {
 		logger.Error("DownloadAsset: save failed", "id", id, "err", err)
 		return AssetDTO{}, err
 	}
 
-	if context != "" && context != "new" {
-		if b, err := a.Buffers.Load(context); err == nil {
-			b.Storable().AttachAsset(asset.Storable())
-			if _, err := a.Buffers.Save(b); err != nil {
-				logger.Warn("DownloadAsset: failed to attach to buffer", "err", err)
-			}
-		} else if n, err := a.Notes.Load(context); err == nil {
-			n.Storable().AttachAsset(asset.Storable())
-			if _, err := a.Notes.Save(n); err != nil {
-				logger.Warn("DownloadAsset: failed to attach to note", "err", err)
-			}
+	if doc != nil {
+		doc.Storable().AttachAsset(asset.Storable())
+		if _, err := a.Documents.Save(doc); err != nil {
+			logger.Warn("DownloadAsset: failed to attach asset", "err", err)
 		}
 	}
 	logger.Info("asset downloaded", "url", targetURL, "externalRef", asset.ExternalRef())
@@ -1081,48 +470,16 @@ func (a *App) DownloadAsset(context, targetURL, id string) (AssetDTO, error) {
 
 // ── AI / CLI operations ───────────────────────────────────────────────────────
 
-func (a *App) EvaluateBuffer(path string) (*sieve.FilingRecommendation, error) {
+func (a *App) DescribeImage(storeRelPath string) (sieve.ImageDesc, error) {
 	if a.AI == nil {
-		return nil, fmt.Errorf("store not open")
+		return sieve.ImageDesc{}, fmt.Errorf("store not open")
 	}
-	var meta sieve.DocumentMeta
-	var body []byte
-	if b, err := a.Buffers.Load(path); err == nil {
-		meta, body = b.Meta(), b.Body()
-	} else if n, err := a.Notes.Load(path); err == nil {
-		meta, body = n.Meta(), n.Body()
-	} else {
-		return nil, fmt.Errorf("document not found: %s", path)
-	}
-	rec, err := a.AI.EvaluateBuffer(meta, body)
+	desc, err := a.AI.DescribeImage(storeRelPath)
 	if err != nil {
-		logger.Warn("EvaluateBuffer failed", "path", path, "err", err)
-		return nil, err
+		logger.Warn("DescribeImage failed", "err", err)
+		return sieve.ImageDesc{}, err
 	}
-	logger.Info("EvaluateBuffer success", "path", path)
-	return rec, nil
-}
-
-// EvaluateAndFile loads the document at path, runs AI evaluation, applies the
-// recommendation to its metadata, and optionally promotes it to the Library.
-// The frontend must have already persisted the document body before calling this.
-// Returns EvaluateAndFileResult{Discarded: true} when the document was removed.
-func (a *App) EvaluateAndFile(path string, fileAfter bool, allowDiscard bool) (EvaluateAndFileResult, error) {
-	if a.AI == nil {
-		return EvaluateAndFileResult{}, fmt.Errorf("store not open")
-	}
-	outcome, err := a.AI.EvaluateAndFileDoc(path, fileAfter, allowDiscard)
-	if err != nil {
-		return EvaluateAndFileResult{}, err
-	}
-	if outcome.Discarded {
-		return EvaluateAndFileResult{Discarded: true}, nil
-	}
-	if outcome.Note != nil {
-		logger.Info("EvaluateAndFile: note outcome", "path", outcome.Note.Path())
-		return EvaluateAndFileResult{Doc: toNoteBufferDTO(outcome.Note)}, nil
-	}
-	return EvaluateAndFileResult{Doc: toBufferDTO(outcome.Buffer)}, nil
+	return desc, nil
 }
 
 func (a *App) RefineLanguage(content string) (string, error) {
@@ -1137,53 +494,6 @@ func (a *App) RefineLanguage(content string) (string, error) {
 	return lang, nil
 }
 
-func (a *App) DescribeImage(storeRelPath string) (sieve.ImageDesc, error) {
-	if a.AI == nil {
-		return sieve.ImageDesc{}, fmt.Errorf("store not open")
-	}
-	desc, err := a.AI.DescribeImage(storeRelPath)
-	if err != nil {
-		logger.Warn("DescribeImage failed", "err", err)
-		return sieve.ImageDesc{}, err
-	}
-	return desc, nil
-}
-
-func (a *App) Explain(content string, history string, notePath string, imageStorePaths []string) (string, error) {
-	if a.AI == nil {
-		return "", fmt.Errorf("store not open")
-	}
-	resp, err := a.AI.RunExplain(content, history, notePath, imageStorePaths)
-	if err != nil {
-		logger.Warn("Explain failed", "err", err)
-		return "", err
-	}
-	return resp, nil
-}
-
-func (a *App) Ask(content string, history string, question string, notePath string, imageStorePaths []string) (string, error) {
-	if a.AI == nil {
-		return "", fmt.Errorf("store not open")
-	}
-	resp, err := a.AI.RunAsk(content, history, question, notePath, imageStorePaths)
-	if err != nil {
-		logger.Warn("Ask failed", "err", err)
-		return "", err
-	}
-	return resp, nil
-}
-
-
-// loadThemeOverride reads the store-local theme override file for name, if any.
-// Returns nil when no override exists or the store is not open.
-func (a *App) loadThemeOverride(name string) []byte {
-	if a.storePath == "" || name == "" {
-		return nil
-	}
-	data, _ := os.ReadFile(filepath.Join(a.storePath, "themes", name+".json"))
-	return data
-}
-
 // ── File manager ──────────────────────────────────────────────────────────────
 
 // ShowInFilesByID reveals a document or folder in the OS file manager.
@@ -1192,14 +502,9 @@ func (a *App) ShowInFilesByID(id string) error {
 	if strings.HasPrefix(id, "prompt:") {
 		return a.ShowInFiles(a.promptsDir())
 	}
-	if a.Notes != nil {
-		if n, err := a.Notes.LoadByUUID(id); err == nil {
-			return a.ShowInFiles(n.Path())
-		}
-	}
-	if a.Buffers != nil {
-		if b, err := a.Buffers.LoadByUUID(id); err == nil {
-			return a.ShowInFiles(b.Path())
+	if a.Documents != nil {
+		if doc, err := a.Documents.LoadByUUID(id); err == nil {
+			return a.ShowInFiles(doc.Path())
 		}
 	}
 	// Folder: id is an ExternalRef (e.g. "store/my-folder") — resolvePath handles it.
@@ -1243,6 +548,16 @@ func (a *App) resolvePath(path string) string {
 	return path
 }
 
+// loadThemeOverride reads the store-local theme override file for name, if any.
+// Returns nil when no override exists or the store is not open.
+func (a *App) loadThemeOverride(name string) []byte {
+	if a.storePath == "" || name == "" {
+		return nil
+	}
+	data, _ := os.ReadFile(filepath.Join(a.storePath, "themes", name+".json"))
+	return data
+}
+
 // migrateStateFiles moves settings.json and session.json from hostDir to
 // configDir. For settings.json it uses a smart merge: if the old file has a
 // "cli" field and the new file does not, the old file wins (it carries real
@@ -1250,20 +565,18 @@ func (a *App) resolvePath(path string) string {
 // first startup before migration ran). session.json is only moved if absent
 // in the new location.
 func migrateStateFiles(hostDir, configDir string) {
-	// settings.json — smart merge: old wins if it has a cli field the new lacks
 	migrateSettings(
 		filepath.Join(hostDir, "settings.json"),
 		filepath.Join(configDir, "settings.json"),
 	)
 
-	// session.json — simple: only move if the new location is absent
 	oldSession := filepath.Join(hostDir, "session.json")
 	nwSession := filepath.Join(configDir, "session.json")
 	if _, err := os.Stat(oldSession); err != nil {
-		return // old file doesn't exist
+		return
 	}
 	if _, err := os.Stat(nwSession); err == nil {
-		return // new file already exists
+		return
 	}
 	if err := os.Rename(oldSession, nwSession); err != nil {
 		logger.Warn("state migration failed", "file", "session.json", "err", err)
@@ -1278,14 +591,11 @@ func migrateStateFiles(hostDir, configDir string) {
 func migrateSettings(oldPath, newPath string) {
 	oldData, err := os.ReadFile(oldPath)
 	if err != nil {
-		return // old file doesn't exist — nothing to do
+		return
 	}
 
-	// Check whether the old settings has a cli field.
 	var oldSettings sieve.Settings
 	if err := json.Unmarshal(oldData, &oldSettings); err != nil || oldSettings.CLI == "" {
-		// Old file has no cli — not worth migrating settings over new defaults.
-		// Still move the file if the new location is absent.
 		if _, err := os.Stat(newPath); os.IsNotExist(err) {
 			if err := os.Rename(oldPath, newPath); err != nil {
 				logger.Warn("migrateSettings: rename failed", "err", err)
@@ -1296,21 +606,18 @@ func migrateSettings(oldPath, newPath string) {
 		return
 	}
 
-	// Old file has a cli field. Check if the new file already has one.
 	if newData, err := os.ReadFile(newPath); err == nil {
 		var newSettings sieve.Settings
 		if json.Unmarshal(newData, &newSettings) == nil && newSettings.CLI != "" {
-			// New file already has cli configured — leave it alone.
 			return
 		}
 	}
 
-	// New file is absent or has no cli — copy old over new.
 	if err := os.WriteFile(newPath, oldData, 0o644); err != nil {
 		logger.Warn("migrateSettings: write failed", "err", err)
 		return
 	}
-	os.Remove(oldPath) // clean up old location
+	os.Remove(oldPath)
 	logger.Info("migrated settings.json (cli merge)", "from", oldPath, "to", newPath)
 }
 

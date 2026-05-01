@@ -2,7 +2,6 @@ package main
 
 import (
 	"embed"
-	"encoding/json"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -115,16 +114,6 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 		&requesthandlers.ContextMenuHandler{
 			ServiceProvider: sp,
 			Tmpl:            tmpl,
-			DeleteFolder: func(id string) error {
-				return app.DeleteFolder(id)
-			},
-			RenameFolder: func(id, name string) error {
-				_, err := app.RenameFolder(id, name)
-				return err
-			},
-			CreateFolder: func(parentFolderID, name string) error {
-				return app.CreateFolder(parentFolderID, name)
-			},
 			EmitNotesChanged: func() {
 				hub.broadcast("notes:changed", "{}")
 			},
@@ -137,12 +126,7 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 		&requesthandlers.SettingsHandler{ServiceProvider: sp, Tmpl: tmpl},
 		&requesthandlers.HelpHandler{Tmpl: tmpl},
 		&requesthandlers.SearchHandler{ServiceProvider: sp, Tmpl: tmpl},
-		&requesthandlers.AssetHandler{
-			ServiceProvider: sp,
-			SaveAsset: func(context, id, dataUrl string) (interface{}, error) {
-				return app.SaveAsset(context, id, dataUrl)
-			},
-		},
+		&requesthandlers.AssetHandler{ServiceProvider: sp},
 		&requesthandlers.PromptsHandler{ServiceProvider: sp, Tmpl: tmpl},
 		&requesthandlers.SessionHandler{
 			ServiceProvider: sp,
@@ -183,7 +167,7 @@ func (h *apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	info := h.app.GetStoreInfo()
-	session := h.app.GetSession()
+	session := h.app.ServiceProvider.State.LoadSession()
 
 	activeUUID := ""
 	if session.ActiveIdx >= 0 && session.ActiveIdx < len(session.Tabs) {
@@ -235,7 +219,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 func (h *apiHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	session := h.app.GetSession()
+	session := h.app.ServiceProvider.State.LoadSession()
 
 	newTabs := []sieve.Tab{}
 	for _, t := range session.Tabs {
@@ -252,12 +236,12 @@ func (h *apiHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(session.Tabs) == 0 {
-		dto, _ := h.app.NewBuffer()
-		session.Tabs = []sieve.Tab{{ID: dto.UUID, Mode: "wysiwyg"}}
+		dto, _ := h.app.ServiceProvider.Documents.New()
+		session.Tabs = []sieve.Tab{{ID: dto.UUID(), Mode: "wysiwyg"}}
 		session.ActiveIdx = 0
 	}
 
-	_ = h.app.SaveSession(session)
+	_ = h.app.ServiceProvider.State.SaveSession(session)
 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -280,7 +264,7 @@ func (h *apiHandler) handleTabsReorder(w http.ResponseWriter, r *http.Request) {
 	fromIdx, _ := strconv.Atoi(fromStr)
 	toIdx, _ := strconv.Atoi(toStr)
 
-	session := h.app.GetSession()
+	session := h.app.ServiceProvider.State.LoadSession()
 	if fromIdx < 0 || fromIdx >= len(session.Tabs) || toIdx < 0 || toIdx > len(session.Tabs) {
 		http.Error(w, "invalid indices", http.StatusBadRequest)
 		return
@@ -308,69 +292,21 @@ func (h *apiHandler) handleTabsReorder(w http.ResponseWriter, r *http.Request) {
 	}
 	session.ActiveIdx = activeIdx
 
-	_ = h.app.SaveSession(session)
+	_ = h.app.ServiceProvider.State.SaveSession(session)
 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.tmpl.ExecuteTemplate(w, "tabbar.html", session); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
-}
-
-func (h *apiHandler) handleNoteDelete(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-
-	if err := h.app.DeleteNote(id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	session := h.app.GetSession()
-
-	newTabs := []sieve.Tab{}
-	for _, t := range session.Tabs {
-		if t.ID != id {
-			newTabs = append(newTabs, t)
-		}
-	}
-	session.Tabs = newTabs
-	if session.ActiveIdx >= len(session.Tabs) {
-		session.ActiveIdx = len(session.Tabs) - 1
-	}
-	if session.ActiveIdx < 0 && len(session.Tabs) > 0 {
-		session.ActiveIdx = 0
-	}
-
-	if len(session.Tabs) == 0 {
-		dto, _ := h.app.NewBuffer()
-		session.Tabs = []sieve.Tab{{ID: dto.UUID, Mode: "wysiwyg"}}
-		session.ActiveIdx = 0
-	}
-
-	_ = h.app.SaveSession(session)
-
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-	if err := h.tmpl.ExecuteTemplate(w, "tabbar.html", session); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	fmt.Fprint(w, `<div id="htmx-sidebar" hx-swap-oob="true" class="sidebar" hx-get="/api/sidebar" hx-trigger="load"></div>`)
-
-	activeID := session.Tabs[session.ActiveIdx].ID
-	fmt.Fprintf(w, `<div id="htmx-editor" hx-swap-oob="true" class="editor-wrapper" style="flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column;">
-		<div id="tiptap-mount" data-uuid="%s" data-mode="wysiwyg" style="flex: 1; min-height: 0; height: 100%%; display: flex; flex-direction: column;"></div>
-	</div>`, activeID)
 }
 
 // ── Session & Layout Operations ───────────────────────────────────────────────
 
 func (h *apiHandler) handleSidebarToggle(w http.ResponseWriter, r *http.Request) {
-	session := h.app.GetSession()
+	session := h.app.ServiceProvider.State.LoadSession()
 	session.ShowSidebar = !session.ShowSidebar
-	_ = h.app.SaveSession(session)
+	_ = h.app.ServiceProvider.State.SaveSession(session)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<style id="layout-overrides" hx-swap-oob="true">
@@ -385,9 +321,9 @@ func (h *apiHandler) handleSidebarToggle(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *apiHandler) handleMetaToggle(w http.ResponseWriter, r *http.Request) {
-	session := h.app.GetSession()
+	session := h.app.ServiceProvider.State.LoadSession()
 	session.ShowMeta = !session.ShowMeta
-	_ = h.app.SaveSession(session)
+	_ = h.app.ServiceProvider.State.SaveSession(session)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<style id="layout-overrides" hx-swap-oob="true">
@@ -402,9 +338,9 @@ func (h *apiHandler) handleMetaToggle(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *apiHandler) handlePromptsToggle(w http.ResponseWriter, r *http.Request) {
-	session := h.app.GetSession()
+	session := h.app.ServiceProvider.State.LoadSession()
 	session.ShowPrompts = !session.ShowPrompts
-	_ = h.app.SaveSession(session)
+	_ = h.app.ServiceProvider.State.SaveSession(session)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<style id="layout-overrides" hx-swap-oob="true">
@@ -415,7 +351,7 @@ func (h *apiHandler) handlePromptsToggle(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *apiHandler) handleSessionLayout(w http.ResponseWriter, r *http.Request) {
-	session := h.app.GetSession()
+	session := h.app.ServiceProvider.State.LoadSession()
 
 	if wStr := r.FormValue("sidebarWidth"); wStr != "" {
 		if wInt, err := strconv.Atoi(wStr); err == nil {
@@ -433,7 +369,7 @@ func (h *apiHandler) handleSessionLayout(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	_ = h.app.SaveSession(session)
+	_ = h.app.ServiceProvider.State.SaveSession(session)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -446,114 +382,4 @@ func (h *apiHandler) handleSessionRefresh(w http.ResponseWriter, r *http.Request
 		var themeName = "%s";
 		root.className = root.className.replace(/theme-\S+/, 'theme-' + themeName);
 	</script>`, info.ThemeName)
-}
-
-// ── AI Operations ────────────────────────────────────────────────────────────
-
-func (h *apiHandler) handleAiSmartFile(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	dto, err := h.app.LoadByUUID(id)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-
-	var path string
-	switch d := dto.(type) {
-	case BufferDTO:
-		path = d.Path
-	case NoteDTO:
-		path = d.Path
-	default:
-		http.Error(w, "invalid document type", http.StatusBadRequest)
-		return
-	}
-
-	result, err := h.app.EvaluateAndFile(path, true, true)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
-}
-
-func (h *apiHandler) handleAiSmartMetadata(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	dto, err := h.app.LoadByUUID(id)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-
-	var path string
-	switch d := dto.(type) {
-	case BufferDTO:
-		path = d.Path
-	case NoteDTO:
-		path = d.Path
-	default:
-		http.Error(w, "invalid document type", http.StatusBadRequest)
-		return
-	}
-
-	result, err := h.app.EvaluateAndFile(path, false, false)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
-}
-
-func (h *apiHandler) handleAiKeepAndFile(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "uuid")
-	dto, err := h.app.LoadByUUID(id)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-
-	var path string
-	switch d := dto.(type) {
-	case BufferDTO:
-		path = d.Path
-		intent := "keep"
-		d.Meta.UserIntent = &intent
-		if _, err := h.app.SaveBuffer(d); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	case NoteDTO:
-		path = d.Path
-		intent := "keep"
-		d.Meta.UserIntent = &intent
-		bufDto := BufferDTO{
-			Kind:     "note",
-			UUID:     d.UUID,
-			Path:     d.Path,
-			Slug:     d.Slug,
-			Body:     d.Body,
-			Meta:     d.Meta,
-			Versions: d.Versions,
-		}
-		if _, err := h.app.SaveBuffer(bufDto); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	default:
-		http.Error(w, "invalid document type", http.StatusBadRequest)
-		return
-	}
-
-	result, err := h.app.EvaluateAndFile(path, true, false)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
 }

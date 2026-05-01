@@ -26,12 +26,12 @@ func (s *stubStorable) IsModified() bool             { return false }
 // stubMetaStorable satisfies the MetaStorable interface.
 type stubMetaStorable struct{ stubStorable }
 
-func (s *stubMetaStorable) Meta() map[string]string          { return nil }
-func (s *stubMetaStorable) SetBody(_ []byte)                 {}
-func (s *stubMetaStorable) SetMeta(_ map[string]string)      {}
-func (s *stubMetaStorable) Owns() []store.Storable           { return nil }
-func (s *stubMetaStorable) AttachAsset(a store.Storable)     {}
-func (s *stubMetaStorable) ClearOwns()                       {}
+func (s *stubMetaStorable) Meta() map[string]string      { return nil }
+func (s *stubMetaStorable) SetBody(_ []byte)             {}
+func (s *stubMetaStorable) SetMeta(_ map[string]string)  {}
+func (s *stubMetaStorable) Owns() []store.Storable       { return nil }
+func (s *stubMetaStorable) AttachAsset(a store.Storable) {}
+func (s *stubMetaStorable) ClearOwns()                   {}
 
 // stubAssetStorable satisfies the AssetStorable interface.
 type stubAssetStorable struct{ stubStorable }

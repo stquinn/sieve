@@ -27,6 +27,7 @@ func (h *MetaHandler) RegisterPaths(r chi.Router) {
 }
 
 type metaPanelData struct {
+	UUID       string
 	Path       string
 	FileName   string
 	Tab        string
@@ -65,7 +66,7 @@ type versionViewData struct {
 	ID         string
 	Created    string
 	SizeKB     int64
-	PathEnc    string
+	UUIDEnc    string
 	VersionEnc string
 }
 
@@ -76,7 +77,6 @@ type assetViewData struct {
 }
 
 func (h *MetaHandler) handleMeta(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Query().Get("path")
 	uuid := r.URL.Query().Get("uuid")
 	tab := r.URL.Query().Get("tab")
 	if tab == "" {
@@ -86,45 +86,26 @@ func (h *MetaHandler) handleMeta(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	// Resolve active note from session if no path/uuid provided
-	if path == "" && uuid == "" {
+	if uuid == "" {
 		session := h.ServiceProvider.State.LoadSession()
 		if len(session.Tabs) > 0 && session.ActiveIdx >= 0 && session.ActiveIdx < len(session.Tabs) {
 			uuid = session.Tabs[session.ActiveIdx].ID
 		}
 	}
 
-	// Resolve path from UUID if only uuid was given
-	if path == "" && uuid != "" {
-		if strings.HasPrefix(uuid, "prompt:") {
-			path = uuid
-		} else {
-			path = h.findPathByUUID(uuid)
-		}
-	}
-	if path == "" {
+	if uuid == "" {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, `<div class="meta-panel__empty">No note selected</div>`)
 		return
 	}
-	data := h.buildMetaPanelData(path, tab)
+	data := h.buildMetaPanelData(uuid, tab)
 	if err := h.Tmpl.ExecuteTemplate(w, "meta_panel.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-// findPathByUUID looks up a document's store path by its UUID frontmatter field.
-func (h *MetaHandler) findPathByUUID(uuid string) string {
-	if b, err := h.ServiceProvider.Buffers.LoadByUUID(uuid); err == nil {
-		return b.Path()
-	}
-	if n, err := h.ServiceProvider.Notes.LoadByUUID(uuid); err == nil {
-		return n.Path()
-	}
-	return ""
-}
-
 func (h *MetaHandler) handleRestore(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Query().Get("path")
+	path := r.URL.Query().Get("uuid")
 	versionID := r.URL.Query().Get("version")
 	if path == "" || versionID == "" {
 		http.Error(w, "missing path or version", http.StatusBadRequest)
@@ -135,18 +116,10 @@ func (h *MetaHandler) handleRestore(w http.ResponseWriter, r *http.Request) {
 	var body string
 	var found bool
 
-	if b, err := h.ServiceProvider.Buffers.Load(path); err == nil {
-		if v, err := h.ServiceProvider.Buffers.RetrieveVersion(b, vref); err == nil {
+	if b, err := h.ServiceProvider.Documents.LoadByUUID(path); err == nil {
+		if v, err := h.ServiceProvider.Documents.RetrieveVersion(b, vref); err == nil {
 			body = string(v.Body)
 			found = true
-		}
-	}
-	if !found {
-		if n, err := h.ServiceProvider.Notes.Load(path); err == nil {
-			if v, err := h.ServiceProvider.Notes.RetrieveVersion(n, vref); err == nil {
-				body = string(v.Body)
-				found = true
-			}
 		}
 	}
 	if !found {
@@ -162,16 +135,15 @@ func (h *MetaHandler) handleRestore(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *MetaHandler) buildMetaPanelData(path, tab string) metaPanelData {
-	isPrompt := strings.HasPrefix(path, "prompt:")
+func (h *MetaHandler) buildMetaPanelData(uuidOrPromptName, tab string) metaPanelData {
+	isPrompt := strings.HasPrefix(uuidOrPromptName, "prompt:")
 	promptType := ""
 	if isPrompt {
-		promptType = strings.TrimPrefix(path, "prompt:")
+		promptType = strings.TrimPrefix(uuidOrPromptName, "prompt:")
 	}
 
 	data := metaPanelData{
-		Path:       path,
-		FileName:   filepath.Base(path),
+		UUID:       uuidOrPromptName,
 		Tab:        tab,
 		IsPrompt:   isPrompt,
 		PromptType: promptType,
@@ -181,19 +153,17 @@ func (h *MetaHandler) buildMetaPanelData(path, tab string) metaPanelData {
 		return data
 	}
 
-	pathEnc := url.QueryEscape(path)
-
-	if b, err := h.ServiceProvider.Buffers.Load(path); err == nil {
+	if b, err := h.ServiceProvider.Documents.LoadByUUID(uuidOrPromptName); err == nil {
+		data.UUID = b.UUID()
+		if fname := b.Meta().Filename(); fname != nil {
+			data.FileName = *fname
+		}
+		if data.FileName == "" {
+			data.FileName = "Untitled"
+		}
 		data.Meta = toMetaView(b.Meta())
-		data.Versions = toVersionViews(b.Versions(), pathEnc)
+		data.Versions = toVersionViews(b.Versions(), b.UUID())
 		data.Assets = toAssetViews(b.Storable().Owns())
-		data.HasAssets = len(data.Assets) > 0
-		return data
-	}
-	if n, err := h.ServiceProvider.Notes.Load(path); err == nil {
-		data.Meta = toMetaView(n.Meta())
-		data.Versions = toVersionViews(n.Versions(), pathEnc)
-		data.Assets = toAssetViews(n.Storable().Owns())
 		data.HasAssets = len(data.Assets) > 0
 		return data
 	}
@@ -247,14 +217,14 @@ func toMetaView(m sieve.DocumentMeta) *metaViewData {
 	return mv
 }
 
-func toVersionViews(refs []store.VersionRef, pathEnc string) []versionViewData {
+func toVersionViews(refs []store.VersionRef, uuidEnc string) []versionViewData {
 	out := make([]versionViewData, len(refs))
 	for i, r := range refs {
 		out[i] = versionViewData{
 			ID:         r.ID,
 			Created:    r.Created.Format("Jan 2, 2006, 3:04 PM"),
 			SizeKB:     r.Size / 1024,
-			PathEnc:    pathEnc,
+			UUIDEnc:    uuidEnc,
 			VersionEnc: url.QueryEscape(r.ID),
 		}
 	}
