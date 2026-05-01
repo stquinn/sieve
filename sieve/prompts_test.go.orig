@@ -61,7 +61,6 @@ func (m *mockStore) RetrieveVersion(s store.Storable, ref store.VersionRef) (sto
 func (m *mockStore) CreateOrLoadFolder(cat store.Category, name string) (store.FolderStorable, error) { return nil, nil }
 func (m *mockStore) LoadFolder(cat store.Category, name string) (store.FolderStorable, error) { return nil, nil }
 func (m *mockStore) RenameFolder(s store.FolderStorable, name string) (store.FolderStorable, error) { return nil, nil }
-func (m *mockStore) ListFrom(categories []store.Category, prefix string) ([]store.Storable, error) { return nil, nil }
 
 func TestPromptService(t *testing.T) {
 	st := newMockStore()

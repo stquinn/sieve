@@ -478,6 +478,7 @@ func (fs *FileStore) saveMeta(s *fileMetaStorable) (store.Storable, error) {
 			versions: versions,
 		},
 		meta: meta,
+		owns: s.owns,
 	}, nil
 }
 

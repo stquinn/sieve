@@ -103,7 +103,7 @@ func (h *ContextMenuHandler) handleIntent(w http.ResponseWriter, r *http.Request
 	if h.EmitNotesChanged != nil {
 		h.EmitNotesChanged()
 	}
-	w.Header().Set("HX-Trigger", fmt.Sprintf(`{"intent:changed": {"uuid": "%s"}}`, id))
+	w.Header().Set("HX-Trigger", fmt.Sprintf(`{"intent:changed": {"uuid": "%s"}, "notes:changed": true}`, id))
 	RenderSidebar(w, h.ServiceProvider.Documents, h.ServiceProvider.State, h.Tmpl)
 }
 
@@ -117,6 +117,10 @@ func (h *ContextMenuHandler) handleDeleteNote(w http.ResponseWriter, r *http.Req
 			return
 		}
 	}
+	if h.EmitNotesChanged != nil {
+		h.EmitNotesChanged()
+	}
+	w.Header().Set("HX-Trigger", "notes:changed")
 	RenderSidebar(w, h.ServiceProvider.Documents, h.ServiceProvider.State, h.Tmpl)
 }
 
@@ -130,6 +134,7 @@ func (h *ContextMenuHandler) handleDeleteFolder(w http.ResponseWriter, r *http.R
 	if h.EmitNotesChanged != nil {
 		h.EmitNotesChanged()
 	}
+	w.Header().Set("HX-Trigger", "notes:changed")
 	RenderSidebar(w, h.ServiceProvider.Documents, h.ServiceProvider.State, h.Tmpl)
 }
 
@@ -190,6 +195,7 @@ func (h *ContextMenuHandler) handleRenameNote(w http.ResponseWriter, r *http.Req
 	if h.EmitNotesChanged != nil {
 		h.EmitNotesChanged()
 	}
+	w.Header().Set("HX-Trigger", "notes:changed")
 	RenderSidebar(w, h.ServiceProvider.Documents, h.ServiceProvider.State, h.Tmpl)
 }
 
@@ -207,6 +213,7 @@ func (h *ContextMenuHandler) handleRenameFolder(w http.ResponseWriter, r *http.R
 	if h.EmitNotesChanged != nil {
 		h.EmitNotesChanged()
 	}
+	w.Header().Set("HX-Trigger", "notes:changed")
 	RenderSidebar(w, h.ServiceProvider.Documents, h.ServiceProvider.State, h.Tmpl)
 }
 
@@ -236,6 +243,7 @@ func (h *ContextMenuHandler) handleCreateFolder(w http.ResponseWriter, r *http.R
 	if h.EmitNotesChanged != nil {
 		h.EmitNotesChanged()
 	}
+	w.Header().Set("HX-Trigger", "notes:changed")
 	RenderSidebar(w, h.ServiceProvider.Documents, h.ServiceProvider.State, h.Tmpl)
 }
 
@@ -248,5 +256,9 @@ func (h *ContextMenuHandler) handleRevertPrompt(w http.ResponseWriter, r *http.R
 			h.EmitPromptsChanged()
 		}
 	}
+	if h.EmitNotesChanged != nil {
+		h.EmitNotesChanged()
+	}
+	w.Header().Set("HX-Trigger", `{"prompts:changed": true, "notes:changed": true}`)
 	w.WriteHeader(http.StatusNoContent)
 }

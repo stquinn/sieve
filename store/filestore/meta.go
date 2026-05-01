@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"regexp"
-	"sieve/logger"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,7 +41,6 @@ var canonicalKeyOrder = []string{
 // so that they round-trip through DocumentMeta accessors in the business layer.
 func parseFrontmatter(data []byte) (meta map[string]string, body []byte, err error) {
 	if data == nil || len(data) == 0 {
-		logger.Info("Empty FrontMatter")
 		return map[string]string{}, []byte{}, nil
 	}
 	content := string(data)

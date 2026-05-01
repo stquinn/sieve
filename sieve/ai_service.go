@@ -62,7 +62,7 @@ func (s *AIService) EvaluateAndFileDoc(id string, fileAfter bool, allowDiscard b
 		evaluated = true
 	}
 
-	return filingCommitDocument(doc, s.documents, evaluated, fileAfter)
+	return filingCommitDocument(doc, s.documents, evaluated || userIntent == "keep", fileAfter)
 }
 
 // EvaluateBuffer runs the AI evaluation over a loaded document and returns the
