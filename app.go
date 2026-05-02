@@ -21,6 +21,7 @@ import (
 	"sieve/store/filestore"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"golang.org/x/net/html"
 )
 
 // App is the Wails application backend.
@@ -492,6 +493,60 @@ func (a *App) RefineLanguage(content string) (string, error) {
 		return "", err
 	}
 	return lang, nil
+}
+
+func (a *App) GetLinkTitle(url string) (string, error) {
+	logger.Info("Getting title for ", url)
+	if url == "" {
+		return "", fmt.Errorf("store not open")
+	}
+	var title string = ""
+	// 1. Make the HTTP GET request
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("status code error: %d %s", resp.StatusCode, resp.Status)
+	}
+
+	// 2. Parse the HTML document
+	doc, err := html.Parse(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	// 3. Recursively find the <title> node
+
+	var f func(*html.Node)
+	f = func(n *html.Node) {
+		// Check if the node is an element named "title"
+		logger.Info("Looking at Node %s", n.Data)
+		// If we found the title, stop searching
+		if title != "" {
+			return
+		}
+
+		// Check if current node is the <title> tag
+		if n.Type == html.ElementNode && n.Data == "title" && n.FirstChild != nil {
+			title = n.FirstChild.Data
+			return
+		}
+
+		// Traverse the children of the current node
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			f(c)
+		}
+
+	}
+	f(doc)
+	logger.Info("Returning title for %s", url)
+	return strings.TrimSpace(title), nil
 }
 
 // ── File manager ──────────────────────────────────────────────────────────────

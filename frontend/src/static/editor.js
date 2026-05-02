@@ -64,8 +64,6 @@
   var blobInterceptorCleanup = null
   var searchOverlay = null
 
-  // Persistent overlay elements — created once, reused across tab switches.
-  var linkBubble = null
   var askDialog = null
 
   // ── Public entry point called from App.tsx htmx:afterSettle ─────────────────
@@ -141,7 +139,7 @@
     var editor = new T.Editor({
       element: el,
       extensions: [
-        T.StarterKit.configure({ codeBlock: false, history: { depth: 10000, newGroupDelay: 500 } }),
+        T.StarterKit.configure({ link: false, codeBlock: false, history: { depth: 10000, newGroupDelay: 500 } }),
         T.CodeBlockWithAttrs.configure({ lowlight: lowlight }),
         T.Placeholder.configure({ placeholder: function (p) { return p.editor.isEmpty ? 'Start writing\u2026' : '' } }),
         T.BlockNode,
@@ -153,6 +151,7 @@
         T.Search,
         T.AiBlock,
         T.AiQuestion,
+        T.SmartLink,
         T.TaskList,
         T.TaskItem.configure({ nested: true }),
         T.Markdown.configure({ html: true, transformPastedText: true, link: { openOnClick: false } }),
@@ -211,7 +210,7 @@
         document.dispatchEvent(new CustomEvent('editor:changed'))
         dispatchStats()
       },
-      onSelectionUpdate: function () { updateLinkBubble() },
+      
     })
 
     currentEditor = editor
@@ -331,58 +330,12 @@
     return currentEditor.storage.markdown.getMarkdown() || ''
   }
 
-  // ── Link bubble ───────────────────────────────────────────────────────────────
-
   function ensureOverlays() {
-    if (!linkBubble) linkBubble = createLinkBubble()
     if (!askDialog) askDialog = createAskDialog()
     if (!searchOverlay) searchOverlay = createSearchOverlay()
   }
 
-  function createLinkBubble() {
-    var bubble = document.createElement('div')
-    bubble.className = 'link-bubble'
-    bubble.style.cssText = 'position:fixed;display:none;z-index:1000;align-items:center;gap:4px'
-
-    var input = document.createElement('input')
-    input.className = 'link-bubble__input'
-    input.placeholder = 'https://\u2026'
-
-    var btnSet = makeBtn('link-bubble__btn', 'Set', function () {
-      currentEditor && currentEditor.chain().focus().extendMarkRange('link').setLink({ href: input.value }).run()
-    })
-    var btnRemove = makeBtn('link-bubble__btn link-bubble__btn--remove', 'Remove', function () {
-      currentEditor && currentEditor.chain().focus().extendMarkRange('link').unsetLink().run()
-    })
-    var btnOpen = makeBtn('link-bubble__btn', 'Open', function (e) {
-      e.preventDefault(); e.stopPropagation()
-      if (input.value) window.runtime && window.runtime.BrowserOpenURL(input.value)
-    })
-
-    input.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { e.preventDefault(); currentEditor && currentEditor.chain().focus().extendMarkRange('link').setLink({ href: input.value }).run() }
-      if (e.key === 'Escape') { currentEditor && currentEditor.chain().focus().run(); bubble.style.display = 'none' }
-    })
-    document.addEventListener('mousedown', function (e) {
-      if (bubble.style.display !== 'none' && !bubble.contains(e.target)) bubble.style.display = 'none'
-    })
-
-    bubble.appendChild(input); bubble.appendChild(btnSet); bubble.appendChild(btnRemove); bubble.appendChild(btnOpen)
-    document.body.appendChild(bubble)
-    return bubble
-  }
-
-  function updateLinkBubble() {
-    if (!currentEditor || !linkBubble) return
-    if (!currentEditor.isActive('link')) { linkBubble.style.display = 'none'; return }
-    var href = currentEditor.getAttributes('link').href || ''
-    linkBubble.querySelector('.link-bubble__input').value = href
-    var from = currentEditor.state.selection.from
-    var coords = currentEditor.view.coordsAtPos(from)
-    linkBubble.style.display = 'flex'
-    linkBubble.style.left = coords.left + 'px'
-    linkBubble.style.top = (coords.bottom + 4) + 'px'
-  }
+  
 
   // ── Ask dialog ────────────────────────────────────────────────────────────────
 
@@ -771,7 +724,7 @@
       var result = detectLanguage(text)
       if (result.tier <= 3) {
         event.preventDefault()
-        var id = 'blk-' + Math.random().toString(16).substring(2, 6)
+        var id = generateId()
 
         currentEditor.commands.insertContent({
           type: 'codeBlock',
@@ -808,9 +761,55 @@
         }
         return true
       }
+      if(text.startsWith("http://") || text.startsWith("https://")) {
+        event.preventDefault()
+        var id  = generateId("lnk")
+        currentEditor.commands.insertContent({
+          type: 'smartLink',
+          attrs: { 
+            id: id, 
+            detect: 'pending',
+            href: text,
+            label: text // Your node uses this 'label' attribute to render its text
+          }
+        })
+        if (window.go && window.go.main && window.go.main.App && window.go.main.App.GetLinkTitle) {
+          window.go.main.App.GetLinkTitle(text).then(function(title) {
+             if (!title || title.trim() == "") return
+              currentEditor.commands.command(function(props) {
+                var tr = props.tr
+                var state = props.state
+                var found = false
+                state.doc.descendants(function(node, pos) {
+                  if (node.type.name === 'smartLink' && node.attrs.id === id) {
+                    found = true
+                    tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { label: title, detect: 'peek' }))
+                    return false
+                  }
+                })
+                if (found) {
+                  currentEditor.view.dispatch(tr)
+                  var md = currentEditor.storage.markdown.getMarkdown() || ''
+                  lastSyncedBody = md
+                  scheduleSave(currentUuid, md)
+                  window.sieveSetMetaDirty && window.sieveSetMetaDirty(true)
+                }
+                return found
+              })
+            }).catch(function(err) {
+              console.error('[editor.js] RefineLanguage failed', err)
+            })
+          }
+        return true
+      }
     }
 
     return false
+  }
+
+  function generateId(prefix = "blk") {
+    var id = prefix + '-' + Math.random().toString(16).substring(2, 6)
+    return id;
   }
 
   function detectLanguage(text) {
