@@ -176,6 +176,10 @@ func (fs *FileStore) CreateText(cat store.Category, key string, body []byte) (st
 }
 
 func (fs *FileStore) CreateOrLoadFolder(category store.Category, name string) (store.FolderStorable, error) {
+	if entry, ok := fs.LookupUUID(name); ok {
+		category = entry.cat
+		name = entry.dirKey
+	}
 	name = strings.TrimPrefix(name, category.Key+"/")
 	logger.Debug("CreateOrLoadFolder: %s, %s", category, name)
 	dir := fs.docDir(category, name)
@@ -193,6 +197,7 @@ func (fs *FileStore) CreateOrLoadFolder(category store.Category, name string) (s
 				Created: time.Now().Format("2006-01-02T15:04:05"),
 			}
 			_ = writeFolderMetaToPath(mp, fm)
+			fs.indexSet(fm.UUID, uuidEntry{cat: category, dirKey: name})
 		}
 	}
 
@@ -580,7 +585,7 @@ func (fs *FileStore) walkIndexDir(dir string) {
 			fs.walkIndexDir(subDir)
 			continue
 		}
-		if dm.Type == "document" && dm.UUID != "" {
+		if (dm.Type == "document" || dm.Type == "folder") && dm.UUID != "" {
 			// Reconstruct category + dirKey from the filesystem path.
 			rel, err := filepath.Rel(fs.root, subDir)
 			if err == nil {
