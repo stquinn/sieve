@@ -121,12 +121,20 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 				hub.broadcast("prompts:changed", "{}")
 			},
 		},
-		&requesthandlers.MetaHandler{ServiceProvider: sp, Tmpl: tmpl},
+		&requesthandlers.MetaHandler{
+			ServiceProvider: sp,
+			Tmpl:            tmpl,
+			EmitNotesChanged: func() {
+				logger.Info("MetaHandler: notes changed event")
+				hub.broadcast("notes:changed", "{}")
+			},
+		},
 		&requesthandlers.EditorHandler{ServiceProvider: sp, Tmpl: tmpl, Broadcast: hub.broadcast},
 		&requesthandlers.SettingsHandler{ServiceProvider: sp, Tmpl: tmpl},
 		&requesthandlers.HelpHandler{Tmpl: tmpl},
 		&requesthandlers.SearchHandler{ServiceProvider: sp, Tmpl: tmpl},
 		&requesthandlers.AssetHandler{ServiceProvider: sp},
+		&requesthandlers.AssetServeHandler{ServiceProvider: app.ServiceProvider},
 		&requesthandlers.PromptsHandler{ServiceProvider: sp, Tmpl: tmpl},
 		&requesthandlers.SessionHandler{
 			ServiceProvider: sp,
@@ -167,7 +175,19 @@ func (h *apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	info := h.app.GetStoreInfo()
-	session := h.app.ServiceProvider.State.LoadSession()
+
+	var session sieve.Session
+	if h.app.ServiceProvider.State != nil {
+		session = h.app.ServiceProvider.State.LoadSession()
+	} else {
+		// Sensible defaults for bootstrap screen
+		session = sieve.Session{
+			SidebarWidth:  260,
+			MetaWidth:     280,
+			PromptsHeight: 180,
+			ShowSidebar:   true,
+		}
+	}
 
 	activeUUID := ""
 	if session.ActiveIdx >= 0 && session.ActiveIdx < len(session.Tabs) {
@@ -180,6 +200,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := struct {
+		StoreRoot        string
 		ThemeName        string
 		Tier             string
 		SidebarWidth     int
@@ -191,6 +212,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		ActiveUUID       string
 		AutosaveDebounce int
 	}{
+		StoreRoot:        info.Root,
 		ThemeName:        info.ThemeName,
 		Tier:             tierStr,
 		SidebarWidth:     session.SidebarWidth,
@@ -201,6 +223,10 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		PromptsHeight:    session.PromptsHeight,
 		ActiveUUID:       activeUUID,
 		AutosaveDebounce: info.AutosaveDebounce,
+	}
+
+	if data.ThemeName == "" {
+		data.ThemeName = "tokyo-night"
 	}
 
 	tmpl, err := template.New("index").Parse(uiIndexHTML)

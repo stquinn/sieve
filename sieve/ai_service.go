@@ -56,7 +56,7 @@ func (s *AIService) EvaluateAndFileDoc(id string, fileAfter bool, allowDiscard b
 	if settings.Tier() != TierDumb {
 		rec, err := s.runEvaluateBuffer(meta, body, settings)
 		if err != nil {
-			return FilingOutcome{}, fmt.Errorf("filing: eval %s: %w", doc.Path(), err)
+			return FilingOutcome{}, fmt.Errorf("filing: eval %s: %w", doc.Storable().ExternalRef(), err)
 		}
 		s.applyFilingRec(meta, rec, settings.CLI)
 		evaluated = true
@@ -312,7 +312,7 @@ func (s *AIService) resolveNotePath(uuid string) string {
 	if err != nil {
 		return ""
 	}
-	return doc.Path()
+	return doc.Storable().ExternalRef()
 }
 
 func (s *AIService) absImagePaths(storePaths []string) []string {

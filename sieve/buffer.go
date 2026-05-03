@@ -23,7 +23,7 @@ type Buffer struct {
 func newBuffer(s store.MetaStorable) *Buffer {
 	buffer := &Buffer{
 		s:    s,
-		slug: strings.TrimSuffix(filepath.Base(s.Key()), filepath.Ext(s.Key())),
+		slug: strings.TrimSuffix(filepath.Base(s.Path()), filepath.Ext(s.Path())),
 		kind: KindBuffer,
 	}
 	buffer.s.Meta()["status"] = "unfiled"
@@ -43,11 +43,6 @@ func (b *Buffer) UUID() string {
 	}
 	return b.s.Key()
 }
-
-// Path returns the store-relative path (ExternalRef) — e.g.
-// "{hostname}/buffers/buf-20240102-1504.md". This is the identifier used by
-// the frontend to address the buffer.
-func (b *Buffer) Path() string { return b.s.ExternalRef() }
 
 // Body returns the pure markdown content with frontmatter stripped.
 func (b *Buffer) Body() []byte { return b.s.Body() }

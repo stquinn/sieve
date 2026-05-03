@@ -8,8 +8,11 @@ package store
 // Store stamps Category, derives ExternalRef by walking the ownership graph,
 // and infers Encoding for assets. Callers cannot set these fields.
 type Storable interface {
-	// Key returns the logical identity of this Storable within its Category.
+	// Key returns the logical identity of this Storable within its Category (UUID).
 	Key() string
+
+	// Path returns the filesystem path of this Storable within its Category.
+	Path() string
 
 	// Category returns the Category this Storable belongs to. Stamped at
 	// creation and immutable — use Store.Move to change category.
@@ -124,6 +127,10 @@ type Store interface {
 	// is derived from the current ownership graph.
 	Load(category Category, key string) (Storable, error)
 
+	LoadByUUID(uuid string) (Storable, error)
+
+	LoadAsset(category Category, uuidParent string, assetKey string) (AssetStorable, error)
+
 	LoadFolder(category Category, key string) (FolderStorable, error)
 
 	// Delete removes s and its entire version history from the Store.
@@ -163,4 +170,8 @@ type Store interface {
 	// VersionedStorable — a distinct type from Storable so a snapshot cannot
 	// be accidentally saved back as the current document.
 	RetrieveVersion(s Storable, ref VersionRef) (VersionedStorable, error)
+
+	// SaveMeta writes only the metadata for s — no snapshot, no version bump.
+	// Use for focus count increments, AI evaluation updates, tag changes, renames.
+	SaveMeta(s MetaStorable) (MetaStorable, error)
 }

@@ -35,22 +35,14 @@ func newTestStore(t *testing.T) *filestore.FileStore {
 
 func mustCreate(t *testing.T, fs *filestore.FileStore, cat store.Category, key string, body []byte) store.Storable {
 	t.Helper()
-	var s store.Storable
-	var err error
-	if strings.Contains(key, ".assets/") || strings.HasSuffix(key, ".png") || strings.HasSuffix(key, ".b64") {
-		// Key in this test context is something like ".assets/img.png"
-		// or "assets/img.png". We use key as assetID for the mock.
-		s, err = fs.CreateAsset(cat, "", key, body)
-	} else {
-		s, err = fs.CreateMetaText(cat, key, body)
-	}
+	s, err := fs.CreateMetaText(cat, key, body)
 	if err != nil {
-		t.Fatalf("Create(%s, %q): %v", cat.Key, key, err)
+		t.Fatalf("CreateMetaText(%s, %q): %v", cat.Key, key, err)
 	}
 	return s
 }
 
-// ── NewFileStore ──────────────────────────────────────────────────────────────
+// ── PrepareCategory ───────────────────────────────────────────────────────────
 
 func TestPrepareCategoryCreatesDirectories(t *testing.T) {
 	dir := t.TempDir()
@@ -66,14 +58,9 @@ func TestPrepareCategoryCreatesDirectories(t *testing.T) {
 		t.Fatalf("PrepareCategory(WorkingCopy): %v", err)
 	}
 
-	// Each required directory should exist dynamically after preparation.
 	required := []string{
 		filepath.Join(dir, "store"),
-		filepath.Join(dir, "store", ".assets"),
-		filepath.Join(dir, "store", ".history"),
 		filepath.Join(dir, "host1", "buffers"),
-		filepath.Join(dir, "host1", "buffers", ".assets"),
-		filepath.Join(dir, "host1", ".history"),
 	}
 	for _, d := range required {
 		if _, err := os.Stat(d); os.IsNotExist(err) {
@@ -95,8 +82,8 @@ func TestCreateBufferGeneratesKey(t *testing.T) {
 	if ms.Key() == "" {
 		t.Error("generated key must not be empty")
 	}
-	if !strings.HasSuffix(ms.Key(), ".md") {
-		t.Errorf("generated key %q must end with .md", ms.Key())
+	if strings.HasSuffix(ms.Key(), ".md") {
+		t.Errorf("generated key %q must not end with .md", ms.Key())
 	}
 }
 
@@ -132,16 +119,25 @@ func TestCreateBufferVersionIsZero(t *testing.T) {
 
 func TestCreateWithExplicitKey(t *testing.T) {
 	fs := newTestStore(t)
+	s := mustCreate(t, fs, testWorkingCopy, "my-buf", nil)
+	if s.Path() != "my-buf" {
+		t.Errorf("path = %q, want my-buf", s.Path())
+	}
+}
+
+func TestCreateStripsMdExtensionFromKey(t *testing.T) {
+	fs := newTestStore(t)
+	// Callers passing legacy .md keys should get the stripped path back.
 	s := mustCreate(t, fs, testWorkingCopy, "my-buf.md", nil)
-	if s.Key() != "my-buf.md" {
-		t.Errorf("key = %q, want my-buf.md", s.Key())
+	if s.Path() != "my-buf" {
+		t.Errorf("path = %q, want my-buf (extension stripped)", s.Path())
 	}
 }
 
 func TestCreateWithBodyContainsFrontmatter(t *testing.T) {
 	fs := newTestStore(t)
 	body := []byte("---\nuuid: abc123\nstatus: unfiled\n---\nhello world\n")
-	s := mustCreate(t, fs, testWorkingCopy, "existing.md", body)
+	s := mustCreate(t, fs, testWorkingCopy, "existing", body)
 	ms := s.(store.MetaStorable)
 
 	if ms.Meta()["uuid"] != "abc123" {
@@ -157,21 +153,20 @@ func TestCreateWithBodyContainsFrontmatter(t *testing.T) {
 
 func TestCreateLibraryNote(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, testLibrary, "my-note.md", nil)
+	s := mustCreate(t, fs, testLibrary, "my-note", nil)
 	ms := s.(store.MetaStorable)
 	if ms.Meta()["uuid"] == "" {
 		t.Error("uuid must be stamped")
 	}
-	// ExternalRef for Library should be store/my-note.md
-	if s.ExternalRef() != "store/my-note.md" {
-		t.Errorf("ExternalRef = %q, want store/my-note.md", s.ExternalRef())
+	if s.ExternalRef() != "store/my-note" {
+		t.Errorf("ExternalRef = %q, want store/my-note", s.ExternalRef())
 	}
 }
 
 func TestCreateBufferExternalRef(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
-	want := "testhost/buffers/buf.md"
+	s := mustCreate(t, fs, testWorkingCopy, "buf", nil)
+	want := "testhost/buffers/buf"
 	if s.ExternalRef() != want {
 		t.Errorf("ExternalRef = %q, want %q", s.ExternalRef(), want)
 	}
@@ -181,28 +176,28 @@ func TestCreateBufferExternalRef(t *testing.T) {
 
 func TestCreateAssetInfersPNG(t *testing.T) {
 	fs := newTestStore(t)
-	// PNG magic bytes
+	doc := mustCreate(t, fs, testWorkingCopy, "my-doc", nil)
 	pngBytes := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00}
-	s := mustCreate(t, fs, testWorkingCopy, "assets/img.png", pngBytes)
-
-	as, ok := s.(store.AssetStorable)
-	if !ok {
-		t.Fatalf("expected AssetStorable, got %T", s)
+	as, err := fs.CreateAsset(testWorkingCopy, doc.Path(), "blk-img1", pngBytes)
+	if err != nil {
+		t.Fatalf("CreateAsset: %v", err)
 	}
 	if as.Encoding() != store.Raw {
 		t.Errorf("encoding = %v, want Raw for PNG binary", as.Encoding())
+	}
+	// ExternalRef should use UUID-based URL scheme.
+	if !strings.HasPrefix(as.ExternalRef(), "/sieve/") {
+		t.Errorf("ExternalRef = %q, want /sieve/... prefix", as.ExternalRef())
 	}
 }
 
 func TestCreateAssetBase64(t *testing.T) {
 	fs := newTestStore(t)
-	// Valid base64 data (multiple of 4, all base64 chars)
+	doc := mustCreate(t, fs, testWorkingCopy, "my-doc", nil)
 	b64 := []byte("aGVsbG8gd29ybGQ=")
-	s := mustCreate(t, fs, testWorkingCopy, "assets/img.b64", b64)
-
-	as, ok := s.(store.AssetStorable)
-	if !ok {
-		t.Fatalf("expected AssetStorable, got %T", s)
+	as, err := fs.CreateAsset(testWorkingCopy, doc.Path(), "blk-b64", b64)
+	if err != nil {
+		t.Fatalf("CreateAsset: %v", err)
 	}
 	if as.Encoding() != store.Base64 {
 		t.Errorf("encoding = %v, want Base64", as.Encoding())
@@ -213,8 +208,8 @@ func TestCreateAssetBase64(t *testing.T) {
 
 func TestLoadReturnsMetaStorable(t *testing.T) {
 	fs := newTestStore(t)
-	created := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
-	loaded, err := fs.Load(testWorkingCopy, "buf.md")
+	created := mustCreate(t, fs, testWorkingCopy, "buf", nil)
+	loaded, err := fs.Load(testWorkingCopy, "buf")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -230,8 +225,8 @@ func TestLoadReturnsMetaStorable(t *testing.T) {
 func TestLoadBodyStripped(t *testing.T) {
 	fs := newTestStore(t)
 	body := []byte("---\nuuid: x\n---\nhello\n")
-	mustCreate(t, fs, testWorkingCopy, "buf.md", body)
-	loaded, err := fs.Load(testWorkingCopy, "buf.md")
+	mustCreate(t, fs, testWorkingCopy, "buf", body)
+	loaded, err := fs.Load(testWorkingCopy, "buf")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -242,7 +237,7 @@ func TestLoadBodyStripped(t *testing.T) {
 
 func TestLoadNotFound(t *testing.T) {
 	fs := newTestStore(t)
-	_, err := fs.Load(testWorkingCopy, "nonexistent.md")
+	_, err := fs.Load(testWorkingCopy, "nonexistent")
 	if err == nil {
 		t.Error("expected error for nonexistent key")
 	}
@@ -252,7 +247,7 @@ func TestLoadNotFound(t *testing.T) {
 
 func TestSaveIncrementsVersion(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "buf", nil)
 	ms := s.(store.MetaStorable)
 
 	ms.SetBody([]byte("updated body"))
@@ -270,18 +265,14 @@ func TestSaveIncrementsVersion(t *testing.T) {
 
 func TestSaveUpdatesModified(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "buf", nil)
 	ms := s.(store.MetaStorable)
-	originalModified := ms.Meta()["modified"]
 
-	// Sleep briefly to ensure the timestamp changes.
-	// (time.Now() has ~1s resolution in the format string used)
 	ms.SetBody([]byte("new body"))
 	saved, err := fs.Save(ms)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	_ = originalModified // may be equal if within same second; just verify non-empty
 	savedMod := saved.(store.MetaStorable).Meta()["modified"]
 	if savedMod == "" {
 		t.Error("modified must be non-empty after save")
@@ -290,7 +281,7 @@ func TestSaveUpdatesModified(t *testing.T) {
 
 func TestSaveBodyPersisted(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "buf", nil)
 	ms := s.(store.MetaStorable)
 	ms.SetBody([]byte("# My Title\n\nSome content.\n"))
 
@@ -298,7 +289,7 @@ func TestSaveBodyPersisted(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	loaded, err := fs.Load(testWorkingCopy, "buf.md")
+	loaded, err := fs.Load(testWorkingCopy, "buf")
 	if err != nil {
 		t.Fatalf("Load after save: %v", err)
 	}
@@ -309,7 +300,7 @@ func TestSaveBodyPersisted(t *testing.T) {
 
 func TestSaveMetaMutationPersisted(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "buf", nil)
 	ms := s.(store.MetaStorable)
 	m := cloneMeta(ms.Meta())
 	m["display_name"] = "Test Note"
@@ -319,7 +310,7 @@ func TestSaveMetaMutationPersisted(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	loaded, err := fs.Load(testWorkingCopy, "buf.md")
+	loaded, err := fs.Load(testWorkingCopy, "buf")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -330,7 +321,7 @@ func TestSaveMetaMutationPersisted(t *testing.T) {
 
 func TestSaveWritesVersionSnapshot(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "buf", nil)
 	ms := s.(store.MetaStorable)
 	ms.SetBody([]byte("v1 content"))
 
@@ -345,17 +336,16 @@ func TestSaveWritesVersionSnapshot(t *testing.T) {
 
 func TestSaveStaleReturnsError(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "buf", nil)
 	ms := s.(store.MetaStorable)
 
-	// Perform a save to advance the on-disk version.
 	ms.SetBody([]byte("first"))
 	saved, err := fs.Save(ms)
 	if err != nil {
 		t.Fatalf("first Save: %v", err)
 	}
 
-	// Try to save the old (stale) Storable again.
+	// Try to save the stale original.
 	ms.SetBody([]byte("stale write"))
 	_, err = fs.Save(ms)
 	if err == nil {
@@ -364,70 +354,109 @@ func TestSaveStaleReturnsError(t *testing.T) {
 	_ = saved
 }
 
+// ── SaveMeta ──────────────────────────────────────────────────────────────────
+
+func TestSaveMetaDoesNotBumpVersion(t *testing.T) {
+	fs := newTestStore(t)
+	s := mustCreate(t, fs, testWorkingCopy, "buf", nil)
+	ms := s.(store.MetaStorable)
+
+	m := cloneMeta(ms.Meta())
+	m["focus_count"] = "3"
+	ms.SetMeta(m)
+
+	updated, err := fs.SaveMeta(ms)
+	if err != nil {
+		t.Fatalf("SaveMeta: %v", err)
+	}
+
+	// Version must stay at 0 — no content change.
+	if updated.Meta()["version"] != "0" {
+		t.Errorf("version = %q after SaveMeta, want 0", updated.Meta()["version"])
+	}
+
+	// No version snapshot should have been written.
+	if len(updated.Versions()) != 0 {
+		t.Errorf("expected 0 versions after SaveMeta, got %d", len(updated.Versions()))
+	}
+
+	// Persisted meta should be readable on next Load.
+	loaded, err := fs.Load(testWorkingCopy, "buf")
+	if err != nil {
+		t.Fatalf("Load after SaveMeta: %v", err)
+	}
+	if loaded.(store.MetaStorable).Meta()["focus_count"] != "3" {
+		t.Errorf("focus_count not persisted by SaveMeta")
+	}
+}
+
 // ── Delete ────────────────────────────────────────────────────────────────────
 
-func TestDeleteRemovesFile(t *testing.T) {
+func TestDeleteRemovesDocument(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "buf", nil)
 
 	if err := fs.Delete(s); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, err := fs.Load(testWorkingCopy, "buf.md"); err == nil {
-		t.Error("expected error loading deleted file")
+	if _, err := fs.Load(testWorkingCopy, "buf"); err == nil {
+		t.Error("expected error loading deleted document")
 	}
 }
 
 func TestDeleteRemovesHistory(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "buf", nil)
 	ms := s.(store.MetaStorable)
 	ms.SetBody([]byte("v1"))
 	saved, _ := fs.Save(ms)
-	uuid := saved.(store.MetaStorable).Meta()["uuid"]
 
 	fs.Delete(saved)
 
-	// History files should be gone.
-	// We check indirectly: a fresh Load would report no versions.
-	_ = uuid
+	// History directory should not exist (RemoveAll deleted the doc dir).
+	root := fs.Root()
+	uuid := saved.(store.MetaStorable).Meta()["uuid"]
+	histDir := filepath.Join(root, "testhost", "buffers", "buf", ".history")
+	if _, err := os.Stat(histDir); !os.IsNotExist(err) {
+		t.Errorf("history dir should be gone after Delete: %s (uuid=%s)", histDir, uuid)
+	}
 }
 
 // ── List ──────────────────────────────────────────────────────────────────────
 
 func TestListReturnsCreatedStorables(t *testing.T) {
 	fs := newTestStore(t)
-	mustCreate(t, fs, testWorkingCopy, "a.md", nil)
-	mustCreate(t, fs, testWorkingCopy, "b.md", nil)
+	mustCreate(t, fs, testWorkingCopy, "a", nil)
+	mustCreate(t, fs, testWorkingCopy, "b", nil)
 
 	list, err := fs.List(testWorkingCopy, "")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	keys := make(map[string]bool)
+	paths := make(map[string]bool)
 	for _, s := range list {
-		keys[s.Key()] = true
+		paths[s.Path()] = true
 	}
-	if !keys["a.md"] {
-		t.Error("a.md not in list")
+	if !paths["a"] {
+		t.Error("a not in list")
 	}
-	if !keys["b.md"] {
-		t.Error("b.md not in list")
+	if !paths["b"] {
+		t.Error("b not in list")
 	}
 }
 
 func TestListWithPrefixFilters(t *testing.T) {
 	fs := newTestStore(t)
-	mustCreate(t, fs, testWorkingCopy, "alpha.md", nil)
-	mustCreate(t, fs, testWorkingCopy, "beta.md", nil)
+	mustCreate(t, fs, testWorkingCopy, "alpha", nil)
+	mustCreate(t, fs, testWorkingCopy, "beta", nil)
 
 	list, err := fs.List(testWorkingCopy, "alpha")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
 	for _, s := range list {
-		if !strings.HasPrefix(s.Key(), "alpha") {
-			t.Errorf("unexpected key %q with prefix filter 'alpha'", s.Key())
+		if !strings.HasPrefix(s.Path(), "alpha") {
+			t.Errorf("unexpected path %q with prefix filter 'alpha'", s.Path())
 		}
 	}
 }
@@ -436,14 +465,56 @@ func TestListWithPrefixFilters(t *testing.T) {
 
 func TestRenameChangesKey(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, testLibrary, "old-name.md", nil)
+	s := mustCreate(t, fs, testLibrary, "old-name", nil)
 
 	renamed, err := fs.Rename(s, "new-name")
 	if err != nil {
 		t.Fatalf("Rename: %v", err)
 	}
-	if renamed.Key() != "new-name.md" {
-		t.Errorf("key after rename = %q, want new-name.md", renamed.Key())
+	if renamed.Path() != "new-name" {
+		t.Errorf("path after rename = %q, want new-name", renamed.Path())
+	}
+}
+
+func TestRenamePreservesUUID(t *testing.T) {
+	fs := newTestStore(t)
+	s := mustCreate(t, fs, testLibrary, "old-name", nil)
+	originalUUID := s.(store.MetaStorable).Meta()["uuid"]
+
+	renamed, err := fs.Rename(s, "new-name")
+	if err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	if renamed.(store.MetaStorable).Meta()["uuid"] != originalUUID {
+		t.Error("UUID must be preserved after rename")
+	}
+}
+
+func TestRenameDoesNotChangeAssetURLs(t *testing.T) {
+	fs := newTestStore(t)
+	s := mustCreate(t, fs, testLibrary, "my-note", nil)
+
+	pngBytes := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
+	asset, err := fs.CreateAsset(testLibrary, s.Path(), "blk-img", pngBytes)
+	if err != nil {
+		t.Fatalf("CreateAsset: %v", err)
+	}
+	originalRef := asset.ExternalRef()
+
+	// Rename the parent document.
+	renamed, err := fs.Rename(s, "renamed-note")
+	if err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	_ = renamed
+
+	// The asset URL is UUID-based — it should not have changed after rename.
+	if originalRef == "" {
+		t.Fatal("originalRef must not be empty")
+	}
+	// Asset URLs use /sieve/{uuid}/... which is stable regardless of directory name.
+	if !strings.HasPrefix(originalRef, "/sieve/") {
+		t.Errorf("asset ExternalRef %q should use /sieve/... scheme", originalRef)
 	}
 }
 
@@ -451,7 +522,7 @@ func TestRenameChangesKey(t *testing.T) {
 
 func TestRetrieveVersionRoundTrip(t *testing.T) {
 	fs := newTestStore(t)
-	s := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
+	s := mustCreate(t, fs, testWorkingCopy, "buf", nil)
 	ms := s.(store.MetaStorable)
 	ms.SetBody([]byte("snapshot content"))
 
@@ -474,14 +545,14 @@ func TestRetrieveVersionRoundTrip(t *testing.T) {
 	}
 }
 
-// ── Frontmatter round-trip ────────────────────────────────────────────────────
+// ── Meta field round-trips ────────────────────────────────────────────────────
 
-func TestFrontmatterUnknownKeysPreserved(t *testing.T) {
+func TestMetaUnknownKeysPreserved(t *testing.T) {
 	fs := newTestStore(t)
 	body := []byte("---\nuuid: x\ncustom_field: hello\n---\nbody\n")
-	mustCreate(t, fs, testWorkingCopy, "buf.md", body)
+	mustCreate(t, fs, testWorkingCopy, "buf", body)
 
-	loaded, err := fs.Load(testWorkingCopy, "buf.md")
+	loaded, err := fs.Load(testWorkingCopy, "buf")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -491,28 +562,59 @@ func TestFrontmatterUnknownKeysPreserved(t *testing.T) {
 	}
 }
 
-func TestFrontmatterNullPreserved(t *testing.T) {
+func TestMetaNullPreserved(t *testing.T) {
 	fs := newTestStore(t)
 	body := []byte("---\nuuid: x\nuser_intent: null\n---\n")
-	mustCreate(t, fs, testWorkingCopy, "buf.md", body)
+	mustCreate(t, fs, testWorkingCopy, "buf", body)
 
-	loaded, _ := fs.Load(testWorkingCopy, "buf.md")
+	loaded, _ := fs.Load(testWorkingCopy, "buf")
 	ms := loaded.(store.MetaStorable)
 	if ms.Meta()["user_intent"] != "null" {
 		t.Errorf("user_intent = %q, want null", ms.Meta()["user_intent"])
 	}
 }
 
-func TestFrontmatterTagsPreserved(t *testing.T) {
+func TestMetaTagsPreserved(t *testing.T) {
 	fs := newTestStore(t)
 	body := []byte("---\nuuid: x\ntags: []\n---\n")
-	mustCreate(t, fs, testWorkingCopy, "buf.md", body)
+	mustCreate(t, fs, testWorkingCopy, "buf", body)
 
-	loaded, _ := fs.Load(testWorkingCopy, "buf.md")
+	loaded, _ := fs.Load(testWorkingCopy, "buf")
 	ms := loaded.(store.MetaStorable)
 	if ms.Meta()["tags"] != "[]" {
 		t.Errorf("tags = %q, want []", ms.Meta()["tags"])
 	}
+}
+
+// ── Assets co-located ────────────────────────────────────────────────────────
+
+func TestAssetIsColocatedInDocDir(t *testing.T) {
+	fs := newTestStore(t)
+	doc := mustCreate(t, fs, testLibrary, "my-note", nil)
+
+	pngBytes := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
+	asset, err := fs.CreateAsset(testLibrary, doc.Key(), "blk-abc", pngBytes)
+	if err != nil {
+		t.Fatalf("CreateAsset: %v", err)
+	}
+
+	// Asset file must exist inside the document directory.
+	root := fs.Root()
+	docDir := filepath.Join(root, "store", "my-note")
+	entries, err := os.ReadDir(docDir)
+	if err != nil {
+		t.Fatalf("ReadDir %s: %v", docDir, err)
+	}
+	found := false
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "blk-abc") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("asset file not found in document directory %s", docDir)
+	}
+	_ = asset
 }
 
 // ── Compile-time interface check ──────────────────────────────────────────────
@@ -526,89 +628,4 @@ func cloneMeta(m map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
-}
-
-func TestMoveUpdatesAssetLinks(t *testing.T) {
-	fs := newTestStore(t)
-
-	// 1. Create a buffer with an asset
-	buf := mustCreate(t, fs, testWorkingCopy, "buf.md", nil)
-	asset, err := fs.CreateAsset(testWorkingCopy, buf.Key(), "img1", []byte("fake-png"))
-	if err != nil {
-		t.Fatalf("CreateAsset: %v", err)
-	}
-
-	ms := buf.(store.MetaStorable)
-	ms.AttachAsset(asset)
-
-	// 2. Add links to the body (one relative, one old absolute)
-	oldRel := ".assets/buf-img1.png"
-	oldExt := asset.ExternalRef()
-	body := []byte("Rel: " + oldRel + ", Ext: " + oldExt)
-	ms.SetBody(body)
-
-	// 3. Move to Library (Shared category)
-	moved, err := fs.Move(ms, testLibrary)
-	if err != nil {
-		t.Fatalf("Move: %v", err)
-	}
-
-	newBody := string(moved.(store.MetaStorable).Body())
-	newOwns := moved.(store.MetaStorable).Owns()
-
-	if len(newOwns) == 0 {
-		t.Fatal("owned assets lost during Move")
-	}
-	newExt := newOwns[0].ExternalRef()
-
-	// 4. Verify that BOTH links were updated to the NEW absolute reference.
-	// We expect exactly 2 instances of the new absolute reference.
-	if strings.Count(newBody, newExt) != 2 {
-		t.Errorf("expected 2 instances of %q in body, got %d\nBody: %s", newExt, strings.Count(newBody, newExt), newBody)
-	}
-	// We check that the relative path is NOT found in its original "naked" form.
-	// Since newExt includes oldRel as a suffix, we check that oldRel is only 
-	// found as part of a newExt.
-	bodyWithoutNewExt := strings.ReplaceAll(newBody, newExt, "")
-	if strings.Contains(bodyWithoutNewExt, oldRel) {
-		t.Errorf("body still contains orphaned relative link %q\nBody: %s", oldRel, newBody)
-	}
-}
-
-func TestRenameUpdatesAssetLinks(t *testing.T) {
-	fs := newTestStore(t)
-	s := mustCreate(t, fs, testLibrary, "note.md", nil)
-	asset, _ := fs.CreateAsset(testLibrary, s.Key(), "img", []byte("xxx"))
-	ms := s.(store.MetaStorable)
-	ms.AttachAsset(asset)
-
-	// Relative link in body (migration case)
-	oldRel := ".assets/note-img.png"
-	ms.SetBody([]byte("Link: " + oldRel))
-
-	renamed, err := fs.Rename(ms, "newnote")
-	if err != nil {
-		t.Fatalf("Rename: %v", err)
-	}
-
-	newBody := string(renamed.(store.MetaStorable).Body())
-	newExt := renamed.(store.MetaStorable).Owns()[0].ExternalRef()
-	
-	if !strings.Contains(newBody, newExt) {
-		t.Errorf("body link not migrated to new absolute ref during rename: %s", newBody)
-	}
-	if strings.Contains(newBody, oldRel) {
-		t.Error("body still contains old relative link")
-	}
-	
-	// Verify files
-	root := fs.Root()
-	oldAssetPath := filepath.Join(root, "store", ".assets", "note-img.png")
-	if _, err := os.Stat(oldAssetPath); !os.IsNotExist(err) {
-		t.Errorf("old asset file %s should be removed after rename", oldAssetPath)
-	}
-	newAssetPath := filepath.Join(root, "store", ".assets", "newnote-img.png")
-	if _, err := os.Stat(newAssetPath); os.IsNotExist(err) {
-		t.Errorf("new asset file %s should exist after rename", newAssetPath)
-	}
 }

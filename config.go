@@ -55,6 +55,12 @@ func (c GlobalConfig) Save() error {
 // ValidateStore checks if a directory looks like a Sieve store without
 // creating any files.
 func ValidateStore(path string) error {
+	// 1. Join the path properly for your OS (handles / vs \)
+	localDevDirectory := filepath.Join(path, "main.go")
+	if _, err := os.Stat(localDevDirectory); err == nil {
+		fmt.Printf("Directory contains main.go - looks like dev dir!")
+		return fmt.Errorf("looks like the dev directory, not a store")
+	}
 	storePath := filepath.Join(path, "store")
 	info, err := os.Stat(storePath)
 	if err != nil {

@@ -54,7 +54,6 @@
 
   var currentEditor = null
   var currentUuid = ''
-  var currentPath = ''
   var currentMountEl = null
   var currentMode = 'wysiwyg'
   var tabModes = {}
@@ -93,8 +92,7 @@
     fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid))
       .then(function (r) { return r.json() })
       .then(function (data) {
-        currentPath = data.path || ''
-        window.__stashActiveTabPath = data.path || ''
+        window.__stashActiveTabUuid = uuid
         lastSyncedBody = data.body || ''
 
         var isMarkdown = currentMode === 'markdown' || data.mode === 'markdown' || uuid.startsWith('prompt:')
@@ -376,11 +374,11 @@
     if (!askDialog) return
     // Build context NOW while editor still has focus and selection intact.
     // showModal() will steal DOM focus which can collapse the browser selection.
-    pendingAskCtx = window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentPath)
+    pendingAskCtx = window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
     var label = askDialog.querySelector('.ask-popup__label')
     var textarea = askDialog.querySelector('.ask-popup__input')
     var ctxLabel = (pendingAskCtx && pendingAskCtx.contextLabel) || ''
-    var fileLabel = currentPath ? currentPath.split('/').pop() : 'Document'
+    var fileLabel = 'Document' // UUID based label could be added if needed, but for now 'Document' is safer without path
     label.textContent = (ctxLabel && ctxLabel !== 'Document' ? ctxLabel + ' — ' + fileLabel : fileLabel) + ' Inquiry'
     textarea.value = ''
     askDialog.showModal()
@@ -491,7 +489,7 @@
 
     var blkId = 'ai-' + Math.random().toString(16).substring(2, 6)
     var job = { docId: currentUuid, blkId: blkId }
-    var ctx = precomputedCtx || window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentPath)
+    var ctx = precomputedCtx || window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
     var lines = question ? question.split('\n') : []
 
     // Resolve insert position AFTER buildAiContext, which may have wrapped the selection
@@ -1123,6 +1121,15 @@
   }
 
   // ── Export ────────────────────────────────────────────────────────────────────
+
+  document.body.addEventListener('editor:restore', function (e) {
+    var data = e.detail;
+    if (data && data.body) {
+      if (window.sieveEditor && window.sieveEditor.setContent) {
+        window.sieveEditor.setContent(data.body);
+      }
+    }
+  });
 
   window.sieveInitEditor = initEditor
 

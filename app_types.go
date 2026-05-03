@@ -50,7 +50,6 @@ type DocumentMetaDTO struct {
 type BufferDTO struct {
 	Kind     string          `json:"kind"`
 	UUID     string          `json:"uuid"`
-	Path     string          `json:"path"`
 	Slug     string          `json:"slug"`
 	Body     string          `json:"body"`
 	Meta     DocumentMetaDTO `json:"meta"`
@@ -61,7 +60,6 @@ type BufferDTO struct {
 type NoteDTO struct {
 	Kind     string          `json:"kind"`
 	UUID     string          `json:"uuid"`
-	Path     string          `json:"path"`
 	Slug     string          `json:"slug"`
 	Body     string          `json:"body"`
 	Meta     DocumentMetaDTO `json:"meta"`
@@ -180,7 +178,6 @@ func toBufferDTO(b *sieve.Buffer) BufferDTO {
 	return BufferDTO{
 		Kind:     "buffer",
 		UUID:     b.UUID(),
-		Path:     b.Path(),
 		Slug:     b.Slug(),
 		Body:     string(b.Body()),
 		Meta:     toDocumentMetaDTO(b.Meta(), b.Storable().Owns()),
@@ -194,7 +191,6 @@ func toNoteBufferDTO(n *sieve.Note) BufferDTO {
 	return BufferDTO{
 		Kind:     "note",
 		UUID:     n.UUID(),
-		Path:     n.Path(),
 		Slug:     n.Slug(),
 		Body:     string(n.Body()),
 		Meta:     toDocumentMetaDTO(n.Meta(), n.Storable().Owns()),
@@ -206,7 +202,6 @@ func toNoteDTO(n *sieve.Note) NoteDTO {
 	return NoteDTO{
 		Kind:     "note",
 		UUID:     n.UUID(),
-		Path:     n.Path(),
 		Slug:     n.Slug(),
 		Body:     string(n.Body()),
 		Meta:     toDocumentMetaDTO(n.Meta(), n.Storable().Owns()),

@@ -1,118 +1,117 @@
 package filestore
 
 import (
-	"reflect"
 	"testing"
 )
 
-func TestFrontmatterRoundTrip(t *testing.T) {
-	tests := []struct {
-		name string
-		meta map[string]string
-		body string
-	}{
-		{
-			name: "Simple",
-			meta: map[string]string{
-				"uuid":   "123",
-				"status": "filed",
-			},
-			body: "hello world\n",
-		},
-		{
-			name: "Colon in value (The Bug)",
-			meta: map[string]string{
-				"summary": "Task: Complete this",
-			},
-			body: "body\n",
-		},
-		{
-			name: "Tags (Arrays)",
-			meta: map[string]string{
-				"tags": "[leap, scheme]",
-			},
-			body: "body\n",
-		},
-		{
-			name: "Dates",
-			meta: map[string]string{
-				"created": "2026-04-16T15:05:26",
-			},
-			body: "body\n",
-		},
-		{
-			name: "Nulls",
-			meta: map[string]string{
-				"user_intent": "null",
-			},
-			body: "body\n",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Serialise
-			out := serialiseFrontmatter(tt.meta, []byte(tt.body))
-
-			// Parse back
-			gotMeta, gotBody, err := parseFrontmatter(out)
-			if err != nil {
-				t.Fatalf("parseFrontmatter error: %v\nRaw output:\n%s", err, string(out))
-			}
-
-			if !reflect.DeepEqual(gotMeta, tt.meta) {
-				t.Errorf("meta mismatch\ngot:  %+v\nwant: %+v\nRaw output:\n%s", gotMeta, tt.meta, string(out))
-			}
-
-			if string(gotBody) != tt.body {
-				t.Errorf("body mismatch\ngot:  %q\nwant: %q", string(gotBody), tt.body)
-			}
-		})
-	}
-}
-
-func TestRecoveryMode(t *testing.T) {
-	// A truly unfixable YAML block (unclosed bracket).
-	corruptData := []byte("---\ninvalid: [unclosed bracket\n---\nraw body")
-
-	// 1. Simulate buildStorable detecting the error.
-	_, _, err := parseFrontmatter(corruptData)
-	if err == nil {
-		t.Fatal("expected parsing error for corrupt YAML")
-	}
-
-	// In graph.go, we would return a MetaStorable with status: error and the raw body.
-	meta := map[string]string{
-		"status": "error",
-	}
-	body := corruptData // We pass the WHOLE file as the body in error mode.
-
-	// 2. Verify serialiseFrontmatter preserves the raw content for manual repair.
-	out := serialiseFrontmatter(meta, body)
-	if string(out) != string(corruptData) {
-		t.Errorf("recovery serialisation failed\ngot:  %s\nwant: %s", string(out), string(corruptData))
-	}
-}
-
-func TestAutoResurrection(t *testing.T) {
-	// The exact "infected" content from the user's report.
-	infected := []byte(`---
-summary: Design spec for LEAP Scheme Assignment data provider: scheme dataset lifecycle
----
-Body content`)
-
-	meta, body, err := parseFrontmatter(infected)
+// TestParseFrontmatterBasic verifies that parseFrontmatter correctly splits a
+// YAML frontmatter seed body (used by createMeta and the migration tool).
+func TestParseFrontmatterBasic(t *testing.T) {
+	data := []byte("---\nuuid: abc123\nstatus: unfiled\n---\nhello world\n")
+	meta, body, err := parseFrontmatter(data)
 	if err != nil {
-		t.Fatalf("Auto-resurrection failed: %v", err)
+		t.Fatalf("parseFrontmatter: %v", err)
+	}
+	if meta["uuid"] != "abc123" {
+		t.Errorf("uuid = %q, want abc123", meta["uuid"])
+	}
+	if meta["status"] != "unfiled" {
+		t.Errorf("status = %q, want unfiled", meta["status"])
+	}
+	if string(body) != "hello world\n" {
+		t.Errorf("body = %q, want 'hello world\\n'", body)
+	}
+}
+
+func TestParseFrontmatterNoFrontmatter(t *testing.T) {
+	data := []byte("plain body")
+	meta, body, err := parseFrontmatter(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(meta) != 0 {
+		t.Errorf("expected empty meta, got %v", meta)
+	}
+	if string(body) != "plain body" {
+		t.Errorf("body = %q, want 'plain body'", body)
+	}
+}
+
+func TestParseFrontmatterNullValue(t *testing.T) {
+	data := []byte("---\nuser_intent: null\n---\n")
+	meta, _, err := parseFrontmatter(data)
+	if err != nil {
+		t.Fatalf("parseFrontmatter: %v", err)
+	}
+	if meta["user_intent"] != "null" {
+		t.Errorf("user_intent = %q, want null", meta["user_intent"])
+	}
+}
+
+func TestParseFrontmatterTags(t *testing.T) {
+	data := []byte("---\ntags: []\n---\n")
+	meta, _, err := parseFrontmatter(data)
+	if err != nil {
+		t.Fatalf("parseFrontmatter: %v", err)
+	}
+	if meta["tags"] != "[]" {
+		t.Errorf("tags = %q, want []", meta["tags"])
+	}
+}
+
+// TestDocMetaRoundTrip verifies that docMetaToMap / mapToDocMeta round-trips
+// all standard fields correctly.
+func TestDocMetaRoundTrip(t *testing.T) {
+	original := &docMeta{
+		UUID:        "test-uuid",
+		Type:        "document",
+		Status:      "filed",
+		Version:     5,
+		FocusCount:  3,
+		DisplayName: "My Note",
+		Tags:        []string{"go", "testing"},
+		Created:     "2026-01-01T00:00:00",
+		Modified:    "2026-01-02T00:00:00",
 	}
 
-	if meta["summary"] != "Design spec for LEAP Scheme Assignment data provider: scheme dataset lifecycle" {
-		t.Errorf("summary mismatch: %q", meta["summary"])
+	m := docMetaToMap(original)
+	if m["uuid"] != "test-uuid" {
+		t.Errorf("uuid = %q, want test-uuid", m["uuid"])
 	}
-	if meta["_recovery"] == "" {
-		t.Error("expected _recovery metadata to be present")
+	if m["version"] != "5" {
+		t.Errorf("version = %q, want 5", m["version"])
 	}
-	if string(body) != "Body content" {
-		t.Errorf("body mismatch: %q", string(body))
+	if m["tags"] != "[go, testing]" {
+		t.Errorf("tags = %q, want [go, testing]", m["tags"])
+	}
+
+	restored := mapToDocMeta(m)
+	if restored.UUID != original.UUID {
+		t.Errorf("UUID mismatch: %q vs %q", restored.UUID, original.UUID)
+	}
+	if restored.Version != original.Version {
+		t.Errorf("Version mismatch: %d vs %d", restored.Version, original.Version)
+	}
+	if restored.FocusCount != original.FocusCount {
+		t.Errorf("FocusCount mismatch: %d vs %d", restored.FocusCount, original.FocusCount)
+	}
+}
+
+// TestDocMetaExtraFieldsPreserved verifies that unknown fields round-trip via Extra.
+func TestDocMetaExtraFieldsPreserved(t *testing.T) {
+	m := map[string]string{
+		"uuid":         "x",
+		"version":      "1",
+		"created":      "2026-01-01T00:00:00",
+		"modified":     "2026-01-01T00:00:00",
+		"custom_field": "hello",
+	}
+	dm := mapToDocMeta(m)
+	if dm.Extra["custom_field"] != "hello" {
+		t.Errorf("extra custom_field = %q, want hello", dm.Extra["custom_field"])
+	}
+	restored := docMetaToMap(dm)
+	if restored["custom_field"] != "hello" {
+		t.Errorf("custom_field not preserved in round-trip: %q", restored["custom_field"])
 	}
 }

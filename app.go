@@ -18,6 +18,7 @@ import (
 
 	"sieve/logger"
 	"sieve/sieve"
+	"sieve/store"
 	"sieve/store/filestore"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -36,6 +37,7 @@ type App struct {
 	State           *sieve.StateService
 	Prompts         *sieve.PromptService
 	AI              *sieve.AIService
+	FileStore       *filestore.FileStore
 
 	themesFS fs.FS
 	hub      *sseHub
@@ -176,12 +178,17 @@ func (a *App) startup(ctx context.Context) {
 		logger.Error("filestore init failed", "err", err)
 		return
 	}
+	a.FileStore = fs
 	a.ServiceProvider.Init(fs, a.storePath)
 	a.Documents = a.ServiceProvider.Documents
 	a.Assets = a.ServiceProvider.Assets
 	a.State = a.ServiceProvider.State
 	a.Prompts = a.ServiceProvider.Prompts
 	a.AI = a.ServiceProvider.AI
+
+	if err := fs.RunMigrationIfNeeded([]store.Category{sieve.Library, sieve.WorkingCopy}); err != nil {
+		logger.Error("store migration failed", "err", err)
+	}
 
 	settings := a.State.LoadSettings()
 
@@ -285,7 +292,7 @@ type StoreInfo struct {
 }
 
 func (a *App) GetStoreInfo() StoreInfo {
-	if a.storePath == "" {
+	if a.storePath == "" || a.State == nil {
 		logger.Warn("GetStoreInfo: store not open")
 		return StoreInfo{
 			ThemeVars: sieve.ThemeVars{},
@@ -525,27 +532,19 @@ func (a *App) GetLinkTitle(url string) (string, error) {
 
 	var f func(*html.Node)
 	f = func(n *html.Node) {
-		// Check if the node is an element named "title"
-		logger.Info("Looking at Node %s", n.Data)
-		// If we found the title, stop searching
 		if title != "" {
 			return
 		}
-
-		// Check if current node is the <title> tag
 		if n.Type == html.ElementNode && n.Data == "title" && n.FirstChild != nil {
 			title = n.FirstChild.Data
 			return
 		}
-
-		// Traverse the children of the current node
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			f(c)
 		}
-
 	}
 	f(doc)
-	logger.Info("Returning title for %s", url)
+	logger.Info("Returning title", "url", url, "title", title)
 	return strings.TrimSpace(title), nil
 }
 
@@ -559,7 +558,7 @@ func (a *App) ShowInFilesByID(id string) error {
 	}
 	if a.Documents != nil {
 		if doc, err := a.Documents.LoadByUUID(id); err == nil {
-			return a.ShowInFiles(doc.Path())
+			return a.ShowInFiles(doc.Storable().ExternalRef())
 		}
 	}
 	// Folder: id is an ExternalRef (e.g. "store/my-folder") — resolvePath handles it.

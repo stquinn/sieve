@@ -21,7 +21,7 @@ type Note struct {
 func newNote(s store.MetaStorable) *Note {
 	note := &Note{
 		s:    s,
-		slug: strings.TrimSuffix(filepath.Base(s.Key()), filepath.Ext(s.Key())),
+		slug: strings.TrimSuffix(filepath.Base(s.Path()), filepath.Ext(s.Path())),
 		kind: KindNote,
 	}
 	// Only set as "filed" if we haven't already marked it as an error file.
@@ -44,10 +44,6 @@ func (n *Note) UUID() string {
 	}
 	return n.s.Key()
 }
-
-// Path returns the store-relative path (ExternalRef) — e.g. "store/my-note.md"
-// or "store/sub/my-note.md". This is the identifier used by the frontend.
-func (n *Note) Path() string { return n.s.ExternalRef() }
 
 // Body returns the pure markdown content with frontmatter stripped.
 func (n *Note) Body() []byte { return n.s.Body() }

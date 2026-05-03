@@ -13,6 +13,7 @@ type mockStorable struct {
 }
 
 func (m *mockStorable) Key() string                { return m.key }
+func (m *mockStorable) Path() string               { return m.key }
 func (m *mockStorable) Category() store.Category   { return m.category }
 func (m *mockStorable) Body() []byte               { return m.body }
 func (m *mockStorable) ExternalRef() string        { return "" }
@@ -62,6 +63,11 @@ func (m *mockStore) CreateOrLoadFolder(cat store.Category, name string) (store.F
 func (m *mockStore) LoadFolder(cat store.Category, name string) (store.FolderStorable, error) { return nil, nil }
 func (m *mockStore) RenameFolder(s store.FolderStorable, name string) (store.FolderStorable, error) { return nil, nil }
 func (m *mockStore) ListFrom(categories []store.Category, prefix string) ([]store.Storable, error) { return nil, nil }
+func (m *mockStore) LoadByUUID(uuid string) (store.Storable, error) { return nil, nil }
+func (m *mockStore) LoadAsset(cat store.Category, parentKey, assetKey string) (store.AssetStorable, error) {
+	return nil, nil
+}
+func (m *mockStore) SaveMeta(s store.MetaStorable) (store.MetaStorable, error) { return nil, nil }
 
 func TestPromptService(t *testing.T) {
 	st := newMockStore()

@@ -131,6 +131,7 @@
     </style>
 </head>
 <body hx-ext="sse" sse-connect="/sse">
+    {{if .StoreRoot}}
     <div id="app-root" class="theme-{{.ThemeName}} tier-{{.Tier}}" style="--sidebar-w: {{if .ShowSidebar}}{{.SidebarWidth}}{{else}}0{{end}}px; --meta-w: {{if .ShowMeta}}{{.MetaWidth}}{{else}}0{{end}}px;">
         
         <div id="sidebar-wrapper" style="width: var(--sidebar-w); display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; border-right: 1px solid var(--theme-border);">
@@ -189,6 +190,51 @@
             </div>
         </div>
     </div>
+    {{else}}
+    <div class="bootstrap-screen">
+        <div class="bootstrap-card">
+            <h1>Welcome to Sieve</h1>
+            <p>Sieve is an AI-augmented knowledge base. To begin, select an existing store or create a new one.</p>
+            
+            <div class="bootstrap-manual">
+                <p style="font-size: 0.9rem; margin-bottom: 0.5rem;">Initialize a store in a specific path:</p>
+                <div style="display: flex; gap: 0.5rem;">
+                    <input type="text" id="manual-path" class="bootstrap-input" placeholder="~/Documents/notes" style="flex: 1;">
+                    <button class="btn btn--primary" onclick="sieveInitManual()">Init</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+        window.sieveSelectVault = async function() {
+            try {
+                const path = await window.go.main.App.SelectVault();
+                if (path) window.location.reload();
+            } catch (e) {
+                console.error(e);
+            }
+        };
+        window.sieveCreateVault = async function() {
+            try {
+                const path = await window.go.main.App.CreateVault();
+                if (path) window.location.reload();
+            } catch (e) {
+                console.error(e);
+            }
+        };
+        window.sieveInitManual = async function() {
+            const path = document.getElementById('manual-path').value;
+            if (path) {
+                try {
+                    await window.go.main.App.InitVault(path);
+                    window.location.reload();
+                } catch (e) {
+                    alert(e);
+                }
+            }
+        };
+    </script>
+    {{end}}
 
     <!-- Scripts -->
     <script src="/static/vendor/htmx-bundle.js"></script>
@@ -405,6 +451,12 @@
             link.href = '/theme.css?t=' + new Date().getTime();
         }
     };
+
+    document.body.addEventListener('settings:changed', function() {
+        var dlg = document.getElementById('settings-dialog');
+        if (dlg) dlg.close();
+        window.sieveOnSettingsChanged();
+    });
 
     window.sieveToggleSearch = function() {
         if (window.sieveEditor && window.sieveEditor.toggleSearch) window.sieveEditor.toggleSearch();

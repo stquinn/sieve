@@ -10,15 +10,9 @@ import (
 )
 
 // scanCategory walks the category directory and returns a flat list of all
-// Storables found (MetaStorable for .md files, AssetStorable for binary files
-// in assets subdirectories). Directories are returned as FolderStorable values
-// with their Owns list populated.
-//
-// Hidden entries (dot-prefixed names other than recognised asset dirs) are
-// skipped. The .history directory is always skipped.
-//
-// prefix restricts results to entries whose key begins with prefix. An empty
-// prefix returns all entries.
+// Sieve-managed nodes. A directory is a node if it contains a .meta file.
+// Directories without .meta are ignored. Dot-prefixed entries are skipped.
+// Folders surface their children in the flat list for caller convenience.
 func (fs *FileStore) scanCategory(cat store.Category, prefix string) ([]store.Storable, error) {
 	root := fs.categoryDir(cat)
 	infos, err := os.ReadDir(root)
@@ -31,203 +25,177 @@ func (fs *FileStore) scanCategory(cat store.Category, prefix string) ([]store.St
 
 	var results []store.Storable
 	for _, info := range infos {
+		if !info.IsDir() {
+			continue
+		}
 		name := info.Name()
-		// Skip hidden entries except .assets (the canonical asset directory).
-		if strings.HasPrefix(name, ".") && name != ".assets" {
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		if prefix != "" && !strings.HasPrefix(name, prefix) {
 			continue
 		}
 
-		key := name
-		if prefix != "" && !strings.HasPrefix(key, prefix) {
-			continue
+		metaPath := filepath.Join(root, name, ".meta")
+		metaType, err := readMetaType(metaPath)
+		if err != nil {
+			continue // no .meta = not a Sieve node
 		}
 
-		if info.IsDir() {
-			folder, err := fs.scanFolder(cat, key)
+		switch metaType {
+		case "folder":
+			folder, err := fs.scanFolderNode(cat, name)
 			if err != nil {
 				continue
 			}
 			results = append(results, folder)
-			// Also surface the folder's children in the flat list so callers
-			// can iterate all leaf nodes without recursion.
 			results = append(results, folder.Owns()...)
-		} else {
-			s := fs.buildStorable(cat, key, root, true)
+		case "document":
+			dm, err := readMetaJSONFromPath(metaPath)
+			if err != nil {
+				continue
+			}
+			s := fs.buildDocStorable(cat, name, dm, false)
 			if s != nil {
 				results = append(results, s)
 			}
 		}
 	}
 
-	// Sort by key for deterministic ordering.
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].Key() < results[j].Key()
 	})
 	return results, nil
 }
 
-// scanFolder reads a subdirectory and returns a fileFolderStorable whose Owns
-// list contains every Storable in that directory (non-recursive: one level).
-func (fs *FileStore) scanFolder(cat store.Category, dirKey string) (*fileFolderStorable, error) {
+// scanFolderNode reads a folder directory and returns a fileFolderStorable
+// whose Owns list contains every child Sieve node (recursive).
+func (fs *FileStore) scanFolderNode(cat store.Category, dirKey string) (*fileFolderStorable, error) {
 	dirPath := filepath.Join(fs.categoryDir(cat), dirKey)
 	infos, err := os.ReadDir(dirPath)
 	if err != nil {
 		return nil, err
 	}
 
+	var folderUUID string
+	if meta, err := readFolderMetaJSONFromPath(filepath.Join(dirPath, ".meta")); err == nil {
+		folderUUID = meta.UUID
+	}
+
 	var owns []store.Storable
 	for _, info := range infos {
-		if info.IsDir() {
-			continue // only one level of folders for now
+		if !info.IsDir() {
+			continue
 		}
 		name := info.Name()
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
+
 		childKey := dirKey + "/" + name
-		s := fs.buildStorable(cat, childKey, fs.categoryDir(cat), true)
-		if s != nil {
-			owns = append(owns, s)
+		childMetaPath := filepath.Join(dirPath, name, ".meta")
+		metaType, err := readMetaType(childMetaPath)
+		if err != nil {
+			continue
+		}
+
+		switch metaType {
+		case "document":
+			dm, err := readMetaJSONFromPath(childMetaPath)
+			if err != nil {
+				continue
+			}
+			s := fs.buildDocStorable(cat, childKey, dm, false)
+			if s != nil {
+				owns = append(owns, s)
+			}
+		case "folder":
+			sub, err := fs.scanFolderNode(cat, childKey)
+			if err == nil && sub != nil {
+				owns = append(owns, sub)
+			}
 		}
 	}
 
-	extRef := fs.externalRef(cat, dirKey)
 	return &fileFolderStorable{
 		fileStorable: fileStorable{
-			key:      dirKey,
+			key:      folderUUID,
+			path:     dirKey,
 			category: cat,
-			extRef:   extRef,
+			extRef:   fs.externalRef(cat, dirKey),
 		},
 		owns: owns,
 	}, nil
 }
 
-// buildStorable reads a single file by key within the category directory and
-// returns the appropriate Storable type:
-//
-//   - .md files                → fileMetaStorable (with parsed frontmatter)
-//   - files in an assets/ dir  → fileAssetStorable (encoding inferred)
-//   - other files              → fileStorable (plain bytes, e.g. JSON)
-//
-// withVersions controls whether version history is loaded from .history.
-// Pass false for scan/list operations (avoids one filepath.Glob per document).
-// Pass true only when loading a single document directly via Load.
-//
-// Returns nil if the file cannot be read or is not relevant (e.g. a .tmp file).
-func (fs *FileStore) buildStorable(cat store.Category, key string, catDir string, withVersions bool) store.Storable {
-	if strings.HasSuffix(key, ".tmp") {
-		return nil
+// buildDocStorable constructs a fileMetaStorable from a pre-read docMeta.
+// withVersions controls whether .history is scanned (false for bulk List calls).
+func (fs *FileStore) buildDocStorable(cat store.Category, key string, dm *docMeta, withVersions bool) store.Storable {
+	body, _ := os.ReadFile(fs.contentPath(cat, key, dm.UUID))
+
+	var versions []store.VersionRef
+	if withVersions {
+		versions = fs.loadVersions(dm.UUID, cat, key)
 	}
 
-	absPath := filepath.Join(catDir, key)
-	data, err := os.ReadFile(absPath)
-	if err != nil {
-		return nil
-	}
+	fs.indexSet(dm.UUID, uuidEntry{cat: cat, dirKey: key})
+	owns := fs.scanDocAssets(cat, key, dm.UUID)
 
-	extRef := fs.externalRef(cat, key)
-	// Asset files: any file whose key contains an assets segment.
-	if isAssetKey(key) {
-		enc := inferEncoding(data)
-		return &fileAssetStorable{
-			fileStorable: fileStorable{
-				key:      key,
-				category: cat,
-				body:     data,
-				extRef:   extRef,
-			},
-			encoding: enc,
-		}
-	}
-
-	// Markdown documents.
-	if strings.HasSuffix(key, ".md") {
-		meta, body, err := parseFrontmatter(data)
-		if err != nil {
-			// Unreadable frontmatter — return as MetaStorable in an error state
-			// so it still appears in the UI (with a warning) instead of disappearing.
-			return &fileMetaStorable{
-				fileStorable: fileStorable{
-					key:      key,
-					category: cat,
-					body:     data, // Provide the raw unparsed data for manual repair.
-					extRef:   extRef,
-				},
-				meta: map[string]string{
-					"status": "error",
-				},
-			}
-		}
-		uuid := meta["uuid"]
-		var versions []store.VersionRef
-		if withVersions {
-			versions = fs.loadVersions(uuid, cat)
-		}
-
-		var owns []store.Storable
-		if assetsStr := meta["assets"]; assetsStr != "" && assetsStr != "[]" {
-			assetsStr = strings.TrimPrefix(assetsStr, "[")
-			assetsStr = strings.TrimSuffix(assetsStr, "]")
-
-			for _, part := range strings.Split(assetsStr, ",") {
-				link := strings.TrimSpace(part)
-				if link == "" {
-					continue
-				}
-
-				// Resolve absolute store-root references or markdown-relative paths
-				var assetKey string
-				if strings.HasPrefix(link, "store/") || strings.Contains(link, "/buffers/") {
-					// It's an ExternalRef. We need the true Category-relative Key.
-					if strings.HasPrefix(link, cat.Key+"/") {
-						assetKey = strings.TrimPrefix(link, cat.Key+"/")
-					} else if cat.Isolation == store.Isolated && strings.HasPrefix(link, fs.hostname+"/"+cat.Key+"/") {
-						assetKey = strings.TrimPrefix(link, fs.hostname+"/"+cat.Key+"/")
-					} else {
-						// Link belongs to another category; skip ownership graph inclusion.
-						continue
-					}
-				} else {
-					assetKey = filepath.Join(filepath.Dir(key), link)
-				}
-
-				assetKey = filepath.ToSlash(filepath.Clean(assetKey))
-				if isAssetKey(assetKey) {
-					child := fs.buildStorable(cat, assetKey, catDir, true)
-					if child != nil {
-						owns = append(owns, child)
-					}
-				}
-			}
-		}
-
-		return &fileMetaStorable{
-			fileStorable: fileStorable{
-				key:      key,
-				category: cat,
-				body:     body,
-				extRef:   extRef,
-				versions: versions,
-			},
-			meta: meta,
-			owns: owns,
-		}
-	}
-
-	// Plain files (JSON, text — used for State category).
-	return &fileStorable{
-		key:      key,
-		category: cat,
-		body:     data,
-		extRef:   extRef,
+	return &fileMetaStorable{
+		fileStorable: fileStorable{
+			key:      dm.UUID,
+			path:     key,
+			category: cat,
+			body:     body,
+			extRef:   fs.externalRef(cat, key),
+			versions: versions,
+		},
+		meta: docMetaToMap(dm),
+		owns: owns,
 	}
 }
 
-// isAssetKey reports whether key refers to a file inside an assets subdirectory.
-// The recognised patterns are:
-//
-//	.assets/...     — Universal asset storage
-func isAssetKey(key string) bool {
-	return strings.HasPrefix(key, ".assets/") ||
-		strings.Contains(key, "/.assets/")
+// scanDocAssets scans a document directory for co-located asset files and
+// returns them as AssetStorables. Skips .meta, {uuid}.md, dot-dirs, and
+// any directory entries.
+func (fs *FileStore) scanDocAssets(cat store.Category, key string, uuid string) []store.Storable {
+	dir := fs.docDir(cat, key)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	contentFile := uuid + ".md"
+	var assets []store.Storable
+	for _, e := range entries {
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		if e.Name() == ".meta" || e.Name() == contentFile {
+			continue
+		}
+		// Any remaining file is treated as an asset.
+		assetPath := filepath.Join(dir, e.Name())
+		data, err := os.ReadFile(assetPath)
+		if err != nil {
+			continue
+		}
+		assetExtRef := "/sieve/" + uuid + "/" + e.Name()
+		assets = append(assets, &fileAssetStorable{
+			fileStorable: fileStorable{
+				key:      e.Name(),
+				path:     e.Name(),
+				category: cat,
+				body:     data,
+				extRef:   assetExtRef,
+			},
+			encoding: inferEncoding(data),
+		})
+	}
+	return assets
+}
+
+// scanFolder is the legacy folder scan used by CreateOrLoadFolder and
+// LoadFolder. It reads a single-level directory and returns a folder storable.
+func (fs *FileStore) scanFolder(cat store.Category, dirKey string) (*fileFolderStorable, error) {
+	return fs.scanFolderNode(cat, dirKey)
 }

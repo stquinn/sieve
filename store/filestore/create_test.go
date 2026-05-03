@@ -10,8 +10,8 @@ import (
 func TestExplicitCreateMetaText(t *testing.T) {
 	fs := newTestStore(t)
 	body := []byte("---\ntitle: Hello\n---\nBody content")
-	
-	ms, err := fs.CreateMetaText(testWorkingCopy, "note.md", body)
+
+	ms, err := fs.CreateMetaText(testWorkingCopy, "note", body)
 	if err != nil {
 		t.Fatalf("CreateMetaText: %v", err)
 	}
@@ -23,7 +23,7 @@ func TestExplicitCreateMetaText(t *testing.T) {
 		t.Errorf("expected body 'Body content', got %q", string(ms.Body()))
 	}
 	if ms.Meta()["uuid"] == "" {
-		t.Error("expected version 0 to be stamped")
+		t.Error("uuid must be stamped")
 	}
 	if ms.Meta()["version"] != "0" {
 		t.Errorf("expected version 0, got %q", ms.Meta()["version"])
@@ -32,10 +32,11 @@ func TestExplicitCreateMetaText(t *testing.T) {
 
 func TestExplicitCreateAsset(t *testing.T) {
 	fs := newTestStore(t)
-	
+	doc, _ := fs.CreateMetaText(testWorkingCopy, "parent-doc", nil)
+
 	t.Run("PNG_Raw", func(t *testing.T) {
 		png := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
-		as, err := fs.CreateAsset(testWorkingCopy, "", "img.png", png)
+		as, err := fs.CreateAsset(testWorkingCopy, doc.Key(), "blk-img1", png)
 		if err != nil {
 			t.Fatalf("CreateAsset: %v", err)
 		}
@@ -46,7 +47,7 @@ func TestExplicitCreateAsset(t *testing.T) {
 
 	t.Run("Base64_Text", func(t *testing.T) {
 		b64 := []byte("aGVsbG8=") // "hello"
-		as, err := fs.CreateAsset(testWorkingCopy, "", "img.txt", b64)
+		as, err := fs.CreateAsset(testWorkingCopy, doc.Key(), "blk-b64", b64)
 		if err != nil {
 			t.Fatalf("CreateAsset: %v", err)
 		}
@@ -59,7 +60,7 @@ func TestExplicitCreateAsset(t *testing.T) {
 func TestExplicitCreateText(t *testing.T) {
 	fs := newTestStore(t)
 	content := []byte(`{"settings": true}`)
-	
+
 	s, err := fs.CreateText(store.Category{Key: "config", Isolation: store.Isolated}, "settings.json", content)
 	if err != nil {
 		t.Fatalf("CreateText: %v", err)

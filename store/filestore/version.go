@@ -14,48 +14,39 @@ import (
 
 var snapshotRe = regexp.MustCompile(`^(.+)\.(\d+)\.md$`)
 
-// historyDir returns the absolute path of the history directory for a category.
-// The layout mirrors the existing on-disk structure:
-//
-//	Shared   (Library)      → {root}/store/.history/
-//	Isolated (WorkingCopy)  → {root}/{hostname}/.history/
-//	Isolated (State)        → {root}/{hostname}/.history/
-func (fs *FileStore) historyDir(cat store.Category) string {
-	if cat.Isolation == store.Isolated {
-		return filepath.Join(fs.root, fs.hostname, ".history")
-	}
-	return filepath.Join(fs.root, cat.Key, ".history")
+// historyDir returns the absolute path of the .history directory for a
+// document. History is now co-located inside the document directory.
+func (fs *FileStore) historyDir(cat store.Category, key string) string {
+	return filepath.Join(fs.docDir(cat, key), ".history")
 }
 
 // snapshotPath returns the path for a specific version snapshot.
-// Format: {historyDir}/{uuid}.{version}.md
-func (fs *FileStore) snapshotPath(cat store.Category, uuid string, version int) string {
+// Format: {docDir}/.history/{uuid}.{version}.md
+func (fs *FileStore) snapshotPath(cat store.Category, key string, uuid string, version int) string {
 	name := fmt.Sprintf("%s.%d.md", uuid, version)
-	return filepath.Join(fs.historyDir(cat), name)
+	return filepath.Join(fs.historyDir(cat, key), name)
 }
 
-// writeSnapshot persists a full-content snapshot (frontmatter + body) for the
-// given UUID and version number. The snapshot dir is created if missing.
-func (fs *FileStore) writeSnapshot(cat store.Category, uuid string, version int, content []byte) error {
-	dir := fs.historyDir(cat)
+// writeSnapshot persists a body-only snapshot for the given document.
+func (fs *FileStore) writeSnapshot(cat store.Category, key string, uuid string, version int, body []byte) error {
+	dir := fs.historyDir(cat, key)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("filestore: create history dir: %w", err)
 	}
-	path := fs.snapshotPath(cat, uuid, version)
-	if err := os.WriteFile(path, content, 0o644); err != nil {
+	path := fs.snapshotPath(cat, key, uuid, version)
+	if err := os.WriteFile(path, body, 0o644); err != nil {
 		return fmt.Errorf("filestore: write snapshot: %w", err)
 	}
 	return nil
 }
 
-// loadVersions scans the history directory for snapshots belonging to uuid
-// and returns them as VersionRef values, newest-first.
-// Returns nil (not an error) if the history dir does not exist.
-func (fs *FileStore) loadVersions(uuid string, cat store.Category) []store.VersionRef {
+// loadVersions scans the document's .history directory and returns VersionRef
+// values newest-first.
+func (fs *FileStore) loadVersions(uuid string, cat store.Category, key string) []store.VersionRef {
 	if uuid == "" {
 		return []store.VersionRef{}
 	}
-	dir := fs.historyDir(cat)
+	dir := fs.historyDir(cat, key)
 	pattern := filepath.Join(dir, uuid+".*.md")
 	matches, err := filepath.Glob(pattern)
 	if err != nil || len(matches) == 0 {
@@ -90,7 +81,6 @@ func (fs *FileStore) loadVersions(uuid string, cat store.Category) []store.Versi
 		})
 	}
 
-	// Sort newest (highest version number) first.
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].version > entries[j].version
 	})
@@ -102,13 +92,13 @@ func (fs *FileStore) loadVersions(uuid string, cat store.Category) []store.Versi
 	return refs
 }
 
-// pruneVersions deletes the oldest snapshots for uuid, keeping only the
-// newest maxVersions entries. If maxVersions <= 0 nothing is deleted.
-func (fs *FileStore) pruneVersions(cat store.Category, uuid string, maxVersions int) {
+// pruneVersions deletes the oldest snapshots for uuid, keeping the newest
+// maxVersions entries. No-op if maxVersions <= 0.
+func (fs *FileStore) pruneVersions(cat store.Category, key string, uuid string, maxVersions int) {
 	if maxVersions <= 0 || uuid == "" {
 		return
 	}
-	dir := fs.historyDir(cat)
+	dir := fs.historyDir(cat, key)
 	pattern := filepath.Join(dir, uuid+".*.md")
 	matches, err := filepath.Glob(pattern)
 	if err != nil || len(matches) <= maxVersions {
@@ -133,7 +123,6 @@ func (fs *FileStore) pruneVersions(cat store.Category, uuid string, maxVersions 
 		entries = append(entries, entry{version: ver, path: m})
 	}
 
-	// Sort oldest first so we can trim from the front.
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].version < entries[j].version
 	})
@@ -144,54 +133,37 @@ func (fs *FileStore) pruneVersions(cat store.Category, uuid string, maxVersions 
 	}
 }
 
-// deleteAllVersions removes every snapshot file for uuid in any history dir.
-// Called by FileStore.Delete.
-func (fs *FileStore) deleteAllVersions(cat store.Category, uuid string) {
-	if uuid == "" {
-		return
-	}
-	// Shared categories keep history in their own directory; Isolated categories
-	// share a single .history dir per host. Delete from whichever dir applies.
-	dir := fs.historyDir(cat)
-	pattern := filepath.Join(dir, uuid+".*.md")
-	matches, _ := filepath.Glob(pattern)
-	for _, m := range matches {
-		os.Remove(m)
-	}
-}
-
-// retrieveVersion reads the snapshot identified by ref and returns a
-// VersionedStorable. The snapshot file contains a full document
-// (frontmatter + body) written by writeSnapshot.
-func (fs *FileStore) retrieveVersion(cat store.Category, uuid string, ref store.VersionRef) (store.VersionedStorable, error) {
+// retrieveVersion reads a body-only snapshot and returns a VersionedStorable.
+func (fs *FileStore) retrieveVersion(cat store.Category, key string, uuid string, ref store.VersionRef) (store.VersionedStorable, error) {
 	ver, err := strconv.Atoi(ref.ID)
 	if err != nil {
 		return store.VersionedStorable{}, fmt.Errorf("filestore: invalid version ref %q: %w", ref.ID, err)
 	}
 
-	path := fs.snapshotPath(cat, uuid, ver)
-	data, err := os.ReadFile(path)
+	path := fs.snapshotPath(cat, key, uuid, ver)
+	body, err := os.ReadFile(path)
 	if err != nil {
 		return store.VersionedStorable{}, fmt.Errorf("filestore: read snapshot %s: %w", path, err)
 	}
 
-	meta, body, err := parseFrontmatter(data)
-	if err != nil {
-		return store.VersionedStorable{}, fmt.Errorf("filestore: parse snapshot %s: %w", path, err)
-	}
-
 	info, _ := os.Stat(path)
 	created := ref.Created
-	if !created.IsZero() {
-		// use the ref timestamp if available; otherwise fall back to file mtime
-	} else if info != nil {
-		created = info.ModTime()
-	} else {
-		created = time.Now()
+	if created.IsZero() {
+		if info != nil {
+			created = info.ModTime()
+		} else {
+			created = time.Now()
+		}
+	}
+
+	// Load current meta for the VersionedStorable.
+	var meta map[string]string
+	if dm, err := readMetaJSONFromPath(fs.metaPath(cat, key)); err == nil {
+		meta = docMetaToMap(dm)
 	}
 
 	return store.VersionedStorable{
-		Ref:  store.VersionRef{ID: ref.ID, Created: created, Size: int64(len(data))},
+		Ref:  store.VersionRef{ID: ref.ID, Created: created, Size: int64(len(body))},
 		Body: body,
 		Meta: meta,
 	}, nil

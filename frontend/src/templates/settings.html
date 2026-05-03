@@ -45,7 +45,7 @@
   </div>
 
   <!-- Content -->
-  <form id="settings-form" hx-post="/api/settings" hx-target="#settings-dialog-content" onsubmit="document.getElementById('settings-dialog').close()" style="flex: 1; background: var(--theme-bg); padding: 2rem; overflow-y: auto; display: flex; flex-direction: column; justify-content: space-between;">
+  <form id="settings-form" hx-post="/api/settings" hx-target="#settings-dialog-content" style="flex: 1; background: var(--theme-bg); padding: 2rem; overflow-y: auto; display: flex; flex-direction: column; justify-content: space-between;">
     <input type="hidden" name="last_settings_panel" id="last-settings-panel-input" value="{{.LastSettingsPanel}}">
     <div class="settings-tab-content" id="settings-tab-ai" style="display: {{if or (eq .LastSettingsPanel "ai") (eq .LastSettingsPanel "")}}block{{else}}none{{end}};">
       <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 1.5rem;">AI Configuration</h3>
@@ -141,12 +141,6 @@ function switchSettingsTab(el, tabName) {
   if (hidden) hidden.value = tabName;
   
   fetch('/api/settings/panel?tab=' + encodeURIComponent(tabName), { method: 'POST' });
-}
-
-
-
-if (window.sieveOnSettingsChanged) {
-  window.sieveOnSettingsChanged();
 }
 </script>
 {{end}}

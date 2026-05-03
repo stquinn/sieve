@@ -49,13 +49,13 @@ func (h *EditorHandler) handleEditorLoad(w http.ResponseWriter, r *http.Request)
 	type loadResponse struct {
 		Body string `json:"body"`
 		Mode string `json:"mode"`
-		Path string `json:"path"`
+		UUID string `json:"uuid"`
 	}
 
 	if strings.HasPrefix(uuid, "prompt:") {
 		name := strings.TrimPrefix(uuid, "prompt:")
 		if body, err := h.ServiceProvider.Prompts.GetPromptContent(name); err == nil {
-			json.NewEncoder(w).Encode(loadResponse{Body: body, Mode: "markdown", Path: uuid})
+			json.NewEncoder(w).Encode(loadResponse{Body: body, Mode: "markdown", UUID: uuid})
 			return
 		}
 		http.Error(w, "not found", http.StatusNotFound)
@@ -67,10 +67,10 @@ func (h *EditorHandler) handleEditorLoad(w http.ResponseWriter, r *http.Request)
 		if mode == "" {
 			mode = "wysiwyg"
 		}
-		json.NewEncoder(w).Encode(loadResponse{Body: string(b.Body()), Mode: mode, Path: b.Path()})
+		json.NewEncoder(w).Encode(loadResponse{Body: string(b.Body()), Mode: mode, UUID: b.UUID()})
 		return
 	}
-	json.NewEncoder(w).Encode(loadResponse{Body: "", Mode: "wysiwyg", Path: ""})
+	json.NewEncoder(w).Encode(loadResponse{Body: "", Mode: "wysiwyg", UUID: ""})
 }
 
 func (h *EditorHandler) handleEditorSave(w http.ResponseWriter, r *http.Request) {

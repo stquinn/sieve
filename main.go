@@ -94,7 +94,7 @@ func (m *muxHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/sieve/") {
-		m.store.ServeHTTP(w, r)
+		m.api.ServeHTTP(w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/stash/") {
@@ -199,8 +199,16 @@ func (m *muxHandler) serveThemeCSS(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 
-	settings := m.app.ServiceProvider.State.LoadSettings()
-	vars := sieve.LoadTheme(settings.Theme, m.app.loadThemeOverride(settings.Theme), m.app.GetThemesFS())
+	themeName := "tokyo-night"
+	var themeOverride []byte
+
+	if m.app.ServiceProvider.State != nil {
+		settings := m.app.ServiceProvider.State.LoadSettings()
+		themeName = settings.Theme
+		themeOverride = m.app.loadThemeOverride(themeName)
+	}
+
+	vars := sieve.LoadTheme(themeName, themeOverride, m.app.GetThemesFS())
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("html:root {\n"))
