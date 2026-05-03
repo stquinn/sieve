@@ -120,8 +120,8 @@ func TestCreateBufferVersionIsZero(t *testing.T) {
 func TestCreateWithExplicitKey(t *testing.T) {
 	fs := newTestStore(t)
 	s := mustCreate(t, fs, testWorkingCopy, "my-buf", nil)
-	if s.Path() != "my-buf" {
-		t.Errorf("path = %q, want my-buf", s.Path())
+	if !strings.HasSuffix(s.ExternalRef(), "/my-buf") {
+		t.Errorf("ExternalRef = %q, want suffix /my-buf", s.ExternalRef())
 	}
 }
 
@@ -129,8 +129,8 @@ func TestCreateStripsMdExtensionFromKey(t *testing.T) {
 	fs := newTestStore(t)
 	// Callers passing legacy .md keys should get the stripped path back.
 	s := mustCreate(t, fs, testWorkingCopy, "my-buf.md", nil)
-	if s.Path() != "my-buf" {
-		t.Errorf("path = %q, want my-buf (extension stripped)", s.Path())
+	if !strings.HasSuffix(s.ExternalRef(), "/my-buf") {
+		t.Errorf("ExternalRef = %q, want suffix /my-buf (extension stripped)", s.ExternalRef())
 	}
 }
 
@@ -178,7 +178,7 @@ func TestCreateAssetInfersPNG(t *testing.T) {
 	fs := newTestStore(t)
 	doc := mustCreate(t, fs, testWorkingCopy, "my-doc", nil)
 	pngBytes := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00}
-	as, err := fs.CreateAsset(testWorkingCopy, doc.Path(), "blk-img1", pngBytes)
+	as, err := fs.CreateAsset(testWorkingCopy, doc.Key(), "blk-img1", pngBytes)
 	if err != nil {
 		t.Fatalf("CreateAsset: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestCreateAssetBase64(t *testing.T) {
 	fs := newTestStore(t)
 	doc := mustCreate(t, fs, testWorkingCopy, "my-doc", nil)
 	b64 := []byte("aGVsbG8gd29ybGQ=")
-	as, err := fs.CreateAsset(testWorkingCopy, doc.Path(), "blk-b64", b64)
+	as, err := fs.CreateAsset(testWorkingCopy, doc.Key(), "blk-b64", b64)
 	if err != nil {
 		t.Fatalf("CreateAsset: %v", err)
 	}
@@ -433,14 +433,22 @@ func TestListReturnsCreatedStorables(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	paths := make(map[string]bool)
+	refs := make(map[string]bool)
 	for _, s := range list {
-		paths[s.Path()] = true
+		refs[s.ExternalRef()] = true
 	}
-	if !paths["a"] {
+	found := func(suffix string) bool {
+		for ref := range refs {
+			if strings.HasSuffix(ref, "/"+suffix) {
+				return true
+			}
+		}
+		return false
+	}
+	if !found("a") {
 		t.Error("a not in list")
 	}
-	if !paths["b"] {
+	if !found("b") {
 		t.Error("b not in list")
 	}
 }
@@ -455,8 +463,8 @@ func TestListWithPrefixFilters(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 	for _, s := range list {
-		if !strings.HasPrefix(s.Path(), "alpha") {
-			t.Errorf("unexpected path %q with prefix filter 'alpha'", s.Path())
+		if !strings.HasSuffix(s.ExternalRef(), "/alpha") && !strings.Contains(s.ExternalRef(), "/alpha/") {
+			t.Errorf("unexpected ExternalRef %q with prefix filter 'alpha'", s.ExternalRef())
 		}
 	}
 }
@@ -471,8 +479,8 @@ func TestRenameChangesKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Rename: %v", err)
 	}
-	if renamed.Path() != "new-name" {
-		t.Errorf("path after rename = %q, want new-name", renamed.Path())
+	if !strings.HasSuffix(renamed.ExternalRef(), "/new-name") {
+		t.Errorf("ExternalRef after rename = %q, want suffix /new-name", renamed.ExternalRef())
 	}
 }
 
@@ -495,7 +503,7 @@ func TestRenameDoesNotChangeAssetURLs(t *testing.T) {
 	s := mustCreate(t, fs, testLibrary, "my-note", nil)
 
 	pngBytes := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
-	asset, err := fs.CreateAsset(testLibrary, s.Path(), "blk-img", pngBytes)
+	asset, err := fs.CreateAsset(testLibrary, s.Key(), "blk-img", pngBytes)
 	if err != nil {
 		t.Fatalf("CreateAsset: %v", err)
 	}

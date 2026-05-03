@@ -11,9 +11,6 @@ type Storable interface {
 	// Key returns the logical identity of this Storable within its Category (UUID).
 	Key() string
 
-	// Path returns the filesystem path of this Storable within its Category.
-	Path() string
-
 	// Category returns the Category this Storable belongs to. Stamped at
 	// creation and immutable — use Store.Move to change category.
 	Category() Category
@@ -87,6 +84,10 @@ type AssetStorable interface {
 type FolderStorable interface {
 	Storable
 
+	// Name returns the human-readable name of this folder (the directory
+	// basename). Use this in the business layer — never parse ExternalRef.
+	Name() string
+
 	// Owns returns the direct children of this folder. Each child is a
 	// MetaStorable or FolderStorable.
 	Owns() []Storable
@@ -159,12 +160,6 @@ type Store interface {
 	// Rename changes the name component of s's key. Returns a new Storable
 	// with the updated key and a corrected ExternalRef.
 	Rename(s Storable, name string) (Storable, error)
-
-	// MoveToKey relocates s to newKey within the same category. newKey is a
-	// full category-relative path (e.g. "target-folder/my-note.md"). Unlike
-	// Rename, which only changes the filename while keeping the current
-	// directory, MoveToKey moves the file to an arbitrary location.
-	MoveToKey(s Storable, newKey string) (Storable, error)
 
 	// RetrieveVersion fetches the snapshot identified by ref. Returns a
 	// VersionedStorable — a distinct type from Storable so a snapshot cannot

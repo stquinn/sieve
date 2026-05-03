@@ -57,7 +57,6 @@ func (m *mockStore) List(cat store.Category, prefix string) ([]store.Storable, e
 func (m *mockStore) Move(s store.Storable, cat store.Category) (store.Storable, error) { return nil, nil }
 func (m *mockStore) Reparent(s store.Storable, folder store.FolderStorable) (store.Storable, error) { return nil, nil }
 func (m *mockStore) Rename(s store.Storable, newKey string) (store.Storable, error) { return nil, nil }
-func (m *mockStore) MoveToKey(s store.Storable, newKey string) (store.Storable, error) { return nil, nil }
 func (m *mockStore) RetrieveVersion(s store.Storable, ref store.VersionRef) (store.VersionedStorable, error) { return store.VersionedStorable{}, nil }
 func (m *mockStore) CreateOrLoadFolder(cat store.Category, name string) (store.FolderStorable, error) { return nil, nil }
 func (m *mockStore) LoadFolder(cat store.Category, name string) (store.FolderStorable, error) { return nil, nil }

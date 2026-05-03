@@ -49,7 +49,6 @@ func (fs *FileStore) scanCategory(cat store.Category, prefix string) ([]store.St
 				continue
 			}
 			results = append(results, folder)
-			results = append(results, folder.Owns()...)
 		case "document":
 			dm, err := readMetaJSONFromPath(metaPath)
 			if err != nil {

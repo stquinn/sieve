@@ -2,7 +2,6 @@ package sieve
 
 import (
 	"fmt"
-	"path/filepath"
 	"sieve/logger"
 	"sieve/store"
 	"strconv"
@@ -200,11 +199,7 @@ func (ds *DocumentService) ReplaceWithVersion(doc Document, ref store.VersionRef
 // Rename changes the filename of a note. name is the new base name (without
 // extension). The existing folder is preserved. name is converted to kebab-case.
 func (ds *DocumentService) Rename(d Document, name string) (Document, error) {
-	// Update display_name so the UI reflects the new name even when the old
-	// one was set by AI. Write back via SetMeta so it's persisted.
-	meta := d.Storable().Meta()
-	meta["display_name"] = name
-	d.Storable().SetMeta(meta)
+	d.Meta().SetDisplayName(name)
 
 	n, ok := d.(*Note)
 	// renames only move files on disk IF its a note.  Buffers just stay where
@@ -311,21 +306,6 @@ func (ds *DocumentService) List() ([]NoteEntry, error) {
 // the target folder path (e.g. "ai-stuff" or "projects/go"). An empty folder
 // moves the note to the Library root. The filename is preserved.
 func (ds *DocumentService) Move(n Document, folderName string) (Document, error) {
-	// Guard: Don't move if target is already the parent
-	currentPath := n.Storable().Path()
-	if idx := strings.LastIndex(currentPath, "/"); idx != -1 {
-		currentParent := currentPath[:idx]
-		// folderName might be "Library/folder" or just "folder" depending on the source.
-		// We normalize it by trimming "Library/" if present.
-		target := strings.TrimPrefix(folderName, Library.Key+"/")
-		if currentParent == target {
-			return n, nil
-		}
-	} else if folderName == "" || folderName == Library.Key {
-		// Already at root
-		return n, nil
-	}
-
 	folder, err := ds.store.CreateOrLoadFolder(n.Storable().Category(), folderName)
 	if err != nil {
 		return nil, fmt.Errorf("document: file: couldnt create folder %q: %w", folderName, err)
@@ -344,15 +324,7 @@ func (ds *DocumentService) Count() int {
 	if err != nil {
 		return 0
 	}
-	n := 0
-	for _, s := range storables {
-		if _, ok := s.(store.MetaStorable); ok {
-			if strings.HasSuffix(s.Path(), ".md") {
-				n++
-			}
-		}
-	}
-	return n
+	return len(flattenDocs(storables))
 }
 
 // Search performs a full-text and frontmatter search over the Library.
@@ -369,11 +341,7 @@ func (ds *DocumentService) Search(query string) ([]SearchResult, error) {
 	queryLower := strings.ToLower(query)
 	var results []SearchResult
 
-	for _, s := range storables {
-		ms, ok := s.(store.MetaStorable)
-		if !ok {
-			continue
-		}
+	for _, ms := range flattenDocs(storables) {
 
 		meta := ms.Meta()
 		body := string(ms.Body())
@@ -409,8 +377,8 @@ func (ds *DocumentService) Search(query string) ([]SearchResult, error) {
 
 		results = append(results, SearchResult{
 			ID:             meta["uuid"],
-			Path:           s.ExternalRef(),
-			Name:           filepath.Base(s.Path()),
+			Path:           ms.ExternalRef(),
+			Name:           newDocumentMeta(ms.Meta(), ms.SetMeta).DisplayName(),
 			IsTagMatch:     isTagMatch,
 			IsSummaryMatch: isSummaryMatch,
 			IsBodyMatch:    isBodyMatch,
@@ -434,7 +402,7 @@ func (bs *DocumentService) nextUntitledNumber() int {
 		if !ok {
 			continue
 		}
-		dn := ms.Meta()["display_name"]
+		dn := newDocumentMeta(ms.Meta(), ms.SetMeta).DisplayName()
 		if strings.HasPrefix(dn, "Untitled ") {
 			if n, err := strconv.Atoi(strings.TrimPrefix(dn, "Untitled ")); err == nil && n > max {
 				max = n
@@ -508,40 +476,48 @@ func deriveFolderFromMeta(meta DocumentMeta) string {
 	return ""
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// flattenDocs recursively collects all MetaStorable documents from a List()
+// result, traversing into FolderStorable.Owns() for nested items.
+func flattenDocs(storables []store.Storable) []store.MetaStorable {
+	var docs []store.MetaStorable
+	for _, s := range storables {
+		switch s := s.(type) {
+		case store.MetaStorable:
+			docs = append(docs, s)
+		case store.FolderStorable:
+			docs = append(docs, flattenDocs(s.Owns())...)
+		}
+	}
+	return docs
+}
+
 // ── Tree builder ──────────────────────────────────────────────────────────────
 
-// buildNoteTree converts a flat []store.Storable (from Store.List) into the
-// hierarchical []NoteEntry the sidebar expects. Only root-level items are
-// processed; nested MetaStorables (key contains "/") are already owned by their
-// parent FolderStorable and are skipped in the top-level pass.
+// buildNoteTree converts a []store.Storable (from Store.List, root items only)
+// into the hierarchical []NoteEntry the sidebar expects. Folders carry their
+// children via Owns() — no path filtering needed here.
 func buildNoteTree(storables []store.Storable) []NoteEntry {
 	var entries []NoteEntry
 	for _, s := range storables {
-		path := s.Path()
-		// Only process root-level items. Nested entries (key contains "/") are
-		// surfaced by their parent FolderStorable.Owns().
-		if strings.Contains(path, "/") {
-			continue
-		}
-		// Skip hidden entries (e.g. .assets directory).
-		if strings.HasPrefix(path, ".") {
-			continue
-		}
-
 		switch s := s.(type) {
 		case store.MetaStorable:
+			// MetaStorable before FolderStorable: fileMetaStorable satisfies both;
+			// documents must not render as folders.
+			dm := newDocumentMeta(s.Meta(), s.SetMeta)
 			entries = append(entries, NoteEntry{
-				ID:          s.Meta()["uuid"],
-				Name:        path,
-				DisplayName: metaString(s.Meta(), "display_name"),
+				ID:          s.Key(),
+				Name:        dm.DisplayName(),
+				DisplayName: dm.DisplayName(),
 				Status:      s.Meta()["status"],
 				UserIntent:  metaString(s.Meta(), "user_intent"),
 				IsDir:       false,
 			})
 		case store.FolderStorable:
 			entries = append(entries, NoteEntry{
-				ID:       s.Key(), // ID is UUID
-				Name:     path,
+				ID:       s.Key(),
+				Name:     s.Name(),
 				IsDir:    true,
 				Children: buildFolderChildren(s.Owns()),
 			})
@@ -555,22 +531,21 @@ func buildFolderChildren(owns []store.Storable) []NoteEntry {
 	for _, s := range owns {
 		switch s := s.(type) {
 		case store.MetaStorable:
-			// MetaStorable must come before FolderStorable: fileMetaStorable
-			// implements both interfaces (it has Owns() for assets), so the
-			// first matching case wins. Documents must not render as folders.
-			path := s.Path()
+			// MetaStorable before FolderStorable: fileMetaStorable satisfies both;
+			// documents must not render as folders.
+			dm := newDocumentMeta(s.Meta(), s.SetMeta)
 			children = append(children, NoteEntry{
-				ID:          s.Meta()["uuid"],
-				Name:        filepath.Base(path),
-				DisplayName: metaString(s.Meta(), "display_name"),
+				ID:          s.Key(),
+				Name:        dm.DisplayName(),
+				DisplayName: dm.DisplayName(),
 				Status:      s.Meta()["status"],
 				UserIntent:  metaString(s.Meta(), "user_intent"),
 				IsDir:       false,
 			})
 		case store.FolderStorable:
 			children = append(children, NoteEntry{
-				ID:       s.Key(), // ID is UUID
-				Name:     filepath.Base(s.Path()),
+				ID:       s.Key(),
+				Name:     s.Name(),
 				IsDir:    true,
 				Children: buildFolderChildren(s.Owns()),
 			})

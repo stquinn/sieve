@@ -1,6 +1,9 @@
 package filestore
 
-import "sieve/store"
+import (
+	"path/filepath"
+	"sieve/store"
+)
 
 // fileStorable is the base concrete type that satisfies store.Storable.
 // It is a pure value object — no I/O, no business logic.
@@ -62,4 +65,5 @@ type fileFolderStorable struct {
 	owns []store.Storable
 }
 
+func (s *fileFolderStorable) Name() string           { return filepath.Base(s.path) }
 func (s *fileFolderStorable) Owns() []store.Storable { return s.owns }

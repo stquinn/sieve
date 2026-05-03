@@ -1,11 +1,6 @@
 package sieve
 
-import (
-	"path/filepath"
-	"strings"
-
-	"sieve/store"
-)
+import "sieve/store"
 
 // Note is a filed document in the Library category.
 // It wraps a MetaStorable returned by the Store — never constructed directly.
@@ -21,7 +16,7 @@ type Note struct {
 func newNote(s store.MetaStorable) *Note {
 	note := &Note{
 		s:    s,
-		slug: strings.TrimSuffix(filepath.Base(s.Path()), filepath.Ext(s.Path())),
+		slug: newDocumentMeta(s.Meta(), s.SetMeta).DisplayName(),
 		kind: KindNote,
 	}
 	// Only set as "filed" if we haven't already marked it as an error file.

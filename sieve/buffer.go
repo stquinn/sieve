@@ -23,7 +23,7 @@ type Buffer struct {
 func newBuffer(s store.MetaStorable) *Buffer {
 	buffer := &Buffer{
 		s:    s,
-		slug: strings.TrimSuffix(filepath.Base(s.Path()), filepath.Ext(s.Path())),
+		slug: newDocumentMeta(s.Meta(), s.SetMeta).DisplayName(),
 		kind: KindBuffer,
 	}
 	buffer.s.Meta()["status"] = "unfiled"

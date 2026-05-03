@@ -361,7 +361,7 @@ func (fs *FileStore) LoadAsset(cat store.Category, uuid string, assetKey string)
 }
 
 func (fs *FileStore) Delete(s store.Storable) error {
-	path := s.Path()
+	path := dirKey(s)
 	logger.Debug("Deleting: %s", s.ExternalRef())
 
 	dir := fs.docDir(s.Category(), path)
@@ -396,7 +396,7 @@ func (fs *FileStore) ListFrom(categories []store.Category, prefix string) ([]sto
 // Move transfers s to a different category via a directory rename.
 // History and assets travel with the document directory automatically.
 func (fs *FileStore) Move(s store.Storable, to store.Category) (store.Storable, error) {
-	path := s.Path()
+	path := dirKey(s)
 	srcDir := fs.docDir(s.Category(), path)
 	dstDir := fs.docDir(to, path)
 
@@ -418,20 +418,20 @@ func (fs *FileStore) Move(s store.Storable, to store.Category) (store.Storable, 
 
 // Reparent moves s under folder by directory rename.
 func (fs *FileStore) Reparent(s store.Storable, folder store.FolderStorable) (store.Storable, error) {
-	base := filepath.Base(s.Path())
-	newKey := folder.(*fileFolderStorable).Path() + "/" + base
+	ff := folder.(*fileFolderStorable)
+	newKey := ff.path + "/" + filepath.Base(s.(*fileMetaStorable).path)
 	return fs.renameKey(s, newKey)
 }
 
-// MoveToKey relocates s to newKey within the same category.
-func (fs *FileStore) MoveToKey(s store.Storable, newKey string) (store.Storable, error) {
+// moveToKey relocates s to newKey within the same category (store-internal).
+func (fs *FileStore) moveToKey(s store.Storable, newKey string) (store.Storable, error) {
 	return fs.renameKey(s, newKey)
 }
 
 // Rename changes the basename of s's key. Appends to the names history in
 // .meta and performs a single atomic directory rename.
 func (fs *FileStore) Rename(s store.Storable, name string) (store.Storable, error) {
-	path := s.Path()
+	path := dirKey(s)
 	dir := filepath.Dir(path)
 	var newKey string
 	if dir == "." {
@@ -451,7 +451,7 @@ func (fs *FileStore) RetrieveVersion(s store.Storable, ref store.VersionRef) (st
 	if uuid == "" {
 		return store.VersionedStorable{}, fmt.Errorf("filestore: RetrieveVersion: storable has no uuid")
 	}
-	path := s.Path()
+	path := dirKey(s)
 	return fs.retrieveVersion(s.Category(), path, uuid, ref)
 }
 
@@ -791,10 +791,29 @@ func (fs *FileStore) savePlain(s *fileStorable) (store.Storable, error) {
 	}, nil
 }
 
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+// dirKey extracts the category-relative filesystem path from a Storable created
+// by this FileStore. Path() was removed from store.Storable to keep the business
+// layer free of filesystem concepts; within the filestore package we use this.
+func dirKey(s store.Storable) string {
+	switch v := s.(type) {
+	case *fileMetaStorable:
+		return v.path
+	case *fileFolderStorable:
+		return v.path
+	case *fileAssetStorable:
+		return v.path
+	case *fileStorable:
+		return v.path
+	}
+	panic("filestore: dirKey: unknown Storable type")
+}
+
 // ── Rename / Move helpers ─────────────────────────────────────────────────────
 
 func (fs *FileStore) renameKey(s store.Storable, newKey string) (store.Storable, error) {
-	oldPath := s.Path()
+	oldPath := dirKey(s)
 	if s.Category().MetaEnabled {
 		newKey = strings.TrimSuffix(newKey, ".md")
 	}
