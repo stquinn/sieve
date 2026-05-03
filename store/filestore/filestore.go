@@ -53,7 +53,6 @@ import (
 	"sieve/store"
 )
 
-
 // FileStore is a filesystem-backed implementation of store.Store.
 // Create one with NewFileStore — do not construct directly.
 type FileStore struct {
@@ -182,7 +181,6 @@ func (fs *FileStore) CreateOrLoadFolder(category store.Category, name string) (s
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("filestore: create folder %s: %w", name, err)
 		}
-		// Write .meta for the new folder
 		mp := filepath.Join(dir, ".meta")
 		if _, statErr := os.Stat(mp); os.IsNotExist(statErr) {
 			fm := &folderMeta{
@@ -191,14 +189,15 @@ func (fs *FileStore) CreateOrLoadFolder(category store.Category, name string) (s
 				Created: time.Now().Format("2006-01-02T15:04:05"),
 			}
 			_ = writeFolderMetaToPath(mp, fm)
-			folder, _ := fs.scanFolder(category, name)
-			if folder != nil {
-				fs.indexSet(fm.UUID, folder)
-			}
 		}
 	}
 
-	return fs.scanFolder(category, name)
+	folder, err := fs.scanFolder(category, name)
+	if err != nil {
+		return nil, err
+	}
+	fs.indexSet(folder.Key(), folder)
+	return folder, nil
 }
 
 func (fs *FileStore) LoadFolder(category store.Category, name string) (store.FolderStorable, error) {
@@ -212,7 +211,12 @@ func (fs *FileStore) LoadFolder(category store.Category, name string) (store.Fol
 	if _, err := os.Stat(dir); err != nil {
 		return nil, err
 	}
-	return fs.scanFolder(category, name)
+	folder, err := fs.scanFolder(category, name)
+	if err != nil {
+		return nil, err
+	}
+	fs.indexSet(folder.Key(), folder)
+	return folder, nil
 }
 
 func (fs *FileStore) Save(s store.Storable) (store.Storable, error) {
@@ -268,13 +272,7 @@ func (fs *FileStore) LoadByUUID(uuid string) (store.Storable, error) {
 	if !ok {
 		return nil, fmt.Errorf("filestore: UUID %s not found", uuid)
 	}
-	// List scans always populate versions, so a cache hit after any List call
-	// is a pure memory read. On a cold start before the first List, fall back
-	// to a full disk load and repopulate the cache.
-	if cached.Versions() != nil {
-		return cached, nil
-	}
-	return fs.Load(cached.Category(), dirKey(cached))
+	return cached, nil
 }
 
 func (fs *FileStore) Load(cat store.Category, key string) (store.Storable, error) {
@@ -346,23 +344,22 @@ func (fs *FileStore) Load(cat store.Category, key string) (store.Storable, error
 }
 
 func (fs *FileStore) LoadAsset(cat store.Category, uuid string, assetKey string) (store.AssetStorable, error) {
-	doc, err := fs.Load(cat, uuid)
-	if err != nil {
-		return nil, fmt.Errorf("filestore: Load Asset - couldnt find  %s: %w", uuid, err)
-	}
-	ms, ok := doc.(store.MetaStorable)
+	cached, ok := fs.LookupUUID(uuid)
 	if !ok {
-		return nil, fmt.Errorf("filestore: Load Asset - not a meta storeable:  %s", uuid)
+		return nil, fmt.Errorf("filestore: LoadAsset: UUID %s not found", uuid)
+	}
+	ms, ok := cached.(store.MetaStorable)
+	if !ok {
+		return nil, fmt.Errorf("filestore: LoadAsset: %s is not a MetaStorable", uuid)
 	}
 	for _, asset := range ms.Owns() {
 		if asset.Key() == assetKey {
-			as, ok := asset.(store.AssetStorable)
-			if ok {
+			if as, ok := asset.(store.AssetStorable); ok {
 				return as, nil
 			}
 		}
 	}
-	return nil, fmt.Errorf("filestore: Load Asset -couldnt find  %s", assetKey)
+	return nil, fmt.Errorf("filestore: LoadAsset: asset %s not found in %s", assetKey, uuid)
 }
 
 func (fs *FileStore) Delete(s store.Storable) error {
@@ -419,11 +416,6 @@ func (fs *FileStore) Move(s store.Storable, to store.Category) (store.Storable, 
 func (fs *FileStore) Reparent(s store.Storable, folder store.FolderStorable) (store.Storable, error) {
 	ff := folder.(*fileFolderStorable)
 	newKey := ff.path + "/" + filepath.Base(s.(*fileMetaStorable).path)
-	return fs.renameKey(s, newKey)
-}
-
-// moveToKey relocates s to newKey within the same category (store-internal).
-func (fs *FileStore) moveToKey(s store.Storable, newKey string) (store.Storable, error) {
 	return fs.renameKey(s, newKey)
 }
 
@@ -525,8 +517,8 @@ func (fs *FileStore) LookupUUID(uuid string) (store.Storable, bool) {
 		return s, true
 	}
 
-	// Heuristic: paths and filenames are never UUIDs — skip the expensive scan.
-	if strings.Contains(uuid, "/") || strings.HasSuffix(uuid, ".md") {
+	// Only UUID-shaped strings are stored in the index; skip the scan for anything else.
+	if !looksLikeUUID(uuid) {
 		return nil, false
 	}
 
@@ -879,6 +871,11 @@ func (fs *FileStore) stampCreate(meta map[string]string) {
 		meta["created"] = now
 	}
 	meta["modified"] = now
+}
+
+// looksLikeUUID returns true for strings in the 8-4-4-4-12 hex UUID format.
+func looksLikeUUID(s string) bool {
+	return len(s) == 36 && s[8] == '-' && s[13] == '-' && s[18] == '-' && s[23] == '-'
 }
 
 func newUUID() string {

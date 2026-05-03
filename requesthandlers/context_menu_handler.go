@@ -190,12 +190,25 @@ func (h *ContextMenuHandler) handleRenameNote(w http.ResponseWriter, r *http.Req
 		name = r.URL.Query().Get("name")
 	}
 	note, err := h.ServiceProvider.Documents.LoadByUUID(id)
-	if err == nil {
-		if _, err := h.ServiceProvider.Documents.Rename(note, name); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	renamed, err := h.ServiceProvider.Documents.Rename(note, name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	session := h.ServiceProvider.State.LoadSession()
+	for i := range session.Tabs {
+		if session.Tabs[i].ID == id {
+			session.Tabs[i].DisplayName = renamed.Meta().DisplayName()
+			break
 		}
 	}
+	_ = h.ServiceProvider.State.SaveSession(session)
+
 	if h.EmitNotesChanged != nil {
 		h.EmitNotesChanged()
 	}

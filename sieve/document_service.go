@@ -196,17 +196,13 @@ func (ds *DocumentService) ReplaceWithVersion(doc Document, ref store.VersionRef
 	return newDoc, nil
 }
 
-// Rename changes the filename of a note. name is the new base name (without
-// extension). The existing folder is preserved. name is converted to kebab-case.
+// Rename changes the display name of a document. For notes the directory is
+// also renamed to its kebab form; the display_name is then written back via
+// SaveMeta because store.Rename reloads from disk, discarding any in-memory
+// meta changes. Buffers are purely cosmetic — only meta is updated.
 func (ds *DocumentService) Rename(d Document, name string) (Document, error) {
-	d.Meta().SetDisplayName(name)
-
 	n, ok := d.(*Note)
-	// renames only move files on disk IF its a note.  Buffers just stay where
-	// they are and get a change of display name - purely cosmetic
 	if ok {
-		// FileStore.Rename preserves the current directory automatically — just
-		// pass the bare kebab name; do NOT prepend dir here.
 		renamed, err := ds.store.Rename(n.Storable(), toKebab(name))
 		if err != nil {
 			return nil, fmt.Errorf("document: rename to %q: %w", name, err)
@@ -215,8 +211,11 @@ func (ds *DocumentService) Rename(d Document, name string) (Document, error) {
 		if !ok {
 			return nil, fmt.Errorf("note: document: renamed storable is not MetaStorable")
 		}
-		return newNote(ms), nil
+		renamedNote := newNote(ms)
+		renamedNote.Meta().SetDisplayName(name)
+		return ds.SaveMeta(renamedNote)
 	}
+	d.Meta().SetDisplayName(name)
 	return ds.SaveMeta(d)
 }
 
