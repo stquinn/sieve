@@ -54,7 +54,7 @@ func (fs *FileStore) scanCategory(cat store.Category, prefix string) ([]store.St
 			if err != nil {
 				continue
 			}
-			s := fs.buildDocStorable(cat, name, dm, false)
+			s := fs.buildDocStorable(cat, name, dm)
 			if s != nil {
 				results = append(results, s)
 			}
@@ -104,7 +104,7 @@ func (fs *FileStore) scanFolderNode(cat store.Category, dirKey string) (*fileFol
 			if err != nil {
 				continue
 			}
-			s := fs.buildDocStorable(cat, childKey, dm, false)
+			s := fs.buildDocStorable(cat, childKey, dm)
 			if s != nil {
 				owns = append(owns, s)
 			}
@@ -128,19 +128,15 @@ func (fs *FileStore) scanFolderNode(cat store.Category, dirKey string) (*fileFol
 }
 
 // buildDocStorable constructs a fileMetaStorable from a pre-read docMeta.
-// withVersions controls whether .history is scanned (false for bulk List calls).
-func (fs *FileStore) buildDocStorable(cat store.Category, key string, dm *docMeta, withVersions bool) store.Storable {
+// buildDocStorable constructs a fileMetaStorable from a pre-read docMeta and
+// registers it in the UUID index. Versions are always loaded — every access
+// goes through the cache, so the cost is paid once per List call.
+func (fs *FileStore) buildDocStorable(cat store.Category, key string, dm *docMeta) store.Storable {
 	body, _ := os.ReadFile(fs.contentPath(cat, key, dm.UUID))
-
-	var versions []store.VersionRef
-	if withVersions {
-		versions = fs.loadVersions(dm.UUID, cat, key)
-	}
-
-	fs.indexSet(dm.UUID, uuidEntry{cat: cat, dirKey: key})
+	versions := fs.loadVersions(dm.UUID, cat, key)
 	owns := fs.scanDocAssets(cat, key, dm.UUID)
 
-	return &fileMetaStorable{
+	s := &fileMetaStorable{
 		fileStorable: fileStorable{
 			key:      dm.UUID,
 			path:     key,
@@ -152,6 +148,8 @@ func (fs *FileStore) buildDocStorable(cat store.Category, key string, dm *docMet
 		meta: docMetaToMap(dm),
 		owns: owns,
 	}
+	fs.indexSet(dm.UUID, s)
+	return s
 }
 
 // scanDocAssets scans a document directory for co-located asset files and

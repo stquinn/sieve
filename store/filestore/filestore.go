@@ -53,11 +53,6 @@ import (
 	"sieve/store"
 )
 
-// uuidEntry is an element of the in-memory UUID→location index.
-type uuidEntry struct {
-	cat    store.Category
-	dirKey string
-}
 
 // FileStore is a filesystem-backed implementation of store.Store.
 // Create one with NewFileStore — do not construct directly.
@@ -67,7 +62,7 @@ type FileStore struct {
 	maxVersions int
 
 	indexMu   sync.RWMutex
-	uuidIndex map[string]uuidEntry // uuid → {cat, dirKey}
+	uuidIndex map[string]store.Storable // uuid → cached Storable
 }
 
 // NewFileStore initialises a FileStore rooted at root for the given hostname.
@@ -80,7 +75,7 @@ func NewFileStore(root, hostname string) (*FileStore, error) {
 		root:        abs,
 		hostname:    hostname,
 		maxVersions: 200,
-		uuidIndex:   make(map[string]uuidEntry),
+		uuidIndex:   make(map[string]store.Storable),
 	}
 	if err := fs.ensureStoreMarker(); err != nil {
 		return nil, err
@@ -111,12 +106,11 @@ func (fs *FileStore) CreateAsset(cat store.Category, parentKey string, assetID s
 	var resolvedKey string
 
 	if parentKey != "" && parentKey != "new" {
-		// parentKey may be a UUID (legacy callers) or a directory key.
-		// Try UUID index lookup first; fall back to treating it as a key.
-		if entry, ok := fs.LookupUUID(parentKey); ok {
-			resolvedKey = entry.dirKey
+		// parentKey may be a UUID or a directory key — try UUID cache first.
+		if cached, ok := fs.LookupUUID(parentKey); ok {
+			resolvedKey = dirKey(cached)
 			docUUID = parentKey
-			cat = entry.cat
+			cat = cached.Category()
 		} else {
 			resolvedKey = parentKey
 			if dm, err := readMetaJSONFromPath(fs.metaPath(cat, resolvedKey)); err == nil {
@@ -176,9 +170,9 @@ func (fs *FileStore) CreateText(cat store.Category, key string, body []byte) (st
 }
 
 func (fs *FileStore) CreateOrLoadFolder(category store.Category, name string) (store.FolderStorable, error) {
-	if entry, ok := fs.LookupUUID(name); ok {
-		category = entry.cat
-		name = entry.dirKey
+	if cached, ok := fs.LookupUUID(name); ok {
+		category = cached.Category()
+		name = dirKey(cached)
 	}
 	name = strings.TrimPrefix(name, category.Key+"/")
 	logger.Debug("CreateOrLoadFolder: %s, %s", category, name)
@@ -197,7 +191,10 @@ func (fs *FileStore) CreateOrLoadFolder(category store.Category, name string) (s
 				Created: time.Now().Format("2006-01-02T15:04:05"),
 			}
 			_ = writeFolderMetaToPath(mp, fm)
-			fs.indexSet(fm.UUID, uuidEntry{cat: category, dirKey: name})
+			folder, _ := fs.scanFolder(category, name)
+			if folder != nil {
+				fs.indexSet(fm.UUID, folder)
+			}
 		}
 	}
 
@@ -205,9 +202,9 @@ func (fs *FileStore) CreateOrLoadFolder(category store.Category, name string) (s
 }
 
 func (fs *FileStore) LoadFolder(category store.Category, name string) (store.FolderStorable, error) {
-	if entry, ok := fs.LookupUUID(name); ok {
-		category = entry.cat
-		name = entry.dirKey
+	if cached, ok := fs.LookupUUID(name); ok {
+		category = cached.Category()
+		name = dirKey(cached)
 	}
 	name = strings.TrimPrefix(name, category.Key+"/")
 	logger.Debug("LoadFolder: %s, %s", category, name)
@@ -251,32 +248,39 @@ func (fs *FileStore) SaveMeta(s store.MetaStorable) (store.MetaStorable, error) 
 		return nil, fmt.Errorf("filestore: SaveMeta %s: %w", path, err)
 	}
 
-	return &fileMetaStorable{
+	saved := &fileMetaStorable{
 		fileStorable: fileStorable{
 			key:      ms.Key(),
-			path:     ms.Path(),
+			path:     ms.path,
 			category: ms.Category(),
 			body:     ms.Body(),
 			extRef:   ms.ExternalRef(),
 			versions: ms.Versions(),
 		},
 		meta: docMetaToMap(newDM),
-	}, nil
+	}
+	fs.indexSet(ms.Key(), saved)
+	return saved, nil
 }
 
 func (fs *FileStore) LoadByUUID(uuid string) (store.Storable, error) {
-	logger.Info("Loading by UUID", "uuid", uuid)
-	key, ok := fs.LookupUUID(uuid)
+	cached, ok := fs.LookupUUID(uuid)
 	if !ok {
 		return nil, fmt.Errorf("filestore: UUID %s not found", uuid)
 	}
-	return fs.Load(key.cat, key.dirKey)
+	// List scans always populate versions, so a cache hit after any List call
+	// is a pure memory read. On a cold start before the first List, fall back
+	// to a full disk load and repopulate the cache.
+	if cached.Versions() != nil {
+		return cached, nil
+	}
+	return fs.Load(cached.Category(), dirKey(cached))
 }
 
 func (fs *FileStore) Load(cat store.Category, key string) (store.Storable, error) {
-	if entry, ok := fs.LookupUUID(key); ok {
-		cat = entry.cat
-		key = entry.dirKey
+	if cached, ok := fs.LookupUUID(key); ok {
+		cat = cached.Category()
+		key = dirKey(cached)
 	}
 	if cat.MetaEnabled {
 		key = strings.TrimSuffix(key, ".md")
@@ -323,10 +327,9 @@ func (fs *FileStore) Load(cat store.Category, key string) (store.Storable, error
 
 	body, _ := os.ReadFile(fs.contentPath(cat, key, dm.UUID))
 	versions := fs.loadVersions(dm.UUID, cat, key)
-	fs.indexSet(dm.UUID, uuidEntry{cat: cat, dirKey: key})
 	owns := fs.scanDocAssets(cat, key, dm.UUID)
 
-	return &fileMetaStorable{
+	s := &fileMetaStorable{
 		fileStorable: fileStorable{
 			key:      dm.UUID,
 			path:     key,
@@ -337,7 +340,9 @@ func (fs *FileStore) Load(cat store.Category, key string) (store.Storable, error
 		},
 		meta: docMetaToMap(dm),
 		owns: owns,
-	}, nil
+	}
+	fs.indexSet(dm.UUID, s)
+	return s, nil
 }
 
 func (fs *FileStore) LoadAsset(cat store.Category, uuid string, assetKey string) (store.AssetStorable, error) {
@@ -407,13 +412,7 @@ func (fs *FileStore) Move(s store.Storable, to store.Category) (store.Storable, 
 		return nil, fmt.Errorf("filestore: Move %s: %w", s.Key(), err)
 	}
 
-	if ms, ok := s.(store.MetaStorable); ok {
-		if uuid := ms.Meta()["uuid"]; uuid != "" {
-			fs.indexSet(uuid, uuidEntry{cat: to, dirKey: path})
-		}
-	}
-
-	return fs.Load(to, path)
+	return fs.Load(to, path) // Load updates the cache with the new location.
 }
 
 // Reparent moves s under folder by directory rename.
@@ -497,12 +496,15 @@ func (fs *FileStore) externalRef(cat store.Category, key string) string {
 
 // ── UUID index ────────────────────────────────────────────────────────────────
 
-func (fs *FileStore) indexSet(uuid string, entry uuidEntry) {
-	if uuid == "" {
+// indexSet stores s under its UUID. Overwrites any existing entry so the cache
+// always reflects the most recently written Storable (newest version, updated
+// meta). No-op when uuid is empty or s is nil.
+func (fs *FileStore) indexSet(uuid string, s store.Storable) {
+	if uuid == "" || s == nil {
 		return
 	}
 	fs.indexMu.Lock()
-	fs.uuidIndex[uuid] = entry
+	fs.uuidIndex[uuid] = s
 	fs.indexMu.Unlock()
 }
 
@@ -512,41 +514,39 @@ func (fs *FileStore) indexDel(uuid string) {
 	fs.indexMu.Unlock()
 }
 
-// DocDirByUUID returns the absolute filesystem path to the document directory
-// identified by uuid. Returns ("", false) if the UUID is not known.
-func (fs *FileStore) DocDirByUUID(uuid string) (string, bool) {
-	entry, ok := fs.LookupUUID(uuid)
-	if !ok {
-		return "", false
-	}
-	return fs.docDir(entry.cat, entry.dirKey), true
-}
-
-// LookupUUID returns the category and directory key for a document UUID.
-// On a cache miss it rebuilds the index from disk (should not happen in normal
-// operation).
-func (fs *FileStore) LookupUUID(uuid string) (uuidEntry, bool) {
+// LookupUUID returns the cached Storable for uuid. On a cache miss it rebuilds
+// the index from disk (should not happen in normal operation — every write path
+// calls indexSet). Returns nil, false when the UUID genuinely does not exist.
+func (fs *FileStore) LookupUUID(uuid string) (store.Storable, bool) {
 	fs.indexMu.RLock()
-	entry, ok := fs.uuidIndex[uuid]
+	s, ok := fs.uuidIndex[uuid]
 	fs.indexMu.RUnlock()
 	if ok {
-		return entry, true
+		return s, true
 	}
 
-	// Heuristic: if it's clearly a path or a filename, don't trigger a scan.
-	// UUIDs and legacy slugs shouldn't have slashes or extensions.
+	// Heuristic: paths and filenames are never UUIDs — skip the expensive scan.
 	if strings.Contains(uuid, "/") || strings.HasSuffix(uuid, ".md") {
-		return uuidEntry{}, false
+		return nil, false
 	}
 
-	// Cache miss — rebuild index.
 	logger.Warn("filestore: UUID index miss for %s — scanning", uuid)
 	fs.rebuildIndex()
 
 	fs.indexMu.RLock()
-	entry, ok = fs.uuidIndex[uuid]
+	s, ok = fs.uuidIndex[uuid]
 	fs.indexMu.RUnlock()
-	return entry, ok
+	return s, ok
+}
+
+// DocDirByUUID returns the absolute filesystem path to the document directory
+// for uuid. O(1) after the first List warms the cache.
+func (fs *FileStore) DocDirByUUID(uuid string) (string, bool) {
+	cached, ok := fs.LookupUUID(uuid)
+	if !ok {
+		return "", false
+	}
+	return fs.docDir(cached.Category(), dirKey(cached)), true
 }
 
 func (fs *FileStore) rebuildIndex() {
@@ -585,26 +585,31 @@ func (fs *FileStore) walkIndexDir(dir string) {
 			fs.walkIndexDir(subDir)
 			continue
 		}
-		if (dm.Type == "document" || dm.Type == "folder") && dm.UUID != "" {
+		if dm.UUID != "" {
 			// Reconstruct category + dirKey from the filesystem path.
 			rel, err := filepath.Rel(fs.root, subDir)
 			if err == nil {
 				rel = filepath.ToSlash(rel)
 				parts := strings.SplitN(rel, "/", 3)
 				var cat store.Category
-				var dirKey string
+				var dk string
 				switch {
 				case len(parts) >= 2 && parts[0] == fs.hostname:
-					// Isolated category: {hostname}/{catKey}/{dirKey...}
 					cat = store.Category{Key: parts[1], Isolation: store.Isolated}
-					dirKey = strings.Join(parts[2:], "/")
+					dk = strings.Join(parts[2:], "/")
 				case len(parts) >= 1:
-					// Shared category: {catKey}/{dirKey...}
 					cat = store.Category{Key: parts[0], Isolation: store.Shared}
-					dirKey = strings.Join(parts[1:], "/")
+					dk = strings.Join(parts[1:], "/")
 				}
-				if dirKey != "" {
-					fs.indexSet(dm.UUID, uuidEntry{cat: cat, dirKey: dirKey})
+				if dk != "" {
+					switch dm.Type {
+					case "document":
+						fs.buildDocStorable(cat, dk, dm) // registers in index
+					case "folder":
+						if folder, err := fs.scanFolder(cat, dk); err == nil {
+							fs.indexSet(dm.UUID, folder)
+						}
+					}
 				}
 			}
 		}
@@ -644,9 +649,7 @@ func (fs *FileStore) createMeta(cat store.Category, key string, body []byte) (st
 		return nil, fmt.Errorf("filestore: write content for %s: %w", key, err)
 	}
 
-	fs.indexSet(dm.UUID, uuidEntry{cat: cat, dirKey: key})
-
-	return &fileMetaStorable{
+	s := &fileMetaStorable{
 		fileStorable: fileStorable{
 			key:      dm.UUID,
 			path:     key,
@@ -656,7 +659,9 @@ func (fs *FileStore) createMeta(cat store.Category, key string, body []byte) (st
 			versions: fs.loadVersions(dm.UUID, cat, key),
 		},
 		meta: docMetaToMap(dm),
-	}, nil
+	}
+	fs.indexSet(dm.UUID, s)
+	return s, nil
 }
 
 func (fs *FileStore) createAsset(cat store.Category, key, absPath string, body []byte) (store.AssetStorable, error) {
@@ -747,7 +752,7 @@ func (fs *FileStore) saveContent(s *fileMetaStorable) (store.Storable, error) {
 	}
 
 	versions := fs.loadVersions(uuid, s.category, path)
-	return &fileMetaStorable{
+	saved := &fileMetaStorable{
 		fileStorable: fileStorable{
 			key:      uuid,
 			path:     path,
@@ -758,7 +763,9 @@ func (fs *FileStore) saveContent(s *fileMetaStorable) (store.Storable, error) {
 		},
 		meta: docMetaToMap(newDM),
 		owns: s.owns,
-	}, nil
+	}
+	fs.indexSet(uuid, saved)
+	return saved, nil
 }
 
 func (fs *FileStore) saveAsset(s *fileAssetStorable) (store.Storable, error) {
@@ -841,10 +848,9 @@ func (fs *FileStore) renameKey(s store.Storable, newKey string) (store.Storable,
 		})
 		_ = writeMetaJSONToPath(newMetaPath, dm)
 
-		fs.indexSet(dm.UUID, uuidEntry{cat: s.Category(), dirKey: newKey})
 	}
 
-	return fs.Load(s.Category(), newKey)
+	return fs.Load(s.Category(), newKey) // Load updates the cache with the new key.
 }
 
 // ── Key generation ─────────────────────────────────────────────────────────────
