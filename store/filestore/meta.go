@@ -40,8 +40,10 @@ var canonicalKeyOrder = []string{
 // and null are preserved as inline YAML notation (e.g. "[]", "[a, b]", "null")
 // so that they round-trip through DocumentMeta accessors in the business layer.
 func parseFrontmatter(data []byte) (meta map[string]string, body []byte, err error) {
+	if data == nil || len(data) == 0 {
+		return map[string]string{}, []byte{}, nil
+	}
 	content := string(data)
-
 	// Require the opening delimiter as the very first bytes.
 	if !strings.HasPrefix(content, "---\n") {
 		return map[string]string{}, data, nil

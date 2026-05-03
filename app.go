@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,11 +16,12 @@ import (
 	"sync"
 	"time"
 
-	"stash/logger"
-	"stash/stash"
-	"stash/store/filestore"
+	"sieve/logger"
+	"sieve/sieve"
+	"sieve/store/filestore"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"golang.org/x/net/html"
 )
 
 // App is the Wails application backend.
@@ -30,27 +30,32 @@ type App struct {
 	storePath string
 	hostname  string // resolved at startup from os.Hostname
 
-	buffers *stash.BufferService
-	notes   *stash.NoteService
-	assets  *stash.AssetService
-	state   *stash.StateService
-	prompts *stash.PromptService
+	ServiceProvider *sieve.ServiceProvider
+	Documents       *sieve.DocumentService
+	Assets          *sieve.AssetService
+	State           *sieve.StateService
+	Prompts         *sieve.PromptService
+	AI              *sieve.AIService
 
 	themesFS fs.FS
+	hub      *sseHub
 	watcher  *notesWatcher
 	closing  bool
 	mu       sync.Mutex
 }
 
-func NewApp(storePath string, themesFS fs.FS) *App {
+func NewApp(storePath string, themesFS fs.FS, hub *sseHub, serviceProvider *sieve.ServiceProvider) *App {
 	hostname, _ := os.Hostname()
 	if hostname == "" {
 		hostname = "localhost"
 	}
+
 	return &App{
-		storePath: storePath,
-		hostname:  hostname,
-		themesFS:  themesFS,
+		storePath:       storePath,
+		hostname:        hostname,
+		themesFS:        themesFS,
+		hub:             hub,
+		ServiceProvider: serviceProvider,
 	}
 }
 
@@ -75,24 +80,6 @@ func (a *App) GetThemesFS() fs.FS { return a.themesFS }
 
 // GetStorePath returns the active store root path.
 func (a *App) GetStorePath() string { return a.storePath }
-
-// LoadSettings returns the current settings via the StateService, or defaults
-// if the store is not yet open.
-func (a *App) LoadSettings() stash.Settings {
-	if a.state != nil {
-		return a.state.LoadSettings()
-	}
-	return stash.DefaultSettings()
-}
-
-// SaveSettings persists user configuration to the store.
-func (a *App) SaveSettings(settings stash.Settings) error {
-	if a.state == nil {
-		return fmt.Errorf("store not open")
-	}
-	logger.Info("SaveSettings", "cli", settings.CLI, "model", settings.Model, "theme", settings.Theme)
-	return a.state.SaveSettings(settings)
-}
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
@@ -189,29 +176,14 @@ func (a *App) startup(ctx context.Context) {
 		logger.Error("filestore init failed", "err", err)
 		return
 	}
-	a.buffers, err = stash.NewBufferService(fs)
-	if err != nil {
-		logger.Error("buffers init failed", "err", err)
-		return
-	}
-	a.notes, err = stash.NewNoteService(fs)
-	if err != nil {
-		logger.Error("notes init failed", "err", err)
-		return
-	}
-	a.assets = stash.NewAssetService(fs)
-	a.state, err = stash.NewStateService(fs)
-	if err != nil {
-		logger.Error("state init failed", "err", err)
-		return
-	}
-	a.prompts, err = stash.NewPromptService(fs)
-	if err != nil {
-		logger.Error("prompts init failed", "err", err)
-		return
-	}
+	a.ServiceProvider.Init(fs, a.storePath)
+	a.Documents = a.ServiceProvider.Documents
+	a.Assets = a.ServiceProvider.Assets
+	a.State = a.ServiceProvider.State
+	a.Prompts = a.ServiceProvider.Prompts
+	a.AI = a.ServiceProvider.AI
 
-	settings := a.state.LoadSettings()
+	settings := a.State.LoadSettings()
 
 	// Save last-used store path.
 	config := LoadGlobalConfig()
@@ -234,7 +206,7 @@ func (a *App) startup(ctx context.Context) {
 		time.Now().Format(time.RFC3339), a.storePath, a.hostname)), 0o644)
 
 	// Restore window geometry.
-	savedSession := a.state.LoadSession()
+	savedSession := a.ServiceProvider.State.LoadSession()
 	if savedSession.Window.Width >= 800 && savedSession.Window.Height >= 500 {
 		runtime.WindowSetSize(ctx, savedSession.Window.Width, savedSession.Window.Height)
 		logger.Debug("window size restored", "w", savedSession.Window.Width, "h", savedSession.Window.Height)
@@ -249,6 +221,9 @@ func (a *App) startup(ctx context.Context) {
 	w, err := newNotesWatcher(a.notesDir(), func() {
 		logger.Debug("notes changed — emitting event")
 		runtime.EventsEmit(a.ctx, "notes:changed")
+		if a.hub != nil {
+			a.hub.broadcast("notes:changed", "{}")
+		}
 	})
 	if err != nil {
 		logger.Warn("could not start notes watcher", "err", err)
@@ -261,12 +236,12 @@ func (a *App) beforeClose(ctx context.Context) bool {
 	if a.closing {
 		return false
 	}
-	if a.state != nil {
+	if a.State != nil {
 		x, y := runtime.WindowGetPosition(ctx)
 		w, h := runtime.WindowGetSize(ctx)
-		session := a.state.LoadSession()
-		session.Window = stash.Window{X: x, Y: y, Width: w, Height: h}
-		_ = a.state.SaveSession(session)
+		session := a.State.LoadSession()
+		session.Window = sieve.Window{X: x, Y: y, Width: w, Height: h}
+		_ = a.State.SaveSession(session)
 	}
 	logger.Info("beforeClose: vetoing and requesting flush")
 	runtime.EventsEmit(ctx, "app:closing")
@@ -298,12 +273,12 @@ type StoreInfo struct {
 	BuffersPath        string          `json:"buffersPath"`
 	NotesPath          string          `json:"notesPath"`
 	IsNew              bool            `json:"isNew"`
-	Tier               stash.Tier      `json:"tier"`
+	Tier               sieve.Tier      `json:"tier"`
 	Cli                string          `json:"cli"`
 	Debug              bool            `json:"debug"`
 	AutosaveDebounce   int             `json:"autosaveDebounce"`
 	ThemeName          string          `json:"themeName"`
-	ThemeVars          stash.ThemeVars `json:"themeVars"`
+	ThemeVars          sieve.ThemeVars `json:"themeVars"`
 	MaxHistoryVersions int             `json:"maxHistoryVersions"`
 	CLITimeoutLong     int             `json:"cliTimeoutLong"`
 	ShowPrompts        bool            `json:"showPrompts"`
@@ -313,62 +288,29 @@ func (a *App) GetStoreInfo() StoreInfo {
 	if a.storePath == "" {
 		logger.Warn("GetStoreInfo: store not open")
 		return StoreInfo{
-			ThemeVars: stash.ThemeVars{},
+			ThemeVars: sieve.ThemeVars{},
 		}
 	}
 
 	logger.Info("GetStoreInfo", "root", a.storePath)
-	liveSettings := a.state.LoadSettings()
+	liveSettings := a.State.LoadSettings()
 
 	return StoreInfo{
 		Root:               a.storePath,
 		Hostname:           a.hostname,
 		BuffersPath:        filepath.Join(a.storePath, a.hostname, "buffers"),
 		NotesPath:          a.notesDir(),
-		IsNew:              a.notes.Count() == 0,
+		IsNew:              a.Documents.Count() == 0,
 		Tier:               liveSettings.Tier(),
 		Cli:                liveSettings.CLI,
 		Debug:              liveSettings.Debug,
 		AutosaveDebounce:   liveSettings.AutosaveDebounce,
 		ThemeName:          liveSettings.Theme,
-		ThemeVars:          stash.LoadTheme(liveSettings.Theme, a.loadThemeOverride(liveSettings.Theme), a.themesFS),
+		ThemeVars:          sieve.LoadTheme(liveSettings.Theme, a.loadThemeOverride(liveSettings.Theme), a.themesFS),
 		MaxHistoryVersions: liveSettings.MaxHistoryVersions,
 		CLITimeoutLong:     liveSettings.CLITimeoutLong,
-		ShowPrompts:        a.state.LoadSession().ShowPrompts,
+		ShowPrompts:        a.State.LoadSession().ShowPrompts,
 	}
-}
-
-// ── Sidebar ───────────────────────────────────────────────────────────────────
-
-func (a *App) SaveSidebarWidth(width int) error {
-	if a.state == nil {
-		return fmt.Errorf("store not open")
-	}
-	session := a.state.LoadSession()
-	session.SidebarWidth = width
-	if err := a.state.SaveSession(session); err != nil {
-		logger.Error("SaveSidebarWidth failed", "err", err)
-		return err
-	}
-	return nil
-}
-
-func (a *App) SaveMetaWidth(width int) error {
-	if a.state == nil {
-		return fmt.Errorf("store not open")
-	}
-	session := a.state.LoadSession()
-	session.MetaWidth = width
-	return a.state.SaveSession(session)
-}
-
-func (a *App) SavePromptsHeight(height int) error {
-	if a.state == nil {
-		return fmt.Errorf("store not open")
-	}
-	session := a.state.LoadSession()
-	session.PromptsHeight = height
-	return a.state.SaveSession(session)
 }
 
 // ── Bootstrapping ─────────────────────────────────────────────────────────────
@@ -379,7 +321,7 @@ func (a *App) SelectVault() (string, error) {
 		return "", fmt.Errorf("app context not initialized")
 	}
 	path, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select Stash Store",
+		Title: "Select Sieve Store",
 	})
 	logger.Debug("SelectVault: dialog returned", "path", path, "err", err)
 	if err != nil {
@@ -390,7 +332,7 @@ func (a *App) SelectVault() (string, error) {
 	}
 	if err := ValidateStore(path); err != nil {
 		logger.Warn("SelectVault: ValidateStore failed", "path", path, "err", err)
-		return "", fmt.Errorf("this directory does not look like a Stash store: %w", err)
+		return "", fmt.Errorf("this directory does not look like a Sieve store: %w", err)
 	}
 
 	logger.Debug("SelectVault: setting storePath and calling startup", "path", path)
@@ -436,7 +378,7 @@ func (a *App) CreateVault() (string, error) {
 	logger.Debug("CreateVault: startup completed", "resulting_storePath", a.storePath)
 	if a.storePath == "" {
 		logger.Warn("CreateVault: startup rejected the folder")
-		return "", fmt.Errorf("selected folder must be empty or an existing Stash store")
+		return "", fmt.Errorf("selected folder must be empty or an existing Sieve store")
 	}
 	logger.Info("store creation initialized", "path", path)
 	return path, nil
@@ -472,7 +414,7 @@ func (a *App) InitVault(path string) error {
 	logger.Debug("InitVault: startup completed", "resulting_storePath", a.storePath)
 	if a.storePath == "" {
 		logger.Warn("InitVault: startup rejected the folder")
-		return fmt.Errorf("folder must be empty or an existing Stash store")
+		return fmt.Errorf("folder must be empty or an existing Sieve store")
 	}
 
 	config := LoadGlobalConfig()
@@ -485,557 +427,13 @@ func (a *App) InitVault(path string) error {
 	return nil
 }
 
-// ── Prompts ───────────────────────────────────────────────────────────────────
-
-func (a *App) GetPrompts() []stash.PromptEntry {
-	if a.prompts == nil {
-		return []stash.PromptEntry{}
-	}
-	return a.prompts.ListPrompts()
-}
-
-func (a *App) LoadPrompt(name string) (string, error) {
-	if a.prompts == nil {
-		return "", fmt.Errorf("store not open")
-	}
-	return a.prompts.GetPromptContent(name)
-}
-
-func (a *App) SavePrompt(name string, content string) (string, error) {
-	if a.prompts == nil {
-		return "", fmt.Errorf("store not open")
-	}
-	err := a.prompts.SavePrompt(name, content)
-	if err != nil {
-		logger.Error("SavePrompt failed", "name", name, "err", err)
-		return "", err
-	}
-	logger.Info("prompt saved to isolation", "name", name, "host", a.hostname)
-	runtime.EventsEmit(a.ctx, "prompts:changed")
-	return name + ".md", nil
-}
-
-func (a *App) DeletePrompt(name string) error {
-	if a.prompts == nil {
-		return fmt.Errorf("store not open")
-	}
-	if err := a.prompts.DeletePrompt(name); err != nil {
-		logger.Warn("DeletePrompt: failed", "name", name, "err", err)
-		return err
-	}
-	runtime.EventsEmit(a.ctx, "prompts:changed")
-	return nil
-}
-
-func (a *App) TogglePrompts() (bool, error) {
-	if a.state == nil {
-		return false, fmt.Errorf("store not open")
-	}
-	session := a.state.LoadSession()
-	session.ShowPrompts = !session.ShowPrompts
-	if err := a.state.SaveSession(session); err != nil {
-		return false, err
-	}
-	return session.ShowPrompts, nil
-}
-
-// ── Notes ─────────────────────────────────────────────────────────────────────
-
-func (a *App) GetNotes() []stash.NoteEntry {
-	if a.notes == nil {
-		logger.Warn("GetNotes: store not open")
-		return []stash.NoteEntry{}
-	}
-	entries, err := a.notes.List()
-	if err != nil {
-		logger.Error("GetNotes failed", "err", err)
-		return []stash.NoteEntry{}
-	}
-	logger.Debug("GetNotes", "entries", len(entries))
-	return entries
-}
-
-func (a *App) SearchStore(query string) []stash.SearchResult {
-	if a.notes == nil {
-		logger.Warn("SearchStore: store not open")
-		return []stash.SearchResult{}
-	}
-	results, err := a.notes.Search(query)
-	if err != nil {
-		logger.Error("SearchStore failed", "err", err)
-		return []stash.SearchResult{}
-	}
-	logger.Debug("SearchStore", "query", query, "results", len(results))
-	return results
-}
-
-// ── Session ───────────────────────────────────────────────────────────────────
-
-func (a *App) GetSession() stash.Session {
-	if a.state == nil {
-		logger.Warn("GetSession: store not open")
-		return stash.Session{
-			Tabs: []stash.Tab{},
-		}
-	}
-
-	session := a.state.LoadSession()
-	logger.Debug("session loaded", "tabs", len(session.Tabs))
-
-	// Prune tabs whose documents no longer exist.
-	live := session.Tabs[:0]
-	for _, t := range session.Tabs {
-		if t.ID == "" {
-			continue
-		}
-		if strings.HasPrefix(t.ID, "prompt:") {
-			live = append(live, t) // prompts are always resolvable
-			continue
-		}
-		if _, err := a.LoadByUUID(t.ID); err == nil {
-			live = append(live, t)
-		} else {
-			logger.Warn("session: skipping missing document", "id", t.ID)
-		}
-	}
-	session.Tabs = live
-
-	if len(session.Tabs) > 0 {
-		hasActive := false
-		for _, t := range session.Tabs {
-			if t.Active {
-				hasActive = true
-				break
-			}
-		}
-		if !hasActive {
-			session.Tabs[0].Active = true
-		}
-	}
-
-	return session
-}
-
-func (a *App) SaveSession(session stash.Session) error {
-	if a.state == nil {
-		return fmt.Errorf("store not open")
-	}
-	existing := a.state.LoadSession()
-	if session.SidebarWidth == 0 {
-		session.SidebarWidth = existing.SidebarWidth
-	}
-	if session.MetaWidth == 0 {
-		session.MetaWidth = existing.MetaWidth
-	}
-	if session.Window == (stash.Window{}) {
-		session.Window = existing.Window
-	}
-	if len(session.OpenFolders) == 0 {
-		session.OpenFolders = existing.OpenFolders
-	}
-	if err := a.state.SaveSession(session); err != nil {
-		logger.Error("SaveSession failed", "err", err)
-		return err
-	}
-	logger.Debug("session saved", "tabs", len(session.Tabs))
-	return nil
-}
-
-// ── Buffers ───────────────────────────────────────────────────────────────────
-
-func (a *App) NewBuffer() (BufferDTO, error) {
-	if a.buffers == nil {
-		return BufferDTO{}, fmt.Errorf("store not open")
-	}
-	b, err := a.buffers.New()
-	if err != nil {
-		logger.Error("NewBuffer failed", "err", err)
-		return BufferDTO{}, err
-	}
-	logger.Info("buffer created", "path", b.Path(), "uuid", b.UUID())
-	return toBufferDTO(b), nil
-}
-
-// LoadBuffer loads any document by its store-relative path and returns a typed DTO.
-// Tries BufferService first; falls back to NoteService so routing is not
-// coupled to the path prefix convention of any particular Store implementation.
-// The returned Body is pure markdown — frontmatter is never included.
-func (a *App) LoadBuffer(path string) (interface{}, error) {
-	if a.buffers == nil {
-		return nil, fmt.Errorf("store not open")
-	}
-	if b, err := a.buffers.Load(path); err == nil {
-		logger.Debug("buffer loaded", "path", path)
-		return toBufferDTO(b), nil
-	}
-	n, err := a.notes.Load(path)
-	if err != nil {
-		logger.Error("LoadBuffer: not found in buffers or notes", "path", path, "err", err)
-		return nil, err
-	}
-	logger.Debug("note loaded via LoadBuffer", "path", path)
-	return toNoteDTO(n), nil
-}
-
-// SaveBuffer persists the body and writable meta fields from dto. The Store
-// bumps the version and modified timestamp automatically. Returns the updated
-// DTO with Store-stamped fields reflecting the saved state.
-// Routes by dto.Meta.Status: "filed" → NoteService, anything else → BufferService.
-func (a *App) SaveBuffer(dto BufferDTO) (interface{}, error) {
-	if a.buffers == nil {
-		return nil, fmt.Errorf("store not open")
-	}
-	if dto.Meta.Status == "filed" {
-		n, err := a.notes.Load(dto.Path)
-		if err != nil {
-			logger.Error("SaveBuffer(note): load failed", "path", dto.Path, "err", err)
-			return nil, err
-		}
-		n.SetBody([]byte(dto.Body))
-		applyDTOToMeta(dto.Meta, n.Meta())
-		saved, err := a.notes.Save(n)
-		if err != nil {
-			logger.Error("SaveBuffer(note): save failed", "path", dto.Path, "err", err)
-			return nil, err
-		}
-		logger.Debug("note saved via SaveBuffer", "path", dto.Path)
-		return toNoteDTO(saved), nil
-	}
-	b, err := a.buffers.Load(dto.Path)
-	if err != nil {
-		logger.Error("SaveBuffer: load failed", "path", dto.Path, "err", err)
-		return nil, err
-	}
-	b.SetBody([]byte(dto.Body))
-	applyDTOToMeta(dto.Meta, b.Meta())
-	saved, err := a.buffers.Save(b)
-	if err != nil {
-		logger.Error("SaveBuffer: save failed", "path", dto.Path, "err", err)
-		return nil, err
-	}
-	logger.Debug("buffer saved", "path", dto.Path)
-	return toBufferDTO(saved), nil
-}
-
-// RefileNote applies the filing recommendation already persisted in dto's
-// metadata to a Library note: saves the updated meta, then renames/moves the
-// note within the Library based on the filename and folder fields.
-// Used when the user runs "Smart File" on a note that is already filed.
-func (a *App) RefileNote(dto BufferDTO) (NoteDTO, error) {
-	if a.notes == nil {
-		return NoteDTO{}, fmt.Errorf("store not open")
-	}
-	n, err := a.notes.Load(dto.Path)
-	if err != nil {
-		return NoteDTO{}, fmt.Errorf("refile: load %s: %w", dto.Path, err)
-	}
-	n.SetBody([]byte(dto.Body))
-	applyDTOToMeta(dto.Meta, n.Meta())
-	// Save updated metadata first so Refile derives the correct name.
-	saved, err := a.notes.Save(n)
-	if err != nil {
-		return NoteDTO{}, fmt.Errorf("refile: save %s: %w", dto.Path, err)
-	}
-	refiled, err := a.notes.Refile(saved)
-	if err != nil {
-		return NoteDTO{}, fmt.Errorf("refile: rename %s: %w", dto.Path, err)
-	}
-	logger.Info("note refiled", "from", dto.Path, "to", refiled.Path())
-	return toNoteDTO(refiled), nil
-}
-
-// DiscardBuffer deletes a buffer and its version history.
-func (a *App) DiscardBuffer(path string) error {
-	if a.buffers == nil {
-		return fmt.Errorf("store not open")
-	}
-	b, err := a.buffers.Load(path)
-	if err != nil {
-		logger.Error("DiscardBuffer: load failed", "path", path, "err", err)
-		return err
-	}
-	if err := a.buffers.Discard(b); err != nil {
-		logger.Error("DiscardBuffer failed", "path", path, "err", err)
-		return err
-	}
-	logger.Info("buffer discarded", "path", path)
-	return nil
-}
-
-// FileBuffer promotes a buffer to the Library using the AI-derived name and
-// folder. Returns the resulting NoteDTO.
-func (a *App) FileBuffer(path string) (NoteDTO, error) {
-	if a.buffers == nil {
-		return NoteDTO{}, fmt.Errorf("store not open")
-	}
-	b, err := a.buffers.Load(path)
-	if err != nil {
-		logger.Error("FileBuffer: load failed", "path", path, "err", err)
-		return NoteDTO{}, err
-	}
-	n, err := a.buffers.File(b)
-	if err != nil {
-		logger.Error("FileBuffer failed", "path", path, "err", err)
-		return NoteDTO{}, err
-	}
-	logger.Info("buffer filed", "from", path, "to", n.Path())
-	return toNoteDTO(n), nil
-}
-
-// FileBufferWithName is like FileBuffer but overrides the filename.
-func (a *App) FileBufferWithName(path, name string) (NoteDTO, error) {
-	if a.buffers == nil {
-		return NoteDTO{}, fmt.Errorf("store not open")
-	}
-	b, err := a.buffers.Load(path)
-	if err != nil {
-		logger.Error("FileBufferWithName: load failed", "path", path, "err", err)
-		return NoteDTO{}, err
-	}
-	n, err := a.buffers.FileWithName(b, name)
-	if err != nil {
-		logger.Error("FileBufferWithName failed", "path", path, "err", err)
-		return NoteDTO{}, err
-	}
-	logger.Info("buffer filed with name", "from", path, "to", n.Path(), "name", name)
-	return toNoteDTO(n), nil
-}
-
-// GetDocumentVersion retrieves a historical snapshot identified by ref.
-// path is the store-relative path of the document (Buffer or Note).
-func (a *App) GetDocumentVersion(path string, ref VersionRefDTO) (VersionedStorableDTO, error) {
-	if a.buffers == nil {
-		return VersionedStorableDTO{}, fmt.Errorf("store not open")
-	}
-	vref := fromVersionRefDTO(ref)
-
-	// Try as Buffer first, then as Note.
-	if b, err := a.buffers.Load(path); err == nil {
-		v, err := a.buffers.RetrieveVersion(b, vref)
-		if err != nil {
-			return VersionedStorableDTO{}, fmt.Errorf("retrieve version: %w", err)
-		}
-		return toVersionedStorableDTO(v), nil
-	}
-	if n, err := a.notes.Load(path); err == nil {
-		v, err := a.notes.RetrieveVersion(n, vref)
-		if err != nil {
-			return VersionedStorableDTO{}, fmt.Errorf("retrieve version: %w", err)
-		}
-		return toVersionedStorableDTO(v), nil
-	}
-	return VersionedStorableDTO{}, fmt.Errorf("document not found: %s", path)
-}
-
-// ── Notes ─────────────────────────────────────────────────────────────────────
-
-// DeleteNote deletes a filed note by its UUID.
-func (a *App) DeleteNote(uuid string) error {
-	if a.notes == nil {
-		return fmt.Errorf("store not open")
-	}
-	n, err := a.notes.LoadByUUID(uuid)
-	if err != nil {
-		logger.Error("DeleteNote: load failed", "uuid", uuid, "err", err)
-		return err
-	}
-	if err := a.notes.Delete(n); err != nil {
-		logger.Error("DeleteNote failed", "uuid", uuid, "err", err)
-		return err
-	}
-	logger.Info("note deleted", "uuid", uuid, "path", n.Path())
-	return nil
-}
-
-// MoveNote moves a note to a different folder within the Library.
-// uuid identifies the note. folderID is the opaque folder identifier returned
-// by GetNotes — e.g. "store/ai-stuff" or "store" for the Library root.
-func (a *App) MoveNote(uuid, folderID string) (NoteDTO, error) {
-	if a.notes == nil {
-		return NoteDTO{}, fmt.Errorf("store not open")
-	}
-	n, err := a.notes.LoadByUUID(uuid)
-	if err != nil {
-		logger.Error("MoveNote: load failed", "uuid", uuid, "err", err)
-		return NoteDTO{}, err
-	}
-	// Strip the category prefix to get the bare folder path expected by NoteService.Move.
-	// "store/ai-stuff" → "ai-stuff"; "store" → "" (root).
-	folder := strings.TrimPrefix(folderID, stash.Library.Key+"/")
-	if folder == stash.Library.Key {
-		folder = ""
-	}
-	moved, err := a.notes.Move(n, folder)
-	if err != nil {
-		logger.Error("MoveNote failed", "uuid", uuid, "folderID", folderID, "err", err)
-		return NoteDTO{}, err
-	}
-	logger.Info("note moved", "uuid", uuid, "to", moved.Path())
-	return toNoteDTO(moved), nil
-}
-
-// RenameNote renames a filed note by its UUID. newName is the desired base name
-// (without extension); it will be kebab-cased by the service.
-func (a *App) RenameNote(uuid, newName string) (NoteDTO, error) {
-	if a.notes == nil {
-		return NoteDTO{}, fmt.Errorf("store not open")
-	}
-	n, err := a.notes.LoadByUUID(uuid)
-	if err != nil {
-		logger.Error("RenameNote: load failed", "uuid", uuid, "err", err)
-		return NoteDTO{}, err
-	}
-	renamed, err := a.notes.Rename(n, newName)
-	if err != nil {
-		logger.Error("RenameNote failed", "uuid", uuid, "name", newName, "err", err)
-		return NoteDTO{}, err
-	}
-	logger.Info("note renamed", "uuid", uuid, "to", renamed.Path())
-	return toNoteDTO(renamed), nil
-}
-
-// LoadByUUID loads a note or buffer by its UUID. Prompts are not handled here —
-// the frontend calls LoadPrompt directly for "prompt:" IDs.
-func (a *App) LoadByUUID(id string) (interface{}, error) {
-	if a.notes != nil {
-		if n, err := a.notes.LoadByUUID(id); err == nil {
-			return toNoteDTO(n), nil
-		}
-	}
-	if a.buffers != nil {
-		if b, err := a.buffers.LoadByUUID(id); err == nil {
-			return toBufferDTO(b), nil
-		}
-	}
-	return nil, fmt.Errorf("no document with id %q", id)
-}
-
-// ── Folders ───────────────────────────────────────────────────────────────────
-//
-// Folder ops use direct file operations — the Store interface does not yet have
-// explicit CreateFolder support (folders are created implicitly by file ops).
-
-// CreateFolder creates a new folder. parentFolderID is the opaque folder ID
-// from GetNotes (e.g. "store/projects") or "" / "store" for the Library root.
-// name is the desired folder name.
-func (a *App) CreateFolder(parentFolderID, name string) error {
-	if a.storePath == "" {
-		return fmt.Errorf("store not open")
-	}
-	var folderPath string
-	if parentFolderID == "" || parentFolderID == stash.Library.Key {
-		folderPath = stash.Library.Key + "/" + name
-	} else {
-		folderPath = parentFolderID + "/" + name
-	}
-	resolved := a.resolvePath(folderPath)
-	if err := os.MkdirAll(resolved, 0o755); err != nil {
-		logger.Error("CreateFolder failed", "folderPath", folderPath, "err", err)
-		return err
-	}
-	logger.Info("folder created", "path", folderPath)
-	return nil
-}
-
-func (a *App) DeleteFolder(path string) error {
-	if a.storePath == "" {
-		return fmt.Errorf("store not open")
-	}
-	resolved := a.resolvePath(path)
-	info, err := os.Stat(resolved)
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("not a directory")
-	}
-	entries, err := os.ReadDir(resolved)
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		if !strings.HasPrefix(e.Name(), ".") {
-			return fmt.Errorf("directory not empty")
-		}
-	}
-	if err := os.RemoveAll(resolved); err != nil {
-		logger.Error("DeleteFolder failed", "path", path, "err", err)
-		return err
-	}
-	logger.Info("folder deleted", "path", path)
-	return nil
-}
-
-// RenameFolder renames a folder. folderID is the opaque folder ID from GetNotes
-// (e.g. "store/ai-stuff"). newName is the desired new folder name (not a full path).
-// Returns the new folder ID so the frontend can update its open-folder state.
-func (a *App) RenameFolder(folderID, newName string) (string, error) {
-	if a.storePath == "" {
-		return "", fmt.Errorf("store not open")
-	}
-	parent := filepath.ToSlash(filepath.Dir(folderID))
-	newPath := parent + "/" + newName
-	oldResolved := a.resolvePath(folderID)
-	newResolved := a.resolvePath(newPath)
-	if err := os.Rename(oldResolved, newResolved); err != nil {
-		logger.Error("RenameFolder failed", "from", folderID, "to", newPath, "err", err)
-		return "", err
-	}
-	logger.Info("folder renamed", "from", folderID, "to", newPath)
-	return newPath, nil
-}
-
 // ── Assets ────────────────────────────────────────────────────────────────────
 
-// SaveAsset stores a base64-encoded image and returns an AssetDTO whose
-// ExternalRef can be inserted directly into markdown.
-// context is the store-relative path of the owning document (or "" for a buffer paste).
-func (a *App) SaveAsset(context, id, dataBase64 string) (AssetDTO, error) {
-	if a.assets == nil {
-		return AssetDTO{}, fmt.Errorf("store not open")
-	}
-	if idx := strings.Index(dataBase64, ","); idx >= 0 {
-		dataBase64 = dataBase64[idx+1:]
-	}
-	data, err := base64.StdEncoding.DecodeString(dataBase64)
-	if err != nil {
-		logger.Error("SaveAsset: decode failed", "err", err)
-		return AssetDTO{}, fmt.Errorf("SaveAsset: decode: %w", err)
-	}
-	isBuffer := context == "" || context == "new" || strings.Contains(context, "/buffers/")
-	cat := stash.WorkingCopy
-	if !isBuffer {
-		cat = stash.Library
-	}
-
-	asset, err := a.assets.Save(cat, context, id, data)
-	if err != nil {
-		logger.Error("SaveAsset failed", "id", id, "err", err)
-		return AssetDTO{}, err
-	}
-
-	if context != "" && context != "new" {
-		if b, err := a.buffers.Load(context); err == nil {
-			b.Storable().AttachAsset(asset.Storable())
-			if _, err := a.buffers.Save(b); err != nil {
-				logger.Warn("SaveAsset: failed to attach to buffer", "err", err)
-			}
-		} else if n, err := a.notes.Load(context); err == nil {
-			n.Storable().AttachAsset(asset.Storable())
-			if _, err := a.notes.Save(n); err != nil {
-				logger.Warn("SaveAsset: failed to attach to note", "err", err)
-			}
-		}
-	}
-
-	logger.Info("asset saved", "externalRef", asset.ExternalRef())
-	return toAssetDTO(asset), nil
-}
-
 // DownloadAsset fetches an image from a URL and stores it as an asset.
-// context is the store-relative path of the owning document (or "" for buffer paste).
-func (a *App) DownloadAsset(context, targetURL, id string) (AssetDTO, error) {
-	if a.assets == nil {
+// uuid identifies the owning document (or "" when no document is active).
+// Called directly from editor.js via the Wails bridge.
+func (a *App) DownloadAsset(uuid, targetURL, id string) (AssetDTO, error) {
+	if a.Assets == nil {
 		return AssetDTO{}, fmt.Errorf("store not open")
 	}
 	data, err := downloadURL(targetURL)
@@ -1043,29 +441,28 @@ func (a *App) DownloadAsset(context, targetURL, id string) (AssetDTO, error) {
 		logger.Error("DownloadAsset: fetch failed", "url", targetURL, "err", err)
 		return AssetDTO{}, err
 	}
-	isBuffer := context == "" || context == "new" || strings.Contains(context, "/buffers/")
-	cat := stash.WorkingCopy
-	if !isBuffer {
-		cat = stash.Library
+
+	cat := sieve.WorkingCopy
+	var doc sieve.Document
+	if uuid != "" && a.Documents != nil {
+		if d, err := a.Documents.LoadByUUID(uuid); err == nil {
+			doc = d
+			if doc.Kind() == sieve.KindNote {
+				cat = sieve.Library
+			}
+		}
 	}
 
-	asset, err := a.assets.Save(cat, context, id, data)
+	asset, err := a.Assets.Save(cat, uuid, id, data)
 	if err != nil {
 		logger.Error("DownloadAsset: save failed", "id", id, "err", err)
 		return AssetDTO{}, err
 	}
 
-	if context != "" && context != "new" {
-		if b, err := a.buffers.Load(context); err == nil {
-			b.Storable().AttachAsset(asset.Storable())
-			if _, err := a.buffers.Save(b); err != nil {
-				logger.Warn("DownloadAsset: failed to attach to buffer", "err", err)
-			}
-		} else if n, err := a.notes.Load(context); err == nil {
-			n.Storable().AttachAsset(asset.Storable())
-			if _, err := a.notes.Save(n); err != nil {
-				logger.Warn("DownloadAsset: failed to attach to note", "err", err)
-			}
+	if doc != nil {
+		doc.Storable().AttachAsset(asset.Storable())
+		if _, err := a.Documents.Save(doc); err != nil {
+			logger.Warn("DownloadAsset: failed to attach asset", "err", err)
 		}
 	}
 	logger.Info("asset downloaded", "url", targetURL, "externalRef", asset.ExternalRef())
@@ -1074,66 +471,23 @@ func (a *App) DownloadAsset(context, targetURL, id string) (AssetDTO, error) {
 
 // ── AI / CLI operations ───────────────────────────────────────────────────────
 
-func (a *App) EvaluateBuffer(path string) (*stash.FilingRecommendation, error) {
-	if a.buffers == nil {
-		return nil, fmt.Errorf("store not open")
+func (a *App) DescribeImage(storeRelPath string) (sieve.ImageDesc, error) {
+	if a.AI == nil {
+		return sieve.ImageDesc{}, fmt.Errorf("store not open")
 	}
-	settings := a.state.LoadSettings()
-
-	var meta stash.DocumentMeta
-	var body []byte
-	if b, err := a.buffers.Load(path); err == nil {
-		meta, body = b.Meta(), b.Body()
-	} else if n, err := a.notes.Load(path); err == nil {
-		meta, body = n.Meta(), n.Body()
-	} else {
-		return nil, fmt.Errorf("document not found: %s", path)
-	}
-
-	prompt, _ := a.prompts.GetPromptContent("file")
-	rec, err := stash.EvaluateBuffer(meta, body, a.libraryFolders(), settings, prompt)
+	desc, err := a.AI.DescribeImage(storeRelPath)
 	if err != nil {
-		logger.Warn("EvaluateBuffer failed", "path", path, "err", err)
-		return nil, err
+		logger.Warn("DescribeImage failed", "err", err)
+		return sieve.ImageDesc{}, err
 	}
-	logger.Info("EvaluateBuffer success", "path", path)
-	return rec, nil
-}
-
-// EvaluateAndFile loads the document at path, runs AI evaluation, applies the
-// recommendation to its metadata, and optionally promotes it to the Library.
-// The frontend must have already persisted the document body before calling this.
-// Returns EvaluateAndFileResult{Discarded: true} when the document was removed.
-func (a *App) EvaluateAndFile(path string, fileAfter bool, allowDiscard bool) (EvaluateAndFileResult, error) {
-	if a.buffers == nil {
-		return EvaluateAndFileResult{}, fmt.Errorf("store not open")
-	}
-	settings := a.state.LoadSettings()
-	prompt, _ := a.prompts.GetPromptContent("file")
-	outcome, err := stash.EvaluateAndFileDoc(path, a.buffers, a.notes, settings, a.libraryFolders(), prompt, fileAfter, allowDiscard)
-	if err != nil {
-		return EvaluateAndFileResult{}, err
-	}
-	if outcome.Discarded {
-		return EvaluateAndFileResult{Discarded: true}, nil
-	}
-	if outcome.Note != nil {
-		logger.Info("EvaluateAndFile: note outcome", "path", outcome.Note.Path())
-		return EvaluateAndFileResult{Doc: toNoteBufferDTO(outcome.Note)}, nil
-	}
-	return EvaluateAndFileResult{Doc: toBufferDTO(outcome.Buffer)}, nil
+	return desc, nil
 }
 
 func (a *App) RefineLanguage(content string) (string, error) {
-	if a.buffers == nil {
+	if a.AI == nil {
 		return "", fmt.Errorf("store not open")
 	}
-	settings := a.state.LoadSettings()
-	if settings.Tier() == stash.TierDumb {
-		return "", fmt.Errorf("dumb mode")
-	}
-	prompt, _ := a.prompts.GetPromptContent("refine")
-	lang, err := stash.RefineLanguage(content, settings, prompt)
+	lang, err := a.AI.RefineLanguage(content)
 	if err != nil {
 		logger.Warn("RefineLanguage failed", "err", err)
 		return "", err
@@ -1141,89 +495,58 @@ func (a *App) RefineLanguage(content string) (string, error) {
 	return lang, nil
 }
 
-func (a *App) DescribeImage(storeRelPath string) (stash.ImageDesc, error) {
-	if a.buffers == nil {
-		return stash.ImageDesc{}, fmt.Errorf("store not open")
-	}
-	settings := a.state.LoadSettings()
-	if settings.Tier() == stash.TierDumb {
-		return stash.ImageDesc{}, fmt.Errorf("dumb mode")
-	}
-	prompt, _ := a.prompts.GetPromptContent("image")
-	desc, err := stash.DescribeImage(filepath.Join(a.storePath, storeRelPath), settings, prompt)
-	if err != nil {
-		logger.Warn("DescribeImage failed", "err", err)
-		return stash.ImageDesc{}, err
-	}
-	return desc, nil
-}
-
-func (a *App) Explain(content string, history string, notePath string, imageStorePaths []string) (string, error) {
-	if a.buffers == nil {
+func (a *App) GetLinkTitle(url string) (string, error) {
+	logger.Info("Getting title for ", url)
+	if url == "" {
 		return "", fmt.Errorf("store not open")
 	}
-	settings := a.state.LoadSettings()
-	if settings.Tier() == stash.TierDumb {
-		return "", fmt.Errorf("explain not available in dumb mode")
-	}
-	prompt, _ := a.prompts.GetPromptContent("explain")
-	resp, err := stash.RunExplain(content, history, settings,
-		filepath.Dir(a.resolvePath(notePath)), a.absImagePaths(imageStorePaths), prompt)
+	var title string = ""
+	// 1. Make the HTTP GET request
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	resp, err := client.Do(req)
 	if err != nil {
-		logger.Warn("Explain failed", "err", err)
 		return "", err
 	}
-	return resp, nil
-}
+	defer resp.Body.Close()
 
-func (a *App) Ask(content string, history string, question string, notePath string, imageStorePaths []string) (string, error) {
-	if a.buffers == nil {
-		return "", fmt.Errorf("store not open")
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("status code error: %d %s", resp.StatusCode, resp.Status)
 	}
-	settings := a.state.LoadSettings()
-	if settings.Tier() == stash.TierDumb {
-		return "", fmt.Errorf("ask not available in dumb mode")
-	}
-	prompt, _ := a.prompts.GetPromptContent("ask")
-	resp, err := stash.RunAsk(content, history, question, settings,
-		filepath.Dir(a.resolvePath(notePath)), a.absImagePaths(imageStorePaths), prompt)
+
+	// 2. Parse the HTML document
+	doc, err := html.Parse(resp.Body)
 	if err != nil {
-		logger.Warn("Ask failed", "err", err)
 		return "", err
 	}
-	return resp, nil
-}
 
-// libraryFolders returns the names of top-level folders in the Library,
-// used to seed the AI's folder suggestions in EvaluateBuffer.
-func (a *App) libraryFolders() []string {
-	entries, _ := a.notes.List()
-	var folders []string
-	for _, e := range entries {
-		if e.IsDir {
-			folders = append(folders, e.Name)
+	// 3. Recursively find the <title> node
+
+	var f func(*html.Node)
+	f = func(n *html.Node) {
+		// Check if the node is an element named "title"
+		logger.Info("Looking at Node %s", n.Data)
+		// If we found the title, stop searching
+		if title != "" {
+			return
 		}
-	}
-	return folders
-}
 
-// absImagePaths converts store-relative image paths to absolute filesystem paths.
-func (a *App) absImagePaths(storePaths []string) []string {
-	abs := make([]string, len(storePaths))
-	for i, p := range storePaths {
-		abs[i] = filepath.Join(a.storePath, p)
-	}
-	return abs
-}
+		// Check if current node is the <title> tag
+		if n.Type == html.ElementNode && n.Data == "title" && n.FirstChild != nil {
+			title = n.FirstChild.Data
+			return
+		}
 
-// loadThemeOverride reads the store-local theme override file for name, if any.
-// Returns nil when no override exists or the store is not open.
-func (a *App) loadThemeOverride(name string) []byte {
-	if a.storePath == "" || name == "" {
-		return nil
+		// Traverse the children of the current node
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			f(c)
+		}
+
 	}
-	data, _ := os.ReadFile(filepath.Join(a.storePath, "themes", name+".json"))
-	return data
+	f(doc)
+	logger.Info("Returning title for %s", url)
+	return strings.TrimSpace(title), nil
 }
 
 // ── File manager ──────────────────────────────────────────────────────────────
@@ -1234,14 +557,9 @@ func (a *App) ShowInFilesByID(id string) error {
 	if strings.HasPrefix(id, "prompt:") {
 		return a.ShowInFiles(a.promptsDir())
 	}
-	if a.notes != nil {
-		if n, err := a.notes.LoadByUUID(id); err == nil {
-			return a.ShowInFiles(n.Path())
-		}
-	}
-	if a.buffers != nil {
-		if b, err := a.buffers.LoadByUUID(id); err == nil {
-			return a.ShowInFiles(b.Path())
+	if a.Documents != nil {
+		if doc, err := a.Documents.LoadByUUID(id); err == nil {
+			return a.ShowInFiles(doc.Path())
 		}
 	}
 	// Folder: id is an ExternalRef (e.g. "store/my-folder") — resolvePath handles it.
@@ -1285,6 +603,16 @@ func (a *App) resolvePath(path string) string {
 	return path
 }
 
+// loadThemeOverride reads the store-local theme override file for name, if any.
+// Returns nil when no override exists or the store is not open.
+func (a *App) loadThemeOverride(name string) []byte {
+	if a.storePath == "" || name == "" {
+		return nil
+	}
+	data, _ := os.ReadFile(filepath.Join(a.storePath, "themes", name+".json"))
+	return data
+}
+
 // migrateStateFiles moves settings.json and session.json from hostDir to
 // configDir. For settings.json it uses a smart merge: if the old file has a
 // "cli" field and the new file does not, the old file wins (it carries real
@@ -1292,20 +620,18 @@ func (a *App) resolvePath(path string) string {
 // first startup before migration ran). session.json is only moved if absent
 // in the new location.
 func migrateStateFiles(hostDir, configDir string) {
-	// settings.json — smart merge: old wins if it has a cli field the new lacks
 	migrateSettings(
 		filepath.Join(hostDir, "settings.json"),
 		filepath.Join(configDir, "settings.json"),
 	)
 
-	// session.json — simple: only move if the new location is absent
 	oldSession := filepath.Join(hostDir, "session.json")
 	nwSession := filepath.Join(configDir, "session.json")
 	if _, err := os.Stat(oldSession); err != nil {
-		return // old file doesn't exist
+		return
 	}
 	if _, err := os.Stat(nwSession); err == nil {
-		return // new file already exists
+		return
 	}
 	if err := os.Rename(oldSession, nwSession); err != nil {
 		logger.Warn("state migration failed", "file", "session.json", "err", err)
@@ -1320,14 +646,11 @@ func migrateStateFiles(hostDir, configDir string) {
 func migrateSettings(oldPath, newPath string) {
 	oldData, err := os.ReadFile(oldPath)
 	if err != nil {
-		return // old file doesn't exist — nothing to do
+		return
 	}
 
-	// Check whether the old settings has a cli field.
-	var oldSettings stash.Settings
+	var oldSettings sieve.Settings
 	if err := json.Unmarshal(oldData, &oldSettings); err != nil || oldSettings.CLI == "" {
-		// Old file has no cli — not worth migrating settings over new defaults.
-		// Still move the file if the new location is absent.
 		if _, err := os.Stat(newPath); os.IsNotExist(err) {
 			if err := os.Rename(oldPath, newPath); err != nil {
 				logger.Warn("migrateSettings: rename failed", "err", err)
@@ -1338,21 +661,18 @@ func migrateSettings(oldPath, newPath string) {
 		return
 	}
 
-	// Old file has a cli field. Check if the new file already has one.
 	if newData, err := os.ReadFile(newPath); err == nil {
-		var newSettings stash.Settings
+		var newSettings sieve.Settings
 		if json.Unmarshal(newData, &newSettings) == nil && newSettings.CLI != "" {
-			// New file already has cli configured — leave it alone.
 			return
 		}
 	}
 
-	// New file is absent or has no cli — copy old over new.
 	if err := os.WriteFile(newPath, oldData, 0o644); err != nil {
 		logger.Warn("migrateSettings: write failed", "err", err)
 		return
 	}
-	os.Remove(oldPath) // clean up old location
+	os.Remove(oldPath)
 	logger.Info("migrated settings.json (cli merge)", "from", oldPath, "to", newPath)
 }
 
@@ -1383,4 +703,3 @@ func downloadURL(targetURL string) ([]byte, error) {
 	}
 	return io.ReadAll(resp.Body)
 }
-

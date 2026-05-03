@@ -3,7 +3,7 @@ package store_test
 import (
 	"testing"
 
-	"stash/store"
+	"sieve/store"
 )
 
 func TestEncodingValues(t *testing.T) {

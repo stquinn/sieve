@@ -7,13 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"stash/store"
-	"stash/store/filestore"
+	"sieve/store"
+	"sieve/store/filestore"
 )
 
 // testLibrary / testWorkingCopy mirror the business-layer category definitions.
-// They are defined here rather than imported from stash/ to avoid a circular
-// dependency (stash imports store; filestore is a sub-package of store).
+// They are defined here rather than imported from sieve/ to avoid a circular
+// dependency (sieve imports store; filestore is a sub-package of store).
 var (
 	testLibrary     = store.Category{Key: "store", DisplayName: "Library", Isolation: store.Shared}
 	testWorkingCopy = store.Category{Key: "buffers", DisplayName: "Working Copy", Isolation: store.Isolated}

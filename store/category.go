@@ -1,4 +1,4 @@
-// Package store defines the persistence boundary for Stash.
+// Package store defines the persistence boundary for Sieve.
 //
 // One place touches storage — everything else uses the results.
 //
@@ -11,7 +11,7 @@
 //
 //	store/          — interfaces and value types only; no I/O
 //	store/filestore — FileStore implementation backed by the local filesystem
-//	stash/          — business layer: Buffer, Note, DocumentMeta, services
+//	sieve/          — business layer: Buffer, Note, DocumentMeta, services
 //	app.go          — thin Wails bridge: calls a service, converts to DTO
 //
 // # Ownership graph
@@ -67,6 +67,6 @@ type Category struct {
 }
 
 // The concrete Category values (Library, WorkingCopy, State) are defined in the
-// business layer (stash package) — they are application concepts, not store
+// business layer (sieve package) — they are application concepts, not store
 // infrastructure. The store package only defines the Category type and the
 // IsolationLevel constants that govern how data is partitioned.

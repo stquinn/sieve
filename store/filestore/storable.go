@@ -1,6 +1,6 @@
 package filestore
 
-import "stash/store"
+import "sieve/store"
 
 // fileStorable is the base concrete type that satisfies store.Storable.
 // It is a pure value object — no I/O, no business logic.

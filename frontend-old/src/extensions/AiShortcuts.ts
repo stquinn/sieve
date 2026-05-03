@@ -1,0 +1,39 @@
+import { Extension } from '@tiptap/core'
+import type { Editor } from '@tiptap/core'
+
+export interface AiShortcutsOptions {
+  onExplain: (editor: Editor) => void
+  onAsk: (editor: Editor) => void
+  onSmartFile: () => void
+  onKeepAndSmartFile: () => void
+  onToggleAiBlocks?: () => void
+}
+
+export const AiShortcuts = Extension.create<AiShortcutsOptions>({
+  name: 'aiShortcuts',
+
+  addKeyboardShortcuts() {
+    return {
+      'Mod-e': () => {
+        this.options.onExplain(this.editor)
+        return true
+      },
+      'Mod-Shift-a': () => {
+        this.options.onAsk(this.editor)
+        return true
+      },
+      'Mod-Shift-A': () => {
+        this.options.onAsk(this.editor)
+        return true
+      },
+      'Mod-j': () => {
+        this.options.onToggleAiBlocks?.()
+        return true
+      },
+      'Mod-J': () => {
+        this.options.onToggleAiBlocks?.()
+        return true
+      },
+    }
+  },
+})

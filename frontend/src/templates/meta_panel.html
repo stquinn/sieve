@@ -1,0 +1,225 @@
+{{define "meta_panel.html"}}
+<div class="flex flex-col h-full overflow-hidden">
+
+  {{/* Tab header */}}
+  <div class="flex items-center justify-between text-[13px] font-semibold uppercase tracking-[0.05em] text-tn-text px-[0.9rem] h-[44px] border-b border-solid border-tn-border shrink-0 bg-tn-bg-dark">
+    <div class="flex gap-[1.2rem] h-full">
+      <button
+        class="flex items-center bg-transparent border-0 cursor-pointer text-[13px] font-semibold uppercase tracking-[0.05em] transition-colors h-full border-b-2 border-solid -mb-px px-0{{if eq .Tab "meta"}} text-tn-text border-tn-blue{{else}} text-tn-muted border-transparent hover:text-tn-text-dim{{end}}"
+        hx-get="/api/meta?uuid={{.UUID | urlenc}}&tab=meta"
+        hx-target="#htmx-meta-panel"
+        hx-swap="innerHTML">Meta</button>
+      {{if not .IsPrompt}}
+      <button
+        class="flex items-center bg-transparent border-0 cursor-pointer text-[13px] font-semibold uppercase tracking-[0.05em] transition-colors h-full border-b-2 border-solid -mb-px px-0{{if eq .Tab "history"}} text-tn-text border-tn-blue{{else}} text-tn-muted border-transparent hover:text-tn-text-dim{{end}}"
+        hx-get="/api/meta?uuid={{.UUID | urlenc}}&tab=history"
+        hx-target="#htmx-meta-panel"
+        hx-swap="innerHTML">History</button>
+      {{end}}
+      {{if .Meta}}
+      <button
+        class="flex items-center bg-transparent border-0 cursor-pointer text-[13px] font-semibold uppercase tracking-[0.05em] transition-colors h-full border-b-2 border-solid -mb-px px-0{{if eq .Tab "assets"}} text-tn-text border-tn-blue{{else}} text-tn-muted border-transparent hover:text-tn-text-dim{{end}}"
+        hx-get="/api/meta?uuid={{.UUID | urlenc}}&tab=assets"
+        hx-target="#htmx-meta-panel"
+        hx-swap="innerHTML">Assets</button>
+      {{end}}
+    </div>
+    <span id="meta-thinking-spinner" class="flex items-center gap-[5px] text-[10.5px] font-medium text-tn-cyan opacity-90 mr-2{{if not (and .Meta (or (eq .Meta.AiEval "evaluating") (eq .Meta.Status "evaluating")))}} hidden{{end}}">
+      <span class="w-[7px] h-[7px] shrink-0 rounded-full border-[1.5px] border-solid border-tn-cyan border-t-transparent animate-spin"></span>
+      Thinking
+    </span>
+  </div>
+
+  {{/* Path crumb */}}
+  <div class="font-mono text-[11px] text-tn-text-dim px-[0.9rem] py-2 whitespace-nowrap overflow-hidden text-ellipsis border-b border-solid border-tn-border shrink-0 bg-tn-bg-dark" title="{{.Path}}">
+    {{.FileName}}  222
+  </div>
+
+  {{/* Scrollable content */}}
+  <div class="flex-1 min-h-0 overflow-y-auto bg-tn-bg-dark">
+    {{if eq .Tab "meta"}}
+      {{if not .Meta}}
+        <div class="text-xs text-tn-subtle px-[0.9rem] py-[0.6rem] italic">No meta</div>
+        {{template "meta_prompt_vars" .}}
+      {{else}}
+        {{template "meta_tab_content" .}}
+      {{end}}
+    {{else if eq .Tab "history"}}
+      {{template "meta_history_tab" .}}
+    {{else if eq .Tab "assets"}}
+      {{template "meta_assets_tab" .}}
+    {{end}}
+  </div>
+
+</div>
+{{end}}
+
+
+{{define "meta_tab_content"}}
+<div class="py-[0.3rem]">
+  {{$m := .Meta}}
+
+  {{/* Dirty indicator — state managed client-side via window.sieveSetMetaDirty */}}
+  <div id="meta-dirty-indicator" class="mx-[0.9rem] mb-2 px-[0.9rem] py-2 rounded-[6px] flex justify-between items-center border border-solid border-tn-border">
+    <span class="meta-dirty-label text-[12px] font-bold uppercase text-tn-text-dim">All Changes Saved</span>
+    <div class="meta-dirty-dot w-2 h-2 rounded-full bg-tn-green"></div>
+  </div>
+
+  <div class="flex px-[0.9rem] py-[0.18rem] gap-[0.4rem] leading-[1.5]">
+    <span class="text-tn-text-dim shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem] font-medium">Status</span>
+    <span class="text-base break-words flex-1{{if eq $m.Status "filed"}} text-tn-green{{else if eq $m.Status "unfiled"}} text-tn-yellow{{else}} text-tn-muted{{end}}">{{if $m.Status}}{{$m.Status}}{{else}}—{{end}}</span>
+  </div>
+
+  {{template "meta_row" (metaRow "Version" (printf "%d" $m.Version))}}
+  {{template "meta_row" (metaRow "Focus count" (printf "%d" $m.FocusCount))}}
+
+  <div class="flex px-[0.9rem] py-[0.18rem] gap-[0.4rem] leading-[1.5]">
+    <span class="text-tn-text-dim shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem] font-medium">Now</span>
+    <span class="text-tn-blue text-base break-words flex-1">{{.Now}}</span>
+  </div>
+
+  <div class="h-px bg-tn-border my-[0.3rem]"></div>
+
+  <div class="flex px-[0.9rem] py-[0.18rem] gap-[0.4rem] leading-[1.5]">
+    <span class="text-tn-text-dim shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem] font-medium">User intent</span>
+    <span class="text-base break-words flex-1{{if eq $m.UserIntent "keep"}} text-tn-blue{{else if eq $m.UserIntent "trash"}} text-tn-red{{else}} text-tn-muted{{end}}">{{if $m.UserIntent}}{{$m.UserIntent}}{{else}}null{{end}}</span>
+  </div>
+
+  <div class="flex px-[0.9rem] py-[0.18rem] gap-[0.4rem] leading-[1.5]">
+    <span class="text-tn-text-dim shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem] font-medium">AI keep</span>
+    <span class="text-base break-words flex-1{{if eq $m.AiKeepStr "keep"}} text-tn-green{{else if eq $m.AiKeepStr "discard"}} text-tn-red font-bold{{else}} text-tn-text{{end}}">{{if $m.AiKeepStr}}{{$m.AiKeepStr}}{{else}}—{{end}}</span>
+  </div>
+
+  <div class="flex px-[0.9rem] py-[0.18rem] gap-[0.4rem] leading-[1.5]">
+    <span class="text-tn-text-dim shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem] font-medium">AI eval</span>
+    <span class="text-base break-words flex-1{{if eq $m.AiEval "complete"}} text-tn-green{{else if eq $m.AiEval "timeout"}} text-tn-red{{else}} text-tn-muted{{end}}">{{if $m.AiEval}}{{$m.AiEval}}{{else}}—{{end}}</span>
+  </div>
+
+  {{template "meta_row" (metaRow "AI evaluated" (or $m.AiLastEvaluated "—"))}}
+  {{template "meta_row" (metaRow "AI folder" (or $m.AiFolderSuggestion "—"))}}
+
+  <div class="h-px bg-tn-border my-[0.3rem]"></div>
+
+  {{template "meta_row" (metaRow "Display name" (or $m.DisplayName "—"))}}
+  {{template "meta_row" (metaRow "Filename" (or $m.Filename "—"))}}
+  {{template "meta_row" (metaRow "User name" (or $m.UserSuggestedName "—"))}}
+  {{template "meta_row" (metaRow "CLI" (or $m.CLI "—"))}}
+
+  <div class="h-px bg-tn-border my-[0.3rem]"></div>
+
+  <div class="flex px-[0.9rem] py-[0.18rem] gap-[0.4rem] leading-[1.5]">
+    <span class="text-tn-text-dim shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem] font-medium">Summary</span>
+    <span class="text-tn-text-dim italic text-[15px] leading-[1.5] flex-1 break-words">{{if $m.Summary}}{{$m.Summary}}{{else}}—{{end}}</span>
+  </div>
+
+  {{if $m.Tags}}
+  <div class="flex px-[0.9rem] py-[0.18rem] gap-[0.4rem] items-start">
+    <span class="text-tn-text-dim shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem] font-medium">Tags</span>
+    <div class="flex flex-wrap gap-1 flex-1">
+      {{range $m.Tags}}<span class="bg-tn-bg-alt border border-solid border-tn-border-2 rounded-[3px] text-tn-blue text-[10px] px-[0.35rem] py-[0.05rem] whitespace-nowrap">{{.}}</span>{{end}}
+    </div>
+  </div>
+  {{else}}
+  {{template "meta_row" (metaRow "Tags" "—")}}
+  {{end}}
+
+  <div class="flex px-[0.9rem] py-[0.18rem] gap-[0.4rem] leading-[1.5]">
+    <span class="text-tn-text-dim shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem] font-medium">AI why</span>
+    <span class="text-tn-text-dim italic text-[15px] leading-[1.5] flex-1 break-words">{{if $m.AiJustification}}{{$m.AiJustification}}{{else}}—{{end}}</span>
+  </div>
+
+  {{if $m.DensitySignals}}
+  <div class="flex px-[0.9rem] py-[0.18rem] gap-[0.4rem] items-start">
+    <span class="text-tn-text-dim shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem] font-medium">Density</span>
+    <div class="flex flex-wrap gap-1 flex-1">
+      {{range $m.DensitySignals}}<span class="bg-tn-bg-alt border border-solid border-tn-border-2 rounded-[3px] text-tn-blue text-[10px] px-[0.35rem] py-[0.05rem] whitespace-nowrap">{{.}}</span>{{end}}
+    </div>
+  </div>
+  {{else}}
+  {{template "meta_row" (metaRow "Density" "—")}}
+  {{end}}
+
+  <div class="h-px bg-tn-border my-[0.3rem]"></div>
+
+  {{template "meta_row" (metaRow "Created" (or $m.Created "—"))}}
+  {{template "meta_row" (metaRow "Modified" (or $m.Modified "—"))}}
+
+  <div class="h-px bg-tn-border my-[0.3rem]"></div>
+
+  <div class="flex px-[0.9rem] py-[0.18rem] gap-[0.4rem] leading-[1.5]">
+    <span class="text-tn-text-dim shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem] font-medium">UUID</span>
+    <span class="font-mono text-[11px] text-tn-muted break-all select-all flex-1">{{if $m.UUID}}{{$m.UUID}}{{else}}—{{end}}</span>
+  </div>
+
+  {{template "meta_prompt_vars" .}}
+</div>
+{{end}}
+
+
+{{define "meta_history_tab"}}
+<div class="py-[0.3rem]">
+  {{if not .Versions}}
+  <div class="text-xs text-tn-subtle px-[0.9rem] py-[0.6rem] italic">No historical snapshots found.</div>
+  {{else}}
+  {{range .Versions}}
+  <div id="version-row-{{.ID}}" class="flex justify-between items-center px-[0.9rem] py-[0.6rem] border-b border-solid border-tn-border">
+    <div class="flex flex-col gap-[0.2rem]">
+      <span class="text-tn-text font-semibold text-[14px]">{{.ID}}</span>
+      <span class="text-tn-text-dim text-[12px]">{{.Created}} · {{.SizeKB}} KB</span>
+    </div>
+    <button
+      class="bg-tn-bg-alt border border-solid border-tn-border-2 text-tn-text text-[13px] px-[0.6rem] py-[0.25rem] rounded-[4px] cursor-pointer hover:bg-tn-blue hover:border-tn-blue hover:text-white transition-colors"
+      hx-post="/api/meta/restore?uuid={{.UUIDEnc}}&version={{.VersionEnc}}"
+      hx-confirm="Restore this version? Any unsaved changes will be lost."
+      hx-swap="none"
+    >Restore</button>
+  </div>
+  {{end}}
+  {{end}}
+</div>
+{{end}}
+
+
+{{define "meta_assets_tab"}}
+<div class="py-[0.3rem]">
+  {{if not .Assets}}
+  <div class="text-xs text-tn-subtle px-[0.9rem] py-[0.6rem] italic">No owned assets found.</div>
+  {{else}}
+  {{range .Assets}}
+  <div class="flex justify-between items-center px-[0.9rem] py-[0.6rem] border-b border-solid border-tn-border">
+    <div class="flex flex-col gap-[0.2rem]">
+      <span class="text-tn-text font-semibold text-[14px]">{{.Name}}</span>
+      <span class="text-tn-text-dim text-[12px]">{{.Encoding}}</span>
+    </div>
+    <code class="text-[11px] text-tn-muted">{{.ExternalRef}}</code>
+  </div>
+  {{end}}
+  {{end}}
+</div>
+{{end}}
+
+
+{{define "meta_prompt_vars"}}
+{{if .IsPrompt}}
+{{$vars := promptVars .PromptType}}
+{{if $vars}}
+<div style="padding:0.8rem 0.9rem;border-top:1px solid var(--theme-border)">
+  <div class="text-[11px] text-tn-muted uppercase tracking-[0.05em] mb-2">Template variables</div>
+  {{range $vars}}
+  <div class="flex gap-2 mb-1">
+    <code class="text-tn-blue text-[12px] min-w-[120px]">{{.Name}}</code>
+    <span class="text-tn-text-dim text-[12px]">{{.Desc}}</span>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+{{end}}
+
+
+{{define "meta_row"}}
+<div class="flex px-[0.9rem] py-[0.18rem] gap-[0.4rem] leading-[1.5]">
+  <span class="text-tn-text-dim shrink-0 w-[7.5rem] text-[15px] pt-[0.05rem] font-medium">{{.Label}}</span>
+  <span class="text-tn-text text-base break-words flex-1">{{.Value}}</span>
+</div>
+{{end}}

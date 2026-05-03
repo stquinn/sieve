@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"stash/stash"
-	"stash/store"
+	"sieve/sieve"
+	"sieve/store"
 )
 
 // ── DTOs — serialised across the Wails bridge as JSON ─────────────────────────
@@ -97,7 +97,7 @@ type VersionedStorableDTO struct {
 
 // ── Business-type → DTO ───────────────────────────────────────────────────────
 
-func toDocumentMetaDTO(m stash.DocumentMeta, owns []store.Storable) DocumentMetaDTO {
+func toDocumentMetaDTO(m sieve.DocumentMeta, owns []store.Storable) DocumentMetaDTO {
 	tags := m.Tags()
 	if tags == nil {
 		tags = []string{}
@@ -176,7 +176,7 @@ func toVersionRefDTOs(refs []store.VersionRef) []VersionRefDTO {
 	return out
 }
 
-func toBufferDTO(b *stash.Buffer) BufferDTO {
+func toBufferDTO(b *sieve.Buffer) BufferDTO {
 	return BufferDTO{
 		Kind:     "buffer",
 		UUID:     b.UUID(),
@@ -190,7 +190,7 @@ func toBufferDTO(b *stash.Buffer) BufferDTO {
 
 // toNoteBufferDTO converts a Note to a BufferDTO so the frontend can use a
 // single LoadBuffer/SaveBuffer API regardless of category.
-func toNoteBufferDTO(n *stash.Note) BufferDTO {
+func toNoteBufferDTO(n *sieve.Note) BufferDTO {
 	return BufferDTO{
 		Kind:     "note",
 		UUID:     n.UUID(),
@@ -202,7 +202,7 @@ func toNoteBufferDTO(n *stash.Note) BufferDTO {
 	}
 }
 
-func toNoteDTO(n *stash.Note) NoteDTO {
+func toNoteDTO(n *sieve.Note) NoteDTO {
 	return NoteDTO{
 		Kind:     "note",
 		UUID:     n.UUID(),
@@ -214,7 +214,7 @@ func toNoteDTO(n *stash.Note) NoteDTO {
 	}
 }
 
-func toAssetDTO(a *stash.ImageAsset) AssetDTO {
+func toAssetDTO(a *sieve.ImageAsset) AssetDTO {
 	return AssetDTO{
 		ExternalRef: a.ExternalRef(),
 		Encoding:    encodingName(a.Encoding()),
@@ -284,7 +284,7 @@ func rawMapToMetaDTO(m map[string]string) DocumentMetaDTO {
 // applyDTOToMeta writes every writable field from dto back to m.
 // Read-only fields (Status, Version, Created, Modified) are skipped.
 // Called by SaveBuffer and SaveNote on the inbound DTO path.
-func applyDTOToMeta(dto DocumentMetaDTO, m stash.DocumentMeta) {
+func applyDTOToMeta(dto DocumentMetaDTO, m sieve.DocumentMeta) {
 	m.SetFocusCount(dto.FocusCount)
 	m.SetUserIntent(dto.UserIntent)
 	m.SetAiEval(dto.AiEval)

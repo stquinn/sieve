@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>Sieve</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/tailwind.css">
+    <link rel="stylesheet" href="/theme.css">
+    <link rel="stylesheet" href="/static/sidebar.css">
+    <link rel="stylesheet" href="/static/editor.css">
+    <style>
+        /* Basic layout styles to replicate App.css without React wrapper */
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+            background-color: var(--theme-bg);
+            color: var(--theme-text);
+            font-family: var(--theme-uiFont, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif);
+        }
+        #app-root {
+            display: flex;
+            flex-direction: row;
+            height: 100%;
+            width: 100%;
+        }
+        #right-panel {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-width: 0;
+            height: 100%;
+        }
+        .editor-area {
+            display: flex;
+            flex-direction: row;
+            flex: 1;
+            min-height: 0;
+            position: relative;
+        }
+        .sidebar {
+            flex-shrink: 0;
+            height: 100%;
+            background-color: var(--theme-bgDark);
+            border-right: 1px solid var(--theme-border);
+        }
+        .sidebar-handle, .meta-handle {
+            width: 4px;
+            cursor: col-resize;
+            background: transparent;
+            transition: background 0.2s;
+            z-index: 10;
+        }
+        .prompts-handle {
+            height: 4px;
+            cursor: row-resize;
+            background: transparent;
+            transition: background 0.2s;
+            z-index: 10;
+        }
+        .sidebar-handle:hover, .meta-handle:hover, .prompts-handle:hover {
+            background: var(--theme-accentPrimary);
+        }
+        .status-bar {
+            height: 28px;
+            background-color: var(--theme-bgDark);
+            border-top: 1px solid var(--theme-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 1rem;
+            font-size: 12px;
+            color: var(--theme-muted);
+            flex-shrink: 0;
+        }
+        dialog {
+            color: var(--theme-text);
+        }
+        .tab-drop-indicator-left {
+            position: relative;
+        }
+        .tab-drop-indicator-left::before {
+            content: "";
+            position: absolute;
+            left: -1px;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            background: var(--theme-accentPrimary);
+            z-index: 50;
+            box-shadow: 0 0 8px var(--theme-accentPrimary);
+        }
+        .tab-drop-indicator-right {
+            position: relative;
+        }
+        .tab-drop-indicator-right::after {
+            content: "";
+            position: absolute;
+            right: -1px;
+            top: 0;
+            bottom: 0;
+            width: 3px;
+            background: var(--theme-accentPrimary);
+            z-index: 50;
+            box-shadow: 0 0 8px var(--theme-accentPrimary);
+        }
+    </style>
+    <style id="layout-overrides">
+        #prompts-panel {
+            display: {{if .ShowPrompts}}block{{else}}none{{end}};
+        }
+        .prompts-handle {
+            display: {{if .ShowPrompts}}block{{else}}none{{end}};
+        }
+        #htmx-sidebar {
+            display: {{if .ShowSidebar}}block{{else}}none{{end}};
+        }
+        #htmx-meta-panel {
+            display: {{if .ShowMeta}}flex{{else}}none{{end}};
+        }
+        .sidebar-handle {
+            display: {{if .ShowSidebar}}block{{else}}none{{end}};
+        }
+        .meta-handle {
+            display: {{if .ShowMeta}}block{{else}}none{{end}};
+        }
+    </style>
+</head>
+<body hx-ext="sse" sse-connect="/sse">
+    <div id="app-root" class="theme-{{.ThemeName}} tier-{{.Tier}}" style="--sidebar-w: {{if .ShowSidebar}}{{.SidebarWidth}}{{else}}0{{end}}px; --meta-w: {{if .ShowMeta}}{{.MetaWidth}}{{else}}0{{end}}px;">
+        
+        <div id="sidebar-wrapper" style="width: var(--sidebar-w); display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; border-right: 1px solid var(--theme-border);">
+            <div id="htmx-sidebar" class="sidebar" style="flex: 1; min-height: 0; border-right: none; display: flex; flex-direction: column;" hx-get="/api/sidebar" hx-trigger="load, sse:notes:changed, notes:changed from:body"></div>
+            <div class="prompts-handle"></div>
+            <div id="prompts-panel" style="height: {{.PromptsHeight}}px; flex-shrink: 0;" hx-get="/api/prompts" hx-trigger="load, sse:prompts:changed, sse:notes:changed, prompts:changed from:body, notes:changed from:body"></div>
+        </div>
+        <div class="sidebar-handle"></div>
+
+        <div id="right-panel">
+            <div id="htmx-tabbar" class="flex items-stretch bg-tn-bg-dark border-0 border-t border-b border-solid border-tn-border-2 h-[44px] shrink-0" hx-get="/api/tabs" hx-trigger="load, sse:session:changed, sse:notes:changed, session:changed from:body, notes:changed from:body" hx-on::after-settle="window.sieveTabBarInit && window.sieveTabBarInit()"></div>
+
+            <dialog id="settings-dialog" style="background: transparent; border: none; padding: 0; outline: none;">
+                <div id="settings-dialog-content" style="background: var(--theme-bgDark); width: 600px; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.6);"></div>
+            </dialog>
+
+            <dialog id="help-dialog" style="background: transparent; border: none; padding: 0; outline: none;">
+                <div id="help-dialog-content" style="background: var(--theme-bgDark); width: 90vw; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.6);"></div>
+            </dialog>
+
+            <dialog id="rename-dialog" style="background: transparent; border: none; padding: 0; outline: none;">
+                <div id="rename-dialog-content" style="background: var(--theme-bgDark); width: 450px; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.6);"></div>
+            </dialog>
+
+            <dialog id="delete-dialog" style="background: transparent; border: none; padding: 0; outline: none;">
+                <div id="delete-dialog-content" style="background: var(--theme-bgDark); width: 450px; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.6);"></div>
+            </dialog>
+
+            <dialog id="quickswitcher-dialog" style="background: transparent; border: none; padding: 0; outline: none; margin: 15vh auto auto;">
+                <div id="quickswitcher-dialog-content" style="background: var(--theme-bgDark); width: 600px; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.6);"></div>
+            </dialog>
+
+            <div class="editor-area">
+                <div id="htmx-editor" class="editor-wrapper" style="flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column;">
+                    <div id="tiptap-mount" class="editor-panel" data-uuid="{{.ActiveUUID}}" data-mode="wysiwyg" style="flex: 1; min-height: 0; display: flex; flex-direction: column;"></div>
+                </div>
+
+                <div class="meta-handle"></div>
+                <div id="htmx-meta-panel" style="width: {{.MetaWidth}}px;" class="flex flex-col flex-shrink-0 overflow-hidden bg-tn-bg-dark border-l border-tn-border text-base" hx-get="/api/meta" hx-trigger="load, sse:session:changed, sse:notes:changed, session:changed from:body, notes:changed from:body"></div>
+            </div>
+
+            <div class="status-bar">
+                <div class="status-bar__left"></div>
+                <div class="status-bar__right"></div>
+            </div>
+
+            <div id="pending-close-overlay" class="pending-close-backdrop" style="display: none;">
+                <div class="pending-close-dialog">
+                    <svg class="pending-close-spinner animate-spin text-tn-accent-cyan" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" style="color: var(--theme-accentCyan);">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <div class="pending-close-title">Closing...</div>
+                    <div class="pending-close-body">Waiting for AI background tasks to finish</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/static/vendor/htmx-bundle.js"></script>
+    <script src="/static/vendor/tiptap.js"></script>
+    <script src="/static/extensions.js"></script>
+    <script type="module" src="/static/smart-link-extension.js"></script>
+    <script src="/static/editor.js"></script>
+    <script src="/static/tabbar.js"></script>
+    <script src="/static/sidebar.js"></script>
+    <script src="/static/layout.js"></script>
+
+    <script>
+    window.isMod = function(e) {
+        if (!e) return false;
+        return navigator.platform.includes('Mac') ? e.metaKey : e.ctrlKey;
+    };
+
+    // Global sieveX functions defined early
+    window.sieveSelectTab = function(id) {
+        if (!window.htmx) return console.error('htmx not loaded');
+        window.htmx.ajax('POST', '/api/note/open/' + id, { target: '#htmx-tabbar', swap: 'innerHTML' });
+    };
+    window.sieveOpenNote = window.sieveSelectTab;
+    window.sieveNewNote = function() {
+        if (!window.htmx) return console.error('htmx not loaded');
+        window.htmx.ajax('POST', '/api/note/new', { target: '#htmx-tabbar', swap: 'innerHTML' });
+    };
+    window.sieveCloseTab = function(id) {
+        if (!window.htmx) return console.error('htmx not loaded');
+        window.htmx.ajax('POST', '/api/tabs/close/' + id, { target: '#htmx-tabbar', swap: 'innerHTML' });
+    };
+    window.sieveCloseActiveTab = function() {
+        var mount = document.getElementById('tiptap-mount');
+        if (mount) {
+            var uuid = mount.getAttribute('data-uuid');
+            if (uuid) window.sieveCloseTab(uuid);
+        }
+    };
+    window.sieveCloseAllTabs = function() {
+        if (!window.htmx) return console.error('htmx not loaded');
+        window.htmx.ajax('POST', '/api/tabs/closeAll', { target: '#htmx-tabbar', swap: 'innerHTML' });
+    };
+    window.sieveToggleSidebar = function() {
+        if (window.htmx) window.htmx.ajax('POST', '/api/session/sidebar/toggle', { swap: 'none' });
+    };
+    window.sieveToggleMeta = function() {
+        if (window.htmx) window.htmx.ajax('POST', '/api/session/meta/toggle', { swap: 'none' });
+    };
+    window.sieveTogglePrompts = function() {
+        if (window.htmx) window.htmx.ajax('POST', '/api/session/prompts/toggle', { swap: 'none' });
+    };
+    window.sieveOpenSettings = function() {
+        var dlg = document.getElementById('settings-dialog');
+        if (dlg && window.htmx) {
+            dlg.showModal();
+            window.htmx.ajax('GET', '/api/settings', { target: '#settings-dialog-content', swap: 'innerHTML' });
+        }
+    };
+    window.sieveHelp = function() {
+        var dlg = document.getElementById('help-dialog');
+        if (dlg && window.htmx) {
+            dlg.showModal();
+            window.htmx.ajax('GET', '/api/help', { target: '#help-dialog-content', swap: 'innerHTML' });
+        }
+    };
+    window.sieveOpenQuickSwitcher = function() {
+        var dlg = document.getElementById('quickswitcher-dialog');
+        if (dlg && window.htmx) {
+            dlg.showModal();
+            window.htmx.ajax('GET', '/api/search-prompt', { target: '#quickswitcher-dialog-content', swap: 'innerHTML' });
+        }
+    };
+
+    window.sieveReorderTabs = function(from, to) {
+        if (!window.htmx) return console.error('htmx not loaded');
+        window.htmx.ajax('POST', '/api/tabs/reorder', { target: '#htmx-tabbar', swap: 'innerHTML', values: { from: from, to: to } });
+    };
+
+    window.__sieveActiveJobs = 0;
+    window.sieveSetEvaluating = function(id, isEval) {
+        var tab = document.querySelector('.group[data-tab-id="' + id + '"]');
+        if (tab) {
+            var normal = tab.querySelector('.tab-icon-normal');
+            var spinner = tab.querySelector('.tab-spinner');
+            if (isEval) {
+                if (normal) normal.classList.add('hidden');
+                if (spinner) spinner.classList.remove('hidden');
+            } else {
+                if (normal) normal.classList.remove('hidden');
+                if (spinner) spinner.classList.add('hidden');
+            }
+        }
+        var metaSpinner = document.getElementById('meta-thinking-spinner');
+        if (metaSpinner) {
+            var mount = document.getElementById('tiptap-mount');
+            if (mount && mount.getAttribute('data-uuid') === id) {
+                if (isEval) metaSpinner.classList.remove('hidden');
+                else metaSpinner.classList.add('hidden');
+            }
+        }
+        var sbLeft = document.querySelector('.status-bar__left');
+        if (sbLeft) {
+            if (window.__sieveActiveJobs > 0) {
+                sbLeft.innerHTML = '<span class="flex items-center gap-1.5"><span class="w-[10px] h-[10px] shrink-0 rounded-full border-[1.5px] border-solid border-tn-cyan border-t-transparent animate-spin"></span> Evaluating (' + window.__sieveActiveJobs + ')</span>';
+            } else {
+                sbLeft.innerHTML = '';
+            }
+        }
+    };
+
+    window.sieveSmartFile = function(id) {
+        var p = window.sieveSave ? window.sieveSave() : Promise.resolve();
+        p.then(function() {
+            if (!id) {
+                var mount = document.getElementById('tiptap-mount');
+                if (mount) id = mount.getAttribute('data-uuid');
+            }
+            if (id) {
+                window.__sieveActiveJobs++;
+                window.sieveSetEvaluating(id, true);
+                fetch('/api/ai/smartFile/' + id, { method: 'POST' }).finally(function() { 
+                    window.__sieveActiveJobs--; 
+                    window.sieveSetEvaluating(id, false);
+                });
+            }
+        });
+    };
+
+    window.sieveSmartMetadata = function(id) {
+        var p = window.sieveSave ? window.sieveSave() : Promise.resolve();
+        p.then(function() {
+            if (!id) {
+                var mount = document.getElementById('tiptap-mount');
+                if (mount) id = mount.getAttribute('data-uuid');
+            }
+            if (id) {
+                window.__sieveActiveJobs++;
+                window.sieveSetEvaluating(id, true);
+                fetch('/api/ai/smartMetadata/' + id, { method: 'POST' }).finally(function() { 
+                    window.__sieveActiveJobs--; 
+                    window.sieveSetEvaluating(id, false);
+                });
+            }
+        });
+    };
+
+    window.sieveKeepAndSmartFile = function(id) {
+        var p = window.sieveSave ? window.sieveSave() : Promise.resolve();
+        p.then(function() {
+            if (!id) {
+                var mount = document.getElementById('tiptap-mount');
+                if (mount) id = mount.getAttribute('data-uuid');
+            }
+            if (id) {
+                window.__sieveActiveJobs++;
+                window.sieveSetEvaluating(id, true);
+                fetch('/api/ai/keepAndFile/' + id, { method: 'POST' }).finally(function() { 
+                    window.__sieveActiveJobs--; 
+                    window.sieveSetEvaluating(id, false);
+                });
+            }
+        });
+    };
+
+    window.sieveSmartFileActive = function() { window.sieveSmartFile(); };
+    window.sieveKeepAndSmartFileActive = function() { window.sieveKeepAndSmartFile(); };
+
+    window.sieveRenameNote = function(id, currentName) {
+        var dlg = document.getElementById('rename-dialog');
+        if (dlg && window.htmx) {
+            dlg.showModal();
+            window.htmx.ajax('GET', '/api/sidebar/rename-prompt?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(currentName) + '&type=note', { target: '#rename-dialog-content', swap: 'innerHTML' });
+        }
+    };
+
+    window.sieveRenameFolder = function(id, currentName) {
+        var dlg = document.getElementById('rename-dialog');
+        if (dlg && window.htmx) {
+            dlg.showModal();
+            window.htmx.ajax('GET', '/api/sidebar/rename-prompt?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(currentName) + '&type=folder', { target: '#rename-dialog-content', swap: 'innerHTML' });
+        }
+    };
+
+    window.sieveCreateFolder = function(parentId) {
+        var dlg = document.getElementById('rename-dialog');
+        if (dlg && window.htmx) {
+            dlg.showModal();
+            window.htmx.ajax('GET', '/api/sidebar/create-folder-prompt?parentId=' + encodeURIComponent(parentId || ''), { target: '#rename-dialog-content', swap: 'innerHTML' });
+        }
+    };
+
+    window.sieveCloseMenu = function() {
+        var menu = document.getElementById('sieve-context-menu');
+        if (menu) menu.remove();
+    };
+
+    window.sieveShowInFiles = function(id) {
+        if (window.go && window.go.main && window.go.main.App && window.go.main.App.ShowInFilesByID) {
+            window.go.main.App.ShowInFilesByID(id);
+        }
+    };
+
+    window.sieveOpenDelete = function(id, name, type) {
+        var dlg = document.getElementById('delete-dialog');
+        if (dlg && window.htmx) {
+            dlg.showModal();
+            window.htmx.ajax('GET', '/api/sidebar/delete-prompt?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&type=' + type, { target: '#delete-dialog-content', swap: 'innerHTML' });
+        }
+    };
+
+    window.sieveOnSettingsChanged = function() {
+        var link = document.querySelector('link[href^="/theme.css"]');
+        if (link) {
+            link.href = '/theme.css?t=' + new Date().getTime();
+        }
+    };
+
+    window.sieveToggleSearch = function() {
+        if (window.sieveEditor && window.sieveEditor.toggleSearch) window.sieveEditor.toggleSearch();
+        else console.log('Toggle Search not implemented in current mode');
+    };
+
+    window.sieveToggleAiBlocks = function() {
+        if (window.sieveEditor && window.sieveEditor.toggleAiBlocks) {
+            window.sieveEditor.toggleAiBlocks();
+        }
+    };
+
+    window.sieveSidebarSearch = function() {
+        const sidebar = document.getElementById('htmx-sidebar');
+        if (!sidebar) return;
+
+        // If the search input in the tree view exists, focus it
+        const treeInput = document.getElementById('sidebar-search-input');
+        if (treeInput) {
+            treeInput.focus();
+            treeInput.select();
+            return;
+        }
+
+        // If already in search mode results, focus the result input
+        const resultInput = document.querySelector('.store-search__input');
+        if (resultInput) {
+            resultInput.focus();
+            resultInput.select();
+            return;
+        }
+
+        // Toggle to search mode
+        window.htmx.ajax('GET', '/api/sidebar/search?q=', { 
+            target: '#htmx-sidebar', 
+            swap: 'innerHTML' 
+        });
+    };
+
+    window.sieveFilterSidebar = function(query) {
+        query = (query || '').toLowerCase();
+        var items = document.querySelectorAll('.sidebar__file, .sidebar__dir');
+        items.forEach(function(item) {
+            var name = item.getAttribute('data-ctx-name') || '';
+            var match = name.toLowerCase().includes(query);
+            item.style.display = match ? 'flex' : 'none';
+        });
+    };
+
+    window.sieveToggleMode = window.sieveToggleMode || function() {
+        console.log('Toggle Mode placeholder called');
+    };
+
+    window.sieveSetMetaDirty = function(dirty) {
+        var indicator = document.getElementById('meta-dirty-indicator');
+        if (!indicator) return;
+        var label = indicator.querySelector('.meta-dirty-label');
+        var dot   = indicator.querySelector('.meta-dirty-dot');
+        if (dirty) {
+            indicator.classList.remove('border-tn-border');
+            indicator.classList.add('border-tn-yellow');
+            indicator.style.background = 'color-mix(in srgb, var(--theme-accentYellow) 10%, transparent)';
+            if (label) { label.classList.remove('text-tn-text-dim'); label.classList.add('text-tn-yellow'); label.textContent = 'Unsaved Changes'; }
+            if (dot)   { dot.classList.remove('bg-tn-green'); dot.classList.add('bg-tn-yellow'); dot.style.boxShadow = '0 0 8px var(--theme-accentYellow)'; }
+        } else {
+            indicator.classList.remove('border-tn-yellow');
+            indicator.classList.add('border-tn-border');
+            indicator.style.background = '';
+            if (label) { label.classList.remove('text-tn-yellow'); label.classList.add('text-tn-text-dim'); label.textContent = 'All Changes Saved'; }
+            if (dot)   { dot.classList.remove('bg-tn-yellow'); dot.classList.add('bg-tn-green'); dot.style.boxShadow = ''; }
+        }
+    };
+
+    // Initial editor load
+    window.addEventListener('DOMContentLoaded', function() {
+        var mount = document.getElementById('tiptap-mount');
+        if (mount && mount.dataset.editorInit !== 'true') {
+            var uuid = mount.getAttribute('data-uuid');
+            var mode = mount.getAttribute('data-mode');
+            if (uuid) {
+                mount.dataset.editorInit = 'true';
+                console.log('[index.html] Initializing editor from DOMContentLoaded for:', uuid);
+                window.sieveInitEditor?.(mount, uuid, mode);
+            }
+        }
+    });
+
+    window.__sieveAutosaveMs = function() {
+        var ms = {{.AutosaveDebounce}} * 1000;
+        return ms > 0 ? ms : 30000;
+    };
+
+    document.addEventListener('editor:saved', function(e) {
+        var uuid = e.detail && e.detail.uuid;
+        var metaPanel = document.getElementById('htmx-meta-panel');
+        var mount = document.getElementById('tiptap-mount');
+        var activeUuid = mount ? mount.getAttribute('data-uuid') : null;
+        if (uuid && uuid === activeUuid && metaPanel && window.htmx && window.getComputedStyle(metaPanel).display !== 'none') {
+            window.htmx.ajax('GET', '/api/meta?uuid=' + encodeURIComponent(uuid), { target: '#htmx-meta-panel', swap: 'innerHTML' });
+        }
+    });
+
+    document.addEventListener('intent:changed', function(e) {
+        var uuid = e.detail && e.detail.uuid;
+        var metaPanel = document.getElementById('htmx-meta-panel');
+        var mount = document.getElementById('tiptap-mount');
+        var activeUuid = mount ? mount.getAttribute('data-uuid') : null;
+        if (uuid && uuid === activeUuid && metaPanel && window.htmx && window.getComputedStyle(metaPanel).display !== 'none') {
+            window.htmx.ajax('GET', '/api/meta?uuid=' + encodeURIComponent(uuid), { target: '#htmx-meta-panel', swap: 'innerHTML' });
+        }
+    });
+
+
+    document.addEventListener('editor:stats', function(e) {
+        var sbRight = document.querySelector('.status-bar__right');
+        if (sbRight && e.detail) {
+            sbRight.innerHTML = '<span title="Characters">' + (e.detail.chars || 0) + ' chars</span>' +
+                                '<span class="status-bar__sep">|</span>' +
+                                '<span title="Lines">' + (e.detail.lines || 0) + ' lines</span>';
+        }
+    });
+
+    // Listen for HTMX load to re-init editor if mount changes
+    window.__sieveFocusTimer = null;
+    window.__sieveDwellInterval = null;
+    window.__sieveActiveDocUuid = null;
+
+    document.addEventListener('htmx:load', function(e) {
+        var mount = document.getElementById('tiptap-mount');
+        if (mount && mount.dataset.editorInit !== 'true') {
+            var uuid = mount.getAttribute('data-uuid');
+            var mode = mount.getAttribute('data-mode');
+            if (uuid) {
+                mount.dataset.editorInit = 'true';
+                console.log('[index.html] Initializing editor from htmx:load for:', uuid);
+                window.sieveInitEditor?.(mount, uuid, mode);
+
+
+                // Focus Count tracking logic
+                if (window.__sieveFocusTimer) clearTimeout(window.__sieveFocusTimer);
+                if (window.__sieveDwellInterval) clearInterval(window.__sieveDwellInterval);
+                window.__sieveActiveDocUuid = uuid;
+
+                var bumpFocus = function() {
+                    if (window.__sieveActiveDocUuid !== uuid) return;
+                    fetch('/api/note/focus/' + encodeURIComponent(uuid), { method: 'POST' })
+                        .then(function() {
+                            // Optionally refresh meta panel to show updated count if visible
+                            var mp = document.getElementById('htmx-meta-panel');
+                            if (mp && window.getComputedStyle(mp).display !== 'none') {
+                                window.htmx.ajax('GET', '/api/meta?uuid=' + encodeURIComponent(uuid), { target: '#htmx-meta-panel', swap: 'innerHTML' });
+                            }
+                        })
+                        .catch(console.error);
+                };
+
+                window.__sieveFocusTimer = setTimeout(bumpFocus, 30 * 1000);
+                window.__sieveDwellInterval = setInterval(bumpFocus, 5 * 60 * 1000);
+            }
+        }
+    });
+
+    // Re-trigger layout parameters on tab changes
+    document.addEventListener('htmx:afterSettle', function(e) {
+        var target = e.detail && e.detail.target;
+        if (!target) return;
+        if (target.id === 'htmx-tabbar') {
+            window.sieveTabBarInit && window.sieveTabBarInit();
+        } else if (target.id === 'htmx-sidebar' || (target.closest && target.closest('#htmx-sidebar'))) {
+            window.sieveSidebarInit && window.sieveSidebarInit();
+            window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' });
+            var mount = document.getElementById('tiptap-mount');
+            var activeUuid = mount ? mount.getAttribute('data-uuid') : null;
+            var metaPanel = document.getElementById('htmx-meta-panel');
+            if (activeUuid && metaPanel && window.htmx && window.getComputedStyle(metaPanel).display !== 'none') {
+                window.htmx.ajax('GET', '/api/meta?uuid=' + encodeURIComponent(activeUuid), { target: '#htmx-meta-panel', swap: 'innerHTML' });
+            }
+        }
+    });
+    </script>
+
+    <script>
+
+    // Placeholder until editor.js overrides it
+    window.sieveToggleMode = window.sieveToggleMode || function() {
+        console.log('Toggle Mode placeholder called');
+    };
+
+    window.sieveSetMetaDirty = function(dirty) {
+        const indicator = document.getElementById('meta-dirty-indicator');
+        if (!indicator) return;
+        const label = indicator.querySelector('.meta-dirty-label');
+        const dot   = indicator.querySelector('.meta-dirty-dot');
+        if (dirty) {
+            indicator.className = indicator.className.replace('border-tn-border', 'border-tn-yellow');
+            if (!indicator.className.includes('border-tn-yellow')) indicator.className += ' border-tn-yellow';
+            indicator.style.background = 'color-mix(in srgb, var(--theme-accentYellow) 10%, transparent)';
+            if (label) { 
+                label.className = label.className.replace('text-tn-text-dim', 'text-tn-yellow'); 
+                label.textContent = 'Unsaved Changes'; 
+            }
+            if (dot) { 
+                dot.className = dot.className.replace('bg-tn-green', 'bg-tn-yellow'); 
+                dot.style.boxShadow = '0 0 8px var(--theme-accentYellow)'; 
+            }
+        } else {
+            indicator.className = indicator.className.replace('border-tn-yellow', 'border-tn-border');
+            indicator.style.background = '';
+            if (label) { 
+                label.className = label.className.replace('text-tn-yellow', 'text-tn-text-dim'); 
+                label.textContent = 'All Changes Saved'; 
+            }
+            if (dot) { 
+                dot.className = dot.className.replace('bg-tn-yellow', 'bg-tn-green'); 
+                dot.style.boxShadow = ''; 
+            }
+        }
+    };
+
+    // Close Handler
+    window.addEventListener('DOMContentLoaded', function() {
+        if (window.runtime && window.runtime.EventsOn) {
+            window.runtime.EventsOn('app:closing', function() {
+                console.log('[stash] App closing, vetoed natively to allow flush.');
+                if (window.sieveSave) window.sieveSave();
+                
+                function checkAndQuit() {
+                    if (window.__sieveActiveJobs > 0) {
+                        console.log('[stash] Waiting for AI jobs to finish...');
+                        var overlay = document.getElementById('pending-close-overlay');
+                        if (overlay) overlay.style.display = 'flex';
+                        setTimeout(checkAndQuit, 500);
+                    } else {
+                        setTimeout(function() { window.go.main.App.Quit(); }, 300);
+                    }
+                }
+                checkAndQuit();
+            });
+        }
+    });
+    </script>
+</body>
+</html>

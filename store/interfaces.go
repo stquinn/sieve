@@ -78,7 +78,7 @@ type AssetStorable interface {
 // Store creates, renames, and reparents folders through the same interface as
 // any other Storable.
 //
-// Stash v1 supports one level of folders. Arbitrary nesting is structurally
+// Sieve v1 supports one level of folders. Arbitrary nesting is structurally
 // free (FolderStorable owning FolderStorable requires no Store changes) but is
 // gated by business layer policy.
 type FolderStorable interface {
@@ -99,7 +99,6 @@ type FolderStorable interface {
 // Versioning is automatic: every Save call writes a snapshot unconditionally.
 // No business layer involvement and no UI action required.
 type Store interface {
-
 	CreateText(category Category, key string, body []byte) (Storable, error)
 
 	// Create makes a new Storable in category with the given key and body. If
@@ -112,6 +111,8 @@ type Store interface {
 	// by the store based on the parent document that logically owns it.
 	CreateAsset(category Category, parentKey string, assetID string, body []byte) (AssetStorable, error)
 
+	CreateOrLoadFolder(category Category, name string) (FolderStorable, error)
+
 	// Save persists the current state of s. The Store stamps the version and
 	// modified timestamp, writes a snapshot unconditionally, and checks the
 	// optimistic lock. Returns ErrStaleStorable if s is based on a version that
@@ -123,6 +124,8 @@ type Store interface {
 	// is derived from the current ownership graph.
 	Load(category Category, key string) (Storable, error)
 
+	LoadFolder(category Category, key string) (FolderStorable, error)
+
 	// Delete removes s and its entire version history from the Store.
 	Delete(s Storable) error
 
@@ -130,6 +133,8 @@ type Store interface {
 	// an empty prefix to list the entire category. For FileStore, this scans
 	// the directory tree and reconstructs the ownership graph.
 	List(category Category, prefix string) ([]Storable, error)
+
+	ListFrom(categories []Category, prefix string) ([]Storable, error)
 
 	// Move transfers s to a different Category and logic Key. Returns a new Storable in the
 	// target category; the source is removed.

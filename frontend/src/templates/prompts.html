@@ -1,0 +1,26 @@
+{{define "prompts.html"}}
+<div style="display: flex; flex-direction: column; background: var(--theme-bgDark); border-top: 1px solid var(--theme-border2); padding-top: 8px; height: 100%; box-sizing: border-box;">
+  <span style="padding-left: 1rem; font-size: 13px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.05em; color: var(--theme-muted); margin-bottom: 4px;">AI Prompts</span>
+  <div style="display: flex; flex-direction: column; overflow-y: auto; flex: 1;">
+    {{range .Prompts}}
+    <button 
+      onclick="window.sieveOpenNote('{{.ID}}')"
+      class="sidebar__file"
+      style="display: flex; align-items: center; gap: 0.5rem; width: 100%; border: none; height: 28px; font-size: 14px; padding: 0 1rem; text-align: left; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box;"
+      title="{{if .IsVirtual}}Baked-in Default{{else}}User Override: {{.Path}}{{end}}"
+      data-ctx-id="{{.ID}}"
+      data-ctx-type="prompt"
+      data-ctx-name="{{.DisplayName}}"
+      data-ctx-is-dir="false"
+    >
+      {{if .IsVirtual}}
+      <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.5;"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+      {{else}}
+      <span style="width: 6px; height: 6px; background: var(--theme-accentPrimary); border-radius: 50%; display: inline-block;"></span>
+      {{end}}
+      <span>{{.DisplayName}}</span>
+    </button>
+    {{end}}
+  </div>
+</div>
+{{end}}

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"stash/logger"
+	"sieve/logger"
 )
 
 // notesWatcher watches a directory tree for filesystem changes and calls

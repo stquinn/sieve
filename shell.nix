@@ -15,6 +15,7 @@ let
     atk
     glibc
     gsettings-desktop-schemas
+    
   ];
 
 in pkgs.mkShell {
@@ -30,6 +31,14 @@ in pkgs.mkShell {
     export CGO_ENABLED=1
 
     ${pkgs.lib.optionalString isLinux ''
+      # WebKit2GTK installs SIGSEGV handlers without SA_ONSTACK which conflicts
+      # with Go's signal stack. The three variables below collectively prevent
+      # WebKit from using GPU compositing / DMABuf paths that crash internally,
+      # and asyncpreemptoff stops Go from using POSIX signals for preemption so
+      # Go's own signal handler stays in place.
+      # export WEBKIT_DISABLE_COMPOSITING_MODE=1
+      # export WEBKIT_DISABLE_DMABUF_RENDERER=1
+      export GODEBUG=asyncpreemptoff=1
       export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:$XDG_DATA_DIRS"
       export PKG_CONFIG_PATH="${pkgs.lib.makeSearchPathOutput "dev" "lib/pkgconfig" [
         pkgs.webkitgtk_4_1

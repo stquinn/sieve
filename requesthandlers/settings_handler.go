@@ -1,0 +1,100 @@
+package requesthandlers
+
+import (
+	"html/template"
+	"net/http"
+	"sieve/sieve"
+	"strconv"
+
+	"github.com/go-chi/chi/v5"
+)
+
+type SettingsHandler struct {
+	ServiceProvider *sieve.ServiceProvider
+	Tmpl            *template.Template
+}
+
+func (h *SettingsHandler) RegisterPaths(r chi.Router) {
+	r.Get("/api/settings", h.handleSettings)
+	r.Post("/api/settings", h.handleSettingsSave)
+	r.Post("/api/settings/panel", h.handleSettingsPanel)
+}
+
+func (h *SettingsHandler) handleSettings(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	settings := h.ServiceProvider.State.LoadSettings()
+	session := h.ServiceProvider.State.LoadSession()
+
+	data := struct {
+		sieve.Settings
+		LastSettingsPanel string
+	}{
+		Settings:          settings,
+		LastSettingsPanel: session.LastSettingsPanel,
+	}
+
+	if err := h.Tmpl.ExecuteTemplate(w, "settings.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	settings := h.ServiceProvider.State.LoadSettings()
+	settings.CLI = r.FormValue("cli")
+	settings.Model = r.FormValue("model")
+
+	if debounceStr := r.FormValue("autosave_debounce"); debounceStr != "" {
+		if val, err := strconv.Atoi(debounceStr); err == nil {
+			settings.AutosaveDebounce = val
+		}
+	}
+	settings.Theme = r.FormValue("theme")
+	if maxHistStr := r.FormValue("max_history_versions"); maxHistStr != "" {
+		if val, err := strconv.Atoi(maxHistStr); err == nil {
+			settings.MaxHistoryVersions = val
+		}
+	}
+	settings.Debug = r.FormValue("debug") == "on"
+
+	if err := h.ServiceProvider.State.SaveSettings(settings); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	session := h.ServiceProvider.State.LoadSession()
+	if lastPanel := r.FormValue("last_settings_panel"); lastPanel != "" {
+		session.LastSettingsPanel = lastPanel
+		_ = h.ServiceProvider.State.SaveSession(session)
+	}
+
+	data := struct {
+		sieve.Settings
+		LastSettingsPanel string
+	}{
+		Settings:          settings,
+		LastSettingsPanel: session.LastSettingsPanel,
+	}
+
+	if err := h.Tmpl.ExecuteTemplate(w, "settings.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (h *SettingsHandler) handleSettingsPanel(w http.ResponseWriter, r *http.Request) {
+	tab := r.URL.Query().Get("tab")
+	if tab != "" {
+		session := h.ServiceProvider.State.LoadSession()
+		session.LastSettingsPanel = tab
+		_ = h.ServiceProvider.State.SaveSession(session)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

@@ -130,3 +130,19 @@ The gutter (the left margin strip of the editor) is currently unused space. It's
 **Implementation note**: The gutter in TipTap is typically implemented as a `NodeView` decoration or a `Decoration.widget` positioned absolutely relative to the editor container. It requires knowing the vertical position of each block, which TipTap's `view.coordsAtPos()` provides. This is a moderate implementation effort but high visual payoff — it's the thing that separates a proper writing tool from a text area.
 
 **Suggested first gutter feature**: AI block fold/collapse — small scope, immediately useful, establishes the gutter as a concept in the codebase.
+
+---
+
+## Focus Count — Activity-Based Increment
+
+Currently `focus_count` increments whenever a tab holds focus for more than 2 minutes, regardless of whether the user is actually present. A tab left open overnight accumulates count with no user attention.
+
+**Desired behaviour:** use in-app activity as a proxy for presence. Only increment `focus_count` if the user has been active in the app within a recent window — cursor movement, keypress, tab switch, scroll. If no activity has occurred within a threshold (e.g. 3 minutes), the app is considered idle and the increment is skipped.
+
+**Implementation notes:**
+- Track a `lastActivity` timestamp in session state, updated on any input event
+- When the focus timer would fire, check `now - lastActivity` against the idle threshold
+- Tab switches reset the idle timer on the newly focused tab — switching to a note is itself an activity signal
+- With the `.meta` separation (`spec-document-as-directory.md`), incrementing focus count is a `SaveMeta` call — cheap, no snapshot, no version bump. This makes the change low-risk to implement.
+
+**Why it matters:** `focus_count` combined with `version` are the two importance signals passed to the filing prompt. If focus count is inflated by idle time, the signal is misleading and the AI filing decision degrades.

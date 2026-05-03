@@ -5,7 +5,9 @@ frontend/wailsjs/
 
 # ── Go ────────────────────────────────────────────────────────────────────────
 # Compiled binaries
-#stash
+sieve
+#block bianry above but allow package
+!sieve/
 *.exe
 *.dll
 *.so

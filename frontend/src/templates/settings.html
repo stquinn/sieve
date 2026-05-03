@@ -1,0 +1,152 @@
+{{define "settings.html"}}
+<style>
+.settings-container select {
+  -webkit-appearance: none;
+  appearance: none;
+  background-color: var(--theme-bgAlt, #1e2030) !important;
+  color: var(--theme-text, #c0caf5) !important;
+  border: 1px solid var(--theme-border2, #3b4261) !important;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23a9b1d6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 1rem center !important;
+  background-size: 1em !important;
+  padding-right: 2.5rem !important;
+}
+
+.settings-container select:focus {
+  border-color: var(--theme-accentPrimary, #7aa2f7) !important;
+}
+
+.settings-container input[type="text"],
+.settings-container input[type="number"] {
+  background-color: var(--theme-bgAlt, #1e2030) !important;
+  color: var(--theme-text, #c0caf5) !important;
+  border: 1px solid var(--theme-border2, #3b4261) !important;
+}
+
+.settings-container input[type="text"]:focus,
+.settings-container input[type="number"]:focus {
+  border-color: var(--theme-accentPrimary, #7aa2f7) !important;
+}
+
+.settings-container option {
+  background-color: var(--theme-bgDark, #16161e);
+  color: var(--theme-text, #c0caf5);
+}
+</style>
+<div class="settings-container" style="display: flex; height: 450px;">
+  <!-- Sidebar -->
+  <div class="settings-sidebar" style="width: 12rem; background: var(--theme-bgDark); border-right: 1px solid var(--theme-border); padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
+    <h2 style="font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem; padding: 0 0.5rem;">Settings</h2>
+    
+    <button id="settings-tab-btn-ai" class="settings-tab-btn {{if or (eq .LastSettingsPanel "ai") (eq .LastSettingsPanel "")}}active{{end}}" onclick="switchSettingsTab(this, 'ai')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if or (eq .LastSettingsPanel "ai") (eq .LastSettingsPanel "")}}var(--theme-bg){{else}}transparent{{end}}; color: {{if or (eq .LastSettingsPanel "ai") (eq .LastSettingsPanel "")}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">AI Provider</button>
+    <button id="settings-tab-btn-appearance" class="settings-tab-btn {{if eq .LastSettingsPanel "appearance"}}active{{end}}" onclick="switchSettingsTab(this, 'appearance')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "appearance"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "appearance"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Appearance</button>
+    <button id="settings-tab-btn-editor" class="settings-tab-btn {{if eq .LastSettingsPanel "editor"}}active{{end}}" onclick="switchSettingsTab(this, 'editor')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "editor"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "editor"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Editor</button>
+  </div>
+
+  <!-- Content -->
+  <form id="settings-form" hx-post="/api/settings" hx-target="#settings-dialog-content" onsubmit="document.getElementById('settings-dialog').close()" style="flex: 1; background: var(--theme-bg); padding: 2rem; overflow-y: auto; display: flex; flex-direction: column; justify-content: space-between;">
+    <input type="hidden" name="last_settings_panel" id="last-settings-panel-input" value="{{.LastSettingsPanel}}">
+    <div class="settings-tab-content" id="settings-tab-ai" style="display: {{if or (eq .LastSettingsPanel "ai") (eq .LastSettingsPanel "")}}block{{else}}none{{end}};">
+      <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 1.5rem;">AI Configuration</h3>
+      
+      <div style="margin-bottom: 1.5rem;">
+        <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">AI Provider (CLI)</label>
+        <select name="cli" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+          <option value="claude" {{if eq .CLI "claude"}}selected{{end}}>Claude</option>
+          <option value="gemini" {{if eq .CLI "gemini"}}selected{{end}}>Gemini</option>
+          <option value="copilot" {{if eq .CLI "copilot"}}selected{{end}}>Copilot</option>
+        </select>
+      </div>
+
+      <div>
+        <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Model Override (Optional)</label>
+        <input type="text" name="model" value="{{.Model}}" placeholder="e.g. claude-3-5-sonnet" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+      </div>
+    </div>
+
+    <div class="settings-tab-content" id="settings-tab-appearance" style="display: {{if eq .LastSettingsPanel "appearance"}}block{{else}}none{{end}};">
+      <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 1.5rem;">Appearance</h3>
+      
+      <div>
+        <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Theme</label>
+        <select name="theme" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+          <option value="sublime" {{if eq .Theme "sublime"}}selected{{end}}>Sublime</option>
+          <option value="tokyonight" {{if eq .Theme "tokyonight"}}selected{{end}}>Tokyo Night</option>
+          <option value="nord" {{if eq .Theme "nord"}}selected{{end}}>Nord</option>
+          <option value="solarized" {{if eq .Theme "solarized"}}selected{{end}}>Solarized Dark</option>
+          <option value="vscode" {{if eq .Theme "vscode"}}selected{{end}}>VS Code Dark+</option>
+          <option value="darcula" {{if eq .Theme "darcula"}}selected{{end}}>IntelliJ Darcula</option>
+          <option value="onedark" {{if eq .Theme "onedark"}}selected{{end}}>One Dark</option>
+          <option value="monokai" {{if eq .Theme "monokai"}}selected{{end}}>Monokai Pro</option>
+          <option value="gruvbox" {{if eq .Theme "gruvbox"}}selected{{end}}>Gruvbox Dark</option>
+          <option value="catppuccin" {{if eq .Theme "catppuccin"}}selected{{end}}>Catppuccin Macchiato</option>
+          <option value="stardust" {{if eq .Theme "stardust"}}selected{{end}}>Stardust (Neon)</option>
+          <option value="emerald" {{if eq .Theme "emerald"}}selected{{end}}>Emerald City</option>
+          <option value="synthwave" {{if eq .Theme "synthwave"}}selected{{end}}>SynthWave '84</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="settings-tab-content" id="settings-tab-editor" style="display: {{if eq .LastSettingsPanel "editor"}}block{{else}}none{{end}};">
+      <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 1.5rem;">Editor & History</h3>
+      
+      <div style="margin-bottom: 1.5rem;">
+        <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Autosave Delay (seconds)</label>
+        <input type="number" name="autosave_debounce" value="{{.AutosaveDebounce}}" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+      </div>
+
+      <div style="margin-bottom: 1.5rem;">
+        <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Max History Versions</label>
+        <input type="number" name="max_history_versions" value="{{.MaxHistoryVersions}}" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 0.75rem;">
+        <input type="checkbox" id="debug-mode" name="debug" {{if .Debug}}checked{{end}} style="width: 1rem; height: 1rem; border-radius: 0.25rem; background: var(--theme-bg); border: 1px solid var(--theme-border);">
+        <label for="debug-mode" style="font-size: 0.875rem; color: var(--theme-text);">Enable Debug Mode</label>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div style="display: flex; justify-content: flex-end; gap: 1rem; padding-top: 1.5rem; border-top: 1px solid var(--theme-border); margin-top: auto;">
+      <button type="button" onclick="document.getElementById('settings-dialog').close()" style="padding: 0.5rem 1.5rem; font-size: 0.875rem; font-weight: 500; color: var(--theme-textDim); background: transparent; border: none; cursor: pointer;">Cancel</button>
+      <button type="submit" style="padding: 0.5rem 1.5rem; font-size: 0.875rem; font-weight: bold; color: #ffffff; background: var(--theme-accentPrimary); border-radius: 0.5rem; border: none; cursor: pointer;">Save Changes</button>
+    </div>
+  </form>
+</div>
+
+<script>
+function switchSettingsTab(el, tabName) {
+  var contents = document.querySelectorAll('.settings-tab-content');
+  contents.forEach(function(c) {
+    c.style.display = 'none';
+  });
+  var target = document.getElementById('settings-tab-' + tabName);
+  if (target) target.style.display = 'block';
+  
+  var buttons = document.querySelectorAll('.settings-tab-btn');
+  buttons.forEach(function(b) {
+    b.style.background = 'transparent';
+    b.style.color = 'var(--theme-textDim)';
+    b.classList.remove('active');
+  });
+  
+  if (el) {
+    el.style.background = 'var(--theme-bg)';
+    el.style.color = 'var(--theme-accentPrimary)';
+    el.classList.add('active');
+  }
+  
+  var hidden = document.getElementById('last-settings-panel-input');
+  if (hidden) hidden.value = tabName;
+  
+  fetch('/api/settings/panel?tab=' + encodeURIComponent(tabName), { method: 'POST' });
+}
+
+
+
+if (window.sieveOnSettingsChanged) {
+  window.sieveOnSettingsChanged();
+}
+</script>
+{{end}}

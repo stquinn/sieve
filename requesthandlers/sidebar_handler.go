@@ -1,0 +1,110 @@
+package requesthandlers
+
+import (
+	"fmt"
+	"html/template"
+	"net/http"
+	"sieve/sieve"
+
+	"github.com/go-chi/chi/v5"
+)
+
+type SideBarHandler struct {
+	ServiceProvider *sieve.ServiceProvider
+	Tmpl            *template.Template
+}
+
+func (s *SideBarHandler) RegisterPaths(r chi.Router) {
+	r.Get("/api/sidebar", s.handleSidebar)
+	r.Post("/api/sidebar", s.handleSidebar)
+}
+
+type sidebarEntry struct {
+	ID          string
+	Name        string
+	DisplayName string
+	UserIntent  string
+	Status      string
+	IsDir       bool
+	IsOpen      bool
+	Children    []sidebarEntry
+	Depth       int
+	ParentID    string
+}
+
+func prepSidebarEntries(entries []sieve.NoteEntry, openFolders map[string]bool, depth int, parentId string) []sidebarEntry {
+	out := make([]sidebarEntry, 0, len(entries))
+	for _, e := range entries {
+		se := sidebarEntry{
+			ID:          e.ID,
+			Name:        e.Name,
+			DisplayName: e.DisplayName,
+			UserIntent:  e.UserIntent,
+			Status:      e.Status,
+			IsDir:       e.IsDir,
+			IsOpen:      e.IsDir && openFolders[e.ID],
+			Depth:       depth,
+			ParentID:    parentId,
+		}
+		if se.IsOpen && len(e.Children) > 0 {
+			se.Children = prepSidebarEntries(e.Children, openFolders, depth+1, e.ID)
+		}
+		out = append(out, se)
+	}
+	return out
+}
+
+// RenderSidebar writes the sidebar HTML fragment to w. It is shared by the
+// sidebar handler and any action handler that needs to return a refreshed tree.
+func RenderSidebar(w http.ResponseWriter, notes *sieve.DocumentService, state *sieve.StateService, tmpl *template.Template) {
+	w.Header().Set("Cache-Control", "no-store")
+	if notes == nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<div class="sidebar__empty">No store open</div>`)
+		return
+	}
+
+	session := state.LoadSession()
+	openFolders := make(map[string]bool, len(session.OpenFolders))
+	for _, id := range session.OpenFolders {
+		openFolders[id] = true
+	}
+
+	entries, err := notes.List()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data := prepSidebarEntries(entries, openFolders, 0, "")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := tmpl.ExecuteTemplate(w, "sidebar.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *SideBarHandler) handleSidebar(w http.ResponseWriter, r *http.Request) {
+	if s.ServiceProvider.Documents == nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `<div class="sidebar__empty">No store open</div>`)
+		return
+	}
+
+	if toggle := r.URL.Query().Get("toggle"); toggle != "" {
+		session := s.ServiceProvider.State.LoadSession()
+		session.OpenFolders = toggleFolder(session.OpenFolders, toggle)
+		_ = s.ServiceProvider.State.SaveSession(session)
+	}
+
+	RenderSidebar(w, s.ServiceProvider.Documents, s.ServiceProvider.State, s.Tmpl)
+}
+
+func toggleFolder(folders []string, id string) []string {
+	for i, f := range folders {
+		if f == id {
+			return append(folders[:i], folders[i+1:]...)
+		}
+	}
+	return append(folders, id)
+}
