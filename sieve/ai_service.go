@@ -58,7 +58,10 @@ func (s *AIService) EvaluateAndFileDoc(id string, fileAfter bool, allowDiscard b
 		if err != nil {
 			return FilingOutcome{}, fmt.Errorf("filing: eval %s: %w", doc.Storable().ExternalRef(), err)
 		}
-		s.applyFilingRec(meta, rec, settings.CLI)
+		doc, err = s.documents.UpdateAiMetadata(doc, rec, settings.CLI)
+		if err != nil {
+			return FilingOutcome{}, fmt.Errorf("filing: update meta %s: %w", doc.Storable().ExternalRef(), err)
+		}
 		evaluated = true
 	}
 
@@ -244,41 +247,7 @@ func (s *AIService) runEvaluateBuffer(meta DocumentMeta, body []byte, settings S
 	return &rec, nil
 }
 
-func (s *AIService) applyFilingRec(meta DocumentMeta, rec *FilingRecommendation, cli string) {
-	now := time.Now().Format("2006-01-02T15:04:05")
-	meta.SetAiEval("complete")
-	meta.SetAiLastEvaluated(&now)
-	keep := rec.Keep
-	meta.SetAiKeep(&keep)
-	if cli != "" {
-		meta.SetCLI(&cli)
-	}
-	if rec.Title != "" {
-		meta.SetDisplayName(rec.Title)
-	}
-	if rec.Filename != "" {
-		fn := rec.Filename
-		meta.SetFilename(&fn)
-	}
-	if rec.Folder != "" {
-		folder := rec.Folder
-		meta.SetAiFolderSuggestion(&folder)
-	}
-	if rec.Summary != "" {
-		s2 := rec.Summary
-		meta.SetSummary(&s2)
-	}
-	if len(rec.Tags) > 0 {
-		meta.SetTags(rec.Tags)
-	}
-	if rec.AiJustification != "" {
-		j := rec.AiJustification
-		meta.SetAiJustification(&j)
-	}
-	if len(rec.DensitySignals) > 0 {
-		meta.SetDensitySignals(rec.DensitySignals)
-	}
-}
+// applyFilingRec is deprecated, logic moved to DocumentService.UpdateAiMetadata
 
 func (s *AIService) libraryFolders() []string {
 	entries, _ := s.documents.List()
@@ -332,11 +301,17 @@ type FilingOutcome struct {
 
 func filingCommitDocument(n Document, documents *DocumentService, save bool, fileAfter bool) (FilingOutcome, error) {
 	if save {
-		saved, err := documents.Save(n)
+		var err error
+		if fileAfter {
+			// If we are about to file it, a full save is appropriate as it's a major transition
+			n, err = documents.Save(n)
+		} else {
+			// If just saving metadata (e.g. evaluation results), don't bump version
+			n, err = documents.SaveMeta(n)
+		}
 		if err != nil {
 			return FilingOutcome{}, fmt.Errorf("filing: save note: %w", err)
 		}
-		n = saved
 	}
 	if fileAfter {
 		refiled, err := documents.File(n)

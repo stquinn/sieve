@@ -99,9 +99,9 @@ func (ns *DocumentService) RenameFolder(id string, newName string) error {
 	return err
 }
 
-// SetIntent writes user_intent to the buffer's metadata and saves it.
+// SetUserIntent writes user_intent to the buffer's metadata and saves it.
 // intent must be "keep", "trash", or "" (clears the field).
-func (ds *DocumentService) SetIntent(d Document, intent string) (Document, error) {
+func (ds *DocumentService) SetUserIntent(d Document, intent string) (Document, error) {
 	meta := d.Storable().Meta()
 	if intent == "" {
 		delete(meta, "user_intent")
@@ -109,7 +109,16 @@ func (ds *DocumentService) SetIntent(d Document, intent string) (Document, error
 		meta["user_intent"] = intent
 	}
 	d.Storable().SetMeta(meta)
-	return ds.Save(d)
+	return ds.SaveMeta(d)
+}
+
+// SaveMeta persists only the metadata of the document, avoiding a version bump.
+func (ds *DocumentService) SaveMeta(n Document) (Document, error) {
+	ms, err := ds.store.SaveMeta(n.Storable())
+	if err != nil {
+		return nil, err
+	}
+	return ds.documentFromStoreable(ms)
 }
 
 // AttachAsset attaches an asset Storable to the note and saves it.
@@ -119,15 +128,50 @@ func (ds *DocumentService) AttachAsset(n Document, a store.AssetStorable) error 
 	return err
 }
 
-// RetrieveVersion fetches a historical snapshot of n identified by ref.
+// IncrementFocusCount increments the focus_count in metadata and saves it.
 func (ds *DocumentService) IncrementFocusCount(n Document) (Document, error) {
 	meta := n.Meta()
 	meta.SetFocusCount(meta.FocusCount() + 1)
-	_, err := ds.store.SaveMeta(n.Storable())
-	if err != nil {
-		return nil, fmt.Errorf("document: IncrementFocusCount: failed to save meta: %w", err)
+	return ds.SaveMeta(n)
+}
+
+// UpdateAiMetadata applies an AI filing recommendation to the document metadata and saves it.
+func (ds *DocumentService) UpdateAiMetadata(d Document, rec *FilingRecommendation, cli string) (Document, error) {
+	meta := d.Meta()
+	now := time.Now().Format("2006-01-02T15:04:05")
+	meta.SetAiEval("complete")
+	meta.SetAiLastEvaluated(&now)
+	keep := rec.Keep
+	meta.SetAiKeep(&keep)
+	if cli != "" {
+		meta.SetCLI(&cli)
 	}
-	return ds.documentFromStoreable(n.Storable())
+	if rec.Title != "" {
+		meta.SetDisplayName(rec.Title)
+	}
+	if rec.Filename != "" {
+		fn := rec.Filename
+		meta.SetFilename(&fn)
+	}
+	if rec.Folder != "" {
+		folder := rec.Folder
+		meta.SetAiFolderSuggestion(&folder)
+	}
+	if rec.Summary != "" {
+		s2 := rec.Summary
+		meta.SetSummary(&s2)
+	}
+	if len(rec.Tags) > 0 {
+		meta.SetTags(rec.Tags)
+	}
+	if rec.AiJustification != "" {
+		j := rec.AiJustification
+		meta.SetAiJustification(&j)
+	}
+	if len(rec.DensitySignals) > 0 {
+		meta.SetDensitySignals(rec.DensitySignals)
+	}
+	return ds.SaveMeta(d)
 }
 
 // RetrieveVersion fetches a historical snapshot of n identified by ref.
@@ -178,7 +222,7 @@ func (ds *DocumentService) Rename(d Document, name string) (Document, error) {
 		}
 		return newNote(ms), nil
 	}
-	return d, nil
+	return ds.SaveMeta(d)
 }
 
 // New creates a new empty buffer in the WorkingCopy category with an

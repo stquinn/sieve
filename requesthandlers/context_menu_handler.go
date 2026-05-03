@@ -85,7 +85,7 @@ func (h *ContextMenuHandler) handleIntent(w http.ResponseWriter, r *http.Request
 
 	doc, err := h.ServiceProvider.Documents.LoadByUUID(id)
 	if err == nil {
-		if _, err := h.ServiceProvider.Documents.SetIntent(doc, value); err != nil {
+		if _, err := h.ServiceProvider.Documents.SetUserIntent(doc, value); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

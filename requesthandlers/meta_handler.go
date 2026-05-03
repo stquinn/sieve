@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"sieve/logger"
 	"sieve/sieve"
 	"sieve/store"
 
@@ -156,7 +157,7 @@ func (h *MetaHandler) buildMetaPanelData(uuidOrPromptName, tab string) metaPanel
 	if isPrompt {
 		return data
 	}
-
+	logger.Info("buildMetaPanelData: %s", uuidOrPromptName)
 	if b, err := h.ServiceProvider.Documents.LoadByUUID(uuidOrPromptName); err == nil {
 		data.UUID = b.UUID()
 		if fname := b.Meta().Filename(); fname != nil {

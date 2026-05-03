@@ -273,7 +273,9 @@ func (fs *FileStore) Load(cat store.Category, key string) (store.Storable, error
 		cat = entry.cat
 		key = entry.dirKey
 	}
-	key = strings.TrimSuffix(key, ".md")
+	if cat.MetaEnabled {
+		key = strings.TrimSuffix(key, ".md")
+	}
 
 	absPath := fs.absPath(cat, key)
 	if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
@@ -524,6 +526,12 @@ func (fs *FileStore) LookupUUID(uuid string) (uuidEntry, bool) {
 	fs.indexMu.RUnlock()
 	if ok {
 		return entry, true
+	}
+
+	// Heuristic: if it's clearly a path or a filename, don't trigger a scan.
+	// UUIDs and legacy slugs shouldn't have slashes or extensions.
+	if strings.Contains(uuid, "/") || strings.HasSuffix(uuid, ".md") {
+		return uuidEntry{}, false
 	}
 
 	// Cache miss — rebuild index.
@@ -782,7 +790,9 @@ func (fs *FileStore) savePlain(s *fileStorable) (store.Storable, error) {
 
 func (fs *FileStore) renameKey(s store.Storable, newKey string) (store.Storable, error) {
 	oldPath := s.Path()
-	newKey = strings.TrimSuffix(newKey, ".md")
+	if s.Category().MetaEnabled {
+		newKey = strings.TrimSuffix(newKey, ".md")
+	}
 
 	if oldPath == newKey {
 		return s, nil
