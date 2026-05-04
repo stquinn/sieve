@@ -631,8 +631,12 @@
           attrs: { src: mdPath, id: blkId, detect: 'pending' }
         })
 
-        if (window.go && window.go.main && window.go.main.App && window.go.main.App.DescribeImage) {
-          window.go.main.App.DescribeImage(window.__stashActiveTabUuid, mdPath, blkId).then(function(desc) {
+        fetch('/api/ai/describe-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uuid: window.__stashActiveTabUuid, path: mdPath, id: blkId })
+        }).then(function(r) { return r.ok ? r.json() : null })
+          .then(function(desc) {
             if (!desc) return
             currentEditor.commands.command(function(commandProps) {
               var tr = commandProps.tr
@@ -661,7 +665,6 @@
           }).catch(function(err) {
             console.error('[editor.js] DescribeImage failed', err)
           })
-        }
       }
 
       if (imageFile) {
@@ -699,15 +702,19 @@
             .catch(function() {
               currentEditor.commands.insertContent({ type: 'image', attrs: { src: imgSrc } })
             })
-        } else if (window.go && window.go.main && window.go.main.App && window.go.main.App.DownloadAsset) {
-          window.go.main.App.DownloadAsset(currentUuid, imgSrc, id).then(function(asset) {
-            processAsset(asset, id)
-          }).catch(function(err) {
-            console.error('[editor.js] DownloadAsset failed', err)
-            currentEditor.commands.insertContent({ type: 'image', attrs: { src: imgSrc } })
-          })
         } else {
-          currentEditor.commands.insertContent({ type: 'image', attrs: { src: imgSrc } })
+          fetch('/api/asset/save-url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uuid: currentUuid, url: imgSrc, id: id }),
+          }).then(function(r) { return r.ok ? r.json() : null })
+            .then(function(asset) {
+              if (asset) { processAsset(asset, id) }
+              else { currentEditor.commands.insertContent({ type: 'image', attrs: { src: imgSrc } }) }
+            }).catch(function(err) {
+              console.error('[editor.js] DownloadAsset failed', err)
+              currentEditor.commands.insertContent({ type: 'image', attrs: { src: imgSrc } })
+            })
         }
         return true
       }
@@ -727,8 +734,12 @@
           content: [{ type: 'text', text: text }]
         })
 
-        if (window.go && window.go.main && window.go.main.App && window.go.main.App.RefineLanguage) {
-          window.go.main.App.RefineLanguage(text).then(function(lang) {
+        fetch('/api/ai/refine-language', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: text })
+        }).then(function(r) { return r.ok ? r.text() : null })
+          .then(function(lang) {
             if (!lang) return
             currentEditor.commands.command(function(props) {
               var tr = props.tr
@@ -753,7 +764,6 @@
           }).catch(function(err) {
             console.error('[editor.js] RefineLanguage failed', err)
           })
-        }
         return true
       }
       if(text.startsWith("http://") || text.startsWith("https://")) {
@@ -768,33 +778,33 @@
             label: text // Your node uses this 'label' attribute to render its text
           }
         })
-        if (window.go && window.go.main && window.go.main.App && window.go.main.App.GetLinkTitle) {
-          window.go.main.App.GetLinkTitle(text).then(function(title) {
-             if (!title || title.trim() == "") return
-              currentEditor.commands.command(function(props) {
-                var tr = props.tr
-                var state = props.state
-                var found = false
-                state.doc.descendants(function(node, pos) {
-                  if (node.type.name === 'smartLink' && node.attrs.id === id) {
-                    found = true
-                    tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { label: title, detect: 'peek' }))
-                    return false
-                  }
-                })
-                if (found) {
-                  currentEditor.view.dispatch(tr)
-                  var md = currentEditor.storage.markdown.getMarkdown() || ''
-                  lastSyncedBody = md
-                  scheduleSave(currentUuid, md)
-                  document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
+        fetch('/api/link-preview?url=' + encodeURIComponent(text))
+          .then(function(r) { return r.ok ? r.text() : null })
+          .then(function(title) {
+            if (!title || title.trim() === '') return
+            currentEditor.commands.command(function(props) {
+              var tr = props.tr
+              var state = props.state
+              var found = false
+              state.doc.descendants(function(node, pos) {
+                if (node.type.name === 'smartLink' && node.attrs.id === id) {
+                  found = true
+                  tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { label: title, detect: 'peek' }))
+                  return false
                 }
-                return found
               })
-            }).catch(function(err) {
-              console.error('[editor.js] RefineLanguage failed', err)
+              if (found) {
+                currentEditor.view.dispatch(tr)
+                var md = currentEditor.storage.markdown.getMarkdown() || ''
+                lastSyncedBody = md
+                scheduleSave(currentUuid, md)
+                document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
+              }
+              return found
             })
-          }
+          }).catch(function(err) {
+            console.error('[editor.js] GetLinkTitle failed', err)
+          })
         return true
       }
     }
@@ -978,8 +988,12 @@
                   })
                   .run()
 
-                if (window.go && window.go.main && window.go.main.App && window.go.main.App.DescribeImage) {
-                  window.go.main.App.DescribeImage(window.__stashActiveTabUuid, mdSrc, id).then(function(desc) {
+                fetch('/api/ai/describe-image', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ uuid: window.__stashActiveTabUuid, path: mdSrc, id: id })
+                }).then(function(r) { return r.ok ? r.json() : null })
+                  .then(function(desc) {
                     if (!desc || !editor) return
                     editor.commands.command(function(props) {
                       var tr = props.tr
@@ -997,7 +1011,6 @@
                       return found
                     })
                   }).catch(function(err) { console.error('[editor.js] DescribeImage failed', err) })
-                }
               }).catch(function(err) { console.error('[editor.js] blob paste save failed', err) })
           }
           reader.readAsDataURL(blob)

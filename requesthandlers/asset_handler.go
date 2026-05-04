@@ -2,10 +2,14 @@ package requesthandlers
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"sieve/logger"
 	"sieve/sieve"
@@ -19,6 +23,7 @@ type AssetHandler struct {
 
 func (h *AssetHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/asset/save", h.handleSave)
+	r.Post("/api/asset/save-url", h.handleSaveURL)
 	r.Get("/sieve/{uuid}/{filename}", h.serveAsset)
 }
 
@@ -63,6 +68,76 @@ func (h *AssetHandler) handleSave(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"externalRef": asset.ExternalRef()})
+}
+
+type downloadAssetRequest struct {
+	UUID string `json:"uuid"`
+	URL  string `json:"url"`
+	ID   string `json:"id"`
+}
+
+func (h *AssetHandler) handleSaveURL(w http.ResponseWriter, r *http.Request) {
+	var req downloadAssetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	data, err := fetchURL(req.URL)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	cat := sieve.WorkingCopy
+	var doc sieve.Document
+	if req.UUID != "" {
+		if d, err := h.ServiceProvider.Documents.LoadByUUID(req.UUID); err == nil {
+			doc = d
+			if doc.Kind() == sieve.KindNote {
+				cat = sieve.Library
+			}
+		}
+	}
+
+	asset, err := h.ServiceProvider.Assets.Save(cat, req.UUID, req.ID, data)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if doc != nil {
+		doc.Storable().AttachAsset(asset.Storable())
+		if _, err := h.ServiceProvider.Documents.Save(doc); err != nil {
+			logger.Warn("handleSaveURL: failed to attach asset", "err", err)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"externalRef": asset.ExternalRef()})
+}
+
+func fetchURL(targetURL string) ([]byte, error) {
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+		Timeout: 30 * time.Second,
+	}
+	req, err := http.NewRequest(http.MethodGet, targetURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("server returned status %d", resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
 }
 
 func decodeDataURL(dataURL string) []byte {

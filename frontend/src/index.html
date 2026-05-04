@@ -272,25 +272,17 @@
         if (link) link.href = '/theme.css?t=' + new Date().getTime();
     });
 
-    // sieve:meta-dirty — dispatched by editor.js, updates the meta panel dirty indicator
+    // sieve:meta-dirty — dispatched by editor.js, updates the save-state dot in the path crumb
     document.addEventListener('sieve:meta-dirty', function(e) {
         var dirty = e.detail && e.detail.dirty;
-        var indicator = document.getElementById('meta-dirty-indicator');
-        if (!indicator) return;
-        var label = indicator.querySelector('.meta-dirty-label');
-        var dot   = indicator.querySelector('.meta-dirty-dot');
+        var dot = document.getElementById('meta-dirty-dot');
+        if (!dot) return;
         if (dirty) {
-            indicator.classList.remove('border-tn-border');
-            indicator.classList.add('border-tn-yellow');
-            indicator.style.background = 'color-mix(in srgb, var(--theme-accentYellow) 10%, transparent)';
-            if (label) { label.classList.remove('text-tn-text-dim'); label.classList.add('text-tn-yellow'); label.textContent = 'Unsaved Changes'; }
-            if (dot)   { dot.classList.remove('bg-tn-green'); dot.classList.add('bg-tn-yellow'); dot.style.boxShadow = '0 0 8px var(--theme-accentYellow)'; }
+            dot.classList.remove('bg-tn-green');
+            dot.classList.add('bg-tn-red');
         } else {
-            indicator.classList.remove('border-tn-yellow');
-            indicator.classList.add('border-tn-border');
-            indicator.style.background = '';
-            if (label) { label.classList.remove('text-tn-yellow'); label.classList.add('text-tn-text-dim'); label.textContent = 'All Changes Saved'; }
-            if (dot)   { dot.classList.remove('bg-tn-yellow'); dot.classList.add('bg-tn-green'); dot.style.boxShadow = ''; }
+            dot.classList.remove('bg-tn-red');
+            dot.classList.add('bg-tn-green');
         }
     });
 

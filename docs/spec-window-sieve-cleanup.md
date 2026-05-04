@@ -1,5 +1,30 @@
 # Specification: window.sieve* Global Cleanup
 
+## Status: All Categories Complete (2026-05-04)
+
+**All categories A–F are fully implemented.**
+
+**What was done:**
+- Created `frontend/src/static/ai-actions.js` — `window.SieveAI` namespace (Category D)
+- `editor.js`: replaced `window.sieveSave/Editor/ToggleMode` exports with `window._editorSave` hook + `sieve:toggle-*` event listeners; removed `exposePublicApi`
+- `tabbar.js`: removed `sieveTabBarInit`/`sieveCloseTabMenu`; uses `htmx:afterSettle` internally
+- `sidebar.js`: removed `sieveSidebarInit`/`sieveCloseMenu`; `sieveShowInFiles` kept (Category F)
+- All templates (`tabbar.html`, `sidebar.html`, `context_menu.html`, `quickswitcher.html`, `prompts.html`, `sidebar_search_results.html`, `meta_panel.html`, `delete.html`): `onclick` globals replaced with `hx-post`/`hx-get` attributes
+- `index.html`: ~25 globals removed; `sieve:meta-dirty` CustomEvent listener added; keyboard shortcut globals removed
+
+**Remaining `window.sieve*` globals (all intentional):**
+
+| Global | Reason |
+|--------|--------|
+| `window.sieveInitEditor` | Spec-designated survivor — called from HTMX `hx-on::after-settle` |
+| `window.sieveSidebarSearch` | Complex JS logic, not convertible to pure HTMX |
+| `window.sieveSelectVault/CreateVault/InitManual` | Category F deferred — Wails IPC vault setup |
+| `window.sieveShowInFiles` | Category F deferred — Wails IPC `ShowInFilesByID` |
+
+**Category F implemented:** 4 HTTP endpoints added; all `window.go.main.App.*` calls in `editor.js` replaced with `fetch()`. `GetLinkTitle` added to `AIService` for future smart-link expansion.
+
+---
+
 ## 1. Background
 
 During the React → HTMX migration, a collection of `window.sieve*` globals were retained in `index.html` as a compatibility shim. They were originally Wails JS bindings; most are now just thin wrappers over `fetch`/`htmx.ajax` calls or JS-to-JS coordination bridges.
