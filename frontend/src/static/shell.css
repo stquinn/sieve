@@ -1,0 +1,108 @@
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    background-color: var(--theme-bg);
+    color: var(--theme-text);
+    font-family: var(--theme-uiFont, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif);
+}
+
+#app-root {
+    display: flex;
+    flex-direction: row;
+    height: 100%;
+    width: 100%;
+}
+
+#right-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+}
+
+.editor-area {
+    display: flex;
+    flex-direction: row;
+    flex: 1;
+    min-height: 0;
+    position: relative;
+}
+
+.sidebar {
+    flex-shrink: 0;
+    height: 100%;
+    background-color: var(--theme-bgDark);
+    border-right: 1px solid var(--theme-border);
+}
+
+.sidebar-handle, .meta-handle {
+    width: 4px;
+    cursor: col-resize;
+    background: transparent;
+    transition: background 0.2s;
+    z-index: 10;
+}
+
+.prompts-handle {
+    height: 4px;
+    cursor: row-resize;
+    background: transparent;
+    transition: background 0.2s;
+    z-index: 10;
+}
+
+.sidebar-handle:hover, .meta-handle:hover, .prompts-handle:hover {
+    background: var(--theme-accentPrimary);
+}
+
+.status-bar {
+    height: 28px;
+    background-color: var(--theme-bgDark);
+    border-top: 1px solid var(--theme-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 1rem;
+    font-size: 12px;
+    color: var(--theme-muted);
+    flex-shrink: 0;
+}
+
+dialog {
+    color: var(--theme-text);
+}
+
+.tab-drop-indicator-left {
+    position: relative;
+}
+
+.tab-drop-indicator-left::before {
+    content: "";
+    position: absolute;
+    left: -1px;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--theme-accentPrimary);
+    z-index: 50;
+    box-shadow: 0 0 8px var(--theme-accentPrimary);
+}
+
+.tab-drop-indicator-right {
+    position: relative;
+}
+
+.tab-drop-indicator-right::after {
+    content: "";
+    position: absolute;
+    right: -1px;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--theme-accentPrimary);
+    z-index: 50;
+    box-shadow: 0 0 8px var(--theme-accentPrimary);
+}
