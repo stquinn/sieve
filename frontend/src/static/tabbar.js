@@ -12,7 +12,7 @@
   function commitDrop() {
     if (dragFromIdx !== null && dragToPos !== null &&
         dragToPos !== dragFromIdx && dragToPos !== dragFromIdx + 1) {
-      window.sieveReorderTabs && window.sieveReorderTabs(dragFromIdx, dragToPos);
+      window.htmx && window.htmx.ajax('POST', '/api/tabs/reorder', { target: '#htmx-tabbar', swap: 'innerHTML', values: { from: dragFromIdx, to: dragToPos } });
     }
     dragFromIdx = null;
     dragToPos = null;
@@ -143,8 +143,9 @@
     if (area && overflowWrap && overflowBtn) initOverflow(area, overflowWrap, overflowBtn);
   }
 
-  window.sieveTabBarInit = init;
-  window.sieveCloseTabMenu = window.sieveCloseMenu;
+  document.addEventListener('htmx:afterSettle', function(e) {
+    if (e.detail && e.detail.target && e.detail.target.id === 'htmx-tabbar') init();
+  });
 
   if (document.readyState !== 'loading') init();
   else document.addEventListener('DOMContentLoaded', init);

@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"mime"
 	"net/http"
 	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"sieve/logger"
 	"sieve/sieve"
 	"sieve/store"
 
@@ -74,9 +74,10 @@ type versionViewData struct {
 }
 
 type assetViewData struct {
-	ExternalRef string
-	Name        string
-	Encoding    string
+	SrcURL   string
+	Name     string
+	MimeType string
+	IsImage  bool
 }
 
 func (h *MetaHandler) handleMeta(w http.ResponseWriter, r *http.Request) {
@@ -175,7 +176,6 @@ func (h *MetaHandler) buildMetaPanelData(uuidOrPromptName, tab string) metaPanel
 	if isPrompt {
 		return data
 	}
-	logger.Info("buildMetaPanelData: %s", uuidOrPromptName)
 	if b, err := h.ServiceProvider.Documents.LoadByUUID(uuidOrPromptName); err == nil {
 		data.UUID = b.UUID()
 		if fname := b.Meta().Filename(); fname != nil {
@@ -259,10 +259,16 @@ func toAssetViews(storables []store.Storable) []assetViewData {
 	for _, s := range storables {
 		if as, ok := s.(store.AssetStorable); ok {
 			ref := as.ExternalRef()
+			name := filepath.Base(ref)
+			mt := mime.TypeByExtension(filepath.Ext(name))
+			if mt == "" {
+				mt = "application/octet-stream"
+			}
 			out = append(out, assetViewData{
-				ExternalRef: ref,
-				Name:        filepath.Base(ref),
-				Encoding:    as.Encoding().String(),
+				SrcURL:   ref,
+				Name:     name,
+				MimeType: mt,
+				IsImage:  strings.HasPrefix(mt, "image/"),
 			})
 		}
 	}

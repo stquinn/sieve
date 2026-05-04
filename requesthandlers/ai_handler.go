@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+
 type AiHandler struct {
 	ServiceProvider  *sieve.ServiceProvider
 	EmitNotesChanged func()
@@ -19,6 +20,9 @@ func (h *AiHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/ai/keepAndFile/{uuid}", h.handleAiKeepAndFile)
 	r.Post("/api/ai/ask", h.handleAiAsk)
 	r.Post("/api/ai/explain", h.handleAiExplain)
+	r.Post("/api/ai/refine-language", h.handleRefineLanguage)
+	r.Post("/api/ai/describe-image", h.handleDescribeImage)
+	r.Get("/api/link-preview", h.handleLinkPreview)
 }
 
 func (h *AiHandler) handleAiSmartFile(w http.ResponseWriter, r *http.Request) {
@@ -43,6 +47,11 @@ func (h *AiHandler) handleAiKeepAndFile(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Broadcast immediately so sidebar/meta panel reflect the keep intent
+	// before the AI evaluation (~30s) completes.
+	if h.EmitNotesChanged != nil {
+		h.EmitNotesChanged()
+	}
 	h.evaluateAndFile(w, id, true, false)
 }
 
@@ -61,15 +70,16 @@ func (h *AiHandler) evaluateAndFile(w http.ResponseWriter, id string, fileAfter 
 	}
 
 	session := h.ServiceProvider.State.LoadSession()
-	for i := range session.Tabs {
-		if session.Tabs[i].ID == id {
-			session.Tabs[i].Status = outcome.Document.Meta().Status()
-			session.Tabs[i].DisplayName = outcome.Document.Meta().DisplayName()
-			if outcome.Document.Meta().UserIntent() != nil {
-				session.Tabs[i].UserIntent = *outcome.Document.Meta().UserIntent()
+	if !outcome.Discarded && outcome.Document != nil {
+		for i := range session.Tabs {
+			if session.Tabs[i].ID == id {
+				session.Tabs[i].Status = outcome.Document.Meta().Status()
+				session.Tabs[i].DisplayName = outcome.Document.Meta().DisplayName()
+				if outcome.Document.Meta().UserIntent() != nil {
+					session.Tabs[i].UserIntent = *outcome.Document.Meta().UserIntent()
+				}
+				break
 			}
-
-			break
 		}
 	}
 	_ = h.ServiceProvider.State.SaveSession(session)
@@ -133,4 +143,59 @@ func (h *AiHandler) handleAiExplain(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write([]byte(resp))
+}
+
+type refineLanguageRequest struct {
+	Content string `json:"content"`
+}
+
+func (h *AiHandler) handleRefineLanguage(w http.ResponseWriter, r *http.Request) {
+	var req refineLanguageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	lang, err := h.ServiceProvider.AI.RefineLanguage(req.Content)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write([]byte(lang))
+}
+
+type describeImageRequest struct {
+	UUID string `json:"uuid"`
+	Path string `json:"path"`
+	ID   string `json:"id"`
+}
+
+func (h *AiHandler) handleDescribeImage(w http.ResponseWriter, r *http.Request) {
+	var req describeImageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	desc, err := h.ServiceProvider.AI.DescribeImage(req.UUID, req.Path, req.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(desc)
+}
+
+func (h *AiHandler) handleLinkPreview(w http.ResponseWriter, r *http.Request) {
+	url := r.URL.Query().Get("url")
+	if url == "" {
+		http.Error(w, "url required", http.StatusBadRequest)
+		return
+	}
+	title, err := h.ServiceProvider.AI.GetLinkTitle(url)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write([]byte(title))
 }

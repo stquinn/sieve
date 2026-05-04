@@ -229,33 +229,33 @@ func buildMenu(app *App) *menu.Menu {
 	appMenu := menu.NewMenu()
 
 	file := appMenu.AddSubmenu("File")
-	file.AddText("New Note", keys.CmdOrCtrl("n"), js("window.sieveNewNote?.()"))
-	file.AddText("Save", keys.CmdOrCtrl("s"), js("window.sieveSave?.()"))
-	file.AddText("Close Tab", keys.CmdOrCtrl("w"), js("window.sieveCloseActiveTab?.()"))
+	file.AddText("New Note", keys.CmdOrCtrl("n"), js("htmx.ajax('POST','/api/note/new',{target:'#htmx-tabbar',swap:'innerHTML'})"))
+	file.AddText("Save", keys.CmdOrCtrl("s"), js("document.dispatchEvent(new CustomEvent('sieve:save'))"))
+	file.AddText("Close Tab", keys.CmdOrCtrl("w"), js("var id=document.getElementById('tiptap-mount')?.getAttribute('data-uuid');if(id)htmx.ajax('POST','/api/tabs/close/'+id,{target:'#htmx-tabbar',swap:'innerHTML'})"))
 	file.AddSeparator()
-	file.AddText("Settings", keys.CmdOrCtrl(","), js("window.sieveOpenSettings?.()"))
+	file.AddText("Settings", keys.CmdOrCtrl(","), js("htmx.ajax('GET','/api/settings',{target:'#settings-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('settings-dialog').showModal()})"))
 	file.AddSeparator()
 	file.AddText("Quit", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
 		wailsruntime.Quit(app.ctx)
 	})
 
 	view := appMenu.AddSubmenu("View")
-	view.AddText("Toggle Sidebar", keys.CmdOrCtrl("\\"), js("window.sieveToggleSidebar?.()"))
-	view.AddText("Toggle Meta Panel", keys.Combo("i", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveToggleMeta?.()"))
-	view.AddText("Toggle Prompts", keys.Combo("p", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveTogglePrompts?.()"))
-	view.AddText("Toggle Editor Mode", keys.Combo("m", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveToggleMode?.()"))
+	view.AddText("Toggle Sidebar", keys.CmdOrCtrl("\\"), js("htmx.ajax('POST','/api/session/sidebar/toggle',{swap:'none'})"))
+	view.AddText("Toggle Meta Panel", keys.Combo("i", keys.CmdOrCtrlKey, keys.ShiftKey), js("htmx.ajax('POST','/api/session/meta/toggle',{swap:'none'})"))
+	view.AddText("Toggle Prompts", keys.Combo("p", keys.CmdOrCtrlKey, keys.ShiftKey), js("htmx.ajax('POST','/api/session/prompts/toggle',{swap:'none'})"))
+	view.AddText("Toggle Editor Mode", keys.Combo("m", keys.CmdOrCtrlKey, keys.ShiftKey), js("document.dispatchEvent(new CustomEvent('sieve:toggle-mode'))"))
 	view.AddSeparator()
-	view.AddText("Toggle Search", keys.CmdOrCtrl("f"), js("window.sieveToggleSearch?.()"))
+	view.AddText("Toggle Search", keys.CmdOrCtrl("f"), js("document.dispatchEvent(new CustomEvent('sieve:toggle-search'))"))
 	view.AddText("Sidebar Search", keys.Combo("f", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveSidebarSearch?.()"))
-	view.AddText("Toggle AI Blocks", keys.CmdOrCtrl("j"), js("window.sieveToggleAiBlocks()"))
-	view.AddText("Quick Switcher", keys.CmdOrCtrl("p"), js("window.sieveOpenQuickSwitcher?.()"))
+	view.AddText("Toggle AI Blocks", keys.CmdOrCtrl("j"), js("document.dispatchEvent(new CustomEvent('sieve:toggle-ai-blocks'))"))
+	view.AddText("Quick Switcher", keys.CmdOrCtrl("p"), js("htmx.ajax('GET','/api/search-prompt',{target:'#quickswitcher-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('quickswitcher-dialog').showModal()})"))
 
 	ai := appMenu.AddSubmenu("Tools")
-	ai.AddText("Smart File", keys.Combo("e", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveSmartFileActive?.()"))
-	ai.AddText("Keep & Smart File", keys.Combo("return", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveKeepAndSmartFile?.()"))
+	ai.AddText("Smart File", keys.Combo("e", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.SieveAI?.smartFile()"))
+	ai.AddText("Keep & Smart File", keys.Combo("return", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.SieveAI?.keepAndSmartFile()"))
 
 	help := appMenu.AddSubmenu("Help")
-	help.AddText("Shortcuts", keys.CmdOrCtrl("/"), js("window.sieveHelp?.()"))
+	help.AddText("Shortcuts", keys.CmdOrCtrl("/"), js("htmx.ajax('GET','/api/help',{target:'#help-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('help-dialog').showModal()})"))
 	help.AddText("About", nil, func(_ *menu.CallbackData) {
 		wailsruntime.MessageDialog(app.ctx, wailsruntime.MessageDialogOptions{
 			Type:    wailsruntime.InfoDialog,

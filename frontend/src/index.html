@@ -142,7 +142,7 @@
         <div class="sidebar-handle"></div>
 
         <div id="right-panel">
-            <div id="htmx-tabbar" class="flex items-stretch bg-tn-bg-dark border-0 border-t border-b border-solid border-tn-border-2 h-[44px] shrink-0" hx-get="/api/tabs" hx-trigger="load, sse:session:changed, sse:notes:changed, session:changed from:body, notes:changed from:body" hx-on::after-settle="window.sieveTabBarInit && window.sieveTabBarInit()"></div>
+            <div id="htmx-tabbar" class="flex items-stretch bg-tn-bg-dark border-0 border-t border-b border-solid border-tn-border-2 h-[44px] shrink-0" hx-get="/api/tabs" hx-trigger="load, sse:session:changed, sse:notes:changed, session:changed from:body, notes:changed from:body"></div>
 
             <dialog id="settings-dialog" style="background: transparent; border: none; padding: 0; outline: none;">
                 <div id="settings-dialog-content" style="background: var(--theme-bgDark); width: 600px; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.6);"></div>
@@ -246,6 +246,7 @@
     <script src="/static/extensions.js"></script>
     <script type="module" src="/static/smart-link-extension.js"></script>
     <script src="/static/editor.js"></script>
+    <script src="/static/ai-actions.js"></script>
     <script src="/static/tabbar.js"></script>
     <script src="/static/sidebar.js"></script>
     <script src="/static/layout.js"></script>
@@ -256,291 +257,34 @@
         return navigator.platform.includes('Mac') ? e.metaKey : e.ctrlKey;
     };
 
-    // Global sieveX functions defined early
-    window.sieveSelectTab = function(id) {
-        if (!window.htmx) return console.error('htmx not loaded');
-        window.htmx.ajax('POST', '/api/note/open/' + id, { target: '#htmx-tabbar', swap: 'innerHTML' });
-    };
-    window.sieveOpenNote = window.sieveSelectTab;
-    window.sieveNewNote = function() {
-        if (!window.htmx) return console.error('htmx not loaded');
-        window.htmx.ajax('POST', '/api/note/new', { target: '#htmx-tabbar', swap: 'innerHTML' });
-    };
-    window.sieveCloseTab = function(id) {
-        if (!window.htmx) return console.error('htmx not loaded');
-        window.htmx.ajax('POST', '/api/tabs/close/' + id, { target: '#htmx-tabbar', swap: 'innerHTML' });
-    };
-    window.sieveCloseActiveTab = function() {
-        var mount = document.getElementById('tiptap-mount');
-        if (mount) {
-            var uuid = mount.getAttribute('data-uuid');
-            if (uuid) window.sieveCloseTab(uuid);
-        }
-    };
-    window.sieveCloseAllTabs = function() {
-        if (!window.htmx) return console.error('htmx not loaded');
-        window.htmx.ajax('POST', '/api/tabs/closeAll', { target: '#htmx-tabbar', swap: 'innerHTML' });
-    };
-    window.sieveToggleSidebar = function() {
-        if (window.htmx) window.htmx.ajax('POST', '/api/session/sidebar/toggle', { swap: 'none' });
-    };
-    window.sieveToggleMeta = function() {
-        if (window.htmx) window.htmx.ajax('POST', '/api/session/meta/toggle', { swap: 'none' });
-    };
-    window.sieveTogglePrompts = function() {
-        if (window.htmx) window.htmx.ajax('POST', '/api/session/prompts/toggle', { swap: 'none' });
-    };
-    window.sieveOpenSettings = function() {
-        var dlg = document.getElementById('settings-dialog');
-        if (dlg && window.htmx) {
-            dlg.showModal();
-            window.htmx.ajax('GET', '/api/settings', { target: '#settings-dialog-content', swap: 'innerHTML' });
-        }
-    };
-    window.sieveHelp = function() {
-        var dlg = document.getElementById('help-dialog');
-        if (dlg && window.htmx) {
-            dlg.showModal();
-            window.htmx.ajax('GET', '/api/help', { target: '#help-dialog-content', swap: 'innerHTML' });
-        }
-    };
-    window.sieveOpenQuickSwitcher = function() {
-        var dlg = document.getElementById('quickswitcher-dialog');
-        if (dlg && window.htmx) {
-            dlg.showModal();
-            window.htmx.ajax('GET', '/api/search-prompt', { target: '#quickswitcher-dialog-content', swap: 'innerHTML' });
-        }
-    };
-
-    window.sieveReorderTabs = function(from, to) {
-        if (!window.htmx) return console.error('htmx not loaded');
-        window.htmx.ajax('POST', '/api/tabs/reorder', { target: '#htmx-tabbar', swap: 'innerHTML', values: { from: from, to: to } });
-    };
-
-    window.__sieveActiveJobs = 0;
-    window.sieveSetEvaluating = function(id, isEval) {
-        var tab = document.querySelector('.group[data-tab-id="' + id + '"]');
-        if (tab) {
-            var normal = tab.querySelector('.tab-icon-normal');
-            var spinner = tab.querySelector('.tab-spinner');
-            if (isEval) {
-                if (normal) normal.classList.add('hidden');
-                if (spinner) spinner.classList.remove('hidden');
-            } else {
-                if (normal) normal.classList.remove('hidden');
-                if (spinner) spinner.classList.add('hidden');
-            }
-        }
-        var metaSpinner = document.getElementById('meta-thinking-spinner');
-        if (metaSpinner) {
-            var mount = document.getElementById('tiptap-mount');
-            if (mount && mount.getAttribute('data-uuid') === id) {
-                if (isEval) metaSpinner.classList.remove('hidden');
-                else metaSpinner.classList.add('hidden');
-            }
-        }
-        var sbLeft = document.querySelector('.status-bar__left');
-        if (sbLeft) {
-            if (window.__sieveActiveJobs > 0) {
-                sbLeft.innerHTML = '<span class="flex items-center gap-1.5"><span class="w-[10px] h-[10px] shrink-0 rounded-full border-[1.5px] border-solid border-tn-cyan border-t-transparent animate-spin"></span> Evaluating (' + window.__sieveActiveJobs + ')</span>';
-            } else {
-                sbLeft.innerHTML = '';
-            }
-        }
-    };
-
-    window.sieveSmartFile = function(id) {
-        var p = window.sieveSave ? window.sieveSave() : Promise.resolve();
-        p.then(function() {
-            if (!id) {
-                var mount = document.getElementById('tiptap-mount');
-                if (mount) id = mount.getAttribute('data-uuid');
-            }
-            if (id) {
-                window.__sieveActiveJobs++;
-                window.sieveSetEvaluating(id, true);
-                fetch('/api/ai/smartFile/' + id, { method: 'POST' }).finally(function() { 
-                    window.__sieveActiveJobs--; 
-                    window.sieveSetEvaluating(id, false);
-                });
-            }
-        });
-    };
-
-    window.sieveSmartMetadata = function(id) {
-        var p = window.sieveSave ? window.sieveSave() : Promise.resolve();
-        p.then(function() {
-            if (!id) {
-                var mount = document.getElementById('tiptap-mount');
-                if (mount) id = mount.getAttribute('data-uuid');
-            }
-            if (id) {
-                window.__sieveActiveJobs++;
-                window.sieveSetEvaluating(id, true);
-                fetch('/api/ai/smartMetadata/' + id, { method: 'POST' }).finally(function() { 
-                    window.__sieveActiveJobs--; 
-                    window.sieveSetEvaluating(id, false);
-                });
-            }
-        });
-    };
-
-    window.sieveKeepAndSmartFile = function(id) {
-        var p = window.sieveSave ? window.sieveSave() : Promise.resolve();
-        p.then(function() {
-            if (!id) {
-                var mount = document.getElementById('tiptap-mount');
-                if (mount) id = mount.getAttribute('data-uuid');
-            }
-            if (id) {
-                window.__sieveActiveJobs++;
-                window.sieveSetEvaluating(id, true);
-                fetch('/api/ai/keepAndFile/' + id, { method: 'POST' }).finally(function() { 
-                    window.__sieveActiveJobs--; 
-                    window.sieveSetEvaluating(id, false);
-                });
-            }
-        });
-    };
-
-    window.sieveSmartFileActive = function() { window.sieveSmartFile(); };
-    window.sieveKeepAndSmartFileActive = function() { window.sieveKeepAndSmartFile(); };
-
-    window.sieveRenameNote = function(id, currentName) {
-        var dlg = document.getElementById('rename-dialog');
-        if (dlg && window.htmx) {
-            dlg.showModal();
-            window.htmx.ajax('GET', '/api/sidebar/rename-prompt?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(currentName) + '&type=note', { target: '#rename-dialog-content', swap: 'innerHTML' });
-        }
-    };
-
-    window.sieveRenameFolder = function(id, currentName) {
-        var dlg = document.getElementById('rename-dialog');
-        if (dlg && window.htmx) {
-            dlg.showModal();
-            window.htmx.ajax('GET', '/api/sidebar/rename-prompt?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(currentName) + '&type=folder', { target: '#rename-dialog-content', swap: 'innerHTML' });
-        }
-    };
-
-    window.sieveCreateFolder = function(parentId) {
-        var dlg = document.getElementById('rename-dialog');
-        if (dlg && window.htmx) {
-            dlg.showModal();
-            window.htmx.ajax('GET', '/api/sidebar/create-folder-prompt?parentId=' + encodeURIComponent(parentId || ''), { target: '#rename-dialog-content', swap: 'innerHTML' });
-        }
-    };
-
-    window.sieveCloseMenu = function() {
-        var menu = document.getElementById('sieve-context-menu');
-        if (menu) menu.remove();
-    };
-
-    window.sieveShowInFiles = function(id) {
-        if (window.go && window.go.main && window.go.main.App && window.go.main.App.ShowInFilesByID) {
-            window.go.main.App.ShowInFilesByID(id);
-        }
-    };
-
-    window.sieveOpenDelete = function(id, name, type) {
-        var dlg = document.getElementById('delete-dialog');
-        if (dlg && window.htmx) {
-            dlg.showModal();
-            window.htmx.ajax('GET', '/api/sidebar/delete-prompt?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&type=' + type, { target: '#delete-dialog-content', swap: 'innerHTML' });
-        }
-    };
-
-    window.sieveOpenRestore = function(uuid, versionId) {
-        var dlg = document.getElementById('restore-dialog');
-        if (dlg && window.htmx) {
-            dlg.showModal();
-            window.htmx.ajax('GET', '/api/meta/restore-prompt?uuid=' + encodeURIComponent(uuid) + '&version=' + encodeURIComponent(versionId), { target: '#restore-dialog-content', swap: 'innerHTML' });
-        }
-    };
-
-    window.sieveOnSettingsChanged = function() {
-        var link = document.querySelector('link[href^="/theme.css"]');
-        if (link) {
-            link.href = '/theme.css?t=' + new Date().getTime();
-        }
+    window.sieveSidebarSearch = function() {
+        var treeInput = document.getElementById('sidebar-search-input');
+        if (treeInput) { treeInput.focus(); treeInput.select(); return; }
+        var resultInput = document.querySelector('.store-search__input');
+        if (resultInput) { resultInput.focus(); resultInput.select(); return; }
+        if (window.htmx) window.htmx.ajax('GET', '/api/sidebar/search?q=', { target: '#htmx-sidebar', swap: 'innerHTML' });
     };
 
     document.body.addEventListener('settings:changed', function() {
         var dlg = document.getElementById('settings-dialog');
         if (dlg) dlg.close();
-        window.sieveOnSettingsChanged();
+        var link = document.querySelector('link[href^="/theme.css"]');
+        if (link) link.href = '/theme.css?t=' + new Date().getTime();
     });
 
-    window.sieveToggleSearch = function() {
-        if (window.sieveEditor && window.sieveEditor.toggleSearch) window.sieveEditor.toggleSearch();
-        else console.log('Toggle Search not implemented in current mode');
-    };
-
-    window.sieveToggleAiBlocks = function() {
-        if (window.sieveEditor && window.sieveEditor.toggleAiBlocks) {
-            window.sieveEditor.toggleAiBlocks();
-        }
-    };
-
-    window.sieveSidebarSearch = function() {
-        const sidebar = document.getElementById('htmx-sidebar');
-        if (!sidebar) return;
-
-        // If the search input in the tree view exists, focus it
-        const treeInput = document.getElementById('sidebar-search-input');
-        if (treeInput) {
-            treeInput.focus();
-            treeInput.select();
-            return;
-        }
-
-        // If already in search mode results, focus the result input
-        const resultInput = document.querySelector('.store-search__input');
-        if (resultInput) {
-            resultInput.focus();
-            resultInput.select();
-            return;
-        }
-
-        // Toggle to search mode
-        window.htmx.ajax('GET', '/api/sidebar/search?q=', { 
-            target: '#htmx-sidebar', 
-            swap: 'innerHTML' 
-        });
-    };
-
-    window.sieveFilterSidebar = function(query) {
-        query = (query || '').toLowerCase();
-        var items = document.querySelectorAll('.sidebar__file, .sidebar__dir');
-        items.forEach(function(item) {
-            var name = item.getAttribute('data-ctx-name') || '';
-            var match = name.toLowerCase().includes(query);
-            item.style.display = match ? 'flex' : 'none';
-        });
-    };
-
-    window.sieveToggleMode = window.sieveToggleMode || function() {
-        console.log('Toggle Mode placeholder called');
-    };
-
-    window.sieveSetMetaDirty = function(dirty) {
-        var indicator = document.getElementById('meta-dirty-indicator');
-        if (!indicator) return;
-        var label = indicator.querySelector('.meta-dirty-label');
-        var dot   = indicator.querySelector('.meta-dirty-dot');
+    // sieve:meta-dirty — dispatched by editor.js, updates the save-state dot in the path crumb
+    document.addEventListener('sieve:meta-dirty', function(e) {
+        var dirty = e.detail && e.detail.dirty;
+        var dot = document.getElementById('meta-dirty-dot');
+        if (!dot) return;
         if (dirty) {
-            indicator.classList.remove('border-tn-border');
-            indicator.classList.add('border-tn-yellow');
-            indicator.style.background = 'color-mix(in srgb, var(--theme-accentYellow) 10%, transparent)';
-            if (label) { label.classList.remove('text-tn-text-dim'); label.classList.add('text-tn-yellow'); label.textContent = 'Unsaved Changes'; }
-            if (dot)   { dot.classList.remove('bg-tn-green'); dot.classList.add('bg-tn-yellow'); dot.style.boxShadow = '0 0 8px var(--theme-accentYellow)'; }
+            dot.classList.remove('bg-tn-green');
+            dot.classList.add('bg-tn-red');
         } else {
-            indicator.classList.remove('border-tn-yellow');
-            indicator.classList.add('border-tn-border');
-            indicator.style.background = '';
-            if (label) { label.classList.remove('text-tn-yellow'); label.classList.add('text-tn-text-dim'); label.textContent = 'All Changes Saved'; }
-            if (dot)   { dot.classList.remove('bg-tn-yellow'); dot.classList.add('bg-tn-green'); dot.style.boxShadow = ''; }
+            dot.classList.remove('bg-tn-red');
+            dot.classList.add('bg-tn-green');
         }
-    };
+    });
 
     // Initial editor load
     window.addEventListener('DOMContentLoaded', function() {
@@ -631,14 +375,11 @@
         }
     });
 
-    // Re-trigger layout parameters on tab changes
+    // Re-trigger layout parameters on sidebar changes
     document.addEventListener('htmx:afterSettle', function(e) {
         var target = e.detail && e.detail.target;
         if (!target) return;
-        if (target.id === 'htmx-tabbar') {
-            window.sieveTabBarInit && window.sieveTabBarInit();
-        } else if (target.id === 'htmx-sidebar' || (target.closest && target.closest('#htmx-sidebar'))) {
-            window.sieveSidebarInit && window.sieveSidebarInit();
+        if (target.id === 'htmx-sidebar' || (target.closest && target.closest('#htmx-sidebar'))) {
             window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' });
             var mount = document.getElementById('tiptap-mount');
             var activeUuid = mount ? mount.getAttribute('data-uuid') : null;
@@ -651,49 +392,12 @@
     </script>
 
     <script>
-
-    // Placeholder until editor.js overrides it
-    window.sieveToggleMode = window.sieveToggleMode || function() {
-        console.log('Toggle Mode placeholder called');
-    };
-
-    window.sieveSetMetaDirty = function(dirty) {
-        const indicator = document.getElementById('meta-dirty-indicator');
-        if (!indicator) return;
-        const label = indicator.querySelector('.meta-dirty-label');
-        const dot   = indicator.querySelector('.meta-dirty-dot');
-        if (dirty) {
-            indicator.className = indicator.className.replace('border-tn-border', 'border-tn-yellow');
-            if (!indicator.className.includes('border-tn-yellow')) indicator.className += ' border-tn-yellow';
-            indicator.style.background = 'color-mix(in srgb, var(--theme-accentYellow) 10%, transparent)';
-            if (label) { 
-                label.className = label.className.replace('text-tn-text-dim', 'text-tn-yellow'); 
-                label.textContent = 'Unsaved Changes'; 
-            }
-            if (dot) { 
-                dot.className = dot.className.replace('bg-tn-green', 'bg-tn-yellow'); 
-                dot.style.boxShadow = '0 0 8px var(--theme-accentYellow)'; 
-            }
-        } else {
-            indicator.className = indicator.className.replace('border-tn-yellow', 'border-tn-border');
-            indicator.style.background = '';
-            if (label) { 
-                label.className = label.className.replace('text-tn-yellow', 'text-tn-text-dim'); 
-                label.textContent = 'All Changes Saved'; 
-            }
-            if (dot) { 
-                dot.className = dot.className.replace('bg-tn-yellow', 'bg-tn-green'); 
-                dot.style.boxShadow = ''; 
-            }
-        }
-    };
-
     // Close Handler
     window.addEventListener('DOMContentLoaded', function() {
         if (window.runtime && window.runtime.EventsOn) {
             window.runtime.EventsOn('app:closing', function() {
                 console.log('[stash] App closing, vetoed natively to allow flush.');
-                if (window.sieveSave) window.sieveSave();
+                if (window._editorSave) window._editorSave();
                 
                 function checkAndQuit() {
                     if (window.__sieveActiveJobs > 0) {
