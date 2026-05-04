@@ -160,6 +160,10 @@
                 <div id="delete-dialog-content" style="background: var(--theme-bgDark); width: 450px; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.6);"></div>
             </dialog>
 
+            <dialog id="restore-dialog" style="background: transparent; border: none; padding: 0; outline: none;">
+                <div id="restore-dialog-content" style="background: var(--theme-bgDark); width: 450px; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.6);"></div>
+            </dialog>
+
             <dialog id="quickswitcher-dialog" style="background: transparent; border: none; padding: 0; outline: none; margin: 15vh auto auto;">
                 <div id="quickswitcher-dialog-content" style="background: var(--theme-bgDark); width: 600px; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.6);"></div>
             </dialog>
@@ -442,6 +446,14 @@
         if (dlg && window.htmx) {
             dlg.showModal();
             window.htmx.ajax('GET', '/api/sidebar/delete-prompt?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(name) + '&type=' + type, { target: '#delete-dialog-content', swap: 'innerHTML' });
+        }
+    };
+
+    window.sieveOpenRestore = function(uuid, versionId) {
+        var dlg = document.getElementById('restore-dialog');
+        if (dlg && window.htmx) {
+            dlg.showModal();
+            window.htmx.ajax('GET', '/api/meta/restore-prompt?uuid=' + encodeURIComponent(uuid) + '&version=' + encodeURIComponent(versionId), { target: '#restore-dialog-content', swap: 'innerHTML' });
         }
     };
 

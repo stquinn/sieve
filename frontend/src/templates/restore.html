@@ -1,0 +1,31 @@
+{{define "restore.html"}}
+<div class="restore-modal" style="padding: 1.5rem; background: var(--theme-bgDark); border-radius: 8px;">
+  <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-accentPrimary); margin-bottom: 1rem;">Restore Version</h3>
+  
+  <p style="font-size: 0.875rem; color: var(--theme-text); margin-bottom: 1.5rem; line-height: 1.4;">
+    Are you sure you want to restore version <strong>{{.VersionID}}</strong>? <br>
+    <span style="color: var(--theme-muted); font-size: 0.8rem;">Any unsaved changes in the current document will be lost.</span>
+  </p>
+
+  <form 
+    hx-post="/api/meta/restore?uuid={{.UUID}}&version={{.VersionID}}"
+    hx-swap="none"
+    onsubmit="document.getElementById('restore-dialog').close()"
+    style="display: flex; justify-content: flex-end; gap: 1rem;"
+  >
+    <button 
+      type="button" 
+      onclick="document.getElementById('restore-dialog').close()" 
+      style="padding: 0.5rem 1.25rem; font-size: 0.875rem; font-weight: 500; color: var(--theme-textDim); background: transparent; border: none; cursor: pointer;"
+    >
+      Cancel
+    </button>
+    <button 
+      type="submit" 
+      style="padding: 0.5rem 1.25rem; font-size: 0.875rem; font-weight: bold; color: #ffffff; background: var(--theme-accentPrimary); border-radius: 0.5rem; border: none; cursor: pointer;"
+    >
+      Restore
+    </button>
+  </form>
+</div>
+{{end}}

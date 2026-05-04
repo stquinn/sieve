@@ -635,7 +635,7 @@
         })
 
         if (window.go && window.go.main && window.go.main.App && window.go.main.App.DescribeImage) {
-          window.go.main.App.DescribeImage(mdPath).then(function(desc) {
+          window.go.main.App.DescribeImage(window.__stashActiveTabUuid, mdPath, blkId).then(function(desc) {
             if (!desc) return
             currentEditor.commands.command(function(commandProps) {
               var tr = commandProps.tr
@@ -982,7 +982,7 @@
                   .run()
 
                 if (window.go && window.go.main && window.go.main.App && window.go.main.App.DescribeImage) {
-                  window.go.main.App.DescribeImage(mdSrc).then(function(desc) {
+                  window.go.main.App.DescribeImage(window.__stashActiveTabUuid, mdSrc, id).then(function(desc) {
                     if (!desc || !editor) return
                     editor.commands.command(function(props) {
                       var tr = props.tr

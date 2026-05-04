@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"sieve/logger"
+	"sieve/store"
 )
 
 // AIService owns all AI evaluation and filing operations. It resolves prompt
@@ -131,14 +132,34 @@ func (s *AIService) RunAsk(content, history, question, noteUUID string, imageSto
 
 // DescribeImage sends an image to the configured AI and returns alt text, a
 // summary, and a suggested filename. storeRelPath is relative to the store root.
-func (s *AIService) DescribeImage(storeRelPath string) (ImageDesc, error) {
+func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string) (ImageDesc, error) {
+	logger.Info("Describe uuid: " + uuid)
+	logger.Info("Describe storeRelPath: " + storeRelPath)
+	logger.Info("Describe blkId: " + blkId)
 	settings := s.state.LoadSettings()
 	if settings.Tier() == TierDumb {
 		return ImageDesc{}, fmt.Errorf("dumb mode")
 	}
+	doc, err := s.documents.LoadByUUID(uuid)
+	if err != nil {
+		return ImageDesc{}, err
+	}
+	var asset store.AssetStorable
+	for _, assetItr := range doc.Storable().Owns() {
+		as, ok := assetItr.(store.AssetStorable)
+		if ok && strings.HasPrefix(as.Key(), blkId) {
+			asset = as
+		}
+	}
+	if asset == nil {
+		return ImageDesc{}, err
+	}
 	prompt, _ := s.prompts.GetPromptContent("image")
-	imagePath := filepath.Join(s.storePath, storeRelPath)
-
+	imagePath := filepath.Join(s.storePath, doc.Storable().ExternalRef(), asset.Key())
+	logger.Info("About to Doc ExtRef " + doc.Storable().ExternalRef())
+	logger.Info("About to Asset Key " + asset.Key())
+	logger.Info("About to Asset ExtRef " + asset.ExternalRef())
+	logger.Info("About to Describe " + imagePath)
 	data, err := os.ReadFile(imagePath)
 	if err == nil {
 		if strings.Contains(string(data), "<svg") || strings.Contains(string(data), "<SVG") || strings.Contains(string(data), "<?xml") {

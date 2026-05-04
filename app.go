@@ -478,11 +478,12 @@ func (a *App) DownloadAsset(uuid, targetURL, id string) (AssetDTO, error) {
 
 // ── AI / CLI operations ───────────────────────────────────────────────────────
 
-func (a *App) DescribeImage(storeRelPath string) (sieve.ImageDesc, error) {
+// window.__stashActiveTabUuid, mdPath, blkId
+func (a *App) DescribeImage(uuid string, storeRelPath string, blkId string) (sieve.ImageDesc, error) {
 	if a.AI == nil {
 		return sieve.ImageDesc{}, fmt.Errorf("store not open")
 	}
-	desc, err := a.AI.DescribeImage(storeRelPath)
+	desc, err := a.AI.DescribeImage(uuid, storeRelPath, blkId)
 	if err != nil {
 		logger.Warn("DescribeImage failed", "err", err)
 		return sieve.ImageDesc{}, err

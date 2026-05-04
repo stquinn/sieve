@@ -25,6 +25,7 @@ type MetaHandler struct {
 
 func (h *MetaHandler) RegisterPaths(r chi.Router) {
 	r.Get("/api/meta", h.handleMeta)
+	r.Get("/api/meta/restore-prompt", h.handleRestorePrompt)
 	r.Post("/api/meta/restore", h.handleRestore)
 }
 
@@ -107,6 +108,23 @@ func (h *MetaHandler) handleMeta(w http.ResponseWriter, r *http.Request) {
 	}
 	data := h.buildMetaPanelData(uuid, tab)
 	if err := h.Tmpl.ExecuteTemplate(w, "meta_panel.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (h *MetaHandler) handleRestorePrompt(w http.ResponseWriter, r *http.Request) {
+	uuid := r.URL.Query().Get("uuid")
+	versionID := r.URL.Query().Get("version")
+
+	data := struct {
+		UUID      string
+		VersionID string
+	}{
+		UUID:      uuid,
+		VersionID: versionID,
+	}
+
+	if err := h.Tmpl.ExecuteTemplate(w, "restore.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
