@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Wails: Debug Sieve",
+      "type": "go",
+      "request": "launch",
+      "mode": "exec",
+      "program": "${workspaceFolder}/build/bin/sieve",
+      "preLaunchTask": "build",
+      "cwd": "${workspaceFolder}",
+      "env": {}
+    }
+  ]
+}

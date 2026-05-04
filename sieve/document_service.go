@@ -230,11 +230,7 @@ func (ds *DocumentService) New() (Document, error) {
 	if err != nil {
 		return nil, fmt.Errorf("document: new: %w", err)
 	}
-	ms, ok := s.(store.MetaStorable)
-	if !ok {
-		return nil, fmt.Errorf("document: new: created storable is not MetaStorable")
-	}
-	return newBuffer(ms), nil
+	return newBuffer(s), nil
 }
 
 func (ds *DocumentService) NewFolder(folderName string) error {

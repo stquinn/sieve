@@ -38,9 +38,5 @@ func (as *AssetService) Save(category store.Category, parentContext string, asse
 	if err != nil {
 		return nil, fmt.Errorf("asset: save %s for %s: %w", assetID, parentContext, err)
 	}
-	asset, ok := s.(store.AssetStorable)
-	if !ok {
-		return nil, fmt.Errorf("asset: save %s: created storable is not AssetStorable", assetID)
-	}
-	return &ImageAsset{S: asset}, nil
+	return &ImageAsset{S: s}, nil
 }

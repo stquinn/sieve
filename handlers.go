@@ -134,7 +134,6 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 		&requesthandlers.HelpHandler{Tmpl: tmpl},
 		&requesthandlers.SearchHandler{ServiceProvider: sp, Tmpl: tmpl},
 		&requesthandlers.AssetHandler{ServiceProvider: sp},
-		&requesthandlers.AssetServeHandler{ServiceProvider: app.ServiceProvider},
 		&requesthandlers.PromptsHandler{ServiceProvider: sp, Tmpl: tmpl},
 		&requesthandlers.SessionHandler{
 			ServiceProvider: sp,
