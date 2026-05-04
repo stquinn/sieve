@@ -59,7 +59,7 @@
 <div class="py-[0.3rem]">
   {{$m := .Meta}}
 
-  {{/* Dirty indicator — state managed client-side via window.sieveSetMetaDirty */}}
+  {{/* Dirty indicator — state managed client-side via sieve:meta-dirty CustomEvent */}}
   <div id="meta-dirty-indicator" class="mx-[0.9rem] mb-2 px-[0.9rem] py-2 rounded-[6px] flex justify-between items-center border border-solid border-tn-border">
     <span class="meta-dirty-label text-[12px] font-bold uppercase text-tn-text-dim">All Changes Saved</span>
     <div class="meta-dirty-dot w-2 h-2 rounded-full bg-tn-green"></div>
@@ -169,7 +169,10 @@
     </div>
     <button
       class="bg-tn-bg-alt border border-solid border-tn-border-2 text-tn-text text-[13px] px-[0.6rem] py-[0.25rem] rounded-[4px] cursor-pointer hover:bg-tn-blue hover:border-tn-blue hover:text-white transition-colors"
-      onclick="window.sieveOpenRestore('{{.UUIDEnc}}', '{{.ID}}')"
+      hx-get="/api/meta/restore-prompt?uuid={{.UUIDEnc}}&version={{.ID | urlenc}}"
+      hx-target="#restore-dialog-content"
+      hx-swap="innerHTML"
+      hx-on::after-settle="document.getElementById('restore-dialog').showModal()"
     >Restore</button>
   </div>
   {{end}}

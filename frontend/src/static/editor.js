@@ -156,8 +156,8 @@
         T.AiShortcuts.configure({
           onExplain: function () { runAiJob('explain') },
           onAsk: function () { openAskPopup() },
-          onSmartFile: function () { window.sieveSmartFile && window.sieveSmartFile(uuid) },
-          onKeepAndSmartFile: function () { window.sieveKeepAndSmartFile && window.sieveKeepAndSmartFile(uuid) },
+          onSmartFile: function () { window.SieveAI && window.SieveAI.smartFile(uuid) },
+          onKeepAndSmartFile: function () { window.SieveAI && window.SieveAI.keepAndSmartFile(uuid) },
           onToggleAiBlocks: toggleAiBlocks,
         }),
       ],
@@ -203,7 +203,7 @@
         var md = p.editor.storage.markdown.getMarkdown() || ''
         if (md === lastSyncedBody) return
         lastSyncedBody = md
-        window.sieveSetMetaDirty && window.sieveSetMetaDirty(true)
+        document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
         scheduleSave(uuid, md)
         document.dispatchEvent(new CustomEvent('editor:changed'))
         dispatchStats()
@@ -212,7 +212,6 @@
     })
 
     currentEditor = editor
-    exposePublicApi()
 
     if (blobInterceptorCleanup) {
       blobInterceptorCleanup()
@@ -248,7 +247,7 @@
       var val = textarea.value
       if (val === lastSyncedBody) return
       lastSyncedBody = val
-      window.sieveSetMetaDirty && window.sieveSetMetaDirty(true)
+      document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
       scheduleSave(uuid, val)
       document.dispatchEvent(new CustomEvent('editor:changed'))
       updateGutter(gutter, val)
@@ -271,8 +270,6 @@
     mountEl.appendChild(wrapper)
 
     requestAnimationFrame(function () { textarea.focus() })
-
-    exposePublicApi(textarea)
   }
 
   function updateGutter(gutter, value) {
@@ -308,7 +305,7 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ body: body, mode: currentMode }),
     }).then(function () {
-      window.sieveSetMetaDirty && window.sieveSetMetaDirty(false)
+      document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: false } }))
       document.dispatchEvent(new CustomEvent('editor:saved', { detail: { uuid: uuid } }))
     }).catch(function (err) { console.error('[editor] save failed', err) })
   }
@@ -541,7 +538,7 @@
     var qLine = lines.length ? '***Ask:*** ' + lines[0] + '\n\n---\n\n' : ''
     var block = '\n\n[!ai] id="' + blkId + '" ref="' + ref + '" thinking="true"\n' + qLine + '_(thinking\u2026)_\n[!ai-end]\n\n'
     lastSyncedBody = lastSyncedBody + block
-    window.sieveSetMetaDirty && window.sieveSetMetaDirty(true)
+    document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
     scheduleSave(currentUuid, lastSyncedBody)
   }
 
@@ -657,7 +654,7 @@
                 var md = currentEditor.storage.markdown.getMarkdown() || ''
                 lastSyncedBody = md
                 scheduleSave(currentUuid, md)
-                window.sieveSetMetaDirty && window.sieveSetMetaDirty(true)
+                document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
               }
               return found
             })
@@ -749,7 +746,7 @@
                 var md = currentEditor.storage.markdown.getMarkdown() || ''
                 lastSyncedBody = md
                 scheduleSave(currentUuid, md)
-                window.sieveSetMetaDirty && window.sieveSetMetaDirty(true)
+                document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
               }
               return found
             })
@@ -790,7 +787,7 @@
                   var md = currentEditor.storage.markdown.getMarkdown() || ''
                   lastSyncedBody = md
                   scheduleSave(currentUuid, md)
-                  window.sieveSetMetaDirty && window.sieveSetMetaDirty(true)
+                  document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
                 }
                 return found
               })
@@ -1027,39 +1024,57 @@
     return function() { observer.disconnect() }
   }
 
-  // ── Public API ────────────────────────────────────────────────────────────────
+  // ── Module-level editor commands (dispatched via sieve:* custom events) ─────
 
-  function exposePublicApi(textarea) {
-    window.sieveEditor = {
-      setSearchTerm: function (term) { currentEditor && currentEditor.commands.setSearchTerm(term) },
-      clearSearch: function () { currentEditor && currentEditor.commands.clearSearch() },
-      setContent: function (content) {
-        if (currentMode === 'markdown' && textarea) {
-          textarea.value = content
-          lastSyncedBody = content
-        } else if (currentEditor) {
-          currentEditor.commands.setContent(content)
-          lastSyncedBody = content
-        }
-      },
-      save: flushSave,
-      toggleSearch: function() {
-        if (!searchOverlay) ensureOverlays()
-        if (searchOverlay.style.display === 'none') {
-            searchOverlay.style.display = 'flex'
-            var input = searchOverlay.querySelector('input')
-            if (input) {
-                input.focus()
-                input.select()
-            }
-        } else {
-            searchOverlay.style.display = 'none'
-            if (currentEditor) currentEditor.commands.clearSearch()
-        }
-      },
-      toggleAiBlocks: toggleAiBlocks
+  function setContent(content) {
+    if (currentMode === 'markdown') {
+      var ta = currentMountEl && currentMountEl.querySelector('.markdown-editor')
+      if (ta) { ta.value = content; lastSyncedBody = content }
+    } else if (currentEditor) {
+      currentEditor.commands.setContent(content)
+      lastSyncedBody = content
     }
   }
+
+  function toggleSearch() {
+    if (!searchOverlay) ensureOverlays()
+    if (searchOverlay.style.display === 'none') {
+      searchOverlay.style.display = 'flex'
+      var input = searchOverlay.querySelector('input')
+      if (input) { input.focus(); input.select() }
+    } else {
+      searchOverlay.style.display = 'none'
+      if (currentEditor) currentEditor.commands.clearSearch()
+    }
+  }
+
+  function toggleMode() {
+    if (!currentUuid || !currentMountEl) return
+    var newMode = (currentMode === 'markdown') ? 'wysiwyg' : 'markdown'
+    var content = ''
+    if (currentMode === 'markdown') {
+      var ta = currentMountEl.querySelector('.markdown-editor')
+      if (ta) content = ta.value
+    } else if (currentEditor) {
+      content = currentEditor.storage.markdown.getMarkdown() || ''
+    } else {
+      content = lastSyncedBody
+    }
+    lastSyncedBody = content
+    currentMode = newMode
+    tabModes[currentUuid] = currentMode
+    doSave(currentUuid, content)
+    if (currentEditor) { currentEditor.destroy(); currentEditor = null }
+    currentMountEl.innerHTML = ''
+    if (currentMode === 'wysiwyg') mountWysiwyg(currentMountEl, currentUuid, content)
+    else mountMarkdown(currentMountEl, currentUuid, content)
+    dispatchStats()
+    if (window.htmx) window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' })
+  }
+
+  document.addEventListener('sieve:toggle-mode',      toggleMode)
+  document.addEventListener('sieve:toggle-search',    toggleSearch)
+  document.addEventListener('sieve:toggle-ai-blocks', toggleAiBlocks)
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1071,65 +1086,12 @@
     return btn
   }
 
-  window.sieveSave = flushSave
-
-  window.sieveToggleMode = function() {
-    console.log('[editor.js] sieveToggleMode called. currentMode:', currentMode)
-    if (!currentUuid || !currentMountEl) return
-    
-    // 1. Determine new mode
-    var newMode = (currentMode === 'markdown') ? 'wysiwyg' : 'markdown'
-    
-    // 2. Capture content from old mode
-    var content = ''
-    if (currentMode === 'markdown') {
-      var textarea = currentMountEl.querySelector('.markdown-editor')
-      if (textarea) content = textarea.value
-    } else if (currentEditor) {
-      content = currentEditor.storage.markdown.getMarkdown() || ''
-    } else {
-      content = lastSyncedBody
-    }
-    
-    // 3. Update local state
-    lastSyncedBody = content
-    currentMode = newMode
-    tabModes[currentUuid] = currentMode
-    
-    // 4. Save NEW mode to server immediately
-    doSave(currentUuid, content)
-    
-    // 5. Re-mount UI
-    if (currentEditor) {
-      currentEditor.destroy()
-      currentEditor = null
-    }
-    currentMountEl.innerHTML = ''
-    
-    if (currentMode === 'wysiwyg') {
-      mountWysiwyg(currentMountEl, currentUuid, content)
-    } else {
-      mountMarkdown(currentMountEl, currentUuid, content)
-    }
-    
-    dispatchStats()
-
-    // 6. Refresh the tab bar to show/hide the [M] indicator
-    if (window.htmx) {
-      window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' })
-    }
-  }
-
-  // ── Export ────────────────────────────────────────────────────────────────────
+  window._editorSave = flushSave
 
   document.body.addEventListener('editor:restore', function (e) {
-    var data = e.detail;
-    if (data && data.body) {
-      if (window.sieveEditor && window.sieveEditor.setContent) {
-        window.sieveEditor.setContent(data.body);
-      }
-    }
-  });
+    var data = e.detail
+    if (data && data.body) setContent(data.body)
+  })
 
   window.sieveInitEditor = initEditor
 

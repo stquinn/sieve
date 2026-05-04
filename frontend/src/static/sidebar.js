@@ -3,9 +3,17 @@
   var draggedId = null;
   var draggedParentId = null;
 
-  function init() {
-    console.log('[sidebar.js] init triggered');
+  function closeMenu() {
+    var menu = document.getElementById('sieve-context-menu');
+    if (menu) menu.remove();
+    menuEl = null;
   }
+
+  window.sieveShowInFiles = function(id) {
+    if (window.go && window.go.main && window.go.main.App && window.go.main.App.ShowInFilesByID) {
+      window.go.main.App.ShowInFilesByID(id);
+    }
+  };
 
   document.addEventListener('dragstart', function(e) {
     const file = e.target.closest('.sidebar__file');
@@ -88,24 +96,22 @@
     }
   });
 
-  window.sieveSidebarInit = init;
-
-  document.addEventListener('click', function (e) {
-    if (document.getElementById('sieve-context-menu') && !document.getElementById('sieve-context-menu').contains(e.target)) window.sieveCloseMenu();
+    document.addEventListener('click', function (e) {
+    if (document.getElementById('sieve-context-menu') && !document.getElementById('sieve-context-menu').contains(e.target)) closeMenu();
   });
 
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') window.sieveCloseMenu();
+    if (e.key === 'Escape') closeMenu();
   });
 
   document.addEventListener('contextmenu', function (e) {
     var target = e.target.closest('[data-ctx-id]');
     if (!target) {
-      window.sieveCloseMenu();
+      closeMenu();
       return;
     }
     e.preventDefault();
-    window.sieveCloseMenu();
+    closeMenu();
     var id = target.dataset.ctxId;
     var isDir = target.dataset.ctxIsDir === 'true';
     var isTab = target.dataset.ctxIsTab === 'true';

@@ -12,7 +12,7 @@
      draggable="true">
   <div
     class="group flex items-center gap-1.5 pl-3 pr-1.5 h-full cursor-pointer w-full text-[14px] select-none shrink transition-colors border-solid border-0 border-r-[1px] border-r-white/10 -mb-[2px] border-t-2 border-b-2 overflow-hidden{{if eq $i $.ActiveIdx}} bg-tn-bg text-tn-text border-t-tn-blue border-b-tn-bg{{else}} bg-tn-bg-dark text-tn-text-dim hover:bg-tn-bg hover:text-tn-text border-t-transparent border-b-transparent{{end}}"
-    onmousedown="if(event.button===0 && !event.target.closest('button')){window.sieveSelectTab && window.sieveSelectTab('{{$t.ID}}')}"
+    onmousedown="if(event.button===0 && !event.target.closest('button')){window.htmx && window.htmx.ajax('POST', '/api/note/open/{{$t.ID}}', {target:'#htmx-tabbar',swap:'innerHTML'})}"
   >
     <div class="flex items-center justify-center relative w-4 h-4 shrink-0">
       <div class="tab-icon-normal flex items-center justify-center">
@@ -31,7 +31,7 @@
     <span class="text-[12px] text-tn-blue font-bold font-mono bg-tn-bg-alt px-1.5 rounded shrink-0">M</span>
     {{end}}
     <button
-      onmousedown="event.stopPropagation(); window.sieveCloseTab && window.sieveCloseTab('{{$t.ID}}')"
+      onmousedown="event.stopPropagation(); window.htmx && window.htmx.ajax('POST', '/api/tabs/close/{{$t.ID}}', {target:'#htmx-tabbar',swap:'innerHTML'})"
       aria-label="Close tab"
       class="ml-0.5 opacity-0 group-hover:opacity-40 hover:!opacity-100 hover:text-tn-red shrink-0 transition-opacity flex items-center justify-center w-4 h-4 text-[15px] leading-none"
     >×</button>
@@ -45,7 +45,9 @@
 </div>
 
 <button
-  onclick="window.sieveNewNote && window.sieveNewNote()"
+  hx-post="/api/note/new"
+  hx-target="#htmx-tabbar"
+  hx-swap="innerHTML"
   aria-label="New tab"
   class="px-3 bg-transparent border-none h-full text-tn-muted hover:text-tn-text hover:bg-tn-bg-alt text-[20px] leading-none shrink-0 transition-colors border-0 border-l border-solid border-white/10"
 >+</button>
@@ -53,7 +55,10 @@
 <div id="tab-spacer" class="flex-1 min-w-0"></div>
 
 <button
-  onclick="window.sieveHelp && window.sieveHelp()"
+  hx-get="/api/help"
+  hx-target="#help-dialog-content"
+  hx-swap="innerHTML"
+  hx-on::after-settle="document.getElementById('help-dialog').showModal()"
   aria-label="Keyboard shortcuts (Ctrl+/)"
   title="Shortcuts (Ctrl+/)"
   class="px-3 bg-transparent border-none h-full text-tn-muted hover:text-tn-text hover:bg-tn-bg-alt text-[14px] leading-none shrink-0 transition-colors"

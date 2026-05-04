@@ -76,7 +76,7 @@
     {{range .Items}}
       <div 
         class="quick-switch__item" 
-        onclick="window.sieveOpenNote && window.sieveOpenNote('{{.ID}}'); document.getElementById('quickswitcher-dialog').close()"
+        onclick="window.htmx && window.htmx.ajax('POST', '/api/note/open/{{.ID}}', {target:'#htmx-tabbar',swap:'innerHTML'}); document.getElementById('quickswitcher-dialog').close()"
       >
         <span class="quick-switch__icon">
           {{if eq .Icon "buffer"}}

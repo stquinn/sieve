@@ -15,7 +15,7 @@
     {{end}}
     hx-target="#htmx-sidebar"
     hx-swap="innerHTML"
-    onsubmit="document.getElementById('delete-dialog').close(); if ('{{.Type}}' === 'note' && window.sieveCloseTab) { window.sieveCloseTab('{{.ID}}'); }"
+    onsubmit="document.getElementById('delete-dialog').close(); if ('{{.Type}}' === 'note') { window.htmx && window.htmx.ajax('POST', '/api/tabs/close/{{.ID}}', {target:'#htmx-tabbar',swap:'innerHTML'}); }"
     style="display: flex; justify-content: flex-end; gap: 1rem;"
   >
     <button 
