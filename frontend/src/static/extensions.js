@@ -16,40 +16,33 @@
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
-  function resolveDisplaySrc(src, activeTabPath) {
+  function resolveDisplaySrc(src, uuid) {
     if (!src) return ''
     if (src.startsWith('http')) {
       return window.location.origin + '/sieve-image-proxy?url=' + encodeURIComponent(src)
     }
     if (src.startsWith('blob:') || src.startsWith('data:') || src.startsWith('/')) return src
-    if (src.includes('dash/') || src.includes('store/') || src.startsWith('.assets/') || src.includes('/buffers/')) {
-      var cleanSrc = src.startsWith('/') ? src.substring(1) : src
-      return '/sieve/' + cleanSrc
+    
+    // Co-located assets: .assets/name.png -> /sieve/UUID/name.png
+    if (src.startsWith('.assets/')) {
+      var filename = src.substring(8)
+      return '/sieve/' + uuid + '/' + filename
     }
-    if (!activeTabPath) return src
-    var tabDir = activeTabPath.split('/').slice(0, -1)
-    var srcParts = src.split('/')
-    var parts = tabDir.slice()
-    for (var i = 0; i < srcParts.length; i++) {
-      var part = srcParts[i]
-      if (part === '..') { parts.pop() }
-      else if (part !== '.') { parts.push(part) }
-    }
-    return '/sieve/' + parts.join('/')
+
+    return src
   }
 
-  function mdSrcToStoreRelPath(src, tabPath) {
+  function mdSrcToStoreRelPath(src, uuid) {
     if (!src || src.startsWith('http') || src.startsWith('blob:') || src.startsWith('data:')) return ''
     if (src.startsWith('/')) return src.substring(1)
-    var tabDir = tabPath.split('/').slice(0, -1)
-    var parts = tabDir.slice()
-    var srcParts = src.split('/')
-    for (var i = 0; i < srcParts.length; i++) {
-      var part = srcParts[i]
-      if (part === '..') parts.pop()
-      else if (part !== '.') parts.push(part)
+    
+    // For co-located assets, we just return the filename. 
+    // The backend knows which document it belongs to.
+    if (src.startsWith('.assets/')) {
+      return src.substring(8)
     }
-    return parts.join('/')
+    
+    return src
   }
 
   function getCleanMarkdown(fullMd) {
@@ -582,13 +575,13 @@
         function applyAttrs(n) {
           var src = n.attrs.src, alt = n.attrs.alt, width = n.attrs.width
           var height = n.attrs.height, summary = n.attrs.summary, id = n.attrs.id
-          var activeTabPath = window.__stashActiveTabPath || ''
+          var activeTabUuid = window.__stashActiveTabUuid || ''
           wrapper.className = 'image-block node-image'
           if (id) wrapper.setAttribute('data-block-id', id)
           else wrapper.removeAttribute('data-block-id')
           if (summary) wrapper.setAttribute('data-tooltip', summary)
           else wrapper.removeAttribute('data-tooltip')
-          img.src = resolveDisplaySrc(src, activeTabPath)
+          img.src = resolveDisplaySrc(src, activeTabUuid)
           img.alt = alt || ''
           img.style.maxWidth = '100%'
           img.style.display = 'block'
@@ -853,14 +846,14 @@
 
   // ── buildAiContext ─────────────────────────────────────────────────────────
 
-  function collectChainImagePaths(doc, refs, tabPath) {
+  function collectChainImagePaths(doc, refs, uuid) {
     var paths = []
     var seen = new Set()
 
     if (refs.length === 0 || refs.includes('doc')) {
       doc.descendants(function (node) {
         if (node.type.name === 'image' && node.attrs && node.attrs.src) {
-          var p = mdSrcToStoreRelPath(node.attrs.src, tabPath)
+          var p = mdSrcToStoreRelPath(node.attrs.src, uuid)
           if (p && !seen.has(p)) { seen.add(p); paths.push(p) }
         }
       })
@@ -869,13 +862,13 @@
         doc.descendants(function (node) {
           if (node.attrs && node.attrs.id === refId) {
             if (node.type.name === 'image' && node.attrs.src) {
-              var p = mdSrcToStoreRelPath(node.attrs.src, tabPath)
+              var p = mdSrcToStoreRelPath(node.attrs.src, uuid)
               if (p && !seen.has(p)) { seen.add(p); paths.push(p) }
             }
             if (node.descendants) {
               node.descendants(function (child) {
                 if (child.type.name === 'image' && child.attrs && child.attrs.src) {
-                  var p = mdSrcToStoreRelPath(child.attrs.src, tabPath)
+                  var p = mdSrcToStoreRelPath(child.attrs.src, uuid)
                   if (p && !seen.has(p)) { seen.add(p); paths.push(p) }
                 }
               })
@@ -888,7 +881,7 @@
     return paths
   }
 
-  function buildAiContext(editor, isMarkdownMode, rawMd, tabPath) {
+  function buildAiContext(editor, isMarkdownMode, rawMd, uuid) {
     if (isMarkdownMode) {
       var ta = document.querySelector('.markdown-raw')
       var cleanBody = getCleanMarkdown(rawMd)
@@ -957,7 +950,7 @@
       var newRef = aiBlockRef ? aiBlockRef + ',' + aiBlockId : aiBlockId
       var chainRefs = aiBlockRef ? aiBlockRef.split(',') : ['doc']
 
-      return { content: currentBlockText || sourceContent, blockRef: newRef, history: historyTurns, contextLabel: 'Follow-up', imagePaths: collectChainImagePaths(doc, chainRefs, tabPath) }
+      return { content: currentBlockText || sourceContent, blockRef: newRef, history: historyTurns, contextLabel: 'Follow-up', imagePaths: collectChainImagePaths(doc, chainRefs, uuid) }
     }
 
     var targetNode = null, targetPos = -1
@@ -1021,12 +1014,12 @@
       var scanRangeTo   = targetNode ? targetPos + targetNode.nodeSize : (blockRange ? blockRange.end : to)
       doc.nodesBetween(scanRangeFrom, scanRangeTo, function (node) {
         if (node.type.name === 'image' && node.attrs && node.attrs.src) {
-          var p = mdSrcToStoreRelPath(node.attrs.src, tabPath)
+          var p = mdSrcToStoreRelPath(node.attrs.src, uuid)
           if (p && !seenPaths.has(p)) { seenPaths.add(p); finalImagePaths.push(p) }
         }
       })
     } else {
-      finalImagePaths = collectChainImagePaths(tr.doc, [blockRef], tabPath)
+      finalImagePaths = collectChainImagePaths(tr.doc, [blockRef], uuid)
     }
 
     if (tr.docChanged) editor.view.dispatch(tr)

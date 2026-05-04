@@ -38,7 +38,7 @@ func (h *AiHandler) handleAiKeepAndFile(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	doc, err = h.ServiceProvider.Documents.SetIntent(doc, "keep")
+	doc, err = h.ServiceProvider.Documents.SetUserIntent(doc, "keep")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

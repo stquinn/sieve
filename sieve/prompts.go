@@ -2,7 +2,6 @@ package sieve
 
 import (
 	"fmt"
-	"path/filepath"
 	"sieve/store"
 )
 
@@ -88,7 +87,7 @@ func (ps *PromptService) ListPrompts() []PromptEntry {
 		}
 		if s, err := ps.st.Load(Prompts, name+".md"); err == nil {
 			p.IsVirtual = false
-			p.Path = filepath.ToSlash(s.Key()) // Not strictly needed but helpful
+			p.Path = s.ExternalRef()
 		} else {
 			p.IsVirtual = true
 		}

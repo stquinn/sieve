@@ -1,0 +1,7 @@
+{
+  "css.lint.unknownAtRules": "ignore",
+  "terminal.integrated.automationProfile.linux": {
+    "path": "${workspaceFolder}/nix-shell-wrapper.sh",
+    "args": []
+  }
+}

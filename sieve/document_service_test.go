@@ -77,15 +77,13 @@ func TestDocumentService_FilePromotesBufferAndAssets(t *testing.T) {
 		t.Fatal("Owned assets lost during File operation")
 	}
 
+	// In the document-as-directory model, asset URLs are UUID-stable:
+	// /sieve/{uuid}/{filename} — the UUID doesn't change on Move/Rename, so
+	// the asset reference in the body is preserved as-is. The old and new
+	// ExternalRefs are identical.
 	newExtRef := newOwns[0].ExternalRef()
-
-	// Verify that the body was updated to the new ExternalRef
-	if !strings.Contains(newBody, newExtRef) {
-		t.Errorf("Expected body to contain the new asset ref %q, got: %s", newExtRef, newBody)
+	if !strings.Contains(newBody, oldExtRef) {
+		t.Errorf("Expected body to still contain the stable asset ref %q, got: %s", oldExtRef, newBody)
 	}
-
-	// Verify the old ExternalRef is no longer in the body
-	if strings.Contains(newBody, oldExtRef) {
-		t.Errorf("Expected body to not contain the old asset ref %q, got: %s", oldExtRef, newBody)
-	}
+	_ = newExtRef
 }

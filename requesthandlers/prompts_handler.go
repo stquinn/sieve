@@ -21,6 +21,10 @@ func (p *PromptsHandler) handlePrompts(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
+	if p.ServiceProvider.Prompts == nil || p.ServiceProvider.State == nil {
+		return
+	}
+
 	prompts := p.ServiceProvider.Prompts.ListPrompts()
 	session := p.ServiceProvider.State.LoadSession()
 	activeID := ""

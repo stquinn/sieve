@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"sieve/logger"
+	"sieve/store"
 )
 
 // AIService owns all AI evaluation and filing operations. It resolves prompt
@@ -56,9 +57,12 @@ func (s *AIService) EvaluateAndFileDoc(id string, fileAfter bool, allowDiscard b
 	if settings.Tier() != TierDumb {
 		rec, err := s.runEvaluateBuffer(meta, body, settings)
 		if err != nil {
-			return FilingOutcome{}, fmt.Errorf("filing: eval %s: %w", doc.Path(), err)
+			return FilingOutcome{}, fmt.Errorf("filing: eval %s: %w", doc.Storable().ExternalRef(), err)
 		}
-		s.applyFilingRec(meta, rec, settings.CLI)
+		doc, err = s.documents.UpdateAiMetadata(doc, rec, settings.CLI)
+		if err != nil {
+			return FilingOutcome{}, fmt.Errorf("filing: update meta %s: %w", doc.Storable().ExternalRef(), err)
+		}
 		evaluated = true
 	}
 
@@ -128,14 +132,34 @@ func (s *AIService) RunAsk(content, history, question, noteUUID string, imageSto
 
 // DescribeImage sends an image to the configured AI and returns alt text, a
 // summary, and a suggested filename. storeRelPath is relative to the store root.
-func (s *AIService) DescribeImage(storeRelPath string) (ImageDesc, error) {
+func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string) (ImageDesc, error) {
+	logger.Info("Describe uuid: " + uuid)
+	logger.Info("Describe storeRelPath: " + storeRelPath)
+	logger.Info("Describe blkId: " + blkId)
 	settings := s.state.LoadSettings()
 	if settings.Tier() == TierDumb {
 		return ImageDesc{}, fmt.Errorf("dumb mode")
 	}
+	doc, err := s.documents.LoadByUUID(uuid)
+	if err != nil {
+		return ImageDesc{}, err
+	}
+	var asset store.AssetStorable
+	for _, assetItr := range doc.Storable().Owns() {
+		as, ok := assetItr.(store.AssetStorable)
+		if ok && strings.HasPrefix(as.Key(), blkId) {
+			asset = as
+		}
+	}
+	if asset == nil {
+		return ImageDesc{}, err
+	}
 	prompt, _ := s.prompts.GetPromptContent("image")
-	imagePath := filepath.Join(s.storePath, storeRelPath)
-
+	imagePath := filepath.Join(s.storePath, doc.Storable().ExternalRef(), asset.Key())
+	logger.Info("About to Doc ExtRef " + doc.Storable().ExternalRef())
+	logger.Info("About to Asset Key " + asset.Key())
+	logger.Info("About to Asset ExtRef " + asset.ExternalRef())
+	logger.Info("About to Describe " + imagePath)
 	data, err := os.ReadFile(imagePath)
 	if err == nil {
 		if strings.Contains(string(data), "<svg") || strings.Contains(string(data), "<SVG") || strings.Contains(string(data), "<?xml") {
@@ -244,41 +268,7 @@ func (s *AIService) runEvaluateBuffer(meta DocumentMeta, body []byte, settings S
 	return &rec, nil
 }
 
-func (s *AIService) applyFilingRec(meta DocumentMeta, rec *FilingRecommendation, cli string) {
-	now := time.Now().Format("2006-01-02T15:04:05")
-	meta.SetAiEval("complete")
-	meta.SetAiLastEvaluated(&now)
-	keep := rec.Keep
-	meta.SetAiKeep(&keep)
-	if cli != "" {
-		meta.SetCLI(&cli)
-	}
-	if rec.Title != "" {
-		meta.SetDisplayName(rec.Title)
-	}
-	if rec.Filename != "" {
-		fn := rec.Filename
-		meta.SetFilename(&fn)
-	}
-	if rec.Folder != "" {
-		folder := rec.Folder
-		meta.SetAiFolderSuggestion(&folder)
-	}
-	if rec.Summary != "" {
-		s2 := rec.Summary
-		meta.SetSummary(&s2)
-	}
-	if len(rec.Tags) > 0 {
-		meta.SetTags(rec.Tags)
-	}
-	if rec.AiJustification != "" {
-		j := rec.AiJustification
-		meta.SetAiJustification(&j)
-	}
-	if len(rec.DensitySignals) > 0 {
-		meta.SetDensitySignals(rec.DensitySignals)
-	}
-}
+// applyFilingRec is deprecated, logic moved to DocumentService.UpdateAiMetadata
 
 func (s *AIService) libraryFolders() []string {
 	entries, _ := s.documents.List()
@@ -312,7 +302,7 @@ func (s *AIService) resolveNotePath(uuid string) string {
 	if err != nil {
 		return ""
 	}
-	return doc.Path()
+	return doc.Storable().ExternalRef()
 }
 
 func (s *AIService) absImagePaths(storePaths []string) []string {
@@ -332,11 +322,17 @@ type FilingOutcome struct {
 
 func filingCommitDocument(n Document, documents *DocumentService, save bool, fileAfter bool) (FilingOutcome, error) {
 	if save {
-		saved, err := documents.Save(n)
+		var err error
+		if fileAfter {
+			// If we are about to file it, a full save is appropriate as it's a major transition
+			n, err = documents.Save(n)
+		} else {
+			// If just saving metadata (e.g. evaluation results), don't bump version
+			n, err = documents.SaveMeta(n)
+		}
 		if err != nil {
 			return FilingOutcome{}, fmt.Errorf("filing: save note: %w", err)
 		}
-		n = saved
 	}
 	if fileAfter {
 		refiled, err := documents.File(n)

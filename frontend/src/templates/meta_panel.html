@@ -32,7 +32,7 @@
 
   {{/* Path crumb */}}
   <div class="font-mono text-[11px] text-tn-text-dim px-[0.9rem] py-2 whitespace-nowrap overflow-hidden text-ellipsis border-b border-solid border-tn-border shrink-0 bg-tn-bg-dark" title="{{.Path}}">
-    {{.FileName}}  222
+    {{.FileName}}
   </div>
 
   {{/* Scrollable content */}}
@@ -169,9 +169,7 @@
     </div>
     <button
       class="bg-tn-bg-alt border border-solid border-tn-border-2 text-tn-text text-[13px] px-[0.6rem] py-[0.25rem] rounded-[4px] cursor-pointer hover:bg-tn-blue hover:border-tn-blue hover:text-white transition-colors"
-      hx-post="/api/meta/restore?uuid={{.UUIDEnc}}&version={{.VersionEnc}}"
-      hx-confirm="Restore this version? Any unsaved changes will be lost."
-      hx-swap="none"
+      onclick="window.sieveOpenRestore('{{.UUIDEnc}}', '{{.ID}}')"
     >Restore</button>
   </div>
   {{end}}

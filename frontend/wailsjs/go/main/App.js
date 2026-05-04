@@ -6,8 +6,8 @@ export function CreateVault() {
   return window['go']['main']['App']['CreateVault']();
 }
 
-export function DescribeImage(arg1) {
-  return window['go']['main']['App']['DescribeImage'](arg1);
+export function DescribeImage(arg1, arg2, arg3) {
+  return window['go']['main']['App']['DescribeImage'](arg1, arg2, arg3);
 }
 
 export function DownloadAsset(arg1, arg2, arg3) {

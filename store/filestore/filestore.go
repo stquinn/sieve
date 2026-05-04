@@ -3,43 +3,50 @@
 //
 // # Directory layout
 //
-//	{root}/store/                    Library notes (Shared)
-//	{root}/store/.assets/            Library assets
-//	{root}/store/.history/           Library version snapshots
-//	{root}/{hostname}/buffers/       WorkingCopy buffers (Isolated)
-//	{root}/{hostname}/buffers/assets/ WorkingCopy buffer assets
-//	{root}/{hostname}/.history/      WorkingCopy version snapshots
-//	{root}/{hostname}/config/        State — settings, session (Isolated)
+//	{root}/store/                          Library notes (Shared)
+//	{root}/store/{note-name}/              Document directory
+//	{root}/store/{note-name}/.meta         JSON metadata
+//	{root}/store/{note-name}/{uuid}.md     Pure markdown body
+//	{root}/store/{note-name}/.history/     Body-only snapshots
+//	{root}/store/{note-name}/.cache/       Derived data (sessions, links)
+//	{root}/{hostname}/buffers/             WorkingCopy buffers (Isolated)
+//	{root}/{hostname}/config/              State — settings, session (Isolated)
+//	{root}/.sieve                          Store marker / migration state
 //
 // # Keys
 //
-// A key is the path of a file relative to its category directory. For example:
+// A key is the directory name relative to its category directory. Documents no
+// longer carry a .md extension — the extension lives only on the content file
+// inside the document directory.
 //
-//	Library      "sub/my-note.md"       → {root}/store/sub/my-note.md
-//	WorkingCopy  "buf-20240102-1504.md" → {root}/{hostname}/buffers/buf-20240102-1504.md
-//	State        "settings.json"        → {root}/{hostname}/config/settings.json
-//
-// An empty key passed to Create causes FileStore to generate a timestamped key.
+//	Library      "sub/my-note"      → {root}/store/sub/my-note/
+//	WorkingCopy  "buf-20240102-1504" → {root}/{hostname}/buffers/buf-20240102-1504/
+//	State        "settings.json"    → {root}/{hostname}/config/settings.json  (plain file)
 //
 // # ExternalRef
 //
-// ExternalRef is the path of a Storable relative to the store root. It is
-// derived at read time by walking upward through the category path — never
-// stored on disk.
+// ExternalRef is the store-root relative path of a document directory:
 //
-//	Library note  → "store/sub/my-note.md"
-//	WorkingCopy   → "{hostname}/buffers/buf-20240102-1504.md"
-//	Buffer asset  → "{hostname}/buffers/assets/blk-xxx.png"
+//	Library note  → "store/sub/my-note"
+//	WorkingCopy   → "{hostname}/buffers/buf-20240102-1504"
+//
+// # Assets
+//
+// Assets are co-located inside the document directory and served via a
+// UUID-stable URL:  /sieve/{uuid}/{filename}
 package filestore
 
 import (
 	"bytes"
 	"crypto/rand"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"sieve/logger"
@@ -51,12 +58,13 @@ import (
 type FileStore struct {
 	root        string
 	hostname    string
-	maxVersions int // maximum snapshots to retain per document; 0 = unlimited
+	maxVersions int
+
+	indexMu   sync.RWMutex
+	uuidIndex map[string]store.Storable // uuid → cached Storable
 }
 
 // NewFileStore initialises a FileStore rooted at root for the given hostname.
-// Missing category directories are created. Returns an error only if the root
-// path cannot be resolved or directories cannot be created.
 func NewFileStore(root, hostname string) (*FileStore, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -66,6 +74,10 @@ func NewFileStore(root, hostname string) (*FileStore, error) {
 		root:        abs,
 		hostname:    hostname,
 		maxVersions: 200,
+		uuidIndex:   make(map[string]store.Storable),
+	}
+	if err := fs.ensureStoreMarker(); err != nil {
+		return nil, err
 	}
 	return fs, nil
 }
@@ -75,107 +87,142 @@ func (fs *FileStore) SetMaxVersions(n int) { fs.maxVersions = n }
 
 // ── Store interface ───────────────────────────────────────────────────────────
 
-// Create makes a new Storable in category with the given key and body.
-//
-// If key is empty, FileStore generates a timestamped filename appropriate for
-// the category. If body begins with a YAML frontmatter block, it is parsed and
-// merged with the generated fields (uuid, version, timestamps). Otherwise body
-// is stored as the document content and minimal frontmatter is generated.
-//
-// The returned Storable's type depends on the key extension and category:
-//   - .md extension (or empty key generating .md)  → MetaStorable
-//   - files under assets/ or .assets/              → AssetStorable
-//   - State category non-.md files                 → plain Storable
 func (fs *FileStore) CreateMetaText(cat store.Category, key string, body []byte) (store.MetaStorable, error) {
 	if key == "" {
 		key = fs.generateKey(cat)
 	}
-
-	absPath := fs.absPath(cat, key)
-	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
-		return nil, fmt.Errorf("filestore: create dir for %s: %w", key, err)
-	}
-
-	return fs.createMeta(cat, key, absPath, body)
+	key = strings.TrimSuffix(key, ".md")
+	return fs.createMeta(cat, key, body)
 }
 
 func (fs *FileStore) CreateAsset(cat store.Category, parentKey string, assetID string, body []byte) (store.AssetStorable, error) {
-	key := fs.generateAssetKey(parentKey, assetID)
+	parentKey = strings.TrimSuffix(parentKey, ".md")
+	ext := extFromBytes(body)
+	filename := assetID + ext
 
-	absPath := fs.absPath(cat, key)
-	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
-		return nil, fmt.Errorf("filestore: create dir for %s: %w", key, err)
-	}
-	return fs.createAsset(cat, key, absPath, body)
-}
+	var assetPath string
+	var docUUID string
+	var resolvedKey string
 
-// generateAssetKey returns a structurally appropriate key for an asset.
-// Unifying the .assets prefix within FileStore explicitly.
-func (fs *FileStore) generateAssetKey(parentKey, assetID string) string {
-	if parentKey == "" || parentKey == "new" {
-		return fmt.Sprintf(".assets/%s.png", assetID)
+	if parentKey != "" && parentKey != "new" {
+		// parentKey may be a UUID or a directory key — try UUID cache first.
+		if cached, ok := fs.LookupUUID(parentKey); ok {
+			resolvedKey = dirKey(cached)
+			docUUID = parentKey
+			cat = cached.Category()
+		} else {
+			resolvedKey = parentKey
+			if dm, err := readMetaJSONFromPath(fs.metaPath(cat, resolvedKey)); err == nil {
+				docUUID = dm.UUID
+			}
+		}
+		assetPath = filepath.Join(fs.docDir(cat, resolvedKey), filename)
+	} else {
+		// No parent: fall back to category-level .assets/ dir.
+		assetPath = filepath.Join(fs.categoryDir(cat), ".assets", filename)
 	}
-	// For files (e.g., Library), prefix the asset ID with the document name.
-	noteName := strings.TrimSuffix(filepath.Base(parentKey), filepath.Ext(parentKey))
-	return fmt.Sprintf(".assets/%s-%s.png", noteName, assetID)
+
+	if err := os.MkdirAll(filepath.Dir(assetPath), 0o755); err != nil {
+		return nil, fmt.Errorf("filestore: create asset dir: %w", err)
+	}
+	if err := os.WriteFile(assetPath, body, 0o644); err != nil {
+		return nil, fmt.Errorf("filestore: create asset %s: %w", filename, err)
+	}
+
+	enc := inferEncoding(body)
+
+	var extRef string
+	if docUUID != "" {
+		extRef = "/sieve/" + docUUID + "/" + filename
+	} else {
+		extRef = fs.externalRef(cat, ".assets/"+filename)
+	}
+
+	var key string
+	if resolvedKey != "" {
+		key = resolvedKey + "/" + filename
+	} else {
+		key = ".assets/" + filename
+	}
+
+	return &fileAssetStorable{
+		fileStorable: fileStorable{
+			key:      filename,
+			path:     key,
+			category: cat,
+			body:     body,
+			extRef:   extRef,
+		},
+		encoding: enc,
+	}, nil
 }
 
 func (fs *FileStore) CreateText(cat store.Category, key string, body []byte) (store.Storable, error) {
 	if key == "" {
 		key = fs.generateKey(cat)
 	}
-
 	absPath := fs.absPath(cat, key)
 	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
 		return nil, fmt.Errorf("filestore: create dir for %s: %w", key, err)
 	}
-	// Plain file (e.g. settings.json, session.json for State category).
 	return fs.createPlain(cat, key, absPath, body)
 }
 
 func (fs *FileStore) CreateOrLoadFolder(category store.Category, name string) (store.FolderStorable, error) {
+	if cached, ok := fs.LookupUUID(name); ok {
+		category = cached.Category()
+		name = dirKey(cached)
+	}
 	name = strings.TrimPrefix(name, category.Key+"/")
 	logger.Debug("CreateOrLoadFolder: %s, %s", category, name)
-	absPath := fs.absPath(category, name)
-	logger.Debug("Loading folder: %s", absPath)
-	_, err := os.ReadDir(absPath)
-	if err != nil {
-		err = os.MkdirAll(absPath, 0o755)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("filestore: create dir for %s: %w", absPath, err)
-	}
-	return fs.scanFolder(category, name)
+	dir := fs.docDir(category, name)
 
-}
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("filestore: create folder %s: %w", name, err)
+		}
+		mp := filepath.Join(dir, ".meta")
+		if _, statErr := os.Stat(mp); os.IsNotExist(statErr) {
+			fm := &folderMeta{
+				UUID:    newUUID(),
+				Type:    "folder",
+				Created: time.Now().Format("2006-01-02T15:04:05"),
+			}
+			_ = writeFolderMetaToPath(mp, fm)
+		}
+	}
 
-func (fs *FileStore) LoadFolder(category store.Category, name string) (store.FolderStorable, error) {
-	name = strings.TrimPrefix(name, category.Key+"/")
-	logger.Debug("Loading folder: %s, %s", category, name)
-	absPath := fs.absPath(category, name)
-	logger.Debug("Loading folder: %s", absPath)
-	_, err := os.ReadDir(absPath)
+	folder, err := fs.scanFolder(category, name)
 	if err != nil {
 		return nil, err
 	}
-	return fs.scanFolder(category, name)
-
+	fs.indexSet(folder.Key(), folder)
+	return folder, nil
 }
 
-// Save persists the current state of s. It:
-//  1. Reads the current file to check the optimistic lock.
-//  2. Returns ErrStaleStorable if s.Meta["version"] is behind the stored version.
-//  3. Increments the version, updates the modified timestamp.
-//  4. Writes the file atomically via a .tmp rename.
-//  5. Writes a version snapshot to the history directory.
-//  6. Prunes snapshots beyond maxVersions.
-//
-// The returned Storable reflects the on-disk state after the write.
-// The input s is stale once Save returns.
+func (fs *FileStore) LoadFolder(category store.Category, name string) (store.FolderStorable, error) {
+	if cached, ok := fs.LookupUUID(name); ok {
+		category = cached.Category()
+		name = dirKey(cached)
+	}
+	name = strings.TrimPrefix(name, category.Key+"/")
+	logger.Debug("LoadFolder: %s, %s", category, name)
+	dir := fs.docDir(category, name)
+	if _, err := os.Stat(dir); err != nil {
+		return nil, err
+	}
+	folder, err := fs.scanFolder(category, name)
+	if err != nil {
+		return nil, err
+	}
+	fs.indexSet(folder.Key(), folder)
+	return folder, nil
+}
+
 func (fs *FileStore) Save(s store.Storable) (store.Storable, error) {
 	switch typed := s.(type) {
 	case *fileMetaStorable:
-		return fs.saveMeta(typed)
+		return fs.saveContent(typed)
 	case *fileAssetStorable:
 		return fs.saveAsset(typed)
 	case *fileStorable:
@@ -185,57 +232,159 @@ func (fs *FileStore) Save(s store.Storable) (store.Storable, error) {
 	}
 }
 
-// Load retrieves the Storable identified by category and key.
-func (fs *FileStore) Load(cat store.Category, key string) (store.Storable, error) {
-	absPath := fs.absPath(cat, key)
-	data, err := os.ReadFile(absPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("filestore: %s: not found", key)
-		}
-		return nil, fmt.Errorf("filestore: load %s: %w", key, err)
+func (fs *FileStore) SaveMeta(s store.MetaStorable) (store.MetaStorable, error) {
+	ms, ok := s.(*fileMetaStorable)
+	if !ok {
+		return nil, fmt.Errorf("filestore: SaveMeta: unsupported type %T", s)
+	}
+	path := ms.path
+
+	// Read current .meta to preserve names and other non-map fields.
+	existingDM, _ := readMetaJSONFromPath(fs.metaPath(ms.category, path))
+
+	newDM := mapToDocMeta(ms.meta)
+	newDM.Type = "document"
+	if existingDM != nil {
+		newDM.Names = existingDM.Names
 	}
 
-	s := fs.buildStorable(cat, key, fs.categoryDir(cat), true)
-	if s == nil {
-		// Fallback: return a plain storable with raw bytes.
-		extRef := fs.externalRef(cat, key)
+	if err := writeMetaJSONToPath(fs.metaPath(ms.Category(), path), newDM); err != nil {
+		return nil, fmt.Errorf("filestore: SaveMeta %s: %w", path, err)
+	}
+
+	saved := &fileMetaStorable{
+		fileStorable: fileStorable{
+			key:      ms.Key(),
+			path:     ms.path,
+			category: ms.Category(),
+			body:     ms.Body(),
+			extRef:   ms.ExternalRef(),
+			versions: ms.Versions(),
+		},
+		meta: docMetaToMap(newDM),
+	}
+	fs.indexSet(ms.Key(), saved)
+	return saved, nil
+}
+
+func (fs *FileStore) LoadByUUID(uuid string) (store.Storable, error) {
+	cached, ok := fs.LookupUUID(uuid)
+	if !ok {
+		return nil, fmt.Errorf("filestore: UUID %s not found", uuid)
+	}
+	return cached, nil
+}
+
+func (fs *FileStore) Load(cat store.Category, key string) (store.Storable, error) {
+	if cached, ok := fs.LookupUUID(key); ok {
+		cat = cached.Category()
+		key = dirKey(cached)
+	}
+	if cat.MetaEnabled {
+		key = strings.TrimSuffix(key, ".md")
+	}
+
+	absPath := fs.absPath(cat, key)
+	if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
+		data, err := os.ReadFile(absPath)
+		if err != nil {
+			return nil, fmt.Errorf("filestore: load %s: %w", key, err)
+		}
 		return &fileStorable{
 			key:      key,
+			path:     key,
 			category: cat,
 			body:     data,
-			extRef:   extRef,
+			extRef:   fs.externalRef(cat, key),
 		}, nil
 	}
+
+	metaPath := fs.metaPath(cat, key)
+	dm, err := readMetaJSONFromPath(metaPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Fall back to plain file check again in case stat failed earlier
+			data, ferr := os.ReadFile(absPath)
+			if ferr != nil {
+				return nil, fmt.Errorf("filestore: %s: not found", key)
+			}
+			return &fileStorable{
+				key:      key,
+				path:     key,
+				category: cat,
+				body:     data,
+				extRef:   fs.externalRef(cat, key),
+			}, nil
+		}
+		return nil, fmt.Errorf("filestore: load .meta for %s: %w", key, err)
+	}
+
+	if dm.Type != "document" {
+		return nil, fmt.Errorf("filestore: %s is not a document (type=%s)", key, dm.Type)
+	}
+
+	body, _ := os.ReadFile(fs.contentPath(cat, key, dm.UUID))
+	versions := fs.loadVersions(dm.UUID, cat, key)
+	owns := fs.scanDocAssets(cat, key, dm.UUID)
+
+	s := &fileMetaStorable{
+		fileStorable: fileStorable{
+			key:      dm.UUID,
+			path:     key,
+			category: cat,
+			body:     body,
+			extRef:   fs.externalRef(cat, key),
+			versions: versions,
+		},
+		meta: docMetaToMap(dm),
+		owns: owns,
+	}
+	fs.indexSet(dm.UUID, s)
 	return s, nil
 }
 
-// Delete removes s and its entire version history from the Store.
+func (fs *FileStore) LoadAsset(cat store.Category, uuid string, assetKey string) (store.AssetStorable, error) {
+	cached, ok := fs.LookupUUID(uuid)
+	if !ok {
+		return nil, fmt.Errorf("filestore: LoadAsset: UUID %s not found", uuid)
+	}
+	ms, ok := cached.(store.MetaStorable)
+	if !ok {
+		return nil, fmt.Errorf("filestore: LoadAsset: %s is not a MetaStorable", uuid)
+	}
+	for _, asset := range ms.Owns() {
+		if asset.Key() == assetKey {
+			if as, ok := asset.(store.AssetStorable); ok {
+				return as, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("filestore: LoadAsset: asset %s not found in %s", assetKey, uuid)
+}
+
 func (fs *FileStore) Delete(s store.Storable) error {
+	path := dirKey(s)
 	logger.Debug("Deleting: %s", s.ExternalRef())
-	absPath := fs.absPath(s.Category(), s.Key())
-	logger.Debug("Deleting: %s", absPath)
-	if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("filestore: delete %s: %w", s.Key(), err)
+
+	dir := fs.docDir(s.Category(), path)
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("filestore: delete %s: %w", path, err)
 	}
 
-	// Remove version history if this is a MetaStorable.
 	if ms, ok := s.(store.MetaStorable); ok {
-		uuid := ms.Meta()["uuid"]
-		fs.deleteAllVersions(s.Category(), uuid)
+		if uuid := ms.Meta()["uuid"]; uuid != "" {
+			fs.indexDel(uuid)
+		}
 	}
 	return nil
 }
 
-// List returns all Storables in category whose key begins with prefix.
-// Pass an empty prefix to list the entire category.
 func (fs *FileStore) List(cat store.Category, prefix string) ([]store.Storable, error) {
 	return fs.scanCategory(cat, prefix)
 }
 
 func (fs *FileStore) ListFrom(categories []store.Category, prefix string) ([]store.Storable, error) {
 	var items []store.Storable
-
 	for _, cat := range categories {
 		newItems, err := fs.scanCategory(cat, prefix)
 		if err != nil {
@@ -243,104 +392,58 @@ func (fs *FileStore) ListFrom(categories []store.Category, prefix string) ([]sto
 		}
 		items = append(items, newItems...)
 	}
-
 	return items, nil
 }
 
-// Move transfers s to a different category. The source file is removed and a
-// new file is created at the destination. Version history follows the UUID.
-// It also cascades the move to any owned children automatically.
+// Move transfers s to a different category via a directory rename.
+// History and assets travel with the document directory automatically.
 func (fs *FileStore) Move(s store.Storable, to store.Category) (store.Storable, error) {
-	newKey := s.Key()
-	destPath := fs.absPath(to, newKey)
-	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+	path := dirKey(s)
+	srcDir := fs.docDir(s.Category(), path)
+	dstDir := fs.docDir(to, path)
+
+	if err := os.MkdirAll(filepath.Dir(dstDir), 0o755); err != nil {
 		return nil, fmt.Errorf("filestore: Move mkdir: %w", err)
 	}
-
-	if ms, ok := s.(store.MetaStorable); ok {
-		// New logic: Use centralized cascade helper to move assets and update body links
-		newOwns, newBody, err := fs.cascadeAssetUpdates(ms, s.Key(), newKey, s.Category(), to)
-		if err != nil {
-			return nil, err
-		}
-
-		// Clear and reset Owns with moved assets so meta['assets'] is written correctly
-		ms.ClearOwns()
-		for _, a := range newOwns {
-			ms.AttachAsset(a)
-		}
-
-		meta := ms.Meta()
-		syncOwnsToMeta(newKey, newOwns, meta)
-		ms.SetMeta(meta)
-		ms.SetBody(newBody)
-
-		content := serialiseFrontmatter(ms.Meta(), ms.Body())
-		if err := os.WriteFile(destPath, content, 0o644); err != nil {
-			return nil, fmt.Errorf("filestore: Move write: %w", err)
-		}
-
-		// Move version history between history dirs.
-		uuid := ms.Meta()["uuid"]
-		if uuid != "" {
-			fs.migrateHistory(s.Category(), to, uuid)
-		}
-	} else if _, ok := s.(store.AssetStorable); ok {
-		if err := os.Rename(fs.absPath(s.Category(), s.Key()), destPath); err != nil {
-			return nil, fmt.Errorf("filestore: Move asset rename: %w", err)
-		}
-	} else {
-		return nil, fmt.Errorf("filestore: Move: unsupported storable type %T", s)
+	if err := os.Rename(srcDir, dstDir); err != nil {
+		return nil, fmt.Errorf("filestore: Move %s: %w", s.Key(), err)
 	}
 
-	// Remove source if we wrote a new file (MetaStorable)
-	if _, ok := s.(store.MetaStorable); ok {
-		os.Remove(fs.absPath(s.Category(), s.Key()))
-	}
-
-	// Return a fresh Storable from the new location.
-	return fs.Load(to, newKey)
+	return fs.Load(to, path) // Load updates the cache with the new location.
 }
 
-// Reparent moves s under folder. For FileStore this physically relocates the
-// file into the folder's directory. ExternalRefs are correct on next read.
+// Reparent moves s under folder by directory rename.
 func (fs *FileStore) Reparent(s store.Storable, folder store.FolderStorable) (store.Storable, error) {
-	base := filepath.Base(s.Key())
-	newKey := folder.Key() + "/" + base
+	ff := folder.(*fileFolderStorable)
+	newKey := ff.path + "/" + filepath.Base(s.(*fileMetaStorable).path)
 	return fs.renameKey(s, newKey)
 }
 
-// MoveToKey relocates s to newKey within the same category. newKey is a full
-// category-relative path (e.g. "target-folder/my-note.md").
-func (fs *FileStore) MoveToKey(s store.Storable, newKey string) (store.Storable, error) {
-	return fs.renameKey(s, newKey)
-}
-
-// Rename changes the name component of s's key. Returns a new Storable with
-// the updated key and a corrected ExternalRef.
+// Rename changes the basename of s's key. Appends to the names history in
+// .meta and performs a single atomic directory rename.
 func (fs *FileStore) Rename(s store.Storable, name string) (store.Storable, error) {
-	dir := filepath.Dir(s.Key())
-	ext := filepath.Ext(s.Key())
+	path := dirKey(s)
+	dir := filepath.Dir(path)
 	var newKey string
 	if dir == "." {
-		newKey = name + ext
+		newKey = name
 	} else {
-		newKey = dir + "/" + name + ext
+		newKey = dir + "/" + name
 	}
 	return fs.renameKey(s, newKey)
 }
 
-// RetrieveVersion fetches the snapshot identified by ref. Returns a
-// VersionedStorable — it cannot be passed back to Save.
 func (fs *FileStore) RetrieveVersion(s store.Storable, ref store.VersionRef) (store.VersionedStorable, error) {
-	var uuid string
-	if ms, ok := s.(store.MetaStorable); ok {
-		uuid = ms.Meta()["uuid"]
+	ms, ok := s.(store.MetaStorable)
+	if !ok {
+		return store.VersionedStorable{}, fmt.Errorf("filestore: RetrieveVersion: storable has no metadata")
 	}
+	uuid := ms.Meta()["uuid"]
 	if uuid == "" {
 		return store.VersionedStorable{}, fmt.Errorf("filestore: RetrieveVersion: storable has no uuid")
 	}
-	return fs.retrieveVersion(s.Category(), uuid, ref)
+	path := dirKey(s)
+	return fs.retrieveVersion(s.Category(), path, uuid, ref)
 }
 
 // ── Path helpers ──────────────────────────────────────────────────────────────
@@ -353,21 +456,28 @@ func (fs *FileStore) categoryDir(cat store.Category) string {
 	return filepath.Join(fs.root, cat.Key)
 }
 
-// absPath returns the absolute path for a Storable with the given key in cat.
+// docDir returns the absolute path to the document or folder directory.
+func (fs *FileStore) docDir(cat store.Category, key string) string {
+	return filepath.Join(fs.categoryDir(cat), filepath.FromSlash(key))
+}
+
+// absPath returns the absolute filesystem path for a key, used for plain files
+// (State category) and backward-compat lookups.
 func (fs *FileStore) absPath(cat store.Category, key string) string {
 	return filepath.Join(fs.categoryDir(cat), filepath.FromSlash(key))
 }
 
-// externalRef returns the ExternalRef for a Storable — the path relative to
-// the store root used to reference it from editor content and AI prompts.
-//
-// For Isolated categories the hostname is included:
-//
-//	{hostname}/{categoryKey}/{key}
-//
-// For Shared categories:
-//
-//	{categoryKey}/{key}
+// metaPath returns the path to the .meta file inside a document directory.
+func (fs *FileStore) metaPath(cat store.Category, key string) string {
+	return filepath.Join(fs.docDir(cat, key), ".meta")
+}
+
+// contentPath returns the path to the {uuid}.md content file.
+func (fs *FileStore) contentPath(cat store.Category, key string, uuid string) string {
+	return filepath.Join(fs.docDir(cat, key), uuid+".md")
+}
+
+// externalRef returns the ExternalRef for a Storable — store-root relative.
 func (fs *FileStore) externalRef(cat store.Category, key string) string {
 	key = filepath.ToSlash(key)
 	if cat.Isolation == store.Isolated {
@@ -376,36 +486,174 @@ func (fs *FileStore) externalRef(cat store.Category, key string) string {
 	return cat.Key + "/" + key
 }
 
+// ── UUID index ────────────────────────────────────────────────────────────────
+
+// indexSet stores s under its UUID. Overwrites any existing entry so the cache
+// always reflects the most recently written Storable (newest version, updated
+// meta). No-op when uuid is empty or s is nil.
+func (fs *FileStore) indexSet(uuid string, s store.Storable) {
+	if uuid == "" || s == nil {
+		return
+	}
+	fs.indexMu.Lock()
+	fs.uuidIndex[uuid] = s
+	fs.indexMu.Unlock()
+}
+
+func (fs *FileStore) indexDel(uuid string) {
+	fs.indexMu.Lock()
+	delete(fs.uuidIndex, uuid)
+	fs.indexMu.Unlock()
+}
+
+// LookupUUID returns the cached Storable for uuid. On a cache miss it rebuilds
+// the index from disk (should not happen in normal operation — every write path
+// calls indexSet). Returns nil, false when the UUID genuinely does not exist.
+func (fs *FileStore) LookupUUID(uuid string) (store.Storable, bool) {
+	fs.indexMu.RLock()
+	s, ok := fs.uuidIndex[uuid]
+	fs.indexMu.RUnlock()
+	if ok {
+		return s, true
+	}
+
+	// Only UUID-shaped strings are stored in the index; skip the scan for anything else.
+	if !looksLikeUUID(uuid) {
+		return nil, false
+	}
+
+	logger.Warn("filestore: UUID index miss for %s — scanning", uuid)
+	fs.rebuildIndex()
+
+	fs.indexMu.RLock()
+	s, ok = fs.uuidIndex[uuid]
+	fs.indexMu.RUnlock()
+	return s, ok
+}
+
+// DocDirByUUID returns the absolute filesystem path to the document directory
+// for uuid. O(1) after the first List warms the cache.
+func (fs *FileStore) DocDirByUUID(uuid string) (string, bool) {
+	cached, ok := fs.LookupUUID(uuid)
+	if !ok {
+		return "", false
+	}
+	return fs.docDir(cached.Category(), dirKey(cached)), true
+}
+
+func (fs *FileStore) rebuildIndex() {
+	// Scan all known categories. The service_provider defines which categories
+	// exist; FileStore doesn't have that list. Scan the store root for directories
+	// that look like category dirs and walk their contents.
+	rootEntries, err := os.ReadDir(fs.root)
+	if err != nil {
+		return
+	}
+	for _, entry := range rootEntries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		// Walk the top-level dir looking for .meta files.
+		topDir := filepath.Join(fs.root, entry.Name())
+		fs.walkIndexDir(topDir)
+	}
+}
+
+func (fs *FileStore) walkIndexDir(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		subDir := filepath.Join(dir, e.Name())
+		metaPath := filepath.Join(subDir, ".meta")
+		dm, err := readMetaJSONFromPath(metaPath)
+		if err != nil {
+			// No .meta or unparseable — recurse in case it's a category or
+			// hostname dir containing category subdirs.
+			fs.walkIndexDir(subDir)
+			continue
+		}
+		if dm.UUID != "" {
+			// Reconstruct category + dirKey from the filesystem path.
+			rel, err := filepath.Rel(fs.root, subDir)
+			if err == nil {
+				rel = filepath.ToSlash(rel)
+				parts := strings.SplitN(rel, "/", 3)
+				var cat store.Category
+				var dk string
+				switch {
+				case len(parts) >= 2 && parts[0] == fs.hostname:
+					cat = store.Category{Key: parts[1], Isolation: store.Isolated}
+					dk = strings.Join(parts[2:], "/")
+				case len(parts) >= 1:
+					cat = store.Category{Key: parts[0], Isolation: store.Shared}
+					dk = strings.Join(parts[1:], "/")
+				}
+				if dk != "" {
+					switch dm.Type {
+					case "document":
+						fs.buildDocStorable(cat, dk, dm) // registers in index
+					case "folder":
+						if folder, err := fs.scanFolder(cat, dk); err == nil {
+							fs.indexSet(dm.UUID, folder)
+						}
+					}
+				}
+			}
+		}
+		// Recurse for nested folders (folders don't get indexed but their
+		// children do).
+		if dm.Type == "folder" {
+			fs.walkIndexDir(subDir)
+		}
+	}
+}
+
 // ── Internal create helpers ───────────────────────────────────────────────────
 
-func (fs *FileStore) createMeta(cat store.Category, key, absPath string, body []byte) (store.MetaStorable, error) {
-	// If body contains frontmatter, parse it; otherwise start with an empty map.
-	meta, pureBody, err := parseFrontmatter(body)
+func (fs *FileStore) createMeta(cat store.Category, key string, body []byte) (store.MetaStorable, error) {
+	// Parse optional frontmatter from the seed body.
+	initialMeta, pureBody, err := parseFrontmatter(body)
 	if err != nil {
 		return nil, fmt.Errorf("filestore: create %s: %w", key, err)
 	}
 
-	fs.stampCreate(meta)
+	fs.stampCreate(initialMeta)
 
-	content := serialiseFrontmatter(meta, pureBody)
-	if err := writeAtomic(absPath, content); err != nil {
-		return nil, fmt.Errorf("filestore: create %s: %w", key, err)
+	dm := mapToDocMeta(initialMeta)
+	dm.Type = "document"
+	dm.Names = []nameEntry{{Name: filepath.Base(key), From: initialMeta["created"]}}
+
+	dir := fs.docDir(cat, key)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("filestore: create dir %s: %w", key, err)
 	}
 
-	extRef := fs.externalRef(cat, key)
-	uuid := meta["uuid"]
-	versions := fs.loadVersions(uuid, cat)
+	if err := writeMetaJSONToPath(fs.metaPath(cat, key), dm); err != nil {
+		return nil, fmt.Errorf("filestore: write .meta for %s: %w", key, err)
+	}
 
-	return &fileMetaStorable{
+	if err := writeAtomic(fs.contentPath(cat, key, dm.UUID), pureBody); err != nil {
+		return nil, fmt.Errorf("filestore: write content for %s: %w", key, err)
+	}
+
+	s := &fileMetaStorable{
 		fileStorable: fileStorable{
-			key:      key,
+			key:      dm.UUID,
+			path:     key,
 			category: cat,
 			body:     pureBody,
-			extRef:   extRef,
-			versions: versions,
+			extRef:   fs.externalRef(cat, key),
+			versions: fs.loadVersions(dm.UUID, cat, key),
 		},
-		meta: meta,
-	}, nil
+		meta: docMetaToMap(dm),
+	}
+	fs.indexSet(dm.UUID, s)
+	return s, nil
 }
 
 func (fs *FileStore) createAsset(cat store.Category, key, absPath string, body []byte) (store.AssetStorable, error) {
@@ -417,6 +665,7 @@ func (fs *FileStore) createAsset(cat store.Category, key, absPath string, body [
 	return &fileAssetStorable{
 		fileStorable: fileStorable{
 			key:      key,
+			path:     key,
 			category: cat,
 			body:     body,
 			extRef:   extRef,
@@ -426,12 +675,17 @@ func (fs *FileStore) createAsset(cat store.Category, key, absPath string, body [
 }
 
 func (fs *FileStore) createPlain(cat store.Category, key, absPath string, body []byte) (store.Storable, error) {
+
+	logger.Info("Before Write", "absPath", absPath)
 	if err := os.WriteFile(absPath, body, 0o644); err != nil {
 		return nil, fmt.Errorf("filestore: create %s: %w", key, err)
 	}
+
 	extRef := fs.externalRef(cat, key)
+
 	return &fileStorable{
 		key:      key,
+		path:     key,
 		category: cat,
 		body:     body,
 		extRef:   extRef,
@@ -440,54 +694,70 @@ func (fs *FileStore) createPlain(cat store.Category, key, absPath string, body [
 
 // ── Internal save helpers ─────────────────────────────────────────────────────
 
-func (fs *FileStore) saveMeta(s *fileMetaStorable) (store.Storable, error) {
-	absPath := fs.absPath(s.category, s.key)
+func (fs *FileStore) saveContent(s *fileMetaStorable) (store.Storable, error) {
+	path := s.path
+	key := s.key
 
-	// Optimistic lock check: read the current on-disk version.
-	if current, err := fs.currentVersion(absPath); err == nil {
-		incoming := metaVersionInt(s.meta)
-		if current > incoming {
-			return nil, fmt.Errorf("%w (disk=%d incoming=%d)", store.ErrStaleStorable, current, incoming)
+	onDisk, err := fs.Load(s.category, path)
+	if err == nil && onDisk != nil {
+		onDiskSaved, ok := onDisk.(*fileMetaStorable)
+		if ok && bytes.Equal(s.body, onDiskSaved.body) && reflect.DeepEqual(s.meta, onDiskSaved.meta) {
+			logger.Info("No change", "key", key)
+			return s, nil
 		}
 	}
 
-	// Stamp version and modified timestamp.
+	// Optimistic lock: compare version against on-disk .meta.
+	if existingDM, err := readMetaJSONFromPath(fs.metaPath(s.category, path)); err == nil {
+		incoming := metaVersionInt(s.meta)
+		if existingDM.Version > incoming {
+			return nil, fmt.Errorf("%w (disk=%d incoming=%d)", store.ErrStaleStorable, existingDM.Version, incoming)
+		}
+	}
+
 	meta := cloneMeta(s.meta)
-
-	// Derive meta["assets"] shorthand from the Owns array for next load.
-	syncOwnsToMeta(s.key, s.owns, meta)
-
 	nextVer := metaVersionInt(meta) + 1
 	meta["version"] = strconv.Itoa(nextVer)
 	meta["modified"] = time.Now().Format("2006-01-02T15:04:05")
 
-	content := serialiseFrontmatter(meta, s.body)
-	if err := writeAtomic(absPath, content); err != nil {
-		return nil, fmt.Errorf("filestore: save %s: %w", s.key, err)
-	}
-
-	// Write snapshot.
 	uuid := meta["uuid"]
-	if uuid != "" {
-		if err := fs.writeSnapshot(s.category, uuid, nextVer, content); err != nil {
-			// Non-fatal: log but continue.
-			_ = err
-		}
-		fs.pruneVersions(s.category, uuid, fs.maxVersions)
+
+	// Write content file.
+	if err := writeAtomic(fs.contentPath(s.category, path, uuid), s.body); err != nil {
+		return nil, fmt.Errorf("filestore: save content %s: %w", path, err)
 	}
 
-	versions := fs.loadVersions(uuid, s.category)
-	return &fileMetaStorable{
+	// Write .meta, preserving names from disk.
+	newDM := mapToDocMeta(meta)
+	newDM.Type = "document"
+	if existingDM, err := readMetaJSONFromPath(fs.metaPath(s.category, path)); err == nil {
+		newDM.Names = existingDM.Names
+	}
+	if err := writeMetaJSONToPath(fs.metaPath(s.category, path), newDM); err != nil {
+		return nil, fmt.Errorf("filestore: save .meta %s: %w", path, err)
+	}
+
+	// Write body-only snapshot.
+	if uuid != "" {
+		_ = fs.writeSnapshot(s.category, path, uuid, nextVer, s.body)
+		fs.pruneVersions(s.category, path, uuid, fs.maxVersions)
+	}
+
+	versions := fs.loadVersions(uuid, s.category, path)
+	saved := &fileMetaStorable{
 		fileStorable: fileStorable{
-			key:      s.key,
+			key:      uuid,
+			path:     path,
 			category: s.category,
 			body:     s.body,
 			extRef:   s.extRef,
 			versions: versions,
 		},
-		meta: meta,
+		meta: docMetaToMap(newDM),
 		owns: s.owns,
-	}, nil
+	}
+	fs.indexSet(uuid, saved)
+	return saved, nil
 }
 
 func (fs *FileStore) saveAsset(s *fileAssetStorable) (store.Storable, error) {
@@ -520,159 +790,75 @@ func (fs *FileStore) savePlain(s *fileStorable) (store.Storable, error) {
 	}, nil
 }
 
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+// dirKey extracts the category-relative filesystem path from a Storable created
+// by this FileStore. Path() was removed from store.Storable to keep the business
+// layer free of filesystem concepts; within the filestore package we use this.
+func dirKey(s store.Storable) string {
+	switch v := s.(type) {
+	case *fileMetaStorable:
+		return v.path
+	case *fileFolderStorable:
+		return v.path
+	case *fileAssetStorable:
+		return v.path
+	case *fileStorable:
+		return v.path
+	}
+	panic("filestore: dirKey: unknown Storable type")
+}
+
 // ── Rename / Move helpers ─────────────────────────────────────────────────────
 
 func (fs *FileStore) renameKey(s store.Storable, newKey string) (store.Storable, error) {
-	if s.Key() == newKey {
+	oldPath := dirKey(s)
+	if s.Category().MetaEnabled {
+		newKey = strings.TrimSuffix(newKey, ".md")
+	}
+
+	if oldPath == newKey {
 		return s, nil
 	}
-	if ms, ok := s.(store.MetaStorable); ok {
-		// New logic: Use centralized cascade helper to move assets and update body links
-		newOwns, newBody, err := fs.cascadeAssetUpdates(ms, s.Key(), newKey, s.Category(), s.Category())
-		if err != nil {
-			return nil, err
-		}
 
-		// Clear and reset Owns with moved assets so meta['assets'] is written correctly
-		ms.ClearOwns()
-		for _, a := range newOwns {
-			ms.AttachAsset(a)
-		}
+	srcDir := fs.docDir(s.Category(), oldPath)
+	dstDir := fs.docDir(s.Category(), newKey)
 
-		meta := ms.Meta()
-		syncOwnsToMeta(newKey, newOwns, meta)
-		ms.SetMeta(meta)
-		ms.SetBody(newBody)
-
-		// Physically rename the parent file
-		srcPath := fs.absPath(s.Category(), s.Key())
-		dstPath := fs.absPath(s.Category(), newKey)
-		if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
-			return nil, fmt.Errorf("filestore: rename mkdir: %w", err)
-		}
-
-		content := serialiseFrontmatter(ms.Meta(), ms.Body())
-		if err := os.WriteFile(dstPath, content, 0o644); err != nil {
-			return nil, fmt.Errorf("filestore: rename write: %w", err)
-		}
-		os.Remove(srcPath)
-
-		return fs.Load(s.Category(), newKey)
-	}
-
-	// Plain storable or asset storable (no body recursion)
-	srcPath := fs.absPath(s.Category(), s.Key())
-	dstPath := fs.absPath(s.Category(), newKey)
-	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dstDir), 0o755); err != nil {
 		return nil, fmt.Errorf("filestore: rename mkdir: %w", err)
 	}
-	if err := os.Rename(srcPath, dstPath); err != nil {
-		return nil, fmt.Errorf("filestore: rename %s → %s: %w", s.Key(), newKey, err)
-	}
-	return fs.Load(s.Category(), newKey)
-}
-
-// cascadeAssetUpdates handles the recursive moving/renaming of owned assets and
-// performs body find-and-replace for both ExternalRefs and relative paths.
-func (fs *FileStore) cascadeAssetUpdates(ms store.MetaStorable, oldParentKey, newParentKey string, oldCat, newCat store.Category) ([]store.Storable, []byte, error) {
-	kebab := strings.TrimSuffix(filepath.Base(newParentKey), filepath.Ext(newParentKey))
-	body := ms.Body()
-	var newOwns []store.Storable
-
-	for _, asset := range ms.Owns() {
-		// 1. Calculate strings to replace in body
-		oldExtRef := asset.ExternalRef()
-		oldRel, err := filepath.Rel(filepath.Dir(oldParentKey), asset.Key())
-		if err != nil {
-			oldRel = asset.Key()
-		}
-		oldRel = filepath.ToSlash(oldRel)
-
-		// 2. Determine new asset key
-		var newAssetKey string
-		if newCat.Isolation == store.Shared {
-			oldDocName := strings.TrimSuffix(filepath.Base(oldParentKey), filepath.Ext(oldParentKey))
-			assetBase := filepath.Base(asset.Key())
-			// e.g. note-img.png -> newnote-img.png
-			if strings.HasPrefix(assetBase, oldDocName+"-") {
-				assetBase = kebab + "-" + strings.TrimPrefix(assetBase, "-")
-			} else if !strings.HasPrefix(assetBase, kebab+"-") {
-				assetBase = kebab + "-" + assetBase
-			}
-			newAssetKey = ".assets/" + assetBase
-		} else {
-			newAssetKey = ".assets/" + filepath.Base(asset.Key())
-		}
-
-		// 3. Physically move/rename the asset
-		var movedAsset store.Storable
-		if oldCat.Key != newCat.Key || oldCat.Isolation != newCat.Isolation {
-			movedAsset, err = fs.Move(asset, newCat)
-			if err != nil {
-				return nil, nil, fmt.Errorf("filestore: cascade move asset: %w", err)
-			}
-		} else {
-			movedAsset = asset
-		}
-
-		if movedAsset.Key() != newAssetKey {
-			movedAsset, err = fs.renameKey(movedAsset, newAssetKey)
-			if err != nil {
-				return nil, nil, fmt.Errorf("filestore: cascade rename asset: %w", err)
-			}
-		}
-
-		newOwns = append(newOwns, movedAsset)
-
-		// 4. Calculate replacement strings
-		newExtRef := movedAsset.ExternalRef()
-
-		// 5. Perform replacement in body using a safe placeholder
-		placeholder := []byte("##SIEVE_ASSET_LINK_PLACEHOLDER##")
-		body = bytes.ReplaceAll(body, []byte(oldExtRef), placeholder)
-		body = bytes.ReplaceAll(body, []byte(oldRel), placeholder)
-		body = bytes.ReplaceAll(body, placeholder, []byte(newExtRef))
+	if err := os.Rename(srcDir, dstDir); err != nil {
+		return nil, fmt.Errorf("filestore: rename %s → %s: %w", oldPath, newKey, err)
 	}
 
-	return newOwns, body, nil
-}
+	// Append new name to .meta names log.
+	newMetaPath := filepath.Join(dstDir, ".meta")
+	if dm, err := readMetaJSONFromPath(newMetaPath); err == nil {
+		dm.Names = append(dm.Names, nameEntry{
+			Name: filepath.Base(newKey),
+			From: time.Now().Format("2006-01-02T15:04:05"),
+		})
+		_ = writeMetaJSONToPath(newMetaPath, dm)
 
-// migrateHistory moves snapshot files from the old category's history dir to
-// the new one. Used by Move to keep history consistent across category changes.
-func (fs *FileStore) migrateHistory(from, to store.Category, uuid string) {
-	srcDir := fs.historyDir(from)
-	dstDir := fs.historyDir(to)
-	if srcDir == dstDir {
-		return
 	}
-	os.MkdirAll(dstDir, 0o755)
-	pattern := filepath.Join(srcDir, uuid+".*.md")
-	matches, _ := filepath.Glob(pattern)
-	for _, m := range matches {
-		dst := filepath.Join(dstDir, filepath.Base(m))
-		os.Rename(m, dst)
-	}
+
+	return fs.Load(s.Category(), newKey) // Load updates the cache with the new key.
 }
 
 // ── Key generation ─────────────────────────────────────────────────────────────
 
-// generateKey produces a timestamped filename for use when Create is called
-// with an empty key. The prefix depends on the category.
 func (fs *FileStore) generateKey(cat store.Category) string {
 	now := time.Now()
-	base := fmt.Sprintf("%s-%s.md", cat.Key, now.Format("20060102-1504"))
-	absPath := fs.absPath(cat, base)
-	if _, err := os.Stat(absPath); os.IsNotExist(err) {
+	base := fmt.Sprintf("buf-%s", now.Format("20060102-1504"))
+	dir := fs.docDir(cat, base)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return base
 	}
-	// Collision: append nanoseconds suffix.
-	return fmt.Sprintf("%s-%s-%d.md", cat.Key, now.Format("20060102-1504"), now.UnixNano()%10000)
+	return fmt.Sprintf("buf-%s-%d", now.Format("20060102-1504"), now.UnixNano()%10000)
 }
 
 // ── Stamp helpers ─────────────────────────────────────────────────────────────
 
-// stampCreate ensures all required system fields are present in meta.
-// Called by createMeta for every new document.
 func (fs *FileStore) stampCreate(meta map[string]string) {
 	now := time.Now().Format("2006-01-02T15:04:05")
 	if meta["uuid"] == "" {
@@ -687,7 +873,11 @@ func (fs *FileStore) stampCreate(meta map[string]string) {
 	meta["modified"] = now
 }
 
-// newUUID generates a random UUID v4.
+// looksLikeUUID returns true for strings in the 8-4-4-4-12 hex UUID format.
+func looksLikeUUID(s string) bool {
+	return len(s) == 36 && s[8] == '-' && s[13] == '-' && s[18] == '-' && s[23] == '-'
+}
+
 func newUUID() string {
 	var b [16]byte
 	rand.Read(b[:])
@@ -697,29 +887,13 @@ func newUUID() string {
 		b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-// ── Optimistic lock helper ────────────────────────────────────────────────────
+// ── Meta helpers ──────────────────────────────────────────────────────────────
 
-// currentVersion reads the on-disk version field for a MetaStorable file.
-// Returns -1 and an error if the file cannot be read or parsed.
-func (fs *FileStore) currentVersion(absPath string) (int, error) {
-	data, err := os.ReadFile(absPath)
-	if err != nil {
-		return -1, err
-	}
-	meta, _, err := parseFrontmatter(data)
-	if err != nil {
-		return -1, err
-	}
-	return metaVersionInt(meta), nil
-}
-
-// metaVersionInt parses meta["version"] as an integer, returning 0 on failure.
 func metaVersionInt(meta map[string]string) int {
 	v, _ := strconv.Atoi(meta["version"])
 	return v
 }
 
-// cloneMeta returns a shallow copy of meta so the caller's map is not mutated.
 func cloneMeta(m map[string]string) map[string]string {
 	out := make(map[string]string, len(m))
 	for k, v := range m {
@@ -728,24 +902,8 @@ func cloneMeta(m map[string]string) map[string]string {
 	return out
 }
 
-// syncOwnsToMeta derives the meta["assets"] shorthand from the Owns array
-// for the next load phase, modifying the given metadata map in-place.
-func syncOwnsToMeta(key string, owns []store.Storable, meta map[string]string) {
-	if len(owns) > 0 {
-		var parts []string
-		for _, child := range owns {
-			// New standard: Use ExternalRef (absolute store-root path)
-			parts = append(parts, child.ExternalRef())
-		}
-		meta["assets"] = "[" + strings.Join(parts, ", ") + "]"
-	} else {
-		delete(meta, "assets")
-	}
-}
-
 // ── Atomic write ──────────────────────────────────────────────────────────────
 
-// writeAtomic writes data to path via a .tmp sibling to avoid partial writes.
 func writeAtomic(path string, data []byte) error {
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
@@ -754,23 +912,37 @@ func writeAtomic(path string, data []byte) error {
 	return os.Rename(tmp, path)
 }
 
+// ── Asset extension detection ─────────────────────────────────────────────────
+
+// extFromBytes sniffs the MIME type from magic bytes and returns the canonical
+// file extension. Falls back to ".bin" for unrecognised types.
+func extFromBytes(b []byte) string {
+	mime := http.DetectContentType(b)
+	switch {
+	case strings.HasPrefix(mime, "image/png"):
+		return ".png"
+	case strings.HasPrefix(mime, "image/jpeg"):
+		return ".jpg"
+	case strings.HasPrefix(mime, "image/gif"):
+		return ".gif"
+	case strings.HasPrefix(mime, "image/webp"):
+		return ".webp"
+	default:
+		return ".bin"
+	}
+}
+
 // ── Directory setup ───────────────────────────────────────────────────────────
 
 // Root returns the base directory where the store is persisted on disk.
 func (fs *FileStore) Root() string { return fs.root }
 
-// PrepareCategory creates the foundational directories needed for a category,
-// including its root directory, its .assets folder, and its .history folder.
+// PrepareCategory creates the category directory. Per-document .history/ and
+// asset directories are created on demand; no shared subdirs needed.
 func (fs *FileStore) PrepareCategory(cat store.Category) error {
-	dirs := []string{
-		fs.categoryDir(cat),
-		filepath.Join(fs.categoryDir(cat), ".assets"),
-		fs.historyDir(cat),
-	}
-	for _, d := range dirs {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			return fmt.Errorf("filestore: prepare category %s: %w", cat.DisplayName, err)
-		}
+	dir := fs.categoryDir(cat)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("filestore: prepare category %s: %w", cat.DisplayName, err)
 	}
 	return nil
 }

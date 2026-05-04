@@ -8,7 +8,7 @@ package store
 // Store stamps Category, derives ExternalRef by walking the ownership graph,
 // and infers Encoding for assets. Callers cannot set these fields.
 type Storable interface {
-	// Key returns the logical identity of this Storable within its Category.
+	// Key returns the logical identity of this Storable within its Category (UUID).
 	Key() string
 
 	// Category returns the Category this Storable belongs to. Stamped at
@@ -84,6 +84,10 @@ type AssetStorable interface {
 type FolderStorable interface {
 	Storable
 
+	// Name returns the human-readable name of this folder (the directory
+	// basename). Use this in the business layer — never parse ExternalRef.
+	Name() string
+
 	// Owns returns the direct children of this folder. Each child is a
 	// MetaStorable or FolderStorable.
 	Owns() []Storable
@@ -124,6 +128,10 @@ type Store interface {
 	// is derived from the current ownership graph.
 	Load(category Category, key string) (Storable, error)
 
+	LoadByUUID(uuid string) (Storable, error)
+
+	LoadAsset(category Category, uuidParent string, assetKey string) (AssetStorable, error)
+
 	LoadFolder(category Category, key string) (FolderStorable, error)
 
 	// Delete removes s and its entire version history from the Store.
@@ -153,14 +161,12 @@ type Store interface {
 	// with the updated key and a corrected ExternalRef.
 	Rename(s Storable, name string) (Storable, error)
 
-	// MoveToKey relocates s to newKey within the same category. newKey is a
-	// full category-relative path (e.g. "target-folder/my-note.md"). Unlike
-	// Rename, which only changes the filename while keeping the current
-	// directory, MoveToKey moves the file to an arbitrary location.
-	MoveToKey(s Storable, newKey string) (Storable, error)
-
 	// RetrieveVersion fetches the snapshot identified by ref. Returns a
 	// VersionedStorable — a distinct type from Storable so a snapshot cannot
 	// be accidentally saved back as the current document.
 	RetrieveVersion(s Storable, ref VersionRef) (VersionedStorable, error)
+
+	// SaveMeta writes only the metadata for s — no snapshot, no version bump.
+	// Use for focus count increments, AI evaluation updates, tag changes, renames.
+	SaveMeta(s MetaStorable) (MetaStorable, error)
 }

@@ -3,6 +3,7 @@ package requesthandlers
 import (
 	"html/template"
 	"net/http"
+	"sieve/logger"
 	"sieve/sieve"
 	"strconv"
 
@@ -23,6 +24,11 @@ func (h *SettingsHandler) RegisterPaths(r chi.Router) {
 func (h *SettingsHandler) handleSettings(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	if h.ServiceProvider.State == nil {
+		return
+	}
+
 	settings := h.ServiceProvider.State.LoadSettings()
 	session := h.ServiceProvider.State.LoadSession()
 
@@ -44,6 +50,7 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	if err := r.ParseForm(); err != nil {
+		logger.Error("handleSettingsSave: parse form failed", "err", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -65,10 +72,15 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 	}
 	settings.Debug = r.FormValue("debug") == "on"
 
+	logger.Info("handleSettingsSave: saving settings", "cli", settings.CLI, "theme", settings.Theme, "debug", settings.Debug)
+
 	if err := h.ServiceProvider.State.SaveSettings(settings); err != nil {
+		logger.Error("handleSettingsSave: save failed", "err", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	w.Header().Set("HX-Trigger", "settings:changed")
 
 	session := h.ServiceProvider.State.LoadSession()
 	if lastPanel := r.FormValue("last_settings_panel"); lastPanel != "" {

@@ -1,11 +1,13 @@
 package requesthandlers
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"strings"
 
+	"sieve/logger"
 	"sieve/sieve"
 
 	"github.com/go-chi/chi/v5"
@@ -17,6 +19,7 @@ type AssetHandler struct {
 
 func (h *AssetHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/asset/save", h.handleSave)
+	r.Get("/sieve/{uuid}/{filename}", h.serveAsset)
 }
 
 type saveAssetRequest struct {
@@ -68,4 +71,33 @@ func decodeDataURL(dataURL string) []byte {
 	}
 	data, _ := base64.StdEncoding.DecodeString(dataURL)
 	return data
+}
+
+func (h *AssetHandler) serveAsset(w http.ResponseWriter, r *http.Request) {
+	uuid := chi.URLParam(r, "uuid")
+	filename := chi.URLParam(r, "filename")
+	logger.Info("Serving Asset", "filename", filename, "uuid", uuid)
+	doc, err := h.ServiceProvider.Documents.LoadByUUID(uuid)
+	if err != nil {
+		http.NotFound(w, r)
+	}
+	logger.Info("Document Found", "Document", uuid, "Assets", len(doc.Storable().Owns()))
+	for _, asset := range doc.Storable().Owns() {
+		logger.Info("Asset", "filename", asset.Key())
+		if asset.Key() == filename {
+			logger.Info("Found Asset", "filename", filename, "uuid", uuid)
+			data := asset.Body()
+			contentType := http.DetectContentType(data)
+			if strings.HasPrefix(contentType, "text/xml") || strings.HasPrefix(contentType, "text/plain") {
+				if bytes.Contains(data, []byte("<svg")) {
+					contentType = "image/svg+xml"
+				}
+			}
+			w.Header().Set("Content-Type", contentType)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(data)
+			return
+		}
+	}
+	http.NotFound(w, r)
 }

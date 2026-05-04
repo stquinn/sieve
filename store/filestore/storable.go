@@ -1,13 +1,17 @@
 package filestore
 
-import "sieve/store"
+import (
+	"path/filepath"
+	"sieve/store"
+)
 
 // fileStorable is the base concrete type that satisfies store.Storable.
 // It is a pure value object — no I/O, no business logic.
 // All fields are stamped by FileStore at creation time and are immutable
 // after the Storable is returned to the caller.
 type fileStorable struct {
-	key        string
+	key        string // logical identity (UUID for docs/folders, filename for assets)
+	path       string // filesystem identity (category-relative directory key)
 	category   store.Category
 	body       []byte
 	extRef     string
@@ -16,6 +20,7 @@ type fileStorable struct {
 }
 
 func (s *fileStorable) Key() string                  { return s.key }
+func (s *fileStorable) Path() string                 { return s.path }
 func (s *fileStorable) Category() store.Category     { return s.category }
 func (s *fileStorable) Body() []byte                 { return s.body }
 func (s *fileStorable) ExternalRef() string          { return s.extRef }
@@ -60,4 +65,5 @@ type fileFolderStorable struct {
 	owns []store.Storable
 }
 
+func (s *fileFolderStorable) Name() string           { return filepath.Base(s.path) }
 func (s *fileFolderStorable) Owns() []store.Storable { return s.owns }

@@ -12,7 +12,6 @@ const (
 type Document interface {
 	Kind() DocumentKind
 	UUID() string
-	Path() string
 	Slug() string
 	Body() []byte
 	SetBody(v []byte)

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"sieve/logger"
 	"sieve/sieve"
 	"sieve/store"
 
@@ -17,12 +18,14 @@ import (
 )
 
 type MetaHandler struct {
-	ServiceProvider *sieve.ServiceProvider
-	Tmpl            *template.Template
+	ServiceProvider  *sieve.ServiceProvider
+	Tmpl             *template.Template
+	EmitNotesChanged func()
 }
 
 func (h *MetaHandler) RegisterPaths(r chi.Router) {
 	r.Get("/api/meta", h.handleMeta)
+	r.Get("/api/meta/restore-prompt", h.handleRestorePrompt)
 	r.Post("/api/meta/restore", h.handleRestore)
 }
 
@@ -87,6 +90,11 @@ func (h *MetaHandler) handleMeta(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve active note from session if no path/uuid provided
 	if uuid == "" {
+		if h.ServiceProvider.State == nil {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `<div class="meta-panel__empty">No note selected</div>`)
+			return
+		}
 		session := h.ServiceProvider.State.LoadSession()
 		if len(session.Tabs) > 0 && session.ActiveIdx >= 0 && session.ActiveIdx < len(session.Tabs) {
 			uuid = session.Tabs[session.ActiveIdx].ID
@@ -104,6 +112,23 @@ func (h *MetaHandler) handleMeta(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *MetaHandler) handleRestorePrompt(w http.ResponseWriter, r *http.Request) {
+	uuid := r.URL.Query().Get("uuid")
+	versionID := r.URL.Query().Get("version")
+
+	data := struct {
+		UUID      string
+		VersionID string
+	}{
+		UUID:      uuid,
+		VersionID: versionID,
+	}
+
+	if err := h.Tmpl.ExecuteTemplate(w, "restore.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
 func (h *MetaHandler) handleRestore(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("uuid")
 	versionID := r.URL.Query().Get("version")
@@ -113,26 +138,24 @@ func (h *MetaHandler) handleRestore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	vref := store.VersionRef{ID: versionID}
-	var body string
-	var found bool
-
-	if b, err := h.ServiceProvider.Documents.LoadByUUID(path); err == nil {
-		if v, err := h.ServiceProvider.Documents.RetrieveVersion(b, vref); err == nil {
-			body = string(v.Body)
-			found = true
-		}
-	}
-	if !found {
-		http.Error(w, "version not found", http.StatusNotFound)
+	doc, err := h.ServiceProvider.Documents.LoadByUUID(path)
+	if err != nil {
+		http.Error(w, "document not found", http.StatusNotFound)
 		return
 	}
+	doc, err = h.ServiceProvider.Documents.ReplaceWithVersion(doc, vref)
+	if err != nil {
+		http.Error(w, "restore failed", http.StatusInternalServerError)
+		return
+	}
+	h.EmitNotesChanged()
 
 	trigger, _ := json.Marshal(map[string]interface{}{
-		"editor:restore": map[string]string{"body": body, "path": path},
+		"editor:restore": map[string]string{"body": string(doc.Body()), "uuid": doc.UUID()},
 	})
 	w.Header().Set("HX-Trigger", string(trigger))
-	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
+
 }
 
 func (h *MetaHandler) buildMetaPanelData(uuidOrPromptName, tab string) metaPanelData {
@@ -152,7 +175,7 @@ func (h *MetaHandler) buildMetaPanelData(uuidOrPromptName, tab string) metaPanel
 	if isPrompt {
 		return data
 	}
-
+	logger.Info("buildMetaPanelData: %s", uuidOrPromptName)
 	if b, err := h.ServiceProvider.Documents.LoadByUUID(uuidOrPromptName); err == nil {
 		data.UUID = b.UUID()
 		if fname := b.Meta().Filename(); fname != nil {

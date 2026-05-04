@@ -6,7 +6,7 @@ import {fs} from '../models';
 
 export function CreateVault():Promise<string>;
 
-export function DescribeImage(arg1:string):Promise<sieve.ImageDesc>;
+export function DescribeImage(arg1:string,arg2:string,arg3:string):Promise<sieve.ImageDesc>;
 
 export function DownloadAsset(arg1:string,arg2:string,arg3:string):Promise<main.AssetDTO>;
 

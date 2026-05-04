@@ -38,7 +38,8 @@ func (h *NoteHandler) handleNoteOpen(w http.ResponseWriter, r *http.Request) {
 	var displayName string
 	var status string
 	var userIntent string
-	if note, err := h.ServiceProvider.Documents.LoadByUUID(id); err == nil {
+	note, err := h.ServiceProvider.Documents.LoadByUUID(id)
+	if err == nil {
 		displayName = note.Meta().DisplayName()
 		status = note.Meta().Status()
 		if note.Meta().UserIntent() != nil {
@@ -73,7 +74,7 @@ func (h *NoteHandler) handleNoteOpen(w http.ResponseWriter, r *http.Request) {
 		tabMode := "wysiwyg"
 		if strings.HasPrefix(id, "prompt:") {
 			tabMode = "markdown"
-		} else if note, err := h.ServiceProvider.Documents.LoadByUUID(id); err == nil {
+		} else if note != nil {
 			if m := note.Meta().All()["mode"]; m != "" {
 				tabMode = m
 			}
@@ -352,8 +353,7 @@ func (h *NoteHandler) handleNoteFocus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if note, err := h.ServiceProvider.Documents.LoadByUUID(id); err == nil {
-		note.Meta().SetFocusCount(note.Meta().FocusCount() + 1)
-		_, _ = h.ServiceProvider.Documents.Save(note)
+		h.ServiceProvider.Documents.IncrementFocusCount(note)
 	} else {
 		http.Error(w, "document not found", http.StatusNotFound)
 		return

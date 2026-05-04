@@ -1,8 +1,11 @@
 package sieve
 
 import (
+	"errors"
+	"os"
 	"sieve/logger"
 	"sieve/store"
+	"strings"
 	"sync"
 )
 
@@ -75,9 +78,23 @@ func (ss *StateService) SaveSession(session Session) error {
 // settings file exists yet, defaults are written to the Store so the user can
 // inspect and edit them.
 func (ss *StateService) LoadSettings() Settings {
-	if ss.cachedSettings == nil {
-		s, err := ss.st.Load(State, "settings.json")
-		if err != nil {
+	ss.mu.RLock()
+	if ss.cachedSettings != nil {
+		defer ss.mu.RUnlock()
+		return *ss.cachedSettings
+	}
+	ss.mu.RUnlock()
+
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+
+	if ss.cachedSettings != nil {
+		return *ss.cachedSettings
+	}
+
+	s, err := ss.st.Load(State, "settings.json")
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "not found") {
 			// First run — write defaults so the user can see all available options.
 			defaults := DefaultSettings()
 			if data, e := defaults.Marshal(); e == nil {
@@ -87,9 +104,11 @@ func (ss *StateService) LoadSettings() Settings {
 			}
 			return defaults
 		}
-		temp := ParseSettings(s.Body())
-		ss.cachedSettings = &temp
+		logger.Error("StateService: failed to load settings", "err", err)
+		return DefaultSettings()
 	}
+	temp := ParseSettings(s.Body())
+	ss.cachedSettings = &temp
 	return *ss.cachedSettings
 }
 
