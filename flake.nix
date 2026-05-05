@@ -37,9 +37,11 @@
             gsettings-desktop-schemas
           ];
 
-          tags = [ "webkit2_41" ];
-
           ldflags = [ "-s" "-w" ];
+
+          preBuild = ''
+            export buildFlagsArray+=(-tags webkit2_41)
+          '';
 
           postInstall = ''
             install -Dm644 build/appicon.png \
