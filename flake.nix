@@ -11,42 +11,49 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
       in {
-        packages.default = pkgs.buildGoModule {
-          pname = "sieve";
-          version = "0.1.0";
-          src = ./.;
+  packages.default = pkgs.buildGoModule {
+  pname = "sieve";
+  version = "0.1.0";
+  src = ./.;
 
-          # Run `nix build` once with lib.fakeHash, copy the hash from the error,
-          # then replace below.
-          vendorHash = "sha256-uK97E7jC0YzTRWVtYhUrlgF4RHrLVPzbIXlC0Jewwh0=";
+  proxyVendor = true;
+  vendorHash = "sha256-KWxSDFzjtwJz7XN/0R9w/Moelg+u9qDuM34u8CGMWjw=";
 
-          nativeBuildInputs = with pkgs; [
-            pkg-config
-            wrapGAppsHook3
-          ];
+  # Explicitly include 'production' - this is often the missing link 
+  # that tells the Wails internal init() NOT to throw that error.
+  buildFlags = [ "-tags=wails,production,webkit2_41" "-trimpath" ];
 
-          buildInputs = with pkgs; [
-            webkitgtk_4_1
-            gtk3
-            glib
-            libsoup_3
-            pango
-            cairo
-            gdk-pixbuf
-            atk
-            gsettings-desktop-schemas
-          ];
+  preBuild = ''
+    export GOFLAGS="-tags=wails,production,webkit2_41 -trimpath"
+  '';
 
-          tags = [ "webkit2_41" ];
+  nativeBuildInputs = with pkgs; [
+    pkg-config
+    wrapGAppsHook3
+  ];
 
-          ldflags = [ "-s" "-w" ];
+  buildInputs = with pkgs; [
+    webkitgtk_4_1
+    gtk3
+    glib
+    libsoup_3
+    pango
+    cairo
+    gdk-pixbuf
+    atk
+    gsettings-desktop-schemas
+  ];
 
-          postInstall = ''
-            install -Dm644 build/appicon.png \
-              $out/share/icons/hicolor/256x256/apps/sieve.png
+  ldflags = [ "-s" "-w" ];
 
-            mkdir -p $out/share/applications
-            cat > $out/share/applications/Sieve.desktop <<'EOF'
+  # ... postInstall and preFixup remain the same
+  postInstall = ''
+    if [ -d build ]; then
+       install -Dm644 build/appicon.png $out/share/icons/hicolor/256x256/apps/sieve.png
+    fi
+
+    mkdir -p $out/share/applications
+    cat > $out/share/applications/Sieve.desktop <<'EOF'
 [Desktop Entry]
 Name=Sieve
 Comment=Scratchpad-first thinking tool
@@ -56,13 +63,12 @@ Type=Application
 Categories=Utility;Office;
 StartupWMClass=Sieve
 EOF
-          '';
+  '';
 
-          # WebKit + Go signal handler conflict workaround (see shell.nix)
-          preFixup = ''
-            gappsWrapperArgs+=(--set GODEBUG asyncpreemptoff=1)
-          '';
-        };
+  preFixup = ''
+    gappsWrapperArgs+=(--set GODEBUG asyncpreemptoff=1)
+  '';
+};
       }
     );
 }
