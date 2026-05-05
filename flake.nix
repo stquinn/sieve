@@ -65,8 +65,11 @@ EOF
 '';
 
   preFixup = ''
-    gappsWrapperArgs+=(--set GODEBUG asyncpreemptoff=1)
-  '';
+  gappsWrapperArgs+=(
+    --set GODEBUG asyncpreemptoff=1
+    --prefix XDG_DATA_DIRS : "$GSETTINGS_SCHEMAS_PATH"
+  )
+'';
 };
       }
     );
