@@ -25,25 +25,25 @@ jobs:
       - name: Build arm64
         run: |
           wails build -clean -platform darwin/arm64
-          mv build/bin/stash.app build/bin/stash-arm64.app
+          mv build/bin/sieve.app build/bin/sieve-arm64.app
 
       - name: Build amd64
         run: |
           wails build -platform darwin/amd64
-          mv build/bin/stash.app build/bin/stash-amd64.app
+          mv build/bin/sieve.app build/bin/sieve-amd64.app
 
       - name: Create universal binary
         run: |
-          cp -R build/bin/stash-arm64.app build/bin/Stash.app
-          lipo build/bin/stash-arm64.app/Contents/MacOS/stash \
-               build/bin/stash-amd64.app/Contents/MacOS/stash \
-               -create -output build/bin/Stash.app/Contents/MacOS/stash
-          cd build/bin && zip -r ../../stash-macos-universal.zip Stash.app
+          cp -R build/bin/sieve-arm64.app build/bin/sieve.app
+          lipo build/bin/sieve-arm64.app/Contents/MacOS/sieve \
+               build/bin/sieve-amd64.app/Contents/MacOS/sieve \
+               -create -output build/bin/sieve.app/Contents/MacOS/sieve
+          cd build/bin && zip -r ../../sieve-macos-universal.zip sieve.app
 
       - uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: stash-macos-universal.zip
+          path: sieve-macos-universal.zip
 
   build-linux:
     runs-on: ubuntu-latest
@@ -67,12 +67,12 @@ jobs:
       - name: Build
         run: |
           wails build -clean -platform linux/amd64 -tags webkit2_41
-          tar -czf stash-linux-amd64.tar.gz -C build/bin stash
+          tar -czf sieve-linux-amd64.tar.gz -C build/bin sieve
 
       - uses: actions/upload-artifact@v4
         with:
           name: linux
-          path: stash-linux-amd64.tar.gz
+          path: sieve-linux-amd64.tar.gz
 
   release:
     needs: [build-macos, build-linux]
@@ -85,5 +85,5 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            macos/stash-macos-universal.zip
-            linux/stash-linux-amd64.tar.gz
+            macos/sieve-macos-universal.zip
+            linux/sieve-linux-amd64.tar.gz

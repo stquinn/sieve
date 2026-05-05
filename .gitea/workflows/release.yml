@@ -28,7 +28,7 @@ jobs:
       - name: Build
         run: |
           wails build -clean -platform linux/amd64 -tags webkit2_41
-          tar -czf stash-linux-amd64.tar.gz -C build/bin stash
+          tar -czf sieve-linux-amd64.tar.gz -C build/bin sieve
 
       - name: Create Gitea release
         env:
@@ -42,6 +42,6 @@ jobs:
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases" | jq -r '.id')
           curl -sf -X POST \
             -H "Authorization: token $GITEA_TOKEN" \
-            -F "attachment=@stash-linux-amd64.tar.gz" \
+            -F "attachment=@sieve-linux-amd64.tar.gz" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/$RELEASE_ID/assets"
 
