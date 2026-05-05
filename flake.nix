@@ -47,23 +47,22 @@
   ldflags = [ "-s" "-w" ];
 
   # ... postInstall and preFixup remain the same
-  postInstall = ''
-    if [ -d build ]; then
-       install -Dm644 build/appicon.png $out/share/icons/hicolor/256x256/apps/sieve.png
-    fi
+ postInstall = ''
+  install -Dm644 build/appicon.png \
+    $out/share/icons/hicolor/256x256/apps/sieve.png
 
-    mkdir -p $out/share/applications
-    cat > $out/share/applications/Sieve.desktop <<'EOF'
+  mkdir -p $out/share/applications
+  cat > $out/share/applications/Sieve.desktop <<EOF
 [Desktop Entry]
 Name=Sieve
 Comment=Scratchpad-first thinking tool
-Exec=sieve
+Exec=$out/bin/sieve
 Icon=sieve
 Type=Application
 Categories=Utility;Office;
 StartupWMClass=Sieve
 EOF
-  '';
+'';
 
   preFixup = ''
     gappsWrapperArgs+=(--set GODEBUG asyncpreemptoff=1)
