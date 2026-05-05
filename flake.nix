@@ -30,6 +30,7 @@
   nativeBuildInputs = with pkgs; [
     pkg-config
     wrapGAppsHook3
+    gobject-introspection
   ];
 
   buildInputs = with pkgs; [
