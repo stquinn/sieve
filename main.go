@@ -21,6 +21,8 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/menu/keys"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/linux"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -29,6 +31,9 @@ var assets embed.FS
 
 //go:embed themes/*.json
 var themes embed.FS
+
+//go:embed build/appicon.png
+var icon []byte
 
 type storeHandler struct{ app *App }
 
@@ -332,6 +337,32 @@ func main() {
 		OnBeforeClose: app.beforeClose,
 		Bind: []interface{}{
 			app,
+		},
+
+		Linux: &linux.Options{
+			Icon:                icon,
+			WindowIsTranslucent: false,
+			WebviewGpuPolicy:    linux.WebviewGpuPolicyAlways,
+			ProgramName:         "Sieve",
+		},
+		Mac: &mac.Options{
+			TitleBar: &mac.TitleBar{
+				TitlebarAppearsTransparent: true,
+				HideTitle:                  false,
+				HideTitleBar:               false,
+				FullSizeContent:            false,
+				UseToolbar:                 false,
+				HideToolbarSeparator:       true,
+			},
+			Appearance:           mac.NSAppearanceNameDarkAqua,
+			WebviewIsTransparent: true,
+			WindowIsTranslucent:  false,
+			ContentProtection:    false,
+			About: &mac.AboutInfo{
+				Title:   "Sieve",
+				Message: "© 2026 SQ",
+				Icon:    icon,
+			},
 		},
 	})
 
