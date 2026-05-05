@@ -48,19 +48,24 @@
 
   # ... postInstall and preFixup remain the same
  postInstall = ''
+  # Install the icon to the store path
   install -Dm644 build/appicon.png \
     $out/share/icons/hicolor/256x256/apps/sieve.png
 
   mkdir -p $out/share/applications
+  # Using <<EOF (no quotes) allows Nix to replace $out with the real store path
   cat > $out/share/applications/Sieve.desktop <<EOF
 [Desktop Entry]
 Name=Sieve
 Comment=Scratchpad-first thinking tool
+# This will become /nix/store/gz8qa.../bin/sieve
 Exec=$out/bin/sieve
-Icon=sieve
+# This will become /nix/store/gz8qa.../share/icons/.../sieve.png
+Icon=$out/share/icons/hicolor/256x256/apps/sieve.png
 Type=Application
 Categories=Utility;Office;
 StartupWMClass=Sieve
+Terminal=false
 EOF
 '';
 
