@@ -37,7 +37,7 @@
             gsettings-desktop-schemas
           ];
 
-          buildFlags = [ "-tags" "webkit2_41" ];
+          tags = [ "webkit2_41" ];
 
           ldflags = [ "-s" "-w" ];
 
