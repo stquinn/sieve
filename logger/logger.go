@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"golang.org/x/term"
@@ -27,7 +28,7 @@ func init() {
 		out = os.Stderr
 		handler = slog.NewTextHandler(out, handlerOpts())
 	} else {
-		logDir := filepath.Join(os.Getenv("HOME"), "Library", "Logs", "Sieve")
+		logDir := logDirectory()
 		_ = os.MkdirAll(logDir, 0o755)
 		rotated := &lumberjack.Logger{
 			Filename:   filepath.Join(logDir, "sieve.log"),
@@ -40,6 +41,18 @@ func init() {
 	}
 
 	log = slog.New(handler)
+}
+
+func logDirectory() string {
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(os.Getenv("HOME"), "Library", "Logs", "Sieve")
+	}
+	// XDG_STATE_HOME is the spec-compliant location for logs/state on Linux.
+	stateHome := os.Getenv("XDG_STATE_HOME")
+	if stateHome == "" {
+		stateHome = filepath.Join(os.Getenv("HOME"), ".local", "state")
+	}
+	return filepath.Join(stateHome, "sieve")
 }
 
 func handlerOpts() *slog.HandlerOptions {
