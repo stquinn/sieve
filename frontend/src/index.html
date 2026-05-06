@@ -77,7 +77,7 @@
                 </div>
 
                 <div class="meta-handle"></div>
-                <div id="htmx-meta-panel" style="width: {{.MetaWidth}}px;" class="flex flex-col flex-shrink-0 overflow-hidden bg-tn-bg-dark border-l border-tn-border text-base" hx-get="/api/meta" hx-trigger="load, sse:session:changed, sse:notes:changed, session:changed from:body, notes:changed from:body"></div>
+                <div id="htmx-meta-panel" style="width: {{.MetaWidth}}px;" class="flex flex-col flex-shrink-0 overflow-hidden bg-tn-bg-dark border-l border-tn-border text-base" hx-get="/api/meta" hx-vals='js:{"tab": window.__metaActiveTab || "meta"}' hx-trigger="load, sse:session:changed, sse:notes:changed, session:changed from:body, notes:changed from:body"></div>
             </div>
 
             <div class="status-bar">
@@ -208,13 +208,27 @@
         return ms > 0 ? ms : 30000;
     };
 
+    window.__metaActiveTab = 'meta';
+
+    function metaPanelUrl(uuid) {
+        return '/api/meta?uuid=' + encodeURIComponent(uuid) + '&tab=' + (window.__metaActiveTab || 'meta');
+    }
+
+    document.addEventListener('htmx:afterSettle', function(e) {
+        var target = e.detail && e.detail.target;
+        if (target && target.id === 'htmx-meta-panel') {
+            var root = target.querySelector('[data-active-tab]');
+            if (root) window.__metaActiveTab = root.getAttribute('data-active-tab') || 'meta';
+        }
+    });
+
     document.addEventListener('editor:saved', function(e) {
         var uuid = e.detail && e.detail.uuid;
         var metaPanel = document.getElementById('htmx-meta-panel');
         var mount = document.getElementById('tiptap-mount');
         var activeUuid = mount ? mount.getAttribute('data-uuid') : null;
         if (uuid && uuid === activeUuid && metaPanel && window.htmx && window.getComputedStyle(metaPanel).display !== 'none') {
-            window.htmx.ajax('GET', '/api/meta?uuid=' + encodeURIComponent(uuid), { target: '#htmx-meta-panel', swap: 'innerHTML' });
+            window.htmx.ajax('GET', metaPanelUrl(uuid), { target: '#htmx-meta-panel', swap: 'innerHTML' });
         }
     });
 
@@ -224,7 +238,7 @@
         var mount = document.getElementById('tiptap-mount');
         var activeUuid = mount ? mount.getAttribute('data-uuid') : null;
         if (uuid && uuid === activeUuid && metaPanel && window.htmx && window.getComputedStyle(metaPanel).display !== 'none') {
-            window.htmx.ajax('GET', '/api/meta?uuid=' + encodeURIComponent(uuid), { target: '#htmx-meta-panel', swap: 'innerHTML' });
+            window.htmx.ajax('GET', metaPanelUrl(uuid), { target: '#htmx-meta-panel', swap: 'innerHTML' });
         }
     });
 
@@ -263,10 +277,9 @@
                     if (window.__sieveActiveDocUuid !== uuid) return;
                     fetch('/api/note/focus/' + encodeURIComponent(uuid), { method: 'POST' })
                         .then(function() {
-                            // Optionally refresh meta panel to show updated count if visible
                             var mp = document.getElementById('htmx-meta-panel');
                             if (mp && window.getComputedStyle(mp).display !== 'none') {
-                                window.htmx.ajax('GET', '/api/meta?uuid=' + encodeURIComponent(uuid), { target: '#htmx-meta-panel', swap: 'innerHTML' });
+                                window.htmx.ajax('GET', metaPanelUrl(uuid), { target: '#htmx-meta-panel', swap: 'innerHTML' });
                             }
                         })
                         .catch(console.error);
@@ -288,7 +301,7 @@
             var activeUuid = mount ? mount.getAttribute('data-uuid') : null;
             var metaPanel = document.getElementById('htmx-meta-panel');
             if (activeUuid && metaPanel && window.htmx && window.getComputedStyle(metaPanel).display !== 'none') {
-                window.htmx.ajax('GET', '/api/meta?uuid=' + encodeURIComponent(activeUuid), { target: '#htmx-meta-panel', swap: 'innerHTML' });
+                window.htmx.ajax('GET', metaPanelUrl(activeUuid), { target: '#htmx-meta-panel', swap: 'innerHTML' });
             }
         }
     });

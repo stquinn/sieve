@@ -66,11 +66,12 @@ type metaViewData struct {
 }
 
 type versionViewData struct {
-	ID         string
-	Created    string
-	SizeKB     int64
-	UUIDEnc    string
+	ID        string
+	Created   string
+	Size      string
+	UUIDEnc   string
 	VersionEnc string
+	IsCurrent bool
 }
 
 type assetViewData struct {
@@ -240,15 +241,27 @@ func toMetaView(m sieve.DocumentMeta) *metaViewData {
 	return mv
 }
 
+func humanSize(b int64) string {
+	switch {
+	case b < 1024:
+		return fmt.Sprintf("%d B", b)
+	case b < 1024*1024:
+		return fmt.Sprintf("%d KB", b/1024)
+	default:
+		return fmt.Sprintf("%.1f MB", float64(b)/(1024*1024))
+	}
+}
+
 func toVersionViews(refs []store.VersionRef, uuidEnc string) []versionViewData {
 	out := make([]versionViewData, len(refs))
 	for i, r := range refs {
 		out[i] = versionViewData{
 			ID:         r.ID,
-			Created:    r.Created.Format("Jan 2, 2006, 3:04 PM"),
-			SizeKB:     r.Size / 1024,
+			Created:    r.Created.Format("2/1/06 @ 15:04"),
+			Size:       humanSize(r.Size),
 			UUIDEnc:    uuidEnc,
 			VersionEnc: url.QueryEscape(r.ID),
+			IsCurrent:  i == 0,
 		}
 	}
 	return out

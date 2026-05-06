@@ -1,5 +1,5 @@
 {{define "meta_panel.html"}}
-<div class="flex flex-col h-full overflow-hidden">
+<div class="flex flex-col h-full overflow-hidden" data-active-tab="{{.Tab}}">
 
   {{/* Tab header */}}
   <div class="flex items-center justify-between text-[13px] font-semibold uppercase tracking-[0.05em] text-tn-text px-[0.9rem] h-[44px] border-b border-solid border-tn-border shrink-0 bg-tn-bg-dark">
@@ -160,15 +160,19 @@
   <div id="version-row-{{.ID}}" class="flex justify-between items-center px-[0.9rem] py-[0.6rem] border-b border-solid border-tn-border">
     <div class="flex flex-col gap-[0.2rem]">
       <span class="text-tn-text font-semibold text-[14px]">{{.ID}}</span>
-      <span class="text-tn-text-dim text-[12px]">{{.Created}} · {{.SizeKB}} KB</span>
+      <span class="text-tn-text-dim text-[12px]">{{.Created}} - {{.Size}}</span>
+       
     </div>
+    <div class="flex flex-col gap-[0.2rem]">
+    {{if .IsCurrent}}
+    <span class="text-[13px] text-tn-text-dim italic px-[0.6rem] py-[0.25rem]">Current</span>
+    {{else}}
     <button
       class="bg-tn-bg-alt border border-solid border-tn-border-2 text-tn-text text-[13px] px-[0.6rem] py-[0.25rem] rounded-[4px] cursor-pointer hover:bg-tn-blue hover:border-tn-blue hover:text-white transition-colors"
-      hx-get="/api/meta/restore-prompt?uuid={{.UUIDEnc}}&version={{.ID | urlenc}}"
-      hx-target="#restore-dialog-content"
-      hx-swap="innerHTML"
-      hx-on::after-settle="document.getElementById('restore-dialog').showModal()"
+      onclick="htmx.ajax('GET','/api/meta/restore-prompt?uuid={{.UUIDEnc}}&version={{.ID | urlenc}}',{target:'#restore-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('restore-dialog').showModal()})"
     >Restore</button>
+    {{end}}
+    </div>
   </div>
   {{end}}
   {{end}}

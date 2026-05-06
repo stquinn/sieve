@@ -13,7 +13,7 @@
           content: ctx.content,
           history: ctx.history,
           noteUUID: currentUuid || '',
-          imageStorePaths: ctx.imagePaths || []
+          imageBlockIds: ctx.imageIds || []
         })
       })
       .then(function(r) {
@@ -36,7 +36,7 @@
           history: ctx.history,
           question: question,
           noteUUID: currentUuid || '',
-          imageStorePaths: ctx.imagePaths || []
+          imageBlockIds: ctx.imageIds || []
         })
       })
       .then(function(r) {

@@ -177,16 +177,7 @@ func (fs *FileStore) scanDocAssets(cat store.Category, key string, uuid string) 
 			continue
 		}
 		assetExtRef := "/sieve/" + uuid + "/" + e.Name()
-		assets = append(assets, &fileAssetStorable{
-			fileStorable: fileStorable{
-				key:      e.Name(),
-				path:     e.Name(),
-				category: cat,
-				body:     data,
-				extRef:   assetExtRef,
-			},
-			encoding: inferEncoding(data),
-		})
+		assets = append(assets, newFileAssetStorable(e.Name(), e.Name(), cat, data, assetExtRef, inferEncoding(data)))
 	}
 	return assets
 }

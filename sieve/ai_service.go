@@ -86,14 +86,16 @@ func (s *AIService) EvaluateBuffer(meta DocumentMeta, body []byte) (*FilingRecom
 // RunExplain asks the AI to explain the given content and returns a markdown
 // response. noteUUID identifies the owning document (used to resolve the working
 // directory for the CLI process). imageStorePaths are store-relative image paths.
-func (s *AIService) RunExplain(content, history, noteUUID string, imageStorePaths []string) (string, error) {
+func (s *AIService) RunExplain(content, history, noteUUID string, imageBlockIds []string) (string, error) {
 	settings := s.state.LoadSettings()
 	if settings.Tier() == TierDumb {
 		return "", fmt.Errorf("explain not available in dumb mode")
 	}
 	prompt, _ := s.prompts.GetPromptContent("explain")
-	noteCwd := filepath.Dir(s.resolvePath(s.resolveNotePath(noteUUID)))
-	imagePaths := s.absImagePaths(imageStorePaths)
+	imagePaths, noteCwd := s.resolveAIImages(noteUUID, imageBlockIds)
+	if noteCwd == "" {
+		noteCwd = filepath.Dir(s.resolvePath(s.resolveNotePath(noteUUID)))
+	}
 
 	contentType := detectContentType(content)
 	p := strings.ReplaceAll(prompt, "{type}", contentType)
@@ -110,14 +112,16 @@ func (s *AIService) RunExplain(content, history, noteUUID string, imageStorePath
 // RunAsk asks the AI a question with the given content as context. history may
 // be empty for first-turn asks. noteUUID and imageStorePaths follow the same
 // conventions as RunExplain.
-func (s *AIService) RunAsk(content, history, question, noteUUID string, imageStorePaths []string) (string, error) {
+func (s *AIService) RunAsk(content, history, question, noteUUID string, imageBlockIds []string) (string, error) {
 	settings := s.state.LoadSettings()
 	if settings.Tier() == TierDumb {
 		return "", fmt.Errorf("ask not available in dumb mode")
 	}
 	prompt, _ := s.prompts.GetPromptContent("ask")
-	noteCwd := filepath.Dir(s.resolvePath(s.resolveNotePath(noteUUID)))
-	imagePaths := s.absImagePaths(imageStorePaths)
+	imagePaths, noteCwd := s.resolveAIImages(noteUUID, imageBlockIds)
+	if noteCwd == "" {
+		noteCwd = filepath.Dir(s.resolvePath(s.resolveNotePath(noteUUID)))
+	}
 
 	contentType := detectContentType(content)
 	p := strings.ReplaceAll(prompt, "{type}", contentType)
@@ -150,8 +154,9 @@ func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string
 	var asset store.AssetStorable
 	for _, assetItr := range doc.Storable().Owns() {
 		as, ok := assetItr.(store.AssetStorable)
-		if ok && strings.HasPrefix(as.Key(), blkId) {
+		if ok && as.BlkID() == blkId {
 			asset = as
+			break
 		}
 	}
 	if asset == nil {
@@ -352,12 +357,36 @@ func (s *AIService) resolveNotePath(uuid string) string {
 	return doc.Storable().ExternalRef()
 }
 
-func (s *AIService) absImagePaths(storePaths []string) []string {
-	abs := make([]string, len(storePaths))
-	for i, p := range storePaths {
-		abs[i] = filepath.Join(s.storePath, p)
+// resolveAIImages loads the document by noteUUID, derives the note's working
+// directory, and returns absolute paths for any owned assets whose blk-id
+// (filename without extension) appears in blockIds. noteCwd is always returned
+// when the document loads, regardless of whether any images matched.
+func (s *AIService) resolveAIImages(noteUUID string, blockIds []string) (imagePaths []string, noteCwd string) {
+	if noteUUID == "" || s.documents == nil {
+		return nil, ""
 	}
-	return abs
+	doc, err := s.documents.LoadByUUID(noteUUID)
+	if err != nil {
+		return nil, ""
+	}
+	noteCwd = filepath.Join(s.storePath, doc.Storable().ExternalRef())
+	if len(blockIds) == 0 {
+		return nil, noteCwd
+	}
+	idSet := make(map[string]bool, len(blockIds))
+	for _, id := range blockIds {
+		idSet[id] = true
+	}
+	for _, owned := range doc.Storable().Owns() {
+		as, ok := owned.(store.AssetStorable)
+		if !ok {
+			continue
+		}
+		if idSet[as.BlkID()] {
+			imagePaths = append(imagePaths, filepath.Join(noteCwd, as.Key()))
+		}
+	}
+	return
 }
 
 // FilingOutcome is the result of AIService.EvaluateAndFileDoc.

@@ -145,16 +145,7 @@ func (fs *FileStore) CreateAsset(cat store.Category, parentKey string, assetID s
 		key = ".assets/" + filename
 	}
 
-	return &fileAssetStorable{
-		fileStorable: fileStorable{
-			key:      filename,
-			path:     key,
-			category: cat,
-			body:     body,
-			extRef:   extRef,
-		},
-		encoding: enc,
-	}, nil
+	return newFileAssetStorable(filename, key, cat, body, extRef, enc), nil
 }
 
 func (fs *FileStore) CreateText(cat store.Category, key string, body []byte) (store.Storable, error) {
@@ -662,16 +653,7 @@ func (fs *FileStore) createAsset(cat store.Category, key, absPath string, body [
 	}
 	enc := inferEncoding(body)
 	extRef := fs.externalRef(cat, key)
-	return &fileAssetStorable{
-		fileStorable: fileStorable{
-			key:      key,
-			path:     key,
-			category: cat,
-			body:     body,
-			extRef:   extRef,
-		},
-		encoding: enc,
-	}, nil
+	return newFileAssetStorable(key, key, cat, body, extRef, enc), nil
 }
 
 func (fs *FileStore) createPlain(cat store.Category, key, absPath string, body []byte) (store.Storable, error) {
@@ -766,15 +748,7 @@ func (fs *FileStore) saveAsset(s *fileAssetStorable) (store.Storable, error) {
 		return nil, fmt.Errorf("filestore: save asset %s: %w", s.key, err)
 	}
 	enc := inferEncoding(s.body)
-	return &fileAssetStorable{
-		fileStorable: fileStorable{
-			key:      s.key,
-			category: s.category,
-			body:     s.body,
-			extRef:   s.extRef,
-		},
-		encoding: enc,
-	}, nil
+	return newFileAssetStorable(s.key, s.key, s.category, s.body, s.extRef, enc), nil
 }
 
 func (fs *FileStore) savePlain(s *fileStorable) (store.Storable, error) {

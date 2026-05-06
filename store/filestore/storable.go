@@ -2,6 +2,8 @@ package filestore
 
 import (
 	"path/filepath"
+	"strings"
+
 	"sieve/store"
 )
 
@@ -53,9 +55,23 @@ func (s *fileMetaStorable) ClearOwns()                         { s.owns = nil; s
 type fileAssetStorable struct {
 	fileStorable
 	encoding store.Encoding
+	blkId    string
 }
- 
+
 func (s *fileAssetStorable) Encoding() store.Encoding { return s.encoding }
+func (s *fileAssetStorable) BlkID() string            { return s.blkId }
+
+func newFileAssetStorable(key, path string, cat store.Category, body []byte, extRef string, enc store.Encoding) *fileAssetStorable {
+	blkId := key
+	if dot := strings.LastIndex(key, "."); dot > 0 {
+		blkId = key[:dot]
+	}
+	return &fileAssetStorable{
+		fileStorable: fileStorable{key: key, path: path, category: cat, body: body, extRef: extRef},
+		encoding:     enc,
+		blkId:        blkId,
+	}
+}
 
 // fileFolderStorable extends fileStorable for directory nodes in the ownership
 // graph. Owns is populated by FileStore.List when scanning the tree.

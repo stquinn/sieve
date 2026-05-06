@@ -7,10 +7,10 @@
     <span style="color: var(--theme-muted); font-size: 0.8rem;">Any unsaved changes in the current document will be lost.</span>
   </p>
 
-  <form 
+  <form
     hx-post="/api/meta/restore?uuid={{.UUID}}&version={{.VersionID}}"
     hx-swap="none"
-    onsubmit="document.getElementById('restore-dialog').close()"
+    hx-on::after-request="document.getElementById('restore-dialog').close()"
     style="display: flex; justify-content: flex-end; gap: 1rem;"
   >
     <button 

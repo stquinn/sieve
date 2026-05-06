@@ -97,11 +97,11 @@ func (h *AiHandler) evaluateAndFile(w http.ResponseWriter, id string, fileAfter 
 }
 
 type askRequest struct {
-	Content         string   `json:"content"`
-	History         string   `json:"history"`
-	Question        string   `json:"question"`
-	NoteUUID        string   `json:"noteUUID"`
-	ImageStorePaths []string `json:"imageStorePaths"`
+	Content       string   `json:"content"`
+	History       string   `json:"history"`
+	Question      string   `json:"question"`
+	NoteUUID      string   `json:"noteUUID"`
+	ImageBlockIds []string `json:"imageBlockIds"`
 }
 
 func (h *AiHandler) handleAiAsk(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +111,7 @@ func (h *AiHandler) handleAiAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.ServiceProvider.AI.RunAsk(req.Content, req.History, req.Question, req.NoteUUID, req.ImageStorePaths)
+	resp, err := h.ServiceProvider.AI.RunAsk(req.Content, req.History, req.Question, req.NoteUUID, req.ImageBlockIds)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -122,10 +122,10 @@ func (h *AiHandler) handleAiAsk(w http.ResponseWriter, r *http.Request) {
 }
 
 type explainRequest struct {
-	Content         string   `json:"content"`
-	History         string   `json:"history"`
-	NoteUUID        string   `json:"noteUUID"`
-	ImageStorePaths []string `json:"imageStorePaths"`
+	Content       string   `json:"content"`
+	History       string   `json:"history"`
+	NoteUUID      string   `json:"noteUUID"`
+	ImageBlockIds []string `json:"imageBlockIds"`
 }
 
 func (h *AiHandler) handleAiExplain(w http.ResponseWriter, r *http.Request) {
@@ -135,7 +135,7 @@ func (h *AiHandler) handleAiExplain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.ServiceProvider.AI.RunExplain(req.Content, req.History, req.NoteUUID, req.ImageStorePaths)
+	resp, err := h.ServiceProvider.AI.RunExplain(req.Content, req.History, req.NoteUUID, req.ImageBlockIds)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

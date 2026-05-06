@@ -71,6 +71,11 @@ type AssetStorable interface {
 
 	// Encoding returns the encoding inferred from the raw bytes at creation.
 	Encoding() Encoding
+
+	// BlkID returns the block identifier for this asset — the filename stem
+	// (key without extension), e.g. "blk-a1b2" for "blk-a1b2.png".
+	// Derived once at load/create time from the filename.
+	BlkID() string
 }
 
 // FolderStorable is a first-class node in the ownership graph. Folders own

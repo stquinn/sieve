@@ -32,17 +32,11 @@
     return src
   }
 
-  function mdSrcToStoreRelPath(src, uuid) {
+  function srcToBlockId(src) {
     if (!src || src.startsWith('http') || src.startsWith('blob:') || src.startsWith('data:')) return ''
-    if (src.startsWith('/')) return src.substring(1)
-    
-    // For co-located assets, we just return the filename. 
-    // The backend knows which document it belongs to.
-    if (src.startsWith('.assets/')) {
-      return src.substring(8)
-    }
-    
-    return src
+    var filename = src.split('/').pop() || ''
+    var dot = filename.lastIndexOf('.')
+    return dot > 0 ? filename.substring(0, dot) : filename
   }
 
   function getCleanMarkdown(fullMd) {
@@ -846,15 +840,15 @@
 
   // ── buildAiContext ─────────────────────────────────────────────────────────
 
-  function collectChainImagePaths(doc, refs, uuid) {
-    var paths = []
+  function collectChainImageIds(doc, refs, uuid) {
+    var ids = []
     var seen = new Set()
 
     if (refs.length === 0 || refs.includes('doc')) {
       doc.descendants(function (node) {
         if (node.type.name === 'image' && node.attrs && node.attrs.src) {
-          var p = mdSrcToStoreRelPath(node.attrs.src, uuid)
-          if (p && !seen.has(p)) { seen.add(p); paths.push(p) }
+          var id = srcToBlockId(node.attrs.src)
+          if (id && !seen.has(id)) { seen.add(id); ids.push(id) }
         }
       })
     } else {
@@ -862,14 +856,14 @@
         doc.descendants(function (node) {
           if (node.attrs && node.attrs.id === refId) {
             if (node.type.name === 'image' && node.attrs.src) {
-              var p = mdSrcToStoreRelPath(node.attrs.src, uuid)
-              if (p && !seen.has(p)) { seen.add(p); paths.push(p) }
+              var id = srcToBlockId(node.attrs.src)
+              if (id && !seen.has(id)) { seen.add(id); ids.push(id) }
             }
             if (node.descendants) {
               node.descendants(function (child) {
                 if (child.type.name === 'image' && child.attrs && child.attrs.src) {
-                  var p = mdSrcToStoreRelPath(child.attrs.src, uuid)
-                  if (p && !seen.has(p)) { seen.add(p); paths.push(p) }
+                  var id = srcToBlockId(child.attrs.src)
+                  if (id && !seen.has(id)) { seen.add(id); ids.push(id) }
                 }
               })
             }
@@ -878,7 +872,7 @@
         })
       })
     }
-    return paths
+    return ids
   }
 
   function buildAiContext(editor, isMarkdownMode, rawMd, uuid) {
@@ -886,9 +880,9 @@
       var ta = document.querySelector('.markdown-raw')
       var cleanBody = getCleanMarkdown(rawMd)
       if (ta && ta.selectionStart !== ta.selectionEnd) {
-        return { content: ta.value.substring(ta.selectionStart, ta.selectionEnd).trim(), blockRef: 'doc', history: '', contextLabel: 'Selection', imagePaths: [] }
+        return { content: ta.value.substring(ta.selectionStart, ta.selectionEnd).trim(), blockRef: 'doc', history: '', contextLabel: 'Selection', imageIds: [] }
       }
-      return { content: cleanBody, blockRef: 'doc', history: '', contextLabel: 'Document', imagePaths: [] }
+      return { content: cleanBody, blockRef: 'doc', history: '', contextLabel: 'Document', imageIds: [] }
     }
 
     var selection = editor.state.selection
@@ -950,7 +944,7 @@
       var newRef = aiBlockRef ? aiBlockRef + ',' + aiBlockId : aiBlockId
       var chainRefs = aiBlockRef ? aiBlockRef.split(',') : ['doc']
 
-      return { content: currentBlockText || sourceContent, blockRef: newRef, history: historyTurns, contextLabel: 'Follow-up', imagePaths: collectChainImagePaths(doc, chainRefs, uuid) }
+      return { content: currentBlockText || sourceContent, blockRef: newRef, history: historyTurns, contextLabel: 'Follow-up', imageIds: collectChainImageIds(doc, chainRefs, uuid) }
     }
 
     var targetNode = null, targetPos = -1
@@ -1007,19 +1001,19 @@
       }
     }
 
-    var finalImagePaths = []
+    var finalImageIds = []
     if (from !== to || targetNode || blockRange) {
-      var seenPaths = new Set()
+      var seenIds = new Set()
       var scanRangeFrom = targetNode ? targetPos : (blockRange ? blockRange.start : from)
       var scanRangeTo   = targetNode ? targetPos + targetNode.nodeSize : (blockRange ? blockRange.end : to)
       doc.nodesBetween(scanRangeFrom, scanRangeTo, function (node) {
         if (node.type.name === 'image' && node.attrs && node.attrs.src) {
-          var p = mdSrcToStoreRelPath(node.attrs.src, uuid)
-          if (p && !seenPaths.has(p)) { seenPaths.add(p); finalImagePaths.push(p) }
+          var id = srcToBlockId(node.attrs.src)
+          if (id && !seenIds.has(id)) { seenIds.add(id); finalImageIds.push(id) }
         }
       })
     } else {
-      finalImagePaths = collectChainImagePaths(tr.doc, [blockRef], uuid)
+      finalImageIds = collectChainImageIds(tr.doc, [blockRef], uuid)
     }
 
     if (tr.docChanged) editor.view.dispatch(tr)
@@ -1029,7 +1023,7 @@
       blockRef: (from === to && !targetNode && !blockRange) ? 'doc' : blockRef,
       history: '',
       contextLabel: contextLabel,
-      imagePaths: finalImagePaths,
+      imageIds: finalImageIds,
     }
   }
 
