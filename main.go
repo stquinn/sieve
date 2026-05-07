@@ -216,16 +216,14 @@ func (m *muxHandler) serveThemeCSS(w http.ResponseWriter, _ *http.Request) {
 	w.Write([]byte("}\n"))
 }
 
-func buildMenu(wailsApp *application.App) *application.Menu {
+func buildMenu(appInstance *App, wailsApp *application.App) *application.Menu {
 	isMac := goruntime.GOOS == "darwin"
 
 	js := func(script string) func(*application.Context) {
-		logger.Info("Executing JS1")
 		return func(_ *application.Context) {
-			logger.Info("Executing JS2")
-			if wailsApp.Window.Current() != nil {
-				logger.Info("Executing JS3")
-				wailsApp.Window.Current().ExecJS(script)
+			fmt.Printf("[menu] callback fired, window=%v, script=%s\n", appInstance.window != nil, script[:20])
+			if appInstance.window != nil {
+				appInstance.window.ExecJS(script)
 			}
 		}
 	}
@@ -238,25 +236,8 @@ func buildMenu(wailsApp *application.App) *application.Menu {
 		appMenu.AddRole(application.AppMenu)
 	}
 
-	// modKey := "Ctrl"
-	// if isMac {
-	// 	modKey = "Cmd"
-	// }
-
-	// appMenu.AddRole(application.FileMenu)
-
 	file := appMenu.AddSubmenu("File")
-
-	// fileMenu.FindByRole(application.NewFile).OnClick(func(ctx *application.Context) { logger.Info("New") })
-	appMenu.AddRole(application.EditMenu)
-
-	newNote := file.Add("New Note")
-	newNote.SetRole(application.NewFile)
-	newNote.SetAccelerator("CmdOrCtrl+n")
-	newNote.SetEnabled(true)
-	newNote.OnClick(func(ctx *application.Context) {
-		logger.Info("CLICKED NEW NOTE")
-	})
+	file.Add("New Note").SetAccelerator("CmdOrCtrl+n").OnClick(js("htmx.ajax('POST','/api/note/new',{target:'#htmx-tabbar',swap:'innerHTML'})"))
 	file.Add("Save").SetAccelerator("CmdOrCtrl+s").OnClick(js("document.dispatchEvent(new CustomEvent('sieve:save'))"))
 	file.Add("Close Tab").SetAccelerator("CmdOrCtrl+w").OnClick(js("var id=document.getElementById('tiptap-mount')?.getAttribute('data-uuid');if(id)htmx.ajax('POST','/api/tabs/close/'+id,{target:'#htmx-tabbar',swap:'innerHTML'})"))
 	file.AddSeparator()
@@ -270,44 +251,40 @@ func buildMenu(wailsApp *application.App) *application.Menu {
 		file.AddRole(application.Quit)
 	}
 
-	// if isMac {
-	// 	appMenu.AddRole(application.EditMenu)
-	// }
+	if isMac {
+		appMenu.AddRole(application.EditMenu)
+	}
 
-	// view := appMenu.AddSubmenu("View")
-	// view.Add("Toggle Sidebar").SetAccelerator(modKey + "+\\").OnClick(js("htmx.ajax('POST','/api/session/sidebar/toggle',{swap:'none'})"))
-	// view.Add("Toggle Meta Panel").SetAccelerator(modKey + "+Shift+i").OnClick(js("htmx.ajax('POST','/api/session/meta/toggle',{swap:'none'})"))
-	// view.Add("Toggle Prompts").SetAccelerator(modKey + "+Shift+p").OnClick(js("htmx.ajax('POST','/api/session/prompts/toggle',{swap:'none'})"))
-	// view.Add("Toggle Editor Mode").SetAccelerator(modKey + "+Shift+m").OnClick(js("document.dispatchEvent(new CustomEvent('sieve:toggle-mode'))"))
-	// view.AddSeparator()
-	// view.Add("Toggle Search").SetAccelerator(modKey + "+f").OnClick(js("document.dispatchEvent(new CustomEvent('sieve:toggle-search'))"))
-	// view.Add("Sidebar Search").SetAccelerator(modKey + "+Shift+f").OnClick(js("window.sieveSidebarSearch?.()"))
-	// view.Add("Toggle AI Blocks").SetAccelerator(modKey + "+j").OnClick(js("document.dispatchEvent(new CustomEvent('sieve:toggle-ai-blocks'))"))
-	// view.Add("Quick Switcher").SetAccelerator(modKey + "+p").OnClick(js("htmx.ajax('GET','/api/search-prompt',{target:'#quickswitcher-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('quickswitcher-dialog').showModal()})"))
+	view := appMenu.AddSubmenu("View")
+	view.Add("Toggle Sidebar").SetAccelerator("CmdOrCtrl+\\").OnClick(js("htmx.ajax('POST','/api/session/sidebar/toggle',{swap:'none'})"))
+	view.Add("Toggle Meta Panel").SetAccelerator("CmdOrCtrl+Shift+i").OnClick(js("htmx.ajax('POST','/api/session/meta/toggle',{swap:'none'})"))
+	view.Add("Toggle Prompts").SetAccelerator("CmdOrCtrl+Shift+p").OnClick(js("htmx.ajax('POST','/api/session/prompts/toggle',{swap:'none'})"))
+	view.Add("Toggle Editor Mode").SetAccelerator("CmdOrCtrl+Shift+m").OnClick(js("document.dispatchEvent(new CustomEvent('sieve:toggle-mode'))"))
+	view.AddSeparator()
+	view.Add("Toggle Search").SetAccelerator("CmdOrCtrl+f").OnClick(js("document.dispatchEvent(new CustomEvent('sieve:toggle-search'))"))
+	view.Add("Sidebar Search").SetAccelerator("CmdOrCtrl+Shift+f").OnClick(js("window.sieveSidebarSearch?.()"))
+	view.Add("Toggle AI Blocks").SetAccelerator("CmdOrCtrl+j").OnClick(js("document.dispatchEvent(new CustomEvent('sieve:toggle-ai-blocks'))"))
+	view.Add("Quick Switcher").SetAccelerator("CmdOrCtrl+p").OnClick(js("htmx.ajax('GET','/api/search-prompt',{target:'#quickswitcher-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('quickswitcher-dialog').showModal()})"))
 
 	tools := appMenu.AddSubmenu("Tools")
 	tools.Add("Smart File").SetAccelerator("CmdOrCtrl+Shift+e").OnClick(js("window.SieveAI?.smartFile()"))
 	tools.Add("Keep & Smart File").SetAccelerator("CmdOrCtrl+Shift+Return").OnClick(js("window.SieveAI?.keepAndSmartFile()"))
 
-	// appMenu.AddRole(application.WindowMenu)
-
 	appMenu.AddRole(application.WindowMenu)
-	appMenu.AddRole(application.HelpMenu)
 
-	// help := appMenu.AddSubmenu("Help")
-	// help.Add("Shortcuts").SetAccelerator(modKey + "+/").OnClick(js("htmx.ajax('GET','/api/help',{target:'#help-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('help-dialog').showModal()})"))
-	// if !isMac {
-	// 	help.Add("About").OnClick(func(_ *application.Context) {
-	// 		wailsApp.Dialog.Info().
-	// 			SetTitle("About Sieve").
-	// 			SetMessage("Sieve v1.0").
-	// 			Show()
-	// 	})
-	// }
+	help := appMenu.AddSubmenu("Help")
+	help.Add("Shortcuts").SetAccelerator("CmdOrCtrl+/").OnClick(js("htmx.ajax('GET','/api/help',{target:'#help-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('help-dialog').showModal()})"))
+	if !isMac {
+		help.Add("About").OnClick(func(_ *application.Context) {
+			wailsApp.Dialog.Info().
+				SetTitle("About Sieve").
+				SetMessage("Sieve v1.0").
+				Show()
+		})
+	}
 
 	wailsApp.Menu.Set(appMenu)
 	return appMenu
-
 }
 
 func main() {
@@ -367,7 +344,7 @@ func main() {
 		},
 	})
 
-	menu := buildMenu(wailsApp)
+	menu := buildMenu(appInstance, wailsApp)
 
 	window := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:              "Sieve",

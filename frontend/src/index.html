@@ -144,6 +144,10 @@
     {{end}}
 
     <!-- Scripts -->
+    <!-- Wails runtime: loaded dynamically so Vite doesn't try to bundle it at build time -->
+    <script>
+    (function(){var s=document.createElement('script');s.type='module';s.src='/wails/runtime.js';document.head.appendChild(s);})();
+    </script>
     <script src="/static/vendor/htmx-bundle.js"></script>
     <script src="/static/vendor/tiptap.js"></script>
     <script src="/static/extensions.js"></script>
