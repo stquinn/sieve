@@ -45,8 +45,11 @@ func (s *AIService) EvaluateAndFileDoc(id string, fileAfter bool, allowDiscard b
 		userIntent = *ui
 	}
 
-	if fileAfter && isHTMLBodyEmpty(string(body)) && userIntent != "keep" {
-		return FilingOutcome{Discarded: true}, s.documents.Delete(doc)
+	if isHTMLBodyEmpty(string(body)) {
+		if fileAfter && allowDiscard && userIntent != "keep" {
+			return FilingOutcome{Discarded: true}, s.documents.Delete(doc)
+		}
+		return FilingOutcome{Discarded: false}, nil
 	}
 
 	if userIntent == "trash" {

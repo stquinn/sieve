@@ -27,7 +27,7 @@ func (h *AiHandler) RegisterPaths(r chi.Router) {
 
 func (h *AiHandler) handleAiSmartFile(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	h.evaluateAndFile(w, id, true, true)
+	h.evaluateAndFile(w, id, true, false)
 }
 
 func (h *AiHandler) handleAiSmartMetadata(w http.ResponseWriter, r *http.Request) {

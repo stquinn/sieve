@@ -198,11 +198,10 @@ func (h *NoteHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 	// Smart Close background evaluation
 	settings := h.ServiceProvider.State.LoadSettings()
 	if settings.Tier() == sieve.TierSmart {
-		isBuffer := false
-		if buf, err := h.ServiceProvider.Documents.LoadByUUID(id); err == nil && buf != nil {
-			go func(id string, isBuf bool) {
-				_, _ = h.ServiceProvider.AI.EvaluateAndFileDoc(id, true, isBuf)
-			}(id, isBuffer)
+		if _, err := h.ServiceProvider.Documents.LoadByUUID(id); err == nil {
+			go func(id string) {
+				_, _ = h.ServiceProvider.AI.EvaluateAndFileDoc(id, true, true)
+			}(id)
 		}
 	}
 
