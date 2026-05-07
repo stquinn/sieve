@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"time"
 
@@ -231,18 +232,39 @@ func buildMenu(app *App) *menu.Menu {
 		}
 	}
 
+	isMac := goruntime.GOOS == "darwin"
+	openSettings := js("htmx.ajax('GET','/api/settings',{target:'#settings-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('settings-dialog').showModal()})")
+
 	appMenu := menu.NewMenu()
+
+	if isMac {
+		// macOS: AppMenu role provides "Sieve > About, Services, Hide, Quit"
+		// EditMenu role provides a proper "Edit" menu with Cut/Copy/Paste/Undo
+		appMenu.Append(menu.AppMenu())
+	}
 
 	file := appMenu.AddSubmenu("File")
 	file.AddText("New Note", keys.CmdOrCtrl("n"), js("htmx.ajax('POST','/api/note/new',{target:'#htmx-tabbar',swap:'innerHTML'})"))
 	file.AddText("Save", keys.CmdOrCtrl("s"), js("document.dispatchEvent(new CustomEvent('sieve:save'))"))
 	file.AddText("Close Tab", keys.CmdOrCtrl("w"), js("var id=document.getElementById('tiptap-mount')?.getAttribute('data-uuid');if(id)htmx.ajax('POST','/api/tabs/close/'+id,{target:'#htmx-tabbar',swap:'innerHTML'})"))
+	//this shuld be Preferences in App menu
 	file.AddSeparator()
-	file.AddText("Settings", keys.CmdOrCtrl(","), js("htmx.ajax('GET','/api/settings',{target:'#settings-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('settings-dialog').showModal()})"))
+	settingsLabel := "Settings"
+	if isMac {
+		settingsLabel = "Preferences"
+	}
+	file.AddText(settingsLabel, keys.CmdOrCtrl(","), openSettings)	
 	file.AddSeparator()
-	file.AddText("Quit", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
-		wailsruntime.Quit(app.ctx)
-	})
+	if !isMac {
+		// On macOS: Settings lives in Sieve > Preferences (injected by AppMenu role),
+		file.AddText("Quit", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
+			wailsruntime.Quit(app.ctx)
+		})
+	}
+
+	if isMac {
+		appMenu.Append(menu.EditMenu())
+	}
 
 	view := appMenu.AddSubmenu("View")
 	view.AddText("Toggle Sidebar", keys.CmdOrCtrl("\\"), js("htmx.ajax('POST','/api/session/sidebar/toggle',{swap:'none'})"))
@@ -255,19 +277,22 @@ func buildMenu(app *App) *menu.Menu {
 	view.AddText("Toggle AI Blocks", keys.CmdOrCtrl("j"), js("document.dispatchEvent(new CustomEvent('sieve:toggle-ai-blocks'))"))
 	view.AddText("Quick Switcher", keys.CmdOrCtrl("p"), js("htmx.ajax('GET','/api/search-prompt',{target:'#quickswitcher-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('quickswitcher-dialog').showModal()})"))
 
-	ai := appMenu.AddSubmenu("Tools")
-	ai.AddText("Smart File", keys.Combo("e", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.SieveAI?.smartFile()"))
-	ai.AddText("Keep & Smart File", keys.Combo("return", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.SieveAI?.keepAndSmartFile()"))
+	tools := appMenu.AddSubmenu("Tools")
+	tools.AddText("Smart File", keys.Combo("e", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.SieveAI?.smartFile()"))
+	tools.AddText("Keep & Smart File", keys.Combo("return", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.SieveAI?.keepAndSmartFile()"))
 
 	help := appMenu.AddSubmenu("Help")
 	help.AddText("Shortcuts", keys.CmdOrCtrl("/"), js("htmx.ajax('GET','/api/help',{target:'#help-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('help-dialog').showModal()})"))
-	help.AddText("About", nil, func(_ *menu.CallbackData) {
-		wailsruntime.MessageDialog(app.ctx, wailsruntime.MessageDialogOptions{
-			Type:    wailsruntime.InfoDialog,
-			Title:   "About Sieve",
-			Message: "Sieve v1.0",
+	if !isMac {
+		// On Linux/Windows: About belongs in Help
+		help.AddText("About", nil, func(_ *menu.CallbackData) {
+			wailsruntime.MessageDialog(app.ctx, wailsruntime.MessageDialogOptions{
+				Type:    wailsruntime.InfoDialog,
+				Title:   "About Sieve",
+				Message: "Sieve v1.0",
+			})
 		})
-	})
+	}
 
 	return appMenu
 }
