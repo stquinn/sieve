@@ -10,8 +10,8 @@
   }
 
   window.sieveShowInFiles = function(id) {
-    if (window.go && window.go.main && window.go.main.App && window.go.main.App.ShowInFilesByID) {
-      window.go.main.App.ShowInFilesByID(id);
+    if (window.wails && window.wails.Call) {
+      window.wails.Call.ByName('main.App.ShowInFilesByID', id);
     }
   };
 

@@ -2,8 +2,8 @@
 
 Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/keep/discard decisions happen on close.
 
-**Stack:** Wails v2 + Go + chi + HTMX + vanilla JS + TipTap 2 + Tailwind
-**Phase:** Phase 10 (post-migration cleanup). Phase 9 (React removal) is complete — no React, no npm build step.
+**Stack:** Wails v3 + Go + chi + HTMX + vanilla JS + TipTap 2 + Tailwind
+**Phase:** Phase 10 (Wails v3 migration complete). Phase 9 (React removal) is complete — no React, no npm build step.
 
 ---
 
@@ -34,8 +34,8 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 ## Build & Dev
 
 ```bash
-wails dev        # hot-reload; shell.nix adds -tags webkit2_41 transparently
-wails build      # production binary
+wails3 dev       # hot-reload; shell.nix wrapper adds -tags webkit2_41 on Linux
+wails3 build     # production binary
 go build ./...   # compile check — no npm step required
 ```
 

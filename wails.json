@@ -1,14 +1,18 @@
 {
-  "$schema": "https://wails.io/schemas/config.v2.json",
+  "$schema": "https://wails.io/schemas/config.v3.json",
   "name": "Sieve",
-  "outputfilename": "sieve",
-  "frontend:dir": "frontend",
-  "frontend:install": "npm install",
-  "frontend:build": "npm run build",
-  "frontend:dev:watcher": "npm run dev",
-  "frontend:dev:serverUrl": "",
+  "outputfilename": "Sieve",
   "author": {
     "name": "stephen",
     "email": "stephen.quinn2@gmail.com"
+  },
+
+  "frontend": {
+    "dir": "./frontend",
+    "install": "npm install",
+    "build": "npm run build",
+    "dev": "npm run dev",
+    "devServerUrl": "http://localhost:5173"
   }
 }
+

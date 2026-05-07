@@ -17,14 +17,7 @@ import (
 	"sieve/logger"
 	"sieve/sieve"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/menu"
-	"github.com/wailsapp/wails/v2/pkg/menu/keys"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/linux"
-	"github.com/wailsapp/wails/v2/pkg/options/mac"
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 //go:embed all:frontend/src
@@ -75,7 +68,7 @@ func (h *storeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // muxHandler routes requests: proxy and theme.css are intercepted first, then
 // API/SSE/static go to apiHandler, store files go to storeHandler, and
-// everything else falls through to the embedded React assets via Wails.
+// everything else falls through to the embedded assets via Wails.
 type muxHandler struct {
 	app   *App
 	store *storeHandler
@@ -104,7 +97,6 @@ func (m *muxHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/stash/") {
-		// Rewrite /stash/ to /sieve/ essentially
 		r.URL.Path = strings.Replace(r.URL.Path, "/stash/", "/sieve/", 1)
 		m.store.ServeHTTP(w, r)
 		return
@@ -224,77 +216,98 @@ func (m *muxHandler) serveThemeCSS(w http.ResponseWriter, _ *http.Request) {
 	w.Write([]byte("}\n"))
 }
 
-func buildMenu(app *App) *menu.Menu {
-	js := func(script string) func(*menu.CallbackData) {
-		return func(_ *menu.CallbackData) {
-			logger.Debug("Menu Action: executing JS", "script", script)
-			wailsruntime.WindowExecJS(app.ctx, script)
+func buildMenu(wailsApp *application.App) *application.Menu {
+	isMac := goruntime.GOOS == "darwin"
+
+	js := func(script string) func(*application.Context) {
+		logger.Info("Executing JS1")
+		return func(_ *application.Context) {
+			logger.Info("Executing JS2")
+			if wailsApp.Window.Current() != nil {
+				logger.Info("Executing JS3")
+				wailsApp.Window.Current().ExecJS(script)
+			}
 		}
 	}
 
-	isMac := goruntime.GOOS == "darwin"
 	openSettings := js("htmx.ajax('GET','/api/settings',{target:'#settings-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('settings-dialog').showModal()})")
 
-	appMenu := menu.NewMenu()
+	appMenu := wailsApp.NewMenu()
 
 	if isMac {
-		// macOS: AppMenu role provides "Sieve > About, Services, Hide, Quit"
-		// EditMenu role provides a proper "Edit" menu with Cut/Copy/Paste/Undo
-		appMenu.Append(menu.AppMenu())
+		appMenu.AddRole(application.AppMenu)
 	}
 
+	// modKey := "Ctrl"
+	// if isMac {
+	// 	modKey = "Cmd"
+	// }
+
+	// appMenu.AddRole(application.FileMenu)
+
 	file := appMenu.AddSubmenu("File")
-	file.AddText("New Note", keys.CmdOrCtrl("n"), js("htmx.ajax('POST','/api/note/new',{target:'#htmx-tabbar',swap:'innerHTML'})"))
-	file.AddText("Save", keys.CmdOrCtrl("s"), js("document.dispatchEvent(new CustomEvent('sieve:save'))"))
-	file.AddText("Close Tab", keys.CmdOrCtrl("w"), js("var id=document.getElementById('tiptap-mount')?.getAttribute('data-uuid');if(id)htmx.ajax('POST','/api/tabs/close/'+id,{target:'#htmx-tabbar',swap:'innerHTML'})"))
-	//this shuld be Preferences in App menu
+
+	// fileMenu.FindByRole(application.NewFile).OnClick(func(ctx *application.Context) { logger.Info("New") })
+	appMenu.AddRole(application.EditMenu)
+
+	newNote := file.Add("New Note")
+	newNote.SetRole(application.NewFile)
+	newNote.SetAccelerator("CmdOrCtrl+n")
+	newNote.SetEnabled(true)
+	newNote.OnClick(func(ctx *application.Context) {
+		logger.Info("CLICKED NEW NOTE")
+	})
+	file.Add("Save").SetAccelerator("CmdOrCtrl+s").OnClick(js("document.dispatchEvent(new CustomEvent('sieve:save'))"))
+	file.Add("Close Tab").SetAccelerator("CmdOrCtrl+w").OnClick(js("var id=document.getElementById('tiptap-mount')?.getAttribute('data-uuid');if(id)htmx.ajax('POST','/api/tabs/close/'+id,{target:'#htmx-tabbar',swap:'innerHTML'})"))
 	file.AddSeparator()
 	settingsLabel := "Settings"
 	if isMac {
 		settingsLabel = "Preferences"
 	}
-	file.AddText(settingsLabel, keys.CmdOrCtrl(","), openSettings)	
-	file.AddSeparator()
+	file.Add(settingsLabel).SetAccelerator("CmdOrCtrl+,").OnClick(openSettings)
 	if !isMac {
-		// On macOS: Settings lives in Sieve > Preferences (injected by AppMenu role),
-		file.AddText("Quit", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
-			wailsruntime.Quit(app.ctx)
-		})
+		file.AddSeparator()
+		file.AddRole(application.Quit)
 	}
 
-	if isMac {
-		appMenu.Append(menu.EditMenu())
-	}
+	// if isMac {
+	// 	appMenu.AddRole(application.EditMenu)
+	// }
 
-	view := appMenu.AddSubmenu("View")
-	view.AddText("Toggle Sidebar", keys.CmdOrCtrl("\\"), js("htmx.ajax('POST','/api/session/sidebar/toggle',{swap:'none'})"))
-	view.AddText("Toggle Meta Panel", keys.Combo("i", keys.CmdOrCtrlKey, keys.ShiftKey), js("htmx.ajax('POST','/api/session/meta/toggle',{swap:'none'})"))
-	view.AddText("Toggle Prompts", keys.Combo("p", keys.CmdOrCtrlKey, keys.ShiftKey), js("htmx.ajax('POST','/api/session/prompts/toggle',{swap:'none'})"))
-	view.AddText("Toggle Editor Mode", keys.Combo("m", keys.CmdOrCtrlKey, keys.ShiftKey), js("document.dispatchEvent(new CustomEvent('sieve:toggle-mode'))"))
-	view.AddSeparator()
-	view.AddText("Toggle Search", keys.CmdOrCtrl("f"), js("document.dispatchEvent(new CustomEvent('sieve:toggle-search'))"))
-	view.AddText("Sidebar Search", keys.Combo("f", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveSidebarSearch?.()"))
-	view.AddText("Toggle AI Blocks", keys.CmdOrCtrl("j"), js("document.dispatchEvent(new CustomEvent('sieve:toggle-ai-blocks'))"))
-	view.AddText("Quick Switcher", keys.CmdOrCtrl("p"), js("htmx.ajax('GET','/api/search-prompt',{target:'#quickswitcher-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('quickswitcher-dialog').showModal()})"))
+	// view := appMenu.AddSubmenu("View")
+	// view.Add("Toggle Sidebar").SetAccelerator(modKey + "+\\").OnClick(js("htmx.ajax('POST','/api/session/sidebar/toggle',{swap:'none'})"))
+	// view.Add("Toggle Meta Panel").SetAccelerator(modKey + "+Shift+i").OnClick(js("htmx.ajax('POST','/api/session/meta/toggle',{swap:'none'})"))
+	// view.Add("Toggle Prompts").SetAccelerator(modKey + "+Shift+p").OnClick(js("htmx.ajax('POST','/api/session/prompts/toggle',{swap:'none'})"))
+	// view.Add("Toggle Editor Mode").SetAccelerator(modKey + "+Shift+m").OnClick(js("document.dispatchEvent(new CustomEvent('sieve:toggle-mode'))"))
+	// view.AddSeparator()
+	// view.Add("Toggle Search").SetAccelerator(modKey + "+f").OnClick(js("document.dispatchEvent(new CustomEvent('sieve:toggle-search'))"))
+	// view.Add("Sidebar Search").SetAccelerator(modKey + "+Shift+f").OnClick(js("window.sieveSidebarSearch?.()"))
+	// view.Add("Toggle AI Blocks").SetAccelerator(modKey + "+j").OnClick(js("document.dispatchEvent(new CustomEvent('sieve:toggle-ai-blocks'))"))
+	// view.Add("Quick Switcher").SetAccelerator(modKey + "+p").OnClick(js("htmx.ajax('GET','/api/search-prompt',{target:'#quickswitcher-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('quickswitcher-dialog').showModal()})"))
 
 	tools := appMenu.AddSubmenu("Tools")
-	tools.AddText("Smart File", keys.Combo("e", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.SieveAI?.smartFile()"))
-	tools.AddText("Keep & Smart File", keys.Combo("return", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.SieveAI?.keepAndSmartFile()"))
+	tools.Add("Smart File").SetAccelerator("CmdOrCtrl+Shift+e").OnClick(js("window.SieveAI?.smartFile()"))
+	tools.Add("Keep & Smart File").SetAccelerator("CmdOrCtrl+Shift+Return").OnClick(js("window.SieveAI?.keepAndSmartFile()"))
 
-	help := appMenu.AddSubmenu("Help")
-	help.AddText("Shortcuts", keys.CmdOrCtrl("/"), js("htmx.ajax('GET','/api/help',{target:'#help-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('help-dialog').showModal()})"))
-	if !isMac {
-		// On Linux/Windows: About belongs in Help
-		help.AddText("About", nil, func(_ *menu.CallbackData) {
-			wailsruntime.MessageDialog(app.ctx, wailsruntime.MessageDialogOptions{
-				Type:    wailsruntime.InfoDialog,
-				Title:   "About Sieve",
-				Message: "Sieve v1.0",
-			})
-		})
-	}
+	// appMenu.AddRole(application.WindowMenu)
 
+	appMenu.AddRole(application.WindowMenu)
+	appMenu.AddRole(application.HelpMenu)
+
+	// help := appMenu.AddSubmenu("Help")
+	// help.Add("Shortcuts").SetAccelerator(modKey + "+/").OnClick(js("htmx.ajax('GET','/api/help',{target:'#help-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('help-dialog').showModal()})"))
+	// if !isMac {
+	// 	help.Add("About").OnClick(func(_ *application.Context) {
+	// 		wailsApp.Dialog.Info().
+	// 			SetTitle("About Sieve").
+	// 			SetMessage("Sieve v1.0").
+	// 			Show()
+	// 	})
+	// }
+
+	wailsApp.Menu.Set(appMenu)
 	return appMenu
+
 }
 
 func main() {
@@ -306,92 +319,80 @@ func main() {
 
 	hub := newSSEHub()
 	serviceProvider := &sieve.ServiceProvider{}
-	app := NewApp(storePath, themes, hub, serviceProvider)
-	api, err := newAPIHandler(app, hub, serviceProvider)
+	appInstance := NewApp(storePath, themes, hub, serviceProvider)
+	api, err := newAPIHandler(appInstance, hub, serviceProvider)
 	if err != nil {
 		log.Fatalf("failed to init API handler: %v", err)
 	}
 
-	// Standalone HTTP server so Vite dev proxy can reach API/SSE/static routes.
-	// In production the AssetServer.Handler covers these; this is a no-op there.
+	mux := &muxHandler{
+		app:   appInstance,
+		store: &storeHandler{app: appInstance},
+		api:   api,
+	}
+
+	// Standalone HTTP server so dev proxy can reach API/SSE/static routes.
 	devPort := os.Getenv("SIEVE_DEV_PORT")
 	if devPort == "" {
 		devPort = "0"
 	}
 	go func() {
-		mux := &muxHandler{app: app, store: &storeHandler{app: app}, api: api}
 		if err := http.ListenAndServe("127.0.0.1:"+devPort, mux); err != nil {
 			log.Printf("dev HTTP server: %v", err)
 		}
 	}()
 
-	err = wails.Run(&options.App{
-		Title:                    "Sieve",
-		Menu:                     buildMenu(app),
-		Width:                    1200,
-		Height:                   800,
-		MinWidth:                 800,
-		MinHeight:                500,
-		EnableDefaultContextMenu: true,
-		BackgroundColour:         &options.RGBA{R: 26, G: 27, B: 38, A: 1},
-		SingleInstanceLock: &options.SingleInstanceLock{
-			UniqueId: "sieve-app-6f3a2b1c",
-			OnSecondInstanceLaunch: func(_ options.SecondInstanceData) {
-				// bring existing window to front
-			},
+	wailsApp := application.New(application.Options{
+		Name:        "Sieve",
+		Description: "Scratchpad-first thinking tool",
+		Icon:        icon,
+		Services: []application.Service{
+			application.NewService(appInstance),
 		},
-		AssetServer: &assetserver.Options{
-			Assets: assets,
-			Handler: &muxHandler{
-				app:   app,
-				store: &storeHandler{app: app},
-				api:   api,
-			},
-			Middleware: func(next http.Handler) http.Handler {
-				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if r.URL.Path == "/" || r.URL.Path == "/index.html" {
-						m := &muxHandler{app: app, store: &storeHandler{app: app}, api: api}
-						m.ServeHTTP(w, r)
-						return
-					}
-					next.ServeHTTP(w, r)
-				})
-			},
+		Assets: application.AssetOptions{
+			Handler: mux,
 		},
-		OnStartup:     app.startup,
-		OnBeforeClose: app.beforeClose,
-		Bind: []interface{}{
-			app,
+		Linux: application.LinuxOptions{
+			ProgramName:                   "Sieve",
+			DisableQuitOnLastWindowClosed: false,
 		},
-
-		Linux: &linux.Options{
-			Icon:                icon,
-			WindowIsTranslucent: false,
-			WebviewGpuPolicy:    linux.WebviewGpuPolicyAlways,
-			ProgramName:         "Sieve",
+		Mac: application.MacOptions{
+			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
-		Mac: &mac.Options{
-			TitleBar: &mac.TitleBar{
-				TitlebarAppearsTransparent: false,
-				HideTitle:                  false,
-				HideTitleBar:               false,
-				FullSizeContent:            false,
-				UseToolbar:                 false,
-				HideToolbarSeparator:       true,
-			},
-			Appearance:           mac.NSAppearanceNameDarkAqua,
-			WebviewIsTransparent: true,
-			WindowIsTranslucent:  false,
-			ContentProtection:    false,
-			About: &mac.AboutInfo{
-				Title:   "Sieve",
-				Message: "© 2026 SQ",
-				Icon:    icon,
-			},
+		SingleInstance: &application.SingleInstanceOptions{
+			UniqueID: "sieve-app-6f3a2b1c",
+		},
+		ShouldQuit: func() bool {
+			return appInstance.shouldQuit()
 		},
 	})
 
-	if err != nil {
+	menu := buildMenu(wailsApp)
+
+	window := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:              "Sieve",
+		Width:              1200,
+		Height:             800,
+		MinWidth:           800,
+		MinHeight:          500,
+		BackgroundColour:   application.NewRGBA(26, 27, 38, 255),
+		UseApplicationMenu: true,
+		URL:                "/",
+		Linux: application.LinuxWindow{
+			Menu: menu,
+		},
+		Mac: application.MacWindow{
+			Backdrop: application.MacBackdropNormal,
+			TitleBar: application.MacTitleBar{
+				AppearsTransparent:   false,
+				Hide:                 false,
+				HideToolbarSeparator: true,
+			},
+		},
+	})
+	appInstance.SetApp(wailsApp, window)
+
+	if err := wailsApp.Run(); err != nil {
 		println("Error:", err.Error())
 	}
 }

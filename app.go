@@ -21,13 +21,15 @@ import (
 	"sieve/store"
 	"sieve/store/filestore"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 	"golang.org/x/net/html"
 )
 
 // App is the Wails application backend.
 type App struct {
-	ctx       context.Context
+	app    *application.App
+	window *application.WebviewWindow
+
 	storePath string
 	hostname  string // resolved at startup from os.Hostname
 
@@ -61,10 +63,14 @@ func NewApp(storePath string, themesFS fs.FS, hub *sseHub, serviceProvider *siev
 	}
 }
 
+// SetApp wires up the Wails application and window references after creation.
+func (a *App) SetApp(app *application.App, window *application.WebviewWindow) {
+	a.app = app
+	a.window = window
+}
+
 // ── Path helpers ──────────────────────────────────────────────────────────────
 
-// configDir returns the absolute path to the per-host config directory
-// ({storePath}/{hostname}/config/). Used for state migration only.
 func (a *App) configDir() string {
 	return filepath.Join(a.storePath, a.hostname, "config")
 }
@@ -77,21 +83,32 @@ func (a *App) promptsDir() string {
 	return filepath.Join(a.storePath, a.hostname, "prompts")
 }
 
-// GetThemesFS returns the embedded themes filesystem.
 func (a *App) GetThemesFS() fs.FS { return a.themesFS }
-
-// GetStorePath returns the active store root path.
 func (a *App) GetStorePath() string { return a.storePath }
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
-// startup is called by Wails when the application window is ready.
-func (a *App) startup(ctx context.Context) {
+// ServiceStartup is called by Wails v3 when the application starts.
+func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
+	a.startup()
+	return nil
+}
+
+// ServiceShutdown is called by Wails v3 on shutdown.
+func (a *App) ServiceShutdown() error {
+	if a.watcher != nil {
+		a.watcher.Close()
+	}
+	return nil
+}
+
+// startup initialises the store, services, and window geometry.
+// Called from ServiceStartup and re-called from SelectVault/CreateVault/InitVault.
+func (a *App) startup() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	isFirstStartup := a.ctx == nil
-	a.ctx = ctx
+	isFirstStartup := a.FileStore == nil
 
 	if a.storePath == "" && isFirstStartup {
 		config := LoadGlobalConfig()
@@ -141,7 +158,6 @@ func (a *App) startup(ctx context.Context) {
 					return
 				}
 			} else {
-				// This is an explicit selection from the UI (CreateVault/InitVault) that is invalid.
 				a.storePath = ""
 				logger.Warn("startup: explicit path is invalid, re-entering bootstrap mode")
 				return
@@ -155,24 +171,20 @@ func (a *App) startup(ctx context.Context) {
 
 	a.storePath = abs
 
-	// Resolve hostname (may differ from the one set in NewApp if called again).
 	if hn, err := os.Hostname(); err == nil && hn != "" {
 		a.hostname = hn
 	}
 
-	// Close old watcher if any.
 	if a.watcher != nil {
 		a.watcher.Close()
 		a.watcher = nil
 	}
 
-	// ── One-time state migration: move settings/session to config/ ────────────
 	migrateStateFiles(
 		filepath.Join(a.storePath, a.hostname),
 		a.configDir(),
 	)
 
-	// ── FileStore-backed services ─────────────────────────────────────────────
 	fs, err := filestore.NewFileStore(a.storePath, a.hostname)
 	if err != nil {
 		logger.Error("filestore init failed", "err", err)
@@ -192,7 +204,6 @@ func (a *App) startup(ctx context.Context) {
 
 	settings := a.State.LoadSettings()
 
-	// Save last-used store path.
 	config := LoadGlobalConfig()
 	config.LastStorePath = a.storePath
 	if err := config.Save(); err != nil {
@@ -207,27 +218,29 @@ func (a *App) startup(ctx context.Context) {
 		"debug", settings.Debug,
 	)
 
-	// Startup probe.
 	probe := filepath.Join(a.storePath, ".startup-probe")
 	_ = os.WriteFile(probe, []byte(fmt.Sprintf("started at %s\nvault: %s\nhost:  %s\n",
 		time.Now().Format(time.RFC3339), a.storePath, a.hostname)), 0o644)
 
 	// Restore window geometry.
 	savedSession := a.ServiceProvider.State.LoadSession()
-	if savedSession.Window.Width >= 800 && savedSession.Window.Height >= 500 {
-		runtime.WindowSetSize(ctx, savedSession.Window.Width, savedSession.Window.Height)
-		logger.Debug("window size restored", "w", savedSession.Window.Width, "h", savedSession.Window.Height)
-	}
-	win := savedSession.Window
-	if win.X > -4000 && win.Y > -4000 {
-		runtime.WindowSetPosition(ctx, win.X, win.Y)
-		logger.Debug("window position restored", "x", win.X, "y", win.Y)
+	if a.window != nil {
+		if savedSession.Window.Width >= 800 && savedSession.Window.Height >= 500 {
+			a.window.SetSize(savedSession.Window.Width, savedSession.Window.Height)
+			logger.Debug("window size restored", "w", savedSession.Window.Width, "h", savedSession.Window.Height)
+		}
+		win := savedSession.Window
+		if win.X > -4000 && win.Y > -4000 {
+			a.window.SetPosition(win.X, win.Y)
+			logger.Debug("window position restored", "x", win.X, "y", win.Y)
+		}
 	}
 
-	// File-system watcher for notes.
 	w, err := newNotesWatcher(a.notesDir(), func() {
 		logger.Debug("notes changed — emitting event")
-		runtime.EventsEmit(a.ctx, "notes:changed")
+		if a.app != nil {
+			a.app.Event.Emit("notes:changed")
+		}
 		if a.hub != nil {
 			a.hub.broadcast("notes:changed", "{}")
 		}
@@ -239,20 +252,25 @@ func (a *App) startup(ctx context.Context) {
 	}
 }
 
-func (a *App) beforeClose(ctx context.Context) bool {
+// shouldQuit is called by the ShouldQuit option in main.go.
+// First call: saves state, emits app:closing (veto). Subsequent calls after
+// Quit() sets a.closing: allow.
+func (a *App) shouldQuit() bool {
 	if a.closing {
-		return false
+		return true
 	}
-	if a.State != nil {
-		x, y := runtime.WindowGetPosition(ctx)
-		w, h := runtime.WindowGetSize(ctx)
+	if a.window != nil && a.State != nil {
+		w, h := a.window.Size()
+		x, y := a.window.Position()
 		session := a.State.LoadSession()
 		session.Window = sieve.Window{X: x, Y: y, Width: w, Height: h}
 		_ = a.State.SaveSession(session)
 	}
-	logger.Info("beforeClose: vetoing and requesting flush")
-	runtime.EventsEmit(ctx, "app:closing")
-	return true
+	logger.Info("shouldQuit: vetoing and requesting flush")
+	if a.app != nil {
+		a.app.Event.Emit("app:closing")
+	}
+	return false
 }
 
 func (a *App) Quit() {
@@ -264,10 +282,12 @@ func (a *App) Quit() {
 	if a.watcher != nil {
 		a.watcher.Close()
 	}
-	runtime.Quit(a.ctx)
+	if a.app != nil {
+		a.app.Quit()
+	}
 	go func() {
 		time.Sleep(500 * time.Millisecond)
-		logger.Warn("App.Quit: runtime.Quit timed out, forcing os.Exit")
+		logger.Warn("App.Quit: Quit timed out, forcing os.Exit")
 		os.Exit(0)
 	}()
 }
@@ -324,12 +344,14 @@ func (a *App) GetStoreInfo() StoreInfo {
 
 func (a *App) SelectVault() (string, error) {
 	logger.Info("SelectVault: triggered")
-	if a.ctx == nil {
-		return "", fmt.Errorf("app context not initialized")
+	if a.app == nil {
+		return "", fmt.Errorf("app not initialized")
 	}
-	path, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select Sieve Store",
-	})
+	path, err := a.app.Dialog.OpenFile().
+		CanChooseDirectories(true).
+		CanChooseFiles(false).
+		SetTitle("Select Sieve Store").
+		PromptForSingleSelection()
 	logger.Debug("SelectVault: dialog returned", "path", path, "err", err)
 	if err != nil {
 		return "", err
@@ -344,7 +366,7 @@ func (a *App) SelectVault() (string, error) {
 
 	logger.Debug("SelectVault: setting storePath and calling startup", "path", path)
 	a.storePath = path
-	a.startup(a.ctx)
+	a.startup()
 
 	logger.Debug("SelectVault: startup completed", "resulting_storePath", a.storePath)
 	if a.storePath == "" {
@@ -364,12 +386,14 @@ func (a *App) SelectVault() (string, error) {
 
 func (a *App) CreateVault() (string, error) {
 	logger.Info("CreateVault: triggered")
-	if a.ctx == nil {
-		return "", fmt.Errorf("app context not initialized")
+	if a.app == nil {
+		return "", fmt.Errorf("app not initialized")
 	}
-	path, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select Folder to Initialize Store",
-	})
+	path, err := a.app.Dialog.OpenFile().
+		CanChooseDirectories(true).
+		CanChooseFiles(false).
+		SetTitle("Select Folder to Initialize Store").
+		PromptForSingleSelection()
 	logger.Debug("CreateVault: dialog returned", "path", path, "err", err)
 	if err != nil {
 		return "", err
@@ -380,7 +404,7 @@ func (a *App) CreateVault() (string, error) {
 
 	logger.Debug("CreateVault: setting storePath and calling startup", "path", path)
 	a.storePath = path
-	a.startup(a.ctx)
+	a.startup()
 
 	logger.Debug("CreateVault: startup completed", "resulting_storePath", a.storePath)
 	if a.storePath == "" {
@@ -416,7 +440,7 @@ func (a *App) InitVault(path string) error {
 
 	logger.Debug("InitVault: setting storePath and calling startup", "abs", abs)
 	a.storePath = abs
-	a.startup(a.ctx)
+	a.startup()
 
 	logger.Debug("InitVault: startup completed", "resulting_storePath", a.storePath)
 	if a.storePath == "" {
@@ -436,9 +460,6 @@ func (a *App) InitVault(path string) error {
 
 // ── Assets ────────────────────────────────────────────────────────────────────
 
-// DownloadAsset fetches an image from a URL and stores it as an asset.
-// uuid identifies the owning document (or "" when no document is active).
-// Called directly from editor.js via the Wails bridge.
 func (a *App) DownloadAsset(uuid, targetURL, id string) (AssetDTO, error) {
 	if a.Assets == nil {
 		return AssetDTO{}, fmt.Errorf("store not open")
@@ -478,7 +499,6 @@ func (a *App) DownloadAsset(uuid, targetURL, id string) (AssetDTO, error) {
 
 // ── AI / CLI operations ───────────────────────────────────────────────────────
 
-// window.__stashActiveTabUuid, mdPath, blkId
 func (a *App) DescribeImage(uuid string, storeRelPath string, blkId string) (sieve.ImageDesc, error) {
 	if a.AI == nil {
 		return sieve.ImageDesc{}, fmt.Errorf("store not open")
@@ -508,8 +528,6 @@ func (a *App) GetLinkTitle(url string) (string, error) {
 	if url == "" {
 		return "", fmt.Errorf("store not open")
 	}
-	var title string = ""
-	// 1. Make the HTTP GET request
 	client := &http.Client{}
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
@@ -523,14 +541,12 @@ func (a *App) GetLinkTitle(url string) (string, error) {
 		return "", fmt.Errorf("status code error: %d %s", resp.StatusCode, resp.Status)
 	}
 
-	// 2. Parse the HTML document
 	doc, err := html.Parse(resp.Body)
 	if err != nil {
 		return "", err
 	}
 
-	// 3. Recursively find the <title> node
-
+	var title string
 	var f func(*html.Node)
 	f = func(n *html.Node) {
 		if title != "" {
@@ -551,8 +567,6 @@ func (a *App) GetLinkTitle(url string) (string, error) {
 
 // ── File manager ──────────────────────────────────────────────────────────────
 
-// ShowInFilesByID reveals a document or folder in the OS file manager.
-// id is a UUID (note/buffer), an opaque folder ID (ExternalRef), or "prompt:name".
 func (a *App) ShowInFilesByID(id string) error {
 	if strings.HasPrefix(id, "prompt:") {
 		return a.ShowInFiles(a.promptsDir())
@@ -562,7 +576,6 @@ func (a *App) ShowInFilesByID(id string) error {
 			return a.ShowInFiles(doc.Storable().ExternalRef())
 		}
 	}
-	// Folder: id is an ExternalRef (e.g. "store/my-folder") — resolvePath handles it.
 	return a.ShowInFiles(id)
 }
 
@@ -592,7 +605,6 @@ func (a *App) ShowInFiles(path string) error {
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
-// resolvePath converts a store-relative path to an absolute filesystem path.
 func (a *App) resolvePath(path string) string {
 	if filepath.IsAbs(path) {
 		return path
@@ -603,8 +615,6 @@ func (a *App) resolvePath(path string) string {
 	return path
 }
 
-// loadThemeOverride reads the store-local theme override file for name, if any.
-// Returns nil when no override exists or the store is not open.
 func (a *App) loadThemeOverride(name string) []byte {
 	if a.storePath == "" || name == "" {
 		return nil
@@ -613,12 +623,6 @@ func (a *App) loadThemeOverride(name string) []byte {
 	return data
 }
 
-// migrateStateFiles moves settings.json and session.json from hostDir to
-// configDir. For settings.json it uses a smart merge: if the old file has a
-// "cli" field and the new file does not, the old file wins (it carries real
-// user configuration; the new file was likely written with defaults on the
-// first startup before migration ran). session.json is only moved if absent
-// in the new location.
 func migrateStateFiles(hostDir, configDir string) {
 	migrateSettings(
 		filepath.Join(hostDir, "settings.json"),
@@ -640,9 +644,6 @@ func migrateStateFiles(hostDir, configDir string) {
 	}
 }
 
-// migrateSettings handles the settings.json migration. If the old file has a
-// "cli" field and the new file is absent or has no "cli", the old file is
-// copied to the new location (overwriting defaults-only stubs).
 func migrateSettings(oldPath, newPath string) {
 	oldData, err := os.ReadFile(oldPath)
 	if err != nil {
@@ -676,7 +677,6 @@ func migrateSettings(oldPath, newPath string) {
 	logger.Info("migrated settings.json (cli merge)", "from", oldPath, "to", newPath)
 }
 
-// downloadURL fetches a URL and returns the body bytes. Used by DownloadAsset.
 func downloadURL(targetURL string) ([]byte, error) {
 	client := &http.Client{
 		Transport: &http.Transport{

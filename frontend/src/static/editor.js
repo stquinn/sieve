@@ -173,7 +173,7 @@
               for (var i = 0; i < marks.length; i++) {
                 if (marks[i].type.name === 'link') {
                   var href = marks[i].attrs.href
-                  setTimeout(function () { window.runtime && window.runtime.BrowserOpenURL(href) }, 50)
+                  setTimeout(function () { window.wails && window.wails.Browser && window.wails.Browser.OpenURL(href) }, 50)
                   event.preventDefault()
                   return true
                 }

@@ -68,8 +68,8 @@
                 e.stopPropagation(); // Stops Tiptap from seeing the event
 
                 const href = node.attrs.href;
-                if (href && window.runtime && window.runtime.BrowserOpenURL) {
-                window.runtime.BrowserOpenURL(href);
+                if (href && window.wails && window.wails.Browser) {
+                    window.wails.Browser.OpenURL(href);
                 }
                 return true;
             }

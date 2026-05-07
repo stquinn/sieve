@@ -115,7 +115,7 @@
     <script>
         window.sieveSelectVault = async function() {
             try {
-                const path = await window.go.main.App.SelectVault();
+                const path = await window.wails.Call.ByName('main.App.SelectVault');
                 if (path) window.location.reload();
             } catch (e) {
                 console.error(e);
@@ -123,7 +123,7 @@
         };
         window.sieveCreateVault = async function() {
             try {
-                const path = await window.go.main.App.CreateVault();
+                const path = await window.wails.Call.ByName('main.App.CreateVault');
                 if (path) window.location.reload();
             } catch (e) {
                 console.error(e);
@@ -133,7 +133,7 @@
             const path = document.getElementById('manual-path').value;
             if (path) {
                 try {
-                    await window.go.main.App.InitVault(path);
+                    await window.wails.Call.ByName('main.App.InitVault', path);
                     window.location.reload();
                 } catch (e) {
                     alert(e);
@@ -310,19 +310,19 @@
     <script>
     // Close Handler
     window.addEventListener('DOMContentLoaded', function() {
-        if (window.runtime && window.runtime.EventsOn) {
-            window.runtime.EventsOn('app:closing', function() {
-                console.log('[stash] App closing, vetoed natively to allow flush.');
+        if (window.wails && window.wails.Events) {
+            window.wails.Events.On('app:closing', function() {
+                console.log('[sieve] App closing, vetoed natively to allow flush.');
                 if (window._editorSave) window._editorSave();
-                
+
                 function checkAndQuit() {
                     if (window.__sieveActiveJobs > 0) {
-                        console.log('[stash] Waiting for AI jobs to finish...');
+                        console.log('[sieve] Waiting for AI jobs to finish...');
                         var overlay = document.getElementById('pending-close-overlay');
                         if (overlay) overlay.style.display = 'flex';
                         setTimeout(checkAndQuit, 500);
                     } else {
-                        setTimeout(function() { window.go.main.App.Quit(); }, 300);
+                        setTimeout(function() { window.wails.Call.ByName('main.App.Quit'); }, 300);
                     }
                 }
                 checkAndQuit();

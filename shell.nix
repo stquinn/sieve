@@ -14,82 +14,69 @@ let
     gdk-pixbuf
     atk
     glibc
+    libGL                # Added for GPU rendering
     gsettings-desktop-schemas
-    
   ];
+
+  wails3 = pkgs.callPackage ./wails3.nix {};
 
 in pkgs.mkShell {
   buildInputs = with pkgs; [
     go
-    wails
     nodejs_22
     pkg-config
+    wails3
+    webkitgtk_4_1 
+    webkitgtk_4_1
+    gtk3 
+    pkg-config gcc
   ] ++ lib.optionals isLinux [ gcc ]
     ++ linuxDeps;
 
   shellHook = ''
     export CGO_ENABLED=1
+    
+    # 1. Ensure frontend binaries are discoverable by Wails
+    export PATH="$PWD/frontend/node_modules/.bin:$PATH"
 
     ${pkgs.lib.optionalString isLinux ''
-      # WebKit2GTK installs SIGSEGV handlers without SA_ONSTACK which conflicts
-      # with Go's signal stack. The three variables below collectively prevent
-      # WebKit from using GPU compositing / DMABuf paths that crash internally,
-      # and asyncpreemptoff stops Go from using POSIX signals for preemption so
-      # Go's own signal handler stays in place.
-      # export WEBKIT_DISABLE_COMPOSITING_MODE=1
-      # export WEBKIT_DISABLE_DMABUF_RENDERER=1
       export GODEBUG=asyncpreemptoff=1
       export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:$XDG_DATA_DIRS"
+      
       export PKG_CONFIG_PATH="${pkgs.lib.makeSearchPathOutput "dev" "lib/pkgconfig" [
         pkgs.webkitgtk_4_1
         pkgs.gtk3
         pkgs.glib
         pkgs.libsoup_3
-        pkgs.pango
-        pkgs.cairo
-        pkgs.gdk-pixbuf
-        pkgs.atk
       ]}:$PKG_CONFIG_PATH"
-      export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [
-        pkgs.webkitgtk_4_1
-        pkgs.gtk3
-        pkgs.glib
-        pkgs.libsoup_3
-        pkgs.pango
-        pkgs.cairo
-        pkgs.gdk-pixbuf
-        pkgs.atk
-        pkgs.glibc
-      ]}:$LD_LIBRARY_PATH"
+      
+      export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath linuxDeps}:$LD_LIBRARY_PATH"
     ''}
 
-    _wails_dir=$(mktemp -d)
-    ${pkgs.lib.optionalString isLinux ''
-      cat > "$_wails_dir/wails" << 'EOF'
-#!/usr/bin/env bash
-case "$1" in
-  dev|build)
-    subcmd="$1"; shift
-    exec ${pkgs.wails}/bin/wails "$subcmd" -tags webkit2_41 "$@" ;;
-  *)
-    exec ${pkgs.wails}/bin/wails "$@" ;;
-esac
-EOF
-    ''}
-    ${pkgs.lib.optionalString isDarwin ''
-      cat > "$_wails_dir/wails" << 'EOF'
-#!/usr/bin/env bash
-exec ${pkgs.wails}/bin/wails "$@"
-EOF
-    ''}
-    chmod +x "$_wails_dir/wails"
-    export PATH="$_wails_dir:$PATH"
-    unset _wails_dir
+#     # 2. Setup the Wails wrapper correctly
+#     _wails_temp_dir=$(mktemp -d)
+    
+#     ${pkgs.lib.optionalString isLinux ''
+#       cat > "$_wails_temp_dir/wails3" << 'EOF'
+# #!/usr/bin/env bash
+# # We remove the case statement and -tags flag as v3 doesn't use them here
+# exec ${wails3}/bin/wails3 "$@"
+# EOF
+#     ''}
+    
+#     ${pkgs.lib.optionalString isDarwin ''
+#       cat > "$_wails_temp_dir/wails3" << 'EOF'
+# #!/usr/bin/env bash
+# exec ${wails3}/bin/wails3 "$@"
+# EOF
+#     ''}
 
-    echo "Stash dev environment ready"
+#     chmod +x "$_wails_temp_dir/wails3"
+    export PATH="$_wails_temp_dir:$PATH"
+
+    echo "Sieve dev environment ready"
     echo "  go      $(go version)"
-    echo "  wails   $(wails version 2>/dev/null || echo 'check wails install')"
+    echo "  wails3  $(wails3 version 2>/dev/null || echo 'check wails3 install')"
     echo "  node    $(node --version)"
-    echo "  npm     $(npm --version)"
   '';
 }

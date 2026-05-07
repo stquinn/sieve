@@ -2,13 +2,17 @@
   "name": "sieve-ui",
   "version": "1.0.0",
   "description": "Tailwind generation for Sieve HTMX UI",
+
+  
+
   "scripts": {
-    "bundle:tiptap": "esbuild tiptap-bundle-entry.js --bundle --format=iife --global-name=TipTap --outfile=./src/static/vendor/tiptap.js --minify",
-    "bundle:htmx": "esbuild htmx-bundle-entry.js --bundle --outfile=./src/static/vendor/htmx-bundle.js --minify",
-    "build": "npm run bundle:htmx && npm run bundle:tiptap && tailwindcss -i ./src/static/input.css -o ./src/static/tailwind.css --minify",
-    "dev": "tailwindcss -i ./src/static/input.css -o ./src/static/tailwind.css --watch"
+    "dev": "vite",
+    "build:dev": "vite build ./src  --minify false --mode development",
+    "build": "vite build ./src --mode production",
+    "preview": "vite preview ./src"
   },
   "devDependencies": {
+    "vite": "^5.0.0",
     "@tiptap/core": "^3.22.5",
     "@tiptap/extension-code-block-lowlight": "^3.22.5",
     "@tiptap/extension-image": "^3.22.5",
@@ -31,6 +35,7 @@
     "tiptap-markdown": "^0.9.0"
   },
   "dependencies": {
-    "htmx-ext-sse": "^2.2.4"
+    "htmx-ext-sse": "^2.2.4",
+    "@wailsio/runtime": "latest"
   }
 }
