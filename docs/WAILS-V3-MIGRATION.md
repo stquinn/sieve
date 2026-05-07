@@ -112,6 +112,42 @@ The swap point in both cases is a single file — not every callsite.
 
 ### Step 1 — Dependencies
 
+**`shell.nix`**
+
+`pkgs.wails` tracks v2 and won't have a v3 package. Instead, install `wails3` via `go install` inside the shellHook — the nix-shell provides all the CGO dependencies (`webkitgtk_4_1`, `gtk3`, `PKG_CONFIG_PATH` etc.) so the compilation works. Pin to a specific version so the shell is reproducible and the install is a no-op on subsequent entries:
+
+```nix
+buildInputs = with pkgs; [
+  go
+  # wails  ← removed, wails3 installed via go install in shellHook below
+  nodejs_22
+  pkg-config
+] ++ ...
+
+shellHook = ''
+  export CGO_ENABLED=1
+
+  if ! command -v wails3 &> /dev/null; then
+    echo "Installing wails3..."
+    go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.1
+  fi
+
+  # ... rest of shellHook unchanged
+
+  echo "Sieve dev environment ready"
+  echo "  go      $(go version)"
+  echo "  wails3  $(wails3 version 2>/dev/null || echo 'check wails3 install')"
+  echo "  node    $(node --version)"
+  echo "  npm     $(npm --version)"
+'';
+```
+
+Any new developer gets `wails3` automatically on first `nix-shell` entry. To upgrade Wails v3, change the version pin in one place and the next shell entry upgrades it for everyone.
+
+The wrapper script that currently injects `-tags webkit2_41` may still be needed on Linux — confirm by running `wails3 dev` and checking whether it errors without the tag.
+
+**`go.mod`**
+
 ```bash
 go get github.com/wailsapp/wails/v3@latest
 go mod tidy
