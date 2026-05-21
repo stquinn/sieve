@@ -4,54 +4,6 @@
 (function () {
   'use strict'
 
-  window.__sieveAiService = {
-    explain: function(job, ctx, listener) {
-      fetch('/api/ai/explain', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content: ctx.content,
-          history: ctx.history,
-          noteUUID: currentUuid || '',
-          imageBlockIds: ctx.imageIds || []
-        })
-      })
-      .then(function(r) {
-        if (!r.ok) throw new Error('Explain failed')
-        return r.text()
-      })
-      .then(function(text) {
-        listener.onComplete(job, text)
-      })
-      .catch(function(err) {
-        listener.onError(job, err.message)
-      })
-    },
-    ask: function(job, ctx, question, listener) {
-      fetch('/api/ai/ask', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content: ctx.content,
-          history: ctx.history,
-          question: question,
-          noteUUID: currentUuid || '',
-          imageBlockIds: ctx.imageIds || []
-        })
-      })
-      .then(function(r) {
-        if (!r.ok) throw new Error('Ask failed')
-        return r.text()
-      })
-      .then(function(text) {
-        listener.onComplete(job, text)
-      })
-      .catch(function(err) {
-        listener.onError(job, err.message)
-      })
-    }
-  }
-
   var currentEditor = null
   var currentUuid = ''
   var currentMountEl = null
@@ -59,6 +11,8 @@
   var tabModes = {}
   var saveTimer = null
   var lastSyncedBody = ''
+  var aiReloadInProgress = false
+  var currentMarkdownTextarea = null
   var showAiBlocks = true
   var blobInterceptorCleanup = null
   var searchOverlay = null
@@ -148,7 +102,7 @@
         T.ImageWithAttrs,
         T.Search,
         T.AiBlock,
-        T.AiQuestion,
+        T.AiBlockLegacy,
         T.SmartLink,
         T.TaskList,
         T.TaskItem.configure({ nested: true }),
@@ -224,6 +178,7 @@
 
   function mountMarkdown(mountEl, uuid, body) {
     currentMode = 'markdown'
+    currentMarkdownTextarea = null
 
     var wrapper = document.createElement('div')
     wrapper.style.cssText = 'display:flex;flex-direction:row;height:100%;overflow:hidden;background:var(--theme-bg);position:relative'
@@ -233,6 +188,7 @@
     gutter.style.cssText = 'width:2.75rem;padding:40px 0.6rem 0.85em;background-color:var(--theme-bgDark);border-right:1px solid var(--theme-border);color:var(--theme-muted);font-family:var(--theme-monoFont);font-size:14px;line-height:1.6;text-align:right;user-select:none;overflow:hidden'
 
     var textarea = document.createElement('textarea')
+    currentMarkdownTextarea = textarea
     textarea.className = 'markdown-editor markdown-raw'
     textarea.spellcheck = true
     textarea.placeholder = 'Raw markdown \u2014 Mod+Shift+M to return'
@@ -300,6 +256,7 @@
   }
 
   function doSave(uuid, body) {
+    if (aiReloadInProgress) return Promise.resolve()
     return fetch('/api/editor/save?uuid=' + encodeURIComponent(uuid), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -480,121 +437,244 @@
 
   // ── AI jobs ───────────────────────────────────────────────────────────────────
 
+  // softReloadContent fetches the latest body from disk and replaces editor content,
+  // preserving the cursor position. Called when an ai:block-resolved SSE event arrives.
+  function softReloadContent(uuid) {
+    if (currentMode !== 'wysiwyg' && currentMode !== 'markdown') return
+    if (currentMode === 'wysiwyg' && !currentEditor) return
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+    aiReloadInProgress = true
+    var savedAnchor = currentMode === 'wysiwyg' ? currentEditor.state.selection.anchor : null
+    fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid))
+      .then(function (r) { return r.json() })
+      .then(function (data) {
+        if (currentUuid !== uuid) { aiReloadInProgress = false; return }
+        var body = data.body || ''
+        if (currentMode === 'wysiwyg' && currentEditor) {
+          currentEditor.commands.setContent(body)
+          lastSyncedBody = body
+          aiReloadInProgress = false
+          var maxPos = currentEditor.state.doc.content.size
+          currentEditor.commands.setTextSelection(Math.min(savedAnchor, maxPos - 1))
+        } else if (currentMode === 'markdown' && currentMarkdownTextarea) {
+          currentMarkdownTextarea.value = body
+          lastSyncedBody = body
+          aiReloadInProgress = false
+        } else {
+          aiReloadInProgress = false
+        }
+      })
+      .catch(function (err) {
+        aiReloadInProgress = false
+        console.error('[editor] softReloadContent failed', err)
+      })
+  }
+
+  // HTMX SSE extension dispatches sse:ai:block-resolved; e.detail is the SSE MessageEvent.
+  document.addEventListener('sse:ai:block-resolved', function (e) {
+    var raw = e.detail && e.detail.data != null ? e.detail.data : (typeof e.detail === 'string' ? e.detail : null)
+    if (!raw) return
+    var data; try { data = JSON.parse(raw) } catch (_) { return }
+    if (!data || data.uuid !== currentUuid) return
+    softReloadContent(currentUuid)
+  })
+
   function runAiJob(type, question, precomputedCtx) {
-    var ai = window.__sieveAiService
-    if (!ai) return
+    if (!currentEditor && currentMode !== 'markdown') return
 
     var blkId = 'ai-' + Math.random().toString(16).substring(2, 6)
-    var job = { docId: currentUuid, blkId: blkId }
-    var ctx = precomputedCtx || window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
-    var lines = question ? question.split('\n') : []
+    var ctx = null
+    var refId = 'doc'
+    var now = new Date().toISOString()
 
-    // Resolve insert position AFTER buildAiContext, which may have wrapped the selection
-    // in a new blockRef node via tr.wrap(). If so, selection.to lands inside that node;
-    // we must insert the aiBlock AFTER the blockRef, not inside it.
-    var insertPos = currentEditor ? currentEditor.state.selection.to : 0
-    if (currentEditor) {
-      let resolved = currentEditor.state.doc.resolve(insertPos)
-      for (let depth = resolved.depth; depth > 0; depth--) {
-        let node = resolved.node(depth)
-        if (node.type.name === 'aiBlock') {
-          insertPos = resolved.after(depth)
-          resolved = currentEditor.state.doc.resolve(insertPos)
-          break
+    var selectedAiNode = null
+    var selectedAiPos = null
+
+    // 1. Detect if an AI block is selected or focused
+    if (currentMode === 'markdown' && currentMarkdownTextarea) {
+      var ta = currentMarkdownTextarea
+      var val = ta.value
+      var selStart = ta.selectionStart
+      var beforeSel = val.substring(0, selStart)
+      var lastFenceStart = beforeSel.lastIndexOf('```ai-block')
+      if (lastFenceStart !== -1) {
+        var closeFenceIdx = val.indexOf('```', lastFenceStart + 11)
+        if (closeFenceIdx !== -1 && closeFenceIdx >= selStart) {
+          var fenceContent = val.substring(lastFenceStart, closeFenceIdx)
+          var idMatch = fenceContent.match(/\bid:\s*(\S+)/)
+          var refMatch = fenceContent.match(/\bref:\s*(\S+)/)
+          if (idMatch) {
+            var selectedId = idMatch[1]
+            var selectedRef = refMatch ? refMatch[1] : 'doc'
+            selectedAiNode = { attrs: { id: selectedId, ref: selectedRef } }
+          }
         }
       }
-      if (resolved.depth >= 1) {
-        insertPos = resolved.after(1)
-      }
-    }
-
-    if (ctx && ctx.blockRef && ctx.blockRef !== 'doc' && !ctx.blockRef.includes(',') && currentEditor) {
-      currentEditor.state.doc.descendants(function (node, pos) {
-        if (node.type.name === 'blockRef' && node.attrs.id === ctx.blockRef) {
-          insertPos = pos + node.nodeSize
-          return false
-        }
-      })
-    }
-
-    var refId = (ctx && ctx.blockRef) || 'doc'
-
-    if (currentMode === 'markdown') {
-      insertAiPlaceholderMarkdown(blkId, refId, question, lines)
-    } else {
-      insertAiPlaceholderWysiwyg(blkId, refId, question, lines, insertPos)
-    }
-
-    var listener = {
-      onComplete: function (_jobId, response) { resolveAiBlock(blkId, refId, response, lines) },
-      onError: function (_jobId, err) { console.error('[editor] AI error', err) },
-    }
-
-    if (type === 'explain') ai.explain(job, ctx, listener)
-    else ai.ask(job, ctx, question || '', listener)
-  }
-
-  function insertAiPlaceholderMarkdown(blkId, ref, question, lines) {
-    var qLine = lines.length ? '***Ask:*** ' + lines[0] + '\n\n---\n\n' : ''
-    var block = '\n\n[!ai] id="' + blkId + '" ref="' + ref + '" thinking="true"\n' + qLine + '_(thinking\u2026)_\n[!ai-end]\n\n'
-    lastSyncedBody = lastSyncedBody + block
-    document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
-    scheduleSave(currentUuid, lastSyncedBody)
-  }
-
-  function insertAiPlaceholderWysiwyg(blkId, ref, question, lines, insertPos) {
-    if (!currentEditor) return
-    var qNodes = lines.map(function (l, i) {
-      return {
-        type: 'paragraph',
-        content: l.trim() ? [
-          i === 0 ? { type: 'text', text: 'Ask: ', marks: [{ type: 'bold' }, { type: 'italic' }] } : null,
-          { type: 'text', text: i === 0 && l.startsWith('Ask: ') ? l.substring(5) : l },
-        ].filter(Boolean) : []
-      }
-    })
-    if (insertPos === undefined) insertPos = currentEditor.state.selection.to
-    currentEditor.commands.insertContentAt(insertPos, {
-      type: 'aiBlock',
-      attrs: { id: blkId, ref: ref, thinking: true },
-      content: [
-        ...(qNodes.length ? [{ type: 'aiQuestion', content: qNodes }] : []),
-        { type: 'horizontalRule' },
-        { type: 'paragraph', content: [{ type: 'text', text: '(thinking\u2026)', marks: [{ type: 'italic' }] }] },
-      ],
-    })
-  }
-
-  function resolveAiBlock(blkId, ref, response, lines) {
-    if (currentMode === 'markdown') {
-      var escaped = blkId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      var pattern = new RegExp('(\\[!ai\\] id="' + escaped + '"[^\\n]*)\\s*[\\s\\S]*?\\s*\\[!ai-end\\]')
-      var replacement = '$1\n\n' + (lines.length ? '***Ask:*** ' + lines[0] + '\n\n---\n\n' : '') + response + '\n\n[!ai-end]'
-      lastSyncedBody = lastSyncedBody.replace(pattern, replacement.replace(/\s*thinking="true"/, ''))
-      scheduleSave(currentUuid, lastSyncedBody)
     } else if (currentEditor) {
-      var foundPos = -1, foundSize = 0
-      currentEditor.state.doc.descendants(function (node, pos) {
-        if (node.type.name === 'aiBlock' && node.attrs.id === blkId) { foundPos = pos; foundSize = node.nodeSize; return false }
-      })
-      if (foundPos === -1) return
-      var md = currentEditor.storage.markdown
-      var html = md.parser.md.render(response.trim())
-      var tmp = document.createElement('div'); tmp.innerHTML = html
-      var parsed = window.TipTap.ProseMirrorDOMParser.fromSchema(currentEditor.schema).parse(tmp)
-      currentEditor.commands.insertContentAt({ from: foundPos, to: foundPos + foundSize }, {
-        type: 'aiBlock',
-        attrs: { id: blkId, ref: ref, thinking: false },
-        content: [
-          ...(lines.length ? [{ type: 'aiQuestion', content: lines.map(function (l, i) { return { type: 'paragraph', content: l.trim() ? [i === 0 ? { type: 'text', text: 'Ask: ', marks: [{ type: 'bold' }, { type: 'italic' }] } : null, { type: 'text', text: l }].filter(Boolean) : [] } }) }] : []),
-          { type: 'horizontalRule' },
-          ...parsed.toJSON().content,
-        ],
-      })
+      var selection = currentEditor.state.selection
+      if (selection.node && selection.node.type.name === 'aiBlock') {
+        selectedAiNode = selection.node
+        selectedAiPos = selection.from
+      } else {
+        // Resolve nested depth
+        var resolved = currentEditor.state.doc.resolve(selection.to)
+        for (var depth = resolved.depth; depth > 0; depth--) {
+          var n = resolved.node(depth)
+          if (n.type.name === 'aiBlock') {
+            selectedAiNode = n
+            selectedAiPos = resolved.before(depth)
+            break
+          }
+        }
+      }
+      
+      // Fallback: Check if active element is inside an AI block element
+      if (!selectedAiNode) {
+        var activeEl = document.activeElement
+        if (activeEl) {
+          var aiBlockEl = activeEl.closest('.ai-block')
+          if (aiBlockEl) {
+            var aiId = aiBlockEl.getAttribute('data-ai-id')
+            if (aiId) {
+              currentEditor.state.doc.descendants(function (node, pos) {
+                if (node.type.name === 'aiBlock' && node.attrs.id === aiId) {
+                  selectedAiNode = node
+                  selectedAiPos = pos
+                  return false
+                }
+              })
+            }
+          }
+        }
+      }
+
+      // If we found a selected/focused AI block, select it programmatically
+      // so buildAiContext builds the perfect follow-up history context
+      if (selectedAiNode && selectedAiPos !== null) {
+        currentEditor.commands.setNodeSelection(selectedAiPos)
+      }
     }
+
+    // 2. Build context
+    ctx = precomputedCtx || window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
+    refId = (ctx && ctx.blockRef) || 'doc'
+
+    var blockType = type === 'explain' ? 'EXPLAIN' : 'ASK'
+
+    // 3. Perform insert or follow-up insertion
+    if (currentMode === 'markdown') {
+      var lines = ['```ai-block', 'id: ' + blkId, 'ref: ' + refId, 'status: PENDING', 'type: ' + blockType, 'createdAt: ' + now]
+      if (question) lines.push('question: ' + question)
+      lines.push('```')
+      var newFence = lines.join('\n')
+
+      if (selectedAiNode && currentMarkdownTextarea) {
+        var ta = currentMarkdownTextarea
+        var val = ta.value
+        var selStart = ta.selectionStart
+        var beforeSel = val.substring(0, selStart)
+        var lastFenceStart = beforeSel.lastIndexOf('```ai-block')
+        var closeFenceIdx = val.indexOf('```', lastFenceStart + 11)
+        
+        // Insert directly after this block's fence
+        var insertPos = closeFenceIdx + 3
+        lastSyncedBody = val.substring(0, insertPos) + '\n\n' + newFence + val.substring(insertPos)
+        ta.value = lastSyncedBody
+      } else {
+        lastSyncedBody = lastSyncedBody + '\n\n' + lines.join('\n') + '\n\n'
+      }
+      document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
+      scheduleSave(currentUuid, lastSyncedBody)
+    } else {
+      var insertPos = currentEditor.state.selection.to
+
+      if (selectedAiNode && selectedAiPos !== null) {
+        // Follow-up: Insert directly after the selected AI block
+        insertPos = selectedAiPos + selectedAiNode.nodeSize
+      } else {
+        // Standard placement: lift out of active aiBlocks and find block boundary
+        var resolved = currentEditor.state.doc.resolve(insertPos)
+        for (var depth = resolved.depth; depth > 0; depth--) {
+          var n = resolved.node(depth)
+          if (n.type.name === 'aiBlock') {
+            insertPos = resolved.after(depth)
+            resolved = currentEditor.state.doc.resolve(insertPos)
+            break
+          }
+        }
+        if (resolved.depth >= 1) insertPos = resolved.after(1)
+
+        // Context anchor override
+        if (ctx && ctx.blockRef && ctx.blockRef !== 'doc') {
+          var chainParts = ctx.blockRef.split(',')
+          var anchorId = chainParts[chainParts.length - 1]
+          if (anchorId && anchorId !== 'doc') {
+            currentEditor.state.doc.descendants(function (node, pos) {
+              if ((node.type.name === 'aiBlock' || node.type.name === 'blockRef') && node.attrs.id === anchorId) {
+                insertPos = pos + node.nodeSize
+                return false
+              }
+            })
+          }
+        }
+      }
+
+      currentEditor.commands.insertContentAt(insertPos, {
+        type: 'aiBlock',
+        attrs: { id: blkId, ref: refId, status: 'PENDING', type: blockType, question: question || '', createdAt: now },
+      })
+
+      // Move focus inside/after the new block so the editor is instantly interactive
+      var afterInsert = insertPos + 2
+      var docSize = currentEditor.state.doc.content.size
+      currentEditor.chain()
+        .setTextSelection(Math.min(afterInsert, docSize - 1))
+        .focus()
+        .scrollIntoView()
+        .run()
+    }
+
+    // Capture the body now (includes the PENDING block) to send to Go
+    var body = currentMode === 'markdown' ? lastSyncedBody : (currentEditor.storage.markdown.getMarkdown() || '')
+
+    var endpoint = type === 'explain' ? '/api/ai/explain' : '/api/ai/ask'
+    var payload = {
+      content:       ctx ? ctx.content : '',
+      history:       ctx ? ctx.history : '',
+      question:      question || '',
+      noteUUID:      currentUuid || '',
+      imageBlockIds: (ctx && ctx.imageIds) || [],
+      blkId:         blkId,
+      body:          body,
+    }
+
+    fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then(function (r) {
+      if (!r.ok) throw new Error('AI request failed: ' + r.status)
+      // Success path: Go has already written COMPLETE to disk and broadcast SSE.
+    }).catch(function (err) {
+      console.error('[editor] AI error', err)
+      if (currentEditor) {
+        currentEditor.commands.command(function (props) {
+          var tr = props.tr
+          var found = false
+          props.state.doc.descendants(function (node, pos) {
+            if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
+              tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { status: 'TIMEOUT' }))
+              found = true
+              return false
+            }
+          })
+          return found
+        })
+      }
+    })
   }
 
-  function toggleAiBlocks() {
+    function toggleAiBlocks() {
     showAiBlocks = !showAiBlocks
     var panel = currentMountEl || document.querySelector('.editor-panel')
     if (panel) {
@@ -604,6 +684,40 @@
 
   function handleSmartPaste(event) {
     if (!event.clipboardData || !currentEditor) return false
+
+    // AI Block paste handler
+    var text = event.clipboardData.getData('text/plain')
+    if (text && text.trim().startsWith('```ai-block')) {
+      var cleanText = text.trim()
+      var firstLineEnd = cleanText.indexOf('\n')
+      var lastBackticks = cleanText.lastIndexOf('```')
+      if (firstLineEnd !== -1 && lastBackticks !== -1 && lastBackticks > firstLineEnd) {
+        var yamlText = cleanText.substring(firstLineEnd + 1, lastBackticks).trim()
+        try {
+          var data = window.jsyaml.load(yamlText)
+          if (data && data.id) {
+            event.preventDefault()
+            currentEditor.commands.insertContent({
+              type: 'aiBlock',
+              attrs: {
+                id: data.id || '',
+                ref: data.ref || 'doc',
+                status: data.status || 'PENDING',
+                type: data.type || null,
+                model: data.model || null,
+                createdAt: data.createdAt || null,
+                completedAt: data.completedAt || null,
+                question: data.question || '',
+                response: data.response || null
+              }
+            })
+            return true
+          }
+        } catch (e) {
+          console.error('[editor.js] Failed to parse pasted ai-block yaml', e)
+        }
+      }
+    }
 
     var html = event.clipboardData.getData('text/html')
     var files = Array.from(event.clipboardData.files)
@@ -1089,6 +1203,94 @@
   document.addEventListener('sieve:toggle-search',    toggleSearch)
   document.addEventListener('sieve:toggle-ai-blocks', toggleAiBlocks)
 
+  document.addEventListener('sieve:ai-explain', function () {
+    if (currentMode === 'markdown') return
+    runAiJob('explain')
+  })
+  document.addEventListener('sieve:ai-ask', function () {
+    if (currentMode === 'markdown') return
+    ensureOverlays()
+    openAskPopup()
+  })
+  document.addEventListener('sieve:ai-retry', function (e) {
+    if (currentMode === 'markdown' || !currentEditor) return
+    var details = e.detail
+    if (!details || !details.id) return
+
+    var blkId = details.id
+    var type = (details.type || '').toLowerCase()
+    if (type !== 'ask' && type !== 'explain') {
+      type = details.question ? 'ask' : 'explain'
+    }
+
+    // 1. Set status to PENDING and clear response
+    currentEditor.commands.command(function (props) {
+      var tr = props.tr
+      var found = false
+      props.state.doc.descendants(function (node, pos) {
+        if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
+          tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { status: 'PENDING', response: null }))
+          found = true
+          return false
+        }
+      })
+      return found
+    })
+
+    // 2. Select the node to ensure buildAiContext builds follow-up history context up to this block
+    var pos = null
+    currentEditor.state.doc.descendants(function (node, p) {
+      if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
+        pos = p
+        return false
+      }
+    })
+    if (pos !== null) {
+      currentEditor.commands.setNodeSelection(pos)
+    }
+
+    // 3. Build context
+    var ctx = window.TipTap.buildAiContext(currentEditor, false, lastSyncedBody, currentUuid)
+
+    // 4. Capture the updated markdown body
+    var body = currentEditor.storage.markdown.getMarkdown() || ''
+
+    var endpoint = type === 'explain' ? '/api/ai/explain' : '/api/ai/ask'
+    var payload = {
+      content:       ctx ? ctx.content : '',
+      history:       ctx ? ctx.history : '',
+      question:      details.question || '',
+      noteUUID:      currentUuid || '',
+      imageBlockIds: (ctx && ctx.imageIds) || [],
+      blkId:         blkId,
+      body:          body,
+    }
+
+    fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then(function (r) {
+      if (!r.ok) throw new Error('AI retry request failed: ' + r.status)
+    }).catch(function (err) {
+      console.error('[editor] AI retry error', err)
+      if (currentEditor) {
+        currentEditor.commands.command(function (props) {
+          var tr = props.tr
+          var found = false
+          props.state.doc.descendants(function (node, pos) {
+            if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
+              tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { status: 'TIMEOUT' }))
+              found = true
+              return false
+            }
+          })
+          return found
+        })
+      }
+    })
+  })
+
   // ── Helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -1104,6 +1306,156 @@
   document.body.addEventListener('editor:restore', function (e) {
     var data = e.detail
     if (data && data.body) setContent(data.body)
+  })
+
+  document.addEventListener('contextmenu', function (e) {
+    if (e.target.closest('#tiptap-mount')) {
+      e.preventDefault()
+    }
+  }, true)
+
+  document.addEventListener('contextmenu', function (e) {
+    var editorEl = e.target.closest('#tiptap-mount')
+    if (!editorEl) return
+
+    // Let custom blocks handle their own context menus
+    if (e.target.closest('.ai-block, .image-block')) {
+      return
+    }
+
+    if (!currentEditor) return
+
+    var selection = currentEditor.state.selection
+    var hasSelection = !selection.empty
+
+    // Detect contextual target block (image, code block, or table)
+    var targetNode = null
+    var doc = currentEditor.state.doc
+    var from = selection.from, to = selection.to
+    var scanFrom = (from === to) ? Math.max(0, from - 1) : from
+    var scanTo   = (from === to) ? Math.min(doc.content.size, to + 1) : to
+    doc.nodesBetween(scanFrom, scanTo, function (node, pos) {
+      if (!targetNode && (node.type.name === 'image' || node.type.name === 'codeBlock' || node.type.name === 'table')) {
+        targetNode = node
+        return false
+      }
+    })
+
+    var items = []
+
+    if (hasSelection) {
+      items.push({
+        label: '📋 Copy',
+        action: function () {
+          var state = currentEditor.state
+          var from = state.selection.from
+          var to = state.selection.to
+          var text = state.doc.textBetween(from, to, '\n')
+          if (text) {
+            navigator.clipboard.writeText(text).catch(console.error)
+          }
+        }
+      })
+      items.push({
+        label: '✂️ Cut',
+        action: function () {
+          var state = currentEditor.state
+          var from = state.selection.from
+          var to = state.selection.to
+          var text = state.doc.textBetween(from, to, '\n')
+          if (text) {
+            navigator.clipboard.writeText(text).then(function () {
+              currentEditor.commands.deleteSelection()
+              currentEditor.commands.focus()
+            }).catch(console.error)
+          }
+        }
+      })
+    }
+
+    items.push({
+      label: '📋 Paste',
+      action: function () {
+        currentEditor.commands.focus()
+        navigator.clipboard.readText().then(function (text) {
+          if (text) {
+            // Check if it is a serialized AI Block, and let our paste handler parse it!
+            if (text.trim().startsWith('```ai-block')) {
+              var cleanText = text.trim()
+              var firstLineEnd = cleanText.indexOf('\n')
+              var lastBackticks = cleanText.lastIndexOf('```')
+              if (firstLineEnd !== -1 && lastBackticks !== -1 && lastBackticks > firstLineEnd) {
+                var yamlText = cleanText.substring(firstLineEnd + 1, lastBackticks).trim()
+                try {
+                  var data = window.jsyaml.load(yamlText)
+                  if (data && data.id) {
+                    currentEditor.commands.insertContent({
+                      type: 'aiBlock',
+                      attrs: {
+                        id: data.id || '',
+                        ref: data.ref || 'doc',
+                        status: data.status || 'PENDING',
+                        type: data.type || null,
+                        model: data.model || null,
+                        createdAt: data.createdAt || null,
+                        completedAt: data.completedAt || null,
+                        question: data.question || '',
+                        response: data.response || null
+                      }
+                    })
+                    return
+                  }
+                } catch (e) {
+                  console.error('[editor.js] Context Paste failed to parse ai-block', e)
+                }
+              }
+            }
+            currentEditor.commands.insertContent(text)
+          }
+        }).catch(function (err) {
+          console.error('[editor.js] Navigator clipboard paste failed, using fallback', err)
+          currentEditor.commands.focus()
+          document.execCommand('paste')
+        })
+      }
+    })
+
+    if (hasSelection) {
+      items.push({
+        label: '🗑️ Delete',
+        action: function () {
+          currentEditor.commands.deleteSelection()
+        }
+      })
+    }
+
+    items.push({
+      label: '🔍 Select All',
+      action: function () {
+        currentEditor.commands.focus()
+        currentEditor.commands.selectAll()
+      }
+    })
+
+    if (hasSelection || targetNode) {
+      items.push({ type: 'divider' })
+      items.push({
+        label: '💬 Ask AI',
+        action: function () {
+          currentEditor.commands.focus()
+          document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
+        }
+      })
+      items.push({
+        label: '💡 Explain',
+        action: function () {
+          currentEditor.commands.focus()
+          document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
+        }
+      })
+    }
+
+    window.TipTap.createContextMenu(e, items)
   })
 
   window.sieveInitEditor = initEditor

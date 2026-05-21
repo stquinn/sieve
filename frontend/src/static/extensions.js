@@ -40,236 +40,10 @@
   }
 
   function getCleanMarkdown(fullMd) {
-    var regex = /\n*\[!ai\] id="[^"]+" ref="[^"]+"[\s\S]*?\[!ai-end\]\n*/g
-    return fullMd.replace(regex, '\n\n').trim()
+    var legacyRegex = /\n*\[!ai\] id="[^"]+" ref="[^"]+"[\s\S]*?\[!ai-end\]\n*/g
+    var fencedRegex = /\n*```ai-block\n[\s\S]*?\n```\n*/g
+    return fullMd.replace(legacyRegex, '\n\n').replace(fencedRegex, '\n\n').trim()
   }
-
-  // ── AiQuestion ─────────────────────────────────────────────────────────────
-
-  var AiQuestion = Node.create({
-    name: 'aiQuestion',
-    group: 'block',
-    content: 'block+',
-    selectable: false,
-    parseHTML() {
-      return [{ tag: 'div[data-type="aiQuestion"]' }]
-    },
-    renderHTML({ HTMLAttributes }) {
-      return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'aiQuestion', class: 'ai-question' }), 0]
-    },
-  })
-
-  // ── AiBlock ────────────────────────────────────────────────────────────────
-
-  function gatherChain(startId, startRefs) {
-    var ids = new Set()
-    function visit(id) {
-      if (!id || id === 'doc' || ids.has(id)) return
-      ids.add(id)
-      var el = document.querySelector('.ai-block[data-ai-id="' + id + '"]')
-      if (el) {
-        var refs = el.getAttribute('data-ai-ref') || ''
-        refs.split(',').forEach(function (r) { visit(r.trim()) })
-      }
-    }
-    visit(startId)
-    startRefs.forEach(visit)
-    return ids
-  }
-
-  function makeAiBlockNodeView({ node }) {
-    var dom = document.createElement('div')
-    dom.className = 'ai-block'
-    dom.setAttribute('data-ai-id', node.attrs.id || '')
-    dom.setAttribute('data-ai-ref', node.attrs.ref || 'doc')
-
-    var badge = document.createElement('span')
-    badge.className = 'ai-block__badge' + (node.textContent.includes('(thinking\u2026)') ? ' ai-block__badge--thinking' : '')
-    badge.textContent = 'AI'
-
-    var contentEl = document.createElement('div')
-    contentEl.className = 'ai-block__content'
-
-    dom.appendChild(badge)
-    dom.appendChild(contentEl)
-
-    function applyChain(action) {
-      var refs = (dom.getAttribute('data-ai-ref') || '').split(',').map(function (r) { return r.trim() }).filter(Boolean)
-      var ids = gatherChain(dom.getAttribute('data-ai-id') || '', refs)
-      ids.forEach(function (id) {
-        if (id === dom.getAttribute('data-ai-id')) 
-          return
-        var blockEl = document.querySelector('[data-block-id="' + id + '"]')
-        if (blockEl) {
-            console.log("Applying block ref active to ", blockEl)
-            blockEl.classList[action]('block-ref-active')
-            console.log([...blockEl.classList]);
-        } 
-        var aiEl = document.querySelector('.ai-block[data-ai-id="' + id + '"]')
-        if (aiEl) 
-          aiEl.classList[action]('ai-block--chain-active')
-      })
-    }
-
-    dom.addEventListener('mouseenter', function () { applyChain('add') })
-    dom.addEventListener('mouseleave', function () { applyChain('remove') })
-    dom.addEventListener('focus',      function () { applyChain('add') })
-    dom.addEventListener('blur',       function () { applyChain('remove') })
-
-    return {
-      dom: dom,
-      contentDOM: contentEl,
-      update: function (updatedNode) {
-        if (updatedNode.type.name !== 'aiBlock') return false
-        dom.setAttribute('data-ai-id', updatedNode.attrs.id || '')
-        dom.setAttribute('data-ai-ref', updatedNode.attrs.ref || 'doc')
-        badge.className = 'ai-block__badge' + (updatedNode.textContent.includes('(thinking\u2026)') ? ' ai-block__badge--thinking' : '')
-        return true
-      },
-      ignoreMutation: function (mutation) {
-        // Ignore if only the class attribute changed
-        if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
-          return true
-        }
-        return false
-      }
-    }
-  }
-
-  var AiBlock = Node.create({
-    name: 'aiBlock',
-    group: 'block',
-    content: '(aiQuestion | block)+',
-    defining: true,
-
-    addAttributes() {
-      return {
-        id: {
-          default: '',
-          parseHTML: function (el) { return el.getAttribute('data-id') || '' },
-          renderHTML: function (attrs) { return { 'data-id': attrs.id } },
-        },
-        ref: {
-          default: 'doc',
-          parseHTML: function (el) { return el.getAttribute('data-ref') || 'doc' },
-          renderHTML: function (attrs) { return { 'data-ref': attrs.ref } },
-        },
-      }
-    },
-
-    parseHTML() {
-      return [{ tag: 'div[data-type="aiBlock"]' }]
-    },
-
-    renderHTML({ HTMLAttributes }) {
-      return ['div', mergeAttributes({ 'data-type': 'aiBlock' }, HTMLAttributes), 0]
-    },
-
-    addNodeView() {
-      return makeAiBlockNodeView
-    },
-
-    addStorage() {
-      return {
-        markdown: {
-          serialize: function (state, node) {
-            state.ensureNewLine()
-            state.write('[!ai] id="' + node.attrs.id + '" ref="' + node.attrs.ref + '"')
-            state.closeBlock(node)
-            node.content.forEach(function (child) {
-              if (child.type.name === 'aiQuestion') {
-                child.content.forEach(function (inner) { state.render(inner) })
-              } else {
-                state.render(child)
-              }
-            })
-            state.ensureNewLine()
-            state.write('[!ai-end]')
-            state.closeBlock(node)
-          },
-          parse: {
-            updateDOM: function (element) {
-              function processEl(el) {
-                var changed = true
-                while (changed) {
-                  changed = false
-                  var children = Array.from(el.children)
-                  for (var i = 0; i < children.length; i++) {
-                    var child = children[i]
-                    if (child.tagName !== 'P') continue
-                    var text = (child.textContent || '').trim()
-                    if (!text.startsWith('[!ai]') || text.startsWith('[!ai-end]')) continue
-                    var endIdx = -1
-                    for (var j = i + 1; j < children.length; j++) {
-                      if (children[j].tagName === 'P' && (children[j].textContent || '').startsWith('[!ai-end]')) {
-                        endIdx = j; break
-                      }
-                    }
-                    if (endIdx === -1) break
-                    var idMatch = text.match(/id="([^"]+)"/)
-                    var refMatch = text.match(/ref="([^"]+)"/)
-                    var wrapper = document.createElement('div')
-                    wrapper.setAttribute('data-type', 'aiBlock')
-                    wrapper.setAttribute('data-id', idMatch ? idMatch[1] : '')
-                    wrapper.setAttribute('data-ref', refMatch ? refMatch[1] : 'doc')
-                    for (var k = i + 1; k < endIdx; k++) wrapper.appendChild(children[k])
-                    var firstChild = wrapper.firstChild
-                    if (firstChild &&
-                        firstChild.getAttribute &&
-                        firstChild.getAttribute('data-type') !== 'aiQuestion' &&
-                        (firstChild.textContent || '').trim().startsWith('Ask: ')) {
-                      var qWrapper = document.createElement('div')
-                      qWrapper.setAttribute('data-type', 'aiQuestion')
-                      if (wrapper.querySelector('hr')) {
-                        while (wrapper.firstChild &&
-                               wrapper.firstChild instanceof HTMLElement &&
-                               wrapper.firstChild.tagName !== 'HR') {
-                          qWrapper.appendChild(wrapper.firstChild)
-                        }
-                      } else {
-                        while (wrapper.firstChild && wrapper.firstChild instanceof HTMLElement) {
-                          var t = (wrapper.firstChild.textContent || '').trim()
-                          if (t === '' || t.length > 120) break
-                          qWrapper.appendChild(wrapper.firstChild)
-                        }
-                      }
-                      wrapper.insertBefore(qWrapper, wrapper.firstChild)
-                    }
-                    el.insertBefore(wrapper, child)
-                    child.remove()
-                    children[endIdx].remove()
-                    changed = true
-                    break
-                  }
-                }
-                // Recurse into nested block containers (e.g. blockRef divs)
-                Array.from(el.children).forEach(function (c) {
-                  if (c.tagName === 'DIV' && c.children.length > 0) processEl(c)
-                })
-              }
-              processEl(element)
-            },
-          },
-        },
-      }
-    },
-  })
-
-  // ── AiShortcuts ────────────────────────────────────────────────────────────
-
-  var AiShortcuts = Extension.create({
-    name: 'aiShortcuts',
-    addKeyboardShortcuts() {
-      var opts = this.options
-      return {
-        'Mod-e':       function () { opts.onExplain        && opts.onExplain();        return true },
-        'Mod-Shift-a': function () { opts.onAsk            && opts.onAsk();            return true },
-        'Mod-Shift-A': function () { opts.onAsk            && opts.onAsk();            return true },
-        'Mod-j':       function () { opts.onToggleAiBlocks && opts.onToggleAiBlocks(); return true },
-        'Mod-J':       function () { opts.onToggleAiBlocks && opts.onToggleAiBlocks(); return true },
-      }
-    },
-  })
 
   // ── BlockNode ──────────────────────────────────────────────────────────────
 
@@ -435,8 +209,11 @@
     addNodeView() {
       return function ({ node }) {
         var wrapper = document.createElement('div')
-        wrapper.className = 'code-block'
+        wrapper.className = 'code-block-wrapper'
         if (node.attrs.id) wrapper.setAttribute('data-block-id', node.attrs.id)
+
+        var container = document.createElement('div')
+        container.className = 'code-block'
 
         var gutter = document.createElement('div')
         gutter.className = 'code-block__gutter'
@@ -457,8 +234,9 @@
         }
 
         updateGutter(node.textContent)
-        wrapper.appendChild(gutter)
-        wrapper.appendChild(code)
+        container.appendChild(gutter)
+        container.appendChild(code)
+        wrapper.appendChild(container)
 
         return {
           dom: wrapper,
@@ -559,6 +337,7 @@
 
     addNodeView() {
       return function ({ node, editor, getPos }) {
+        var currentNode = node
         var wrapper = document.createElement('div')
         wrapper.style.display = 'inline-block'
 
@@ -611,10 +390,87 @@
         wrapper.appendChild(img)
         wrapper.appendChild(resizer)
 
+        wrapper.addEventListener('contextmenu', function (e) {
+          e.preventDefault()
+          e.stopPropagation()
+
+          // Programmatically select this node in ProseMirror so editor context highlights it
+          if (typeof getPos === 'function') {
+            var pos = getPos()
+            editor.commands.setNodeSelection(pos)
+          }
+
+          function serializeImageMarkdown(n) {
+            var src = n.attrs.src || '', alt = n.attrs.alt || ''
+            var width = n.attrs.width || '', height = n.attrs.height || ''
+            var summary = n.attrs.summary || '', detect = n.attrs.detect || '', id = n.attrs.id || ''
+            var text = '![' + alt + '](' + src + ')'
+            if (width || height || summary || detect || id) {
+              var extra = []
+              if (id) extra.push('id="' + id + '"')
+              if (width) extra.push('width="' + width + '"')
+              if (height) extra.push('height="' + height + '"')
+              if (summary) extra.push('summary="' + summary + '"')
+              if (detect) extra.push('detect="' + detect + '"')
+              text += '{' + extra.join(' ') + '}'
+            }
+            return text
+          }
+
+          var items = [
+            {
+              label: '📋 Copy',
+              action: function () {
+                navigator.clipboard.writeText(serializeImageMarkdown(currentNode)).catch(console.error)
+              }
+            },
+            {
+              label: '✂️ Cut',
+              action: function () {
+                navigator.clipboard.writeText(serializeImageMarkdown(currentNode))
+                  .then(function () {
+                    if (typeof getPos === 'function') {
+                      var pos = getPos()
+                      editor.view.dispatch(editor.state.tr.delete(pos, pos + currentNode.nodeSize))
+                    }
+                  })
+                  .catch(console.error)
+              }
+            },
+            {
+              label: '🗑️ Delete',
+              action: function () {
+                if (typeof getPos === 'function') {
+                  var pos = getPos()
+                  editor.view.dispatch(editor.state.tr.delete(pos, pos + currentNode.nodeSize))
+                }
+              }
+            },
+            { type: 'divider' },
+            {
+              label: '💬 Ask AI',
+              action: function () {
+                editor.commands.focus()
+                document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
+              }
+            },
+            {
+              label: '💡 Explain',
+              action: function () {
+                editor.commands.focus()
+                document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
+              }
+            }
+          ]
+
+          window.TipTap.createContextMenu(e, items)
+        })
+
         return {
           dom: wrapper,
           update: function (updatedNode) {
             if (updatedNode.type.name !== node.type.name) return false
+            currentNode = updatedNode
             applyAttrs(updatedNode)
             return true
           },
@@ -875,6 +731,35 @@
     return ids
   }
 
+  function serializeTableNode(tableNode, serializer) {
+    var rows = []
+    var colCount = 0
+    tableNode.forEach(function (row) {
+      if (row.type.name !== 'tableRow') return
+      var cells = []
+      row.forEach(function (cell) {
+        var cellText = serializer.serialize(cell).trim().replace(/\n/g, ' ')
+        cells.push(cellText)
+      })
+      rows.push(cells)
+      if (cells.length > colCount) colCount = cells.length
+    })
+    if (rows.length === 0) return ''
+    var mdLines = []
+    // Header
+    var header = rows[0]
+    mdLines.push('| ' + header.join(' | ') + ' |')
+    // Divider
+    var dividers = []
+    for (var i = 0; i < colCount; i++) dividers.push('---')
+    mdLines.push('| ' + dividers.join(' | ') + ' |')
+    // Body
+    for (var r = 1; r < rows.length; r++) {
+      mdLines.push('| ' + rows[r].join(' | ') + ' |')
+    }
+    return mdLines.join('\n')
+  }
+
   function buildAiContext(editor, isMarkdownMode, rawMd, uuid) {
     if (isMarkdownMode) {
       var ta = document.querySelector('.markdown-raw')
@@ -891,10 +776,31 @@
     var serializer = editor.storage.markdown.serializer
 
     var aiBlockRef = '', aiBlockId = ''
+
+    // AI blocks are contentEditable:false so TipTap cursor can't enter them.
+    // Check native browser selection first — covers the case where the user
+    // has highlighted text inside a rendered AI block response.
+    var nativeSel = window.getSelection()
+    if (nativeSel && !nativeSel.isCollapsed) {
+      var anchorEl = nativeSel.anchorNode
+      var el = anchorEl && anchorEl.nodeType === 3 ? anchorEl.parentElement : anchorEl
+      while (el && !el.classList.contains('ai-block')) el = el.parentElement
+      if (el && el.classList.contains('ai-block')) {
+        var nativeId = el.getAttribute('data-ai-id') || ''
+        doc.descendants(function (node) {
+          if (node.type.name === 'aiBlock' && node.attrs.id === nativeId) {
+            aiBlockId = nativeId; aiBlockRef = node.attrs.ref || ''; return false
+          }
+        })
+      }
+    }
+
     var $from = editor.state.selection.$from
-    for (var d = $from.depth; d >= 0; d--) {
-      var n = $from.node(d)
-      if (n.type.name === 'aiBlock') { aiBlockId = n.attrs.id || ''; aiBlockRef = n.attrs.ref || ''; break }
+    if (!aiBlockId) {
+      for (var d = $from.depth; d >= 0; d--) {
+        var n = $from.node(d)
+        if (n.type.name === 'aiBlock') { aiBlockId = n.attrs.id || ''; aiBlockRef = n.attrs.ref || ''; break }
+      }
     }
     if (!aiBlockId) {
       doc.nodesBetween(from, to, function (node) {
@@ -951,31 +857,46 @@
     var scanFrom = (from === to) ? Math.max(0, from - 1) : from
     var scanTo   = (from === to) ? Math.min(doc.content.size, to + 1) : to
     doc.nodesBetween(scanFrom, scanTo, function (node, pos) {
-      if (!targetNode && (node.type.name === 'image' || node.type.name === 'codeBlock')) {
+      if (!targetNode && (node.type.name === 'image' || node.type.name === 'codeBlock' || node.type.name === 'table')) {
         targetNode = node; targetPos = pos; return false
       }
     })
 
     var selectedText = '', blockRange = null, contextLabel = ''
     if (targetNode && from === targetPos && to === targetPos + targetNode.nodeSize) {
-      selectedText = serializer.serialize(targetNode).trim()
-      contextLabel = targetNode.type.name === 'image' ? 'Image' : 'Code Block'
+      if (targetNode.type.name === 'table') {
+        selectedText = serializeTableNode(targetNode, serializer)
+      } else {
+        selectedText = serializer.serialize(targetNode).trim()
+      }
+      contextLabel = targetNode.type.name === 'image' ? 'Image' : (targetNode.type.name === 'codeBlock' ? 'Code Block' : 'Table')
     } else if (from !== to) {
       selectedText = serializer.serialize(doc.slice(from, to).content).trim()
       blockRange = selection.$from.blockRange(selection.$to)
       contextLabel = 'Selection'
     } else if (targetNode) {
-      selectedText = serializer.serialize(targetNode).trim()
-      contextLabel = targetNode.type.name === 'image' ? 'Image' : 'Code Block'
+      if (targetNode.type.name === 'table') {
+        selectedText = serializeTableNode(targetNode, serializer)
+      } else {
+        selectedText = serializer.serialize(targetNode).trim()
+      }
+      contextLabel = targetNode.type.name === 'image' ? 'Image' : (targetNode.type.name === 'codeBlock' ? 'Code Block' : 'Table')
     } else {
       selectedText = getCleanMarkdown(editor.storage.markdown.getMarkdown())
       contextLabel = 'Document'
     }
 
     var existingBlockId = ''
-    if (targetNode && from >= targetPos && to <= targetPos + targetNode.nodeSize) {
-      existingBlockId = targetNode.attrs.id
-    } else if (blockRange) {
+    for (var d = selection.$from.depth; d >= 0; d--) {
+      var n = selection.$from.node(d)
+      if (n.type.name === 'blockRef') {
+        existingBlockId = n.attrs.id || ''
+        break
+      }
+    }
+    if (!existingBlockId && targetNode && from >= targetPos && to <= targetPos + targetNode.nodeSize) {
+      existingBlockId = targetNode.attrs.id || ''
+    } else if (!existingBlockId && blockRange) {
       doc.nodesBetween(blockRange.start, blockRange.end, function (node) {
         if (!existingBlockId && node.type.name === 'blockRef' && node.attrs.id) {
           existingBlockId = node.attrs.id; return false
@@ -990,7 +911,14 @@
     if (!existingBlockId) {
       try {
         if (targetNode && from >= targetPos && to <= targetPos + targetNode.nodeSize) {
-          tr.setNodeMarkup(targetPos, undefined, Object.assign({}, targetNode.attrs, { id: blockRef }))
+          if (targetNode.type.name === 'table') {
+            var $from = doc.resolve(targetPos)
+            var $to = doc.resolve(targetPos + targetNode.nodeSize)
+            var topRange = new NodeRange($from, $to, 0)
+            tr.wrap(topRange, [{ type: editor.state.schema.nodes.blockRef, attrs: { id: blockRef } }])
+          } else {
+            tr.setNodeMarkup(targetPos, undefined, Object.assign({}, targetNode.attrs, { id: blockRef }))
+          }
         } else if (blockRange) {
           var topRange = new NodeRange(blockRange.$from, blockRange.$to, 0)
           tr.wrap(topRange, [{ type: editor.state.schema.nodes.blockRef, attrs: { id: blockRef } }])
@@ -1029,9 +957,6 @@
 
   // ── Expose on window.TipTap ────────────────────────────────────────────────
 
-  T.AiQuestion = AiQuestion
-  T.AiBlock = AiBlock
-  T.AiShortcuts = AiShortcuts
   T.BlockNode = BlockNode
   T.CodeBlockWithAttrs = CodeBlockWithAttrs
   T.ImageWithAttrs = ImageWithAttrs

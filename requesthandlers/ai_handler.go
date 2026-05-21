@@ -3,15 +3,16 @@ package requesthandlers
 import (
 	"encoding/json"
 	"net/http"
+	"sieve/logger"
 	"sieve/sieve"
 
 	"github.com/go-chi/chi/v5"
 )
 
-
 type AiHandler struct {
 	ServiceProvider  *sieve.ServiceProvider
 	EmitNotesChanged func()
+	Broadcast        func(event, data string)
 }
 
 func (h *AiHandler) RegisterPaths(r chi.Router) {
@@ -102,6 +103,8 @@ type askRequest struct {
 	Question      string   `json:"question"`
 	NoteUUID      string   `json:"noteUUID"`
 	ImageBlockIds []string `json:"imageBlockIds"`
+	BlkID         string   `json:"blkId"`
+	Body          string   `json:"body"`
 }
 
 func (h *AiHandler) handleAiAsk(w http.ResponseWriter, r *http.Request) {
@@ -111,10 +114,29 @@ func (h *AiHandler) handleAiAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Save body immediately so the PENDING block is on disk before AI runs.
+	if req.BlkID != "" && req.Body != "" && req.NoteUUID != "" {
+		if doc, err := h.ServiceProvider.Documents.LoadByUUID(req.NoteUUID); err == nil {
+			doc.SetBody([]byte(req.Body))
+			if _, err := h.ServiceProvider.Documents.Save(doc); err != nil {
+				logger.Error("handleAiAsk: save body failed", "err", err)
+			}
+		}
+	}
+
 	resp, err := h.ServiceProvider.AI.RunAsk(req.Content, req.History, req.Question, req.NoteUUID, req.ImageBlockIds)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	if req.BlkID != "" && req.NoteUUID != "" {
+		if err := h.ServiceProvider.AI.ResolveAiBlock(req.NoteUUID, req.BlkID, resp, "", "ASK"); err != nil {
+			logger.Error("handleAiAsk: ResolveAiBlock failed", "err", err)
+		} else if h.Broadcast != nil {
+			data, _ := json.Marshal(map[string]string{"uuid": req.NoteUUID, "blkId": req.BlkID})
+			h.Broadcast("ai:block-resolved", string(data))
+		}
 	}
 
 	w.Header().Set("Content-Type", "text/plain")
@@ -126,6 +148,8 @@ type explainRequest struct {
 	History       string   `json:"history"`
 	NoteUUID      string   `json:"noteUUID"`
 	ImageBlockIds []string `json:"imageBlockIds"`
+	BlkID         string   `json:"blkId"`
+	Body          string   `json:"body"`
 }
 
 func (h *AiHandler) handleAiExplain(w http.ResponseWriter, r *http.Request) {
@@ -135,10 +159,29 @@ func (h *AiHandler) handleAiExplain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Save body immediately so the PENDING block is on disk before AI runs.
+	if req.BlkID != "" && req.Body != "" && req.NoteUUID != "" {
+		if doc, err := h.ServiceProvider.Documents.LoadByUUID(req.NoteUUID); err == nil {
+			doc.SetBody([]byte(req.Body))
+			if _, err := h.ServiceProvider.Documents.Save(doc); err != nil {
+				logger.Error("handleAiExplain: save body failed", "err", err)
+			}
+		}
+	}
+
 	resp, err := h.ServiceProvider.AI.RunExplain(req.Content, req.History, req.NoteUUID, req.ImageBlockIds)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	if req.BlkID != "" && req.NoteUUID != "" {
+		if err := h.ServiceProvider.AI.ResolveAiBlock(req.NoteUUID, req.BlkID, resp, "", "EXPLAIN"); err != nil {
+			logger.Error("handleAiExplain: ResolveAiBlock failed", "err", err)
+		} else if h.Broadcast != nil {
+			data, _ := json.Marshal(map[string]string{"uuid": req.NoteUUID, "blkId": req.BlkID})
+			h.Broadcast("ai:block-resolved", string(data))
+		}
 	}
 
 	w.Header().Set("Content-Type", "text/plain")

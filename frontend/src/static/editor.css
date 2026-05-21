@@ -445,7 +445,7 @@ textarea::selection {
   caret-color: var(--theme-text);
 }
 
-.tiptap p.is-empty::before {
+.tiptap p.is-empty::after {
   content: attr(data-placeholder);
   color: var(--theme-muted);
   pointer-events: none;
@@ -633,25 +633,25 @@ textarea::selection {
 /* a referencing aiBlock, the class `block-ref-active` is toggled via     */
 /* direct DOM manipulation in AiBlockView, fading in a subtle highlight.  */
 
-.block-node {
-  border-radius: 4px;
-  transition: background-color 0.2s ease;
+.block-node,
+.image-block,
+.code-block-wrapper {
+  border-radius: 8px;
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  border-left: 3px solid transparent;
+  padding: 4px 6px;
 }
 
-.block-node.block-ref-active {
-  background-color: color-mix(in srgb, var(--theme-accentPrimary) 8%, transparent);
-  box-shadow: 2px 0 0 0 var(--theme-accentPrimary) inset;
-  padding-left: 3px;
-  padding-right: 3px;
+.block-node.block-ref-active,
+.image-block.block-ref-active,
+.code-block-wrapper.block-ref-active {
+  background-color: color-mix(in srgb, var(--theme-accentPrimary) 8%, transparent) !important;
+  border-left-color: var(--theme-accentPrimary) !important;
 }
 
-.block-node.block-ref-active .code-block,
-.tiptap .code-block.block-ref-active,
-.block-node.block-ref-active table,
-.tiptap table.block-ref-active {
-  background: color-mix(in srgb, var(--theme-accentPrimary) 10%, var(--theme-bgDark));
-  border-color: color-mix(in srgb, var(--theme-accentPrimary) 30%, var(--theme-border));
-  box-shadow: 0 0 0 2px var(--theme-accentPrimary); 
+.tiptap .code-block-wrapper {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
 }
 
 div.node-image.ProseMirror-selectednode {
@@ -665,8 +665,15 @@ div.node-image.ProseMirror-selectednode {
   transition: box-shadow 0.2s ease;
 }
 
-.image-block.block-ref-active img {
-  box-shadow: 0 0 0 2px var(--theme-accentPrimary);
+.image-block:hover img {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--theme-accentPrimary) 60%, var(--theme-aiBlockBorder)),
+              0 4px 20px rgba(0, 0, 0, 0.25);
+}
+
+.image-block.ProseMirror-selectednode img {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-accentPrimary) 25%, transparent),
+              0 0 0 2px var(--theme-accentPrimary),
+              0 8px 30px rgba(0, 0, 0, 0.45) !important;
 }
 
 .image-block {
@@ -705,7 +712,7 @@ div.node-image.ProseMirror-selectednode {
 
 .ai-block {
   border: 1px solid var(--theme-aiBlockBorder);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--theme-aiBlockBg);
   margin-top: 1.5rem;
   margin-bottom: 2rem;
@@ -714,14 +721,33 @@ div.node-image.ProseMirror-selectednode {
   transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
 }
 
-.ai-block:hover,
-.ai-block:focus-within {
-  /* border-color: var(--theme-accentPrimary); */
+.ai-block:hover {
+  border-color: color-mix(in srgb, var(--theme-accentPrimary) 60%, var(--theme-aiBlockBorder));
+  background: color-mix(in srgb, var(--theme-accentPrimary) 2%, var(--theme-aiBlockBg));
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
 }
+
+.ai-block.ProseMirror-selectednode {
+  border-color: var(--theme-accentPrimary) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-accentPrimary) 25%, transparent), 
+              0 8px 30px rgba(0, 0, 0, 0.45) !important;
+  background: color-mix(in srgb, var(--theme-accentPrimary) 5%, var(--theme-aiBlockBg)) !important;
+  outline: none !important;
+}
+
 .ai-block.ai-block--chain-active {
-  border-color: var(--theme-accentPrimary);
-  box-shadow: 0 0 0 1px var(--theme-accentPrimary);
+  border-color: color-mix(in srgb, var(--theme-accentPrimary) 30%, var(--theme-aiBlockBorder)) !important;
   background: color-mix(in srgb, var(--theme-accentPrimary) 4%, var(--theme-aiBlockBg));
+}
+
+.ai-block.ai-block--chain-active::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 8px;
+  border-left: 3px solid var(--theme-accentPrimary);
+  pointer-events: none;
+  z-index: 5;
 }
 
 /* "AI" badge sits in the top border */
@@ -782,19 +808,19 @@ div.node-image.ProseMirror-selectednode {
   to { transform: rotate(360deg); }
 }
 
-/* Question area inside AI block — formal aiQuestion node */
-.tiptap .ai-question {
+/* Question area inside AI block */
+.ai-block .ai-question {
   color: var(--theme-textDim);
-  border-bottom: 1px solid color-mix(in srgb, var(--theme-accentPrimary) 12%, transparent);
-  margin-bottom: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--theme-accentPrimary) 30%, transparent);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
 }
-.tiptap .ai-question strong, 
-.tiptap .ai-question em {
-  color: var(--theme-accentPurple);
+.ai-block .ai-question strong {
+  color: var(--theme-accentPrimary);
 }
 
-/* Hide the structural divider in AI blocks - the ai-question border does this job */
-.tiptap .ai-block hr {
+/* Hide the structural divider - the ai-question border does this job */
+.ai-block hr {
   display: none;
 }
 
@@ -1840,4 +1866,53 @@ div.node-image.ProseMirror-selectednode {
   justify-content: flex-end;
   width: 100%;
   margin-top: 4px;
+}
+
+/* ── Editor Context Menu ───────────────────────────────────────────── */
+.editor-context-menu {
+  position: fixed;
+  z-index: 10000;
+  background: var(--theme-bgAlt);
+  border: 1px solid var(--theme-border2);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  padding: 6px 0;
+  min-width: 170px;
+  backdrop-filter: blur(10px);
+  animation: context-menu-fade-in 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes context-menu-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.editor-context-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  color: var(--theme-text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.editor-context-menu__item:hover {
+  background: color-mix(in srgb, var(--theme-accentPrimary) 12%, transparent);
+  color: var(--theme-accentPrimary);
+}
+
+.editor-context-menu__divider {
+  height: 1px;
+  background: var(--theme-border2);
+  margin: 6px 0;
 }

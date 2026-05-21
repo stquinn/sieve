@@ -20,19 +20,7 @@ func RunCLI(cli string, prompt string, model string, timeoutSecs int, cwd string
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
-	var args []string
-	switch {
-	case strings.Contains(cli, "claude"):
-		args = []string{"--print", "--no-session-persistence"}
-	case strings.Contains(cli, "gemini"):
-		args = []string{"--prompt", "", "--yolo"}
-	case strings.Contains(cli, "copilot"):
-		args = []string{"--prompt", "", "--yolo", "--silent"}
-	}
-
-	if model != "" && len(args) > 0 {
-		args = append(args, "--model", model)
-	}
+	args := buildBaseArgs(cli, model)
 
 	cmd := exec.CommandContext(ctx, cli, args...)
 	cmd.Stdin = bytes.NewBufferString(prompt)
@@ -68,23 +56,13 @@ func RunCLI(cli string, prompt string, model string, timeoutSecs int, cwd string
 	return out, nil
 }
 
-// RunCLIWithImages executes the configured CLI with a text prompt (via stdin) and
-// one or more image file attachments passed as explicit --image flags. imagePaths
-// must be absolute filesystem paths. cwd sets the subprocess working directory so
-// relative asset paths in the prompt resolve correctly.
-func RunCLIWithImages(cli string, prompt string, imagePaths []string, model string, timeoutSecs int, cwd string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSecs)*time.Second)
-	defer cancel()
-
-	// All CLIs use CWD + explicit filename in the prompt — none of the supported
-	// CLIs expose a stable --image flag. Each reads the image via its own file
-	// tools once the CWD is set to the image's directory.
+func buildBaseArgs(cli string, model string) []string {
 	var args []string
 	switch {
 	case strings.Contains(cli, "claude"):
 		args = []string{"--print", "--no-session-persistence"}
 	case strings.Contains(cli, "gemini"):
-		args = []string{"--prompt", "", "--yolo"}
+		args = []string{"--prompt", "", "--yolo", "--skip-trust"}
 	case strings.Contains(cli, "copilot"):
 		args = []string{"--prompt", "", "--yolo", "--silent"}
 	}
@@ -92,33 +70,5 @@ func RunCLIWithImages(cli string, prompt string, imagePaths []string, model stri
 	if model != "" && len(args) > 0 {
 		args = append(args, "--model", model)
 	}
-
-	cmd := exec.CommandContext(ctx, cli, args...)
-	cmd.Stdin = bytes.NewBufferString(prompt)
-	if cwd != "" {
-		cmd.Dir = cwd
-	}
-	cmd.Env = append(os.Environ(), "PATH="+LoginPath())
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	logger.Debug("cli exec start (with images)", "path", cmd.Path, "args", cmd.Args, "model", model, "cwd", cwd, "images", len(imagePaths))
-	logger.LogPrompt(prompt)
-
-	err := cmd.Run()
-
-	if ctx.Err() == context.DeadlineExceeded {
-		logger.Error("cli timeout", "timeout_secs", timeoutSecs)
-		return "", fmt.Errorf("cli timeout after %d seconds", timeoutSecs)
-	}
-	if err != nil {
-		logger.Error("cli execution error", "err", err, "stderr", stderr.String())
-		return "", fmt.Errorf("cli execution error: %v (stderr: %s)", err, stderr.String())
-	}
-
-	out := stdout.String()
-	logger.LogResponse(out)
-	return out, nil
+	return args
 }

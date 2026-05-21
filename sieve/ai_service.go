@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/net/html"
 	"sieve/logger"
+	"sieve/sieve/aiblock"
 	"sieve/store"
 )
 
@@ -106,9 +107,6 @@ func (s *AIService) RunExplain(content, history, noteUUID string, imageBlockIds 
 	p = strings.ReplaceAll(p, "{content}", content)
 	p = strings.ReplaceAll(p, "{images}", imageNameList(imagePaths, noteCwd))
 
-	if len(imagePaths) > 0 {
-		return RunCLIWithImages(settings.CLI, p, imagePaths, settings.Model, settings.CLITimeoutLong, noteCwd)
-	}
 	return RunCLI(settings.CLI, p, settings.Model, settings.CLITimeoutLong, noteCwd)
 }
 
@@ -135,9 +133,47 @@ func (s *AIService) RunAsk(content, history, question, noteUUID string, imageBlo
 
 	if len(imagePaths) > 0 {
 		logger.Info("RunAsk: has images", "count", len(imagePaths))
-		return RunCLIWithImages(settings.CLI, p, imagePaths, settings.Model, settings.CLITimeoutLong, noteCwd)
 	}
 	return RunCLI(settings.CLI, p, settings.Model, settings.CLITimeoutLong, noteCwd)
+}
+
+// ResolveAiBlock finds the block with blkId in noteUUID's body, sets it to
+// COMPLETE with the given response and model, and saves the document.
+func (s *AIService) ResolveAiBlock(noteUUID, blkId, response, model, blockType string) error {
+	doc, err := s.documents.LoadByUUID(noteUUID)
+	if err != nil {
+		return fmt.Errorf("ResolveAiBlock: load %s: %w", noteUUID, err)
+	}
+	body := string(doc.Body())
+	blocks := aiblock.ParseAll(body)
+	var found aiblock.AiBlockData
+	for _, b := range blocks {
+		if b.ID == blkId {
+			found = b
+			break
+		}
+	}
+	if found.ID == "" {
+		return fmt.Errorf("ResolveAiBlock: block %q not found in %s", blkId, noteUUID)
+	}
+	if model == "" {
+		model = s.state.LoadSettings().Model
+	}
+	found.Status = "COMPLETE"
+	found.Response = response
+	found.Model = model
+	if blockType != "" {
+		found.Type = blockType
+	}
+	found.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+
+	newBody, err := aiblock.Replace(body, found)
+	if err != nil {
+		return fmt.Errorf("ResolveAiBlock: replace: %w", err)
+	}
+	doc.SetBody([]byte(newBody))
+	_, err = s.documents.Save(doc)
+	return err
 }
 
 // DescribeImage sends an image to the configured AI and returns alt text, a
@@ -181,7 +217,7 @@ func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string
 
 	p := strings.ReplaceAll(prompt, "{image_filename}", filepath.Base(imagePath))
 	cwd := filepath.Dir(imagePath)
-	resp, err := RunCLIWithImages(settings.CLI, p, []string{imagePath}, settings.Model, settings.CLITimeoutLong, cwd)
+	resp, err := RunCLI(settings.CLI, p, settings.Model, settings.CLITimeoutLong, cwd)
 	if err != nil {
 		return ImageDesc{}, err
 	}
@@ -403,7 +439,12 @@ func filingCommitDocument(n Document, documents *DocumentService, save bool, fil
 	if save {
 		var err error
 		if fileAfter {
-			// If we are about to file it, a full save is appropriate as it's a major transition
+			// Refresh the body from disk before a full save so that concurrent
+			// body writes (e.g. an in-flight explain inserting a PENDING block)
+			// are not overwritten by stale body data read at evaluation start.
+			if fresh, loadErr := documents.LoadByUUID(n.UUID()); loadErr == nil {
+				n.SetBody(fresh.Body())
+			}
 			n, err = documents.Save(n)
 		} else {
 			// If just saving metadata (e.g. evaluation results), don't bump version
