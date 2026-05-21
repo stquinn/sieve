@@ -15,6 +15,7 @@
     trash:       svg('<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>'),
     selectAll:   svg('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6"/><path d="M9 12h6"/><path d="M9 15h6"/>'),
     sparkle:     svg('<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.937A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.582a.5.5 0 0 1 0 .962L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>'),
+    promote:     svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>'),
     info:        svg('<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>'),
     refresh:     svg('<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><polyline points="3 3 3 8 8 8"/>'),
     smartFile:   svg('<path d="M4.5 16.5c-1.5 1.5-1.5 3 0 3s3-1.5 3-3L19.5 4.5"/><path d="m19.5 4.5-3 3"/>'),
@@ -242,6 +243,16 @@
   }
 
   // ── AI Block node ────────────────────────────────────────────────────────────
+
+  function promoteAiBlock(editor, getPos, n) {
+    var question = (n.attrs.question || '').replace(/\n/g, ' ').trim()
+    var response = n.attrs.response || ''
+    var md = '### ' + question + '\n\n' + response
+    var html = editor.storage.markdown.parser.md.render(md)
+    var pos = getPos()
+    editor.commands.insertContentAt({ from: pos, to: pos + n.nodeSize }, html)
+  }
+
   function buildAiBlockItems(ctx) {
     var editor = ctx.editor, getPos = ctx.getPos, n = ctx.node
 
@@ -275,6 +286,11 @@
         editor.commands.focus()
         document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
       }},
+      { type: 'divider' },
+      { icon: IC.promote, label: 'Promote to Document',
+        disabled: n.attrs.status !== 'COMPLETE' || !n.attrs.response,
+        action: function () { promoteAiBlock(editor, getPos, n) }
+      },
       { type: 'divider' },
       { icon: IC.refresh, label: isError ? 'Retry' : 'Replay', action: function () {
         document.dispatchEvent(new CustomEvent('sieve:ai-retry', {
