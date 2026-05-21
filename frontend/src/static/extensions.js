@@ -209,8 +209,11 @@
     addNodeView() {
       return function ({ node }) {
         var wrapper = document.createElement('div')
-        wrapper.className = 'code-block'
+        wrapper.className = 'code-block-wrapper'
         if (node.attrs.id) wrapper.setAttribute('data-block-id', node.attrs.id)
+
+        var container = document.createElement('div')
+        container.className = 'code-block'
 
         var gutter = document.createElement('div')
         gutter.className = 'code-block__gutter'
@@ -231,8 +234,9 @@
         }
 
         updateGutter(node.textContent)
-        wrapper.appendChild(gutter)
-        wrapper.appendChild(code)
+        container.appendChild(gutter)
+        container.appendChild(code)
+        wrapper.appendChild(container)
 
         return {
           dom: wrapper,
@@ -384,6 +388,99 @@
 
         wrapper.appendChild(img)
         wrapper.appendChild(resizer)
+
+        wrapper.addEventListener('contextmenu', function (e) {
+          e.preventDefault()
+          e.stopPropagation()
+
+          // Programmatically select this node in ProseMirror so editor context highlights it
+          if (typeof getPos === 'function') {
+            var pos = getPos()
+            editor.commands.setNodeSelection(pos)
+          }
+
+          var items = [
+            {
+              label: '📋 Copy',
+              action: function () {
+                var src = node.attrs.src || ''
+                var alt = node.attrs.alt || ''
+                var width = node.attrs.width || ''
+                var height = node.attrs.height || ''
+                var summary = node.attrs.summary || ''
+                var detect = node.attrs.detect || ''
+                var id = node.attrs.id || ''
+                
+                var text = '![' + alt + '](' + src + ')'
+                if (width || height || summary || detect || id) {
+                  var extra = []
+                  if (id) extra.push('id="' + id + '"')
+                  if (width) extra.push('width="' + width + '"')
+                  if (height) extra.push('height="' + height + '"')
+                  if (summary) extra.push('summary="' + summary + '"')
+                  if (detect) extra.push('detect="' + detect + '"')
+                  text += '{' + extra.join(' ') + '}'
+                }
+                navigator.clipboard.writeText(text).catch(console.error)
+              }
+            },
+            {
+              label: '✂️ Cut',
+              action: function () {
+                var src = node.attrs.src || ''
+                var alt = node.attrs.alt || ''
+                var width = node.attrs.width || ''
+                var height = node.attrs.height || ''
+                var summary = node.attrs.summary || ''
+                var detect = node.attrs.detect || ''
+                var id = node.attrs.id || ''
+                
+                var text = '![' + alt + '](' + src + ')'
+                if (width || height || summary || detect || id) {
+                  var extra = []
+                  if (id) extra.push('id="' + id + '"')
+                  if (width) extra.push('width="' + width + '"')
+                  if (height) extra.push('height="' + height + '"')
+                  if (summary) extra.push('summary="' + summary + '"')
+                  if (detect) extra.push('detect="' + detect + '"')
+                  text += '{' + extra.join(' ') + '}'
+                }
+                navigator.clipboard.writeText(text)
+                  .then(function () {
+                    if (typeof getPos === 'function') {
+                      var pos = getPos()
+                      editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize))
+                    }
+                  })
+                  .catch(console.error)
+              }
+            },
+            {
+              label: '🗑️ Delete',
+              action: function () {
+                if (typeof getPos === 'function') {
+                  var pos = getPos()
+                  editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize))
+                }
+              }
+            },
+            { type: 'divider' },
+            {
+              label: '💬 Ask AI',
+              action: function () {
+                document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
+              }
+            },
+            {
+              label: '💡 Explain',
+              action: function () {
+                document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
+              }
+            }
+          ]
+
+          window.TipTap.createContextMenu(e, items)
+        })
 
         return {
           dom: wrapper,

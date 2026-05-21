@@ -483,44 +483,137 @@
     if (!currentEditor && currentMode !== 'markdown') return
 
     var blkId = 'ai-' + Math.random().toString(16).substring(2, 6)
-    var ctx = precomputedCtx || window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
-    var refId = (ctx && ctx.blockRef) || 'doc'
+    var ctx = null
+    var refId = 'doc'
     var now = new Date().toISOString()
 
+    var selectedAiNode = null
+    var selectedAiPos = null
+
+    // 1. Detect if an AI block is selected or focused
+    if (currentMode === 'markdown' && currentMarkdownTextarea) {
+      var ta = currentMarkdownTextarea
+      var val = ta.value
+      var selStart = ta.selectionStart
+      var beforeSel = val.substring(0, selStart)
+      var lastFenceStart = beforeSel.lastIndexOf('```ai-block')
+      if (lastFenceStart !== -1) {
+        var closeFenceIdx = val.indexOf('```', lastFenceStart + 11)
+        if (closeFenceIdx !== -1 && closeFenceIdx >= selStart) {
+          var fenceContent = val.substring(lastFenceStart, closeFenceIdx)
+          var idMatch = fenceContent.match(/\bid:\s*(\S+)/)
+          var refMatch = fenceContent.match(/\bref:\s*(\S+)/)
+          if (idMatch) {
+            var selectedId = idMatch[1]
+            var selectedRef = refMatch ? refMatch[1] : 'doc'
+            selectedAiNode = { attrs: { id: selectedId, ref: selectedRef } }
+          }
+        }
+      }
+    } else if (currentEditor) {
+      var selection = currentEditor.state.selection
+      if (selection.node && selection.node.type.name === 'aiBlock') {
+        selectedAiNode = selection.node
+        selectedAiPos = selection.from
+      } else {
+        // Resolve nested depth
+        var resolved = currentEditor.state.doc.resolve(selection.to)
+        for (var depth = resolved.depth; depth > 0; depth--) {
+          var n = resolved.node(depth)
+          if (n.type.name === 'aiBlock') {
+            selectedAiNode = n
+            selectedAiPos = resolved.before(depth)
+            break
+          }
+        }
+      }
+      
+      // Fallback: Check if active element is inside an AI block element
+      if (!selectedAiNode) {
+        var activeEl = document.activeElement
+        if (activeEl) {
+          var aiBlockEl = activeEl.closest('.ai-block')
+          if (aiBlockEl) {
+            var aiId = aiBlockEl.getAttribute('data-ai-id')
+            if (aiId) {
+              currentEditor.state.doc.descendants(function (node, pos) {
+                if (node.type.name === 'aiBlock' && node.attrs.id === aiId) {
+                  selectedAiNode = node
+                  selectedAiPos = pos
+                  return false
+                }
+              })
+            }
+          }
+        }
+      }
+
+      // If we found a selected/focused AI block, select it programmatically
+      // so buildAiContext builds the perfect follow-up history context
+      if (selectedAiNode && selectedAiPos !== null) {
+        currentEditor.commands.setNodeSelection(selectedAiPos)
+      }
+    }
+
+    // 2. Build context
+    ctx = precomputedCtx || window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
+    refId = (ctx && ctx.blockRef) || 'doc'
+
+    // 3. Perform insert or follow-up insertion
     if (currentMode === 'markdown') {
-      // In markdown mode, append the fenced YAML block directly to lastSyncedBody
       var lines = ['```ai-block', 'id: ' + blkId, 'ref: ' + refId, 'status: PENDING', 'createdAt: ' + now]
       if (question) lines.push('question: ' + question)
       lines.push('```')
-      lastSyncedBody = lastSyncedBody + '\n\n' + lines.join('\n') + '\n\n'
+      var newFence = lines.join('\n')
+
+      if (selectedAiNode && currentMarkdownTextarea) {
+        var ta = currentMarkdownTextarea
+        var val = ta.value
+        var selStart = ta.selectionStart
+        var beforeSel = val.substring(0, selStart)
+        var lastFenceStart = beforeSel.lastIndexOf('```ai-block')
+        var closeFenceIdx = val.indexOf('```', lastFenceStart + 11)
+        
+        // Insert directly after this block's fence
+        var insertPos = closeFenceIdx + 3
+        lastSyncedBody = val.substring(0, insertPos) + '\n\n' + newFence + val.substring(insertPos)
+        ta.value = lastSyncedBody
+      } else {
+        lastSyncedBody = lastSyncedBody + '\n\n' + lines.join('\n') + '\n\n'
+      }
       document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
       scheduleSave(currentUuid, lastSyncedBody)
     } else {
-      // Start from cursor, lift out of any enclosing aiBlock, then to top-level block end
       var insertPos = currentEditor.state.selection.to
-      var resolved = currentEditor.state.doc.resolve(insertPos)
-      for (var depth = resolved.depth; depth > 0; depth--) {
-        var n = resolved.node(depth)
-        if (n.type.name === 'aiBlock') {
-          insertPos = resolved.after(depth)
-          resolved = currentEditor.state.doc.resolve(insertPos)
-          break
-        }
-      }
-      if (resolved.depth >= 1) insertPos = resolved.after(1)
 
-      // Override: if context is anchored to a specific blockRef or aiBlock, insert after it.
-      // For chain refs like "doc,ai-xxxx" or "src,ai-xxxx" the last segment is the anchor.
-      if (ctx && ctx.blockRef && ctx.blockRef !== 'doc') {
-        var chainParts = ctx.blockRef.split(',')
-        var anchorId = chainParts[chainParts.length - 1]
-        if (anchorId && anchorId !== 'doc') {
-          currentEditor.state.doc.descendants(function (node, pos) {
-            if ((node.type.name === 'aiBlock' || node.type.name === 'blockRef') && node.attrs.id === anchorId) {
-              insertPos = pos + node.nodeSize
-              return false
-            }
-          })
+      if (selectedAiNode && selectedAiPos !== null) {
+        // Follow-up: Insert directly after the selected AI block
+        insertPos = selectedAiPos + selectedAiNode.nodeSize
+      } else {
+        // Standard placement: lift out of active aiBlocks and find block boundary
+        var resolved = currentEditor.state.doc.resolve(insertPos)
+        for (var depth = resolved.depth; depth > 0; depth--) {
+          var n = resolved.node(depth)
+          if (n.type.name === 'aiBlock') {
+            insertPos = resolved.after(depth)
+            resolved = currentEditor.state.doc.resolve(insertPos)
+            break
+          }
+        }
+        if (resolved.depth >= 1) insertPos = resolved.after(1)
+
+        // Context anchor override
+        if (ctx && ctx.blockRef && ctx.blockRef !== 'doc') {
+          var chainParts = ctx.blockRef.split(',')
+          var anchorId = chainParts[chainParts.length - 1]
+          if (anchorId && anchorId !== 'doc') {
+            currentEditor.state.doc.descendants(function (node, pos) {
+              if ((node.type.name === 'aiBlock' || node.type.name === 'blockRef') && node.attrs.id === anchorId) {
+                insertPos = pos + node.nodeSize
+                return false
+              }
+            })
+          }
         }
       }
 
@@ -528,8 +621,9 @@
         type: 'aiBlock',
         attrs: { id: blkId, ref: refId, status: 'PENDING', question: question || '', createdAt: now },
       })
-      // Move focus to just after the inserted block so the editor feels responsive
-      var afterInsert = insertPos + 2  // leaf block node size = 2
+
+      // Move focus inside/after the new block so the editor is instantly interactive
+      var afterInsert = insertPos + 2
       var docSize = currentEditor.state.doc.content.size
       currentEditor.chain()
         .setTextSelection(Math.min(afterInsert, docSize - 1))
@@ -588,6 +682,40 @@
 
   function handleSmartPaste(event) {
     if (!event.clipboardData || !currentEditor) return false
+
+    // AI Block paste handler
+    var text = event.clipboardData.getData('text/plain')
+    if (text && text.trim().startsWith('```ai-block')) {
+      var cleanText = text.trim()
+      var firstLineEnd = cleanText.indexOf('\n')
+      var lastBackticks = cleanText.lastIndexOf('```')
+      if (firstLineEnd !== -1 && lastBackticks !== -1 && lastBackticks > firstLineEnd) {
+        var yamlText = cleanText.substring(firstLineEnd + 1, lastBackticks).trim()
+        try {
+          var data = window.jsyaml.load(yamlText)
+          if (data && data.id) {
+            event.preventDefault()
+            currentEditor.commands.insertContent({
+              type: 'aiBlock',
+              attrs: {
+                id: data.id || '',
+                ref: data.ref || 'doc',
+                status: data.status || 'PENDING',
+                type: data.type || null,
+                model: data.model || null,
+                createdAt: data.createdAt || null,
+                completedAt: data.completedAt || null,
+                question: data.question || '',
+                response: data.response || null
+              }
+            })
+            return true
+          }
+        } catch (e) {
+          console.error('[editor.js] Failed to parse pasted ai-block yaml', e)
+        }
+      }
+    }
 
     var html = event.clipboardData.getData('text/html')
     var files = Array.from(event.clipboardData.files)
@@ -1073,6 +1201,16 @@
   document.addEventListener('sieve:toggle-search',    toggleSearch)
   document.addEventListener('sieve:toggle-ai-blocks', toggleAiBlocks)
 
+  document.addEventListener('sieve:ai-explain', function () {
+    if (currentMode === 'markdown') return
+    runAiJob('explain')
+  })
+  document.addEventListener('sieve:ai-ask', function () {
+    if (currentMode === 'markdown') return
+    ensureOverlays()
+    openAskPopup()
+  })
+
   // ── Helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -1088,6 +1226,143 @@
   document.body.addEventListener('editor:restore', function (e) {
     var data = e.detail
     if (data && data.body) setContent(data.body)
+  })
+
+  document.addEventListener('contextmenu', function (e) {
+    if (e.target.closest('#tiptap-mount')) {
+      e.preventDefault()
+    }
+  }, true)
+
+  document.addEventListener('contextmenu', function (e) {
+    var editorEl = e.target.closest('#tiptap-mount')
+    if (!editorEl) return
+
+    // Let custom blocks handle their own context menus
+    if (e.target.closest('.ai-block, .image-block')) {
+      return
+    }
+
+    if (!currentEditor) return
+
+    var selection = currentEditor.state.selection
+    var hasSelection = !selection.empty
+
+    var items = []
+
+    if (hasSelection) {
+      items.push({
+        label: '📋 Copy',
+        action: function () {
+          var state = currentEditor.state
+          var from = state.selection.from
+          var to = state.selection.to
+          var text = state.doc.textBetween(from, to, '\n')
+          if (text) {
+            navigator.clipboard.writeText(text).catch(console.error)
+          }
+        }
+      })
+      items.push({
+        label: '✂️ Cut',
+        action: function () {
+          var state = currentEditor.state
+          var from = state.selection.from
+          var to = state.selection.to
+          var text = state.doc.textBetween(from, to, '\n')
+          if (text) {
+            navigator.clipboard.writeText(text).then(function () {
+              currentEditor.commands.deleteSelection()
+              currentEditor.commands.focus()
+            }).catch(console.error)
+          }
+        }
+      })
+    }
+
+    items.push({
+      label: '📋 Paste',
+      action: function () {
+        currentEditor.commands.focus()
+        navigator.clipboard.readText().then(function (text) {
+          if (text) {
+            // Check if it is a serialized AI Block, and let our paste handler parse it!
+            if (text.trim().startsWith('```ai-block')) {
+              var cleanText = text.trim()
+              var firstLineEnd = cleanText.indexOf('\n')
+              var lastBackticks = cleanText.lastIndexOf('```')
+              if (firstLineEnd !== -1 && lastBackticks !== -1 && lastBackticks > firstLineEnd) {
+                var yamlText = cleanText.substring(firstLineEnd + 1, lastBackticks).trim()
+                try {
+                  var data = window.jsyaml.load(yamlText)
+                  if (data && data.id) {
+                    currentEditor.commands.insertContent({
+                      type: 'aiBlock',
+                      attrs: {
+                        id: data.id || '',
+                        ref: data.ref || 'doc',
+                        status: data.status || 'PENDING',
+                        type: data.type || null,
+                        model: data.model || null,
+                        createdAt: data.createdAt || null,
+                        completedAt: data.completedAt || null,
+                        question: data.question || '',
+                        response: data.response || null
+                      }
+                    })
+                    return
+                  }
+                } catch (e) {
+                  console.error('[editor.js] Context Paste failed to parse ai-block', e)
+                }
+              }
+            }
+            currentEditor.commands.insertContent(text)
+          }
+        }).catch(function (err) {
+          console.error('[editor.js] Navigator clipboard paste failed, using fallback', err)
+          currentEditor.commands.focus()
+          document.execCommand('paste')
+        })
+      }
+    })
+
+    if (hasSelection) {
+      items.push({
+        label: '🗑️ Delete',
+        action: function () {
+          currentEditor.commands.deleteSelection()
+        }
+      })
+    }
+
+    items.push({
+      label: '🔍 Select All',
+      action: function () {
+        currentEditor.commands.focus()
+        currentEditor.commands.selectAll()
+      }
+    })
+
+    if (hasSelection) {
+      items.push({ type: 'divider' })
+      items.push({
+        label: '💬 Ask AI',
+        action: function () {
+          currentEditor.commands.focus()
+          document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
+        }
+      })
+      items.push({
+        label: '💡 Explain',
+        action: function () {
+          currentEditor.commands.focus()
+          document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
+        }
+      })
+    }
+
+    window.TipTap.createContextMenu(e, items)
   })
 
   window.sieveInitEditor = initEditor

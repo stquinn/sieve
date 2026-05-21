@@ -62,7 +62,7 @@ func buildBaseArgs(cli string, model string) []string {
 	case strings.Contains(cli, "claude"):
 		args = []string{"--print", "--no-session-persistence"}
 	case strings.Contains(cli, "gemini"):
-		args = []string{"--prompt", "", "--yolo", "--skip-trust"}
+		args = []string{"--prompt", "", "--yolo"} //, "--skip-trust"
 	case strings.Contains(cli, "copilot"):
 		args = []string{"--prompt", "", "--yolo", "--silent"}
 	}

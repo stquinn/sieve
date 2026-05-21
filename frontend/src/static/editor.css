@@ -633,25 +633,25 @@ textarea::selection {
 /* a referencing aiBlock, the class `block-ref-active` is toggled via     */
 /* direct DOM manipulation in AiBlockView, fading in a subtle highlight.  */
 
-.block-node {
-  border-radius: 4px;
-  transition: background-color 0.2s ease;
+.block-node,
+.image-block,
+.code-block-wrapper {
+  border-radius: 8px;
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  border-left: 3px solid transparent;
+  padding: 4px 6px;
 }
 
-.block-node.block-ref-active {
-  background-color: color-mix(in srgb, var(--theme-accentPrimary) 8%, transparent);
-  box-shadow: 2px 0 0 0 var(--theme-accentPrimary) inset;
-  padding-left: 3px;
-  padding-right: 3px;
+.block-node.block-ref-active,
+.image-block.block-ref-active,
+.code-block-wrapper.block-ref-active {
+  background-color: color-mix(in srgb, var(--theme-accentPrimary) 8%, transparent) !important;
+  border-left-color: var(--theme-accentPrimary) !important;
 }
 
-.block-node.block-ref-active .code-block,
-.tiptap .code-block.block-ref-active,
-.block-node.block-ref-active table,
-.tiptap table.block-ref-active {
-  background: color-mix(in srgb, var(--theme-accentPrimary) 10%, var(--theme-bgDark));
-  border-color: color-mix(in srgb, var(--theme-accentPrimary) 30%, var(--theme-border));
-  box-shadow: 0 0 0 2px var(--theme-accentPrimary); 
+.tiptap .code-block-wrapper {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
 }
 
 div.node-image.ProseMirror-selectednode {
@@ -674,10 +674,6 @@ div.node-image.ProseMirror-selectednode {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-accentPrimary) 25%, transparent),
               0 0 0 2px var(--theme-accentPrimary),
               0 8px 30px rgba(0, 0, 0, 0.45) !important;
-}
-
-.image-block.block-ref-active img {
-  box-shadow: 0 0 0 2px var(--theme-accentPrimary);
 }
 
 .image-block {
@@ -740,9 +736,12 @@ div.node-image.ProseMirror-selectednode {
 }
 
 .ai-block.ai-block--chain-active {
-  border-color: var(--theme-accentPrimary);
-  box-shadow: 0 0 0 1px var(--theme-accentPrimary);
+  border-left: 3px solid var(--theme-accentPrimary) !important;
+  border-top-color: color-mix(in srgb, var(--theme-accentPrimary) 30%, var(--theme-aiBlockBorder)) !important;
+  border-right-color: color-mix(in srgb, var(--theme-accentPrimary) 30%, var(--theme-aiBlockBorder)) !important;
+  border-bottom-color: color-mix(in srgb, var(--theme-accentPrimary) 30%, var(--theme-aiBlockBorder)) !important;
   background: color-mix(in srgb, var(--theme-accentPrimary) 4%, var(--theme-aiBlockBg));
+  padding-left: calc(1.5rem - 2px) !important;
 }
 
 /* "AI" badge sits in the top border */
@@ -1861,4 +1860,53 @@ div.node-image.ProseMirror-selectednode {
   justify-content: flex-end;
   width: 100%;
   margin-top: 4px;
+}
+
+/* ── Editor Context Menu ───────────────────────────────────────────── */
+.editor-context-menu {
+  position: fixed;
+  z-index: 10000;
+  background: var(--theme-bgAlt);
+  border: 1px solid var(--theme-border2);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  padding: 6px 0;
+  min-width: 170px;
+  backdrop-filter: blur(10px);
+  animation: context-menu-fade-in 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes context-menu-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.editor-context-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  color: var(--theme-text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.editor-context-menu__item:hover {
+  background: color-mix(in srgb, var(--theme-accentPrimary) 12%, transparent);
+  color: var(--theme-accentPrimary);
+}
+
+.editor-context-menu__divider {
+  height: 1px;
+  background: var(--theme-border2);
+  margin: 6px 0;
 }
