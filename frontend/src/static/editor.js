@@ -1439,19 +1439,15 @@
 
     if (hasSelection || targetNode) {
       items.push({ type: 'divider' })
-      var contextName = 'AI'
-      if (targetNode) {
-        contextName = targetNode.type.name === 'image' ? 'Image' : (targetNode.type.name === 'codeBlock' ? 'Code Block' : 'Table')
-      }
       items.push({
-        label: '💬 Ask AI' + (targetNode ? ' (' + contextName + ')' : ''),
+        label: '💬 Ask AI',
         action: function () {
           currentEditor.commands.focus()
           document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
         }
       })
       items.push({
-        label: '💡 Explain' + (targetNode ? ' (' + contextName + ')' : ''),
+        label: '💡 Explain',
         action: function () {
           currentEditor.commands.focus()
           document.dispatchEvent(new CustomEvent('sieve:ai-explain'))

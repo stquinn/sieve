@@ -337,6 +337,7 @@
 
     addNodeView() {
       return function ({ node, editor, getPos }) {
+        var currentNode = node
         var wrapper = document.createElement('div')
         wrapper.style.display = 'inline-block'
 
@@ -399,57 +400,38 @@
             editor.commands.setNodeSelection(pos)
           }
 
+          function serializeImageMarkdown(n) {
+            var src = n.attrs.src || '', alt = n.attrs.alt || ''
+            var width = n.attrs.width || '', height = n.attrs.height || ''
+            var summary = n.attrs.summary || '', detect = n.attrs.detect || '', id = n.attrs.id || ''
+            var text = '![' + alt + '](' + src + ')'
+            if (width || height || summary || detect || id) {
+              var extra = []
+              if (id) extra.push('id="' + id + '"')
+              if (width) extra.push('width="' + width + '"')
+              if (height) extra.push('height="' + height + '"')
+              if (summary) extra.push('summary="' + summary + '"')
+              if (detect) extra.push('detect="' + detect + '"')
+              text += '{' + extra.join(' ') + '}'
+            }
+            return text
+          }
+
           var items = [
             {
               label: '📋 Copy',
               action: function () {
-                var src = node.attrs.src || ''
-                var alt = node.attrs.alt || ''
-                var width = node.attrs.width || ''
-                var height = node.attrs.height || ''
-                var summary = node.attrs.summary || ''
-                var detect = node.attrs.detect || ''
-                var id = node.attrs.id || ''
-                
-                var text = '![' + alt + '](' + src + ')'
-                if (width || height || summary || detect || id) {
-                  var extra = []
-                  if (id) extra.push('id="' + id + '"')
-                  if (width) extra.push('width="' + width + '"')
-                  if (height) extra.push('height="' + height + '"')
-                  if (summary) extra.push('summary="' + summary + '"')
-                  if (detect) extra.push('detect="' + detect + '"')
-                  text += '{' + extra.join(' ') + '}'
-                }
-                navigator.clipboard.writeText(text).catch(console.error)
+                navigator.clipboard.writeText(serializeImageMarkdown(currentNode)).catch(console.error)
               }
             },
             {
               label: '✂️ Cut',
               action: function () {
-                var src = node.attrs.src || ''
-                var alt = node.attrs.alt || ''
-                var width = node.attrs.width || ''
-                var height = node.attrs.height || ''
-                var summary = node.attrs.summary || ''
-                var detect = node.attrs.detect || ''
-                var id = node.attrs.id || ''
-                
-                var text = '![' + alt + '](' + src + ')'
-                if (width || height || summary || detect || id) {
-                  var extra = []
-                  if (id) extra.push('id="' + id + '"')
-                  if (width) extra.push('width="' + width + '"')
-                  if (height) extra.push('height="' + height + '"')
-                  if (summary) extra.push('summary="' + summary + '"')
-                  if (detect) extra.push('detect="' + detect + '"')
-                  text += '{' + extra.join(' ') + '}'
-                }
-                navigator.clipboard.writeText(text)
+                navigator.clipboard.writeText(serializeImageMarkdown(currentNode))
                   .then(function () {
                     if (typeof getPos === 'function') {
                       var pos = getPos()
-                      editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize))
+                      editor.view.dispatch(editor.state.tr.delete(pos, pos + currentNode.nodeSize))
                     }
                   })
                   .catch(console.error)
@@ -460,7 +442,7 @@
               action: function () {
                 if (typeof getPos === 'function') {
                   var pos = getPos()
-                  editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize))
+                  editor.view.dispatch(editor.state.tr.delete(pos, pos + currentNode.nodeSize))
                 }
               }
             },
@@ -468,12 +450,14 @@
             {
               label: '💬 Ask AI',
               action: function () {
+                editor.commands.focus()
                 document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
               }
             },
             {
               label: '💡 Explain',
               action: function () {
+                editor.commands.focus()
                 document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
               }
             }
@@ -486,6 +470,7 @@
           dom: wrapper,
           update: function (updatedNode) {
             if (updatedNode.type.name !== node.type.name) return false
+            currentNode = updatedNode
             applyAttrs(updatedNode)
             return true
           },

@@ -130,6 +130,7 @@
   // ── NodeView factory ─────────────────────────────────────────────────────────
 
   function makeNodeView(node, editor, getPos) {
+    var currentNode = node
     var dom = document.createElement('div')
     dom.className = 'ai-block'
     dom.setAttribute('data-ai-id', node.attrs.id || '')
@@ -172,34 +173,24 @@
       }
 
       var items = []
-      var label = (node.attrs.status === 'TIMEOUT' || node.attrs.status === 'PENDING') ? '🔄 Retry' : '🔄 Replay'
-      items.push({
-        label: label,
-        action: function () {
-          document.dispatchEvent(new CustomEvent('sieve:ai-retry', {
-            detail: { id: node.attrs.id, question: node.attrs.question, ref: node.attrs.ref, type: node.attrs.type }
-          }))
-        }
-      })
-      items.push({ type: 'divider' })
 
       items.push(
         {
           label: '📋 Copy',
           action: function () {
-            var text = '```ai-block\n' + serializeAiBlockYaml(node.attrs) + '\n```'
+            var text = '```ai-block\n' + serializeAiBlockYaml(currentNode.attrs) + '\n```'
             navigator.clipboard.writeText(text).catch(console.error)
           }
         },
         {
           label: '✂️ Cut',
           action: function () {
-            var text = '```ai-block\n' + serializeAiBlockYaml(node.attrs) + '\n```'
+            var text = '```ai-block\n' + serializeAiBlockYaml(currentNode.attrs) + '\n```'
             navigator.clipboard.writeText(text)
               .then(function () {
                 if (typeof getPos === 'function') {
                   var pos = getPos()
-                  editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize))
+                  editor.view.dispatch(editor.state.tr.delete(pos, pos + currentNode.nodeSize))
                 }
               })
               .catch(console.error)
@@ -210,7 +201,7 @@
           action: function () {
             if (typeof getPos === 'function') {
               var pos = getPos()
-              editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize))
+              editor.view.dispatch(editor.state.tr.delete(pos, pos + currentNode.nodeSize))
             }
           }
         },
@@ -218,16 +209,29 @@
         {
           label: '💬 Ask AI',
           action: function () {
+            editor.commands.focus()
             document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
           }
         },
         {
           label: '💡 Explain',
           action: function () {
+            editor.commands.focus()
             document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
           }
         }
       )
+      items.push({ type: 'divider' })
+      var label = (currentNode.attrs.status === 'TIMEOUT' || currentNode.attrs.status === 'PENDING') ? '🔄 Retry' : '🔄 Replay'
+      items.push({
+        label: label,
+        action: function () {
+          document.dispatchEvent(new CustomEvent('sieve:ai-retry', {
+            detail: { id: currentNode.attrs.id, question: currentNode.attrs.question, ref: currentNode.attrs.ref, type: currentNode.attrs.type }
+          }))
+        }
+      })
+      
 
       window.TipTap.createContextMenu(e, items)
     })
@@ -311,6 +315,7 @@
       contentDOM: null,
       update: function (updatedNode) {
         if (updatedNode.type.name !== 'aiBlock') return false
+        currentNode = updatedNode
         render(updatedNode)
         return true
       },
