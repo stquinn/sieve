@@ -137,7 +137,7 @@ Retry / Replay
 
 ## Out of Scope
 
+- **Chain context preservation** — each AI block carries a `ref` pointing to other blocks it was asked in context of. On promotion this relationship is lost. Acceptable: the H3 heading anchors the content, and the block's position in the document places it naturally near whatever it was contextually adjacent to. Resolving the chain to prose is deferred.
 - Configurable heading level (H3 is fixed for this iteration)
 - "Promote question only" or "Promote response only" variants
-- Configurable heading level
 - Confirmation dialog (undo covers recovery)
