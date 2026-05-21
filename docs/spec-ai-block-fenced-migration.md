@@ -1,5 +1,54 @@
 # Specification: AI Block Migration to Fenced YAML Format
 
+---
+
+## Decision Record: Why Markdown is the Canonical Storage Format
+
+This decision was made explicitly and should not be relitigated without revisiting all three constraints below.
+
+### What was considered
+
+**Option A — Custom node format (ProseMirror JSON)**
+Store documents as a JSON array of typed nodes. Go manipulates them trivially by index or id. No fence parser. No flush race. TipTap loads its own JSON natively.
+
+Rejected because it locks the knowledge base. Documents stored as JSON are opaque outside Sieve. Users cannot open them in a text editor, grep them, use them in Obsidian, or pipe them into other tools. A markdown exporter was considered as a workaround, but exporting is a manual step — knowledge that lives in JSON is only ever one missed export away from being inaccessible.
+
+**Option B — Markdown as canonical storage (chosen)**
+Documents are `.md` files on disk. Always readable in any editor, always portable, always accessible.
+
+### Why markdown wins on all three axes
+
+| Goal | Why markdown |
+|------|-------------|
+| **Human portability** | Any text editor, any platform, forever. No app required to read your own notes. |
+| **Tool interoperability** | Greppable, Obsidian-compatible, scriptable. The knowledge base works with any markdown-aware tool. |
+| **AI crawlability** | LLMs are deeply trained on markdown. Structure — headings, lists, code blocks — carries semantic weight in context. JSON node trees would need a serialisation step and lose that fidelity. |
+
+Sieve's purpose is to build up a knowledge base that compounds over time. The storage format must outlive the app. Markdown satisfies that requirement; a proprietary node format does not.
+
+### What this costs
+
+The price is Go-side complexity for structured operations — specifically the fence parser needed to find and update `ai-block` nodes in markdown. This is a bounded cost: one small package, written once, that never changes because we control the format. It is the correct trade-off.
+
+### AI blocks in markdown
+
+Fenced YAML blocks are readable by humans and LLMs alike:
+
+````markdown
+```ai-block
+id: abc123
+status: COMPLETE
+question: What is the strangler fig pattern?
+response: |
+  It's a migration strategy where you incrementally replace an old system
+  alongside a new one, routing traffic gradually until the old is empty.
+```
+````
+
+An LLM crawling the knowledge base sees the question, the answer, and understands their relationship. The format is transparent to any future tooling.
+
+---
+
 ## 1. Motivation
 
 The current AI block format uses a custom open/close tag syntax:
@@ -140,13 +189,13 @@ No big-bang file conversion. Two extensions run side by side; documents self-mig
 
 ### 4.1 New Extension: `AiBlock`
 
-Full parse + serialize. Handles the fenced YAML format.
+**Parse + serialize + render only.** The extension has no knowledge of AI jobs, status transitions, or lifecycles. It renders whatever attrs are present.
 
-**Parse:** markdown-it fence rule intercepts language tag `ai-block`, parses YAML payload via `window.jsyaml.load()`, produces the `aiBlock` ProseMirror node with attributes from the YAML fields.
+**Parse:** markdown-it fence rule intercepts language tag `ai-block`, calls `window.jsyaml.load()` on the fence content, maps fields to `aiBlock` node attrs. Done.
 
-**Serialize:** writes the fenced YAML format. This is the only write path — `AiBlockLegacy` has no serializer.
+**Serialize:** writes the fenced YAML format from node attrs. This is the only write path — `AiBlockLegacy` has no serializer.
 
-The NodeView, chain highlighting, toggle behaviour, and keyboard shortcuts are **unchanged** — they operate on the `aiBlock` node type regardless of how it was parsed.
+**NodeView:** renders based on `attrs.status`. `PENDING` → spinner. `COMPLETE` → response content. `TIMEOUT` → retry badge. The NodeView does not know how status changes — it just renders the current value. Chain highlighting, toggle behaviour, and keyboard shortcuts are unchanged.
 
 ### 4.2 Legacy Extension: `AiBlockLegacy`
 
@@ -182,17 +231,19 @@ Once count reaches zero, delete the extension and remove the legacy `[!ai]` rege
 
 The fenced YAML is the **on-disk representation only**. At parse time the extension extracts every field from the YAML payload and maps it to a ProseMirror node attribute. The YAML string itself is not stored as node content — it is discarded after parsing.
 
+The extension is a pure renderer. It never updates attrs in response to AI job events — it only re-renders when the document is reloaded from disk.
+
 ```js
-// Parse: YAML → node attrs
+// Parse: YAML → node attrs (extension's only input)
 const data = window.jsyaml.load(token.content)
 // data = { id, ref, status, question, response, model, createdAt, completedAt }
 
-// Serialize: node attrs → YAML
+// Serialize: node attrs → YAML (extension's only output)
 function serializeAiBlockYaml(attrs) {
   const lines = []
   lines.push('id: ' + attrs.id)
   lines.push('ref: ' + (attrs.ref || 'doc'))
-  lines.push('status: ' + (attrs.status || 'COMPLETE'))
+  lines.push('status: ' + (attrs.status || 'PENDING'))
   if (attrs.model)       lines.push('model: ' + attrs.model)
   if (attrs.createdAt)   lines.push('createdAt: ' + attrs.createdAt)
   if (attrs.completedAt) lines.push('completedAt: ' + attrs.completedAt)
@@ -217,19 +268,13 @@ function serializeAiBlockYaml(attrs) {
 state.write('```ai-block\n' + serializeAiBlockYaml(node.attrs) + '\n```')
 ```
 
-At runtime all attrs are first-class ProseMirror properties. The NodeView sets `data-ai-id` from `node.attrs.id` exactly as today. Finding a block by ID is unchanged:
+At runtime all attrs are first-class ProseMirror properties. The NodeView sets `data-ai-id` from `node.attrs.id`. Finding a block by ID is unchanged:
 
 ```js
-// DOM query — unchanged
 document.querySelector('.ai-block[data-ai-id="' + id + '"]')
-
-// ProseMirror traversal — unchanged
-doc.descendants((node, pos) => {
-  if (node.type.name === 'aiBlock' && node.attrs.id === targetId) { ... }
-})
 ```
 
-Updating a block on AI completion is a standard attribute transaction — find the node by `id`, set `status: COMPLETE`, `response`, `completedAt`. No string manipulation, no regex.
+**Transitions between PENDING and COMPLETE are never done by JS.** Go updates the YAML on disk; JS reloads the document body; the extension parses the updated attrs and the NodeView re-renders. The extension is unaware this happened.
 
 ---
 
@@ -268,53 +313,175 @@ New files for this migration:
 
 ## 8. Implementation Phases
 
-### Phase 1 — Fenced extension + legacy shim
+### Phase A — Go `sieve/aiblock` package *(no UI impact, safe to ship alone)*
+
+1. Create `sieve/aiblock/block.go` — `AiBlockData` struct, `ParseAll`, `Replace`
+2. Write `sieve/aiblock/block_test.go` — cover: basic round-trip, nested fences, missing id, multiline response with `---`
+3. No wiring yet — package is inert until Phase C
+
+### Phase B — Fenced extension + legacy shim *(can run in parallel with A)*
 
 1. Add `js-yaml` to `package.json`, build vendor bundle, add `<script>` to `index.html`
 
 2. Create `ai-block-extension.js` with `AiBlock`
-   - markdown-it fence rule for `ai-block` tag, `jsyaml.load()` of content
-   - NodeView, `gatherChain`, `AiQuestion`, `AiShortcuts` moved here from `extensions.js`
-   - Serialize to fenced YAML
+   - markdown-it fence rule for `ai-block` tag, `jsyaml.load()` of content → node attrs
+   - NodeView: renders based on `attrs.status` only — spinner for PENDING, content for COMPLETE, retry badge for TIMEOUT. No callbacks, no job awareness.
+   - `serializeAiBlockYaml` serializer
+   - `gatherChain`, `AiShortcuts` moved here from `extensions.js`
    - Attach to `window.TipTap`
 
 3. Create `ai-block-legacy-extension.js` with `AiBlockLegacy`
    - Move `updateDOM` parse logic from `extensions.js`
-   - No serializer
-   - Map legacy fields to new schema attrs
+   - No serializer — produces same `aiBlock` node attrs as `AiBlock`
+   - Map legacy fields to new schema
 
 4. Register both in `editor.js` — `AiBlock` first, `AiBlockLegacy` as fallback
 
 5. Remove `AiQuestion`, `AiBlock`, `AiShortcuts` from `extensions.js`
 
-6. Update `getCleanMarkdown` in `extensions.js` to strip fenced `ai-block` blocks in addition to legacy `[!ai]` blocks
+6. Update `getCleanMarkdown` in `extensions.js` to strip fenced `ai-block` blocks
 
-7. Smoke test: open a legacy document, confirm render. Save. Confirm file now contains fenced YAML.
+7. Smoke test: open legacy doc → renders correctly → save → file now contains fenced YAML
 
-### Phase 2 — Fix AI block creation
+### Phase C — Go handler changes *(depends on A)*
 
-Replace the string-injection approach in `editor.js`:
+1. Add `BlkID` and `Body` fields to `askRequest` and `explainRequest`
+2. Implement `AIService.ResolveAiBlock(noteUUID, blkId, response, model string) error`
+3. Update `handleAiAsk` and `handleAiExplain`: save body first, run AI, call `ResolveAiBlock`, broadcast `ai:block-resolved`
+4. Wire `AiHandler` to the SSE broadcast function (same pattern as `EmitNotesChanged`)
 
-```js
-// Current — inserts raw markdown string, then regex-replaces on completion
-var block = '\n\n[!ai] id="' + blkId + '" ref="' + ref + '" thinking="true"\n...\n[!ai-end]\n\n'
+### Phase D — JS `runAiJob` rewrite *(depends on B + C)*
+
+1. Replace `runAiJob` with new flow: insert minimal `aiBlock` node, serialize body, POST with `blkId` + `body`
+2. Add `softReloadContent` and `ai:block-resolved` SSE listener
+3. Delete `resolveAiBlock`, `insertAiPlaceholderMarkdown`, `insertAiPlaceholderWysiwyg`
+4. End-to-end test: trigger ask, switch tab mid-flight, return — COMPLETE block is present
+
+### Phase E — Cleanup *(after D is stable)*
+
+- Remove `AiBlockLegacy` once filestore grep returns zero
+- Remove legacy `[!ai]` handling from `getCleanMarkdown`
+
+### Phase 2 — Go owns the document, JS owns the cursor
+
+**Root cause of the current tab-switch bug:** `resolveAiBlock` in `editor.js` reads `currentEditor` and `currentUuid` (module-level vars) at response time. Switching tabs reassigns both to the new tab. The PENDING block sits on disk forever as `(thinking…)`.
+
+**Architecture:** responsibilities split cleanly by what each side uniquely knows.
+
+| Side | Owns | Because |
+|------|------|---------|
+| JS | Cursor position, insert location | Only JS knows where the user is in the ProseMirror doc |
+| Go | Document content, all writes | Only Go runs the AI and holds the UUID |
+| TipTap extension | Rendering | Parses attrs, renders DOM — nothing else |
+
+---
+
+#### JS side — `runAiJob` (editor.js)
+
+JS does the minimum to mark the position and hand off to Go:
+
+1. Generate `blkId` (short random id)
+2. Insert an `aiBlock` node at the cursor position via ProseMirror transaction — minimal attrs only:
+   ```js
+   { type: 'aiBlock', attrs: { id: blkId, ref: ref, question: question, status: 'PENDING', createdAt: now } }
+   ```
+   The extension renders a spinner immediately because `status === 'PENDING'`.
+3. Serialize the current editor body (`lastSyncedBody` — now contains the PENDING block)
+4. Fire `POST /api/ai/ask` with `{ content, question, noteUUID, blkId, body: serializedBody }`
+5. On response: nothing. Go has already written COMPLETE to disk and broadcast SSE. JS ignores the HTTP response body for the success path.
+6. On error (non-2xx): find the block by `blkId` in the editor, set `status: 'TIMEOUT'` via PM transaction to show the retry badge.
+
+**Deleted:** `resolveAiBlock`, `insertAiPlaceholderMarkdown`, `insertAiPlaceholderWysiwyg`, markdown mode special-case — all gone.
+
+No explicit flush before the request. JS sends `body` in the request — Go works from that snapshot directly. No flush race.
+
+---
+
+#### Go side — `handleAiAsk`, `handleAiExplain`
+
+```go
+type askRequest struct {
+    Content       string   `json:"content"`
+    History       string   `json:"history"`
+    Question      string   `json:"question"`
+    NoteUUID      string   `json:"noteUUID"`
+    ImageBlockIds []string `json:"imageBlockIds"`
+    BlkID         string   `json:"blkId"`   // NEW — id of the PENDING block
+    Body          string   `json:"body"`    // NEW — full doc body including PENDING block
+}
 ```
 
-Replace with a ProseMirror command that inserts an `aiBlock` node directly with `status: PENDING` and `question` set from the user input. On completion, find the node by `id` via document traversal and update it with a transaction — no regex, no string replace.
+Handler flow:
 
-The markdown mode path (`insertAiPlaceholderMarkdown`, `resolveAiBlock` markdown branch) is also replaced at this phase.
+```
+receive request
+→ save Body to disk immediately  (PENDING block is now on disk)
+→ run AI (RunAsk / RunExplain — unchanged)
+→ AIService.ResolveAiBlock(noteUUID, blkId, response, model)
+→ broadcast SSE  ai:block-resolved  { uuid, blkId }
+→ return 200
+```
+
+`ResolveAiBlock` loads the doc, calls `aiblock.Replace(body, blkId, updatedData)`, saves. The `aiblock` package (see Phase A below) handles the YAML find-and-replace.
+
+---
+
+#### JS SSE listener — `softReloadContent`
+
+```js
+document.addEventListener('ai:block-resolved', function(e) {
+  var data = JSON.parse(e.detail)
+  if (data.uuid !== currentUuid) return   // inactive tab — ignore, initEditor handles it on focus
+  softReloadContent(currentUuid)
+})
+
+function softReloadContent(uuid) {
+  var savedAnchor = currentEditor ? currentEditor.state.selection.anchor : 0
+  fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid))
+    .then(function(r) { return r.json() })
+    .then(function(data) {
+      currentEditor.commands.setContent(parseBodyForMode(data.body, currentMode))
+      var maxPos = currentEditor.state.doc.content.size
+      currentEditor.commands.setTextSelection(Math.min(savedAnchor, maxPos))
+    })
+}
+```
+
+The PENDING block was already visible at the cursor position (inserted in step 2 above). After `softReloadContent` the same block now has `status: COMPLETE` and `response` populated. The extension re-parses and renders the answer. Cursor is restored. The user never sees a jump.
+
+For inactive tabs: the SSE event is ignored. When the user focuses the tab, `initEditor` fetches from disk — the COMPLETE block is just there.
+
+---
+
+#### Go: `sieve/aiblock` package (prerequisite)
+
+New package. Two functions:
+
+```go
+// ParseAll extracts all ai-block fences from a markdown body.
+func ParseAll(body string) []AiBlockData
+
+// Replace finds the block with matching ID and rewrites it with updated fields.
+func Replace(body string, updated AiBlockData) (string, error)
+```
+
+Line scanner tracks fence depth to handle nested fences. Uses existing `gopkg.in/yaml.v2` for parse and marshal. ~150 lines including tests.
 
 ### Phase 3 — Interrupted block recovery
 
-Because the YAML block is self-describing, any block left with `status: PENDING` — from a timeout, app close, or network failure — contains everything needed to retry: `question`, `ref`, and `model`.
+Because the YAML block is self-describing, any block left with `status: PENDING` — from a timeout, app close, or tab-switch mid-job — contains everything needed to retry: `question`, `ref`, and `model`.
+
+**Tab-switch mid-job** is handled automatically by the Phase 2 architecture: Go updates the document regardless of JS state. When the user returns to the tab, the editor loads from disk and displays the completed block. No special recovery needed for this case.
+
+**Hard interruptions** (timeout, app quit before Go writes the result):
 
 **Backend responsibilities:**
 
 | Event | Sets |
 |-------|------|
-| Block inserted | `status: PENDING`, `createdAt` |
-| AI completes | `status: COMPLETE`, `response`, `completedAt` |
-| CLI timeout | `status: TIMEOUT` |
+| Block inserted (JS flush) | `status: PENDING`, `createdAt` |
+| AI completes (Go `ResolveAiBlock`) | `status: COMPLETE`, `response`, `completedAt` |
+| CLI timeout (Go handler) | `status: TIMEOUT` |
 
 **NodeView render logic:**
 
@@ -347,3 +514,4 @@ Implement the right-click "Promote to Document" action on the `AiBlock` NodeView
 - **Chain refs:** `ref` comma-separation semantics unchanged. `gatherChain` reads from the DOM attribute (`data-ai-ref`), which the NodeView sets from `node.attrs.ref`.
 - **Legacy `---` collision:** documents already corrupted by the `---` issue are handled best-effort by the legacy parser. The fenced format eliminates this class of bug for all new blocks.
 - **Auto-migration and markdown mode:** in markdown mode, saves use `lastSyncedBody` directly rather than TipTap serialization. Legacy blocks in documents habitually opened in markdown mode will not auto-migrate via save. The `GrepAllDocuments` removal check handles this correctly — `AiBlockLegacy` stays until count reaches zero regardless of cause.
+- **Tab-switch before AI returns (current bug):** `resolveAiBlock` in `editor.js` reads `currentEditor`/`currentUuid` at response time. Switching tabs reassigns both, so the PENDING block is never resolved — it sits on disk as `(thinking…)`. This is fully eliminated by the Phase 2 Go-side update architecture.

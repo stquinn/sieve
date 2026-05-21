@@ -782,19 +782,19 @@ div.node-image.ProseMirror-selectednode {
   to { transform: rotate(360deg); }
 }
 
-/* Question area inside AI block — formal aiQuestion node */
-.tiptap .ai-question {
+/* Question area inside AI block */
+.ai-block .ai-question {
   color: var(--theme-textDim);
-  border-bottom: 1px solid color-mix(in srgb, var(--theme-accentPrimary) 12%, transparent);
-  margin-bottom: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--theme-accentPrimary) 30%, transparent);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
 }
-.tiptap .ai-question strong, 
-.tiptap .ai-question em {
-  color: var(--theme-accentPurple);
+.ai-block .ai-question strong {
+  color: var(--theme-accentPrimary);
 }
 
-/* Hide the structural divider in AI blocks - the ai-question border does this job */
-.tiptap .ai-block hr {
+/* Hide the structural divider - the ai-question border does this job */
+.ai-block hr {
   display: none;
 }
 

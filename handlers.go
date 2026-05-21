@@ -152,6 +152,7 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 				logger.Info("AI: notes changed event")
 				hub.broadcast("notes:changed", "{}")
 			},
+			Broadcast: hub.broadcast,
 		},
 	}
 	r := chi.NewRouter()
