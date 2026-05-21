@@ -247,7 +247,9 @@
   function promoteAiBlock(editor, getPos, n) {
     var question = (n.attrs.question || '').replace(/\n/g, ' ').trim()
     var response = n.attrs.response || ''
-    var md = '### ' + question + '\n\n' + response
+    // If response contains ```ai-block fences (e.g. a question about the format),
+    // insertContentAt will parse them as live aiBlock nodes via the extension's updateDOM hook.
+    var md = question ? ('### ' + question + '\n\n' + response) : response
     var html = editor.storage.markdown.parser.md.render(md)
     var pos = getPos()
     editor.commands.insertContentAt({ from: pos, to: pos + n.nodeSize }, html)
