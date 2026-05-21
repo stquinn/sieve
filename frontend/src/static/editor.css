@@ -445,7 +445,7 @@ textarea::selection {
   caret-color: var(--theme-text);
 }
 
-.tiptap p.is-empty::before {
+.tiptap p.is-empty::after {
   content: attr(data-placeholder);
   color: var(--theme-muted);
   pointer-events: none;
@@ -712,7 +712,7 @@ div.node-image.ProseMirror-selectednode {
 
 .ai-block {
   border: 1px solid var(--theme-aiBlockBorder);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--theme-aiBlockBg);
   margin-top: 1.5rem;
   margin-bottom: 2rem;
@@ -736,12 +736,18 @@ div.node-image.ProseMirror-selectednode {
 }
 
 .ai-block.ai-block--chain-active {
-  border-left: 3px solid var(--theme-accentPrimary) !important;
-  border-top-color: color-mix(in srgb, var(--theme-accentPrimary) 30%, var(--theme-aiBlockBorder)) !important;
-  border-right-color: color-mix(in srgb, var(--theme-accentPrimary) 30%, var(--theme-aiBlockBorder)) !important;
-  border-bottom-color: color-mix(in srgb, var(--theme-accentPrimary) 30%, var(--theme-aiBlockBorder)) !important;
+  border-color: color-mix(in srgb, var(--theme-accentPrimary) 30%, var(--theme-aiBlockBorder)) !important;
   background: color-mix(in srgb, var(--theme-accentPrimary) 4%, var(--theme-aiBlockBg));
-  padding-left: calc(1.5rem - 2px) !important;
+}
+
+.ai-block.ai-block--chain-active::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 8px;
+  border-left: 3px solid var(--theme-accentPrimary);
+  pointer-events: none;
+  z-index: 5;
 }
 
 /* "AI" badge sits in the top border */

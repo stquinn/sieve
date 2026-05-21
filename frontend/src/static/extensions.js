@@ -746,6 +746,35 @@
     return ids
   }
 
+  function serializeTableNode(tableNode, serializer) {
+    var rows = []
+    var colCount = 0
+    tableNode.forEach(function (row) {
+      if (row.type.name !== 'tableRow') return
+      var cells = []
+      row.forEach(function (cell) {
+        var cellText = serializer.serialize(cell).trim().replace(/\n/g, ' ')
+        cells.push(cellText)
+      })
+      rows.push(cells)
+      if (cells.length > colCount) colCount = cells.length
+    })
+    if (rows.length === 0) return ''
+    var mdLines = []
+    // Header
+    var header = rows[0]
+    mdLines.push('| ' + header.join(' | ') + ' |')
+    // Divider
+    var dividers = []
+    for (var i = 0; i < colCount; i++) dividers.push('---')
+    mdLines.push('| ' + dividers.join(' | ') + ' |')
+    // Body
+    for (var r = 1; r < rows.length; r++) {
+      mdLines.push('| ' + rows[r].join(' | ') + ' |')
+    }
+    return mdLines.join('\n')
+  }
+
   function buildAiContext(editor, isMarkdownMode, rawMd, uuid) {
     if (isMarkdownMode) {
       var ta = document.querySelector('.markdown-raw')
@@ -843,31 +872,46 @@
     var scanFrom = (from === to) ? Math.max(0, from - 1) : from
     var scanTo   = (from === to) ? Math.min(doc.content.size, to + 1) : to
     doc.nodesBetween(scanFrom, scanTo, function (node, pos) {
-      if (!targetNode && (node.type.name === 'image' || node.type.name === 'codeBlock')) {
+      if (!targetNode && (node.type.name === 'image' || node.type.name === 'codeBlock' || node.type.name === 'table')) {
         targetNode = node; targetPos = pos; return false
       }
     })
 
     var selectedText = '', blockRange = null, contextLabel = ''
     if (targetNode && from === targetPos && to === targetPos + targetNode.nodeSize) {
-      selectedText = serializer.serialize(targetNode).trim()
-      contextLabel = targetNode.type.name === 'image' ? 'Image' : 'Code Block'
+      if (targetNode.type.name === 'table') {
+        selectedText = serializeTableNode(targetNode, serializer)
+      } else {
+        selectedText = serializer.serialize(targetNode).trim()
+      }
+      contextLabel = targetNode.type.name === 'image' ? 'Image' : (targetNode.type.name === 'codeBlock' ? 'Code Block' : 'Table')
     } else if (from !== to) {
       selectedText = serializer.serialize(doc.slice(from, to).content).trim()
       blockRange = selection.$from.blockRange(selection.$to)
       contextLabel = 'Selection'
     } else if (targetNode) {
-      selectedText = serializer.serialize(targetNode).trim()
-      contextLabel = targetNode.type.name === 'image' ? 'Image' : 'Code Block'
+      if (targetNode.type.name === 'table') {
+        selectedText = serializeTableNode(targetNode, serializer)
+      } else {
+        selectedText = serializer.serialize(targetNode).trim()
+      }
+      contextLabel = targetNode.type.name === 'image' ? 'Image' : (targetNode.type.name === 'codeBlock' ? 'Code Block' : 'Table')
     } else {
       selectedText = getCleanMarkdown(editor.storage.markdown.getMarkdown())
       contextLabel = 'Document'
     }
 
     var existingBlockId = ''
-    if (targetNode && from >= targetPos && to <= targetPos + targetNode.nodeSize) {
-      existingBlockId = targetNode.attrs.id
-    } else if (blockRange) {
+    for (var d = selection.$from.depth; d >= 0; d--) {
+      var n = selection.$from.node(d)
+      if (n.type.name === 'blockRef') {
+        existingBlockId = n.attrs.id || ''
+        break
+      }
+    }
+    if (!existingBlockId && targetNode && from >= targetPos && to <= targetPos + targetNode.nodeSize) {
+      existingBlockId = targetNode.attrs.id || ''
+    } else if (!existingBlockId && blockRange) {
       doc.nodesBetween(blockRange.start, blockRange.end, function (node) {
         if (!existingBlockId && node.type.name === 'blockRef' && node.attrs.id) {
           existingBlockId = node.attrs.id; return false
@@ -882,7 +926,14 @@
     if (!existingBlockId) {
       try {
         if (targetNode && from >= targetPos && to <= targetPos + targetNode.nodeSize) {
-          tr.setNodeMarkup(targetPos, undefined, Object.assign({}, targetNode.attrs, { id: blockRef }))
+          if (targetNode.type.name === 'table') {
+            var $from = doc.resolve(targetPos)
+            var $to = doc.resolve(targetPos + targetNode.nodeSize)
+            var topRange = new NodeRange($from, $to, 0)
+            tr.wrap(topRange, [{ type: editor.state.schema.nodes.blockRef, attrs: { id: blockRef } }])
+          } else {
+            tr.setNodeMarkup(targetPos, undefined, Object.assign({}, targetNode.attrs, { id: blockRef }))
+          }
         } else if (blockRange) {
           var topRange = new NodeRange(blockRange.$from, blockRange.$to, 0)
           tr.wrap(topRange, [{ type: editor.state.schema.nodes.blockRef, attrs: { id: blockRef } }])

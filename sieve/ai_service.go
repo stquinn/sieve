@@ -139,7 +139,7 @@ func (s *AIService) RunAsk(content, history, question, noteUUID string, imageBlo
 
 // ResolveAiBlock finds the block with blkId in noteUUID's body, sets it to
 // COMPLETE with the given response and model, and saves the document.
-func (s *AIService) ResolveAiBlock(noteUUID, blkId, response, model string) error {
+func (s *AIService) ResolveAiBlock(noteUUID, blkId, response, model, blockType string) error {
 	doc, err := s.documents.LoadByUUID(noteUUID)
 	if err != nil {
 		return fmt.Errorf("ResolveAiBlock: load %s: %w", noteUUID, err)
@@ -162,6 +162,9 @@ func (s *AIService) ResolveAiBlock(noteUUID, blkId, response, model string) erro
 	found.Status = "COMPLETE"
 	found.Response = response
 	found.Model = model
+	if blockType != "" {
+		found.Type = blockType
+	}
 	found.CompletedAt = time.Now().UTC().Format(time.RFC3339)
 
 	newBody, err := aiblock.Replace(body, found)

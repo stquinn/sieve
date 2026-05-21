@@ -559,9 +559,11 @@
     ctx = precomputedCtx || window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
     refId = (ctx && ctx.blockRef) || 'doc'
 
+    var blockType = type === 'explain' ? 'EXPLAIN' : 'ASK'
+
     // 3. Perform insert or follow-up insertion
     if (currentMode === 'markdown') {
-      var lines = ['```ai-block', 'id: ' + blkId, 'ref: ' + refId, 'status: PENDING', 'createdAt: ' + now]
+      var lines = ['```ai-block', 'id: ' + blkId, 'ref: ' + refId, 'status: PENDING', 'type: ' + blockType, 'createdAt: ' + now]
       if (question) lines.push('question: ' + question)
       lines.push('```')
       var newFence = lines.join('\n')
@@ -619,7 +621,7 @@
 
       currentEditor.commands.insertContentAt(insertPos, {
         type: 'aiBlock',
-        attrs: { id: blkId, ref: refId, status: 'PENDING', question: question || '', createdAt: now },
+        attrs: { id: blkId, ref: refId, status: 'PENDING', type: blockType, question: question || '', createdAt: now },
       })
 
       // Move focus inside/after the new block so the editor is instantly interactive
@@ -1210,6 +1212,84 @@
     ensureOverlays()
     openAskPopup()
   })
+  document.addEventListener('sieve:ai-retry', function (e) {
+    if (currentMode === 'markdown' || !currentEditor) return
+    var details = e.detail
+    if (!details || !details.id) return
+
+    var blkId = details.id
+    var type = (details.type || '').toLowerCase()
+    if (type !== 'ask' && type !== 'explain') {
+      type = details.question ? 'ask' : 'explain'
+    }
+
+    // 1. Set status to PENDING and clear response
+    currentEditor.commands.command(function (props) {
+      var tr = props.tr
+      var found = false
+      props.state.doc.descendants(function (node, pos) {
+        if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
+          tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { status: 'PENDING', response: null }))
+          found = true
+          return false
+        }
+      })
+      return found
+    })
+
+    // 2. Select the node to ensure buildAiContext builds follow-up history context up to this block
+    var pos = null
+    currentEditor.state.doc.descendants(function (node, p) {
+      if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
+        pos = p
+        return false
+      }
+    })
+    if (pos !== null) {
+      currentEditor.commands.setNodeSelection(pos)
+    }
+
+    // 3. Build context
+    var ctx = window.TipTap.buildAiContext(currentEditor, false, lastSyncedBody, currentUuid)
+
+    // 4. Capture the updated markdown body
+    var body = currentEditor.storage.markdown.getMarkdown() || ''
+
+    var endpoint = type === 'explain' ? '/api/ai/explain' : '/api/ai/ask'
+    var payload = {
+      content:       ctx ? ctx.content : '',
+      history:       ctx ? ctx.history : '',
+      question:      details.question || '',
+      noteUUID:      currentUuid || '',
+      imageBlockIds: (ctx && ctx.imageIds) || [],
+      blkId:         blkId,
+      body:          body,
+    }
+
+    fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then(function (r) {
+      if (!r.ok) throw new Error('AI retry request failed: ' + r.status)
+    }).catch(function (err) {
+      console.error('[editor] AI retry error', err)
+      if (currentEditor) {
+        currentEditor.commands.command(function (props) {
+          var tr = props.tr
+          var found = false
+          props.state.doc.descendants(function (node, pos) {
+            if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
+              tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { status: 'TIMEOUT' }))
+              found = true
+              return false
+            }
+          })
+          return found
+        })
+      }
+    })
+  })
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1247,6 +1327,19 @@
 
     var selection = currentEditor.state.selection
     var hasSelection = !selection.empty
+
+    // Detect contextual target block (image, code block, or table)
+    var targetNode = null
+    var doc = currentEditor.state.doc
+    var from = selection.from, to = selection.to
+    var scanFrom = (from === to) ? Math.max(0, from - 1) : from
+    var scanTo   = (from === to) ? Math.min(doc.content.size, to + 1) : to
+    doc.nodesBetween(scanFrom, scanTo, function (node, pos) {
+      if (!targetNode && (node.type.name === 'image' || node.type.name === 'codeBlock' || node.type.name === 'table')) {
+        targetNode = node
+        return false
+      }
+    })
 
     var items = []
 
@@ -1344,17 +1437,21 @@
       }
     })
 
-    if (hasSelection) {
+    if (hasSelection || targetNode) {
       items.push({ type: 'divider' })
+      var contextName = 'AI'
+      if (targetNode) {
+        contextName = targetNode.type.name === 'image' ? 'Image' : (targetNode.type.name === 'codeBlock' ? 'Code Block' : 'Table')
+      }
       items.push({
-        label: '💬 Ask AI',
+        label: '💬 Ask AI' + (targetNode ? ' (' + contextName + ')' : ''),
         action: function () {
           currentEditor.commands.focus()
           document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
         }
       })
       items.push({
-        label: '💡 Explain',
+        label: '💡 Explain' + (targetNode ? ' (' + contextName + ')' : ''),
         action: function () {
           currentEditor.commands.focus()
           document.dispatchEvent(new CustomEvent('sieve:ai-explain'))

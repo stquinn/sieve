@@ -131,7 +131,7 @@ func (h *AiHandler) handleAiAsk(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.BlkID != "" && req.NoteUUID != "" {
-		if err := h.ServiceProvider.AI.ResolveAiBlock(req.NoteUUID, req.BlkID, resp, ""); err != nil {
+		if err := h.ServiceProvider.AI.ResolveAiBlock(req.NoteUUID, req.BlkID, resp, "", "ASK"); err != nil {
 			logger.Error("handleAiAsk: ResolveAiBlock failed", "err", err)
 		} else if h.Broadcast != nil {
 			data, _ := json.Marshal(map[string]string{"uuid": req.NoteUUID, "blkId": req.BlkID})
@@ -176,7 +176,7 @@ func (h *AiHandler) handleAiExplain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.BlkID != "" && req.NoteUUID != "" {
-		if err := h.ServiceProvider.AI.ResolveAiBlock(req.NoteUUID, req.BlkID, resp, ""); err != nil {
+		if err := h.ServiceProvider.AI.ResolveAiBlock(req.NoteUUID, req.BlkID, resp, "", "EXPLAIN"); err != nil {
 			logger.Error("handleAiExplain: ResolveAiBlock failed", "err", err)
 		} else if h.Broadcast != nil {
 			data, _ := json.Marshal(map[string]string{"uuid": req.NoteUUID, "blkId": req.BlkID})

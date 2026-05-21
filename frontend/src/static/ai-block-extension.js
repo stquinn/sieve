@@ -171,7 +171,19 @@
         editor.commands.setNodeSelection(pos)
       }
 
-      var items = [
+      var items = []
+      var label = (node.attrs.status === 'TIMEOUT' || node.attrs.status === 'PENDING') ? '🔄 Retry' : '🔄 Replay'
+      items.push({
+        label: label,
+        action: function () {
+          document.dispatchEvent(new CustomEvent('sieve:ai-retry', {
+            detail: { id: node.attrs.id, question: node.attrs.question, ref: node.attrs.ref, type: node.attrs.type }
+          }))
+        }
+      })
+      items.push({ type: 'divider' })
+
+      items.push(
         {
           label: '📋 Copy',
           action: function () {
@@ -215,7 +227,7 @@
             document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
           }
         }
-      ]
+      )
 
       window.TipTap.createContextMenu(e, items)
     })
@@ -287,17 +299,7 @@
 
         var errEl = document.createElement('p')
         errEl.className = 'ai-block__timeout'
-        errEl.textContent = 'Request timed out. '
-        var retryBtn = document.createElement('button')
-        retryBtn.className = 'ai-block__retry'
-        retryBtn.textContent = 'Retry'
-        retryBtn.setAttribute('data-ai-id', n.attrs.id || '')
-        retryBtn.addEventListener('click', function () {
-          document.dispatchEvent(new CustomEvent('sieve:ai-retry', {
-            detail: { id: n.attrs.id, question: n.attrs.question, ref: n.attrs.ref, type: n.attrs.type }
-          }))
-        })
-        errEl.appendChild(retryBtn)
+        errEl.textContent = 'Request timed out. (Right-click to Retry)'
         contentEl.appendChild(errEl)
       }
     }
