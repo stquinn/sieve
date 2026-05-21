@@ -252,7 +252,9 @@
     var md = question ? ('### ' + question + '\n\n' + response) : response
     var html = editor.storage.markdown.parser.md.render(md)
     var pos = getPos()
-    editor.commands.insertContentAt({ from: pos, to: pos + n.nodeSize }, html)
+    // Trailing empty paragraph prevents the next block from merging with the last
+    // paragraph of the promoted content.
+    editor.commands.insertContentAt({ from: pos, to: pos + n.nodeSize }, html + '<p></p>')
   }
 
   function buildAiBlockItems(ctx) {
