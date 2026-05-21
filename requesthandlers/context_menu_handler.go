@@ -19,7 +19,6 @@ type ContextMenuHandler struct {
 }
 
 func (h *ContextMenuHandler) RegisterPaths(r chi.Router) {
-	r.Get("/api/context-menu", h.handleMenu)
 	r.Post("/api/sidebar/intent", h.handleIntent)
 	r.Post("/api/sidebar/delete-note", h.handleDeleteNote)
 	r.Post("/api/sidebar/delete-folder", h.handleDeleteFolder)
@@ -31,49 +30,6 @@ func (h *ContextMenuHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/sidebar/create-folder", h.handleCreateFolder)
 	r.Post("/api/sidebar/revert-prompt", h.handleRevertPrompt)
 	r.Post("/api/sidebar/move", h.handleMoveItem)
-}
-
-// ── Menu content ──────────────────────────────────────────────────────────────
-
-type contextMenuData struct {
-	ID        string
-	Name      string
-	Intent    string
-	IsDir     bool
-	IsTab     bool
-	IsPrompt  bool
-	IsVirtual bool
-}
-
-func (h *ContextMenuHandler) handleMenu(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	data := contextMenuData{
-		ID:     q.Get("id"),
-		Name:   q.Get("name"),
-		Intent: q.Get("intent"),
-		IsDir:  q.Get("isDir") == "true",
-		IsTab:  q.Get("isTab") == "true",
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	tplName := "note-context-menu.html"
-	if data.IsDir {
-		tplName = "folder-context-menu.html"
-	}
-	if strings.HasPrefix(data.ID, "prompt:") {
-		data.IsPrompt = true
-		data.IsVirtual = true
-		for _, pe := range h.ServiceProvider.Prompts.ListPrompts() {
-			if pe.ID == data.ID {
-				data.IsVirtual = pe.IsVirtual
-				break
-			}
-		}
-		tplName = "prompt-context-menu.html"
-	}
-	if err := h.Tmpl.ExecuteTemplate(w, tplName, data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
 }
 
 // ── Actions → return refreshed sidebar ───────────────────────────────────────

@@ -31,6 +31,15 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 
 ---
 
+## Code Navigation
+Prefer the `language-server` MCP tools over grep/bash for code navigation tasks:
+- Use `get_references` to find usages of a symbol
+- Use `get_definition` to navigate to a definition
+- Use `get_diagnostics` for compiler errors
+- Only fall back to grep if the language server tool fails
+
+---
+
 ## Build & Dev
 
 ```bash

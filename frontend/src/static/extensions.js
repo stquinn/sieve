@@ -393,77 +393,10 @@
         wrapper.addEventListener('contextmenu', function (e) {
           e.preventDefault()
           e.stopPropagation()
-
-          // Programmatically select this node in ProseMirror so editor context highlights it
-          if (typeof getPos === 'function') {
-            var pos = getPos()
-            editor.commands.setNodeSelection(pos)
-          }
-
-          function serializeImageMarkdown(n) {
-            var src = n.attrs.src || '', alt = n.attrs.alt || ''
-            var width = n.attrs.width || '', height = n.attrs.height || ''
-            var summary = n.attrs.summary || '', detect = n.attrs.detect || '', id = n.attrs.id || ''
-            var text = '![' + alt + '](' + src + ')'
-            if (width || height || summary || detect || id) {
-              var extra = []
-              if (id) extra.push('id="' + id + '"')
-              if (width) extra.push('width="' + width + '"')
-              if (height) extra.push('height="' + height + '"')
-              if (summary) extra.push('summary="' + summary + '"')
-              if (detect) extra.push('detect="' + detect + '"')
-              text += '{' + extra.join(' ') + '}'
-            }
-            return text
-          }
-
-          var items = [
-            {
-              label: '📋 Copy',
-              action: function () {
-                navigator.clipboard.writeText(serializeImageMarkdown(currentNode)).catch(console.error)
-              }
-            },
-            {
-              label: '✂️ Cut',
-              action: function () {
-                navigator.clipboard.writeText(serializeImageMarkdown(currentNode))
-                  .then(function () {
-                    if (typeof getPos === 'function') {
-                      var pos = getPos()
-                      editor.view.dispatch(editor.state.tr.delete(pos, pos + currentNode.nodeSize))
-                    }
-                  })
-                  .catch(console.error)
-              }
-            },
-            {
-              label: '🗑️ Delete',
-              action: function () {
-                if (typeof getPos === 'function') {
-                  var pos = getPos()
-                  editor.view.dispatch(editor.state.tr.delete(pos, pos + currentNode.nodeSize))
-                }
-              }
-            },
-            { type: 'divider' },
-            {
-              label: '💬 Ask AI',
-              action: function () {
-                editor.commands.focus()
-                document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
-              }
-            },
-            {
-              label: '💡 Explain',
-              action: function () {
-                editor.commands.focus()
-                document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
-              }
-            }
-          ]
-
-          window.TipTap.createContextMenu(e, items)
+          if (typeof getPos === 'function') editor.commands.setNodeSelection(getPos())
+          document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
+            detail: { x: e.clientX, y: e.clientY, context: { type: 'image', editor: editor, getPos: getPos, node: currentNode } }
+          }))
         })
 
         return {
