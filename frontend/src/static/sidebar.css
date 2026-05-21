@@ -10,7 +10,7 @@
 .ctx-item--danger { color:var(--theme-accentRed); }
 .ctx-item--active { background:var(--theme-border2); font-weight:700; }
 .ctx-item--disabled { opacity:0.4; pointer-events:none; cursor:default; }
-.ctx-separator { height:1px;background:var(--theme-border2);margin:4px 0; }
+.ctx-separator { height:1px;background:var(--theme-muted);margin:4px 0;opacity:0.35; }
 .ctx-header {
   padding: 6px 12px;
   font-size: 11px;
