@@ -665,6 +665,17 @@ div.node-image.ProseMirror-selectednode {
   transition: box-shadow 0.2s ease;
 }
 
+.image-block:hover img {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--theme-accentPrimary) 60%, var(--theme-aiBlockBorder)),
+              0 4px 20px rgba(0, 0, 0, 0.25);
+}
+
+.image-block.ProseMirror-selectednode img {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-accentPrimary) 25%, transparent),
+              0 0 0 2px var(--theme-accentPrimary),
+              0 8px 30px rgba(0, 0, 0, 0.45) !important;
+}
+
 .image-block.block-ref-active img {
   box-shadow: 0 0 0 2px var(--theme-accentPrimary);
 }
@@ -714,10 +725,20 @@ div.node-image.ProseMirror-selectednode {
   transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
 }
 
-.ai-block:hover,
-.ai-block:focus-within {
-  /* border-color: var(--theme-accentPrimary); */
+.ai-block:hover {
+  border-color: color-mix(in srgb, var(--theme-accentPrimary) 60%, var(--theme-aiBlockBorder));
+  background: color-mix(in srgb, var(--theme-accentPrimary) 2%, var(--theme-aiBlockBg));
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
 }
+
+.ai-block.ProseMirror-selectednode {
+  border-color: var(--theme-accentPrimary) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-accentPrimary) 25%, transparent), 
+              0 8px 30px rgba(0, 0, 0, 0.45) !important;
+  background: color-mix(in srgb, var(--theme-accentPrimary) 5%, var(--theme-aiBlockBg)) !important;
+  outline: none !important;
+}
+
 .ai-block.ai-block--chain-active {
   border-color: var(--theme-accentPrimary);
   box-shadow: 0 0 0 1px var(--theme-accentPrimary);

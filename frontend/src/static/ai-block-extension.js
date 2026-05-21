@@ -198,7 +198,7 @@
   var AiBlock = Node.create({
     name: 'aiBlock',
     group: 'block',
-    selectable: false,
+    selectable: true,
     draggable: false,
     addAttributes() {
       return {

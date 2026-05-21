@@ -107,9 +107,6 @@ func (s *AIService) RunExplain(content, history, noteUUID string, imageBlockIds 
 	p = strings.ReplaceAll(p, "{content}", content)
 	p = strings.ReplaceAll(p, "{images}", imageNameList(imagePaths, noteCwd))
 
-	if len(imagePaths) > 0 {
-		return RunCLIWithImages(settings.CLI, p, imagePaths, settings.Model, settings.CLITimeoutLong, noteCwd)
-	}
 	return RunCLI(settings.CLI, p, settings.Model, settings.CLITimeoutLong, noteCwd)
 }
 
@@ -136,7 +133,6 @@ func (s *AIService) RunAsk(content, history, question, noteUUID string, imageBlo
 
 	if len(imagePaths) > 0 {
 		logger.Info("RunAsk: has images", "count", len(imagePaths))
-		return RunCLIWithImages(settings.CLI, p, imagePaths, settings.Model, settings.CLITimeoutLong, noteCwd)
 	}
 	return RunCLI(settings.CLI, p, settings.Model, settings.CLITimeoutLong, noteCwd)
 }
@@ -218,7 +214,7 @@ func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string
 
 	p := strings.ReplaceAll(prompt, "{image_filename}", filepath.Base(imagePath))
 	cwd := filepath.Dir(imagePath)
-	resp, err := RunCLIWithImages(settings.CLI, p, []string{imagePath}, settings.Model, settings.CLITimeoutLong, cwd)
+	resp, err := RunCLI(settings.CLI, p, settings.Model, settings.CLITimeoutLong, cwd)
 	if err != nil {
 		return ImageDesc{}, err
 	}
