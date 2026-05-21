@@ -64,7 +64,7 @@
         btn.addEventListener('click', function (ev) {
           ev.stopPropagation()
           menu.remove()
-          item.action()
+          if (typeof item.action === 'function') item.action()
         })
         menu.appendChild(btn)
       }
