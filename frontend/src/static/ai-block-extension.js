@@ -28,75 +28,8 @@
     return ids
   }
 
-  // ── createContextMenu ────────────────────────────────────────────────────────
-  T.createContextMenu = function (e, items) {
-    e.preventDefault()
-    e.stopPropagation()
-
-    // 1. Close any existing context menu
-    var existing = document.getElementById('sieve-editor-context-menu')
-    if (existing) existing.remove()
-
-    // 2. Create the menu element
-    var menu = document.createElement('div')
-    menu.id = 'sieve-editor-context-menu'
-    menu.className = 'editor-context-menu'
-    menu.style.left = e.clientX + 'px'
-    menu.style.top = e.clientY + 'px'
-
-    // 3. Render items
-    items.forEach(function (item) {
-      if (item.type === 'divider') {
-        var div = document.createElement('div')
-        div.className = 'editor-context-menu__divider'
-        menu.appendChild(div)
-      } else {
-        var el = document.createElement('div')
-        el.className = 'editor-context-menu__item'
-        var textEl = document.createElement('span')
-        textEl.textContent = item.label
-        el.appendChild(textEl)
-
-        el.addEventListener('click', function (clickEvent) {
-          clickEvent.stopPropagation()
-          menu.remove()
-          item.action()
-        })
-        menu.appendChild(el)
-      }
-    })
-
-    document.body.appendChild(menu)
-
-    // 4. Adjust position for viewport boundaries
-    requestAnimationFrame(function () {
-      var r = menu.getBoundingClientRect()
-      if (r.right > window.innerWidth - 8) {
-        menu.style.left = (window.innerWidth - r.width - 8) + 'px'
-      }
-      if (r.bottom > window.innerHeight - 8) {
-        menu.style.top = (window.innerHeight - r.height - 8) + 'px'
-      }
-    })
-
-    // 5. Setup dismiss listeners
-    function dismiss() {
-      menu.remove()
-      document.removeEventListener('click', dismiss)
-      document.removeEventListener('contextmenu', dismiss)
-      document.removeEventListener('keydown', keyDismiss)
-    }
-    function keyDismiss(keyEvent) {
-      if (keyEvent.key === 'Escape') dismiss()
-    }
-
-    // Delay listeners to prevent instant closure on the click that opened it
-    setTimeout(function () {
-      document.addEventListener('click', dismiss)
-      document.addEventListener('contextmenu', dismiss)
-      document.addEventListener('keydown', keyDismiss)
-    }, 50)
-  }
+  // serializeAiBlockYaml is used by both the markdown serializer and context-menu.js
+  T.serializeAiBlockYaml = serializeAiBlockYaml
 
   // ── serializeAiBlockYaml ────────────────────────────────────────────────────
 
@@ -165,75 +98,10 @@
     dom.addEventListener('contextmenu', function (e) {
       e.preventDefault()
       e.stopPropagation()
-
-      // Programmatically select this node in ProseMirror so editor context highlights it
-      if (typeof getPos === 'function') {
-        var pos = getPos()
-        editor.commands.setNodeSelection(pos)
-      }
-
-      var items = []
-
-      items.push(
-        {
-          label: '📋 Copy',
-          action: function () {
-            var text = '```ai-block\n' + serializeAiBlockYaml(currentNode.attrs) + '\n```'
-            navigator.clipboard.writeText(text).catch(console.error)
-          }
-        },
-        {
-          label: '✂️ Cut',
-          action: function () {
-            var text = '```ai-block\n' + serializeAiBlockYaml(currentNode.attrs) + '\n```'
-            navigator.clipboard.writeText(text)
-              .then(function () {
-                if (typeof getPos === 'function') {
-                  var pos = getPos()
-                  editor.view.dispatch(editor.state.tr.delete(pos, pos + currentNode.nodeSize))
-                }
-              })
-              .catch(console.error)
-          }
-        },
-        {
-          label: '🗑️ Delete',
-          action: function () {
-            if (typeof getPos === 'function') {
-              var pos = getPos()
-              editor.view.dispatch(editor.state.tr.delete(pos, pos + currentNode.nodeSize))
-            }
-          }
-        },
-        { type: 'divider' },
-        {
-          label: '💬 Ask AI',
-          action: function () {
-            editor.commands.focus()
-            document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
-          }
-        },
-        {
-          label: '💡 Explain',
-          action: function () {
-            editor.commands.focus()
-            document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
-          }
-        }
-      )
-      items.push({ type: 'divider' })
-      var label = (currentNode.attrs.status === 'TIMEOUT' || currentNode.attrs.status === 'PENDING') ? '🔄 Retry' : '🔄 Replay'
-      items.push({
-        label: label,
-        action: function () {
-          document.dispatchEvent(new CustomEvent('sieve:ai-retry', {
-            detail: { id: currentNode.attrs.id, question: currentNode.attrs.question, ref: currentNode.attrs.ref, type: currentNode.attrs.type }
-          }))
-        }
-      })
-      
-
-      window.TipTap.createContextMenu(e, items)
+      if (typeof getPos === 'function') editor.commands.setNodeSelection(getPos())
+      document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
+        detail: { x: e.clientX, y: e.clientY, context: { type: 'aiBlock', editor: editor, getPos: getPos, node: currentNode } }
+      }))
     })
 
     dom.addEventListener('mouseenter', function () { applyChain('add') })

@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "language-server": {
+      "command": "/home/stephen/go/bin/mcp-language-server",
+      "args": [
+        "--workspace", "/home/stephen/Development/projects/sieve",
+        "--lsp", "/home/stephen/go/bin/gopls"
+      ],
+      "env": {
+        "GOPATH": "/home/stephen/go",
+        "GOCACHE": "/home/stephen/.cache/go-build",
+        "GOMODCACHE": "/home/stephen/go/pkg/mod"
+      }
+    }
+  }
+}

@@ -1,13 +1,6 @@
 (function () {
-  var menuEl = null;
   var draggedId = null;
   var draggedParentId = null;
-
-  function closeMenu() {
-    var menu = document.getElementById('sieve-context-menu');
-    if (menu) menu.remove();
-    menuEl = null;
-  }
 
   window.sieveShowInFiles = function(id) {
     if (window.go && window.go.main && window.go.main.App && window.go.main.App.ShowInFilesByID) {
@@ -96,55 +89,24 @@
     }
   });
 
-    document.addEventListener('click', function (e) {
-    if (document.getElementById('sieve-context-menu') && !document.getElementById('sieve-context-menu').contains(e.target)) closeMenu();
-  });
-
-  document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') closeMenu();
-  });
-
   document.addEventListener('contextmenu', function (e) {
     var target = e.target.closest('[data-ctx-id]');
-    if (!target) {
-      closeMenu();
-      return;
-    }
+    if (!target) return;
     e.preventDefault();
-    closeMenu();
     var id = target.dataset.ctxId;
     var isDir = target.dataset.ctxIsDir === 'true';
     var isTab = target.dataset.ctxIsTab === 'true';
+    var isVirtual = target.dataset.ctxIsVirtual === 'true';
     var name = target.dataset.ctxName || '';
     var intent = target.dataset.ctxIntent || '';
-    menuEl = document.createElement('div');
-    menuEl.id = 'sieve-context-menu';
-    menuEl.style.cssText = [
-      'position:fixed',
-      'z-index:9999',
-      'top:' + e.clientY + 'px',
-      'left:' + e.clientX + 'px',
-      'background:var(--theme-bgAlt)',
-      'border:1px solid var(--theme-border2)',
-      'border-radius:8px',
-      'box-shadow:0 8px 24px rgba(0,0,0,0.4)',
-      'padding:0',
-      'min-width:200px'
-    ].join(';');
-    document.body.appendChild(menuEl);
-    var params = new URLSearchParams({ id: id, name: name, intent: intent, isDir: String(isDir), isTab: String(isTab) });
-    window.htmx.ajax('GET', '/api/context-menu?' + params.toString(), {
-      target: '#sieve-context-menu',
-      swap: 'innerHTML',
-    });
-    requestAnimationFrame(function () {
-      if (!menuEl) return;
-      var r = menuEl.getBoundingClientRect();
-      if (r.right > window.innerWidth - 8)
-        menuEl.style.left = (window.innerWidth - r.width - 8) + 'px';
-      if (r.bottom > window.innerHeight - 8)
-        menuEl.style.top = (window.innerHeight - r.height - 8) + 'px';
-    });
+    var ctxType = target.dataset.ctxType || (id.startsWith('prompt:') ? 'prompt' : 'note');
+    if (isDir) ctxType = 'folder';
+    document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
+      detail: {
+        x: e.clientX, y: e.clientY,
+        context: { type: ctxType, id: id, name: name, intent: intent, isTab: isTab, isVirtual: isVirtual }
+      }
+    }));
   });
 
 })();
