@@ -28,16 +28,10 @@ func (h *SessionHandler) handleSidebarToggle(w http.ResponseWriter, r *http.Requ
 	_ = h.ServiceProvider.State.SaveSession(session)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<style id="layout-overrides" hx-swap-oob="true">
-		#app-root {
-			--sidebar-w: %dpx;
-		}
-		#htmx-sidebar {
-			display: %s;
-		}
-		.sidebar-handle {
-			display: %s;
-		}
+	fmt.Fprintf(w, `<style id="layout-overrides-sidebar" hx-swap-oob="true">
+		#app-root { --sidebar-w: %dpx; }
+		#htmx-sidebar { display: %s; }
+		.sidebar-handle { display: %s; }
 	</style>`, map[bool]int{true: session.SidebarWidth, false: 0}[session.ShowSidebar],
 		map[bool]string{true: "block", false: "none"}[session.ShowSidebar],
 		map[bool]string{true: "block", false: "none"}[session.ShowSidebar])
@@ -49,16 +43,10 @@ func (h *SessionHandler) handleMetaToggle(w http.ResponseWriter, r *http.Request
 	_ = h.ServiceProvider.State.SaveSession(session)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<style id="layout-overrides" hx-swap-oob="true">
-		#app-root {
-			--meta-w: %dpx;
-		}
-		#htmx-meta-panel {
-			display: %s;
-		}
-		.meta-handle {
-			display: %s;
-		}
+	fmt.Fprintf(w, `<style id="layout-overrides-meta" hx-swap-oob="true">
+		#app-root { --meta-w: %dpx; }
+		#htmx-meta-panel { display: %s; }
+		.meta-handle { display: %s; }
 	</style>`, map[bool]int{true: session.MetaWidth, false: 0}[session.ShowMeta],
 		map[bool]string{true: "flex", false: "none"}[session.ShowMeta],
 		map[bool]string{true: "block", false: "none"}[session.ShowMeta])
@@ -74,13 +62,9 @@ func (h *SessionHandler) handlePromptsToggle(w http.ResponseWriter, r *http.Requ
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<style id="layout-overrides" hx-swap-oob="true">
-		#prompts-panel {
-			display: %s;
-		}
-		.prompts-handle {
-			display: %s;
-		}
+	fmt.Fprintf(w, `<style id="layout-overrides-prompts" hx-swap-oob="true">
+		#prompts-panel { display: %s; }
+		.prompts-handle { display: %s; }
 	</style>`, map[bool]string{true: "block", false: "none"}[session.ShowPrompts],
 		map[bool]string{true: "block", false: "none"}[session.ShowPrompts])
 }

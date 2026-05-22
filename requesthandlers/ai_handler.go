@@ -2,9 +2,12 @@ package requesthandlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sieve/logger"
 	"sieve/sieve"
+	"sieve/store"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -114,13 +117,23 @@ func (h *AiHandler) handleAiAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Save body immediately so the PENDING block is on disk before AI runs.
+	// Save body (with PENDING block) before AI runs. Retry on ErrStaleStorable
+	// because a concurrent handleEditorSave may have just bumped the version.
 	if req.BlkID != "" && req.Body != "" && req.NoteUUID != "" {
-		if doc, err := h.ServiceProvider.Documents.LoadByUUID(req.NoteUUID); err == nil {
+		for attempt := 0; attempt < 3; attempt++ {
+			doc, err := h.ServiceProvider.Documents.LoadByUUID(req.NoteUUID)
+			if err != nil {
+				logger.Error("handleAiAsk: load for pre-save failed", "err", err)
+				break
+			}
 			doc.SetBody([]byte(req.Body))
 			if _, err := h.ServiceProvider.Documents.Save(doc); err != nil {
+				if errors.Is(err, store.ErrStaleStorable) {
+					continue
+				}
 				logger.Error("handleAiAsk: save body failed", "err", err)
 			}
+			break
 		}
 	}
 
@@ -131,10 +144,19 @@ func (h *AiHandler) handleAiAsk(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.BlkID != "" && req.NoteUUID != "" {
-		if err := h.ServiceProvider.AI.ResolveAiBlock(req.NoteUUID, req.BlkID, resp, "", "ASK"); err != nil {
+		model := h.ServiceProvider.State.LoadSettings().Model
+		completedAt := time.Now().UTC().Format(time.RFC3339)
+		if err := h.ServiceProvider.AI.ResolveAiBlock(req.NoteUUID, req.BlkID, resp, model, "ASK"); err != nil {
 			logger.Error("handleAiAsk: ResolveAiBlock failed", "err", err)
 		} else if h.Broadcast != nil {
-			data, _ := json.Marshal(map[string]string{"uuid": req.NoteUUID, "blkId": req.BlkID})
+			data, _ := json.Marshal(map[string]string{
+				"uuid":        req.NoteUUID,
+				"blkId":       req.BlkID,
+				"status":      "COMPLETE",
+				"response":    resp,
+				"model":       model,
+				"completedAt": completedAt,
+			})
 			h.Broadcast("ai:block-resolved", string(data))
 		}
 	}
@@ -159,13 +181,23 @@ func (h *AiHandler) handleAiExplain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Save body immediately so the PENDING block is on disk before AI runs.
+	// Save body (with PENDING block) before AI runs. Retry on ErrStaleStorable
+	// because a concurrent handleEditorSave may have just bumped the version.
 	if req.BlkID != "" && req.Body != "" && req.NoteUUID != "" {
-		if doc, err := h.ServiceProvider.Documents.LoadByUUID(req.NoteUUID); err == nil {
+		for attempt := 0; attempt < 3; attempt++ {
+			doc, err := h.ServiceProvider.Documents.LoadByUUID(req.NoteUUID)
+			if err != nil {
+				logger.Error("handleAiExplain: load for pre-save failed", "err", err)
+				break
+			}
 			doc.SetBody([]byte(req.Body))
 			if _, err := h.ServiceProvider.Documents.Save(doc); err != nil {
+				if errors.Is(err, store.ErrStaleStorable) {
+					continue
+				}
 				logger.Error("handleAiExplain: save body failed", "err", err)
 			}
+			break
 		}
 	}
 
@@ -176,10 +208,19 @@ func (h *AiHandler) handleAiExplain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.BlkID != "" && req.NoteUUID != "" {
-		if err := h.ServiceProvider.AI.ResolveAiBlock(req.NoteUUID, req.BlkID, resp, "", "EXPLAIN"); err != nil {
+		model := h.ServiceProvider.State.LoadSettings().Model
+		completedAt := time.Now().UTC().Format(time.RFC3339)
+		if err := h.ServiceProvider.AI.ResolveAiBlock(req.NoteUUID, req.BlkID, resp, model, "EXPLAIN"); err != nil {
 			logger.Error("handleAiExplain: ResolveAiBlock failed", "err", err)
 		} else if h.Broadcast != nil {
-			data, _ := json.Marshal(map[string]string{"uuid": req.NoteUUID, "blkId": req.BlkID})
+			data, _ := json.Marshal(map[string]string{
+				"uuid":        req.NoteUUID,
+				"blkId":       req.BlkID,
+				"status":      "COMPLETE",
+				"response":    resp,
+				"model":       model,
+				"completedAt": completedAt,
+			})
 			h.Broadcast("ai:block-resolved", string(data))
 		}
 	}

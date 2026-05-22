@@ -471,11 +471,49 @@
   }
 
   // HTMX SSE extension dispatches sse:ai:block-resolved; e.detail is the SSE MessageEvent.
+  // The payload includes full block attrs so we can patch TipTap in-place, avoiding a
+  // server round-trip and the race where an in-flight auto-save (PENDING body) overwrites
+  // the COMPLETE body between ResolveAiBlock saving and softReloadContent fetching.
   document.addEventListener('sse:ai:block-resolved', function (e) {
     var raw = e.detail && e.detail.data != null ? e.detail.data : (typeof e.detail === 'string' ? e.detail : null)
     if (!raw) return
     var data; try { data = JSON.parse(raw) } catch (_) { return }
     if (!data || data.uuid !== currentUuid) return
+
+    // Patch the TipTap node in-place when the SSE carries full block attrs.
+    if (data.blkId && data.status && currentEditor) {
+      var patched = false
+      currentEditor.commands.command(function (props) {
+        var tr = props.tr
+        props.state.doc.descendants(function (node, pos) {
+          if (node.type.name === 'aiBlock' && node.attrs.id === data.blkId) {
+            tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, {
+              status:      data.status,
+              response:    data.response   || node.attrs.response,
+              model:       data.model      || node.attrs.model,
+              completedAt: data.completedAt || node.attrs.completedAt,
+            }))
+            patched = true
+            return false
+          }
+        })
+        return patched
+      })
+
+      if (patched) {
+        // Capture the COMPLETE markdown body and immediately persist it.
+        // This ensures any in-flight auto-save (with stale PENDING body) is
+        // followed by a COMPLETE save, and lastSyncedBody is up-to-date so
+        // the 30s auto-save timer no longer holds a stale PENDING body.
+        var completeMd = currentEditor.storage.markdown.getMarkdown() || ''
+        lastSyncedBody = completeMd
+        if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+        doSave(currentUuid, completeMd)
+        return
+      }
+    }
+
+    // Fallback: full reload from server (legacy path, or if TipTap patch failed).
     softReloadContent(currentUuid)
   })
 
@@ -654,7 +692,8 @@
       body: JSON.stringify(payload),
     }).then(function (r) {
       if (!r.ok) throw new Error('AI request failed: ' + r.status)
-      // Success path: Go has already written COMPLETE to disk and broadcast SSE.
+      // Fallback: reload from disk in case the SSE event was dropped.
+      if (!aiReloadInProgress) softReloadContent(currentUuid)
     }).catch(function (err) {
       console.error('[editor] AI error', err)
       if (currentEditor) {
@@ -1272,6 +1311,8 @@
       body: JSON.stringify(payload),
     }).then(function (r) {
       if (!r.ok) throw new Error('AI retry request failed: ' + r.status)
+      // Fallback: reload from disk in case the SSE event was dropped.
+      if (!aiReloadInProgress) softReloadContent(currentUuid)
     }).catch(function (err) {
       console.error('[editor] AI retry error', err)
       if (currentEditor) {

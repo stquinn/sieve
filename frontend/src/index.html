@@ -12,25 +12,17 @@
     <link rel="stylesheet" href="/static/sidebar.css">
     <link rel="stylesheet" href="/static/editor.css">
     <link rel="stylesheet" href="/static/shell.css">
-    <style id="layout-overrides">
-        #prompts-panel {
-            display: {{if .ShowPrompts}}block{{else}}none{{end}};
-        }
-        .prompts-handle {
-            display: {{if .ShowPrompts}}block{{else}}none{{end}};
-        }
-        #htmx-sidebar {
-            display: {{if .ShowSidebar}}block{{else}}none{{end}};
-        }
-        #htmx-meta-panel {
-            display: {{if .ShowMeta}}flex{{else}}none{{end}};
-        }
-        .sidebar-handle {
-            display: {{if .ShowSidebar}}block{{else}}none{{end}};
-        }
-        .meta-handle {
-            display: {{if .ShowMeta}}block{{else}}none{{end}};
-        }
+    <style id="layout-overrides-sidebar">
+        #htmx-sidebar { display: {{if .ShowSidebar}}block{{else}}none{{end}}; }
+        .sidebar-handle { display: {{if .ShowSidebar}}block{{else}}none{{end}}; }
+    </style>
+    <style id="layout-overrides-meta">
+        #htmx-meta-panel { display: {{if .ShowMeta}}flex{{else}}none{{end}}; }
+        .meta-handle { display: {{if .ShowMeta}}block{{else}}none{{end}}; }
+    </style>
+    <style id="layout-overrides-prompts">
+        #prompts-panel { display: {{if .ShowPrompts}}block{{else}}none{{end}}; }
+        .prompts-handle { display: {{if .ShowPrompts}}block{{else}}none{{end}}; }
     </style>
 </head>
 <body hx-ext="sse" sse-connect="/sse">
