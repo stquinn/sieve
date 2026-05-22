@@ -16,7 +16,7 @@ func newSSEHub() *sseHub {
 }
 
 func (h *sseHub) subscribe() chan string {
-	ch := make(chan string, 4)
+	ch := make(chan string, 32)
 	h.mu.Lock()
 	h.clients[ch] = struct{}{}
 	h.mu.Unlock()
