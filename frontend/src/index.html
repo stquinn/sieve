@@ -262,6 +262,15 @@
     window.__sieveFocusTimer = null;
     window.__sieveDwellInterval = null;
     window.__sieveActiveDocUuid = null;
+    window.__sieveLastActivity = Date.now();
+
+    (function() {
+        var ACTIVITY_EVENTS = ['keydown', 'mousemove', 'scroll', 'click'];
+        function recordActivity() { window.__sieveLastActivity = Date.now(); }
+        ACTIVITY_EVENTS.forEach(function(ev) {
+            document.addEventListener(ev, recordActivity, { passive: true, capture: true });
+        });
+    })();
 
     document.addEventListener('htmx:load', function(e) {
         var mount = document.getElementById('tiptap-mount');
