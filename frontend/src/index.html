@@ -287,9 +287,13 @@
                 if (window.__sieveFocusTimer) clearTimeout(window.__sieveFocusTimer);
                 if (window.__sieveDwellInterval) clearInterval(window.__sieveDwellInterval);
                 window.__sieveActiveDocUuid = uuid;
+                window.__sieveLastActivity = Date.now(); // tab switch is itself activity
+
+                var IDLE_THRESHOLD_MS = 3 * 60 * 1000; // 3 minutes
 
                 var bumpFocus = function() {
                     if (window.__sieveActiveDocUuid !== uuid) return;
+                    if (Date.now() - window.__sieveLastActivity > IDLE_THRESHOLD_MS) return;
                     fetch('/api/note/focus/' + encodeURIComponent(uuid), { method: 'POST' })
                         .then(function() {
                             var mp = document.getElementById('htmx-meta-panel');
