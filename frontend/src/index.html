@@ -268,6 +268,7 @@
         var ACTIVITY_EVENTS = ['keydown', 'mousemove', 'scroll', 'click'];
         function recordActivity() { window.__sieveLastActivity = Date.now(); }
         ACTIVITY_EVENTS.forEach(function(ev) {
+            // capture: true so TipTap's stopPropagation() can't suppress these
             document.addEventListener(ev, recordActivity, { passive: true, capture: true });
         });
     })();
