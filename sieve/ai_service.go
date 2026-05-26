@@ -525,6 +525,11 @@ func (s *AIService) RunWebClip(uuid, id, source, mode, docContent string) (title
 
 	content = localiseImages(raw, cwd)
 	title = extractFirstHeading(content)
+	if title == "" {
+		if t, err2 := s.GetLinkTitle(source); err2 == nil {
+			title = t
+		}
+	}
 	return title, content, nil
 }
 

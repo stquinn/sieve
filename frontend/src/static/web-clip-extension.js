@@ -110,11 +110,21 @@
         }
 
       } else if (status === 'COMPLETE') {
-        header.innerHTML = '<span class="web-clip-block__badge">' + completeModeLabel + ' from ' + domain + '</span>'
+        var badge = document.createElement('span')
+        badge.className = 'web-clip-block__badge'
+        badge.textContent = completeModeLabel + ' — '
+        header.appendChild(badge)
+        var srcLink = document.createElement('a')
+        srcLink.className = 'web-clip-block__source-link'
+        srcLink.href = attrs.source || ''
+        srcLink.textContent = attrs.source || domain
+        srcLink.target = '_blank'
+        srcLink.rel = 'noopener noreferrer'
+        header.appendChild(srcLink)
         if (attrs.title) {
           var titleEl = document.createElement('span')
           titleEl.className = 'web-clip-block__title'
-          titleEl.textContent = ' — ' + attrs.title
+          titleEl.textContent = attrs.title
           header.appendChild(titleEl)
         }
         dom.appendChild(header)
