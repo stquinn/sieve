@@ -18,6 +18,7 @@
   var searchOverlay = null
 
   var askDialog = null
+  var internalizeDialog = null
 
   // ── Public entry point called from App.tsx htmx:afterSettle ─────────────────
 
@@ -148,6 +149,12 @@
             if (event.shiftKey) return false
             event.preventDefault()
             view.dispatch(view.state.tr.insertText('    '))
+            return true
+          }
+          if (event.key === 'U' && window.isMod(event) && event.shiftKey) {
+            event.preventDefault()
+            ensureOverlays()
+            openInternalizeDialog()
             return true
           }
           return false
@@ -285,6 +292,7 @@
   function ensureOverlays() {
     if (!askDialog) askDialog = createAskDialog()
     if (!searchOverlay) searchOverlay = createSearchOverlay()
+    if (!internalizeDialog) internalizeDialog = createInternalizeDialog()
   }
 
   
@@ -337,6 +345,113 @@
     textarea.value = ''
     askDialog.showModal()
     textarea.focus()
+  }
+
+  // ── Internalize dialog ────────────────────────────────────────────────────────
+
+  function createInternalizeDialog() {
+    var dialog = document.createElement('dialog')
+    dialog.className = 'internalize-popup'
+    dialog.style.cssText = 'position:fixed;top:30%;left:50%;transform:translateX(-50%);margin:0;width:460px;max-width:92vw;'
+
+    var header = document.createElement('div'); header.className = 'ask-popup__header'
+    var label = document.createElement('span'); label.className = 'ask-popup__label'; label.textContent = 'Internalise URL'
+    var closeBtn = makeBtn('ask-popup__close', '✕', function () { dialog.close() })
+    closeBtn.title = 'Close (Esc)'
+    header.appendChild(label); header.appendChild(closeBtn)
+
+    var urlInput = document.createElement('input')
+    urlInput.type = 'url'
+    urlInput.className = 'internalize-popup__input'
+    urlInput.placeholder = 'https://…'
+    urlInput.style.cssText = 'width:100%;box-sizing:border-box;padding:8px 10px;font-size:14px;'
+
+    var footer = document.createElement('div'); footer.className = 'ask-popup__footer'
+    var fetchBtn = makeBtn('internalize-popup__btn', 'Fetch', function () {
+      var url = urlInput.value.trim()
+      if (url) { doInternalize(url, 'fetch'); dialog.close() }
+    })
+    var summariseBtn = makeBtn('internalize-popup__btn', 'Summarise', function () {
+      var url = urlInput.value.trim()
+      if (url) { doInternalize(url, 'summarise'); dialog.close() }
+    })
+    footer.appendChild(fetchBtn); footer.appendChild(summariseBtn)
+
+    urlInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); dialog.close() }
+      if (e.key === 'Enter') { e.preventDefault(); var url = urlInput.value.trim(); if (url) { doInternalize(url, 'fetch'); dialog.close() } }
+    })
+
+    dialog.appendChild(header)
+    dialog.appendChild(urlInput)
+    dialog.appendChild(footer)
+    document.body.appendChild(dialog)
+    return dialog
+  }
+
+  function openInternalizeDialog() {
+    if (!internalizeDialog) return
+    var urlInput = internalizeDialog.querySelector('input')
+    if (urlInput) urlInput.value = ''
+    internalizeDialog.showModal()
+    if (urlInput) urlInput.focus()
+  }
+
+  function doInternalize(source, mode) {
+    if (!currentUuid) return
+    if (!currentEditor && currentMode !== 'markdown') return
+
+    var blkId = 'wc-' + Math.random().toString(16).substring(2, 8)
+    var now = new Date().toISOString()
+
+    // Capture document content BEFORE inserting the PENDING block.
+    // This is sent as docContent for Summarise mode so Claude sees the real
+    // document, not the PENDING block noise.
+    var docContent = currentMode === 'markdown'
+      ? lastSyncedBody
+      : (currentEditor ? currentEditor.storage.markdown.getMarkdown() || '' : '')
+
+    if (currentMode === 'markdown' && currentMarkdownTextarea) {
+      var lines = ['```web-clip', 'id: ' + blkId, 'source: ' + source, 'mode: ' + mode,
+                   'status: PENDING', 'createdAt: ' + now, '```']
+      lastSyncedBody = lastSyncedBody + '\n\n' + lines.join('\n') + '\n\n'
+      currentMarkdownTextarea.value = lastSyncedBody
+      scheduleSave(currentUuid, lastSyncedBody)
+    } else if (currentEditor) {
+      currentEditor.commands.insertContent({
+        type: 'webClip',
+        attrs: { id: blkId, source: source, mode: mode, status: 'PENDING', createdAt: now }
+      })
+      var afterPos = currentEditor.state.selection.to
+      var docSize = currentEditor.state.doc.content.size
+      currentEditor.chain().setTextSelection(Math.min(afterPos + 1, docSize - 1)).focus().scrollIntoView().run()
+    }
+
+    var body = currentMode === 'markdown'
+      ? lastSyncedBody
+      : (currentEditor ? currentEditor.storage.markdown.getMarkdown() || '' : '')
+
+    fetch('/api/internalize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uuid: currentUuid, source: source, mode: mode, id: blkId, body: body, docContent: docContent })
+    }).then(function (r) {
+      if (!r.ok) console.error('[editor] internalize request failed: ' + r.status)
+    }).catch(function (err) {
+      console.error('[editor] internalize error', err)
+      if (currentEditor) {
+        currentEditor.commands.command(function (props) {
+          var tr = props.tr
+          props.state.doc.descendants(function (node, pos) {
+            if (node.type.name === 'webClip' && node.attrs.id === blkId) {
+              tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { status: 'ERROR', error: 'Request failed' }))
+              return false
+            }
+          })
+          return true
+        })
+      }
+    })
   }
 
   // ── Search overlay ────────────────────────────────────────────────────────────
@@ -515,6 +630,41 @@
 
     // Fallback: full reload from server (legacy path, or if TipTap patch failed).
     softReloadContent(currentUuid)
+  })
+
+  document.addEventListener('sse:ai:web-clip-resolved', function (e) {
+    var raw = e.detail && e.detail.data != null ? e.detail.data : (typeof e.detail === 'string' ? e.detail : null)
+    if (!raw) return
+    var data; try { data = JSON.parse(raw) } catch (_) { return }
+    if (!data || data.uuid !== currentUuid) return
+
+    if (data.blkId && data.status && currentEditor) {
+      var patched = false
+      currentEditor.commands.command(function (props) {
+        var tr = props.tr
+        props.state.doc.descendants(function (node, pos) {
+          if (node.type.name === 'webClip' && node.attrs.id === data.blkId) {
+            var newAttrs = Object.assign({}, node.attrs, { status: data.status })
+            if (data.title)       newAttrs.title = data.title
+            if (data.content)     newAttrs.content = data.content
+            if (data.model)       newAttrs.model = data.model
+            if (data.completedAt) newAttrs.completedAt = data.completedAt
+            if (data.error)       newAttrs.error = data.error
+            tr.setNodeMarkup(pos, null, newAttrs)
+            patched = true
+            return false
+          }
+        })
+        return patched
+      })
+
+      if (patched) {
+        var completeMd = currentEditor.storage.markdown.getMarkdown() || ''
+        lastSyncedBody = completeMd
+        if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+        doSave(currentUuid, completeMd)
+      }
+    }
   })
 
   function runAiJob(type, question, precomputedCtx) {
@@ -1332,6 +1482,49 @@
     })
   })
 
+  document.addEventListener('sieve:webclip-retry', function (e) {
+    if (!currentEditor) return
+    var detail = e.detail
+    if (!detail || !detail.id) return
+
+    var blkId = detail.id
+    var now = new Date().toISOString()
+
+    currentEditor.commands.command(function (props) {
+      var tr = props.tr
+      var found = false
+      props.state.doc.descendants(function (node, pos) {
+        if (node.type.name === 'webClip' && node.attrs.id === blkId) {
+          tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, {
+            status: 'PENDING', content: null, error: null,
+            title: null, model: null, completedAt: null, createdAt: now
+          }))
+          found = true
+          return false
+        }
+      })
+      return found
+    })
+
+    var body = currentEditor.storage.markdown.getMarkdown() || ''
+
+    fetch('/api/internalize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        uuid: currentUuid,
+        source: detail.source,
+        mode: detail.mode,
+        id: blkId,
+        body: body
+      })
+    }).then(function (r) {
+      if (!r.ok) console.error('[editor] webclip retry failed: ' + r.status)
+    }).catch(function (err) {
+      console.error('[editor] webclip retry error', err)
+    })
+  })
+
   // ── Helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -1362,6 +1555,14 @@
     document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
       detail: { x: e.clientX, y: e.clientY, context: { type: 'editor', editor: currentEditor } }
     }))
+  })
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'U' && window.isMod(e) && e.shiftKey && !e.altKey) {
+      e.preventDefault()
+      ensureOverlays()
+      openInternalizeDialog()
+    }
   })
 
   window.sieveInitEditor = initEditor
