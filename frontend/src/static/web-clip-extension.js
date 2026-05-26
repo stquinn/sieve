@@ -218,7 +218,9 @@
                 var data
                 try { data = window.jsyaml.load(token.content) } catch (e) { data = null }
                 if (!data || !data.id) {
-                  return '<div data-type="webClip" data-id="__parse-error__" data-status="ERROR"></div>\n'
+                  return defaultFence
+                    ? defaultFence(tokens, idx, options, env, self)
+                    : self.renderToken(tokens, idx, options)
                 }
                 var attrs = [
                   'data-type="webClip"',
