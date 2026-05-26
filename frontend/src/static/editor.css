@@ -1604,6 +1604,43 @@ div.node-image.ProseMirror-selectednode {
 }
 .ask-popup__send:hover { background: color-mix(in srgb, var(--theme-accentPrimary) 85%, white); }
 
+/* ── Internalize URL dialog — position + input/btn overrides (inherits ask-popup theme frame) ── */
+
+.internalize-popup {
+  top: 30%;
+  bottom: auto;
+  left: 50%;
+  width: 460px;
+  max-width: 92vw;
+}
+
+.internalize-popup__input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--theme-text);
+  font-family: inherit;
+  font-size: 14px;
+  padding: 10px 16px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.internalize-popup__input::placeholder { color: var(--theme-textDim); opacity: 0.5; }
+
+.internalize-popup__btn {
+  background: var(--theme-accentPrimary);
+  border: none;
+  border-radius: 5px;
+  color: var(--theme-bg);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 6px 18px;
+  letter-spacing: 0.02em;
+}
+.internalize-popup__btn:hover { background: color-mix(in srgb, var(--theme-accentPrimary) 85%, white); }
+
 /* ── Bootstrap Screen ────────────────────────────────────────────────── */
 
 .bootstrap-screen {

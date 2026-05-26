@@ -352,8 +352,8 @@
 
   function createInternalizeDialog() {
     var dialog = document.createElement('dialog')
-    dialog.className = 'internalize-popup'
-    dialog.style.cssText = 'position:fixed;top:30%;left:50%;transform:translateX(-50%);margin:0;width:460px;max-width:92vw;'
+    dialog.className = 'internalize-popup ask-popup'
+    dialog.style.cssText = 'top:30%;bottom:auto;left:50%;width:460px;max-width:92vw;'
 
     var header = document.createElement('div'); header.className = 'ask-popup__header'
     var label = document.createElement('span'); label.className = 'ask-popup__label'; label.textContent = 'Internalise URL'
@@ -365,7 +365,6 @@
     urlInput.type = 'url'
     urlInput.className = 'internalize-popup__input'
     urlInput.placeholder = 'https://…'
-    urlInput.style.cssText = 'width:100%;box-sizing:border-box;padding:8px 10px;font-size:14px;'
 
     var footer = document.createElement('div'); footer.className = 'ask-popup__footer'
     var fetchBtn = makeBtn('internalize-popup__btn', 'Fetch', function () {
