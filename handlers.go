@@ -161,6 +161,10 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 			},
 			Broadcast: hub.broadcast,
 		},
+		&requesthandlers.InternalizeHandler{
+			ServiceProvider: sp,
+			Broadcast:       hub.broadcast,
+		},
 	}
 	r := chi.NewRouter()
 	for _, requestHandler := range requestHandlers {
