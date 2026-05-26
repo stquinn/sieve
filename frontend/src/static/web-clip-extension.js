@@ -51,7 +51,10 @@
     var dom = document.createElement('div')
     dom.className = 'web-clip-block'
     dom.contentEditable = 'false'
+    dom.setAttribute('draggable', 'false')
+    dom.style.userSelect = 'text'
 
+    dom.addEventListener('dragstart', function (e) { e.preventDefault() })
     dom.addEventListener('mousedown', function (e) { e.stopPropagation() })
 
     dom.addEventListener('contextmenu', function (e) {

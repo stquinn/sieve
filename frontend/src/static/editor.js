@@ -389,10 +389,10 @@
     return dialog
   }
 
-  function openInternalizeDialog() {
+  function openInternalizeDialog(prefillUrl) {
     if (!internalizeDialog) return
     var urlInput = internalizeDialog.querySelector('input')
-    if (urlInput) urlInput.value = ''
+    if (urlInput) urlInput.value = prefillUrl || ''
     if (!internalizeDialog.open) internalizeDialog.showModal()
     if (urlInput) urlInput.focus()
   }
@@ -1539,7 +1539,7 @@
   }
 
   window._editorSave = flushSave
-  window._sieveOpenInternalize = function () { ensureOverlays(); openInternalizeDialog() }
+  window._sieveOpenInternalize = function (url) { ensureOverlays(); openInternalizeDialog(url) }
 
   document.body.addEventListener('editor:restore', function (e) {
     var data = e.detail
@@ -1556,8 +1556,10 @@
     if (!e.target.closest('#tiptap-mount')) return
     if (e.target.closest('.ai-block, .image-block, .web-clip-block')) return
     if (!currentEditor) return
+    var linkEl = e.target.closest('a[href]')
+    var linkUrl = linkEl ? linkEl.getAttribute('href') : null
     document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
-      detail: { x: e.clientX, y: e.clientY, context: { type: 'editor', editor: currentEditor } }
+      detail: { x: e.clientX, y: e.clientY, context: { type: 'editor', editor: currentEditor, linkUrl: linkUrl } }
     }))
   })
 

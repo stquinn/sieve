@@ -185,8 +185,9 @@
     }})
 
     items.push({ type: 'divider' })
-    items.push({ icon: IC.externalLink, label: 'Internalise URL…', action: function () {
-      window._sieveOpenInternalize && window._sieveOpenInternalize()
+    var linkUrl = ctx.linkUrl || null
+    items.push({ icon: IC.externalLink, label: linkUrl ? 'Internalise Link' : 'Internalise URL…', action: function () {
+      window._sieveOpenInternalize && window._sieveOpenInternalize(linkUrl || '')
     }})
 
     if (hasSelection || targetNode) {
