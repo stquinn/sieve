@@ -152,7 +152,7 @@
             view.dispatch(view.state.tr.insertText('    '))
             return true
           }
-          if (event.key === 'U' && window.isMod(event) && event.shiftKey) {
+          if (event.key === 'W' && window.isMod(event) && event.shiftKey) {
             event.preventDefault()
             ensureOverlays()
             openInternalizeDialog()
@@ -1540,6 +1540,7 @@
   }
 
   window._editorSave = flushSave
+  window._sieveOpenInternalize = function () { ensureOverlays(); openInternalizeDialog() }
 
   document.body.addEventListener('editor:restore', function (e) {
     var data = e.detail
@@ -1554,7 +1555,7 @@
 
   document.addEventListener('contextmenu', function (e) {
     if (!e.target.closest('#tiptap-mount')) return
-    if (e.target.closest('.ai-block, .image-block')) return
+    if (e.target.closest('.ai-block, .image-block, .web-clip-block')) return
     if (!currentEditor) return
     document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
       detail: { x: e.clientX, y: e.clientY, context: { type: 'editor', editor: currentEditor } }
@@ -1562,7 +1563,7 @@
   })
 
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'U' && window.isMod(e) && e.shiftKey && !e.altKey) {
+    if (e.key === 'W' && window.isMod(e) && e.shiftKey && !e.altKey) {
       e.preventDefault()
       ensureOverlays()
       openInternalizeDialog()

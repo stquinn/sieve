@@ -27,6 +27,7 @@
     folder:      svg('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'),
     close:       svg('<path d="M18 6L6 18"/><path d="M6 6l12 12"/>'),
     closeAll:    svg('<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>'),
+    externalLink: svg('<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>'),
   }
 
   // ── Renderer ────────────────────────────────────────────────────────────────
@@ -181,6 +182,11 @@
     items.push({ icon: IC.selectAll, label: 'Select All', action: function () {
       editor.commands.focus()
       editor.commands.selectAll()
+    }})
+
+    items.push({ type: 'divider' })
+    items.push({ icon: IC.externalLink, label: 'Internalise URL…', action: function () {
+      window._sieveOpenInternalize && window._sieveOpenInternalize()
     }})
 
     if (hasSelection || targetNode) {
