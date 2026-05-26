@@ -19,16 +19,24 @@
     return Date.now() - new Date(createdAt).getTime() > thresholdMs
   }
 
+  // Quote a scalar value if it contains YAML-special characters. Mirrors Go's yamlScalar().
+  function yamlScalar(s) {
+    if (!s) return s
+    var needsQuote = /[:#{}[\]|>&*!,]/.test(s) || s[0] === ' ' || s[s.length - 1] === ' '
+    if (!needsQuote) return s
+    return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'
+  }
+
   function serializeWebClipYaml(attrs) {
     var lines = []
     lines.push('id: ' + (attrs.id || ''))
-    lines.push('source: ' + (attrs.source || ''))
-    if (attrs.title) lines.push('title: ' + attrs.title)
+    lines.push('source: ' + yamlScalar(attrs.source || ''))
+    if (attrs.title) lines.push('title: ' + yamlScalar(attrs.title))
     lines.push('mode: ' + (attrs.mode || 'fetch'))
     lines.push('status: ' + (attrs.status || 'PENDING'))
-    if (attrs.model) lines.push('model: ' + attrs.model)
-    if (attrs.createdAt) lines.push('createdAt: ' + attrs.createdAt)
-    if (attrs.completedAt) lines.push('completedAt: ' + attrs.completedAt)
+    if (attrs.model) lines.push('model: ' + yamlScalar(attrs.model))
+    if (attrs.createdAt) lines.push('createdAt: ' + yamlScalar(attrs.createdAt))
+    if (attrs.completedAt) lines.push('completedAt: ' + yamlScalar(attrs.completedAt))
     if (attrs.content) {
       lines.push('content: |')
       attrs.content.split('\n').forEach(function (l) { lines.push('  ' + (l || '')) })
