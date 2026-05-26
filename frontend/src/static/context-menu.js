@@ -304,6 +304,67 @@
     ]
   }
 
+  // ── Web Clip node ─────────────────────────────────────────────────────────────
+
+  function promoteWebClip(editor, getPos, n) {
+    var content = (n.attrs.content || '').trim()
+    if (!content) return
+    var html = editor.storage.markdown.parser.md.render(content)
+    var pos = getPos()
+    editor.commands.insertContentAt({ from: pos, to: pos + n.nodeSize }, html + '<p></p>')
+  }
+
+  function buildWebClipItems(ctx) {
+    var editor = ctx.editor, getPos = ctx.getPos, n = ctx.node
+
+    function yaml() {
+      return '```web-clip\n' + (window.TipTap.serializeWebClipYaml
+        ? window.TipTap.serializeWebClipYaml(n.attrs)
+        : JSON.stringify(n.attrs)) + '\n```'
+    }
+
+    function del() {
+      if (typeof getPos === 'function') {
+        var pos = getPos()
+        editor.view.dispatch(editor.state.tr.delete(pos, pos + n.nodeSize))
+      }
+    }
+
+    var status = n.attrs.status || 'PENDING'
+    var isComplete = status === 'COMPLETE'
+    var isRetryable = status === 'ERROR' || status === 'TIMEOUT' ||
+      (status === 'PENDING' && n.attrs.createdAt &&
+        Date.now() - new Date(n.attrs.createdAt).getTime() > ((window.__sieveCliTimeoutLong || 60) * 1000 + 30000))
+
+    var domain = ''
+    try { domain = new URL(n.attrs.source || '').hostname } catch (_) { domain = n.attrs.source || '' }
+    var modeLabel = n.attrs.mode === 'summarise' ? 'Summarised' : 'Fetched'
+    var headerLabel = isComplete ? (modeLabel + ' from ' + domain) : domain
+
+    var items = [
+      { type: 'header', label: headerLabel },
+      { icon: IC.copy, label: 'Copy', action: function () { navigator.clipboard.writeText(yaml()).catch(console.error) } },
+      { icon: IC.cut, label: 'Cut', action: function () { navigator.clipboard.writeText(yaml()).then(del).catch(console.error) } },
+      { icon: IC.trash, label: 'Delete', action: del },
+      { type: 'divider' },
+      { icon: IC.promote, label: 'Promote to Document',
+        disabled: !isComplete || !n.attrs.content,
+        action: function () { promoteWebClip(editor, getPos, n) }
+      },
+    ]
+
+    if (isRetryable) {
+      items.push({ type: 'divider' })
+      items.push({ icon: IC.refresh, label: 'Retry', action: function () {
+        document.dispatchEvent(new CustomEvent('sieve:webclip-retry', {
+          detail: { id: n.attrs.id, source: n.attrs.source, mode: n.attrs.mode }
+        }))
+      }})
+    }
+
+    return items
+  }
+
   // ── Sidebar: note ────────────────────────────────────────────────────────────
   function buildNoteItems(ctx) {
     var id = ctx.id, name = ctx.name, intent = ctx.intent, isTab = ctx.isTab
@@ -413,6 +474,7 @@
       case 'editor':  items = buildEditorItems(ctx); break
       case 'image':   items = buildImageItems(ctx); break
       case 'aiBlock': items = buildAiBlockItems(ctx); break
+      case 'webClip': items = buildWebClipItems(ctx); break
       case 'note':    items = buildNoteItems(ctx); break
       case 'folder':  items = buildFolderItems(ctx); break
       case 'prompt':  items = buildPromptItems(ctx); break
