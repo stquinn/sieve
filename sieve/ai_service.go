@@ -14,6 +14,7 @@ import (
 	"sieve/logger"
 	"sieve/sieve/aiblock"
 	"sieve/store"
+	"sieve/sieve/webclip"
 )
 
 // AIService owns all AI evaluation and filing operations. It resolves prompt
@@ -480,4 +481,96 @@ func isHTMLBodyEmpty(html string) bool {
 		}
 	}
 	return true
+}
+
+// ── Web Clip ──────────────────────────────────────────────────────────────────
+
+// extractFirstHeading returns the text of the first ATX heading in content,
+// or empty string if none found.
+func extractFirstHeading(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "# ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "# "))
+		}
+	}
+	return ""
+}
+
+// RunWebClip retrieves a URL via the configured CLI using the overridable prompt
+// for the given mode ("web-clip-fetch" or "web-clip-summarise"), runs image
+// localisation on the result, and returns (title, content, error).
+// docContent is the current document body (used by Summarise mode for context).
+func (s *AIService) RunWebClip(uuid, id, source, mode, docContent string) (title, content string, err error) {
+	settings := s.state.LoadSettings()
+
+	promptName := "web-clip-fetch"
+	if mode == "summarise" {
+		promptName = "web-clip-summarise"
+	}
+	promptTemplate, _ := s.prompts.GetPromptContent(promptName)
+	prompt := strings.ReplaceAll(promptTemplate, "{source}", source)
+	prompt = strings.ReplaceAll(prompt, "{document}", docContent)
+
+	doc, loadErr := s.documents.LoadByUUID(uuid)
+	cwd := ""
+	if loadErr == nil {
+		cwd = filepath.Join(s.storePath, filepath.Dir(doc.Storable().ExternalRef()))
+	}
+
+	raw, err := RunCLI(settings.CLI, prompt, settings.Model, settings.CLITimeoutLong, cwd)
+	if err != nil {
+		return "", "", err
+	}
+
+	content = localiseImages(raw, cwd)
+	title = extractFirstHeading(content)
+	return title, content, nil
+}
+
+// ResolveWebClip finds the web-clip block with id in uuid's document body,
+// updates its fields to the given status/content/etc., and saves the document.
+func (s *AIService) ResolveWebClip(uuid, id, title, content, model, errMsg, status, completedAt string) error {
+	doc, err := s.documents.LoadByUUID(uuid)
+	if err != nil {
+		return fmt.Errorf("ResolveWebClip: load %s: %w", uuid, err)
+	}
+	body := string(doc.Body())
+	blocks := webclip.ParseAll(body)
+
+	var found webclip.WebClipData
+	for _, b := range blocks {
+		if b.ID == id {
+			found = b
+			break
+		}
+	}
+	if found.ID == "" {
+		return fmt.Errorf("ResolveWebClip: block %q not found in %s", id, uuid)
+	}
+
+	found.Status = status
+	if title != "" {
+		found.Title = title
+	}
+	if content != "" {
+		found.Content = content
+	}
+	if model != "" {
+		found.Model = model
+	}
+	if errMsg != "" {
+		found.Error = errMsg
+	}
+	if completedAt != "" {
+		found.CompletedAt = completedAt
+	}
+
+	newBody, err := webclip.Replace(body, found)
+	if err != nil {
+		return fmt.Errorf("ResolveWebClip: replace: %w", err)
+	}
+	doc.SetBody([]byte(newBody))
+	_, err = s.documents.Save(doc)
+	return err
 }

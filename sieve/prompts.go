@@ -47,6 +47,10 @@ func (ps *PromptService) GetPromptContent(name string) (string, error) {
 		return DefaultImagePrompt, nil
 	case "refine":
 		return DefaultRefinePrompt, nil
+	case "web-clip-fetch":
+		return DefaultWebClipFetchPrompt, nil
+	case "web-clip-summarise":
+		return DefaultWebClipSummarisePrompt, nil
 	default:
 		return "", fmt.Errorf("unknown prompt: %s", name)
 	}
@@ -69,13 +73,15 @@ func (ps *PromptService) DeletePrompt(name string) error {
 
 // ListPrompts returns all standard prompts with their virtualization status.
 func (ps *PromptService) ListPrompts() []PromptEntry {
-	names := []string{"file", "explain", "ask", "refine", "image"}
+	names := []string{"file", "explain", "ask", "refine", "image", "web-clip-fetch", "web-clip-summarise"}
 	displayNames := map[string]string{
 		"file":    "Smart Filing",
 		"explain": "Explain Content",
 		"ask":     "In-context Chat",
-		"refine":  "Language Detection",
-		"image":   "Describe Image",
+		"refine":          "Language Detection",
+		"image":           "Describe Image",
+		"web-clip-fetch":     "Web Clip — Fetch",
+		"web-clip-summarise": "Web Clip — Summarise",
 	}
 
 	out := make([]PromptEntry, 0, len(names))
@@ -258,5 +264,18 @@ If you cannot identify a specific language confidently, reply with exactly: text
 
 Code:
 {content}
+`
+
+const DefaultWebClipFetchPrompt = `Please retrieve the content at the following URL and return it as clean, well-structured markdown. Preserve all meaningful content including headings, lists, tables, and code blocks.
+
+URL: {source}
+`
+
+const DefaultWebClipSummarisePrompt = `Please retrieve the content at the following URL and return a concise markdown summary targeted to the context of the document below. Focus on aspects of the retrieved content that are most relevant to what is already in the document. Omit navigation, boilerplate, author bios, and related links.
+
+URL: {source}
+
+Current document context:
+{document}
 `
 

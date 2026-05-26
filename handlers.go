@@ -73,6 +73,13 @@ func promptVarsForType(t string) []promptVarDef {
 		"image": {
 			{"{image_filename}", "The original filename of the image"},
 		},
+		"web-clip-fetch": {
+			{"{source}", "URL to retrieve"},
+		},
+		"web-clip-summarise": {
+			{"{source}", "URL to summarise"},
+			{"{document}", "Current document content (sent automatically — not manually editable)"},
+		},
 	}
 	return m[t]
 }
