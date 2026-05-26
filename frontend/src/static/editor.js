@@ -393,7 +393,7 @@
     if (!internalizeDialog) return
     var urlInput = internalizeDialog.querySelector('input')
     if (urlInput) urlInput.value = ''
-    internalizeDialog.showModal()
+    if (!internalizeDialog.open) internalizeDialog.showModal()
     if (urlInput) urlInput.focus()
   }
 
