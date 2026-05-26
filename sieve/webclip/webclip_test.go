@@ -99,7 +99,7 @@ func TestReplace_CompleteUpdate(t *testing.T) {
 	if !strings.Contains(result, "status: COMPLETE") {
 		t.Error("missing COMPLETE status")
 	}
-	if !strings.Contains(result, "title: Example Page") {
+	if !strings.Contains(result, "title: |-") || !strings.Contains(result, "  Example Page") {
 		t.Error("missing title")
 	}
 	if !strings.Contains(result, "Some content.") {

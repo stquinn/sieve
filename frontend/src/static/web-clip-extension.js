@@ -31,7 +31,10 @@
     var lines = []
     lines.push('id: ' + (attrs.id || ''))
     lines.push('source: ' + yamlScalar(attrs.source || ''))
-    if (attrs.title) lines.push('title: ' + yamlScalar(attrs.title))
+    if (attrs.title) {
+      lines.push('title: |-')
+      ;(attrs.title || '').split('\n').forEach(function (l) { lines.push('  ' + l) })
+    }
     lines.push('mode: ' + (attrs.mode || 'fetch'))
     lines.push('status: ' + (attrs.status || 'PENDING'))
     if (attrs.model) lines.push('model: ' + yamlScalar(attrs.model))

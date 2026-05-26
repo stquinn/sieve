@@ -107,7 +107,10 @@ func SerializeYAML(d WebClipData) string {
 	lines = append(lines, "id: "+yamlScalar(d.ID))
 	lines = append(lines, "source: "+yamlScalar(d.Source))
 	if d.Title != "" {
-		lines = append(lines, "title: "+yamlScalar(d.Title))
+		lines = append(lines, "title: |-")
+		for _, l := range strings.Split(d.Title, "\n") {
+			lines = append(lines, "  "+l)
+		}
 	}
 	lines = append(lines, "mode: "+yamlScalar(d.Mode))
 	status := d.Status
