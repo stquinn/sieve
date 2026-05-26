@@ -918,8 +918,8 @@ div.node-image.ProseMirror-selectednode {
   font-size: 13px;
   margin-right: 4px;
 }
-.web-clip-block__icon--warn { color: var(--theme-accentWarm, #e8a045); }
-.web-clip-block__icon--error { color: #e06c75; }
+.web-clip-block__icon--warn { color: var(--theme-accentOrange); }
+.web-clip-block__icon--error { color: var(--theme-accentRed); }
 
 .web-clip-block__spinner {
   display: inline-block;
