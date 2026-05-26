@@ -664,8 +664,11 @@
         lastSyncedBody = completeMd
         if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
         doSave(currentUuid, completeMd)
+        return
       }
     }
+
+    softReloadContent(currentUuid)
   })
 
   function runAiJob(type, question, precomputedCtx) {

@@ -88,29 +88,41 @@ func Replace(body string, updated WebClipData) (string, error) {
 	return strings.Join(out, "\n"), nil
 }
 
+// yamlScalar returns a safe YAML scalar for a single-line value.
+// Values that need quoting (contain YAML special chars or leading/trailing space)
+// are returned as double-quoted strings.
+func yamlScalar(s string) string {
+	needsQuote := strings.ContainsAny(s, `:#{}[]|>&*!,`) ||
+		strings.HasPrefix(s, " ") || strings.HasSuffix(s, " ")
+	if !needsQuote {
+		return s
+	}
+	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
+}
+
 // SerializeYAML builds the YAML body (without fence markers) for a WebClipData.
 // Mirrors the serializer in web-clip-extension.js.
 func SerializeYAML(d WebClipData) string {
 	var lines []string
-	lines = append(lines, "id: "+d.ID)
-	lines = append(lines, "source: "+d.Source)
+	lines = append(lines, "id: "+yamlScalar(d.ID))
+	lines = append(lines, "source: "+yamlScalar(d.Source))
 	if d.Title != "" {
-		lines = append(lines, "title: "+d.Title)
+		lines = append(lines, "title: "+yamlScalar(d.Title))
 	}
-	lines = append(lines, "mode: "+d.Mode)
+	lines = append(lines, "mode: "+yamlScalar(d.Mode))
 	status := d.Status
 	if status == "" {
 		status = "PENDING"
 	}
-	lines = append(lines, "status: "+status)
+	lines = append(lines, "status: "+yamlScalar(status))
 	if d.Model != "" {
-		lines = append(lines, "model: "+d.Model)
+		lines = append(lines, "model: "+yamlScalar(d.Model))
 	}
 	if d.CreatedAt != "" {
-		lines = append(lines, "createdAt: "+d.CreatedAt)
+		lines = append(lines, "createdAt: "+yamlScalar(d.CreatedAt))
 	}
 	if d.CompletedAt != "" {
-		lines = append(lines, "completedAt: "+d.CompletedAt)
+		lines = append(lines, "completedAt: "+yamlScalar(d.CompletedAt))
 	}
 	if d.Content != "" {
 		lines = append(lines, "content: |")

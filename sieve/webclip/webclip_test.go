@@ -155,3 +155,22 @@ func TestSerializeYAML_Defaults(t *testing.T) {
 		t.Error("expected default status: PENDING")
 	}
 }
+
+func TestSerializeYAML_ColonInTitle(t *testing.T) {
+	d := WebClipData{
+		ID:     "colon1",
+		Source: "https://example.com",
+		Title:  "React: A Complete Guide",
+		Mode:   "fetch",
+		Status: "COMPLETE",
+	}
+	yaml := SerializeYAML(d)
+	body := "```web-clip\n" + yaml + "\n```"
+	blocks := ParseAll(body)
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block after round-trip with colon title, got %d", len(blocks))
+	}
+	if blocks[0].Title != d.Title {
+		t.Errorf("title: got %q, want %q", blocks[0].Title, d.Title)
+	}
+}
