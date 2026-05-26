@@ -104,6 +104,7 @@
         T.Search,
         T.AiBlock,
         T.AiBlockLegacy,
+        T.WebClip,
         T.SmartLink,
         T.TaskList,
         T.TaskItem.configure({ nested: true }),

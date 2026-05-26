@@ -222,6 +222,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		PromptsHeight    int
 		ActiveUUID       string
 		AutosaveDebounce int
+		CLITimeoutLong   int
 	}{
 		StoreRoot:        info.Root,
 		ThemeName:        info.ThemeName,
@@ -234,6 +235,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		PromptsHeight:    session.PromptsHeight,
 		ActiveUUID:       activeUUID,
 		AutosaveDebounce: info.AutosaveDebounce,
+		CLITimeoutLong:   info.CLITimeoutLong,
 	}
 
 	if data.ThemeName == "" {

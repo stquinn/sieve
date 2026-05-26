@@ -28,6 +28,7 @@
 <body hx-ext="sse" sse-connect="/sse">
     <!-- Relay: makes HTMX SSE extension register an EventSource listener for ai:block-resolved so it bubbles to document as sse:ai:block-resolved -->
     <div id="ai-sse-relay" hx-trigger="sse:ai:block-resolved" style="display:none"></div>
+    <div id="webclip-sse-relay" hx-trigger="sse:ai:web-clip-resolved" style="display:none"></div>
     {{if .StoreRoot}}
     <div id="app-root" class="theme-{{.ThemeName}} tier-{{.Tier}}" style="--sidebar-w: {{if .ShowSidebar}}{{.SidebarWidth}}{{else}}0{{end}}px; --meta-w: {{if .ShowMeta}}{{.MetaWidth}}{{else}}0{{end}}px;">
         
@@ -145,6 +146,7 @@
     <script type="module" src="/static/smart-link-extension.js"></script>
     <script type="module" src="/static/ai-block-extension.js"></script>
     <script type="module" src="/static/ai-block-legacy-extension.js"></script>
+    <script type="module" src="/static/web-clip-extension.js"></script>
     <script src="/static/editor.js"></script>
     <script src="/static/ai-actions.js"></script>
     <script src="/static/tabbar.js"></script>
@@ -205,6 +207,8 @@
         var ms = {{.AutosaveDebounce}} * 1000;
         return ms > 0 ? ms : 30000;
     };
+
+    window.__sieveCliTimeoutLong = {{.CLITimeoutLong}};
 
     window.__metaActiveTab = 'meta';
 
