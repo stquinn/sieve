@@ -401,56 +401,38 @@
     if (!currentUuid) return
     if (!currentEditor && currentMode !== 'markdown') return
 
-    var blkId = 'wc-' + Math.random().toString(16).substring(2, 8)
-    var now = new Date().toISOString()
-
-    // Capture document content BEFORE inserting the PENDING block.
-    // This is sent as docContent for Summarise mode so Claude sees the real
-    // document, not the PENDING block noise.
-    var docContent = currentMode === 'markdown'
-      ? lastSyncedBody
-      : (currentEditor ? currentEditor.storage.markdown.getMarkdown() || '' : '')
-
-    if (currentMode === 'markdown' && currentMarkdownTextarea) {
-      var lines = ['```web-clip', 'id: ' + blkId, 'source: ' + source, 'mode: ' + mode,
-                   'status: PENDING', 'createdAt: ' + now, '```']
-      lastSyncedBody = lastSyncedBody + '\n\n' + lines.join('\n') + '\n\n'
-      currentMarkdownTextarea.value = lastSyncedBody
-      scheduleSave(currentUuid, lastSyncedBody)
-    } else if (currentEditor) {
-      currentEditor.commands.insertContent({
-        type: 'webClip',
-        attrs: { id: blkId, source: source, mode: mode, status: 'PENDING', createdAt: now }
-      })
-      var afterPos = currentEditor.state.selection.to
-      var docSize = currentEditor.state.doc.content.size
-      currentEditor.chain().setTextSelection(Math.min(afterPos + 1, docSize - 1)).focus().scrollIntoView().run()
-    }
-
-    var body = currentMode === 'markdown'
-      ? lastSyncedBody
-      : (currentEditor ? currentEditor.storage.markdown.getMarkdown() || '' : '')
-
     fetch('/api/internalize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uuid: currentUuid, source: source, mode: mode, id: blkId, body: body, docContent: docContent })
+      body: JSON.stringify({ uuid: currentUuid, source: source, mode: mode })
     }).then(function (r) {
-      if (!r.ok) console.error('[editor] internalize request failed: ' + r.status)
+      if (!r.ok) { console.error('[editor] internalize request failed: ' + r.status); return }
+      return r.json()
+    }).then(function (resp) {
+      if (!resp || !resp.id) return
+      // Go has already appended the PENDING block to the document on disk.
+      // Insert it into the live editor from Go's canonical fence text.
+      if (currentMode === 'markdown' && currentMarkdownTextarea) {
+        lastSyncedBody = lastSyncedBody + '\n\n' + resp.fence + '\n'
+        currentMarkdownTextarea.value = lastSyncedBody
+      } else if (currentEditor) {
+        // Parse Go's YAML to extract attrs — reading only, never generating.
+        var data = {}
+        try { data = window.jsyaml.load(resp.fence.replace(/^```web-clip\n/, '').replace(/\n```$/, '')) || {} } catch (_) {}
+        currentEditor.commands.insertContent({
+          type: 'webClip',
+          attrs: {
+            rawYaml: resp.fence.replace(/^```web-clip\n/, '').replace(/\n```$/, ''),
+            id: data.id || resp.id, source: data.source || source,
+            mode: data.mode || mode, status: 'PENDING', createdAt: data.createdAt || ''
+          }
+        })
+        var afterPos = currentEditor.state.selection.to
+        var docSize = currentEditor.state.doc.content.size
+        currentEditor.chain().setTextSelection(Math.min(afterPos + 1, docSize - 1)).focus().scrollIntoView().run()
+      }
     }).catch(function (err) {
       console.error('[editor] internalize error', err)
-      if (currentEditor) {
-        currentEditor.commands.command(function (props) {
-          var tr = props.tr
-          props.state.doc.descendants(function (node, pos) {
-            if (node.type.name === 'webClip' && node.attrs.id === blkId) {
-              tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { status: 'ERROR', error: 'Request failed' }))
-              return false
-            }
-          })
-          return true
-        })
-      }
     })
   }
 

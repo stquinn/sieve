@@ -224,9 +224,11 @@
     addStorage() {
       return {
         markdown: {
+          // Replay the Go-generated YAML verbatim — JS never generates YAML.
           serialize: function (state, node) {
             state.ensureNewLine()
-            state.write('```web-clip\n' + serializeWebClipYaml(node.attrs) + '\n```')
+            var raw = node.attrs.rawYaml
+            state.write('```web-clip\n' + raw + '\n```')
             state.closeBlock(node)
           },
           parse: {
@@ -246,8 +248,10 @@
                     ? defaultFence(tokens, idx, options, env, self)
                     : self.renderToken(tokens, idx, options)
                 }
+                // Store raw YAML so the serializer can replay it without regenerating.
                 var attrs = [
                   'data-type="webClip"',
+                  'data-raw-yaml="' + esc(token.content) + '"',
                   'data-id="' + esc(data.id) + '"',
                   'data-source="' + esc(data.source || '') + '"',
                   'data-mode="' + esc(data.mode || 'fetch') + '"',
@@ -278,6 +282,7 @@
   WebClip = WebClip.extend({
     addAttributes() {
       return {
+        rawYaml:     { default: '', parseHTML: function(el) { return el.getAttribute('data-raw-yaml') || '' } },
         id:          { default: '', parseHTML: function(el) { return el.getAttribute('data-id') || '' } },
         source:      { default: '', parseHTML: function(el) { return el.getAttribute('data-source') || '' } },
         title:       { default: null, parseHTML: function(el) { return el.getAttribute('data-title') || null } },

@@ -325,9 +325,7 @@
     var editor = ctx.editor, getPos = ctx.getPos, n = ctx.node
 
     function yaml() {
-      return '```web-clip\n' + (window.TipTap.serializeWebClipYaml
-        ? window.TipTap.serializeWebClipYaml(n.attrs)
-        : JSON.stringify(n.attrs)) + '\n```'
+      return '```web-clip\n' + (n.attrs.rawYaml || '') + '\n```'
     }
 
     function del() {
