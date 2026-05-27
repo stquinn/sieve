@@ -44,3 +44,7 @@ Thumbs.db
 # ── Logs & screenshots ────────────────────────────────────────────────────────
 *.log
 Screenshot*.png
+
+#-- Syncthing 
+**/*.tmp
+**/.syncthing.*.tmp
