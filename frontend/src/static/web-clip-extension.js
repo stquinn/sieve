@@ -13,8 +13,10 @@
     try { return new URL(url).hostname } catch (_) { return url }
   }
 
-  function isStale(createdAt) {
+  function isStale(createdAt, id) {
     if (!createdAt) return true
+    // Server confirmed this job is still running — never render as stale
+    if (id && window.__sieveActiveWebClips && window.__sieveActiveWebClips.has(id)) return false
     var thresholdMs = (window.__sieveCliTimeoutLong || 60) * 1000 + 30000
     return Date.now() - new Date(createdAt).getTime() > thresholdMs
   }
@@ -63,10 +65,22 @@
     dom.className = 'web-clip-block'
     dom.contentEditable = 'false'
     dom.setAttribute('draggable', 'false')
+    dom.setAttribute('data-wc-id', node.attrs.id || '')
     dom.style.userSelect = 'text'
+
+    function applyReverseChain(action) {
+      var id = dom.getAttribute('data-wc-id') || ''
+      if (!id) return
+      document.querySelectorAll('.ai-block').forEach(function (el) {
+        var refs = (el.getAttribute('data-ai-ref') || '').split(',').map(function (r) { return r.trim() })
+        if (refs.indexOf(id) !== -1) el.classList[action]('ai-block--chain-active')
+      })
+    }
 
     dom.addEventListener('dragstart', function (e) { e.preventDefault() })
     dom.addEventListener('mousedown', function (e) { e.stopPropagation() })
+    dom.addEventListener('mouseenter', function () { applyReverseChain('add') })
+    dom.addEventListener('mouseleave', function () { applyReverseChain('remove') })
 
     dom.addEventListener('contextmenu', function (e) {
       e.preventDefault()
@@ -101,6 +115,7 @@
 
     function render(n) {
       dom.innerHTML = ''
+      dom.setAttribute('data-wc-id', n.attrs.id || '')
       var attrs = n.attrs
       var status = attrs.status || 'PENDING'
       var domain = extractDomain(attrs.source || '')
@@ -111,7 +126,7 @@
       header.className = 'web-clip-block__header'
 
       if (status === 'PENDING') {
-        var stale = isStale(attrs.createdAt)
+        var stale = isStale(attrs.createdAt, attrs.id)
         if (stale) {
           header.innerHTML = '<span class="web-clip-block__icon web-clip-block__icon--warn">⚠</span>' +
             '<span class="web-clip-block__label">' + modeLabel.replace('ing', '') + ' interrupted — ' + domain + '</span>'

@@ -20,6 +20,11 @@
   var askDialog = null
   var internalizeDialog = null
 
+  // Track in-flight web-clip jobs so PENDING blocks on re-render don't flicker to "stale".
+  // Populated from /api/internalize/active on each note load (handles page reload).
+  // Also updated optimistically when a job is started or the SSE completion fires.
+  window.__sieveActiveWebClips = window.__sieveActiveWebClips || new Set()
+
   // ── Public entry point called from App.tsx htmx:afterSettle ─────────────────
 
   function initEditor(mountEl, uuid, mode) {
@@ -44,9 +49,14 @@
 
     console.log('[editor.js] initEditor fetching data for uuid:', uuid)
 
-    fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid))
-      .then(function (r) { return r.json() })
-      .then(function (data) {
+    Promise.all([
+      fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid)).then(function (r) { return r.json() }),
+      fetch('/api/internalize/active').then(function (r) { return r.json() }).catch(function () { return { active: [] } }),
+    ]).then(function (results) {
+        var data = results[0]
+        var activeData = results[1]
+        // Sync active-jobs set before mounting so PENDING web-clip blocks know if they're still running.
+        window.__sieveActiveWebClips = new Set(activeData.active || [])
         window.__stashActiveTabUuid = uuid
         lastSyncedBody = data.body || ''
 
@@ -410,6 +420,7 @@
       return r.json()
     }).then(function (resp) {
       if (!resp || !resp.id) return
+      window.__sieveActiveWebClips.add(resp.id)
       // Go has already appended the PENDING block to the document on disk.
       // Insert it into the live editor from Go's canonical fence text.
       if (currentMode === 'markdown' && currentMarkdownTextarea) {
@@ -618,7 +629,11 @@
     var raw = e.detail && e.detail.data != null ? e.detail.data : (typeof e.detail === 'string' ? e.detail : null)
     if (!raw) return
     var data; try { data = JSON.parse(raw) } catch (_) { return }
-    if (!data || data.uuid !== currentUuid) return
+    if (!data) return
+    // Remove from active-jobs set regardless of which tab is currently open —
+    // the job is done and should never render as "still running".
+    if (data.blkId) window.__sieveActiveWebClips.delete(data.blkId)
+    if (data.uuid !== currentUuid) return
     // web-clip uses rawYaml passthrough — in-place patch can't update rawYaml correctly.
     // Go has already written the canonical YAML to disk; reload from there.
     softReloadContent(currentUuid)
@@ -1465,6 +1480,7 @@
 
     var body = currentEditor.storage.markdown.getMarkdown() || ''
 
+    window.__sieveActiveWebClips.add(blkId)
     fetch('/api/internalize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1476,8 +1492,12 @@
         body: body
       })
     }).then(function (r) {
-      if (!r.ok) console.error('[editor] webclip retry failed: ' + r.status)
+      if (!r.ok) {
+        window.__sieveActiveWebClips.delete(blkId)
+        console.error('[editor] webclip retry failed: ' + r.status)
+      }
     }).catch(function (err) {
+      window.__sieveActiveWebClips.delete(blkId)
       console.error('[editor] webclip retry error', err)
     })
   })

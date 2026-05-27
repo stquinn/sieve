@@ -89,6 +89,8 @@
         if (blockEl) blockEl.classList[action]('block-ref-active')
         var aiEl = document.querySelector('.ai-block[data-ai-id="' + id + '"]')
         if (aiEl) aiEl.classList[action]('ai-block--chain-active')
+        var wcEl = document.querySelector('.web-clip-block[data-wc-id="' + id + '"]')
+        if (wcEl) wcEl.classList[action]('web-clip-block--chain-active')
       })
     }
 

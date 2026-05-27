@@ -75,11 +75,11 @@ func (ps *PromptService) DeletePrompt(name string) error {
 func (ps *PromptService) ListPrompts() []PromptEntry {
 	names := []string{"file", "explain", "ask", "refine", "image", "web-clip-fetch", "web-clip-summarise"}
 	displayNames := map[string]string{
-		"file":    "Smart Filing",
-		"explain": "Explain Content",
-		"ask":     "In-context Chat",
-		"refine":          "Language Detection",
-		"image":           "Describe Image",
+		"file":               "Smart Filing",
+		"explain":            "Explain Content",
+		"ask":                "In-context Chat",
+		"refine":             "Language Detection",
+		"image":              "Describe Image",
 		"web-clip-fetch":     "Web Clip — Fetch",
 		"web-clip-summarise": "Web Clip — Summarise",
 	}
@@ -267,7 +267,7 @@ Code:
 `
 
 const DefaultWebClipFetchPrompt = `Please retrieve the content at the following URL and return it as clean, well-structured markdown. Preserve all meaningful content including headings, lists, tables, and code blocks.
-
+Do not summarise - preserve content as is.  Your job is to simply retrieve the document and translate to markdown as per the instructions above.
 URL: {source}
 `
 
@@ -278,4 +278,3 @@ URL: {source}
 Current document context:
 {document}
 `
-

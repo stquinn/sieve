@@ -740,6 +740,22 @@
         if (node.type.name === 'aiBlock') { aiBlockId = node.attrs.id || ''; aiBlockRef = node.attrs.ref || ''; return false }
       })
     }
+    // Cursor may be right after an AI block (e.g. in the next paragraph) — check
+    // the node immediately preceding the cursor at each ancestor level.
+    if (!aiBlockId) {
+      var $pos = selection.$from
+      for (var d2 = 0; d2 <= $pos.depth; d2++) {
+        var idx = $pos.index(d2)
+        if (idx > 0) {
+          var prevSibling = $pos.node(d2).child(idx - 1)
+          if (prevSibling && prevSibling.type.name === 'aiBlock') {
+            aiBlockId = prevSibling.attrs.id || ''
+            aiBlockRef = prevSibling.attrs.ref || ''
+            break
+          }
+        }
+      }
+    }
 
     if (aiBlockId) {
       var refs = aiBlockRef.split(',')
@@ -753,6 +769,16 @@
         sourceContent = getCleanMarkdown(editor.storage.markdown.getMarkdown())
       }
 
+      function aiBlockSummary(node) {
+        var q = (node.attrs.question || '').trim()
+        var r = (node.attrs.response || '').trim()
+        if (!q && !r) return serializer.serialize(node).trim()
+        var parts = []
+        if (q) parts.push('**Q:** ' + q)
+        if (r) parts.push('**A:** ' + r)
+        return parts.join('\n\n')
+      }
+
       var intermediateHistory = []
       var seenIds = new Set()
       var turnCount = 1
@@ -763,7 +789,7 @@
         (function (rid, tc) {
           doc.descendants(function (node) {
             if (node.attrs && node.attrs.id === rid) {
-              intermediateHistory.push('[Turn ' + tc + ']\n' + serializer.serialize(node))
+              intermediateHistory.push('[Turn ' + tc + ']\n' + aiBlockSummary(node))
               return false
             }
           })
@@ -773,10 +799,18 @@
       var currentBlockText = ''
       doc.nodesBetween(from, to, function (node) {
         if (node.type.name === 'aiBlock' && node.attrs && node.attrs.id === aiBlockId) {
-          if (!seenIds.has(node.attrs.id)) { currentBlockText = serializer.serialize(node); seenIds.add(node.attrs.id) }
+          if (!seenIds.has(node.attrs.id)) { currentBlockText = aiBlockSummary(node); seenIds.add(node.attrs.id) }
           return false
         }
       })
+      // Cursor was detected as adjacent to the AI block — also search the full selection range
+      if (!currentBlockText) {
+        doc.descendants(function (node) {
+          if (node.type.name === 'aiBlock' && node.attrs.id === aiBlockId && !seenIds.has(aiBlockId)) {
+            currentBlockText = aiBlockSummary(node); seenIds.add(aiBlockId); return false
+          }
+        })
+      }
       if (!currentBlockText && !empty) currentBlockText = doc.textBetween(from, to, '\n')
 
       var historyTurns = [sourceContent ? '[Source Context]\n' + sourceContent : ''].concat(intermediateHistory).filter(Boolean).join('\n\n---\n\n')

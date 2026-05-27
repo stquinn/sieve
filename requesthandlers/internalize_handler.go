@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -26,10 +27,24 @@ func randomHex(n int) string {
 type InternalizeHandler struct {
 	ServiceProvider *sieve.ServiceProvider
 	Broadcast       func(event, data string)
+	activeJobs      sync.Map // blkID → struct{}; tracks in-flight web-clip jobs
 }
 
 func (h *InternalizeHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/internalize", h.handleInternalize)
+	r.Get("/api/internalize/active", h.handleActiveJobs)
+}
+
+// handleActiveJobs returns the IDs of all currently running web-clip jobs.
+// JS uses this on note load to distinguish "genuinely stale" from "still running".
+func (h *InternalizeHandler) handleActiveJobs(w http.ResponseWriter, r *http.Request) {
+	ids := []string{}
+	h.activeJobs.Range(func(key, _ any) bool {
+		ids = append(ids, key.(string))
+		return true
+	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string][]string{"active": ids})
 }
 
 type internalizeRequest struct {
@@ -108,6 +123,9 @@ func (h *InternalizeHandler) handleInternalize(w http.ResponseWriter, r *http.Re
 }
 
 func (h *InternalizeHandler) runInBackground(uuid, id, source, mode, docContent string) {
+	h.activeJobs.Store(id, struct{}{})
+	defer h.activeJobs.Delete(id)
+
 	settings := h.ServiceProvider.State.LoadSettings()
 	model := settings.Model
 

@@ -290,11 +290,14 @@
       { icon: IC.trash, label: 'Delete', action: del },
       { type: 'divider' },
       { icon: IC.sparkle, label: 'Ask AI...', action: function () {
-        editor.commands.focus()
+        // Re-assert node selection so buildAiContext sees this AI block as context.
+        if (typeof getPos === 'function') editor.chain().focus().setNodeSelection(getPos()).run()
+        else editor.commands.focus()
         document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
       }},
       { icon: IC.info, label: 'Explain', action: function () {
-        editor.commands.focus()
+        if (typeof getPos === 'function') editor.chain().focus().setNodeSelection(getPos()).run()
+        else editor.commands.focus()
         document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
       }},
       { type: 'divider' },
