@@ -358,6 +358,18 @@
       },
     ]
 
+    if (isComplete && n.attrs.content) {
+      items.push({ type: 'divider' })
+      items.push({ icon: IC.sparkle, label: 'Ask AI...', action: function () {
+        editor.commands.focus()
+        document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
+      }})
+      items.push({ icon: IC.info, label: 'Explain', action: function () {
+        editor.commands.focus()
+        document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
+      }})
+    }
+
     if (isRetryable) {
       items.push({ type: 'divider' })
       items.push({ icon: IC.refresh, label: 'Retry', action: function () {

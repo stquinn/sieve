@@ -130,13 +130,21 @@ func SerializeYAML(d WebClipData) string {
 	if d.Content != "" {
 		lines = append(lines, "content: |")
 		for _, l := range strings.Split(d.Content, "\n") {
-			lines = append(lines, "  "+l)
+			if l == "" {
+				lines = append(lines, "    ")
+			} else {
+				lines = append(lines, "    "+l)
+			}
 		}
 	}
 	if d.Error != "" {
 		lines = append(lines, "error: |")
 		for _, l := range strings.Split(d.Error, "\n") {
-			lines = append(lines, "  "+l)
+			if l == "" {
+				lines = append(lines, "    ")
+			} else {
+				lines = append(lines, "    "+l)
+			}
 		}
 	}
 	return strings.Join(lines, "\n")

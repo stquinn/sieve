@@ -131,9 +131,9 @@ func SerializeYAML(d AiBlockData) string {
 		lines = append(lines, "response: |")
 		for _, l := range strings.Split(d.Response, "\n") {
 			if l == "" {
-				lines = append(lines, "  ")
+				lines = append(lines, "    ")
 			} else {
-				lines = append(lines, "  "+l)
+				lines = append(lines, "    "+l)
 			}
 		}
 	}

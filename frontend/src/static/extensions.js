@@ -790,30 +790,46 @@
     var scanFrom = (from === to) ? Math.max(0, from - 1) : from
     var scanTo   = (from === to) ? Math.min(doc.content.size, to + 1) : to
     doc.nodesBetween(scanFrom, scanTo, function (node, pos) {
-      if (!targetNode && (node.type.name === 'image' || node.type.name === 'codeBlock' || node.type.name === 'table')) {
+      if (!targetNode && (node.type.name === 'image' || node.type.name === 'codeBlock' || node.type.name === 'table' || node.type.name === 'webClip')) {
         targetNode = node; targetPos = pos; return false
       }
     })
 
+    function labelFor(node) {
+      switch (node.type.name) {
+        case 'image':    return 'Image'
+        case 'codeBlock': return 'Code Block'
+        case 'table':    return 'Table'
+        case 'webClip':  return 'Web Clip'
+        default:         return node.type.name
+      }
+    }
+
+    function textFor(node) {
+      if (node.type.name === 'table') return serializeTableNode(node, serializer)
+      if (node.type.name === 'webClip') {
+        // Give AI the rich content rather than raw YAML
+        var a = node.attrs
+        var parts = []
+        if (a.title) parts.push('# ' + a.title)
+        if (a.source) parts.push('Source: ' + a.source)
+        if (a.content) parts.push(a.content)
+        return parts.join('\n\n').trim() || serializer.serialize(node).trim()
+      }
+      return serializer.serialize(node).trim()
+    }
+
     var selectedText = '', blockRange = null, contextLabel = ''
     if (targetNode && from === targetPos && to === targetPos + targetNode.nodeSize) {
-      if (targetNode.type.name === 'table') {
-        selectedText = serializeTableNode(targetNode, serializer)
-      } else {
-        selectedText = serializer.serialize(targetNode).trim()
-      }
-      contextLabel = targetNode.type.name === 'image' ? 'Image' : (targetNode.type.name === 'codeBlock' ? 'Code Block' : 'Table')
+      selectedText = textFor(targetNode)
+      contextLabel = labelFor(targetNode)
     } else if (from !== to) {
       selectedText = serializer.serialize(doc.slice(from, to).content).trim()
       blockRange = selection.$from.blockRange(selection.$to)
       contextLabel = 'Selection'
     } else if (targetNode) {
-      if (targetNode.type.name === 'table') {
-        selectedText = serializeTableNode(targetNode, serializer)
-      } else {
-        selectedText = serializer.serialize(targetNode).trim()
-      }
-      contextLabel = targetNode.type.name === 'image' ? 'Image' : (targetNode.type.name === 'codeBlock' ? 'Code Block' : 'Table')
+      selectedText = textFor(targetNode)
+      contextLabel = labelFor(targetNode)
     } else {
       selectedText = getCleanMarkdown(editor.storage.markdown.getMarkdown())
       contextLabel = 'Document'

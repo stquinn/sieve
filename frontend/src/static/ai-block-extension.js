@@ -54,7 +54,7 @@
     var r = attrs.response || ''
     if (r) {
       lines.push('response: |')
-      r.split('\n').forEach(function (l) { lines.push('  ' + (l || '')) })
+      r.split('\n').forEach(function (l) { lines.push('    ' + (l || '')) })
     }
 
     return lines.join('\n')
@@ -254,12 +254,7 @@
                 try {
                   data = window.jsyaml.load(yamlText)
                 } catch (e) {
-                  var errDiv = document.createElement('div')
-                  errDiv.setAttribute('data-type', 'aiBlock')
-                  errDiv.setAttribute('data-id', '__parse-error__')
-                  errDiv.setAttribute('data-status', 'TIMEOUT')
-                  if (pre.parentNode) pre.parentNode.replaceChild(errDiv, pre)
-                  return
+                  return // leave original <pre> intact — renders as code block
                 }
                 if (!data || !data.id) return
                 var div = document.createElement('div')
