@@ -28,7 +28,23 @@
     return ids
   }
 
-  // serializeAiBlockYaml is used by both the markdown serializer and context-menu.js
+  // ── isStale ──────────────────────────────────────────────────────────────────
+
+  function isStale(createdAt, id) {
+    if (!createdAt) return true
+    // Server confirmed this job is still running — never render as stale.
+    if (id && window.__sieveActiveAiBlocks && window.__sieveActiveAiBlocks.has(id)) return false
+    var thresholdMs = (window.__sieveCliTimeoutLong || 60) * 1000 + 30000
+    return Date.now() - new Date(createdAt).getTime() > thresholdMs
+  }
+
+  // ── esc ──────────────────────────────────────────────────────────────────────
+
+  function esc(str) {
+    return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  }
+
+  // serializeAiBlockYaml is kept for context-menu.js display use; no longer used for persistence.
   T.serializeAiBlockYaml = serializeAiBlockYaml
 
   // ── yamlScalar ──────────────────────────────────────────────────────────────
@@ -154,16 +170,24 @@
       var status = n.attrs.status || 'PENDING'
 
       if (status === 'PENDING') {
-        badge.className = 'ai-block__badge ai-block__badge--thinking'
-        badge.textContent = 'AI'
-
-        renderQuestion(n.attrs.question, n.attrs.type)
-
-        var thinking = document.createElement('p')
-        var em = document.createElement('em')
-        em.textContent = '(thinking…)'
-        thinking.appendChild(em)
-        contentEl.appendChild(thinking)
+        if (isStale(n.attrs.createdAt, n.attrs.id)) {
+          badge.className = 'ai-block__badge ai-block__badge--error'
+          badge.textContent = 'AI'
+          renderQuestion(n.attrs.question, n.attrs.type)
+          var errEl = document.createElement('p')
+          errEl.className = 'ai-block__timeout'
+          errEl.textContent = 'Request timed out. (Right-click to Retry)'
+          contentEl.appendChild(errEl)
+        } else {
+          badge.className = 'ai-block__badge ai-block__badge--thinking'
+          badge.textContent = 'AI'
+          renderQuestion(n.attrs.question, n.attrs.type)
+          var thinking = document.createElement('p')
+          var em = document.createElement('em')
+          em.textContent = '(thinking…)'
+          thinking.appendChild(em)
+          contentEl.appendChild(thinking)
+        }
       } else if (status === 'COMPLETE') {
         badge.className = 'ai-block__badge'
         badge.textContent = 'AI'
@@ -177,16 +201,16 @@
           contentEl.appendChild(responseEl)
         }
       } else {
-        // TIMEOUT or unknown status
+        // TIMEOUT, ERROR, or unknown status
         badge.className = 'ai-block__badge ai-block__badge--error'
         badge.textContent = 'AI'
 
         renderQuestion(n.attrs.question, n.attrs.type)
 
-        var errEl = document.createElement('p')
-        errEl.className = 'ai-block__timeout'
-        errEl.textContent = 'Request timed out. (Right-click to Retry)'
-        contentEl.appendChild(errEl)
+        var errEl2 = document.createElement('p')
+        errEl2.className = 'ai-block__timeout'
+        errEl2.textContent = 'Request timed out. (Right-click to Retry)'
+        contentEl.appendChild(errEl2)
       }
     }
 
@@ -220,15 +244,16 @@
     draggable: false,
     addAttributes() {
       return {
-        id: { default: '', parseHTML: function (el) { return el.getAttribute('data-id') || '' } },
-        ref: { default: 'doc', parseHTML: function (el) { return el.getAttribute('data-ref') || 'doc' } },
-        status: { default: 'PENDING', parseHTML: function (el) { return el.getAttribute('data-status') || 'PENDING' } },
-        type: { default: null, parseHTML: function (el) { return el.getAttribute('data-block-type') || null } },
-        model: { default: null, parseHTML: function (el) { return el.getAttribute('data-model') || null } },
-        createdAt: { default: null, parseHTML: function (el) { return el.getAttribute('data-created-at') || null } },
+        rawYaml:     { default: '', parseHTML: function (el) { return el.getAttribute('data-raw-yaml') || '' } },
+        id:          { default: '', parseHTML: function (el) { return el.getAttribute('data-id') || '' } },
+        ref:         { default: 'doc', parseHTML: function (el) { return el.getAttribute('data-ref') || 'doc' } },
+        status:      { default: 'PENDING', parseHTML: function (el) { return el.getAttribute('data-status') || 'PENDING' } },
+        type:        { default: null, parseHTML: function (el) { return el.getAttribute('data-block-type') || null } },
+        model:       { default: null, parseHTML: function (el) { return el.getAttribute('data-model') || null } },
+        createdAt:   { default: null, parseHTML: function (el) { return el.getAttribute('data-created-at') || null } },
         completedAt: { default: null, parseHTML: function (el) { return el.getAttribute('data-completed-at') || null } },
-        question: { default: '', parseHTML: function (el) { return el.getAttribute('data-question') || '' } },
-        response: { default: null, parseHTML: function (el) { return el.getAttribute('data-response') || null } },
+        question:    { default: '', parseHTML: function (el) { return el.getAttribute('data-question') || '' } },
+        response:    { default: null, parseHTML: function (el) { return el.getAttribute('data-response') || null } },
       }
     },
 
@@ -250,40 +275,47 @@
     addStorage() {
       return {
         markdown: {
+          // Replay the Go-generated YAML verbatim — JS never generates YAML.
           serialize: function (state, node) {
             state.ensureNewLine()
-            state.write('```ai-block\n' + serializeAiBlockYaml(node.attrs) + '\n```')
+            var raw = node.attrs.rawYaml
+            state.write('```ai-block\n' + raw + '\n```')
             state.closeBlock(node)
           },
           parse: {
-            // updateDOM converts <pre><code class="language-ai-block"> produced by
-            // markdown-it into <div data-type="aiBlock"> for the DOMParser to pick up.
-            updateDOM: function (element) {
-              var codes = Array.from(element.querySelectorAll('code.language-ai-block'))
-              codes.forEach(function (code) {
-                var pre = code.parentElement
-                if (!pre || pre.tagName !== 'PRE') return
-                var yamlText = code.textContent || ''
-                var data
-                try {
-                  data = window.jsyaml.load(yamlText)
-                } catch (e) {
-                  return // leave original <pre> intact — renders as code block
+            setup: function (markdownit) {
+              var defaultFence = markdownit.renderer.rules.fence
+              markdownit.renderer.rules.fence = function (tokens, idx, options, env, self) {
+                var token = tokens[idx]
+                if (token.info.trim() !== 'ai-block') {
+                  return defaultFence
+                    ? defaultFence(tokens, idx, options, env, self)
+                    : self.renderToken(tokens, idx, options)
                 }
-                if (!data || !data.id) return
-                var div = document.createElement('div')
-                div.setAttribute('data-type', 'aiBlock')
-                div.setAttribute('data-id', data.id || '')
-                div.setAttribute('data-ref', data.ref || 'doc')
-                div.setAttribute('data-status', data.status || 'PENDING')
-                if (data.type) div.setAttribute('data-block-type', data.type)
-                if (data.model) div.setAttribute('data-model', data.model)
-                if (data.createdAt) div.setAttribute('data-created-at', data.createdAt)
-                if (data.completedAt) div.setAttribute('data-completed-at', data.completedAt)
-                if (data.question) div.setAttribute('data-question', data.question)
-                if (data.response) div.setAttribute('data-response', data.response)
-                if (pre.parentNode) pre.parentNode.replaceChild(div, pre)
-              })
+                var data
+                try { data = window.jsyaml.load(token.content) } catch (e) { data = null }
+                if (!data || !data.id) {
+                  // Non-destructive: leave as default fence render if unparseable
+                  return defaultFence
+                    ? defaultFence(tokens, idx, options, env, self)
+                    : self.renderToken(tokens, idx, options)
+                }
+                // Store raw YAML so the serializer can replay it without regenerating.
+                var attrs = [
+                  'data-type="aiBlock"',
+                  'data-raw-yaml="' + esc(token.content) + '"',
+                  'data-id="' + esc(data.id) + '"',
+                  'data-ref="' + esc(data.ref || 'doc') + '"',
+                  'data-status="' + esc(data.status || 'PENDING') + '"',
+                ]
+                if (data.type)        attrs.push('data-block-type="' + esc(data.type) + '"')
+                if (data.model)       attrs.push('data-model="' + esc(data.model) + '"')
+                if (data.createdAt)   attrs.push('data-created-at="' + esc(data.createdAt) + '"')
+                if (data.completedAt) attrs.push('data-completed-at="' + esc(data.completedAt) + '"')
+                if (data.question)    attrs.push('data-question="' + esc(data.question) + '"')
+                if (data.response)    attrs.push('data-response="' + esc((data.response || '').trim()) + '"')
+                return '<div ' + attrs.join(' ') + '></div>\n'
+              }
             },
           },
         },

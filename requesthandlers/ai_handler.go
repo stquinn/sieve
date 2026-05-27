@@ -3,19 +3,24 @@ package requesthandlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
-	"sieve/logger"
-	"sieve/sieve"
-	"sieve/store"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"sieve/logger"
+	"sieve/sieve"
+	"sieve/sieve/aiblock"
+	"sieve/store"
 )
 
 type AiHandler struct {
 	ServiceProvider  *sieve.ServiceProvider
 	EmitNotesChanged func()
 	Broadcast        func(event, data string)
+	activeJobs       sync.Map // blkID → struct{}
 }
 
 func (h *AiHandler) RegisterPaths(r chi.Router) {
@@ -27,6 +32,17 @@ func (h *AiHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/ai/refine-language", h.handleRefineLanguage)
 	r.Post("/api/ai/describe-image", h.handleDescribeImage)
 	r.Get("/api/link-preview", h.handleLinkPreview)
+	r.Get("/api/ai/active", h.handleActiveJobs)
+}
+
+func (h *AiHandler) handleActiveJobs(w http.ResponseWriter, r *http.Request) {
+	ids := []string{}
+	h.activeJobs.Range(func(key, _ any) bool {
+		ids = append(ids, key.(string))
+		return true
+	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string][]string{"active": ids})
 }
 
 func (h *AiHandler) handleAiSmartFile(w http.ResponseWriter, r *http.Request) {
@@ -51,8 +67,6 @@ func (h *AiHandler) handleAiKeepAndFile(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Broadcast immediately so sidebar/meta panel reflect the keep intent
-	// before the AI evaluation (~30s) completes.
 	if h.EmitNotesChanged != nil {
 		h.EmitNotesChanged()
 	}
@@ -60,7 +74,6 @@ func (h *AiHandler) handleAiKeepAndFile(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *AiHandler) evaluateAndFile(w http.ResponseWriter, id string, fileAfter bool, allowDiscard bool) {
-
 	_, err := h.ServiceProvider.Documents.LoadByUUID(id)
 	if err != nil {
 		http.Error(w, "document not found", http.StatusNotFound)
@@ -100,133 +113,183 @@ func (h *AiHandler) evaluateAndFile(w http.ResponseWriter, id string, fileAfter 
 	}
 }
 
-type askRequest struct {
+type aiBlockRequest struct {
 	Content       string   `json:"content"`
 	History       string   `json:"history"`
 	Question      string   `json:"question"`
 	NoteUUID      string   `json:"noteUUID"`
 	ImageBlockIds []string `json:"imageBlockIds"`
-	BlkID         string   `json:"blkId"`
-	Body          string   `json:"body"`
+	ID            string   `json:"id"`  // optional: reuse existing block ID (retry path)
+	Ref           string   `json:"ref"` // insertion anchor
+}
+
+type aiBlockResponse struct {
+	ID    string `json:"id"`
+	Fence string `json:"fence"`
 }
 
 func (h *AiHandler) handleAiAsk(w http.ResponseWriter, r *http.Request) {
-	var req askRequest
+	var req aiBlockRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.NoteUUID == "" {
+		http.Error(w, "noteUUID is required", http.StatusBadRequest)
 		return
 	}
 
-	// Save body (with PENDING block) before AI runs. Retry on ErrStaleStorable
-	// because a concurrent handleEditorSave may have just bumped the version.
-	if req.BlkID != "" && req.Body != "" && req.NoteUUID != "" {
-		for attempt := 0; attempt < 3; attempt++ {
-			doc, err := h.ServiceProvider.Documents.LoadByUUID(req.NoteUUID)
-			if err != nil {
-				logger.Error("handleAiAsk: load for pre-save failed", "err", err)
-				break
-			}
-			doc.SetBody([]byte(req.Body))
-			if _, err := h.ServiceProvider.Documents.Save(doc); err != nil {
-				if errors.Is(err, store.ErrStaleStorable) {
-					continue
-				}
-				logger.Error("handleAiAsk: save body failed", "err", err)
-			}
-			break
-		}
-	}
+	blkID, fence := h.insertPendingBlock(req, "ASK")
 
-	resp, err := h.ServiceProvider.AI.RunAsk(req.Content, req.History, req.Question, req.NoteUUID, req.ImageBlockIds)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(aiBlockResponse{ID: blkID, Fence: fence})
 
-	if req.BlkID != "" && req.NoteUUID != "" {
-		model := h.ServiceProvider.State.LoadSettings().Model
-		completedAt := time.Now().UTC().Format(time.RFC3339)
-		if err := h.ServiceProvider.AI.ResolveAiBlock(req.NoteUUID, req.BlkID, resp, model, "ASK"); err != nil {
-			logger.Error("handleAiAsk: ResolveAiBlock failed", "err", err)
-		} else if h.Broadcast != nil {
-			data, _ := json.Marshal(map[string]string{
-				"uuid":        req.NoteUUID,
-				"blkId":       req.BlkID,
-				"status":      "COMPLETE",
-				"response":    resp,
-				"model":       model,
-				"completedAt": completedAt,
-			})
-			h.Broadcast("ai:block-resolved", string(data))
-		}
-	}
-
-	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte(resp))
-}
-
-type explainRequest struct {
-	Content       string   `json:"content"`
-	History       string   `json:"history"`
-	NoteUUID      string   `json:"noteUUID"`
-	ImageBlockIds []string `json:"imageBlockIds"`
-	BlkID         string   `json:"blkId"`
-	Body          string   `json:"body"`
+	go h.runAiBlock(req.NoteUUID, blkID, "ASK", req.Content, req.History, req.Question, req.ImageBlockIds)
 }
 
 func (h *AiHandler) handleAiExplain(w http.ResponseWriter, r *http.Request) {
-	var req explainRequest
+	var req aiBlockRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.NoteUUID == "" {
+		http.Error(w, "noteUUID is required", http.StatusBadRequest)
 		return
 	}
 
-	// Save body (with PENDING block) before AI runs. Retry on ErrStaleStorable
-	// because a concurrent handleEditorSave may have just bumped the version.
-	if req.BlkID != "" && req.Body != "" && req.NoteUUID != "" {
-		for attempt := 0; attempt < 3; attempt++ {
-			doc, err := h.ServiceProvider.Documents.LoadByUUID(req.NoteUUID)
-			if err != nil {
-				logger.Error("handleAiExplain: load for pre-save failed", "err", err)
-				break
+	blkID, fence := h.insertPendingBlock(req, "EXPLAIN")
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(aiBlockResponse{ID: blkID, Fence: fence})
+
+	go h.runAiBlock(req.NoteUUID, blkID, "EXPLAIN", req.Content, req.History, req.Question, req.ImageBlockIds)
+}
+
+// insertPendingBlock writes the PENDING fence to disk and returns (blkID, fence).
+// On the retry path (req.ID != ""), it skips insertion and returns the existing ID with empty fence.
+func (h *AiHandler) insertPendingBlock(req aiBlockRequest, blockType string) (blkID, fence string) {
+	if req.ID != "" {
+		return req.ID, ""
+	}
+
+	blkID = fmt.Sprintf("ai-%s", randomHex(2))
+	ref := req.Ref
+	if ref == "" {
+		ref = "doc"
+	}
+	pending := aiblock.AiBlockData{
+		ID:        blkID,
+		Ref:       ref,
+		Status:    "PENDING",
+		Type:      blockType,
+		Question:  req.Question,
+		CreatedAt: time.Now().Format(time.RFC3339),
+	}
+	pendingYAML := aiblock.SerializeYAML(pending)
+	fence = "```ai-block\n" + pendingYAML + "\n```"
+
+	for attempt := 0; attempt < 3; attempt++ {
+		doc, err := h.ServiceProvider.Documents.LoadByUUID(req.NoteUUID)
+		if err != nil {
+			logger.Error("insertPendingBlock: load failed", "err", err)
+			break
+		}
+		docContent := string(doc.Body())
+		newBody := aiblock.InsertAfterRef(docContent, req.Ref, fence)
+		doc.SetBody([]byte(newBody))
+		if _, err := h.ServiceProvider.Documents.Save(doc); err != nil {
+			if errors.Is(err, store.ErrStaleStorable) {
+				continue
 			}
-			doc.SetBody([]byte(req.Body))
-			if _, err := h.ServiceProvider.Documents.Save(doc); err != nil {
-				if errors.Is(err, store.ErrStaleStorable) {
-					continue
-				}
-				logger.Error("handleAiExplain: save body failed", "err", err)
-			}
+			logger.Error("insertPendingBlock: save failed", "err", err)
+		}
+		break
+	}
+
+	return blkID, fence
+}
+
+func (h *AiHandler) runAiBlock(uuid, blkID, blockType, content, history, question string, imageBlockIds []string) {
+	h.activeJobs.Store(blkID, struct{}{})
+	defer h.activeJobs.Delete(blkID)
+
+	settings := h.ServiceProvider.State.LoadSettings()
+	model := settings.Model
+
+	var resp string
+	var runErr error
+	if blockType == "ASK" {
+		resp, runErr = h.ServiceProvider.AI.RunAsk(content, history, question, uuid, imageBlockIds)
+	} else {
+		resp, runErr = h.ServiceProvider.AI.RunExplain(content, history, uuid, imageBlockIds)
+	}
+
+	var status, completedAt string
+	if runErr != nil {
+		if strings.Contains(runErr.Error(), "timeout") {
+			status = "TIMEOUT"
+		} else {
+			status = "ERROR"
+		}
+		model = ""
+		resp = ""
+		h.resolveAiBlockStatus(uuid, blkID, status, blockType)
+	} else {
+		status = "COMPLETE"
+		completedAt = time.Now().UTC().Format(time.RFC3339)
+		if err := h.ServiceProvider.AI.ResolveAiBlock(uuid, blkID, resp, model, blockType); err != nil {
+			logger.Error("runAiBlock: ResolveAiBlock failed", "id", blkID, "err", err)
+		}
+	}
+
+	payload, _ := json.Marshal(map[string]string{
+		"uuid":        uuid,
+		"blkId":       blkID,
+		"status":      status,
+		"response":    resp,
+		"model":       model,
+		"completedAt": completedAt,
+	})
+	if h.Broadcast != nil {
+		h.Broadcast("ai:block-resolved", string(payload))
+	}
+}
+
+// resolveAiBlockStatus updates a block to TIMEOUT or ERROR status in the document.
+// Used when runAiBlock encounters an error (ResolveAiBlock only handles COMPLETE).
+func (h *AiHandler) resolveAiBlockStatus(uuid, blkID, status, blockType string) {
+	doc, err := h.ServiceProvider.Documents.LoadByUUID(uuid)
+	if err != nil {
+		logger.Error("resolveAiBlockStatus: load failed", "id", blkID, "err", err)
+		return
+	}
+	body := string(doc.Body())
+	blocks := aiblock.ParseAll(body)
+	var found aiblock.AiBlockData
+	for _, b := range blocks {
+		if b.ID == blkID {
+			found = b
 			break
 		}
 	}
-
-	resp, err := h.ServiceProvider.AI.RunExplain(req.Content, req.History, req.NoteUUID, req.ImageBlockIds)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if found.ID == "" {
+		logger.Error("resolveAiBlockStatus: block not found", "id", blkID)
 		return
 	}
-
-	if req.BlkID != "" && req.NoteUUID != "" {
-		model := h.ServiceProvider.State.LoadSettings().Model
-		completedAt := time.Now().UTC().Format(time.RFC3339)
-		if err := h.ServiceProvider.AI.ResolveAiBlock(req.NoteUUID, req.BlkID, resp, model, "EXPLAIN"); err != nil {
-			logger.Error("handleAiExplain: ResolveAiBlock failed", "err", err)
-		} else if h.Broadcast != nil {
-			data, _ := json.Marshal(map[string]string{
-				"uuid":        req.NoteUUID,
-				"blkId":       req.BlkID,
-				"status":      "COMPLETE",
-				"response":    resp,
-				"model":       model,
-				"completedAt": completedAt,
-			})
-			h.Broadcast("ai:block-resolved", string(data))
-		}
+	found.Status = status
+	if blockType != "" {
+		found.Type = blockType
 	}
-
-	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte(resp))
+	newBody, err := aiblock.Replace(body, found)
+	if err != nil {
+		logger.Error("resolveAiBlockStatus: replace failed", "id", blkID, "err", err)
+		return
+	}
+	doc.SetBody([]byte(newBody))
+	if _, err := h.ServiceProvider.Documents.Save(doc); err != nil {
+		logger.Error("resolveAiBlockStatus: save failed", "id", blkID, "err", err)
+	}
 }
 
 type refineLanguageRequest struct {

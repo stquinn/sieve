@@ -25,6 +25,10 @@
   // Also updated optimistically when a job is started or the SSE completion fires.
   window.__sieveActiveWebClips = window.__sieveActiveWebClips || new Set()
 
+  // Track in-flight ai-block jobs so PENDING blocks on re-render don't flicker to "stale".
+  // Populated from /api/ai/active on each note load; updated optimistically on start/SSE.
+  window.__sieveActiveAiBlocks = window.__sieveActiveAiBlocks || new Set()
+
   // Track blkIds of in-flight ask/explain jobs started in this session so the status bar
   // counter stays balanced (we only decrement for jobs we incremented).
   var pendingAiBlkIds = new Set()
@@ -56,11 +60,14 @@
     Promise.all([
       fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid)).then(function (r) { return r.json() }),
       fetch('/api/internalize/active').then(function (r) { return r.json() }).catch(function () { return { active: [] } }),
+      fetch('/api/ai/active').then(function (r) { return r.json() }).catch(function () { return { active: [] } }),
     ]).then(function (results) {
         var data = results[0]
         var activeData = results[1]
-        // Sync active-jobs set before mounting so PENDING web-clip blocks know if they're still running.
+        var activeAiData = results[2]
+        // Sync active-jobs sets before mounting so PENDING blocks know if they're still running.
         window.__sieveActiveWebClips = new Set(activeData.active || [])
+        window.__sieveActiveAiBlocks = new Set(activeAiData.active || [])
         window.__stashActiveTabUuid = uuid
         lastSyncedBody = data.body || ''
 
@@ -584,56 +591,22 @@
       })
   }
 
-  // HTMX SSE extension dispatches sse:ai:block-resolved; e.detail is the SSE MessageEvent.
-  // The payload includes full block attrs so we can patch TipTap in-place, avoiding a
-  // server round-trip and the race where an in-flight auto-save (PENDING body) overwrites
-  // the COMPLETE body between ResolveAiBlock saving and softReloadContent fetching.
+  // HTMX SSE extension dispatches sse:ai:block-resolved when Go finishes an ai-block job.
+  // Go has already written the COMPLETE YAML to disk; reload from there (rawYaml passthrough
+  // means in-place patch can't update rawYaml correctly, matching the web-clip pattern).
   document.addEventListener('sse:ai:block-resolved', function (e) {
     var raw = e.detail && e.detail.data != null ? e.detail.data : (typeof e.detail === 'string' ? e.detail : null)
     if (!raw) return
     var data; try { data = JSON.parse(raw) } catch (_) { return }
     if (!data) return
-    // Decrement status bar counter for jobs started in this session.
+    // Balanced decrement — only for jobs started in this session.
     if (data.blkId && pendingAiBlkIds.has(data.blkId)) {
       pendingAiBlkIds.delete(data.blkId)
       window.SieveAI && window.SieveAI.trackJob(-1, data.blkId)
     }
+    // Remove from stale-detection set regardless of which note is open.
+    if (data.blkId) window.__sieveActiveAiBlocks.delete(data.blkId)
     if (data.uuid !== currentUuid) return
-
-    // Patch the TipTap node in-place when the SSE carries full block attrs.
-    if (data.blkId && data.status && currentEditor) {
-      var patched = false
-      currentEditor.commands.command(function (props) {
-        var tr = props.tr
-        props.state.doc.descendants(function (node, pos) {
-          if (node.type.name === 'aiBlock' && node.attrs.id === data.blkId) {
-            tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, {
-              status:      data.status,
-              response:    data.response   || node.attrs.response,
-              model:       data.model      || node.attrs.model,
-              completedAt: data.completedAt || node.attrs.completedAt,
-            }))
-            patched = true
-            return false
-          }
-        })
-        return patched
-      })
-
-      if (patched) {
-        // Capture the COMPLETE markdown body and immediately persist it.
-        // This ensures any in-flight auto-save (with stale PENDING body) is
-        // followed by a COMPLETE save, and lastSyncedBody is up-to-date so
-        // the 30s auto-save timer no longer holds a stale PENDING body.
-        var completeMd = currentEditor.storage.markdown.getMarkdown() || ''
-        lastSyncedBody = completeMd
-        if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
-        doSave(currentUuid, completeMd)
-        return
-      }
-    }
-
-    // Fallback: full reload from server (legacy path, or if TipTap patch failed).
     softReloadContent(currentUuid)
   })
 
@@ -657,13 +630,12 @@
   function runAiJob(type, question, precomputedCtx) {
     if (!currentEditor && currentMode !== 'markdown') return
 
-    var blkId = 'ai-' + Math.random().toString(16).substring(2, 6)
     var ctx = null
     var refId = 'doc'
-    var now = new Date().toISOString()
 
     var selectedAiNode = null
     var selectedAiPos = null
+    var insertPos = null  // wysiwyg only; computed before fetch, used after response
 
     // 1. Detect if an AI block is selected or focused
     if (currentMode === 'markdown' && currentMarkdownTextarea) {
@@ -702,7 +674,7 @@
           }
         }
       }
-      
+
       // Fallback: Check if active element is inside an AI block element
       if (!selectedAiNode) {
         var activeEl = document.activeElement
@@ -736,38 +708,13 @@
 
     var blockType = type === 'explain' ? 'EXPLAIN' : 'ASK'
 
-    // 3. Perform insert or follow-up insertion
-    if (currentMode === 'markdown') {
-      var lines = ['```ai-block', 'id: ' + blkId, 'ref: ' + refId, 'status: PENDING', 'type: ' + blockType, 'createdAt: ' + now]
-      if (question) lines.push('question: ' + question)
-      lines.push('```')
-      var newFence = lines.join('\n')
-
-      if (selectedAiNode && currentMarkdownTextarea) {
-        var ta = currentMarkdownTextarea
-        var val = ta.value
-        var selStart = ta.selectionStart
-        var beforeSel = val.substring(0, selStart)
-        var lastFenceStart = beforeSel.lastIndexOf('```ai-block')
-        var closeFenceIdx = val.indexOf('```', lastFenceStart + 11)
-        
-        // Insert directly after this block's fence
-        var insertPos = closeFenceIdx + 3
-        lastSyncedBody = val.substring(0, insertPos) + '\n\n' + newFence + val.substring(insertPos)
-        ta.value = lastSyncedBody
-      } else {
-        lastSyncedBody = lastSyncedBody + '\n\n' + lines.join('\n') + '\n\n'
-      }
-      document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
-      scheduleSave(currentUuid, lastSyncedBody)
-    } else {
-      var insertPos = currentEditor.state.selection.to
+    // 3. Compute wysiwyg insertion position (Go inserts server-side; client mirrors after response)
+    if (currentMode !== 'markdown' && currentEditor) {
+      insertPos = currentEditor.state.selection.to
 
       if (selectedAiNode && selectedAiPos !== null) {
-        // Follow-up: Insert directly after the selected AI block
         insertPos = selectedAiPos + selectedAiNode.nodeSize
       } else {
-        // Standard placement: lift out of active aiBlocks and find block boundary
         var resolved = currentEditor.state.doc.resolve(insertPos)
         for (var depth = resolved.depth; depth > 0; depth--) {
           var n = resolved.node(depth)
@@ -793,68 +740,62 @@
           }
         }
       }
-
-      currentEditor.commands.insertContentAt(insertPos, {
-        type: 'aiBlock',
-        attrs: { id: blkId, ref: refId, status: 'PENDING', type: blockType, question: question || '', createdAt: now },
-      })
-
-      // Move focus inside/after the new block so the editor is instantly interactive
-      var afterInsert = insertPos + 2
-      var docSize = currentEditor.state.doc.content.size
-      currentEditor.chain()
-        .setTextSelection(Math.min(afterInsert, docSize - 1))
-        .focus()
-        .scrollIntoView()
-        .run()
     }
-
-    // Capture the body now (includes the PENDING block) to send to Go
-    var body = currentMode === 'markdown' ? lastSyncedBody : (currentEditor.storage.markdown.getMarkdown() || '')
 
     var endpoint = type === 'explain' ? '/api/ai/explain' : '/api/ai/ask'
-    var payload = {
-      content:       ctx ? ctx.content : '',
-      history:       ctx ? ctx.history : '',
-      question:      question || '',
-      noteUUID:      currentUuid || '',
-      imageBlockIds: (ctx && ctx.imageIds) || [],
-      blkId:         blkId,
-      body:          body,
-    }
-
-    pendingAiBlkIds.add(blkId)
-    window.SieveAI && window.SieveAI.trackJob(1, blkId, type === 'explain' ? 'Explaining...' : 'Asking AI...')
 
     fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        content:       ctx ? ctx.content : '',
+        history:       ctx ? ctx.history : '',
+        question:      question || '',
+        noteUUID:      currentUuid || '',
+        imageBlockIds: (ctx && ctx.imageIds) || [],
+        ref:           refId,
+      }),
     }).then(function (r) {
       if (!r.ok) throw new Error('AI request failed: ' + r.status)
-      // Fallback: reload from disk in case the SSE event was dropped.
-      if (!aiReloadInProgress) softReloadContent(currentUuid)
+      return r.json()
+    }).then(function (resp) {
+      if (!resp || !resp.id) return
+      var blkId = resp.id
+      window.__sieveActiveAiBlocks.add(blkId)
+      pendingAiBlkIds.add(blkId)
+      window.SieveAI && window.SieveAI.trackJob(1, blkId, type === 'explain' ? 'Explaining...' : 'Asking AI...')
+
+      if (resp.fence && currentEditor && insertPos !== null) {
+        // Insert from Go's canonical fence into TipTap at the pre-computed position.
+        var rawYaml = resp.fence.replace(/^```ai-block\n/, '').replace(/\n```$/, '')
+        var data = {}
+        try { data = window.jsyaml.load(rawYaml) || {} } catch (_) {}
+        currentEditor.commands.insertContentAt(insertPos, {
+          type: 'aiBlock',
+          attrs: {
+            rawYaml:   rawYaml,
+            id:        data.id || blkId,
+            ref:       data.ref || refId,
+            status:    'PENDING',
+            type:      blockType,
+            question:  question || '',
+            createdAt: data.createdAt || '',
+          }
+        })
+        var afterInsert = insertPos + 2
+        var docSize = currentEditor.state.doc.content.size
+        currentEditor.chain()
+          .setTextSelection(Math.min(afterInsert, docSize - 1))
+          .focus()
+          .scrollIntoView()
+          .run()
+      } else if (resp.fence && currentMode === 'markdown') {
+        // Markdown mode: Go saved at the canonical position — reload to reflect it.
+        softReloadContent(currentUuid)
+      }
+      // Retry path (resp.fence === ''): block already in doc; tracking sets updated above.
     }).catch(function (err) {
       console.error('[editor] AI error', err)
-      // HTTP-level failure — SSE will never fire, so decrement here.
-      if (pendingAiBlkIds.has(blkId)) {
-        pendingAiBlkIds.delete(blkId)
-        window.SieveAI && window.SieveAI.trackJob(-1, blkId)
-      }
-      if (currentEditor) {
-        currentEditor.commands.command(function (props) {
-          var tr = props.tr
-          var found = false
-          props.state.doc.descendants(function (node, pos) {
-            if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
-              tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { status: 'TIMEOUT' }))
-              found = true
-              return false
-            }
-          })
-          return found
-        })
-      }
     })
   }
 
@@ -884,15 +825,16 @@
             currentEditor.commands.insertContent({
               type: 'aiBlock',
               attrs: {
-                id: data.id || '',
-                ref: data.ref || 'doc',
-                status: data.status || 'PENDING',
-                type: data.type || null,
-                model: data.model || null,
-                createdAt: data.createdAt || null,
+                rawYaml:     yamlText,
+                id:          data.id || '',
+                ref:         data.ref || 'doc',
+                status:      data.status || 'PENDING',
+                type:        data.type || null,
+                model:       data.model || null,
+                createdAt:   data.createdAt || null,
                 completedAt: data.completedAt || null,
-                question: data.question || '',
-                response: data.response || null
+                question:    data.question || '',
+                response:    data.response || null,
               }
             })
             return true
@@ -1407,13 +1349,17 @@
       type = details.question ? 'ask' : 'explain'
     }
 
-    // 1. Set status to PENDING and clear response
+    // 1. Immediate visual feedback: reset to PENDING with fresh timestamp
+    //    (updating createdAt prevents isStale from firing before the server responds)
+    var now = new Date().toISOString()
     currentEditor.commands.command(function (props) {
       var tr = props.tr
       var found = false
       props.state.doc.descendants(function (node, pos) {
         if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
-          tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { status: 'PENDING', response: null }))
+          tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, {
+            status: 'PENDING', response: null, createdAt: now
+          }))
           found = true
           return false
         }
@@ -1421,48 +1367,42 @@
       return found
     })
 
-    // 2. Select the node to ensure buildAiContext builds follow-up history context up to this block
-    var pos = null
+    // 2. Select node so buildAiContext builds follow-up history context up to this block
+    var nodePos = null
     currentEditor.state.doc.descendants(function (node, p) {
       if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
-        pos = p
+        nodePos = p
         return false
       }
     })
-    if (pos !== null) {
-      currentEditor.commands.setNodeSelection(pos)
-    }
+    if (nodePos !== null) currentEditor.commands.setNodeSelection(nodePos)
 
     // 3. Build context
     var ctx = window.TipTap.buildAiContext(currentEditor, false, lastSyncedBody, currentUuid)
 
-    // 4. Capture the updated markdown body
-    var body = currentEditor.storage.markdown.getMarkdown() || ''
-
-    var endpoint = type === 'explain' ? '/api/ai/explain' : '/api/ai/ask'
-    var payload = {
-      content:       ctx ? ctx.content : '',
-      history:       ctx ? ctx.history : '',
-      question:      details.question || '',
-      noteUUID:      currentUuid || '',
-      imageBlockIds: (ctx && ctx.imageIds) || [],
-      blkId:         blkId,
-      body:          body,
-    }
-
+    // Add to active-jobs sets before fetch so isStale returns false immediately on re-render
+    window.__sieveActiveAiBlocks.add(blkId)
     pendingAiBlkIds.add(blkId)
     window.SieveAI && window.SieveAI.trackJob(1, blkId, type === 'explain' ? 'Explaining...' : 'Asking AI...')
 
+    var endpoint = type === 'explain' ? '/api/ai/explain' : '/api/ai/ask'
     fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        id:            blkId,
+        content:       ctx ? ctx.content : '',
+        history:       ctx ? ctx.history : '',
+        question:      details.question || '',
+        noteUUID:      currentUuid || '',
+        imageBlockIds: (ctx && ctx.imageIds) || [],
+      }),
     }).then(function (r) {
       if (!r.ok) throw new Error('AI retry request failed: ' + r.status)
-      // Fallback: reload from disk in case the SSE event was dropped.
-      if (!aiReloadInProgress) softReloadContent(currentUuid)
+      // SSE will fire sse:ai:block-resolved → softReloadContent
     }).catch(function (err) {
       console.error('[editor] AI retry error', err)
+      window.__sieveActiveAiBlocks.delete(blkId)
       if (pendingAiBlkIds.has(blkId)) {
         pendingAiBlkIds.delete(blkId)
         window.SieveAI && window.SieveAI.trackJob(-1, blkId)
