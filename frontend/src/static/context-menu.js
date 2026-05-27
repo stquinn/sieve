@@ -190,17 +190,15 @@
       window._sieveOpenInternalize && window._sieveOpenInternalize(linkUrl || '')
     }})
 
-    if (hasSelection || targetNode) {
-      items.push({ type: 'divider' })
-      items.push({ icon: IC.sparkle, label: 'Ask AI...', action: function () {
-        editor.commands.focus()
-        document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
-      }})
-      items.push({ icon: IC.info, label: 'Explain', action: function () {
-        editor.commands.focus()
-        document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
-      }})
-    }
+    items.push({ type: 'divider' })
+    items.push({ icon: IC.sparkle, label: 'Ask AI...', action: function () {
+      editor.commands.focus()
+      document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
+    }})
+    items.push({ icon: IC.info, label: 'Explain', action: function () {
+      editor.commands.focus()
+      document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
+    }})
 
     return items
   }

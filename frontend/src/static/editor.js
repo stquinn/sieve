@@ -361,9 +361,16 @@
     pendingAskCtx = window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
     var label = askDialog.querySelector('.ask-popup__label')
     var textarea = askDialog.querySelector('.ask-popup__input')
-    var ctxLabel = (pendingAskCtx && pendingAskCtx.contextLabel) || ''
-    var fileLabel = 'Document' // UUID based label could be added if needed, but for now 'Document' is safer without path
-    label.textContent = (ctxLabel && ctxLabel !== 'Document' ? ctxLabel + ' — ' + fileLabel : fileLabel) + ' Inquiry'
+    var ctxLabel = (pendingAskCtx && pendingAskCtx.contextLabel) || 'Document'
+    
+    var headerText = ''
+    if (ctxLabel === 'Follow-up') {
+      headerText = 'Ask Follow-up'
+    } else {
+      headerText = 'Ask About ' + ctxLabel
+    }
+    label.textContent = headerText
+    
     textarea.value = ''
     askDialog.showModal()
     textarea.focus()

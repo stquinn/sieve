@@ -2,6 +2,7 @@
 
 A guide synthesised from building the Web Clip block (`web-clip`) and the AI Block (`ai-block`). These are "Category 3" blocks — machine-generated artefacts embedded in the Markdown document as fenced code blocks with a custom language tag.
 
+
 ---
 
 ## What is an Intelligent Fenced Block?
@@ -13,6 +14,7 @@ A fenced block with a named language tag (e.g. ` ```web-clip ` or ` ```ai-block 
 - Is created by a user action, processed asynchronously by Go, and resolved via SSE
 - Is persisted verbatim in the Markdown file — Go owns the serialised form
 
+
 ---
 
 ## Rule 1 — Go Owns All YAML. JS Never Generates It.
@@ -23,6 +25,7 @@ A fenced block with a named language tag (e.g. ` ```web-clip ` or ` ```ai-block 
 - Go writes the initial `PENDING` fence and the final `COMPLETE`/`ERROR` fence.
 - JS parses YAML (via `js-yaml`) to extract attributes for rendering. It never constructs YAML strings.
 - The TipTap markdown serialiser uses a `rawYaml` attribute (stored verbatim from the original fence) and replays it unchanged:
+- UI Needs to SAVE current buffer before allowing backend to update and insert place holder - or buffer only changes will be lost.
 
 ```js
 serialize: function (state, node) {
