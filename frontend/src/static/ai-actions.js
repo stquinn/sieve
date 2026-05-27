@@ -3,6 +3,16 @@
 (function() {
   window.__sieveActiveJobs = 0;
 
+  function updateStatusBar() {
+    var sbLeft = document.querySelector('.status-bar__left');
+    if (!sbLeft) return;
+    if (window.__sieveActiveJobs > 0) {
+      sbLeft.innerHTML = '<span class="flex items-center gap-1.5"><span class="w-[10px] h-[10px] shrink-0 rounded-full border-[1.5px] border-solid border-tn-cyan border-t-transparent animate-spin"></span> Evaluating (' + window.__sieveActiveJobs + ')</span>';
+    } else {
+      sbLeft.innerHTML = '';
+    }
+  }
+
   function setEvaluating(id, isEval) {
     var tab = document.querySelector('.group[data-tab-id="' + id + '"]');
     if (tab) {
@@ -24,14 +34,7 @@
         else metaSpinner.classList.add('hidden');
       }
     }
-    var sbLeft = document.querySelector('.status-bar__left');
-    if (sbLeft) {
-      if (window.__sieveActiveJobs > 0) {
-        sbLeft.innerHTML = '<span class="flex items-center gap-1.5"><span class="w-[10px] h-[10px] shrink-0 rounded-full border-[1.5px] border-solid border-tn-cyan border-t-transparent animate-spin"></span> Evaluating (' + window.__sieveActiveJobs + ')</span>';
-      } else {
-        sbLeft.innerHTML = '';
-      }
-    }
+    updateStatusBar();
   }
 
   function saveAndPost(url, id) {
@@ -53,6 +56,12 @@
   }
 
   window.SieveAI = {
+    // trackJob: called by editor.js for ask/explain/web-clip jobs that don't go through
+    // saveAndPost. delta is +1 when a job starts and -1 when it completes or errors.
+    trackJob: function(delta) {
+      window.__sieveActiveJobs = Math.max(0, (window.__sieveActiveJobs || 0) + delta);
+      updateStatusBar();
+    },
     smartFile:        function(id) { saveAndPost('/api/ai/smartFile/', id); },
     smartMetadata:    function(id) { saveAndPost('/api/ai/smartMetadata/', id); },
     keepAndSmartFile: function(id) { saveAndPost('/api/ai/keepAndFile/', id); }

@@ -25,6 +25,10 @@
   // Also updated optimistically when a job is started or the SSE completion fires.
   window.__sieveActiveWebClips = window.__sieveActiveWebClips || new Set()
 
+  // Track blkIds of in-flight ask/explain jobs started in this session so the status bar
+  // counter stays balanced (we only decrement for jobs we incremented).
+  var pendingAiBlkIds = new Set()
+
   // ── Public entry point called from App.tsx htmx:afterSettle ─────────────────
 
   function initEditor(mountEl, uuid, mode) {
@@ -421,6 +425,7 @@
     }).then(function (resp) {
       if (!resp || !resp.id) return
       window.__sieveActiveWebClips.add(resp.id)
+      window.SieveAI && window.SieveAI.trackJob(1)
       // Go has already appended the PENDING block to the document on disk.
       // Insert it into the live editor from Go's canonical fence text.
       if (currentMode === 'markdown' && currentMarkdownTextarea) {
@@ -586,7 +591,13 @@
     var raw = e.detail && e.detail.data != null ? e.detail.data : (typeof e.detail === 'string' ? e.detail : null)
     if (!raw) return
     var data; try { data = JSON.parse(raw) } catch (_) { return }
-    if (!data || data.uuid !== currentUuid) return
+    if (!data) return
+    // Decrement status bar counter for jobs started in this session.
+    if (data.blkId && pendingAiBlkIds.has(data.blkId)) {
+      pendingAiBlkIds.delete(data.blkId)
+      window.SieveAI && window.SieveAI.trackJob(-1)
+    }
+    if (data.uuid !== currentUuid) return
 
     // Patch the TipTap node in-place when the SSE carries full block attrs.
     if (data.blkId && data.status && currentEditor) {
@@ -632,7 +643,10 @@
     if (!data) return
     // Remove from active-jobs set regardless of which tab is currently open —
     // the job is done and should never render as "still running".
-    if (data.blkId) window.__sieveActiveWebClips.delete(data.blkId)
+    if (data.blkId && window.__sieveActiveWebClips.has(data.blkId)) {
+      window.__sieveActiveWebClips.delete(data.blkId)
+      window.SieveAI && window.SieveAI.trackJob(-1)
+    }
     if (data.uuid !== currentUuid) return
     // web-clip uses rawYaml passthrough — in-place patch can't update rawYaml correctly.
     // Go has already written the canonical YAML to disk; reload from there.
@@ -808,6 +822,9 @@
       body:          body,
     }
 
+    pendingAiBlkIds.add(blkId)
+    window.SieveAI && window.SieveAI.trackJob(1)
+
     fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -818,6 +835,11 @@
       if (!aiReloadInProgress) softReloadContent(currentUuid)
     }).catch(function (err) {
       console.error('[editor] AI error', err)
+      // HTTP-level failure — SSE will never fire, so decrement here.
+      if (pendingAiBlkIds.has(blkId)) {
+        pendingAiBlkIds.delete(blkId)
+        window.SieveAI && window.SieveAI.trackJob(-1)
+      }
       if (currentEditor) {
         currentEditor.commands.command(function (props) {
           var tr = props.tr
@@ -1427,6 +1449,9 @@
       body:          body,
     }
 
+    pendingAiBlkIds.add(blkId)
+    window.SieveAI && window.SieveAI.trackJob(1)
+
     fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1437,6 +1462,10 @@
       if (!aiReloadInProgress) softReloadContent(currentUuid)
     }).catch(function (err) {
       console.error('[editor] AI retry error', err)
+      if (pendingAiBlkIds.has(blkId)) {
+        pendingAiBlkIds.delete(blkId)
+        window.SieveAI && window.SieveAI.trackJob(-1)
+      }
       if (currentEditor) {
         currentEditor.commands.command(function (props) {
           var tr = props.tr
@@ -1481,6 +1510,7 @@
     var body = currentEditor.storage.markdown.getMarkdown() || ''
 
     window.__sieveActiveWebClips.add(blkId)
+    window.SieveAI && window.SieveAI.trackJob(1)
     fetch('/api/internalize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1494,10 +1524,12 @@
     }).then(function (r) {
       if (!r.ok) {
         window.__sieveActiveWebClips.delete(blkId)
+        window.SieveAI && window.SieveAI.trackJob(-1)
         console.error('[editor] webclip retry failed: ' + r.status)
       }
     }).catch(function (err) {
       window.__sieveActiveWebClips.delete(blkId)
+      window.SieveAI && window.SieveAI.trackJob(-1)
       console.error('[editor] webclip retry error', err)
     })
   })
