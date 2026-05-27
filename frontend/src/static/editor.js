@@ -425,7 +425,8 @@
     }).then(function (resp) {
       if (!resp || !resp.id) return
       window.__sieveActiveWebClips.add(resp.id)
-      window.SieveAI && window.SieveAI.trackJob(1)
+      var wcLabel = (mode === 'summarise' ? 'Summarising ' : 'Fetching ') + extractDomain(source)
+      window.SieveAI && window.SieveAI.trackJob(1, resp.id, wcLabel)
       // Go has already appended the PENDING block to the document on disk.
       // Insert it into the live editor from Go's canonical fence text.
       if (currentMode === 'markdown' && currentMarkdownTextarea) {
@@ -595,7 +596,7 @@
     // Decrement status bar counter for jobs started in this session.
     if (data.blkId && pendingAiBlkIds.has(data.blkId)) {
       pendingAiBlkIds.delete(data.blkId)
-      window.SieveAI && window.SieveAI.trackJob(-1)
+      window.SieveAI && window.SieveAI.trackJob(-1, data.blkId)
     }
     if (data.uuid !== currentUuid) return
 
@@ -645,7 +646,7 @@
     // the job is done and should never render as "still running".
     if (data.blkId && window.__sieveActiveWebClips.has(data.blkId)) {
       window.__sieveActiveWebClips.delete(data.blkId)
-      window.SieveAI && window.SieveAI.trackJob(-1)
+      window.SieveAI && window.SieveAI.trackJob(-1, data.blkId)
     }
     if (data.uuid !== currentUuid) return
     // web-clip uses rawYaml passthrough — in-place patch can't update rawYaml correctly.
@@ -823,7 +824,7 @@
     }
 
     pendingAiBlkIds.add(blkId)
-    window.SieveAI && window.SieveAI.trackJob(1)
+    window.SieveAI && window.SieveAI.trackJob(1, blkId, type === 'explain' ? 'Explaining...' : 'Asking AI...')
 
     fetch(endpoint, {
       method: 'POST',
@@ -838,7 +839,7 @@
       // HTTP-level failure — SSE will never fire, so decrement here.
       if (pendingAiBlkIds.has(blkId)) {
         pendingAiBlkIds.delete(blkId)
-        window.SieveAI && window.SieveAI.trackJob(-1)
+        window.SieveAI && window.SieveAI.trackJob(-1, blkId)
       }
       if (currentEditor) {
         currentEditor.commands.command(function (props) {
@@ -1450,7 +1451,7 @@
     }
 
     pendingAiBlkIds.add(blkId)
-    window.SieveAI && window.SieveAI.trackJob(1)
+    window.SieveAI && window.SieveAI.trackJob(1, blkId, type === 'explain' ? 'Explaining...' : 'Asking AI...')
 
     fetch(endpoint, {
       method: 'POST',
@@ -1464,7 +1465,7 @@
       console.error('[editor] AI retry error', err)
       if (pendingAiBlkIds.has(blkId)) {
         pendingAiBlkIds.delete(blkId)
-        window.SieveAI && window.SieveAI.trackJob(-1)
+        window.SieveAI && window.SieveAI.trackJob(-1, blkId)
       }
       if (currentEditor) {
         currentEditor.commands.command(function (props) {
@@ -1510,7 +1511,8 @@
     var body = currentEditor.storage.markdown.getMarkdown() || ''
 
     window.__sieveActiveWebClips.add(blkId)
-    window.SieveAI && window.SieveAI.trackJob(1)
+    var wcRetryLabel = (detail.mode === 'summarise' ? 'Summarising ' : 'Fetching ') + extractDomain(detail.source)
+    window.SieveAI && window.SieveAI.trackJob(1, blkId, wcRetryLabel)
     fetch('/api/internalize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1524,18 +1526,21 @@
     }).then(function (r) {
       if (!r.ok) {
         window.__sieveActiveWebClips.delete(blkId)
-        window.SieveAI && window.SieveAI.trackJob(-1)
+        window.SieveAI && window.SieveAI.trackJob(-1, blkId)
         console.error('[editor] webclip retry failed: ' + r.status)
       }
     }).catch(function (err) {
       window.__sieveActiveWebClips.delete(blkId)
-      window.SieveAI && window.SieveAI.trackJob(-1)
+      window.SieveAI && window.SieveAI.trackJob(-1, blkId)
       console.error('[editor] webclip retry error', err)
     })
   })
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
 
+  function extractDomain(url) {
+    try { return new URL(url).hostname } catch (_) { return url }
+  }
 
   function makeBtn(cls, text, onClick) {
     var btn = document.createElement('button')

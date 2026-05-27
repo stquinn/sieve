@@ -188,3 +188,32 @@ No JavaScript bridge, no `refreshTabBar()`, no `persistSession`.
 **Why acceptable now:** Rapidly unhooks React without breaking hardcoded triggers in legacy files (`tabbar.js`, `sidebar.js`), templates, or Wails native menus.
 
 **Retires in:** Post-migration cleanup pass (Phase 10). Each global wrapper will be retired by upgrading markup to direct HTMX properties.
+
+---
+
+## Phase 10 debt — Intelligent Fenced Blocks
+
+### X-C: AI Block violates Rule 1 — JS generates YAML, not Go
+**What:** The web-clip block established the correct pattern: Go generates the PENDING fence, returns it to JS as text, JS parses it and inserts into TipTap. The AI block pre-dates this pattern. `serializeAiBlockYaml()` in `ai-block-extension.js` generates YAML from TipTap attrs in JS, and `runAiJob` inserts a TipTap node directly (not from Go fence text). This means:
+- Go's `aiblock.SerializeYAML()` and JS's `serializeAiBlockYaml()` are parallel implementations that can drift
+- The PENDING block is never round-tripped through Go before hitting the document
+- The completion path uses in-place TipTap patch + `doSave` instead of Go-writes-disk → `softReloadContent`
+
+**Ideal fix:** Create `POST /api/ai/pending` (or extend `/api/ai/ask` to return the PENDING fence). JS receives fence text, parses it, inserts into TipTap. Completion path switches to `softReloadContent` (same as web-clip). JS's `serializeAiBlockYaml` can then be retired — Go owns the canonical form.
+
+**Why deferred:** AI block existed before the pattern was formalised. The current JS-serialiser approach is self-consistent (JS generates → JS saves) and has no known bugs. The fix is a significant refactor touching the ask/explain flow, the retry path, the SSE handler, and the Go handlers.
+
+**Risk if left:** YAML drift between Go and JS serialisers; AI block questions containing `:` or `#` could corrupt YAML on a future regression (partially mitigated by `yamlScalar()` now applied to the question field).
+
+**Retires in:** Next intelligent-blocks cleanup sprint.
+
+---
+
+### X-D: AI Block has no stale/active-job detection (Rule 7)
+**What:** Web-clip PENDING blocks distinguish "still running" from "genuinely timed out" via Go's `sync.Map` + `GET /api/internalize/active` + `window.__sieveActiveWebClips`. AI blocks have no equivalent — a PENDING ai-block after a page reload shows "thinking..." indefinitely until an SSE fires.
+
+**Why acceptable now:** AI blocks don't have a timeout threshold display (they don't show "interrupted"). The SSE will eventually fire if the Go goroutine is still alive. The UX impact is low: a reloaded-page user sees a spinning "thinking..." which resolves when the job completes.
+
+**Ideal fix:** Expose `GET /api/ai/active` alongside the existing internalize active-jobs endpoint. `initEditor` fetches both in parallel. Stale AI blocks (PENDING, no active job, older than timeout) could show a "timed out — retry" state like web-clips.
+
+**Retires in:** Next intelligent-blocks cleanup sprint (bundle with X-C).

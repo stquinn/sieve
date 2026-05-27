@@ -1,16 +1,27 @@
 // ai-actions.js — Category D: AI save-then-post operations + evaluating UI state.
 // Exposes window.SieveAI namespace; keeps window.__sieveActiveJobs counter for close-guard.
 (function() {
+  var activeJobLabels = {};  // jobId → display label
   window.__sieveActiveJobs = 0;
 
   function updateStatusBar() {
     var sbLeft = document.querySelector('.status-bar__left');
     if (!sbLeft) return;
-    if (window.__sieveActiveJobs > 0) {
-      sbLeft.innerHTML = '<span class="flex items-center gap-1.5"><span class="w-[10px] h-[10px] shrink-0 rounded-full border-[1.5px] border-solid border-tn-cyan border-t-transparent animate-spin"></span> Evaluating (' + window.__sieveActiveJobs + ')</span>';
-    } else {
-      sbLeft.innerHTML = '';
-    }
+    var ids = Object.keys(activeJobLabels);
+    if (ids.length === 0) { sbLeft.innerHTML = ''; return; }
+
+    var firstLabel = activeJobLabels[ids[0]];
+    var span = document.createElement('span');
+    span.className = 'flex items-center gap-1.5';
+    var spinner = document.createElement('span');
+    spinner.className = 'w-[10px] h-[10px] shrink-0 rounded-full border-[1.5px] border-solid border-tn-cyan border-t-transparent animate-spin';
+    var text = document.createElement('span');
+    var extra = ids.length > 1 ? ' +' + (ids.length - 1) + ' more' : '';
+    text.textContent = firstLabel + extra;
+    span.appendChild(spinner);
+    span.appendChild(text);
+    sbLeft.innerHTML = '';
+    sbLeft.appendChild(span);
   }
 
   function setEvaluating(id, isEval) {
@@ -37,7 +48,7 @@
     updateStatusBar();
   }
 
-  function saveAndPost(url, id) {
+  function saveAndPost(url, id, label) {
     var p = window._editorSave ? window._editorSave() : Promise.resolve();
     p.then(function() {
       if (!id) {
@@ -45,10 +56,12 @@
         if (mount) id = mount.getAttribute('data-uuid');
       }
       if (id) {
-        window.__sieveActiveJobs++;
+        activeJobLabels[id] = label || 'Filing note...';
+        window.__sieveActiveJobs = Object.keys(activeJobLabels).length;
         setEvaluating(id, true);
         fetch(url + id, { method: 'POST' }).finally(function() {
-          window.__sieveActiveJobs--;
+          delete activeJobLabels[id];
+          window.__sieveActiveJobs = Object.keys(activeJobLabels).length;
           setEvaluating(id, false);
         });
       }
@@ -56,14 +69,20 @@
   }
 
   window.SieveAI = {
-    // trackJob: called by editor.js for ask/explain/web-clip jobs that don't go through
-    // saveAndPost. delta is +1 when a job starts and -1 when it completes or errors.
-    trackJob: function(delta) {
-      window.__sieveActiveJobs = Math.max(0, (window.__sieveActiveJobs || 0) + delta);
+    // trackJob: called by editor.js for ask/explain/web-clip jobs.
+    // delta: +1 to register a job, -1 to remove it.
+    // id: stable key for the job (blkId). label: human-readable status text.
+    trackJob: function(delta, id, label) {
+      if (delta > 0 && id) {
+        activeJobLabels[id] = label || 'Working...';
+      } else if (id) {
+        delete activeJobLabels[id];
+      }
+      window.__sieveActiveJobs = Object.keys(activeJobLabels).length;
       updateStatusBar();
     },
-    smartFile:        function(id) { saveAndPost('/api/ai/smartFile/', id); },
-    smartMetadata:    function(id) { saveAndPost('/api/ai/smartMetadata/', id); },
-    keepAndSmartFile: function(id) { saveAndPost('/api/ai/keepAndFile/', id); }
+    smartFile:        function(id) { saveAndPost('/api/ai/smartFile/',    id, 'Filing note...'); },
+    smartMetadata:    function(id) { saveAndPost('/api/ai/smartMetadata/', id, 'Updating metadata...'); },
+    keepAndSmartFile: function(id) { saveAndPost('/api/ai/keepAndFile/',  id, 'Filing note...'); }
   };
 })();

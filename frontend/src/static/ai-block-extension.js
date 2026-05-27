@@ -31,6 +31,16 @@
   // serializeAiBlockYaml is used by both the markdown serializer and context-menu.js
   T.serializeAiBlockYaml = serializeAiBlockYaml
 
+  // ── yamlScalar ──────────────────────────────────────────────────────────────
+
+  // Quote a flow scalar if it contains YAML-special characters. Mirrors Go's yamlScalar().
+  function yamlScalar(s) {
+    if (!s) return s
+    var needsQuote = /[:#{}[\]|>&*!,]/.test(s) || s[0] === ' ' || s[s.length - 1] === ' '
+    if (!needsQuote) return s
+    return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'
+  }
+
   // ── serializeAiBlockYaml ────────────────────────────────────────────────────
 
   function serializeAiBlockYaml(attrs) {
@@ -39,16 +49,18 @@
     lines.push('ref: ' + (attrs.ref || 'doc'))
     lines.push('status: ' + (attrs.status || 'PENDING'))
     if (attrs.type) lines.push('type: ' + attrs.type)
-    if (attrs.model) lines.push('model: ' + attrs.model)
-    if (attrs.createdAt) lines.push('createdAt: ' + attrs.createdAt)
-    if (attrs.completedAt) lines.push('completedAt: ' + attrs.completedAt)
+    if (attrs.model) lines.push('model: ' + yamlScalar(attrs.model))
+    if (attrs.createdAt) lines.push('createdAt: ' + yamlScalar(attrs.createdAt))
+    if (attrs.completedAt) lines.push('completedAt: ' + yamlScalar(attrs.completedAt))
 
     var q = attrs.question || ''
     if (q.includes('\n')) {
+      // Block scalar — 4-space indent so inner ``` lines can't close the outer fence
       lines.push('question: |')
-      q.split('\n').forEach(function (l) { lines.push('  ' + l) })
+      q.split('\n').forEach(function (l) { lines.push('    ' + l) })
     } else if (q) {
-      lines.push('question: ' + q)
+      // Flow scalar — quote if it contains YAML-special characters
+      lines.push('question: ' + yamlScalar(q))
     }
 
     var r = attrs.response || ''
