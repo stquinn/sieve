@@ -1,5 +1,7 @@
 # AI Job Lifecycle via Go SSE Implementation Plan
 
+## PLAN NEEDS UPDATING BASED ON CHANGES INTRODUCED IN @2026-05-27-ai-block-refactor.md
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace JS-side `trackJob()` call sites with Go-broadcast `ai:job-started` / `ai:job-ended` SSE events, making Go the single source of truth for AI job lifecycle and eliminating ~11 JS call sites that manually track status bar state.
