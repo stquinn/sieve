@@ -36,6 +36,7 @@ type internalizeRequest struct {
 	UUID   string `json:"uuid"`
 	Source string `json:"source"`
 	Mode   string `json:"mode"`
+	ID     string `json:"id"` // optional: reuse existing block ID (retry path)
 }
 
 type internalizeResponse struct {
@@ -58,36 +59,46 @@ func (h *InternalizeHandler) handleInternalize(w http.ResponseWriter, r *http.Re
 		req.Mode = "fetch"
 	}
 
-	// Generate the PENDING block. Go owns all YAML generation.
-	blkID := fmt.Sprintf("wc-%s", randomHex(6))
-	pending := webclip.WebClipData{
-		ID:        blkID,
-		Source:    req.Source,
-		Mode:      req.Mode,
-		Status:    "PENDING",
-		CreatedAt: time.Now().Format(time.RFC3339),
-	}
-	pendingYAML := webclip.SerializeYAML(pending)
-	fence := "```web-clip\n" + pendingYAML + "\n```"
+	var blkID, fence, docContent string
 
-	// Load current body (docContent for Summarise), append PENDING block, save.
-	var docContent string
-	for attempt := 0; attempt < 3; attempt++ {
-		doc, err := h.ServiceProvider.Documents.LoadByUUID(req.UUID)
-		if err != nil {
-			logger.Error("handleInternalize: load failed", "err", err)
+	if req.ID != "" {
+		// Retry path: reuse the caller-supplied ID. The block already exists in
+		// the document; just restart the background job without appending a duplicate.
+		blkID = req.ID
+		// Load docContent for the summarise prompt (same as new-block path).
+		if doc, err := h.ServiceProvider.Documents.LoadByUUID(req.UUID); err == nil {
+			docContent = string(doc.Body())
+		}
+	} else {
+		// New block: generate a short ID (wc-XXXX, 4 hex chars) and append PENDING fence.
+		blkID = fmt.Sprintf("wc-%s", randomHex(2))
+		pending := webclip.WebClipData{
+			ID:        blkID,
+			Source:    req.Source,
+			Mode:      req.Mode,
+			Status:    "PENDING",
+			CreatedAt: time.Now().Format(time.RFC3339),
+		}
+		pendingYAML := webclip.SerializeYAML(pending)
+		fence = "```web-clip\n" + pendingYAML + "\n```"
+
+		for attempt := 0; attempt < 3; attempt++ {
+			doc, err := h.ServiceProvider.Documents.LoadByUUID(req.UUID)
+			if err != nil {
+				logger.Error("handleInternalize: load failed", "err", err)
+				break
+			}
+			docContent = string(doc.Body())
+			newBody := strings.TrimRight(docContent, "\n") + "\n\n" + fence + "\n"
+			doc.SetBody([]byte(newBody))
+			if _, err := h.ServiceProvider.Documents.Save(doc); err != nil {
+				if errors.Is(err, store.ErrStaleStorable) {
+					continue
+				}
+				logger.Error("handleInternalize: save failed", "err", err)
+			}
 			break
 		}
-		docContent = string(doc.Body())
-		newBody := strings.TrimRight(docContent, "\n") + "\n\n" + fence + "\n"
-		doc.SetBody([]byte(newBody))
-		if _, err := h.ServiceProvider.Documents.Save(doc); err != nil {
-			if errors.Is(err, store.ErrStaleStorable) {
-				continue
-			}
-			logger.Error("handleInternalize: save failed", "err", err)
-		}
-		break
 	}
 
 	w.Header().Set("Content-Type", "application/json")

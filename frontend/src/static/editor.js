@@ -619,36 +619,8 @@
     if (!raw) return
     var data; try { data = JSON.parse(raw) } catch (_) { return }
     if (!data || data.uuid !== currentUuid) return
-
-    if (data.blkId && data.status && currentEditor) {
-      var patched = false
-      currentEditor.commands.command(function (props) {
-        var tr = props.tr
-        props.state.doc.descendants(function (node, pos) {
-          if (node.type.name === 'webClip' && node.attrs.id === data.blkId) {
-            var newAttrs = Object.assign({}, node.attrs, { status: data.status })
-            if (data.title)       newAttrs.title = data.title
-            if (data.content)     newAttrs.content = data.content
-            if (data.model)       newAttrs.model = data.model
-            if (data.completedAt) newAttrs.completedAt = data.completedAt
-            if (data.error)       newAttrs.error = data.error
-            tr.setNodeMarkup(pos, null, newAttrs)
-            patched = true
-            return false
-          }
-        })
-        return patched
-      })
-
-      if (patched) {
-        var completeMd = currentEditor.storage.markdown.getMarkdown() || ''
-        lastSyncedBody = completeMd
-        if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
-        doSave(currentUuid, completeMd)
-        return
-      }
-    }
-
+    // web-clip uses rawYaml passthrough — in-place patch can't update rawYaml correctly.
+    // Go has already written the canonical YAML to disk; reload from there.
     softReloadContent(currentUuid)
   })
 
