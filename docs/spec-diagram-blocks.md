@@ -1,73 +1,146 @@
-# Specification: Diagram Blocks (Mermaid)
+# Specification: Diagram Blocks (Mermaid Renderer)
 
-## 1. Overview
-The "Diagram Blocks" feature enables users to create and preview architectural diagrams, flowcharts, and sequences directly within the Stash editor using **Mermaid.js**. These blocks function as "smart" code blocks that can toggle between a textual definition and a rendered visual representation.
+> This spec describes the mermaid renderer within the `code` fenced block infrastructure.
+> Read `architecture-block-model.md` and `spec-code-blocks.md` first.
 
-## 2. User Experience
+---
 
-### 2.1 Creation & Syntax
-Users define a diagram using standard Markdown fenced code blocks with the `mermaid` language identifier:
+## What a Diagram Block Is
 
-```mermaid
-graph TD;
-    A-->B;
-    A-->C;
-    B-->D;
-    C-->D;
+A diagram block is a `code` fenced block whose detected language is `mermaid` and whose `mode` is `RENDER`. There is no separate block type — the diagram capability activates when the `code` block's renderer registry finds a match for `language: mermaid`.
+
+````markdown
+```code
+id: cb-a3f9
+language: mermaid
+mode: RENDER
+status: COMPLETE
+source: |
+    graph TD
+        A-->B
+        A-->C
+        B-->D
+```
+````
+
+In `CODE` mode it is a syntax-highlighted code block. In `RENDER` mode it is an SVG diagram. The user toggles between them explicitly.
+
+---
+
+## How a Diagram Block Comes to Exist
+
+### Path 1 — Paste
+
+User pastes a bare ` ```mermaid ... ``` ` block. The paste handler in `editor.js` detects the fence, sends it to `POST /api/code/create` with `hint: mermaid`. Go recognises `mermaid` as a known language, skips the AI detection step, and writes the `code` YAML with `language: mermaid`, `status: COMPLETE`, `mode: CODE` directly. Soft reload. Mode toggle appears immediately.
+
+### Path 2 — AI Detection
+
+User pastes an unrecognised code fence. Go writes a PENDING block, starts `runDetect`. AI returns `language: mermaid`. Go updates the YAML, broadcasts `code:block-resolved`. Soft reload. Mode toggle appears.
+
+### Path 3 — AI Ask Promotion (Type Migration)
+
+User asks AI "draw a deployment diagram for X". AI Ask response contains mermaid source. User right-clicks the AI block → "Promote to Diagram". Go reads the AI block's `response` field, writes a new `code` block with `language: mermaid`, `source: <response>`, `mode: RENDER`. The diagram renders immediately. The original AI Ask block is removed or retained — user choice.
+
+This works because AI Ask and Code are the same underlying shape. Type migration is a field remap, not a structural change. See `architecture-block-model.md`.
+
+---
+
+## Mermaid Renderer Registration
+
+```js
+// In code-block-extension.js
+const codeRenderers = {
+  mermaid: {
+    modes: ['CODE', 'RENDER'],
+    render: renderMermaid,
+  }
+}
 ```
 
-### 2.2 Mode-Driven Interaction
-Diagram blocks support two stable states: **View Mode** (rendered SVG) and **Edit Mode** (raw Markdown text). The transition between these states is **explicit**, driven by the `mode` attribute.
+`renderMermaid(attrs, container)` — loads mermaid lazily, calls `mermaid.render()`, injects SVG. On parse error: shows inline error, stays in `CODE` mode.
 
-- **View Mode (Default)**: The diagram is rendered as an SVG. In this mode, the diagram can be interacted with (e.g., right-click to copy image, zoom, or select text within the SVG) without accidentally triggering the text editor.
-- **Edit Mode**: The block displays the raw Mermaid markup with line numbers for editing.
+---
 
-### 2.3 Explicit Switching & Sizing
-To prevent "flickering" between views during normal navigation, switching modes requires an explicit gesture:
-- **`Ctrl + D`**: Toggles the active block between View and Edit modes.
-- **Edit Overlay**: Hovering over a rendered diagram reveals an "Edit" button (pencil icon) in the corner to switch to Edit Mode.
-- **Draggable Sizing**: In **View Mode**, the diagram container features a resize handle (bottom-right). Users can drag to resize the diagram, matching the behavior of Stash's image management.
-- **Done/Preview Button**: In Edit Mode, a "View" or "Done" button (check icon) appears to commit changes and render the diagram.
-- **Note on Focus**: Simply clicking or focusing the block does **not** switch it to Edit Mode if it is currently in View Mode.
+## Mermaid.js Vendoring
 
-## 3. State Persistence (Mode & Size Awareness)
+Add `mermaid.min.js` to `frontend/src/static/vendor/`. Note: ~2 MB minified — confirm acceptable before pulling in. Must be vendored (Wails WebView has no guaranteed internet access).
 
-To respect user intent, the block remembers its display mode and dimensions if explicitly changed.
+Load lazily on first `RENDER` request:
 
-- **Storage Format**: display mode and dimensions are stored as attributes in the fenced code block's info string, following the pattern established by `CodeBlockWithAttrs`.
-    - ` ```mermaid mode="view" width="600" height="400" `
-- **Serialization Logic**:
-    - When the user toggles the mode or resizes the diagram, the `mode`, `width`, and `height` attributes are updated on the ProseMirror node.
-    - Upon saving, the Markdown serializer writes these attributes into the "fence" info line.
-    - Omitted attributes default to "auto" or "view" on next load.
+```js
+function ensureMermaid() {
+  if (window.mermaid) return Promise.resolve()
+  return new Promise(function(resolve, reject) {
+    var s = document.createElement('script')
+    s.src = '/static/vendor/mermaid.min.js'
+    s.onload = resolve; s.onerror = reject
+    document.head.appendChild(s)
+  })
+}
+```
 
-## 4. Technical Architecture
+---
 
-### 4.1 Frontend (React / Tiptap)
-- **Extension**: `DiagramBlock` (extending `CodeBlockLowlight`).
-- **Parsing**: The `markdown-it` parser must be configured to recognize the `mode` attribute in the info string and map it to a node attribute.
-- **NodeView**: A custom React NodeView (`DiagramNodeView.tsx`):
-    - **Interpreter**: Reads the `mode`, `width`, and `height` attributes from the node.
-    - **Conditional Render**:
-        - If `mode === 'edit'`, it renders a `<NodeViewContent as="code" />` for standard text editing.
-        - If `mode === 'view'` (or missing), it renders a stylized container with the Mermaid SVG output.
-    - **Sizing**: The container is constrained by the `width` and `height` attributes. If they are provided, the container uses those fixed dimensions; otherwise, it defaults to responsive width.
-    - **Interactive Resize**: Adds a drag-to-resize listener that updates the node attributes in real-time.
-    - Loads the `mermaid` library dynamically (to keep the initial bundle small).
-    - Uses `mermaid.render()` to generate SVGs from the Markdown content.
-    - Wraps the raw text in a `<NodeViewContent />` for Editing and a stylized `div` for View mode.
+## Theme Integration
 
-### 4.2 Themes & Aesthetics
-- **Theme Variables**: The Mermaid renderer will be initialized with theme variables derived from Stash's current CSS theme (e.g., Mariana, Dark, Light).
-- **Styling**: Diagrams will be center-aligned and limited to the editor's width, with a subtle border/background in View mode to distinguish them from standard text.
+Initialise with Sieve CSS custom properties. Re-initialise on `settings:changed`.
 
-## 5. Implementation Roadmap
-1.  **Phase 1**: Implement the `DiagramBlock` extension and basic NodeView toggle logic.
-2.  **Phase 2**: Integrate `mermaid-js` and implement the SVG rendering pipeline.
-3.  **Phase 3**: Add `Ctrl + D` shortcut and state persistence (attribute round-tripping).
-4.  **Phase 4**: Polish theme integration and CSS variables mapping.
+```js
+function buildMermaidTheme() {
+  var s = getComputedStyle(document.documentElement)
+  return {
+    theme: 'base',
+    themeVariables: {
+      background:        s.getPropertyValue('--theme-bg').trim(),
+      primaryColor:      s.getPropertyValue('--theme-bgAlt').trim(),
+      primaryTextColor:  s.getPropertyValue('--theme-text').trim(),
+      lineColor:         s.getPropertyValue('--theme-muted').trim(),
+      edgeLabelBackground: s.getPropertyValue('--theme-bg').trim(),
+    }
+  }
+}
+```
 
-## 6. Edge Cases
-- **Invalid Syntax**: If Mermaid fails to parse the text, the block should display a helpful error message and automatically switch back to (or stay in) Edit Mode.
-- **Large Diagrams**: Implement a "scrollable" container or a "zoom-on-click" for extremely large diagrams to prevent layout breakage.
-- **Static Export**: Ensure that if the Markdown is exported or viewed in a non-Stash tool, it remains a standard, readable fenced code block.
+---
+
+## Mode Toggle UX
+
+| Gesture | Effect |
+|---------|--------|
+| `Ctrl+R` on selected block | Toggle `CODE` ↔ `RENDER` |
+| Hover rendered diagram → pencil button | Switch to `CODE` |
+| ✓ button in `CODE` mode | Switch to `RENDER` |
+
+Mode toggle is immediate — `updateAttributes({ mode })` triggers NodeView re-render. Persisted on next autosave. No Go roundtrip.
+
+---
+
+## Resize (RENDER mode)
+
+Drag handle in bottom-right corner updates `width` and `height` attrs on `mouseup`. Persisted on next autosave. Omitted attrs default to full editor width at auto height.
+
+---
+
+## Edge Cases
+
+- **Invalid syntax** — `mermaid.render()` rejects → show inline error, remain in `CODE` mode
+- **Mermaid not yet loaded** — show brief loading state before SVG appears
+- **External Markdown viewers** — degrades to a `code` fenced block with YAML; source is readable; many renderers (GitHub, Obsidian) render `mermaid` natively if the fence tag were `mermaid` — accept this trade-off for now
+
+---
+
+## Future: PlantUML
+
+PlantUML would be a second renderer registration:
+
+```js
+codeRenderers.plantuml = {
+  modes: ['CODE', 'SERVER'],
+  serverAttr: 'server',           // reads attrs.server for the render endpoint
+  render: renderPlantUML,
+}
+```
+
+Go sets `server: <configured-url>` in the YAML when resolving a PlantUML block. The renderer encodes the source and requests the SVG from the server URL. Configurable via settings.
+
+No changes to the `code` block infrastructure required — it is a renderer registration.
