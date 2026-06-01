@@ -1,5 +1,8 @@
 // web-clip-extension.js — fenced YAML web-clip block (machine artefact, Category 3).
 // Depends on window.TipTap and window.jsyaml.
+
+import { esc, renderMarkdown, applyHighlighting, isStaleByTime } from './fenced-block-base.js'
+
 ;(function () {
   'use strict'
 
@@ -14,9 +17,7 @@
   }
 
   function isStale(createdAt) {
-    if (!createdAt) return true
-    var thresholdMs = (window.__sieveCliTimeoutLong || 60) * 1000 + 30000
-    return Date.now() - new Date(createdAt).getTime() > thresholdMs
+    return isStaleByTime(createdAt)
   }
 
   // Quote a scalar value if it contains YAML-special characters. Mirrors Go's yamlScalar().
@@ -89,16 +90,6 @@
       }))
     })
 
-    function renderMarkdown(text) {
-      try {
-        var md = editor && editor.storage && editor.storage.markdown
-        if (md && md.parser && md.parser.md) return md.parser.md.render(text.trim())
-      } catch (e) {}
-      var div = document.createElement('div')
-      div.textContent = text
-      return div.innerHTML
-    }
-
     function makeRetryBtn(blkId, source, mode) {
       var btn = document.createElement('button')
       btn.className = 'web-clip-block__retry'
@@ -158,7 +149,8 @@
         if (attrs.content) {
           var contentEl = document.createElement('div')
           contentEl.className = 'web-clip-block__content'
-          contentEl.innerHTML = renderMarkdown(attrs.content)
+          contentEl.innerHTML = renderMarkdown(attrs.content, editor)
+          applyHighlighting(contentEl)
           dom.appendChild(contentEl)
         }
 
@@ -284,10 +276,6 @@
       }
     },
   })
-
-  function esc(str) {
-    return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  }
 
   // The parseHTML() expects data-* attributes because the fence hook produces raw HTML.
   // Override addAttributes to also parse from data-* HTML attributes:

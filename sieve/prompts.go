@@ -267,13 +267,13 @@ Code:
 `
 
 const DefaultWebClipFetchPrompt = `Please retrieve the content at the following URL and return it as clean, well-structured markdown. Preserve all meaningful content including headings, lists, tables, and code blocks.
-Lease ensure to grab any relevant images and include those as well.
+Please ensure to grab any relevant images and include those as well.
 Do not summarise - preserve content as is.  Your job is to simply retrieve the document and translate to markdown as per the instructions above.
 URL: {source}
 `
 
 const DefaultWebClipSummarisePrompt = `Please retrieve the content at the following URL and return a concise markdown summary targeted to the context of the document below. Focus on aspects of the retrieved content that are most relevant to what is already in the document. Omit navigation, boilerplate, author bios, and related links.
-
+Please ensure to grab any important and informative images and include those as well.
 URL: {source}
 
 Current document context:

@@ -2,6 +2,8 @@
 // Depends on window.TipTap (vendor/tiptap.js) and window.jsyaml (vendor/js-yaml.js).
 // Attaches AiBlock, AiShortcuts to window.TipTap.
 
+import { esc, renderMarkdown, applyHighlighting, isStaleByTime } from './fenced-block-base.js'
+
 ; (function () {
   'use strict'
 
@@ -31,17 +33,9 @@
   // ── isStale ──────────────────────────────────────────────────────────────────
 
   function isStale(createdAt, id) {
-    if (!createdAt) return true
     // Server confirmed this job is still running — never render as stale.
     if (id && window.__sieveActiveAiBlocks && window.__sieveActiveAiBlocks.has(id)) return false
-    var thresholdMs = (window.__sieveCliTimeoutLong || 60) * 1000 + 30000
-    return Date.now() - new Date(createdAt).getTime() > thresholdMs
-  }
-
-  // ── esc ──────────────────────────────────────────────────────────────────────
-
-  function esc(str) {
-    return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    return isStaleByTime(createdAt)
   }
 
   // serializeAiBlockYaml is kept for context-menu.js display use; no longer used for persistence.
@@ -139,18 +133,6 @@
     dom.addEventListener('focus', function () { applyChain('add') })
     dom.addEventListener('blur', function () { applyChain('remove') })
 
-    function renderMarkdown(text) {
-      try {
-        var md = editor && editor.storage && editor.storage.markdown
-        if (md && md.parser && md.parser.md) {
-          return md.parser.md.render(text.trim())
-        }
-      } catch (e) { /* fall through */ }
-      var div = document.createElement('div')
-      div.textContent = text
-      return div.innerHTML
-    }
-
     function renderQuestion(q, type) {
       if (!q) return
       var qEl = document.createElement('div')
@@ -197,7 +179,8 @@
         if (n.attrs.response) {
           var responseEl = document.createElement('div')
           responseEl.className = 'ai-block__response'
-          responseEl.innerHTML = renderMarkdown(n.attrs.response)
+          responseEl.innerHTML = renderMarkdown(n.attrs.response, editor)
+          applyHighlighting(responseEl)
           contentEl.appendChild(responseEl)
         }
       } else {

@@ -824,8 +824,8 @@ div.node-image.ProseMirror-selectednode {
   display: none;
 }
 
-/* Inline code inside AI blocks */
-.ai-block code {
+/* Inline code inside AI blocks (excludes block code inside <pre>) */
+.ai-block :not(pre) > code {
   background: color-mix(in srgb, var(--theme-accentPrimary) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--theme-accentPrimary) 20%, transparent);
   border-radius: 3px;
@@ -926,6 +926,61 @@ div.node-image.ProseMirror-selectednode {
 .web-clip-block__content li { margin-bottom: 0.2em; }
 .web-clip-block__content strong { color: var(--theme-text); }
 .web-clip-block__content img { max-width: 100%; height: auto; display: block; }
+
+/* ── Shared fenced-block rendered content ────────────────────────────── */
+/* applyHighlighting() in fenced-block-base.js wraps each pre>code block  */
+/* in a .sieve-code-block div with a line-number gutter, matching the     */
+/* TipTap .code-block appearance. All colours from the theme.             */
+/* Future blocks: call applyHighlighting(contentEl) after setting innerHTML */
+
+.sieve-code-block {
+  display: flex;
+  background: var(--theme-bgDark);
+  border: 1px solid var(--theme-border);
+  border-radius: 4px;
+  margin: 0.5em 0;
+  overflow: hidden;
+  font-family: var(--theme-monoFont);
+  font-size: 0.85em;
+  line-height: 1.6;
+}
+
+.sieve-code-block__gutter {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: 0.85em 0.4em;
+  background: var(--theme-bgDark);
+  border-right: 1px solid var(--theme-gutterLineColor);
+  color: var(--theme-lineNumberColor);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.sieve-code-block__gutter span {
+  display: block;
+  line-height: 1.6;
+}
+
+.sieve-code-block pre {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  background: transparent;
+  border: none;
+  overflow-x: auto;
+}
+
+.sieve-code-block pre code {
+  display: block;
+  padding: 0.85em 1.1em;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: inherit;
+  font-size: inherit;
+  white-space: pre;
+}
 
 .web-clip-block__label {
   font-size: 12px;

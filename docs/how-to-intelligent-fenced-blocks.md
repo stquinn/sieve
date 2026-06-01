@@ -160,66 +160,45 @@ if req.ID != "" {
 
 ---
 
-## Rule 7 — Active Job Tracking for Stale-vs-Running Detection
+## Rule 7 — Active Job Tracking via Shared JobTracker + SSE
 
-**The problem:** When the user switches notes and returns, TipTap reloads the document from disk. A `PENDING` block evaluates `isStale(createdAt)` against the current time. If the job has been running for longer than the timeout window, it shows "interrupted" — even though the job is still running in the background.
+**The problem:** When the user switches notes and returns, TipTap reloads the document from disk. A `PENDING` block evaluates `isStale(createdAt)` against the current time. If the job has been running longer than the timeout window it shows "interrupted" — even though the job is still in flight.
 
-**The solution — two layers:**
+**The solution — shared `JobTracker` + SSE lifecycle events:**
 
-**Go-side (server of truth):**
+**Go-side:** All handlers share a single `*requesthandlers.JobTracker` (constructed in `handlers.go` and injected). Emit lifecycle SSE events at job boundaries:
 
 ```go
-type InternalizeHandler struct {
-    activeJobs sync.Map  // blkID → struct{}
-}
-
-func (h *InternalizeHandler) runInBackground(uuid, id, ...) {
-    h.activeJobs.Store(id, struct{}{})
-    defer h.activeJobs.Delete(id)
-    // ... do the work ...
-}
-
-// GET /api/internalize/active → {"active": ["wc-a3f9", ...]}
-func (h *InternalizeHandler) handleActiveJobs(w http.ResponseWriter, r *http.Request) {
-    var ids []string
-    h.activeJobs.Range(func(key, _ any) bool {
-        ids = append(ids, key.(string)); return true
-    })
-    json.NewEncoder(w).Encode(map[string][]string{"active": ids})
-}
+// handlers.go — one tracker shared across all handlers
+jobTracker := requesthandlers.NewJobTracker()
+// ...
+AiHandler{JobTracker: jobTracker, ...}
+InternalizeHandler{JobTracker: jobTracker, ...}
 ```
 
-**JS-side (zero flicker on note switch):** `initEditor` fetches the active list in parallel with the note content, populating `window.__sieveActiveWebClips` before TipTap renders a single node:
+```go
+// In any handler's background goroutine:
+h.JobTracker.Start(JobInfo{JobID: blkID, Label: "Fetching example.com", DocID: uuid, SpinTab: true})
+defer h.JobTracker.End(blkID)
 
-```js
-Promise.all([
-  fetch('/api/editor/load?uuid=' + uuid).then(r => r.json()),
-  fetch('/api/internalize/active').then(r => r.json()).catch(() => ({ active: [] })),
-]).then(function (results) {
-  window.__sieveActiveWebClips = new Set(results[1].active || [])
-  // ... mount editor with results[0].body ...
-})
+hub.Broadcast("ai:job-started", mustJSON(jobInfo))
+// ... do work ...
+hub.Broadcast("ai:job-ended",   mustJSON(map[string]string{"jobId": blkID}))
 ```
 
-`isStale()` checks the set first:
+`GET /api/ai/active-jobs` is served by `h.JobTracker.ServeActiveJobs` and returns all currently in-flight jobs — used by JS to restore state on tab switch.
+
+**JS-side:** `editor.js` calls `SieveAI.loadActiveJobs()` after mounting, which fetches `/api/ai/active-jobs` and seeds `window.__sieveActiveAiBlocks`. The extension's `isStale()` checks the set before the time threshold:
 
 ```js
+// ai-block-extension.js — using isStaleByTime from fenced-block-base.js
 function isStale(createdAt, id) {
-  if (!createdAt) return true
-  if (id && window.__sieveActiveWebClips && window.__sieveActiveWebClips.has(id)) return false
-  var thresholdMs = (window.__sieveCliTimeoutLong || 60) * 1000 + 30000
-  return Date.now() - new Date(createdAt).getTime() > thresholdMs
+  if (id && window.__sieveActiveAiBlocks && window.__sieveActiveAiBlocks.has(id)) return false
+  return isStaleByTime(createdAt)  // imported from fenced-block-base.js
 }
 ```
 
-The SSE completion handler removes the ID from the set (even if the note is not currently open):
-
-```js
-if (data.blkId && window.__sieveActiveWebClips.has(data.blkId)) {
-  window.__sieveActiveWebClips.delete(data.blkId)
-  window.SieveAI && window.SieveAI.trackJob(-1)
-}
-```
+`ai-actions.js` listens for `sse:ai:job-started` / `sse:ai:job-ended` and maintains the `activeJobs` map and status bar automatically — the extension does not need to call `trackJob()` manually.
 
 ---
 
@@ -239,31 +218,57 @@ The in-place-patch + doSave pattern is only appropriate for blocks where JS **ow
 
 ---
 
-## Rule 9 — Status Bar Integration
+## Rule 9 — Status Bar Integration via SSE (No Manual trackJob Calls)
 
-All background AI jobs should show the "Evaluating (N)" spinner in the status bar. The counter is owned by `ai-actions.js` via `window.__sieveActiveJobs`. Call `window.SieveAI.trackJob(+1)` when a job starts and `window.SieveAI.trackJob(-1)` when it completes or errors:
+The status bar spinner ("Evaluating…") is driven automatically by `ai:job-started` / `ai:job-ended` SSE events broadcast by Go. `ai-actions.js` listens and maintains the counter — **the extension JS does not call `trackJob()` manually**.
 
-```js
-// Job starts
-window.__sieveActiveWebClips.add(blkId)
-window.SieveAI && window.SieveAI.trackJob(1)
+What the extension must do: ensure Go emits the lifecycle events (see Rule 7). That is all. The status bar, the active-job map, and the tab spinner are all consequences of Go broadcasting correctly.
 
-// SSE completion (only decrement if we incremented)
-if (window.__sieveActiveWebClips.has(data.blkId)) {
-  window.__sieveActiveWebClips.delete(data.blkId)
-  window.SieveAI && window.SieveAI.trackJob(-1)
-}
-
-// HTTP-level error (SSE will never fire — decrement here)
-window.__sieveActiveWebClips.delete(blkId)
-window.SieveAI && window.SieveAI.trackJob(-1)
-```
-
-Guard every decrement with a `has()` check so the counter can never go negative if an SSE fires for a job started before a page reload.
+The old pattern of `window.__sieveActiveWebClips.add/delete` + `SieveAI.trackJob(±1)` from JS has been removed. Do not reintroduce it.
 
 ---
 
-## Rule 10 — Context Menu via `sieve:contextmenu`
+## Rule 10 — JS Extension Structure: Import from `fenced-block-base.js`
+
+All fenced block extensions are loaded as `type="module"`. Import shared utilities from `frontend/src/static/fenced-block-base.js` — do not duplicate them:
+
+```js
+import { esc, renderMarkdown, applyHighlighting, isStaleByTime } from './fenced-block-base.js'
+```
+
+| Export | Purpose |
+|--------|---------|
+| `esc(str)` | HTML-escape a string for `data-*` attribute values |
+| `renderMarkdown(text, editor)` | Render markdown via the shared markdownit instance; plain-text fallback |
+| `isStaleByTime(createdAt)` | Time-based PENDING staleness; wrap with block-specific in-flight check |
+| `applyHighlighting(container)` | Box styling + line numbers + syntax colours for rendered content (see Rule 11) |
+
+The IIFE wrapper in extension files is kept for compatibility; the `import` line goes before it.
+
+---
+
+## Rule 11 — Rendered Content: Call `applyHighlighting` After Setting innerHTML
+
+After rendering a markdown field into a container div, call `applyHighlighting`:
+
+```js
+var contentEl = document.createElement('div')
+contentEl.className = 'my-block__content'
+contentEl.innerHTML = renderMarkdown(data.content, editor)
+applyHighlighting(contentEl)          // adds sieve-rendered-content class + processes pre>code
+container.appendChild(contentEl)
+```
+
+`applyHighlighting` does three things in one call:
+1. Adds the `sieve-rendered-content` CSS class to the container
+2. Wraps each `<pre><code>` block in a `.sieve-code-block` flex layout with a line-number gutter (mirrors the TipTap editor's native code block appearance)
+3. Applies lowlight syntax highlighting to any `language-*` code block
+
+All colours come from existing theme variables — no extra CSS needed in the block's own stylesheet.
+
+---
+
+## Rule 12 — Context Menu via `sieve:contextmenu`
 
 Do not wire context menus directly in the NodeView. Dispatch a `sieve:contextmenu` CustomEvent from the `contextmenu` DOM listener:
 
@@ -292,7 +297,7 @@ dom.addEventListener('contextmenu', function (e) {
 
 ---
 
-## Rule 11 — Chain-Active Hover: The CSS Pattern
+## Rule 13 — Chain-Active Hover: The CSS Pattern
 
 Intelligent blocks that participate in reference chains should highlight their chain peers on hover. The pattern uses a CSS class toggled by `mouseenter`/`mouseleave` and an `::after` pseudo-element for the left bracket:
 
@@ -317,13 +322,22 @@ Blocks highlight in both directions:
 
 ---
 
-## Rule 12 — AI History/Context Must Be Human-Readable
+## Rule 14 — AI History/Context Must Be Human-Readable
 
-When a block is used as context for a follow-up AI question, send clean prose — not raw YAML fences. Claude cannot reason about YAML as conversation history.
+When a block is used as context for a follow-up AI question, send clean prose — not raw YAML fences. Claude cannot reason about YAML structure as conversation history; it needs the *meaning*.
 
-**Bad:** Pass the raw ` ```ai-block ... ``` ` fence text as a history turn.
+**The pattern for any block type:** write a `<blockType>Summary(node)` function that extracts the semantically meaningful fields and formats them as readable prose or Markdown. The right fields depend on what the block *is*:
 
-**Good:** Extract `question` and `response` attrs and format as Q/A:
+| Block type | Meaningful content to pass |
+|------------|---------------------------|
+| `ai-block` | `question` + `response` as `**Q:**` / `**A:**` |
+| `web-clip` | `title`, `source` URL, and `content` (the fetched/summarised text) |
+| `diagram` *(future)* | diagram description/caption + the diagram source (e.g. Mermaid syntax) as a labelled code block |
+| Any block | Whatever a human would read to understand what the block *contains* — not the YAML wrapper |
+
+**Bad:** Pass the raw ` ```ai-block ... ``` ` fence text.
+
+**Good (ai-block example):**
 
 ```js
 function aiBlockSummary(node) {
@@ -337,11 +351,22 @@ function aiBlockSummary(node) {
 }
 ```
 
-Similarly, when a web-clip block is referenced, pass its `title`, `source`, and `content` as clean Markdown rather than the raw YAML.
+**Good (web-clip example):**
+```js
+function webClipSummary(node) {
+  var parts = []
+  if (node.attrs.title)   parts.push('**' + node.attrs.title + '**')
+  if (node.attrs.source)  parts.push('Source: ' + node.attrs.source)
+  if (node.attrs.content) parts.push(node.attrs.content.trim())
+  return parts.join('\n\n')
+}
+```
+
+When building a new block type, ask: *"if I were pasting this block's content into a chat message, what would I write?"* — pass that.
 
 ---
 
-## Rule 13 — Adjacent Block Detection for `nodesBetween`
+## Rule 15 — Adjacent Block Detection for `nodesBetween`
 
 ProseMirror's `nodesBetween(from, to, cb)` visits nodes that **contain** positions in `[from, to]`. A collapsed cursor (`from === to`) positioned immediately after a block will not visit that block — the block ends at `from` but does not contain it.
 
@@ -367,24 +392,29 @@ if (!aiBlockId) {
 
 ## Checklist: Building a New Intelligent Fenced Block
 
-- [ ] Go struct with yaml struct tags; use `fencedblock.Serialize` (yaml.v3, SetIndent 4) — no hand-rolled YAML, no `yamlScalar()` helper
+**Go side**
+- [ ] Go struct with yaml tags; use `fencedblock.Serialize` (yaml.v3, SetIndent 4) — no hand-rolled YAML, no `yamlScalar()` helper
 - [ ] `PREFIX-XXXX` ID generation (`randomHex(2)` → 4 hex chars)
 - [ ] HTTP handler: new block appends PENDING fence; retry reuses caller-supplied ID
-- [ ] JS entry points (`runAiJob`, retry handler, `doInternalize`) call `flushSave().then(...)` before any `fetch` that causes Go to write the document (prevents unsaved-text loss on `softReloadContent`)
-- [ ] `sync.Map` + `GET /api/.../active` endpoint for stale-vs-running detection
-- [ ] Background goroutine: registers ID in activeJobs, defers delete, broadcasts SSE on completion
+- [ ] Handler holds `*requesthandlers.JobTracker` (injected from the shared instance in `handlers.go`)
+- [ ] Background goroutine: calls `h.JobTracker.Start` + `hub.Broadcast("ai:job-started", ...)` at start; `h.JobTracker.End` + `hub.Broadcast("ai:job-ended", ...)` after SSE resolution broadcast
+
+**JS side**
+- [ ] Extension file is `type="module"`; import `{ esc, renderMarkdown, applyHighlighting, isStaleByTime }` from `./fenced-block-base.js`
+- [ ] `flushSave().then(...)` wraps every `fetch` that causes Go to write the document
 - [ ] TipTap Node extension:
-  - [ ] Fence hook replaces ` ```tag ``` ` → `<div data-type="...">` with `data-*` attributes
+  - [ ] Fence hook replaces ` ```tag ``` ` → `<div data-type="...">` with `data-*` attributes including `data-raw-yaml`
   - [ ] Non-destructive: passes through to `defaultFence` on parse failure or missing `id`
-  - [ ] `rawYaml` attribute stored from `data-raw-yaml` for verbatim serialisation
   - [ ] `addAttributes()` parsers read from `data-*` HTML attributes
   - [ ] `addNodeView()` renders from attrs (never generates YAML)
   - [ ] Markdown serialiser replays `node.attrs.rawYaml` verbatim
-- [ ] `data-wc-id` (or equivalent) set on NodeView DOM element and re-set in every `render()` call
+- [ ] After `contentEl.innerHTML = renderMarkdown(...)` → call `applyHighlighting(contentEl)`
+- [ ] Block-id attribute set on NodeView DOM element and re-set in every `render()` call
+- [ ] `isStale()`: check block-specific in-flight set first, then `return isStaleByTime(createdAt)`
+- [ ] `editor.js` `loadActiveJobs()` feeds the in-flight set on tab switch (already done for ai-blocks; new block types may need their own set seeded here)
 - [ ] Context menu dispatches `sieve:contextmenu`; sets node selection before opening
-- [ ] JS job lifecycle: `window.__sieveActiveWebClips.add/delete` + `SieveAI.trackJob(±1)`
-- [ ] `initEditor` fetches `/api/.../active` in parallel with note content
-- [ ] `isStale()` checks active set before time-based evaluation
-- [ ] SSE completion: removes ID from active set then calls `softReloadContent` (no in-place YAML patch)
+- [ ] SSE completion: calls `softReloadContent` (no in-place YAML patch for rawYaml-carrying blocks)
+
+**Visual / UX**
 - [ ] Chain-active hover: `::after` CSS + `mouseenter`/`mouseleave` toggling class in both directions
 - [ ] AI context: pass clean prose summary, not raw YAML
