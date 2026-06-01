@@ -1,39 +1,4 @@
 {{define "settings.html"}}
-<style>
-.settings-container select {
-  -webkit-appearance: none;
-  appearance: none;
-  background-color: var(--theme-bgAlt, #1e2030) !important;
-  color: var(--theme-text, #c0caf5) !important;
-  border: 1px solid var(--theme-border2, #3b4261) !important;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23a9b1d6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>") !important;
-  background-repeat: no-repeat !important;
-  background-position: right 1rem center !important;
-  background-size: 1em !important;
-  padding-right: 2.5rem !important;
-}
-
-.settings-container select:focus {
-  border-color: var(--theme-accentPrimary, #7aa2f7) !important;
-}
-
-.settings-container input[type="text"],
-.settings-container input[type="number"] {
-  background-color: var(--theme-bgAlt, #1e2030) !important;
-  color: var(--theme-text, #c0caf5) !important;
-  border: 1px solid var(--theme-border2, #3b4261) !important;
-}
-
-.settings-container input[type="text"]:focus,
-.settings-container input[type="number"]:focus {
-  border-color: var(--theme-accentPrimary, #7aa2f7) !important;
-}
-
-.settings-container option {
-  background-color: var(--theme-bgDark, #16161e);
-  color: var(--theme-text, #c0caf5);
-}
-</style>
 <div class="settings-container" style="display: flex; height: 450px;">
   <!-- Sidebar -->
   <div class="settings-sidebar" style="width: 12rem; background: var(--theme-bgDark); border-right: 1px solid var(--theme-border); padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">

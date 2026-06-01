@@ -2,7 +2,7 @@
 // Depends on window.TipTap (vendor/tiptap.js) and window.jsyaml (vendor/js-yaml.js).
 // Attaches AiBlock, AiShortcuts to window.TipTap.
 
-import { esc, renderMarkdown, applyHighlighting, isStaleByTime } from './fenced-block-base.js'
+import { esc, renderMarkdown, applyHighlighting, isStaleByTime, isJobActive } from './fenced-block-base.js'
 
 ; (function () {
   'use strict'
@@ -33,8 +33,7 @@ import { esc, renderMarkdown, applyHighlighting, isStaleByTime } from './fenced-
   // ── isStale ──────────────────────────────────────────────────────────────────
 
   function isStale(createdAt, id) {
-    // Server confirmed this job is still running — never render as stale.
-    if (id && window.__sieveActiveAiBlocks && window.__sieveActiveAiBlocks.has(id)) return false
+    if (isJobActive(id)) return false
     return isStaleByTime(createdAt)
   }
 

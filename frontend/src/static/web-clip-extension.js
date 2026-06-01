@@ -1,7 +1,7 @@
 // web-clip-extension.js — fenced YAML web-clip block (machine artefact, Category 3).
 // Depends on window.TipTap and window.jsyaml.
 
-import { esc, renderMarkdown, applyHighlighting, isStaleByTime } from './fenced-block-base.js'
+import { esc, renderMarkdown, applyHighlighting, isStaleByTime, isJobActive } from './fenced-block-base.js'
 
 ;(function () {
   'use strict'
@@ -16,7 +16,8 @@ import { esc, renderMarkdown, applyHighlighting, isStaleByTime } from './fenced-
     try { return new URL(url).hostname } catch (_) { return url }
   }
 
-  function isStale(createdAt) {
+  function isStale(createdAt, id) {
+    if (isJobActive(id)) return false
     return isStaleByTime(createdAt)
   }
 
@@ -34,7 +35,7 @@ import { esc, renderMarkdown, applyHighlighting, isStaleByTime } from './fenced-
     lines.push('source: ' + yamlScalar(attrs.source || ''))
     if (attrs.title) {
       lines.push('title: |-')
-      ;(attrs.title || '').split('\n').forEach(function (l) { lines.push('  ' + l) })
+      ;(attrs.title || '').split('\n').forEach(function (l) { lines.push('    ' + l) })
     }
     lines.push('mode: ' + (attrs.mode || 'fetch'))
     lines.push('status: ' + (attrs.status || 'PENDING'))
@@ -43,11 +44,11 @@ import { esc, renderMarkdown, applyHighlighting, isStaleByTime } from './fenced-
     if (attrs.completedAt) lines.push('completedAt: ' + yamlScalar(attrs.completedAt))
     if (attrs.content) {
       lines.push('content: |')
-      attrs.content.split('\n').forEach(function (l) { lines.push('  ' + (l || '')) })
+      attrs.content.split('\n').forEach(function (l) { lines.push('    ' + (l || '')) })
     }
     if (attrs.error) {
       lines.push('error: |')
-      attrs.error.split('\n').forEach(function (l) { lines.push('  ' + (l || '')) })
+      attrs.error.split('\n').forEach(function (l) { lines.push('    ' + (l || '')) })
     }
     return lines.join('\n')
   }
@@ -115,7 +116,7 @@ import { esc, renderMarkdown, applyHighlighting, isStaleByTime } from './fenced-
       header.className = 'web-clip-block__header'
 
       if (status === 'PENDING') {
-        var stale = isStale(attrs.createdAt)
+        var stale = isStale(attrs.createdAt, attrs.id)
         if (stale) {
           header.innerHTML = '<span class="web-clip-block__icon web-clip-block__icon--warn">⚠</span>' +
             '<span class="web-clip-block__label">' + modeLabel.replace('ing', '') + ' interrupted — ' + domain + '</span>'

@@ -20,9 +20,6 @@
   var askDialog = null
   var internalizeDialog = null
 
-  // Track in-flight ai-block jobs so PENDING blocks on re-render don't flicker to "stale".
-  window.__sieveActiveAiBlocks = window.__sieveActiveAiBlocks || new Set()
-
   // ── Public entry point called from App.tsx htmx:afterSettle ─────────────────
 
   function initEditor(mountEl, uuid, mode) {
@@ -606,8 +603,6 @@
     if (!raw) return
     var data; try { data = JSON.parse(raw) } catch (_) { return }
     if (!data) return
-    // Remove from stale-detection set regardless of which note is open.
-    if (data.blkId) window.__sieveActiveAiBlocks.delete(data.blkId)
     if (data.uuid !== currentUuid) return
     softReloadContent(currentUuid)
   })
@@ -758,7 +753,6 @@
       }).then(function (resp) {
         if (!resp || !resp.id) return
         var blkId = resp.id
-        window.__sieveActiveAiBlocks.add(blkId)
 
         if (resp.fence && currentEditor && insertPos !== null) {
           // Insert from Go's canonical fence into TipTap at the pre-computed position.
@@ -1376,9 +1370,6 @@
     // 3. Build context
     var ctx = window.TipTap.buildAiContext(currentEditor, false, lastSyncedBody, currentUuid)
 
-    // Add to active-jobs set before fetch so isStale returns false immediately on re-render
-    window.__sieveActiveAiBlocks.add(blkId)
-
     var endpoint = type === 'explain' ? '/api/ai/explain' : '/api/ai/ask'
     flushSave().then(function () {
       fetch(endpoint, {
@@ -1397,7 +1388,6 @@
         // SSE will fire sse:ai:block-resolved → softReloadContent
       }).catch(function (err) {
         console.error('[editor] AI retry error', err)
-        window.__sieveActiveAiBlocks.delete(blkId)
         if (currentEditor) {
           currentEditor.commands.command(function (props) {
             var tr = props.tr

@@ -78,7 +78,7 @@ Priority ladder — first non-empty value wins:
 
 ---
 
-## 4. Phase 1 — Inline Title Fetch on Paste
+## 4. Phase 1 — Inline Title Fetch on Paste ✓ SHIPPED
 
 No new node type. Enhances the existing `SmartLink`.
 
@@ -87,10 +87,12 @@ No new node type. Enhances the existing `SmartLink`.
 | `detect` value | Meaning |
 |----------------|---------|
 | `pending` | fetch in flight |
-| `titled` | title resolved, inline only |
+| `peek` | title resolved, inline only |
 | `enriched` | full card data available |
 
 If the fetch fails or times out, `label` falls back to the raw URL — no error shown.
+
+**Implementation:** `editor.js:1005–1039` (paste handler) + `requesthandlers/ai_handler.go:366` (`GET /api/link-preview`). Note: actual `detect` value used on resolve is `'peek'`, not `'titled'`.
 
 ---
 

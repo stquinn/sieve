@@ -188,17 +188,18 @@ hub.Broadcast("ai:job-ended",   mustJSON(map[string]string{"jobId": blkID}))
 
 `GET /api/ai/active-jobs` is served by `h.JobTracker.ServeActiveJobs` and returns all currently in-flight jobs — used by JS to restore state on tab switch.
 
-**JS-side:** `editor.js` calls `SieveAI.loadActiveJobs()` after mounting, which fetches `/api/ai/active-jobs` and seeds `window.__sieveActiveAiBlocks`. The extension's `isStale()` checks the set before the time threshold:
+**JS-side:** `fenced-block-base.js` owns the active-job Set. On module load it fetches `/api/ai/active-jobs` to seed in-flight IDs, then listens to `sse:ai:job-started` / `sse:ai:job-ended` SSE events to keep the set current. It exports `isJobActive(id)` — import and call it in every block extension's `isStale`:
 
 ```js
-// ai-block-extension.js — using isStaleByTime from fenced-block-base.js
+import { isStaleByTime, isJobActive } from './fenced-block-base.js'
+
 function isStale(createdAt, id) {
-  if (id && window.__sieveActiveAiBlocks && window.__sieveActiveAiBlocks.has(id)) return false
-  return isStaleByTime(createdAt)  // imported from fenced-block-base.js
+  if (isJobActive(id)) return false
+  return isStaleByTime(createdAt)
 }
 ```
 
-`ai-actions.js` listens for `sse:ai:job-started` / `sse:ai:job-ended` and maintains the `activeJobs` map and status bar automatically — the extension does not need to call `trackJob()` manually.
+No manual `window.__sieve*` Set management in the extension. No `trackJob()` calls. The status bar is also driven automatically by the same SSE events via `ai-actions.js`.
 
 ---
 
@@ -233,14 +234,15 @@ The old pattern of `window.__sieveActiveWebClips.add/delete` + `SieveAI.trackJob
 All fenced block extensions are loaded as `type="module"`. Import shared utilities from `frontend/src/static/fenced-block-base.js` — do not duplicate them:
 
 ```js
-import { esc, renderMarkdown, applyHighlighting, isStaleByTime } from './fenced-block-base.js'
+import { esc, renderMarkdown, applyHighlighting, isStaleByTime, isJobActive } from './fenced-block-base.js'
 ```
 
 | Export | Purpose |
 |--------|---------|
 | `esc(str)` | HTML-escape a string for `data-*` attribute values |
 | `renderMarkdown(text, editor)` | Render markdown via the shared markdownit instance; plain-text fallback |
-| `isStaleByTime(createdAt)` | Time-based PENDING staleness; wrap with block-specific in-flight check |
+| `isStaleByTime(createdAt)` | Time-based PENDING staleness — always the final fallback in `isStale` |
+| `isJobActive(id)` | Returns true if the block's job ID is currently in-flight on the server — check this first in `isStale` |
 | `applyHighlighting(container)` | Box styling + line numbers + syntax colours for rendered content (see Rule 11) |
 
 The IIFE wrapper in extension files is kept for compatibility; the `import` line goes before it.
@@ -400,7 +402,7 @@ if (!aiBlockId) {
 - [ ] Background goroutine: calls `h.JobTracker.Start` + `hub.Broadcast("ai:job-started", ...)` at start; `h.JobTracker.End` + `hub.Broadcast("ai:job-ended", ...)` after SSE resolution broadcast
 
 **JS side**
-- [ ] Extension file is `type="module"`; import `{ esc, renderMarkdown, applyHighlighting, isStaleByTime }` from `./fenced-block-base.js`
+- [ ] Extension file is `type="module"`; import `{ esc, renderMarkdown, applyHighlighting, isStaleByTime, isJobActive }` from `./fenced-block-base.js`
 - [ ] `flushSave().then(...)` wraps every `fetch` that causes Go to write the document
 - [ ] TipTap Node extension:
   - [ ] Fence hook replaces ` ```tag ``` ` → `<div data-type="...">` with `data-*` attributes including `data-raw-yaml`
@@ -410,8 +412,7 @@ if (!aiBlockId) {
   - [ ] Markdown serialiser replays `node.attrs.rawYaml` verbatim
 - [ ] After `contentEl.innerHTML = renderMarkdown(...)` → call `applyHighlighting(contentEl)`
 - [ ] Block-id attribute set on NodeView DOM element and re-set in every `render()` call
-- [ ] `isStale()`: check block-specific in-flight set first, then `return isStaleByTime(createdAt)`
-- [ ] `editor.js` `loadActiveJobs()` feeds the in-flight set on tab switch (already done for ai-blocks; new block types may need their own set seeded here)
+- [ ] `isStale(createdAt, id)`: call `isJobActive(id)` first (from `fenced-block-base.js`), then `return isStaleByTime(createdAt)` — no manual Set management needed
 - [ ] Context menu dispatches `sieve:contextmenu`; sets node selection before opening
 - [ ] SSE completion: calls `softReloadContent` (no in-place YAML patch for rawYaml-carrying blocks)
 

@@ -101,9 +101,32 @@ export function esc(str) {
 }
 
 // isStaleByTime — returns true when createdAt is older than the CLI timeout threshold.
-// Blocks with in-flight job tracking can call this and short-circuit on their own check first.
 export function isStaleByTime(createdAt) {
   if (!createdAt) return true
   var thresholdMs = (window.__sieveCliTimeoutLong || 60) * 1000 + 30000
   return Date.now() - new Date(createdAt).getTime() > thresholdMs
+}
+
+// ── Active job tracking ───────────────────────────────────────────────────────
+// Shared across all fenced block extensions. Seeded from /api/ai/active-jobs on
+// module load; kept current via ai:job-started / ai:job-ended SSE events.
+
+var _activeJobIds = new Set()
+
+fetch('/api/ai/active-jobs')
+  .then(function (r) { return r.json() })
+  .then(function (data) { (data.jobs || []).forEach(function (j) { if (j.jobId) _activeJobIds.add(j.jobId) }) })
+  .catch(function () {})
+
+document.addEventListener('sse:ai:job-started', function (e) {
+  try { var d = JSON.parse(e.detail || '{}'); if (d.jobId) _activeJobIds.add(d.jobId) } catch (_) {}
+})
+document.addEventListener('sse:ai:job-ended', function (e) {
+  try { var d = JSON.parse(e.detail || '{}'); if (d.jobId) _activeJobIds.delete(d.jobId) } catch (_) {}
+})
+
+// isJobActive — returns true if the given job ID is currently in-flight on the server.
+// Use this in block isStale checks before falling back to isStaleByTime.
+export function isJobActive(id) {
+  return !!id && _activeJobIds.has(id)
 }
