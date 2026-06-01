@@ -514,8 +514,10 @@ func (s *AIService) RunWebClip(uuid, id, source, mode, docContent string) (title
 
 	doc, loadErr := s.documents.LoadByUUID(uuid)
 	cwd := ""
+	docDir := ""
 	if loadErr == nil {
 		cwd = filepath.Join(s.storePath, filepath.Dir(doc.Storable().ExternalRef()))
+		docDir = filepath.Join(s.storePath, doc.Storable().ExternalRef())
 	}
 
 	raw, err := RunCLI(settings.CLI, prompt, settings.Model, settings.CLITimeoutLong, cwd)
@@ -523,7 +525,7 @@ func (s *AIService) RunWebClip(uuid, id, source, mode, docContent string) (title
 		return "", "", err
 	}
 
-	content = localiseImages(raw, cwd)
+	content = localiseImages(raw, docDir, uuid)
 	title = extractFirstHeading(content)
 	if title == "" {
 		if t, err2 := s.GetLinkTitle(source); err2 == nil {

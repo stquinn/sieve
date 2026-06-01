@@ -115,6 +115,7 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 		tmpl:   tmpl,
 		static: http.FileServer(http.FS(staticFS)),
 	}
+	jobTracker := requesthandlers.NewJobTracker()
 	requestHandlers := []requesthandlers.RequestHandler{
 		&requesthandlers.SideBarHandler{ServiceProvider: sp, Tmpl: tmpl},
 		&requesthandlers.TabHandler{ServiceProvider: sp, Tmpl: tmpl},
@@ -155,6 +156,7 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 		},
 		&requesthandlers.AiHandler{
 			ServiceProvider: sp,
+			JobTracker:      jobTracker,
 			EmitNotesChanged: func() {
 				logger.Info("AI: notes changed event")
 				hub.broadcast("notes:changed", "{}")
@@ -163,6 +165,7 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 		},
 		&requesthandlers.InternalizeHandler{
 			ServiceProvider: sp,
+			JobTracker:      jobTracker,
 			Broadcast:       hub.broadcast,
 		},
 	}

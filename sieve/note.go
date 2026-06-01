@@ -14,16 +14,11 @@ type Note struct {
 
 // newNote constructs a Note and derives the slug once from the Store key.
 func newNote(s store.MetaStorable) *Note {
-	note := &Note{
+	return &Note{
 		s:    s,
 		slug: newDocumentMeta(s.Meta(), s.SetMeta).DisplayName(),
 		kind: KindNote,
 	}
-	// Only set as "filed" if we haven't already marked it as an error file.
-	if note.s.Meta()["status"] != "error" {
-		note.s.Meta()["status"] = "filed"
-	}
-	return note
 }
 
 // Slug returns the key-derived short identifier without extension, e.g. "my-note".

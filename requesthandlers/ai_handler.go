@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -20,7 +19,29 @@ type AiHandler struct {
 	ServiceProvider  *sieve.ServiceProvider
 	EmitNotesChanged func()
 	Broadcast        func(event, data string)
-	activeJobs       sync.Map // blkID → struct{}
+	JobTracker       *JobTracker
+}
+
+func (h *AiHandler) emitJobStarted(jobID, label, docID string, spinTab bool) {
+	if h.JobTracker != nil {
+		h.JobTracker.Start(JobInfo{JobID: jobID, Label: label, DocID: docID, SpinTab: spinTab})
+	}
+	if h.Broadcast != nil {
+		data, _ := json.Marshal(map[string]interface{}{
+			"jobId": jobID, "label": label, "docId": docID, "spinTab": spinTab,
+		})
+		h.Broadcast("ai:job-started", string(data))
+	}
+}
+
+func (h *AiHandler) emitJobEnded(jobID, docID string) {
+	if h.JobTracker != nil {
+		h.JobTracker.End(jobID)
+	}
+	if h.Broadcast != nil {
+		data, _ := json.Marshal(map[string]string{"jobId": jobID, "docId": docID})
+		h.Broadcast("ai:job-ended", string(data))
+	}
 }
 
 func (h *AiHandler) RegisterPaths(r chi.Router) {
@@ -32,17 +53,14 @@ func (h *AiHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/ai/refine-language", h.handleRefineLanguage)
 	r.Post("/api/ai/describe-image", h.handleDescribeImage)
 	r.Get("/api/link-preview", h.handleLinkPreview)
-	r.Get("/api/ai/active", h.handleActiveJobs)
-}
-
-func (h *AiHandler) handleActiveJobs(w http.ResponseWriter, r *http.Request) {
-	ids := []string{}
-	h.activeJobs.Range(func(key, _ any) bool {
-		ids = append(ids, key.(string))
-		return true
+	r.Get("/api/ai/active-jobs", func(w http.ResponseWriter, r *http.Request) {
+		if h.JobTracker != nil {
+			h.JobTracker.ServeActiveJobs(w, r)
+		} else {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"jobs":[]}`))
+		}
 	})
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string][]string{"active": ids})
 }
 
 func (h *AiHandler) handleAiSmartFile(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +97,13 @@ func (h *AiHandler) evaluateAndFile(w http.ResponseWriter, id string, fileAfter 
 		http.Error(w, "document not found", http.StatusNotFound)
 		return
 	}
+
+	label := "Updating metadata..."
+	if fileAfter {
+		label = "Filing note..."
+	}
+	h.emitJobStarted(id, label, id, true)
+	defer h.emitJobEnded(id, id)
 
 	outcome, err := h.ServiceProvider.AI.EvaluateAndFileDoc(id, fileAfter, allowDiscard)
 	if err != nil {
@@ -211,8 +236,11 @@ func (h *AiHandler) insertPendingBlock(req aiBlockRequest, blockType string) (bl
 }
 
 func (h *AiHandler) runAiBlock(uuid, blkID, blockType, content, history, question string, imageBlockIds []string) {
-	h.activeJobs.Store(blkID, struct{}{})
-	defer h.activeJobs.Delete(blkID)
+	label := "Asking AI..."
+	if blockType == "EXPLAIN" {
+		label = "Explaining..."
+	}
+	h.emitJobStarted(blkID, label, uuid, false)
 
 	settings := h.ServiceProvider.State.LoadSettings()
 	model := settings.Model
@@ -254,6 +282,9 @@ func (h *AiHandler) runAiBlock(uuid, blkID, blockType, content, history, questio
 	if h.Broadcast != nil {
 		h.Broadcast("ai:block-resolved", string(payload))
 	}
+
+	// Emit ended after ai:block-resolved so the editor updates before the spinner clears.
+	h.emitJobEnded(blkID, uuid)
 }
 
 // resolveAiBlockStatus updates a block to TIMEOUT or ERROR status in the document.

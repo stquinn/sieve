@@ -925,6 +925,7 @@ div.node-image.ProseMirror-selectednode {
 .web-clip-block__content ul, .web-clip-block__content ol { margin: 0.4em 0 0.6em 1.4em; padding: 0; }
 .web-clip-block__content li { margin-bottom: 0.2em; }
 .web-clip-block__content strong { color: var(--theme-text); }
+.web-clip-block__content img { max-width: 100%; height: auto; display: block; }
 
 .web-clip-block__label {
   font-size: 12px;
@@ -1764,6 +1765,12 @@ div.node-image.ProseMirror-selectednode {
 }
 
 .internalize-popup__input::placeholder { color: var(--theme-textDim); opacity: 0.5; }
+
+.internalize-popup__error {
+  color: var(--theme-accentRed, #e05252);
+  font-size: 12px;
+  padding: 4px 2px 0;
+}
 
 .internalize-popup__btn {
   background: var(--theme-accentPrimary);

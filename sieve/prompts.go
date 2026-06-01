@@ -267,6 +267,7 @@ Code:
 `
 
 const DefaultWebClipFetchPrompt = `Please retrieve the content at the following URL and return it as clean, well-structured markdown. Preserve all meaningful content including headings, lists, tables, and code blocks.
+Lease ensure to grab any relevant images and include those as well.
 Do not summarise - preserve content as is.  Your job is to simply retrieve the document and translate to markdown as per the instructions above.
 URL: {source}
 `

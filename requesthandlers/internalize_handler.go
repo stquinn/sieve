@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -27,24 +27,11 @@ func randomHex(n int) string {
 type InternalizeHandler struct {
 	ServiceProvider *sieve.ServiceProvider
 	Broadcast       func(event, data string)
-	activeJobs      sync.Map // blkID → struct{}; tracks in-flight web-clip jobs
+	JobTracker      *JobTracker
 }
 
 func (h *InternalizeHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/internalize", h.handleInternalize)
-	r.Get("/api/internalize/active", h.handleActiveJobs)
-}
-
-// handleActiveJobs returns the IDs of all currently running web-clip jobs.
-// JS uses this on note load to distinguish "genuinely stale" from "still running".
-func (h *InternalizeHandler) handleActiveJobs(w http.ResponseWriter, r *http.Request) {
-	ids := []string{}
-	h.activeJobs.Range(func(key, _ any) bool {
-		ids = append(ids, key.(string))
-		return true
-	})
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string][]string{"active": ids})
 }
 
 type internalizeRequest struct {
@@ -123,8 +110,27 @@ func (h *InternalizeHandler) handleInternalize(w http.ResponseWriter, r *http.Re
 }
 
 func (h *InternalizeHandler) runInBackground(uuid, id, source, mode, docContent string) {
-	h.activeJobs.Store(id, struct{}{})
-	defer h.activeJobs.Delete(id)
+	label := "Fetching web page..."
+	if mode == "summarise" {
+		label = "Summarising web page..."
+	}
+	if u, err := url.Parse(source); err == nil && u.Host != "" {
+		if mode == "summarise" {
+			label = "Summarising " + u.Host
+		} else {
+			label = "Fetching " + u.Host
+		}
+	}
+
+	if h.JobTracker != nil {
+		h.JobTracker.Start(JobInfo{JobID: id, Label: label, DocID: uuid, SpinTab: false})
+	}
+	if h.Broadcast != nil {
+		data, _ := json.Marshal(map[string]interface{}{
+			"jobId": id, "label": label, "docId": uuid, "spinTab": false,
+		})
+		h.Broadcast("ai:job-started", string(data))
+	}
 
 	settings := h.ServiceProvider.State.LoadSettings()
 	model := settings.Model
@@ -163,5 +169,14 @@ func (h *InternalizeHandler) runInBackground(uuid, id, source, mode, docContent 
 	})
 	if h.Broadcast != nil {
 		h.Broadcast("ai:web-clip-resolved", string(payload))
+	}
+
+	// Emit ended after web-clip-resolved so the editor updates before the spinner clears.
+	if h.JobTracker != nil {
+		h.JobTracker.End(id)
+	}
+	if h.Broadcast != nil {
+		endData, _ := json.Marshal(map[string]string{"jobId": id, "docId": uuid})
+		h.Broadcast("ai:job-ended", string(endData))
 	}
 }

@@ -20,18 +20,8 @@
   var askDialog = null
   var internalizeDialog = null
 
-  // Track in-flight web-clip jobs so PENDING blocks on re-render don't flicker to "stale".
-  // Populated from /api/internalize/active on each note load (handles page reload).
-  // Also updated optimistically when a job is started or the SSE completion fires.
-  window.__sieveActiveWebClips = window.__sieveActiveWebClips || new Set()
-
   // Track in-flight ai-block jobs so PENDING blocks on re-render don't flicker to "stale".
-  // Populated from /api/ai/active on each note load; updated optimistically on start/SSE.
   window.__sieveActiveAiBlocks = window.__sieveActiveAiBlocks || new Set()
-
-  // Track blkIds of in-flight ask/explain jobs started in this session so the status bar
-  // counter stays balanced (we only decrement for jobs we incremented).
-  var pendingAiBlkIds = new Set()
 
   // ── Public entry point called from App.tsx htmx:afterSettle ─────────────────
 
@@ -57,17 +47,10 @@
 
     console.log('[editor.js] initEditor fetching data for uuid:', uuid)
 
-    Promise.all([
-      fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid)).then(function (r) { return r.json() }),
-      fetch('/api/internalize/active').then(function (r) { return r.json() }).catch(function () { return { active: [] } }),
-      fetch('/api/ai/active').then(function (r) { return r.json() }).catch(function () { return { active: [] } }),
-    ]).then(function (results) {
-        var data = results[0]
-        var activeData = results[1]
-        var activeAiData = results[2]
-        // Sync active-jobs sets before mounting so PENDING blocks know if they're still running.
-        window.__sieveActiveWebClips = new Set(activeData.active || [])
-        window.__sieveActiveAiBlocks = new Set(activeAiData.active || [])
+    fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid))
+      .then(function (r) { return r.json() })
+      .then(function (data) {
+        window.SieveAI && window.SieveAI.loadActiveJobs()
         window.__stashActiveTabUuid = uuid
         lastSyncedBody = data.body || ''
 
@@ -378,6 +361,15 @@
 
   // ── Internalize dialog ────────────────────────────────────────────────────────
 
+  function isValidURL(url) {
+    try {
+      var u = new URL(url)
+      return u.protocol === 'http:' || u.protocol === 'https:'
+    } catch (e) {
+      return false
+    }
+  }
+
   function createInternalizeDialog() {
     var dialog = document.createElement('dialog')
     dialog.className = 'internalize-popup ask-popup'
@@ -394,24 +386,33 @@
     urlInput.className = 'internalize-popup__input'
     urlInput.placeholder = 'https://…'
 
+    var errorMsg = document.createElement('div')
+    errorMsg.className = 'internalize-popup__error'
+    errorMsg.textContent = 'Please enter a valid http:// or https:// URL'
+    errorMsg.style.display = 'none'
+
+    urlInput.addEventListener('input', function () { errorMsg.style.display = 'none' })
+
+    function trySubmit(mode) {
+      var url = urlInput.value.trim()
+      if (!isValidURL(url)) { errorMsg.style.display = ''; return }
+      doInternalize(url, mode)
+      dialog.close()
+    }
+
     var footer = document.createElement('div'); footer.className = 'ask-popup__footer'
-    var fetchBtn = makeBtn('internalize-popup__btn', 'Fetch', function () {
-      var url = urlInput.value.trim()
-      if (url) { doInternalize(url, 'fetch'); dialog.close() }
-    })
-    var summariseBtn = makeBtn('internalize-popup__btn', 'Summarise', function () {
-      var url = urlInput.value.trim()
-      if (url) { doInternalize(url, 'summarise'); dialog.close() }
-    })
+    var fetchBtn = makeBtn('internalize-popup__btn', 'Fetch', function () { trySubmit('fetch') })
+    var summariseBtn = makeBtn('internalize-popup__btn', 'Summarise', function () { trySubmit('summarise') })
     footer.appendChild(fetchBtn); footer.appendChild(summariseBtn)
 
     urlInput.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') { e.preventDefault(); dialog.close() }
-      if (e.key === 'Enter') { e.preventDefault(); var url = urlInput.value.trim(); if (url) { doInternalize(url, 'fetch'); dialog.close() } }
+      if (e.key === 'Enter') { e.preventDefault(); trySubmit('fetch') }
     })
 
     dialog.appendChild(header)
     dialog.appendChild(urlInput)
+    dialog.appendChild(errorMsg)
     dialog.appendChild(footer)
     document.body.appendChild(dialog)
     return dialog
@@ -429,41 +430,40 @@
     if (!currentUuid) return
     if (!currentEditor && currentMode !== 'markdown') return
 
-    fetch('/api/internalize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uuid: currentUuid, source: source, mode: mode })
-    }).then(function (r) {
-      if (!r.ok) { console.error('[editor] internalize request failed: ' + r.status); return }
-      return r.json()
-    }).then(function (resp) {
-      if (!resp || !resp.id) return
-      window.__sieveActiveWebClips.add(resp.id)
-      var wcLabel = (mode === 'summarise' ? 'Summarising ' : 'Fetching ') + extractDomain(source)
-      window.SieveAI && window.SieveAI.trackJob(1, resp.id, wcLabel)
-      // Go has already appended the PENDING block to the document on disk.
-      // Insert it into the live editor from Go's canonical fence text.
-      if (currentMode === 'markdown' && currentMarkdownTextarea) {
-        lastSyncedBody = lastSyncedBody + '\n\n' + resp.fence + '\n'
-        currentMarkdownTextarea.value = lastSyncedBody
-      } else if (currentEditor) {
-        // Parse Go's YAML to extract attrs — reading only, never generating.
-        var data = {}
-        try { data = window.jsyaml.load(resp.fence.replace(/^```web-clip\n/, '').replace(/\n```$/, '')) || {} } catch (_) {}
-        currentEditor.commands.insertContent({
-          type: 'webClip',
-          attrs: {
-            rawYaml: resp.fence.replace(/^```web-clip\n/, '').replace(/\n```$/, ''),
-            id: data.id || resp.id, source: data.source || source,
-            mode: data.mode || mode, status: 'PENDING', createdAt: data.createdAt || ''
-          }
-        })
-        var afterPos = currentEditor.state.selection.to
-        var docSize = currentEditor.state.doc.content.size
-        currentEditor.chain().setTextSelection(Math.min(afterPos + 1, docSize - 1)).focus().scrollIntoView().run()
-      }
-    }).catch(function (err) {
-      console.error('[editor] internalize error', err)
+    flushSave().then(function () {
+      fetch('/api/internalize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uuid: currentUuid, source: source, mode: mode })
+      }).then(function (r) {
+        if (!r.ok) { console.error('[editor] internalize request failed: ' + r.status); return }
+        return r.json()
+      }).then(function (resp) {
+        if (!resp || !resp.id) return
+        // Go has already appended the PENDING block to the document on disk.
+        // Insert it into the live editor from Go's canonical fence text.
+        if (currentMode === 'markdown' && currentMarkdownTextarea) {
+          lastSyncedBody = lastSyncedBody + '\n\n' + resp.fence + '\n'
+          currentMarkdownTextarea.value = lastSyncedBody
+        } else if (currentEditor) {
+          // Parse Go's YAML to extract attrs — reading only, never generating.
+          var data = {}
+          try { data = window.jsyaml.load(resp.fence.replace(/^```web-clip\n/, '').replace(/\n```$/, '')) || {} } catch (_) {}
+          currentEditor.commands.insertContent({
+            type: 'webClip',
+            attrs: {
+              rawYaml: resp.fence.replace(/^```web-clip\n/, '').replace(/\n```$/, ''),
+              id: data.id || resp.id, source: data.source || source,
+              mode: data.mode || mode, status: 'PENDING', createdAt: data.createdAt || ''
+            }
+          })
+          var afterPos = currentEditor.state.selection.to
+          var docSize = currentEditor.state.doc.content.size
+          currentEditor.chain().setTextSelection(Math.min(afterPos + 1, docSize - 1)).focus().scrollIntoView().run()
+        }
+      }).catch(function (err) {
+        console.error('[editor] internalize error', err)
+      })
     })
   }
 
@@ -606,11 +606,6 @@
     if (!raw) return
     var data; try { data = JSON.parse(raw) } catch (_) { return }
     if (!data) return
-    // Balanced decrement — only for jobs started in this session.
-    if (data.blkId && pendingAiBlkIds.has(data.blkId)) {
-      pendingAiBlkIds.delete(data.blkId)
-      window.SieveAI && window.SieveAI.trackJob(-1, data.blkId)
-    }
     // Remove from stale-detection set regardless of which note is open.
     if (data.blkId) window.__sieveActiveAiBlocks.delete(data.blkId)
     if (data.uuid !== currentUuid) return
@@ -622,12 +617,6 @@
     if (!raw) return
     var data; try { data = JSON.parse(raw) } catch (_) { return }
     if (!data) return
-    // Remove from active-jobs set regardless of which tab is currently open —
-    // the job is done and should never render as "still running".
-    if (data.blkId && window.__sieveActiveWebClips.has(data.blkId)) {
-      window.__sieveActiveWebClips.delete(data.blkId)
-      window.SieveAI && window.SieveAI.trackJob(-1, data.blkId)
-    }
     if (data.uuid !== currentUuid) return
     // web-clip uses rawYaml passthrough — in-place patch can't update rawYaml correctly.
     // Go has already written the canonical YAML to disk; reload from there.
@@ -751,58 +740,58 @@
 
     var endpoint = type === 'explain' ? '/api/ai/explain' : '/api/ai/ask'
 
-    fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        content:       ctx ? ctx.content : '',
-        history:       ctx ? ctx.history : '',
-        question:      question || '',
-        noteUUID:      currentUuid || '',
-        imageBlockIds: (ctx && ctx.imageIds) || [],
-        ref:           refId,
-      }),
-    }).then(function (r) {
-      if (!r.ok) throw new Error('AI request failed: ' + r.status)
-      return r.json()
-    }).then(function (resp) {
-      if (!resp || !resp.id) return
-      var blkId = resp.id
-      window.__sieveActiveAiBlocks.add(blkId)
-      pendingAiBlkIds.add(blkId)
-      window.SieveAI && window.SieveAI.trackJob(1, blkId, type === 'explain' ? 'Explaining...' : 'Asking AI...')
+    flushSave().then(function () {
+      fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content:       ctx ? ctx.content : '',
+          history:       ctx ? ctx.history : '',
+          question:      question || '',
+          noteUUID:      currentUuid || '',
+          imageBlockIds: (ctx && ctx.imageIds) || [],
+          ref:           refId,
+        }),
+      }).then(function (r) {
+        if (!r.ok) throw new Error('AI request failed: ' + r.status)
+        return r.json()
+      }).then(function (resp) {
+        if (!resp || !resp.id) return
+        var blkId = resp.id
+        window.__sieveActiveAiBlocks.add(blkId)
 
-      if (resp.fence && currentEditor && insertPos !== null) {
-        // Insert from Go's canonical fence into TipTap at the pre-computed position.
-        var rawYaml = resp.fence.replace(/^```ai-block\n/, '').replace(/\n```$/, '')
-        var data = {}
-        try { data = window.jsyaml.load(rawYaml) || {} } catch (_) {}
-        currentEditor.commands.insertContentAt(insertPos, {
-          type: 'aiBlock',
-          attrs: {
-            rawYaml:   rawYaml,
-            id:        data.id || blkId,
-            ref:       data.ref || refId,
-            status:    'PENDING',
-            type:      blockType,
-            question:  question || '',
-            createdAt: data.createdAt || '',
-          }
-        })
-        var afterInsert = insertPos + 2
-        var docSize = currentEditor.state.doc.content.size
-        currentEditor.chain()
-          .setTextSelection(Math.min(afterInsert, docSize - 1))
-          .focus()
-          .scrollIntoView()
-          .run()
-      } else if (resp.fence && currentMode === 'markdown') {
-        // Markdown mode: Go saved at the canonical position — reload to reflect it.
-        softReloadContent(currentUuid)
-      }
-      // Retry path (resp.fence === ''): block already in doc; tracking sets updated above.
-    }).catch(function (err) {
-      console.error('[editor] AI error', err)
+        if (resp.fence && currentEditor && insertPos !== null) {
+          // Insert from Go's canonical fence into TipTap at the pre-computed position.
+          var rawYaml = resp.fence.replace(/^```ai-block\n/, '').replace(/\n```$/, '')
+          var data = {}
+          try { data = window.jsyaml.load(rawYaml) || {} } catch (_) {}
+          currentEditor.commands.insertContentAt(insertPos, {
+            type: 'aiBlock',
+            attrs: {
+              rawYaml:   rawYaml,
+              id:        data.id || blkId,
+              ref:       data.ref || refId,
+              status:    'PENDING',
+              type:      blockType,
+              question:  question || '',
+              createdAt: data.createdAt || '',
+            }
+          })
+          var afterInsert = insertPos + 2
+          var docSize = currentEditor.state.doc.content.size
+          currentEditor.chain()
+            .setTextSelection(Math.min(afterInsert, docSize - 1))
+            .focus()
+            .scrollIntoView()
+            .run()
+        } else if (resp.fence && currentMode === 'markdown') {
+          // Markdown mode: Go saved at the canonical position — reload to reflect it.
+          softReloadContent(currentUuid)
+        }
+        // Retry path (resp.fence === ''): block already in doc; tracking sets updated above.
+      }).catch(function (err) {
+        console.error('[editor] AI error', err)
+      })
     })
   }
 
@@ -1387,47 +1376,43 @@
     // 3. Build context
     var ctx = window.TipTap.buildAiContext(currentEditor, false, lastSyncedBody, currentUuid)
 
-    // Add to active-jobs sets before fetch so isStale returns false immediately on re-render
+    // Add to active-jobs set before fetch so isStale returns false immediately on re-render
     window.__sieveActiveAiBlocks.add(blkId)
-    pendingAiBlkIds.add(blkId)
-    window.SieveAI && window.SieveAI.trackJob(1, blkId, type === 'explain' ? 'Explaining...' : 'Asking AI...')
 
     var endpoint = type === 'explain' ? '/api/ai/explain' : '/api/ai/ask'
-    fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id:            blkId,
-        content:       ctx ? ctx.content : '',
-        history:       ctx ? ctx.history : '',
-        question:      details.question || '',
-        noteUUID:      currentUuid || '',
-        imageBlockIds: (ctx && ctx.imageIds) || [],
-      }),
-    }).then(function (r) {
-      if (!r.ok) throw new Error('AI retry request failed: ' + r.status)
-      // SSE will fire sse:ai:block-resolved → softReloadContent
-    }).catch(function (err) {
-      console.error('[editor] AI retry error', err)
-      window.__sieveActiveAiBlocks.delete(blkId)
-      if (pendingAiBlkIds.has(blkId)) {
-        pendingAiBlkIds.delete(blkId)
-        window.SieveAI && window.SieveAI.trackJob(-1, blkId)
-      }
-      if (currentEditor) {
-        currentEditor.commands.command(function (props) {
-          var tr = props.tr
-          var found = false
-          props.state.doc.descendants(function (node, pos) {
-            if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
-              tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { status: 'TIMEOUT' }))
-              found = true
-              return false
-            }
+    flushSave().then(function () {
+      fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id:            blkId,
+          content:       ctx ? ctx.content : '',
+          history:       ctx ? ctx.history : '',
+          question:      details.question || '',
+          noteUUID:      currentUuid || '',
+          imageBlockIds: (ctx && ctx.imageIds) || [],
+        }),
+      }).then(function (r) {
+        if (!r.ok) throw new Error('AI retry request failed: ' + r.status)
+        // SSE will fire sse:ai:block-resolved → softReloadContent
+      }).catch(function (err) {
+        console.error('[editor] AI retry error', err)
+        window.__sieveActiveAiBlocks.delete(blkId)
+        if (currentEditor) {
+          currentEditor.commands.command(function (props) {
+            var tr = props.tr
+            var found = false
+            props.state.doc.descendants(function (node, pos) {
+              if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
+                tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { status: 'TIMEOUT' }))
+                found = true
+                return false
+              }
+            })
+            return found
           })
-          return found
-        })
-      }
+        }
+      })
     })
   })
 
@@ -1457,9 +1442,6 @@
 
     var body = currentEditor.storage.markdown.getMarkdown() || ''
 
-    window.__sieveActiveWebClips.add(blkId)
-    var wcRetryLabel = (detail.mode === 'summarise' ? 'Summarising ' : 'Fetching ') + extractDomain(detail.source)
-    window.SieveAI && window.SieveAI.trackJob(1, blkId, wcRetryLabel)
     fetch('/api/internalize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1472,13 +1454,9 @@
       })
     }).then(function (r) {
       if (!r.ok) {
-        window.__sieveActiveWebClips.delete(blkId)
-        window.SieveAI && window.SieveAI.trackJob(-1, blkId)
         console.error('[editor] webclip retry failed: ' + r.status)
       }
     }).catch(function (err) {
-      window.__sieveActiveWebClips.delete(blkId)
-      window.SieveAI && window.SieveAI.trackJob(-1, blkId)
       console.error('[editor] webclip retry error', err)
     })
   })

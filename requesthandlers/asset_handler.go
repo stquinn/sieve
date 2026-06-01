@@ -151,28 +151,18 @@ func decodeDataURL(dataURL string) []byte {
 func (h *AssetHandler) serveAsset(w http.ResponseWriter, r *http.Request) {
 	uuid := chi.URLParam(r, "uuid")
 	filename := chi.URLParam(r, "filename")
-	logger.Info("Serving Asset", "filename", filename, "uuid", uuid)
-	doc, err := h.ServiceProvider.Documents.LoadByUUID(uuid)
+	data, err := h.ServiceProvider.Assets.ServeAssetData(uuid, filename)
 	if err != nil {
 		http.NotFound(w, r)
+		return
 	}
-	logger.Info("Document Found", "Document", uuid, "Assets", len(doc.Storable().Owns()))
-	for _, asset := range doc.Storable().Owns() {
-		logger.Info("Asset", "filename", asset.Key())
-		if asset.Key() == filename {
-			logger.Info("Found Asset", "filename", filename, "uuid", uuid)
-			data := asset.Body()
-			contentType := http.DetectContentType(data)
-			if strings.HasPrefix(contentType, "text/xml") || strings.HasPrefix(contentType, "text/plain") {
-				if bytes.Contains(data, []byte("<svg")) {
-					contentType = "image/svg+xml"
-				}
-			}
-			w.Header().Set("Content-Type", contentType)
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(data)
-			return
+	contentType := http.DetectContentType(data)
+	if strings.HasPrefix(contentType, "text/xml") || strings.HasPrefix(contentType, "text/plain") {
+		if bytes.Contains(data, []byte("<svg")) {
+			contentType = "image/svg+xml"
 		}
 	}
-	http.NotFound(w, r)
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }

@@ -23,13 +23,12 @@
     }
     if (src.startsWith('blob:') || src.startsWith('data:') || src.startsWith('/')) return src
     
-    // Co-located assets: .assets/name.png -> /sieve/UUID/name.png
+    // Co-located assets: legacy .assets/ prefix or bare filename -> /sieve/UUID/name.png
     if (src.startsWith('.assets/')) {
-      var filename = src.substring(8)
-      return '/sieve/' + uuid + '/' + filename
+      return '/sieve/' + uuid + '/' + src.substring(8)
     }
-
-    return src
+    // Bare co-located filename (images saved directly in doc directory)
+    return '/sieve/' + uuid + '/' + src.split('/').pop()
   }
 
   function srcToBlockId(src) {

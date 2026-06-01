@@ -1,16 +1,17 @@
-// ai-actions.js — Category D: AI save-then-post operations + evaluating UI state.
-// Exposes window.SieveAI namespace; keeps window.__sieveActiveJobs counter for close-guard.
+// ai-actions.js — Status bar driven by ai:job-started / ai:job-ended SSE events from Go.
+// Exposes window.SieveAI namespace; maintains window.__sieveActiveJobs for the close-guard.
 (function() {
-  var activeJobLabels = {};  // jobId → display label
+  // activeJobs: jobId → {label, docId, spinTab}. Populated by SSE events and loadActiveJobs().
+  var activeJobs = {};
   window.__sieveActiveJobs = 0;
 
   function updateStatusBar() {
     var sbLeft = document.querySelector('.status-bar__left');
     if (!sbLeft) return;
-    var ids = Object.keys(activeJobLabels);
+    var ids = Object.keys(activeJobs);
     if (ids.length === 0) { sbLeft.innerHTML = ''; return; }
 
-    var firstLabel = activeJobLabels[ids[0]];
+    var firstLabel = activeJobs[ids[0]].label;
     var span = document.createElement('span');
     span.className = 'flex items-center gap-1.5';
     var spinner = document.createElement('span');
@@ -45,10 +46,36 @@
         else metaSpinner.classList.add('hidden');
       }
     }
-    updateStatusBar();
   }
 
-  function saveAndPost(url, id, label) {
+  function parseSSEDetail(e) {
+    var raw = e.detail && e.detail.data != null ? e.detail.data : (typeof e.detail === 'string' ? e.detail : null)
+    if (!raw) return {}
+    try { return JSON.parse(raw); } catch (_) { return {}; }
+  }
+
+  document.addEventListener('sse:ai:job-started', function(e) {
+    var data = parseSSEDetail(e);
+    if (!data.jobId) return;
+    activeJobs[data.jobId] = { label: data.label || 'Working...', docId: data.docId, spinTab: !!data.spinTab };
+    window.__sieveActiveJobs = Object.keys(activeJobs).length;
+    if (data.spinTab && data.docId) setEvaluating(data.docId, true);
+    updateStatusBar();
+  });
+
+  document.addEventListener('sse:ai:job-ended', function(e) {
+    var data = parseSSEDetail(e);
+    if (!data.jobId) return;
+    var job = activeJobs[data.jobId] || {};
+    delete activeJobs[data.jobId];
+    window.__sieveActiveJobs = Object.keys(activeJobs).length;
+    var docId = job.docId || data.docId;
+    var spinTab = job.spinTab != null ? job.spinTab : !!data.spinTab;
+    if (spinTab && docId) setEvaluating(docId, false);
+    updateStatusBar();
+  });
+
+  function saveAndPost(url, id) {
     var p = window._editorSave ? window._editorSave() : Promise.resolve();
     p.then(function() {
       if (!id) {
@@ -56,33 +83,31 @@
         if (mount) id = mount.getAttribute('data-uuid');
       }
       if (id) {
-        activeJobLabels[id] = label || 'Filing note...';
-        window.__sieveActiveJobs = Object.keys(activeJobLabels).length;
-        setEvaluating(id, true);
-        fetch(url + id, { method: 'POST' }).finally(function() {
-          delete activeJobLabels[id];
-          window.__sieveActiveJobs = Object.keys(activeJobLabels).length;
-          setEvaluating(id, false);
-        });
+        fetch(url + id, { method: 'POST' });
+        // Go emits ai:job-started and ai:job-ended via SSE — no JS tracking needed here.
       }
     });
   }
 
   window.SieveAI = {
-    // trackJob: called by editor.js for ask/explain/web-clip jobs.
-    // delta: +1 to register a job, -1 to remove it.
-    // id: stable key for the job (blkId). label: human-readable status text.
-    trackJob: function(delta, id, label) {
-      if (delta > 0 && id) {
-        activeJobLabels[id] = label || 'Working...';
-      } else if (id) {
-        delete activeJobLabels[id];
-      }
-      window.__sieveActiveJobs = Object.keys(activeJobLabels).length;
-      updateStatusBar();
+    // loadActiveJobs: called by editor.js on tab load to restore status bar state.
+    loadActiveJobs: function() {
+      fetch('/api/ai/active-jobs')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var jobs = data.jobs || [];
+          jobs.forEach(function(job) {
+            if (!job.jobId) return;
+            activeJobs[job.jobId] = { label: job.label || 'Working...', docId: job.docId, spinTab: !!job.spinTab };
+            if (job.spinTab && job.docId) setEvaluating(job.docId, true);
+          });
+          window.__sieveActiveJobs = Object.keys(activeJobs).length;
+          updateStatusBar();
+        })
+        .catch(function() {});
     },
-    smartFile:        function(id) { saveAndPost('/api/ai/smartFile/',    id, 'Filing note...'); },
-    smartMetadata:    function(id) { saveAndPost('/api/ai/smartMetadata/', id, 'Updating metadata...'); },
-    keepAndSmartFile: function(id) { saveAndPost('/api/ai/keepAndFile/',  id, 'Filing note...'); }
+    smartFile:        function(id) { saveAndPost('/api/ai/smartFile/',    id); },
+    smartMetadata:    function(id) { saveAndPost('/api/ai/smartMetadata/', id); },
+    keepAndSmartFile: function(id) { saveAndPost('/api/ai/keepAndFile/',  id); }
   };
 })();

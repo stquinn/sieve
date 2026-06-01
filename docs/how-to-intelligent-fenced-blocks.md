@@ -25,7 +25,6 @@ A fenced block with a named language tag (e.g. ` ```web-clip ` or ` ```ai-block 
 - Go writes the initial `PENDING` fence and the final `COMPLETE`/`ERROR` fence.
 - JS parses YAML (via `js-yaml`) to extract attributes for rendering. It never constructs YAML strings.
 - The TipTap markdown serialiser uses a `rawYaml` attribute (stored verbatim from the original fence) and replays it unchanged:
-- UI Needs to SAVE current buffer before allowing backend to update and insert place holder - or buffer only changes will be lost.
 
 ```js
 serialize: function (state, node) {
@@ -38,6 +37,22 @@ serialize: function (state, node) {
 The fence hook stores the raw content in `data-raw-yaml` on the HTML element, which becomes `rawYaml` in TipTap attrs. The serialiser echoes it back out — no round-trip generation.
 
 **Consequence:** After a background job completes, JS cannot update `rawYaml` in-place (the old value is still in TipTap's state). The correct completion flow is always `softReloadContent` — Go has already written the canonical YAML to disk; JS discards its stale state and reloads.
+
+**Corollary — JS must flush its buffer before triggering any Go document write:** Go reads the document from disk when inserting a `PENDING` block, and again when resolving it. If the JS autosave debounce (1 s) has not yet fired, Go sees stale content; when `softReloadContent` runs on completion, the user's unsaved text is silently discarded.
+
+Chain every backend request that causes Go to modify the document inside `flushSave().then(...)`:
+
+```js
+// Correct — save lands before Go reads the file.
+flushSave().then(function () {
+  fetch('/api/ai/ask', { method: 'POST', body: JSON.stringify({ /* ... */ }) })
+    .then(function (r) { return r.json() })
+    .then(function (resp) { /* insert PENDING node */ })
+    .catch(function (err) { /* handle error */ })
+})
+```
+
+Apply to: initial Ask / Explain (`runAiJob`), retry (`sieve:ai-retry` handler), and web-clip fetch / summarise (`doInternalize`). Any future handler that calls `InsertAfterRef` or otherwise mutates the document body must follow the same pattern.
 
 ---
 
@@ -77,75 +92,23 @@ if (!data || !data.id) return
 
 ---
 
-## Rule 3 — Inner Fences Need 4-Space Block Scalar Indentation
+## Rule 3 — Block Scalar Content Must Be Indented ≥ 4 Spaces
 
-**Why:** CommonMark allows a closing fence to have 0–3 leading spaces. A 2-space indented line that starts with three backticks (e.g. from a code block inside fetched content) will prematurely close the outer `web-clip` fence, corrupting the document.
+**Why:** CommonMark allows a closing fence to have 0–3 leading spaces. A 2-space indented line starting with three backticks (e.g. from a code block inside fetched content) will prematurely close the outer fence and corrupt the document.
 
-**How:** All block scalars inside a fenced block must indent their content lines by **at least 4 spaces**:
+**How:** Use `fencedblock.Serialize` (which calls `yaml.NewEncoder` with `SetIndent(4)`). This is handled automatically — you do not need to write indentation logic by hand. A 4-space indent makes any ` ``` ` inside block scalar content unparseable as a fence delimiter.
 
-```go
-// Go serialiser
-lines = append(lines, "content: |")
-for _, l := range strings.Split(content, "\n") {
-    if l == "" {
-        lines = append(lines, "    ")   // 4 spaces even for blank lines
-    } else {
-        lines = append(lines, "    "+l)
-    }
-}
-```
-
-```js
-// JS serialiser (only used for ai-block question field — Go owns the rest)
-r.split('\n').forEach(function (l) { lines.push('    ' + (l || '')) })
-```
-
-A 4-space indent means any ` ``` ` sequence inside the content becomes `    ``` ` — four leading spaces make it unparseable as a fence delimiter.
+Do not hand-roll YAML serialization for fenced blocks. If you find yourself writing `lines = append(lines, "    "+l)`, stop and use `fencedblock.Serialize` instead.
 
 ---
 
-## Rule 4 — YAML Scalars Must Be Quoted When Necessary
+## Rule 4 — Let the YAML Library Handle Quoting
 
-Certain characters are meaningful in YAML and will break parsing if they appear unquoted in a flow scalar: `: # { } [ ] | > & * ! ,` — and a value that starts or ends with a space.
+**Why:** YAML has many edge cases for scalar values — colons, hashes, brackets, leading/trailing spaces, values that look like timestamps or booleans. A hand-written `yamlScalar()` helper will always have gaps.
 
-**Go** uses a helper:
+**How:** Use `fencedblock.Serialize`, which uses `gopkg.in/yaml.v3`. yaml.v3 handles quoting automatically — values like `"React: A Complete Guide"`, `"https://example.com"`, and `"2026-05-22T10:00:00Z"` are all emitted safely and round-trip correctly without any helper function.
 
-```go
-func yamlScalar(s string) string {
-    needsQuote := strings.ContainsAny(s, `:#{}[]|>&*!,`) ||
-        strings.HasPrefix(s, " ") || strings.HasSuffix(s, " ")
-    if !needsQuote {
-        return s
-    }
-    s = strings.ReplaceAll(s, `\`, `\\`)
-    s = strings.ReplaceAll(s, `"`, `\"`)
-    return `"` + s + `"`
-}
-```
-
-**JS** mirrors this exactly for any field it writes (currently only `source`, `model`, `createdAt`, `completedAt` in the retry serialiser):
-
-```js
-function yamlScalar(s) {
-  if (!s) return s
-  var needsQuote = /[:#{}[\]|>&*!,]/.test(s) || s[0] === ' ' || s[s.length - 1] === ' '
-  if (!needsQuote) return s
-  return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'
-}
-```
-
-**For multiline values** (titles, content, error messages) use block scalars (`|` or `|-`) rather than quoting. Block scalars are immune to special characters and are more readable:
-
-```yaml
-title: |-
-  Page title with "quotes" and : colons — no escaping needed
-content: |
-    First paragraph.
-
-    Second paragraph with ```code``` — safe because of 4-space indent.
-```
-
-Use `|-` (strip) for title (no trailing newline). Use `|` (clip) for content/error (preserve single trailing newline, conventional for prose).
+The `yamlScalar()` helpers that previously existed in `aiblock` and `webclip` have been deleted. Do not reintroduce them.
 
 ---
 
@@ -404,10 +367,10 @@ if (!aiBlockId) {
 
 ## Checklist: Building a New Intelligent Fenced Block
 
-- [ ] Go struct + YAML serialiser with `yamlScalar()` for all flow scalars
-- [ ] Block scalar indentation ≥ 4 spaces for multiline fields
+- [ ] Go struct with yaml struct tags; use `fencedblock.Serialize` (yaml.v3, SetIndent 4) — no hand-rolled YAML, no `yamlScalar()` helper
 - [ ] `PREFIX-XXXX` ID generation (`randomHex(2)` → 4 hex chars)
 - [ ] HTTP handler: new block appends PENDING fence; retry reuses caller-supplied ID
+- [ ] JS entry points (`runAiJob`, retry handler, `doInternalize`) call `flushSave().then(...)` before any `fetch` that causes Go to write the document (prevents unsaved-text loss on `softReloadContent`)
 - [ ] `sync.Map` + `GET /api/.../active` endpoint for stale-vs-running detection
 - [ ] Background goroutine: registers ID in activeJobs, defers delete, broadcasts SSE on completion
 - [ ] TipTap Node extension:

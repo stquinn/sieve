@@ -1,14 +1,45 @@
 # AI Job Lifecycle via Go SSE Implementation Plan
 
-## PLAN NEEDS UPDATING BASED ON CHANGES INTRODUCED IN @2026-05-27-ai-block-refactor.md
-
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace JS-side `trackJob()` call sites with Go-broadcast `ai:job-started` / `ai:job-ended` SSE events, making Go the single source of truth for AI job lifecycle and eliminating ~11 JS call sites that manually track status bar state.
+**Goal:** Replace JS-side `trackJob()` call sites with Go-broadcast `ai:job-started` / `ai:job-ended` SSE events, making Go the single source of truth for AI job lifecycle and eliminating JS call sites that manually track status bar state.
 
-**Architecture:** A new `JobTracker` struct (in `requesthandlers/`) is the shared in-flight job registry. Both `AiHandler` and `InternalizeHandler` hold a pointer to it. Each handler emits `ai:job-started` / `ai:job-ended` SSE events at job boundaries, and registers/deregisters from the tracker. A new `GET /api/ai/active-jobs` endpoint (registered on `AiHandler`) serves the tracker's state so the JS status bar can restore after a tab switch. `ai-actions.js` becomes a pure SSE consumer — `trackJob()` is deleted and `window.SieveAI.loadActiveJobs()` replaces the old `/api/internalize/active` call in `editor.js`.
+**Architecture:** A new `JobTracker` struct (in `requesthandlers/`) is the shared in-flight job registry. Both `AiHandler` and `InternalizeHandler` hold a pointer to it. Each handler emits `ai:job-started` / `ai:job-ended` SSE events at job boundaries, and registers/deregisters from the tracker. A new `GET /api/ai/active-jobs` endpoint (registered on `AiHandler`) replaces both the existing `/api/ai/active` (on `AiHandler`) and `/api/internalize/active` (on `InternalizeHandler`) endpoints. `ai-actions.js` becomes a pure SSE consumer — `trackJob()` is deleted and `window.SieveAI.loadActiveJobs()` replaces the old active-jobs fetches in `editor.js`.
 
 **Tech Stack:** Go (chi, `sync.RWMutex`), vanilla JS, HTMX SSE extension, Wails v2
+
+---
+
+## Current State (verified 2026-06-01)
+
+### Go — what exists and needs replacing
+
+| Handler | Current tracking | Route to remove |
+|---------|-----------------|-----------------|
+| `AiHandler` | `activeJobs sync.Map` (blkID → struct{}) | `GET /api/ai/active` → `handleActiveJobs` |
+| `InternalizeHandler` | `activeJobs sync.Map` (blkID → struct{}) | `GET /api/internalize/active` → `handleActiveJobs` |
+
+`evaluateAndFile` runs **synchronously** in the HTTP handler (no goroutine). Job events wrap it directly.
+
+`runAiBlock` is the async goroutine for ask/explain. Job events belong here, **not** in `handleAiAsk`/`handleAiExplain`.
+
+`runInBackground` is the async goroutine for web clips. Job events belong here.
+
+### JS — actual `trackJob` call sites (verified via grep)
+
+| Line | Site | Direction |
+|------|------|-----------|
+| ~460–462 | web-clip new block (doInternalize) | +1 start |
+| ~630–632 | `sse:ai:block-resolved` handler | −1 end |
+| ~647–649 | `sse:ai:web-clip-resolved` handler | −1 end |
+| ~793–794 | `runAiJob` ask/explain start | +1 start |
+| ~1414–1415 | retry-path ask/explain start | +1 start |
+| ~1436–1438 | retry-path ask/explain fetch error | −1 end |
+| ~1484–1486 | web-clip retry start | +1 start |
+| ~1499–1500 | web-clip retry error (path 1) | −1 end |
+| ~1504–1505 | web-clip retry error (path 2) | −1 end |
+
+State variables to delete: `window.__sieveActiveWebClips` (line ~26), `pendingAiBlkIds` (line ~34).
 
 ---
 
@@ -18,11 +49,11 @@
 |--------|------|--------|
 | **Create** | `requesthandlers/job_tracker.go` | `JobTracker` struct + `JobInfo` type |
 | **Create** | `requesthandlers/job_tracker_test.go` | Unit tests for `JobTracker` |
-| **Modify** | `requesthandlers/ai_handler.go` | Add `JobTracker` field; emit job events from `evaluateAndFile`, `handleAiAsk`, `handleAiExplain`; add `/api/ai/active-jobs` route |
-| **Modify** | `requesthandlers/internalize_handler.go` | Replace `activeJobs sync.Map` with `JobTracker`; emit job events from `runInBackground`; remove `/api/internalize/active` |
+| **Modify** | `requesthandlers/ai_handler.go` | Replace `activeJobs sync.Map`; add `JobTracker` field; emit job events from `evaluateAndFile` and `runAiBlock`; replace `GET /api/ai/active` with `GET /api/ai/active-jobs` |
+| **Modify** | `requesthandlers/internalize_handler.go` | Replace `activeJobs sync.Map` with `JobTracker`; emit job events from `runInBackground`; remove `GET /api/internalize/active` |
 | **Modify** | `handlers.go` | Create `JobTracker` instance; inject into both handlers |
 | **Modify** | `frontend/src/static/ai-actions.js` | Rewrite as SSE consumer; remove `trackJob()`; add `loadActiveJobs()` |
-| **Modify** | `frontend/src/static/editor.js` | Remove 11 `trackJob()` call sites; remove `pendingAiBlkIds`; remove `window.__sieveActiveWebClips`; call `loadActiveJobs()` on tab load |
+| **Modify** | `frontend/src/static/editor.js` | Remove all `trackJob()` call sites; remove `pendingAiBlkIds`; remove `window.__sieveActiveWebClips`; replace `/api/internalize/active` fetch with `SieveAI.loadActiveJobs()` |
 | **Modify** | `frontend/src/index.html` | Add SSE relay divs for new events |
 
 ---
@@ -198,7 +229,6 @@ Expected: all 6 tests PASS.
 ```bash
 go build ./...
 ```
-Expected: no errors.
 
 - [ ] **Step 6: Commit**
 
@@ -214,11 +244,11 @@ git commit -m "feat(ai-sse): add JobTracker — shared in-flight AI job registry
 **Files:**
 - Modify: `requesthandlers/ai_handler.go`
 
-- [ ] **Step 1: Add helper methods and JobTracker field to AiHandler**
+**Note on current structure:** `handleAiAsk` and `handleAiExplain` now return immediately after inserting the pending block — they launch `go runAiBlock(...)` and return `{id, fence}`. Job lifecycle events belong in `runAiBlock`, NOT in the handlers themselves. `evaluateAndFile` is synchronous and wraps directly.
 
-Add the `JobTracker` field to the struct and two private helpers. The helpers keep the broadcast + tracker calls co-located so each handler method is a one-liner at the boundary.
+- [ ] **Step 1: Replace activeJobs sync.Map with JobTracker field; add helper methods**
 
-Replace the `AiHandler` struct definition (lines 15–19) and add helpers after it:
+Replace the `AiHandler` struct (currently lines 19–24) and add two helpers after it. Also remove `"sync"` from imports if it is no longer needed after this change (verify other uses first — `sync` may still be used elsewhere in the file).
 
 ```go
 type AiHandler struct {
@@ -251,9 +281,9 @@ func (h *AiHandler) emitJobEnded(jobID, docID string) {
 }
 ```
 
-- [ ] **Step 2: Add /api/ai/active-jobs route to RegisterPaths**
+- [ ] **Step 2: Replace GET /api/ai/active with GET /api/ai/active-jobs in RegisterPaths**
 
-Add one line to `RegisterPaths`:
+Replace the existing `r.Get("/api/ai/active", h.handleActiveJobs)` line and delete the `handleActiveJobs` method. The new route delegates to `JobTracker`:
 
 ```go
 func (h *AiHandler) RegisterPaths(r chi.Router) {
@@ -276,11 +306,11 @@ func (h *AiHandler) RegisterPaths(r chi.Router) {
 }
 ```
 
+Delete the entire `handleActiveJobs` method that currently serves `{"active": [ids...]}`.
+
 - [ ] **Step 3: Wrap evaluateAndFile with job lifecycle events**
 
-`evaluateAndFile` is called by smartFile (fileAfter=true), smartMetadata (fileAfter=false), and keepAndFile (fileAfter=true). Emit `ai:job-started` after the document-exists check, then defer `ai:job-ended` so it fires on every return path (success and error).
-
-Replace `evaluateAndFile` (lines 62–101):
+`evaluateAndFile` is synchronous. Emit `ai:job-started` after the document-exists check, then defer `ai:job-ended`. The job ID is the document ID (same value used for tab spinner targeting).
 
 ```go
 func (h *AiHandler) evaluateAndFile(w http.ResponseWriter, id string, fileAfter bool, allowDiscard bool) {
@@ -326,153 +356,73 @@ func (h *AiHandler) evaluateAndFile(w http.ResponseWriter, id string, fileAfter 
 }
 ```
 
-- [ ] **Step 4: Wrap handleAiAsk with job lifecycle events**
+- [ ] **Step 4: Wrap runAiBlock with job lifecycle events**
 
-Emit `ai:job-started` before `RunAsk` and defer `ai:job-ended` so it fires on all return paths. Guarded by `req.BlkID != ""` (same guard as the existing `ai:block-resolved` broadcast, since we need a stable job ID).
+`runAiBlock` is the goroutine where ask/explain work actually happens. Replace the `activeJobs.Store`/`Delete` calls with `emitJobStarted`/`emitJobEnded`. Emit `ai:job-ended` **after** `ai:block-resolved` so the editor updates before the spinner clears — call it explicitly at the end rather than using defer.
 
-In `handleAiAsk`, insert after the pre-save block (after line 138 in the original, before `resp, err := h.ServiceProvider.AI.RunAsk(...)`):
-
-```go
-	if req.BlkID != "" && req.NoteUUID != "" {
-		h.emitJobStarted(req.BlkID, "Asking AI...", req.NoteUUID, false)
-		defer h.emitJobEnded(req.BlkID, req.NoteUUID)
-	}
-```
-
-The full function becomes:
+Replace the current `runAiBlock` (currently at lines ~213–257):
 
 ```go
-func (h *AiHandler) handleAiAsk(w http.ResponseWriter, r *http.Request) {
-	var req askRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+func (h *AiHandler) runAiBlock(uuid, blkID, blockType, content, history, question string, imageBlockIds []string) {
+	label := "Asking AI..."
+	if blockType == "EXPLAIN" {
+		label = "Explaining..."
+	}
+	h.emitJobStarted(blkID, label, uuid, false)
+
+	settings := h.ServiceProvider.State.LoadSettings()
+	model := settings.Model
+
+	var resp string
+	var runErr error
+	if blockType == "ASK" {
+		resp, runErr = h.ServiceProvider.AI.RunAsk(content, history, question, uuid, imageBlockIds)
+	} else {
+		resp, runErr = h.ServiceProvider.AI.RunExplain(content, history, uuid, imageBlockIds)
 	}
 
-	if req.BlkID != "" && req.Body != "" && req.NoteUUID != "" {
-		for attempt := 0; attempt < 3; attempt++ {
-			doc, err := h.ServiceProvider.Documents.LoadByUUID(req.NoteUUID)
-			if err != nil {
-				logger.Error("handleAiAsk: load for pre-save failed", "err", err)
-				break
-			}
-			doc.SetBody([]byte(req.Body))
-			if _, err := h.ServiceProvider.Documents.Save(doc); err != nil {
-				if errors.Is(err, store.ErrStaleStorable) {
-					continue
-				}
-				logger.Error("handleAiAsk: save body failed", "err", err)
-			}
-			break
+	var status, completedAt string
+	if runErr != nil {
+		if strings.Contains(runErr.Error(), "timeout") {
+			status = "TIMEOUT"
+		} else {
+			status = "ERROR"
+		}
+		model = ""
+		resp = ""
+		h.resolveAiBlockStatus(uuid, blkID, status, blockType)
+	} else {
+		status = "COMPLETE"
+		completedAt = time.Now().UTC().Format(time.RFC3339)
+		if err := h.ServiceProvider.AI.ResolveAiBlock(uuid, blkID, resp, model, blockType); err != nil {
+			logger.Error("runAiBlock: ResolveAiBlock failed", "id", blkID, "err", err)
 		}
 	}
 
-	if req.BlkID != "" && req.NoteUUID != "" {
-		h.emitJobStarted(req.BlkID, "Asking AI...", req.NoteUUID, false)
-		defer h.emitJobEnded(req.BlkID, req.NoteUUID)
+	payload, _ := json.Marshal(map[string]string{
+		"uuid":        uuid,
+		"blkId":       blkID,
+		"status":      status,
+		"response":    resp,
+		"model":       model,
+		"completedAt": completedAt,
+	})
+	if h.Broadcast != nil {
+		h.Broadcast("ai:block-resolved", string(payload))
 	}
 
-	resp, err := h.ServiceProvider.AI.RunAsk(req.Content, req.History, req.Question, req.NoteUUID, req.ImageBlockIds)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if req.BlkID != "" && req.NoteUUID != "" {
-		model := h.ServiceProvider.State.LoadSettings().Model
-		completedAt := time.Now().UTC().Format(time.RFC3339)
-		if err := h.ServiceProvider.AI.ResolveAiBlock(req.NoteUUID, req.BlkID, resp, model, "ASK"); err != nil {
-			logger.Error("handleAiAsk: ResolveAiBlock failed", "err", err)
-		} else if h.Broadcast != nil {
-			data, _ := json.Marshal(map[string]string{
-				"uuid":        req.NoteUUID,
-				"blkId":       req.BlkID,
-				"status":      "COMPLETE",
-				"response":    resp,
-				"model":       model,
-				"completedAt": completedAt,
-			})
-			h.Broadcast("ai:block-resolved", string(data))
-		}
-	}
-
-	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte(resp))
+	// Emit ended after ai:block-resolved so the editor updates before the spinner clears.
+	h.emitJobEnded(blkID, uuid)
 }
 ```
 
-- [ ] **Step 5: Wrap handleAiExplain with job lifecycle events**
-
-Same pattern as ask. The full function:
-
-```go
-func (h *AiHandler) handleAiExplain(w http.ResponseWriter, r *http.Request) {
-	var req explainRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	if req.BlkID != "" && req.Body != "" && req.NoteUUID != "" {
-		for attempt := 0; attempt < 3; attempt++ {
-			doc, err := h.ServiceProvider.Documents.LoadByUUID(req.NoteUUID)
-			if err != nil {
-				logger.Error("handleAiExplain: load for pre-save failed", "err", err)
-				break
-			}
-			doc.SetBody([]byte(req.Body))
-			if _, err := h.ServiceProvider.Documents.Save(doc); err != nil {
-				if errors.Is(err, store.ErrStaleStorable) {
-					continue
-				}
-				logger.Error("handleAiExplain: save body failed", "err", err)
-			}
-			break
-		}
-	}
-
-	if req.BlkID != "" && req.NoteUUID != "" {
-		h.emitJobStarted(req.BlkID, "Explaining...", req.NoteUUID, false)
-		defer h.emitJobEnded(req.BlkID, req.NoteUUID)
-	}
-
-	resp, err := h.ServiceProvider.AI.RunExplain(req.Content, req.History, req.NoteUUID, req.ImageBlockIds)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if req.BlkID != "" && req.NoteUUID != "" {
-		model := h.ServiceProvider.State.LoadSettings().Model
-		completedAt := time.Now().UTC().Format(time.RFC3339)
-		if err := h.ServiceProvider.AI.ResolveAiBlock(req.NoteUUID, req.BlkID, resp, model, "EXPLAIN"); err != nil {
-			logger.Error("handleAiExplain: ResolveAiBlock failed", "err", err)
-		} else if h.Broadcast != nil {
-			data, _ := json.Marshal(map[string]string{
-				"uuid":        req.NoteUUID,
-				"blkId":       req.BlkID,
-				"status":      "COMPLETE",
-				"response":    resp,
-				"model":       model,
-				"completedAt": completedAt,
-			})
-			h.Broadcast("ai:block-resolved", string(data))
-		}
-	}
-
-	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte(resp))
-}
-```
-
-- [ ] **Step 6: Compile check**
+- [ ] **Step 5: Compile check**
 
 ```bash
 go build ./...
 ```
-Expected: no errors.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add requesthandlers/ai_handler.go
@@ -486,13 +436,11 @@ git commit -m "feat(ai-sse): AiHandler emits ai:job-started/ended and serves /ap
 **Files:**
 - Modify: `requesthandlers/internalize_handler.go`
 
-The `InternalizeHandler` runs web-clip jobs in a goroutine. It already has an `activeJobs sync.Map`. We replace that with the shared `JobTracker`, emit the SSE events, and remove the now-redundant `/api/internalize/active` endpoint.
-
-The label for the status bar is derived from `mode` and the URL hostname using `net/url`.
+Replace `activeJobs sync.Map` with `JobTracker`, emit SSE events from `runInBackground`, and remove `/api/internalize/active`.
 
 - [ ] **Step 1: Replace activeJobs sync.Map with JobTracker field**
 
-Replace the struct definition (lines 27–31):
+Replace the struct definition (currently lines 27–31):
 
 ```go
 type InternalizeHandler struct {
@@ -502,11 +450,9 @@ type InternalizeHandler struct {
 }
 ```
 
-Remove `"sync"` from imports (it's no longer used directly).
+Remove `"sync"` from imports (no longer needed).
 
-- [ ] **Step 2: Remove RegisterPaths entry for /api/internalize/active**
-
-Replace `RegisterPaths` (lines 33–36):
+- [ ] **Step 2: Remove /api/internalize/active from RegisterPaths and delete handleActiveJobs**
 
 ```go
 func (h *InternalizeHandler) RegisterPaths(r chi.Router) {
@@ -514,88 +460,15 @@ func (h *InternalizeHandler) RegisterPaths(r chi.Router) {
 }
 ```
 
-- [ ] **Step 3: Delete the handleActiveJobs method**
+Delete the entire `handleActiveJobs` method (currently lines ~38–48).
 
-Delete the entire `handleActiveJobs` method (lines 38–48). It is replaced by `GET /api/ai/active-jobs` served from `JobTracker.ServeActiveJobs`.
+- [ ] **Step 3: Update runInBackground to use JobTracker and emit job events**
 
-- [ ] **Step 4: Update runInBackground to use JobTracker and emit job events**
+Add `"net/url"` to imports. The label uses the URL hostname.
 
-The web-clip label uses the URL hostname. Add `"net/url"` to imports.
+Emit `ai:job-ended` **after** `ai:web-clip-resolved` so the editor block updates before the spinner clears — call it explicitly at the end, not via defer.
 
-Replace `runInBackground` (lines 125–167):
-
-```go
-func (h *InternalizeHandler) runInBackground(uuid, id, source, mode, docContent string) {
-	label := "Fetching web page..."
-	if mode == "summarise" {
-		label = "Summarising web page..."
-	}
-	if u, err := url.Parse(source); err == nil && u.Host != "" {
-		host := u.Host
-		if mode == "summarise" {
-			label = "Summarising " + host
-		} else {
-			label = "Fetching " + host
-		}
-	}
-
-	if h.JobTracker != nil {
-		h.JobTracker.Start(JobInfo{JobID: id, Label: label, DocID: uuid, SpinTab: false})
-		defer h.JobTracker.End(id)
-	}
-	if h.Broadcast != nil {
-		data, _ := json.Marshal(map[string]interface{}{
-			"jobId": id, "label": label, "docId": uuid, "spinTab": false,
-		})
-		h.Broadcast("ai:job-started", string(data))
-		endData, _ := json.Marshal(map[string]string{"jobId": id, "docId": uuid})
-		defer h.Broadcast("ai:job-ended", string(endData))
-	}
-
-	settings := h.ServiceProvider.State.LoadSettings()
-	model := settings.Model
-
-	title, content, cliErr := h.ServiceProvider.AI.RunWebClip(uuid, id, source, mode, docContent)
-
-	var status, errMsg, completedAt string
-	if cliErr != nil {
-		if strings.Contains(cliErr.Error(), "timeout") {
-			status = "TIMEOUT"
-		} else {
-			status = "ERROR"
-			errMsg = "Claude could not retrieve this page. Check that your MCP configuration can access this URL."
-			model = ""
-		}
-		title = ""
-		content = ""
-	} else {
-		status = "COMPLETE"
-		completedAt = time.Now().UTC().Format(time.RFC3339)
-	}
-
-	if err := h.ServiceProvider.AI.ResolveWebClip(uuid, id, title, content, model, errMsg, status, completedAt); err != nil {
-		logger.Error("handleInternalize: ResolveWebClip failed", "id", id, "err", err)
-	}
-
-	payload, _ := json.Marshal(map[string]string{
-		"uuid":        uuid,
-		"blkId":       id,
-		"status":      status,
-		"title":       title,
-		"content":     content,
-		"model":       model,
-		"completedAt": completedAt,
-		"error":       errMsg,
-	})
-	if h.Broadcast != nil {
-		h.Broadcast("ai:web-clip-resolved", string(payload))
-	}
-}
-```
-
-Note: `ai:job-ended` fires via defer **before** `ai:web-clip-resolved` due to Go's defer LIFO ordering. This is correct — the status bar clears first, then the editor block updates.
-
-Wait — actually we want `ai:web-clip-resolved` to fire before `ai:job-ended` so the editor updates its block before the spinner disappears. Reverse the defer order by not deferring `ai:job-ended` — instead call it explicitly at the end:
+Replace `runInBackground` (currently lines ~125–167):
 
 ```go
 func (h *InternalizeHandler) runInBackground(uuid, id, source, mode, docContent string) {
@@ -604,11 +477,10 @@ func (h *InternalizeHandler) runInBackground(uuid, id, source, mode, docContent 
 		label = "Summarising web page..."
 	}
 	if u, err := url.Parse(source); err == nil && u.Host != "" {
-		host := u.Host
 		if mode == "summarise" {
-			label = "Summarising " + host
+			label = "Summarising " + u.Host
 		} else {
-			label = "Fetching " + host
+			label = "Fetching " + u.Host
 		}
 	}
 
@@ -672,38 +544,13 @@ func (h *InternalizeHandler) runInBackground(uuid, id, source, mode, docContent 
 }
 ```
 
-- [ ] **Step 5: Update imports**
-
-The file needs `"net/url"` added and `"sync"` removed. Verify the full import block:
-
-```go
-import (
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"net/http"
-	"net/url"
-	"strings"
-	"time"
-
-	"github.com/go-chi/chi/v5"
-	"sieve/logger"
-	"sieve/sieve"
-	"sieve/sieve/webclip"
-	"sieve/store"
-)
-```
-
-- [ ] **Step 6: Compile check**
+- [ ] **Step 4: Compile check**
 
 ```bash
 go build ./...
 ```
-Expected: no errors.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add requesthandlers/internalize_handler.go
@@ -719,28 +566,28 @@ git commit -m "feat(ai-sse): InternalizeHandler emits ai:job-started/ended via s
 
 - [ ] **Step 1: Create JobTracker and inject into both handlers**
 
-In `newAPIHandler()`, create the tracker before the handler slice and pass it to both `AiHandler` and `InternalizeHandler`:
+In `newAPIHandler()`, create the tracker before the handler slice:
 
 ```go
 tracker := requesthandlers.NewJobTracker()
 ```
 
-Then update the two handler initialisations:
+Update the two handler initialisations:
 
 ```go
 &requesthandlers.AiHandler{
-    ServiceProvider: sp,
-    JobTracker: tracker,
-    EmitNotesChanged: func() {
-        logger.Info("AI: notes changed event")
-        hub.broadcast("notes:changed", "{}")
-    },
-    Broadcast: hub.broadcast,
+	ServiceProvider: sp,
+	JobTracker: tracker,
+	EmitNotesChanged: func() {
+		logger.Info("AI: notes changed event")
+		hub.broadcast("notes:changed", "{}")
+	},
+	Broadcast: hub.broadcast,
 },
 &requesthandlers.InternalizeHandler{
-    ServiceProvider: sp,
-    JobTracker:      tracker,
-    Broadcast:       hub.broadcast,
+	ServiceProvider: sp,
+	JobTracker:      tracker,
+	Broadcast:       hub.broadcast,
 },
 ```
 
@@ -749,7 +596,6 @@ Then update the two handler initialisations:
 ```bash
 go build ./...
 ```
-Expected: no errors.
 
 - [ ] **Step 3: Commit**
 
@@ -765,7 +611,7 @@ git commit -m "feat(ai-sse): wire shared JobTracker into AiHandler and Internali
 **Files:**
 - Modify: `frontend/src/static/ai-actions.js`
 
-Remove `trackJob()`, `activeJobLabels`, and the direct-manipulation `saveAndPost` cleanup. Replace with SSE listeners and `loadActiveJobs()`.
+Remove `trackJob()`, `activeJobLabels`, and the tab-spinner direct manipulation from `saveAndPost`. Replace with SSE listeners (`sse:ai:job-started`, `sse:ai:job-ended`) and `loadActiveJobs()`.
 
 - [ ] **Step 1: Rewrite ai-actions.js**
 
@@ -898,94 +744,85 @@ git commit -m "feat(ai-sse): ai-actions.js becomes SSE consumer — remove track
 **Files:**
 - Modify: `frontend/src/static/editor.js`
 
-There are 11 `trackJob` call sites and two sets of tracking state (`pendingAiBlkIds`, `window.__sieveActiveWebClips`) to remove. The tab load code calling `/api/internalize/active` is also replaced.
+Use grep to verify exact line numbers before editing — they may have shifted from those listed below.
 
-- [ ] **Step 1: Remove pendingAiBlkIds and window.__sieveActiveWebClips declarations**
+- [ ] **Step 1: Remove state variable declarations (~lines 26, 34)**
 
-Find the declarations near lines 23–30 and delete them. They look like:
-
+Delete:
 ```js
 window.__sieveActiveWebClips = window.__sieveActiveWebClips || new Set()
-// ...
+```
+and:
+```js
 var pendingAiBlkIds = new Set()
 ```
 
-Delete both lines.
+Also delete the comment on line ~24 ("Populated from /api/internalize/active on each note load...").
 
-- [ ] **Step 2: Replace the tab-load active-jobs fetch (lines ~56–63)**
+- [ ] **Step 2: Replace the Promise.all tab-load fetch (~lines 56–72)**
 
-The current code is a `Promise.all` that fetches both the editor content and `/api/internalize/active`:
-
-```js
-Promise.all([
-  fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid)).then(function (r) { return r.json() }),
-  fetch('/api/internalize/active').then(function (r) { return r.json() }).catch(function () { return { active: [] } }),
-]).then(function (results) {
-    var activeData = results[1]
-    window.__sieveActiveWebClips = new Set(activeData.active || [])
-    // ... (editor init using results[0])
-```
-
-Replace with a simple single fetch, and call `loadActiveJobs` separately:
+The current code fetches both the editor content AND `/api/internalize/active` in a `Promise.all` and seeds `window.__sieveActiveWebClips`. Replace it with a single editor-load fetch and a separate `loadActiveJobs()` call:
 
 ```js
 fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid))
   .then(function (r) { return r.json() })
   .then(function (data) {
-    window.SieveAI && window.SieveAI.loadActiveJobs();
-    // ... (rest of editor init using data — same as before but using results[0])
+    window.SieveAI && window.SieveAI.loadActiveJobs()
+    // ... rest of editor init using data (unchanged)
 ```
 
-Note: verify the exact shape of the `Promise.all` block and preserve all existing editor initialisation logic — only the second fetch and `activeData` usage is removed.
+Preserve ALL existing editor initialisation logic inside the `.then` — only the `Promise.all` wrapper, second fetch, and `activeData`/`window.__sieveActiveWebClips` seeding are removed.
 
-- [ ] **Step 3: Remove trackJob(1) at web-clip start (lines ~427–429)**
+- [ ] **Step 3: Remove web-clip start tracking (~lines 460–462)**
 
-Find:
+Find and delete:
 ```js
 window.__sieveActiveWebClips.add(resp.id)
 var wcLabel = (mode === 'summarise' ? 'Summarising ' : 'Fetching ') + extractDomain(source)
 window.SieveAI && window.SieveAI.trackJob(1, resp.id, wcLabel)
 ```
 
-Delete all three lines.
+- [ ] **Step 4: Remove ask/explain end tracking in sse:ai:block-resolved (~lines 630–632)**
 
-- [ ] **Step 4: Remove trackJob(-1) at ask/explain SSE completion (lines ~597–599)**
-
-Find:
+Find and delete:
 ```js
 if (data.blkId && pendingAiBlkIds.has(data.blkId)) {
   pendingAiBlkIds.delete(data.blkId)
   window.SieveAI && window.SieveAI.trackJob(-1, data.blkId)
 }
 ```
+Leave all other code in the `sse:ai:block-resolved` handler intact.
 
-Delete all three lines (the guard and its body). Leave any other code in the `sse:ai:block-resolved` handler intact.
+- [ ] **Step 5: Remove web-clip end tracking in sse:ai:web-clip-resolved (~lines 647–649)**
 
-- [ ] **Step 5: Remove trackJob(-1) at web-clip SSE completion (lines ~647–649)**
-
-Find:
+Find and delete:
 ```js
 if (data.blkId && window.__sieveActiveWebClips.has(data.blkId)) {
   window.__sieveActiveWebClips.delete(data.blkId)
   window.SieveAI && window.SieveAI.trackJob(-1, data.blkId)
 }
 ```
+Leave all other code in the `sse:ai:web-clip-resolved` handler intact.
 
-Delete all three lines. Leave any other code in the `sse:ai:web-clip-resolved` handler intact.
+- [ ] **Step 6: Remove ask/explain start tracking in runAiJob (~lines 793–794)**
 
-- [ ] **Step 6: Remove trackJob(1) at ask/explain start — first occurrence (lines ~826–827)**
-
-Find (inside `runAiJob` or equivalent):
+Find and delete:
 ```js
 pendingAiBlkIds.add(blkId)
 window.SieveAI && window.SieveAI.trackJob(1, blkId, type === 'explain' ? 'Explaining...' : 'Asking AI...')
 ```
 
-Delete both lines.
+- [ ] **Step 7: Remove ask/explain start tracking on retry path (~lines 1414–1415)**
 
-- [ ] **Step 7: Remove trackJob(-1) at ask/explain fetch error — first occurrence (lines ~840–842)**
+Find and delete (second occurrence of same pattern):
+```js
+pendingAiBlkIds.add(blkId)
+window.SieveAI && window.SieveAI.trackJob(1, blkId, type === 'explain' ? 'Explaining...' : 'Asking AI...')
+```
 
-Find:
+- [ ] **Step 8: Remove ask/explain error cleanup on retry path (~lines 1436–1438)**
+
+Find and delete:
 ```js
 if (pendingAiBlkIds.has(blkId)) {
   pendingAiBlkIds.delete(blkId)
@@ -993,56 +830,36 @@ if (pendingAiBlkIds.has(blkId)) {
 }
 ```
 
-Delete all three lines (Go will emit `ai:job-ended` when the handler returns its error, so JS cleanup is no longer needed).
+- [ ] **Step 9: Remove web-clip retry start tracking (~lines 1484–1486)**
 
-- [ ] **Step 8: Remove trackJob(1) at ask/explain start — second occurrence (lines ~1453–1454)**
-
-Find (second ask/explain code path, likely inline/retry):
-```js
-pendingAiBlkIds.add(blkId)
-window.SieveAI && window.SieveAI.trackJob(1, blkId, type === 'explain' ? 'Explaining...' : 'Asking AI...')
-```
-
-Delete both lines.
-
-- [ ] **Step 9: Remove trackJob(-1) at ask/explain fetch error — second occurrence (lines ~1466–1468)**
-
-Find:
-```js
-if (pendingAiBlkIds.has(blkId)) {
-  pendingAiBlkIds.delete(blkId)
-  window.SieveAI && window.SieveAI.trackJob(-1, blkId)
-}
-```
-
-Delete all three lines.
-
-- [ ] **Step 10: Remove trackJob(1) at web-clip retry start (lines ~1513–1515)**
-
-Find:
+Find and delete:
 ```js
 window.__sieveActiveWebClips.add(blkId)
 var wcRetryLabel = (detail.mode === 'summarise' ? 'Summarising ' : 'Fetching ') + extractDomain(detail.source)
 window.SieveAI && window.SieveAI.trackJob(1, blkId, wcRetryLabel)
 ```
 
-Delete all three lines.
+- [ ] **Step 10: Remove web-clip retry error cleanup — both paths (~lines 1499–1505)**
 
-- [ ] **Step 11: Remove trackJob(-1) at web-clip retry error — both occurrences (lines ~1528–1534)**
-
-Find (two separate catch/error paths):
+Find and delete both occurrences:
 ```js
 window.__sieveActiveWebClips.delete(blkId)
 window.SieveAI && window.SieveAI.trackJob(-1, blkId)
 ```
 
-Delete both pairs of lines (two occurrences, ~lines 1528–1529 and ~1533–1534).
+- [ ] **Step 11: Compile check (Go) + verify no trackJob references remain**
+
+```bash
+go build ./...
+grep -n "trackJob\|pendingAiBlkIds\|__sieveActiveWebClips\|internalize/active" frontend/src/static/editor.js
+```
+Expected: `go build` clean, grep returns no results.
 
 - [ ] **Step 12: Commit**
 
 ```bash
 git add frontend/src/static/editor.js
-git commit -m "feat(ai-sse): editor.js — remove 11 trackJob call sites and web-clip/ask tracking state"
+git commit -m "feat(ai-sse): editor.js — remove trackJob call sites and web-clip/ask tracking state"
 ```
 
 ---
@@ -1052,7 +869,7 @@ git commit -m "feat(ai-sse): editor.js — remove 11 trackJob call sites and web
 **Files:**
 - Modify: `frontend/src/index.html`
 
-The HTMX SSE extension fires `sse:<eventName>` DOM events for elements that receive SSE messages. The existing relay divs near lines 28–31 ensure `sse:ai:block-resolved` and `sse:ai:web-clip-resolved` bubble as DOM events. Add equivalent divs for the two new events so `document.addEventListener('sse:ai:job-started', ...)` in `ai-actions.js` fires reliably.
+The existing relay divs (lines ~30–31) relay `sse:ai:block-resolved` and `sse:ai:web-clip-resolved`. Add equivalent divs so `document.addEventListener('sse:ai:job-started', ...)` and `sse:ai:job-ended` in `ai-actions.js` fire reliably.
 
 - [ ] **Step 1: Add relay divs**
 
@@ -1081,19 +898,20 @@ git commit -m "feat(ai-sse): add SSE relay divs for ai:job-started and ai:job-en
 
 ## Task 8: End-to-End Verification
 
-- [ ] **Step 1: Full compile check**
+- [ ] **Step 1: Full compile check and tests**
 
 ```bash
 go build ./...
-```
-Expected: no errors.
-
-- [ ] **Step 2: Run all Go tests**
-
-```bash
 go test ./...
 ```
-Expected: all pass (especially `TestJobTracker_*`).
+Expected: all pass.
+
+- [ ] **Step 2: Verify no old endpoints are called**
+
+```bash
+grep -rn "internalize/active\|/api/ai/active[^-]" frontend/src/
+```
+Expected: no results.
 
 - [ ] **Step 3: Start dev server**
 
@@ -1104,43 +922,30 @@ wails dev
 - [ ] **Step 4: Verify smartFile (tab spinner + status bar)**
 
 1. Open a note with content.
-2. Right-click → "Smart File" (or keyboard shortcut).
-3. **Expected:** Status bar left shows "Filing note..." with a spinner. The active tab shows the rotating arc spinner (`.tab-spinner`). The meta panel thinking spinner appears.
-4. Wait for completion (~30s).
-5. **Expected:** All spinners disappear. Status bar left is empty. Tab icon returns to its normal dot.
+2. Right-click → "Smart File".
+3. **Expected:** Status bar left shows "Filing note..." with spinner. Active tab shows rotating arc spinner. Meta panel thinking spinner appears.
+4. After completion: all spinners disappear, status bar empty, tab icon returns to normal.
 
-- [ ] **Step 5: Verify smartMetadata**
+- [ ] **Step 5: Verify Ask/Explain (status bar only, no tab spinner)**
 
-1. Open a note.
-2. Trigger smart metadata update.
-3. **Expected:** Status bar shows "Updating metadata...". Tab spinner active.
-4. After completion: all clear.
+1. Create an AI block and run Ask.
+2. **Expected:** Status bar shows "Asking AI...". Tab spinner does NOT appear (spinTab=false).
+3. After AI resolves: status bar clears, block updates with response.
 
-- [ ] **Step 6: Verify Ask/Explain (status bar only, no tab spinner)**
-
-1. In a note, create an AI block and run Ask.
-2. **Expected:** Status bar shows "Asking AI...". Tab spinner does NOT appear (spinTab=false for block-level jobs).
-3. After AI resolves: status bar clears. Block updates with response.
-
-- [ ] **Step 7: Verify web clip (status bar only)**
+- [ ] **Step 6: Verify web clip (status bar only)**
 
 1. Paste a URL as a web clip.
-2. **Expected:** Status bar shows "Fetching <hostname>" (e.g., "Fetching github.com").
-3. After fetch: status bar clears. Web-clip block updates.
+2. **Expected:** Status bar shows "Fetching \<hostname\>".
+3. After fetch: status bar clears, web-clip block updates.
 
-- [ ] **Step 8: Verify tab switch restores active jobs**
+- [ ] **Step 7: Verify tab switch restores active jobs**
 
 1. Start a long-running web clip.
-2. Switch to a different note tab.
-3. Switch back.
-4. **Expected:** Status bar still shows the web clip label (restored via `loadActiveJobs()` call on tab mount).
+2. Switch to a different note tab and back.
+3. **Expected:** Status bar still shows the web clip label (restored via `loadActiveJobs()`).
 
-- [ ] **Step 9: Verify close guard**
+- [ ] **Step 8: Verify close guard**
 
-1. Start a long-running AI job (smartFile works well — ~30s).
+1. Start a long-running smartFile (~30s).
 2. Immediately close the app window.
-3. **Expected:** "Closing... Waiting for AI background tasks to finish" overlay appears. App stays open until the job completes, then quits.
-
-- [ ] **Step 10: Verify /api/internalize/active is gone (no 404s in console)**
-
-Check browser console / network tab — no requests to `/api/internalize/active` should appear.
+3. **Expected:** "Closing... Waiting for AI background tasks to finish" overlay appears. App stays open until job completes, then quits.
