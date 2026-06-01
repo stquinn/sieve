@@ -13,10 +13,8 @@
     try { return new URL(url).hostname } catch (_) { return url }
   }
 
-  function isStale(createdAt, id) {
+  function isStale(createdAt) {
     if (!createdAt) return true
-    // Server confirmed this job is still running — never render as stale
-    if (id && window.__sieveActiveWebClips && window.__sieveActiveWebClips.has(id)) return false
     var thresholdMs = (window.__sieveCliTimeoutLong || 60) * 1000 + 30000
     return Date.now() - new Date(createdAt).getTime() > thresholdMs
   }
@@ -126,7 +124,7 @@
       header.className = 'web-clip-block__header'
 
       if (status === 'PENDING') {
-        var stale = isStale(attrs.createdAt, attrs.id)
+        var stale = isStale(attrs.createdAt)
         if (stale) {
           header.innerHTML = '<span class="web-clip-block__icon web-clip-block__icon--warn">⚠</span>' +
             '<span class="web-clip-block__label">' + modeLabel.replace('ing', '') + ' interrupted — ' + domain + '</span>'

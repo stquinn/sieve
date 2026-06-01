@@ -155,6 +155,34 @@ func TestInsertAfterRef_FallbackWhenAnchorMissing(t *testing.T) {
 	}
 }
 
+func TestSerialize_CodeFenceInResponse(t *testing.T) {
+	// yaml.v3 defaults to double-quoted style for strings starting with backticks.
+	// Serialize must force literal block style so the output is human-readable.
+	b := testBlock{
+		ID:     "ai-1",
+		Status: "COMPLETE",
+		Response: "```go\npackage main\n\nfunc main() {}\n```",
+	}
+	s, err := Serialize(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(s, `\"`) || strings.Contains(s, `\n`) {
+		t.Errorf("response should be a block scalar, not escaped: %s", s)
+	}
+	if !strings.Contains(s, "response: |") {
+		t.Errorf("expected literal block indicator 'response: |', got:\n%s", s)
+	}
+	// Round-trip must preserve the code fence content.
+	blocks := ParseAll[testBlock]("```test-block\n"+s+"\n```", "test-block")
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block after round-trip, got %d", len(blocks))
+	}
+	if !strings.Contains(blocks[0].Response, "```go") {
+		t.Errorf("code fence lost in round-trip: %q", blocks[0].Response)
+	}
+}
+
 func TestRoundTrip(t *testing.T) {
 	original := testBlock{
 		ID:       "rt1",
