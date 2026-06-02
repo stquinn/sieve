@@ -168,6 +168,7 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 			JobTracker:      jobTracker,
 			Broadcast:       hub.broadcast,
 		},
+		requesthandlers.NewWsHandler(sp),
 	}
 	r := chi.NewRouter()
 	for _, requestHandler := range requestHandlers {

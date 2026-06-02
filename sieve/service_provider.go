@@ -13,6 +13,7 @@ type ServiceProvider struct {
 	State     *StateService
 	Prompts   *PromptService
 	AI        *AIService
+	Editor    *EditorService
 }
 
 func (s *ServiceProvider) Init(store store.Store, storePath string) {
@@ -36,6 +37,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 		return
 	}
 	s.AI = NewAIService(s.State, s.Prompts, s.Documents, storePath)
+	s.Editor = NewEditorService(s.Documents)
 	s.migrateSession()
 }
 
