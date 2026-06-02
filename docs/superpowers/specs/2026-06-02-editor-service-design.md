@@ -354,7 +354,7 @@ One line. All open shadows written to disk.
 - The two-registry pattern (JS renderer + Go descriptor) — clarified and extended
 - Markdown on disk — preserved
 - SSE for broadcast events (notes:changed, etc.) — retained; job events migrate to WebSocket over time
-- Existing blocks (ai-block, web-clip) continue working during migration; they gain the shadow document benefits without code changes
+- Existing blocks (ai-block, web-clip) continue working during migration — on-disk format is already correct; migration is extension replacement only, no data changes
 
 ---
 
@@ -365,8 +365,8 @@ The SieveBlock model accommodates all current and future block types:
 | Tag | Notes |
 |-----|-------|
 | `code` | First SieveBlock implementation. User-editable source, AI language detection, mermaid renderer. Clean cutover from `CodeBlockWithAttrs` — no backward compat needed; existing code fences degrade gracefully to standard markdown rendering. |
-| `ai-block` | Migration from existing fenced YAML. Needs dual-format support during transition. |
-| `web-clip` | Migration from existing fenced YAML. Needs dual-format support during transition. |
+| `ai-block` | Migration from existing fenced YAML. On-disk format is already correct — fence info string is the tag, body is YAML. Replace specific TipTap extension with SieveBlock extension; no data migration needed. |
+| `web-clip` | Migration from existing fenced YAML. Same as ai-block — format already correct; extension replacement only. |
 | `rich-image` | New. Replaces TipTap image-with-attrs extension. Binary stored in AssetService; fence carries metadata (src, description, dimensions, alt). AI description job on paste. |
 | `titled-link` | New. Replaces HTTP-title link extension. Fence carries url, title, description. HTTP fetch + AI summary job on paste. |
 
