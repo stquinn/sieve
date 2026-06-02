@@ -263,6 +263,23 @@ func (s *AIService) RefineLanguage(content string) (string, error) {
 	return "", nil
 }
 
+// DetectCodeLanguage returns the programming language for source code.
+// It tries heuristics first (fast, no AI call). If heuristics are not
+// confident, RefineLanguage is called. Returns "unknown" on failure.
+func (s *AIService) DetectCodeLanguage(source, hint string) (string, error) {
+	if lang, ok := detectByHeuristics(source, hint); ok {
+		return lang, nil
+	}
+	lang, err := s.RefineLanguage(source)
+	if err != nil {
+		return "unknown", err
+	}
+	if lang == "" {
+		return "unknown", nil
+	}
+	return lang, nil
+}
+
 // GetLinkTitle fetches the HTML <title> of a URL. Returns empty string (not an
 // error) when the page has no title or returns a non-200 status.
 func (s *AIService) GetLinkTitle(targetURL string) (string, error) {
