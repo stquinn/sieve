@@ -505,11 +505,13 @@
 
   var pendingAskCtx = null
 
-  function openAskPopup() {
+  function openAskPopup(precomputedCtx) {
     if (!askDialog) return
     // Build context NOW while editor still has focus and selection intact.
     // showModal() will steal DOM focus which can collapse the browser selection.
-    pendingAskCtx = window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
+    // precomputedCtx lets callers (e.g. block renderer context menus) supply
+    // context directly rather than relying on editor selection state.
+    pendingAskCtx = precomputedCtx || window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
     var label = askDialog.querySelector('.ask-popup__label')
     var textarea = askDialog.querySelector('.ask-popup__input')
     var ctxLabel = (pendingAskCtx && pendingAskCtx.contextLabel) || 'Document'
@@ -1333,14 +1335,14 @@
   document.addEventListener('sieve:toggle-search',    toggleSearch)
   document.addEventListener('sieve:toggle-ai-blocks', toggleAiBlocks)
 
-  document.addEventListener('sieve:ai-explain', function () {
+  document.addEventListener('sieve:ai-explain', function (e) {
     if (currentMode === 'markdown') return
-    runAiJob('explain')
+    runAiJob('explain', undefined, e && e.detail && e.detail.precomputedCtx)
   })
-  document.addEventListener('sieve:ai-ask', function () {
+  document.addEventListener('sieve:ai-ask', function (e) {
     if (currentMode === 'markdown') return
     ensureOverlays()
-    openAskPopup()
+    openAskPopup(e && e.detail && e.detail.precomputedCtx)
   })
   document.addEventListener('sieve:ai-retry', function (e) {
     if (currentMode === 'markdown' || !currentEditor) return
@@ -1465,6 +1467,25 @@
     })
   })
 
+  document.addEventListener('sieve:block-retry', function (e) {
+    if (!currentEditor || !e.detail || !e.detail.id) return
+    var blkId = e.detail.id
+    var now = new Date().toISOString()
+    currentEditor.commands.command(function (props) {
+      var tr = props.tr
+      var found = false
+      props.state.doc.descendants(function (node, pos) {
+        if (node.type.name.startsWith('sieve-') && node.attrs.id === blkId) {
+          tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { status: 'PENDING', createdAt: now }))
+          found = true
+          return false
+        }
+      })
+      return found
+    })
+    wsSend({ type: 'retry-block-job', id: blkId, uuid: currentUuid })
+  })
+
   // ── Helpers ───────────────────────────────────────────────────────────────────
 
   function extractDomain(url) {
@@ -1494,7 +1515,7 @@
 
   document.addEventListener('contextmenu', function (e) {
     if (!e.target.closest('#tiptap-mount')) return
-    if (e.target.closest('.ai-block, .image-block, .web-clip-block')) return
+    if (e.target.closest('.ai-block, .image-block, .web-clip-block, .sieve-block')) return
     if (!currentEditor) return
     var linkEl = e.target.closest('a[href]')
     var linkUrl = linkEl ? linkEl.getAttribute('href') : null

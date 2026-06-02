@@ -256,6 +256,48 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
     },
   }
 
+  CodeRenderer.buildContextMenuItems = function (ctx) {
+    var n = ctx.node, editor = ctx.editor, getPos = ctx.getPos
+    var IC = window.SieveIcons || {}
+
+    function del() {
+      if (typeof getPos === 'function') {
+        var pos = getPos()
+        editor.view.dispatch(editor.state.tr.delete(pos, pos + n.nodeSize))
+      }
+    }
+
+    function codeCtx() {
+      return {
+        content:      n.attrs.source || '',
+        blockRef:     n.attrs.id || 'doc',
+        history:      '',
+        contextLabel: 'Code Block',
+        imageIds:     [],
+      }
+    }
+
+    var isRetryable = n.attrs.status !== 'PENDING'
+
+    return [
+      { icon: IC.trash,        label: 'Delete',             action: del },
+      { type: 'divider' },
+      { icon: IC.sparkle,      label: 'Ask AI…',            action: function () {
+        document.dispatchEvent(new CustomEvent('sieve:ai-ask', { detail: { precomputedCtx: codeCtx() } }))
+      }},
+      { icon: IC.info,         label: 'Explain',            action: function () {
+        document.dispatchEvent(new CustomEvent('sieve:ai-explain', { detail: { precomputedCtx: codeCtx() } }))
+      }},
+      { type: 'divider' },
+      { icon: IC.refresh,      label: isRetryable ? 'Replay' : 'Retry',
+        disabled: !n.attrs.source,
+        action: function () {
+          document.dispatchEvent(new CustomEvent('sieve:block-retry', { detail: { id: n.attrs.id } }))
+        },
+      },
+    ]
+  }
+
   T.registerSieveRenderer('code', CodeRenderer)
 
 })()

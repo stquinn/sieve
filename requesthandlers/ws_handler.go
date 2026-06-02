@@ -99,6 +99,8 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 			h.handleEnterMarkdown(writeMsg, uuid)
 		case "enter-wysiwyg":
 			h.handleEnterWysiwyg(uuid)
+		case "retry-block-job":
+			h.handleRetryBlockJob(uuid, raw, writeMsg)
 		}
 	}
 }
@@ -196,6 +198,22 @@ func (h *WsHandler) handleCreateBlock(uuid string, raw []byte, writeMsg func(int
 			"type":    "block-attrs-updated",
 			"id":      blkID,
 			"rawYaml": updatedRawYaml,
+		})
+	})
+}
+
+func (h *WsHandler) handleRetryBlockJob(uuid string, raw []byte, writeMsg func(interface{})) {
+	var msg struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil || msg.ID == "" {
+		return
+	}
+	go h.ServiceProvider.Editor.RunJob(context.Background(), uuid, msg.ID, func(blkID, rawYaml string) {
+		writeMsg(map[string]string{
+			"type":    "block-attrs-updated",
+			"id":      blkID,
+			"rawYaml": rawYaml,
 		})
 	})
 }

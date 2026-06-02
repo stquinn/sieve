@@ -80,7 +80,26 @@ import { esc } from './fenced-block-base.js'
       },
 
       addNodeView() {
-        return function ({ node }) { return renderer.makeNodeView(node) }
+        return function ({ node, editor, getPos }) {
+          var view = renderer.makeNodeView(node)
+          if (renderer.buildContextMenuItems && view.dom) {
+            view.dom.addEventListener('contextmenu', function (e) {
+              e.preventDefault()
+              e.stopPropagation()
+              var currentNode = (typeof getPos === 'function') ? editor.state.doc.nodeAt(getPos()) : node
+              document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
+                detail: {
+                  x: e.clientX, y: e.clientY,
+                  context: {
+                    type: 'sieveBlock',
+                    items: renderer.buildContextMenuItems({ node: currentNode || node, editor: editor, getPos: getPos }),
+                  },
+                },
+              }))
+            })
+          }
+          return view
+        }
       },
 
       addStorage() {

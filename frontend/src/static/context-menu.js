@@ -493,17 +493,21 @@
   document.addEventListener('sieve:contextmenu', function (e) {
     var d = e.detail, ctx = d.context, items
     switch (ctx.type) {
-      case 'editor':  items = buildEditorItems(ctx); break
-      case 'image':   items = buildImageItems(ctx); break
-      case 'aiBlock': items = buildAiBlockItems(ctx); break
-      case 'webClip': items = buildWebClipItems(ctx); break
-      case 'note':    items = buildNoteItems(ctx); break
-      case 'folder':  items = buildFolderItems(ctx); break
-      case 'prompt':  items = buildPromptItems(ctx); break
+      case 'editor':    items = buildEditorItems(ctx); break
+      case 'image':     items = buildImageItems(ctx); break
+      case 'aiBlock':   items = buildAiBlockItems(ctx); break
+      case 'webClip':   items = buildWebClipItems(ctx); break
+      case 'note':      items = buildNoteItems(ctx); break
+      case 'folder':    items = buildFolderItems(ctx); break
+      case 'prompt':    items = buildPromptItems(ctx); break
+      case 'sieveBlock': items = ctx.items || []; break
       default: return
     }
     render(d.x, d.y, items)
   })
+
+  // Expose icon set so sieve block renderers can build menu items with matching icons.
+  window.SieveIcons = IC
 
   // ── Dismiss ──────────────────────────────────────────────────────────────────
   document.addEventListener('click', function (e) {

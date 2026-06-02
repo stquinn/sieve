@@ -40,7 +40,7 @@ func newShadow(uuid, body string, debounce time.Duration, onFlush func()) *Shado
 	return &ShadowDocument{
 		UUID:     uuid,
 		Markdown: body,
-		Blocks:   make(map[string]*SieveBlock),
+		Blocks:   parseAllBlocks(body),
 		Mode:     "wysiwyg",
 		debounce: debounce,
 		onFlush:  onFlush,
@@ -427,24 +427,25 @@ func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map
 		Kind:  blk.Kind,
 		Attrs: make(map[string]interface{}, len(blk.Attrs)),
 	}
+	attrsBefore := make(map[string]interface{}, len(blk.Attrs))
 	for k, v := range blk.Attrs {
 		blkCopy.Attrs[k] = v
+		attrsBefore[k] = v
 	}
-	langBefore, _ := blk.Attrs["language"].(string)
 	shadow.mu.Unlock()
 
 	scheduleJob := processor.OnUpdate(blkCopy, es.services)
 
-	// If OnUpdate changed attrs (e.g. heuristics detected a language) or
-	// scheduled a job (status set back to PENDING), persist and notify JS.
-	langAfter, _ := blkCopy.Attrs["language"].(string)
-	statusAfter, _ := blkCopy.Attrs["status"].(string)
-	if langAfter != langBefore || scheduleJob {
-		shadow.setBlock(kind, blockID, map[string]interface{}{
-			"language":        blkCopy.Attrs["language"],
-			"status":          statusAfter,
-			"detectionMethod": blkCopy.Attrs["detectionMethod"],
-		})
+	// Compute which attrs OnUpdate changed and merge only those back.
+	attrsChanged := make(map[string]interface{})
+	for k, v := range blkCopy.Attrs {
+		if attrsBefore[k] != v {
+			attrsChanged[k] = v
+		}
+	}
+
+	if len(attrsChanged) > 0 {
+		shadow.setBlock(kind, blockID, attrsChanged)
 		if notify != nil {
 			shadow.mu.Lock()
 			blk2, ok2 := shadow.Blocks[blockID]

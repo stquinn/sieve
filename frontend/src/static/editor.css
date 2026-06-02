@@ -1030,22 +1030,36 @@ div.node-image.ProseMirror-selectednode {
 
 .sieve-block {
   position: relative;
-  margin-top: 1rem;
-  margin-bottom: 1rem;
+  margin-top: 1.5rem;
+  margin-bottom: 2rem;
 }
 
 .sieve-block--code {
   display: flex;
   flex-direction: column;
   background: var(--theme-bgDark);
-  border: 1px solid var(--theme-border);
-  border-radius: 4px;
-  overflow: hidden;
+  border: 1px solid var(--theme-aiBlockBorder);
+  border-radius: 8px;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .sieve-block--code:hover {
-  border-color: color-mix(in srgb, var(--theme-accentPrimary) 50%, var(--theme-border));
+  border-color: color-mix(in srgb, var(--theme-accentGreen) 60%, var(--theme-aiBlockBorder));
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+}
+
+.sieve-block--code.block-ref-active {
+  border-color: color-mix(in srgb, var(--theme-accentGreen) 30%, var(--theme-aiBlockBorder)) !important;
+}
+
+.sieve-block--code.block-ref-active::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 8px;
+  border-left: 3px solid var(--theme-accentGreen);
+  pointer-events: none;
+  z-index: 5;
 }
 
 .sieve-block__header {
@@ -1054,7 +1068,8 @@ div.node-image.ProseMirror-selectednode {
   justify-content: flex-end;
   padding: 4px 12px;
   background: color-mix(in srgb, var(--theme-bgDark) 95%, white);
-  border-bottom: 1px solid var(--theme-border);
+  border-bottom: 1px solid var(--theme-aiBlockBorder);
+  border-radius: 8px 8px 0 0;
   user-select: none;
 }
 
@@ -1062,7 +1077,7 @@ div.node-image.ProseMirror-selectednode {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.05em;
-  color: var(--theme-accentPrimary);
+  color: var(--theme-accentGreen);
   font-family: var(--theme-monoFont);
   text-transform: uppercase;
 }
@@ -1080,6 +1095,7 @@ div.node-image.ProseMirror-selectednode {
 .sieve-block__body {
   display: flex;
   overflow: hidden;
+  border-radius: 0 0 8px 8px;
 }
 
 /* Line-number gutter — mirrors .sieve-code-block__gutter */

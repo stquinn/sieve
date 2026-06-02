@@ -673,22 +673,26 @@
     var scanFrom = (from === to) ? Math.max(0, from - 1) : from
     var scanTo   = (from === to) ? Math.min(doc.content.size, to + 1) : to
     doc.nodesBetween(scanFrom, scanTo, function (node, pos) {
-      if (!targetNode && (node.type.name === 'image' || node.type.name === 'codeBlock' || node.type.name === 'table' || node.type.name === 'webClip')) {
+      if (!targetNode && (node.type.name === 'image' || node.type.name === 'codeBlock' || node.type.name === 'table' || node.type.name === 'webClip' || node.type.name === 'sieve-code')) {
         targetNode = node; targetPos = pos; return false
       }
     })
 
     function labelFor(node) {
       switch (node.type.name) {
-        case 'image':    return 'Image'
-        case 'codeBlock': return 'Code Block'
-        case 'table':    return 'Table'
-        case 'webClip':  return 'Web Clip'
-        default:         return node.type.name
+        case 'image':      return 'Image'
+        case 'codeBlock':  return 'Code Block'
+        case 'sieve-code': return 'Code Block'
+        case 'table':      return 'Table'
+        case 'webClip':    return 'Web Clip'
+        default:           return node.type.name
       }
     }
 
     function textFor(node) {
+      if (node.type.name === 'sieve-code') {
+        return (node.attrs.source || '').trim()
+      }
       if (node.type.name === 'table') return serializeTableNode(node, serializer)
       if (node.type.name === 'webClip') {
         // Give AI the rich content rather than raw YAML
