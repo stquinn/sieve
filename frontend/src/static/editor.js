@@ -88,14 +88,12 @@
 
   function mountWysiwyg(el, uuid, body) {
     var T = window.TipTap
-    var lowlight = T.createLowlight(T.common)
     var initialized = false
 
     var editor = new T.Editor({
       element: el,
       extensions: [
         T.StarterKit.configure({ link: false, codeBlock: false, history: { depth: 10000, newGroupDelay: 500 } }),
-        T.CodeBlockWithAttrs.configure({ lowlight: lowlight }),
         T.Placeholder.configure({ placeholder: function (p) { return p.editor.isEmpty ? 'Start writing\u2026' : '' } }),
         T.BlockNode,
         T.Table.configure({ resizable: false }),
@@ -107,6 +105,7 @@
         T.AiBlock,
         T.AiBlockLegacy,
         T.WebClip,
+        T.SieveBlock,
         T.SmartLink,
         T.TaskList,
         T.TaskItem.configure({ nested: true }),
