@@ -1,6 +1,7 @@
 package requesthandlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sync"
@@ -48,17 +49,18 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 	// gorilla/websocket allows one concurrent writer — protect with a mutex so
 	// the debounce goroutine and the message-loop goroutine don't race.
 	var writeMu sync.Mutex
-	write := func(data []byte) {
-		writeMu.Lock()
-		defer writeMu.Unlock()
-		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			logger.Debug("ws: write failed", "uuid", uuid, "err", err)
+	writeMsg := func(v interface{}) {
+		data, err := json.Marshal(v)
+		if err != nil {
+			return
 		}
+		writeMu.Lock()
+		_ = conn.WriteMessage(websocket.TextMessage, data)
+		writeMu.Unlock()
 	}
 
 	notifySaved := func() {
-		ack, _ := json.Marshal(map[string]string{"type": "flush-ack", "uuid": uuid})
-		write(ack)
+		writeMsg(map[string]string{"type": "flush-ack", "uuid": uuid})
 	}
 
 	logger.Info("ws: connection established", "uuid", uuid)
@@ -86,10 +88,14 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 			h.handleDocUpdate(uuid, raw)
 		case "block-update":
 			h.handleBlockUpdate(uuid, raw)
+		case "create-block":
+			h.handleCreateBlock(uuid, raw, writeMsg)
+		case "paste":
+			h.handlePaste(uuid, raw, writeMsg)
 		case "flush":
-			h.handleFlush(write, uuid)
+			h.handleFlush(writeMsg, uuid)
 		case "enter-markdown":
-			h.handleEnterMarkdown(write, uuid)
+			h.handleEnterMarkdown(writeMsg, uuid)
 		case "enter-wysiwyg":
 			h.handleEnterWysiwyg(uuid)
 		}
@@ -122,23 +128,21 @@ func (h *WsHandler) handleBlockUpdate(uuid string, raw []byte) {
 	h.ServiceProvider.Editor.UpdateBlock(uuid, msg.Kind, msg.ID, msg.Attrs)
 }
 
-func (h *WsHandler) handleFlush(write func([]byte), uuid string) {
+func (h *WsHandler) handleFlush(writeMsg func(interface{}), uuid string) {
 	_ = h.ServiceProvider.Editor.Flush(uuid)
-	ack, _ := json.Marshal(map[string]string{"type": "flush-ack", "uuid": uuid})
-	write(ack)
+	writeMsg(map[string]string{"type": "flush-ack", "uuid": uuid})
 }
 
 // handleEnterMarkdown embeds current block state into Markdown, sets mode = markdown,
 // and returns merged content to JS as the seed for the markdown editor.
-func (h *WsHandler) handleEnterMarkdown(write func([]byte), uuid string) {
+func (h *WsHandler) handleEnterMarkdown(writeMsg func(interface{}), uuid string) {
 	merged := h.ServiceProvider.Editor.EnterMarkdown(uuid)
 	h.persistTabMode(uuid, "markdown")
-	resp, _ := json.Marshal(map[string]string{
+	writeMsg(map[string]string{
 		"type":     "markdown-content",
 		"uuid":     uuid,
 		"markdown": merged,
 	})
-	write(resp)
 }
 
 // handleEnterWysiwyg re-parses shadow.Blocks from shadow.Markdown and sets mode = wysiwyg.
@@ -160,4 +164,61 @@ func (h *WsHandler) persistTabMode(uuid, mode string) {
 		}
 	}
 	_ = h.ServiceProvider.State.SaveSession(session)
+}
+
+// handleCreateBlock is the primary UI-triggered block creation path.
+// JS sends this when the user uses a keyboard shortcut, toolbar button, or command.
+func (h *WsHandler) handleCreateBlock(uuid string, raw []byte, writeMsg func(interface{})) {
+	var msg struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil || msg.Kind == "" {
+		return
+	}
+	id, rawYaml, err := h.ServiceProvider.Editor.CreateBlock(uuid, msg.Kind, nil)
+	if err != nil {
+		logger.Warn("ws: create-block failed", "uuid", uuid, "kind", msg.Kind, "err", err)
+		return
+	}
+	writeMsg(map[string]string{
+		"type":    "insert-block",
+		"kind":    msg.Kind,
+		"id":      id,
+		"rawYaml": rawYaml,
+	})
+	go h.ServiceProvider.Editor.RunJob(context.Background(), uuid, id, func(blkID, updatedRawYaml string) {
+		writeMsg(map[string]string{
+			"type":    "block-attrs-updated",
+			"id":      blkID,
+			"rawYaml": updatedRawYaml,
+		})
+	})
+}
+
+// handlePaste is the secondary paste-triggered creation path.
+// Runs paste matchers; delegates to CreateBlock internally on match.
+func (h *WsHandler) handlePaste(uuid string, raw []byte, writeMsg func(interface{})) {
+	var msg struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		return
+	}
+	kind, id, rawYaml, matched := h.ServiceProvider.Editor.HandlePaste(uuid, msg.Content)
+	if !matched {
+		return
+	}
+	writeMsg(map[string]string{
+		"type":    "insert-block",
+		"kind":    kind,
+		"id":      id,
+		"rawYaml": rawYaml,
+	})
+	go h.ServiceProvider.Editor.RunJob(context.Background(), uuid, id, func(blkID, updatedRawYaml string) {
+		writeMsg(map[string]string{
+			"type":    "block-attrs-updated",
+			"id":      blkID,
+			"rawYaml": updatedRawYaml,
+		})
+	})
 }
