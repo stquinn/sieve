@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -318,12 +319,19 @@ func main() {
 	if devPort == "" {
 		devPort = "0"
 	}
-	go func() {
-		mux := &muxHandler{app: app, store: &storeHandler{app: app}, api: api}
-		if err := http.ListenAndServe("127.0.0.1:"+devPort, mux); err != nil {
-			log.Printf("dev HTTP server: %v", err)
-		}
-	}()
+	ln, err := net.Listen("tcp", "127.0.0.1:"+devPort)
+	if err != nil {
+		log.Printf("failed to start dev HTTP listener: %v", err)
+	} else {
+		app.DevServerPort = ln.Addr().(*net.TCPAddr).Port
+		logger.Info("Dev HTTP server listening", "addr", ln.Addr().String(), "port", app.DevServerPort)
+		go func() {
+			mux := &muxHandler{app: app, store: &storeHandler{app: app}, api: api}
+			if err := http.Serve(ln, mux); err != nil && err != http.ErrServerClosed {
+				log.Printf("dev HTTP server error: %v", err)
+			}
+		}()
+	}
 
 	err = wails.Run(&options.App{
 		Title:                    "Sieve",

@@ -158,6 +158,8 @@
     <script src="/static/layout.js"></script>
 
     <script>
+    window.__sieveDevServerPort = {{.DevServerPort}};
+
     window.isMod = function(e) {
         if (!e) return false;
         return navigator.platform.includes('Mac') ? e.metaKey : e.ctrlKey;

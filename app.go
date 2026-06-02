@@ -44,6 +44,8 @@ type App struct {
 	watcher  *notesWatcher
 	closing  bool
 	mu       sync.Mutex
+
+	DevServerPort int
 }
 
 func NewApp(storePath string, themesFS fs.FS, hub *sseHub, serviceProvider *sieve.ServiceProvider) *App {

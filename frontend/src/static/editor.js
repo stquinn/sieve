@@ -93,6 +93,7 @@
   function mountWysiwyg(el, uuid, body) {
     var T = window.TipTap
     var lowlight = T.createLowlight(T.common)
+    var initialized = false
 
     var editor = new T.Editor({
       element: el,
@@ -166,7 +167,11 @@
           return false
         },
       },
+      onCreate: function () {
+        initialized = true
+      },
       onUpdate: function (p) {
+        if (!initialized) return
         var md = p.editor.storage.markdown.getMarkdown() || ''
         if (md === lastSyncedBody) return
         lastSyncedBody = md
@@ -175,7 +180,6 @@
         document.dispatchEvent(new CustomEvent('editor:changed'))
         dispatchStats()
       },
-      
     })
 
     currentEditor = editor
@@ -279,7 +283,11 @@
   function openEditorWs(uuid) {
     if (editorWs) { editorWs.close(); editorWs = null }
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    editorWs = new WebSocket(proto + '//' + location.host + '/api/ws?uuid=' + encodeURIComponent(uuid))
+    var host = location.host
+    if (window.__sieveDevServerPort) {
+      host = '127.0.0.1:' + window.__sieveDevServerPort
+    }
+    editorWs = new WebSocket(proto + '//' + host + '/api/ws?uuid=' + encodeURIComponent(uuid))
 
     editorWs.onopen = function () {
       editorWsPending.forEach(function (m) { editorWs.send(m) })
