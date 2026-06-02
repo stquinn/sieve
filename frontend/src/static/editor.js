@@ -106,7 +106,7 @@
         T.AiBlock,
         T.AiBlockLegacy,
         T.WebClip,
-        T.SieveBlock,
+      ].concat(T.getSieveNodes()).concat([
         T.SmartLink,
         T.TaskList,
         T.TaskItem.configure({ nested: true }),
@@ -118,7 +118,7 @@
           onKeepAndSmartFile: function () { window.SieveAI && window.SieveAI.keepAndSmartFile(uuid) },
           onToggleAiBlocks: toggleAiBlocks,
         }),
-      ],
+      ]),
       content: body,
       editorProps: {
         attributes: { spellcheck: 'true' },
@@ -399,7 +399,7 @@
     sieveInsertPos = null
 
     currentEditor.commands.insertContentAt(pos, {
-      type: 'sieveBlock',
+      type: 'sieve-' + (msg.kind || 'code'),
       attrs: {
         kind:            msg.kind || 'code',
         id:              msg.id || parsed.id || '',
@@ -429,7 +429,8 @@
     currentEditor.commands.command(function (commandProps) {
       var tr = commandProps.tr
       commandProps.state.doc.descendants(function (node, pos) {
-        if (node.type.name === 'sieveBlock' && node.attrs.id === msg.id) {
+        // Match any sieve-* node by id (kind is not in the WS message)
+        if (node.type.name.startsWith('sieve-') && node.attrs.id === msg.id) {
           tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, {
             rawYaml:         msg.rawYaml || node.attrs.rawYaml,
             status:          parsed.status   || node.attrs.status,
