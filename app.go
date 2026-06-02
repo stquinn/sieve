@@ -241,6 +241,9 @@ func (a *App) startup(ctx context.Context) {
 
 func (a *App) beforeClose(ctx context.Context) bool {
 	if a.closing {
+		if a.ServiceProvider.Editor != nil {
+			a.ServiceProvider.Editor.FlushAll()
+		}
 		return false
 	}
 	if a.State != nil {
