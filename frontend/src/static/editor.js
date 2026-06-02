@@ -19,6 +19,7 @@
   var showAiBlocks = true
   var blobInterceptorCleanup = null
   var searchOverlay = null
+  var sieveInsertPos = null
 
   var askDialog = null
   var internalizeDialog = null
@@ -317,6 +318,12 @@
       if (msg.type === 'markdown-content') {
         document.dispatchEvent(new CustomEvent('editor:markdown-content', { detail: msg }))
       }
+      if (msg.type === 'insert-block') {
+        document.dispatchEvent(new CustomEvent('editor:insert-block', { detail: msg }))
+      }
+      if (msg.type === 'block-attrs-updated') {
+        document.dispatchEvent(new CustomEvent('editor:block-attrs-updated', { detail: msg }))
+      }
     }
 
     editorWs.onerror = function (err) { console.error('[editor] ws error', err) }
@@ -351,6 +358,68 @@
       wsSend(msg)
     })
   }
+
+  // Primary creation path. JS fires sieve:create-block when the user uses a
+  // keyboard shortcut, toolbar button, or slash command to insert a block.
+  // detail: { kind: 'code' }
+  document.addEventListener('sieve:create-block', function (e) {
+    if (!currentUuid || currentUuid.startsWith('prompt:') || !e.detail.kind) return
+    sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
+    wsSend({ type: 'create-block', kind: e.detail.kind, uuid: currentUuid })
+  })
+
+  // NodeViews fire sieve:block-update when the user edits block content.
+  document.addEventListener('sieve:block-update', function (e) {
+    if (!currentUuid || !e.detail.id) return
+    wsSend({ type: 'block-update', uuid: currentUuid, id: e.detail.id, kind: e.detail.kind, attrs: e.detail.attrs })
+  })
+
+  document.addEventListener('editor:insert-block', function (e) {
+    if (!currentEditor) return
+    var msg = e.detail
+    var parsed = {}
+    try { parsed = window.jsyaml.load(msg.rawYaml) || {} } catch (_) {}
+
+    var pos = sieveInsertPos !== null ? sieveInsertPos : currentEditor.state.doc.content.size
+    sieveInsertPos = null
+
+    currentEditor.commands.insertContentAt(pos, {
+      type: 'sieveBlock',
+      attrs: {
+        kind:     msg.kind || 'code',
+        id:       msg.id || parsed.id || '',
+        rawYaml:  msg.rawYaml || '',
+        status:   parsed.status || 'PENDING',
+        language: parsed.language || '',
+        source:   typeof parsed.source === 'string' ? parsed.source.trim() : '',
+      },
+    })
+  })
+
+  document.addEventListener('editor:block-attrs-updated', function (e) {
+    if (!currentEditor) return
+    var msg = e.detail
+    var parsed = {}
+    try { parsed = window.jsyaml.load(msg.rawYaml) || {} } catch (_) {}
+
+    currentEditor.commands.command(function (commandProps) {
+      var tr = commandProps.tr
+      commandProps.state.doc.descendants(function (node, pos) {
+        if (node.type.name === 'sieveBlock' && node.attrs.id === msg.id) {
+          tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, {
+            rawYaml:  msg.rawYaml || node.attrs.rawYaml,
+            status:   parsed.status   || node.attrs.status,
+            language: parsed.language || node.attrs.language,
+            source:   parsed.source != null
+              ? (typeof parsed.source === 'string' ? parsed.source.trim() : String(parsed.source))
+              : node.attrs.source,
+          }))
+          return false
+        }
+      })
+      return true
+    })
+  })
 
   // ── Stats ─────────────────────────────────────────────────────────────────────
 
@@ -875,8 +944,21 @@
   function handleSmartPaste(event) {
     if (!event.clipboardData || !currentEditor) return false
 
-    // AI Block paste handler
+    // Bare code fences → Go processor registry via WebSocket (secondary creation path).
+    // ai-block and web-clip have their own dedicated JS paste handlers.
     var text = event.clipboardData.getData('text/plain')
+    if (text && currentUuid && !currentUuid.startsWith('prompt:')) {
+      var fenceMatch = text.trim().match(/^```(\w*)\n[\s\S]+\n```$/)
+      var jsOwnedKinds = ['ai-block', 'web-clip']
+      if (fenceMatch && jsOwnedKinds.indexOf((fenceMatch[1] || '').toLowerCase()) === -1) {
+        event.preventDefault()
+        sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
+        wsSend({ type: 'paste', uuid: currentUuid, content: text.trim() })
+        return true
+      }
+    }
+
+    // AI Block paste handler
     if (text && text.trim().startsWith('```ai-block')) {
       var cleanText = text.trim()
       var firstLineEnd = cleanText.indexOf('\n')
@@ -1027,51 +1109,8 @@
 
     // Text paste heuristic
     var text = event.clipboardData.getData('text/plain')
-    if (text && !currentEditor.isActive('codeBlock')) {
-      var result = detectLanguage(text)
-      if (result.tier <= 3) {
-        event.preventDefault()
-        var id = generateId()
-
-        currentEditor.commands.insertContent({
-          type: 'codeBlock',
-          attrs: { language: result.language || '', id: id, detect: 'heuristic' },
-          content: [{ type: 'text', text: text }]
-        })
-
-        fetch('/api/ai/refine-language', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: text })
-        }).then(function(r) { return r.ok ? r.text() : null })
-          .then(function(lang) {
-            if (!lang) return
-            currentEditor.commands.command(function(props) {
-              var tr = props.tr
-              var state = props.state
-              var found = false
-              state.doc.descendants(function(node, pos) {
-                if (node.type.name === 'codeBlock' && node.attrs.id === id) {
-                  found = true
-                  tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { language: lang, detect: 'ai' }))
-                  return false
-                }
-              })
-              if (found) {
-                currentEditor.view.dispatch(tr)
-                var md = currentEditor.storage.markdown.getMarkdown() || ''
-                lastSyncedBody = md
-                wsSend({ type: 'doc-update', uuid: currentUuid, markdown: md })
-                document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
-              }
-              return found
-            })
-          }).catch(function(err) {
-            console.error('[editor.js] RefineLanguage failed', err)
-          })
-        return true
-      }
-      if(text.startsWith("http://") || text.startsWith("https://")) {
+    if (text) {
+      if (text.startsWith("http://") || text.startsWith("https://")) {
         event.preventDefault()
         var id  = generateId("lnk")
         currentEditor.commands.insertContent({
@@ -1120,132 +1159,6 @@
   function generateId(prefix = "blk") {
     var id = prefix + '-' + Math.random().toString(16).substring(2, 6)
     return id;
-  }
-
-  function detectLanguage(text) {
-    var trimmed = text.trim()
-    if (!trimmed) return { tier: 4 }
-
-    if (
-      (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
-      (trimmed.startsWith('[') && trimmed.endsWith(']'))
-    ) {
-      try { JSON.parse(trimmed); return { tier: 1, language: 'json' } } catch(e) {}
-    }
-
-    var YAML_K8S = /^apiVersion:\s*\S+[\s\S]+^kind:\s*[A-Za-z]+/m
-    if (YAML_K8S.test(trimmed)) return { tier: 1, language: 'yaml' }
-    
-    function scoreYaml(txt) {
-      var lines = txt.split('\n').filter(function(l) { return l.trim() && !l.trim().startsWith('#') })
-      if (lines.length === 0) return 0
-      var kvLines = lines.filter(function(l) { return /^\s*[\w.-]+:\s*/.test(l) }).length
-      var listLines = lines.filter(function(l) { return /^\s*-\s+/.test(l) }).length
-      return (kvLines + listLines) / lines.length
-    }
-    
-    var yamlScore = scoreYaml(trimmed)
-    if (yamlScore >= 0.75 && trimmed.split('\n').length >= 3) {
-      return { tier: yamlScore >= 0.9 ? 1 : 2, language: 'yaml' }
-    }
-
-    var GO_T1 = [
-      /^package\s+\w+/m,
-      /^type\s+\w+\s+struct\s*\{/m,
-      /^type\s+\w+\s+interface\s*\{/m,
-      /`(?:json|yaml|xml|db|bson|form|mapstructure|validate):"[^"]*"`/,
-      /^import\s+\(/m,
-      /^import\s+"/m,
-    ]
-    if (GO_T1.some(function(re) { return re.test(trimmed) })) return { tier: 1, language: 'go' }
-
-    var JAVA_T1 = [
-      /^public\s+(?:class|interface|enum|abstract\s+class)\s+\w+/m,
-      /^private\s+(?:class|interface|enum)\s+\w+/m,
-      /^protected\s+(?:class|interface)\s+\w+/m,
-      /\bpublic\s+static\s+void\s+main\s*\(\s*String/,
-      /^import\s+java\./m,
-      /^import\s+org\.\w+\.\w+/m,
-      /^import\s+com\.\w+\.\w+/m,
-    ]
-    if (JAVA_T1.some(function(re) { return re.test(trimmed) })) return { tier: 1, language: 'java' }
-
-    var DART_T1 = [
-      /^import\s+'package:flutter\//m,
-      /^import\s+'dart:/m,
-      /\bextends\s+(?:StatefulWidget|StatelessWidget|State)\b/,
-      /Widget\s+build\s*\(\s*BuildContext/,
-      /\brunApp\s*\(/,
-    ]
-    if (DART_T1.some(function(re) { return re.test(trimmed) })) return { tier: 1, language: 'dart' }
-
-    var GO_T2 = [
-      /\bfunc\s+\(\s*\w+\s+\*?\w+\s*\)\s+\w+\s*\(/,
-      /\bfunc\s+\w+\s*\(/,
-      /:=\s/,
-      /^var\s+\w+\s+\w+/m,
-      /^const\s+\w+/m,
-      /\bfmt\.\w+\(/,
-      /\berr\s*!=\s*nil\b/,
-    ]
-    var goT2Hits = GO_T2.filter(function(re) { return re.test(trimmed) }).length
-    if (goT2Hits >= 2) return { tier: 2, language: 'go' }
-
-    var JAVA_T2 = [
-      /@(?:Override|SpringBootApplication|Component|Service|Repository|Controller|Autowired|Bean|Test)\b/,
-      /\bthrows\s+\w+(?:Exception|Error)\b/,
-      /\bextends\s+\w+\b/,
-      /\bimplements\s+\w+\b/,
-      /\bSystem\.out\.print/,
-      /new\s+\w+\(.*\);/,
-      /\b(?:String|int|long|double|float|boolean|void|List|Map|Set)\s+\w+\s*=/,
-    ]
-    var javaT2Hits = JAVA_T2.filter(function(re) { return re.test(trimmed) }).length
-    if (javaT2Hits >= 2) return { tier: 2, language: 'java' }
-
-    var DART_T2 = [
-      /^import\s+'package:/m,
-      /\bScaffold\s*\(/,
-      /\bContainer\s*\(/,
-      /\bColumn\s*\(\s*children:/,
-      /\bRow\s*\(\s*children:/,
-      /@override\b/,
-      /\bconst\s+\w+\s*\(/,
-      /\bfinal\s+\w+\s+\w+\s*=/,
-    ]
-    var dartT2Hits = DART_T2.filter(function(re) { return re.test(trimmed) }).length
-    if (dartT2Hits >= 2) return { tier: 2, language: 'dart' }
-
-    if (/^(?:export\s+)?interface\s+\w+/m.test(trimmed) || /^(?:export\s+)?type\s+\w+\s*=/m.test(trimmed)) {
-      return { tier: 2, language: 'typescript' }
-    }
-    if (trimmed.includes('import ') && trimmed.includes('from ') && trimmed.includes('const ')) {
-      return { tier: 2, language: 'typescript' }
-    }
-    if ((trimmed.includes('function(') || trimmed.includes('=>')) && trimmed.includes('const ')) {
-      return { tier: 2, language: 'javascript' }
-    }
-
-    if (/^#!/.test(trimmed) && /bash|sh|zsh/i.test(trimmed.split('\n')[0])) {
-      return { tier: 1, language: 'bash' }
-    }
-
-    if (/^SELECT\s/i.test(trimmed) && /\bFROM\b/i.test(trimmed)) {
-      return { tier: 1, language: 'sql' }
-    }
-
-    if (trimmed.includes('def ') && trimmed.includes('self')) return { tier: 1, language: 'python' }
-
-    var lines = trimmed.split('\n')
-    var braceCount = (trimmed.match(/[{}]/g) || []).length
-    var semicolonCount = (trimmed.match(/;/g) || []).length
-    var indentedLines = lines.filter(function(l) { return /^[ \t]{2,}/.test(l) }).length
-    var anyWeakSignal = goT2Hits >= 1 || javaT2Hits >= 1 || dartT2Hits >= 1
-    if (lines.length > 2 && (braceCount > 2 || semicolonCount > 2 || anyWeakSignal || indentedLines > lines.length * 0.4)) {
-      return { tier: 3 }
-    }
-
-    return { tier: 4 }
   }
 
   function initBlobInterceptor(editor, uuid) {
