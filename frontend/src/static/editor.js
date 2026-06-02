@@ -9,7 +9,6 @@
   var currentMountEl = null
   var currentMode = 'wysiwyg'
   var tabModes = {}
-  var saveTimer = null
   var lastSyncedBody = ''
   var editorWs = null
   var editorWsPending = []
@@ -254,19 +253,15 @@
 
   // ── Save ─────────────────────────────────────────────────────────────────────
 
-  function scheduleSave(uuid, body) {
-    if (saveTimer) clearTimeout(saveTimer)
-    var delay = (window.__sieveAutosaveMs && window.__sieveAutosaveMs()) || 30000
-    saveTimer = setTimeout(function () { doSave(uuid, body) }, delay)
-  }
-
   function flushSave() {
-    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
-    if (currentUuid) {
-      var content = getMarkdown()
-      return doSave(currentUuid, content)
+    if (!currentUuid) return Promise.resolve()
+    if (currentUuid.startsWith('prompt:')) {
+      return doSave(currentUuid, getMarkdown())
     }
-    return Promise.resolve()
+    return wsSendAndAwait('flush', { type: 'flush', uuid: currentUuid })
+      .catch(function (err) {
+        console.warn('[editor] flush timeout, continuing:', err)
+      })
   }
 
   function doSave(uuid, body) {
@@ -631,7 +626,6 @@
   function softReloadContent(uuid) {
     if (currentMode !== 'wysiwyg' && currentMode !== 'markdown') return
     if (currentMode === 'wysiwyg' && !currentEditor) return
-    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
     aiReloadInProgress = true
     var savedAnchor = currentMode === 'wysiwyg' ? currentEditor.state.selection.anchor : null
     fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid))
@@ -1370,13 +1364,27 @@
     lastSyncedBody = content
     currentMode = newMode
     tabModes[currentUuid] = currentMode
-    doSave(currentUuid, content)
+    
     if (currentEditor) { currentEditor.destroy(); currentEditor = null }
     currentMountEl.innerHTML = ''
-    if (currentMode === 'wysiwyg') mountWysiwyg(currentMountEl, currentUuid, content)
-    else mountMarkdown(currentMountEl, currentUuid, content)
-    dispatchStats()
-    if (window.htmx) window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' })
+    
+    if (currentMode === 'wysiwyg') {
+      wsSend({ type: 'enter-wysiwyg', uuid: currentUuid })
+      mountWysiwyg(currentMountEl, currentUuid, content)
+      dispatchStats()
+      if (window.htmx) window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' })
+    } else {
+      // Switching to markdown — request merged content from EditorService
+      wsSend({ type: 'enter-markdown', uuid: currentUuid })
+      document.addEventListener('editor:markdown-content', function onMdContent(e) {
+        if (e.detail.uuid !== currentUuid) return
+        document.removeEventListener('editor:markdown-content', onMdContent)
+        lastSyncedBody = e.detail.markdown
+        mountMarkdown(currentMountEl, currentUuid, e.detail.markdown)
+        dispatchStats()
+        if (window.htmx) window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' })
+      }, { once: true })
+    }
   }
 
   document.addEventListener('sieve:toggle-mode',      toggleMode)
