@@ -1,17 +1,9 @@
 // code-renderer.js — Sieve block renderer for the 'code' kind.
 //
-// Renderer interface implemented:
-//   nodeConfig   selectable:false, draggable:false — mouse drag selects text, not moves block
-//   attrs        source, language, detectionMethod
-//   parseAttrs   extracts source/language/detectionMethod from YAML on fence parse
-//   makeNodeView gutter (line numbers) + contenteditable code element
-//
-// On focus:  highlight spans stripped → plain text for clean cursor behaviour
-// On blur:   lowlight syntax highlighting re-applied + gutter updated
-// On input:  gutter line count updated + debounced sieve:block-update to Go shadow
-// Tab:       inserts two spaces via Selection API
-// selectNode: focuses codeEl when TipTap selects the atom via keyboard,
-//             preventing TipTap from deleting the node on the next keypress
+// Syntax highlighting is always live — even while editing. On each input event
+// we save the cursor's character offset, rebuild innerHTML with lowlight spans,
+// then restore the cursor to the same offset. A 100ms debounce avoids rebuilding
+// on every single keystroke while keeping the delay imperceptible.
 
 import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
 
@@ -41,6 +33,43 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
     }).join('')
   }
 
+  // ── Cursor helpers ────────────────────────────────────────────────────────────
+  // Save/restore cursor as a plain character offset so it survives innerHTML
+  // being replaced by a fresh set of highlight spans.
+
+  function getCaretOffset(el) {
+    var sel = window.getSelection()
+    if (!sel || !sel.rangeCount) return 0
+    var range = sel.getRangeAt(0)
+    var pre   = range.cloneRange()
+    pre.selectNodeContents(el)
+    pre.setEnd(range.endContainer, range.endOffset)
+    return pre.toString().length
+  }
+
+  function setCaretOffset(el, offset) {
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null)
+    var node, pos = 0
+    while ((node = walker.nextNode())) {
+      var len = node.nodeValue.length
+      if (pos + len >= offset) {
+        var range = document.createRange()
+        range.setStart(node, offset - pos)
+        range.collapse(true)
+        var sel = window.getSelection()
+        if (sel) { sel.removeAllRanges(); sel.addRange(range) }
+        return
+      }
+      pos += len
+    }
+    // Offset is past all text — place cursor at end
+    var range = document.createRange()
+    range.selectNodeContents(el)
+    range.collapse(false)
+    var sel = window.getSelection()
+    if (sel) { sel.removeAllRanges(); sel.addRange(range) }
+  }
+
   // ── CodeRenderer ─────────────────────────────────────────────────────────────
 
   var CodeRenderer = {
@@ -48,7 +77,7 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
     nodeConfig: {
       atom:       true,
       selectable: false,  // prevents click creating a NodeSelection over the whole block
-      draggable:  false,  // mouse drag selects text; block moved only via explicit handle
+      draggable:  false,  // mouse drag selects text rather than moving the block
     },
 
     attrs: {
@@ -160,6 +189,8 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
       }
 
       // ── Render ────────────────────────────────────────────────────────────────
+      // Skip content update when the user has focus — their typed content takes
+      // precedence over an incoming block-attrs-updated from a concurrent AI job.
 
       function render(attrs) {
         currentAttrs = attrs
@@ -174,7 +205,8 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
 
       // ── Events ────────────────────────────────────────────────────────────────
 
-      var inputTimer = null
+      var inputTimer    = null
+      var highlightTimer = null
 
       function rawSource() {
         var s = codeEl.innerText || ''
@@ -188,24 +220,32 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
         }))
       }
 
-      codeEl.addEventListener('focus', function () {
-        // Strip highlight spans on focus so cursor positions map to plain characters.
-        var src = rawSource()
-        codeEl.textContent = src
-        codeEl.className = 'sieve-block__source'
-      })
-
       codeEl.addEventListener('input', function () {
+        // Update gutter immediately on every keystroke
         updateGutter(codeEl.innerText || '')
+
+        // Re-highlight with cursor restoration: debounced at 100ms so rapid typing
+        // doesn't rebuild the DOM on every single keystroke.
+        clearTimeout(highlightTimer)
+        highlightTimer = setTimeout(function () {
+          if (document.activeElement !== codeEl) return
+          var offset = getCaretOffset(codeEl)
+          applyHighlight(rawSource(), currentAttrs.language || '')
+          setCaretOffset(codeEl, offset)
+        }, 100)
+
+        // Flush to Go shadow on a slightly longer debounce
         clearTimeout(inputTimer)
         inputTimer = setTimeout(flushSource, 200)
       })
 
       codeEl.addEventListener('blur', function () {
+        clearTimeout(highlightTimer)
         flushSource()
-        var src = rawSource()
-        applyHighlight(src, currentAttrs.language || '')
-        updateGutter(src)
+        // Final highlight pass on blur — catches the last keystrokes if the
+        // 100ms highlight debounce hadn't fired yet when the user tabbed away.
+        applyHighlight(rawSource(), currentAttrs.language || '')
+        updateGutter(rawSource())
       })
 
       codeEl.addEventListener('keydown', function (e) {
@@ -241,8 +281,6 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
           return true
         },
 
-        // When TipTap selects this atom via keyboard navigation, focus the code
-        // element immediately so the next keypress types rather than deletes the node.
         selectNode: function () { codeEl.focus() },
 
         ignoreMutation: function () { return true },
@@ -252,12 +290,14 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
           return event.type === 'keydown' || event.type === 'keyup' || event.type === 'keypress'
         },
 
-        destroy: function () { clearTimeout(inputTimer) },
+        destroy: function () {
+          clearTimeout(inputTimer)
+          clearTimeout(highlightTimer)
+        },
       }
     },
   }
 
-  // Self-register. sieve-block-extension.js must appear before this script in index.html.
   T.registerSieveRenderer('code', CodeRenderer)
 
 })()
