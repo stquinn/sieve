@@ -1104,32 +1104,62 @@ div.node-image.ProseMirror-selectednode {
   line-height: 1.6;
 }
 
-/* Pre — mirrors .sieve-code-block pre */
-.sieve-block__pre {
+/* CSS Grid container — highlight and textarea share the same cell so they
+   auto-size together. The grid drives height; textarea fills it. */
+.sieve-block__code-area {
+  display: grid;
   flex: 1;
   min-width: 0;
-  margin: 0;
-  background: transparent;
-  border: none;
-  overflow-x: auto;
-  padding: 0;
 }
 
-/* Contenteditable code — mirrors .sieve-code-block pre code */
-.sieve-block__source {
-  display: block;
-  padding: 0.85em 1.1em;
+/* Shared typography — MUST be identical on both layers for text to align */
+.sieve-block__highlight,
+.sieve-block__edit {
+  grid-area: 1 / 1;
   font-family: var(--theme-monoFont);
   font-size: 0.85em;
   line-height: 1.6;
-  color: var(--theme-text);
+  padding: 0.85em 1.1em;
+  white-space: pre-wrap;
+  word-break: break-word;
+  tab-size: 2;
+  margin: 0;
+  min-height: 2.5em;
+  box-sizing: border-box;
+}
+
+/* Display layer: syntax-highlighted, sits behind the textarea */
+.sieve-block__highlight {
+  pointer-events: none;
+  background: transparent;
+  border: none;
+  overflow: hidden;
+}
+
+.sieve-block__highlight code {
+  display: block;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font: inherit;
+  white-space: inherit;
+  word-break: inherit;
+  tab-size: inherit;
+  color: inherit;
+  border-radius: 0;
+}
+
+/* Input layer: transparent text so highlights show through the textarea */
+.sieve-block__edit {
+  position: relative;
+  z-index: 1;
+  color: transparent;
+  caret-color: var(--theme-text);
   background: transparent;
   border: none;
   outline: none;
-  white-space: pre;
-  tab-size: 2;
-  min-height: 2.5em;
-  word-break: normal;
+  resize: none;
+  overflow: hidden;
   cursor: text;
 }
 
