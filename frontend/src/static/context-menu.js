@@ -28,6 +28,7 @@
     close:       svg('<path d="M18 6L6 18"/><path d="M6 6l12 12"/>'),
     closeAll:    svg('<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>'),
     externalLink: svg('<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>'),
+    code:         svg('<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>'),
   }
 
   // ── Renderer ────────────────────────────────────────────────────────────────
@@ -188,6 +189,9 @@
     var linkUrl = ctx.linkUrl || null
     items.push({ icon: IC.externalLink, label: linkUrl ? 'Internalise Link' : 'Internalise URL…', action: function () {
       window._sieveOpenInternalize && window._sieveOpenInternalize(linkUrl || '')
+    }})
+    items.push({ icon: IC.code, label: 'Insert Code Block', action: function () {
+      document.dispatchEvent(new CustomEvent('sieve:create-block', { detail: { kind: 'code' } }))
     }})
 
     items.push({ type: 'divider' })
