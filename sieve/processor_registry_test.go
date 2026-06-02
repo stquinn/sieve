@@ -19,6 +19,7 @@ func (p *mockProcessor) InitAttrs(id string, overrides map[string]interface{}) m
 func (p *mockProcessor) PasteMatch(c string) (bool, map[string]interface{}) { return p.matchFn(c) }
 func (p *mockProcessor) BuildContext(_ SieveBlock, _ ShadowDocument) string  { return "" }
 func (p *mockProcessor) RunJob(_ context.Context, _ *SieveBlock, _ Services) error { return nil }
+func (p *mockProcessor) OnUpdate(_ *SieveBlock, _ Services) bool             { return false }
 
 func resetRegistry() {
 	processorRegistry = map[string]BlockProcessor{}

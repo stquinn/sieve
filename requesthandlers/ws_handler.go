@@ -6,10 +6,11 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/gorilla/websocket"
 	"sieve/logger"
 	"sieve/sieve"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/gorilla/websocket"
 )
 
 // WsHandler manages one persistent WebSocket connection per open document.
@@ -87,10 +88,10 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 		case "doc-update":
 			h.handleDocUpdate(uuid, raw)
 		case "block-update":
-			h.handleBlockUpdate(uuid, raw)
+			h.handleBlockUpdate(uuid, raw, writeMsg)
 		case "create-block":
 			h.handleCreateBlock(uuid, raw, writeMsg)
-		case "paste":
+		case "smart-paste":
 			h.handlePaste(uuid, raw, writeMsg)
 		case "flush":
 			h.handleFlush(writeMsg, uuid)
@@ -112,11 +113,9 @@ func (h *WsHandler) handleDocUpdate(uuid string, raw []byte) {
 	h.ServiceProvider.Editor.UpdateMarkdown(uuid, msg.Markdown)
 }
 
-// handleBlockUpdate merges per-block attr updates into the shadow so Remux can
-// substitute authoritative YAML over TipTap's potentially-stale rawYaml.
-// TODO: no JS sender yet — shadow.Blocks is always empty during WYSIWYG editing
-// until TipTap block extensions are updated to emit block-update messages.
-func (h *WsHandler) handleBlockUpdate(uuid string, raw []byte) {
+// handleBlockUpdate merges the user's attr patch into the shadow, then calls
+// OnUpdate on the processor so it can re-run heuristics or schedule a RunJob.
+func (h *WsHandler) handleBlockUpdate(uuid string, raw []byte, writeMsg func(interface{})) {
 	var msg struct {
 		ID    string                 `json:"id"`
 		Kind  string                 `json:"kind"`
@@ -125,7 +124,13 @@ func (h *WsHandler) handleBlockUpdate(uuid string, raw []byte) {
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return
 	}
-	h.ServiceProvider.Editor.UpdateBlock(uuid, msg.Kind, msg.ID, msg.Attrs)
+	h.ServiceProvider.Editor.HandleBlockUpdate(uuid, msg.Kind, msg.ID, msg.Attrs, func(blkID, rawYaml string) {
+		writeMsg(map[string]string{
+			"type":    "block-attrs-updated",
+			"id":      blkID,
+			"rawYaml": rawYaml,
+		})
+	})
 }
 
 func (h *WsHandler) handleFlush(writeMsg func(interface{}), uuid string) {
@@ -195,8 +200,6 @@ func (h *WsHandler) handleCreateBlock(uuid string, raw []byte, writeMsg func(int
 	})
 }
 
-// handlePaste is the secondary paste-triggered creation path.
-// Runs paste matchers; delegates to CreateBlock internally on match.
 func (h *WsHandler) handlePaste(uuid string, raw []byte, writeMsg func(interface{})) {
 	var msg struct {
 		Content string `json:"content"`
@@ -206,8 +209,11 @@ func (h *WsHandler) handlePaste(uuid string, raw []byte, writeMsg func(interface
 	}
 	kind, id, rawYaml, matched := h.ServiceProvider.Editor.HandlePaste(uuid, msg.Content)
 	if !matched {
+		// No processor claimed this paste — tell JS to fall back to normal insertion.
+		writeMsg(map[string]string{"type": "paste-no-match", "uuid": uuid})
 		return
 	}
+
 	writeMsg(map[string]string{
 		"type":    "insert-block",
 		"kind":    kind,

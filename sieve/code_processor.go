@@ -9,6 +9,11 @@ import (
 
 var codeFenceRe = regexp.MustCompile("(?s)^```(\\w*)\\n(.+)\\n```$")
 
+// minSourceLength is the minimum non-whitespace character count before
+// OnUpdate will attempt language detection. Below this threshold there is
+// rarely enough signal for reliable results.
+const minSourceLength = 30
+
 // CodeBlockProcessor handles the 'code' Kind.
 type CodeBlockProcessor struct{}
 
@@ -69,6 +74,43 @@ func (p *CodeBlockProcessor) PasteMatch(content string) (bool, map[string]interf
 	}
 
 	return false, nil
+}
+
+// OnUpdate runs on every block-update from the client. It re-applies heuristics
+// to the current source so that the language badge updates as the user types,
+// without waiting for a full RunJob. If heuristics still can't identify the
+// language and the block has already completed a prior job (status COMPLETE),
+// it schedules a new RunJob for AI refinement.
+func (p *CodeBlockProcessor) OnUpdate(block *SieveBlock, _ Services) bool {
+	lang, _ := block.Attrs["language"].(string)
+	if lang != "" && lang != "unknown" {
+		return false // already identified — no work needed
+	}
+
+	source, _ := block.Attrs["source"].(string)
+	if len(strings.TrimSpace(source)) < minSourceLength {
+		return false // not enough content for reliable detection
+	}
+
+	// Re-run heuristics on current source — synchronous, no AI call.
+	hint, _ := block.Attrs["hint"].(string)
+	if detected, ok := detectByHeuristics(source, hint); ok {
+		block.Attrs["language"] = detected
+		block.Attrs["detectionMethod"] = "heuristic"
+		return false
+	}
+
+	// Heuristics gave nothing. Only schedule an AI job if the previous job
+	// already completed — prevents launching concurrent jobs while one is
+	// still in flight (PENDING).
+	status, _ := block.Attrs["status"].(string)
+	if status == "PENDING" {
+		return false
+	}
+
+	// Mark PENDING now so rapid subsequent updates don't each spawn a new job.
+	block.Attrs["status"] = "PENDING"
+	return true
 }
 
 func (p *CodeBlockProcessor) BuildContext(block SieveBlock, _ ShadowDocument) string {

@@ -87,6 +87,16 @@ func (s *ShadowDocument) replaceBlock(blockID string, attrs map[string]interface
 	s.resetDebounce()
 }
 
+// deleteBlockAttr removes a single key from an existing block's attrs.
+// Used to expunge transient fields (e.g. hint) that a job has consumed.
+func (s *ShadowDocument) deleteBlockAttr(blockID, key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if blk, ok := s.Blocks[blockID]; ok {
+		delete(blk.Attrs, key)
+	}
+}
+
 func (s *ShadowDocument) resetDebounce() {
 	if s.onFlush == nil || s.closed {
 		return
@@ -386,6 +396,71 @@ func (es *EditorService) HandlePaste(uuid, content string) (kind, id, rawYaml st
 	return "", "", "", false
 }
 
+// HandleBlockUpdate processes a block-update from the client: merges the user's
+// attr patch into the shadow, then calls OnUpdate on the processor so it can
+// react synchronously (e.g. re-run heuristics) or schedule a RunJob.
+// notify is called when a job completes and JS needs to update its node attrs.
+func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map[string]interface{}, notify func(id, rawYaml string)) {
+	es.UpdateBlock(uuid, kind, blockID, attrs)
+
+	processor := GetProcessor(kind)
+	if processor == nil {
+		return
+	}
+
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if shadow == nil {
+		return
+	}
+
+	shadow.mu.Lock()
+	blk, ok := shadow.Blocks[blockID]
+	if !ok {
+		shadow.mu.Unlock()
+		return
+	}
+	// Copy the current merged state (user patch + existing attrs) for OnUpdate.
+	blkCopy := &SieveBlock{
+		ID:    blk.ID,
+		Kind:  blk.Kind,
+		Attrs: make(map[string]interface{}, len(blk.Attrs)),
+	}
+	for k, v := range blk.Attrs {
+		blkCopy.Attrs[k] = v
+	}
+	langBefore, _ := blk.Attrs["language"].(string)
+	shadow.mu.Unlock()
+
+	scheduleJob := processor.OnUpdate(blkCopy, es.services)
+
+	// If OnUpdate changed attrs (e.g. heuristics detected a language) or
+	// scheduled a job (status set back to PENDING), persist and notify JS.
+	langAfter, _ := blkCopy.Attrs["language"].(string)
+	statusAfter, _ := blkCopy.Attrs["status"].(string)
+	if langAfter != langBefore || scheduleJob {
+		shadow.setBlock(kind, blockID, map[string]interface{}{
+			"language":        blkCopy.Attrs["language"],
+			"status":          statusAfter,
+			"detectionMethod": blkCopy.Attrs["detectionMethod"],
+		})
+		if notify != nil {
+			shadow.mu.Lock()
+			blk2, ok2 := shadow.Blocks[blockID]
+			shadow.mu.Unlock()
+			if ok2 {
+				rawYaml, _ := fencedblock.Serialize[map[string]interface{}](blk2.Attrs)
+				notify(blockID, rawYaml)
+			}
+		}
+	}
+
+	if scheduleJob {
+		go es.RunJob(context.Background(), uuid, blockID, notify)
+	}
+}
+
 // RunJob executes the background job for blockID, merges results into the shadow,
 // flushes to disk, and calls notify with the updated rawYaml.
 func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string, notify func(id, rawYaml string)) {
@@ -421,9 +496,15 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string, notif
 	if err := processor.RunJob(ctx, blkCopy, es.services); err != nil {
 		shadow.setBlock(kind, blockID, map[string]interface{}{"status": "ERROR"})
 	} else {
-		// replaceBlock (not setBlock) so that keys deleted by RunJob (e.g. "hint")
-		// are removed from the shadow rather than silently preserved by the merge.
-		shadow.replaceBlock(blockID, blkCopy.Attrs)
+		// Merge only the fields the job updated (language, status, detectionMethod).
+		// Do NOT use replaceBlock here — that would overwrite source with the copy
+		// taken at job-start, discarding any edits the user made while AI was running.
+		shadow.setBlock(kind, blockID, map[string]interface{}{
+			"language":        blkCopy.Attrs["language"],
+			"status":          blkCopy.Attrs["status"],
+			"detectionMethod": blkCopy.Attrs["detectionMethod"],
+		})
+		shadow.deleteBlockAttr(blockID, "hint")
 	}
 
 	_ = es.Flush(uuid)

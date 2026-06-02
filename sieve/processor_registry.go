@@ -22,6 +22,13 @@ type BlockProcessor interface {
 	PasteMatch(content string) (matched bool, overrides map[string]interface{})
 	BuildContext(block SieveBlock, doc ShadowDocument) string
 	RunJob(ctx context.Context, block *SieveBlock, svc Services) error
+
+	// OnUpdate is called after every block-update from the client. block is a
+	// mutable copy of the current shadow state after the user's latest attr
+	// patch has been merged in. Implementations may update block.Attrs
+	// synchronously (e.g. re-run heuristics). Returning true schedules a
+	// RunJob for the block.
+	OnUpdate(block *SieveBlock, svc Services) (scheduleJob bool)
 }
 
 // Services is the dependency bag passed to BlockProcessor.RunJob.
