@@ -3,8 +3,8 @@ package requesthandlers
 import (
 	"fmt"
 	"html/template"
-	"log"
 	"net/http"
+	"sieve/logger"
 	"sieve/sieve"
 	"strings"
 
@@ -222,7 +222,7 @@ func (h *ContextMenuHandler) handleCreateFolder(w http.ResponseWriter, r *http.R
 
 func (h *ContextMenuHandler) handleRevertPrompt(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
-	log.Println("Reverting prompt:", id, r.URL.Query())
+	logger.Info("revert prompt", "id", id)
 	if strings.HasPrefix(id, "prompt:") {
 		name := strings.TrimPrefix(id, "prompt:")
 		_ = h.ServiceProvider.Prompts.DeletePrompt(name)

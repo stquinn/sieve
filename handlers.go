@@ -168,6 +168,7 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 			JobTracker:      jobTracker,
 			Broadcast:       hub.broadcast,
 		},
+		requesthandlers.NewWsHandler(sp),
 	}
 	r := chi.NewRouter()
 	for _, requestHandler := range requestHandlers {
@@ -226,6 +227,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		ActiveUUID       string
 		AutosaveDebounce int
 		CLITimeoutLong   int
+		DevServerPort    int
 	}{
 		StoreRoot:        info.Root,
 		ThemeName:        info.ThemeName,
@@ -239,6 +241,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		ActiveUUID:       activeUUID,
 		AutosaveDebounce: info.AutosaveDebounce,
 		CLITimeoutLong:   info.CLITimeoutLong,
+		DevServerPort:    h.app.DevServerPort,
 	}
 
 	if data.ThemeName == "" {

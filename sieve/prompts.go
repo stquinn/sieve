@@ -272,10 +272,15 @@ Do not summarise - preserve content as is.  Your job is to simply retrieve the d
 URL: {source}
 `
 
-const DefaultWebClipSummarisePrompt = `Please retrieve the content at the following URL and return a concise markdown summary targeted to the context of the document below. Focus on aspects of the retrieved content that are most relevant to what is already in the document. Omit navigation, boilerplate, author bios, and related links.
-Please ensure to grab any important and informative images and include those as well.
-URL: {source}
+const DefaultWebClipSummarisePrompt = `Please retrieve the content at the following URL and return a
+  concise markdown summary targeted to the context of the document below. Focus on aspects of the
+  retrieved content that are most relevant to what is already in the document. Omit navigation,
+  boilerplate, author bios, and related links.
+  Only include an image if it directly illustrates a key point in your summary and cannot be adequately
+  conveyed in text alone, and it relates to the document context below.
+  URL: {source}
 
-Current document context:
-{document}
-`
+  Current document context:
+  {document}
+  `
+

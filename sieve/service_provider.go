@@ -4,6 +4,7 @@ import (
 	"sieve/logger"
 	"sieve/store"
 	"strings"
+	"time"
 )
 
 type ServiceProvider struct {
@@ -13,6 +14,7 @@ type ServiceProvider struct {
 	State     *StateService
 	Prompts   *PromptService
 	AI        *AIService
+	Editor    *EditorService
 }
 
 func (s *ServiceProvider) Init(store store.Store, storePath string) {
@@ -36,6 +38,9 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 		return
 	}
 	s.AI = NewAIService(s.State, s.Prompts, s.Documents, storePath)
+	settings := s.State.LoadSettings()
+	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
+	s.Editor = NewEditorService(s.Documents, autosave)
 	s.migrateSession()
 }
 

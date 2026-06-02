@@ -44,6 +44,8 @@ type App struct {
 	watcher  *notesWatcher
 	closing  bool
 	mu       sync.Mutex
+
+	DevServerPort int
 }
 
 func NewApp(storePath string, themesFS fs.FS, hub *sseHub, serviceProvider *sieve.ServiceProvider) *App {
@@ -241,6 +243,9 @@ func (a *App) startup(ctx context.Context) {
 
 func (a *App) beforeClose(ctx context.Context) bool {
 	if a.closing {
+		if a.ServiceProvider.Editor != nil {
+			a.ServiceProvider.Editor.FlushAll()
+		}
 		return false
 	}
 	if a.State != nil {

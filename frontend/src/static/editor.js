@@ -9,8 +9,11 @@
   var currentMountEl = null
   var currentMode = 'wysiwyg'
   var tabModes = {}
-  var saveTimer = null
   var lastSyncedBody = ''
+  var editorWs = null
+  var editorWsPending = []
+  var editorWsAwaiters = {}   // type → { resolve, reject }
+  var docUpdateTimer = null
   var aiReloadInProgress = false
   var currentMarkdownTextarea = null
   var showAiBlocks = true
@@ -23,26 +26,23 @@
   // ── Public entry point called from App.tsx htmx:afterSettle ─────────────────
 
   function initEditor(mountEl, uuid, mode) {
-    console.log('[editor.js] initEditor called with uuid:', uuid, 'mode:', mode)
     if (currentEditor) {
-      console.log('[editor.js] initEditor destroying old editor for uuid:', currentUuid)
       flushSave()
       currentEditor.destroy()
       currentEditor = null
+      if (currentUuid && !currentUuid.startsWith('prompt:')) closeEditorWs()
     }
 
     if (!mountEl || !uuid) {
-      console.log('[editor.js] initEditor early return due to empty mountEl or uuid')
       currentUuid = ''
       currentMode = 'wysiwyg'
       return
     }
 
     currentUuid = uuid
+    if (!uuid.startsWith('prompt:')) openEditorWs(uuid)
     currentMountEl = mountEl
     currentMode = mode || tabModes[uuid] || 'wysiwyg'
-
-    console.log('[editor.js] initEditor fetching data for uuid:', uuid)
 
     fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid))
       .then(function (r) { return r.json() })
@@ -70,10 +70,9 @@
   // Listen for external changes (e.g. revert prompt or background edits)
   document.addEventListener('prompts:changed', function() {
     if (currentUuid && currentUuid.startsWith('prompt:')) {
-      console.log('[editor.js] prompts:changed - reloading current prompt editor:', currentUuid);
-      initEditor(currentMountEl, currentUuid, currentMode);
+      initEditor(currentMountEl, currentUuid, currentMode)
     }
-  });
+  })
 
   document.addEventListener('notes:changed', function() {
     // If we're editing a prompt, notes:changed might also mean the prompt was reverted
@@ -89,6 +88,7 @@
   function mountWysiwyg(el, uuid, body) {
     var T = window.TipTap
     var lowlight = T.createLowlight(T.common)
+    var initialized = false
 
     var editor = new T.Editor({
       element: el,
@@ -162,16 +162,23 @@
           return false
         },
       },
+      onCreate: function () {
+        initialized = true
+      },
       onUpdate: function (p) {
+        if (!initialized) return
         var md = p.editor.storage.markdown.getMarkdown() || ''
         if (md === lastSyncedBody) return
         lastSyncedBody = md
         document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
-        scheduleSave(uuid, md)
         document.dispatchEvent(new CustomEvent('editor:changed'))
         dispatchStats()
+        if (docUpdateTimer) clearTimeout(docUpdateTimer)
+        docUpdateTimer = setTimeout(function () {
+          docUpdateTimer = null
+          wsSend({ type: 'doc-update', uuid: uuid, markdown: md })
+        }, 500)
       },
-      
     })
 
     currentEditor = editor
@@ -213,10 +220,14 @@
       if (val === lastSyncedBody) return
       lastSyncedBody = val
       document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
-      scheduleSave(uuid, val)
       document.dispatchEvent(new CustomEvent('editor:changed'))
       updateGutter(gutter, val)
       dispatchStats()
+      if (docUpdateTimer) clearTimeout(docUpdateTimer)
+      docUpdateTimer = setTimeout(function () {
+        docUpdateTimer = null
+        wsSend({ type: 'doc-update', uuid: uuid, markdown: val })
+      }, 500)
     })
     textarea.addEventListener('keydown', function (e) {
       if (e.key === 's' && window.isMod(e)) {
@@ -249,19 +260,21 @@
 
   // ── Save ─────────────────────────────────────────────────────────────────────
 
-  function scheduleSave(uuid, body) {
-    if (saveTimer) clearTimeout(saveTimer)
-    var delay = (window.__sieveAutosaveMs && window.__sieveAutosaveMs()) || 30000
-    saveTimer = setTimeout(function () { doSave(uuid, body) }, delay)
-  }
-
   function flushSave() {
-    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
-    if (currentUuid) {
-      var content = getMarkdown()
-      return doSave(currentUuid, content)
+    if (!currentUuid) return Promise.resolve()
+    // Flush any pending debounced doc-update immediately so Go has the latest content.
+    if (docUpdateTimer) {
+      clearTimeout(docUpdateTimer)
+      docUpdateTimer = null
+      wsSend({ type: 'doc-update', uuid: currentUuid, markdown: lastSyncedBody })
     }
-    return Promise.resolve()
+    if (currentUuid.startsWith('prompt:')) {
+      return doSave(currentUuid, getMarkdown())
+    }
+    return wsSendAndAwait('flush', { type: 'flush', uuid: currentUuid })
+      .catch(function (err) {
+        console.warn('[editor] flush timeout, continuing:', err)
+      })
   }
 
   function doSave(uuid, body) {
@@ -274,6 +287,69 @@
       document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: false } }))
       document.dispatchEvent(new CustomEvent('editor:saved', { detail: { uuid: uuid } }))
     }).catch(function (err) { console.error('[editor] save failed', err) })
+  }
+
+  function openEditorWs(uuid) {
+    if (editorWs) { editorWs.close(); editorWs = null }
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    var host = location.host
+    if (window.__sieveDevServerPort) {
+      host = '127.0.0.1:' + window.__sieveDevServerPort
+    }
+    editorWs = new WebSocket(proto + '//' + host + '/api/ws?uuid=' + encodeURIComponent(uuid))
+
+    editorWs.onopen = function () {
+      editorWsPending.forEach(function (m) { editorWs.send(m) })
+      editorWsPending = []
+    }
+
+    editorWs.onmessage = function (event) {
+      var msg = JSON.parse(event.data || '{}')
+      var awaiter = editorWsAwaiters[msg.type]
+      if (awaiter) {
+        delete editorWsAwaiters[msg.type]
+        awaiter.resolve(msg)
+      }
+      if (msg.type === 'flush-ack') {
+        document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: false } }))
+        document.dispatchEvent(new CustomEvent('editor:saved', { detail: { uuid: msg.uuid } }))
+      }
+      if (msg.type === 'markdown-content') {
+        document.dispatchEvent(new CustomEvent('editor:markdown-content', { detail: msg }))
+      }
+    }
+
+    editorWs.onerror = function (err) { console.error('[editor] ws error', err) }
+  }
+
+  function closeEditorWs() {
+    if (editorWs) { editorWs.close(); editorWs = null }
+    editorWsPending = []
+    editorWsAwaiters = {}
+  }
+
+  function wsSend(msg) {
+    var data = JSON.stringify(msg)
+    if (editorWs && editorWs.readyState === WebSocket.OPEN) {
+      editorWs.send(data)
+    } else {
+      editorWsPending.push(data)
+    }
+  }
+
+  function wsSendAndAwait(type, msg) {
+    return new Promise(function (resolve, reject) {
+      var ackType = type + '-ack'
+      var timer = setTimeout(function () {
+        delete editorWsAwaiters[ackType]
+        reject(new Error('ws timeout: ' + type))
+      }, 5000)
+      editorWsAwaiters[ackType] = {
+        resolve: function (m) { clearTimeout(timer); resolve(m) },
+        reject: function (e) { clearTimeout(timer); reject(e) },
+      }
+      wsSend(msg)
+    })
   }
 
   // ── Stats ─────────────────────────────────────────────────────────────────────
@@ -567,7 +643,6 @@
   function softReloadContent(uuid) {
     if (currentMode !== 'wysiwyg' && currentMode !== 'markdown') return
     if (currentMode === 'wysiwyg' && !currentEditor) return
-    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
     aiReloadInProgress = true
     var savedAnchor = currentMode === 'wysiwyg' ? currentEditor.state.selection.anchor : null
     fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid))
@@ -887,7 +962,7 @@
                 currentEditor.view.dispatch(tr)
                 var md = currentEditor.storage.markdown.getMarkdown() || ''
                 lastSyncedBody = md
-                scheduleSave(currentUuid, md)
+                wsSend({ type: 'doc-update', uuid: currentUuid, markdown: md })
                 document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
               }
               return found
@@ -986,7 +1061,7 @@
                 currentEditor.view.dispatch(tr)
                 var md = currentEditor.storage.markdown.getMarkdown() || ''
                 lastSyncedBody = md
-                scheduleSave(currentUuid, md)
+                wsSend({ type: 'doc-update', uuid: currentUuid, markdown: md })
                 document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
               }
               return found
@@ -1027,7 +1102,7 @@
                 currentEditor.view.dispatch(tr)
                 var md = currentEditor.storage.markdown.getMarkdown() || ''
                 lastSyncedBody = md
-                scheduleSave(currentUuid, md)
+                wsSend({ type: 'doc-update', uuid: currentUuid, markdown: md })
                 document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
               }
               return found
@@ -1306,13 +1381,28 @@
     lastSyncedBody = content
     currentMode = newMode
     tabModes[currentUuid] = currentMode
-    doSave(currentUuid, content)
+    
     if (currentEditor) { currentEditor.destroy(); currentEditor = null }
     currentMountEl.innerHTML = ''
-    if (currentMode === 'wysiwyg') mountWysiwyg(currentMountEl, currentUuid, content)
-    else mountMarkdown(currentMountEl, currentUuid, content)
-    dispatchStats()
-    if (window.htmx) window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' })
+    
+    if (currentMode === 'wysiwyg') {
+      wsSend({ type: 'enter-wysiwyg', uuid: currentUuid })
+      mountWysiwyg(currentMountEl, currentUuid, content)
+      dispatchStats()
+      if (window.htmx) window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' })
+    } else {
+      // Switching to markdown — request merged content from EditorService
+      wsSend({ type: 'enter-markdown', uuid: currentUuid })
+      document.addEventListener('editor:markdown-content', function onMdContent(e) {
+        if (e.detail.uuid !== currentUuid) return
+        if (currentMode !== 'markdown') return  // user toggled back before response arrived
+        document.removeEventListener('editor:markdown-content', onMdContent)
+        lastSyncedBody = e.detail.markdown
+        mountMarkdown(currentMountEl, currentUuid, e.detail.markdown)
+        dispatchStats()
+        if (window.htmx) window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' })
+      }, { once: true })
+    }
   }
 
   document.addEventListener('sieve:toggle-mode',      toggleMode)
