@@ -4,6 +4,7 @@ import (
 	"context"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var codeFenceRe = regexp.MustCompile("(?s)^```(\\w*)\\n(.+)\\n```$")
@@ -22,6 +23,7 @@ func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface
 		"source":          "",
 		"language":        "",
 		"detectionMethod": "",
+		"createdAt":       time.Now().UTC().Format(time.RFC3339),
 	}
 	for k, v := range overrides {
 		if k == "id" {
@@ -43,15 +45,26 @@ func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface
 // PasteMatch detects a bare fenced code block and returns the source and optional
 // language hint as overrides for InitAttrs. It does NOT set id, status, or language.
 func (p *CodeBlockProcessor) PasteMatch(content string) (bool, map[string]interface{}) {
-	m := codeFenceRe.FindStringSubmatch(strings.TrimSpace(content))
-	if m == nil {
-		return false, nil
+	trimmed := strings.TrimSpace(content)
+
+	// Primary: fenced code block (```lang\ncontent\n```).
+	if m := codeFenceRe.FindStringSubmatch(trimmed); m != nil {
+		overrides := map[string]interface{}{"source": m[2]}
+		if m[1] != "" {
+			overrides["hint"] = m[1]
+		}
+		return true, overrides
 	}
-	overrides := map[string]interface{}{"source": m[2]}
-	if m[1] != "" {
-		overrides["hint"] = m[1]
+
+	// Secondary: plain multi-line code. Use heuristics as the gatekeeper so
+	// that ordinary prose (which wouldn't yield a language) falls through.
+	if strings.Contains(trimmed, "\n") {
+		if _, ok := detectByHeuristics(trimmed, ""); ok {
+			return true, map[string]interface{}{"source": trimmed}
+		}
 	}
-	return true, overrides
+
+	return false, nil
 }
 
 func (p *CodeBlockProcessor) BuildContext(block SieveBlock, _ ShadowDocument) string {
@@ -65,6 +78,11 @@ func (p *CodeBlockProcessor) BuildContext(block SieveBlock, _ ShadowDocument) st
 // result from InitAttrs is kept. hint is transient and deleted after use.
 func (p *CodeBlockProcessor) RunJob(ctx context.Context, block *SieveBlock, svc Services) error {
 	source, _ := block.Attrs["source"].(string)
+	if strings.TrimSpace(source) == "" {
+		block.Attrs["status"] = "COMPLETE"
+		delete(block.Attrs, "hint")
+		return nil
+	}
 
 	lang, err := svc.AI.RefineLanguage(source)
 	if err != nil {

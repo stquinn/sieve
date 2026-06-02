@@ -30,6 +30,7 @@ type ShadowDocument struct {
 	Blocks   map[string]*SieveBlock // user-edited blocks; authoritative over shadow.Markdown
 	Mode     string                 // "wysiwyg" (default) or "markdown"
 	debounce time.Duration
+	closed   bool // set by stopDebounce; prevents re-arming after Close
 	mu       sync.Mutex
 	timer    *time.Timer
 	onFlush  func()
@@ -72,8 +73,22 @@ func (s *ShadowDocument) setBlock(kind, blockID string, attrs map[string]interfa
 	s.resetDebounce()
 }
 
+// replaceBlock atomically replaces the attrs map for an existing block.
+// Unlike setBlock (additive merge), deleted keys in attrs are propagated —
+// the old map is discarded entirely. No-op if the block does not exist.
+func (s *ShadowDocument) replaceBlock(blockID string, attrs map[string]interface{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	blk, ok := s.Blocks[blockID]
+	if !ok {
+		return
+	}
+	blk.Attrs = attrs
+	s.resetDebounce()
+}
+
 func (s *ShadowDocument) resetDebounce() {
-	if s.onFlush == nil {
+	if s.onFlush == nil || s.closed {
 		return
 	}
 	if s.timer != nil {
@@ -89,6 +104,7 @@ func (s *ShadowDocument) resetDebounce() {
 func (s *ShadowDocument) stopDebounce() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.closed = true
 	if s.timer != nil {
 		s.timer.Stop()
 		s.timer = nil
@@ -329,6 +345,12 @@ func (es *EditorService) SetServices(svc Services) {
 // returns the serialised rawYaml for the JS to insert as a sieveBlock node.
 // overrides may be nil for a zero-state block (UI command, keyboard shortcut).
 func (es *EditorService) CreateBlock(uuid, kind string, overrides map[string]interface{}) (id, rawYaml string, err error) {
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if shadow == nil {
+		return "", "", fmt.Errorf("create-block: no open document for uuid %q", uuid)
+	}
 	processor := GetProcessor(kind)
 	if processor == nil {
 		return "", "", fmt.Errorf("no processor registered for kind %q", kind)
@@ -399,7 +421,9 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string, notif
 	if err := processor.RunJob(ctx, blkCopy, es.services); err != nil {
 		shadow.setBlock(kind, blockID, map[string]interface{}{"status": "ERROR"})
 	} else {
-		shadow.setBlock(kind, blockID, blkCopy.Attrs)
+		// replaceBlock (not setBlock) so that keys deleted by RunJob (e.g. "hint")
+		// are removed from the shadow rather than silently preserved by the merge.
+		shadow.replaceBlock(blockID, blkCopy.Attrs)
 	}
 
 	_ = es.Flush(uuid)

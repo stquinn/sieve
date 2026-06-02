@@ -20,6 +20,7 @@
   var blobInterceptorCleanup = null
   var searchOverlay = null
   var sieveInsertPos = null
+  var pendingPasteText = null  // saved while awaiting Go's paste-pipeline decision
 
   var askDialog = null
   var internalizeDialog = null
@@ -318,10 +319,25 @@
         document.dispatchEvent(new CustomEvent('editor:markdown-content', { detail: msg }))
       }
       if (msg.type === 'insert-block') {
+        pendingPasteText = null
         document.dispatchEvent(new CustomEvent('editor:insert-block', { detail: msg }))
       }
       if (msg.type === 'block-attrs-updated') {
         document.dispatchEvent(new CustomEvent('editor:block-attrs-updated', { detail: msg }))
+      }
+      if (msg.type === 'paste-no-match') {
+        // Go found no processor match — insert the saved text at the saved paste position.
+        var fallback = pendingPasteText
+        var savedPos = sieveInsertPos
+        pendingPasteText = null
+        sieveInsertPos = null
+        if (fallback && currentEditor) {
+          if (savedPos !== null) {
+            currentEditor.commands.insertContentAt(savedPos, fallback)
+          } else {
+            currentEditor.commands.insertContent(fallback)
+          }
+        }
       }
     }
 
@@ -390,10 +406,18 @@
         rawYaml:         msg.rawYaml || '',
         status:          parsed.status || 'PENDING',
         language:        parsed.language || '',
-        source:          typeof parsed.source === 'string' ? parsed.source.trim() : '',
+        source:          typeof parsed.source === 'string' ? parsed.source : '',
+        createdAt:       parsed.createdAt || null,
         detectionMethod: parsed.detectionMethod || '',
       },
     })
+
+    if (!parsed.source) {
+      setTimeout(function () {
+        var el = document.querySelector('[data-block-id="' + (msg.id || parsed.id) + '"] .sieve-block__source')
+        if (el) el.focus()
+      }, 50)
+    }
   })
 
   document.addEventListener('editor:block-attrs-updated', function (e) {
@@ -411,7 +435,7 @@
             status:          parsed.status   || node.attrs.status,
             language:        parsed.language || node.attrs.language,
             source:          parsed.source != null
-              ? (typeof parsed.source === 'string' ? parsed.source.trim() : String(parsed.source))
+              ? (typeof parsed.source === 'string' ? parsed.source : String(parsed.source))
               : node.attrs.source,
             detectionMethod: parsed.detectionMethod || node.attrs.detectionMethod || '',
           }))
@@ -945,21 +969,13 @@
   function handleSmartPaste(event) {
     if (!event.clipboardData || !currentEditor) return false
 
-    // Bare code fences → Go processor registry via WebSocket (secondary creation path).
-    // ai-block and web-clip have their own dedicated JS paste handlers.
     var text = event.clipboardData.getData('text/plain')
-    if (text && currentUuid && !currentUuid.startsWith('prompt:')) {
-      var fenceMatch = text.trim().match(/^```(\w*)\n[\s\S]+\n```$/)
-      var jsOwnedKinds = ['ai-block', 'web-clip']
-      if (fenceMatch && jsOwnedKinds.indexOf((fenceMatch[1] || '').toLowerCase()) === -1) {
-        event.preventDefault()
-        sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
-        wsSend({ type: 'paste', uuid: currentUuid, content: text.trim() })
-        return true
-      }
-    }
+    var html = event.clipboardData.getData('text/html')
+    var files = Array.from(event.clipboardData.files)
 
-    // AI Block paste handler
+    // ── 1. ai-block re-import (JS-owned) ────────────────────────────────────────
+    // Pasting a complete ```ai-block…``` fence reconstructs the existing block
+    // node with its original ID — no Go round-trip needed.
     if (text && text.trim().startsWith('```ai-block')) {
       var cleanText = text.trim()
       var firstLineEnd = cleanText.indexOf('\n')
@@ -993,18 +1009,15 @@
       }
     }
 
-    var html = event.clipboardData.getData('text/html')
-    var files = Array.from(event.clipboardData.files)
+    // ── 2. Image paste (JS-owned) ────────────────────────────────────────────────
+    // Requires browser FileReader + blob → asset upload. Cannot go through Go WS.
     var imageFile = files.find(function (f) { return f.type.startsWith('image/') })
-
     var imgSrc = null
     if (!imageFile && html) {
       var div = document.createElement('div')
       div.innerHTML = html
       var imgs = div.querySelectorAll('img')
-      if (imgs.length === 1 && imgs[0].src) {
-        imgSrc = imgs[0].src
-      }
+      if (imgs.length === 1 && imgs[0].src) imgSrc = imgs[0].src
     }
 
     if (imageFile || imgSrc) {
@@ -1013,12 +1026,10 @@
       function processAsset(asset, blkId) {
         if (!asset || !asset.externalRef) return
         var mdPath = asset.externalRef
-
         currentEditor.commands.insertContent({
           type: 'image',
           attrs: { src: mdPath, id: blkId, detect: 'pending' }
         })
-
         fetch('/api/ai/describe-image', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1065,9 +1076,7 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ uuid: currentUuid, id: id, dataUrl: dataUrl }),
           }).then(function (r) { return r.json() })
-            .then(function (asset) {
-              processAsset(asset, id)
-            })
+            .then(function (asset) { processAsset(asset, id) })
             .catch(function () {
               currentEditor.commands.insertContent({ type: 'image', attrs: { src: dataUrl } })
             })
@@ -1084,9 +1093,7 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ uuid: currentUuid, id: id, dataUrl: imgSrc }),
           }).then(function (r) { return r.json() })
-            .then(function (asset) {
-              processAsset(asset, id)
-            })
+            .then(function (asset) { processAsset(asset, id) })
             .catch(function() {
               currentEditor.commands.insertContent({ type: 'image', attrs: { src: imgSrc } })
             })
@@ -1108,50 +1115,52 @@
       }
     }
 
-    // Text paste heuristic
-    var text = event.clipboardData.getData('text/plain')
-    if (text) {
-      if (text.startsWith("http://") || text.startsWith("https://")) {
-        event.preventDefault()
-        var id  = generateId("lnk")
-        currentEditor.commands.insertContent({
-          type: 'smartLink',
-          attrs: { 
-            id: id, 
-            detect: 'pending',
-            href: text,
-            label: text // Your node uses this 'label' attribute to render its text
-          }
-        })
-        fetch('/api/link-preview?url=' + encodeURIComponent(text))
-          .then(function(r) { return r.ok ? r.text() : null })
-          .then(function(title) {
-            if (!title || title.trim() === '') return
-            currentEditor.commands.command(function(props) {
-              var tr = props.tr
-              var state = props.state
-              var found = false
-              state.doc.descendants(function(node, pos) {
-                if (node.type.name === 'smartLink' && node.attrs.id === id) {
-                  found = true
-                  tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { label: title, detect: 'peek' }))
-                  return false
-                }
-              })
-              if (found) {
-                currentEditor.view.dispatch(tr)
-                var md = currentEditor.storage.markdown.getMarkdown() || ''
-                lastSyncedBody = md
-                wsSend({ type: 'doc-update', uuid: currentUuid, markdown: md })
-                document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
+    // ── 3. URL paste → smartLink (JS-owned) ─────────────────────────────────────
+    if (text && (text.startsWith('http://') || text.startsWith('https://'))) {
+      event.preventDefault()
+      var id = generateId('lnk')
+      currentEditor.commands.insertContent({
+        type: 'smartLink',
+        attrs: { id: id, detect: 'pending', href: text, label: text }
+      })
+      fetch('/api/link-preview?url=' + encodeURIComponent(text))
+        .then(function(r) { return r.ok ? r.text() : null })
+        .then(function(title) {
+          if (!title || title.trim() === '') return
+          currentEditor.commands.command(function(props) {
+            var tr = props.tr
+            var state = props.state
+            var found = false
+            state.doc.descendants(function(node, pos) {
+              if (node.type.name === 'smartLink' && node.attrs.id === id) {
+                found = true
+                tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { label: title, detect: 'peek' }))
+                return false
               }
-              return found
             })
-          }).catch(function(err) {
-            console.error('[editor.js] GetLinkTitle failed', err)
+            if (found) {
+              currentEditor.view.dispatch(tr)
+              var md = currentEditor.storage.markdown.getMarkdown() || ''
+              lastSyncedBody = md
+              wsSend({ type: 'doc-update', uuid: currentUuid, markdown: md })
+              document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
+            }
+            return found
           })
-        return true
-      }
+        }).catch(function(err) { console.error('[editor.js] GetLinkTitle failed', err) })
+      return true
+    }
+
+    // ── 4. Smart-paste pipeline ──────────────────────────────────────────────────
+    // All remaining text → Go. BlockProcessors get first refusal via PasteMatch.
+    //   insert-block   → same flow as any block creation (context menu, shortcut)
+    //   paste-no-match → JS re-inserts text as prose (TipTap insertContent fallback)
+    if (text && currentUuid && !currentUuid.startsWith('prompt:')) {
+      pendingPasteText = text.trim()
+      event.preventDefault()
+      sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
+      wsSend({ type: 'smart-paste', uuid: currentUuid, content: text.trim() })
+      return true
     }
 
     return false

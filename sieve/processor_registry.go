@@ -42,10 +42,18 @@ var (
 
 // RegisterProcessor registers kind → processor. Registration order sets
 // paste-match priority — more-specific kinds must be registered first.
+// Re-registering the same kind updates the processor in-place rather than
+// appending a duplicate entry to pasteMatchers.
 func RegisterProcessor(kind string, processor BlockProcessor) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	processorRegistry[kind] = processor
+	for i, pm := range pasteMatchers {
+		if pm.Kind == kind {
+			pasteMatchers[i].Processor = processor
+			return
+		}
+	}
 	pasteMatchers = append(pasteMatchers, struct {
 		Kind      string
 		Processor BlockProcessor

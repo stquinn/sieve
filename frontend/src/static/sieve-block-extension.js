@@ -6,7 +6,7 @@
 //   makeNodeView(node)        → TipTap NodeView object
 //   parseAttrs(data)          → { key: value } extra data-* attrs for fence parser (optional)
 
-import { esc, applyHighlighting, isStaleByTime, isJobActive } from './fenced-block-base.js'
+import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
 
 ;(function () {
   'use strict'
@@ -128,13 +128,44 @@ import { esc, applyHighlighting, isStaleByTime, isJobActive } from './fenced-blo
     },
   })
 
+  // ── safeHighlight ─────────────────────────────────────────────────────────────
+  // Applies lowlight syntax colours in-place on a <code> element.
+  // Unlike applyHighlighting() from fenced-block-base, this does NOT wrap the
+  // <pre> in a gutter container — the sieve block has its own header/layout.
+  // Never runs while the user is focused inside the element (avoids cursor loss).
+
+  function safeHighlight(codeEl, lang) {
+    if (document.activeElement === codeEl) return
+    var T = window.TipTap
+    var low = (T && T.createLowlight && T.common)
+      ? (safeHighlight._ll || (safeHighlight._ll = T.createLowlight(T.common)))
+      : null
+    if (!low || !lang || lang === 'unknown' || lang === 'text') {
+      // No highlighter or unknown lang — leave as plain text.
+      return
+    }
+    var raw = codeEl.innerText
+    if (!raw) return
+    try {
+      var html = low.highlight(lang, raw).children.map(function hastStr(n) {
+        if (n.type === 'text') return n.value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        if (n.type === 'element') {
+          var cls = (n.properties && n.properties.className || []).join(' ')
+          return '<span' + (cls ? ' class="' + cls + '"' : '') + '>' + n.children.map(hastStr).join('') + '</span>'
+        }
+        return ''
+      }).join('')
+      codeEl.innerHTML = html
+    } catch (_) {}
+  }
+
   // ── CodeRenderer ─────────────────────────────────────────────────────────────
 
   var CodeRenderer = {
     parseAttrs: function (data) {
       return {
         language: data.language || '',
-        source: (typeof data.source === 'string' ? data.source.trim() : ''),
+        source: (typeof data.source === 'string' ? data.source : ''),
         detectionMethod: data.detectionMethod || '',
       }
     },
@@ -197,11 +228,13 @@ import { esc, applyHighlighting, isStaleByTime, isJobActive } from './fenced-blo
         }
 
         if (document.activeElement !== codeEl) {
+          // Set plain text first — restores newlines correctly from source.
           codeEl.textContent = attrs.source || ''
           var langClass = (attrs.language && attrs.language !== 'unknown')
             ? 'language-' + attrs.language : 'language-text'
-          codeEl.className = 'sieve-block__source ' + langClass
-          applyHighlighting(pre)
+          codeEl.className = 'sieve-block__source hljs ' + langClass
+          // Apply syntax colours in-place (no DOM restructuring).
+          safeHighlight(codeEl, attrs.language)
         }
       }
 
@@ -211,10 +244,28 @@ import { esc, applyHighlighting, isStaleByTime, isJobActive } from './fenced-blo
       codeEl.addEventListener('input', function () {
         clearTimeout(inputTimer)
         inputTimer = setTimeout(function () {
+          // innerText respects visual newlines from browser-inserted <br>/<div> on Enter.
+          // textContent collapses them, stripping all line breaks.
+          var src = codeEl.innerText
+          // Browsers append a trailing \n to contenteditable when the last line has a <br>;
+          // strip exactly one trailing newline to avoid phantom blank lines accumulating.
+          if (src.endsWith('\n')) src = src.slice(0, -1)
           document.dispatchEvent(new CustomEvent('sieve:block-update', {
-            detail: { id: currentAttrs.id, kind: 'code', attrs: { source: codeEl.textContent } },
+            detail: { id: currentAttrs.id, kind: 'code', attrs: { source: src } },
           }))
         }, 200)
+      })
+
+      // Flush source immediately on blur so that if TipTap calls update() after
+      // focus leaves, the shadow already has the current content — preventing
+      // typed-but-not-yet-debounced content from being wiped by a render() call.
+      codeEl.addEventListener('blur', function () {
+        clearTimeout(inputTimer)
+        var src = codeEl.innerText
+        if (src.endsWith('\n')) src = src.slice(0, -1)
+        document.dispatchEvent(new CustomEvent('sieve:block-update', {
+          detail: { id: currentAttrs.id, kind: 'code', attrs: { source: src } },
+        }))
       })
 
       codeEl.addEventListener('keydown', function (e) {
