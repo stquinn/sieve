@@ -9,6 +9,13 @@ type mockProcessor struct {
 	matchFn func(string) (bool, map[string]interface{})
 }
 
+func (p *mockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
+	attrs := map[string]interface{}{"id": id, "status": "PENDING"}
+	for k, v := range overrides {
+		attrs[k] = v
+	}
+	return attrs
+}
 func (p *mockProcessor) PasteMatch(c string) (bool, map[string]interface{}) { return p.matchFn(c) }
 func (p *mockProcessor) BuildContext(_ SieveBlock, _ ShadowDocument) string  { return "" }
 func (p *mockProcessor) RunJob(_ context.Context, _ *SieveBlock, _ Services) error { return nil }
@@ -51,10 +58,10 @@ func TestPasteMatchers_firstMatchWins(t *testing.T) {
 	registryMu.RUnlock()
 
 	for _, pm := range matchers {
-		ok, attrs := pm.Processor.PasteMatch("target")
+		ok, overrides := pm.Processor.PasteMatch("target")
 		if ok {
-			if attrs["winner"] != "specific" {
-				t.Errorf("expected specific to win, got %v", attrs["winner"])
+			if overrides["winner"] != "specific" {
+				t.Errorf("expected specific to win, got %v", overrides["winner"])
 			}
 			break
 		}

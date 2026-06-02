@@ -8,8 +8,18 @@ import (
 )
 
 // BlockProcessor is implemented by every SieveBlock Kind.
+//
+// InitAttrs is the schema declaration. It returns the complete, valid initial
+// YAML map for a new block — every field at its zero value, overridden by
+// whatever the creation trigger supplied. Called by CreateBlock regardless of
+// how the block was created (UI command, paste, API).
+//
+// PasteMatch is secondary: it detects whether pasted content should become
+// this Kind and extracts override values to pass into InitAttrs. Processors
+// that have no paste trigger return false, nil from PasteMatch.
 type BlockProcessor interface {
-	PasteMatch(content string) (matched bool, attrs map[string]interface{})
+	InitAttrs(id string, overrides map[string]interface{}) map[string]interface{}
+	PasteMatch(content string) (matched bool, overrides map[string]interface{})
 	BuildContext(block SieveBlock, doc ShadowDocument) string
 	RunJob(ctx context.Context, block *SieveBlock, svc Services) error
 }
