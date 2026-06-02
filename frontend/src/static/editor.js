@@ -11,6 +11,9 @@
   var tabModes = {}
   var saveTimer = null
   var lastSyncedBody = ''
+  var editorWs = null
+  var editorWsPending = []
+  var editorWsAwaiters = {}   // type → { resolve, reject }
   var aiReloadInProgress = false
   var currentMarkdownTextarea = null
   var showAiBlocks = true
@@ -29,6 +32,7 @@
       flushSave()
       currentEditor.destroy()
       currentEditor = null
+      closeEditorWs()
     }
 
     if (!mountEl || !uuid) {
@@ -39,6 +43,7 @@
     }
 
     currentUuid = uuid
+    openEditorWs(uuid)
     currentMountEl = mountEl
     currentMode = mode || tabModes[uuid] || 'wysiwyg'
 
@@ -167,7 +172,7 @@
         if (md === lastSyncedBody) return
         lastSyncedBody = md
         document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
-        scheduleSave(uuid, md)
+        wsSend({ type: 'doc-update', uuid: uuid, markdown: md })
         document.dispatchEvent(new CustomEvent('editor:changed'))
         dispatchStats()
       },
@@ -213,7 +218,7 @@
       if (val === lastSyncedBody) return
       lastSyncedBody = val
       document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
-      scheduleSave(uuid, val)
+      wsSend({ type: 'doc-update', uuid: uuid, markdown: val })
       document.dispatchEvent(new CustomEvent('editor:changed'))
       updateGutter(gutter, val)
       dispatchStats()
@@ -274,6 +279,65 @@
       document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: false } }))
       document.dispatchEvent(new CustomEvent('editor:saved', { detail: { uuid: uuid } }))
     }).catch(function (err) { console.error('[editor] save failed', err) })
+  }
+
+  function openEditorWs(uuid) {
+    if (editorWs) { editorWs.close(); editorWs = null }
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    editorWs = new WebSocket(proto + '//' + location.host + '/api/ws?uuid=' + encodeURIComponent(uuid))
+
+    editorWs.onopen = function () {
+      editorWsPending.forEach(function (m) { editorWs.send(m) })
+      editorWsPending = []
+    }
+
+    editorWs.onmessage = function (event) {
+      var msg = JSON.parse(event.data || '{}')
+      var awaiter = editorWsAwaiters[msg.type]
+      if (awaiter) {
+        delete editorWsAwaiters[msg.type]
+        awaiter.resolve(msg)
+      }
+      if (msg.type === 'flush-ack') {
+        document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: false } }))
+        document.dispatchEvent(new CustomEvent('editor:saved', { detail: { uuid: msg.uuid } }))
+      }
+      if (msg.type === 'markdown-content') {
+        document.dispatchEvent(new CustomEvent('editor:markdown-content', { detail: msg }))
+      }
+    }
+
+    editorWs.onerror = function (err) { console.error('[editor] ws error', err) }
+  }
+
+  function closeEditorWs() {
+    if (editorWs) { editorWs.close(); editorWs = null }
+    editorWsPending = []
+    editorWsAwaiters = {}
+  }
+
+  function wsSend(msg) {
+    var data = JSON.stringify(msg)
+    if (editorWs && editorWs.readyState === WebSocket.OPEN) {
+      editorWs.send(data)
+    } else {
+      editorWsPending.push(data)
+    }
+  }
+
+  function wsSendAndAwait(type, msg) {
+    return new Promise(function (resolve, reject) {
+      var ackType = type + '-ack'
+      var timer = setTimeout(function () {
+        delete editorWsAwaiters[ackType]
+        reject(new Error('ws timeout: ' + type))
+      }, 5000)
+      editorWsAwaiters[ackType] = {
+        resolve: function (m) { clearTimeout(timer); resolve(m) },
+        reject: function (e) { clearTimeout(timer); reject(e) },
+      }
+      wsSend(msg)
+    })
   }
 
   // ── Stats ─────────────────────────────────────────────────────────────────────
