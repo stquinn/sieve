@@ -32,13 +32,15 @@ Markdown storage is non-negotiable. It keeps documents portable, human-readable,
 
 ### 2. There is one block type: SieveBlock
 
-There are no code blocks, AI blocks, web clip blocks as distinct Go types. There is one `SieveBlock`. The `tag` field is a key into two registries. Everything else is data.
+There are no code blocks, AI blocks, web clip blocks as distinct Go types. There is one `SieveBlock`. The fence info string is the block's `Kind` — a key into two registries. Everything else is data.
 
 ```
-tag
+fence info string (Kind)
   → Go processor registry:  what the server does (job, prompt, paste match, serialise)
   → JS renderer registry:    how it looks (inline/block, modes, render function)
 ```
+
+`Kind` is parsed from the fence info string by Go at load time. It is **never written into the YAML body** — the fence position is canonical and sufficient.
 
 Adding a new content type means adding two registry entries. No new Go types. No new infrastructure.
 
@@ -99,7 +101,7 @@ type ShadowDocument struct {
 
 type SieveBlock struct {
     ID    string
-    Tag   string                 // resolves via registries
+    Kind  string                 // from fence info string — never written to YAML body
     Attrs map[string]interface{} // all YAML fields — open map
 }
 ```
@@ -115,13 +117,13 @@ func (s *ShadowDocument) Remux() string {
     out := s.Markdown
     for _, block := range s.Blocks {
         yaml, _ := fencedblock.Serialize(block.Attrs)
-        out = replaceBlockFence(out, block.Tag, block.ID, yaml)
+        out = replaceBlockFence(out, block.Kind, block.ID, yaml)
     }
     return out
 }
 ```
 
-`replaceBlockFence` scans for ` ```tag...id: X...``` ` and substitutes the YAML body. This is the same targeted fence-replace already used by `ResolveAiBlock` and `ResolveWebClip` — no new parsing infrastructure required.
+`replaceBlockFence` scans for ` ```<kind>...id: X...``` ` and substitutes the YAML body. This is the same targeted fence-replace already used by `ResolveAiBlock` and `ResolveWebClip` — no new parsing infrastructure required.
 
 **Timing invariant:** block-update debounce (~200ms) is shorter than the save debounce (1s). By the time the save fires, all pending block updates have settled in `shadow.Blocks`. The remux always has current block state.
 
@@ -175,7 +177,7 @@ Drive the status bar and tab spinner. Consolidates what SSE does today.
 
 ## The Go Processor Registry
 
-The processor registry maps tag → `BlockProcessor`. The registry returns an interface — each block type provides its own implementation. No handler code, no routing logic lives here.
+The processor registry maps Kind → `BlockProcessor`. The registry returns an interface — each block type provides its own implementation. No handler code, no routing logic lives here.
 
 ```go
 // The interface the registry returns for every tag.
@@ -201,7 +203,7 @@ var processorRegistry = map[string]BlockProcessor{}
 ```go
 func (es *EditorService) RunJob(uuid, blockID string) {
     block     := es.shadows[uuid].Blocks[blockID]
-    processor := processorRegistry[block.Tag]
+    processor := processorRegistry[block.Kind]
 
     if err := processor.RunJob(ctx, block, es.services); err != nil {
         block.Attrs["status"] = "ERROR"
@@ -287,7 +289,7 @@ For simple processors, a struct-literal with method closures also works:
 | Responsibility | Notes |
 |---|---|
 | TipTap setup and extensions | Unchanged |
-| NodeView rendering per tag | Via renderer registry — JS only concern |
+| NodeView rendering per Kind | Via renderer registry — JS only concern |
 | User interactions | Clicks, keyboard, context menus |
 | WebSocket message handling | Receive instructions, apply to TipTap |
 | Cursor / position management | TipTap owns cursor; Go references positions by block ID |
@@ -296,18 +298,7 @@ For simple processors, a struct-literal with method closures also works:
 
 ## Paste Intelligence in Go
 
-The Go processor registry declares a paste matcher per tag:
-
-```go
-type BlockProcessor struct {
-    Tag        string
-    PasteMatch func(content string) (matched bool, attrs map[string]interface{})
-    Job        JobDescriptor
-    // ...
-}
-```
-
-EditorService runs pasted content through all registered matchers. First match wins. If no match: JS handles as plain text paste (unchanged behaviour). Fully unit-testable without a browser.
+Each `BlockProcessor` declares a `PasteMatch` method (see interface above). EditorService runs pasted content through all registered processors in order. First match wins — returns the initial attrs and the Kind to use. If no match: JS handles as plain text paste (unchanged behaviour). Fully unit-testable without a browser.
 
 ---
 
@@ -362,10 +353,10 @@ One line. All open shadows written to disk.
 
 The SieveBlock model accommodates all current and future block types:
 
-| Tag | Notes |
-|-----|-------|
+| Kind | Notes |
+|------|-------|
 | `code` | First SieveBlock implementation. User-editable source, AI language detection, mermaid renderer. Clean cutover from `CodeBlockWithAttrs` — no backward compat needed; existing code fences degrade gracefully to standard markdown rendering. |
-| `ai-block` | Migration from existing fenced YAML. On-disk format is already correct — fence info string is the tag, body is YAML. Replace specific TipTap extension with SieveBlock extension; no data migration needed. |
+| `ai-block` | Migration from existing fenced YAML. On-disk format is already correct — fence info string is the Kind, body is YAML. Replace specific TipTap extension with SieveBlock extension; no data migration needed. |
 | `web-clip` | Migration from existing fenced YAML. Same as ai-block — format already correct; extension replacement only. |
 | `rich-image` | New. Replaces TipTap image-with-attrs extension. Binary stored in AssetService; fence carries metadata (src, description, dimensions, alt). AI description job on paste. |
 | `titled-link` | New. Replaces HTTP-title link extension. Fence carries url, title, description. HTTP fetch + AI summary job on paste. |
