@@ -134,3 +134,139 @@ func parseAllBlocks(body string) map[string]*SieveBlock {
 	}
 	return blocks
 }
+
+// EditorService is the Go-side editor model. It holds one ShadowDocument per
+// open document and coordinates all save operations. DocumentService owns disk.
+type EditorService struct {
+	documents *DocumentService
+	mu        sync.RWMutex
+	shadows   map[string]*ShadowDocument
+}
+
+// NewEditorService creates an EditorService backed by the given DocumentService.
+func NewEditorService(documents *DocumentService) *EditorService {
+	return &EditorService{
+		documents: documents,
+		shadows:   make(map[string]*ShadowDocument),
+	}
+}
+
+// Open loads a document from disk and creates an in-memory ShadowDocument.
+// shadow.Blocks starts empty; blocks are populated via UpdateBlock as users edit.
+func (es *EditorService) Open(uuid string) error {
+	doc, err := es.documents.LoadByUUID(uuid)
+	if err != nil {
+		return err
+	}
+	shadow := newShadow(uuid, string(doc.Body()), func() { _ = es.Flush(uuid) })
+
+	es.mu.Lock()
+	es.shadows[uuid] = shadow
+	es.mu.Unlock()
+	return nil
+}
+
+// Close flushes the shadow to disk and removes it. Called when the WebSocket closes.
+func (es *EditorService) Close(uuid string) {
+	_ = es.Flush(uuid)
+
+	es.mu.Lock()
+	shadow, ok := es.shadows[uuid]
+	delete(es.shadows, uuid)
+	es.mu.Unlock()
+
+	if ok {
+		shadow.stopDebounce()
+	}
+}
+
+// UpdateMarkdown stores the latest full markdown from TipTap and resets the debounce.
+func (es *EditorService) UpdateMarkdown(uuid, markdown string) {
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if shadow != nil {
+		shadow.setMarkdown(markdown)
+	}
+}
+
+// UpdateBlock merges attrs into the named block, creating it if needed.
+// kind is only used when creating a new block entry.
+func (es *EditorService) UpdateBlock(uuid, kind, blockID string, attrs map[string]interface{}) {
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if shadow != nil {
+		shadow.setBlock(kind, blockID, attrs)
+	}
+}
+
+// EnterMarkdown switches the shadow to markdown mode.
+// It first computes Remux() to embed all current block state into shadow.Markdown,
+// then sets mode = "markdown" so that subsequent Flush calls save verbatim.
+// Returns the merged markdown to use as the seed for the markdown editor.
+func (es *EditorService) EnterMarkdown(uuid string) string {
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if shadow == nil {
+		return ""
+	}
+	merged := shadow.Remux() // acquires and releases shadow.mu internally
+	shadow.mu.Lock()
+	shadow.Markdown = merged
+	shadow.Mode = "markdown"
+	shadow.mu.Unlock()
+	return merged
+}
+
+// EnterWysiwyg switches the shadow back to WYSIWYG mode.
+// It re-parses shadow.Blocks from the current shadow.Markdown so that any block
+// YAML the user edited directly in markdown mode is picked up for future Remux calls.
+func (es *EditorService) EnterWysiwyg(uuid string) {
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if shadow == nil {
+		return
+	}
+	shadow.mu.Lock()
+	shadow.Blocks = parseAllBlocks(shadow.Markdown)
+	shadow.Mode = "wysiwyg"
+	shadow.mu.Unlock()
+}
+
+// Flush writes the Remuxed shadow to disk via DocumentService.
+// In markdown mode Remux() returns shadow.Markdown verbatim.
+func (es *EditorService) Flush(uuid string) error {
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if shadow == nil {
+		return nil
+	}
+
+	merged := shadow.Remux()
+
+	doc, err := es.documents.LoadByUUID(uuid)
+	if err != nil {
+		return err
+	}
+	doc.SetBody([]byte(merged))
+	_, err = es.documents.Save(doc)
+	return err
+}
+
+// FlushAll writes all open shadows to disk. Called on application shutdown.
+func (es *EditorService) FlushAll() {
+	es.mu.RLock()
+	uuids := make([]string, 0, len(es.shadows))
+	for uuid := range es.shadows {
+		uuids = append(uuids, uuid)
+	}
+	es.mu.RUnlock()
+	for _, uuid := range uuids {
+		_ = es.Flush(uuid)
+	}
+}
+
