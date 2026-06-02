@@ -355,13 +355,18 @@ The SieveBlock model accommodates all current and future block types:
 
 | Kind | Notes |
 |------|-------|
-| `code` | First SieveBlock implementation. User-editable source, AI language detection, mermaid renderer. Clean cutover from `CodeBlockWithAttrs` — no backward compat needed; existing code fences degrade gracefully to standard markdown rendering. |
-| `ai-block` | Migration from existing fenced YAML. On-disk format is already correct — fence info string is the Kind, body is YAML. Replace specific TipTap extension with SieveBlock extension; no data migration needed. |
-| `web-clip` | Migration from existing fenced YAML. Same as ai-block — format already correct; extension replacement only. |
+| `code` | First SieveBlock implementation. User-editable source, AI language detection, syntax highlighting. No renderer — CODE mode only. Clean cutover from `CodeBlockWithAttrs`; existing code fences degrade gracefully to standard markdown rendering. |
+| `diagram` | Visual markup (mermaid, plantuml, etc.). Sub-language routing lives inside the diagram processor/renderer — `language` attr distinguishes mermaid from plantuml. CODE and RENDER modes. Attrs: `id`, `language`, `status`, `source`, `width`, `height`, `theme`. |
+| `ai-block` | Migration from existing fenced YAML. On-disk format already correct — extension replacement only, no data migration. |
+| `web-clip` | Migration from existing fenced YAML. Same as ai-block — extension replacement only. |
 | `rich-image` | New. Replaces TipTap image-with-attrs extension. Binary stored in AssetService; fence carries metadata (src, description, dimensions, alt). AI description job on paste. |
 | `titled-link` | New. Replaces HTTP-title link extension. Fence carries url, title, description. HTTP fetch + AI summary job on paste. |
 
-Migration sequencing: `code` first (proves user-editable + rendering). Once SieveBlock is established, migrate `ai-block` and `web-clip` into the processor registry, then introduce `rich-image` and `titled-link` as new first-class blocks.
+Paste matcher registration order (most specific first): `diagram` → `web-clip` → `titled-link` → `code`. First match wins; unmatched pastes fall through to JS as plain text.
+
+Migration sequencing: `code` first (proves user-editable path), then `diagram` (proves render mode). Once SieveBlock is established, migrate `ai-block` and `web-clip`, then introduce `rich-image` and `titled-link`.
+
+Note: `spec-code-blocks.md` and `plan-code-block-implementation.md` are superseded by this design. The mermaid renderer they described is now `kind: diagram`.
 
 ---
 
