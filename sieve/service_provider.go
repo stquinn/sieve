@@ -41,6 +41,12 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	settings := s.State.LoadSettings()
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
 	s.Editor = NewEditorService(s.Documents, autosave)
+	s.Editor.SetServices(Services{
+		AI:        s.AI,
+		Documents: s.Documents,
+		Assets:    s.Assets,
+	})
+	RegisterProcessor("code", &CodeBlockProcessor{})
 	s.migrateSession()
 }
 
