@@ -89,3 +89,48 @@ func TestDetectByHeuristics_noMatch(t *testing.T) {
 		t.Error("expected no match for plain prose")
 	}
 }
+
+// ── looksLikeCode ────────────────────────────────────────────────────────────
+
+func TestLooksLikeCode_braces(t *testing.T) {
+	src := "function foo() {\n  var x = 1\n  return x\n}"
+	if !looksLikeCode(src) {
+		t.Error("expected braces to trigger tier-3")
+	}
+}
+
+func TestLooksLikeCode_semicolons(t *testing.T) {
+	src := "int x = 1;\nint y = 2;\nreturn x + y;"
+	if !looksLikeCode(src) {
+		t.Error("expected semicolons to trigger tier-3")
+	}
+}
+
+func TestLooksLikeCode_indentation(t *testing.T) {
+	src := "if condition:\n    do_something()\n    do_more()\n    final_step()"
+	if !looksLikeCode(src) {
+		t.Error("expected heavy indentation to trigger tier-3")
+	}
+}
+
+func TestLooksLikeCode_weakSignal(t *testing.T) {
+	// Single := hit — too weak for detectByHeuristics but enough for looksLikeCode
+	src := "x := getValue()\nresult := process(x)\nreturn result"
+	if !looksLikeCode(src) {
+		t.Error("expected single tier-2 weak signal to trigger tier-3")
+	}
+}
+
+func TestLooksLikeCode_prose(t *testing.T) {
+	src := "This is a normal paragraph.\nIt has two sentences.\nNo code here at all."
+	if looksLikeCode(src) {
+		t.Error("expected plain prose to NOT trigger tier-3")
+	}
+}
+
+func TestLooksLikeCode_tooShort(t *testing.T) {
+	src := "x := 1\nreturn x"
+	if looksLikeCode(src) {
+		t.Error("expected two-line snippet to NOT trigger tier-3 (below length threshold)")
+	}
+}

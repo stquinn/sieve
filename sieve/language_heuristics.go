@@ -73,6 +73,45 @@ var tier2 = []struct {
 	{regexp.MustCompile(`:\s*(?:string|number|boolean|any)\b`), "typescript"},
 }
 
+// looksLikeCode is the tier-3 gate. It returns true when source has structural
+// signals that make it code-likely, even when no specific language can be
+// identified. This preserves the original paste-pipeline behaviour where:
+//   - tier 1/2 → language identified → code block
+//   - tier 3   → structurally code   → code block (AI detects language)
+//   - tier 4   → no signals          → plain text, falls through to TipTap
+//
+// Mirrors the JS tier-3 check: braceCount>2 || semicolonCount>2 ||
+// anyWeakSignal || indentedLines > 40% of total lines.
+func looksLikeCode(source string) bool {
+	trimmed := strings.TrimSpace(source)
+	lines := strings.Split(trimmed, "\n")
+	if len(lines) <= 2 {
+		return false // too short to be confident
+	}
+
+	braceCount := strings.Count(trimmed, "{") + strings.Count(trimmed, "}")
+	semicolonCount := strings.Count(trimmed, ";")
+
+	indented := 0
+	for _, line := range lines {
+		if len(line) >= 2 && (line[0] == ' ' || line[0] == '\t') {
+			indented++
+		}
+	}
+
+	// Any single tier2 hit is a weak signal worth acting on
+	anyWeakSignal := false
+	for _, rule := range tier2 {
+		if rule.re.MatchString(trimmed) {
+			anyWeakSignal = true
+			break
+		}
+	}
+
+	// indented > 40% of lines  →  indented*10 > len(lines)*4
+	return braceCount > 2 || semicolonCount > 2 || anyWeakSignal || indented*10 > len(lines)*4
+}
+
 // detectByHeuristics returns the detected language and true if confident,
 // or ("", false) if no strong signal was found.
 // hint is the fence info string (e.g. "python" from ```python). If it is a

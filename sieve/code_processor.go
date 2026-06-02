@@ -56,10 +56,14 @@ func (p *CodeBlockProcessor) PasteMatch(content string) (bool, map[string]interf
 		return true, overrides
 	}
 
-	// Secondary: plain multi-line code. Use heuristics as the gatekeeper so
-	// that ordinary prose (which wouldn't yield a language) falls through.
+	// Secondary: plain multi-line text. Route to code block when heuristics
+	// identify a language (tier 1/2) OR structural signals suggest code (tier 3).
+	// Only clear prose with no signals at all (tier 4) falls through.
 	if strings.Contains(trimmed, "\n") {
 		if _, ok := detectByHeuristics(trimmed, ""); ok {
+			return true, map[string]interface{}{"source": trimmed}
+		}
+		if looksLikeCode(trimmed) {
 			return true, map[string]interface{}{"source": trimmed}
 		}
 	}
