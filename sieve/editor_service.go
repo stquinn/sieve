@@ -1,6 +1,8 @@
 package sieve
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -150,6 +152,7 @@ func parseAllBlocks(body string) map[string]*SieveBlock {
 // open document and coordinates all save operations. DocumentService owns disk.
 type EditorService struct {
 	documents *DocumentService
+	services  Services
 	debounce  time.Duration
 	mu        sync.RWMutex
 	shadows   map[string]*ShadowDocument
@@ -314,6 +317,101 @@ func (es *EditorService) FlushAll() {
 	logger.Info("editor: flush-all", "count", len(uuids))
 	for _, uuid := range uuids {
 		_ = es.Flush(uuid)
+	}
+}
+
+func (es *EditorService) SetServices(svc Services) {
+	es.services = svc
+}
+
+// CreateBlock is the canonical block creation path. It initialises a new block
+// via the registered processor's InitAttrs, registers it in the shadow, and
+// returns the serialised rawYaml for the JS to insert as a sieveBlock node.
+// overrides may be nil for a zero-state block (UI command, keyboard shortcut).
+func (es *EditorService) CreateBlock(uuid, kind string, overrides map[string]interface{}) (id, rawYaml string, err error) {
+	processor := GetProcessor(kind)
+	if processor == nil {
+		return "", "", fmt.Errorf("no processor registered for kind %q", kind)
+	}
+	id = GenerateBlockID(kind)
+	attrs := processor.InitAttrs(id, overrides)
+	es.UpdateBlock(uuid, kind, id, attrs)
+	raw, err := fencedblock.Serialize[map[string]interface{}](attrs)
+	if err != nil {
+		return "", "", err
+	}
+	return id, raw, nil
+}
+
+// HandlePaste runs paste matchers and delegates to CreateBlock on the first match.
+// It is the secondary creation path — prefer CreateBlock directly for UI-triggered creation.
+func (es *EditorService) HandlePaste(uuid, content string) (kind, id, rawYaml string, matched bool) {
+	registryMu.RLock()
+	matchers := pasteMatchers
+	registryMu.RUnlock()
+
+	for _, pm := range matchers {
+		ok, overrides := pm.Processor.PasteMatch(content)
+		if !ok {
+			continue
+		}
+		blockID, raw, err := es.CreateBlock(uuid, pm.Kind, overrides)
+		if err != nil {
+			return "", "", "", false
+		}
+		return pm.Kind, blockID, raw, true
+	}
+	return "", "", "", false
+}
+
+// RunJob executes the background job for blockID, merges results into the shadow,
+// flushes to disk, and calls notify with the updated rawYaml.
+func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string, notify func(id, rawYaml string)) {
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if shadow == nil {
+		return
+	}
+
+	shadow.mu.Lock()
+	blk, ok := shadow.Blocks[blockID]
+	if !ok {
+		shadow.mu.Unlock()
+		return
+	}
+	kind := blk.Kind
+	blkCopy := &SieveBlock{
+		ID:    blk.ID,
+		Kind:  blk.Kind,
+		Attrs: make(map[string]interface{}, len(blk.Attrs)),
+	}
+	for k, v := range blk.Attrs {
+		blkCopy.Attrs[k] = v
+	}
+	shadow.mu.Unlock()
+
+	processor := GetProcessor(kind)
+	if processor == nil {
+		return
+	}
+
+	if err := processor.RunJob(ctx, blkCopy, es.services); err != nil {
+		shadow.setBlock(kind, blockID, map[string]interface{}{"status": "ERROR"})
+	} else {
+		shadow.setBlock(kind, blockID, blkCopy.Attrs)
+	}
+
+	_ = es.Flush(uuid)
+
+	if notify != nil {
+		shadow.mu.Lock()
+		blk2, ok2 := shadow.Blocks[blockID]
+		shadow.mu.Unlock()
+		if ok2 {
+			rawYaml, _ := fencedblock.Serialize[map[string]interface{}](blk2.Attrs)
+			notify(blockID, rawYaml)
+		}
 	}
 }
 

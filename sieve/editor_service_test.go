@@ -356,3 +356,121 @@ func TestEditorService_EnterWysiwygReparsesBlocks(t *testing.T) {
 	}
 }
 
+func TestEditorService_CreateBlock_code(t *testing.T) {
+	resetRegistry()
+	RegisterProcessor("code", &CodeBlockProcessor{})
+
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, 0)
+
+	doc, _ := ds.New()
+	doc.SetBody([]byte("# Hello"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+	_ = es.Open(uuid, nil)
+
+	id, rawYaml, err := es.CreateBlock(uuid, "code", nil)
+	if err != nil {
+		t.Fatalf("CreateBlock: %v", err)
+	}
+	if len(id) < 5 {
+		t.Errorf("expected valid id, got %q", id)
+	}
+	if !strings.Contains(rawYaml, "status: PENDING") {
+		t.Errorf("expected PENDING in rawYaml, got:\n%s", rawYaml)
+	}
+
+	// Block must be in shadow with complete attrs
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	shadow.mu.Lock()
+	blk, ok := shadow.Blocks[id]
+	shadow.mu.Unlock()
+	if !ok {
+		t.Fatal("expected block in shadow")
+	}
+	if blk.Attrs["id"] != id {
+		t.Errorf("expected id in attrs, got %v", blk.Attrs["id"])
+	}
+	if _, ok := blk.Attrs["source"]; !ok {
+		t.Error("expected source field in attrs (zero value)")
+	}
+	if _, ok := blk.Attrs["language"]; !ok {
+		t.Error("expected language field in attrs (zero value)")
+	}
+}
+
+func TestEditorService_CreateBlock_withOverrides(t *testing.T) {
+	resetRegistry()
+	RegisterProcessor("code", &CodeBlockProcessor{})
+
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, 0)
+	doc, _ := ds.New()
+	doc.SetBody([]byte("# Hello"))
+	doc, _ = ds.Save(doc)
+	_ = es.Open(doc.UUID(), nil)
+
+	id, rawYaml, err := es.CreateBlock(doc.UUID(), "code", map[string]interface{}{
+		"source": "print('hello')",
+		"hint":   "python",
+	})
+	if err != nil {
+		t.Fatalf("CreateBlock: %v", err)
+	}
+	if !strings.Contains(rawYaml, "print") {
+		t.Errorf("expected source in rawYaml, got:\n%s", rawYaml)
+	}
+	_ = id
+}
+
+func TestEditorService_HandlePaste_delegatesToCreateBlock(t *testing.T) {
+	resetRegistry()
+	RegisterProcessor("code", &CodeBlockProcessor{})
+
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, 0)
+	doc, _ := ds.New()
+	doc.SetBody([]byte("# Hello"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+	_ = es.Open(uuid, nil)
+
+	kind, id, rawYaml, matched := es.HandlePaste(uuid, "```python\nprint('hello')\n```")
+	if !matched {
+		t.Fatal("expected match")
+	}
+	if kind != "code" {
+		t.Errorf("expected kind=code, got %q", kind)
+	}
+	if len(id) < 5 {
+		t.Errorf("expected valid id, got %q", id)
+	}
+	// rawYaml must contain the complete initial state, not just paste-extracted values
+	if !strings.Contains(rawYaml, "status: PENDING") {
+		t.Errorf("expected complete state in rawYaml, got:\n%s", rawYaml)
+	}
+	if !strings.Contains(rawYaml, "print") {
+		t.Errorf("expected source in rawYaml, got:\n%s", rawYaml)
+	}
+}
+
+func TestEditorService_HandlePaste_noMatch(t *testing.T) {
+	resetRegistry()
+	RegisterProcessor("code", &CodeBlockProcessor{})
+
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, 0)
+	doc, _ := ds.New()
+	doc.SetBody([]byte("# Hello"))
+	doc, _ = ds.Save(doc)
+	_ = es.Open(doc.UUID(), nil)
+
+	_, _, _, matched := es.HandlePaste(doc.UUID(), "just plain text")
+	if matched {
+		t.Fatal("expected no match for plain text")
+	}
+}
+
+
