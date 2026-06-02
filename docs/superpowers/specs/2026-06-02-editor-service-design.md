@@ -155,7 +155,22 @@ Fired on paste. EditorService runs the content against the Go processor registry
 ```
 Fired by JS when an immediate write is needed (before AI job, tab switch, app close). EditorService writes shadow to disk synchronously, acknowledges.
 
+```json
+{ "type": "enter-markdown", "uuid": "..." }
+```
+Fired when the user switches to markdown mode. EditorService responds with `markdown-content` (the current `Remux()` output) and clears `shadow.Blocks`. From this point, `doc-update` messages carry full raw markdown (including block YAML directly edited by the user); `Remux()` is a no-op because `shadow.Blocks` is empty, so the full text is saved verbatim.
+
+```json
+{ "type": "enter-wysiwyg", "uuid": "..." }
+```
+Fired when the user switches back to WYSIWYG mode. EditorService reloads the shadow from disk (same as `Open`) — this picks up any block YAML the user edited directly in markdown mode and re-populates `shadow.Blocks`.
+
 ### Go → JS (via WebSocket)
+
+```json
+{ "type": "markdown-content", "uuid": "...", "markdown": "..." }
+```
+Response to `enter-markdown`. Carries the current `Remux()` output — the latest merged state including any in-flight block edits. JS uses this as the seed for the markdown editor, not the potentially stale disk content.
 
 ```json
 { "type": "insert-block", "id": "...", "fence": "...", "cursorRef": "..." }
