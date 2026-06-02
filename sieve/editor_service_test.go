@@ -3,9 +3,10 @@ package sieve
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
-func TestRemux_replacesBlockInWysiwyg(t *testing.T) {
+func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
 	md := "# Hello\n\n```ai-block\nid: ab-1234\nquestion: What?\nresponse: Old answer\nstatus: COMPLETE\n```\n\nSome prose."
 	shadow := &ShadowDocument{
 		UUID:     "test-uuid",
@@ -25,20 +26,20 @@ func TestRemux_replacesBlockInWysiwyg(t *testing.T) {
 		},
 	}
 
-	result := shadow.Remux()
+	result := shadow.contentForSave()
 
 	if !strings.Contains(result, "response: New answer") {
-		t.Errorf("expected Remux to update response, got:\n%s", result)
+		t.Errorf("expected contentForSave to update response, got:\n%s", result)
 	}
 	if strings.Contains(result, "response: Old answer") {
-		t.Errorf("expected Remux to remove old response, got:\n%s", result)
+		t.Errorf("expected contentForSave to remove old response, got:\n%s", result)
 	}
 	if !strings.Contains(result, "Some prose.") {
 		t.Errorf("expected prose to be preserved, got:\n%s", result)
 	}
 }
 
-func TestRemux_markdownModeIsNoop(t *testing.T) {
+func TestContentForSave_markdownModeIsVerbatim(t *testing.T) {
 	md := "# Hello\n\n```ai-block\nid: ab-1234\nresponse: original\n```"
 	shadow := &ShadowDocument{
 		UUID:     "test-uuid",
@@ -56,14 +57,14 @@ func TestRemux_markdownModeIsNoop(t *testing.T) {
 		},
 	}
 
-	result := shadow.Remux()
+	result := shadow.contentForSave()
 
 	if result != md {
-		t.Errorf("expected Remux to be no-op in markdown mode, got:\n%s", result)
+		t.Errorf("expected contentForSave to return markdown verbatim, got:\n%s", result)
 	}
 }
 
-func TestRemux_emptyBlocksIsNoop(t *testing.T) {
+func TestContentForSave_emptyBlocksIsNoop(t *testing.T) {
 	md := "# Hello\n\n```ai-block\nid: ab-1234\nresponse: untouched\n```"
 	shadow := &ShadowDocument{
 		UUID:     "test-uuid",
@@ -72,7 +73,7 @@ func TestRemux_emptyBlocksIsNoop(t *testing.T) {
 		Blocks:   make(map[string]*SieveBlock),
 	}
 
-	result := shadow.Remux()
+	result := shadow.contentForSave()
 
 	if result != md {
 		t.Errorf("expected no change with empty Blocks, got:\n%s", result)
@@ -136,7 +137,7 @@ func TestShadowDocument_setBlockMergesAttrs(t *testing.T) {
 
 func TestEditorService_FlushWritesToDisk(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds)
+	es := NewEditorService(ds, time.Second)
 
 	doc, err := ds.New()
 	if err != nil {
@@ -149,7 +150,7 @@ func TestEditorService_FlushWritesToDisk(t *testing.T) {
 	}
 	uuid := doc.UUID()
 
-	if err := es.Open(uuid); err != nil {
+	if err := es.Open(uuid, nil); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	es.UpdateMarkdown(uuid, "# Hello\n\n```ai-block\nid: ab-1234\nresponse: original\nstatus: COMPLETE\n```")
@@ -174,14 +175,14 @@ func TestEditorService_FlushWritesToDisk(t *testing.T) {
 
 func TestEditorService_EnterMarkdownEmbedsBlocks(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds)
+	es := NewEditorService(ds, time.Second)
 
 	doc, _ := ds.New()
 	doc.SetBody([]byte("# Doc\n\n```code\nid: cb-0001\nsource: old\nstatus: COMPLETE\n```"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
 
-	_ = es.Open(uuid)
+	_ = es.Open(uuid, nil)
 	es.UpdateMarkdown(uuid, "# Doc\n\n```code\nid: cb-0001\nsource: old\nstatus: COMPLETE\n```")
 	es.UpdateBlock(uuid, "code", "cb-0001", map[string]interface{}{
 		"id":     "cb-0001",
@@ -205,16 +206,131 @@ func TestEditorService_EnterMarkdownEmbedsBlocks(t *testing.T) {
 	}
 }
 
+func TestEditorService_CloseFlushesAndRemovesShadow(t *testing.T) {
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, time.Second)
+
+	doc, _ := ds.New()
+	doc.SetBody([]byte("# Hello\n\nSome prose."))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+
+	_ = es.Open(uuid, nil)
+	es.UpdateMarkdown(uuid, "# Hello\n\nEdited prose.")
+
+	es.Close(uuid)
+
+	// Shadow must be gone after Close.
+	es.mu.RLock()
+	_, stillOpen := es.shadows[uuid]
+	es.mu.RUnlock()
+	if stillOpen {
+		t.Error("expected shadow to be removed after Close")
+	}
+
+	// Content must be on disk.
+	reloaded, err := ds.LoadByUUID(uuid)
+	if err != nil {
+		t.Fatalf("LoadByUUID: %v", err)
+	}
+	if !strings.Contains(string(reloaded.Body()), "Edited prose.") {
+		t.Errorf("expected Close to flush content, got:\n%s", reloaded.Body())
+	}
+}
+
+func TestEditorService_FlushAllWritesAllShadows(t *testing.T) {
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, time.Second)
+
+	var uuids []string
+	for i, body := range []string{"doc one body", "doc two body"} {
+		doc, _ := ds.New()
+		doc.SetBody([]byte("original"))
+		doc, _ = ds.Save(doc)
+		uuids = append(uuids, doc.UUID())
+		_ = es.Open(doc.UUID(), nil)
+		es.UpdateMarkdown(doc.UUID(), body)
+		_ = i
+	}
+
+	es.FlushAll()
+
+	for i, uuid := range uuids {
+		reloaded, err := ds.LoadByUUID(uuid)
+		if err != nil {
+			t.Fatalf("doc %d LoadByUUID: %v", i, err)
+		}
+		if strings.Contains(string(reloaded.Body()), "original") {
+			t.Errorf("doc %d: expected FlushAll to overwrite original, got:\n%s", i, reloaded.Body())
+		}
+	}
+}
+
+func TestEditorService_UpdateMarkdown_NoShadowIsNoop(t *testing.T) {
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, time.Second)
+	// No Open — shadow doesn't exist; should not panic.
+	es.UpdateMarkdown("nonexistent-uuid", "some content")
+}
+
+func TestEditorService_UpdateBlock_NoShadowIsNoop(t *testing.T) {
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, time.Second)
+	es.UpdateBlock("nonexistent-uuid", "ai-block", "ab-0001", map[string]interface{}{"id": "ab-0001"})
+}
+
+func TestEditorService_EnterMarkdown_NoShadowReturnsEmpty(t *testing.T) {
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, time.Second)
+	result := es.EnterMarkdown("nonexistent-uuid")
+	if result != "" {
+		t.Errorf("expected empty string for missing shadow, got %q", result)
+	}
+}
+
+func TestEditorService_EnterWysiwyg_NoShadowIsNoop(t *testing.T) {
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, time.Second)
+	es.EnterWysiwyg("nonexistent-uuid") // must not panic
+}
+
+func TestEditorService_NotifySavedCalledAfterDebounce(t *testing.T) {
+	ds, _ := newTestDocumentService(t)
+	// Use a very short debounce so the test doesn't take long.
+	es := NewEditorService(ds, 50*time.Millisecond)
+
+	doc, _ := ds.New()
+	doc.SetBody([]byte("original"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+
+	notified := make(chan struct{}, 1)
+	_ = es.Open(uuid, func() { notified <- struct{}{} })
+	es.UpdateMarkdown(uuid, "updated content")
+
+	select {
+	case <-notified:
+		// good
+	case <-time.After(2 * time.Second):
+		t.Fatal("notifySaved was not called within 2s after debounce")
+	}
+
+	reloaded, _ := ds.LoadByUUID(uuid)
+	if !strings.Contains(string(reloaded.Body()), "updated content") {
+		t.Errorf("expected debounce to save content, got:\n%s", reloaded.Body())
+	}
+}
+
 func TestEditorService_EnterWysiwygReparsesBlocks(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds)
+	es := NewEditorService(ds, time.Second)
 
 	doc, _ := ds.New()
 	doc.SetBody([]byte("# Doc\n\n```code\nid: cb-0001\nsource: original\nstatus: COMPLETE\n```"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
 
-	_ = es.Open(uuid)
+	_ = es.Open(uuid, nil)
 	_ = es.EnterMarkdown(uuid)
 
 	// User edits block YAML directly in markdown mode

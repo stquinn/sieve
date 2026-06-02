@@ -6,7 +6,6 @@ import (
 	"embed"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -84,7 +83,7 @@ type muxHandler struct {
 }
 
 func (m *muxHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf("[sieve] request: %s %s\n", r.Method, r.URL.Path)
+	logger.Debug("request", "method", r.Method, "path", r.URL.Path)
 
 	if strings.Contains(r.URL.Path, "/sieve-image-proxy") {
 		m.serveProxy(w, r)
@@ -163,7 +162,7 @@ func (m *muxHandler) serveProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Printf("[sieve:proxy] fetching: %s\n", targetURL)
+	logger.Debug("proxy: fetching", "url", targetURL)
 
 	client := &http.Client{
 		Transport: &http.Transport{
@@ -173,7 +172,7 @@ func (m *muxHandler) serveProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL, nil)
 	if err != nil {
-		fmt.Printf("[sieve:proxy] request creation failed: %v\n", err)
+		logger.Warn("proxy: request creation failed", "err", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -182,13 +181,13 @@ func (m *muxHandler) serveProxy(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Printf("[sieve:proxy] fetch failed: %v\n", err)
+		logger.Warn("proxy: fetch failed", "err", err)
 		http.Error(w, fmt.Sprintf("failed to fetch url: %v", err), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
-	fmt.Printf("[sieve:proxy] status: %d, type: %s\n", resp.StatusCode, resp.Header.Get("Content-Type"))
+	logger.Debug("proxy: response", "status", resp.StatusCode, "content_type", resp.Header.Get("Content-Type"))
 
 	if ct := resp.Header.Get("Content-Type"); ct != "" {
 		w.Header().Set("Content-Type", ct)
@@ -310,7 +309,8 @@ func main() {
 	app := NewApp(storePath, themes, hub, serviceProvider)
 	api, err := newAPIHandler(app, hub, serviceProvider)
 	if err != nil {
-		log.Fatalf("failed to init API handler: %v", err)
+		logger.Error("failed to init API handler", "err", err)
+		os.Exit(1)
 	}
 
 	// Standalone HTTP server so Vite dev proxy can reach API/SSE/static routes.
@@ -321,14 +321,14 @@ func main() {
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:"+devPort)
 	if err != nil {
-		log.Printf("failed to start dev HTTP listener: %v", err)
+		logger.Warn("failed to start dev HTTP listener", "err", err)
 	} else {
 		app.DevServerPort = ln.Addr().(*net.TCPAddr).Port
 		logger.Info("Dev HTTP server listening", "addr", ln.Addr().String(), "port", app.DevServerPort)
 		go func() {
 			mux := &muxHandler{app: app, store: &storeHandler{app: app}, api: api}
 			if err := http.Serve(ln, mux); err != nil && err != http.ErrServerClosed {
-				log.Printf("dev HTTP server error: %v", err)
+				logger.Error("dev HTTP server error", "err", err)
 			}
 		}()
 	}

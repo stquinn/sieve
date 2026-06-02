@@ -13,6 +13,7 @@
   var editorWs = null
   var editorWsPending = []
   var editorWsAwaiters = {}   // type → { resolve, reject }
+  var docUpdateTimer = null
   var aiReloadInProgress = false
   var currentMarkdownTextarea = null
   var showAiBlocks = true
@@ -25,28 +26,23 @@
   // ── Public entry point called from App.tsx htmx:afterSettle ─────────────────
 
   function initEditor(mountEl, uuid, mode) {
-    console.log('[editor.js] initEditor called with uuid:', uuid, 'mode:', mode)
     if (currentEditor) {
-      console.log('[editor.js] initEditor destroying old editor for uuid:', currentUuid)
       flushSave()
       currentEditor.destroy()
       currentEditor = null
-      closeEditorWs()
+      if (currentUuid && !currentUuid.startsWith('prompt:')) closeEditorWs()
     }
 
     if (!mountEl || !uuid) {
-      console.log('[editor.js] initEditor early return due to empty mountEl or uuid')
       currentUuid = ''
       currentMode = 'wysiwyg'
       return
     }
 
     currentUuid = uuid
-    openEditorWs(uuid)
+    if (!uuid.startsWith('prompt:')) openEditorWs(uuid)
     currentMountEl = mountEl
     currentMode = mode || tabModes[uuid] || 'wysiwyg'
-
-    console.log('[editor.js] initEditor fetching data for uuid:', uuid)
 
     fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid))
       .then(function (r) { return r.json() })
@@ -74,10 +70,9 @@
   // Listen for external changes (e.g. revert prompt or background edits)
   document.addEventListener('prompts:changed', function() {
     if (currentUuid && currentUuid.startsWith('prompt:')) {
-      console.log('[editor.js] prompts:changed - reloading current prompt editor:', currentUuid);
-      initEditor(currentMountEl, currentUuid, currentMode);
+      initEditor(currentMountEl, currentUuid, currentMode)
     }
-  });
+  })
 
   document.addEventListener('notes:changed', function() {
     // If we're editing a prompt, notes:changed might also mean the prompt was reverted
@@ -176,9 +171,13 @@
         if (md === lastSyncedBody) return
         lastSyncedBody = md
         document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
-        wsSend({ type: 'doc-update', uuid: uuid, markdown: md })
         document.dispatchEvent(new CustomEvent('editor:changed'))
         dispatchStats()
+        if (docUpdateTimer) clearTimeout(docUpdateTimer)
+        docUpdateTimer = setTimeout(function () {
+          docUpdateTimer = null
+          wsSend({ type: 'doc-update', uuid: uuid, markdown: md })
+        }, 500)
       },
     })
 
@@ -221,10 +220,14 @@
       if (val === lastSyncedBody) return
       lastSyncedBody = val
       document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
-      wsSend({ type: 'doc-update', uuid: uuid, markdown: val })
       document.dispatchEvent(new CustomEvent('editor:changed'))
       updateGutter(gutter, val)
       dispatchStats()
+      if (docUpdateTimer) clearTimeout(docUpdateTimer)
+      docUpdateTimer = setTimeout(function () {
+        docUpdateTimer = null
+        wsSend({ type: 'doc-update', uuid: uuid, markdown: val })
+      }, 500)
     })
     textarea.addEventListener('keydown', function (e) {
       if (e.key === 's' && window.isMod(e)) {
@@ -259,6 +262,12 @@
 
   function flushSave() {
     if (!currentUuid) return Promise.resolve()
+    // Flush any pending debounced doc-update immediately so Go has the latest content.
+    if (docUpdateTimer) {
+      clearTimeout(docUpdateTimer)
+      docUpdateTimer = null
+      wsSend({ type: 'doc-update', uuid: currentUuid, markdown: lastSyncedBody })
+    }
     if (currentUuid.startsWith('prompt:')) {
       return doSave(currentUuid, getMarkdown())
     }
@@ -953,7 +962,7 @@
                 currentEditor.view.dispatch(tr)
                 var md = currentEditor.storage.markdown.getMarkdown() || ''
                 lastSyncedBody = md
-                scheduleSave(currentUuid, md)
+                wsSend({ type: 'doc-update', uuid: currentUuid, markdown: md })
                 document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
               }
               return found
@@ -1052,7 +1061,7 @@
                 currentEditor.view.dispatch(tr)
                 var md = currentEditor.storage.markdown.getMarkdown() || ''
                 lastSyncedBody = md
-                scheduleSave(currentUuid, md)
+                wsSend({ type: 'doc-update', uuid: currentUuid, markdown: md })
                 document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
               }
               return found
@@ -1093,7 +1102,7 @@
                 currentEditor.view.dispatch(tr)
                 var md = currentEditor.storage.markdown.getMarkdown() || ''
                 lastSyncedBody = md
-                scheduleSave(currentUuid, md)
+                wsSend({ type: 'doc-update', uuid: currentUuid, markdown: md })
                 document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
               }
               return found
@@ -1386,6 +1395,7 @@
       wsSend({ type: 'enter-markdown', uuid: currentUuid })
       document.addEventListener('editor:markdown-content', function onMdContent(e) {
         if (e.detail.uuid !== currentUuid) return
+        if (currentMode !== 'markdown') return  // user toggled back before response arrived
         document.removeEventListener('editor:markdown-content', onMdContent)
         lastSyncedBody = e.detail.markdown
         mountMarkdown(currentMountEl, currentUuid, e.detail.markdown)

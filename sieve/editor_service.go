@@ -6,8 +6,11 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+	"sieve/logger"
 	"sieve/sieve/fencedblock"
 )
+
+const defaultAutosaveDebounce = 30 * time.Second
 
 // SieveBlock is the Go representation of any fenced YAML block.
 // Kind comes from the fence info string — it is never written to the YAML body.
@@ -24,17 +27,19 @@ type ShadowDocument struct {
 	Markdown string                 // full document from TipTap; block rawYaml may be stale
 	Blocks   map[string]*SieveBlock // user-edited blocks; authoritative over shadow.Markdown
 	Mode     string                 // "wysiwyg" (default) or "markdown"
+	debounce time.Duration
 	mu       sync.Mutex
 	timer    *time.Timer
 	onFlush  func()
 }
 
-func newShadow(uuid, body string, onFlush func()) *ShadowDocument {
+func newShadow(uuid, body string, debounce time.Duration, onFlush func()) *ShadowDocument {
 	return &ShadowDocument{
 		UUID:     uuid,
 		Markdown: body,
 		Blocks:   make(map[string]*SieveBlock),
 		Mode:     "wysiwyg",
+		debounce: debounce,
 		onFlush:  onFlush,
 	}
 }
@@ -72,7 +77,11 @@ func (s *ShadowDocument) resetDebounce() {
 	if s.timer != nil {
 		s.timer.Stop()
 	}
-	s.timer = time.AfterFunc(1*time.Second, s.onFlush)
+	d := s.debounce
+	if d <= 0 {
+		d = defaultAutosaveDebounce
+	}
+	s.timer = time.AfterFunc(d, s.onFlush)
 }
 
 func (s *ShadowDocument) stopDebounce() {
@@ -84,10 +93,12 @@ func (s *ShadowDocument) stopDebounce() {
 	}
 }
 
-// Remux returns shadow.Markdown with each block in shadow.Blocks replaced by
-// a freshly serialised fence. In markdown mode it returns Markdown verbatim —
-// the user is editing raw YAML directly, so no substitution is needed.
-func (s *ShadowDocument) Remux() string {
+// contentForSave returns the content that should be written to disk.
+// In markdown mode the user is editing raw YAML directly, so shadow.Markdown
+// is returned verbatim — no block substitution.
+// In WYSIWYG mode each block in shadow.Blocks is substituted into shadow.Markdown
+// so authoritative block state overwrites any stale rawYaml from TipTap.
+func (s *ShadowDocument) contentForSave() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.Mode == "markdown" {
@@ -139,45 +150,63 @@ func parseAllBlocks(body string) map[string]*SieveBlock {
 // open document and coordinates all save operations. DocumentService owns disk.
 type EditorService struct {
 	documents *DocumentService
+	debounce  time.Duration
 	mu        sync.RWMutex
 	shadows   map[string]*ShadowDocument
 }
 
 // NewEditorService creates an EditorService backed by the given DocumentService.
-func NewEditorService(documents *DocumentService) *EditorService {
+// debounce controls the autosave delay; pass 0 to use the default (30s).
+func NewEditorService(documents *DocumentService, debounce time.Duration) *EditorService {
+	d := debounce
+	if d <= 0 {
+		d = defaultAutosaveDebounce
+	}
+	logger.Info("editor: initialized", "autosave_debounce", d)
 	return &EditorService{
 		documents: documents,
+		debounce:  d,
 		shadows:   make(map[string]*ShadowDocument),
 	}
 }
 
 // Open loads a document from disk and creates an in-memory ShadowDocument.
-// shadow.Blocks starts empty; blocks are populated via UpdateBlock as users edit.
-func (es *EditorService) Open(uuid string) error {
+// notifySaved is called (if non-nil) after each successful debounce flush so the
+// WebSocket connection can send a flush-ack to the client.
+func (es *EditorService) Open(uuid string, notifySaved func()) error {
 	doc, err := es.documents.LoadByUUID(uuid)
 	if err != nil {
 		return err
 	}
-	shadow := newShadow(uuid, string(doc.Body()), func() { _ = es.Flush(uuid) })
+	// Declare shadow before the closure so the closure can capture the variable.
+	var shadow *ShadowDocument
+	shadow = newShadow(uuid, string(doc.Body()), es.debounce, func() {
+		if err := es.flushShadow(shadow, "debounce"); err == nil && notifySaved != nil {
+			notifySaved()
+		}
+	})
 
 	es.mu.Lock()
 	es.shadows[uuid] = shadow
 	es.mu.Unlock()
+	logger.Info("editor: open", "uuid", uuid, "body_bytes", len(doc.Body()))
 	return nil
 }
 
-// Close flushes the shadow to disk and removes it. Called when the WebSocket closes.
+// Close atomically removes the shadow and flushes it. Capturing the pointer
+// before deleting prevents a concurrent Open() from being deleted by mistake.
 func (es *EditorService) Close(uuid string) {
-	_ = es.Flush(uuid)
-
 	es.mu.Lock()
 	shadow, ok := es.shadows[uuid]
 	delete(es.shadows, uuid)
 	es.mu.Unlock()
 
-	if ok {
-		shadow.stopDebounce()
+	if !ok {
+		return
 	}
+	logger.Info("editor: close", "uuid", uuid)
+	shadow.stopDebounce()
+	_ = es.flushShadow(shadow, "close")
 }
 
 // UpdateMarkdown stores the latest full markdown from TipTap and resets the debounce.
@@ -185,9 +214,11 @@ func (es *EditorService) UpdateMarkdown(uuid, markdown string) {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
-	if shadow != nil {
-		shadow.setMarkdown(markdown)
+	if shadow == nil {
+		logger.Warn("editor: doc-update dropped — no shadow", "uuid", uuid)
+		return
 	}
+	shadow.setMarkdown(markdown)
 }
 
 // UpdateBlock merges attrs into the named block, creating it if needed.
@@ -196,9 +227,11 @@ func (es *EditorService) UpdateBlock(uuid, kind, blockID string, attrs map[strin
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
-	if shadow != nil {
-		shadow.setBlock(kind, blockID, attrs)
+	if shadow == nil {
+		logger.Warn("editor: block-update dropped — no shadow", "uuid", uuid, "block", blockID)
+		return
 	}
+	shadow.setBlock(kind, blockID, attrs)
 }
 
 // EnterMarkdown switches the shadow to markdown mode.
@@ -210,13 +243,15 @@ func (es *EditorService) EnterMarkdown(uuid string) string {
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
 	if shadow == nil {
+		logger.Warn("editor: enter-markdown — no shadow", "uuid", uuid)
 		return ""
 	}
-	merged := shadow.Remux() // acquires and releases shadow.mu internally
+	merged := shadow.contentForSave() // embeds block state before mode switch
 	shadow.mu.Lock()
 	shadow.Markdown = merged
 	shadow.Mode = "markdown"
 	shadow.mu.Unlock()
+	logger.Info("editor: enter-markdown", "uuid", uuid, "bytes", len(merged))
 	return merged
 }
 
@@ -228,12 +263,15 @@ func (es *EditorService) EnterWysiwyg(uuid string) {
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
 	if shadow == nil {
+		logger.Warn("editor: enter-wysiwyg — no shadow", "uuid", uuid)
 		return
 	}
 	shadow.mu.Lock()
-	shadow.Blocks = parseAllBlocks(shadow.Markdown)
+	blocks := parseAllBlocks(shadow.Markdown)
+	shadow.Blocks = blocks
 	shadow.Mode = "wysiwyg"
 	shadow.mu.Unlock()
+	logger.Info("editor: enter-wysiwyg", "uuid", uuid, "blocks_reparsed", len(blocks))
 }
 
 // Flush writes the Remuxed shadow to disk via DocumentService.
@@ -243,18 +281,26 @@ func (es *EditorService) Flush(uuid string) error {
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
 	if shadow == nil {
+		logger.Warn("editor: flush called but no shadow", "uuid", uuid)
 		return nil
 	}
+	return es.flushShadow(shadow, "explicit")
+}
 
-	merged := shadow.Remux()
-
-	doc, err := es.documents.LoadByUUID(uuid)
+func (es *EditorService) flushShadow(shadow *ShadowDocument, source string) error {
+	merged := shadow.contentForSave()
+	doc, err := es.documents.LoadByUUID(shadow.UUID)
 	if err != nil {
+		logger.Warn("editor: flush load failed", "uuid", shadow.UUID, "source", source, "err", err)
 		return err
 	}
 	doc.SetBody([]byte(merged))
-	_, err = es.documents.Save(doc)
-	return err
+	if _, err = es.documents.Save(doc); err != nil {
+		logger.Warn("editor: flush save failed", "uuid", shadow.UUID, "source", source, "err", err)
+		return err
+	}
+	logger.Info("editor: saved", "uuid", shadow.UUID, "source", source, "bytes", len(merged))
+	return nil
 }
 
 // FlushAll writes all open shadows to disk. Called on application shutdown.
@@ -265,6 +311,7 @@ func (es *EditorService) FlushAll() {
 		uuids = append(uuids, uuid)
 	}
 	es.mu.RUnlock()
+	logger.Info("editor: flush-all", "count", len(uuids))
 	for _, uuid := range uuids {
 		_ = es.Flush(uuid)
 	}

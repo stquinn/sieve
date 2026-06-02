@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"sieve/logger"
 )
 
 // GlobalConfig stores application-level settings that are not store-specific.
@@ -58,7 +60,7 @@ func ValidateStore(path string) error {
 	// 1. Join the path properly for your OS (handles / vs \)
 	localDevDirectory := filepath.Join(path, "main.go")
 	if _, err := os.Stat(localDevDirectory); err == nil {
-		fmt.Printf("Directory contains main.go - looks like dev dir!")
+		logger.Warn("config: store path looks like source directory", "path", path)
 		return fmt.Errorf("looks like the dev directory, not a store")
 	}
 	storePath := filepath.Join(path, "store")
@@ -93,7 +95,7 @@ func FindBestStorePath(cliArg, envVar string) string {
 		if err := ValidateStore(config.LastStorePath); err == nil {
 			return config.LastStorePath
 		} else {
-			fmt.Printf("[sieve] FindBestStorePath: LastStorePath rejected: %v\n", err)
+			logger.Warn("config: last store path rejected", "path", config.LastStorePath, "err", err)
 		}
 	}
 	pwd, _ := os.Getwd()
