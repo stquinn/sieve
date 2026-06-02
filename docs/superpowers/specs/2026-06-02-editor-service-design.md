@@ -358,11 +358,27 @@ One line. All open shadows written to disk.
 
 ---
 
+## Planned Block Types
+
+The SieveBlock model accommodates all current and future block types:
+
+| Tag | Notes |
+|-----|-------|
+| `code` | First SieveBlock implementation. User-editable source, AI language detection, mermaid renderer. Clean cutover from `CodeBlockWithAttrs` — no backward compat needed; existing code fences degrade gracefully to standard markdown rendering. |
+| `ai-block` | Migration from existing fenced YAML. Needs dual-format support during transition. |
+| `web-clip` | Migration from existing fenced YAML. Needs dual-format support during transition. |
+| `rich-image` | New. Replaces TipTap image-with-attrs extension. Binary stored in AssetService; fence carries metadata (src, description, dimensions, alt). AI description job on paste. |
+| `titled-link` | New. Replaces HTTP-title link extension. Fence carries url, title, description. HTTP fetch + AI summary job on paste. |
+
+Migration sequencing: `code` first (proves user-editable + rendering). Once SieveBlock is established, migrate `ai-block` and `web-clip` into the processor registry, then introduce `rich-image` and `titled-link` as new first-class blocks.
+
+---
+
 ## Implementation Sequence
 
 This design is delivered in two implementation plans:
 
 1. **Go-heavy frontend plan** — EditorService, ShadowDocument, WebSocket infrastructure, flushSave migration, paste intelligence
-2. **SieveBlock plan** — Go processor registry, JS renderer registry, first block (code/mermaid), migration path from existing block extensions
+2. **SieveBlock plan** — Go processor registry, JS renderer registry, `code` as first block, migration path for existing blocks, `rich-image` and `titled-link` as new blocks
 
 The frontend plan is a prerequisite for the SieveBlock plan. Existing blocks continue to function throughout — no flag days.
