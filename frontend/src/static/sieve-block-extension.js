@@ -1,15 +1,36 @@
-// sieve-block-extension.js
+// sieve-block-extension.js — Sieve block node factory.
 //
-// Renderer interface (each BlockRenderer must supply):
-//   nodeConfig   { atom, selectable, draggable }   TipTap node schema overrides
-//   attrs        { [key]: TipTap attr definition }  kind-specific attrs (merged with base)
-//   parseAttrs   (data) → { key: value }            HTML data-* attrs from YAML for fence parser
-//   makeNodeView (node) → TipTap NodeView           how the block renders
+// Renderer interface (each renderer file must supply these fields):
 //
-// registerSieveRenderer(kind, renderer) creates one TipTap node per kind.
-// getSieveNodes() returns them all; editor.js spreads them into the extensions array.
+//   nodeConfig   { atom, selectable, draggable }
+//       ProseMirror schema overrides. Defaults: atom:true, selectable:true, draggable:true.
+//       These are schema-level — fixed at editor init time, cannot change at runtime.
+//       Use selectable:false + draggable:false for user-editable blocks (code, diagram)
+//       so mouse drag selects text rather than moving the block.
+//
+//   attrs   { [key]: TipTap attr definition }
+//       Kind-specific TipTap attributes. Merged with the five base attrs that every
+//       sieve block shares: kind, id, rawYaml, status, createdAt.
+//
+//   parseAttrs(data) → { key: value }
+//       Called by the fence parser. Receives the parsed YAML object; returns the
+//       extra data-* HTML attributes the renderer needs on initial parse.
+//
+//   makeNodeView(node) → TipTap NodeView
+//       Returns the NodeView object (dom, update, stopEvent, etc.).
+//
+// Registration:
+//   window.TipTap.registerSieveRenderer('code', CodeRenderer)
+//   → creates a TipTap node named 'sieve-code' with the renderer's config/attrs
+//   → getSieveNodes() includes it automatically — no editor.js changes needed
+//
+// Adding a new block kind:
+//   1. Create <kind>-renderer.js following the interface above
+//   2. Add <script type="module" src="/static/<kind>-renderer.js"> to index.html
+//      after sieve-block-extension.js
+//   That's it.
 
-import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
+import { esc } from './fenced-block-base.js'
 
 ;(function () {
   'use strict'
@@ -18,25 +39,26 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
   var Node = T.Node
   var mergeAttributes = T.mergeAttributes
 
-  // ── Base attributes present on every sieve block kind ────────────────────────
+  // ── Base attributes shared by every sieve block kind ─────────────────────────
 
   var BASE_ATTRS = {
-    kind:      { default: '', parseHTML: function (el) { return el.getAttribute('data-kind')       || '' } },
-    id:        { default: '', parseHTML: function (el) { return el.getAttribute('data-id')         || '' } },
-    rawYaml:   { default: '', parseHTML: function (el) { return el.getAttribute('data-raw-yaml')   || '' } },
-    status:    { default: 'PENDING', parseHTML: function (el) { return el.getAttribute('data-status')    || 'PENDING' } },
-    createdAt: { default: null,      parseHTML: function (el) { return el.getAttribute('data-created-at') || null } },
+    kind:      { default: '',        parseHTML: function (el) { return el.getAttribute('data-kind')        || '' } },
+    id:        { default: '',        parseHTML: function (el) { return el.getAttribute('data-id')          || '' } },
+    rawYaml:   { default: '',        parseHTML: function (el) { return el.getAttribute('data-raw-yaml')    || '' } },
+    status:    { default: 'PENDING', parseHTML: function (el) { return el.getAttribute('data-status')      || 'PENDING' } },
+    createdAt: { default: null,      parseHTML: function (el) { return el.getAttribute('data-created-at')  || null } },
   }
 
-  // Default node schema overrides (suitable for display-only blocks such as AI/WebClip).
+  // Schema defaults for display-only blocks (AI, WebClip). Editable blocks
+  // (code, diagram) override selectable and draggable via nodeConfig.
   var DEFAULT_NODE_CONFIG = { atom: true, selectable: true, draggable: true }
 
   // ── Node factory ─────────────────────────────────────────────────────────────
 
   function createSieveNode(kind, renderer) {
     var cfg      = Object.assign({}, DEFAULT_NODE_CONFIG, renderer.nodeConfig || {})
-    var nodeName = 'sieve-' + kind    // e.g. 'sieve-code', 'sieve-ai-block'
-    var dataType = 'sieve-' + kind    // data-type="sieve-code" in HTML
+    var nodeName = 'sieve-' + kind   // e.g. 'sieve-code', 'sieve-diagram'
+    var dataType = 'sieve-' + kind   // value of the data-type HTML attribute
 
     return Node.create({
       name:       nodeName,
@@ -46,7 +68,6 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
       draggable:  cfg.draggable,
 
       addAttributes() {
-        // Base attrs + renderer-supplied kind-specific attrs
         return Object.assign({}, BASE_ATTRS, renderer.attrs || {})
       },
 
@@ -66,6 +87,7 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
         return {
           markdown: {
             // Serialise: replay rawYaml verbatim inside a ```kind fence.
+            // Go owns all YAML generation; JS never constructs YAML.
             serialize: function (state, node) {
               state.ensureNewLine()
               if (node.attrs.kind && node.attrs.rawYaml) {
@@ -77,9 +99,9 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
             },
 
             parse: {
-              // Wrap the fence rule; only intercept fences whose info string matches
-              // this kind and whose YAML body contains an id. All other fences fall
-              // through to the next handler in the chain.
+              // Wrap the markdownit fence rule. Only intercepts fences whose info
+              // string matches this kind AND whose YAML body contains an id field.
+              // All other fences fall through to the previous handler in the chain.
               setup: function (markdownit) {
                 var prevFence = markdownit.renderer.rules.fence
                 markdownit.renderer.rules.fence = function (tokens, idx, options, env, self) {
@@ -101,7 +123,7 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
                   }
 
                   var htmlAttrs = [
-                    'data-type="' + dataType + '"',
+                    'data-type="'     + dataType + '"',
                     'data-kind="'     + esc(kind) + '"',
                     'data-id="'       + esc(data.id) + '"',
                     'data-raw-yaml="' + esc(token.content) + '"',
@@ -129,7 +151,7 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
 
   // ── Registry ─────────────────────────────────────────────────────────────────
 
-  var nodeRegistry = {}  // kind → TipTap Node
+  var nodeRegistry = {}
 
   function registerSieveRenderer(kind, renderer) {
     nodeRegistry[kind] = createSieveNode(kind, renderer)
@@ -139,236 +161,9 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
     return Object.keys(nodeRegistry).map(function (k) { return nodeRegistry[k] })
   }
 
-  // ── CodeRenderer ─────────────────────────────────────────────────────────────
-
-  var CodeRenderer = {
-    // Code blocks should not be draggable as a unit (drag = text selection)
-    // and should not capture clicks as a NodeSelection (blocks inner focus).
-    nodeConfig: {
-      atom:       true,
-      selectable: false,
-      draggable:  false,
-    },
-
-    // Kind-specific TipTap attribute definitions (merged with BASE_ATTRS by the factory).
-    attrs: {
-      source:          { default: '', parseHTML: function (el) { return el.getAttribute('data-source')           || '' } },
-      language:        { default: '', parseHTML: function (el) { return el.getAttribute('data-language')         || '' } },
-      detectionMethod: { default: '', parseHTML: function (el) { return el.getAttribute('data-detection-method') || '' } },
-    },
-
-    parseAttrs: function (data) {
-      return {
-        language:        data.language        || '',
-        source:          typeof data.source === 'string' ? data.source : '',
-        detectionMethod: data.detectionMethod || '',
-      }
-    },
-
-    makeNodeView: function (node) {
-      var currentAttrs = Object.assign({}, node.attrs)
-
-      // ── DOM ──────────────────────────────────────────────────────────────
-      var dom = document.createElement('div')
-      dom.className = 'sieve-block sieve-block--code'
-      dom.setAttribute('data-block-id', node.attrs.id || '')
-      dom.contentEditable = 'false'
-
-      var header = document.createElement('div')
-      header.className = 'sieve-block__header'
-      header.contentEditable = 'false'
-      var badge = document.createElement('span')
-      badge.className = 'sieve-block__badge'
-      header.appendChild(badge)
-      dom.appendChild(header)
-
-      // flex row: line-number gutter + pre/code
-      var body = document.createElement('div')
-      body.className = 'sieve-block__body'
-
-      var gutter = document.createElement('div')
-      gutter.className = 'sieve-block__gutter'
-      gutter.contentEditable = 'false'
-
-      var pre = document.createElement('pre')
-      pre.className = 'sieve-block__pre'
-
-      var codeEl = document.createElement('code')
-      codeEl.className = 'sieve-block__source'
-      codeEl.contentEditable = 'true'
-      codeEl.spellcheck = false
-      codeEl.setAttribute('autocorrect', 'off')
-      codeEl.setAttribute('autocapitalize', 'off')
-
-      pre.appendChild(codeEl)
-      body.appendChild(gutter)
-      body.appendChild(pre)
-      dom.appendChild(body)
-
-      // ── Lowlight ─────────────────────────────────────────────────────────
-      var _low = null
-      function getLow() {
-        if (!_low) {
-          if (T && T.createLowlight && T.common) _low = T.createLowlight(T.common)
-        }
-        return _low
-      }
-
-      function hastToHtml(nodes) {
-        return (nodes || []).map(function (n) {
-          if (n.type === 'text') {
-            return n.value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-          }
-          if (n.type === 'element') {
-            var cls = (n.properties && n.properties.className || []).join(' ')
-            return '<span' + (cls ? ' class="' + cls + '"' : '') + '>' + hastToHtml(n.children) + '</span>'
-          }
-          return ''
-        }).join('')
-      }
-
-      // ── Gutter ───────────────────────────────────────────────────────────
-      function updateGutter(source) {
-        var lines = (source || '').split('\n')
-        var count = (lines[lines.length - 1] === '') ? lines.length - 1 : lines.length
-        count = Math.max(count, 1)
-        if (gutter.childElementCount === count) return
-        gutter.innerHTML = ''
-        for (var i = 1; i <= count; i++) {
-          var span = document.createElement('span')
-          span.textContent = String(i)
-          gutter.appendChild(span)
-        }
-      }
-
-      // ── Highlighting ─────────────────────────────────────────────────────
-      function applyHighlight(source, lang) {
-        codeEl.textContent = source || ''
-        var langClass = (lang && lang !== 'unknown') ? 'language-' + lang : 'language-text'
-        codeEl.className = 'sieve-block__source hljs ' + langClass
-        var low = getLow()
-        if (low && lang && lang !== 'unknown' && lang !== 'text' && source) {
-          try { codeEl.innerHTML = hastToHtml(low.highlight(lang, source).children) } catch (_) {}
-        }
-      }
-
-      // ── Badge ────────────────────────────────────────────────────────────
-      function updateBadge(attrs) {
-        var isPending     = attrs.status === 'PENDING'
-        var isStale       = isPending && !isJobActive(attrs.id) && isStaleByTime(attrs.createdAt)
-        var showDetecting = isPending && !isStale && (!attrs.language || attrs.language === '')
-        if (showDetecting) {
-          badge.textContent = 'detecting…'
-          badge.className   = 'sieve-block__badge sieve-block__badge--pending'
-        } else if (attrs.language && attrs.language !== 'unknown') {
-          badge.textContent = attrs.language
-          badge.className   = 'sieve-block__badge'
-        } else {
-          badge.textContent = attrs.language || ''
-          badge.className   = 'sieve-block__badge sieve-block__badge--unknown'
-        }
-        if (attrs.detectionMethod) {
-          badge.setAttribute('data-detection-method', attrs.detectionMethod)
-          badge.title = 'Detected via ' + attrs.detectionMethod
-        } else {
-          badge.removeAttribute('data-detection-method')
-          badge.removeAttribute('title')
-        }
-      }
-
-      // ── Render ───────────────────────────────────────────────────────────
-      function render(attrs) {
-        currentAttrs = attrs
-        updateBadge(attrs)
-        if (document.activeElement !== codeEl) {
-          applyHighlight(attrs.source || '', attrs.language || '')
-          updateGutter(attrs.source || '')
-        }
-      }
-
-      render(node.attrs)
-
-      // ── Events ───────────────────────────────────────────────────────────
-      var inputTimer = null
-
-      function rawSource() {
-        var s = codeEl.innerText || ''
-        return s.endsWith('\n') ? s.slice(0, -1) : s
-      }
-
-      function flushSource() {
-        clearTimeout(inputTimer)
-        document.dispatchEvent(new CustomEvent('sieve:block-update', {
-          detail: { id: currentAttrs.id, kind: 'code', attrs: { source: rawSource() } },
-        }))
-      }
-
-      // Strip highlight spans on focus — clean plain-text cursor behaviour.
-      codeEl.addEventListener('focus', function () {
-        var src = rawSource()
-        codeEl.textContent = src
-        codeEl.className = 'sieve-block__source'
-      })
-
-      codeEl.addEventListener('input', function () {
-        updateGutter(codeEl.innerText || '')
-        clearTimeout(inputTimer)
-        inputTimer = setTimeout(flushSource, 200)
-      })
-
-      codeEl.addEventListener('blur', function () {
-        flushSource()
-        var src = rawSource()
-        applyHighlight(src, currentAttrs.language || '')
-        updateGutter(src)
-      })
-
-      codeEl.addEventListener('keydown', function (e) {
-        if (e.key === 'Tab') {
-          e.preventDefault()
-          var sel = window.getSelection()
-          if (sel && sel.rangeCount) {
-            var range = sel.getRangeAt(0)
-            range.deleteContents()
-            range.insertNode(document.createTextNode('  '))
-            range.collapse(false)
-            sel.removeAllRanges()
-            sel.addRange(range)
-          }
-          updateGutter(codeEl.innerText || '')
-          clearTimeout(inputTimer)
-          inputTimer = setTimeout(flushSource, 200)
-          return
-        }
-        if (e.metaKey || e.ctrlKey) return
-        e.stopPropagation()
-      })
-
-      return {
-        dom:         dom,
-        contentDOM:  null,
-        update: function (updatedNode) {
-          if (updatedNode.type.name !== 'sieve-code') return false
-          render(updatedNode.attrs)
-          return true
-        },
-        // When TipTap selects the atom via keyboard navigation, immediately focus
-        // the code element so keystrokes go there rather than deleting the block.
-        selectNode:    function () { codeEl.focus() },
-        ignoreMutation: function () { return true },
-        stopEvent: function (event) {
-          if (event.type === 'keydown' && (event.metaKey || event.ctrlKey)) return false
-          return event.type === 'keydown' || event.type === 'keyup' || event.type === 'keypress'
-        },
-        destroy: function () { clearTimeout(inputTimer) },
-      }
-    },
-  }
-
-  registerSieveRenderer('code', CodeRenderer)
-
   // ── Exports ───────────────────────────────────────────────────────────────────
-  T.getSieveNodes        = getSieveNodes
+
   T.registerSieveRenderer = registerSieveRenderer
+  T.getSieveNodes         = getSieveNodes
 
 })()
