@@ -17,10 +17,11 @@ type CodeBlockProcessor struct{}
 // when the block is inserted. RunJob (AI) then enriches silently in the background.
 func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
-		"id":       id,
-		"status":   "PENDING",
-		"source":   "",
-		"language": "",
+		"id":              id,
+		"status":          "PENDING",
+		"source":          "",
+		"language":        "",
+		"detectionMethod": "",
 	}
 	for k, v := range overrides {
 		if k == "id" {
@@ -34,6 +35,7 @@ func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface
 	hint, _ := attrs["hint"].(string)
 	if lang, ok := detectByHeuristics(source, hint); ok {
 		attrs["language"] = lang
+		attrs["detectionMethod"] = "heuristic"
 	}
 	return attrs
 }
@@ -74,6 +76,7 @@ func (p *CodeBlockProcessor) RunJob(ctx context.Context, block *SieveBlock, svc 
 	}
 	if lang != "" {
 		block.Attrs["language"] = lang
+		block.Attrs["detectionMethod"] = "ai"
 	}
 	// If lang == "" AI was not confident — keep the heuristic result unchanged.
 	block.Attrs["status"] = "COMPLETE"

@@ -385,12 +385,13 @@
     currentEditor.commands.insertContentAt(pos, {
       type: 'sieveBlock',
       attrs: {
-        kind:     msg.kind || 'code',
-        id:       msg.id || parsed.id || '',
-        rawYaml:  msg.rawYaml || '',
-        status:   parsed.status || 'PENDING',
-        language: parsed.language || '',
-        source:   typeof parsed.source === 'string' ? parsed.source.trim() : '',
+        kind:            msg.kind || 'code',
+        id:              msg.id || parsed.id || '',
+        rawYaml:         msg.rawYaml || '',
+        status:          parsed.status || 'PENDING',
+        language:        parsed.language || '',
+        source:          typeof parsed.source === 'string' ? parsed.source.trim() : '',
+        detectionMethod: parsed.detectionMethod || '',
       },
     })
   })
@@ -406,12 +407,13 @@
       commandProps.state.doc.descendants(function (node, pos) {
         if (node.type.name === 'sieveBlock' && node.attrs.id === msg.id) {
           tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, {
-            rawYaml:  msg.rawYaml || node.attrs.rawYaml,
-            status:   parsed.status   || node.attrs.status,
-            language: parsed.language || node.attrs.language,
-            source:   parsed.source != null
+            rawYaml:         msg.rawYaml || node.attrs.rawYaml,
+            status:          parsed.status   || node.attrs.status,
+            language:        parsed.language || node.attrs.language,
+            source:          parsed.source != null
               ? (typeof parsed.source === 'string' ? parsed.source.trim() : String(parsed.source))
               : node.attrs.source,
+            detectionMethod: parsed.detectionMethod || node.attrs.detectionMethod || '',
           }))
           return false
         }

@@ -34,13 +34,14 @@ import { esc, applyHighlighting, isStaleByTime, isJobActive } from './fenced-blo
 
     addAttributes() {
       return {
-        kind:      { default: '',        parseHTML: function (el) { return el.getAttribute('data-kind')       || '' } },
-        id:        { default: '',        parseHTML: function (el) { return el.getAttribute('data-id')         || '' } },
-        rawYaml:   { default: '',        parseHTML: function (el) { return el.getAttribute('data-raw-yaml')   || '' } },
-        status:    { default: 'PENDING', parseHTML: function (el) { return el.getAttribute('data-status')     || 'PENDING' } },
-        language:  { default: '',        parseHTML: function (el) { return el.getAttribute('data-language')   || '' } },
-        source:    { default: '',        parseHTML: function (el) { return el.getAttribute('data-source')     || '' } },
-        createdAt: { default: null,      parseHTML: function (el) { return el.getAttribute('data-created-at') || null } },
+        kind:            { default: '',        parseHTML: function (el) { return el.getAttribute('data-kind')             || '' } },
+        id:              { default: '',        parseHTML: function (el) { return el.getAttribute('data-id')               || '' } },
+        rawYaml:         { default: '',        parseHTML: function (el) { return el.getAttribute('data-raw-yaml')         || '' } },
+        status:          { default: 'PENDING', parseHTML: function (el) { return el.getAttribute('data-status')           || 'PENDING' } },
+        language:        { default: '',        parseHTML: function (el) { return el.getAttribute('data-language')         || '' } },
+        source:          { default: '',        parseHTML: function (el) { return el.getAttribute('data-source')           || '' } },
+        createdAt:       { default: null,      parseHTML: function (el) { return el.getAttribute('data-created-at')       || null } },
+        detectionMethod: { default: '',        parseHTML: function (el) { return el.getAttribute('data-detection-method') || '' } },
       }
     },
 
@@ -113,7 +114,8 @@ import { esc, applyHighlighting, isStaleByTime, isJobActive } from './fenced-blo
                 if (renderer && renderer.parseAttrs) {
                   var extra = renderer.parseAttrs(data)
                   Object.keys(extra).forEach(function (k) {
-                    attrs.push('data-' + k + '="' + esc(String(extra[k])) + '"')
+                    var kebab = k.replace(/([a-z0-9]|(?=[A-Z]))([A-Z])/g, '$1-$2').toLowerCase()
+                    attrs.push('data-' + kebab + '="' + esc(String(extra[k])) + '"')
                   })
                 }
                 if (data.createdAt) attrs.push('data-created-at="' + esc(data.createdAt) + '"')
@@ -133,6 +135,7 @@ import { esc, applyHighlighting, isStaleByTime, isJobActive } from './fenced-blo
       return {
         language: data.language || '',
         source: (typeof data.source === 'string' ? data.source.trim() : ''),
+        detectionMethod: data.detectionMethod || '',
       }
     },
 
@@ -183,6 +186,14 @@ import { esc, applyHighlighting, isStaleByTime, isJobActive } from './fenced-blo
         } else {
           badge.textContent = attrs.language || ''
           badge.className = 'sieve-block__badge sieve-block__badge--unknown'
+        }
+
+        if (attrs.detectionMethod) {
+          badge.setAttribute('data-detection-method', attrs.detectionMethod)
+          badge.title = 'Detected via ' + attrs.detectionMethod
+        } else {
+          badge.removeAttribute('data-detection-method')
+          badge.removeAttribute('title')
         }
 
         if (document.activeElement !== codeEl) {
