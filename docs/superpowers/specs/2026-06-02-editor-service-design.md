@@ -36,7 +36,7 @@ There are no code blocks, AI blocks, web clip blocks as distinct Go types. There
 
 ```
 tag
-  → Go descriptor registry:  what the server does (job, prompt, paste match, serialise)
+  → Go processor registry:  what the server does (job, prompt, paste match, serialise)
   → JS renderer registry:    how it looks (inline/block, modes, render function)
 ```
 
@@ -60,7 +60,7 @@ EditorService  (sieve package)
     owns: ShadowDocument per open document (in-memory)
     owns: WebSocket connections
     owns: debounce timers
-    owns: paste intelligence (via descriptor registry)
+    owns: paste intelligence (via processor registry)
     owns: AI context assembly
     method: Flush(uuid)     → assembled markdown → DocumentService.Save()
     method: FlushAll()      → shutdown, flush all open shadows
@@ -91,15 +91,10 @@ On shutdown: `EditorService.FlushAll()` writes every open shadow to disk via Doc
 ```go
 type ShadowDocument struct {
     UUID     string
-    Segments []ShadowSegment          // ordered document structure
-    Blocks   map[string]*SieveBlock   // keyed by block ID
+    Markdown string                  // full doc from TipTap — stale block rawYaml is acceptable
+    Blocks   map[string]*SieveBlock  // authoritative block state, keyed by ID
     mu       sync.Mutex
-}
-
-type ShadowSegment struct {
-    Type    string  // "prose" | "block"
-    Prose   string  // markdown text, when Type == "prose"
-    BlockID string  // when Type == "block"
+    debounce *time.Timer
 }
 
 type SieveBlock struct {
@@ -109,9 +104,26 @@ type SieveBlock struct {
 }
 ```
 
-### Assembly at flush time
+No segment tree. No structural parsing. `Markdown` is a verbatim string from TipTap — prose is correct, block rawYaml may be stale. `Blocks` is always authoritative.
 
-EditorService iterates `Segments`. For prose segments: output markdown. For block segments: look up `SieveBlock` by ID, call `fencedblock.Serialize` on `Attrs`, wrap in fence. One assembly path, regardless of block tag.
+### Remux at flush time
+
+EditorService takes `shadow.Markdown` and replaces each block's fence with a freshly serialised version from `shadow.Blocks`:
+
+```go
+func (s *ShadowDocument) Remux() string {
+    out := s.Markdown
+    for _, block := range s.Blocks {
+        yaml, _ := fencedblock.Serialize(block.Attrs)
+        out = replaceBlockFence(out, block.Tag, block.ID, yaml)
+    }
+    return out
+}
+```
+
+`replaceBlockFence` scans for ` ```tag...id: X...``` ` and substitutes the YAML body. This is the same targeted fence-replace already used by `ResolveAiBlock` and `ResolveWebClip` — no new parsing infrastructure required.
+
+**Timing invariant:** block-update debounce (~200ms) is shorter than the save debounce (1s). By the time the save fires, all pending block updates have settled in `shadow.Blocks`. The remux always has current block state.
 
 ---
 
@@ -122,9 +134,9 @@ One persistent WebSocket connection per open document. Replaces the current `flu
 ### JS → Go
 
 ```json
-{ "type": "prose-update", "uuid": "...", "markdown": "..." }
+{ "type": "doc-update", "uuid": "...", "markdown": "..." }
 ```
-Fired by TipTap's `onUpdate` (debounced, ~200ms). Carries the full TipTap markdown. EditorService updates the shadow's prose segments and resets the debounce timer.
+Fired by TipTap's `onUpdate` (debounced, ~200ms). Carries the full TipTap markdown — prose is current, block rawYaml may be stale for user-edited blocks. EditorService stores it as `shadow.Markdown` and resets the save debounce. No parsing required.
 
 ```json
 { "type": "block-update", "uuid": "...", "id": "...", "attrs": { "source": "..." } }
@@ -134,7 +146,7 @@ Fired by a block NodeView when the user edits block content. EditorService merge
 ```json
 { "type": "paste", "uuid": "...", "content": "...", "cursorRef": "after:cb-a3f9" }
 ```
-Fired on paste. EditorService runs the content against the Go descriptor registry paste matchers. Returns an insert instruction.
+Fired on paste. EditorService runs the content against the Go processor registry paste matchers. Returns an insert instruction.
 
 ```json
 { "type": "flush", "uuid": "..." }
@@ -161,91 +173,99 @@ Drive the status bar and tab spinner. Consolidates what SSE does today.
 
 ---
 
-## The Go Descriptor Registry
+## The Go Processor Registry
 
-The descriptor registry is the authoritative definition of what a block type *does* on the server. Each entry is a pure data struct — no handler code, no routing logic.
+The processor registry maps tag → `BlockProcessor`. The registry returns an interface — each block type provides its own implementation. No handler code, no routing logic lives here.
 
 ```go
-type BlockDescriptor struct {
-    Tag        string
+// The interface the registry returns for every tag.
+type BlockProcessor interface {
+    // PasteMatch decides whether pasted content should become this block type.
+    // Returns matched=true and the initial attrs if so.
+    PasteMatch(content string) (matched bool, attrs map[string]interface{})
 
-    // How a block of this type comes into existence from a user paste
-    PasteMatch func(content string) (matched bool, attrs map[string]interface{})
+    // BuildContext assembles the full AI prompt from the block's own attrs
+    // and the surrounding shadow document (for chain/ref resolution).
+    BuildContext(block SieveBlock, doc ShadowDocument) string
 
-    // What the server does when a job runs for this block
-    Job *AICallDescriptor  // nil = no server job
+    // RunJob executes the server-side job for this block: calls AI or HTTP,
+    // then updates block attrs with the result.
+    RunJob(ctx context.Context, block *SieveBlock, svc Services) error
 }
 
-type AICallDescriptor struct {
-    Prompt       string  // key into PromptService
-    BuildContext func(block SieveBlock, doc ShadowDocument) string
-    Resolve      func(response string, block *SieveBlock) error
-    Timeout      time.Duration
-}
+var processorRegistry = map[string]BlockProcessor{}
 ```
 
-**The AI Call as data.** An AI operation is not a code path — it is a struct: prompt pointer, context builder, resolve function, timeout. The descriptor owns the specifics. One generic dispatcher runs all of them:
+**The AI Call as data.** The block carries its own context — question, ref chain, conversation history — in its attrs. `BuildContext` assembles the full prompt from those attrs + the shadow document (to walk the chain and resolve refs). The AI service receives a complete, self-contained prompt. It has no knowledge of block types. One generic dispatcher runs all processors:
 
 ```go
 func (es *EditorService) RunJob(uuid, blockID string) {
-    block  := es.shadows[uuid].Blocks[blockID]
-    desc   := descriptorRegistry[block.Tag]
-    if desc.Job == nil { return }
+    block     := es.shadows[uuid].Blocks[blockID]
+    processor := processorRegistry[block.Tag]
 
-    prompt := desc.Job.BuildContext(*block, *es.shadows[uuid])
-    resp   := es.ai.Call(desc.Job.Prompt, prompt)
-    desc.Job.Resolve(resp, block)
+    if err := processor.RunJob(ctx, block, es.services); err != nil {
+        block.Attrs["status"] = "ERROR"
+    }
     es.Flush(uuid)
     // broadcast job-ended via WebSocket
 }
 ```
 
-**The block carries its own context.** The AI Ask block holds its question, ref chain, and conversation history in its own attrs. `BuildContext` assembles the full prompt from those attrs + the shadow document (to walk the chain and resolve refs). The AI service receives a complete, self-contained prompt. It has no knowledge of block types.
+**`AiHandler`, `InternalizeHandler`, `CodeHandler` are retired** as distinct concepts. Their type-specific logic retreats into processor implementations. Adding a new AI-powered block type means implementing `BlockProcessor` and registering it. No new handler. No new endpoint. No new infrastructure.
 
-**`AiHandler`, `InternalizeHandler`, `CodeHandler` are retired** as distinct concepts. Their type-specific logic retreats into descriptor data. Adding a new AI-powered block type means writing a `BuildContext` and `Resolve` function and registering them. No new handler. No new endpoint. No new infrastructure.
-
-### Example: ai-block descriptor
+### Example: ai-block processor
 
 ```go
-descriptorRegistry["ai-block"] = BlockDescriptor{
-    Tag: "ai-block",
-    Job: &AICallDescriptor{
-        Prompt:  "ai-ask",
-        Timeout: 60 * time.Second,
-        BuildContext: func(block SieveBlock, doc ShadowDocument) string {
-            // block carries question, ref, chain history in attrs
-            return assembleAiAskContext(block, doc)
-        },
-        Resolve: func(resp string, block *SieveBlock) error {
-            block.Attrs["response"] = resp
-            block.Attrs["status"]   = "COMPLETE"
-            return nil
-        },
-    },
+processorRegistry["ai-block"] = &AiBlockProcessor{}
+
+type AiBlockProcessor struct{}
+
+func (p *AiBlockProcessor) PasteMatch(_ string) (bool, map[string]interface{}) {
+    return false, nil  // ai-blocks are created by user action, not paste
+}
+
+func (p *AiBlockProcessor) BuildContext(block SieveBlock, doc ShadowDocument) string {
+    return assembleAiAskContext(block, doc)  // walks ref chain in shadow
+}
+
+func (p *AiBlockProcessor) RunJob(ctx context.Context, block *SieveBlock, svc Services) error {
+    prompt := p.BuildContext(*block, *svc.Editor.Shadow(block.ID))
+    resp, err := svc.AI.Call(ctx, "ai-ask", prompt)
+    if err != nil { return err }
+    block.Attrs["response"] = resp
+    block.Attrs["status"]   = "COMPLETE"
+    return nil
 }
 ```
 
-### Example: code-block descriptor (language detection)
+### Example: code-block processor
 
 ```go
-descriptorRegistry["code"] = BlockDescriptor{
-    Tag: "code",
-    PasteMatch: func(content string) (bool, map[string]interface{}) {
-        // match bare fenced code block
-    },
-    Job: &AICallDescriptor{
-        Prompt:  "detect-language",
-        Timeout: 5 * time.Second,
-        BuildContext: func(block SieveBlock, doc ShadowDocument) string {
-            return block.Attrs["source"].(string)
-        },
-        Resolve: func(resp string, block *SieveBlock) error {
-            block.Attrs["language"] = strings.TrimSpace(resp)
-            block.Attrs["status"]   = "COMPLETE"
-            return nil
-        },
-    },
+processorRegistry["code"] = &CodeBlockProcessor{}
+
+func (p *CodeBlockProcessor) PasteMatch(content string) (bool, map[string]interface{}) {
+    // match bare fenced code block — ` ```lang\n...\n``` `
 }
+
+func (p *CodeBlockProcessor) BuildContext(block SieveBlock, _ ShadowDocument) string {
+    return block.Attrs["source"].(string)  // just the source for language detection
+}
+
+func (p *CodeBlockProcessor) RunJob(ctx context.Context, block *SieveBlock, svc Services) error {
+    lang, err := svc.AI.Call(ctx, "detect-language", p.BuildContext(*block, ShadowDocument{}))
+    if err != nil { return err }
+    block.Attrs["language"] = strings.TrimSpace(lang)
+    block.Attrs["status"]   = "COMPLETE"
+    return nil
+}
+```
+
+### Example: (legacy) ai-block — inline registration style
+
+For simple processors, a struct-literal with method closures also works:
+
+```go
+// See Example: ai-block processor above.
 ```
 
 ---
@@ -257,8 +277,8 @@ descriptorRegistry["code"] = BlockDescriptor{
 | Document serialisation | `getMarkdown()` + `flushSave()` | Gone from JS |
 | Save debounce timer | `saveTimer` in JS | Go debounce in EditorService |
 | Pre-job flush coordination | `flushSave().then(...)` everywhere | EditorService.Flush() internal to dispatcher |
-| Paste intelligence | Scattered across extension files, untested | `PasteMatch` in descriptor registry, fully testable |
-| AI context assembly | `buildAiContext()` walks TipTap in JS | `BuildContext` in descriptor, runs against shadow |
+| Paste intelligence | Scattered across extension files, untested | `PasteMatch` in processor registry, fully testable |
+| AI context assembly | `buildAiContext()` walks TipTap in JS | `BuildContext` on `BlockProcessor`, runs against shadow |
 | Job coordination | `flushSave().then(fetch(...))` | Generic dispatcher — no handler-specific code |
 | Distinct AI handlers | `AiHandler`, `InternalizeHandler`, `CodeHandler` | Single `RunJob` dispatcher + descriptor data |
 
@@ -276,10 +296,10 @@ descriptorRegistry["code"] = BlockDescriptor{
 
 ## Paste Intelligence in Go
 
-The Go descriptor registry declares a paste matcher per tag:
+The Go processor registry declares a paste matcher per tag:
 
 ```go
-type BlockDescriptor struct {
+type BlockProcessor struct {
     Tag        string
     PasteMatch func(content string) (matched bool, attrs map[string]interface{})
     Job        JobDescriptor
@@ -343,6 +363,6 @@ One line. All open shadows written to disk.
 This design is delivered in two implementation plans:
 
 1. **Go-heavy frontend plan** — EditorService, ShadowDocument, WebSocket infrastructure, flushSave migration, paste intelligence
-2. **SieveBlock plan** — Go descriptor registry, JS renderer registry, first block (code/mermaid), migration path from existing block extensions
+2. **SieveBlock plan** — Go processor registry, JS renderer registry, first block (code/mermaid), migration path from existing block extensions
 
 The frontend plan is a prerequisite for the SieveBlock plan. Existing blocks continue to function throughout — no flag days.
