@@ -1076,42 +1076,61 @@ div.node-image.ProseMirror-selectednode {
   color: var(--theme-textDim);
 }
 
-/* Display panel — applyHighlighting() produces .sieve-code-block inside here */
-.sieve-block__display {
-  cursor: text;
-  min-height: 2.5em; /* click target for empty blocks */
+/* Flex row: gutter + pre/code — mirrors .sieve-code-block layout */
+.sieve-block__body {
+  display: flex;
+  overflow: hidden;
 }
 
-/* Strip the duplicate border/margin that .sieve-code-block adds when nested
-   inside .sieve-block--code (the outer container already draws the border). */
-.sieve-block--code .sieve-code-block {
-  border: none;
-  border-radius: 0;
-  margin: 0;
+/* Line-number gutter — mirrors .sieve-code-block__gutter */
+.sieve-block__gutter {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: 0.85em 0.6em;
+  background: var(--theme-bgDark);
+  border-right: 1px solid var(--theme-gutterLineColor);
+  color: var(--theme-lineNumberColor);
+  font-family: var(--theme-monoFont);
+  font-size: 0.85em;
+  line-height: 1.6;
+  user-select: none;
+  flex-shrink: 0;
+  min-width: 2.2em;
 }
 
-/* Textarea shown while editing. Matches .sieve-code-block pre code padding/font. */
-.sieve-block__edit {
+.sieve-block__gutter span {
   display: block;
-  width: 100%;
+  line-height: 1.6;
+}
+
+/* Pre — mirrors .sieve-code-block pre */
+.sieve-block__pre {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  background: transparent;
+  border: none;
+  overflow-x: auto;
+  padding: 0;
+}
+
+/* Contenteditable code — mirrors .sieve-code-block pre code */
+.sieve-block__source {
+  display: block;
   padding: 0.85em 1.1em;
   font-family: var(--theme-monoFont);
   font-size: 0.85em;
   line-height: 1.6;
   color: var(--theme-text);
-  background: var(--theme-bgDark);
+  background: transparent;
   border: none;
   outline: none;
-  resize: none;
-  box-sizing: border-box;
-  overflow: hidden;
   white-space: pre;
   tab-size: 2;
-}
-
-.sieve-block__edit:focus {
-  outline: 2px solid var(--theme-accentPrimary);
-  outline-offset: -2px;
+  min-height: 2.5em;
+  word-break: normal;
+  cursor: text;
 }
 
 /* ── Code blocks ─────────────────────────────────────────────────────── */
