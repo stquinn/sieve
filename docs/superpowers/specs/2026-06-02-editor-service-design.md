@@ -95,6 +95,7 @@ type ShadowDocument struct {
     UUID     string
     Markdown string                  // full doc from TipTap — stale block rawYaml is acceptable
     Blocks   map[string]*SieveBlock  // authoritative block state, keyed by ID
+    Mode     string                  // "wysiwyg" or "markdown" — controls Flush behaviour
     mu       sync.Mutex
     debounce *time.Timer
 }
@@ -114,6 +115,9 @@ EditorService takes `shadow.Markdown` and replaces each block's fence with a fre
 
 ```go
 func (s *ShadowDocument) Remux() string {
+    if s.Mode == "markdown" {
+        return s.Markdown  // user is editing raw YAML — no substitution
+    }
     out := s.Markdown
     for _, block := range s.Blocks {
         yaml, _ := fencedblock.Serialize(block.Attrs)
@@ -125,7 +129,13 @@ func (s *ShadowDocument) Remux() string {
 
 `replaceBlockFence` scans for ` ```<kind>...id: X...``` ` and substitutes the YAML body. This is the same targeted fence-replace already used by `ResolveAiBlock` and `ResolveWebClip` — no new parsing infrastructure required.
 
+**Mode controls flush behaviour.** In `"markdown"` mode, `Remux()` returns `shadow.Markdown` verbatim — the user's text IS the YAML. In `"wysiwyg"` mode (default), block fences are replaced with authoritative block state.
+
 **Timing invariant:** block-update debounce (~200ms) is shorter than the save debounce (1s). By the time the save fires, all pending block updates have settled in `shadow.Blocks`. The remux always has current block state.
+
+**Mode transitions:**
+- WYSIWYG → Markdown: `Remux()` first (embeds block state into `shadow.Markdown`), set `shadow.Mode = "markdown"`, return merged markdown to JS as seed
+- Markdown → WYSIWYG: re-parse `shadow.Blocks` from `shadow.Markdown` (picks up user's direct YAML edits), set `shadow.Mode = "wysiwyg"`. No disk reload needed.
 
 ---
 
@@ -158,12 +168,21 @@ Fired by JS when an immediate write is needed (before AI job, tab switch, app cl
 ```json
 { "type": "enter-markdown", "uuid": "..." }
 ```
-Fired when the user switches to markdown mode. EditorService responds with `markdown-content` (the current `Remux()` output) and clears `shadow.Blocks`. From this point, `doc-update` messages carry full raw markdown (including block YAML directly edited by the user); `Remux()` is a no-op because `shadow.Blocks` is empty, so the full text is saved verbatim.
+Fired when the user switches to markdown mode. EditorService:
+1. Computes `Remux()` — embeds all current block state into `shadow.Markdown`
+2. Sets `shadow.mode = "markdown"`
+3. Responds with `markdown-content` carrying the merged markdown as the seed for the markdown editor
+
+In markdown mode, `doc-update` messages are stored as `shadow.Markdown` as usual, but `Flush()` saves `shadow.Markdown` verbatim — no Remux, because the user's text is the authoritative YAML. Block-update messages are ignored while in markdown mode.
 
 ```json
 { "type": "enter-wysiwyg", "uuid": "..." }
 ```
-Fired when the user switches back to WYSIWYG mode. EditorService reloads the shadow from disk (same as `Open`) — this picks up any block YAML the user edited directly in markdown mode and re-populates `shadow.Blocks`.
+Fired when the user switches back to WYSIWYG mode. EditorService:
+1. Re-parses `shadow.Blocks` from the current `shadow.Markdown` (picks up any block YAML the user edited directly)
+2. Sets `shadow.mode = "wysiwyg"`
+
+No disk reload needed — `shadow.Markdown` already reflects the latest text. `shadow.Blocks` is rebuilt from it so Remux has accurate baseline state for future block-updates.
 
 ### Go → JS (via WebSocket)
 
