@@ -6,7 +6,7 @@
 //   makeNodeView(node)        → TipTap NodeView object
 //   parseAttrs(data)          → { key: value } extra data-* attrs for fence parser (optional)
 
-import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
+import { esc, applyHighlighting, isStaleByTime, isJobActive } from './fenced-block-base.js'
 
 ;(function () {
   'use strict'
@@ -128,38 +128,11 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
     },
   })
 
-  // ── safeHighlight ─────────────────────────────────────────────────────────────
-  // Applies lowlight syntax colours in-place on a <code> element.
-  // Unlike applyHighlighting() from fenced-block-base, this does NOT wrap the
-  // <pre> in a gutter container — the sieve block has its own header/layout.
-  // Never runs while the user is focused inside the element (avoids cursor loss).
-
-  function safeHighlight(codeEl, lang) {
-    if (document.activeElement === codeEl) return
-    var T = window.TipTap
-    var low = (T && T.createLowlight && T.common)
-      ? (safeHighlight._ll || (safeHighlight._ll = T.createLowlight(T.common)))
-      : null
-    if (!low || !lang || lang === 'unknown' || lang === 'text') {
-      // No highlighter or unknown lang — leave as plain text.
-      return
-    }
-    var raw = codeEl.innerText
-    if (!raw) return
-    try {
-      var html = low.highlight(lang, raw).children.map(function hastStr(n) {
-        if (n.type === 'text') return n.value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        if (n.type === 'element') {
-          var cls = (n.properties && n.properties.className || []).join(' ')
-          return '<span' + (cls ? ' class="' + cls + '"' : '') + '>' + n.children.map(hastStr).join('') + '</span>'
-        }
-        return ''
-      }).join('')
-      codeEl.innerHTML = html
-    } catch (_) {}
-  }
-
   // ── CodeRenderer ─────────────────────────────────────────────────────────────
+  // Two-panel design: a read-only display panel (applyHighlighting — gives gutter
+  // + syntax colours identical to AI blocks and WebClips) and a <textarea> edit
+  // panel shown on click/selectNode. This avoids the "atom node selected → TipTap
+  // deletes on keypress" problem and gives proper line numbers + highlighting.
 
   var CodeRenderer = {
     parseAttrs: function (data) {
@@ -172,42 +145,42 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
 
     makeNodeView: function (node) {
       var currentAttrs = Object.assign({}, node.attrs)
+      var isEditing = false
 
+      // ── Outer container ──────────────────────────────────────────────────
       var dom = document.createElement('div')
       dom.className = 'sieve-block sieve-block--code'
       dom.setAttribute('data-block-id', node.attrs.id || '')
       dom.contentEditable = 'false'
 
+      // ── Header ───────────────────────────────────────────────────────────
       var header = document.createElement('div')
       header.className = 'sieve-block__header'
       header.contentEditable = 'false'
-
       var badge = document.createElement('span')
       badge.className = 'sieve-block__badge'
       header.appendChild(badge)
-
-      var pre = document.createElement('pre')
-      pre.className = 'sieve-block__pre not-prose'
-
-      var codeEl = document.createElement('code')
-      codeEl.className = 'sieve-block__source'
-      codeEl.contentEditable = 'true'
-      codeEl.spellcheck = false
-      codeEl.setAttribute('autocorrect', 'off')
-      codeEl.setAttribute('autocapitalize', 'off')
-      pre.appendChild(codeEl)
       dom.appendChild(header)
-      dom.appendChild(pre)
 
-      function render(attrs) {
-        currentAttrs = attrs
+      // ── Display panel (highlighted, click to edit) ───────────────────────
+      var displayEl = document.createElement('div')
+      displayEl.className = 'sieve-block__display'
+      dom.appendChild(displayEl)
+
+      // ── Edit panel (textarea, shown while editing) ───────────────────────
+      var editEl = document.createElement('textarea')
+      editEl.className = 'sieve-block__edit'
+      editEl.spellcheck = false
+      editEl.setAttribute('autocorrect', 'off')
+      editEl.setAttribute('autocapitalize', 'off')
+      editEl.style.display = 'none'
+      dom.appendChild(editEl)
+
+      // ── Render helpers ───────────────────────────────────────────────────
+      function updateBadge(attrs) {
         var isPending = attrs.status === 'PENDING'
         var isStale = isPending && !isJobActive(attrs.id) && isStaleByTime(attrs.createdAt)
-        // Show "detecting…" only when pending AND heuristics gave no language yet.
-        // If heuristics already set a language in InitAttrs, show it immediately —
-        // the AI is enriching silently in the background.
         var showDetecting = isPending && !isStale && (!attrs.language || attrs.language === '')
-
         if (showDetecting) {
           badge.textContent = 'detecting…'
           badge.className = 'sieve-block__badge sieve-block__badge--pending'
@@ -218,7 +191,6 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
           badge.textContent = attrs.language || ''
           badge.className = 'sieve-block__badge sieve-block__badge--unknown'
         }
-
         if (attrs.detectionMethod) {
           badge.setAttribute('data-detection-method', attrs.detectionMethod)
           badge.title = 'Detected via ' + attrs.detectionMethod
@@ -226,49 +198,85 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
           badge.removeAttribute('data-detection-method')
           badge.removeAttribute('title')
         }
+      }
 
-        if (document.activeElement !== codeEl) {
-          // Set plain text first — restores newlines correctly from source.
-          codeEl.textContent = attrs.source || ''
-          var langClass = (attrs.language && attrs.language !== 'unknown')
-            ? 'language-' + attrs.language : 'language-text'
-          codeEl.className = 'sieve-block__source hljs ' + langClass
-          // Apply syntax colours in-place (no DOM restructuring).
-          safeHighlight(codeEl, attrs.language)
-        }
+      function renderDisplay(attrs) {
+        var pre = document.createElement('pre')
+        var code = document.createElement('code')
+        code.textContent = attrs.source || ''
+        code.className = (attrs.language && attrs.language !== 'unknown')
+          ? 'language-' + attrs.language : 'language-text'
+        pre.appendChild(code)
+        displayEl.innerHTML = ''
+        displayEl.appendChild(pre)
+        applyHighlighting(displayEl)
+      }
+
+      function render(attrs) {
+        currentAttrs = attrs
+        updateBadge(attrs)
+        if (!isEditing) renderDisplay(attrs)
       }
 
       render(node.attrs)
 
+      // ── Enter / exit edit mode ───────────────────────────────────────────
+      function autoResize() {
+        editEl.style.height = 'auto'
+        editEl.style.height = Math.max(editEl.scrollHeight, 40) + 'px'
+      }
+
+      function enterEdit() {
+        if (isEditing) return
+        isEditing = true
+        editEl.value = currentAttrs.source || ''
+        autoResize()
+        displayEl.style.display = 'none'
+        editEl.style.display = ''
+        editEl.focus()
+      }
+
+      displayEl.addEventListener('click', function (e) {
+        e.stopPropagation()
+        enterEdit()
+      })
+
+      // ── Edit panel events ────────────────────────────────────────────────
       var inputTimer = null
-      codeEl.addEventListener('input', function () {
-        clearTimeout(inputTimer)
-        inputTimer = setTimeout(function () {
-          // innerText respects visual newlines from browser-inserted <br>/<div> on Enter.
-          // textContent collapses them, stripping all line breaks.
-          var src = codeEl.innerText
-          // Browsers append a trailing \n to contenteditable when the last line has a <br>;
-          // strip exactly one trailing newline to avoid phantom blank lines accumulating.
-          if (src.endsWith('\n')) src = src.slice(0, -1)
-          document.dispatchEvent(new CustomEvent('sieve:block-update', {
-            detail: { id: currentAttrs.id, kind: 'code', attrs: { source: src } },
-          }))
-        }, 200)
-      })
 
-      // Flush source immediately on blur so that if TipTap calls update() after
-      // focus leaves, the shadow already has the current content — preventing
-      // typed-but-not-yet-debounced content from being wiped by a render() call.
-      codeEl.addEventListener('blur', function () {
+      function flushSource() {
         clearTimeout(inputTimer)
-        var src = codeEl.innerText
-        if (src.endsWith('\n')) src = src.slice(0, -1)
         document.dispatchEvent(new CustomEvent('sieve:block-update', {
-          detail: { id: currentAttrs.id, kind: 'code', attrs: { source: src } },
+          detail: { id: currentAttrs.id, kind: 'code', attrs: { source: editEl.value } },
         }))
+      }
+
+      editEl.addEventListener('input', function () {
+        autoResize()
+        clearTimeout(inputTimer)
+        inputTimer = setTimeout(flushSource, 200)
       })
 
-      codeEl.addEventListener('keydown', function (e) {
+      editEl.addEventListener('blur', function () {
+        flushSource()
+        isEditing = false
+        currentAttrs = Object.assign({}, currentAttrs, { source: editEl.value })
+        renderDisplay(currentAttrs)
+        displayEl.style.display = ''
+        editEl.style.display = 'none'
+      })
+
+      editEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Tab') {
+          e.preventDefault()
+          var s = editEl.selectionStart, end = editEl.selectionEnd
+          editEl.value = editEl.value.substring(0, s) + '  ' + editEl.value.substring(end)
+          editEl.selectionStart = editEl.selectionEnd = s + 2
+          clearTimeout(inputTimer)
+          inputTimer = setTimeout(flushSource, 200)
+          return
+        }
+        if (e.key === 'Escape') { editEl.blur(); return }
         if (e.metaKey || e.ctrlKey) return
         e.stopPropagation()
       })
@@ -281,6 +289,9 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
           render(updatedNode.attrs)
           return true
         },
+        // When TipTap selects this atom (click or arrow key), enter edit mode
+        // immediately so keystrokes go to the textarea, not TipTap's editor.
+        selectNode: function () { enterEdit() },
         ignoreMutation: function () { return true },
         stopEvent: function (event) {
           if (event.type === 'keydown' && (event.metaKey || event.ctrlKey)) return false

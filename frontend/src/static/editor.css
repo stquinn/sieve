@@ -1026,6 +1026,93 @@ div.node-image.ProseMirror-selectednode {
   border-color: var(--theme-accentCyan);
   color: var(--theme-accentCyan);
 }
+/* ── Sieve Blocks ────────────────────────────────────────────────────── */
+
+.sieve-block {
+  position: relative;
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+}
+
+.sieve-block--code {
+  display: flex;
+  flex-direction: column;
+  background: var(--theme-bgDark);
+  border: 1px solid var(--theme-border);
+  border-radius: 4px;
+  overflow: hidden;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.sieve-block--code:hover {
+  border-color: color-mix(in srgb, var(--theme-accentPrimary) 50%, var(--theme-border));
+}
+
+.sieve-block__header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 4px 12px;
+  background: color-mix(in srgb, var(--theme-bgDark) 95%, white);
+  border-bottom: 1px solid var(--theme-border);
+  user-select: none;
+}
+
+.sieve-block__badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--theme-accentPrimary);
+  font-family: var(--theme-monoFont);
+  text-transform: uppercase;
+}
+
+.sieve-block__badge--pending {
+  color: var(--theme-textDim);
+  opacity: 0.7;
+}
+
+.sieve-block__badge--unknown {
+  color: var(--theme-textDim);
+}
+
+/* Display panel — applyHighlighting() produces .sieve-code-block inside here */
+.sieve-block__display {
+  cursor: text;
+  min-height: 2.5em; /* click target for empty blocks */
+}
+
+/* Strip the duplicate border/margin that .sieve-code-block adds when nested
+   inside .sieve-block--code (the outer container already draws the border). */
+.sieve-block--code .sieve-code-block {
+  border: none;
+  border-radius: 0;
+  margin: 0;
+}
+
+/* Textarea shown while editing. Matches .sieve-code-block pre code padding/font. */
+.sieve-block__edit {
+  display: block;
+  width: 100%;
+  padding: 0.85em 1.1em;
+  font-family: var(--theme-monoFont);
+  font-size: 0.85em;
+  line-height: 1.6;
+  color: var(--theme-text);
+  background: var(--theme-bgDark);
+  border: none;
+  outline: none;
+  resize: none;
+  box-sizing: border-box;
+  overflow: hidden;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.sieve-block__edit:focus {
+  outline: 2px solid var(--theme-accentPrimary);
+  outline-offset: -2px;
+}
 
 /* ── Code blocks ─────────────────────────────────────────────────────── */
 

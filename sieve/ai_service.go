@@ -239,7 +239,7 @@ func (s *AIService) RefineLanguage(content string) (string, error) {
 	prompt, _ := s.prompts.GetPromptContent("refine")
 	p := strings.ReplaceAll(prompt, "{content}", content)
 
-	resp, err := RunCLI(settings.CLI, p, settings.Model, settings.CLITimeout, "")
+	resp, err := RunCLI(settings.CLI, p, settings.Model, settings.CLITimeoutLong, "")
 	if err != nil {
 		return "", err
 	}
