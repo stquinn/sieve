@@ -1,6 +1,7 @@
 package sieve
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -473,12 +474,47 @@ func TestEditorService_HandlePaste_noMatch(t *testing.T) {
 	}
 }
 
+type mockLifecycleListener struct {
+	onCreated func(uuid, kind, blockID, rawYaml string)
+	onUpdated func(uuid, blockID, rawYaml string)
+}
+
+func (l *mockLifecycleListener) OnBlockCreated(uuid, kind, blockID, rawYaml string) {
+	if l.onCreated != nil {
+		l.onCreated(uuid, kind, blockID, rawYaml)
+	}
+}
+
+func (l *mockLifecycleListener) OnBlockUpdated(uuid, blockID, rawYaml string) {
+	if l.onUpdated != nil {
+		l.onUpdated(uuid, blockID, rawYaml)
+	}
+}
+
 func TestHandleBlockUpdate_notifySendsSnapshotUnderLock(t *testing.T) {
 	resetRegistry()
 	RegisterProcessor("code", &CodeBlockProcessor{})
 
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, 0)
+
+	var notifyID string
+	var notifyYaml string
+	notifyCalled := make(chan struct{}, 1)
+
+	listener := &mockLifecycleListener{
+		onUpdated: func(uuid, blockID, rawYaml string) {
+			if strings.Contains(rawYaml, "language:") {
+				notifyID = blockID
+				notifyYaml = rawYaml
+				select {
+				case notifyCalled <- struct{}{}:
+				default:
+				}
+			}
+		},
+	}
+	es.SetLifecycleListener(listener)
 
 	doc, _ := ds.New()
 	doc.SetBody([]byte("# Hello"))
@@ -487,7 +523,7 @@ func TestHandleBlockUpdate_notifySendsSnapshotUnderLock(t *testing.T) {
 	_ = es.Open(uuid, nil)
 
 	// Create a code block with a very short source (<30 chars) so heuristics
-	// do not fire in InitAttrs and language stays empty. OnUpdate will then
+	// do not fire in InitAttrs and language stays empty. OnChange will then
 	// receive a long Go source (>=30 chars) that triggers heuristic detection,
 	// producing a non-empty attrsChanged and exercising the notify path.
 	id, _, err := es.CreateBlock(uuid, "code", map[string]interface{}{
@@ -497,27 +533,16 @@ func TestHandleBlockUpdate_notifySendsSnapshotUnderLock(t *testing.T) {
 		t.Fatalf("CreateBlock: %v", err)
 	}
 
-	var notifyID string
-	var notifyYaml string
-	notifyCalled := make(chan struct{}, 1)
-
 	// Supply a Go source long enough to pass minSourceLength (30) so that
-	// OnUpdate detects "go" and sets language, making attrsChanged non-empty.
+	// OnChange detects "go" and sets language, making attrsChanged non-empty.
 	goSource := "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(\"hello\") }"
 	es.HandleBlockUpdate(uuid, "code", id, map[string]interface{}{
 		"source": goSource,
-	}, func(blockID, rawYaml string) {
-		notifyID = blockID
-		notifyYaml = rawYaml
-		select {
-		case notifyCalled <- struct{}{}:
-		default:
-		}
 	})
 
 	select {
 	case <-notifyCalled:
-		// notify was invoked synchronously by the OnUpdate heuristic path
+		// notify was invoked synchronously by the OnChange heuristic path
 	case <-time.After(2 * time.Second):
 		t.Fatal("notify was not called within 2s")
 	}
@@ -527,5 +552,134 @@ func TestHandleBlockUpdate_notifySendsSnapshotUnderLock(t *testing.T) {
 	}
 	if !strings.Contains(notifyYaml, "language:") {
 		t.Errorf("expected notify rawYaml to contain language: key, got:\n%s", notifyYaml)
+	}
+
+	// Wait for background RunJob to complete so the temp dir cleanup doesn't race
+	for i := 0; i < 50; i++ {
+		es.mu.Lock()
+		shadow := es.shadows[uuid]
+		es.mu.Unlock()
+		if shadow != nil {
+			shadow.mu.Lock()
+			blk, ok := shadow.Blocks[id]
+			status := ""
+			if ok {
+				status, _ = blk.Attrs["status"].(string)
+			}
+			shadow.mu.Unlock()
+			if status == BlockStatusError || status == BlockStatusComplete {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+type testRunJobProcessor struct {
+	runJob func(ctx context.Context, block *SieveBlock, svc Services) error
+}
+
+func (p *testRunJobProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
+	attrs := map[string]interface{}{"id": id, "status": BlockStatusPending}
+	for k, v := range overrides {
+		attrs[k] = v
+	}
+	return attrs
+}
+func (p *testRunJobProcessor) PasteMatch(entries []PasteEntry) (bool, map[string]interface{}) {
+	return false, nil
+}
+func (p *testRunJobProcessor) BuildContext(_ SieveBlock, _ ShadowDocument) string  { return "" }
+func (p *testRunJobProcessor) OnChange(_ *SieveBlock, _ Services)                  {}
+func (p *testRunJobProcessor) RunJob(ctx context.Context, block *SieveBlock, svc Services) error {
+	if p.runJob != nil {
+		return p.runJob(ctx, block, svc)
+	}
+	return nil
+}
+
+func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
+	resetRegistry()
+	
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, 0)
+	doc, _ := ds.New()
+	doc.SetBody([]byte("# Test"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+	_ = es.Open(uuid, nil)
+
+	// Create a block with initial attributes
+	initialAttrs := map[string]interface{}{
+		"source":   "original source",
+		"language": "python",
+		"hint":     "some-hint",
+		"status":   BlockStatusPending,
+	}
+
+	var blockID string
+
+	// Register a mock processor
+	proc := &testRunJobProcessor{
+		runJob: func(ctx context.Context, block *SieveBlock, svc Services) error {
+			// Simulate job modifying attrs
+			block.Attrs["language"] = "go"            // modified
+			block.Attrs["added_key"] = "new value"    // added
+			block.Attrs["status"] = BlockStatusComplete
+			delete(block.Attrs, "hint")               // deleted
+			
+			// Simulate a concurrent user edit to "source" during the job execution
+			es.mu.Lock()
+			shadow := es.shadows[uuid]
+			es.mu.Unlock()
+			shadow.mu.Lock()
+			shadow.Blocks[blockID].Attrs["source"] = "concurrent user edit"
+			shadow.mu.Unlock()
+
+			return nil
+		},
+	}
+	RegisterProcessor("mock-kind", proc)
+
+	blockID, _, err := es.CreateBlock(uuid, "mock-kind", initialAttrs)
+	if err != nil {
+		t.Fatalf("CreateBlock failed: %v", err)
+	}
+
+	// Call RunJob
+	es.RunJob(context.Background(), uuid, blockID)
+
+	// Check final attributes in shadow
+	es.mu.Lock()
+	shadow := es.shadows[uuid]
+	es.mu.Unlock()
+
+	shadow.mu.Lock()
+	blk, ok := shadow.Blocks[blockID]
+	shadow.mu.Unlock()
+
+	if !ok {
+		t.Fatal("expected block to exist in shadow")
+	}
+
+	// Check updates
+	if blk.Attrs["language"] != "go" {
+		t.Errorf("expected language to be updated to 'go', got %v", blk.Attrs["language"])
+	}
+	if blk.Attrs["added_key"] != "new value" {
+		t.Errorf("expected added_key to be 'new value', got %v", blk.Attrs["added_key"])
+	}
+	if blk.Attrs["status"] != BlockStatusComplete {
+		t.Errorf("expected status to be COMPLETE, got %v", blk.Attrs["status"])
+	}
+
+	// Check deleted keys
+	if _, exists := blk.Attrs["hint"]; exists {
+		t.Error("expected hint key to be deleted")
+	}
+
+	// Check preserved concurrent edit
+	if blk.Attrs["source"] != "concurrent user edit" {
+		t.Errorf("expected concurrent user edit to be preserved, got %v", blk.Attrs["source"])
 	}
 }

@@ -3,6 +3,7 @@ package sieve
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -177,11 +178,12 @@ func parseAllBlocks(body string) map[string]*SieveBlock {
 // EditorService is the Go-side editor model. It holds one ShadowDocument per
 // open document and coordinates all save operations. DocumentService owns disk.
 type EditorService struct {
-	documents *DocumentService
-	services  Services
-	debounce  time.Duration
-	mu        sync.RWMutex
-	shadows   map[string]*ShadowDocument
+	documents  *DocumentService
+	services   Services
+	debounce   time.Duration
+	mu         sync.RWMutex
+	shadows    map[string]*ShadowDocument
+	listener   BlockLifecycleListener
 }
 
 // NewEditorService creates an EditorService backed by the given DocumentService.
@@ -196,6 +198,31 @@ func NewEditorService(documents *DocumentService, debounce time.Duration) *Edito
 		documents: documents,
 		debounce:  d,
 		shadows:   make(map[string]*ShadowDocument),
+	}
+}
+
+// SetLifecycleListener registers the block lifecycle event listener.
+func (es *EditorService) SetLifecycleListener(l BlockLifecycleListener) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	es.listener = l
+}
+
+func (es *EditorService) notifyBlockCreated(uuid, kind, blockID, rawYaml string) {
+	es.mu.RLock()
+	l := es.listener
+	es.mu.RUnlock()
+	if l != nil {
+		l.OnBlockCreated(uuid, kind, blockID, rawYaml)
+	}
+}
+
+func (es *EditorService) notifyBlockUpdated(uuid, blockID, rawYaml string) {
+	es.mu.RLock()
+	l := es.listener
+	es.mu.RUnlock()
+	if l != nil {
+		l.OnBlockUpdated(uuid, blockID, rawYaml)
 	}
 }
 
@@ -354,7 +381,13 @@ func (es *EditorService) SetServices(svc Services) {
 // via the registered processor's InitAttrs, registers it in the shadow, and
 // returns the serialised rawYaml for the JS to insert as a sieveBlock node.
 // overrides may be nil for a zero-state block (UI command, keyboard shortcut).
-func (es *EditorService) CreateBlock(uuid, kind string, overrides map[string]interface{}) (id, rawYaml string, err error) {
+func (es *EditorService) CreateBlock(uuid, kind string, overrides map[string]interface{}) (id string, rawYaml string, err error) {
+	defer func() {
+		if err == nil {
+			es.DispatchJobIfNeeded(uuid, id)
+		}
+	}()
+
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
@@ -368,11 +401,14 @@ func (es *EditorService) CreateBlock(uuid, kind string, overrides map[string]int
 	id = GenerateBlockID(kind)
 	attrs := processor.InitAttrs(id, overrides)
 	es.UpdateBlock(uuid, kind, id, attrs)
-	raw, err := fencedblock.Serialize[map[string]interface{}](attrs)
+	rawYaml, err = fencedblock.Serialize[map[string]interface{}](attrs)
 	if err != nil {
 		return "", "", err
 	}
-	return id, raw, nil
+
+	es.notifyBlockCreated(uuid, kind, id, rawYaml)
+
+	return id, rawYaml, nil
 }
 
 // HandlePaste runs paste matchers and delegates to CreateBlock on the first match.
@@ -397,10 +433,10 @@ func (es *EditorService) HandlePaste(uuid string, entries []PasteEntry) (kind, i
 }
 
 // HandleBlockUpdate processes a block-update from the client: merges the user's
-// attr patch into the shadow, then calls OnUpdate on the processor so it can
-// react synchronously (e.g. re-run heuristics) or schedule a RunJob.
-// notify is called when a job completes and JS needs to update its node attrs.
-func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map[string]interface{}, notify func(id, rawYaml string)) {
+// attr patch into the shadow, then calls OnChange on the processor so it can
+// react synchronously (e.g. re-run heuristics). Any resulting async work is
+// dispatched automatically if the block status is set to PENDING.
+func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map[string]interface{}) {
 	es.UpdateBlock(uuid, kind, blockID, attrs)
 
 	processor := GetProcessor(kind)
@@ -421,7 +457,7 @@ func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map
 		shadow.mu.Unlock()
 		return
 	}
-	// Copy the current merged state (user patch + existing attrs) for OnUpdate.
+	// Copy the current merged state (user patch + existing attrs) for OnChange.
 	blkCopy := &SieveBlock{
 		ID:    blk.ID,
 		Kind:  blk.Kind,
@@ -434,9 +470,9 @@ func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map
 	}
 	shadow.mu.Unlock()
 
-	scheduleJob := processor.OnUpdate(blkCopy, es.services)
+	processor.OnChange(blkCopy, es.services)
 
-	// Compute which attrs OnUpdate changed and merge only those back.
+	// Compute which attrs OnChange changed and merge only those back.
 	attrsChanged := make(map[string]interface{})
 	for k, v := range blkCopy.Attrs {
 		if attrsBefore[k] != v {
@@ -446,32 +482,67 @@ func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map
 
 	if len(attrsChanged) > 0 {
 		shadow.setBlock(kind, blockID, attrsChanged)
-		if notify != nil {
-			shadow.mu.Lock()
-			blk2, ok2 := shadow.Blocks[blockID]
-			var attrsCopy map[string]interface{}
-			if ok2 {
-				attrsCopy = make(map[string]interface{}, len(blk2.Attrs))
-				for k, v := range blk2.Attrs {
-					attrsCopy[k] = v
-				}
+		shadow.mu.Lock()
+		blk2, ok2 := shadow.Blocks[blockID]
+		var attrsCopy map[string]interface{}
+		if ok2 {
+			attrsCopy = make(map[string]interface{}, len(blk2.Attrs))
+			for k, v := range blk2.Attrs {
+				attrsCopy[k] = v
 			}
-			shadow.mu.Unlock()
-			if ok2 {
-				rawYaml, _ := fencedblock.Serialize[map[string]interface{}](attrsCopy)
-				notify(blockID, rawYaml)
-			}
+		}
+		shadow.mu.Unlock()
+		if ok2 {
+			rawYaml, _ := fencedblock.Serialize[map[string]interface{}](attrsCopy)
+			es.notifyBlockUpdated(uuid, blockID, rawYaml)
 		}
 	}
 
-	if scheduleJob {
-		go es.RunJob(context.Background(), uuid, blockID, notify)
+	es.DispatchJobIfNeeded(uuid, blockID)
+}
+
+// DispatchJobIfNeeded checks if the block has status PENDING. If so, it transitions the block
+// to DISPATCHED, notifies the listener of the transition, flushes to disk, and runs the job.
+func (es *EditorService) DispatchJobIfNeeded(uuid, blockID string) {
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if shadow == nil {
+		return
+	}
+
+	shadow.mu.Lock()
+	blk, ok := shadow.Blocks[blockID]
+	if !ok {
+		shadow.mu.Unlock()
+		return
+	}
+	status, _ := blk.Attrs["status"].(string)
+	if status == BlockStatusPending {
+		blk.Attrs["status"] = BlockStatusDispatched
+		
+		// Take copy of attributes under lock to serialize and notify listener
+		attrsCopy := make(map[string]interface{}, len(blk.Attrs))
+		for k, v := range blk.Attrs {
+			attrsCopy[k] = v
+		}
+		shadow.mu.Unlock()
+
+		rawYaml, _ := fencedblock.Serialize[map[string]interface{}](attrsCopy)
+		es.notifyBlockUpdated(uuid, blockID, rawYaml)
+		
+		// Flush state to disk
+		_ = es.Flush(uuid)
+
+		go es.RunJob(context.Background(), uuid, blockID)
+	} else {
+		shadow.mu.Unlock()
 	}
 }
 
 // RunJob executes the background job for blockID, merges results into the shadow,
-// flushes to disk, and calls notify with the updated rawYaml.
-func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string, notify func(id, rawYaml string)) {
+// flushes to disk, and notifies the listener with the updated rawYaml.
+func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
@@ -491,8 +562,10 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string, notif
 		Kind:  blk.Kind,
 		Attrs: make(map[string]interface{}, len(blk.Attrs)),
 	}
+	attrsBefore := make(map[string]interface{}, len(blk.Attrs))
 	for k, v := range blk.Attrs {
 		blkCopy.Attrs[k] = v
+		attrsBefore[k] = v
 	}
 	shadow.mu.Unlock()
 
@@ -502,36 +575,47 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string, notif
 	}
 
 	if err := processor.RunJob(ctx, blkCopy, es.services); err != nil {
-		shadow.setBlock(kind, blockID, map[string]interface{}{"status": "ERROR"})
+		shadow.setBlock(kind, blockID, map[string]interface{}{"status": BlockStatusError})
 	} else {
-		// Merge only the fields the job updated (language, status, detectionMethod).
-		// Do NOT use replaceBlock here — that would overwrite source with the copy
-		// taken at job-start, discarding any edits the user made while AI was running.
-		shadow.setBlock(kind, blockID, map[string]interface{}{
-			"language":        blkCopy.Attrs["language"],
-			"status":          blkCopy.Attrs["status"],
-			"detectionMethod": blkCopy.Attrs["detectionMethod"],
-		})
-		shadow.deleteBlockAttr(blockID, "hint")
+		// Dynamically determine what attributes the job updated.
+		updates := make(map[string]interface{})
+		var deletes []string
+
+		for k, vAfter := range blkCopy.Attrs {
+			vBefore, exists := attrsBefore[k]
+			if !exists || !reflect.DeepEqual(vBefore, vAfter) {
+				updates[k] = vAfter
+			}
+		}
+		for k := range attrsBefore {
+			if _, exists := blkCopy.Attrs[k]; !exists {
+				deletes = append(deletes, k)
+			}
+		}
+
+		if len(updates) > 0 {
+			shadow.setBlock(kind, blockID, updates)
+		}
+		for _, k := range deletes {
+			shadow.deleteBlockAttr(blockID, k)
+		}
 	}
 
 	_ = es.Flush(uuid)
 
-	if notify != nil {
-		shadow.mu.Lock()
-		blk2, ok2 := shadow.Blocks[blockID]
-		var attrsCopy map[string]interface{}
-		if ok2 {
-			attrsCopy = make(map[string]interface{}, len(blk2.Attrs))
-			for k, v := range blk2.Attrs {
-				attrsCopy[k] = v
-			}
+	shadow.mu.Lock()
+	blk2, ok2 := shadow.Blocks[blockID]
+	var attrsCopy map[string]interface{}
+	if ok2 {
+		attrsCopy = make(map[string]interface{}, len(blk2.Attrs))
+		for k, v := range blk2.Attrs {
+			attrsCopy[k] = v
 		}
-		shadow.mu.Unlock()
-		if ok2 {
-			rawYaml, _ := fencedblock.Serialize[map[string]interface{}](attrsCopy)
-			notify(blockID, rawYaml)
-		}
+	}
+	shadow.mu.Unlock()
+	if ok2 {
+		rawYaml, _ := fencedblock.Serialize[map[string]interface{}](attrsCopy)
+		es.notifyBlockUpdated(uuid, blockID, rawYaml)
 	}
 }
 

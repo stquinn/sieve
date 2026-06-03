@@ -343,7 +343,7 @@
     var status = n.attrs.status || 'PENDING'
     var isComplete = status === 'COMPLETE'
     var isRetryable = status === 'ERROR' || status === 'TIMEOUT' ||
-      (status === 'PENDING' && n.attrs.createdAt &&
+      ((status === 'PENDING' || status === 'DISPATCHED') && n.attrs.createdAt &&
         Date.now() - new Date(n.attrs.createdAt).getTime() > ((window.__sieveCliTimeoutLong || 60) * 1000 + 30000))
 
     var domain = ''

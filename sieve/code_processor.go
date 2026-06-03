@@ -25,7 +25,7 @@ type CodeBlockProcessor struct{}
 func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
 		"id":              id,
-		"status":          "PENDING",
+		"status":          BlockStatusPending,
 		"source":          "",
 		"language":        "",
 		"detectionMethod": "",
@@ -87,16 +87,20 @@ func (p *CodeBlockProcessor) PasteMatch(entries []PasteEntry) (bool, map[string]
 	return false, nil
 }
 
-// OnUpdate runs on every block-update from the client. It always re-applies
+// OnChange runs synchronously after any block mutation. It always re-applies
 // heuristics so the language badge tracks the current source. If heuristics
-// identify a language it is applied immediately (no AI needed). If heuristics
-// are silent and AI already ran, the AI result is left untouched — the user
-// can force re-detection via the context-menu Retry action. If heuristics are
-// silent and no language is set, a new RunJob is scheduled.
-func (p *CodeBlockProcessor) OnUpdate(block *SieveBlock, _ Services) bool {
+// identify a language it is applied immediately. If heuristics are silent
+// and no language is set, status is set to PENDING to trigger background AI.
+// If a job is already in flight (DISPATCHED), it returns early.
+func (p *CodeBlockProcessor) OnChange(block *SieveBlock, _ Services) {
+	status, _ := block.Attrs["status"].(string)
+	if status == BlockStatusDispatched {
+		return // Guard: Job in flight
+	}
+
 	source, _ := block.Attrs["source"].(string)
 	if len(strings.TrimSpace(source)) < minSourceLength {
-		return false
+		return
 	}
 
 	// Always re-run heuristics — cheap, gives live feedback as the user types.
@@ -107,26 +111,22 @@ func (p *CodeBlockProcessor) OnUpdate(block *SieveBlock, _ Services) bool {
 			block.Attrs["language"] = detected
 			block.Attrs["detectionMethod"] = "heuristic"
 		}
-		return false
+		return
 	}
 
 	// Heuristics have no opinion. Trust any language already set by AI.
 	lang, _ := block.Attrs["language"].(string)
 	if lang != "" && lang != "unknown" {
-		return false
+		return
 	}
 
-	// Heuristics gave nothing. Only schedule an AI job if the previous job
-	// already completed — prevents launching concurrent jobs while one is
-	// still in flight (PENDING).
-	status, _ := block.Attrs["status"].(string)
-	if status == "PENDING" {
-		return false
+	// Heuristics gave nothing. Only schedule an AI job if it isn't already PENDING.
+	if status == BlockStatusPending {
+		return
 	}
 
-	// Mark PENDING now so rapid subsequent updates don't each spawn a new job.
-	block.Attrs["status"] = "PENDING"
-	return true
+	// Mark PENDING now so the framework dispatches the job.
+	block.Attrs["status"] = BlockStatusPending
 }
 
 func (p *CodeBlockProcessor) BuildContext(block SieveBlock, _ ShadowDocument) string {
@@ -143,19 +143,19 @@ func (p *CodeBlockProcessor) BuildContext(block SieveBlock, _ ShadowDocument) st
 func (p *CodeBlockProcessor) RunJob(ctx context.Context, block *SieveBlock, svc Services) error {
 	source, _ := block.Attrs["source"].(string)
 	if strings.TrimSpace(source) == "" {
-		block.Attrs["status"] = "COMPLETE"
+		block.Attrs["status"] = BlockStatusComplete
 		delete(block.Attrs, "hint")
 		return nil
 	}
 
 	if svc.AI == nil {
-		block.Attrs["status"] = "ERROR"
+		block.Attrs["status"] = BlockStatusError
 		return fmt.Errorf("AI detection failed: AI service unavailable")
 	}
 
 	lang, err := svc.AI.RefineLanguage(source)
 	if err != nil {
-		block.Attrs["status"] = "ERROR"
+		block.Attrs["status"] = BlockStatusError
 		return fmt.Errorf("AI detection failed: %w", err)
 	}
 	if lang != "" {
@@ -163,7 +163,7 @@ func (p *CodeBlockProcessor) RunJob(ctx context.Context, block *SieveBlock, svc 
 		block.Attrs["detectionMethod"] = "ai"
 	}
 	// If lang == "" AI was not confident — keep the heuristic result unchanged.
-	block.Attrs["status"] = "COMPLETE"
+	block.Attrs["status"] = BlockStatusComplete
 	delete(block.Attrs, "hint")
 	return nil
 }

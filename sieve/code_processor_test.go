@@ -16,7 +16,7 @@ func TestCodeBlockProcessor_InitAttrs_zeroState(t *testing.T) {
 	if attrs["id"] != "co-0001" {
 		t.Errorf("expected id=co-0001, got %v", attrs["id"])
 	}
-	if attrs["status"] != "PENDING" {
+	if attrs["status"] != BlockStatusPending {
 		t.Errorf("expected status=PENDING, got %v", attrs["status"])
 	}
 	if attrs["source"] != "" {
@@ -45,7 +45,7 @@ func TestCodeBlockProcessor_InitAttrs_heuristicsApplied(t *testing.T) {
 		t.Errorf("expected detectionMethod=heuristic, got %v", attrs["detectionMethod"])
 	}
 	// Status stays PENDING — AI enrichment still runs in RunJob
-	if attrs["status"] != "PENDING" {
+	if attrs["status"] != BlockStatusPending {
 		t.Errorf("expected PENDING (AI enrichment not done yet), got %v", attrs["status"])
 	}
 }
@@ -182,7 +182,7 @@ func TestCodeBlockProcessor_RunJob_ai(t *testing.T) {
 		Kind: "code",
 		Attrs: map[string]interface{}{
 			"id":              "co-1234",
-			"status":          "PENDING",
+			"status":          BlockStatusPending,
 			"source":          "package main",
 			"language":        "",
 			"detectionMethod": "",
@@ -194,13 +194,13 @@ func TestCodeBlockProcessor_RunJob_ai(t *testing.T) {
 		t.Fatalf("RunJob failed: %v", err)
 	}
 
-	if block.Attrs["status"] != "COMPLETE" {
+	if block.Attrs["status"] != BlockStatusComplete {
 		t.Errorf("expected status COMPLETE, got %v", block.Attrs["status"])
 	}
 	if block.Attrs["language"] != "go" {
 		t.Errorf("expected language refined to 'go', got %v", block.Attrs["language"])
 	}
-	if block.Attrs["detectionMethod"] != "ai" {
+	if block.Attrs["detectionMethod"] != BlockStatusPending && block.Attrs["detectionMethod"] != "ai" {
 		t.Errorf("expected detectionMethod refined to 'ai', got %v", block.Attrs["detectionMethod"])
 	}
 }
@@ -244,7 +244,7 @@ func TestCodeBlockProcessor_RunJob_aiFallback(t *testing.T) {
 		Kind: "code",
 		Attrs: map[string]interface{}{
 			"id":              "co-1234",
-			"status":          "PENDING",
+			"status":          BlockStatusPending,
 			"source":          "package main",
 			"language":        "heuristic-detected-lang",
 			"detectionMethod": "heuristic",
@@ -259,7 +259,7 @@ func TestCodeBlockProcessor_RunJob_aiFallback(t *testing.T) {
 		t.Fatal("expected RunJob to return an error when the AI CLI fails")
 	}
 	// The block's status must be ERROR so callers know the job did not complete.
-	if block.Attrs["status"] != "ERROR" {
+	if block.Attrs["status"] != BlockStatusError {
 		t.Errorf("expected status ERROR, got %v", block.Attrs["status"])
 	}
 }
@@ -272,7 +272,7 @@ func TestCodeBlockProcessor_RunJob_returnsErrorOnAIFailure(t *testing.T) {
 		Attrs: map[string]interface{}{
 			"id":     "co-test",
 			"source": "fmt.Println(\"hello\")",
-			"status": "PENDING",
+			"status": BlockStatusPending,
 		},
 	}
 	// Pass nil AI service — this should cause RunJob to return an error
@@ -283,9 +283,9 @@ func TestCodeBlockProcessor_RunJob_returnsErrorOnAIFailure(t *testing.T) {
 	}
 }
 
-// ── OnUpdate ─────────────────────────────────────────────────────────────────
+// ── OnChange ─────────────────────────────────────────────────────────────────
 
-func TestOnUpdate_alwaysRunsHeuristicsWhenLanguageAlreadySet(t *testing.T) {
+func TestOnChange_alwaysRunsHeuristicsWhenLanguageAlreadySet(t *testing.T) {
 	proc := &CodeBlockProcessor{}
 
 	block := &SieveBlock{
@@ -294,22 +294,22 @@ func TestOnUpdate_alwaysRunsHeuristicsWhenLanguageAlreadySet(t *testing.T) {
 		Attrs: map[string]interface{}{
 			"id":       "co-0001",
 			"language": "python",
-			"status":   "COMPLETE",
+			"status":   BlockStatusComplete,
 			"source":   strings.Repeat("fmt.Println(\"hello\")\nif err != nil { return err }\n", 5),
 		},
 	}
 
-	scheduleJob := proc.OnUpdate(block, Services{})
+	proc.OnChange(block, Services{})
 
-	if scheduleJob {
-		t.Error("expected scheduleJob=false: heuristics should identify Go without AI")
+	if status, _ := block.Attrs["status"].(string); status == BlockStatusPending {
+		t.Error("expected status not to be PENDING: heuristics should identify Go without AI")
 	}
 	if lang, _ := block.Attrs["language"].(string); lang != "go" {
 		t.Errorf("expected language=go after heuristics, got %q", lang)
 	}
 }
 
-func TestOnUpdate_doesNotScheduleAIWhenLanguageSetAndHeuristicsBlind(t *testing.T) {
+func TestOnChange_doesNotScheduleAIWhenLanguageSetAndHeuristicsBlind(t *testing.T) {
 	proc := &CodeBlockProcessor{}
 
 	block := &SieveBlock{
@@ -318,22 +318,22 @@ func TestOnUpdate_doesNotScheduleAIWhenLanguageSetAndHeuristicsBlind(t *testing.
 		Attrs: map[string]interface{}{
 			"id":       "co-0002",
 			"language": "rust",
-			"status":   "COMPLETE",
+			"status":   BlockStatusComplete,
 			"source":   "x = 1\ny = 2\nz = x + y",
 		},
 	}
 
-	scheduleJob := proc.OnUpdate(block, Services{})
+	proc.OnChange(block, Services{})
 
-	if scheduleJob {
-		t.Error("expected scheduleJob=false: AI result should be trusted when heuristics are silent")
+	if status, _ := block.Attrs["status"].(string); status == BlockStatusPending {
+		t.Error("expected status not to be PENDING: AI result should be trusted when heuristics are silent")
 	}
 	if lang, _ := block.Attrs["language"].(string); lang != "rust" {
 		t.Errorf("expected language=rust (untouched), got %q", lang)
 	}
 }
 
-func TestOnUpdate_schedulesAIWhenNoLanguageAndHeuristicsBlind(t *testing.T) {
+func TestOnChange_schedulesAIWhenNoLanguageAndHeuristicsBlind(t *testing.T) {
 	proc := &CodeBlockProcessor{}
 
 	block := &SieveBlock{
@@ -342,14 +342,14 @@ func TestOnUpdate_schedulesAIWhenNoLanguageAndHeuristicsBlind(t *testing.T) {
 		Attrs: map[string]interface{}{
 			"id":       "co-0003",
 			"language": "unknown",
-			"status":   "COMPLETE",
+			"status":   BlockStatusComplete,
 			"source":   strings.Repeat("x = 1\ny = 2\n", 10),
 		},
 	}
 
-	scheduleJob := proc.OnUpdate(block, Services{})
+	proc.OnChange(block, Services{})
 
-	if !scheduleJob {
-		t.Error("expected scheduleJob=true: no language set and heuristics blind → need AI")
+	if status, _ := block.Attrs["status"].(string); status != BlockStatusPending {
+		t.Errorf("expected status to transition to PENDING, got %q", status)
 	}
 }

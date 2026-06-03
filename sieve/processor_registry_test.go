@@ -10,7 +10,7 @@ type mockProcessor struct {
 }
 
 func (p *mockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
-	attrs := map[string]interface{}{"id": id, "status": "PENDING"}
+	attrs := map[string]interface{}{"id": id, "status": BlockStatusPending}
 	for k, v := range overrides {
 		attrs[k] = v
 	}
@@ -21,7 +21,7 @@ func (p *mockProcessor) PasteMatch(entries []PasteEntry) (bool, map[string]inter
 }
 func (p *mockProcessor) BuildContext(_ SieveBlock, _ ShadowDocument) string  { return "" }
 func (p *mockProcessor) RunJob(_ context.Context, _ *SieveBlock, _ Services) error { return nil }
-func (p *mockProcessor) OnUpdate(_ *SieveBlock, _ Services) bool             { return false }
+func (p *mockProcessor) OnChange(_ *SieveBlock, _ Services)                  {}
 
 func resetRegistry() {
 	processorRegistry = map[string]BlockProcessor{}

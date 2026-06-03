@@ -1,7 +1,6 @@
 package requesthandlers
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"sync"
@@ -18,15 +17,19 @@ import (
 type WsHandler struct {
 	ServiceProvider *sieve.ServiceProvider
 	upgrader        websocket.Upgrader
+	channelsMu      sync.RWMutex
+	channels        map[string]func(interface{}) // uuid -> writeMsg function
 }
 
 func NewWsHandler(sp *sieve.ServiceProvider) *WsHandler {
-	return &WsHandler{
+	h := &WsHandler{
 		ServiceProvider: sp,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
+		channels: make(map[string]func(interface{})),
 	}
+	return h
 }
 
 func (h *WsHandler) RegisterPaths(r chi.Router) {
@@ -46,6 +49,10 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+
+	if h.ServiceProvider.Editor != nil {
+		h.ServiceProvider.Editor.SetLifecycleListener(h)
+	}
 
 	// gorilla/websocket allows one concurrent writer — protect with a mutex so
 	// the debounce goroutine and the message-loop goroutine don't race.
@@ -67,6 +74,17 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logger.Info("ws: connection established", "uuid", uuid)
+	
+	h.channelsMu.Lock()
+	h.channels[uuid] = writeMsg
+	h.channelsMu.Unlock()
+
+	defer func() {
+		h.channelsMu.Lock()
+		delete(h.channels, uuid)
+		h.channelsMu.Unlock()
+	}()
+
 	if err := h.ServiceProvider.Editor.Open(uuid, notifySaved); err != nil {
 		logger.Warn("ws: could not open shadow", "uuid", uuid, "err", err)
 	}
@@ -116,7 +134,7 @@ func (h *WsHandler) handleDocUpdate(uuid string, raw []byte) {
 }
 
 // handleBlockUpdate merges the user's attr patch into the shadow, then calls
-// OnUpdate on the processor so it can re-run heuristics or schedule a RunJob.
+// OnChange on the processor so it can re-run heuristics.
 func (h *WsHandler) handleBlockUpdate(uuid string, raw []byte, writeMsg func(interface{})) {
 	var msg struct {
 		ID    string                 `json:"id"`
@@ -126,13 +144,7 @@ func (h *WsHandler) handleBlockUpdate(uuid string, raw []byte, writeMsg func(int
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return
 	}
-	h.ServiceProvider.Editor.HandleBlockUpdate(uuid, msg.Kind, msg.ID, msg.Attrs, func(blkID, rawYaml string) {
-		writeMsg(map[string]string{
-			"type":    "block-attrs-updated",
-			"id":      blkID,
-			"rawYaml": rawYaml,
-		})
-	})
+	h.ServiceProvider.Editor.HandleBlockUpdate(uuid, msg.Kind, msg.ID, msg.Attrs)
 }
 
 func (h *WsHandler) handleFlush(writeMsg func(interface{}), uuid string) {
@@ -182,24 +194,11 @@ func (h *WsHandler) handleCreateBlock(uuid string, raw []byte, writeMsg func(int
 	if err := json.Unmarshal(raw, &msg); err != nil || msg.Kind == "" {
 		return
 	}
-	id, rawYaml, err := h.ServiceProvider.Editor.CreateBlock(uuid, msg.Kind, nil)
+	_, _, err := h.ServiceProvider.Editor.CreateBlock(uuid, msg.Kind, nil)
 	if err != nil {
 		logger.Warn("ws: create-block failed", "uuid", uuid, "kind", msg.Kind, "err", err)
 		return
 	}
-	writeMsg(map[string]string{
-		"type":    "insert-block",
-		"kind":    msg.Kind,
-		"id":      id,
-		"rawYaml": rawYaml,
-	})
-	go h.ServiceProvider.Editor.RunJob(context.Background(), uuid, id, func(blkID, updatedRawYaml string) {
-		writeMsg(map[string]string{
-			"type":    "block-attrs-updated",
-			"id":      blkID,
-			"rawYaml": updatedRawYaml,
-		})
-	})
 }
 
 func (h *WsHandler) handleRetryBlockJob(uuid string, raw []byte, writeMsg func(interface{})) {
@@ -209,12 +208,36 @@ func (h *WsHandler) handleRetryBlockJob(uuid string, raw []byte, writeMsg func(i
 	if err := json.Unmarshal(raw, &msg); err != nil || msg.ID == "" {
 		return
 	}
-	go h.ServiceProvider.Editor.RunJob(context.Background(), uuid, msg.ID, func(blkID, rawYaml string) {
+	h.ServiceProvider.Editor.UpdateBlock(uuid, "", msg.ID, map[string]interface{}{"status": sieve.BlockStatusPending})
+	h.ServiceProvider.Editor.DispatchJobIfNeeded(uuid, msg.ID)
+}
+
+// OnBlockCreated implements sieve.BlockLifecycleListener.
+func (h *WsHandler) OnBlockCreated(uuid, kind, blockID, rawYaml string) {
+	h.channelsMu.RLock()
+	writeMsg, ok := h.channels[uuid]
+	h.channelsMu.RUnlock()
+	if ok {
 		writeMsg(map[string]string{
-			"type":    "block-attrs-updated",
-			"id":      blkID,
+			"type":    "insert-block",
+			"kind":    kind,
+			"id":      blockID,
 			"rawYaml": rawYaml,
 		})
-	})
+	}
+}
+
+// OnBlockUpdated implements sieve.BlockLifecycleListener.
+func (h *WsHandler) OnBlockUpdated(uuid, blockID, rawYaml string) {
+	h.channelsMu.RLock()
+	writeMsg, ok := h.channels[uuid]
+	h.channelsMu.RUnlock()
+	if ok {
+		writeMsg(map[string]string{
+			"type":    "block-attrs-updated",
+			"id":      blockID,
+			"rawYaml": rawYaml,
+		})
+	}
 }
 

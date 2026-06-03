@@ -117,7 +117,7 @@ import { esc, isStaleByTime, isJobActive, getLowlight, hastToHtml } from './fenc
       }
 
       function updateBadge(attrs) {
-        var isPending     = attrs.status === 'PENDING'
+        var isPending     = attrs.status === 'PENDING' || attrs.status === 'DISPATCHED'
         var isStale       = isPending && !isJobActive(attrs.id) && isStaleByTime(attrs.createdAt)
         var showDetecting = isPending && !isStale && (!attrs.language || attrs.language === '')
         if (showDetecting) {
@@ -185,6 +185,10 @@ import { esc, isStaleByTime, isJobActive, getLowlight, hastToHtml } from './fenc
         flushSource()
         applyHighlight(editEl.value, currentAttrs.language || '')
         updateGutter(editEl.value)
+      })
+
+      editEl.addEventListener('paste', function (e) {
+        e.stopPropagation()
       })
 
       editEl.addEventListener('keydown', function (e) {
@@ -257,7 +261,7 @@ import { esc, isStaleByTime, isJobActive, getLowlight, hastToHtml } from './fenc
       }
     }
 
-    var isRetryable = n.attrs.status !== 'PENDING'
+    var isRetryable = n.attrs.status !== 'PENDING' && n.attrs.status !== 'DISPATCHED'
 
     return [
       { icon: IC.trash,        label: 'Delete',             action: del },

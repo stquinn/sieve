@@ -15,6 +15,20 @@ type PasteEntry struct {
 	Content  string `json:"content"`
 }
 
+// Block status constants.
+const (
+	BlockStatusPending    = "PENDING"
+	BlockStatusDispatched = "DISPATCHED"
+	BlockStatusComplete   = "COMPLETE"
+	BlockStatusError      = "ERROR"
+)
+
+// BlockLifecycleListener listens to block lifecycle events from the framework.
+type BlockLifecycleListener interface {
+	OnBlockCreated(uuid, kind, blockID, rawYaml string)
+	OnBlockUpdated(uuid, blockID, rawYaml string)
+}
+
 // BlockProcessor is implemented by every SieveBlock Kind.
 //
 // InitAttrs is the schema declaration. It returns the complete, valid initial
@@ -31,12 +45,11 @@ type BlockProcessor interface {
 	BuildContext(block SieveBlock, doc ShadowDocument) string
 	RunJob(ctx context.Context, block *SieveBlock, svc Services) error
 
-	// OnUpdate is called after every block-update from the client. block is a
-	// mutable copy of the current shadow state after the user's latest attr
-	// patch has been merged in. Implementations may update block.Attrs
-	// synchronously (e.g. re-run heuristics). Returning true schedules a
-	// RunJob for the block.
-	OnUpdate(block *SieveBlock, svc Services) (scheduleJob bool)
+	// OnChange is called synchronously after any block mutation (creation or
+	// update). block is a mutable copy of the shadow block state. Implementations
+	// may update block.Attrs in-place. To request a background async job, set
+	// block.Attrs["status"] = BlockStatusPending.
+	OnChange(block *SieveBlock, svc Services)
 }
 
 // Services is the dependency bag passed to BlockProcessor.RunJob.

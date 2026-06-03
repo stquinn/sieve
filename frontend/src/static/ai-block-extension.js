@@ -150,7 +150,7 @@ import { esc, renderMarkdown, applyHighlighting, isStaleByTime, isJobActive } fr
 
       var status = n.attrs.status || 'PENDING'
 
-      if (status === 'PENDING') {
+      if (status === 'PENDING' || status === 'DISPATCHED') {
         if (isStale(n.attrs.createdAt, n.attrs.id)) {
           badge.className = 'ai-block__badge ai-block__badge--error'
           badge.textContent = 'AI'

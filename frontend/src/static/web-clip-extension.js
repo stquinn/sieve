@@ -115,7 +115,7 @@ import { esc, renderMarkdown, applyHighlighting, isStaleByTime, isJobActive } fr
       var header = document.createElement('div')
       header.className = 'web-clip-block__header'
 
-      if (status === 'PENDING') {
+      if (status === 'PENDING' || status === 'DISPATCHED') {
         var stale = isStale(attrs.createdAt, attrs.id)
         if (stale) {
           header.innerHTML = '<span class="web-clip-block__icon web-clip-block__icon--warn">⚠</span>' +

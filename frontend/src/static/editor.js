@@ -958,6 +958,10 @@
   function handleSmartPaste(event) {
     if (!event.clipboardData || !currentEditor) return false
 
+    if (event.target && (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA')) {
+      return false
+    }
+
     var text = event.clipboardData.getData('text/plain')
     var html = event.clipboardData.getData('text/html')
     var files = Array.from(event.clipboardData.files)
@@ -1153,7 +1157,7 @@
           pasteEntries.push({ mimeType: mimeType, content: event.clipboardData.getData(mimeType) })
         })
       }
-      var pasteInsertPos = currentEditor ? currentEditor.state.selection.to : null
+      sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
       event.preventDefault()
 
       fetch('/api/editor/smart-paste', {
@@ -1165,26 +1169,10 @@
         .then(function (result) {
           if (!currentEditor) return
           if (result.matched) {
-            var parsed = {}
-            try { parsed = window.jsyaml.load(result.rawYaml) || {} } catch (_) {}
-            var pos = pasteInsertPos !== null ? pasteInsertPos : currentEditor.state.doc.content.size
-            currentEditor.commands.insertContentAt(pos, {
-              type: 'sieve-' + (result.kind || 'code'),
-              attrs: {
-                kind:            result.kind || 'code',
-                id:              result.id || parsed.id || '',
-                rawYaml:         result.rawYaml || '',
-                status:          parsed.status || 'PENDING',
-                language:        parsed.language || '',
-                source:          typeof parsed.source === 'string' ? parsed.source : '',
-                createdAt:       parsed.createdAt || null,
-                detectionMethod: parsed.detectionMethod || '',
-              },
-            })
-            // Kick off background AI detection via existing WS retry path.
-            wsSend({ type: 'retry-block-job', uuid: currentUuid, id: result.id })
+            // Handled entirely via WebSocket push. Nothing to insert here.
           } else {
-            // No processor matched — replay original clipboard content to TipTap.
+            // No processor matched — clear the stashed insert position and replay original clipboard content.
+            sieveInsertPos = null
             if (pasteHtml) {
               currentEditor.commands.insertContent(pasteHtml)
             } else {
@@ -1194,6 +1182,7 @@
         })
         .catch(function (err) {
           console.error('[editor.js] smart-paste fetch failed', err)
+          sieveInsertPos = null
           if (currentEditor) currentEditor.commands.insertContent(text)
         })
 
