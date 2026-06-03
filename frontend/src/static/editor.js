@@ -20,7 +20,7 @@
   var blobInterceptorCleanup = null
   var searchOverlay = null
   var sieveInsertPos = null
-  var pendingPasteText = null  // saved while awaiting Go's paste-pipeline decision
+
 
   var askDialog = null
   var internalizeDialog = null
@@ -319,26 +319,12 @@
         document.dispatchEvent(new CustomEvent('editor:markdown-content', { detail: msg }))
       }
       if (msg.type === 'insert-block') {
-        pendingPasteText = null
         document.dispatchEvent(new CustomEvent('editor:insert-block', { detail: msg }))
       }
       if (msg.type === 'block-attrs-updated') {
         document.dispatchEvent(new CustomEvent('editor:block-attrs-updated', { detail: msg }))
       }
-      if (msg.type === 'paste-no-match') {
-        // Go found no processor match — insert the saved text at the saved paste position.
-        var fallback = pendingPasteText
-        var savedPos = sieveInsertPos
-        pendingPasteText = null
-        sieveInsertPos = null
-        if (fallback && currentEditor) {
-          if (savedPos !== null) {
-            currentEditor.commands.insertContentAt(savedPos, fallback)
-          } else {
-            currentEditor.commands.insertContent(fallback)
-          }
-        }
-      }
+
     }
 
     editorWs.onerror = function (err) { console.error('[editor] ws error', err) }
@@ -1155,14 +1141,62 @@
     }
 
     // ── 4. Smart-paste pipeline ──────────────────────────────────────────────────
-    // All remaining text → Go. BlockProcessors get first refusal via PasteMatch.
-    //   insert-block   → same flow as any block creation (context menu, shortcut)
-    //   paste-no-match → JS re-inserts text as prose (TipTap insertContent fallback)
+    // Collect all clipboard entries synchronously before any async gap.
+    // event.preventDefault() is called immediately; on no-match the original
+    // clipboard content is replayed to TipTap via insertContent.
     if (text && currentUuid && !currentUuid.startsWith('prompt:')) {
-      pendingPasteText = text.trim()
+      var pasteEntries = []
+      var pasteHtml = ''
+      if (event.clipboardData) {
+        pasteHtml = event.clipboardData.getData('text/html')
+        Array.from(event.clipboardData.types || []).forEach(function (mimeType) {
+          pasteEntries.push({ mimeType: mimeType, content: event.clipboardData.getData(mimeType) })
+        })
+      }
+      var pasteInsertPos = currentEditor ? currentEditor.state.selection.to : null
       event.preventDefault()
-      sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
-      wsSend({ type: 'smart-paste', uuid: currentUuid, content: text.trim() })
+
+      fetch('/api/editor/smart-paste', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uuid: currentUuid, entries: pasteEntries }),
+      })
+        .then(function (r) { return r.json() })
+        .then(function (result) {
+          if (!currentEditor) return
+          if (result.matched) {
+            var parsed = {}
+            try { parsed = window.jsyaml.load(result.rawYaml) || {} } catch (_) {}
+            var pos = pasteInsertPos !== null ? pasteInsertPos : currentEditor.state.doc.content.size
+            currentEditor.commands.insertContentAt(pos, {
+              type: 'sieve-' + (result.kind || 'code'),
+              attrs: {
+                kind:            result.kind || 'code',
+                id:              result.id || parsed.id || '',
+                rawYaml:         result.rawYaml || '',
+                status:          parsed.status || 'PENDING',
+                language:        parsed.language || '',
+                source:          typeof parsed.source === 'string' ? parsed.source : '',
+                createdAt:       parsed.createdAt || null,
+                detectionMethod: parsed.detectionMethod || '',
+              },
+            })
+            // Kick off background AI detection via existing WS retry path.
+            wsSend({ type: 'retry-block-job', uuid: currentUuid, id: result.id })
+          } else {
+            // No processor matched — replay original clipboard content to TipTap.
+            if (pasteHtml) {
+              currentEditor.commands.insertContent(pasteHtml)
+            } else {
+              currentEditor.commands.insertContent(text)
+            }
+          }
+        })
+        .catch(function (err) {
+          console.error('[editor.js] smart-paste fetch failed', err)
+          if (currentEditor) currentEditor.commands.insertContent(text)
+        })
+
       return true
     }
 
