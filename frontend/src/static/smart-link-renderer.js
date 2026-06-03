@@ -1,7 +1,7 @@
-// smart-link-renderer.js — Smart Link block renderer.
+// smart-link-renderer.js — Smart Link inline renderer.
 // Registers window.TipTap.registerSieveRenderer('smart-link', SmartLinkRenderer)
-// A smart-link block is created by pasting a bare URL. Go's RunJob fetches the
-// page title; the renderer shows a compact link card.
+// Renders as an inline <a> in flowing text. Go's RunJob fetches the page title;
+// the label updates in place when the job completes.
 
 import { isJobStale } from './fenced-block-base.js'
 
@@ -12,7 +12,7 @@ import { isJobStale } from './fenced-block-base.js'
 
   var SmartLinkRenderer = {
 
-    nodeConfig: { atom: true, selectable: true, draggable: false },
+    nodeConfig: { group: 'inline', inline: true, atom: true, selectable: true, draggable: false },
 
     attrs: {
       href:        { default: '',   parseHTML: function (el) { return el.getAttribute('data-href')         || '' } },
@@ -31,91 +31,45 @@ import { isJobStale } from './fenced-block-base.js'
     },
 
     makeNodeView: function (node, editor) {
-      var dom = document.createElement('div')
-      dom.className = 'smart-link-block'
-      dom.contentEditable = 'false'
+      var dom = document.createElement('a')
+      dom.className = 'smart-link-node'
       dom.setAttribute('data-sl-id', node.attrs.id || '')
 
       dom.addEventListener('dragstart', function (e) { e.preventDefault() })
       dom.addEventListener('mousedown', function (e) { e.stopPropagation() })
-
-      function openURL(href) {
-        if (href && window.runtime && window.runtime.BrowserOpenURL) {
-          window.runtime.BrowserOpenURL(href)
+      dom.addEventListener('click', function (e) {
+        e.preventDefault()
+        if (window.isMod && window.isMod(e)) {
+          var href = dom.getAttribute('href')
+          if (href && window.runtime && window.runtime.BrowserOpenURL) {
+            window.runtime.BrowserOpenURL(href)
+          }
         }
-      }
+      })
 
       function render(n) {
-        dom.innerHTML = ''
         dom.setAttribute('data-sl-id', n.attrs.id || '')
-        dom.className = 'smart-link-block'
-
         var status = n.attrs.status || 'PENDING'
-        var href   = n.attrs.href  || ''
-        var label  = n.attrs.label || href
+        var href   = n.attrs.href  || '#'
+        var label  = n.attrs.label || n.attrs.href || '…'
 
-        var icon = document.createElement('span')
-        icon.className = 'smart-link-block__icon'
-        icon.textContent = '🔗'
-
-        var textWrap = document.createElement('div')
-        textWrap.className = 'smart-link-block__text'
+        dom.href = href
+        dom.title = 'Ctrl+Click to open'
+        dom.removeAttribute('data-pending')
+        dom.removeAttribute('data-error')
 
         if (status === 'PENDING' || status === 'DISPATCHED') {
-          dom.classList.add('smart-link-block--loading')
-          var titleEl = document.createElement('span')
-          titleEl.className = 'smart-link-block__title'
-          titleEl.textContent = label || href || 'Fetching…'
-          var statusEl = document.createElement('span')
-          statusEl.className = 'smart-link-block__url'
-          statusEl.textContent = 'Fetching title…'
-          textWrap.appendChild(titleEl)
-          textWrap.appendChild(statusEl)
-
+          dom.textContent = label || href
+          dom.setAttribute('data-pending', '')
           if (isJobStale(n.attrs.createdAt, n.attrs.id)) {
-            dom.classList.remove('smart-link-block--loading')
-            var retryBtn = document.createElement('button')
-            retryBtn.className = 'smart-link-block__retry'
-            retryBtn.textContent = 'Retry'
-            retryBtn.addEventListener('click', function () {
-              document.dispatchEvent(new CustomEvent('sieve:block-retry', { detail: { id: n.attrs.id } }))
-            })
-            textWrap.appendChild(retryBtn)
+            dom.setAttribute('data-stale', '')
           }
         } else if (status === 'COMPLETE') {
-          var titleLink = document.createElement('a')
-          titleLink.className = 'smart-link-block__title'
-          titleLink.href = href || '#'
-          titleLink.textContent = label || href
-          titleLink.title = 'Ctrl+Click to open'
-          titleLink.addEventListener('click', function (e) {
-            e.preventDefault()
-            if (window.isMod && window.isMod(e)) openURL(href)
-          })
-          var urlEl = document.createElement('span')
-          urlEl.className = 'smart-link-block__url'
-          urlEl.textContent = href
-          textWrap.appendChild(titleLink)
-          textWrap.appendChild(urlEl)
+          dom.textContent = label || href
         } else {
-          dom.classList.add('smart-link-block--error')
-          var errLink = document.createElement('a')
-          errLink.className = 'smart-link-block__title'
-          errLink.href = href || '#'
-          errLink.textContent = label || href
-          errLink.addEventListener('click', function (e) {
-            e.preventDefault()
-            if (window.isMod && window.isMod(e)) openURL(href)
-          })
-          var errMsg = document.createElement('span')
-          errMsg.className = 'smart-link-block__url smart-link-block__url--error'
-          errMsg.textContent = (n.attrs.error || 'Could not fetch title').trim()
-          textWrap.appendChild(errLink)
-          textWrap.appendChild(errMsg)
+          dom.textContent = label || href
+          dom.setAttribute('data-error', '')
         }
-
-        dom.appendChild(icon)
-        dom.appendChild(textWrap)
       }
 
       render(node)
@@ -151,7 +105,7 @@ import { isJobStale } from './fenced-block-base.js'
         }
       }
 
-      var items = [
+      return [
         { type: 'header', label: 'Smart Link' },
         {
           icon: IC.externalLink,
@@ -169,33 +123,101 @@ import { isJobStale } from './fenced-block-base.js'
             if (href) navigator.clipboard.writeText(href).catch(function () {})
           },
         },
+        {
+          icon: IC.edit,
+          label: 'Edit…',
+          action: function () {
+            if (typeof getPos === 'function') editor.chain().focus().setNodeSelection(getPos()).run()
+            document.dispatchEvent(new CustomEvent('sieve:smart-link-edit', {
+              detail: { id: node.attrs.id, href: href, label: label, getPos: getPos, editor: editor }
+            }))
+          },
+        },
         { type: 'divider' },
         { icon: IC.trash, label: 'Delete', action: del },
       ]
-
-      if (node.attrs.status === 'COMPLETE' && href) {
-        items.push({ type: 'divider' })
-        items.push({
-          icon: IC.sparkle,
-          label: 'Ask AI…',
-          action: function () {
-            if (typeof getPos === 'function') editor.chain().focus().setNodeSelection(getPos()).run()
-            else editor.commands.focus()
-            var ctx = {
-              content:      label !== href ? '[' + label + '](' + href + ')' : href,
-              history:      '',
-              blockRef:     node.attrs.id,
-              imageIds:     [],
-              contextLabel: 'Smart Link',
-            }
-            document.dispatchEvent(new CustomEvent('sieve:ai-ask', { detail: { precomputedCtx: ctx } }))
-          },
-        })
-      }
-
-      return items
     },
   }
 
   T.registerSieveRenderer('smart-link', SmartLinkRenderer)
+
+  // ── Edit dialog ───────────────────────────────────────────────────────────────
+  // Opened via sieve:smart-link-edit. Re-uses ask-popup styling.
+
+  var editDialog = null
+
+  function getEditDialog() {
+    if (editDialog) return editDialog
+
+    var dlg = document.createElement('dialog')
+    dlg.className = 'ask-popup smart-link-edit-popup'
+
+    var header = document.createElement('div')
+    header.className = 'ask-popup__header'
+    var title = document.createElement('span')
+    title.className = 'ask-popup__label'
+    title.textContent = 'Edit Link'
+    var closeBtn = document.createElement('button')
+    closeBtn.className = 'ask-popup__close'
+    closeBtn.textContent = '✕'
+    closeBtn.addEventListener('click', function () { dlg.close() })
+    header.appendChild(title)
+    header.appendChild(closeBtn)
+
+    var hrefInput = document.createElement('input')
+    hrefInput.type = 'url'
+    hrefInput.className = 'smart-link-edit-popup__input'
+    hrefInput.placeholder = 'URL (https://…)'
+
+    var labelInput = document.createElement('input')
+    labelInput.type = 'text'
+    labelInput.className = 'smart-link-edit-popup__input'
+    labelInput.placeholder = 'Display label'
+
+    var footer = document.createElement('div')
+    footer.className = 'ask-popup__footer'
+    var saveBtn = document.createElement('button')
+    saveBtn.className = 'ask-popup__send'
+    saveBtn.textContent = 'Save'
+    footer.appendChild(saveBtn)
+
+    dlg.appendChild(header)
+    dlg.appendChild(hrefInput)
+    dlg.appendChild(labelInput)
+    dlg.appendChild(footer)
+    document.body.appendChild(dlg)
+
+    dlg.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); dlg.close() }
+      if (e.key === 'Enter')  { e.preventDefault(); dlg._save() }
+    })
+    saveBtn.addEventListener('click', function () { dlg._save() })
+
+    editDialog = dlg
+    return dlg
+  }
+
+  document.addEventListener('sieve:smart-link-edit', function (e) {
+    var detail  = e.detail
+    var dlg     = getEditDialog()
+    var hrefEl  = dlg.querySelector('.smart-link-edit-popup__input')
+    var labelEl = dlg.querySelectorAll('.smart-link-edit-popup__input')[1]
+
+    hrefEl.value  = detail.href  || ''
+    labelEl.value = detail.label || ''
+
+    dlg._save = function () {
+      var newHref  = hrefEl.value.trim()
+      var newLabel = labelEl.value.trim() || newHref
+      if (!newHref) return
+      document.dispatchEvent(new CustomEvent('sieve:block-update', {
+        detail: { id: detail.id, kind: 'smart-link', attrs: { href: newHref, label: newLabel } }
+      }))
+      dlg.close()
+    }
+
+    dlg.showModal()
+    requestAnimationFrame(function () { hrefEl.select() })
+  })
+
 })()

@@ -155,9 +155,10 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
   var MyBlockRenderer = {
 
     // nodeConfig: ProseMirror schema overrides.
-    // Display-only (async job): atom: true, selectable: true, draggable: false
-    // Editable (user types):    atom: true, selectable: false, draggable: false
-    // Never set atom: false — all sieve blocks are atomic at the schema level.
+    // Display-only block (async job): atom: true, selectable: true, draggable: false
+    // Editable block (user types):    atom: true, selectable: false, draggable: false
+    // Inline node (flows in text):    group: 'inline', inline: true, atom: true, selectable: true, draggable: false
+    // Never set atom: false — all sieve nodes are atomic at the schema level.
     nodeConfig: { atom: true, selectable: true, draggable: false },
 
     // attrs: kind-specific TipTap attributes. Merged with the five base attrs

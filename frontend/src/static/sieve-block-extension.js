@@ -2,11 +2,11 @@
 //
 // Renderer interface (each renderer file must supply these fields):
 //
-//   nodeConfig   { atom, selectable, draggable }
-//       ProseMirror schema overrides. Defaults: atom:true, selectable:true, draggable:true.
+//   nodeConfig   { atom, selectable, draggable, group, inline }
+//       ProseMirror schema overrides. Defaults: atom:true, selectable:true, draggable:true, group:'block', inline:false.
 //       These are schema-level — fixed at editor init time, cannot change at runtime.
-//       Use selectable:false + draggable:false for user-editable blocks (code, diagram)
-//       so mouse drag selects text rather than moving the block.
+//       Use selectable:false + draggable:false for user-editable blocks (code, diagram).
+//       Use group:'inline', inline:true for nodes that render inside text flow (e.g. smart-link).
 //
 //   attrs   { [key]: TipTap attr definition }
 //       Kind-specific TipTap attributes. Merged with the five base attrs that every
@@ -49,9 +49,7 @@ import { esc } from './fenced-block-base.js'
     createdAt: { default: null,      parseHTML: function (el) { return el.getAttribute('data-created-at')  || null } },
   }
 
-  // Schema defaults for display-only blocks (AI, WebClip). Editable blocks
-  // (code, diagram) override selectable and draggable via nodeConfig.
-  var DEFAULT_NODE_CONFIG = { atom: true, selectable: true, draggable: true }
+  var DEFAULT_NODE_CONFIG = { atom: true, selectable: true, draggable: true, group: 'block', inline: false }
 
   // ── Node factory ─────────────────────────────────────────────────────────────
 
@@ -60,9 +58,12 @@ import { esc } from './fenced-block-base.js'
     var nodeName = 'sieve-' + kind   // e.g. 'sieve-code', 'sieve-diagram'
     var dataType = 'sieve-' + kind   // value of the data-type HTML attribute
 
+    var tag = cfg.inline ? 'span' : 'div'
+
     return Node.create({
       name:       nodeName,
-      group:      'block',
+      group:      cfg.group,
+      inline:     cfg.inline,
       atom:       cfg.atom,
       selectable: cfg.selectable,
       draggable:  cfg.draggable,
@@ -72,11 +73,11 @@ import { esc } from './fenced-block-base.js'
       },
 
       parseHTML() {
-        return [{ tag: 'div[data-type="' + dataType + '"]' }]
+        return [{ tag: tag + '[data-type="' + dataType + '"]' }]
       },
 
       renderHTML({ HTMLAttributes }) {
-        return ['div', mergeAttributes({ 'data-type': dataType }, HTMLAttributes)]
+        return [tag, mergeAttributes({ 'data-type': dataType }, HTMLAttributes)]
       },
 
       addNodeView() {
@@ -158,7 +159,7 @@ import { esc } from './fenced-block-base.js'
                   if (data.createdAt) {
                     htmlAttrs.push('data-created-at="' + esc(data.createdAt) + '"')
                   }
-                  return '<div ' + htmlAttrs.join(' ') + '></div>\n'
+                  return '<' + tag + ' ' + htmlAttrs.join(' ') + '></' + tag + '>\n'
                 }
               },
             },
