@@ -2,6 +2,7 @@ package sieve
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -137,6 +138,8 @@ func (p *CodeBlockProcessor) BuildContext(block SieveBlock, _ ShadowDocument) st
 // Heuristics already ran in InitAttrs — RunJob calls RefineLanguage (AI-only)
 // to potentially improve the result. If the AI returns empty, the heuristic
 // result from InitAttrs is kept. hint is transient and deleted after use.
+// If the AI call fails (including when svc.AI is nil), RunJob returns a non-nil
+// error so EditorService.RunJob can surface status=ERROR to the user.
 func (p *CodeBlockProcessor) RunJob(ctx context.Context, block *SieveBlock, svc Services) error {
 	source, _ := block.Attrs["source"].(string)
 	if strings.TrimSpace(source) == "" {
@@ -145,13 +148,15 @@ func (p *CodeBlockProcessor) RunJob(ctx context.Context, block *SieveBlock, svc 
 		return nil
 	}
 
+	if svc.AI == nil {
+		block.Attrs["status"] = "ERROR"
+		return fmt.Errorf("AI detection failed: AI service unavailable")
+	}
+
 	lang, err := svc.AI.RefineLanguage(source)
 	if err != nil {
-		// Non-fatal: heuristics may have already set a language. Mark complete
-		// and keep whatever language is set rather than overwriting with "unknown".
-		block.Attrs["status"] = "COMPLETE"
-		delete(block.Attrs, "hint")
-		return nil
+		block.Attrs["status"] = "ERROR"
+		return fmt.Errorf("AI detection failed: %w", err)
 	}
 	if lang != "" {
 		block.Attrs["language"] = lang

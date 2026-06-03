@@ -252,19 +252,34 @@ func TestCodeBlockProcessor_RunJob_aiFallback(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := p.RunJob(ctx, block, svc); err != nil {
-		t.Fatalf("RunJob failed: %v", err)
-	}
+	err = p.RunJob(ctx, block, svc)
 
-	// Should still be COMPLETE, but preserve heuristic language and method
-	if block.Attrs["status"] != "COMPLETE" {
-		t.Errorf("expected status COMPLETE, got %v", block.Attrs["status"])
+	// AI failure must surface as an error so EditorService can set status=ERROR.
+	if err == nil {
+		t.Fatal("expected RunJob to return an error when the AI CLI fails")
 	}
-	if block.Attrs["language"] != "heuristic-detected-lang" {
-		t.Errorf("expected language preserved, got %v", block.Attrs["language"])
+	// The block's status must be ERROR so callers know the job did not complete.
+	if block.Attrs["status"] != "ERROR" {
+		t.Errorf("expected status ERROR, got %v", block.Attrs["status"])
 	}
-	if block.Attrs["detectionMethod"] != "heuristic" {
-		t.Errorf("expected detectionMethod preserved, got %v", block.Attrs["detectionMethod"])
+}
+
+func TestCodeBlockProcessor_RunJob_returnsErrorOnAIFailure(t *testing.T) {
+	proc := &CodeBlockProcessor{}
+	block := &SieveBlock{
+		ID:   "co-test",
+		Kind: "code",
+		Attrs: map[string]interface{}{
+			"id":     "co-test",
+			"source": "fmt.Println(\"hello\")",
+			"status": "PENDING",
+		},
+	}
+	// Pass nil AI service — this should cause RunJob to return an error
+	// rather than silently setting status=COMPLETE.
+	err := proc.RunJob(context.Background(), block, Services{AI: nil})
+	if err == nil {
+		t.Error("expected RunJob to return an error when AI service is unavailable")
 	}
 }
 
