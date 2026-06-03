@@ -174,7 +174,7 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
 
     buildContextMenuItems: function ({ node, editor, getPos }) {
       function yaml() {
-        return '```web-clip\n' + (node.attrs.rawYaml || '') + '\n```'
+        return node.attrs.serialisedForm || ''
       }
 
       function del() {
@@ -194,9 +194,6 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
 
       var status = node.attrs.status || 'PENDING'
       var isComplete = status === 'COMPLETE'
-      var isRetryable = status === 'ERROR' || status === 'TIMEOUT' ||
-        ((status === 'PENDING' || status === 'DISPATCHED') && node.attrs.createdAt &&
-          Date.now() - new Date(node.attrs.createdAt).getTime() > ((window.__sieveCliTimeoutLong || 60) * 1000 + 30000))
 
       var domain = ''
       try { domain = new URL(node.attrs.source || '').hostname } catch (_) { domain = node.attrs.source || '' }
@@ -230,13 +227,6 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
           else editor.commands.focus()
           var ctx = { content: webClipSummary(node), history: '', blockRef: node.attrs.id, imageIds: [], contextLabel: 'Web Clip' }
           document.dispatchEvent(new CustomEvent('sieve:ai-explain', { detail: { precomputedCtx: ctx } }))
-        }})
-      }
-
-      if (isRetryable) {
-        items.push({ type: 'divider' })
-        items.push({ icon: IC.refresh, label: 'Retry Fetch', action: function () {
-          document.dispatchEvent(new CustomEvent('sieve:block-retry', { detail: { id: node.attrs.id } }))
         }})
       }
 

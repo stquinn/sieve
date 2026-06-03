@@ -30,7 +30,7 @@
 //      after sieve-block-extension.js
 //   That's it.
 
-import { esc } from './fenced-block-base.js'
+import { esc, isJobStale } from './fenced-block-base.js'
 
 ;(function () {
   'use strict'
@@ -83,19 +83,36 @@ import { esc } from './fenced-block-base.js'
       addNodeView() {
         return function ({ node, editor, getPos }) {
           var view = renderer.makeNodeView(node, editor)
-          if (renderer.buildContextMenuItems && view.dom) {
+          if (view.dom) {
             view.dom.addEventListener('contextmenu', function (e) {
               e.preventDefault()
               e.stopPropagation()
               var currentNode = (typeof getPos === 'function') ? editor.state.doc.nodeAt(getPos()) : node
-              document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
-                detail: {
-                  x: e.clientX, y: e.clientY,
-                  context: {
-                    type: 'sieveBlock',
-                    items: renderer.buildContextMenuItems({ node: currentNode || node, editor: editor, getPos: getPos }),
+              var n = currentNode || node
+              var items = renderer.buildContextMenuItems
+                ? renderer.buildContextMenuItems({ node: n, editor: editor, getPos: getPos })
+                : []
+
+              // Retry / Replay — automatic for all sieve blocks with a job lifecycle.
+              // DISPATCHED = job actively running; never retryable.
+              // PENDING = waiting to dispatch; stale if createdAt > 15s ago.
+              var status = n.attrs.status || 'PENDING'
+              var isStale = status === 'PENDING' && isJobStale(n.attrs.createdAt, n.attrs.id)
+              var isError = status === 'ERROR' || status === 'TIMEOUT'
+              if (isStale || isError || status === 'COMPLETE') {
+                var IC = window.SieveIcons || {}
+                items = items.concat([
+                  { type: 'divider' },
+                  { icon: IC.refresh, label: (isStale || isError) ? 'Retry' : 'Replay',
+                    action: function () {
+                      document.dispatchEvent(new CustomEvent('sieve:block-retry', { detail: { id: n.attrs.id } }))
+                    }
                   },
-                },
+                ])
+              }
+
+              document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
+                detail: { x: e.clientX, y: e.clientY, context: { type: 'sieveBlock', items: items } },
               }))
             })
           }

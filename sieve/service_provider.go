@@ -3,7 +3,6 @@ package sieve
 import (
 	"sieve/logger"
 	"sieve/store"
-	"strings"
 	"time"
 )
 
@@ -57,54 +56,12 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
 	s.Editor = NewEditorService(s.Documents, autosave)
 	s.Editor.SetServices(s.BlockServices())
-	RegisterProcessor("code",       &CodeBlockProcessor{})
-	RegisterProcessor("web-clip",   &WebClipBlockProcessor{})
-	RegisterProcessor("smart-link", &SmartLinkProcessor{})
-	s.migrateSession()
-}
+	svc := s.BlockServices()
+	RegisterProcessor("code",        NewCodeBlockProcessor(svc))
+	RegisterProcessor("web-clip",    NewWebClipBlockProcessor(svc))
+	RegisterProcessor("smart-link",  NewSmartLinkProcessor(svc))
+	RegisterProcessor("smart-image", NewSmartImageProcessor(svc))
 
-func (s *ServiceProvider) migrateSession() {
-	if s.State == nil || s.Documents == nil {
-		return
-	}
-	session := s.State.LoadSession()
-	changed := false
-
-	for i, tab := range session.Tabs {
-		if strings.HasPrefix(tab.ID, "prompt:") {
-			continue
-		}
-
-		// If it's a path or doesn't look like a standard UUID, try to resolve it
-		if strings.Contains(tab.ID, "/") || !isUUID(tab.ID) {
-			// Try to load it via the Store to find its real UUID
-			// 1. Try Library
-			if st, err := s.Store.Load(Library, tab.ID); err == nil {
-				if ms, ok := st.(store.MetaStorable); ok {
-					if uuid := ms.Meta()["uuid"]; uuid != "" {
-						session.Tabs[i].ID = uuid
-						changed = true
-						continue
-					}
-				}
-			}
-			// 2. Try WorkingCopy
-			if st, err := s.Store.Load(WorkingCopy, tab.ID); err == nil {
-				if ms, ok := st.(store.MetaStorable); ok {
-					if uuid := ms.Meta()["uuid"]; uuid != "" {
-						session.Tabs[i].ID = uuid
-						changed = true
-						continue
-					}
-				}
-			}
-		}
-	}
-
-	if changed {
-		logger.Info("ServiceProvider: migrated session tab IDs to UUIDs")
-		_ = s.State.SaveSession(session)
-	}
 }
 
 func isUUID(s string) bool {

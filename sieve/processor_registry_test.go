@@ -9,6 +9,10 @@ type mockProcessor struct {
 	matchFn func([]PasteEntry) (bool, map[string]interface{})
 }
 
+func (p *mockProcessor) Mode() BlockMode {
+	return BlockModeBlock
+}
+
 func (p *mockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{"id": id, "status": BlockStatusPending}
 	for k, v := range overrides {
@@ -16,13 +20,13 @@ func (p *mockProcessor) InitAttrs(id string, overrides map[string]interface{}) m
 	}
 	return attrs
 }
-func (p *mockProcessor) PasteMatch(entries []PasteEntry) (bool, map[string]interface{}) {
+func (p *mockProcessor) PasteMatch(entries []PasteEntry, _ string, _ string) (bool, map[string]interface{}) {
 	return p.matchFn(entries)
 }
 func (p *mockProcessor) BuildContext(_ SieveBlock, _ ShadowDocument) string  { return "" }
-func (p *mockProcessor) RunJob(_ context.Context, _ string, _ *SieveBlock, _ BlockServices) error { return nil }
+func (p *mockProcessor) RunJob(_ context.Context, _ string, _ *SieveBlock, _ func(string, map[string]interface{})) error { return nil }
 func (p *mockProcessor) JobLabel(_ *SieveBlock) string { return "" }
-func (p *mockProcessor) OnChange(_ *SieveBlock, _ BlockServices)                  {}
+func (p *mockProcessor) OnChange(_ *SieveBlock) {}
 
 func resetRegistry() {
 	processorRegistry = map[string]BlockProcessor{}
@@ -66,7 +70,7 @@ func TestPasteMatchers_firstMatchWins(t *testing.T) {
 	registryMu.RUnlock()
 
 	for _, pm := range matchers {
-		ok, overrides := pm.Processor.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "target"}})
+		ok, overrides := pm.Processor.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "target"}}, "", "")
 		if ok {
 			if overrides["winner"] != "specific" {
 				t.Errorf("expected specific to win, got %v", overrides["winner"])

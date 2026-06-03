@@ -261,24 +261,15 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
       }
     }
 
-    var isRetryable = n.attrs.status !== 'PENDING' && n.attrs.status !== 'DISPATCHED'
-
     return [
-      { icon: IC.trash,        label: 'Delete',             action: del },
+      { icon: IC.trash,   label: 'Delete',   action: del },
       { type: 'divider' },
-      { icon: IC.sparkle,      label: 'Ask AI…',            action: function () {
+      { icon: IC.sparkle, label: 'Ask AI…',  action: function () {
         document.dispatchEvent(new CustomEvent('sieve:ai-ask', { detail: { precomputedCtx: codeCtx() } }))
       }},
-      { icon: IC.info,         label: 'Explain',            action: function () {
+      { icon: IC.info,    label: 'Explain',  action: function () {
         document.dispatchEvent(new CustomEvent('sieve:ai-explain', { detail: { precomputedCtx: codeCtx() } }))
       }},
-      { type: 'divider' },
-      { icon: IC.refresh,      label: isRetryable ? 'Replay' : 'Retry',
-        disabled: !n.attrs.source,
-        action: function () {
-          document.dispatchEvent(new CustomEvent('sieve:block-retry', { detail: { id: n.attrs.id } }))
-        },
-      },
     ]
   }
 

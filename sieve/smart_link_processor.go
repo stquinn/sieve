@@ -8,9 +8,11 @@ import (
 )
 
 // SmartLinkProcessor handles the 'smart-link' block kind.
-// Pasting a bare URL (http:// or https://) creates this block. RunJob uses
-// LinkPreviewService to fetch the page title — no AI service is involved.
-type SmartLinkProcessor struct{}
+type SmartLinkProcessor struct{ svc BlockServices }
+
+func NewSmartLinkProcessor(svc BlockServices) *SmartLinkProcessor {
+	return &SmartLinkProcessor{svc: svc}
+}
 
 func (p *SmartLinkProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
@@ -36,10 +38,7 @@ func (p *SmartLinkProcessor) InitAttrs(id string, overrides map[string]interface
 	return attrs
 }
 
-// PasteMatch returns true for a clipboard that contains a single bare URL
-// (http:// or https://) and nothing else. Multi-line pastes and prose text
-// are not matched so that paragraph text containing a URL is not swallowed.
-func (p *SmartLinkProcessor) PasteMatch(entries []PasteEntry) (bool, map[string]interface{}) {
+func (p *SmartLinkProcessor) PasteMatch(entries []PasteEntry, _ string, _ string) (bool, map[string]interface{}) {
 	var content string
 	for _, e := range entries {
 		if e.MIMEType == "text/plain" {
@@ -60,7 +59,7 @@ func (p *SmartLinkProcessor) PasteMatch(entries []PasteEntry) (bool, map[string]
 	return true, map[string]interface{}{"href": trimmed, "label": trimmed}
 }
 
-func (p *SmartLinkProcessor) OnChange(block *SieveBlock, _ BlockServices) {}
+func (p *SmartLinkProcessor) OnChange(_ *SieveBlock) {}
 
 func (p *SmartLinkProcessor) Mode() BlockMode {
 	return BlockModeInline
@@ -84,7 +83,7 @@ func (p *SmartLinkProcessor) JobLabel(block *SieveBlock) string {
 	return "Fetching " + host
 }
 
-func (p *SmartLinkProcessor) RunJob(ctx context.Context, uuid string, block *SieveBlock, svc BlockServices) error {
+func (p *SmartLinkProcessor) RunJob(ctx context.Context, uuid string, block *SieveBlock, _ func(string, map[string]interface{})) error {
 	href, _ := block.Attrs["href"].(string)
 	now := time.Now().UTC().Format(time.RFC3339)
 
@@ -94,7 +93,7 @@ func (p *SmartLinkProcessor) RunJob(ctx context.Context, uuid string, block *Sie
 		return nil
 	}
 
-	title := svc.LinkPreview.FetchTitle(href)
+	title := p.svc.LinkPreview.FetchTitle(href)
 	if title == "" {
 		title = href
 	}

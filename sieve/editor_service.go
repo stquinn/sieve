@@ -195,6 +195,10 @@ func (es *EditorService) notifyBlockUpdated(uuid string, block SieveBlock) {
 	}
 }
 
+// dispatchedStuckThreshold is how old a DISPATCHED block must be before it is
+// assumed stuck (server crash, OOM) and reset to PENDING on reconnect.
+const dispatchedStuckThreshold = 10 * time.Minute
+
 // Open loads a document from disk and creates an in-memory ShadowDocument.
 // notifySaved is called (if non-nil) after each successful debounce flush so the
 // WebSocket connection can send a flush-ack to the client.
@@ -214,8 +218,43 @@ func (es *EditorService) Open(uuid string, notifySaved func()) error {
 	es.mu.Lock()
 	es.shadows[uuid] = shadow
 	es.mu.Unlock()
+
+	// Reset any DISPATCHED blocks that pre-date this session — they are stuck
+	// (server crash or restart). Re-queue them so they run again on reconnect.
+	es.resetStuckDispatched(uuid, shadow)
+
 	logger.Info("editor: open", "uuid", uuid, "body_bytes", len(doc.Body()))
 	return nil
+}
+
+// resetStuckDispatched finds DISPATCHED blocks older than dispatchedStuckThreshold
+// and resets them to PENDING so DispatchJobIfNeeded will re-run their jobs.
+func (es *EditorService) resetStuckDispatched(uuid string, shadow *ShadowDocument) {
+	shadow.mu.Lock()
+	var stuck []string
+	for id, blk := range shadow.Blocks {
+		if status, _ := blk.Attrs["status"].(string); status != BlockStatusDispatched {
+			continue
+		}
+		createdAt, _ := blk.Attrs["createdAt"].(string)
+		if createdAt == "" {
+			blk.Attrs["status"] = BlockStatusPending
+			stuck = append(stuck, id)
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
+			if time.Since(t) > dispatchedStuckThreshold {
+				blk.Attrs["status"] = BlockStatusPending
+				stuck = append(stuck, id)
+			}
+		}
+	}
+	shadow.mu.Unlock()
+
+	for _, id := range stuck {
+		logger.Info("editor: resetting stuck DISPATCHED block", "uuid", uuid, "block", id)
+		es.DispatchJobIfNeeded(uuid, id)
+	}
 }
 
 // Close atomically removes the shadow and flushes it. Capturing the pointer
@@ -346,11 +385,15 @@ func (es *EditorService) SetServices(svc BlockServices) {
 	es.services = svc
 }
 
-// CreateBlock is the canonical block creation path. It initialises a new block
-// via the registered processor's InitAttrs, registers it in the shadow, and
-// returns the serialised rawYaml for the JS to insert as a sieveBlock node.
-// overrides may be nil for a zero-state block (UI command, keyboard shortcut).
+// CreateBlock is the canonical block creation path for UI-triggered creation
+// (keyboard shortcut, toolbar button). Generates a fresh block ID.
 func (es *EditorService) CreateBlock(uuid, kind string, overrides map[string]interface{}) (id string, rawYaml string, err error) {
+	return es.createBlockWithID(uuid, kind, GenerateBlockIDFor(kind), overrides)
+}
+
+// createBlockWithID creates a block using a caller-supplied ID. Used by
+// HandlePaste so the pre-generated ID (passed to PasteMatch) is reused.
+func (es *EditorService) createBlockWithID(uuid, kind, blockID string, overrides map[string]interface{}) (id string, rawYaml string, err error) {
 	defer func() {
 		if err == nil {
 			es.DispatchJobIfNeeded(uuid, id)
@@ -367,7 +410,7 @@ func (es *EditorService) CreateBlock(uuid, kind string, overrides map[string]int
 	if processor == nil {
 		return "", "", fmt.Errorf("no processor registered for kind %q", kind)
 	}
-	id = GenerateBlockID(kind)
+	id = blockID
 	attrs := processor.InitAttrs(id, overrides)
 	sieveBlock := SieveBlock{ID: id, Kind: kind, Attrs: attrs}
 	es.UpdateBlock(uuid, sieveBlock)
@@ -394,15 +437,16 @@ func (es *EditorService) HandlePaste(uuid string, entries []PasteEntry) (kind, i
 	registryMu.RUnlock()
 
 	for _, pm := range matchers {
-		ok, overrides := pm.Processor.PasteMatch(entries)
+		blockID := GenerateBlockIDFor(pm.Kind)
+		ok, overrides := pm.Processor.PasteMatch(entries, uuid, blockID)
 		if !ok {
 			continue
 		}
-		blockID, raw, err := es.CreateBlock(uuid, pm.Kind, overrides)
+		id, raw, err := es.createBlockWithID(uuid, pm.Kind, blockID, overrides)
 		if err != nil {
 			return "", "", "", false
 		}
-		return pm.Kind, blockID, raw, true
+		return pm.Kind, id, raw, true
 	}
 	return "", "", "", false
 }
@@ -450,7 +494,7 @@ func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map
 	}
 	shadow.mu.Unlock()
 
-	processor.OnChange(blkCopy, es.services)
+	processor.OnChange(blkCopy)
 
 	// Compute which attrs OnChange changed and merge only those back.
 	attrsChanged := make(map[string]interface{})
@@ -568,7 +612,27 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 		defer es.services.Jobs.End(blockID)
 	}
 
-	if err := processor.RunJob(ctx, uuid, blkCopy, es.services); err != nil {
+	// notify lets the processor push intermediate attr updates mid-job
+	// (e.g. push src immediately after saving, before slow AI describe).
+	notify := func(bID string, partialAttrs map[string]interface{}) {
+		shadow.setBlock(SieveBlock{ID: bID, Kind: kind, Attrs: partialAttrs})
+		_ = es.flushShadow(shadow, "job-progress")
+		shadow.mu.Lock()
+		blkMid, okMid := shadow.Blocks[bID]
+		var midAttrs map[string]interface{}
+		if okMid {
+			midAttrs = make(map[string]interface{}, len(blkMid.Attrs))
+			for k, v := range blkMid.Attrs {
+				midAttrs[k] = v
+			}
+		}
+		shadow.mu.Unlock()
+		if okMid {
+			es.notifyBlockUpdated(uuid, SieveBlock{ID: bID, Kind: kind, Attrs: midAttrs})
+		}
+	}
+
+	if err := processor.RunJob(ctx, uuid, blkCopy, notify); err != nil {
 		shadow.setBlock(SieveBlock{ID: blockID, Kind: kind, Attrs: map[string]interface{}{"status": BlockStatusError}})
 	} else {
 		// Dynamically determine what attributes the job updated.

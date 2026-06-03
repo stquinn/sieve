@@ -190,23 +190,30 @@ func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string
 	if err != nil {
 		return ImageDesc{}, err
 	}
-	var asset store.AssetStorable
+	docDir := filepath.Join(s.storePath, doc.Storable().ExternalRef())
+
+	var imagePath string
 	for _, assetItr := range doc.Storable().Owns() {
 		as, ok := assetItr.(store.AssetStorable)
 		if ok && as.BlkID() == blkId {
-			asset = as
+			imagePath = filepath.Join(docDir, as.Key())
 			break
 		}
 	}
-	if asset == nil {
-		return ImageDesc{}, err
+	if imagePath == "" {
+		// Asset attachment may have been overwritten by a later flush.
+		// Fall back to constructing the path from storeRelPath (= asset.ExternalRef()).
+		candidate := filepath.Join(docDir, storeRelPath)
+		if _, statErr := os.Stat(candidate); statErr != nil {
+			logger.Warn("DescribeImage: asset not found", "blkId", blkId, "src", storeRelPath, "candidate", candidate)
+			return ImageDesc{}, fmt.Errorf("image file not found for block %s", blkId)
+		}
+		logger.Info("DescribeImage: asset attachment missing, using path fallback", "path", candidate)
+		imagePath = candidate
 	}
+
 	prompt, _ := s.prompts.GetPromptContent("image")
-	imagePath := filepath.Join(s.storePath, doc.Storable().ExternalRef(), asset.Key())
-	logger.Info("About to Doc ExtRef " + doc.Storable().ExternalRef())
-	logger.Info("About to Asset Key " + asset.Key())
-	logger.Info("About to Asset ExtRef " + asset.ExternalRef())
-	logger.Info("About to Describe " + imagePath)
+	logger.Info("About to Describe", "path", imagePath)
 	data, err := os.ReadFile(imagePath)
 	if err == nil {
 		if strings.Contains(string(data), "<svg") || strings.Contains(string(data), "<SVG") || strings.Contains(string(data), "<?xml") {

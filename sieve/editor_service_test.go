@@ -88,9 +88,13 @@ func TestShadowDocument_setBlockCreatesEntry(t *testing.T) {
 		Blocks: make(map[string]*SieveBlock),
 	}
 
-	shadow.setBlock("code", "cb-0001", map[string]interface{}{
-		"id":     "cb-0001",
-		"source": "fmt.Println()",
+	shadow.setBlock(SieveBlock{
+		Kind:  "code",
+		ID:    "cb-0001",
+		Attrs: map[string]interface{}{
+			"id":     "cb-0001",
+			"source": "fmt.Println()",
+		},
 	})
 
 	blk, ok := shadow.Blocks["cb-0001"]
@@ -119,9 +123,13 @@ func TestShadowDocument_setBlockMergesAttrs(t *testing.T) {
 		},
 	}
 
-	shadow.setBlock("code", "cb-0001", map[string]interface{}{
-		"language": "python",
-		"status":   "COMPLETE",
+	shadow.setBlock(SieveBlock{
+		Kind:  "code",
+		ID:    "cb-0001",
+		Attrs: map[string]interface{}{
+			"language": "python",
+			"status":   "COMPLETE",
+		},
 	})
 
 	blk := shadow.Blocks["cb-0001"]
@@ -155,10 +163,14 @@ func TestEditorService_FlushWritesToDisk(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	es.UpdateMarkdown(uuid, "# Hello\n\n```ai-block\nid: ab-1234\nresponse: original\nstatus: COMPLETE\n```")
-	es.UpdateBlock(uuid, "ai-block", "ab-1234", map[string]interface{}{
-		"id":       "ab-1234",
-		"response": "updated by user",
-		"status":   "COMPLETE",
+	es.UpdateBlock(uuid, SieveBlock{
+		Kind:  "ai-block",
+		ID:    "ab-1234",
+		Attrs: map[string]interface{}{
+			"id":       "ab-1234",
+			"response": "updated by user",
+			"status":   "COMPLETE",
+		},
 	})
 
 	if err := es.Flush(uuid); err != nil {
@@ -185,10 +197,14 @@ func TestEditorService_EnterMarkdownEmbedsBlocks(t *testing.T) {
 
 	_ = es.Open(uuid, nil)
 	es.UpdateMarkdown(uuid, "# Doc\n\n```code\nid: cb-0001\nsource: old\nstatus: COMPLETE\n```")
-	es.UpdateBlock(uuid, "code", "cb-0001", map[string]interface{}{
-		"id":     "cb-0001",
-		"source": "updated source",
-		"status": "COMPLETE",
+	es.UpdateBlock(uuid, SieveBlock{
+		Kind:  "code",
+		ID:    "cb-0001",
+		Attrs: map[string]interface{}{
+			"id":     "cb-0001",
+			"source": "updated source",
+			"status": "COMPLETE",
+		},
 	})
 
 	seed := es.EnterMarkdown(uuid)
@@ -277,7 +293,7 @@ func TestEditorService_UpdateMarkdown_NoShadowIsNoop(t *testing.T) {
 func TestEditorService_UpdateBlock_NoShadowIsNoop(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, time.Second)
-	es.UpdateBlock("nonexistent-uuid", "ai-block", "ab-0001", map[string]interface{}{"id": "ab-0001"})
+	es.UpdateBlock("nonexistent-uuid", SieveBlock{Kind: "ai-block", ID: "ab-0001", Attrs: map[string]interface{}{"id": "ab-0001"}})
 }
 
 func TestEditorService_EnterMarkdown_NoShadowReturnsEmpty(t *testing.T) {
@@ -339,9 +355,12 @@ func TestEditorService_EnterWysiwygReparsesBlocks(t *testing.T) {
 
 	es.EnterWysiwyg(uuid)
 
-	// Now UpdateBlock should merge into the re-parsed block
-	es.UpdateBlock(uuid, "code", "cb-0001", map[string]interface{}{
-		"language": "go",
+	es.UpdateBlock(uuid, SieveBlock{
+		Kind:  "code",
+		ID:    "cb-0001",
+		Attrs: map[string]interface{}{
+			"language": "go",
+		},
 	})
 
 	if err := es.Flush(uuid); err != nil {
@@ -476,18 +495,18 @@ func TestEditorService_HandlePaste_noMatch(t *testing.T) {
 
 type mockLifecycleListener struct {
 	onCreated func(uuid, kind, blockID, rawYaml string)
-	onUpdated func(uuid, blockID, rawYaml string)
+	onUpdated func(uuid, blockID string, attrs map[string]interface{}, rawYaml string)
 }
 
-func (l *mockLifecycleListener) OnBlockCreated(uuid, kind, blockID, rawYaml string) {
+func (l *mockLifecycleListener) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, rawYaml string) {
 	if l.onCreated != nil {
 		l.onCreated(uuid, kind, blockID, rawYaml)
 	}
 }
 
-func (l *mockLifecycleListener) OnBlockUpdated(uuid, blockID, rawYaml string) {
+func (l *mockLifecycleListener) OnBlockUpdated(uuid, blockID string, attrs map[string]interface{}, rawYaml string) {
 	if l.onUpdated != nil {
-		l.onUpdated(uuid, blockID, rawYaml)
+		l.onUpdated(uuid, blockID, attrs, rawYaml)
 	}
 }
 
@@ -503,7 +522,7 @@ func TestHandleBlockUpdate_notifySendsSnapshotUnderLock(t *testing.T) {
 	notifyCalled := make(chan struct{}, 1)
 
 	listener := &mockLifecycleListener{
-		onUpdated: func(uuid, blockID, rawYaml string) {
+		onUpdated: func(uuid, blockID string, attrs map[string]interface{}, rawYaml string) {
 			if strings.Contains(rawYaml, "language:") {
 				notifyID = blockID
 				notifyYaml = rawYaml
@@ -576,9 +595,10 @@ func TestHandleBlockUpdate_notifySendsSnapshotUnderLock(t *testing.T) {
 }
 
 type testRunJobProcessor struct {
-	runJob func(ctx context.Context, uuid string, block *SieveBlock, svc BlockServices) error
+	runJob func(ctx context.Context, uuid string, block *SieveBlock) error
 }
 
+func (p *testRunJobProcessor) Mode() BlockMode { return BlockModeBlock }
 func (p *testRunJobProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{"id": id, "status": BlockStatusPending}
 	for k, v := range overrides {
@@ -586,14 +606,14 @@ func (p *testRunJobProcessor) InitAttrs(id string, overrides map[string]interfac
 	}
 	return attrs
 }
-func (p *testRunJobProcessor) PasteMatch(entries []PasteEntry) (bool, map[string]interface{}) {
+func (p *testRunJobProcessor) PasteMatch(entries []PasteEntry, _ string, _ string) (bool, map[string]interface{}) {
 	return false, nil
 }
 func (p *testRunJobProcessor) BuildContext(_ SieveBlock, _ ShadowDocument) string  { return "" }
-func (p *testRunJobProcessor) OnChange(_ *SieveBlock, _ BlockServices)                  {}
-func (p *testRunJobProcessor) RunJob(ctx context.Context, uuid string, block *SieveBlock, svc BlockServices) error {
+func (p *testRunJobProcessor) OnChange(_ *SieveBlock) {}
+func (p *testRunJobProcessor) RunJob(ctx context.Context, uuid string, block *SieveBlock, _ func(string, map[string]interface{})) error {
 	if p.runJob != nil {
-		return p.runJob(ctx, uuid, block, svc)
+		return p.runJob(ctx, uuid, block)
 	}
 	return nil
 }
@@ -622,7 +642,7 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 
 	// Register a mock processor
 	proc := &testRunJobProcessor{
-		runJob: func(ctx context.Context, uuid string, block *SieveBlock, svc BlockServices) error {
+		runJob: func(ctx context.Context, uuid string, block *SieveBlock) error {
 			// Simulate job modifying attrs
 			block.Attrs["language"] = "go"            // modified
 			block.Attrs["added_key"] = "new value"    // added

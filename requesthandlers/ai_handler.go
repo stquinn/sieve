@@ -43,7 +43,6 @@ func (h *AiHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/ai/ask", h.handleAiAsk)
 	r.Post("/api/ai/explain", h.handleAiExplain)
 	r.Post("/api/ai/refine-language", h.handleRefineLanguage)
-	r.Post("/api/ai/describe-image", h.handleDescribeImage)
 	r.Get("/api/ai/active-jobs", func(w http.ResponseWriter, r *http.Request) {
 		if h.JobTracker != nil {
 			h.JobTracker.ServeActiveJobs(w, r)
@@ -331,27 +330,6 @@ func (h *AiHandler) handleRefineLanguage(w http.ResponseWriter, r *http.Request)
 	}
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write([]byte(lang))
-}
-
-type describeImageRequest struct {
-	UUID string `json:"uuid"`
-	Path string `json:"path"`
-	ID   string `json:"id"`
-}
-
-func (h *AiHandler) handleDescribeImage(w http.ResponseWriter, r *http.Request) {
-	var req describeImageRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	desc, err := h.ServiceProvider.AI.DescribeImage(req.UUID, req.Path, req.ID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(desc)
 }
 
 

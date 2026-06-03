@@ -101,7 +101,6 @@
         T.TableRow,
         T.TableHeader,
         T.TableCell,
-        T.ImageWithAttrs,
         T.Search,
         T.AiBlock,
         T.AiBlockLegacy,
@@ -139,6 +138,7 @@
           },
         },
         handlePaste: function (_view, event) { return handleSmartPaste(event) },
+        handleDrop: function (_view, event, slice, moved) { return handleSmartDrop(event) },
         handleKeyDown: function (view, event) {
           if (event.key === 's' && window.isMod(event)) {
             event.preventDefault()
@@ -181,12 +181,6 @@
     })
 
     currentEditor = editor
-
-    if (blobInterceptorCleanup) {
-      blobInterceptorCleanup()
-      blobInterceptorCleanup = null
-    }
-    blobInterceptorCleanup = initBlobInterceptor(editor, uuid)
   }
 
   // ── Markdown mode ─────────────────────────────────────────────────────────────
@@ -964,252 +958,136 @@
       }
     }
 
-    // ── 2. Image paste (JS-owned) ────────────────────────────────────────────────
-    // Requires browser FileReader + blob → asset upload. Cannot go through Go WS.
-    var imageFile = files.find(function (f) { return f.type.startsWith('image/') })
-    var imgSrc = null
-    if (!imageFile && html) {
-      var div = document.createElement('div')
-      div.innerHTML = html
-      var imgs = div.querySelectorAll('img')
-      if (imgs.length === 1 && imgs[0].src) imgSrc = imgs[0].src
-    }
-
-    if (imageFile || imgSrc) {
-      event.preventDefault()
-
-      function processAsset(asset, blkId) {
-        if (!asset || !asset.externalRef) return
-        var mdPath = asset.externalRef
-        currentEditor.commands.insertContent({
-          type: 'image',
-          attrs: { src: mdPath, id: blkId, detect: 'pending' }
-        })
-        fetch('/api/ai/describe-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ uuid: window.__stashActiveTabUuid, path: mdPath, id: blkId })
-        }).then(function(r) { return r.ok ? r.json() : null })
-          .then(function(desc) {
-            if (!desc) return
-            currentEditor.commands.command(function(commandProps) {
-              var tr = commandProps.tr
-              var state = commandProps.state
-              var found = false
-              state.doc.descendants(function(node, pos) {
-                if (node.type.name === 'image' && node.attrs.id === blkId) {
-                  found = true
-                  tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, {
-                    alt: desc.alt || '',
-                    summary: desc.summary || '',
-                    detect: desc.detect || 'ai'
-                  }))
-                  return false
-                }
-              })
-              if (found) {
-                currentEditor.view.dispatch(tr)
-                var md = currentEditor.storage.markdown.getMarkdown() || ''
-                lastSyncedBody = md
-                wsSend({ type: 'doc-update', uuid: currentUuid, markdown: md })
-                document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
-              }
-              return found
-            })
-          }).catch(function(err) {
-            console.error('[editor.js] DescribeImage failed', err)
-          })
-      }
-
-      if (imageFile) {
-        var reader = new FileReader()
-        reader.onload = function (e) {
-          var dataUrl = e.target.result
-          var id = 'blk-' + Math.random().toString(16).substring(2, 6)
-          fetch('/api/asset/save', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uuid: currentUuid, id: id, dataUrl: dataUrl }),
-          }).then(function (r) { return r.json() })
-            .then(function (asset) { processAsset(asset, id) })
-            .catch(function () {
-              currentEditor.commands.insertContent({ type: 'image', attrs: { src: dataUrl } })
-            })
-        }
-        reader.readAsDataURL(imageFile)
-        return true
-      }
-
-      if (imgSrc) {
-        var id = 'blk-' + Math.random().toString(16).substring(2, 6)
-        if (imgSrc.startsWith('data:')) {
-          fetch('/api/asset/save', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uuid: currentUuid, id: id, dataUrl: imgSrc }),
-          }).then(function (r) { return r.json() })
-            .then(function (asset) { processAsset(asset, id) })
-            .catch(function() {
-              currentEditor.commands.insertContent({ type: 'image', attrs: { src: imgSrc } })
-            })
-        } else {
-          fetch('/api/asset/save-url', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uuid: currentUuid, url: imgSrc, id: id }),
-          }).then(function(r) { return r.ok ? r.json() : null })
-            .then(function(asset) {
-              if (asset) { processAsset(asset, id) }
-              else { currentEditor.commands.insertContent({ type: 'image', attrs: { src: imgSrc } }) }
-            }).catch(function(err) {
-              console.error('[editor.js] DownloadAsset failed', err)
-              currentEditor.commands.insertContent({ type: 'image', attrs: { src: imgSrc } })
-            })
-        }
-        return true
-      }
-    }
-
-    // ── 3. Smart-paste pipeline ──────────────────────────────────────────────────
-    // Collect all clipboard entries synchronously before any async gap.
-    // event.preventDefault() is called immediately; on no-match the original
-    // clipboard content is replayed to TipTap via insertContent.
-    if (text && currentUuid && !currentUuid.startsWith('prompt:')) {
+    // ── 2. Smart-paste pipeline (including images) ────────────────────────────────
+    // Collect all clipboard entries. For files, we use FileReader to get base64.
+    if (currentUuid && !currentUuid.startsWith('prompt:')) {
       var pasteEntries = []
-      var pasteHtml = ''
-      if (event.clipboardData) {
-        pasteHtml = event.clipboardData.getData('text/html')
-        Array.from(event.clipboardData.types || []).forEach(function (mimeType) {
-          pasteEntries.push({ mimeType: mimeType, content: event.clipboardData.getData(mimeType) })
-        })
-      }
-      sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
-      event.preventDefault()
+      var hasFiles = false
 
-      fetch('/api/editor/smart-paste', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uuid: currentUuid, entries: pasteEntries }),
-      })
-        .then(function (r) { return r.json() })
-        .then(function (result) {
-          if (!currentEditor) return
-          if (result.matched) {
-            // Handled entirely via WebSocket push. Nothing to insert here.
-          } else {
-            // No processor matched — clear the stashed insert position and replay original clipboard content.
-            sieveInsertPos = null
-            if (pasteHtml) {
-              currentEditor.commands.insertContent(pasteHtml)
-            } else {
-              currentEditor.commands.insertContent(text)
+      if (event.clipboardData && event.clipboardData.items) {
+        var promises = []
+        Array.from(event.clipboardData.items).forEach(function(item) {
+          if (item.kind === 'file') {
+            var file = item.getAsFile()
+            if (file) {
+              hasFiles = true
+              promises.push(new Promise(function(resolve) {
+                var reader = new FileReader()
+                reader.onload = function(e) {
+                  resolve({ mimeType: file.type, content: e.target.result })
+                }
+                reader.onerror = function() { resolve(null) }
+                reader.readAsDataURL(file)
+              }))
             }
+          } else if (item.kind === 'string') {
+            promises.push(new Promise(function(resolve) {
+              item.getAsString(function(str) {
+                resolve({ mimeType: item.type, content: str })
+              })
+            }))
           }
         })
-        .catch(function (err) {
-          console.error('[editor.js] smart-paste fetch failed', err)
-          sieveInsertPos = null
-          if (currentEditor) currentEditor.commands.insertContent(text)
-        })
 
-      return true
+        sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
+        event.preventDefault()
+
+        Promise.all(promises).then(function(results) {
+          var validEntries = results.filter(function(r) { return r !== null })
+          fetch('/api/editor/smart-paste', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uuid: currentUuid, entries: validEntries }),
+          })
+            .then(function (r) { return r.json() })
+            .then(function (result) {
+              if (!currentEditor) return
+              if (result.matched) {
+                // Handled entirely via WebSocket push. Nothing to insert here.
+              } else {
+                // No processor matched — clear the stashed insert position and replay original clipboard content.
+                sieveInsertPos = null
+                if (html) {
+                  currentEditor.commands.insertContent(html)
+                } else if (text) {
+                  currentEditor.commands.insertContent(text)
+                }
+              }
+            })
+            .catch(function (err) {
+              console.error('[editor.js] smart-paste fetch failed', err)
+              sieveInsertPos = null
+              if (currentEditor) currentEditor.commands.insertContent(text)
+            })
+        })
+        return true
+      }
     }
 
     return false
   }
 
-  function initBlobInterceptor(editor, uuid) {
-    var editorEl = editor.view.dom
-    if (!editorEl) return function() {}
+  function handleSmartDrop(event) {
+    if (!event.dataTransfer || !currentEditor) return false
 
-    function processImg(img) {
-      var blobSrc = img.getAttribute('src') || ''
-      if (!blobSrc.startsWith('blob:') && !blobSrc.startsWith('data:')) return
-      if (img.__stashProcessing) return
-      img.__stashProcessing = true
-
-      var canvas = document.createElement('canvas')
-      var image = new Image()
-      image.onload = function() {
-        canvas.width = image.naturalWidth
-        canvas.height = image.naturalHeight
-        var ctx = canvas.getContext('2d')
-        if (!ctx) return
-        ctx.drawImage(image, 0, 0)
-        canvas.toBlob(function(blob) {
-          if (!blob) return
-          var reader = new FileReader()
-          reader.onload = function(e) {
-            var dataUrl = e.target.result
-            var id = 'blk-' + Math.random().toString(16).substring(2, 6)
-            
-            fetch('/api/asset/save', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ uuid: currentUuid, id: id, dataUrl: dataUrl }),
-            }).then(function (r) { return r.json() })
-              .then(function (asset) {
-                var mdSrc = asset.externalRef
-                editor.chain()
-                  .command(function(props) {
-                    var tr = props.tr
-                    var state = props.state
-                    state.doc.descendants(function(node, pos) {
-                      if (node.type.name === 'image' && (node.attrs.src === blobSrc || node.attrs.src === img.src)) {
-                        tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, { src: mdSrc, id: id, detect: 'pending' }))
-                      }
-                    })
-                    return true
-                  })
-                  .run()
-
-                fetch('/api/ai/describe-image', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ uuid: window.__stashActiveTabUuid, path: mdSrc, id: id })
-                }).then(function(r) { return r.ok ? r.json() : null })
-                  .then(function(desc) {
-                    if (!desc || !editor) return
-                    editor.commands.command(function(props) {
-                      var tr = props.tr
-                      var state = props.state
-                      var found = false
-                      state.doc.descendants(function(node, pos) {
-                        if (node.type.name === 'image' && node.attrs.id === id) {
-                          found = true
-                          if (node.attrs.detect !== 'user') {
-                            tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { alt: desc.alt, summary: desc.summary, detect: 'ai' }))
-                          }
-                          return false
-                        }
-                      })
-                      return found
-                    })
-                  }).catch(function(err) { console.error('[editor.js] DescribeImage failed', err) })
-              }).catch(function(err) { console.error('[editor.js] blob paste save failed', err) })
+    if (currentUuid && !currentUuid.startsWith('prompt:')) {
+      var promises = []
+      var hasFiles = false
+      if (event.dataTransfer.items) {
+        Array.from(event.dataTransfer.items).forEach(function(item) {
+          if (item.kind === 'file') {
+            var file = item.getAsFile()
+            if (file && file.type.startsWith('image/')) {
+              hasFiles = true
+              promises.push(new Promise(function(resolve) {
+                var reader = new FileReader()
+                reader.onload = function(e) {
+                  resolve({ mimeType: file.type, content: e.target.result })
+                }
+                reader.onerror = function() { resolve(null) }
+                reader.readAsDataURL(file)
+              }))
+            }
+          } else if (item.kind === 'string') {
+            promises.push(new Promise(function(resolve) {
+              item.getAsString(function(str) {
+                resolve({ mimeType: item.type, content: str })
+              })
+            }))
           }
-          reader.readAsDataURL(blob)
-        }, 'image/png')
+        })
       }
-      image.src = blobSrc
+
+      if (!hasFiles) return false
+
+      var pos = currentEditor.view.posAtCoords({ left: event.clientX, top: event.clientY })
+      var insertPos = pos ? pos.pos : currentEditor.state.selection.to
+      
+      event.preventDefault()
+
+      Promise.all(promises).then(function(results) {
+        var validEntries = results.filter(function(r) { return r !== null })
+        if (validEntries.length === 0) return
+        sieveInsertPos = insertPos
+        fetch('/api/editor/smart-paste', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uuid: currentUuid, entries: validEntries }),
+        })
+          .then(function (r) { return r.json() })
+          .then(function (result) {
+            if (!currentEditor) return
+            if (result.matched) {
+              // Handled entirely via WebSocket push. Nothing to insert here.
+            }
+          })
+          .catch(function (err) {
+            console.error('[editor.js] smart-drop fetch failed', err)
+          })
+      })
+      return true
     }
-
-    var observer = new MutationObserver(function(mutations) {
-      for (var i = 0; i < mutations.length; i++) {
-        var mutation = mutations[i]
-        for (var j = 0; j < mutation.addedNodes.length; j++) {
-          var node = mutation.addedNodes[j]
-          if (node.nodeName === 'IMG') processImg(node)
-          else if (node.querySelectorAll) {
-            var imgs = node.querySelectorAll('img')
-            for (var k = 0; k < imgs.length; k++) processImg(imgs[k])
-          }
-        }
-      }
-    })
-
-    observer.observe(editorEl, { childList: true, subtree: true })
-    return function() { observer.disconnect() }
+    return false
   }
 
   // ── Module-level editor commands (dispatched via sieve:* custom events) ─────

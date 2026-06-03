@@ -119,7 +119,7 @@
     var scanFrom = (from === to) ? Math.max(0, from - 1) : from
     var scanTo   = (from === to) ? Math.min(doc.content.size, to + 1) : to
     doc.nodesBetween(scanFrom, scanTo, function (node) {
-      if (!targetNode && (node.type.name === 'image' || node.type.name === 'codeBlock' || node.type.name === 'table')) {
+      if (!targetNode && (node.type.name === 'sieve-smart-image' || node.type.name === 'codeBlock' || node.type.name === 'table')) {
         targetNode = node
         return false
       }
@@ -205,50 +205,6 @@
     }})
 
     return items
-  }
-
-  // ── Image node ───────────────────────────────────────────────────────────────
-  function buildImageItems(ctx) {
-    var editor = ctx.editor, getPos = ctx.getPos, n = ctx.node
-
-    function md() {
-      var a = n.attrs
-      var text = '![' + (a.alt || '') + '](' + (a.src || '') + ')'
-      var extra = []
-      if (a.id) extra.push('id="' + a.id + '"')
-      if (a.width) extra.push('width="' + a.width + '"')
-      if (a.height) extra.push('height="' + a.height + '"')
-      if (a.summary) extra.push('summary="' + a.summary + '"')
-      if (a.detect) extra.push('detect="' + a.detect + '"')
-      if (extra.length) text += '{' + extra.join(' ') + '}'
-      return text
-    }
-
-    function del() {
-      if (typeof getPos === 'function') {
-        var pos = getPos()
-        editor.view.dispatch(editor.state.tr.delete(pos, pos + n.nodeSize))
-      }
-    }
-
-    return [
-      { icon: IC.copy, label: 'Copy', action: function () {
-        navigator.clipboard.writeText(md()).catch(console.error)
-      }},
-      { icon: IC.cut, label: 'Cut', action: function () {
-        navigator.clipboard.writeText(md()).then(del).catch(console.error)
-      }},
-      { icon: IC.trash, label: 'Delete', action: del },
-      { type: 'divider' },
-      { icon: IC.sparkle, label: 'Ask AI...', action: function () {
-        editor.commands.focus()
-        document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
-      }},
-      { icon: IC.info, label: 'Explain', action: function () {
-        editor.commands.focus()
-        document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
-      }},
-    ]
   }
 
   // ── AI Block node ────────────────────────────────────────────────────────────

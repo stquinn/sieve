@@ -11,7 +11,7 @@ import (
 // ── InitAttrs ────────────────────────────────────────────────────────────────
 
 func TestCodeBlockProcessor_InitAttrs_zeroState(t *testing.T) {
-	p := &CodeBlockProcessor{}
+	p := NewCodeBlockProcessor(BlockServices{})
 	attrs := p.InitAttrs("co-0001", nil)
 	if attrs["id"] != "co-0001" {
 		t.Errorf("expected id=co-0001, got %v", attrs["id"])
@@ -32,7 +32,7 @@ func TestCodeBlockProcessor_InitAttrs_zeroState(t *testing.T) {
 }
 
 func TestCodeBlockProcessor_InitAttrs_heuristicsApplied(t *testing.T) {
-	p := &CodeBlockProcessor{}
+	p := NewCodeBlockProcessor(BlockServices{})
 	// InitAttrs must run heuristics synchronously so the user sees a language
 	// badge immediately, before RunJob (AI) completes.
 	attrs := p.InitAttrs("co-0002", map[string]interface{}{
@@ -51,7 +51,7 @@ func TestCodeBlockProcessor_InitAttrs_heuristicsApplied(t *testing.T) {
 }
 
 func TestCodeBlockProcessor_InitAttrs_withOverrides(t *testing.T) {
-	p := &CodeBlockProcessor{}
+	p := NewCodeBlockProcessor(BlockServices{})
 	attrs := p.InitAttrs("co-0003", map[string]interface{}{
 		"source": "print('hello')",
 		"hint":   "python",
@@ -76,8 +76,8 @@ func TestCodeBlockProcessor_InitAttrs_withOverrides(t *testing.T) {
 // ── PasteMatch ───────────────────────────────────────────────────────────────
 
 func TestCodeBlockProcessor_PasteMatch_withLanguage(t *testing.T) {
-	p := &CodeBlockProcessor{}
-	matched, overrides := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\nprint('world')\n```"}})
+	p := NewCodeBlockProcessor(BlockServices{})
+	matched, overrides := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\nprint('world')\n```"}}, "", "")
 	if !matched {
 		t.Fatal("expected match for bare code fence")
 	}
@@ -97,8 +97,8 @@ func TestCodeBlockProcessor_PasteMatch_withLanguage(t *testing.T) {
 }
 
 func TestCodeBlockProcessor_PasteMatch_noLanguage(t *testing.T) {
-	p := &CodeBlockProcessor{}
-	matched, overrides := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "```\nsome code\n```"}})
+	p := NewCodeBlockProcessor(BlockServices{})
+	matched, overrides := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "```\nsome code\n```"}}, "", "")
 	if !matched {
 		t.Fatal("expected match for fence without language")
 	}
@@ -111,18 +111,18 @@ func TestCodeBlockProcessor_PasteMatch_noLanguage(t *testing.T) {
 }
 
 func TestCodeBlockProcessor_PasteMatch_noMatch(t *testing.T) {
-	p := &CodeBlockProcessor{}
-	if matched, _ := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "just plain text"}}); matched {
+	p := NewCodeBlockProcessor(BlockServices{})
+	if matched, _ := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "just plain text"}}, "", ""); matched {
 		t.Fatal("expected no match for plain text")
 	}
-	if matched, _ := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "`inline code`"}}); matched {
+	if matched, _ := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "`inline code`"}}, "", ""); matched {
 		t.Fatal("expected no match for inline code")
 	}
 }
 
 func TestCodeBlockProcessor_PasteMatch_multiline(t *testing.T) {
-	p := &CodeBlockProcessor{}
-	matched, overrides := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "```go\npackage main\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n```"}})
+	p := NewCodeBlockProcessor(BlockServices{})
+	matched, overrides := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "```go\npackage main\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n```"}}, "", "")
 	if !matched {
 		t.Fatal("expected match for multiline fence")
 	}
@@ -132,8 +132,8 @@ func TestCodeBlockProcessor_PasteMatch_multiline(t *testing.T) {
 }
 
 func TestCodeBlockProcessor_PasteMatch_noTextPlain(t *testing.T) {
-	p := &CodeBlockProcessor{}
-	matched, _ := p.PasteMatch([]PasteEntry{{MIMEType: "text/html", Content: "<b>hello</b>"}})
+	p := NewCodeBlockProcessor(BlockServices{})
+	matched, _ := p.PasteMatch([]PasteEntry{{MIMEType: "text/html", Content: "<b>hello</b>"}}, "", "")
 	if matched {
 		t.Fatal("expected no match when no text/plain entry is present")
 	}
@@ -176,7 +176,7 @@ func TestCodeBlockProcessor_RunJob_ai(t *testing.T) {
 		Assets:    assets,
 	}
 
-	p := &CodeBlockProcessor{}
+	p := NewCodeBlockProcessor(svc)
 	block := &SieveBlock{
 		ID:   "co-1234",
 		Kind: "code",
@@ -190,7 +190,7 @@ func TestCodeBlockProcessor_RunJob_ai(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := p.RunJob(ctx, "", block, svc); err != nil {
+	if err := p.RunJob(ctx, "", block, nil); err != nil {
 		t.Fatalf("RunJob failed: %v", err)
 	}
 
@@ -238,7 +238,7 @@ func TestCodeBlockProcessor_RunJob_aiFallback(t *testing.T) {
 		Assets:    assets,
 	}
 
-	p := &CodeBlockProcessor{}
+	p := NewCodeBlockProcessor(svc)
 	block := &SieveBlock{
 		ID:   "co-1234",
 		Kind: "code",
@@ -252,7 +252,7 @@ func TestCodeBlockProcessor_RunJob_aiFallback(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	err = p.RunJob(ctx, "", block, svc)
+	err = p.RunJob(ctx, "", block, nil)
 
 	// AI failure must surface as an error so EditorService can set status=ERROR.
 	if err == nil {
@@ -265,7 +265,7 @@ func TestCodeBlockProcessor_RunJob_aiFallback(t *testing.T) {
 }
 
 func TestCodeBlockProcessor_RunJob_returnsErrorOnAIFailure(t *testing.T) {
-	proc := &CodeBlockProcessor{}
+	proc := NewCodeBlockProcessor(BlockServices{})
 	block := &SieveBlock{
 		ID:   "co-test",
 		Kind: "code",
@@ -275,9 +275,9 @@ func TestCodeBlockProcessor_RunJob_returnsErrorOnAIFailure(t *testing.T) {
 			"status": BlockStatusPending,
 		},
 	}
-	// Pass nil AI service — this should cause RunJob to return an error
+	// nil AI service — this should cause RunJob to return an error
 	// rather than silently setting status=COMPLETE.
-	err := proc.RunJob(context.Background(), "", block, BlockServices{AI: nil})
+	err := proc.RunJob(context.Background(), "", block, nil)
 	if err == nil {
 		t.Error("expected RunJob to return an error when AI service is unavailable")
 	}
@@ -286,7 +286,7 @@ func TestCodeBlockProcessor_RunJob_returnsErrorOnAIFailure(t *testing.T) {
 // ── OnChange ─────────────────────────────────────────────────────────────────
 
 func TestOnChange_alwaysRunsHeuristicsWhenLanguageAlreadySet(t *testing.T) {
-	proc := &CodeBlockProcessor{}
+	proc := NewCodeBlockProcessor(BlockServices{})
 
 	block := &SieveBlock{
 		ID:   "co-0001",
@@ -299,7 +299,7 @@ func TestOnChange_alwaysRunsHeuristicsWhenLanguageAlreadySet(t *testing.T) {
 		},
 	}
 
-	proc.OnChange(block, BlockServices{})
+	proc.OnChange(block)
 
 	if status, _ := block.Attrs["status"].(string); status == BlockStatusPending {
 		t.Error("expected status not to be PENDING: heuristics should identify Go without AI")
@@ -310,7 +310,7 @@ func TestOnChange_alwaysRunsHeuristicsWhenLanguageAlreadySet(t *testing.T) {
 }
 
 func TestOnChange_doesNotScheduleAIWhenLanguageSetAndHeuristicsBlind(t *testing.T) {
-	proc := &CodeBlockProcessor{}
+	proc := NewCodeBlockProcessor(BlockServices{})
 
 	block := &SieveBlock{
 		ID:   "co-0002",
@@ -323,7 +323,7 @@ func TestOnChange_doesNotScheduleAIWhenLanguageSetAndHeuristicsBlind(t *testing.
 		},
 	}
 
-	proc.OnChange(block, BlockServices{})
+	proc.OnChange(block)
 
 	if status, _ := block.Attrs["status"].(string); status == BlockStatusPending {
 		t.Error("expected status not to be PENDING: AI result should be trusted when heuristics are silent")
@@ -334,7 +334,7 @@ func TestOnChange_doesNotScheduleAIWhenLanguageSetAndHeuristicsBlind(t *testing.
 }
 
 func TestOnChange_schedulesAIWhenNoLanguageAndHeuristicsBlind(t *testing.T) {
-	proc := &CodeBlockProcessor{}
+	proc := NewCodeBlockProcessor(BlockServices{})
 
 	block := &SieveBlock{
 		ID:   "co-0003",
@@ -347,7 +347,7 @@ func TestOnChange_schedulesAIWhenNoLanguageAndHeuristicsBlind(t *testing.T) {
 		},
 	}
 
-	proc.OnChange(block, BlockServices{})
+	proc.OnChange(block)
 
 	if status, _ := block.Attrs["status"].(string); status != BlockStatusPending {
 		t.Errorf("expected status to transition to PENDING, got %q", status)

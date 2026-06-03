@@ -148,199 +148,6 @@
     },
   })
 
-  
-
-
-  // ── ImageWithAttrs ─────────────────────────────────────────────────────────
-
-  var ImageWithAttrs = T.Image.extend({
-    addAttributes() {
-      return Object.assign({}, this.parent ? this.parent() : {}, {
-        id: {
-          default: null,
-          parseHTML: function (element) { return element.getAttribute('data-block-id') },
-          renderHTML: function (attrs) { return attrs.id ? { 'data-block-id': attrs.id } : {} },
-        },
-        detect: {
-          default: null,
-          parseHTML: function (element) { return element.getAttribute('data-detect') },
-          renderHTML: function (attrs) { return attrs.detect ? { 'data-detect': attrs.detect } : {} },
-        },
-        summary: {
-          default: null,
-          parseHTML: function (element) { return element.getAttribute('data-summary') },
-          renderHTML: function (attrs) { return attrs.summary ? { 'data-summary': attrs.summary } : {} },
-        },
-        width: {
-          default: null,
-          parseHTML: function (element) { return element.getAttribute('data-width') },
-          renderHTML: function (attrs) { return attrs.width ? { 'data-width': attrs.width } : {} },
-        },
-        height: {
-          default: null,
-          parseHTML: function (element) { return element.getAttribute('data-height') },
-          renderHTML: function (attrs) { return attrs.height ? { 'data-height': attrs.height } : {} },
-        },
-      })
-    },
-
-    addNodeView() {
-      return function ({ node, editor, getPos }) {
-        var currentNode = node
-        var wrapper = document.createElement('div')
-        wrapper.style.display = 'inline-block'
-
-        var img = document.createElement('img')
-        var resizer = document.createElement('div')
-        resizer.className = 'image-resizer'
-
-        function applyAttrs(n) {
-          var src = n.attrs.src, alt = n.attrs.alt, width = n.attrs.width
-          var height = n.attrs.height, summary = n.attrs.summary, id = n.attrs.id
-          var activeTabUuid = window.__stashActiveTabUuid || ''
-          wrapper.className = 'image-block node-image'
-          if (id) wrapper.setAttribute('data-block-id', id)
-          else wrapper.removeAttribute('data-block-id')
-          if (summary) wrapper.setAttribute('data-tooltip', summary)
-          else wrapper.removeAttribute('data-tooltip')
-          img.src = resolveDisplaySrc(src, activeTabUuid)
-          img.alt = alt || ''
-          img.style.maxWidth = '100%'
-          img.style.display = 'block'
-          img.style.width  = width  ? (width.match(/^[0-9]+$/)  ? width + 'px'  : width)  : ''
-          img.style.height = height ? (height.match(/^[0-9]+$/) ? height + 'px' : height) : ''
-        }
-
-        applyAttrs(node)
-
-        resizer.addEventListener('mousedown', function (e) {
-          e.preventDefault(); e.stopPropagation()
-          var startX = e.clientX, startW = img.clientWidth, startH = img.clientHeight
-          var ratio = startW / startH
-          function onMove(ev) {
-            var w = Math.max(40, startW + ev.clientX - startX)
-            var h = Math.round(w / ratio)
-            img.style.width = w + 'px'; img.style.height = h + 'px'
-            if (typeof getPos === 'function') {
-                var pos = getPos()
-                editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, { width: String(w), height: String(h) })))
-            }
-          }
-          function onUp() {
-            window.removeEventListener('mousemove', onMove)
-            window.removeEventListener('mouseup', onUp)
-            document.body.style.cursor = ''
-          }
-          document.body.style.cursor = 'nwse-resize'
-          window.addEventListener('mousemove', onMove)
-          window.addEventListener('mouseup', onUp)
-        })
-
-        wrapper.appendChild(img)
-        wrapper.appendChild(resizer)
-
-        wrapper.addEventListener('contextmenu', function (e) {
-          e.preventDefault()
-          e.stopPropagation()
-          if (typeof getPos === 'function') editor.commands.setNodeSelection(getPos())
-          document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
-            detail: { x: e.clientX, y: e.clientY, context: { type: 'image', editor: editor, getPos: getPos, node: currentNode } }
-          }))
-        })
-
-        return {
-          dom: wrapper,
-          update: function (updatedNode) {
-            if (updatedNode.type.name !== node.type.name) return false
-            currentNode = updatedNode
-            applyAttrs(updatedNode)
-            return true
-          },
-          ignoreMutation: function (mutation) {
-            // Ignore if only the class attribute changed
-            if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
-              return true
-            }
-            return false
-          }
-        }
-      }
-    },
-
-    addStorage() {
-      var parentStorage = this.parent ? this.parent() : {}
-      return Object.assign({}, parentStorage, {
-        activeTabPath: '',
-        markdown: {
-          serialize: function (state, node) {
-            var alt = state.esc(node.attrs.alt || '')
-            var src = node.attrs.src || ''
-            var title = node.attrs.title ? ' ' + state.quote(node.attrs.title) : ''
-            var idAttr = node.attrs.id ? 'id="' + node.attrs.id + '"' : ''
-            var detectAttr = node.attrs.detect ? 'detect="' + node.attrs.detect + '"' : ''
-            var summaryAttr = node.attrs.summary ? 'summary="' + node.attrs.summary + '"' : ''
-            var widthAttr = node.attrs.width ? 'width="' + node.attrs.width + '"' : ''
-            var heightAttr = node.attrs.height ? 'height="' + node.attrs.height + '"' : ''
-            var attrs = [idAttr, detectAttr, summaryAttr, widthAttr, heightAttr].filter(Boolean).join(' ')
-            var attrsSuffix = attrs ? '{' + attrs + '}' : ''
-            state.write('![' + alt + '](' + src + title + ')' + attrsSuffix)
-            state.closeBlock(node)
-          },
-          parse: {
-            setup: function (markdownit) {
-              markdownit.core.ruler.after('inline', 'image_attrs', function (state) {
-                for (var ti = 0; ti < state.tokens.length; ti++) {
-                  var token = state.tokens[ti]
-                  if (token.type !== 'inline') continue
-                  for (var i = 0; i < token.children.length; i++) {
-                    var child = token.children[i]
-                    if (child.type === 'image') {
-                      var next = token.children[i + 1]
-                      if (next && next.type === 'text' && next.content.trim().startsWith('{')) {
-                        var match = next.content.match(/^\s*\{([^}]+)\}/)
-                        if (match) {
-                          var attrsStr = match[1]
-                          var idMatch = attrsStr.match(/\bid="([^"]*)"/)
-                          var detectMatch = attrsStr.match(/\bdetect="([^"]*)"/)
-                          var summaryMatch = attrsStr.match(/\bsummary="([^"]*)"/)
-                          var widthMatch = attrsStr.match(/\bwidth="([^"]*)"/)
-                          var heightMatch = attrsStr.match(/\bheight="([^"]*)"/)
-                          if (idMatch) child.attrPush(['data-block-id', idMatch[1]])
-                          if (detectMatch) child.attrPush(['data-detect', detectMatch[1]])
-                          if (summaryMatch) child.attrPush(['data-summary', summaryMatch[1]])
-                          if (widthMatch) child.attrPush(['data-width', widthMatch[1]])
-                          if (heightMatch) child.attrPush(['data-height', heightMatch[1]])
-                          next.content = next.content.substring(match[0].length)
-                        }
-                      }
-                    }
-                  }
-                }
-              })
-            },
-            tokens: {
-              image: {
-                node: 'image',
-                getAttrs: function (token) {
-                  return {
-                    src: token.attrGet('src'),
-                    title: token.attrGet('title') || null,
-                    alt: (token.children && token.children[0] && token.children[0].content) || '',
-                    id: token.attrGet('data-block-id') || null,
-                    detect: token.attrGet('data-detect') || null,
-                    summary: token.attrGet('data-summary') || null,
-                    width: token.attrGet('data-width') || null,
-                    height: token.attrGet('data-height') || null,
-                  }
-                },
-              },
-            },
-          },
-        },
-      })
-    },
-  })
-
   // ── Search ─────────────────────────────────────────────────────────────────
 
   var searchPluginKey = new PluginKey('search')
@@ -484,24 +291,24 @@
 
     if (refs.length === 0 || refs.includes('doc')) {
       doc.descendants(function (node) {
-        if (node.type.name === 'image' && node.attrs && node.attrs.src) {
-          var id = srcToBlockId(node.attrs.src)
-          if (id && !seen.has(id)) { seen.add(id); ids.push(id) }
+        if (node.type.name === 'sieve-smart-image' && node.attrs && node.attrs.id) {
+          var id = node.attrs.id
+          if (!seen.has(id)) { seen.add(id); ids.push(id) }
         }
       })
     } else {
       refs.forEach(function (refId) {
         doc.descendants(function (node) {
           if (node.attrs && node.attrs.id === refId) {
-            if (node.type.name === 'image' && node.attrs.src) {
-              var id = srcToBlockId(node.attrs.src)
-              if (id && !seen.has(id)) { seen.add(id); ids.push(id) }
+            if (node.type.name === 'sieve-smart-image' && node.attrs.id) {
+              var id = node.attrs.id
+              if (!seen.has(id)) { seen.add(id); ids.push(id) }
             }
             if (node.descendants) {
               node.descendants(function (child) {
-                if (child.type.name === 'image' && child.attrs && child.attrs.src) {
-                  var id = srcToBlockId(child.attrs.src)
-                  if (id && !seen.has(id)) { seen.add(id); ids.push(id) }
+                if (child.type.name === 'sieve-smart-image' && child.attrs && child.attrs.id) {
+                  var id = child.attrs.id
+                  if (!seen.has(id)) { seen.add(id); ids.push(id) }
                 }
               })
             }
@@ -673,19 +480,19 @@
     var scanFrom = (from === to) ? Math.max(0, from - 1) : from
     var scanTo   = (from === to) ? Math.min(doc.content.size, to + 1) : to
     doc.nodesBetween(scanFrom, scanTo, function (node, pos) {
-      if (!targetNode && (node.type.name === 'image' || node.type.name === 'codeBlock' || node.type.name === 'table' || node.type.name === 'webClip' || node.type.name === 'sieve-code')) {
+      if (!targetNode && (node.type.name === 'sieve-smart-image' || node.type.name === 'codeBlock' || node.type.name === 'table' || node.type.name === 'sieve-web-clip' || node.type.name === 'sieve-code')) {
         targetNode = node; targetPos = pos; return false
       }
     })
 
     function labelFor(node) {
       switch (node.type.name) {
-        case 'image':      return 'Image'
-        case 'codeBlock':  return 'Code Block'
-        case 'sieve-code': return 'Code Block'
-        case 'table':      return 'Table'
-        case 'webClip':    return 'Web Clip'
-        default:           return node.type.name
+        case 'sieve-smart-image': return 'Image'
+        case 'codeBlock':         return 'Code Block'
+        case 'sieve-code':        return 'Code Block'
+        case 'table':             return 'Table'
+        case 'sieve-web-clip':    return 'Web Clip'
+        default:                  return node.type.name
       }
     }
 
@@ -694,7 +501,7 @@
         return (node.attrs.source || '').trim()
       }
       if (node.type.name === 'table') return serializeTableNode(node, serializer)
-      if (node.type.name === 'webClip') {
+      if (node.type.name === 'sieve-web-clip') {
         // Give AI the rich content rather than raw YAML
         var a = node.attrs
         var parts = []
@@ -771,9 +578,9 @@
       var scanRangeFrom = targetNode ? targetPos : (blockRange ? blockRange.start : from)
       var scanRangeTo   = targetNode ? targetPos + targetNode.nodeSize : (blockRange ? blockRange.end : to)
       doc.nodesBetween(scanRangeFrom, scanRangeTo, function (node) {
-        if (node.type.name === 'image' && node.attrs && node.attrs.src) {
-          var id = srcToBlockId(node.attrs.src)
-          if (id && !seenIds.has(id)) { seenIds.add(id); finalImageIds.push(id) }
+        if (node.type.name === 'sieve-smart-image' && node.attrs && node.attrs.id) {
+          var id = node.attrs.id
+          if (!seenIds.has(id)) { seenIds.add(id); finalImageIds.push(id) }
         }
       })
     } else {
@@ -794,7 +601,6 @@
   // ── Expose on window.TipTap ────────────────────────────────────────────────
 
   T.BlockNode = BlockNode
-  T.ImageWithAttrs = ImageWithAttrs
   T.Search = Search
   T.buildAiContext = buildAiContext
 

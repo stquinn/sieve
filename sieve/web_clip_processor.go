@@ -8,7 +8,12 @@ import (
 	"time"
 )
 
-type WebClipBlockProcessor struct{}
+// WebClipBlockProcessor handles the 'web-clip' Kind.
+type WebClipBlockProcessor struct{ svc BlockServices }
+
+func NewWebClipBlockProcessor(svc BlockServices) *WebClipBlockProcessor {
+	return &WebClipBlockProcessor{svc: svc}
+}
 
 func (p *WebClipBlockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
@@ -32,13 +37,11 @@ func (p *WebClipBlockProcessor) InitAttrs(id string, overrides map[string]interf
 	return attrs
 }
 
-func (p *WebClipBlockProcessor) PasteMatch(entries []PasteEntry) (bool, map[string]interface{}) {
+func (p *WebClipBlockProcessor) PasteMatch(_ []PasteEntry, _ string, _ string) (bool, map[string]interface{}) {
 	return false, nil
 }
 
-func (p *WebClipBlockProcessor) OnChange(block *SieveBlock, _ BlockServices) {
-	// Status changes are verified and queued by the framework
-}
+func (p *WebClipBlockProcessor) OnChange(_ *SieveBlock) {}
 
 func (p *WebClipBlockProcessor) BuildContext(block SieveBlock, _ ShadowDocument) string {
 	content, _ := block.Attrs["content"].(string)
@@ -62,7 +65,7 @@ func (p *WebClipBlockProcessor) Mode() BlockMode {
 	return BlockModeBlock
 }
 
-func (p *WebClipBlockProcessor) RunJob(ctx context.Context, uuid string, block *SieveBlock, svc BlockServices) error {
+func (p *WebClipBlockProcessor) RunJob(ctx context.Context, uuid string, block *SieveBlock, _ func(string, map[string]interface{})) error {
 	source, _ := block.Attrs["source"].(string)
 	mode, _ := block.Attrs["mode"].(string)
 	if mode == "" {
@@ -70,17 +73,17 @@ func (p *WebClipBlockProcessor) RunJob(ctx context.Context, uuid string, block *
 	}
 
 	var docContent string
-	if doc, err := svc.Documents.LoadByUUID(uuid); err == nil {
+	if doc, err := p.svc.Documents.LoadByUUID(uuid); err == nil {
 		docContent = string(doc.Body())
 	}
 
-	if svc.AI == nil {
+	if p.svc.AI == nil {
 		block.Attrs["status"] = BlockStatusError
 		block.Attrs["error"] = "AI service is unavailable"
 		return fmt.Errorf("webclip RunJob failed: AI service is unavailable")
 	}
 
-	title, content, cliErr := svc.AI.RunWebClip(uuid, block.ID, source, mode, docContent)
+	title, content, cliErr := p.svc.AI.RunWebClip(uuid, block.ID, source, mode, docContent)
 
 	if cliErr != nil {
 		if strings.Contains(cliErr.Error(), "timeout") {
@@ -96,7 +99,7 @@ func (p *WebClipBlockProcessor) RunJob(ctx context.Context, uuid string, block *
 	block.Attrs["title"] = title
 	block.Attrs["content"] = content
 	block.Attrs["completedAt"] = time.Now().UTC().Format(time.RFC3339)
-	block.Attrs["model"] = svc.AI.state.LoadSettings().Model
+	block.Attrs["model"] = p.svc.AI.state.LoadSettings().Model
 
 	return nil
 }
