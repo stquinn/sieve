@@ -12,7 +12,7 @@ import { isJobStale } from './fenced-block-base.js'
 
   var SmartLinkRenderer = {
 
-    nodeConfig: { group: 'inline', inline: true, atom: true, selectable: true, draggable: false },
+    nodeConfig: { atom: true, selectable: true, draggable: false },
 
     attrs: {
       href:        { default: '',   parseHTML: function (el) { return el.getAttribute('data-href')         || '' } },

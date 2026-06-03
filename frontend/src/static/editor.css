@@ -981,17 +981,7 @@ div.node-image.ProseMirror-selectednode {
   border-color: var(--theme-accentCyan);
   color: var(--theme-accentCyan);
 }
-/* ── Inline sieve node paragraph collapse ────────────────────────────── */
-/* Fenced blocks are block-level in markdown, so the fence rule wraps the   */
-/* inline <span> in an outer <span> to stay in the inline HTML stream.      */
-/* ProseMirror still wraps the result in a paragraph; collapse its margins. */
-
-.ProseMirror p:has(> span[data-type^="sieve-"]:only-child) {
-  display: inline;
-  margin: 0;
-}
-
-/* ── Smart-link inline nodes ─────────────────────────────────────────── */
+/* ── Smart-link nodes ────────────────────────────────────────────────── */
 
 .smart-link-node {
   color: var(--theme-accentPrimary);

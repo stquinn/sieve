@@ -159,8 +159,7 @@ import { esc } from './fenced-block-base.js'
                   if (data.createdAt) {
                     htmlAttrs.push('data-created-at="' + esc(data.createdAt) + '"')
                   }
-                  var el = '<' + tag + ' ' + htmlAttrs.join(' ') + '></' + tag + '>'
-                  return cfg.inline ? '<span>' + el + '</span>' : el + '\n'
+                  return '<' + tag + ' ' + htmlAttrs.join(' ') + '></' + tag + '>\n'
                 }
               },
             },
