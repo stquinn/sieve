@@ -8,33 +8,12 @@
 // no div/br newline issues, no cursor-restoration needed.
 // Highlight re-applies on input (debounced 50ms) by updating the overlay innerHTML.
 
-import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
+import { esc, isStaleByTime, isJobActive, getLowlight, hastToHtml } from './fenced-block-base.js'
 
 ;(function () {
   'use strict'
 
   var T = window.TipTap
-
-  // ── Shared lowlight instance ──────────────────────────────────────────────────
-
-  var _low = null
-  function getLow() {
-    if (!_low && T && T.createLowlight && T.common) _low = T.createLowlight(T.common)
-    return _low
-  }
-
-  function hastToHtml(nodes) {
-    return (nodes || []).map(function (n) {
-      if (n.type === 'text') {
-        return n.value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      }
-      if (n.type === 'element') {
-        var cls = (n.properties && n.properties.className || []).join(' ')
-        return '<span' + (cls ? ' class="' + cls + '"' : '') + '>' + hastToHtml(n.children) + '</span>'
-      }
-      return ''
-    }).join('')
-  }
 
   // ── CodeRenderer ─────────────────────────────────────────────────────────────
 
@@ -61,6 +40,7 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
     },
 
     makeNodeView: function (node) {
+      var nodeTypeName = node.type.name
       var currentAttrs = Object.assign({}, node.attrs)
 
       // ── DOM ──────────────────────────────────────────────────────────────────
@@ -128,7 +108,7 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
         var display = source ? source + '\n' : '\n'
         highlightCode.textContent = display
         highlightCode.className = (lang && lang !== 'unknown') ? 'language-' + lang + ' hljs' : 'hljs'
-        var low = getLow()
+        var low = getLowlight()
         if (low && lang && lang !== 'unknown' && lang !== 'text' && source) {
           try {
             highlightCode.innerHTML = hastToHtml(low.highlight(lang, source).children) + '\n'
@@ -234,7 +214,7 @@ import { esc, isStaleByTime, isJobActive } from './fenced-block-base.js'
         contentDOM: null,
 
         update: function (updatedNode) {
-          if (updatedNode.type.name !== 'sieve-code') return false
+          if (updatedNode.type.name !== nodeTypeName) return false
           render(updatedNode.attrs)
           return true
         },

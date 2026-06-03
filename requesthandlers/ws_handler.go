@@ -56,7 +56,9 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeMu.Lock()
-		_ = conn.WriteMessage(websocket.TextMessage, data)
+		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			logger.Debug("ws: write failed", "uuid", uuid, "err", err)
+		}
 		writeMu.Unlock()
 	}
 

@@ -8,7 +8,7 @@
 
 var _lowlight = null
 
-function getLowlight() {
+export function getLowlight() {
   if (!_lowlight) {
     var T = window.TipTap
     if (T && T.createLowlight && T.common) _lowlight = T.createLowlight(T.common)
@@ -18,7 +18,7 @@ function getLowlight() {
 
 // Minimal hast-to-HTML serialiser. Only handles the subset lowlight emits:
 // root/element nodes (become <span class="…">) and text nodes.
-function hastToHtml(nodes) {
+export function hastToHtml(nodes) {
   if (!nodes) return ''
   return nodes.map(function (n) {
     if (n.type === 'text') {
