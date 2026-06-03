@@ -981,6 +981,17 @@ div.node-image.ProseMirror-selectednode {
   border-color: var(--theme-accentCyan);
   color: var(--theme-accentCyan);
 }
+/* ── Inline sieve node paragraph collapse ────────────────────────────── */
+/* When an inline sieve node sits on its own line in the markdown (fenced   */
+/* block), TipTap wraps it in a bare paragraph. Collapse that paragraph so  */
+/* it flows without block-level spacing.                                     */
+
+.ProseMirror p:has(> span[data-type^="sieve-"]:only-child) {
+  margin: 0;
+  line-height: inherit;
+  display: inline;
+}
+
 /* ── Smart-link inline nodes ─────────────────────────────────────────── */
 
 .smart-link-node {

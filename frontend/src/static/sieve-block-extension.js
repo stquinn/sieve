@@ -109,14 +109,13 @@ import { esc } from './fenced-block-base.js'
             // Serialise: replay rawYaml verbatim inside a ```kind fence.
             // Go owns all YAML generation; JS never constructs YAML.
             serialize: function (state, node) {
-              var isInline = node.type.spec.inline
-              if (!isInline) state.ensureNewLine()
+              state.ensureNewLine()
               if (node.attrs.kind && node.attrs.rawYaml) {
                 state.write('```' + node.attrs.kind + '\n' + node.attrs.rawYaml + '\n```')
               } else {
                 state.write('```\n\n```')
               }
-              if (!isInline) state.closeBlock(node)
+              state.closeBlock(node)
             },
 
             parse: {
@@ -160,7 +159,8 @@ import { esc } from './fenced-block-base.js'
                   if (data.createdAt) {
                     htmlAttrs.push('data-created-at="' + esc(data.createdAt) + '"')
                   }
-                  return '<' + tag + ' ' + htmlAttrs.join(' ') + '></' + tag + '>' + (cfg.inline ? '' : '\n')
+                  var el = '<' + tag + ' ' + htmlAttrs.join(' ') + '></' + tag + '>'
+                  return cfg.inline ? '<p>' + el + '</p>\n' : el + '\n'
                 }
               },
             },
