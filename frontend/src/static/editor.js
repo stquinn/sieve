@@ -376,15 +376,13 @@
   document.addEventListener('editor:insert-block', function (e) {
     var msg = e.detail
     if (currentMode === 'markdown' && currentMarkdownTextarea) {
-      var fence = '```' + msg.kind + '\n' + msg.rawYaml + '\n```'
-      lastSyncedBody = lastSyncedBody.trim() + '\n\n' + fence + '\n'
+      lastSyncedBody = lastSyncedBody.trim() + '\n\n' + (msg.serialisedForm || '') + '\n'
       currentMarkdownTextarea.value = lastSyncedBody
       wsSend({ type: 'doc-update', uuid: currentUuid, markdown: lastSyncedBody })
       return
     }
     if (!currentEditor) return
-    var parsed = {}
-    try { parsed = window.jsyaml.load(msg.rawYaml) || {} } catch (_) {}
+    var parsed = msg.attrs || {}
 
     var pos = sieveInsertPos !== null ? sieveInsertPos : currentEditor.state.doc.content.size
     sieveInsertPos = null
@@ -392,7 +390,7 @@
     var attrs = {
       kind:            msg.kind || 'code',
       id:              msg.id || parsed.id || '',
-      rawYaml:         msg.rawYaml || '',
+      serialisedForm:  msg.serialisedForm || '',
       status:          parsed.status || 'PENDING',
       createdAt:       parsed.createdAt || null,
     }
@@ -418,8 +416,7 @@
   document.addEventListener('editor:block-attrs-updated', function (e) {
     if (!currentEditor) return
     var msg = e.detail
-    var parsed = {}
-    try { parsed = window.jsyaml.load(msg.rawYaml) || {} } catch (_) {}
+    var parsed = msg.attrs || {}
 
     currentEditor.commands.command(function (commandProps) {
       var tr = commandProps.tr
@@ -427,7 +424,7 @@
         // Match any sieve-* node by id (kind is not in the WS message)
         if (node.type.name.startsWith('sieve-') && node.attrs.id === msg.id) {
           var nextAttrs = Object.assign({}, node.attrs, {
-            rawYaml:         msg.rawYaml || node.attrs.rawYaml,
+            serialisedForm:  msg.serialisedForm || node.attrs.serialisedForm,
             status:          parsed.status   || node.attrs.status,
           })
           Object.keys(parsed).forEach(function (k) {

@@ -58,6 +58,10 @@ func (p *WebClipBlockProcessor) JobLabel(block *SieveBlock) string {
 	return "Fetching " + host
 }
 
+func (p *WebClipBlockProcessor) Mode() BlockMode {
+	return BlockModeBlock
+}
+
 func (p *WebClipBlockProcessor) RunJob(ctx context.Context, uuid string, block *SieveBlock, svc BlockServices) error {
 	source, _ := block.Attrs["source"].(string)
 	mode, _ := block.Attrs["mode"].(string)

@@ -138,6 +138,10 @@ func (p *CodeBlockProcessor) JobLabel(block *SieveBlock) string {
 	return "Refining language..."
 }
 
+func (p *CodeBlockProcessor) Mode() BlockMode {
+	return BlockModeBlock
+}
+
 // RunJob enriches the language via AI and marks the block COMPLETE.
 // Heuristics already ran in InitAttrs — RunJob calls RefineLanguage (AI-only)
 // to potentially improve the result. If the AI returns empty, the heuristic

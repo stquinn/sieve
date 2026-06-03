@@ -62,6 +62,10 @@ func (p *SmartLinkProcessor) PasteMatch(entries []PasteEntry) (bool, map[string]
 
 func (p *SmartLinkProcessor) OnChange(block *SieveBlock, _ BlockServices) {}
 
+func (p *SmartLinkProcessor) Mode() BlockMode {
+	return BlockModeInline
+}
+
 func (p *SmartLinkProcessor) BuildContext(block SieveBlock, _ ShadowDocument) string {
 	href, _ := block.Attrs["href"].(string)
 	label, _ := block.Attrs["label"].(string)

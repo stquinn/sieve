@@ -213,39 +213,44 @@ func (h *WsHandler) handleRetryBlockJob(uuid string, raw []byte, writeMsg func(i
 	// Reset both status and createdAt. The DISPATCHED notifyBlockUpdated that fires
 	// immediately will carry the fresh createdAt, so the frontend's isJobStale()
 	// won't fire and re-show "interrupted" instead of the spinner.
-	h.ServiceProvider.Editor.UpdateBlock(uuid, "", msg.ID, map[string]interface{}{
-		"status":    sieve.BlockStatusPending,
-		"createdAt": time.Now().UTC().Format(time.RFC3339),
-		"error":     "",
+	h.ServiceProvider.Editor.UpdateBlock(uuid, sieve.SieveBlock{
+		ID: msg.ID,
+		Attrs: map[string]interface{}{
+			"status":    sieve.BlockStatusPending,
+			"createdAt": time.Now().UTC().Format(time.RFC3339),
+			"error":     "",
+		},
 	})
 	h.ServiceProvider.Editor.DispatchJobIfNeeded(uuid, msg.ID)
 }
 
 // OnBlockCreated implements sieve.BlockLifecycleListener.
-func (h *WsHandler) OnBlockCreated(uuid, kind, blockID, rawYaml string) {
+func (h *WsHandler) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, serialisedForm string) {
 	h.channelsMu.RLock()
 	writeMsg, ok := h.channels[uuid]
 	h.channelsMu.RUnlock()
 	if ok {
-		writeMsg(map[string]string{
-			"type":    "insert-block",
-			"kind":    kind,
-			"id":      blockID,
-			"rawYaml": rawYaml,
+		writeMsg(map[string]interface{}{
+			"type":           "insert-block",
+			"kind":           kind,
+			"id":             blockID,
+			"attrs":          attrs,
+			"serialisedForm": serialisedForm,
 		})
 	}
 }
 
 // OnBlockUpdated implements sieve.BlockLifecycleListener.
-func (h *WsHandler) OnBlockUpdated(uuid, blockID, rawYaml string) {
+func (h *WsHandler) OnBlockUpdated(uuid, blockID string, attrs map[string]interface{}, serialisedForm string) {
 	h.channelsMu.RLock()
 	writeMsg, ok := h.channels[uuid]
 	h.channelsMu.RUnlock()
 	if ok {
-		writeMsg(map[string]string{
-			"type":    "block-attrs-updated",
-			"id":      blockID,
-			"rawYaml": rawYaml,
+		writeMsg(map[string]interface{}{
+			"type":           "block-attrs-updated",
+			"id":             blockID,
+			"attrs":          attrs,
+			"serialisedForm": serialisedForm,
 		})
 	}
 }

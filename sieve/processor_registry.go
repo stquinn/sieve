@@ -23,10 +23,17 @@ const (
 	BlockStatusError      = "ERROR"
 )
 
+type BlockMode string
+
+const (
+	BlockModeBlock  BlockMode = "block"
+	BlockModeInline BlockMode = "inline"
+)
+
 // BlockLifecycleListener listens to block lifecycle events from the framework.
 type BlockLifecycleListener interface {
-	OnBlockCreated(uuid, kind, blockID, rawYaml string)
-	OnBlockUpdated(uuid, blockID, rawYaml string)
+	OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, serialisedForm string)
+	OnBlockUpdated(uuid, blockID string, attrs map[string]interface{}, serialisedForm string)
 }
 
 // BlockProcessor is implemented by every SieveBlock Kind.
@@ -45,6 +52,8 @@ type BlockProcessor interface {
 	BuildContext(block SieveBlock, doc ShadowDocument) string
 	RunJob(ctx context.Context, uuid string, block *SieveBlock, svc BlockServices) error
 	JobLabel(block *SieveBlock) string
+
+	Mode() BlockMode
 
 	// OnChange is called synchronously after any block mutation (creation or
 	// update). block is a mutable copy of the shadow block state. Implementations

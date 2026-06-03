@@ -34,7 +34,7 @@ func SerializeYAML(d AiBlockData) string {
 	if d.Status == "" {
 		d.Status = "PENDING"
 	}
-	s, _ := fencedblock.Serialize(d)
+	s, _ := fencedblock.SerializeYaml(d)
 	return s
 }
 

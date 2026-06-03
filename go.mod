@@ -7,6 +7,7 @@ require (
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/gorilla/websocket v1.5.3
 	github.com/wailsapp/wails/v2 v2.12.0
+	github.com/yuin/goldmark v1.8.2
 	golang.org/x/net v0.35.0
 	golang.org/x/term v0.42.0
 	gopkg.in/lumberjack.v2 v2.0.0

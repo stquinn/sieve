@@ -4,11 +4,9 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"strings"
 	"sync"
 	"time"
 
-	"gopkg.in/yaml.v3"
 	"sieve/logger"
 	"sieve/sieve/fencedblock"
 )
@@ -41,7 +39,7 @@ func newShadow(uuid, body string, debounce time.Duration, onFlush func()) *Shado
 	return &ShadowDocument{
 		UUID:     uuid,
 		Markdown: body,
-		Blocks:   parseAllBlocks(body),
+		Blocks:   ParseAllBlocks(body),
 		Mode:     "wysiwyg",
 		debounce: debounce,
 		onFlush:  onFlush,
@@ -57,19 +55,19 @@ func (s *ShadowDocument) setMarkdown(md string) {
 
 // setBlock creates or merges attrs into the named block. kind is only used
 // when creating a new entry; subsequent calls preserve the existing Kind.
-func (s *ShadowDocument) setBlock(kind, blockID string, attrs map[string]interface{}) {
+func (s *ShadowDocument) setBlock(block SieveBlock) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if blk, ok := s.Blocks[blockID]; ok {
-		for k, v := range attrs {
+	if blk, ok := s.Blocks[block.ID]; ok {
+		for k, v := range block.Attrs {
 			blk.Attrs[k] = v
 		}
 	} else {
-		merged := make(map[string]interface{}, len(attrs))
-		for k, v := range attrs {
+		merged := make(map[string]interface{}, len(block.Attrs))
+		for k, v := range block.Attrs {
 			merged[k] = v
 		}
-		s.Blocks[blockID] = &SieveBlock{ID: blockID, Kind: kind, Attrs: merged}
+		s.Blocks[block.ID] = &SieveBlock{ID: block.ID, Kind: block.Kind, Attrs: merged}
 	}
 	s.resetDebounce()
 }
@@ -77,14 +75,14 @@ func (s *ShadowDocument) setBlock(kind, blockID string, attrs map[string]interfa
 // replaceBlock atomically replaces the attrs map for an existing block.
 // Unlike setBlock (additive merge), deleted keys in attrs are propagated —
 // the old map is discarded entirely. No-op if the block does not exist.
-func (s *ShadowDocument) replaceBlock(blockID string, attrs map[string]interface{}) {
+func (s *ShadowDocument) replaceBlock(blockID string, block SieveBlock) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	blk, ok := s.Blocks[blockID]
 	if !ok {
 		return
 	}
-	blk.Attrs = attrs
+	blk.Attrs = block.Attrs
 	s.resetDebounce()
 }
 
@@ -133,57 +131,20 @@ func (s *ShadowDocument) contentForSave() string {
 	if s.Mode == "markdown" {
 		return s.Markdown
 	}
-	out := s.Markdown
-	for _, blk := range s.Blocks {
-		updated, err := fencedblock.Replace[map[string]interface{}](out, blk.Kind, blk.ID, blk.Attrs)
-		if err == nil {
-			out = updated
-		}
-	}
-	return out
+	return InjectBlocks(s.Markdown, s.Blocks)
 }
 
-// parseAllBlocks scans body for all named fenced blocks (```kind where kind != "")
-// and returns them keyed by block ID. Used when re-entering WYSIWYG mode so that
-// any block YAML the user edited directly in markdown mode is picked up.
-func parseAllBlocks(body string) map[string]*SieveBlock {
-	blocks := make(map[string]*SieveBlock)
-	lines := strings.Split(body, "\n")
-	i := 0
-	for i < len(lines) {
-		line := lines[i]
-		if strings.HasPrefix(line, "```") && len(line) > 3 {
-			kind := strings.TrimPrefix(line, "```")
-			j := i + 1
-			for j < len(lines) && lines[j] != "```" {
-				j++
-			}
-			if j < len(lines) {
-				content := strings.Join(lines[i+1:j], "\n")
-				var attrs map[string]interface{}
-				if yaml.Unmarshal([]byte(content), &attrs) == nil {
-					if id, ok := attrs["id"].(string); ok && id != "" {
-						blocks[id] = &SieveBlock{ID: id, Kind: kind, Attrs: attrs}
-					}
-				}
-				i = j + 1
-				continue
-			}
-		}
-		i++
-	}
-	return blocks
-}
+// Markdown parsing is now handled by markdown_parser.go
 
 // EditorService is the Go-side editor model. It holds one ShadowDocument per
 // open document and coordinates all save operations. DocumentService owns disk.
 type EditorService struct {
-	documents  *DocumentService
-	services   BlockServices
-	debounce   time.Duration
-	mu         sync.RWMutex
-	shadows    map[string]*ShadowDocument
-	listener   BlockLifecycleListener
+	documents *DocumentService
+	services  BlockServices
+	debounce  time.Duration
+	mu        sync.RWMutex
+	shadows   map[string]*ShadowDocument
+	listener  BlockLifecycleListener
 }
 
 // NewEditorService creates an EditorService backed by the given DocumentService.
@@ -208,21 +169,29 @@ func (es *EditorService) SetLifecycleListener(l BlockLifecycleListener) {
 	es.listener = l
 }
 
-func (es *EditorService) notifyBlockCreated(uuid, kind, blockID, rawYaml string) {
+func (es *EditorService) notifyBlockCreated(uuid string, block SieveBlock) {
 	es.mu.RLock()
 	l := es.listener
 	es.mu.RUnlock()
 	if l != nil {
-		l.OnBlockCreated(uuid, kind, blockID, rawYaml)
+		serialisedForm := ""
+		if processor := GetProcessor(block.Kind); processor != nil {
+			serialisedForm, _ = SerializeBlock(processor, &block)
+		}
+		l.OnBlockCreated(uuid, block.Kind, block.ID, block.Attrs, serialisedForm)
 	}
 }
 
-func (es *EditorService) notifyBlockUpdated(uuid, blockID, rawYaml string) {
+func (es *EditorService) notifyBlockUpdated(uuid string, block SieveBlock) {
 	es.mu.RLock()
 	l := es.listener
 	es.mu.RUnlock()
 	if l != nil {
-		l.OnBlockUpdated(uuid, blockID, rawYaml)
+		serialisedForm := ""
+		if processor := GetProcessor(block.Kind); processor != nil {
+			serialisedForm, _ = SerializeBlock(processor, &block)
+		}
+		l.OnBlockUpdated(uuid, block.ID, block.Attrs, serialisedForm)
 	}
 }
 
@@ -279,15 +248,15 @@ func (es *EditorService) UpdateMarkdown(uuid, markdown string) {
 
 // UpdateBlock merges attrs into the named block, creating it if needed.
 // kind is only used when creating a new block entry.
-func (es *EditorService) UpdateBlock(uuid, kind, blockID string, attrs map[string]interface{}) {
+func (es *EditorService) UpdateBlock(uuid string, block SieveBlock) {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
 	if shadow == nil {
-		logger.Warn("editor: block-update dropped — no shadow", "uuid", uuid, "block", blockID)
+		logger.Warn("editor: block-update dropped — no shadow", "uuid", uuid, "block", block.ID)
 		return
 	}
-	shadow.setBlock(kind, blockID, attrs)
+	shadow.setBlock(block)
 }
 
 // EnterMarkdown switches the shadow to markdown mode.
@@ -323,7 +292,7 @@ func (es *EditorService) EnterWysiwyg(uuid string) {
 		return
 	}
 	shadow.mu.Lock()
-	blocks := parseAllBlocks(shadow.Markdown)
+	blocks := ParseAllBlocks(shadow.Markdown)
 	shadow.Blocks = blocks
 	shadow.Mode = "wysiwyg"
 	shadow.mu.Unlock()
@@ -400,15 +369,21 @@ func (es *EditorService) CreateBlock(uuid, kind string, overrides map[string]int
 	}
 	id = GenerateBlockID(kind)
 	attrs := processor.InitAttrs(id, overrides)
-	es.UpdateBlock(uuid, kind, id, attrs)
-	rawYaml, err = fencedblock.Serialize[map[string]interface{}](attrs)
+	sieveBlock := SieveBlock{ID: id, Kind: kind, Attrs: attrs}
+	es.UpdateBlock(uuid, sieveBlock)
+	rawYaml, err = fencedblock.SerializeYaml[map[string]interface{}](attrs)
 	if err != nil {
 		return "", "", err
 	}
 
-	es.notifyBlockCreated(uuid, kind, id, rawYaml)
+	es.notifyBlockCreated(uuid, sieveBlock)
 
 	return id, rawYaml, nil
+}
+
+// SerializeBlock encodes the block based on its processor mode.
+func (es *EditorService) SerializeBlock(processor BlockProcessor, block SieveBlock) (string, error) {
+	return SerializeBlock(processor, &block)
 }
 
 // HandlePaste runs paste matchers and delegates to CreateBlock on the first match.
@@ -437,7 +412,12 @@ func (es *EditorService) HandlePaste(uuid string, entries []PasteEntry) (kind, i
 // react synchronously (e.g. re-run heuristics). Any resulting async work is
 // dispatched automatically if the block status is set to PENDING.
 func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map[string]interface{}) {
-	es.UpdateBlock(uuid, kind, blockID, attrs)
+	sieveBlock := SieveBlock{
+		ID:    blockID,
+		Kind:  kind,
+		Attrs: attrs,
+	}
+	es.UpdateBlock(uuid, sieveBlock)
 
 	processor := GetProcessor(kind)
 	if processor == nil {
@@ -481,7 +461,8 @@ func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map
 	}
 
 	if len(attrsChanged) > 0 {
-		shadow.setBlock(kind, blockID, attrsChanged)
+		updatedBlock := SieveBlock{ID: blockID, Kind: kind, Attrs: attrsChanged}
+		shadow.setBlock(updatedBlock)
 		shadow.mu.Lock()
 		blk2, ok2 := shadow.Blocks[blockID]
 		var attrsCopy map[string]interface{}
@@ -493,8 +474,8 @@ func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map
 		}
 		shadow.mu.Unlock()
 		if ok2 {
-			rawYaml, _ := fencedblock.Serialize[map[string]interface{}](attrsCopy)
-			es.notifyBlockUpdated(uuid, blockID, rawYaml)
+			// rawYaml, _ := fencedblock.SerializeYaml[map[string]interface{}](attrsCopy)
+			es.notifyBlockUpdated(uuid, updatedBlock)
 		}
 	}
 
@@ -520,7 +501,7 @@ func (es *EditorService) DispatchJobIfNeeded(uuid, blockID string) {
 	status, _ := blk.Attrs["status"].(string)
 	if status == BlockStatusPending {
 		blk.Attrs["status"] = BlockStatusDispatched
-		
+
 		// Take copy of attributes under lock to serialize and notify listener
 		attrsCopy := make(map[string]interface{}, len(blk.Attrs))
 		for k, v := range blk.Attrs {
@@ -528,9 +509,9 @@ func (es *EditorService) DispatchJobIfNeeded(uuid, blockID string) {
 		}
 		shadow.mu.Unlock()
 
-		rawYaml, _ := fencedblock.Serialize[map[string]interface{}](attrsCopy)
-		es.notifyBlockUpdated(uuid, blockID, rawYaml)
-		
+		blkCopy := SieveBlock{ID: blockID, Kind: blk.Kind, Attrs: attrsCopy}
+		es.notifyBlockUpdated(uuid, blkCopy)
+
 		// Flush state to disk
 		_ = es.Flush(uuid)
 
@@ -586,7 +567,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	}
 
 	if err := processor.RunJob(ctx, uuid, blkCopy, es.services); err != nil {
-		shadow.setBlock(kind, blockID, map[string]interface{}{"status": BlockStatusError})
+		shadow.setBlock(SieveBlock{ID: blockID, Kind: kind, Attrs: map[string]interface{}{"status": BlockStatusError}})
 	} else {
 		// Dynamically determine what attributes the job updated.
 		updates := make(map[string]interface{})
@@ -605,7 +586,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 		}
 
 		if len(updates) > 0 {
-			shadow.setBlock(kind, blockID, updates)
+			shadow.setBlock(SieveBlock{ID: blockID, Kind: kind, Attrs: updates})
 		}
 		for _, k := range deletes {
 			shadow.deleteBlockAttr(blockID, k)
@@ -625,8 +606,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	}
 	shadow.mu.Unlock()
 	if ok2 {
-		rawYaml, _ := fencedblock.Serialize[map[string]interface{}](attrsCopy)
-		es.notifyBlockUpdated(uuid, blockID, rawYaml)
+		blkCopy2 := SieveBlock{ID: blockID, Kind: kind, Attrs: attrsCopy}
+		es.notifyBlockUpdated(uuid, blkCopy2)
 	}
 }
-

@@ -42,11 +42,11 @@ import { esc } from './fenced-block-base.js'
   // ── Base attributes shared by every sieve block kind ─────────────────────────
 
   var BASE_ATTRS = {
-    kind:      { default: '',        parseHTML: function (el) { return el.getAttribute('data-kind')        || '' } },
-    id:        { default: '',        parseHTML: function (el) { return el.getAttribute('data-id')          || '' } },
-    rawYaml:   { default: '',        parseHTML: function (el) { return el.getAttribute('data-raw-yaml')    || '' } },
-    status:    { default: 'PENDING', parseHTML: function (el) { return el.getAttribute('data-status')      || 'PENDING' } },
-    createdAt: { default: null,      parseHTML: function (el) { return el.getAttribute('data-created-at')  || null } },
+    kind:             { default: '',        parseHTML: function (el) { return el.getAttribute('data-kind')        || '' } },
+    id:               { default: '',        parseHTML: function (el) { return el.getAttribute('data-id')          || '' } },
+    serialisedForm:   { default: '',        parseHTML: function (el) { return el.getAttribute('data-serialised-form') || '' } },
+    status:           { default: 'PENDING', parseHTML: function (el) { return el.getAttribute('data-status')      || 'PENDING' } },
+    createdAt:        { default: null,      parseHTML: function (el) { return el.getAttribute('data-created-at')  || null } },
   }
 
   var DEFAULT_NODE_CONFIG = { atom: true, selectable: true, draggable: true, group: 'block', inline: false }
@@ -106,16 +106,16 @@ import { esc } from './fenced-block-base.js'
       addStorage() {
         return {
           markdown: {
-            // Serialise: replay rawYaml verbatim inside a ```kind fence.
-            // Go owns all YAML generation; JS never constructs YAML.
+            // Serialise: replay serialisedForm verbatim.
+            // Go owns all Markdown generation; JS never reconstructs fences or inline blocks manually.
             serialize: function (state, node) {
-              state.ensureNewLine()
-              if (node.attrs.kind && node.attrs.rawYaml) {
-                state.write('```' + node.attrs.kind + '\n' + node.attrs.rawYaml + '\n```')
+              if (cfg.inline) {
+                state.write(node.attrs.serialisedForm || '')
               } else {
-                state.write('```\n\n```')
+                state.ensureNewLine()
+                state.write(node.attrs.serialisedForm || '```' + kind + '\n\n```')
+                state.closeBlock(node)
               }
-              state.closeBlock(node)
             },
 
             parse: {
@@ -123,6 +123,57 @@ import { esc } from './fenced-block-base.js'
               // string matches this kind AND whose YAML body contains an id field.
               // All other fences fall through to the previous handler in the chain.
               setup: function (markdownit) {
+                // 1. Inline parsing rule for `[!kind] {json} [!kind-end]`
+                markdownit.inline.ruler.before('link', 'sieve_inline_' + kind, function(state, silent) {
+                  var start = state.pos
+                  if (state.src.charCodeAt(start) !== 0x5B /* [ */) return false
+                  if (state.src.charCodeAt(start + 1) !== 0x21 /* ! */) return false
+
+                  var regex = new RegExp('^\\\[!' + kind + '\\\]\\s*(\\\{.*?\\\})\\s*\\\[!' + kind + '-end\\\]')
+                  var match = regex.exec(state.src.slice(start))
+                  if (!match) return false
+
+                  if (!silent) {
+                    var jsonStr = match[1]
+                    var data = null
+                    try { data = JSON.parse(jsonStr) } catch (e) {}
+
+                    if (data && data.id) {
+                      var token = state.push('sieve_inline_' + kind, tag, 0)
+                      var htmlAttrs = [
+                        ['data-type', dataType],
+                        ['data-kind', kind],
+                        ['data-id', data.id],
+                        ['data-serialised-form', match[0]],
+                        ['data-status', data.status || 'PENDING']
+                      ]
+                      if (renderer.parseAttrs) {
+                        var extra = renderer.parseAttrs(data)
+                        Object.keys(extra).forEach(function (k) {
+                          var kebab = k.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()
+                          htmlAttrs.push(['data-' + kebab, String(extra[k] != null ? extra[k] : '')])
+                        })
+                      }
+                      if (data.createdAt) {
+                        htmlAttrs.push(['data-created-at', data.createdAt])
+                      }
+                      token.attrs = htmlAttrs
+                    } else {
+                      state.pos += match[0].length
+                      return false
+                    }
+                  }
+                  state.pos += match[0].length
+                  return true
+                })
+
+                markdownit.renderer.rules['sieve_inline_' + kind] = function(tokens, idx) {
+                  var token = tokens[idx]
+                  var attrsStr = token.attrs.map(function(a) { return a[0] + '="' + esc(a[1]) + '"' }).join(' ')
+                  return '<' + tag + ' ' + attrsStr + '></' + tag + '>'
+                }
+
+                // 2. Block parsing rule for fences
                 var prevFence = markdownit.renderer.rules.fence
                 markdownit.renderer.rules.fence = function (tokens, idx, options, env, self) {
                   var token     = tokens[idx]
@@ -142,11 +193,14 @@ import { esc } from './fenced-block-base.js'
                       : self.renderToken(tokens, idx, options)
                   }
 
+                  var markup = token.markup || '```'
+                  var serialisedForm = markup + token.info + '\n' + token.content + markup
+
                   var htmlAttrs = [
                     'data-type="'     + dataType + '"',
                     'data-kind="'     + esc(kind) + '"',
                     'data-id="'       + esc(data.id) + '"',
-                    'data-raw-yaml="' + esc(token.content) + '"',
+                    'data-serialised-form="' + esc(serialisedForm) + '"',
                     'data-status="'   + esc(data.status || 'PENDING') + '"',
                   ]
                   if (renderer.parseAttrs) {

@@ -40,13 +40,13 @@ func ParseAll[T any](body, tag string) []T {
 	return out
 }
 
-// Serialize encodes v as YAML with 4-space indentation using yaml.v3.
+// SerializeYaml encodes v as YAML with 4-space indentation using yaml.v3.
 // All multiline strings are forced to literal block style (|) regardless of
 // content — this prevents yaml.v3 from choosing double-quoted style for
 // strings that begin with backticks or other "tricky" characters.
 // 4-space indent ensures block scalar content can never trigger a closing
 // fence (CommonMark allows fences with 0–3 leading spaces only).
-func Serialize[T any](v T) (string, error) {
+func SerializeYaml[T any](v T) (string, error) {
 	// Marshal to bytes, then unmarshal to a Node tree so we can override
 	// yaml.v3's automatic style choices for multiline strings.
 	raw, err := yaml.Marshal(v)
@@ -114,7 +114,9 @@ func Replace[T any](body, tag, blockID string, updated T) (string, error) {
 		return body, fmt.Errorf("fencedblock: %s block %q not found", tag, blockID)
 	}
 
-	serialized, err := Serialize(updated)
+	//TODO - SERIALISE SHOULD USE SERIALISE THE ENTIRE BLOCK INCLUDING FENCE
+	//therefore supporting  INLINE AND BLOCK
+	serialized, err := SerializeYaml(updated)
 	if err != nil {
 		return body, fmt.Errorf("fencedblock: serialize failed: %w", err)
 	}
