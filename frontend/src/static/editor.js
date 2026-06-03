@@ -400,7 +400,7 @@
 
     if (!parsed.source) {
       setTimeout(function () {
-        var el = document.querySelector('[data-block-id="' + (msg.id || parsed.id) + '"] .sieve-block__source')
+        var el = document.querySelector('[data-block-id="' + (msg.id || parsed.id) + '"] .sieve-block__edit')
         if (el) el.focus()
       }, 50)
     }
