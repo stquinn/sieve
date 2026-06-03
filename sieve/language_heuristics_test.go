@@ -134,3 +134,31 @@ func TestLooksLikeCode_tooShort(t *testing.T) {
 		t.Error("expected two-line snippet to NOT trigger tier-3 (below length threshold)")
 	}
 }
+
+func TestDetectByHeuristics_sqlWithLeadingComment(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "SELECT with leading SQL comment",
+			input: "-- find active users\nSELECT id, name FROM users WHERE active = 1",
+		},
+		{
+			name:  "SELECT with leading blank line",
+			input: "\nSELECT id FROM users",
+		},
+		{
+			name:  "INSERT with leading comment",
+			input: "-- add user\nINSERT INTO users (name) VALUES ('alice')",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lang, ok := detectByHeuristics(tc.input, "")
+			if !ok || lang != "sql" {
+				t.Errorf("expected sql detection, got lang=%q ok=%v", lang, ok)
+			}
+		})
+	}
+}

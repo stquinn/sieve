@@ -43,8 +43,8 @@ var tier1 = []struct {
 	// Python
 	{regexp.MustCompile(`(?m)^\s*def\s+\w+\s*\(.*\)\s*:`), "python"},
 	// SQL
-	{regexp.MustCompile(`(?i)^\s*SELECT\s+.+\bFROM\b`), "sql"},
-	{regexp.MustCompile(`(?i)^\s*(?:INSERT\s+INTO|CREATE\s+TABLE|DROP\s+TABLE|ALTER\s+TABLE)\b`), "sql"},
+	{regexp.MustCompile(`(?i)(?m)^\s*SELECT\s+.+\bFROM\b`), "sql"},
+	{regexp.MustCompile(`(?i)(?m)^\s*(?:INSERT\s+INTO|CREATE\s+TABLE|DROP\s+TABLE|ALTER\s+TABLE)\b`), "sql"},
 	// Bash shebang
 	{regexp.MustCompile(`^#!.*(?:bash|sh|zsh)\b`), "bash"},
 	// TypeScript (must be before JS — more specific)
