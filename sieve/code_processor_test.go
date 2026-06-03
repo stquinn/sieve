@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -264,5 +265,76 @@ func TestCodeBlockProcessor_RunJob_aiFallback(t *testing.T) {
 	}
 	if block.Attrs["detectionMethod"] != "heuristic" {
 		t.Errorf("expected detectionMethod preserved, got %v", block.Attrs["detectionMethod"])
+	}
+}
+
+// ── OnUpdate ─────────────────────────────────────────────────────────────────
+
+func TestOnUpdate_alwaysRunsHeuristicsWhenLanguageAlreadySet(t *testing.T) {
+	proc := &CodeBlockProcessor{}
+
+	block := &SieveBlock{
+		ID:   "co-0001",
+		Kind: "code",
+		Attrs: map[string]interface{}{
+			"id":       "co-0001",
+			"language": "python",
+			"status":   "COMPLETE",
+			"source":   strings.Repeat("fmt.Println(\"hello\")\nif err != nil { return err }\n", 5),
+		},
+	}
+
+	scheduleJob := proc.OnUpdate(block, Services{})
+
+	if scheduleJob {
+		t.Error("expected scheduleJob=false: heuristics should identify Go without AI")
+	}
+	if lang, _ := block.Attrs["language"].(string); lang != "go" {
+		t.Errorf("expected language=go after heuristics, got %q", lang)
+	}
+}
+
+func TestOnUpdate_doesNotScheduleAIWhenLanguageSetAndHeuristicsBlind(t *testing.T) {
+	proc := &CodeBlockProcessor{}
+
+	block := &SieveBlock{
+		ID:   "co-0002",
+		Kind: "code",
+		Attrs: map[string]interface{}{
+			"id":       "co-0002",
+			"language": "rust",
+			"status":   "COMPLETE",
+			"source":   "x = 1\ny = 2\nz = x + y",
+		},
+	}
+
+	scheduleJob := proc.OnUpdate(block, Services{})
+
+	if scheduleJob {
+		t.Error("expected scheduleJob=false: AI result should be trusted when heuristics are silent")
+	}
+	if lang, _ := block.Attrs["language"].(string); lang != "rust" {
+		t.Errorf("expected language=rust (untouched), got %q", lang)
+	}
+}
+
+func TestOnUpdate_schedulesAIWhenNoLanguageAndHeuristicsBlind(t *testing.T) {
+	proc := &CodeBlockProcessor{}
+
+	block := &SieveBlock{
+		ID:   "co-0003",
+		Kind: "code",
+		Attrs: map[string]interface{}{
+			"id":       "co-0003",
+			"language": "unknown",
+			"status":   "COMPLETE",
+			"source":   strings.Repeat("x = 1\ny = 2\n", 10),
+		},
+	}
+
+	scheduleJob := proc.OnUpdate(block, Services{})
+
+	if !scheduleJob {
+		t.Error("expected scheduleJob=true: no language set and heuristics blind → need AI")
 	}
 }

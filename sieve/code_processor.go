@@ -86,27 +86,32 @@ func (p *CodeBlockProcessor) PasteMatch(entries []PasteEntry) (bool, map[string]
 	return false, nil
 }
 
-// OnUpdate runs on every block-update from the client. It re-applies heuristics
-// to the current source so that the language badge updates as the user types,
-// without waiting for a full RunJob. If heuristics still can't identify the
-// language and the block has already completed a prior job (status COMPLETE),
-// it schedules a new RunJob for AI refinement.
+// OnUpdate runs on every block-update from the client. It always re-applies
+// heuristics so the language badge tracks the current source. If heuristics
+// identify a language it is applied immediately (no AI needed). If heuristics
+// are silent and AI already ran, the AI result is left untouched — the user
+// can force re-detection via the context-menu Retry action. If heuristics are
+// silent and no language is set, a new RunJob is scheduled.
 func (p *CodeBlockProcessor) OnUpdate(block *SieveBlock, _ Services) bool {
-	lang, _ := block.Attrs["language"].(string)
-	if lang != "" && lang != "unknown" {
-		return false // already identified — no work needed
-	}
-
 	source, _ := block.Attrs["source"].(string)
 	if len(strings.TrimSpace(source)) < minSourceLength {
-		return false // not enough content for reliable detection
+		return false
 	}
 
-	// Re-run heuristics on current source — synchronous, no AI call.
+	// Always re-run heuristics — cheap, gives live feedback as the user types.
 	hint, _ := block.Attrs["hint"].(string)
 	if detected, ok := detectByHeuristics(source, hint); ok {
-		block.Attrs["language"] = detected
-		block.Attrs["detectionMethod"] = "heuristic"
+		lang, _ := block.Attrs["language"].(string)
+		if detected != lang {
+			block.Attrs["language"] = detected
+			block.Attrs["detectionMethod"] = "heuristic"
+		}
+		return false
+	}
+
+	// Heuristics have no opinion. Trust any language already set by AI.
+	lang, _ := block.Attrs["language"].(string)
+	if lang != "" && lang != "unknown" {
 		return false
 	}
 
