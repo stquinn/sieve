@@ -226,51 +226,6 @@ textarea::selection {
 
 .hljs-strong                { color: var(--theme-syntaxStrong); font-weight: 700; }
 
-
-/* ── Link bubble menu ────────────────────────────────────────────────── */
-
-.link-bubble {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  background: var(--theme-bgAlt);
-  border: 1px solid var(--theme-border2);
-  border-radius: 6px;
-  padding: 0.35rem 0.5rem;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-}
-
-.link-bubble__input {
-  background: var(--theme-bg);
-  border: 1px solid var(--theme-border2);
-  border-radius: 4px;
-  color: var(--theme-text);
-  font-size: 13px;
-  padding: 0.25rem 0.5rem;
-  width: 280px;
-  outline: none;
-}
-
-.link-bubble__input:focus {
-  border-color: var(--theme-accentPrimary);
-}
-
-.link-bubble__btn {
-  background: var(--theme-border2);
-  border: none;
-  border-radius: 4px;
-  color: var(--theme-text);
-  cursor: pointer;
-  font-size: 12px;
-  padding: 0.25rem 0.6rem;
-  white-space: nowrap;
-}
-
-.link-bubble__btn:hover { background: var(--theme-bgAlt); }
-
-.link-bubble__btn--remove { color: var(--theme-accentRed); }
-.link-bubble__btn--remove:hover { background: color-mix(in srgb, var(--theme-accentRed) 15%, transparent); }
-
 /* ── Root layout ─────────────────────────────────────────────────────── */
 
 #app-root {
@@ -1026,6 +981,85 @@ div.node-image.ProseMirror-selectednode {
   border-color: var(--theme-accentCyan);
   color: var(--theme-accentCyan);
 }
+/* ── Smart-link blocks ───────────────────────────────────────────────── */
+
+.smart-link-block {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  border: 1px solid var(--theme-border);
+  border-radius: 6px;
+  background: var(--theme-bgAlt);
+  padding: 0.4rem 0.7rem;
+  margin: 0.25rem 0;
+  max-width: 560px;
+  cursor: default;
+  transition: border-color 0.15s ease;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.smart-link-block:hover {
+  border-color: var(--theme-accentPrimary);
+}
+
+.smart-link-block.ProseMirror-selectednode {
+  border-color: var(--theme-accentPrimary) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--theme-accentPrimary) 25%, transparent) !important;
+  outline: none !important;
+}
+
+.smart-link-block__icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.smart-link-block__text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  min-width: 0;
+}
+
+.smart-link-block__title {
+  color: var(--theme-accentPrimary);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 480px;
+}
+
+.smart-link-block__title:hover { text-decoration: underline; }
+
+.smart-link-block__url {
+  color: var(--theme-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 480px;
+}
+
+.smart-link-block--loading .smart-link-block__title { color: var(--theme-muted); font-style: italic; }
+.smart-link-block--error .smart-link-block__title   { color: var(--theme-accentOrange); }
+.smart-link-block__url--error                       { color: var(--theme-accentOrange); }
+
+.smart-link-block__retry {
+  background: var(--theme-border2);
+  border: none;
+  border-radius: 4px;
+  color: var(--theme-text);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0.15rem 0.5rem;
+  margin-top: 0.2rem;
+}
+.smart-link-block__retry:hover { background: var(--theme-bgAlt); }
+
 /* ── Sieve Blocks ────────────────────────────────────────────────────── */
 
 .sieve-block {
@@ -2205,53 +2239,4 @@ div.node-image.ProseMirror-selectednode {
   color: var(--theme-text);
 }
 
-/* The main container */
-.link-bubble {
-  position: fixed;
-  z-index: 1000;
-  display: none; /* Controlled by JS */
-  flex-direction: column;
-  gap: 12px;
-  padding: 16px;
-  border: 1px solid #3e4451;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-  background: #282c34;
-  color: #abb2bf;
-  width: 280px;
-}
 
-/* Individual Rows */
-.link-bubble__row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-}
-
-.link-bubble__row label {
-  width: 45px;
-  font-size: 12px;
-  flex-shrink: 0;
-}
-
-/* Input styling */
-.link-bubble__input {
-  flex: 1;
-  background: #fff;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  padding: 4px 8px;
-  color: #000;
-  outline: none;
-}
-
-/* Action row */
-.link-bubble__actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-  width: 100%;
-  margin-top: 4px;
-}

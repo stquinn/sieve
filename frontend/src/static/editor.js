@@ -106,7 +106,6 @@
         T.AiBlock,
         T.AiBlockLegacy,
       ].concat(T.getSieveNodes()).concat([
-        T.SmartLink,
         T.TaskList,
         T.TaskItem.configure({ nested: true }),
         T.Markdown.configure({ html: true, transformPastedText: true, link: { openOnClick: false } }),
@@ -1074,43 +1073,7 @@
       }
     }
 
-    // ── 3. URL paste → smartLink (JS-owned) ─────────────────────────────────────
-    if (text && (text.startsWith('http://') || text.startsWith('https://'))) {
-      event.preventDefault()
-      var id = generateId('lnk')
-      currentEditor.commands.insertContent({
-        type: 'smartLink',
-        attrs: { id: id, detect: 'pending', href: text, label: text }
-      })
-      fetch('/api/link-preview?url=' + encodeURIComponent(text))
-        .then(function(r) { return r.ok ? r.text() : null })
-        .then(function(title) {
-          if (!title || title.trim() === '') return
-          currentEditor.commands.command(function(props) {
-            var tr = props.tr
-            var state = props.state
-            var found = false
-            state.doc.descendants(function(node, pos) {
-              if (node.type.name === 'smartLink' && node.attrs.id === id) {
-                found = true
-                tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { label: title, detect: 'peek' }))
-                return false
-              }
-            })
-            if (found) {
-              currentEditor.view.dispatch(tr)
-              var md = currentEditor.storage.markdown.getMarkdown() || ''
-              lastSyncedBody = md
-              wsSend({ type: 'doc-update', uuid: currentUuid, markdown: md })
-              document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
-            }
-            return found
-          })
-        }).catch(function(err) { console.error('[editor.js] GetLinkTitle failed', err) })
-      return true
-    }
-
-    // ── 4. Smart-paste pipeline ──────────────────────────────────────────────────
+    // ── 3. Smart-paste pipeline ──────────────────────────────────────────────────
     // Collect all clipboard entries synchronously before any async gap.
     // event.preventDefault() is called immediately; on no-match the original
     // clipboard content is replayed to TipTap via insertContent.
@@ -1156,11 +1119,6 @@
     }
 
     return false
-  }
-
-  function generateId(prefix = "blk") {
-    var id = prefix + '-' + Math.random().toString(16).substring(2, 6)
-    return id;
   }
 
   function initBlobInterceptor(editor, uuid) {
