@@ -437,7 +437,7 @@ func TestEditorService_HandlePaste_delegatesToCreateBlock(t *testing.T) {
 	uuid := doc.UUID()
 	_ = es.Open(uuid, nil)
 
-	kind, id, rawYaml, matched := es.HandlePaste(uuid, "```python\nprint('hello')\n```")
+	kind, id, rawYaml, matched := es.HandlePaste(uuid, []PasteEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\n```"}})
 	if !matched {
 		t.Fatal("expected match")
 	}
@@ -467,7 +467,7 @@ func TestEditorService_HandlePaste_noMatch(t *testing.T) {
 	doc, _ = ds.Save(doc)
 	_ = es.Open(doc.UUID(), nil)
 
-	_, _, _, matched := es.HandlePaste(doc.UUID(), "just plain text")
+	_, _, _, matched := es.HandlePaste(doc.UUID(), []PasteEntry{{MIMEType: "text/plain", Content: "just plain text"}})
 	if matched {
 		t.Fatal("expected no match for plain text")
 	}

@@ -7,6 +7,14 @@ import (
 	"sync"
 )
 
+// PasteEntry is one item from the browser clipboard DataTransfer.
+// MIMEType is the raw MIME type string (e.g. "text/plain", "text/html").
+// Content is the UTF-8 string value returned by clipboardData.getData(mimeType).
+type PasteEntry struct {
+	MIMEType string `json:"mimeType"`
+	Content  string `json:"content"`
+}
+
 // BlockProcessor is implemented by every SieveBlock Kind.
 //
 // InitAttrs is the schema declaration. It returns the complete, valid initial
@@ -19,7 +27,7 @@ import (
 // that have no paste trigger return false, nil from PasteMatch.
 type BlockProcessor interface {
 	InitAttrs(id string, overrides map[string]interface{}) map[string]interface{}
-	PasteMatch(content string) (matched bool, overrides map[string]interface{})
+	PasteMatch(entries []PasteEntry) (matched bool, overrides map[string]interface{})
 	BuildContext(block SieveBlock, doc ShadowDocument) string
 	RunJob(ctx context.Context, block *SieveBlock, svc Services) error
 

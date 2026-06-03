@@ -6,7 +6,7 @@ import (
 )
 
 type mockProcessor struct {
-	matchFn func(string) (bool, map[string]interface{})
+	matchFn func([]PasteEntry) (bool, map[string]interface{})
 }
 
 func (p *mockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
@@ -16,7 +16,9 @@ func (p *mockProcessor) InitAttrs(id string, overrides map[string]interface{}) m
 	}
 	return attrs
 }
-func (p *mockProcessor) PasteMatch(c string) (bool, map[string]interface{}) { return p.matchFn(c) }
+func (p *mockProcessor) PasteMatch(entries []PasteEntry) (bool, map[string]interface{}) {
+	return p.matchFn(entries)
+}
 func (p *mockProcessor) BuildContext(_ SieveBlock, _ ShadowDocument) string  { return "" }
 func (p *mockProcessor) RunJob(_ context.Context, _ *SieveBlock, _ Services) error { return nil }
 func (p *mockProcessor) OnUpdate(_ *SieveBlock, _ Services) bool             { return false }
@@ -28,7 +30,7 @@ func resetRegistry() {
 
 func TestRegisterProcessor_storesInRegistry(t *testing.T) {
 	resetRegistry()
-	mock := &mockProcessor{matchFn: func(_ string) (bool, map[string]interface{}) { return false, nil }}
+	mock := &mockProcessor{matchFn: func(_ []PasteEntry) (bool, map[string]interface{}) { return false, nil }}
 	RegisterProcessor("test-kind", mock)
 	if GetProcessor("test-kind") == nil {
 		t.Fatal("expected processor to be registered, got nil")
@@ -44,11 +46,15 @@ func TestRegisterProcessor_unknownKindReturnsNil(t *testing.T) {
 
 func TestPasteMatchers_firstMatchWins(t *testing.T) {
 	resetRegistry()
-	specific := &mockProcessor{matchFn: func(c string) (bool, map[string]interface{}) {
-		if c == "target" { return true, map[string]interface{}{"winner": "specific"} }
+	specific := &mockProcessor{matchFn: func(entries []PasteEntry) (bool, map[string]interface{}) {
+		for _, e := range entries {
+			if e.MIMEType == "text/plain" && e.Content == "target" {
+				return true, map[string]interface{}{"winner": "specific"}
+			}
+		}
 		return false, nil
 	}}
-	general := &mockProcessor{matchFn: func(c string) (bool, map[string]interface{}) {
+	general := &mockProcessor{matchFn: func(_ []PasteEntry) (bool, map[string]interface{}) {
 		return true, map[string]interface{}{"winner": "general"}
 	}}
 	RegisterProcessor("specific", specific)
@@ -59,7 +65,7 @@ func TestPasteMatchers_firstMatchWins(t *testing.T) {
 	registryMu.RUnlock()
 
 	for _, pm := range matchers {
-		ok, overrides := pm.Processor.PasteMatch("target")
+		ok, overrides := pm.Processor.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "target"}})
 		if ok {
 			if overrides["winner"] != "specific" {
 				t.Errorf("expected specific to win, got %v", overrides["winner"])

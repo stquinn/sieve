@@ -225,7 +225,7 @@ func (h *WsHandler) handlePaste(uuid string, raw []byte, writeMsg func(interface
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return
 	}
-	kind, id, rawYaml, matched := h.ServiceProvider.Editor.HandlePaste(uuid, msg.Content)
+	kind, id, rawYaml, matched := h.ServiceProvider.Editor.HandlePaste(uuid, []sieve.PasteEntry{{MIMEType: "text/plain", Content: msg.Content}})
 	if !matched {
 		// No processor claimed this paste — tell JS to fall back to normal insertion.
 		writeMsg(map[string]string{"type": "paste-no-match", "uuid": uuid})

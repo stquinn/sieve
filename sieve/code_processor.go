@@ -49,7 +49,17 @@ func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface
 
 // PasteMatch detects a bare fenced code block and returns the source and optional
 // language hint as overrides for InitAttrs. It does NOT set id, status, or language.
-func (p *CodeBlockProcessor) PasteMatch(content string) (bool, map[string]interface{}) {
+func (p *CodeBlockProcessor) PasteMatch(entries []PasteEntry) (bool, map[string]interface{}) {
+	var content string
+	for _, e := range entries {
+		if e.MIMEType == "text/plain" {
+			content = e.Content
+			break
+		}
+	}
+	if content == "" {
+		return false, nil
+	}
 	trimmed := strings.TrimSpace(content)
 
 	// Primary: fenced code block (```lang\ncontent\n```).

@@ -76,7 +76,7 @@ func TestCodeBlockProcessor_InitAttrs_withOverrides(t *testing.T) {
 
 func TestCodeBlockProcessor_PasteMatch_withLanguage(t *testing.T) {
 	p := &CodeBlockProcessor{}
-	matched, overrides := p.PasteMatch("```python\nprint('hello')\nprint('world')\n```")
+	matched, overrides := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\nprint('world')\n```"}})
 	if !matched {
 		t.Fatal("expected match for bare code fence")
 	}
@@ -97,7 +97,7 @@ func TestCodeBlockProcessor_PasteMatch_withLanguage(t *testing.T) {
 
 func TestCodeBlockProcessor_PasteMatch_noLanguage(t *testing.T) {
 	p := &CodeBlockProcessor{}
-	matched, overrides := p.PasteMatch("```\nsome code\n```")
+	matched, overrides := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "```\nsome code\n```"}})
 	if !matched {
 		t.Fatal("expected match for fence without language")
 	}
@@ -111,17 +111,17 @@ func TestCodeBlockProcessor_PasteMatch_noLanguage(t *testing.T) {
 
 func TestCodeBlockProcessor_PasteMatch_noMatch(t *testing.T) {
 	p := &CodeBlockProcessor{}
-	if matched, _ := p.PasteMatch("just plain text"); matched {
+	if matched, _ := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "just plain text"}}); matched {
 		t.Fatal("expected no match for plain text")
 	}
-	if matched, _ := p.PasteMatch("`inline code`"); matched {
+	if matched, _ := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "`inline code`"}}); matched {
 		t.Fatal("expected no match for inline code")
 	}
 }
 
 func TestCodeBlockProcessor_PasteMatch_multiline(t *testing.T) {
 	p := &CodeBlockProcessor{}
-	matched, overrides := p.PasteMatch("```go\npackage main\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n```")
+	matched, overrides := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "```go\npackage main\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n```"}})
 	if !matched {
 		t.Fatal("expected match for multiline fence")
 	}

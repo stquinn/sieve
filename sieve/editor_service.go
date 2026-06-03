@@ -377,13 +377,13 @@ func (es *EditorService) CreateBlock(uuid, kind string, overrides map[string]int
 
 // HandlePaste runs paste matchers and delegates to CreateBlock on the first match.
 // It is the secondary creation path — prefer CreateBlock directly for UI-triggered creation.
-func (es *EditorService) HandlePaste(uuid, content string) (kind, id, rawYaml string, matched bool) {
+func (es *EditorService) HandlePaste(uuid string, entries []PasteEntry) (kind, id, rawYaml string, matched bool) {
 	registryMu.RLock()
 	matchers := pasteMatchers
 	registryMu.RUnlock()
 
 	for _, pm := range matchers {
-		ok, overrides := pm.Processor.PasteMatch(content)
+		ok, overrides := pm.Processor.PasteMatch(entries)
 		if !ok {
 			continue
 		}
