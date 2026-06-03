@@ -160,7 +160,7 @@ import { esc } from './fenced-block-base.js'
                     htmlAttrs.push('data-created-at="' + esc(data.createdAt) + '"')
                   }
                   var el = '<' + tag + ' ' + htmlAttrs.join(' ') + '></' + tag + '>'
-                  return cfg.inline ? '<p>' + el + '</p>\n' : el + '\n'
+                  return cfg.inline ? '<span>' + el + '</span>' : el + '\n'
                 }
               },
             },
