@@ -130,6 +130,14 @@ func TestCodeBlockProcessor_PasteMatch_multiline(t *testing.T) {
 	}
 }
 
+func TestCodeBlockProcessor_PasteMatch_noTextPlain(t *testing.T) {
+	p := &CodeBlockProcessor{}
+	matched, _ := p.PasteMatch([]PasteEntry{{MIMEType: "text/html", Content: "<b>hello</b>"}})
+	if matched {
+		t.Fatal("expected no match when no text/plain entry is present")
+	}
+}
+
 func TestCodeBlockProcessor_RunJob_ai(t *testing.T) {
 	ds, fs := newTestDocumentService(t)
 	assets := NewAssetService(fs)
