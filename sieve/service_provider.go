@@ -43,13 +43,15 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
 	s.Editor = NewEditorService(s.Documents, autosave)
 	s.Editor.SetServices(Services{
-		AI:        s.AI,
-		Documents: s.Documents,
-		Assets:    s.Assets,
-		Jobs:      s.Jobs,
+		AI:          s.AI,
+		Documents:   s.Documents,
+		Assets:      s.Assets,
+		Jobs:        s.Jobs,
+		LinkPreview: NewLinkPreviewService(),
 	})
-	RegisterProcessor("code", &CodeBlockProcessor{})
-	RegisterProcessor("web-clip", &WebClipBlockProcessor{})
+	RegisterProcessor("code",       &CodeBlockProcessor{})
+	RegisterProcessor("web-clip",   &WebClipBlockProcessor{})
+	RegisterProcessor("smart-link", &SmartLinkProcessor{})
 	s.migrateSession()
 }
 

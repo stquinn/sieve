@@ -55,10 +55,11 @@ type BlockProcessor interface {
 
 // Services is the dependency bag passed to BlockProcessor.RunJob.
 type Services struct {
-	AI        *AIService
-	Documents *DocumentService
-	Assets    *AssetService
-	Jobs      *JobTracker
+	AI          *AIService
+	Documents   *DocumentService
+	Assets      *AssetService
+	Jobs        *JobTracker
+	LinkPreview *LinkPreviewService
 }
 
 var (

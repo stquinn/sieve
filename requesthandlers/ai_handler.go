@@ -44,7 +44,6 @@ func (h *AiHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/ai/explain", h.handleAiExplain)
 	r.Post("/api/ai/refine-language", h.handleRefineLanguage)
 	r.Post("/api/ai/describe-image", h.handleDescribeImage)
-	r.Get("/api/link-preview", h.handleLinkPreview)
 	r.Get("/api/ai/active-jobs", func(w http.ResponseWriter, r *http.Request) {
 		if h.JobTracker != nil {
 			h.JobTracker.ServeActiveJobs(w, r)
@@ -355,20 +354,6 @@ func (h *AiHandler) handleDescribeImage(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(desc)
 }
 
-func (h *AiHandler) handleLinkPreview(w http.ResponseWriter, r *http.Request) {
-	url := r.URL.Query().Get("url")
-	if url == "" {
-		http.Error(w, "url required", http.StatusBadRequest)
-		return
-	}
-	title, err := h.ServiceProvider.AI.GetLinkTitle(url)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte(title))
-}
 
 func randomHex(n int) string {
 	b := make([]byte, n)
