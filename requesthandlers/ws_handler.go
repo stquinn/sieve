@@ -91,8 +91,6 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 			h.handleBlockUpdate(uuid, raw, writeMsg)
 		case "create-block":
 			h.handleCreateBlock(uuid, raw, writeMsg)
-		case "smart-paste":
-			h.handlePaste(uuid, raw, writeMsg)
 		case "flush":
 			h.handleFlush(writeMsg, uuid)
 		case "enter-markdown":
@@ -218,31 +216,3 @@ func (h *WsHandler) handleRetryBlockJob(uuid string, raw []byte, writeMsg func(i
 	})
 }
 
-func (h *WsHandler) handlePaste(uuid string, raw []byte, writeMsg func(interface{})) {
-	var msg struct {
-		Content string `json:"content"`
-	}
-	if err := json.Unmarshal(raw, &msg); err != nil {
-		return
-	}
-	kind, id, rawYaml, matched := h.ServiceProvider.Editor.HandlePaste(uuid, []sieve.PasteEntry{{MIMEType: "text/plain", Content: msg.Content}})
-	if !matched {
-		// No processor claimed this paste — tell JS to fall back to normal insertion.
-		writeMsg(map[string]string{"type": "paste-no-match", "uuid": uuid})
-		return
-	}
-
-	writeMsg(map[string]string{
-		"type":    "insert-block",
-		"kind":    kind,
-		"id":      id,
-		"rawYaml": rawYaml,
-	})
-	go h.ServiceProvider.Editor.RunJob(context.Background(), uuid, id, func(blkID, updatedRawYaml string) {
-		writeMsg(map[string]string{
-			"type":    "block-attrs-updated",
-			"id":      blkID,
-			"rawYaml": updatedRawYaml,
-		})
-	})
-}

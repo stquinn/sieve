@@ -26,6 +26,7 @@ func (h *EditorHandler) RegisterPaths(r chi.Router) {
 	r.Get("/api/editor", h.handleEditorShell)
 	r.Get("/api/editor/load", h.handleEditorLoad)
 	r.Post("/api/editor/save", h.handleEditorSave)
+	r.Post("/api/editor/smart-paste", h.handleSmartPaste)
 }
 
 func (h *EditorHandler) handleEditorShell(w http.ResponseWriter, r *http.Request) {
@@ -127,4 +128,30 @@ func (h *EditorHandler) handleEditorSave(w http.ResponseWriter, r *http.Request)
 	}
 
 	http.Error(w, "save failed", http.StatusInternalServerError)
+}
+
+func (h *EditorHandler) handleSmartPaste(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UUID    string             `json:"uuid"`
+		Entries []sieve.PasteEntry `json:"entries"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UUID == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	kind, id, rawYaml, matched := h.ServiceProvider.Editor.HandlePaste(req.UUID, req.Entries)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		Matched bool   `json:"matched"`
+		Kind    string `json:"kind,omitempty"`
+		ID      string `json:"id,omitempty"`
+		RawYaml string `json:"rawYaml,omitempty"`
+	}{
+		Matched: matched,
+		Kind:    kind,
+		ID:      id,
+		RawYaml: rawYaml,
+	})
 }
