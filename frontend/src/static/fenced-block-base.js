@@ -89,7 +89,9 @@ export function renderMarkdown(text, editor) {
   try {
     var md = editor && editor.storage && editor.storage.markdown
     if (md && md.parser && md.parser.md) return md.parser.md.render(text.trim())
-  } catch (_) {}
+  } catch (_) {
+    console.log('Failed to render markdown')
+  }
   var div = document.createElement('div')
   div.textContent = text
   return div.innerHTML
@@ -129,4 +131,13 @@ document.addEventListener('sse:ai:job-ended', function (e) {
 // Use this in block isStale checks before falling back to isStaleByTime.
 export function isJobActive(id) {
   return !!id && _activeJobIds.has(id)
+}
+
+// isJobStale — checks if a job block is stale. Returns false if the job is active on the server.
+// If the job is not active, it returns true unless the block was created within a 15-second grace period.
+export function isJobStale(createdAt, id) {
+  if (isJobActive(id)) return false
+  if (!createdAt) return true
+  var ageMs = Date.now() - new Date(createdAt).getTime()
+  return ageMs > 15000
 }

@@ -43,7 +43,8 @@ type BlockProcessor interface {
 	InitAttrs(id string, overrides map[string]interface{}) map[string]interface{}
 	PasteMatch(entries []PasteEntry) (matched bool, overrides map[string]interface{})
 	BuildContext(block SieveBlock, doc ShadowDocument) string
-	RunJob(ctx context.Context, block *SieveBlock, svc Services) error
+	RunJob(ctx context.Context, uuid string, block *SieveBlock, svc Services) error
+	JobLabel(block *SieveBlock) string
 
 	// OnChange is called synchronously after any block mutation (creation or
 	// update). block is a mutable copy of the shadow block state. Implementations
@@ -57,6 +58,7 @@ type Services struct {
 	AI        *AIService
 	Documents *DocumentService
 	Assets    *AssetService
+	Jobs      *JobTracker
 }
 
 var (

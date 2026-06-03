@@ -574,7 +574,18 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 		return
 	}
 
-	if err := processor.RunJob(ctx, blkCopy, es.services); err != nil {
+	label := processor.JobLabel(blkCopy)
+	if label != "" && es.services.Jobs != nil {
+		es.services.Jobs.Start(JobInfo{
+			JobID:   blockID,
+			Label:   label,
+			DocID:   uuid,
+			SpinTab: false,
+		})
+		defer es.services.Jobs.End(blockID)
+	}
+
+	if err := processor.RunJob(ctx, uuid, blkCopy, es.services); err != nil {
 		shadow.setBlock(kind, blockID, map[string]interface{}{"status": BlockStatusError})
 	} else {
 		// Dynamically determine what attributes the job updated.
@@ -601,7 +612,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 		}
 	}
 
-	_ = es.Flush(uuid)
+	_ = es.flushShadow(shadow, "job-complete")
 
 	shadow.mu.Lock()
 	blk2, ok2 := shadow.Blocks[blockID]

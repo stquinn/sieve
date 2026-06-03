@@ -134,13 +134,17 @@ func (p *CodeBlockProcessor) BuildContext(block SieveBlock, _ ShadowDocument) st
 	return src
 }
 
+func (p *CodeBlockProcessor) JobLabel(block *SieveBlock) string {
+	return "Refining language..."
+}
+
 // RunJob enriches the language via AI and marks the block COMPLETE.
 // Heuristics already ran in InitAttrs — RunJob calls RefineLanguage (AI-only)
 // to potentially improve the result. If the AI returns empty, the heuristic
 // result from InitAttrs is kept. hint is transient and deleted after use.
 // If the AI call fails (including when svc.AI is nil), RunJob returns a non-nil
 // error so EditorService.RunJob can surface status=ERROR to the user.
-func (p *CodeBlockProcessor) RunJob(ctx context.Context, block *SieveBlock, svc Services) error {
+func (p *CodeBlockProcessor) RunJob(ctx context.Context, uuid string, block *SieveBlock, svc Services) error {
 	source, _ := block.Attrs["source"].(string)
 	if strings.TrimSpace(source) == "" {
 		block.Attrs["status"] = BlockStatusComplete

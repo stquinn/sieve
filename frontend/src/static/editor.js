@@ -105,7 +105,6 @@
         T.Search,
         T.AiBlock,
         T.AiBlockLegacy,
-        T.WebClip,
       ].concat(T.getSieveNodes()).concat([
         T.SmartLink,
         T.TaskList,
@@ -362,11 +361,11 @@
 
   // Primary creation path. JS fires sieve:create-block when the user uses a
   // keyboard shortcut, toolbar button, or slash command to insert a block.
-  // detail: { kind: 'code' }
+  // detail: { kind: 'code', attrs: {} }
   document.addEventListener('sieve:create-block', function (e) {
     if (!currentUuid || currentUuid.startsWith('prompt:') || !e.detail.kind) return
     sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
-    wsSend({ type: 'create-block', kind: e.detail.kind, uuid: currentUuid })
+    wsSend({ type: 'create-block', kind: e.detail.kind, attrs: e.detail.attrs || {}, uuid: currentUuid })
   })
 
   // NodeViews fire sieve:block-update when the user edits block content.
@@ -376,29 +375,40 @@
   })
 
   document.addEventListener('editor:insert-block', function (e) {
-    if (!currentEditor) return
     var msg = e.detail
+    if (currentMode === 'markdown' && currentMarkdownTextarea) {
+      var fence = '```' + msg.kind + '\n' + msg.rawYaml + '\n```'
+      lastSyncedBody = lastSyncedBody.trim() + '\n\n' + fence + '\n'
+      currentMarkdownTextarea.value = lastSyncedBody
+      wsSend({ type: 'doc-update', uuid: currentUuid, markdown: lastSyncedBody })
+      return
+    }
+    if (!currentEditor) return
     var parsed = {}
     try { parsed = window.jsyaml.load(msg.rawYaml) || {} } catch (_) {}
 
     var pos = sieveInsertPos !== null ? sieveInsertPos : currentEditor.state.doc.content.size
     sieveInsertPos = null
 
-    currentEditor.commands.insertContentAt(pos, {
-      type: 'sieve-' + (msg.kind || 'code'),
-      attrs: {
-        kind:            msg.kind || 'code',
-        id:              msg.id || parsed.id || '',
-        rawYaml:         msg.rawYaml || '',
-        status:          parsed.status || 'PENDING',
-        language:        parsed.language || '',
-        source:          typeof parsed.source === 'string' ? parsed.source : '',
-        createdAt:       parsed.createdAt || null,
-        detectionMethod: parsed.detectionMethod || '',
-      },
+    var attrs = {
+      kind:            msg.kind || 'code',
+      id:              msg.id || parsed.id || '',
+      rawYaml:         msg.rawYaml || '',
+      status:          parsed.status || 'PENDING',
+      createdAt:       parsed.createdAt || null,
+    }
+    Object.keys(parsed).forEach(function (k) {
+      if (k !== 'id' && k !== 'status' && k !== 'createdAt') {
+        attrs[k] = parsed[k]
+      }
     })
 
-    if (!parsed.source) {
+    currentEditor.commands.insertContentAt(pos, {
+      type: 'sieve-' + (msg.kind || 'code'),
+      attrs: attrs,
+    })
+
+    if (!parsed.source && msg.kind === 'code') {
       setTimeout(function () {
         var el = document.querySelector('[data-block-id="' + (msg.id || parsed.id) + '"] .sieve-block__edit')
         if (el) el.focus()
@@ -417,15 +427,16 @@
       commandProps.state.doc.descendants(function (node, pos) {
         // Match any sieve-* node by id (kind is not in the WS message)
         if (node.type.name.startsWith('sieve-') && node.attrs.id === msg.id) {
-          tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, {
+          var nextAttrs = Object.assign({}, node.attrs, {
             rawYaml:         msg.rawYaml || node.attrs.rawYaml,
             status:          parsed.status   || node.attrs.status,
-            language:        parsed.language || node.attrs.language,
-            source:          parsed.source != null
-              ? (typeof parsed.source === 'string' ? parsed.source : String(parsed.source))
-              : node.attrs.source,
-            detectionMethod: parsed.detectionMethod || node.attrs.detectionMethod || '',
-          }))
+          })
+          Object.keys(parsed).forEach(function (k) {
+            if (k !== 'id' && k !== 'status') {
+              nextAttrs[k] = parsed[k]
+            }
+          })
+          tr.setNodeMarkup(pos, null, nextAttrs)
           return false
         }
       })
@@ -585,42 +596,8 @@
   function doInternalize(source, mode) {
     if (!currentUuid) return
     if (!currentEditor && currentMode !== 'markdown') return
-
-    flushSave().then(function () {
-      fetch('/api/internalize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uuid: currentUuid, source: source, mode: mode })
-      }).then(function (r) {
-        if (!r.ok) { console.error('[editor] internalize request failed: ' + r.status); return }
-        return r.json()
-      }).then(function (resp) {
-        if (!resp || !resp.id) return
-        // Go has already appended the PENDING block to the document on disk.
-        // Insert it into the live editor from Go's canonical fence text.
-        if (currentMode === 'markdown' && currentMarkdownTextarea) {
-          lastSyncedBody = lastSyncedBody + '\n\n' + resp.fence + '\n'
-          currentMarkdownTextarea.value = lastSyncedBody
-        } else if (currentEditor) {
-          // Parse Go's YAML to extract attrs — reading only, never generating.
-          var data = {}
-          try { data = window.jsyaml.load(resp.fence.replace(/^```web-clip\n/, '').replace(/\n```$/, '')) || {} } catch (_) {}
-          currentEditor.commands.insertContent({
-            type: 'webClip',
-            attrs: {
-              rawYaml: resp.fence.replace(/^```web-clip\n/, '').replace(/\n```$/, ''),
-              id: data.id || resp.id, source: data.source || source,
-              mode: data.mode || mode, status: 'PENDING', createdAt: data.createdAt || ''
-            }
-          })
-          var afterPos = currentEditor.state.selection.to
-          var docSize = currentEditor.state.doc.content.size
-          currentEditor.chain().setTextSelection(Math.min(afterPos + 1, docSize - 1)).focus().scrollIntoView().run()
-        }
-      }).catch(function (err) {
-        console.error('[editor] internalize error', err)
-      })
-    })
+    sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
+    wsSend({ type: 'create-block', kind: 'web-clip', attrs: { source: source, mode: mode }, uuid: currentUuid })
   }
 
   // ── Search overlay ────────────────────────────────────────────────────────────
@@ -765,17 +742,6 @@
     softReloadContent(currentUuid)
   })
 
-  document.addEventListener('sse:ai:web-clip-resolved', function (e) {
-    var raw = e.detail && e.detail.data != null ? e.detail.data : (typeof e.detail === 'string' ? e.detail : null)
-    if (!raw) return
-    var data; try { data = JSON.parse(raw) } catch (_) { return }
-    if (!data) return
-    if (data.uuid !== currentUuid) return
-    // web-clip uses rawYaml passthrough — in-place patch can't update rawYaml correctly.
-    // Go has already written the canonical YAML to disk; reload from there.
-    softReloadContent(currentUuid)
-  })
-
   function runAiJob(type, question, precomputedCtx) {
     if (!currentEditor && currentMode !== 'markdown') return
 
@@ -881,7 +847,7 @@
           var anchorId = chainParts[chainParts.length - 1]
           if (anchorId && anchorId !== 'doc') {
             currentEditor.state.doc.descendants(function (node, pos) {
-              if ((node.type.name === 'aiBlock' || node.type.name === 'blockRef') && node.attrs.id === anchorId) {
+              if (node.attrs.id === anchorId) {
                 insertPos = pos + node.nodeSize
                 return false
               }
@@ -1445,51 +1411,6 @@
     })
   })
 
-  document.addEventListener('sieve:webclip-retry', function (e) {
-    if (!currentEditor) return
-    var detail = e.detail
-    if (!detail || !detail.id) return
-
-    var blkId = detail.id
-    var now = new Date().toISOString()
-
-    currentEditor.commands.command(function (props) {
-      var tr = props.tr
-      var found = false
-      props.state.doc.descendants(function (node, pos) {
-        if (node.type.name === 'webClip' && node.attrs.id === blkId) {
-          tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, {
-            status: 'PENDING', content: null, error: null,
-            title: null, model: null, completedAt: null, createdAt: now
-          }))
-          found = true
-          return false
-        }
-      })
-      return found
-    })
-
-    var body = currentEditor.storage.markdown.getMarkdown() || ''
-
-    fetch('/api/internalize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        uuid: currentUuid,
-        source: detail.source,
-        mode: detail.mode,
-        id: blkId,
-        body: body
-      })
-    }).then(function (r) {
-      if (!r.ok) {
-        console.error('[editor] webclip retry failed: ' + r.status)
-      }
-    }).catch(function (err) {
-      console.error('[editor] webclip retry error', err)
-    })
-  })
-
   document.addEventListener('sieve:block-retry', function (e) {
     if (!currentEditor || !e.detail || !e.detail.id) return
     var blkId = e.detail.id
@@ -1499,7 +1420,12 @@
       var found = false
       props.state.doc.descendants(function (node, pos) {
         if (node.type.name.startsWith('sieve-') && node.attrs.id === blkId) {
-          tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { status: 'PENDING', createdAt: now }))
+          var cleanAttrs = Object.assign({}, node.attrs, { status: 'PENDING', createdAt: now })
+          if ('content' in cleanAttrs)     cleanAttrs.content = null
+          if ('error' in cleanAttrs)       cleanAttrs.error = null
+          if ('title' in cleanAttrs)       cleanAttrs.title = null
+          if ('completedAt' in cleanAttrs) cleanAttrs.completedAt = null
+          tr.setNodeMarkup(pos, null, cleanAttrs)
           found = true
           return false
         }

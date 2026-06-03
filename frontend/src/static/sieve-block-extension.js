@@ -16,7 +16,7 @@
 //       Called by the fence parser. Receives the parsed YAML object; returns the
 //       extra data-* HTML attributes the renderer needs on initial parse.
 //
-//   makeNodeView(node) → TipTap NodeView
+//   makeNodeView(node, editor) → TipTap NodeView
 //       Returns the NodeView object (dom, update, stopEvent, etc.).
 //
 // Registration:
@@ -81,7 +81,7 @@ import { esc } from './fenced-block-base.js'
 
       addNodeView() {
         return function ({ node, editor, getPos }) {
-          var view = renderer.makeNodeView(node)
+          var view = renderer.makeNodeView(node, editor)
           if (renderer.buildContextMenuItems && view.dom) {
             view.dom.addEventListener('contextmenu', function (e) {
               e.preventDefault()

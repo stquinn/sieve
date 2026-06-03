@@ -1,6 +1,8 @@
 package requesthandlers
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,28 +21,18 @@ type AiHandler struct {
 	ServiceProvider  *sieve.ServiceProvider
 	EmitNotesChanged func()
 	Broadcast        func(event, data string)
-	JobTracker       *JobTracker
+	JobTracker       *sieve.JobTracker
 }
 
 func (h *AiHandler) emitJobStarted(jobID, label, docID string, spinTab bool) {
 	if h.JobTracker != nil {
-		h.JobTracker.Start(JobInfo{JobID: jobID, Label: label, DocID: docID, SpinTab: spinTab})
-	}
-	if h.Broadcast != nil {
-		data, _ := json.Marshal(map[string]interface{}{
-			"jobId": jobID, "label": label, "docId": docID, "spinTab": spinTab,
-		})
-		h.Broadcast("ai:job-started", string(data))
+		h.JobTracker.Start(sieve.JobInfo{JobID: jobID, Label: label, DocID: docID, SpinTab: spinTab})
 	}
 }
 
 func (h *AiHandler) emitJobEnded(jobID, docID string) {
 	if h.JobTracker != nil {
 		h.JobTracker.End(jobID)
-	}
-	if h.Broadcast != nil {
-		data, _ := json.Marshal(map[string]string{"jobId": jobID, "docId": docID})
-		h.Broadcast("ai:job-ended", string(data))
 	}
 }
 
@@ -376,4 +368,10 @@ func (h *AiHandler) handleLinkPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write([]byte(title))
+}
+
+func randomHex(n int) string {
+	b := make([]byte, n)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }

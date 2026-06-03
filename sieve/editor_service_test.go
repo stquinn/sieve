@@ -576,7 +576,7 @@ func TestHandleBlockUpdate_notifySendsSnapshotUnderLock(t *testing.T) {
 }
 
 type testRunJobProcessor struct {
-	runJob func(ctx context.Context, block *SieveBlock, svc Services) error
+	runJob func(ctx context.Context, uuid string, block *SieveBlock, svc Services) error
 }
 
 func (p *testRunJobProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
@@ -591,12 +591,13 @@ func (p *testRunJobProcessor) PasteMatch(entries []PasteEntry) (bool, map[string
 }
 func (p *testRunJobProcessor) BuildContext(_ SieveBlock, _ ShadowDocument) string  { return "" }
 func (p *testRunJobProcessor) OnChange(_ *SieveBlock, _ Services)                  {}
-func (p *testRunJobProcessor) RunJob(ctx context.Context, block *SieveBlock, svc Services) error {
+func (p *testRunJobProcessor) RunJob(ctx context.Context, uuid string, block *SieveBlock, svc Services) error {
 	if p.runJob != nil {
-		return p.runJob(ctx, block, svc)
+		return p.runJob(ctx, uuid, block, svc)
 	}
 	return nil
 }
+func (p *testRunJobProcessor) JobLabel(_ *SieveBlock) string { return "" }
 
 func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 	resetRegistry()
@@ -621,7 +622,7 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 
 	// Register a mock processor
 	proc := &testRunJobProcessor{
-		runJob: func(ctx context.Context, block *SieveBlock, svc Services) error {
+		runJob: func(ctx context.Context, uuid string, block *SieveBlock, svc Services) error {
 			// Simulate job modifying attrs
 			block.Attrs["language"] = "go"            // modified
 			block.Attrs["added_key"] = "new value"    // added

@@ -8,7 +8,7 @@
 // no div/br newline issues, no cursor-restoration needed.
 // Highlight re-applies on input (debounced 50ms) by updating the overlay innerHTML.
 
-import { esc, isStaleByTime, isJobActive, getLowlight, hastToHtml } from './fenced-block-base.js'
+import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js'
 
 ;(function () {
   'use strict'
@@ -118,7 +118,7 @@ import { esc, isStaleByTime, isJobActive, getLowlight, hastToHtml } from './fenc
 
       function updateBadge(attrs) {
         var isPending     = attrs.status === 'PENDING' || attrs.status === 'DISPATCHED'
-        var isStale       = isPending && !isJobActive(attrs.id) && isStaleByTime(attrs.createdAt)
+        var isStale       = isPending && isJobStale(attrs.createdAt, attrs.id)
         var showDetecting = isPending && !isStale && (!attrs.language || attrs.language === '')
         if (showDetecting) {
           badge.textContent = 'detecting…'

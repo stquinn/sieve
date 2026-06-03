@@ -14,7 +14,6 @@ import (
 	"sieve/logger"
 	"sieve/sieve/aiblock"
 	"sieve/store"
-	"sieve/sieve/webclip"
 )
 
 // AIService owns all AI evaluation and filing operations. It resolves prompt
@@ -552,49 +551,4 @@ func (s *AIService) RunWebClip(uuid, id, source, mode, docContent string) (title
 	return title, content, nil
 }
 
-// ResolveWebClip finds the web-clip block with id in uuid's document body,
-// updates its fields to the given status/content/etc., and saves the document.
-func (s *AIService) ResolveWebClip(uuid, id, title, content, model, errMsg, status, completedAt string) error {
-	doc, err := s.documents.LoadByUUID(uuid)
-	if err != nil {
-		return fmt.Errorf("ResolveWebClip: load %s: %w", uuid, err)
-	}
-	body := string(doc.Body())
-	blocks := webclip.ParseAll(body)
 
-	var found webclip.WebClipData
-	for _, b := range blocks {
-		if b.ID == id {
-			found = b
-			break
-		}
-	}
-	if found.ID == "" {
-		return fmt.Errorf("ResolveWebClip: block %q not found in %s", id, uuid)
-	}
-
-	found.Status = status
-	if title != "" {
-		found.Title = title
-	}
-	if content != "" {
-		found.Content = content
-	}
-	if model != "" {
-		found.Model = model
-	}
-	if errMsg != "" {
-		found.Error = errMsg
-	}
-	if completedAt != "" {
-		found.CompletedAt = completedAt
-	}
-
-	newBody, err := webclip.Replace(body, found)
-	if err != nil {
-		return fmt.Errorf("ResolveWebClip: replace: %w", err)
-	}
-	doc.SetBody([]byte(newBody))
-	_, err = s.documents.Save(doc)
-	return err
-}

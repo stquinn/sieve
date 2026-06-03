@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sync"
+	"time"
 
 	"sieve/logger"
 	"sieve/sieve"
@@ -189,12 +190,13 @@ func (h *WsHandler) persistTabMode(uuid, mode string) {
 // JS sends this when the user uses a keyboard shortcut, toolbar button, or command.
 func (h *WsHandler) handleCreateBlock(uuid string, raw []byte, writeMsg func(interface{})) {
 	var msg struct {
-		Kind string `json:"kind"`
+		Kind  string                 `json:"kind"`
+		Attrs map[string]interface{} `json:"attrs"`
 	}
 	if err := json.Unmarshal(raw, &msg); err != nil || msg.Kind == "" {
 		return
 	}
-	_, _, err := h.ServiceProvider.Editor.CreateBlock(uuid, msg.Kind, nil)
+	_, _, err := h.ServiceProvider.Editor.CreateBlock(uuid, msg.Kind, msg.Attrs)
 	if err != nil {
 		logger.Warn("ws: create-block failed", "uuid", uuid, "kind", msg.Kind, "err", err)
 		return
@@ -208,7 +210,14 @@ func (h *WsHandler) handleRetryBlockJob(uuid string, raw []byte, writeMsg func(i
 	if err := json.Unmarshal(raw, &msg); err != nil || msg.ID == "" {
 		return
 	}
-	h.ServiceProvider.Editor.UpdateBlock(uuid, "", msg.ID, map[string]interface{}{"status": sieve.BlockStatusPending})
+	// Reset both status and createdAt. The DISPATCHED notifyBlockUpdated that fires
+	// immediately will carry the fresh createdAt, so the frontend's isJobStale()
+	// won't fire and re-show "interrupted" instead of the spinner.
+	h.ServiceProvider.Editor.UpdateBlock(uuid, "", msg.ID, map[string]interface{}{
+		"status":    sieve.BlockStatusPending,
+		"createdAt": time.Now().UTC().Format(time.RFC3339),
+		"error":     "",
+	})
 	h.ServiceProvider.Editor.DispatchJobIfNeeded(uuid, msg.ID)
 }
 

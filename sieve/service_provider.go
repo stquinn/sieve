@@ -15,6 +15,7 @@ type ServiceProvider struct {
 	Prompts   *PromptService
 	AI        *AIService
 	Editor    *EditorService
+	Jobs      *JobTracker
 }
 
 func (s *ServiceProvider) Init(store store.Store, storePath string) {
@@ -45,8 +46,10 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 		AI:        s.AI,
 		Documents: s.Documents,
 		Assets:    s.Assets,
+		Jobs:      s.Jobs,
 	})
 	RegisterProcessor("code", &CodeBlockProcessor{})
+	RegisterProcessor("web-clip", &WebClipBlockProcessor{})
 	s.migrateSession()
 }
 
