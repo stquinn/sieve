@@ -8,14 +8,27 @@ import (
 )
 
 type ServiceProvider struct {
-	Store     store.Store
-	Documents *DocumentService
-	Assets    *AssetService
-	State     *StateService
-	Prompts   *PromptService
-	AI        *AIService
-	Editor    *EditorService
-	Jobs      *JobTracker
+	Store       store.Store
+	Documents   *DocumentService
+	Assets      *AssetService
+	State       *StateService
+	Prompts     *PromptService
+	AI          *AIService
+	Editor      *EditorService
+	Jobs        *JobTracker
+	LinkPreview *LinkPreviewService
+}
+
+// BlockServices returns the scoped dependency bag for block processors.
+// Add a field here when a new service should be available inside RunJob / OnChange.
+func (s *ServiceProvider) BlockServices() BlockServices {
+	return BlockServices{
+		AI:          s.AI,
+		Documents:   s.Documents,
+		Assets:      s.Assets,
+		Jobs:        s.Jobs,
+		LinkPreview: s.LinkPreview,
+	}
 }
 
 func (s *ServiceProvider) Init(store store.Store, storePath string) {
@@ -39,16 +52,11 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 		return
 	}
 	s.AI = NewAIService(s.State, s.Prompts, s.Documents, storePath)
+	s.LinkPreview = NewLinkPreviewService()
 	settings := s.State.LoadSettings()
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
 	s.Editor = NewEditorService(s.Documents, autosave)
-	s.Editor.SetServices(Services{
-		AI:          s.AI,
-		Documents:   s.Documents,
-		Assets:      s.Assets,
-		Jobs:        s.Jobs,
-		LinkPreview: NewLinkPreviewService(),
-	})
+	s.Editor.SetServices(s.BlockServices())
 	RegisterProcessor("code",       &CodeBlockProcessor{})
 	RegisterProcessor("web-clip",   &WebClipBlockProcessor{})
 	RegisterProcessor("smart-link", &SmartLinkProcessor{})

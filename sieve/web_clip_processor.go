@@ -36,7 +36,7 @@ func (p *WebClipBlockProcessor) PasteMatch(entries []PasteEntry) (bool, map[stri
 	return false, nil
 }
 
-func (p *WebClipBlockProcessor) OnChange(block *SieveBlock, _ Services) {
+func (p *WebClipBlockProcessor) OnChange(block *SieveBlock, _ BlockServices) {
 	// Status changes are verified and queued by the framework
 }
 
@@ -58,7 +58,7 @@ func (p *WebClipBlockProcessor) JobLabel(block *SieveBlock) string {
 	return "Fetching " + host
 }
 
-func (p *WebClipBlockProcessor) RunJob(ctx context.Context, uuid string, block *SieveBlock, svc Services) error {
+func (p *WebClipBlockProcessor) RunJob(ctx context.Context, uuid string, block *SieveBlock, svc BlockServices) error {
 	source, _ := block.Attrs["source"].(string)
 	mode, _ := block.Attrs["mode"].(string)
 	if mode == "" {

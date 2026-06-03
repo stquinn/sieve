@@ -60,7 +60,7 @@ func (p *SmartLinkProcessor) PasteMatch(entries []PasteEntry) (bool, map[string]
 	return true, map[string]interface{}{"href": trimmed, "label": trimmed}
 }
 
-func (p *SmartLinkProcessor) OnChange(block *SieveBlock, _ Services) {}
+func (p *SmartLinkProcessor) OnChange(block *SieveBlock, _ BlockServices) {}
 
 func (p *SmartLinkProcessor) BuildContext(block SieveBlock, _ ShadowDocument) string {
 	href, _ := block.Attrs["href"].(string)
@@ -80,7 +80,7 @@ func (p *SmartLinkProcessor) JobLabel(block *SieveBlock) string {
 	return "Fetching " + host
 }
 
-func (p *SmartLinkProcessor) RunJob(ctx context.Context, uuid string, block *SieveBlock, svc Services) error {
+func (p *SmartLinkProcessor) RunJob(ctx context.Context, uuid string, block *SieveBlock, svc BlockServices) error {
 	href, _ := block.Attrs["href"].(string)
 	now := time.Now().UTC().Format(time.RFC3339)
 

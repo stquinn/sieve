@@ -92,7 +92,7 @@ func (p *CodeBlockProcessor) PasteMatch(entries []PasteEntry) (bool, map[string]
 // identify a language it is applied immediately. If heuristics are silent
 // and no language is set, status is set to PENDING to trigger background AI.
 // If a job is already in flight (DISPATCHED), it returns early.
-func (p *CodeBlockProcessor) OnChange(block *SieveBlock, _ Services) {
+func (p *CodeBlockProcessor) OnChange(block *SieveBlock, _ BlockServices) {
 	status, _ := block.Attrs["status"].(string)
 	if status == BlockStatusDispatched {
 		return // Guard: Job in flight
@@ -144,7 +144,7 @@ func (p *CodeBlockProcessor) JobLabel(block *SieveBlock) string {
 // result from InitAttrs is kept. hint is transient and deleted after use.
 // If the AI call fails (including when svc.AI is nil), RunJob returns a non-nil
 // error so EditorService.RunJob can surface status=ERROR to the user.
-func (p *CodeBlockProcessor) RunJob(ctx context.Context, uuid string, block *SieveBlock, svc Services) error {
+func (p *CodeBlockProcessor) RunJob(ctx context.Context, uuid string, block *SieveBlock, svc BlockServices) error {
 	source, _ := block.Attrs["source"].(string)
 	if strings.TrimSpace(source) == "" {
 		block.Attrs["status"] = BlockStatusComplete

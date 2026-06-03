@@ -170,7 +170,7 @@ func TestCodeBlockProcessor_RunJob_ai(t *testing.T) {
 	_, _ = fs.CreateText(Prompts, "refine.txt", []byte("Refine this: {content}"))
 
 	ai := NewAIService(state, prompts, ds, tmpDir)
-	svc := Services{
+	svc := BlockServices{
 		AI:        ai,
 		Documents: ds,
 		Assets:    assets,
@@ -232,7 +232,7 @@ func TestCodeBlockProcessor_RunJob_aiFallback(t *testing.T) {
 	}
 
 	ai := NewAIService(state, prompts, ds, tmpDir)
-	svc := Services{
+	svc := BlockServices{
 		AI:        ai,
 		Documents: ds,
 		Assets:    assets,
@@ -277,7 +277,7 @@ func TestCodeBlockProcessor_RunJob_returnsErrorOnAIFailure(t *testing.T) {
 	}
 	// Pass nil AI service — this should cause RunJob to return an error
 	// rather than silently setting status=COMPLETE.
-	err := proc.RunJob(context.Background(), "", block, Services{AI: nil})
+	err := proc.RunJob(context.Background(), "", block, BlockServices{AI: nil})
 	if err == nil {
 		t.Error("expected RunJob to return an error when AI service is unavailable")
 	}
@@ -299,7 +299,7 @@ func TestOnChange_alwaysRunsHeuristicsWhenLanguageAlreadySet(t *testing.T) {
 		},
 	}
 
-	proc.OnChange(block, Services{})
+	proc.OnChange(block, BlockServices{})
 
 	if status, _ := block.Attrs["status"].(string); status == BlockStatusPending {
 		t.Error("expected status not to be PENDING: heuristics should identify Go without AI")
@@ -323,7 +323,7 @@ func TestOnChange_doesNotScheduleAIWhenLanguageSetAndHeuristicsBlind(t *testing.
 		},
 	}
 
-	proc.OnChange(block, Services{})
+	proc.OnChange(block, BlockServices{})
 
 	if status, _ := block.Attrs["status"].(string); status == BlockStatusPending {
 		t.Error("expected status not to be PENDING: AI result should be trusted when heuristics are silent")
@@ -347,7 +347,7 @@ func TestOnChange_schedulesAIWhenNoLanguageAndHeuristicsBlind(t *testing.T) {
 		},
 	}
 
-	proc.OnChange(block, Services{})
+	proc.OnChange(block, BlockServices{})
 
 	if status, _ := block.Attrs["status"].(string); status != BlockStatusPending {
 		t.Errorf("expected status to transition to PENDING, got %q", status)

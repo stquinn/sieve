@@ -20,9 +20,9 @@ func (p *mockProcessor) PasteMatch(entries []PasteEntry) (bool, map[string]inter
 	return p.matchFn(entries)
 }
 func (p *mockProcessor) BuildContext(_ SieveBlock, _ ShadowDocument) string  { return "" }
-func (p *mockProcessor) RunJob(_ context.Context, _ string, _ *SieveBlock, _ Services) error { return nil }
+func (p *mockProcessor) RunJob(_ context.Context, _ string, _ *SieveBlock, _ BlockServices) error { return nil }
 func (p *mockProcessor) JobLabel(_ *SieveBlock) string { return "" }
-func (p *mockProcessor) OnChange(_ *SieveBlock, _ Services)                  {}
+func (p *mockProcessor) OnChange(_ *SieveBlock, _ BlockServices)                  {}
 
 func resetRegistry() {
 	processorRegistry = map[string]BlockProcessor{}

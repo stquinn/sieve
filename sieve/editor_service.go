@@ -179,7 +179,7 @@ func parseAllBlocks(body string) map[string]*SieveBlock {
 // open document and coordinates all save operations. DocumentService owns disk.
 type EditorService struct {
 	documents  *DocumentService
-	services   Services
+	services   BlockServices
 	debounce   time.Duration
 	mu         sync.RWMutex
 	shadows    map[string]*ShadowDocument
@@ -373,7 +373,7 @@ func (es *EditorService) FlushAll() {
 	}
 }
 
-func (es *EditorService) SetServices(svc Services) {
+func (es *EditorService) SetServices(svc BlockServices) {
 	es.services = svc
 }
 
