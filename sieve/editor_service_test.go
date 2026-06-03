@@ -473,4 +473,59 @@ func TestEditorService_HandlePaste_noMatch(t *testing.T) {
 	}
 }
 
+func TestHandleBlockUpdate_notifySendsSnapshotUnderLock(t *testing.T) {
+	resetRegistry()
+	RegisterProcessor("code", &CodeBlockProcessor{})
 
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, 0)
+
+	doc, _ := ds.New()
+	doc.SetBody([]byte("# Hello"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+	_ = es.Open(uuid, nil)
+
+	// Create a code block with a very short source (<30 chars) so heuristics
+	// do not fire in InitAttrs and language stays empty. OnUpdate will then
+	// receive a long Go source (>=30 chars) that triggers heuristic detection,
+	// producing a non-empty attrsChanged and exercising the notify path.
+	id, _, err := es.CreateBlock(uuid, "code", map[string]interface{}{
+		"source": "x", // too short for heuristics; language stays ""
+	})
+	if err != nil {
+		t.Fatalf("CreateBlock: %v", err)
+	}
+
+	var notifyID string
+	var notifyYaml string
+	notifyCalled := make(chan struct{}, 1)
+
+	// Supply a Go source long enough to pass minSourceLength (30) so that
+	// OnUpdate detects "go" and sets language, making attrsChanged non-empty.
+	goSource := "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(\"hello\") }"
+	es.HandleBlockUpdate(uuid, "code", id, map[string]interface{}{
+		"source": goSource,
+	}, func(blockID, rawYaml string) {
+		notifyID = blockID
+		notifyYaml = rawYaml
+		select {
+		case notifyCalled <- struct{}{}:
+		default:
+		}
+	})
+
+	select {
+	case <-notifyCalled:
+		// notify was invoked synchronously by the OnUpdate heuristic path
+	case <-time.After(2 * time.Second):
+		t.Fatal("notify was not called within 2s")
+	}
+
+	if notifyID != id {
+		t.Errorf("expected notify block id=%q, got %q", id, notifyID)
+	}
+	if !strings.Contains(notifyYaml, "language:") {
+		t.Errorf("expected notify rawYaml to contain language: key, got:\n%s", notifyYaml)
+	}
+}

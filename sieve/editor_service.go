@@ -449,9 +449,16 @@ func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map
 		if notify != nil {
 			shadow.mu.Lock()
 			blk2, ok2 := shadow.Blocks[blockID]
+			var attrsCopy map[string]interface{}
+			if ok2 {
+				attrsCopy = make(map[string]interface{}, len(blk2.Attrs))
+				for k, v := range blk2.Attrs {
+					attrsCopy[k] = v
+				}
+			}
 			shadow.mu.Unlock()
 			if ok2 {
-				rawYaml, _ := fencedblock.Serialize[map[string]interface{}](blk2.Attrs)
+				rawYaml, _ := fencedblock.Serialize[map[string]interface{}](attrsCopy)
 				notify(blockID, rawYaml)
 			}
 		}
