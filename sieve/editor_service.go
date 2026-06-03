@@ -463,20 +463,22 @@ func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map
 	if len(attrsChanged) > 0 {
 		updatedBlock := SieveBlock{ID: blockID, Kind: kind, Attrs: attrsChanged}
 		shadow.setBlock(updatedBlock)
-		shadow.mu.Lock()
-		blk2, ok2 := shadow.Blocks[blockID]
-		var attrsCopy map[string]interface{}
-		if ok2 {
-			attrsCopy = make(map[string]interface{}, len(blk2.Attrs))
-			for k, v := range blk2.Attrs {
-				attrsCopy[k] = v
-			}
+	}
+
+	// Always notify client so it gets the re-computed serialisedForm and UI updates
+	shadow.mu.Lock()
+	blkFinal, okFinal := shadow.Blocks[blockID]
+	var finalAttrs map[string]interface{}
+	if okFinal {
+		finalAttrs = make(map[string]interface{}, len(blkFinal.Attrs))
+		for k, v := range blkFinal.Attrs {
+			finalAttrs[k] = v
 		}
-		shadow.mu.Unlock()
-		if ok2 {
-			// rawYaml, _ := fencedblock.SerializeYaml[map[string]interface{}](attrsCopy)
-			es.notifyBlockUpdated(uuid, updatedBlock)
-		}
+	}
+	shadow.mu.Unlock()
+
+	if okFinal {
+		es.notifyBlockUpdated(uuid, SieveBlock{ID: blockID, Kind: kind, Attrs: finalAttrs})
 	}
 
 	es.DispatchJobIfNeeded(uuid, blockID)
