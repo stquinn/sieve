@@ -11,10 +11,10 @@ func TestBlockAnchorParsesSimpleRegion(t *testing.T) {
 	md := "[!block] id=\"blk-1234\"\n\nSome content\n\n[!block-end]\n"
 	doc := mdParser().Parser().Parse(text.NewReader([]byte(md)))
 
-	var found *BlockAnchorNode
+	var found *blockAnchorNode
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if entering {
-			if ba, ok := n.(*BlockAnchorNode); ok {
+			if ba, ok := n.(*blockAnchorNode); ok {
 				found = ba
 				return ast.WalkStop, nil
 			}
@@ -23,7 +23,7 @@ func TestBlockAnchorParsesSimpleRegion(t *testing.T) {
 	})
 
 	if found == nil {
-		t.Fatal("expected BlockAnchorNode, got nil")
+		t.Fatal("expected blockAnchorNode, got nil")
 	}
 	if found.AnchorID != "blk-1234" {
 		t.Errorf("expected AnchorID=blk-1234, got %q", found.AnchorID)
@@ -34,10 +34,10 @@ func TestBlockAnchorHasChildren(t *testing.T) {
 	md := "[!block] id=\"blk-1234\"\n\nSome content here\n\n[!block-end]\n"
 	doc := mdParser().Parser().Parse(text.NewReader([]byte(md)))
 
-	var anchor *BlockAnchorNode
+	var anchor *blockAnchorNode
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if entering {
-			if ba, ok := n.(*BlockAnchorNode); ok {
+			if ba, ok := n.(*blockAnchorNode); ok {
 				anchor = ba
 				return ast.WalkStop, nil
 			}
@@ -53,14 +53,14 @@ func TestBlockAnchorHasChildren(t *testing.T) {
 }
 
 func TestBlockAnchorMissingIDIsIgnored(t *testing.T) {
-	// [!block] without id= should NOT produce a BlockAnchorNode — falls through to plain text
+	// [!block] without id= should NOT produce a blockAnchorNode — falls through to plain text
 	md := "[!block] notanid\n\nSome content\n\n[!block-end]\n"
 	doc := mdParser().Parser().Parse(text.NewReader([]byte(md)))
 
-	var found *BlockAnchorNode
+	var found *blockAnchorNode
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if entering {
-			if ba, ok := n.(*BlockAnchorNode); ok {
+			if ba, ok := n.(*blockAnchorNode); ok {
 				found = ba
 				return ast.WalkStop, nil
 			}
@@ -68,22 +68,22 @@ func TestBlockAnchorMissingIDIsIgnored(t *testing.T) {
 		return ast.WalkContinue, nil
 	})
 	if found != nil {
-		t.Error("expected no BlockAnchorNode for malformed anchor line")
+		t.Error("expected no blockAnchorNode for malformed anchor line")
 	}
 }
 
 func TestBlockAnchorChildSieveBlockIsPromoted(t *testing.T) {
 	RegisterProcessor("code", &CodeBlockProcessor{})
 	t.Cleanup(func() { UnregisterProcessor("code") })
-	// A fenced SieveBlock inside a BlockAnchor should be promoted to SieveBlockNode
+	// A fenced SieveBlock inside a BlockAnchor should be promoted to sieveBlockNode
 	// by the existing sieveBlockASTTransformer.
 	md := "[!block] id=\"blk-1234\"\n\n```code\nid: co-abcd\nstatus: COMPLETE\nsource: fmt.Println()\n```\n\n[!block-end]\n"
 	doc := mdParser().Parser().Parse(text.NewReader([]byte(md)))
 
-	var anchor *BlockAnchorNode
+	var anchor *blockAnchorNode
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if entering {
-			if ba, ok := n.(*BlockAnchorNode); ok {
+			if ba, ok := n.(*blockAnchorNode); ok {
 				anchor = ba
 				return ast.WalkStop, nil
 			}
@@ -94,15 +94,15 @@ func TestBlockAnchorChildSieveBlockIsPromoted(t *testing.T) {
 		t.Fatal("no anchor found")
 	}
 
-	var sieveChild *SieveBlockNode
+	var sieveChild *sieveBlockNode
 	for child := anchor.FirstChild(); child != nil; child = child.NextSibling() {
-		if sb, ok := child.(*SieveBlockNode); ok {
+		if sb, ok := child.(*sieveBlockNode); ok {
 			sieveChild = sb
 			break
 		}
 	}
 	if sieveChild == nil {
-		t.Error("expected SieveBlockNode child inside BlockAnchorNode")
+		t.Error("expected sieveBlockNode child inside blockAnchorNode")
 	}
 }
 
@@ -113,10 +113,10 @@ func TestBlockAnchorDoesNotInterruptParagraph(t *testing.T) {
 	md := "Some prose here\n[!block] id=\"blk-9999\"\nmore prose\n\n[!block-end]\n"
 	doc := mdParser().Parser().Parse(text.NewReader([]byte(md)))
 
-	var found *BlockAnchorNode
+	var found *blockAnchorNode
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if entering {
-			if ba, ok := n.(*BlockAnchorNode); ok {
+			if ba, ok := n.(*blockAnchorNode); ok {
 				found = ba
 				return ast.WalkStop, nil
 			}
@@ -124,7 +124,7 @@ func TestBlockAnchorDoesNotInterruptParagraph(t *testing.T) {
 		return ast.WalkContinue, nil
 	})
 	if found != nil {
-		t.Error("BlockAnchorNode must not be opened when [!block] interrupts a paragraph")
+		t.Error("blockAnchorNode must not be opened when [!block] interrupts a paragraph")
 	}
 }
 
@@ -132,10 +132,10 @@ func TestBlockAnchorMultipleParagraphs(t *testing.T) {
 	md := "[!block] id=\"blk-5678\"\n\nFirst paragraph.\n\nSecond paragraph.\n\n[!block-end]\n"
 	doc := mdParser().Parser().Parse(text.NewReader([]byte(md)))
 
-	var anchor *BlockAnchorNode
+	var anchor *blockAnchorNode
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if entering {
-			if ba, ok := n.(*BlockAnchorNode); ok {
+			if ba, ok := n.(*blockAnchorNode); ok {
 				anchor = ba
 				return ast.WalkStop, nil
 			}
@@ -154,10 +154,10 @@ func TestTargetHighlightNodeParsesMarker(t *testing.T) {
 	md := "[!block] id=\"blk-1234\"\n\nThe patient showed ==acute== symptoms.\n\n[!block-end]\n"
 	doc := mdParser().Parser().Parse(text.NewReader([]byte(md)))
 
-	var anchor *BlockAnchorNode
+	var anchor *blockAnchorNode
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if entering {
-			if ba, ok := n.(*BlockAnchorNode); ok {
+			if ba, ok := n.(*blockAnchorNode); ok {
 				anchor = ba
 				return ast.WalkStop, nil
 			}
@@ -165,7 +165,7 @@ func TestTargetHighlightNodeParsesMarker(t *testing.T) {
 		return ast.WalkContinue, nil
 	})
 	if anchor == nil {
-		t.Fatal("no BlockAnchorNode found")
+		t.Fatal("no blockAnchorNode found")
 	}
 	if len(anchor.Targets) != 1 {
 		t.Fatalf("expected 1 target, got %d: %v", len(anchor.Targets), anchor.Targets)
@@ -179,10 +179,10 @@ func TestTargetHighlightNodeMultipleTargets(t *testing.T) {
 	md := "[!block] id=\"blk-5678\"\n\nThe ==quick== brown ==fox== jumps.\n\n[!block-end]\n"
 	doc := mdParser().Parser().Parse(text.NewReader([]byte(md)))
 
-	var anchor *BlockAnchorNode
+	var anchor *blockAnchorNode
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if entering {
-			if ba, ok := n.(*BlockAnchorNode); ok {
+			if ba, ok := n.(*blockAnchorNode); ok {
 				anchor = ba
 				return ast.WalkStop, nil
 			}
@@ -190,7 +190,7 @@ func TestTargetHighlightNodeMultipleTargets(t *testing.T) {
 		return ast.WalkContinue, nil
 	})
 	if anchor == nil {
-		t.Fatal("no BlockAnchorNode found")
+		t.Fatal("no blockAnchorNode found")
 	}
 	if len(anchor.Targets) != 2 {
 		t.Fatalf("expected 2 targets, got %d: %v", len(anchor.Targets), anchor.Targets)
@@ -201,14 +201,14 @@ func TestTargetHighlightNodeMultipleTargets(t *testing.T) {
 }
 
 func TestTargetHighlightOutsideAnchorProducesNoTargets(t *testing.T) {
-	// ==marks== outside a BlockAnchor don't crash and produce no BlockAnchorNode
+	// ==marks== outside a BlockAnchor don't crash and produce no blockAnchorNode
 	md := "The ==highlighted== word outside any anchor.\n"
 	doc := mdParser().Parser().Parse(text.NewReader([]byte(md)))
 
-	var found *BlockAnchorNode
+	var found *blockAnchorNode
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if entering {
-			if ba, ok := n.(*BlockAnchorNode); ok {
+			if ba, ok := n.(*blockAnchorNode); ok {
 				found = ba
 				return ast.WalkStop, nil
 			}
@@ -216,7 +216,7 @@ func TestTargetHighlightOutsideAnchorProducesNoTargets(t *testing.T) {
 		return ast.WalkContinue, nil
 	})
 	if found != nil {
-		t.Error("unexpected BlockAnchorNode for content outside any anchor")
+		t.Error("unexpected blockAnchorNode for content outside any anchor")
 	}
 }
 

@@ -24,51 +24,51 @@ var (
 	inlineBlockRegex = regexp.MustCompile(`^\[!([A-Za-z0-9_-]+)\]\s*(\{.*?\})\s*\[!([A-Za-z0-9_-]+)-end\]`)
 )
 
-// SieveNode is the interface that all custom Sieve AST nodes implement.
-type SieveNode interface {
+// sieveNode is the interface that all custom Sieve AST nodes implement.
+type sieveNode interface {
 	ast.Node
 	GetSieveBlock() *SieveBlock
 	StartByte() int
 	EndByte() int
 }
 
-// SieveBlockNode represents a fenced block
-type SieveBlockNode struct {
+// sieveBlockNode represents a fenced block
+type sieveBlockNode struct {
 	ast.BaseBlock
 	SieveBlock
 	start int
 	end   int
 }
 
-func (n *SieveBlockNode) Dump(source []byte, level int) {
+func (n *sieveBlockNode) Dump(source []byte, level int) {
 	ast.DumpHelper(n, source, level, nil, nil)
 }
 
-var KindSieveBlock = ast.NewNodeKind("SieveBlock")
+var kindSieveBlock = ast.NewNodeKind("SieveBlock")
 
-func (n *SieveBlockNode) Kind() ast.NodeKind { return KindSieveBlock }
-func (n *SieveBlockNode) GetSieveBlock() *SieveBlock { return &n.SieveBlock }
-func (n *SieveBlockNode) StartByte() int { return n.start }
-func (n *SieveBlockNode) EndByte() int { return n.end }
+func (n *sieveBlockNode) Kind() ast.NodeKind { return kindSieveBlock }
+func (n *sieveBlockNode) GetSieveBlock() *SieveBlock { return &n.SieveBlock }
+func (n *sieveBlockNode) StartByte() int { return n.start }
+func (n *sieveBlockNode) EndByte() int { return n.end }
 
-// SieveInlineNode represents [TEXT](URL) { ... }
-type SieveInlineNode struct {
+// sieveInlineNode represents [TEXT](URL) { ... }
+type sieveInlineNode struct {
 	ast.BaseInline
 	SieveBlock
 	start int
 	end   int
 }
 
-func (n *SieveInlineNode) Dump(source []byte, level int) {
+func (n *sieveInlineNode) Dump(source []byte, level int) {
 	ast.DumpHelper(n, source, level, nil, nil)
 }
 
-var KindSieveInline = ast.NewNodeKind("SieveInline")
+var kindSieveInline = ast.NewNodeKind("SieveInline")
 
-func (n *SieveInlineNode) Kind() ast.NodeKind { return KindSieveInline }
-func (n *SieveInlineNode) GetSieveBlock() *SieveBlock { return &n.SieveBlock }
-func (n *SieveInlineNode) StartByte() int { return n.start }
-func (n *SieveInlineNode) EndByte() int { return n.end }
+func (n *sieveInlineNode) Kind() ast.NodeKind { return kindSieveInline }
+func (n *sieveInlineNode) GetSieveBlock() *SieveBlock { return &n.SieveBlock }
+func (n *sieveInlineNode) StartByte() int { return n.start }
+func (n *sieveInlineNode) EndByte() int { return n.end }
 
 // --- AST Transformer for Block Nodes ---
 
@@ -138,7 +138,7 @@ func (t *sieveBlockASTTransformer) Transform(node *ast.Document, reader text.Rea
 				}
 			}
 
-			sieveNode := &SieveBlockNode{
+			sieveNode := &sieveBlockNode{
 				SieveBlock: SieveBlock{
 					ID:    id,
 					Kind:  kind,
@@ -195,7 +195,7 @@ func (s *sieveInlineParser) Parse(parent ast.Node, reader text.Reader, pc parser
 	start := segment.Start
 	end := segment.Start + match[1]
 
-	node := &SieveInlineNode{
+	node := &sieveInlineNode{
 		SieveBlock: SieveBlock{
 			ID:    id,
 			Kind:  startKind,
@@ -224,13 +224,13 @@ func (e *sieveExtension) Extend(m goldmark.Markdown) {
 	)
 }
 
-var SieveExtension = &sieveExtension{}
+var sieveExtensionPlugin = &sieveExtension{}
 
 // --- Public API for EditorService ---
 
 var sharedMDParser = sync.OnceValue(func() goldmark.Markdown {
 	return goldmark.New(
-		goldmark.WithExtensions(BlockAnchorExtension, SieveExtension),
+		goldmark.WithExtensions(blockAnchorExtensionPlugin, sieveExtensionPlugin),
 	)
 })
 
@@ -245,7 +245,7 @@ func ParseAllBlocks(markdown string) map[string]*SieveBlock {
 		if !entering {
 			return ast.WalkContinue, nil
 		}
-		if sn, ok := n.(SieveNode); ok {
+		if sn, ok := n.(sieveNode); ok {
 			blk := sn.GetSieveBlock()
 			
 			copyBlk := &SieveBlock{
@@ -287,10 +287,10 @@ func InjectBlocks(markdown string, authoritativeBlocks map[string]*SieveBlock) s
 	doc := mdParser().Parser().Parse(text.NewReader([]byte(markdown)))
 
 	// Collect nodes to replace
-	var nodes []SieveNode
+	var nodes []sieveNode
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if entering {
-			if sn, ok := n.(SieveNode); ok {
+			if sn, ok := n.(sieveNode); ok {
 				nodes = append(nodes, sn)
 			}
 		}
@@ -346,39 +346,39 @@ func InjectBlocks(markdown string, authoritativeBlocks map[string]*SieveBlock) s
 
 // --- BlockAnchor Parsers and AST Nodes ---
 
-// BlockAnchorNode is a Goldmark container AST node representing a
+// blockAnchorNode is a Goldmark container AST node representing a
 // [!block] id="…" … [!block-end] region.
 // Its children are the parsed Markdown blocks within the region.
-// Any fenced SieveBlocks inside will be promoted to SieveBlockNode by
+// Any fenced SieveBlocks inside will be promoted to sieveBlockNode by
 // the existing sieveBlockASTTransformer.
-type BlockAnchorNode struct {
+type blockAnchorNode struct {
 	ast.BaseBlock
 	BlockAnchor
 }
 
-func (n *BlockAnchorNode) Dump(source []byte, level int) {
+func (n *blockAnchorNode) Dump(source []byte, level int) {
 	ast.DumpHelper(n, source, level, map[string]string{"AnchorID": n.AnchorID}, nil)
 }
 
-// KindBlockAnchor is the unique Goldmark NodeKind for BlockAnchorNode.
-var KindBlockAnchor = ast.NewNodeKind("BlockAnchor")
+// kindBlockAnchor is the unique Goldmark NodeKind for blockAnchorNode.
+var kindBlockAnchor = ast.NewNodeKind("BlockAnchor")
 
-func (n *BlockAnchorNode) Kind() ast.NodeKind { return KindBlockAnchor }
+func (n *blockAnchorNode) Kind() ast.NodeKind { return kindBlockAnchor }
 
-// TargetHighlightNode is an inline AST node representing a ==...== target mark.
+// targetHighlightNode is an inline AST node representing a ==...== target mark.
 // It stores the raw text content between the delimiters.
-type TargetHighlightNode struct {
+type targetHighlightNode struct {
 	ast.BaseInline
 	Content string
 }
 
-func (n *TargetHighlightNode) Dump(source []byte, level int) {
+func (n *targetHighlightNode) Dump(source []byte, level int) {
 	ast.DumpHelper(n, source, level, map[string]string{"Content": n.Content}, nil)
 }
 
-var KindTargetHighlight = ast.NewNodeKind("TargetHighlight")
+var kindTargetHighlight = ast.NewNodeKind("TargetHighlight")
 
-func (n *TargetHighlightNode) Kind() ast.NodeKind { return KindTargetHighlight }
+func (n *targetHighlightNode) Kind() ast.NodeKind { return kindTargetHighlight }
 
 // blockAnchorOpenRegex matches [!block] id="blk-XXXX" at the start of a line.
 var blockAnchorOpenRegex = regexp.MustCompile(`^\[!block\]\s+id="([^"]+)"`)
@@ -398,7 +398,7 @@ func (p *blockAnchorParser) Open(parent ast.Node, reader text.Reader, pc parser.
 		return nil, parser.NoChildren
 	}
 	reader.Advance(len(line))
-	return &BlockAnchorNode{
+	return &blockAnchorNode{
 		BlockAnchor: BlockAnchor{AnchorID: string(match[1])},
 	}, parser.HasChildren
 }
@@ -439,8 +439,8 @@ func (e *blockAnchorExtension) Extend(m goldmark.Markdown) {
 	)
 }
 
-// BlockAnchorExtension is the Goldmark extension to register with goldmark.New().
-var BlockAnchorExtension = &blockAnchorExtension{}
+// blockAnchorExtensionPlugin is the Goldmark extension to register with goldmark.New().
+var blockAnchorExtensionPlugin = &blockAnchorExtension{}
 
 // targetHighlightParser is a Goldmark inline parser for ==...== markers.
 type targetHighlightParser struct{}
@@ -462,11 +462,11 @@ func (p *targetHighlightParser) Parse(parent ast.Node, reader text.Reader, pc pa
 		return nil
 	}
 	reader.Advance(end + 4) // ==content== → 2 + end + 2
-	return &TargetHighlightNode{Content: string(content)}
+	return &targetHighlightNode{Content: string(content)}
 }
 
-// blockAnchorTargetTransformer walks BlockAnchorNodes and collects
-// all TargetHighlightNode text into the anchor's Targets slice.
+// blockAnchorTargetTransformer walks blockAnchorNodes and collects
+// all targetHighlightNode text into the anchor's Targets slice.
 type blockAnchorTargetTransformer struct{}
 
 func (t *blockAnchorTargetTransformer) Transform(node *ast.Document, reader text.Reader, pc parser.Context) {
@@ -474,7 +474,7 @@ func (t *blockAnchorTargetTransformer) Transform(node *ast.Document, reader text
 		if !entering {
 			return ast.WalkContinue, nil
 		}
-		ba, ok := n.(*BlockAnchorNode)
+		ba, ok := n.(*blockAnchorNode)
 		if !ok {
 			return ast.WalkContinue, nil
 		}
@@ -482,7 +482,7 @@ func (t *blockAnchorTargetTransformer) Transform(node *ast.Document, reader text
 			if !childEntering {
 				return ast.WalkContinue, nil
 			}
-			if ht, ok := child.(*TargetHighlightNode); ok {
+			if ht, ok := child.(*targetHighlightNode); ok {
 				ba.Targets = append(ba.Targets, ht.Content)
 			}
 			return ast.WalkContinue, nil
@@ -498,7 +498,7 @@ func ParseBlockAnchors(markdown string) []*BlockAnchor {
 	var anchors []*BlockAnchor
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if entering {
-			if ba, ok := n.(*BlockAnchorNode); ok {
+			if ba, ok := n.(*blockAnchorNode); ok {
 				// Deep copy the business object so mutations don't affect the AST
 				copyAnchor := &BlockAnchor{
 					AnchorID: ba.AnchorID,
