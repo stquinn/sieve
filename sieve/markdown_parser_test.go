@@ -220,6 +220,14 @@ func TestTargetHighlightOutsideAnchorProducesNoTargets(t *testing.T) {
 	}
 }
 
+func TestTargetHighlightWithSpaces(t *testing.T) {
+	md := "[!block] id=\"blk-1234\"\n\nThe == quick == fox.\n\n[!block-end]\n"
+	anchors := ParseBlockAnchors(md)
+	if len(anchors) != 1 || len(anchors[0].Targets) != 1 || anchors[0].Targets[0] != "quick" {
+		t.Errorf("expected trimmed target 'quick', got %v", anchors)
+	}
+}
+
 func TestParseBlockAnchors(t *testing.T) {
 	md := "[!block] id=\"blk-abc\"\n\nFoo ==bar== baz.\n\n[!block-end]\n\n[!block] id=\"blk-def\"\n\nNo targets here.\n\n[!block-end]\n"
 	anchors := ParseBlockAnchors(md)

@@ -95,6 +95,20 @@
     if (menu) menu.remove()
   }
 
+  function wrapInBlockAnchor(editor) {
+    var s = editor.state
+    var sel = s.selection
+    var blockRef = 'blk-' + Math.random().toString(16).substring(2, 6)
+    var blockRange = sel.$from.blockRange(sel.$to)
+    if (!blockRange) return
+    var topRange = new window.TipTap.NodeRange(blockRange.$from, blockRange.$to, 0)
+    var tr = s.tr
+    try {
+      tr.wrap(topRange, [{ type: s.schema.nodes.blockRef, attrs: { id: blockRef } }])
+      editor.view.dispatch(tr)
+    } catch (e) { /* selection too complex to wrap */ }
+  }
+
   function applyTargetHighlight(editor) {
     var s = editor.state
     var sel = s.selection
@@ -121,32 +135,12 @@
 
     if (coversNode && !inBlockAnchor) {
       // Wrap whole node in BlockAnchor only — no == mark needed
-      var blockRef = 'blk-' + Math.random().toString(16).substring(2, 6)
-      var blockRange = sel.$from.blockRange(sel.$to)
-      if (blockRange) {
-        var topRange = new window.TipTap.NodeRange(blockRange.$from, blockRange.$to, 0)
-        var tr = s.tr
-        try {
-          tr.wrap(topRange, [{ type: s.schema.nodes.blockRef, attrs: { id: blockRef } }])
-          editor.view.dispatch(tr)
-        } catch (e) { /* selection too complex to wrap */ }
-      }
+      wrapInBlockAnchor(editor)
       return
     }
 
     // Word/phrase selected: apply == mark. Wrap parent in BlockAnchor first if not already.
-    if (!inBlockAnchor) {
-      var blockRef = 'blk-' + Math.random().toString(16).substring(2, 6)
-      var blockRange = sel.$from.blockRange(sel.$to)
-      if (blockRange) {
-        var topRange = new window.TipTap.NodeRange(blockRange.$from, blockRange.$to, 0)
-        var tr = s.tr
-        try {
-          tr.wrap(topRange, [{ type: s.schema.nodes.blockRef, attrs: { id: blockRef } }])
-          editor.view.dispatch(tr)
-        } catch (e) { /* wrapping failed — still apply the mark */ }
-      }
-    }
+    if (!inBlockAnchor) wrapInBlockAnchor(editor)
 
     // Apply the highlight mark on the selection
     editor.commands.setMark('highlight')
@@ -275,6 +269,8 @@
         applyTargetHighlight(editor)
         editor.commands.focus()
       }})
+    } else {
+      items.push({ type: 'divider' })
     }
 
     items.push({ icon: IC.sparkle, label: 'Ask AI...', action: function () {
