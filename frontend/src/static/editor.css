@@ -604,6 +604,27 @@ textarea::selection {
   border-left-color: var(--theme-accentPrimary) !important;
 }
 
+/* ── AI target highlight marks (==...==) ─────────────────────────────── */
+/* Normal state: always visible as AI-targeted — amber underline.         */
+/* Active state: prominent when parent block-anchor is focused.           */
+
+.tiptap mark {
+  background: transparent;
+  border-radius: 2px;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, #f59e0b 70%, transparent);
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  color: inherit;
+}
+
+.block-ref-active mark,
+.block-node.block-ref-active mark {
+  background-color: color-mix(in srgb, #f59e0b 18%, transparent);
+  text-decoration-color: #f59e0b;
+  text-decoration-style: solid;
+}
+
 .tiptap .code-block-wrapper {
   margin-top: 0.5em;
   margin-bottom: 0.5em;
