@@ -195,9 +195,16 @@
       document.dispatchEvent(new CustomEvent('sieve:create-block', { detail: { kind: 'code' } }))
     }})
 
-    items.push({ type: 'divider' })
-    if (hasSelection) {
-      items.push({ icon: IC.highlight, label: 'Highlight Target', action: function () {
+    var isHighlighted = editor.isActive('highlight')
+    if (hasSelection || isHighlighted) {
+      var label = isHighlighted ? 'Unhighlight Target' : 'Highlight Target'
+      items.push({ icon: IC.highlight, label: label, action: function () {
+        if (isHighlighted) {
+          editor.commands.unsetMark('highlight')
+          editor.commands.focus()
+          return
+        }
+
         var s = editor.state
         var sel = s.selection
         if (sel.empty) return
