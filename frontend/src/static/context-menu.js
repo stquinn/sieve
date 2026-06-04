@@ -29,6 +29,7 @@
     closeAll:    svg('<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>'),
     externalLink: svg('<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>'),
     code:         svg('<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>'),
+    highlight:   svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/><line x1="15" y1="5" x2="18" y2="8"/>'),
   }
 
   // ── Renderer ────────────────────────────────────────────────────────────────
@@ -195,6 +196,66 @@
     }})
 
     items.push({ type: 'divider' })
+    if (hasSelection) {
+      items.push({ icon: IC.highlight, label: 'Highlight Target', action: function () {
+        var s = editor.state
+        var sel = s.selection
+        if (sel.empty) return
+
+        // Detect if the selection covers the entire parent node (discounting whitespace)
+        var $from = sel.$from
+        var nodeStart = $from.start($from.depth)
+        var nodeEnd = $from.end($from.depth)
+        var coversNode =
+          s.doc.textBetween(sel.from, sel.to).trim() ===
+          s.doc.textBetween(nodeStart, nodeEnd).trim()
+
+        // Detect if already inside a BlockAnchor (blockRef node)
+        var inBlockAnchor = false
+        for (var d = $from.depth; d >= 0; d--) {
+          if ($from.node(d).type.name === 'blockRef') { inBlockAnchor = true; break }
+        }
+
+        if (coversNode && inBlockAnchor) {
+          // No-op: block already defines the entire target
+          return
+        }
+
+        if (coversNode && !inBlockAnchor) {
+          // Wrap whole node in BlockAnchor only — no == mark needed
+          var blockRef = 'blk-' + Math.random().toString(16).substring(2, 6)
+          var blockRange = sel.$from.blockRange(sel.$to)
+          if (blockRange) {
+            var topRange = new window.TipTap.NodeRange(blockRange.$from, blockRange.$to, 0)
+            var tr = s.tr
+            try {
+              tr.wrap(topRange, [{ type: s.schema.nodes.blockRef, attrs: { id: blockRef } }])
+              editor.view.dispatch(tr)
+            } catch (e) { /* selection too complex to wrap */ }
+          }
+          return
+        }
+
+        // Word/phrase selected: apply == mark. Wrap parent in BlockAnchor first if not already.
+        if (!inBlockAnchor) {
+          var blockRef = 'blk-' + Math.random().toString(16).substring(2, 6)
+          var blockRange = sel.$from.blockRange(sel.$to)
+          if (blockRange) {
+            var topRange = new window.TipTap.NodeRange(blockRange.$from, blockRange.$to, 0)
+            var tr = s.tr
+            try {
+              tr.wrap(topRange, [{ type: s.schema.nodes.blockRef, attrs: { id: blockRef } }])
+              editor.view.dispatch(tr)
+            } catch (e) { /* wrapping failed — still apply the mark */ }
+          }
+        }
+
+        // Apply or toggle the highlight mark on the selection
+        editor.commands.toggleMark('highlight')
+        editor.commands.focus()
+      }})
+    }
+
     items.push({ icon: IC.sparkle, label: 'Ask AI...', action: function () {
       editor.commands.focus()
       document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
