@@ -269,10 +269,9 @@
         applyTargetHighlight(editor)
         editor.commands.focus()
       }})
-    } else {
-      items.push({ type: 'divider' })
     }
 
+    items.push({ type: 'divider' })
     items.push({ icon: IC.sparkle, label: 'Ask AI...', action: function () {
       if (hasSelection && !isHighlighted) applyTargetHighlight(editor)
       editor.commands.focus()

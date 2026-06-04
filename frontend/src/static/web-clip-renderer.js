@@ -90,6 +90,12 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
       function render(n) {
         dom.innerHTML = ''
         dom.setAttribute('data-wc-id', n.attrs.id || '')
+        
+        var outerBadge = document.createElement('span')
+        outerBadge.className = 'web-clip-block__badge'
+        outerBadge.textContent = 'WEB CLIP'
+        dom.appendChild(outerBadge)
+
         var attrs = n.attrs
         var status = attrs.status || 'PENDING'
         var domain = attrs.source || ''
@@ -113,10 +119,10 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
           }
 
         } else if (status === 'COMPLETE') {
-          var badge = document.createElement('span')
-          badge.className = 'web-clip-block__badge'
-          badge.textContent = completeModeLabel + ' — '
-          header.appendChild(badge)
+          var statusEl = document.createElement('span')
+          statusEl.className = 'web-clip-block__status'
+          statusEl.textContent = completeModeLabel + ' — '
+          header.appendChild(statusEl)
           var srcLink = document.createElement('a')
           srcLink.className = 'web-clip-block__source-link'
           srcLink.href = attrs.source || ''
