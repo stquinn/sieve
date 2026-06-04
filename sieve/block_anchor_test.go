@@ -149,3 +149,92 @@ func TestBlockAnchorMultipleParagraphs(t *testing.T) {
 		t.Errorf("expected at least 2 children, got %d", anchor.ChildCount())
 	}
 }
+
+func TestTargetHighlightNodeParsesMarker(t *testing.T) {
+	md := "[!block] id=\"blk-1234\"\n\nThe patient showed ==acute== symptoms.\n\n[!block-end]\n"
+	doc := mdParser().Parser().Parse(text.NewReader([]byte(md)))
+
+	var anchor *BlockAnchorNode
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if entering {
+			if ba, ok := n.(*BlockAnchorNode); ok {
+				anchor = ba
+				return ast.WalkStop, nil
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+	if anchor == nil {
+		t.Fatal("no BlockAnchorNode found")
+	}
+	if len(anchor.Targets) != 1 {
+		t.Fatalf("expected 1 target, got %d: %v", len(anchor.Targets), anchor.Targets)
+	}
+	if anchor.Targets[0] != "acute" {
+		t.Errorf("expected target 'acute', got %q", anchor.Targets[0])
+	}
+}
+
+func TestTargetHighlightNodeMultipleTargets(t *testing.T) {
+	md := "[!block] id=\"blk-5678\"\n\nThe ==quick== brown ==fox== jumps.\n\n[!block-end]\n"
+	doc := mdParser().Parser().Parse(text.NewReader([]byte(md)))
+
+	var anchor *BlockAnchorNode
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if entering {
+			if ba, ok := n.(*BlockAnchorNode); ok {
+				anchor = ba
+				return ast.WalkStop, nil
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+	if anchor == nil {
+		t.Fatal("no BlockAnchorNode found")
+	}
+	if len(anchor.Targets) != 2 {
+		t.Fatalf("expected 2 targets, got %d: %v", len(anchor.Targets), anchor.Targets)
+	}
+	if anchor.Targets[0] != "quick" || anchor.Targets[1] != "fox" {
+		t.Errorf("expected [quick fox], got %v", anchor.Targets)
+	}
+}
+
+func TestTargetHighlightOutsideAnchorProducesNoTargets(t *testing.T) {
+	// ==marks== outside a BlockAnchor don't crash and produce no BlockAnchorNode
+	md := "The ==highlighted== word outside any anchor.\n"
+	doc := mdParser().Parser().Parse(text.NewReader([]byte(md)))
+
+	var found *BlockAnchorNode
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if entering {
+			if ba, ok := n.(*BlockAnchorNode); ok {
+				found = ba
+				return ast.WalkStop, nil
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+	if found != nil {
+		t.Error("unexpected BlockAnchorNode for content outside any anchor")
+	}
+}
+
+func TestParseBlockAnchors(t *testing.T) {
+	md := "[!block] id=\"blk-abc\"\n\nFoo ==bar== baz.\n\n[!block-end]\n\n[!block] id=\"blk-def\"\n\nNo targets here.\n\n[!block-end]\n"
+	anchors := ParseBlockAnchors(md)
+	if len(anchors) != 2 {
+		t.Fatalf("expected 2 anchors, got %d", len(anchors))
+	}
+	byID := make(map[string]*BlockAnchorNode)
+	for _, a := range anchors {
+		byID[a.AnchorID] = a
+	}
+	if a := byID["blk-abc"]; a == nil || len(a.Targets) != 1 || a.Targets[0] != "bar" {
+		t.Errorf("blk-abc: expected Targets=[bar], got %v", a)
+	}
+	if a := byID["blk-def"]; a == nil || len(a.Targets) != 0 {
+		t.Errorf("blk-def: expected no targets, got %v", a.Targets)
+	}
+}
+

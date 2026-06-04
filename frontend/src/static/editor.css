@@ -612,7 +612,7 @@ textarea::selection {
   background: transparent;
   border-radius: 2px;
   text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, #f59e0b 70%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--theme-accentYellow) 70%, transparent);
   text-decoration-style: dotted;
   text-underline-offset: 2px;
   color: inherit;
@@ -620,8 +620,8 @@ textarea::selection {
 
 .block-ref-active mark,
 .block-node.block-ref-active mark {
-  background-color: color-mix(in srgb, #f59e0b 18%, transparent);
-  text-decoration-color: #f59e0b;
+  background-color: color-mix(in srgb, var(--theme-accentYellow) 18%, transparent);
+  text-decoration-color: var(--theme-accentYellow);
   text-decoration-style: solid;
 }
 

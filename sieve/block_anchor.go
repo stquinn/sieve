@@ -19,6 +19,7 @@ import (
 type BlockAnchorNode struct {
 	ast.BaseBlock
 	AnchorID string
+	Targets  []string
 }
 
 func (n *BlockAnchorNode) Dump(source []byte, level int) {
@@ -29,6 +30,21 @@ func (n *BlockAnchorNode) Dump(source []byte, level int) {
 var KindBlockAnchor = ast.NewNodeKind("BlockAnchor")
 
 func (n *BlockAnchorNode) Kind() ast.NodeKind { return KindBlockAnchor }
+
+// TargetHighlightNode is an inline AST node representing a ==...== target mark.
+// It stores the raw text content between the delimiters.
+type TargetHighlightNode struct {
+	ast.BaseInline
+	Content string
+}
+
+func (n *TargetHighlightNode) Dump(source []byte, level int) {
+	ast.DumpHelper(n, source, level, map[string]string{"Content": n.Content}, nil)
+}
+
+var KindTargetHighlight = ast.NewNodeKind("TargetHighlight")
+
+func (n *TargetHighlightNode) Kind() ast.NodeKind { return KindTargetHighlight }
 
 // blockAnchorOpenRegex matches [!block] id="blk-XXXX" at the start of a line.
 var blockAnchorOpenRegex = regexp.MustCompile(`^\[!block\]\s+id="([^"]+)"`)
@@ -78,8 +94,79 @@ func (e *blockAnchorExtension) Extend(m goldmark.Markdown) {
 		parser.WithBlockParsers(
 			util.Prioritized(&blockAnchorParser{}, 100),
 		),
+		parser.WithInlineParsers(
+			util.Prioritized(&targetHighlightParser{}, 50),
+		),
+		parser.WithASTTransformers(
+			util.Prioritized(&blockAnchorTargetTransformer{}, 50),
+		),
 	)
 }
 
 // BlockAnchorExtension is the Goldmark extension to register with goldmark.New().
 var BlockAnchorExtension = &blockAnchorExtension{}
+
+// targetHighlightParser is a Goldmark inline parser for ==...== markers.
+type targetHighlightParser struct{}
+
+func (p *targetHighlightParser) Trigger() []byte { return []byte{'='} }
+
+func (p *targetHighlightParser) Parse(parent ast.Node, reader text.Reader, pc parser.Context) ast.Node {
+	line, _ := reader.PeekLine()
+	if len(line) < 4 || line[0] != '=' || line[1] != '=' {
+		return nil
+	}
+	rest := line[2:]
+	end := bytes.Index(rest, []byte("=="))
+	if end <= 0 {
+		return nil
+	}
+	content := bytes.TrimSpace(rest[:end])
+	if len(content) == 0 {
+		return nil
+	}
+	reader.Advance(end + 4) // ==content== → 2 + end + 2
+	return &TargetHighlightNode{Content: string(content)}
+}
+
+// blockAnchorTargetTransformer walks BlockAnchorNodes and collects
+// all TargetHighlightNode text into the anchor's Targets slice.
+type blockAnchorTargetTransformer struct{}
+
+func (t *blockAnchorTargetTransformer) Transform(node *ast.Document, reader text.Reader, pc parser.Context) {
+	_ = ast.Walk(node, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		ba, ok := n.(*BlockAnchorNode)
+		if !ok {
+			return ast.WalkContinue, nil
+		}
+		_ = ast.Walk(ba, func(child ast.Node, childEntering bool) (ast.WalkStatus, error) {
+			if !childEntering {
+				return ast.WalkContinue, nil
+			}
+			if ht, ok := child.(*TargetHighlightNode); ok {
+				ba.Targets = append(ba.Targets, ht.Content)
+			}
+			return ast.WalkContinue, nil
+		})
+		return ast.WalkContinue, nil
+	})
+}
+
+// ParseBlockAnchors parses markdown and returns all BlockAnchorNodes,
+// each with AnchorID and Targets populated.
+func ParseBlockAnchors(markdown string) []*BlockAnchorNode {
+	doc := mdParser().Parser().Parse(text.NewReader([]byte(markdown)))
+	var anchors []*BlockAnchorNode
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if entering {
+			if ba, ok := n.(*BlockAnchorNode); ok {
+				anchors = append(anchors, ba)
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+	return anchors
+}
