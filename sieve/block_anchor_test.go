@@ -226,7 +226,7 @@ func TestParseBlockAnchors(t *testing.T) {
 	if len(anchors) != 2 {
 		t.Fatalf("expected 2 anchors, got %d", len(anchors))
 	}
-	byID := make(map[string]*BlockAnchorNode)
+	byID := make(map[string]*BlockAnchor)
 	for _, a := range anchors {
 		byID[a.AnchorID] = a
 	}

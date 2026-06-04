@@ -11,6 +11,12 @@ import (
 	"github.com/yuin/goldmark/util"
 )
 
+// BlockAnchor is the business object representing a block anchor region and its targets.
+type BlockAnchor struct {
+	AnchorID string
+	Targets  []string
+}
+
 // BlockAnchorNode is a Goldmark container AST node representing a
 // [!block] id="…" … [!block-end] region.
 // Its children are the parsed Markdown blocks within the region.
@@ -18,8 +24,7 @@ import (
 // the existing sieveBlockASTTransformer.
 type BlockAnchorNode struct {
 	ast.BaseBlock
-	AnchorID string
-	Targets  []string
+	BlockAnchor
 }
 
 func (n *BlockAnchorNode) Dump(source []byte, level int) {
@@ -64,7 +69,9 @@ func (p *blockAnchorParser) Open(parent ast.Node, reader text.Reader, pc parser.
 		return nil, parser.NoChildren
 	}
 	reader.Advance(len(line))
-	return &BlockAnchorNode{AnchorID: string(match[1])}, parser.HasChildren
+	return &BlockAnchorNode{
+		BlockAnchor: BlockAnchor{AnchorID: string(match[1])},
+	}, parser.HasChildren
 }
 
 // Continue is called for each subsequent line while the node is open.
@@ -155,15 +162,21 @@ func (t *blockAnchorTargetTransformer) Transform(node *ast.Document, reader text
 	})
 }
 
-// ParseBlockAnchors parses markdown and returns all BlockAnchorNodes,
-// each with AnchorID and Targets populated.
-func ParseBlockAnchors(markdown string) []*BlockAnchorNode {
+// ParseBlockAnchors parses markdown and returns all BlockAnchors.
+// This returns only the business objects, keeping Goldmark AST internal.
+func ParseBlockAnchors(markdown string) []*BlockAnchor {
 	doc := mdParser().Parser().Parse(text.NewReader([]byte(markdown)))
-	var anchors []*BlockAnchorNode
+	var anchors []*BlockAnchor
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if entering {
 			if ba, ok := n.(*BlockAnchorNode); ok {
-				anchors = append(anchors, ba)
+				// Deep copy the business object so mutations don't affect the AST
+				copyAnchor := &BlockAnchor{
+					AnchorID: ba.AnchorID,
+					Targets:  make([]string, len(ba.Targets)),
+				}
+				copy(copyAnchor.Targets, ba.Targets)
+				anchors = append(anchors, copyAnchor)
 			}
 		}
 		return ast.WalkContinue, nil
