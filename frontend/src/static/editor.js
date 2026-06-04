@@ -19,6 +19,8 @@
   var showAiBlocks = true
   var blobInterceptorCleanup = null
   var searchOverlay = null
+  var sieveInsertPos = null
+
 
   var askDialog = null
   var internalizeDialog = null
@@ -87,26 +89,24 @@
 
   function mountWysiwyg(el, uuid, body) {
     var T = window.TipTap
-    var lowlight = T.createLowlight(T.common)
     var initialized = false
 
     var editor = new T.Editor({
       element: el,
       extensions: [
         T.StarterKit.configure({ link: false, codeBlock: false, history: { depth: 10000, newGroupDelay: 500 } }),
-        T.CodeBlockWithAttrs.configure({ lowlight: lowlight }),
         T.Placeholder.configure({ placeholder: function (p) { return p.editor.isEmpty ? 'Start writing\u2026' : '' } }),
         T.BlockNode,
         T.Table.configure({ resizable: false }),
         T.TableRow,
         T.TableHeader,
         T.TableCell,
-        T.ImageWithAttrs,
         T.Search,
-        T.AiBlock,
+
         T.AiBlockLegacy,
-        T.WebClip,
-        T.SmartLink,
+        T.Image.configure({ inline: false, allowBase64: true, HTMLAttributes: { class: 'editor-image' } }),
+        T.HighlightMark,
+      ].concat(T.getSieveNodes()).concat([
         T.TaskList,
         T.TaskItem.configure({ nested: true }),
         T.Markdown.configure({ html: true, transformPastedText: true, link: { openOnClick: false } }),
@@ -117,7 +117,7 @@
           onKeepAndSmartFile: function () { window.SieveAI && window.SieveAI.keepAndSmartFile(uuid) },
           onToggleAiBlocks: toggleAiBlocks,
         }),
-      ],
+      ]),
       content: body,
       editorProps: {
         attributes: { spellcheck: 'true' },
@@ -140,6 +140,7 @@
           },
         },
         handlePaste: function (_view, event) { return handleSmartPaste(event) },
+        handleDrop: function (_view, event, slice, moved) { return handleSmartDrop(event) },
         handleKeyDown: function (view, event) {
           if (event.key === 's' && window.isMod(event)) {
             event.preventDefault()
@@ -182,12 +183,6 @@
     })
 
     currentEditor = editor
-
-    if (blobInterceptorCleanup) {
-      blobInterceptorCleanup()
-      blobInterceptorCleanup = null
-    }
-    blobInterceptorCleanup = initBlobInterceptor(editor, uuid)
   }
 
   // ── Markdown mode ─────────────────────────────────────────────────────────────
@@ -317,6 +312,13 @@
       if (msg.type === 'markdown-content') {
         document.dispatchEvent(new CustomEvent('editor:markdown-content', { detail: msg }))
       }
+      if (msg.type === 'insert-block') {
+        document.dispatchEvent(new CustomEvent('editor:insert-block', { detail: msg }))
+      }
+      if (msg.type === 'block-attrs-updated') {
+        document.dispatchEvent(new CustomEvent('editor:block-attrs-updated', { detail: msg }))
+      }
+
     }
 
     editorWs.onerror = function (err) { console.error('[editor] ws error', err) }
@@ -351,6 +353,94 @@
       wsSend(msg)
     })
   }
+
+  // Primary creation path. JS fires sieve:create-block when the user uses a
+  // keyboard shortcut, toolbar button, or slash command to insert a block.
+  // detail: { kind: 'code', attrs: {} }
+  document.addEventListener('sieve:create-block', function (e) {
+    if (!currentUuid || currentUuid.startsWith('prompt:') || !e.detail.kind) return
+    sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
+    wsSend({ type: 'create-block', kind: e.detail.kind, attrs: e.detail.attrs || {}, uuid: currentUuid })
+  })
+
+  // NodeViews fire sieve:block-update when the user edits block content.
+  document.addEventListener('sieve:block-update', function (e) {
+    if (!currentUuid || !e.detail.id) return
+    wsSend({ type: 'block-update', uuid: currentUuid, id: e.detail.id, kind: e.detail.kind, attrs: e.detail.attrs })
+  })
+
+  document.addEventListener('editor:insert-block', function (e) {
+    var msg = e.detail
+    if (currentMode === 'markdown' && currentMarkdownTextarea) {
+      lastSyncedBody = lastSyncedBody.trim() + '\n\n' + (msg.serialisedForm || '') + '\n'
+      currentMarkdownTextarea.value = lastSyncedBody
+      wsSend({ type: 'doc-update', uuid: currentUuid, markdown: lastSyncedBody })
+      return
+    }
+    if (!currentEditor) return
+    var parsed = msg.attrs || {}
+
+    var pos = sieveInsertPos !== null ? sieveInsertPos : currentEditor.state.doc.content.size
+    sieveInsertPos = null
+
+    var attrs = {
+      kind:            msg.kind || 'code',
+      id:              msg.id || parsed.id || '',
+      serialisedForm:  msg.serialisedForm || '',
+      status:          parsed.status || 'PENDING',
+      createdAt:       parsed.createdAt || null,
+    }
+    Object.keys(parsed).forEach(function (k) {
+      if (k !== 'id' && k !== 'status' && k !== 'createdAt') {
+        attrs[k] = parsed[k]
+      }
+    })
+
+    currentEditor.commands.insertContentAt(pos, {
+      type: 'sieve-' + (msg.kind || 'code'),
+      attrs: attrs,
+    })
+
+    if (!parsed.source && msg.kind === 'code') {
+      setTimeout(function () {
+        var el = document.querySelector('[data-block-id="' + (msg.id || parsed.id) + '"] .sieve-block__edit')
+        if (el) el.focus()
+      }, 50)
+    }
+  })
+
+  document.addEventListener('editor:block-attrs-updated', function (e) {
+    if (!currentEditor) return
+    var msg = e.detail
+    var parsed = msg.attrs || {}
+
+    currentEditor.commands.command(function (commandProps) {
+      var tr = commandProps.tr
+      commandProps.state.doc.descendants(function (node, pos) {
+        // Match any sieve-* node by id (kind is not in the WS message)
+        if (node.type.name.startsWith('sieve-') && node.attrs.id === msg.id) {
+          var nextAttrs = Object.assign({}, node.attrs, {
+            serialisedForm:  msg.serialisedForm || node.attrs.serialisedForm,
+            status:          parsed.status   || node.attrs.status,
+          })
+          var schemaAttrs = node.type.spec.attrs || {}
+          Object.keys(parsed).forEach(function (k) {
+            // Safely apply keys that exist in the existing node.attrs schema mapping
+            if (k !== 'id' && k !== 'status' && (k in node.attrs)) {
+              nextAttrs[k] = parsed[k]
+            }
+          })
+          try {
+            tr.setNodeMarkup(pos, null, nextAttrs)
+          } catch (err) {
+            console.error('[editor] setNodeMarkup failed:', err, nextAttrs)
+          }
+          return false
+        }
+      })
+      return true
+    })
+  })
 
   // ── Stats ─────────────────────────────────────────────────────────────────────
 
@@ -410,11 +500,13 @@
 
   var pendingAskCtx = null
 
-  function openAskPopup() {
+  function openAskPopup(precomputedCtx) {
     if (!askDialog) return
     // Build context NOW while editor still has focus and selection intact.
     // showModal() will steal DOM focus which can collapse the browser selection.
-    pendingAskCtx = window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
+    // precomputedCtx lets callers (e.g. block renderer context menus) supply
+    // context directly rather than relying on editor selection state.
+    pendingAskCtx = precomputedCtx || window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
     var label = askDialog.querySelector('.ask-popup__label')
     var textarea = askDialog.querySelector('.ask-popup__input')
     var ctxLabel = (pendingAskCtx && pendingAskCtx.contextLabel) || 'Document'
@@ -502,42 +594,8 @@
   function doInternalize(source, mode) {
     if (!currentUuid) return
     if (!currentEditor && currentMode !== 'markdown') return
-
-    flushSave().then(function () {
-      fetch('/api/internalize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uuid: currentUuid, source: source, mode: mode })
-      }).then(function (r) {
-        if (!r.ok) { console.error('[editor] internalize request failed: ' + r.status); return }
-        return r.json()
-      }).then(function (resp) {
-        if (!resp || !resp.id) return
-        // Go has already appended the PENDING block to the document on disk.
-        // Insert it into the live editor from Go's canonical fence text.
-        if (currentMode === 'markdown' && currentMarkdownTextarea) {
-          lastSyncedBody = lastSyncedBody + '\n\n' + resp.fence + '\n'
-          currentMarkdownTextarea.value = lastSyncedBody
-        } else if (currentEditor) {
-          // Parse Go's YAML to extract attrs — reading only, never generating.
-          var data = {}
-          try { data = window.jsyaml.load(resp.fence.replace(/^```web-clip\n/, '').replace(/\n```$/, '')) || {} } catch (_) {}
-          currentEditor.commands.insertContent({
-            type: 'webClip',
-            attrs: {
-              rawYaml: resp.fence.replace(/^```web-clip\n/, '').replace(/\n```$/, ''),
-              id: data.id || resp.id, source: data.source || source,
-              mode: data.mode || mode, status: 'PENDING', createdAt: data.createdAt || ''
-            }
-          })
-          var afterPos = currentEditor.state.selection.to
-          var docSize = currentEditor.state.doc.content.size
-          currentEditor.chain().setTextSelection(Math.min(afterPos + 1, docSize - 1)).focus().scrollIntoView().run()
-        }
-      }).catch(function (err) {
-        console.error('[editor] internalize error', err)
-      })
-    })
+    sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
+    wsSend({ type: 'create-block', kind: 'web-clip', attrs: { source: source, mode: mode }, uuid: currentUuid })
   }
 
   // ── Search overlay ────────────────────────────────────────────────────────────
@@ -670,199 +728,29 @@
       })
   }
 
-  // HTMX SSE extension dispatches sse:ai:block-resolved when Go finishes an ai-block job.
-  // Go has already written the COMPLETE YAML to disk; reload from there (rawYaml passthrough
-  // means in-place patch can't update rawYaml correctly, matching the web-clip pattern).
-  document.addEventListener('sse:ai:block-resolved', function (e) {
-    var raw = e.detail && e.detail.data != null ? e.detail.data : (typeof e.detail === 'string' ? e.detail : null)
-    if (!raw) return
-    var data; try { data = JSON.parse(raw) } catch (_) { return }
-    if (!data) return
-    if (data.uuid !== currentUuid) return
-    softReloadContent(currentUuid)
-  })
 
-  document.addEventListener('sse:ai:web-clip-resolved', function (e) {
-    var raw = e.detail && e.detail.data != null ? e.detail.data : (typeof e.detail === 'string' ? e.detail : null)
-    if (!raw) return
-    var data; try { data = JSON.parse(raw) } catch (_) { return }
-    if (!data) return
-    if (data.uuid !== currentUuid) return
-    // web-clip uses rawYaml passthrough — in-place patch can't update rawYaml correctly.
-    // Go has already written the canonical YAML to disk; reload from there.
-    softReloadContent(currentUuid)
-  })
+    function runAiJob(type, question, precomputedCtx) {
+      if (!currentEditor && currentMode !== 'markdown') return
 
-  function runAiJob(type, question, precomputedCtx) {
-    if (!currentEditor && currentMode !== 'markdown') return
+      var ctx = precomputedCtx || window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
+      var refId = (ctx && ctx.blockRef) || 'doc'
+      var blockType = type === 'explain' ? 'EXPLAIN' : 'ASK'
 
-    var ctx = null
-    var refId = 'doc'
-
-    var selectedAiNode = null
-    var selectedAiPos = null
-    var insertPos = null  // wysiwyg only; computed before fetch, used after response
-
-    // 1. Detect if an AI block is selected or focused
-    if (currentMode === 'markdown' && currentMarkdownTextarea) {
-      var ta = currentMarkdownTextarea
-      var val = ta.value
-      var selStart = ta.selectionStart
-      var beforeSel = val.substring(0, selStart)
-      var lastFenceStart = beforeSel.lastIndexOf('```ai-block')
-      if (lastFenceStart !== -1) {
-        var closeFenceIdx = val.indexOf('```', lastFenceStart + 11)
-        if (closeFenceIdx !== -1 && closeFenceIdx >= selStart) {
-          var fenceContent = val.substring(lastFenceStart, closeFenceIdx)
-          var idMatch = fenceContent.match(/\bid:\s*(\S+)/)
-          var refMatch = fenceContent.match(/\bref:\s*(\S+)/)
-          if (idMatch) {
-            var selectedId = idMatch[1]
-            var selectedRef = refMatch ? refMatch[1] : 'doc'
-            selectedAiNode = { attrs: { id: selectedId, ref: selectedRef } }
-          }
-        }
-      }
-    } else if (currentEditor) {
-      var selection = currentEditor.state.selection
-      if (selection.node && selection.node.type.name === 'aiBlock') {
-        selectedAiNode = selection.node
-        selectedAiPos = selection.from
-      } else {
-        // Resolve nested depth
-        var resolved = currentEditor.state.doc.resolve(selection.to)
-        for (var depth = resolved.depth; depth > 0; depth--) {
-          var n = resolved.node(depth)
-          if (n.type.name === 'aiBlock') {
-            selectedAiNode = n
-            selectedAiPos = resolved.before(depth)
-            break
-          }
-        }
-      }
-
-      // Fallback: Check if active element is inside an AI block element
-      if (!selectedAiNode) {
-        var activeEl = document.activeElement
-        if (activeEl) {
-          var aiBlockEl = activeEl.closest('.ai-block')
-          if (aiBlockEl) {
-            var aiId = aiBlockEl.getAttribute('data-ai-id')
-            if (aiId) {
-              currentEditor.state.doc.descendants(function (node, pos) {
-                if (node.type.name === 'aiBlock' && node.attrs.id === aiId) {
-                  selectedAiNode = node
-                  selectedAiPos = pos
-                  return false
-                }
-              })
-            }
-          }
-        }
-      }
-
-      // If we found a selected/focused AI block, select it programmatically
-      // so buildAiContext builds the perfect follow-up history context
-      if (selectedAiNode && selectedAiPos !== null) {
-        currentEditor.commands.setNodeSelection(selectedAiPos)
-      }
-    }
-
-    // 2. Build context
-    ctx = precomputedCtx || window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
-    refId = (ctx && ctx.blockRef) || 'doc'
-
-    var blockType = type === 'explain' ? 'EXPLAIN' : 'ASK'
-
-    // 3. Compute wysiwyg insertion position (Go inserts server-side; client mirrors after response)
-    if (currentMode !== 'markdown' && currentEditor) {
-      insertPos = currentEditor.state.selection.to
-
-      if (selectedAiNode && selectedAiPos !== null) {
-        insertPos = selectedAiPos + selectedAiNode.nodeSize
-      } else {
-        var resolved = currentEditor.state.doc.resolve(insertPos)
-        for (var depth = resolved.depth; depth > 0; depth--) {
-          var n = resolved.node(depth)
-          if (n.type.name === 'aiBlock') {
-            insertPos = resolved.after(depth)
-            resolved = currentEditor.state.doc.resolve(insertPos)
-            break
-          }
-        }
-        if (resolved.depth >= 1) insertPos = resolved.after(1)
-
-        // Context anchor override
-        if (ctx && ctx.blockRef && ctx.blockRef !== 'doc') {
-          var chainParts = ctx.blockRef.split(',')
-          var anchorId = chainParts[chainParts.length - 1]
-          if (anchorId && anchorId !== 'doc') {
-            currentEditor.state.doc.descendants(function (node, pos) {
-              if ((node.type.name === 'aiBlock' || node.type.name === 'blockRef') && node.attrs.id === anchorId) {
-                insertPos = pos + node.nodeSize
-                return false
-              }
-            })
-          }
-        }
-      }
-    }
-
-    var endpoint = type === 'explain' ? '/api/ai/explain' : '/api/ai/ask'
-
-    flushSave().then(function () {
-      fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content:       ctx ? ctx.content : '',
-          history:       ctx ? ctx.history : '',
-          question:      question || '',
-          noteUUID:      currentUuid || '',
-          imageBlockIds: (ctx && ctx.imageIds) || [],
-          ref:           refId,
-        }),
-      }).then(function (r) {
-        if (!r.ok) throw new Error('AI request failed: ' + r.status)
-        return r.json()
-      }).then(function (resp) {
-        if (!resp || !resp.id) return
-        var blkId = resp.id
-
-        if (resp.fence && currentEditor && insertPos !== null) {
-          // Insert from Go's canonical fence into TipTap at the pre-computed position.
-          var rawYaml = resp.fence.replace(/^```ai-block\n/, '').replace(/\n```$/, '')
-          var data = {}
-          try { data = window.jsyaml.load(rawYaml) || {} } catch (_) {}
-          currentEditor.commands.insertContentAt(insertPos, {
-            type: 'aiBlock',
-            attrs: {
-              rawYaml:   rawYaml,
-              id:        data.id || blkId,
-              ref:       data.ref || refId,
-              status:    'PENDING',
-              type:      blockType,
-              question:  question || '',
-              createdAt: data.createdAt || '',
-            }
-          })
-          var afterInsert = insertPos + 2
-          var docSize = currentEditor.state.doc.content.size
-          currentEditor.chain()
-            .setTextSelection(Math.min(afterInsert, docSize - 1))
-            .focus()
-            .scrollIntoView()
-            .run()
-        } else if (resp.fence && currentMode === 'markdown') {
-          // Markdown mode: Go saved at the canonical position — reload to reflect it.
-          softReloadContent(currentUuid)
-        }
-        // Retry path (resp.fence === ''): block already in doc; tracking sets updated above.
-      }).catch(function (err) {
-        console.error('[editor] AI error', err)
+      flushSave().then(function () {
+        wsSend({
+          type: 'create-block',
+          kind: 'ai-block',
+          attrs: {
+            type:     blockType,
+            ref:      refId,
+            question: question || '',
+          },
+          uuid: currentUuid,
+        })
+      }).catch(function(err) {
+        console.error('runAiJob flush save error:', err)
       })
-    })
-  }
+    }
 
     function toggleAiBlocks() {
     showAiBlocks = !showAiBlocks
@@ -875,8 +763,17 @@
   function handleSmartPaste(event) {
     if (!event.clipboardData || !currentEditor) return false
 
-    // AI Block paste handler
+    if (event.target && (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA')) {
+      return false
+    }
+
     var text = event.clipboardData.getData('text/plain')
+    var html = event.clipboardData.getData('text/html')
+    var files = Array.from(event.clipboardData.files)
+
+    // ── 1. ai-block re-import (JS-owned) ────────────────────────────────────────
+    // Pasting a complete ```ai-block…``` fence reconstructs the existing block
+    // node with its original ID — no Go round-trip needed.
     if (text && text.trim().startsWith('```ai-block')) {
       var cleanText = text.trim()
       var firstLineEnd = cleanText.indexOf('\n')
@@ -888,7 +785,7 @@
           if (data && data.id) {
             event.preventDefault()
             currentEditor.commands.insertContent({
-              type: 'aiBlock',
+              type: 'sieve-ai-block',
               attrs: {
                 rawYaml:     yamlText,
                 id:          data.id || '',
@@ -910,206 +807,68 @@
       }
     }
 
-    var html = event.clipboardData.getData('text/html')
-    var files = Array.from(event.clipboardData.files)
-    var imageFile = files.find(function (f) { return f.type.startsWith('image/') })
+    // ── 2. Smart-paste pipeline (including images) ────────────────────────────────
+    // Collect all clipboard entries. For files, we use FileReader to get base64.
+    if (currentUuid && !currentUuid.startsWith('prompt:')) {
+      var pasteEntries = []
+      var hasFiles = false
 
-    var imgSrc = null
-    if (!imageFile && html) {
-      var div = document.createElement('div')
-      div.innerHTML = html
-      var imgs = div.querySelectorAll('img')
-      if (imgs.length === 1 && imgs[0].src) {
-        imgSrc = imgs[0].src
-      }
-    }
-
-    if (imageFile || imgSrc) {
-      event.preventDefault()
-
-      function processAsset(asset, blkId) {
-        if (!asset || !asset.externalRef) return
-        var mdPath = asset.externalRef
-
-        currentEditor.commands.insertContent({
-          type: 'image',
-          attrs: { src: mdPath, id: blkId, detect: 'pending' }
-        })
-
-        fetch('/api/ai/describe-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ uuid: window.__stashActiveTabUuid, path: mdPath, id: blkId })
-        }).then(function(r) { return r.ok ? r.json() : null })
-          .then(function(desc) {
-            if (!desc) return
-            currentEditor.commands.command(function(commandProps) {
-              var tr = commandProps.tr
-              var state = commandProps.state
-              var found = false
-              state.doc.descendants(function(node, pos) {
-                if (node.type.name === 'image' && node.attrs.id === blkId) {
-                  found = true
-                  tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, {
-                    alt: desc.alt || '',
-                    summary: desc.summary || '',
-                    detect: desc.detect || 'ai'
-                  }))
-                  return false
+      if (event.clipboardData && event.clipboardData.items) {
+        var promises = []
+        Array.from(event.clipboardData.items).forEach(function(item) {
+          if (item.kind === 'file') {
+            var file = item.getAsFile()
+            if (file) {
+              hasFiles = true
+              promises.push(new Promise(function(resolve) {
+                var reader = new FileReader()
+                reader.onload = function(e) {
+                  resolve({ mimeType: file.type, content: e.target.result })
                 }
+                reader.onerror = function() { resolve(null) }
+                reader.readAsDataURL(file)
+              }))
+            }
+          } else if (item.kind === 'string') {
+            promises.push(new Promise(function(resolve) {
+              item.getAsString(function(str) {
+                resolve({ mimeType: item.type, content: str })
               })
-              if (found) {
-                currentEditor.view.dispatch(tr)
-                var md = currentEditor.storage.markdown.getMarkdown() || ''
-                lastSyncedBody = md
-                wsSend({ type: 'doc-update', uuid: currentUuid, markdown: md })
-                document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
-              }
-              return found
-            })
-          }).catch(function(err) {
-            console.error('[editor.js] DescribeImage failed', err)
-          })
-      }
-
-      if (imageFile) {
-        var reader = new FileReader()
-        reader.onload = function (e) {
-          var dataUrl = e.target.result
-          var id = 'blk-' + Math.random().toString(16).substring(2, 6)
-          fetch('/api/asset/save', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uuid: currentUuid, id: id, dataUrl: dataUrl }),
-          }).then(function (r) { return r.json() })
-            .then(function (asset) {
-              processAsset(asset, id)
-            })
-            .catch(function () {
-              currentEditor.commands.insertContent({ type: 'image', attrs: { src: dataUrl } })
-            })
-        }
-        reader.readAsDataURL(imageFile)
-        return true
-      }
-
-      if (imgSrc) {
-        var id = 'blk-' + Math.random().toString(16).substring(2, 6)
-        if (imgSrc.startsWith('data:')) {
-          fetch('/api/asset/save', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uuid: currentUuid, id: id, dataUrl: imgSrc }),
-          }).then(function (r) { return r.json() })
-            .then(function (asset) {
-              processAsset(asset, id)
-            })
-            .catch(function() {
-              currentEditor.commands.insertContent({ type: 'image', attrs: { src: imgSrc } })
-            })
-        } else {
-          fetch('/api/asset/save-url', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uuid: currentUuid, url: imgSrc, id: id }),
-          }).then(function(r) { return r.ok ? r.json() : null })
-            .then(function(asset) {
-              if (asset) { processAsset(asset, id) }
-              else { currentEditor.commands.insertContent({ type: 'image', attrs: { src: imgSrc } }) }
-            }).catch(function(err) {
-              console.error('[editor.js] DownloadAsset failed', err)
-              currentEditor.commands.insertContent({ type: 'image', attrs: { src: imgSrc } })
-            })
-        }
-        return true
-      }
-    }
-
-    // Text paste heuristic
-    var text = event.clipboardData.getData('text/plain')
-    if (text && !currentEditor.isActive('codeBlock')) {
-      var result = detectLanguage(text)
-      if (result.tier <= 3) {
-        event.preventDefault()
-        var id = generateId()
-
-        currentEditor.commands.insertContent({
-          type: 'codeBlock',
-          attrs: { language: result.language || '', id: id, detect: 'heuristic' },
-          content: [{ type: 'text', text: text }]
-        })
-
-        fetch('/api/ai/refine-language', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: text })
-        }).then(function(r) { return r.ok ? r.text() : null })
-          .then(function(lang) {
-            if (!lang) return
-            currentEditor.commands.command(function(props) {
-              var tr = props.tr
-              var state = props.state
-              var found = false
-              state.doc.descendants(function(node, pos) {
-                if (node.type.name === 'codeBlock' && node.attrs.id === id) {
-                  found = true
-                  tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { language: lang, detect: 'ai' }))
-                  return false
-                }
-              })
-              if (found) {
-                currentEditor.view.dispatch(tr)
-                var md = currentEditor.storage.markdown.getMarkdown() || ''
-                lastSyncedBody = md
-                wsSend({ type: 'doc-update', uuid: currentUuid, markdown: md })
-                document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
-              }
-              return found
-            })
-          }).catch(function(err) {
-            console.error('[editor.js] RefineLanguage failed', err)
-          })
-        return true
-      }
-      if(text.startsWith("http://") || text.startsWith("https://")) {
-        event.preventDefault()
-        var id  = generateId("lnk")
-        currentEditor.commands.insertContent({
-          type: 'smartLink',
-          attrs: { 
-            id: id, 
-            detect: 'pending',
-            href: text,
-            label: text // Your node uses this 'label' attribute to render its text
+            }))
           }
         })
-        fetch('/api/link-preview?url=' + encodeURIComponent(text))
-          .then(function(r) { return r.ok ? r.text() : null })
-          .then(function(title) {
-            if (!title || title.trim() === '') return
-            currentEditor.commands.command(function(props) {
-              var tr = props.tr
-              var state = props.state
-              var found = false
-              state.doc.descendants(function(node, pos) {
-                if (node.type.name === 'smartLink' && node.attrs.id === id) {
-                  found = true
-                  tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { label: title, detect: 'peek' }))
-                  return false
-                }
-              })
-              if (found) {
-                currentEditor.view.dispatch(tr)
-                var md = currentEditor.storage.markdown.getMarkdown() || ''
-                lastSyncedBody = md
-                wsSend({ type: 'doc-update', uuid: currentUuid, markdown: md })
-                document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
-              }
-              return found
-            })
-          }).catch(function(err) {
-            console.error('[editor.js] GetLinkTitle failed', err)
+
+        sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
+        event.preventDefault()
+
+        Promise.all(promises).then(function(results) {
+          var validEntries = results.filter(function(r) { return r !== null })
+          fetch('/api/editor/smart-paste', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uuid: currentUuid, entries: validEntries }),
           })
+            .then(function (r) { return r.json() })
+            .then(function (result) {
+              if (!currentEditor) return
+              if (result.matched) {
+                // Handled entirely via WebSocket push. Nothing to insert here.
+              } else {
+                // No processor matched — clear the stashed insert position and replay original clipboard content.
+                sieveInsertPos = null
+                if (html) {
+                  currentEditor.commands.insertContent(html)
+                } else if (text) {
+                  currentEditor.commands.insertContent(text)
+                }
+              }
+            })
+            .catch(function (err) {
+              console.error('[editor.js] smart-paste fetch failed', err)
+              sieveInsertPos = null
+              if (currentEditor) currentEditor.commands.insertContent(text)
+            })
+        })
         return true
       }
     }
@@ -1117,229 +876,67 @@
     return false
   }
 
-  function generateId(prefix = "blk") {
-    var id = prefix + '-' + Math.random().toString(16).substring(2, 6)
-    return id;
-  }
+  function handleSmartDrop(event) {
+    if (!event.dataTransfer || !currentEditor) return false
 
-  function detectLanguage(text) {
-    var trimmed = text.trim()
-    if (!trimmed) return { tier: 4 }
-
-    if (
-      (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
-      (trimmed.startsWith('[') && trimmed.endsWith(']'))
-    ) {
-      try { JSON.parse(trimmed); return { tier: 1, language: 'json' } } catch(e) {}
-    }
-
-    var YAML_K8S = /^apiVersion:\s*\S+[\s\S]+^kind:\s*[A-Za-z]+/m
-    if (YAML_K8S.test(trimmed)) return { tier: 1, language: 'yaml' }
-    
-    function scoreYaml(txt) {
-      var lines = txt.split('\n').filter(function(l) { return l.trim() && !l.trim().startsWith('#') })
-      if (lines.length === 0) return 0
-      var kvLines = lines.filter(function(l) { return /^\s*[\w.-]+:\s*/.test(l) }).length
-      var listLines = lines.filter(function(l) { return /^\s*-\s+/.test(l) }).length
-      return (kvLines + listLines) / lines.length
-    }
-    
-    var yamlScore = scoreYaml(trimmed)
-    if (yamlScore >= 0.75 && trimmed.split('\n').length >= 3) {
-      return { tier: yamlScore >= 0.9 ? 1 : 2, language: 'yaml' }
-    }
-
-    var GO_T1 = [
-      /^package\s+\w+/m,
-      /^type\s+\w+\s+struct\s*\{/m,
-      /^type\s+\w+\s+interface\s*\{/m,
-      /`(?:json|yaml|xml|db|bson|form|mapstructure|validate):"[^"]*"`/,
-      /^import\s+\(/m,
-      /^import\s+"/m,
-    ]
-    if (GO_T1.some(function(re) { return re.test(trimmed) })) return { tier: 1, language: 'go' }
-
-    var JAVA_T1 = [
-      /^public\s+(?:class|interface|enum|abstract\s+class)\s+\w+/m,
-      /^private\s+(?:class|interface|enum)\s+\w+/m,
-      /^protected\s+(?:class|interface)\s+\w+/m,
-      /\bpublic\s+static\s+void\s+main\s*\(\s*String/,
-      /^import\s+java\./m,
-      /^import\s+org\.\w+\.\w+/m,
-      /^import\s+com\.\w+\.\w+/m,
-    ]
-    if (JAVA_T1.some(function(re) { return re.test(trimmed) })) return { tier: 1, language: 'java' }
-
-    var DART_T1 = [
-      /^import\s+'package:flutter\//m,
-      /^import\s+'dart:/m,
-      /\bextends\s+(?:StatefulWidget|StatelessWidget|State)\b/,
-      /Widget\s+build\s*\(\s*BuildContext/,
-      /\brunApp\s*\(/,
-    ]
-    if (DART_T1.some(function(re) { return re.test(trimmed) })) return { tier: 1, language: 'dart' }
-
-    var GO_T2 = [
-      /\bfunc\s+\(\s*\w+\s+\*?\w+\s*\)\s+\w+\s*\(/,
-      /\bfunc\s+\w+\s*\(/,
-      /:=\s/,
-      /^var\s+\w+\s+\w+/m,
-      /^const\s+\w+/m,
-      /\bfmt\.\w+\(/,
-      /\berr\s*!=\s*nil\b/,
-    ]
-    var goT2Hits = GO_T2.filter(function(re) { return re.test(trimmed) }).length
-    if (goT2Hits >= 2) return { tier: 2, language: 'go' }
-
-    var JAVA_T2 = [
-      /@(?:Override|SpringBootApplication|Component|Service|Repository|Controller|Autowired|Bean|Test)\b/,
-      /\bthrows\s+\w+(?:Exception|Error)\b/,
-      /\bextends\s+\w+\b/,
-      /\bimplements\s+\w+\b/,
-      /\bSystem\.out\.print/,
-      /new\s+\w+\(.*\);/,
-      /\b(?:String|int|long|double|float|boolean|void|List|Map|Set)\s+\w+\s*=/,
-    ]
-    var javaT2Hits = JAVA_T2.filter(function(re) { return re.test(trimmed) }).length
-    if (javaT2Hits >= 2) return { tier: 2, language: 'java' }
-
-    var DART_T2 = [
-      /^import\s+'package:/m,
-      /\bScaffold\s*\(/,
-      /\bContainer\s*\(/,
-      /\bColumn\s*\(\s*children:/,
-      /\bRow\s*\(\s*children:/,
-      /@override\b/,
-      /\bconst\s+\w+\s*\(/,
-      /\bfinal\s+\w+\s+\w+\s*=/,
-    ]
-    var dartT2Hits = DART_T2.filter(function(re) { return re.test(trimmed) }).length
-    if (dartT2Hits >= 2) return { tier: 2, language: 'dart' }
-
-    if (/^(?:export\s+)?interface\s+\w+/m.test(trimmed) || /^(?:export\s+)?type\s+\w+\s*=/m.test(trimmed)) {
-      return { tier: 2, language: 'typescript' }
-    }
-    if (trimmed.includes('import ') && trimmed.includes('from ') && trimmed.includes('const ')) {
-      return { tier: 2, language: 'typescript' }
-    }
-    if ((trimmed.includes('function(') || trimmed.includes('=>')) && trimmed.includes('const ')) {
-      return { tier: 2, language: 'javascript' }
-    }
-
-    if (/^#!/.test(trimmed) && /bash|sh|zsh/i.test(trimmed.split('\n')[0])) {
-      return { tier: 1, language: 'bash' }
-    }
-
-    if (/^SELECT\s/i.test(trimmed) && /\bFROM\b/i.test(trimmed)) {
-      return { tier: 1, language: 'sql' }
-    }
-
-    if (trimmed.includes('def ') && trimmed.includes('self')) return { tier: 1, language: 'python' }
-
-    var lines = trimmed.split('\n')
-    var braceCount = (trimmed.match(/[{}]/g) || []).length
-    var semicolonCount = (trimmed.match(/;/g) || []).length
-    var indentedLines = lines.filter(function(l) { return /^[ \t]{2,}/.test(l) }).length
-    var anyWeakSignal = goT2Hits >= 1 || javaT2Hits >= 1 || dartT2Hits >= 1
-    if (lines.length > 2 && (braceCount > 2 || semicolonCount > 2 || anyWeakSignal || indentedLines > lines.length * 0.4)) {
-      return { tier: 3 }
-    }
-
-    return { tier: 4 }
-  }
-
-  function initBlobInterceptor(editor, uuid) {
-    var editorEl = editor.view.dom
-    if (!editorEl) return function() {}
-
-    function processImg(img) {
-      var blobSrc = img.getAttribute('src') || ''
-      if (!blobSrc.startsWith('blob:') && !blobSrc.startsWith('data:')) return
-      if (img.__stashProcessing) return
-      img.__stashProcessing = true
-
-      var canvas = document.createElement('canvas')
-      var image = new Image()
-      image.onload = function() {
-        canvas.width = image.naturalWidth
-        canvas.height = image.naturalHeight
-        var ctx = canvas.getContext('2d')
-        if (!ctx) return
-        ctx.drawImage(image, 0, 0)
-        canvas.toBlob(function(blob) {
-          if (!blob) return
-          var reader = new FileReader()
-          reader.onload = function(e) {
-            var dataUrl = e.target.result
-            var id = 'blk-' + Math.random().toString(16).substring(2, 6)
-            
-            fetch('/api/asset/save', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ uuid: currentUuid, id: id, dataUrl: dataUrl }),
-            }).then(function (r) { return r.json() })
-              .then(function (asset) {
-                var mdSrc = asset.externalRef
-                editor.chain()
-                  .command(function(props) {
-                    var tr = props.tr
-                    var state = props.state
-                    state.doc.descendants(function(node, pos) {
-                      if (node.type.name === 'image' && (node.attrs.src === blobSrc || node.attrs.src === img.src)) {
-                        tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, { src: mdSrc, id: id, detect: 'pending' }))
-                      }
-                    })
-                    return true
-                  })
-                  .run()
-
-                fetch('/api/ai/describe-image', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ uuid: window.__stashActiveTabUuid, path: mdSrc, id: id })
-                }).then(function(r) { return r.ok ? r.json() : null })
-                  .then(function(desc) {
-                    if (!desc || !editor) return
-                    editor.commands.command(function(props) {
-                      var tr = props.tr
-                      var state = props.state
-                      var found = false
-                      state.doc.descendants(function(node, pos) {
-                        if (node.type.name === 'image' && node.attrs.id === id) {
-                          found = true
-                          if (node.attrs.detect !== 'user') {
-                            tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { alt: desc.alt, summary: desc.summary, detect: 'ai' }))
-                          }
-                          return false
-                        }
-                      })
-                      return found
-                    })
-                  }).catch(function(err) { console.error('[editor.js] DescribeImage failed', err) })
-              }).catch(function(err) { console.error('[editor.js] blob paste save failed', err) })
+    if (currentUuid && !currentUuid.startsWith('prompt:')) {
+      var promises = []
+      var hasFiles = false
+      if (event.dataTransfer.items) {
+        Array.from(event.dataTransfer.items).forEach(function(item) {
+          if (item.kind === 'file') {
+            var file = item.getAsFile()
+            if (file && file.type.startsWith('image/')) {
+              hasFiles = true
+              promises.push(new Promise(function(resolve) {
+                var reader = new FileReader()
+                reader.onload = function(e) {
+                  resolve({ mimeType: file.type, content: e.target.result })
+                }
+                reader.onerror = function() { resolve(null) }
+                reader.readAsDataURL(file)
+              }))
+            }
+          } else if (item.kind === 'string') {
+            promises.push(new Promise(function(resolve) {
+              item.getAsString(function(str) {
+                resolve({ mimeType: item.type, content: str })
+              })
+            }))
           }
-          reader.readAsDataURL(blob)
-        }, 'image/png')
+        })
       }
-      image.src = blobSrc
+
+      if (!hasFiles) return false
+
+      var pos = currentEditor.view.posAtCoords({ left: event.clientX, top: event.clientY })
+      var insertPos = pos ? pos.pos : currentEditor.state.selection.to
+      
+      event.preventDefault()
+
+      Promise.all(promises).then(function(results) {
+        var validEntries = results.filter(function(r) { return r !== null })
+        if (validEntries.length === 0) return
+        sieveInsertPos = insertPos
+        fetch('/api/editor/smart-paste', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uuid: currentUuid, entries: validEntries }),
+        })
+          .then(function (r) { return r.json() })
+          .then(function (result) {
+            if (!currentEditor) return
+            if (result.matched) {
+              // Handled entirely via WebSocket push. Nothing to insert here.
+            }
+          })
+          .catch(function (err) {
+            console.error('[editor.js] smart-drop fetch failed', err)
+          })
+      })
+      return true
     }
-
-    var observer = new MutationObserver(function(mutations) {
-      for (var i = 0; i < mutations.length; i++) {
-        var mutation = mutations[i]
-        for (var j = 0; j < mutation.addedNodes.length; j++) {
-          var node = mutation.addedNodes[j]
-          if (node.nodeName === 'IMG') processImg(node)
-          else if (node.querySelectorAll) {
-            var imgs = node.querySelectorAll('img')
-            for (var k = 0; k < imgs.length; k++) processImg(imgs[k])
-          }
-        }
-      }
-    })
-
-    observer.observe(editorEl, { childList: true, subtree: true })
-    return function() { observer.disconnect() }
+    return false
   }
 
   // ── Module-level editor commands (dispatched via sieve:* custom events) ─────
@@ -1409,136 +1006,38 @@
   document.addEventListener('sieve:toggle-search',    toggleSearch)
   document.addEventListener('sieve:toggle-ai-blocks', toggleAiBlocks)
 
-  document.addEventListener('sieve:ai-explain', function () {
+  document.addEventListener('sieve:ai-explain', function (e) {
     if (currentMode === 'markdown') return
-    runAiJob('explain')
+    runAiJob('explain', undefined, e && e.detail && e.detail.precomputedCtx)
   })
-  document.addEventListener('sieve:ai-ask', function () {
+  document.addEventListener('sieve:ai-ask', function (e) {
     if (currentMode === 'markdown') return
     ensureOverlays()
-    openAskPopup()
+    openAskPopup(e && e.detail && e.detail.precomputedCtx)
   })
-  document.addEventListener('sieve:ai-retry', function (e) {
-    if (currentMode === 'markdown' || !currentEditor) return
-    var details = e.detail
-    if (!details || !details.id) return
-
-    var blkId = details.id
-    var type = (details.type || '').toLowerCase()
-    if (type !== 'ask' && type !== 'explain') {
-      type = details.question ? 'ask' : 'explain'
-    }
-
-    // 1. Immediate visual feedback: reset to PENDING with fresh timestamp
-    //    (updating createdAt prevents isStale from firing before the server responds)
+  document.addEventListener('sieve:block-retry', function (e) {
+    if (!currentEditor || !e.detail || !e.detail.id) return
+    var blkId = e.detail.id
     var now = new Date().toISOString()
     currentEditor.commands.command(function (props) {
       var tr = props.tr
       var found = false
       props.state.doc.descendants(function (node, pos) {
-        if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
-          tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, {
-            status: 'PENDING', response: null, createdAt: now
-          }))
+        if (node.type.name.startsWith('sieve-') && node.attrs.id === blkId) {
+          var cleanAttrs = Object.assign({}, node.attrs, { status: 'PENDING', createdAt: now })
+          if ('content' in cleanAttrs)     cleanAttrs.content = null
+          if ('error' in cleanAttrs)       cleanAttrs.error = null
+          if ('title' in cleanAttrs)       cleanAttrs.title = null
+          if ('completedAt' in cleanAttrs) cleanAttrs.completedAt = null
+          if ('response' in cleanAttrs)    cleanAttrs.response = null
+          tr.setNodeMarkup(pos, null, cleanAttrs)
           found = true
           return false
         }
       })
       return found
     })
-
-    // 2. Select node so buildAiContext builds follow-up history context up to this block
-    var nodePos = null
-    currentEditor.state.doc.descendants(function (node, p) {
-      if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
-        nodePos = p
-        return false
-      }
-    })
-    if (nodePos !== null) currentEditor.commands.setNodeSelection(nodePos)
-
-    // 3. Build context
-    var ctx = window.TipTap.buildAiContext(currentEditor, false, lastSyncedBody, currentUuid)
-
-    var endpoint = type === 'explain' ? '/api/ai/explain' : '/api/ai/ask'
-    flushSave().then(function () {
-      fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id:            blkId,
-          content:       ctx ? ctx.content : '',
-          history:       ctx ? ctx.history : '',
-          question:      details.question || '',
-          noteUUID:      currentUuid || '',
-          imageBlockIds: (ctx && ctx.imageIds) || [],
-        }),
-      }).then(function (r) {
-        if (!r.ok) throw new Error('AI retry request failed: ' + r.status)
-        // SSE will fire sse:ai:block-resolved → softReloadContent
-      }).catch(function (err) {
-        console.error('[editor] AI retry error', err)
-        if (currentEditor) {
-          currentEditor.commands.command(function (props) {
-            var tr = props.tr
-            var found = false
-            props.state.doc.descendants(function (node, pos) {
-              if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
-                tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { status: 'TIMEOUT' }))
-                found = true
-                return false
-              }
-            })
-            return found
-          })
-        }
-      })
-    })
-  })
-
-  document.addEventListener('sieve:webclip-retry', function (e) {
-    if (!currentEditor) return
-    var detail = e.detail
-    if (!detail || !detail.id) return
-
-    var blkId = detail.id
-    var now = new Date().toISOString()
-
-    currentEditor.commands.command(function (props) {
-      var tr = props.tr
-      var found = false
-      props.state.doc.descendants(function (node, pos) {
-        if (node.type.name === 'webClip' && node.attrs.id === blkId) {
-          tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, {
-            status: 'PENDING', content: null, error: null,
-            title: null, model: null, completedAt: null, createdAt: now
-          }))
-          found = true
-          return false
-        }
-      })
-      return found
-    })
-
-    var body = currentEditor.storage.markdown.getMarkdown() || ''
-
-    fetch('/api/internalize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        uuid: currentUuid,
-        source: detail.source,
-        mode: detail.mode,
-        id: blkId,
-        body: body
-      })
-    }).then(function (r) {
-      if (!r.ok) {
-        console.error('[editor] webclip retry failed: ' + r.status)
-      }
-    }).catch(function (err) {
-      console.error('[editor] webclip retry error', err)
-    })
+    wsSend({ type: 'retry-block-job', id: blkId, uuid: currentUuid })
   })
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1570,7 +1069,7 @@
 
   document.addEventListener('contextmenu', function (e) {
     if (!e.target.closest('#tiptap-mount')) return
-    if (e.target.closest('.ai-block, .image-block, .web-clip-block')) return
+    if (e.target.closest('.ai-block, .image-block, .web-clip-block, .sieve-block')) return
     if (!currentEditor) return
     var linkEl = e.target.closest('a[href]')
     var linkUrl = linkEl ? linkEl.getAttribute('href') : null

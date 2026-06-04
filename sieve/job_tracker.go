@@ -1,4 +1,4 @@
-package requesthandlers
+package sieve
 
 import (
 	"encoding/json"
@@ -15,10 +15,10 @@ type JobInfo struct {
 }
 
 // JobTracker is a thread-safe registry of in-flight AI jobs.
-// Shared between AiHandler and InternalizeHandler via handlers.go.
 type JobTracker struct {
-	mu   sync.RWMutex
-	jobs map[string]JobInfo
+	Broadcast func(event, data string)
+	mu        sync.RWMutex
+	jobs      map[string]JobInfo
 }
 
 func NewJobTracker() *JobTracker {
@@ -29,12 +29,25 @@ func (t *JobTracker) Start(info JobInfo) {
 	t.mu.Lock()
 	t.jobs[info.JobID] = info
 	t.mu.Unlock()
+
+	if t.Broadcast != nil {
+		data, _ := json.Marshal(info)
+		t.Broadcast("ai:job-started", string(data))
+	}
 }
 
 func (t *JobTracker) End(jobID string) {
 	t.mu.Lock()
-	delete(t.jobs, jobID)
+	info, exists := t.jobs[jobID]
+	if exists {
+		delete(t.jobs, jobID)
+	}
 	t.mu.Unlock()
+
+	if exists && t.Broadcast != nil {
+		data, _ := json.Marshal(map[string]string{"jobId": jobID, "docId": info.DocID})
+		t.Broadcast("ai:job-ended", string(data))
+	}
 }
 
 func (t *JobTracker) Active() []JobInfo {

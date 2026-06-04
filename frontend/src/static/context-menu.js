@@ -28,6 +28,8 @@
     close:       svg('<path d="M18 6L6 18"/><path d="M6 6l12 12"/>'),
     closeAll:    svg('<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>'),
     externalLink: svg('<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>'),
+    code:         svg('<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>'),
+    highlight:   svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/><line x1="15" y1="5" x2="18" y2="8"/>'),
   }
 
   // ── Renderer ────────────────────────────────────────────────────────────────
@@ -93,6 +95,57 @@
     if (menu) menu.remove()
   }
 
+  function wrapInBlockAnchor(editor) {
+    var s = editor.state
+    var sel = s.selection
+    var blockRef = 'blk-' + Math.random().toString(16).substring(2, 6)
+    var blockRange = sel.$from.blockRange(sel.$to)
+    if (!blockRange) return
+    var topRange = new window.TipTap.NodeRange(blockRange.$from, blockRange.$to, 0)
+    var tr = s.tr
+    try {
+      tr.wrap(topRange, [{ type: s.schema.nodes.blockRef, attrs: { id: blockRef } }])
+      editor.view.dispatch(tr)
+    } catch (e) { /* selection too complex to wrap */ }
+  }
+
+  function applyTargetHighlight(editor) {
+    var s = editor.state
+    var sel = s.selection
+    if (sel.empty) return
+
+    // Detect if the selection covers the entire parent node (discounting whitespace)
+    var $from = sel.$from
+    var nodeStart = $from.start($from.depth)
+    var nodeEnd = $from.end($from.depth)
+    var coversNode =
+      s.doc.textBetween(sel.from, sel.to).trim() ===
+      s.doc.textBetween(nodeStart, nodeEnd).trim()
+
+    // Detect if already inside a BlockAnchor (blockRef node)
+    var inBlockAnchor = false
+    for (var d = $from.depth; d >= 0; d--) {
+      if ($from.node(d).type.name === 'blockRef') { inBlockAnchor = true; break }
+    }
+
+    if (coversNode && inBlockAnchor) {
+      // No-op: block already defines the entire target
+      return
+    }
+
+    if (coversNode && !inBlockAnchor) {
+      // Wrap whole node in BlockAnchor only — no == mark needed
+      wrapInBlockAnchor(editor)
+      return
+    }
+
+    // Word/phrase selected: apply == mark. Wrap parent in BlockAnchor first if not already.
+    if (!inBlockAnchor) wrapInBlockAnchor(editor)
+
+    // Apply the highlight mark on the selection
+    editor.commands.setMark('highlight')
+  }
+
   function tabItems(id) {
     return [
       { type: 'divider' },
@@ -106,8 +159,20 @@
   }
 
   // ── Editor: text / code block / table ────────────────────────────────────────
-  function buildEditorItems(ctx) {
+  function buildEditorItems(ctx, x, y) {
     var editor = ctx.editor
+
+    // Snap selection to right-click coordinates if click is outside current selection
+    if (x != null && y != null) {
+      var posAt = editor.view.posAtCoords({ left: x, top: y })
+      if (posAt && posAt.pos != null) {
+        var currentSel = editor.state.selection
+        if (posAt.pos < currentSel.from || posAt.pos > currentSel.to) {
+          editor.commands.setTextSelection(posAt.pos)
+        }
+      }
+    }
+
     var state = editor.state
     var sel = state.selection
     var hasSelection = !sel.empty
@@ -118,7 +183,7 @@
     var scanFrom = (from === to) ? Math.max(0, from - 1) : from
     var scanTo   = (from === to) ? Math.min(doc.content.size, to + 1) : to
     doc.nodesBetween(scanFrom, scanTo, function (node) {
-      if (!targetNode && (node.type.name === 'image' || node.type.name === 'codeBlock' || node.type.name === 'table')) {
+      if (!targetNode && (node.type.name === 'sieve-smart-image' || node.type.name === 'codeBlock' || node.type.name === 'table')) {
         targetNode = node
         return false
       }
@@ -189,62 +254,36 @@
     items.push({ icon: IC.externalLink, label: linkUrl ? 'Internalise Link' : 'Internalise URL…', action: function () {
       window._sieveOpenInternalize && window._sieveOpenInternalize(linkUrl || '')
     }})
+    items.push({ icon: IC.code, label: 'Insert Code Block', action: function () {
+      document.dispatchEvent(new CustomEvent('sieve:create-block', { detail: { kind: 'code' } }))
+    }})
+
+    var isHighlighted = editor.isActive('highlight')
+    if (hasSelection || isHighlighted) {
+      var label = isHighlighted ? 'Unhighlight Target' : 'Highlight Target'
+      items.push({ icon: IC.highlight, label: label, action: function () {
+        if (isHighlighted) {
+          editor.chain().extendMarkRange('highlight').unsetMark('highlight').focus().run()
+          return
+        }
+        applyTargetHighlight(editor)
+        editor.commands.focus()
+      }})
+    }
 
     items.push({ type: 'divider' })
     items.push({ icon: IC.sparkle, label: 'Ask AI...', action: function () {
+      if (hasSelection && !isHighlighted) applyTargetHighlight(editor)
       editor.commands.focus()
       document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
     }})
     items.push({ icon: IC.info, label: 'Explain', action: function () {
+      if (hasSelection && !isHighlighted) applyTargetHighlight(editor)
       editor.commands.focus()
       document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
     }})
 
     return items
-  }
-
-  // ── Image node ───────────────────────────────────────────────────────────────
-  function buildImageItems(ctx) {
-    var editor = ctx.editor, getPos = ctx.getPos, n = ctx.node
-
-    function md() {
-      var a = n.attrs
-      var text = '![' + (a.alt || '') + '](' + (a.src || '') + ')'
-      var extra = []
-      if (a.id) extra.push('id="' + a.id + '"')
-      if (a.width) extra.push('width="' + a.width + '"')
-      if (a.height) extra.push('height="' + a.height + '"')
-      if (a.summary) extra.push('summary="' + a.summary + '"')
-      if (a.detect) extra.push('detect="' + a.detect + '"')
-      if (extra.length) text += '{' + extra.join(' ') + '}'
-      return text
-    }
-
-    function del() {
-      if (typeof getPos === 'function') {
-        var pos = getPos()
-        editor.view.dispatch(editor.state.tr.delete(pos, pos + n.nodeSize))
-      }
-    }
-
-    return [
-      { icon: IC.copy, label: 'Copy', action: function () {
-        navigator.clipboard.writeText(md()).catch(console.error)
-      }},
-      { icon: IC.cut, label: 'Cut', action: function () {
-        navigator.clipboard.writeText(md()).then(del).catch(console.error)
-      }},
-      { icon: IC.trash, label: 'Delete', action: del },
-      { type: 'divider' },
-      { icon: IC.sparkle, label: 'Ask AI...', action: function () {
-        editor.commands.focus()
-        document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
-      }},
-      { icon: IC.info, label: 'Explain', action: function () {
-        editor.commands.focus()
-        document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
-      }},
-    ]
   }
 
   // ── AI Block node ────────────────────────────────────────────────────────────
@@ -310,77 +349,6 @@
         }))
       }},
     ]
-  }
-
-  // ── Web Clip node ─────────────────────────────────────────────────────────────
-
-  function promoteWebClip(editor, getPos, n) {
-    var content = (n.attrs.content || '').trim()
-    if (!content) return
-    var html = editor.storage.markdown.parser.md.render(content)
-    var pos = getPos()
-    editor.commands.insertContentAt({ from: pos, to: pos + n.nodeSize }, html + '<p></p>')
-  }
-
-  function buildWebClipItems(ctx) {
-    var editor = ctx.editor, getPos = ctx.getPos, n = ctx.node
-
-    function yaml() {
-      return '```web-clip\n' + (n.attrs.rawYaml || '') + '\n```'
-    }
-
-    function del() {
-      if (typeof getPos === 'function') {
-        var pos = getPos()
-        editor.view.dispatch(editor.state.tr.delete(pos, pos + n.nodeSize))
-      }
-    }
-
-    var status = n.attrs.status || 'PENDING'
-    var isComplete = status === 'COMPLETE'
-    var isRetryable = status === 'ERROR' || status === 'TIMEOUT' ||
-      (status === 'PENDING' && n.attrs.createdAt &&
-        Date.now() - new Date(n.attrs.createdAt).getTime() > ((window.__sieveCliTimeoutLong || 60) * 1000 + 30000))
-
-    var domain = ''
-    try { domain = new URL(n.attrs.source || '').hostname } catch (_) { domain = n.attrs.source || '' }
-    var modeLabel = n.attrs.mode === 'summarise' ? 'Summarised' : 'Fetched'
-    var headerLabel = isComplete ? (modeLabel + ' from ' + domain) : domain
-
-    var items = [
-      { type: 'header', label: headerLabel },
-      { icon: IC.copy, label: 'Copy', action: function () { navigator.clipboard.writeText(yaml()).catch(console.error) } },
-      { icon: IC.cut, label: 'Cut', action: function () { navigator.clipboard.writeText(yaml()).then(del).catch(console.error) } },
-      { icon: IC.trash, label: 'Delete', action: del },
-      { type: 'divider' },
-      { icon: IC.promote, label: 'Promote to Document',
-        disabled: !isComplete || !n.attrs.content,
-        action: function () { promoteWebClip(editor, getPos, n) }
-      },
-    ]
-
-    if (isComplete && n.attrs.content) {
-      items.push({ type: 'divider' })
-      items.push({ icon: IC.sparkle, label: 'Ask AI...', action: function () {
-        editor.commands.focus()
-        document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
-      }})
-      items.push({ icon: IC.info, label: 'Explain', action: function () {
-        editor.commands.focus()
-        document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
-      }})
-    }
-
-    if (isRetryable) {
-      items.push({ type: 'divider' })
-      items.push({ icon: IC.refresh, label: 'Retry', action: function () {
-        document.dispatchEvent(new CustomEvent('sieve:webclip-retry', {
-          detail: { id: n.attrs.id, source: n.attrs.source, mode: n.attrs.mode }
-        }))
-      }})
-    }
-
-    return items
   }
 
   // ── Sidebar: note ────────────────────────────────────────────────────────────
@@ -489,17 +457,20 @@
   document.addEventListener('sieve:contextmenu', function (e) {
     var d = e.detail, ctx = d.context, items
     switch (ctx.type) {
-      case 'editor':  items = buildEditorItems(ctx); break
-      case 'image':   items = buildImageItems(ctx); break
-      case 'aiBlock': items = buildAiBlockItems(ctx); break
-      case 'webClip': items = buildWebClipItems(ctx); break
-      case 'note':    items = buildNoteItems(ctx); break
-      case 'folder':  items = buildFolderItems(ctx); break
-      case 'prompt':  items = buildPromptItems(ctx); break
+      case 'editor':    items = buildEditorItems(ctx, d.x, d.y); break
+      case 'image':     items = buildImageItems(ctx); break
+      case 'aiBlock':   items = buildAiBlockItems(ctx); break
+      case 'note':      items = buildNoteItems(ctx); break
+      case 'folder':    items = buildFolderItems(ctx); break
+      case 'prompt':    items = buildPromptItems(ctx); break
+      case 'sieveBlock': items = ctx.items || []; break
       default: return
     }
     render(d.x, d.y, items)
   })
+
+  // Expose icon set so sieve block renderers can build menu items with matching icons.
+  window.SieveIcons = IC
 
   // ── Dismiss ──────────────────────────────────────────────────────────────────
   document.addEventListener('click', function (e) {

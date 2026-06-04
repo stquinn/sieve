@@ -1,12 +1,14 @@
 package sieve
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
+	RegisterProcessor("ai-block", &testRunJobProcessor{})
 	md := "# Hello\n\n```ai-block\nid: ab-1234\nquestion: What?\nresponse: Old answer\nstatus: COMPLETE\n```\n\nSome prose."
 	shadow := &ShadowDocument{
 		UUID:     "test-uuid",
@@ -87,9 +89,13 @@ func TestShadowDocument_setBlockCreatesEntry(t *testing.T) {
 		Blocks: make(map[string]*SieveBlock),
 	}
 
-	shadow.setBlock("code", "cb-0001", map[string]interface{}{
-		"id":     "cb-0001",
-		"source": "fmt.Println()",
+	shadow.setBlock(SieveBlock{
+		Kind:  "code",
+		ID:    "cb-0001",
+		Attrs: map[string]interface{}{
+			"id":     "cb-0001",
+			"source": "fmt.Println()",
+		},
 	})
 
 	blk, ok := shadow.Blocks["cb-0001"]
@@ -118,9 +124,13 @@ func TestShadowDocument_setBlockMergesAttrs(t *testing.T) {
 		},
 	}
 
-	shadow.setBlock("code", "cb-0001", map[string]interface{}{
-		"language": "python",
-		"status":   "COMPLETE",
+	shadow.setBlock(SieveBlock{
+		Kind:  "code",
+		ID:    "cb-0001",
+		Attrs: map[string]interface{}{
+			"language": "python",
+			"status":   "COMPLETE",
+		},
 	})
 
 	blk := shadow.Blocks["cb-0001"]
@@ -136,6 +146,7 @@ func TestShadowDocument_setBlockMergesAttrs(t *testing.T) {
 }
 
 func TestEditorService_FlushWritesToDisk(t *testing.T) {
+	RegisterProcessor("ai-block", &testRunJobProcessor{})
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, time.Second)
 
@@ -154,10 +165,14 @@ func TestEditorService_FlushWritesToDisk(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	es.UpdateMarkdown(uuid, "# Hello\n\n```ai-block\nid: ab-1234\nresponse: original\nstatus: COMPLETE\n```")
-	es.UpdateBlock(uuid, "ai-block", "ab-1234", map[string]interface{}{
-		"id":       "ab-1234",
-		"response": "updated by user",
-		"status":   "COMPLETE",
+	es.UpdateBlock(uuid, SieveBlock{
+		Kind:  "ai-block",
+		ID:    "ab-1234",
+		Attrs: map[string]interface{}{
+			"id":       "ab-1234",
+			"response": "updated by user",
+			"status":   "COMPLETE",
+		},
 	})
 
 	if err := es.Flush(uuid); err != nil {
@@ -174,6 +189,8 @@ func TestEditorService_FlushWritesToDisk(t *testing.T) {
 }
 
 func TestEditorService_EnterMarkdownEmbedsBlocks(t *testing.T) {
+	RegisterProcessor("code", &CodeBlockProcessor{})
+	t.Cleanup(func() { UnregisterProcessor("code") })
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, time.Second)
 
@@ -184,10 +201,14 @@ func TestEditorService_EnterMarkdownEmbedsBlocks(t *testing.T) {
 
 	_ = es.Open(uuid, nil)
 	es.UpdateMarkdown(uuid, "# Doc\n\n```code\nid: cb-0001\nsource: old\nstatus: COMPLETE\n```")
-	es.UpdateBlock(uuid, "code", "cb-0001", map[string]interface{}{
-		"id":     "cb-0001",
-		"source": "updated source",
-		"status": "COMPLETE",
+	es.UpdateBlock(uuid, SieveBlock{
+		Kind:  "code",
+		ID:    "cb-0001",
+		Attrs: map[string]interface{}{
+			"id":     "cb-0001",
+			"source": "updated source",
+			"status": "COMPLETE",
+		},
 	})
 
 	seed := es.EnterMarkdown(uuid)
@@ -276,7 +297,7 @@ func TestEditorService_UpdateMarkdown_NoShadowIsNoop(t *testing.T) {
 func TestEditorService_UpdateBlock_NoShadowIsNoop(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, time.Second)
-	es.UpdateBlock("nonexistent-uuid", "ai-block", "ab-0001", map[string]interface{}{"id": "ab-0001"})
+	es.UpdateBlock("nonexistent-uuid", SieveBlock{Kind: "ai-block", ID: "ab-0001", Attrs: map[string]interface{}{"id": "ab-0001"}})
 }
 
 func TestEditorService_EnterMarkdown_NoShadowReturnsEmpty(t *testing.T) {
@@ -322,6 +343,8 @@ func TestEditorService_NotifySavedCalledAfterDebounce(t *testing.T) {
 }
 
 func TestEditorService_EnterWysiwygReparsesBlocks(t *testing.T) {
+	RegisterProcessor("code", &CodeBlockProcessor{})
+	t.Cleanup(func() { UnregisterProcessor("code") })
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, time.Second)
 
@@ -338,9 +361,12 @@ func TestEditorService_EnterWysiwygReparsesBlocks(t *testing.T) {
 
 	es.EnterWysiwyg(uuid)
 
-	// Now UpdateBlock should merge into the re-parsed block
-	es.UpdateBlock(uuid, "code", "cb-0001", map[string]interface{}{
-		"language": "go",
+	es.UpdateBlock(uuid, SieveBlock{
+		Kind:  "code",
+		ID:    "cb-0001",
+		Attrs: map[string]interface{}{
+			"language": "go",
+		},
 	})
 
 	if err := es.Flush(uuid); err != nil {
@@ -356,3 +382,331 @@ func TestEditorService_EnterWysiwygReparsesBlocks(t *testing.T) {
 	}
 }
 
+func TestEditorService_CreateBlock_code(t *testing.T) {
+	resetRegistry()
+	RegisterProcessor("code", &CodeBlockProcessor{})
+
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, 0)
+
+	doc, _ := ds.New()
+	doc.SetBody([]byte("# Hello"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+	_ = es.Open(uuid, nil)
+
+	id, rawYaml, err := es.CreateBlock(uuid, "code", nil)
+	if err != nil {
+		t.Fatalf("CreateBlock: %v", err)
+	}
+	if len(id) < 5 {
+		t.Errorf("expected valid id, got %q", id)
+	}
+	if !strings.Contains(rawYaml, "status: PENDING") {
+		t.Errorf("expected PENDING in rawYaml, got:\n%s", rawYaml)
+	}
+
+	// Block must be in shadow with complete attrs
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	shadow.mu.Lock()
+	blk, ok := shadow.Blocks[id]
+	shadow.mu.Unlock()
+	if !ok {
+		t.Fatal("expected block in shadow")
+	}
+	if blk.Attrs["id"] != id {
+		t.Errorf("expected id in attrs, got %v", blk.Attrs["id"])
+	}
+	if _, ok := blk.Attrs["source"]; !ok {
+		t.Error("expected source field in attrs (zero value)")
+	}
+	if _, ok := blk.Attrs["language"]; !ok {
+		t.Error("expected language field in attrs (zero value)")
+	}
+}
+
+func TestEditorService_CreateBlock_withOverrides(t *testing.T) {
+	resetRegistry()
+	RegisterProcessor("code", &CodeBlockProcessor{})
+
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, 0)
+	doc, _ := ds.New()
+	doc.SetBody([]byte("# Hello"))
+	doc, _ = ds.Save(doc)
+	_ = es.Open(doc.UUID(), nil)
+
+	id, rawYaml, err := es.CreateBlock(doc.UUID(), "code", map[string]interface{}{
+		"source": "print('hello')",
+		"hint":   "python",
+	})
+	if err != nil {
+		t.Fatalf("CreateBlock: %v", err)
+	}
+	if !strings.Contains(rawYaml, "print") {
+		t.Errorf("expected source in rawYaml, got:\n%s", rawYaml)
+	}
+	_ = id
+}
+
+func TestEditorService_HandlePaste_delegatesToCreateBlock(t *testing.T) {
+	resetRegistry()
+	RegisterProcessor("code", &CodeBlockProcessor{})
+
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, 0)
+	doc, _ := ds.New()
+	doc.SetBody([]byte("# Hello"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+	_ = es.Open(uuid, nil)
+
+	kind, id, rawYaml, matched := es.HandlePaste(uuid, []PasteEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\n```"}})
+	if !matched {
+		t.Fatal("expected match")
+	}
+	if kind != "code" {
+		t.Errorf("expected kind=code, got %q", kind)
+	}
+	if len(id) < 5 {
+		t.Errorf("expected valid id, got %q", id)
+	}
+	// rawYaml must contain the complete initial state, not just paste-extracted values
+	if !strings.Contains(rawYaml, "status: PENDING") {
+		t.Errorf("expected complete state in rawYaml, got:\n%s", rawYaml)
+	}
+	if !strings.Contains(rawYaml, "print") {
+		t.Errorf("expected source in rawYaml, got:\n%s", rawYaml)
+	}
+}
+
+func TestEditorService_HandlePaste_noMatch(t *testing.T) {
+	resetRegistry()
+	RegisterProcessor("code", &CodeBlockProcessor{})
+
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, 0)
+	doc, _ := ds.New()
+	doc.SetBody([]byte("# Hello"))
+	doc, _ = ds.Save(doc)
+	_ = es.Open(doc.UUID(), nil)
+
+	_, _, _, matched := es.HandlePaste(doc.UUID(), []PasteEntry{{MIMEType: "text/plain", Content: "just plain text"}})
+	if matched {
+		t.Fatal("expected no match for plain text")
+	}
+}
+
+type mockLifecycleListener struct {
+	onCreated func(uuid, kind, blockID, rawYaml string)
+	onUpdated func(uuid, blockID string, attrs map[string]interface{}, rawYaml string)
+}
+
+func (l *mockLifecycleListener) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, rawYaml string) {
+	if l.onCreated != nil {
+		l.onCreated(uuid, kind, blockID, rawYaml)
+	}
+}
+
+func (l *mockLifecycleListener) OnBlockUpdated(uuid, blockID string, attrs map[string]interface{}, rawYaml string) {
+	if l.onUpdated != nil {
+		l.onUpdated(uuid, blockID, attrs, rawYaml)
+	}
+}
+
+func TestHandleBlockUpdate_notifySendsSnapshotUnderLock(t *testing.T) {
+	resetRegistry()
+	RegisterProcessor("code", &CodeBlockProcessor{})
+
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, 0)
+
+	var notifyID string
+	var notifyYaml string
+	notifyCalled := make(chan struct{}, 1)
+
+	listener := &mockLifecycleListener{
+		onUpdated: func(uuid, blockID string, attrs map[string]interface{}, rawYaml string) {
+			if strings.Contains(rawYaml, "language:") {
+				notifyID = blockID
+				notifyYaml = rawYaml
+				select {
+				case notifyCalled <- struct{}{}:
+				default:
+				}
+			}
+		},
+	}
+	es.SetLifecycleListener(listener)
+
+	doc, _ := ds.New()
+	doc.SetBody([]byte("# Hello"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+	_ = es.Open(uuid, nil)
+
+	// Create a code block with a very short source (<30 chars) so heuristics
+	// do not fire in InitAttrs and language stays empty. OnChange will then
+	// receive a long Go source (>=30 chars) that triggers heuristic detection,
+	// producing a non-empty attrsChanged and exercising the notify path.
+	id, _, err := es.CreateBlock(uuid, "code", map[string]interface{}{
+		"source": "x", // too short for heuristics; language stays ""
+	})
+	if err != nil {
+		t.Fatalf("CreateBlock: %v", err)
+	}
+
+	// Supply a Go source long enough to pass minSourceLength (30) so that
+	// OnChange detects "go" and sets language, making attrsChanged non-empty.
+	goSource := "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(\"hello\") }"
+	es.HandleBlockUpdate(uuid, "code", id, map[string]interface{}{
+		"source": goSource,
+	})
+
+	select {
+	case <-notifyCalled:
+		// notify was invoked synchronously by the OnChange heuristic path
+	case <-time.After(2 * time.Second):
+		t.Fatal("notify was not called within 2s")
+	}
+
+	if notifyID != id {
+		t.Errorf("expected notify block id=%q, got %q", id, notifyID)
+	}
+	if !strings.Contains(notifyYaml, "language:") {
+		t.Errorf("expected notify rawYaml to contain language: key, got:\n%s", notifyYaml)
+	}
+
+	// Wait for background RunJob to complete so the temp dir cleanup doesn't race
+	for i := 0; i < 50; i++ {
+		es.mu.Lock()
+		shadow := es.shadows[uuid]
+		es.mu.Unlock()
+		if shadow != nil {
+			shadow.mu.Lock()
+			blk, ok := shadow.Blocks[id]
+			status := ""
+			if ok {
+				status, _ = blk.Attrs["status"].(string)
+			}
+			shadow.mu.Unlock()
+			if status == BlockStatusError || status == BlockStatusComplete {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+type testRunJobProcessor struct {
+	runJob func(ctx context.Context, uuid string, block *SieveBlock) error
+}
+
+func (p *testRunJobProcessor) Mode() BlockMode { return BlockModeBlock }
+func (p *testRunJobProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
+	attrs := map[string]interface{}{"id": id, "status": BlockStatusPending}
+	for k, v := range overrides {
+		attrs[k] = v
+	}
+	return attrs
+}
+func (p *testRunJobProcessor) PasteMatch(entries []PasteEntry, _ string, _ string) (bool, map[string]interface{}) {
+	return false, nil
+}
+func (p *testRunJobProcessor) BuildContext(_ SieveBlock, _ ShadowDocument, _ map[string]bool) string  { return "" }
+func (p *testRunJobProcessor) OnChange(_ *SieveBlock) {}
+func (p *testRunJobProcessor) RunJob(jctx JobContext) error {
+	if p.runJob != nil {
+		return p.runJob(jctx.Ctx, jctx.UUID, jctx.Block)
+	}
+	return nil
+}
+func (p *testRunJobProcessor) JobLabel(_ *SieveBlock) string { return "" }
+
+func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
+	resetRegistry()
+	
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, 0)
+	doc, _ := ds.New()
+	doc.SetBody([]byte("# Test"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+	_ = es.Open(uuid, nil)
+
+	// Create a block with initial attributes
+	initialAttrs := map[string]interface{}{
+		"source":   "original source",
+		"language": "python",
+		"hint":     "some-hint",
+		"status":   BlockStatusPending,
+	}
+
+	var blockID string
+
+	// Register a mock processor
+	proc := &testRunJobProcessor{
+		runJob: func(ctx context.Context, uuid string, block *SieveBlock) error {
+			// Simulate job modifying attrs
+			block.Attrs["language"] = "go"            // modified
+			block.Attrs["added_key"] = "new value"    // added
+			block.Attrs["status"] = BlockStatusComplete
+			delete(block.Attrs, "hint")               // deleted
+			
+			// Simulate a concurrent user edit to "source" during the job execution
+			es.mu.Lock()
+			shadow := es.shadows[uuid]
+			es.mu.Unlock()
+			shadow.mu.Lock()
+			shadow.Blocks[blockID].Attrs["source"] = "concurrent user edit"
+			shadow.mu.Unlock()
+
+			return nil
+		},
+	}
+	RegisterProcessor("mock-kind", proc)
+
+	blockID, _, err := es.CreateBlock(uuid, "mock-kind", initialAttrs)
+	if err != nil {
+		t.Fatalf("CreateBlock failed: %v", err)
+	}
+
+	// Call RunJob
+	es.RunJob(context.Background(), uuid, blockID)
+
+	// Check final attributes in shadow
+	es.mu.Lock()
+	shadow := es.shadows[uuid]
+	es.mu.Unlock()
+
+	shadow.mu.Lock()
+	blk, ok := shadow.Blocks[blockID]
+	shadow.mu.Unlock()
+
+	if !ok {
+		t.Fatal("expected block to exist in shadow")
+	}
+
+	// Check updates
+	if blk.Attrs["language"] != "go" {
+		t.Errorf("expected language to be updated to 'go', got %v", blk.Attrs["language"])
+	}
+	if blk.Attrs["added_key"] != "new value" {
+		t.Errorf("expected added_key to be 'new value', got %v", blk.Attrs["added_key"])
+	}
+	if blk.Attrs["status"] != BlockStatusComplete {
+		t.Errorf("expected status to be COMPLETE, got %v", blk.Attrs["status"])
+	}
+
+	// Check deleted keys
+	if _, exists := blk.Attrs["hint"]; exists {
+		t.Error("expected hint key to be deleted")
+	}
+
+	// Check preserved concurrent edit
+	if blk.Attrs["source"] != "concurrent user edit" {
+		t.Errorf("expected concurrent user edit to be preserved, got %v", blk.Attrs["source"])
+	}
+}

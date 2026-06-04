@@ -29,7 +29,6 @@
 <body hx-ext="sse" sse-connect="/sse">
     <!-- Relay: makes HTMX SSE extension register EventSource listeners so events bubble to document as sse:* -->
     <div id="ai-sse-relay" hx-trigger="sse:ai:block-resolved" style="display:none"></div>
-    <div id="webclip-sse-relay" hx-trigger="sse:ai:web-clip-resolved" style="display:none"></div>
     <div id="ai-job-started-relay" hx-trigger="sse:ai:job-started" style="display:none"></div>
     <div id="ai-job-ended-relay" hx-trigger="sse:ai:job-ended" style="display:none"></div>
     {{if .StoreRoot}}
@@ -146,10 +145,12 @@
     <script src="/static/vendor/tiptap.js"></script>
     <script src="/static/vendor/js-yaml.js"></script>
     <script src="/static/extensions.js"></script>
-    <script type="module" src="/static/smart-link-extension.js"></script>
-    <script type="module" src="/static/ai-block-extension.js"></script>
-    <script type="module" src="/static/ai-block-legacy-extension.js"></script>
-    <script type="module" src="/static/web-clip-extension.js"></script>
+    <script type="module" src="/static/sieve-block-extension.js"></script>
+    <script type="module" src="/static/ai-block-renderer.js"></script>
+    <script type="module" src="/static/code-renderer.js"></script>
+<script type="module" src="/static/web-clip-renderer.js"></script>
+    <script type="module" src="/static/smart-link-renderer.js"></script>
+    <script type="module" src="/static/smart-image-renderer.js"></script>
     <script src="/static/editor.js"></script>
     <script src="/static/ai-actions.js"></script>
     <script src="/static/tabbar.js"></script>

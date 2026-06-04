@@ -1,0 +1,113 @@
+package sieve
+
+import (
+	"testing"
+)
+
+type mockProcessor struct {
+	matchFn func([]PasteEntry) (bool, map[string]interface{})
+}
+
+func (p *mockProcessor) Mode() BlockMode {
+	return BlockModeBlock
+}
+
+func (p *mockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
+	attrs := map[string]interface{}{"id": id, "status": BlockStatusPending}
+	for k, v := range overrides {
+		attrs[k] = v
+	}
+	return attrs
+}
+func (p *mockProcessor) PasteMatch(entries []PasteEntry, _ string, _ string) (bool, map[string]interface{}) {
+	return p.matchFn(entries)
+}
+func (p *mockProcessor) BuildContext(_ SieveBlock, _ ShadowDocument, _ map[string]bool) string  { return "" }
+func (p *mockProcessor) RunJob(_ JobContext) error { return nil }
+func (p *mockProcessor) JobLabel(_ *SieveBlock) string { return "" }
+func (p *mockProcessor) OnChange(_ *SieveBlock) {}
+
+func resetRegistry() {
+	processorRegistry = map[string]BlockProcessor{}
+	pasteMatchers = nil
+}
+
+func TestRegisterProcessor_storesInRegistry(t *testing.T) {
+	resetRegistry()
+	mock := &mockProcessor{matchFn: func(_ []PasteEntry) (bool, map[string]interface{}) { return false, nil }}
+	RegisterProcessor("test-kind", mock)
+	if GetProcessor("test-kind") == nil {
+		t.Fatal("expected processor to be registered, got nil")
+	}
+}
+
+func TestRegisterProcessor_unknownKindReturnsNil(t *testing.T) {
+	resetRegistry()
+	if GetProcessor("no-such-kind") != nil {
+		t.Fatal("expected nil for unregistered kind")
+	}
+}
+
+func TestPasteMatchers_firstMatchWins(t *testing.T) {
+	resetRegistry()
+	specific := &mockProcessor{matchFn: func(entries []PasteEntry) (bool, map[string]interface{}) {
+		for _, e := range entries {
+			if e.MIMEType == "text/plain" && e.Content == "target" {
+				return true, map[string]interface{}{"winner": "specific"}
+			}
+		}
+		return false, nil
+	}}
+	general := &mockProcessor{matchFn: func(_ []PasteEntry) (bool, map[string]interface{}) {
+		return true, map[string]interface{}{"winner": "general"}
+	}}
+	RegisterProcessor("specific", specific)
+	RegisterProcessor("general", general)
+
+	registryMu.RLock()
+	matchers := pasteMatchers
+	registryMu.RUnlock()
+
+	for _, pm := range matchers {
+		ok, overrides := pm.Processor.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "target"}}, "", "")
+		if ok {
+			if overrides["winner"] != "specific" {
+				t.Errorf("expected specific to win, got %v", overrides["winner"])
+			}
+			break
+		}
+	}
+}
+
+func TestUnregisterProcessor_removesFromRegistryAndMatchers(t *testing.T) {
+	resetRegistry()
+	mock := &mockProcessor{matchFn: func(_ []PasteEntry) (bool, map[string]interface{}) { return false, nil }}
+	RegisterProcessor("tmp-kind", mock)
+	UnregisterProcessor("tmp-kind")
+	if GetProcessor("tmp-kind") != nil {
+		t.Error("expected nil after UnregisterProcessor, still registered")
+	}
+	registryMu.RLock()
+	for _, pm := range pasteMatchers {
+		if pm.Kind == "tmp-kind" {
+			registryMu.RUnlock()
+			t.Error("expected tmp-kind removed from pasteMatchers")
+			return
+		}
+	}
+	registryMu.RUnlock()
+}
+
+func TestGenerateBlockID_formatAndUniqueness(t *testing.T) {
+	id1 := GenerateBlockID("code")
+	id2 := GenerateBlockID("code")
+	if len(id1) < 5 {
+		t.Errorf("expected ID length >= 5, got %q", id1)
+	}
+	if id1 == id2 {
+		t.Errorf("expected unique IDs, got %q twice", id1)
+	}
+	if id1[:2] != "co" {
+		t.Errorf("expected prefix 'co', got %q", id1[:2])
+	}
+}

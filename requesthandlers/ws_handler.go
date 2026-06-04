@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"sync"
+	"time"
+
+	"sieve/logger"
+	"sieve/sieve"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
-	"sieve/logger"
-	"sieve/sieve"
 )
 
 // WsHandler manages one persistent WebSocket connection per open document.
@@ -16,15 +18,19 @@ import (
 type WsHandler struct {
 	ServiceProvider *sieve.ServiceProvider
 	upgrader        websocket.Upgrader
+	channelsMu      sync.RWMutex
+	channels        map[string]func(interface{}) // uuid -> writeMsg function
 }
 
 func NewWsHandler(sp *sieve.ServiceProvider) *WsHandler {
-	return &WsHandler{
+	h := &WsHandler{
 		ServiceProvider: sp,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
+		channels: make(map[string]func(interface{})),
 	}
+	return h
 }
 
 func (h *WsHandler) RegisterPaths(r chi.Router) {
@@ -45,23 +51,41 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	if h.ServiceProvider.Editor != nil {
+		h.ServiceProvider.Editor.SetLifecycleListener(h)
+	}
+
 	// gorilla/websocket allows one concurrent writer — protect with a mutex so
 	// the debounce goroutine and the message-loop goroutine don't race.
 	var writeMu sync.Mutex
-	write := func(data []byte) {
+	writeMsg := func(v interface{}) {
+		data, err := json.Marshal(v)
+		if err != nil {
+			return
+		}
 		writeMu.Lock()
-		defer writeMu.Unlock()
 		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
 			logger.Debug("ws: write failed", "uuid", uuid, "err", err)
 		}
+		writeMu.Unlock()
 	}
 
 	notifySaved := func() {
-		ack, _ := json.Marshal(map[string]string{"type": "flush-ack", "uuid": uuid})
-		write(ack)
+		writeMsg(map[string]string{"type": "flush-ack", "uuid": uuid})
 	}
 
 	logger.Info("ws: connection established", "uuid", uuid)
+	
+	h.channelsMu.Lock()
+	h.channels[uuid] = writeMsg
+	h.channelsMu.Unlock()
+
+	defer func() {
+		h.channelsMu.Lock()
+		delete(h.channels, uuid)
+		h.channelsMu.Unlock()
+	}()
+
 	if err := h.ServiceProvider.Editor.Open(uuid, notifySaved); err != nil {
 		logger.Warn("ws: could not open shadow", "uuid", uuid, "err", err)
 	}
@@ -85,13 +109,17 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 		case "doc-update":
 			h.handleDocUpdate(uuid, raw)
 		case "block-update":
-			h.handleBlockUpdate(uuid, raw)
+			h.handleBlockUpdate(uuid, raw, writeMsg)
+		case "create-block":
+			h.handleCreateBlock(uuid, raw, writeMsg)
 		case "flush":
-			h.handleFlush(write, uuid)
+			h.handleFlush(writeMsg, uuid)
 		case "enter-markdown":
-			h.handleEnterMarkdown(write, uuid)
+			h.handleEnterMarkdown(writeMsg, uuid)
 		case "enter-wysiwyg":
 			h.handleEnterWysiwyg(uuid)
+		case "retry-block-job":
+			h.handleRetryBlockJob(uuid, raw, writeMsg)
 		}
 	}
 }
@@ -106,11 +134,9 @@ func (h *WsHandler) handleDocUpdate(uuid string, raw []byte) {
 	h.ServiceProvider.Editor.UpdateMarkdown(uuid, msg.Markdown)
 }
 
-// handleBlockUpdate merges per-block attr updates into the shadow so Remux can
-// substitute authoritative YAML over TipTap's potentially-stale rawYaml.
-// TODO: no JS sender yet — shadow.Blocks is always empty during WYSIWYG editing
-// until TipTap block extensions are updated to emit block-update messages.
-func (h *WsHandler) handleBlockUpdate(uuid string, raw []byte) {
+// handleBlockUpdate merges the user's attr patch into the shadow, then calls
+// OnChange on the processor so it can re-run heuristics.
+func (h *WsHandler) handleBlockUpdate(uuid string, raw []byte, writeMsg func(interface{})) {
 	var msg struct {
 		ID    string                 `json:"id"`
 		Kind  string                 `json:"kind"`
@@ -119,26 +145,24 @@ func (h *WsHandler) handleBlockUpdate(uuid string, raw []byte) {
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return
 	}
-	h.ServiceProvider.Editor.UpdateBlock(uuid, msg.Kind, msg.ID, msg.Attrs)
+	h.ServiceProvider.Editor.HandleBlockUpdate(uuid, msg.Kind, msg.ID, msg.Attrs)
 }
 
-func (h *WsHandler) handleFlush(write func([]byte), uuid string) {
+func (h *WsHandler) handleFlush(writeMsg func(interface{}), uuid string) {
 	_ = h.ServiceProvider.Editor.Flush(uuid)
-	ack, _ := json.Marshal(map[string]string{"type": "flush-ack", "uuid": uuid})
-	write(ack)
+	writeMsg(map[string]string{"type": "flush-ack", "uuid": uuid})
 }
 
 // handleEnterMarkdown embeds current block state into Markdown, sets mode = markdown,
 // and returns merged content to JS as the seed for the markdown editor.
-func (h *WsHandler) handleEnterMarkdown(write func([]byte), uuid string) {
+func (h *WsHandler) handleEnterMarkdown(writeMsg func(interface{}), uuid string) {
 	merged := h.ServiceProvider.Editor.EnterMarkdown(uuid)
 	h.persistTabMode(uuid, "markdown")
-	resp, _ := json.Marshal(map[string]string{
+	writeMsg(map[string]string{
 		"type":     "markdown-content",
 		"uuid":     uuid,
 		"markdown": merged,
 	})
-	write(resp)
 }
 
 // handleEnterWysiwyg re-parses shadow.Blocks from shadow.Markdown and sets mode = wysiwyg.
@@ -161,3 +185,73 @@ func (h *WsHandler) persistTabMode(uuid, mode string) {
 	}
 	_ = h.ServiceProvider.State.SaveSession(session)
 }
+
+// handleCreateBlock is the primary UI-triggered block creation path.
+// JS sends this when the user uses a keyboard shortcut, toolbar button, or command.
+func (h *WsHandler) handleCreateBlock(uuid string, raw []byte, writeMsg func(interface{})) {
+	var msg struct {
+		Kind  string                 `json:"kind"`
+		Attrs map[string]interface{} `json:"attrs"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil || msg.Kind == "" {
+		return
+	}
+	_, _, err := h.ServiceProvider.Editor.CreateBlock(uuid, msg.Kind, msg.Attrs)
+	if err != nil {
+		logger.Warn("ws: create-block failed", "uuid", uuid, "kind", msg.Kind, "err", err)
+		return
+	}
+}
+
+func (h *WsHandler) handleRetryBlockJob(uuid string, raw []byte, writeMsg func(interface{})) {
+	var msg struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil || msg.ID == "" {
+		return
+	}
+	// Reset both status and createdAt. The DISPATCHED notifyBlockUpdated that fires
+	// immediately will carry the fresh createdAt, so the frontend's isJobStale()
+	// won't fire and re-show "interrupted" instead of the spinner.
+	h.ServiceProvider.Editor.UpdateBlock(uuid, sieve.SieveBlock{
+		ID: msg.ID,
+		Attrs: map[string]interface{}{
+			"status":    sieve.BlockStatusPending,
+			"createdAt": time.Now().UTC().Format(time.RFC3339),
+			"error":     "",
+		},
+	})
+	h.ServiceProvider.Editor.DispatchJobIfNeeded(uuid, msg.ID)
+}
+
+// OnBlockCreated implements sieve.BlockLifecycleListener.
+func (h *WsHandler) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, serialisedForm string) {
+	h.channelsMu.RLock()
+	writeMsg, ok := h.channels[uuid]
+	h.channelsMu.RUnlock()
+	if ok {
+		writeMsg(map[string]interface{}{
+			"type":           "insert-block",
+			"kind":           kind,
+			"id":             blockID,
+			"attrs":          attrs,
+			"serialisedForm": serialisedForm,
+		})
+	}
+}
+
+// OnBlockUpdated implements sieve.BlockLifecycleListener.
+func (h *WsHandler) OnBlockUpdated(uuid, blockID string, attrs map[string]interface{}, serialisedForm string) {
+	h.channelsMu.RLock()
+	writeMsg, ok := h.channels[uuid]
+	h.channelsMu.RUnlock()
+	if ok {
+		writeMsg(map[string]interface{}{
+			"type":           "block-attrs-updated",
+			"id":             blockID,
+			"attrs":          attrs,
+			"serialisedForm": serialisedForm,
+		})
+	}
+}
+

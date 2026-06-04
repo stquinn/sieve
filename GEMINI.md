@@ -26,3 +26,7 @@ All compilation should happen inside the Nix shell to ensure the correct environ
 - **Stable Handlers**: Use the `handlers` ref pattern in `App.tsx` for global shortcuts.
 - **AI Context**: Build context using the `buildAiContext` utility to ensure block-chaining persistence.
 - **Frontmatter**: Frontmatter must be handled via `splitFrontmatter` to avoid Tiptap corruption.
+
+## Agent Behavior Policies
+
+- **File Editing**: You MUST use native file editing tools (`replace_file_content`, `multi_replace_file_content`) to modify code. NEVER write custom Python, Bash, or ad-hoc scripts (e.g., using `cat << EOF > script.py`) to perform search-and-replace via the terminal. Executing arbitrary scripts triggers security prompts and blocks automation.

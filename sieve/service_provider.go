@@ -3,18 +3,31 @@ package sieve
 import (
 	"sieve/logger"
 	"sieve/store"
-	"strings"
 	"time"
 )
 
 type ServiceProvider struct {
-	Store     store.Store
-	Documents *DocumentService
-	Assets    *AssetService
-	State     *StateService
-	Prompts   *PromptService
-	AI        *AIService
-	Editor    *EditorService
+	Store       store.Store
+	Documents   *DocumentService
+	Assets      *AssetService
+	State       *StateService
+	Prompts     *PromptService
+	AI          *AIService
+	Editor      *EditorService
+	Jobs        *JobTracker
+	LinkPreview *LinkPreviewService
+}
+
+// BlockServices returns the scoped dependency bag for block processors.
+// Add a field here when a new service should be available inside RunJob / OnChange.
+func (s *ServiceProvider) BlockServices() BlockServices {
+	return BlockServices{
+		AI:          s.AI,
+		Documents:   s.Documents,
+		Assets:      s.Assets,
+		Jobs:        s.Jobs,
+		LinkPreview: s.LinkPreview,
+	}
 }
 
 func (s *ServiceProvider) Init(store store.Store, storePath string) {
@@ -38,54 +51,18 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 		return
 	}
 	s.AI = NewAIService(s.State, s.Prompts, s.Documents, storePath)
+	s.LinkPreview = NewLinkPreviewService()
 	settings := s.State.LoadSettings()
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
 	s.Editor = NewEditorService(s.Documents, autosave)
-	s.migrateSession()
-}
-
-func (s *ServiceProvider) migrateSession() {
-	if s.State == nil || s.Documents == nil {
-		return
-	}
-	session := s.State.LoadSession()
-	changed := false
-
-	for i, tab := range session.Tabs {
-		if strings.HasPrefix(tab.ID, "prompt:") {
-			continue
-		}
-
-		// If it's a path or doesn't look like a standard UUID, try to resolve it
-		if strings.Contains(tab.ID, "/") || !isUUID(tab.ID) {
-			// Try to load it via the Store to find its real UUID
-			// 1. Try Library
-			if st, err := s.Store.Load(Library, tab.ID); err == nil {
-				if ms, ok := st.(store.MetaStorable); ok {
-					if uuid := ms.Meta()["uuid"]; uuid != "" {
-						session.Tabs[i].ID = uuid
-						changed = true
-						continue
-					}
-				}
-			}
-			// 2. Try WorkingCopy
-			if st, err := s.Store.Load(WorkingCopy, tab.ID); err == nil {
-				if ms, ok := st.(store.MetaStorable); ok {
-					if uuid := ms.Meta()["uuid"]; uuid != "" {
-						session.Tabs[i].ID = uuid
-						changed = true
-						continue
-					}
-				}
-			}
-		}
-	}
-
-	if changed {
-		logger.Info("ServiceProvider: migrated session tab IDs to UUIDs")
-		_ = s.State.SaveSession(session)
-	}
+	s.Editor.SetServices(s.BlockServices())
+	svc := s.BlockServices()
+	RegisterProcessor("code",        NewCodeBlockProcessor(svc))
+	RegisterProcessor("web-clip",    NewWebClipBlockProcessor(svc))
+	RegisterProcessor("smart-link",  NewSmartLinkProcessor(svc))
+	RegisterProcessor("smart-image", NewSmartImageProcessor(svc))
+	RegisterProcessor("ai-block", NewAIBlockProcessor(svc))
+	RegisterContextProvider("block-anchor", &BlockAnchorProvider{svc: svc})
 }
 
 func isUUID(s string) bool {

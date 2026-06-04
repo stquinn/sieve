@@ -32,7 +32,9 @@
     "tiptap-markdown": "^0.9.0"
   },
   "dependencies": {
+    "@tiptap/extension-highlight": "^3.22.5",
     "htmx-ext-sse": "^2.2.4",
-    "js-yaml": "^4.1.1"
+    "js-yaml": "^4.1.1",
+    "markdown-it-mark": "^4.0.0"
   }
 }

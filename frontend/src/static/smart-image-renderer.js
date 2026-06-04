@@ -1,0 +1,192 @@
+// smart-image-renderer.js — Renderer for the smart-image Sieve Block.
+// Matches the visual structure of the old ImageWithAttrs NodeView so existing
+// image CSS (.image-block, .node-image, .image-resizer) works unchanged.
+
+import { isJobStale } from './fenced-block-base.js'
+
+;(function () {
+  'use strict'
+
+  var T = window.TipTap
+
+  function resolveSrc(src) {
+    if (!src) return ''
+    if (src.startsWith('http://') || src.startsWith('https://')) {
+      return window.location.origin + '/sieve-image-proxy?url=' + encodeURIComponent(src)
+    }
+    if (src.startsWith('data:') || src.startsWith('blob:') || src.startsWith('/')) return src
+    if (src.startsWith('.assets/')) src = src.substring(8)
+    return '/sieve/' + (window.__stashActiveTabUuid || '') + '/' + src.split('/').pop()
+  }
+
+  function makeNodeView(node, editor) {
+    var currentAttrs = Object.assign({}, node.attrs)
+
+    // dom matches old ImageWithAttrs: inline-block wrapper that owns selection CSS
+    var dom = document.createElement('div')
+    dom.className = 'image-block node-image'
+    dom.style.display = 'inline-block'
+    dom.contentEditable = 'false'
+
+    var img = document.createElement('img')
+    img.style.maxWidth = '100%'
+    img.style.display = 'block'
+
+    var resizer = document.createElement('div')
+    resizer.className = 'image-resizer'
+
+    // Status badge — shows "Processing…" while PENDING, hidden when COMPLETE
+    var badge = document.createElement('span')
+    badge.className = 'smart-image-status'
+    badge.style.cssText = 'position:absolute;top:6px;left:6px;font-size:10px;padding:2px 6px;border-radius:4px;pointer-events:none;display:none'
+
+    dom.appendChild(img)
+    dom.appendChild(resizer)
+    dom.appendChild(badge)
+
+    function applyAttrs(attrs) {
+      currentAttrs = attrs
+      img.src = resolveSrc(attrs.src || '')
+      img.alt = attrs.alt || ''
+      var w = attrs.width  || ''
+      var h = attrs.height || ''
+      img.style.width  = w ? (String(w).match(/^\d+$/) ? w + 'px' : w) : ''
+      img.style.height = h ? (String(h).match(/^\d+$/) ? h + 'px' : h) : ''
+      if (attrs.summary) dom.setAttribute('data-tooltip', attrs.summary)
+      else dom.removeAttribute('data-tooltip')
+      if (attrs.id) dom.setAttribute('data-id', attrs.id)
+
+      // Badge visibility.
+      // DISPATCHED = job is actively running → always show Processing.
+      // PENDING = waiting to dispatch → stale if createdAt > 15s ago.
+      var status = attrs.status || 'PENDING'
+      var isStale = status === 'PENDING' && isJobStale(attrs.createdAt, attrs.id)
+      if ((status === 'PENDING' || status === 'DISPATCHED') && !isStale) {
+        badge.textContent = 'Processing…'
+        badge.style.display = 'block'
+        badge.style.background = 'rgba(0,0,0,0.55)'
+        badge.style.color = '#fff'
+      } else if (isStale || status === 'ERROR') {
+        badge.textContent = 'Failed'
+        badge.style.display = 'block'
+        badge.style.background = 'rgba(180,0,0,0.75)'
+        badge.style.color = '#fff'
+      } else {
+        badge.style.display = 'none'
+      }
+    }
+
+    applyAttrs(node.attrs)
+
+    // Resize drag — maintains aspect ratio
+    var isResizing = false, startX, startW, startH, ratio
+
+    resizer.addEventListener('mousedown', function (e) {
+      e.preventDefault(); e.stopPropagation()
+      isResizing = true; startX = e.clientX
+      startW = img.clientWidth; startH = img.clientHeight
+      ratio = startH > 0 ? startW / startH : 1
+      document.body.style.cursor = 'nwse-resize'
+
+      function onMove(e) {
+        if (!isResizing) return
+        var w = Math.max(40, startW + (e.clientX - startX))
+        var h = Math.round(w / ratio)
+        img.style.width = w + 'px'; img.style.height = h + 'px'
+      }
+
+      function onUp() {
+        if (!isResizing) return
+        isResizing = false
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+        document.body.style.cursor = ''
+        document.dispatchEvent(new CustomEvent('sieve:block-update', {
+          detail: { id: currentAttrs.id, kind: 'smart-image', attrs: {
+            width:  String(Math.round(img.offsetWidth)),
+            height: String(Math.round(img.offsetHeight)),
+          }}
+        }))
+      }
+
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+    })
+
+    return {
+      dom: dom,
+      contentDOM: null,
+      update: function (updatedNode) {
+        if (updatedNode.type.name !== 'sieve-smart-image') return false
+        applyAttrs(updatedNode.attrs)
+        return true
+      },
+      ignoreMutation: function (mutation) {
+        return mutation.type === 'attributes'
+      },
+    }
+  }
+
+  function buildContextMenuItems(ctx) {
+    var editor = ctx.editor, node = ctx.node, getPos = ctx.getPos
+    var IC = window.SieveIcons || {}
+
+    function del() {
+      if (typeof getPos === 'function') {
+        var pos = getPos()
+        editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize))
+      }
+    }
+
+    return [
+      { icon: IC.trash, label: 'Delete', action: del },
+      { type: 'divider' },
+      { icon: IC.sparkle, label: 'Ask AI…', action: function () {
+        document.dispatchEvent(new CustomEvent('sieve:ai-ask', { detail: { precomputedCtx: {
+          content: node.attrs.summary || node.attrs.alt || '',
+          blockRef: node.attrs.id || 'doc',
+          history: '', imageIds: node.attrs.id ? [node.attrs.id] : [],
+          contextLabel: 'Image',
+        }}}))
+      }},
+      { icon: IC.info, label: 'Explain', action: function () {
+        document.dispatchEvent(new CustomEvent('sieve:ai-explain', { detail: { precomputedCtx: {
+          content: node.attrs.summary || node.attrs.alt || '',
+          blockRef: node.attrs.id || 'doc',
+          history: '', imageIds: node.attrs.id ? [node.attrs.id] : [],
+          contextLabel: 'Image',
+        }}}))
+      }},
+    ]
+  }
+
+  T.registerSieveRenderer('smart-image', {
+    nodeConfig: {
+      atom: true,
+      selectable: true,
+      draggable: true,
+      group: 'block',
+    },
+    attrs: {
+      src:     { default: '', parseHTML: function (el) { return el.getAttribute('data-src')     || '' } },
+      alt:     { default: '', parseHTML: function (el) { return el.getAttribute('data-alt')     || '' } },
+      summary: { default: '', parseHTML: function (el) { return el.getAttribute('data-summary') || '' } },
+      detect:  { default: '', parseHTML: function (el) { return el.getAttribute('data-detect')  || '' } },
+      width:   { default: '', parseHTML: function (el) { return el.getAttribute('data-width')   || '' } },
+      height:  { default: '', parseHTML: function (el) { return el.getAttribute('data-height')  || '' } },
+    },
+    parseAttrs: function (data) {
+      return {
+        src:     data.src     || '',
+        alt:     data.alt     || '',
+        summary: data.summary || '',
+        detect:  data.detect  || '',
+        width:   String(data.width  || ''),
+        height:  String(data.height || ''),
+      }
+    },
+    makeNodeView: makeNodeView,
+    buildContextMenuItems: buildContextMenuItems,
+  })
+
+})()

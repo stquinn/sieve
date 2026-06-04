@@ -50,7 +50,7 @@ func TestParseAll_Multiple(t *testing.T) {
 
 func TestSerialize_SimpleFields(t *testing.T) {
 	b := testBlock{ID: "x1", Status: "PENDING", Question: "What?"}
-	s, err := Serialize(b)
+	s, err := SerializeYaml(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestSerialize_SimpleFields(t *testing.T) {
 
 func TestSerialize_MultilineResponse(t *testing.T) {
 	b := testBlock{ID: "m1", Response: "Line 1\nLine 2\n---\nLine 3"}
-	s, err := Serialize(b)
+	s, err := SerializeYaml(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestSerialize_MultilineResponse(t *testing.T) {
 
 func TestSerialize_SpecialCharsQuoted(t *testing.T) {
 	b := testBlock{ID: "q1", Question: "What is this: a test?"}
-	s, err := Serialize(b)
+	s, err := SerializeYaml(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,11 +159,11 @@ func TestSerialize_CodeFenceInResponse(t *testing.T) {
 	// yaml.v3 defaults to double-quoted style for strings starting with backticks.
 	// Serialize must force literal block style so the output is human-readable.
 	b := testBlock{
-		ID:     "ai-1",
-		Status: "COMPLETE",
+		ID:       "ai-1",
+		Status:   "COMPLETE",
 		Response: "```go\npackage main\n\nfunc main() {}\n```",
 	}
-	s, err := Serialize(b)
+	s, err := SerializeYaml(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestRoundTrip(t *testing.T) {
 		Question: "What is the strangler fig pattern?",
 		Response: "A migration strategy.\n\n---\n\nNamed after the tree.",
 	}
-	s, err := Serialize(original)
+	s, err := SerializeYaml(original)
 	if err != nil {
 		t.Fatal(err)
 	}

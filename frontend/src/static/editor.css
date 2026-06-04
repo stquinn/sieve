@@ -226,51 +226,6 @@ textarea::selection {
 
 .hljs-strong                { color: var(--theme-syntaxStrong); font-weight: 700; }
 
-
-/* ── Link bubble menu ────────────────────────────────────────────────── */
-
-.link-bubble {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  background: var(--theme-bgAlt);
-  border: 1px solid var(--theme-border2);
-  border-radius: 6px;
-  padding: 0.35rem 0.5rem;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-}
-
-.link-bubble__input {
-  background: var(--theme-bg);
-  border: 1px solid var(--theme-border2);
-  border-radius: 4px;
-  color: var(--theme-text);
-  font-size: 13px;
-  padding: 0.25rem 0.5rem;
-  width: 280px;
-  outline: none;
-}
-
-.link-bubble__input:focus {
-  border-color: var(--theme-accentPrimary);
-}
-
-.link-bubble__btn {
-  background: var(--theme-border2);
-  border: none;
-  border-radius: 4px;
-  color: var(--theme-text);
-  cursor: pointer;
-  font-size: 12px;
-  padding: 0.25rem 0.6rem;
-  white-space: nowrap;
-}
-
-.link-bubble__btn:hover { background: var(--theme-bgAlt); }
-
-.link-bubble__btn--remove { color: var(--theme-accentRed); }
-.link-bubble__btn--remove:hover { background: color-mix(in srgb, var(--theme-accentRed) 15%, transparent); }
-
 /* ── Root layout ─────────────────────────────────────────────────────── */
 
 #app-root {
@@ -649,6 +604,32 @@ textarea::selection {
   border-left-color: var(--theme-accentPrimary) !important;
 }
 
+/* ── AI target highlight marks (==...==) ─────────────────────────────── */
+/* Normal state: always visible as AI-targeted — dashed amber underline.  */
+/* Active state: prominent pill/badge when parent block-anchor is focused. */
+
+.tiptap mark {
+  background: transparent;
+  border-radius: 3px;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--theme-accentYellow) 60%, transparent);
+  text-decoration-style: dashed;
+  text-underline-offset: 3px;
+  color: inherit;
+}
+
+.block-ref-active mark,
+.block-node.block-ref-active mark {
+  background-color: color-mix(in srgb, var(--theme-accentYellow) 12%, transparent);
+  color: var(--theme-accentYellow);
+  font-weight: 600;
+  padding: 2px 4px;
+  margin: 0 -2px;
+  border-radius: 4px;
+  border: 1px dashed color-mix(in srgb, var(--theme-accentYellow) 60%, transparent);
+  text-decoration: none;
+}
+
 .tiptap .code-block-wrapper {
   margin-top: 0.5em;
   margin-bottom: 0.5em;
@@ -888,13 +869,26 @@ div.node-image.ProseMirror-selectednode {
 }
 
 .web-clip-block__badge {
+  position: absolute;
+  top: -9px;
+  left: 12px;
+  background: var(--theme-bg);
+  padding: 0 6px;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
   color: var(--theme-accentCyan);
   font-family: var(--theme-monoFont);
   text-transform: uppercase;
-  white-space: nowrap;
+  border: 1px solid var(--theme-border2);
+  border-radius: 4px;
+  z-index: 10;
+}
+
+.web-clip-block__status {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--theme-accentCyan);
 }
 
 .web-clip-block__source-link {
@@ -1025,6 +1019,209 @@ div.node-image.ProseMirror-selectednode {
 .web-clip-block__retry:hover {
   border-color: var(--theme-accentCyan);
   color: var(--theme-accentCyan);
+}
+/* ── Smart-link nodes ────────────────────────────────────────────────── */
+
+.smart-link-node {
+  color: var(--theme-accentPrimary);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--theme-accentPrimary) 40%, transparent);
+  padding: 0 1px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.smart-link-node:hover {
+  color: color-mix(in srgb, var(--theme-accentPrimary) 85%, white);
+  border-bottom-color: var(--theme-accentPrimary);
+}
+
+.smart-link-node.ProseMirror-selectednode {
+  outline: 2px solid color-mix(in srgb, var(--theme-accentPrimary) 50%, transparent);
+  border-radius: 2px;
+}
+
+.smart-link-node[data-pending] { color: var(--theme-muted); font-style: italic; }
+.smart-link-node[data-error]   { color: var(--theme-accentOrange); }
+
+/* ── Smart-link edit dialog ──────────────────────────────────────────── */
+
+.smart-link-edit-popup {
+  top: 30%;
+  bottom: auto;
+  left: 50%;
+  width: 380px;
+  max-width: 92vw;
+}
+
+.smart-link-edit-popup__input {
+  width: 100%;
+  background: var(--theme-bg);
+  border: 1px solid var(--theme-border2);
+  border-radius: 6px;
+  color: var(--theme-text);
+  font-size: 13px;
+  padding: 0.4rem 0.6rem;
+  outline: none;
+  box-sizing: border-box;
+  margin-bottom: 0.5rem;
+}
+
+.smart-link-edit-popup__input:focus { border-color: var(--theme-accentPrimary); }
+.smart-link-edit-popup__input::placeholder { color: var(--theme-textDim); opacity: 0.6; }
+
+/* ── Sieve Blocks ────────────────────────────────────────────────────── */
+
+.sieve-block {
+  position: relative;
+  margin-top: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+
+.sieve-block--code {
+  display: flex;
+  flex-direction: column;
+  background: var(--theme-bgDark);
+  border: 1px solid var(--theme-aiBlockBorder);
+  border-radius: 8px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.sieve-block--code:hover {
+  border-color: color-mix(in srgb, var(--theme-accentGreen) 60%, var(--theme-aiBlockBorder));
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+}
+
+.sieve-block--code.block-ref-active {
+  border-color: color-mix(in srgb, var(--theme-accentGreen) 30%, var(--theme-aiBlockBorder)) !important;
+}
+
+.sieve-block--code.block-ref-active::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 8px;
+  border-left: 3px solid var(--theme-accentGreen);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.sieve-block__header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 4px 12px;
+  background: color-mix(in srgb, var(--theme-bgDark) 95%, white);
+  border-bottom: 1px solid var(--theme-aiBlockBorder);
+  border-radius: 8px 8px 0 0;
+  user-select: none;
+}
+
+.sieve-block__badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--theme-accentGreen);
+  font-family: var(--theme-monoFont);
+  text-transform: uppercase;
+}
+
+.sieve-block__badge--pending {
+  color: var(--theme-textDim);
+  opacity: 0.7;
+}
+
+.sieve-block__badge--unknown {
+  color: var(--theme-textDim);
+}
+
+/* Flex row: gutter + pre/code — mirrors .sieve-code-block layout */
+.sieve-block__body {
+  display: flex;
+  overflow: hidden;
+  border-radius: 0 0 8px 8px;
+}
+
+/* Line-number gutter — mirrors .sieve-code-block__gutter */
+.sieve-block__gutter {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: 0.85em 0.6em;
+  background: var(--theme-bgDark);
+  border-right: 1px solid var(--theme-gutterLineColor);
+  color: var(--theme-lineNumberColor);
+  font-family: var(--theme-monoFont);
+  font-size: 0.85em;
+  line-height: 1.6;
+  user-select: none;
+  flex-shrink: 0;
+  min-width: 2.2em;
+}
+
+.sieve-block__gutter span {
+  display: block;
+  line-height: 1.6;
+}
+
+/* CSS Grid container — highlight and textarea share the same cell so they
+   auto-size together. The grid drives height; textarea fills it. */
+.sieve-block__code-area {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Shared typography — MUST be identical on both layers for text to align */
+.sieve-block__highlight,
+.sieve-block__edit {
+  grid-area: 1 / 1;
+  font-family: var(--theme-monoFont);
+  font-size: 0.85em;
+  line-height: 1.6;
+  padding: 0.85em 1.1em;
+  white-space: pre-wrap;
+  word-break: break-word;
+  tab-size: 2;
+  margin: 0;
+  min-height: 2.5em;
+  box-sizing: border-box;
+}
+
+/* Display layer: syntax-highlighted, sits behind the textarea */
+.sieve-block__highlight {
+  pointer-events: none;
+  background: transparent;
+  border: none;
+  overflow: hidden;
+}
+
+.sieve-block__highlight code {
+  display: block;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font: inherit;
+  white-space: inherit;
+  word-break: inherit;
+  tab-size: inherit;
+  color: inherit;
+  border-radius: 0;
+}
+
+/* Input layer: transparent text so highlights show through the textarea */
+.sieve-block__edit {
+  position: relative;
+  z-index: 1;
+  color: transparent;
+  caret-color: var(--theme-text);
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  cursor: text;
 }
 
 /* ── Code blocks ─────────────────────────────────────────────────────── */
@@ -2053,53 +2250,4 @@ div.node-image.ProseMirror-selectednode {
   color: var(--theme-text);
 }
 
-/* The main container */
-.link-bubble {
-  position: fixed;
-  z-index: 1000;
-  display: none; /* Controlled by JS */
-  flex-direction: column;
-  gap: 12px;
-  padding: 16px;
-  border: 1px solid #3e4451;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-  background: #282c34;
-  color: #abb2bf;
-  width: 280px;
-}
 
-/* Individual Rows */
-.link-bubble__row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-}
-
-.link-bubble__row label {
-  width: 45px;
-  font-size: 12px;
-  flex-shrink: 0;
-}
-
-/* Input styling */
-.link-bubble__input {
-  flex: 1;
-  background: #fff;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  padding: 4px 8px;
-  color: #000;
-  outline: none;
-}
-
-/* Action row */
-.link-bubble__actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-  width: 100%;
-  margin-top: 4px;
-}
