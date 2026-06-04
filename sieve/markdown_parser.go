@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
@@ -227,11 +228,13 @@ var SieveExtension = &sieveExtension{}
 
 // --- Public API for EditorService ---
 
-func mdParser() goldmark.Markdown {
+var sharedMDParser = sync.OnceValue(func() goldmark.Markdown {
 	return goldmark.New(
 		goldmark.WithExtensions(BlockAnchorExtension, SieveExtension),
 	)
-}
+})
+
+func mdParser() goldmark.Markdown { return sharedMDParser() }
 
 // ParseAllBlocks parses markdown and extracts all Sieve blocks
 func ParseAllBlocks(markdown string) map[string]*SieveBlock {

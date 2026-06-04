@@ -65,11 +65,10 @@ func (p *blockAnchorParser) Continue(node ast.Node, reader text.Reader, pc parse
 // Close finalises the node. No action needed.
 func (p *blockAnchorParser) Close(node ast.Node, reader text.Reader, pc parser.Context) {}
 
-// CanInterruptParagraph returns true so [!block] can open without a preceding blank line.
-func (p *blockAnchorParser) CanInterruptParagraph() bool { return true }
+func (p *blockAnchorParser) CanInterruptParagraph() bool { return false }
 
-// CanAcceptIndentedCode returns false — the block anchor uses an explicit end marker.
-func (p *blockAnchorParser) CanAcceptIndentedCode() bool { return false }
+// CanAcceptIndentedLine returns false — the block anchor uses an explicit end marker.
+func (p *blockAnchorParser) CanAcceptIndentedLine() bool { return false }
 
 // blockAnchorExtension adds blockAnchorParser to a Goldmark Markdown instance.
 type blockAnchorExtension struct{}

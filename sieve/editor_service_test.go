@@ -189,6 +189,8 @@ func TestEditorService_FlushWritesToDisk(t *testing.T) {
 }
 
 func TestEditorService_EnterMarkdownEmbedsBlocks(t *testing.T) {
+	RegisterProcessor("code", &CodeBlockProcessor{})
+	t.Cleanup(func() { UnregisterProcessor("code") })
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, time.Second)
 
@@ -341,6 +343,8 @@ func TestEditorService_NotifySavedCalledAfterDebounce(t *testing.T) {
 }
 
 func TestEditorService_EnterWysiwygReparsesBlocks(t *testing.T) {
+	RegisterProcessor("code", &CodeBlockProcessor{})
+	t.Cleanup(func() { UnregisterProcessor("code") })
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, time.Second)
 

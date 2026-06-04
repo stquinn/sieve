@@ -80,6 +80,25 @@ func TestPasteMatchers_firstMatchWins(t *testing.T) {
 	}
 }
 
+func TestUnregisterProcessor_removesFromRegistryAndMatchers(t *testing.T) {
+	resetRegistry()
+	mock := &mockProcessor{matchFn: func(_ []PasteEntry) (bool, map[string]interface{}) { return false, nil }}
+	RegisterProcessor("tmp-kind", mock)
+	UnregisterProcessor("tmp-kind")
+	if GetProcessor("tmp-kind") != nil {
+		t.Error("expected nil after UnregisterProcessor, still registered")
+	}
+	registryMu.RLock()
+	for _, pm := range pasteMatchers {
+		if pm.Kind == "tmp-kind" {
+			registryMu.RUnlock()
+			t.Error("expected tmp-kind removed from pasteMatchers")
+			return
+		}
+	}
+	registryMu.RUnlock()
+}
+
 func TestGenerateBlockID_formatAndUniqueness(t *testing.T) {
 	id1 := GenerateBlockID("code")
 	id2 := GenerateBlockID("code")

@@ -28,6 +28,7 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 | File watcher | `watcher.go` |
 | Tech debt register | `docs/TECH-DEBT.md` |
 | Current milestone plan | `docs/PHASE9-PLAN.md` (completed), `docs/FEATURE-BACKLOG.md` |
+| Current Guuidance on how to use the Sieve Block Framework | `docs/how-to-sieve-block-framework.md` |
 | **How to build a fenced block** | `docs/how-to-intelligent-fenced-blocks.md` |
 | Shared fenced block JS base | `frontend/src/static/fenced-block-base.js` |
 

@@ -74,6 +74,7 @@ func TestBlockAnchorMissingIDIsIgnored(t *testing.T) {
 
 func TestBlockAnchorChildSieveBlockIsPromoted(t *testing.T) {
 	RegisterProcessor("code", &CodeBlockProcessor{})
+	t.Cleanup(func() { UnregisterProcessor("code") })
 	// A fenced SieveBlock inside a BlockAnchor should be promoted to SieveBlockNode
 	// by the existing sieveBlockASTTransformer.
 	md := "[!block] id=\"blk-1234\"\n\n```code\nid: co-abcd\nstatus: COMPLETE\nsource: fmt.Println()\n```\n\n[!block-end]\n"
@@ -102,6 +103,28 @@ func TestBlockAnchorChildSieveBlockIsPromoted(t *testing.T) {
 	}
 	if sieveChild == nil {
 		t.Error("expected SieveBlockNode child inside BlockAnchorNode")
+	}
+}
+
+func TestBlockAnchorDoesNotInterruptParagraph(t *testing.T) {
+	// [!block] immediately following text (no blank line) must NOT open an anchor;
+	// the line should stay in the paragraph. This prevents the parser from firing
+	// mid-prose when users write [!block] as literal text.
+	md := "Some prose here\n[!block] id=\"blk-9999\"\nmore prose\n\n[!block-end]\n"
+	doc := mdParser().Parser().Parse(text.NewReader([]byte(md)))
+
+	var found *BlockAnchorNode
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if entering {
+			if ba, ok := n.(*BlockAnchorNode); ok {
+				found = ba
+				return ast.WalkStop, nil
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+	if found != nil {
+		t.Error("BlockAnchorNode must not be opened when [!block] interrupts a paragraph")
 	}
 }
 

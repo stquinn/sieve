@@ -92,6 +92,20 @@ func RegisterProcessor(kind string, processor BlockProcessor) {
 	}{Kind: kind, Processor: processor})
 }
 
+// UnregisterProcessor removes kind from the registry and paste-matcher list.
+// Intended for test teardown only.
+func UnregisterProcessor(kind string) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	delete(processorRegistry, kind)
+	for i, pm := range pasteMatchers {
+		if pm.Kind == kind {
+			pasteMatchers = append(pasteMatchers[:i], pasteMatchers[i+1:]...)
+			break
+		}
+	}
+}
+
 // GetProcessor returns the registered processor for kind, or nil.
 func GetProcessor(kind string) BlockProcessor {
 	registryMu.RLock()
