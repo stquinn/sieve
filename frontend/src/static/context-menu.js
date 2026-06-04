@@ -212,8 +212,7 @@
       var label = isHighlighted ? 'Unhighlight Target' : 'Highlight Target'
       items.push({ icon: IC.highlight, label: label, action: function () {
         if (isHighlighted) {
-          editor.commands.unsetMark('highlight')
-          editor.commands.focus()
+          editor.chain().extendMarkRange('highlight').unsetMark('highlight').focus().run()
           return
         }
 
