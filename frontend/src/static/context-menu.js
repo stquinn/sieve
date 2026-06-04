@@ -108,8 +108,20 @@
   }
 
   // ── Editor: text / code block / table ────────────────────────────────────────
-  function buildEditorItems(ctx) {
+  function buildEditorItems(ctx, x, y) {
     var editor = ctx.editor
+
+    // Snap selection to right-click coordinates if click is outside current selection
+    if (x != null && y != null) {
+      var posAt = editor.view.posAtCoords({ left: x, top: y })
+      if (posAt && posAt.pos != null) {
+        var currentSel = editor.state.selection
+        if (posAt.pos < currentSel.from || posAt.pos > currentSel.to) {
+          editor.commands.setTextSelection(posAt.pos)
+        }
+      }
+    }
+
     var state = editor.state
     var sel = state.selection
     var hasSelection = !sel.empty
@@ -446,7 +458,7 @@
   document.addEventListener('sieve:contextmenu', function (e) {
     var d = e.detail, ctx = d.context, items
     switch (ctx.type) {
-      case 'editor':    items = buildEditorItems(ctx); break
+      case 'editor':    items = buildEditorItems(ctx, d.x, d.y); break
       case 'image':     items = buildImageItems(ctx); break
       case 'aiBlock':   items = buildAiBlockItems(ctx); break
       case 'note':      items = buildNoteItems(ctx); break
