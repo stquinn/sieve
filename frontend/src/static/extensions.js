@@ -38,12 +38,6 @@
     return dot > 0 ? filename.substring(0, dot) : filename
   }
 
-  function getCleanMarkdown(fullMd) {
-    var legacyRegex = /\n*\[!ai\] id="[^"]+" ref="[^"]+"[\s\S]*?\[!ai-end\]\n*/g
-    var fencedRegex = /\n*```ai-block\n[\s\S]*?\n```\n*/g
-    return fullMd.replace(legacyRegex, '\n\n').replace(fencedRegex, '\n\n').trim()
-  }
-
   // ── BlockNode ──────────────────────────────────────────────────────────────
 
   function makeBlockNodeView({ node }) {
