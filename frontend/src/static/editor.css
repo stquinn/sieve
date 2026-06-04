@@ -610,20 +610,24 @@ textarea::selection {
 
 .tiptap mark {
   background: transparent;
-  border-radius: 2px;
+  border-radius: 3px;
   text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, var(--theme-accentYellow) 70%, transparent);
-  text-decoration-style: dotted;
-  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, var(--theme-accentYellow) 60%, transparent);
+  text-decoration-style: dashed;
+  text-underline-offset: 3px;
   color: inherit;
 }
 
 .block-ref-active mark,
 .block-node.block-ref-active mark {
+  background-color: color-mix(in srgb, var(--theme-accentYellow) 12%, transparent);
   color: var(--theme-accentYellow);
   font-weight: 600;
-  text-decoration-color: var(--theme-accentYellow);
-  text-decoration-style: solid;
+  padding: 2px 4px;
+  margin: 0 -2px;
+  border-radius: 4px;
+  border: 1px dashed color-mix(in srgb, var(--theme-accentYellow) 60%, transparent);
+  text-decoration: none;
 }
 
 .tiptap .code-block-wrapper {
