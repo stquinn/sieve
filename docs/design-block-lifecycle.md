@@ -112,37 +112,6 @@ For SieveBlock components, ref IDs work well — they point to stable, identifia
 
 This creates fragility: the user deletes the paragraph. The BlockAnchor is gone. The AI block has a dangling `ref=blk-1234` pointing at nothing.
 
-### Cleaner Approach: Store Context as AI Block Attributes
-
-Instead of injecting a BlockAnchor into the document and pointing at it, capture the context **directly in the AI block's YAML at the time of creation**:
-
-```yaml
-question: What does this mean?
-context: "this is a sentence with a complicated word"
-target: "complicated"
-status: PENDING
-```
-
-- Self-contained — the AI block has everything it needs
-- Deletion-proof — original content can be removed without breaking the block
-- Immutable snapshot — records exactly what the user asked about at that moment
-- No document modification around the selection — no injected markers
-
-The trade-off is staleness: if the user edits the paragraph after asking, the stored `context` no longer matches the document. This is acceptable — a stale snapshot is better than a broken reference, and it preserves the record of what was actually asked.
-
-### What BlockAnchor Is Now
-
-With context captured in the AI block itself, BlockAnchor reverts to its proper role: **visual and structural scoping**, not context capture.
-
-| Use case | Mechanism |
-|---|---|
-| AI question about a word or paragraph | `context` + `target` attrs on the AI block |
-| AI question about a SieveBlock | `ref=` pointing to the SieveBlock's stable ID |
-| Explicit scoping for Convert to Markdown / chain synthesis | BlockAnchor (opt-in, not required) |
-| Visual grouping of a chain | BlockAnchor (opt-in) |
-
-BlockAnchor becomes a power-user tool for deliberate document structure, not a plumbing requirement for every AI interaction.
-
 ---
 
 ## Precision Targeting Within a Block Anchor
@@ -182,6 +151,10 @@ When no `<:::>` is present, the block behaves exactly as today — context only.
 The `<:::>` delimiters are replaced in TipTap by a `<span>` with a class that visually matches the left-bracket chain indicator already used for AI chains. The target word is highlighted in the same visual language as the chain it belongs to — no separate affordance needed, the user sees at a glance which word drove which chain.
 
 A lightweight TipTap mark handles rendering only. Serialisation and parsing stay entirely on the markdown/backend side.
+
+### Promotion IDs
+
+When we promote a SieveBlock to the Document We should wrap the new content in Block Anchors re-using the ID from the Original Block.  Therefore the Target ID is still valid - and anything points to it - can still be looked up
 
 ### Open Questions
 
