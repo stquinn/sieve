@@ -2,7 +2,6 @@ package sieve
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"fmt"
 	"image"
@@ -11,6 +10,7 @@ import (
 	_ "image/png"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -26,8 +26,8 @@ func NewSmartImageProcessor(svc BlockServices) *SmartImageProcessor {
 	return &SmartImageProcessor{svc: svc}
 }
 
-func (p *SmartImageProcessor) Mode() BlockMode     { return BlockModeBlock }
-func (p *SmartImageProcessor) IDPrefix() string    { return "img" }
+func (p *SmartImageProcessor) Mode() BlockMode  { return BlockModeBlock }
+func (p *SmartImageProcessor) IDPrefix() string { return "img" }
 
 func (p *SmartImageProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
@@ -98,12 +98,31 @@ func (p *SmartImageProcessor) PasteMatch(entries []PasteEntry, uuid string, bloc
 
 func (p *SmartImageProcessor) OnChange(_ *SieveBlock) {}
 
-func (p *SmartImageProcessor) BuildContext(_ SieveBlock, _ ShadowDocument) string { return "" }
+func (p *SmartImageProcessor) BuildContext(block SieveBlock, _ ShadowDocument, seen map[string]bool) string {
+	src, _ := block.Attrs["src"].(string)
+	alt, _ := block.Attrs["alt"].(string)
+	summary, _ := block.Attrs["summary"].(string)
+	if src == "" {
+		return ""
+	}
+	filename := filepath.Base(src)
+	var sb strings.Builder
+	sb.WriteString("NODE ID: " + block.ID + "\n\n")
+	sb.WriteString("Image: " + filename + "\n")
+	if alt != "" {
+		sb.WriteString("Alt: " + alt + "\n")
+	}
+	if summary != "" {
+		sb.WriteString("Summary: " + summary)
+	}
+	return sb.String()
+}
 
 func (p *SmartImageProcessor) JobLabel(_ *SieveBlock) string { return "Describing image…" }
 
 // RunJob is AI-only. The image file is already saved; this calls DescribeImage.
-func (p *SmartImageProcessor) RunJob(ctx context.Context, uuid string, block *SieveBlock, _ func(string, map[string]interface{})) error {
+func (p *SmartImageProcessor) RunJob(jctx JobContext) error {
+	uuid, block := jctx.UUID, jctx.Block
 	src, _ := block.Attrs["src"].(string)
 	if src == "" {
 		logger.Warn("smart-image: RunJob called with no src", "block", block.ID)

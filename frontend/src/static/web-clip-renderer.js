@@ -68,7 +68,7 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
       dom.className = 'web-clip-block'
       dom.contentEditable = 'false'
       dom.setAttribute('draggable', 'false')
-      dom.setAttribute('data-wc-id', node.attrs.id || '')
+      dom.setAttribute('data-id', node.attrs.id || '')
       dom.style.userSelect = 'text'
 
       dom.addEventListener('dragstart', function (e) { e.preventDefault() })
@@ -77,7 +77,7 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
       // Reverse chain highlight: when hovering the web-clip, light up any AI blocks
       // that reference it via data-ai-ref. Forward direction (AI → web-clip) is in ai-block-extension.js.
       function applyReverseChain(action) {
-        var id = dom.getAttribute('data-wc-id') || ''
+        var id = dom.getAttribute('data-id') || ''
         if (!id) return
         document.querySelectorAll('.ai-block').forEach(function (el) {
           var refs = (el.getAttribute('data-ai-ref') || '').split(',').map(function (r) { return r.trim() })
@@ -89,7 +89,7 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
 
       function render(n) {
         dom.innerHTML = ''
-        dom.setAttribute('data-wc-id', n.attrs.id || '')
+        dom.setAttribute('data-id', n.attrs.id || '')
         
         var outerBadge = document.createElement('span')
         outerBadge.className = 'web-clip-block__badge'

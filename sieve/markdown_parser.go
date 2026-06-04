@@ -76,82 +76,90 @@ type sieveBlockASTTransformer struct{}
 
 func (t *sieveBlockASTTransformer) Transform(node *ast.Document, reader text.Reader, pc parser.Context) {
 	source := reader.Source()
-	
+
+	// First pass: collect candidates without touching the tree.
+	// Calling ReplaceChild inside ast.Walk clears the replaced node's sibling
+	// pointers, which breaks the walk loop (NextSibling returns nil early).
+	type pending struct {
+		cb   *ast.FencedCodeBlock
+		node *sieveBlockNode
+	}
+	var candidates []pending
+
 	_ = ast.Walk(node, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
 		}
-
-		if cb, ok := n.(*ast.FencedCodeBlock); ok {
-			kind := string(cb.Language(source))
-			if kind == "" {
-				return ast.WalkContinue, nil
-			}
-
-			processor := GetProcessor(kind)
-			if processor == nil || processor.Mode() != BlockModeBlock {
-				return ast.WalkContinue, nil
-			}
-
-			// Parse YAML content
-			var buf bytes.Buffer
-			l := cb.Lines().Len()
-			for i := 0; i < l; i++ {
-				seg := cb.Lines().At(i)
-				buf.Write(seg.Value(source))
-			}
-
-			var attrs map[string]interface{}
-			if err := yaml.Unmarshal(buf.Bytes(), &attrs); err != nil {
-				return ast.WalkContinue, nil
-			}
-
-			id, _ := attrs["id"].(string)
-			if id == "" {
-				return ast.WalkContinue, nil
-			}
-			
-			// Find precise start and end bytes of the block including fences
-			startIdx := 0
-			if cb.Lines().Len() > 0 {
-				startIdx = cb.Lines().At(0).Start
-				// Back up over newline
-				if startIdx > 0 && source[startIdx-1] == '\n' {
-					startIdx--
-				}
-				// Back up to start of fence line
-				for startIdx > 0 && source[startIdx-1] != '\n' {
-					startIdx--
-				}
-			}
-
-			endIdx := len(source)
-			if cb.Lines().Len() > 0 {
-				endIdx = cb.Lines().At(cb.Lines().Len() - 1).Stop
-				// Move forward over newline
-				if endIdx < len(source) && source[endIdx] == '\n' {
-					endIdx++
-				}
-				// Move forward to end of closing fence line
-				for endIdx < len(source) && source[endIdx] != '\n' {
-					endIdx++
-				}
-			}
-
-			sieveNode := &sieveBlockNode{
-				SieveBlock: SieveBlock{
-					ID:    id,
-					Kind:  kind,
-					Attrs: attrs,
-				},
-				start: startIdx,
-				end:   endIdx,
-			}
-			parent := cb.Parent()
-			parent.ReplaceChild(parent, cb, sieveNode)
+		cb, ok := n.(*ast.FencedCodeBlock)
+		if !ok {
+			return ast.WalkContinue, nil
 		}
+
+		kind := string(cb.Language(source))
+		if kind == "" {
+			return ast.WalkContinue, nil
+		}
+		processor := GetProcessor(kind)
+		if processor == nil || processor.Mode() != BlockModeBlock {
+			return ast.WalkContinue, nil
+		}
+
+		var buf bytes.Buffer
+		l := cb.Lines().Len()
+		for i := 0; i < l; i++ {
+			seg := cb.Lines().At(i)
+			buf.Write(seg.Value(source))
+		}
+
+		var attrs map[string]interface{}
+		if err := yaml.Unmarshal(buf.Bytes(), &attrs); err != nil {
+			return ast.WalkContinue, nil
+		}
+		id, _ := attrs["id"].(string)
+		if id == "" {
+			return ast.WalkContinue, nil
+		}
+
+		startIdx := 0
+		if cb.Lines().Len() > 0 {
+			startIdx = cb.Lines().At(0).Start
+			if startIdx > 0 && source[startIdx-1] == '\n' {
+				startIdx--
+			}
+			for startIdx > 0 && source[startIdx-1] != '\n' {
+				startIdx--
+			}
+		}
+		endIdx := len(source)
+		if cb.Lines().Len() > 0 {
+			endIdx = cb.Lines().At(cb.Lines().Len() - 1).Stop
+			if endIdx < len(source) && source[endIdx] == '\n' {
+				endIdx++
+			}
+			for endIdx < len(source) && source[endIdx] != '\n' {
+				endIdx++
+			}
+		}
+
+		candidates = append(candidates, pending{
+			cb: cb,
+			node: &sieveBlockNode{
+				SieveBlock: SieveBlock{ID: id, Kind: kind, Attrs: attrs},
+				start:      startIdx,
+				end:        endIdx,
+			},
+		})
 		return ast.WalkContinue, nil
 	})
+
+	// Second pass: apply replacements now that the walk is complete.
+	for _, p := range candidates {
+		parent := p.cb.Parent()
+		if parent == nil {
+			continue
+		}
+		parent.ReplaceChild(parent, p.cb, p.node)
+	}
 }
 
 // --- Inline Parser ---
@@ -511,4 +519,32 @@ func ParseBlockAnchors(markdown string) []*BlockAnchor {
 		return ast.WalkContinue, nil
 	})
 	return anchors
+}
+
+// FindBlockByID parses markdown and returns the SieveBlock for the given ID.
+// For block anchors returns SieveBlock{Kind: "block-anchor"}.
+// Returns (SieveBlock{}, false) if not found.
+func FindBlockByID(markdown string, id string) (SieveBlock, bool) {
+	source := []byte(markdown)
+	doc := mdParser().Parser().Parse(text.NewReader(source))
+
+	var result SieveBlock
+	found := false
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		if ba, ok := n.(*blockAnchorNode); ok && ba.AnchorID == id {
+			result = SieveBlock{ID: id, Kind: "block-anchor", Attrs: map[string]interface{}{"id": id}}
+			found = true
+			return ast.WalkStop, nil
+		}
+		if sn, ok := n.(*sieveBlockNode); ok && sn.SieveBlock.ID == id {
+			result = sn.SieveBlock
+			found = true
+			return ast.WalkStop, nil
+		}
+		return ast.WalkContinue, nil
+	})
+	return result, found
 }

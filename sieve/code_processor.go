@@ -1,7 +1,6 @@
 package sieve
 
 import (
-	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -109,9 +108,13 @@ func (p *CodeBlockProcessor) OnChange(block *SieveBlock) {
 	block.Attrs["status"] = BlockStatusPending
 }
 
-func (p *CodeBlockProcessor) BuildContext(block SieveBlock, _ ShadowDocument) string {
+func (p *CodeBlockProcessor) BuildContext(block SieveBlock, _ ShadowDocument, seen map[string]bool) string {
 	src, _ := block.Attrs["source"].(string)
-	return src
+	language, _ := block.Attrs["language"].(string)
+	if src != "" {
+		return "NODE ID: " + block.ID + "\n\n" + "```" + language + "\n" + src + "\n```"
+	}
+	return ""
 }
 
 func (p *CodeBlockProcessor) JobLabel(_ *SieveBlock) string {
@@ -122,7 +125,8 @@ func (p *CodeBlockProcessor) Mode() BlockMode {
 	return BlockModeBlock
 }
 
-func (p *CodeBlockProcessor) RunJob(ctx context.Context, uuid string, block *SieveBlock, notify func(string, map[string]interface{})) error {
+func (p *CodeBlockProcessor) RunJob(jctx JobContext) error {
+	block := jctx.Block
 	source, _ := block.Attrs["source"].(string)
 	if strings.TrimSpace(source) == "" {
 		block.Attrs["status"] = BlockStatusComplete

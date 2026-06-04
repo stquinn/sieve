@@ -28,6 +28,16 @@ const (
 	BlockModeInline BlockMode = "inline"
 )
 
+// JobContext is the complete input to a processor's RunJob.
+// EditorService assembles it at dispatch time — processors never reach back into services.
+type JobContext struct {
+	Ctx    context.Context
+	UUID   string
+	Shadow ShadowDocument
+	Block  *SieveBlock
+	Notify func(blockID string, attrs map[string]interface{})
+}
+
 // BlockLifecycleListener listens to block lifecycle events from the framework.
 type BlockLifecycleListener interface {
 	OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, serialisedForm string)
@@ -49,11 +59,11 @@ type BlockLifecycleListener interface {
 type BlockProcessor interface {
 	InitAttrs(id string, overrides map[string]interface{}) map[string]interface{}
 	PasteMatch(entries []PasteEntry, uuid string, blockID string) (matched bool, overrides map[string]interface{})
-	RunJob(ctx context.Context, uuid string, block *SieveBlock, notify func(blockID string, attrs map[string]interface{})) error
+	RunJob(jctx JobContext) error
 	JobLabel(block *SieveBlock) string
 	OnChange(block *SieveBlock)
 	Mode() BlockMode
-	BuildContext(block SieveBlock, doc ShadowDocument) string
+	BuildContext(block SieveBlock, doc ShadowDocument, seen map[string]bool) string
 }
 
 // BlockServices is the dependency bag injected into processors at construction.

@@ -102,7 +102,7 @@
         T.TableHeader,
         T.TableCell,
         T.Search,
-        T.AiBlock,
+
         T.AiBlockLegacy,
         T.Image.configure({ inline: false, allowBase64: true, HTMLAttributes: { class: 'editor-image' } }),
         T.HighlightMark,
@@ -423,12 +423,18 @@
             serialisedForm:  msg.serialisedForm || node.attrs.serialisedForm,
             status:          parsed.status   || node.attrs.status,
           })
+          var schemaAttrs = node.type.spec.attrs || {}
           Object.keys(parsed).forEach(function (k) {
-            if (k !== 'id' && k !== 'status') {
+            // Safely apply keys that exist in the existing node.attrs schema mapping
+            if (k !== 'id' && k !== 'status' && (k in node.attrs)) {
               nextAttrs[k] = parsed[k]
             }
           })
-          tr.setNodeMarkup(pos, null, nextAttrs)
+          try {
+            tr.setNodeMarkup(pos, null, nextAttrs)
+          } catch (err) {
+            console.error('[editor] setNodeMarkup failed:', err, nextAttrs)
+          }
           return false
         }
       })
@@ -722,188 +728,29 @@
       })
   }
 
-  // HTMX SSE extension dispatches sse:ai:block-resolved when Go finishes an ai-block job.
-  // Go has already written the COMPLETE YAML to disk; reload from there (rawYaml passthrough
-  // means in-place patch can't update rawYaml correctly, matching the web-clip pattern).
-  document.addEventListener('sse:ai:block-resolved', function (e) {
-    var raw = e.detail && e.detail.data != null ? e.detail.data : (typeof e.detail === 'string' ? e.detail : null)
-    if (!raw) return
-    var data; try { data = JSON.parse(raw) } catch (_) { return }
-    if (!data) return
-    if (data.uuid !== currentUuid) return
-    softReloadContent(currentUuid)
-  })
 
-  function runAiJob(type, question, precomputedCtx) {
-    if (!currentEditor && currentMode !== 'markdown') return
+    function runAiJob(type, question, precomputedCtx) {
+      if (!currentEditor && currentMode !== 'markdown') return
 
-    var ctx = null
-    var refId = 'doc'
+      var ctx = precomputedCtx || window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
+      var refId = (ctx && ctx.blockRef) || 'doc'
+      var blockType = type === 'explain' ? 'EXPLAIN' : 'ASK'
 
-    var selectedAiNode = null
-    var selectedAiPos = null
-    var insertPos = null  // wysiwyg only; computed before fetch, used after response
-
-    // 1. Detect if an AI block is selected or focused
-    if (currentMode === 'markdown' && currentMarkdownTextarea) {
-      var ta = currentMarkdownTextarea
-      var val = ta.value
-      var selStart = ta.selectionStart
-      var beforeSel = val.substring(0, selStart)
-      var lastFenceStart = beforeSel.lastIndexOf('```ai-block')
-      if (lastFenceStart !== -1) {
-        var closeFenceIdx = val.indexOf('```', lastFenceStart + 11)
-        if (closeFenceIdx !== -1 && closeFenceIdx >= selStart) {
-          var fenceContent = val.substring(lastFenceStart, closeFenceIdx)
-          var idMatch = fenceContent.match(/\bid:\s*(\S+)/)
-          var refMatch = fenceContent.match(/\bref:\s*(\S+)/)
-          if (idMatch) {
-            var selectedId = idMatch[1]
-            var selectedRef = refMatch ? refMatch[1] : 'doc'
-            selectedAiNode = { attrs: { id: selectedId, ref: selectedRef } }
-          }
-        }
-      }
-    } else if (currentEditor) {
-      var selection = currentEditor.state.selection
-      if (selection.node && selection.node.type.name === 'aiBlock') {
-        selectedAiNode = selection.node
-        selectedAiPos = selection.from
-      } else {
-        // Resolve nested depth
-        var resolved = currentEditor.state.doc.resolve(selection.to)
-        for (var depth = resolved.depth; depth > 0; depth--) {
-          var n = resolved.node(depth)
-          if (n.type.name === 'aiBlock') {
-            selectedAiNode = n
-            selectedAiPos = resolved.before(depth)
-            break
-          }
-        }
-      }
-
-      // Fallback: Check if active element is inside an AI block element
-      if (!selectedAiNode) {
-        var activeEl = document.activeElement
-        if (activeEl) {
-          var aiBlockEl = activeEl.closest('.ai-block')
-          if (aiBlockEl) {
-            var aiId = aiBlockEl.getAttribute('data-ai-id')
-            if (aiId) {
-              currentEditor.state.doc.descendants(function (node, pos) {
-                if (node.type.name === 'aiBlock' && node.attrs.id === aiId) {
-                  selectedAiNode = node
-                  selectedAiPos = pos
-                  return false
-                }
-              })
-            }
-          }
-        }
-      }
-
-      // If we found a selected/focused AI block, select it programmatically
-      // so buildAiContext builds the perfect follow-up history context
-      if (selectedAiNode && selectedAiPos !== null) {
-        currentEditor.commands.setNodeSelection(selectedAiPos)
-      }
-    }
-
-    // 2. Build context
-    ctx = precomputedCtx || window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
-    refId = (ctx && ctx.blockRef) || 'doc'
-
-    var blockType = type === 'explain' ? 'EXPLAIN' : 'ASK'
-
-    // 3. Compute wysiwyg insertion position (Go inserts server-side; client mirrors after response)
-    if (currentMode !== 'markdown' && currentEditor) {
-      insertPos = currentEditor.state.selection.to
-
-      if (selectedAiNode && selectedAiPos !== null) {
-        insertPos = selectedAiPos + selectedAiNode.nodeSize
-      } else {
-        var resolved = currentEditor.state.doc.resolve(insertPos)
-        for (var depth = resolved.depth; depth > 0; depth--) {
-          var n = resolved.node(depth)
-          if (n.type.name === 'aiBlock') {
-            insertPos = resolved.after(depth)
-            resolved = currentEditor.state.doc.resolve(insertPos)
-            break
-          }
-        }
-        if (resolved.depth >= 1) insertPos = resolved.after(1)
-
-        // Context anchor override
-        if (ctx && ctx.blockRef && ctx.blockRef !== 'doc') {
-          var chainParts = ctx.blockRef.split(',')
-          var anchorId = chainParts[chainParts.length - 1]
-          if (anchorId && anchorId !== 'doc') {
-            currentEditor.state.doc.descendants(function (node, pos) {
-              if (node.attrs.id === anchorId) {
-                insertPos = pos + node.nodeSize
-                return false
-              }
-            })
-          }
-        }
-      }
-    }
-
-    var endpoint = type === 'explain' ? '/api/ai/explain' : '/api/ai/ask'
-
-    flushSave().then(function () {
-      fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content:       ctx ? ctx.content : '',
-          history:       ctx ? ctx.history : '',
-          question:      question || '',
-          noteUUID:      currentUuid || '',
-          imageBlockIds: (ctx && ctx.imageIds) || [],
-          ref:           refId,
-        }),
-      }).then(function (r) {
-        if (!r.ok) throw new Error('AI request failed: ' + r.status)
-        return r.json()
-      }).then(function (resp) {
-        if (!resp || !resp.id) return
-        var blkId = resp.id
-
-        if (resp.fence && currentEditor && insertPos !== null) {
-          // Insert from Go's canonical fence into TipTap at the pre-computed position.
-          var rawYaml = resp.fence.replace(/^```ai-block\n/, '').replace(/\n```$/, '')
-          var data = {}
-          try { data = window.jsyaml.load(rawYaml) || {} } catch (_) {}
-          currentEditor.commands.insertContentAt(insertPos, {
-            type: 'aiBlock',
-            attrs: {
-              rawYaml:   rawYaml,
-              id:        data.id || blkId,
-              ref:       data.ref || refId,
-              status:    'PENDING',
-              type:      blockType,
-              question:  question || '',
-              createdAt: data.createdAt || '',
-            }
-          })
-          var afterInsert = insertPos + 2
-          var docSize = currentEditor.state.doc.content.size
-          currentEditor.chain()
-            .setTextSelection(Math.min(afterInsert, docSize - 1))
-            .focus()
-            .scrollIntoView()
-            .run()
-        } else if (resp.fence && currentMode === 'markdown') {
-          // Markdown mode: Go saved at the canonical position — reload to reflect it.
-          softReloadContent(currentUuid)
-        }
-        // Retry path (resp.fence === ''): block already in doc; tracking sets updated above.
-      }).catch(function (err) {
-        console.error('[editor] AI error', err)
+      flushSave().then(function () {
+        wsSend({
+          type: 'create-block',
+          kind: 'ai-block',
+          attrs: {
+            type:     blockType,
+            ref:      refId,
+            question: question || '',
+          },
+          uuid: currentUuid,
+        })
+      }).catch(function(err) {
+        console.error('runAiJob flush save error:', err)
       })
-    })
-  }
+    }
 
     function toggleAiBlocks() {
     showAiBlocks = !showAiBlocks
@@ -938,7 +785,7 @@
           if (data && data.id) {
             event.preventDefault()
             currentEditor.commands.insertContent({
-              type: 'aiBlock',
+              type: 'sieve-ai-block',
               attrs: {
                 rawYaml:     yamlText,
                 id:          data.id || '',
@@ -1168,84 +1015,6 @@
     ensureOverlays()
     openAskPopup(e && e.detail && e.detail.precomputedCtx)
   })
-  document.addEventListener('sieve:ai-retry', function (e) {
-    if (currentMode === 'markdown' || !currentEditor) return
-    var details = e.detail
-    if (!details || !details.id) return
-
-    var blkId = details.id
-    var type = (details.type || '').toLowerCase()
-    if (type !== 'ask' && type !== 'explain') {
-      type = details.question ? 'ask' : 'explain'
-    }
-
-    // 1. Immediate visual feedback: reset to PENDING with fresh timestamp
-    //    (updating createdAt prevents isStale from firing before the server responds)
-    var now = new Date().toISOString()
-    currentEditor.commands.command(function (props) {
-      var tr = props.tr
-      var found = false
-      props.state.doc.descendants(function (node, pos) {
-        if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
-          tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, {
-            status: 'PENDING', response: null, createdAt: now
-          }))
-          found = true
-          return false
-        }
-      })
-      return found
-    })
-
-    // 2. Select node so buildAiContext builds follow-up history context up to this block
-    var nodePos = null
-    currentEditor.state.doc.descendants(function (node, p) {
-      if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
-        nodePos = p
-        return false
-      }
-    })
-    if (nodePos !== null) currentEditor.commands.setNodeSelection(nodePos)
-
-    // 3. Build context
-    var ctx = window.TipTap.buildAiContext(currentEditor, false, lastSyncedBody, currentUuid)
-
-    var endpoint = type === 'explain' ? '/api/ai/explain' : '/api/ai/ask'
-    flushSave().then(function () {
-      fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id:            blkId,
-          content:       ctx ? ctx.content : '',
-          history:       ctx ? ctx.history : '',
-          question:      details.question || '',
-          noteUUID:      currentUuid || '',
-          imageBlockIds: (ctx && ctx.imageIds) || [],
-        }),
-      }).then(function (r) {
-        if (!r.ok) throw new Error('AI retry request failed: ' + r.status)
-        // SSE will fire sse:ai:block-resolved → softReloadContent
-      }).catch(function (err) {
-        console.error('[editor] AI retry error', err)
-        if (currentEditor) {
-          currentEditor.commands.command(function (props) {
-            var tr = props.tr
-            var found = false
-            props.state.doc.descendants(function (node, pos) {
-              if (node.type.name === 'aiBlock' && node.attrs.id === blkId) {
-                tr.setNodeMarkup(pos, null, Object.assign({}, node.attrs, { status: 'TIMEOUT' }))
-                found = true
-                return false
-              }
-            })
-            return found
-          })
-        }
-      })
-    })
-  })
-
   document.addEventListener('sieve:block-retry', function (e) {
     if (!currentEditor || !e.detail || !e.detail.id) return
     var blkId = e.detail.id
@@ -1260,6 +1029,7 @@
           if ('error' in cleanAttrs)       cleanAttrs.error = null
           if ('title' in cleanAttrs)       cleanAttrs.title = null
           if ('completedAt' in cleanAttrs) cleanAttrs.completedAt = null
+          if ('response' in cleanAttrs)    cleanAttrs.response = null
           tr.setNodeMarkup(pos, null, cleanAttrs)
           found = true
           return false

@@ -12,7 +12,6 @@ import (
 
 	"golang.org/x/net/html"
 	"sieve/logger"
-	"sieve/sieve/aiblock"
 	"sieve/store"
 )
 
@@ -90,22 +89,19 @@ func (s *AIService) EvaluateBuffer(meta DocumentMeta, body []byte) (*FilingRecom
 // RunExplain asks the AI to explain the given content and returns a markdown
 // response. noteUUID identifies the owning document (used to resolve the working
 // directory for the CLI process). imageStorePaths are store-relative image paths.
-func (s *AIService) RunExplain(content, history, noteUUID string, imageBlockIds []string) (string, error) {
+func (s *AIService) RunExplain(content, history, question, noteUUID string) (string, error) {
 	settings := s.state.LoadSettings()
 	if settings.Tier() == TierDumb {
 		return "", fmt.Errorf("explain not available in dumb mode")
 	}
 	prompt, _ := s.prompts.GetPromptContent("explain")
-	imagePaths, noteCwd := s.resolveAIImages(noteUUID, imageBlockIds)
-	if noteCwd == "" {
-		noteCwd = filepath.Dir(s.resolvePath(s.resolveNotePath(noteUUID)))
-	}
+	noteCwd := filepath.Dir(s.resolvePath(s.resolveNotePath(noteUUID)))
 
 	contentType := detectContentType(content)
 	p := strings.ReplaceAll(prompt, "{type}", contentType)
-	p = strings.ReplaceAll(p, "{history}", history)
 	p = strings.ReplaceAll(p, "{content}", content)
-	p = strings.ReplaceAll(p, "{images}", imageNameList(imagePaths, noteCwd))
+	p = strings.ReplaceAll(p, "{history}", history)
+	p = strings.ReplaceAll(p, "{action}", question)
 
 	return RunCLI(settings.CLI, p, settings.Model, settings.CLITimeoutLong, noteCwd)
 }
@@ -113,68 +109,23 @@ func (s *AIService) RunExplain(content, history, noteUUID string, imageBlockIds 
 // RunAsk asks the AI a question with the given content as context. history may
 // be empty for first-turn asks. noteUUID and imageStorePaths follow the same
 // conventions as RunExplain.
-func (s *AIService) RunAsk(content, history, question, noteUUID string, imageBlockIds []string) (string, error) {
+func (s *AIService) RunAsk(content, history, question, noteUUID string) (string, error) {
 	settings := s.state.LoadSettings()
 	if settings.Tier() == TierDumb {
 		return "", fmt.Errorf("ask not available in dumb mode")
 	}
 	prompt, _ := s.prompts.GetPromptContent("ask")
-	imagePaths, noteCwd := s.resolveAIImages(noteUUID, imageBlockIds)
-	if noteCwd == "" {
-		noteCwd = filepath.Dir(s.resolvePath(s.resolveNotePath(noteUUID)))
-	}
+	noteCwd := filepath.Dir(s.resolvePath(s.resolveNotePath(noteUUID)))
 
 	contentType := detectContentType(content)
 	p := strings.ReplaceAll(prompt, "{type}", contentType)
 	p = strings.ReplaceAll(p, "{content}", content)
 	p = strings.ReplaceAll(p, "{history}", history)
-	p = strings.ReplaceAll(p, "{question}", question)
-	p = strings.ReplaceAll(p, "{images}", imageNameList(imagePaths, noteCwd))
+	p = strings.ReplaceAll(p, "{action}", question)
 
-	if len(imagePaths) > 0 {
-		logger.Info("RunAsk: has images", "count", len(imagePaths))
-	}
 	return RunCLI(settings.CLI, p, settings.Model, settings.CLITimeoutLong, noteCwd)
 }
 
-// ResolveAiBlock finds the block with blkId in noteUUID's body, sets it to
-// COMPLETE with the given response and model, and saves the document.
-func (s *AIService) ResolveAiBlock(noteUUID, blkId, response, model, blockType string) error {
-	doc, err := s.documents.LoadByUUID(noteUUID)
-	if err != nil {
-		return fmt.Errorf("ResolveAiBlock: load %s: %w", noteUUID, err)
-	}
-	body := string(doc.Body())
-	blocks := aiblock.ParseAll(body)
-	var found aiblock.AiBlockData
-	for _, b := range blocks {
-		if b.ID == blkId {
-			found = b
-			break
-		}
-	}
-	if found.ID == "" {
-		return fmt.Errorf("ResolveAiBlock: block %q not found in %s", blkId, noteUUID)
-	}
-	if model == "" {
-		model = s.state.LoadSettings().Model
-	}
-	found.Status = "COMPLETE"
-	found.Response = response
-	found.Model = model
-	if blockType != "" {
-		found.Type = blockType
-	}
-	found.CompletedAt = time.Now().UTC().Format(time.RFC3339)
-
-	newBody, err := aiblock.Replace(body, found)
-	if err != nil {
-		return fmt.Errorf("ResolveAiBlock: replace: %w", err)
-	}
-	doc.SetBody([]byte(newBody))
-	_, err = s.documents.Save(doc)
-	return err
-}
 
 // DescribeImage sends an image to the configured AI and returns alt text, a
 // summary, and a suggested filename. storeRelPath is relative to the store root.
@@ -420,37 +371,6 @@ func (s *AIService) resolveNotePath(uuid string) string {
 	return doc.Storable().ExternalRef()
 }
 
-// resolveAIImages loads the document by noteUUID, derives the note's working
-// directory, and returns absolute paths for any owned assets whose blk-id
-// (filename without extension) appears in blockIds. noteCwd is always returned
-// when the document loads, regardless of whether any images matched.
-func (s *AIService) resolveAIImages(noteUUID string, blockIds []string) (imagePaths []string, noteCwd string) {
-	if noteUUID == "" || s.documents == nil {
-		return nil, ""
-	}
-	doc, err := s.documents.LoadByUUID(noteUUID)
-	if err != nil {
-		return nil, ""
-	}
-	noteCwd = filepath.Join(s.storePath, doc.Storable().ExternalRef())
-	if len(blockIds) == 0 {
-		return nil, noteCwd
-	}
-	idSet := make(map[string]bool, len(blockIds))
-	for _, id := range blockIds {
-		idSet[id] = true
-	}
-	for _, owned := range doc.Storable().Owns() {
-		as, ok := owned.(store.AssetStorable)
-		if !ok {
-			continue
-		}
-		if idSet[as.BlkID()] {
-			imagePaths = append(imagePaths, filepath.Join(noteCwd, as.Key()))
-		}
-	}
-	return
-}
 
 // FilingOutcome is the result of AIService.EvaluateAndFileDoc.
 // Exactly one of Note or Buffer is non-nil when Discarded is false.

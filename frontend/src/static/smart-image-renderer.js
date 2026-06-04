@@ -54,7 +54,7 @@ import { isJobStale } from './fenced-block-base.js'
       img.style.height = h ? (String(h).match(/^\d+$/) ? h + 'px' : h) : ''
       if (attrs.summary) dom.setAttribute('data-tooltip', attrs.summary)
       else dom.removeAttribute('data-tooltip')
-      if (attrs.id) dom.setAttribute('data-block-id', attrs.id)
+      if (attrs.id) dom.setAttribute('data-id', attrs.id)
 
       // Badge visibility.
       // DISPATCHED = job is actively running → always show Processing.

@@ -47,7 +47,7 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
 
       var dom = document.createElement('div')
       dom.className = 'sieve-block sieve-block--code'
-      dom.setAttribute('data-block-id', node.attrs.id || '')
+      dom.setAttribute('data-id', node.attrs.id || '')
       dom.contentEditable = 'false'
 
       // Header + badge

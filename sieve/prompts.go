@@ -105,6 +105,8 @@ func (ps *PromptService) ListPrompts() []PromptEntry {
 // DefaultPrompts baked into the binary to provide zero-config AI interactions.
 // Users can override these by editing the copies written to store/{hostname}/prompts/
 // and modifying settings.json.
+// DefaultExplainPrompt and DefaultAskPrompt are intentionally separate constants
+// even though they share most text — each can be overridden independently by the user.
 
 const DefaultFilingPrompt = `
 Given the following content, decide if it is worth keeping
@@ -190,10 +192,12 @@ Act as a highly efficient research assistant. Provide the answer concisely with 
 - SYNTHESIZE: If information is gathered from multiple files (e.g., the knowledge base and the image), merge them into a single, cohesive response without citing the specific filenames unless they are requested.
 
 [TASK]
-Explain the following content clearly and concisely.
-Use the supplied conversation history as context, but focus your explanation on the provided content rather than the full history.
+You are part of an ongoing analysis thread. The user will provide a TARGET (the root piece of content), a THREAD (the history of questions and explanations about that target), and an ACTION to perform.
+Your task is to explain the specific node requested in the ACTION clearly and concisely.
 Respond in plain markdown suitable for inline display.
-Do not repeat the content. Just explain it.
+Do not repeat the content. Just explain the requested node.
+
+Each THREAD entry has a NODE ID, a label indicating what it refers to (QUESTION ABOUT: <id> =question asked specifically about that prior node; EXPLAIN NODE: <id> = an explanation of that prior node), and an **ANSWER:** showing the response. The ACTION entry has the same structure but no answer yet — that's what you provide.
 
 File Access Scope:
 You are  authorized to access and process the specific files or paths named within the user's prompt. Do not perform exploratory file system operations, recursive directory walks, or search for "relevant" files on the local disk unless they are specifically targeted by name.
@@ -203,13 +207,21 @@ Tool Usage:
 You are encouraged to use available tools/MCP servers to fulfill the request, provided they do not involve unauthorized local disk scanning.
 
 Content type: {type}
-Image List: {images}
 
-Conversation History:
+TARGET:
+{content}
+
+---
+---
+
+THREAD:
 {history}
 
-Content:
-{content}
+---
+---
+
+ACTION:
+{action}
 `
 
 const DefaultAskPrompt = `
@@ -225,9 +237,11 @@ Act as a highly efficient research assistant. Provide the answer concisely with 
 - SYNTHESIZE: If information is gathered from multiple files (e.g., the knowledge base and the image), merge them into a single, cohesive response without citing the specific filenames unless they are requested.
 
 [TASK]
-Given the following content and conversation history,
-answer the user's question clearly and concisely.
+You are part of an ongoing analysis thread. The user will provide a TARGET (the root piece of content), a THREAD (the history of questions and explanations about that target), and an ACTION to perform.
+Your task is to answer the user's question clearly and concisely.
 Respond in plain markdown suitable for inline display.
+
+Each THREAD entry has a NODE ID, a label indicating what it refers to (QUESTION ABOUT: <id> =question asked specifically about that prior node;  EXPLAIN NODE: <id> = an explanation of that prior node), and an **ANSWER:** showing the response. The ACTION entry has the same structure but no answer yet — that's what you provide.
 
 File Access Scope:
 You are  authorized to access and process the specific files or paths named within the user's prompt. Do not perform exploratory file system operations, recursive directory walks, or search for "relevant" files on the local disk unless they are specifically targeted by name.
@@ -237,15 +251,21 @@ Tool Usage:
 You are encouraged to use available tools/MCP servers to fulfill the request, provided they do not involve unauthorized local disk scanning.
 
 Content type: {type}
-Image List: {images}
-Content:
+
+TARGET:
 {content}
 
-Conversation history:
+---
+---
+
+THREAD:
 {history}
 
-User question:
-{question}
+---
+---
+
+ACTION:
+{action}
 `
 
 const DefaultImagePrompt = `Describe the image file {image_filename} and help me describe and categorise it.
@@ -283,4 +303,3 @@ const DefaultWebClipSummarisePrompt = `Please retrieve the content at the follow
   Current document context:
   {document}
   `
-

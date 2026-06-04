@@ -615,11 +615,11 @@ func (p *testRunJobProcessor) InitAttrs(id string, overrides map[string]interfac
 func (p *testRunJobProcessor) PasteMatch(entries []PasteEntry, _ string, _ string) (bool, map[string]interface{}) {
 	return false, nil
 }
-func (p *testRunJobProcessor) BuildContext(_ SieveBlock, _ ShadowDocument) string  { return "" }
+func (p *testRunJobProcessor) BuildContext(_ SieveBlock, _ ShadowDocument, _ map[string]bool) string  { return "" }
 func (p *testRunJobProcessor) OnChange(_ *SieveBlock) {}
-func (p *testRunJobProcessor) RunJob(ctx context.Context, uuid string, block *SieveBlock, _ func(string, map[string]interface{})) error {
+func (p *testRunJobProcessor) RunJob(jctx JobContext) error {
 	if p.runJob != nil {
-		return p.runJob(ctx, uuid, block)
+		return p.runJob(jctx.Ctx, jctx.UUID, jctx.Block)
 	}
 	return nil
 }

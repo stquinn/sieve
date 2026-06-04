@@ -1,7 +1,6 @@
 package sieve
 
 import (
-	"context"
 	"net/url"
 	"strings"
 	"time"
@@ -65,13 +64,19 @@ func (p *SmartLinkProcessor) Mode() BlockMode {
 	return BlockModeInline
 }
 
-func (p *SmartLinkProcessor) BuildContext(block SieveBlock, _ ShadowDocument) string {
+func (p *SmartLinkProcessor) BuildContext(block SieveBlock, _ ShadowDocument, seen map[string]bool) string {
 	href, _ := block.Attrs["href"].(string)
 	label, _ := block.Attrs["label"].(string)
-	if label != "" && label != href {
-		return "[" + label + "](" + href + ")"
+	if href == "" {
+		return ""
 	}
-	return href
+	var sb strings.Builder
+	sb.WriteString("NODE ID: " + block.ID + "\n\n")
+	sb.WriteString("Link: " + href + "\n")
+	if label != "" && label != href {
+		sb.WriteString("Label: " + label)
+	}
+	return sb.String()
 }
 
 func (p *SmartLinkProcessor) JobLabel(block *SieveBlock) string {
@@ -83,7 +88,8 @@ func (p *SmartLinkProcessor) JobLabel(block *SieveBlock) string {
 	return "Fetching " + host
 }
 
-func (p *SmartLinkProcessor) RunJob(ctx context.Context, uuid string, block *SieveBlock, _ func(string, map[string]interface{})) error {
+func (p *SmartLinkProcessor) RunJob(jctx JobContext) error {
+	block := jctx.Block
 	href, _ := block.Attrs["href"].(string)
 	now := time.Now().UTC().Format(time.RFC3339)
 

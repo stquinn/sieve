@@ -1,7 +1,6 @@
 package sieve
 
 import (
-	"path/filepath"
 	"strings"
 )
 
@@ -64,21 +63,4 @@ func extractJSONFallback(text string) string {
 		return text[first : last+1]
 	}
 	return text
-}
-
-// imageNameList builds the {images} prompt substitution: relative paths from
-// noteCwd where possible, otherwise just the base filename.
-func imageNameList(imagePaths []string, noteCwd string) string {
-	if len(imagePaths) == 0 {
-		return "N/A"
-	}
-	names := make([]string, len(imagePaths))
-	for i, p := range imagePaths {
-		if rel, err := filepath.Rel(noteCwd, p); err == nil {
-			names[i] = rel
-		} else {
-			names[i] = filepath.Base(p)
-		}
-	}
-	return strings.Join(names, ", ")
 }

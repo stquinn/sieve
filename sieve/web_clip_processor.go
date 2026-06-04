@@ -1,7 +1,6 @@
 package sieve
 
 import (
-	"context"
 	"fmt"
 	"net/url"
 	"strings"
@@ -43,9 +42,25 @@ func (p *WebClipBlockProcessor) PasteMatch(_ []PasteEntry, _ string, _ string) (
 
 func (p *WebClipBlockProcessor) OnChange(_ *SieveBlock) {}
 
-func (p *WebClipBlockProcessor) BuildContext(block SieveBlock, _ ShadowDocument) string {
+func (p *WebClipBlockProcessor) BuildContext(block SieveBlock, _ ShadowDocument, seen map[string]bool) string {
+	source, _ := block.Attrs["source"].(string)
+	title, _ := block.Attrs["title"].(string)
 	content, _ := block.Attrs["content"].(string)
-	return content
+	if source == "" && content == "" {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("NODE ID: " + block.ID + "\n\n")
+	if source != "" {
+		sb.WriteString("Source: " + source + "\n")
+	}
+	if title != "" {
+		sb.WriteString("Title: " + title + "\n")
+	}
+	if content != "" {
+		sb.WriteString("\n" + content)
+	}
+	return sb.String()
 }
 
 func (p *WebClipBlockProcessor) JobLabel(block *SieveBlock) string {
@@ -65,7 +80,8 @@ func (p *WebClipBlockProcessor) Mode() BlockMode {
 	return BlockModeBlock
 }
 
-func (p *WebClipBlockProcessor) RunJob(ctx context.Context, uuid string, block *SieveBlock, _ func(string, map[string]interface{})) error {
+func (p *WebClipBlockProcessor) RunJob(jctx JobContext) error {
+	uuid, block := jctx.UUID, jctx.Block
 	source, _ := block.Attrs["source"].(string)
 	mode, _ := block.Attrs["mode"].(string)
 	if mode == "" {

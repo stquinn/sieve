@@ -190,7 +190,7 @@ func TestCodeBlockProcessor_RunJob_ai(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := p.RunJob(ctx, "", block, nil); err != nil {
+	if err := p.RunJob(JobContext{Ctx: ctx, UUID: "", Block: block}); err != nil {
 		t.Fatalf("RunJob failed: %v", err)
 	}
 
@@ -252,7 +252,7 @@ func TestCodeBlockProcessor_RunJob_aiFallback(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	err = p.RunJob(ctx, "", block, nil)
+	err = p.RunJob(JobContext{Ctx: ctx, UUID: "", Block: block})
 
 	// AI failure must surface as an error so EditorService can set status=ERROR.
 	if err == nil {
@@ -277,7 +277,7 @@ func TestCodeBlockProcessor_RunJob_returnsErrorOnAIFailure(t *testing.T) {
 	}
 	// nil AI service — this should cause RunJob to return an error
 	// rather than silently setting status=COMPLETE.
-	err := proc.RunJob(context.Background(), "", block, nil)
+	err := proc.RunJob(JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: block})
 	if err == nil {
 		t.Error("expected RunJob to return an error when AI service is unavailable")
 	}

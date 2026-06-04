@@ -2,6 +2,7 @@ package sieve
 
 import (
 	"testing"
+	"strings"
 
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/text"
@@ -246,3 +247,101 @@ func TestParseBlockAnchors(t *testing.T) {
 	}
 }
 
+
+func TestFindBlockByIDAnchor(t *testing.T) {
+	md := "[!block] id=\"blk-1234\"\n\nSome content\n\n[!block-end]\n"
+	block, found := FindBlockByID(md, "blk-1234")
+	if !found {
+		t.Fatal("expected to find blk-1234")
+	}
+	if block.ID != "blk-1234" || block.Kind != "block-anchor" {
+		t.Errorf("got ID=%q Kind=%q", block.ID, block.Kind)
+	}
+}
+
+func TestFindBlockByIDSieveBlock(t *testing.T) {
+	RegisterProcessor("code", &mockContextProcessor{})
+	defer UnregisterProcessor("code")
+	md := "```code\nid: co-abcd\nstatus: COMPLETE\nsource: fmt.Println()\n```\n"
+	block, found := FindBlockByID(md, "co-abcd")
+	if !found {
+		t.Fatal("expected to find co-abcd")
+	}
+	if block.Kind != "code" {
+		t.Errorf("expected Kind=code, got %q", block.Kind)
+	}
+}
+
+func TestFindBlockByIDNotFound(t *testing.T) {
+	_, found := FindBlockByID("Just some plain markdown.\n", "blk-9999")
+	if found {
+		t.Error("expected not found")
+	}
+}
+
+func TestBlockAnchorProviderReturnsTextContent(t *testing.T) {
+	RegisterContextProvider("block-anchor", &BlockAnchorProvider{})
+	md := "[!block] id=\"blk-1234\"\n\nHello world.\n\n[!block-end]\n"
+	cp := GetContextProvider("block-anchor")
+	if cp == nil {
+		t.Fatal("expected BlockAnchorProvider to be registered")
+	}
+	result := cp.BuildContext(
+		SieveBlock{ID: "blk-1234", Kind: "block-anchor"},
+		ShadowDocument{Markdown: md},
+		map[string]bool{"blk-1234": true},
+	)
+	if !strings.Contains(result, "Hello world") {
+		t.Errorf("expected 'Hello world' in context, got %q", result)
+	}
+}
+
+func TestBlockAnchorProviderIncludesTargets(t *testing.T) {
+	md := "[!block] id=\"blk-1234\"\n\nThe patient showed ==acute== symptoms.\n\n[!block-end]\n"
+	cp := GetContextProvider("block-anchor")
+	result := cp.BuildContext(
+		SieveBlock{ID: "blk-1234", Kind: "block-anchor"},
+		ShadowDocument{Markdown: md},
+		map[string]bool{"blk-1234": true},
+	)
+	if !strings.Contains(result, "acute") {
+		t.Errorf("expected target word in context, got %q", result)
+	}
+	if !strings.Contains(result, "Specifically regarding") {
+		t.Errorf("expected targets suffix, got %q", result)
+	}
+}
+
+func TestBlockAnchorProviderReturnsEmptyForUnknownID(t *testing.T) {
+	md := "[!block] id=\"blk-1234\"\n\nHello world.\n\n[!block-end]\n"
+	cp := GetContextProvider("block-anchor")
+	result := cp.BuildContext(
+		SieveBlock{ID: "blk-9999", Kind: "block-anchor"},
+		ShadowDocument{Markdown: md},
+		map[string]bool{"blk-9999": true},
+	)
+	if result != "" {
+		t.Errorf("expected empty string for unknown ID, got %q", result)
+	}
+}
+
+func TestBuildContextForIDDispatchesByKind(t *testing.T) {
+	// "img-1234" would route to SmartImageProcessor; "blk-1234" routes to BlockAnchorProvider.
+	// This tests that the kind-based dispatch works end-to-end.
+	md := "[!block] id=\"blk-abc\"\n\nSome prose.\n\n[!block-end]\n"
+	doc := ShadowDocument{Markdown: md}
+	result := BuildContextForID("blk-abc", doc, map[string]bool{})
+	if !strings.Contains(result, "Some prose") {
+		t.Errorf("expected anchor content, got %q", result)
+	}
+}
+
+func TestBuildContextForIDPreventsCycles(t *testing.T) {
+	// seen map already contains the ID — must return "" without panicking
+	md := "[!block] id=\"blk-abc\"\n\nContent.\n\n[!block-end]\n"
+	seen := map[string]bool{"blk-abc": true}
+	result := BuildContextForID("blk-abc", ShadowDocument{Markdown: md}, seen)
+	if result != "" {
+		t.Errorf("expected empty for already-seen ID, got %q", result)
+	}
+}

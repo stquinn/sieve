@@ -594,6 +594,12 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 		blkCopy.Attrs[k] = v
 		attrsBefore[k] = v
 	}
+	markdown := shadow.Markdown
+	mode := shadow.Mode
+	blocksCopy := make(map[string]*SieveBlock, len(shadow.Blocks))
+	for k, v := range shadow.Blocks {
+		blocksCopy[k] = v
+	}
 	shadow.mu.Unlock()
 
 	processor := GetProcessor(kind)
@@ -632,7 +638,14 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 		}
 	}
 
-	if err := processor.RunJob(ctx, uuid, blkCopy, notify); err != nil {
+	jctx := JobContext{
+		Ctx:    ctx,
+		UUID:   uuid,
+		Shadow: ShadowDocument{UUID: uuid, Markdown: markdown, Mode: mode, Blocks: blocksCopy},
+		Block:  blkCopy,
+		Notify: notify,
+	}
+	if err := processor.RunJob(jctx); err != nil {
 		shadow.setBlock(SieveBlock{ID: blockID, Kind: kind, Attrs: map[string]interface{}{"status": BlockStatusError}})
 	} else {
 		// Dynamically determine what attributes the job updated.

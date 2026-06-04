@@ -61,7 +61,8 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	RegisterProcessor("web-clip",    NewWebClipBlockProcessor(svc))
 	RegisterProcessor("smart-link",  NewSmartLinkProcessor(svc))
 	RegisterProcessor("smart-image", NewSmartImageProcessor(svc))
-
+	RegisterProcessor("ai-block", NewAIBlockProcessor(svc))
+	RegisterContextProvider("block-anchor", &BlockAnchorProvider{svc: svc})
 }
 
 func isUUID(s string) bool {

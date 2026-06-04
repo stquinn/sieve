@@ -33,7 +33,7 @@ import { isJobStale } from './fenced-block-base.js'
     makeNodeView: function (node, editor) {
       var dom = document.createElement('a')
       dom.className = 'smart-link-node'
-      dom.setAttribute('data-sl-id', node.attrs.id || '')
+      dom.setAttribute('data-id', node.attrs.id || '')
 
       dom.addEventListener('dragstart', function (e) { e.preventDefault() })
       dom.addEventListener('mousedown', function (e) { e.stopPropagation() })
@@ -48,7 +48,7 @@ import { isJobStale } from './fenced-block-base.js'
       })
 
       function render(n) {
-        dom.setAttribute('data-sl-id', n.attrs.id || '')
+        dom.setAttribute('data-id', n.attrs.id || '')
         var status = n.attrs.status || 'PENDING'
         var href   = n.attrs.href  || '#'
         var label  = n.attrs.label || n.attrs.href || '…'

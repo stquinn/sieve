@@ -1,7 +1,6 @@
 package sieve
 
 import (
-	"context"
 	"testing"
 )
 
@@ -23,8 +22,8 @@ func (p *mockProcessor) InitAttrs(id string, overrides map[string]interface{}) m
 func (p *mockProcessor) PasteMatch(entries []PasteEntry, _ string, _ string) (bool, map[string]interface{}) {
 	return p.matchFn(entries)
 }
-func (p *mockProcessor) BuildContext(_ SieveBlock, _ ShadowDocument) string  { return "" }
-func (p *mockProcessor) RunJob(_ context.Context, _ string, _ *SieveBlock, _ func(string, map[string]interface{})) error { return nil }
+func (p *mockProcessor) BuildContext(_ SieveBlock, _ ShadowDocument, _ map[string]bool) string  { return "" }
+func (p *mockProcessor) RunJob(_ JobContext) error { return nil }
 func (p *mockProcessor) JobLabel(_ *SieveBlock) string { return "" }
 func (p *mockProcessor) OnChange(_ *SieveBlock) {}
 
