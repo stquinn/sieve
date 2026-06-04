@@ -73,6 +73,7 @@ func TestBlockAnchorMissingIDIsIgnored(t *testing.T) {
 }
 
 func TestBlockAnchorChildSieveBlockIsPromoted(t *testing.T) {
+	RegisterProcessor("code", &CodeBlockProcessor{})
 	// A fenced SieveBlock inside a BlockAnchor should be promoted to SieveBlockNode
 	// by the existing sieveBlockASTTransformer.
 	md := "[!block] id=\"blk-1234\"\n\n```code\nid: co-abcd\nstatus: COMPLETE\nsource: fmt.Println()\n```\n\n[!block-end]\n"

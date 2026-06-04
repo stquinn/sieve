@@ -229,7 +229,7 @@ var SieveExtension = &sieveExtension{}
 
 func mdParser() goldmark.Markdown {
 	return goldmark.New(
-		goldmark.WithExtensions(SieveExtension),
+		goldmark.WithExtensions(BlockAnchorExtension, SieveExtension),
 	)
 }
 

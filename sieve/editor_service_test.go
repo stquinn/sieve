@@ -8,6 +8,7 @@ import (
 )
 
 func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
+	RegisterProcessor("ai-block", &testRunJobProcessor{})
 	md := "# Hello\n\n```ai-block\nid: ab-1234\nquestion: What?\nresponse: Old answer\nstatus: COMPLETE\n```\n\nSome prose."
 	shadow := &ShadowDocument{
 		UUID:     "test-uuid",
@@ -145,6 +146,7 @@ func TestShadowDocument_setBlockMergesAttrs(t *testing.T) {
 }
 
 func TestEditorService_FlushWritesToDisk(t *testing.T) {
+	RegisterProcessor("ai-block", &testRunJobProcessor{})
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, time.Second)
 
