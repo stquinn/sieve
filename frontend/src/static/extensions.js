@@ -598,10 +598,35 @@
     }
   }
 
+  // ── HighlightMark ──────────────────────────────────────────────────────────
+  // Extends the built-in Highlight extension with tiptap-markdown storage so
+  // ==word== round-trips correctly through the markdown serializer/parser.
+
+  var HighlightMark = T.Highlight.extend({
+    addStorage: function () {
+      return {
+        markdown: {
+          serialize: {
+            open: '==',
+            close: '==',
+            mixable: true,
+            expelEnclosingWhitespace: true,
+          },
+          parse: {
+            setup: function (md) {
+              md.use(T.markdownItMark)
+            },
+          },
+        },
+      }
+    },
+  })
+
   // ── Expose on window.TipTap ────────────────────────────────────────────────
 
   T.BlockNode = BlockNode
   T.Search = Search
   T.buildAiContext = buildAiContext
+  T.HighlightMark = HighlightMark
 
 })()
