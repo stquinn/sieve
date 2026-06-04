@@ -621,6 +621,8 @@ textarea::selection {
 .block-ref-active mark,
 .block-node.block-ref-active mark {
   background-color: color-mix(in srgb, var(--theme-accentYellow) 18%, transparent);
+  color: var(--theme-accentYellow);
+  font-weight: 600;
   text-decoration-color: var(--theme-accentYellow);
   text-decoration-style: solid;
 }
