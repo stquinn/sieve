@@ -26,6 +26,7 @@ func (p *WebClipBlockProcessor) InitAttrs(id string, overrides map[string]interf
 		"completedAt": "",
 		"content":     "",
 		"error":       "",
+		"supportsPromotion": true,
 	}
 	for k, v := range overrides {
 		if k == "id" {
@@ -118,4 +119,22 @@ func (p *WebClipBlockProcessor) RunJob(jctx JobContext) error {
 	block.Attrs["model"] = p.svc.AI.state.LoadSettings().Model
 
 	return nil
+}
+
+func (p *WebClipBlockProcessor) MarkdownRepresentation(block SieveBlock) string {
+	content, _ := block.Attrs["content"].(string)
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+	title, _ := block.Attrs["title"].(string)
+	source, _ := block.Attrs["source"].(string)
+	var sb strings.Builder
+	if title != "" && source != "" {
+		sb.WriteString("### [" + title + "](" + source + ")\n\n")
+	} else if title != "" {
+		sb.WriteString("### " + title + "\n\n")
+	}
+	sb.WriteString(content)
+	return sb.String()
 }

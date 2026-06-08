@@ -27,6 +27,7 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
     nodeConfig: { atom: true, selectable: true, draggable: false },
 
     attrs: {
+      supportsPromotion: { default: true },
       ref:      { default: 'doc', parseHTML: function (el) { return el.getAttribute('data-ref') || 'doc' } },
       type:     { default: 'ASK', parseHTML: function (el) { return el.getAttribute('data-type') || 'ASK' } },
       model:    { default: null,  parseHTML: function (el) { return el.getAttribute('data-model') || null } },

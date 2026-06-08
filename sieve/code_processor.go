@@ -26,6 +26,7 @@ func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface
 		"language":        "",
 		"detectionMethod": "",
 		"createdAt":       time.Now().UTC().Format(time.RFC3339),
+		"supportsPromotion": true,
 	}
 	for k, v := range overrides {
 		if k == "id" {
@@ -151,4 +152,14 @@ func (p *CodeBlockProcessor) RunJob(jctx JobContext) error {
 	block.Attrs["status"] = BlockStatusComplete
 	delete(block.Attrs, "hint")
 	return nil
+}
+
+func (p *CodeBlockProcessor) MarkdownRepresentation(block SieveBlock) string {
+	source, _ := block.Attrs["source"].(string)
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return ""
+	}
+	lang, _ := block.Attrs["language"].(string)
+	return "```" + lang + "\n" + source + "\n```"
 }

@@ -190,13 +190,7 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
         }
       }
 
-      function promoteWebClip() {
-        var content = (node.attrs.content || '').trim()
-        if (!content) return
-        var html = editor.storage.markdown.parser.md.render(content)
-        var pos = getPos()
-        editor.commands.insertContentAt({ from: pos, to: pos + node.nodeSize }, html + '<p></p>')
-      }
+
 
       var status = node.attrs.status || 'PENDING'
       var isComplete = status === 'COMPLETE'
@@ -213,11 +207,7 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
         { icon: IC.copy,  label: 'Copy', action: function () { navigator.clipboard.writeText(yaml()).catch(console.error) } },
         { icon: IC.cut,   label: 'Cut',  action: function () { navigator.clipboard.writeText(yaml()).then(del).catch(console.error) } },
         { icon: IC.trash, label: 'Delete', action: del },
-        { type: 'divider' },
-        { icon: IC.promote, label: 'Promote to Document',
-          disabled: !isComplete || !node.attrs.content,
-          action: promoteWebClip
-        },
+
       ]
 
       if (isComplete && node.attrs.content) {

@@ -30,6 +30,8 @@
     externalLink: svg('<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>'),
     code:         svg('<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>'),
     highlight:   svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/><line x1="15" y1="5" x2="18" y2="8"/>'),
+    globe:       svg('<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>'),
+    arrowDown:   svg('<line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>'),
   }
 
   // ── Renderer ────────────────────────────────────────────────────────────────
@@ -251,8 +253,11 @@
 
     items.push({ type: 'divider' })
     var linkUrl = ctx.linkUrl || null
-    items.push({ icon: IC.externalLink, label: linkUrl ? 'Internalise Link' : 'Internalise URL…', action: function () {
+    items.push({ icon: IC.externalLink, label: linkUrl ? 'Insert Web Clip from Link' : 'Insert Web Clip...', action: function () {
       window._sieveOpenInternalize && window._sieveOpenInternalize(linkUrl || '')
+    }})
+    items.push({ icon: IC.smartFile, label: linkUrl ? 'Insert URL Card from Link' : 'Insert URL Card...', action: function () {
+      window._sieveOpenRichLink && window._sieveOpenRichLink(linkUrl || '')
     }})
     items.push({ icon: IC.code, label: 'Insert Code Block', action: function () {
       document.dispatchEvent(new CustomEvent('sieve:create-block', { detail: { kind: 'code' } }))
@@ -288,18 +293,7 @@
 
   // ── AI Block node ────────────────────────────────────────────────────────────
 
-  function promoteAiBlock(editor, getPos, n) {
-    var question = (n.attrs.question || '').replace(/\n/g, ' ').trim()
-    var response = n.attrs.response || ''
-    // If response contains ```ai-block fences (e.g. a question about the format),
-    // insertContentAt will parse them as live aiBlock nodes via the extension's updateDOM hook.
-    var md = question ? ('### ' + question + '\n\n' + response) : response
-    var html = editor.storage.markdown.parser.md.render(md)
-    var pos = getPos()
-    // Trailing empty paragraph prevents the next block from merging with the last
-    // paragraph of the promoted content.
-    editor.commands.insertContentAt({ from: pos, to: pos + n.nodeSize }, html + '<p></p>')
-  }
+
 
   function buildAiBlockItems(ctx) {
     var editor = ctx.editor, getPos = ctx.getPos, n = ctx.node
@@ -340,7 +334,11 @@
       { type: 'divider' },
       { icon: IC.promote, label: 'Promote to Document',
         disabled: n.attrs.status !== 'COMPLETE' || !n.attrs.response,
-        action: function () { promoteAiBlock(editor, getPos, n) }
+        action: function () {
+          document.dispatchEvent(new CustomEvent('sieve:promote-block', {
+            detail: { id: n.attrs.id }
+          }))
+        }
       },
       { type: 'divider' },
       { icon: IC.refresh, label: isError ? 'Retry' : 'Replay', action: function () {

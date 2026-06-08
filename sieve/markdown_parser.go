@@ -548,3 +548,32 @@ func FindBlockByID(markdown string, id string) (SieveBlock, bool) {
 	})
 	return result, found
 }
+
+// PromoteBlock replaces a block with plain markdown content.
+func PromoteBlock(markdown string, blockID string, replacement string) (string, bool) {
+	doc := mdParser().Parser().Parse(text.NewReader([]byte(markdown)))
+
+	var target sieveNode
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		if sn, ok := n.(sieveNode); ok {
+			if sn.GetSieveBlock().ID == blockID {
+				target = sn
+				return ast.WalkStop, nil
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+
+	if target == nil {
+		return markdown, false
+	}
+
+	var out strings.Builder
+	out.WriteString(markdown[:target.StartByte()])
+	out.WriteString(replacement)
+	out.WriteString(markdown[target.EndByte():])
+	return out.String(), true
+}

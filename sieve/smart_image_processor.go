@@ -39,6 +39,7 @@ func (p *SmartImageProcessor) InitAttrs(id string, overrides map[string]interfac
 		"width":   "",
 		"height":  "",
 		"status":  BlockStatusComplete, // default: no job unless src is provided
+		"supportsPromotion": true,
 	}
 	for k, v := range overrides {
 		if k == "id" {
@@ -255,4 +256,16 @@ func (p *SmartImageProcessor) saveAsset(uuid, blockID string, data []byte) (stri
 	}
 
 	return asset.ExternalRef(), nil
+}
+
+func (p *SmartImageProcessor) MarkdownRepresentation(block SieveBlock) string {
+	src, _ := block.Attrs["src"].(string)
+	if src == "" {
+		return ""
+	}
+	alt, _ := block.Attrs["alt"].(string)
+	if strings.TrimSpace(alt) == "" {
+		alt, _ = block.Attrs["summary"].(string)
+	}
+	return "![" + strings.TrimSpace(alt) + "](" + src + ")"
 }
