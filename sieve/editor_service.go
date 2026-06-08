@@ -195,6 +195,15 @@ func (es *EditorService) notifyBlockUpdated(uuid string, block SieveBlock) {
 	}
 }
 
+func (es *EditorService) notifyBlockPromoted(uuid, blockID, replacement string) {
+	es.mu.RLock()
+	l := es.listener
+	es.mu.RUnlock()
+	if l != nil {
+		l.OnBlockPromoted(uuid, blockID, replacement)
+	}
+}
+
 // dispatchedStuckThreshold is how old a DISPATCHED block must be before it is
 // assumed stuck (server crash, OOM) and reset to PENDING on reconnect.
 const dispatchedStuckThreshold = 10 * time.Minute
@@ -688,4 +697,51 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 		blkCopy2 := SieveBlock{ID: blockID, Kind: kind, Attrs: attrsCopy}
 		es.notifyBlockUpdated(uuid, blkCopy2)
 	}
+}
+
+func (es *EditorService) PromoteBlock(uuid, blockID string) error {
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if shadow == nil {
+		return fmt.Errorf("no open document")
+	}
+
+	shadow.mu.Lock()
+	blk, ok := shadow.Blocks[blockID]
+	if !ok {
+		shadow.mu.Unlock()
+		return fmt.Errorf("block not found")
+	}
+	processor := GetProcessor(blk.Kind)
+	if processor == nil {
+		shadow.mu.Unlock()
+		return fmt.Errorf("processor not found")
+	}
+	
+	blkCopy := SieveBlock{ID: blk.ID, Kind: blk.Kind, Attrs: make(map[string]interface{}, len(blk.Attrs))}
+	for k, v := range blk.Attrs {
+		blkCopy.Attrs[k] = v
+	}
+	shadow.mu.Unlock()
+
+	replacement := processor.MarkdownRepresentation(blkCopy)
+	if replacement == "" {
+		return fmt.Errorf("block cannot be promoted")
+	}
+
+	shadow.mu.Lock()
+	newMarkdown, ok := PromoteBlock(shadow.Markdown, blockID, replacement)
+	if !ok {
+		shadow.mu.Unlock()
+		return fmt.Errorf("block not found in markdown AST")
+	}
+	shadow.Markdown = newMarkdown
+	delete(shadow.Blocks, blockID)
+	shadow.resetDebounce()
+	shadow.mu.Unlock()
+
+	_ = es.Flush(uuid)
+	es.notifyBlockPromoted(uuid, blockID, replacement)
+	return nil
 }

@@ -27,6 +27,7 @@ func (p *AIBlockProcessor) InitAttrs(id string, overrides map[string]interface{}
 		"type":      "ASK",
 		"model":     "",
 		"error":     "",
+		"supportsPromotion": true,
 	}
 	for k, v := range overrides {
 		if k == "id" {
@@ -158,4 +159,19 @@ func (p *AIBlockProcessor) RunJob(jctx JobContext) error {
 	block.Attrs["response"] = response
 	block.Attrs["completedAt"] = time.Now().UTC().Format(time.RFC3339)
 	return nil
+}
+
+func (p *AIBlockProcessor) MarkdownRepresentation(block SieveBlock) string {
+	status, _ := block.Attrs["status"].(string)
+	response, _ := block.Attrs["response"].(string)
+	response = strings.TrimSpace(response)
+	if status != BlockStatusComplete || response == "" {
+		return ""
+	}
+	question, _ := block.Attrs["question"].(string)
+	question = strings.TrimSpace(question)
+	if question != "" {
+		return "### " + question + "\n\n" + response
+	}
+	return response
 }

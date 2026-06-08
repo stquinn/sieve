@@ -30,7 +30,7 @@
 //      after sieve-block-extension.js
 //   That's it.
 
-import { esc, isJobStale } from './fenced-block-base.js'
+import { esc, isJobStale, getLowlight } from './fenced-block-base.js'
 
 ;(function () {
   'use strict'
@@ -47,6 +47,7 @@ import { esc, isJobStale } from './fenced-block-base.js'
     serialisedForm:   { default: '',        parseHTML: function (el) { return el.getAttribute('data-serialised-form') || '' } },
     status:           { default: 'PENDING', parseHTML: function (el) { return el.getAttribute('data-status')      || 'PENDING' } },
     createdAt:        { default: null,      parseHTML: function (el) { return el.getAttribute('data-created-at')  || null } },
+    supportsPromotion: { default: false, parseHTML: function (el) { return el.getAttribute('data-supports-promotion') === 'true' } },
   }
 
   var DEFAULT_NODE_CONFIG = { atom: true, selectable: true, draggable: true, group: 'block', inline: false }
@@ -106,6 +107,22 @@ import { esc, isJobStale } from './fenced-block-base.js'
                   { icon: IC.refresh, label: (isStale || isError) ? 'Retry' : 'Replay',
                     action: function () {
                       document.dispatchEvent(new CustomEvent('sieve:block-retry', { detail: { id: n.attrs.id } }))
+                    }
+                  },
+                ])
+              }
+
+              // Promote to Document — automatic for any block with supportsPromotion: true.
+              if (n.attrs.supportsPromotion && status === 'COMPLETE') {
+                var IC2 = window.SieveIcons || {}
+                items = items.concat([
+                  { type: 'divider' },
+                  { icon: IC2.promote, label: 'Promote to Document',
+                    action: function () {
+                      var promoteId = n.attrs.id
+                      document.dispatchEvent(new CustomEvent('sieve:promote-block', {
+                        detail: { id: promoteId }
+                      }))
                     }
                   },
                 ])
@@ -174,6 +191,9 @@ import { esc, isJobStale } from './fenced-block-base.js'
                       if (data.createdAt) {
                         htmlAttrs.push(['data-created-at', data.createdAt])
                       }
+                      if (data.supportsPromotion) {
+                        htmlAttrs.push(['data-supports-promotion', 'true'])
+                      }
                       token.attrs = htmlAttrs
                     } else {
                       state.pos += match[0].length
@@ -230,6 +250,9 @@ import { esc, isJobStale } from './fenced-block-base.js'
                   if (data.createdAt) {
                     htmlAttrs.push('data-created-at="' + esc(data.createdAt) + '"')
                   }
+                  if (data.supportsPromotion) {
+                    htmlAttrs.push('data-supports-promotion="true"')
+                  }
                   return '<' + tag + ' ' + htmlAttrs.join(' ') + '></' + tag + '>\n'
                 }
               },
@@ -250,6 +273,17 @@ import { esc, isJobStale } from './fenced-block-base.js'
 
   function getSieveNodes() {
     return Object.keys(nodeRegistry).map(function (k) { return nodeRegistry[k] })
+  }
+
+  // ── Native Code Block (syntax highlighting via CodeBlockLowlight) ─────────────
+  // Uses CodeBlockLowlight's decoration system for highlighting. Visual appearance
+  // is handled by the existing .tiptap .code-block CSS + .hljs-* token colours.
+
+  if (T.CodeBlockLowlight) {
+    window.SieveNativeCodeBlock = T.CodeBlockLowlight.configure({
+      lowlight: getLowlight(),
+      HTMLAttributes: { class: 'code-block' },
+    })
   }
 
   // ── Exports ───────────────────────────────────────────────────────────────────

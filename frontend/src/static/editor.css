@@ -922,6 +922,22 @@ div.node-image.ProseMirror-selectednode {
 .web-clip-block__content img { max-width: 100%; height: auto; display: block; }
 
 /* ── Shared fenced-block rendered content ────────────────────────────── */
+/* Standard Tiptap Code Blocks (used after promotion) */
+pre.tiptap-code-block {
+  margin: 0.5rem 0;
+  background: var(--theme-bgDark);
+  padding: 0.75rem;
+  overflow: auto;
+  border-radius: 4px;
+  border: 1px solid var(--theme-border);
+}
+pre.tiptap-code-block code {
+  color: var(--theme-text);
+  font-family: var(--theme-monoFont);
+  font-size: 0.9em;
+  display: block;
+}
+
 /* applyHighlighting() in fenced-block-base.js wraps each pre>code block  */
 /* in a .sieve-code-block div with a line-number gutter, matching the     */
 /* TipTap .code-block appearance. All colours from the theme.             */
@@ -1157,7 +1173,6 @@ div.node-image.ProseMirror-selectednode {
   line-height: 1.6;
   user-select: none;
   flex-shrink: 0;
-  min-width: 2.2em;
 }
 
 .sieve-block__gutter span {

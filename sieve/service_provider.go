@@ -60,6 +60,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	RegisterProcessor("code",        NewCodeBlockProcessor(svc))
 	RegisterProcessor("web-clip",    NewWebClipBlockProcessor(svc))
 	RegisterProcessor("smart-link",  NewSmartLinkProcessor(svc))
+	RegisterProcessor("rich-link",   NewRichLinkProcessor(svc))
 	RegisterProcessor("smart-image", NewSmartImageProcessor(svc))
 	RegisterProcessor("ai-block", NewAIBlockProcessor(svc))
 	RegisterContextProvider("block-anchor", &BlockAnchorProvider{svc: svc})

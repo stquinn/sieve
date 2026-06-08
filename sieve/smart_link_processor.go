@@ -109,3 +109,7 @@ func (p *SmartLinkProcessor) RunJob(jctx JobContext) error {
 	block.Attrs["completedAt"] = now
 	return nil
 }
+
+func (p *SmartLinkProcessor) MarkdownRepresentation(_ SieveBlock) string {
+	return ""
+}

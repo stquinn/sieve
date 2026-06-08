@@ -120,6 +120,8 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 			h.handleEnterWysiwyg(uuid)
 		case "retry-block-job":
 			h.handleRetryBlockJob(uuid, raw, writeMsg)
+		case "promote-block":
+			h.handlePromoteBlock(uuid, raw, writeMsg)
 		}
 	}
 }
@@ -253,5 +255,28 @@ func (h *WsHandler) OnBlockUpdated(uuid, blockID string, attrs map[string]interf
 			"serialisedForm": serialisedForm,
 		})
 	}
+}
+
+func (h *WsHandler) OnBlockPromoted(uuid, blockID, replacement string) {
+	h.channelsMu.RLock()
+	writeMsg, ok := h.channels[uuid]
+	h.channelsMu.RUnlock()
+	if ok {
+		writeMsg(map[string]interface{}{
+			"type":        "block-promoted",
+			"id":          blockID,
+			"replacement": replacement,
+		})
+	}
+}
+
+func (h *WsHandler) handlePromoteBlock(uuid string, raw []byte, writeMsg func(interface{})) {
+	var msg struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil || msg.ID == "" {
+		return
+	}
+	_ = h.ServiceProvider.Editor.PromoteBlock(uuid, msg.ID)
 }
 

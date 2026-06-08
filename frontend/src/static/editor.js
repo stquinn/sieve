@@ -24,6 +24,7 @@
 
   var askDialog = null
   var internalizeDialog = null
+  var richLinkDialog = null
 
   // ── Public entry point called from App.tsx htmx:afterSettle ─────────────────
 
@@ -106,7 +107,7 @@
         T.AiBlockLegacy,
         T.Image.configure({ inline: false, allowBase64: true, HTMLAttributes: { class: 'editor-image' } }),
         T.HighlightMark,
-      ].concat(T.getSieveNodes()).concat([
+      ].concat(window.SieveNativeCodeBlock ? [window.SieveNativeCodeBlock] : []).concat(T.getSieveNodes()).concat([
         T.TaskList,
         T.TaskItem.configure({ nested: true }),
         T.Markdown.configure({ html: true, transformPastedText: true, link: { openOnClick: false } }),
@@ -160,6 +161,12 @@
             openInternalizeDialog()
             return true
           }
+          if (event.key === 'L' && window.isMod(event) && event.shiftKey) {
+            event.preventDefault()
+            ensureOverlays()
+            openRichLinkDialog()
+            return true
+          }
           return false
         },
       },
@@ -196,7 +203,7 @@
 
     var gutter = document.createElement('div')
     gutter.className = 'markdown-gutter'
-    gutter.style.cssText = 'width:2.75rem;padding:40px 0.6rem 0.85em;background-color:var(--theme-bgDark);border-right:1px solid var(--theme-border);color:var(--theme-muted);font-family:var(--theme-monoFont);font-size:14px;line-height:1.6;text-align:right;user-select:none;overflow:hidden'
+    gutter.style.cssText = 'flex-shrink:0;padding:40px 0.6rem 0.85em;background-color:var(--theme-bgDark);border-right:1px solid var(--theme-border);color:var(--theme-muted);font-family:var(--theme-monoFont);font-size:14px;line-height:1.6;text-align:right;user-select:none;overflow:hidden'
 
     var textarea = document.createElement('textarea')
     currentMarkdownTextarea = textarea
@@ -318,6 +325,26 @@
       if (msg.type === 'block-attrs-updated') {
         document.dispatchEvent(new CustomEvent('editor:block-attrs-updated', { detail: msg }))
       }
+      if (msg.type === 'block-promoted') {
+        if (!msg.id || !msg.replacement || !currentEditor) return
+        var promotedId = msg.id
+        var promotedHtml = currentEditor.storage.markdown.parser.md.render(msg.replacement)
+        var nodePos = null
+        var nodeSize = null
+        currentEditor.state.doc.descendants(function (node, pos) {
+          if (node.type.name.startsWith('sieve-') && node.attrs.id === promotedId) {
+            nodePos = pos
+            nodeSize = node.nodeSize
+            return false
+          }
+        })
+        if (nodePos !== null) {
+          currentEditor.commands.insertContentAt(
+            { from: nodePos, to: nodePos + nodeSize },
+            promotedHtml + '<p></p>'
+          )
+        }
+      }
 
     }
 
@@ -367,6 +394,11 @@
   document.addEventListener('sieve:block-update', function (e) {
     if (!currentUuid || !e.detail.id) return
     wsSend({ type: 'block-update', uuid: currentUuid, id: e.detail.id, kind: e.detail.kind, attrs: e.detail.attrs })
+  })
+
+  document.addEventListener('sieve:promote-block', function (e) {
+    if (!currentUuid || !e.detail || !e.detail.id) return
+    wsSend({ type: 'promote-block', id: e.detail.id, uuid: currentUuid })
   })
 
   document.addEventListener('editor:insert-block', function (e) {
@@ -461,6 +493,7 @@
     if (!askDialog) askDialog = createAskDialog()
     if (!searchOverlay) searchOverlay = createSearchOverlay()
     if (!internalizeDialog) internalizeDialog = createInternalizeDialog()
+    if (!richLinkDialog) richLinkDialog = createRichLinkDialog()
   }
 
   
@@ -524,6 +557,70 @@
     textarea.focus()
   }
 
+  // ── Rich Link dialog ──────────────────────────────────────────────────────────
+
+  function createRichLinkDialog() {
+    var dialog = document.createElement('dialog')
+    dialog.className = 'internalize-popup ask-popup'
+    dialog.style.cssText = 'top:30%;bottom:auto;left:50%;width:460px;max-width:92vw;'
+
+    var header = document.createElement('div'); header.className = 'ask-popup__header'
+    var label = document.createElement('span'); label.className = 'ask-popup__label'; label.textContent = 'Insert Link Card'
+    var closeBtn = makeBtn('ask-popup__close', '✕', function () { dialog.close() })
+    closeBtn.title = 'Close (Esc)'
+    header.appendChild(label); header.appendChild(closeBtn)
+
+    var urlInput = document.createElement('input')
+    urlInput.type = 'url'
+    urlInput.className = 'internalize-popup__input'
+    urlInput.placeholder = 'https://…'
+
+    var errorMsg = document.createElement('div')
+    errorMsg.className = 'internalize-popup__error'
+    errorMsg.textContent = 'Please enter a valid http:// or https:// URL'
+    errorMsg.style.display = 'none'
+
+    urlInput.addEventListener('input', function () { errorMsg.style.display = 'none' })
+
+    function trySubmit() {
+      var url = urlInput.value.trim()
+      if (!isValidURL(url)) { errorMsg.style.display = ''; return }
+      doCreateRichLink(url)
+      dialog.close()
+    }
+
+    var footer = document.createElement('div'); footer.className = 'ask-popup__footer'
+    var insertBtn = makeBtn('internalize-popup__btn', 'Insert Card', trySubmit)
+    footer.appendChild(insertBtn)
+
+    urlInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); dialog.close() }
+      if (e.key === 'Enter') { e.preventDefault(); trySubmit() }
+    })
+
+    dialog.appendChild(header)
+    dialog.appendChild(urlInput)
+    dialog.appendChild(errorMsg)
+    dialog.appendChild(footer)
+    document.body.appendChild(dialog)
+    return dialog
+  }
+
+  function openRichLinkDialog(prefillUrl) {
+    if (!richLinkDialog) return
+    var urlInput = richLinkDialog.querySelector('input')
+    if (urlInput) urlInput.value = prefillUrl || ''
+    if (!richLinkDialog.open) richLinkDialog.showModal()
+    if (urlInput) urlInput.focus()
+  }
+
+  function doCreateRichLink(href) {
+    if (!currentUuid) return
+    if (!currentEditor && currentMode !== 'markdown') return
+    sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
+    wsSend({ type: 'create-block', kind: 'rich-link', attrs: { href: href }, uuid: currentUuid })
+  }
+
   // ── Internalize dialog ────────────────────────────────────────────────────────
 
   function isValidURL(url) {
@@ -541,7 +638,7 @@
     dialog.style.cssText = 'top:30%;bottom:auto;left:50%;width:460px;max-width:92vw;'
 
     var header = document.createElement('div'); header.className = 'ask-popup__header'
-    var label = document.createElement('span'); label.className = 'ask-popup__label'; label.textContent = 'Internalise URL'
+    var label = document.createElement('span'); label.className = 'ask-popup__label'; label.textContent = 'Insert Web Clip'
     var closeBtn = makeBtn('ask-popup__close', '✕', function () { dialog.close() })
     closeBtn.title = 'Close (Esc)'
     header.appendChild(label); header.appendChild(closeBtn)
@@ -561,14 +658,19 @@
     function trySubmit(mode) {
       var url = urlInput.value.trim()
       if (!isValidURL(url)) { errorMsg.style.display = ''; return }
-      doInternalize(url, mode)
+      if (mode === 'card') {
+        doCreateRichLink(url)
+      } else {
+        doInternalize(url, mode)
+      }
       dialog.close()
     }
 
     var footer = document.createElement('div'); footer.className = 'ask-popup__footer'
     var fetchBtn = makeBtn('internalize-popup__btn', 'Fetch', function () { trySubmit('fetch') })
     var summariseBtn = makeBtn('internalize-popup__btn', 'Summarise', function () { trySubmit('summarise') })
-    footer.appendChild(fetchBtn); footer.appendChild(summariseBtn)
+    var cardBtn = makeBtn('internalize-popup__btn', 'Card', function () { trySubmit('card') })
+    footer.appendChild(fetchBtn); footer.appendChild(summariseBtn); footer.appendChild(cardBtn)
 
     urlInput.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') { e.preventDefault(); dialog.close() }
@@ -1055,6 +1157,7 @@
 
   window._editorSave = flushSave
   window._sieveOpenInternalize = function (url) { ensureOverlays(); openInternalizeDialog(url) }
+  window._sieveOpenRichLink = function (url) { ensureOverlays(); openRichLinkDialog(url) }
 
   document.body.addEventListener('editor:restore', function (e) {
     var data = e.detail
@@ -1084,6 +1187,41 @@
       ensureOverlays()
       openInternalizeDialog()
     }
+    if (e.key === 'L' && window.isMod(e) && e.shiftKey && !e.altKey) {
+      e.preventDefault()
+      ensureOverlays()
+      openRichLinkDialog()
+    }
+  })
+
+  // ── Enrich as Card (SmartLink → Rich Link) ────────────────────────────────────
+  // Fired by smart-link-renderer.js when user right-clicks a SmartLink and selects
+  // "Enrich as Card". Inserts a rich-link block at insertPos, then removes the
+  // SmartLink inline node. The SmartLink is removed BEFORE the create-block WS
+  // message so sieveInsertPos corresponds to the correct post-deletion position.
+  document.addEventListener('sieve:enrich-as-card', function (e) {
+    if (!currentUuid || !currentEditor) return
+    var href = e.detail.href
+    var title = e.detail.title || href
+    var insertPos = e.detail.insertPos  // position AFTER smart-link deletion
+    if (!href) return
+    sieveInsertPos = insertPos
+    wsSend({ type: 'create-block', kind: 'rich-link', attrs: { href: href, title: title }, uuid: currentUuid })
+  })
+
+  // ── Upgrade to Web Clip (Rich Link → Web Clip) ────────────────────────────────
+  // Fired by rich-link-renderer.js context menu "Upgrade to Web Clip".
+  document.addEventListener('sieve:upgrade-to-web-clip', function (e) {
+    if (!currentUuid || !currentEditor) return
+    var href = e.detail.href
+    var fromPos = e.detail.fromPos
+    var fromSize = e.detail.fromSize
+    var mode = e.detail.mode || 'fetch'
+    if (!href || fromPos == null) return
+    // Delete the rich-link block first, then insert web-clip at its position
+    currentEditor.view.dispatch(currentEditor.state.tr.delete(fromPos, fromPos + fromSize))
+    sieveInsertPos = fromPos
+    wsSend({ type: 'create-block', kind: 'web-clip', attrs: { source: href, mode: mode }, uuid: currentUuid })
   })
 
   window.sieveInitEditor = initEditor

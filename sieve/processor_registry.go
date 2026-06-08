@@ -42,6 +42,7 @@ type JobContext struct {
 type BlockLifecycleListener interface {
 	OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, serialisedForm string)
 	OnBlockUpdated(uuid, blockID string, attrs map[string]interface{}, serialisedForm string)
+	OnBlockPromoted(uuid, blockID string, replacement string)
 }
 
 // BlockProcessor is implemented by every SieveBlock Kind.
@@ -64,6 +65,7 @@ type BlockProcessor interface {
 	OnChange(block *SieveBlock)
 	Mode() BlockMode
 	BuildContext(block SieveBlock, doc ShadowDocument, seen map[string]bool) string
+	MarkdownRepresentation(block SieveBlock) string
 }
 
 // BlockServices is the dependency bag injected into processors at construction.
