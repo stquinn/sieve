@@ -58,6 +58,11 @@ func TestEditorService_PromoteBlock_wrapsInBlockAnchor(t *testing.T) {
 	if !strings.Contains(body, "[!block-end]") {
 		t.Errorf("expected [!block-end] in saved markdown, got:\n%s", body)
 	}
+	// Blank lines around the content are required so markdownit renders [!block] and
+	// [!block-end] as isolated <p> elements, which the blockRef updateDOM step can find.
+	if !strings.Contains(body, "[!block] id=\"tm-0001\"\n\npromoted content\n\n[!block-end]") {
+		t.Errorf("expected blank lines separating block anchor sentinels from content, got:\n%s", body)
+	}
 	if strings.Contains(body, "```test-md") {
 		t.Errorf("expected original fence to be gone, got:\n%s", body)
 	}

@@ -730,7 +730,7 @@ func (es *EditorService) PromoteBlock(uuid, blockID string) error {
 		return fmt.Errorf("block cannot be promoted")
 	}
 
-	markdownReplacement := fmt.Sprintf("[!block] id=%q\n%s\n[!block-end]", blockID, plainContent)
+	markdownReplacement := fmt.Sprintf("[!block] id=%q\n\n%s\n\n[!block-end]", blockID, plainContent)
 
 	shadow.mu.Lock()
 	newMarkdown, ok := PromoteBlock(shadow.Markdown, blockID, markdownReplacement)
