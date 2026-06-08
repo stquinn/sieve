@@ -327,24 +327,7 @@
         document.dispatchEvent(new CustomEvent('editor:block-attrs-updated', { detail: msg }))
       }
       if (msg.type === 'block-promoted') {
-        if (!msg.id || !msg.replacement || !currentEditor) return
-        var promotedId = msg.id
-        var promotedHtml = currentEditor.storage.markdown.parser.md.render(msg.replacement)
-        var nodePos = null
-        var nodeSize = null
-        currentEditor.state.doc.descendants(function (node, pos) {
-          if (node.type.name.startsWith('sieve-') && node.attrs.id === promotedId) {
-            nodePos = pos
-            nodeSize = node.nodeSize
-            return false
-          }
-        })
-        if (nodePos !== null) {
-          currentEditor.commands.insertContentAt(
-            { from: nodePos, to: nodePos + nodeSize },
-            promotedHtml + '<p></p>'
-          )
-        }
+        softReloadContent(currentUuid)
       }
 
     }
