@@ -109,6 +109,12 @@ The block has a **persistent header in both modes** — the primary navigation a
 └────────────────────────────────────────────────────────────────────┘
 ```
 
+#### Mode Toggle — Keyboard Shortcut
+
+Within the edit mode textarea: **`Ctrl+Enter`** (or `Cmd+Enter` on Mac) flushes the source and switches to render mode. This is intercepted in the textarea's `keydown` handler before the general `Ctrl` passthrough.
+
+Render → edit has no keyboard shortcut — the block is `selectable: false` and has no keyboard focus surface in render mode. The **Edit tab in the header** is the primary affordance.
+
 #### Header — Pill Toggle
 
 The header shows a segmented pill toggle with two tabs: **Edit** and **Render**. The active tab is highlighted:
