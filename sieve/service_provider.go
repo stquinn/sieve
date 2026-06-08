@@ -63,6 +63,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	RegisterProcessor("rich-link",   NewRichLinkProcessor(svc))
 	RegisterProcessor("smart-image", NewSmartImageProcessor(svc))
 	RegisterProcessor("ai-block", NewAIBlockProcessor(svc))
+	RegisterProcessor("diagram",  NewDiagramProcessor(svc))
 	RegisterContextProvider("block-anchor", &BlockAnchorProvider{svc: svc})
 }
 
