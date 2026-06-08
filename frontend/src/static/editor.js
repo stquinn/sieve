@@ -203,7 +203,7 @@
 
     var gutter = document.createElement('div')
     gutter.className = 'markdown-gutter'
-    gutter.style.cssText = 'flex-shrink:0;padding:40px 0.6rem 0.85em;background-color:var(--theme-bgDark);border-right:1px solid var(--theme-border);color:var(--theme-muted);font-family:var(--theme-monoFont);font-size:14px;line-height:1.6;text-align:right;user-select:none;overflow:hidden'
+    gutter.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;flex-shrink:0;padding:40px 0.6rem 0.85em;background-color:var(--theme-bgDark);border-right:1px solid var(--theme-border);color:var(--theme-muted);font-family:var(--theme-monoFont);font-size:14px;line-height:1.75;user-select:none;overflow:hidden'
 
     var textarea = document.createElement('textarea')
     currentMarkdownTextarea = textarea
@@ -252,11 +252,12 @@
 
   function updateGutter(gutter, value) {
     var lines = value.split('\n')
+    var count = lines.length
     gutter.innerHTML = ''
-    for (var i = 0; i < lines.length; i++) {
-      var d = document.createElement('div')
-      d.textContent = String(i + 1)
-      gutter.appendChild(d)
+    for (var i = 0; i < count; i++) {
+      var span = document.createElement('span')
+      span.textContent = String(i + 1)
+      gutter.appendChild(span)
     }
   }
 
@@ -480,6 +481,11 @@
     var text = getMarkdown()
     var chars = text.length
     var lines = text === '' ? 0 : text.split('\n').length
+    
+    var blockCount = currentEditor ? currentEditor.state.doc.childCount : lines
+    var digits = Math.max(1, String(blockCount).length)
+    document.documentElement.style.setProperty('--line-digits', digits)
+
     document.dispatchEvent(new CustomEvent('editor:stats', { detail: { chars: chars, lines: lines } }))
   }
 

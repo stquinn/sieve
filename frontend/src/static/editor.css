@@ -375,7 +375,8 @@ textarea::selection {
   font-family: var(--theme-editorFont, inherit);
   position: relative;
 
-  padding-left: 2.8rem;
+  /* Auto-growing padding based on digits */
+  padding-left: calc(1.75rem + (max(1, var(--line-digits, 1)) - 1) * 0.55rem);
   padding-right: 1rem;
 
   counter-reset: docline;
@@ -385,7 +386,7 @@ textarea::selection {
 .tiptap::before {
   content: '';
   position: fixed;
-  left: calc(var(--sidebar-w, 0px) + 2.25rem);
+  left: calc(var(--sidebar-w, 0px) + 1.2rem + (max(1, var(--line-digits, 1)) - 1) * 0.55rem);
   top: 44px;
   bottom: 32px;
   width: 1px;
@@ -422,22 +423,19 @@ textarea::selection {
 .tiptap > *::before {
   content: counter(docline);
   position: absolute;
-  left: -3.75rem;
-  width: 2.75rem;
+  right: 100%;
+  margin-right: 1.0rem;
   text-align: right;
   color: var(--theme-muted);
   font-family: var(--theme-monoFont);
   font-size: 14px;
   line-height: 1.75;
-  top: 0;
+  top: 2px;
   user-select: none;
   pointer-events: none;
 }
 
-/* Code blocks have their own gutter — skip outer counter */
-.tiptap > .code-block::before {
-  content: none;
-}
+/* Code blocks now show their outer counter per user request */
 
 /* ── Spacing ─────────────────────────────────────────────────────────── */
 
@@ -1258,7 +1256,7 @@ pre.tiptap-code-block code {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  min-width: 2.75rem;
+  min-width: 1.75rem;
   padding: 0.85em 0.6em;
   background: var(--theme-bgDark);
   border-right: 1px solid var(--theme-border);
