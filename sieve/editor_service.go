@@ -725,13 +725,15 @@ func (es *EditorService) PromoteBlock(uuid, blockID string) error {
 	}
 	shadow.mu.Unlock()
 
-	replacement := processor.MarkdownRepresentation(blkCopy)
-	if replacement == "" {
+	plainContent := processor.MarkdownRepresentation(blkCopy)
+	if plainContent == "" {
 		return fmt.Errorf("block cannot be promoted")
 	}
 
+	markdownReplacement := fmt.Sprintf("[!block] id=%q\n%s\n[!block-end]", blockID, plainContent)
+
 	shadow.mu.Lock()
-	newMarkdown, ok := PromoteBlock(shadow.Markdown, blockID, replacement)
+	newMarkdown, ok := PromoteBlock(shadow.Markdown, blockID, markdownReplacement)
 	if !ok {
 		shadow.mu.Unlock()
 		return fmt.Errorf("block not found in markdown AST")
@@ -742,6 +744,6 @@ func (es *EditorService) PromoteBlock(uuid, blockID string) error {
 	shadow.mu.Unlock()
 
 	_ = es.Flush(uuid)
-	es.notifyBlockPromoted(uuid, blockID, replacement)
+	es.notifyBlockPromoted(uuid, blockID, plainContent)
 	return nil
 }
