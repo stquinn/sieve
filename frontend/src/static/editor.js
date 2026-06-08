@@ -1198,6 +1198,11 @@
       ensureOverlays()
       openRichLinkDialog()
     }
+    if (e.key === 'D' && window.isMod(e) && e.shiftKey && !e.altKey) {
+      e.preventDefault()
+      if (!currentUuid || !currentEditor) return
+      wsSend({ type: 'create-block', kind: 'diagram', attrs: {}, uuid: currentUuid })
+    }
   })
 
   // ── Enrich as Card (SmartLink → Rich Link) ────────────────────────────────────
