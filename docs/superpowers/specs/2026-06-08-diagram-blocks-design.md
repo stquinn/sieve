@@ -26,7 +26,7 @@ Pasting a ` ```mermaid\n...\n``` ` fenced block creates a `diagram` block with t
 ### Backlog (not in this spec)
 
 - Right-click AI Ask block → "Promote to Diagram" (when response contains mermaid source)
-- Right-click code block with `language: mermaid` → "Convert to Diagram"
+- Right-click plain ` ```mermaid ``` ` TipTap code block → "Upgrade to Diagram Block": extracts source, deletes code block, dispatches `sieve:create-block { kind: "diagram", attrs: { source, mode: "render" } }`. Completes the lifecycle symmetry with Promote to Document (diagram block → fence) — same relationship as Enrich as Card / Downgrade to Smart Link in the Rich Link lifecycle.
 
 ---
 
