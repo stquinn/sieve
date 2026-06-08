@@ -504,6 +504,8 @@ type mockLifecycleListener struct {
 	onUpdated func(uuid, blockID string, attrs map[string]interface{}, rawYaml string)
 }
 
+func (l *mockLifecycleListener) OnBlockPromoted(uuid, blockID string, replacement string) {}
+
 func (l *mockLifecycleListener) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, rawYaml string) {
 	if l.onCreated != nil {
 		l.onCreated(uuid, kind, blockID, rawYaml)
@@ -616,6 +618,7 @@ func (p *testRunJobProcessor) PasteMatch(entries []PasteEntry, _ string, _ strin
 	return false, nil
 }
 func (p *testRunJobProcessor) BuildContext(_ SieveBlock, _ ShadowDocument, _ map[string]bool) string  { return "" }
+func (p *testRunJobProcessor) MarkdownRepresentation(_ SieveBlock) string { return "" }
 func (p *testRunJobProcessor) OnChange(_ *SieveBlock) {}
 func (p *testRunJobProcessor) RunJob(jctx JobContext) error {
 	if p.runJob != nil {

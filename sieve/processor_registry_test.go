@@ -23,6 +23,7 @@ func (p *mockProcessor) PasteMatch(entries []PasteEntry, _ string, _ string) (bo
 	return p.matchFn(entries)
 }
 func (p *mockProcessor) BuildContext(_ SieveBlock, _ ShadowDocument, _ map[string]bool) string  { return "" }
+func (p *mockProcessor) MarkdownRepresentation(_ SieveBlock) string { return "" }
 func (p *mockProcessor) RunJob(_ JobContext) error { return nil }
 func (p *mockProcessor) JobLabel(_ *SieveBlock) string { return "" }
 func (p *mockProcessor) OnChange(_ *SieveBlock) {}

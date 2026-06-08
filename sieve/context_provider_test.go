@@ -2,11 +2,15 @@ package sieve
 
 import "testing"
 
-type mockContextProcessor struct{ returnVal string }
+type mockContextProcessor struct {
+	returnVal string
+	buildFn   func(SieveBlock) string
+}
 
 func (m *mockContextProcessor) BuildContext(block SieveBlock, doc ShadowDocument, seen map[string]bool) string {
-	return m.returnVal
+	return m.buildFn(block)
 }
+func (m *mockContextProcessor) MarkdownRepresentation(_ SieveBlock) string { return "" }
 func (m *mockContextProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{"id": id}
 }
