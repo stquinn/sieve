@@ -47,6 +47,9 @@ Thumbs.db
 *.log
 Screenshot*.png
 
-#-- Syncthing 
+#-- Syncthing
 **/*.tmp
 **/.syncthing.*.tmp
+
+# ── Superpowers brainstorm sessions ───────────────────────────────────────────
+.superpowers/
