@@ -54,6 +54,7 @@ rich-link
 | `description` | string | OG description |
 | `image` | string | `asset://` reference (downloaded on enrich; empty if unavailable) |
 | `siteName` | string | OG site name (or hostname fallback) |
+| `supportsPromotion` | bool | `true` — signals framework to show "Promote to Document" in context menu |
 | `status` | string | `PENDING` / `DISPATCHED` / `COMPLETE` / `ERROR` |
 | `createdAt` | string | RFC3339 |
 | `completedAt` | string | RFC3339 (when job finished) |
@@ -103,9 +104,10 @@ New file: `sieve/rich_link_processor.go`
 | Method | Behaviour |
 |---|---|
 | `Mode()` | `BlockModeBlock` |
-| `InitAttrs()` | sets `href`, `status: PENDING`, timestamps; derives initial `title` from `href` if none provided |
+| `InitAttrs()` | sets `href`, `supportsPromotion: true`, `status: PENDING`, timestamps |
 | `RunJob()` | calls `FetchFull`, writes all attrs, sets `status: COMPLETE` |
-| `BuildContext()` | returns title, description, URL for AI context (used when a Web Clip or AI block has this card in scope) |
+| `BuildContext()` | returns title, description, URL for AI context |
+| `MarkdownRepresentation()` | `### [Title](href)\n*SiteName*\n\nDescription` — returns `""` if href empty |
 | `PasteMatch()` | returns false — URLs on paste become Smart Links, not cards |
 | `JobLabel()` | `"Fetching " + hostname` |
 
@@ -170,20 +172,102 @@ Replaces the block node with a new paragraph containing an inline `sieve-smart-l
 
 ---
 
-## Promote to Document
+## Promote to Document Framework
 
-Hardens the card to portable markdown. Output (Option A — heading + italic source + description):
+"Promote to Document" is a **framework-level capability** that replaces a fenced sieve block with portable markdown prose, both in the live TipTap editor and in the stored document on disk. Rich Link Card is the first block to introduce this; all existing blocks that support promotion are updated in the same work.
 
-```markdown
-### [Title](url)
-*Site Name*
+### Go: `BlockProcessor.MarkdownRepresentation`
 
-Description text here.
+New method on the `BlockProcessor` interface:
+
+```go
+MarkdownRepresentation(block SieveBlock) string
 ```
 
-If description is empty, omits the description paragraph. If site name is empty, omits the italic line. Title is always present (falls back to URL).
+Returns the block's content as portable markdown prose. Returns `""` for blocks that don't support promotion. `EditorService` calls this — processors never interact with `markdown_parser.go` directly.
 
-This is deliberately richer than `[Title](url)` — the card's intelligence is baked in, not discarded.
+| Processor | Output |
+|---|---|
+| `RichLinkProcessor` | `### [Title](href)\n*SiteName*\n\nDescription` |
+| `AIBlockProcessor` | `### {question}\n\n{response}` (question as H3; response only if no question) |
+| `WebClipProcessor` | `### [Title](source)\n\n{content}` (title+link as H3, then fetched content verbatim) |
+| `SmartImageProcessor` | `![{alt}]({src})` — uses AI-generated `alt`; falls back to `summary` if `alt` empty |
+| `CodeBlockProcessor` | ` ```{language}\n{source}\n``` ` |
+| `SmartLinkProcessor` | `""` — already portable markdown, no promotion needed |
+
+`supportsPromotion: true` is set in `InitAttrs` for all processors except `SmartLinkProcessor`. This boolean travels in the block YAML and signals the JS framework to show the context menu item.
+
+### Go: `PromoteBlock` in `markdown_parser.go`
+
+New exported function alongside `InjectBlocks`:
+
+```go
+func PromoteBlock(markdown string, blockID string, content string) (string, bool)
+```
+
+Same goldmark byte-offset splice approach as `InjectBlocks`. Finds the block by ID, replaces its byte range with `content` (plain markdown prose) rather than re-serialized YAML. Returns updated markdown + found bool.
+
+### Go: `EditorService.PromoteBlock`
+
+```go
+func (es *EditorService) PromoteBlock(uuid, blockID string) (content string, err error)
+```
+
+Coordinates the operation:
+1. Look up block in shadow
+2. Get processor, call `MarkdownRepresentation(block)` — returns error if `""`
+3. Call `PromoteBlock(shadow.Markdown, blockID, content)` to splice the document
+4. Flush to disk
+5. Return the content string
+
+### Go: `ws_handler.go` — `promote-block` message
+
+```
+Client → Server: { "type": "promote-block", "id": "ri-a1b2", "uuid": "..." }
+Server → Client: { "type": "block-promoted", "id": "ri-a1b2", "content": "### [Title]..." }
+```
+
+Error (block not found, kind doesn't support promotion): silently ignored — no response sent.
+
+### JS: `sieve-block-extension.js` framework injection
+
+`supportsPromotion` added as a **base attr** (default `false`) so every sieve block node carries it after parsing.
+
+When building the context menu, after the retry/replay section:
+
+```js
+if (n.attrs.supportsPromotion && status === 'COMPLETE') {
+  items = items.concat([
+    { type: 'divider' },
+    { icon: IC.promote, label: 'Promote to Document',
+      action: function () {
+        document.dispatchEvent(new CustomEvent('sieve:promote-block', {
+          detail: { id: n.attrs.id }
+        }))
+      }
+    }
+  ])
+}
+```
+
+This means **no renderer ever needs to add "Promote to Document" manually**. The framework handles it for any block where Go sets `supportsPromotion: true`.
+
+### JS: `editor.js` — promote event + WS handler
+
+`sieve:promote-block` listener → sends WS message.
+
+`block-promoted` WS case → soft reload:
+```js
+// find node by id, replace with rendered HTML
+var html = currentEditor.storage.markdown.parser.md.render(msg.content)
+currentEditor.commands.insertContentAt({ from: nodePos, to: nodePos + nodeSize }, html + '<p></p>')
+```
+
+### JS: Cleanup in existing renderers
+
+**`web-clip-renderer.js`:** Remove `promoteWebClip` function and the manual "Promote to Document" context menu item. Framework auto-injects it.
+
+**`context-menu.js` (AI Block):** Replace `promoteAiBlock` call with `sieve:promote-block` dispatch. Remove the `promoteAiBlock` function. The menu item stays (including its `disabled` logic) but its action changes.
 
 ---
 
@@ -203,12 +287,24 @@ This is deliberately richer than `[Title](url)` — the card's intelligence is b
 
 | File | Change |
 |---|---|
+| `sieve/processor_registry.go` | Add `MarkdownRepresentation(block SieveBlock) string` to `BlockProcessor` interface |
 | `sieve/link_preview_service.go` | Add `FetchFull()` + `LinkPreviewResult` type |
-| `sieve/rich_link_processor.go` | New — `RichLinkProcessor` |
+| `sieve/rich_link_processor.go` | New — `RichLinkProcessor` (incl. `MarkdownRepresentation`, `supportsPromotion: true`) |
+| `sieve/ai_block_processor.go` | Add `MarkdownRepresentation` + `supportsPromotion: true` in `InitAttrs` |
+| `sieve/web_clip_processor.go` | Add `MarkdownRepresentation` + `supportsPromotion: true` in `InitAttrs` |
+| `sieve/smart_image_processor.go` | Add `MarkdownRepresentation` + `supportsPromotion: true` in `InitAttrs` |
+| `sieve/code_processor.go` | Add `MarkdownRepresentation` + `supportsPromotion: true` in `InitAttrs` |
+| `sieve/smart_link_processor.go` | Add `MarkdownRepresentation` (returns `""`) |
+| `sieve/markdown_parser.go` | Add `PromoteBlock(markdown, blockID, content string) (string, bool)` |
+| `sieve/editor_service.go` | Add `PromoteBlock(uuid, blockID string) (string, error)` |
 | `sieve/service_provider.go` | Register `rich-link` processor |
-| `frontend/src/static/rich-link-renderer.js` | New — card renderer + context menu |
+| `requesthandlers/ws_handler.go` | Add `promote-block` WS message case |
+| `frontend/src/static/sieve-block-extension.js` | Add `supportsPromotion` base attr; auto-inject "Promote to Document" menu item |
+| `frontend/src/static/rich-link-renderer.js` | New — card renderer + context menu (no manual promote item — framework handles it) |
 | `frontend/src/static/smart-link-renderer.js` | Add "Enrich as Card" context menu item |
-| `frontend/src/static/editor.js` | Add `Ctrl+Shift+L` shortcut + URL dialog |
+| `frontend/src/static/web-clip-renderer.js` | Remove `promoteWebClip` + manual promote item |
+| `frontend/src/static/context-menu.js` | AI Block: replace `promoteAiBlock` with `sieve:promote-block` dispatch |
+| `frontend/src/static/editor.js` | `Ctrl+Shift+L` dialog; `sieve:promote-block` → WS; `block-promoted` soft reload; enrich/upgrade handlers |
 | `frontend/src/index.html` | Load `rich-link-renderer.js` as `<script type="module">` |
 | `frontend/src/static/input.css` | Card styles |
 

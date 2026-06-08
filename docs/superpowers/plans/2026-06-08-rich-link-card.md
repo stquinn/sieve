@@ -4,7 +4,7 @@
 
 **Goal:** Add a `rich-link` Sieve block kind that renders Open Graph metadata for a URL as a visual card, sitting between Smart Link (inline, title only) and Web Clip (full content, AI-capable) in the block lifecycle.
 
-**Architecture:** Follows the standard Sieve Block Framework — a `RichLinkProcessor` Go struct that implements `BlockProcessor`, plus a `rich-link-renderer.js` JS file registered via `T.registerSieveRenderer`. The Go backend extends the existing `LinkPreviewService` with a `FetchFull` method for OG metadata. Two creation entry points: `Ctrl+Shift+L` keyboard shortcut (dialog) and SmartLink right-click "Enrich as Card" (no dialog). Full context menu covers the lifecycle: upgrade to Web Clip, downgrade to Smart Link, promote to hardened markdown.
+**Architecture:** Follows the standard Sieve Block Framework — a `RichLinkProcessor` Go struct that implements `BlockProcessor`, plus a `rich-link-renderer.js` JS file registered via `T.registerSieveRenderer`. The Go backend extends the existing `LinkPreviewService` with a `FetchFull` method for OG metadata. Two creation entry points: `Ctrl+Shift+L` keyboard shortcut (dialog) and SmartLink right-click "Enrich as Card" (no dialog). This work also introduces the **Promote to Document framework**: a new `MarkdownRepresentation(block SieveBlock) string` method on `BlockProcessor`, a `PromoteBlock` function in `markdown_parser.go`, and a `supportsPromotion` base attr that causes `sieve-block-extension.js` to auto-inject the "Promote to Document" context menu item for any supporting block. All existing processors are updated in this plan.
 
 **Tech Stack:** Go, `golang.org/x/net/html` (already in go.mod for `FetchTitle`), vanilla JS, TipTap NodeView pattern from `web-clip-renderer.js`.
 
@@ -23,11 +23,29 @@
 
 | Action | File | Purpose |
 |--------|------|---------|
+| Modify | `sieve/processor_registry.go` | Add `MarkdownRepresentation` to `BlockProcessor` interface |
 | Modify | `sieve/link_preview_service.go` | Add `LinkPreviewResult` type + `FetchFull` method |
 | Create | `sieve/link_preview_service_test.go` | Tests for `FetchFull` |
-| Create | `sieve/rich_link_processor.go` | `RichLinkProcessor` — all six `BlockProcessor` methods |
+| Create | `sieve/rich_link_processor.go` | `RichLinkProcessor` — all seven `BlockProcessor` methods |
 | Create | `sieve/rich_link_processor_test.go` | Tests for `RichLinkProcessor` |
+| Modify | `sieve/ai_block_processor.go` | Add `MarkdownRepresentation` + `supportsPromotion: true` |
+| Modify | `sieve/web_clip_processor.go` | Add `MarkdownRepresentation` + `supportsPromotion: true` |
+| Modify | `sieve/smart_image_processor.go` | Add `MarkdownRepresentation` + `supportsPromotion: true` |
+| Modify | `sieve/code_processor.go` | Add `MarkdownRepresentation` + `supportsPromotion: true` |
+| Modify | `sieve/smart_link_processor.go` | Add `MarkdownRepresentation` (returns `""`) |
+| Modify | `sieve/markdown_parser.go` | Add `PromoteBlock` function |
+| Create | `sieve/markdown_parser_promote_test.go` | Tests for `PromoteBlock` |
+| Modify | `sieve/editor_service.go` | Add `EditorService.PromoteBlock` method |
 | Modify | `sieve/service_provider.go` | Register `rich-link` processor |
+| Modify | `requesthandlers/ws_handler.go` | Add `promote-block` WS message case |
+| Modify | `frontend/src/static/sieve-block-extension.js` | Add `supportsPromotion` base attr + auto-inject promote item |
+| Modify | `frontend/src/static/editor.js` | `Ctrl+Shift+L` dialog; promote WS send/receive; enrich/upgrade handlers |
+| Modify | `frontend/src/static/web-clip-renderer.js` | Remove manual promote; Go now owns promotion |
+| Modify | `frontend/src/static/context-menu.js` | AI Block: wire promote to `sieve:promote-block` |
+| Create | `frontend/src/static/rich-link-renderer.js` | Card renderer + context menu |
+| Modify | `frontend/src/static/smart-link-renderer.js` | Add "Enrich as Card" |
+| Modify | `frontend/src/index.html` | Load `rich-link-renderer.js` |
+| Modify | `frontend/src/static/input.css` | Card styles |
 | Modify | `frontend/src/static/input.css` | `.rich-link-card` CSS |
 | Create | `frontend/src/static/rich-link-renderer.js` | NodeView + context menu |
 | Modify | `frontend/src/index.html` | Load `rich-link-renderer.js` |
@@ -758,6 +776,541 @@ git commit -m "feat(go): add RichLinkProcessor for rich-link block kind"
 
 ---
 
+## Task 2B: Go — `MarkdownRepresentation` on `BlockProcessor` + all processors
+
+**Files:**
+- Modify: `sieve/processor_registry.go`
+- Modify: `sieve/ai_block_processor.go`
+- Modify: `sieve/web_clip_processor.go`
+- Modify: `sieve/smart_image_processor.go`
+- Modify: `sieve/code_processor.go`
+- Modify: `sieve/smart_link_processor.go`
+- Modify: `sieve/rich_link_processor.go` (just created in Task 2)
+
+Adding `MarkdownRepresentation` to the interface is a **breaking change** — all processors must implement it before the build passes. Do all processors in one commit.
+
+- [ ] **Step 1: Add method to `BlockProcessor` interface in `sieve/processor_registry.go`**
+
+Find the `BlockProcessor` interface definition and add after `BuildContext`:
+
+```go
+// MarkdownRepresentation returns the block's content as portable markdown prose
+// for use when the user promotes the block to document content.
+// Returns "" for blocks that do not support promotion.
+// EditorService calls this — processors must not interact with markdown_parser directly.
+MarkdownRepresentation(block SieveBlock) string
+```
+
+- [ ] **Step 2: Verify build fails (interface not satisfied)**
+
+```bash
+go build -tags webkit2_41 ./... 2>&1 | head -20
+```
+
+Expected: multiple `does not implement BlockProcessor` errors — one per processor.
+
+- [ ] **Step 3: Add `MarkdownRepresentation` to `sieve/ai_block_processor.go`**
+
+Add `supportsPromotion: true` in `InitAttrs` (after the existing attrs map, before the overrides loop):
+```go
+"supportsPromotion": true,
+```
+
+Add the method after `RunJob`:
+```go
+func (p *AIBlockProcessor) MarkdownRepresentation(block SieveBlock) string {
+	status, _ := block.Attrs["status"].(string)
+	response, _ := block.Attrs["response"].(string)
+	response = strings.TrimSpace(response)
+	if status != BlockStatusComplete || response == "" {
+		return ""
+	}
+	question, _ := block.Attrs["question"].(string)
+	question = strings.TrimSpace(question)
+	if question != "" {
+		return "### " + question + "\n\n" + response
+	}
+	return response
+}
+```
+
+- [ ] **Step 4: Add `MarkdownRepresentation` to `sieve/web_clip_processor.go`**
+
+Add `supportsPromotion: true` in `InitAttrs`.
+
+Add the method:
+```go
+func (p *WebClipBlockProcessor) MarkdownRepresentation(block SieveBlock) string {
+	content, _ := block.Attrs["content"].(string)
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+	title, _ := block.Attrs["title"].(string)
+	source, _ := block.Attrs["source"].(string)
+	var sb strings.Builder
+	if title != "" && source != "" {
+		sb.WriteString("### [" + title + "](" + source + ")\n\n")
+	} else if title != "" {
+		sb.WriteString("### " + title + "\n\n")
+	}
+	sb.WriteString(content)
+	return sb.String()
+}
+```
+
+Note: this improves on the existing JS `promoteWebClip` which omitted the title header. The Go version is now canonical.
+
+- [ ] **Step 5: Add `MarkdownRepresentation` to `sieve/smart_image_processor.go`**
+
+Add `supportsPromotion: true` in `InitAttrs`.
+
+Add the method:
+```go
+func (p *SmartImageProcessor) MarkdownRepresentation(block SieveBlock) string {
+	src, _ := block.Attrs["src"].(string)
+	if src == "" {
+		return ""
+	}
+	alt, _ := block.Attrs["alt"].(string)
+	if strings.TrimSpace(alt) == "" {
+		alt, _ = block.Attrs["summary"].(string)
+	}
+	return "![" + strings.TrimSpace(alt) + "](" + src + ")"
+}
+```
+
+- [ ] **Step 6: Add `MarkdownRepresentation` to `sieve/code_processor.go`**
+
+Add `supportsPromotion: true` in `InitAttrs`.
+
+Add the method:
+```go
+func (p *CodeBlockProcessor) MarkdownRepresentation(block SieveBlock) string {
+	source, _ := block.Attrs["source"].(string)
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return ""
+	}
+	lang, _ := block.Attrs["language"].(string)
+	return "```" + lang + "\n" + source + "\n```"
+}
+```
+
+- [ ] **Step 7: Add `MarkdownRepresentation` to `sieve/smart_link_processor.go`**
+
+SmartLink does not support promotion — it is already portable markdown. No `supportsPromotion` attr needed (defaults to `false`).
+
+```go
+func (p *SmartLinkProcessor) MarkdownRepresentation(_ SieveBlock) string {
+	return ""
+}
+```
+
+- [ ] **Step 8: Add `MarkdownRepresentation` to `sieve/rich_link_processor.go`**
+
+Add `supportsPromotion: true` in `InitAttrs` (add to the attrs map in Step 3 of Task 2).
+
+Add the method to the processor:
+```go
+func (p *RichLinkProcessor) MarkdownRepresentation(block SieveBlock) string {
+	href, _ := block.Attrs["href"].(string)
+	if href == "" {
+		return ""
+	}
+	title, _ := block.Attrs["title"].(string)
+	if strings.TrimSpace(title) == "" {
+		title = href
+	}
+	siteName, _ := block.Attrs["siteName"].(string)
+	description, _ := block.Attrs["description"].(string)
+
+	var sb strings.Builder
+	sb.WriteString("### [" + strings.TrimSpace(title) + "](" + href + ")")
+	if strings.TrimSpace(siteName) != "" {
+		sb.WriteString("\n*" + strings.TrimSpace(siteName) + "*")
+	}
+	if strings.TrimSpace(description) != "" {
+		sb.WriteString("\n\n" + strings.TrimSpace(description))
+	}
+	return sb.String()
+}
+```
+
+- [ ] **Step 9: Compile check — build must pass**
+
+```bash
+go build -tags webkit2_41 ./...
+```
+
+Expected: no errors. All processors now implement the full `BlockProcessor` interface.
+
+- [ ] **Step 10: Run full sieve test suite**
+
+```bash
+go test -tags webkit2_41 ./sieve/... -v 2>&1 | tail -20
+```
+
+Expected: no failures.
+
+- [ ] **Step 11: Commit**
+
+```bash
+git add sieve/processor_registry.go sieve/ai_block_processor.go sieve/web_clip_processor.go \
+        sieve/smart_image_processor.go sieve/code_processor.go sieve/smart_link_processor.go \
+        sieve/rich_link_processor.go
+git commit -m "feat(go): add MarkdownRepresentation to BlockProcessor interface — all processors"
+```
+
+---
+
+## Task 2C: Go — `PromoteBlock` + `EditorService.PromoteBlock` + WS handler
+
+**Files:**
+- Modify: `sieve/markdown_parser.go`
+- Create: `sieve/markdown_parser_promote_test.go`
+- Modify: `sieve/editor_service.go`
+- Modify: `requesthandlers/ws_handler.go`
+
+- [ ] **Step 1: Write failing tests for `PromoteBlock`**
+
+Create `sieve/markdown_parser_promote_test.go`:
+
+```go
+package sieve
+
+import (
+	"testing"
+)
+
+func TestPromoteBlock_replacesBlockWithContent(t *testing.T) {
+	markdown := "Before\n\n```rich-link\nid: ri-0001\nhref: https://example.com\n```\n\nAfter"
+	// Register a minimal processor so the parser recognises rich-link
+	RegisterProcessor("rich-link", NewRichLinkProcessor(BlockServices{}))
+	defer UnregisterProcessor("rich-link")
+
+	result, ok := PromoteBlock(markdown, "ri-0001", "### [Example](https://example.com)")
+	if !ok {
+		t.Fatal("PromoteBlock: block not found")
+	}
+	if result == markdown {
+		t.Fatal("PromoteBlock: markdown unchanged")
+	}
+	if !contains(result, "### [Example](https://example.com)") {
+		t.Errorf("PromoteBlock: promoted content missing; got:\n%s", result)
+	}
+	if contains(result, "```rich-link") {
+		t.Error("PromoteBlock: fenced block still present after promotion")
+	}
+	if !contains(result, "Before") || !contains(result, "After") {
+		t.Error("PromoteBlock: surrounding content lost")
+	}
+}
+
+func TestPromoteBlock_unknownIDReturnsFalse(t *testing.T) {
+	markdown := "Some content without any blocks"
+	result, ok := PromoteBlock(markdown, "ri-9999", "replacement")
+	if ok {
+		t.Error("PromoteBlock: expected false for unknown blockID")
+	}
+	if result != markdown {
+		t.Error("PromoteBlock: markdown must be unchanged when block not found")
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		func() bool {
+			for i := 0; i <= len(s)-len(substr); i++ {
+				if s[i:i+len(substr)] == substr {
+					return true
+				}
+			}
+			return false
+		}())
+}
+```
+
+- [ ] **Step 2: Run tests — expect FAIL**
+
+```bash
+go test -tags webkit2_41 ./sieve/... -run TestPromoteBlock -v 2>&1 | head -20
+```
+
+Expected: `undefined: PromoteBlock`.
+
+- [ ] **Step 3: Add `PromoteBlock` to `sieve/markdown_parser.go`**
+
+Add after `InjectBlocks`:
+
+```go
+// PromoteBlock replaces the fenced sieve block with blockID in markdown with
+// content (plain markdown prose). Returns the updated markdown and true if the
+// block was found and replaced, or the original markdown and false if not found.
+// Uses the same goldmark byte-offset splice approach as InjectBlocks.
+func PromoteBlock(markdown string, blockID string, content string) (string, bool) {
+	source := []byte(markdown)
+	doc := mdParser().Parser().Parse(text.NewReader(source))
+
+	var target sieveNode
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		if sn, ok := n.(sieveNode); ok && sn.GetSieveBlock().ID == blockID {
+			target = sn
+			return ast.WalkStop, nil
+		}
+		return ast.WalkContinue, nil
+	})
+
+	if target == nil {
+		return markdown, false
+	}
+
+	var out strings.Builder
+	out.WriteString(markdown[:target.StartByte()])
+	out.WriteString(strings.TrimSpace(content))
+	out.WriteString(markdown[target.EndByte():])
+	return out.String(), true
+}
+```
+
+- [ ] **Step 4: Run tests — expect PASS**
+
+```bash
+go test -tags webkit2_41 ./sieve/... -run TestPromoteBlock -v
+```
+
+Expected: both tests PASS.
+
+- [ ] **Step 5: Add `EditorService.PromoteBlock` to `sieve/editor_service.go`**
+
+Add after `HandleBlockUpdate`:
+
+```go
+// PromoteBlock replaces a sieve block in the stored document with its
+// MarkdownRepresentation. Returns the promoted content string for sending
+// to the client, or an error if the block is not found or does not support promotion.
+func (es *EditorService) PromoteBlock(uuid, blockID string) (string, error) {
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if shadow == nil {
+		return "", fmt.Errorf("promote-block: no open document for uuid %q", uuid)
+	}
+
+	shadow.mu.RLock()
+	blk, ok := shadow.Blocks[blockID]
+	if !ok {
+		shadow.mu.RUnlock()
+		return "", fmt.Errorf("promote-block: block %q not found", blockID)
+	}
+	blkCopy := SieveBlock{ID: blk.ID, Kind: blk.Kind, Attrs: make(map[string]interface{}, len(blk.Attrs))}
+	for k, v := range blk.Attrs {
+		blkCopy.Attrs[k] = v
+	}
+	shadow.mu.RUnlock()
+
+	processor := GetProcessor(blkCopy.Kind)
+	if processor == nil {
+		return "", fmt.Errorf("promote-block: no processor for kind %q", blkCopy.Kind)
+	}
+	content := processor.MarkdownRepresentation(blkCopy)
+	if content == "" {
+		return "", fmt.Errorf("promote-block: kind %q does not support promotion", blkCopy.Kind)
+	}
+
+	shadow.mu.Lock()
+	updated, found := PromoteBlock(shadow.Markdown, blockID, content)
+	if found {
+		shadow.Markdown = updated
+	}
+	shadow.mu.Unlock()
+
+	if found {
+		_ = es.Flush(uuid)
+	}
+
+	return content, nil
+}
+```
+
+- [ ] **Step 6: Add `promote-block` case to `requesthandlers/ws_handler.go`**
+
+In the `switch msg.Type` block alongside the other cases:
+```go
+case "promote-block":
+    h.handlePromoteBlock(uuid, raw, writeMsg)
+```
+
+Add the handler function after `handleRetryBlockJob`:
+```go
+// handlePromoteBlock replaces a sieve block in the stored document with its
+// MarkdownRepresentation and notifies the client to perform a soft reload.
+func (h *WsHandler) handlePromoteBlock(uuid string, raw []byte, writeMsg func(interface{})) {
+	var msg struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil || msg.ID == "" {
+		return
+	}
+	content, err := h.ServiceProvider.Editor.PromoteBlock(uuid, msg.ID)
+	if err != nil {
+		logger.Warn("ws: promote-block failed", "uuid", uuid, "id", msg.ID, "err", err)
+		return
+	}
+	writeMsg(map[string]interface{}{
+		"type":    "block-promoted",
+		"id":      msg.ID,
+		"content": content,
+	})
+}
+```
+
+- [ ] **Step 7: Compile check**
+
+```bash
+go build -tags webkit2_41 ./...
+```
+
+Expected: no errors.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add sieve/markdown_parser.go sieve/markdown_parser_promote_test.go \
+        sieve/editor_service.go requesthandlers/ws_handler.go
+git commit -m "feat(go): add PromoteBlock pipeline — markdown_parser, EditorService, WS handler"
+```
+
+---
+
+## Task 4B: JS — Promote to Document framework
+
+**Files:**
+- Modify: `frontend/src/static/sieve-block-extension.js`
+- Modify: `frontend/src/static/editor.js`
+- Modify: `frontend/src/static/web-clip-renderer.js`
+- Modify: `frontend/src/static/context-menu.js`
+
+This task wires the JS side of promotion: `supportsPromotion` as a base attr, automatic menu item injection, the WS round-trip, and cleanup of the old JS-side promotion functions.
+
+- [ ] **Step 1: Add `supportsPromotion` to `BASE_ATTRS` in `sieve-block-extension.js`**
+
+Find the `BASE_ATTRS` object (around line 42–50). Add after `createdAt`:
+
+```js
+supportsPromotion: { default: false, parseHTML: function (el) { return el.getAttribute('data-supports-promotion') === 'true' } },
+```
+
+- [ ] **Step 2: Auto-inject "Promote to Document" in `sieve-block-extension.js`**
+
+Find the context menu assembly section (around line 96–116). After the retry/replay block and before the `document.dispatchEvent(new CustomEvent('sieve:contextmenu', ...))` line, add:
+
+```js
+              // Promote to Document — automatic for any block with supportsPromotion: true.
+              if (n.attrs.supportsPromotion && status === 'COMPLETE') {
+                var IC2 = window.SieveIcons || {}
+                items = items.concat([
+                  { type: 'divider' },
+                  { icon: IC2.promote, label: 'Promote to Document',
+                    action: function () {
+                      var promoteId = n.attrs.id
+                      document.dispatchEvent(new CustomEvent('sieve:promote-block', {
+                        detail: { id: promoteId }
+                      }))
+                    }
+                  },
+                ])
+              }
+```
+
+Note: `IC` is already declared in the retry block above but only inside its `if` scope. Declare `IC2` (or move `IC` declaration before both blocks — check the existing code and do whichever is cleaner without touching unrelated lines).
+
+- [ ] **Step 3: Add `sieve:promote-block` → WS in `editor.js`**
+
+Find the section with `sieve:create-block`, `sieve:block-update`, `sieve:block-retry` event listeners (around line 360–370). Add alongside them:
+
+```js
+  document.addEventListener('sieve:promote-block', function (e) {
+    if (!currentUuid || !e.detail || !e.detail.id) return
+    wsSend({ type: 'promote-block', id: e.detail.id, uuid: currentUuid })
+  })
+```
+
+- [ ] **Step 4: Handle `block-promoted` WS message in `editor.js`**
+
+Find where incoming WS messages are dispatched (the `switch` or `if/else` block handling `insert-block`, `block-attrs-updated`, etc). Add a case for `block-promoted`:
+
+```js
+    } else if (msg.type === 'block-promoted') {
+      if (!msg.id || !msg.content || !currentEditor) return
+      var promotedId = msg.id
+      var promotedHtml = currentEditor.storage.markdown.parser.md.render(msg.content)
+      var nodePos = null
+      var nodeSize = null
+      currentEditor.state.doc.descendants(function (node, pos) {
+        if (node.type.name.startsWith('sieve-') && node.attrs.id === promotedId) {
+          nodePos = pos
+          nodeSize = node.nodeSize
+          return false
+        }
+      })
+      if (nodePos !== null) {
+        currentEditor.commands.insertContentAt(
+          { from: nodePos, to: nodePos + nodeSize },
+          promotedHtml + '<p></p>'
+        )
+      }
+```
+
+- [ ] **Step 5: Remove `promoteWebClip` from `web-clip-renderer.js`**
+
+Find and delete:
+1. The `promoteWebClip` function (lines 193–199)
+2. The `{ icon: IC.promote, label: 'Promote to Document', disabled: ..., action: promoteWebClip }` item in `buildContextMenuItems`
+
+The framework now auto-injects this item for Web Clip because `supportsPromotion: true` is set in `WebClipBlockProcessor.InitAttrs` (Task 2B).
+
+- [ ] **Step 6: Update AI Block promote action in `context-menu.js`**
+
+Find `promoteAiBlock` function (around line 291) and the menu item that calls it (around line 341).
+
+Replace the `action` on the "Promote to Document" item:
+```js
+      { icon: IC.promote, label: 'Promote to Document',
+        disabled: n.attrs.status !== 'COMPLETE' || !n.attrs.response,
+        action: function () {
+          document.dispatchEvent(new CustomEvent('sieve:promote-block', {
+            detail: { id: n.attrs.id }
+          }))
+        }
+      },
+```
+
+Delete the `promoteAiBlock` function entirely (lines 291–302).
+
+Note: the AI Block context menu item stays in `context-menu.js` (not migrated to the framework) because `aiBlock` is a separate TipTap node type not registered via `registerSieveRenderer`. The action now uses the same WS path as all other blocks.
+
+- [ ] **Step 7: Compile check**
+
+```bash
+go build -tags webkit2_41 ./...
+```
+
+Expected: no errors.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add frontend/src/static/sieve-block-extension.js frontend/src/static/editor.js \
+        frontend/src/static/web-clip-renderer.js frontend/src/static/context-menu.js
+git commit -m "feat(js): Promote to Document framework — base attr, auto-inject, WS soft reload"
+```
+
+---
+
 ## Task 3: Frontend — CSS styles
 
 **Files:**
@@ -1169,9 +1722,13 @@ import { isJobStale } from './fenced-block-base.js'
               .run()
           },
         },
+        // NOTE: "Promote to Document" is NOT listed here.
+        // sieve-block-extension.js auto-injects it for any block with
+        // node.attrs.supportsPromotion === true (set in RichLinkProcessor.InitAttrs).
+        // Do not add a manual item — it would duplicate the framework-injected one.
         {
           icon: IC.fileText,
-          label: 'Promote to Document',
+          label: 'Promote to Document — REMOVE THIS BLOCK — handled by framework',
           action: function () {
             if (typeof getPos !== 'function') return
             var pos = getPos()
@@ -1332,6 +1889,8 @@ Three additions to `editor.js`:
 1. `createRichLinkDialog` + `openRichLinkDialog` (Ctrl+Shift+L entry point)
 2. `sieve:enrich-as-card` handler (SmartLink right-click → card)
 3. `sieve:upgrade-to-web-clip` handler (Rich Link Card → Web Clip)
+
+Note: `sieve:promote-block` WS send and `block-promoted` soft-reload handler were added in Task 4B. Do not re-add them here.
 
 All additions go inside the existing IIFE (before the closing `})()` at line 1091).
 
@@ -1691,7 +2250,31 @@ wails dev
 2. Click "Upgrade to Web Clip"
 3. Verify the card is replaced by a Web Clip block fetching from the same URL
 
-- [ ] **Step 9: Commit smoke test**
+- [ ] **Step 9: Test Promote to Document — Rich Link Card**
+
+1. Right-click a completed Rich Link Card
+2. Click "Promote to Document" (injected by the framework, not by the renderer)
+3. Verify the card is replaced by:
+   - An H3 heading linking to the URL with the card's title
+   - An italic line with the site name
+   - A paragraph with the description
+4. Verify the underlying markdown file (check with Ctrl+Shift+M markdown view) no longer contains the `rich-link` fenced block
+
+- [ ] **Step 10: Test Promote to Document — Web Clip**
+
+1. Right-click a completed Web Clip
+2. Click "Promote to Document"
+3. Verify the Web Clip is replaced by an H3 heading `[Title](url)` followed by the fetched content as prose
+4. Verify the underlying markdown no longer contains the `web-clip` fenced block
+
+- [ ] **Step 11: Test Promote to Document — AI Block**
+
+1. Right-click a completed AI Block
+2. Click "Promote to Document"
+3. Verify the AI Block is replaced by an H3 of the question followed by the response as prose
+4. Verify the underlying markdown no longer contains the `ai-block` fenced block
+
+- [ ] **Step 12: Commit smoke test**
 
 If all steps passed, no code changes needed. If fixes were required, commit them before proceeding.
 
@@ -1702,6 +2285,8 @@ If all steps passed, no code changes needed. If fixes were required, commit them
 - `isJobStale` is imported from `fenced-block-base.js` — verify it's used in `rich-link-renderer.js` (Task 4). ✓
 - `sieve-rich-link` is the TipTap node type name — matches `registerSieveRenderer('rich-link', ...)` because the factory prefixes `sieve-`. Verify `update()` check uses `'sieve-rich-link'`. ✓
 - `rich-link` ID prefix: `GenerateBlockIDFor('rich-link')` will call `GenerateBlockID('ri')` (first two chars) → IDs like `ri-a3f9`. ✓
-- `attrs` and `parseAttrs` keys must match exactly: `href, title, description, image, siteName, fetchedAt, completedAt, error`. ✓
+- `attrs` and `parseAttrs` keys must match exactly: `href, title, description, image, siteName, supportsPromotion, fetchedAt, completedAt, error`. ✓
+- `supportsPromotion` must be in both `attrs` and `parseAttrs` in `rich-link-renderer.js` so the framework can read it from the node. ✓ (verify — it's easy to miss)
 - `var thumb = null` pattern in `makeNodeView` render function: when an image IS present, the `<img>` element is appended directly to `body` and `thumb` is set to null to skip the second `body.appendChild(thumb)`. Verify this renders correctly — if buggy, use an `if (thumb)` guard (already present). ✓
-- The `sieve:enrich-as-card` pos arithmetic: `blockEnd - nodeSize`. A SmartLink inline atom has `nodeSize` = 1. The paragraph end pos shifts by -1 after deletion. If the paragraph becomes empty (was just the SmartLink), `blockEnd - 1` is the empty paragraph's content start — the card inserts after the paragraph. Acceptable; test in smoke test.
+- The `sieve:enrich-as-card` pos arithmetic: `blockEnd - nodeSize`. A SmartLink inline atom has `nodeSize` = 1. The paragraph end pos shifts by -1 after deletion. Acceptable; test in smoke test.
+- Task 4B Step 2: `IC` vs `IC2` — check the scoping of `var IC = window.SieveIcons || {}` in `sieve-block-extension.js`. If `IC` is declared inside the `if (isStale || isError || status === 'COMPLETE')` block, it is block-scoped (`var` is function-scoped in JS, so actually available). Using `IC` directly in the promote block should work — verify and remove `IC2` if redundant.
