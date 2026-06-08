@@ -8,7 +8,10 @@ type mockContextProcessor struct {
 }
 
 func (m *mockContextProcessor) BuildContext(block SieveBlock, doc ShadowDocument, seen map[string]bool) string {
-	return m.buildFn(block)
+	if m.buildFn != nil {
+		return m.buildFn(block)
+	}
+	return m.returnVal
 }
 func (m *mockContextProcessor) MarkdownRepresentation(_ SieveBlock) string { return "" }
 func (m *mockContextProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {

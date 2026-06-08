@@ -130,6 +130,7 @@
 /* ── Diagram Block ──────────────────────────────────────────────────────────── */
 
 .sieve-block--diagram {
+  position: relative;
   border: 1px solid var(--theme-border);
   border-radius: 6px;
   background: var(--theme-bgDark);
@@ -139,6 +140,20 @@
 
 .sieve-block--diagram:hover {
   border-color: var(--theme-border2);
+}
+
+.sieve-block--diagram.block-ref-active {
+  border-color: color-mix(in srgb, var(--theme-accentGreen) 30%, var(--theme-border)) !important;
+}
+
+.sieve-block--diagram.block-ref-active::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 6px;
+  border-left: 3px solid var(--theme-accentGreen);
+  pointer-events: none;
+  z-index: 5;
 }
 
 /* Header: always visible in both modes */
@@ -228,7 +243,7 @@
 .sieve-block--diagram .sieve-block__gutter {
   width: 36px;
   flex-shrink: 0;
-  background: var(--theme-bgAlt);
+  background: var(--theme-bgDark);
   border-right: 1px solid var(--theme-border);
   padding: 10px 8px 10px 0;
   display: flex;

@@ -26,6 +26,7 @@ func (p *DiagramProcessor) InitAttrs(id string, overrides map[string]interface{}
 		"source":            "",
 		"diagramType":       "mermaid",
 		"mode":              "render",
+		"cursorPos":         0,
 		"supportsPromotion": true,
 		"createdAt":         time.Now().UTC().Format(time.RFC3339),
 	}
@@ -59,7 +60,7 @@ func (p *DiagramProcessor) PasteMatch(entries []PasteEntry, _ string, _ string) 
 		return false, nil
 	}
 	return true, map[string]interface{}{
-		"source": m[1],
+		"source": strings.TrimSpace(m[1]),
 		"mode":   "render",
 	}
 }

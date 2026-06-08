@@ -19,6 +19,16 @@
 //   makeNodeView(node, editor) → TipTap NodeView
 //       Returns the NodeView object (dom, update, stopEvent, etc.).
 //
+// Optional renderer fields (framework injects these behaviours automatically):
+//
+//   buildContextMenuItems({ node, editor, getPos }) → [ item, ... ]
+//       Block-specific context menu items prepended before the framework items.
+//       The framework always appends: Ask AI, Explain, Delete, Retry/Replay, Promote.
+//
+//   buildAiCtx(node) → { contextLabel, imageIds? }
+//       Customise the "Ask About [X]" popup label and any image IDs to include.
+//       Defaults to a capitalised version of the block kind if omitted.
+//
 // Registration:
 //   window.TipTap.registerSieveRenderer('code', CodeRenderer)
 //   → creates a TipTap node named 'sieve-code' with the renderer's config/attrs
@@ -90,18 +100,57 @@ import { esc, isJobStale, getLowlight } from './fenced-block-base.js'
               e.stopPropagation()
               var currentNode = (typeof getPos === 'function') ? editor.state.doc.nodeAt(getPos()) : node
               var n = currentNode || node
+              var IC = window.SieveIcons || {}
+
               var items = renderer.buildContextMenuItems
                 ? renderer.buildContextMenuItems({ node: n, editor: editor, getPos: getPos })
                 : []
 
+              // Ask AI + Explain — universal for every sieve block.
+              // blockRef is the block's own ID; Go's BuildContext + expandAIBlockRefs handle context assembly.
+              // Optionally declare buildAiCtx(node) → { contextLabel, imageIds? } to customise the popup label.
+              var aiBase = renderer.buildAiCtx ? renderer.buildAiCtx(n) : {}
+              var kindLabel = n.attrs.kind
+                ? n.attrs.kind.charAt(0).toUpperCase() + n.attrs.kind.slice(1).replace(/-/g, ' ')
+                : 'Block'
+              var aiCtx = {
+                content:      '',
+                blockRef:     n.attrs.id || 'doc',
+                history:      '',
+                contextLabel: (aiBase && aiBase.contextLabel) || kindLabel,
+                imageIds:     (aiBase && aiBase.imageIds) || [],
+              }
+              items = items.concat([
+                { type: 'divider' },
+                { icon: IC.sparkle, label: 'Ask AI…', action: function () {
+                  if (typeof getPos === 'function') editor.chain().focus().setNodeSelection(getPos()).run()
+                  else editor.commands.focus()
+                  document.dispatchEvent(new CustomEvent('sieve:ai-ask', { detail: { precomputedCtx: aiCtx } }))
+                }},
+                { icon: IC.info,    label: 'Explain',  action: function () {
+                  if (typeof getPos === 'function') editor.chain().focus().setNodeSelection(getPos()).run()
+                  else editor.commands.focus()
+                  document.dispatchEvent(new CustomEvent('sieve:ai-explain', { detail: { precomputedCtx: aiCtx } }))
+                }},
+              ])
+
+              // Delete — universal for every sieve block.
+              items = items.concat([
+                { type: 'divider' },
+                { icon: IC.trash, label: 'Delete', action: function () {
+                  if (typeof getPos === 'function') {
+                    var pos = getPos()
+                    editor.view.dispatch(editor.state.tr.delete(pos, pos + n.nodeSize))
+                  }
+                }},
+              ])
+
               // Retry / Replay — automatic for all sieve blocks with a job lifecycle.
-              // DISPATCHED = job actively running; never retryable.
-              // PENDING = waiting to dispatch; stale if createdAt > 15s ago.
+              // PENDING/DISPATCHED = stale if job no longer active and createdAt > 15s ago.
               var status = n.attrs.status || 'PENDING'
-              var isStale = status === 'PENDING' && isJobStale(n.attrs.createdAt, n.attrs.id)
+              var isStale = (status === 'PENDING' || status === 'DISPATCHED') && isJobStale(n.attrs.createdAt, n.attrs.id)
               var isError = status === 'ERROR' || status === 'TIMEOUT'
               if (isStale || isError || status === 'COMPLETE') {
-                var IC = window.SieveIcons || {}
                 items = items.concat([
                   { type: 'divider' },
                   { icon: IC.refresh, label: (isStale || isError) ? 'Retry' : 'Replay',
@@ -114,14 +163,12 @@ import { esc, isJobStale, getLowlight } from './fenced-block-base.js'
 
               // Promote to Document — automatic for any block with supportsPromotion: true.
               if (n.attrs.supportsPromotion && status === 'COMPLETE') {
-                var IC2 = window.SieveIcons || {}
                 items = items.concat([
                   { type: 'divider' },
-                  { icon: IC2.promote, label: 'Promote to Document',
+                  { icon: IC.promote, label: 'Promote to Document',
                     action: function () {
-                      var promoteId = n.attrs.id
                       document.dispatchEvent(new CustomEvent('sieve:promote-block', {
-                        detail: { id: promoteId }
+                        detail: { id: n.attrs.id }
                       }))
                     }
                   },

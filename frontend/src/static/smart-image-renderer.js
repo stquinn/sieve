@@ -127,37 +127,10 @@ import { isJobStale } from './fenced-block-base.js'
     }
   }
 
-  function buildContextMenuItems(ctx) {
-    var editor = ctx.editor, node = ctx.node, getPos = ctx.getPos
-    var IC = window.SieveIcons || {}
-
-    function del() {
-      if (typeof getPos === 'function') {
-        var pos = getPos()
-        editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize))
-      }
-    }
-
-    return [
-      { icon: IC.trash, label: 'Delete', action: del },
-      { type: 'divider' },
-      { icon: IC.sparkle, label: 'Ask AI…', action: function () {
-        document.dispatchEvent(new CustomEvent('sieve:ai-ask', { detail: { precomputedCtx: {
-          content: node.attrs.summary || node.attrs.alt || '',
-          blockRef: node.attrs.id || 'doc',
-          history: '', imageIds: node.attrs.id ? [node.attrs.id] : [],
-          contextLabel: 'Image',
-        }}}))
-      }},
-      { icon: IC.info, label: 'Explain', action: function () {
-        document.dispatchEvent(new CustomEvent('sieve:ai-explain', { detail: { precomputedCtx: {
-          content: node.attrs.summary || node.attrs.alt || '',
-          blockRef: node.attrs.id || 'doc',
-          history: '', imageIds: node.attrs.id ? [node.attrs.id] : [],
-          contextLabel: 'Image',
-        }}}))
-      }},
-    ]
+  // Ask AI, Explain, and Delete are injected by sieve-block-extension.js framework.
+  // imageIds passes the block ID so Go can include the image in the AI context.
+  function buildAiCtx(node) {
+    return { contextLabel: 'Image', imageIds: node.attrs.id ? [node.attrs.id] : [] }
   }
 
   T.registerSieveRenderer('smart-image', {
@@ -186,7 +159,7 @@ import { isJobStale } from './fenced-block-base.js'
       }
     },
     makeNodeView: makeNodeView,
-    buildContextMenuItems: buildContextMenuItems,
+    buildAiCtx: buildAiCtx,
   })
 
 })()

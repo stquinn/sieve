@@ -98,13 +98,6 @@ import { isJobStale } from './fenced-block-base.js'
       var href   = node.attrs.href  || ''
       var label  = node.attrs.label || href
 
-      function del() {
-        if (typeof getPos === 'function') {
-          var pos = getPos()
-          editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize))
-        }
-      }
-
       return [
         { type: 'header', label: 'Smart Link' },
         {
@@ -155,8 +148,6 @@ import { isJobStale } from './fenced-block-base.js'
             }))
           },
         },
-        { type: 'divider' },
-        { icon: IC.trash, label: 'Delete', action: del },
       ]
     },
   }

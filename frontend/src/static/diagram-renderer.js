@@ -2,7 +2,7 @@
 //
 // Edit mode: textarea + syntax-highlight overlay + line gutter (same pattern as code-renderer.js).
 // Render mode: SVG from mermaid.js, lazy-loaded from vendor/mermaid.min.js.
-// Mode is persisted in YAML via sieve:block-update so it survives document reload.
+// Mode and cursor position are persisted in YAML via sieve:block-update so they survive reloads.
 
 import { getLowlight, hastToHtml } from './fenced-block-base.js'
 
@@ -31,17 +31,53 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
   function buildMermaidTheme() {
     var s = getComputedStyle(document.documentElement)
     function v(name) { return s.getPropertyValue(name).trim() }
+    var bgDark    = v('--theme-bgDark')        || '#0e0e0e'
+    var bgAlt     = v('--theme-bgAlt')         || '#1a1a1a'
+    var text      = v('--theme-text')          || '#cccccc'
+    var textDim   = v('--theme-textDim')       || '#888888'
+    var accent    = v('--theme-accentPrimary') || '#7aa2f7'
+    var accentCy  = v('--theme-accentCyan')    || '#7dcfff'
+    var accentGr  = v('--theme-accentGreen')   || '#9ece6a'
+    var border    = v('--theme-border')        || '#2a2a2a'
+    var border2   = v('--theme-border2')       || '#3a3a3a'
+
     return {
       startOnLoad: false,
       theme: 'base',
       themeVariables: {
-        background:          v('--theme-bgDark')  || '#0e0e0e',
-        primaryColor:        v('--theme-bgAlt')   || '#1a1a1a',
-        primaryTextColor:    v('--theme-text')     || '#cccccc',
-        lineColor:           v('--theme-fg3')      || '#555555',
-        edgeLabelBackground: v('--theme-bgDark')  || '#0e0e0e',
-        nodeBorder:          v('--theme-border2')  || '#3a3a3a',
-        clusterBkg:          v('--theme-bgAlt')   || '#1a1a1a',
+        // Typography
+        fontFamily:           v('--theme-monoFont') || 'monospace',
+        fontSize:             '12px',
+
+        // Nodes
+        background:           bgDark,
+        primaryColor:         accent,
+        primaryBorderColor:   accent,
+        primaryTextColor:     bgDark,
+        secondaryColor:       accentCy,
+        secondaryBorderColor: accentCy,
+        secondaryTextColor:   bgDark,
+        tertiaryColor:        accentGr,
+        tertiaryBorderColor:  accentGr,
+        tertiaryTextColor:    bgDark,
+
+        // Edges & labels
+        lineColor:            textDim,
+        edgeLabelBackground:  'transparent',
+        labelColor:           text,
+        labelTextColor:       text,
+
+        // Subgraphs / clusters
+        clusterBkg:           bgAlt,
+        clusterBorder:        border2,
+        titleColor:           textDim,
+
+        // Special shapes (diamonds, cylinders, circles)
+        nodeBorder:           border2,
+        mainBkg:              accent,
+        specNodeLabelColor:   bgDark,
+        attributeBackgroundColorOdd:  bgAlt,
+        attributeBackgroundColorEven: bgDark,
       },
     }
   }
@@ -51,9 +87,14 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
     window.mermaid.initialize(buildMermaidTheme())
   }
 
-  // Re-theme on settings change
+  // All active NodeViews register a rerender fn so theme changes re-render live SVGs.
+  var activeRenderers = []
+
   document.addEventListener('sse:settings:changed', function () {
-    if (window.mermaid) initMermaid()
+    if (window.mermaid) {
+      initMermaid()
+      activeRenderers.forEach(function (r) { r() })
+    }
   })
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -77,20 +118,19 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
   }
 
   function applyHighlight(highlightCode, source) {
-    var display = source ? source + '\n' : '\n'
-    highlightCode.textContent = display
-    highlightCode.className = 'hljs'
-    // mermaid syntax may not be available in lowlight — fall back to plain text
     var low = getLowlight()
     if (low && source) {
       try {
         var result = low.highlight('mermaid', source)
         highlightCode.innerHTML = hastToHtml(result.children) + '\n'
         highlightCode.className = 'language-mermaid hljs'
+        return
       } catch (_) {
-        // lowlight doesn't know mermaid — plain text overlay is fine
+        // lowlight doesn't know mermaid — fall through to plain text
       }
     }
+    highlightCode.textContent = (source ? source + '\n' : '\n')
+    highlightCode.className = 'hljs'
   }
 
   // ── DiagramRenderer ───────────────────────────────────────────────────────────
@@ -99,7 +139,7 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
 
     nodeConfig: {
       atom:       true,
-      selectable: false,  // textarea in edit mode needs mouse to select text, not the node
+      selectable: false,
       draggable:  false,
     },
 
@@ -107,6 +147,7 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
       source:      { default: '', parseHTML: function (el) { return el.getAttribute('data-source')       || '' } },
       diagramType: { default: 'mermaid', parseHTML: function (el) { return el.getAttribute('data-diagram-type') || 'mermaid' } },
       mode:        { default: 'render', parseHTML: function (el) { return el.getAttribute('data-mode')   || 'render' } },
+      cursorPos:   { default: 0,        parseHTML: function (el) { return parseInt(el.getAttribute('data-cursor-pos'))  || 0 } },
     },
 
     parseAttrs: function (data) {
@@ -114,12 +155,14 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
         source:      typeof data.source === 'string' ? data.source : '',
         diagramType: data.diagramType || 'mermaid',
         mode:        data.mode        || 'render',
+        cursorPos:   typeof data.cursorPos === 'number' ? data.cursorPos : 0,
       }
     },
 
     makeNodeView: function (node, editor) {
-      var nodeTypeName   = node.type.name
-      var currentAttrs   = Object.assign({}, node.attrs)
+      var nodeTypeName = node.type.name
+      var currentAttrs = Object.assign({}, node.attrs)
+      var destroyed    = false
 
       // ── DOM shell ─────────────────────────────────────────────────────────────
 
@@ -206,8 +249,10 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
 
       var renderBody = document.createElement('div')
       renderBody.className = 'diagram-block__render'
+      renderBody.setAttribute('tabindex', '0')
+      renderBody.style.outline = 'none'
 
-      // ── State helpers ─────────────────────────────────────────────────────────
+      // ── Helpers ───────────────────────────────────────────────────────────────
 
       function flushSource() {
         document.dispatchEvent(new CustomEvent('sieve:block-update', {
@@ -215,9 +260,13 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
         }))
       }
 
+      // Dispatch a mode change. When switching to render, include the current
+      // cursor position so it is persisted in YAML and survives document reloads.
       function switchMode(newMode) {
+        var attrs = { mode: newMode }
+        if (newMode === 'render') attrs.cursorPos = editEl.selectionStart
         document.dispatchEvent(new CustomEvent('sieve:block-update', {
-          detail: { id: currentAttrs.id, kind: 'diagram', attrs: { mode: newMode } },
+          detail: { id: currentAttrs.id, kind: 'diagram', attrs: attrs },
         }))
       }
 
@@ -228,21 +277,33 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
           (mode === 'render' ? ' diagram-block__toggle-btn--active-render' : '')
       }
 
-      // ── Render function ───────────────────────────────────────────────────────
+      // ── Render functions ──────────────────────────────────────────────────────
 
+      // showEdit detects whether this is a render→edit mode switch by checking
+      // whether renderBody was in the DOM. If so, it auto-focuses the textarea and
+      // restores the cursor position from attrs.cursorPos (persisted in YAML).
       function showEdit(attrs) {
-        if (dom.contains(renderBody)) dom.removeChild(renderBody)
+        var comingFromRender = dom.contains(renderBody)
+        if (comingFromRender) dom.removeChild(renderBody)
         if (!dom.contains(editBody)) dom.appendChild(editBody)
         if (document.activeElement !== editEl) {
           editEl.value = attrs.source || ''
           applyHighlight(highlightCode, attrs.source || '')
           updateGutter(gutter, attrs.source || '')
+          if (comingFromRender) {
+            editEl.focus()
+            var pos = typeof attrs.cursorPos === 'number' ? attrs.cursorPos : 0
+            editEl.selectionStart = editEl.selectionEnd = Math.min(pos, editEl.value.length)
+          }
         }
       }
 
       function showRender(attrs) {
-        if (dom.contains(editBody)) dom.removeChild(editBody)
+        var comingFromEdit = dom.contains(editBody)
+        if (comingFromEdit) dom.removeChild(editBody)
         if (!dom.contains(renderBody)) dom.appendChild(renderBody)
+        // Give the render area keyboard focus so Ctrl+Enter can flip back to edit.
+        if (comingFromEdit) renderBody.focus()
 
         var src = (attrs.source || '').trim()
 
@@ -259,9 +320,10 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
           var id = uniqueMermaidId(attrs.id)
           return window.mermaid.render(id, src)
         }).then(function (result) {
-          renderBody.innerHTML = ''
+          if (destroyed) return
           renderBody.innerHTML = result.svg
         }).catch(function (err) {
+          if (destroyed) return
           var msg = (err && err.message) ? err.message : String(err)
           renderBody.innerHTML =
             '<div class="diagram-block__error">' +
@@ -270,7 +332,6 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
             '<div class="diagram-block__error-title">Diagram syntax error</div>' +
             '<div class="diagram-block__error-msg">' + msg.replace(/</g, '&lt;') + '</div>' +
             '</div></div>'
-          // flip back to edit mode
           switchMode('edit')
         })
       }
@@ -287,13 +348,22 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
 
       render(node.attrs)
 
+      // Register for theme-change re-renders; cleaned up in destroy().
+      function rerender() {
+        if (currentAttrs.mode === 'render') showRender(currentAttrs)
+      }
+      activeRenderers.push(rerender)
+
       // ── Events ────────────────────────────────────────────────────────────────
 
       editBtn.addEventListener('mousedown', function (e) {
         e.preventDefault()
         e.stopPropagation()
-        if (currentAttrs.mode !== 'edit') switchMode('edit')
-        else editEl.focus()
+        if (currentAttrs.mode !== 'edit') {
+          switchMode('edit')
+        } else {
+          editEl.focus()
+        }
       })
 
       renderBtn.addEventListener('mousedown', function (e) {
@@ -354,6 +424,16 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
         e.stopPropagation()
       })
 
+      // Ctrl+Enter / Cmd+Enter in render mode: flip back to edit.
+      // stopPropagation prevents the event bubbling to TipTap's root listener.
+      renderBody.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault()
+          e.stopPropagation()
+          switchMode('edit')
+        }
+      })
+
       // ── NodeView ──────────────────────────────────────────────────────────────
 
       return {
@@ -378,6 +458,8 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
         },
 
         destroy: function () {
+          destroyed = true
+          activeRenderers = activeRenderers.filter(function (r) { return r !== rerender })
           clearTimeout(inputTimer)
           clearTimeout(highlightTimer)
         },
@@ -386,17 +468,13 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
   }
 
   // ── Context menu ──────────────────────────────────────────────────────────────
+  // Ask AI, Explain, and Delete are injected by sieve-block-extension.js framework.
+
+  DiagramRenderer.buildAiCtx = function () { return { contextLabel: 'Diagram' } }
 
   DiagramRenderer.buildContextMenuItems = function (ctx) {
     var n = ctx.node, editor = ctx.editor, getPos = ctx.getPos
     var IC = window.SieveIcons || {}
-
-    function del() {
-      if (typeof getPos === 'function') {
-        var pos = getPos()
-        editor.view.dispatch(editor.state.tr.delete(pos, pos + n.nodeSize))
-      }
-    }
 
     function toggleMode() {
       var newMode = n.attrs.mode === 'render' ? 'edit' : 'render'
@@ -412,23 +490,8 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
     var modeLabel = n.attrs.mode === 'render' ? 'Edit source' : 'Render'
 
     return [
-      { icon: IC.edit,    label: modeLabel, action: toggleMode },
-      { type: 'divider' },
-      { icon: IC.copy,    label: 'Copy source', action: copySource },
-      { icon: IC.sparkle, label: 'Ask AI…', action: function () {
-        if (typeof getPos === 'function') editor.chain().focus().setNodeSelection(getPos()).run()
-        else editor.commands.focus()
-        var ctx = {
-          content:      n.attrs.source || '',
-          blockRef:     n.attrs.id || 'doc',
-          history:      '',
-          contextLabel: 'Diagram',
-          imageIds:     [],
-        }
-        document.dispatchEvent(new CustomEvent('sieve:ai-ask', { detail: { precomputedCtx: ctx } }))
-      }},
-      { type: 'divider' },
-      { icon: IC.trash, label: 'Delete', action: del },
+      { icon: IC.edit, label: modeLabel, action: toggleMode },
+      { icon: IC.copy, label: 'Copy source', action: copySource },
     ]
   }
 

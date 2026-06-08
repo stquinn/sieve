@@ -158,53 +158,15 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
       }
     },
 
+    // Context label reflects whether this was an Ask or Explain block.
+    // Chain resolution (following ref back to the original source) is handled by Go's RunJob.
+    buildAiCtx: function (node) {
+      return { contextLabel: node.attrs.type === 'EXPLAIN' ? 'Explain' : 'Ask AI' }
+    },
+
     buildContextMenuItems: function (ctx) {
-      var node = ctx.node, editor = ctx.editor, getPos = ctx.getPos
-
-      function del() {
-        if (typeof getPos === 'function') {
-          var pos = getPos()
-          editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize))
-        }
-      }
-
-      var status = node.attrs.status || 'PENDING'
-      var isStale = status === 'PENDING' && isJobStale(node.attrs.createdAt, node.attrs.id)
-      var isError = status === 'ERROR' || status === 'TIMEOUT' || isStale
-      var isComplete = status === 'COMPLETE'
-
-      var items = [{ type: 'header', label: node.attrs.type === 'EXPLAIN' ? 'Explain' : 'Ask AI' }]
-
-      if (isComplete && node.attrs.response) {
-        items.push({ type: 'divider' })
-        items.push({ icon: IC.sparkle, label: 'Ask AI...', action: function () {
-          if (typeof getPos === 'function') editor.chain().focus().setNodeSelection(getPos()).run()
-          else editor.commands.focus()
-          var ref = (node.attrs.ref && node.attrs.ref !== 'doc')
-            ? node.attrs.ref + ',' + node.attrs.id
-            : node.attrs.id
-          document.dispatchEvent(new CustomEvent('sieve:ai-ask', {
-            detail: { precomputedCtx: { content: '', blockRef: ref, history: '', contextLabel: 'Follow-up', imageIds: [] } }
-          }))
-        }})
-      } else {
-        items.push({ type: 'divider' })
-        items.push({ icon: IC.sparkle, label: 'Ask AI...', action: function () {
-          if (typeof getPos === 'function') editor.chain().focus().setNodeSelection(getPos()).run()
-          else editor.commands.focus()
-          document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
-        }})
-      }
-
-      items.push({ icon: IC.info, label: 'Explain', action: function () {
-        if (typeof getPos === 'function') editor.chain().focus().setNodeSelection(getPos()).run()
-        else editor.commands.focus()
-        document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
-      }})
-
-      items.push({ type: 'divider' })
-      items.push({ icon: IC.trash, label: 'Delete', action: del })
-      return items
+      var node = ctx.node
+      return [{ type: 'header', label: node.attrs.type === 'EXPLAIN' ? 'Explain' : 'Ask AI' }]
     },
   }
 

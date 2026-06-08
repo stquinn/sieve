@@ -240,38 +240,8 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
     },
   }
 
-  CodeRenderer.buildContextMenuItems = function (ctx) {
-    var n = ctx.node, editor = ctx.editor, getPos = ctx.getPos
-    var IC = window.SieveIcons || {}
-
-    function del() {
-      if (typeof getPos === 'function') {
-        var pos = getPos()
-        editor.view.dispatch(editor.state.tr.delete(pos, pos + n.nodeSize))
-      }
-    }
-
-    function codeCtx() {
-      return {
-        content:      n.attrs.source || '',
-        blockRef:     n.attrs.id || 'doc',
-        history:      '',
-        contextLabel: 'Code Block',
-        imageIds:     [],
-      }
-    }
-
-    return [
-      { icon: IC.trash,   label: 'Delete',   action: del },
-      { type: 'divider' },
-      { icon: IC.sparkle, label: 'Ask AI…',  action: function () {
-        document.dispatchEvent(new CustomEvent('sieve:ai-ask', { detail: { precomputedCtx: codeCtx() } }))
-      }},
-      { icon: IC.info,    label: 'Explain',  action: function () {
-        document.dispatchEvent(new CustomEvent('sieve:ai-explain', { detail: { precomputedCtx: codeCtx() } }))
-      }},
-    ]
-  }
+  // Ask AI, Explain, and Delete are injected by sieve-block-extension.js framework.
+  CodeRenderer.buildAiCtx = function () { return { contextLabel: 'Code' } }
 
   T.registerSieveRenderer('code', CodeRenderer)
 
