@@ -106,3 +106,87 @@ dialog {
     z-index: 50;
     box-shadow: 0 0 8px var(--theme-accentPrimary);
 }
+
+/* ── Editor Toolbar ──────────────────────────────────────────────────────── */
+
+#editor-toolbar {
+  align-items: center;
+  height: 32px;
+  background: var(--theme-bgDark);
+  border-bottom: 1px solid var(--theme-border);
+  padding: 0 8px;
+  gap: 1px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.tb-group { display: flex; align-items: center; gap: 1px; }
+
+.tb-sep {
+  width: 1px; height: 16px;
+  background: var(--theme-border);
+  margin: 0 5px;
+  flex-shrink: 0;
+}
+
+.tb-btn {
+  height: 24px; min-width: 24px; padding: 0 5px;
+  border: none; border-radius: 3px; background: transparent;
+  color: var(--theme-textDim); font-size: 11px; font-weight: 600;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  white-space: nowrap; flex-shrink: 0;
+}
+.tb-btn:hover  { background: var(--theme-border); }
+.tb-btn.active { background: var(--theme-border); color: var(--theme-accentPrimary); }
+
+.tb-insert {
+  font-size: 10px; font-weight: 700; letter-spacing: .02em;
+  padding: 0 7px; height: 22px; border-radius: 3px;
+  background: color-mix(in srgb, var(--theme-accentCyan) 12%, transparent);
+  color: var(--theme-accentCyan);
+}
+.tb-insert:hover {
+  background: color-mix(in srgb, var(--theme-accentCyan) 22%, transparent);
+}
+
+.tb-ai-actions {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 2px;
+}
+.tb-help { margin-left: 4px; }
+
+.tier-dumb .tb-ai-actions { display: none; }
+
+.tb-ai {
+  font-size: 10px; font-weight: 700; letter-spacing: .02em;
+  padding: 0 8px; height: 22px; border-radius: 3px;
+  background: color-mix(in srgb, var(--theme-accentPrimary) 12%, transparent);
+  color: var(--theme-accentPrimary);
+}
+.tb-ai:hover {
+  background: color-mix(in srgb, var(--theme-accentPrimary) 22%, transparent);
+}
+.tb-ai-keep {
+  background: color-mix(in srgb, var(--theme-accentGreen) 12%, transparent);
+  color: var(--theme-accentGreen);
+}
+.tb-ai-keep:hover {
+  background: color-mix(in srgb, var(--theme-accentGreen) 22%, transparent);
+}
+
+/* Status bar library chip */
+.status-chip--library {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--theme-bgAlt);
+  border: 1px solid var(--theme-border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px; font-weight: 600;
+  color: var(--theme-accentPrimary);
+  cursor: pointer; user-select: none;
+}
+.status-chip--library:hover { background: var(--theme-border); }
+.lib-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--theme-accentGreen); flex-shrink: 0;
+}
