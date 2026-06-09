@@ -79,7 +79,7 @@ func (configRecorder) AddRecent(lib sieve.Library) {
 	c := LoadGlobalConfig()
 	filtered := make([]sieve.Library, 0, len(c.RecentLibraries))
 	for _, e := range c.RecentLibraries {
-		if e.ID != lib.ID {
+		if e.Ref != lib.Ref {
 			filtered = append(filtered, e)
 		}
 	}

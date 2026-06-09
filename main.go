@@ -258,7 +258,7 @@ func buildMenu(app *App) *menu.Menu {
 		recents = app.library.Recent()
 	}
 	for _, entry := range recents {
-		entryID := entry.ID
+		entryID := entry.Ref
 		entryName := entry.Name
 		recentMenu.AddText(entryName, nil, func(_ *menu.CallbackData) {
 			wailsruntime.WindowExecJS(app.ctx, fmt.Sprintf(`window.sieveSwitchLibrary(%q)`, entryID))

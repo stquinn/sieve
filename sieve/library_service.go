@@ -7,12 +7,12 @@ import (
 	"unicode"
 )
 
-// Library identifies a knowledge base by an opaque ID and a human-readable name.
-// For the current file-backed implementation the ID is a filesystem path, but
-// callers above the service layer treat it as opaque.
+// Library identifies a knowledge base by an opaque reference and a human-readable name.
+// The Ref is treated as opaque by all callers above the service layer — the current
+// file-backed implementation uses a filesystem path, but a future backend may use
+// a connection string, UUID, or URL.
 type Library struct {
-	// JSON tag is "path" for backwards compatibility with existing GlobalConfig files.
-	ID   string `json:"path"`
+	Ref  string `json:"ref"`
 	Name string `json:"name"`
 }
 
@@ -119,8 +119,8 @@ func (s *fileLibraryService) BestOnStartup(cliArg, envVar string) string {
 	}
 	// Walk recents — return first one that still validates.
 	for _, lib := range s.recorder.Recent() {
-		if s.validate == nil || s.validate(lib.ID) == nil {
-			return lib.ID
+		if s.validate == nil || s.validate(lib.Ref) == nil {
+			return lib.Ref
 		}
 	}
 	// Legacy fallback: last-used path from older config format.
@@ -151,7 +151,7 @@ func (s *fileLibraryService) Current() Library {
 	if name == "" {
 		name = LibraryDisplayName(s.currentID)
 	}
-	return Library{ID: s.currentID, Name: name}
+	return Library{Ref:s.currentID, Name: name}
 }
 
 func (s *fileLibraryService) Recent() []Library {
@@ -174,7 +174,7 @@ func (s *fileLibraryService) RecordSwitch(id string) {
 	if name == "" {
 		name = LibraryDisplayName(id)
 	}
-	s.recorder.AddRecent(Library{ID: id, Name: name})
+	s.recorder.AddRecent(Library{Ref:id, Name: name})
 }
 
 func (s *fileLibraryService) DisplayName(id string) string {
