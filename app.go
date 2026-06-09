@@ -194,12 +194,14 @@ func (a *App) startup(ctx context.Context) {
 
 	settings := a.State.LoadSettings()
 
-	// Save last-used store path.
+	// Save last-used store path and update recents list.
 	config := LoadGlobalConfig()
 	config.LastStorePath = a.storePath
+	config.AddRecent(a.storePath)
 	if err := config.Save(); err != nil {
 		logger.Warn("could not save global config", "err", err)
 	}
+	a.hub.broadcast("library:changed", "")
 
 	logger.Info("store ready",
 		"root", a.storePath,
@@ -393,6 +395,27 @@ func (a *App) CreateVault() (string, error) {
 		return "", fmt.Errorf("selected folder must be empty or an existing Sieve store")
 	}
 	logger.Info("store creation initialized", "path", path)
+	return path, nil
+}
+
+// SwitchLibrary switches to an existing library at path without opening a file
+// dialog. Used by the File > Open Recent submenu.
+func (a *App) SwitchLibrary(path string) (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("app context not initialized")
+	}
+	if err := ValidateStore(path); err != nil {
+		return "", fmt.Errorf("invalid library: %w", err)
+	}
+	if a.ServiceProvider != nil && a.ServiceProvider.Editor != nil {
+		a.ServiceProvider.Editor.FlushAll()
+	}
+	a.storePath = path
+	a.startup(a.ctx)
+	if a.storePath == "" {
+		return "", fmt.Errorf("failed to load the selected library")
+	}
+	runtime.MenuSetApplicationMenu(a.ctx, buildMenu(a))
 	return path, nil
 }
 
