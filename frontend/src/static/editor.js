@@ -26,6 +26,30 @@
   var internalizeDialog = null
   var richLinkDialog = null
 
+  // ── Toolbar active-state sync ─────────────────────────────────────────────────
+
+  function syncToolbar(editor) {
+    var toolbar = document.getElementById('editor-toolbar')
+    if (!toolbar || toolbar.style.display === 'none') return
+    var map = {
+      bold:        ['bold'],
+      italic:      ['italic'],
+      strike:      ['strike'],
+      code:        ['code'],
+      h1:          ['heading', { level: 1 }],
+      h2:          ['heading', { level: 2 }],
+      h3:          ['heading', { level: 3 }],
+      bulletList:  ['bulletList'],
+      orderedList: ['orderedList'],
+      taskList:    ['taskList'],
+      blockquote:  ['blockquote'],
+    }
+    toolbar.querySelectorAll('[data-cmd]').forEach(function(btn) {
+      var args = map[btn.dataset.cmd]
+      if (args) btn.classList.toggle('active', editor.isActive.apply(editor, args))
+    })
+  }
+
   // ── Public entry point called from App.tsx htmx:afterSettle ─────────────────
 
   function initEditor(mountEl, uuid, mode) {
@@ -195,6 +219,12 @@
       },
       onCreate: function () {
         initialized = true
+      },
+      onSelectionUpdate: function (p) {
+        syncToolbar(p.editor)
+      },
+      onTransaction: function (p) {
+        syncToolbar(p.editor)
       },
       onUpdate: function (p) {
         if (!initialized) return

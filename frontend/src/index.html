@@ -453,6 +453,68 @@
 
     // Close Handler
     window.addEventListener('DOMContentLoaded', function() {
+
+        // ── Toolbar command dispatch ────────────────────────────────────────────
+        document.getElementById('editor-toolbar')?.addEventListener('click', function(e) {
+          var btn = e.target.closest('[data-cmd],[data-insert],[data-ai],[id="tb-image-btn"],[id="tb-help-btn"]');
+          if (!btn) return;
+
+          if (btn.id === 'tb-help-btn') {
+            htmx.ajax('GET', '/api/help', { target: '#help-dialog-content', swap: 'innerHTML' })
+                .then(function() { document.getElementById('help-dialog').showModal(); });
+            return;
+          }
+          if (btn.id === 'tb-image-btn') {
+            document.getElementById('tb-image-input').click();
+            return;
+          }
+          var ai = btn.dataset.ai;
+          if (ai && window.SieveAI) { window.SieveAI[ai](); return; }
+
+          var insert = btn.dataset.insert;
+          if (insert) {
+            document.dispatchEvent(new CustomEvent('sieve:create-block', { detail: { kind: insert } }));
+            return;
+          }
+
+          var editor = window.__tiptap;
+          if (!editor) return;
+          var c = editor.chain().focus();
+          switch (btn.dataset.cmd) {
+            case 'bold':           c.toggleBold().run(); break;
+            case 'italic':         c.toggleItalic().run(); break;
+            case 'strike':         c.toggleStrike().run(); break;
+            case 'code':           c.toggleCode().run(); break;
+            case 'h1':             c.toggleHeading({ level: 1 }).run(); break;
+            case 'h2':             c.toggleHeading({ level: 2 }).run(); break;
+            case 'h3':             c.toggleHeading({ level: 3 }).run(); break;
+            case 'bulletList':     c.toggleBulletList().run(); break;
+            case 'orderedList':    c.toggleOrderedList().run(); break;
+            case 'taskList':       c.toggleTaskList().run(); break;
+            case 'blockquote':     c.toggleBlockquote().run(); break;
+            case 'insertTable':    c.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(); break;
+            case 'horizontalRule': c.setHorizontalRule().run(); break;
+          }
+        });
+
+        // ── Toolbar image upload ────────────────────────────────────────────────
+        document.getElementById('tb-image-input')?.addEventListener('change', function(e) {
+          var file = e.target.files && e.target.files[0];
+          if (!file) return;
+          var uuid = document.getElementById('tiptap-mount')?.getAttribute('data-uuid');
+          if (!uuid || uuid.startsWith('prompt:')) return;
+          var reader = new FileReader();
+          reader.onload = function(ev) {
+            fetch('/api/editor/smart-paste', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ uuid: uuid, entries: [{ mimeType: file.type, content: ev.target.result }] }),
+            }).catch(function(err) { console.error('[toolbar] image upload failed', err); });
+          };
+          reader.readAsDataURL(file);
+          e.target.value = '';
+        });
+
         if (window.runtime && window.runtime.EventsOn) {
             window.runtime.EventsOn('app:closing', function() {
                 console.log('[stash] App closing, vetoed natively to allow flush.');

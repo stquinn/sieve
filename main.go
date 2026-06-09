@@ -299,8 +299,14 @@ func buildMenu(app *App) *menu.Menu {
 	view.AddText("Sidebar Search", keys.Combo("f", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveSidebarSearch?.()"))
 	view.AddText("Toggle AI Blocks", keys.CmdOrCtrl("j"), js("document.dispatchEvent(new CustomEvent('sieve:toggle-ai-blocks'))"))
 	view.AddText("Quick Switcher", keys.CmdOrCtrl("p"), js("htmx.ajax('GET','/api/search-prompt',{target:'#quickswitcher-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('quickswitcher-dialog').showModal()})"))
+	view.AddSeparator()
+	view.AddText("Show Toolbar", keys.Combo("t", keys.CmdOrCtrlKey, keys.ShiftKey),
+		js("htmx.ajax('POST','/api/session/toolbar/toggle',{swap:'none'})"))
 
 	tools := appMenu.AddSubmenu("Tools")
+	tools.AddText("Smart Metadata", keys.Combo("m", keys.CmdOrCtrlKey, keys.ShiftKey),
+		js("window.SieveAI?.smartMetadata()"))
+	tools.AddSeparator()
 	tools.AddText("Smart File", keys.Combo("e", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.SieveAI?.smartFile()"))
 	tools.AddText("Keep & Smart File", keys.Combo("return", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.SieveAI?.keepAndSmartFile()"))
 

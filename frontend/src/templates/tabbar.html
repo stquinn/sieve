@@ -54,10 +54,4 @@
 
 <div id="tab-spacer" class="flex-1 min-w-0"></div>
 
-<button
-  onclick="htmx.ajax('GET','/api/help',{target:'#help-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('help-dialog').showModal()})"
-  aria-label="Keyboard shortcuts (Ctrl+/)"
-  title="Shortcuts (Ctrl+/)"
-  class="px-3 bg-transparent border-none h-full text-tn-muted hover:text-tn-text hover:bg-tn-bg-alt text-[14px] leading-none shrink-0 transition-colors"
->?</button>
 {{end}}
