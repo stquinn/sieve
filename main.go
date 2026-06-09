@@ -327,6 +327,15 @@ func buildMenu(app *App) *menu.Menu {
 }
 
 func main() {
+	// On Linux, GTK's portal-based file chooser requires gsettings-desktop-schemas
+	// which is absent in minimal NixOS/Nix environments. Fall back to the built-in
+	// GTK file chooser by disabling the portal.
+	if goruntime.GOOS == "linux" {
+		if os.Getenv("GTK_USE_PORTAL") == "" {
+			_ = os.Setenv("GTK_USE_PORTAL", "0")
+		}
+	}
+
 	cliArg := ""
 	if len(os.Args) > 1 {
 		cliArg = os.Args[1]

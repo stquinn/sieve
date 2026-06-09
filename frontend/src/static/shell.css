@@ -111,13 +111,31 @@ dialog {
 
 #editor-toolbar {
   align-items: center;
-  height: 32px;
+  height: 36px;
   background: var(--theme-bgDark);
   border-bottom: 1px solid var(--theme-border);
-  padding: 0 8px;
-  gap: 1px;
+  padding: 0 10px;
+  gap: 2px;
   flex-shrink: 0;
   overflow: hidden;
+}
+
+/* Table toolbar — secondary bar, appears below main toolbar when cursor is in a table */
+#table-toolbar {
+  display: none;
+  align-items: center;
+  height: 32px;
+  background: color-mix(in srgb, var(--theme-accentCyan) 6%, var(--theme-bgDark));
+  border-bottom: 1px solid var(--theme-border);
+  padding: 0 10px;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.tb-label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--theme-muted);
+  margin-right: 6px; flex-shrink: 0;
 }
 
 .tb-group { display: flex; align-items: center; gap: 1px; }
@@ -130,7 +148,7 @@ dialog {
 }
 
 .tb-btn {
-  height: 24px; min-width: 24px; padding: 0 5px;
+  height: 26px; min-width: 26px; padding: 0 6px;
   border: none; border-radius: 3px; background: transparent;
   color: var(--theme-textDim); font-size: 11px; font-weight: 600;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
@@ -138,10 +156,13 @@ dialog {
 }
 .tb-btn:hover  { background: var(--theme-border); }
 .tb-btn.active { background: var(--theme-border); color: var(--theme-accentPrimary); }
+.tb-btn.tb-danger { color: var(--theme-accentRed); }
+.tb-btn.tb-danger:hover { background: color-mix(in srgb, var(--theme-accentRed) 15%, transparent); }
 
+/* Teal block insert pills */
 .tb-insert {
   font-size: 10px; font-weight: 700; letter-spacing: .02em;
-  padding: 0 7px; height: 22px; border-radius: 3px;
+  padding: 0 8px; height: 24px; border-radius: 3px;
   background: color-mix(in srgb, var(--theme-accentCyan) 12%, transparent);
   color: var(--theme-accentCyan);
 }
@@ -149,6 +170,21 @@ dialog {
   background: color-mix(in srgb, var(--theme-accentCyan) 22%, transparent);
 }
 
+/* Orange AI query pills (Explain, Ask) — left side, tier-gated */
+.tb-ai-query { display: flex; align-items: center; gap: 1px; }
+.tier-dumb .tb-ai-query { display: none; }
+
+.tb-query {
+  font-size: 10px; font-weight: 700; letter-spacing: .02em;
+  padding: 0 8px; height: 24px; border-radius: 3px;
+  background: color-mix(in srgb, var(--theme-accentOrange) 12%, transparent);
+  color: var(--theme-accentOrange);
+}
+.tb-query:hover {
+  background: color-mix(in srgb, var(--theme-accentOrange) 22%, transparent);
+}
+
+/* Blue/green AI filing actions — right side, tier-gated */
 .tb-ai-actions {
   margin-left: auto;
   display: flex; align-items: center; gap: 2px;
@@ -159,7 +195,7 @@ dialog {
 
 .tb-ai {
   font-size: 10px; font-weight: 700; letter-spacing: .02em;
-  padding: 0 8px; height: 22px; border-radius: 3px;
+  padding: 0 8px; height: 24px; border-radius: 3px;
   background: color-mix(in srgb, var(--theme-accentPrimary) 12%, transparent);
   color: var(--theme-accentPrimary);
 }

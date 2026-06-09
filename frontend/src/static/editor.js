@@ -48,10 +48,10 @@
       var args = map[btn.dataset.cmd]
       if (args) btn.classList.toggle('active', editor.isActive.apply(editor, args))
     })
-    // Show table controls only when cursor is inside a table
-    var tableGroup = document.getElementById('tb-table-group')
-    if (tableGroup) {
-      tableGroup.style.display = editor.isActive('table') ? 'flex' : 'none'
+    // Show the table toolbar when cursor is inside a table
+    var tableToolbar = document.getElementById('table-toolbar')
+    if (tableToolbar) {
+      tableToolbar.style.display = editor.isActive('table') ? 'flex' : 'none'
     }
   }
 

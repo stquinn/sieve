@@ -68,6 +68,7 @@
                 <div id="quickswitcher-dialog-content" style="background: var(--theme-bgDark); width: 600px; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.6);"></div>
             </dialog>
 
+            <!-- Main toolbar -->
             <div id="editor-toolbar" style="display:{{if .ShowToolbar}}flex{{else}}none{{end}}">
               <!-- Text formatting -->
               <div class="tb-group">
@@ -98,45 +99,53 @@
                 <button class="tb-btn" data-cmd="horizontalRule" title="Horizontal rule">&#8212;</button>
               </div>
               <div class="tb-sep"></div>
-              <!-- Sieve block inserts -->
+              <!-- Insert content: blocks + AI query (left side, both teal and orange) -->
               <div class="tb-group">
                 <button class="tb-btn tb-insert" data-insert="code"    title="Insert code block">{ } Code</button>
                 <button class="tb-btn tb-insert" data-insert="diagram" title="Insert diagram">&#9671; Diagram</button>
                 <button class="tb-btn tb-insert" id="tb-clip-btn"      title="Insert web clip">&#11041; Clip</button>
-              </div>
-              <div class="tb-sep"></div>
-              <!-- Image upload -->
-              <div class="tb-group">
-                <button class="tb-btn tb-insert" id="tb-image-btn" title="Insert image from file">&#128444; Image</button>
+                <button class="tb-btn tb-insert" id="tb-image-btn"     title="Insert image from file">&#128444; Image</button>
                 <input id="tb-image-input" type="file" accept="image/*" style="display:none">
               </div>
-              <div class="tb-sep"></div>
-              <!-- Table controls — shown/hidden by syncToolbar when cursor is in a table -->
-              <div class="tb-group" id="tb-table-group" style="display:none">
-                <button class="tb-btn" data-cmd="addColumnBefore" title="Insert column before">&#8677;Col</button>
-                <button class="tb-btn" data-cmd="addColumnAfter"  title="Insert column after">Col&#8676;</button>
-                <button class="tb-btn" data-cmd="deleteColumn"    title="Delete column">&#8855;Col</button>
-                <div class="tb-sep"></div>
-                <button class="tb-btn" data-cmd="addRowBefore"    title="Insert row above">&#8679;Row</button>
-                <button class="tb-btn" data-cmd="addRowAfter"     title="Insert row below">Row&#8681;</button>
-                <button class="tb-btn" data-cmd="deleteRow"       title="Delete row">&#8855;Row</button>
-                <div class="tb-sep"></div>
-                <button class="tb-btn" data-cmd="toggleHeaderRow" title="Toggle header row">Hdr</button>
-                <button class="tb-btn" data-cmd="mergeOrSplit"    title="Merge / split cells">&#8868;</button>
-                <button class="tb-btn" data-cmd="deleteTable"     title="Delete table" style="color:var(--theme-accentRed)">&#8855;Tbl</button>
+              <!-- AI query: Explain + Ask — orange, tier-gated, still on the left -->
+              <div class="tb-group tb-ai-query">
+                <button class="tb-btn tb-query" id="tb-explain-btn" title="Explain selection (⌘⇧X)">Explain</button>
+                <button class="tb-btn tb-query" id="tb-ask-btn"     title="Ask about selection (⌘⇧A)">Ask</button>
               </div>
-              <!-- AI query actions (right-aligned; hidden at Tier 1) -->
+              <!-- AI filing actions — right side, tier-gated -->
               <div class="tb-ai-actions">
-                <button class="tb-btn tb-ai" id="tb-explain-btn" title="Explain selection">Explain</button>
-                <button class="tb-btn tb-ai" id="tb-ask-btn"     title="Ask about selection">Ask</button>
-                <div class="tb-sep" style="height:16px;background:var(--theme-border);margin:0 4px"></div>
-                <button class="tb-btn tb-ai"           data-ai="smartMetadata"   title="Smart Metadata (&#8984;&#8679;M)">&#10009; Metadata</button>
-                <button class="tb-btn tb-ai"           data-ai="smartFile"       title="Smart File (&#8984;&#8679;E)">&#11041; File</button>
+                <button class="tb-btn tb-ai"            data-ai="smartMetadata"    title="Smart Metadata (&#8984;&#8679;M)">&#10009; Metadata</button>
+                <button class="tb-btn tb-ai"            data-ai="smartFile"        title="Smart File (&#8984;&#8679;E)">&#11041; File</button>
                 <button class="tb-btn tb-ai tb-ai-keep" data-ai="keepAndSmartFile" title="Keep &amp; Smart File (&#8984;&#8679;&#9166;)">&#10003; Keep &amp; File</button>
               </div>
-              <!-- Help (relocated from tab bar) -->
+              <!-- Help -->
               <div class="tb-help">
                 <button class="tb-btn" id="tb-help-btn" title="Help (&#8984;/)">?</button>
+              </div>
+            </div>
+
+            <!-- Table toolbar — appears below main toolbar when cursor is inside a table -->
+            <div id="table-toolbar">
+              <span class="tb-label">Table</span>
+              <div class="tb-group">
+                <button class="tb-btn" data-cmd="addColumnBefore" title="Insert column before">&#8677; Col</button>
+                <button class="tb-btn" data-cmd="addColumnAfter"  title="Insert column after">Col &#8676;</button>
+                <button class="tb-btn" data-cmd="deleteColumn"    title="Delete column">&#10005; Col</button>
+              </div>
+              <div class="tb-sep"></div>
+              <div class="tb-group">
+                <button class="tb-btn" data-cmd="addRowBefore"    title="Insert row above">&#8679; Row</button>
+                <button class="tb-btn" data-cmd="addRowAfter"     title="Insert row below">Row &#8681;</button>
+                <button class="tb-btn" data-cmd="deleteRow"       title="Delete row">&#10005; Row</button>
+              </div>
+              <div class="tb-sep"></div>
+              <div class="tb-group">
+                <button class="tb-btn" data-cmd="toggleHeaderRow" title="Toggle header row">Header</button>
+                <button class="tb-btn" data-cmd="mergeOrSplit"    title="Merge / split cells">Merge</button>
+              </div>
+              <div class="tb-sep"></div>
+              <div class="tb-group">
+                <button class="tb-btn tb-danger" data-cmd="deleteTable" title="Delete entire table">&#10005; Table</button>
               </div>
             </div>
 
@@ -472,7 +481,8 @@
     window.addEventListener('DOMContentLoaded', function() {
 
         // ── Toolbar command dispatch ────────────────────────────────────────────
-        document.getElementById('editor-toolbar')?.addEventListener('click', function(e) {
+        // Single delegated handler covers both main toolbar and table toolbar
+        function handleToolbarClick(e) {
           var btn = e.target.closest('button,[data-cmd],[data-insert],[data-ai]');
           if (!btn) return;
 
@@ -539,7 +549,9 @@
             case 'mergeOrSplit':    c.mergeOrSplit().run(); break;
             case 'deleteTable':     c.deleteTable().run(); break;
           }
-        });
+        }
+        document.getElementById('editor-toolbar')?.addEventListener('click', handleToolbarClick);
+        document.getElementById('table-toolbar')?.addEventListener('click', handleToolbarClick);
 
         // ── Toolbar image upload ────────────────────────────────────────────────
         document.getElementById('tb-image-input')?.addEventListener('change', function(e) {
