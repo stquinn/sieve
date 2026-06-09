@@ -202,7 +202,16 @@ func isImageURL(s string) bool {
 	if strings.ContainsAny(s, " \t\n\r") {
 		return false
 	}
-	lower := strings.ToLower(s)
+	
+	path := s
+	if idx := strings.Index(path, "?"); idx != -1 {
+		path = path[:idx]
+	}
+	if idx := strings.Index(path, "#"); idx != -1 {
+		path = path[:idx]
+	}
+	
+	lower := strings.ToLower(path)
 	return strings.HasSuffix(lower, ".png") || strings.HasSuffix(lower, ".jpg") ||
 		strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".gif") ||
 		strings.HasSuffix(lower, ".webp") || strings.HasSuffix(lower, ".svg")

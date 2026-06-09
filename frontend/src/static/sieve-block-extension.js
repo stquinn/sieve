@@ -60,7 +60,7 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
     supportsEmbedding: { default: false, parseHTML: function (el) { return el.getAttribute('data-supports-embedding') === 'true' } },
   }
 
-  var DEFAULT_NODE_CONFIG = { atom: true, selectable: true, draggable: true, group: 'block', inline: false }
+  var DEFAULT_NODE_CONFIG = { atom: false, selectable: true, draggable: true, group: 'block', inline: false }
 
   // ── Node factory ─────────────────────────────────────────────────────────────
 
@@ -91,10 +91,44 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
         return [tag, mergeAttributes({ 'data-type': dataType }, HTMLAttributes)]
       },
 
+      renderText({ node }) {
+        return node.attrs.serialisedForm || ''
+      },
+
       addNodeView() {
         return function ({ node, editor, getPos }) {
           var view = renderer.makeNodeView(node, editor)
           if (view.dom) {
+            view.dom.contentEditable = 'true'
+
+            // Ignore ProseMirror's default selection observation for Sieve blocks.
+            // This prevents ProseMirror from yanking the native cursor when dragging across bounds.
+            const originalIgnore = view.ignoreMutation
+            view.ignoreMutation = function (mutation) {
+              if (mutation.type === 'selection') {
+                var sel = window.getSelection()
+                if (sel && sel.anchorNode && sel.focusNode) {
+                  var anchorIn = view.dom.contains(sel.anchorNode)
+                  var focusIn = view.dom.contains(sel.focusNode)
+                  // Let native handle selection if it's completely inside this block
+                  if (anchorIn && focusIn) return true
+                  // Let ProseMirror handle it if it crosses the block boundary
+                  return false
+                }
+                return true
+              }
+              return originalIgnore ? originalIgnore.call(view, mutation) : true
+            }
+
+            // Prevent browser text insertion into block DOM without using contentEditable="false".
+            // beforeinput covers typing, paste, cut, drag-drop, IME — but not navigation keys.
+            // Skip if the event originates from an editable sub-element (code/diagram textarea).
+            if (!cfg.atom) {
+              view.dom.addEventListener('beforeinput', function (e) {
+                if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return
+                e.preventDefault()
+              })
+            }
 
             view.dom.addEventListener('contextmenu', function (e) {
               e.preventDefault()

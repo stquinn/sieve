@@ -14,7 +14,6 @@
   background: var(--theme-bgDark);
   width: 100%;
   box-sizing: border-box;
-  user-select: none;
 }
 
 .smart-card-card:hover {
@@ -206,7 +205,6 @@
   border: none;
   background: transparent;
   letter-spacing: 0.02em;
-  user-select: none;
   transition: color 0.1s;
 }
 

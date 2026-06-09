@@ -277,6 +277,35 @@
     },
   })
 
+  // ── SelectionHighlight ─────────────────────────────────────────────────────
+
+  var SelectionHighlight = Extension.create({
+    name: 'selectionHighlight',
+    addProseMirrorPlugins: function () {
+      return [
+        new Plugin({
+          props: {
+            decorations: function (state) {
+              var sel = state.selection
+              // sel.node is defined for NodeSelection. sel.empty is true for empty TextSelection.
+              // So if it's not empty and has no node, it's a TextSelection (or AllSelection)
+              if (sel.empty || sel.node) return DecorationSet.empty
+              var decos = []
+              state.doc.nodesBetween(sel.from, sel.to, function (node, pos) {
+                if (node.isLeaf && (node.type.name.startsWith('sieve-') || node.type.name === 'blockRef')) {
+                  if (pos >= sel.from && pos + node.nodeSize <= sel.to) {
+                    decos.push(Decoration.node(pos, pos + node.nodeSize, { class: 'ProseMirror-selectednode' }))
+                  }
+                }
+              })
+              return DecorationSet.create(state.doc, decos)
+            }
+          }
+        })
+      ]
+    }
+  })
+
   // ── buildAiContext ─────────────────────────────────────────────────────────
 
   function buildAiContext(editor, isMarkdownMode, rawMd, uuid) {
@@ -470,6 +499,7 @@
 
   T.BlockNode = BlockNode
   T.Search = Search
+  T.SelectionHighlight = SelectionHighlight
   T.buildAiContext = buildAiContext
   T.HighlightMark = HighlightMark
   T.AiShortcuts = AiShortcuts

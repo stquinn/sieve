@@ -24,7 +24,7 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
 
   var AiBlockRenderer = {
 
-    nodeConfig: { atom: true, selectable: true, draggable: false },
+    nodeConfig: { selectable: true, draggable: false },
 
     attrs: {
       supportsEmbedding: { default: true },
@@ -50,7 +50,6 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
     makeNodeView: function (node, editor) {
       var dom = document.createElement('div')
       dom.className = 'sieve-ai-block ai-block'
-      dom.contentEditable = 'false'
       dom.setAttribute('data-id', node.attrs.id || '')
       dom.setAttribute('data-ai-ref', node.attrs.ref || 'doc')
 
@@ -76,7 +75,6 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
         })
       }
 
-      dom.addEventListener('mousedown', function (e) { e.stopPropagation() })
       dom.addEventListener('dragstart', function (e) { e.preventDefault() })
       dom.addEventListener('mouseenter', function () { applyChain('add') })
       dom.addEventListener('mouseleave', function () { applyChain('remove') })

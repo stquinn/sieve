@@ -54,7 +54,6 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
     },
 
     nodeConfig: {
-      atom: true,
       selectable: true,
       draggable: false
     },
@@ -85,13 +84,11 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
 
       var dom = document.createElement('div')
       dom.className = 'web-clip-block'
-      dom.contentEditable = 'false'
       dom.setAttribute('draggable', 'false')
       dom.setAttribute('data-id', node.attrs.id || '')
       dom.style.userSelect = 'text'
 
       dom.addEventListener('dragstart', function (e) { e.preventDefault() })
-      dom.addEventListener('mousedown', function (e) { e.stopPropagation() })
       dom.addEventListener('click', function (e) {
         var a = e.target.closest ? e.target.closest('a') : null
         if (a && a.href) {

@@ -57,13 +57,14 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	s.Editor = NewEditorService(s.Documents, autosave)
 	s.Editor.SetServices(s.BlockServices())
 	svc := s.BlockServices()
-	RegisterProcessor("code",        NewCodeBlockProcessor(svc))
-	RegisterProcessor("web-clip",    NewWebClipBlockProcessor(svc))
-	RegisterProcessor("smart-link",  NewSmartLinkProcessor(svc))
-	RegisterProcessor("smart-card",   NewSmartCardProcessor(svc))
+	RegisterProcessor("diagram", NewDiagramProcessor(svc))
 	RegisterProcessor("smart-image", NewSmartImageProcessor(svc))
+	RegisterProcessor("code", NewCodeBlockProcessor(svc))
+	RegisterProcessor("smart-link", NewSmartLinkProcessor(svc))
+	RegisterProcessor("smart-card", NewSmartCardProcessor(svc))
+	RegisterProcessor("web-clip", NewWebClipBlockProcessor(svc))
 	RegisterProcessor("ai-block", NewAIBlockProcessor(svc))
-	RegisterProcessor("diagram",  NewDiagramProcessor(svc))
+
 	RegisterContextProvider("block-anchor", &BlockAnchorProvider{svc: svc})
 }
 

@@ -13,7 +13,7 @@ import { isJobStale } from './fenced-block-base.js'
 
     getFriendlyName: function() { return 'Card' },
 
-    nodeConfig: { atom: true, selectable: true, draggable: false },
+    nodeConfig: { selectable: true, draggable: false },
 
     attrs: {
       href:        { default: '',   parseHTML: function (el) { return el.getAttribute('data-href')        || '' } },
@@ -42,11 +42,9 @@ import { isJobStale } from './fenced-block-base.js'
     makeNodeView: function (node, editor) {
       var dom = document.createElement('div')
       dom.className = 'smart-card-card'
-      dom.contentEditable = 'false'
       dom.setAttribute('data-smart-card-id', node.attrs.id || '')
 
       dom.addEventListener('dragstart', function (e) { e.preventDefault() })
-      dom.addEventListener('mousedown', function (e) { e.stopPropagation() })
 
       dom.addEventListener('click', function (e) {
         if (!node.attrs.href) {

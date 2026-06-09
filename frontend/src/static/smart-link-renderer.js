@@ -14,7 +14,7 @@ import { isJobStale } from './fenced-block-base.js'
 
     getFriendlyName: function() { return 'Link' },
 
-    nodeConfig: { atom: true, selectable: true, draggable: false, inline: true, group: "inline" },
+    nodeConfig: { selectable: true, draggable: false, inline: true, group: "inline" },
 
     attrs: {
       href:        { default: '',   parseHTML: function (el) { return el.getAttribute('data-href')         || '' } },
@@ -38,7 +38,6 @@ import { isJobStale } from './fenced-block-base.js'
       dom.setAttribute('data-id', node.attrs.id || '')
 
       dom.addEventListener('dragstart', function (e) { e.preventDefault() })
-      dom.addEventListener('mousedown', function (e) { e.stopPropagation() })
       dom.addEventListener('click', function (e) {
         e.preventDefault()
         if (window.isMod && window.isMod(e)) {

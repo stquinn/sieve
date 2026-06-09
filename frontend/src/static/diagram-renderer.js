@@ -139,7 +139,6 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
   var DiagramRenderer = {
 
     nodeConfig: {
-      atom:       true,
       selectable: false,
       draggable:  false,
     },
@@ -170,7 +169,6 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
       var dom = document.createElement('div')
       dom.className = 'sieve-block sieve-block--diagram'
       dom.setAttribute('data-id', node.attrs.id || '')
-      dom.contentEditable = 'false'
 
       dom.addEventListener('dragstart', function (e) { e.preventDefault() })
 
@@ -178,8 +176,6 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
 
       var header = document.createElement('div')
       header.className = 'sieve-block__header'
-      header.contentEditable = 'false'
-
       var badge = document.createElement('span')
       badge.className = 'sieve-block__badge'
       badge.textContent = 'diagram'
@@ -224,8 +220,6 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
 
       var gutter = document.createElement('div')
       gutter.className = 'sieve-block__gutter'
-      gutter.contentEditable = 'false'
-
       var codeArea = document.createElement('div')
       codeArea.className = 'sieve-block__code-area'
 

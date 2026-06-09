@@ -107,6 +107,7 @@
         T.AiBlockLegacy,
         T.Image.configure({ inline: false, allowBase64: true, HTMLAttributes: { class: 'editor-image' } }),
         T.HighlightMark,
+        T.SelectionHighlight,
       ].concat(window.SieveNativeCodeBlock ? [window.SieveNativeCodeBlock] : []).concat(T.getSieveNodes()).concat([
         T.TaskList,
         T.TaskItem.configure({ nested: true }),
@@ -123,6 +124,28 @@
       editorProps: {
         attributes: { spellcheck: 'true' },
         handleDOMEvents: {
+          copy: function(view, event) {
+            var sel = view.state.selection
+            // sel.node exists only on NodeSelection
+            if (sel && sel.node && sel.node.type.name === 'sieve-smart-image') {
+              var src = sel.node.attrs.src
+              if (!src) return false
+              
+              if (src.startsWith('http://') || src.startsWith('https://')) {
+                src = window.location.origin + '/sieve-image-proxy?url=' + encodeURIComponent(src)
+              } else if (!src.startsWith('data:') && !src.startsWith('blob:') && !src.startsWith('/')) {
+                if (src.startsWith('.assets/')) src = src.substring(8)
+                src = '/sieve/' + (window.__stashActiveTabUuid || uuid) + '/' + src.split('/').pop()
+              }
+
+              event.preventDefault()
+              if (window._sieveCopyImageToClipboard) {
+                window._sieveCopyImageToClipboard(src)
+              }
+              return true
+            }
+            return false
+          },
           click: function (view, event) {
             if (!window.isMod(event)) return false
             var pos = view.posAtCoords({ left: event.clientX, top: event.clientY })
@@ -203,7 +226,7 @@
 
     var gutter = document.createElement('div')
     gutter.className = 'markdown-gutter'
-    gutter.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;flex-shrink:0;padding:40px 0.6rem 0.85em;background-color:var(--theme-bgDark);border-right:1px solid var(--theme-border);color:var(--theme-muted);font-family:var(--theme-monoFont);font-size:14px;line-height:1.75;user-select:none;overflow:hidden'
+    gutter.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;flex-shrink:0;padding:40px 0.6rem 0.85em;background-color:var(--theme-bgDark);border-right:1px solid var(--theme-border);color:var(--theme-muted);font-family:var(--theme-monoFont);font-size:14px;line-height:1.75;overflow:hidden'
 
     var textarea = document.createElement('textarea')
     currentMarkdownTextarea = textarea
@@ -1152,6 +1175,48 @@
   window._editorSave = flushSave
   window._sieveOpenInternalize = function (url) { ensureOverlays(); openInternalizeDialog(url) }
   window._sieveOpenSmartCard = function (url) { ensureOverlays(); openSmartCardDialog(url) }
+
+  window._sieveCopyImageToClipboard = function(src) {
+    if (!navigator.clipboard || !navigator.clipboard.write) return
+
+    var blobPromise = fetch(src)
+      .then(function(res) { return res.blob() })
+      .then(function(blob) {
+        return new Promise(function(resolve, reject) {
+          // WebKit strictly requires image/png for clipboard writes.
+          if (blob.type === 'image/png') {
+            resolve(blob)
+            return
+          }
+          
+          var img = new Image()
+          img.onload = function() {
+            var canvas = document.createElement('canvas')
+            canvas.width = img.width
+            canvas.height = img.height
+            var ctx = canvas.getContext('2d')
+            ctx.drawImage(img, 0, 0)
+            canvas.toBlob(function(pngBlob) { resolve(pngBlob) }, 'image/png')
+          }
+          img.onerror = reject
+          img.src = URL.createObjectURL(blob)
+        })
+      })
+
+    var item = {}
+    item['image/png'] = blobPromise
+
+    navigator.clipboard.write([new ClipboardItem(item)]).catch(function(err) {
+      console.error('Failed to copy image with promise', err)
+      blobPromise.then(function(blob) {
+        var fallbackItem = {}
+        fallbackItem['image/png'] = blob
+        navigator.clipboard.write([new ClipboardItem(fallbackItem)]).catch(function(err2) {
+          console.error('Fallback copy failed', err2)
+        })
+      })
+    })
+  }
 
   // Global capture for Ctrl+Click on any link in the app
   document.addEventListener('click', function(e) {

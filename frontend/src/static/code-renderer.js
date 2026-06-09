@@ -20,7 +20,6 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
   var CodeRenderer = {
 
     nodeConfig: {
-      atom:       true,
       selectable: false,  // prevents TipTap creating a NodeSelection on click
       draggable:  false,  // mouse drag selects text, not moves the block
     },
@@ -48,12 +47,10 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
       var dom = document.createElement('div')
       dom.className = 'sieve-block sieve-block--code'
       dom.setAttribute('data-id', node.attrs.id || '')
-      dom.contentEditable = 'false'
 
       // Header + badge
       var header = document.createElement('div')
       header.className = 'sieve-block__header'
-      header.contentEditable = 'false'
       var badge = document.createElement('span')
       badge.className = 'sieve-block__badge'
       header.appendChild(badge)
@@ -65,7 +62,6 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
 
       var gutter = document.createElement('div')
       gutter.className = 'sieve-block__gutter'
-      gutter.contentEditable = 'false'
 
       // CSS Grid cell — highlight layer (behind) + textarea layer (in front)
       var codeArea = document.createElement('div')

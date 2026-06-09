@@ -26,7 +26,6 @@ import { isJobStale } from './fenced-block-base.js'
     var dom = document.createElement('div')
     dom.className = 'image-block node-image'
     dom.style.display = 'inline-block'
-    dom.contentEditable = 'false'
 
     var img = document.createElement('img')
     img.style.maxWidth = '100%'
@@ -160,6 +159,24 @@ import { isJobStale } from './fenced-block-base.js'
     },
     makeNodeView: makeNodeView,
     buildAiCtx: buildAiCtx,
+    buildContextMenuItems: function(ctx) {
+      var n = ctx.node
+      return [
+        { icon: window.SieveIcons.copy, label: 'Copy Image', action: function () {
+          var src = resolveSrc(n.attrs.src)
+          if (!src) return
+          fetch(src)
+            .then(function (res) { return res.blob() })
+            .then(function (blob) {
+              if (navigator.clipboard && navigator.clipboard.write) {
+                var item = {}
+                item[blob.type] = blob
+                navigator.clipboard.write([new ClipboardItem(item)])
+              }
+            }).catch(function (err) { console.error('Failed to copy image', err) })
+        }}
+      ]
+    },
     resolveEntries: function(sourceNode, entries) {
       if (!entries || entries.length === 0) return entries
       var textContent = entries[0].content || ''
