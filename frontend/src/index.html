@@ -78,7 +78,9 @@
             </div>
 
             <div class="status-bar">
-                <div class="status-bar__left"></div>
+                <div class="status-bar__left">
+                  <div hx-get="/api/library/current" hx-trigger="load" hx-swap="innerHTML"></div>
+                </div>
                 <div class="status-bar__right"></div>
             </div>
 

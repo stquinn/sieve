@@ -247,6 +247,24 @@ func buildMenu(app *App) *menu.Menu {
 	file.AddText("New Note", keys.CmdOrCtrl("n"), js("htmx.ajax('POST','/api/note/new',{target:'#htmx-tabbar',swap:'innerHTML'})"))
 	file.AddText("Save", keys.CmdOrCtrl("s"), js("document.dispatchEvent(new CustomEvent('sieve:save'))"))
 	file.AddText("Close Tab", keys.CmdOrCtrl("w"), js("var id=document.getElementById('tiptap-mount')?.getAttribute('data-uuid');if(id)htmx.ajax('POST','/api/tabs/close/'+id,{target:'#htmx-tabbar',swap:'innerHTML'})"))
+	file.AddSeparator()
+	file.AddText("Open Library…", keys.Combo("o", keys.CmdOrCtrlKey, keys.ShiftKey),
+		js("window.sieveSelectLibrary()"))
+	recentMenu := file.AddSubmenu("Open Recent")
+	cfg := LoadGlobalConfig()
+	for _, entry := range cfg.RecentLibraries {
+		entryPath := entry.Path
+		entryName := entry.Name
+		recentMenu.AddText(entryName, nil, func(_ *menu.CallbackData) {
+			wailsruntime.WindowExecJS(app.ctx, fmt.Sprintf(`window.sieveSwitchLibrary(%q)`, entryPath))
+		})
+	}
+	if len(cfg.RecentLibraries) > 0 {
+		recentMenu.AddSeparator()
+	}
+	recentMenu.AddText("Open Other Library…", nil, js("window.sieveSelectLibrary()"))
+	file.AddText("Create New Library…", nil,
+		js("window.go.main.App.CreateVault().then(function(p){ if(p) location.reload() })"))
 	//this shuld be Preferences in App menu
 	file.AddSeparator()
 	settingsLabel := "Settings"
