@@ -36,6 +36,7 @@ type Session struct {
 	PromptsHeight int      `json:"promptsHeight,omitempty"`
 	OpenFolders       []string `json:"openFolders,omitempty"`
 	LastSettingsPanel string   `json:"lastSettingsPanel,omitempty"`
+	ShowToolbar       bool     `json:"showToolbar,omitempty"`
 }
 
 // ParseSession decodes session JSON bytes into a Session.

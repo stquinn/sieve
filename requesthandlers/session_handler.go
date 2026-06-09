@@ -18,6 +18,7 @@ func (h *SessionHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/session/sidebar/toggle", h.handleSidebarToggle)
 	r.Post("/api/session/meta/toggle", h.handleMetaToggle)
 	r.Post("/api/session/prompts/toggle", h.handlePromptsToggle)
+	r.Post("/api/session/toolbar/toggle", h.handleToolbarToggle)
 	r.Post("/api/session/layout", h.handleSessionLayout)
 	r.Post("/api/session/refresh", h.handleSessionRefresh)
 }
@@ -90,6 +91,19 @@ func (h *SessionHandler) handleSessionLayout(w http.ResponseWriter, r *http.Requ
 
 	_ = h.ServiceProvider.State.SaveSession(session)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *SessionHandler) handleToolbarToggle(w http.ResponseWriter, r *http.Request) {
+	session := h.ServiceProvider.State.LoadSession()
+	session.ShowToolbar = !session.ShowToolbar
+	_ = h.ServiceProvider.State.SaveSession(session)
+
+	display := "none"
+	if session.ShowToolbar {
+		display = "flex"
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<style id="layout-overrides-toolbar" hx-swap-oob="true">#editor-toolbar { display: %s; }</style>`, display)
 }
 
 func (h *SessionHandler) handleSessionRefresh(w http.ResponseWriter, r *http.Request) {
