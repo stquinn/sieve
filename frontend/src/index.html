@@ -68,6 +68,61 @@
                 <div id="quickswitcher-dialog-content" style="background: var(--theme-bgDark); width: 600px; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.6);"></div>
             </dialog>
 
+            <div id="editor-toolbar" style="display:{{if .ShowToolbar}}flex{{else}}none{{end}}">
+              <!-- Text formatting -->
+              <div class="tb-group">
+                <button class="tb-btn" data-cmd="bold"    title="Bold (⌘B)"><b>B</b></button>
+                <button class="tb-btn" data-cmd="italic"  title="Italic (⌘I)"><i>I</i></button>
+                <button class="tb-btn" data-cmd="strike"  title="Strikethrough"><s>S</s></button>
+                <button class="tb-btn" data-cmd="code"    title="Inline code" style="font-family:monospace">&lt;&gt;</button>
+              </div>
+              <div class="tb-sep"></div>
+              <!-- Headings -->
+              <div class="tb-group">
+                <button class="tb-btn" data-cmd="h1" title="Heading 1" style="font-weight:800">H1</button>
+                <button class="tb-btn" data-cmd="h2" title="Heading 2" style="font-weight:700">H2</button>
+                <button class="tb-btn" data-cmd="h3" title="Heading 3" style="font-weight:600">H3</button>
+              </div>
+              <div class="tb-sep"></div>
+              <!-- Lists -->
+              <div class="tb-group">
+                <button class="tb-btn" data-cmd="bulletList"  title="Bullet list">&#8801;</button>
+                <button class="tb-btn" data-cmd="orderedList" title="Ordered list" style="font-size:10px">1.</button>
+                <button class="tb-btn" data-cmd="taskList"    title="Task list">&#9745;</button>
+              </div>
+              <div class="tb-sep"></div>
+              <!-- Block elements -->
+              <div class="tb-group">
+                <button class="tb-btn" data-cmd="blockquote"     title="Blockquote">&#8220;</button>
+                <button class="tb-btn" data-cmd="insertTable"    title="Insert 3&#xD7;3 table" style="font-size:13px">&#8862;</button>
+                <button class="tb-btn" data-cmd="horizontalRule" title="Horizontal rule">&#8212;</button>
+              </div>
+              <div class="tb-sep"></div>
+              <!-- Sieve block inserts -->
+              <div class="tb-group">
+                <button class="tb-btn tb-insert" data-insert="code"     title="Insert code block">{ } Code</button>
+                <button class="tb-btn tb-insert" data-insert="diagram"  title="Insert diagram">&#9671; Diagram</button>
+                <button class="tb-btn tb-insert" data-insert="web-clip" title="Insert web clip">&#11041; Clip</button>
+                <button class="tb-btn tb-insert" data-insert="ai-block" title="Insert AI block">&#10022; AI</button>
+              </div>
+              <div class="tb-sep"></div>
+              <!-- Image upload -->
+              <div class="tb-group">
+                <button class="tb-btn tb-insert" id="tb-image-btn" title="Insert image from file">&#128444; Image</button>
+                <input id="tb-image-input" type="file" accept="image/*" style="display:none">
+              </div>
+              <!-- AI filing actions (right-aligned; hidden at Tier 1 via .tier-dumb CSS) -->
+              <div class="tb-ai-actions">
+                <button class="tb-btn tb-ai"           data-ai="smartMetadata"   title="Smart Metadata (&#8984;&#8679;M)">&#10009; Metadata</button>
+                <button class="tb-btn tb-ai"           data-ai="smartFile"       title="Smart File (&#8984;&#8679;E)">&#11041; File</button>
+                <button class="tb-btn tb-ai tb-ai-keep" data-ai="keepAndSmartFile" title="Keep &amp; Smart File (&#8984;&#8679;&#9166;)">&#10003; Keep &amp; File</button>
+              </div>
+              <!-- Help (relocated from tab bar) -->
+              <div class="tb-help">
+                <button class="tb-btn" id="tb-help-btn" title="Help (&#8984;/)">?</button>
+              </div>
+            </div>
+
             <div class="editor-area">
                 <div id="htmx-editor" class="editor-wrapper" style="flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column;">
                     <div id="tiptap-mount" class="editor-panel" data-uuid="{{.ActiveUUID}}" data-mode="wysiwyg" style="flex: 1; min-height: 0; display: flex; flex-direction: column;"></div>
