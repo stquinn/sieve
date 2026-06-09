@@ -21,10 +21,10 @@ type storeMeta struct {
 	Name      string `json:"name,omitempty"`
 }
 
-// ReadLibraryName returns the human-readable library name stored in the .sieve
-// marker at root, or an empty string if absent or unreadable.
-func ReadLibraryName(root string) string {
-	m, err := (&FileStore{root: root}).readStoreMarker()
+// LibraryName returns the human-readable library name stored in the .sieve
+// marker, satisfying sieve.LibraryNamer. Returns "" if absent or unreadable.
+func (fs *FileStore) LibraryName() string {
+	m, err := fs.readStoreMarker()
 	if err != nil {
 		return ""
 	}

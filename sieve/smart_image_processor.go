@@ -304,7 +304,7 @@ func (p *SmartImageProcessor) saveAsset(uuid, blockID string, data []byte) (stri
 	if d, err := p.svc.Documents.LoadByUUID(uuid); err == nil {
 		doc = d
 		if doc.Kind() == KindNote {
-			cat = Library
+			cat = LibraryCategory
 		}
 	}
 

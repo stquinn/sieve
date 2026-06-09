@@ -10,7 +10,6 @@ import (
 	"sieve/logger"
 	"sieve/requesthandlers"
 	"sieve/sieve"
-	"sieve/store/filestore"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -168,15 +167,8 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 		},
 		requesthandlers.NewWsHandler(sp),
 		&requesthandlers.LibraryHandler{
-			Tmpl: tmpl,
-			GetLibraryInfo: func() (string, string) {
-				path := app.storePath
-				name := filestore.ReadLibraryName(path)
-				if name == "" {
-					name = libraryDisplayName(path)
-				}
-				return path, name
-			},
+			Tmpl:            tmpl,
+			ServiceProvider: sp,
 		},
 	}
 	r := chi.NewRouter()

@@ -13,8 +13,8 @@ import "sieve/store"
 // Note: Library uses Key "store" rather than "library" to match the existing
 // on-disk layout. Renaming requires a storage migration — decision deferred.
 var (
-	// Library holds filed notes. Shared across all hosts.
-	Library = store.Category{Key: "store", DisplayName: "Library", MetaEnabled: true, Isolation: store.Shared}
+	// LibraryCategory holds filed notes. Shared across all hosts.
+	LibraryCategory = store.Category{Key: "store", DisplayName: "Library", MetaEnabled: true, Isolation: store.Shared}
 	// WorkingCopy holds in-progress buffers. Scoped to the current host.
 	WorkingCopy = store.Category{Key: "buffers", DisplayName: "Working Copy", MetaEnabled: true, Isolation: store.Isolated}
 	// State holds application state (settings, session). Scoped to the current host.

@@ -30,7 +30,7 @@ func NewAssetService(st store.Store) *AssetService {
 // directory) before retrying. This handles the web-clip case where image files
 // are written to disk after the document was last loaded into cache.
 func (as *AssetService) ServeAssetData(docUUID, filename string) ([]byte, error) {
-	cats := []store.Category{WorkingCopy, Library}
+	cats := []store.Category{WorkingCopy, LibraryCategory}
 	for _, cat := range cats {
 		if a, err := as.st.LoadAsset(cat, docUUID, filename); err == nil {
 			return a.Body(), nil
@@ -48,7 +48,7 @@ func (as *AssetService) ServeAssetData(docUUID, filename string) ([]byte, error)
 }
 
 // Save stores binary data as an asset and returns the resulting ImageAsset.
-// category must be WorkingCopy (for buffer pastes) or Library (for note
+// category must be WorkingCopy (for buffer pastes) or LibraryCategory (for note
 // pastes). parentContext is the document logically owning the asset, and assetID
 // is the specific ID for this asset.
 // The Encoding is inferred from magic bytes by the Store.

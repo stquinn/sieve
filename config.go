@@ -5,62 +5,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
-	"unicode"
 
 	"sieve/logger"
+	"sieve/sieve"
 )
 
-// LibraryEntry is one entry in the recent-libraries list.
-type LibraryEntry struct {
-	Path string `json:"path"`
-	Name string `json:"name"`
-}
-
-// GlobalConfig stores application-level settings that are not store-specific.
+// GlobalConfig stores machine-level settings that are not specific to any one
+// library. It is persisted to the OS config directory (~/.config/sieve/).
 type GlobalConfig struct {
 	LastStorePath   string         `json:"lastStorePath"`
-	RecentLibraries []LibraryEntry `json:"recentLibraries,omitempty"`
-}
-
-// libraryDisplayName converts a filesystem path to a display-friendly name.
-// Splits the basename on hyphens, underscores, and camelCase boundaries,
-// then title-cases each word.
-func libraryDisplayName(path string) string {
-	base := filepath.Base(path)
-	var runes []rune
-	prev := rune(0)
-	for _, r := range base {
-		if unicode.IsUpper(r) && unicode.IsLower(prev) {
-			runes = append(runes, ' ')
-		}
-		runes = append(runes, r)
-		prev = r
-	}
-	s := strings.NewReplacer("-", " ", "_", " ").Replace(string(runes))
-	words := strings.Fields(s)
-	for i, w := range words {
-		if len(w) > 0 {
-			words[i] = strings.ToUpper(w[:1]) + strings.ToLower(w[1:])
-		}
-	}
-	return strings.Join(words, " ")
-}
-
-// AddRecent prepends path to RecentLibraries, deduplicates by path, and trims
-// to 8 entries. Does not save — caller must call config.Save().
-func (c *GlobalConfig) AddRecent(path string) {
-	entry := LibraryEntry{Path: path, Name: libraryDisplayName(path)}
-	filtered := make([]LibraryEntry, 0, len(c.RecentLibraries))
-	for _, e := range c.RecentLibraries {
-		if e.Path != path {
-			filtered = append(filtered, e)
-		}
-	}
-	c.RecentLibraries = append([]LibraryEntry{entry}, filtered...)
-	if len(c.RecentLibraries) > 8 {
-		c.RecentLibraries = c.RecentLibraries[:8]
-	}
+	RecentLibraries []sieve.Library `json:"recentLibraries,omitempty"`
 }
 
 func globalConfigPath() (string, error) {
@@ -103,10 +57,42 @@ func (c GlobalConfig) Save() error {
 	return os.WriteFile(path, data, 0o644)
 }
 
+// configRecorder implements sieve.LibraryRecorder backed by GlobalConfig.
+// It is stateless — each method reads and writes the config file fresh.
+type configRecorder struct{}
+
+func (configRecorder) Recent() []sieve.Library {
+	return LoadGlobalConfig().RecentLibraries
+}
+
+func (configRecorder) LastUsed() string {
+	return LoadGlobalConfig().LastStorePath
+}
+
+func (configRecorder) SetLastUsed(id string) {
+	c := LoadGlobalConfig()
+	c.LastStorePath = id
+	_ = c.Save()
+}
+
+func (configRecorder) AddRecent(lib sieve.Library) {
+	c := LoadGlobalConfig()
+	filtered := make([]sieve.Library, 0, len(c.RecentLibraries))
+	for _, e := range c.RecentLibraries {
+		if e.ID != lib.ID {
+			filtered = append(filtered, e)
+		}
+	}
+	c.RecentLibraries = append([]sieve.Library{lib}, filtered...)
+	if len(c.RecentLibraries) > 8 {
+		c.RecentLibraries = c.RecentLibraries[:8]
+	}
+	_ = c.Save()
+}
+
 // ValidateStore checks if a directory looks like a Sieve store without
-// creating any files.
+// creating any files. Passed to LibraryService as the validate function.
 func ValidateStore(path string) error {
-	// 1. Join the path properly for your OS (handles / vs \)
 	localDevDirectory := filepath.Join(path, "main.go")
 	if _, err := os.Stat(localDevDirectory); err == nil {
 		logger.Warn("config: store path looks like source directory", "path", path)
@@ -124,32 +110,4 @@ func ValidateStore(path string) error {
 		return fmt.Errorf("not a store: /store is not a directory")
 	}
 	return nil
-}
-
-// FindBestStorePath attempts to find a valid store path from CLI arg,
-// environment variable, or the global config's last-used path.
-func FindBestStorePath(cliArg, envVar string) string {
-	if cliArg != "" {
-		// If the user explicitly provides a CLI argument, we trust it and pass it directly.
-		// startup() handles checking if it is a valid store, an empty directory, or invalid.
-		return cliArg
-	}
-	if envVar != "" {
-		if err := ValidateStore(envVar); err == nil {
-			return envVar
-		}
-	}
-	config := LoadGlobalConfig()
-	if config.LastStorePath != "" {
-		if err := ValidateStore(config.LastStorePath); err == nil {
-			return config.LastStorePath
-		} else {
-			logger.Warn("config: last store path rejected", "path", config.LastStorePath, "err", err)
-		}
-	}
-	pwd, _ := os.Getwd()
-	if err := ValidateStore(pwd); err == nil {
-		return pwd
-	}
-	return ""
 }

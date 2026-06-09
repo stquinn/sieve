@@ -159,7 +159,7 @@ func (p *SmartCardProcessor) downloadImage(uuid, blockID, imageURL string) (stri
 
 	cat := WorkingCopy
 	if d, err := p.svc.Documents.LoadByUUID(uuid); err == nil && d.Kind() == KindNote {
-		cat = Library
+		cat = LibraryCategory
 	}
 
 	asset, err := p.svc.Assets.Save(cat, uuid, blockID+"-img", data)

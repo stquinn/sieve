@@ -14,7 +14,7 @@ type DocumentService struct {
 }
 
 func NewDocumentService(st store.Store) (*DocumentService, error) {
-	if err := st.PrepareCategory(Library); err != nil {
+	if err := st.PrepareCategory(LibraryCategory); err != nil {
 		return nil, err
 	}
 	if err := st.PrepareCategory(WorkingCopy); err != nil {
@@ -27,7 +27,7 @@ func (ds *DocumentService) documentFromStoreable(item store.MetaStorable) (Docum
 	if item == nil {
 		return nil, fmt.Errorf("Nill MetaStoreable not allowed")
 	}
-	if item.Category().Key == Library.Key {
+	if item.Category().Key == LibraryCategory.Key {
 		result := newNote(item)
 		return result, nil
 	}
@@ -81,7 +81,7 @@ func (ns *DocumentService) Delete(n Document) error {
 
 // Delete removes the note and its entire version history from the Store.
 func (ns *DocumentService) DeleteFolder(id string) error {
-	folder, err := ns.store.LoadFolder(Library, id)
+	folder, err := ns.store.LoadFolder(LibraryCategory, id)
 	if err == nil {
 		return ns.store.Delete(folder)
 	}
@@ -90,7 +90,7 @@ func (ns *DocumentService) DeleteFolder(id string) error {
 
 // Delete removes the note and its entire version history from the Store.
 func (ns *DocumentService) RenameFolder(id string, newName string) error {
-	folder, err := ns.store.LoadFolder(Library, id)
+	folder, err := ns.store.LoadFolder(LibraryCategory, id)
 	if err == nil {
 		_, err := ns.store.Rename(folder, newName)
 		return err
@@ -234,7 +234,7 @@ func (ds *DocumentService) New() (Document, error) {
 }
 
 func (ds *DocumentService) NewFolder(folderName string) error {
-	_, err := ds.store.CreateOrLoadFolder(Library, folderName)
+	_, err := ds.store.CreateOrLoadFolder(LibraryCategory, folderName)
 	if err != nil {
 		return fmt.Errorf("document: couldnt create folder: %w", err)
 	}
@@ -251,11 +251,11 @@ func (ds *DocumentService) File(b Document) (Document, error) {
 	kebab := deriveKebabNameFromMeta(b.Meta(), b.Body())
 	var moved store.Storable
 	var err error
-	// If Buffer - Move to Library category (FileStore migrates version history automatically).
+	// If Buffer - Move to LibraryCategory category (FileStore migrates version history automatically).
 	if b.Kind() == KindBuffer {
-		moved, err = ds.store.Move(b.Storable(), Library)
+		moved, err = ds.store.Move(b.Storable(), LibraryCategory)
 		if err != nil {
-			return nil, fmt.Errorf("document: file: move to Library: %w", err)
+			return nil, fmt.Errorf("document: file: move to LibraryCategory: %w", err)
 		}
 	} else {
 		//if its was already a Note - its already moved
@@ -287,19 +287,19 @@ func (ds *DocumentService) File(b Document) (Document, error) {
 	return newNote(ms), nil
 }
 
-// List returns the Library tree as a []NoteEntry (the same projection used
+// List returns the LibraryCategory tree as a []NoteEntry (the same projection used
 // by the sidebar). Backed by the Store — no direct filesystem access.
 func (ds *DocumentService) List() ([]NoteEntry, error) {
-	storables, err := ds.store.List(Library, "")
+	storables, err := ds.store.List(LibraryCategory, "")
 	if err != nil {
 		return nil, err
 	}
 	return buildNoteTree(storables), nil
 }
 
-// Move relocates a note to a different folder within the Library. folder is
+// Move relocates a note to a different folder within the LibraryCategory. folder is
 // the target folder path (e.g. "ai-stuff" or "projects/go"). An empty folder
-// moves the note to the Library root. The filename is preserved.
+// moves the note to the LibraryCategory root. The filename is preserved.
 func (ds *DocumentService) Move(n Document, folderName string) (Document, error) {
 	folder, err := ds.store.CreateOrLoadFolder(n.Storable().Category(), folderName)
 	if err != nil {
@@ -313,22 +313,22 @@ func (ds *DocumentService) Move(n Document, folderName string) (Document, error)
 	return newNote(ms), nil
 }
 
-// Count returns the number of notes in the Library.
+// Count returns the number of notes in the LibraryCategory.
 func (ds *DocumentService) Count() int {
-	storables, err := ds.store.List(Library, "")
+	storables, err := ds.store.List(LibraryCategory, "")
 	if err != nil {
 		return 0
 	}
 	return len(flattenDocs(storables))
 }
 
-// Search performs a full-text and frontmatter search over the Library.
+// Search performs a full-text and frontmatter search over the LibraryCategory.
 // Backed by the Store — no direct filesystem access.
 func (ds *DocumentService) Search(query string) ([]SearchResult, error) {
 	if query == "" {
 		return nil, nil
 	}
-	storables, err := ds.store.List(Library, "")
+	storables, err := ds.store.List(LibraryCategory, "")
 	if err != nil {
 		return nil, err
 	}
@@ -565,7 +565,7 @@ func min(a, b int) int {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-// NoteEntry represents a single node in the Library tree.
+// NoteEntry represents a single node in the LibraryCategory tree.
 // Directories have IsDir=true and a Children slice; files carry a UUID ID.
 type NoteEntry struct {
 	ID          string      `json:"id"` // UUID for files; ExternalRef for folders (opaque to frontend)

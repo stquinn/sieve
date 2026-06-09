@@ -29,7 +29,7 @@ func NewAIService(state *StateService, prompts *PromptService, documents *Docume
 }
 
 // EvaluateAndFileDoc runs the full evaluate-and-file pipeline for the document
-// at path. fileAfter promotes a buffer to the Library (or refiles a note).
+// at path. fileAfter promotes a buffer to the LibraryCategory (or refiles a note).
 // allowDiscard permits deletion of empty bodies and trash-intent documents.
 func (s *AIService) EvaluateAndFileDoc(id string, fileAfter bool, allowDiscard bool) (FilingOutcome, error) {
 	doc, err := s.documents.LoadByUUID(id)

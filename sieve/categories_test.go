@@ -8,7 +8,7 @@ import (
 )
 
 func TestLibraryCategory(t *testing.T) {
-	c := sieve.Library
+	c := sieve.LibraryCategory
 	if c.Key != "store" {
 		t.Errorf("Library.Key = %q, want %q", c.Key, "store")
 	}
@@ -47,7 +47,7 @@ func TestStateCategory(t *testing.T) {
 }
 
 func TestCategoryKeysAreDistinct(t *testing.T) {
-	keys := []string{sieve.Library.Key, sieve.WorkingCopy.Key, sieve.State.Key}
+	keys := []string{sieve.LibraryCategory.Key, sieve.WorkingCopy.Key, sieve.State.Key}
 	seen := make(map[string]bool)
 	for _, k := range keys {
 		if seen[k] {
@@ -58,7 +58,7 @@ func TestCategoryKeysAreDistinct(t *testing.T) {
 }
 
 func TestCategoryDisplayNamesAreDistinct(t *testing.T) {
-	names := []string{sieve.Library.DisplayName, sieve.WorkingCopy.DisplayName, sieve.State.DisplayName}
+	names := []string{sieve.LibraryCategory.DisplayName, sieve.WorkingCopy.DisplayName, sieve.State.DisplayName}
 	seen := make(map[string]bool)
 	for _, n := range names {
 		if seen[n] {

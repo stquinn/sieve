@@ -8,6 +8,7 @@ import (
 
 type ServiceProvider struct {
 	Store       store.Store
+	Library     LibraryService
 	Documents   *DocumentService
 	Assets      *AssetService
 	State       *StateService

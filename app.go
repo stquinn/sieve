@@ -27,9 +27,9 @@ import (
 
 // App is the Wails application backend.
 type App struct {
-	ctx       context.Context
-	storePath string
-	hostname  string // resolved at startup from os.Hostname
+	ctx      context.Context
+	storePath string // current library root; internal file-path detail
+	hostname  string
 
 	ServiceProvider *sieve.ServiceProvider
 	Documents       *sieve.DocumentService
@@ -37,8 +37,8 @@ type App struct {
 	State           *sieve.StateService
 	Prompts         *sieve.PromptService
 	AI              *sieve.AIService
-	FileStore       *filestore.FileStore
 
+	library  sieve.LibraryService // owns library discovery, recents, naming
 	themesFS fs.FS
 	hub      *sseHub
 	watcher  *notesWatcher
@@ -48,7 +48,7 @@ type App struct {
 	DevServerPort int
 }
 
-func NewApp(storePath string, themesFS fs.FS, hub *sseHub, serviceProvider *sieve.ServiceProvider) *App {
+func NewApp(storePath string, themesFS fs.FS, hub *sseHub, serviceProvider *sieve.ServiceProvider, library sieve.LibraryService) *App {
 	hostname, _ := os.Hostname()
 	if hostname == "" {
 		hostname = "localhost"
@@ -60,6 +60,7 @@ func NewApp(storePath string, themesFS fs.FS, hub *sseHub, serviceProvider *siev
 		themesFS:        themesFS,
 		hub:             hub,
 		ServiceProvider: serviceProvider,
+		library:         library,
 	}
 }
 
@@ -95,18 +96,6 @@ func (a *App) startup(ctx context.Context) {
 	isFirstStartup := a.ctx == nil
 	a.ctx = ctx
 
-	if a.storePath == "" && isFirstStartup {
-		config := LoadGlobalConfig()
-		if config.LastStorePath != "" {
-			if err := ValidateStore(config.LastStorePath); err == nil {
-				a.storePath = config.LastStorePath
-				logger.Info("startup: using LastStorePath", "path", a.storePath)
-			} else {
-				logger.Warn("startup: LastStorePath rejected", "path", config.LastStorePath, "err", err)
-			}
-		}
-	}
-
 	abs, _ := filepath.Abs(a.storePath)
 	logger.Info("startup", "vault_raw", a.storePath, "vault_abs", abs)
 
@@ -117,39 +106,31 @@ func (a *App) startup(ctx context.Context) {
 
 	logger.Info("startup: beginning validation", "isFirstStartup", isFirstStartup, "storePath", abs)
 
-	if err := ValidateStore(abs); err != nil {
-		logger.Warn("startup: ValidateStore failed", "path", abs, "err", err)
+	if err := a.library.Validate(abs); err != nil {
+		logger.Warn("startup: validation failed", "path", abs, "err", err)
 		entries, readErr := os.ReadDir(abs)
 		isEmpty := readErr == nil && len(entries) == 0
-		logger.Debug("startup: empty directory check", "isEmpty", isEmpty, "readErr", readErr, "entriesCount", len(entries))
+		logger.Debug("startup: empty directory check", "isEmpty", isEmpty, "entriesCount", len(entries))
 
 		if !isEmpty {
-			logger.Warn("startup: path is neither a valid store nor empty", "path", abs)
+			// Not a valid store and not empty — fall back to best available library.
 			if isFirstStartup {
-				config := LoadGlobalConfig()
-				if config.LastStorePath != "" {
-					if fallbackErr := ValidateStore(config.LastStorePath); fallbackErr == nil {
-						abs = config.LastStorePath
-						logger.Info("startup: falling back to LastStorePath", "path", abs)
-					} else {
-						logger.Warn("startup: fallback LastStorePath rejected", "path", config.LastStorePath, "err", fallbackErr)
-						a.storePath = ""
-						logger.Info("startup: entering bootstrap mode from invalid implicit path")
-						return
-					}
+				fallback := a.library.BestOnStartup("", "")
+				if fallback != "" && fallback != abs {
+					abs = fallback
+					logger.Info("startup: falling back to best available library", "path", abs)
 				} else {
 					a.storePath = ""
-					logger.Info("startup: entering bootstrap mode from invalid implicit path")
+					logger.Info("startup: entering bootstrap mode — no valid library found")
 					return
 				}
 			} else {
-				// This is an explicit selection from the UI (CreateVault/InitVault) that is invalid.
 				a.storePath = ""
 				logger.Warn("startup: explicit path is invalid, re-entering bootstrap mode")
 				return
 			}
 		} else {
-			logger.Info("startup: path is empty, proceeding with initialization", "path", abs)
+			logger.Info("startup: path is empty, proceeding with initialisation", "path", abs)
 		}
 	} else {
 		logger.Info("startup: path is a valid store", "path", abs)
@@ -180,7 +161,6 @@ func (a *App) startup(ctx context.Context) {
 		logger.Error("filestore init failed", "err", err)
 		return
 	}
-	a.FileStore = fs
 	a.ServiceProvider.Init(fs, a.storePath)
 	a.Documents = a.ServiceProvider.Documents
 	a.Assets = a.ServiceProvider.Assets
@@ -188,19 +168,16 @@ func (a *App) startup(ctx context.Context) {
 	a.Prompts = a.ServiceProvider.Prompts
 	a.AI = a.ServiceProvider.AI
 
-	if err := fs.RunMigrationIfNeeded([]store.Category{sieve.Library, sieve.WorkingCopy}); err != nil {
+	if err := fs.RunMigrationIfNeeded([]store.Category{sieve.LibraryCategory, sieve.WorkingCopy}); err != nil {
 		logger.Error("store migration failed", "err", err)
 	}
 
 	settings := a.State.LoadSettings()
 
-	// Save last-used store path and update recents list.
-	config := LoadGlobalConfig()
-	config.LastStorePath = a.storePath
-	config.AddRecent(a.storePath)
-	if err := config.Save(); err != nil {
-		logger.Warn("could not save global config", "err", err)
-	}
+	// Attach the library service to the live store and record this switch.
+	a.library.Attach(a.storePath, fs)
+	a.library.RecordSwitch(a.storePath)
+	a.ServiceProvider.Library = a.library
 	a.hub.broadcast("library:changed", "")
 
 	logger.Info("store ready",
@@ -344,8 +321,8 @@ func (a *App) SelectVault() (string, error) {
 	if path == "" {
 		return "", nil
 	}
-	if err := ValidateStore(path); err != nil {
-		logger.Warn("SelectVault: ValidateStore failed", "path", path, "err", err)
+	if err := a.library.Validate(path); err != nil {
+		logger.Warn("SelectVault: validation failed", "path", path, "err", err)
 		return "", fmt.Errorf("this directory does not look like a Sieve store: %w", err)
 	}
 
@@ -357,13 +334,6 @@ func (a *App) SelectVault() (string, error) {
 	if a.storePath == "" {
 		logger.Warn("SelectVault: startup rejected the folder")
 		return "", fmt.Errorf("failed to load the selected store")
-	}
-
-	config := LoadGlobalConfig()
-	config.LastStorePath = path
-	if err := config.Save(); err != nil {
-		logger.Warn("SelectVault: failed to save global config", "err", err)
-		return "", fmt.Errorf("could not update global config: %w", err)
 	}
 	logger.Info("store selected", "path", path)
 	return path, nil
@@ -404,7 +374,7 @@ func (a *App) SwitchLibrary(path string) (string, error) {
 	if a.ctx == nil {
 		return "", fmt.Errorf("app context not initialized")
 	}
-	if err := ValidateStore(path); err != nil {
+	if err := a.library.Validate(path); err != nil {
 		return "", fmt.Errorf("invalid library: %w", err)
 	}
 	if a.ServiceProvider != nil && a.ServiceProvider.Editor != nil {
@@ -483,7 +453,7 @@ func (a *App) DownloadAsset(uuid, targetURL, id string) (AssetDTO, error) {
 		if d, err := a.Documents.LoadByUUID(uuid); err == nil {
 			doc = d
 			if doc.Kind() == sieve.KindNote {
-				cat = sieve.Library
+				cat = sieve.LibraryCategory
 			}
 		}
 	}

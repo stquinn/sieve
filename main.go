@@ -251,15 +251,20 @@ func buildMenu(app *App) *menu.Menu {
 	file.AddText("Open Library…", keys.Combo("o", keys.CmdOrCtrlKey, keys.ShiftKey),
 		js("window.sieveSelectLibrary()"))
 	recentMenu := file.AddSubmenu("Open Recent")
-	cfg := LoadGlobalConfig()
-	for _, entry := range cfg.RecentLibraries {
-		entryPath := entry.Path
+	var recents []sieve.Library
+	if app.ServiceProvider != nil && app.ServiceProvider.Library != nil {
+		recents = app.ServiceProvider.Library.Recent()
+	} else {
+		recents = app.library.Recent()
+	}
+	for _, entry := range recents {
+		entryID := entry.ID
 		entryName := entry.Name
 		recentMenu.AddText(entryName, nil, func(_ *menu.CallbackData) {
-			wailsruntime.WindowExecJS(app.ctx, fmt.Sprintf(`window.sieveSwitchLibrary(%q)`, entryPath))
+			wailsruntime.WindowExecJS(app.ctx, fmt.Sprintf(`window.sieveSwitchLibrary(%q)`, entryID))
 		})
 	}
-	if len(cfg.RecentLibraries) > 0 {
+	if len(recents) > 0 {
 		recentMenu.AddSeparator()
 	}
 	recentMenu.AddText("Open Other Library…", nil, js("window.sieveSelectLibrary()"))
@@ -320,11 +325,12 @@ func main() {
 	if len(os.Args) > 1 {
 		cliArg = os.Args[1]
 	}
-	storePath := FindBestStorePath(cliArg, os.Getenv("SIEVE_STORE"))
+	libSvc := sieve.NewLibraryService(configRecorder{}, ValidateStore)
+	storePath := libSvc.BestOnStartup(cliArg, os.Getenv("SIEVE_STORE"))
 
 	hub := newSSEHub()
 	serviceProvider := &sieve.ServiceProvider{}
-	app := NewApp(storePath, themes, hub, serviceProvider)
+	app := NewApp(storePath, themes, hub, serviceProvider, libSvc)
 	api, err := newAPIHandler(app, hub, serviceProvider)
 	if err != nil {
 		logger.Error("failed to init API handler", "err", err)
