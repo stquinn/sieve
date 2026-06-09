@@ -902,6 +902,13 @@ func extFromBytes(b []byte) string {
 	case strings.HasPrefix(mime, "image/webp"):
 		return ".webp"
 	default:
+		// http.DetectContentType does not recognise SVG (it returns text/plain or
+		// text/xml). Check the content directly: mermaid SVGs start with <svg;
+		// standards-compliant SVGs may start with an XML declaration.
+		trimmed := bytes.TrimSpace(b)
+		if bytes.HasPrefix(trimmed, []byte("<svg")) || bytes.HasPrefix(trimmed, []byte("<?xml")) {
+			return ".svg"
+		}
 		return ".bin"
 	}
 }

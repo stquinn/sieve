@@ -274,8 +274,14 @@ func toAssetViews(storables []store.Storable) []assetViewData {
 			ref := as.ExternalRef()
 			name := filepath.Base(ref)
 			mt := mime.TypeByExtension(filepath.Ext(name))
-			if mt == "" {
-				mt = "application/octet-stream"
+			// .bin is our legacy unknown-type extension. Sniff the content to
+			// detect SVG — the same check the asset server uses when serving.
+			if mt == "" || filepath.Ext(name) == ".bin" {
+				if isSVGBytes(as.Body()) {
+					mt = "image/svg+xml"
+				} else if mt == "" {
+					mt = "application/octet-stream"
+				}
 			}
 			out = append(out, assetViewData{
 				SrcURL:   ref,
@@ -286,6 +292,20 @@ func toAssetViews(storables []store.Storable) []assetViewData {
 		}
 	}
 	return out
+}
+
+// isSVGBytes returns true when b begins with an SVG document.
+// http.DetectContentType does not reliably detect SVG so we check bytes directly.
+func isSVGBytes(b []byte) bool {
+	// Trim leading whitespace then check for <svg or <?xml
+	for i, c := range b {
+		if c == ' ' || c == '\t' || c == '\r' || c == '\n' {
+			continue
+		}
+		rest := b[i:]
+		return len(rest) >= 4 && (string(rest[:4]) == "<svg" || (len(rest) >= 5 && string(rest[:5]) == "<?xml"))
+	}
+	return false
 }
 
 func metaFmtTime(t time.Time) string {

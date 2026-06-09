@@ -141,3 +141,18 @@ export function isJobStale(createdAt, id) {
   var ageMs = Date.now() - new Date(createdAt).getTime()
   return ageMs > 15000
 }
+
+// extractTextFromDOM recursively gathers text from a DOM node.
+export function extractTextFromDOM(node) {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent || ''
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    if (node.nodeName === 'TEXTAREA' || node.nodeName === 'INPUT') return node.value || ''
+    if (node.classList && (node.classList.contains('sieve-block__gutter') || node.classList.contains('sieve-block__highlight') || node.classList.contains('sieve-code-block__gutter'))) return ''
+  }
+  if (node.nodeName === 'BR') return '\n'
+  if (node.nodeName === 'DIV' || node.nodeName === 'P' || node.nodeName === 'LI') {
+    var inner = Array.from(node.childNodes).map(function(n) { return extractTextFromDOM(n) }).join('')
+    return inner + '\n'
+  }
+  return Array.from(node.childNodes).map(function(n) { return extractTextFromDOM(n) }).join('')
+}

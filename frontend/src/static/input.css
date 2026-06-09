@@ -4,7 +4,7 @@
 
 /* ── Rich Link Card ─────────────────────────────────────────────────────────── */
 
-.rich-link-card {
+.smart-card-card {
   border: 1px solid var(--theme-border);
   border-radius: 8px;
   padding: 12px;
@@ -17,23 +17,23 @@
   user-select: none;
 }
 
-.rich-link-card:hover {
+.smart-card-card:hover {
   border-color: var(--theme-border2);
 }
 
-.rich-link-card--pending {
+.smart-card-card--pending {
   opacity: 0.7;
 }
 
 /* Row 1: link icon + site name */
-.rich-link-card__meta {
+.smart-card-card__meta {
   display: flex;
   align-items: center;
   gap: 6px;
   margin-bottom: 8px;
 }
 
-.rich-link-card__icon {
+.smart-card-card__icon {
   width: 14px;
   height: 14px;
   display: flex;
@@ -44,7 +44,7 @@
   font-size: 10px;
 }
 
-.rich-link-card__site {
+.smart-card-card__site {
   font-size: 11px;
   color: var(--theme-fg3);
   font-weight: 500;
@@ -52,13 +52,13 @@
 }
 
 /* Row 2: thumbnail + text content */
-.rich-link-card__body {
+.smart-card-card__body {
   display: flex;
   gap: 10px;
   align-items: flex-start;
 }
 
-.rich-link-card__thumb {
+.smart-card-card__thumb {
   width: 72px;
   height: 72px;
   min-width: 72px;
@@ -68,7 +68,7 @@
   flex-shrink: 0;
 }
 
-.rich-link-card__thumb--placeholder {
+.smart-card-card__thumb--placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -76,18 +76,18 @@
   font-size: 11px;
 }
 
-.rich-link-card__thumb--spinner {
+.smart-card-card__thumb--spinner {
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.rich-link-card__content {
+.smart-card-card__content {
   flex: 1;
   min-width: 0;
 }
 
-.rich-link-card__title {
+.smart-card-card__title {
   font-weight: 600;
   color: var(--theme-accent);
   margin-bottom: 3px;
@@ -98,7 +98,7 @@
   -webkit-box-orient: vertical;
 }
 
-.rich-link-card__description {
+.smart-card-card__description {
   font-size: 11px;
   color: var(--theme-fg2);
   line-height: 1.4;
@@ -109,7 +109,7 @@
   -webkit-box-orient: vertical;
 }
 
-.rich-link-card__url {
+.smart-card-card__url {
   font-size: 10px;
   color: var(--theme-fg3);
   white-space: nowrap;
@@ -118,7 +118,7 @@
 }
 
 /* Spinner reused from web-clip-block__spinner */
-.rich-link-card__spinner {
+.smart-card-card__spinner {
   display: inline-block;
   width: 14px;
   height: 14px;

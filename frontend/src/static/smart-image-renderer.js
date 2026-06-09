@@ -160,6 +160,28 @@ import { isJobStale } from './fenced-block-base.js'
     },
     makeNodeView: makeNodeView,
     buildAiCtx: buildAiCtx,
+    resolveEntries: function(sourceNode, entries) {
+      if (!entries || entries.length === 0) return entries
+      var textContent = entries[0].content || ''
+      var mermaidMatch = /^```mermaid\n([\s\S]*?)```$/.exec(textContent.trim())
+      if (!mermaidMatch) return entries
+
+      var src = mermaidMatch[1].trim()
+      if (!src || !window.TipTap.ensureMermaid) return entries
+
+      return window.TipTap.ensureMermaid().then(function() {
+        var id = 'mermaid-extract-' + Date.now() + '-' + Math.floor(Math.random() * 1000)
+        return window.mermaid.render(id, src)
+      }).then(function(result) {
+        // Return raw SVG so saveSVG on the backend writes it directly.
+        // Never send to an external rendering server.
+        return [{ mimeType: 'image/svg+xml', content: result.svg }]
+      }).catch(function(err) {
+        console.error('[smart-image] mermaid render failed for extraction', err)
+        window.alert('Failed to extract diagram: ' + err.message)
+        return entries
+      })
+    }
   })
 
 })()

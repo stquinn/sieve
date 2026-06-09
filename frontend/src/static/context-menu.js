@@ -46,6 +46,20 @@
     menu.style.left = x + 'px'
     menu.style.top = y + 'px'
 
+    appendItemsToMenu(menu, items)
+
+    document.body.appendChild(menu)
+
+    requestAnimationFrame(function () {
+      var r = menu.getBoundingClientRect()
+      if (r.right > window.innerWidth - 8)
+        menu.style.left = (window.innerWidth - r.width - 8) + 'px'
+      if (r.bottom > window.innerHeight - 8)
+        menu.style.top = (window.innerHeight - r.height - 8) + 'px'
+    })
+  }
+
+  function appendItemsToMenu(menu, items) {
     items.forEach(function (item) {
       if (item.type === 'header') {
         var hdr = document.createElement('div')
@@ -76,16 +90,21 @@
         menu.appendChild(btn)
       }
     })
+  }
 
-    document.body.appendChild(menu)
-
-    requestAnimationFrame(function () {
-      var r = menu.getBoundingClientRect()
-      if (r.right > window.innerWidth - 8)
-        menu.style.left = (window.innerWidth - r.width - 8) + 'px'
-      if (r.bottom > window.innerHeight - 8)
-        menu.style.top = (window.innerHeight - r.height - 8) + 'px'
-    })
+  window.SieveContextMenu = {
+    appendItems: function (items) {
+      var menu = document.getElementById('sieve-context-menu')
+      if (!menu) return
+      appendItemsToMenu(menu, items)
+      requestAnimationFrame(function () {
+        var r = menu.getBoundingClientRect()
+        if (r.right > window.innerWidth - 8)
+          menu.style.left = (window.innerWidth - r.width - 8) + 'px'
+        if (r.bottom > window.innerHeight - 8)
+          menu.style.top = (window.innerHeight - r.height - 8) + 'px'
+      })
+    }
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────────

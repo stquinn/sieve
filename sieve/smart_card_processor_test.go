@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-func TestRichLinkProcessor_InitAttrs_defaults(t *testing.T) {
-	p := NewRichLinkProcessor(BlockServices{})
+func TestSmartCardProcessor_InitAttrs_defaults(t *testing.T) {
+	p := NewSmartCardProcessor(BlockServices{})
 	attrs := p.InitAttrs("ri-a1b2", nil)
 
 	if attrs["id"] != "ri-a1b2" {
@@ -25,45 +25,44 @@ func TestRichLinkProcessor_InitAttrs_defaults(t *testing.T) {
 	if attrs["createdAt"] == nil || attrs["createdAt"] == "" {
 		t.Error("createdAt must be set")
 	}
-	for _, field := range []string{"title", "description", "image", "siteName", "fetchedAt", "completedAt", "error", "supportsPromotion"} {
+	for _, field := range []string{"title", "description", "image", "siteName", "fetchedAt", "completedAt", "error", "supportsEmbedding"} {
 		if _, ok := attrs[field]; !ok {
 			t.Errorf("InitAttrs must declare field %q", field)
 		}
 	}
 }
 
-func TestRichLinkProcessor_InitAttrs_idNotOverridable(t *testing.T) {
-	p := NewRichLinkProcessor(BlockServices{})
+func TestSmartCardProcessor_InitAttrs_idNotOverridable(t *testing.T) {
+	p := NewSmartCardProcessor(BlockServices{})
 	attrs := p.InitAttrs("ri-0001", map[string]interface{}{"id": "injected"})
 	if attrs["id"] != "ri-0001" {
 		t.Error("id must not be overridable")
 	}
 }
 
-func TestRichLinkProcessor_InitAttrs_hrefPreserved(t *testing.T) {
-	p := NewRichLinkProcessor(BlockServices{})
+func TestSmartCardProcessor_InitAttrs_hrefPreserved(t *testing.T) {
+	p := NewSmartCardProcessor(BlockServices{})
 	attrs := p.InitAttrs("ri-0002", map[string]interface{}{"href": "https://example.com"})
 	if attrs["href"] != "https://example.com" {
 		t.Errorf("href override: got %v, want https://example.com", attrs["href"])
 	}
 }
 
-func TestRichLinkProcessor_Mode(t *testing.T) {
-	p := NewRichLinkProcessor(BlockServices{})
+func TestSmartCardProcessor_Mode(t *testing.T) {
+	p := NewSmartCardProcessor(BlockServices{})
 	if p.Mode() != BlockModeBlock {
 		t.Errorf("Mode: got %v, want block", p.Mode())
 	}
 }
 
-func TestRichLinkProcessor_PasteMatch_neverMatches(t *testing.T) {
-	p := NewRichLinkProcessor(BlockServices{})
-	ok, _ := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "https://example.com"}}, "", "")
-	if ok {
-		t.Error("PasteMatch must always return false — URLs become SmartLinks, not RichLink cards")
+func TestSmartCardProcessor_IsBlock_neverMatches(t *testing.T) {
+	p := NewSmartCardProcessor(BlockServices{})
+	if p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "https://example.com"}}) {
+		t.Error("IsBlock must always return false — URLs become SmartLinks, not SmartCard cards")
 	}
 }
 
-func TestRichLinkProcessor_RunJob_fetchesOGData(t *testing.T) {
+func TestSmartCardProcessor_RunJob_fetchesOGData(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprint(w, `<!DOCTYPE html><html><head>
@@ -74,10 +73,10 @@ func TestRichLinkProcessor_RunJob_fetchesOGData(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewRichLinkProcessor(BlockServices{LinkPreview: NewLinkPreviewService()})
+	p := NewSmartCardProcessor(BlockServices{LinkPreview: NewLinkPreviewService()})
 	block := &SieveBlock{
 		ID:   "ri-0001",
-		Kind: "rich-link",
+		Kind: "smart-card",
 		Attrs: map[string]interface{}{
 			"href":      srv.URL,
 			"status":    BlockStatusPending,
@@ -108,11 +107,11 @@ func TestRichLinkProcessor_RunJob_fetchesOGData(t *testing.T) {
 	}
 }
 
-func TestRichLinkProcessor_RunJob_emptyHrefCompletes(t *testing.T) {
-	p := NewRichLinkProcessor(BlockServices{LinkPreview: NewLinkPreviewService()})
+func TestSmartCardProcessor_RunJob_emptyHrefCompletes(t *testing.T) {
+	p := NewSmartCardProcessor(BlockServices{LinkPreview: NewLinkPreviewService()})
 	block := &SieveBlock{
 		ID:   "ri-0002",
-		Kind: "rich-link",
+		Kind: "smart-card",
 		Attrs: map[string]interface{}{
 			"href":      "",
 			"status":    BlockStatusPending,
@@ -127,7 +126,7 @@ func TestRichLinkProcessor_RunJob_emptyHrefCompletes(t *testing.T) {
 	}
 }
 
-func TestRichLinkProcessor_RunJob_imageFailureIsNonFatal(t *testing.T) {
+func TestSmartCardProcessor_RunJob_imageFailureIsNonFatal(t *testing.T) {
 	// Page has an OG image URL that will fail to download.
 	imgSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "gone", http.StatusGone)
@@ -143,10 +142,10 @@ func TestRichLinkProcessor_RunJob_imageFailureIsNonFatal(t *testing.T) {
 	}))
 	defer pageSrv.Close()
 
-	p := NewRichLinkProcessor(BlockServices{LinkPreview: NewLinkPreviewService()})
+	p := NewSmartCardProcessor(BlockServices{LinkPreview: NewLinkPreviewService()})
 	block := &SieveBlock{
 		ID:   "ri-0003",
-		Kind: "rich-link",
+		Kind: "smart-card",
 		Attrs: map[string]interface{}{
 			"href":      pageSrv.URL,
 			"status":    BlockStatusPending,
@@ -165,11 +164,11 @@ func TestRichLinkProcessor_RunJob_imageFailureIsNonFatal(t *testing.T) {
 	}
 }
 
-func TestRichLinkProcessor_BuildContext(t *testing.T) {
-	p := NewRichLinkProcessor(BlockServices{})
+func TestSmartCardProcessor_BuildContext(t *testing.T) {
+	p := NewSmartCardProcessor(BlockServices{})
 	block := SieveBlock{
 		ID:   "ri-0001",
-		Kind: "rich-link",
+		Kind: "smart-card",
 		Attrs: map[string]interface{}{
 			"href":        "https://example.com",
 			"title":       "Example",

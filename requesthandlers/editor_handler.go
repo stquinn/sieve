@@ -27,6 +27,7 @@ func (h *EditorHandler) RegisterPaths(r chi.Router) {
 	r.Get("/api/editor/load", h.handleEditorLoad)
 	r.Post("/api/editor/save", h.handleEditorSave)
 	r.Post("/api/editor/smart-paste", h.handleSmartPaste)
+	r.Post("/api/detect-extractions", h.handleDetectExtractions)
 }
 
 func (h *EditorHandler) handleEditorShell(w http.ResponseWriter, r *http.Request) {
@@ -133,7 +134,7 @@ func (h *EditorHandler) handleEditorSave(w http.ResponseWriter, r *http.Request)
 func (h *EditorHandler) handleSmartPaste(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UUID    string             `json:"uuid"`
-		Entries []sieve.PasteEntry `json:"entries"`
+		Entries []sieve.ContentEntry `json:"entries"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UUID == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -154,4 +155,21 @@ func (h *EditorHandler) handleSmartPaste(w http.ResponseWriter, r *http.Request)
 		ID:      id,
 		RawYaml: rawYaml,
 	})
+}
+
+func (h *EditorHandler) handleDetectExtractions(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SourceKind string               `json:"sourceKind"`
+		Entries    []sieve.ContentEntry `json:"entries"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	candidates := sieve.DetectExtractions(req.SourceKind, req.Entries)
+	if candidates == nil {
+		candidates = []sieve.ExtractionCandidate{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(candidates)
 }

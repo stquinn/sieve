@@ -17,9 +17,8 @@ func (m *mockContextProcessor) MarkdownRepresentation(_ SieveBlock) string { ret
 func (m *mockContextProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{"id": id}
 }
-func (m *mockContextProcessor) PasteMatch(entries []PasteEntry, uuid, blockID string) (bool, map[string]interface{}) {
-	return false, nil
-}
+func (m *mockContextProcessor) IsBlock(entries []ContentEntry) bool { return false }
+func (m *mockContextProcessor) Transform(entries []ContentEntry, uuid, blockID string) map[string]interface{} { return nil }
 func (m *mockContextProcessor) RunJob(jctx JobContext) error { return nil }
 func (m *mockContextProcessor) JobLabel(_ *SieveBlock) string { return "" }
 func (m *mockContextProcessor) OnChange(_ *SieveBlock)        {}

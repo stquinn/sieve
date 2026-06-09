@@ -55,54 +55,58 @@ func TestSmartLinkProcessor_InitAttrs_idNotOverridable(t *testing.T) {
 	}
 }
 
-// ── PasteMatch ───────────────────────────────────────────────────────────────
+// ── IsBlock + Transform ───────────────────────────────────────────────────────
 
-func TestSmartLinkProcessor_PasteMatch_httpsURL(t *testing.T) {
+func TestSmartLinkProcessor_IsBlock_httpsURL(t *testing.T) {
 	p := NewSmartLinkProcessor(BlockServices{})
-	ok, overrides := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "https://example.com"}}, "", "")
-	if !ok {
-		t.Fatal("expected match for plain HTTPS URL")
+	if !p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "https://example.com"}}) {
+		t.Fatal("IsBlock must return true for a plain HTTPS URL")
+	}
+}
+
+func TestSmartLinkProcessor_Transform_httpsURL(t *testing.T) {
+	p := NewSmartLinkProcessor(BlockServices{})
+	overrides := p.Transform([]ContentEntry{{MIMEType: "text/plain", Content: "https://example.com"}}, "", "")
+	if overrides == nil {
+		t.Fatal("Transform must return non-nil for a plain HTTPS URL")
 	}
 	if overrides["href"] != "https://example.com" {
 		t.Errorf("href: got %q, want https://example.com", overrides["href"])
 	}
+	// Transform must not set status or id — those belong to InitAttrs
 	if overrides["status"] != nil {
-		t.Error("PasteMatch must not set status — that belongs to InitAttrs")
+		t.Error("Transform must not set status")
 	}
 	if overrides["id"] != nil {
-		t.Error("PasteMatch must not set id — that belongs to InitAttrs")
+		t.Error("Transform must not set id")
 	}
 }
 
-func TestSmartLinkProcessor_PasteMatch_httpURL(t *testing.T) {
+func TestSmartLinkProcessor_IsBlock_httpURL(t *testing.T) {
 	p := NewSmartLinkProcessor(BlockServices{})
-	ok, _ := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "http://example.com/path?q=1"}}, "", "")
-	if !ok {
-		t.Fatal("expected match for plain HTTP URL")
+	if !p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "http://example.com/path?q=1"}}) {
+		t.Fatal("IsBlock must return true for a plain HTTP URL")
 	}
 }
 
-func TestSmartLinkProcessor_PasteMatch_multiLine(t *testing.T) {
+func TestSmartLinkProcessor_IsBlock_multiLine(t *testing.T) {
 	p := NewSmartLinkProcessor(BlockServices{})
-	ok, _ := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "https://a.com\nhttps://b.com"}}, "", "")
-	if ok {
-		t.Error("multi-line paste must not match")
+	if p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "https://a.com\nhttps://b.com"}}) {
+		t.Error("IsBlock must return false for multi-line content")
 	}
 }
 
-func TestSmartLinkProcessor_PasteMatch_plainText(t *testing.T) {
+func TestSmartLinkProcessor_IsBlock_plainText(t *testing.T) {
 	p := NewSmartLinkProcessor(BlockServices{})
-	ok, _ := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "just some text"}}, "", "")
-	if ok {
-		t.Error("plain text must not match")
+	if p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "just some text"}}) {
+		t.Error("IsBlock must return false for plain text")
 	}
 }
 
-func TestSmartLinkProcessor_PasteMatch_noEntries(t *testing.T) {
+func TestSmartLinkProcessor_IsBlock_noEntries(t *testing.T) {
 	p := NewSmartLinkProcessor(BlockServices{})
-	ok, _ := p.PasteMatch(nil, "", "")
-	if ok {
-		t.Error("empty clipboard must not match")
+	if p.IsBlock(nil) {
+		t.Error("IsBlock must return false for nil entries")
 	}
 }
 

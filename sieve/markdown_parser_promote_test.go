@@ -5,10 +5,10 @@ import (
 )
 
 func TestPromoteBlock_replacesBlockWithContent(t *testing.T) {
-	markdown := "Before\n\n```rich-link\nid: ri-0001\nhref: https://example.com\n```\n\nAfter"
-	// Register a minimal processor so the parser recognises rich-link
-	RegisterProcessor("rich-link", NewRichLinkProcessor(BlockServices{}))
-	defer UnregisterProcessor("rich-link")
+	markdown := "Before\n\n```smart-card\nid: ri-0001\nhref: https://example.com\n```\n\nAfter"
+	// Register a minimal processor so the parser recognises smart-card
+	RegisterProcessor("smart-card", NewSmartCardProcessor(BlockServices{}))
+	defer UnregisterProcessor("smart-card")
 
 	result, ok := PromoteBlock(markdown, "ri-0001", "### [Example](https://example.com)")
 	if !ok {
@@ -20,7 +20,7 @@ func TestPromoteBlock_replacesBlockWithContent(t *testing.T) {
 	if !contains(result, "### [Example](https://example.com)") {
 		t.Errorf("PromoteBlock: promoted content missing; got:\n%s", result)
 	}
-	if contains(result, "```rich-link") {
+	if contains(result, "```smart-card") {
 		t.Error("PromoteBlock: fenced block still present after promotion")
 	}
 	if !contains(result, "Before") || !contains(result, "After") {

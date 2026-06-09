@@ -1,12 +1,12 @@
 package sieve
 
 import (
-	"regexp"
 	"strings"
 	"time"
 )
 
-var mermaidFenceRe = regexp.MustCompile("(?s)^```mermaid\n(.+)\n```$")
+// mermaidFenceRe aliases the shared pattern so this file reads naturally.
+var mermaidFenceRe = MermaidFenceRe
 
 // DiagramProcessor handles the 'diagram' block kind.
 // Rendering is entirely client-side; no async server job is needed.
@@ -27,7 +27,7 @@ func (p *DiagramProcessor) InitAttrs(id string, overrides map[string]interface{}
 		"diagramType":       "mermaid",
 		"mode":              "render",
 		"cursorPos":         0,
-		"supportsPromotion": true,
+		"supportsEmbedding": true,
 		"createdAt":         time.Now().UTC().Format(time.RFC3339),
 	}
 	for k, v := range overrides {
@@ -44,25 +44,23 @@ func (p *DiagramProcessor) InitAttrs(id string, overrides map[string]interface{}
 	return attrs
 }
 
-func (p *DiagramProcessor) PasteMatch(entries []PasteEntry, _ string, _ string) (bool, map[string]interface{}) {
-	var content string
+func (p *DiagramProcessor) IsBlock(entries []ContentEntry) bool {
 	for _, e := range entries {
-		if e.MIMEType == "text/plain" {
-			content = e.Content
-			break
+		if mermaidFenceRe.MatchString(e.Content) {
+			return true
 		}
 	}
-	if content == "" {
-		return false, nil
+	return false
+}
+
+func (p *DiagramProcessor) Transform(entries []ContentEntry, _ string, _ string) map[string]interface{} {
+	for _, e := range entries {
+		m := mermaidFenceRe.FindStringSubmatch(e.Content)
+		if m != nil {
+			return map[string]interface{}{"source": strings.TrimSpace(m[1])}
+		}
 	}
-	m := mermaidFenceRe.FindStringSubmatch(strings.TrimSpace(content))
-	if m == nil {
-		return false, nil
-	}
-	return true, map[string]interface{}{
-		"source": strings.TrimSpace(m[1]),
-		"mode":   "render",
-	}
+	return nil
 }
 
 func (p *DiagramProcessor) OnChange(_ *SieveBlock) {}

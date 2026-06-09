@@ -27,7 +27,7 @@ func (p *AIBlockProcessor) InitAttrs(id string, overrides map[string]interface{}
 		"type":      "ASK",
 		"model":     "",
 		"error":     "",
-		"supportsPromotion": true,
+		"supportsEmbedding": true,
 	}
 	for k, v := range overrides {
 		if k == "id" {
@@ -38,9 +38,8 @@ func (p *AIBlockProcessor) InitAttrs(id string, overrides map[string]interface{}
 	return attrs
 }
 
-func (p *AIBlockProcessor) PasteMatch(entries []PasteEntry, uuid, blockID string) (bool, map[string]interface{}) {
-	return false, nil
-}
+func (p *AIBlockProcessor) IsBlock(entries []ContentEntry) bool { return false }
+func (p *AIBlockProcessor) Transform(entries []ContentEntry, uuid, blockID string) map[string]interface{} { return nil }
 
 func (p *AIBlockProcessor) OnChange(block *SieveBlock) {}
 

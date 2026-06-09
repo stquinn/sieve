@@ -12,9 +12,8 @@ type testMarkdownProcessor struct{ md string }
 func (p *testMarkdownProcessor) InitAttrs(id string, _ map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{"id": id}
 }
-func (p *testMarkdownProcessor) PasteMatch(_ []PasteEntry, _, _ string) (bool, map[string]interface{}) {
-	return false, nil
-}
+func (p *testMarkdownProcessor) IsBlock(_ []ContentEntry) bool { return false }
+func (p *testMarkdownProcessor) Transform(_ []ContentEntry, _, _ string) map[string]interface{} { return nil }
 func (p *testMarkdownProcessor) RunJob(_ JobContext) error         { return nil }
 func (p *testMarkdownProcessor) JobLabel(_ *SieveBlock) string     { return "" }
 func (p *testMarkdownProcessor) OnChange(_ *SieveBlock)            {}

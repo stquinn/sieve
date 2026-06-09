@@ -26,7 +26,7 @@ func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface
 		"language":        "",
 		"detectionMethod": "",
 		"createdAt":       time.Now().UTC().Format(time.RFC3339),
-		"supportsPromotion": true,
+		"supportsEmbedding": true,
 	}
 	for k, v := range overrides {
 		if k == "id" {
@@ -43,37 +43,35 @@ func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface
 	return attrs
 }
 
-func (p *CodeBlockProcessor) PasteMatch(entries []PasteEntry, uuid string, blockID string) (bool, map[string]interface{}) {
-	var content string
+func (p *CodeBlockProcessor) IsBlock(entries []ContentEntry) bool {
 	for _, e := range entries {
-		if e.MIMEType == "text/plain" {
-			content = e.Content
-			break
+		m := codeFenceRe.FindStringSubmatch(e.Content)
+		if m != nil {
+			lang := m[1]
+			if lang == "mermaid" {
+				continue
+			}
+			return true
 		}
 	}
-	if content == "" {
-		return false, nil
-	}
-	trimmed := strings.TrimSpace(content)
+	return false
+}
 
-	if m := codeFenceRe.FindStringSubmatch(trimmed); m != nil {
-		overrides := map[string]interface{}{"source": m[2]}
-		if m[1] != "" {
-			overrides["hint"] = m[1]
-		}
-		return true, overrides
-	}
-
-	if strings.Contains(trimmed, "\n") {
-		if _, ok := detectByHeuristics(trimmed, ""); ok {
-			return true, map[string]interface{}{"source": trimmed}
-		}
-		if looksLikeCode(trimmed) {
-			return true, map[string]interface{}{"source": trimmed}
+func (p *CodeBlockProcessor) Transform(entries []ContentEntry, uuid string, blockID string) map[string]interface{} {
+	for _, e := range entries {
+		m := codeFenceRe.FindStringSubmatch(e.Content)
+		if m != nil {
+			lang := m[1]
+			if lang == "mermaid" {
+				continue
+			}
+			return map[string]interface{}{
+				"language": lang,
+				"source":   strings.TrimSpace(m[2]),
+			}
 		}
 	}
-
-	return false, nil
+	return nil
 }
 
 func (p *CodeBlockProcessor) OnChange(block *SieveBlock) {

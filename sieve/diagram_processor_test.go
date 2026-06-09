@@ -24,13 +24,13 @@ func TestDiagramProcessor_InitAttrs_defaults(t *testing.T) {
 	if attrs["mode"] != "edit" {
 		t.Errorf("mode with empty source: got %v, want edit", attrs["mode"])
 	}
-	if attrs["supportsPromotion"] != true {
-		t.Errorf("supportsPromotion: got %v, want true", attrs["supportsPromotion"])
+	if attrs["supportsEmbedding"] != true {
+		t.Errorf("supportsEmbedding: got %v, want true", attrs["supportsEmbedding"])
 	}
 	if attrs["createdAt"] == nil || attrs["createdAt"] == "" {
 		t.Error("createdAt must be set")
 	}
-	for _, field := range []string{"source", "diagramType", "mode", "supportsPromotion", "createdAt"} {
+	for _, field := range []string{"source", "diagramType", "mode", "supportsEmbedding", "createdAt"} {
 		if _, ok := attrs[field]; !ok {
 			t.Errorf("InitAttrs must declare field %q", field)
 		}
@@ -63,35 +63,48 @@ func TestDiagramProcessor_Mode(t *testing.T) {
 	}
 }
 
-func TestDiagramProcessor_PasteMatch_mermaidFence(t *testing.T) {
+func TestDiagramProcessor_IsBlock_mermaidFence(t *testing.T) {
 	p := NewDiagramProcessor(BlockServices{})
 	src := "graph TD\n  A[Start] --> B[End]"
 	content := "```mermaid\n" + src + "\n```"
-	matched, overrides := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: content}}, "", "")
-	if !matched {
-		t.Fatal("PasteMatch must return true for a mermaid fenced block")
+	if !p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: content}}) {
+		t.Fatal("IsBlock must return true for a mermaid fenced block")
+	}
+}
+
+func TestDiagramProcessor_Transform_mermaidFence(t *testing.T) {
+	p := NewDiagramProcessor(BlockServices{})
+	src := "graph TD\n  A[Start] --> B[End]"
+	content := "```mermaid\n" + src + "\n```"
+	overrides := p.Transform([]ContentEntry{{MIMEType: "text/plain", Content: content}}, "", "")
+	if overrides == nil {
+		t.Fatal("Transform must return non-nil for a mermaid fenced block")
 	}
 	if overrides["source"] != src {
 		t.Errorf("source: got %v, want %q", overrides["source"], src)
 	}
-	if overrides["mode"] != "render" {
-		t.Errorf("mode override: got %v, want render", overrides["mode"])
+	// mode is not set by Transform — InitAttrs derives it from source presence
+}
+
+func TestDiagramProcessor_IsBlock_otherFence(t *testing.T) {
+	p := NewDiagramProcessor(BlockServices{})
+	if p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "```go\nfunc main() {}\n```"}}) {
+		t.Error("IsBlock must return false for non-mermaid fenced block")
 	}
 }
 
-func TestDiagramProcessor_PasteMatch_otherFence(t *testing.T) {
+func TestDiagramProcessor_IsBlock_plainText(t *testing.T) {
 	p := NewDiagramProcessor(BlockServices{})
-	ok, _ := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "```go\nfunc main() {}\n```"}}, "", "")
-	if ok {
-		t.Error("PasteMatch must return false for non-mermaid fenced block")
+	if p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "hello world"}}) {
+		t.Error("IsBlock must return false for plain text")
 	}
 }
 
-func TestDiagramProcessor_PasteMatch_plainText(t *testing.T) {
+func TestDiagramProcessor_Transform_notIsBlock(t *testing.T) {
 	p := NewDiagramProcessor(BlockServices{})
-	ok, _ := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "hello world"}}, "", "")
-	if ok {
-		t.Error("PasteMatch must return false for plain text")
+	overrides := p.Transform([]ContentEntry{{MIMEType: "text/plain", Content: "hello world"}}, "", "")
+	if overrides != nil {
+		t.Error("Transform must return nil when IsBlock is false")
 	}
 }
 

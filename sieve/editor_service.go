@@ -440,17 +440,19 @@ func (es *EditorService) SerializeBlock(processor BlockProcessor, block SieveBlo
 
 // HandlePaste runs paste matchers and delegates to CreateBlock on the first match.
 // It is the secondary creation path — prefer CreateBlock directly for UI-triggered creation.
-func (es *EditorService) HandlePaste(uuid string, entries []PasteEntry) (kind, id, rawYaml string, matched bool) {
+func (es *EditorService) HandlePaste(uuid string, entries []ContentEntry) (kind, id, rawYaml string, matched bool) {
 	registryMu.RLock()
 	matchers := pasteMatchers
 	registryMu.RUnlock()
 
 	for _, pm := range matchers {
-		blockID := GenerateBlockIDFor(pm.Kind)
-		ok, overrides := pm.Processor.PasteMatch(entries, uuid, blockID)
-		if !ok {
+		if !pm.Processor.IsBlock(entries) {
 			continue
 		}
+		
+		blockID := GenerateBlockIDFor(pm.Kind)
+		overrides := pm.Processor.Transform(entries, uuid, blockID)
+
 		id, raw, err := es.createBlockWithID(uuid, pm.Kind, blockID, overrides)
 		if err != nil {
 			return "", "", "", false
@@ -458,6 +460,24 @@ func (es *EditorService) HandlePaste(uuid string, entries []PasteEntry) (kind, i
 		return pm.Kind, id, raw, true
 	}
 	return "", "", "", false
+}
+
+// CreateBlockFromEntries is the extraction creation path. It is identical to Paste
+// except the backend skips detection — the frontend explicitly requested this Kind.
+func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []ContentEntry) (id, rawYaml string, err error) {
+	processor := GetProcessor(kind)
+	if processor == nil {
+		return "", "", fmt.Errorf("no processor registered for kind %q", kind)
+	}
+
+	blockID := GenerateBlockIDFor(kind)
+	// Execute the transformation (e.g. smart-image saves the file synchronously)
+	overrides := processor.Transform(entries, uuid, blockID)
+	if overrides == nil {
+		return "", "", fmt.Errorf("extract: processor %q could not transform entries into a block", kind)
+	}
+
+	return es.createBlockWithID(uuid, kind, blockID, overrides)
 }
 
 // HandleBlockUpdate processes a block-update from the client: merges the user's

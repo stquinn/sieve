@@ -27,7 +27,7 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
     nodeConfig: { atom: true, selectable: true, draggable: false },
 
     attrs: {
-      supportsPromotion: { default: true },
+      supportsEmbedding: { default: true },
       ref:      { default: 'doc', parseHTML: function (el) { return el.getAttribute('data-ref') || 'doc' } },
       type:     { default: 'ASK', parseHTML: function (el) { return el.getAttribute('data-type') || 'ASK' } },
       model:    { default: null,  parseHTML: function (el) { return el.getAttribute('data-model') || null } },
@@ -168,32 +168,7 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
       var node = ctx.node
       var items = [{ type: 'header', label: node.attrs.type === 'EXPLAIN' ? 'Explain' : 'Ask AI' }]
 
-      // Detect mermaid fenced blocks in the AI response and offer Promote to Diagram
-      var response = node.attrs.response || ''
-      var mermaidBlocks = []
-      var mermaidRe = /```mermaid\n([\s\S]*?)```/g
-      var match
-      while ((match = mermaidRe.exec(response)) !== null) {
-        mermaidBlocks.push(match[1].trim())
-      }
 
-      if (mermaidBlocks.length > 0) {
-        items.push({ type: 'divider' })
-        mermaidBlocks.forEach(function (source, idx) {
-          var label = mermaidBlocks.length === 1
-            ? 'Promote to Diagram'
-            : 'Promote to Diagram ' + (idx + 1)
-          items.push({
-            icon: IC.diagram || IC.sparkle,
-            label: label,
-            action: function () {
-              document.dispatchEvent(new CustomEvent('sieve:create-block', {
-                detail: { kind: 'diagram', attrs: { source: source, mode: 'render' } }
-              }))
-            }
-          })
-        })
-      }
 
       return items
     },

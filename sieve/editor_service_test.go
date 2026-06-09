@@ -463,7 +463,7 @@ func TestEditorService_HandlePaste_delegatesToCreateBlock(t *testing.T) {
 	uuid := doc.UUID()
 	_ = es.Open(uuid, nil)
 
-	kind, id, rawYaml, matched := es.HandlePaste(uuid, []PasteEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\n```"}})
+	kind, id, rawYaml, matched := es.HandlePaste(uuid, []ContentEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\n```"}})
 	if !matched {
 		t.Fatal("expected match")
 	}
@@ -493,7 +493,7 @@ func TestEditorService_HandlePaste_noMatch(t *testing.T) {
 	doc, _ = ds.Save(doc)
 	_ = es.Open(doc.UUID(), nil)
 
-	_, _, _, matched := es.HandlePaste(doc.UUID(), []PasteEntry{{MIMEType: "text/plain", Content: "just plain text"}})
+	_, _, _, matched := es.HandlePaste(doc.UUID(), []ContentEntry{{MIMEType: "text/plain", Content: "just plain text"}})
 	if matched {
 		t.Fatal("expected no match for plain text")
 	}
@@ -614,9 +614,8 @@ func (p *testRunJobProcessor) InitAttrs(id string, overrides map[string]interfac
 	}
 	return attrs
 }
-func (p *testRunJobProcessor) PasteMatch(entries []PasteEntry, _ string, _ string) (bool, map[string]interface{}) {
-	return false, nil
-}
+func (p *testRunJobProcessor) IsBlock(entries []ContentEntry) bool { return false }
+func (p *testRunJobProcessor) Transform(entries []ContentEntry, _ string, _ string) map[string]interface{} { return nil }
 func (p *testRunJobProcessor) BuildContext(_ SieveBlock, _ ShadowDocument, _ map[string]bool) string  { return "" }
 func (p *testRunJobProcessor) MarkdownRepresentation(_ SieveBlock) string { return "" }
 func (p *testRunJobProcessor) OnChange(_ *SieveBlock) {}

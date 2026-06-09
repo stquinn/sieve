@@ -34,6 +34,25 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
   }
 
   var WebClipRenderer = {
+
+    getFriendlyName: function() { return 'Web Clip' },
+
+    getExtractionMenuItems: function(sourceNode, entries, defaultAction) {
+      var IC = window.SieveIcons || {}
+      return [
+        {
+          icon: IC['web-clip'] || IC.code,
+          label: 'Upgrade to Web Clip (Fetch)',
+          action: function() { defaultAction({ mode: 'fetch' }) }
+        },
+        {
+          icon: IC['web-clip'] || IC.code,
+          label: 'Upgrade to Web Clip (Summarise)',
+          action: function() { defaultAction({ mode: 'summarise' }) }
+        }
+      ]
+    },
+
     nodeConfig: {
       atom: true,
       selectable: true,
@@ -73,6 +92,14 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
 
       dom.addEventListener('dragstart', function (e) { e.preventDefault() })
       dom.addEventListener('mousedown', function (e) { e.stopPropagation() })
+      dom.addEventListener('click', function (e) {
+        var a = e.target.closest ? e.target.closest('a') : null
+        if (a && a.href) {
+          // Prevent Wails from navigating the internal webview.
+          // Note: Ctrl+Click is already handled by the global capture in editor.js
+          e.preventDefault()
+        }
+      })
 
       // Reverse chain highlight: when hovering the web-clip, light up any AI blocks
       // that reference it via data-ai-ref. Forward direction (AI → web-clip) is in ai-block-extension.js.
@@ -210,24 +237,12 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
 
       ]
 
-      if (isComplete && node.attrs.content) {
-        items.push({ type: 'divider' })
-        items.push({ icon: IC.sparkle, label: 'Ask AI...', action: function () {
-          if (typeof getPos === 'function') editor.chain().focus().setNodeSelection(getPos()).run()
-          else editor.commands.focus()
-          var ctx = { content: webClipSummary(node), history: '', blockRef: node.attrs.id, imageIds: [], contextLabel: 'Web Clip' }
-          document.dispatchEvent(new CustomEvent('sieve:ai-ask', { detail: { precomputedCtx: ctx } }))
-        }})
-        items.push({ icon: IC.info, label: 'Explain', action: function () {
-          if (typeof getPos === 'function') editor.chain().focus().setNodeSelection(getPos()).run()
-          else editor.commands.focus()
-          var ctx = { content: webClipSummary(node), history: '', blockRef: node.attrs.id, imageIds: [], contextLabel: 'Web Clip' }
-          document.dispatchEvent(new CustomEvent('sieve:ai-explain', { detail: { precomputedCtx: ctx } }))
-        }})
-      }
-
       return items
-    }
+    },
+
+    buildAiCtx: function (node) {
+      return { contextLabel: 'Web Clip' }
+    },
   }
 
   T.registerSieveRenderer('web-clip', WebClipRenderer)

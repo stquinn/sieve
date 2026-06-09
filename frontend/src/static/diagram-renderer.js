@@ -27,6 +27,7 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
     })
     return mermaidReady
   }
+  T.ensureMermaid = ensureMermaid
 
   function buildMermaidTheme() {
     var s = getComputedStyle(document.documentElement)

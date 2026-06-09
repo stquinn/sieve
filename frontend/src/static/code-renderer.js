@@ -241,7 +241,19 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
   }
 
   // Ask AI, Explain, and Delete are injected by sieve-block-extension.js framework.
-  CodeRenderer.buildAiCtx = function () { return { contextLabel: 'Code' } }
+  CodeRenderer.buildAiCtx = function (node) {
+    var lang = node.attrs.language
+    var label = lang && lang !== 'unknown' ? lang + ' block' : 'Code block'
+    return { contextLabel: label }
+  }
+
+  CodeRenderer.buildContextMenuItems = function ({ node }) {
+    var lang = node.attrs.language
+    var label = lang && lang !== 'unknown' ? lang + ' block' : 'Code block'
+    return [
+      { type: 'header', label: label },
+    ]
+  }
 
   T.registerSieveRenderer('code', CodeRenderer)
 

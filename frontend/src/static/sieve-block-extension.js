@@ -40,7 +40,7 @@
 //      after sieve-block-extension.js
 //   That's it.
 
-import { esc, isJobStale, getLowlight } from './fenced-block-base.js'
+import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block-base.js'
 
 ;(function () {
   'use strict'
@@ -57,7 +57,7 @@ import { esc, isJobStale, getLowlight } from './fenced-block-base.js'
     serialisedForm:   { default: '',        parseHTML: function (el) { return el.getAttribute('data-serialised-form') || '' } },
     status:           { default: 'PENDING', parseHTML: function (el) { return el.getAttribute('data-status')      || 'PENDING' } },
     createdAt:        { default: null,      parseHTML: function (el) { return el.getAttribute('data-created-at')  || null } },
-    supportsPromotion: { default: false, parseHTML: function (el) { return el.getAttribute('data-supports-promotion') === 'true' } },
+    supportsEmbedding: { default: false, parseHTML: function (el) { return el.getAttribute('data-supports-embedding') === 'true' } },
   }
 
   var DEFAULT_NODE_CONFIG = { atom: true, selectable: true, draggable: true, group: 'block', inline: false }
@@ -95,6 +95,7 @@ import { esc, isJobStale, getLowlight } from './fenced-block-base.js'
         return function ({ node, editor, getPos }) {
           var view = renderer.makeNodeView(node, editor)
           if (view.dom) {
+
             view.dom.addEventListener('contextmenu', function (e) {
               e.preventDefault()
               e.stopPropagation()
@@ -161,11 +162,11 @@ import { esc, isJobStale, getLowlight } from './fenced-block-base.js'
                 ])
               }
 
-              // Promote to Document — automatic for any block with supportsPromotion: true.
-              if (n.attrs.supportsPromotion && status === 'COMPLETE') {
+              // Embed in document — automatic for any block with supportsEmbedding: true.
+              if (n.attrs.supportsEmbedding && status === 'COMPLETE') {
                 items = items.concat([
                   { type: 'divider' },
-                  { icon: IC.promote, label: 'Promote to Document',
+                  { icon: IC.promote, label: 'Embed in document',
                     action: function () {
                       document.dispatchEvent(new CustomEvent('sieve:promote-block', {
                         detail: { id: n.attrs.id }
@@ -178,6 +179,100 @@ import { esc, isJobStale, getLowlight } from './fenced-block-base.js'
               document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
                 detail: { x: e.clientX, y: e.clientY, context: { type: 'sieveBlock', items: items } },
               }))
+
+              var entries = null
+              var extractSourceLabel = ''
+
+              // Image click — check before <pre> so a click on an <img> inside a
+              // code-adjacent block takes the image path, not the text path.
+              var closestImg = e.target.tagName === 'IMG' ? e.target
+                : (e.target.closest ? e.target.closest('img') : null)
+              if (closestImg && closestImg.src && view.dom.contains(closestImg)) {
+                entries = [{ mimeType: 'text/uri-list', content: closestImg.src }]
+                extractSourceLabel = 'image'
+              }
+
+              // Anchor click
+              var closestA = e.target.tagName === 'A' ? e.target
+                : (e.target.closest ? e.target.closest('a') : null)
+              if (!entries && closestA && closestA.href && view.dom.contains(closestA)) {
+                entries = [{ mimeType: 'text/uri-list', content: closestA.href }]
+                extractSourceLabel = 'link'
+              }
+
+              if (!entries) {
+                var textContent = ''
+                var closestPre = e.target.closest && e.target.closest('pre')
+                if (closestPre && view.dom.contains(closestPre)) {
+                  var lang = ''
+                  var codeEl = closestPre.querySelector('code') || closestPre
+                  ;(codeEl.className || '').split(' ').forEach(function (cls) {
+                    if (cls.indexOf('language-') === 0) lang = cls.slice(9)
+                  })
+                  textContent = '```' + lang + '\n' + codeEl.textContent + '\n```'
+                  extractSourceLabel = lang === 'mermaid' ? 'diagram' : 'code'
+                }
+
+                if (!textContent) {
+                  extractSourceLabel = n.attrs.kind || 'text'
+                  if (n.attrs.kind === 'code' || n.attrs.kind === 'diagram') {
+                    var lang = n.attrs.language || (n.attrs.kind === 'diagram' ? 'mermaid' : '')
+                    textContent = '```' + lang + '\n' + (n.attrs.source || '') + '\n```'
+                  } else if (n.attrs.serialisedForm) {
+                    textContent = n.attrs.serialisedForm
+                  } else {
+                    textContent = extractTextFromDOM(view.dom)
+                  }
+                }
+
+                if (textContent) {
+                  entries = [{ mimeType: 'text/plain', content: textContent }]
+                }
+              }
+
+              if (entries) {
+                fetch('/api/detect-extractions', {
+                  method: 'POST',
+                  body: JSON.stringify({ sourceKind: n.attrs.kind, entries: entries }),
+                  headers: { 'Content-Type': 'application/json' }
+                }).then(function (res) { return res.json() }).then(function (candidates) {
+                  if (!candidates || candidates.length === 0) return
+                  if (!window.SieveContextMenu || !window.SieveContextMenu.appendItems) return
+
+                  var extraItems = [
+                    { type: 'divider' },
+                    { type: 'header', label: 'EXTRACT FROM ' + extractSourceLabel.toUpperCase().replace('-', ' ') }
+                  ]
+                  candidates.forEach(function (c) {
+                    var icon = IC[c.kind] || IC.code
+                    var r = renderers[c.kind]
+                    var prettyKind = (r && typeof r.getFriendlyName === 'function')
+                      ? r.getFriendlyName()
+                      : c.kind.split('-').map(function(w) { return w.charAt(0).toUpperCase() + w.slice(1) }).join(' ')
+                    
+                    var defaultAction = function (context) {
+                      document.dispatchEvent(new CustomEvent('sieve:extract', {
+                        detail: { blockId: n.attrs.id, targetKind: c.kind, sourceNode: n, entries: entries, context: context || {} }
+                      }))
+                    }
+
+                    if (r && typeof r.getExtractionMenuItems === 'function') {
+                      var items = r.getExtractionMenuItems(n, entries, defaultAction)
+                      if (items && items.length) {
+                        items.forEach(function(item) { extraItems.push(item) })
+                        return
+                      }
+                    }
+
+                    extraItems.push({
+                      icon: icon,
+                      label: 'Extract as ' + prettyKind,
+                      action: function () { defaultAction({}) }
+                    })
+                  })
+                  window.SieveContextMenu.appendItems(extraItems)
+                }).catch(function() {})
+              }
             })
           }
           return view
@@ -238,8 +333,8 @@ import { esc, isJobStale, getLowlight } from './fenced-block-base.js'
                       if (data.createdAt) {
                         htmlAttrs.push(['data-created-at', data.createdAt])
                       }
-                      if (data.supportsPromotion) {
-                        htmlAttrs.push(['data-supports-promotion', 'true'])
+                      if (data.supportsEmbedding) {
+                        htmlAttrs.push(['data-supports-embedding', 'true'])
                       }
                       token.attrs = htmlAttrs
                     } else {
@@ -297,8 +392,8 @@ import { esc, isJobStale, getLowlight } from './fenced-block-base.js'
                   if (data.createdAt) {
                     htmlAttrs.push('data-created-at="' + esc(data.createdAt) + '"')
                   }
-                  if (data.supportsPromotion) {
-                    htmlAttrs.push('data-supports-promotion="true"')
+                  if (data.supportsEmbedding) {
+                    htmlAttrs.push('data-supports-embedding="true"')
                   }
                   return '<' + tag + ' ' + htmlAttrs.join(' ') + '></' + tag + '>\n'
                 }
@@ -313,9 +408,19 @@ import { esc, isJobStale, getLowlight } from './fenced-block-base.js'
   // ── Registry ─────────────────────────────────────────────────────────────────
 
   var nodeRegistry = {}
+  var renderers = {}
 
   function registerSieveRenderer(kind, renderer) {
     nodeRegistry[kind] = createSieveNode(kind, renderer)
+    renderers[kind] = renderer
+  }
+
+  T.resolveEntriesForKind = function(kind, sourceNode, entries) {
+    var r = renderers[kind]
+    if (r && typeof r.resolveEntries === 'function') {
+      return r.resolveEntries(sourceNode, entries)
+    }
+    return entries
   }
 
   function getSieveNodes() {

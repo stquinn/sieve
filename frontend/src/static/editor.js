@@ -164,7 +164,7 @@
           if (event.key === 'L' && window.isMod(event) && event.shiftKey) {
             event.preventDefault()
             ensureOverlays()
-            openRichLinkDialog()
+            openSmartCardDialog()
             return true
           }
           return false
@@ -317,6 +317,9 @@
         document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: false } }))
         document.dispatchEvent(new CustomEvent('editor:saved', { detail: { uuid: msg.uuid } }))
       }
+      if (msg.type === 'error') {
+        window.alert(msg.message || 'An error occurred.')
+      }
       if (msg.type === 'markdown-content') {
         document.dispatchEvent(new CustomEvent('editor:markdown-content', { detail: msg }))
       }
@@ -329,7 +332,9 @@
       if (msg.type === 'block-promoted') {
         softReloadContent(currentUuid)
       }
-
+      if (msg.type === 'block-extracted') {
+        // Rely on insert-block to place the new node; do not reload.
+      }
     }
 
     editorWs.onerror = function (err) { console.error('[editor] ws error', err) }
@@ -482,7 +487,7 @@
     if (!askDialog) askDialog = createAskDialog()
     if (!searchOverlay) searchOverlay = createSearchOverlay()
     if (!internalizeDialog) internalizeDialog = createInternalizeDialog()
-    if (!richLinkDialog) richLinkDialog = createRichLinkDialog()
+    if (!richLinkDialog) richLinkDialog = createSmartCardDialog()
   }
 
   
@@ -548,7 +553,7 @@
 
   // ── Rich Link dialog ──────────────────────────────────────────────────────────
 
-  function createRichLinkDialog() {
+  function createSmartCardDialog() {
     var dialog = document.createElement('dialog')
     dialog.className = 'internalize-popup ask-popup'
     dialog.style.cssText = 'top:30%;bottom:auto;left:50%;width:460px;max-width:92vw;'
@@ -574,7 +579,7 @@
     function trySubmit() {
       var url = urlInput.value.trim()
       if (!isValidURL(url)) { errorMsg.style.display = ''; return }
-      doCreateRichLink(url)
+      doCreateSmartCard(url)
       dialog.close()
     }
 
@@ -595,7 +600,7 @@
     return dialog
   }
 
-  function openRichLinkDialog(prefillUrl) {
+  function openSmartCardDialog(prefillUrl) {
     if (!richLinkDialog) return
     var urlInput = richLinkDialog.querySelector('input')
     if (urlInput) urlInput.value = prefillUrl || ''
@@ -603,11 +608,11 @@
     if (urlInput) urlInput.focus()
   }
 
-  function doCreateRichLink(href) {
+  function doCreateSmartCard(href) {
     if (!currentUuid) return
     if (!currentEditor && currentMode !== 'markdown') return
     sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
-    wsSend({ type: 'create-block', kind: 'rich-link', attrs: { href: href }, uuid: currentUuid })
+    wsSend({ type: 'create-block', kind: 'smart-card', attrs: { href: href }, uuid: currentUuid })
   }
 
   // ── Internalize dialog ────────────────────────────────────────────────────────
@@ -648,7 +653,7 @@
       var url = urlInput.value.trim()
       if (!isValidURL(url)) { errorMsg.style.display = ''; return }
       if (mode === 'card') {
-        doCreateRichLink(url)
+        doCreateSmartCard(url)
       } else {
         doInternalize(url, mode)
       }
@@ -1146,7 +1151,23 @@
 
   window._editorSave = flushSave
   window._sieveOpenInternalize = function (url) { ensureOverlays(); openInternalizeDialog(url) }
-  window._sieveOpenRichLink = function (url) { ensureOverlays(); openRichLinkDialog(url) }
+  window._sieveOpenSmartCard = function (url) { ensureOverlays(); openSmartCardDialog(url) }
+
+  // Global capture for Ctrl+Click on any link in the app
+  document.addEventListener('click', function(e) {
+    if (window.isMod(e)) {
+      var a = e.target.closest ? e.target.closest('a') : null
+      if (a && a.href && a.href.match(/^https?:\/\//)) {
+        e.preventDefault()
+        e.stopPropagation()
+        if (window.runtime && window.runtime.BrowserOpenURL) {
+          window.runtime.BrowserOpenURL(a.href)
+        } else {
+          window.open(a.href, '_blank')
+        }
+      }
+    }
+  }, true)
 
   document.body.addEventListener('editor:restore', function (e) {
     var data = e.detail
@@ -1179,7 +1200,7 @@
     if (e.key === 'L' && window.isMod(e) && e.shiftKey && !e.altKey) {
       e.preventDefault()
       ensureOverlays()
-      openRichLinkDialog()
+      openSmartCardDialog()
     }
     if (e.key === 'D' && window.isMod(e) && e.shiftKey && !e.altKey) {
       e.preventDefault()
@@ -1188,23 +1209,9 @@
     }
   })
 
-  // ── Enrich as Card (SmartLink → Rich Link) ────────────────────────────────────
-  // Fired by smart-link-renderer.js when user right-clicks a SmartLink and selects
-  // "Enrich as Card". Inserts a rich-link block at insertPos, then removes the
-  // SmartLink inline node. The SmartLink is removed BEFORE the create-block WS
-  // message so sieveInsertPos corresponds to the correct post-deletion position.
-  document.addEventListener('sieve:enrich-as-card', function (e) {
-    if (!currentUuid || !currentEditor) return
-    var href = e.detail.href
-    var title = e.detail.title || href
-    var insertPos = e.detail.insertPos  // position AFTER smart-link deletion
-    if (!href) return
-    sieveInsertPos = insertPos
-    wsSend({ type: 'create-block', kind: 'rich-link', attrs: { href: href, title: title }, uuid: currentUuid })
-  })
 
   // ── Upgrade to Web Clip (Rich Link → Web Clip) ────────────────────────────────
-  // Fired by rich-link-renderer.js context menu "Upgrade to Web Clip".
+  // Fired by smart-card-renderer.js context menu "Upgrade to Web Clip".
   document.addEventListener('sieve:upgrade-to-web-clip', function (e) {
     if (!currentUuid || !currentEditor) return
     var href = e.detail.href
@@ -1212,10 +1219,63 @@
     var fromSize = e.detail.fromSize
     var mode = e.detail.mode || 'fetch'
     if (!href || fromPos == null) return
-    // Delete the rich-link block first, then insert web-clip at its position
+    // Delete the smart-card block first, then insert web-clip at its position
     currentEditor.view.dispatch(currentEditor.state.tr.delete(fromPos, fromPos + fromSize))
     sieveInsertPos = fromPos
     wsSend({ type: 'create-block', kind: 'web-clip', attrs: { source: href, mode: mode }, uuid: currentUuid })
+  })
+
+  // ── Extract (sieve:extract) ──────────────────────────────────────────────────
+  document.addEventListener('sieve:extract', function (e) {
+    if (!currentUuid || !currentEditor) return
+    var blockId = e.detail.blockId
+    var targetKind = e.detail.targetKind
+    var entries = e.detail.entries || []
+    var sourceNode = e.detail.sourceNode
+    var context = e.detail.context || {}
+
+    if (entries.length > 0 && Object.keys(context).length > 0) {
+      entries[0].context = context
+    }
+
+    var targetPos = null
+    var targetNode = null
+    currentEditor.state.doc.descendants(function (node, pos) {
+      if (node.attrs.id === blockId) {
+        targetPos = pos
+        targetNode = node
+        return false
+      }
+    })
+
+    if (targetPos !== null) {
+      sieveInsertPos = targetPos + targetNode.nodeSize
+    }
+
+    if (window.TipTap && window.TipTap.resolveEntriesForKind) {
+      var res = window.TipTap.resolveEntriesForKind(targetKind, sourceNode, entries)
+      if (res && typeof res.then === 'function') {
+        res.then(function(resolved) {
+          wsSend({
+            type: 'extract',
+            blockId: blockId,
+            targetKind: targetKind,
+            entries: resolved
+          })
+        }).catch(function(err) {
+          console.error('[sieve:extract] extraction failed', err)
+        })
+        return
+      }
+      entries = res
+    }
+
+    wsSend({
+      type: 'extract',
+      blockId: blockId,
+      targetKind: targetKind,
+      entries: entries
+    })
   })
 
   window.sieveInitEditor = initEditor
