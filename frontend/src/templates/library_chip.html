@@ -1,0 +1,12 @@
+{{define "library_chip.html"}}
+<span id="library-chip"
+  class="status-chip status-chip--library"
+  title="Current library — click to switch"
+  onclick="window.sieveSelectLibrary()"
+  hx-get="/api/library/current"
+  hx-trigger="sse:library:changed"
+  hx-target="#library-chip"
+  hx-swap="outerHTML">
+  <span class="lib-dot"></span>{{.Name}}
+</span>
+{{end}}
