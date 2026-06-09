@@ -10,7 +10,8 @@ Status: Approved
 Two independent quality-of-life features that can be built and shipped together in one branch.
 
 1. **Library Switcher** — File menu with Recent Libraries submenu; active library shown as a clickable chip in the status bar. Models the workspace-switching UX familiar from VS Code and other editors.
-2. **Editor Toolbar** — A docked toolbar between the tab bar and editor area. Toggleable via View menu (⌘⇧T). Exposes text formatting, headings, lists, table insertion, image-from-file upload, and the four Sieve block-insert types.
+2. **Editor Toolbar** — A docked toolbar between the tab bar and editor area. Toggleable via View menu (⌘⇧T). Left side: text formatting, headings, lists, table insertion, image-from-file upload, and the four Sieve block-insert types. Right side (Tier 2 only): Smart Metadata, Smart File, Keep & Smart File — the "save/commit" actions, right-aligned as in VS Code's editor toolbar.
+3. **Tools menu refresh** — Smart Metadata added (currently missing). All three AI filing actions in one place with shortcuts, mirroring the toolbar. Toolbar and menu are complementary: toolbar = fast click, menu = discoverable path + keyboard shortcut, both always in sync.
 
 ---
 
@@ -197,8 +198,14 @@ The toolbar HTML is inserted between `#htmx-tabbar` and `.editor-area`:
     <button class="tb-btn tb-insert" id="tb-image-btn" title="Insert image from file">🖼 Image</button>
     <input id="tb-image-input" type="file" accept="image/*" style="display:none">
   </div>
+  <!-- AI filing actions — right-aligned, Tier 2 only (hidden via CSS when no CLI) -->
+  <div class="tb-ai-actions">
+    <button class="tb-btn tb-ai" data-ai="smartMetadata" title="Smart Metadata (⌘⇧M)">⊹ Metadata</button>
+    <button class="tb-btn tb-ai tb-ai-file" data-ai="smartFile" title="Smart File (⌘⇧E)">⬡ File</button>
+    <button class="tb-btn tb-ai tb-ai-keep" data-ai="keepAndSmartFile" title="Keep &amp; Smart File (⌘⇧↵)">✓ Keep &amp; File</button>
+  </div>
   <!-- Help (relocated from tab bar) -->
-  <div style="margin-left:auto">
+  <div class="tb-help">
     <button class="tb-btn" id="tb-help-btn" title="Help (⌘/)">?</button>
   </div>
 </div>
@@ -240,6 +247,32 @@ The toolbar HTML is inserted between `#htmx-tabbar` and `.editor-area`:
 .tb-insert:hover {
   background: color-mix(in srgb, var(--theme-accentCyan) 22%, transparent);
 }
+
+/* AI filing actions — right side of toolbar */
+.tb-ai-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.tb-help { margin-left: 4px; }
+
+/* Hide AI buttons entirely when no CLI is configured (Tier 1) */
+.tier-1 .tb-ai-actions { display: none; }
+
+.tb-ai {
+  font-size: 10px; font-weight: 700; letter-spacing: .02em;
+  padding: 0 8px; height: 22px;
+  background: color-mix(in srgb, var(--theme-accentPrimary) 12%, transparent);
+  color: var(--theme-accentPrimary);
+  border-radius: 3px;
+}
+.tb-ai:hover { background: color-mix(in srgb, var(--theme-accentPrimary) 22%, transparent); }
+.tb-ai-keep {
+  background: color-mix(in srgb, var(--theme-accentGreen) 12%, transparent);
+  color: var(--theme-accentGreen);
+}
+.tb-ai-keep:hover { background: color-mix(in srgb, var(--theme-accentGreen) 22%, transparent); }
 ```
 
 ### JS (`index.html` inline or separate `toolbar.js`)
@@ -257,9 +290,16 @@ document.getElementById('editor-toolbar')?.addEventListener('click', function(e)
 
   var cmd = btn.dataset.cmd;
   var insert = btn.dataset.insert;
+  var ai = btn.dataset.ai;
 
   if (insert) {
     document.dispatchEvent(new CustomEvent('sieve:create-block', { detail: { kind: insert } }));
+    return;
+  }
+
+  // AI filing actions — delegate to existing window.SieveAI methods
+  if (ai && window.SieveAI) {
+    window.SieveAI[ai]();
     return;
   }
 
@@ -359,6 +399,38 @@ view.AddText("Show Toolbar", keys.Combo("t", keys.CmdOrCtrlKey, keys.ShiftKey),
 - Table editing controls (add/remove rows/cols) — toolbar handles insert only; editing relies on TipTap's existing right-click or future gutter work.
 - Toolbar visibility per-document or per-mode — it's a global session setting only.
 
+---
+
+## Feature 3: Tools Menu Refresh
+
+The toolbar and menu are complementary — both expose the same AI filing actions. The menu is the discoverable path with keyboard shortcuts; the toolbar is the fast click path. Neither replaces the other.
+
+### Updated Tools Menu (`main.go` — `buildMenu`)
+
+Replace the current two-item Tools menu with:
+
+```go
+tools.AddText("Smart Metadata", keys.Combo("m", keys.CmdOrCtrlKey, keys.ShiftKey),
+    js("window.SieveAI?.smartMetadata()"))
+tools.AddSeparator()
+tools.AddText("Smart File", keys.Combo("e", keys.CmdOrCtrlKey, keys.ShiftKey),
+    js("window.SieveAI?.smartFile()"))
+tools.AddText("Keep & Smart File", keys.Combo("return", keys.CmdOrCtrlKey, keys.ShiftKey),
+    js("window.SieveAI?.keepAndSmartFile()"))
+```
+
+All three items are always present in the menu regardless of Tier — the menu items call `window.SieveAI?.smartFile()` which already handles the case gracefully when no CLI is configured (the `?.` optional chaining means no-op if `SieveAI` is undefined at Tier 1).
+
+The resulting menu:
+
+```
+Tools
+  Smart Metadata     ⌘⇧M
+  ─────────────────────────
+  Smart File         ⌘⇧E
+  Keep & Smart File  ⌘⇧↵
+```
+
 ### Help Button Relocation
 
 The existing Help `?` button in the tab bar (`tabbar.html` template or its handler) is removed and replaced by the `?` button at the right end of the editor toolbar. When the toolbar is hidden, the keyboard shortcut `⌘/` (already in the View menu) remains the fallback access path.
@@ -376,8 +448,9 @@ The existing Help `?` button in the tab bar (`tabbar.html` template or its handl
 | `requesthandlers/session_handler.go` | `POST /api/session/toolbar/toggle` |
 | New `requesthandlers/library_handler.go` | `GET /api/library/current` |
 | New `frontend/src/templates/library_chip.html` | Status bar chip template |
-| `frontend/src/index.html` | Toolbar HTML block, `toolbar-visible` class on app-root, status bar chip mount, toolbar JS, image file input handler |
-| `frontend/src/static/shell.css` | Toolbar CSS |
+| `frontend/src/index.html` | Toolbar HTML block (left editing side + right AI side), `toolbar-visible` class on app-root, status bar chip mount, toolbar JS, image file input handler |
+| `frontend/src/static/shell.css` | Toolbar CSS including `.tb-ai-actions`, `.tier-1 .tb-ai-actions { display:none }` |
 | `frontend/src/static/editor.js` | `syncToolbar()` call in selectionUpdate/transaction handlers |
 | `frontend/src/templates/tabbar.html` | Remove Help `?` button (line ~58) from tab bar |
+| `main.go` | `buildMenu`: Tools menu refresh (Smart Metadata added, ⌘⇧M shortcut) |
 | `handlers.go` | Register `LibraryHandler` |
