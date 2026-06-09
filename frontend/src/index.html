@@ -337,6 +337,63 @@
     </script>
 
     <script>
+    // ── Library switch safety wrappers ────────────────────────────────────────
+    // Mirrors the app:closing flow: waits for active AI jobs, flushes the
+    // editor, then delegates to the Go binding. All library-switch entry points
+    // (menu, chip) go through one of these two functions.
+
+    window.sieveSwitchLibrary = async function(path) {
+      var overlay = document.getElementById('pending-close-overlay');
+      var overlayTitle = overlay && overlay.querySelector('.pending-close-title');
+      var overlayBody  = overlay && overlay.querySelector('.pending-close-body');
+      await new Promise(function(resolve) {
+        function check() {
+          if (window.__sieveActiveJobs > 0) {
+            if (overlay) overlay.style.display = 'flex';
+            if (overlayTitle) overlayTitle.textContent = 'Switching library…';
+            if (overlayBody)  overlayBody.textContent  = 'Waiting for AI tasks to finish';
+            setTimeout(check, 500);
+          } else { resolve(); }
+        }
+        check();
+      });
+      if (window._editorSave) window._editorSave();
+      await new Promise(function(r) { setTimeout(r, 300); });
+      try {
+        var result = await window.go.main.App.SwitchLibrary(path);
+        if (result) location.reload();
+      } catch (e) {
+        console.error('[sieve] SwitchLibrary failed', e);
+        if (overlay) overlay.style.display = 'none';
+        alert('Could not switch to that library:\n' + e);
+      }
+    };
+
+    window.sieveSelectLibrary = async function() {
+      var overlay = document.getElementById('pending-close-overlay');
+      var overlayTitle = overlay && overlay.querySelector('.pending-close-title');
+      var overlayBody  = overlay && overlay.querySelector('.pending-close-body');
+      await new Promise(function(resolve) {
+        function check() {
+          if (window.__sieveActiveJobs > 0) {
+            if (overlay) overlay.style.display = 'flex';
+            if (overlayTitle) overlayTitle.textContent = 'Switching library…';
+            if (overlayBody)  overlayBody.textContent  = 'Waiting for AI tasks to finish';
+            setTimeout(check, 500);
+          } else { resolve(); }
+        }
+        check();
+      });
+      if (window._editorSave) window._editorSave();
+      await new Promise(function(r) { setTimeout(r, 300); });
+      try {
+        var path = await window.go.main.App.SelectVault();
+        if (path) location.reload();
+      } catch (e) {
+        if (overlay) overlay.style.display = 'none';
+      }
+    };
+
     // Close Handler
     window.addEventListener('DOMContentLoaded', function() {
         if (window.runtime && window.runtime.EventsOn) {
