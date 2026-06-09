@@ -382,12 +382,13 @@ textarea::selection {
   counter-reset: docline;
 }
 
-/* Gutter separator — tracks sidebar width via CSS variable */
+/* Gutter separator — tracks sidebar width and toolbar height via CSS variables.
+   --toolbar-h is set on #app-root and updated when the toolbar is toggled. */
 .tiptap::before {
   content: '';
   position: fixed;
   left: calc(var(--sidebar-w, 0px) + 1.2rem + (max(1, var(--line-digits, 1)) - 1) * 0.55rem);
-  top: 44px;
+  top: calc(44px + var(--toolbar-h, 0px));
   bottom: 32px;
   width: 1px;
   background: var(--theme-border2);

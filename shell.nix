@@ -39,7 +39,21 @@ in pkgs.mkShell {
       # export WEBKIT_DISABLE_COMPOSITING_MODE=1
       # export WEBKIT_DISABLE_DMABUF_RENDERER=1
       export GODEBUG=asyncpreemptoff=1
-      export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:$XDG_DATA_DIRS"
+
+      # GTK file dialogs require the org.gtk.Settings.FileChooser GSettings schema.
+      # On NixOS the schema XML ships in the Nix store but needs to be compiled
+      # before GLib can find it.  We compile once into /tmp and point GLib there.
+      _schema_src="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}/glib-2.0/schemas"
+      _schema_dir="''${XDG_RUNTIME_DIR:-/tmp}/sieve-gschemas"
+      mkdir -p "$_schema_dir"
+      if [ ! -f "$_schema_dir/gschemas.compiled" ]; then
+        cp "$_schema_src"/*.xml "$_schema_dir/" 2>/dev/null || true
+        ${pkgs.glib.dev}/bin/glib-compile-schemas "$_schema_dir" 2>/dev/null || true
+      fi
+      export GSETTINGS_SCHEMA_DIR="$_schema_dir"
+      unset _schema_src _schema_dir
+
+      export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share:$XDG_DATA_DIRS"
       export PKG_CONFIG_PATH="${pkgs.lib.makeSearchPathOutput "dev" "lib/pkgconfig" [
         pkgs.webkitgtk_4_1
         pkgs.gtk3

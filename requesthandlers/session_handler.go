@@ -99,11 +99,14 @@ func (h *SessionHandler) handleToolbarToggle(w http.ResponseWriter, r *http.Requ
 	_ = h.ServiceProvider.State.SaveSession(session)
 
 	display := "none"
+	toolbarH := "0px"
 	if session.ShowToolbar {
 		display = "flex"
+		toolbarH = "36px"
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<style id="layout-overrides-toolbar" hx-swap-oob="true">#editor-toolbar { display: %s; }</style>`, display)
+	// Update toolbar visibility and the CSS variable that offsets the gutter separator.
+	fmt.Fprintf(w, `<style id="layout-overrides-toolbar" hx-swap-oob="true">#editor-toolbar { display: %s; } #app-root { --toolbar-h: %s; }</style>`, display, toolbarH)
 }
 
 func (h *SessionHandler) handleSessionRefresh(w http.ResponseWriter, r *http.Request) {
