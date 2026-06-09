@@ -1,332 +1,345 @@
 # Sieve Block Promotion Framework — Design Spec
 
-**Date:** 2026-06-08
-**Status:** Design / Pre-implementation
+**Date:** 2026-06-08  
+**Revised:** 2026-06-09  
+**Status:** Design — ready for implementation
 
 ---
 
 ## Overview
 
-Any Sieve block that contains rich content (an AI response, a web clip body, a code block) may contain material that belongs in a different block type. Today this is handled ad-hoc: the AI block renderer was patched to detect mermaid fences and offer "Promote to Diagram". That approach is brittle — detection logic for one block type leaks into another, and every new block type requires patching unrelated renderers.
+Content in Sieve moves along a lifecycle spectrum. This framework makes that movement first-class and systematic rather than ad-hoc.
 
-This spec describes a **self-fulfilling promotion framework** baked into the Sieve Block Framework itself. Each `BlockProcessor` in Go declares what promotions it can detect from a block of text. The framework asks all registered processors at context-menu time and assembles promotion options automatically. No processor ever needs to know about any other processor.
-
-> **Design decision — detection lives in Go, not JS.**  
-> Detection logic (regex, URL parsing, fence extraction) belongs alongside `PasteMatch` in the Go `BlockProcessor` — not scattered across JS renderer files. Go is easier to test, reason about, and keep consistent. The JS client remains thin: it calls a lightweight API endpoint to get promotions for the current block, then renders them. This also means promotion logic is available to any future client (CLI, API, mobile) without re-implementation.
-
-
-> TODO you kind of hint at ait....but ebing able to use promote to smart image on a diagram is ridiculously powerful - its basically a  really clkever way to export the image - but allow us to work on the read only version of the diagram
+See also: `docs/design-block-lifecycle.md` for the full lifecycle model.
 
 ---
 
-## Symmetry with PasteMatch
+## The Two Operations
 
-Every `BlockProcessor` already implements `PasteMatch` — the inbound question: *"can I create a block from this pasted content?"*
+### Embed (Sieve Block → Markdown)
 
-Promotion detection is the outbound mirror: *"given this block's content, what other blocks could be created from it?"*
+A live Sieve block is dissolved back into the document as portable markdown. The block loses its UI, its smarts, its iterability — but its intelligence is baked into the content. `MarkdownRepresentation` on the processor provides the output.
 
-This makes the `BlockProcessor` interface self-contained and symmetric:
+> Previously called "Promote to Document." Renamed because it describes what happens: the block is *embedded* into the document flow.
 
-```
-PasteMatch(entries []PasteEntry, ...) (bool, map[string]interface{})
-  → "Can I absorb this incoming content?"
+This is a **replace** operation. The block is removed; its markdown representation takes its place.
 
-DetectPromotions(text string) []PromotionSuggestion
-  → "What could be created from this outgoing content?"
-```
-
-Both methods live on the same interface. Both are testable in isolation. Both are ignorant of other block types.
+Already partially implemented via `supportsPromotion: true` on processors. This spec does not change that mechanism.
 
 ---
 
-## Core Concept
+### Extract (Content within a block → new Sieve Block)
 
-The `BlockProcessor` interface gains one optional method:
+Something interesting was found *inside* a block — a mermaid fence in an AI response, an image URL in a web clip — and the user wants to pull it out and work on it as a proper Sieve block.
+
+> Previously called "Promote to [kind]." Renamed because it describes the action: the content is *extracted* from the containing block and given a life of its own.
+
+This is an **additive** operation. The source block is untouched; a new block is created.
+
+This is the primary subject of this spec.
+
+---
+
+## Architecture Principle
+
+**The Go backend is frontend-agnostic.** It deals exclusively in markdown text and structured attrs. No HTML, no SVG, no DOM concepts ever reach the backend interface. The same backend must work equally for a Wails JS frontend, a JavaFX app, a Flutter app, or a CLI.
+
+Detection logic — regex, content pattern matching — belongs in Go where it is testable, consistent, and reusable across any future client.
+
+---
+
+## Interface Changes: `IsBlock` + `Transform`
+
+The existing `PasteMatch` method is split into two:
 
 ```go
-type PromotionSuggestion struct {
-    Kind  string            // e.g. "diagram", "smart-image"
-    Label string            // e.g. "Promote to Diagram"
-    Attrs map[string]any    // attrs to pass to CreateBlock
+// IsBlock — fast boolean gate.
+// "Can this content become a block of my kind?"
+// Pure pattern matching — no processing, no side effects.
+IsBlock(entries []ContentEntry) bool
+
+// Transform — called only when IsBlock is true.
+// Produces the attrs map for InitAttrs.
+// Replaces PasteMatch.
+Transform(entries []ContentEntry, docUUID string, cursorBlockID string) map[string]interface{}
+```
+
+`PasteMatch` is removed from the interface. Existing processors are migrated to `IsBlock` + `Transform`.
+
+> good defensaive programming dictates that the Transform function should probably call isBlock on any inpout to ensure it can be processed
+
+### Why the split?
+
+Detection (Extract menu building) needs to run `IsBlock` across all processors cheaply — no processing, no asset creation, just yes/no. `Transform` is only called when the user has committed to a specific extraction. Separating them makes the detection path free and the execution path explicit.
+
+---
+
+## ContentEntry (replaces PasteEntry)
+
+```go
+type ContentEntry struct {
+    MIMEType string
+    Content  string
 }
-
-// Optional — processors that cannot detect anything simply omit it.
-DetectPromotions(text string) []PromotionSuggestion
 ```
 
-At context-menu time, the flow is:
+Renamed from `PasteEntry`. The type represents "a piece of content with a MIME type" — this is true for paste, for detection, and for extract execution. The name `PasteEntry` was too narrow.
 
-1. User right-clicks a Sieve block
-2. JS client calls `POST /api/detect-promotions` with `{ kind, text, clickTarget }` (see Context-Aware Click below)
-3. Go handler calls `DetectPromotions(text)` on **every** registered processor except the source kind
-4. Aggregates all `[]PromotionSuggestion` results and returns them as JSON
-5. JS renders each as a "Promote to…" menu item, dispatching `sieve:create-block` on click
-
-No JS renderer knows about any other renderer. No Go processor knows about any other processor.
-
-> am wondering most blocks are static - this could be precomputed by the backend - When inserted into the shadow.  Could be a yaml proprty - maybe an array or something
+Not all `ContentEntry` values can become a block — the type is generic. `IsBlock` is the gate.
 
 ---
 
-## Context-Aware Click
-
-When a block contains multiple items of the same kind — for example an AI response with two images, or three code fences — showing a numbered list ("Promote Image 1", "Promote Image 2") is confusing. The user right-clicked on *something specific* and probably means just that thing.
-
-### How it works
-
-The right-click event carries a DOM target (`event.target`). The JS client walks up the DOM from the click target to identify the nearest promotable element:
-
-| User clicks on | Identified as |
-|---|---|
-| An `<img>` tag | That specific image's `src` |
-| A `<pre><code class="language-mermaid">` block | That specific mermaid fence |
-| A `<pre><code class="language-python">` block | That specific code fence |
-| A `<a href>` hyperlink | That specific URL |
-| The block's background / chrome | No click target — fall back to full scan |
-
-When a specific click target is identified, the client sends `clickTarget: { type: "image", src: "..." }` (or similar) alongside the full `text`. Go can then:
-
-- **If `clickTarget` is present:** run `DetectPromotions` but filter to only the suggestion matching the clicked element. The menu shows a single, unambiguous item: *"Promote to Smart Image"*.
-- **If `clickTarget` is absent:** run the full scan and show all detected items, numbered if there are multiples.
-
-### Result
+## Smart Paste Flow (unchanged behaviour, updated mechanics)
 
 ```
-User right-clicks Image 2 inside a web clip:
-
-  ┌─────────────────────────────────────┐
-  │  WEB CLIP                           │
-  │  ─────────────────────────────────  │
-  │  (native actions…)                  │
-  │  ─────────────────────────────────  │
-  │  ◈  Promote to Smart Image          │  ← just this image, no number
-  └─────────────────────────────────────┘
-
-User right-clicks the block background:
-
-  ┌─────────────────────────────────────┐
-  │  WEB CLIP                           │
-  │  ─────────────────────────────────  │
-  │  (native actions…)                  │
-  │  ─────────────────────────────────  │
-  │  ◈  Promote to Diagram              │
-  │  ◈  Promote Image 1 to Smart Image  │
-  │  ◈  Promote Image 2 to Smart Image  │
-  │  ◈  Promote to Link Card            │
-  └─────────────────────────────────────┘
+for each processor (in registration order):
+    if processor.IsBlock(entries):
+        attrs = processor.Transform(entries, docUUID, cursorBlockID)
+        InitAttrs(id, attrs) → create block
+        stop
 ```
 
-This is the right UX default: **be specific when the user is specific, be comprehensive when they are not.**
+First match wins. Same behaviour as today.
 
 ---
 
-## ContentData Shape
+## Extract Detection Flow
 
-`getContentData` returns a structured object rather than a plain string, so target renderers can work from already-parsed structure where available:
+Triggered on right-click of any Sieve block.
+
+```
+JS: build ContentEntry[] from the click context (see below)
+JS: POST /api/detect-extractions { sourceKind, entries }
+Go: for each processor (except sourceKind):
+        if processor.IsBlock(entries): add { kind } to results
+Go: return [{ kind }, ...]
+JS: build "Extract as [kind]" menu items from results
+    (UI derives label from kind — no label in API response)
+```
+
+Detection is **free** — `IsBlock` is pure pattern matching. No assets are created. No rendering occurs.
+
+---
+
+## Extract Execution Flow
+
+Triggered when the user clicks an "Extract as [kind]" menu item.
+
+```
+JS: targetRenderer.resolveEntries(entries) → resolved ContentEntry[]  [async, may show spinner]
+JS: send WS event `extract` { kind, entries: transformedEntries }
+Go: processor.Transform(entries, docUUID, cursorBlockID) → attrs
+Go: InitAttrs(id, attrs) → create block
+```
+
+The `extract` WS event delegates to the same code path as paste — `Transform` then `InitAttrs` — with the target processor pre-selected rather than discovered by first-match scan.
+
+**Asset must exist before block is created.** `Transform` for `SmartImageProcessor` saves the asset first, then returns attrs with the stored `src`. No block is ever created with a PENDING status pointing at an asset that does not yet exist.
+
+---
+
+## ContentEntry from the Click Context
+
+The JS builds `ContentEntry[]` by walking up the DOM from `event.target` to the nearest `.sieve-block` boundary.
+
+**The JS has zero knowledge of what is extractable.** It only performs generic DOM classification — it does not know that `language-mermaid` is special. It describes what it found; Go decides whether it matters.
+
+```
+click lands on <code class="language-X"> inside a block
+  → ContentEntry { mimeType: "text/plain", content: <fence text including ``` delimiters> }
+
+click lands on <img src="...">
+  → ContentEntry { mimeType: "text/uri-list", content: <src URL> }
+
+click lands on <a href="...">
+  → ContentEntry { mimeType: "text/uri-list", content: <href URL> }
+
+click reaches .sieve-block without matching anything specific
+  → no ContentEntry built — detect-extractions is not called
+  → no "Extract as" items appear in the menu
+  → only native block actions and Embed (if supportsPromotion: true) are shown
+```
+
+The content extracted from the clicked element IS the data sent to the backend. The backend does not need to re-locate the node — it was given the content directly.
+
+**Background click is not an extraction.** Embed (the stock `supportsPromotion` path) is always available independently of this framework and is not triggered by the DOM walk.
+
+**Duplicate content:** if the same mermaid fence appears twice in a block and the user clicks one, both produce identical ContentEntry values and identical extraction results. This is acceptable — extracting either copy produces the same block.
+
+---
+
+## `resolveEntries` — JS Target Renderer Hook
+
+Called **only at execution time** (after the user has clicked a specific "Extract as" item), not at detection time.
+
+The JS holds the `ContentEntry[]` built during the DOM walk in memory for the lifetime of the context menu. When the user clicks a menu item, that same array is passed into `resolveEntries` on the target renderer. Some entries need work to reach their final form before being sent to the backend (mermaid text → SVG); others are already resolved and pass straight through.
+
+**Default (base framework):** pass-through. Returns entries unchanged. Correct for any processor whose `Transform` works directly on text or URI content.
+
+**`SmartImageRenderer` override:**
 
 ```js
-{
-  text:   string,        // Raw markdown/plain-text body (for pattern matching)
-  html:   string,        // Raw HTML body if available (for web clips etc.)
-  images: [              // Already-resolved image assets, if any
-    { src: string, alt: string }
-  ],
-  urls:   string[],      // Already-resolved hyperlinks, if any
+async resolveEntries(entries) {
+  const text = entries.find(e => e.mimeType === 'text/plain')?.content
+  if (isMermaidFence(text)) {
+    // render mermaid source → SVG (may be slow — spinner shown on source block)
+    await ensureMermaid()                         // from diagram-renderer.js (exported)
+    const { svg } = await mermaid.render(uniqueId, extractMermaidSource(text))
+    return [{ mimeType: 'image/svg+xml', content: svg }]
+  }
+  // already image bytes (image/png, image/svg+xml from diagram block render mode)
+  return entries
 }
 ```
 
-Renderers that have no rich structure (e.g. a code block) just populate `text`. Renderers with richer data (e.g. a web clip) populate whichever fields they have.
+**Mermaid rendering source:**
+- If source block is a **diagram block in render mode**: SVG is already in the DOM. `createContentEntry` captures it directly — no mermaid render step needed. Fast path.
+- If source block is a **diagram block in edit mode** or **any other block** (AI, web clip, code): mermaid source is text only. `createContentEntry` renders it programmatically. May be perceptible on slower machines — a spinner is shown on the source block while this runs.
+
+"Extract as Smart Image" is available from any block in any mode, consistent with the principle that the same content in an AI block (never rendered) should have no more friction than the same content in a diagram block.
+
+**`ensureMermaid()` is exported from `diagram-renderer.js`** and imported by `smart-image-renderer.js`. Mermaid rendering knowledge lives in exactly one place.
 
 ---
 
-## Promotion Shape
+## `SmartImageProcessor.IsBlock` Detects Mermaid
 
-`detectInContent` returns an array of promotion descriptors:
+`SmartImageProcessor.IsBlock` returns true for:
+- `image/*` MIME types
+- `text/uri-list` containing image URLs (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`)
+- `text/plain` containing a ` ```mermaid ` fence
 
-```js
-{
-  label:  string,        // Menu label, e.g. "Promote to Diagram"
-  kind:   string,        // Sieve block kind, e.g. "diagram"
-  attrs:  object,        // Attrs to pass to sieve:create-block
-}
-```
-
-The framework dispatches `sieve:create-block` with `{ kind, attrs }` when the user clicks a promotion item. This is the same event already used by keyboard shortcuts and the context menu's "Insert…" actions — no new plumbing required.
-
----
-
-## Source Renderers
-
-These renderers implement `getContentData`:
-
-| Renderer | `text` | `html` | `images` | `urls` |
-|---|---|---|---|---|
-| `ai-block` | `node.attrs.response` (markdown) | — | — | — |
-| `web-clip` | `node.attrs.body` (markdown) | `node.attrs.rawHtml` if stored | Parsed from body/HTML | Parsed from body/HTML |
-| `code` | `node.attrs.source` | — | — | — |
-| `smart-image` | `node.attrs.summary` + `node.attrs.alt` | — | `[{ src: node.attrs.src, alt: node.attrs.alt }]` | — |
-
----
-
-## Target Renderers
-
-These renderers implement `detectInContent`:
-
-### `diagram`
-
-Scans `data.text` for mermaid fenced blocks:
-
-```
-```mermaid
-...
-```
-```
-
-Returns one `Promotion` per match:
-- `label`: `"Promote to Diagram"` (or `"Promote to Diagram 2"` if multiple)
-- `kind`: `"diagram"`
-- `attrs`: `{ source: <extracted source>, mode: "render" }`
-
-### `code`
-
-Scans `data.text` for any fenced code block with a language tag:
-
-```
-```python
-...
-```
-```
-
-Returns one `Promotion` per match:
-- `label`: `"Promote to Code Block (python)"`
-- `kind`: `"code"`
-- `attrs`: `{ source: <extracted source>, language: "python" }`
-
-> Note: A code block promoting its own source to another code block is intentionally a no-op — the framework should suppress self-promotion (same kind as source).
-
-### `smart-image`
-
-Scans `data.images` (already parsed) and `data.text` for markdown image syntax (`![alt](https://…)`) and bare image URLs (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`).
-
-Returns one `Promotion` per image:
-- `label`: `"Promote Image to Smart Image"` (or `"Promote Image 1…"` if multiple)
-- `kind`: `"smart-image"`
-- `attrs`: `{ src: <url> }`
-
-When the server receives `create-block` with `kind: smart-image` and a remote `src`, `InitAttrs` sets `status: PENDING` and `RunJob` automatically downloads the image and triggers AI description via `DescribeImage`. The user gets a fully AI-described, locally-stored Smart Image block for free.
-
-### `rich-link`
-
-Scans `data.urls` (already parsed) and `data.text` for bare `https://` URLs that are **not** image URLs.
-
-Returns one `Promotion` per URL:
-- `label`: `"Promote to Link Card"` (or `"Promote Link 1…"` if multiple)
-- `kind`: `"rich-link"`
-- `attrs`: `{ href: <url> }`
-
----
-
-## The Combinatorial Payoff
-
-With no changes to existing source renderers, the following promotions become available automatically the moment target renderers implement `detectInContent`:
-
-| Source block contains | Promotion offered |
-|---|---|
-| AI response with mermaid | → Diagram Block |
-| AI response with code fence | → Code Block |
-| AI response with image URL | → Smart Image Block |
-| AI response with URL | → Link Card |
-| Web Clip body with mermaid | → Diagram Block |
-| Web Clip body with image URL | → Smart Image Block |
-| Web Clip body with URL | → Link Card |
-| Web Clip body with code | → Code Block |
-| Code block containing a URL | → Link Card |
-| Smart Image (alt text describing mermaid?) | — (unlikely but works) |
-
-Every new block type added in future participates automatically by implementing `detectInContent`. Every existing source block automatically gains the ability to promote to it.
-
----
-
-## Context Menu Rendering
-
-Promotions are grouped into a dedicated section, separated by a divider, after the block's own native actions:
-
-```
-┌────────────────────────────────────────┐
-│  WEB CLIP                              │
-│  ──────────────────────────────────    │
-│  (native web clip actions…)            │
-│  ─────────────────────────────────     │
-│  ◈  Promote to Diagram                 │
-│  ◈  Promote Image 1 to Smart Image     │
-│  ◈  Promote Image 2 to Smart Image     │
-│  ◈  Promote to Link Card               │
-└────────────────────────────────────────┘
-```
-
-If no promotions are detected, the divider and section are omitted entirely.
+The last case is what enables "Extract as Smart Image" from any block containing mermaid source. The processor is the authority on what can become a Smart Image — including content that requires a render step before it can be stored.
 
 ---
 
 ## Self-Suppression
 
-A renderer should not offer to promote content to its own kind. The framework suppresses any `Promotion` where `kind === sourceRendererKind`. This prevents e.g. a code block promoting its source to another code block.
+The framework passes `sourceKind` to `/api/detect-extractions`. Any processor whose kind matches `sourceKind` is skipped. A diagram block does not offer "Extract as Diagram."
 
 ---
 
-## Implementation Scope
-
-### Go backend
-
-| File | Change |
-|---|---|
-| `sieve/block_processor.go` | Add `DetectPromotions(text string) []PromotionSuggestion` to the `BlockProcessor` interface (as an optional method via interface check, so existing processors don't break) |
-| `sieve/diagram_processor.go` | Implement `DetectPromotions` — mermaid fence regex |
-| `sieve/code_processor.go` | Implement `DetectPromotions` — fenced code block regex |
-| `sieve/smart_image_processor.go` | Implement `DetectPromotions` — markdown image syntax + bare image URLs |
-| `sieve/rich_link_processor.go` | Implement `DetectPromotions` — bare HTTPS URLs (non-image) |
-| `sieve/router.go` (or equivalent) | Add `POST /api/detect-promotions` endpoint |
-
-### JS client (thin layer only)
-
-| File | Change |
-|---|---|
-| `frontend/src/static/context-menu.js` | On right-click of a Sieve block: extract `text` from node attrs, identify `clickTarget` from DOM event, call `/api/detect-promotions`, render results |
-| `frontend/src/static/ai-block-renderer.js` | **Remove** hardcoded mermaid detection (was interim) |
-
-> All JS renderer files (`diagram-renderer.js`, `smart-image-renderer.js`, etc.) require **zero changes**. Detection is entirely in Go.
-
----
-
-## API: `/api/detect-promotions`
+## Context Menu Layout
 
 ```
-POST /api/detect-promotions
+┌────────────────────────────────────────────┐
+│  AI BLOCK · diagram                        │  ← context-aware header (see below)
+│  ─────────────────────────────────────     │
+│  (native AI block actions…)                │
+│  ─────────────────────────────────────     │
+│  ◈  Extract as Diagram                     │
+│  ◈  Extract as Smart Image                 │
+│  ─────────────────────────────────────     │
+│  ◈  Embed in document                      │  ← always present (MarkdownRepresentation)
+└────────────────────────────────────────────┘
+```
+
+If no extractions are detected, the extraction section and its divider are omitted. "Embed in document" is always present for blocks with `supportsPromotion: true`.
+
+### Context-Aware Header
+
+When the DOM walk identifies a specific element (not a background click), the menu header annotates the block kind with what was targeted. This explains to the user why extra options are present and what content they apply to.
+
+| What JS found | Header |
+|---|---|
+| `<code class="language-mermaid">` | `AI BLOCK · diagram` |
+| `<code class="language-X">` (other) | `AI BLOCK · code` |
+| `<img>` | `AI BLOCK · image` |
+| `<a href>` | `AI BLOCK · link` |
+| Reached `.sieve-block` (background) | `AI BLOCK` |
+
+The suffix is derived from the ContentEntry at click time — the JS knows what it found during the DOM walk before calling `detect-extractions`. The annotation is purely a UI label; it does not affect the API call.
+
+The suffix is rendered in the same visual style as the block kind label but muted — a contextual annotation, not a separate primary label. A light separator (`·`) reads more naturally than parentheses at small sizes.
+
+---
+
+## API: `/api/detect-extractions`
+
+```
+POST /api/detect-extractions
 Content-Type: application/json
 
 {
-  "uuid":        "abc123",          // current document
-  "kind":        "web-clip",        // source block kind (for self-suppression)
-  "text":        "...markdown...",  // full text content of the block
-  "clickTarget": {                  // optional — what the user right-clicked on
-    "type": "image",
-    "src":  "https://example.com/photo.jpg"
-  }
+  "uuid":       "abc123",       // current document
+  "sourceKind": "ai-block",     // for self-suppression
+  "entries": [                  // ContentEntry[] describing what was clicked
+    { "mimeType": "text/plain", "content": "```mermaid\ngraph TD\n  A-->B\n```" }
+  ]
 }
 
 → 200 OK
 [
-  { "kind": "smart-image", "label": "Promote to Smart Image", "attrs": { "src": "https://example.com/photo.jpg" } }
+  { "kind": "diagram" },
+  { "kind": "smart-image" }
 ]
 ```
 
-With no `clickTarget`, all detections are returned. With a `clickTarget`, only suggestions that match the specific clicked element are returned.
+No labels in the response. The UI derives "Extract as Diagram", "Extract as Smart Image" from the kind.
+
+No attrs in the response. Attrs are computed at execution time by `Transform`, not speculatively at detection time.
 
 ---
 
-## Out of Scope
+## WS Event: `extract`
 
-- Promoting into native TipTap nodes (plain `<img>` or links) rather than Sieve blocks — Smart Image and Rich Link already cover these cases as proper blocks.
-- Batch promotion (promoting all detected items at once) — single-item promotion per menu item is sufficient for V1.
-- Promotion from inline content (e.g. a paragraph containing a URL) — only block-level Sieve nodes participate as sources.
-- Caching promotion results — the endpoint is fast (pure regex, no I/O) and called only on right-click, so caching is unnecessary.
+```json
+{
+  "type":    "extract",
+  "uuid":    "doc-abc123",
+  "kind":    "diagram",
+  "entries": [
+    { "mimeType": "text/plain", "content": "```mermaid\ngraph TD\n  A-->B\n```" }
+  ]
+}
+```
+
+Go handler routes to the named processor. Calls `Transform(entries, ...)` → `InitAttrs` → creates block. Identical code path to paste, processor pre-selected.
+
+---
+
+## The Combinatorial Payoff
+
+| Source block contains | Extract offered |
+|---|---|
+| AI response with mermaid fence | → Diagram, Smart Image |
+| AI response with code fence | → Code Block |
+| AI response with image URL | → Smart Image |
+| AI response with bare URL | → Rich Link |
+| Web Clip with mermaid | → Diagram, Smart Image |
+| Web Clip with image URL | → Smart Image |
+| Web Clip with URL | → Rich Link |
+| Diagram block (any mode) | → Smart Image |
+
+Every new processor added in future participates automatically — it implements `IsBlock` and `Transform`, and extraction from every existing block type gains the new kind for free.
+
+---
+
+## Migration: PasteMatch → IsBlock + Transform
+
+All existing processors must be migrated. The split is mechanical:
+
+```go
+// Before
+func (p *FooProcessor) PasteMatch(entries []PasteEntry, docUUID, cursorBlockID string) (bool, map[string]interface{}) {
+    // detect and extract in one step
+}
+
+// After
+func (p *FooProcessor) IsBlock(entries []ContentEntry) bool {
+    // detection only — same logic, return bool
+}
+func (p *FooProcessor) Transform(entries []ContentEntry, docUUID, cursorBlockID string) map[string]interface{} {
+    // extraction — same attr-building logic
+}
+```
+
+---
+
+## Out of Scope (V1)
+
+- Extraction from inline content (a URL in a paragraph) — only block-level Sieve nodes are sources
+- Batch extraction (extract all detected items at once) — single item per menu click
+- Extraction into native TipTap nodes (plain `<img>`, plain links) — Smart Image and Rich Link cover these
+- Pre-computing extraction candidates at block creation time — detection is fast (pure `IsBlock`, no I/O) and called only on right-click; pre-computation is unnecessary
+- PDF, spreadsheet, and other binary-to-image extraction paths — `SmartImageProcessor.IsBlock` will detect them; `createContentEntry` rendering hooks are deferred until those source types exist
