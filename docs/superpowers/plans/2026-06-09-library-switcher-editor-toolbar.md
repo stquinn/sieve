@@ -4,7 +4,7 @@
 
 **Goal:** Add a recent-libraries switcher with status-bar chip, a docked editor toolbar with formatting/insert/AI-filing actions, and refresh the Tools menu to match.
 
-**Architecture:** Library switching reuses the existing `SelectVault`/`startup()` plumbing; `GlobalConfig` gains a `RecentLibraries` list and the `.sieve` marker file gains a `Name` field for future user-set names. The toolbar is static HTML in `index.html` with a CSS show/hide driven by `session.ShowToolbar`, toggled by a new endpoint following the exact pattern of the existing sidebar/meta toggles. AI filing actions appear on the toolbar right side (hidden at Tier 1 via CSS) and in the Tools menu — complementary paths to the same actions.
+**Architecture:** Library switching reuses the existing `SelectVault`/`startup()` plumbing; `GlobalConfig` gains a `RecentLibraries` list and the `.sieve` marker file gains a `Name` field for future user-set names. Switching is guarded: a `window.sieveSwitchLibrary(path)` JS wrapper waits for active AI jobs (polling `window.__sieveActiveJobs`, showing the existing pending-close overlay) and flushes the editor before handing off to the Go binding, which calls `Editor.FlushAll()` before reinitializing. The toolbar is static HTML in `index.html` with inline style show/hide driven by `session.ShowToolbar`, toggled by a new endpoint following the exact pattern of the existing sidebar/meta toggles. AI filing actions appear on the toolbar right side (hidden at Tier 1 via CSS) and in the Tools menu — complementary paths to the same actions.
 
 **Tech Stack:** Go (Wails v2, chi), HTMX, vanilla JS, TipTap, Tailwind/CSS variables
 
@@ -17,7 +17,7 @@
 | `config.go` | `LibraryEntry`, `libraryDisplayName`, `AddRecent` on `GlobalConfig` |
 | `config_test.go` | Tests for `libraryDisplayName` and `AddRecent` |
 | `store/filestore/marker.go` | Add `Name` field to `storeMeta`; add `ReadLibraryName(root)` |
-| `app.go` | `SwitchLibrary`, call `AddRecent` + broadcast `library:changed` in `startup()`, rebuild menu after switch |
+| `app.go` | `SwitchLibrary` (with `FlushAll` guard), call `AddRecent` + broadcast `library:changed` in `startup()`, rebuild menu after switch |
 | `main.go` | `buildMenu`: File menu library entries, View `⌘⇧T`, Tools menu refresh |
 | `handlers.go` | Register `LibraryHandler`; pass `GetLibraryInfo` func pointer |
 | `requesthandlers/library_handler.go` | New — `GET /api/library/current` |
@@ -287,6 +287,133 @@ git commit -m "feat: add SwitchLibrary binding and wire AddRecent+SSE into start
 
 ---
 
+## Task 3b: Library switch safety — flush + job-wait
+
+**Files:**
+- Modify: `app.go`
+- Modify: `frontend/src/index.html`
+
+Switching libraries is semantically equivalent to closing the app and reopening it. The frontend must wait for active AI jobs and flush the editor. The Go binding must flush the autosave queue. This task adds that safety before any UI that triggers a switch is wired up.
+
+- [ ] **Add `FlushAll` call to `SwitchLibrary` in `app.go`** — insert before `a.storePath = path`:
+
+```go
+func (a *App) SwitchLibrary(path string) (string, error) {
+    if a.ctx == nil {
+        return "", fmt.Errorf("app context not initialized")
+    }
+    if err := ValidateStore(path); err != nil {
+        return "", fmt.Errorf("invalid library: %w", err)
+    }
+    // Flush any pending autosave before reinitializing the store.
+    if a.ServiceProvider != nil && a.ServiceProvider.Editor != nil {
+        a.ServiceProvider.Editor.FlushAll()
+    }
+    a.storePath = path
+    a.startup(a.ctx)
+    if a.storePath == "" {
+        return "", fmt.Errorf("failed to load the selected library")
+    }
+    runtime.MenuSetApplicationMenu(a.ctx, buildMenu(a))
+    return path, nil
+}
+```
+
+- [ ] **Add `window.sieveSwitchLibrary` helper to `frontend/src/index.html`** — place inside the `DOMContentLoaded` listener, near the existing `app:closing` handler:
+
+```js
+// ── Library switch safety wrapper ─────────────────────────────────────────
+// All library-switch entry points (menu, chip, toolbar) go through this
+// function. It mirrors the app:closing flow: waits for active AI jobs,
+// flushes the editor, then delegates to the Go binding.
+window.sieveSwitchLibrary = async function(path) {
+  var overlay = document.getElementById('pending-close-overlay');
+  var overlayTitle  = overlay && overlay.querySelector('.pending-close-title');
+  var overlayBody   = overlay && overlay.querySelector('.pending-close-body');
+
+  // Wait for any active AI jobs.
+  await new Promise(function(resolve) {
+    function check() {
+      if (window.__sieveActiveJobs > 0) {
+        if (overlay) overlay.style.display = 'flex';
+        if (overlayTitle) overlayTitle.textContent = 'Switching library…';
+        if (overlayBody)  overlayBody.textContent  = 'Waiting for AI tasks to finish';
+        setTimeout(check, 500);
+      } else {
+        resolve();
+      }
+    }
+    check();
+  });
+
+  // Flush editor.
+  if (window._editorSave) window._editorSave();
+  await new Promise(function(r) { setTimeout(r, 300); });
+
+  try {
+    var result = await window.go.main.App.SwitchLibrary(path);
+    if (result) location.reload();
+  } catch (e) {
+    console.error('[sieve] SwitchLibrary failed', e);
+    if (overlay) overlay.style.display = 'none';
+    alert('Could not switch to that library:\n' + e);
+  }
+};
+
+// Wrapper for SelectVault (file picker) — same safety, no path arg.
+window.sieveSelectLibrary = async function() {
+  var overlay = document.getElementById('pending-close-overlay');
+  var overlayTitle = overlay && overlay.querySelector('.pending-close-title');
+  var overlayBody  = overlay && overlay.querySelector('.pending-close-body');
+
+  await new Promise(function(resolve) {
+    function check() {
+      if (window.__sieveActiveJobs > 0) {
+        if (overlay) overlay.style.display = 'flex';
+        if (overlayTitle) overlayTitle.textContent = 'Switching library…';
+        if (overlayBody)  overlayBody.textContent  = 'Waiting for AI tasks to finish';
+        setTimeout(check, 500);
+      } else {
+        resolve();
+      }
+    }
+    check();
+  });
+
+  if (window._editorSave) window._editorSave();
+  await new Promise(function(r) { setTimeout(r, 300); });
+
+  try {
+    var path = await window.go.main.App.SelectVault();
+    if (path) location.reload();
+  } catch (e) {
+    if (overlay) overlay.style.display = 'none';
+  }
+};
+```
+
+- [ ] **Update all existing `SelectVault` call sites in `index.html`** to use `sieveSelectLibrary()` instead:
+
+Find: `window.go.main.App.SelectVault().then(function(p){ if(p) location.reload() })`
+Replace with: `window.sieveSelectLibrary()`
+
+This includes the bootstrap screen buttons (`sieveSelectVault`, `sieveCreateVault` — leave `CreateVault` as-is, it creates a new empty library with no state to flush).
+
+- [ ] **Compile check:**
+
+```bash
+go build ./...
+```
+
+- [ ] **Commit:**
+
+```bash
+git add app.go frontend/src/index.html
+git commit -m "feat: add library switch safety — flush autosave and wait for AI jobs before switching"
+```
+
+---
+
 ## Task 4: Library HTTP handler + chip template
 
 **Files:**
@@ -339,7 +466,7 @@ func (h *LibraryHandler) handleLibraryCurrent(w http.ResponseWriter, r *http.Req
 <span id="library-chip"
   class="status-chip status-chip--library"
   title="Current library — click to switch"
-  onclick="window.go.main.App.SelectVault().then(function(p){ if(p) location.reload() })"
+  onclick="window.sieveSelectLibrary()"
   hx-get="/api/library/current"
   hx-trigger="sse:library:changed"
   hx-target="#library-chip"
@@ -395,8 +522,9 @@ Note: `libraryDisplayName` is in `config.go` (package `main`) — this closure i
 
 ```go
 file.AddSeparator()
+// All library switch calls go through the safety wrapper defined in index.html.
 file.AddText("Open Library…", keys.Combo("o", keys.CmdOrCtrlKey, keys.ShiftKey),
-    js("window.go.main.App.SelectVault().then(function(p){ if(p) location.reload() })"))
+    js("window.sieveSelectLibrary()"))
 
 // Build Open Recent submenu from GlobalConfig
 recentMenu := file.AddSubmenu("Open Recent")
@@ -407,14 +535,14 @@ for _, entry := range cfg.RecentLibraries {
     recentMenu.AddText(entryName, nil, func(_ *menu.CallbackData) {
         logger.Info("menu: switching library", "path", entryPath)
         runtime.WindowExecJS(app.ctx,
-            fmt.Sprintf(`window.go.main.App.SwitchLibrary(%q).then(function(p){ if(p) location.reload() })`, entryPath))
+            fmt.Sprintf(`window.sieveSwitchLibrary(%q)`, entryPath))
     })
 }
 if len(cfg.RecentLibraries) > 0 {
     recentMenu.AddSeparator()
 }
 recentMenu.AddText("Open Other Library…", nil,
-    js("window.go.main.App.SelectVault().then(function(p){ if(p) location.reload() })"))
+    js("window.sieveSelectLibrary()"))
 
 file.AddText("Create New Library…", nil,
     js("window.go.main.App.CreateVault().then(function(p){ if(p) location.reload() })"))
