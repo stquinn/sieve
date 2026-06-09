@@ -5,13 +5,62 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"unicode"
 
 	"sieve/logger"
 )
 
+// LibraryEntry is one entry in the recent-libraries list.
+type LibraryEntry struct {
+	Path string `json:"path"`
+	Name string `json:"name"`
+}
+
 // GlobalConfig stores application-level settings that are not store-specific.
 type GlobalConfig struct {
-	LastStorePath string `json:"lastStorePath"`
+	LastStorePath   string         `json:"lastStorePath"`
+	RecentLibraries []LibraryEntry `json:"recentLibraries,omitempty"`
+}
+
+// libraryDisplayName converts a filesystem path to a display-friendly name.
+// Splits the basename on hyphens, underscores, and camelCase boundaries,
+// then title-cases each word.
+func libraryDisplayName(path string) string {
+	base := filepath.Base(path)
+	var runes []rune
+	prev := rune(0)
+	for _, r := range base {
+		if unicode.IsUpper(r) && unicode.IsLower(prev) {
+			runes = append(runes, ' ')
+		}
+		runes = append(runes, r)
+		prev = r
+	}
+	s := strings.NewReplacer("-", " ", "_", " ").Replace(string(runes))
+	words := strings.Fields(s)
+	for i, w := range words {
+		if len(w) > 0 {
+			words[i] = strings.ToUpper(w[:1]) + strings.ToLower(w[1:])
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+// AddRecent prepends path to RecentLibraries, deduplicates by path, and trims
+// to 8 entries. Does not save — caller must call config.Save().
+func (c *GlobalConfig) AddRecent(path string) {
+	entry := LibraryEntry{Path: path, Name: libraryDisplayName(path)}
+	filtered := make([]LibraryEntry, 0, len(c.RecentLibraries))
+	for _, e := range c.RecentLibraries {
+		if e.Path != path {
+			filtered = append(filtered, e)
+		}
+	}
+	c.RecentLibraries = append([]LibraryEntry{entry}, filtered...)
+	if len(c.RecentLibraries) > 8 {
+		c.RecentLibraries = c.RecentLibraries[:8]
+	}
 }
 
 func globalConfigPath() (string, error) {
