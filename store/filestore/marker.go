@@ -12,10 +12,23 @@ import (
 const currentStoreVersion = 1
 
 // storeMeta is the content of the {root}/.sieve marker file.
+// It is a general-purpose library-level state file: version/migration tracking
+// today, extensible for any future per-library metadata.
 type storeMeta struct {
 	Version   int    `json:"version"`
 	Created   string `json:"created"`
 	Migration string `json:"migration"` // "complete" | "pending" | "partial"
+	Name      string `json:"name,omitempty"`
+}
+
+// ReadLibraryName returns the human-readable library name stored in the .sieve
+// marker at root, or an empty string if absent or unreadable.
+func ReadLibraryName(root string) string {
+	m, err := (&FileStore{root: root}).readStoreMarker()
+	if err != nil {
+		return ""
+	}
+	return m.Name
 }
 
 func (fs *FileStore) sieveMarkerPath() string {
