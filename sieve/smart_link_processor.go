@@ -37,25 +37,32 @@ func (p *SmartLinkProcessor) InitAttrs(id string, overrides map[string]interface
 	return attrs
 }
 
-func (p *SmartLinkProcessor) PasteMatch(entries []PasteEntry, _ string, _ string) (bool, map[string]interface{}) {
-	var content string
+func (p *SmartLinkProcessor) IsBlock(entries []ContentEntry) bool {
 	for _, e := range entries {
-		if e.MIMEType == "text/plain" {
-			content = e.Content
-			break
+		trimmed := strings.TrimSpace(e.Content)
+		if trimmed == "" || strings.ContainsAny(trimmed, " \t\n\r") {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "http://") && !strings.HasPrefix(trimmed, "https://") {
+			continue
+		}
+		// Defer image URLs to SmartImageProcessor
+		if isImageURL(trimmed) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func (p *SmartLinkProcessor) Transform(entries []ContentEntry, _ string, _ string) map[string]interface{} {
+	for _, e := range entries {
+		trimmed := strings.TrimSpace(e.Content)
+		if trimmed != "" && (strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://")) && !strings.ContainsAny(trimmed, " \t\n\r") {
+			return map[string]interface{}{"href": trimmed, "label": trimmed}
 		}
 	}
-	trimmed := strings.TrimSpace(content)
-	if trimmed == "" {
-		return false, nil
-	}
-	if !strings.HasPrefix(trimmed, "http://") && !strings.HasPrefix(trimmed, "https://") {
-		return false, nil
-	}
-	if strings.ContainsAny(trimmed, " \t\n\r") {
-		return false, nil
-	}
-	return true, map[string]interface{}{"href": trimmed, "label": trimmed}
+	return nil
 }
 
 func (p *SmartLinkProcessor) OnChange(_ *SieveBlock) {}
@@ -110,6 +117,14 @@ func (p *SmartLinkProcessor) RunJob(jctx JobContext) error {
 	return nil
 }
 
-func (p *SmartLinkProcessor) MarkdownRepresentation(_ SieveBlock) string {
-	return ""
+func (p *SmartLinkProcessor) MarkdownRepresentation(block SieveBlock) string {
+	href, _ := block.Attrs["href"].(string)
+	if href == "" {
+		return ""
+	}
+	label, _ := block.Attrs["label"].(string)
+	if label == "" || label == href {
+		return href
+	}
+	return "[" + label + "](" + href + ")"
 }

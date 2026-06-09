@@ -20,7 +20,6 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
   var CodeRenderer = {
 
     nodeConfig: {
-      atom:       true,
       selectable: false,  // prevents TipTap creating a NodeSelection on click
       draggable:  false,  // mouse drag selects text, not moves the block
     },
@@ -48,12 +47,10 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
       var dom = document.createElement('div')
       dom.className = 'sieve-block sieve-block--code'
       dom.setAttribute('data-id', node.attrs.id || '')
-      dom.contentEditable = 'false'
 
       // Header + badge
       var header = document.createElement('div')
       header.className = 'sieve-block__header'
-      header.contentEditable = 'false'
       var badge = document.createElement('span')
       badge.className = 'sieve-block__badge'
       header.appendChild(badge)
@@ -65,7 +62,6 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
 
       var gutter = document.createElement('div')
       gutter.className = 'sieve-block__gutter'
-      gutter.contentEditable = 'false'
 
       // CSS Grid cell — highlight layer (behind) + textarea layer (in front)
       var codeArea = document.createElement('div')
@@ -240,36 +236,18 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
     },
   }
 
-  CodeRenderer.buildContextMenuItems = function (ctx) {
-    var n = ctx.node, editor = ctx.editor, getPos = ctx.getPos
-    var IC = window.SieveIcons || {}
+  // Ask AI, Explain, and Delete are injected by sieve-block-extension.js framework.
+  CodeRenderer.buildAiCtx = function (node) {
+    var lang = node.attrs.language
+    var label = lang && lang !== 'unknown' ? lang + ' block' : 'Code block'
+    return { contextLabel: label }
+  }
 
-    function del() {
-      if (typeof getPos === 'function') {
-        var pos = getPos()
-        editor.view.dispatch(editor.state.tr.delete(pos, pos + n.nodeSize))
-      }
-    }
-
-    function codeCtx() {
-      return {
-        content:      n.attrs.source || '',
-        blockRef:     n.attrs.id || 'doc',
-        history:      '',
-        contextLabel: 'Code Block',
-        imageIds:     [],
-      }
-    }
-
+  CodeRenderer.buildContextMenuItems = function ({ node }) {
+    var lang = node.attrs.language
+    var label = lang && lang !== 'unknown' ? lang + ' block' : 'Code block'
     return [
-      { icon: IC.trash,   label: 'Delete',   action: del },
-      { type: 'divider' },
-      { icon: IC.sparkle, label: 'Ask AI…',  action: function () {
-        document.dispatchEvent(new CustomEvent('sieve:ai-ask', { detail: { precomputedCtx: codeCtx() } }))
-      }},
-      { icon: IC.info,    label: 'Explain',  action: function () {
-        document.dispatchEvent(new CustomEvent('sieve:ai-explain', { detail: { precomputedCtx: codeCtx() } }))
-      }},
+      { type: 'header', label: label },
     ]
   }
 

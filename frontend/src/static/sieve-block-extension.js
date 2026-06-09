@@ -19,6 +19,16 @@
 //   makeNodeView(node, editor) → TipTap NodeView
 //       Returns the NodeView object (dom, update, stopEvent, etc.).
 //
+// Optional renderer fields (framework injects these behaviours automatically):
+//
+//   buildContextMenuItems({ node, editor, getPos }) → [ item, ... ]
+//       Block-specific context menu items prepended before the framework items.
+//       The framework always appends: Ask AI, Explain, Delete, Retry/Replay, Promote.
+//
+//   buildAiCtx(node) → { contextLabel, imageIds? }
+//       Customise the "Ask About [X]" popup label and any image IDs to include.
+//       Defaults to a capitalised version of the block kind if omitted.
+//
 // Registration:
 //   window.TipTap.registerSieveRenderer('code', CodeRenderer)
 //   → creates a TipTap node named 'sieve-code' with the renderer's config/attrs
@@ -30,7 +40,7 @@
 //      after sieve-block-extension.js
 //   That's it.
 
-import { esc, isJobStale, getLowlight } from './fenced-block-base.js'
+import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block-base.js'
 
 ;(function () {
   'use strict'
@@ -47,10 +57,10 @@ import { esc, isJobStale, getLowlight } from './fenced-block-base.js'
     serialisedForm:   { default: '',        parseHTML: function (el) { return el.getAttribute('data-serialised-form') || '' } },
     status:           { default: 'PENDING', parseHTML: function (el) { return el.getAttribute('data-status')      || 'PENDING' } },
     createdAt:        { default: null,      parseHTML: function (el) { return el.getAttribute('data-created-at')  || null } },
-    supportsPromotion: { default: false, parseHTML: function (el) { return el.getAttribute('data-supports-promotion') === 'true' } },
+    supportsEmbedding: { default: false, parseHTML: function (el) { return el.getAttribute('data-supports-embedding') === 'true' } },
   }
 
-  var DEFAULT_NODE_CONFIG = { atom: true, selectable: true, draggable: true, group: 'block', inline: false }
+  var DEFAULT_NODE_CONFIG = { atom: false, selectable: true, draggable: true, group: 'block', inline: false }
 
   // ── Node factory ─────────────────────────────────────────────────────────────
 
@@ -81,27 +91,101 @@ import { esc, isJobStale, getLowlight } from './fenced-block-base.js'
         return [tag, mergeAttributes({ 'data-type': dataType }, HTMLAttributes)]
       },
 
+      renderText({ node }) {
+        return node.attrs.serialisedForm || ''
+      },
+
       addNodeView() {
         return function ({ node, editor, getPos }) {
           var view = renderer.makeNodeView(node, editor)
           if (view.dom) {
+            view.dom.contentEditable = 'true'
+
+            // Ignore ProseMirror's default selection observation for Sieve blocks.
+            // This prevents ProseMirror from yanking the native cursor when dragging across bounds.
+            const originalIgnore = view.ignoreMutation
+            view.ignoreMutation = function (mutation) {
+              if (mutation.type === 'selection') {
+                var sel = window.getSelection()
+                if (sel && sel.anchorNode && sel.focusNode) {
+                  var anchorIn = view.dom.contains(sel.anchorNode)
+                  var focusIn = view.dom.contains(sel.focusNode)
+                  // Let native handle selection if it's completely inside this block
+                  if (anchorIn && focusIn) return true
+                  // Let ProseMirror handle it if it crosses the block boundary
+                  return false
+                }
+                return true
+              }
+              return originalIgnore ? originalIgnore.call(view, mutation) : true
+            }
+
+            // Prevent browser text insertion into block DOM without using contentEditable="false".
+            // beforeinput covers typing, paste, cut, drag-drop, IME — but not navigation keys.
+            // Skip if the event originates from an editable sub-element (code/diagram textarea).
+            if (!cfg.atom) {
+              view.dom.addEventListener('beforeinput', function (e) {
+                if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return
+                e.preventDefault()
+              })
+            }
+
             view.dom.addEventListener('contextmenu', function (e) {
               e.preventDefault()
               e.stopPropagation()
               var currentNode = (typeof getPos === 'function') ? editor.state.doc.nodeAt(getPos()) : node
               var n = currentNode || node
+              var IC = window.SieveIcons || {}
+
               var items = renderer.buildContextMenuItems
                 ? renderer.buildContextMenuItems({ node: n, editor: editor, getPos: getPos })
                 : []
 
+              // Ask AI + Explain — universal for every sieve block.
+              // blockRef is the block's own ID; Go's BuildContext + expandAIBlockRefs handle context assembly.
+              // Optionally declare buildAiCtx(node) → { contextLabel, imageIds? } to customise the popup label.
+              var aiBase = renderer.buildAiCtx ? renderer.buildAiCtx(n) : {}
+              var kindLabel = n.attrs.kind
+                ? n.attrs.kind.charAt(0).toUpperCase() + n.attrs.kind.slice(1).replace(/-/g, ' ')
+                : 'Block'
+              var aiCtx = {
+                content:      '',
+                blockRef:     n.attrs.id || 'doc',
+                history:      '',
+                contextLabel: (aiBase && aiBase.contextLabel) || kindLabel,
+                imageIds:     (aiBase && aiBase.imageIds) || [],
+              }
+              items = items.concat([
+                { type: 'divider' },
+                { icon: IC.sparkle, label: 'Ask AI…', action: function () {
+                  if (typeof getPos === 'function') editor.chain().focus().setNodeSelection(getPos()).run()
+                  else editor.commands.focus()
+                  document.dispatchEvent(new CustomEvent('sieve:ai-ask', { detail: { precomputedCtx: aiCtx } }))
+                }},
+                { icon: IC.info,    label: 'Explain',  action: function () {
+                  if (typeof getPos === 'function') editor.chain().focus().setNodeSelection(getPos()).run()
+                  else editor.commands.focus()
+                  document.dispatchEvent(new CustomEvent('sieve:ai-explain', { detail: { precomputedCtx: aiCtx } }))
+                }},
+              ])
+
+              // Delete — universal for every sieve block.
+              items = items.concat([
+                { type: 'divider' },
+                { icon: IC.trash, label: 'Delete', action: function () {
+                  if (typeof getPos === 'function') {
+                    var pos = getPos()
+                    editor.view.dispatch(editor.state.tr.delete(pos, pos + n.nodeSize))
+                  }
+                }},
+              ])
+
               // Retry / Replay — automatic for all sieve blocks with a job lifecycle.
-              // DISPATCHED = job actively running; never retryable.
-              // PENDING = waiting to dispatch; stale if createdAt > 15s ago.
+              // PENDING/DISPATCHED = stale if job no longer active and createdAt > 15s ago.
               var status = n.attrs.status || 'PENDING'
-              var isStale = status === 'PENDING' && isJobStale(n.attrs.createdAt, n.attrs.id)
+              var isStale = (status === 'PENDING' || status === 'DISPATCHED') && isJobStale(n.attrs.createdAt, n.attrs.id)
               var isError = status === 'ERROR' || status === 'TIMEOUT'
               if (isStale || isError || status === 'COMPLETE') {
-                var IC = window.SieveIcons || {}
                 items = items.concat([
                   { type: 'divider' },
                   { icon: IC.refresh, label: (isStale || isError) ? 'Retry' : 'Replay',
@@ -112,16 +196,14 @@ import { esc, isJobStale, getLowlight } from './fenced-block-base.js'
                 ])
               }
 
-              // Promote to Document — automatic for any block with supportsPromotion: true.
-              if (n.attrs.supportsPromotion && status === 'COMPLETE') {
-                var IC2 = window.SieveIcons || {}
+              // Embed in document — automatic for any block with supportsEmbedding: true.
+              if (n.attrs.supportsEmbedding && status === 'COMPLETE') {
                 items = items.concat([
                   { type: 'divider' },
-                  { icon: IC2.promote, label: 'Promote to Document',
+                  { icon: IC.promote, label: 'Embed in document',
                     action: function () {
-                      var promoteId = n.attrs.id
                       document.dispatchEvent(new CustomEvent('sieve:promote-block', {
-                        detail: { id: promoteId }
+                        detail: { id: n.attrs.id }
                       }))
                     }
                   },
@@ -131,6 +213,100 @@ import { esc, isJobStale, getLowlight } from './fenced-block-base.js'
               document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
                 detail: { x: e.clientX, y: e.clientY, context: { type: 'sieveBlock', items: items } },
               }))
+
+              var entries = null
+              var extractSourceLabel = ''
+
+              // Image click — check before <pre> so a click on an <img> inside a
+              // code-adjacent block takes the image path, not the text path.
+              var closestImg = e.target.tagName === 'IMG' ? e.target
+                : (e.target.closest ? e.target.closest('img') : null)
+              if (closestImg && closestImg.src && view.dom.contains(closestImg)) {
+                entries = [{ mimeType: 'text/uri-list', content: closestImg.src }]
+                extractSourceLabel = 'image'
+              }
+
+              // Anchor click
+              var closestA = e.target.tagName === 'A' ? e.target
+                : (e.target.closest ? e.target.closest('a') : null)
+              if (!entries && closestA && closestA.href && view.dom.contains(closestA)) {
+                entries = [{ mimeType: 'text/uri-list', content: closestA.href }]
+                extractSourceLabel = 'link'
+              }
+
+              if (!entries) {
+                var textContent = ''
+                var closestPre = e.target.closest && e.target.closest('pre')
+                if (closestPre && view.dom.contains(closestPre)) {
+                  var lang = ''
+                  var codeEl = closestPre.querySelector('code') || closestPre
+                  ;(codeEl.className || '').split(' ').forEach(function (cls) {
+                    if (cls.indexOf('language-') === 0) lang = cls.slice(9)
+                  })
+                  textContent = '```' + lang + '\n' + codeEl.textContent + '\n```'
+                  extractSourceLabel = lang === 'mermaid' ? 'diagram' : 'code'
+                }
+
+                if (!textContent) {
+                  extractSourceLabel = n.attrs.kind || 'text'
+                  if (n.attrs.kind === 'code' || n.attrs.kind === 'diagram') {
+                    var lang = n.attrs.language || (n.attrs.kind === 'diagram' ? 'mermaid' : '')
+                    textContent = '```' + lang + '\n' + (n.attrs.source || '') + '\n```'
+                  } else if (n.attrs.serialisedForm) {
+                    textContent = n.attrs.serialisedForm
+                  } else {
+                    textContent = extractTextFromDOM(view.dom)
+                  }
+                }
+
+                if (textContent) {
+                  entries = [{ mimeType: 'text/plain', content: textContent }]
+                }
+              }
+
+              if (entries) {
+                fetch('/api/detect-extractions', {
+                  method: 'POST',
+                  body: JSON.stringify({ sourceKind: n.attrs.kind, entries: entries }),
+                  headers: { 'Content-Type': 'application/json' }
+                }).then(function (res) { return res.json() }).then(function (candidates) {
+                  if (!candidates || candidates.length === 0) return
+                  if (!window.SieveContextMenu || !window.SieveContextMenu.appendItems) return
+
+                  var extraItems = [
+                    { type: 'divider' },
+                    { type: 'header', label: 'EXTRACT FROM ' + extractSourceLabel.toUpperCase().replace('-', ' ') }
+                  ]
+                  candidates.forEach(function (c) {
+                    var icon = IC[c.kind] || IC.code
+                    var r = renderers[c.kind]
+                    var prettyKind = (r && typeof r.getFriendlyName === 'function')
+                      ? r.getFriendlyName()
+                      : c.kind.split('-').map(function(w) { return w.charAt(0).toUpperCase() + w.slice(1) }).join(' ')
+                    
+                    var defaultAction = function (context) {
+                      document.dispatchEvent(new CustomEvent('sieve:extract', {
+                        detail: { blockId: n.attrs.id, targetKind: c.kind, sourceNode: n, entries: entries, context: context || {} }
+                      }))
+                    }
+
+                    if (r && typeof r.getExtractionMenuItems === 'function') {
+                      var items = r.getExtractionMenuItems(n, entries, defaultAction)
+                      if (items && items.length) {
+                        items.forEach(function(item) { extraItems.push(item) })
+                        return
+                      }
+                    }
+
+                    extraItems.push({
+                      icon: icon,
+                      label: 'Extract as ' + prettyKind,
+                      action: function () { defaultAction({}) }
+                    })
+                  })
+                  window.SieveContextMenu.appendItems(extraItems)
+                }).catch(function() {})
+              }
             })
           }
           return view
@@ -191,8 +367,8 @@ import { esc, isJobStale, getLowlight } from './fenced-block-base.js'
                       if (data.createdAt) {
                         htmlAttrs.push(['data-created-at', data.createdAt])
                       }
-                      if (data.supportsPromotion) {
-                        htmlAttrs.push(['data-supports-promotion', 'true'])
+                      if (data.supportsEmbedding) {
+                        htmlAttrs.push(['data-supports-embedding', 'true'])
                       }
                       token.attrs = htmlAttrs
                     } else {
@@ -250,8 +426,8 @@ import { esc, isJobStale, getLowlight } from './fenced-block-base.js'
                   if (data.createdAt) {
                     htmlAttrs.push('data-created-at="' + esc(data.createdAt) + '"')
                   }
-                  if (data.supportsPromotion) {
-                    htmlAttrs.push('data-supports-promotion="true"')
+                  if (data.supportsEmbedding) {
+                    htmlAttrs.push('data-supports-embedding="true"')
                   }
                   return '<' + tag + ' ' + htmlAttrs.join(' ') + '></' + tag + '>\n'
                 }
@@ -266,9 +442,19 @@ import { esc, isJobStale, getLowlight } from './fenced-block-base.js'
   // ── Registry ─────────────────────────────────────────────────────────────────
 
   var nodeRegistry = {}
+  var renderers = {}
 
   function registerSieveRenderer(kind, renderer) {
     nodeRegistry[kind] = createSieveNode(kind, renderer)
+    renderers[kind] = renderer
+  }
+
+  T.resolveEntriesForKind = function(kind, sourceNode, entries) {
+    var r = renderers[kind]
+    if (r && typeof r.resolveEntries === 'function') {
+      return r.resolveEntries(sourceNode, entries)
+    }
+    return entries
   }
 
   function getSieveNodes() {

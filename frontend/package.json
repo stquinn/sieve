@@ -6,7 +6,8 @@
     "bundle:tiptap": "esbuild tiptap-bundle-entry.js --bundle --format=iife --global-name=TipTap --outfile=./src/static/vendor/tiptap.js --minify",
     "bundle:htmx": "esbuild htmx-bundle-entry.js --bundle --outfile=./src/static/vendor/htmx-bundle.js --minify",
     "bundle:jsyaml": "esbuild node_modules/js-yaml/dist/js-yaml.mjs --bundle --format=iife --global-name=jsyaml --outfile=./src/static/vendor/js-yaml.js --minify",
-    "build": "npm run bundle:htmx && npm run bundle:tiptap && npm run bundle:jsyaml && tailwindcss -i ./src/static/input.css -o ./src/static/tailwind.css --minify",
+    "bundle:mermaid": "cp node_modules/mermaid/dist/mermaid.min.js ./src/static/vendor/mermaid.min.js",
+    "build": "npm run bundle:htmx && npm run bundle:tiptap && npm run bundle:jsyaml && npm run bundle:mermaid && tailwindcss -i ./src/static/input.css -o ./src/static/tailwind.css --minify",
     "dev": "tailwindcss -i ./src/static/input.css -o ./src/static/tailwind.css --watch"
   },
   "devDependencies": {
@@ -35,6 +36,7 @@
   },
   "dependencies": {
     "htmx-ext-sse": "^2.2.4",
-    "js-yaml": "^4.1.1"
+    "js-yaml": "^4.1.1",
+    "mermaid": "^11.4.0"
   }
 }

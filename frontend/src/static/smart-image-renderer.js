@@ -26,7 +26,6 @@ import { isJobStale } from './fenced-block-base.js'
     var dom = document.createElement('div')
     dom.className = 'image-block node-image'
     dom.style.display = 'inline-block'
-    dom.contentEditable = 'false'
 
     var img = document.createElement('img')
     img.style.maxWidth = '100%'
@@ -127,37 +126,10 @@ import { isJobStale } from './fenced-block-base.js'
     }
   }
 
-  function buildContextMenuItems(ctx) {
-    var editor = ctx.editor, node = ctx.node, getPos = ctx.getPos
-    var IC = window.SieveIcons || {}
-
-    function del() {
-      if (typeof getPos === 'function') {
-        var pos = getPos()
-        editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize))
-      }
-    }
-
-    return [
-      { icon: IC.trash, label: 'Delete', action: del },
-      { type: 'divider' },
-      { icon: IC.sparkle, label: 'Ask AI…', action: function () {
-        document.dispatchEvent(new CustomEvent('sieve:ai-ask', { detail: { precomputedCtx: {
-          content: node.attrs.summary || node.attrs.alt || '',
-          blockRef: node.attrs.id || 'doc',
-          history: '', imageIds: node.attrs.id ? [node.attrs.id] : [],
-          contextLabel: 'Image',
-        }}}))
-      }},
-      { icon: IC.info, label: 'Explain', action: function () {
-        document.dispatchEvent(new CustomEvent('sieve:ai-explain', { detail: { precomputedCtx: {
-          content: node.attrs.summary || node.attrs.alt || '',
-          blockRef: node.attrs.id || 'doc',
-          history: '', imageIds: node.attrs.id ? [node.attrs.id] : [],
-          contextLabel: 'Image',
-        }}}))
-      }},
-    ]
+  // Ask AI, Explain, and Delete are injected by sieve-block-extension.js framework.
+  // imageIds passes the block ID so Go can include the image in the AI context.
+  function buildAiCtx(node) {
+    return { contextLabel: 'Image', imageIds: node.attrs.id ? [node.attrs.id] : [] }
   }
 
   T.registerSieveRenderer('smart-image', {
@@ -186,7 +158,47 @@ import { isJobStale } from './fenced-block-base.js'
       }
     },
     makeNodeView: makeNodeView,
-    buildContextMenuItems: buildContextMenuItems,
+    buildAiCtx: buildAiCtx,
+    buildContextMenuItems: function(ctx) {
+      var n = ctx.node
+      return [
+        { icon: window.SieveIcons.copy, label: 'Copy Image', action: function () {
+          var src = resolveSrc(n.attrs.src)
+          if (!src) return
+          fetch(src)
+            .then(function (res) { return res.blob() })
+            .then(function (blob) {
+              if (navigator.clipboard && navigator.clipboard.write) {
+                var item = {}
+                item[blob.type] = blob
+                navigator.clipboard.write([new ClipboardItem(item)])
+              }
+            }).catch(function (err) { console.error('Failed to copy image', err) })
+        }}
+      ]
+    },
+    resolveEntries: function(sourceNode, entries) {
+      if (!entries || entries.length === 0) return entries
+      var textContent = entries[0].content || ''
+      var mermaidMatch = /^```mermaid\n([\s\S]*?)```$/.exec(textContent.trim())
+      if (!mermaidMatch) return entries
+
+      var src = mermaidMatch[1].trim()
+      if (!src || !window.TipTap.ensureMermaid) return entries
+
+      return window.TipTap.ensureMermaid().then(function() {
+        var id = 'mermaid-extract-' + Date.now() + '-' + Math.floor(Math.random() * 1000)
+        return window.mermaid.render(id, src)
+      }).then(function(result) {
+        // Return raw SVG so saveSVG on the backend writes it directly.
+        // Never send to an external rendering server.
+        return [{ mimeType: 'image/svg+xml', content: result.svg }]
+      }).catch(function(err) {
+        console.error('[smart-image] mermaid render failed for extraction', err)
+        window.alert('Failed to extract diagram: ' + err.message)
+        return entries
+      })
+    }
   })
 
 })()

@@ -1,5 +1,5 @@
-// rich-link-renderer.js — Rich Link Card block renderer.
-// Registers window.TipTap.registerSieveRenderer('rich-link', RichLinkRenderer)
+// smart-card-renderer.js — Rich Link Card block renderer.
+// Registers window.TipTap.registerSieveRenderer('smart-card', SmartCardRenderer)
 // Renders OG metadata as a visual card block. Display-only (no editable content).
 
 import { isJobStale } from './fenced-block-base.js'
@@ -9,9 +9,11 @@ import { isJobStale } from './fenced-block-base.js'
 
   var T = window.TipTap
 
-  var RichLinkRenderer = {
+  var SmartCardRenderer = {
 
-    nodeConfig: { atom: true, selectable: true, draggable: false },
+    getFriendlyName: function() { return 'Card' },
+
+    nodeConfig: { selectable: true, draggable: false },
 
     attrs: {
       href:        { default: '',   parseHTML: function (el) { return el.getAttribute('data-href')        || '' } },
@@ -39,17 +41,15 @@ import { isJobStale } from './fenced-block-base.js'
 
     makeNodeView: function (node, editor) {
       var dom = document.createElement('div')
-      dom.className = 'rich-link-card'
-      dom.contentEditable = 'false'
-      dom.setAttribute('data-rich-link-id', node.attrs.id || '')
+      dom.className = 'smart-card-card'
+      dom.setAttribute('data-smart-card-id', node.attrs.id || '')
 
       dom.addEventListener('dragstart', function (e) { e.preventDefault() })
-      dom.addEventListener('mousedown', function (e) { e.stopPropagation() })
 
       dom.addEventListener('click', function (e) {
         if (!node.attrs.href) {
           if (typeof getPos !== 'function') return
-          document.dispatchEvent(new CustomEvent('sieve:rich-link-edit', {
+          document.dispatchEvent(new CustomEvent('sieve:smart-card-edit', {
             detail: { id: node.attrs.id, href: '', title: '', getPos: getPos, editor: editor }
           }))
           return
@@ -65,22 +65,22 @@ import { isJobStale } from './fenced-block-base.js'
 
       function render(n) {
         dom.innerHTML = ''
-        dom.setAttribute('data-rich-link-id', n.attrs.id || '')
+        dom.setAttribute('data-smart-card-id', n.attrs.id || '')
 
         var status = n.attrs.status || 'PENDING'
         var isPending = status === 'PENDING' || status === 'DISPATCHED'
         var stale = isPending && isJobStale(n.attrs.createdAt, n.attrs.id)
 
-        dom.classList.toggle('rich-link-card--pending', isPending && !stale)
+        dom.classList.toggle('smart-card-card--pending', isPending && !stale)
 
         // Row 1: link icon + site name
         var meta = document.createElement('div')
-        meta.className = 'rich-link-card__meta'
+        meta.className = 'smart-card-card__meta'
         var icon = document.createElement('span')
-        icon.className = 'rich-link-card__icon'
+        icon.className = 'smart-card-card__icon'
         icon.textContent = '🔗'
         var site = document.createElement('span')
-        site.className = 'rich-link-card__site'
+        site.className = 'smart-card-card__site'
         site.textContent = isPending ? extractDomain(n.attrs.href || '') : (n.attrs.siteName || extractDomain(n.attrs.href || ''))
         meta.appendChild(icon)
         meta.appendChild(site)
@@ -88,50 +88,50 @@ import { isJobStale } from './fenced-block-base.js'
 
         // Row 2: thumbnail + content
         var body = document.createElement('div')
-        body.className = 'rich-link-card__body'
+        body.className = 'smart-card-card__body'
 
         // Thumbnail column
         var thumb = document.createElement('div')
-        thumb.className = 'rich-link-card__thumb'
+        thumb.className = 'smart-card-card__thumb'
         if (isPending) {
-          thumb.classList.add('rich-link-card__thumb--spinner')
+          thumb.classList.add('smart-card-card__thumb--spinner')
           var spinner = document.createElement('span')
-          spinner.className = 'rich-link-card__spinner'
+          spinner.className = 'smart-card-card__spinner'
           thumb.appendChild(spinner)
         } else if (n.attrs.image) {
-          thumb.classList.add('rich-link-card__thumb--placeholder')
+          thumb.classList.add('smart-card-card__thumb--placeholder')
           var img = document.createElement('img')
           img.src = n.attrs.image
           img.alt = n.attrs.title || ''
-          img.className = 'rich-link-card__thumb'
+          img.className = 'smart-card-card__thumb'
           img.style.cssText = 'width:72px;height:72px;object-fit:cover;border-radius:5px;'
           // Replace the div with the img
           body.appendChild(img)
           thumb = null
         } else {
-          thumb.classList.add('rich-link-card__thumb--placeholder')
+          thumb.classList.add('smart-card-card__thumb--placeholder')
           thumb.textContent = '🔗'
         }
         if (thumb) body.appendChild(thumb)
 
         // Text content column
         var content = document.createElement('div')
-        content.className = 'rich-link-card__content'
+        content.className = 'smart-card-card__content'
 
         var titleEl = document.createElement('div')
-        titleEl.className = 'rich-link-card__title'
+        titleEl.className = 'smart-card-card__title'
         titleEl.textContent = isPending ? (n.attrs.href || '…') : (n.attrs.title || n.attrs.href || '…')
         content.appendChild(titleEl)
 
         if (!isPending && n.attrs.description) {
           var descEl = document.createElement('div')
-          descEl.className = 'rich-link-card__description'
+          descEl.className = 'smart-card-card__description'
           descEl.textContent = n.attrs.description
           content.appendChild(descEl)
         }
 
         var urlEl = document.createElement('div')
-        urlEl.className = 'rich-link-card__url'
+        urlEl.className = 'smart-card-card__url'
         urlEl.textContent = n.attrs.href || ''
         content.appendChild(urlEl)
 
@@ -145,7 +145,7 @@ import { isJobStale } from './fenced-block-base.js'
         dom: dom,
         contentDOM: null,
         update: function (updatedNode) {
-          if (updatedNode.type.name !== 'sieve-rich-link') return false
+          if (updatedNode.type.name !== 'sieve-smart-card') return false
           render(updatedNode)
           return true
         },
@@ -166,13 +166,6 @@ import { isJobStale } from './fenced-block-base.js'
       var title  = node.attrs.title || href
       var id     = node.attrs.id    || ''
 
-      function deleteBlock() {
-        if (typeof getPos === 'function') {
-          var pos = getPos()
-          editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize))
-        }
-      }
-
       return [
         { type: 'header', label: 'Rich Link' },
         {
@@ -184,36 +177,12 @@ import { isJobStale } from './fenced-block-base.js'
             }
           },
         },
-        {
-          icon: IC.globe,
-          label: 'Upgrade to Web Clip (Fetch)',
-          action: function () {
-            if (typeof getPos !== 'function') return
-            var pos = getPos()
-            var size = node.nodeSize
-            document.dispatchEvent(new CustomEvent('sieve:upgrade-to-web-clip', {
-              detail: { href: href, fromPos: pos, fromSize: size, mode: 'fetch' }
-            }))
-          },
-        },
-        {
-          icon: IC.globe,
-          label: 'Upgrade to Web Clip (Summarise)',
-          action: function () {
-            if (typeof getPos !== 'function') return
-            var pos = getPos()
-            var size = node.nodeSize
-            document.dispatchEvent(new CustomEvent('sieve:upgrade-to-web-clip', {
-              detail: { href: href, fromPos: pos, fromSize: size, mode: 'summarise' }
-            }))
-          },
-        },
-        { type: 'divider' },
+
         {
           icon: IC.edit,
           label: 'Edit Link…',
           action: function () {
-            document.dispatchEvent(new CustomEvent('sieve:rich-link-edit', {
+            document.dispatchEvent(new CustomEvent('sieve:smart-card-edit', {
               detail: { id: id, href: href, title: title, getPos: getPos, editor: editor }
             }))
           },
@@ -256,13 +225,11 @@ import { isJobStale } from './fenced-block-base.js'
           },
         },
 
-        { type: 'divider' },
-        { icon: IC.trash, label: 'Delete', action: deleteBlock },
       ]
     },
   }
 
-  T.registerSieveRenderer('rich-link', RichLinkRenderer)
+  T.registerSieveRenderer('smart-card', SmartCardRenderer)
 
   // ── Edit dialog ──────────────────────────────────────────────────────────────
 
@@ -272,7 +239,7 @@ import { isJobStale } from './fenced-block-base.js'
     if (editDialog) return editDialog
 
     var dlg = document.createElement('dialog')
-    dlg.className = 'ask-popup rich-link-edit-popup'
+    dlg.className = 'ask-popup smart-card-edit-popup'
 
     var header = document.createElement('div')
     header.className = 'ask-popup__header'
@@ -319,7 +286,7 @@ import { isJobStale } from './fenced-block-base.js'
     return dlg
   }
 
-  document.addEventListener('sieve:rich-link-edit', function (e) {
+  document.addEventListener('sieve:smart-card-edit', function (e) {
     var detail = e.detail
     var dlg = getEditDialog()
     var inputs = dlg.querySelectorAll('.smart-link-edit-popup__input')
@@ -331,7 +298,7 @@ import { isJobStale } from './fenced-block-base.js'
       var newTitle = inputs[1].value.trim() || newHref
       if (!newHref) return
       document.dispatchEvent(new CustomEvent('sieve:block-update', {
-        detail: { id: detail.id, kind: 'rich-link', attrs: { href: newHref, title: newTitle } }
+        detail: { id: detail.id, kind: 'smart-card', attrs: { href: newHref, title: newTitle } }
       }))
       dlg.close()
     }

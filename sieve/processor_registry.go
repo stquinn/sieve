@@ -7,10 +7,11 @@ import (
 	"sync"
 )
 
-// PasteEntry is one item from the browser clipboard DataTransfer.
-type PasteEntry struct {
-	MIMEType string `json:"mimeType"`
-	Content  string `json:"content"`
+// ContentEntry is one item from the browser clipboard DataTransfer.
+type ContentEntry struct {
+	MIMEType string                 `json:"mimeType"`
+	Content  string                 `json:"content"`
+	Context  map[string]interface{} `json:"context,omitempty"`
 }
 
 // Block status constants.
@@ -59,7 +60,8 @@ type BlockLifecycleListener interface {
 // before the slower AI describe completes).
 type BlockProcessor interface {
 	InitAttrs(id string, overrides map[string]interface{}) map[string]interface{}
-	PasteMatch(entries []PasteEntry, uuid string, blockID string) (matched bool, overrides map[string]interface{})
+	IsBlock(entries []ContentEntry) bool
+	Transform(entries []ContentEntry, uuid string, blockID string) map[string]interface{}
 	RunJob(jctx JobContext) error
 	JobLabel(block *SieveBlock) string
 	OnChange(block *SieveBlock)
@@ -147,4 +149,37 @@ func GenerateBlockIDFor(kind string) string {
 		return GenerateBlockID(hp.IDPrefix())
 	}
 	return GenerateBlockID(kind)
+}
+
+type ExtractionCandidate struct {
+	Kind string `json:"kind"`
+}
+
+type SelfExtractable interface {
+	AllowSelfExtraction() bool
+}
+
+// DetectExtractions finds which registered blocks can handle the given entries.
+// Used by the frontend context menu to offer "Extract as Diagram", etc.
+func DetectExtractions(sourceKind string, entries []ContentEntry) []ExtractionCandidate {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+
+	var candidates []ExtractionCandidate
+	for _, pm := range pasteMatchers {
+		if pm.Kind == sourceKind {
+			allowSelf := false
+			if se, ok := pm.Processor.(SelfExtractable); ok {
+				allowSelf = se.AllowSelfExtraction()
+			}
+			if !allowSelf {
+				continue
+			}
+		}
+
+		if pm.Processor.IsBlock(entries) {
+			candidates = append(candidates, ExtractionCandidate{Kind: pm.Kind})
+		}
+	}
+	return candidates
 }

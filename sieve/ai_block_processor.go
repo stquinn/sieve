@@ -27,7 +27,7 @@ func (p *AIBlockProcessor) InitAttrs(id string, overrides map[string]interface{}
 		"type":      "ASK",
 		"model":     "",
 		"error":     "",
-		"supportsPromotion": true,
+		"supportsEmbedding": true,
 	}
 	for k, v := range overrides {
 		if k == "id" {
@@ -38,9 +38,8 @@ func (p *AIBlockProcessor) InitAttrs(id string, overrides map[string]interface{}
 	return attrs
 }
 
-func (p *AIBlockProcessor) PasteMatch(entries []PasteEntry, uuid, blockID string) (bool, map[string]interface{}) {
-	return false, nil
-}
+func (p *AIBlockProcessor) IsBlock(entries []ContentEntry) bool { return false }
+func (p *AIBlockProcessor) Transform(entries []ContentEntry, uuid, blockID string) map[string]interface{} { return nil }
 
 func (p *AIBlockProcessor) OnChange(block *SieveBlock) {}
 
@@ -97,6 +96,31 @@ func (p *AIBlockProcessor) BuildContext(block SieveBlock, doc ShadowDocument, se
 	return sb.String()
 }
 
+// expandAIBlockRefs replaces any ai-block ID in refs with its own ref chain
+// followed by itself. This lets the caller pass a single ai-block ID and still
+// receive the original source content as primary context and the prior Q&A as
+// history — without the frontend needing to pre-build the chain.
+func expandAIBlockRefs(refs []string, doc ShadowDocument) []string {
+	var result []string
+	for _, id := range refs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if blk, ok := doc.Blocks[id]; ok && blk.Kind == "ai-block" {
+			if aiRef, _ := blk.Attrs["ref"].(string); aiRef != "" && aiRef != "doc" {
+				for _, part := range strings.Split(aiRef, ",") {
+					if part = strings.TrimSpace(part); part != "" {
+						result = append(result, part)
+					}
+				}
+			}
+		}
+		result = append(result, id)
+	}
+	return result
+}
+
 // RunJob resolves each ID in the ref chain via BuildContextForID.
 // Dispatch is by block kind: img-1234 → SmartImageProcessor,
 // blk-1234 → BlockAnchorProvider, a prior AI block → AIBlockProcessor.BuildContext.
@@ -111,7 +135,9 @@ func (p *AIBlockProcessor) RunJob(jctx JobContext) error {
 	seen := map[string]bool{block.ID: true}
 	var content string
 	var historyParts []string
-	refs := strings.Split(ref, ",")
+	// Expand any ai-block refs so the original source is primary content
+	// and the prior Q&A becomes history — no chain-building needed in the frontend.
+	refs := expandAIBlockRefs(strings.Split(ref, ","), jctx.Shadow)
 
 	var validCtxs []string
 	for _, id := range refs {

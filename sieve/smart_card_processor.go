@@ -9,18 +9,18 @@ import (
 	"time"
 )
 
-// RichLinkProcessor handles the 'rich-link' block kind.
+// SmartCardProcessor handles the 'smart-card' block kind.
 // It fetches Open Graph metadata for a URL and stores the result as block attrs.
 // Image download is best-effort; failures are non-fatal.
-type RichLinkProcessor struct{ svc BlockServices }
+type SmartCardProcessor struct{ svc BlockServices }
 
-func NewRichLinkProcessor(svc BlockServices) *RichLinkProcessor {
-	return &RichLinkProcessor{svc: svc}
+func NewSmartCardProcessor(svc BlockServices) *SmartCardProcessor {
+	return &SmartCardProcessor{svc: svc}
 }
 
-func (p *RichLinkProcessor) Mode() BlockMode { return BlockModeBlock }
+func (p *SmartCardProcessor) Mode() BlockMode { return BlockModeBlock }
 
-func (p *RichLinkProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
+func (p *SmartCardProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
 		"id":                id,
 		"href":              "",
@@ -33,7 +33,7 @@ func (p *RichLinkProcessor) InitAttrs(id string, overrides map[string]interface{
 		"createdAt":         time.Now().UTC().Format(time.RFC3339),
 		"completedAt":       "",
 		"error":             "",
-		"supportsPromotion": true,
+		"supportsEmbedding": true,
 	}
 	for k, v := range overrides {
 		if k == "id" {
@@ -44,13 +44,36 @@ func (p *RichLinkProcessor) InitAttrs(id string, overrides map[string]interface{
 	return attrs
 }
 
-func (p *RichLinkProcessor) PasteMatch(_ []PasteEntry, _ string, _ string) (bool, map[string]interface{}) {
-	return false, nil
+func (p *SmartCardProcessor) IsBlock(entries []ContentEntry) bool {
+	for _, e := range entries {
+		trimmed := strings.TrimSpace(e.Content)
+		if trimmed == "" || strings.ContainsAny(trimmed, " \t\n\r") {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "http://") && !strings.HasPrefix(trimmed, "https://") {
+			continue
+		}
+		if isImageURL(trimmed) {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
-func (p *RichLinkProcessor) OnChange(_ *SieveBlock) {}
+func (p *SmartCardProcessor) Transform(entries []ContentEntry, uuid, blockID string) map[string]interface{} {
+	for _, e := range entries {
+		trimmed := strings.TrimSpace(e.Content)
+		if trimmed != "" && (strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://")) && !strings.ContainsAny(trimmed, " \t\n\r") {
+			return map[string]interface{}{"href": trimmed}
+		}
+	}
+	return nil
+}
 
-func (p *RichLinkProcessor) JobLabel(block *SieveBlock) string {
+func (p *SmartCardProcessor) OnChange(_ *SieveBlock) {}
+
+func (p *SmartCardProcessor) JobLabel(block *SieveBlock) string {
 	href, _ := block.Attrs["href"].(string)
 	if href == "" {
 		return "Fetching link…"
@@ -61,7 +84,7 @@ func (p *RichLinkProcessor) JobLabel(block *SieveBlock) string {
 	return "Fetching link…"
 }
 
-func (p *RichLinkProcessor) BuildContext(block SieveBlock, _ ShadowDocument, _ map[string]bool) string {
+func (p *SmartCardProcessor) BuildContext(block SieveBlock, _ ShadowDocument, _ map[string]bool) string {
 	href, _ := block.Attrs["href"].(string)
 	if href == "" {
 		return ""
@@ -85,7 +108,7 @@ func (p *RichLinkProcessor) BuildContext(block SieveBlock, _ ShadowDocument, _ m
 	return sb.String()
 }
 
-func (p *RichLinkProcessor) RunJob(jctx JobContext) error {
+func (p *SmartCardProcessor) RunJob(jctx JobContext) error {
 	block := jctx.Block
 	href, _ := block.Attrs["href"].(string)
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -116,7 +139,7 @@ func (p *RichLinkProcessor) RunJob(jctx JobContext) error {
 	return nil
 }
 
-func (p *RichLinkProcessor) downloadImage(uuid, blockID, imageURL string) (string, error) {
+func (p *SmartCardProcessor) downloadImage(uuid, blockID, imageURL string) (string, error) {
 	client := &http.Client{Timeout: 8 * time.Second}
 	resp, err := client.Get(imageURL)
 	if err != nil {
@@ -146,7 +169,7 @@ func (p *RichLinkProcessor) downloadImage(uuid, blockID, imageURL string) (strin
 	return asset.ExternalRef(), nil
 }
 
-func (p *RichLinkProcessor) MarkdownRepresentation(block SieveBlock) string {
+func (p *SmartCardProcessor) MarkdownRepresentation(block SieveBlock) string {
 	href, _ := block.Attrs["href"].(string)
 	if href == "" {
 		return ""

@@ -26,7 +26,7 @@ func (p *WebClipBlockProcessor) InitAttrs(id string, overrides map[string]interf
 		"completedAt": "",
 		"content":     "",
 		"error":       "",
-		"supportsPromotion": true,
+		"supportsEmbedding": true,
 	}
 	for k, v := range overrides {
 		if k == "id" {
@@ -37,8 +37,37 @@ func (p *WebClipBlockProcessor) InitAttrs(id string, overrides map[string]interf
 	return attrs
 }
 
-func (p *WebClipBlockProcessor) PasteMatch(_ []PasteEntry, _ string, _ string) (bool, map[string]interface{}) {
-	return false, nil
+func (p *WebClipBlockProcessor) IsBlock(entries []ContentEntry) bool {
+	for _, e := range entries {
+		trimmed := strings.TrimSpace(e.Content)
+		if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *WebClipBlockProcessor) AllowSelfExtraction() bool {
+	return true
+}
+
+func (p *WebClipBlockProcessor) Transform(entries []ContentEntry, uuid, blockID string) map[string]interface{} {
+	for _, e := range entries {
+		trimmed := strings.TrimSpace(e.Content)
+		if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
+			mode := "fetch" // default
+			if e.Context != nil {
+				if m, ok := e.Context["mode"].(string); ok && m != "" {
+					mode = m
+				}
+			}
+			return map[string]interface{}{
+				"source": trimmed,
+				"mode":   mode,
+			}
+		}
+	}
+	return nil
 }
 
 func (p *WebClipBlockProcessor) OnChange(_ *SieveBlock) {}

@@ -2,6 +2,7 @@ package requesthandlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -122,6 +123,8 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 			h.handleRetryBlockJob(uuid, raw, writeMsg)
 		case "promote-block":
 			h.handlePromoteBlock(uuid, raw, writeMsg)
+		case "extract":
+			h.handleExtract(uuid, raw, writeMsg)
 		}
 	}
 }
@@ -277,6 +280,40 @@ func (h *WsHandler) handlePromoteBlock(uuid string, raw []byte, writeMsg func(in
 	if err := json.Unmarshal(raw, &msg); err != nil || msg.ID == "" {
 		return
 	}
-	_ = h.ServiceProvider.Editor.PromoteBlock(uuid, msg.ID)
+	if err := h.ServiceProvider.Editor.PromoteBlock(uuid, msg.ID); err != nil {
+		logger.Warn("ws: promote-block failed", "uuid", uuid, "block", msg.ID, "err", err)
+	}
+}
+
+func (h *WsHandler) handleExtract(uuid string, raw []byte, writeMsg func(interface{})) {
+	var p struct {
+		BlockID    string               `json:"blockId"`
+		TargetKind string               `json:"targetKind"`
+		Entries    []sieve.ContentEntry `json:"entries"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		logger.Warn("ws: bad extract payload", "err", err)
+		return
+	}
+
+	newID, rawYaml, err := h.ServiceProvider.Editor.CreateBlockFromEntries(uuid, p.TargetKind, p.Entries)
+	if err != nil {
+		logger.Warn("ws: extract block failed", "err", err)
+		writeMsg(map[string]interface{}{
+			"type":    "error",
+			"message": fmt.Sprintf("Failed to extract block: %v", err),
+		})
+		return
+	}
+
+	// This is broadcast to the caller so they know to replace their local placeholder.
+	// Other connected clients will receive the standard 'insert-block' from the lifecycle listener.
+	writeMsg(map[string]interface{}{
+		"type":       "block-extracted",
+		"originalId": p.BlockID,
+		"newId":      newID,
+		"newKind":    p.TargetKind,
+		"newYaml":    rawYaml,
+	})
 }
 

@@ -134,10 +134,23 @@ export function isJobActive(id) {
 }
 
 // isJobStale — checks if a job block is stale. Returns false if the job is active on the server.
-// If the job is not active, it returns true unless the block was created within a 15-second grace period.
+// If the job is not active, it falls back to checking the configured CLI timeout threshold.
 export function isJobStale(createdAt, id) {
   if (isJobActive(id)) return false
-  if (!createdAt) return true
-  var ageMs = Date.now() - new Date(createdAt).getTime()
-  return ageMs > 15000
+  return isStaleByTime(createdAt)
+}
+
+// extractTextFromDOM recursively gathers text from a DOM node.
+export function extractTextFromDOM(node) {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent || ''
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    if (node.nodeName === 'TEXTAREA' || node.nodeName === 'INPUT') return node.value || ''
+    if (node.classList && (node.classList.contains('sieve-block__gutter') || node.classList.contains('sieve-block__highlight') || node.classList.contains('sieve-code-block__gutter'))) return ''
+  }
+  if (node.nodeName === 'BR') return '\n'
+  if (node.nodeName === 'DIV' || node.nodeName === 'P' || node.nodeName === 'LI') {
+    var inner = Array.from(node.childNodes).map(function(n) { return extractTextFromDOM(n) }).join('')
+    return inner + '\n'
+  }
+  return Array.from(node.childNodes).map(function(n) { return extractTextFromDOM(n) }).join('')
 }

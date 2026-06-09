@@ -463,7 +463,7 @@ func TestEditorService_HandlePaste_delegatesToCreateBlock(t *testing.T) {
 	uuid := doc.UUID()
 	_ = es.Open(uuid, nil)
 
-	kind, id, rawYaml, matched := es.HandlePaste(uuid, []PasteEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\n```"}})
+	kind, id, rawYaml, matched := es.HandlePaste(uuid, []ContentEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\n```"}})
 	if !matched {
 		t.Fatal("expected match")
 	}
@@ -493,7 +493,7 @@ func TestEditorService_HandlePaste_noMatch(t *testing.T) {
 	doc, _ = ds.Save(doc)
 	_ = es.Open(doc.UUID(), nil)
 
-	_, _, _, matched := es.HandlePaste(doc.UUID(), []PasteEntry{{MIMEType: "text/plain", Content: "just plain text"}})
+	_, _, _, matched := es.HandlePaste(doc.UUID(), []ContentEntry{{MIMEType: "text/plain", Content: "just plain text"}})
 	if matched {
 		t.Fatal("expected no match for plain text")
 	}
@@ -503,6 +503,8 @@ type mockLifecycleListener struct {
 	onCreated func(uuid, kind, blockID, rawYaml string)
 	onUpdated func(uuid, blockID string, attrs map[string]interface{}, rawYaml string)
 }
+
+func (l *mockLifecycleListener) OnBlockPromoted(uuid, blockID string, replacement string) {}
 
 func (l *mockLifecycleListener) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, rawYaml string) {
 	if l.onCreated != nil {
@@ -612,10 +614,10 @@ func (p *testRunJobProcessor) InitAttrs(id string, overrides map[string]interfac
 	}
 	return attrs
 }
-func (p *testRunJobProcessor) PasteMatch(entries []PasteEntry, _ string, _ string) (bool, map[string]interface{}) {
-	return false, nil
-}
+func (p *testRunJobProcessor) IsBlock(entries []ContentEntry) bool { return false }
+func (p *testRunJobProcessor) Transform(entries []ContentEntry, _ string, _ string) map[string]interface{} { return nil }
 func (p *testRunJobProcessor) BuildContext(_ SieveBlock, _ ShadowDocument, _ map[string]bool) string  { return "" }
+func (p *testRunJobProcessor) MarkdownRepresentation(_ SieveBlock) string { return "" }
 func (p *testRunJobProcessor) OnChange(_ *SieveBlock) {}
 func (p *testRunJobProcessor) RunJob(jctx JobContext) error {
 	if p.runJob != nil {
@@ -708,5 +710,63 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 	// Check preserved concurrent edit
 	if blk.Attrs["source"] != "concurrent user edit" {
 		t.Errorf("expected concurrent user edit to be preserved, got %v", blk.Attrs["source"])
+	}
+}
+
+func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
+	resetRegistry()
+	
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, 0)
+	doc, _ := ds.New()
+	doc.SetBody([]byte("# Test"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+	_ = es.Open(uuid, nil)
+
+	initialAttrs := map[string]interface{}{
+		"status": BlockStatusPending,
+	}
+
+	var blockID string
+
+	proc := &testRunJobProcessor{
+		runJob: func(ctx context.Context, jobUUID string, block *SieveBlock) error {
+			// Simulate the user navigating away (Close) and back (Open) while the job runs
+			es.Close(uuid)
+			_ = es.Open(uuid, nil)
+
+			block.Attrs["status"] = BlockStatusComplete
+			return nil
+		},
+	}
+	RegisterProcessor("mock-kind2", proc)
+
+	blockID, _, err := es.CreateBlock(uuid, "mock-kind2", initialAttrs)
+	if err != nil {
+		t.Fatalf("CreateBlock failed: %v", err)
+	}
+
+	es.RunJob(context.Background(), uuid, blockID)
+
+	// Ensure the NEW shadow has the COMPLETE state
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+
+	if shadow == nil {
+		t.Fatal("expected new shadow to exist")
+	}
+
+	shadow.mu.Lock()
+	blk, ok := shadow.Blocks[blockID]
+	shadow.mu.Unlock()
+
+	if !ok {
+		t.Fatal("expected block to exist in new shadow")
+	}
+
+	if blk.Attrs["status"] != BlockStatusComplete {
+		t.Errorf("expected status to be applied to the NEW shadow, got %v", blk.Attrs["status"])
 	}
 }

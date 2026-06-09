@@ -29,6 +29,7 @@
     closeAll:    svg('<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>'),
     externalLink: svg('<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>'),
     code:         svg('<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>'),
+    diagram:      svg('<rect x="8" y="2" width="8" height="5" rx="1"/><line x1="12" y1="7" x2="12" y2="11"/><line x1="3" y1="11" x2="21" y2="11"/><line x1="3" y1="11" x2="3" y2="14"/><line x1="12" y1="11" x2="12" y2="14"/><line x1="21" y1="11" x2="21" y2="14"/><rect x="1" y="14" width="5" height="4" rx="1"/><rect x="9" y="14" width="6" height="4" rx="1"/><rect x="18" y="14" width="5" height="4" rx="1"/>'),
     highlight:   svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/><line x1="15" y1="5" x2="18" y2="8"/>'),
     globe:       svg('<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>'),
     arrowDown:   svg('<line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>'),
@@ -45,6 +46,20 @@
     menu.style.left = x + 'px'
     menu.style.top = y + 'px'
 
+    appendItemsToMenu(menu, items)
+
+    document.body.appendChild(menu)
+
+    requestAnimationFrame(function () {
+      var r = menu.getBoundingClientRect()
+      if (r.right > window.innerWidth - 8)
+        menu.style.left = (window.innerWidth - r.width - 8) + 'px'
+      if (r.bottom > window.innerHeight - 8)
+        menu.style.top = (window.innerHeight - r.height - 8) + 'px'
+    })
+  }
+
+  function appendItemsToMenu(menu, items) {
     items.forEach(function (item) {
       if (item.type === 'header') {
         var hdr = document.createElement('div')
@@ -75,16 +90,21 @@
         menu.appendChild(btn)
       }
     })
+  }
 
-    document.body.appendChild(menu)
-
-    requestAnimationFrame(function () {
-      var r = menu.getBoundingClientRect()
-      if (r.right > window.innerWidth - 8)
-        menu.style.left = (window.innerWidth - r.width - 8) + 'px'
-      if (r.bottom > window.innerHeight - 8)
-        menu.style.top = (window.innerHeight - r.height - 8) + 'px'
-    })
+  window.SieveContextMenu = {
+    appendItems: function (items) {
+      var menu = document.getElementById('sieve-context-menu')
+      if (!menu) return
+      appendItemsToMenu(menu, items)
+      requestAnimationFrame(function () {
+        var r = menu.getBoundingClientRect()
+        if (r.right > window.innerWidth - 8)
+          menu.style.left = (window.innerWidth - r.width - 8) + 'px'
+        if (r.bottom > window.innerHeight - 8)
+          menu.style.top = (window.innerHeight - r.height - 8) + 'px'
+      })
+    }
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -261,6 +281,9 @@
     }})
     items.push({ icon: IC.code, label: 'Insert Code Block', action: function () {
       document.dispatchEvent(new CustomEvent('sieve:create-block', { detail: { kind: 'code' } }))
+    }})
+    items.push({ icon: IC.diagram, label: 'Insert Diagram', action: function () {
+      document.dispatchEvent(new CustomEvent('sieve:create-block', { detail: { kind: 'diagram' } }))
     }})
 
     var isHighlighted = editor.isActive('highlight')

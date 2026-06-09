@@ -39,7 +39,7 @@ func (p *SmartImageProcessor) InitAttrs(id string, overrides map[string]interfac
 		"width":   "",
 		"height":  "",
 		"status":  BlockStatusComplete, // default: no job unless src is provided
-		"supportsPromotion": true,
+		"supportsEmbedding": true,
 	}
 	for k, v := range overrides {
 		if k == "id" {
@@ -55,46 +55,91 @@ func (p *SmartImageProcessor) InitAttrs(id string, overrides map[string]interfac
 	return attrs
 }
 
-// PasteMatch detects image content, saves the file synchronously, and returns
-// {src: filename} so CreateBlock has the path before the block is inserted.
-func (p *SmartImageProcessor) PasteMatch(entries []PasteEntry, uuid string, blockID string) (bool, map[string]interface{}) {
+func (p *SmartImageProcessor) IsBlock(entries []ContentEntry) bool {
 	for _, e := range entries {
-		// Base64 data URL (from FileReader on clipboard file)
+		if strings.HasPrefix(e.MIMEType, "image/") && strings.HasPrefix(e.Content, "data:image/") {
+			return true
+		}
+		// Raw SVG rendered locally by the JS frontend (resolveEntries)
+		if e.MIMEType == "image/svg+xml" {
+			return true
+		}
+		if isImageURL(strings.TrimSpace(e.Content)) {
+			return true
+		}
+		// Mermaid source — JS resolveEntries will render it to SVG before Transform is called
+		if MermaidFenceRe.MatchString(e.Content) {
+			return true
+		}
+		if e.MIMEType == "text/html" {
+			if src := extractHTMLImageSrc(e.Content); src != "" && isImageURL(src) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (p *SmartImageProcessor) Transform(entries []ContentEntry, uuid string, blockID string) map[string]interface{} {
+	for _, e := range entries {
+		// Base64 data URI (paste from clipboard)
 		if strings.HasPrefix(e.MIMEType, "image/") && strings.HasPrefix(e.Content, "data:image/") {
 			filename, err := p.saveBase64(uuid, e.Content, blockID)
 			if err != nil {
-				logger.Warn("smart-image: paste save failed", "block", blockID, "err", err)
-				return false, nil
+				logger.Warn("smart-image: transform base64 save failed", "block", blockID, "err", err)
+				return nil
 			}
-			return true, map[string]interface{}{"src": filename}
+			return map[string]interface{}{"src": filename}
 		}
-
-		// Image URL (bare URL ending in image extension)
-		if e.MIMEType == "text/plain" || e.MIMEType == "text/uri-list" {
-			s := strings.TrimSpace(e.Content)
-			if isImageURL(s) {
-				filename, err := p.downloadImage(uuid, s, blockID)
-				if err != nil {
-					logger.Warn("smart-image: paste download failed", "block", blockID, "url", s, "err", err)
-					return false, nil
+		// Raw SVG rendered locally by the JS frontend via resolveEntries
+		if e.MIMEType == "image/svg+xml" {
+			filename, err := p.saveSVG(uuid, e.Content, blockID)
+			if err != nil {
+				logger.Warn("smart-image: transform svg save failed", "block", blockID, "err", err)
+				return nil
+			}
+			// SVG has no intrinsic pixel size; set a default so it is visible immediately.
+			return map[string]interface{}{"src": filename, "width": "400"}
+		}
+		// Image URL (paste or extract from HTML)
+		s := strings.TrimSpace(e.Content)
+		if isImageURL(s) {
+			// If it's already a local sieve asset, just use the filename
+			if strings.HasPrefix(s, "/sieve/") || strings.Contains(s, "/sieve/") {
+				parts := strings.Split(s, "/")
+				filename := parts[len(parts)-1]
+				// Remove query params if any
+				if idx := strings.Index(filename, "?"); idx != -1 {
+					filename = filename[:idx]
 				}
-				return true, map[string]interface{}{"src": filename}
+				return map[string]interface{}{"src": filename}
 			}
-		}
 
-		// HTML containing a single remote image
+			filename, err := p.downloadImage(uuid, s, blockID)
+			if err != nil {
+				logger.Warn("smart-image: transform download failed", "block", blockID, "url", s, "err", err)
+				return nil
+			}
+			return map[string]interface{}{"src": filename}
+		}
 		if e.MIMEType == "text/html" {
 			if src := extractHTMLImageSrc(e.Content); src != "" && isImageURL(src) {
 				filename, err := p.downloadImage(uuid, src, blockID)
 				if err != nil {
-					logger.Warn("smart-image: paste html-img download failed", "block", blockID, "url", src, "err", err)
-					return false, nil
+					logger.Warn("smart-image: transform html-img download failed", "block", blockID, "url", src, "err", err)
+					return nil
 				}
-				return true, map[string]interface{}{"src": filename}
+				return map[string]interface{}{"src": filename}
 			}
 		}
+		// Mermaid source arriving without JS pre-processing — cannot render server-side.
+		// resolveEntries in SmartImageRenderer must convert mermaid to SVG before this is called.
+		if MermaidFenceRe.MatchString(e.Content) {
+			logger.Warn("smart-image: mermaid source reached Transform unresolved; resolveEntries must render SVG locally", "block", blockID)
+			return nil
+		}
 	}
-	return false, nil
+	return nil
 }
 
 func (p *SmartImageProcessor) OnChange(_ *SieveBlock) {}
@@ -151,16 +196,25 @@ func (p *SmartImageProcessor) RunJob(jctx JobContext) error {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 func isImageURL(s string) bool {
-	if !strings.HasPrefix(s, "http://") && !strings.HasPrefix(s, "https://") {
+	if !strings.HasPrefix(s, "http://") && !strings.HasPrefix(s, "https://") && !strings.HasPrefix(s, "/") && !strings.Contains(s, "/sieve/") {
 		return false
 	}
 	if strings.ContainsAny(s, " \t\n\r") {
 		return false
 	}
-	lower := strings.ToLower(s)
+	
+	path := s
+	if idx := strings.Index(path, "?"); idx != -1 {
+		path = path[:idx]
+	}
+	if idx := strings.Index(path, "#"); idx != -1 {
+		path = path[:idx]
+	}
+	
+	lower := strings.ToLower(path)
 	return strings.HasSuffix(lower, ".png") || strings.HasSuffix(lower, ".jpg") ||
 		strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".gif") ||
-		strings.HasSuffix(lower, ".webp")
+		strings.HasSuffix(lower, ".webp") || strings.HasSuffix(lower, ".svg")
 }
 
 func extractHTMLImageSrc(html string) string {
@@ -206,6 +260,13 @@ func (p *SmartImageProcessor) saveBase64(uuid, dataUrl, blockID string) (string,
 	return p.saveAsset(uuid, blockID, raw)
 }
 
+// saveSVG saves raw SVG content (locally rendered — never from an external server).
+// Returns the asset filename. Callers should set a default display width since SVG
+// has no intrinsic pixel size the browser can use before layout.
+func (p *SmartImageProcessor) saveSVG(uuid, svgContent, blockID string) (string, error) {
+	return p.saveAsset(uuid, blockID, []byte(svgContent))
+}
+
 func (p *SmartImageProcessor) downloadImage(uuid, url, blockID string) (string, error) {
 	logger.Info("smart-image: downloading", "block", blockID, "url", url)
 	resp, err := http.Get(url)
@@ -221,6 +282,12 @@ func (p *SmartImageProcessor) downloadImage(uuid, url, blockID string) (string, 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
+	}
+
+	// SVG is XML text — image.DecodeConfig only handles raster formats.
+	trimmed := bytes.TrimSpace(raw)
+	if bytes.HasPrefix(trimmed, []byte("<svg")) || bytes.HasPrefix(trimmed, []byte("<?xml")) {
+		return p.saveAsset(uuid, blockID, raw)
 	}
 
 	_, _, err = image.DecodeConfig(bytes.NewReader(raw))

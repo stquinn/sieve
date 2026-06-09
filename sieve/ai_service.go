@@ -165,14 +165,6 @@ func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string
 
 	prompt, _ := s.prompts.GetPromptContent("image")
 	logger.Info("About to Describe", "path", imagePath)
-	data, err := os.ReadFile(imagePath)
-	if err == nil {
-		if strings.Contains(string(data), "<svg") || strings.Contains(string(data), "<SVG") || strings.Contains(string(data), "<?xml") {
-			logger.Info("DescribeImage bypassed for SVG", "path", imagePath)
-			return ImageDesc{Filename: filepath.Base(imagePath), Detect: "Unsupported SVG"}, nil
-		}
-	}
-
 	p := strings.ReplaceAll(prompt, "{image_filename}", filepath.Base(imagePath))
 	cwd := filepath.Dir(imagePath)
 	resp, err := RunCLI(settings.CLI, p, settings.Model, settings.CLITimeoutLong, cwd)

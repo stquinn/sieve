@@ -12,7 +12,9 @@ import { isJobStale } from './fenced-block-base.js'
 
   var SmartLinkRenderer = {
 
-    nodeConfig: { atom: true, selectable: true, draggable: false, inline: true, group: "inline" },
+    getFriendlyName: function() { return 'Link' },
+
+    nodeConfig: { selectable: true, draggable: false, inline: true, group: "inline" },
 
     attrs: {
       href:        { default: '',   parseHTML: function (el) { return el.getAttribute('data-href')         || '' } },
@@ -36,7 +38,6 @@ import { isJobStale } from './fenced-block-base.js'
       dom.setAttribute('data-id', node.attrs.id || '')
 
       dom.addEventListener('dragstart', function (e) { e.preventDefault() })
-      dom.addEventListener('mousedown', function (e) { e.stopPropagation() })
       dom.addEventListener('click', function (e) {
         e.preventDefault()
         if (window.isMod && window.isMod(e)) {
@@ -98,13 +99,6 @@ import { isJobStale } from './fenced-block-base.js'
       var href   = node.attrs.href  || ''
       var label  = node.attrs.label || href
 
-      function del() {
-        if (typeof getPos === 'function') {
-          var pos = getPos()
-          editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize))
-        }
-      }
-
       return [
         { type: 'header', label: 'Smart Link' },
         {
@@ -133,30 +127,7 @@ import { isJobStale } from './fenced-block-base.js'
             }))
           },
         },
-        {
-          icon: IC.sparkle,
-          label: 'Enrich as Card',
-          action: function () {
-            if (typeof getPos !== 'function') return
-            var pos = getPos()
-            var nodeSize = node.nodeSize
-            // Resolve insert position BEFORE deleting (positions shift after deletion).
-            // The card is block-level so it should land after the containing paragraph.
-            // Use the end of the containing block as the target.
-            var $pos = editor.state.doc.resolve(pos)
-            var blockEnd = $pos.end($pos.depth)  // end of the paragraph wrapping the smart-link
-            // Delete the smart-link inline node
-            editor.view.dispatch(editor.state.tr.delete(pos, pos + nodeSize))
-            // After deletion, the block end shifts by -nodeSize (the deleted inline).
-            // If the paragraph is now empty it will still exist; insert after it.
-            var insertPos = blockEnd - nodeSize
-            document.dispatchEvent(new CustomEvent('sieve:enrich-as-card', {
-              detail: { href: href, title: label, insertPos: insertPos }
-            }))
-          },
-        },
-        { type: 'divider' },
-        { icon: IC.trash, label: 'Delete', action: del },
+
       ]
     },
   }

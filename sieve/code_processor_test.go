@@ -73,34 +73,48 @@ func TestCodeBlockProcessor_InitAttrs_withOverrides(t *testing.T) {
 	}
 }
 
-// ── PasteMatch ───────────────────────────────────────────────────────────────
+// ── IsBlock + Transform ───────────────────────────────────────────────────────
 
-func TestCodeBlockProcessor_PasteMatch_withLanguage(t *testing.T) {
+func TestCodeBlockProcessor_IsBlock_withLanguage(t *testing.T) {
 	p := NewCodeBlockProcessor(BlockServices{})
-	matched, overrides := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\nprint('world')\n```"}}, "", "")
-	if !matched {
-		t.Fatal("expected match for bare code fence")
+	if !p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\nprint('world')\n```"}}) {
+		t.Fatal("IsBlock must return true for a fenced code block")
+	}
+}
+
+func TestCodeBlockProcessor_Transform_withLanguage(t *testing.T) {
+	p := NewCodeBlockProcessor(BlockServices{})
+	overrides := p.Transform([]ContentEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\nprint('world')\n```"}}, "", "")
+	if overrides == nil {
+		t.Fatal("Transform must return non-nil for a fenced code block")
 	}
 	if overrides["source"] != "print('hello')\nprint('world')" {
 		t.Errorf("unexpected source: %v", overrides["source"])
 	}
-	if overrides["hint"] != "python" {
-		t.Errorf("expected hint=python, got %v", overrides["hint"])
+	if overrides["language"] != "python" {
+		t.Errorf("expected language=python, got %v", overrides["language"])
 	}
-	// PasteMatch must NOT set status or id — those belong to InitAttrs
+	// Transform must NOT set status or id — those belong to InitAttrs
 	if _, ok := overrides["status"]; ok {
-		t.Error("PasteMatch must not set status")
+		t.Error("Transform must not set status")
 	}
 	if _, ok := overrides["id"]; ok {
-		t.Error("PasteMatch must not set id")
+		t.Error("Transform must not set id")
 	}
 }
 
-func TestCodeBlockProcessor_PasteMatch_noLanguage(t *testing.T) {
+func TestCodeBlockProcessor_IsBlock_noLanguage(t *testing.T) {
 	p := NewCodeBlockProcessor(BlockServices{})
-	matched, overrides := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "```\nsome code\n```"}}, "", "")
-	if !matched {
-		t.Fatal("expected match for fence without language")
+	if !p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "```\nsome code\n```"}}) {
+		t.Fatal("IsBlock must return true for a fence without language")
+	}
+}
+
+func TestCodeBlockProcessor_Transform_noLanguage(t *testing.T) {
+	p := NewCodeBlockProcessor(BlockServices{})
+	overrides := p.Transform([]ContentEntry{{MIMEType: "text/plain", Content: "```\nsome code\n```"}}, "", "")
+	if overrides == nil {
+		t.Fatal("Transform must return non-nil for a fence without language")
 	}
 	if overrides["source"] != "some code" {
 		t.Errorf("unexpected source: %v", overrides["source"])
@@ -110,32 +124,38 @@ func TestCodeBlockProcessor_PasteMatch_noLanguage(t *testing.T) {
 	}
 }
 
-func TestCodeBlockProcessor_PasteMatch_noMatch(t *testing.T) {
+func TestCodeBlockProcessor_IsBlock_noMatch(t *testing.T) {
 	p := NewCodeBlockProcessor(BlockServices{})
-	if matched, _ := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "just plain text"}}, "", ""); matched {
-		t.Fatal("expected no match for plain text")
+	if p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "just plain text"}}) {
+		t.Fatal("IsBlock must return false for plain text")
 	}
-	if matched, _ := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "`inline code`"}}, "", ""); matched {
-		t.Fatal("expected no match for inline code")
+	if p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "`inline code`"}}) {
+		t.Fatal("IsBlock must return false for inline code")
 	}
 }
 
-func TestCodeBlockProcessor_PasteMatch_multiline(t *testing.T) {
+func TestCodeBlockProcessor_IsBlock_multiline(t *testing.T) {
 	p := NewCodeBlockProcessor(BlockServices{})
-	matched, overrides := p.PasteMatch([]PasteEntry{{MIMEType: "text/plain", Content: "```go\npackage main\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n```"}}, "", "")
-	if !matched {
-		t.Fatal("expected match for multiline fence")
+	if !p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "```go\npackage main\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n```"}}) {
+		t.Fatal("IsBlock must return true for a multiline fence")
+	}
+}
+
+func TestCodeBlockProcessor_Transform_multiline(t *testing.T) {
+	p := NewCodeBlockProcessor(BlockServices{})
+	overrides := p.Transform([]ContentEntry{{MIMEType: "text/plain", Content: "```go\npackage main\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n```"}}, "", "")
+	if overrides == nil {
+		t.Fatal("Transform must return non-nil for a multiline fence")
 	}
 	if src, _ := overrides["source"].(string); src == "" {
 		t.Error("expected non-empty source")
 	}
 }
 
-func TestCodeBlockProcessor_PasteMatch_noTextPlain(t *testing.T) {
+func TestCodeBlockProcessor_IsBlock_htmlEntry(t *testing.T) {
 	p := NewCodeBlockProcessor(BlockServices{})
-	matched, _ := p.PasteMatch([]PasteEntry{{MIMEType: "text/html", Content: "<b>hello</b>"}}, "", "")
-	if matched {
-		t.Fatal("expected no match when no text/plain entry is present")
+	if p.IsBlock([]ContentEntry{{MIMEType: "text/html", Content: "<b>hello</b>"}}) {
+		t.Fatal("IsBlock must return false for HTML-only entry with no code content")
 	}
 }
 
