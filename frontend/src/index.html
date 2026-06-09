@@ -100,10 +100,9 @@
               <div class="tb-sep"></div>
               <!-- Sieve block inserts -->
               <div class="tb-group">
-                <button class="tb-btn tb-insert" data-insert="code"     title="Insert code block">{ } Code</button>
-                <button class="tb-btn tb-insert" data-insert="diagram"  title="Insert diagram">&#9671; Diagram</button>
-                <button class="tb-btn tb-insert" data-insert="web-clip" title="Insert web clip">&#11041; Clip</button>
-                <button class="tb-btn tb-insert" data-insert="ai-block" title="Insert AI block">&#10022; AI</button>
+                <button class="tb-btn tb-insert" data-insert="code"    title="Insert code block">{ } Code</button>
+                <button class="tb-btn tb-insert" data-insert="diagram" title="Insert diagram">&#9671; Diagram</button>
+                <button class="tb-btn tb-insert" id="tb-clip-btn"      title="Insert web clip">&#11041; Clip</button>
               </div>
               <div class="tb-sep"></div>
               <!-- Image upload -->
@@ -111,8 +110,26 @@
                 <button class="tb-btn tb-insert" id="tb-image-btn" title="Insert image from file">&#128444; Image</button>
                 <input id="tb-image-input" type="file" accept="image/*" style="display:none">
               </div>
-              <!-- AI filing actions (right-aligned; hidden at Tier 1 via .tier-dumb CSS) -->
+              <div class="tb-sep"></div>
+              <!-- Table controls — shown/hidden by syncToolbar when cursor is in a table -->
+              <div class="tb-group" id="tb-table-group" style="display:none">
+                <button class="tb-btn" data-cmd="addColumnBefore" title="Insert column before">&#8677;Col</button>
+                <button class="tb-btn" data-cmd="addColumnAfter"  title="Insert column after">Col&#8676;</button>
+                <button class="tb-btn" data-cmd="deleteColumn"    title="Delete column">&#8855;Col</button>
+                <div class="tb-sep"></div>
+                <button class="tb-btn" data-cmd="addRowBefore"    title="Insert row above">&#8679;Row</button>
+                <button class="tb-btn" data-cmd="addRowAfter"     title="Insert row below">Row&#8681;</button>
+                <button class="tb-btn" data-cmd="deleteRow"       title="Delete row">&#8855;Row</button>
+                <div class="tb-sep"></div>
+                <button class="tb-btn" data-cmd="toggleHeaderRow" title="Toggle header row">Hdr</button>
+                <button class="tb-btn" data-cmd="mergeOrSplit"    title="Merge / split cells">&#8868;</button>
+                <button class="tb-btn" data-cmd="deleteTable"     title="Delete table" style="color:var(--theme-accentRed)">&#8855;Tbl</button>
+              </div>
+              <!-- AI query actions (right-aligned; hidden at Tier 1) -->
               <div class="tb-ai-actions">
+                <button class="tb-btn tb-ai" id="tb-explain-btn" title="Explain selection">Explain</button>
+                <button class="tb-btn tb-ai" id="tb-ask-btn"     title="Ask about selection">Ask</button>
+                <div class="tb-sep" style="height:16px;background:var(--theme-border);margin:0 4px"></div>
                 <button class="tb-btn tb-ai"           data-ai="smartMetadata"   title="Smart Metadata (&#8984;&#8679;M)">&#10009; Metadata</button>
                 <button class="tb-btn tb-ai"           data-ai="smartFile"       title="Smart File (&#8984;&#8679;E)">&#11041; File</button>
                 <button class="tb-btn tb-ai tb-ai-keep" data-ai="keepAndSmartFile" title="Keep &amp; Smart File (&#8984;&#8679;&#9166;)">&#10003; Keep &amp; File</button>
@@ -456,9 +473,10 @@
 
         // ── Toolbar command dispatch ────────────────────────────────────────────
         document.getElementById('editor-toolbar')?.addEventListener('click', function(e) {
-          var btn = e.target.closest('[data-cmd],[data-insert],[data-ai],[id="tb-image-btn"],[id="tb-help-btn"]');
+          var btn = e.target.closest('button,[data-cmd],[data-insert],[data-ai]');
           if (!btn) return;
 
+          // Special buttons by ID
           if (btn.id === 'tb-help-btn') {
             htmx.ajax('GET', '/api/help', { target: '#help-dialog-content', swap: 'innerHTML' })
                 .then(function() { document.getElementById('help-dialog').showModal(); });
@@ -468,15 +486,31 @@
             document.getElementById('tb-image-input').click();
             return;
           }
+          if (btn.id === 'tb-clip-btn') {
+            if (window._sieveOpenInternalize) window._sieveOpenInternalize();
+            return;
+          }
+          if (btn.id === 'tb-explain-btn') {
+            document.dispatchEvent(new CustomEvent('sieve:ai-explain'));
+            return;
+          }
+          if (btn.id === 'tb-ask-btn') {
+            document.dispatchEvent(new CustomEvent('sieve:ai-ask'));
+            return;
+          }
+
+          // AI filing actions
           var ai = btn.dataset.ai;
           if (ai && window.SieveAI) { window.SieveAI[ai](); return; }
 
+          // Block inserts (code, diagram only — clip handled above)
           var insert = btn.dataset.insert;
           if (insert) {
             document.dispatchEvent(new CustomEvent('sieve:create-block', { detail: { kind: insert } }));
             return;
           }
 
+          // TipTap formatting + table commands
           var editor = window.__tiptap;
           if (!editor) return;
           var c = editor.chain().focus();
@@ -494,6 +528,16 @@
             case 'blockquote':     c.toggleBlockquote().run(); break;
             case 'insertTable':    c.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(); break;
             case 'horizontalRule': c.setHorizontalRule().run(); break;
+            // Table editing
+            case 'addColumnBefore': c.addColumnBefore().run(); break;
+            case 'addColumnAfter':  c.addColumnAfter().run(); break;
+            case 'deleteColumn':    c.deleteColumn().run(); break;
+            case 'addRowBefore':    c.addRowBefore().run(); break;
+            case 'addRowAfter':     c.addRowAfter().run(); break;
+            case 'deleteRow':       c.deleteRow().run(); break;
+            case 'toggleHeaderRow': c.toggleHeaderRow().run(); break;
+            case 'mergeOrSplit':    c.mergeOrSplit().run(); break;
+            case 'deleteTable':     c.deleteTable().run(); break;
           }
         });
 
@@ -501,10 +545,13 @@
         document.getElementById('tb-image-input')?.addEventListener('change', function(e) {
           var file = e.target.files && e.target.files[0];
           if (!file) return;
-          var uuid = document.getElementById('tiptap-mount')?.getAttribute('data-uuid');
-          if (!uuid || uuid.startsWith('prompt:')) return;
+          var mount = document.getElementById('tiptap-mount');
+          var uuid = mount && mount.getAttribute('data-uuid');
+          // Only proceed when a real document (not a prompt) is active
+          if (!uuid || uuid.startsWith('prompt:') || !window.__tiptap) return;
           var reader = new FileReader();
           reader.onload = function(ev) {
+            if (!ev.target || !ev.target.result) return;
             fetch('/api/editor/smart-paste', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },

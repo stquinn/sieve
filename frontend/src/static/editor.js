@@ -48,6 +48,11 @@
       var args = map[btn.dataset.cmd]
       if (args) btn.classList.toggle('active', editor.isActive.apply(editor, args))
     })
+    // Show table controls only when cursor is inside a table
+    var tableGroup = document.getElementById('tb-table-group')
+    if (tableGroup) {
+      tableGroup.style.display = editor.isActive('table') ? 'flex' : 'none'
+    }
   }
 
   // ── Public entry point called from App.tsx htmx:afterSettle ─────────────────
@@ -57,6 +62,7 @@
       flushSave()
       currentEditor.destroy()
       currentEditor = null
+      window.__tiptap = null
       if (currentUuid && !currentUuid.startsWith('prompt:')) closeEditorWs()
     }
 
@@ -243,6 +249,7 @@
     })
 
     currentEditor = editor
+    window.__tiptap = editor
   }
 
   // ── Markdown mode ─────────────────────────────────────────────────────────────
@@ -1128,7 +1135,7 @@
     currentMode = newMode
     tabModes[currentUuid] = currentMode
     
-    if (currentEditor) { currentEditor.destroy(); currentEditor = null }
+    if (currentEditor) { currentEditor.destroy(); currentEditor = null; window.__tiptap = null }
     currentMountEl.innerHTML = ''
     
     if (currentMode === 'wysiwyg') {

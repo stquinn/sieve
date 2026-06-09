@@ -44,20 +44,10 @@ func (p *SmartCardProcessor) InitAttrs(id string, overrides map[string]interface
 	return attrs
 }
 
-func (p *SmartCardProcessor) IsBlock(entries []ContentEntry) bool {
-	for _, e := range entries {
-		trimmed := strings.TrimSpace(e.Content)
-		if trimmed == "" || strings.ContainsAny(trimmed, " \t\n\r") {
-			continue
-		}
-		if !strings.HasPrefix(trimmed, "http://") && !strings.HasPrefix(trimmed, "https://") {
-			continue
-		}
-		if isImageURL(trimmed) {
-			continue
-		}
-		return true
-	}
+// IsBlock always returns false — SmartCard blocks are created via the
+// "Insert Card" dialog (window._sieveOpenSmartCard), never via paste detection.
+// URL pastes are handled by SmartLinkProcessor instead.
+func (p *SmartCardProcessor) IsBlock(_ []ContentEntry) bool {
 	return false
 }
 

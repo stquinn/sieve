@@ -104,6 +104,11 @@ func (a *App) startup(ctx context.Context) {
 		return
 	}
 
+	if a.library == nil {
+		logger.Error("startup: library service is nil — cannot proceed")
+		return
+	}
+
 	logger.Info("startup: beginning validation", "isFirstStartup", isFirstStartup, "storePath", abs)
 
 	if err := a.library.Validate(abs); err != nil {

@@ -29,3 +29,5 @@ export function SelectVault():Promise<string>;
 export function ShowInFiles(arg1:string):Promise<void>;
 
 export function ShowInFilesByID(arg1:string):Promise<void>;
+
+export function SwitchLibrary(arg1:string):Promise<string>;

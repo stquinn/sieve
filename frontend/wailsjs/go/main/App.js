@@ -53,3 +53,7 @@ export function ShowInFiles(arg1) {
 export function ShowInFilesByID(arg1) {
   return window['go']['main']['App']['ShowInFilesByID'](arg1);
 }
+
+export function SwitchLibrary(arg1) {
+  return window['go']['main']['App']['SwitchLibrary'](arg1);
+}
