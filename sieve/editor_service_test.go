@@ -712,3 +712,61 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 		t.Errorf("expected concurrent user edit to be preserved, got %v", blk.Attrs["source"])
 	}
 }
+
+func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
+	resetRegistry()
+	
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, 0)
+	doc, _ := ds.New()
+	doc.SetBody([]byte("# Test"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+	_ = es.Open(uuid, nil)
+
+	initialAttrs := map[string]interface{}{
+		"status": BlockStatusPending,
+	}
+
+	var blockID string
+
+	proc := &testRunJobProcessor{
+		runJob: func(ctx context.Context, jobUUID string, block *SieveBlock) error {
+			// Simulate the user navigating away (Close) and back (Open) while the job runs
+			es.Close(uuid)
+			_ = es.Open(uuid, nil)
+
+			block.Attrs["status"] = BlockStatusComplete
+			return nil
+		},
+	}
+	RegisterProcessor("mock-kind2", proc)
+
+	blockID, _, err := es.CreateBlock(uuid, "mock-kind2", initialAttrs)
+	if err != nil {
+		t.Fatalf("CreateBlock failed: %v", err)
+	}
+
+	es.RunJob(context.Background(), uuid, blockID)
+
+	// Ensure the NEW shadow has the COMPLETE state
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+
+	if shadow == nil {
+		t.Fatal("expected new shadow to exist")
+	}
+
+	shadow.mu.Lock()
+	blk, ok := shadow.Blocks[blockID]
+	shadow.mu.Unlock()
+
+	if !ok {
+		t.Fatal("expected block to exist in new shadow")
+	}
+
+	if blk.Attrs["status"] != BlockStatusComplete {
+		t.Errorf("expected status to be applied to the NEW shadow, got %v", blk.Attrs["status"])
+	}
+}

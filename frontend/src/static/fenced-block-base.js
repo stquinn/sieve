@@ -134,12 +134,10 @@ export function isJobActive(id) {
 }
 
 // isJobStale — checks if a job block is stale. Returns false if the job is active on the server.
-// If the job is not active, it returns true unless the block was created within a 15-second grace period.
+// If the job is not active, it falls back to checking the configured CLI timeout threshold.
 export function isJobStale(createdAt, id) {
   if (isJobActive(id)) return false
-  if (!createdAt) return true
-  var ageMs = Date.now() - new Date(createdAt).getTime()
-  return ageMs > 15000
+  return isStaleByTime(createdAt)
 }
 
 // extractTextFromDOM recursively gathers text from a DOM node.

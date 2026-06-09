@@ -596,6 +596,71 @@ func (es *EditorService) DispatchJobIfNeeded(uuid, blockID string) {
 	}
 }
 
+// applyJobUpdate safely applies block updates resulting from a background job.
+// It looks up the current active shadow (which may have been recreated) or updates disk directly if closed.
+func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[string]interface{}, deletes []string, flushReason string) {
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+
+	if shadow != nil {
+		if len(updates) > 0 {
+			shadow.setBlock(SieveBlock{ID: blockID, Kind: kind, Attrs: updates})
+		}
+		for _, k := range deletes {
+			shadow.deleteBlockAttr(blockID, k)
+		}
+		if flushReason != "" {
+			_ = es.flushShadow(shadow, flushReason)
+		}
+		
+		shadow.mu.Lock()
+		blk, ok := shadow.Blocks[blockID]
+		var attrsCopy map[string]interface{}
+		if ok {
+			attrsCopy = make(map[string]interface{}, len(blk.Attrs))
+			for k, v := range blk.Attrs {
+				attrsCopy[k] = v
+			}
+		}
+		shadow.mu.Unlock()
+		if ok {
+			es.notifyBlockUpdated(uuid, SieveBlock{ID: blockID, Kind: kind, Attrs: attrsCopy})
+		}
+	} else {
+		// No active shadow in memory. We must update the document on disk directly.
+		doc, err := es.documents.LoadByUUID(uuid)
+		if err != nil {
+			logger.Warn("editor: job update failed to load doc", "uuid", uuid, "err", err)
+			return
+		}
+		body := string(doc.Body())
+		blocks := ParseAllBlocks(body)
+		blk, ok := blocks[blockID]
+		if !ok {
+			logger.Warn("editor: job update target block missing from disk", "uuid", uuid, "block", blockID)
+			return
+		}
+		
+		if len(updates) > 0 {
+			for k, v := range updates {
+				blk.Attrs[k] = v
+			}
+		}
+		for _, k := range deletes {
+			delete(blk.Attrs, k)
+		}
+		
+		newBody := InjectBlocks(body, blocks)
+		doc.SetBody([]byte(newBody))
+		if _, err := es.documents.Save(doc); err != nil {
+			logger.Warn("editor: job update save to disk failed", "uuid", uuid, "err", err)
+		} else {
+			logger.Info("editor: job update applied to disk directly", "uuid", uuid, "block", blockID)
+		}
+	}
+}
+
 // RunJob executes the background job for blockID, merges results into the shadow,
 // flushes to disk, and notifies the listener with the updated rawYaml.
 func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
@@ -650,21 +715,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	// notify lets the processor push intermediate attr updates mid-job
 	// (e.g. push src immediately after saving, before slow AI describe).
 	notify := func(bID string, partialAttrs map[string]interface{}) {
-		shadow.setBlock(SieveBlock{ID: bID, Kind: kind, Attrs: partialAttrs})
-		_ = es.flushShadow(shadow, "job-progress")
-		shadow.mu.Lock()
-		blkMid, okMid := shadow.Blocks[bID]
-		var midAttrs map[string]interface{}
-		if okMid {
-			midAttrs = make(map[string]interface{}, len(blkMid.Attrs))
-			for k, v := range blkMid.Attrs {
-				midAttrs[k] = v
-			}
-		}
-		shadow.mu.Unlock()
-		if okMid {
-			es.notifyBlockUpdated(uuid, SieveBlock{ID: bID, Kind: kind, Attrs: midAttrs})
-		}
+		es.applyJobUpdate(uuid, bID, kind, partialAttrs, nil, "job-progress")
 	}
 
 	jctx := JobContext{
@@ -675,7 +726,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 		Notify: notify,
 	}
 	if err := processor.RunJob(jctx); err != nil {
-		shadow.setBlock(SieveBlock{ID: blockID, Kind: kind, Attrs: map[string]interface{}{"status": BlockStatusError}})
+		es.applyJobUpdate(uuid, blockID, kind, map[string]interface{}{"status": BlockStatusError}, nil, "job-complete")
 	} else {
 		// Dynamically determine what attributes the job updated.
 		updates := make(map[string]interface{})
@@ -693,29 +744,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 			}
 		}
 
-		if len(updates) > 0 {
-			shadow.setBlock(SieveBlock{ID: blockID, Kind: kind, Attrs: updates})
-		}
-		for _, k := range deletes {
-			shadow.deleteBlockAttr(blockID, k)
-		}
-	}
-
-	_ = es.flushShadow(shadow, "job-complete")
-
-	shadow.mu.Lock()
-	blk2, ok2 := shadow.Blocks[blockID]
-	var attrsCopy map[string]interface{}
-	if ok2 {
-		attrsCopy = make(map[string]interface{}, len(blk2.Attrs))
-		for k, v := range blk2.Attrs {
-			attrsCopy[k] = v
-		}
-	}
-	shadow.mu.Unlock()
-	if ok2 {
-		blkCopy2 := SieveBlock{ID: blockID, Kind: kind, Attrs: attrsCopy}
-		es.notifyBlockUpdated(uuid, blkCopy2)
+		es.applyJobUpdate(uuid, blockID, kind, updates, deletes, "job-complete")
 	}
 }
 
