@@ -327,7 +327,6 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
             '<div class="diagram-block__error-title">Diagram syntax error</div>' +
             '<div class="diagram-block__error-msg">' + msg.replace(/</g, '&lt;') + '</div>' +
             '</div></div>'
-          switchMode('edit')
         })
       }
 
