@@ -183,10 +183,12 @@ func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string
 
 // RefineLanguage asks the AI to identify the programming language of a code
 // snippet. Returns the lowercase language name or empty string.
-func (s *AIService) RefineLanguage(content string) (string, error) {
+func (s *AIService) RefineLanguage(content, currentLanguage, detectionMethod string) (string, error) {
 	settings := s.state.LoadSettings()
 	prompt, _ := s.prompts.GetPromptContent("refine")
 	p := strings.ReplaceAll(prompt, "{content}", content)
+	p = strings.ReplaceAll(p, "{current_language}", currentLanguage)
+	p = strings.ReplaceAll(p, "{detection_method}", detectionMethod)
 
 	resp, err := RunCLI(settings.CLI, p, settings.Model, settings.CLITimeoutLong, "")
 	if err != nil {
@@ -199,14 +201,11 @@ func (s *AIService) RefineLanguage(content string) (string, error) {
 	}
 	lang = strings.Trim(lang, ".,;:'\"")
 
-	known := map[string]bool{
-		"python": true, "go": true, "javascript": true, "typescript": true,
-		"rust": true, "java": true, "c": true, "cpp": true, "sql": true,
-		"bash": true, "sh": true, "shell": true, "yaml": true, "json": true,
-		"xml": true, "html": true, "css": true, "ruby": true, "php": true,
-		"swift": true, "kotlin": true, "dart": true, "text": true,
+	if canonical, ok := canonicalLanguages[lang]; ok {
+		lang = canonical
 	}
-	if known[lang] {
+
+	if knownLanguages[lang] {
 		return lang, nil
 	}
 	return "", nil
@@ -219,7 +218,7 @@ func (s *AIService) DetectCodeLanguage(source, hint string) (string, error) {
 	if lang, ok := detectByHeuristics(source, hint); ok {
 		return lang, nil
 	}
-	lang, err := s.RefineLanguage(source)
+	lang, err := s.RefineLanguage(source, "", "")
 	if err != nil {
 		return "unknown", err
 	}

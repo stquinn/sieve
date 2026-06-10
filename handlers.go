@@ -69,6 +69,8 @@ func promptVarsForType(t string) []promptVarDef {
 		},
 		"refine": {
 			{"{content}", "The code block text to identify"},
+			{"{current_language}", "The language currently detected by heuristics"},
+			{"{detection_method}", "The method used to detect the current language"},
 		},
 		"image": {
 			{"{image_filename}", "The original filename of the image"},

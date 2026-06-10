@@ -130,7 +130,7 @@ func (h *AiHandler) handleRefineLanguage(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	lang, err := h.ServiceProvider.AI.RefineLanguage(req.Content)
+	lang, err := h.ServiceProvider.AI.RefineLanguage(req.Content, "", "")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

@@ -394,6 +394,7 @@ func TestEditorService_CreateBlock_code(t *testing.T) {
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
 	_ = es.Open(uuid, nil)
+	defer waitJobs(t, es, uuid)
 
 	id, rawYaml, err := es.CreateBlock(uuid, "code", nil)
 	if err != nil {
@@ -436,7 +437,9 @@ func TestEditorService_CreateBlock_withOverrides(t *testing.T) {
 	doc, _ := ds.New()
 	doc.SetBody([]byte("# Hello"))
 	doc, _ = ds.Save(doc)
-	_ = es.Open(doc.UUID(), nil)
+	uuid := doc.UUID()
+	_ = es.Open(uuid, nil)
+	defer waitJobs(t, es, uuid)
 
 	id, rawYaml, err := es.CreateBlock(doc.UUID(), "code", map[string]interface{}{
 		"source": "print('hello')",
@@ -462,6 +465,7 @@ func TestEditorService_HandlePaste_delegatesToCreateBlock(t *testing.T) {
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
 	_ = es.Open(uuid, nil)
+	defer waitJobs(t, es, uuid)
 
 	kind, id, rawYaml, matched := es.HandlePaste(uuid, []ContentEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\n```"}})
 	if !matched {
@@ -643,7 +647,7 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 		"source":   "original source",
 		"language": "python",
 		"hint":     "some-hint",
-		"status":   BlockStatusPending,
+		"status":   BlockStatusDispatched,
 	}
 
 	var blockID string
@@ -725,7 +729,7 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 	_ = es.Open(uuid, nil)
 
 	initialAttrs := map[string]interface{}{
-		"status": BlockStatusPending,
+		"status": BlockStatusDispatched,
 	}
 
 	var blockID string
@@ -734,7 +738,9 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 		runJob: func(ctx context.Context, jobUUID string, block *SieveBlock) error {
 			// Simulate the user navigating away (Close) and back (Open) while the job runs
 			es.Close(uuid)
-			_ = es.Open(uuid, nil)
+			if errOpen := es.Open(uuid, nil); errOpen != nil {
+				t.Logf("Open error: %v", errOpen)
+			}
 
 			block.Attrs["status"] = BlockStatusComplete
 			return nil
@@ -769,4 +775,31 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 	if blk.Attrs["status"] != BlockStatusComplete {
 		t.Errorf("expected status to be applied to the NEW shadow, got %v", blk.Attrs["status"])
 	}
+}
+
+func waitJobs(t *testing.T, es *EditorService, uuid string) {
+	t.Helper()
+	for i := 0; i < 100; i++ {
+		es.mu.Lock()
+		shadow := es.shadows[uuid]
+		es.mu.Unlock()
+		if shadow == nil {
+			return
+		}
+		shadow.mu.Lock()
+		allDone := true
+		for _, blk := range shadow.Blocks {
+			status, _ := blk.Attrs["status"].(string)
+			if status == BlockStatusPending || status == BlockStatusDispatched {
+				allDone = false
+				break
+			}
+		}
+		shadow.mu.Unlock()
+		if allDone {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Log("warning: waitJobs timed out")
 }

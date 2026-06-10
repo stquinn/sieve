@@ -6,7 +6,62 @@ import (
 	"strings"
 )
 
-// knownLanguages is the set of language names this system recognises.
+// canonicalLanguages maps language hints or aliases to their canonical, lowercase names.
+var canonicalLanguages = map[string]string{
+	"python":     "python",
+	"py":         "python",
+	"go":         "go",
+	"golang":     "go",
+	"javascript": "javascript",
+	"js":         "javascript",
+	"typescript": "typescript",
+	"ts":         "typescript",
+	"rust":       "rust",
+	"rs":         "rust",
+	"java":       "java",
+	"kotlin":     "kotlin",
+	"kt":         "kotlin",
+	"dart":       "dart",
+	"swift":      "swift",
+	"c":          "c",
+	"cpp":        "cpp",
+	"c++":        "cpp",
+	"h":          "c",
+	"hpp":        "cpp",
+	"csharp":     "csharp",
+	"cs":         "csharp",
+	"sql":        "sql",
+	"bash":       "bash",
+	"sh":         "bash",
+	"shell":      "bash",
+	"zsh":        "bash",
+	"yaml":       "yaml",
+	"yml":        "yaml",
+	"json":       "json",
+	"toml":       "toml",
+	"ini":        "ini",
+	"dockerfile": "dockerfile",
+	"docker":     "dockerfile",
+	"makefile":   "makefile",
+	"make":       "makefile",
+	"lua":        "lua",
+	"powershell": "powershell",
+	"ps1":        "powershell",
+	"xml":        "xml",
+	"html":       "html",
+	"css":        "css",
+	"ruby":       "ruby",
+	"rb":         "ruby",
+	"php":        "php",
+	"markdown":   "markdown",
+	"md":         "markdown",
+	"mermaid":    "mermaid",
+	"plantuml":   "plantuml",
+	"text":       "text",
+	"txt":        "text",
+}
+
+// knownLanguages is the set of canonical language names this system recognises.
 // A hint that is in this set is trusted directly without pattern matching.
 var knownLanguages = map[string]bool{
 	"python": true, "go": true, "javascript": true, "typescript": true,
@@ -15,6 +70,8 @@ var knownLanguages = map[string]bool{
 	"bash": true, "sh": true, "shell": true, "yaml": true, "json": true,
 	"xml": true, "html": true, "css": true, "ruby": true, "php": true,
 	"mermaid": true, "plantuml": true, "text": true,
+	"markdown": true, "csharp": true, "toml": true, "ini": true,
+	"dockerfile": true, "makefile": true, "lua": true, "powershell": true,
 }
 
 // tier1 patterns are unambiguous single signals — one match is decisive.
@@ -50,6 +107,12 @@ var tier1 = []struct {
 	// TypeScript (must be before JS — more specific)
 	{regexp.MustCompile(`(?m)^(?:export\s+)?interface\s+\w+\s*\{`), "typescript"},
 	{regexp.MustCompile(`(?m)^(?:export\s+)?type\s+\w+\s*=`), "typescript"},
+	// Markdown (Tier 1 unambiguous)
+	{regexp.MustCompile(`(?m)^[\t ]*\|(?:\s*:?-+:?\s*\|)+\s*$`), "markdown"},
+	{regexp.MustCompile(`\[[^\]\n]+\]\(https?://[^"'\s)]+\)`), "markdown"},
+	{regexp.MustCompile(`(?m)^[\t ]*[-*+]\s+.+\n[\t ]*[-*+]\s+`), "markdown"},
+	{regexp.MustCompile(`(?m)^[\t ]*\d+\.\s+.+\n[\t ]*\d+\.\s+`), "markdown"},
+	{regexp.MustCompile("(?m)^\\x60{3,4}[a-zA-Z0-9_-]*\\r?\\n"), "markdown"},
 }
 
 // tier2 patterns require 2+ hits to be confident (weaker individual signals).
@@ -71,6 +134,12 @@ var tier2 = []struct {
 	{regexp.MustCompile(`\bfinal\s+\w+\s+\w+\s*=`), "dart"},
 	{regexp.MustCompile(`\bconst\s+\w+\s+\w+\s*=`), "typescript"},
 	{regexp.MustCompile(`:\s*(?:string|number|boolean|any)\b`), "typescript"},
+	// Markdown (Tier 2 signals)
+	{regexp.MustCompile(`(?m)^##+\s+`), "markdown"},
+	{regexp.MustCompile(`(?m)^>\s+`), "markdown"},
+	{regexp.MustCompile(`(?m)\*\*([^\*\n]+)\*\*|__([^\_\n]+)__`), "markdown"},
+	{regexp.MustCompile(`(?m)\\x60([^\\x60\\n]+)\\x60`), "markdown"},
+	{regexp.MustCompile(`(?m)!\[([^\]\n]*)\]\([^)\n]+\)`), "markdown"},
 }
 
 // looksLikeCode is the tier-3 gate. It returns true when source has structural
@@ -118,8 +187,10 @@ func looksLikeCode(source string) bool {
 // known language name it is trusted unconditionally — no pattern matching needed.
 func detectByHeuristics(source, hint string) (string, bool) {
 	h := strings.ToLower(strings.TrimSpace(hint))
-	if h != "" && knownLanguages[h] {
-		return h, true
+	if h != "" {
+		if canonical, ok := canonicalLanguages[h]; ok {
+			return canonical, true
+		}
 	}
 
 	trimmed := strings.TrimSpace(source)

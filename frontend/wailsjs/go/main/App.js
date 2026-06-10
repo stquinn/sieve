@@ -42,8 +42,8 @@ export function Quit() {
   return window['go']['main']['App']['Quit']();
 }
 
-export function RefineLanguage(arg1) {
-  return window['go']['main']['App']['RefineLanguage'](arg1);
+export function RefineLanguage(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RefineLanguage'](arg1, arg2, arg3);
 }
 
 export function SelectVault() {

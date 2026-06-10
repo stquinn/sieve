@@ -528,11 +528,11 @@ func (a *App) DescribeImage(uuid string, storeRelPath string, blkId string) (sie
 	return desc, nil
 }
 
-func (a *App) RefineLanguage(content string) (string, error) {
+func (a *App) RefineLanguage(content, currentLanguage, detectionMethod string) (string, error) {
 	if a.AI == nil {
 		return "", fmt.Errorf("store not open")
 	}
-	lang, err := a.AI.RefineLanguage(content)
+	lang, err := a.AI.RefineLanguage(content, currentLanguage, detectionMethod)
 	if err != nil {
 		logger.Warn("RefineLanguage failed", "err", err)
 		return "", err

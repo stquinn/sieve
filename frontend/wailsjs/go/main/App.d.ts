@@ -24,7 +24,7 @@ export function InitVault(arg1:string):Promise<void>;
 
 export function Quit():Promise<void>;
 
-export function RefineLanguage(arg1:string):Promise<string>;
+export function RefineLanguage(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function SelectVault():Promise<string>;
 

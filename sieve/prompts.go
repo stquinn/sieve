@@ -279,8 +279,12 @@ Respond ONLY with valid JSON. No preamble.
 `
 
 const DefaultRefinePrompt = `Identify the programming language of this code snippet.
-Reply with ONLY the lowercase language name (e.g. python, go, javascript, typescript, rust, java, c, cpp, sql, bash, yaml, json, xml, html, css, ruby, php, swift, kotlin, dart).
+Reply with ONLY the lowercase language name (e.g. python, go, javascript, typescript, rust, java, c, cpp, sql, bash, yaml, json, xml, html, css, ruby, php, swift, kotlin, dart, markdown, csharp, toml, ini, dockerfile, makefile, lua, powershell).
 If you cannot identify a specific language confidently, reply with exactly: text
+
+Current Detection State (use as a signal/context, but make up your own mind):
+- Current Language: {current_language}
+- Detection Method: {detection_method}
 
 Code:
 {content}

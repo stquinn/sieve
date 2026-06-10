@@ -138,7 +138,9 @@ func (p *CodeBlockProcessor) RunJob(jctx JobContext) error {
 		return fmt.Errorf("AI detection failed: AI service unavailable")
 	}
 
-	lang, err := p.svc.AI.RefineLanguage(source)
+	currentLang, _ := block.Attrs["language"].(string)
+	method, _ := block.Attrs["detectionMethod"].(string)
+	lang, err := p.svc.AI.RefineLanguage(source, currentLang, method)
 	if err != nil {
 		block.Attrs["status"] = BlockStatusError
 		return fmt.Errorf("AI detection failed: %w", err)

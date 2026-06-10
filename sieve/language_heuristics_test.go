@@ -162,3 +162,66 @@ func TestDetectByHeuristics_sqlWithLeadingComment(t *testing.T) {
 		})
 	}
 }
+
+func TestDetectByHeuristics_markdown(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "Markdown Table",
+			input: "| Header 1 | Header 2 |\n|---|---|\n| Cell 1 | Cell 2 |\n",
+		},
+		{
+			name:  "Markdown Link",
+			input: "Check out this [google link](https://google.com) for details.",
+		},
+		{
+			name:  "Consecutive Bullets",
+			input: "- Item one\n- Item two\n- Item three",
+		},
+		{
+			name:  "Consecutive Numbered List",
+			input: "1. First step\n2. Second step\n3. Third step",
+		},
+		{
+			name: "Nested Code Fence",
+			input: "### Get User Profile\n```http\nGET https://api.github.com/users/octocat\nAccept: application/vnd.github.v3+json\nAuthorization: Bearer {{GITHUB_TOKEN}}\n```\n",
+		},
+		{
+			name: "Tier 2 Combination (Header + Bold)",
+			input: "## Heading\nThis is some **bold** text to explain concepts.",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lang, ok := detectByHeuristics(tc.input, "")
+			if !ok || lang != "markdown" {
+				t.Errorf("expected markdown detection, got lang=%q ok=%v", lang, ok)
+			}
+		})
+	}
+}
+
+func TestDetectByHeuristics_canonicalization(t *testing.T) {
+	cases := []struct {
+		hint     string
+		expected string
+	}{
+		{"md", "markdown"},
+		{"markdown", "markdown"},
+		{"cs", "csharp"},
+		{"csharp", "csharp"},
+		{"js", "javascript"},
+		{"ts", "typescript"},
+		{"rs", "rust"},
+		{"yml", "yaml"},
+	}
+	for _, tc := range cases {
+		lang, ok := detectByHeuristics("some code block source", tc.hint)
+		if !ok || lang != tc.expected {
+			t.Errorf("expected hint %q to resolve to %q, got %q (ok=%v)", tc.hint, tc.expected, lang, ok)
+		}
+	}
+}
+
