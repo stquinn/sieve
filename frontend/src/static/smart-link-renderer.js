@@ -12,7 +12,13 @@ import { isJobStale } from './fenced-block-base.js'
 
   var SmartLinkRenderer = {
 
-    getFriendlyName: function() { return 'Link' },
+    getFriendlyName: function(node) { return 'Link' },
+
+    asContentEntry: function(node) {
+      if (!node.attrs.href) return null
+      return [{ mimeType: 'text/uri-list', content: node.attrs.href }]
+    },
+
 
     nodeConfig: { selectable: true, draggable: false, inline: true, group: "inline" },
 

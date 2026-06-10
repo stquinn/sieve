@@ -19,6 +19,10 @@
   var showAiBlocks = true
   var blobInterceptorCleanup = null
   var searchOverlay = null
+  // Where the next inserted Sieve block goes. A number = insert at that point
+  // (additive). A {from,to} object = replace that range (in-place conversion of a
+  // native code block). Every block-creating operation sets this fresh, so a stale
+  // value can never leak into a later insert.
   var sieveInsertPos = null
 
 
@@ -516,6 +520,7 @@
   document.addEventListener('editor:insert-block', function (e) {
     var msg = e.detail
     if (currentMode === 'markdown' && currentMarkdownTextarea) {
+      sieveInsertPos = null
       lastSyncedBody = lastSyncedBody.trim() + '\n\n' + (msg.serialisedForm || '') + '\n'
       currentMarkdownTextarea.value = lastSyncedBody
       wsSend({ type: 'doc-update', uuid: currentUuid, markdown: lastSyncedBody })
@@ -524,7 +529,7 @@
     if (!currentEditor) return
     var parsed = msg.attrs || {}
 
-    var pos = sieveInsertPos !== null ? sieveInsertPos : currentEditor.state.doc.content.size
+    var target = sieveInsertPos
     sieveInsertPos = null
 
     var attrs = {
@@ -540,10 +545,18 @@
       }
     })
 
-    currentEditor.commands.insertContentAt(pos, {
+    var newBlock = {
       type: 'sieve-' + (msg.kind || 'code'),
       attrs: attrs,
-    })
+    }
+    // Object target → in-place conversion: replace the native source node's range
+    // with the Sieve block (one transaction → one Undo). Number/null → insert at
+    // that point (additive extraction / paste / create).
+    if (target && typeof target === 'object') {
+      currentEditor.commands.insertContentAt(target, newBlock)
+    } else {
+      currentEditor.commands.insertContentAt(target !== null ? target : currentEditor.state.doc.content.size, newBlock)
+    }
 
     if (!parsed.source && (msg.kind === 'code' || msg.kind === 'diagram')) {
       setTimeout(function () {
@@ -1426,18 +1439,27 @@
       entries[0].context = context
     }
 
-    var targetPos = null
-    var targetNode = null
-    currentEditor.state.doc.descendants(function (node, pos) {
-      if (node.attrs.id === blockId) {
-        targetPos = pos
-        targetNode = node
-        return false
-      }
-    })
+    var targetPos = e.detail.sourcePos !== undefined ? e.detail.sourcePos : null
+    var targetNode = e.detail.sourceNode || null
 
-    if (targetPos !== null) {
-      sieveInsertPos = targetPos + targetNode.nodeSize
+    if (blockId) {
+      currentEditor.state.doc.descendants(function (node, pos) {
+        if (node.attrs.id === blockId) {
+          targetPos = pos
+          targetNode = node
+          return false
+        }
+      })
+    }
+
+    // Additive extraction (Sieve-block sources): insert AFTER the source, leaving
+    // it intact. In-place conversion (native code blocks, replaceSource): replace
+    // the source node's range with the new Sieve block — a single transaction, so
+    // one Undo restores the native block.
+    if (targetPos !== null && targetNode !== null) {
+      sieveInsertPos = e.detail.replaceSource
+        ? { from: targetPos, to: targetPos + targetNode.nodeSize }
+        : targetPos + targetNode.nodeSize
     }
 
     if (window.TipTap && window.TipTap.resolveEntriesForKind) {

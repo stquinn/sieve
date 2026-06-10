@@ -149,13 +149,15 @@
     var hasSelection = !sel.empty
 
     var targetNode = null
+    var targetPos = null
     var doc = state.doc
     var from = sel.from, to = sel.to
     var scanFrom = (from === to) ? Math.max(0, from - 1) : from
     var scanTo   = (from === to) ? Math.min(doc.content.size, to + 1) : to
-    doc.nodesBetween(scanFrom, scanTo, function (node) {
-      if (!targetNode && (node.type.name === 'sieve-smart-image' || node.type.name === 'codeBlock' || node.type.name === 'table')) {
+    doc.nodesBetween(scanFrom, scanTo, function (node, pos) {
+      if (!targetNode && (node.type.name === 'sieve-smart-image' || node.type.name === 'codeBlock' || node.type.name === 'image' || node.type.name === 'table')) {
         targetNode = node
+        targetPos = pos
         return false
       }
     })
@@ -226,7 +228,7 @@
       window._sieveOpenInternalize && window._sieveOpenInternalize(linkUrl || '')
     }})
     items.push({ icon: IC.smartFile, label: linkUrl ? 'Insert URL Card from Link' : 'Insert URL Card...', action: function () {
-      window._sieveOpenRichLink && window._sieveOpenRichLink(linkUrl || '')
+      window._sieveOpenSmartCard && window._sieveOpenSmartCard(linkUrl || '')
     }})
     items.push({ icon: IC.code, label: 'Insert Code Block', action: function () {
       document.dispatchEvent(new CustomEvent('sieve:create-block', { detail: { kind: 'code' } }))
@@ -259,6 +261,75 @@
     items.push({ icon: IC.info, label: 'Explain', action: function () {
       document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
     }})
+
+    // Native node → Sieve block conversion (in-place UPGRADE). We borrow the exact
+    // pattern Sieve-block extraction uses: classify the node, build a ContentEntry,
+    // and let the backend processors decide which kinds it can become. A native node
+    // IS its own content, so converting REPLACES it (replaceSource) — unlike
+    // extraction from a Sieve block, whose content is a fragment that must survive.
+    // Detection (all processors) decides the targets; we only describe the source.
+    var convEntries = null
+    var convLabel = ''
+    
+    window.TipTap  && window.TipTap.detectAndAppendExtractions({
+      sourceNode: targetNode,
+      sourceKind: targetNode ? targetNode.type.name : null,
+      entries: convEntries,
+      sourcePos: targetPos,
+      extractSourceLabel: convLabel,
+      replaceSource: true
+    })
+
+    if (targetNode && targetNode.type.name === 'codeBlock') {
+      // Never hand-build the fence — let the node serialise itself through the
+      // markdown storage serialiser, which sizes the fence correctly even when the
+      // content contains its own ``` runs.
+      try {
+        var wrapper = editor.state.schema.topNodeType.create(null, targetNode)
+        var fenced = (editor.storage.markdown.serializer.serialize(wrapper) || '').trim()
+        if (fenced) {
+          convEntries = [{ mimeType: 'text/plain', content: fenced }]
+          convLabel = 'code'
+        }
+      } catch (err) {
+        console.error('[context-menu] failed to serialise code block for conversion', err)
+      }
+    } else if (targetNode && targetNode.type.name === 'image' && targetNode.attrs.src) {
+      // A dumb native image (e.g. from imported markdown). Hand its URL to detection
+      // as text/uri-list; for inline base64 send the data URI under its image mime so
+      // SmartImageProcessor recognises it.
+      var src = targetNode.attrs.src
+      var mime = 'text/uri-list'
+      var dataMatch = /^data:([^;]+)/.exec(src)
+      if (dataMatch) mime = dataMatch[1]
+      convEntries = [{ mimeType: mime, content: src }]
+      convLabel = 'image'
+    }
+
+    if (convEntries && window.TipTap && window.TipTap.detectAndAppendExtractions) {
+      window.TipTap.detectAndAppendExtractions({
+        sourceNode: targetNode,
+        sourceKind: targetNode.type.name,
+        entries: convEntries,
+        sourcePos: targetPos,
+        extractSourceLabel: convLabel,
+        replaceSource: true
+      })
+    }
+
+    // Delete — only for block-level native nodes (codeBlock, table).
+    // Paragraph text uses normal keyboard deletion; this is for structured blocks
+    // where there's no other obvious affordance (e.g. after extracting to Sieve).
+    var blockNodeTypes = { codeBlock: true, table: true }
+    if (targetNode && blockNodeTypes[targetNode.type.name] && targetPos !== null) {
+      ;(function (node, pos) {
+        items.push({ type: 'divider' })
+        items.push({ icon: IC.trash, label: 'Delete Block', cls: 'ctx-item--danger', action: function () {
+          editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize))
+          editor.commands.focus()
+        }})
+      })(targetNode, targetPos)
+    }
 
     return items
   }

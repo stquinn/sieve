@@ -36,6 +36,13 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
       error:    { default: null,  parseHTML: function (el) { return el.getAttribute('data-error') || null } },
     },
 
+    getFriendlyName: function(node) { return node.attrs.type == 'EXPLAIN' ? 'Explain' : 'Ask AI' },
+
+    asContentEntry: function(node) {
+      if (!node.attrs.source) return null
+      return  [{ mimeType: 'text/plain', content: node.attrs.source }]
+    },
+
     parseAttrs: function (data) {
       return {
         ref:      data.ref      || 'doc',

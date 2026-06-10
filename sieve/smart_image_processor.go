@@ -31,14 +31,14 @@ func (p *SmartImageProcessor) IDPrefix() string { return "img" }
 
 func (p *SmartImageProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
-		"id":      id,
-		"src":     "",
-		"alt":     "",
-		"summary": "",
-		"detect":  "",
-		"width":   "",
-		"height":  "",
-		"status":  BlockStatusComplete, // default: no job unless src is provided
+		"id":                id,
+		"src":               "",
+		"alt":               "",
+		"summary":           "",
+		"detect":            "",
+		"width":             "",
+		"height":            "",
+		"status":            BlockStatusComplete, // default: no job unless src is provided
 		"supportsEmbedding": true,
 	}
 	for k, v := range overrides {
@@ -62,6 +62,9 @@ func (p *SmartImageProcessor) IsBlock(entries []ContentEntry) bool {
 		}
 		// Raw SVG rendered locally by the JS frontend (resolveEntries)
 		if e.MIMEType == "image/svg+xml" {
+			return true
+		}
+		if e.MIMEType == "sieve/image" {
 			return true
 		}
 		if isImageURL(strings.TrimSpace(e.Content)) {
@@ -202,7 +205,7 @@ func isImageURL(s string) bool {
 	if strings.ContainsAny(s, " \t\n\r") {
 		return false
 	}
-	
+
 	path := s
 	if idx := strings.Index(path, "?"); idx != -1 {
 		path = path[:idx]
@@ -210,7 +213,7 @@ func isImageURL(s string) bool {
 	if idx := strings.Index(path, "#"); idx != -1 {
 		path = path[:idx]
 	}
-	
+
 	lower := strings.ToLower(path)
 	return strings.HasSuffix(lower, ".png") || strings.HasSuffix(lower, ".jpg") ||
 		strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".gif") ||

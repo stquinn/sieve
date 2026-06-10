@@ -19,6 +19,8 @@ import { isJobStale } from './fenced-block-base.js'
     return '/sieve/' + (window.__stashActiveTabUuid || '') + '/' + src.split('/').pop()
   }
 
+  
+
   function makeNodeView(node, editor) {
     var currentAttrs = Object.assign({}, node.attrs)
 
@@ -146,6 +148,14 @@ import { isJobStale } from './fenced-block-base.js'
       detect:  { default: '', parseHTML: function (el) { return el.getAttribute('data-detect')  || '' } },
       width:   { default: '', parseHTML: function (el) { return el.getAttribute('data-width')   || '' } },
       height:  { default: '', parseHTML: function (el) { return el.getAttribute('data-height')  || '' } },
+    },
+    asContentEntry: function(node) {
+      var src = resolveSrc(node.attrs.src || '')
+      if (!src) return null
+      return [{ mimeType: 'text/uri-list', content: node.attrs.src }]
+    },
+    getFriendlyName: function(node) {
+      return 'Image'
     },
     parseAttrs: function (data) {
       return {

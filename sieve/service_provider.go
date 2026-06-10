@@ -60,12 +60,12 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	svc := s.BlockServices()
 	RegisterProcessor("diagram", NewDiagramProcessor(svc))
 	RegisterProcessor("smart-image", NewSmartImageProcessor(svc))
-	RegisterProcessor("code", NewCodeBlockProcessor(svc))
+
 	RegisterProcessor("smart-link", NewSmartLinkProcessor(svc))
 	RegisterProcessor("smart-card", NewSmartCardProcessor(svc))
 	RegisterProcessor("web-clip", NewWebClipBlockProcessor(svc))
+	RegisterProcessor("code", NewCodeBlockProcessor(svc))
 	RegisterProcessor("ai-block", NewAIBlockProcessor(svc))
-
 	RegisterContextProvider("block-anchor", &BlockAnchorProvider{svc: svc})
 }
 

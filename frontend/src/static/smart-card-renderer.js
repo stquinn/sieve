@@ -11,7 +11,12 @@ import { isJobStale } from './fenced-block-base.js'
 
   var SmartCardRenderer = {
 
-    getFriendlyName: function() { return 'Card' },
+    getFriendlyName: function(node) { return 'Card' },
+
+    asContentEntry: function(node) {
+      if (!node.attrs.href) return null
+      return [{ mimeType: 'text/uri-list', content: node.attrs.href }]
+    },
 
     nodeConfig: { selectable: true, draggable: false },
 
@@ -194,37 +199,6 @@ import { isJobStale } from './fenced-block-base.js'
             if (href) navigator.clipboard.writeText(href).catch(function () {})
           },
         },
-        { type: 'divider' },
-        {
-          icon: IC.arrowDown,
-          label: 'Downgrade to Smart Link',
-          action: function () {
-            if (typeof getPos !== 'function') return
-            var pos = getPos()
-            var size = node.nodeSize
-            editor.chain()
-              .command(function (props) {
-                props.tr.delete(pos, pos + size)
-                return true
-              })
-              .insertContentAt(pos, {
-                type: 'paragraph',
-                content: [{
-                  type: 'sieve-smart-link',
-                  attrs: {
-                    href: href,
-                    label: title,
-                    status: 'COMPLETE',
-                    completedAt: new Date().toISOString(),
-                    createdAt: new Date().toISOString(),
-                    error: null,
-                  }
-                }]
-              })
-              .run()
-          },
-        },
-
       ]
     },
   }

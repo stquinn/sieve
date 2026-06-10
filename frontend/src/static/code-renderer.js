@@ -30,6 +30,15 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
       detectionMethod: { default: '', parseHTML: function (el) { return el.getAttribute('data-detection-method') || '' } },
     },
 
+    getFriendlyName: function() { return 'Code' },
+
+    asContentEntry: function(node) {
+      if (!node.attrs.source) return null
+      return  [
+        { mimeType: 'text/plain', content: node.attrs.source }
+      ]
+    },
+
     parseAttrs: function (data) {
       return {
         language:        data.language        || '',

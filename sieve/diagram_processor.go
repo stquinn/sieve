@@ -49,6 +49,16 @@ func (p *DiagramProcessor) IsBlock(entries []ContentEntry) bool {
 		if mermaidFenceRe.MatchString(e.Content) {
 			return true
 		}
+		if e.MIMEType == "sieve/code" && strings.TrimSpace(e.Content) != "" {
+			block := ParseFirstBlock(e.Content)
+
+			if block == nil {
+				continue
+			}
+			if block.Attrs["language"] == "mermaid" && strings.TrimSpace(block.Attrs["source"].(string)) != "" {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -58,6 +68,17 @@ func (p *DiagramProcessor) Transform(entries []ContentEntry, _ string, _ string)
 		m := mermaidFenceRe.FindStringSubmatch(e.Content)
 		if m != nil {
 			return map[string]interface{}{"source": strings.TrimSpace(m[1])}
+		}
+		if e.MIMEType == "sieve/code" && strings.TrimSpace(e.Content) != "" {
+			block := ParseFirstBlock(e.Content)
+			if block == nil {
+				continue
+			}
+			if source, ok := block.Attrs["source"]; ok {
+				if language, ok := block.Attrs["language"]; ok && language == "mermaid" && strings.TrimSpace(source.(string)) != "" {
+					return map[string]interface{}{"source": source.(string)}
+				}
+			}
 		}
 	}
 	return nil

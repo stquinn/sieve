@@ -150,6 +150,13 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
       cursorPos:   { default: 0,        parseHTML: function (el) { return parseInt(el.getAttribute('data-cursor-pos'))  || 0 } },
     },
 
+    getFriendlyName: function() { return 'Diagram' },
+
+    asContentEntry: function(node) {
+      if (!node.attrs.source) return null
+      return  [{ mimeType: 'text/plain', content: node.attrs.source }]
+    },
+
     parseAttrs: function (data) {
       return {
         source:      typeof data.source === 'string' ? data.source : '',

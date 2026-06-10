@@ -46,10 +46,10 @@ func (n *sieveBlockNode) Dump(source []byte, level int) {
 
 var kindSieveBlock = ast.NewNodeKind("SieveBlock")
 
-func (n *sieveBlockNode) Kind() ast.NodeKind { return kindSieveBlock }
+func (n *sieveBlockNode) Kind() ast.NodeKind         { return kindSieveBlock }
 func (n *sieveBlockNode) GetSieveBlock() *SieveBlock { return &n.SieveBlock }
-func (n *sieveBlockNode) StartByte() int { return n.start }
-func (n *sieveBlockNode) EndByte() int { return n.end }
+func (n *sieveBlockNode) StartByte() int             { return n.start }
+func (n *sieveBlockNode) EndByte() int               { return n.end }
 
 // sieveInlineNode represents [TEXT](URL) { ... }
 type sieveInlineNode struct {
@@ -65,10 +65,10 @@ func (n *sieveInlineNode) Dump(source []byte, level int) {
 
 var kindSieveInline = ast.NewNodeKind("SieveInline")
 
-func (n *sieveInlineNode) Kind() ast.NodeKind { return kindSieveInline }
+func (n *sieveInlineNode) Kind() ast.NodeKind         { return kindSieveInline }
 func (n *sieveInlineNode) GetSieveBlock() *SieveBlock { return &n.SieveBlock }
-func (n *sieveInlineNode) StartByte() int { return n.start }
-func (n *sieveInlineNode) EndByte() int { return n.end }
+func (n *sieveInlineNode) StartByte() int             { return n.start }
+func (n *sieveInlineNode) EndByte() int               { return n.end }
 
 // --- AST Transformer for Block Nodes ---
 
@@ -212,7 +212,7 @@ func (s *sieveInlineParser) Parse(parent ast.Node, reader text.Reader, pc parser
 		start: start,
 		end:   end,
 	}
-	
+
 	reader.Advance(match[1])
 	return node
 }
@@ -255,7 +255,7 @@ func ParseAllBlocks(markdown string) map[string]*SieveBlock {
 		}
 		if sn, ok := n.(sieveNode); ok {
 			blk := sn.GetSieveBlock()
-			
+
 			copyBlk := &SieveBlock{
 				ID:    blk.ID,
 				Kind:  blk.Kind,
@@ -271,6 +271,33 @@ func ParseAllBlocks(markdown string) map[string]*SieveBlock {
 	return blocks
 }
 
+// ParseAllBlocks parses markdown and extracts all Sieve blocks
+func ParseFirstBlock(markdown string) *SieveBlock {
+	var block *SieveBlock
+	doc := mdParser().Parser().Parse(text.NewReader([]byte(markdown)))
+
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		if sn, ok := n.(sieveNode); ok {
+			blk := sn.GetSieveBlock()
+
+			copyBlk := &SieveBlock{
+				ID:    blk.ID,
+				Kind:  blk.Kind,
+				Attrs: make(map[string]interface{}),
+			}
+			for k, v := range blk.Attrs {
+				copyBlk.Attrs[k] = v
+			}
+			block = copyBlk
+		}
+		return ast.WalkContinue, nil
+	})
+	return block
+}
+
 // SerializeBlock safely formats a SieveBlock into markdown string based on its mode
 func SerializeBlock(processor BlockProcessor, block *SieveBlock) (string, error) {
 	if processor.Mode() == BlockModeInline {
@@ -280,7 +307,7 @@ func SerializeBlock(processor BlockProcessor, block *SieveBlock) (string, error)
 		}
 		return fmt.Sprintf("[!%s] %s [!%s-end]", block.Kind, string(b), block.Kind), nil
 	}
-	
+
 	// BlockModeBlock
 	serialized, err := fencedblock.SerializeYaml(block.Attrs)
 	if err != nil {

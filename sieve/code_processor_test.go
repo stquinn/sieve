@@ -103,6 +103,52 @@ func TestCodeBlockProcessor_Transform_withLanguage(t *testing.T) {
 	}
 }
 
+func TestCodeBlockProcessor_Transform_wideFenceWithNestedFences(t *testing.T) {
+	p := NewCodeBlockProcessor(BlockServices{})
+	// A native ````markdown block whose content itself contains a ```http fence.
+	// The editor sizes the outer fence to 4 backticks; detection/extraction must
+	// recognise it and capture the inner content verbatim (inner fences intact).
+	content := "````markdown\n### Get User Profile\n```http\nGET /\n```\n````"
+	if !p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: content}}) {
+		t.Fatal("IsBlock must return true for a 4-backtick fence")
+	}
+	overrides := p.Transform([]ContentEntry{{MIMEType: "text/plain", Content: content}}, "", "")
+	if overrides == nil {
+		t.Fatal("Transform must return non-nil for a 4-backtick fence")
+	}
+	if overrides["language"] != "markdown" {
+		t.Errorf("expected language=markdown, got %v", overrides["language"])
+	}
+	if overrides["source"] != "### Get User Profile\n```http\nGET /\n```" {
+		t.Errorf("unexpected source: %q", overrides["source"])
+	}
+}
+
+func TestCodeBlockProcessor_IsBlock_unfencedCode(t *testing.T) {
+	p := NewCodeBlockProcessor(BlockServices{})
+	// Smart-paste of raw, unfenced source must still be detected as code
+	// (restored from the pre-framework PasteMatch).
+	src := "func main() {\n\tfmt.Println(\"hi\")\n\treturn\n}"
+	if !p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: src}}) {
+		t.Fatal("IsBlock must return true for unfenced code that heuristics recognise")
+	}
+	overrides := p.Transform([]ContentEntry{{MIMEType: "text/plain", Content: src}}, "", "")
+	if overrides == nil {
+		t.Fatal("Transform must return non-nil for unfenced code")
+	}
+	if overrides["source"] != src {
+		t.Errorf("unfenced source must be verbatim, got %q", overrides["source"])
+	}
+}
+
+func TestCodeBlockProcessor_IsBlock_unfencedProseIsNotCode(t *testing.T) {
+	p := NewCodeBlockProcessor(BlockServices{})
+	prose := "This is a normal paragraph of prose.\nIt spans a couple of lines.\nNothing here resembles source code at all."
+	if p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: prose}}) {
+		t.Fatal("IsBlock must not treat ordinary multi-line prose as code")
+	}
+}
+
 func TestCodeBlockProcessor_IsBlock_noLanguage(t *testing.T) {
 	p := NewCodeBlockProcessor(BlockServices{})
 	if !p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "```\nsome code\n```"}}) {

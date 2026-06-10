@@ -16,16 +16,16 @@ func NewWebClipBlockProcessor(svc BlockServices) *WebClipBlockProcessor {
 
 func (p *WebClipBlockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
-		"id":          id,
-		"source":      "",
-		"title":       "",
-		"mode":        "fetch",
-		"status":      BlockStatusPending,
-		"model":       "",
-		"createdAt":   time.Now().UTC().Format(time.RFC3339),
-		"completedAt": "",
-		"content":     "",
-		"error":       "",
+		"id":                id,
+		"source":            "",
+		"title":             "",
+		"mode":              "fetch",
+		"status":            BlockStatusPending,
+		"model":             "",
+		"createdAt":         time.Now().UTC().Format(time.RFC3339),
+		"completedAt":       "",
+		"content":           "",
+		"error":             "",
 		"supportsEmbedding": true,
 	}
 	for k, v := range overrides {

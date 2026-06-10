@@ -7,7 +7,10 @@ import (
 	"time"
 )
 
-var codeFenceRe = regexp.MustCompile("(?s)^```(\\w*)\\n(.+)\\n```$")
+// codeFenceRe matches a fenced code block. The fence may be 3 or more backticks:
+// the editor sizes fences longer than any backtick run in the content, so a code
+// block that itself contains ``` arrives wrapped in 4+ ticks.
+var codeFenceRe = regexp.MustCompile("(?s)^`{3,}(\\w*)\\n(.+)\\n`{3,}$")
 
 const minSourceLength = 30
 
@@ -20,12 +23,12 @@ func NewCodeBlockProcessor(svc BlockServices) *CodeBlockProcessor {
 
 func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
-		"id":              id,
-		"status":          BlockStatusPending,
-		"source":          "",
-		"language":        "",
-		"detectionMethod": "",
-		"createdAt":       time.Now().UTC().Format(time.RFC3339),
+		"id":                id,
+		"status":            BlockStatusPending,
+		"source":            "",
+		"language":          "",
+		"detectionMethod":   "",
+		"createdAt":         time.Now().UTC().Format(time.RFC3339),
 		"supportsEmbedding": true,
 	}
 	for k, v := range overrides {
@@ -54,7 +57,8 @@ func (p *CodeBlockProcessor) IsBlock(entries []ContentEntry) bool {
 			return true
 		}
 	}
-	return false
+	_, ok := unfencedCodeContent(entries)
+	return ok
 }
 
 func (p *CodeBlockProcessor) Transform(entries []ContentEntry, uuid string, blockID string) map[string]interface{} {
@@ -71,7 +75,39 @@ func (p *CodeBlockProcessor) Transform(entries []ContentEntry, uuid string, bloc
 			}
 		}
 	}
+	if src, ok := unfencedCodeContent(entries); ok {
+		return map[string]interface{}{"source": src}
+	}
 	return nil
+}
+
+// unfencedCodeContent returns the trimmed source of the first text entry that is
+// NOT a code fence but still reads as code — either a heuristic language match or
+// structural cues (braces, semicolons, indentation). This restores the smart-paste
+// behaviour the pre-framework PasteMatch had: raw, unfenced source pasted into the
+// editor still becomes a code block. Language is left to heuristics/AI in InitAttrs.
+func unfencedCodeContent(entries []ContentEntry) (string, bool) {
+	for _, e := range entries {
+		if e.MIMEType != "" && e.MIMEType != "text/plain" {
+			continue
+		}
+		trimmed := strings.TrimSpace(e.Content)
+		// Skip empties and anything that is itself a fence (handled / intentionally
+		// skipped above, e.g. mermaid) so we never claim a fenced block as raw code.
+		if trimmed == "" || codeFenceRe.MatchString(trimmed) {
+			continue
+		}
+		if !strings.Contains(trimmed, "\n") {
+			continue
+		}
+		if _, ok := detectByHeuristics(trimmed, ""); ok {
+			return trimmed, true
+		}
+		if looksLikeCode(trimmed) {
+			return trimmed, true
+		}
+	}
+	return "", false
 }
 
 func (p *CodeBlockProcessor) OnChange(block *SieveBlock) {
@@ -161,5 +197,28 @@ func (p *CodeBlockProcessor) MarkdownRepresentation(block SieveBlock) string {
 		return ""
 	}
 	lang, _ := block.Attrs["language"].(string)
-	return "```" + lang + "\n" + source + "\n```"
+	fence := getFence(source)
+	return fence + lang + "\n" + source + "\n" + fence
+}
+
+// Move this outside to the package level
+var backtickRegex = regexp.MustCompile("`+")
+
+func getFence(content string) string {
+	runs := backtickRegex.FindAllString(content, -1)
+
+	longest := 0
+	for _, r := range runs {
+		if len(r) > longest {
+			longest = len(r)
+		}
+	}
+
+	// You can use a simple max helper or manual comparison
+	fenceLen := longest + 1
+	if fenceLen < 3 {
+		fenceLen = 3
+	}
+
+	return strings.Repeat("`", fenceLen)
 }

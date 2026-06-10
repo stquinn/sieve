@@ -214,98 +214,28 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
                 detail: { x: e.clientX, y: e.clientY, context: { type: 'sieveBlock', items: items } },
               }))
 
-              var entries = null
-              var extractSourceLabel = ''
+              //now lets see if we clicked on something interesting within the block that we can extract data from. 
+              var { entries, extractSourceLabel } = extractContentEntryFromEditor( e, view);
 
-              // Image click — check before <pre> so a click on an <img> inside a
-              // code-adjacent block takes the image path, not the text path.
-              var closestImg = e.target.tagName === 'IMG' ? e.target
-                : (e.target.closest ? e.target.closest('img') : null)
-              if (closestImg && closestImg.src && view.dom.contains(closestImg)) {
-                entries = [{ mimeType: 'text/uri-list', content: closestImg.src }]
-                extractSourceLabel = 'image'
+              if(entries == undefined || !entries) {
+                //nothign more intersting than the sieve block itself was clicked on, 
+                // but if the renderer supports it, we can extract a content entry from 
+                extractSourceLabel = renderer.getFriendlyName ? renderer.getFriendlyName(n) : n.attrs.kind || 'block';
+                entries =  renderer.asContentEntry(n);
               }
-
-              // Anchor click
-              var closestA = e.target.tagName === 'A' ? e.target
-                : (e.target.closest ? e.target.closest('a') : null)
-              if (!entries && closestA && closestA.href && view.dom.contains(closestA)) {
-                entries = [{ mimeType: 'text/uri-list', content: closestA.href }]
-                extractSourceLabel = 'link'
-              }
-
-              if (!entries) {
-                var textContent = ''
-                var closestPre = e.target.closest && e.target.closest('pre')
-                if (closestPre && view.dom.contains(closestPre)) {
-                  var lang = ''
-                  var codeEl = closestPre.querySelector('code') || closestPre
-                  ;(codeEl.className || '').split(' ').forEach(function (cls) {
-                    if (cls.indexOf('language-') === 0) lang = cls.slice(9)
-                  })
-                  textContent = '```' + lang + '\n' + codeEl.textContent + '\n```'
-                  extractSourceLabel = lang === 'mermaid' ? 'diagram' : 'code'
-                }
-
-                if (!textContent) {
-                  extractSourceLabel = n.attrs.kind || 'text'
-                  if (n.attrs.kind === 'code' || n.attrs.kind === 'diagram') {
-                    var lang = n.attrs.language || (n.attrs.kind === 'diagram' ? 'mermaid' : '')
-                    textContent = '```' + lang + '\n' + (n.attrs.source || '') + '\n```'
-                  } else if (n.attrs.serialisedForm) {
-                    textContent = n.attrs.serialisedForm
-                  } else {
-                    textContent = extractTextFromDOM(view.dom)
-                  }
-                }
-
-                if (textContent) {
-                  entries = [{ mimeType: 'text/plain', content: textContent }]
-                }
-              }
+              
+              //framework-level auto extraction for any sieve block, if the renderer supports it.
+              entries.push({ mimeType: 'sieve/' + node.attrs.kind, content: node.attrs.serialisedForm })
+              
 
               if (entries) {
-                fetch('/api/detect-extractions', {
-                  method: 'POST',
-                  body: JSON.stringify({ sourceKind: n.attrs.kind, entries: entries }),
-                  headers: { 'Content-Type': 'application/json' }
-                }).then(function (res) { return res.json() }).then(function (candidates) {
-                  if (!candidates || candidates.length === 0) return
-                  if (!window.SieveContextMenu || !window.SieveContextMenu.appendItems) return
-
-                  var extraItems = [
-                    { type: 'divider' },
-                    { type: 'header', label: 'EXTRACT FROM ' + extractSourceLabel.toUpperCase().replace('-', ' ') }
-                  ]
-                  candidates.forEach(function (c) {
-                    var icon = IC[c.kind] || IC.code
-                    var r = renderers[c.kind]
-                    var prettyKind = (r && typeof r.getFriendlyName === 'function')
-                      ? r.getFriendlyName()
-                      : c.kind.split('-').map(function(w) { return w.charAt(0).toUpperCase() + w.slice(1) }).join(' ')
-                    
-                    var defaultAction = function (context) {
-                      document.dispatchEvent(new CustomEvent('sieve:extract', {
-                        detail: { blockId: n.attrs.id, targetKind: c.kind, sourceNode: n, entries: entries, context: context || {} }
-                      }))
-                    }
-
-                    if (r && typeof r.getExtractionMenuItems === 'function') {
-                      var items = r.getExtractionMenuItems(n, entries, defaultAction)
-                      if (items && items.length) {
-                        items.forEach(function(item) { extraItems.push(item) })
-                        return
-                      }
-                    }
-
-                    extraItems.push({
-                      icon: icon,
-                      label: 'Extract as ' + prettyKind,
-                      action: function () { defaultAction({}) }
-                    })
-                  })
-                  window.SieveContextMenu.appendItems(extraItems)
-                }).catch(function() {})
+                detectAndAppendExtractions({
+                  sourceNode: n,
+                  sourceKind: n.attrs.kind,
+                  entries: entries,
+                  blockId: n.attrs.id,
+                  extractSourceLabel: extractSourceLabel
+                })
               }
             })
           }
@@ -461,12 +391,119 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
     return Object.keys(nodeRegistry).map(function (k) { return nodeRegistry[k] })
   }
 
+  // replaceSource: when true the source node is REPLACED by the new Sieve block
+  // (an in-place upgrade — used for native nodes, whose content IS the block).
+  // When false/omitted the operation is additive — the source survives (used for
+  // Sieve-block sources like AI/Web Clip, which are read-only composites).
+  //
+  // additiveKinds: target kinds that stay ADDITIVE even when replaceSource is true.
+  // A native source can replace in place only when the target occupies the same slot
+  // (block image → smart-image, inline link → smart-link). When the target is a
+  // different shape (inline link → block smart-card/web-clip) there is no node to
+  // swap, so those kinds are inserted alongside instead. Decided per candidate.
+  function detectAndAppendExtractions({ sourceNode, sourceKind, entries, blockId, sourcePos, extractSourceLabel, replaceSource, additiveKinds }) {
+    var additive = additiveKinds || []
+    fetch('/api/detect-extractions', {
+      method: 'POST',
+      body: JSON.stringify({ sourceKind: sourceKind, entries: entries }),
+      headers: { 'Content-Type': 'application/json' }
+    }).then(function (res) { return res.json() }).then(function (candidates) {
+      if (!candidates || candidates.length === 0) return
+      if (!window.SieveContextMenu || !window.SieveContextMenu.appendItems) return
+
+      var IC = window.SieveIcons || {}
+      // Header always names the SOURCE (what was clicked) — "EXTRACT FROM IMAGE" /
+      // "CONVERT FROM CODE". The verb signals additive vs in-place; the menu items
+      // themselves name the target, so the header must not.
+      var headerLabel = (replaceSource ? 'CONVERT FROM ' : 'EXTRACT FROM ') +
+        (extractSourceLabel || sourceKind).toUpperCase().replace('-', ' ')
+      var extraItems = [
+        { type: 'divider' },
+        { type: 'header', label: headerLabel }
+      ]
+      candidates.forEach(function (c) {
+        var icon = IC[c.kind] || IC.code
+        var r = renderers[c.kind]
+        var prettyKind = (r && typeof r.getFriendlyName === 'function')
+          ? r.getFriendlyName()
+          : c.kind.split('-').map(function(w) { return w.charAt(0).toUpperCase() + w.slice(1) }).join(' ')
+
+        var replace = !!replaceSource && additive.indexOf(c.kind) === -1
+
+        var defaultAction = function (context) {
+          document.dispatchEvent(new CustomEvent('sieve:extract', {
+            detail: {
+              blockId: blockId || null,
+              targetKind: c.kind,
+              sourceNode: sourceNode,
+              sourcePos: sourcePos,
+              entries: entries,
+              context: context || {},
+              replaceSource: replace
+            }
+          }))
+        }
+
+        if (r && typeof r.getExtractionMenuItems === 'function') {
+          var items = r.getExtractionMenuItems(sourceNode, entries, defaultAction)
+          if (items && items.length) {
+            items.forEach(function(item) { extraItems.push(item) })
+            return
+          }
+        }
+
+        extraItems.push({
+          icon: icon,
+          label: (replace ? 'Convert to ' : 'Extract as ') + prettyKind,
+          action: function () { defaultAction({}) }
+        })
+      })
+      window.SieveContextMenu.appendItems(extraItems)
+    }).catch(function() {})
+  }
+
   // ── Native Code Block (syntax highlighting via CodeBlockLowlight) ─────────────
   // Uses CodeBlockLowlight's decoration system for highlighting. Visual appearance
   // is handled by the existing .tiptap .code-block CSS + .hljs-* token colours.
 
   if (T.CodeBlockLowlight) {
-    window.SieveNativeCodeBlock = T.CodeBlockLowlight.configure({
+    window.SieveNativeCodeBlock = T.CodeBlockLowlight.extend({
+      // The bundled tiptap-markdown serialiser for code blocks hardcodes a
+      // 3-backtick fence. A code block whose own content contains a ``` run
+      // (e.g. a ````markdown block wrapping ```http) therefore has its fence
+      // collapsed to 3 ticks on save, which corrupts the document on reload.
+      // Override the serialiser to size the fence longer than any backtick run
+      // in the content (standard prosemirror-markdown behaviour). The parse
+      // spec is replicated verbatim from the bundle so loading is unaffected.
+      addStorage() {
+        var parent = (this.parent && this.parent()) || {}
+        var out = {}
+        Object.keys(parent).forEach(function (k) { out[k] = parent[k] })
+        out.markdown = {
+          serialize: function (state, node) {
+            var content = node.textContent || ''
+            var longest = 0
+            var runs = content.match(/`+/g)
+            if (runs) runs.forEach(function (r) { if (r.length > longest) longest = r.length })
+            var fence = new Array(Math.max(3, longest + 1) + 1).join('`')
+            state.write(fence + (node.attrs.language || '') + '\n')
+            state.text(content, false)
+            state.ensureNewLine()
+            state.write(fence)
+            state.closeBlock(node)
+          },
+          parse: {
+            setup: function (markdownit) {
+              markdownit.set({ langPrefix: 'language-' })
+            },
+            updateDOM: function (el) {
+              el.innerHTML = el.innerHTML.replace(/\n<\/code><\/pre>/g, '</code></pre>')
+            },
+          },
+        }
+        return out
+      },
+    }).configure({
       lowlight: getLowlight(),
       HTMLAttributes: { class: 'code-block' },
     })
@@ -476,5 +513,46 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
 
   T.registerSieveRenderer = registerSieveRenderer
   T.getSieveNodes         = getSieveNodes
+  T.detectAndAppendExtractions = detectAndAppendExtractions
+  T.extractContentEntryFromEditor = extractContentEntryFromEditor
 
 })()
+function extractContentEntryFromEditor(event, editorView) {
+  var entries = null;
+  var extractSourceLabel = "";
+
+  //an image would be interesting to extract, and we can get a data-uri for it if needed.
+  var closestImg = event.target.tagName === 'IMG' ? event.target : (event.target.closest ? event.target.closest('img') : null);
+  if (closestImg && closestImg.src && editorView.dom.contains(closestImg)) {
+    //not sure this is the right MIME type to use for an image
+    entries = [{ mimeType: 'sieve/image', content: closestImg.src }];
+    extractSourceLabel = 'image';
+  }
+
+  // Anchor click
+  var closestA = event.target.tagName === 'A' ? event.target : (event.target.closest ? event.target.closest('a') : null);
+  if (!entries && closestA && closestA.href && editorView.dom.contains(closestA)) {
+    entries = [{ mimeType: 'text/uri-list', content: closestA.href }];
+    extractSourceLabel = 'link';
+  }
+
+  if (!entries) {
+    var textContent = '';
+    var closestPre = event.target.closest && event.target.closest('pre');
+    if (closestPre && editorView.dom.contains(closestPre)) {
+      var lang = '';
+      var codeEl = closestPre.querySelector('code') || closestPre; (codeEl.className || '').split(' ').forEach(function (cls) {
+        if (cls.indexOf('language-') === 0) lang = cls.slice(9);
+      });
+      textContent = '```' + lang + '\n' + codeEl.textContent + '\n```';
+      extractSourceLabel = lang === 'mermaid' ? 'diagram' : 'code';
+    }
+    
+
+    if (textContent) {
+      entries = [{ mimeType: 'text/plain', content: textContent }];
+    }
+  }
+  return { entries, extractSourceLabel };
+}
+
