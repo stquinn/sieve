@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"unicode"
 )
 
@@ -102,6 +103,11 @@ func NewLibraryService(recorder LibraryRecorder, validate func(string) error) Li
 }
 
 type fileLibraryService struct {
+	// mu guards currentID and namer, which are written by Attach/RecordSwitch on
+	// the startup goroutine and read by Current/Recent on HTTP goroutines (the
+	// status-bar chip refetches via /api/library/current on library:changed).
+	// recorder and validate are set once at construction and never mutated.
+	mu        sync.RWMutex
 	currentID string
 	namer     LibraryNamer // nil until Attach is called
 	recorder  LibraryRecorder
@@ -139,19 +145,24 @@ func (s *fileLibraryService) BestOnStartup(cliArg, envVar string) string {
 }
 
 func (s *fileLibraryService) Attach(id string, namer LibraryNamer) {
+	s.mu.Lock()
 	s.currentID = id
 	s.namer = namer
+	s.mu.Unlock()
 }
 
 func (s *fileLibraryService) Current() Library {
+	s.mu.RLock()
+	id, namer := s.currentID, s.namer
+	s.mu.RUnlock()
 	name := ""
-	if s.namer != nil {
-		name = s.namer.LibraryName()
+	if namer != nil {
+		name = namer.LibraryName()
 	}
 	if name == "" {
-		name = LibraryDisplayName(s.currentID)
+		name = LibraryDisplayName(id)
 	}
-	return Library{Ref:s.currentID, Name: name}
+	return Library{Ref: id, Name: name}
 }
 
 func (s *fileLibraryService) Recent() []Library {
@@ -166,15 +177,18 @@ func (s *fileLibraryService) Validate(id string) error {
 }
 
 func (s *fileLibraryService) RecordSwitch(id string) {
+	s.mu.RLock()
+	namer := s.namer
+	s.mu.RUnlock()
 	s.recorder.SetLastUsed(id)
 	name := ""
-	if s.namer != nil {
-		name = s.namer.LibraryName()
+	if namer != nil {
+		name = namer.LibraryName()
 	}
 	if name == "" {
 		name = LibraryDisplayName(id)
 	}
-	s.recorder.AddRecent(Library{Ref:id, Name: name})
+	s.recorder.AddRecent(Library{Ref: id, Name: name})
 }
 
 func (s *fileLibraryService) DisplayName(id string) string {

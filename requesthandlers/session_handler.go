@@ -19,8 +19,10 @@ func (h *SessionHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/session/meta/toggle", h.handleMetaToggle)
 	r.Post("/api/session/prompts/toggle", h.handlePromptsToggle)
 	r.Post("/api/session/toolbar/toggle", h.handleToolbarToggle)
+	r.Post("/api/session/linenumbers/toggle", h.handleLineNumbersToggle)
 	r.Post("/api/session/layout", h.handleSessionLayout)
 	r.Post("/api/session/refresh", h.handleSessionRefresh)
+	r.Get("/api/library/switch-layout", h.handleSwitchLayout)
 }
 
 func (h *SessionHandler) handleSidebarToggle(w http.ResponseWriter, r *http.Request) {
@@ -118,4 +120,77 @@ func (h *SessionHandler) handleSessionRefresh(w http.ResponseWriter, r *http.Req
 		var themeName = "%s";
 		root.className = root.className.replace(/theme-\S+/, 'theme-' + themeName);
 	</script>`, themeName)
+}
+
+// lineNumberOverrideCSS returns the CSS that hides the editor line numbers and
+// the gutter rule (and reclaims their left padding) when line numbers are toggled
+// off. Empty when on, so the base editor.css rules apply. Shared by the toggle
+// endpoint, the index template's initial render, and the library-switch layout so
+// all three stay in lockstep.
+func lineNumberOverrideCSS(show bool) string {
+	if show {
+		return ""
+	}
+	return `.tiptap > *::before, .tiptap::before { display: none !important; } .tiptap { padding-left: 1.25rem !important; }`
+}
+
+func (h *SessionHandler) handleLineNumbersToggle(w http.ResponseWriter, r *http.Request) {
+	session := h.ServiceProvider.State.LoadSession()
+	session.ShowLineNumbers = !session.ShowLineNumbers
+	_ = h.ServiceProvider.State.SaveSession(session)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<style id="layout-overrides-linenumbers" hx-swap-oob="true">%s</style>`, lineNumberOverrideCSS(session.ShowLineNumbers))
+}
+
+// handleSwitchLayout returns OOB style-tag swaps for all layout CSS variables
+// based on the new library's session. Called after SwitchLibrary to update the
+// UI in-place without a page reload (avoids the WebKit signal-handler reinstall
+// that location.reload() triggers on Linux/WebKit2GTK).
+func (h *SessionHandler) handleSwitchLayout(w http.ResponseWriter, r *http.Request) {
+	session := h.ServiceProvider.State.LoadSession()
+	settings := h.ServiceProvider.State.LoadSettings()
+
+	sidebarW, sidebarDisp, handleDisp := 0, "none", "none"
+	if session.ShowSidebar {
+		sidebarW = session.SidebarWidth
+		sidebarDisp = "block"
+		handleDisp = "block"
+	}
+	metaW, metaDisp, metaHandleDisp := 0, "none", "none"
+	if session.ShowMeta {
+		metaW = session.MetaWidth
+		metaDisp = "flex"
+		metaHandleDisp = "block"
+	}
+	promptsDisp := "none"
+	if session.ShowPrompts {
+		promptsDisp = "block"
+	}
+	toolbarDisp, toolbarH := "none", "0px"
+	if session.ShowToolbar {
+		toolbarDisp = "flex"
+		toolbarH = "36px"
+	}
+
+	tierStr := "dumb"
+	if settings.Tier() == sieve.TierSmart {
+		tierStr = "smart"
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w,
+		`<style id="layout-overrides-sidebar" hx-swap-oob="true">#app-root { --sidebar-w: %dpx; } #htmx-sidebar { display: %s; } .sidebar-handle { display: %s; }</style>`+
+			`<style id="layout-overrides-meta" hx-swap-oob="true">#app-root { --meta-w: %dpx; } #htmx-meta-panel { display: %s; } .meta-handle { display: %s; }</style>`+
+			`<style id="layout-overrides-prompts" hx-swap-oob="true">#prompts-panel { display: %s; } .prompts-handle { display: %s; }</style>`+
+			`<style id="layout-overrides-toolbar" hx-swap-oob="true">#editor-toolbar { display: %s; } #app-root { --toolbar-h: %s; }</style>`+
+			`<style id="layout-overrides-linenumbers" hx-swap-oob="true">%s</style>`+
+			`<script>var r=document.getElementById('app-root');if(r)r.className=r.className.replace(/tier-\S+/,'tier-%s');</script>`,
+		sidebarW, sidebarDisp, handleDisp,
+		metaW, metaDisp, metaHandleDisp,
+		promptsDisp, promptsDisp,
+		toolbarDisp, toolbarH,
+		lineNumberOverrideCSS(session.ShowLineNumbers),
+		tierStr,
+	)
 }

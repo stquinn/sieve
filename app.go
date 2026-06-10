@@ -27,7 +27,7 @@ import (
 
 // App is the Wails application backend.
 type App struct {
-	ctx      context.Context
+	ctx       context.Context
 	storePath string // current library root; internal file-path detail
 	hostname  string
 
@@ -373,6 +373,26 @@ func (a *App) CreateVault() (string, error) {
 	return path, nil
 }
 
+// GetActiveUUID returns the UUID of the currently active tab in the session.
+// Used by the no-reload library switch to reinitialize the editor in place.
+func (a *App) GetActiveUUID() string {
+	if a.ServiceProvider == nil || a.ServiceProvider.State == nil {
+		return ""
+	}
+	session := a.ServiceProvider.State.LoadSession()
+	if session.ActiveIdx >= 0 && session.ActiveIdx < len(session.Tabs) {
+		return session.Tabs[session.ActiveIdx].ID
+	}
+	return ""
+}
+
+//TODO  - WHY IS ALL THIS HERE - its hsuld be part of the Library Service
+//ITS MAKIGN ASSUMPTIONS ABOUT FILE FORMATS?PATHS and all of the was supposed
+//to be encapsualetd within the Library - service.  Listeners or call back hooks should be
+//registered if the APP code really needs to do things with vcariables oin its scope
+//but once we have Fucntions using Services injected and the Library Service is responsible
+// for managing the store and its lifecycle - then the App should not be doing any of this work - its a violation of encapsulation and separation of concerns.  The Library Service should be able to manage all of this without the App needing to know about it.  The App should just call LibraryService.SwitchLibrary(path) and the Library Service should handle all of the validation, state management, and event broadcasting related to switching libraries.  This would make the code cleaner, more modular, and easier to maintain.  The App should not be directly interacting with the file system or managing the store path - that should all be handled by the Library Service.  The App's role should be to provide a user interface and delegate library management tasks to the Library Service.
+
 // SwitchLibrary switches to an existing library at path without opening a file
 // dialog. Used by the File > Open Recent submenu.
 func (a *App) SwitchLibrary(path string) (string, error) {
@@ -383,14 +403,28 @@ func (a *App) SwitchLibrary(path string) (string, error) {
 		return "", fmt.Errorf("invalid library: %w", err)
 	}
 	if a.ServiceProvider != nil && a.ServiceProvider.Editor != nil {
-		a.ServiceProvider.Editor.FlushAll()
+		// CloseAll (not FlushAll): startup() below replaces this EditorService, so
+		// we must stop its armed autosave timers too, or they fire a delayed write
+		// against the old library after the switch. See EditorService.CloseAll.
+		a.ServiceProvider.Editor.CloseAll()
 	}
 	a.storePath = path
 	a.startup(a.ctx)
 	if a.storePath == "" {
 		return "", fmt.Errorf("failed to load the selected library")
 	}
-	runtime.MenuSetApplicationMenu(a.ctx, buildMenu(a))
+	// Refresh the native menu (for the "Open Recent" submenu) ONLY on macOS.
+	// On Linux/Windows, Wails v2.12.0's GTK SetApplicationMenu is broken for
+	// repeated calls: it allocates a new menubar but never re-packs it into the
+	// window (packing only happens once in setupContent) and never destroys the
+	// old menubar, while resetting gtkSignalToMenuItem. The old menubar stays
+	// visible with its click handlers still wired, so the next menu-item click
+	// dereferences a nil *menu.MenuItem and SIGSEGVs in handleMenuItemClick.
+	// Skipping the rebuild leaves the native "Open Recent" list stale until
+	// restart; library switching remains available via the Open Library dialog.
+	if goruntime.GOOS == "darwin" {
+		runtime.MenuSetApplicationMenu(a.ctx, buildMenu(a))
+	}
 	return path, nil
 }
 

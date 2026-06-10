@@ -71,6 +71,13 @@ html, body {
     flex-shrink: 0;
 }
 
+/* Library chip and AI-job spinner sit side by side; each owns its own slot. */
+.status-bar__left {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
 dialog {
     color: var(--theme-text);
 }
@@ -111,20 +118,25 @@ dialog {
 
 #editor-toolbar {
   align-items: center;
-  height: 36px;
+  /* Wrap to additional rows on narrow windows instead of clipping buttons.
+     Height is measured into --toolbar-h by updateToolbarH() so the editor
+     gutter separator tracks the real (possibly multi-row) height. */
+  flex-wrap: wrap;
+  min-height: 44px;
+  height: auto;
   background: var(--theme-bgDark);
   border-bottom: 1px solid var(--theme-border);
-  padding: 0 10px;
+  padding: 0 5px;
   gap: 2px;
+  row-gap: 2px;
   flex-shrink: 0;
-  overflow: hidden;
 }
 
 /* Table toolbar — secondary bar, appears below main toolbar when cursor is in a table */
 #table-toolbar {
   display: none;
   align-items: center;
-  height: 32px;
+  height: 40px;
   background: color-mix(in srgb, var(--theme-accentCyan) 6%, var(--theme-bgDark));
   border-bottom: 1px solid var(--theme-border);
   padding: 0 10px;
@@ -141,18 +153,19 @@ dialog {
 .tb-group { display: flex; align-items: center; gap: 1px; }
 
 .tb-sep {
-  width: 1px; height: 16px;
+  width: 2px; height: 16px;
   background: var(--theme-border);
   margin: 0 5px;
   flex-shrink: 0;
 }
 
 .tb-btn {
-  height: 26px; min-width: 26px; padding: 0 6px;
+  height: 35px; min-width: 35px; padding: 0 2px;
   border: none; border-radius: 3px; background: transparent;
-  color: var(--theme-textDim); font-size: 11px; font-weight: 600;
+  color: var(--theme-textDim); font-size: 1.1em; font-weight: 600;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
   white-space: nowrap; flex-shrink: 0;
+  margin-right: 6px;
 }
 .tb-btn:hover  { background: var(--theme-border); }
 .tb-btn.active { background: var(--theme-border); color: var(--theme-accentPrimary); }
@@ -161,8 +174,8 @@ dialog {
 
 /* Teal block insert pills */
 .tb-insert {
-  font-size: 10px; font-weight: 700; letter-spacing: .02em;
-  padding: 0 8px; height: 24px; border-radius: 3px;
+  font-size: 0.8em; font-weight: 700; letter-spacing: .02em; 
+  padding: 10px; height: 35px; border-radius: 3px; margin-right: 6px;
   background: color-mix(in srgb, var(--theme-accentCyan) 12%, transparent);
   color: var(--theme-accentCyan);
 }
@@ -175,8 +188,8 @@ dialog {
 .tier-dumb .tb-ai-query { display: none; }
 
 .tb-query {
-  font-size: 10px; font-weight: 700; letter-spacing: .02em;
-  padding: 0 8px; height: 24px; border-radius: 3px;
+  font-size: 0.8em; font-weight: 700; letter-spacing: .02em;
+  padding: 10px; height: 35px; border-radius: 3px; margin-right: 6px;
   background: color-mix(in srgb, var(--theme-accentOrange) 12%, transparent);
   color: var(--theme-accentOrange);
 }
@@ -194,8 +207,8 @@ dialog {
 .tier-dumb .tb-ai-actions { display: none; }
 
 .tb-ai {
-  font-size: 10px; font-weight: 700; letter-spacing: .02em;
-  padding: 0 8px; height: 24px; border-radius: 3px;
+  font-size: 0.8em; font-weight: 700; letter-spacing: .02em;
+  padding: 10px; height: 35px; border-radius: 3px; margin-right: 6px;
   background: color-mix(in srgb, var(--theme-accentPrimary) 12%, transparent);
   color: var(--theme-accentPrimary);
 }

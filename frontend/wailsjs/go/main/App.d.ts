@@ -10,6 +10,8 @@ export function DescribeImage(arg1:string,arg2:string,arg3:string):Promise<sieve
 
 export function DownloadAsset(arg1:string,arg2:string,arg3:string):Promise<main.AssetDTO>;
 
+export function GetActiveUUID():Promise<string>;
+
 export function GetLinkTitle(arg1:string):Promise<string>;
 
 export function GetStoreInfo():Promise<main.StoreInfo>;

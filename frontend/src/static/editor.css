@@ -382,13 +382,18 @@ textarea::selection {
   counter-reset: docline;
 }
 
-/* Gutter separator — tracks sidebar width and toolbar height via CSS variables.
-   --toolbar-h is set on #app-root and updated when the toolbar is toggled. */
+/* Gutter separator — a fixed vertical rule down the left of the editor body.
+   --editor-top: viewport Y of the editor area top (#htmx-editor), measured by
+     updateEditorTop() in index.html. This single measured anchor sits exactly
+     below however many rows the toolbar has wrapped to, so the rule never
+     overlaps the toolbar. The summed-height calc is kept only as a pre-paint
+     fallback for the first frame before JS measures.
+   --sidebar-w / --line-digits position it horizontally. */
 .tiptap::before {
   content: '';
   position: fixed;
   left: calc(var(--sidebar-w, 0px) + 1.2rem + (max(1, var(--line-digits, 1)) - 1) * 0.55rem);
-  top: calc(44px + var(--toolbar-h, 0px));
+  top: var(--editor-top, calc(var(--tabbar-h, 44px) + var(--toolbar-h, 0px) + var(--table-toolbar-h, 0px)));
   bottom: 32px;
   width: 1px;
   background: var(--theme-border2);

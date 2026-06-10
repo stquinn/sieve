@@ -6,7 +6,10 @@
   window.__sieveActiveJobs = 0;
 
   function updateStatusBar() {
-    var sbLeft = document.querySelector('.status-bar__left');
+    // Write only into the dedicated jobs slot — NOT .status-bar__left, which also
+    // holds the library chip (#library-chip). Clobbering the whole left cell wiped
+    // the chip (and its hx-get wrapper) on every job start/end.
+    var sbLeft = document.querySelector('.status-bar__jobs');
     if (!sbLeft) return;
     var ids = Object.keys(activeJobs);
     if (ids.length === 0) { sbLeft.innerHTML = ''; return; }

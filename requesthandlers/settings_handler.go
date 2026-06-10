@@ -1,6 +1,7 @@
 package requesthandlers
 
 import (
+	"fmt"
 	"html/template"
 	"net/http"
 	"sieve/logger"
@@ -98,7 +99,18 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 
 	if err := h.Tmpl.ExecuteTemplate(w, "settings.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
+
+	// Re-apply the AI tier class on #app-root so configuring (or removing) a CLI
+	// updates the tier-gated AI buttons live, without a reload. This <script> runs
+	// because the response is swapped into #settings-dialog-content (innerHTML).
+	// settings.Tier() re-resolves the CLI on PATH, so it reflects the just-saved CLI.
+	tierStr := "dumb"
+	if settings.Tier() == sieve.TierSmart {
+		tierStr = "smart"
+	}
+	fmt.Fprintf(w, `<script>var r=document.getElementById('app-root');if(r)r.className=r.className.replace(/tier-\S+/,'tier-%s');</script>`, tierStr)
 }
 
 func (h *SettingsHandler) handleSettingsPanel(w http.ResponseWriter, r *http.Request) {

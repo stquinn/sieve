@@ -117,57 +117,6 @@
     if (menu) menu.remove()
   }
 
-  function wrapInBlockAnchor(editor) {
-    var s = editor.state
-    var sel = s.selection
-    var blockRef = 'blk-' + Math.random().toString(16).substring(2, 6)
-    var blockRange = sel.$from.blockRange(sel.$to)
-    if (!blockRange) return
-    var topRange = new window.TipTap.NodeRange(blockRange.$from, blockRange.$to, 0)
-    var tr = s.tr
-    try {
-      tr.wrap(topRange, [{ type: s.schema.nodes.blockRef, attrs: { id: blockRef } }])
-      editor.view.dispatch(tr)
-    } catch (e) { /* selection too complex to wrap */ }
-  }
-
-  function applyTargetHighlight(editor) {
-    var s = editor.state
-    var sel = s.selection
-    if (sel.empty) return
-
-    // Detect if the selection covers the entire parent node (discounting whitespace)
-    var $from = sel.$from
-    var nodeStart = $from.start($from.depth)
-    var nodeEnd = $from.end($from.depth)
-    var coversNode =
-      s.doc.textBetween(sel.from, sel.to).trim() ===
-      s.doc.textBetween(nodeStart, nodeEnd).trim()
-
-    // Detect if already inside a BlockAnchor (blockRef node)
-    var inBlockAnchor = false
-    for (var d = $from.depth; d >= 0; d--) {
-      if ($from.node(d).type.name === 'blockRef') { inBlockAnchor = true; break }
-    }
-
-    if (coversNode && inBlockAnchor) {
-      // No-op: block already defines the entire target
-      return
-    }
-
-    if (coversNode && !inBlockAnchor) {
-      // Wrap whole node in BlockAnchor only — no == mark needed
-      wrapInBlockAnchor(editor)
-      return
-    }
-
-    // Word/phrase selected: apply == mark. Wrap parent in BlockAnchor first if not already.
-    if (!inBlockAnchor) wrapInBlockAnchor(editor)
-
-    // Apply the highlight mark on the selection
-    editor.commands.setMark('highlight')
-  }
-
   function tabItems(id) {
     return [
       { type: 'divider' },
@@ -294,20 +243,20 @@
           editor.chain().extendMarkRange('highlight').unsetMark('highlight').focus().run()
           return
         }
-        applyTargetHighlight(editor)
+        window.TipTap.applyTargetHighlight(editor)
         editor.commands.focus()
       }})
     }
 
     items.push({ type: 'divider' })
+    // Ask AI / Explain just fire the event — the editor.js handler owns ALL the
+    // business logic (target highlight + focus + buildAiContext + run), so the
+    // context menu, toolbar, and keyboard shortcut behave identically. The menu's
+    // only job is to set the selection from the right-click (done in buildEditorItems).
     items.push({ icon: IC.sparkle, label: 'Ask AI...', action: function () {
-      if (hasSelection && !isHighlighted) applyTargetHighlight(editor)
-      editor.commands.focus()
       document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
     }})
     items.push({ icon: IC.info, label: 'Explain', action: function () {
-      if (hasSelection && !isHighlighted) applyTargetHighlight(editor)
-      editor.commands.focus()
       document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
     }})
 

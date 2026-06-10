@@ -48,10 +48,14 @@
       var args = map[btn.dataset.cmd]
       if (args) btn.classList.toggle('active', editor.isActive.apply(editor, args))
     })
-    // Show the table toolbar when cursor is inside a table
+    // Show the table toolbar when cursor is inside a table; update the CSS variable
+    // so the fixed-position gutter separator adjusts its top offset accordingly.
     var tableToolbar = document.getElementById('table-toolbar')
     if (tableToolbar) {
-      tableToolbar.style.display = editor.isActive('table') ? 'flex' : 'none'
+      var inTable = editor.isActive('table')
+      tableToolbar.style.display = inTable ? 'flex' : 'none'
+      var appRoot = document.getElementById('app-root')
+      if (appRoot) appRoot.style.setProperty('--table-toolbar-h', inTable ? '32px' : '0px')
     }
   }
 
@@ -143,8 +147,10 @@
         T.TaskItem.configure({ nested: true }),
         T.Markdown.configure({ html: true, transformPastedText: true, link: { openOnClick: false } }),
         T.AiShortcuts.configure({
-          onExplain: function () { runAiJob('explain') },
-          onAsk: function () { openAskPopup() },
+          // Fire the same events as every other surface so the editor.js handler
+          // runs identical business logic (target highlight + focus + run).
+          onExplain: function () { document.dispatchEvent(new CustomEvent('sieve:ai-explain')) },
+          onAsk: function () { document.dispatchEvent(new CustomEvent('sieve:ai-ask')) },
           onSmartFile: function () { window.SieveAI && window.SieveAI.smartFile(uuid) },
           onKeepAndSmartFile: function () { window.SieveAI && window.SieveAI.keepAndSmartFile(uuid) },
           onToggleAiBlocks: toggleAiBlocks,
@@ -1162,14 +1168,35 @@
   document.addEventListener('sieve:toggle-search',    toggleSearch)
   document.addEventListener('sieve:toggle-ai-blocks', toggleAiBlocks)
 
+  // ── Ask AI / Explain: the single business-logic seam ──────────────────────────
+  // Every entry point — toolbar button, context menu, keyboard shortcut, sieve
+  // block — just fires sieve:ai-ask / sieve:ai-explain. These two handlers are the
+  // ONE place that prepares the target and runs the job, so all surfaces behave
+  // identically. No surface should call runAiJob/openAskPopup or applyTargetHighlight
+  // itself. aiPrepareTarget returns false to abort (markdown mode has no inline target).
+  function aiPrepareTarget(precomputedCtx) {
+    if (currentMode === 'markdown') return false
+    if (precomputedCtx || !currentEditor) return true   // caller supplied context as-is
+    var sel = currentEditor.state.selection
+    // Visible == target highlight only for a real text selection — skip collapsed
+    // cursors, node selections (e.g. an AI block), and already-highlighted targets.
+    if (sel && !sel.empty && !sel.node && !currentEditor.isActive('highlight')) {
+      window.TipTap.applyTargetHighlight(currentEditor)
+    }
+    currentEditor.commands.focus()
+    return true
+  }
+
   document.addEventListener('sieve:ai-explain', function (e) {
-    if (currentMode === 'markdown') return
-    runAiJob('explain', undefined, e && e.detail && e.detail.precomputedCtx)
+    var ctx = e && e.detail && e.detail.precomputedCtx
+    if (!aiPrepareTarget(ctx)) return
+    runAiJob('explain', undefined, ctx)
   })
   document.addEventListener('sieve:ai-ask', function (e) {
-    if (currentMode === 'markdown') return
+    var ctx = e && e.detail && e.detail.precomputedCtx
+    if (!aiPrepareTarget(ctx)) return
     ensureOverlays()
-    openAskPopup(e && e.detail && e.detail.precomputedCtx)
+    openAskPopup(ctx)
   })
   document.addEventListener('sieve:block-retry', function (e) {
     if (!currentEditor || !e.detail || !e.detail.id) return

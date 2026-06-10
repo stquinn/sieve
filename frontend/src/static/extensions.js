@@ -443,6 +443,54 @@
     }
   }
 
+  // ── applyTargetHighlight ─────────────────────────────────────────────────────
+  // Canonical "mark this selection as the AI target": wraps the parent block in a
+  // BlockAnchor (blockRef) and applies the == highlight mark, so the target is both
+  // visible and resolvable by buildAiContext. Single source of truth shared by the
+  // context menu's "Highlight Target" item and by the Ask AI / Explain event handler
+  // in editor.js — so every entry point produces an identical target.
+  function wrapInBlockAnchor(editor) {
+    var s = editor.state
+    var sel = s.selection
+    var blockRef = 'blk-' + Math.random().toString(16).substring(2, 6)
+    var blockRange = sel.$from.blockRange(sel.$to)
+    if (!blockRange) return
+    var topRange = new T.NodeRange(blockRange.$from, blockRange.$to, 0)
+    var tr = s.tr
+    try {
+      tr.wrap(topRange, [{ type: s.schema.nodes.blockRef, attrs: { id: blockRef } }])
+      editor.view.dispatch(tr)
+    } catch (e) { /* selection too complex to wrap */ }
+  }
+
+  function applyTargetHighlight(editor) {
+    var s = editor.state
+    var sel = s.selection
+    if (sel.empty) return
+
+    // Detect if the selection covers the entire parent node (discounting whitespace)
+    var $from = sel.$from
+    var nodeStart = $from.start($from.depth)
+    var nodeEnd = $from.end($from.depth)
+    var coversNode =
+      s.doc.textBetween(sel.from, sel.to).trim() ===
+      s.doc.textBetween(nodeStart, nodeEnd).trim()
+
+    // Detect if already inside a BlockAnchor (blockRef node)
+    var inBlockAnchor = false
+    for (var d = $from.depth; d >= 0; d--) {
+      if ($from.node(d).type.name === 'blockRef') { inBlockAnchor = true; break }
+    }
+
+    if (coversNode && inBlockAnchor) return            // block already defines the target
+    if (coversNode && !inBlockAnchor) { wrapInBlockAnchor(editor); return } // wrap node, no mark
+
+    // Word/phrase selected: wrap parent in BlockAnchor (if needed) then apply == mark.
+    if (!inBlockAnchor) wrapInBlockAnchor(editor)
+    editor.commands.setMark('highlight')
+  }
+  T.applyTargetHighlight = applyTargetHighlight
+
   // ── HighlightMark ──────────────────────────────────────────────────────────
   // Extends the built-in Highlight extension with tiptap-markdown storage so
   // ==word== round-trips correctly through the markdown serializer/parser.

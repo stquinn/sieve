@@ -14,6 +14,10 @@ export function DownloadAsset(arg1, arg2, arg3) {
   return window['go']['main']['App']['DownloadAsset'](arg1, arg2, arg3);
 }
 
+export function GetActiveUUID() {
+  return window['go']['main']['App']['GetActiveUUID']();
+}
+
 export function GetLinkTitle(arg1) {
   return window['go']['main']['App']['GetLinkTitle'](arg1);
 }

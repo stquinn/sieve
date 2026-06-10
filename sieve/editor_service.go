@@ -390,6 +390,27 @@ func (es *EditorService) FlushAll() {
 	}
 }
 
+// CloseAll stops every shadow's autosave timer, flushes it to disk, and drops
+// all shadows. Use this (not FlushAll) when the EditorService itself is being
+// retired — e.g. a library switch replaces it via ServiceProvider.Init. FlushAll
+// leaves the armed time.AfterFunc timers running; they capture the old
+// DocumentService/FileStore and would fire a delayed write against the previous
+// library after the switch, leaking the old store handle until they do.
+func (es *EditorService) CloseAll() {
+	es.mu.Lock()
+	shadows := make([]*ShadowDocument, 0, len(es.shadows))
+	for _, sh := range es.shadows {
+		shadows = append(shadows, sh)
+	}
+	es.shadows = make(map[string]*ShadowDocument)
+	es.mu.Unlock()
+	logger.Info("editor: close-all", "count", len(shadows))
+	for _, sh := range shadows {
+		sh.stopDebounce()
+		_ = es.flushShadow(sh, "close-all")
+	}
+}
+
 func (es *EditorService) SetServices(svc BlockServices) {
 	es.services = svc
 }

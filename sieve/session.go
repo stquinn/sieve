@@ -37,6 +37,9 @@ type Session struct {
 	OpenFolders       []string `json:"openFolders,omitempty"`
 	LastSettingsPanel string   `json:"lastSettingsPanel,omitempty"`
 	ShowToolbar       bool     `json:"showToolbar,omitempty"`
+	// No omitempty: false must serialise so an explicit "off" survives reload.
+	// Defaults to true in ParseSession; sessions predating the field keep numbers on.
+	ShowLineNumbers bool `json:"showLineNumbers"`
 }
 
 // ParseSession decodes session JSON bytes into a Session.
@@ -44,11 +47,12 @@ type Session struct {
 // responsible for opening a default tab.
 func ParseSession(data []byte) Session {
 	s := Session{
-		ShowSidebar:   true,
-		ShowPrompts:   true,
-		PromptsHeight: 180,
-		SidebarWidth:  250,
-		MetaWidth:     300,
+		ShowSidebar:     true,
+		ShowPrompts:     true,
+		ShowLineNumbers: true,
+		PromptsHeight:   180,
+		SidebarWidth:    250,
+		MetaWidth:       300,
 	}
 	if len(data) == 0 {
 		return s

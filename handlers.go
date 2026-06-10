@@ -225,6 +225,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		ShowMeta         bool
 		ShowPrompts      bool
 		ShowToolbar      bool
+		ShowLineNumbers  bool
 		PromptsHeight    int
 		ActiveUUID       string
 		AutosaveDebounce int
@@ -240,6 +241,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		ShowMeta:         session.ShowMeta,
 		ShowPrompts:      session.ShowPrompts,
 		ShowToolbar:      session.ShowToolbar,
+		ShowLineNumbers:  session.ShowLineNumbers,
 		PromptsHeight:    session.PromptsHeight,
 		ActiveUUID:       activeUUID,
 		AutosaveDebounce: info.AutosaveDebounce,

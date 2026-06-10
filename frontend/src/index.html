@@ -25,6 +25,11 @@
         #prompts-panel { display: {{if .ShowPrompts}}block{{else}}none{{end}}; }
         .prompts-handle { display: {{if .ShowPrompts}}block{{else}}none{{end}}; }
     </style>
+    <style id="layout-overrides-toolbar">
+        #editor-toolbar { display: {{if .ShowToolbar}}flex{{else}}none{{end}}; }
+        #app-root { --toolbar-h: {{if .ShowToolbar}}36px{{else}}0px{{end}}; }
+    </style>
+    <style id="layout-overrides-linenumbers">{{if not .ShowLineNumbers}}.tiptap > *::before, .tiptap::before { display: none !important; } .tiptap { padding-left: 1.25rem !important; }{{end}}</style>
 </head>
 <body hx-ext="sse" sse-connect="/sse">
     <!-- Relay: makes HTMX SSE extension register EventSource listeners so events bubble to document as sse:* -->
@@ -32,7 +37,7 @@
     <div id="ai-job-started-relay" hx-trigger="sse:ai:job-started" style="display:none"></div>
     <div id="ai-job-ended-relay" hx-trigger="sse:ai:job-ended" style="display:none"></div>
     {{if .StoreRoot}}
-    <div id="app-root" class="theme-{{.ThemeName}} tier-{{.Tier}}" style="--sidebar-w: {{if .ShowSidebar}}{{.SidebarWidth}}{{else}}0{{end}}px; --meta-w: {{if .ShowMeta}}{{.MetaWidth}}{{else}}0{{end}}px; --toolbar-h: {{if .ShowToolbar}}36px{{else}}0px{{end}};">
+    <div id="app-root" class="theme-{{.ThemeName}} tier-{{.Tier}}" style="--sidebar-w: {{if .ShowSidebar}}{{.SidebarWidth}}{{else}}0{{end}}px; --meta-w: {{if .ShowMeta}}{{.MetaWidth}}{{else}}0{{end}}px;">
         
         <div id="sidebar-wrapper" style="width: var(--sidebar-w); display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; border-right: 1px solid var(--theme-border);">
             <div id="htmx-sidebar" class="sidebar" style="flex: 1; min-height: 0; border-right: none; display: flex; flex-direction: column;" hx-get="/api/sidebar" hx-trigger="load, sse:notes:changed, notes:changed from:body"></div>
@@ -68,8 +73,8 @@
                 <div id="quickswitcher-dialog-content" style="background: var(--theme-bgDark); width: 600px; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.6);"></div>
             </dialog>
 
-            <!-- Main toolbar -->
-            <div id="editor-toolbar" style="display:{{if .ShowToolbar}}flex{{else}}none{{end}}">
+            <!-- Main toolbar — visibility and --toolbar-h controlled by #layout-overrides-toolbar style tag -->
+            <div id="editor-toolbar">
               <!-- Text formatting -->
               <div class="tb-group">
                 <button class="tb-btn" data-cmd="bold"    title="Bold (⌘B)"><b>B</b></button>
@@ -99,11 +104,17 @@
                 <button class="tb-btn" data-cmd="horizontalRule" title="Horizontal rule">&#8212;</button>
               </div>
               <div class="tb-sep"></div>
+              <div class="tb-group">
+                <button class="tb-btn"id="tb-toggle-mode-btn"       title="Toggle Editor Mode">
+                    <span class="text-[12px] text-tn-blue font-bold font-mono bg-tn-bg-alt px-1.5 rounded shrink-0">M</span>
+                </button>
+              </div>
+              <div class="tb-sep"></div>
               <!-- Insert content: blocks + AI query (left side, both teal and orange) -->
               <div class="tb-group">
                 <button class="tb-btn tb-insert" data-insert="code"    title="Insert code block">{ } Code</button>
                 <button class="tb-btn tb-insert" data-insert="diagram" title="Insert diagram">&#9671; Diagram</button>
-                <button class="tb-btn tb-insert" id="tb-clip-btn"      title="Insert web clip">&#11041; Clip</button>
+                <button class="tb-btn tb-insert" id="tb-clip-btn"      title="Insert web clip">&#11041; Web Clip</button>
                 <button class="tb-btn tb-insert" id="tb-image-btn"     title="Insert image from file">&#128444; Image</button>
                 <input id="tb-image-input" type="file" accept="image/*" style="display:none">
               </div>
@@ -111,12 +122,6 @@
               <div class="tb-group tb-ai-query">
                 <button class="tb-btn tb-query" id="tb-explain-btn" title="Explain selection (⌘⇧X)">Explain</button>
                 <button class="tb-btn tb-query" id="tb-ask-btn"     title="Ask about selection (⌘⇧A)">Ask</button>
-              </div>
-              <!-- AI filing actions — right side, tier-gated -->
-              <div class="tb-ai-actions">
-                <button class="tb-btn tb-ai"            data-ai="smartMetadata"    title="Smart Metadata (&#8984;&#8679;M)">&#10009; Metadata</button>
-                <button class="tb-btn tb-ai"            data-ai="smartFile"        title="Smart File (&#8984;&#8679;E)">&#11041; File</button>
-                <button class="tb-btn tb-ai tb-ai-keep" data-ai="keepAndSmartFile" title="Keep &amp; Smart File (&#8984;&#8679;&#9166;)">&#10003; Keep &amp; File</button>
               </div>
               <!-- Help -->
               <div class="tb-help">
@@ -159,8 +164,14 @@
             </div>
 
             <div class="status-bar">
+                <!-- Three dedicated, non-overlapping slots: each owner writes only
+                     into its own element, so no update can clobber another.
+                       __lib   — library chip   (GET /api/library/current)
+                       __jobs  — AI job spinner (ai-actions.js updateStatusBar)
+                       __right — document stats  (editor:stats handler) -->
                 <div class="status-bar__left">
-                  <div hx-get="/api/library/current" hx-trigger="load" hx-swap="innerHTML"></div>
+                  <div class="status-bar__lib" hx-get="/api/library/current" hx-trigger="load" hx-swap="innerHTML"></div>
+                  <div class="status-bar__jobs"></div>
                 </div>
                 <div class="status-bar__right"></div>
             </div>
@@ -280,6 +291,43 @@
         }
     });
 
+    // Measure real tabbar height and expose as --tabbar-h for the gutter separator.
+    // The active-tab -mb-[2px] trick makes the visual bottom slightly lower than
+    // the CSS h-[44px] value, so we measure instead of hardcoding.
+    function updateTabbarH() {
+        var tabbar = document.getElementById('htmx-tabbar');
+        var appRoot = document.getElementById('app-root');
+        if (tabbar && appRoot) {
+            appRoot.style.setProperty('--tabbar-h', Math.ceil(tabbar.getBoundingClientRect().bottom) + 'px');
+        }
+    }
+    window.addEventListener('DOMContentLoaded', updateTabbarH);
+    document.addEventListener('htmx:afterSettle', function(e) {
+        if (e.detail && e.detail.target && e.detail.target.id === 'htmx-tabbar') updateTabbarH();
+    });
+
+    // Anchor the editor gutter rule (.tiptap::before) to the real top of the
+    // editor area. The toolbar wraps to multiple rows on narrow windows, so its
+    // height is dynamic; measuring #htmx-editor's viewport position means the
+    // gutter always starts exactly below the toolbar — no summed-height guessing,
+    // no overlap. Recomputed whenever the chrome could move (resize, wrap, toggle).
+    function updateEditorTop() {
+        var ed = document.getElementById('htmx-editor');
+        var appRoot = document.getElementById('app-root');
+        if (ed && appRoot) appRoot.style.setProperty('--editor-top', Math.round(ed.getBoundingClientRect().top) + 'px');
+    }
+    window.addEventListener('DOMContentLoaded', function() {
+        updateEditorTop();
+        // #htmx-editor is flex:1, so its height (and thus its top) changes whenever
+        // any chrome above it changes — toolbar wrap, the table toolbar appearing,
+        // or a bar toggling. Observing it alone catches every case that moves the
+        // gutter anchor, including the table toolbar (which isn't an htmx swap).
+        var ed = document.getElementById('htmx-editor');
+        if (ed && window.ResizeObserver) new ResizeObserver(updateEditorTop).observe(ed);
+    });
+    window.addEventListener('resize', updateEditorTop);
+    document.addEventListener('htmx:afterSettle', updateEditorTop);
+
     // Initial editor load
     window.addEventListener('DOMContentLoaded', function() {
         var mount = document.getElementById('tiptap-mount');
@@ -365,6 +413,37 @@
         document.addEventListener('click',     recordActivity, { passive: true, capture: true });
     })();
 
+    // Arm (or clear) per-document focus-count tracking. Must run on EVERY editor
+    // (re)init — both htmx:load and the in-place library switch — otherwise the
+    // previous document's dwell interval keeps firing bumpFocus and POSTs focus
+    // pings for a stale UUID against the newly-switched library. Pass a falsy uuid
+    // to just tear the timers down (e.g. switching to an empty library).
+    window.__sieveArmFocusTracking = function(uuid) {
+        if (window.__sieveFocusTimer) clearTimeout(window.__sieveFocusTimer);
+        if (window.__sieveDwellInterval) clearInterval(window.__sieveDwellInterval);
+        window.__sieveFocusTimer = null;
+        window.__sieveDwellInterval = null;
+        window.__sieveActiveDocUuid = uuid || null;
+        if (!uuid) return;
+        window.__sieveLastActivity = Date.now(); // tab switch is itself activity
+
+        var IDLE_THRESHOLD_MS = 3 * 60 * 1000; // 3 minutes
+        var bumpFocus = function() {
+            if (window.__sieveActiveDocUuid !== uuid) return;
+            if (Date.now() - window.__sieveLastActivity > IDLE_THRESHOLD_MS) return;
+            fetch('/api/note/focus/' + encodeURIComponent(uuid), { method: 'POST' })
+                .then(function() {
+                    var mp = document.getElementById('htmx-meta-panel');
+                    if (mp && window.getComputedStyle(mp).display !== 'none') {
+                        window.htmx.ajax('GET', metaPanelUrl(uuid), { target: '#htmx-meta-panel', swap: 'innerHTML' });
+                    }
+                })
+                .catch(console.error);
+        };
+        window.__sieveFocusTimer = setTimeout(bumpFocus, 30 * 1000);
+        window.__sieveDwellInterval = setInterval(bumpFocus, 5 * 60 * 1000);
+    };
+
     document.addEventListener('htmx:load', function(e) {
         var mount = document.getElementById('tiptap-mount');
         if (mount && mount.dataset.editorInit !== 'true') {
@@ -374,31 +453,7 @@
                 mount.dataset.editorInit = 'true';
                 console.log('[index.html] Initializing editor from htmx:load for:', uuid);
                 window.sieveInitEditor?.(mount, uuid, mode);
-
-
-                // Focus Count tracking logic
-                if (window.__sieveFocusTimer) clearTimeout(window.__sieveFocusTimer);
-                if (window.__sieveDwellInterval) clearInterval(window.__sieveDwellInterval);
-                window.__sieveActiveDocUuid = uuid;
-                window.__sieveLastActivity = Date.now(); // tab switch is itself activity
-
-                var IDLE_THRESHOLD_MS = 3 * 60 * 1000; // 3 minutes
-
-                var bumpFocus = function() {
-                    if (window.__sieveActiveDocUuid !== uuid) return;
-                    if (Date.now() - window.__sieveLastActivity > IDLE_THRESHOLD_MS) return;
-                    fetch('/api/note/focus/' + encodeURIComponent(uuid), { method: 'POST' })
-                        .then(function() {
-                            var mp = document.getElementById('htmx-meta-panel');
-                            if (mp && window.getComputedStyle(mp).display !== 'none') {
-                                window.htmx.ajax('GET', metaPanelUrl(uuid), { target: '#htmx-meta-panel', swap: 'innerHTML' });
-                            }
-                        })
-                        .catch(console.error);
-                };
-
-                window.__sieveFocusTimer = setTimeout(bumpFocus, 30 * 1000);
-                window.__sieveDwellInterval = setInterval(bumpFocus, 5 * 60 * 1000);
+                window.__sieveArmFocusTracking(uuid);
             }
         }
     });
@@ -425,7 +480,51 @@
     // editor, then delegates to the Go binding. All library-switch entry points
     // (menu, chip) go through one of these two functions.
 
-    window.sieveSwitchLibrary = async function(path) {
+    // Shared library-switch refresh: updates all HTMX panels and reinitialises
+    // the editor in place — no location.reload() so WebKit never reinstalls its
+    // SIGSEGV handler, avoiding the "non-Go code set up signal handler" panic.
+    async function sieveApplyLibrarySwitch() {
+      // 1. Layout style overrides (sidebar/meta/toolbar/prompts visibility + widths).
+      await htmx.ajax('GET', '/api/library/switch-layout', { swap: 'none' });
+
+      // 2. Refresh all library-specific panels in parallel.
+      await Promise.all([
+        htmx.ajax('GET', '/api/sidebar',  { target: '#htmx-sidebar',   swap: 'innerHTML' }),
+        htmx.ajax('GET', '/api/tabs',     { target: '#htmx-tabbar',    swap: 'innerHTML' }),
+        htmx.ajax('GET', '/api/meta',     { target: '#htmx-meta-panel', swap: 'innerHTML' }),
+        htmx.ajax('GET', '/api/prompts',  { target: '#prompts-panel',  swap: 'innerHTML' }),
+      ]);
+
+      // 3. Reinitialise editor for the new library's active document.
+      var newUUID = await window.go.main.App.GetActiveUUID();
+      var mount = document.getElementById('tiptap-mount');
+      if (mount) {
+        if (newUUID) {
+          mount.setAttribute('data-uuid', newUUID);
+          mount.setAttribute('data-mode', 'wysiwyg');
+          // Claim the mount BEFORE init (not delete) so a late htmx:load — e.g. the
+          // redundant /api/tabs reload fired by the sidebar afterSettle handler —
+          // cannot re-enter sieveInitEditor while our async /api/editor/load is in
+          // flight. Deleting the flag opened a window for a second editor to mount
+          // on top of this one, leaving artefacts from the old document.
+          mount.dataset.editorInit = 'true';
+          window.sieveInitEditor?.(mount, newUUID, 'wysiwyg');
+        } else {
+          mount.setAttribute('data-uuid', '');
+          mount.dataset.editorInit = 'true';
+          // Route teardown through initEditor (uuid='') so it closes the previous
+          // document's editor WebSocket and resets editor.js module state. Calling
+          // __tiptap.destroy() directly skips closeEditorWs() and leaks the socket.
+          window.sieveInitEditor?.(mount, '', 'wysiwyg');
+        }
+        // Re-arm focus tracking for the new active doc (or clear it). The htmx:load
+        // handler that normally does this is suppressed here by editorInit='true'.
+        window.__sieveArmFocusTracking(newUUID || '');
+      }
+    }
+
+    // Shared job-wait + editor-flush preamble.
+    async function sieveWaitAndFlush() {
       var overlay = document.getElementById('pending-close-overlay');
       var overlayTitle = overlay && overlay.querySelector('.pending-close-title');
       var overlayBody  = overlay && overlay.querySelector('.pending-close-body');
@@ -442,37 +541,31 @@
       });
       if (window._editorSave) window._editorSave();
       await new Promise(function(r) { setTimeout(r, 300); });
+    }
+
+    window.sieveSwitchLibrary = async function(path) {
+      var overlay = document.getElementById('pending-close-overlay');
+      await sieveWaitAndFlush();
       try {
         var result = await window.go.main.App.SwitchLibrary(path);
-        if (result) location.reload();
+        if (result) await sieveApplyLibrarySwitch();
       } catch (e) {
         console.error('[sieve] SwitchLibrary failed', e);
-        if (overlay) overlay.style.display = 'none';
         alert('Could not switch to that library:\n' + e);
+      } finally {
+        if (overlay) overlay.style.display = 'none';
       }
     };
 
     window.sieveSelectLibrary = async function() {
       var overlay = document.getElementById('pending-close-overlay');
-      var overlayTitle = overlay && overlay.querySelector('.pending-close-title');
-      var overlayBody  = overlay && overlay.querySelector('.pending-close-body');
-      await new Promise(function(resolve) {
-        function check() {
-          if (window.__sieveActiveJobs > 0) {
-            if (overlay) overlay.style.display = 'flex';
-            if (overlayTitle) overlayTitle.textContent = 'Switching library…';
-            if (overlayBody)  overlayBody.textContent  = 'Waiting for AI tasks to finish';
-            setTimeout(check, 500);
-          } else { resolve(); }
-        }
-        check();
-      });
-      if (window._editorSave) window._editorSave();
-      await new Promise(function(r) { setTimeout(r, 300); });
+      await sieveWaitAndFlush();
       try {
         var path = await window.go.main.App.SelectVault();
-        if (path) location.reload();
+        if (path) await sieveApplyLibrarySwitch();
       } catch (e) {
+        console.error('[sieve] SelectVault failed', e);
+      } finally {
         if (overlay) overlay.style.display = 'none';
       }
     };
@@ -496,6 +589,11 @@
             document.getElementById('tb-image-input').click();
             return;
           }
+          if (btn.id === 'tb-toggle-mode-btn') {
+            document.dispatchEvent(new CustomEvent('sieve:toggle-mode'));
+            return;
+          }
+          
           if (btn.id === 'tb-clip-btn') {
             if (window._sieveOpenInternalize) window._sieveOpenInternalize();
             return;
@@ -504,6 +602,11 @@
             document.dispatchEvent(new CustomEvent('sieve:ai-explain'));
             return;
           }
+          if (btn.id === 'tb-ask-btn') {
+            document.dispatchEvent(new CustomEvent('sieve:ai-ask'));
+            return;
+          }
+
           if (btn.id === 'tb-ask-btn') {
             document.dispatchEvent(new CustomEvent('sieve:ai-ask'));
             return;

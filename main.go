@@ -264,10 +264,6 @@ func buildMenu(app *App) *menu.Menu {
 			wailsruntime.WindowExecJS(app.ctx, fmt.Sprintf(`window.sieveSwitchLibrary(%q)`, entryID))
 		})
 	}
-	if len(recents) > 0 {
-		recentMenu.AddSeparator()
-	}
-	recentMenu.AddText("Open Other Library…", nil, js("window.sieveSelectLibrary()"))
 	file.AddText("Create New Library…", nil,
 		js("window.go.main.App.CreateVault().then(function(p){ if(p) location.reload() })"))
 	//this shuld be Preferences in App menu
@@ -293,6 +289,7 @@ func buildMenu(app *App) *menu.Menu {
 	view.AddText("Toggle Sidebar", keys.CmdOrCtrl("\\"), js("htmx.ajax('POST','/api/session/sidebar/toggle',{swap:'none'})"))
 	view.AddText("Toggle Meta Panel", keys.Combo("i", keys.CmdOrCtrlKey, keys.ShiftKey), js("htmx.ajax('POST','/api/session/meta/toggle',{swap:'none'})"))
 	view.AddText("Toggle Prompts", keys.Combo("p", keys.CmdOrCtrlKey, keys.ShiftKey), js("htmx.ajax('POST','/api/session/prompts/toggle',{swap:'none'})"))
+	view.AddText("Toggle Line Numbers", keys.Combo("l", keys.CmdOrCtrlKey, keys.ShiftKey), js("htmx.ajax('POST','/api/session/linenumbers/toggle',{swap:'none'})"))
 	view.AddText("Toggle Editor Mode", keys.Combo("m", keys.CmdOrCtrlKey, keys.ShiftKey), js("document.dispatchEvent(new CustomEvent('sieve:toggle-mode'))"))
 	view.AddSeparator()
 	view.AddText("Toggle Search", keys.CmdOrCtrl("f"), js("document.dispatchEvent(new CustomEvent('sieve:toggle-search'))"))
@@ -327,6 +324,11 @@ func buildMenu(app *App) *menu.Menu {
 }
 
 func main() {
+	// On Linux, WebKit2GTK reinstalls its SIGSEGV handler without SA_ONSTACK
+	// after certain internal operations. This fixer goroutine re-adds the flag
+	// every 20ms so Go's signal trampoline keeps working as a chained handler.
+	startSignalFixer()
+
 	cliArg := ""
 	if len(os.Args) > 1 {
 		cliArg = os.Args[1]
