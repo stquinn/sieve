@@ -37,6 +37,11 @@ graph TD
 * **Pending States:** When the top code block runs, all downstream dependent blocks instantly enter a loading or pulsing state (e.g. glowing border).
 * **Narrative Lineage:** A user can follow the data transformation chronologically down the page, watching the document recalculate and redraw its diagrams automatically.
 
+
+## AI Chain re-evaluation
+Even without this pipoeline idea - there may be something about re-evaluating AI Blocks - when other sieve nodes change.  So right now each AI Block contains its own chain.  But maybe they should be effecitvely a linked list.  And each link is like a listener in the backend.  If one changes - then it triggers the next to do a "Replay" - therefore always up to date.  SO those kind of "Review" this document use cases - could be self fullfilling.
+
+Now anything automatic like this - could have issues - what is a singificant enough change to warrant the expense of re-evaluating an entiore block?
 ---
 
 ## 3. The HTTP/API Sieve (Inline API Client)

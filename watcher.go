@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,6 +51,9 @@ func (w *notesWatcher) addRecursive(root string) error {
 			return nil // skip unreadable entries, keep walking
 		}
 		if d.IsDir() {
+			if path != root && strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
 			if addErr := w.fw.Add(path); addErr != nil {
 				logger.Warn("notes watcher: could not watch dir", "path", path, "err", addErr)
 			}
