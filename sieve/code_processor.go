@@ -3,6 +3,7 @@ package sieve
 import (
 	"fmt"
 	"regexp"
+	"sieve/logger"
 	"strings"
 	"time"
 )
@@ -37,6 +38,8 @@ func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface
 		}
 		attrs[k] = v
 	}
+
+	logger.Debug("CodeBlockProcessor InitAttrs: initial attrs: %+v", attrs)
 	source, _ := attrs["source"].(string)
 	hint, _ := attrs["hint"].(string)
 	if lang, ok := detectByHeuristics(source, hint); ok {
@@ -56,13 +59,36 @@ func (p *CodeBlockProcessor) IsBlock(entries []ContentEntry) bool {
 			}
 			return true
 		}
+		if e.MIMEType == "sieve/diagram" && strings.TrimSpace(e.Content) != "" {
+			block := ParseFirstBlock(e.Content)
+			if block != nil && block.Attrs["diagramType"] == "mermaid" && strings.TrimSpace(block.Attrs["source"].(string)) != "" {
+				logger.Debug("MATCHED DIAGRAM BLOCK AS CODE")
+				return true
+			}
+		}
+		if _, ok := unfencedCodeContent(e); ok {
+			return true
+		}
 	}
-	_, ok := unfencedCodeContent(entries)
-	return ok
+	return false
 }
 
 func (p *CodeBlockProcessor) Transform(entries []ContentEntry, uuid string, blockID string) map[string]interface{} {
 	for _, e := range entries {
+		if e.MIMEType == "sieve/diagram" && strings.TrimSpace(e.Content) != "" {
+			block := ParseFirstBlock(e.Content)
+			if block != nil {
+				if block.Attrs["diagramType"] == "mermaid" && strings.TrimSpace(block.Attrs["source"].(string)) != "" {
+					logger.Debug("TRANSFORMING DIAGRAM BLOCK AS CODE")
+					return map[string]interface{}{
+						"language":        "mermaid",
+						"source":          strings.TrimSpace(block.Attrs["source"].(string)),
+						"detectionMethod": "Converted from diagram block",
+						"status":          BlockStatusComplete,
+					}
+				}
+			}
+		}
 		m := codeFenceRe.FindStringSubmatch(e.Content)
 		if m != nil {
 			lang := m[1]
@@ -74,9 +100,10 @@ func (p *CodeBlockProcessor) Transform(entries []ContentEntry, uuid string, bloc
 				"source":   strings.TrimSpace(m[2]),
 			}
 		}
-	}
-	if src, ok := unfencedCodeContent(entries); ok {
-		return map[string]interface{}{"source": src}
+
+		if src, ok := unfencedCodeContent(e); ok {
+			return map[string]interface{}{"source": src}
+		}
 	}
 	return nil
 }
@@ -86,26 +113,25 @@ func (p *CodeBlockProcessor) Transform(entries []ContentEntry, uuid string, bloc
 // structural cues (braces, semicolons, indentation). This restores the smart-paste
 // behaviour the pre-framework PasteMatch had: raw, unfenced source pasted into the
 // editor still becomes a code block. Language is left to heuristics/AI in InitAttrs.
-func unfencedCodeContent(entries []ContentEntry) (string, bool) {
-	for _, e := range entries {
-		if e.MIMEType != "" && e.MIMEType != "text/plain" {
-			continue
-		}
-		trimmed := strings.TrimSpace(e.Content)
-		// Skip empties and anything that is itself a fence (handled / intentionally
-		// skipped above, e.g. mermaid) so we never claim a fenced block as raw code.
-		if trimmed == "" || codeFenceRe.MatchString(trimmed) {
-			continue
-		}
-		if !strings.Contains(trimmed, "\n") {
-			continue
-		}
-		if _, ok := detectByHeuristics(trimmed, ""); ok {
-			return trimmed, true
-		}
-		if looksLikeCode(trimmed) {
-			return trimmed, true
-		}
+func unfencedCodeContent(entry ContentEntry) (string, bool) {
+
+	if entry.MIMEType != "" && entry.MIMEType != "text/plain" {
+		return "", false
+	}
+	trimmed := strings.TrimSpace(entry.Content)
+	// Skip empties and anything that is itself a fence (handled / intentionally
+	// skipped above, e.g. mermaid) so we never claim a fenced block as raw code.
+	if trimmed == "" || codeFenceRe.MatchString(trimmed) {
+		return "", false
+	}
+	if !strings.Contains(trimmed, "\n") {
+		return "", false
+	}
+	if _, ok := detectByHeuristics(trimmed, ""); ok {
+		return trimmed, true
+	}
+	if looksLikeCode(trimmed) {
+		return trimmed, true
 	}
 	return "", false
 }
