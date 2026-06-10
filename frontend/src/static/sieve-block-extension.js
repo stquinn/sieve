@@ -215,7 +215,7 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
               }))
 
               //now lets see if we clicked on something interesting within the block that we can extract data from. 
-              var { entries, extractSourceLabel } = extractContentEntryFromEditor( e, view);
+              var { entries, extractSourceLabel } = extractContentEntryFromEditor( e, editor);
 
               if(entries == undefined || !entries) {
                 //nothign more intersting than the sieve block itself was clicked on, 
@@ -445,7 +445,11 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
         }
 
         if (r && typeof r.getExtractionMenuItems === 'function') {
-          var items = r.getExtractionMenuItems(sourceNode, entries, defaultAction)
+          // Pass the operation kind so a renderer that emits its own labels can match
+          // the framework's verb: replace=true is an in-place UPGRADE (native → sieve),
+          // replace=false is additive EXTRACTION (a child of a sieve block — the source
+          // survives). Without this a renderer can't tell the two apart and mislabels.
+          var items = r.getExtractionMenuItems(sourceNode, entries, defaultAction, { replace: replace })
           if (items && items.length) {
             items.forEach(function(item) { extraItems.push(item) })
             return
@@ -513,17 +517,39 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
 
   T.registerSieveRenderer = registerSieveRenderer
   T.getSieveNodes         = getSieveNodes
+  // serializeNode turns a single block node into markdown via the editor's OWN
+  // markdown serialiser. The serialiser sizes code fences longer than any backtick
+  // run in the content, so this is the only safe way to render a node to a fence —
+  // never hand-build ```. The node is wrapped in a fresh doc so the serialiser has a
+  // valid root. Returns '' on failure (e.g. a node the serialiser can't handle).
+  function serializeNode(editor, node) {
+    try {
+      var wrapper = editor.state.schema.topNodeType.create(null, node)
+      return (editor.storage.markdown.serializer.serialize(wrapper) || '').trim()
+    } catch (err) {
+      console.error('[sieve] serializeNode failed', err)
+      return ''
+    }
+  }
+
   T.detectAndAppendExtractions = detectAndAppendExtractions
   T.extractContentEntryFromEditor = extractContentEntryFromEditor
+  T.serializeNode = serializeNode
 
 })()
-function extractContentEntryFromEditor(event, editorView) {
+// extractContentEntryFromEditor inspects whatever DOM element was clicked (event.target)
+// and, if it sits on something extractable, returns the ContentEntry array detection
+// needs. It is shared by two callers: the Sieve-block NodeView (real DOM event) and the
+// editor context menu (a synthetic { target: elementFromPoint(x,y) } — see context-menu.js).
+// It therefore reads ONLY event.target; nothing else off the event.
+function extractContentEntryFromEditor(event, editor) {
   var entries = null;
   var extractSourceLabel = "";
+  var view = editor.view;
 
   //an image would be interesting to extract, and we can get a data-uri for it if needed.
   var closestImg = event.target.tagName === 'IMG' ? event.target : (event.target.closest ? event.target.closest('img') : null);
-  if (closestImg && closestImg.src && editorView.dom.contains(closestImg)) {
+  if (closestImg && closestImg.src && view.dom.contains(closestImg)) {
     //not sure this is the right MIME type to use for an image
     entries = [{ mimeType: 'sieve/image', content: closestImg.src }];
     extractSourceLabel = 'image';
@@ -531,26 +557,34 @@ function extractContentEntryFromEditor(event, editorView) {
 
   // Anchor click
   var closestA = event.target.tagName === 'A' ? event.target : (event.target.closest ? event.target.closest('a') : null);
-  if (!entries && closestA && closestA.href && editorView.dom.contains(closestA)) {
+  if (!entries && closestA && closestA.href && view.dom.contains(closestA)) {
     entries = [{ mimeType: 'text/uri-list', content: closestA.href }];
     extractSourceLabel = 'link';
   }
 
   if (!entries) {
-    var textContent = '';
     var closestPre = event.target.closest && event.target.closest('pre');
-    if (closestPre && editorView.dom.contains(closestPre)) {
-      var lang = '';
-      var codeEl = closestPre.querySelector('code') || closestPre; (codeEl.className || '').split(' ').forEach(function (cls) {
-        if (cls.indexOf('language-') === 0) lang = cls.slice(9);
-      });
-      textContent = '```' + lang + '\n' + codeEl.textContent + '\n```';
-      extractSourceLabel = lang === 'mermaid' ? 'diagram' : 'code';
-    }
-    
+    if (closestPre && view.dom.contains(closestPre)) {
+      // Resolve the clicked <pre> back to its ProseMirror codeBlock node so the
+      // markdown serialiser can fence it correctly (nested ``` runs and all). A
+      // Sieve block's rendered <pre> is NodeView DOM, not a real codeBlock node — it
+      // resolves to no codeBlock here and is left to asContentEntry / the sieve/<kind>
+      // entry instead, which is the correct path for those.
+      var codeNode = null;
+      try {
+        var $pos = view.state.doc.resolve(view.posAtDOM(closestPre, 0));
+        for (var d = $pos.depth; d >= 0; d--) {
+          if ($pos.node(d).type.name === 'codeBlock') { codeNode = $pos.node(d); break; }
+        }
+      } catch (err) { /* pre isn't a mappable PM position — fall through */ }
 
-    if (textContent) {
-      entries = [{ mimeType: 'text/plain', content: textContent }];
+      if (codeNode) {
+        var fenced = window.TipTap.serializeNode(editor, codeNode);
+        if (fenced) {
+          entries = [{ mimeType: 'text/plain', content: fenced }];
+          extractSourceLabel = codeNode.attrs.language === 'mermaid' ? 'diagram' : 'code';
+        }
+      }
     }
   }
   return { entries, extractSourceLabel };

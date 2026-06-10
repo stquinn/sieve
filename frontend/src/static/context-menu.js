@@ -262,59 +262,31 @@
       document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
     }})
 
-    // Native node → Sieve block conversion (in-place UPGRADE). We borrow the exact
-    // pattern Sieve-block extraction uses: classify the node, build a ContentEntry,
-    // and let the backend processors decide which kinds it can become. A native node
-    // IS its own content, so converting REPLACES it (replaceSource) — unlike
-    // extraction from a Sieve block, whose content is a fragment that must survive.
-    // Detection (all processors) decides the targets; we only describe the source.
-    var convEntries = null
-    var convLabel = ''
-    
-    window.TipTap  && window.TipTap.detectAndAppendExtractions({
-      sourceNode: targetNode,
-      sourceKind: targetNode ? targetNode.type.name : null,
-      entries: convEntries,
-      sourcePos: targetPos,
-      extractSourceLabel: convLabel,
-      replaceSource: true
-    })
-
-    if (targetNode && targetNode.type.name === 'codeBlock') {
-      // Never hand-build the fence — let the node serialise itself through the
-      // markdown storage serialiser, which sizes the fence correctly even when the
-      // content contains its own ``` runs.
-      try {
-        var wrapper = editor.state.schema.topNodeType.create(null, targetNode)
-        var fenced = (editor.storage.markdown.serializer.serialize(wrapper) || '').trim()
-        if (fenced) {
-          convEntries = [{ mimeType: 'text/plain', content: fenced }]
-          convLabel = 'code'
+    // Native node → Sieve block conversion (in-place UPGRADE). A native node IS its
+    // own content, so converting REPLACES it (replaceSource:true) — unlike extraction
+    // from a Sieve block, whose content is a fragment that survives. We reuse the exact
+    // extraction path the Sieve-block NodeView uses: extractContentEntryFromEditor reads
+    // whatever DOM element was clicked. The context menu has no DOM event, but it has the
+    // click coords, so we reconstruct the same target with elementFromPoint and pass a
+    // synthetic { target } — the function reads nothing else off the event. Detection
+    // (all processors) decides the conversion targets; we only describe the source.
+    var nativeConvertible = { codeBlock: true, image: true }
+    if (targetNode && nativeConvertible[targetNode.type.name] && targetPos !== null &&
+        x != null && y != null && window.TipTap && window.TipTap.extractContentEntryFromEditor) {
+      var domEl = document.elementFromPoint(x, y)
+      if (domEl) {
+        var res = window.TipTap.extractContentEntryFromEditor({ target: domEl }, editor)
+        if (res && res.entries) {
+          window.TipTap.detectAndAppendExtractions({
+            sourceNode: targetNode,
+            sourceKind: targetNode.type.name,
+            entries: res.entries,
+            sourcePos: targetPos,
+            extractSourceLabel: res.extractSourceLabel,
+            replaceSource: true
+          })
         }
-      } catch (err) {
-        console.error('[context-menu] failed to serialise code block for conversion', err)
       }
-    } else if (targetNode && targetNode.type.name === 'image' && targetNode.attrs.src) {
-      // A dumb native image (e.g. from imported markdown). Hand its URL to detection
-      // as text/uri-list; for inline base64 send the data URI under its image mime so
-      // SmartImageProcessor recognises it.
-      var src = targetNode.attrs.src
-      var mime = 'text/uri-list'
-      var dataMatch = /^data:([^;]+)/.exec(src)
-      if (dataMatch) mime = dataMatch[1]
-      convEntries = [{ mimeType: mime, content: src }]
-      convLabel = 'image'
-    }
-
-    if (convEntries && window.TipTap && window.TipTap.detectAndAppendExtractions) {
-      window.TipTap.detectAndAppendExtractions({
-        sourceNode: targetNode,
-        sourceKind: targetNode.type.name,
-        entries: convEntries,
-        sourcePos: targetPos,
-        extractSourceLabel: convLabel,
-        replaceSource: true
-      })
     }
 
     // Delete — only for block-level native nodes (codeBlock, table).

@@ -42,17 +42,21 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
       return [{ mimeType: 'text/uri-list', content: node.attrs.source }]
     },
 
-    getExtractionMenuItems: function(sourceNode, entries, defaultAction) {
+    getExtractionMenuItems: function(sourceNode, entries, defaultAction, opts) {
       var IC = window.SieveIcons || {}
+      // "Upgrade" only when REPLACING a native source in place. Extracting a link out
+      // of an existing sieve block is additive — the source block survives — so it must
+      // read "Extract", matching the framework's verb for every other target kind.
+      var verb = (opts && opts.replace) ? 'Upgrade to' : 'Extract as'
       return [
         {
           icon: IC['web-clip'] || IC.code,
-          label: 'Upgrade to Web Clip (Fetch)',
+          label: verb + ' Web Clip (Fetch)',
           action: function() { defaultAction({ mode: 'fetch' }) }
         },
         {
           icon: IC['web-clip'] || IC.code,
-          label: 'Upgrade to Web Clip (Summarise)',
+          label: verb + ' Web Clip (Summarise)',
           action: function() { defaultAction({ mode: 'summarise' }) }
         }
       ]
