@@ -359,7 +359,8 @@
   }
 
   function openEditorWs(uuid) {
-    if (editorWs) { editorWs.close(); editorWs = null }
+    closeEditorWs()
+
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
     var host = location.host
     if (window.__sieveDevServerPort) {
@@ -368,12 +369,33 @@
     editorWs = new WebSocket(proto + '//' + host + '/api/ws?uuid=' + encodeURIComponent(uuid))
 
     editorWs.onopen = function () {
+      console.log('[editor] ws connected')
+      reconnectDelay = 1000
+      lastPong = Date.now()
+      
       editorWsPending.forEach(function (m) { editorWs.send(m) })
       editorWsPending = []
+
+      clearInterval(pingInterval)
+      pingInterval = setInterval(function() {
+        if (Date.now() - lastPong > 45000) {
+          console.warn('[editor] ws: watchdog timeout, forcing reconnect')
+          if (editorWs) editorWs.close()
+          return
+        }
+        if (editorWs && editorWs.readyState === WebSocket.OPEN) {
+          editorWs.send(JSON.stringify({ type: 'ping' }))
+        }
+      }, 15000)
     }
 
     editorWs.onmessage = function (event) {
       var msg = JSON.parse(event.data || '{}')
+      if (msg.type === 'pong') {
+        lastPong = Date.now()
+        return
+      }
+
       var awaiter = editorWsAwaiters[msg.type]
       if (awaiter) {
         delete editorWsAwaiters[msg.type]
@@ -403,11 +425,37 @@
       }
     }
 
+    editorWs.onclose = function () {
+      clearInterval(pingInterval)
+      console.warn('[editor] ws closed. Reconnecting in ' + reconnectDelay + 'ms...')
+      
+      clearTimeout(reconnectTimer)
+      reconnectTimer = setTimeout(function() {
+        reconnectDelay = Math.min(reconnectDelay * 2, 30000)
+        openEditorWs(uuid)
+      }, reconnectDelay)
+    }
+
     editorWs.onerror = function (err) { console.error('[editor] ws error', err) }
   }
 
+  var editorWs = null
+  var editorWsPending = []
+  var editorWsAwaiters = {}
+  
+  var reconnectTimer = null
+  var pingInterval = null
+  var reconnectDelay = 1000
+  var lastPong = Date.now()
+
   function closeEditorWs() {
-    if (editorWs) { editorWs.close(); editorWs = null }
+    clearTimeout(reconnectTimer)
+    clearInterval(pingInterval)
+    if (editorWs) { 
+      editorWs.onclose = null
+      editorWs.close()
+      editorWs = null 
+    }
     editorWsPending = []
     editorWsAwaiters = {}
   }
@@ -442,7 +490,16 @@
   document.addEventListener('sieve:create-block', function (e) {
     if (!currentUuid || currentUuid.startsWith('prompt:') || !e.detail.kind) return
     sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
-    wsSend({ type: 'create-block', kind: e.detail.kind, attrs: e.detail.attrs || {}, uuid: currentUuid })
+    var attrs = e.detail.attrs || {}
+    if (e.detail.kind === 'diagram' && !attrs.source) {
+      attrs.mode = 'edit'
+    }
+    wsSend({ type: 'create-block', kind: e.detail.kind, attrs: attrs, uuid: currentUuid })
+  })
+
+  // Explicitly capture insertion position for async flows (like image upload)
+  document.addEventListener('sieve:capture-insert-pos', function () {
+    sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
   })
 
   // NodeViews fire sieve:block-update when the user edits block content.
@@ -488,9 +545,9 @@
       attrs: attrs,
     })
 
-    if (!parsed.source && msg.kind === 'code') {
+    if (!parsed.source && (msg.kind === 'code' || msg.kind === 'diagram')) {
       setTimeout(function () {
-        var el = document.querySelector('[data-block-id="' + (msg.id || parsed.id) + '"] .sieve-block__edit')
+        var el = document.querySelector('[data-id="' + (msg.id || parsed.id) + '"] .sieve-block__edit')
         if (el) el.focus()
       }, 50)
     }
@@ -897,6 +954,8 @@
       var ctx = precomputedCtx || window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
       var refId = (ctx && ctx.blockRef) || 'doc'
       var blockType = type === 'explain' ? 'EXPLAIN' : 'ASK'
+
+      sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
 
       flushSave().then(function () {
         wsSend({

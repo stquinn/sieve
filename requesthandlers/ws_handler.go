@@ -107,6 +107,8 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 		}
 
 		switch msg.Type {
+		case "ping":
+			writeMsg(map[string]string{"type": "pong"})
 		case "doc-update":
 			h.handleDocUpdate(uuid, raw)
 		case "block-update":

@@ -586,6 +586,7 @@
             return;
           }
           if (btn.id === 'tb-image-btn') {
+            document.dispatchEvent(new CustomEvent('sieve:capture-insert-pos'));
             document.getElementById('tb-image-input').click();
             return;
           }
@@ -619,6 +620,8 @@
           // Block inserts (code, diagram only — clip handled above)
           var insert = btn.dataset.insert;
           if (insert) {
+            var editor = window.__tiptap;
+            if (editor) editor.chain().focus().run();
             document.dispatchEvent(new CustomEvent('sieve:create-block', { detail: { kind: insert } }));
             return;
           }
@@ -653,8 +656,20 @@
             case 'deleteTable':     c.deleteTable().run(); break;
           }
         }
-        document.getElementById('editor-toolbar')?.addEventListener('click', handleToolbarClick);
-        document.getElementById('table-toolbar')?.addEventListener('click', handleToolbarClick);
+        var editorToolbar = document.getElementById('editor-toolbar');
+        if (editorToolbar) {
+          editorToolbar.addEventListener('mousedown', function(e) {
+            if (e.target.closest('button,[data-cmd],[data-insert],[data-ai]')) e.preventDefault();
+          });
+          editorToolbar.addEventListener('click', handleToolbarClick);
+        }
+        var tableToolbar = document.getElementById('table-toolbar');
+        if (tableToolbar) {
+          tableToolbar.addEventListener('mousedown', function(e) {
+            if (e.target.closest('button,[data-cmd]')) e.preventDefault();
+          });
+          tableToolbar.addEventListener('click', handleToolbarClick);
+        }
 
         // ── Toolbar image upload ────────────────────────────────────────────────
         document.getElementById('tb-image-input')?.addEventListener('change', function(e) {
