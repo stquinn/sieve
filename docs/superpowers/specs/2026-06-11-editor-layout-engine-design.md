@@ -71,6 +71,8 @@ Conversion from leaf → container is **per-kind work** (define content schema, 
 
 **Payoff:** this one substrate piece retires two of the three pains — consistency *and* rock-solid selection — because prose-shaped islands become transparent native structure.
 
+**Precedent & succession — `blockRef`.** A partial container already exists: `BlockNode` / `blockRef` (`extensions.js:74`), the legacy **block anchor** (`[!block] id="…" … [!block-end]`). It declares `content: 'block+'` and a `contentDOM`, but it is the *broken* attempt — fragile to parse (the markdown-it `updateDOM` while-loop, `extensions.js:108+`), and it **cannot nest** (anchor-in-anchor breaks). It is slated for retirement. The proper container node built here is its **successor**: same goal (a block that holds blocks), done correctly (clean schema, robust YAML-fence serialization, nests). **This column/container work is therefore the precursor that lets the legacy block anchor make way** — retiring `blockRef` onto the new substrate is a first-class downstream outcome, not a side quest. Do **not** extend the `[!…]` parser; build the new container fresh.
+
 ---
 
 ## 5. Interaction substrate (the "rock solid" core)
@@ -143,6 +145,8 @@ columns:
 
 **Why this over `:::` fenced-divs:** consistency. A `column-row` degrades exactly like every other Sieve block (a non-Sieve reader sees a `` ```column-row `` code block), it's one fence convention, it's a single self-contained `serialisedForm` that the existing `InjectBlocks` and `sieve/<kind>` clipboard already handle, and nesting is via unambiguous YAML indentation rather than fragile `::::` colon-escalation. The only thing `:::` did better — free flatten-for-dumb-readers — is moot because Sieve mediates every export anyway (see §9).
 
+**Why not the `[!…]` / `blockRef` thin-wrapper (the readable-children alternative):** it would reuse the legacy block-anchor marker syntax (`[!block] … [!block-end]`), which *does* keep children readable — but it is parsed by the fragile `updateDOM` loop, **cannot nest**, and is being **retired** (§4). Building columns on it would extend a doomed mechanism. The YAML fence rides the **robust** path (js-yaml + `serialisedForm` + `InjectBlocks`) and avoids that parser entirely; the scalar-prose rule (above) buys back the readability without the fragility. Robustness + acceptable SNR beats the marker-wrapper's readability + fragility.
+
 > **Open spike (Stage 2):** the inner-fence mechanism is proven for one level (diagram = fenced code in YAML). Columns embed *arbitrary* blocks (including other fenced blocks). Confirm multi-level YAML `|` nesting composes 2–3 deep before banking on it.
 
 ---
@@ -161,7 +165,13 @@ References cause spooky-action-at-a-distance. The lineage system makes it legibl
 - **Always-on:** a faint "participates in lineage" tick, and **dirty-glow** on stale blocks (safety-critical — a consumer whose cached value differs from its source's current output).
 - **On hover/select:** full bracket-chains + neighbour highlight; **edited node + immediate neighbours bright, deeper transitive staleness dim** (so it never becomes a "Christmas tree", §107).
 
-**Structural document map (not a minimap):** one cell per block, coloured by flavour, column-rows shown as side-by-side cells, **off-screen dirty-glow** (the "five screens away went stale" signal), faint lineage edges, a viewport box, click-to-jump. It is the macro end of the same lineage vocabulary and depends on flavour + staleness + reconciler — hence Stage 4.
+**Structural document map (not a minimap):** one cell per block, coloured by flavour, column-rows shown as side-by-side cells, **off-screen dirty-glow** (the "five screens away went stale" signal), faint lineage edges, a viewport box, click-to-jump. It is the macro end of the same lineage vocabulary and depends on flavour + staleness + reconciler.
+
+**Two-phase delivery (the gutter does NOT wait on the reconciler):** the *edge data already exists* — the `ref` attribute is a comma-separated list of upstream block IDs (e.g. `ai-block-renderer.js:31`), already traversed Go-side by `ai_block_processor.go` (`strings.Split(ref, ",")`, `expandAIBlockRefs`). So:
+- **3a — Lineage rail v0 (no reconciler):** read each block's `ref` chain, resolve the IDs to positions, draw the bracket-chains in the Stage-1 gutter. A real, static "graph of linked blocks." *Honest gap:* today `ref` lives mostly on AI blocks (`default:'doc'`), so the graph is **sparse** until other kinds carry refs — but the rendering is complete and the data source updates as the ref model grows. Ships right after Stage 1.
+- **3b — Lineage live (needs reconciler):** dirty-glow propagation, the map's off-screen staleness, cascade tiers. This is the part that genuinely waits on the reconciler / reference-graph project (§11).
+
+The rendering is decoupled from how edges are stored, so 3a survives any later rework of the `ref` model.
 
 ---
 
@@ -185,7 +195,10 @@ The deep enabler (containers) is isolated; the visible win (chrome/substrate) la
 - **Stage 1 — Chrome + reorder + leaf-world substrate.** Decoration-based gutter/handle on every top-level node; drag-reorder; gap cursor; snap-at-island selection; generalized `sieve/<kind>` multi-block clipboard. *No schema change.* Immediate, visible "consistent + solid" win, and §11's "do the substrate spike first."
 - **Stage 2 — Container substrate (the defect fix).** Container node shape + `contentDOM`; the `` ```column-row `` serialization (Shape 1, scalar prose) + the multi-level YAML `|` safety spike; refined "traverse-containers / snap-atoms" selection. Unlocks copy/paste for prose-shaped blocks.
 - **Stage 3 — Columns.** `column-row` NodeView, resize grab-handle, the three creation gestures (B→A→C), depth-cap policy, cement linearise rung.
-- **Stage 4 — Lineage rail + document map.** Gutter bracket-chains (hybrid), dirty-glow propagation (couples to the reconciler / reference graph from brainstorm 2), structural document map.
+- **Stage 4a — Lineage rail v0 (ref-chain graph, no reconciler).** Populate the Stage-1 gutter with bracket-chains drawn from the existing `ref` chains (§8). Static "graph of linked blocks"; sparse until more kinds carry `ref`, but real and shippable. **Can land right after Stage 1** — it only needs the gutter (Stage 1) and the existing `ref` data, not containers or the reconciler.
+- **Stage 4b — Lineage live + document map.** Hybrid dirty-glow propagation, the map's off-screen staleness, cascade tiers, structural document map. Couples to the reconciler / reference graph (brainstorm 2 §3–4) — the only stage gated on that separate work.
+
+**Cross-cutting outcome:** once Stage 2's container substrate exists, the legacy block anchor (`blockRef`, §4) can be migrated onto it and retired. Schedule that as a follow-on after Stage 3 (when the container is proven by columns); it is enabled by, but not part of, this layout rebuild.
 
 ---
 
