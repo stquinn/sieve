@@ -136,6 +136,7 @@
         T.StarterKit.configure({ link: false, codeBlock: false, history: { depth: 10000, newGroupDelay: 500 } }),
         T.Placeholder.configure({ placeholder: function (p) { return p.editor.isEmpty ? 'Start writing\u2026' : '' } }),
         T.BlockNode,
+        T.BlockChrome,
         T.Table.configure({ resizable: false }),
         T.TableRow,
         T.TableHeader,
