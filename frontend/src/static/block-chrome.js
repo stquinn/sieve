@@ -109,18 +109,20 @@
     // ── mousedown: select the entire top-level node ────────────────────
     handle.addEventListener('mousedown', function (e) {
       e.preventDefault()
-      var pos = (typeof getPos === 'function') ? getPos() : offset
+      // Always use `offset` (the node's opening position), not getPos() which
+      // returns offset+1 (inside the node — the widget's own position).
       var editor = window.__tiptap
       if (editor) {
-        editor.commands.setNodeSelection(pos)
+        editor.commands.setNodeSelection(offset)
         view.focus()
       }
     })
 
     // ── dragstart: record source pos ───────────────────────────────────
     handle.addEventListener('dragstart', function (e) {
-      var pos = (typeof getPos === 'function') ? getPos() : offset
-      dragState = { from: pos }
+      // Always use `offset` (node start), not getPos() (widget position = offset+1).
+      // drop handler calls doc.nodeAt(from) which must resolve to the whole block.
+      dragState = { from: offset }
       e.dataTransfer.effectAllowed = 'move'
       e.dataTransfer.setData('application/x-sieve-block', String(pos))
       // Set drag image to the block's DOM row
@@ -332,7 +334,13 @@
             // ── DOM event handlers ─────────────────────────────────────────
             handleDOMEvents: {
 
-              // dragover: update indicator to nearest boundary
+              // dragstart: claim the event when our handle initiated it, so PM's
+            // built-in NodeSelection drag doesn't also fire and double-insert.
+            dragstart: function (view, event) {
+              return dragState != null
+            },
+
+            // dragover: update indicator to nearest boundary
               dragover: function (view, event) {
                 if (!dragState) return false
                 event.preventDefault()
