@@ -21,6 +21,9 @@
         #htmx-meta-panel { display: {{if .ShowMeta}}flex{{else}}none{{end}}; }
         .meta-handle { display: {{if .ShowMeta}}block{{else}}none{{end}}; }
     </style>
+    <script>
+        window.initAskPanelPinned = {{if .ShowAskPanel}}true{{else}}false{{end}};
+    </script>
     <style id="layout-overrides-prompts">
         #prompts-panel { display: {{if .ShowPrompts}}block{{else}}none{{end}}; }
         .prompts-handle { display: {{if .ShowPrompts}}block{{else}}none{{end}}; }
@@ -162,11 +165,10 @@
                         <div id="tiptap-mount" class="editor-panel" data-uuid="{{.ActiveUUID}}" data-mode="wysiwyg" style="flex: 1; min-height: 0; display: flex; flex-direction: column;"></div>
                     </div>
 
-                    <!-- Ask AI panel — slides in/out as a flex child of the editor column -->
-                    <div id="ask-panel" class="ask-panel">
+                    <!-- Ask AI panel — persistent at the bottom of the editor column -->
+                    <div id="ask-panel" class="ask-panel {{if .ShowAskPanel}}is-open{{end}}">
                         <div class="ask-popup__header">
-                            <span class="ask-popup__label"></span>
-                            <button class="ask-popup__close" title="Close (Esc)">&#x2715;</button>
+                            <span class="ask-popup__label">Ask About Document</span>
                         </div>
                         <textarea class="ask-popup__input" placeholder="Ask a question&#x2026; (Enter to send, Shift+Enter for new line)" rows="3" spellcheck="false"></textarea>
                         <div class="ask-popup__footer">

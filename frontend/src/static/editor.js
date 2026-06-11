@@ -344,6 +344,9 @@
       },
       onSelectionUpdate: function (p) {
         syncToolbar(p.editor)
+        if (typeof updateAskPanelLabelLive === 'function') {
+          updateAskPanelLabelLive(p.editor)
+        }
       },
       onTransaction: function (p) {
         syncToolbar(p.editor)
@@ -366,6 +369,14 @@
 
     currentEditor = editor
     window.__tiptap = editor
+
+    // Catch focus events on inner form controls (like Sieve Code block textareas)
+    // where ProseMirror's native onSelectionUpdate won't fire.
+    editor.view.dom.addEventListener('focusin', function() {
+      if (typeof updateAskPanelLabelLive === 'function') {
+        updateAskPanelLabelLive(editor)
+      }
+    })
   }
 
   // ── Markdown mode ─────────────────────────────────────────────────────────────
@@ -736,21 +747,31 @@
 
   // ── Ask panel — wires the structural #ask-panel div in index.html ───────────
 
+  var pendingAskCtx = null
+  var isAskPanelPinned = window.initAskPanelPinned || false
+  var askLabelTimeout = null
+
+  document.addEventListener('sieve:ask-panel-toggled', function(e) {
+    isAskPanelPinned = e.detail
+    var panel = document.getElementById('ask-panel')
+    if (panel) {
+      if (isAskPanelPinned) panel.classList.add('is-open')
+      else if (document.activeElement !== panel.querySelector('.ask-popup__input')) panel.classList.remove('is-open')
+    }
+  })
+
   function createAskDialog() {
     var panel = document.getElementById('ask-panel')
     if (!panel) return null
 
     var textarea = panel.querySelector('.ask-popup__input')
-    var closeBtn = panel.querySelector('.ask-popup__close')
     var sendBtn  = panel.querySelector('.ask-popup__send')
 
     function closePanel() {
-      panel.classList.remove('is-open')
-      // Return focus to the editor so typing resumes immediately
+      if (!isAskPanelPinned) panel.classList.remove('is-open')
       if (currentEditor) currentEditor.view.focus()
     }
 
-    closeBtn.addEventListener('click', closePanel)
     sendBtn.addEventListener('click', function () { doAsk(textarea, panel) })
 
     textarea.addEventListener('keydown', function (e) {
@@ -761,19 +782,33 @@
     return panel
   }
 
-  var pendingAskCtx = null
+  function updateAskPanelLabelLive(editor) {
+    if (!askDialog) return
+    // Only update if it's visible to save DOM writes
+    if (!askDialog.classList.contains('is-open')) return
+    if (askLabelTimeout) clearTimeout(askLabelTimeout)
+    askLabelTimeout = setTimeout(function() {
+      var label = askDialog.querySelector('.ask-popup__label')
+      var ctxLabel = window.TipTap.getAiTargetLabel(editor, currentMode === 'markdown')
+      label.textContent = ctxLabel === 'Follow-up' ? 'Ask Follow-up' : 'Ask About ' + ctxLabel
+    }, 100)
+  }
 
   function openAskPopup(precomputedCtx) {
     if (!askDialog) return
-    pendingAskCtx = precomputedCtx || window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
-    var label    = askDialog.querySelector('.ask-popup__label')
     var textarea = askDialog.querySelector('.ask-popup__input')
-    var ctxLabel = (pendingAskCtx && pendingAskCtx.contextLabel) || 'Document'
+    
+    // If the panel is already open and focused, toggle back to editor
+    if (askDialog.classList.contains('is-open') && document.activeElement === textarea) {
+      if (!isAskPanelPinned) askDialog.classList.remove('is-open')
+      if (currentEditor) currentEditor.view.focus()
+      return
+    }
 
-    label.textContent = ctxLabel === 'Follow-up' ? 'Ask Follow-up' : 'Ask About ' + ctxLabel
-
-    textarea.value = ''
+    pendingAskCtx = precomputedCtx || null
     askDialog.classList.add('is-open')
+    if (currentEditor) updateAskPanelLabelLive(currentEditor)
+    
     setTimeout(function() {
       textarea.focus()
     }, 50)
@@ -1013,7 +1048,14 @@
 
   function doAsk(textarea, panel) {
     var val = textarea.value.trim()
-    if (val) { runAiJob('ask', val, pendingAskCtx); pendingAskCtx = null; panel.classList.remove('is-open') }
+    if (val) { 
+      var ctx = pendingAskCtx || window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
+      runAiJob('ask', val, ctx)
+      pendingAskCtx = null
+      textarea.value = ''
+      if (!isAskPanelPinned) panel.classList.remove('is-open')
+      if (currentEditor) currentEditor.view.focus()
+    }
   }
 
   // ── AI jobs ───────────────────────────────────────────────────────────────────
