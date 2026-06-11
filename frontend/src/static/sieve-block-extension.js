@@ -60,7 +60,10 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
     supportsEmbedding: { default: false, parseHTML: function (el) { return el.getAttribute('data-supports-embedding') === 'true' } },
   }
 
-  var DEFAULT_NODE_CONFIG = { atom: true, selectable: true, draggable: true, group: 'block', inline: false }
+  // draggable:false — reordering is done via the custom gutter handle (block-chrome.js),
+  // not ProseMirror's native node drag.  Native node-drag on a draggable block stole
+  // textarea/text-selection gestures (a drag inside a code textarea moved the whole block).
+  var DEFAULT_NODE_CONFIG = { atom: true, selectable: true, draggable: false, group: 'block', inline: false }
 
   // ── Node factory ─────────────────────────────────────────────────────────────
 
@@ -233,6 +236,39 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
               }
             })
           }
+
+          // ── Central stopEvent: shield interactive sub-elements from ProseMirror ──
+          // Now that every sieve block is selectable+draggable (uniform schema),
+          // we must stop clicks/typing inside a block's own form controls from
+          // reaching ProseMirror — otherwise a click in a code textarea would
+          // create/clear a NodeSelection and fight the editor caret.  Renderers
+          // may also define their own stopEvent (e.g. key handling); we compose
+          // with it rather than replacing it.
+          var rendererStopEvent = view.stopEvent
+          view.stopEvent = function (event) {
+            var t = event.target
+            // 1. Modifier keyboard shortcuts (Ctrl/Cmd + C/V/S/E…) must reach the
+            //    main editor keymap — never stop them here.
+            if ((event.type === 'keydown' || event.type === 'keyup' || event.type === 'keypress') &&
+                (event.ctrlKey || event.metaKey)) {
+              return false
+            }
+            // 2. Drag handle / gutter chrome → let ProseMirror see it (drag-reorder,
+            //    whole-block selection are wired off these).
+            if (t && t.closest && t.closest('.block-chrome-host, .block-chrome-handle, .drag-handle')) {
+              return false
+            }
+            // 3. Interactive form controls inside the block → shield from PM so
+            //    editing/clicking them doesn't disturb the document selection.
+            if (t && t.closest &&
+                t.closest('textarea, input, button, select, option, a[href], .CodeMirror, .cm-editor')) {
+              return true
+            }
+            // 4. Otherwise defer to the renderer's own stopEvent (if any), else let PM handle it.
+            if (typeof rendererStopEvent === 'function') return rendererStopEvent.call(view, event)
+            return false
+          }
+
           return view
         }
       },

@@ -167,9 +167,17 @@
         handleDOMEvents: {
           copy: function(view, event) {
             var sel = view.state.selection
+            // Authoritative selection range: our own block range (shift-click /
+            // gutter drag) when set, else the live PM selection.  { from, to,
+            // active, isBlockRange }.
+            var er = (window.TipTap && window.TipTap.getBlockSelectionRange)
+              ? window.TipTap.getBlockSelectionRange(view)
+              : { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false }
 
             // ── Smart image copy ────────────────────────────────────────────────
-            if (sel && sel.node && sel.node.type.name === 'sieve-smart-image') {
+            // Only for a lone image NodeSelection — never when a multi-block range
+            // is active (then the image is just one item in the slice).
+            if (!er.isBlockRange && sel && sel.node && sel.node.type.name === 'sieve-smart-image') {
               var src = sel.node.attrs.src
               if (!src) return false
               if (src.startsWith('http://') || src.startsWith('https://')) {
@@ -191,61 +199,96 @@
               if (activeEl.selectionStart !== activeEl.selectionEnd) return false
             }
 
-            // Collect top-level nodes that overlap the selection.
-            // Also handles the case where PM's selection is an empty cursor sitting
-            // at a sieve block boundary (selectable:false blocks like code/diagram
-            // don't create a NodeSelection on click, but the cursor lands at offset).
+            // Sub-block highlight: if the user highlighted text *within a single
+            // block* (a rendered card's content), copy exactly that — not the whole
+            // block.  (Textarea/input selections are handled by the guard above.)
+            var domSel = window.getSelection && window.getSelection()
+            if (domSel && !domSel.isCollapsed && String(domSel).trim()) {
+              var blkOf = function (n) {
+                var el = n && (n.nodeType === 1 ? n : n.parentElement)
+                while (el && el !== view.dom) {
+                  if (el.classList && el.classList.contains('block-with-chrome')) return el
+                  el = el.parentElement
+                }
+                return null
+              }
+              var ab = blkOf(domSel.anchorNode)
+              if (ab && ab === blkOf(domSel.focusNode)) return false   // native sub-text copy
+            }
+
+            // Per-block readable text / html (one consistent rule; chrome stripped).
+            // text/plain priority: source (code/diagram) → response (AI) → DOM text → YAML.
+            var blockText = function (node, dom) {
+              if (node.attrs.source) return node.attrs.source
+              if (node.attrs.response) return node.attrs.response
+              if (dom) {
+                var parts = []
+                Array.prototype.forEach.call(dom.children, function (c) {
+                  if (c.classList && c.classList.contains('block-chrome-host')) return
+                  parts.push(c.innerText)
+                })
+                var t = parts.join('').trim()
+                if (t) return t
+              }
+              return node.attrs.serialisedForm || ''
+            }
+            var blockHTML = function (dom) {
+              if (!dom) return ''
+              var clone = dom.cloneNode(true)
+              var ch = clone.querySelector('.block-chrome-host')
+              if (ch) ch.remove()
+              return clone.outerHTML
+            }
+
+            // Collect top-level nodes overlapping the effective range (prose + sieve).
+            // The range comes from our plugin-state block selection (shift-click /
+            // gutter drag) or the live PM selection — either way it is a clean,
+            // non-snapped span, so this collection reliably includes sieve atoms.
             var sliceItems = []
+            var plainParts = []
+            var htmlParts = []
             var hasSieve = false
+            var singleSieveKind = null
+            var singleSieveForm = ''
 
-            view.state.doc.forEach(function(node, offset) {
+            view.state.doc.forEach(function (node, offset) {
               var nodeEnd = offset + node.nodeSize
-              // Non-empty selection: include nodes that overlap.
-              if (!sel.empty && (nodeEnd <= sel.from || offset >= sel.to)) return
+              // Active range: include nodes that overlap it.
+              if (er.active && (nodeEnd <= er.from || offset >= er.to)) return
               // Empty cursor: only include a sieve node the cursor sits within.
-              if (sel.empty && (sel.from < offset || sel.from >= nodeEnd)) return
+              if (!er.active && (er.from < offset || er.from >= nodeEnd)) return
 
+              var dom = view.nodeDOM(offset)
               if (node.type.name.startsWith('sieve-')) {
                 hasSieve = true
+                singleSieveKind = node.attrs.kind
+                singleSieveForm = node.attrs.serialisedForm || ''
                 var attrs = {}
                 for (var k in node.attrs) {
                   if (Object.prototype.hasOwnProperty.call(node.attrs, k)) attrs[k] = node.attrs[k]
                 }
                 sliceItems.push({ _type: 'sieve', kind: node.attrs.kind, attrs: attrs })
-              } else {
-                if (!sel.empty) sliceItems.push({ _type: 'prose', json: node.toJSON() })
+                plainParts.push(blockText(node, dom))
+                htmlParts.push(blockHTML(dom))
+              } else if (!sel.empty) {
+                sliceItems.push({ _type: 'prose', json: node.toJSON() })
+                plainParts.push(dom ? dom.innerText : '')
+                htmlParts.push(blockHTML(dom))
               }
             })
 
-            if (!hasSieve) return false   // pure prose — TipTap handles natively
+            if (!hasSieve) return false   // pure prose — let TipTap/markdown handle it natively
 
+            // Emit all four flavours.  sieve/slice (+ sieve/<kind> for a lone block)
+            // are authoritative for in-app reconstruct and the Go paste handlers
+            // (fresh IDs, smart-paste routing); text/plain + text/html are lossy
+            // external fallbacks.
             event.preventDefault()
             event.clipboardData.setData('sieve/slice', JSON.stringify(sliceItems))
-
+            event.clipboardData.setData('text/plain', plainParts.filter(Boolean).join('\n\n'))
+            event.clipboardData.setData('text/html', htmlParts.filter(Boolean).join('\n'))
             if (sliceItems.length === 1 && sliceItems[0]._type === 'sieve') {
-              // Single block: readable text/plain, block's own HTML, kind-specific type.
-              // text/plain priority: source (code/diagram) → response (AI) → DOM text → YAML
-              var b = sliceItems[0]
-              var blockDOM = view.nodeDOM(sel.empty ? sel.from : sel.from)
-              var plainText = b.attrs.source || b.attrs.response ||
-                (blockDOM ? blockDOM.innerText : '') || b.attrs.serialisedForm || ''
-              event.clipboardData.setData('text/plain', plainText)
-              event.clipboardData.setData('text/html', blockDOM ? blockDOM.outerHTML : '')
-              event.clipboardData.setData('sieve/' + b.kind, b.attrs.serialisedForm || '')
-            } else {
-              // Multi-block: join each block's readable content for text/plain.
-              var getText = function(n) {
-                if (!n) return ''
-                if (n.text) return n.text
-                return (n.content || []).map(getText).join('')
-              }
-              var md = sliceItems.map(function(item) {
-                return item._type === 'sieve'
-                  ? (item.attrs.source || item.attrs.response || item.attrs.serialisedForm || '')
-                  : getText(item.json)
-              }).filter(Boolean).join('\n\n')
-              event.clipboardData.setData('text/plain', md)
-              event.clipboardData.setData('text/html', window.__tiptap ? window.__tiptap.getHTML() : '')
+              event.clipboardData.setData('sieve/' + singleSieveKind, singleSieveForm)
             }
             return true
           },
@@ -1111,26 +1154,25 @@
         var blocks = JSON.parse(sliceData)
         if (Array.isArray(blocks) && blocks.length > 0) {
           event.preventDefault()
-          blocks.forEach(function(entry) {
+          // Build the whole ordered content array and insert it in ONE call.
+          // Inserting block-by-block in a loop dropped trailing blocks because
+          // each insert moved the selection the next insert relied on.
+          var sliceContent = blocks.map(function (entry) {
             if (entry._type === 'prose') {
-              // Prose node — reconstruct from PM JSON (preserves heading level,
-              // bold, italic, links, etc.)
-              currentEditor.commands.insertContent(entry.json)
-            } else {
-              // Sieve block — new format (_type:'sieve') or legacy format (no _type)
-              var nodeAttrs = (entry._type === 'sieve') ? entry.attrs : entry
-              var pasteAttrs = {}
-              for (var attrKey in nodeAttrs) {
-                if (Object.prototype.hasOwnProperty.call(nodeAttrs, attrKey) && attrKey !== 'type') {
-                  pasteAttrs[attrKey] = nodeAttrs[attrKey]
-                }
-              }
-              currentEditor.commands.insertContent({
-                type: 'sieve-' + entry.kind,
-                attrs: pasteAttrs,
-              })
+              // Prose node — PM JSON (preserves heading level, bold, links, etc.)
+              return entry.json
             }
+            // Sieve block — new format (_type:'sieve') or legacy format (no _type)
+            var nodeAttrs = (entry._type === 'sieve') ? entry.attrs : entry
+            var pasteAttrs = {}
+            for (var attrKey in nodeAttrs) {
+              if (Object.prototype.hasOwnProperty.call(nodeAttrs, attrKey) && attrKey !== 'type') {
+                pasteAttrs[attrKey] = nodeAttrs[attrKey]
+              }
+            }
+            return { type: 'sieve-' + entry.kind, attrs: pasteAttrs }
           })
+          currentEditor.commands.insertContent(sliceContent)
           return true
         }
       } catch (e) {

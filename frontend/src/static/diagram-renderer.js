@@ -138,10 +138,11 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
 
   var DiagramRenderer = {
 
-    nodeConfig: {
-      selectable: false,
-      draggable:  false,
-    },
+    // No nodeConfig overrides: all sieve blocks share the default schema
+    // (atom + selectable + draggable) for a uniform, non-disjoint selection.
+    // Clicks/typing inside the textarea are shielded from ProseMirror centrally
+    // via the stopEvent hook in sieve-block-extension.js, so this block stays
+    // selectable without editor interactions triggering a stray NodeSelection.
 
     attrs: {
       source:      { default: '', parseHTML: function (el) { return el.getAttribute('data-source')       || '' } },

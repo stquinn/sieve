@@ -19,10 +19,11 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
 
   var CodeRenderer = {
 
-    nodeConfig: {
-      selectable: false,  // prevents TipTap creating a NodeSelection on click
-      draggable:  false,  // mouse drag selects text, not moves the block
-    },
+    // No nodeConfig overrides: all sieve blocks share the default schema
+    // (atom + selectable + draggable) for a uniform, non-disjoint selection.
+    // Clicks/typing inside the textarea are shielded from ProseMirror centrally
+    // via the stopEvent hook in sieve-block-extension.js, so this block stays
+    // selectable without editor interactions triggering a stray NodeSelection.
 
     attrs: {
       source:          { default: '', parseHTML: function (el) { return el.getAttribute('data-source')           || '' } },

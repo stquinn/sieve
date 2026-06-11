@@ -119,13 +119,25 @@ textarea::selection {
   background: var(--theme-selectionBg);
 }
 
-/* Sieve block included in a TextSelection drag.
-   contentEditable=false atoms don't get the browser selection highlight,
-   so a decoration class drives the visual instead. */
+/* Sieve block that is part of a multi-block RANGE selection.
+   contentEditable=false atoms don't get the browser's native selection highlight,
+   so the SelectionHighlight decoration drives the visual instead.  The tint must
+   sit ON TOP of the block — sieve cards render their own opaque background, so a
+   plain `background` here is hidden behind their content (the block looks skipped).
+   A translucent overlay (::after) washes over the whole block, matching the look
+   of standard text selection while staying visible over opaque card content. */
 .block-in-selection {
-  outline: 2px solid var(--theme-accent, #5b7cff);
-  outline-offset: 2px;
+  position: relative;
+}
+.block-in-selection::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--theme-selectionBg);
+  opacity: 0.4;
   border-radius: 4px;
+  pointer-events: none;   /* never blocks clicks/drag on the block beneath */
+  z-index: 3;
 }
 
 /* Drag-select preview: JS adds .drag-hover via elementFromPoint during

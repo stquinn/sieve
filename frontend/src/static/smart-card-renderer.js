@@ -49,9 +49,19 @@ import { isJobStale } from './fenced-block-base.js'
       dom.className = 'smart-card-card'
       dom.setAttribute('data-smart-card-id', node.attrs.id || '')
 
-      dom.addEventListener('dragstart', function (e) { e.preventDefault() })
+      // The block-chrome host (gutter line number + drag handle) is injected as the
+      // card's first child, so its events bubble here.  Ignore them: a handle click
+      // is a block selection, and a handle drag is a reorder — neither should
+      // activate/navigate the card or be cancelled.
+      function fromChrome(e) { return e.target && e.target.closest && e.target.closest('.block-chrome-host') }
+
+      dom.addEventListener('dragstart', function (e) {
+        if (fromChrome(e)) return        // let the gutter handle start its reorder drag
+        e.preventDefault()
+      })
 
       dom.addEventListener('click', function (e) {
+        if (fromChrome(e)) return        // gutter/handle click selects the block, not the card
         if (!node.attrs.href) {
           if (typeof getPos !== 'function') return
           document.dispatchEvent(new CustomEvent('sieve:smart-card-edit', {

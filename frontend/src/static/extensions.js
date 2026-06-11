@@ -294,7 +294,10 @@
               state.doc.nodesBetween(sel.from, sel.to, function (node, pos) {
                 if (node.isLeaf && (node.type.name.startsWith('sieve-') || node.type.name === 'blockRef')) {
                   if (pos >= sel.from && pos + node.nodeSize <= sel.to) {
-                    decos.push(Decoration.node(pos, pos + node.nodeSize, { class: 'ProseMirror-selectednode' }))
+                    // A sieve block that is part of a multi-block RANGE selection.
+                    // Use the range tint (background) — NOT ProseMirror-selectednode,
+                    // whose outline is reserved for a single focused NodeSelection.
+                    decos.push(Decoration.node(pos, pos + node.nodeSize, { class: 'block-in-selection' }))
                   }
                 }
               })

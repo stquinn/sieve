@@ -129,7 +129,9 @@
         var hi = Math.max(a, b)
         var hiNode = doc.nodeAt(hi)
         var to = hi + (hiNode ? hiNode.nodeSize : 1)
-        editor.commands.setTextSelection({ from: lo, to: to })
+        // Block-range via our own plugin-state range — NOT setTextSelection, which
+        // snaps its endpoints off the contentEditable=false sieve atoms (dropping them).
+        editor.view.dispatch(editor.state.tr.setMeta(blockChromeKey, { range: { from: lo, to: to } }))
       } else {
         lastSelectedOffset = offset
         editor.commands.setNodeSelection(offset)
@@ -204,7 +206,9 @@
         var hi = Math.max(a, b)
         var hiNode = doc.nodeAt(hi)
         var to = hi + (hiNode ? hiNode.nodeSize : 1)
-        editor.commands.setTextSelection({ from: lo, to: to })
+        // Block-range via our own plugin-state range — NOT setTextSelection, which
+        // snaps its endpoints off the contentEditable=false sieve atoms (dropping them).
+        editor.view.dispatch(editor.state.tr.setMeta(blockChromeKey, { range: { from: lo, to: to } }))
       } else {
         lastSelectedOffset = pos
         editor.commands.setNodeSelection(pos)
@@ -231,6 +235,21 @@
     })
   }
 
+  // ── Effective selection range ────────────────────────────────────────────────
+  // The authoritative range for block-level selection + copy.  Prefers our own
+  // plugin-state range (set by handle click / shift-click / gutter drag): a real
+  // pair of doc positions that — unlike a ProseMirror TextSelection — does NOT
+  // snap off the contentEditable=false sieve atoms.  Falls back to the live PM
+  // selection so a plain caret / NodeSelection / native prose drag still works.
+  function effectiveRange(state) {
+    var ps = blockChromeKey.getState(state)
+    if (ps && ps.range) {
+      return { from: ps.range.from, to: ps.range.to, active: ps.range.to > ps.range.from, isBlockRange: true }
+    }
+    var s = state.selection
+    return { from: s.from, to: s.to, active: !s.empty, isBlockRange: false }
+  }
+
   // ── Build Decoration set ─────────────────────────────────────────────────────
   // For every top-level node:
   //   1. Decoration.node — applies class 'block-with-chrome' (CSS positioning hook)
@@ -241,7 +260,7 @@
   function buildDecorations(state) {
     var decos = []
     var index = 0
-    var sel = state.selection
+    var er = effectiveRange(state)
 
     state.doc.forEach(function (node, offset) {
       var i = index++   // capture for closure
@@ -250,9 +269,9 @@
 
       // Mark the block for CSS gutter positioning.
       // For sieve blocks (contentEditable=false atoms), also add block-in-selection
-      // when the selection overlaps them — the browser won't render a native
+      // when the effective range overlaps them — the browser won't render a native
       // selection highlight on non-editable elements, so we drive it via decoration.
-      var inSel = isSieveNode(node) && !sel.empty && sel.from < to && sel.to > from
+      var inSel = isSieveNode(node) && er.active && er.from < to && er.to > from
       decos.push(
         Decoration.node(from, to, { class: inSel ? 'block-with-chrome block-in-selection' : 'block-with-chrome' })
       )
@@ -318,6 +337,28 @@
       return [
         new Plugin({
           key: blockChromeKey,
+
+          // ── Plugin state: our own block-selection range ──────────────────────
+          // A real {from,to} pair of doc positions spanning whole blocks.  Set via
+          // setMeta(blockChromeKey, { range }).  Unlike a PM TextSelection it never
+          // snaps off the sieve atoms, so it is the authoritative multi-block range.
+          state: {
+            init: function () { return { range: null } },
+            apply: function (tr, prev) {
+              var meta = tr.getMeta(blockChromeKey)
+              if (meta && Object.prototype.hasOwnProperty.call(meta, 'range')) {
+                return { range: meta.range }
+              }
+              // A normal selection change (plain click, typing, arrows) ends the
+              // block-selection gesture → drop the range.
+              if (tr.selectionSet) return { range: null }
+              // Keep the range valid across doc edits (e.g. drag-reorder).
+              if (prev.range && tr.docChanged) {
+                return { range: { from: tr.mapping.map(prev.range.from), to: tr.mapping.map(prev.range.to) } }
+              }
+              return prev
+            },
+          },
 
           props: {
             // ── Decorations ───────────────────────────────────────────────
@@ -433,4 +474,10 @@
   })
 
   T.BlockChrome = BlockChrome
+
+  // Authoritative block-selection range for the copy handler (editor.js).
+  // Returns { from, to, active, isBlockRange }.  isBlockRange=true means our own
+  // multi-block range is set (shift-click / gutter drag); false means we fell back
+  // to the live PM selection (caret / single NodeSelection / native prose drag).
+  T.getBlockSelectionRange = function (view) { return effectiveRange(view.state) }
 })()
