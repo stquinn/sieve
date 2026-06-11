@@ -327,6 +327,9 @@
           // sieve-block-extension.js injected.  Prose nodes are handled by
           // Decoration.widget (Strategy A) — never touch those here.
           view: function (editorView) {
+            // Populate Sieve chrome on initial mount (view.update won't fire until
+            // a state change occurs, so we need this one-shot rAF on creation).
+            requestAnimationFrame(function () { syncSieveChrome(editorView) })
             return {
               update: function (view) {
                 // Use rAF to run after PM has applied its own DOM mutations.
