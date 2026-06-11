@@ -312,138 +312,21 @@
   // ── buildAiContext ─────────────────────────────────────────────────────────
 
   function buildAiContext(editor, isMarkdownMode, rawMd, uuid) {
-    if (isMarkdownMode) {
-      var ta = document.querySelector('.markdown-raw')
-      if (ta && ta.selectionStart !== ta.selectionEnd) {
-        return { blockRef: 'doc', contextLabel: 'Selection' }
-      }
-      return { blockRef: 'doc', contextLabel: 'Document' }
-    }
+    var t = T.resolveAiTarget(editor, isMarkdownMode)
 
-    var selection = editor.state.selection
-    var doc = editor.state.doc
-    var from = selection.from, to = selection.to
+    if (t.kind === 'document') return { blockRef: 'doc', contextLabel: 'Document' }
+    if (t.kind === 'selection') return { blockRef: t.blockRef || 'doc', contextLabel: t.label }
 
-    var aiBlockRef = '', aiBlockId = ''
-    var existingBlockId = '', targetNode = null, targetPos = -1
-
-    var nativeId = ''
-    var activeEl = document.activeElement
-    if (activeEl && activeEl.closest) {
-      var closestBlock = activeEl.closest('[data-id], [data-type^="sieve-"]')
-      if (closestBlock) {
-        nativeId = closestBlock.getAttribute('data-id') || ''
-      }
-    }
-
-    if (!nativeId) {
-      var nativeSel = window.getSelection()
-      if (nativeSel && nativeSel.anchorNode) {
-        var el = nativeSel.anchorNode
-        if (el.nodeType === 3) el = el.parentElement
-        if (el && el.closest) {
-          var closestBlock = el.closest('[data-id], [data-type^="sieve-"]')
-          if (closestBlock) {
-            nativeId = closestBlock.getAttribute('data-id') || ''
-          }
-        }
-      }
-    }
-
-    if (nativeId) {
-      doc.descendants(function (node, pos) {
-        if (node.attrs && node.attrs.id === nativeId) {
-          if (node.type.name === 'aiBlock' || node.type.name === 'sieve-ai-block') {
-            aiBlockId = nativeId; aiBlockRef = node.attrs.ref || ''; 
-          } else {
-            existingBlockId = nativeId; targetNode = node; targetPos = pos;
-          }
-          return false
-        }
-      })
-    }
-
-    var $from = editor.state.selection.$from
-    if (!aiBlockId && !existingBlockId) {
-      for (var d = $from.depth; d >= 0; d--) {
-        var n = $from.node(d)
-        if (n.type.name === 'aiBlock' || n.type.name === 'sieve-ai-block') { aiBlockId = n.attrs.id || ''; aiBlockRef = n.attrs.ref || ''; break }
-        if (n.type.name === 'blockRef' || n.type.name.startsWith('sieve-')) { existingBlockId = n.attrs.id || ''; targetNode = n; break }
-      }
-    }
-    
-    if (!aiBlockId && !existingBlockId) {
-      var scanFrom = (from === to) ? Math.max(0, from - 1) : from
-      var scanTo   = (from === to) ? Math.min(doc.content.size, to + 1) : to
-      doc.nodesBetween(scanFrom, scanTo, function (node, pos) {
-        if (!targetNode && (node.type.name === 'blockRef' || node.type.name.startsWith('sieve-') || node.type.name === 'codeBlock' || node.type.name === 'table')) {
-          if (node.type.name === 'aiBlock' || node.type.name === 'sieve-ai-block') {
-             aiBlockId = node.attrs.id || ''; aiBlockRef = node.attrs.ref || ''; return false
-          }
-          targetNode = node; targetPos = pos; existingBlockId = node.attrs.id || ''; return false
-        }
-      })
-    }
-
-    if (aiBlockId) {
+    // sieveBlock / anchor → reference the existing id (no mutation).
+    var n = t.node
+    if (n && (n.type.name === 'aiBlock' || n.type.name === 'sieve-ai-block')) {
+      // Follow-up: chain this AI block onto its own ref so Go assembles history.
+      var aiBlockId = n.attrs.id || ''
+      var aiBlockRef = n.attrs.ref || ''
       var newRef = aiBlockRef && aiBlockRef !== 'doc' ? aiBlockRef + ',' + aiBlockId : aiBlockId
       return { blockRef: newRef, contextLabel: 'Follow-up' }
     }
-
-    function labelFor(node) {
-      if (!node) return 'Document'
-      if (node.type.name.startsWith('sieve-')) {
-         var kind = node.attrs.kind || node.type.name.replace('sieve-', '')
-         return kind.charAt(0).toUpperCase() + kind.slice(1) + ' Block'
-      }
-      switch (node.type.name) {
-        case 'codeBlock':         return 'Code Block'
-        case 'table':             return 'Table'
-        case 'blockRef':          return 'Block'
-        default:                  return node.type.name
-      }
-    }
-
-    var blockRange = null, contextLabel = ''
-    if (targetNode) {
-      contextLabel = labelFor(targetNode)
-    } else if (from !== to) {
-      blockRange = selection.$from.blockRange(selection.$to)
-      contextLabel = 'Selection'
-    } else {
-      contextLabel = 'Document'
-    }
-
-    var blockRef = existingBlockId || 'blk-' + Math.random().toString(16).substring(2, 6)
-    var tr = editor.state.tr
-    var NodeRange = T.NodeRange
-
-    if (!existingBlockId) {
-      try {
-        if (targetNode && targetPos !== -1) {
-          if (targetNode.type.name === 'table') {
-            var $tfrom = doc.resolve(targetPos)
-            var $tto = doc.resolve(targetPos + targetNode.nodeSize)
-            var topRange = new NodeRange($tfrom, $tto, 0)
-            tr.wrap(topRange, [{ type: editor.state.schema.nodes.blockRef, attrs: { id: blockRef } }])
-          } else {
-            tr.setNodeMarkup(targetPos, undefined, Object.assign({}, targetNode.attrs, { id: blockRef }))
-          }
-        } else if (blockRange) {
-          var topRange2 = new NodeRange(blockRange.$from, blockRange.$to, 0)
-          tr.wrap(topRange2, [{ type: editor.state.schema.nodes.blockRef, attrs: { id: blockRef } }])
-        }
-      } catch (e) {
-        blockRef = existingBlockId || 'doc'
-      }
-    }
-
-    if (tr.docChanged) editor.view.dispatch(tr)
-
-    return {
-      blockRef: (from === to && !targetNode && !blockRange) ? 'doc' : blockRef,
-      contextLabel: contextLabel,
-    }
+    return { blockRef: t.id || 'doc', contextLabel: t.label }
   }
 
   // ── getAiTargetLabel ───────────────────────────────────────────────────────
