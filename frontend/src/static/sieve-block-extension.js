@@ -409,6 +409,18 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
     renderers[kind] = renderer
   }
 
+  // Canonical friendly name for a sieve block node — the ONE source the live
+  // label, the context menu, and the commit path share. Reuses each renderer's
+  // optional buildAiCtx(node).contextLabel (e.g. a code block surfacing its
+  // language), falling back to a title-cased kind.
+  T.getSieveBlockLabel = function (node) {
+    var kind = node && node.attrs ? node.attrs.kind : ''
+    var r = renderers[kind]
+    var base = (r && typeof r.buildAiCtx === 'function') ? r.buildAiCtx(node) : null
+    var fallback = kind ? (kind.charAt(0).toUpperCase() + kind.slice(1).replace(/-/g, ' ')) : 'Block'
+    return (base && base.contextLabel) || fallback
+  }
+
   T.resolveEntriesForKind = function(kind, sourceNode, entries) {
     var r = renderers[kind]
     if (r && typeof r.resolveEntries === 'function') {
