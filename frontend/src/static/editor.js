@@ -185,6 +185,20 @@
               }
               return true
             }
+            // ── sieve/slice multi-block copy ──────────────────────────────────
+            if (window.SieveClipboard) {
+              var hasSieve = false
+              view.state.doc.nodesBetween(sel.from, sel.to, function(node) {
+                if (node.type.name.startsWith('sieve-')) { hasSieve = true; return false }
+              })
+              if (hasSieve) {
+                var payload = window.SieveClipboard.buildCopyPayload(view)
+                event.preventDefault()
+                event.clipboardData.setData('sieve/slice', JSON.stringify(payload.slice))
+                event.clipboardData.setData('text/plain', payload.markdown)
+                return true
+              }
+            }
             return false
           },
           click: function (view, event) {
@@ -1039,6 +1053,29 @@
         } catch (e) {
           console.error('[editor.js] Failed to parse pasted ai-block yaml', e)
         }
+      }
+    }
+
+    // ── 1b. sieve/slice reconstruct ──────────────────────────────────────────────
+    var sliceData = event.clipboardData.getData('sieve/slice')
+    if (sliceData) {
+      try {
+        var blocks = JSON.parse(sliceData)
+        if (Array.isArray(blocks) && blocks.length > 0) {
+          event.preventDefault()
+          blocks.forEach(function(entry) {
+            currentEditor.commands.insertContent({
+              type: 'sieve-' + entry.kind,
+              attrs: {
+                kind: entry.kind,
+                serialisedForm: entry.serialisedForm || '',
+              }
+            })
+          })
+          return true
+        }
+      } catch (e) {
+        console.error('[editor.js] Failed to parse sieve/slice paste', e)
       }
     }
 
