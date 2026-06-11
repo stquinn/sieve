@@ -289,9 +289,17 @@
       var nodeDOM = editorView.nodeDOM(offset)
       if (!nodeDOM) return
 
-      // The chrome host was injected as first child by sieve-block-extension.js.
+      // The chrome host should have been injected as first child by
+      // sieve-block-extension.js on NodeView creation.  If it is missing
+      // (renderer recreated its root, or injection raced with a state update)
+      // inject it here so chrome is always present.
       var host = nodeDOM.querySelector(':scope > .block-chrome-host')
-      if (!host) return
+      if (!host) {
+        host = document.createElement('div')
+        host.className = 'block-chrome-host'
+        host.setAttribute('contenteditable', 'false')
+        nodeDOM.insertBefore(host, nodeDOM.firstChild)
+      }
 
       populateChromeHost(host, i + 1, offset, editorView)
     })
