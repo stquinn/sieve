@@ -409,15 +409,28 @@
           // sieve-block-extension.js injected.  Prose nodes are handled by
           // Decoration.widget (Strategy A) — never touch those here.
           view: function (editorView) {
-            // Populate Sieve chrome on initial mount (view.update won't fire until
-            // a state change occurs, so we need this one-shot rAF on creation).
             requestAnimationFrame(function () { syncSieveChrome(editorView) })
+
+            // ── Drag-select preview ────────────────────────────────────────────
+            // While the mouse button is held, add .sel-dragging to the editor so
+            // CSS can show a "will be selected" tint on hovered sieve blocks.
+            // Cleared on mouseup (which also triggers the selection extension).
+            function onMouseDown(e) {
+              if (e.button === 0) editorView.dom.classList.add('sel-dragging')
+            }
+            function onMouseUp() {
+              editorView.dom.classList.remove('sel-dragging')
+            }
+            document.addEventListener('mousedown', onMouseDown)
+            document.addEventListener('mouseup', onMouseUp)
+
             return {
               update: function (view) {
-                // Use rAF to run after PM has applied its own DOM mutations.
-                requestAnimationFrame(function () {
-                  syncSieveChrome(view)
-                })
+                requestAnimationFrame(function () { syncSieveChrome(view) })
+              },
+              destroy: function () {
+                document.removeEventListener('mousedown', onMouseDown)
+                document.removeEventListener('mouseup', onMouseUp)
               },
             }
           },

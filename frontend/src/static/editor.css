@@ -119,6 +119,16 @@ textarea::selection {
   background: var(--theme-selectionBg);
 }
 
+/* Drag-select preview: while the mouse button is held (.sel-dragging), any
+   hovered sieve block shows a faint tint so the user knows it will be
+   captured when they release.  Distinct from the hover-handle reveal above. */
+.sel-dragging .block-with-chrome:hover {
+  background: rgba(122, 162, 247, 0.12);
+  outline: 1px dashed rgba(122, 162, 247, 0.4);
+  outline-offset: -1px;
+  border-radius: 4px;
+}
+
 /* ── ProseMirror gap cursor — visible above/below/between island blocks ─── */
 
 .ProseMirror-gapcursor { z-index: 30; }
