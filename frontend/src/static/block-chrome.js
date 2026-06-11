@@ -412,16 +412,47 @@
             requestAnimationFrame(function () { syncSieveChrome(editorView) })
 
             // ── Drag-select preview ────────────────────────────────────────────
-            // While the mouse button is held, add .sel-dragging to the editor so
-            // CSS can show a "will be selected" tint on hovered sieve blocks.
-            // Cleared on mouseup (which also triggers the selection extension).
+            // CSS :hover does not update during a mouse-button-held drag because
+            // the browser captures the mouse to the drag origin.  Instead we use
+            // mousemove + elementFromPoint to find the block under the cursor and
+            // add .drag-hover directly to its DOM element.
+            var dragHoverEl = null
+            var mouseIsDown = false
+
+            function clearDragHover() {
+              if (dragHoverEl) {
+                dragHoverEl.classList.remove('drag-hover')
+                dragHoverEl = null
+              }
+            }
+
             function onMouseDown(e) {
-              if (e.button === 0) editorView.dom.classList.add('sel-dragging')
+              if (e.button === 0) mouseIsDown = true
             }
+
+            function onMouseMove(e) {
+              if (!mouseIsDown || dragState) { clearDragHover(); return }
+              var el = document.elementFromPoint(e.clientX, e.clientY)
+              var blockEl = null
+              while (el && el !== editorView.dom) {
+                if (el.classList && el.classList.contains('block-with-chrome')) {
+                  blockEl = el; break
+                }
+                el = el.parentElement
+              }
+              if (blockEl !== dragHoverEl) {
+                clearDragHover()
+                if (blockEl) { blockEl.classList.add('drag-hover'); dragHoverEl = blockEl }
+              }
+            }
+
             function onMouseUp() {
-              editorView.dom.classList.remove('sel-dragging')
+              mouseIsDown = false
+              clearDragHover()
             }
+
             document.addEventListener('mousedown', onMouseDown)
+            document.addEventListener('mousemove', onMouseMove)
             document.addEventListener('mouseup', onMouseUp)
 
             return {
@@ -430,6 +461,7 @@
               },
               destroy: function () {
                 document.removeEventListener('mousedown', onMouseDown)
+                document.removeEventListener('mousemove', onMouseMove)
                 document.removeEventListener('mouseup', onMouseUp)
               },
             }
