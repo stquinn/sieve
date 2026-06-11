@@ -137,6 +137,7 @@
         T.Placeholder.configure({ placeholder: function (p) { return p.editor.isEmpty ? 'Start writing\u2026' : '' } }),
         T.BlockNode,
         T.BlockChrome,
+        T.AiTargetDecoration,
         T.Table.configure({ resizable: false }),
         T.TableRow,
         T.TableHeader,

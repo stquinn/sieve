@@ -2474,4 +2474,17 @@ pre.tiptap-code-block code {
   color: var(--theme-text);
 }
 
+/* Ephemeral AI-target glow — same gutter/rail language as block chrome,
+   visually distinct from a text selection. Not a committed highlight. */
+.tiptap .block-ai-target {
+  position: relative;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(99, 102, 241, 0.25);
+  background: rgba(99, 102, 241, 0.05);
+  transition: box-shadow 120ms ease, background 120ms ease;
+}
+.tiptap .block-ai-target > .block-chrome-host .block-chrome-rail {
+  background: rgba(99, 102, 241, 0.8);
+}
+
 
