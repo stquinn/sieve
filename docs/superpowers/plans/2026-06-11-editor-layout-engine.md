@@ -244,7 +244,15 @@ handle.addEventListener('mousedown', function () {
 ```
 Add a drop-indicator decoration computed in `props.decorations` from a plugin-state position updated on `dragover` (store target boundary in plugin state via `apply`). Keep the indicator a 2px line decoration at the nearest top-level boundary.
 
-> Engineer note: this is the trickiest Stage-1 task. If the native NodeSelection drag proves unreliable for atom blocks, fall back to a manual implementation: on `dragstart` store `pos`; on `drop` compute `targetPos = nearestTopLevelBoundary(view.posAtCoords(...))`, then `tr.delete(...).insert(...)` the node. Both approaches are acceptable; verify by the protocol below.
+> Engineer note: this is the trickiest Stage-1 task. If the native NodeSelection drag proves unreliable for atom blocks, fall back to a manual implementation **in a single transaction** — critical for undo integrity (separate delete + insert transactions need two Mod+Z and can flash invalid intermediate doc states). On `dragstart` store `pos`; on `drop` compute the target top-level boundary, then **map the insert position through the delete** (the target shifts left by `nodeSize` if it was after `from`):
+> ```js
+> var node = view.state.doc.nodeAt(from)
+> var tr = view.state.tr.delete(from, from + node.nodeSize)
+> var insertAt = tr.mapping.map(targetPos)   // map through the delete — do NOT use raw targetPos
+> tr.insert(insertAt, node)
+> view.dispatch(tr)
+> ```
+> Both the native and manual approaches are acceptable; verify undo restores order in a **single** Mod+Z (protocol below).
 
 - [ ] **Step 2: Manual verify reorder.**
 
@@ -279,8 +287,10 @@ Expected: present. If StarterKit is configured to disable it, re-enable in `edit
 - [ ] **Step 2: Style the gap cursor** so it's visible next to island blocks:
 
 ```css
+.ProseMirror-gapcursor { z-index: 30; }            /* keep it above island NodeViews */
 .ProseMirror-gapcursor:after { border-top: 2px solid var(--theme-accent, #5b7cff); width: 60%; }
 ```
+> Explicitly verify the cursor is reachable **above the first** block, **below the last** block, and **between two adjacent island blocks** — these are where it tends to collapse invisibly.
 
 - [ ] **Step 3: Manual verify.**
 
@@ -409,8 +419,8 @@ git commit -m "Stage 1: multi-block sieve/<kind> clipboard (copy + paste reconst
 
 ### Go-testable core (bite-sized now)
 
-- **Task 2.1 — `column-row` serializer (Go).** Create `sieve/columnrow_serializer.go`: `SerializeColumnRow(node ShadowNode) string` and `ParseColumnRow(fenceBody string) (ShadowNode, error)` implementing Shape 1 (string child = verbatim markdown scalar; single-key map = Sieve Block; `widths`, `columns:[{children:[]}]`). Reuse the inner-fence mechanism (`fencedblock.Serialize`, `forceLiteralStyle`+indent). Mirror the existing per-block serialization seam (`sieve/markdown_parser.go`, `editor_service` InjectBlocks path).
-- **Task 2.2 — Round-trip tests (Go).** `sieve/columnrow_serializer_test.go`: table-driven tests for (a) prose-only column, (b) prose + diagram child, (c) widths round-trip, (d) **the spike**: a column-row nesting a fenced block, then a column-row nesting a column-row (2–3 deep), asserting byte-stable round-trip. *This resolves spec §7's open spike.* Use `go test ./sieve/ -run ColumnRow -v`.
+- **Task 2.1 — `column-row` serializer (Go).** Create `sieve/columnrow_serializer.go`: `SerializeColumnRow(node ShadowNode) string` and `ParseColumnRow(fenceBody string) (ShadowNode, error)` implementing Shape 1 (string child = verbatim markdown scalar; single-key map = Sieve Block; `widths`, `columns:[{children:[]}]`). **Reuse the existing inner-fence mechanism: `fencedblock.SerializeYaml[map[string]interface{}]` + the recursive `forceLiteralStyle` (4-space indent; `sieve/fencedblock/fencedblock.go`)** — do not hand-roll YAML. Mirror the existing per-block serialization seam (`sieve/markdown_parser.go:312`, `editor_service.go:447` InjectBlocks path).
+- **Task 2.2 — Round-trip tests (Go).** `sieve/columnrow_serializer_test.go`: table-driven tests for (a) prose-only column, (b) prose + diagram child, (c) widths round-trip, (d) **the spike**: a column-row nesting a fenced block, then a column-row nesting a column-row (2–3 deep), asserting byte-stable round-trip. *This resolves spec §7's open spike.* Use `go test ./sieve/ -run ColumnRow -v`. **Add a raw-output assertion** (inspect the serialized string, not just the round-trip): a nested multiline scalar such as a Mermaid `source` must be emitted with `|` literal style and indentation in multiples of 4, **not** a double-quoted `\n` string. `forceLiteralStyle` already recurses the node tree, so this test verifies that recursion *composes under nesting* — the actual unknown — rather than that naive marshalling works.
 
 > These two tasks are full TDD (write failing Go test → implement → green), and they de-risk the serialization before any UI.
 
