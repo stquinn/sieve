@@ -29,7 +29,7 @@
         #editor-toolbar { display: {{if .ShowToolbar}}flex{{else}}none{{end}}; }
         #app-root { --toolbar-h: {{if .ShowToolbar}}36px{{else}}0px{{end}}; }
     </style>
-    <style id="layout-overrides-linenumbers">{{if not .ShowLineNumbers}}.tiptap > *::before, .tiptap::before { display: none !important; } .tiptap { padding-left: 1.25rem !important; }{{end}}</style>
+    <style id="layout-overrides-linenumbers">{{if not .ShowLineNumbers}}.block-chrome-host, .tiptap::before { display: none !important; } .tiptap { padding-left: 1.25rem !important; }{{end}}</style>
 </head>
 <body hx-ext="sse" sse-connect="/sse">
     <!-- Relay: makes HTMX SSE extension register EventSource listeners so events bubble to document as sse:* -->

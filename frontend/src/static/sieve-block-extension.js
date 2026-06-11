@@ -99,6 +99,15 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
         return function ({ node, editor, getPos }) {
           var view = renderer.makeNodeView(node, editor)
           if (view.dom) {
+            // Inject the chrome host slot as the FIRST child.
+            // BlockChrome will find it via .block-chrome-host and populate it
+            // with the line number, drag handle, and rail.  Must be
+            // contenteditable="false" so PM never tries to edit it.
+            var chromeHost = document.createElement('div')
+            chromeHost.className = 'block-chrome-host'
+            chromeHost.setAttribute('contenteditable', 'false')
+            view.dom.insertBefore(chromeHost, view.dom.firstChild)
+
             view.dom.contentEditable = 'true'
 
             // Ignore ProseMirror's default selection observation for Sieve blocks.

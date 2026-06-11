@@ -1,6 +1,15 @@
 // block-chrome.js — BlockChrome TipTap extension.
-// Adds a ProseMirror plugin that renders gutter chrome (drag handle + rail)
-// as widget decorations on every top-level block node, plus drag-reorder.
+// Adds a ProseMirror plugin that renders gutter chrome (line number + drag handle + rail)
+// for every top-level block node, plus drag-reorder.
+//
+// Strategy:
+//   1. Decoration.node(from, to, { class: 'block-with-chrome' }) — applies to the outermost
+//      DOM element for BOTH prose nodes AND atom NodeViews (Sieve blocks).
+//   2. view.update() scan — after each state update, walks every .block-with-chrome element
+//      and ensures its .block-chrome-host child is populated with line-number + handle + rail.
+//      Sieve blocks already have a .block-chrome-host injected by sieve-block-extension.js;
+//      prose nodes get one created here.
+//
 // Depends on window.TipTap (vendor/tiptap.js) loaded first.
 ;(function () {
   'use strict'
@@ -55,72 +64,31 @@
     return bestPos
   }
 
-  // ── Chrome widget factory ────────────────────────────────────────────────────
-  // Returns a single Decoration.widget for the top-level node at `pos` (offset).
-  // `view` is received as a parameter by the Decoration.widget toDOM callback.
-  // The pos captured in closure is the raw doc offset of the top-level node.
+  // ── Build Decoration.node set ────────────────────────────────────────────────
+  // Applies class 'block-with-chrome' to the outermost DOM element of every
+  // top-level node.  Decoration.node works for both prose nodes AND atom NodeViews.
 
-  function chromeWidget(pos) {
-    return Decoration.widget(
-      pos + 1,   // place the widget at the start of the node's content
-      function toDOM(view) {
-        var wrap = document.createElement('div')
-        wrap.className = 'block-chrome'
-        wrap.setAttribute('contenteditable', 'false')
+  function buildDecorations(state) {
+    var decos = []
 
-        var handle = document.createElement('span')
-        handle.className = 'block-chrome-handle'
-        handle.setAttribute('draggable', 'true')
-        handle.textContent = '⠷'   // braille drag-dots glyph
+    state.doc.forEach(function (node, offset) {
+      var from = offset
+      var to   = offset + node.nodeSize
+      decos.push(
+        Decoration.node(from, to, { class: 'block-with-chrome' })
+      )
+    })
 
-        var rail = document.createElement('span')
-        rail.className = 'block-chrome-rail'
+    // Drop indicator (only during drag)
+    var pluginState = blockChromeKey.getState(state)
+    if (pluginState && pluginState.indicatorPos != null) {
+      var iPos = pluginState.indicatorPos
+      var maxPos = state.doc.content.size
+      var clampedPos = Math.max(0, Math.min(iPos, maxPos))
+      decos.push(indicatorWidget(clampedPos))
+    }
 
-        wrap.appendChild(handle)
-        wrap.appendChild(rail)
-
-        // ── mousedown: select the entire top-level node ────────────────────
-        // NodeSelection is not exported from the vendor bundle, so we use the
-        // TipTap setNodeSelection command exposed via window.__tiptap.
-        handle.addEventListener('mousedown', function (e) {
-          e.preventDefault()
-          var editor = window.__tiptap
-          if (editor) {
-            editor.commands.setNodeSelection(pos)
-            view.focus()
-          }
-        })
-
-        // ── dragstart: record source pos ───────────────────────────────────
-        handle.addEventListener('dragstart', function (e) {
-          dragState = { from: pos }
-          e.dataTransfer.effectAllowed = 'move'
-          e.dataTransfer.setData('application/x-sieve-block', String(pos))
-          // Set drag image to the block's DOM row
-          try {
-            var domNode = view.nodeDOM(pos + 1)
-            var imgEl = domNode && (domNode.parentElement || domNode)
-            if (imgEl && imgEl.nodeType === 1) e.dataTransfer.setDragImage(imgEl, 0, 0)
-          } catch (_) {}
-        })
-
-        // ── dragend: clean up (fires even if drop was outside editor) ──────
-        handle.addEventListener('dragend', function () {
-          if (dragState) {
-            dragState = null
-            // Clear indicator (view may have changed state since dragstart)
-            try {
-              view.dispatch(
-                view.state.tr.setMeta(blockChromeKey, { indicatorPos: null })
-              )
-            } catch (_) {}
-          }
-        })
-
-        return wrap
-      },
-      { side: -1, key: 'chrome-' + pos }
-    )
+    return DecorationSet.create(state.doc, decos)
   }
 
   // ── Drop indicator widget ────────────────────────────────────────────────────
@@ -136,6 +104,113 @@
       },
       { side: -1, key: 'drop-indicator' }
     )
+  }
+
+  // ── Populate a single .block-chrome-host element ─────────────────────────────
+  // Creates (or reuses) the line number, handle, and rail children.
+  // blockIndex is 1-based.
+
+  function populateChromeHost(host, blockIndex, pos, view) {
+    // Idempotency: if already populated with the correct index, skip.
+    var linenum = host.querySelector('.block-chrome-linenum')
+    if (linenum && linenum.textContent === String(blockIndex)) return
+
+    // Clear any stale content.
+    while (host.firstChild) host.removeChild(host.firstChild)
+
+    var num = document.createElement('span')
+    num.className = 'block-chrome-linenum'
+    num.textContent = String(blockIndex)
+
+    var handle = document.createElement('span')
+    handle.className = 'block-chrome-handle'
+    handle.setAttribute('draggable', 'true')
+    handle.textContent = '⠷'   // braille drag-dots glyph
+
+    var rail = document.createElement('span')
+    rail.className = 'block-chrome-rail'
+
+    host.appendChild(num)
+    host.appendChild(handle)
+    host.appendChild(rail)
+
+    // ── mousedown: select the entire top-level node ────────────────────
+    handle.addEventListener('mousedown', function (e) {
+      e.preventDefault()
+      var editor = window.__tiptap
+      if (editor) {
+        editor.commands.setNodeSelection(pos)
+        view.focus()
+      }
+    })
+
+    // ── dragstart: record source pos ───────────────────────────────────
+    handle.addEventListener('dragstart', function (e) {
+      dragState = { from: pos }
+      e.dataTransfer.effectAllowed = 'move'
+      e.dataTransfer.setData('application/x-sieve-block', String(pos))
+      // Set drag image to the block's DOM row
+      try {
+        var domNode = view.nodeDOM(pos)
+        var imgEl = domNode && (domNode.nodeType === 1 ? domNode : domNode.parentElement)
+        if (imgEl && imgEl.nodeType === 1) e.dataTransfer.setDragImage(imgEl, 0, 0)
+      } catch (_) {}
+    })
+
+    // ── dragend: clean up (fires even if drop was outside editor) ──────
+    handle.addEventListener('dragend', function () {
+      if (dragState) {
+        dragState = null
+        try {
+          view.dispatch(
+            view.state.tr.setMeta(blockChromeKey, { indicatorPos: null })
+          )
+        } catch (_) {}
+      }
+    })
+  }
+
+  // ── Scan the editor DOM and ensure every .block-with-chrome has chrome ───────
+  // Called from view.update() on every state change.
+  //
+  // We build a parallel list of top-level doc positions from state.doc so we
+  // can pass the correct PM pos to each chrome host without relying on posAtDOM
+  // (which is unreliable for atom NodeViews).
+
+  function syncChromeDOM(editorView) {
+    var doc = editorView.state.doc
+    var editorDom = editorView.dom
+
+    // Build an ordered list of { pos, nodeSize } for every top-level node.
+    var topLevelPositions = []
+    doc.forEach(function (node, offset) {
+      topLevelPositions.push(offset)
+    })
+
+    var blocks = editorDom.querySelectorAll('.block-with-chrome')
+
+    // blocks and topLevelPositions should have the same length.
+    // If they don't (e.g. PM hasn't applied decorations yet), bail gracefully.
+    var count = Math.min(blocks.length, topLevelPositions.length)
+
+    for (var i = 0; i < count; i++) {
+      var blockEl = blocks[i]
+      var blockIndex = i + 1          // 1-based line number
+      var pos = topLevelPositions[i]  // doc offset of this top-level node
+
+      // Find or create the chrome host.
+      // Sieve blocks already have one injected by sieve-block-extension.js.
+      // Prose nodes need one created as their first child.
+      var host = blockEl.querySelector(':scope > .block-chrome-host')
+      if (!host) {
+        host = document.createElement('div')
+        host.className = 'block-chrome-host'
+        host.setAttribute('contenteditable', 'false')
+        blockEl.insertBefore(host, blockEl.firstChild)
+      }
+
+      populateChromeHost(host, blockIndex, pos, editorView)
+    }
   }
 
   // ── Plugin ─────────────────────────────────────────────────────────────────
@@ -162,23 +237,7 @@
           props: {
             // ── Decorations ───────────────────────────────────────────────
             decorations: function (state) {
-              var decos = []
-
-              // Chrome widgets for every top-level node
-              state.doc.forEach(function (node, offset) {
-                decos.push(chromeWidget(offset))
-              })
-
-              // Drop indicator (only during drag)
-              var pluginState = blockChromeKey.getState(state)
-              if (pluginState && pluginState.indicatorPos != null) {
-                var iPos = pluginState.indicatorPos
-                var maxPos = state.doc.content.size
-                var clampedPos = Math.max(0, Math.min(iPos, maxPos))
-                decos.push(indicatorWidget(clampedPos))
-              }
-
-              return DecorationSet.create(state.doc, decos)
+              return buildDecorations(state)
             },
 
             // ── DOM event handlers ─────────────────────────────────────────
@@ -265,6 +324,18 @@
                 return true
               },
             },
+          },
+
+          // ── view() callback: sync chrome DOM after every state update ────────
+          view: function (editorView) {
+            return {
+              update: function (view) {
+                // Use rAF to run after PM has applied its own DOM mutations.
+                requestAnimationFrame(function () {
+                  syncChromeDOM(view)
+                })
+              },
+            }
           },
         }),
       ]
