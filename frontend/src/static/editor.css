@@ -112,6 +112,11 @@ textarea::selection {
   outline: none !important;
 }
 
+/* ── ProseMirror gap cursor — visible above/below/between island blocks ─── */
+
+.ProseMirror-gapcursor { z-index: 30; }
+.ProseMirror-gapcursor:after { border-top: 2px solid var(--theme-accent, #5b7cff); width: 60%; }
+
 /* Fix ghost selection bars in WebKit around images */
 .node-image,
 .node-image * {
