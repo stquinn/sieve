@@ -8,9 +8,13 @@
     "bundle:jsyaml": "esbuild node_modules/js-yaml/dist/js-yaml.mjs --bundle --format=iife --global-name=jsyaml --outfile=./src/static/vendor/js-yaml.js --minify",
     "bundle:mermaid": "cp node_modules/mermaid/dist/mermaid.min.js ./src/static/vendor/mermaid.min.js",
     "build": "npm run bundle:htmx && npm run bundle:tiptap && npm run bundle:jsyaml && npm run bundle:mermaid && tailwindcss -i ./src/static/input.css -o ./src/static/tailwind.css --minify",
-    "dev": "tailwindcss -i ./src/static/input.css -o ./src/static/tailwind.css --watch"
+    "dev": "tailwindcss -i ./src/static/input.css -o ./src/static/tailwind.css --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
+    "happy-dom": "^15.11.6",
+    "vitest": "^2.1.8",
     "@tiptap/core": "^3.22.5",
     "@tiptap/extension-code-block-lowlight": "^3.22.5",
     "@tiptap/extension-highlight": "3.22.5",
