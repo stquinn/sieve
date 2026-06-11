@@ -54,3 +54,33 @@ describe('resolveAiTarget — kinds', () => {
     expect(editor.state.doc).toBe(before)
   })
 })
+
+describe('resolveAiTarget — labels', () => {
+  it('selection label quotes a short word', () => {
+    const { editor } = docWithRange([build.p('product')], 1, 8) // "product"
+    expect(resolveAiTarget(editor, false).label).toBe('"product"')
+  })
+
+  it('selection label truncates long text on a word boundary', () => {
+    const { editor } = docWithRange([build.p('the quarterly revenue summary')], 1, 30)
+    const label = resolveAiTarget(editor, false).label
+    expect(label.startsWith('"the quarterly')).toBe(true)
+    expect(label.endsWith('…"')).toBe(true)
+    expect(label.length).toBeLessThan(26)
+  })
+
+  it('sieve block label comes from getSieveBlockLabel', () => {
+    const { editor } = docWithRange([build.p('x'), build.sieveCode('c-1')], 4, 4)
+    expect(resolveAiTarget(editor, false).label).toBe('Code Block')
+  })
+
+  it('ai-block label is Follow-up', () => {
+    const { editor } = docWithRange([build.p('x'), build.aiBlock('ai-1')], 4, 4)
+    expect(resolveAiTarget(editor, false).label).toBe('Follow-up')
+  })
+
+  it('document label is Document', () => {
+    const { editor } = docWithCaret([build.p('hi')], 0, 1)
+    expect(resolveAiTarget(editor, false).label).toBe('Document')
+  })
+})
