@@ -36,6 +36,10 @@
   // Module-level; cleared on drop or dragend.  { from: number }
   var dragState = null
 
+  // ── Block selection state ────────────────────────────────────────────────────
+  // Tracks last handle-clicked block for shift-range selection
+  var lastSelectedOffset = null
+
   // ── Top-level boundary helpers ──────────────────────────────────────────────
 
   // Given a clientY and the EditorView, find the nearest top-level boundary
@@ -107,17 +111,30 @@
     host.appendChild(handle)
     host.appendChild(rail)
 
-    // ── mousedown: select the entire top-level node ────────────────────
+    // ── mousedown: select the entire top-level node or shift-click range ─────
     handle.addEventListener('mousedown', function (e) {
       // stopPropagation (not preventDefault): prevents PM from creating a
       // spurious TextSelection, but allows the browser to detect a subsequent
       // drag gesture from this element (preventDefault would suppress dragstart).
       e.stopPropagation()
       var editor = window.__tiptap
-      if (editor) {
+      if (!editor) return
+
+      if (e.shiftKey && lastSelectedOffset != null) {
+        // Shift-click: extend to a block range spanning from lastSelectedOffset to this block
+        var doc = editor.state.doc
+        var a = lastSelectedOffset
+        var b = offset
+        var lo = Math.min(a, b)
+        var hi = Math.max(a, b)
+        var hiNode = doc.nodeAt(hi)
+        var to = hi + (hiNode ? hiNode.nodeSize : 1)
+        editor.commands.setTextSelection({ from: lo, to: to })
+      } else {
+        lastSelectedOffset = offset
         editor.commands.setNodeSelection(offset)
-        view.focus()
       }
+      view.focus()
     })
 
     // ── dragstart: record source pos ───────────────────────────────────
@@ -172,14 +189,27 @@
     host.appendChild(handle)
     host.appendChild(rail)
 
-    // ── mousedown: select the entire top-level node ────────────────────
+    // ── mousedown: select the entire top-level node or shift-click range ─────
     handle.addEventListener('mousedown', function (e) {
       e.stopPropagation()
       var editor = window.__tiptap
-      if (editor) {
+      if (!editor) return
+
+      if (e.shiftKey && lastSelectedOffset != null) {
+        // Shift-click: extend to a block range spanning from lastSelectedOffset to this block
+        var doc = editor.state.doc
+        var a = lastSelectedOffset
+        var b = pos
+        var lo = Math.min(a, b)
+        var hi = Math.max(a, b)
+        var hiNode = doc.nodeAt(hi)
+        var to = hi + (hiNode ? hiNode.nodeSize : 1)
+        editor.commands.setTextSelection({ from: lo, to: to })
+      } else {
+        lastSelectedOffset = pos
         editor.commands.setNodeSelection(pos)
-        view.focus()
       }
+      view.focus()
     })
 
     // ── dragstart: record source pos ───────────────────────────────────

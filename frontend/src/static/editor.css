@@ -105,11 +105,18 @@ textarea::selection {
 .ProseMirror-selectednode {
   outline: 2px solid var(--theme-nodeSelectionOutline) !important;
   outline-offset: 2px;
+  border-radius: 4px;
 }
 
 /* Blocks are transparent containers; don't show the selection outline across the whole screen */
 .block-node.ProseMirror-selectednode {
   outline: none !important;
+}
+
+/* Block range selection (shift-click handle range) */
+.block-with-chrome.ProseMirror-selectednode,
+.block-with-chrome ::selection {
+  background: var(--theme-selectionBg);
 }
 
 /* ── ProseMirror gap cursor — visible above/below/between island blocks ─── */
