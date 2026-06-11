@@ -241,15 +241,20 @@
   function buildDecorations(state) {
     var decos = []
     var index = 0
+    var sel = state.selection
 
     state.doc.forEach(function (node, offset) {
       var i = index++   // capture for closure
       var from = offset
       var to   = offset + node.nodeSize
 
-      // Always mark the block for CSS gutter positioning.
+      // Mark the block for CSS gutter positioning.
+      // For sieve blocks (contentEditable=false atoms), also add block-in-selection
+      // when the selection overlaps them — the browser won't render a native
+      // selection highlight on non-editable elements, so we drive it via decoration.
+      var inSel = isSieveNode(node) && !sel.empty && sel.from < to && sel.to > from
       decos.push(
-        Decoration.node(from, to, { class: 'block-with-chrome' })
+        Decoration.node(from, to, { class: inSel ? 'block-with-chrome block-in-selection' : 'block-with-chrome' })
       )
 
       // Strategy A: prose/native nodes only.
@@ -323,63 +328,11 @@
             // ── DOM event handlers ─────────────────────────────────────────
             handleDOMEvents: {
 
-            // dragover: allow our handle drags to drop
+              // dragover: allow our handle drags to drop
               dragover: function (view, event) {
                 if (!dragState) return false
                 event.preventDefault()
                 event.dataTransfer.dropEffect = 'move'
-                return true
-              },
-
-              // mouseup: when the cursor is released inside a sieve atom's DOM,
-            // ensure the selection covers the whole atom.
-            //
-            // Sieve blocks have contentEditable=true at root so PM can interact
-            // with them, but their atoms can't be partially selected — the head
-            // of a drag-select snaps to just before the atom boundary.  We catch
-            // the mouseup event (which fires on the actual element under the
-            // cursor, unlike drag events) and extend the selection to include the
-            // whole atom.  For a plain click on a sieve block body we create a
-            // NodeSelection.
-              mouseup: function (view, event) {
-                if (dragState) return false   // handle-drag, not a selection gesture
-
-                var editor = window.__tiptap
-                if (!editor) return false
-
-                // Use event.target (the element under the cursor at release)
-                // to identify which sieve atom, if any, we're over.
-                var overOffset = null
-                var overEnd = null
-                editor.state.doc.forEach(function (node, offset) {
-                  if (!isSieveNode(node) || overOffset !== null) return
-                  var dom = view.nodeDOM(offset)
-                  if (!dom) return
-                  if (dom === event.target || dom.contains(event.target)) {
-                    overOffset = offset
-                    overEnd = offset + node.nodeSize
-                  }
-                })
-
-                if (overOffset === null) return false
-
-                var sel = editor.state.selection
-
-                if (sel.empty) {
-                  // Plain click on sieve block body → NodeSelection
-                  editor.commands.setNodeSelection(overOffset)
-                  return true
-                }
-
-                if (sel.from <= overOffset && sel.to >= overEnd) return false  // already covered
-
-                // Extend the selection head to include the whole sieve atom.
-                var anchor = sel.anchor
-                var newHead = anchor <= overOffset ? overEnd : overOffset
-                editor.commands.setTextSelection({
-                  from: Math.min(anchor, newHead),
-                  to: Math.max(anchor, newHead),
-                })
                 return true
               },
 
@@ -425,7 +378,6 @@
             // mousemove + elementFromPoint to find the block under the cursor and
             // add .drag-hover directly to its DOM element.
             var dragHoverEl = null
-            var mouseIsDown = false
 
             function clearDragHover() {
               if (dragHoverEl) {
@@ -434,12 +386,12 @@
               }
             }
 
-            function onMouseDown(e) {
-              if (e.button === 0) mouseIsDown = true
-            }
-
+            // Drag-drop preview: highlight the block under the cursor during a
+            // handle drag.  Only active when dragState is set (after dragstart on
+            // a handle) — CSS :hover stops updating once the browser captures the
+            // mouse for the native drag, so we drive it manually via mousemove.
             function onMouseMove(e) {
-              if (!mouseIsDown || dragState) { clearDragHover(); return }
+              if (!dragState) { clearDragHover(); return }
               var el = document.elementFromPoint(e.clientX, e.clientY)
               var blockEl = null
               while (el && el !== editorView.dom) {
@@ -455,20 +407,21 @@
             }
 
             function onMouseUp() {
-              mouseIsDown = false
               clearDragHover()
             }
 
-            document.addEventListener('mousedown', onMouseDown)
             document.addEventListener('mousemove', onMouseMove)
             document.addEventListener('mouseup', onMouseUp)
 
             return {
               update: function (view) {
+                // Toggle has-selection on the editor root so CSS and JS can
+                // suppress hover-driven highlights (chain glows, etc.) while
+                // a selection is active.
+                view.dom.classList.toggle('has-selection', !view.state.selection.empty)
                 requestAnimationFrame(function () { syncSieveChrome(view) })
               },
               destroy: function () {
-                document.removeEventListener('mousedown', onMouseDown)
                 document.removeEventListener('mousemove', onMouseMove)
                 document.removeEventListener('mouseup', onMouseUp)
               },

@@ -83,7 +83,10 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
       }
 
       dom.addEventListener('dragstart', function (e) { e.preventDefault() })
-      dom.addEventListener('mouseenter', function () { applyChain('add') })
+      dom.addEventListener('mouseenter', function () {
+        if (editor.view.dom.classList.contains('has-selection')) return
+        applyChain('add')
+      })
       dom.addEventListener('mouseleave', function () { applyChain('remove') })
 
       function renderQuestion(n) {

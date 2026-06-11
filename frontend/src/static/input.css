@@ -133,8 +133,9 @@
   border: 1px solid var(--theme-border);
   border-radius: 6px;
   background: var(--theme-bgDark);
-  overflow: hidden;
   margin: 4px 0;
+  /* overflow: hidden removed — it clips the block-chrome-host gutter (left: -48px).
+     SVG overflow is contained by .sieve-block__body below instead. */
 }
 
 .sieve-block--diagram:hover {
@@ -236,6 +237,8 @@
 .sieve-block--diagram .sieve-block__body {
   display: flex;
   min-height: 80px;
+  overflow: hidden;
+  border-radius: 0 0 6px 6px;
 }
 
 .sieve-block--diagram .sieve-block__gutter {

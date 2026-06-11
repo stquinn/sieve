@@ -167,37 +167,87 @@
         handleDOMEvents: {
           copy: function(view, event) {
             var sel = view.state.selection
-            // sel.node exists only on NodeSelection
+
+            // ── Smart image copy ────────────────────────────────────────────────
             if (sel && sel.node && sel.node.type.name === 'sieve-smart-image') {
               var src = sel.node.attrs.src
               if (!src) return false
-              
               if (src.startsWith('http://') || src.startsWith('https://')) {
                 src = window.location.origin + '/sieve-image-proxy?url=' + encodeURIComponent(src)
               } else if (!src.startsWith('data:') && !src.startsWith('blob:') && !src.startsWith('/')) {
                 if (src.startsWith('.assets/')) src = src.substring(8)
                 src = '/sieve/' + (window.__stashActiveTabUuid || uuid) + '/' + src.split('/').pop()
               }
-
               event.preventDefault()
-              if (window._sieveCopyImageToClipboard) {
-                window._sieveCopyImageToClipboard(src)
-              }
+              if (window._sieveCopyImageToClipboard) window._sieveCopyImageToClipboard(src)
               return true
             }
-            // ── sieve/slice multi-block copy ──────────────────────────────────
-            if (window.SieveClipboard) {
-              var payload = window.SieveClipboard.buildCopyPayload(view)
-              if (payload) {
-                var htmlContent = (window.__tiptap && window.__tiptap.getHTML) ? window.__tiptap.getHTML() : ''
-                event.preventDefault()
-                event.clipboardData.setData('sieve/slice', JSON.stringify(payload.blocks))
-                event.clipboardData.setData('text/plain', payload.markdown)
-                event.clipboardData.setData('text/html', htmlContent)
-                return true
-              }
+
+            // ── Sieve block copy ────────────────────────────────────────────────
+            // If a textarea/input has a text selection, let the browser copy it
+            // natively — the user is copying code/source text from within a block.
+            var activeEl = document.activeElement
+            if (activeEl && (activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'INPUT')) {
+              if (activeEl.selectionStart !== activeEl.selectionEnd) return false
             }
-            return false
+
+            // Collect top-level nodes that overlap the selection.
+            // Also handles the case where PM's selection is an empty cursor sitting
+            // at a sieve block boundary (selectable:false blocks like code/diagram
+            // don't create a NodeSelection on click, but the cursor lands at offset).
+            var sliceItems = []
+            var hasSieve = false
+
+            view.state.doc.forEach(function(node, offset) {
+              var nodeEnd = offset + node.nodeSize
+              // Non-empty selection: include nodes that overlap.
+              if (!sel.empty && (nodeEnd <= sel.from || offset >= sel.to)) return
+              // Empty cursor: only include a sieve node the cursor sits within.
+              if (sel.empty && (sel.from < offset || sel.from >= nodeEnd)) return
+
+              if (node.type.name.startsWith('sieve-')) {
+                hasSieve = true
+                var attrs = {}
+                for (var k in node.attrs) {
+                  if (Object.prototype.hasOwnProperty.call(node.attrs, k)) attrs[k] = node.attrs[k]
+                }
+                sliceItems.push({ _type: 'sieve', kind: node.attrs.kind, attrs: attrs })
+              } else {
+                if (!sel.empty) sliceItems.push({ _type: 'prose', json: node.toJSON() })
+              }
+            })
+
+            if (!hasSieve) return false   // pure prose — TipTap handles natively
+
+            event.preventDefault()
+            event.clipboardData.setData('sieve/slice', JSON.stringify(sliceItems))
+
+            if (sliceItems.length === 1 && sliceItems[0]._type === 'sieve') {
+              // Single block: readable text/plain, block's own HTML, kind-specific type.
+              // text/plain priority: source (code/diagram) → response (AI) → DOM text → YAML
+              var b = sliceItems[0]
+              var blockDOM = view.nodeDOM(sel.empty ? sel.from : sel.from)
+              var plainText = b.attrs.source || b.attrs.response ||
+                (blockDOM ? blockDOM.innerText : '') || b.attrs.serialisedForm || ''
+              event.clipboardData.setData('text/plain', plainText)
+              event.clipboardData.setData('text/html', blockDOM ? blockDOM.outerHTML : '')
+              event.clipboardData.setData('sieve/' + b.kind, b.attrs.serialisedForm || '')
+            } else {
+              // Multi-block: join each block's readable content for text/plain.
+              var getText = function(n) {
+                if (!n) return ''
+                if (n.text) return n.text
+                return (n.content || []).map(getText).join('')
+              }
+              var md = sliceItems.map(function(item) {
+                return item._type === 'sieve'
+                  ? (item.attrs.source || item.attrs.response || item.attrs.serialisedForm || '')
+                  : getText(item.json)
+              }).filter(Boolean).join('\n\n')
+              event.clipboardData.setData('text/plain', md)
+              event.clipboardData.setData('text/html', window.__tiptap ? window.__tiptap.getHTML() : '')
+            }
+            return true
           },
           click: function (view, event) {
             if (!window.isMod(event)) return false

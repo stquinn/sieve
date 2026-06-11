@@ -119,6 +119,15 @@ textarea::selection {
   background: var(--theme-selectionBg);
 }
 
+/* Sieve block included in a TextSelection drag.
+   contentEditable=false atoms don't get the browser selection highlight,
+   so a decoration class drives the visual instead. */
+.block-in-selection {
+  outline: 2px solid var(--theme-accent, #5b7cff);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 /* Drag-select preview: JS adds .drag-hover via elementFromPoint during
    mouse-button-held drag.  CSS :hover can't be used here because the browser
    captures the mouse to the drag origin and stops updating :hover on other
