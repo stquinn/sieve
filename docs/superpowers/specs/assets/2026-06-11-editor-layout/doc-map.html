@@ -190,6 +190,22 @@
     .mock-input { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem; width: 100%; }
   </style>
 </head><body><div class="header"><h1>§8 — Structural document map (NOT a text minimap)</h1><div class="status">Design 2026-06-11</div></div><div class="main"><div id="claude-content">
+
+<style id="decision-style">
+  .decision-banner{background:rgba(52,199,89,.12);border:1px solid #34c759;border-radius:10px;padding:.8rem 1rem;margin:0 0 1.5rem;font-size:.92rem;line-height:1.5;}
+  .decision-banner b{color:#34c759;}
+  .decision-banner code{background:rgba(127,127,127,.18);padding:.05em .35em;border-radius:4px;font-size:.85em;}
+  .decision-banner a{color:#0a84ff;}
+  .opt-chosen{border-color:#34c759 !important;background:rgba(52,199,89,.10) !important;position:relative;}
+  .opt-chosen::after{content:'✓ CHOSEN';position:absolute;top:.55rem;right:.7rem;background:#34c759;color:#fff;font-size:.66rem;font-weight:700;padding:.15rem .5rem;border-radius:6px;letter-spacing:.03em;white-space:nowrap;}
+  .opt-dim{opacity:.5;filter:grayscale(.3);}
+  .option[data-choice="a"]{border-color:#34c759 !important;background:rgba(52,199,89,.10) !important;position:relative;}
+  .option[data-choice="a"]::after{content:"✓ CHOSEN";position:absolute;top:.55rem;right:.7rem;background:#34c759;color:#fff;font-size:.66rem;font-weight:700;padding:.15rem .5rem;border-radius:6px;letter-spacing:.03em;white-space:nowrap;}
+  .option[data-choice="b"]{opacity:.5;filter:grayscale(.3);}
+  .option[data-choice="c"]{opacity:.5;filter:grayscale(.3);}
+</style>
+
+<div class="decision-banner"><b>Decision: A &mdash; the structural map (NOT a text minimap).</b> Flavour-coloured cells, off-screen dirty-glow, viewport box, click-to-jump. The macro zoom of the lineage system. Stage-3 feature.</div>
 <h2>A document map — but structural, not a minimap</h2>
 <p class="subtitle">The macro end of the lineage system: not shrunk text, but one cell per block, coloured by flavour, glowing when stale, with faint lineage edges and a viewport marker. It's how "a render five screens away went stale" becomes visible without scrolling. Below: the structural version (A) vs. the classic text minimap you dislike (B).</p>
 

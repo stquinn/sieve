@@ -190,6 +190,19 @@
     .mock-input { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem; width: 100%; }
   </style>
 </head><body><div class="header"><h1>§7 — Sieve Block as child (Shape 1)</h1><div class="status">Design 2026-06-11</div></div><div class="main"><div id="claude-content">
+
+<style id="decision-style">
+  .decision-banner{background:rgba(52,199,89,.12);border:1px solid #34c759;border-radius:10px;padding:.8rem 1rem;margin:0 0 1.5rem;font-size:.92rem;line-height:1.5;}
+  .decision-banner b{color:#34c759;}
+  .decision-banner code{background:rgba(127,127,127,.18);padding:.05em .35em;border-radius:4px;font-size:.85em;}
+  .decision-banner a{color:#0a84ff;}
+  .opt-chosen{border-color:#34c759 !important;background:rgba(52,199,89,.10) !important;position:relative;}
+  .opt-chosen::after{content:'';position:absolute;top:.55rem;right:.7rem;background:#34c759;color:#fff;font-size:.66rem;font-weight:700;padding:.15rem .5rem;border-radius:6px;letter-spacing:.03em;white-space:nowrap;}
+  .opt-dim{opacity:.5;filter:grayscale(.3);}
+
+</style>
+
+<div class="decision-banner"><b>✓ Chosen: Shape 1</b> &mdash; the kind leads (map key), properties nested beneath it. It is the 1:1 translation of the standalone fence (info-string &rarr; map key, body &rarr; nested value). Shape 2 was rejected.</div>
 <h2>How a Sieve Block renders as a child</h2>
 <p class="subtitle">You assumed kind leads, props nested. That's Shape 1 — and it's the faithful translation of the fence you already use. Shape 2 (kind as a flat field) is the alternative.</p>
 

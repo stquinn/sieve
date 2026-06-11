@@ -190,6 +190,22 @@
     .mock-input { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem; width: 100%; }
   </style>
 </head><body><div class="header"><h1>§7 — Column serialization: SNR comparison</h1><div class="status">Design 2026-06-11</div></div><div class="main"><div id="claude-content">
+
+<style id="decision-style">
+  .decision-banner{background:rgba(52,199,89,.12);border:1px solid #34c759;border-radius:10px;padding:.8rem 1rem;margin:0 0 1.5rem;font-size:.92rem;line-height:1.5;}
+  .decision-banner b{color:#34c759;}
+  .decision-banner code{background:rgba(127,127,127,.18);padding:.05em .35em;border-radius:4px;font-size:.85em;}
+  .decision-banner a{color:#0a84ff;}
+  .opt-chosen{border-color:#34c759 !important;background:rgba(52,199,89,.10) !important;position:relative;}
+  .opt-chosen::after{content:'✓ DIRECTION (refined)';position:absolute;top:.55rem;right:.7rem;background:#34c759;color:#fff;font-size:.66rem;font-weight:700;padding:.15rem .5rem;border-radius:6px;letter-spacing:.03em;white-space:nowrap;}
+  .opt-dim{opacity:.5;filter:grayscale(.3);}
+  .option[data-choice="b"]{border-color:#34c759 !important;background:rgba(52,199,89,.10) !important;position:relative;}
+  .option[data-choice="b"]::after{content:"✓ DIRECTION (refined)";position:absolute;top:.55rem;right:.7rem;background:#34c759;color:#fff;font-size:.66rem;font-weight:700;padding:.15rem .5rem;border-radius:6px;letter-spacing:.03em;white-space:nowrap;}
+  .option[data-choice="a"]{opacity:.5;filter:grayscale(.3);}
+  .option[data-choice="c"]{opacity:.5;filter:grayscale(.3);}
+</style>
+
+<div class="decision-banner"><b>Direction chosen: B</b> &mdash; one fence convention (a <code>column-row</code> Sieve block), <em>not</em> a <code>:::</code> div. The low-SNR strawman shown in B here is <b>fixed by verbatim scalar prose</b> &mdash; see <a href="scalar-prose.html">scalar-prose</a> and <a href="block-shape.html">block-shape</a> for the final model.</div>
 <h2>The same column, two encodings — read the files</h2>
 <p class="subtitle">Target: a paragraph beside a diagram. The question is only what the on-disk markdown looks like. SNR is the whole game here.</p>
 

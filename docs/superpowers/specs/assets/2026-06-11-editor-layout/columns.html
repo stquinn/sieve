@@ -190,6 +190,24 @@
     .mock-input { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem; width: 100%; }
   </style>
 </head><body><div class="header"><h1>§6 — Columns (container + resize + creation gesture)</h1><div class="status">Design 2026-06-11</div></div><div class="main"><div id="claude-content">
+
+<style id="decision-style">
+  .decision-banner{background:rgba(52,199,89,.12);border:1px solid #34c759;border-radius:10px;padding:.8rem 1rem;margin:0 0 1.5rem;font-size:.92rem;line-height:1.5;}
+  .decision-banner b{color:#34c759;}
+  .decision-banner code{background:rgba(127,127,127,.18);padding:.05em .35em;border-radius:4px;font-size:.85em;}
+  .decision-banner a{color:#0a84ff;}
+  .opt-chosen{border-color:#34c759 !important;background:rgba(52,199,89,.10) !important;position:relative;}
+  .opt-chosen::after{content:'✓ KEPT';position:absolute;top:.55rem;right:.7rem;background:#34c759;color:#fff;font-size:.66rem;font-weight:700;padding:.15rem .5rem;border-radius:6px;letter-spacing:.03em;white-space:nowrap;}
+  .opt-dim{opacity:.5;filter:grayscale(.3);}
+  .option[data-choice="a"]{border-color:#34c759 !important;background:rgba(52,199,89,.10) !important;position:relative;}
+  .option[data-choice="a"]::after{content:"✓ KEPT";position:absolute;top:.55rem;right:.7rem;background:#34c759;color:#fff;font-size:.66rem;font-weight:700;padding:.15rem .5rem;border-radius:6px;letter-spacing:.03em;white-space:nowrap;}
+  .option[data-choice="b"]{border-color:#34c759 !important;background:rgba(52,199,89,.10) !important;position:relative;}
+  .option[data-choice="b"]::after{content:"✓ KEPT";position:absolute;top:.55rem;right:.7rem;background:#34c759;color:#fff;font-size:.66rem;font-weight:700;padding:.15rem .5rem;border-radius:6px;letter-spacing:.03em;white-space:nowrap;}
+  .option[data-choice="c"]{border-color:#34c759 !important;background:rgba(52,199,89,.10) !important;position:relative;}
+  .option[data-choice="c"]::after{content:"✓ KEPT";position:absolute;top:.55rem;right:.7rem;background:#34c759;color:#fff;font-size:.66rem;font-weight:700;padding:.15rem .5rem;border-radius:6px;letter-spacing:.03em;white-space:nowrap;}
+</style>
+
+<div class="decision-banner"><b>Decision: all three gestures kept</b> over <em>one</em> <code>column-row</code> container &mdash; they are entry points, not alternatives. Build order: <b>B (insert) &rarr; A (drag-to-edge) &rarr; C (group)</b>. Plus a draggable resize grab-handle and depth cap = 1 (v1).</div>
 <h2>Columns — the 2D layer</h2>
 <p class="subtitle">A column-row is one container node holding child blocks that lay out horizontally. The blocks inside keep their refs, flavours, cache & cement behaviour — the reconciler and serialiser don't notice. Refs may cross a column boundary (logical graph ≠ visual layout). Here's the target, then one decision: the creation gesture.</p>
 

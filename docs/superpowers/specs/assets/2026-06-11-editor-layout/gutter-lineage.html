@@ -190,6 +190,22 @@
     .mock-input { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem; width: 100%; }
   </style>
 </head><body><div class="header"><h1>§8 — Gutter / lineage rail (hybrid)</h1><div class="status">Design 2026-06-11</div></div><div class="main"><div id="claude-content">
+
+<style id="decision-style">
+  .decision-banner{background:rgba(52,199,89,.12);border:1px solid #34c759;border-radius:10px;padding:.8rem 1rem;margin:0 0 1.5rem;font-size:.92rem;line-height:1.5;}
+  .decision-banner b{color:#34c759;}
+  .decision-banner code{background:rgba(127,127,127,.18);padding:.05em .35em;border-radius:4px;font-size:.85em;}
+  .decision-banner a{color:#0a84ff;}
+  .opt-chosen{border-color:#34c759 !important;background:rgba(52,199,89,.10) !important;position:relative;}
+  .opt-chosen::after{content:'✓ CHOSEN';position:absolute;top:.55rem;right:.7rem;background:#34c759;color:#fff;font-size:.66rem;font-weight:700;padding:.15rem .5rem;border-radius:6px;letter-spacing:.03em;white-space:nowrap;}
+  .opt-dim{opacity:.5;filter:grayscale(.3);}
+  .option[data-choice="c"]{border-color:#34c759 !important;background:rgba(52,199,89,.10) !important;position:relative;}
+  .option[data-choice="c"]::after{content:"✓ CHOSEN";position:absolute;top:.55rem;right:.7rem;background:#34c759;color:#fff;font-size:.66rem;font-weight:700;padding:.15rem .5rem;border-radius:6px;letter-spacing:.03em;white-space:nowrap;}
+  .option[data-choice="a"]{opacity:.5;filter:grayscale(.3);}
+  .option[data-choice="b"]{opacity:.5;filter:grayscale(.3);}
+</style>
+
+<div class="decision-banner"><b>Decision: C &mdash; Hybrid.</b> Faint always-on &lsquo;participates&rsquo; tick + <em>always-on dirty-glow</em> (safety-critical); full bracket-chains + neighbour highlight on hover/select. Extends the existing block-anchor / word-highlight language &mdash; not a parallel system.</div>
 <h2>The gutter / lineage rail</h2>
 <p class="subtitle">References cause spooky-action-at-a-distance: edit one block, a render five screens away silently goes stale. The gutter rail is what makes that legible. It carries three things — the per-block accent + drag handle (objective 1), and bracket-chains showing ref edges (objective 3). Dirty-glow is safety-critical. Question: how loud are the edges by default?</p>
 

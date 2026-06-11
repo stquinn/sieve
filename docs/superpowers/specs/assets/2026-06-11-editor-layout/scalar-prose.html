@@ -190,6 +190,19 @@
     .mock-input { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem; width: 100%; }
   </style>
 </head><body><div class="header"><h1>§7 — Scalar prose (no prose kind, verbatim markdown)</h1><div class="status">Design 2026-06-11</div></div><div class="main"><div id="claude-content">
+
+<style id="decision-style">
+  .decision-banner{background:rgba(52,199,89,.12);border:1px solid #34c759;border-radius:10px;padding:.8rem 1rem;margin:0 0 1.5rem;font-size:.92rem;line-height:1.5;}
+  .decision-banner b{color:#34c759;}
+  .decision-banner code{background:rgba(127,127,127,.18);padding:.05em .35em;border-radius:4px;font-size:.85em;}
+  .decision-banner a{color:#0a84ff;}
+  .opt-chosen{border-color:#34c759 !important;background:rgba(52,199,89,.10) !important;position:relative;}
+  .opt-chosen::after{content:'';position:absolute;top:.55rem;right:.7rem;background:#34c759;color:#fff;font-size:.66rem;font-weight:700;padding:.15rem .5rem;border-radius:6px;letter-spacing:.03em;white-space:nowrap;}
+  .opt-dim{opacity:.5;filter:grayscale(.3);}
+
+</style>
+
+<div class="decision-banner"><b>✓ This is the chosen serialization model.</b> <code>children:</code> is a mixed array &mdash; a <em>string</em> is verbatim standard markdown (no &lsquo;prose kind&rsquo;, no dialect), a <em>map</em> is a Sieve Block. Only Sieve Blocks get special handling.</div>
 <h2>B, refined: prose is a verbatim scalar — no "prose kind"</h2>
 <p class="subtitle">children: is a mixed array. A <span style="color:#7c9">string</span> = verbatim standard markdown (Sieve injects it through the normal parser, zero special handling). A <span style="color:#79c0ff">map</span> = a real Sieve Block. Nothing redefines markdown.</p>
 
