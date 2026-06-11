@@ -20,6 +20,7 @@ func (h *SessionHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/session/prompts/toggle", h.handlePromptsToggle)
 	r.Post("/api/session/toolbar/toggle", h.handleToolbarToggle)
 	r.Post("/api/session/linenumbers/toggle", h.handleLineNumbersToggle)
+	r.Post("/api/session/askpanel/toggle", h.handleAskPanelToggle)
 	r.Post("/api/session/layout", h.handleSessionLayout)
 	r.Post("/api/session/refresh", h.handleSessionRefresh)
 	r.Get("/api/library/switch-layout", h.handleSwitchLayout)
@@ -111,6 +112,15 @@ func (h *SessionHandler) handleToolbarToggle(w http.ResponseWriter, r *http.Requ
 	fmt.Fprintf(w, `<style id="layout-overrides-toolbar" hx-swap-oob="true">#editor-toolbar { display: %s; } #app-root { --toolbar-h: %s; }</style>`, display, toolbarH)
 }
 
+func (h *SessionHandler) handleAskPanelToggle(w http.ResponseWriter, r *http.Request) {
+	session := h.ServiceProvider.State.LoadSession()
+	session.ShowAskPanel = !session.ShowAskPanel
+	_ = h.ServiceProvider.State.SaveSession(session)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<script hx-swap-oob="true">document.dispatchEvent(new CustomEvent('sieve:ask-panel-toggled', { detail: %t }))</script>`, session.ShowAskPanel)
+}
+
 func (h *SessionHandler) handleSessionRefresh(w http.ResponseWriter, r *http.Request) {
 	themeName := h.ServiceProvider.State.LoadSettings().Theme
 
@@ -185,12 +195,12 @@ func (h *SessionHandler) handleSwitchLayout(w http.ResponseWriter, r *http.Reque
 			`<style id="layout-overrides-prompts" hx-swap-oob="true">#prompts-panel { display: %s; } .prompts-handle { display: %s; }</style>`+
 			`<style id="layout-overrides-toolbar" hx-swap-oob="true">#editor-toolbar { display: %s; } #app-root { --toolbar-h: %s; }</style>`+
 			`<style id="layout-overrides-linenumbers" hx-swap-oob="true">%s</style>`+
-			`<script>var r=document.getElementById('app-root');if(r)r.className=r.className.replace(/tier-\S+/,'tier-%s');</script>`,
+			`<script hx-swap-oob="true">var r=document.getElementById('app-root');if(r)r.className=r.className.replace(/tier-\S+/,'tier-%s'); document.dispatchEvent(new CustomEvent('sieve:ask-panel-toggled', { detail: %t }));</script>`,
 		sidebarW, sidebarDisp, handleDisp,
 		metaW, metaDisp, metaHandleDisp,
 		promptsDisp, promptsDisp,
 		toolbarDisp, toolbarH,
 		lineNumberOverrideCSS(session.ShowLineNumbers),
-		tierStr,
+		tierStr, session.ShowAskPanel,
 	)
 }

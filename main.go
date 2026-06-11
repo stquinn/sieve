@@ -288,6 +288,7 @@ func buildMenu(app *App) *menu.Menu {
 	view := appMenu.AddSubmenu("View")
 	view.AddText("Toggle Sidebar", keys.CmdOrCtrl("\\"), js("htmx.ajax('POST','/api/session/sidebar/toggle',{swap:'none'})"))
 	view.AddText("Toggle Meta Panel", keys.Combo("i", keys.CmdOrCtrlKey, keys.ShiftKey), js("htmx.ajax('POST','/api/session/meta/toggle',{swap:'none'})"))
+	view.AddText("Toggle Ask Panel", nil, js("htmx.ajax('POST','/api/session/askpanel/toggle',{swap:'none'})"))
 	view.AddText("Toggle Prompts", keys.Combo("p", keys.CmdOrCtrlKey, keys.ShiftKey), js("htmx.ajax('POST','/api/session/prompts/toggle',{swap:'none'})"))
 	view.AddText("Toggle Line Numbers", keys.Combo("l", keys.CmdOrCtrlKey, keys.ShiftKey), js("htmx.ajax('POST','/api/session/linenumbers/toggle',{swap:'none'})"))
 	view.AddText("Toggle Editor Mode", keys.Combo("m", keys.CmdOrCtrlKey, keys.ShiftKey), js("document.dispatchEvent(new CustomEvent('sieve:toggle-mode'))"))

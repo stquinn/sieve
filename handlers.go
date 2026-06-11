@@ -227,6 +227,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		ShowMeta         bool
 		ShowPrompts      bool
 		ShowToolbar      bool
+		ShowAskPanel     bool
 		ShowLineNumbers  bool
 		PromptsHeight    int
 		ActiveUUID       string
@@ -243,6 +244,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		ShowMeta:         session.ShowMeta,
 		ShowPrompts:      session.ShowPrompts,
 		ShowToolbar:      session.ShowToolbar,
+		ShowAskPanel:     session.ShowAskPanel,
 		ShowLineNumbers:  session.ShowLineNumbers,
 		PromptsHeight:    session.PromptsHeight,
 		ActiveUUID:       activeUUID,

@@ -37,6 +37,7 @@ type Session struct {
 	OpenFolders       []string `json:"openFolders,omitempty"`
 	LastSettingsPanel string   `json:"lastSettingsPanel,omitempty"`
 	ShowToolbar       bool     `json:"showToolbar,omitempty"`
+	ShowAskPanel      bool     `json:"showAskPanel"`
 	// No omitempty: false must serialise so an explicit "off" survives reload.
 	// Defaults to true in ParseSession; sessions predating the field keep numbers on.
 	ShowLineNumbers bool `json:"showLineNumbers"`
