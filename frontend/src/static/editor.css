@@ -430,8 +430,14 @@ textarea::selection {
 
 .block-chrome-handle { opacity: 0; cursor: grab; color: var(--theme-accentPrimary);
   font-size: 13px; line-height: 1.5; transition: opacity .15s; }
-.ProseMirror:hover .block-chrome-handle,
-.block-chrome-host:hover .block-chrome-handle { opacity: .7; }
+
+/* Show handle only on the row under the cursor, not all rows at once.
+   Strategy A (prose): host is a DOM sibling before the block — use :has()
+   to detect hover on the immediately-following .block-with-chrome.
+   Strategy B (Sieve): host is inside the block — normal descendant hover works. */
+.block-chrome-host:hover .block-chrome-handle,
+.block-chrome-host:has(+ .block-with-chrome:hover) .block-chrome-handle,
+.block-with-chrome:hover > .block-chrome-host .block-chrome-handle { opacity: .7; }
 .block-chrome-handle:hover { opacity: 1 !important; }
 
 .block-chrome-rail { width: 3px; align-self: stretch; border-radius: 2px;

@@ -102,7 +102,7 @@
     var handle = document.createElement('span')
     handle.className = 'block-chrome-handle'
     handle.setAttribute('draggable', 'true')
-    handle.textContent = '⠷'   // braille drag-dots glyph
+    handle.textContent = '⠿'   // 2×3 drag-dots glyph
 
     var rail = document.createElement('span')
     rail.className = 'block-chrome-rail'
@@ -180,7 +180,7 @@
     var handle = document.createElement('span')
     handle.className = 'block-chrome-handle'
     handle.setAttribute('draggable', 'true')
-    handle.textContent = '⠷'   // braille drag-dots glyph
+    handle.textContent = '⠿'   // 2×3 drag-dots glyph
 
     var rail = document.createElement('span')
     rail.className = 'block-chrome-rail'
