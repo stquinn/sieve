@@ -136,16 +136,9 @@
       } catch (_) {}
     })
 
-    // ── dragend: clean up (fires even if drop was outside editor) ──────
+    // ── dragend: clean up if drop didn't fire (e.g. dropped outside editor)
     handle.addEventListener('dragend', function () {
-      if (dragState) {
-        dragState = null
-        try {
-          view.dispatch(
-            view.state.tr.setMeta(blockChromeKey, { indicatorPos: null })
-          )
-        } catch (_) {}
-      }
+      dragState = null
     })
 
     return host
@@ -202,16 +195,9 @@
       } catch (_) {}
     })
 
-    // ── dragend: clean up (fires even if drop was outside editor) ──────
+    // ── dragend: clean up if drop didn't fire (e.g. dropped outside editor)
     handle.addEventListener('dragend', function () {
-      if (dragState) {
-        dragState = null
-        try {
-          view.dispatch(
-            view.state.tr.setMeta(blockChromeKey, { indicatorPos: null })
-          )
-        } catch (_) {}
-      }
+      dragState = null
     })
   }
 
@@ -255,31 +241,7 @@
       }
     })
 
-    // Drop indicator (only during drag)
-    var pluginState = blockChromeKey.getState(state)
-    if (pluginState && pluginState.indicatorPos != null) {
-      var iPos = pluginState.indicatorPos
-      var maxPos = state.doc.content.size
-      var clampedPos = Math.max(0, Math.min(iPos, maxPos))
-      decos.push(indicatorWidget(clampedPos))
-    }
-
     return DecorationSet.create(state.doc, decos)
-  }
-
-  // ── Drop indicator widget ────────────────────────────────────────────────────
-
-  function indicatorWidget(pos) {
-    return Decoration.widget(
-      pos,
-      function () {
-        var line = document.createElement('div')
-        line.className = 'block-chrome-drop-indicator'
-        line.setAttribute('contenteditable', 'false')
-        return line
-      },
-      { side: -1, key: 'drop-indicator' }
-    )
   }
 
   // ── Sync Sieve block chrome hosts (Strategy B) ───────────────────────────────
@@ -314,18 +276,6 @@
         new Plugin({
           key: blockChromeKey,
 
-          // Plugin state: { indicatorPos: number | null }
-          state: {
-            init: function () { return { indicatorPos: null } },
-            apply: function (tr, prev) {
-              var meta = tr.getMeta(blockChromeKey)
-              if (meta && meta.indicatorPos !== undefined) {
-                return { indicatorPos: meta.indicatorPos }
-              }
-              return prev
-            },
-          },
-
           props: {
             // ── Decorations ───────────────────────────────────────────────
             decorations: function (state) {
@@ -335,34 +285,12 @@
             // ── DOM event handlers ─────────────────────────────────────────
             handleDOMEvents: {
 
-            // dragover: update indicator to nearest boundary
+            // dragover: allow our handle drags to drop
               dragover: function (view, event) {
-                if (!dragState) return false  // not our drag — let PM handle it
+                if (!dragState) return false
                 event.preventDefault()
                 event.dataTransfer.dropEffect = 'move'
-
-                var targetPos = nearestBoundary(view, event.clientY)
-                if (targetPos == null) return true
-
-                var currentState = blockChromeKey.getState(view.state)
-                if (!currentState || currentState.indicatorPos !== targetPos) {
-                  view.dispatch(
-                    view.state.tr.setMeta(blockChromeKey, { indicatorPos: targetPos })
-                  )
-                }
                 return true
-              },
-
-              // dragleave: clear indicator when cursor leaves the editor DOM
-              dragleave: function (view, event) {
-                if (!dragState) return false
-                var related = event.relatedTarget
-                if (!related || !view.dom.contains(related)) {
-                  view.dispatch(
-                    view.state.tr.setMeta(blockChromeKey, { indicatorPos: null })
-                  )
-                }
-                return false
               },
 
               // drop: single-transaction reorder
@@ -374,45 +302,21 @@
                 dragState = null
 
                 var targetPos = nearestBoundary(view, event.clientY)
-
-                // Always clear the indicator — embed it in the same transaction
-                // as the move (or a no-op transaction if no move).
-                if (targetPos == null) {
-                  view.dispatch(
-                    view.state.tr.setMeta(blockChromeKey, { indicatorPos: null })
-                  )
-                  return true
-                }
+                if (targetPos == null) return true
 
                 var doc = view.state.doc
                 var node = doc.nodeAt(from)
-                if (!node) {
-                  view.dispatch(
-                    view.state.tr.setMeta(blockChromeKey, { indicatorPos: null })
-                  )
-                  return true
-                }
+                if (!node) return true
 
                 var nodeSize = node.nodeSize
+                if (targetPos === from || targetPos === from + nodeSize) return true
 
-                // If dropping back onto the same position, just clear indicator
-                if (targetPos === from || targetPos === from + nodeSize) {
-                  view.dispatch(
-                    view.state.tr.setMeta(blockChromeKey, { indicatorPos: null })
-                  )
-                  return true
-                }
-
-                // ── Single transaction: clear indicator + delete + map + insert
-                // Both the indicator clear and the doc mutation go in one tr —
-                // critical for single-Mod+Z undo integrity.
+                // Single transaction: delete source + map insert position.
+                // One tr = one Mod+Z undo step.
                 var tr = view.state.tr
-                tr.setMeta(blockChromeKey, { indicatorPos: null })
                 tr.delete(from, from + nodeSize)
-                var insertAt = tr.mapping.map(targetPos)
-                tr.insert(insertAt, node)
+                tr.insert(tr.mapping.map(targetPos), node)
                 view.dispatch(tr)
-
                 return true
               },
             },
