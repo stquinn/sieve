@@ -259,3 +259,105 @@ Conceptually the model is sound and mostly TipTap-native (rich *per-block* UI vi
 7. **The substrate is the real work**: predictable selection/clipboard + block drag-reorder, on a deliberately *linear* canvas with gutter lineage.
 
 Build the **atom** — a Go-Playground-style block (editor + Run + stdout pane, stateless, runner behind it) — and most of the rest is *what happens when output panes become input ports*.
+
+
+---
+
+## 14.  Some random thoughts
+### How does a user physically draw a reference? Is it a visual autocompleter in the prose editor (e.g. typing @ or / brings up a list of upstream blocks to link to)?
+
+That simplifies the UX immensely. Instead of requiring the user to learn a syntax to manually declare dependencies (like writing code in a notebook), the referencing is **action-driven and context-aware**.
+
+It makes the document-building flow feel natural and immediate:
+
+1. **You have the source:** A Python block, an HTTP response, or a raw data dump.
+2. **You take action:** You right-click the block, opening a context menu.
+3. **The editor creates the link:** You select *"Extract as Diagram"* or *"Ask AI..."*. Sieve creates the new block directly below the source, automatically setting the new block's `parent` attribute to the source block's ID.
+
+### Why this is a UX masterstroke:
+* **Zero Syntax Overhead:** The user never has to copy UUIDs, write `@block-123` tags, or type code to link cells. The graph is built visually and implicitly through their normal editing actions.
+* **Predictable Document Flow:** Because the spawned node is created immediately below the parent, the visual layout matches the chronological flow of execution.
+* **Clear Provenance:** The new block can visually render a small breadcrumb or link in its header (e.g., `↙ Source: code-abc`), which acts as both a visual link and an affordance to scroll back up to the parent.
+
+Under the hood, the registry of flavours handles the rest. For instance, when you click *"Extract as Diagram"*, the context-menu handler fires:
+```javascript
+document.dispatchEvent(new CustomEvent('sieve:extract', {
+  detail: { 
+    blockId: n.attrs.id,        // Source ID
+    targetKind: 'diagram',      // Target Flavour
+    sourceNode: n               // Node attributes/content
+  }
+}))
+```
+The framework creates a `sieve-diagram` block, assigns `parent: sourceNode.id`, and your reconciler registers the edge.
+
+It fits the existing codebase beautifully since you already have the `detect-extractions` endpoint and context menu triggers wired up in [sieve-block-extension.js](file:///home/stephen/Development/projects/sieve/frontend/src/static/sieve-block-extension.js#L268-L309). You are essentially generalizing that exact "Extract as" concept into the permanent DAG relationships of your design spine.
+
+It makes the editor feel like it has "gravity"—you drop some raw data in, and you can pull tables, critiques, and diagrams out of it with a couple of clicks, keeping the links intact.
+
+> may not always be true - as FAN IN and FAN OUT may need different semantics and the ability to link via  the UI
+
+
+### Logic gate metaphor
+
+For simple, linear workflows, Sieve utilizes a context-aware "sprouting" UX. Right-clicking a block and selecting an action (e.g., Explain with AI, Extract as Diagram, or Format as Table) automatically instantiates a new consumer block directly below, pre-wired with a backward reference (parent: sourceNode.id) to the parent block. However, to handle complex multi-input scenarios (Fan-In)—such as linking a payload block and an environment block into a single HTTP client, or post-hoc linking of existing blocks—the editor moves beyond simple linear creation, employing a transient "Logic Gate" visual metaphor that temporarily exposes data ports during drag operations.
+
+When a user initiates a block drag, Sieve’s layout engine enters a temporary wiring mode where consumer blocks morph to reveal structured sockets: input legs on the left (e.g., [Env], [Payload], [Config]) and output legs on the right (e.g., [JSON], [Text]). Dragging a compatible producer block over a consumer highlights its corresponding input leg as a drop zone (e.g., [Connect Block A]), and dropping it establishes the edge in the DAG. If an input slot is already occupied, the leg enters a "Replace" state, allowing seamless swaps. Once the drag operation terminates, these ports recede to keep the document pristine, and the active connections are visually preserved using gutter lineage lines that flow from the right-hand output of the parent down the margin and loop back into the left-hand input of the child block.
+
+
+### Filtered Drop Downs and drag and drop
+
+You have hit the nail on the head. If a block requires $N$ inputs, the UI must give the user a clear way to perform that binding without making the document look like a spaghetti diagram. 
+
+The two patterns you mentioned—**Dropdowns with Friendly Names** and **Drag-and-Drop Binding**—are actually highly complementary. One is a precise, keyboard-accessible fallback; the other is a fluid, high-fidelity gesture. 
+
+Here is how both of those mechanisms could work in a document editor like Sieve:
+
+---
+
+### Prerequisites: "Friendly Names" & Type-Gating
+For either mechanism to work, the editor needs to make blocks identifiable and compatible:
+1. **Auto-Friendly Names:** By default, every block gets a readable identifier based on its kind and position (e.g., `[Python Code (Line 12)]` or `[HTTP Response (Line 42)]`). If a block gets renamed by the user (e.g., `[Staging Database]`), that name takes precedence.
+2. **Type-Gating (The Flavour Check):** The editor knows what type of data each block outputs (JSON, plain text, environment maps, SVGs). If an HTTP client block has an input slot that expects an `Environment Map`, the UI will *only* let you bind blocks that output that format.
+
+---
+
+### UX Option A: The Input Slot Dropdown (Precise & Simple)
+Another idea....
+
+In the header or settings bar of the consumer block, you render explicit slots for its expected inputs:
+
+```
++-----------------------------------------------------------+
+| HTTP Client Block                                         |
+|                                                           |
+|  [ Environment: v ] -> List: [ Staging Env (Line 2)     ] |
+|                              [ Prod Env (Line 4)        ] |
+|                                                           |
+|  [ Payload:     v ] -> List: [ User JSON Query (Line 18) ] |
+|                              [ Auth Response (Line 29)  ] |
++-----------------------------------------------------------+
+```
+
+* **How it feels:** Clean, standard, and highly accessible. You click the dropdown, it lists only the compatible blocks currently in the document, and you click one to bind it.
+* **Pro:** Very easy to build, requires no complex drag-and-drop math, and works perfectly on mobile or with a keyboard.
+
+---
+
+### UX Option B: The "Drag-into-Field" Dropzone (Fluid & Visual)
+Since you already noted that block-level drag-and-drop is a key requirement for layout reordering, you can piggyback on that exact same gesture for wiring:
+
+* **The Setup:** The consumer block exposes empty slots: `[ Drag Payload here ]`.
+* **The Gesture:** You grab the drag handle of `Code Block A` and start dragging it.
+* **The Highlight:** As you drag, the layout engine shifts modes: instead of showing where the block will land in the page flow, Sieve lights up any empty **Input Dropzones** in other blocks that are compatible with `Code Block A`'s output type.
+* **The Drop:** You drop `Code Block A` directly onto the `[ Drag Payload here ]` slot of the HTTP client. 
+* **The Result:** The block snaps back to its original physical position in the document, but the HTTP client's input slot updates to: `[ Payload: Code Block A ]`.
+
+---
+
+### The Verdict: Start with Dropdowns, Evolve to Drag-into-Field
+If you were to build this incrementally:
+1. **Milestone 1:** Build the **Dropdown** selectors in the block headers. It solves the functionality of $N$-input binding immediately with low engineering risk.
+2. **Milestone 2:** Layer the **Drag-and-Drop** binding on top of it once your block-reordering substrate is solid.
+
+It is a really cool design space. It solves the complexity of multi-input programming without cluttering the document with visual cables.
