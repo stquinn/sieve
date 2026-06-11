@@ -378,7 +378,7 @@ textarea::selection {
 /* ── Editor ──────────────────────────────────────────────────────────── */
 
 /* Block chrome (Stage 1.5 — full gutter ownership) */
-.editor-panel { --chrome-w: 40px; }
+.editor-panel { --chrome-w: 48px; }
 
 /* Strategy A (prose nodes): widget is a DOM sibling BEFORE the block inside
    .ProseMirror (position:relative). top:auto uses the CSS static-position
@@ -393,8 +393,8 @@ textarea::selection {
   width: var(--chrome-w);
   height: auto;
   display: flex;
-  align-items: flex-start;
-  gap: 2px;
+  align-items: baseline;
+  gap: 4px;
   user-select: none;
   pointer-events: none;
 }
@@ -409,8 +409,8 @@ textarea::selection {
   width: var(--chrome-w);
   height: 100%;
   display: flex;
-  align-items: flex-start;
-  gap: 2px;
+  align-items: baseline;
+  gap: 4px;
   user-select: none;
   pointer-events: none;
 }
@@ -419,20 +419,19 @@ textarea::selection {
 .block-chrome-host > * { pointer-events: auto; }
 
 .block-chrome-linenum {
-  font-size: 11px;
-  line-height: 1.6;
-  color: var(--theme-muted);
-  min-width: 18px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--theme-textDim);
+  min-width: 20px;
   text-align: right;
-  opacity: 0.6;
   font-family: var(--theme-monoFont);
   user-select: none;
 }
 
-.block-chrome-handle { opacity: 0; cursor: grab; color: var(--theme-accent, #5b7cff);
-  font-size: 14px; line-height: 1.6; transition: opacity .1s; }
+.block-chrome-handle { opacity: 0; cursor: grab; color: var(--theme-accentPrimary);
+  font-size: 13px; line-height: 1.5; transition: opacity .15s; }
 .ProseMirror:hover .block-chrome-handle,
-.block-chrome-host:hover .block-chrome-handle { opacity: .6; }
+.block-chrome-host:hover .block-chrome-handle { opacity: .7; }
 .block-chrome-handle:hover { opacity: 1 !important; }
 
 .block-chrome-rail { width: 3px; align-self: stretch; border-radius: 2px;
