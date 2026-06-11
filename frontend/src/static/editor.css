@@ -1160,31 +1160,7 @@ pre.tiptap-code-block code {
 .smart-link-node[data-pending] { color: var(--theme-muted); font-style: italic; }
 .smart-link-node[data-error]   { color: var(--theme-accentOrange); }
 
-/* ── Smart-link edit dialog ──────────────────────────────────────────── */
-
-.smart-link-edit-popup {
-  top: 30%;
-  bottom: auto;
-  left: 50%;
-  width: 380px;
-  max-width: 92vw;
-}
-
-.smart-link-edit-popup__input {
-  width: 100%;
-  background: var(--theme-bg);
-  border: 1px solid var(--theme-border2);
-  border-radius: 6px;
-  color: var(--theme-text);
-  font-size: 13px;
-  padding: 0.4rem 0.6rem;
-  outline: none;
-  box-sizing: border-box;
-  margin-bottom: 0.5rem;
-}
-
-.smart-link-edit-popup__input:focus { border-color: var(--theme-accentPrimary); }
-.smart-link-edit-popup__input::placeholder { color: var(--theme-textDim); opacity: 0.6; }
+/* Smart-link edit dialog styles have been unified with other modal dialogs at the bottom of the file */
 
 /* ── Sieve Blocks ────────────────────────────────────────────────────── */
 
@@ -1888,6 +1864,8 @@ pre.tiptap-code-block code {
   color: var(--theme-textDim);
   flex-shrink: 0;
   overflow: hidden;
+  position: relative;
+  z-index: 201;
 }
 
 .status-bar__left {
@@ -2016,29 +1994,108 @@ pre.tiptap-code-block code {
   line-height: 1.5;
 }
 
-/* ── Ask Popup ───────────────────────────────────────────────────────── */
-/* Width tracks 90% of the editor panel (total viewport minus sidebar).  */
-/* --sidebar-w is set on #app-root and inherited here.                   */
+/* ── Ask Panel — structural flex child of #editor-col ────────────────── */
+/* Sits between #htmx-editor and the status bar, inside the editor column */
+/* so it is naturally bounded by sidebar on left and meta panel on right. */
 
-.ask-popup {
-  position: fixed;
-  bottom: 24px;
-  /* Centre over the editor panel, not the full viewport */
-  left: calc(var(--sidebar-w, 0px) + (100vw - var(--sidebar-w, 0px)) / 2);
-  transform: translateX(-50%);
-  width: calc((100vw - var(--sidebar-w, 0px)) * 0.9);
+/* Clip #editor-col so the ask panel can never bleed into meta column. */
+#editor-col { overflow: hidden; }
+
+.ask-panel {
+  flex-shrink: 0;
+  overflow: hidden;
+  max-height: 0;
   background: var(--theme-bgAlt);
-  border: 1px solid var(--theme-border2);
-  border-radius: 8px;
-  box-shadow: 0 12px 48px rgba(0,0,0,0.7), 0 0 0 1px color-mix(in srgb, var(--theme-accentPrimary) 8%, transparent);
-  z-index: 200;
-  display: none;
+  border-top: 0px solid transparent;
+  display: flex;
   flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  transition: max-height 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+              border-top-color 0.25s;
 }
 
-.ask-popup[open] {
-  display: flex;
+.ask-panel.is-open {
+  max-height: 220px;
+  border-top: 1px solid var(--theme-border2);
 }
+
+/* Reuse ask-popup__ BEM names for the inner elements */
+.ask-panel .ask-popup__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px 8px;
+  border-bottom: 1px solid var(--theme-border);
+  flex-shrink: 0;
+}
+
+.ask-panel .ask-popup__label {
+  font-size: 11px;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--theme-accentPrimary) 65%, transparent);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.ask-panel .ask-popup__close {
+  background: none;
+  border: none;
+  color: var(--theme-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+  line-height: 1;
+}
+.ask-panel .ask-popup__close:hover { color: var(--theme-text); }
+
+.ask-panel .ask-popup__input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--theme-text);
+  font-family: inherit;
+  font-size: 16px;
+  padding: 14px 16px;
+  resize: none;
+  line-height: 1.55;
+  flex: 1;
+  min-height: 0;
+}
+
+.ask-panel .ask-popup__input::placeholder { color: var(--theme-textDim); opacity: 0.5; font-size: 15px; }
+
+.ask-panel .ask-popup__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px 10px;
+  border-top: 1px solid var(--theme-border);
+  flex-shrink: 0;
+}
+
+.ask-panel .ask-popup__hint {
+  font-size: 12px;
+  color: var(--theme-textDim);
+  opacity: 0.6;
+}
+
+.ask-panel .ask-popup__send {
+  background: var(--theme-accentPrimary);
+  border: none;
+  border-radius: 5px;
+  color: var(--theme-bg);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 6px 18px;
+  letter-spacing: 0.02em;
+}
+.ask-panel .ask-popup__send:hover { background: color-mix(in srgb, var(--theme-accentPrimary) 85%, white); }
+
+/* ── Shared inner-element styles for the modal dialogs (internalize / edit) ── */
+/* These BEM names are still used by internalize-popup, smart-link-edit-popup  */
+/* and smart-card-edit-popup which are real <dialog> elements.                 */
 
 .ask-popup__header {
   display: flex;
@@ -2067,21 +2124,6 @@ pre.tiptap-code-block code {
 }
 .ask-popup__close:hover { color: var(--theme-text); }
 
-.ask-popup__input {
-  background: transparent;
-  border: none;
-  outline: none;
-  color: var(--theme-text);
-  font-family: inherit;
-  font-size: 16px;
-  padding: 14px 16px;
-  resize: none;
-  line-height: 1.55;
-  min-height: 80px;
-}
-
-.ask-popup__input::placeholder { color: var(--theme-textDim); opacity: 0.5; font-size: 15px; }
-
 .ask-popup__footer {
   display: flex;
   align-items: center;
@@ -2109,34 +2151,101 @@ pre.tiptap-code-block code {
 }
 .ask-popup__send:hover { background: color-mix(in srgb, var(--theme-accentPrimary) 85%, white); }
 
-/* ── Internalize URL dialog — position + input/btn overrides (inherits ask-popup theme frame) ── */
 
-.internalize-popup {
-  top: 30%;
-  bottom: auto;
-  left: 50%;
-  width: 460px;
-  max-width: 92vw;
+/* ── Base visual frame for modal dialogs using .ask-popup class ─────── */
+/* internalize-popup, smart-link-edit-popup, smart-card-edit-popup all   */
+/* carry this class to inherit background, shadow and display toggling.  */
+
+.ask-popup {
+  background: var(--theme-bgAlt);
+  border: none;
+  border-radius: 6px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  padding: 0;
+  overflow: hidden;
+  display: none;
+  flex-direction: column;
 }
 
-.internalize-popup__input {
-  background: transparent;
-  border: none;
-  outline: none;
+.ask-popup[open] {
+  display: flex;
+  animation: modal-scale-in 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ── Internalize URL dialog — position + input/btn overrides ──────────── */
+
+.internalize-popup,
+.smart-link-edit-popup,
+.smart-card-edit-popup {
+  position: fixed;
+  top: 30%;
+  bottom: auto;
+  left: 50vw;
+  transform: translateX(-50%);
+  width: 440px;
+  max-width: 92vw;
+  margin: 0;
+}
+
+.internalize-popup[open],
+.smart-link-edit-popup[open],
+.smart-card-edit-popup[open] {
+  display: flex;
+  animation: modal-scale-in 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes modal-scale-in {
+  from {
+    transform: translate(-50%, -10px) scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: translate(-50%, 0) scale(1);
+    opacity: 1;
+  }
+}
+
+.internalize-popup .ask-popup__footer,
+.smart-link-edit-popup .ask-popup__footer,
+.smart-card-edit-popup .ask-popup__footer {
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.internalize-popup__input,
+.smart-link-edit-popup__input {
+  width: calc(100% - 32px);
+  margin: 12px 16px 0;
+  background: var(--theme-bg);
+  border: 1px solid var(--theme-border2);
+  border-radius: 6px;
   color: var(--theme-text);
-  font-family: inherit;
-  font-size: 14px;
-  padding: 10px 16px;
-  width: 100%;
+  font-size: 13px;
+  padding: 0.5rem 0.75rem;
+  outline: none;
   box-sizing: border-box;
 }
 
-.internalize-popup__input::placeholder { color: var(--theme-textDim); opacity: 0.5; }
+.internalize-popup__input:last-of-type,
+.smart-link-edit-popup__input:last-of-type {
+  margin-bottom: 12px;
+}
+
+.internalize-popup__input:focus,
+.smart-link-edit-popup__input:focus {
+  border-color: var(--theme-accentPrimary);
+}
+
+.internalize-popup__input::placeholder,
+.smart-link-edit-popup__input::placeholder {
+  color: var(--theme-textDim);
+  opacity: 0.6;
+}
 
 .internalize-popup__error {
   color: var(--theme-accentRed, #e05252);
   font-size: 12px;
-  padding: 4px 2px 0;
+  padding: 6px 16px 0;
 }
 
 .internalize-popup__btn {

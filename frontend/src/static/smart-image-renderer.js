@@ -172,6 +172,7 @@ import { isJobStale } from './fenced-block-base.js'
     buildContextMenuItems: function(ctx) {
       var n = ctx.node
       return [
+        { type: 'header', label: "Image"},
         { icon: window.SieveIcons.copy, label: 'Copy Image', action: function () {
           var src = resolveSrc(n.attrs.src)
           if (!src) return
@@ -184,7 +185,8 @@ import { isJobStale } from './fenced-block-base.js'
                 navigator.clipboard.write([new ClipboardItem(item)])
               }
             }).catch(function (err) { console.error('Failed to copy image', err) })
-        }}
+        }},
+        
       ]
     },
     resolveEntries: function(sourceNode, entries) {

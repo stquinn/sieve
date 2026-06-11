@@ -734,63 +734,49 @@
 
   
 
-  // ── Ask dialog ────────────────────────────────────────────────────────────────
+  // ── Ask panel — wires the structural #ask-panel div in index.html ───────────
 
   function createAskDialog() {
-    var dialog = document.createElement('dialog')
-    dialog.className = 'ask-popup'
-    dialog.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);top:auto;margin:0;width:80vh;max-width:90vw;'
+    var panel = document.getElementById('ask-panel')
+    if (!panel) return null
 
-    var header = document.createElement('div'); header.className = 'ask-popup__header'
-    var label = document.createElement('span'); label.className = 'ask-popup__label'
-    var closeBtn = makeBtn('ask-popup__close', '\u2715', function () { dialog.close() })
-    closeBtn.title = 'Close (Esc)'
-    header.appendChild(label); header.appendChild(closeBtn)
+    var textarea = panel.querySelector('.ask-popup__input')
+    var closeBtn = panel.querySelector('.ask-popup__close')
+    var sendBtn  = panel.querySelector('.ask-popup__send')
 
-    var textarea = document.createElement('textarea')
-    textarea.className = 'ask-popup__input'
-    textarea.placeholder = 'Ask a question\u2026 (Enter to send, Shift+Enter for new line)'
-    textarea.rows = 3; textarea.spellcheck = false
+    function closePanel() {
+      panel.classList.remove('is-open')
+      // Return focus to the editor so typing resumes immediately
+      if (currentEditor) currentEditor.view.focus()
+    }
 
-    var footer = document.createElement('div'); footer.className = 'ask-popup__footer'
-    var hint = document.createElement('span'); hint.className = 'ask-popup__hint'; hint.textContent = 'Enter to send \u00b7 Shift+Enter for new line'
-    var sendBtn = makeBtn('ask-popup__send', 'Send', function () { doAsk(textarea, dialog) })
-    footer.appendChild(hint); footer.appendChild(sendBtn)
+    closeBtn.addEventListener('click', closePanel)
+    sendBtn.addEventListener('click', function () { doAsk(textarea, panel) })
 
     textarea.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doAsk(textarea, dialog) }
-      if (e.key === 'Escape') { e.preventDefault(); dialog.close() }
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doAsk(textarea, panel) }
+      if (e.key === 'Escape') { e.preventDefault(); closePanel() }
     })
 
-    dialog.appendChild(header); dialog.appendChild(textarea); dialog.appendChild(footer)
-    document.body.appendChild(dialog)
-    return dialog
+    return panel
   }
 
   var pendingAskCtx = null
 
   function openAskPopup(precomputedCtx) {
     if (!askDialog) return
-    // Build context NOW while editor still has focus and selection intact.
-    // showModal() will steal DOM focus which can collapse the browser selection.
-    // precomputedCtx lets callers (e.g. block renderer context menus) supply
-    // context directly rather than relying on editor selection state.
     pendingAskCtx = precomputedCtx || window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
-    var label = askDialog.querySelector('.ask-popup__label')
+    var label    = askDialog.querySelector('.ask-popup__label')
     var textarea = askDialog.querySelector('.ask-popup__input')
     var ctxLabel = (pendingAskCtx && pendingAskCtx.contextLabel) || 'Document'
-    
-    var headerText = ''
-    if (ctxLabel === 'Follow-up') {
-      headerText = 'Ask Follow-up'
-    } else {
-      headerText = 'Ask About ' + ctxLabel
-    }
-    label.textContent = headerText
-    
+
+    label.textContent = ctxLabel === 'Follow-up' ? 'Ask Follow-up' : 'Ask About ' + ctxLabel
+
     textarea.value = ''
-    askDialog.showModal()
-    textarea.focus()
+    askDialog.classList.add('is-open')
+    setTimeout(function() {
+      textarea.focus()
+    }, 50)
   }
 
   // ── Rich Link dialog ──────────────────────────────────────────────────────────
@@ -798,7 +784,6 @@
   function createSmartCardDialog() {
     var dialog = document.createElement('dialog')
     dialog.className = 'internalize-popup ask-popup'
-    dialog.style.cssText = 'top:30%;bottom:auto;left:50%;width:460px;max-width:92vw;'
 
     var header = document.createElement('div'); header.className = 'ask-popup__header'
     var label = document.createElement('span'); label.className = 'ask-popup__label'; label.textContent = 'Insert Link Card'
@@ -871,7 +856,6 @@
   function createInternalizeDialog() {
     var dialog = document.createElement('dialog')
     dialog.className = 'internalize-popup ask-popup'
-    dialog.style.cssText = 'top:30%;bottom:auto;left:50%;width:460px;max-width:92vw;'
 
     var header = document.createElement('div'); header.className = 'ask-popup__header'
     var label = document.createElement('span'); label.className = 'ask-popup__label'; label.textContent = 'Insert Web Clip'
@@ -1027,9 +1011,9 @@
     return overlay
   }
 
-  function doAsk(textarea, dialog) {
+  function doAsk(textarea, panel) {
     var val = textarea.value.trim()
-    if (val) { runAiJob('ask', val, pendingAskCtx); pendingAskCtx = null; dialog.close() }
+    if (val) { runAiJob('ask', val, pendingAskCtx); pendingAskCtx = null; panel.classList.remove('is-open') }
   }
 
   // ── AI jobs ───────────────────────────────────────────────────────────────────

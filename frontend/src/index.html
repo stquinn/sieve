@@ -155,8 +155,25 @@
             </div>
 
             <div class="editor-area">
-                <div id="htmx-editor" class="editor-wrapper" style="flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column;">
-                    <div id="tiptap-mount" class="editor-panel" data-uuid="{{.ActiveUUID}}" data-mode="wysiwyg" style="flex: 1; min-height: 0; display: flex; flex-direction: column;"></div>
+                <!-- #editor-col wraps the editor scroller + ask panel so the panel
+                     is naturally constrained to editor width (meta panel excluded) -->
+                <div id="editor-col" style="flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0;">
+                    <div id="htmx-editor" class="editor-wrapper" style="flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column;">
+                        <div id="tiptap-mount" class="editor-panel" data-uuid="{{.ActiveUUID}}" data-mode="wysiwyg" style="flex: 1; min-height: 0; display: flex; flex-direction: column;"></div>
+                    </div>
+
+                    <!-- Ask AI panel — slides in/out as a flex child of the editor column -->
+                    <div id="ask-panel" class="ask-panel">
+                        <div class="ask-popup__header">
+                            <span class="ask-popup__label"></span>
+                            <button class="ask-popup__close" title="Close (Esc)">&#x2715;</button>
+                        </div>
+                        <textarea class="ask-popup__input" placeholder="Ask a question&#x2026; (Enter to send, Shift+Enter for new line)" rows="3" spellcheck="false"></textarea>
+                        <div class="ask-popup__footer">
+                            <span class="ask-popup__hint">Enter to send &middot; Shift+Enter for new line</span>
+                            <button class="ask-popup__send">Send</button>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="meta-handle"></div>

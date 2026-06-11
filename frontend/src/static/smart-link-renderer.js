@@ -106,7 +106,7 @@ import { isJobStale } from './fenced-block-base.js'
       var label  = node.attrs.label || href
 
       return [
-        { type: 'header', label: 'Smart Link' },
+        { type: 'header', label: 'Link' },
         {
           icon: IC.externalLink,
           label: 'Open URL',

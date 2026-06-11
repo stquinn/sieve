@@ -182,7 +182,7 @@ import { isJobStale } from './fenced-block-base.js'
       var id     = node.attrs.id    || ''
 
       return [
-        { type: 'header', label: 'Rich Link' },
+        { type: 'header', label: 'Link Card' },
         {
           icon: IC.externalLink,
           label: 'Open URL',

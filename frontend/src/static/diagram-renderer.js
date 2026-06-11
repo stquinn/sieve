@@ -491,7 +491,10 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
 
     var modeLabel = n.attrs.mode === 'render' ? 'Edit source' : 'Render'
 
+    var headerLabel = n.attrs.diagramType + ' Diagram'
+
     return [
+       { type: 'header', label: headerLabel},
       { icon: IC.edit, label: modeLabel, action: toggleMode },
       { icon: IC.copy, label: 'Copy source', action: copySource },
     ]
