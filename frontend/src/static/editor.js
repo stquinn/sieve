@@ -193,9 +193,11 @@
               })
               if (hasSieve) {
                 var payload = window.SieveClipboard.buildCopyPayload(view)
+                var htmlContent = (window.__tiptap && window.__tiptap.getHTML) ? window.__tiptap.getHTML() : ''
                 event.preventDefault()
                 event.clipboardData.setData('sieve/slice', JSON.stringify(payload.slice))
                 event.clipboardData.setData('text/plain', payload.markdown)
+                event.clipboardData.setData('text/html', htmlContent)
                 return true
               }
             }
