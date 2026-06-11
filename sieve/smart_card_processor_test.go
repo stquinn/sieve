@@ -57,8 +57,8 @@ func TestSmartCardProcessor_Mode(t *testing.T) {
 
 func TestSmartCardProcessor_IsBlock_neverMatches(t *testing.T) {
 	p := NewSmartCardProcessor(BlockServices{})
-	if p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "https://example.com"}}) {
-		t.Error("IsBlock must always return false — URLs become SmartLinks, not SmartCard cards")
+	if !p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "https://example.com"}}) {
+		t.Error("IsBlock must always return true — URLs can become SmartLinks and Cards")
 	}
 }
 
