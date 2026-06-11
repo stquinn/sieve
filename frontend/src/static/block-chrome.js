@@ -122,14 +122,15 @@
 
     // ── dragstart: record source pos ───────────────────────────────────
     handle.addEventListener('dragstart', function (e) {
-      // Always use `offset` (node start), not getPos() (widget position = offset+1).
-      // drop handler calls doc.nodeAt(from) which must resolve to the whole block.
       dragState = { from: offset }
       e.dataTransfer.effectAllowed = 'move'
-      e.dataTransfer.setData('application/x-sieve-block', String(pos))
-      // Set drag image to the block's DOM row
+      e.dataTransfer.setData('application/x-sieve-block', String(offset))
+      // stopImmediatePropagation: blocks PM's bubble-phase dragstart from seeing
+      // this event and starting its own NodeSelection drag (which would double-insert).
+      // Do NOT preventDefault — that cancels the drag and shows the stop cursor.
+      e.stopImmediatePropagation()
       try {
-        var domNode = view.nodeDOM(pos)
+        var domNode = view.nodeDOM(offset)
         var imgEl = domNode && (domNode.nodeType === 1 ? domNode : domNode.parentElement)
         if (imgEl && imgEl.nodeType === 1) e.dataTransfer.setDragImage(imgEl, 0, 0)
       } catch (_) {}
@@ -193,7 +194,7 @@
       dragState = { from: pos }
       e.dataTransfer.effectAllowed = 'move'
       e.dataTransfer.setData('application/x-sieve-block', String(pos))
-      // Set drag image to the block's DOM row
+      e.stopImmediatePropagation()
       try {
         var domNode = view.nodeDOM(pos)
         var imgEl = domNode && (domNode.nodeType === 1 ? domNode : domNode.parentElement)
@@ -334,21 +335,11 @@
             // ── DOM event handlers ─────────────────────────────────────────
             handleDOMEvents: {
 
-              // dragstart: claim the event when our handle initiated it, so PM's
-            // built-in NodeSelection drag doesn't also fire and double-insert.
-            dragstart: function (view, event) {
-              return dragState != null
-            },
-
             // dragover: update indicator to nearest boundary
               dragover: function (view, event) {
-                // Always set dropEffect = 'move' and preventDefault so the
-                // browser allows the drop and PM's dragend fires with
-                // dropEffect='move' (triggering source deletion for a true move).
+                if (!dragState) return false  // not our drag — let PM handle it
                 event.preventDefault()
                 event.dataTransfer.dropEffect = 'move'
-
-                if (!dragState) return false  // let PM handle indicator + drop
 
                 var targetPos = nearestBoundary(view, event.clientY)
                 if (targetPos == null) return true
