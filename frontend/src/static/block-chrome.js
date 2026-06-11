@@ -89,6 +89,7 @@
     var host = document.createElement('div')
     host.className = 'block-chrome-host'
     host.setAttribute('contenteditable', 'false')
+    host.setAttribute('data-chrome-strategy', 'prose')
 
     var num = document.createElement('span')
     num.className = 'block-chrome-linenum'
@@ -235,21 +236,19 @@
       )
 
       // Strategy A: prose/native nodes only.
-      // Sieve nodes already have a .block-chrome-host slot; view.update() fills it.
+      // Widget placed at `offset` (BEFORE the node) with side:1 so it renders
+      // as a DOM sibling preceding the block element inside .ProseMirror, NOT
+      // inside the <p>. This is critical: draggable="true" inside a nested
+      // contenteditable context is unreliable in browsers. As a direct sibling
+      // of .ProseMirror with contenteditable="false", drag works correctly.
       if (!isSieveNode(node)) {
-        // offset+1 is the first position inside the node.
-        // side:-1 places the widget before any content at that position.
-        // key ensures PM reuses the same DOM element across re-renders so event
-        // listeners survive without being re-attached.
-        // Note: offset and i are closure-safe here — each forEach callback
-        // invocation has its own scope (offset is a parameter; i is a var local).
         decos.push(
           Decoration.widget(
-            offset + 1,
+            offset,
             function (widgetView, getPos) {
               return createChromeHostWidget(i + 1, offset, widgetView, getPos)
             },
-            { side: -1, key: 'chrome-' + offset }
+            { side: 1, key: 'chrome-' + offset }
           )
         )
       }

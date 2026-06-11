@@ -373,10 +373,29 @@ textarea::selection {
 /* Block chrome (Stage 1.5 — full gutter ownership) */
 .editor-panel { --chrome-w: 40px; }
 
-/* The chrome host is absolutely positioned in the block's left gutter.
-   Both prose nodes (.block-with-chrome) and Sieve atom blocks share this. */
+/* Strategy A (prose nodes): widget is a DOM sibling BEFORE the block inside
+   .ProseMirror (position:relative). top:auto uses the CSS static-position
+   rule — the element positions itself at where it would be in normal flow,
+   which aligns it with the <p>/<h1>/etc. that immediately follows it in DOM.
+   left:1rem sits the host in the gutter (padding-left = chrome-w + 1rem, so
+   chrome-w-wide host ending at padding-left starts at 1rem). */
+.block-chrome-host[data-chrome-strategy="prose"] {
+  position: absolute;
+  top: auto;
+  left: 1rem;
+  width: var(--chrome-w);
+  height: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* Strategy B (Sieve atom nodes): host is inside the NodeView DOM which has
+   position:relative. Positioned relative to that NodeView root. */
 .block-with-chrome { position: relative; }
-.block-chrome-host {
+.block-chrome-host:not([data-chrome-strategy="prose"]) {
   position: absolute;
   left: calc(-1 * var(--chrome-w));
   top: 0;
@@ -388,6 +407,7 @@ textarea::selection {
   user-select: none;
   pointer-events: none;
 }
+
 /* Re-enable pointer events only on interactive children */
 .block-chrome-host > * { pointer-events: auto; }
 
