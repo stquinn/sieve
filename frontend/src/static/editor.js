@@ -187,12 +187,8 @@
             }
             // ── sieve/slice multi-block copy ──────────────────────────────────
             if (window.SieveClipboard) {
-              var hasSieve = false
-              view.state.doc.nodesBetween(sel.from, sel.to, function(node) {
-                if (node.type.name.startsWith('sieve-')) { hasSieve = true; return false }
-              })
-              if (hasSieve) {
-                var payload = window.SieveClipboard.buildCopyPayload(view)
+              var payload = window.SieveClipboard.buildCopyPayload(view)
+              if (payload) {
                 var htmlContent = (window.__tiptap && window.__tiptap.getHTML) ? window.__tiptap.getHTML() : ''
                 event.preventDefault()
                 event.clipboardData.setData('sieve/slice', JSON.stringify(payload.slice))
@@ -1066,12 +1062,15 @@
         if (Array.isArray(blocks) && blocks.length > 0) {
           event.preventDefault()
           blocks.forEach(function(entry) {
+            var pasteAttrs = {}
+            for (var attrKey in entry) {
+              if (Object.prototype.hasOwnProperty.call(entry, attrKey) && attrKey !== 'type') {
+                pasteAttrs[attrKey] = entry[attrKey]
+              }
+            }
             currentEditor.commands.insertContent({
               type: 'sieve-' + entry.kind,
-              attrs: {
-                kind: entry.kind,
-                serialisedForm: entry.serialisedForm || '',
-              }
+              attrs: pasteAttrs,
             })
           })
           return true
