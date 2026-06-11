@@ -264,6 +264,9 @@ Build the **atom** — a Go-Playground-style block (editor + Run + stdout pane, 
 ---
 
 ## 14.  Some random thoughts
+
+---
+
 ### How does a user physically draw a reference? Is it a visual autocompleter in the prose editor (e.g. typing @ or / brings up a list of upstream blocks to link to)?
 
 That simplifies the UX immensely. Instead of requiring the user to learn a syntax to manually declare dependencies (like writing code in a notebook), the referencing is **action-driven and context-aware**.
@@ -296,16 +299,20 @@ It fits the existing codebase beautifully since you already have the `detect-ext
 It makes the editor feel like it has "gravity"—you drop some raw data in, and you can pull tables, critiques, and diagrams out of it with a couple of clicks, keeping the links intact.
 
 > may not always be true - as FAN IN and FAN OUT may need different semantics and the ability to link via  the UI
+---
 
+# Logic gate metaphor
 
-### Logic gate metaphor
+> holy grail UI - just feels right and could look really cool if done right.  Absolute shite if not
 
 For simple, linear workflows, Sieve utilizes a context-aware "sprouting" UX. Right-clicking a block and selecting an action (e.g., Explain with AI, Extract as Diagram, or Format as Table) automatically instantiates a new consumer block directly below, pre-wired with a backward reference (parent: sourceNode.id) to the parent block. However, to handle complex multi-input scenarios (Fan-In)—such as linking a payload block and an environment block into a single HTTP client, or post-hoc linking of existing blocks—the editor moves beyond simple linear creation, employing a transient "Logic Gate" visual metaphor that temporarily exposes data ports during drag operations.
 
 When a user initiates a block drag, Sieve’s layout engine enters a temporary wiring mode where consumer blocks morph to reveal structured sockets: input legs on the left (e.g., [Env], [Payload], [Config]) and output legs on the right (e.g., [JSON], [Text]). Dragging a compatible producer block over a consumer highlights its corresponding input leg as a drop zone (e.g., [Connect Block A]), and dropping it establishes the edge in the DAG. If an input slot is already occupied, the leg enters a "Replace" state, allowing seamless swaps. Once the drag operation terminates, these ports recede to keep the document pristine, and the active connections are visually preserved using gutter lineage lines that flow from the right-hand output of the parent down the margin and loop back into the left-hand input of the child block.
 
 
-### Filtered Drop Downs and drag and drop
+---
+
+## Filtered Drop Downs and drag and drop
 
 You have hit the nail on the head. If a block requires $N$ inputs, the UI must give the user a clear way to perform that binding without making the document look like a spaghetti diagram. 
 
@@ -323,8 +330,7 @@ For either mechanism to work, the editor needs to make blocks identifiable and c
 ---
 
 ### UX Option A: The Input Slot Dropdown (Precise & Simple)
-Another idea....
-
+Another idea
 In the header or settings bar of the consumer block, you render explicit slots for its expected inputs:
 
 ```
