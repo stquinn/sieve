@@ -365,6 +365,19 @@ textarea::selection {
 
 /* ── Editor ──────────────────────────────────────────────────────────── */
 
+/* Block chrome (Stage 1) */
+.editor-panel { --chrome-w: 28px; }
+.block-chrome { position: absolute; left: calc(-1 * var(--chrome-w)); width: var(--chrome-w);
+  display: flex; align-items: flex-start; gap: 2px; user-select: none; }
+.block-chrome-handle { opacity: 0; cursor: grab; color: var(--theme-muted);
+  font-size: 12px; line-height: 1.4; transition: opacity .1s; }
+.ProseMirror:hover .block-chrome-handle,
+.block-chrome:hover .block-chrome-handle { opacity: .6; }
+.block-chrome-handle:hover { opacity: 1 !important; }
+.block-chrome-rail { width: 3px; align-self: stretch; border-radius: 2px;
+  background: transparent; }
+.block-chrome:hover .block-chrome-rail { background: rgba(120,140,255,.22); }
+
 .tiptap {
   margin: 0;
   min-height: 100vh;
@@ -375,8 +388,8 @@ textarea::selection {
   font-family: var(--theme-editorFont, inherit);
   position: relative;
 
-  /* Auto-growing padding based on digits */
-  padding-left: calc(1.75rem + (max(1, var(--line-digits, 1)) - 1) * 0.55rem);
+  /* Auto-growing padding based on digits; --chrome-w reserves space for the gutter chrome */
+  padding-left: calc(var(--chrome-w, 0px) + 1.75rem + (max(1, var(--line-digits, 1)) - 1) * 0.55rem);
   padding-right: 1rem;
 
   counter-reset: docline;
@@ -388,11 +401,11 @@ textarea::selection {
      below however many rows the toolbar has wrapped to, so the rule never
      overlaps the toolbar. The summed-height calc is kept only as a pre-paint
      fallback for the first frame before JS measures.
-   --sidebar-w / --line-digits position it horizontally. */
+   --sidebar-w / --line-digits / --chrome-w position it horizontally. */
 .tiptap::before {
   content: '';
   position: fixed;
-  left: calc(var(--sidebar-w, 0px) + 1.2rem + (max(1, var(--line-digits, 1)) - 1) * 0.55rem);
+  left: calc(var(--sidebar-w, 0px) + var(--chrome-w, 0px) + 1.2rem + (max(1, var(--line-digits, 1)) - 1) * 0.55rem);
   top: var(--editor-top, calc(var(--tabbar-h, 44px) + var(--toolbar-h, 0px) + var(--table-toolbar-h, 0px)));
   bottom: 32px;
   width: 1px;
