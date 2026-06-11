@@ -108,9 +108,10 @@
 
     // ── mousedown: select the entire top-level node ────────────────────
     handle.addEventListener('mousedown', function (e) {
-      e.preventDefault()
-      // Always use `offset` (the node's opening position), not getPos() which
-      // returns offset+1 (inside the node — the widget's own position).
+      // stopPropagation (not preventDefault): prevents PM from creating a
+      // spurious TextSelection, but allows the browser to detect a subsequent
+      // drag gesture from this element (preventDefault would suppress dragstart).
+      e.stopPropagation()
       var editor = window.__tiptap
       if (editor) {
         editor.commands.setNodeSelection(offset)
@@ -178,7 +179,7 @@
 
     // ── mousedown: select the entire top-level node ────────────────────
     handle.addEventListener('mousedown', function (e) {
-      e.preventDefault()
+      e.stopPropagation()
       var editor = window.__tiptap
       if (editor) {
         editor.commands.setNodeSelection(pos)
@@ -342,9 +343,13 @@
 
             // dragover: update indicator to nearest boundary
               dragover: function (view, event) {
-                if (!dragState) return false
+                // Always set dropEffect = 'move' and preventDefault so the
+                // browser allows the drop and PM's dragend fires with
+                // dropEffect='move' (triggering source deletion for a true move).
                 event.preventDefault()
                 event.dataTransfer.dropEffect = 'move'
+
+                if (!dragState) return false  // let PM handle indicator + drop
 
                 var targetPos = nearestBoundary(view, event.clientY)
                 if (targetPos == null) return true
