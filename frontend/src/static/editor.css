@@ -377,6 +377,12 @@ textarea::selection {
 .block-chrome-rail { width: 3px; align-self: stretch; border-radius: 2px;
   background: transparent; }
 .block-chrome:hover .block-chrome-rail { background: rgba(120,140,255,.22); }
+.block-chrome-drop-indicator {
+  position: absolute; left: 0; right: 0; height: 2px;
+  background: var(--theme-accent, #5b8dee);
+  border-radius: 1px; pointer-events: none; z-index: 10;
+  margin-left: calc(-1 * var(--chrome-w, 28px));
+}
 
 .tiptap {
   margin: 0;
