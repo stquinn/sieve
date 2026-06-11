@@ -191,7 +191,7 @@
               if (payload) {
                 var htmlContent = (window.__tiptap && window.__tiptap.getHTML) ? window.__tiptap.getHTML() : ''
                 event.preventDefault()
-                event.clipboardData.setData('sieve/slice', JSON.stringify(payload.slice))
+                event.clipboardData.setData('sieve/slice', JSON.stringify(payload.blocks))
                 event.clipboardData.setData('text/plain', payload.markdown)
                 event.clipboardData.setData('text/html', htmlContent)
                 return true
@@ -1062,16 +1062,24 @@
         if (Array.isArray(blocks) && blocks.length > 0) {
           event.preventDefault()
           blocks.forEach(function(entry) {
-            var pasteAttrs = {}
-            for (var attrKey in entry) {
-              if (Object.prototype.hasOwnProperty.call(entry, attrKey) && attrKey !== 'type') {
-                pasteAttrs[attrKey] = entry[attrKey]
+            if (entry._type === 'prose') {
+              // Prose node — reconstruct from PM JSON (preserves heading level,
+              // bold, italic, links, etc.)
+              currentEditor.commands.insertContent(entry.json)
+            } else {
+              // Sieve block — new format (_type:'sieve') or legacy format (no _type)
+              var nodeAttrs = (entry._type === 'sieve') ? entry.attrs : entry
+              var pasteAttrs = {}
+              for (var attrKey in nodeAttrs) {
+                if (Object.prototype.hasOwnProperty.call(nodeAttrs, attrKey) && attrKey !== 'type') {
+                  pasteAttrs[attrKey] = nodeAttrs[attrKey]
+                }
               }
+              currentEditor.commands.insertContent({
+                type: 'sieve-' + entry.kind,
+                attrs: pasteAttrs,
+              })
             }
-            currentEditor.commands.insertContent({
-              type: 'sieve-' + entry.kind,
-              attrs: pasteAttrs,
-            })
           })
           return true
         }

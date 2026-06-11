@@ -1,32 +1,30 @@
 ;(function () {
   'use strict'
 
-  /**
-   * buildCopyPayload — build a sieve/slice clipboard payload from the current
-   * ProseMirror selection.
-   *
-   * @param {EditorView} view  ProseMirror EditorView (NOT the TipTap editor)
-   * @returns {{ slice: Array<object>, markdown: string } | null}  null when no sieve nodes in selection
-   */
+  // buildCopyPayload — build a sieve/slice clipboard payload from the current
+  // ProseMirror selection.
+  //
+  // The payload is an ORDERED array of items covering every top-level node in
+  // the selection:
+  //   { _type: 'prose', json: <PM node JSON> }   — prose/native node
+  //   { _type: 'sieve', kind, attrs: {...} }      — sieve block (all attrs)
+  //
+  // Returns null when the selection contains no sieve nodes (nothing to intercept).
+  //
+  // @param {EditorView} view  ProseMirror EditorView (NOT the TipTap editor)
+  // @returns {{ blocks: Array, markdown: string } | null}
   function buildCopyPayload(view) {
     var sel = view.state.selection
-    var parts = []
+    var items = []
+    var hasSieve = false
 
-    // If the selection contains any non-sieve (prose) top-level nodes, return
-    // null and let the browser's default copy run — that preserves prose text.
-    // Only intercept for pure-sieve selections (single or range via handle-click).
-    var hasProse = false
     view.state.doc.forEach(function (node, offset) {
-      if (hasProse) return
       var nodeEnd = offset + node.nodeSize
-      if (nodeEnd > sel.from && offset < sel.to) {
-        if (!node.type.name.startsWith('sieve-')) hasProse = true
-      }
-    })
-    if (hasProse) return null
+      // Skip nodes entirely outside the selection
+      if (nodeEnd <= sel.from || offset >= sel.to) return
 
-    view.state.doc.nodesBetween(sel.from, sel.to, function (node) {
       if (node.type.name.startsWith('sieve-')) {
+        hasSieve = true
         var allAttrs = {}
         var nodeAttrs = node.attrs
         for (var key in nodeAttrs) {
@@ -34,24 +32,32 @@
             allAttrs[key] = nodeAttrs[key]
           }
         }
-        parts.push(allAttrs)
-        // Do not descend into sieve node children
-        return false
+        items.push({ _type: 'sieve', kind: node.attrs.kind, attrs: allAttrs })
+      } else {
+        // Prose/native node: serialize to ProseMirror JSON so insertContent
+        // can reconstruct it with full formatting on paste.
+        items.push({ _type: 'prose', json: node.toJSON() })
       }
     })
 
-    if (parts.length === 0) return null
+    if (!hasSieve) return null
 
-    var md = parts.map(function (p) { return p.serialisedForm || '' }).join('\n\n')
-    if (!md) {
-      try {
-        if (window.__tiptap && window.__tiptap.storage && window.__tiptap.storage.markdown) {
-          md = window.__tiptap.storage.markdown.getMarkdown() || ''
-        }
-      } catch (_) {}
-    }
+    // text/plain: sieve fences and prose plain-text in document order.
+    // Used as the degraded fallback when pasting into external editors.
+    var md = items.map(function (item) {
+      if (item._type === 'sieve') return item.attrs.serialisedForm || ''
+      return extractText(item.json)
+    }).filter(Boolean).join('\n\n')
 
-    return { slice: parts, markdown: md }
+    return { blocks: items, markdown: md }
+  }
+
+  // Recursively extract plain text from a ProseMirror node JSON object.
+  function extractText(json) {
+    if (!json) return ''
+    if (json.text) return json.text
+    if (!json.content) return ''
+    return json.content.map(extractText).join('')
   }
 
   window.SieveClipboard = { buildCopyPayload: buildCopyPayload }
