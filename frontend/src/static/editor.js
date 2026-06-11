@@ -785,13 +785,16 @@
 
   function updateAskPanelLabelLive(editor) {
     if (!askDialog) return
-    // Only update if it's visible to save DOM writes
     if (!askDialog.classList.contains('is-open')) return
+    // A pinned explicit target (right-click / sieve block) overrides ambient.
+    if (pendingAskCtx) return
     if (askLabelTimeout) clearTimeout(askLabelTimeout)
-    askLabelTimeout = setTimeout(function() {
+    askLabelTimeout = setTimeout(function () {
+      if (pendingAskCtx) return
+      var t = window.TipTap.resolveAiTarget(editor, currentMode === 'markdown')
       var label = askDialog.querySelector('.ask-popup__label')
-      var ctxLabel = window.TipTap.getAiTargetLabel(editor, currentMode === 'markdown')
-      label.textContent = ctxLabel === 'Follow-up' ? 'Ask Follow-up' : 'Ask About ' + ctxLabel
+      label.textContent = t.label === 'Follow-up' ? 'Ask Follow-up' : 'Ask About ' + t.label
+      if (currentMode !== 'markdown') window.TipTap.setAiTargetGlow(editor.view, t.range)
     }, 100)
   }
 
@@ -808,8 +811,12 @@
 
     pendingAskCtx = precomputedCtx || null
     askDialog.classList.add('is-open')
-    if (currentEditor) updateAskPanelLabelLive(currentEditor)
-    
+    if (pendingAskCtx && pendingAskCtx.range && currentEditor) {
+      window.TipTap.setAiTargetGlow(currentEditor.view, pendingAskCtx.range)
+    } else if (currentEditor) {
+      updateAskPanelLabelLive(currentEditor)
+    }
+
     setTimeout(function() {
       textarea.focus()
     }, 50)
