@@ -323,6 +323,44 @@
                 return true
               },
 
+              // mouseup: extend selection to cover a sieve atom when the cursor
+            // is released over one.  Sieve blocks are contenteditable=false, so
+            // browser drag-select stops at their boundary.  This catches that
+            // mouseup and snaps the selection head to include the whole atom.
+              mouseup: function (view, event) {
+                if (dragState) return false   // handle-drag, not selection
+                var editor = window.__tiptap
+                if (!editor) return false
+                var sel = editor.state.selection
+                if (sel.empty) return false
+
+                var overOffset = null
+                var overEnd = null
+                editor.state.doc.forEach(function (node, offset) {
+                  if (!isSieveNode(node) || overOffset !== null) return
+                  var dom = view.nodeDOM(offset)
+                  if (!dom) return
+                  var el = dom.nodeType === 1 ? dom : dom.parentElement
+                  if (!el) return
+                  var r = el.getBoundingClientRect()
+                  if (event.clientY >= r.top && event.clientY <= r.bottom) {
+                    overOffset = offset
+                    overEnd = offset + node.nodeSize
+                  }
+                })
+
+                if (overOffset === null) return false
+                if (sel.from <= overOffset && sel.to >= overEnd) return false  // already covered
+
+                var anchor = sel.anchor
+                var newHead = anchor <= overOffset ? overEnd : overOffset
+                editor.commands.setTextSelection({
+                  from: Math.min(anchor, newHead),
+                  to: Math.max(anchor, newHead),
+                })
+                return true
+              },
+
               // drop: single-transaction reorder
               drop: function (view, event) {
                 if (!dragState) return false

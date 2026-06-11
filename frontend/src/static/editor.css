@@ -415,8 +415,10 @@ textarea::selection {
   pointer-events: none;
 }
 
-/* Re-enable pointer events only on interactive children */
-.block-chrome-host > * { pointer-events: auto; }
+/* Only the handle needs pointer events; linenum and rail are display-only.
+   Without this restriction the linenum text gets included in browser drag-select. */
+.block-chrome-host > * { pointer-events: none; }
+.block-chrome-handle { pointer-events: auto; }
 
 .block-chrome-linenum {
   font-size: 13px;
@@ -426,6 +428,7 @@ textarea::selection {
   text-align: right;
   font-family: var(--theme-monoFont);
   user-select: none;
+  -webkit-user-select: none;
 }
 
 .block-chrome-handle { opacity: 0; cursor: grab; color: var(--theme-accentPrimary);
