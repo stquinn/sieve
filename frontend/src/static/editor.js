@@ -751,6 +751,7 @@
   var pendingAskCtx = null
   var isAskPanelPinned = window.initAskPanelPinned || false
   var askLabelTimeout = null
+  var returnSelection = null   // editor selection captured on jump-in to the Ask box
 
   document.addEventListener('sieve:ask-panel-toggled', function(e) {
     isAskPanelPinned = e.detail
@@ -768,10 +769,7 @@
     var textarea = panel.querySelector('.ask-popup__input')
     var sendBtn  = panel.querySelector('.ask-popup__send')
 
-    function closePanel() {
-      if (!isAskPanelPinned) panel.classList.remove('is-open')
-      if (currentEditor) currentEditor.view.focus()
-    }
+    function closePanel() { returnToEditor() }
 
     sendBtn.addEventListener('click', function () { doAsk(textarea, panel) })
 
@@ -802,12 +800,14 @@
     if (!askDialog) return
     var textarea = askDialog.querySelector('.ask-popup__input')
     
-    // If the panel is already open and focused, toggle back to editor
+    // Toggle: if the box already has focus, jump back to the editor (focus axis
+    // only — pin/visibility is independent).
     if (askDialog.classList.contains('is-open') && document.activeElement === textarea) {
-      if (!isAskPanelPinned) askDialog.classList.remove('is-open')
-      if (currentEditor) currentEditor.view.focus()
+      returnToEditor()
       return
     }
+    // Jump IN: remember where we were so we can restore the caret exactly.
+    if (currentEditor) returnSelection = currentEditor.state.selection
 
     pendingAskCtx = precomputedCtx || null
     askDialog.classList.add('is-open')
@@ -1054,16 +1054,55 @@
     return overlay
   }
 
+  // Jump back to the editor, restoring the caret to where we were when we entered
+  // the Ask box. Focus and panel visibility are independent: only hide if unpinned.
+  function returnToEditor() {
+    if (!isAskPanelPinned && askDialog) askDialog.classList.remove('is-open')
+    if (currentEditor) {
+      if (returnSelection) {
+        try {
+          currentEditor.view.focus()
+          currentEditor.view.dispatch(currentEditor.state.tr.setSelection(returnSelection))
+        } catch (e) { currentEditor.view.focus() }
+      } else {
+        currentEditor.view.focus()
+      }
+    }
+  }
+
   function doAsk(textarea, panel) {
     var val = textarea.value.trim()
-    if (val) { 
-      var ctx = pendingAskCtx || window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
-      runAiJob('ask', val, ctx)
-      pendingAskCtx = null
-      textarea.value = ''
-      if (!isAskPanelPinned) panel.classList.remove('is-open')
-      if (currentEditor) currentEditor.view.focus()
+    if (!val) return
+
+    var ctx
+    var hadPinned = !!pendingAskCtx
+    if (pendingAskCtx) {
+      ctx = pendingAskCtx
+    } else {
+      // Resolve once at SEND. Mint an anchor ONLY for a live selection — the one
+      // mutating case. applyTargetHighlight wraps in blockRef + applies ==.
+      var t = window.TipTap.resolveAiTarget(currentEditor, currentMode === 'markdown')
+      if (t.kind === 'selection' && currentMode !== 'markdown') {
+        window.TipTap.applyTargetHighlight(currentEditor)
+      }
+      ctx = window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', lastSyncedBody, currentUuid)
     }
+
+    runAiJob('ask', val, ctx)
+    pendingAskCtx = null
+    textarea.value = ''
+    if (currentEditor) window.TipTap.clearAiTargetGlow(currentEditor.view)
+    if (!isAskPanelPinned) panel.classList.remove('is-open')
+    // Return focus to the editor. For the selection-mint case the caret already
+    // sits in the freshly-minted anchor (applyTargetHighlight preserves it); for
+    // non-mutating kinds, restore the captured selection.
+    if (currentEditor) {
+      currentEditor.view.focus()
+      if (returnSelection && !hadPinned) {
+        try { currentEditor.view.dispatch(currentEditor.state.tr.setSelection(returnSelection)) } catch (e) {}
+      }
+    }
+    returnSelection = null
   }
 
   // ── AI jobs ───────────────────────────────────────────────────────────────────
@@ -1439,7 +1478,8 @@
   })
   document.addEventListener('sieve:ai-ask', function (e) {
     var ctx = e && e.detail && e.detail.precomputedCtx
-    if (!aiPrepareTarget(ctx)) return
+    // No mint at open — the target is resolved live and only minted at SEND
+    // (doAsk). Markdown mode is allowed: it asks about the whole doc / selection.
     ensureOverlays()
     openAskPopup(ctx)
   })
