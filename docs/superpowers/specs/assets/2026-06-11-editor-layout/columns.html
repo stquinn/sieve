@@ -1,0 +1,268 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>§6 — Columns (container + resize + creation gesture)</title>
+  <style>
+    /*
+     * BRAINSTORM COMPANION FRAME TEMPLATE
+     *
+     * This template provides a consistent frame with:
+     * - OS-aware light/dark theming
+     * - Fixed header and selection indicator bar
+     * - Scrollable main content area
+     * - CSS helpers for common UI patterns
+     *
+     * Content is injected via placeholder comment in #claude-content.
+     */
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+
+    /* ===== THEME VARIABLES ===== */
+    :root {
+      --bg-primary: #f5f5f7;
+      --bg-secondary: #ffffff;
+      --bg-tertiary: #e5e5e7;
+      --border: #d1d1d6;
+      --text-primary: #1d1d1f;
+      --text-secondary: #86868b;
+      --text-tertiary: #aeaeb2;
+      --accent: #0071e3;
+      --accent-hover: #0077ed;
+      --success: #34c759;
+      --warning: #ff9f0a;
+      --error: #ff3b30;
+      --selected-bg: #e8f4fd;
+      --selected-border: #0071e3;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-primary: #1d1d1f;
+        --bg-secondary: #2d2d2f;
+        --bg-tertiary: #3d3d3f;
+        --border: #424245;
+        --text-primary: #f5f5f7;
+        --text-secondary: #86868b;
+        --text-tertiary: #636366;
+        --accent: #0a84ff;
+        --accent-hover: #409cff;
+        --selected-bg: rgba(10, 132, 255, 0.15);
+        --selected-border: #0a84ff;
+      }
+    }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      display: flex;
+      flex-direction: column;
+      line-height: 1.5;
+    }
+
+    /* ===== FRAME STRUCTURE ===== */
+    .header {
+      background: var(--bg-secondary);
+      padding: 0.5rem 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .header h1 { font-size: 0.85rem; font-weight: 500; color: var(--text-secondary); }
+    .header .status { font-size: 0.7rem; color: var(--success); display: flex; align-items: center; gap: 0.4rem; }
+    .header .status::before { content: ''; width: 6px; height: 6px; background: var(--success); border-radius: 50%; }
+
+    .main { flex: 1; overflow-y: auto; }
+    #claude-content { padding: 2rem; min-height: 100%; }
+
+    .indicator-bar {
+      background: var(--bg-secondary);
+      border-top: 1px solid var(--border);
+      padding: 0.5rem 1.5rem;
+      flex-shrink: 0;
+      text-align: center;
+    }
+    .indicator-bar span {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+    .indicator-bar .selected-text {
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    /* ===== TYPOGRAPHY ===== */
+    h2 { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.5rem; }
+    h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .subtitle { color: var(--text-secondary); margin-bottom: 1.5rem; }
+    .section { margin-bottom: 2rem; }
+    .label { font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+
+    /* ===== OPTIONS (for A/B/C choices) ===== */
+    .options { display: flex; flex-direction: column; gap: 0.75rem; }
+    .option {
+      background: var(--bg-secondary);
+      border: 2px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+    .option:hover { border-color: var(--accent); }
+    .option.selected { background: var(--selected-bg); border-color: var(--selected-border); }
+    .option .letter {
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+      width: 1.75rem; height: 1.75rem;
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 600; font-size: 0.85rem; flex-shrink: 0;
+    }
+    .option.selected .letter { background: var(--accent); color: white; }
+    .option .content { flex: 1; }
+    .option .content h3 { font-size: 0.95rem; margin-bottom: 0.15rem; }
+    .option .content p { color: var(--text-secondary); font-size: 0.85rem; margin: 0; }
+
+    /* ===== CARDS (for showing designs/mockups) ===== */
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+    .card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .card:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    .card.selected { border-color: var(--selected-border); border-width: 2px; }
+    .card-image { background: var(--bg-tertiary); aspect-ratio: 16/10; display: flex; align-items: center; justify-content: center; }
+    .card-body { padding: 1rem; }
+    .card-body h3 { margin-bottom: 0.25rem; }
+    .card-body p { color: var(--text-secondary); font-size: 0.85rem; }
+
+    /* ===== MOCKUP CONTAINER ===== */
+    .mockup {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 1.5rem;
+    }
+    .mockup-header {
+      background: var(--bg-tertiary);
+      padding: 0.5rem 1rem;
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border);
+    }
+    .mockup-body { padding: 1.5rem; }
+
+    /* ===== SPLIT VIEW (side-by-side comparison) ===== */
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+    @media (max-width: 700px) { .split { grid-template-columns: 1fr; } }
+
+    /* ===== PROS/CONS ===== */
+    .pros-cons { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1rem 0; }
+    .pros, .cons { background: var(--bg-secondary); border-radius: 8px; padding: 1rem; }
+    .pros h4 { color: var(--success); font-size: 0.85rem; margin-bottom: 0.5rem; }
+    .cons h4 { color: var(--error); font-size: 0.85rem; margin-bottom: 0.5rem; }
+    .pros ul, .cons ul { margin-left: 1.25rem; font-size: 0.85rem; color: var(--text-secondary); }
+    .pros li, .cons li { margin-bottom: 0.25rem; }
+
+    /* ===== PLACEHOLDER (for mockup areas) ===== */
+    .placeholder {
+      background: var(--bg-tertiary);
+      border: 2px dashed var(--border);
+      border-radius: 8px;
+      padding: 2rem;
+      text-align: center;
+      color: var(--text-tertiary);
+    }
+
+    /* ===== INLINE MOCKUP ELEMENTS ===== */
+    .mock-nav { background: var(--accent); color: white; padding: 0.75rem 1rem; display: flex; gap: 1.5rem; font-size: 0.9rem; }
+    .mock-sidebar { background: var(--bg-tertiary); padding: 1rem; min-width: 180px; }
+    .mock-content { padding: 1.5rem; flex: 1; }
+    .mock-button { background: var(--accent); color: white; border: none; padding: 0.5rem 1rem; border-radius: 6px; font-size: 0.85rem; }
+    .mock-input { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem; width: 100%; }
+  </style>
+</head><body><div class="header"><h1>§6 — Columns (container + resize + creation gesture)</h1><div class="status">Design 2026-06-11</div></div><div class="main"><div id="claude-content">
+<h2>Columns — the 2D layer</h2>
+<p class="subtitle">A column-row is one container node holding child blocks that lay out horizontally. The blocks inside keep their refs, flavours, cache & cement behaviour — the reconciler and serialiser don't notice. Refs may cross a column boundary (logical graph ≠ visual layout). Here's the target, then one decision: the creation gesture.</p>
+
+<style>
+  .mk { font: 14px/1.6 var(--theme-font, system-ui), sans-serif; }
+  .mk .doc { display:flex; flex-direction:column; gap:4px; padding:12px 8px; background: rgba(255,255,255,0.02); border-radius:8px; }
+  .mk .blk { display:flex; align-items:flex-start; gap:8px; padding:3px 6px; border-radius:6px; }
+  .mk .handle { width:14px; color:#889; font-size:12px; flex-shrink:0; user-select:none;}
+  .mk .gut { width:3px; align-self:stretch; border-radius:2px; background:rgba(120,140,255,0.25); flex-shrink:0;}
+  .mk .txt { flex:1; }
+  .mk h4.mh { margin:0; font-size:15px; font-weight:600; }
+  .mk .muted { color:#9a9a9a; }
+  /* the row container */
+  .mk .rowcon { border:1px dashed rgba(120,140,255,0.5); border-radius:8px; padding:4px; }
+  .mk .rowcon .conhead { font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:#89a; padding:1px 6px 4px; }
+  .mk .cols { display:flex; align-items:stretch; gap:0; }
+  .mk .col { flex:1; padding:4px; }
+  .mk .divider { width:6px; cursor:col-resize; display:flex; align-items:center; justify-content:center; }
+  .mk .divider::before { content:''; width:2px; height:80%; background:rgba(120,140,255,0.5); border-radius:2px;}
+  .mk .diagram { border:1px solid rgba(120,140,255,0.45); border-radius:6px; padding:10px; background:rgba(120,140,255,0.06); }
+  .mk .diagram .cap { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#8a9; margin-bottom:6px; }
+  .mk .shape { display:inline-block; border:1px solid #8a9; border-radius:4px; padding:2px 8px; margin:2px; font-size:12px; }
+  .gestures .letter { background:rgba(120,140,255,0.15); }
+</style>
+
+<div class="mockup">
+  <div class="mockup-header">Target: a diagram placed beside its explanatory prose</div>
+  <div class="mockup-body">
+    <div class="mk"><div class="doc">
+      <div class="blk"><span class="handle">⠿</span><span class="gut"></span><span class="txt"><h4 class="mh">Token validation</h4></span></div>
+
+      <div class="blk"><span class="handle">⠿</span>
+        <div class="rowcon">
+          <div class="conhead">⠿ column-row · 2 cols (drag the divider to resize)</div>
+          <div class="cols">
+            <div class="col">
+              <div class="blk"><span class="gut"></span><span class="txt">Every request carries a bearer token. The gateway checks it against the cache, then the auth service on a miss. The decision is cached for five minutes.</span></div>
+            </div>
+            <div class="divider"></div>
+            <div class="col">
+              <div class="blk"><span class="gut"></span><div class="diagram"><div class="cap">diagram · mermaid</div><span class="shape">Client</span> → <span class="shape">Gateway</span><br><span class="shape">Cache</span> ⇄ <span class="shape">Auth</span></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="blk"><span class="handle">⠿</span><span class="gut"></span><span class="txt muted">On filing, the row survives to Confluence and flattens for plain email.</span></div>
+    </div></div>
+  </div>
+</div>
+
+<h3 style="margin-top:24px">How do you create a column-row?</h3>
+<div class="options gestures">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Drag a block to another block's edge</h3>
+      <p class="muted">Grab a block's handle, drag it onto the left/right edge of another block — a drop-zone highlights and they fuse into a 2-col row. Drag more in to add columns; drag the last one out to dissolve. Most direct, most "placed-by-hand"; trickiest drop-target plumbing.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Explicit "columns" insert / slash command</h3>
+      <p class="muted">Insert an empty 2- or 3-column layout block (slash menu or block menu), then fill each cell by typing or dragging blocks in. Predictable and easy to build; an extra step and an empty-cell state to design.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Select adjacent blocks → "group into columns"</h3>
+      <p class="muted">Multi-select two+ stacked blocks, choose "side-by-side." Reuses the block-selection substrate we're building anyway; less spatial/fluid than dragging.</p>
+    </div>
+  </div>
+</div>
+</div></div></body></html>

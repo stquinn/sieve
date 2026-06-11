@@ -220,3 +220,83 @@ New notes in brainstorm 2 §14 design *how a user draws a reference* (creates DA
 **Already-present footholds (keeps this additive, not greenfield):** the context-menu **"Extract as"** triggers + `detect-extractions`, and **friendly names** via `renderer.getFriendlyName` (`sieve-block-extension.js:223`). The **dropdown-first, drag-later** verdict in §14 matches this spec's staging: dropdown binding is independent and low-risk; drag-to-wire sits on top of the Stage 1/3 reorder substrate.
 
 **Fan-in vs fan-out division (the user's §14 caveat):** **sprout** (extract-as → child pre-wired `parent: id`) handles 1→1 and fan-out naturally; **bind** (dropdown / drag-into-slot, type-gated) handles fan-in (many sources → one consumer). The system needs both — they are the two halves of the DAG, not redundant paths.
+
+---
+
+## 14. Appendix A — Visual reference (the agreed UX illustrations)
+
+The UX for each major decision was worked out as interactive mockups during the brainstorm. They are preserved as standalone, self-contained HTML in **[`assets/2026-06-11-editor-layout/`](./assets/2026-06-11-editor-layout/index.html)** — open `index.html` in a browser. Inline ASCII below carries the structural intent for plain-markdown readers; the HTML carries colour and hover behaviour. **Where the ASCII and prose describe a visual, build the visual — do not downgrade it** (e.g. the document map is a *structural* map, **not** a shrunk-text minimap).
+
+### A.1 — Unit of layout (§3) · [block-unit.html](./assets/2026-06-11-editor-layout/block-unit.html)
+Uniform chrome on *every* top-level node, via decorations. The handle is both the drag-grip and the block-select grip; the gutter cell is where the lineage tick lives.
+```
+ handle gutter   content
+   ⠿     │  Auth flow                  ← heading   (top-level block)
+   ⠿     │  The gateway validates…     ← paragraph (prose flows natively inside)
+         │  ┌────────────────────────┐
+   ⠿     │  │ diagram · mermaid      │ ← fenced block (leaf / atom)
+         │  │ Client → Gateway → …   │
+         │  └────────────────────────┘
+   ⠿     │  Next we cache the …        ← paragraph
+   ^       ^
+   |       └ gutter cell — one per top-level node; carries the faint lineage tick
+   └ drag handle — appears on hover; also the whole-block selection grip
+```
+
+### A.2 — Columns (§6) · [columns.html](./assets/2026-06-11-editor-layout/columns.html)
+One `column-row` container; a diagram placed beside its prose; a draggable divider sets `widths[]`.
+```
+ ⠿ ┌─ column-row ───────────────────────────────────┐
+   │  Every request carries a       ║  ┌──────────┐  │
+   │  bearer token. The gateway     ║  │ diagram  │  │
+   │  checks the cache, then the    ║  │ Client → │  │
+   │  auth service on a miss.       ║  │ Gateway  │  │
+   │           (column 1 · .55)     ║  └──────────┘  │
+   │                                ║   (column 2 ·.45)
+   └────────────────────────────────╫────────────────┘
+                                     ↕ resize grab-handle → updates widths[]
+```
+
+### A.3 — Gutter / lineage rail (§8, hybrid) · [gutter-lineage.html](./assets/2026-06-11-editor-layout/gutter-lineage.html)
+Always-on dirty-glow (safety); full bracket-chains on hover/select. Fan-out: one source → two consumers, one stale.
+```
+ rail        block
+  │┐   ┌─ payload · json  (SOURCE) ───────────┐
+  │├──▶│ { users:1240, active:870 }           │
+  ││   └───────────────────────────────────────┘
+  ││   ┌─ table   (consumer · fresh) ─────────┐
+  │└──▶│ users 1240 / active 870              │
+  │    └───────────────────────────────────────┘
+  │    ┌─ diagram (consumer) ╌╌ STALE ╌╌╌╌╌╌╌┐ ◀ amber glow
+  └───▶│ pie … (cached value, awaiting re-run)│   (ALWAYS on — safety-critical)
+       └───────────────────────────────────────┘
+  faint always-on "participates" tick → full chain + neighbour highlight on hover/select
+```
+
+### A.4 — Structural document map (§8) · [doc-map.html](./assets/2026-06-11-editor-layout/doc-map.html)
+**This is the at-risk one. It is a *structural* map, not a shrunk-text minimap.** One cell per block, coloured by flavour; column-rows render as side-by-side cells; **dirty blocks glow even when off-screen** (the "five screens away went stale" signal); a viewport box; click a cell to jump.
+```
+ document (scrolled)                 structural map (right rail)
+ ┌───────────────────────────┐       ┌────┐
+ │ prose                     │       │▓▓▓▓│ prose      ┐
+ │ table (payload-ref)       │       │████│ table      │ viewport
+ │ diagram                   │       │▒▒▒▒│ diagram     ┘ (on screen)
+ └───────────────────────────┘       │▓▓ ▒│ prose │ diagram   ← column-row (2 cells)
+                                      │████│ ai
+                                      │▓▓▓▓│ prose
+                                      │◉◉◉◉│ diagram    ◀ STALE, glowing (OFF-SCREEN)
+                                      │████│ table
+                                      │████│ code
+                                      │▓▓▓▓│ prose
+                                      │◉◉◉◉│ ai         ◀ STALE, glowing (OFF-SCREEN)
+                                      └────┘
+ legend:  ▓ prose   █ table/ai/code   ▒ diagram  (flavour-coloured)   ◉ dirty-glow
+ • one cell per block (NOT pixel-shrunk text)   • column-rows = adjacent cells
+ • click-to-jump   • it is the macro zoom of the lineage system (micro = word anchor,
+   meso = gutter bracket-chain, macro = this map)
+```
+
+### A.5 — Serialization visuals (§7)
+- [snr-compare.html](./assets/2026-06-11-editor-layout/snr-compare.html) — why the on-disk file must stay readable (`:::`-thin-wrapper vs YAML-embed SNR).
+- [scalar-prose.html](./assets/2026-06-11-editor-layout/scalar-prose.html) — the chosen model: `children:` is a mixed array; a string is verbatim markdown (no prose kind), a map is a Sieve Block.
+- [block-shape.html](./assets/2026-06-11-editor-layout/block-shape.html) — Shape 1 (kind leads, props nested), the 1:1 translation of the standalone fence.

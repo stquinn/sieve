@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Editor Layout Engine — Visual Reference</title>
+<style>
+  :root{--bg:#1d1d1f;--card:#2d2d2f;--bd:#424245;--tx:#f5f5f7;--mut:#86868b;--acc:#0a84ff;}
+  @media (prefers-color-scheme: light){:root{--bg:#f5f5f7;--card:#fff;--bd:#d1d1d6;--tx:#1d1d1f;--mut:#86868b;--acc:#0071e3;}}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--tx);line-height:1.5;padding:2.5rem 1.5rem;max-width:880px;margin:0 auto;}
+  h1{font-size:1.7rem;margin-bottom:.25rem;}
+  .sub{color:var(--mut);margin-bottom:2rem;}
+  a.card{display:block;background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:1rem 1.25rem;margin-bottom:.75rem;text-decoration:none;color:inherit;transition:all .15s;}
+  a.card:hover{border-color:var(--acc);transform:translateY(-1px);}
+  a.card .tag{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--acc);font-weight:600;}
+  a.card .t{font-size:1rem;font-weight:600;margin:.15rem 0;}
+  a.card .d{font-size:.85rem;color:var(--mut);}
+  footer{margin-top:2rem;color:var(--mut);font-size:.8rem;}
+</style>
+</head>
+<body>
+  <h1>Editor Layout Engine — Visual Reference</h1>
+  <p class="sub">The agreed UX illustrations from the 2026-06-11 brainstorm. Companion to <code>../../2026-06-11-editor-layout-engine-design.md</code>. Each links to the spec section it supports.</p>
+
+  <a class="card" href="block-unit.html"><div class="tag">§3 · Unit of layout</div><div class="t">Every top-level node is a block</div><div class="d">Islands-only vs. per-node chrome (chosen) vs. Notion-style. Hover the rows to see the gutter + drag handle.</div></a>
+  <a class="card" href="columns.html"><div class="tag">§6 · Columns</div><div class="t">The 2D container + resize handle + creation gesture</div><div class="d">Diagram beside its prose; column-row container; drag-to-edge / insert / group.</div></a>
+  <a class="card" href="gutter-lineage.html"><div class="tag">§8 · Lineage rail</div><div class="t">Hybrid gutter (always-on dirty-glow, on-demand edges)</div><div class="d">Fan-out: payload → table (fresh) + diagram (stale, glowing).</div></a>
+  <a class="card" href="doc-map.html"><div class="tag">§8 · Document map</div><div class="t">Structural map — NOT a text minimap</div><div class="d">Flavour-coloured cells, off-screen dirty-glow, viewport box, lineage edges. The variant that matters.</div></a>
+  <a class="card" href="snr-compare.html"><div class="tag">§7 · Serialization</div><div class="t">SNR comparison — :::columns vs YAML-embed</div><div class="d">Why the file must stay readable.</div></a>
+  <a class="card" href="scalar-prose.html"><div class="tag">§7 · Scalar prose</div><div class="t">No prose kind — verbatim markdown scalar</div><div class="d">children: array; string = prose, map = Sieve Block.</div></a>
+  <a class="card" href="block-shape.html"><div class="tag">§7 · Block child shape</div><div class="t">Shape 1 — kind leads, props nested</div><div class="d">1:1 with the standalone fence.</div></a>
+
+  <footer>Generated from the brainstorm visual companion. Open any page directly in a browser.</footer>
+</body>
+</html>
