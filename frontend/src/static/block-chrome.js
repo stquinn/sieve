@@ -2,13 +2,22 @@
 // Adds a ProseMirror plugin that renders gutter chrome (line number + drag handle + rail)
 // for every top-level block node, plus drag-reorder.
 //
-// Strategy:
-//   1. Decoration.node(from, to, { class: 'block-with-chrome' }) — applies to the outermost
-//      DOM element for BOTH prose nodes AND atom NodeViews (Sieve blocks).
-//   2. view.update() scan — after each state update, walks every .block-with-chrome element
-//      and ensures its .block-chrome-host child is populated with line-number + handle + rail.
-//      Sieve blocks already have a .block-chrome-host injected by sieve-block-extension.js;
-//      prose nodes get one created here.
+// Two-strategy approach to avoid infinite loop with ProseMirror:
+//
+//   Strategy A — Prose/native nodes → Decoration.widget
+//     ProseMirror owns the DOM for prose nodes (p, h1, ul, blockquote, etc.).
+//     Injecting a <div> manually as first child causes PM to see foreign DOM,
+//     include it in reconciliation, and loop.  Instead we use Decoration.widget
+//     at offset+1 with side:-1 so PM tracks it natively.
+//
+//   Strategy B — Sieve atom nodes → fill existing .block-chrome-host slot
+//     sieve-block-extension.js injects a .block-chrome-host div as first child
+//     of every Sieve NodeView's DOM during addNodeView().  NodeViews have
+//     ignoreMutation logic that suppresses reconciliation for their own DOM.
+//     view.update() finds that pre-existing slot and populates it.
+//
+// Discriminator: a top-level node is a Sieve block when its attrs contain
+// serialisedForm (present in BASE_ATTRS for every sieve- node).
 //
 // Depends on window.TipTap (vendor/tiptap.js) loaded first.
 ;(function () {
@@ -64,49 +73,80 @@
     return bestPos
   }
 
-  // ── Build Decoration.node set ────────────────────────────────────────────────
-  // Applies class 'block-with-chrome' to the outermost DOM element of every
-  // top-level node.  Decoration.node works for both prose nodes AND atom NodeViews.
+  // ── Is this a Sieve block node? ──────────────────────────────────────────────
+  // Sieve blocks carry serialisedForm in BASE_ATTRS. Prose nodes never do.
 
-  function buildDecorations(state) {
-    var decos = []
+  function isSieveNode(node) {
+    return node.attrs && node.attrs.serialisedForm !== undefined
+  }
 
-    state.doc.forEach(function (node, offset) {
-      var from = offset
-      var to   = offset + node.nodeSize
-      decos.push(
-        Decoration.node(from, to, { class: 'block-with-chrome' })
-      )
+  // ── Create chrome host DOM for a widget (Strategy A — prose nodes) ───────────
+  // Returns a configured .block-chrome-host element with event listeners wired.
+  // blockIndex is 1-based. offset is the doc offset of the node (for drag pos).
+  // getPos is the PM widget factory's getPos callback (may be null in fallback).
+
+  function createChromeHostWidget(blockIndex, offset, view, getPos) {
+    var host = document.createElement('div')
+    host.className = 'block-chrome-host'
+    host.setAttribute('contenteditable', 'false')
+
+    var num = document.createElement('span')
+    num.className = 'block-chrome-linenum'
+    num.textContent = String(blockIndex)
+
+    var handle = document.createElement('span')
+    handle.className = 'block-chrome-handle'
+    handle.setAttribute('draggable', 'true')
+    handle.textContent = '⠷'   // braille drag-dots glyph
+
+    var rail = document.createElement('span')
+    rail.className = 'block-chrome-rail'
+
+    host.appendChild(num)
+    host.appendChild(handle)
+    host.appendChild(rail)
+
+    // ── mousedown: select the entire top-level node ────────────────────
+    handle.addEventListener('mousedown', function (e) {
+      e.preventDefault()
+      var pos = (typeof getPos === 'function') ? getPos() : offset
+      var editor = window.__tiptap
+      if (editor) {
+        editor.commands.setNodeSelection(pos)
+        view.focus()
+      }
     })
 
-    // Drop indicator (only during drag)
-    var pluginState = blockChromeKey.getState(state)
-    if (pluginState && pluginState.indicatorPos != null) {
-      var iPos = pluginState.indicatorPos
-      var maxPos = state.doc.content.size
-      var clampedPos = Math.max(0, Math.min(iPos, maxPos))
-      decos.push(indicatorWidget(clampedPos))
-    }
+    // ── dragstart: record source pos ───────────────────────────────────
+    handle.addEventListener('dragstart', function (e) {
+      var pos = (typeof getPos === 'function') ? getPos() : offset
+      dragState = { from: pos }
+      e.dataTransfer.effectAllowed = 'move'
+      e.dataTransfer.setData('application/x-sieve-block', String(pos))
+      // Set drag image to the block's DOM row
+      try {
+        var domNode = view.nodeDOM(pos)
+        var imgEl = domNode && (domNode.nodeType === 1 ? domNode : domNode.parentElement)
+        if (imgEl && imgEl.nodeType === 1) e.dataTransfer.setDragImage(imgEl, 0, 0)
+      } catch (_) {}
+    })
 
-    return DecorationSet.create(state.doc, decos)
+    // ── dragend: clean up (fires even if drop was outside editor) ──────
+    handle.addEventListener('dragend', function () {
+      if (dragState) {
+        dragState = null
+        try {
+          view.dispatch(
+            view.state.tr.setMeta(blockChromeKey, { indicatorPos: null })
+          )
+        } catch (_) {}
+      }
+    })
+
+    return host
   }
 
-  // ── Drop indicator widget ────────────────────────────────────────────────────
-
-  function indicatorWidget(pos) {
-    return Decoration.widget(
-      pos,
-      function () {
-        var line = document.createElement('div')
-        line.className = 'block-chrome-drop-indicator'
-        line.setAttribute('contenteditable', 'false')
-        return line
-      },
-      { side: -1, key: 'drop-indicator' }
-    )
-  }
-
-  // ── Populate a single .block-chrome-host element ─────────────────────────────
+  // ── Populate a single .block-chrome-host element (Strategy B — Sieve nodes) ──
   // Creates (or reuses) the line number, handle, and rail children.
   // blockIndex is 1-based.
 
@@ -170,47 +210,96 @@
     })
   }
 
-  // ── Scan the editor DOM and ensure every .block-with-chrome has chrome ───────
-  // Called from view.update() on every state change.
-  //
-  // We build a parallel list of top-level doc positions from state.doc so we
-  // can pass the correct PM pos to each chrome host without relying on posAtDOM
-  // (which is unreliable for atom NodeViews).
+  // ── Build Decoration set ─────────────────────────────────────────────────────
+  // For every top-level node:
+  //   1. Decoration.node — applies class 'block-with-chrome' (CSS positioning hook)
+  //   2. Decoration.widget at offset+1 — only for PROSE nodes (Strategy A).
+  //      Sieve nodes have their host slot filled by view.update() (Strategy B).
+  // Also adds the drop-indicator widget during drag.
 
-  function syncChromeDOM(editorView) {
-    var doc = editorView.state.doc
-    var editorDom = editorView.dom
+  function buildDecorations(state) {
+    var decos = []
+    var index = 0
 
-    // Build an ordered list of { pos, nodeSize } for every top-level node.
-    var topLevelPositions = []
-    doc.forEach(function (node, offset) {
-      topLevelPositions.push(offset)
+    state.doc.forEach(function (node, offset) {
+      var i = index++   // capture for closure
+      var from = offset
+      var to   = offset + node.nodeSize
+
+      // Always mark the block for CSS gutter positioning.
+      decos.push(
+        Decoration.node(from, to, { class: 'block-with-chrome' })
+      )
+
+      // Strategy A: prose/native nodes only.
+      // Sieve nodes already have a .block-chrome-host slot; view.update() fills it.
+      if (!isSieveNode(node)) {
+        // offset+1 is the first position inside the node.
+        // side:-1 places the widget before any content at that position.
+        // key ensures PM reuses the same DOM element across re-renders so event
+        // listeners survive without being re-attached.
+        // Note: offset and i are closure-safe here — each forEach callback
+        // invocation has its own scope (offset is a parameter; i is a var local).
+        decos.push(
+          Decoration.widget(
+            offset + 1,
+            function (widgetView, getPos) {
+              return createChromeHostWidget(i + 1, offset, widgetView, getPos)
+            },
+            { side: -1, key: 'chrome-' + offset }
+          )
+        )
+      }
     })
 
-    var blocks = editorDom.querySelectorAll('.block-with-chrome')
-
-    // blocks and topLevelPositions should have the same length.
-    // If they don't (e.g. PM hasn't applied decorations yet), bail gracefully.
-    var count = Math.min(blocks.length, topLevelPositions.length)
-
-    for (var i = 0; i < count; i++) {
-      var blockEl = blocks[i]
-      var blockIndex = i + 1          // 1-based line number
-      var pos = topLevelPositions[i]  // doc offset of this top-level node
-
-      // Find or create the chrome host.
-      // Sieve blocks already have one injected by sieve-block-extension.js.
-      // Prose nodes need one created as their first child.
-      var host = blockEl.querySelector(':scope > .block-chrome-host')
-      if (!host) {
-        host = document.createElement('div')
-        host.className = 'block-chrome-host'
-        host.setAttribute('contenteditable', 'false')
-        blockEl.insertBefore(host, blockEl.firstChild)
-      }
-
-      populateChromeHost(host, blockIndex, pos, editorView)
+    // Drop indicator (only during drag)
+    var pluginState = blockChromeKey.getState(state)
+    if (pluginState && pluginState.indicatorPos != null) {
+      var iPos = pluginState.indicatorPos
+      var maxPos = state.doc.content.size
+      var clampedPos = Math.max(0, Math.min(iPos, maxPos))
+      decos.push(indicatorWidget(clampedPos))
     }
+
+    return DecorationSet.create(state.doc, decos)
+  }
+
+  // ── Drop indicator widget ────────────────────────────────────────────────────
+
+  function indicatorWidget(pos) {
+    return Decoration.widget(
+      pos,
+      function () {
+        var line = document.createElement('div')
+        line.className = 'block-chrome-drop-indicator'
+        line.setAttribute('contenteditable', 'false')
+        return line
+      },
+      { side: -1, key: 'drop-indicator' }
+    )
+  }
+
+  // ── Sync Sieve block chrome hosts (Strategy B) ───────────────────────────────
+  // Called from view.update() on every state change.
+  // ONLY fills the .block-chrome-host slot that sieve-block-extension.js has
+  // already injected. Never touches prose nodes — those are handled by
+  // Decoration.widget (Strategy A).
+
+  function syncSieveChrome(editorView) {
+    var index = 0
+    editorView.state.doc.forEach(function (node, offset) {
+      var i = index++
+      if (!isSieveNode(node)) return   // prose node — Decoration.widget handles it
+
+      var nodeDOM = editorView.nodeDOM(offset)
+      if (!nodeDOM) return
+
+      // The chrome host was injected as first child by sieve-block-extension.js.
+      var host = nodeDOM.querySelector(':scope > .block-chrome-host')
+      if (!host) return
+
+      populateChromeHost(host, i + 1, offset, editorView)
+    })
   }
 
   // ── Plugin ─────────────────────────────────────────────────────────────────
@@ -326,13 +415,16 @@
             },
           },
 
-          // ── view() callback: sync chrome DOM after every state update ────────
+          // ── view() callback: sync Sieve chrome hosts after every state update ─
+          // Strategy B only: fills the .block-chrome-host slot that
+          // sieve-block-extension.js injected.  Prose nodes are handled by
+          // Decoration.widget (Strategy A) — never touch those here.
           view: function (editorView) {
             return {
               update: function (view) {
                 // Use rAF to run after PM has applied its own DOM mutations.
                 requestAnimationFrame(function () {
-                  syncChromeDOM(view)
+                  syncSieveChrome(view)
                 })
               },
             }
