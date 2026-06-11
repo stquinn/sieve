@@ -323,35 +323,49 @@
                 return true
               },
 
-              // mouseup: extend selection to cover a sieve atom when the cursor
-            // is released over one.  Sieve blocks are contenteditable=false, so
-            // browser drag-select stops at their boundary.  This catches that
-            // mouseup and snaps the selection head to include the whole atom.
+              // mouseup: when the cursor is released inside a sieve atom's DOM,
+            // ensure the selection covers the whole atom.
+            //
+            // Sieve blocks have contentEditable=true at root so PM can interact
+            // with them, but their atoms can't be partially selected — the head
+            // of a drag-select snaps to just before the atom boundary.  We catch
+            // the mouseup event (which fires on the actual element under the
+            // cursor, unlike drag events) and extend the selection to include the
+            // whole atom.  For a plain click on a sieve block body we create a
+            // NodeSelection.
               mouseup: function (view, event) {
-                if (dragState) return false   // handle-drag, not selection
+                if (dragState) return false   // handle-drag, not a selection gesture
+
                 var editor = window.__tiptap
                 if (!editor) return false
-                var sel = editor.state.selection
-                if (sel.empty) return false
 
+                // Use event.target (the element under the cursor at release)
+                // to identify which sieve atom, if any, we're over.
                 var overOffset = null
                 var overEnd = null
                 editor.state.doc.forEach(function (node, offset) {
                   if (!isSieveNode(node) || overOffset !== null) return
                   var dom = view.nodeDOM(offset)
                   if (!dom) return
-                  var el = dom.nodeType === 1 ? dom : dom.parentElement
-                  if (!el) return
-                  var r = el.getBoundingClientRect()
-                  if (event.clientY >= r.top && event.clientY <= r.bottom) {
+                  if (dom === event.target || dom.contains(event.target)) {
                     overOffset = offset
                     overEnd = offset + node.nodeSize
                   }
                 })
 
                 if (overOffset === null) return false
+
+                var sel = editor.state.selection
+
+                if (sel.empty) {
+                  // Plain click on sieve block body → NodeSelection
+                  editor.commands.setNodeSelection(overOffset)
+                  return true
+                }
+
                 if (sel.from <= overOffset && sel.to >= overEnd) return false  // already covered
 
+                // Extend the selection head to include the whole sieve atom.
                 var anchor = sel.anchor
                 var newHead = anchor <= overOffset ? overEnd : overOffset
                 editor.commands.setTextSelection({

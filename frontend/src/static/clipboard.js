@@ -12,6 +12,19 @@
     var sel = view.state.selection
     var parts = []
 
+    // If the selection contains any non-sieve (prose) top-level nodes, return
+    // null and let the browser's default copy run — that preserves prose text.
+    // Only intercept for pure-sieve selections (single or range via handle-click).
+    var hasProse = false
+    view.state.doc.forEach(function (node, offset) {
+      if (hasProse) return
+      var nodeEnd = offset + node.nodeSize
+      if (nodeEnd > sel.from && offset < sel.to) {
+        if (!node.type.name.startsWith('sieve-')) hasProse = true
+      }
+    })
+    if (hasProse) return null
+
     view.state.doc.nodesBetween(sel.from, sel.to, function (node) {
       if (node.type.name.startsWith('sieve-')) {
         var allAttrs = {}
