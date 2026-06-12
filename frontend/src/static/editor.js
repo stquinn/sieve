@@ -1115,7 +1115,6 @@
     if (!val) return
 
     var ctx
-    var hadPinned = !!pendingAskCtx
     if (pendingAskCtx) {
       ctx = pendingAskCtx
     } else {
@@ -1133,13 +1132,16 @@
     textarea.value = ''
     if (currentEditor) window.TipTap.clearAiTargetGlow(currentEditor.view)
     if (!isAskPanelPinned) panel.classList.remove('is-open')
-    // SEND also returns you to where you were. For a pinned/explicit target we
-    // didn't capture a focus context, so just refocus the editor; otherwise
-    // restore the captured context (editor caret / block caret / markdown).
-    if (hadPinned || !focusReturn) {
-      if (currentEditor) currentEditor.view.focus()
-    } else {
-      window.TipTap.restoreFocusContext(currentEditor, focusReturn)
+    // SEND is a doc-mutating action, so focus FOLLOWS the action rather than
+    // restoring the pre-ask caret: a selection got wrapped in an anchor and the
+    // answer block is about to be inserted, which makes the captured position
+    // stale anyway. Hand focus back to the editor (never leave it in the box) and
+    // collapse the caret to the END of the target — right where the answer lands.
+    // (Ctrl+Shift+A jump-out, which is navigation not action, still restores
+    // the exact context via returnToEditor.)
+    if (currentEditor) {
+      currentEditor.view.focus()
+      try { currentEditor.commands.setTextSelection(currentEditor.state.selection.to) } catch (e) {}
     }
     focusReturn = null
   }
