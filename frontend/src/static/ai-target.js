@@ -132,8 +132,26 @@
     return { kind: 'document', range: null, label: 'Document' }
   }
 
+  // aiInsertPos(state) → doc position where the AI answer block should be inserted.
+  // The answer must be a SIBLING that FOLLOWS the target block, never nested inside
+  // it. After a SEND-time mint the caret sits inside a freshly-wrapped blockRef
+  // anchor, so selection.to would land the block inside the anchor — this returns
+  // the position immediately after the shallowest enclosing target block instead.
+  // Plain cursor / document targets fall back to the caret (selection.to).
+  function aiInsertPos(state) {
+    var sel = state.selection
+    // Whole-node selection (e.g. a sieve block): selection.to already sits after it.
+    if (sel.node) return sel.to
+    var $from = sel.$from
+    for (var d = 1; d <= $from.depth; d++) {
+      if (isTargetName($from.node(d).type.name)) return $from.after(d)
+    }
+    return sel.to
+  }
+
   T.titleCase = titleCase
   T.quoteSnippet = quoteSnippet
   T.describeTarget = describeTarget
   T.resolveAiTarget = resolveAiTarget
+  T.aiInsertPos = aiInsertPos
 })()

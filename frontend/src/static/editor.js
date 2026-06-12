@@ -1147,7 +1147,10 @@
       var refId = (ctx && ctx.blockRef) || 'doc'
       var blockType = type === 'explain' ? 'EXPLAIN' : 'ASK'
 
-      sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
+      // Insert the answer AFTER the target block (anchor/sieve), never nested
+      // inside it. After a SEND-time mint the caret sits inside the fresh anchor,
+      // so selection.to alone would place the block inside it. See ai-target.js.
+      sieveInsertPos = currentEditor ? window.TipTap.aiInsertPos(currentEditor.state) : null
 
       flushSave().then(function () {
         wsSend({
