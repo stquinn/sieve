@@ -806,6 +806,20 @@
       if (e.key === 'Escape') { e.preventDefault(); closePanel() }
     })
 
+    // Glow lifetime == Ask-box focus. The glow shows what the question is linked to
+    // *while you're composing it*, then clears the moment you return to the document
+    // — so normal editing (even with the panel pinned open) never paints a block.
+    textarea.addEventListener('focus', function () {
+      if (!currentEditor || currentMode === 'markdown') return
+      var range = (pendingAskCtx && pendingAskCtx.range)
+        ? pendingAskCtx.range
+        : window.TipTap.resolveAiTarget(currentEditor, false).range
+      window.TipTap.setAiTargetGlow(currentEditor.view, range)
+    })
+    textarea.addEventListener('blur', function () {
+      if (currentEditor) window.TipTap.clearAiTargetGlow(currentEditor.view)
+    })
+
     return panel
   }
 
@@ -820,7 +834,9 @@
       var t = window.TipTap.resolveAiTarget(editor, currentMode === 'markdown')
       var label = askDialog.querySelector('.ask-popup__label')
       label.textContent = t.label === 'Follow-up' ? 'Ask Follow-up' : 'Ask About ' + t.label
-      if (currentMode !== 'markdown') window.TipTap.setAiTargetGlow(editor.view, t.range)
+      // NB: no glow here. The label tracks the caret ambiently, but the glow (which
+      // paints the document) is applied ONLY while the Ask box is focused — see the
+      // textarea focus/blur handlers in wireAskPanel — so normal editing never glows.
     }, 100)
   }
 
@@ -841,11 +857,9 @@
 
     pendingAskCtx = precomputedCtx || null
     askDialog.classList.add('is-open')
-    if (pendingAskCtx && pendingAskCtx.range && currentEditor) {
-      window.TipTap.setAiTargetGlow(currentEditor.view, pendingAskCtx.range)
-    } else if (currentEditor) {
-      updateAskPanelLabelLive(currentEditor)
-    }
+    // The label tracks ambiently; the glow is applied by the textarea focus handler
+    // once focus lands in the box below (glow only while focused → never during edit).
+    if (!pendingAskCtx && currentEditor) updateAskPanelLabelLive(currentEditor)
 
     setTimeout(function() {
       textarea.focus()
