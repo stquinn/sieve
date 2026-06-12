@@ -751,7 +751,7 @@
   var pendingAskCtx = null
   var isAskPanelPinned = window.initAskPanelPinned || false
   var askLabelTimeout = null
-  var returnSelection = null   // editor selection captured on jump-in to the Ask box
+  var focusReturn = null   // focus context (editor/block/markdown) captured on jump-in to the Ask box
 
   document.addEventListener('sieve:ask-panel-toggled', function(e) {
     isAskPanelPinned = e.detail
@@ -788,6 +788,8 @@
     if (closeBtn) closeBtn.addEventListener('click', closePanel)
 
     textarea.addEventListener('keydown', function (e) {
+      // Ctrl+Shift+A (jump back out) is handled by the single global handler below,
+      // so it isn't duplicated here — only Enter/Escape are box-local.
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doAsk(textarea, panel) }
       if (e.key === 'Escape') { e.preventDefault(); closePanel() }
     })
@@ -820,8 +822,10 @@
       returnToEditor()
       return
     }
-    // Jump IN: remember where we were so we can restore the caret exactly.
-    if (currentEditor) returnSelection = currentEditor.state.selection
+    // Jump IN: capture where focus was (main editor, a block's inner editor, or
+    // the markdown textarea) so jump-out restores it exactly. Must run before the
+    // textarea steals focus below — activeElement is still the source here.
+    focusReturn = window.TipTap.captureFocusContext(currentEditor)
 
     pendingAskCtx = precomputedCtx || null
     askDialog.classList.add('is-open')
@@ -835,6 +839,33 @@
       textarea.focus()
     }, 50)
   }
+
+  // Single focus-agnostic Ctrl+Shift+A entry point. If the Ask box has focus, jump
+  // back out (restoring focus); otherwise jump in. The ProseMirror Mod-Shift-a
+  // keymap still covers the case where the MAIN editor is focused; this handles the
+  // cases the keymap can't see (the Ask box, a sieve block's inner editor) and
+  // bails when the editor has focus so the two never double-fire.
+  function toggleAskFocus() {
+    ensureOverlays()
+    var textarea = askDialog && askDialog.querySelector('.ask-popup__input')
+    if (askDialog && askDialog.classList.contains('is-open') && document.activeElement === textarea) {
+      returnToEditor()
+    } else {
+      document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
+    }
+  }
+
+  document.addEventListener('keydown', function (e) {
+    if ((e.key !== 'a' && e.key !== 'A') || !window.isMod(e) || !e.shiftKey || e.altKey) return
+    if (!currentEditor && currentMode !== 'markdown') return
+    // The PM keymap owns the main-editor-focused case — let it handle that.
+    if (currentEditor && currentEditor.view.hasFocus()) return
+    // Don't hijack the shortcut inside the sidebar or a modal dialog.
+    var ae = document.activeElement
+    if (ae && ae.closest && ae.closest('#htmx-sidebar, dialog')) return
+    e.preventDefault()
+    toggleAskFocus()
+  })
 
   // ── Rich Link dialog ──────────────────────────────────────────────────────────
 
@@ -1072,16 +1103,11 @@
   // the Ask box. Focus and panel visibility are independent: only hide if unpinned.
   function returnToEditor() {
     if (!isAskPanelPinned && askDialog) askDialog.classList.remove('is-open')
-    if (currentEditor) {
-      if (returnSelection) {
-        try {
-          currentEditor.view.focus()
-          currentEditor.view.dispatch(currentEditor.state.tr.setSelection(returnSelection))
-        } catch (e) { currentEditor.view.focus() }
-      } else {
-        currentEditor.view.focus()
-      }
-    }
+    // Restore wherever we were on jump-in: main editor caret, a block's inner
+    // editor caret, or the markdown textarea. restoreFocusContext re-resolves by
+    // position against the current doc, so a doc edit while we were in the box
+    // can't make the restore silently throw.
+    window.TipTap.restoreFocusContext(currentEditor, focusReturn)
   }
 
   function doAsk(textarea, panel) {
@@ -1107,16 +1133,15 @@
     textarea.value = ''
     if (currentEditor) window.TipTap.clearAiTargetGlow(currentEditor.view)
     if (!isAskPanelPinned) panel.classList.remove('is-open')
-    // Return focus to the editor. For the selection-mint case the caret already
-    // sits in the freshly-minted anchor (applyTargetHighlight preserves it); for
-    // non-mutating kinds, restore the captured selection.
-    if (currentEditor) {
-      currentEditor.view.focus()
-      if (returnSelection && !hadPinned) {
-        try { currentEditor.view.dispatch(currentEditor.state.tr.setSelection(returnSelection)) } catch (e) {}
-      }
+    // SEND also returns you to where you were. For a pinned/explicit target we
+    // didn't capture a focus context, so just refocus the editor; otherwise
+    // restore the captured context (editor caret / block caret / markdown).
+    if (hadPinned || !focusReturn) {
+      if (currentEditor) currentEditor.view.focus()
+    } else {
+      window.TipTap.restoreFocusContext(currentEditor, focusReturn)
     }
-    returnSelection = null
+    focusReturn = null
   }
 
   // ── AI jobs ───────────────────────────────────────────────────────────────────
