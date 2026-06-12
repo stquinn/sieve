@@ -461,6 +461,7 @@ textarea::selection {
   font-family: var(--theme-monoFont);
   user-select: none;
   -webkit-user-select: none;
+  white-space: nowrap;
 }
 
 /* Drag handle: a substantial, clearly-clickable affordance. Hidden at rest,
@@ -474,7 +475,8 @@ textarea::selection {
   color: var(--theme-accentPrimary);
   font-size: 18px;
   line-height: 1;
-  align-self: center;
+  align-self: flex-start;
+  margin-top: -2px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2043,6 +2045,8 @@ pre.tiptap-code-block code {
 
 .ask-panel.is-open {
   display: flex;
+  position: relative;
+  z-index: 20;
   border-top: 1px solid var(--theme-border2);
 }
 

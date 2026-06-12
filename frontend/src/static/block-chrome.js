@@ -460,6 +460,17 @@
                 // suppress hover-driven highlights (chain glows, etc.) while
                 // a selection is active.
                 view.dom.classList.toggle('has-selection', !view.state.selection.empty)
+
+                // Dynamically expand the gutter width for documents with many blocks
+                // to prevent line numbers from wrapping or pushing the rail.
+                // 54px is the base width in editor.css (accommodates up to 99 blocks).
+                var digits = String(view.state.doc.childCount).length
+                var chromeW = 54
+                if (digits > 2) {
+                  chromeW = 54 + (digits - 2) * 8
+                }
+                view.dom.style.setProperty('--chrome-w', chromeW + 'px')
+
                 requestAnimationFrame(function () { syncSieveChrome(view) })
               },
               destroy: function () {

@@ -33,11 +33,11 @@ func (h *SessionHandler) handleSidebarToggle(w http.ResponseWriter, r *http.Requ
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<style id="layout-overrides-sidebar" hx-swap-oob="true">
-		#app-root { --sidebar-w: %dpx; }
-		#htmx-sidebar { display: %s; }
-		.sidebar-handle { display: %s; }
+		#app-root { --sidebar-w: %dpx !important; }
+		#htmx-sidebar { display: %s !important; }
+		.sidebar-handle { display: %s !important; }
 	</style>`, map[bool]int{true: session.SidebarWidth, false: 0}[session.ShowSidebar],
-		map[bool]string{true: "block", false: "none"}[session.ShowSidebar],
+		map[bool]string{true: "flex", false: "none"}[session.ShowSidebar],
 		map[bool]string{true: "block", false: "none"}[session.ShowSidebar])
 }
 
@@ -48,9 +48,9 @@ func (h *SessionHandler) handleMetaToggle(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<style id="layout-overrides-meta" hx-swap-oob="true">
-		#app-root { --meta-w: %dpx; }
-		#htmx-meta-panel { display: %s; }
-		.meta-handle { display: %s; }
+		#app-root { --meta-w: %dpx !important; }
+		#htmx-meta-panel { display: %s !important; }
+		.meta-handle { display: %s !important; }
 	</style>`, map[bool]int{true: session.MetaWidth, false: 0}[session.ShowMeta],
 		map[bool]string{true: "flex", false: "none"}[session.ShowMeta],
 		map[bool]string{true: "block", false: "none"}[session.ShowMeta])
@@ -123,7 +123,14 @@ func (h *SessionHandler) handleAskPanelToggle(w http.ResponseWriter, r *http.Req
 	_ = h.ServiceProvider.State.SaveSession(session)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<script hx-swap-oob="true">document.dispatchEvent(new CustomEvent('sieve:ask-panel-toggled', { detail: %t }))</script>`, session.ShowAskPanel)
+	
+	styleRule := ""
+	if session.ShowAskPanel {
+		styleRule = `#ask-panel { display: flex !important; position: relative; z-index: 20; border-top: 1px solid var(--theme-border2); }`
+	}
+	
+	fmt.Fprintf(w, `<style id="layout-overrides-askpanel" hx-swap-oob="true">%s</style>
+<script id="askpanel-state-sync" hx-swap-oob="true">document.dispatchEvent(new CustomEvent('sieve:ask-panel-toggled', { detail: %t }))</script>`, styleRule, session.ShowAskPanel)
 }
 
 func (h *SessionHandler) handleSessionRefresh(w http.ResponseWriter, r *http.Request) {
@@ -193,19 +200,26 @@ func (h *SessionHandler) handleSwitchLayout(w http.ResponseWriter, r *http.Reque
 		tierStr = "smart"
 	}
 
+	askPanelStyle := ""
+	if session.ShowAskPanel {
+		askPanelStyle = `#ask-panel { display: flex !important; position: relative; z-index: 20; border-top: 1px solid var(--theme-border2); }`
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w,
-		`<style id="layout-overrides-sidebar" hx-swap-oob="true">#app-root { --sidebar-w: %dpx; } #htmx-sidebar { display: %s; } .sidebar-handle { display: %s; }</style>`+
-			`<style id="layout-overrides-meta" hx-swap-oob="true">#app-root { --meta-w: %dpx; } #htmx-meta-panel { display: %s; } .meta-handle { display: %s; }</style>`+
+		`<style id="layout-overrides-sidebar" hx-swap-oob="true">#app-root { --sidebar-w: %dpx !important; } #htmx-sidebar { display: %s !important; } .sidebar-handle { display: %s !important; }</style>`+
+			`<style id="layout-overrides-meta" hx-swap-oob="true">#app-root { --meta-w: %dpx !important; } #htmx-meta-panel { display: %s !important; } .meta-handle { display: %s !important; }</style>`+
 			`<style id="layout-overrides-prompts" hx-swap-oob="true">#prompts-panel { display: %s; } .prompts-handle { display: %s; }</style>`+
 			`<style id="layout-overrides-toolbar" hx-swap-oob="true">#editor-toolbar { display: %s; } #app-root { --toolbar-h: %s; }</style>`+
 			`<style id="layout-overrides-linenumbers" hx-swap-oob="true">%s</style>`+
-			`<script hx-swap-oob="true">var r=document.getElementById('app-root');if(r)r.className=r.className.replace(/tier-\S+/,'tier-%s'); document.dispatchEvent(new CustomEvent('sieve:ask-panel-toggled', { detail: %t }));</script>`,
+			`<style id="layout-overrides-askpanel" hx-swap-oob="true">%s</style>`+
+			`<script id="askpanel-state-sync" hx-swap-oob="true">var r=document.getElementById('app-root');if(r)r.className=r.className.replace(/tier-\S+/,'tier-%s'); document.dispatchEvent(new CustomEvent('sieve:ask-panel-toggled', { detail: %t }));</script>`,
 		sidebarW, sidebarDisp, handleDisp,
 		metaW, metaDisp, metaHandleDisp,
 		promptsDisp, promptsDisp,
 		toolbarDisp, toolbarH,
 		lineNumberOverrideCSS(session.ShowLineNumbers),
+		askPanelStyle,
 		tierStr, session.ShowAskPanel,
 	)
 }

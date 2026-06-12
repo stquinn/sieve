@@ -14,14 +14,19 @@
     <link rel="stylesheet" href="/static/shell.css">
     <link rel="stylesheet" href="/static/settings.css">
     <style id="layout-overrides-sidebar">
-        #htmx-sidebar { display: {{if .ShowSidebar}}block{{else}}none{{end}}; }
-        .sidebar-handle { display: {{if .ShowSidebar}}block{{else}}none{{end}}; }
+        #app-root { --sidebar-w: {{if .ShowSidebar}}{{.SidebarWidth}}{{else}}0{{end}}px !important; }
+        #htmx-sidebar { display: {{if .ShowSidebar}}flex{{else}}none{{end}} !important; }
+        .sidebar-handle { display: {{if .ShowSidebar}}block{{else}}none{{end}} !important; }
     </style>
     <style id="layout-overrides-meta">
-        #htmx-meta-panel { display: {{if .ShowMeta}}flex{{else}}none{{end}}; }
-        .meta-handle { display: {{if .ShowMeta}}block{{else}}none{{end}}; }
+        #app-root { --meta-w: {{if .ShowMeta}}{{.MetaWidth}}{{else}}0{{end}}px !important; }
+        #htmx-meta-panel { display: {{if .ShowMeta}}flex{{else}}none{{end}} !important; }
+        .meta-handle { display: {{if .ShowMeta}}block{{else}}none{{end}} !important; }
     </style>
-    <script>
+    <style id="layout-overrides-askpanel">
+        {{if .ShowAskPanel}}#ask-panel { display: flex !important; position: relative; z-index: 20; border-top: 1px solid var(--theme-border2); }{{end}}
+    </style>
+    <script id="askpanel-state-sync">
         window.initAskPanelPinned = {{if .ShowAskPanel}}true{{else}}false{{end}};
     </script>
     <style id="layout-overrides-prompts">
