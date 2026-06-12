@@ -97,8 +97,10 @@ func (fs *FileStore) CreateMetaText(cat store.Category, key string, body []byte)
 
 func (fs *FileStore) CreateAsset(cat store.Category, parentKey string, assetID string, body []byte) (store.AssetStorable, error) {
 	parentKey = strings.TrimSuffix(parentKey, ".md")
-	ext := extFromBytes(body)
-	filename := assetID + ext
+	filename := assetID
+	if filepath.Ext(assetID) == "" {
+		filename = assetID + extFromBytes(body)
+	}
 
 	var assetPath string
 	var docUUID string
@@ -902,12 +904,18 @@ func extFromBytes(b []byte) string {
 	case strings.HasPrefix(mime, "image/webp"):
 		return ".webp"
 	default:
-		// http.DetectContentType does not recognise SVG (it returns text/plain or
-		// text/xml). Check the content directly: mermaid SVGs start with <svg;
-		// standards-compliant SVGs may start with an XML declaration.
 		trimmed := bytes.TrimSpace(b)
 		if bytes.HasPrefix(trimmed, []byte("<svg")) || bytes.HasPrefix(trimmed, []byte("<?xml")) {
 			return ".svg"
+		}
+		if bytes.HasPrefix(trimmed, []byte("{")) && bytes.HasSuffix(trimmed, []byte("}")) {
+			return ".json"
+		}
+		if bytes.HasPrefix(trimmed, []byte("[")) && bytes.HasSuffix(trimmed, []byte("]")) {
+			return ".json"
+		}
+		if strings.HasPrefix(mime, "text/") {
+			return ".txt"
 		}
 		return ".bin"
 	}

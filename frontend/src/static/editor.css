@@ -114,9 +114,15 @@ textarea::selection {
 }
 
 /* Block range selection (shift-click handle range) */
-.block-with-chrome.ProseMirror-selectednode,
 .block-with-chrome ::selection {
   background: var(--theme-selectionBg);
+}
+
+.block-with-chrome.ProseMirror-selectednode {
+  outline: 2px solid var(--theme-accentPrimary);
+  outline-offset: -2px;
+  border-radius: 6px;
+  box-shadow: 0 0 15px rgba(122, 162, 247, 0.15);
 }
 
 /* Sieve block that is part of a multi-block RANGE selection.
@@ -1216,6 +1222,7 @@ pre.tiptap-code-block code {
 
 .sieve-block--code.block-ref-active {
   border-color: color-mix(in srgb, var(--theme-accentGreen) 30%, var(--theme-aiBlockBorder)) !important;
+  background-color: color-mix(in srgb, var(--theme-accentGreen) 4%, var(--theme-bgDark)) !important;
 }
 
 .sieve-block--code.block-ref-active::after {

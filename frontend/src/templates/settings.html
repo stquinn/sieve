@@ -1,5 +1,5 @@
 {{define "settings.html"}}
-<div class="settings-container" style="display: flex; height: 450px;">
+<div class="settings-container" style="display: flex; height: 75vh; min-height: 400px; max-height: 850px;">
   <!-- Sidebar -->
   <div class="settings-sidebar" style="width: 12rem; background: var(--theme-bgDark); border-right: 1px solid var(--theme-border); padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
     <h2 style="font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem; padding: 0 0.5rem;">Settings</h2>
@@ -7,6 +7,7 @@
     <button id="settings-tab-btn-ai" class="settings-tab-btn {{if or (eq .LastSettingsPanel "ai") (eq .LastSettingsPanel "")}}active{{end}}" onclick="switchSettingsTab(this, 'ai')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if or (eq .LastSettingsPanel "ai") (eq .LastSettingsPanel "")}}var(--theme-bg){{else}}transparent{{end}}; color: {{if or (eq .LastSettingsPanel "ai") (eq .LastSettingsPanel "")}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">AI Provider</button>
     <button id="settings-tab-btn-appearance" class="settings-tab-btn {{if eq .LastSettingsPanel "appearance"}}active{{end}}" onclick="switchSettingsTab(this, 'appearance')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "appearance"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "appearance"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Appearance</button>
     <button id="settings-tab-btn-editor" class="settings-tab-btn {{if eq .LastSettingsPanel "editor"}}active{{end}}" onclick="switchSettingsTab(this, 'editor')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "editor"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "editor"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Editor</button>
+    <button id="settings-tab-btn-logs" class="settings-tab-btn {{if eq .LastSettingsPanel "logs"}}active{{end}}" onclick="switchSettingsTab(this, 'logs')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "logs"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "logs"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Logs</button>
   </div>
 
   <!-- Content -->
@@ -72,6 +73,51 @@
       </div>
     </div>
 
+    <div class="settings-tab-content" id="settings-tab-logs" style="display: {{if eq .LastSettingsPanel "logs"}}block{{else}}none{{end}};">
+      <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 1rem;">Custom Log Parsers</h3>
+      
+      <div style="background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 1rem; margin-bottom: 1.5rem; font-size: 0.875rem; color: var(--theme-textDim); line-height: 1.5;">
+        <strong style="color: var(--theme-text);">Regex Group Mapping</strong><br>
+        Sieve uses <a href="https://pkg.go.dev/regexp/syntax" target="_blank" style="color: var(--theme-accentPrimary);">named capture groups</a> to extract specific columns from your log lines. Your regex can extract data into any of the following named groups:<br><br>
+        <code>(?P&lt;date&gt;...)</code>, <code>(?P&lt;level&gt;...)</code>, <code>(?P&lt;thread&gt;...)</code>, <code>(?P&lt;logger&gt;...)</code>, <code>(?P&lt;message&gt;...)</code>
+      </div>
+
+      <div id="custom-parsers-list" style="display: flex; flex-direction: column; gap: 1rem;">
+        {{range .CustomLogParsers}}
+        <div class="custom-parser-item" style="display: flex; gap: 0.5rem; align-items: flex-start;">
+          <input type="text" name="parser_name" value="{{.Name}}" placeholder="Name (e.g., Nginx)" style="flex: 1; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+          <input type="text" name="parser_pattern" value="{{.Pattern}}" placeholder="Regex ^(?P<date>...)" style="flex: 3; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+          <button type="button" onclick="this.parentElement.remove()" style="padding: 0.6rem; color: #ef4444; background: transparent; border: 1px solid var(--theme-border); border-radius: 0.5rem; cursor: pointer;" title="Delete Parser">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+          </button>
+        </div>
+        {{end}}
+      </div>
+
+      <button type="button" onclick="addCustomParser()" style="margin-top: 1rem; padding: 0.5rem 1rem; font-size: 0.875rem; font-weight: 500; color: var(--theme-text); background: var(--theme-bgDark); border: 1px dashed var(--theme-border); border-radius: 0.5rem; cursor: pointer; width: 100%; text-align: center;">
+        + Add Regex Parser
+      </button>
+
+      <div style="margin-top: 2rem;">
+        <h4 style="font-size: 0.875rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem;">Built-in Parsers (Read-only)</h4>
+        
+        <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+          <div class="custom-parser-item" style="display: flex; gap: 0.5rem; align-items: flex-start; opacity: 0.7;">
+            <input type="text" value="Spring Boot" disabled style="flex: 1; background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+            <input type="text" value="^(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)\s+(\w+)\s+(.*?)\s+---\s+\[(.*?)\]\s+(.*?)\s+:\s+(.*)$" disabled style="flex: 3; font-family: monospace; background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+          </div>
+          <div class="custom-parser-item" style="display: flex; gap: 0.5rem; align-items: flex-start; opacity: 0.7;">
+            <input type="text" value="Home Assistant" disabled style="flex: 1; background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+            <input type="text" value="^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\.\d{3})\s+([A-Z]+)\s+\((.*?)\)\s+\[(.*?)\]\s+(.*)$" disabled style="flex: 3; font-family: monospace; background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+          </div>
+          <div class="custom-parser-item" style="display: flex; gap: 0.5rem; align-items: flex-start; opacity: 0.7;">
+            <input type="text" value="Smarter Fallback" disabled style="flex: 1; background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+            <input type="text" value="Automatically extracts and isolates timestamps, thread names, class names, and log levels using heuristics" disabled style="flex: 3; font-family: sans-serif; background: var(--theme-bgDark); border: 1px dashed var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-textDim); outline: none; font-size: 0.8rem;">
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Footer -->
     <div style="display: flex; justify-content: flex-end; gap: 1rem; padding-top: 1.5rem; border-top: 1px solid var(--theme-border); margin-top: auto;">
       <button type="button" onclick="document.getElementById('settings-dialog').close()" style="padding: 0.5rem 1.5rem; font-size: 0.875rem; font-weight: 500; color: var(--theme-textDim); background: transparent; border: none; cursor: pointer;">Cancel</button>
@@ -106,6 +152,22 @@ function switchSettingsTab(el, tabName) {
   if (hidden) hidden.value = tabName;
   
   fetch('/api/settings/panel?tab=' + encodeURIComponent(tabName), { method: 'POST' });
+}
+
+function addCustomParser() {
+  const container = document.getElementById('custom-parsers-list');
+  const div = document.createElement('div');
+  div.className = 'custom-parser-item';
+  div.style.cssText = 'display: flex; gap: 0.5rem; align-items: flex-start;';
+  
+  div.innerHTML = `
+    <input type="text" name="parser_name" placeholder="Name" style="flex: 1; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+    <input type="text" name="parser_pattern" placeholder="Regex ^(?P<date>...)" style="flex: 3; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+    <button type="button" onclick="this.parentElement.remove()" style="padding: 0.6rem; color: #ef4444; background: transparent; border: 1px solid var(--theme-border); border-radius: 0.5rem; cursor: pointer;" title="Delete Parser">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+    </button>
+  `;
+  container.appendChild(div);
 }
 </script>
 {{end}}

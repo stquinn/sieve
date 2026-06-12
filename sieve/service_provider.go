@@ -28,6 +28,7 @@ func (s *ServiceProvider) BlockServices() BlockServices {
 		Assets:      s.Assets,
 		Jobs:        s.Jobs,
 		LinkPreview: s.LinkPreview,
+		State:       s.State,
 	}
 }
 
@@ -64,8 +65,9 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	RegisterProcessor("smart-link", NewSmartLinkProcessor(svc))
 	RegisterProcessor("smart-card", NewSmartCardProcessor(svc))
 	RegisterProcessor("web-clip", NewWebClipBlockProcessor(svc))
-	RegisterProcessor("code", NewCodeBlockProcessor(svc))
 	RegisterProcessor("log", NewLogProcessor(svc))
+	RegisterProcessor("code", NewCodeBlockProcessor(svc))
+
 	RegisterProcessor("ai-block", NewAIBlockProcessor(svc))
 	RegisterContextProvider("block-anchor", &BlockAnchorProvider{svc: svc})
 }

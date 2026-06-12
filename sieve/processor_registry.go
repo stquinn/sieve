@@ -70,13 +70,13 @@ type BlockProcessor interface {
 	MarkdownRepresentation(block SieveBlock) string
 }
 
-// BlockServices is the dependency bag injected into processors at construction.
 type BlockServices struct {
 	AI          *AIService
 	Documents   *DocumentService
 	Assets      *AssetService
 	Jobs        *JobTracker
 	LinkPreview *LinkPreviewService
+	State       *StateService
 }
 
 var (

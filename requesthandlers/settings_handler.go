@@ -73,6 +73,19 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 	}
 	settings.Debug = r.FormValue("debug") == "on"
 
+	var customParsers []sieve.CustomLogParser
+	names := r.PostForm["parser_name"]
+	patterns := r.PostForm["parser_pattern"]
+	for i := 0; i < len(names); i++ {
+		if i < len(patterns) && names[i] != "" && patterns[i] != "" {
+			customParsers = append(customParsers, sieve.CustomLogParser{
+				Name:    names[i],
+				Pattern: patterns[i],
+			})
+		}
+	}
+	settings.CustomLogParsers = customParsers
+
 	logger.Info("handleSettingsSave: saving settings", "cli", settings.CLI, "theme", settings.Theme, "debug", settings.Debug)
 
 	if err := h.ServiceProvider.State.SaveSettings(settings); err != nil {

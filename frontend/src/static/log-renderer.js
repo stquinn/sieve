@@ -16,11 +16,12 @@ import { isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js'
       language:        { default: 'log', parseHTML: function (el) { return el.getAttribute('data-language')         || 'log' } },
       detectionMethod: { default: '', parseHTML: function (el) { return el.getAttribute('data-detection-method') || '' } },
       parsedAssetRef:  { default: '', parseHTML: function (el) { return el.getAttribute('data-parsed-asset-ref') || '' } },
+      logFormatName:   { default: '', parseHTML: function (el) { return el.getAttribute('data-log-format-name') || '' } },
       logFormatRegex:  { default: '', parseHTML: function (el) { return el.getAttribute('data-log-format-regex') || '' } },
       status:          { default: 'COMPLETE', parseHTML: function (el) { return el.getAttribute('data-status') || 'COMPLETE' } },
     },
 
-    getFriendlyName: function() { return 'Log Explorer' },
+    getFriendlyName: function() { return 'Log' },
     getIcon: function() { return window.SieveIcons && window.SieveIcons.terminal },
 
     asContentEntry: function(node) {
@@ -36,6 +37,7 @@ import { isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js'
         source:          typeof data.source === 'string' ? data.source : '',
         detectionMethod: data.detectionMethod || '',
         parsedAssetRef:  data.parsedAssetRef || '',
+        logFormatName:   data.logFormatName || '',
         logFormatRegex:  data.logFormatRegex || '',
         status:          data.status || 'COMPLETE',
       }
@@ -58,8 +60,27 @@ import { isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js'
       
       var title = document.createElement('span')
       title.className = 'sieve-block__badge'
-      title.textContent = 'Log Explorer'
+      title.innerText = LogRenderer.getFriendlyName()
       header.appendChild(title)
+
+      var formatBadge = document.createElement('span')
+      formatBadge.className = 'sieve-block__badge'
+      formatBadge.style.background = 'var(--theme-bg)'
+      formatBadge.style.color = 'var(--theme-textSubtle)'
+      formatBadge.style.border = '1px solid var(--theme-border)'
+      formatBadge.style.fontWeight = 'normal'
+      formatBadge.style.marginLeft = '12px'
+      
+      if (currentAttrs.logFormatName) {
+        formatBadge.innerText = 'Format: ' + currentAttrs.logFormatName
+        formatBadge.style.display = 'inline-block'
+        if (currentAttrs.logFormatRegex) {
+          formatBadge.title = 'Regex: ' + currentAttrs.logFormatRegex
+        }
+      } else {
+        formatBadge.style.display = 'none'
+      }
+      header.appendChild(formatBadge)
       
       var toggle = document.createElement('div')
       toggle.className = 'diagram-block__toggle'
@@ -506,6 +527,19 @@ import { isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js'
         var assetChanged = currentAttrs.parsedAssetRef !== attrs.parsedAssetRef;
         currentAttrs = attrs;
         
+        if (currentAttrs.logFormatName) {
+            formatBadge.innerText = 'Format: ' + currentAttrs.logFormatName;
+            formatBadge.style.display = 'inline-block';
+        } else {
+            formatBadge.style.display = 'none';
+        }
+        
+        if (currentAttrs.logFormatRegex) {
+            formatBadge.title = 'Regex: ' + currentAttrs.logFormatRegex;
+        } else {
+            formatBadge.title = '';
+        }
+        
         if (!mode) {
            mode = attrs.parsedAssetRef ? 'explore' : 'edit';
         }
@@ -556,7 +590,7 @@ import { isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js'
 
   LogRenderer.buildContextMenuItems = function ({ node }) {
     return [
-      { type: 'header', label: 'Log Explorer' },
+      { type: 'header', label: 'Log' },
     ]
   }
 

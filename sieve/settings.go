@@ -17,19 +17,25 @@ const (
 	TierSmart Tier = 2 // CLI configured and available
 )
 
+// CustomLogParser defines a user-provided regex for log parsing.
+type CustomLogParser struct {
+	Name    string `json:"name"`
+	Pattern string `json:"pattern"`
+}
+
 // Settings mirrors store/{hostname}/settings.json.
 // All fields are optional — missing keys fall back to defaults.
 type Settings struct {
-	CLI                string  `json:"cli,omitempty"`
-	Model              string  `json:"model,omitempty"`
-	CLITimeout         int     `json:"cli_timeout,omitempty"`
-	CLITimeoutLong     int     `json:"cli_timeout_long,omitempty"`
-	AutosaveDebounce   int     `json:"autosave_debounce,omitempty"`
-	Debug              bool    `json:"debug,omitempty"`
-	Theme              string  `json:"theme,omitempty"`
-	MaxHistoryVersions int     `json:"max_history_versions,omitempty"`
+	CLI                string            `json:"cli,omitempty"`
+	Model              string            `json:"model,omitempty"`
+	CLITimeout         int               `json:"cli_timeout,omitempty"`
+	CLITimeoutLong     int               `json:"cli_timeout_long,omitempty"`
+	AutosaveDebounce   int               `json:"autosave_debounce,omitempty"`
+	Debug              bool              `json:"debug,omitempty"`
+	Theme              string            `json:"theme,omitempty"`
+	MaxHistoryVersions int               `json:"max_history_versions,omitempty"`
+	CustomLogParsers   []CustomLogParser `json:"custom_log_parsers,omitempty"`
 }
-
 
 // Tier returns the capability tier based on whether the configured CLI is
 // reachable on PATH. Failing to find it degrades silently to Tier 1.
@@ -105,6 +111,9 @@ func ParseSettings(data []byte) Settings {
 	}
 	if loaded.MaxHistoryVersions > 0 {
 		s.MaxHistoryVersions = loaded.MaxHistoryVersions
+	}
+	if len(loaded.CustomLogParsers) > 0 {
+		s.CustomLogParsers = loaded.CustomLogParsers
 	}
 
 	if pretty, err := json.MarshalIndent(s, "", "  "); err == nil {

@@ -7,8 +7,48 @@ import (
 	"time"
 )
 
-// logDetectRe looks for standard log indicators: [ERROR], ISO timestamps, "Exception", "stack trace", etc.
-var logDetectRe = regexp.MustCompile(`(?i)(?:\[(?:error|fatal|exception|warn|info|debug)\]|\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}|Exception|Stack Trace:)`)
+// logSignalRe is the generic "this line looks like a log line" signal: a leading
+// timestamp, a bracketed level, or a level= token. Deliberately does NOT match the
+// bare words "Exception"/"Stack Trace" — those appear in ordinary source code, and
+// matching them made plain code blocks get misdetected as logs.
+var logSignalRe = regexp.MustCompile(`(?i)(?:^\s*\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}|^\s*\d{2}:\d{2}:\d{2}\b|\[(?:error|fatal|warn|warning|info|debug|trace)\]|\blevel=(?:error|warn|info|debug|trace))`)
+
+// logParserRegexes returns the structured parsers — built-ins plus any the user
+// configured in settings — compiled once. Invalid user patterns are skipped.
+func logParserRegexes(customParsers []CustomLogParser) []*regexp.Regexp {
+	res := []*regexp.Regexp{springBootRe, homeAssistantRe}
+	for _, cp := range customParsers {
+		if re, err := regexp.Compile(cp.Pattern); err == nil {
+			res = append(res, re)
+		}
+	}
+	return res
+}
+
+// looksLikeLog is the single source of truth for "is this text a log": a line
+// matches any structured parser (built-in OR user-custom), or shows a generic log
+// signal. Shared by IsBlock / Transform so detection can never disagree with the
+// parsers that actually run in parseLogLines.
+func looksLikeLog(source string, customParsers []CustomLogParser) bool {
+	if strings.TrimSpace(source) == "" {
+		return false
+	}
+	parsers := logParserRegexes(customParsers)
+	for _, line := range strings.Split(source, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if logSignalRe.MatchString(line) {
+			return true
+		}
+		for _, re := range parsers {
+			if re.MatchString(line) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 type LogProcessor struct{ svc BlockServices }
 
@@ -19,7 +59,7 @@ func NewLogProcessor(svc BlockServices) *LogProcessor {
 func (p *LogProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
 		"id":                id,
-		"status":            BlockStatusComplete,
+		"status":            BlockStatusPending,
 		"source":            "",
 		"language":          "log",
 		"createdAt":         time.Now().UTC().Format(time.RFC3339),
@@ -35,6 +75,7 @@ func (p *LogProcessor) InitAttrs(id string, overrides map[string]interface{}) ma
 }
 
 func (p *LogProcessor) IsBlock(entries []ContentEntry) bool {
+	custom := p.customParsers()
 	for _, e := range entries {
 		// Native Sieve Log block
 		if e.MIMEType == "sieve/log" {
@@ -48,17 +89,16 @@ func (p *LogProcessor) IsBlock(entries []ContentEntry) bool {
 				if block.Attrs["language"] == "log" && strings.TrimSpace(source) != "" {
 					return true
 				}
-				if strings.TrimSpace(source) != "" && logDetectRe.MatchString(source) {
+				if looksLikeLog(source, custom) {
 					return true
 				}
-			} else if logDetectRe.MatchString(e.Content) {
+			} else if looksLikeLog(e.Content, custom) {
 				return true
 			}
 		}
 		// Raw text that looks like a log
 		if e.MIMEType == "text/plain" {
-			trimmed := strings.TrimSpace(e.Content)
-			if trimmed != "" && logDetectRe.MatchString(trimmed) {
+			if looksLikeLog(e.Content, custom) {
 				return true
 			}
 		}
@@ -66,7 +106,16 @@ func (p *LogProcessor) IsBlock(entries []ContentEntry) bool {
 	return false
 }
 
+// customParsers loads the user-configured log parsers from settings (nil-safe).
+func (p *LogProcessor) customParsers() []CustomLogParser {
+	if p.svc.State == nil {
+		return nil
+	}
+	return p.svc.State.LoadSettings().CustomLogParsers
+}
+
 func (p *LogProcessor) Transform(entries []ContentEntry, uuid string, blockID string) map[string]interface{} {
+	custom := p.customParsers()
 	for _, e := range entries {
 		if e.MIMEType == "sieve/log" {
 			block := ParseFirstBlock(e.Content)
@@ -83,14 +132,14 @@ func (p *LogProcessor) Transform(entries []ContentEntry, uuid string, blockID st
 				if block.Attrs["language"] == "log" && trimmed != "" {
 					return map[string]interface{}{"source": trimmed}
 				}
-				if trimmed != "" && logDetectRe.MatchString(trimmed) {
+				if looksLikeLog(trimmed, custom) {
 					return map[string]interface{}{"source": trimmed}
 				}
 			}
 		}
 		if e.MIMEType == "text/plain" {
 			trimmed := strings.TrimSpace(e.Content)
-			if trimmed != "" && logDetectRe.MatchString(trimmed) {
+			if looksLikeLog(trimmed, custom) {
 				return map[string]interface{}{"source": trimmed}
 			}
 		}
@@ -126,8 +175,9 @@ type LogLineData struct {
 }
 
 type ParsedLogData struct {
-	Format string        `json:"format"`
-	Lines  []LogLineData `json:"lines"`
+	Format  string        `json:"format"`
+	Pattern string        `json:"pattern"`
+	Lines   []LogLineData `json:"lines"`
 }
 
 var springBootRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)\s+(\w+)\s+(.*?)\s+---\s+\[(.*?)\]\s+(.*?)\s+:\s+(.*)$`)
@@ -135,17 +185,28 @@ var homeAssistantRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}
 
 // Fallback-sniffing regexes, compiled once (were previously recompiled per line).
 var (
-	logBracketRe   = regexp.MustCompile(`\[(.*?)\]`)
-	logDateInnerRe = regexp.MustCompile(`\d{4}|\d{2}:\d{2}`)
-	logLevelRe     = regexp.MustCompile(`\b(ERROR|WARN|WARNING|INFO|DEBUG|TRACE|FATAL)\b`)
-	logLoggerRe    = regexp.MustCompile(`\b([a-zA-Z0-9_]+\.[a-zA-Z0-9_\.]+)\s*:|\b([A-Z][a-zA-Z0-9_]+(?:Service|Controller|Manager|Repository|Engine|Handler|Control|Processor))\s*:`)
+	logBracketRe    = regexp.MustCompile(`\[(.*?)\]|\((.*?)\)`)
+	logDateInnerRe  = regexp.MustCompile(`\d{4}|\d{2}:\d{2}`)
+	logLevelRe      = regexp.MustCompile(`\b(ERROR|WARN|WARNING|INFO|DEBUG|TRACE|FATAL)\b`)
+	logLoggerRe     = regexp.MustCompile(`\b([a-zA-Z0-9_]+\.[a-zA-Z0-9_\.]+)\s*:|\b([A-Z][a-zA-Z0-9_]+(?:Service|Controller|Manager|Repository|Engine|Handler|Control|Processor))\s*:`)
+	logDatePrefixRe = regexp.MustCompile(`^(?:\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?|\d{2}:\d{2}:\d{2})`)
 )
 
-func parseLogLines(source string) ParsedLogData {
+func parseLogLines(source string, customParsers []CustomLogParser) ParsedLogData {
+	var compiledCustomParsers []*regexp.Regexp
+	var customParserNames []string
+	for _, cp := range customParsers {
+		if re, err := regexp.Compile(cp.Pattern); err == nil {
+			compiledCustomParsers = append(compiledCustomParsers, re)
+			customParserNames = append(customParserNames, cp.Name)
+		}
+	}
+
 	lines := strings.Split(source, "\n")
 	parsed := ParsedLogData{
-		Format: "generic",
-		Lines:  make([]LogLineData, 0, len(lines)),
+		Format:  "Smarter Fallback",
+		Pattern: "Heuristics-based extraction (Date, Level, Thread, Logger)",
+		Lines:   make([]LogLineData, 0, len(lines)),
 	}
 
 	for i, line := range lines {
@@ -163,24 +224,42 @@ func parseLogLines(source string) ParsedLogData {
 			var j map[string]interface{}
 			if err := json.Unmarshal([]byte(trimmedLine), &j); err == nil {
 				parsed.Format = "json"
-				
+
 				// Extract Level
-				if v, ok := j["level"].(string); ok { data.Level = v }
-				if v, ok := j["severity"].(string); ok && data.Level == "" { data.Level = v }
-				
+				if v, ok := j["level"].(string); ok {
+					data.Level = v
+				}
+				if v, ok := j["severity"].(string); ok && data.Level == "" {
+					data.Level = v
+				}
+
 				// Extract Date
-				if v, ok := j["time"].(string); ok { data.Date = v }
-				if v, ok := j["timestamp"].(string); ok && data.Date == "" { data.Date = v }
-				if v, ok := j["@timestamp"].(string); ok && data.Date == "" { data.Date = v }
-				
+				if v, ok := j["time"].(string); ok {
+					data.Date = v
+				}
+				if v, ok := j["timestamp"].(string); ok && data.Date == "" {
+					data.Date = v
+				}
+				if v, ok := j["@timestamp"].(string); ok && data.Date == "" {
+					data.Date = v
+				}
+
 				// Extract Logger/Thread
-				if v, ok := j["logger"].(string); ok { data.Logger = v }
-				if v, ok := j["thread"].(string); ok { data.Thread = v }
-				
+				if v, ok := j["logger"].(string); ok {
+					data.Logger = v
+				}
+				if v, ok := j["thread"].(string); ok {
+					data.Thread = v
+				}
+
 				// Extract Message
-				if v, ok := j["message"].(string); ok { data.Message = v }
-				if v, ok := j["msg"].(string); ok && data.Message == line { data.Message = v }
-				
+				if v, ok := j["message"].(string); ok {
+					data.Message = v
+				}
+				if v, ok := j["msg"].(string); ok && data.Message == line {
+					data.Message = v
+				}
+
 				data.Severity = mapLevelToSeverity(data.Level)
 				parsed.Lines = append(parsed.Lines, data)
 				continue
@@ -188,9 +267,45 @@ func parseLogLines(source string) ParsedLogData {
 		}
 
 		// 1. Try Custom Regex if provided (not implemented in this stub yet, assuming fallback)
+		// 1.5 Try Custom Parsers
+		customMatched := false
+		for idx, re := range compiledCustomParsers {
+			if m := re.FindStringSubmatch(line); m != nil {
+				parsed.Format = customParserNames[idx]
+				parsed.Pattern = customParsers[idx].Pattern
+				customMatched = true
+
+				names := re.SubexpNames()
+				for i, name := range names {
+					if i != 0 && name != "" {
+						val := m[i]
+						switch strings.ToLower(name) {
+						case "date":
+							data.Date = val
+						case "level":
+							data.Level = strings.ToUpper(val)
+						case "thread":
+							data.Thread = val
+						case "logger":
+							data.Logger = val
+						case "message":
+							data.Message = val
+						}
+					}
+				}
+				data.Severity = mapLevelToSeverity(data.Level)
+				parsed.Lines = append(parsed.Lines, data)
+				break
+			}
+		}
+		if customMatched {
+			continue
+		}
+
 		// 2. Try strict Spring Boot format
 		if m := springBootRe.FindStringSubmatch(line); m != nil {
-			parsed.Format = "spring-boot"
+			parsed.Format = "Spring Boot"
+			parsed.Pattern = springBootRe.String()
 			data.Date = m[1]
 			data.Level = strings.ToUpper(m[2])
 			data.Thread = strings.TrimSpace(m[4])
@@ -203,7 +318,8 @@ func parseLogLines(source string) ParsedLogData {
 
 		// 2.5 Try strict Home Assistant format
 		if m := homeAssistantRe.FindStringSubmatch(line); m != nil {
-			parsed.Format = "home-assistant"
+			parsed.Format = "Home Assistant"
+			parsed.Pattern = homeAssistantRe.String()
 			data.Date = m[1]
 			data.Level = strings.ToUpper(m[2])
 			data.Thread = strings.TrimSpace(m[3])
@@ -216,14 +332,22 @@ func parseLogLines(source string) ParsedLogData {
 
 		// 3. Fallback Heuristic Sniffing
 		remaining := line
-		
+
 		// Sniff Go logfmt (level=INFO msg="..." etc)
 		if strings.Contains(remaining, "level=") || strings.Contains(remaining, "time=") {
 			// very naive logfmt sniffing
-			if strings.Contains(remaining, "level=WARN") { data.Level = "WARN" }
-			if strings.Contains(remaining, "level=ERROR") { data.Level = "ERROR" }
-			if strings.Contains(remaining, "level=INFO") { data.Level = "INFO" }
-			if strings.Contains(remaining, "level=DEBUG") { data.Level = "DEBUG" }
+			if strings.Contains(remaining, "level=WARN") {
+				data.Level = "WARN"
+			}
+			if strings.Contains(remaining, "level=ERROR") {
+				data.Level = "ERROR"
+			}
+			if strings.Contains(remaining, "level=INFO") {
+				data.Level = "INFO"
+			}
+			if strings.Contains(remaining, "level=DEBUG") {
+				data.Level = "DEBUG"
+			}
 			data.Severity = mapLevelToSeverity(data.Level)
 		}
 
@@ -231,37 +355,71 @@ func parseLogLines(source string) ParsedLogData {
 		matches := logBracketRe.FindAllStringSubmatch(remaining, -1)
 		for _, match := range matches {
 			inner := match[1]
+			if inner == "" {
+				inner = match[2]
+			}
+			matchedField := false
 			// Is it a level?
 			upper := strings.ToUpper(inner)
 			if upper == "INFO" || upper == "ERROR" || upper == "WARN" || upper == "DEBUG" || upper == "TRACE" || upper == "FATAL" {
-				if data.Level == "" { data.Level = inner }
+				if data.Level == "" {
+					data.Level = inner
+					matchedField = true
+				}
 			} else if logDateInnerRe.MatchString(inner) {
 				// Looks like an apache date
-				if data.Date == "" { data.Date = inner }
+				if data.Date == "" {
+					data.Date = inner
+					matchedField = true
+				}
 			} else {
 				// Probably a thread
-				if data.Thread == "" { data.Thread = inner }
+				if data.Thread == "" {
+					data.Thread = inner
+					matchedField = true
+				}
+			}
+
+			if matchedField {
+				remaining = strings.Replace(remaining, match[0], "", 1)
+			}
+		}
+
+		// Sniff Standalone Date prefix
+		if data.Date == "" {
+			if loc := logDatePrefixRe.FindStringIndex(remaining); loc != nil {
+				data.Date = strings.TrimSpace(remaining[loc[0]:loc[1]])
+				remaining = remaining[:loc[0]] + remaining[loc[1]:]
 			}
 		}
 
 		// If no level found in brackets, sniff standalone levels
 		if data.Level == "" {
-			if m := logLevelRe.FindString(strings.ToUpper(remaining)); m != "" {
-				data.Level = m
+			if loc := logLevelRe.FindStringIndex(strings.ToUpper(remaining)); loc != nil {
+				data.Level = remaining[loc[0]:loc[1]]
+				remaining = remaining[:loc[0]] + remaining[loc[1]:]
 			}
 		}
 
 		data.Severity = mapLevelToSeverity(data.Level)
 
 		// Sniff Logger / Class Name
-		// Usually looks like: package.ClassName : or ClassName: 
+		// Usually looks like: package.ClassName : or ClassName:
 		if m := logLoggerRe.FindStringSubmatch(remaining); m != nil {
 			if m[1] != "" {
 				data.Logger = m[1]
 			} else if m[2] != "" {
 				data.Logger = m[2]
 			}
+			remaining = strings.Replace(remaining, m[0], "", 1)
 		}
+
+		remaining = strings.TrimSpace(remaining)
+		remaining = strings.TrimPrefix(remaining, "- ")
+		remaining = strings.TrimPrefix(remaining, "-")
+		remaining = strings.TrimPrefix(remaining, ": ")
+		remaining = strings.TrimPrefix(remaining, ":")
+		data.Message = strings.TrimSpace(remaining)
 
 		parsed.Lines = append(parsed.Lines, data)
 	}
@@ -291,8 +449,9 @@ func (p *LogProcessor) RunJob(jctx JobContext) error {
 		return nil
 	}
 
-	parsedData := parseLogLines(source)
-	
+	settings := p.svc.State.LoadSettings()
+	parsedData := parseLogLines(source, settings.CustomLogParsers)
+
 	jsonData, err := json.Marshal(parsedData)
 	if err != nil {
 		return err
@@ -309,6 +468,8 @@ func (p *LogProcessor) RunJob(jctx JobContext) error {
 	}
 
 	block.Attrs["parsedAssetRef"] = asset.ExternalRef()
+	block.Attrs["logFormatName"] = parsedData.Format
+	block.Attrs["logFormatRegex"] = parsedData.Pattern
 	block.Attrs["status"] = BlockStatusComplete
 	return nil
 }

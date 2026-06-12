@@ -244,10 +244,10 @@
   function effectiveRange(state) {
     var ps = blockChromeKey.getState(state)
     if (ps && ps.range) {
-      return { from: ps.range.from, to: ps.range.to, active: ps.range.to > ps.range.from, isBlockRange: true }
+      return { from: ps.range.from, to: ps.range.to, active: ps.range.to > ps.range.from, isBlockRange: true, isNodeSelection: false }
     }
     var s = state.selection
-    return { from: s.from, to: s.to, active: !s.empty, isBlockRange: false }
+    return { from: s.from, to: s.to, active: !s.empty, isBlockRange: false, isNodeSelection: !!s.node }
   }
 
   // ── Build Decoration set ─────────────────────────────────────────────────────
@@ -271,7 +271,10 @@
       // For sieve blocks (contentEditable=false atoms), also add block-in-selection
       // when the effective range overlaps them — the browser won't render a native
       // selection highlight on non-editable elements, so we drive it via decoration.
-      var inSel = isSieveNode(node) && er.active && er.from < to && er.to > from
+      // EXCEPTION: if it's a single NodeSelection exactly on this block, Tiptap applies
+      // .ProseMirror-selectednode itself, so we don't want to double-tint it here.
+      var isSingleNodeSel = !er.isBlockRange && er.isNodeSelection && er.from === from
+      var inSel = isSieveNode(node) && er.active && er.from < to && er.to > from && !isSingleNodeSel
       decos.push(
         Decoration.node(from, to, { class: inSel ? 'block-with-chrome block-in-selection' : 'block-with-chrome' })
       )
