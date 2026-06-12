@@ -176,3 +176,28 @@ about where the abstraction earns its keep versus where it's just tidy.
 > First brick already laid: `focus-context.js` is contract #3's macro instance (editor↔Ask), built
 > so the micro instance (block source↔render) calls the same code. Build the flip-memory once; let
 > every scale call it — but never let "same contract" seduce you into "same object."
+
+---
+
+## 7. Getting ahead of ourselves (on purpose)
+
+Take one more step and the lens keeps pulling upward. If ProseMirror is just the *prose flavour's
+editor*, then **markdown stops being the app** — it's one flavour's wire format, and the document
+was only ever the first projection. From there: if a tab is a viewport onto a block, a tab can be a
+viewport onto *another tab's* block — `TAB2 = ER_MODEL(TAB1)`, the spreadsheet model promoted from
+cell→cell to **tab→tab**, a workspace of linked projections. (The mechanism that makes that work —
+a ref resolving against a live doc when open, an on-disk cache when closed — is the same
+render-the-cache substrate the web/mobile frontend needs anyway, so it's not even a detour.) And
+one step past *that*, the block stops being "the primitive Sieve is built from" and starts looking
+like "a primitive you could build a whole **suite** of applications from."
+
+That last step is where we caught ourselves — and it's worth a wink, not a fence. This is a
+brainstorm; running ahead of reality is the whole job, and pretending otherwise would just make the
+file boring. Writing it down isn't a commitment to build a platform (frameworks get *extracted* from
+working products, never designed up front) — it's a note that the abstraction has *that much
+gravity*, and a reminder that the asset is **knowing** it could go there, not **going** there.
+Whether we ever spend it is a much later question, gated on real second use-cases rather than
+imagined ones.
+
+So: flag planted, not a stop sign. We might be getting ahead of ourselves — which is exactly what
+this file is for.
