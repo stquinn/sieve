@@ -410,7 +410,7 @@ textarea::selection {
 /* ── Editor ──────────────────────────────────────────────────────────── */
 
 /* Block chrome (Stage 1.5 — full gutter ownership) */
-.editor-panel { --chrome-w: 48px; }
+.editor-panel { --chrome-w: 54px; }
 
 /* Strategy A (prose nodes): widget is a DOM sibling BEFORE the block inside
    .ProseMirror (position:relative). top:auto uses the CSS static-position
@@ -463,8 +463,26 @@ textarea::selection {
   -webkit-user-select: none;
 }
 
-.block-chrome-handle { opacity: 0; cursor: grab; color: var(--theme-accentPrimary);
-  font-size: 13px; line-height: 1.5; transition: opacity .15s; }
+/* Drag handle: a substantial, clearly-clickable affordance. Hidden at rest,
+   revealed per-row on hover. The padding + min size give a generous hit target
+   (Fitts's law); the hover pill makes the target visible and the handle feel
+   consequential rather than incidental. align-self:center vertically centres it
+   on the line regardless of the host's baseline alignment. */
+.block-chrome-handle {
+  opacity: 0;
+  cursor: grab;
+  color: var(--theme-accentPrimary);
+  font-size: 18px;
+  line-height: 1;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  min-height: 24px;
+  border-radius: 6px;
+  transition: opacity .12s ease, background .12s ease, color .12s ease;
+}
 
 /* Show handle only on the row under the cursor, not all rows at once.
    Strategy A (prose): host is a DOM sibling before the block — use :has()
@@ -472,8 +490,17 @@ textarea::selection {
    Strategy B (Sieve): host is inside the block — normal descendant hover works. */
 .block-chrome-host:hover .block-chrome-handle,
 .block-chrome-host:has(+ .block-with-chrome:hover) .block-chrome-handle,
-.block-with-chrome:hover > .block-chrome-host .block-chrome-handle { opacity: .7; }
-.block-chrome-handle:hover { opacity: 1 !important; }
+.block-with-chrome:hover > .block-chrome-host .block-chrome-handle {
+  opacity: .85;
+  color: color-mix(in srgb, var(--theme-accentPrimary) 80%, var(--theme-textDim));
+}
+.block-chrome-handle:hover {
+  opacity: 1 !important;
+  color: var(--theme-accentPrimary);
+  background: rgba(120, 140, 255, .18);
+  box-shadow: inset 0 0 0 1px rgba(120, 140, 255, .28);
+}
+.block-chrome-handle:active { cursor: grabbing; background: rgba(120, 140, 255, .26); }
 
 .block-chrome-rail { width: 3px; align-self: stretch; border-radius: 2px;
   background: transparent; }
