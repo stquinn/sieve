@@ -85,80 +85,83 @@
             <div id="editor-toolbar">
               <!-- Text formatting -->
               <div class="tb-group">
-                <button class="tb-btn" data-cmd="bold"    title="Bold (⌘B)"><b>B</b></button>
-                <button class="tb-btn" data-cmd="italic"  title="Italic (⌘I)"><i>I</i></button>
-                <button class="tb-btn" data-cmd="strike"  title="Strikethrough"><s>S</s></button>
-                <button class="tb-btn" data-cmd="code"    title="Inline code" style="font-family:monospace">&lt;&gt;</button>
+                <button class="tb-btn" data-cmd="bold"   data-icon="bold"   title="Bold"></button>
+                <button class="tb-btn" data-cmd="italic" data-icon="italic" title="Italic"></button>
+                <button class="tb-btn" data-cmd="strike" data-icon="strike" title="Strikethrough"></button>
+                <button class="tb-btn" data-cmd="code"   data-icon="code"   title="Inline code"></button>
               </div>
               <div class="tb-sep"></div>
               <!-- Headings -->
               <div class="tb-group">
-                <button class="tb-btn" data-cmd="h1" title="Heading 1" style="font-weight:800">H1</button>
-                <button class="tb-btn" data-cmd="h2" title="Heading 2" style="font-weight:700">H2</button>
-                <button class="tb-btn" data-cmd="h3" title="Heading 3" style="font-weight:600">H3</button>
+                <button class="tb-btn" data-cmd="h1" data-icon="h1" title="Heading 1"></button>
+                <button class="tb-btn" data-cmd="h2" data-icon="h2" title="Heading 2"></button>
+                <button class="tb-btn" data-cmd="h3" data-icon="h3" title="Heading 3"></button>
               </div>
               <div class="tb-sep"></div>
               <!-- Lists -->
               <div class="tb-group">
-                <button class="tb-btn" data-cmd="bulletList"  title="Bullet list">&#8801;</button>
-                <button class="tb-btn" data-cmd="orderedList" title="Ordered list" style="font-size:10px">1.</button>
-                <button class="tb-btn" data-cmd="taskList"    title="Task list">&#9745;</button>
+                <button class="tb-btn" data-cmd="bulletList"  data-icon="bulletList"  title="Bullet list"></button>
+                <button class="tb-btn" data-cmd="orderedList" data-icon="orderedList" title="Ordered list"></button>
+                <button class="tb-btn" data-cmd="taskList"    data-icon="taskList"    title="Task list"></button>
               </div>
               <div class="tb-sep"></div>
               <!-- Block elements -->
               <div class="tb-group">
-                <button class="tb-btn" data-cmd="blockquote"     title="Blockquote">&#8220;</button>
-                <button class="tb-btn" data-cmd="insertTable"    title="Insert 3&#xD7;3 table" style="font-size:13px">&#8862;</button>
-                <button class="tb-btn" data-cmd="horizontalRule" title="Horizontal rule">&#8212;</button>
+                <button class="tb-btn" data-cmd="blockquote"     data-icon="blockquote"     title="Blockquote"></button>
+                <button class="tb-btn" data-cmd="insertTable"    data-icon="table"          title="Insert 3&#xD7;3 table"></button>
+                <button class="tb-btn" data-cmd="horizontalRule" data-icon="horizontalRule" title="Horizontal rule"></button>
               </div>
               <div class="tb-sep"></div>
               <div class="tb-group">
-                <button class="tb-btn"id="tb-toggle-mode-btn"       title="Toggle Editor Mode">
-                    <span class="text-[12px] text-tn-blue font-bold font-mono bg-tn-bg-alt px-1.5 rounded shrink-0">M</span>
-                </button>
+                <button class="tb-btn" id="tb-toggle-mode-btn" title="Toggle Editor Mode"></button>
               </div>
               <div class="tb-sep"></div>
               <!-- Insert content: blocks + AI query (left side, both teal and orange) -->
               <div class="tb-group">
-                <button class="tb-btn tb-insert" data-insert="code"    title="Insert code block">{ } Code</button>
-                <button class="tb-btn tb-insert" data-insert="diagram" title="Insert diagram">&#9671; Diagram</button>
-                <button class="tb-btn tb-insert" id="tb-clip-btn"      title="Insert web clip">&#11041; Web Clip</button>
-                <button class="tb-btn tb-insert" id="tb-image-btn"     title="Insert image from file">&#128444; Image</button>
+                <button class="tb-btn" data-insert="code" data-sieve-kind="code" title="Insert code block"></button>
+                <button class="tb-btn" data-insert="diagram" data-sieve-kind="diagram" title="Insert diagram"></button>
+                <button class="tb-btn" id="tb-clip-btn" data-sieve-kind="web-clip" title="Insert web clip"></button>
+                <button class="tb-btn" id="tb-image-btn" data-sieve-kind="smart-image" title="Insert image from file"></button>
                 <input id="tb-image-input" type="file" accept="image/*" style="display:none">
               </div>
+              <div class="tb-sep"></div>
               <!-- AI query: Explain + Ask — orange, tier-gated, still on the left -->
               <div class="tb-group tb-ai-query">
-                <button class="tb-btn tb-query" id="tb-explain-btn" title="Explain selection (⌘⇧X)">Explain</button>
-                <button class="tb-btn tb-query" id="tb-ask-btn"     title="Ask about selection (⌘⇧A)">Ask</button>
+                <button class="tb-btn" id="tb-explain-btn" data-icon="info" title="Explain"></button>
+                <button class="tb-btn" id="tb-ask-btn" data-icon="sparkle" title="Ask"></button>
               </div>
               <!-- Help -->
               <div class="tb-help">
-                <button class="tb-btn" id="tb-help-btn" title="Help (&#8984;/)">?</button>
+                <button class="tb-btn" id="tb-help-btn" data-icon="help" title="Help"></button>
               </div>
             </div>
 
             <!-- Table toolbar — appears below main toolbar when cursor is inside a table -->
             <div id="table-toolbar">
-              <span class="tb-label">Table</span>
-              <div class="tb-group">
-                <button class="tb-btn" data-cmd="addColumnBefore" title="Insert column before">&#8677; Col</button>
-                <button class="tb-btn" data-cmd="addColumnAfter"  title="Insert column after">Col &#8676;</button>
-                <button class="tb-btn" data-cmd="deleteColumn"    title="Delete column">&#10005; Col</button>
+              <div class="tb-label" style="display:flex; align-items:center; gap:6px; color: var(--theme-accentCyan); padding-left: 6px; padding-right: 8px;">
+                <span style="width: 14px; height: 14px; display: flex;" data-icon="table"></span>
+                TABLE TOOLS
               </div>
               <div class="tb-sep"></div>
               <div class="tb-group">
-                <button class="tb-btn" data-cmd="addRowBefore"    title="Insert row above">&#8679; Row</button>
-                <button class="tb-btn" data-cmd="addRowAfter"     title="Insert row below">Row &#8681;</button>
-                <button class="tb-btn" data-cmd="deleteRow"       title="Delete row">&#10005; Row</button>
+                <button class="tb-btn" data-cmd="addColumnBefore" data-icon="tableColumnPlusLeft" title="Insert column before"></button>
+                <button class="tb-btn" data-cmd="addColumnAfter"  data-icon="tableColumnPlusRight" title="Insert column after"></button>
+                <button class="tb-btn tb-danger" data-cmd="deleteColumn" data-icon="tableColumnRemove" title="Delete column"></button>
               </div>
               <div class="tb-sep"></div>
               <div class="tb-group">
-                <button class="tb-btn" data-cmd="toggleHeaderRow" title="Toggle header row">Header</button>
-                <button class="tb-btn" data-cmd="mergeOrSplit"    title="Merge / split cells">Merge</button>
+                <button class="tb-btn" data-cmd="addRowBefore"    data-icon="tableRowPlusTop" title="Insert row above"></button>
+                <button class="tb-btn" data-cmd="addRowAfter"     data-icon="tableRowPlusBottom" title="Insert row below"></button>
+                <button class="tb-btn tb-danger" data-cmd="deleteRow" data-icon="tableRowRemove" title="Delete row"></button>
               </div>
               <div class="tb-sep"></div>
               <div class="tb-group">
-                <button class="tb-btn tb-danger" data-cmd="deleteTable" title="Delete entire table">&#10005; Table</button>
+                <button class="tb-btn" data-cmd="toggleHeaderRow" data-icon="tableHeader" title="Toggle header row"></button>
+                <button class="tb-btn" data-cmd="mergeOrSplit"    data-icon="tableMerge" title="Merge / split cells"></button>
+              </div>
+              <div class="tb-sep"></div>
+              <div class="tb-group">
+                <button class="tb-btn tb-danger" data-cmd="deleteTable" data-icon="trash" title="Delete entire table"></button>
               </div>
             </div>
 
@@ -266,6 +269,7 @@
     <script src="/static/vendor/htmx-bundle.js"></script>
     <script src="/static/vendor/tiptap.js"></script>
     <script src="/static/vendor/js-yaml.js"></script>
+    <script src="/static/icons.js"></script>
     <script src="/static/extensions.js"></script>
     <script src="/static/ai-target.js"></script>
     <script src="/static/focus-context.js"></script>
@@ -362,6 +366,16 @@
 
     // Initial editor load
     window.addEventListener('DOMContentLoaded', function() {
+        document.querySelectorAll('[data-icon]').forEach(function(el) {
+            var icon = window.SieveIcons && window.SieveIcons[el.getAttribute('data-icon')];
+            if (icon) el.insertAdjacentHTML('afterbegin', icon);
+        });
+        document.querySelectorAll('[data-sieve-kind]').forEach(function(el) {
+            var kind = el.getAttribute('data-sieve-kind');
+            var icon = window.TipTap && window.TipTap.getSieveIcon && window.TipTap.getSieveIcon(kind);
+            if (icon) el.insertAdjacentHTML('afterbegin', icon);
+        });
+
         var mount = document.getElementById('tiptap-mount');
         if (mount && mount.dataset.editorInit !== 'true') {
             var uuid = mount.getAttribute('data-uuid');

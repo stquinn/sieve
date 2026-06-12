@@ -12,6 +12,7 @@ import { isJobStale } from './fenced-block-base.js'
 
   var SmartLinkRenderer = {
 
+    getIcon: function() { return window.SieveIcons && window.SieveIcons.smartMeta },
     getFriendlyName: function(node) { return 'Link' },
 
     asContentEntry: function(node) {

@@ -421,6 +421,12 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
     return (base && base.contextLabel) || fallback
   }
 
+  T.getSieveIcon = function(kind) {
+    var r = renderers[kind]
+    if (r && typeof r.getIcon === 'function') return r.getIcon()
+    return window.SieveIcons ? window.SieveIcons.code : '' // fallback
+  }
+
   T.resolveEntriesForKind = function(kind, sourceNode, entries) {
     var r = renderers[kind]
     if (r && typeof r.resolveEntries === 'function') {

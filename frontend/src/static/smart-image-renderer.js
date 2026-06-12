@@ -154,6 +154,7 @@ import { isJobStale } from './fenced-block-base.js'
       if (!src) return null
       return [{ mimeType: 'text/uri-list', content: node.attrs.src }]
     },
+    getIcon: function() { return window.SieveIcons && window.SieveIcons.image },
     getFriendlyName: function(node) {
       return 'Image'
     },

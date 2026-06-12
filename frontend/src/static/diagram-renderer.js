@@ -152,6 +152,8 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
     },
 
     getFriendlyName: function() { return 'Diagram' },
+    getIcon: function() { return window.SieveIcons && window.SieveIcons.diagram },
+
 
     asContentEntry: function(node) {
       if (!node.attrs.source) return null

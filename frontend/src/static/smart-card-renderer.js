@@ -11,6 +11,7 @@ import { isJobStale } from './fenced-block-base.js'
 
   var SmartCardRenderer = {
 
+    getIcon: function() { return window.SieveIcons && window.SieveIcons.smartFile },
     getFriendlyName: function(node) { return 'Card' },
 
     asContentEntry: function(node) {

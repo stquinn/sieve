@@ -103,6 +103,7 @@
           mountWysiwyg(mountEl, uuid, data.body || '')
         }
         tabModes[uuid] = currentMode
+        updateModeUI()
         dispatchStats()
       })
       .catch(function (err) { console.error('[editor] load failed', err) })
@@ -1479,6 +1480,7 @@
     lastSyncedBody = content
     currentMode = newMode
     tabModes[currentUuid] = currentMode
+    updateModeUI()
     
     if (currentEditor) { currentEditor.destroy(); currentEditor = null; window.__tiptap = null }
     currentMountEl.innerHTML = ''
@@ -1500,6 +1502,15 @@
         dispatchStats()
         if (window.htmx) window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' })
       }, { once: true })
+    }
+  }
+
+  function updateModeUI() {
+    document.body.classList.toggle('markdown-mode', currentMode === 'markdown')
+    var toggleBtn = document.getElementById('tb-toggle-mode-btn')
+    if (toggleBtn && window.SieveIcons) {
+      toggleBtn.innerHTML = window.SieveIcons[currentMode === 'markdown' ? 'eye' : 'markdown']
+      toggleBtn.title = currentMode === 'markdown' ? 'Return to WYSIWYG' : 'View Markdown Source'
     }
   }
 

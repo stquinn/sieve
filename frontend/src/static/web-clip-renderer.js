@@ -35,6 +35,7 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
 
   var WebClipRenderer = {
 
+    getIcon: function() { return window.SieveIcons && window.SieveIcons.externalLink },
     getFriendlyName: function(node) { return 'Web Clip' },
 
     asContentEntry: function(node) {

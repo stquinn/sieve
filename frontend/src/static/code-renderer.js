@@ -32,6 +32,8 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
     },
 
     getFriendlyName: function() { return 'Code' },
+    getIcon: function() { return window.SieveIcons && window.SieveIcons.terminal },
+
 
     asContentEntry: function(node) {
       if (!node.attrs.source) return null
