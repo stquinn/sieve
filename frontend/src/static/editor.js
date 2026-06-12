@@ -682,6 +682,17 @@
         if (el) el.focus()
       }, 50)
     }
+
+    // Bring the new block into view. Async answer blocks (ask/explain) carry no
+    // focus, so they can land below the fold and get lost; deferred so the
+    // NodeView has rendered, 'nearest' so it doesn't jump when already visible.
+    var blkId = msg.id || parsed.id
+    if (blkId) {
+      setTimeout(function () {
+        var node = document.querySelector('[data-id="' + blkId + '"]')
+        if (node) node.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      }, 60)
+    }
   })
 
   document.addEventListener('editor:block-attrs-updated', function (e) {
