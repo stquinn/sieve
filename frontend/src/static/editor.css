@@ -2486,5 +2486,12 @@ pre.tiptap-code-block code {
 .tiptap .block-ai-target > .block-chrome-host .block-chrome-rail {
   background: rgba(99, 102, 241, 0.8);
 }
+/* Inline variant: a text-selection target keeps its cue after focus leaves the
+   editor (jumping into the Ask box clears the native browser selection). */
+.tiptap .block-ai-target-inline {
+  border-radius: 3px;
+  background: rgba(99, 102, 241, 0.18);
+  box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.25);
+}
 
 

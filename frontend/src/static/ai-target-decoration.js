@@ -44,9 +44,15 @@
               if (!ps || !ps.range) return DecorationSet.empty
               var from = ps.range.from, to = ps.range.to
               if (to <= from) return DecorationSet.empty
-              return DecorationSet.create(state.doc, [
-                Decoration.node(from, to, { class: 'block-ai-target' }),
-              ])
+              // A block target's range wraps exactly one node → node glow (box +
+              // rail). A text selection is a sub-span → inline glow, so the visual
+              // cue survives once the native browser selection clears on blur.
+              var nodeAt = state.doc.nodeAt(from)
+              var isWholeNode = nodeAt && (from + nodeAt.nodeSize === to)
+              var deco = isWholeNode
+                ? Decoration.node(from, to, { class: 'block-ai-target' })
+                : Decoration.inline(from, to, { class: 'block-ai-target-inline' })
+              return DecorationSet.create(state.doc, [deco])
             },
           },
         }),
