@@ -118,6 +118,11 @@ import { isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js'
       editArea.style.width = '100%'
       editArea.style.maxHeight = '600px'
       editArea.style.overflowY = 'auto'
+      // Let the gutter + code grid grow to their natural (full) height and have
+      // THIS wrapper scroll. Without this, flex's default align-items:stretch pins
+      // the grid to the 600px container height and the highlight/textarea
+      // (overflow:hidden) clip everything past ~28 lines with nothing to scroll.
+      editArea.style.alignItems = 'flex-start'
 
       var gutter = document.createElement('div')
       gutter.className = 'sieve-block__gutter'
