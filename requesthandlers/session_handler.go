@@ -91,6 +91,11 @@ func (h *SessionHandler) handleSessionLayout(w http.ResponseWriter, r *http.Requ
 			session.PromptsHeight = hInt
 		}
 	}
+	if hStr := r.FormValue("askPanelHeight"); hStr != "" {
+		if hInt, err := strconv.Atoi(hStr); err == nil {
+			session.AskPanelHeight = hInt
+		}
+	}
 
 	_ = h.ServiceProvider.State.SaveSession(session)
 	w.WriteHeader(http.StatusNoContent)

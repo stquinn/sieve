@@ -34,6 +34,7 @@ type Session struct {
 	ShowMeta      bool     `json:"showMeta"`
 	ShowPrompts   bool     `json:"showPrompts"`
 	PromptsHeight int      `json:"promptsHeight,omitempty"`
+	AskPanelHeight int     `json:"askPanelHeight,omitempty"`
 	OpenFolders       []string `json:"openFolders,omitempty"`
 	LastSettingsPanel string   `json:"lastSettingsPanel,omitempty"`
 	ShowToolbar       bool     `json:"showToolbar,omitempty"`
@@ -52,6 +53,7 @@ func ParseSession(data []byte) Session {
 		ShowPrompts:     true,
 		ShowLineNumbers: true,
 		PromptsHeight:   180,
+		AskPanelHeight:  220,
 		SidebarWidth:    250,
 		MetaWidth:       300,
 	}
@@ -66,6 +68,9 @@ func ParseSession(data []byte) Session {
 	}
 	if s.MetaWidth <= 0 {
 		s.MetaWidth = 300
+	}
+	if s.AskPanelHeight <= 0 {
+		s.AskPanelHeight = 220
 	}
 	return s
 }

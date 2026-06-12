@@ -738,7 +738,7 @@
   }
 
   function ensureOverlays() {
-    if (!askDialog) askDialog = createAskDialog()
+    if (!askDialog) askDialog = wireAskPanel()
     if (!searchOverlay) searchOverlay = createSearchOverlay()
     if (!internalizeDialog) internalizeDialog = createInternalizeDialog()
     if (!richLinkDialog) richLinkDialog = createSmartCardDialog()
@@ -762,16 +762,30 @@
     }
   })
 
-  function createAskDialog() {
+  // Wire event handlers onto the structural #ask-panel from index.html. The panel
+  // is not created here — it lives in the DOM; this just binds send/close/keys.
+  function wireAskPanel() {
     var panel = document.getElementById('ask-panel')
     if (!panel) return null
 
     var textarea = panel.querySelector('.ask-popup__input')
     var sendBtn  = panel.querySelector('.ask-popup__send')
+    var closeBtn = panel.querySelector('.ask-popup__close')
 
-    function closePanel() { returnToEditor() }
+    // "View Ask panel on/off" and "pin" are one construct: a single persisted
+    // boolean (ShowAskPanel) flipped by /api/session/askpanel/toggle — the same
+    // endpoint the View menu uses. So when the panel is pinned ON, ✕ untoggles
+    // it through that endpoint (persisting off). When it's a transient ambient
+    // open (focus-jumped, not pinned), ✕ just hands focus back and hides it.
+    function closePanel() {
+      if (isAskPanelPinned && window.htmx) {
+        window.htmx.ajax('POST', '/api/session/askpanel/toggle', { swap: 'none' })
+      }
+      returnToEditor()
+    }
 
     sendBtn.addEventListener('click', function () { doAsk(textarea, panel) })
+    if (closeBtn) closeBtn.addEventListener('click', closePanel)
 
     textarea.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doAsk(textarea, panel) }

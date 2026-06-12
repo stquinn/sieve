@@ -230,6 +230,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		ShowAskPanel     bool
 		ShowLineNumbers  bool
 		PromptsHeight    int
+		AskPanelHeight   int
 		ActiveUUID       string
 		AutosaveDebounce int
 		CLITimeoutLong   int
@@ -247,6 +248,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		ShowAskPanel:     session.ShowAskPanel,
 		ShowLineNumbers:  session.ShowLineNumbers,
 		PromptsHeight:    session.PromptsHeight,
+		AskPanelHeight:   session.AskPanelHeight,
 		ActiveUUID:       activeUUID,
 		AutosaveDebounce: info.AutosaveDebounce,
 		CLITimeoutLong:   info.CLITimeoutLong,

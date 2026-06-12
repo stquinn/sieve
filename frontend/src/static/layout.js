@@ -6,9 +6,10 @@
 
     function onMouseDown(e) {
         currentHandle = e.target;
-        if (!currentHandle.classList.contains('sidebar-handle') && 
-            !currentHandle.classList.contains('meta-handle') && 
-            !currentHandle.classList.contains('prompts-handle')) return;
+        if (!currentHandle.classList.contains('sidebar-handle') &&
+            !currentHandle.classList.contains('meta-handle') &&
+            !currentHandle.classList.contains('prompts-handle') &&
+            !currentHandle.classList.contains('ask-handle')) return;
 
         isDragging = true;
         startX = e.clientX;
@@ -18,6 +19,7 @@
         const sidebarWrapper = document.getElementById('sidebar-wrapper');
         const metaPanel = document.getElementById('htmx-meta-panel');
         const promptsPanel = document.getElementById('prompts-panel');
+        const askPanel = document.getElementById('ask-panel');
 
         if (currentHandle.classList.contains('sidebar-handle')) {
             startWidth = sidebarWrapper.offsetWidth;
@@ -25,6 +27,8 @@
             startWidth = metaPanel.offsetWidth;
         } else if (currentHandle.classList.contains('prompts-handle')) {
             startHeight = promptsPanel.offsetHeight;
+        } else if (currentHandle.classList.contains('ask-handle')) {
+            startHeight = askPanel.offsetHeight;
         }
 
         document.body.style.cursor = window.getComputedStyle(currentHandle).cursor;
@@ -62,7 +66,35 @@
             if (newHeight < 50) newHeight = 50;
             if (newHeight > 600) newHeight = 600;
             promptsPanel.style.height = newHeight + 'px';
+        } else if (currentHandle.classList.contains('ask-handle')) {
+            const askPanel = document.getElementById('ask-panel');
+            const dy = startY - e.clientY; // handle is at the top → up grows it
+            let newHeight = startHeight + dy;
+            const min = askPanelMinHeight(askPanel);
+            const editorCol = document.getElementById('editor-col');
+            // Editor must always keep ≥100px; cap growth at the column height − 100.
+            const max = editorCol ? Math.max(min, editorCol.clientHeight - 100) : 600;
+            if (newHeight < min) newHeight = min;
+            if (newHeight > max) newHeight = max;
+            askPanel.style.height = newHeight + 'px';
         }
+    }
+
+    // Minimum Ask-panel height: header + footer + exactly one textarea line
+    // (line-height + the input's vertical padding). Computed live so it tracks
+    // theme/font changes rather than hard-coding a pixel floor.
+    function askPanelMinHeight(askPanel) {
+        const header = askPanel.querySelector('.ask-popup__header');
+        const footer = askPanel.querySelector('.ask-popup__footer');
+        const input = askPanel.querySelector('.ask-popup__input');
+        const handle = askPanel.querySelector('.ask-handle');
+        const cs = getComputedStyle(input);
+        const lineH = parseFloat(cs.lineHeight) || 22;
+        const padV = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+        const headerH = header ? header.offsetHeight : 0;
+        const footerH = footer ? footer.offsetHeight : 0;
+        const handleH = handle ? handle.offsetHeight : 0;
+        return Math.ceil(headerH + footerH + handleH + lineH + padV);
     }
 
     function onMouseUp() {
@@ -76,15 +108,18 @@
         // Save to backend
         const appRoot = document.getElementById('app-root');
         const promptsPanel = document.getElementById('prompts-panel');
-        
+        const askPanel = document.getElementById('ask-panel');
+
         const sidebarWidth = parseInt(getComputedStyle(appRoot).getPropertyValue('--sidebar-w'));
         const metaWidth = parseInt(getComputedStyle(appRoot).getPropertyValue('--meta-w'));
         const promptsHeight = promptsPanel ? promptsPanel.offsetHeight : 0;
+        const askPanelHeight = askPanel ? askPanel.offsetHeight : 0;
 
         const params = new URLSearchParams();
         params.append('sidebarWidth', sidebarWidth);
         params.append('metaWidth', metaWidth);
         params.append('promptsHeight', promptsHeight);
+        params.append('askPanelHeight', askPanelHeight);
 
         fetch('/api/session/layout', {
             method: 'POST',
@@ -94,9 +129,10 @@
     }
 
     document.addEventListener('mousedown', function(e) {
-        if (e.target.classList.contains('sidebar-handle') || 
-            e.target.classList.contains('meta-handle') || 
-            e.target.classList.contains('prompts-handle')) {
+        if (e.target.classList.contains('sidebar-handle') ||
+            e.target.classList.contains('meta-handle') ||
+            e.target.classList.contains('prompts-handle') ||
+            e.target.classList.contains('ask-handle')) {
             onMouseDown(e);
         }
     });

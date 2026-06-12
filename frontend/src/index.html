@@ -165,12 +165,16 @@
                         <div id="tiptap-mount" class="editor-panel" data-uuid="{{.ActiveUUID}}" data-mode="wysiwyg" style="flex: 1; min-height: 0; display: flex; flex-direction: column;"></div>
                     </div>
 
-                    <!-- Ask AI panel — persistent at the bottom of the editor column -->
-                    <div id="ask-panel" class="ask-panel {{if .ShowAskPanel}}is-open{{end}}">
+                    <!-- Ask AI panel — persistent, resizable, at the bottom of the editor column.
+                         The drag handle is the panel's first child so it shows/hides with the
+                         panel's display (no JS toggle). Height persists via /api/session/layout. -->
+                    <div id="ask-panel" class="ask-panel {{if .ShowAskPanel}}is-open{{end}}" style="height: {{.AskPanelHeight}}px;">
+                        <div class="ask-handle"></div>
                         <div class="ask-popup__header">
                             <span class="ask-popup__label">Ask About Document</span>
+                            <button class="ask-popup__close" aria-label="Close" title="Close">&#10005;</button>
                         </div>
-                        <textarea class="ask-popup__input" placeholder="Ask a question&#x2026; (Enter to send, Shift+Enter for new line)" rows="3" spellcheck="false"></textarea>
+                        <textarea class="ask-popup__input" placeholder="Ask a question&#x2026;" spellcheck="false"></textarea>
                         <div class="ask-popup__footer">
                             <span class="ask-popup__hint">Enter to send &middot; Shift+Enter for new line</span>
                             <button class="ask-popup__send">Send</button>

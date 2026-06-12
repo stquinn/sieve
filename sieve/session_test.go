@@ -30,3 +30,19 @@ func TestParseSession_ShowLineNumbers(t *testing.T) {
 		t.Fatal("expected ShowLineNumbers=false when explicitly set")
 	}
 }
+
+func TestParseSession_AskPanelHeight(t *testing.T) {
+	// Defaults to 220 for a fresh session and one predating the field.
+	if h := ParseSession(nil).AskPanelHeight; h != 220 {
+		t.Fatalf("expected default AskPanelHeight=220, got %d", h)
+	}
+	legacy := ParseSession([]byte(`{"activeIdx": 0, "showSidebar": true}`))
+	if legacy.AskPanelHeight != 220 {
+		t.Fatalf("expected AskPanelHeight=220 for a session without the field, got %d", legacy.AskPanelHeight)
+	}
+	// A non-zero stored value is preserved.
+	set := ParseSession([]byte(`{"askPanelHeight": 360}`))
+	if set.AskPanelHeight != 360 {
+		t.Fatalf("expected AskPanelHeight=360, got %d", set.AskPanelHeight)
+	}
+}

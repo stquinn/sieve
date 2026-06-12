@@ -2001,23 +2001,35 @@ pre.tiptap-code-block code {
 /* Clip #editor-col so the ask panel can never bleed into meta column. */
 #editor-col { overflow: hidden; }
 
+/* Resizable panel: display toggle + explicit (persisted) height, mirroring
+   #prompts-panel. Height comes from the inline style the template renders;
+   the drag handle (layout.js) overwrites it and persists on mouseup. */
 .ask-panel {
   flex-shrink: 0;
   overflow: hidden;
-  max-height: 0;
   background: var(--theme-bgAlt);
-  border-top: 0px solid transparent;
-  display: flex;
   flex-direction: column;
   width: 100%;
   min-width: 0;
-  transition: max-height 0.25s cubic-bezier(0.16, 1, 0.3, 1),
-              border-top-color 0.25s;
+  display: none;
 }
 
 .ask-panel.is-open {
-  max-height: 220px;
+  display: flex;
   border-top: 1px solid var(--theme-border2);
+}
+
+/* Drag-to-resize grip — top strip of the panel. Lives inside #ask-panel so it
+   shows/hides with the panel. Matches .prompts-handle's row-resize vocabulary. */
+.ask-handle {
+  height: 6px;
+  flex-shrink: 0;
+  cursor: row-resize;
+  background: transparent;
+  transition: background 0.2s;
+}
+.ask-handle:hover {
+  background: var(--theme-accentPrimary);
 }
 
 /* Reuse ask-popup__ BEM names for the inner elements */
