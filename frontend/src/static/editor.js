@@ -625,8 +625,12 @@
     }
 
     var nodeType = currentEditor.schema.nodes[newBlock.type]
-    if (nodeType && nodeType.spec.content && nodeType.spec.content.indexOf('block') !== -1) {
-      newBlock.content = [{ type: 'paragraph' }]
+    if (nodeType && nodeType.spec.content) {
+      if (nodeType.spec.content.indexOf('block') !== -1) {
+        newBlock.content = [{ type: 'paragraph' }]
+      } else if (nodeType.spec.content.indexOf('text') !== -1 && attrs.source) {
+        newBlock.content = [{ type: 'text', text: attrs.source }]
+      }
     }
     // Object target → in-place conversion: replace the native source node's range
     // with the Sieve block (one transaction → one Undo). Number/null → insert at
@@ -1274,7 +1278,18 @@
                 pasteAttrs[attrKey] = nodeAttrs[attrKey]
               }
             }
-            return { type: 'sieve-' + entry.kind, attrs: pasteAttrs }
+            var result = { type: 'sieve-' + entry.kind, attrs: pasteAttrs }
+            if (currentEditor) {
+              var nodeType = currentEditor.schema.nodes[result.type]
+              if (nodeType && nodeType.spec.content) {
+                if (nodeType.spec.content.indexOf('block') !== -1) {
+                  result.content = [{ type: 'paragraph' }]
+                } else if (nodeType.spec.content.indexOf('text') !== -1 && pasteAttrs.source) {
+                  result.content = [{ type: 'text', text: pasteAttrs.source }]
+                }
+              }
+            }
+            return result
           })
           currentEditor.commands.insertContent(sliceContent)
           return true

@@ -646,13 +646,50 @@ textarea::selection {
 
 /* ── Lists ───────────────────────────────────────────────────────────── */
 
-.tiptap ul, .tiptap ol {
-  padding-left: 1.25rem;
+.tiptap ul:not([data-type="taskList"]), .tiptap ol {
+  list-style: none;
+  padding-left: 0;
   margin: 0.5rem 0;
+}
+
+.tiptap ol {
+  counter-reset: tiptap-counter;
+}
+
+.tiptap ul:not([data-type="taskList"]) > li,
+.tiptap ol > li {
+  position: relative;
+  padding-left: 2rem;
+  margin-bottom: 0.25rem;
+}
+
+.tiptap ul:not([data-type="taskList"]) > li:last-child,
+.tiptap ol > li:last-child {
+  margin-bottom: 0;
 }
 
 .tiptap li > p {
   margin: 0;
+}
+
+.tiptap ul:not([data-type="taskList"]) > li::before {
+  content: "•";
+  position: absolute;
+  left: 0;
+  width: 2rem;
+  text-align: left;
+}
+
+.tiptap ol > li {
+  counter-increment: tiptap-counter;
+}
+
+.tiptap ol > li::before {
+  content: counter(tiptap-counter) ".";
+  position: absolute;
+  left: 0;
+  width: 2rem;
+  text-align: left;
 }
 
 /* Task lists */
