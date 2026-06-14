@@ -27,6 +27,11 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
+// version is the release version shown in the About dialog. It defaults to
+// "dev" for local builds and is overridden at build time via the release
+// workflow with -ldflags "-X main.version=<git tag>".
+var version = "dev"
+
 //go:embed all:frontend/src
 var assets embed.FS
 
@@ -316,7 +321,7 @@ func buildMenu(app *App) *menu.Menu {
 			wailsruntime.MessageDialog(app.ctx, wailsruntime.MessageDialogOptions{
 				Type:    wailsruntime.InfoDialog,
 				Title:   "About Sieve",
-				Message: "Sieve v1.0",
+				Message: "Sieve " + version,
 			})
 		})
 	}

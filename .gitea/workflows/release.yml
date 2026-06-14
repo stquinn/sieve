@@ -27,7 +27,7 @@ jobs:
 
       - name: Build
         run: |
-          wails build -clean -platform linux/amd64 -tags webkit2_41
+          wails build -clean -platform linux/amd64 -tags webkit2_41 -ldflags "-X main.version=${{ github.ref_name }}"
           tar -czf sieve-linux-amd64.tar.gz -C build/bin sieve
 
       - name: Create Gitea release
