@@ -4,7 +4,7 @@
 // Render mode: SVG from mermaid.js, lazy-loaded from vendor/mermaid.min.js.
 // Mode and cursor position are persisted in YAML via sieve:block-update so they survive reloads.
 
-import { getLowlight, hastToHtml } from './fenced-block-base.js'
+import { esc, getLowlight, hastToHtml } from './fenced-block-base.js'
 
 ;(function () {
   'use strict'
@@ -138,11 +138,21 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
 
   var DiagramRenderer = {
 
-    // No nodeConfig overrides: all sieve blocks share the default schema
-    // (atom + selectable + draggable) for a uniform, non-disjoint selection.
-    // Clicks/typing inside the textarea are shielded from ProseMirror centrally
-    // via the stopEvent hook in sieve-block-extension.js, so this block stays
-    // selectable without editor interactions triggering a stray NodeSelection.
+    nodeConfig: {
+      atom: false,
+      selectable: true,
+      draggable: true,
+      group: 'block',
+      inline: false,
+      content: 'text*',
+      marks: '',
+      code: true,
+      defining: true
+    },
+
+    getInitialContentHTML: function(data) {
+      return esc(typeof data.source === 'string' ? data.source : '')
+    },
 
     attrs: {
       source:      { default: '', parseHTML: function (el) { return el.getAttribute('data-source')       || '' } },
@@ -156,8 +166,9 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
 
 
     asContentEntry: function(node) {
-      if (!node.attrs.source) return null
-      return  [{ mimeType: 'text/plain', content: node.attrs.source }]
+      var src = node.textContent || node.attrs.source
+      if (!src) return null
+      return  [{ mimeType: 'text/plain', content: src }]
     },
 
     parseAttrs: function (data) {
@@ -169,7 +180,7 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
       }
     },
 
-    makeNodeView: function (node, editor) {
+    makeNodeView: function (node, editor, getPos) {
       var nodeTypeName = node.type.name
       var currentAttrs = Object.assign({}, node.attrs)
       var destroyed    = false
@@ -186,6 +197,7 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
 
       var header = document.createElement('div')
       header.className = 'sieve-block__header'
+      header.contentEditable = 'false'
       var badge = document.createElement('span')
       badge.className = 'sieve-block__badge'
       badge.textContent = 'diagram'
@@ -230,23 +242,22 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
 
       var gutter = document.createElement('div')
       gutter.className = 'sieve-block__gutter'
+      gutter.contentEditable = 'false'
       var codeArea = document.createElement('div')
       codeArea.className = 'sieve-block__code-area'
 
-      var highlightPre = document.createElement('pre')
-      highlightPre.className = 'sieve-block__highlight'
-      var highlightCode = document.createElement('code')
-      highlightPre.appendChild(highlightCode)
-
-      var editEl = document.createElement('textarea')
-      editEl.className = 'sieve-block__edit'
-      editEl.spellcheck = false
-      editEl.setAttribute('autocorrect', 'off')
-      editEl.setAttribute('autocapitalize', 'off')
-      editEl.setAttribute('autocomplete', 'off')
-
-      codeArea.appendChild(highlightPre)
-      codeArea.appendChild(editEl)
+      var pre = document.createElement('pre')
+      pre.className = 'sieve-block__edit' 
+      pre.style.whiteSpace = 'pre-wrap'
+      pre.style.pointerEvents = 'auto'
+      pre.style.outline = 'none'
+      pre.style.color = 'var(--theme-text)'
+      
+      var contentDOM = document.createElement('code')
+      contentDOM.className = 'hljs'
+      
+      pre.appendChild(contentDOM)
+      codeArea.appendChild(pre)
       editBody.appendChild(gutter)
       editBody.appendChild(codeArea)
 
@@ -259,17 +270,11 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
 
       // ── Helpers ───────────────────────────────────────────────────────────────
 
-      function flushSource() {
-        document.dispatchEvent(new CustomEvent('sieve:block-update', {
-          detail: { id: currentAttrs.id, kind: 'diagram', attrs: { source: editEl.value } },
-        }))
-      }
+      // No flushSource needed; PM natively handles input
 
-      // Dispatch a mode change. When switching to render, include the current
-      // cursor position so it is persisted in YAML and survives document reloads.
-      function switchMode(newMode) {
-        var attrs = { mode: newMode }
-        if (newMode === 'render') attrs.cursorPos = editEl.selectionStart
+      // Dispatch a mode change.
+      function switchMode(newMode, pos) {
+        var attrs = { mode: newMode, cursorPos: typeof pos === 'number' ? pos : currentAttrs.cursorPos }
         document.dispatchEvent(new CustomEvent('sieve:block-update', {
           detail: { id: currentAttrs.id, kind: 'diagram', attrs: attrs },
         }))
@@ -284,33 +289,38 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
 
       // ── Render functions ──────────────────────────────────────────────────────
 
-      // showEdit detects whether this is a render→edit mode switch by checking
-      // whether renderBody was in the DOM. If so, it auto-focuses the textarea and
-      // restores the cursor position from attrs.cursorPos (persisted in YAML).
-      function showEdit(attrs) {
+      function showEdit(attrs, textContent) {
         var comingFromRender = dom.contains(renderBody)
         if (comingFromRender) dom.removeChild(renderBody)
         if (!dom.contains(editBody)) dom.appendChild(editBody)
-        if (document.activeElement !== editEl) {
-          editEl.value = attrs.source || ''
-          applyHighlight(highlightCode, attrs.source || '')
-          updateGutter(gutter, attrs.source || '')
-          if (comingFromRender) {
-            editEl.focus()
-            var pos = typeof attrs.cursorPos === 'number' ? attrs.cursorPos : 0
-            editEl.selectionStart = editEl.selectionEnd = Math.min(pos, editEl.value.length)
+        updateGutter(gutter, textContent || '')
+        if (comingFromRender) {
+          var pos = typeof attrs.cursorPos === 'number' ? attrs.cursorPos : 0
+          if (editor && editor.commands && getPos) {
+            setTimeout(function() {
+              try {
+                var pmPos = getPos() + 1 + Math.min(pos, (textContent || '').length)
+                editor.commands.setTextSelection(pmPos)
+                editor.commands.focus()
+              } catch (e) {
+                console.error('Failed to restore cursor', e)
+                contentDOM.focus()
+              }
+            }, 0)
+          } else {
+            contentDOM.focus()
           }
         }
       }
 
-      function showRender(attrs) {
+      function showRender(attrs, textContent) {
         var comingFromEdit = dom.contains(editBody)
         if (comingFromEdit) dom.removeChild(editBody)
         if (!dom.contains(renderBody)) dom.appendChild(renderBody)
         // Give the render area keyboard focus so Ctrl+Enter can flip back to edit.
         if (comingFromEdit) renderBody.focus()
 
-        var src = (attrs.source || '').trim()
+        var src = (textContent || '').trim()
 
         if (!src) {
           renderBody.innerHTML =
@@ -340,23 +350,38 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
         })
       }
 
-      function render(attrs) {
+      function render(attrs, textContent) {
         currentAttrs = attrs
         updateToggle(attrs.mode)
         if (attrs.mode === 'render') {
-          showRender(attrs)
+          showRender(attrs, textContent)
         } else {
-          showEdit(attrs)
+          showEdit(attrs, textContent)
         }
       }
 
-      render(node.attrs)
+      render(node.attrs, node.textContent)
 
       // Register for theme-change re-renders; cleaned up in destroy().
       function rerender() {
-        if (currentAttrs.mode === 'render') showRender(currentAttrs)
+        if (currentAttrs.mode === 'render') showRender(currentAttrs, node.textContent)
       }
       activeRenderers.push(rerender)
+      
+      var updateTimer = null
+      var observer = new MutationObserver(function() {
+        var text = contentDOM.textContent
+        updateGutter(gutter, text)
+        clearTimeout(updateTimer)
+        updateTimer = setTimeout(function() {
+          if (currentAttrs.id) {
+            document.dispatchEvent(new CustomEvent('sieve:block-update', {
+              detail: { id: currentAttrs.id, kind: 'diagram', attrs: { source: text } }
+            }))
+          }
+        }, 200)
+      })
+      observer.observe(contentDOM, { characterData: true, childList: true, subtree: true })
 
       // ── Events ────────────────────────────────────────────────────────────────
 
@@ -366,7 +391,7 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
         if (currentAttrs.mode !== 'edit') {
           switchMode('edit')
         } else {
-          editEl.focus()
+          contentDOM.focus()
         }
       })
 
@@ -374,59 +399,18 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
         e.preventDefault()
         e.stopPropagation()
         if (currentAttrs.mode !== 'render') {
-          flushSource()
-          switchMode('render')
+          var pos = 0
+          if (editor.view && editor.view.state.selection.$from.parent.type.name === nodeTypeName) {
+            if (editor.view.state.selection.$from.parent.attrs.id === currentAttrs.id) {
+               pos = editor.view.state.selection.$from.parentOffset
+            }
+          }
+          switchMode('render', pos)
         }
       })
 
-      var inputTimer = null
-      var highlightTimer = null
-
-      editEl.addEventListener('input', function () {
-        updateGutter(gutter, editEl.value)
-        clearTimeout(highlightTimer)
-        highlightTimer = setTimeout(function () {
-          applyHighlight(highlightCode, editEl.value)
-        }, 50)
-        clearTimeout(inputTimer)
-        inputTimer = setTimeout(flushSource, 200)
-      })
-
-      editEl.addEventListener('blur', function () {
-        clearTimeout(highlightTimer)
-        clearTimeout(inputTimer)
-        flushSource()
-        applyHighlight(highlightCode, editEl.value)
-        updateGutter(gutter, editEl.value)
-      })
-
-      editEl.addEventListener('paste', function (e) { e.stopPropagation() })
-
-      editEl.addEventListener('keydown', function (e) {
-        if (e.key === 'Tab') {
-          e.preventDefault()
-          var start = editEl.selectionStart
-          var end   = editEl.selectionEnd
-          editEl.value = editEl.value.substring(0, start) + '  ' + editEl.value.substring(end)
-          editEl.selectionStart = editEl.selectionEnd = start + 2
-          updateGutter(gutter, editEl.value)
-          clearTimeout(highlightTimer)
-          highlightTimer = setTimeout(function () { applyHighlight(highlightCode, editEl.value) }, 50)
-          clearTimeout(inputTimer)
-          inputTimer = setTimeout(flushSource, 200)
-          return
-        }
-        // Ctrl+Enter / Cmd+Enter: flush source and switch to render mode
-        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-          e.preventDefault()
-          e.stopPropagation()
-          flushSource()
-          switchMode('render')
-          return
-        }
-        if (e.metaKey || e.ctrlKey) return
-        e.stopPropagation()
-      })
+      // Note: contentDOM keydown is usually swallowed by ProseMirror's root listener.
+      // Ctrl+Enter for switching to render mode is handled in buildPlugins below.
 
       // Ctrl+Enter / Cmd+Enter in render mode: flip back to edit.
       // stopPropagation prevents the event bubbling to TipTap's root listener.
@@ -442,19 +426,23 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
 
       return {
         dom:        dom,
-        contentDOM: null,
+        contentDOM: contentDOM,
 
         update: function (updatedNode) {
           if (updatedNode.type.name !== nodeTypeName) return false
-          render(updatedNode.attrs)
+          node = updatedNode // update ref for rerender
+          render(updatedNode.attrs, updatedNode.textContent)
           return true
         },
 
         selectNode: function () {
-          if (currentAttrs.mode === 'edit') editEl.focus()
+          if (currentAttrs.mode === 'edit') contentDOM.focus()
         },
 
-        ignoreMutation: function () { return true },
+        ignoreMutation: function (mutation) {
+          // Allow ProseMirror to handle content mutations natively.
+          return !contentDOM.contains(mutation.target)
+        },
 
         stopEvent: function (event) {
           if (event.type === 'keydown' && (event.metaKey || event.ctrlKey)) return false
@@ -463,11 +451,126 @@ import { getLowlight, hastToHtml } from './fenced-block-base.js'
 
         destroy: function () {
           destroyed = true
+          clearTimeout(updateTimer)
+          observer.disconnect()
           activeRenderers = activeRenderers.filter(function (r) { return r !== rerender })
-          clearTimeout(inputTimer)
-          clearTimeout(highlightTimer)
         },
       }
+    },
+
+    // ── Plugins ───────────────────────────────────────────────────────────────
+    
+    buildPlugins: function(nodeType) {
+      var Plugin = T.Plugin
+      var Decoration = T.Decoration
+      var DecorationSet = T.DecorationSet
+      
+      function getDecorations(node, pos) {
+        var low = getLowlight()
+        if (!low) return []
+        
+        try {
+          var result = low.highlight('mermaid', node.textContent)
+          var decos = []
+          function parseNodes(nodes, offset, classes) {
+            nodes.forEach(function(n) {
+              if (n.type === 'text') {
+                if (classes.length > 0) {
+                  decos.push(Decoration.inline(offset, offset + n.value.length, { class: classes.join(' ') }))
+                }
+                offset += n.value.length
+              } else if (n.type === 'element') {
+                var cls = classes.concat(n.properties.className || [])
+                offset = parseNodes(n.children || [], offset, cls)
+              }
+            })
+            return offset
+          }
+          parseNodes(result.children, pos + 1, [])
+          return decos
+        } catch (e) { return [] }
+      }
+
+
+      return [
+        new Plugin({
+          state: {
+            init: function(_, instance) {
+              var decos = []
+              instance.doc.descendants(function(node, pos) {
+                if (node.type === nodeType) decos = decos.concat(getDecorations(node, pos))
+              })
+              return DecorationSet.create(instance.doc, decos)
+            },
+            apply: function(tr, set) {
+              if (!tr.docChanged) return set.map(tr.mapping, tr.doc)
+              var decos = []
+              tr.doc.descendants(function(node, pos) {
+                if (node.type === nodeType) decos = decos.concat(getDecorations(node, pos))
+              })
+              return DecorationSet.create(tr.doc, decos)
+            }
+          },
+          props: {
+            decorations: function(state) {
+              return this.getState(state)
+            },
+            handleKeyDown: function(view, event) {
+              if (event.key !== 'Enter' && event.key !== 'Tab') return false
+              
+              var state = view.state
+              var selection = state.selection
+              var isDiagram = false
+              var node = null
+              var isNodeSelection = !!selection.node
+              var pos = 0
+              
+              if (isNodeSelection) {
+                if (selection.node.type === nodeType) {
+                  isDiagram = true
+                  node = selection.node
+                }
+              } else {
+                if (selection.$from.parent.type === nodeType) {
+                  isDiagram = true
+                  node = selection.$from.parent
+                  pos = selection.$from.parentOffset
+                }
+              }
+              
+              if (!isDiagram) return false
+              
+              if (event.key === 'Enter') {
+                if (event.metaKey || event.ctrlKey) {
+                  var id = node.attrs.id
+                  if (id) {
+                    var currentPos = isNodeSelection ? (typeof node.attrs.cursorPos === 'number' ? node.attrs.cursorPos : 0) : pos
+                    var newMode = node.attrs.mode === 'render' ? 'edit' : 'render'
+                    document.dispatchEvent(new CustomEvent('sieve:block-update', {
+                      detail: { id: id, kind: 'diagram', attrs: { mode: newMode, cursorPos: currentPos } }
+                    }))
+                  }
+                  return true
+                }
+                
+                if (!isNodeSelection && node.attrs.mode !== 'render') {
+                  view.dispatch(state.tr.insertText('\n').scrollIntoView())
+                  return true
+                }
+                return false
+              }
+              
+              if (event.key === 'Tab' && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
+                if (!isNodeSelection && node.attrs.mode !== 'render') {
+                  view.dispatch(state.tr.insertText('  ').scrollIntoView())
+                  return true
+                }
+              }
+              return false
+            }
+          }
+        })
+      ]
     },
   }
 

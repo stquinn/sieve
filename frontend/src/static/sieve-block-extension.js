@@ -40,7 +40,7 @@
 //      after sieve-block-extension.js
 //   That's it.
 
-import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block-base.js'
+import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from './fenced-block-base.js'
 
 ;(function () {
   'use strict'
@@ -81,6 +81,14 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
       atom:       cfg.atom,
       selectable: cfg.selectable,
       draggable:  cfg.draggable,
+      content:    cfg.content,
+      marks:      cfg.marks,
+      code:       cfg.code,
+      defining:   cfg.defining,
+
+      addProseMirrorPlugins() {
+        return renderer.buildPlugins ? renderer.buildPlugins(this.type) : []
+      },
 
       addAttributes() {
         return Object.assign({}, BASE_ATTRS, renderer.attrs || {})
@@ -100,7 +108,7 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
 
       addNodeView() {
         return function ({ node, editor, getPos }) {
-          var view = renderer.makeNodeView(node, editor)
+          var view = renderer.makeNodeView(node, editor, getPos)
           if (view.dom) {
             // Inject the chrome host slot as the FIRST child.
             // BlockChrome will find it via .block-chrome-host and populate it
@@ -114,17 +122,9 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
             // Explicitly non-editable: prevents the block root from inheriting
             // contentEditable="true" from the ProseMirror root, which would let
             // the browser treat it as an editable area and break PM atom snapping.
-            // Form elements (textarea, input) inside remain independently focusable.
-            view.dom.contentEditable = 'false'
-
-            // Prevent browser text insertion into block DOM.
-            // beforeinput covers typing, paste, cut, drag-drop, IME — but not navigation keys.
-            // Skip if the event originates from an editable sub-element (code/diagram textarea).
-            if (!cfg.atom) {
-              view.dom.addEventListener('beforeinput', function (e) {
-                if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return
-                e.preventDefault()
-              })
+            // Only apply this to blocks without a contentDOM (i.e., pure atoms).
+            if (!view.contentDOM) {
+              view.dom.contentEditable = 'false'
             }
 
             view.dom.addEventListener('contextmenu', function (e) {
@@ -269,6 +269,48 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
             return false
           }
 
+          // ── Framework-level markdown body sync ──────────────────────────────────
+          // Any display block that declares `markdownAttr` (e.g. ai-block → 'response',
+          // web-clip → 'content') gets that markdown rendered into its contentDOM as
+          // real ProseMirror nodes, using the LIVE editor. renderMarkdown needs the
+          // editor's markdownit instance, which getInitialContentHTML cannot reach
+          // during parse — so this NodeView seam is where it belongs. Declare the attr
+          // and a markdown display block "just works": rich render + native copy/paste.
+          if (view.contentDOM && renderer.markdownAttr) {
+            var mdAttr = renderer.markdownAttr
+            var lastMd = node.attrs[mdAttr]
+            var syncMd = function (md) {
+              setTimeout(function () {
+                if (!editor || !editor.view) return
+                var html = renderMarkdown(md || '', editor) || '<p></p>'
+                var tmp = document.createElement('div')
+                tmp.innerHTML = html
+                var PMDP = window.TipTap.ProseMirrorDOMParser || window.TipTap.DOMParser
+                var slice = PMDP.fromSchema(editor.state.schema).parseSlice(tmp)
+                var pos = typeof getPos === 'function' ? getPos() : -1
+                if (pos === -1) return
+                var cur = editor.state.doc.nodeAt(pos)
+                if (!cur || !cur.type.name.startsWith('sieve-')) return
+                var tr = editor.state.tr
+                tr.replace(pos + 1, pos + 1 + cur.content.size, slice)
+                tr.setMeta('sieve-md-sync', true)
+                tr.setMeta('addToHistory', false)
+                editor.view.dispatch(tr)
+              }, 0)
+            }
+            if (lastMd) syncMd(lastMd)
+            var origUpdate = (typeof view.update === 'function') ? view.update.bind(view) : null
+            view.update = function (updatedNode) {
+              var ok = origUpdate ? origUpdate(updatedNode) : true
+              if (!ok) return false
+              if (updatedNode.attrs[mdAttr] !== lastMd) {
+                lastMd = updatedNode.attrs[mdAttr]
+                syncMd(lastMd)
+              }
+              return true
+            }
+          }
+
           return view
         }
       },
@@ -389,7 +431,13 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
                   if (data.supportsEmbedding) {
                     htmlAttrs.push('data-supports-embedding="true"')
                   }
-                  return '<' + tag + ' ' + htmlAttrs.join(' ') + '></' + tag + '>\n'
+
+                  var innerHTML = ''
+                  if (!cfg.atom && renderer.getInitialContentHTML) {
+                    innerHTML = renderer.getInitialContentHTML(data)
+                  }
+
+                  return '<' + tag + ' ' + htmlAttrs.join(' ') + '>' + innerHTML + '</' + tag + '>\n'
                 }
               },
             },

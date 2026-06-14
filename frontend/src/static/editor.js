@@ -168,18 +168,19 @@
         attributes: { spellcheck: 'true' },
         handleDOMEvents: {
           copy: function(view, event) {
+            // Copy is delegated to ProseMirror now that sieve blocks are real PM nodes.
+            // text/plain + text/html are whatever PM produces. This handler only steps
+            // in for the two things PM can't express:
+            //   (1) smart-image → copy the actual bitmap, and
+            //   (2) a WHOLE-block copy (single sieve NodeSelection or a gutter
+            //       block-range) → ADD sieve/slice + sieve/<kind> so smart paste can
+            //       rebuild the proper kind. We mirror PM's text/plain (the block's
+            //       serialisedForm) and provide a richer text/html from the rendered DOM.
+            // Sub-text highlights, bare cursors, and prose all fall through to native.
             var sel = view.state.selection
-            // Authoritative selection range: our own block range (shift-click /
-            // gutter drag) when set, else the live PM selection.  { from, to,
-            // active, isBlockRange }.
-            var er = (window.TipTap && window.TipTap.getBlockSelectionRange)
-              ? window.TipTap.getBlockSelectionRange(view)
-              : { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false }
 
-            // ── Smart image copy ────────────────────────────────────────────────
-            // Only for a lone image NodeSelection — never when a multi-block range
-            // is active (then the image is just one item in the slice).
-            if (!er.isBlockRange && sel && sel.node && sel.node.type.name === 'sieve-smart-image') {
+            // (1) Smart-image bitmap.
+            if (sel && sel.node && sel.node.type.name === 'sieve-smart-image') {
               var src = sel.node.attrs.src
               if (!src) return false
               if (src.startsWith('http://') || src.startsWith('https://')) {
@@ -193,47 +194,13 @@
               return true
             }
 
-            // ── Sieve block copy ────────────────────────────────────────────────
-            // If a textarea/input has a text selection, let the browser copy it
-            // natively — the user is copying code/source text from within a block.
-            var activeEl = document.activeElement
-            if (activeEl && (activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'INPUT')) {
-              if (activeEl.selectionStart !== activeEl.selectionEnd) return false
-            }
+            // Whole-block? Either a gutter block-range, or a NodeSelection on a sieve node.
+            var er = (window.TipTap && window.TipTap.getBlockSelectionRange)
+              ? window.TipTap.getBlockSelectionRange(view)
+              : { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false }
+            var isSieveNodeSel = !!(sel.node && sel.node.type && String(sel.node.type.name).indexOf('sieve-') === 0)
+            if (!er.isBlockRange && !isSieveNodeSel) return false   // ← native ProseMirror
 
-            // Sub-block highlight: if the user highlighted text *within a single
-            // block* (a rendered card's content), copy exactly that — not the whole
-            // block.  (Textarea/input selections are handled by the guard above.)
-            var domSel = window.getSelection && window.getSelection()
-            if (domSel && !domSel.isCollapsed && String(domSel).trim()) {
-              var blkOf = function (n) {
-                var el = n && (n.nodeType === 1 ? n : n.parentElement)
-                while (el && el !== view.dom) {
-                  if (el.classList && el.classList.contains('block-with-chrome')) return el
-                  el = el.parentElement
-                }
-                return null
-              }
-              var ab = blkOf(domSel.anchorNode)
-              if (ab && ab === blkOf(domSel.focusNode)) return false   // native sub-text copy
-            }
-
-            // Per-block readable text / html (one consistent rule; chrome stripped).
-            // text/plain priority: source (code/diagram) → response (AI) → DOM text → YAML.
-            var blockText = function (node, dom) {
-              if (node.attrs.source) return node.attrs.source
-              if (node.attrs.response) return node.attrs.response
-              if (dom) {
-                var parts = []
-                Array.prototype.forEach.call(dom.children, function (c) {
-                  if (c.classList && c.classList.contains('block-chrome-host')) return
-                  parts.push(c.innerText)
-                })
-                var t = parts.join('').trim()
-                if (t) return t
-              }
-              return node.attrs.serialisedForm || ''
-            }
             var blockHTML = function (dom) {
               if (!dom) return ''
               var clone = dom.cloneNode(true)
@@ -242,10 +209,6 @@
               return clone.outerHTML
             }
 
-            // Collect top-level nodes overlapping the effective range (prose + sieve).
-            // The range comes from our plugin-state block selection (shift-click /
-            // gutter drag) or the live PM selection — either way it is a clean,
-            // non-snapped span, so this collection reliably includes sieve atoms.
             var sliceItems = []
             var plainParts = []
             var htmlParts = []
@@ -255,13 +218,9 @@
 
             view.state.doc.forEach(function (node, offset) {
               var nodeEnd = offset + node.nodeSize
-              // Active range: include nodes that overlap it.
-              if (er.active && (nodeEnd <= er.from || offset >= er.to)) return
-              // Empty cursor: only include a sieve node the cursor sits within.
-              if (!er.active && (er.from < offset || er.from >= nodeEnd)) return
-
+              if (nodeEnd <= er.from || offset >= er.to) return
               var dom = view.nodeDOM(offset)
-              if (node.type.name.startsWith('sieve-')) {
+              if (String(node.type.name).indexOf('sieve-') === 0) {
                 hasSieve = true
                 singleSieveKind = node.attrs.kind
                 singleSieveForm = node.attrs.serialisedForm || ''
@@ -270,25 +229,21 @@
                   if (Object.prototype.hasOwnProperty.call(node.attrs, k)) attrs[k] = node.attrs[k]
                 }
                 sliceItems.push({ _type: 'sieve', kind: node.attrs.kind, attrs: attrs })
-                plainParts.push(blockText(node, dom))
+                plainParts.push(node.attrs.serialisedForm || '')
                 htmlParts.push(blockHTML(dom))
-              } else if (!sel.empty) {
+              } else {
                 sliceItems.push({ _type: 'prose', json: node.toJSON() })
                 plainParts.push(dom ? dom.innerText : '')
                 htmlParts.push(blockHTML(dom))
               }
             })
 
-            if (!hasSieve) return false   // pure prose — let TipTap/markdown handle it natively
+            if (!hasSieve) return false   // no sieve block in range — let PM handle it natively
 
-            // Emit all four flavours.  sieve/slice (+ sieve/<kind> for a lone block)
-            // are authoritative for in-app reconstruct and the Go paste handlers
-            // (fresh IDs, smart-paste routing); text/plain + text/html are lossy
-            // external fallbacks.
             event.preventDefault()
-            event.clipboardData.setData('sieve/slice', JSON.stringify(sliceItems))
             event.clipboardData.setData('text/plain', plainParts.filter(Boolean).join('\n\n'))
             event.clipboardData.setData('text/html', htmlParts.filter(Boolean).join('\n'))
+            event.clipboardData.setData('sieve/slice', JSON.stringify(sliceItems))
             if (sliceItems.length === 1 && sliceItems[0]._type === 'sieve') {
               event.clipboardData.setData('sieve/' + singleSieveKind, singleSieveForm)
             }
@@ -668,6 +623,11 @@
       type: 'sieve-' + (msg.kind || 'code'),
       attrs: attrs,
     }
+
+    var nodeType = currentEditor.schema.nodes[newBlock.type]
+    if (nodeType && nodeType.spec.content && nodeType.spec.content.indexOf('block') !== -1) {
+      newBlock.content = [{ type: 'paragraph' }]
+    }
     // Object target → in-place conversion: replace the native source node's range
     // with the Sieve block (one transaction → one Undo). Number/null → insert at
     // that point (additive extraction / paste / create).
@@ -719,6 +679,7 @@
           })
           try {
             tr.setNodeMarkup(pos, null, nextAttrs)
+            tr.setMeta('addToHistory', false)
           } catch (err) {
             console.error('[editor] setNodeMarkup failed:', err, nextAttrs)
           }

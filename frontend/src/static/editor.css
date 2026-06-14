@@ -100,6 +100,16 @@ textarea::selection {
   color: var(--theme-selectionFg);
 }
 
+.ai-block__badge::selection,
+.sieve-block__header::selection,
+.sieve-block__badge::selection,
+.sieve-code-block__gutter span::selection,
+.sieve-block__gutter span::selection,
+.code-block__gutter span::selection {
+  background: transparent;
+  color: inherit;
+}
+
 /* ── ProseMirror node selection (e.g. image, code block selected) ─────── */
 
 .ProseMirror-selectednode {
@@ -866,6 +876,12 @@ div.node-image.ProseMirror-selectednode {
   z-index: 5;
 }
 
+/* Reset tiptap defaults for the internal ai-block AST renderer */
+.ai-block .tiptap {
+  min-height: 0;
+  padding: 0;
+}
+
 /* "AI" badge sits in the top border */
 .ai-block__badge {
   position: absolute;
@@ -881,6 +897,8 @@ div.node-image.ProseMirror-selectednode {
   border: 1px solid var(--theme-border2);
   border-radius: 4px;
   z-index: 10;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .ai-block__badge--thinking {
@@ -926,10 +944,11 @@ div.node-image.ProseMirror-selectednode {
 
 /* Question area inside AI block */
 .ai-block .ai-question {
-  color: var(--theme-textDim);
-  border-bottom: 1px solid color-mix(in srgb, var(--theme-accentPrimary) 30%, transparent);
+  font-size: 14px;
+  color: var(--theme-textPrimary);
+  margin-bottom: 0.75rem;
   padding-bottom: 8px;
-  margin-bottom: 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--theme-accentPrimary) 30%, transparent);
 }
 .ai-block .ai-question strong {
   color: var(--theme-accentPrimary);
@@ -1041,6 +1060,14 @@ div.node-image.ProseMirror-selectednode {
   color: var(--theme-text);
   width: 100%;
   margin-top: 2px;
+}
+
+/* Reset tiptap defaults for the internal web-clip content renderer (it is a real
+   PM-owned contentDOM carrying the .tiptap class — without this it inherits the
+   editor's min-height:100vh + chrome padding and the panel becomes huge). */
+.web-clip-block .tiptap {
+  min-height: 0;
+  padding: 0;
 }
 
 .web-clip-block__content {
@@ -1244,6 +1271,7 @@ pre.tiptap-code-block code {
   border-bottom: 1px solid var(--theme-aiBlockBorder);
   border-radius: 8px 8px 0 0;
   user-select: none;
+  -webkit-user-select: none;
 }
 
 .sieve-block__badge {
@@ -1253,6 +1281,8 @@ pre.tiptap-code-block code {
   color: var(--theme-accentGreen);
   font-family: var(--theme-monoFont);
   text-transform: uppercase;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .sieve-block__badge--pending {
@@ -1324,7 +1354,8 @@ pre.tiptap-code-block code {
   overflow: hidden;
 }
 
-.sieve-block__highlight code {
+.sieve-block__highlight code,
+.tiptap .sieve-block__edit code {
   display: block;
   background: transparent;
   border: none;
@@ -1350,6 +1381,27 @@ pre.tiptap-code-block code {
   overflow: hidden;
   cursor: text;
 }
+
+/* ── Log highlighting (decoration classes) ───────────────────────────────
+   Applied by the log renderer's decoration plugin to the read-only log text.
+   Colours + noise dimming live here so the "Toggle Noise" button is a pure
+   view concern: it flips .log--hide-noise on the block root. */
+.sieve-block--log .log-tok-error  { color: var(--theme-red);    font-weight: bold; }
+.sieve-block--log .log-tok-warn   { color: var(--theme-yellow); }
+.sieve-block--log .log-tok-info   { color: var(--theme-accentCyan); }
+.sieve-block--log .log-tok-level  { font-weight: bold; }
+.sieve-block--log .log-tok-thread { color: var(--theme-magenta); }
+.sieve-block--log .log-tok-logger { color: var(--theme-green); }
+.sieve-block--log .log-tok-bracket { color: var(--theme-textSubtle); font-weight: 500; }
+.sieve-block--log .log-tok-noise  { opacity: 0.6; }
+
+.sieve-block--log .log-line-error { color: var(--theme-red);    font-weight: bold; }
+.sieve-block--log .log-line-warn  { color: var(--theme-yellow); }
+.sieve-block--log .log-line-info  { opacity: 0.85; }
+
+/* Noise hidden: dim timestamps/pid/thread/logger and de-emphasise info lines. */
+.sieve-block--log.log--hide-noise .log-tok-noise { opacity: 0.15; }
+.sieve-block--log.log--hide-noise .log-line-info { opacity: 0.3; }
 
 /* ── Code blocks ─────────────────────────────────────────────────────── */
 

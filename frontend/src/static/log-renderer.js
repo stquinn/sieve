@@ -1,6 +1,6 @@
 // log-renderer.js — Sieve block renderer for the 'log' kind.
 
-import { isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js'
+import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js'
 
 ;(function () {
   'use strict'
@@ -21,13 +21,32 @@ import { isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js'
       status:          { default: 'COMPLETE', parseHTML: function (el) { return el.getAttribute('data-status') || 'COMPLETE' } },
     },
 
+    // text* + code:true — the raw captured log lines ARE the node's text content,
+    // exactly like code/diagram. Editing is blocked by the read-only plugin below.
+    nodeConfig: {
+      atom: false,
+      selectable: true,
+      draggable: false,
+      group: 'block',
+      inline: false,
+      content: 'text*',
+      marks: '',
+      code: true,
+      defining: true
+    },
+
     getFriendlyName: function() { return 'Log' },
     getIcon: function() { return window.SieveIcons && window.SieveIcons.terminal },
 
+    getInitialContentHTML: function(data) {
+      return esc(typeof data.source === 'string' ? data.source : '')
+    },
+
     asContentEntry: function(node) {
-      if (!node.attrs.source) return null
+      var src = node.textContent || node.attrs.source
+      if (!src) return null
       return  [
-        { mimeType: 'text/plain', content: node.attrs.source }
+        { mimeType: 'text/plain', content: src }
       ]
     },
 
@@ -147,26 +166,26 @@ import { isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js'
 
       var gutter = document.createElement('div')
       gutter.className = 'sieve-block__gutter'
+      gutter.contentEditable = 'false'
 
       var codeArea = document.createElement('div')
       codeArea.className = 'sieve-block__code-area'
       codeArea.style.flex = '1'
 
-      var highlightPre = document.createElement('pre')
-      highlightPre.className = 'sieve-block__highlight'
-      var highlightCode = document.createElement('code')
-      highlightPre.appendChild(highlightCode)
+      // Real PM-owned contentDOM holding the raw log text — read-only via the plugin.
+      // Highlighting is applied as decorations (buildPlugins), not innerHTML overlay.
+      var pre = document.createElement('pre')
+      pre.className = 'sieve-block__edit'
+      pre.style.whiteSpace = 'pre-wrap'
+      pre.style.pointerEvents = 'auto'
+      pre.style.outline = 'none'
+      pre.style.color = 'var(--theme-text)'
 
-      var editEl = document.createElement('textarea')
-      editEl.className = 'sieve-block__edit'
-      editEl.spellcheck = false
-      editEl.readOnly = true
-      editEl.setAttribute('autocorrect', 'off')
-      editEl.setAttribute('autocapitalize', 'off')
-      editEl.setAttribute('autocomplete', 'off')
+      var contentDOM = document.createElement('code')
+      contentDOM.className = 'hljs language-log'
 
-      codeArea.appendChild(highlightPre)
-      codeArea.appendChild(editEl)
+      pre.appendChild(contentDOM)
+      codeArea.appendChild(pre)
       editArea.appendChild(gutter)
       editArea.appendChild(codeArea)
 
@@ -436,7 +455,9 @@ import { isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js'
           } else {
               noiseBtn.classList.remove('sieve-block__badge--active')
           }
-          applyHighlight(editEl.value)
+          // Noise dimming is a view-level concern; decorations stay constant and CSS
+          // dims .log-tok-noise / .log-line-info under .log--hide-noise.
+          dom.classList.toggle('log--hide-noise', hideNoise)
       })
 
       function updateGutter(source) {
@@ -451,78 +472,7 @@ import { isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js'
         }
       }
 
-      function applyHighlight(source) {
-        var lines = (source || '').split('\n');
-        var htmlLines = lines.map(function(line) {
-           var safeLine = line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-           
-           // Match Spring Boot style log:
-           // DATE TIME  LEVEL PID --- [THREAD] LOGGER : MESSAGE
-           var springMatch = safeLine.match(SPRING_LINE_RE);
-           
-           if (springMatch) {
-               var date = springMatch[1];
-               var level = springMatch[2].toUpperCase();
-               var pid = springMatch[3];
-               var thread = springMatch[4];
-               var logger = springMatch[5];
-               var msg = springMatch[6];
-               
-               var levelColor = 'var(--theme-textSubtle)';
-               if (level.match(/ERROR|FATAL/i)) levelColor = 'var(--theme-red)';
-               else if (level.match(/WARN/i)) levelColor = 'var(--theme-yellow)';
-               else if (level.match(/INFO|DEBUG|TRACE/i)) levelColor = 'var(--theme-accentCyan)';
-               
-               var noiseStyle = hideNoise ? 'opacity: 0.15;' : 'opacity: 0.5;';
-               
-               var dateSpan = '<span style="' + noiseStyle + '">' + date + '</span>';
-               var levelSpan = '<span style="color: ' + levelColor + '; font-weight: bold;">' + level + '</span>';
-               var pidSpan = '<span style="' + noiseStyle + '">' + pid + '</span>';
-               var threadSpan = '<span style="color: var(--theme-magenta); ' + noiseStyle + '">[' + thread + ']</span>';
-               var loggerSpan = '<span style="color: var(--theme-green); ' + noiseStyle + '">' + logger + '</span>';
-               
-               var formattedLine = dateSpan + '  ' + levelSpan + ' ' + pidSpan + ' --- ' + threadSpan + ' ' + loggerSpan + ' : ' + msg;
-               
-               if (hideNoise && level.match(/INFO|DEBUG|TRACE/i)) {
-                   return '<span style="opacity: 0.25;">' + formattedLine + '</span>';
-               } else if (level.match(/ERROR|FATAL/i)) {
-                   return '<span style="color: var(--theme-red); font-weight: bold;">' + formattedLine + '</span>';
-               } else if (level.match(/WARN/i)) {
-                   return '<span style="color: var(--theme-yellow);">' + formattedLine + '</span>';
-               }
-               return formattedLine;
-           }
-
-           // Fallback for other log styles
-           safeLine = safeLine.replace(/\[(.*?)\]/g, function(match, inner) {
-             var color = 'var(--theme-textSubtle)';
-             if (inner.match(/error|fatal|fail|exception/i)) color = 'var(--theme-red)';
-             else if (inner.match(/warn/i)) color = 'var(--theme-yellow)';
-             else if (inner.match(/info|debug|trace/i)) color = 'var(--theme-accentCyan)';
-             var noiseStyle = hideNoise ? 'opacity: 0.3;' : 'opacity: 0.8;';
-             return '<span style="color: ' + color + '; font-weight: 500; ' + noiseStyle + '">[' + inner + ']</span>';
-           });
-
-           if (safeLine.match(/\b(ERROR|FATAL|Exception)\b/i)) {
-              return '<span style="color: var(--theme-red); font-weight: bold;">' + safeLine + '</span>';
-           }
-           if (safeLine.match(/\b(WARN|Warning)\b/i)) {
-              return '<span style="color: var(--theme-yellow);">' + safeLine + '</span>';
-           }
-           if (safeLine.match(/\b(INFO|DEBUG|TRACE)\b/i) && hideNoise) {
-              return '<span style="opacity: 0.25;">' + safeLine + '</span>';
-           }
-           
-           var dateNoiseStyle = hideNoise ? 'opacity: 0.15;' : 'opacity: 0.5;';
-           safeLine = safeLine.replace(/(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)/g, '<span style="' + dateNoiseStyle + '">$1</span>');
-           
-           return safeLine;
-        });
-        var display = htmlLines.join('\n') + '\n';
-        highlightCode.innerHTML = display;
-      }
-
-      function render(attrs) {
+      function render(attrs, textContent) {
         var statusChanged = currentAttrs.status !== attrs.status;
         var assetChanged = currentAttrs.parsedAssetRef !== attrs.parsedAssetRef;
         currentAttrs = attrs;
@@ -549,38 +499,156 @@ import { isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js'
         }
         updateUI();
 
-        if (document.activeElement !== editEl) {
-          editEl.value = attrs.source || ''
-          applyHighlight(attrs.source || '')
-          updateGutter(attrs.source || '')
-        }
+        updateGutter(textContent || '')
       }
 
-      render(node.attrs)
+      render(node.attrs, node.textContent)
 
-      // The log source is a read-only captured input — never edited in-place — so
-      // there is NO input/Tab/flush wiring. Highlight + gutter are driven by render()
-      // and the noise toggle. (Removing the old editable handlers also kills a
-      // spurious re-parse that fired just from focusing+blurring the block.)
+      // The log source is a read-only captured input — never edited in-place. The
+      // text lives in the PM document (text* content); highlighting is applied as
+      // decorations, the gutter is driven by render(), and editing is blocked by the
+      // read-only plugin in buildPlugins.
 
       return {
         dom:        dom,
-        contentDOM: null,
+        contentDOM: contentDOM,
         update: function (updatedNode) {
           if (updatedNode.type.name !== nodeTypeName) return false
-          render(updatedNode.attrs)
+          render(updatedNode.attrs, updatedNode.textContent)
           return true
         },
-        selectNode: function () { if (mode === 'edit') editEl.focus() },
-        ignoreMutation: function () { return true },
-        stopEvent: function (event) {
-          if (event.type === 'keydown' && (event.metaKey || event.ctrlKey)) return false
-          return event.type === 'keydown' || event.type === 'keyup' || event.type === 'keypress'
+        ignoreMutation: function (mutation) {
+          return !contentDOM.contains(mutation.target)
         },
         destroy: function () {
           if (logObserver) { logObserver.disconnect(); logObserver = null }
         },
       }
+    },
+
+    // ── Plugins ───────────────────────────────────────────────────────────────
+
+    buildPlugins: function(nodeType) {
+      var Plugin = window.TipTap.Plugin
+      var Decoration = window.TipTap.Decoration
+      var DecorationSet = window.TipTap.DecorationSet
+
+      function isInside(state, from, to) {
+        var inside = false
+        state.doc.nodesBetween(from, to, function(node) {
+          if (node.type === nodeType) inside = true
+        })
+        return inside
+      }
+
+      // ── Log syntax highlighting via decorations ───────────────────────────────
+      // Semantic classes only — colours and noise-dimming live in CSS so the
+      // noise toggle is a pure view concern (a class on the block root).
+      function decorateLine(line, start, decos) {
+        var spring = line.match(SPRING_LINE_RE)
+        if (spring) {
+          var level = spring[2].toUpperCase()
+          var levelCls = /ERROR|FATAL/.test(level) ? 'log-tok-error'
+                       : /WARN/.test(level)        ? 'log-tok-warn'
+                       :                              'log-tok-info'
+          var lineCls = /ERROR|FATAL/.test(level) ? 'log-line-error'
+                      : /WARN/.test(level)        ? 'log-line-warn'
+                      :                              'log-line-info'
+          decos.push(Decoration.inline(start, start + line.length, { class: lineCls }))
+
+          var idx = 0
+          function span(text, cls) {
+            if (!text) return
+            var i = line.indexOf(text, idx)
+            if (i < 0) return
+            decos.push(Decoration.inline(start + i, start + i + text.length, { class: cls }))
+            idx = i + text.length
+          }
+          span(spring[1], 'log-tok-noise')                 // date
+          span(spring[2], levelCls + ' log-tok-level')     // level
+          span(spring[3], 'log-tok-noise')                 // pid
+          span('[' + spring[4] + ']', 'log-tok-thread log-tok-noise') // thread
+          span(spring[5], 'log-tok-logger log-tok-noise')  // logger
+          return
+        }
+
+        // Fallback: bracketed tokens, whole-line severity, timestamps.
+        var br = /\[(.*?)\]/g, m
+        while ((m = br.exec(line))) {
+          var inner = m[1]
+          var cls = /error|fatal|fail|exception/i.test(inner) ? 'log-tok-error'
+                  : /warn/i.test(inner)                        ? 'log-tok-warn'
+                  : /info|debug|trace/i.test(inner)            ? 'log-tok-info'
+                  :                                              'log-tok-bracket'
+          decos.push(Decoration.inline(start + m.index, start + m.index + m[0].length, { class: cls + ' log-tok-noise' }))
+        }
+        if (/\b(ERROR|FATAL|Exception)\b/i.test(line)) {
+          decos.push(Decoration.inline(start, start + line.length, { class: 'log-line-error' }))
+        } else if (/\b(WARN|Warning)\b/i.test(line)) {
+          decos.push(Decoration.inline(start, start + line.length, { class: 'log-line-warn' }))
+        } else if (/\b(INFO|DEBUG|TRACE)\b/i.test(line)) {
+          decos.push(Decoration.inline(start, start + line.length, { class: 'log-line-info' }))
+        }
+        var dre = /(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)/g, dm
+        while ((dm = dre.exec(line))) {
+          decos.push(Decoration.inline(start + dm.index, start + dm.index + dm[0].length, { class: 'log-tok-noise' }))
+        }
+      }
+
+      function getDecorations(node, pos) {
+        var text = node.textContent || ''
+        var decos = []
+        var lineStart = 0
+        text.split('\n').forEach(function (line) {
+          if (line.length) decorateLine(line, pos + 1 + lineStart, decos)
+          lineStart += line.length + 1 // +1 for the newline
+        })
+        return decos
+      }
+
+      function buildSet(doc) {
+        var decos = []
+        doc.descendants(function (node, pos) {
+          if (node.type === nodeType) decos = decos.concat(getDecorations(node, pos))
+        })
+        return DecorationSet.create(doc, decos)
+      }
+
+      return [
+        new Plugin({
+          state: {
+            init: function (_, instance) { return buildSet(instance.doc) },
+            apply: function (tr, set) { return tr.docChanged ? buildSet(tr.doc) : set.map(tr.mapping, tr.doc) }
+          },
+          props: {
+            decorations: function (state) { return this.getState(state) }
+          }
+        }),
+        new Plugin({
+          props: {
+            handleTextInput: function(view, from, to, text) {
+              return isInside(view.state, from, to)
+            },
+            handleKeyDown: function(view, event) {
+              if (event.key === 'Backspace' || event.key === 'Delete' || event.key === 'Enter') {
+                return isInside(view.state, view.state.selection.from, view.state.selection.to)
+              }
+              if (event.key.length === 1 && !event.metaKey && !event.ctrlKey) {
+                return isInside(view.state, view.state.selection.from, view.state.selection.to)
+              }
+              return false
+            },
+            handlePaste: function(view, event, slice) {
+              return isInside(view.state, view.state.selection.from, view.state.selection.to)
+            },
+            handleDrop: function(view, event, slice, moved) {
+              var pos = view.posAtCoords({ left: event.clientX, top: event.clientY })
+              if (pos && isInside(view.state, pos.pos, pos.pos)) return true
+              return false
+            }
+          }
+        })
+      ]
     },
   }
 

@@ -23,8 +23,20 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
   }
 
   var AiBlockRenderer = {
+    nodeConfig: {
+      atom: false,
+      selectable: true,
+      draggable: false,
+      group: 'block',
+      inline: false,
+      content: 'block+'
+    },
 
-    nodeConfig: { selectable: true, draggable: false },
+    // Framework renders attrs.response into contentDOM as real PM nodes (see the
+    // markdown body sync in sieve-block-extension.js). Seed empty; the seam fills it.
+    markdownAttr: 'response',
+
+    getInitialContentHTML: function() { return '<p></p>' },
 
     attrs: {
       supportsEmbedding: { default: true },
@@ -55,7 +67,8 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
       }
     },
 
-    makeNodeView: function (node, editor) {
+    makeNodeView: function (node, editor, getPos) {
+      var nodeTypeName = 'sieve-ai-block'
       var dom = document.createElement('div')
       dom.className = 'sieve-ai-block ai-block'
       dom.setAttribute('data-id', node.attrs.id || '')
@@ -63,11 +76,17 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
 
       var badge = document.createElement('span')
       badge.className = 'ai-block__badge'
+      badge.contentEditable = 'false'
       var contentEl = document.createElement('div')
       contentEl.className = 'ai-block__content'
-      contentEl.style.userSelect = 'text'
+      contentEl.contentEditable = 'false'
+      
+      var contentDOM = document.createElement('div')
+      contentDOM.className = 'sieve-block__content tiptap' // Use tiptap class for internal styling
+      
       dom.appendChild(badge)
       dom.appendChild(contentEl)
+      dom.appendChild(contentDOM)
 
       function applyChain(action) {
         var id = dom.getAttribute('data-id') || ''
@@ -91,27 +110,28 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
       dom.addEventListener('mouseleave', function () { applyChain('remove') })
 
       function renderQuestion(n) {
-        if (!n.attrs.question) return
+        var question = n.question || n.attrs.question
+        if (!question) return
         var qEl = document.createElement('div')
         qEl.className = 'ai-question'
         var qLabel = document.createElement('strong')
-        qLabel.textContent = (n.attrs.type === 'EXPLAIN') ? 'Explain: ' : 'Ask: '
+        qLabel.textContent = (n.type === 'EXPLAIN' || n.attrs && n.attrs.type === 'EXPLAIN') ? 'Explain: ' : 'Ask: '
         qEl.appendChild(qLabel)
-        qEl.appendChild(document.createTextNode(n.attrs.question))
+        qEl.appendChild(document.createTextNode(question))
         contentEl.appendChild(qEl)
       }
 
-      function render(n) {
+      function render(attrs) {
         contentEl.innerHTML = ''
-        dom.setAttribute('data-id', n.attrs.id || '')
-        dom.setAttribute('data-ai-ref', n.attrs.ref || 'doc')
-        var status = n.attrs.status || 'PENDING'
+        dom.setAttribute('data-id', attrs.id || '')
+        dom.setAttribute('data-ai-ref', attrs.ref || 'doc')
+        var status = attrs.status || 'PENDING'
 
         if (status === 'PENDING' || status === 'DISPATCHED') {
-          if (isJobStale(n.attrs.createdAt, n.attrs.id)) {
+          if (isJobStale(attrs.createdAt, attrs.id)) {
             badge.className = 'ai-block__badge ai-block__badge--error'
             badge.textContent = 'AI'
-            renderQuestion(n)
+            renderQuestion(attrs)
             var errEl = document.createElement('p')
             errEl.className = 'ai-block__timeout'
             errEl.textContent = 'Request timed out. (Right-click to Retry)'
@@ -119,7 +139,7 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
           } else {
             badge.className = 'ai-block__badge ai-block__badge--thinking'
             badge.textContent = 'AI'
-            renderQuestion(n)
+            renderQuestion(attrs)
             var thinking = document.createElement('p')
             var em = document.createElement('em')
             em.textContent = '(thinking…)'
@@ -129,42 +149,80 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
         } else if (status === 'COMPLETE') {
           badge.className = 'ai-block__badge'
           badge.textContent = 'AI'
-          renderQuestion(n)
-          if (n.attrs.response) {
-            var responseEl = document.createElement('div')
-            responseEl.className = 'ai-block__response'
-            responseEl.innerHTML = renderMarkdown(n.attrs.response, editor)
-            applyHighlighting(responseEl)
-            contentEl.appendChild(responseEl)
-          }
+          renderQuestion(attrs)
         } else {
           badge.className = 'ai-block__badge ai-block__badge--error'
           badge.textContent = 'AI'
-          renderQuestion(n)
+          renderQuestion(attrs)
           var errEl2 = document.createElement('p')
           errEl2.className = 'ai-block__timeout'
-          errEl2.textContent = n.attrs.error || 'Request failed. (Right-click to Retry)'
+          errEl2.textContent = attrs.error || 'Request failed. (Right-click to Retry)'
           contentEl.appendChild(errEl2)
         }
       }
 
-      render(node)
+      render(node.attrs)
 
       return {
-        dom: dom,
-        contentDOM: null,
+        dom:        dom,
+        contentDOM: contentDOM,
+
         update: function (updatedNode) {
-          if (updatedNode.type.name !== 'sieve-ai-block') return false
+          if (updatedNode.type.name !== nodeTypeName) return false
           node = updatedNode
-          render(updatedNode)
+          render(node.attrs)
+          // Body (attrs.response) is synced into contentDOM by the framework markdown seam.
           return true
         },
-        ignoreMutation: function () { return true },
-        stopEvent: function (event) {
-          if (event.type === 'keydown' && (event.metaKey || event.ctrlKey)) return false
-          return event.type === 'keydown' || event.type === 'keyup' || event.type === 'keypress'
+
+        ignoreMutation: function (mutation) {
+          // Allow PM to handle native content
+          return !contentDOM.contains(mutation.target)
         },
       }
+    },
+
+    // ── Plugins ───────────────────────────────────────────────────────────────
+
+    buildPlugins: function(nodeType) {
+      var Plugin = window.TipTap.Plugin
+      
+      function isInsideAiBlock(state, from, to) {
+        var inside = false
+        state.doc.nodesBetween(from, to, function(node) {
+          if (node.type === nodeType) inside = true
+        })
+        return inside
+      }
+
+      return [
+        new Plugin({
+          props: {
+            handleTextInput: function(view, from, to, text) {
+              return isInsideAiBlock(view.state, from, to)
+            },
+            handleKeyDown: function(view, event) {
+              // Block deletion and enter/formatting keys inside AI block
+              if (event.key === 'Backspace' || event.key === 'Delete' || event.key === 'Enter') {
+                return isInsideAiBlock(view.state, view.state.selection.from, view.state.selection.to)
+              }
+              // Block normal typing just in case handleTextInput misses it
+              if (event.key.length === 1 && !event.metaKey && !event.ctrlKey) {
+                return isInsideAiBlock(view.state, view.state.selection.from, view.state.selection.to)
+              }
+              return false
+            },
+            handlePaste: function(view, event, slice) {
+              return isInsideAiBlock(view.state, view.state.selection.from, view.state.selection.to)
+            },
+            handleDrop: function(view, event, slice, moved) {
+              var pos = view.posAtCoords({ left: event.clientX, top: event.clientY })
+              if (pos && isInsideAiBlock(view.state, pos.pos, pos.pos)) return true
+              return false
+            }
+          }
+        })
+      ]
     },
 
     // Context label reflects whether this was an Ask or Explain block.

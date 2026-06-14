@@ -19,7 +19,15 @@ import { isJobStale } from './fenced-block-base.js'
       return [{ mimeType: 'text/uri-list', content: node.attrs.href }]
     },
 
-    nodeConfig: { selectable: true, draggable: false },
+    // Pure display-only metadata card — no editable body. A true atom: the framework
+    // forces contentEditable=false (no contentDOM), so there is no phantom caret region.
+    nodeConfig: {
+      atom: true,
+      selectable: true,
+      draggable: false,
+      group: 'block',
+      inline: false
+    },
 
     attrs: {
       href:        { default: '',   parseHTML: function (el) { return el.getAttribute('data-href')        || '' } },
@@ -45,10 +53,16 @@ import { isJobStale } from './fenced-block-base.js'
       }
     },
 
-    makeNodeView: function (node, editor) {
+    makeNodeView: function (node, editor, getPos) {
+      var nodeTypeName = 'sieve-smart-card'
       var dom = document.createElement('div')
       dom.className = 'smart-card-card'
       dom.setAttribute('data-smart-card-id', node.attrs.id || '')
+
+      // renderEl holds all visual content; cleared on each render().
+      var renderEl = document.createElement('div')
+      renderEl.className = 'smart-card-card__render'
+      dom.appendChild(renderEl)
 
       // The block-chrome host (gutter line number + drag handle) is injected as the
       // card's first child, so its events bubble here.  Ignore them: a handle click
@@ -80,7 +94,7 @@ import { isJobStale } from './fenced-block-base.js'
       })
 
       function render(n) {
-        dom.innerHTML = ''
+        renderEl.innerHTML = ''
         dom.setAttribute('data-smart-card-id', n.attrs.id || '')
 
         var status = n.attrs.status || 'PENDING'
@@ -100,7 +114,7 @@ import { isJobStale } from './fenced-block-base.js'
         site.textContent = isPending ? extractDomain(n.attrs.href || '') : (n.attrs.siteName || extractDomain(n.attrs.href || ''))
         meta.appendChild(icon)
         meta.appendChild(site)
-        dom.appendChild(meta)
+        renderEl.appendChild(meta)
 
         // Row 2: thumbnail + content
         var body = document.createElement('div')
@@ -152,23 +166,17 @@ import { isJobStale } from './fenced-block-base.js'
         content.appendChild(urlEl)
 
         body.appendChild(content)
-        dom.appendChild(body)
+        renderEl.appendChild(body)
       }
 
       render(node)
 
       return {
         dom: dom,
-        contentDOM: null,
         update: function (updatedNode) {
-          if (updatedNode.type.name !== 'sieve-smart-card') return false
+          if (updatedNode.type.name !== nodeTypeName) return false
           render(updatedNode)
           return true
-        },
-        ignoreMutation: function () { return true },
-        stopEvent: function (event) {
-          if (event.type === 'keydown' && (event.metaKey || event.ctrlKey)) return false
-          return event.type === 'keydown' || event.type === 'keyup' || event.type === 'keypress'
         },
       }
     },

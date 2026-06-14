@@ -38,6 +38,12 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
     getIcon: function() { return window.SieveIcons && window.SieveIcons.externalLink },
     getFriendlyName: function(node) { return 'Web Clip' },
 
+    // Framework renders attrs.content into contentDOM as real PM nodes (see the
+    // markdown body sync in sieve-block-extension.js). Seed empty; the seam fills it.
+    markdownAttr: 'content',
+
+    getInitialContentHTML: function() { return '<p></p>' },
+
     asContentEntry: function(node) {
       if (!node.attrs.source) return null
       return [{ mimeType: 'text/uri-list', content: node.attrs.source }]
@@ -64,8 +70,12 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
     },
 
     nodeConfig: {
+      atom: false,
       selectable: true,
-      draggable: false
+      draggable: false,
+      group: 'block',
+      inline: false,
+      content: 'block+'
     },
 
     attrs: {
@@ -90,13 +100,29 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
       }
     },
 
-    makeNodeView: function (node, editor) {
+    makeNodeView: function (node, editor, getPos) {
 
+      var nodeTypeName = 'sieve-web-clip'
       var dom = document.createElement('div')
       dom.className = 'web-clip-block'
       dom.setAttribute('draggable', 'false')
       dom.setAttribute('data-id', node.attrs.id || '')
       dom.style.userSelect = 'text'
+
+      // renderEl holds the chrome (badge, source link, status/spinner/retry) and is
+      // cleared on each render(). It is contentEditable=false — like ai-block's badge
+      // and question — so the caret can never land in it.
+      var renderEl = document.createElement('div')
+      renderEl.className = 'web-clip-block__render'
+      renderEl.contentEditable = 'false'
+      dom.appendChild(renderEl)
+
+      // contentDOM is a VISIBLE, ProseMirror-owned region holding the fetched/summarised
+      // markdown as real document nodes — a direct analog of ai-block's response body.
+      // ProseMirror tracks it by reference; it is never removed from dom.
+      var contentDOM = document.createElement('div')
+      contentDOM.className = 'web-clip-block__content tiptap'
+      dom.appendChild(contentDOM)
 
       dom.addEventListener('dragstart', function (e) { e.preventDefault() })
       dom.addEventListener('click', function (e) {
@@ -122,13 +148,14 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
       dom.addEventListener('mouseleave', function () { applyReverseChain('remove') })
 
       function render(n) {
-        dom.innerHTML = ''
+        // Clear only renderEl — contentDOM stays permanently attached to dom.
+        renderEl.innerHTML = ''
         dom.setAttribute('data-id', n.attrs.id || '')
-        
+
         var outerBadge = document.createElement('span')
         outerBadge.className = 'web-clip-block__badge'
         outerBadge.textContent = 'WEB CLIP'
-        dom.appendChild(outerBadge)
+        renderEl.appendChild(outerBadge)
 
         var attrs = n.attrs
         var status = attrs.status || 'PENDING'
@@ -144,12 +171,12 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
           if (stale) {
             header.innerHTML = '<span class="web-clip-block__icon web-clip-block__icon--warn">⚠</span>' +
               '<span class="web-clip-block__label">' + modeLabel.replace('ing', '') + ' interrupted — ' + domain + '</span>'
-            dom.appendChild(header)
-            dom.appendChild(makeRetryBtn(attrs.id))
+            renderEl.appendChild(header)
+            renderEl.appendChild(makeRetryBtn(attrs.id))
           } else {
             header.innerHTML = '<span class="web-clip-block__spinner"></span>' +
               '<span class="web-clip-block__label">' + modeLabel + ' from ' + domain + '…</span>'
-            dom.appendChild(header)
+            renderEl.appendChild(header)
           }
 
         } else if (status === 'COMPLETE') {
@@ -170,27 +197,22 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
             titleEl.textContent = attrs.title
             header.appendChild(titleEl)
           }
-          dom.appendChild(header)
-          if (attrs.content) {
-            var contentEl = document.createElement('div')
-            contentEl.className = 'web-clip-block__content'
-            contentEl.innerHTML = renderMarkdown(attrs.content, editor)
-            applyHighlighting(contentEl)
-            dom.appendChild(contentEl)
-          }
+          renderEl.appendChild(header)
+          // The fetched/summarised body is rendered into contentDOM as real PM nodes
+          // (see getInitialContentHTML + the content-sync in update()), not here.
 
         } else if (status === 'TIMEOUT') {
           header.innerHTML = '<span class="web-clip-block__icon web-clip-block__icon--warn">⚠</span>' +
             '<span class="web-clip-block__label">Timed out — ' + domain + '</span>'
-          dom.appendChild(header)
-          dom.appendChild(makeRetryBtn(attrs.id))
+          renderEl.appendChild(header)
+          renderEl.appendChild(makeRetryBtn(attrs.id))
 
         } else if (status === 'ERROR') {
           var errMsg = (attrs.error || 'Unknown error').trim()
           header.innerHTML = '<span class="web-clip-block__icon web-clip-block__icon--error">✕</span>' +
             '<span class="web-clip-block__label">' + errMsg + '</span>'
-          dom.appendChild(header)
-          dom.appendChild(makeRetryBtn(attrs.id))
+          renderEl.appendChild(header)
+          renderEl.appendChild(makeRetryBtn(attrs.id))
         }
       }
 
@@ -198,34 +220,62 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
 
       return {
         dom: dom,
-        contentDOM: null,
+        contentDOM: contentDOM,
         update: function (updatedNode) {
-          if (updatedNode.type.name !== 'sieve-web-clip') return false
+          if (updatedNode.type.name !== nodeTypeName) return false
+          node = updatedNode
           render(updatedNode)
+          // Body (attrs.content) is synced into contentDOM by the framework markdown seam.
           return true
         },
-        ignoreMutation: function () { return true },
-        stopEvent: function (event) {
-          if (event.type === 'keydown' && (event.metaKey || event.ctrlKey)) return false
-          return event.type === 'keydown' || event.type === 'keyup' || event.type === 'keypress'
+        ignoreMutation: function (mutation) {
+          return !contentDOM.contains(mutation.target)
         },
       }
     },
 
-    buildContextMenuItems: function ({ node, editor, getPos }) {
-      function yaml() {
-        return node.attrs.serialisedForm || ''
+    // ── Plugins ───────────────────────────────────────────────────────────────
+
+    buildPlugins: function(nodeType) {
+      var Plugin = window.TipTap.Plugin
+
+      function isInside(state, from, to) {
+        var inside = false
+        state.doc.nodesBetween(from, to, function(node) {
+          if (node.type === nodeType) inside = true
+        })
+        return inside
       }
 
-      function del() {
-        if (typeof getPos === 'function') {
-          var pos = getPos()
-          editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize))
-        }
-      }
+      return [
+        new Plugin({
+          props: {
+            handleTextInput: function(view, from, to, text) {
+              return isInside(view.state, from, to)
+            },
+            handleKeyDown: function(view, event) {
+              if (event.key === 'Backspace' || event.key === 'Delete' || event.key === 'Enter') {
+                return isInside(view.state, view.state.selection.from, view.state.selection.to)
+              }
+              if (event.key.length === 1 && !event.metaKey && !event.ctrlKey) {
+                return isInside(view.state, view.state.selection.from, view.state.selection.to)
+              }
+              return false
+            },
+            handlePaste: function(view, event, slice) {
+              return isInside(view.state, view.state.selection.from, view.state.selection.to)
+            },
+            handleDrop: function(view, event, slice, moved) {
+              var pos = view.posAtCoords({ left: event.clientX, top: event.clientY })
+              if (pos && isInside(view.state, pos.pos, pos.pos)) return true
+              return false
+            }
+          }
+        })
+      ]
+    },
 
-
-
+    buildContextMenuItems: function ({ node }) {
       var status = node.attrs.status || 'PENDING'
       var isComplete = status === 'COMPLETE'
 
@@ -234,17 +284,10 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
       var modeLabel = node.attrs.mode === 'summarise' ? 'Summarised' : 'Fetched'
       var headerLabel = isComplete ? (modeLabel + ' from ' + domain) : domain
 
-      var IC = window.SieveIcons || {}
-
-      var items = [
-        { type: 'header', label: headerLabel },
-        { icon: IC.copy,  label: 'Copy', action: function () { navigator.clipboard.writeText(yaml()).catch(console.error) } },
-        { icon: IC.cut,   label: 'Cut',  action: function () { navigator.clipboard.writeText(yaml()).then(del).catch(console.error) } },
-        { icon: IC.trash, label: 'Delete', action: del },
-
-      ]
-
-      return items
+      // Copy/Cut/Delete are intentionally NOT here. Highlighted text copies natively;
+      // whole-block copy + the universal Delete come from the framework. The old
+      // bespoke Copy wrote the entire block's YAML instead of the selection.
+      return [{ type: 'header', label: headerLabel }]
     },
 
     buildAiCtx: function (node) {
