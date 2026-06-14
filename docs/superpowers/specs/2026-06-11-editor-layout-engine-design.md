@@ -147,7 +147,7 @@ columns:
 
 **Why not the `[!…]` / `blockRef` thin-wrapper (the readable-children alternative):** it would reuse the legacy block-anchor marker syntax (`[!block] … [!block-end]`), which *does* keep children readable — but it is parsed by the fragile `updateDOM` loop, **cannot nest**, and is being **retired** (§4). Building columns on it would extend a doomed mechanism. The YAML fence rides the **robust** path (js-yaml + `serialisedForm` + `InjectBlocks`) and avoids that parser entirely; the scalar-prose rule (above) buys back the readability without the fragility. Robustness + acceptable SNR beats the marker-wrapper's readability + fragility.
 
-> **Open spike (Stage 2):** the inner-fence mechanism is proven for one level (diagram = fenced code in YAML). Columns embed *arbitrary* blocks (including other fenced blocks). Confirm multi-level YAML `|` nesting composes 2–3 deep before banking on it.
+> **~~Open spike (Stage 2)~~ — RESOLVED 2026-06-14:** the inner-fence mechanism is proven for one level (diagram = fenced code in YAML). Columns embed *arbitrary* blocks (including other fenced blocks). ~~Confirm~~ Confirmed multi-level YAML `|` nesting composes 2–3 deep — `forceLiteralStyle`'s tree recursion keeps deep multiline scalars in `|-` literal style with structural indent a multiple of 4 (fence-safe at any depth). Verified by `sieve/columnrow_serializer_test.go:TestColumnRow_NestedScalarComposesUnderNesting` (depths 4 and 5) with a raw-output assertion + byte-stable round-trip.
 
 ---
 
