@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"sieve/sieve/fencedblock"
+
+	"github.com/yuin/goldmark/text"
 )
 
 // DocBlock is a node in the unified, ordered block tree (spec §2). It supersedes
@@ -55,6 +57,46 @@ func SerializeBlockDoc(doc BlockDoc) (string, error) {
 		parts = append(parts, s)
 	}
 	return strings.Join(parts, "\n\n"), nil
+}
+
+// ParseBlockDoc parses markdown into an ordered BlockDoc. Only TOP-LEVEL fenced
+// Sieve blocks (direct children of the document root) become structured
+// DocBlocks; everything between them — prose, headings, lists, and (Stage A)
+// legacy block-anchor regions — becomes one verbatim prose DocBlock per run.
+// Per-paragraph granularity and {id=} handles arrive in Stage B; container
+// child expansion arrives in Stage E.
+func ParseBlockDoc(markdown string) (BlockDoc, error) {
+	source := []byte(markdown)
+	root := mdParser().Parser().Parse(text.NewReader(source))
+
+	var out BlockDoc
+	cursor := 0
+
+	emitProse := func(end int) {
+		if end <= cursor {
+			return
+		}
+		raw := strings.Trim(string(source[cursor:end]), "\n")
+		if strings.TrimSpace(raw) != "" {
+			out.Blocks = append(out.Blocks, DocBlock{Kind: KindProse, Content: raw})
+		}
+	}
+
+	for n := root.FirstChild(); n != nil; n = n.NextSibling() {
+		sn, ok := n.(*sieveBlockNode)
+		if !ok {
+			continue // prose/anchor: absorbed into the surrounding run
+		}
+		emitProse(sn.StartByte())
+		out.Blocks = append(out.Blocks, DocBlock{
+			ID:    sn.SieveBlock.ID,
+			Kind:  sn.SieveBlock.Kind,
+			Attrs: sn.SieveBlock.Attrs,
+		})
+		cursor = sn.EndByte()
+	}
+	emitProse(len(source))
+	return out, nil
 }
 
 // serializeFencedBlock renders any block-mode kind as ```kind\n<yaml>\n```
