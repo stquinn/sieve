@@ -12,6 +12,13 @@
 
 ---
 
+## Progress / handoff log
+
+- **Stage A — COMPLETE** (2026-06-17). All four tasks (A1–A4) implemented via TDD; checkboxes ticked below. New files: `sieve/block_document.go`, `sieve/block_document_test.go`. `go test ./sieve/ -run BlockDoc` green; full `go test ./...` green (no regressions, nothing wired into the app yet). Commits: `Block model: DocBlock/BlockDoc types…` → `…round-trip stability test (mixed doc incl column-row)`.
+- **NEXT: Stage B** — bite-size it now per the roadmap below (universal `{id=}` handles + bijection). Start at B.1 (prose per-paragraph segmentation; needs the goldmark top-level byte-range helper deferred from Stage A). Stages B–F remain roadmap outlines until bite-sized.
+
+---
+
 ## Fidelity note (read before executing)
 
 This plan commits to the full pivot but front-loads fidelity honestly, per spec §11:
@@ -65,7 +72,7 @@ The spec's stages are **sequential, not independent subsystems** — each builds
 **Files:**
 - Create: `sieve/block_document.go`
 
-- [ ] **Step 1: Create the types and kind constants.**
+- [x] **Step 1: Create the types and kind constants.**
 
 ```go
 package sieve
@@ -102,12 +109,12 @@ const (
 )
 ```
 
-- [ ] **Step 2: Verify it compiles.**
+- [x] **Step 2: Verify it compiles.**
 
 Run: `go build ./sieve/`
 Expected: no output (success). No name collisions (`DocBlock`/`BlockDoc`/`KindProse` are new).
 
-- [ ] **Step 3: Commit.**
+- [x] **Step 3: Commit.**
 
 ```bash
 git add sieve/block_document.go
@@ -120,7 +127,7 @@ git commit -m "Block model: DocBlock/BlockDoc types + kind constants"
 - Modify: `sieve/block_document.go`
 - Create: `sieve/block_document_test.go`
 
-- [ ] **Step 1: Write the failing test.**
+- [x] **Step 1: Write the failing test.**
 
 ```go
 package sieve
@@ -146,12 +153,12 @@ func TestSerializeBlockDoc_ProseAndFence(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it to confirm it fails.**
+- [x] **Step 2: Run it to confirm it fails.**
 
 Run: `go test ./sieve/ -run TestSerializeBlockDoc_ProseAndFence -v`
 Expected: FAIL — `undefined: SerializeBlockDoc`.
 
-- [ ] **Step 3: Implement `SerializeBlockDoc` + `serializeFencedBlock`.** Add to `sieve/block_document.go` (and add `"strings"` and `"sieve/sieve/fencedblock"` to imports):
+- [x] **Step 3: Implement `SerializeBlockDoc` + `serializeFencedBlock`.** Add to `sieve/block_document.go` (and add `"strings"` and `"sieve/sieve/fencedblock"` to imports):
 
 ```go
 // SerializeBlockDoc assembles markdown from the block tree — the single
@@ -186,12 +193,12 @@ func serializeFencedBlock(b DocBlock) (string, error) {
 }
 ```
 
-- [ ] **Step 4: Run the test to confirm it passes.**
+- [x] **Step 4: Run the test to confirm it passes.**
 
 Run: `go test ./sieve/ -run TestSerializeBlockDoc_ProseAndFence -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```bash
 git add sieve/block_document.go sieve/block_document_test.go
@@ -203,7 +210,7 @@ git commit -m "Block spine: SerializeBlockDoc (registry-free fence serialization
 **Files:**
 - Modify: `sieve/block_document.go`, `sieve/block_document_test.go`
 
-- [ ] **Step 1: Write the failing test.** Parsing recognizes a fence only if a block-mode processor is registered for its kind (the existing goldmark gate), so register the real `CodeBlockProcessor` exactly as `markdown_parser_test.go:77` does.
+- [x] **Step 1: Write the failing test.** Parsing recognizes a fence only if a block-mode processor is registered for its kind (the existing goldmark gate), so register the real `CodeBlockProcessor` exactly as `markdown_parser_test.go:77` does.
 
 ```go
 func TestParseBlockDoc_ProseAndFence(t *testing.T) {
@@ -230,12 +237,12 @@ func TestParseBlockDoc_ProseAndFence(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it to confirm it fails.**
+- [x] **Step 2: Run it to confirm it fails.**
 
 Run: `go test ./sieve/ -run TestParseBlockDoc_ProseAndFence -v`
 Expected: FAIL — `undefined: ParseBlockDoc`.
 
-- [ ] **Step 3: Implement `ParseBlockDoc`.** Add to `sieve/block_document.go` (add `"github.com/yuin/goldmark/text"` to imports; `mdParser`, `sieveBlockNode` are already in-package from `markdown_parser.go`):
+- [x] **Step 3: Implement `ParseBlockDoc`.** Add to `sieve/block_document.go` (add `"github.com/yuin/goldmark/text"` to imports; `mdParser`, `sieveBlockNode` are already in-package from `markdown_parser.go`):
 
 ```go
 // ParseBlockDoc parses markdown into an ordered BlockDoc. Only TOP-LEVEL fenced
@@ -279,12 +286,12 @@ func ParseBlockDoc(markdown string) (BlockDoc, error) {
 }
 ```
 
-- [ ] **Step 4: Run the test to confirm it passes.**
+- [x] **Step 4: Run the test to confirm it passes.**
 
 Run: `go test ./sieve/ -run TestParseBlockDoc_ProseAndFence -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```bash
 git add sieve/block_document.go sieve/block_document_test.go
@@ -296,7 +303,7 @@ git commit -m "Block spine: ParseBlockDoc (top-level prose/fence segmentation)"
 **Files:**
 - Modify: `sieve/block_document_test.go`
 
-- [ ] **Step 1: Write the round-trip test.** Build a mixed doc programmatically (so we never hand-write YAML), serialize → parse → serialize, and assert byte-stability + structure. `column-row` is exercised as an opaque structured block (Stage A scope).
+- [x] **Step 1: Write the round-trip test.** Build a mixed doc programmatically (so we never hand-write YAML), serialize → parse → serialize, and assert byte-stability + structure. `column-row` is exercised as an opaque structured block (Stage A scope).
 
 ```go
 func TestBlockDoc_RoundTripStable(t *testing.T) {
@@ -334,17 +341,17 @@ func TestBlockDoc_RoundTripStable(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it.**
+- [x] **Step 2: Run it.**
 
 Run: `go test ./sieve/ -run TestBlockDoc_RoundTripStable -v`
 Expected: PASS. If it fails on the `column-row` block, confirm the parse gate sees a registered block-mode processor for `column-row` (the test registers one).
 
-- [ ] **Step 3: Run the whole stage + full suite (no regressions).**
+- [x] **Step 3: Run the whole stage + full suite (no regressions).**
 
 Run: `go test ./sieve/ -run BlockDoc -v && go test ./...`
 Expected: Stage A tests PASS; the pre-existing suite stays green (Stage A wires nothing).
 
-- [ ] **Step 4: Commit.**
+- [x] **Step 4: Commit.**
 
 ```bash
 git add sieve/block_document_test.go
