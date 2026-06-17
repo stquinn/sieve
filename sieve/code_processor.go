@@ -182,6 +182,8 @@ func (p *CodeBlockProcessor) JobLabel(_ *SieveBlock) string {
 	return "Refining language..."
 }
 
+func (p *CodeBlockProcessor) IDPrefix() string { return "cod" }
+
 func (p *CodeBlockProcessor) Mode() BlockMode {
 	return BlockModeBlock
 }

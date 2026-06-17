@@ -67,6 +67,8 @@ func (p *SmartLinkProcessor) Transform(entries []ContentEntry, _ string, _ strin
 
 func (p *SmartLinkProcessor) OnChange(_ *SieveBlock) {}
 
+func (p *SmartLinkProcessor) IDPrefix() string { return "lnk" }
+
 func (p *SmartLinkProcessor) Mode() BlockMode {
 	return BlockModeInline
 }

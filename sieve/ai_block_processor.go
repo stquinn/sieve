@@ -14,6 +14,8 @@ func NewAIBlockProcessor(svc BlockServices) *AIBlockProcessor {
 	return &AIBlockProcessor{svc: svc}
 }
 
+func (p *AIBlockProcessor) IDPrefix() string { return "ai" }
+
 func (p *AIBlockProcessor) Mode() BlockMode { return BlockModeBlock }
 
 func (p *AIBlockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {

@@ -18,6 +18,8 @@ func NewSmartCardProcessor(svc BlockServices) *SmartCardProcessor {
 	return &SmartCardProcessor{svc: svc}
 }
 
+func (p *SmartCardProcessor) IDPrefix() string { return "crd" }
+
 func (p *SmartCardProcessor) Mode() BlockMode { return BlockModeBlock }
 
 func (p *SmartCardProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {

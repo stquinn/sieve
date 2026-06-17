@@ -159,6 +159,8 @@ func (p *LogProcessor) BuildContext(block SieveBlock, _ ShadowDocument, seen map
 
 func (p *LogProcessor) JobLabel(_ *SieveBlock) string { return "" }
 
+func (p *LogProcessor) IDPrefix() string { return "log" }
+
 func (p *LogProcessor) Mode() BlockMode {
 	return BlockModeBlock
 }

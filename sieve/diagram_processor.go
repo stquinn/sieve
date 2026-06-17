@@ -17,6 +17,8 @@ func NewDiagramProcessor(svc BlockServices) *DiagramProcessor {
 	return &DiagramProcessor{svc: svc}
 }
 
+func (p *DiagramProcessor) IDPrefix() string { return "dia" }
+
 func (p *DiagramProcessor) Mode() BlockMode { return BlockModeBlock }
 
 func (p *DiagramProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
