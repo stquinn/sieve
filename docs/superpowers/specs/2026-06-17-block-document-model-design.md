@@ -47,11 +47,31 @@ The central architectural rule: **storage, wire, and editor-internal representat
 
 | Layer | What it is | Format |
 |---|---|---|
-| **Storage** (Store seam) | on-disk / DB | **markdown + `{id=}` anchors** — bijection to the block list |
+| **Storage** (Store seam) | on-disk / DB | **markdown + handle markers** — bijection to the block list (see §3.1) |
 | **Wire** (server↔frontend) | the block list + block ops | **Sieve-native envelope**: `{ id, kind, content, children? }`; prose `content` = **markdown string** |
 | **Editor-internal** (one frontend) | what TipTap happens to use | ProseMirror doc — converted at the frontend's own boundary, **never transported or stored** |
 
 Rationale (from fork #3): ProseMirror is the internal data structure of *one* frontend, not a format. Making PM-JSON the wire or storage format would couple the whole system to a frontend library — backwards from the architecture direction (multiple frontends behind a Go server + Store). A future non-PM frontend converts markdown → its own editor at *its* boundary; the wire stays neutral. Prose `content` travels as a **markdown string** (debuggable, consistent with markdown storage) rather than a portable inline AST.
+
+### 3.1 Handle markers (on-disk addressability)
+
+Every block carries a stable handle, persisted on disk so the reference graph survives reopen. Two persistence forms, by kind:
+
+- **Fenced blocks** (code, diagram, ai, container, …) — the handle is the `id:` field already in the YAML body. Unchanged.
+- **Prose blocks** — the handle is a **leading HTML-comment marker on its own line**, immediately above the block it labels:
+
+  ```
+  <!--s:pr-3f9a-->
+  The gateway validates the token.
+  ```
+
+**Marker rules:**
+- **`s:` is a sentinel namespace** so the strip pass recognises the comment as a Sieve handle (regex `<!--s:([\w-]+)-->`), distinct from any user-authored HTML comment.
+- **The handle value is `kindprefix-hex`** per `GenerateBlockID` (`processor_registry.go`) — e.g. prose → `pr-3f9a`. The kind prefix is a **cosmetic birth-time hint only**: resolution treats handles as **opaque** (§7), and all handles — prose markers and fenced `id:`s — share **one global namespace**, so a ref resolves to whichever block answers to the handle regardless of kind (and the prefix may go stale after a kind-flip — accepted).
+- **Pairing:** a marker line belongs to the block **immediately below it**. This aligns with the §7 churn rules — on split the head keeps its leading marker (keeps id) and a fresh marker is inserted above the tail (tail mints); on merge the tail's marker is deleted and its id folds into the head's handle-set.
+- **HTML comment is chosen** because it is invisible in *every* downstream markdown renderer (graceful degradation even without stripping) and goldmark treats it as a raw-HTML node (a stray marker cannot corrupt parsing).
+
+**Bypass goldmark — handle markers are NOT parsed as markdown.** They are processed by a deterministic **strip-from-editor / re-attach-on-save** line pass (the frontmatter pattern, CLAUDE.md), operating **only on prose spans** between fenced blocks. The id is never lost: it is **hidden in the editor view, retained in the block model, and always written back to disk.** This avoids inline-parser false positives (a user typing `{foo}`), and because the pass never touches fenced-block interiors, a marker pasted inside a code block cannot be corrupted. A *separate* export operation may strip handles entirely for sharing — that never touches canonical storage.
 
 ---
 

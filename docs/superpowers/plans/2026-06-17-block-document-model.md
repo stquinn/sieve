@@ -359,10 +359,12 @@ git commit -m "Block spine: round-trip stability test (mixed doc incl column-row
 
 **Dependencies:** Stage A. **Exit criteria:** parse→serialize preserves prose handles; a prose block edited in isolation keeps its handle; handle-set union on merge and fresh mint on split are implemented + Go-tested; anchors never reach the editor (strip-on-load / re-attach-on-save).
 
+**Marker decision (locked — spec §3.1):** prose handle = a **leading own-line HTML comment** `<!--s:KIND-hex-->` (e.g. `<!--s:pr-3f9a-->`), handle value via `GenerateBlockID` (kind prefix is a cosmetic hint; resolution is opaque, one global namespace). **Bypass goldmark** — a deterministic strip-from-editor / re-attach-on-save line pass operating **only on prose spans** (fenced blocks keep `id:` in YAML). Marker pairs to the block immediately below it. The id is hidden in the editor but always written back to disk.
+
 **Files & interfaces (bite-size when starting):**
-- `sieve/handle_anchor.go` — `{id=}` token parse/emit. Decide: goldmark inline parser vs a pre/post line pass (cf. the frontmatter strip pattern, CLAUDE.md "Frontmatter"). Functions: `attachHandles(BlockDoc) BlockDoc`, `stripHandles(markdown) (clean string, map[blockIndex]handle)`.
-- `sieve/block_document.go` — split prose runs into per-top-level-node `DocBlock`s; carry `ID` on prose.
-- Handle-set type: extend `DocBlock` with `Aliases []string` (absorbed handles) OR model `Handles []string`; implement `mergeHandles`/`splitHandles` (spec §7) + the "next save strips dangling refs" GC.
+- `sieve/handle_anchor.go` — marker strip/emit (NOT a goldmark parser). `stripHandles(markdown) (clean string, []handleAt)` where `handleAt = {handle string; blockIndex int}` pairs each `<!--s:…-->` to the prose block below it via regex `<!--s:([\w-]+)-->`; `attachHandles(BlockDoc) string` re-prepends a marker line above each prose block carrying an `ID`. Confine to prose spans (use the spine's top-level segmentation; never touch fenced-block byte ranges).
+- `sieve/block_document.go` — split prose runs into per-top-level-node `DocBlock`s (needs the deferred goldmark top-level byte-range helper); carry `ID` on prose blocks from the strip map.
+- Handle-set type: extend `DocBlock` with `Aliases []string` (absorbed handles); implement `mergeHandles` (union tail into head) / `splitHandles` (head keeps, tail mints via `GenerateBlockID`) per spec §7 + the "next save strips dangling refs" GC.
 
 **Task outline:**
 - B.1 prose per-paragraph segmentation (needs the goldmark top-level byte-range helper deferred from Stage A) + tests.
