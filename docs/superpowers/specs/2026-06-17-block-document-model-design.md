@@ -23,7 +23,7 @@ This design commits to the resolution reached in the brainstorm: **Sieve is a st
 ### Non-goals
 - **No new editor substrate.** ProseMirror/TipTap remains the frontend editor (spec §2 of the layout-engine spec stands). No React.
 - **No enforced referential integrity.** Refs are best-effort pointers (resolve-or-null); see §7.
-- **No big-bang rewrite.** Migration is strangler/seam-first (§9).
+- **No big-bang rewrite.** Migration is a **staged cutover sequenced for testability** (§11), not an all-at-once switch — but also **not** a strangler pattern (no live dual-path, no backward-compat shims; see §11).
 - **No sidecar metadata.** Prose is rich enough to be the single source of truth; baked blocks are recreatable from their prose via the existing Smart Paste / `PasteMatch` pipeline.
 
 ---
@@ -153,18 +153,23 @@ Because the backend owns the block list, **search/indexing runs server-side and 
 
 ---
 
-## 11. Migration — strangler / seam-first (one spec, staged plan)
+## 11. Migration — staged cutover (Go-testable core first)
 
-This is a large pivot delivered as **independently-verified seams**, never leaving the app broken between stages. The load-bearing **Store seam** does the heavy lifting; the existing `columnrow_serializer` (Go round-trip tested) is the precedent.
+This is a **one-time, internal cutover**, not a live system being incrementally replaced. Sieve is a single-user desktop app on a feature branch: there is no production traffic to route, and **no need to keep the old and new serialization paths coexisting**. So this is explicitly **not a strangler pattern** — there are **no backward-compatibility shims** keeping the old frontend alive against the new backend, because we never ship an intermediate state. We complete the cutover before running live.
 
-- **Stage A — Backend block model + serialization spine.** Block-list/tree types in Go; per-kind `BlockProcessor`; parse markdown → block-list and serialize block-list → markdown *behind the existing markdown interface*. Go round-trip tests. **Frontend unchanged.**
-- **Stage B — Universal handles.** Assign `{id=}` handles to all blocks (prose included), hidden in the editor (frontmatter-style strip on load / re-attach on save), stripped on export. Proves the markdown↔block-list bijection. Still behind the existing interface.
-- **Stage C — Wire protocol.** Block ops over WS (`create/update/delete/reorder/move`); the Sieve-native envelope; the prose **transaction observer** + debounce. Frontend begins consuming the block list.
-- **Stage D — Native frontend.** `BlockAnchor` transparent container; per-kind NodeViews driven by the block list; retire the JS *document-level* serializer (keep per-block inline only).
+The staging exists purely to **sequence the work for testability and bisectable failures**, front-loading the part that is cheapest to verify (the serialization core, proven by Go round-trip tests — precedent: `columnrow_serializer`).
+
+**Per-stage bar:** the build compiles and the relevant tests pass. Intermediate stages need **not** leave the app fully runnable end-to-end; the app becomes runnable again at the frontend cutover (Stage D) and stays so thereafter.
+
+**Order (each de-risks the next):**
+- **Stage A — Backend block model + serialization spine.** Block-list/tree types in Go; per-kind `BlockProcessor`; markdown → block-list and block-list → markdown, **proven in isolation by Go round-trip tests before any wiring.** The hardest-to-get-right, easiest-to-test part goes first.
+- **Stage B — Universal handles.** Assign `{id=}` handles to all blocks (prose included), hidden in the editor (frontmatter-style strip on load / re-attach on save), stripped on export. Proves the markdown↔block-list bijection. Go-tested.
+- **Stage C — Wire protocol.** Block ops over WS (`create/update/delete/reorder/move`); the Sieve-native envelope; the prose **transaction observer** + debounce.
+- **Stage D — Native frontend.** `BlockAnchor` transparent container; per-kind NodeViews driven by the block list; retire the JS *document-level* serializer (keep per-block inline only). **App runnable end-to-end again from here.**
 - **Stage E — Containers/tree + columns.** By-value containers; reframed `column-row`; **retire `blockRef`** onto the new container.
 - **Stage F — Lenses + search.** Layout/lineage projections; server-side tree search.
 
-Each stage produces working, shippable software. The implementation plan bite-sizes each stage just-in-time as its predecessor lands.
+The implementation plan bite-sizes each stage just-in-time as its predecessor lands.
 
 ---
 
@@ -185,7 +190,7 @@ After this pivot, the remaining layout-engine work (columns UI, lineage rail) re
 
 - **Transaction-observer correctness** — mapping continuous PM transactions to per-block `update-block` ops (range → owning handle, debounce, split/merge detection) is the trickiest new mechanism. Needs careful manual protocols (no JS test harness) plus Go-side round-trip coverage for the serialization it feeds.
 - **Undo integrity across handle churn** — split/merge must round-trip handles through undo without orphaning or duplicating. Explicit test cases.
-- **Migration seam discipline** — Stages A/B must stay strictly behind the existing markdown interface so the frontend keeps working; resist leaking the new model forward before Stage C.
+- **Non-runnable intermediate stages** — because we drop backward-compat shims (§11), the app is not runnable end-to-end between Stage A and Stage D, so UI/integration problems surface only at the frontend cutover. Mitigate with strong Go round-trip coverage on the serialization core, small stages, and reaching the runnable Stage D promptly.
 - **Bijection edge cases** — external edits that drop/alter `{id=}` anchors are a degraded mode (treated as new blocks); document the behavior, don't fight it.
 - **Clipboard/wire fidelity across the future web frontend** — the Sieve-native envelope must carry enough to reconstruct blocks on a non-PM frontend (architecture direction).
 - **Reconciler coupling (deferred)** — live lineage / dirty-glow (layout-engine Stage 4b) still depends on the separate reconciler/reference-graph project; out of scope here.
