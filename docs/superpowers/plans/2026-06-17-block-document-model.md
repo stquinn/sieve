@@ -432,6 +432,25 @@ git commit -m "Block spine: round-trip stability test (mixed doc incl column-row
 
 **Task outline:** D.1 BlockAnchor view; D.2 block-list → editor render; D.3 remove document-level JS serializer; D.4 end-to-end manual protocol + selection/copy-paste regression (reuse editor-layout Stage 1 protocols).
 
+### Bite-sized (2026-06-18, redo)
+
+**Anti-patterns that broke the reverted attempt — forbidden here:**
+- ❌ Mutating the doc inside `onUpdate` (the per-keystroke `ensureSieveBlockAnchorsAndIds` re-wrapper minted IDs every keystroke → "new line per char"). Block identity must come from the LOADED structure, fixed at load, not patched on every transaction.
+- ❌ Whole-tree re-diff on every keystroke. The observer maps only the *changed range* to its owning anchor.
+- ❌ `requestAnimationFrame`/`setTimeout` callbacks that call `view.nodeDOM`/`view.state` without a `view.isDestroyed`/docView guard (caused the `nodeDOM → descAt null` flood on tab-switch).
+
+**Verification gate (every task):** the headless CDP harness (`/tmp/cdp_probe2.mjs`) must show: editor mounts, **zero** console errors on load, and after typing N chars the **top-level block count is unchanged** (prose edits never create blocks). A note must be open — see the open-note helper note below.
+
+**Ordering keeps the app runnable** (it currently works via the doc-update bridge; each task is additive until D.3):
+
+- [ ] **D.1** `block-anchor-renderer.js` (fresh): transparent `contentDOM` container for prose — `content:'block+'`, `defining:true`, not atom, not draggable; `parseHTML` for `div[data-type="sieve-block-anchor"]`; NodeView `update` returns true only for same type. Register via `registerSieveRenderer('block-anchor', …)`; add `<script type="module">` after `diagram-renderer.js`. **Additive** — nothing emits the node yet, so the app is unchanged. Gate: page loads, module registers, no console errors.
+- [ ] **D.2** Render from the block list. Server: `editor_handler` sends `blocks` ([]FrontendBlock) in WYSIWYG load. Client: `mountWysiwyg(el, uuid, blocks)` builds document HTML (prose → `<div data-type=sieve-block-anchor data-id> <rendered-markdown> </div>`; structured → existing per-kind `data-*` div; containers nest) and `setContent(html)`. Reuse each node's existing `parseHTML` — NO manual ProseMirror JSON. Gate: open a real note, blocks render, count matches `len(blocks)`, no errors; markdown mode still serves `body`.
+- [ ] **D.3** Thin observer (replaces doc-update). On transaction (guarded; skip meta `sieve-sync`): find the anchor/structured block containing the changed range, debounce `update-block {uuid, blockId, content}`; remove the document-level `tiptap-markdown` serialize path (keep per-block inline md↔PM). Gate: typing emits `update-block` (not `doc-update`), block count invariant, save round-trips.
+- [ ] **D.4** Split (Enter at block boundary) → `create-block` + minted handle; merge (Backspace at block start) → `delete-block` + alias-union. Pure handle math already exists in Go (`splitHandles`/`mergeHandles`); JS emits ops, identity assigned at the boundary event only. Gate: Enter adds exactly one block, Backspace removes exactly one, undo stable.
+- [ ] **D.5** Regression sweep via CDP: free-flow prose typing, cross-paragraph selection, copy/paste of a sieve block, tab-switch (no `nodeDOM`/`descAt` errors), reopen.
+
+**Open-note helper (for the CDP gate):** the editor mounts on `#tiptap-mount[data-uuid]` via `initEditor` → `GET /api/editor/load?uuid=`. A fresh headless session has no active tab, so the harness must first open a note (create one through the app's note API or click a real note item) before `window.__tiptap` exists. Capture the chosen uuid + open sequence in the harness so D.1–D.5 gates are reproducible.
+
 ---
 
 ## Stage E — Containers / tree + columns (roadmap)
