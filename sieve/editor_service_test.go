@@ -9,24 +9,26 @@ import (
 
 func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
 	RegisterProcessor("ai-block", &testRunJobProcessor{})
-	md := "# Hello\n\n```ai-block\nid: ab-1234\nquestion: What?\nresponse: Old answer\nstatus: COMPLETE\n```\n\nSome prose."
+	// Authoritative block state lives in Doc; a setBlock update must win on save.
 	shadow := &ShadowDocument{
-		UUID:     "test-uuid",
-		Markdown: md,
-		Mode:     "wysiwyg",
-		Blocks: map[string]*SieveBlock{
-			"ab-1234": {
-				ID:   "ab-1234",
-				Kind: "ai-block",
-				Attrs: map[string]interface{}{
-					"id":       "ab-1234",
-					"question": "What?",
-					"response": "New answer",
-					"status":   "COMPLETE",
-				},
-			},
-		},
+		UUID: "test-uuid",
+		Mode: "wysiwyg",
+		Doc: BlockDoc{Blocks: []DocBlock{
+			{Kind: KindProse, Content: "# Hello"},
+			{ID: "ab-1234", Kind: "ai-block", Attrs: map[string]interface{}{
+				"id":       "ab-1234",
+				"question": "What?",
+				"response": "Old answer",
+				"status":   "COMPLETE",
+			}},
+			{Kind: KindProse, Content: "Some prose."},
+		}},
 	}
+	shadow.syncBlocksView()
+
+	shadow.setBlock(SieveBlock{ID: "ab-1234", Kind: "ai-block", Attrs: map[string]interface{}{
+		"response": "New answer",
+	}})
 
 	result := shadow.contentForSave()
 
@@ -66,19 +68,21 @@ func TestContentForSave_markdownModeIsVerbatim(t *testing.T) {
 	}
 }
 
-func TestContentForSave_emptyBlocksIsNoop(t *testing.T) {
+func TestContentForSave_roundTripsWysiwyg(t *testing.T) {
+	RegisterProcessor("ai-block", &testRunJobProcessor{})
+	t.Cleanup(func() { UnregisterProcessor("ai-block") })
 	md := "# Hello\n\n```ai-block\nid: ab-1234\nresponse: untouched\n```"
-	shadow := &ShadowDocument{
-		UUID:     "test-uuid",
-		Markdown: md,
-		Mode:     "wysiwyg",
-		Blocks:   make(map[string]*SieveBlock),
-	}
+	shadow := newShadow("test-uuid", md, 0, nil)
 
 	result := shadow.contentForSave()
 
-	if result != md {
-		t.Errorf("expected no change with empty Blocks, got:\n%s", result)
+	// Content is preserved through the serialization spine...
+	if !strings.Contains(result, "# Hello") || !strings.Contains(result, "response: untouched") {
+		t.Fatalf("expected content preserved, got:\n%s", result)
+	}
+	// ...and the serialization is stable (parse -> serialize -> parse is a fixpoint).
+	if again := newShadow("test-uuid", result, 0, nil).contentForSave(); again != result {
+		t.Fatalf("serialization not stable:\n first: %q\nsecond: %q", result, again)
 	}
 }
 
@@ -111,18 +115,15 @@ func TestShadowDocument_setBlockMergesAttrs(t *testing.T) {
 	shadow := &ShadowDocument{
 		UUID: "test-uuid",
 		Mode: "wysiwyg",
-		Blocks: map[string]*SieveBlock{
-			"cb-0001": {
-				ID:   "cb-0001",
-				Kind: "code",
-				Attrs: map[string]interface{}{
-					"id":       "cb-0001",
-					"source":   "old",
-					"language": "unknown",
-				},
-			},
-		},
+		Doc: BlockDoc{Blocks: []DocBlock{
+			{ID: "cb-0001", Kind: "code", Attrs: map[string]interface{}{
+				"id":       "cb-0001",
+				"source":   "old",
+				"language": "unknown",
+			}},
+		}},
 	}
+	shadow.syncBlocksView()
 
 	shadow.setBlock(SieveBlock{
 		Kind:  "code",
@@ -730,6 +731,11 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 
 	initialAttrs := map[string]interface{}{
 		"status": BlockStatusDispatched,
+		// A realistic recent createdAt: a freshly-created block is not "stuck", so
+		// resetStuckDispatched on the mid-job reopen must not re-dispatch it. (Now
+		// that created blocks persist through Close, this keeps the test focused on
+		// the recreate-mid-job behaviour it is actually exercising.)
+		"createdAt": time.Now().Format(time.RFC3339),
 	}
 
 	var blockID string

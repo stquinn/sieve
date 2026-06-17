@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 
@@ -314,69 +313,6 @@ func SerializeBlock(processor BlockProcessor, block *SieveBlock) (string, error)
 		return "", err
 	}
 	return "```" + block.Kind + "\n" + serialized + "\n```", nil
-}
-
-// InjectBlocks safely replaces block attributes in the AST and outputs the updated markdown.
-// It uses precise byte offsets gathered during AST parsing to splice the new strings into the original source.
-func InjectBlocks(markdown string, authoritativeBlocks map[string]*SieveBlock) string {
-	doc := mdParser().Parser().Parse(text.NewReader([]byte(markdown)))
-
-	// Collect nodes to replace
-	var nodes []sieveNode
-	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
-		if entering {
-			if sn, ok := n.(sieveNode); ok {
-				nodes = append(nodes, sn)
-			}
-		}
-		return ast.WalkContinue, nil
-	})
-
-	// If no authoritative blocks match, we just return the original markdown
-	if len(nodes) == 0 {
-		return markdown
-	}
-
-	// Sort nodes by start byte to safely splice backwards or left-to-right
-	sort.Slice(nodes, func(i, j int) bool {
-		return nodes[i].StartByte() < nodes[j].StartByte()
-	})
-
-	var out strings.Builder
-	lastEnd := 0
-
-	for _, n := range nodes {
-		blk := n.GetSieveBlock()
-		authBlk, exists := authoritativeBlocks[blk.ID]
-		if !exists {
-			// keep original
-			out.WriteString(markdown[lastEnd:n.EndByte()])
-			lastEnd = n.EndByte()
-			continue
-		}
-
-		processor := GetProcessor(authBlk.Kind)
-		if processor == nil {
-			out.WriteString(markdown[lastEnd:n.EndByte()])
-			lastEnd = n.EndByte()
-			continue
-		}
-
-		serialized, err := SerializeBlock(processor, authBlk)
-		if err != nil {
-			// fallback to original
-			out.WriteString(markdown[lastEnd:n.EndByte()])
-			lastEnd = n.EndByte()
-			continue
-		}
-
-		out.WriteString(markdown[lastEnd:n.StartByte()])
-		out.WriteString(serialized)
-		lastEnd = n.EndByte()
-	}
-
-	out.WriteString(markdown[lastEnd:])
-	return out.String()
 }
 
 // --- BlockAnchor Parsers and AST Nodes ---

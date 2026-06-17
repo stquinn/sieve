@@ -24,9 +24,14 @@ type SieveBlock struct {
 // ShadowDocument holds the in-memory editor state for one open document.
 // Mode controls how Flush and Remux behave ("wysiwyg" or "markdown").
 type ShadowDocument struct {
-	UUID     string
-	Markdown string                 // full document from TipTap; block rawYaml may be stale
-	Blocks   map[string]*SieveBlock // user-edited blocks; authoritative over shadow.Markdown
+	UUID string
+	// Doc is the authoritative ordered block tree (spec §2). In WYSIWYG mode it
+	// is the single source of truth for what gets saved — contentForSave just
+	// serializes it (blocks 1..N). It replaces the old "markdown is the model"
+	// pair (Markdown + Blocks overlaid via InjectBlocks).
+	Doc      BlockDoc
+	Markdown string                 // last full markdown (markdown mode + raw-markdown consumers)
+	Blocks   map[string]*SieveBlock // DERIVED view over Doc (temporary bridge); Attrs aliases Doc's map
 	Mode     string                 // "wysiwyg" (default) or "markdown"
 	debounce time.Duration
 	closed   bool // set by stopDebounce; prevents re-arming after Close
@@ -36,13 +41,50 @@ type ShadowDocument struct {
 }
 
 func newShadow(uuid, body string, debounce time.Duration, onFlush func()) *ShadowDocument {
-	return &ShadowDocument{
+	doc, err := ParseBlockDocWithHandles(body)
+	if err != nil {
+		logger.Warn("editor: parse block doc failed", "uuid", uuid, "err", err)
+	}
+	s := &ShadowDocument{
 		UUID:     uuid,
+		Doc:      doc,
 		Markdown: body,
-		Blocks:   ParseAllBlocks(body),
 		Mode:     "wysiwyg",
 		debounce: debounce,
 		onFlush:  onFlush,
+	}
+	s.syncBlocksView()
+	return s
+}
+
+// syncBlocksView rebuilds the derived Blocks map from the authoritative Doc.
+// Each SieveBlock.Attrs ALIASES the DocBlock.Attrs map (same reference), so the
+// existing call sites that mutate attrs in place (AI jobs, lifecycle) propagate
+// straight back into Doc. Prose blocks are excluded — the Blocks map has always
+// held only fenced (structured) blocks. Temporary bridge (caller holds s.mu).
+func (s *ShadowDocument) syncBlocksView() {
+	s.Blocks = make(map[string]*SieveBlock)
+	var walk func(blocks []DocBlock)
+	walk = func(blocks []DocBlock) {
+		for i := range blocks {
+			b := &blocks[i]
+			if b.Kind != KindProse && b.ID != "" {
+				s.Blocks[b.ID] = &SieveBlock{ID: b.ID, Kind: b.Kind, Attrs: b.Attrs}
+			}
+			walk(b.Children)
+		}
+	}
+	walk(s.Doc.Blocks)
+}
+
+// reparseDoc replaces Doc from the given markdown (WYSIWYG only) and refreshes
+// the derived view. Caller holds s.mu.
+func (s *ShadowDocument) reparseDoc(md string) {
+	if doc, err := ParseBlockDocWithHandles(md); err == nil {
+		s.Doc = doc
+		s.syncBlocksView()
+	} else {
+		logger.Warn("editor: reparse block doc failed", "uuid", s.UUID, "err", err)
 	}
 }
 
@@ -50,25 +92,32 @@ func (s *ShadowDocument) setMarkdown(md string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Markdown = md
+	if s.Mode == "wysiwyg" {
+		s.reparseDoc(md)
+	}
 	s.resetDebounce()
 }
 
-// setBlock creates or merges attrs into the named block. kind is only used
-// when creating a new entry; subsequent calls preserve the existing Kind.
+// setBlock creates or merges attrs into the named block in Doc. kind is only
+// used when creating a new entry; subsequent calls preserve the existing Kind.
 func (s *ShadowDocument) setBlock(block SieveBlock) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if blk, ok := s.Blocks[block.ID]; ok {
+	if b := s.Doc.findBlock(block.ID); b != nil {
+		if b.Attrs == nil {
+			b.Attrs = make(map[string]interface{}, len(block.Attrs))
+		}
 		for k, v := range block.Attrs {
-			blk.Attrs[k] = v
+			b.Attrs[k] = v
 		}
 	} else {
 		merged := make(map[string]interface{}, len(block.Attrs))
 		for k, v := range block.Attrs {
 			merged[k] = v
 		}
-		s.Blocks[block.ID] = &SieveBlock{ID: block.ID, Kind: block.Kind, Attrs: merged}
+		s.Doc.Blocks = append(s.Doc.Blocks, DocBlock{ID: block.ID, Kind: block.Kind, Attrs: merged})
 	}
+	s.syncBlocksView()
 	s.resetDebounce()
 }
 
@@ -78,11 +127,12 @@ func (s *ShadowDocument) setBlock(block SieveBlock) {
 func (s *ShadowDocument) replaceBlock(blockID string, block SieveBlock) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	blk, ok := s.Blocks[blockID]
-	if !ok {
+	b := s.Doc.findBlock(blockID)
+	if b == nil {
 		return
 	}
-	blk.Attrs = block.Attrs
+	b.Attrs = block.Attrs
+	s.syncBlocksView()
 	s.resetDebounce()
 }
 
@@ -91,8 +141,8 @@ func (s *ShadowDocument) replaceBlock(blockID string, block SieveBlock) {
 func (s *ShadowDocument) deleteBlockAttr(blockID, key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if blk, ok := s.Blocks[blockID]; ok {
-		delete(blk.Attrs, key)
+	if b := s.Doc.findBlock(blockID); b != nil {
+		delete(b.Attrs, key)
 	}
 }
 
@@ -123,15 +173,20 @@ func (s *ShadowDocument) stopDebounce() {
 // contentForSave returns the content that should be written to disk.
 // In markdown mode the user is editing raw YAML directly, so shadow.Markdown
 // is returned verbatim — no block substitution.
-// In WYSIWYG mode each block in shadow.Blocks is substituted into shadow.Markdown
-// so authoritative block state overwrites any stale rawYaml from TipTap.
+// In WYSIWYG mode the authoritative block tree is serialized (blocks 1..N) via
+// the single serialization spine — there is no InjectBlocks overlay anymore.
 func (s *ShadowDocument) contentForSave() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.Mode == "markdown" {
 		return s.Markdown
 	}
-	return InjectBlocks(s.Markdown, s.Blocks)
+	md, err := SerializeBlockDocWithHandles(s.Doc)
+	if err != nil {
+		logger.Warn("editor: serialize block doc failed", "uuid", s.UUID, "err", err)
+		return s.Markdown
+	}
+	return md
 }
 
 // Markdown parsing is now handled by markdown_parser.go
@@ -329,8 +384,8 @@ func (es *EditorService) EnterMarkdown(uuid string) string {
 }
 
 // EnterWysiwyg switches the shadow back to WYSIWYG mode.
-// It re-parses shadow.Blocks from the current shadow.Markdown so that any block
-// YAML the user edited directly in markdown mode is picked up for future Remux calls.
+// It re-parses the authoritative Doc from the current shadow.Markdown so that any
+// block YAML the user edited directly in markdown mode is picked up for save.
 func (es *EditorService) EnterWysiwyg(uuid string) {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
@@ -340,11 +395,11 @@ func (es *EditorService) EnterWysiwyg(uuid string) {
 		return
 	}
 	shadow.mu.Lock()
-	blocks := ParseAllBlocks(shadow.Markdown)
-	shadow.Blocks = blocks
+	shadow.reparseDoc(shadow.Markdown)
 	shadow.Mode = "wysiwyg"
+	n := len(shadow.Blocks)
 	shadow.mu.Unlock()
-	logger.Info("editor: enter-wysiwyg", "uuid", uuid, "blocks_reparsed", len(blocks))
+	logger.Info("editor: enter-wysiwyg", "uuid", uuid, "blocks_reparsed", n)
 }
 
 // Flush writes the Remuxed shadow to disk via DocumentService.
@@ -656,23 +711,32 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 			return
 		}
 		body := string(doc.Body())
-		blocks := ParseAllBlocks(body)
-		blk, ok := blocks[blockID]
-		if !ok {
+		blockDoc, err := ParseBlockDocWithHandles(body)
+		if err != nil {
+			logger.Warn("editor: job update failed to parse doc", "uuid", uuid, "err", err)
+			return
+		}
+		blk := blockDoc.findBlock(blockID)
+		if blk == nil {
 			logger.Warn("editor: job update target block missing from disk", "uuid", uuid, "block", blockID)
 			return
 		}
-		
-		if len(updates) > 0 {
-			for k, v := range updates {
-				blk.Attrs[k] = v
-			}
+
+		if blk.Attrs == nil {
+			blk.Attrs = make(map[string]interface{}, len(updates))
+		}
+		for k, v := range updates {
+			blk.Attrs[k] = v
 		}
 		for _, k := range deletes {
 			delete(blk.Attrs, k)
 		}
-		
-		newBody := InjectBlocks(body, blocks)
+
+		newBody, err := SerializeBlockDocWithHandles(blockDoc)
+		if err != nil {
+			logger.Warn("editor: job update failed to serialize doc", "uuid", uuid, "err", err)
+			return
+		}
 		doc.SetBody([]byte(newBody))
 		if _, err := es.documents.Save(doc); err != nil {
 			logger.Warn("editor: job update save to disk failed", "uuid", uuid, "err", err)
@@ -809,7 +873,13 @@ func (es *EditorService) PromoteBlock(uuid, blockID string) error {
 		return fmt.Errorf("block not found in markdown AST")
 	}
 	shadow.Markdown = newMarkdown
-	delete(shadow.Blocks, blockID)
+	// In WYSIWYG mode the authoritative Doc drives the save, so refresh it from
+	// the promoted markdown (this also drops the promoted block from the tree).
+	if shadow.Mode == "wysiwyg" {
+		shadow.reparseDoc(newMarkdown)
+	} else {
+		delete(shadow.Blocks, blockID)
+	}
 	shadow.resetDebounce()
 	shadow.mu.Unlock()
 
