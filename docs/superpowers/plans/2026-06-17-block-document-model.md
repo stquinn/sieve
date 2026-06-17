@@ -16,7 +16,8 @@
 
 - **Stage A — COMPLETE** (2026-06-17). All four tasks (A1–A4) implemented via TDD; checkboxes ticked below. New files: `sieve/block_document.go`, `sieve/block_document_test.go`. `go test ./sieve/ -run BlockDoc` green; full `go test ./...` green (no regressions, nothing wired into the app yet). Commits: `Block model: DocBlock/BlockDoc types…` → `…round-trip stability test (mixed doc incl column-row)`.
 - **Stage B — COMPLETE** (2026-06-17). Tasks B.1–B.4 implemented and passing, including stacked alias marker support for merged prose blocks on serialize/deserialize to ensure referential survival across reopens.
-- **NEXT: Stage C** — Wire protocol (block ops over WS).
+- **Stages C–F — ATTEMPTED BIG-BANG, REVERTED** (2026-06-17). An attempt implemented C–F as a single uncommitted big-bang cutover *without* the plan's mandated TDD / just-in-time bite-sizing / runnable checkpoints. It produced thousands of runtime errors across multiple subsystems (per-keystroke block creation via `ensureSieveBlockAnchorsAndIds` re-wrapping a trailing bare paragraph; `requestAnimationFrame(syncSieveChrome)` firing after EditorView destroy → `nodeDOM` null `descAt`; PM decoration/view desync → `Index N out of range`; `ws timeout: flush` on document switch; doc loading with an unwrapped trailing paragraph). Reproduced deterministically via headless-Chrome CDP against the dev server (typing `abc` grew the doc 8→11 top-level blocks). **Reverted** to the committed Stage A/B baseline (`8c72ca6`). The full attempt is preserved on branch **`wip/block-model-cf-attempt1`** (commit `0293f26`). Salvageable-for-reference Go pieces: `BlockDoc.CreateBlock/UpdateBlockContentAndAttrs/MoveBlock`, the `block-op` WS envelope (`ws_handler.go` + `EditorService.HandleBlockOp`), and `sieve/block_index.go` (+ test). The rotten core is the frontend per-keystroke observer in `editor.js` (+467/−22, zero tests) — do NOT cherry-pick it; redo with TDD.
+- **NEXT: Stage C — REDO per plan.** Bite-size C just-in-time; TDD each task; keep the app runnable. Repro fixture for the legacy `[!block]…[!block-end]` blockRef + `ai-block` case saved at `/tmp/sieve-repro-blockref.md` (re-home into `sieve/testdata/` when starting).
 
 ---
 
@@ -403,6 +404,17 @@ git commit -m "Block spine: round-trip stability test (mixed doc incl column-row
 - `frontend/src/static/editor.js` — transaction observer: map changed range → owning block handle → debounced `update-block`; detect split (`create-block` + mint) / merge (`delete-block` + union).
 
 **Task outline:** C.1 spine into flush (Go); C.2 block-op schema + handler (Go, table-tested); C.3 transaction observer (JS, manual `wails dev` protocol); C.4 split/merge → ops (JS + Go handle rules).
+
+### Bite-sized (2026-06-17, redo)
+
+**Lesson from the reverted attempt:** the JS observer was the rotten core (per-keystroke whole-tree diff, random ID minting, doc-mutation inside `onUpdate`, rAF-after-destroy). Build and prove the backend contract in Go FIRST, keep the JS thin, and TDD every Go task. Do NOT cherry-pick `editor.js` from `wip/block-model-cf-attempt1`.
+
+- [x] **C.2a** `sieve/block_op.go`: `BlockOp` type + `(*BlockDoc).ApplyOp` — pure create/update/delete/move transforms (top-level + nested), table-tested. Commit `fd25ae9`.
+- [ ] **C.2b** `EditorService.HandleBlockOp(uuid, op)` applies an op to the open `ShadowDocument` and re-debounces the flush; Go test against a live `EditorService` + in-memory store.
+- [ ] **C.1** Flush spine: `ShadowDocument` holds a `BlockDoc`; `contentForSave` goes through `SerializeBlockDocWithHandles` (retire `InjectBlocks`). Keep the `map[id]*SieveBlock` adapter only as long as other call sites need it; Go test the flush output round-trips.
+- [ ] **C.2c** WS routing: `ws_handler.go` decodes `{type:"block-op", op:{…}}` → `HandleBlockOp`; error envelope on failure. Table-test the decode + dispatch.
+- [ ] **C.3** JS transaction observer (THIN): map the changed range to its owning block handle → debounced `update-block {uuid, blockId, content}`. No whole-tree re-diff, no doc mutation inside `onUpdate`. Verify via the headless-CDP harness (`/tmp/cdp_probe.mjs`) that typing N chars sends update-block ops and does NOT change top-level block count.
+- [ ] **C.4** split (Enter) → `create-block` + mint; merge (Backspace) → `delete-block` + alias union. Go handle rules already exist (`splitHandles`/`mergeHandles`); JS only emits the ops. Verify count deltas via CDP harness.
 
 ---
 
