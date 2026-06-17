@@ -127,7 +127,28 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 			h.handlePromoteBlock(uuid, raw, writeMsg)
 		case "extract":
 			h.handleExtract(uuid, raw, writeMsg)
+		case "block-op":
+			h.handleBlockOp(uuid, raw, writeMsg)
 		}
+	}
+}
+
+// handleBlockOp applies one granular block operation (create/update/delete/move)
+// to the open document's authoritative block tree.
+func (h *WsHandler) handleBlockOp(uuid string, raw []byte, writeMsg func(interface{})) {
+	var msg struct {
+		Op sieve.BlockOp `json:"op"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		logger.Warn("ws: block-op decode failed", "uuid", uuid, "err", err)
+		return
+	}
+	if err := h.ServiceProvider.Editor.HandleBlockOp(uuid, msg.Op); err != nil {
+		logger.Warn("ws: block-op failed", "uuid", uuid, "op", msg.Op.Type, "block", msg.Op.BlockID, "err", err)
+		writeMsg(map[string]interface{}{
+			"type":    "error",
+			"message": fmt.Sprintf("block-op %s failed: %v", msg.Op.Type, err),
+		})
 	}
 }
 

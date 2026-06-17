@@ -349,6 +349,26 @@ func (es *EditorService) UpdateMarkdown(uuid, markdown string) {
 	shadow.setMarkdown(markdown)
 }
 
+// HandleBlockOp applies a granular wire op (create/update/delete/move) to the
+// open document's authoritative block tree and re-arms the autosave debounce.
+func (es *EditorService) HandleBlockOp(uuid string, op BlockOp) error {
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if shadow == nil {
+		return fmt.Errorf("block-op: no open document for uuid %q", uuid)
+	}
+
+	shadow.mu.Lock()
+	defer shadow.mu.Unlock()
+	if err := shadow.Doc.ApplyOp(op); err != nil {
+		return err
+	}
+	shadow.syncBlocksView()
+	shadow.resetDebounce()
+	return nil
+}
+
 // UpdateBlock merges attrs into the named block, creating it if needed.
 // kind is only used when creating a new block entry.
 func (es *EditorService) UpdateBlock(uuid string, block SieveBlock) {

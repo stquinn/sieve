@@ -1,13 +1,93 @@
 package sieve
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
 
+// C.2c — the WS envelope {type:"block-op", op:{...}} must decode into BlockOp
+// with the exact field names the frontend sends. Guards the wire contract.
+func TestBlockOp_DecodesWireEnvelope(t *testing.T) {
+	raw := []byte(`{
+		"type": "block-op",
+		"op": {
+			"type": "create-block",
+			"blockId": "co-1",
+			"kind": "code",
+			"content": "x = 1",
+			"attrs": {"source": "x = 1"},
+			"aliases": ["co-old"],
+			"index": 2,
+			"parentId": "col-1"
+		}
+	}`)
+	var msg struct {
+		Op BlockOp `json:"op"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	op := msg.Op
+	if op.Type != "create-block" || op.BlockID != "co-1" || op.Kind != "code" {
+		t.Fatalf("scalar fields wrong: %+v", op)
+	}
+	if op.Content != "x = 1" || op.Index != 2 || op.ParentID != "col-1" {
+		t.Fatalf("content/index/parent wrong: %+v", op)
+	}
+	if op.Attrs["source"] != "x = 1" {
+		t.Fatalf("attrs wrong: %+v", op.Attrs)
+	}
+	if len(op.Aliases) != 1 || op.Aliases[0] != "co-old" {
+		t.Fatalf("aliases wrong: %+v", op.Aliases)
+	}
+}
+
 // Stage C.2 — block-op apply semantics on the BlockDoc tree.
 // These are pure transforms, table-tested, with no editor/WS/browser involved.
 // They are the authoritative backend contract that the wire protocol carries.
+
+// C.2b — EditorService.HandleBlockOp applies a wire op to the open shadow's Doc
+// and the change persists on flush.
+func TestEditorService_HandleBlockOp_UpdatesAndPersists(t *testing.T) {
+	resetRegistry()
+	RegisterProcessor("code", &CodeBlockProcessor{})
+
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, 0)
+	doc, _ := ds.New()
+	doc.SetBody([]byte("Intro.\n\n```code\nid: co-1\nsource: x = 1\n```"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+	if err := es.Open(uuid, nil); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	err := es.HandleBlockOp(uuid, BlockOp{
+		Type: "update-block", BlockID: "co-1", Kind: "code",
+		Attrs: map[string]interface{}{"id": "co-1", "source": "y = 2"},
+	})
+	if err != nil {
+		t.Fatalf("HandleBlockOp: %v", err)
+	}
+	if err := es.Flush(uuid); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	reloaded, _ := ds.LoadByUUID(uuid)
+	body := string(reloaded.Body())
+	if !strings.Contains(body, "source: y = 2") || strings.Contains(body, "source: x = 1") {
+		t.Fatalf("op not persisted, disk body:\n%s", body)
+	}
+}
+
+func TestEditorService_HandleBlockOp_NoShadowErrors(t *testing.T) {
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, 0)
+	if err := es.HandleBlockOp("missing", BlockOp{Type: "update-block", BlockID: "x"}); err == nil {
+		t.Fatal("expected error when no document is open")
+	}
+}
 
 // C.1 — the disk-direct job-update path (no open shadow) must also go through
 // the serialization spine, not InjectBlocks. Characterization test: behavior is
