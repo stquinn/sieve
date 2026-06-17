@@ -66,19 +66,45 @@ func SerializeBlockDoc(doc BlockDoc) (string, error) {
 // Per-paragraph granularity and {id=} handles arrive in Stage B; container
 // child expansion arrives in Stage E.
 func ParseBlockDoc(markdown string) (BlockDoc, error) {
+	spans, err := segmentBlockDoc(markdown)
+	if err != nil {
+		return BlockDoc{}, err
+	}
+	out := BlockDoc{Blocks: make([]DocBlock, len(spans))}
+	for i, s := range spans {
+		out.Blocks[i] = s.block
+	}
+	return out, nil
+}
+
+// blockSpan is a parsed block plus the byte offset at which its content begins
+// in the (clean) source. The offset lets the handle layer (Stage B.2) pair a
+// stripped `<!--s:…-->` marker to the block immediately below it.
+type blockSpan struct {
+	block DocBlock
+	start int
+}
+
+// segmentBlockDoc is the offset-tracking core shared by ParseBlockDoc and the
+// handle-aware loader. Top-level Sieve fences become structured blocks; the
+// prose runs between them are split per-paragraph (splitProseRunSpans).
+func segmentBlockDoc(markdown string) ([]blockSpan, error) {
 	source := []byte(markdown)
 	root := mdParser().Parser().Parse(text.NewReader(source))
 
-	var out BlockDoc
+	var spans []blockSpan
 	cursor := 0
 
 	emitProse := func(end int) {
 		if end <= cursor {
 			return
 		}
-		raw := strings.Trim(string(source[cursor:end]), "\n")
-		for _, para := range splitProseRun(raw) {
-			out.Blocks = append(out.Blocks, DocBlock{Kind: KindProse, Content: para})
+		base := cursor
+		for _, frag := range splitProseRunSpans(string(source[cursor:end])) {
+			spans = append(spans, blockSpan{
+				block: DocBlock{Kind: KindProse, Content: frag.content},
+				start: base + frag.start,
+			})
 		}
 	}
 
@@ -88,15 +114,18 @@ func ParseBlockDoc(markdown string) (BlockDoc, error) {
 			continue // prose/anchor: absorbed into the surrounding run
 		}
 		emitProse(sn.StartByte())
-		out.Blocks = append(out.Blocks, DocBlock{
-			ID:    sn.SieveBlock.ID,
-			Kind:  sn.SieveBlock.Kind,
-			Attrs: sn.SieveBlock.Attrs,
+		spans = append(spans, blockSpan{
+			block: DocBlock{
+				ID:    sn.SieveBlock.ID,
+				Kind:  sn.SieveBlock.Kind,
+				Attrs: sn.SieveBlock.Attrs,
+			},
+			start: sn.StartByte(),
 		})
 		cursor = sn.EndByte()
 	}
 	emitProse(len(source))
-	return out, nil
+	return spans, nil
 }
 
 // splitProseRun divides a verbatim prose run into per-paragraph blocks
@@ -108,24 +137,52 @@ func ParseBlockDoc(markdown string) (BlockDoc, error) {
 // spine deliberately avoids fragile goldmark span math (which excludes code
 // fences). Empty/whitespace-only paragraphs are dropped.
 func splitProseRun(run string) []string {
-	lines := strings.Split(run, "\n")
-	var blocks []string
+	frags := splitProseRunSpans(run)
+	out := make([]string, len(frags))
+	for i, f := range frags {
+		out[i] = f.content
+	}
+	return out
+}
+
+// proseFrag is a paragraph plus its byte offset within the run it came from.
+type proseFrag struct {
+	content string
+	start   int
+}
+
+// splitProseRunSpans is splitProseRun with byte-offset tracking — see
+// splitProseRun for the segmentation contract. start is the offset of the
+// fragment's first content character within run.
+func splitProseRunSpans(run string) []proseFrag {
+	var frags []proseFrag
 	var cur []string
+	curStart := -1
 	inFence := false
 	fenceMarker := ""
+	pos := 0
 
 	flush := func() {
-		if len(cur) == 0 {
-			return
-		}
-		para := strings.Trim(strings.Join(cur, "\n"), "\n")
-		if strings.TrimSpace(para) != "" {
-			blocks = append(blocks, para)
+		if len(cur) > 0 {
+			joined := strings.Join(cur, "\n")
+			lead := len(joined) - len(strings.TrimLeft(joined, "\n"))
+			content := strings.Trim(joined, "\n")
+			if strings.TrimSpace(content) != "" {
+				frags = append(frags, proseFrag{content: content, start: curStart + lead})
+			}
 		}
 		cur = nil
+		curStart = -1
 	}
 
-	for _, ln := range lines {
+	lines := strings.Split(run, "\n")
+	for i, ln := range lines {
+		lineStart := pos
+		pos += len(ln)
+		if i < len(lines)-1 {
+			pos++ // the '\n' separator
+		}
+
 		trimmed := strings.TrimSpace(ln)
 		marker := ""
 		switch {
@@ -140,6 +197,9 @@ func splitProseRun(run string) []string {
 			} else if marker == fenceMarker {
 				inFence = false
 			}
+			if curStart == -1 {
+				curStart = lineStart
+			}
 			cur = append(cur, ln)
 			continue
 		}
@@ -147,10 +207,13 @@ func splitProseRun(run string) []string {
 			flush()
 			continue
 		}
+		if curStart == -1 {
+			curStart = lineStart
+		}
 		cur = append(cur, ln)
 	}
 	flush()
-	return blocks
+	return frags
 }
 
 // serializeFencedBlock renders any block-mode kind as ```kind\n<yaml>\n```
