@@ -77,8 +77,8 @@ func ParseBlockDoc(markdown string) (BlockDoc, error) {
 			return
 		}
 		raw := strings.Trim(string(source[cursor:end]), "\n")
-		if strings.TrimSpace(raw) != "" {
-			out.Blocks = append(out.Blocks, DocBlock{Kind: KindProse, Content: raw})
+		for _, para := range splitProseRun(raw) {
+			out.Blocks = append(out.Blocks, DocBlock{Kind: KindProse, Content: para})
 		}
 	}
 
@@ -97,6 +97,60 @@ func ParseBlockDoc(markdown string) (BlockDoc, error) {
 	}
 	emitProse(len(source))
 	return out, nil
+}
+
+// splitProseRun divides a verbatim prose run into per-paragraph blocks
+// (Stage B.1). It separates on blank lines while treating fenced code regions
+// (``` or ~~~) as atomic, so a blank line inside a code block never splits a
+// block. Tight lists (no blank lines between items) stay one block; blank-line-
+// separated content — including loose lists — becomes separate blocks. This is
+// an accepted fidelity cost: every fragment still round-trips verbatim, and the
+// spine deliberately avoids fragile goldmark span math (which excludes code
+// fences). Empty/whitespace-only paragraphs are dropped.
+func splitProseRun(run string) []string {
+	lines := strings.Split(run, "\n")
+	var blocks []string
+	var cur []string
+	inFence := false
+	fenceMarker := ""
+
+	flush := func() {
+		if len(cur) == 0 {
+			return
+		}
+		para := strings.Trim(strings.Join(cur, "\n"), "\n")
+		if strings.TrimSpace(para) != "" {
+			blocks = append(blocks, para)
+		}
+		cur = nil
+	}
+
+	for _, ln := range lines {
+		trimmed := strings.TrimSpace(ln)
+		marker := ""
+		switch {
+		case strings.HasPrefix(trimmed, "```"):
+			marker = "```"
+		case strings.HasPrefix(trimmed, "~~~"):
+			marker = "~~~"
+		}
+		if marker != "" {
+			if !inFence {
+				inFence, fenceMarker = true, marker
+			} else if marker == fenceMarker {
+				inFence = false
+			}
+			cur = append(cur, ln)
+			continue
+		}
+		if trimmed == "" && !inFence {
+			flush()
+			continue
+		}
+		cur = append(cur, ln)
+	}
+	flush()
+	return blocks
 }
 
 // serializeFencedBlock renders any block-mode kind as ```kind\n<yaml>\n```
