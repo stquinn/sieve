@@ -23,6 +23,20 @@ type DocBlock struct {
 	Content  string
 	Attrs    map[string]interface{}
 	Children []DocBlock
+	// Aliases are additional handles this block answers to, accumulated when
+	// other blocks merge into it (spec §7). ID is the primary handle; a ref
+	// resolves against ID or any alias.
+	Aliases []string
+}
+
+// answersTo returns every handle this block resolves to — its primary ID plus
+// any aliases absorbed via merges (spec §7).
+func (b DocBlock) answersTo() []string {
+	out := make([]string, 0, 1+len(b.Aliases))
+	if b.ID != "" {
+		out = append(out, b.ID)
+	}
+	return append(out, b.Aliases...)
 }
 
 // BlockDoc is an ordered list of top-level blocks — a tree wherever containers

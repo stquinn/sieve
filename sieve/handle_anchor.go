@@ -87,6 +87,43 @@ func ParseBlockDocWithHandles(markdown string) (BlockDoc, error) {
 	return doc, nil
 }
 
+// splitHandles applies the split handle rule (Enter mid-block, spec §7): the
+// head keeps ALL its handles unchanged; the tail mints exactly one fresh handle
+// and answers to nothing else. Undoing a split therefore just discards the tail
+// — the head was never touched, so no stray handle remains. Content assignment
+// is the caller's concern; this governs identity only.
+func splitHandles(head DocBlock) (DocBlock, DocBlock) {
+	tail := DocBlock{ID: GenerateBlockID(KindProse), Kind: KindProse}
+	return head, tail
+}
+
+// mergeHandles applies the merge handle rule (Backspace at start, spec §7): the
+// surviving head unions the tail's entire handle-set into its aliases, so it
+// answers to both and every existing ref to the tail still resolves with zero
+// referrer rewriting. head.ID stays primary; tail's id + aliases join
+// head.Aliases (deduped, head.ID excluded). Returns a fresh block without
+// mutating either input, so undo can restore the exact prior assignment.
+func mergeHandles(head, tail DocBlock) DocBlock {
+	seen := map[string]bool{}
+	var aliases []string
+	add := func(h string) {
+		if h == "" || h == head.ID || seen[h] {
+			return
+		}
+		seen[h] = true
+		aliases = append(aliases, h)
+	}
+	for _, a := range head.Aliases {
+		add(a)
+	}
+	add(tail.ID)
+	for _, a := range tail.Aliases {
+		add(a)
+	}
+	head.Aliases = aliases
+	return head
+}
+
 // SerializeBlockDocWithHandles is the handle-aware writer (the `attachHandles`
 // role from the plan): it serializes the block tree, re-prepending a marker
 // line above every prose block that carries an ID. Fenced blocks already
