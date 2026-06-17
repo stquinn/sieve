@@ -42,3 +42,37 @@ func TestParseBlockDoc_ProseAndFence(t *testing.T) {
 		t.Fatalf("block 2: %+v", doc.Blocks[2])
 	}
 }
+
+func TestBlockDoc_RoundTripStable(t *testing.T) {
+	RegisterProcessor("code", &CodeBlockProcessor{})
+	t.Cleanup(func() { UnregisterProcessor("code") })
+	RegisterProcessor("column-row", &CodeBlockProcessor{}) // any block-mode processor suffices for the parse gate
+	t.Cleanup(func() { UnregisterProcessor("column-row") })
+
+	doc := BlockDoc{Blocks: []DocBlock{
+		{Kind: KindProse, Content: "# Title\n\nIntro prose."},
+		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{"id": "co-1", "source": "x = 1"}},
+		{Kind: KindProse, Content: "Between."},
+		{ID: "cr-1", Kind: KindColumnRow, Attrs: map[string]interface{}{"id": "cr-1", "widths": []interface{}{0.5, 0.5}}},
+		{Kind: KindProse, Content: "Tail."},
+	}}
+
+	md1, err := SerializeBlockDoc(doc)
+	if err != nil {
+		t.Fatalf("serialize 1: %v", err)
+	}
+	parsed, err := ParseBlockDoc(md1)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(parsed.Blocks) != len(doc.Blocks) {
+		t.Fatalf("block count drift: want %d got %d", len(doc.Blocks), len(parsed.Blocks))
+	}
+	md2, err := SerializeBlockDoc(parsed)
+	if err != nil {
+		t.Fatalf("serialize 2: %v", err)
+	}
+	if md1 != md2 {
+		t.Fatalf("round-trip not stable:\n md1: %q\n md2: %q", md1, md2)
+	}
+}
