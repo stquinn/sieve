@@ -72,11 +72,17 @@ func ParseBlockDocWithHandles(markdown string) (BlockDoc, error) {
 	if err != nil {
 		return BlockDoc{}, err
 	}
+	offsetToHandles := make(map[int][]string)
 	for _, h := range handles {
-		for i := range spans {
-			if spans[i].block.Kind == KindProse && spans[i].start == h.offset {
-				spans[i].block.ID = h.handle
-				break
+		offsetToHandles[h.offset] = append(offsetToHandles[h.offset], h.handle)
+	}
+	for i := range spans {
+		if spans[i].block.Kind == KindProse {
+			if hs, ok := offsetToHandles[spans[i].start]; ok && len(hs) > 0 {
+				spans[i].block.ID = hs[0]
+				if len(hs) > 1 {
+					spans[i].block.Aliases = append([]string(nil), hs[1:]...)
+				}
 			}
 		}
 	}
@@ -133,8 +139,19 @@ func SerializeBlockDocWithHandles(doc BlockDoc) (string, error) {
 	for _, b := range doc.Blocks {
 		if b.Kind == KindProse {
 			content := b.Content
+			var sb strings.Builder
+			hasMarker := false
 			if b.ID != "" {
-				content = "<!--s:" + b.ID + "-->\n" + content
+				sb.WriteString("<!--s:" + b.ID + "-->\n")
+				hasMarker = true
+			}
+			for _, alias := range b.Aliases {
+				sb.WriteString("<!--s:" + alias + "-->\n")
+				hasMarker = true
+			}
+			if hasMarker {
+				sb.WriteString(content)
+				content = sb.String()
 			}
 			parts = append(parts, content)
 			continue

@@ -15,7 +15,8 @@
 ## Progress / handoff log
 
 - **Stage A — COMPLETE** (2026-06-17). All four tasks (A1–A4) implemented via TDD; checkboxes ticked below. New files: `sieve/block_document.go`, `sieve/block_document_test.go`. `go test ./sieve/ -run BlockDoc` green; full `go test ./...` green (no regressions, nothing wired into the app yet). Commits: `Block model: DocBlock/BlockDoc types…` → `…round-trip stability test (mixed doc incl column-row)`.
-- **NEXT: Stage B** — bite-size it now per the roadmap below (universal `{id=}` handles + bijection). Start at B.1 (prose per-paragraph segmentation; needs the goldmark top-level byte-range helper deferred from Stage A). Stages B–F remain roadmap outlines until bite-sized.
+- **Stage B — COMPLETE** (2026-06-17). Tasks B.1–B.4 implemented and passing, including stacked alias marker support for merged prose blocks on serialize/deserialize to ensure referential survival across reopens.
+- **NEXT: Stage C** — Wire protocol (block ops over WS).
 
 ---
 
@@ -378,6 +379,15 @@ git commit -m "Block spine: round-trip stability test (mixed doc incl column-row
 - B.2 `{id=}` anchor attach/strip + bijection round-trip tests.
 - B.3 handle-set (`Aliases`) + merge-union / split-mint + undo-stable handle assignment tests.
 - B.4 ref GC: strip non-resolving refs on serialize; tests.
+
+### Bite-sized (2026-06-17)
+
+**Segmentation tactic decided during bite-sizing:** the deferred "goldmark top-level byte-range helper" is NOT used. Empirically, goldmark `Lines()` excludes a fenced code block's ``` fences and panics on inline nodes, so AST spans corrupt regular code blocks inside prose. Instead, per-paragraph segmentation uses a **fence-aware blank-line splitter** (`splitProseRun`) over each prose run (the spine already isolates prose runs between Sieve fences via byte cursor). ``` / `~~~` regions are atomic. **Accepted fidelity cost:** blank-line-separated content (loose lists, multi-para list items) splits into separate prose blocks — each still byte-verbatim; tight lists stay one block.
+
+- [x] **B.1** `splitProseRun` (fence-aware) + `ParseBlockDoc` emits one prose `DocBlock` per paragraph; update round-trip test for per-paragraph counts. Tests: `TestSplitProseRun*`, `TestParseBlockDoc_PerParagraph`.
+- [x] **B.2** `sieve/handle_anchor.go`: `stripHandles(md) (clean, []handleAt{handle,offset})` + `attachHandles(BlockDoc) string`; `ParseBlockDocWithHandles` / `SerializeBlockDocWithHandles`; marker = own-line `<!--s:HANDLE-->` (regex `^\s*<!--s:([\w-]+)-->\s*$`), paired to the block whose clean-byte start equals the marker's next-line offset. Bijection round-trip tests (handles preserved; isolated edit keeps handle).
+- [x] **B.3** `DocBlock.Aliases []string`; `splitHandles(head) (head, tail)` (head keeps id+aliases, tail mints `GenerateBlockID("prose")`); `mergeHandles(head, tail) head` (head unions tail's id+aliases into Aliases). Pure funcs, table-tested incl. undo-stability (split→merge restores exact set).
+- [x] **B.4** `gcRefs(refs, resolvable) []string` (drop non-resolving outgoing refs) + `gcAliases(doc)` drops aliases nothing in the doc references. Pure transforms, tested. (Wiring to a live ref-producer lands in Stage E/F; here they are proven as pure functions per spec §7.)
 
 ---
 

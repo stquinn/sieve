@@ -1,6 +1,9 @@
 package sieve
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestStripHandles(t *testing.T) {
 	md := "<!--s:pr-aaaa-->\nFirst.\n\n<!--s:pr-bbbb-->\nSecond.\n\nNo handle here."
@@ -57,6 +60,34 @@ func TestHandles_Bijection(t *testing.T) {
 	}
 	if out != md {
 		t.Fatalf("bijection broken:\n got: %q\nwant: %q", out, md)
+	}
+}
+
+func TestHandles_MergedHandleSetPersists(t *testing.T) {
+	// A block that answers to a primary handle plus absorbed aliases (post-merge,
+	// spec §7) must persist every handle to disk so refs survive reopen.
+	doc := BlockDoc{Blocks: []DocBlock{
+		{ID: "pr-aaaa", Kind: KindProse, Content: "Merged block.", Aliases: []string{"pr-bbbb", "pr-cccc"}},
+	}}
+	md, err := SerializeBlockDocWithHandles(doc)
+	if err != nil {
+		t.Fatalf("serialize: %v", err)
+	}
+	want := "<!--s:pr-aaaa-->\n<!--s:pr-bbbb-->\n<!--s:pr-cccc-->\nMerged block."
+	if md != want {
+		t.Fatalf("stacked markers:\n got: %q\nwant: %q", md, want)
+	}
+
+	got, err := ParseBlockDocWithHandles(md)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got.Blocks) != 1 {
+		t.Fatalf("want 1 block, got %d: %+v", len(got.Blocks), got.Blocks)
+	}
+	b := got.Blocks[0]
+	if b.ID != "pr-aaaa" || strings.Join(b.Aliases, ",") != "pr-bbbb,pr-cccc" {
+		t.Fatalf("handle-set not restored: %+v", b)
 	}
 }
 
