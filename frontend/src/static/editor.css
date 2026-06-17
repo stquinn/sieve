@@ -101,6 +101,7 @@ textarea::selection {
 }
 
 .ai-block__badge::selection,
+.web-clip-block__badge::selection,
 .sieve-block__header::selection,
 .sieve-block__badge::selection,
 .sieve-code-block__gutter span::selection,
@@ -1074,6 +1075,8 @@ div.node-image.ProseMirror-selectednode {
   border: 1px solid var(--theme-border2);
   border-radius: 4px;
   z-index: 10;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .web-clip-block__status {
