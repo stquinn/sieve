@@ -1,5 +1,11 @@
 package sieve
 
+import (
+	"strings"
+
+	"sieve/sieve/fencedblock"
+)
+
 // DocBlock is a node in the unified, ordered block tree (spec §2). It supersedes
 // the flat map[id]*SieveBlock model for serialization. Which payload field is
 // meaningful depends on Kind:
@@ -30,3 +36,34 @@ const (
 	KindColumnRow = "column-row"
 	KindColumn    = "column"
 )
+
+// SerializeBlockDoc assembles markdown from the block tree — the single
+// serialization spine that replaces InjectBlocks (markdown_parser.go:321).
+// Prose blocks emit their verbatim Content; structured blocks emit a fenced
+// YAML block. Blocks are joined by a blank line (canonical spacing).
+func SerializeBlockDoc(doc BlockDoc) (string, error) {
+	parts := make([]string, 0, len(doc.Blocks))
+	for _, b := range doc.Blocks {
+		if b.Kind == KindProse {
+			parts = append(parts, b.Content)
+			continue
+		}
+		s, err := serializeFencedBlock(b)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, s)
+	}
+	return strings.Join(parts, "\n\n"), nil
+}
+
+// serializeFencedBlock renders any block-mode kind as ```kind\n<yaml>\n```
+// using the shared literal-style machinery — registry-free, so it serializes
+// code, diagram, column-row, etc. uniformly without needing a BlockProcessor.
+func serializeFencedBlock(b DocBlock) (string, error) {
+	body, err := fencedblock.SerializeYaml(b.Attrs)
+	if err != nil {
+		return "", err
+	}
+	return "```" + b.Kind + "\n" + body + "\n```", nil
+}
