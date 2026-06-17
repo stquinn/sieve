@@ -410,11 +410,13 @@ git commit -m "Block spine: round-trip stability test (mixed doc incl column-row
 **Lesson from the reverted attempt:** the JS observer was the rotten core (per-keystroke whole-tree diff, random ID minting, doc-mutation inside `onUpdate`, rAF-after-destroy). Build and prove the backend contract in Go FIRST, keep the JS thin, and TDD every Go task. Do NOT cherry-pick `editor.js` from `wip/block-model-cf-attempt1`.
 
 - [x] **C.2a** `sieve/block_op.go`: `BlockOp` type + `(*BlockDoc).ApplyOp` — pure create/update/delete/move transforms (top-level + nested), table-tested. Commit `fd25ae9`.
-- [ ] **C.2b** `EditorService.HandleBlockOp(uuid, op)` applies an op to the open `ShadowDocument` and re-debounces the flush; Go test against a live `EditorService` + in-memory store.
-- [ ] **C.1** Flush spine: `ShadowDocument` holds a `BlockDoc`; `contentForSave` goes through `SerializeBlockDocWithHandles` (retire `InjectBlocks`). Keep the `map[id]*SieveBlock` adapter only as long as other call sites need it; Go test the flush output round-trips.
-- [ ] **C.2c** WS routing: `ws_handler.go` decodes `{type:"block-op", op:{…}}` → `HandleBlockOp`; error envelope on failure. Table-test the decode + dispatch.
-- [ ] **C.3** JS transaction observer (THIN): map the changed range to its owning block handle → debounced `update-block {uuid, blockId, content}`. No whole-tree re-diff, no doc mutation inside `onUpdate`. Verify via the headless-CDP harness (`/tmp/cdp_probe.mjs`) that typing N chars sends update-block ops and does NOT change top-level block count.
-- [ ] **C.4** split (Enter) → `create-block` + mint; merge (Backspace) → `delete-block` + alias union. Go handle rules already exist (`splitHandles`/`mergeHandles`); JS only emits the ops. Verify count deltas via CDP harness.
+- [x] **C.1** Flush spine: `ShadowDocument` holds an authoritative `BlockDoc`; `contentForSave` goes through `SerializeBlockDocWithHandles`; `InjectBlocks` retired (both callers migrated, function deleted). `Blocks` map is now a derived view (Attrs aliased). Disk-direct job-update path migrated too. Existing tests migrated to the new model. Commit `97ee848`. **Plus** a fixture round-trip test on the user's real blockRef+ai-block doc (no content loss, stable serialization) — commit after `cf21072`.
+- [x] **C.2b** `EditorService.HandleBlockOp(uuid, op)` applies an op to the open `ShadowDocument`'s Doc + re-debounces. TDD against a live `EditorService` + in-memory store. Commit `cf21072`.
+- [x] **C.2c** WS routing: `ws_handler.go` decodes `{type:"block-op", op:{…}}` → `HandleBlockOp` with an error envelope; wire-contract decode test pins the JSON field names. Commit `cf21072`.
+
+**Go side of Stage C is complete and tested.** The app still round-trips through the existing `doc-update` path (full markdown → Go reparses to Doc → serializes Doc on save), which keeps it runnable. Nothing in the frontend emits block-ops yet.
+
+- [ ] **C.3 / C.4 — coupled to Stage D, do together.** The thin JS observer (changed range → owning block handle → debounced `update-block`; Enter→`create-block`+mint; Backspace→`delete-block`+alias-union) needs the editor to carry block identity, which only exists once Stage D renders from the block list with `sieve-block-anchor` wrappers. Doing C.3/C.4 before D is what forced the reverted attempt's fragile per-keystroke whole-tree re-wrapper. **Next chunk: Stage D native rendering + the thin observer, verified via the CDP harness (`/tmp/cdp_probe.mjs`): typing N chars must emit `update-block` ops and NOT change the top-level block count.**
 
 ---
 
