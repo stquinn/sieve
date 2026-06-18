@@ -33,6 +33,19 @@ Two senses of "children", kept distinct: **content** (what a Block is made of �
 prose paragraphs, code lines) vs **child blocks** (independent Blocks a Container
 groups).
 
+### Naming: the prose block is `prose`, not `block-anchor`
+Node name == kind, no exceptions: `sieve-prose`, `sieve-code`, `sieve-diagram`,
+`sieve-image`. The D.1 name `block-anchor` is retired — "block" is superfluous
+(the `sieve-` prefix already means Sieve Block) and "anchor" both no longer
+distinguishes anything (every block carries a handle) and collides with Sieve's
+existing gutter/lineage "anchor" concept. Mechanical rename (do it first, before
+layering more on the old name):
+- `block-anchor-renderer.js` → `prose-renderer.js`
+- `registerSieveRenderer('block-anchor', …)` → `'prose'`
+- node `sieve-block-anchor` → `sieve-prose` (and `data-type` in `block-render.js`)
+- `name === 'sieve-block-anchor'` checks in `editor.js`
+- `index.html` script tag
+
 ### Leaf constraint is Sieve policy, enforced via the PM schema
 PM is **mechanism, not policy** — it enforces whatever `content:` expression we
 declare and has no opinion otherwise. "A prose Block can't contain a code Block"
