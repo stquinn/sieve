@@ -45,3 +45,23 @@ func TestBlockDocToFrontendBlocks_ProseAndStructured(t *testing.T) {
 		t.Fatalf("prose block 2: %+v", fbs[2])
 	}
 }
+
+// Structured blocks travel as their PROPERTIES (Attrs), not just a fence string —
+// the block model is properties-in/properties-out, so the client renders the
+// NodeView straight from attrs (no markdown re-parse). Prose carries no attrs.
+func TestBlockDocToFrontendBlocks_StructuredCarriesAttrs(t *testing.T) {
+	doc := BlockDoc{Blocks: []DocBlock{
+		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{"id": "co-1", "source": "x = 1"}},
+		{ID: "pr-1", Kind: KindProse, Content: "Prose."},
+	}}
+	fbs, err := BlockDocToFrontendBlocks(doc)
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	if fbs[0].Attrs == nil || fbs[0].Attrs["source"] != "x = 1" || fbs[0].Attrs["id"] != "co-1" {
+		t.Fatalf("structured block must carry attrs: %+v", fbs[0].Attrs)
+	}
+	if fbs[1].Attrs != nil {
+		t.Fatalf("prose block must not carry attrs: %+v", fbs[1].Attrs)
+	}
+}

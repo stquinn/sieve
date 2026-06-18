@@ -9,10 +9,19 @@ package sieve
 // structured block through its existing renderer — no ProseMirror JSON crosses
 // the wire.
 type FrontendBlock struct {
-	ID             string   `json:"id"`
-	Kind           string   `json:"kind"`
-	Content        string   `json:"content,omitempty"`        // prose: verbatim markdown
-	SerialisedForm string   `json:"serialisedForm,omitempty"` // structured: ```kind\n<yaml>\n```
+	ID   string `json:"id"`
+	Kind string `json:"kind"`
+	// Content is prose: verbatim markdown.
+	Content string `json:"content,omitempty"`
+	// Attrs is the structured block's PROPERTIES — the block model is
+	// properties-in/properties-out, so the client renders the NodeView straight
+	// from these (no markdown re-parse). Nil for prose.
+	Attrs map[string]interface{} `json:"attrs,omitempty"`
+	// SerialisedForm is the structured block's ```kind\n<yaml>\n``` fence.
+	// TRANSITIONAL: kept while the client migrates from rendering structured
+	// blocks via markdownit to rendering straight from Attrs; remove once the
+	// attrs path is proven (then Go serializes fences only at the disk boundary).
+	SerialisedForm string   `json:"serialisedForm,omitempty"`
 	Aliases        []string `json:"aliases,omitempty"`
 }
 
@@ -29,6 +38,9 @@ func BlockDocToFrontendBlocks(doc BlockDoc) ([]FrontendBlock, error) {
 		if b.Kind == KindProse {
 			fb.Content = b.Content
 		} else {
+			// Properties-native: the client renders structured NodeViews from Attrs.
+			fb.Attrs = b.Attrs
+			// Transitional fence text (removed once the attrs path is proven).
 			s, err := serializeFencedBlock(b)
 			if err != nil {
 				return nil, err
