@@ -41,12 +41,21 @@ function proseOp(type, b, index) {
 // a change-signature, never emitted as an op here).
 // prev: { [id]: sig } from the last successful sync, or null on the first call.
 // → { mode: 'ops' | 'fallback', ops: [BlockOp], next: { [id]: sig } }
+// isPendingEmptyProse reports a brand-new prose block with no content — the empty
+// editing surface of a new doc. It is not a real block until the user types, so
+// it is excluded from the baseline + ops; create-block fires on first content.
+function isPendingEmptyProse(b, prev) {
+  return b.kind === 'prose' && !(b.content && b.content.length) && !(prev && b.id in prev)
+}
+
 export function computeBlockSync(curr, prev) {
   var next = {}
   var anyEmptyId = false
   for (var i = 0; i < curr.length; i++) {
-    if (!curr[i].id) anyEmptyId = true
-    next[curr[i].id] = blockSig(curr[i])
+    var cb = curr[i]
+    if (!cb.id) { anyEmptyId = true; continue }
+    if (isPendingEmptyProse(cb, prev)) continue
+    next[cb.id] = blockSig(cb)
   }
 
   // Can't address a block without an id → defensive whole-document fallback.
@@ -75,6 +84,7 @@ export function computeBlockSync(curr, prev) {
   for (var k = 0; k < curr.length; k++) {
     var p = curr[k]
     if (p.kind !== 'prose') continue
+    if (!(p.id in next)) continue // pending empty surface — not a real block yet
     if (!(p.id in prev)) {
       ops.push(proseOp('create-block', p, k))
     } else if (prev[p.id] !== next[p.id]) {

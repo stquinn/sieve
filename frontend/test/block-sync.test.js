@@ -122,6 +122,22 @@ describe('computeBlockSync', () => {
     ])
   })
 
+  it('a brand-new EMPTY prose block is not synced until it has content', () => {
+    // The empty prose surface of a new doc is just the cursor target — no
+    // create-block until the user types (user choice: create on first content).
+    const r1 = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: '' }], {})
+    expect(r1.ops).toEqual([])
+    expect(r1.next).toEqual({}) // not tracked, so a later content-add reads as new
+    const r2 = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'hi' }], r1.next)
+    expect(r2.ops).toEqual([{ type: 'create-block', blockId: 'pr-1', kind: 'prose', content: 'hi', index: 0 }])
+  })
+
+  it('emptying an EXISTING prose block emits an update, not a skip', () => {
+    const prev = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'hello' }], null).next
+    const r = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: '' }], prev)
+    expect(r.ops).toEqual([{ type: 'update-block', blockId: 'pr-1', kind: 'prose', content: '' }])
+  })
+
   it('falls back when any block has no id (defensive only — minting should precede)', () => {
     const prev = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'A' }], null).next
     const r = computeBlockSync([
