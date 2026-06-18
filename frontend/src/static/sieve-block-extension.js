@@ -220,12 +220,15 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from
               var { entries, extractSourceLabel } = extractContentEntryFromEditor( e, editor);
 
               if(entries == undefined || !entries) {
-                //nothign more intersting than the sieve block itself was clicked on, 
-                // but if the renderer supports it, we can extract a content entry from 
+                //nothign more intersting than the sieve block itself was clicked on,
+                // but if the renderer supports it, we can extract a content entry from
                 extractSourceLabel = renderer.getFriendlyName ? renderer.getFriendlyName(n) : n.attrs.kind || 'block';
-                entries =  renderer.asContentEntry(n);
+                entries = renderer.asContentEntry ? renderer.asContentEntry(n) : null;
               }
-              
+              // A renderer may have no content entry (e.g. a prose block) → ensure
+              // an array before the framework push so we never crash on null.
+              if (!entries) entries = [];
+
               //framework-level auto extraction for any sieve block, if the renderer supports it.
               entries.push({ mimeType: 'sieve/' + node.attrs.kind, content: node.attrs.serialisedForm })
               
@@ -517,7 +520,15 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from
   }
 
   function getSieveNodes() {
-    return Object.keys(nodeRegistry).map(function (k) { return nodeRegistry[k] })
+    // sieve-prose MUST be declared first among the sieveBlock group: PM's
+    // createAndFill auto-fill is purely structural — it grabs the FIRST
+    // instantiable node type in the required group (schema-declaration order),
+    // with no notion of a default. Listing prose first makes every auto-fill
+    // (empty doc, trailing/gap fill) a prose block, not a stray ai-block atom.
+    var keys = Object.keys(nodeRegistry).sort(function (a, b) {
+      return a === 'prose' ? -1 : b === 'prose' ? 1 : 0
+    })
+    return keys.map(function (k) { return nodeRegistry[k] })
   }
 
   // replaceSource: when true the source node is REPLACED by the new Sieve block

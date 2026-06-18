@@ -296,11 +296,13 @@
           onToggleAiBlocks: toggleAiBlocks,
         }),
       ]),
-      // Start empty: under the strict top-level-blocks schema a raw markdown body
-      // (bare paragraphs) is not a valid document, so we never seed it directly.
-      // renderBlocksIntoEditor populates real content from the block list; an
-      // empty doc createAndFills to one empty sieve-prose (which the minter ids).
-      content: '',
+      // Seed an explicit empty prose block. Under the strict top-level-blocks
+      // schema a raw markdown body (bare paragraphs) is invalid, and an empty
+      // string makes PM createAndFill pick the FIRST sieveBlock type — which is
+      // NOT sieve-prose (it grabbed an ai-block atom → empty ERROR box on every
+      // new doc). Seeding sieve-prose explicitly is deterministic; the minter ids
+      // it, and renderBlocksIntoEditor replaces it for a non-empty doc.
+      content: '<div data-type="sieve-prose"><p></p></div>',
       editorProps: {
         attributes: { spellcheck: 'true' },
         handleDOMEvents: {
