@@ -16,6 +16,39 @@ Anywhere blank lines currently influence parsing (e.g. `segmentBlockDoc` /
 marker "binding to the next block") is the exact ambiguity to remove. Blank lines
 are content; they carry no structural signal.
 
+## Vocabulary (Block vs Container) — load-bearing
+
+"Block" was overloaded; fix the words:
+
+- **Block = a LEAF.** Represents one content *type* (`Kind = prose | code | image
+  | diagram | …`). It has **content** but no child **blocks**. Opaque to the block
+  scanner. The new `sieve-block-anchor` is a **prose Block (leaf)** — not a
+  container. Its paragraphs are its *content* (ProseMirror child nodes), not child
+  blocks. It only *looks* like a container because PM's `content:'block+'` literally
+  holds child nodes — that's PM's meaning of "contains," not Sieve's.
+- **Container = groups child Blocks/Containers** (`Kind = column-row`, and the tab
+  root). The only thing that nests; only Containers are scanned for child blocks.
+
+Two senses of "children", kept distinct: **content** (what a Block is made of —
+prose paragraphs, code lines) vs **child blocks** (independent Blocks a Container
+groups).
+
+### Leaf constraint is Sieve policy, enforced via the PM schema
+PM is **mechanism, not policy** — it enforces whatever `content:` expression we
+declare and has no opinion otherwise. "A prose Block can't contain a code Block"
+is a **Sieve** decision *expressed* in the schema:
+- The prose block-anchor's `content` allows prose nodes (paragraph/heading/list/
+  blockquote) and **excludes** sieve-* and container nodes.
+- Structured Blocks + Containers live at the doc/container level (siblings).
+- **Why:** to keep a prose Block an opaque leaf in storage. If PM let a sieve node
+  sit in the anchor's contentDOM, the serialized prose Block would contain a fence
+  inside its delimiters → the scanner must descend into prose → prose stops being
+  opaque → marker-collision hole reopens.
+- **Free payoff:** insert a code Block mid-prose and PM (node disallowed here but
+  allowed at the parent) runs its native split-to-place — it **splits the prose
+  Block and drops the code Block between as a sibling**. That is the "insert splits"
+  behaviour with no bespoke split command; the schema does it.
+
 ## Whitespace: the XML rule (a content-fidelity requirement)
 
 One rule, like XML: whitespace **between** blocks (outside the delimiters) is
@@ -77,16 +110,17 @@ explicitly in the editor** (split mints a delimiter pair), never inferred from
 blank lines. Consequence: a hand-written markdown file with N blank-line-separated
 paragraphs opens as ONE prose block until the user explicitly splits it.
 
-### Consequence: a block is a container of children
-With whitespace non-structural, a prose block's content is arbitrary markdown
-(multiple paragraphs, lists). The earlier "one paragraph per block" assumption is
-**revised**: a block is a **container of children**, block extent is
-delimiter-only, and the editor anchor (`content:'block+'`) already holds
-multi-node content.
+### Consequence: a prose Block holds multi-paragraph content (not child blocks)
+With whitespace non-structural, a prose Block's **content** is arbitrary prose
+markdown (multiple paragraphs, lists). The earlier "one paragraph per block"
+assumption is **revised**: block extent is delimiter-only and the prose
+block-anchor (`content` = prose nodes) holds multiple paragraphs as content. This
+is content, not child blocks — a prose Block is a leaf (see Vocabulary); only
+Containers hold child blocks.
 
-This makes whitespace preservation mostly **free**: a blank line inside a block
-is just a markdown paragraph break → a child paragraph node → round-trips as a
-blank-line-separated paragraph. Meaningful whitespace (paragraph breaks) is
+This makes whitespace preservation mostly **free**: a blank line inside a Block
+is a markdown paragraph break → a child paragraph *node* (content) → round-trips as
+a blank-line-separated paragraph. Meaningful whitespace (paragraph breaks) is
 preserved by construction; only exotic whitespace (3+ consecutive blanks, trailing
 spaces) is lossy, and that is accepted.
 
