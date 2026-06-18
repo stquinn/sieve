@@ -412,36 +412,13 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from
                       : self.renderToken(tokens, idx, options)
                   }
 
+                  // The fence reconstructs the properties map (data) by parsing
+                  // its YAML; build the data-* div from it via the SAME helper
+                  // block-render.js uses with Go-sent attrs — one builder, exact
+                  // parity across the load-from-markdown and load-from-attrs paths.
                   var markup = token.markup || '```'
                   var serialisedForm = markup + token.info + '\n' + token.content + markup
-
-                  var htmlAttrs = [
-                    'data-type="'     + dataType + '"',
-                    'data-kind="'     + esc(kind) + '"',
-                    'data-id="'       + esc(data.id) + '"',
-                    'data-serialised-form="' + esc(serialisedForm) + '"',
-                    'data-status="'   + esc(data.status || 'PENDING') + '"',
-                  ]
-                  if (renderer.parseAttrs) {
-                    var extra = renderer.parseAttrs(data)
-                    Object.keys(extra).forEach(function (k) {
-                      var kebab = k.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()
-                      htmlAttrs.push('data-' + kebab + '="' + esc(String(extra[k] != null ? extra[k] : '')) + '"')
-                    })
-                  }
-                  if (data.createdAt) {
-                    htmlAttrs.push('data-created-at="' + esc(data.createdAt) + '"')
-                  }
-                  if (data.supportsEmbedding) {
-                    htmlAttrs.push('data-supports-embedding="true"')
-                  }
-
-                  var innerHTML = ''
-                  if (!cfg.atom && renderer.getInitialContentHTML) {
-                    innerHTML = renderer.getInitialContentHTML(data)
-                  }
-
-                  return '<' + tag + ' ' + htmlAttrs.join(' ') + '>' + innerHTML + '</' + tag + '>\n'
+                  return buildSieveBlockHTML(kind, data, serialisedForm)
                 }
               },
             },
@@ -459,6 +436,49 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from
   function registerSieveRenderer(kind, renderer) {
     nodeRegistry[kind] = createSieveNode(kind, renderer)
     renderers[kind] = renderer
+  }
+
+  // buildSieveBlockHTML assembles a structured block's data-* div from its
+  // PROPERTIES map (data) — the single builder shared by the markdownit fence
+  // rule (load-from-markdown) and block-render.js (load-from-attrs), so both emit
+  // byte-identical HTML that each renderer's parseHTML consumes. The block model
+  // is properties-in: block-render passes Go-sent attrs straight in, no fence
+  // parse. serialisedForm is the TRANSITIONAL data-serialised-form payload (paste
+  // / markdown-serialize) and may be '' once those paths migrate off it.
+  function buildSieveBlockHTML(kind, data, serialisedForm) {
+    var renderer = renderers[kind]
+    if (!renderer || !data || !data.id) return ''
+    var cfg = Object.assign({}, DEFAULT_NODE_CONFIG, renderer.nodeConfig || {})
+    var tag = cfg.inline ? 'span' : 'div'
+    var dataType = 'sieve-' + kind
+
+    var htmlAttrs = [
+      'data-type="'     + dataType + '"',
+      'data-kind="'     + esc(kind) + '"',
+      'data-id="'       + esc(data.id) + '"',
+      'data-serialised-form="' + esc(serialisedForm || '') + '"',
+      'data-status="'   + esc(data.status || 'PENDING') + '"',
+    ]
+    if (renderer.parseAttrs) {
+      var extra = renderer.parseAttrs(data)
+      Object.keys(extra).forEach(function (k) {
+        var kebab = k.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()
+        htmlAttrs.push('data-' + kebab + '="' + esc(String(extra[k] != null ? extra[k] : '')) + '"')
+      })
+    }
+    if (data.createdAt) {
+      htmlAttrs.push('data-created-at="' + esc(data.createdAt) + '"')
+    }
+    if (data.supportsEmbedding) {
+      htmlAttrs.push('data-supports-embedding="true"')
+    }
+
+    var innerHTML = ''
+    if (!cfg.atom && renderer.getInitialContentHTML) {
+      innerHTML = renderer.getInitialContentHTML(data)
+    }
+
+    return '<' + tag + ' ' + htmlAttrs.join(' ') + '>' + innerHTML + '</' + tag + '>\n'
   }
 
   // Canonical friendly name for a sieve block node — the ONE source the live
@@ -616,6 +636,7 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from
   // ── Exports ───────────────────────────────────────────────────────────────────
 
   T.registerSieveRenderer = registerSieveRenderer
+  T.buildSieveBlockHTML = buildSieveBlockHTML
   T.getSieveNodes         = getSieveNodes
   // serializeNode turns a single block node into markdown via the editor's OWN
   // markdown serialiser. The serialiser sizes code fences longer than any backtick

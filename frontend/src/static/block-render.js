@@ -31,9 +31,16 @@ function blockHTML(b, mdRender) {
     }
     return `<div data-type="sieve-prose"${attrs}>${inner}</div>`
   }
-  // Structured / container: render the canonical fence text. markdownit emits a
-  // fenced code block; the per-kind fence parse rule (registered at editor
-  // creation) rewrites it into the node's data-* div via parseHTML.
+  // Structured / container: build the node's data-* div straight from the block's
+  // PROPERTIES (attrs), reusing the SAME parseAttrs/data-* builder the markdownit
+  // fence rule uses (buildSieveBlockHTML) — no markdown round-trip, the block
+  // model is properties-in. serialisedForm is passed through transitionally for
+  // the data-serialised-form attr (paste/markdown-serialize) until those migrate.
+  const T = (typeof window !== 'undefined' && window.TipTap) || {}
+  if (typeof T.buildSieveBlockHTML === 'function') {
+    return T.buildSieveBlockHTML(b.kind, b.attrs || {}, b.serialisedForm || '')
+  }
+  // Fallback (no renderer registry available, e.g. a bare unit env): the fence.
   return mdRender(b.serialisedForm || '')
 }
 

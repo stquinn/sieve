@@ -1,11 +1,24 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { buildBlocksHTML } from '../src/static/block-render.js'
 
 // mdRender stub: marks its input so we can assert WHICH text was rendered and
-// that the prose wrapper / structured pass-through put it in the right place.
+// that the prose wrapper put it in the right place.
 const md = (t) => `<R>${t}</R>`
 
 describe('buildBlocksHTML', () => {
+  // Structured blocks build their data-* div from attrs via the shared
+  // buildSieveBlockHTML (the same builder the fence rule uses). Stub it so this
+  // unit test stays free of the renderer registry; assert it gets the attrs.
+  let sieveCalls
+  beforeEach(() => {
+    sieveCalls = []
+    globalThis.window = globalThis.window || globalThis
+    window.TipTap = window.TipTap || {}
+    window.TipTap.buildSieveBlockHTML = (kind, attrs, sf) => {
+      sieveCalls.push([kind, attrs, sf])
+      return `<div data-type="sieve-${kind}" data-id="${(attrs && attrs.id) || ''}"></div>`
+    }
+  })
   it('wraps a prose block in a sieve-prose carrying its id', () => {
     const html = buildBlocksHTML([{ kind: 'prose', id: 'pr-1', content: 'Hello' }], md)
     expect(html).toBe('<div data-type="sieve-prose" data-id="pr-1"><R>Hello</R></div>')
@@ -21,9 +34,15 @@ describe('buildBlocksHTML', () => {
     expect(html).not.toContain('data-aliases')
   })
 
-  it('renders a structured block through its serialised fence form, no anchor wrapper', () => {
-    const html = buildBlocksHTML([{ kind: 'code', id: 'co-1', serialisedForm: '```code\nid: co-1\n```' }], md)
-    expect(html).toBe('<R>```code\nid: co-1\n```</R>')
+  it('builds a structured block from its attrs via buildSieveBlockHTML (no markdown)', () => {
+    const html = buildBlocksHTML(
+      [{ kind: 'code', id: 'co-1', attrs: { id: 'co-1', source: 'x=1' }, serialisedForm: '```code\nid: co-1\n```' }],
+      md,
+    )
+    expect(sieveCalls).toHaveLength(1)
+    expect(sieveCalls[0][0]).toBe('code')
+    expect(sieveCalls[0][1]).toEqual({ id: 'co-1', source: 'x=1' })
+    expect(html).toBe('<div data-type="sieve-code" data-id="co-1"></div>')
     expect(html).not.toContain('sieve-prose')
   })
 
@@ -40,8 +59,8 @@ describe('buildBlocksHTML', () => {
   it('joins multiple blocks in order with newlines', () => {
     const html = buildBlocksHTML([
       { kind: 'prose', id: 'pr-1', content: 'A' },
-      { kind: 'code', id: 'co-1', serialisedForm: 'F' },
+      { kind: 'code', id: 'co-1', attrs: { id: 'co-1' } },
     ], md)
-    expect(html).toBe('<div data-type="sieve-prose" data-id="pr-1"><R>A</R></div>\n<R>F</R>')
+    expect(html).toBe('<div data-type="sieve-prose" data-id="pr-1"><R>A</R></div>\n<div data-type="sieve-code" data-id="co-1"></div>')
   })
 })
