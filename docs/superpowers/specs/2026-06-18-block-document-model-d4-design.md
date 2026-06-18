@@ -81,11 +81,33 @@ explicitly in the editor** (split mints a delimiter pair), never inferred from
 blank lines. Consequence: a hand-written markdown file with N blank-line-separated
 paragraphs opens as ONE prose block until the user explicitly splits it.
 
-### Consequence: blocks may be multi-node
-With whitespace non-structural, a prose block's content can be arbitrary markdown
+### Consequence: a block is a container of children
+With whitespace non-structural, a prose block's content is arbitrary markdown
 (multiple paragraphs, lists). The earlier "one paragraph per block" assumption is
-**revised**: block extent is delimiter-only. The editor anchor (`content:'block+'`)
-already supports multi-node content.
+**revised**: a block is a **container of children**, block extent is
+delimiter-only, and the editor anchor (`content:'block+'`) already holds
+multi-node content.
+
+This makes whitespace preservation mostly **free**: a blank line inside a block
+is just a markdown paragraph break → a child paragraph node → round-trips as a
+blank-line-separated paragraph. Meaningful whitespace (paragraph breaks) is
+preserved by construction; only exotic whitespace (3+ consecutive blanks, trailing
+spaces) is lossy, and that is accepted.
+
+### Editing consequence: Enter = paragraph, not split
+Because a block holds children, **default Enter just adds a paragraph child** — no
+new delimiter, no minted id, no structural `block-op`, lossless. Creating a *new
+delimited block* is a **deliberate, rarer operation** (insert a structured block,
+promote a unit for referencing, start a column), not every Enter. The split/merge
+keymap therefore shrinks dramatically for normal typing.
+
+### OPEN: identity granularity
+Under the container model, a handle/id naturally lives on the **block
+(container)**; paragraphs inside are plain, unidentified markdown content. A
+reference points at a block, not a paragraph; paragraph-level identity is **opt-in
+via promotion** (give the paragraph its own delimiters). This reframes what
+`splitHandles`/`mergeHandles` are for (block-level split/merge, not per-paragraph).
+**Decision pending user confirmation.**
 
 ## Parser / serializer changes (the spine)
 
