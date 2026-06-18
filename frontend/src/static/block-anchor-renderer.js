@@ -91,6 +91,19 @@
           dom.setAttribute('data-id', node.attrs.id || '')
           return true
         },
+
+        // CRITICAL: block-anchor is a content-bearing sieve node, so isSieveNode()
+        // (serialisedForm-defined) routes it to block-chrome's Strategy B, which
+        // injects + repopulates a `.block-chrome-host` inside this editable node
+        // on every state change. Without ignoreMutation, ProseMirror's
+        // MutationObserver sees those chrome writes, fails to reconcile them, and
+        // recreates this NodeView in a tight loop (perpetual redraw → 100% CPU,
+        // typing lag). Every other content-bearing sieve block (code, ai-block,
+        // web-clip, log, diagram) carries this exact guard; the anchor must too:
+        // let PM own mutations inside contentDOM, ignore everything else (chrome).
+        ignoreMutation: function (mutation) {
+          return !contentDOM.contains(mutation.target)
+        },
       }
     },
   }

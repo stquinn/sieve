@@ -14,6 +14,9 @@
   var editorWsPending = []
   var editorWsAwaiters = {}   // type → { resolve, reject }
   var docUpdateTimer = null
+  // Stage D.3: the WYSIWYG observer flushes the pending block-sync immediately on
+  // demand (tab switch / save). Set by mountWysiwyg, called by flushSave.
+  var docSyncFlush = null
   var aiReloadInProgress = false
   var currentMarkdownTextarea = null
   var showAiBlocks = true
@@ -150,6 +153,64 @@
     var T = window.TipTap
     var initialized = false
     var suppressUpdate = false
+    // Per-editor block-sync cache: { [blockId]: serializedContent } as of the
+    // last successful sync. The thin observer (Stage D.3) diffs against it.
+    var blockContentCache = null
+
+    // Serialize one top-level block to the (id, kind, content) the sync diff
+    // needs. Prose anchors → clean child markdown (handle markers stripped; Go
+    // re-prepends them on save). Structured sieve blocks → their serialisedForm
+    // fence. A native top-level node (no anchor wrapper) returns null, which
+    // forces the caller to a whole-document doc-update.
+    function topBlockTriple(ed, node) {
+      var name = node.type.name
+      if (name === 'sieve-block-anchor') {
+        var full = window.TipTap.serializeNode(ed, node) || ''
+        var content = full.replace(/^(?:<!--s:[\w-]+-->\n)+/, '').trim()
+        return { id: node.attrs.id || '', kind: 'prose', content: content }
+      }
+      if (name.indexOf('sieve-') === 0) {
+        return { id: node.attrs.id || '', kind: node.attrs.kind || name, content: node.attrs.serialisedForm || '' }
+      }
+      return null
+    }
+
+    function collectTopBlocks(ed) {
+      var out = []
+      var doc = ed.state.doc
+      for (var i = 0; i < doc.childCount; i++) {
+        var t = topBlockTriple(ed, doc.child(i))
+        if (!t) return null
+        out.push(t)
+      }
+      return out
+    }
+
+    function seedBlockCache(ed) {
+      var curr = collectTopBlocks(ed)
+      blockContentCache = (curr && window.TipTap.computeBlockSync)
+        ? window.TipTap.computeBlockSync(curr, null).next
+        : {}
+    }
+
+    function sendDocUpdate(ed, id) {
+      var md = ed.storage.markdown.getMarkdown() || ''
+      lastSyncedBody = md
+      wsSend({ type: 'doc-update', uuid: id, markdown: md })
+    }
+
+    // syncDocument is the debounced wire send: prefer granular block-ops, fall
+    // back to a whole-document doc-update when a block can't be addressed yet
+    // (no-id prose, a structure change, a structured-block edit, or a stray
+    // native node). It NEVER mutates the document — pure read + send.
+    function syncDocument(ed, id) {
+      var curr = collectTopBlocks(ed)
+      if (!curr || !window.TipTap.computeBlockSync) { sendDocUpdate(ed, id); return }
+      var r = window.TipTap.computeBlockSync(curr, blockContentCache)
+      blockContentCache = r.next
+      if (r.mode === 'fallback') { sendDocUpdate(ed, id); return }
+      r.ops.forEach(function (op) { wsSend({ type: 'block-op', uuid: id, op: op }) })
+    }
 
     var editor = new T.Editor({
       element: el,
@@ -330,16 +391,18 @@
       },
       onUpdate: function (p) {
         if (!initialized || suppressUpdate) return
-        var md = p.editor.storage.markdown.getMarkdown() || ''
-        if (md === lastSyncedBody) return
-        lastSyncedBody = md
+        // Stage D.3: the thin observer. We no longer serialize the whole document
+        // on every keystroke — onUpdate only marks dirty and (re)arms a debounce.
+        // The actual diff + wire send happens once typing settles, in
+        // syncDocument, which prefers granular block-ops and falls back to a
+        // whole-document doc-update only when a block can't be addressed yet.
         document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
         document.dispatchEvent(new CustomEvent('editor:changed'))
         dispatchStats()
         if (docUpdateTimer) clearTimeout(docUpdateTimer)
         docUpdateTimer = setTimeout(function () {
           docUpdateTimer = null
-          wsSend({ type: 'doc-update', uuid: uuid, markdown: md })
+          syncDocument(editor, uuid)
         }, 500)
       },
     })
@@ -366,6 +429,21 @@
       }
     }
 
+    // Seed the block-sync baseline from the freshly-mounted document so the very
+    // first edit diffs against real content (not an empty cache, which would
+    // swallow it). Stage D.3.
+    seedBlockCache(editor)
+
+    // Expose an immediate flush of the pending debounced sync (used by flushSave
+    // / tab switch / mode toggle). Cleared by mountMarkdown so a stale wysiwyg
+    // flush can't fire against a destroyed editor.
+    docSyncFlush = function () {
+      if (!docUpdateTimer) return
+      clearTimeout(docUpdateTimer)
+      docUpdateTimer = null
+      syncDocument(editor, uuid)
+    }
+
     // Catch focus events on inner form controls (like Sieve Code block textareas)
     // where ProseMirror's native onSelectionUpdate won't fire.
     editor.view.dom.addEventListener('focusin', function() {
@@ -380,6 +458,9 @@
   function mountMarkdown(mountEl, uuid, body) {
     currentMode = 'markdown'
     currentMarkdownTextarea = null
+    // No WYSIWYG editor here — drop any block-sync flush from a prior mount so
+    // flushSave can't run syncDocument against a destroyed editor.
+    docSyncFlush = null
 
     var wrapper = document.createElement('div')
     wrapper.style.cssText = 'display:flex;flex-direction:row;height:100%;overflow:hidden;background:var(--theme-bg);position:relative'
@@ -448,11 +529,17 @@
 
   function flushSave() {
     if (!currentUuid) return Promise.resolve()
-    // Flush any pending debounced doc-update immediately so Go has the latest content.
-    if (docUpdateTimer) {
-      clearTimeout(docUpdateTimer)
-      docUpdateTimer = null
-      wsSend({ type: 'doc-update', uuid: currentUuid, markdown: lastSyncedBody })
+    // Flush any pending debounced sync immediately so Go has the latest content.
+    // WYSIWYG goes through the block-sync flush (granular ops or doc-update
+    // fallback); markdown mode sends its raw textarea body directly.
+    if (currentMode === 'markdown') {
+      if (docUpdateTimer) {
+        clearTimeout(docUpdateTimer)
+        docUpdateTimer = null
+        wsSend({ type: 'doc-update', uuid: currentUuid, markdown: lastSyncedBody })
+      }
+    } else if (docSyncFlush) {
+      docSyncFlush()
     }
     if (currentUuid.startsWith('prompt:')) {
       return doSave(currentUuid, getMarkdown())
@@ -739,7 +826,7 @@
     var text = getMarkdown()
     var chars = text.length
     var lines = text === '' ? 0 : text.split('\n').length
-    
+
     var blockCount = currentEditor ? currentEditor.state.doc.childCount : lines
     var digits = Math.max(1, String(blockCount).length)
     document.documentElement.style.setProperty('--line-digits', digits)
@@ -1502,6 +1589,9 @@
       var ta = currentMountEl.querySelector('.markdown-editor')
       if (ta) content = ta.value
     } else if (currentEditor) {
+      // Flush any pending block-sync so Go's shadow is current before it merges
+      // the markdown view (enter-markdown serializes the shadow, not local md).
+      if (docSyncFlush) docSyncFlush()
       content = currentEditor.storage.markdown.getMarkdown() || ''
     } else {
       content = lastSyncedBody
