@@ -41,9 +41,12 @@ function blockHTML(b, mdRender) {
   // the data-serialised-form attr (paste/markdown-serialize) until those migrate.
   const T = (typeof window !== 'undefined' && window.TipTap) || {}
   if (typeof T.buildSieveBlockHTML === 'function') {
-    return T.buildSieveBlockHTML(b.kind, b.attrs || {}, b.serialisedForm || '')
+    const built = T.buildSieveBlockHTML(b.kind, b.attrs || {}, b.serialisedForm || '')
+    if (built) return built
   }
-  // Fallback (no renderer registry available, e.g. a bare unit env): the fence.
+  // Fallback: build from the serialised fence via markdownit (no attrs, an
+  // unregistered renderer, or a bare unit env). Never return empty — an empty
+  // structured block would parse to an invalid prose node.
   return mdRender(b.serialisedForm || '')
 }
 

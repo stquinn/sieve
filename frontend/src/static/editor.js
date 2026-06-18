@@ -266,7 +266,15 @@
             newState.doc.forEach(function (node, pos) {
               if (node.type.name === 'sieve-prose' && !node.attrs.id) {
                 if (!tr) tr = newState.tr
-                tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, { id: mintProseId() }))
+                // setNodeMarkup re-validates content and THROWS if the prose
+                // block is invalid (e.g. left empty after PM lifted a sieve node
+                // out of it). Never let that abort the whole transaction/render —
+                // skip + log the offending node so we can fix it at the source.
+                try {
+                  tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, { id: mintProseId() }))
+                } catch (e) {
+                  console.error('[proseIdentity] invalid sieve-prose, cannot mint id at', pos, '→', JSON.stringify(node.toJSON()))
+                }
               }
             })
             return tr
