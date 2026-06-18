@@ -166,7 +166,13 @@
       var name = node.type.name
       if (name === 'sieve-prose') {
         var full = window.TipTap.serializeNode(ed, node) || ''
-        var content = full.replace(/^(?:<!--s:[\w-]+-->\n)+/, '').trim()
+        // Strip the paired delimiters the prose markdownSerialize adds (open
+        // handle-list marker + trailing close) — the sync sends CLEAN content and
+        // Go re-wraps it. Tolerate the legacy stacked single-marker form too.
+        var content = full
+          .replace(/^(?:<!--s:[\w\- ]+-->\n)+/, '')
+          .replace(/\n?<!--\/s:[\w-]+-->\s*$/, '')
+          .trim()
         return { id: node.attrs.id || '', kind: 'prose', content: content, aliases: node.attrs.aliases || [] }
       }
       if (name.indexOf('sieve-') === 0) {

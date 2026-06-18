@@ -288,8 +288,12 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from
                 var PMDP = window.TipTap.ProseMirrorDOMParser || window.TipTap.DOMParser
                 var slice = PMDP.fromSchema(editor.state.schema).parseSlice(tmp)
                 var pos = typeof getPos === 'function' ? getPos() : -1
-                if (pos === -1) return
-                var cur = editor.state.doc.nodeAt(pos)
+                // getPos can be stale by the time this deferred sync runs (the doc
+                // may have shrunk), and doc.nodeAt THROWS (not returns null) for an
+                // out-of-range pos. Bounds-check before touching the doc.
+                var pmDoc = editor.state.doc
+                if (pos == null || pos < 0 || pos >= pmDoc.content.size) return
+                var cur = pmDoc.nodeAt(pos)
                 if (!cur || !cur.type.name.startsWith('sieve-')) return
                 var tr = editor.state.tr
                 tr.replace(pos + 1, pos + 1 + cur.content.size, slice)

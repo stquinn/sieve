@@ -58,16 +58,24 @@
     // aliases). renderContent serialises the children through PM's own markdown
     // serialiser — no hand-built markdown.
     markdownSerialize: function (state, node) {
-      var marks = ''
-      if (node.attrs.id) marks += '<!--s:' + node.attrs.id + '-->\n'
-      if (node.attrs.aliases && node.attrs.aliases.length) {
-        node.attrs.aliases.forEach(function (a) { marks += '<!--s:' + a + '-->\n' })
+      var id = node.attrs.id
+      // Handle-less prose (not yet minted) → bare content; Go mints on Open.
+      if (!id) {
+        state.renderContent(node)
+        return
       }
-      if (marks) {
-        state.ensureNewLine()
-        state.write(marks)
-      }
+      // PAIRED delimiters, byte-matching Go's serializeProseBlock: the open
+      // marker carries the full handle-set (primary id + aliases, space-
+      // separated), the close marker the primary id only. A lone open marker
+      // would be unbalanced → Go treats it as literal text, so the close is
+      // mandatory for the identity to survive a doc-update round-trip.
+      var handles = [id].concat(node.attrs.aliases || [])
+      state.ensureNewLine()
+      state.write('<!--s:' + handles.join(' ') + '-->\n')
       state.renderContent(node)
+      state.ensureNewLine()
+      state.write('<!--/s:' + id + '-->')
+      state.closeBlock(node)
     },
 
     makeNodeView: function (node, editor, getPos) {
