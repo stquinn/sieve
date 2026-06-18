@@ -195,6 +195,39 @@ automatic and silent. (Confirmed with user 2026-06-18.)
   returns the shadow's blocks (`BlockDocToFrontendBlocks`). Editor and shadow
   share identity → anchors render with real `data-id`, sync cache seeded.
 
+## The frontend speaks BLOCKS; `serialisedForm` becomes Go-disk-only
+
+Decided 2026-06-18 (dialogue). The block model is properties-in/properties-out:
+the frontend deals in blocks (a prose block's `content` is markdown; a structured
+block is its `attrs` map). Markdown/fences are Go's **on-disk serialization
+format only** — they are not a frontend concept. `serialisedForm` (the fence
+string carried as a node attr) is retired from the wire and the frontend.
+
+Why this is small, not a per-renderer refactor: the structured renderers already
+draw from individual `data-*` attrs (`node.attrs.source`, `.language`, …). The
+markdownit fence rule only exists to *reconstruct* a properties map by parsing the
+fence YAML (`jsyaml.load` → `renderer.parseAttrs(data)` → `data-*`). That `data`
+map is exactly `FrontendBlock.Attrs`, which Go already sends. So we feed `Attrs`
+straight into the same `parseAttrs` + kebab-`data-*` builder, bypassing
+markdownit/jsyaml/fence entirely.
+
+End state (each a TDD'd slice; keep the app runnable / Go-test-gated):
+- **Load**: build the structured node's `data-*` div from `Attrs` via a shared
+  `buildSieveBlockHTML(kind, data[, serialisedForm])` extracted from the fence
+  rule (the fence rule calls the same helper, guaranteeing parity). No markdown.
+- **Sync**: structured `update-block {attrs}`; prose `update-block {content}`.
+  Retire the doc-update fallback (the fallback existed *because* the client could
+  not build `Attrs` from a fence string — now it has them).
+- **Copy/paste**: `sieve/<kind>` and `sieve/<slice>` clipboard payloads carry the
+  BLOCK format (attrs / DocBlock-shaped), not a `serialisedForm` fence.
+- **Markdown-mode view + save**: sourced from Go serializing the Doc (Go owns the
+  one markdown serializer); the editor stops serializing structured blocks to
+  markdown. The vestigial in-editor markdown-serialize + markdownit fence-parse
+  paths for structured blocks drop out.
+- **`serialisedForm`**: removed from `FrontendBlock` and node attrs once the above
+  land; survives only inside Go as the disk format. Until then it is passed
+  through transitionally so paste/markdown-serialize keep working.
+
 ## Sync — the observer becomes a full diff (retires doc-update for WYSIWYG)
 
 Extend pure `computeBlockSync` into an id-keyed diff over top-level blocks:
