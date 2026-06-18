@@ -273,20 +273,26 @@
           key: new T.PluginKey('proseIdentity'),
           appendTransaction: function (trs, _oldState, newState) {
             if (!trs.some(function (tr) { return tr.docChanged })) return null
-            var tr = null
+            // Collect top-level actions first (don't mutate during the walk):
+            //   - a size-0 sieve-prose is structurally invalid (content is
+            //     'block+') — a parse/trailing artifact PM fabricates from
+            //     whitespace; DELETE it.
+            //   - an id-less sieve-prose with real content → MINT its handle.
+            var mints = [], drops = []
             newState.doc.forEach(function (node, pos) {
-              if (node.type.name === 'sieve-prose' && !node.attrs.id) {
-                if (!tr) tr = newState.tr
-                // setNodeMarkup re-validates content and THROWS if the prose
-                // block is invalid (e.g. left empty after PM lifted a sieve node
-                // out of it). Never let that abort the whole transaction/render —
-                // skip + log the offending node so we can fix it at the source.
-                try {
-                  tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, { id: mintProseId() }))
-                } catch (e) {
-                  console.error('[proseIdentity] invalid sieve-prose, cannot mint id at', pos, '→', JSON.stringify(node.toJSON()))
-                }
-              }
+              if (node.type.name !== 'sieve-prose') return
+              if (node.content.size === 0) drops.push({ pos: pos, size: node.nodeSize })
+              else if (!node.attrs.id) mints.push({ pos: pos, attrs: node.attrs })
+            })
+            if (!mints.length && !drops.length) return null
+            var tr = newState.tr
+            // Mints first (no size change → positions stay valid), then drops in
+            // REVERSE order so earlier positions are unaffected by later deletes.
+            mints.forEach(function (m) {
+              tr.setNodeMarkup(m.pos, undefined, Object.assign({}, m.attrs, { id: mintProseId() }))
+            })
+            drops.sort(function (a, b) { return b.pos - a.pos }).forEach(function (d) {
+              tr.delete(d.pos, d.pos + d.size)
             })
             return tr
           },
