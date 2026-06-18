@@ -110,7 +110,9 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
       dom.addEventListener('mouseleave', function () { applyChain('remove') })
 
       function renderQuestion(n) {
-        var question = n.question || n.attrs.question
+        // n may be the attrs object (n.question) or a PM node (n.attrs.question);
+        // guard so an empty/missing question never throws and aborts the load.
+        var question = n.attrs ? n.attrs.question : n.question
         if (!question) return
         var qEl = document.createElement('div')
         qEl.className = 'ai-question'
