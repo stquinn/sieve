@@ -138,13 +138,26 @@
   // reuses each node's parseHTML, so no ProseMirror JSON is ever hand-built.
   function renderBlocksIntoEditor(editor, blocks) {
     var mdRender = function (t) { return editor.storage.markdown.parser.md.render(t) }
-    var html = window.TipTap.buildBlocksHTML(blocks, mdRender)
-    var tmp = document.createElement('div')
-    tmp.innerHTML = html
     var PMDP = window.TipTap.ProseMirrorDOMParser || window.TipTap.DOMParser
-    var parsed = PMDP.fromSchema(editor.state.schema).parse(tmp)
+    var parser = PMDP.fromSchema(editor.state.schema)
+
+    // Parse each block in ISOLATION so one block with content the schema rejects
+    // (e.g. a sieve node or raw HTML that slipped into prose) is logged + skipped
+    // instead of aborting the whole document render (which dropped EVERY block).
+    var nodes = []
+    ;(blocks || []).forEach(function (b, i) {
+      var bhtml = window.TipTap.buildBlocksHTML([b], mdRender)
+      try {
+        var tmp = document.createElement('div')
+        tmp.innerHTML = bhtml
+        parser.parse(tmp).content.forEach(function (n) { nodes.push(n) })
+      } catch (e) {
+        console.error('[editor] block ' + i + ' (' + b.kind + ' ' + (b.id || '') + ') failed to render:', e, '\n--- HTML ---\n' + bhtml)
+      }
+    })
+    if (!nodes.length) return // nothing valid parsed — keep the existing content
     var tr = editor.state.tr
-    tr.replaceWith(0, editor.state.doc.content.size, parsed.content)
+    tr.replaceWith(0, editor.state.doc.content.size, nodes)
     tr.setMeta('addToHistory', false)
     editor.view.dispatch(tr)
   }

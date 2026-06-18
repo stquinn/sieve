@@ -24,7 +24,10 @@ function escAttr(str) {
 // Build the HTML for a single block.
 function blockHTML(b, mdRender) {
   if (b.kind === 'prose') {
-    const inner = b.content ? mdRender(b.content) : '<p></p>'
+    let inner = b.content ? mdRender(b.content) : '<p></p>'
+    // A prose block needs at least one block-level child (content: 'block+');
+    // whitespace-only content renders to nothing, which is invalid.
+    if (!inner || !inner.trim()) inner = '<p></p>'
     let attrs = ` data-id="${escAttr(b.id || '')}"`
     if (b.aliases && b.aliases.length) {
       attrs += ` data-aliases="${escAttr(JSON.stringify(b.aliases))}"`
