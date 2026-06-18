@@ -234,6 +234,32 @@ pairs. Vitest TDD: extended `computeBlockSync`. Manual eyeball (CDP unavailable)
 Enter adds one block, Backspace removes one, undo stable, fresh-note typing emits
 block-ops, reopen round-trips, blank lines never alter block structure.
 
+## Deferred defects (rewire when the new blocks land — NOT before)
+
+- **AI targeting collapses to `ref: doc`; `==` highlight never applies.**
+  Observed 2026-06-18 (prose + Ask-AI-on-selection → ai-blocks recorded
+  `ref: doc`, no highlight). Root cause is the legacy `==`/`blockRef`
+  sub-phrase anchor colliding with the half-migrated block model, two-fold:
+  1. `extensions.js` `wrapInBlockAnchor` builds the wrap range at a HARDCODED
+     depth `0` (`new NodeRange(blockRange.$from, blockRange.$to, 0)`). That
+     assumed prose paragraphs were direct children of the doc. Since D.2 prose
+     is nested inside the `sieve-prose` wrapper (depth ≥ 2), so depth 0 is
+     invalid → `tr.wrap` throws → the `catch` swallows it → no `blockRef`, no
+     `==` mark.
+  2. Targeting then resolves the enclosing `sieve-prose` block, which has NO
+     minted id yet (minting is Stage-D step 3), so the AI job's `ref` falls back
+     to `doc`.
+  **Not caused by the prose-block rename** — `resolveAiTarget` recognizes a
+  target via `isSieveName = name.indexOf('sieve-') === 0`, which matches both
+  the old `sieve-block-anchor` and the new `sieve-prose` identically. Pre-exists
+  this session (introduced by the D.2 `sieve-prose` wrapper).
+  **Fix direction (deferred, by user decision):** do NOT patch the legacy
+  blockRef path. Once prose ids are minted (step 3) and blocks are real, rewire
+  Ask AI to target the whole prose BLOCK (`ref: pr-xxxx`), per the design rule
+  "references point at a Block, not a phrase"; retire the `==`/blockRef
+  sub-phrase anchor with the rest of blockRef in Stage E. No app user until the
+  migration is complete, so this is not user-facing yet.
+
 ## Risks
 
 - Spine swap is foundational — gate behind exhaustive Go round-trip tests before
