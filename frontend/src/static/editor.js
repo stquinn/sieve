@@ -149,8 +149,18 @@
       var bhtml = window.TipTap.buildBlocksHTML([b], mdRender)
       try {
         var tmp = document.createElement('div')
-        tmp.innerHTML = bhtml
-        parser.parse(tmp).content.forEach(function (n) { nodes.push(n) })
+        tmp.innerHTML = bhtml.trim()
+        var parsed = parser.parse(tmp)
+        parsed.content.forEach(function (n) {
+          // Drop empty prose parse-artifacts (a sieve node lifted out of prose,
+          // or stray whitespace) — they have no content + no id, aren't real
+          // blocks, and would trip the minter + churn the sync.
+          if (n.type.name === 'sieve-prose' && n.content.size === 0) {
+            console.warn('[editor] dropped empty prose artifact from block ' + i + ' (' + b.kind + '); parsed ' + parsed.childCount + ' nodes from:\n' + bhtml.trim().slice(0, 200))
+            return
+          }
+          nodes.push(n)
+        })
       } catch (e) {
         console.error('[editor] block ' + i + ' (' + b.kind + ' ' + (b.id || '') + ') failed to render:', e, '\n--- HTML ---\n' + bhtml)
       }
