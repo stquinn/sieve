@@ -38,6 +38,24 @@ type ShadowDocument struct {
 	mu       sync.Mutex
 	timer    *time.Timer
 	onFlush  func()
+	// notifySaved is invoked after each successful debounce flush (flush-ack to
+	// the WS client). It is rewired when an already-open shadow is reused by a
+	// later Open (idempotent Open), so the debounce closure reads it live.
+	notifySaved func()
+}
+
+// setNotifySaved rewires the post-flush callback (idempotent Open reuse).
+func (s *ShadowDocument) setNotifySaved(fn func()) {
+	s.mu.Lock()
+	s.notifySaved = fn
+	s.mu.Unlock()
+}
+
+// getNotifySaved reads the post-flush callback under lock for the debounce timer.
+func (s *ShadowDocument) getNotifySaved() func() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.notifySaved
 }
 
 func newShadow(uuid, body string, debounce time.Duration, onFlush func()) *ShadowDocument {
@@ -267,6 +285,17 @@ const dispatchedStuckThreshold = 10 * time.Minute
 // notifySaved is called (if non-nil) after each successful debounce flush so the
 // WebSocket connection can send a flush-ack to the client.
 func (es *EditorService) Open(uuid string, notifySaved func()) error {
+	// Idempotent: reuse an already-open shadow (the HTTP load ensures-open before
+	// the WS connection does, so both share ONE identity — minted ids stay
+	// stable). Just rewire the post-flush callback for this caller.
+	es.mu.Lock()
+	if existing, ok := es.shadows[uuid]; ok {
+		es.mu.Unlock()
+		existing.setNotifySaved(notifySaved)
+		return nil
+	}
+	es.mu.Unlock()
+
 	doc, err := es.documents.LoadByUUID(uuid)
 	if err != nil {
 		return err
@@ -274,12 +303,32 @@ func (es *EditorService) Open(uuid string, notifySaved func()) error {
 	// Declare shadow before the closure so the closure can capture the variable.
 	var shadow *ShadowDocument
 	shadow = newShadow(uuid, string(doc.Body()), es.debounce, func() {
-		if err := es.flushShadow(shadow, "debounce"); err == nil && notifySaved != nil {
-			notifySaved()
+		if err := es.flushShadow(shadow, "debounce"); err == nil {
+			if ns := shadow.getNotifySaved(); ns != nil {
+				ns()
+			}
 		}
 	})
+	shadow.notifySaved = notifySaved
+
+	// Mint a handle for every handle-less prose block (identity is the shadow's
+	// to own). Idempotent — prose that already carries a handle keeps it — so a
+	// persisted id survives reopen. In-memory now; persisted on next save via the
+	// delimited-tree writer. Safe to mint before publishing: shadow is not yet
+	// shared and no debounce timer is armed.
+	if shadow.Mode == "wysiwyg" {
+		mintProseIDs(shadow.Doc.Blocks)
+	}
 
 	es.mu.Lock()
+	// Another goroutine may have opened the same uuid between the check above and
+	// here; if so, discard ours and reuse theirs (rewiring the callback).
+	if existing, ok := es.shadows[uuid]; ok {
+		es.mu.Unlock()
+		shadow.stopDebounce()
+		existing.setNotifySaved(notifySaved)
+		return nil
+	}
 	es.shadows[uuid] = shadow
 	es.mu.Unlock()
 
@@ -289,6 +338,27 @@ func (es *EditorService) Open(uuid string, notifySaved func()) error {
 
 	logger.Info("editor: open", "uuid", uuid, "body_bytes", len(doc.Body()))
 	return nil
+}
+
+// FrontendBlocks projects the OPEN shadow's authoritative Doc into the wire
+// shape the WYSIWYG load renders from — the load-through-shadow path, so the
+// client sees the shadow's minted handles (real data-id) and identity is shared.
+// Returns false when the uuid has no open shadow.
+func (es *EditorService) FrontendBlocks(uuid string) ([]FrontendBlock, bool) {
+	es.mu.Lock()
+	shadow := es.shadows[uuid]
+	es.mu.Unlock()
+	if shadow == nil {
+		return nil, false
+	}
+	shadow.mu.Lock()
+	doc := shadow.Doc
+	shadow.mu.Unlock()
+	blocks, err := BlockDocToFrontendBlocks(doc)
+	if err != nil {
+		return nil, false
+	}
+	return blocks, true
 }
 
 // resetStuckDispatched finds DISPATCHED blocks older than dispatchedStuckThreshold

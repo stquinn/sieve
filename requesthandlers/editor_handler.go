@@ -72,13 +72,16 @@ func (h *EditorHandler) handleEditorLoad(w http.ResponseWriter, r *http.Request)
 		}
 		body := string(b.Body())
 		resp := loadResponse{Body: body, Mode: mode, UUID: b.UUID()}
-		// WYSIWYG renders from the block list (Stage D.2). Markdown mode keeps
+		// WYSIWYG renders from the block list (Stage D.2). Load THROUGH the shadow
+		// (identity step): ensure the shadow is open — minting prose handles — and
+		// return its blocks, so the editor and shadow share identity (anchors get a
+		// real data-id, the sync cache is seeded). Open is idempotent, so the WS
+		// connection that follows reuses this same shadow. Markdown mode keeps
 		// serving raw body only; the client never builds blocks there.
 		if mode != "markdown" {
-			if doc, derr := sieve.ParseBlockDocWithHandles(body); derr == nil {
-				if blocks, berr := sieve.BlockDocToFrontendBlocks(doc); berr == nil {
-					resp.Blocks = blocks
-				}
+			_ = h.ServiceProvider.Editor.Open(uuid, nil)
+			if blocks, ok := h.ServiceProvider.Editor.FrontendBlocks(uuid); ok {
+				resp.Blocks = blocks
 			}
 		}
 		json.NewEncoder(w).Encode(resp)

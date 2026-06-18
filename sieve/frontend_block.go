@@ -5,7 +5,7 @@ package sieve
 // blocks travel as verbatim markdown in Content; structured blocks travel as
 // their canonical fence text in SerialisedForm (the same string the editor's
 // existing per-kind parseHTML/fence rule consumes). The frontend wraps each
-// prose block in a `sieve-block-anchor` carrying ID/Aliases and renders each
+// prose block in a `sieve-prose` node carrying ID/Aliases and renders each
 // structured block through its existing renderer — no ProseMirror JSON crosses
 // the wire.
 type FrontendBlock struct {

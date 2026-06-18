@@ -183,6 +183,23 @@ func findClose(lines []string, start int, primary string) int {
 	return -1
 }
 
+// mintProseIDs assigns a fresh handle to every prose block with an empty ID,
+// recursing into container children. Structured blocks already carry their id in
+// YAML, and prose blocks that already hold a handle are left untouched — so it is
+// idempotent and silent (IDs are invisible plumbing minted automatically on
+// Open). Returns the number of handles minted. Mutates blocks in place.
+func mintProseIDs(blocks []DocBlock) int {
+	minted := 0
+	for i := range blocks {
+		if blocks[i].Kind == KindProse && blocks[i].ID == "" {
+			blocks[i].ID = GenerateBlockID(KindProse)
+			minted++
+		}
+		minted += mintProseIDs(blocks[i].Children)
+	}
+	return minted
+}
+
 // serializeFencedBlock renders any block-mode kind as ```kind\n<yaml>\n```
 // using the shared literal-style machinery — registry-free, so it serializes
 // code, diagram, column-row, etc. uniformly without needing a BlockProcessor.
