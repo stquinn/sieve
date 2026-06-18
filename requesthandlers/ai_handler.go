@@ -95,7 +95,11 @@ func (h *AiHandler) evaluateAndFile(w http.ResponseWriter, id string, fileAfter 
 	if !outcome.Discarded && outcome.Document != nil {
 		for i := range session.Tabs {
 			if session.Tabs[i].ID == id {
-				session.Tabs[i].Status = outcome.Document.Meta().Status()
+				status := "unfiled"
+				if outcome.Document.Kind() == sieve.KindNote {
+					status = "filed"
+				}
+				session.Tabs[i].Status = status
 				session.Tabs[i].DisplayName = outcome.Document.Meta().DisplayName()
 				if outcome.Document.Meta().UserIntent() != nil {
 					session.Tabs[i].UserIntent = *outcome.Document.Meta().UserIntent()

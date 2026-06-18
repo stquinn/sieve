@@ -505,7 +505,7 @@ func buildNoteTree(storables []store.Storable) []NoteEntry {
 				ID:          s.Key(),
 				Name:        dm.DisplayName(),
 				DisplayName: dm.DisplayName(),
-				Status:      s.Meta()["status"],
+				Status:      "filed",
 				UserIntent:  metaString(s.Meta(), "user_intent"),
 				IsDir:       false,
 			})
@@ -533,7 +533,7 @@ func buildFolderChildren(owns []store.Storable) []NoteEntry {
 				ID:          s.Key(),
 				Name:        dm.DisplayName(),
 				DisplayName: dm.DisplayName(),
-				Status:      s.Meta()["status"],
+				Status:      "filed",
 				UserIntent:  metaString(s.Meta(), "user_intent"),
 				IsDir:       false,
 			})

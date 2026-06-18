@@ -16,12 +16,28 @@
   >
     <div class="flex items-center justify-center relative w-4 h-4 shrink-0">
       <div class="tab-icon-normal flex items-center justify-center">
-        {{if $t.UserIntent}}
-        <span class="w-1.5 h-1.5 rounded-full shrink-0{{if ne $i $.ActiveIdx}} opacity-40{{end}}{{if eq $t.UserIntent "keep"}} bg-tn-blue{{else if eq $t.UserIntent "trash"}} bg-tn-red{{else}} bg-tn-yellow{{end}}"></span>
+        {{if eq $t.UserIntent "trash"}}
+        <span class="w-1.5 h-1.5 rounded-full shrink-0 bg-tn-red{{if ne $i $.ActiveIdx}} opacity-40{{end}}"></span>
         {{else if eq $t.Status "filed"}}
-        <span class="w-1.5 h-1.5 rounded-full shrink-0 bg-tn-green{{if ne $i $.ActiveIdx}} opacity-40{{end}}"></span>
+        <svg viewBox="0 0 24 24" class="w-3.5 h-3.5 opacity-40 shrink-0" fill="none" stroke-linecap="round" stroke-linejoin="round">
+          <defs>
+            <mask id="doc-mask-{{$t.ID}}">
+              <rect width="24" height="24" fill="white" />
+              <line x1="16" y1="13" x2="8" y2="13" stroke="black" stroke-width="2" />
+              <line x1="16" y1="17" x2="8" y2="17" stroke="black" stroke-width="2" />
+              <line x1="10" y1="9" x2="8" y2="9" stroke="black" stroke-width="2" />
+            </mask>
+          </defs>
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="currentColor" mask="url(#doc-mask-{{$t.ID}})" />
+        </svg>
         {{else}}
-        <svg viewBox="0 0 24 24" class="w-3.5 h-3.5 opacity-40 shrink-0" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        <svg viewBox="0 0 24 24" class="w-3.5 h-3.5 opacity-40 shrink-0" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+          <line x1="16" y1="17" x2="8" y2="17"/>
+          <line x1="10" y1="9" x2="8" y2="9"/>
+        </svg>
         {{end}}
       </div>
       <span class="tab-spinner absolute hidden w-3.5 h-3.5 shrink-0 rounded-full border-[1.5px] border-solid border-tn-cyan border-t-transparent animate-spin"></span>

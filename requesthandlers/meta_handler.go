@@ -185,7 +185,7 @@ func (h *MetaHandler) buildMetaPanelData(uuidOrPromptName, tab string) metaPanel
 		if data.FileName == "" {
 			data.FileName = "Untitled"
 		}
-		data.Meta = toMetaView(b.Meta())
+		data.Meta = toMetaView(b)
 		data.Versions = toVersionViews(b.Versions(), b.UUID())
 		data.Assets = toAssetViews(b.Storable().Owns())
 		data.HasAssets = len(data.Assets) > 0
@@ -194,9 +194,14 @@ func (h *MetaHandler) buildMetaPanelData(uuidOrPromptName, tab string) metaPanel
 	return data
 }
 
-func toMetaView(m sieve.DocumentMeta) *metaViewData {
+func toMetaView(d sieve.Document) *metaViewData {
+	m := d.Meta()
+	status := "unfiled"
+	if d.Kind() == sieve.KindNote {
+		status = "filed"
+	}
 	mv := &metaViewData{
-		Status:         m.Status(),
+		Status:         status,
 		Version:        m.Version(),
 		FocusCount:     m.FocusCount(),
 		AiEval:         m.AiEval(),
