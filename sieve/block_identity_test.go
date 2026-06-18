@@ -159,6 +159,30 @@ func TestFrontendBlocks_ClosedDocReturnsFalse(t *testing.T) {
 	}
 }
 
+// A brand-new / empty doc must open with ONE minted prose block to author into —
+// otherwise typed content becomes bare top-level paragraphs with no identity
+// (they never get an id, and round-trip as undelimited markdown).
+func TestOpen_EmptyDocSeedsOneMintedProseBlock(t *testing.T) {
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, 0)
+
+	doc, _ := ds.New()
+	doc.SetBody([]byte(""))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+
+	if err := es.Open(uuid, nil); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	shadow := es.shadows[uuid]
+	if shadow == nil || len(shadow.Doc.Blocks) != 1 {
+		t.Fatalf("empty doc should seed exactly one block, got %+v", shadow)
+	}
+	if shadow.Doc.Blocks[0].Kind != KindProse || !strings.HasPrefix(shadow.Doc.Blocks[0].ID, "pr-") {
+		t.Fatalf("seeded block must be a minted prose block: %+v", shadow.Doc.Blocks[0])
+	}
+}
+
 func TestMintProseIDs_RecursesIntoContainers(t *testing.T) {
 	blocks := []DocBlock{
 		{ID: "cr-1", Kind: KindColumnRow, Children: []DocBlock{
