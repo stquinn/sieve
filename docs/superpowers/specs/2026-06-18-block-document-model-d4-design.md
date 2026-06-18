@@ -83,6 +83,16 @@ container model makes paragraph breaks free (each is a child node), and the
 diff-only-changed observer means unedited blocks are never re-serialized. Markdown
 mode is already fully verbatim.
 
+**Candidate (user, 2026-06-18): one paragraph + hard breaks, not many
+paragraphs.** PM supports intra-paragraph line breaks (`hardBreak` / markdown
+`\`). Representing a prose block as a SINGLE paragraph carrying explicit hard
+breaks (rather than N separate paragraph nodes split on blank lines) may be the
+faithful model: it preserves arbitrary blank-line runs as content and maps
+cleanly to "one node = one block." "Preserving whitespace via separate paragraphs
+may have been a mistake." This is a prose-block-INTERNAL representation choice,
+orthogonal to top-level block structure (step 5) — revisit on its own once
+top-level blocks are solid; do not entangle the two.
+
 ## Storage format: a comment-tag block tree
 
 Each block is delimited by a matched open/close pair of strippable HTML comments:
