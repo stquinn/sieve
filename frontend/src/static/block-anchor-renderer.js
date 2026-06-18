@@ -49,6 +49,26 @@
       return { aliases: data.aliases || [] }
     },
 
+    // Transparent markdown serialiser. A block-anchor is NOT a fence — it owns
+    // real prose children, so getMarkdown() must emit that prose, not a
+    // serialisedForm. We re-prepend the handle marker(s) above the content so
+    // the identity survives a doc-update round-trip, byte-for-byte matching Go's
+    // SerializeBlockDocWithHandles (`<!--s:ID-->` own-line markers, id then
+    // aliases). renderContent serialises the children through PM's own markdown
+    // serialiser — no hand-built markdown.
+    markdownSerialize: function (state, node) {
+      var marks = ''
+      if (node.attrs.id) marks += '<!--s:' + node.attrs.id + '-->\n'
+      if (node.attrs.aliases && node.attrs.aliases.length) {
+        node.attrs.aliases.forEach(function (a) { marks += '<!--s:' + a + '-->\n' })
+      }
+      if (marks) {
+        state.ensureNewLine()
+        state.write(marks)
+      }
+      state.renderContent(node)
+    },
+
     makeNodeView: function (node, editor, getPos) {
       var dom = document.createElement('div')
       dom.className = 'block-anchor'

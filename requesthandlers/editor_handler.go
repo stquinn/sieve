@@ -49,9 +49,10 @@ func (h *EditorHandler) handleEditorLoad(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 
 	type loadResponse struct {
-		Body string `json:"body"`
-		Mode string `json:"mode"`
-		UUID string `json:"uuid"`
+		Body   string                `json:"body"`
+		Mode   string                `json:"mode"`
+		UUID   string                `json:"uuid"`
+		Blocks []sieve.FrontendBlock `json:"blocks,omitempty"`
 	}
 
 	if strings.HasPrefix(uuid, "prompt:") {
@@ -69,7 +70,18 @@ func (h *EditorHandler) handleEditorLoad(w http.ResponseWriter, r *http.Request)
 		if mode == "" {
 			mode = "wysiwyg"
 		}
-		json.NewEncoder(w).Encode(loadResponse{Body: string(b.Body()), Mode: mode, UUID: b.UUID()})
+		body := string(b.Body())
+		resp := loadResponse{Body: body, Mode: mode, UUID: b.UUID()}
+		// WYSIWYG renders from the block list (Stage D.2). Markdown mode keeps
+		// serving raw body only; the client never builds blocks there.
+		if mode != "markdown" {
+			if doc, derr := sieve.ParseBlockDocWithHandles(body); derr == nil {
+				if blocks, berr := sieve.BlockDocToFrontendBlocks(doc); berr == nil {
+					resp.Blocks = blocks
+				}
+			}
+		}
+		json.NewEncoder(w).Encode(resp)
 		return
 	}
 	json.NewEncoder(w).Encode(loadResponse{Body: "", Mode: "wysiwyg", UUID: ""})

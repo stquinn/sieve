@@ -100,7 +100,7 @@
           mountMarkdown(mountEl, uuid, data.body || '')
         } else {
           currentMode = 'wysiwyg'
-          mountWysiwyg(mountEl, uuid, data.body || '')
+          mountWysiwyg(mountEl, uuid, data.body || '', data.blocks)
         }
         tabModes[uuid] = currentMode
         updateModeUI()
@@ -127,9 +127,29 @@
 
   // ── WYSIWYG mode ─────────────────────────────────────────────────────────────
 
-  function mountWysiwyg(el, uuid, body) {
+  // renderBlocksIntoEditor replaces the whole document with content built from
+  // the block list. It uses the editor's live markdownit (carrying the fence
+  // parse rules) to render each block to HTML, then parses that HTML through
+  // ProseMirror's DOMParser and swaps it in via a single non-undoable
+  // transaction. This is the proven syncMd pattern scaled to the whole doc: it
+  // reuses each node's parseHTML, so no ProseMirror JSON is ever hand-built.
+  function renderBlocksIntoEditor(editor, blocks) {
+    var mdRender = function (t) { return editor.storage.markdown.parser.md.render(t) }
+    var html = window.TipTap.buildBlocksHTML(blocks, mdRender)
+    var tmp = document.createElement('div')
+    tmp.innerHTML = html
+    var PMDP = window.TipTap.ProseMirrorDOMParser || window.TipTap.DOMParser
+    var parsed = PMDP.fromSchema(editor.state.schema).parse(tmp)
+    var tr = editor.state.tr
+    tr.replaceWith(0, editor.state.doc.content.size, parsed.content)
+    tr.setMeta('addToHistory', false)
+    editor.view.dispatch(tr)
+  }
+
+  function mountWysiwyg(el, uuid, body, blocks) {
     var T = window.TipTap
     var initialized = false
+    var suppressUpdate = false
 
     var editor = new T.Editor({
       element: el,
@@ -309,7 +329,7 @@
         syncToolbar(p.editor)
       },
       onUpdate: function (p) {
-        if (!initialized) return
+        if (!initialized || suppressUpdate) return
         var md = p.editor.storage.markdown.getMarkdown() || ''
         if (md === lastSyncedBody) return
         lastSyncedBody = md
@@ -326,6 +346,25 @@
 
     currentEditor = editor
     window.__tiptap = editor
+
+    // Stage D.2: the block list IS the document model. When the load supplied it,
+    // render the document from the blocks (prose → block-anchor; structured →
+    // its fence rule), bypassing the markdown `content:` seed above. We build the
+    // HTML with the editor's OWN markdownit (so the fence parse rules are live)
+    // and parse it through ProseMirror's DOMParser — reusing every node's
+    // parseHTML, never hand-building ProseMirror JSON. suppressUpdate guards the
+    // initial replace so it isn't mistaken for a user edit / doc-update.
+    if (blocks && blocks.length && window.TipTap.buildBlocksHTML) {
+      suppressUpdate = true
+      try {
+        renderBlocksIntoEditor(editor, blocks)
+        lastSyncedBody = editor.storage.markdown.getMarkdown() || lastSyncedBody
+      } catch (err) {
+        console.error('[editor] block render failed; keeping markdown seed', err)
+      } finally {
+        suppressUpdate = false
+      }
+    }
 
     // Catch focus events on inner form controls (like Sieve Code block textareas)
     // where ProseMirror's native onSelectionUpdate won't fire.

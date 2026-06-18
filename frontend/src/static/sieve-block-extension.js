@@ -320,7 +320,11 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from
           markdown: {
             // Serialise: replay serialisedForm verbatim.
             // Go owns all Markdown generation; JS never reconstructs fences or inline blocks manually.
-            serialize: function (state, node) {
+            //
+            // markdownSerialize override: a TRANSPARENT node (e.g. block-anchor) is
+            // not a fence — it owns real prose children and must serialise them, not
+            // a serialisedForm. Renderers that declare it take full control here.
+            serialize: renderer.markdownSerialize ? renderer.markdownSerialize : function (state, node) {
               if (cfg.inline) {
                 state.write(node.attrs.serialisedForm || '')
               } else {
