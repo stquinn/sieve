@@ -192,10 +192,23 @@
       return out
     }
 
-    function seedBlockCache(ed) {
-      var curr = collectTopBlocks(ed)
-      blockContentCache = (curr && window.TipTap.computeBlockSync)
-        ? window.TipTap.computeBlockSync(curr, null).next
+    // Seed the sync baseline from GO's view (the server block list), NOT the
+    // editor — so a block PM created client-side (e.g. the prose block an empty
+    // doc createAndFills, or a split) is absent from the baseline and the first
+    // sync emits a create-block for it. Seeding from the editor would hide such a
+    // block from Go forever (its update-block would fail "block not found"). For a
+    // loaded doc the server blocks ARE the editor blocks, so nothing spurious.
+    function seedBlockCache(serverBlocks) {
+      var triples = (serverBlocks || []).map(function (b) {
+        return {
+          id: b.id,
+          kind: b.kind,
+          content: b.kind === 'prose' ? (b.content || '') : (b.serialisedForm || ''),
+          aliases: b.aliases || [],
+        }
+      })
+      blockContentCache = window.TipTap.computeBlockSync
+        ? window.TipTap.computeBlockSync(triples, null).next
         : {}
     }
 
@@ -218,10 +231,43 @@
       r.ops.forEach(function (op) { wsSend({ type: 'block-op', uuid: id, op: op }) })
     }
 
+    // Step 5: the doc top level holds ONLY sieve blocks (group "sieveBlock") —
+    // PM structurally forbids a bare top-level paragraph, so "all content is
+    // blocks" holds without a per-keystroke wrapper. An empty doc createAndFills
+    // to one empty sieve-prose (PM creates the block, not Go).
+    var SieveDocument = T.Node.create({ name: 'doc', topNode: true, content: 'sieveBlock+' })
+
+    // Mint a client-side prose id when PM creates a NEW prose block (matches Go's
+    // pr-xxxx). Bounded + idempotent: fires only for an id-less sieve-prose and
+    // only on a doc change — it never wraps and never re-mints an existing block
+    // (the schema removed the bare-paragraph churn that made the old minter loop).
+    var mintProseId = function () { return 'pr-' + Math.random().toString(16).slice(2, 6) }
+    var ProseIdentity = T.Extension.create({
+      name: 'proseIdentity',
+      addProseMirrorPlugins: function () {
+        return [new T.Plugin({
+          key: new T.PluginKey('proseIdentity'),
+          appendTransaction: function (trs, _oldState, newState) {
+            if (!trs.some(function (tr) { return tr.docChanged })) return null
+            var tr = null
+            newState.doc.forEach(function (node, pos) {
+              if (node.type.name === 'sieve-prose' && !node.attrs.id) {
+                if (!tr) tr = newState.tr
+                tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, { id: mintProseId() }))
+              }
+            })
+            return tr
+          },
+        })]
+      },
+    })
+
     var editor = new T.Editor({
       element: el,
       extensions: [
-        T.StarterKit.configure({ link: false, codeBlock: false, history: { depth: 10000, newGroupDelay: 500 } }),
+        SieveDocument,
+        ProseIdentity,
+        T.StarterKit.configure({ document: false, link: false, codeBlock: false, history: { depth: 10000, newGroupDelay: 500 } }),
         T.Placeholder.configure({ placeholder: function (p) { return p.editor.isEmpty ? 'Start writing\u2026' : '' } }),
         T.BlockNode,
         T.BlockChrome,
@@ -250,7 +296,11 @@
           onToggleAiBlocks: toggleAiBlocks,
         }),
       ]),
-      content: body,
+      // Start empty: under the strict top-level-blocks schema a raw markdown body
+      // (bare paragraphs) is not a valid document, so we never seed it directly.
+      // renderBlocksIntoEditor populates real content from the block list; an
+      // empty doc createAndFills to one empty sieve-prose (which the minter ids).
+      content: '',
       editorProps: {
         attributes: { spellcheck: 'true' },
         handleDOMEvents: {
@@ -435,10 +485,9 @@
       }
     }
 
-    // Seed the block-sync baseline from the freshly-mounted document so the very
-    // first edit diffs against real content (not an empty cache, which would
-    // swallow it). Stage D.3.
-    seedBlockCache(editor)
+    // Seed the block-sync baseline from GO's block list (what the server has),
+    // so a PM-created block (empty-doc fill / split) is seen as new and synced.
+    seedBlockCache(blocks)
 
     // Expose an immediate flush of the pending debounced sync (used by flushSave
     // / tab switch / mode toggle). Cleared by mountMarkdown so a stale wysiwyg

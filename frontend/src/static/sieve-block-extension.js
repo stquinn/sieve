@@ -76,7 +76,12 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from
 
     return Node.create({
       name:       nodeName,
-      group:      cfg.group,
+      // Step 5: block-mode sieve blocks form the "sieveBlock" group — the ONLY
+      // thing the doc top level allows. That keeps the top level all-blocks
+      // (no bare paragraphs) and, because prose content is the "block" group,
+      // excludes sieve blocks from inside prose (kind-homogeneity). Inline sieve
+      // nodes keep their own group.
+      group:      cfg.inline ? cfg.group : 'sieveBlock',
       inline:     cfg.inline,
       atom:       cfg.atom,
       selectable: cfg.selectable,
