@@ -317,12 +317,6 @@ func (es *EditorService) Open(uuid string, notifySaved func()) error {
 	// delimited-tree writer. Safe to mint before publishing: shadow is not yet
 	// shared and no debounce timer is armed.
 	if shadow.Mode == "wysiwyg" {
-		// A doc always needs at least one prose block to author into; an empty doc
-		// otherwise mounts with a bare editor and typed content escapes as
-		// id-less top-level paragraphs.
-		if len(shadow.Doc.Blocks) == 0 {
-			shadow.Doc.Blocks = append(shadow.Doc.Blocks, DocBlock{Kind: KindProse})
-		}
 		mintProseIDs(shadow.Doc.Blocks)
 	}
 
