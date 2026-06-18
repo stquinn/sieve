@@ -6,6 +6,17 @@ pending final user review.
 Branch: `feature/refactor_editor_layout`
 Plan: `docs/superpowers/plans/2026-06-17-block-document-model.md` (Stage D)
 
+> **SUPERSEDED — prose granularity (2026-06-18).** The "Vocabulary (Block vs
+> Container)" decision below — *a prose Block is ONE leaf whose paragraphs are its
+> content* (N paragraphs = one block/one id) — is **superseded by**
+> `2026-06-18-node-granular-blocks-design.md`. That single-container model made the
+> whole prose run one targetable id (≈ DOC-level), defeating per-paragraph targeting.
+> The replacement: the doc holds **many** `sieve-prose` blocks (one id each); prose
+> keeps `content:'block+'` (a cemented web clip / AI answer is one rich prose block);
+> granularity comes from block boundaries (Enter splits live; cement draws one).
+> **Everything else in this D.4 doc — delimiters, leaf-opacity, whitespace-is-content,
+> shadow-as-source — still holds.**
+
 ## Governing principle (NEW — load-bearing)
 
 **Whitespace is meaningless to the parser. Block structure derives ONLY from
