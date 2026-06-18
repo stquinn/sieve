@@ -150,17 +150,18 @@
       try {
         var tmp = document.createElement('div')
         tmp.innerHTML = bhtml.trim()
-        var parsed = parser.parse(tmp)
-        parsed.content.forEach(function (n) {
-          // Drop empty prose parse-artifacts (a sieve node lifted out of prose,
-          // or stray whitespace) — they have no content + no id, aren't real
-          // blocks, and would trip the minter + churn the sync.
-          if (n.type.name === 'sieve-prose' && n.content.size === 0) {
-            console.warn('[editor] dropped empty prose artifact from block ' + i + ' (' + b.kind + '); parsed ' + parsed.childCount + ' nodes from:\n' + bhtml.trim().slice(0, 200))
-            return
-          }
-          nodes.push(n)
+        // Take ONLY the block node we expect for this Go block (sieve-<kind>),
+        // ignoring any extra nodes the parse invents — chiefly empty sieve-prose
+        // that PM fabricates from stray whitespace between blocks. The shadow is
+        // authoritative: we render exactly its blocks, never parser artifacts.
+        var want = 'sieve-' + b.kind
+        var pushed = 0
+        parser.parse(tmp).content.forEach(function (n) {
+          if (n.type.name === want) { nodes.push(n); pushed++ }
         })
+        if (!pushed) {
+          console.error('[editor] block ' + i + ' (' + b.kind + ' ' + (b.id || '') + ') produced no ' + want + ' node from:\n' + bhtml.trim().slice(0, 200))
+        }
       } catch (e) {
         console.error('[editor] block ' + i + ' (' + b.kind + ' ' + (b.id || '') + ') failed to render:', e, '\n--- HTML ---\n' + bhtml)
       }
