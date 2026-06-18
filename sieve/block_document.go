@@ -9,14 +9,16 @@ import (
 )
 
 // DocBlock is a node in the unified, ordered block tree (spec §2). It supersedes
-// the flat map[id]*SieveBlock model for serialization. Which payload field is
+// the flat map[id]*SieveBlock model for serialization. A Sieve Block is a
+// kind-homogeneous LEAF — one content kind per block. Which payload field is
 // meaningful depends on Kind:
-//   - prose kinds      → Content holds verbatim markdown; Attrs/Children nil
+//   - prose kind       → Content holds verbatim markdown; Attrs/Children nil
 //   - structured kinds → Attrs holds the fenced YAML payload; Content ""; Children nil
 //   - container kinds  → Children holds the subtree; Attrs may hold layout (e.g. widths)
 //
-// ID is the block's primary handle. In Stage A prose blocks have an empty ID
-// (positional); Stage B assigns universal {id=} handles.
+// ID is the block's primary handle, minted on Open. A prose block's content is
+// arbitrary markdown (multiple paragraphs); whitespace inside it is content, not
+// a structural boundary.
 type DocBlock struct {
 	ID       string
 	Kind     string
@@ -53,10 +55,10 @@ const (
 	KindColumn    = "column"
 )
 
-// SerializeBlockDoc assembles markdown from the block tree — the single
-// serialization spine that replaces InjectBlocks (markdown_parser.go:321).
-// Prose blocks emit their verbatim Content; structured blocks emit a fenced
-// YAML block. Blocks are joined by a blank line (canonical spacing).
+// SerializeBlockDoc assembles markdown from the block tree WITHOUT handle
+// delimiters — a handle-less convenience over the spine (the delimited writer is
+// SerializeBlockDocWithHandles). Prose blocks emit their verbatim Content;
+// structured blocks emit a fenced YAML block. Blocks are joined by a blank line.
 func SerializeBlockDoc(doc BlockDoc) (string, error) {
 	parts := make([]string, 0, len(doc.Blocks))
 	for _, b := range doc.Blocks {
@@ -73,161 +75,112 @@ func SerializeBlockDoc(doc BlockDoc) (string, error) {
 	return strings.Join(parts, "\n\n"), nil
 }
 
-// ParseBlockDoc parses markdown into an ordered BlockDoc. Only TOP-LEVEL fenced
-// Sieve blocks (direct children of the document root) become structured
-// DocBlocks; everything between them — prose, headings, lists, and (Stage A)
-// legacy block-anchor regions — becomes one verbatim prose DocBlock per run.
-// Per-paragraph granularity and {id=} handles arrive in Stage B; container
-// child expansion arrives in Stage E.
+// ParseBlockDoc parses markdown into an ordered BlockDoc using the paired-
+// delimiter tree rules (handle-less convenience over scanBlocks; the handle-
+// aware loader is ParseBlockDocWithHandles). Top-level structured fences become
+// structured blocks; paired `<!--s:ID-->` regions and undelimited runs become
+// prose blocks. Blank lines never split.
 func ParseBlockDoc(markdown string) (BlockDoc, error) {
-	spans, err := segmentBlockDoc(markdown)
-	if err != nil {
-		return BlockDoc{}, err
-	}
-	out := BlockDoc{Blocks: make([]DocBlock, len(spans))}
-	for i, s := range spans {
-		out.Blocks[i] = s.block
-	}
-	return out, nil
+	return BlockDoc{Blocks: scanBlocks(markdown)}, nil
 }
 
-// blockSpan is a parsed block plus the byte offset at which its content begins
-// in the (clean) source. The offset lets the handle layer (Stage B.2) pair a
-// stripped `<!--s:…-->` marker to the block immediately below it.
-type blockSpan struct {
-	block DocBlock
-	start int
-}
-
-// segmentBlockDoc is the offset-tracking core shared by ParseBlockDoc and the
-// handle-aware loader. Top-level Sieve fences become structured blocks; the
-// prose runs between them are split per-paragraph (splitProseRunSpans).
-func segmentBlockDoc(markdown string) ([]blockSpan, error) {
+// scanBlocks is the D.4 spine scanner. Structure derives ONLY from delimiters:
+//   - a top-level structured fence (registered block-mode kind + id) is an
+//     atomic, opaque structured block — goldmark already isolates it, so a
+//     literal marker inside it is fence content, never a prose boundary (leaf
+//     opacity);
+//   - the byte gaps between fences are prose regions, scanned for paired
+//     `<!--s:ID-->` / `<!--/s:ID-->` delimiters (scanProseRegion).
+//
+// Whitespace is never read for structure; blank lines carry no signal.
+func scanBlocks(markdown string) []DocBlock {
 	source := []byte(markdown)
 	root := mdParser().Parser().Parse(text.NewReader(source))
 
-	var spans []blockSpan
+	var out []DocBlock
 	cursor := 0
-
 	emitProse := func(end int) {
 		if end <= cursor {
 			return
 		}
-		base := cursor
-		for _, frag := range splitProseRunSpans(string(source[cursor:end])) {
-			spans = append(spans, blockSpan{
-				block: DocBlock{Kind: KindProse, Content: frag.content},
-				start: base + frag.start,
-			})
-		}
+		out = append(out, scanProseRegion(string(source[cursor:end]))...)
 	}
 
 	for n := root.FirstChild(); n != nil; n = n.NextSibling() {
 		sn, ok := n.(*sieveBlockNode)
 		if !ok {
-			continue // prose/anchor: absorbed into the surrounding run
+			continue // prose/anchor: absorbed into the surrounding prose region
 		}
 		emitProse(sn.StartByte())
-		spans = append(spans, blockSpan{
-			block: DocBlock{
-				ID:    sn.SieveBlock.ID,
-				Kind:  sn.SieveBlock.Kind,
-				Attrs: sn.SieveBlock.Attrs,
-			},
-			start: sn.StartByte(),
+		out = append(out, DocBlock{
+			ID:    sn.SieveBlock.ID,
+			Kind:  sn.SieveBlock.Kind,
+			Attrs: sn.SieveBlock.Attrs,
 		})
 		cursor = sn.EndByte()
 	}
 	emitProse(len(source))
-	return spans, nil
-}
-
-// splitProseRun divides a verbatim prose run into per-paragraph blocks
-// (Stage B.1). It separates on blank lines while treating fenced code regions
-// (``` or ~~~) as atomic, so a blank line inside a code block never splits a
-// block. Tight lists (no blank lines between items) stay one block; blank-line-
-// separated content — including loose lists — becomes separate blocks. This is
-// an accepted fidelity cost: every fragment still round-trips verbatim, and the
-// spine deliberately avoids fragile goldmark span math (which excludes code
-// fences). Empty/whitespace-only paragraphs are dropped.
-func splitProseRun(run string) []string {
-	frags := splitProseRunSpans(run)
-	out := make([]string, len(frags))
-	for i, f := range frags {
-		out[i] = f.content
-	}
 	return out
 }
 
-// proseFrag is a paragraph plus its byte offset within the run it came from.
-type proseFrag struct {
-	content string
-	start   int
+// scanProseRegion splits a non-fenced region into prose blocks using paired
+// comment-tag delimiters. A matched `<!--s:ID …-->` / `<!--/s:ID-->` pair is one
+// prose block whose interior is taken verbatim (opaque — never re-scanned for
+// nested markers; nesting is container-only, Stage E). An open with no matching
+// close is unbalanced → literal text. Any maximal run of undelimited lines is a
+// SINGLE prose block (never blank-line split); whitespace-only runs are dropped.
+func scanProseRegion(region string) []DocBlock {
+	lines := strings.Split(region, "\n")
+	var out []DocBlock
+	var pending []string
+
+	flushPending := func() {
+		if len(pending) == 0 {
+			return
+		}
+		content := strings.Trim(strings.Join(pending, "\n"), "\n")
+		pending = pending[:0]
+		if strings.TrimSpace(content) != "" {
+			out = append(out, DocBlock{Kind: KindProse, Content: content})
+		}
+	}
+
+	for i := 0; i < len(lines); {
+		if m := markerOpenRe.FindStringSubmatch(lines[i]); m != nil {
+			handles := strings.Fields(m[1])
+			primary := handles[0]
+			if closeIdx := findClose(lines, i+1, primary); closeIdx != -1 {
+				flushPending()
+				blk := DocBlock{
+					ID:      primary,
+					Kind:    KindProse,
+					Content: strings.Join(lines[i+1:closeIdx], "\n"),
+				}
+				if len(handles) > 1 {
+					blk.Aliases = append([]string(nil), handles[1:]...)
+				}
+				out = append(out, blk)
+				i = closeIdx + 1
+				continue
+			}
+			// unbalanced open → fall through; the marker line is literal content
+		}
+		pending = append(pending, lines[i])
+		i++
+	}
+	flushPending()
+	return out
 }
 
-// splitProseRunSpans is splitProseRun with byte-offset tracking — see
-// splitProseRun for the segmentation contract. start is the offset of the
-// fragment's first content character within run.
-func splitProseRunSpans(run string) []proseFrag {
-	var frags []proseFrag
-	var cur []string
-	curStart := -1
-	inFence := false
-	fenceMarker := ""
-	pos := 0
-
-	flush := func() {
-		if len(cur) > 0 {
-			joined := strings.Join(cur, "\n")
-			lead := len(joined) - len(strings.TrimLeft(joined, "\n"))
-			content := strings.Trim(joined, "\n")
-			if strings.TrimSpace(content) != "" {
-				frags = append(frags, proseFrag{content: content, start: curStart + lead})
-			}
+// findClose returns the index of the first close marker at or after start whose
+// primary id matches, or -1 if none (the open is then unbalanced → literal text).
+func findClose(lines []string, start int, primary string) int {
+	for k := start; k < len(lines); k++ {
+		if cm := markerCloseRe.FindStringSubmatch(lines[k]); cm != nil && cm[1] == primary {
+			return k
 		}
-		cur = nil
-		curStart = -1
 	}
-
-	lines := strings.Split(run, "\n")
-	for i, ln := range lines {
-		lineStart := pos
-		pos += len(ln)
-		if i < len(lines)-1 {
-			pos++ // the '\n' separator
-		}
-
-		trimmed := strings.TrimSpace(ln)
-		marker := ""
-		switch {
-		case strings.HasPrefix(trimmed, "```"):
-			marker = "```"
-		case strings.HasPrefix(trimmed, "~~~"):
-			marker = "~~~"
-		}
-		if marker != "" {
-			if !inFence {
-				inFence, fenceMarker = true, marker
-			} else if marker == fenceMarker {
-				inFence = false
-			}
-			if curStart == -1 {
-				curStart = lineStart
-			}
-			cur = append(cur, ln)
-			continue
-		}
-		if trimmed == "" && !inFence {
-			flush()
-			continue
-		}
-		if curStart == -1 {
-			curStart = lineStart
-		}
-		cur = append(cur, ln)
-	}
-	flush()
-	return frags
+	return -1
 }
 
 // serializeFencedBlock renders any block-mode kind as ```kind\n<yaml>\n```

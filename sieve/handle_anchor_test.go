@@ -5,34 +5,14 @@ import (
 	"testing"
 )
 
-func TestStripHandles(t *testing.T) {
-	md := "<!--s:pr-aaaa-->\nFirst.\n\n<!--s:pr-bbbb-->\nSecond.\n\nNo handle here."
-	clean, handles := stripHandles(md)
-
-	wantClean := "First.\n\nSecond.\n\nNo handle here."
-	if clean != wantClean {
-		t.Fatalf("clean mismatch:\n got: %q\nwant: %q", clean, wantClean)
-	}
-	if len(handles) != 2 {
-		t.Fatalf("want 2 handles, got %d: %+v", len(handles), handles)
-	}
-	// Each handle's offset must point at the first byte of the block below it.
-	if handles[0].handle != "pr-aaaa" || clean[handles[0].offset:handles[0].offset+6] != "First." {
-		t.Fatalf("handle 0: %+v -> %q", handles[0], clean[handles[0].offset:])
-	}
-	if handles[1].handle != "pr-bbbb" || clean[handles[1].offset:handles[1].offset+7] != "Second." {
-		t.Fatalf("handle 1: %+v -> %q", handles[1], clean[handles[1].offset:])
-	}
-}
-
 func TestHandles_Bijection(t *testing.T) {
 	RegisterProcessor("code", &CodeBlockProcessor{})
 	t.Cleanup(func() { UnregisterProcessor("code") })
 
-	md := "<!--s:pr-aaaa-->\nFirst paragraph.\n\n" +
-		"<!--s:pr-bbbb-->\nSecond paragraph.\n\n" +
+	md := "<!--s:pr-aaaa-->\nFirst paragraph.\n<!--/s:pr-aaaa-->\n\n" +
+		"<!--s:pr-bbbb-->\nSecond paragraph.\n<!--/s:pr-bbbb-->\n\n" +
 		"```code\nid: co-1\nsource: x = 1\n```\n\n" +
-		"<!--s:pr-cccc-->\nTail."
+		"<!--s:pr-cccc-->\nTail.\n<!--/s:pr-cccc-->"
 
 	doc, err := ParseBlockDocWithHandles(md)
 	if err != nil {
@@ -65,7 +45,8 @@ func TestHandles_Bijection(t *testing.T) {
 
 func TestHandles_MergedHandleSetPersists(t *testing.T) {
 	// A block that answers to a primary handle plus absorbed aliases (post-merge,
-	// spec §7) must persist every handle to disk so refs survive reopen.
+	// spec §7) must persist every handle to disk so refs survive reopen. In the
+	// paired-delimiter format the whole handle-set rides in the open marker.
 	doc := BlockDoc{Blocks: []DocBlock{
 		{ID: "pr-aaaa", Kind: KindProse, Content: "Merged block.", Aliases: []string{"pr-bbbb", "pr-cccc"}},
 	}}
@@ -73,9 +54,9 @@ func TestHandles_MergedHandleSetPersists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
 	}
-	want := "<!--s:pr-aaaa-->\n<!--s:pr-bbbb-->\n<!--s:pr-cccc-->\nMerged block."
+	want := "<!--s:pr-aaaa pr-bbbb pr-cccc-->\nMerged block.\n<!--/s:pr-aaaa-->"
 	if md != want {
-		t.Fatalf("stacked markers:\n got: %q\nwant: %q", md, want)
+		t.Fatalf("handle-set marker:\n got: %q\nwant: %q", md, want)
 	}
 
 	got, err := ParseBlockDocWithHandles(md)
@@ -92,7 +73,8 @@ func TestHandles_MergedHandleSetPersists(t *testing.T) {
 }
 
 func TestHandles_IsolatedEditKeepsHandle(t *testing.T) {
-	md := "<!--s:pr-aaaa-->\nOriginal text.\n\n<!--s:pr-bbbb-->\nUntouched."
+	md := "<!--s:pr-aaaa-->\nOriginal text.\n<!--/s:pr-aaaa-->\n\n" +
+		"<!--s:pr-bbbb-->\nUntouched.\n<!--/s:pr-bbbb-->"
 	doc, err := ParseBlockDocWithHandles(md)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -104,7 +86,8 @@ func TestHandles_IsolatedEditKeepsHandle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
 	}
-	want := "<!--s:pr-aaaa-->\nEdited text.\n\n<!--s:pr-bbbb-->\nUntouched."
+	want := "<!--s:pr-aaaa-->\nEdited text.\n<!--/s:pr-aaaa-->\n\n" +
+		"<!--s:pr-bbbb-->\nUntouched.\n<!--/s:pr-bbbb-->"
 	if out != want {
 		t.Fatalf("edited block lost handle:\n got: %q\nwant: %q", out, want)
 	}

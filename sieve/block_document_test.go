@@ -43,37 +43,10 @@ func TestParseBlockDoc_ProseAndFence(t *testing.T) {
 	}
 }
 
-func TestSplitProseRun(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want []string
-	}{
-		{"single", "Just one paragraph.", []string{"Just one paragraph."}},
-		{"two paras", "First.\n\nSecond.", []string{"First.", "Second."}},
-		{"heading then para", "# Title\n\nBody.", []string{"# Title", "Body."}},
-		{"multiline para stays", "Line one\nline two.", []string{"Line one\nline two."}},
-		{"tight list stays one", "- a\n- b\n- c", []string{"- a\n- b\n- c"}},
-		{"fence with blank line is atomic", "```python\nx = 1\n\ny = 2\n```", []string{"```python\nx = 1\n\ny = 2\n```"}},
-		{"para then fenced code", "Intro.\n\n```js\na\n\nb\n```\n\nOutro.", []string{"Intro.", "```js\na\n\nb\n```", "Outro."}},
-		{"collapses extra blanks", "A.\n\n\n\nB.", []string{"A.", "B."}},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := splitProseRun(c.in)
-			if len(got) != len(c.want) {
-				t.Fatalf("len: want %d got %d: %q", len(c.want), len(got), got)
-			}
-			for i := range got {
-				if got[i] != c.want[i] {
-					t.Fatalf("block %d: want %q got %q", i, c.want[i], got[i])
-				}
-			}
-		})
-	}
-}
-
-func TestParseBlockDoc_PerParagraph(t *testing.T) {
+// A structured fence separates undelimited prose runs, but blank lines WITHIN a
+// run never split it: each maximal run between fences is one prose block (D.4 —
+// whitespace is parse-meaningless). Multi-paragraph content stays verbatim.
+func TestParseBlockDoc_UndelimitedRunsBetweenFences(t *testing.T) {
 	RegisterProcessor("code", &CodeBlockProcessor{})
 	t.Cleanup(func() { UnregisterProcessor("code") })
 
@@ -86,11 +59,9 @@ func TestParseBlockDoc_PerParagraph(t *testing.T) {
 		kind    string
 		content string
 	}{
-		{KindProse, "# Title"},
-		{KindProse, "Intro prose."},
+		{KindProse, "# Title\n\nIntro prose."},
 		{"code", ""},
-		{KindProse, "First tail."},
-		{KindProse, "Second tail."},
+		{KindProse, "First tail.\n\nSecond tail."},
 	}
 	if len(doc.Blocks) != len(wantKinds) {
 		t.Fatalf("want %d blocks, got %d: %+v", len(wantKinds), len(doc.Blocks), doc.Blocks)

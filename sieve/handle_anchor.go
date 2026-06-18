@@ -21,76 +21,23 @@ import (
 // code block cannot be corrupted. The id is hidden in the editor but always
 // written back to disk.
 
-// handleMarkerRe matches a Sieve handle marker on its own line. The `s:`
-// sentinel namespace distinguishes it from a user-authored HTML comment.
-var handleMarkerRe = regexp.MustCompile(`^\s*<!--s:([\w-]+)-->\s*$`)
+// markerOpenRe / markerCloseRe match the paired comment-tag delimiters that
+// bound every block (spec §"Storage format: a comment-tag block tree"). The open
+// marker's capture is a SPACE-SEPARATED handle list: the first token is the
+// block's primary ID, any remaining tokens are aliases it also answers to
+// (post-merge handle-set, spec §7). The close marker carries the primary ID
+// only. The `s:` sentinel namespace distinguishes these from user HTML comments.
+var (
+	markerOpenRe  = regexp.MustCompile(`^\s*<!--s:([\w-]+(?:\s+[\w-]+)*)\s*-->\s*$`)
+	markerCloseRe = regexp.MustCompile(`^\s*<!--/s:([\w-]+)\s*-->\s*$`)
+)
 
-// handleAt pairs a stripped handle with the byte offset, in the cleaned
-// markdown, of the block it labels (the block immediately below the marker).
-type handleAt struct {
-	handle string
-	offset int
-}
-
-// stripHandles removes handle-marker lines from markdown and returns the clean
-// markdown plus, for each marker, the handle and the offset of the block below
-// it. A marker binds to the next non-marker line; if that line is blank
-// (external edit dropped the pairing) the handle simply fails to match a block
-// later and is treated as a new block — degraded mode, per spec §13.
-func stripHandles(markdown string) (string, []handleAt) {
-	lines := strings.Split(markdown, "\n")
-	var clean strings.Builder
-	var handles []handleAt
-	var pending []string
-
-	for i, ln := range lines {
-		if m := handleMarkerRe.FindStringSubmatch(ln); m != nil {
-			pending = append(pending, m[1])
-			continue // drop the marker line entirely
-		}
-		if len(pending) > 0 {
-			off := clean.Len() // start of this (the labelled) block in clean
-			for _, h := range pending {
-				handles = append(handles, handleAt{handle: h, offset: off})
-			}
-			pending = nil
-		}
-		clean.WriteString(ln)
-		if i < len(lines)-1 {
-			clean.WriteString("\n")
-		}
-	}
-	return clean.String(), handles
-}
-
-// ParseBlockDocWithHandles is the handle-aware loader: it strips markers, parses
-// the clean markdown into an ordered BlockDoc, then assigns each stripped handle
-// to the prose block whose content begins at the marker's offset.
+// ParseBlockDocWithHandles is the handle-aware loader. Structure derives ONLY
+// from delimiters: top-level structured fences (atomic, opaque) and paired
+// `<!--s:ID--> … <!--/s:ID-->` prose blocks. Unbalanced opens are literal text;
+// undelimited runs become a single opaque prose block. Blank lines never split.
 func ParseBlockDocWithHandles(markdown string) (BlockDoc, error) {
-	clean, handles := stripHandles(markdown)
-	spans, err := segmentBlockDoc(clean)
-	if err != nil {
-		return BlockDoc{}, err
-	}
-	offsetToHandles := make(map[int][]string)
-	for _, h := range handles {
-		offsetToHandles[h.offset] = append(offsetToHandles[h.offset], h.handle)
-	}
-	for i := range spans {
-		if spans[i].block.Kind == KindProse {
-			if hs, ok := offsetToHandles[spans[i].start]; ok && len(hs) > 0 {
-				spans[i].block.ID = hs[0]
-				if len(hs) > 1 {
-					spans[i].block.Aliases = append([]string(nil), hs[1:]...)
-				}
-			}
-		}
-	}
-	doc := BlockDoc{Blocks: make([]DocBlock, len(spans))}
-	for i, s := range spans {
-		doc.Blocks[i] = s.block
-	}
-	return doc, nil
+	return BlockDoc{Blocks: scanBlocks(markdown)}, nil
 }
 
 // splitHandles applies the split handle rule (Enter mid-block, spec §7): the
@@ -130,30 +77,18 @@ func mergeHandles(head, tail DocBlock) DocBlock {
 	return head
 }
 
-// SerializeBlockDocWithHandles is the handle-aware writer (the `attachHandles`
-// role from the plan): it serializes the block tree, re-prepending a marker
-// line above every prose block that carries an ID. Fenced blocks already
-// persist their handle in the YAML `id:` field, so they are unchanged.
+// SerializeBlockDocWithHandles is the handle-aware writer: it serializes the
+// block tree with paired comment-tag delimiters (spec §"Storage format"). A
+// prose block carrying an ID is wrapped `<!--s:ID alias…-->\n<content>\n
+// <!--/s:ID-->`; the open marker lists the full handle-set, the close the
+// primary id only. Handle-less prose (not yet minted) emits bare content.
+// Fenced blocks already persist their handle in the YAML `id:` field and stay
+// self-delimiting, so they are unchanged.
 func SerializeBlockDocWithHandles(doc BlockDoc) (string, error) {
 	parts := make([]string, 0, len(doc.Blocks))
 	for _, b := range doc.Blocks {
 		if b.Kind == KindProse {
-			content := b.Content
-			var sb strings.Builder
-			hasMarker := false
-			if b.ID != "" {
-				sb.WriteString("<!--s:" + b.ID + "-->\n")
-				hasMarker = true
-			}
-			for _, alias := range b.Aliases {
-				sb.WriteString("<!--s:" + alias + "-->\n")
-				hasMarker = true
-			}
-			if hasMarker {
-				sb.WriteString(content)
-				content = sb.String()
-			}
-			parts = append(parts, content)
+			parts = append(parts, serializeProseBlock(b))
 			continue
 		}
 		s, err := serializeFencedBlock(b)
@@ -163,4 +98,17 @@ func SerializeBlockDocWithHandles(doc BlockDoc) (string, error) {
 		parts = append(parts, s)
 	}
 	return strings.Join(parts, "\n\n"), nil
+}
+
+// serializeProseBlock wraps a prose block in its paired comment-tag delimiters.
+// Handle-less prose (empty ID — undelimited, pre-mint) is emitted verbatim so
+// the handle-less spine and minting-on-Open stay decoupled.
+func serializeProseBlock(b DocBlock) string {
+	if b.ID == "" {
+		return b.Content
+	}
+	handles := append([]string{b.ID}, b.Aliases...)
+	open := "<!--s:" + strings.Join(handles, " ") + "-->"
+	closeTag := "<!--/s:" + b.ID + "-->"
+	return open + "\n" + b.Content + "\n" + closeTag
 }
