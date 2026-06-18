@@ -124,27 +124,37 @@ a blank-line-separated paragraph. Meaningful whitespace (paragraph breaks) is
 preserved by construction; only exotic whitespace (3+ consecutive blanks, trailing
 spaces) is lossy, and that is accepted.
 
-### Editing model: Enter = new block, Shift+Enter = in-block content
-The Notion convention, which removes the need for a bespoke split command:
+### A Block is kind-homogeneous; the boundary IS the kind transition
+Each Block holds exactly one content *kind*: a diagram block holds mermaid, a code
+block holds source, and the **block-anchor holds markdown prose**. The block-anchor
+is not special — it is "the prose-kind Block," same shape as the rest.
 
-- **Shift+Enter** → a newline/paragraph as *content* within the current block. The
-  block (a container) renders these as paragraph children. Stays one block;
-  whitespace preserved as content.
-- **Enter** → PM creates a new block *node* via **standard insert-node behaviour**.
-  The diff observer sees a new top-level node → `create-block` (new minted id).
+A prose Block holds **any amount** of markdown prose. The instant content stops
+being markdown prose (code, image, diagram, …) → **new Block, do not pass go.**
+This is **schema-enforced**: sieve/container nodes are excluded from a prose
+Block's PM content, so inserting one makes PM split the prose to place it as a
+sibling (the "insert splits" payoff, free).
 
-So "split" is just Enter through PM's native machinery; "merge" is just
-Backspace-at-start joining nodes (diff sees a node gone → `delete-block`, removed
-id+aliases fold into the survivor). `splitHandles`/`mergeHandles` reduce to "new
-block mints an id / removed block's handles union into the survivor" — already
-expressed by the create/delete ops. Keymap work shrinks to: Enter creates a new
-block-anchor (not a paragraph inside the current one); Shift+Enter adds in-block
-content.
+### Inside prose, engineer nothing — let PM
+Whether a new paragraph stays as content in the current prose Block or becomes an
+adjacent prose Block is **immaterial**: both are `Kind=prose`, round-trip
+identically, and references behave the same. So there is **no bespoke split/merge
+keymap for prose** — PM's native paragraph behaviour (Enter, Backspace) is fine;
+we serialize the result as prose Block(s). The default implementation keeps a
+prose Block multi-paragraph (fewer blocks, less id churn), but the system is free
+to coalesce/split adjacent prose since it is equivalent.
+
+The only structural events that matter: **non-prose inserted → prose splits**
+(schema, free) and **block deleted**. The diff observer turns those into
+`create-block` / `delete-block`; ids mint silently. `splitHandles`/`mergeHandles`
+reduce to "new block mints an id / removed block's handles fold into the survivor,"
+already expressed by the create/delete ops — no bespoke command.
 
 ### RESOLVED: identity granularity, and IDs are silent
-Identity lives on the **block (container)**. A block may hold multiple paragraphs
-(added via Shift+Enter) that are unidentified content; a new block node (Enter)
-gets an id. References point at a block, not a paragraph.
+Identity lives on the **Block**. A prose Block may hold multiple paragraphs that
+are unidentified content; references point at a Block, not a paragraph. Adjacent
+prose Blocks are equivalent, so whether prose is one Block or several is immaterial
+to identity (each Block that exists has its own id, minted silently).
 
 **IDs are invisible plumbing.** The user is just editing a page and has no idea
 ids exist or are being minted. There is NO "create block" / "promote" gesture, no
