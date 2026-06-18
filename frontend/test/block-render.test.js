@@ -6,9 +6,9 @@ import { buildBlocksHTML } from '../src/static/block-render.js'
 const md = (t) => `<R>${t}</R>`
 
 describe('buildBlocksHTML', () => {
-  it('wraps a prose block in a sieve-block-anchor carrying its id', () => {
+  it('wraps a prose block in a sieve-prose carrying its id', () => {
     const html = buildBlocksHTML([{ kind: 'prose', id: 'pr-1', content: 'Hello' }], md)
-    expect(html).toBe('<div data-type="sieve-block-anchor" data-id="pr-1"><R>Hello</R></div>')
+    expect(html).toBe('<div data-type="sieve-prose" data-id="pr-1"><R>Hello</R></div>')
   })
 
   it('emits data-aliases as a JSON array when present', () => {
@@ -24,7 +24,7 @@ describe('buildBlocksHTML', () => {
   it('renders a structured block through its serialised fence form, no anchor wrapper', () => {
     const html = buildBlocksHTML([{ kind: 'code', id: 'co-1', serialisedForm: '```code\nid: co-1\n```' }], md)
     expect(html).toBe('<R>```code\nid: co-1\n```</R>')
-    expect(html).not.toContain('sieve-block-anchor')
+    expect(html).not.toContain('sieve-prose')
   })
 
   it('escapes the id attribute', () => {
@@ -34,7 +34,7 @@ describe('buildBlocksHTML', () => {
 
   it('falls back to an empty paragraph for empty prose so the anchor is non-empty', () => {
     const html = buildBlocksHTML([{ kind: 'prose', id: 'pr-1', content: '' }], md)
-    expect(html).toBe('<div data-type="sieve-block-anchor" data-id="pr-1"><p></p></div>')
+    expect(html).toBe('<div data-type="sieve-prose" data-id="pr-1"><p></p></div>')
   })
 
   it('joins multiple blocks in order with newlines', () => {
@@ -42,6 +42,6 @@ describe('buildBlocksHTML', () => {
       { kind: 'prose', id: 'pr-1', content: 'A' },
       { kind: 'code', id: 'co-1', serialisedForm: 'F' },
     ], md)
-    expect(html).toBe('<div data-type="sieve-block-anchor" data-id="pr-1"><R>A</R></div>\n<R>F</R>')
+    expect(html).toBe('<div data-type="sieve-prose" data-id="pr-1"><R>A</R></div>\n<R>F</R>')
   })
 })

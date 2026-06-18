@@ -164,7 +164,7 @@
     // forces the caller to a whole-document doc-update.
     function topBlockTriple(ed, node) {
       var name = node.type.name
-      if (name === 'sieve-block-anchor') {
+      if (name === 'sieve-prose') {
         var full = window.TipTap.serializeNode(ed, node) || ''
         var content = full.replace(/^(?:<!--s:[\w-]+-->\n)+/, '').trim()
         return { id: node.attrs.id || '', kind: 'prose', content: content }
@@ -411,7 +411,7 @@
     window.__tiptap = editor
 
     // Stage D.2: the block list IS the document model. When the load supplied it,
-    // render the document from the blocks (prose → block-anchor; structured →
+    // render the document from the blocks (prose → sieve-prose; structured →
     // its fence rule), bypassing the markdown `content:` seed above. We build the
     // HTML with the editor's OWN markdownit (so the fence parse rules are live)
     // and parse it through ProseMirror's DOMParser — reusing every node's

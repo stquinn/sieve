@@ -1,24 +1,25 @@
-// block-anchor-renderer.js — BlockAnchor: a transparent prose container.
+// prose-renderer.js — the prose Block: a transparent, kind-homogeneous leaf.
 //
-// Stage D.1. A prose block in the BlockDoc model is rendered as a
-// `sieve-block-anchor` node carrying the block's handle (id + aliases). It is a
-// TRANSPARENT container: it is NOT an atom and exposes a real `contentDOM`, so
-// ProseMirror owns the prose inside it (selection, caret, marks all traverse
-// normally) and typing edits the prose WITHOUT ever recreating the node.
+// A prose block in the BlockDoc model is rendered as a `sieve-prose` node
+// carrying the block's handle (id + aliases). It is a TRANSPARENT container: it
+// is NOT an atom and exposes a real `contentDOM`, so ProseMirror owns the prose
+// inside it (selection, caret, marks all traverse normally) and typing edits the
+// prose WITHOUT ever recreating the node. Its paragraphs are its *content*, not
+// child blocks — a prose Block is a kind-homogeneous leaf (Kind = prose).
 //
 // Identity (the id) is assigned at LOAD/structure time only — never patched on
 // every transaction. That deliberate constraint is what avoids the reverted
 // attempt's "new line per keystroke" defect.
 //
-// Registered as kind "block-anchor" → node name "sieve-block-anchor" (see
-// getSieveNodeNameFromKind), parsed from `div[data-type="sieve-block-anchor"]`.
+// Registered as kind "prose" → node name "sieve-prose" (see createSieveNode's
+// 'sieve-' + kind rule), parsed from `div[data-type="sieve-prose"]`.
 
 (function () {
   'use strict'
 
   var T = window.TipTap
 
-  var BlockAnchorRenderer = {
+  var ProseRenderer = {
     nodeConfig: {
       atom: false,        // transparent: prose children are real, editable PM content
       content: 'block+',  // paragraphs, headings, lists, …
@@ -49,7 +50,7 @@
       return { aliases: data.aliases || [] }
     },
 
-    // Transparent markdown serialiser. A block-anchor is NOT a fence — it owns
+    // Transparent markdown serialiser. A prose block is NOT a fence — it owns
     // real prose children, so getMarkdown() must emit that prose, not a
     // serialisedForm. We re-prepend the handle marker(s) above the content so
     // the identity survives a doc-update round-trip, byte-for-byte matching Go's
@@ -71,13 +72,13 @@
 
     makeNodeView: function (node, editor, getPos) {
       var dom = document.createElement('div')
-      dom.className = 'block-anchor'
-      dom.setAttribute('data-type', 'sieve-block-anchor')
+      dom.className = 'prose'
+      dom.setAttribute('data-type', 'sieve-prose')
       dom.setAttribute('data-kind', 'prose')
       dom.setAttribute('data-id', node.attrs.id || '')
 
       var contentDOM = document.createElement('div')
-      contentDOM.className = 'block-anchor__content'
+      contentDOM.className = 'prose__content'
       dom.appendChild(contentDOM)
 
       return {
@@ -92,15 +93,16 @@
           return true
         },
 
-        // CRITICAL: block-anchor is a content-bearing sieve node, so isSieveNode()
-        // (serialisedForm-defined) routes it to block-chrome's Strategy B, which
-        // injects + repopulates a `.block-chrome-host` inside this editable node
-        // on every state change. Without ignoreMutation, ProseMirror's
-        // MutationObserver sees those chrome writes, fails to reconcile them, and
-        // recreates this NodeView in a tight loop (perpetual redraw → 100% CPU,
-        // typing lag). Every other content-bearing sieve block (code, ai-block,
-        // web-clip, log, diagram) carries this exact guard; the anchor must too:
-        // let PM own mutations inside contentDOM, ignore everything else (chrome).
+        // CRITICAL: the prose block is a content-bearing sieve node, so
+        // isSieveNode() (serialisedForm-defined) routes it to block-chrome's
+        // Strategy B, which injects + repopulates a `.block-chrome-host` inside
+        // this editable node on every state change. Without ignoreMutation,
+        // ProseMirror's MutationObserver sees those chrome writes, fails to
+        // reconcile them, and recreates this NodeView in a tight loop (perpetual
+        // redraw → 100% CPU, typing lag). Every other content-bearing sieve block
+        // (code, ai-block, web-clip, log, diagram) carries this exact guard; the
+        // prose block must too: let PM own mutations inside contentDOM, ignore
+        // everything else (chrome).
         ignoreMutation: function (mutation) {
           return !contentDOM.contains(mutation.target)
         },
@@ -108,5 +110,5 @@
     },
   }
 
-  T.registerSieveRenderer('block-anchor', BlockAnchorRenderer)
+  T.registerSieveRenderer('prose', ProseRenderer)
 })()

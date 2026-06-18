@@ -4,7 +4,7 @@
 // HTML string the editor parses (via tiptap-markdown's markdownit + each node's
 // existing parseHTML). It does NOT build ProseMirror JSON — that is the whole
 // point of the spine: prose travels as rendered markdown wrapped in a
-// `sieve-block-anchor`; structured blocks travel as their canonical fence text,
+// `sieve-prose`; structured blocks travel as their canonical fence text,
 // which markdownit + the per-kind fence rule turn into the right data-* div.
 //
 // `mdRender` is injected (the editor passes
@@ -29,7 +29,7 @@ function blockHTML(b, mdRender) {
     if (b.aliases && b.aliases.length) {
       attrs += ` data-aliases="${escAttr(JSON.stringify(b.aliases))}"`
     }
-    return `<div data-type="sieve-block-anchor"${attrs}>${inner}</div>`
+    return `<div data-type="sieve-prose"${attrs}>${inner}</div>`
   }
   // Structured / container: render the canonical fence text. markdownit emits a
   // fenced code block; the per-kind fence parse rule (registered at editor
