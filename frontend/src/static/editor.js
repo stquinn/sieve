@@ -266,34 +266,54 @@
     // only on a doc change — it never wraps and never re-mints an existing block
     // (the schema removed the bare-paragraph churn that made the old minter loop).
     var mintProseId = function () { return 'pr-' + Math.random().toString(16).slice(2, 6) }
+    // Defense-in-depth: appendTransaction runs inside EditorState.apply's
+    // stabilisation loop — if it never stops returning a doc-changing tr the main
+    // thread spins at 100% (a frozen app). This plugin is additive + idempotent so
+    // it stabilises, but a runaway guard turns any future regression into a logged
+    // warning + a disabled plugin instead of a hard freeze. A real loop fires
+    // hundreds of times in microseconds; real edits are spaced out, so reset the
+    // counter once calls stop arriving back-to-back.
+    var piCalls = 0, piLast = 0
     var ProseIdentity = T.Extension.create({
       name: 'proseIdentity',
       addProseMirrorPlugins: function () {
         return [new T.Plugin({
           key: new T.PluginKey('proseIdentity'),
           appendTransaction: function (trs, _oldState, newState) {
+            var now = Date.now()
+            if (now - piLast > 100) piCalls = 0   // calls stopped arriving → reset
+            piLast = now
+            if (++piCalls > 100) {
+              console.error('[proseIdentity] RUNAWAY (' + piCalls + ' calls) — disabling to avoid a freeze. doc:', JSON.stringify(newState.doc.toJSON()))
+              return null
+            }
             if (!trs.some(function (tr) { return tr.docChanged })) return null
-            // Collect top-level actions first (don't mutate during the walk):
-            //   - a size-0 sieve-prose is structurally invalid (content is
-            //     'block+') — a parse/trailing artifact PM fabricates from
-            //     whitespace; DELETE it.
-            //   - an id-less sieve-prose with real content → MINT its handle.
-            var mints = [], drops = []
+            var tr = null
+            // (1) Mint a handle for any id-less sieve-prose that has REAL TEXT.
+            // An EMPTY prose (just an empty paragraph) and a size-0 parse artifact
+            // are editing surfaces, NOT committed blocks: leave them id-less so they
+            // never fire create-block until the user actually types. NEVER delete a
+            // size-0 prose — deleting fights PM's re-fill (it re-fabricates the node
+            // every pass → the appendTransaction loop that froze the app).
             newState.doc.forEach(function (node, pos) {
-              if (node.type.name !== 'sieve-prose') return
-              if (node.content.size === 0) drops.push({ pos: pos, size: node.nodeSize })
-              else if (!node.attrs.id) mints.push({ pos: pos, attrs: node.attrs })
+              if (node.type.name !== 'sieve-prose' || node.attrs.id) return
+              if (node.textContent.length === 0) return // surface/artifact: leave id-less
+              if (!tr) tr = newState.tr
+              tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, { id: mintProseId() }))
             })
-            if (!mints.length && !drops.length) return null
-            var tr = newState.tr
-            // Mints first (no size change → positions stay valid), then drops in
-            // REVERSE order so earlier positions are unaffected by later deletes.
-            mints.forEach(function (m) {
-              tr.setNodeMarkup(m.pos, undefined, Object.assign({}, m.attrs, { id: mintProseId() }))
-            })
-            drops.sort(function (a, b) { return b.pos - a.pos }).forEach(function (d) {
-              tr.delete(d.pos, d.pos + d.size)
-            })
+            // (2) Ensure a trailing prose editing surface. If the doc ends in a
+            // structured block there is nowhere to put a caret, so append ONE valid
+            // empty prose (createAndFill → it has a paragraph, so it is selectable &
+            // typeable). Idempotent: once the last child is a prose this is a no-op,
+            // so it ADDS-if-missing (monotonic) and never loops. It is id-less, so it
+            // is the same transient surface an empty doc shows — typing into it mints
+            // an id + round-trips via create-block; it is never persisted to Go.
+            var last = newState.doc.lastChild
+            if (last && last.type.name !== 'sieve-prose') {
+              if (!tr) tr = newState.tr
+              var surface = newState.schema.nodes['sieve-prose'].createAndFill()
+              if (surface) tr.insert(tr.doc.content.size, surface)
+            }
             return tr
           },
         })]
@@ -305,7 +325,13 @@
       extensions: [
         SieveDocument,
         ProseIdentity,
-        T.StarterKit.configure({ document: false, link: false, codeBlock: false, history: { depth: 10000, newGroupDelay: 500 } }),
+        // trailingNode:false — StarterKit's TrailingNode appends a node after the
+        // last block; under our 'sieveBlock+' top level it is coerced into an empty,
+        // INVALID sieve-prose (no paragraph) that is unselectable/un-typeable and is
+        // a local fabrication the shadow never sent. We render EXACTLY the shadow's
+        // blocks; typing after the last block goes through the Gapcursor → a real new
+        // prose block → create-block.
+        T.StarterKit.configure({ document: false, link: false, codeBlock: false, trailingNode: false, history: { depth: 10000, newGroupDelay: 500 } }),
         T.Placeholder.configure({ placeholder: function (p) { return p.editor.isEmpty ? 'Start writing\u2026' : '' } }),
         T.BlockNode,
         T.BlockChrome,
