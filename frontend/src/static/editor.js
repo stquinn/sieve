@@ -167,7 +167,7 @@
       if (name === 'sieve-prose') {
         var full = window.TipTap.serializeNode(ed, node) || ''
         var content = full.replace(/^(?:<!--s:[\w-]+-->\n)+/, '').trim()
-        return { id: node.attrs.id || '', kind: 'prose', content: content }
+        return { id: node.attrs.id || '', kind: 'prose', content: content, aliases: node.attrs.aliases || [] }
       }
       if (name.indexOf('sieve-') === 0) {
         return { id: node.attrs.id || '', kind: node.attrs.kind || name, content: node.attrs.serialisedForm || '' }

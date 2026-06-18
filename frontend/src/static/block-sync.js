@@ -1,53 +1,90 @@
-// block-sync.js — Stage D.3 thin-observer diff logic (pure).
+// block-sync.js — the thin-observer diff core (pure, D.4).
 //
-// The block document model syncs the editor to Go with granular block-ops, not
-// a whole-document markdown blob. computeBlockSync is the decision core: given
-// the current top-level blocks and the content cache from the last sync, it
-// decides whether granular `update-block` ops are safe and, if so, which blocks
-// actually changed.
+// The block document model syncs the editor to Go with granular block-ops, not a
+// whole-document markdown blob. computeBlockSync is an id-keyed diff over the
+// top-level blocks that emits create-block / update-block / delete-block ops.
 //
-// It deliberately FALLS BACK to a whole-document doc-update for the two cases
-// granular ops can't yet express (both land in D.4):
-//   1. a changed block has no id — identity isn't minted until D.4, so it can't
-//      be addressed; and
-//   2. the set of top-level block ids changed — a split/merge, handled in D.4.
-// Falling back keeps the app lossless and runnable while D.3 ships in isolation.
+// SCOPE: the observer owns PROSE blocks. Structured (sieve-*) blocks have their
+// own sync channels — content via `sieve:block-update` ({attrs}), insertion via
+// `editor:insert-block` — and their `serialisedForm` is a stable backend-sourced
+// snapshot the frontend never mutates. So this observer must NOT emit content ops
+// for structured blocks. A change that CREATES/DELETES/edits a structured block
+// defers to the whole-document fallback this slice (unchanged from before);
+// structured ops go granular in a later slice once their lifecycle is unified.
+//
+// The other fallback is DEFENSIVE: a block with no id can't be addressed. Prose
+// identity is minted before the diff runs (server-side on Open, client-side for
+// new blocks), so it should not normally fire.
 
-// curr: [{ id, kind, content }] in document order (content already serialized).
-// prev: { [id]: content } from the last successful sync, or null on first call.
-// → { mode: 'ops' | 'fallback', ops: [BlockOp], next: { [id]: content } }
+// blockSig is a block's change-signature, prefixed with kind so a cached entry's
+// kind is recoverable. Prose hashes on content + aliases; structured hashes on
+// its stable serialisedForm content (carried in `content` for structured).
+function blockSig(b) {
+  return b.kind + '\x00' + (b.content || '') + '\x00' + ((b.aliases || []).join(','))
+}
+
+function sigKind(sig) {
+  return sig.split('\x00', 1)[0]
+}
+
+// proseOp builds a create/update op for a prose block; aliases ride along when
+// present, and create carries its document index.
+function proseOp(type, b, index) {
+  var op = { type: type, blockId: b.id, kind: 'prose', content: b.content || '' }
+  if (b.aliases && b.aliases.length) op.aliases = b.aliases
+  if (type === 'create-block') op.index = index
+  return op
+}
+
+// curr: [{ id, kind, content, aliases? }] in document order. For prose, content
+// is markdown; for structured, content is the stable serialisedForm (used only as
+// a change-signature, never emitted as an op here).
+// prev: { [id]: sig } from the last successful sync, or null on the first call.
+// → { mode: 'ops' | 'fallback', ops: [BlockOp], next: { [id]: sig } }
 export function computeBlockSync(curr, prev) {
   var next = {}
   var anyEmptyId = false
   for (var i = 0; i < curr.length; i++) {
-    var b = curr[i]
-    if (!b.id) anyEmptyId = true
-    next[b.id] = b.content
+    if (!curr[i].id) anyEmptyId = true
+    next[curr[i].id] = blockSig(curr[i])
   }
 
-  // Can't address a block without an id → whole-document fallback.
+  // Can't address a block without an id → defensive whole-document fallback.
   if (anyEmptyId) return { mode: 'fallback', ops: [], next: next }
 
   // First call: just seed the baseline, never emit ops.
   if (!prev) return { mode: 'ops', ops: [], next: next }
 
-  // Structure change (split/merge / create / delete) → fallback until D.4.
-  var prevIds = Object.keys(prev)
-  if (prevIds.length !== curr.length) return { mode: 'fallback', ops: [], next: next }
-  for (var j = 0; j < curr.length; j++) {
-    if (!(curr[j].id in prev)) return { mode: 'fallback', ops: [], next: next }
+  // Any structured (non-prose) block created, deleted, or changed → fall back to
+  // a whole-document update this slice (structured sync is not granular yet).
+  for (var c = 0; c < curr.length; c++) {
+    var b = curr[c]
+    if (b.kind === 'prose') continue
+    if (!(b.id in prev) || prev[b.id] !== next[b.id]) {
+      return { mode: 'fallback', ops: [], next: next }
+    }
+  }
+  for (var pid in prev) {
+    if (sigKind(prev[pid]) !== 'prose' && !(pid in next)) {
+      return { mode: 'fallback', ops: [], next: next }
+    }
   }
 
-  // Same id set → emit an update-block for each prose block whose content
-  // changed. A CHANGED structured block defers to doc-update: the Go
-  // update-block contract for structured kinds carries parsed Attrs, which the
-  // client (holding only the fence string) can't faithfully build yet.
+  // Structured blocks are stable → emit granular PROSE create/update/delete.
   var ops = []
   for (var k = 0; k < curr.length; k++) {
-    var c = curr[k]
-    if (prev[c.id] === c.content) continue
-    if (c.kind !== 'prose') return { mode: 'fallback', ops: [], next: next }
-    ops.push({ type: 'update-block', blockId: c.id, kind: c.kind, content: c.content })
+    var p = curr[k]
+    if (p.kind !== 'prose') continue
+    if (!(p.id in prev)) {
+      ops.push(proseOp('create-block', p, k))
+    } else if (prev[p.id] !== next[p.id]) {
+      ops.push(proseOp('update-block', p, k))
+    }
+  }
+  for (var id in prev) {
+    if (sigKind(prev[id]) === 'prose' && !(id in next)) {
+      ops.push({ type: 'delete-block', blockId: id })
+    }
   }
   return { mode: 'ops', ops: ops, next: next }
 }
