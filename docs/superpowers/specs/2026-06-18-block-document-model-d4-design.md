@@ -254,10 +254,16 @@ block-ops, reopen round-trips, blank lines never alter block structure.
   the old `sieve-block-anchor` and the new `sieve-prose` identically. Pre-exists
   this session (introduced by the D.2 `sieve-prose` wrapper).
   **Fix direction (deferred, by user decision):** do NOT patch the legacy
-  blockRef path. Once prose ids are minted (step 3) and blocks are real, rewire
-  Ask AI to target the whole prose BLOCK (`ref: pr-xxxx`), per the design rule
-  "references point at a Block, not a phrase"; retire the `==`/blockRef
-  sub-phrase anchor with the rest of blockRef in Stage E. No app user until the
+  blockRef path now. Once prose ids are minted (step 3) and blocks are real,
+  rewire AI targeting from scratch. **RETAINED FEATURE (user, 2026-06-18):
+  highlighted-word/phrase AI targeting INSIDE a prose block stays** — a user
+  must still be able to highlight a span and have Ask AI target just that span
+  (highlighted-word granularity is core; see the lineage memory). So the rewire
+  must support BOTH whole-block targeting (caret in block → `ref: pr-xxxx`) AND
+  sub-block phrase targeting (highlighted span within a prose block). The
+  *mechanism* may change (the depth-0 blockRef wrap and blockRef node itself can
+  be replaced/retired in Stage E), but the phrase-targeting *capability* must
+  survive — do not collapse everything to whole-block. No app user until the
   migration is complete, so this is not user-facing yet.
 
 ## Risks
