@@ -16,19 +16,26 @@ Anywhere blank lines currently influence parsing (e.g. `segmentBlockDoc` /
 marker "binding to the next block") is the exact ambiguity to remove. Blank lines
 are content; they carry no structural signal.
 
-## Whitespace: the XML rule
+## Whitespace: the XML rule (a content-fidelity requirement)
 
 One rule, like XML: whitespace **between** blocks (outside the delimiters) is
 insignificant; whitespace **inside** a block is preserved content. The parser
 never reads whitespace for structure (delimiters do that); it stores in-block
 whitespace faithfully as content.
 
-Because a block is a container of children, the common case is free: a paragraph
-break inside a block is a child node and round-trips as a blank-line-separated
-paragraph. Only exotic whitespace (3+ consecutive blanks, trailing spaces) is
-lossy through the markdown↔PM round-trip, and that is accepted. (Today Sieve drops
-more than that because the whole doc re-serializes; the diff-only-changed observer
-already limits loss to edited blocks. Markdown mode is fully verbatim.)
+**Source-agnostic.** It does not matter how the whitespace got there — existing
+markdown on disk, a manual edit, or keystrokes. If it is inside a block, it is
+block content. The "how it was produced" is a non-question.
+
+**The one real engineering problem: make PM render and round-trip it as
+whitespace.** markdownit/PM normalize by default (collapse blank-line runs, trim
+trailing spaces, reflow), which is why Sieve drops whitespace today. This is a
+genuine requirement to solve, not just an accepted loss — approaches to
+investigate: preserve blank-line runs as content, hard breaks / trailing-space
+handling, or a more verbatim prose-content path. Two mitigations already help: the
+container model makes paragraph breaks free (each is a child node), and the
+diff-only-changed observer means unedited blocks are never re-serialized. Markdown
+mode is already fully verbatim.
 
 ## Storage format: a comment-tag block tree
 
@@ -100,11 +107,16 @@ expressed by the create/delete ops. Keymap work shrinks to: Enter creates a new
 block-anchor (not a paragraph inside the current one); Shift+Enter adds in-block
 content.
 
-### RESOLVED: identity granularity
+### RESOLVED: identity granularity, and IDs are silent
 Identity lives on the **block (container)**. A block may hold multiple paragraphs
-(added via Shift+Enter) that are unidentified content; **Enter starts a new
-identified block**. Promotion isn't a special operation — it's pressing Enter.
-References point at a block, not a paragraph. (Confirmed with user 2026-06-18.)
+(added via Shift+Enter) that are unidentified content; a new block node (Enter)
+gets an id. References point at a block, not a paragraph.
+
+**IDs are invisible plumbing.** The user is just editing a page and has no idea
+ids exist or are being minted. There is NO "create block" / "promote" gesture, no
+UI, no awareness — you type, nodes appear, ids get attached under the hood. Any
+framing of block creation as a deliberate identity act is wrong; minting is
+automatic and silent. (Confirmed with user 2026-06-18.)
 
 ## Parser / serializer changes (the spine)
 
