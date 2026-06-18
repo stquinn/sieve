@@ -16,30 +16,19 @@ Anywhere blank lines currently influence parsing (e.g. `segmentBlockDoc` /
 marker "binding to the next block") is the exact ambiguity to remove. Blank lines
 are content; they carry no structural signal.
 
-## Whitespace: two roles (structural vs content)
+## Whitespace: the XML rule
 
-Whitespace has two distinct roles and we want opposite things from each:
+One rule, like XML: whitespace **between** blocks (outside the delimiters) is
+insignificant; whitespace **inside** a block is preserved content. The parser
+never reads whitespace for structure (delimiters do that); it stores in-block
+whitespace faithfully as content.
 
-1. **Structural** (blank line as block boundary) → **meaningless** (the principle
-   above). Never defines structure.
-2. **Content** (spacing/blank lines the user typed inside prose for placement and
-   readability) → **preserved verbatim**. Sieve currently DROPS this and shouldn't.
-
-These are consistent: the parser ignores whitespace for structure and stores it
-faithfully as content. Where it's dropped today: the WYSIWYG round-trip
-(prose markdown → markdownit → ProseMirror → `getMarkdown()`) normalizes —
-collapses blank-line runs, trims trailing spaces, reflows.
-
-**Fidelity strategy:**
-- **Unedited blocks are never re-serialized.** The diff observer only emits ops
-  for *changed* blocks, so unchanged prose keeps its on-disk verbatim content
-  (whitespace and all) between its delimiters — free preservation for the common
-  case.
-- **Edited blocks** still pass through the markdown↔PM round-trip, which is
-  inherently whitespace-lossy. Investigate a more whitespace-faithful prose path
-  (verbatim-ish content, preserve trailing spaces / hard breaks / blank-line runs)
-  — a real task, not a free win.
-- **Markdown mode** is already fully verbatim (saved as typed).
+Because a block is a container of children, the common case is free: a paragraph
+break inside a block is a child node and round-trips as a blank-line-separated
+paragraph. Only exotic whitespace (3+ consecutive blanks, trailing spaces) is
+lossy through the markdown↔PM round-trip, and that is accepted. (Today Sieve drops
+more than that because the whole doc re-serializes; the diff-only-changed observer
+already limits loss to edited blocks. Markdown mode is fully verbatim.)
 
 ## Storage format: a comment-tag block tree
 
@@ -94,20 +83,28 @@ blank-line-separated paragraph. Meaningful whitespace (paragraph breaks) is
 preserved by construction; only exotic whitespace (3+ consecutive blanks, trailing
 spaces) is lossy, and that is accepted.
 
-### Editing consequence: Enter = paragraph, not split
-Because a block holds children, **default Enter just adds a paragraph child** — no
-new delimiter, no minted id, no structural `block-op`, lossless. Creating a *new
-delimited block* is a **deliberate, rarer operation** (insert a structured block,
-promote a unit for referencing, start a column), not every Enter. The split/merge
-keymap therefore shrinks dramatically for normal typing.
+### Editing model: Enter = new block, Shift+Enter = in-block content
+The Notion convention, which removes the need for a bespoke split command:
 
-### OPEN: identity granularity
-Under the container model, a handle/id naturally lives on the **block
-(container)**; paragraphs inside are plain, unidentified markdown content. A
-reference points at a block, not a paragraph; paragraph-level identity is **opt-in
-via promotion** (give the paragraph its own delimiters). This reframes what
-`splitHandles`/`mergeHandles` are for (block-level split/merge, not per-paragraph).
-**Decision pending user confirmation.**
+- **Shift+Enter** → a newline/paragraph as *content* within the current block. The
+  block (a container) renders these as paragraph children. Stays one block;
+  whitespace preserved as content.
+- **Enter** → PM creates a new block *node* via **standard insert-node behaviour**.
+  The diff observer sees a new top-level node → `create-block` (new minted id).
+
+So "split" is just Enter through PM's native machinery; "merge" is just
+Backspace-at-start joining nodes (diff sees a node gone → `delete-block`, removed
+id+aliases fold into the survivor). `splitHandles`/`mergeHandles` reduce to "new
+block mints an id / removed block's handles union into the survivor" — already
+expressed by the create/delete ops. Keymap work shrinks to: Enter creates a new
+block-anchor (not a paragraph inside the current one); Shift+Enter adds in-block
+content.
+
+### RESOLVED: identity granularity
+Identity lives on the **block (container)**. A block may hold multiple paragraphs
+(added via Shift+Enter) that are unidentified content; **Enter starts a new
+identified block**. Promotion isn't a special operation — it's pressing Enter.
+References point at a block, not a paragraph. (Confirmed with user 2026-06-18.)
 
 ## Parser / serializer changes (the spine)
 
