@@ -41,6 +41,8 @@ import { registerBlockKind } from './block-kinds.js'
   // loaded block's id straight onto its native node and topBlockTriple can read
   // it back. The durable identity lives in the on-disk paired markers; this attr
   // is only the in-editor carrier (attrs don't survive markdown).
+  var mintProseId = function () { return 'pr-' + Math.random().toString(16).slice(2, 6) }
+
   var BlockId = T.Extension.create({
     name: 'blockId',
     addGlobalAttributes: function () {
@@ -57,6 +59,56 @@ import { registerBlockKind } from './block-kinds.js'
           },
         },
       }]
+    },
+
+    // The minting plugin (D-r.4). It is the PASSIVE half of "TipTap runs the
+    // editor": PM creates/splits/merges nodes natively; we only ensure each
+    // top-level prose node carries a UNIQUE blockId, so PM's N nodes == N blocks.
+    // A node needs an id when its blockId is empty (paste, gap-cursor paragraph)
+    // OR duplicated — the splitBlock attr-copy trap: Enter copies the node's
+    // attrs, so the new half is born with the original's id (mintActions flags the
+    // second occurrence → re-mint → original keeps its id, new half gets a fresh
+    // one → exactly one create-block). Runs in appendTransaction (NOT onUpdate),
+    // history-excluded, and ONLY fills ids (creates no nodes) so it converges; a
+    // runaway guard is the backstop.
+    addProseMirrorPlugins: function () {
+      var Plugin = T.Plugin, PluginKey = T.PluginKey
+      var calls = 0, last = 0
+      return [new Plugin({
+        key: new PluginKey('blockIdMint'),
+        appendTransaction: function (trs, _oldState, newState) {
+          var now = Date.now()
+          if (now - last > 100) calls = 0   // edits are spaced out → reset
+          last = now
+          if (++calls > 100) {
+            console.error('[blockId] RUNAWAY mint pass — disabling to avoid a freeze')
+            return null
+          }
+          if (!trs.some(function (t) { return t.docChanged })) return null
+
+          var isProse = window.TipTap.isNativeProseNodeName
+          var ids = [], positions = []
+          newState.doc.forEach(function (node, pos) {
+            if (!isProse(node.type.name)) return   // structured nodes own their id
+            ids.push(node.attrs.blockId || '')
+            positions.push(pos)
+          })
+          var need = window.TipTap.mintActions(ids)
+          if (!need.length) return null
+
+          // setNodeMarkup changes attrs only (no size change) → positions are
+          // stable across the loop. History-excluded so minting is never undone.
+          var tr = newState.tr
+          need.forEach(function (i) {
+            var pos = positions[i]
+            var node = newState.doc.nodeAt(pos)
+            if (!node) return
+            tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, { blockId: mintProseId() }))
+          })
+          tr.setMeta('addToHistory', false)
+          return tr
+        },
+      })]
     },
   })
 

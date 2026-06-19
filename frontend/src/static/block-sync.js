@@ -66,6 +66,26 @@ export function seedBaseline(curr) {
   return next
 }
 
+// mintActions is the pure minting decision (D-r.4). Given the blockIds of the
+// top-level nodes in document order, it returns the INDICES that need a fresh id:
+// an id that is EMPTY (a brand-new node — paste, gap-cursor paragraph) or one
+// ALREADY SEEN earlier in the pass. The duplicate case is THE splitBlock trap:
+// ProseMirror's Enter copies the split node's attributes, so the new half is born
+// carrying the original's blockId. The first occurrence keeps the id; the later
+// duplicate is re-minted, so split → original keeps its id + the new half gets a
+// fresh one → exactly one create-block. Minting only FILLS ids (it creates no
+// nodes), so re-running over the result flags nothing → convergent (no runaway).
+export function mintActions(ids) {
+  var seen = {}
+  var need = []
+  for (var i = 0; i < (ids || []).length; i++) {
+    var id = ids[i]
+    if (!id || seen[id]) { need.push(i); continue }
+    seen[id] = true
+  }
+  return need
+}
+
 export function computeBlockSync(curr, prev) {
   var next = {}
   var anyEmptyId = false
@@ -121,4 +141,5 @@ if (typeof window !== 'undefined') {
   window.TipTap = window.TipTap || {}
   window.TipTap.computeBlockSync = computeBlockSync
   window.TipTap.seedBaseline = seedBaseline
+  window.TipTap.mintActions = mintActions
 }
