@@ -109,7 +109,7 @@ func expandAIBlockRefs(refs []string, doc ShadowDocument) []string {
 		if id == "" {
 			continue
 		}
-		if blk, ok := doc.Blocks[id]; ok && blk.Kind == "ai-block" {
+		if blk, ok := doc.getBlock(id); ok && blk.Kind == "ai-block" {
 			if aiRef, _ := blk.Attrs["ref"].(string); aiRef != "" && aiRef != "doc" {
 				for _, part := range strings.Split(aiRef, ",") {
 					if part = strings.TrimSpace(part); part != "" {

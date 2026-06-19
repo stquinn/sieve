@@ -78,6 +78,26 @@ func newShadow(uuid, body string, debounce time.Duration, onFlush func()) *Shado
 	return s
 }
 
+// getBlock resolves a block by id from the authoritative block tree, regardless
+// of kind — the single accessor callers should use instead of poking the derived
+// Blocks map (which is structured-only and slated for removal). It is the first
+// brick of the ShadowDoc → uniform-block-model refactor: "everything is a block",
+// so lookup never discriminates on kind; only context/serialisation does. Falls
+// back to the structured Blocks map so paths that only populate it (and tests)
+// keep resolving. Returns the block and true, or nil/false.
+func (s ShadowDocument) getBlock(id string) (*DocBlock, bool) {
+	if id == "" {
+		return nil, false
+	}
+	if b := findBlockIn(s.Doc.Blocks, id); b != nil {
+		return b, true
+	}
+	if sb, ok := s.Blocks[id]; ok && sb != nil {
+		return &DocBlock{ID: sb.ID, Kind: sb.Kind, Attrs: sb.Attrs}, true
+	}
+	return nil, false
+}
+
 // syncBlocksView rebuilds the derived Blocks map from the authoritative Doc.
 // Each SieveBlock.Attrs ALIASES the DocBlock.Attrs map (same reference), so the
 // existing call sites that mutate attrs in place (AI jobs, lifecycle) propagate
@@ -870,6 +890,11 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	for k, v := range shadow.Blocks {
 		blocksCopy[k] = v
 	}
+	// Snapshot the authoritative block tree so the job can resolve ANY block by id
+	// (prose included) via getBlock — prose carries its payload as Content, which
+	// the structured-only Blocks map can't hold. Top-level slice copy under lock;
+	// Content is value-copied (race-free), matching the existing Attrs aliasing.
+	docCopy := BlockDoc{Blocks: append([]DocBlock(nil), shadow.Doc.Blocks...)}
 	shadow.mu.Unlock()
 
 	processor := GetProcessor(kind)
@@ -897,7 +922,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	jctx := JobContext{
 		Ctx:    ctx,
 		UUID:   uuid,
-		Shadow: ShadowDocument{UUID: uuid, Markdown: markdown, Mode: mode, Blocks: blocksCopy},
+		Shadow: ShadowDocument{UUID: uuid, Markdown: markdown, Mode: mode, Blocks: blocksCopy, Doc: docCopy},
 		Block:  blkCopy,
 		Notify: notify,
 	}

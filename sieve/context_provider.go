@@ -69,25 +69,31 @@ func BuildContextForID(id string, doc ShadowDocument, seen map[string]bool) stri
 	if id == "doc" {
 		return doc.Markdown
 	}
-	var block SieveBlock
-	logger.Debug("ContextProvider: looking up context for block ID %q", id)
-	for _, blk := range doc.Blocks {
-		logger.Debug("ContextProvider: checking block ID %q (kind %q)", blk.ID, blk.Kind)
-	}
-	if blk, ok := doc.Blocks[id]; ok {
-		block = *blk
-	} else {
-		found, ok := FindBlockByID(doc.Markdown, id)
-		if !ok {
-			logger.Warn("ContextProvider: block ID %q not found in doc or blocks map", id)
+	// Uniform resolution: every block — prose or structured — is addressable by id
+	// in the block tree (getBlock). Kind only matters here, at context-build time:
+	// a prose block's payload IS its markdown content; a structured block routes to
+	// its registered ContextProvider.
+	if b, ok := doc.getBlock(id); ok {
+		if b.Kind == KindProse {
+			return b.Content
+		}
+		cp := GetContextProvider(b.Kind)
+		if cp == nil {
+			logger.Warn("ContextProvider: no provider registered for block kind %q", b.Kind)
 			return ""
 		}
-		block = found
+		return cp.BuildContext(SieveBlock{ID: b.ID, Kind: b.Kind, Attrs: b.Attrs}, doc, seen)
 	}
-	cp := GetContextProvider(block.Kind)
-	if cp == nil {
-		logger.Warn("ContextProvider: no provider registered for block kind %q", block.Kind)
+	// Fallback: structured blocks parseable straight from markdown (markdown mode).
+	found, ok := FindBlockByID(doc.Markdown, id)
+	if !ok {
+		logger.Warn("ContextProvider: block ID %q not found in doc or blocks map", id)
 		return ""
 	}
-	return cp.BuildContext(block, doc, seen)
+	cp := GetContextProvider(found.Kind)
+	if cp == nil {
+		logger.Warn("ContextProvider: no provider registered for block kind %q", found.Kind)
+		return ""
+	}
+	return cp.BuildContext(found, doc, seen)
 }
