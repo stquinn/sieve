@@ -766,77 +766,61 @@ func (es *EditorService) DispatchJobIfNeeded(uuid, blockID string) {
 }
 
 // applyJobUpdate safely applies block updates resulting from a background job.
-// It looks up the current active shadow (which may have been recreated) or updates disk directly if closed.
+// ALL mutations flow through the in-memory ShadowDocument — the single update
+// path. If the document is closed (no shadow), we open it transiently, apply
+// through the same path, then close it (Close flushes to disk with reason "close").
 func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[string]interface{}, deletes []string, flushReason string) {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
 
-	if shadow != nil {
-		if len(updates) > 0 {
-			shadow.setBlock(SieveBlock{ID: blockID, Kind: kind, Attrs: updates})
+	openedTransiently := false
+	if shadow == nil {
+		// Document is closed: open it transiently so the update flows through
+		// the ShadowDocument. Do NOT hold es.mu across Open (Open acquires it).
+		if err := es.Open(uuid, nil); err != nil {
+			logger.Warn("editor: job update failed to open doc transiently", "uuid", uuid, "err", err)
+			return
 		}
-		for _, k := range deletes {
-			shadow.deleteBlockAttr(blockID, k)
-		}
-		if flushReason != "" {
-			_ = es.flushShadow(shadow, flushReason)
-		}
+		openedTransiently = true
 
-		shadow.mu.Lock()
-		blk := shadow.findBlock(blockID)
-		ok := blk != nil
-		var attrsCopy map[string]interface{}
-		if ok {
-			attrsCopy = make(map[string]interface{}, len(blk.Attrs))
-			for k, v := range blk.Attrs {
-				attrsCopy[k] = v
-			}
-		}
-		shadow.mu.Unlock()
-		if ok {
-			es.notifyBlockUpdated(uuid, SieveBlock{ID: blockID, Kind: kind, Attrs: attrsCopy})
-		}
-	} else {
-		// No active shadow in memory. We must update the document on disk directly.
-		doc, err := es.documents.LoadByUUID(uuid)
-		if err != nil {
-			logger.Warn("editor: job update failed to load doc", "uuid", uuid, "err", err)
+		es.mu.RLock()
+		shadow = es.shadows[uuid]
+		es.mu.RUnlock()
+		if shadow == nil {
+			logger.Warn("editor: job update shadow missing after transient open", "uuid", uuid)
 			return
 		}
-		body := string(doc.Body())
-		diskBlocks, err := es.codec.Deserialize(body)
-		if err != nil {
-			logger.Warn("editor: job update failed to parse doc", "uuid", uuid, "err", err)
-			return
-		}
-		blk := findBlockIn(diskBlocks, blockID)
-		if blk == nil {
-			logger.Warn("editor: job update target block missing from disk", "uuid", uuid, "block", blockID)
-			return
-		}
+	}
 
-		if blk.Attrs == nil {
-			blk.Attrs = make(map[string]interface{}, len(updates))
-		}
-		for k, v := range updates {
-			blk.Attrs[k] = v
-		}
-		for _, k := range deletes {
-			delete(blk.Attrs, k)
-		}
+	if len(updates) > 0 {
+		shadow.setBlock(SieveBlock{ID: blockID, Kind: kind, Attrs: updates})
+	}
+	for _, k := range deletes {
+		shadow.deleteBlockAttr(blockID, k)
+	}
+	if flushReason != "" {
+		_ = es.flushShadow(shadow, flushReason)
+	}
 
-		newBody, err := es.codec.Serialize(diskBlocks)
-		if err != nil {
-			logger.Warn("editor: job update failed to serialize doc", "uuid", uuid, "err", err)
-			return
+	shadow.mu.Lock()
+	blk := shadow.findBlock(blockID)
+	ok := blk != nil
+	var attrsCopy map[string]interface{}
+	if ok {
+		attrsCopy = make(map[string]interface{}, len(blk.Attrs))
+		for k, v := range blk.Attrs {
+			attrsCopy[k] = v
 		}
-		doc.SetBody([]byte(newBody))
-		if _, err := es.documents.Save(doc); err != nil {
-			logger.Warn("editor: job update save to disk failed", "uuid", uuid, "err", err)
-		} else {
-			logger.Info("editor: job update applied to disk directly", "uuid", uuid, "block", blockID)
-		}
+	}
+	shadow.mu.Unlock()
+	if ok {
+		es.notifyBlockUpdated(uuid, SieveBlock{ID: blockID, Kind: kind, Attrs: attrsCopy})
+	}
+
+	if openedTransiently {
+		// Close flushes (reason "close") and removes the shadow from the map.
+		es.Close(uuid)
 	}
 }
 

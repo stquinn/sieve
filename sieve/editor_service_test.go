@@ -803,6 +803,76 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 	}
 }
 
+// TestApplyJobUpdate_closedDoc verifies that a job update targeting a document
+// that is NOT open in memory (no shadow) is persisted to disk via a transient
+// Open→apply→Close cycle, and that no shadow leaks into es.shadows afterward.
+// Uses the "code" kind (real CodeBlockProcessor) so the fenced block is
+// properly deserialized by the shadow and its block-id is recognized.
+func TestApplyJobUpdate_closedDoc(t *testing.T) {
+	resetRegistry()
+	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
+	t.Cleanup(func() { UnregisterProcessor("code") })
+
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
+
+	// Create and save a document with a code block; never open it in the EditorService.
+	// createdAt is set to "now" so resetStuckDispatched (called on Open) does not
+	// treat the DISPATCHED block as stuck and spawn a background RunJob goroutine,
+	// which would race with our transient Close.
+	doc, err := ds.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	createdAt := time.Now().Format(time.RFC3339)
+	body := "# Job Update Test\n\n```code\nid: cb-closed\nstatus: DISPATCHED\ncreatedAt: " + createdAt + "\nsource: old source\n```"
+	doc.SetBody([]byte(body))
+	doc, err = ds.Save(doc)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	uuid := doc.UUID()
+
+	// Confirm no shadow exists before the update.
+	es.mu.RLock()
+	_, hasShadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if hasShadow {
+		t.Fatal("precondition: expected no open shadow before applyJobUpdate")
+	}
+
+	// Apply a job update to the closed document.
+	es.applyJobUpdate(uuid, "cb-closed", "code",
+		map[string]interface{}{"status": BlockStatusComplete, "source": "new source"},
+		nil, // no deletes
+		"",  // no explicit flush reason; Close will flush
+	)
+
+	// Shadow must be gone after the transient open+close.
+	es.mu.RLock()
+	_, stillOpen := es.shadows[uuid]
+	es.mu.RUnlock()
+	if stillOpen {
+		t.Error("expected no shadow to remain after transient applyJobUpdate on closed doc")
+	}
+
+	// The update must be persisted on disk.
+	reloaded, err := ds.LoadByUUID(uuid)
+	if err != nil {
+		t.Fatalf("LoadByUUID: %v", err)
+	}
+	diskBody := string(reloaded.Body())
+	if !strings.Contains(diskBody, "new source") {
+		t.Errorf("expected disk body to contain 'new source' after job update, got:\n%s", diskBody)
+	}
+	if !strings.Contains(diskBody, string(BlockStatusComplete)) {
+		t.Errorf("expected disk body to contain COMPLETE status after job update, got:\n%s", diskBody)
+	}
+	if strings.Contains(diskBody, "old source") {
+		t.Errorf("expected old source to be replaced on disk, got:\n%s", diskBody)
+	}
+}
+
 func waitJobs(t *testing.T, es *EditorService, uuid string) {
 	t.Helper()
 	for i := 0; i < 100; i++ {
