@@ -204,7 +204,7 @@ func TestEditorService_FlushWritesToDisk(t *testing.T) {
 }
 
 func TestEditorService_EnterMarkdownEmbedsBlocks(t *testing.T) {
-	RegisterProcessor("code", &CodeBlockProcessor{})
+	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
 	t.Cleanup(func() { UnregisterProcessor("code") })
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), time.Second)
@@ -358,7 +358,7 @@ func TestEditorService_NotifySavedCalledAfterDebounce(t *testing.T) {
 }
 
 func TestEditorService_EnterWysiwygReparsesBlocks(t *testing.T) {
-	RegisterProcessor("code", &CodeBlockProcessor{})
+	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
 	t.Cleanup(func() { UnregisterProcessor("code") })
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), time.Second)
@@ -399,7 +399,7 @@ func TestEditorService_EnterWysiwygReparsesBlocks(t *testing.T) {
 
 func TestEditorService_CreateBlock_code(t *testing.T) {
 	resetRegistry()
-	RegisterProcessor("code", &CodeBlockProcessor{})
+	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
 
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
@@ -445,7 +445,7 @@ func TestEditorService_CreateBlock_code(t *testing.T) {
 
 func TestEditorService_CreateBlock_withOverrides(t *testing.T) {
 	resetRegistry()
-	RegisterProcessor("code", &CodeBlockProcessor{})
+	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
 
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
@@ -471,7 +471,7 @@ func TestEditorService_CreateBlock_withOverrides(t *testing.T) {
 
 func TestEditorService_HandlePaste_delegatesToCreateBlock(t *testing.T) {
 	resetRegistry()
-	RegisterProcessor("code", &CodeBlockProcessor{})
+	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
 
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
@@ -503,7 +503,7 @@ func TestEditorService_HandlePaste_delegatesToCreateBlock(t *testing.T) {
 
 func TestEditorService_HandlePaste_noMatch(t *testing.T) {
 	resetRegistry()
-	RegisterProcessor("code", &CodeBlockProcessor{})
+	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
 
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
@@ -539,7 +539,7 @@ func (l *mockLifecycleListener) OnBlockUpdated(uuid, blockID string, attrs map[s
 
 func TestHandleBlockUpdate_notifySendsSnapshotUnderLock(t *testing.T) {
 	resetRegistry()
-	RegisterProcessor("code", &CodeBlockProcessor{})
+	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
 
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
