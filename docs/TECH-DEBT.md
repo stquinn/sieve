@@ -35,3 +35,19 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 **Retires when:** The **approved design** [`docs/superpowers/specs/2026-06-19-unified-block-targeting-design.md`](superpowers/specs/2026-06-19-unified-block-targeting-design.md) is implemented (folded into the block-document-model plan as task set **D-r.7**): unify the prose identity attr `blockId` → `id`; resolve targets by node *character* (NodeSelection/unit → that block by id, TextSelection → `==` + ref chain of every crossed block, bare caret in flowing text → `doc`); and route every additive block insert through one `blockInsertPos` (inline → caret, block → after the enclosing top-level node) so answers never split.
 
 </details>
+
+## B-C: ShadowDocument still half in the "markdown is the model" world
+
+**What:** `ShadowDocument` carries a `Markdown string` and a `Blocks map[string]*SieveBlock` that **excludes prose** (`editor_service.go` `syncBlocksView`: `if b.Kind != KindProse`) and exposes blocks via raw map / `Attrs["..."]` access. This contradicts the committed model ("everything is a block, addressed by id; kind matters only at render/serialise"). It surfaced as the AI-prompt regression (a prose ref chain resolved to nothing). A **stopgap** landed — `ShadowDocument.getBlock(id)` (the uniform accessor) + snapshotting the block tree into the AI job (commit "Go stopgap: AI ref chains resolve prose blocks (getBlock seam)") — fixing prompts and laying the first brick.
+
+**Why deferred (2026-06-19, user decision):** The full refactor has real blast radius (every `shadow.Blocks[...]` / `.Markdown` reader) and the context was filling; doing it as a big-bang risks another revert (cf. the C–F attempt). Stopgap now, plan the rest.
+
+**Retires when:** Per [`docs/superpowers/specs/2026-06-19-shadowdoc-uniform-block-refactor.md`](superpowers/specs/2026-06-19-shadowdoc-uniform-block-refactor.md): (1) `getBlock(id)` is the **sole** accessor (no raw map/attr poking); (2) the `Blocks` map + `syncBlocksView` are **deleted** (all readers migrated to `getBlock`/tree walks); (3) the `Markdown` attribute is **removed** — whole-doc markdown is derived on demand by serialising the tree; (4) `BlockDoc`/`DocBlock` are **renamed** (user dislikes the names — open choice; `Document` collides with the storage type); (5) attr access gets typed accessors so shape errors are compile-time. Bite-size via writing-plans; keep the app runnable + tests green each step (no big-bang).
+
+## B-D: AI chain-active bracket doesn't render on native prose blocks
+
+**What:** The persistent AI-chain affordance (`block-ref-active`, the curved left-rail bracket toggled by `ai-block-renderer.js` `applyChain` when you focus/hover an AI block) renders only on **structured** blocks — its CSS is gated on `.block-node` / `.image-block` / `.code-block-wrapper` / `.sieve-block--*`. A **native prose** block is `<p class="block-with-chrome" data-id>`, which none of those match, so the class is added (the comma ref chain IS split correctly) but paints nothing. Verified: `block-ref-active` on such a `<p>` → `border-left: 0 none`, `::after content: none`.
+
+**Why deferred (2026-06-19):** Outside D-r.7's locked scope (identity/targeting/insert); folded into the ShadowDoc-refactor work as an adjacent "uniform block" visual fix.
+
+**Retires when:** The persistent bracket is driven through the SAME `.block-chrome-rail` the ephemeral `block-ai-target` glow already uses (`ai-target-decoration.js` + `editor.css:2628`), so prose and structured share one visual language (per `project_block_anchor_lineage`). Verify by eye in WebKitGTK. Detail in the ShadowDoc-refactor spec ("folded-in follow-up").
