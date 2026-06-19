@@ -63,6 +63,12 @@ func newShadow(uuid, body string, debounce time.Duration, onFlush func()) *Shado
 	if err != nil {
 		logger.Warn("editor: parse block doc failed", "uuid", uuid, "err", err)
 	}
+	// Constructor invariant: a block can never exist in the live model without an
+	// id. Mint a handle for every id-less prose block as the shadow is built, so
+	// the authoritative tree is disciplined from the moment it exists (and stays
+	// so on reparse — see reparseDoc — and on create-block — see ApplyOp).
+	// Idempotent: a block that already carries a handle keeps it (stable reopen).
+	mintProseIDs(doc.Blocks)
 	s := &ShadowDocument{
 		UUID:     uuid,
 		Doc:      doc,
@@ -100,6 +106,14 @@ func (s *ShadowDocument) syncBlocksView() {
 func (s *ShadowDocument) reparseDoc(md string) {
 	if doc, err := ParseBlockDocWithHandles(md); err == nil {
 		s.Doc = doc
+		// Discipline: every block in the authoritative tree carries an id. A
+		// doc-update may arrive with id-less prose (the pre-mint frontend
+		// fallback sends bare markdown), so mint a handle for any block that
+		// lacks one — exactly as Open does — before it can ever be persisted.
+		// Idempotent: a block that already has an id keeps it (stable across
+		// reopen). The granular per-node ids come from the frontend's create-block
+		// ops once minting lands there; this guarantees the floor regardless.
+		mintProseIDs(s.Doc.Blocks)
 		s.syncBlocksView()
 	} else {
 		logger.Warn("editor: reparse block doc failed", "uuid", s.UUID, "err", err)
@@ -310,15 +324,8 @@ func (es *EditorService) Open(uuid string, notifySaved func()) error {
 		}
 	})
 	shadow.notifySaved = notifySaved
-
-	// Mint a handle for every handle-less prose block (identity is the shadow's
-	// to own). Idempotent — prose that already carries a handle keeps it — so a
-	// persisted id survives reopen. In-memory now; persisted on next save via the
-	// delimited-tree writer. Safe to mint before publishing: shadow is not yet
-	// shared and no debounce timer is armed.
-	if shadow.Mode == "wysiwyg" {
-		mintProseIDs(shadow.Doc.Blocks)
-	}
+	// Handle minting now happens in newShadow (the constructor invariant: no block
+	// without an id) and on every reparse — no separate mint pass needed here.
 
 	es.mu.Lock()
 	// Another goroutine may have opened the same uuid between the check above and

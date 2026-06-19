@@ -148,6 +148,37 @@ func TestShadowDocument_ContentForSave_SerializesDoc(t *testing.T) {
 	}
 }
 
+// Invariant: a block can never enter the tree without an id. create-block is a
+// construction point — if the op carries no blockId, ApplyOp GENERATES one
+// (given an id or generate one), rather than erroring or admitting an id-less
+// block. The frontend mints client-side and supplies it; this is the backend
+// floor that guarantees the invariant regardless of caller.
+func TestBlockDoc_ApplyOp_CreateBlockGeneratesIdWhenMissing(t *testing.T) {
+	doc := BlockDoc{}
+	if err := doc.ApplyOp(BlockOp{Type: "create-block", Kind: KindProse, Content: "fresh", Index: 0}); err != nil {
+		t.Fatalf("ApplyOp create-block with no id should generate one, got error: %v", err)
+	}
+	if len(doc.Blocks) != 1 {
+		t.Fatalf("want 1 block, got %d", len(doc.Blocks))
+	}
+	if doc.Blocks[0].ID == "" {
+		t.Fatalf("created block has no id — the constructor must generate one")
+	}
+	if doc.Blocks[0].Content != "fresh" {
+		t.Fatalf("content = %q, want %q", doc.Blocks[0].Content, "fresh")
+	}
+}
+
+func TestBlockDoc_ApplyOp_CreateBlockKeepsGivenId(t *testing.T) {
+	doc := BlockDoc{}
+	if err := doc.ApplyOp(BlockOp{Type: "create-block", BlockID: "pr-given", Kind: KindProse, Content: "x", Index: 0}); err != nil {
+		t.Fatalf("ApplyOp: %v", err)
+	}
+	if doc.Blocks[0].ID != "pr-given" {
+		t.Fatalf("id = %q, want the supplied %q", doc.Blocks[0].ID, "pr-given")
+	}
+}
+
 func TestBlockDoc_ApplyOp_UpdateProseContent(t *testing.T) {
 	doc := BlockDoc{Blocks: []DocBlock{
 		{ID: "pr-1", Kind: KindProse, Content: "old"},

@@ -86,6 +86,33 @@ func TestContentForSave_roundTripsWysiwyg(t *testing.T) {
 	}
 }
 
+// A doc-update carrying id-less prose (the pre-mint frontend fallback writes
+// bare markdown) must never be persisted id-less: Go mints a handle for every
+// id-less prose block on reparse, so contentForSave always emits a delimited,
+// addressable block. Backend discipline — a block has an id, period.
+func TestShadowDocument_DocUpdateMintsHandlesForIdlessProse(t *testing.T) {
+	shadow := newShadow("test-uuid", "", 0, nil) // empty doc, wysiwyg
+	shadow.setMarkdown("First paragraph.\n\nSecond paragraph.")
+
+	// Every prose block in the authoritative tree now carries an id.
+	for i, b := range shadow.Doc.Blocks {
+		if b.Kind == KindProse && b.ID == "" {
+			t.Fatalf("block %d persisted id-less: %+v", i, b)
+		}
+	}
+
+	// ...so the saved markdown is delimited (addressable), not bare prose.
+	out := shadow.contentForSave()
+	if !strings.Contains(out, "<!--s:") || !strings.Contains(out, "<!--/s:") {
+		t.Fatalf("expected delimited (id-bearing) prose on save, got:\n%s", out)
+	}
+
+	// And the minted identity is stable across reopen (idempotent).
+	if again := newShadow("test-uuid", out, 0, nil).contentForSave(); again != out {
+		t.Fatalf("minted handles not stable:\n first: %q\nsecond: %q", out, again)
+	}
+}
+
 func TestShadowDocument_setBlockCreatesEntry(t *testing.T) {
 	shadow := &ShadowDocument{
 		UUID:   "test-uuid",

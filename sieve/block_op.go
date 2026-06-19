@@ -34,11 +34,16 @@ func (d *BlockDoc) ApplyOp(op BlockOp) error {
 		return nil
 
 	case "create-block":
-		if op.BlockID == "" {
-			return fmt.Errorf("create-block: empty blockId")
+		// A block can never enter the tree without an id. The frontend mints
+		// client-side and supplies one; if it doesn't, the constructor generates
+		// one here (given an id or generate one) rather than admitting an id-less
+		// block. GenerateBlockIDFor honors a registered processor's prefix.
+		id := op.BlockID
+		if id == "" {
+			id = GenerateBlockIDFor(op.Kind)
 		}
 		nb := DocBlock{
-			ID:      op.BlockID,
+			ID:      id,
 			Kind:    op.Kind,
 			Content: op.Content,
 			Attrs:   op.Attrs,
