@@ -249,9 +249,12 @@
     }
 
     // syncDocument is the debounced wire send: prefer granular block-ops, fall
-    // back to a whole-document doc-update when a block can't be addressed yet
-    // (no-id prose, a structure change, a structured-block edit, or a stray
-    // native node). It NEVER mutates the document — pure read + send.
+    // back to a whole-document doc-update only when computeBlockSync says so. As
+    // of D-r.5 that fallback fires ONLY for a structured-block edit (Go's
+    // structured update-block takes parsed Attrs the client can't rebuild from a
+    // fence) — prose is fully granular (an id-less prose node is pending, not a
+    // fallback). Markdown mode keeps its own raw doc-update path, outside here.
+    // It NEVER mutates the document — pure read + send.
     function syncDocument(ed, id) {
       var curr = collectTopBlocks(ed)
       if (!curr || !window.TipTap.computeBlockSync) { sendDocUpdate(ed, id); return }

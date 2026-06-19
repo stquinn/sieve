@@ -12,9 +12,13 @@
 // defers to the whole-document fallback this slice (unchanged from before);
 // structured ops go granular in a later slice once their lifecycle is unified.
 //
-// The other fallback is DEFENSIVE: a block with no id can't be addressed. Prose
-// identity is minted before the diff runs (server-side on Open, client-side for
-// new blocks), so it should not normally fire.
+// D-r.5: the prose-path fallback is RETIRED. Prose create/update/delete are fully
+// granular, so an id-less prose node no longer forces a doc-update — it is treated
+// as a pending editing surface (the minting plugin fills its id before the next
+// sync) and simply skipped. The fallback survives ONLY for (a) structured-block
+// edits (above) and (b) markdown mode (handled in editor.js, outside this diff).
+// The remaining id-less fallback here is structured-only and purely defensive — a
+// structured block should always carry a backend-authoritative id.
 
 // blockSig is a block's change-signature, prefixed with kind so a cached entry's
 // kind is recoverable. Prose hashes on content + aliases; structured hashes on
@@ -88,16 +92,23 @@ export function mintActions(ids) {
 
 export function computeBlockSync(curr, prev) {
   var next = {}
-  var anyEmptyId = false
+  var structuredNoId = false
   for (var i = 0; i < curr.length; i++) {
     var cb = curr[i]
-    if (!cb.id) { anyEmptyId = true; continue }
+    if (!cb.id) {
+      // D-r.5: an id-less PROSE node is a pending editing surface — the minting
+      // plugin fills its id before the next sync — so SKIP it (emit nothing) and
+      // keep syncing the addressable prose blocks granularly. No doc-update.
+      // An id-less STRUCTURED block can't be addressed (it should always carry a
+      // backend-authoritative id) → defensive whole-document fallback survives.
+      if (cb.kind !== 'prose') structuredNoId = true
+      continue
+    }
     if (isPendingEmptyProse(cb, prev)) continue
     next[cb.id] = blockSig(cb)
   }
 
-  // Can't address a block without an id → defensive whole-document fallback.
-  if (anyEmptyId) return { mode: 'fallback', ops: [], next: next }
+  if (structuredNoId) return { mode: 'fallback', ops: [], next: next }
 
   // First call: just seed the baseline, never emit ops.
   if (!prev) return { mode: 'ops', ops: [], next: next }

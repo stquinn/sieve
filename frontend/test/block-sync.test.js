@@ -205,12 +205,50 @@ describe('computeBlockSync', () => {
     expect(r.ops).toEqual([{ type: 'update-block', blockId: 'pr-1', kind: 'prose', content: '' }])
   })
 
-  it('falls back when any block has no id (defensive only — minting should precede)', () => {
+  // D-r.5: the prose-path doc-update fallback is retired. An id-less PROSE node is
+  // a pending editing surface — minting (the appendTransaction plugin) fills its id
+  // before the next sync — so it is SKIPPED (emits nothing) rather than forcing a
+  // whole-document doc-update. The addressable prose blocks still sync granularly.
+  it('skips an id-less prose node (pending) instead of falling back', () => {
     const prev = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'A' }], null).next
     const r = computeBlockSync([
-      { id: 'pr-1', kind: 'prose', content: 'A' },
-      { id: '', kind: 'prose', content: 'new' },
+      { id: 'pr-1', kind: 'prose', content: 'A2' },
+      { id: '', kind: 'prose', content: 'new' }, // minting fills this id next sync
     ], prev)
+    expect(r.mode).toBe('ops')
+    expect(r.ops).toEqual([
+      { type: 'update-block', blockId: 'pr-1', kind: 'prose', content: 'A2' },
+    ])
+  })
+
+  // The whole point of D-r.5: a session that only ever touches prose must emit
+  // granular block-ops on every sync and NEVER drop to the doc-update fallback.
+  it('a prose-only edit session never produces a doc-update fallback', () => {
+    // create
+    let prev = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'A' }], null).next
+    const created = computeBlockSync([
+      { id: 'pr-1', kind: 'prose', content: 'A' },
+      { id: 'pr-2', kind: 'prose', content: 'B' },
+    ], prev)
+    expect(created.mode).toBe('ops')
+    prev = created.next
+    // update
+    const updated = computeBlockSync([
+      { id: 'pr-1', kind: 'prose', content: 'A!' },
+      { id: 'pr-2', kind: 'prose', content: 'B' },
+    ], prev)
+    expect(updated.mode).toBe('ops')
+    prev = updated.next
+    // delete
+    const deleted = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'A!' }], prev)
+    expect(deleted.mode).toBe('ops')
+  })
+
+  // The fallback survives ONLY for structured blocks, whose granular sync isn't
+  // wired yet. A structured block should always carry a backend-authoritative id,
+  // but if one ever arrives id-less it can't be addressed → defensive fallback.
+  it('still falls back for an id-less STRUCTURED block (defensive)', () => {
+    const r = computeBlockSync([{ id: '', kind: 'code', content: '```code\n```' }], {})
     expect(r.mode).toBe('fallback')
   })
 
