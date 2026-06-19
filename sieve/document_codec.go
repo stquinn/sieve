@@ -68,6 +68,25 @@ func (c *DocumentCodec) Deserialize(markdown string) ([]SieveBlock, error) {
 	return out, nil
 }
 
+// Serialize renders the block slice to markdown by asking each block's flavour to
+// serialize ITSELF — the mirror of Deserialize. The spine never decides format by
+// kind. A block must carry an id (persistence-boundary invariant). Identical
+// behaviour to the former SerializeBlockDocWithHandles, now on the codec.
+func (c *DocumentCodec) Serialize(blocks []SieveBlock) (string, error) {
+	parts := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		if b.ID == "" {
+			return "", fmt.Errorf("refusing to persist id-less %s block (construct via newSieveBlock)", b.Kind)
+		}
+		s, err := serializeBlock(b)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, s)
+	}
+	return strings.Join(parts, "\n\n"), nil
+}
+
 // firstAcceptor returns the first non-prose processor (registry priority order)
 // that claims the region, or nil. Prose is excluded here — it is the terminal
 // mop-up, invoked explicitly by flushProse, never asked in the loop.

@@ -1,9 +1,5 @@
 package sieve
 
-import (
-	"fmt"
-	"strings"
-)
 
 // Stage B.2 — universal prose handles via on-disk markers.
 //
@@ -66,34 +62,10 @@ func mergeHandles(head, tail SieveBlock) SieveBlock {
 	return head
 }
 
-// SerializeBlockDocWithHandles is the handle-aware writer: it serializes the
-// block tree with paired comment-tag delimiters (spec §"Storage format"). A
-// prose block carrying an ID is wrapped `<!--s:ID alias…-->\n<content>\n
-// <!--/s:ID-->`; the open marker lists the full handle-set, the close the
-// primary id only. Handle-less prose (not yet minted) emits bare content.
-// Fenced blocks already persist their handle in the YAML `id:` field and stay
-// self-delimiting, so they are unchanged.
+// SerializeBlockDocWithHandles is a thin shim retained during the codec
+// migration; callers move to DocumentCodec.Serialize in Task 8.
 func SerializeBlockDocWithHandles(blocks []SieveBlock) (string, error) {
-	parts := make([]string, 0, len(blocks))
-	for _, b := range blocks {
-		// Persistence-boundary guard (universal invariant, not a kind concern): a
-		// block must never reach disk id-less. If this fires, a code path built a
-		// block via a raw literal instead of the factory — fix the construction
-		// site, don't relax the guard.
-		if b.ID == "" {
-			return "", fmt.Errorf("refusing to persist id-less %s block (construct via newSieveBlock)", b.Kind)
-		}
-		// Ask the flavour to serialize ITSELF — the whole point of the block model.
-		// Prose owns its <!--s:ID--> markers (ProseProcessor); structured kinds share
-		// the fenced YAML form (FencedSerializer). No kind-switch here. A kind with no
-		// registered processor (a container pre-Stage-E) falls back to the fence.
-		s, err := serializeBlock(b)
-		if err != nil {
-			return "", err
-		}
-		parts = append(parts, s)
-	}
-	return strings.Join(parts, "\n\n"), nil
+	return NewDocumentCodec(globalRegistry()).Serialize(blocks)
 }
 
 // serializeBlock dispatches a single block to its flavour's Serialize. The save

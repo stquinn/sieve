@@ -145,6 +145,45 @@ func TestDocumentCodec_BackToBackStructured(t *testing.T) {
 	}
 }
 
+func TestDocumentCodec_RoundTrip(t *testing.T) {
+	// Register the "code" processor in the global registry so globalRegistry()
+	// can accept code regions during Deserialize. ProseProcessor self-registers
+	// via init(), so KindProse is always present.
+	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
+	t.Cleanup(func() { UnregisterProcessor("code") })
+
+	c := NewDocumentCodec(globalRegistry()) // REAL registry — production path
+	original := []SieveBlock{
+		newSieveBlock(KindProse, "pr-1", "An intro paragraph.", nil),
+		newSieveBlock("code", "co-1", "", map[string]interface{}{"id": "co-1", "source": "x := 1"}),
+		newSieveBlock(KindProse, "pr-2", "A closing paragraph.", nil),
+	}
+	md, err := c.Serialize(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.Deserialize(md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(original) {
+		t.Fatalf("round-trip changed block count: %d → %d\n%s", len(original), len(got), md)
+	}
+	for i := range original {
+		if got[i].ID != original[i].ID || got[i].Kind != original[i].Kind {
+			t.Errorf("block %d: %q/%q → %q/%q", i, original[i].ID, original[i].Kind, got[i].ID, got[i].Kind)
+		}
+	}
+	// Serialize(Deserialize(md)) is idempotent.
+	md2, err := c.Serialize(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if md2 != md {
+		t.Errorf("re-serialize not idempotent:\n--- first ---\n%s\n--- second ---\n%s", md, md2)
+	}
+}
+
 func TestGlobalRegistry_GetAndOrdered(t *testing.T) {
 	reg := globalRegistry()
 	if reg.Get(KindProse) == nil {
