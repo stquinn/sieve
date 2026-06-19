@@ -13,14 +13,6 @@ import (
 
 const defaultAutosaveDebounce = 30 * time.Second
 
-// SieveBlock is the Go representation of any fenced YAML block.
-// Kind comes from the fence info string — it is never written to the YAML body.
-type SieveBlock struct {
-	ID    string
-	Kind  string                 // from fence info string
-	Attrs map[string]interface{} // all YAML fields including "id"
-}
-
 // ShadowDocument holds the in-memory editor state for one open document.
 // Mode controls how Flush and Remux behave ("wysiwyg" or "markdown").
 type ShadowDocument struct {
@@ -29,18 +21,18 @@ type ShadowDocument struct {
 	// no BlockDoc wrapper, no nested "document inside a document". In WYSIWYG mode
 	// it is the single source of truth for what gets saved (contentForSave just
 	// serializes it); markdown is derived on demand, never stored.
-	Blocks []DocBlock
+	Blocks []SieveBlock
 	// mdModeBuffer holds the raw text the user edits in MARKDOWN MODE ONLY. In
 	// WYSIWYG mode the tree (Doc) is authoritative and whole-doc markdown is
 	// derived on demand (deriveMarkdown) — there is no stored markdown to drift
 	// (the old Markdown field drifted: a prose-only session left it stale).
 	mdModeBuffer string
 	Mode         string // "wysiwyg" (default) or "markdown"
-	debounce time.Duration
-	closed   bool // set by stopDebounce; prevents re-arming after Close
-	mu       sync.Mutex
-	timer    *time.Timer
-	onFlush  func()
+	debounce     time.Duration
+	closed       bool // set by stopDebounce; prevents re-arming after Close
+	mu           sync.Mutex
+	timer        *time.Timer
+	onFlush      func()
 	// notifySaved is invoked after each successful debounce flush (flush-ack to
 	// the WS client). It is rewired when an already-open shadow is reused by a
 	// later Open (idempotent Open), so the debounce closure reads it live.
@@ -62,7 +54,7 @@ func (s *ShadowDocument) getNotifySaved() func() {
 }
 
 func newShadow(uuid, body string, debounce time.Duration, onFlush func()) *ShadowDocument {
-	// ParseBlockDocWithHandles constructs every block via newDocBlock, which mints
+	// ParseBlockDocWithHandles constructs every block via newSieveBlock, which mints
 	// an id for any id-less (marker-less) prose at construction — so the shadow's
 	// tree is disciplined the moment it exists, with no separate mint sweep.
 	blocks, err := ParseBlockDocWithHandles(body)
@@ -83,7 +75,7 @@ func newShadow(uuid, body string, debounce time.Duration, onFlush func()) *Shado
 // of kind. It is the SOLE accessor: "everything is a block", so lookup never
 // discriminates on kind; only context/serialisation does. Returns the block and
 // true, or nil/false.
-func (s ShadowDocument) getBlock(id string) (*DocBlock, bool) {
+func (s ShadowDocument) getBlock(id string) (*SieveBlock, bool) {
 	if id == "" {
 		return nil, false
 	}
@@ -94,7 +86,7 @@ func (s ShadowDocument) getBlock(id string) (*DocBlock, bool) {
 }
 
 // reparseDoc replaces Doc from the given markdown (WYSIWYG only). Caller holds
-// s.mu. The parser constructs every block via newDocBlock, so id-less prose
+// s.mu. The parser constructs every block via newSieveBlock, so id-less prose
 // arriving on the doc-update fallback is minted at construction — it can never
 // reach contentForSave id-less.
 func (s *ShadowDocument) reparseDoc(md string) {
@@ -151,7 +143,7 @@ func (s *ShadowDocument) setBlock(block SieveBlock) {
 		for k, v := range block.Attrs {
 			merged[k] = v
 		}
-		s.Blocks = append(s.Blocks, DocBlock{ID: block.ID, Kind: block.Kind, Attrs: merged})
+		s.Blocks = append(s.Blocks, SieveBlock{ID: block.ID, Kind: block.Kind, Attrs: merged})
 	}
 	s.resetDebounce()
 }
@@ -351,7 +343,7 @@ func (es *EditorService) FrontendBlocks(uuid string) ([]FrontendBlock, bool) {
 		return nil, false
 	}
 	shadow.mu.Lock()
-	tree := append([]DocBlock(nil), shadow.Blocks...)
+	tree := append([]SieveBlock(nil), shadow.Blocks...)
 	shadow.mu.Unlock()
 	blocks, err := BlockDocToFrontendBlocks(tree)
 	if err != nil {
@@ -611,7 +603,7 @@ func (es *EditorService) HandlePaste(uuid string, entries []ContentEntry) (kind,
 		if !pm.Processor.IsBlock(entries) {
 			continue
 		}
-		
+
 		blockID := GenerateBlockIDFor(pm.Kind)
 		overrides := pm.Processor.Transform(entries, uuid, blockID)
 
@@ -775,7 +767,7 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 		if flushReason != "" {
 			_ = es.flushShadow(shadow, flushReason)
 		}
-		
+
 		shadow.mu.Lock()
 		blk := findBlockIn(shadow.Blocks, blockID)
 		ok := blk != nil
@@ -865,7 +857,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	// Snapshot the authoritative block tree so the job can resolve ANY block by id
 	// (prose included) via getBlock. Top-level slice copy under lock; Content is
 	// value-copied (race-free), matching the existing Attrs aliasing.
-	blocksCopy := append([]DocBlock(nil), shadow.Blocks...)
+	blocksCopy := append([]SieveBlock(nil), shadow.Blocks...)
 	shadow.mu.Unlock()
 
 	processor := GetProcessor(kind)
@@ -939,7 +931,7 @@ func (es *EditorService) PromoteBlock(uuid, blockID string) error {
 		shadow.mu.Unlock()
 		return fmt.Errorf("processor not found")
 	}
-	
+
 	blkCopy := SieveBlock{ID: blk.ID, Kind: blk.Kind, Attrs: make(map[string]interface{}, len(blk.Attrs))}
 	for k, v := range blk.Attrs {
 		blkCopy.Attrs[k] = v

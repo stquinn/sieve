@@ -8,7 +8,7 @@ import (
 	"github.com/yuin/goldmark/text"
 )
 
-// DocBlock is a node in the unified, ordered block tree (spec §2). EVERY kind —
+// SieveBlock is a node in the unified, ordered block tree (spec §2). EVERY kind —
 // prose included — carries its payload in the single Attrs bag, addressed by id;
 // kind is consulted only at render/serialise time. There is no per-kind payload
 // field: prose's body is Attrs["content"] (read via Content()), exactly as code
@@ -18,7 +18,7 @@ import (
 // distinct structural type — they HOLD blocks but are not blocks (no payload, no
 // content) — and arrive in Stage E behind a small Node interface (ID()/Kind())
 // both implement. Until then nothing nests at runtime.
-type DocBlock struct {
+type SieveBlock struct {
 	ID    string
 	Kind  string
 	Attrs map[string]interface{}
@@ -28,7 +28,7 @@ type DocBlock struct {
 	Aliases []string
 }
 
-// newDocBlock is the sole sanctioned way to construct a block, and it enforces
+// newSieveBlock is the sole sanctioned way to construct a block, and it enforces
 // the invariant the type cannot enforce on its own (Go has no constructors): a
 // block is GIVEN an id or it GENERATES one — it never exists id-less. Every
 // construction site (the parser, ApplyOp create, split) routes through here, so
@@ -37,11 +37,11 @@ type DocBlock struct {
 // known id (a marker's handle, a frontend-minted blockId) to keep it. The
 // serialize-time guard in SerializeBlockDocWithHandles is the runtime backstop
 // for any future code path that bypasses this factory with a raw literal.
-func newDocBlock(kind, id, content string, attrs map[string]interface{}) DocBlock {
+func newSieveBlock(kind, id, content string, attrs map[string]interface{}) SieveBlock {
 	if id == "" {
 		id = GenerateBlockIDFor(kind)
 	}
-	b := DocBlock{ID: id, Kind: kind, Attrs: attrs}
+	b := SieveBlock{ID: id, Kind: kind, Attrs: attrs}
 	if content != "" {
 		b.setContent(content)
 	}
@@ -50,12 +50,12 @@ func newDocBlock(kind, id, content string, attrs map[string]interface{}) DocBloc
 
 // Content is the block's authored text payload (Attrs["content"]) — a prose
 // block's verbatim markdown, a web-clip's clipped text. "" for kinds that carry
-// no content attr. The typed read that replaces the old DocBlock.Content field.
-func (b DocBlock) Content() string { return b.StringAttr("content") }
+// no content attr. The typed read that replaces the old SieveBlock.Content field.
+func (b SieveBlock) Content() string { return b.StringAttr("content") }
 
 // setContent writes the authored text payload into the Attrs bag, lazily
 // allocating it. The single write-side counterpart to Content().
-func (b *DocBlock) setContent(content string) {
+func (b *SieveBlock) setContent(content string) {
 	if b.Attrs == nil {
 		b.Attrs = map[string]interface{}{}
 	}
@@ -67,23 +67,23 @@ func (b *DocBlock) setContent(content string) {
 // below are built on — replacing brittle b.Attrs["x"].(string) casts (spec #5)
 // that panic or silently mis-type. Storage stays kind-agnostic (one Attrs bag);
 // only the read is typed.
-func (b DocBlock) StringAttr(key string) string {
+func (b SieveBlock) StringAttr(key string) string {
 	s, _ := b.Attrs[key].(string)
 	return s
 }
 
 // Source is the code/log/diagram authored payload (Attrs["source"]).
-func (b DocBlock) Source() string { return b.StringAttr("source") }
+func (b SieveBlock) Source() string { return b.StringAttr("source") }
 
 // Ref is the AI-chain reference list (Attrs["ref"]), comma-separated block ids.
-func (b DocBlock) Ref() string { return b.StringAttr("ref") }
+func (b SieveBlock) Ref() string { return b.StringAttr("ref") }
 
 // Status is the job lifecycle state (Attrs["status"]): PENDING/DISPATCHED/…
-func (b DocBlock) Status() string { return b.StringAttr("status") }
+func (b SieveBlock) Status() string { return b.StringAttr("status") }
 
 // answersTo returns every handle this block resolves to — its primary ID plus
 // any aliases absorbed via merges (spec §7).
-func (b DocBlock) answersTo() []string {
+func (b SieveBlock) answersTo() []string {
 	out := make([]string, 0, 1+len(b.Aliases))
 	if b.ID != "" {
 		out = append(out, b.ID)
@@ -91,7 +91,7 @@ func (b DocBlock) answersTo() []string {
 	return append(out, b.Aliases...)
 }
 
-// The document is an ordered []DocBlock — the in-memory form the serialization
+// The document is an ordered []SieveBlock — the in-memory form the serialization
 // spine round-trips against markdown. There is no wrapper type: ShadowDocument
 // holds the slice directly (no nested "document inside a document").
 
@@ -106,7 +106,7 @@ const (
 // delimiters — a handle-less convenience over the spine (the delimited writer is
 // SerializeBlockDocWithHandles). Prose blocks emit their verbatim Content;
 // structured blocks emit a fenced YAML block. Blocks are joined by a blank line.
-func SerializeBlockDoc(blocks []DocBlock) (string, error) {
+func SerializeBlockDoc(blocks []SieveBlock) (string, error) {
 	parts := make([]string, 0, len(blocks))
 	for _, b := range blocks {
 		if b.Kind == KindProse {
@@ -127,7 +127,7 @@ func SerializeBlockDoc(blocks []DocBlock) (string, error) {
 // aware loader is ParseBlockDocWithHandles). Top-level structured fences become
 // structured blocks; paired `<!--s:ID-->` regions and undelimited runs become
 // prose blocks. Blank lines never split.
-func ParseBlockDoc(markdown string) ([]DocBlock, error) {
+func ParseBlockDoc(markdown string) ([]SieveBlock, error) {
 	return scanBlocks(markdown), nil
 }
 
@@ -140,11 +140,11 @@ func ParseBlockDoc(markdown string) ([]DocBlock, error) {
 //     `<!--s:ID-->` / `<!--/s:ID-->` delimiters (scanProseRegion).
 //
 // Whitespace is never read for structure; blank lines carry no signal.
-func scanBlocks(markdown string) []DocBlock {
+func scanBlocks(markdown string) []SieveBlock {
 	source := []byte(markdown)
 	root := mdParser().Parser().Parse(text.NewReader(source))
 
-	var out []DocBlock
+	var out []SieveBlock
 	cursor := 0
 	emitProse := func(end int) {
 		if end <= cursor {
@@ -159,7 +159,7 @@ func scanBlocks(markdown string) []DocBlock {
 			continue // prose/anchor: absorbed into the surrounding prose region
 		}
 		emitProse(sn.StartByte())
-		b := newDocBlock(sn.SieveBlock.Kind, sn.SieveBlock.ID, "", sn.SieveBlock.Attrs)
+		b := newSieveBlock(sn.SieveBlock.Kind, sn.SieveBlock.ID, "", sn.SieveBlock.Attrs)
 		out = append(out, b)
 		cursor = sn.EndByte()
 	}
@@ -173,9 +173,9 @@ func scanBlocks(markdown string) []DocBlock {
 // nested markers; nesting is container-only, Stage E). An open with no matching
 // close is unbalanced → literal text. Any maximal run of undelimited lines is a
 // SINGLE prose block (never blank-line split); whitespace-only runs are dropped.
-func scanProseRegion(region string) []DocBlock {
+func scanProseRegion(region string) []SieveBlock {
 	lines := strings.Split(region, "\n")
-	var out []DocBlock
+	var out []SieveBlock
 	var pending []string
 
 	flushPending := func() {
@@ -188,7 +188,7 @@ func scanProseRegion(region string) []DocBlock {
 			// Undelimited (marker-less) prose: no id on disk → the factory mints
 			// one now (hydration on parse), so the block exists with an id from
 			// the moment it is constructed — never swept in afterward.
-			out = append(out, newDocBlock(KindProse, "", content, nil))
+			out = append(out, newSieveBlock(KindProse, "", content, nil))
 		}
 	}
 
@@ -200,7 +200,7 @@ func scanProseRegion(region string) []DocBlock {
 				flushPending()
 				// Delimited prose: the marker carries the primary handle, so the
 				// factory keeps it (no mint).
-				blk := newDocBlock(KindProse, primary, strings.Join(lines[i+1:closeIdx], "\n"), nil)
+				blk := newSieveBlock(KindProse, primary, strings.Join(lines[i+1:closeIdx], "\n"), nil)
 				if len(handles) > 1 {
 					blk.Aliases = append([]string(nil), handles[1:]...)
 				}
@@ -233,7 +233,7 @@ func findClose(lines []string, start int, primary string) int {
 // hold a handle are left untouched — so it is idempotent and silent (IDs are
 // invisible plumbing minted automatically on Open). Returns the number of handles
 // minted. Mutates blocks in place.
-func mintProseIDs(blocks []DocBlock) int {
+func mintProseIDs(blocks []SieveBlock) int {
 	minted := 0
 	for i := range blocks {
 		if blocks[i].Kind == KindProse && blocks[i].ID == "" {
@@ -247,7 +247,7 @@ func mintProseIDs(blocks []DocBlock) int {
 // serializeFencedBlock renders any block-mode kind as ```kind\n<yaml>\n```
 // using the shared literal-style machinery — registry-free, so it serializes
 // code, diagram, column-row, etc. uniformly without needing a BlockProcessor.
-func serializeFencedBlock(b DocBlock) (string, error) {
+func serializeFencedBlock(b SieveBlock) (string, error) {
 	body, err := fencedblock.SerializeYaml(b.Attrs)
 	if err != nil {
 		return "", err

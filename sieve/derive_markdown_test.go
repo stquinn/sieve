@@ -13,7 +13,7 @@ func TestDeriveMarkdown_WysiwygReflectsLiveTree(t *testing.T) {
 	shadow := &ShadowDocument{
 		UUID: "u",
 		Mode: "wysiwyg",
-		Blocks: []DocBlock{
+		Blocks: []SieveBlock{
 			{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Original prose."}},
 		},
 	}

@@ -1,7 +1,7 @@
 package sieve
 
 // FrontendBlock is the wire shape the WYSIWYG editor renders from (Stage D.2).
-// It is a flattened, presentation-oriented projection of a DocBlock with ONE
+// It is a flattened, presentation-oriented projection of a SieveBlock with ONE
 // uniform shape per kind: the payload always rides in Attrs (prose's body at
 // Attrs["content"], structured props by key). Structured blocks additionally
 // carry their canonical fence text in SerialisedForm (transitional, the string
@@ -30,7 +30,7 @@ type FrontendBlock struct {
 // to its fence text via the shared serializer. Containers are opaque here — their
 // by-value child expansion is Stage E; for now a column-row serializes as a
 // single structured fence, exactly as ParseBlockDoc round-trips it.
-func BlockDocToFrontendBlocks(blocks []DocBlock) ([]FrontendBlock, error) {
+func BlockDocToFrontendBlocks(blocks []SieveBlock) ([]FrontendBlock, error) {
 	out := make([]FrontendBlock, 0, len(blocks))
 	for _, b := range blocks {
 		// Uniform wire shape: every kind carries its payload in Attrs (prose's body

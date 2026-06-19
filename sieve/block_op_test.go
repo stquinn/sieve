@@ -154,7 +154,7 @@ func TestShadowDocument_ContentForSave_SerializesDoc(t *testing.T) {
 // block. The frontend mints client-side and supplies it; this is the backend
 // floor that guarantees the invariant regardless of caller.
 func TestBlockDoc_ApplyOp_CreateBlockGeneratesIdWhenMissing(t *testing.T) {
-	doc := []DocBlock{}
+	doc := []SieveBlock{}
 	if err := ApplyOp(&doc, BlockOp{Type: "create-block", Kind: KindProse, Content: "fresh", Index: 0}); err != nil {
 		t.Fatalf("ApplyOp create-block with no id should generate one, got error: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestBlockDoc_ApplyOp_CreateBlockGeneratesIdWhenMissing(t *testing.T) {
 }
 
 func TestBlockDoc_ApplyOp_CreateBlockKeepsGivenId(t *testing.T) {
-	doc := []DocBlock{}
+	doc := []SieveBlock{}
 	if err := ApplyOp(&doc, BlockOp{Type: "create-block", BlockID: "pr-given", Kind: KindProse, Content: "x", Index: 0}); err != nil {
 		t.Fatalf("ApplyOp: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestBlockDoc_ApplyOp_CreateBlockKeepsGivenId(t *testing.T) {
 }
 
 func TestBlockDoc_ApplyOp_UpdateProseContent(t *testing.T) {
-	doc := []DocBlock{
+	doc := []SieveBlock{
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "old"}},
 	}
 	if err := ApplyOp(&doc, BlockOp{Type: "update-block", BlockID: "pr-1", Content: "new"}); err != nil {
@@ -192,7 +192,7 @@ func TestBlockDoc_ApplyOp_UpdateProseContent(t *testing.T) {
 }
 
 func TestBlockDoc_ApplyOp_UpdateAttrsAndAliases(t *testing.T) {
-	doc := []DocBlock{
+	doc := []SieveBlock{
 		{ID: "ai-1", Kind: "ai-block", Attrs: map[string]interface{}{"status": "PENDING"}},
 	}
 	op := BlockOp{
@@ -214,14 +214,14 @@ func TestBlockDoc_ApplyOp_UpdateAttrsAndAliases(t *testing.T) {
 }
 
 func TestBlockDoc_ApplyOp_UnknownBlockErrors(t *testing.T) {
-	doc := []DocBlock{{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "x"}}}
+	doc := []SieveBlock{{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "x"}}}
 	if err := ApplyOp(&doc, BlockOp{Type: "update-block", BlockID: "nope", Content: "y"}); err == nil {
 		t.Fatal("expected error updating a missing block, got nil")
 	}
 }
 
 func TestBlockDoc_ApplyOp_DeleteTopLevel(t *testing.T) {
-	doc := []DocBlock{
+	doc := []SieveBlock{
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "a"}},
 		{ID: "pr-2", Kind: KindProse, Attrs: map[string]interface{}{"content": "b"}},
 		{ID: "pr-3", Kind: KindProse, Attrs: map[string]interface{}{"content": "c"}},
@@ -235,7 +235,7 @@ func TestBlockDoc_ApplyOp_DeleteTopLevel(t *testing.T) {
 }
 
 func TestBlockDoc_ApplyOp_MoveReordersWithinParent(t *testing.T) {
-	doc := []DocBlock{
+	doc := []SieveBlock{
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "a"}},
 		{ID: "pr-2", Kind: KindProse, Attrs: map[string]interface{}{"content": "b"}},
 		{ID: "pr-3", Kind: KindProse, Attrs: map[string]interface{}{"content": "c"}},
@@ -252,7 +252,7 @@ func TestBlockDoc_ApplyOp_MoveReordersWithinParent(t *testing.T) {
 }
 
 func TestBlockDoc_ApplyOp_CreateTopLevelAtIndex(t *testing.T) {
-	doc := []DocBlock{
+	doc := []SieveBlock{
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "a"}},
 		{ID: "pr-2", Kind: KindProse, Attrs: map[string]interface{}{"content": "b"}},
 	}
@@ -270,7 +270,7 @@ func TestBlockDoc_ApplyOp_CreateTopLevelAtIndex(t *testing.T) {
 
 // Nesting into a parent is rejected until Stage E re-introduces containers.
 func TestBlockDoc_ApplyOp_CreateIntoParentRejected(t *testing.T) {
-	doc := []DocBlock{
+	doc := []SieveBlock{
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "a"}},
 	}
 	op := BlockOp{
@@ -285,7 +285,7 @@ func TestBlockDoc_ApplyOp_CreateIntoParentRejected(t *testing.T) {
 	}
 }
 
-func ids(blocks []DocBlock) []string {
+func ids(blocks []SieveBlock) []string {
 	out := make([]string, len(blocks))
 	for i, b := range blocks {
 		out[i] = b.ID

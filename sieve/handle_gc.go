@@ -17,7 +17,7 @@ package sieve
 // target is in this set. (Also the basis for the Stage F structured-facet search
 // index.) Flat today; Stage E containers re-introduce a tree walk via the Node
 // interface.
-func collectHandles(blocks []DocBlock) map[string]bool {
+func collectHandles(blocks []SieveBlock) map[string]bool {
 	out := map[string]bool{}
 	for _, b := range blocks {
 		for _, h := range b.answersTo() {
@@ -44,15 +44,15 @@ func gcRefs(refs []string, resolvable map[string]bool) []string {
 // gcAliases returns a copy of the tree with each block's alias handles filtered
 // to those that something still references. Primary IDs are never dropped. The
 // input doc is not mutated, so undo can restore the prior assignment.
-func gcAliases(blocks []DocBlock, referenced map[string]bool) []DocBlock {
+func gcAliases(blocks []SieveBlock, referenced map[string]bool) []SieveBlock {
 	return gcAliasesBlocks(blocks, referenced)
 }
 
-func gcAliasesBlocks(blocks []DocBlock, referenced map[string]bool) []DocBlock {
+func gcAliasesBlocks(blocks []SieveBlock, referenced map[string]bool) []SieveBlock {
 	if blocks == nil {
 		return nil
 	}
-	out := make([]DocBlock, len(blocks))
+	out := make([]SieveBlock, len(blocks))
 	for i, b := range blocks {
 		var kept []string
 		for _, a := range b.Aliases {

@@ -6,7 +6,7 @@ import (
 )
 
 func TestCollectHandles_IndexesEveryHandle(t *testing.T) {
-	doc := []DocBlock{
+	doc := []SieveBlock{
 		{ID: "pr-a", Kind: KindProse, Aliases: []string{"pr-x"}},
 		{ID: "pr-b", Kind: KindProse},
 		{ID: "co-1", Kind: "code"},
@@ -30,7 +30,7 @@ func TestGCRefs_DropsDangling(t *testing.T) {
 }
 
 func TestGCAliases_DropsUnreferenced(t *testing.T) {
-	doc := []DocBlock{
+	doc := []SieveBlock{
 		{ID: "pr-a", Kind: KindProse, Aliases: []string{"pr-x", "pr-y"}},
 	}
 	referenced := map[string]bool{"pr-x": true} // nothing points at pr-y
@@ -46,7 +46,7 @@ func TestGCAliases_DropsUnreferenced(t *testing.T) {
 }
 
 func TestGCAliases_IsPure(t *testing.T) {
-	doc := []DocBlock{
+	doc := []SieveBlock{
 		{ID: "pr-b", Kind: KindProse, Aliases: []string{"pr-stale"}},
 	}
 	_ = gcAliases(doc, map[string]bool{}) // nothing referenced

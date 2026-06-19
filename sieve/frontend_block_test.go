@@ -3,7 +3,7 @@ package sieve
 import "testing"
 
 func TestBlockDocToFrontendBlocks_ProseAndStructured(t *testing.T) {
-	doc := []DocBlock{
+	doc := []SieveBlock{
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Hello **world**."}, Aliases: []string{"pr-0"}},
 		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{"id": "co-1", "source": "x = 1"}},
 		{Kind: KindProse, Attrs: map[string]interface{}{"content": "Tail."}},
@@ -50,7 +50,7 @@ func TestBlockDocToFrontendBlocks_ProseAndStructured(t *testing.T) {
 // blocks carry their YAML props; prose carries its body at Attrs["content"]. The
 // client renders the right thing by KIND, not by which field holds the payload.
 func TestBlockDocToFrontendBlocks_StructuredCarriesAttrs(t *testing.T) {
-	doc := []DocBlock{
+	doc := []SieveBlock{
 		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{"id": "co-1", "source": "x = 1"}},
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Prose."}},
 	}

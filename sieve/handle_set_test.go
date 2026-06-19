@@ -6,7 +6,7 @@ import (
 )
 
 func TestSplitHandles_HeadKeepsTailMints(t *testing.T) {
-	head := DocBlock{ID: "pr-aaaa", Kind: KindProse, Aliases: []string{"pr-xxxx"}}
+	head := SieveBlock{ID: "pr-aaaa", Kind: KindProse, Aliases: []string{"pr-xxxx"}}
 	gotHead, tail := splitHandles(head)
 
 	// Head keeps all its handles, unchanged.
@@ -26,8 +26,8 @@ func TestSplitHandles_HeadKeepsTailMints(t *testing.T) {
 }
 
 func TestMergeHandles_UnionDeduped(t *testing.T) {
-	head := DocBlock{ID: "pr-aaaa", Kind: KindProse, Aliases: []string{"pr-xxxx"}}
-	tail := DocBlock{ID: "pr-bbbb", Kind: KindProse, Aliases: []string{"pr-yyyy", "pr-xxxx"}}
+	head := SieveBlock{ID: "pr-aaaa", Kind: KindProse, Aliases: []string{"pr-xxxx"}}
+	tail := SieveBlock{ID: "pr-bbbb", Kind: KindProse, Aliases: []string{"pr-yyyy", "pr-xxxx"}}
 
 	merged := mergeHandles(head, tail)
 
@@ -41,8 +41,8 @@ func TestMergeHandles_UnionDeduped(t *testing.T) {
 }
 
 func TestMergeHandles_PreservesResolution(t *testing.T) {
-	head := DocBlock{ID: "pr-aaaa", Aliases: []string{"pr-xxxx"}}
-	tail := DocBlock{ID: "pr-bbbb", Aliases: []string{"pr-yyyy"}}
+	head := SieveBlock{ID: "pr-aaaa", Aliases: []string{"pr-xxxx"}}
+	tail := SieveBlock{ID: "pr-bbbb", Aliases: []string{"pr-yyyy"}}
 	merged := mergeHandles(head, tail)
 
 	resolves := map[string]bool{}
@@ -59,8 +59,8 @@ func TestMergeHandles_PreservesResolution(t *testing.T) {
 }
 
 func TestMergeHandles_DoesNotMutateInput(t *testing.T) {
-	head := DocBlock{ID: "pr-aaaa", Aliases: []string{"pr-xxxx"}}
-	tail := DocBlock{ID: "pr-bbbb"}
+	head := SieveBlock{ID: "pr-aaaa", Aliases: []string{"pr-xxxx"}}
+	tail := SieveBlock{ID: "pr-bbbb"}
 	_ = mergeHandles(head, tail)
 
 	// Purity matters for undo: the original head's alias slice must be intact

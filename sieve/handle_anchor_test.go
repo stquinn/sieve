@@ -47,7 +47,7 @@ func TestHandles_MergedHandleSetPersists(t *testing.T) {
 	// A block that answers to a primary handle plus absorbed aliases (post-merge,
 	// spec §7) must persist every handle to disk so refs survive reopen. In the
 	// paired-delimiter format the whole handle-set rides in the open marker.
-	doc := []DocBlock{
+	doc := []SieveBlock{
 		{ID: "pr-aaaa", Kind: KindProse, Attrs: map[string]interface{}{"content": "Merged block."}, Aliases: []string{"pr-bbbb", "pr-cccc"}},
 	}
 	md, err := SerializeBlockDocWithHandles(doc)

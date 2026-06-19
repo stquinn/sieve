@@ -2,12 +2,12 @@ package sieve
 
 import "testing"
 
-// newDocBlock is the sole sanctioned construction point for a block: it mints an
+// newSieveBlock is the sole sanctioned construction point for a block: it mints an
 // id when none is given, so the invariant "a block never exists without an id"
 // is owned in ONE place rather than swept after the fact. (Go has no enforced
 // constructors; this factory + the serialize-time guard are the idiomatic teeth.)
-func TestNewDocBlock_MintsWhenNoID(t *testing.T) {
-	b := newDocBlock(KindProse, "", "hello", nil)
+func TestNewSieveBlock_MintsWhenNoID(t *testing.T) {
+	b := newSieveBlock(KindProse, "", "hello", nil)
 	if b.ID == "" {
 		t.Fatalf("expected a minted id, got empty")
 	}
@@ -16,8 +16,8 @@ func TestNewDocBlock_MintsWhenNoID(t *testing.T) {
 	}
 }
 
-func TestNewDocBlock_KeepsGivenID(t *testing.T) {
-	b := newDocBlock(KindProse, "pr-given", "hi", nil)
+func TestNewSieveBlock_KeepsGivenID(t *testing.T) {
+	b := newSieveBlock(KindProse, "pr-given", "hi", nil)
 	if b.ID != "pr-given" {
 		t.Fatalf("id = %q, want the supplied %q", b.ID, "pr-given")
 	}
@@ -27,14 +27,14 @@ func TestNewDocBlock_KeepsGivenID(t *testing.T) {
 // block (the runtime backstop behind the factory). A block built by a rogue path
 // that bypassed the factory can never reach disk silently.
 func TestSerializeBlockDocWithHandles_RefusesIdlessProse(t *testing.T) {
-	doc := []DocBlock{{Kind: KindProse, Attrs: map[string]interface{}{"content": "x"}}} // bypasses the factory
+	doc := []SieveBlock{{Kind: KindProse, Attrs: map[string]interface{}{"content": "x"}}} // bypasses the factory
 	if _, err := SerializeBlockDocWithHandles(doc); err == nil {
 		t.Fatalf("expected an error refusing to persist an id-less prose block")
 	}
 }
 
 func TestSerializeBlockDoc_ProseAndFence(t *testing.T) {
-	doc := []DocBlock{
+	doc := []SieveBlock{
 		{Kind: KindProse, Attrs: map[string]interface{}{"content": "Hello."}},
 		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{
 			"id":     "co-1",
@@ -115,7 +115,7 @@ func TestBlockDoc_RoundTripStable(t *testing.T) {
 
 	// Each prose block is a single paragraph so per-paragraph segmentation
 	// (Stage B.1) preserves the block count through the round-trip.
-	doc := []DocBlock{
+	doc := []SieveBlock{
 		{Kind: KindProse, Attrs: map[string]interface{}{"content": "# Title"}},
 		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{"id": "co-1", "source": "x = 1"}},
 		{Kind: KindProse, Attrs: map[string]interface{}{"content": "Between."}},

@@ -7,7 +7,7 @@ import "testing"
 // derives ONLY from these delimiters, never from blank lines.
 
 func TestPairedDelimiter_SerializeProse(t *testing.T) {
-	doc := []DocBlock{
+	doc := []SieveBlock{
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Hello."}},
 	}
 	got, err := SerializeBlockDocWithHandles(doc)
@@ -45,7 +45,7 @@ func TestPairedDelimiter_RoundTripProse(t *testing.T) {
 // Aliases (post-merge handle-set, spec §7) ride in the open marker as a
 // space-separated handle list; the close marker carries the primary id only.
 func TestPairedDelimiter_AliasesRoundTrip(t *testing.T) {
-	doc := []DocBlock{
+	doc := []SieveBlock{
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Merged."}, Aliases: []string{"pr-0", "pr-9"}},
 	}
 	md, err := SerializeBlockDocWithHandles(doc)

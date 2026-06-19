@@ -5,7 +5,7 @@ import "fmt"
 // BlockOp is a granular mutation of the BlockDoc tree, carried over the wire
 // (Stage C, spec §4). One op == one user-visible block change.
 type BlockOp struct {
-	Type     string                 `json:"type"`    // "create-block","update-block","delete-block","move"
+	Type     string                 `json:"type"` // "create-block","update-block","delete-block","move"
 	BlockID  string                 `json:"blockId"`
 	Kind     string                 `json:"kind,omitempty"`
 	Content  string                 `json:"content,omitempty"`
@@ -17,7 +17,7 @@ type BlockOp struct {
 
 // ApplyOp mutates the ordered block slice in place according to op. It returns an
 // error (never silently no-ops) so the wire layer can surface failures.
-func ApplyOp(blocks *[]DocBlock, op BlockOp) error {
+func ApplyOp(blocks *[]SieveBlock, op BlockOp) error {
 	switch op.Type {
 	case "update-block":
 		b := findBlockIn(*blocks, op.BlockID)
@@ -45,7 +45,7 @@ func ApplyOp(blocks *[]DocBlock, op BlockOp) error {
 		if op.ParentID != "" {
 			return fmt.Errorf("create-block: nesting into parent %q is Stage E (no Children yet)", op.ParentID)
 		}
-		nb := newDocBlock(op.Kind, op.BlockID, op.Content, op.Attrs)
+		nb := newSieveBlock(op.Kind, op.BlockID, op.Content, op.Attrs)
 		nb.Aliases = op.Aliases
 		insertBlockAt(blocks, op.Index, nb)
 		return nil
@@ -74,7 +74,7 @@ func ApplyOp(blocks *[]DocBlock, op BlockOp) error {
 
 // removeBlock deletes the block with id from the tree rooted at *blocks,
 // returning the removed block and whether it was found.
-func removeBlock(blocks *[]DocBlock, id string) (DocBlock, bool) {
+func removeBlock(blocks *[]SieveBlock, id string) (SieveBlock, bool) {
 	for i := range *blocks {
 		if (*blocks)[i].ID == id {
 			removed := (*blocks)[i]
@@ -82,26 +82,26 @@ func removeBlock(blocks *[]DocBlock, id string) (DocBlock, bool) {
 			return removed, true
 		}
 	}
-	return DocBlock{}, false
+	return SieveBlock{}, false
 }
 
 // insertBlockAt inserts b at index in *blocks, clamping out-of-range indices to
 // the ends (a robustness choice — the wire layer may send a stale index).
-func insertBlockAt(blocks *[]DocBlock, index int, b DocBlock) {
+func insertBlockAt(blocks *[]SieveBlock, index int, b SieveBlock) {
 	if index < 0 {
 		index = 0
 	}
 	if index > len(*blocks) {
 		index = len(*blocks)
 	}
-	*blocks = append(*blocks, DocBlock{})
+	*blocks = append(*blocks, SieveBlock{})
 	copy((*blocks)[index+1:], (*blocks)[index:])
 	(*blocks)[index] = b
 }
 
 // findBlockIn returns a pointer to the block with the given ID, or nil. The
 // pointer aliases the live slice so callers can mutate it.
-func findBlockIn(blocks []DocBlock, id string) *DocBlock {
+func findBlockIn(blocks []SieveBlock, id string) *SieveBlock {
 	for i := range blocks {
 		if blocks[i].ID == id {
 			return &blocks[i]

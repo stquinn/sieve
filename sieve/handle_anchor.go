@@ -37,7 +37,7 @@ var (
 // from delimiters: top-level structured fences (atomic, opaque) and paired
 // `<!--s:ID--> … <!--/s:ID-->` prose blocks. Unbalanced opens are literal text;
 // undelimited runs become a single opaque prose block. Blank lines never split.
-func ParseBlockDocWithHandles(markdown string) ([]DocBlock, error) {
+func ParseBlockDocWithHandles(markdown string) ([]SieveBlock, error) {
 	return scanBlocks(markdown), nil
 }
 
@@ -46,8 +46,8 @@ func ParseBlockDocWithHandles(markdown string) ([]DocBlock, error) {
 // and answers to nothing else. Undoing a split therefore just discards the tail
 // — the head was never touched, so no stray handle remains. Content assignment
 // is the caller's concern; this governs identity only.
-func splitHandles(head DocBlock) (DocBlock, DocBlock) {
-	tail := DocBlock{ID: GenerateBlockID(KindProse), Kind: KindProse}
+func splitHandles(head SieveBlock) (SieveBlock, SieveBlock) {
+	tail := SieveBlock{ID: GenerateBlockID(KindProse), Kind: KindProse}
 	return head, tail
 }
 
@@ -57,7 +57,7 @@ func splitHandles(head DocBlock) (DocBlock, DocBlock) {
 // referrer rewriting. head.ID stays primary; tail's id + aliases join
 // head.Aliases (deduped, head.ID excluded). Returns a fresh block without
 // mutating either input, so undo can restore the exact prior assignment.
-func mergeHandles(head, tail DocBlock) DocBlock {
+func mergeHandles(head, tail SieveBlock) SieveBlock {
 	seen := map[string]bool{}
 	var aliases []string
 	add := func(h string) {
@@ -85,15 +85,15 @@ func mergeHandles(head, tail DocBlock) DocBlock {
 // primary id only. Handle-less prose (not yet minted) emits bare content.
 // Fenced blocks already persist their handle in the YAML `id:` field and stay
 // self-delimiting, so they are unchanged.
-func SerializeBlockDocWithHandles(blocks []DocBlock) (string, error) {
+func SerializeBlockDocWithHandles(blocks []SieveBlock) (string, error) {
 	parts := make([]string, 0, len(blocks))
 	for _, b := range blocks {
-		// Persistence-boundary guard (the runtime teeth behind newDocBlock): a
+		// Persistence-boundary guard (the runtime teeth behind newSieveBlock): a
 		// block must never reach disk id-less. If this fires, a code path built a
 		// block via a raw literal instead of the factory — fix the construction
 		// site, don't relax the guard.
 		if b.ID == "" {
-			return "", fmt.Errorf("refusing to persist id-less %s block (construct via newDocBlock)", b.Kind)
+			return "", fmt.Errorf("refusing to persist id-less %s block (construct via newSieveBlock)", b.Kind)
 		}
 		if b.Kind == KindProse {
 			parts = append(parts, serializeProseBlock(b))
@@ -111,7 +111,7 @@ func SerializeBlockDocWithHandles(blocks []DocBlock) (string, error) {
 // serializeProseBlock wraps a prose block in its paired comment-tag delimiters.
 // Handle-less prose (empty ID — undelimited, pre-mint) is emitted verbatim so
 // the handle-less spine and minting-on-Open stay decoupled.
-func serializeProseBlock(b DocBlock) string {
+func serializeProseBlock(b SieveBlock) string {
 	if b.ID == "" {
 		return b.Content()
 	}

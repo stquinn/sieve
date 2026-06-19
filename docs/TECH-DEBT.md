@@ -36,13 +36,18 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 
 </details>
 
-## B-C: ShadowDocument still half in the "markdown is the model" world
+## B-C: ShadowDocument uniform-block refactor — ✅ RETIRED 2026-06-19
 
-**What:** `ShadowDocument` carries a `Markdown string` and a `Blocks map[string]*SieveBlock` that **excludes prose** (`editor_service.go` `syncBlocksView`: `if b.Kind != KindProse`) and exposes blocks via raw map / `Attrs["..."]` access. This contradicts the committed model ("everything is a block, addressed by id; kind matters only at render/serialise"). It surfaced as the AI-prompt regression (a prose ref chain resolved to nothing). A **stopgap** landed — `ShadowDocument.getBlock(id)` (the uniform accessor) + snapshotting the block tree into the AI job (commit "Go stopgap: AI ref chains resolve prose blocks (getBlock seam)") — fixing prompts and laying the first brick.
+**What it was:** `ShadowDocument` carried a `Markdown string` and a `Blocks map[string]*SieveBlock` that **excluded prose** (`syncBlocksView`: `if b.Kind != KindProse`) and exposed blocks via raw map / `Attrs["..."]` access — contradicting the committed model ("everything is a block, addressed by id; kind matters only at render/serialise").
 
-**Why deferred (2026-06-19, user decision):** The full refactor has real blast radius (every `shadow.Blocks[...]` / `.Markdown` reader) and the context was filling; doing it as a big-bang risks another revert (cf. the C–F attempt). Stopgap now, plan the rest.
+**Resolved by** the bite-sized plan [`docs/superpowers/plans/2026-06-19-shadowdoc-uniform-block-refactor.md`](superpowers/plans/2026-06-19-shadowdoc-uniform-block-refactor.md) (one commit per step, app runnable + green throughout — no big-bang):
+1. ✅ `getBlock(id)` / `findBlockIn` is the sole accessor; the `Blocks map` + `syncBlocksView` are deleted (all readers on the tree).
+2. ✅ The `Markdown` field is gone — whole-doc markdown is derived on demand (`deriveMarkdown`, mode-aware); markdown-mode keeps a scoped `mdModeBuffer`. Closed the D-r.5 `id=="doc"` drift bug.
+3. ✅ Prose body lives in `Attrs["content"]` (typed `Content()` accessor) — prose is a `SieveBlock` like every kind; the bespoke `Content` field is gone. Typed accessors (`Source/Ref/Status/StringAttr`) replace brittle casts (spec #5).
+4. ✅ `Children` removed (a block is a leaf; containers are Stage E). `BlockDoc` wrapper collapsed — `ShadowDocument.Blocks []SieveBlock` directly. `DocBlock` merged into `SieveBlock` (one in-memory block type).
+5. ✅ Wire shape unified (B-E): prose body in `attrs.content`, `FrontendBlock.Content` dropped; JS reads via `proseContent()`.
 
-**Retires when:** Per [`docs/superpowers/specs/2026-06-19-shadowdoc-uniform-block-refactor.md`](superpowers/specs/2026-06-19-shadowdoc-uniform-block-refactor.md): (1) `getBlock(id)` is the **sole** accessor (no raw map/attr poking); (2) the `Blocks` map + `syncBlocksView` are **deleted** (all readers migrated to `getBlock`/tree walks); (3) the `Markdown` attribute is **removed** — whole-doc markdown is derived on demand by serialising the tree; (4) `BlockDoc`/`DocBlock` are **renamed** (user dislikes the names — open choice; `Document` collides with the storage type); (5) attr access gets typed accessors so shape errors are compile-time. Bite-size via writing-plans; keep the app runnable + tests green each step (no big-bang).
+**Spun off (open):** `B-F` lock-free `DocView` snapshot for the job/context boundary (removes pre-existing `copylocks` vet warnings); `B-G` retire `serialisedForm` + collapse `FrontendBlock` into json-tagged `SieveBlock` (copy/paste round-trips on-demand). Both need WebKit by-eye verification.
 
 ## B-D: AI chain-active bracket doesn't render on native prose blocks
 

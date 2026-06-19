@@ -5,8 +5,8 @@ import "testing"
 // Typed attr accessors (spec #5): kind-agnostic storage, typed reads — so a
 // typo or shape change is a compile error / empty string, not a silent panic.
 // They front the single Attrs payload bag that every kind shares.
-func TestDocBlock_TypedAccessors(t *testing.T) {
-	b := DocBlock{
+func TestSieveBlock_TypedAccessors(t *testing.T) {
+	b := SieveBlock{
 		ID:   "co-1",
 		Kind: "code",
 		Attrs: map[string]interface{}{
@@ -30,7 +30,7 @@ func TestDocBlock_TypedAccessors(t *testing.T) {
 		t.Errorf("StringAttr(language) = %q, want %q", got, "go")
 	}
 
-	pr := DocBlock{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "verbatim prose body"}}
+	pr := SieveBlock{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "verbatim prose body"}}
 	if got := pr.Content(); got != "verbatim prose body" {
 		t.Errorf("Content() = %q, want %q", got, "verbatim prose body")
 	}
@@ -38,13 +38,13 @@ func TestDocBlock_TypedAccessors(t *testing.T) {
 
 // Missing/nil/wrong-type attrs return "" rather than panicking — the whole point
 // of the typed accessor over a raw b.Attrs["x"].(string) cast.
-func TestDocBlock_TypedAccessors_SafeOnMissing(t *testing.T) {
-	var b DocBlock // nil Attrs
+func TestSieveBlock_TypedAccessors_SafeOnMissing(t *testing.T) {
+	var b SieveBlock // nil Attrs
 	if got := b.Source(); got != "" {
 		t.Errorf("Source() on nil attrs = %q, want empty", got)
 	}
 
-	b2 := DocBlock{Attrs: map[string]interface{}{"status": 42}} // wrong type
+	b2 := SieveBlock{Attrs: map[string]interface{}{"status": 42}} // wrong type
 	if got := b2.Status(); got != "" {
 		t.Errorf("Status() on non-string = %q, want empty", got)
 	}

@@ -13,7 +13,7 @@ func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
 	shadow := &ShadowDocument{
 		UUID: "test-uuid",
 		Mode: "wysiwyg",
-		Blocks: []DocBlock{
+		Blocks: []SieveBlock{
 			{ID: "pr-hello", Kind: KindProse, Attrs: map[string]interface{}{"content": "# Hello"}},
 			{ID: "ab-1234", Kind: "ai-block", Attrs: map[string]interface{}{
 				"id":       "ab-1234",
@@ -109,8 +109,8 @@ func TestShadowDocument_setBlockCreatesEntry(t *testing.T) {
 	}
 
 	shadow.setBlock(SieveBlock{
-		Kind:  "code",
-		ID:    "cb-0001",
+		Kind: "code",
+		ID:   "cb-0001",
 		Attrs: map[string]interface{}{
 			"id":     "cb-0001",
 			"source": "fmt.Println()",
@@ -130,7 +130,7 @@ func TestShadowDocument_setBlockMergesAttrs(t *testing.T) {
 	shadow := &ShadowDocument{
 		UUID: "test-uuid",
 		Mode: "wysiwyg",
-		Blocks: []DocBlock{
+		Blocks: []SieveBlock{
 			{ID: "cb-0001", Kind: "code", Attrs: map[string]interface{}{
 				"id":       "cb-0001",
 				"source":   "old",
@@ -140,8 +140,8 @@ func TestShadowDocument_setBlockMergesAttrs(t *testing.T) {
 	}
 
 	shadow.setBlock(SieveBlock{
-		Kind:  "code",
-		ID:    "cb-0001",
+		Kind: "code",
+		ID:   "cb-0001",
 		Attrs: map[string]interface{}{
 			"language": "python",
 			"status":   "COMPLETE",
@@ -181,8 +181,8 @@ func TestEditorService_FlushWritesToDisk(t *testing.T) {
 	}
 	es.UpdateMarkdown(uuid, "# Hello\n\n```ai-block\nid: ab-1234\nresponse: original\nstatus: COMPLETE\n```")
 	es.UpdateBlock(uuid, SieveBlock{
-		Kind:  "ai-block",
-		ID:    "ab-1234",
+		Kind: "ai-block",
+		ID:   "ab-1234",
 		Attrs: map[string]interface{}{
 			"id":       "ab-1234",
 			"response": "updated by user",
@@ -217,8 +217,8 @@ func TestEditorService_EnterMarkdownEmbedsBlocks(t *testing.T) {
 	_ = es.Open(uuid, nil)
 	es.UpdateMarkdown(uuid, "# Doc\n\n```code\nid: cb-0001\nsource: old\nstatus: COMPLETE\n```")
 	es.UpdateBlock(uuid, SieveBlock{
-		Kind:  "code",
-		ID:    "cb-0001",
+		Kind: "code",
+		ID:   "cb-0001",
 		Attrs: map[string]interface{}{
 			"id":     "cb-0001",
 			"source": "updated source",
@@ -377,8 +377,8 @@ func TestEditorService_EnterWysiwygReparsesBlocks(t *testing.T) {
 	es.EnterWysiwyg(uuid)
 
 	es.UpdateBlock(uuid, SieveBlock{
-		Kind:  "code",
-		ID:    "cb-0001",
+		Kind: "code",
+		ID:   "cb-0001",
 		Attrs: map[string]interface{}{
 			"language": "go",
 		},
@@ -634,10 +634,14 @@ func (p *testRunJobProcessor) InitAttrs(id string, overrides map[string]interfac
 	return attrs
 }
 func (p *testRunJobProcessor) IsBlock(entries []ContentEntry) bool { return false }
-func (p *testRunJobProcessor) Transform(entries []ContentEntry, _ string, _ string) map[string]interface{} { return nil }
-func (p *testRunJobProcessor) BuildContext(_ SieveBlock, _ ShadowDocument, _ map[string]bool) string  { return "" }
+func (p *testRunJobProcessor) Transform(entries []ContentEntry, _ string, _ string) map[string]interface{} {
+	return nil
+}
+func (p *testRunJobProcessor) BuildContext(_ SieveBlock, _ ShadowDocument, _ map[string]bool) string {
+	return ""
+}
 func (p *testRunJobProcessor) MarkdownRepresentation(_ SieveBlock) string { return "" }
-func (p *testRunJobProcessor) OnChange(_ *SieveBlock) {}
+func (p *testRunJobProcessor) OnChange(_ *SieveBlock)                     {}
 func (p *testRunJobProcessor) RunJob(jctx JobContext) error {
 	if p.runJob != nil {
 		return p.runJob(jctx.Ctx, jctx.UUID, jctx.Block)
@@ -648,7 +652,7 @@ func (p *testRunJobProcessor) JobLabel(_ *SieveBlock) string { return "" }
 
 func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 	resetRegistry()
-	
+
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, 0)
 	doc, _ := ds.New()
@@ -671,11 +675,11 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 	proc := &testRunJobProcessor{
 		runJob: func(ctx context.Context, uuid string, block *SieveBlock) error {
 			// Simulate job modifying attrs
-			block.Attrs["language"] = "go"            // modified
-			block.Attrs["added_key"] = "new value"    // added
+			block.Attrs["language"] = "go"         // modified
+			block.Attrs["added_key"] = "new value" // added
 			block.Attrs["status"] = BlockStatusComplete
-			delete(block.Attrs, "hint")               // deleted
-			
+			delete(block.Attrs, "hint") // deleted
+
 			// Simulate a concurrent user edit to "source" during the job execution
 			es.mu.Lock()
 			shadow := es.shadows[uuid]
@@ -734,7 +738,7 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 
 func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 	resetRegistry()
-	
+
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, 0)
 	doc, _ := ds.New()

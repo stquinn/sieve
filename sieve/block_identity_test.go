@@ -10,10 +10,10 @@ import (
 // blocks already carry their id in YAML; prose blocks that already have a handle
 // keep it (idempotent).
 func TestMintProseIDs_AssignsToHandlelessProse(t *testing.T) {
-	blocks := []DocBlock{
-		{Kind: KindProse, Attrs: map[string]interface{}{"content": "A"}},                  // empty ID → mint
-		{ID: "co-1", Kind: "code"},                       // structured → untouched
-		{ID: "pr-keep", Kind: KindProse, Attrs: map[string]interface{}{"content": "B"}},   // already minted → untouched
+	blocks := []SieveBlock{
+		{Kind: KindProse, Attrs: map[string]interface{}{"content": "A"}},                // empty ID → mint
+		{ID: "co-1", Kind: "code"},                                                      // structured → untouched
+		{ID: "pr-keep", Kind: KindProse, Attrs: map[string]interface{}{"content": "B"}}, // already minted → untouched
 	}
 	n := mintProseIDs(blocks)
 	if n != 1 {
@@ -31,7 +31,7 @@ func TestMintProseIDs_AssignsToHandlelessProse(t *testing.T) {
 }
 
 func TestMintProseIDs_Idempotent(t *testing.T) {
-	blocks := []DocBlock{{Kind: KindProse, Attrs: map[string]interface{}{"content": "A"}}}
+	blocks := []SieveBlock{{Kind: KindProse, Attrs: map[string]interface{}{"content": "A"}}}
 	mintProseIDs(blocks)
 	first := blocks[0].ID
 	if first == "" {
@@ -158,4 +158,3 @@ func TestFrontendBlocks_ClosedDocReturnsFalse(t *testing.T) {
 		t.Fatal("expected ok=false for an unopened uuid")
 	}
 }
-
