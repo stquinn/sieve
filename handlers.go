@@ -10,6 +10,7 @@ import (
 	"sieve/logger"
 	"sieve/requesthandlers"
 	"sieve/sieve"
+	"sieve/sieve/domain"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -194,12 +195,12 @@ func (h *apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	info := h.app.GetStoreInfo()
 
-	var session sieve.Session
+	var session domain.Session
 	if h.app.ServiceProvider.State != nil {
 		session = h.app.ServiceProvider.State.LoadSession()
 	} else {
 		// Sensible defaults for bootstrap screen
-		session = sieve.Session{
+		session = domain.Session{
 			SidebarWidth:  260,
 			MetaWidth:     280,
 			PromptsHeight: 180,
@@ -277,7 +278,7 @@ func (h *apiHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	session := h.app.ServiceProvider.State.LoadSession()
 
-	newTabs := []sieve.Tab{}
+	newTabs := []domain.Tab{}
 	for _, t := range session.Tabs {
 		if t.ID != id {
 			newTabs = append(newTabs, t)
@@ -293,7 +294,7 @@ func (h *apiHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 
 	if len(session.Tabs) == 0 {
 		dto, _ := h.app.ServiceProvider.Documents.New()
-		session.Tabs = []sieve.Tab{{ID: dto.UUID(), Mode: "wysiwyg"}}
+		session.Tabs = []domain.Tab{{ID: dto.UUID(), Mode: "wysiwyg"}}
 		session.ActiveIdx = 0
 	}
 
@@ -335,7 +336,7 @@ func (h *apiHandler) handleTabsReorder(w http.ResponseWriter, r *http.Request) {
 		toIdx--
 	}
 
-	tabs = append(tabs[:toIdx], append([]sieve.Tab{moved}, tabs[toIdx:]...)...)
+	tabs = append(tabs[:toIdx], append([]domain.Tab{moved}, tabs[toIdx:]...)...)
 	session.Tabs = tabs
 
 	activeIdx := session.ActiveIdx

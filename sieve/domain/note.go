@@ -1,4 +1,4 @@
-package sieve
+package domain
 
 import "sieve/store"
 
@@ -12,11 +12,11 @@ type Note struct {
 	kind DocumentKind
 }
 
-// newNote constructs a Note and derives the slug once from the Store key.
-func newNote(s store.MetaStorable) *Note {
+// NewNote constructs a Note and derives the slug once from the Store key.
+func NewNote(s store.MetaStorable) *Note {
 	return &Note{
 		s:    s,
-		slug: newDocumentMeta(s.Meta(), s.SetMeta).DisplayName(),
+		slug: NewDocumentMeta(s.Meta(), s.SetMeta).DisplayName(),
 		kind: KindNote,
 	}
 }
@@ -46,7 +46,7 @@ func (n *Note) SetBody(v []byte) { n.s.SetBody(v) }
 // the returned DocumentMeta are visible immediately and persist on the next
 // NoteService.Save call.
 func (n *Note) Meta() DocumentMeta {
-	return newDocumentMeta(n.s.Meta(), n.s.SetMeta)
+	return NewDocumentMeta(n.s.Meta(), n.s.SetMeta)
 }
 
 // Versions returns lightweight history refs ordered newest-first. Fetch a

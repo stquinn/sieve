@@ -1,6 +1,9 @@
 package sieve
 
-import "sieve/store"
+import (
+	"sieve/sieve/domain"
+	"sieve/store"
+)
 
 // Port interfaces are the contract block processors depend on. Concrete services
 // implement them; the composition root wires them into BlockServices. This is the
@@ -11,24 +14,24 @@ import "sieve/store"
 
 // DocumentsPort is the document load/save surface processors use.
 type DocumentsPort interface {
-	LoadByUUID(uuid string) (Document, error)
-	Save(d Document) (Document, error)
+	LoadByUUID(uuid string) (domain.Document, error)
+	Save(d domain.Document) (domain.Document, error)
 }
 
 // AssetsPort is the binary-asset persistence surface processors use.
 type AssetsPort interface {
-	Save(category store.Category, parentContext, assetID string, data []byte) (*ImageAsset, error)
+	Save(category store.Category, parentContext, assetID string, data []byte) (*domain.ImageAsset, error)
 }
 
 // StatePort is the settings-read surface processors use.
 type StatePort interface {
-	LoadSettings() Settings
+	LoadSettings() domain.Settings
 }
 
 // LinkPreviewPort is the URL-metadata surface processors use.
 type LinkPreviewPort interface {
 	FetchTitle(targetURL string) string
-	FetchFull(targetURL string) LinkPreviewResult
+	FetchFull(targetURL string) domain.LinkPreviewResult
 }
 
 // AIPort is the AI surface processors use. ImageDesc is a return type here, so it
@@ -37,7 +40,7 @@ type AIPort interface {
 	RunExplain(content, history, question, noteUUID string) (string, error)
 	RunAsk(content, history, question, noteUUID string) (string, error)
 	RefineLanguage(content, currentLanguage, detectionMethod string) (string, error)
-	DescribeImage(uuid, storeRelPath, blkId string) (ImageDesc, error)
+	DescribeImage(uuid, storeRelPath, blkId string) (domain.ImageDesc, error)
 	RunWebClip(uuid, id, source, mode, docContent string) (title, content string, err error)
 }
 

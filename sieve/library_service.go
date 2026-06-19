@@ -61,8 +61,8 @@ type LibraryNamer interface {
 type LibraryRecorder interface {
 	Recent() []Library
 	AddRecent(lib Library)
-	LastUsed() string        // last-used library ID, for startup fallback
-	SetLastUsed(id string)   // persisted alongside recents
+	LastUsed() string      // last-used library ID, for startup fallback
+	SetLastUsed(id string) // persisted alongside recents
 }
 
 // LibraryDisplayName converts an opaque library ID to a human-readable name.

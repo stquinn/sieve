@@ -11,7 +11,8 @@ var mermaidFenceRe = MermaidFenceRe
 // DiagramProcessor handles the 'diagram' block kind.
 // Rendering is entirely client-side; no async server job is needed.
 // InitAttrs sets status: COMPLETE directly so DispatchJobIfNeeded skips dispatch.
-type DiagramProcessor struct{ svc BlockServices
+type DiagramProcessor struct {
+	svc                BlockServices
 	FencedSerializer   // one shared YAML serialization — free
 	FencedDeserializer // its mirror — recognise+parse the fenced form
 }

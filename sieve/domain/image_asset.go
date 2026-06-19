@@ -1,4 +1,4 @@
-package sieve
+package domain
 
 import "sieve/store"
 
@@ -11,7 +11,7 @@ type ImageAsset struct {
 // ExternalRef is the path used to reference this asset from outside the
 // Store — in editor markdown, AI CLI calls, etc. Derived by the Store from
 // the ownership graph; never stored on disk.
-func (a *ImageAsset) ExternalRef() string      { return a.S.ExternalRef() }
+func (a *ImageAsset) ExternalRef() string { return a.S.ExternalRef() }
 
 // Encoding is the inferred encoding of the asset bytes (Raw, Base64, etc).
 // Inferred by the Store from magic bytes at Create time.

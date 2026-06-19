@@ -4,28 +4,6 @@ import (
 	"strings"
 )
 
-// FilingRecommendation mirrors the expected JSON structure from the AI.
-type FilingRecommendation struct {
-	Keep            bool     `json:"keep"`
-	Title           string   `json:"title"`
-	Filename        string   `json:"filename"`
-	Folder          string   `json:"folder"`
-	NewFolder       bool     `json:"new_folder"`
-	Type            string   `json:"type"`
-	Summary         string   `json:"summary"`
-	Tags            []string `json:"tags"`
-	AiJustification string   `json:"ai_justification"`
-	DensitySignals  []string `json:"density_signals"`
-}
-
-// ImageDesc is the structured response from AIService.DescribeImage.
-type ImageDesc struct {
-	Filename string `json:"filename"`
-	Alt      string `json:"alt"`
-	Summary  string `json:"summary"`
-	Detect   string `json:"detect,omitempty"`
-}
-
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 func detectContentType(content string) string {

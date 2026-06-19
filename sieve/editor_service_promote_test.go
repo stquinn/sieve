@@ -7,17 +7,23 @@ import (
 
 // testMarkdownProcessor returns a fixed MarkdownRepresentation so we can
 // assert the block anchor wrapper without depending on any real processor.
-type testMarkdownProcessor struct{ md string; FencedSerializer; FencedDeserializer }
+type testMarkdownProcessor struct {
+	md string
+	FencedSerializer
+	FencedDeserializer
+}
 
 func (p *testMarkdownProcessor) InitAttrs(id string, _ map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{"id": id}
 }
 func (p *testMarkdownProcessor) IsBlock(_ []ContentEntry) bool { return false }
-func (p *testMarkdownProcessor) Transform(_ []ContentEntry, _, _ string) map[string]interface{} { return nil }
-func (p *testMarkdownProcessor) RunJob(_ JobContext) error         { return nil }
-func (p *testMarkdownProcessor) JobLabel(_ *SieveBlock) string     { return "" }
-func (p *testMarkdownProcessor) OnChange(_ *SieveBlock)            {}
-func (p *testMarkdownProcessor) Mode() BlockMode                   { return BlockModeBlock }
+func (p *testMarkdownProcessor) Transform(_ []ContentEntry, _, _ string) map[string]interface{} {
+	return nil
+}
+func (p *testMarkdownProcessor) RunJob(_ JobContext) error     { return nil }
+func (p *testMarkdownProcessor) JobLabel(_ *SieveBlock) string { return "" }
+func (p *testMarkdownProcessor) OnChange(_ *SieveBlock)        {}
+func (p *testMarkdownProcessor) Mode() BlockMode               { return BlockModeBlock }
 func (p *testMarkdownProcessor) BuildContext(_ SieveBlock, _ DocView, _ map[string]bool) string {
 	return ""
 }

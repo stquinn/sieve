@@ -1,4 +1,4 @@
-package sieve
+package domain
 
 import (
 	"path/filepath"
@@ -19,11 +19,11 @@ type Buffer struct {
 	kind DocumentKind
 }
 
-// newBuffer constructs a Buffer and derives the slug once from the Store key.
-func newBuffer(s store.MetaStorable) *Buffer {
+// NewBuffer constructs a Buffer and derives the slug once from the Store key.
+func NewBuffer(s store.MetaStorable) *Buffer {
 	return &Buffer{
 		s:    s,
-		slug: newDocumentMeta(s.Meta(), s.SetMeta).DisplayName(),
+		slug: NewDocumentMeta(s.Meta(), s.SetMeta).DisplayName(),
 		kind: KindBuffer,
 	}
 }
@@ -53,7 +53,7 @@ func (b *Buffer) SetBody(v []byte) { b.s.SetBody(v) }
 // the returned DocumentMeta are visible immediately and persist on the next
 // BufferService.Save call.
 func (b *Buffer) Meta() DocumentMeta {
-	return newDocumentMeta(b.s.Meta(), b.s.SetMeta)
+	return NewDocumentMeta(b.s.Meta(), b.s.SetMeta)
 }
 
 // Versions returns lightweight history refs ordered newest-first. Fetch a
@@ -67,7 +67,7 @@ func (n *Buffer) Kind() DocumentKind { return n.kind }
 
 // ── Shared string helpers used by BufferService and NoteService ───────────────
 
-func toKebab(s string) string {
+func ToKebab(s string) string {
 	s = strings.ToLower(s)
 	var b strings.Builder
 	prevDash := false
@@ -90,7 +90,7 @@ func toKebab(s string) string {
 	return result
 }
 
-func cleanFolderPath(folder string) string {
+func CleanFolderPath(folder string) string {
 	segments := strings.Split(filepath.ToSlash(folder), "/")
 	var valid []string
 	for _, seg := range segments {

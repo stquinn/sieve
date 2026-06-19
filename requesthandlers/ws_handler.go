@@ -76,7 +76,7 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logger.Info("ws: connection established", "uuid", uuid)
-	
+
 	h.channelsMu.Lock()
 	h.channels[uuid] = writeMsg
 	h.channelsMu.Unlock()
@@ -359,4 +359,3 @@ func (h *WsHandler) handleExtract(uuid string, raw []byte, writeMsg func(interfa
 		"newYaml":    rawYaml,
 	})
 }
-

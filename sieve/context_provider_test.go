@@ -20,8 +20,10 @@ func (m *mockContextProcessor) InitAttrs(id string, overrides map[string]interfa
 	return map[string]interface{}{"id": id}
 }
 func (m *mockContextProcessor) IsBlock(entries []ContentEntry) bool { return false }
-func (m *mockContextProcessor) Transform(entries []ContentEntry, uuid, blockID string) map[string]interface{} { return nil }
-func (m *mockContextProcessor) RunJob(jctx JobContext) error { return nil }
+func (m *mockContextProcessor) Transform(entries []ContentEntry, uuid, blockID string) map[string]interface{} {
+	return nil
+}
+func (m *mockContextProcessor) RunJob(jctx JobContext) error  { return nil }
 func (m *mockContextProcessor) JobLabel(_ *SieveBlock) string { return "" }
 func (m *mockContextProcessor) OnChange(_ *SieveBlock)        {}
 func (m *mockContextProcessor) Mode() BlockMode               { return BlockModeBlock }
@@ -56,4 +58,3 @@ func TestGetContextProviderReturnsNilForUnknownKind(t *testing.T) {
 		t.Error("expected nil for unregistered kind")
 	}
 }
-

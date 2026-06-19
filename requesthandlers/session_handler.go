@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"sieve/sieve"
+	"sieve/sieve/domain"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -123,12 +124,12 @@ func (h *SessionHandler) handleAskPanelToggle(w http.ResponseWriter, r *http.Req
 	_ = h.ServiceProvider.State.SaveSession(session)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	
+
 	styleRule := ""
 	if session.ShowAskPanel {
 		styleRule = `#ask-panel { display: flex !important; position: relative; z-index: 20; border-top: 1px solid var(--theme-border2); }`
 	}
-	
+
 	fmt.Fprintf(w, `<style id="layout-overrides-askpanel" hx-swap-oob="true">%s</style>
 <script id="askpanel-state-sync" hx-swap-oob="true">document.dispatchEvent(new CustomEvent('sieve:ask-panel-toggled', { detail: %t }))</script>`, styleRule, session.ShowAskPanel)
 }
@@ -196,7 +197,7 @@ func (h *SessionHandler) handleSwitchLayout(w http.ResponseWriter, r *http.Reque
 	}
 
 	tierStr := "dumb"
-	if settings.Tier() == sieve.TierSmart {
+	if settings.Tier() == domain.TierSmart {
 		tierStr = "smart"
 	}
 

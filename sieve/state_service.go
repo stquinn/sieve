@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"sieve/logger"
+	"sieve/sieve/domain"
 	"sieve/store"
 	"strings"
 	"sync"
@@ -15,8 +16,8 @@ import (
 type StateService struct {
 	st             store.Store
 	mu             sync.RWMutex
-	cachedSession  *Session
-	cachedSettings *Settings
+	cachedSession  *domain.Session
+	cachedSettings *domain.Settings
 }
 
 // NewStateService creates a StateService backed by st.
@@ -26,7 +27,7 @@ func (ss *StateService) Store() store.Store {
 }
 
 func NewStateService(st store.Store) (*StateService, error) {
-	if err := st.PrepareCategory(State); err != nil {
+	if err := st.PrepareCategory(domain.State); err != nil {
 		return nil, err
 	}
 	return &StateService{st: st}, nil
@@ -34,7 +35,7 @@ func NewStateService(st store.Store) (*StateService, error) {
 
 // LoadSession returns the current session. If no session exists in the Store
 // yet, sensible defaults are returned.
-func (ss *StateService) LoadSession() Session {
+func (ss *StateService) LoadSession() domain.Session {
 	ss.mu.RLock()
 	if ss.cachedSession != nil {
 		defer ss.mu.RUnlock()
@@ -49,19 +50,19 @@ func (ss *StateService) LoadSession() Session {
 		return *ss.cachedSession
 	}
 
-	s, err := ss.st.Load(State, "session.json")
+	s, err := ss.st.Load(domain.State, "session.json")
 	if err != nil {
-		parsed := ParseSession(nil)
+		parsed := domain.ParseSession(nil)
 		ss.cachedSession = &parsed
 		return parsed
 	}
-	parsed := ParseSession(s.Body())
+	parsed := domain.ParseSession(s.Body())
 	ss.cachedSession = &parsed
 	return parsed
 }
 
 // SaveSession persists session to the Store, replacing any existing session.
-func (ss *StateService) SaveSession(session Session) error {
+func (ss *StateService) SaveSession(session domain.Session) error {
 	ss.mu.Lock()
 	ss.cachedSession = &session
 	ss.mu.Unlock()
@@ -70,14 +71,14 @@ func (ss *StateService) SaveSession(session Session) error {
 	if err != nil {
 		return err
 	}
-	_, err = ss.st.CreateText(State, "session.json", data)
+	_, err = ss.st.CreateText(domain.State, "session.json", data)
 	return err
 }
 
 // LoadSettings returns the current settings merged with defaults. If no
 // settings file exists yet, defaults are written to the Store so the user can
 // inspect and edit them.
-func (ss *StateService) LoadSettings() Settings {
+func (ss *StateService) LoadSettings() domain.Settings {
 	ss.mu.RLock()
 	if ss.cachedSettings != nil {
 		defer ss.mu.RUnlock()
@@ -92,33 +93,33 @@ func (ss *StateService) LoadSettings() Settings {
 		return *ss.cachedSettings
 	}
 
-	s, err := ss.st.Load(State, "settings.json")
+	s, err := ss.st.Load(domain.State, "settings.json")
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "not found") {
 			// First run — write defaults so the user can see all available options.
-			defaults := DefaultSettings()
+			defaults := domain.DefaultSettings()
 			if data, e := defaults.Marshal(); e == nil {
-				if _, e2 := ss.st.CreateText(State, "settings.json", data); e2 != nil {
+				if _, e2 := ss.st.CreateText(domain.State, "settings.json", data); e2 != nil {
 					logger.Warn("StateService: could not write default settings", "err", e2)
 				}
 			}
 			return defaults
 		}
 		logger.Error("StateService: failed to load settings", "err", err)
-		return DefaultSettings()
+		return domain.DefaultSettings()
 	}
-	temp := ParseSettings(s.Body())
+	temp := domain.ParseSettings(s.Body())
 	ss.cachedSettings = &temp
 	return *ss.cachedSettings
 }
 
 // SaveSettings persists settings to the Store, replacing any existing file.
-func (ss *StateService) SaveSettings(settings Settings) error {
+func (ss *StateService) SaveSettings(settings domain.Settings) error {
 	data, err := settings.Marshal()
 	if err != nil {
 		return err
 	}
-	_, err = ss.st.CreateText(State, "settings.json", data)
+	_, err = ss.st.CreateText(domain.State, "settings.json", data)
 	ss.cachedSettings = nil
 	return err
 }

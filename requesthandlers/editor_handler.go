@@ -148,7 +148,7 @@ func (h *EditorHandler) handleEditorSave(w http.ResponseWriter, r *http.Request)
 
 func (h *EditorHandler) handleSmartPaste(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		UUID    string             `json:"uuid"`
+		UUID    string               `json:"uuid"`
 		Entries []sieve.ContentEntry `json:"entries"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UUID == "" {

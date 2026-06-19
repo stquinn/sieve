@@ -1,4 +1,4 @@
-package sieve
+package domain
 
 import (
 	"encoding/json"
@@ -6,7 +6,7 @@ import (
 
 // Tab represents one open tab in a session.
 type Tab struct {
-	ID          string `json:"id"`                    // UUID (or "prompt:name" for prompts)
+	ID          string `json:"id"` // UUID (or "prompt:name" for prompts)
 	Scroll      int    `json:"scroll"`
 	Active      bool   `json:"active"`
 	Mode        string `json:"mode"`                  // "wysiwyg" or "markdown"
@@ -25,16 +25,16 @@ type Window struct {
 
 // Session is the full contents of store/{hostname}/session.json.
 type Session struct {
-	ActiveIdx     int      `json:"activeIdx"`
-	Tabs          []Tab    `json:"tabs"`
-	Window        Window   `json:"window,omitempty"`
-	SidebarWidth  int      `json:"sidebarWidth,omitempty"`
-	MetaWidth     int      `json:"metaWidth,omitempty"`
-	ShowSidebar   bool     `json:"showSidebar"`
-	ShowMeta      bool     `json:"showMeta"`
-	ShowPrompts   bool     `json:"showPrompts"`
-	PromptsHeight int      `json:"promptsHeight,omitempty"`
-	AskPanelHeight int     `json:"askPanelHeight,omitempty"`
+	ActiveIdx         int      `json:"activeIdx"`
+	Tabs              []Tab    `json:"tabs"`
+	Window            Window   `json:"window,omitempty"`
+	SidebarWidth      int      `json:"sidebarWidth,omitempty"`
+	MetaWidth         int      `json:"metaWidth,omitempty"`
+	ShowSidebar       bool     `json:"showSidebar"`
+	ShowMeta          bool     `json:"showMeta"`
+	ShowPrompts       bool     `json:"showPrompts"`
+	PromptsHeight     int      `json:"promptsHeight,omitempty"`
+	AskPanelHeight    int      `json:"askPanelHeight,omitempty"`
 	OpenFolders       []string `json:"openFolders,omitempty"`
 	LastSettingsPanel string   `json:"lastSettingsPanel,omitempty"`
 	ShowToolbar       bool     `json:"showToolbar,omitempty"`

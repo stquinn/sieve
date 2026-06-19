@@ -15,12 +15,14 @@ import (
 	"time"
 
 	"sieve/logger"
+	"sieve/sieve/domain"
 )
 
 // SmartImageProcessor handles the 'smart-image' Kind.
 // PasteMatch saves the image file synchronously so the block is created with
 // src already set. RunJob is AI-only: it calls DescribeImage on the saved file.
-type SmartImageProcessor struct{ svc BlockServices
+type SmartImageProcessor struct {
+	svc                BlockServices
 	FencedSerializer   // one shared YAML serialization — free
 	FencedDeserializer // its mirror — recognise+parse the fenced form
 }
@@ -305,12 +307,12 @@ func (p *SmartImageProcessor) downloadImage(uuid, url, blockID string) (string, 
 }
 
 func (p *SmartImageProcessor) saveAsset(uuid, blockID string, data []byte) (string, error) {
-	cat := WorkingCopy
-	var doc Document
+	cat := domain.WorkingCopy
+	var doc domain.Document
 	if d, err := p.svc.Documents.LoadByUUID(uuid); err == nil {
 		doc = d
-		if doc.Kind() == KindNote {
-			cat = LibraryCategory
+		if doc.Kind() == domain.KindNote {
+			cat = domain.LibraryCategory
 		}
 	}
 

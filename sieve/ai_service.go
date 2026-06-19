@@ -10,9 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/net/html"
 	"sieve/logger"
+	"sieve/sieve/domain"
 	"sieve/store"
+
+	"golang.org/x/net/html"
 )
 
 // AIService owns all AI evaluation and filing operations. It resolves prompt
@@ -60,7 +62,7 @@ func (s *AIService) EvaluateAndFileDoc(id string, fileAfter bool, allowDiscard b
 
 	settings := s.state.LoadSettings()
 	evaluated := false
-	if settings.Tier() != TierDumb {
+	if settings.Tier() != domain.TierDumb {
 		rec, err := s.runEvaluateBuffer(meta, body, settings)
 		if err != nil {
 			return FilingOutcome{}, fmt.Errorf("filing: eval %s: %w", doc.Storable().ExternalRef(), err)
@@ -78,9 +80,9 @@ func (s *AIService) EvaluateAndFileDoc(id string, fileAfter bool, allowDiscard b
 // EvaluateBuffer runs the AI evaluation over a loaded document and returns the
 // filing recommendation. The caller provides meta and body from an already-loaded
 // document; folders, settings, and the prompt template are resolved internally.
-func (s *AIService) EvaluateBuffer(meta DocumentMeta, body []byte) (*FilingRecommendation, error) {
+func (s *AIService) EvaluateBuffer(meta domain.DocumentMeta, body []byte) (*domain.FilingRecommendation, error) {
 	settings := s.state.LoadSettings()
-	if settings.Tier() == TierDumb {
+	if settings.Tier() == domain.TierDumb {
 		return nil, fmt.Errorf("AI evaluation not available in Dumb mode")
 	}
 	return s.runEvaluateBuffer(meta, body, settings)
@@ -91,7 +93,7 @@ func (s *AIService) EvaluateBuffer(meta DocumentMeta, body []byte) (*FilingRecom
 // directory for the CLI process). imageStorePaths are store-relative image paths.
 func (s *AIService) RunExplain(content, history, question, noteUUID string) (string, error) {
 	settings := s.state.LoadSettings()
-	if settings.Tier() == TierDumb {
+	if settings.Tier() == domain.TierDumb {
 		return "", fmt.Errorf("explain not available in dumb mode")
 	}
 	prompt, _ := s.prompts.GetPromptContent("explain")
@@ -111,7 +113,7 @@ func (s *AIService) RunExplain(content, history, question, noteUUID string) (str
 // conventions as RunExplain.
 func (s *AIService) RunAsk(content, history, question, noteUUID string) (string, error) {
 	settings := s.state.LoadSettings()
-	if settings.Tier() == TierDumb {
+	if settings.Tier() == domain.TierDumb {
 		return "", fmt.Errorf("ask not available in dumb mode")
 	}
 	prompt, _ := s.prompts.GetPromptContent("ask")
@@ -126,20 +128,19 @@ func (s *AIService) RunAsk(content, history, question, noteUUID string) (string,
 	return RunCLI(settings.CLI, p, settings.Model, settings.CLITimeoutLong, noteCwd)
 }
 
-
 // DescribeImage sends an image to the configured AI and returns alt text, a
 // summary, and a suggested filename. storeRelPath is relative to the store root.
-func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string) (ImageDesc, error) {
+func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string) (domain.ImageDesc, error) {
 	logger.Info("Describe uuid: " + uuid)
 	logger.Info("Describe storeRelPath: " + storeRelPath)
 	logger.Info("Describe blkId: " + blkId)
 	settings := s.state.LoadSettings()
-	if settings.Tier() == TierDumb {
-		return ImageDesc{}, fmt.Errorf("dumb mode")
+	if settings.Tier() == domain.TierDumb {
+		return domain.ImageDesc{}, fmt.Errorf("dumb mode")
 	}
 	doc, err := s.documents.LoadByUUID(uuid)
 	if err != nil {
-		return ImageDesc{}, err
+		return domain.ImageDesc{}, err
 	}
 	docDir := filepath.Join(s.storePath, doc.Storable().ExternalRef())
 
@@ -157,7 +158,7 @@ func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string
 		candidate := filepath.Join(docDir, storeRelPath)
 		if _, statErr := os.Stat(candidate); statErr != nil {
 			logger.Warn("DescribeImage: asset not found", "blkId", blkId, "src", storeRelPath, "candidate", candidate)
-			return ImageDesc{}, fmt.Errorf("image file not found for block %s", blkId)
+			return domain.ImageDesc{}, fmt.Errorf("image file not found for block %s", blkId)
 		}
 		logger.Info("DescribeImage: asset attachment missing, using path fallback", "path", candidate)
 		imagePath = candidate
@@ -169,13 +170,13 @@ func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string
 	cwd := filepath.Dir(imagePath)
 	resp, err := RunCLI(settings.CLI, p, settings.Model, settings.CLITimeoutLong, cwd)
 	if err != nil {
-		return ImageDesc{}, err
+		return domain.ImageDesc{}, err
 	}
 
 	cleaned := extractJSONFallback(resp)
-	var desc ImageDesc
+	var desc domain.ImageDesc
 	if err := json.Unmarshal([]byte(cleaned), &desc); err != nil {
-		return ImageDesc{}, fmt.Errorf("parse image desc: %w", err)
+		return domain.ImageDesc{}, fmt.Errorf("parse image desc: %w", err)
 	}
 	desc.Detect = "ai"
 	return desc, nil
@@ -274,7 +275,7 @@ func (s *AIService) GetLinkTitle(targetURL string) (string, error) {
 
 // ── Private helpers ───────────────────────────────────────────────────────────
 
-func (s *AIService) runEvaluateBuffer(meta DocumentMeta, body []byte, settings Settings) (*FilingRecommendation, error) {
+func (s *AIService) runEvaluateBuffer(meta domain.DocumentMeta, body []byte, settings domain.Settings) (*domain.FilingRecommendation, error) {
 	prompt, _ := s.prompts.GetPromptContent("file")
 	folders := s.libraryFolders()
 
@@ -312,7 +313,7 @@ func (s *AIService) runEvaluateBuffer(meta DocumentMeta, body []byte, settings S
 	}
 
 	jsonBlock := extractJSONFallback(respText)
-	var rec FilingRecommendation
+	var rec domain.FilingRecommendation
 	if err := json.Unmarshal([]byte(jsonBlock), &rec); err != nil {
 		return nil, fmt.Errorf("could not parse AI json response: %v\nJSON was: %s", err, jsonBlock)
 	}
@@ -362,15 +363,14 @@ func (s *AIService) resolveNotePath(uuid string) string {
 	return doc.Storable().ExternalRef()
 }
 
-
 // FilingOutcome is the result of AIService.EvaluateAndFileDoc.
 // Exactly one of Note or Buffer is non-nil when Discarded is false.
 type FilingOutcome struct {
 	Discarded bool
-	Document  Document
+	Document  domain.Document
 }
 
-func filingCommitDocument(n Document, documents *DocumentService, save bool, fileAfter bool) (FilingOutcome, error) {
+func filingCommitDocument(n domain.Document, documents *DocumentService, save bool, fileAfter bool) (FilingOutcome, error) {
 	if save {
 		var err error
 		if fileAfter {
@@ -468,5 +468,3 @@ func (s *AIService) RunWebClip(uuid, id, source, mode, docContent string) (title
 	}
 	return title, content, nil
 }
-
-

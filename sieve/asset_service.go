@@ -3,6 +3,7 @@ package sieve
 import (
 	"fmt"
 
+	"sieve/sieve/domain"
 	"sieve/store"
 )
 
@@ -30,7 +31,7 @@ func NewAssetService(st store.Store) *AssetService {
 // directory) before retrying. This handles the web-clip case where image files
 // are written to disk after the document was last loaded into cache.
 func (as *AssetService) ServeAssetData(docUUID, filename string) ([]byte, error) {
-	cats := []store.Category{WorkingCopy, LibraryCategory}
+	cats := []store.Category{domain.WorkingCopy, domain.LibraryCategory}
 	for _, cat := range cats {
 		if a, err := as.st.LoadAsset(cat, docUUID, filename); err == nil {
 			return a.Body(), nil
@@ -58,10 +59,10 @@ func (as *AssetService) ServeAssetData(docUUID, filename string) ([]byte, error)
 //
 //	asset, err := svc.Save(store.WorkingCopy, "buf.md", "blk-abc", data)
 //	editor.InsertContent("![](" + asset.ExternalRef() + ")")
-func (as *AssetService) Save(category store.Category, parentContext string, assetID string, data []byte) (*ImageAsset, error) {
+func (as *AssetService) Save(category store.Category, parentContext string, assetID string, data []byte) (*domain.ImageAsset, error) {
 	s, err := as.st.CreateAsset(category, parentContext, assetID, data)
 	if err != nil {
 		return nil, fmt.Errorf("asset: save %s for %s: %w", assetID, parentContext, err)
 	}
-	return &ImageAsset{S: s}, nil
+	return &domain.ImageAsset{S: s}, nil
 }

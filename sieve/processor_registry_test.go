@@ -34,11 +34,11 @@ func (p *mockProcessor) Transform(entries []ContentEntry, _ string, _ string) ma
 	}
 	return nil
 }
-func (p *mockProcessor) BuildContext(_ SieveBlock, _ DocView, _ map[string]bool) string  { return "" }
-func (p *mockProcessor) MarkdownRepresentation(_ SieveBlock) string { return "" }
-func (p *mockProcessor) RunJob(_ JobContext) error { return nil }
-func (p *mockProcessor) JobLabel(_ *SieveBlock) string { return "" }
-func (p *mockProcessor) OnChange(_ *SieveBlock) {}
+func (p *mockProcessor) BuildContext(_ SieveBlock, _ DocView, _ map[string]bool) string { return "" }
+func (p *mockProcessor) MarkdownRepresentation(_ SieveBlock) string                     { return "" }
+func (p *mockProcessor) RunJob(_ JobContext) error                                      { return nil }
+func (p *mockProcessor) JobLabel(_ *SieveBlock) string                                  { return "" }
+func (p *mockProcessor) OnChange(_ *SieveBlock)                                         {}
 
 func resetRegistry() {
 	processorRegistry = map[string]BlockProcessor{}

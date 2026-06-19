@@ -1,6 +1,7 @@
 package sieve
 
 import (
+	"sieve/sieve/domain"
 	"testing"
 )
 
@@ -79,7 +80,7 @@ time=2026-06-12T13:21:24.227+01:00 level=ERROR msg="[sieve] editor: open" uuid=1
 func TestParseLogLines_Radarr(t *testing.T) {
 	logSource := `[Info] RssSyncService: RSS Sync Completed. Reports found: 100, Reports grabbed: 0`
 
-	parsed := parseLogLines(logSource, []CustomLogParser{{Name: "Radarr", Pattern: `^\[(?P<level>[A-Za-z]+)\]\s+(?P<logger>.*?):\s+(?P<message>.*)$`}})
+	parsed := parseLogLines(logSource, []domain.CustomLogParser{{Name: "Radarr", Pattern: `^\[(?P<level>[A-Za-z]+)\]\s+(?P<logger>.*?):\s+(?P<message>.*)$`}})
 
 	if len(parsed.Lines) != 1 {
 		t.Fatalf("Expected 1 line, got %d", len(parsed.Lines))

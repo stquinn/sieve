@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"sieve/sieve/domain"
 	"sieve/store/filestore"
 )
 
@@ -34,16 +35,16 @@ func TestDocumentService_FilePromotesBufferAndAssets(t *testing.T) {
 
 	// 2. Attach an asset to the buffer via the FileStore
 	// We need to simulate what AssetService does
-	asset, err := fs.CreateAsset(WorkingCopy, doc.Storable().Meta()["uuid"], "img1", []byte("fake-png"))
+	asset, err := fs.CreateAsset(domain.WorkingCopy, doc.Storable().Meta()["uuid"], "img1", []byte("fake-png"))
 	if err != nil {
 		t.Fatalf("Failed to create asset: %v", err)
 	}
 
 	// 3. Attach it to the document
 	doc.Storable().AttachAsset(asset)
-	
+
 	oldExtRef := asset.ExternalRef()
-	
+
 	// Add markdown containing the external ref to the body
 	doc.Storable().SetBody([]byte("Image: ![](" + oldExtRef + ")"))
 
@@ -65,7 +66,7 @@ func TestDocumentService_FilePromotesBufferAndAssets(t *testing.T) {
 	}
 
 	// 5. Verify the filed document
-	if filedDoc.Kind() != KindNote {
+	if filedDoc.Kind() != domain.KindNote {
 		t.Errorf("Expected filed document to be a Note, got %v", filedDoc.Kind())
 	}
 

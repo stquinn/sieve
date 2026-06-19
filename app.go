@@ -18,6 +18,7 @@ import (
 
 	"sieve/logger"
 	"sieve/sieve"
+	"sieve/sieve/domain"
 	"sieve/store"
 	"sieve/store/filestore"
 
@@ -173,7 +174,7 @@ func (a *App) startup(ctx context.Context) {
 	a.Prompts = a.ServiceProvider.Prompts
 	a.AI = a.ServiceProvider.AI
 
-	if err := fs.RunMigrationIfNeeded([]store.Category{sieve.LibraryCategory, sieve.WorkingCopy}); err != nil {
+	if err := fs.RunMigrationIfNeeded([]store.Category{domain.LibraryCategory, domain.WorkingCopy}); err != nil {
 		logger.Error("store migration failed", "err", err)
 	}
 
@@ -236,7 +237,7 @@ func (a *App) beforeClose(ctx context.Context) bool {
 		x, y := runtime.WindowGetPosition(ctx)
 		w, h := runtime.WindowGetSize(ctx)
 		session := a.State.LoadSession()
-		session.Window = sieve.Window{X: x, Y: y, Width: w, Height: h}
+		session.Window = domain.Window{X: x, Y: y, Width: w, Height: h}
 		_ = a.State.SaveSession(session)
 	}
 	logger.Info("beforeClose: vetoing and requesting flush")
@@ -269,7 +270,7 @@ type StoreInfo struct {
 	BuffersPath        string          `json:"buffersPath"`
 	NotesPath          string          `json:"notesPath"`
 	IsNew              bool            `json:"isNew"`
-	Tier               sieve.Tier      `json:"tier"`
+	Tier               domain.Tier     `json:"tier"`
 	Cli                string          `json:"cli"`
 	Debug              bool            `json:"debug"`
 	AutosaveDebounce   int             `json:"autosaveDebounce"`
@@ -486,13 +487,13 @@ func (a *App) DownloadAsset(uuid, targetURL, id string) (AssetDTO, error) {
 		return AssetDTO{}, err
 	}
 
-	cat := sieve.WorkingCopy
-	var doc sieve.Document
+	cat := domain.WorkingCopy
+	var doc domain.Document
 	if uuid != "" && a.Documents != nil {
 		if d, err := a.Documents.LoadByUUID(uuid); err == nil {
 			doc = d
-			if doc.Kind() == sieve.KindNote {
-				cat = sieve.LibraryCategory
+			if doc.Kind() == domain.KindNote {
+				cat = domain.LibraryCategory
 			}
 		}
 	}
@@ -516,14 +517,14 @@ func (a *App) DownloadAsset(uuid, targetURL, id string) (AssetDTO, error) {
 // ── AI / CLI operations ───────────────────────────────────────────────────────
 
 // window.__stashActiveTabUuid, mdPath, blkId
-func (a *App) DescribeImage(uuid string, storeRelPath string, blkId string) (sieve.ImageDesc, error) {
+func (a *App) DescribeImage(uuid string, storeRelPath string, blkId string) (domain.ImageDesc, error) {
 	if a.AI == nil {
-		return sieve.ImageDesc{}, fmt.Errorf("store not open")
+		return domain.ImageDesc{}, fmt.Errorf("store not open")
 	}
 	desc, err := a.AI.DescribeImage(uuid, storeRelPath, blkId)
 	if err != nil {
 		logger.Warn("DescribeImage failed", "err", err)
-		return sieve.ImageDesc{}, err
+		return domain.ImageDesc{}, err
 	}
 	return desc, nil
 }
@@ -686,7 +687,7 @@ func migrateSettings(oldPath, newPath string) {
 		return
 	}
 
-	var oldSettings sieve.Settings
+	var oldSettings domain.Settings
 	if err := json.Unmarshal(oldData, &oldSettings); err != nil || oldSettings.CLI == "" {
 		if _, err := os.Stat(newPath); os.IsNotExist(err) {
 			if err := os.Rename(oldPath, newPath); err != nil {
@@ -699,7 +700,7 @@ func migrateSettings(oldPath, newPath string) {
 	}
 
 	if newData, err := os.ReadFile(newPath); err == nil {
-		var newSettings sieve.Settings
+		var newSettings domain.Settings
 		if json.Unmarshal(newData, &newSettings) == nil && newSettings.CLI != "" {
 			return
 		}

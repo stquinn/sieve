@@ -2,6 +2,7 @@ package sieve
 
 import (
 	"fmt"
+	"sieve/sieve/domain"
 	"sieve/store"
 )
 
@@ -22,7 +23,7 @@ type PromptService struct {
 
 // NewPromptService creates a PromptService backed by st.
 func NewPromptService(st store.Store) (*PromptService, error) {
-	if err := st.PrepareCategory(Prompts); err != nil {
+	if err := st.PrepareCategory(domain.Prompts); err != nil {
 		return nil, err
 	}
 	return &PromptService{st: st}, nil
@@ -31,7 +32,7 @@ func NewPromptService(st store.Store) (*PromptService, error) {
 // GetPromptContent returns the prompt template for name. If an override file
 // exists in the Store, it is used; otherwise the baked-in default is returned.
 func (ps *PromptService) GetPromptContent(name string) (string, error) {
-	s, err := ps.st.Load(Prompts, name+".md")
+	s, err := ps.st.Load(domain.Prompts, name+".md")
 	if err == nil {
 		return string(s.Body()), nil
 	}
@@ -58,13 +59,13 @@ func (ps *PromptService) GetPromptContent(name string) (string, error) {
 
 // SavePrompt persists a prompt override to the Store.
 func (ps *PromptService) SavePrompt(name string, content string) error {
-	_, err := ps.st.CreateText(Prompts, name+".md", []byte(content))
+	_, err := ps.st.CreateText(domain.Prompts, name+".md", []byte(content))
 	return err
 }
 
 // DeletePrompt removes a prompt override from the Store.
 func (ps *PromptService) DeletePrompt(name string) error {
-	s, err := ps.st.Load(Prompts, name+".md")
+	s, err := ps.st.Load(domain.Prompts, name+".md")
 	if err != nil {
 		return nil // Already deleted or doesn't exist
 	}
@@ -91,7 +92,7 @@ func (ps *PromptService) ListPrompts() []PromptEntry {
 			Name:        name,
 			DisplayName: displayNames[name],
 		}
-		if s, err := ps.st.Load(Prompts, name+".md"); err == nil {
+		if s, err := ps.st.Load(domain.Prompts, name+".md"); err == nil {
 			p.IsVirtual = false
 			p.Path = s.ExternalRef()
 		} else {

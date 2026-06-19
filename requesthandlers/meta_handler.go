@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"sieve/sieve"
+	"sieve/sieve/domain"
 	"sieve/store"
 
 	"github.com/go-chi/chi/v5"
@@ -66,12 +67,12 @@ type metaViewData struct {
 }
 
 type versionViewData struct {
-	ID        string
-	Created   string
-	Size      string
-	UUIDEnc   string
+	ID         string
+	Created    string
+	Size       string
+	UUIDEnc    string
 	VersionEnc string
-	IsCurrent bool
+	IsCurrent  bool
 }
 
 type assetViewData struct {
@@ -194,10 +195,10 @@ func (h *MetaHandler) buildMetaPanelData(uuidOrPromptName, tab string) metaPanel
 	return data
 }
 
-func toMetaView(d sieve.Document) *metaViewData {
+func toMetaView(d domain.Document) *metaViewData {
 	m := d.Meta()
 	status := "unfiled"
-	if d.Kind() == sieve.KindNote {
+	if d.Kind() == domain.KindNote {
 		status = "filed"
 	}
 	mv := &metaViewData{

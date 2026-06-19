@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"net/http"
 	"sieve/sieve"
+	"sieve/sieve/domain"
 	"strconv"
 	"strings"
 
@@ -42,7 +43,7 @@ func (h *NoteHandler) handleNoteOpen(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		displayName = note.Meta().DisplayName()
 		status = "unfiled"
-		if note.Kind() == sieve.KindNote {
+		if note.Kind() == domain.KindNote {
 			status = "filed"
 		}
 		if note.Meta().UserIntent() != nil {
@@ -82,7 +83,7 @@ func (h *NoteHandler) handleNoteOpen(w http.ResponseWriter, r *http.Request) {
 				tabMode = m
 			}
 		}
-		session.Tabs = append(session.Tabs, sieve.Tab{
+		session.Tabs = append(session.Tabs, domain.Tab{
 			ID:          id,
 			Mode:        tabMode,
 			DisplayName: displayName,
@@ -119,7 +120,7 @@ func (h *NoteHandler) handleNoteNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session := h.ServiceProvider.State.LoadSession()
-	session.Tabs = append(session.Tabs, sieve.Tab{
+	session.Tabs = append(session.Tabs, domain.Tab{
 		ID:          newNote.UUID(),
 		Mode:        "wysiwyg",
 		DisplayName: newNote.Meta().DisplayName(),
@@ -154,7 +155,7 @@ func (h *NoteHandler) handleTabsCloseAll(w http.ResponseWriter, r *http.Request)
 	}
 
 	session := h.ServiceProvider.State.LoadSession()
-	session.Tabs = []sieve.Tab{{
+	session.Tabs = []domain.Tab{{
 		ID:          newNote.UUID(),
 		Mode:        "wysiwyg",
 		DisplayName: newNote.Meta().DisplayName(),
@@ -184,7 +185,7 @@ func (h *NoteHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	session := h.ServiceProvider.State.LoadSession()
 
-	newTabs := []sieve.Tab{}
+	newTabs := []domain.Tab{}
 	for _, t := range session.Tabs {
 		if t.ID != id {
 			newTabs = append(newTabs, t)
@@ -200,7 +201,7 @@ func (h *NoteHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 
 	// Smart Close background evaluation
 	settings := h.ServiceProvider.State.LoadSettings()
-	if settings.Tier() == sieve.TierSmart {
+	if settings.Tier() == domain.TierSmart {
 		if _, err := h.ServiceProvider.Documents.LoadByUUID(id); err == nil {
 			go func(id string) {
 				_, _ = h.ServiceProvider.AI.EvaluateAndFileDoc(id, true, true)
@@ -210,7 +211,7 @@ func (h *NoteHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 
 	if len(session.Tabs) == 0 {
 		newNote, _ := h.ServiceProvider.Documents.New()
-		session.Tabs = []sieve.Tab{{
+		session.Tabs = []domain.Tab{{
 			ID:          newNote.UUID(),
 			Mode:        "wysiwyg",
 			DisplayName: newNote.Meta().DisplayName(),
@@ -261,7 +262,7 @@ func (h *NoteHandler) handleTabsReorder(w http.ResponseWriter, r *http.Request) 
 		toIdx--
 	}
 
-	tabs = append(tabs[:toIdx], append([]sieve.Tab{moved}, tabs[toIdx:]...)...)
+	tabs = append(tabs[:toIdx], append([]domain.Tab{moved}, tabs[toIdx:]...)...)
 	session.Tabs = tabs
 
 	activeIdx := session.ActiveIdx
@@ -300,7 +301,7 @@ func (h *NoteHandler) handleNoteDelete(w http.ResponseWriter, r *http.Request) {
 
 	session := h.ServiceProvider.State.LoadSession()
 
-	newTabs := []sieve.Tab{}
+	newTabs := []domain.Tab{}
 	for _, t := range session.Tabs {
 		if t.ID != id {
 			newTabs = append(newTabs, t)
@@ -316,7 +317,7 @@ func (h *NoteHandler) handleNoteDelete(w http.ResponseWriter, r *http.Request) {
 
 	if len(session.Tabs) == 0 {
 		newNote, _ := h.ServiceProvider.Documents.New()
-		session.Tabs = []sieve.Tab{{
+		session.Tabs = []domain.Tab{{
 			ID:          newNote.UUID(),
 			Mode:        "wysiwyg",
 			DisplayName: newNote.Meta().DisplayName(),

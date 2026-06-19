@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"sieve/logger"
+	"sieve/sieve/domain"
 )
 
 // RunCLI executes the configured CLI using the provided prompt content via STDIN.
@@ -31,7 +32,7 @@ func RunCLI(cli string, prompt string, model string, timeoutSecs int, cwd string
 	// Inherit the full login shell PATH so the subprocess can find tools
 	// installed in /usr/local/bin, /opt/homebrew/bin, etc. when the app is
 	// launched from the Dock or Finder with a minimal inherited PATH.
-	cmd.Env = append(os.Environ(), "PATH="+LoginPath())
+	cmd.Env = append(os.Environ(), "PATH="+domain.LoginPath())
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

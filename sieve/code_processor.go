@@ -16,7 +16,8 @@ var codeFenceRe = regexp.MustCompile("(?s)^`{3,}(\\w*)\\n(.+)\\n`{3,}$")
 const minSourceLength = 30
 
 // CodeBlockProcessor handles the 'code' Kind.
-type CodeBlockProcessor struct{ svc BlockServices
+type CodeBlockProcessor struct {
+	svc                BlockServices
 	FencedSerializer   // one shared YAML serialization — free
 	FencedDeserializer // its mirror — recognise+parse the fenced form
 }

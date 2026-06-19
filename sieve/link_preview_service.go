@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"net/http"
 	"net/url"
+	"sieve/sieve/domain"
 	"strings"
 	"time"
 
@@ -63,20 +64,10 @@ func (s *LinkPreviewService) FetchTitle(targetURL string) string {
 	return strings.TrimSpace(title)
 }
 
-// LinkPreviewResult holds Open Graph metadata fetched from a URL.
-// OGImageURL is the raw OG image URL — callers are responsible for downloading
-// and storing it via AssetService. Empty string means no image was found.
-type LinkPreviewResult struct {
-	Title       string
-	Description string
-	OGImageURL  string
-	SiteName    string
-}
-
 // FetchFull returns Open Graph metadata for targetURL.
 // Priority: og:* > twitter:* > <title>/<meta name="description"> > hostname fallback.
 // Returns a zero-value result on any fetch or parse failure.
-func (s *LinkPreviewService) FetchFull(targetURL string) LinkPreviewResult {
+func (s *LinkPreviewService) FetchFull(targetURL string) domain.LinkPreviewResult {
 	client := &http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
@@ -85,18 +76,18 @@ func (s *LinkPreviewService) FetchFull(targetURL string) LinkPreviewResult {
 	}
 	req, err := http.NewRequest(http.MethodGet, targetURL, nil)
 	if err != nil {
-		return LinkPreviewResult{}
+		return domain.LinkPreviewResult{}
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 	resp, err := client.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
-		return LinkPreviewResult{}
+		return domain.LinkPreviewResult{}
 	}
 	defer resp.Body.Close()
 
 	doc, err := html.Parse(resp.Body)
 	if err != nil {
-		return LinkPreviewResult{}
+		return domain.LinkPreviewResult{}
 	}
 
 	var (
@@ -143,7 +134,7 @@ func (s *LinkPreviewService) FetchFull(targetURL string) LinkPreviewResult {
 	}
 	walk(doc)
 
-	result := LinkPreviewResult{}
+	result := domain.LinkPreviewResult{}
 	result.Title = first(ogTitle, twTitle, pageTitle, targetURL)
 	result.Description = first(ogDesc, twDesc, metaDesc)
 	result.SiteName = first(ogSite, hostOnly(targetURL))

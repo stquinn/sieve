@@ -185,11 +185,11 @@ func TestDetectByHeuristics_markdown(t *testing.T) {
 			input: "1. First step\n2. Second step\n3. Third step",
 		},
 		{
-			name: "Nested Code Fence",
+			name:  "Nested Code Fence",
 			input: "### Get User Profile\n```http\nGET https://api.github.com/users/octocat\nAccept: application/vnd.github.v3+json\nAuthorization: Bearer {{GITHUB_TOKEN}}\n```\n",
 		},
 		{
-			name: "Tier 2 Combination (Header + Bold)",
+			name:  "Tier 2 Combination (Header + Bold)",
 			input: "## Heading\nThis is some **bold** text to explain concepts.",
 		},
 	}
@@ -224,4 +224,3 @@ func TestDetectByHeuristics_canonicalization(t *testing.T) {
 		}
 	}
 }
-

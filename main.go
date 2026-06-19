@@ -277,7 +277,7 @@ func buildMenu(app *App) *menu.Menu {
 	if isMac {
 		settingsLabel = "Preferences"
 	}
-	file.AddText(settingsLabel, keys.CmdOrCtrl(","), openSettings)	
+	file.AddText(settingsLabel, keys.CmdOrCtrl(","), openSettings)
 	file.AddSeparator()
 	if !isMac {
 		// On macOS: Settings lives in Sieve > Preferences (injected by AppMenu role),

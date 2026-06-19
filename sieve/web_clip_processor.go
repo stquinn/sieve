@@ -8,7 +8,8 @@ import (
 )
 
 // WebClipBlockProcessor handles the 'web-clip' Kind.
-type WebClipBlockProcessor struct{ svc BlockServices
+type WebClipBlockProcessor struct {
+	svc                BlockServices
 	FencedSerializer   // one shared YAML serialization — free
 	FencedDeserializer // its mirror — recognise+parse the fenced form
 }

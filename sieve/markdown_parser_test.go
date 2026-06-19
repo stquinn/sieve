@@ -1,8 +1,8 @@
 package sieve
 
 import (
-	"testing"
 	"strings"
+	"testing"
 
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/text"
@@ -246,7 +246,6 @@ func TestParseBlockAnchors(t *testing.T) {
 		t.Errorf("blk-def: expected no targets, got %v", a.Targets)
 	}
 }
-
 
 func TestFindBlockByIDAnchor(t *testing.T) {
 	md := "[!block] id=\"blk-1234\"\n\nSome content\n\n[!block-end]\n"

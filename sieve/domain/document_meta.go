@@ -1,4 +1,4 @@
-package sieve
+package domain
 
 import (
 	"strconv"
@@ -88,9 +88,9 @@ type documentMeta struct {
 	commit func(map[string]string)
 }
 
-// newDocumentMeta constructs a DocumentMeta view over m. commit should be
+// NewDocumentMeta constructs a DocumentMeta view over m. commit should be
 // MetaStorable.SetMeta and is called after each Set* mutation.
-func newDocumentMeta(m map[string]string, commit func(map[string]string)) DocumentMeta {
+func NewDocumentMeta(m map[string]string, commit func(map[string]string)) DocumentMeta {
 	return &documentMeta{m: m, commit: commit}
 }
 
@@ -101,31 +101,39 @@ func (d *documentMeta) set(key, value string) {
 
 // ── Read-only system fields ───────────────────────────────────────────────────
 
-func (d *documentMeta) Status() string       { return d.m["status"] }
-func (d *documentMeta) Version() int         { return metaInt(d.m, "version") }
-func (d *documentMeta) Created() time.Time   { return metaTime(d.m, "created") }
-func (d *documentMeta) Modified() time.Time  { return metaTime(d.m, "modified") }
+func (d *documentMeta) Status() string         { return d.m["status"] }
+func (d *documentMeta) Version() int           { return metaInt(d.m, "version") }
+func (d *documentMeta) Created() time.Time     { return metaTime(d.m, "created") }
+func (d *documentMeta) Modified() time.Time    { return metaTime(d.m, "modified") }
 func (d *documentMeta) All() map[string]string { return d.m }
 
 // ── Typed read/write fields ───────────────────────────────────────────────────
 
-func (d *documentMeta) FocusCount() int        { return metaInt(d.m, "focus_count") }
-func (d *documentMeta) SetFocusCount(v int)    { d.set("focus_count", strconv.Itoa(v)) }
+func (d *documentMeta) FocusCount() int     { return metaInt(d.m, "focus_count") }
+func (d *documentMeta) SetFocusCount(v int) { d.set("focus_count", strconv.Itoa(v)) }
 
 func (d *documentMeta) UserIntent() *string     { return metaNullableStr(d.m, "user_intent") }
 func (d *documentMeta) SetUserIntent(v *string) { d.set("user_intent", nullableStrVal(v)) }
 
-func (d *documentMeta) AiEval() string       { return metaStrDefault(d.m, "ai_eval", "none") }
-func (d *documentMeta) SetAiEval(v string)   { d.set("ai_eval", v) }
+func (d *documentMeta) AiEval() string     { return metaStrDefault(d.m, "ai_eval", "none") }
+func (d *documentMeta) SetAiEval(v string) { d.set("ai_eval", v) }
 
 func (d *documentMeta) AiLastEvaluated() *string     { return metaNullableStr(d.m, "ai_last_evaluated") }
 func (d *documentMeta) SetAiLastEvaluated(v *string) { d.set("ai_last_evaluated", nullableStrVal(v)) }
 
-func (d *documentMeta) AiFolderSuggestion() *string     { return metaNullableStr(d.m, "ai_folder_suggestion") }
-func (d *documentMeta) SetAiFolderSuggestion(v *string) { d.set("ai_folder_suggestion", nullableStrVal(v)) }
+func (d *documentMeta) AiFolderSuggestion() *string {
+	return metaNullableStr(d.m, "ai_folder_suggestion")
+}
+func (d *documentMeta) SetAiFolderSuggestion(v *string) {
+	d.set("ai_folder_suggestion", nullableStrVal(v))
+}
 
-func (d *documentMeta) UserSuggestedName() *string     { return metaNullableStr(d.m, "user_suggested_name") }
-func (d *documentMeta) SetUserSuggestedName(v *string) { d.set("user_suggested_name", nullableStrVal(v)) }
+func (d *documentMeta) UserSuggestedName() *string {
+	return metaNullableStr(d.m, "user_suggested_name")
+}
+func (d *documentMeta) SetUserSuggestedName(v *string) {
+	d.set("user_suggested_name", nullableStrVal(v))
+}
 
 func (d *documentMeta) DisplayName() string     { return d.m["display_name"] }
 func (d *documentMeta) SetDisplayName(v string) { d.set("display_name", v) }
@@ -136,8 +144,8 @@ func (d *documentMeta) SetFilename(v *string) { d.set("filename", nullableStrVal
 func (d *documentMeta) Summary() *string     { return metaNullableStr(d.m, "summary") }
 func (d *documentMeta) SetSummary(v *string) { d.set("summary", nullableStrVal(v)) }
 
-func (d *documentMeta) Tags() []string      { return metaList(d.m, "tags") }
-func (d *documentMeta) SetTags(v []string)  { d.set("tags", listVal(v)) }
+func (d *documentMeta) Tags() []string     { return metaList(d.m, "tags") }
+func (d *documentMeta) SetTags(v []string) { d.set("tags", listVal(v)) }
 
 func (d *documentMeta) AiJustification() *string     { return metaNullableStr(d.m, "ai_justification") }
 func (d *documentMeta) SetAiJustification(v *string) { d.set("ai_justification", nullableStrVal(v)) }
@@ -151,10 +159,10 @@ func (d *documentMeta) SetCLI(v *string) { d.set("cli", nullableStrVal(v)) }
 func (d *documentMeta) AiKeep() *bool     { return metaNullableBool(d.m, "ai_keep") }
 func (d *documentMeta) SetAiKeep(v *bool) { d.set("ai_keep", nullableBoolVal(v)) }
 
-func (d *documentMeta) Scroll() int      { return metaInt(d.m, "scroll") }
-func (d *documentMeta) SetScroll(v int)  { d.set("scroll", strconv.Itoa(v)) }
+func (d *documentMeta) Scroll() int     { return metaInt(d.m, "scroll") }
+func (d *documentMeta) SetScroll(v int) { d.set("scroll", strconv.Itoa(v)) }
 
-func (d *documentMeta) Mode() string    { return d.m["mode"] }
+func (d *documentMeta) Mode() string     { return d.m["mode"] }
 func (d *documentMeta) SetMode(v string) { d.set("mode", v) }
 
 // ── Low-level conversion helpers ─────────────────────────────────────────────

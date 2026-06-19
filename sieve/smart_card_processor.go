@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sieve/sieve/domain"
 	"strings"
 	"time"
 )
@@ -163,9 +164,9 @@ func (p *SmartCardProcessor) downloadImage(uuid, blockID, imageURL string) (stri
 		return "", fmt.Errorf("read image body: %w", err)
 	}
 
-	cat := WorkingCopy
-	if d, err := p.svc.Documents.LoadByUUID(uuid); err == nil && d.Kind() == KindNote {
-		cat = LibraryCategory
+	cat := domain.WorkingCopy
+	if d, err := p.svc.Documents.LoadByUUID(uuid); err == nil && d.Kind() == domain.KindNote {
+		cat = domain.LibraryCategory
 	}
 
 	asset, err := p.svc.Assets.Save(cat, uuid, blockID+"-img", data)

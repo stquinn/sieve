@@ -13,7 +13,7 @@ import (
 // GlobalConfig stores machine-level settings that are not specific to any one
 // library. It is persisted to the OS config directory (~/.config/sieve/).
 type GlobalConfig struct {
-	LastStorePath   string         `json:"lastStorePath"`
+	LastStorePath   string          `json:"lastStorePath"`
 	RecentLibraries []sieve.Library `json:"recentLibraries,omitempty"`
 }
 

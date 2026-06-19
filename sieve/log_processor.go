@@ -3,6 +3,7 @@ package sieve
 import (
 	"encoding/json"
 	"regexp"
+	"sieve/sieve/domain"
 	"strings"
 	"time"
 )
@@ -15,7 +16,7 @@ var logSignalRe = regexp.MustCompile(`(?i)(?:^\s*\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{
 
 // logParserRegexes returns the structured parsers — built-ins plus any the user
 // configured in settings — compiled once. Invalid user patterns are skipped.
-func logParserRegexes(customParsers []CustomLogParser) []*regexp.Regexp {
+func logParserRegexes(customParsers []domain.CustomLogParser) []*regexp.Regexp {
 	res := []*regexp.Regexp{springBootRe, homeAssistantRe}
 	for _, cp := range customParsers {
 		if re, err := regexp.Compile(cp.Pattern); err == nil {
@@ -29,7 +30,7 @@ func logParserRegexes(customParsers []CustomLogParser) []*regexp.Regexp {
 // matches any structured parser (built-in OR user-custom), or shows a generic log
 // signal. Shared by IsBlock / Transform so detection can never disagree with the
 // parsers that actually run in parseLogLines.
-func looksLikeLog(source string, customParsers []CustomLogParser) bool {
+func looksLikeLog(source string, customParsers []domain.CustomLogParser) bool {
 	if strings.TrimSpace(source) == "" {
 		return false
 	}
@@ -50,7 +51,8 @@ func looksLikeLog(source string, customParsers []CustomLogParser) bool {
 	return false
 }
 
-type LogProcessor struct{ svc BlockServices
+type LogProcessor struct {
+	svc                BlockServices
 	FencedSerializer   // one shared YAML serialization — free
 	FencedDeserializer // its mirror — recognise+parse the fenced form
 }
@@ -110,7 +112,7 @@ func (p *LogProcessor) IsBlock(entries []ContentEntry) bool {
 }
 
 // customParsers loads the user-configured log parsers from settings (nil-safe).
-func (p *LogProcessor) customParsers() []CustomLogParser {
+func (p *LogProcessor) customParsers() []domain.CustomLogParser {
 	if p.svc.State == nil {
 		return nil
 	}
@@ -197,7 +199,7 @@ var (
 	logDatePrefixRe = regexp.MustCompile(`^(?:\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?|\d{2}:\d{2}:\d{2})`)
 )
 
-func parseLogLines(source string, customParsers []CustomLogParser) ParsedLogData {
+func parseLogLines(source string, customParsers []domain.CustomLogParser) ParsedLogData {
 	var compiledCustomParsers []*regexp.Regexp
 	var customParserNames []string
 	for _, cp := range customParsers {
@@ -462,9 +464,9 @@ func (p *LogProcessor) RunJob(jctx JobContext) error {
 		return err
 	}
 
-	cat := WorkingCopy
-	if d, err := p.svc.Documents.LoadByUUID(jctx.UUID); err == nil && d.Kind() == KindNote {
-		cat = LibraryCategory
+	cat := domain.WorkingCopy
+	if d, err := p.svc.Documents.LoadByUUID(jctx.UUID); err == nil && d.Kind() == domain.KindNote {
+		cat = domain.LibraryCategory
 	}
 
 	asset, err := p.svc.Assets.Save(cat, jctx.UUID, block.ID+"-parsed", jsonData)

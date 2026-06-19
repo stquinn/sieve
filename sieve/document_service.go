@@ -3,6 +3,7 @@ package sieve
 import (
 	"fmt"
 	"sieve/logger"
+	"sieve/sieve/domain"
 	"sieve/store"
 	"strconv"
 	"strings"
@@ -14,25 +15,25 @@ type DocumentService struct {
 }
 
 func NewDocumentService(st store.Store) (*DocumentService, error) {
-	if err := st.PrepareCategory(LibraryCategory); err != nil {
+	if err := st.PrepareCategory(domain.LibraryCategory); err != nil {
 		return nil, err
 	}
-	if err := st.PrepareCategory(WorkingCopy); err != nil {
+	if err := st.PrepareCategory(domain.WorkingCopy); err != nil {
 		return nil, err
 	}
 	return &DocumentService{store: st}, nil
 }
 
-func (ds *DocumentService) documentFromStoreable(item store.MetaStorable) (Document, error) {
+func (ds *DocumentService) documentFromStoreable(item store.MetaStorable) (domain.Document, error) {
 	if item == nil {
 		return nil, fmt.Errorf("Nill MetaStoreable not allowed")
 	}
-	if item.Category().Key == LibraryCategory.Key {
-		result := newNote(item)
+	if item.Category().Key == domain.LibraryCategory.Key {
+		result := domain.NewNote(item)
 		return result, nil
 	}
-	if item.Category().Key == WorkingCopy.Key {
-		result := newBuffer(item)
+	if item.Category().Key == domain.WorkingCopy.Key {
+		result := domain.NewBuffer(item)
 		return result, nil
 	}
 	return nil, fmt.Errorf("Unsupported MetaStoreable type %s", item.Category().Key)
@@ -42,7 +43,7 @@ func (ds *DocumentService) documentFromStoreable(item store.MetaStorable) (Docum
 // over both categories — use sparingly (bridge operations, not hot paths).
 // The scan skips version loading for performance; a targeted Load is issued
 // only for the matched document so Versions() returns the full history.
-func (ds *DocumentService) LoadByUUID(uuid string) (Document, error) {
+func (ds *DocumentService) LoadByUUID(uuid string) (domain.Document, error) {
 
 	storable, err := ds.store.LoadByUUID(uuid)
 	if err != nil {
@@ -58,7 +59,7 @@ func (ds *DocumentService) LoadByUUID(uuid string) (Document, error) {
 // Save persists the current state of n. The Store bumps the version and
 // modified timestamp and writes a snapshot. Returns a new Note — n is stale
 // after this call.
-func (ds *DocumentService) Save(n Document) (Document, error) {
+func (ds *DocumentService) Save(n domain.Document) (domain.Document, error) {
 	saved, err := ds.store.Save(n.Storable())
 	if err != nil {
 		return nil, fmt.Errorf("document: save: %w", err)
@@ -75,13 +76,13 @@ func (ds *DocumentService) Save(n Document) (Document, error) {
 }
 
 // Delete removes the note and its entire version history from the Store.
-func (ns *DocumentService) Delete(n Document) error {
+func (ns *DocumentService) Delete(n domain.Document) error {
 	return ns.store.Delete(n.Storable())
 }
 
 // Delete removes the note and its entire version history from the Store.
 func (ns *DocumentService) DeleteFolder(id string) error {
-	folder, err := ns.store.LoadFolder(LibraryCategory, id)
+	folder, err := ns.store.LoadFolder(domain.LibraryCategory, id)
 	if err == nil {
 		return ns.store.Delete(folder)
 	}
@@ -90,7 +91,7 @@ func (ns *DocumentService) DeleteFolder(id string) error {
 
 // Delete removes the note and its entire version history from the Store.
 func (ns *DocumentService) RenameFolder(id string, newName string) error {
-	folder, err := ns.store.LoadFolder(LibraryCategory, id)
+	folder, err := ns.store.LoadFolder(domain.LibraryCategory, id)
 	if err == nil {
 		_, err := ns.store.Rename(folder, newName)
 		return err
@@ -100,7 +101,7 @@ func (ns *DocumentService) RenameFolder(id string, newName string) error {
 
 // SetUserIntent writes user_intent to the buffer's metadata and saves it.
 // intent must be "keep", "trash", or "" (clears the field).
-func (ds *DocumentService) SetUserIntent(d Document, intent string) (Document, error) {
+func (ds *DocumentService) SetUserIntent(d domain.Document, intent string) (domain.Document, error) {
 	meta := d.Storable().Meta()
 	if intent == "" {
 		delete(meta, "user_intent")
@@ -112,7 +113,7 @@ func (ds *DocumentService) SetUserIntent(d Document, intent string) (Document, e
 }
 
 // SaveMeta persists only the metadata of the document, avoiding a version bump.
-func (ds *DocumentService) SaveMeta(n Document) (Document, error) {
+func (ds *DocumentService) SaveMeta(n domain.Document) (domain.Document, error) {
 	ms, err := ds.store.SaveMeta(n.Storable())
 	if err != nil {
 		return nil, err
@@ -121,21 +122,21 @@ func (ds *DocumentService) SaveMeta(n Document) (Document, error) {
 }
 
 // AttachAsset attaches an asset Storable to the note and saves it.
-func (ds *DocumentService) AttachAsset(n Document, a store.AssetStorable) error {
+func (ds *DocumentService) AttachAsset(n domain.Document, a store.AssetStorable) error {
 	n.Storable().AttachAsset(a)
 	_, err := ds.store.Save(n.Storable())
 	return err
 }
 
 // IncrementFocusCount increments the focus_count in metadata and saves it.
-func (ds *DocumentService) IncrementFocusCount(n Document) (Document, error) {
+func (ds *DocumentService) IncrementFocusCount(n domain.Document) (domain.Document, error) {
 	meta := n.Meta()
 	meta.SetFocusCount(meta.FocusCount() + 1)
 	return ds.SaveMeta(n)
 }
 
 // UpdateAiMetadata applies an AI filing recommendation to the document metadata and saves it.
-func (ds *DocumentService) UpdateAiMetadata(d Document, rec *FilingRecommendation, cli string) (Document, error) {
+func (ds *DocumentService) UpdateAiMetadata(d domain.Document, rec *domain.FilingRecommendation, cli string) (domain.Document, error) {
 	meta := d.Meta()
 	now := time.Now().Format("2006-01-02T15:04:05")
 	meta.SetAiEval("complete")
@@ -174,12 +175,12 @@ func (ds *DocumentService) UpdateAiMetadata(d Document, rec *FilingRecommendatio
 }
 
 // RetrieveVersion fetches a historical snapshot of n identified by ref.
-func (ds *DocumentService) RetrieveVersion(n Document, ref store.VersionRef) (store.VersionedStorable, error) {
+func (ds *DocumentService) RetrieveVersion(n domain.Document, ref store.VersionRef) (store.VersionedStorable, error) {
 	return ds.store.RetrieveVersion(n.Storable(), ref)
 }
 
 // ReplaceVersion replaces the current version of a document with a historical snapshot.
-func (ds *DocumentService) ReplaceWithVersion(doc Document, ref store.VersionRef) (Document, error) {
+func (ds *DocumentService) ReplaceWithVersion(doc domain.Document, ref store.VersionRef) (domain.Document, error) {
 	version, err := ds.store.RetrieveVersion(doc.Storable(), ref)
 	if err != nil {
 		return nil, err
@@ -200,10 +201,10 @@ func (ds *DocumentService) ReplaceWithVersion(doc Document, ref store.VersionRef
 // also renamed to its kebab form; the display_name is then written back via
 // SaveMeta because store.Rename reloads from disk, discarding any in-memory
 // meta changes. Buffers are purely cosmetic — only meta is updated.
-func (ds *DocumentService) Rename(d Document, name string) (Document, error) {
-	n, ok := d.(*Note)
+func (ds *DocumentService) Rename(d domain.Document, name string) (domain.Document, error) {
+	n, ok := d.(*domain.Note)
 	if ok {
-		renamed, err := ds.store.Rename(n.Storable(), toKebab(name))
+		renamed, err := ds.store.Rename(n.Storable(), domain.ToKebab(name))
 		if err != nil {
 			return nil, fmt.Errorf("document: rename to %q: %w", name, err)
 		}
@@ -211,7 +212,7 @@ func (ds *DocumentService) Rename(d Document, name string) (Document, error) {
 		if !ok {
 			return nil, fmt.Errorf("note: document: renamed storable is not MetaStorable")
 		}
-		renamedNote := newNote(ms)
+		renamedNote := domain.NewNote(ms)
 		renamedNote.Meta().SetDisplayName(name)
 		return ds.SaveMeta(renamedNote)
 	}
@@ -222,26 +223,26 @@ func (ds *DocumentService) Rename(d Document, name string) (Document, error) {
 // New creates a new empty buffer in the WorkingCopy category with an
 // "Untitled N" display name. The Store generates a timestamped key and stamps
 // uuid, version, created, and modified.
-func (ds *DocumentService) New() (Document, error) {
+func (ds *DocumentService) New() (domain.Document, error) {
 	n := ds.nextUntitledNumber()
 	body := ds.defaultMetaBody(n)
 
-	s, err := ds.store.CreateMetaText(WorkingCopy, "", []byte(body))
+	s, err := ds.store.CreateMetaText(domain.WorkingCopy, "", []byte(body))
 	if err != nil {
 		return nil, fmt.Errorf("document: new: %w", err)
 	}
-	return newBuffer(s), nil
+	return domain.NewBuffer(s), nil
 }
 
 func (ds *DocumentService) NewFolder(folderName string) error {
-	_, err := ds.store.CreateOrLoadFolder(LibraryCategory, folderName)
+	_, err := ds.store.CreateOrLoadFolder(domain.LibraryCategory, folderName)
 	if err != nil {
 		return fmt.Errorf("document: couldnt create folder: %w", err)
 	}
 	return nil
 }
 
-func (ds *DocumentService) File(b Document) (Document, error) {
+func (ds *DocumentService) File(b domain.Document) (domain.Document, error) {
 	// Update meta before renaming.
 	raw := b.Storable().Meta()
 	raw["status"] = "filed"
@@ -252,8 +253,8 @@ func (ds *DocumentService) File(b Document) (Document, error) {
 	var moved store.Storable
 	var err error
 	// If Buffer - Move to LibraryCategory category (FileStore migrates version history automatically).
-	if b.Kind() == KindBuffer {
-		moved, err = ds.store.Move(b.Storable(), LibraryCategory)
+	if b.Kind() == domain.KindBuffer {
+		moved, err = ds.store.Move(b.Storable(), domain.LibraryCategory)
 		if err != nil {
 			return nil, fmt.Errorf("document: file: move to LibraryCategory: %w", err)
 		}
@@ -284,13 +285,13 @@ func (ds *DocumentService) File(b Document) (Document, error) {
 	if !ok {
 		return nil, fmt.Errorf("buffer: file: moved storable is not MetaStorable")
 	}
-	return newNote(ms), nil
+	return domain.NewNote(ms), nil
 }
 
 // List returns the LibraryCategory tree as a []NoteEntry (the same projection used
 // by the sidebar). Backed by the Store — no direct filesystem access.
 func (ds *DocumentService) List() ([]NoteEntry, error) {
-	storables, err := ds.store.List(LibraryCategory, "")
+	storables, err := ds.store.List(domain.LibraryCategory, "")
 	if err != nil {
 		return nil, err
 	}
@@ -300,7 +301,7 @@ func (ds *DocumentService) List() ([]NoteEntry, error) {
 // Move relocates a note to a different folder within the LibraryCategory. folder is
 // the target folder path (e.g. "ai-stuff" or "projects/go"). An empty folder
 // moves the note to the LibraryCategory root. The filename is preserved.
-func (ds *DocumentService) Move(n Document, folderName string) (Document, error) {
+func (ds *DocumentService) Move(n domain.Document, folderName string) (domain.Document, error) {
 	folder, err := ds.store.CreateOrLoadFolder(n.Storable().Category(), folderName)
 	if err != nil {
 		return nil, fmt.Errorf("document: file: couldnt create folder %q: %w", folderName, err)
@@ -310,12 +311,12 @@ func (ds *DocumentService) Move(n Document, folderName string) (Document, error)
 	if !ok {
 		return nil, fmt.Errorf("buffer: file: moved storable is not MetaStorable")
 	}
-	return newNote(ms), nil
+	return domain.NewNote(ms), nil
 }
 
 // Count returns the number of notes in the LibraryCategory.
 func (ds *DocumentService) Count() int {
-	storables, err := ds.store.List(LibraryCategory, "")
+	storables, err := ds.store.List(domain.LibraryCategory, "")
 	if err != nil {
 		return 0
 	}
@@ -328,7 +329,7 @@ func (ds *DocumentService) Search(query string) ([]SearchResult, error) {
 	if query == "" {
 		return nil, nil
 	}
-	storables, err := ds.store.List(LibraryCategory, "")
+	storables, err := ds.store.List(domain.LibraryCategory, "")
 	if err != nil {
 		return nil, err
 	}
@@ -373,7 +374,7 @@ func (ds *DocumentService) Search(query string) ([]SearchResult, error) {
 		results = append(results, SearchResult{
 			ID:             meta["uuid"],
 			Path:           ms.ExternalRef(),
-			Name:           newDocumentMeta(ms.Meta(), ms.SetMeta).DisplayName(),
+			Name:           domain.NewDocumentMeta(ms.Meta(), ms.SetMeta).DisplayName(),
 			IsTagMatch:     isTagMatch,
 			IsSummaryMatch: isSummaryMatch,
 			IsBodyMatch:    isBodyMatch,
@@ -387,7 +388,7 @@ func (ds *DocumentService) Search(query string) ([]SearchResult, error) {
 // "Untitled N" display_name and returns N+1.
 // TODO Store creates the Buffer - why isnt it telling you the name?
 func (bs *DocumentService) nextUntitledNumber() int {
-	storables, err := bs.store.List(WorkingCopy, "")
+	storables, err := bs.store.List(domain.WorkingCopy, "")
 	if err != nil {
 		return 1
 	}
@@ -397,7 +398,7 @@ func (bs *DocumentService) nextUntitledNumber() int {
 		if !ok {
 			continue
 		}
-		dn := newDocumentMeta(ms.Meta(), ms.SetMeta).DisplayName()
+		dn := domain.NewDocumentMeta(ms.Meta(), ms.SetMeta).DisplayName()
 		if strings.HasPrefix(dn, "Untitled ") {
 			if n, err := strconv.Atoi(strings.TrimPrefix(dn, "Untitled ")); err == nil && n > max {
 				max = n
@@ -444,18 +445,18 @@ func metaString(meta map[string]string, key string) string {
 
 // deriveKebabNameFromMeta extracts a kebab-case filename from meta and body.
 // Priority: filename field > user_suggested_name field > first heading > timestamp.
-func deriveKebabNameFromMeta(meta DocumentMeta, body []byte) string {
+func deriveKebabNameFromMeta(meta domain.DocumentMeta, body []byte) string {
 	if fn := meta.Filename(); fn != nil && *fn != "" {
-		return toKebab(strings.TrimSuffix(*fn, ".md"))
+		return domain.ToKebab(strings.TrimSuffix(*fn, ".md"))
 	}
 	if usn := meta.UserSuggestedName(); usn != nil && *usn != "" {
-		return toKebab(*usn)
+		return domain.ToKebab(*usn)
 	}
 	// First heading in the body.
 	for _, line := range strings.SplitN(string(body), "\n", 200) {
 		if strings.HasPrefix(line, "#") {
 			if heading := strings.TrimSpace(strings.TrimLeft(line, "#")); heading != "" {
-				return toKebab(heading)
+				return domain.ToKebab(heading)
 			}
 		}
 	}
@@ -464,9 +465,9 @@ func deriveKebabNameFromMeta(meta DocumentMeta, body []byte) string {
 
 // deriveFolderFromMeta returns a cleaned folder path from ai_folder_suggestion,
 // or an empty string if none is set.
-func deriveFolderFromMeta(meta DocumentMeta) string {
+func deriveFolderFromMeta(meta domain.DocumentMeta) string {
 	if s := meta.AiFolderSuggestion(); s != nil && *s != "" {
-		return cleanFolderPath(*s)
+		return domain.CleanFolderPath(*s)
 	}
 	return ""
 }
@@ -500,7 +501,7 @@ func buildNoteTree(storables []store.Storable) []NoteEntry {
 		case store.MetaStorable:
 			// MetaStorable before FolderStorable: fileMetaStorable satisfies both;
 			// documents must not render as folders.
-			dm := newDocumentMeta(s.Meta(), s.SetMeta)
+			dm := domain.NewDocumentMeta(s.Meta(), s.SetMeta)
 			entries = append(entries, NoteEntry{
 				ID:          s.Key(),
 				Name:        dm.DisplayName(),
@@ -528,7 +529,7 @@ func buildFolderChildren(owns []store.Storable) []NoteEntry {
 		case store.MetaStorable:
 			// MetaStorable before FolderStorable: fileMetaStorable satisfies both;
 			// documents must not render as folders.
-			dm := newDocumentMeta(s.Meta(), s.SetMeta)
+			dm := domain.NewDocumentMeta(s.Meta(), s.SetMeta)
 			children = append(children, NoteEntry{
 				ID:          s.Key(),
 				Name:        dm.DisplayName(),

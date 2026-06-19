@@ -7,7 +7,7 @@ import (
 
 // AIBlockProcessor implements BlockProcessor for the "ai-block" kind.
 type AIBlockProcessor struct {
-	svc              BlockServices
+	svc                BlockServices
 	FencedSerializer   // one shared YAML serialization — free
 	FencedDeserializer // its mirror — recognise+parse the fenced form
 }
@@ -22,15 +22,15 @@ func (p *AIBlockProcessor) Mode() BlockMode { return BlockModeBlock }
 
 func (p *AIBlockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
-		"id":        id,
-		"status":    BlockStatusPending,
-		"createdAt": time.Now().UTC().Format(time.RFC3339),
-		"ref":       "doc",
-		"question":  "",
-		"response":  "",
-		"type":      "ASK",
-		"model":     "",
-		"error":     "",
+		"id":                id,
+		"status":            BlockStatusPending,
+		"createdAt":         time.Now().UTC().Format(time.RFC3339),
+		"ref":               "doc",
+		"question":          "",
+		"response":          "",
+		"type":              "ASK",
+		"model":             "",
+		"error":             "",
 		"supportsEmbedding": true,
 	}
 	for k, v := range overrides {
@@ -43,7 +43,9 @@ func (p *AIBlockProcessor) InitAttrs(id string, overrides map[string]interface{}
 }
 
 func (p *AIBlockProcessor) IsBlock(entries []ContentEntry) bool { return false }
-func (p *AIBlockProcessor) Transform(entries []ContentEntry, uuid, blockID string) map[string]interface{} { return nil }
+func (p *AIBlockProcessor) Transform(entries []ContentEntry, uuid, blockID string) map[string]interface{} {
+	return nil
+}
 
 func (p *AIBlockProcessor) OnChange(block *SieveBlock) {}
 

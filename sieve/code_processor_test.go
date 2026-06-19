@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sieve/sieve/domain"
 	"strings"
 	"testing"
 )
@@ -226,14 +227,14 @@ func TestCodeBlockProcessor_RunJob_ai(t *testing.T) {
 	}
 
 	// Set CLI path in settings
-	settings := DefaultSettings()
+	settings := domain.DefaultSettings()
 	settings.CLI = cliPath
 	if err := state.SaveSettings(settings); err != nil {
 		t.Fatalf("SaveSettings: %v", err)
 	}
 
 	// Write the "refine" prompt content (needed by RefineLanguage)
-	_, _ = fs.CreateText(Prompts, "refine.txt", []byte("Refine this: {content}"))
+	_, _ = fs.CreateText(domain.Prompts, "refine.txt", []byte("Refine this: {content}"))
 
 	ai := NewAIService(state, prompts, ds, tmpDir)
 	svc := BlockServices{
@@ -291,7 +292,7 @@ func TestCodeBlockProcessor_RunJob_aiFallback(t *testing.T) {
 		t.Fatalf("WriteFile mock CLI: %v", err)
 	}
 
-	settings := DefaultSettings()
+	settings := domain.DefaultSettings()
 	settings.CLI = cliPath
 	if err := state.SaveSettings(settings); err != nil {
 		t.Fatalf("SaveSettings: %v", err)

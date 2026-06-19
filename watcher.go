@@ -8,18 +8,19 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"sieve/logger"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 // notesWatcher watches a directory tree for filesystem changes and calls
 // notify (debounced) whenever a relevant change occurs.
 type notesWatcher struct {
-	fw      *fsnotify.Watcher
-	mu      sync.Mutex
-	timer   *time.Timer
-	notify  func()
-	done    chan struct{}
+	fw     *fsnotify.Watcher
+	mu     sync.Mutex
+	timer  *time.Timer
+	notify func()
+	done   chan struct{}
 }
 
 func newNotesWatcher(root string, notify func()) (*notesWatcher, error) {

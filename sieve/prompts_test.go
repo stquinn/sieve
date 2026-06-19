@@ -2,8 +2,8 @@ package sieve
 
 import (
 	"fmt"
-	"testing"
 	"sieve/store"
+	"testing"
 )
 
 type mockStorable struct {
@@ -12,11 +12,11 @@ type mockStorable struct {
 	body     []byte
 }
 
-func (m *mockStorable) Key() string                { return m.key }
-func (m *mockStorable) Path() string               { return m.key }
-func (m *mockStorable) Category() store.Category   { return m.category }
-func (m *mockStorable) Body() []byte               { return m.body }
-func (m *mockStorable) ExternalRef() string        { return "" }
+func (m *mockStorable) Key() string                  { return m.key }
+func (m *mockStorable) Path() string                 { return m.key }
+func (m *mockStorable) Category() store.Category     { return m.category }
+func (m *mockStorable) Body() []byte                 { return m.body }
+func (m *mockStorable) ExternalRef() string          { return "" }
 func (m *mockStorable) Versions() []store.VersionRef { return nil }
 func (m *mockStorable) IsModified() bool             { return false }
 
@@ -50,18 +50,38 @@ func (m *mockStore) Delete(s store.Storable) error {
 func (m *mockStore) PrepareCategory(cat store.Category) error { return nil }
 
 // Unimplemented methods to satisfy Store interface
-func (m *mockStore) CreateMetaText(cat store.Category, key string, body []byte) (store.MetaStorable, error) { return nil, nil }
-func (m *mockStore) CreateAsset(cat store.Category, parentKey, assetID string, body []byte) (store.AssetStorable, error) { return nil, nil }
+func (m *mockStore) CreateMetaText(cat store.Category, key string, body []byte) (store.MetaStorable, error) {
+	return nil, nil
+}
+func (m *mockStore) CreateAsset(cat store.Category, parentKey, assetID string, body []byte) (store.AssetStorable, error) {
+	return nil, nil
+}
 func (m *mockStore) Save(s store.Storable) (store.Storable, error) { return nil, nil }
-func (m *mockStore) List(cat store.Category, prefix string) ([]store.Storable, error) { return nil, nil }
-func (m *mockStore) Move(s store.Storable, cat store.Category) (store.Storable, error) { return nil, nil }
-func (m *mockStore) Reparent(s store.Storable, folder store.FolderStorable) (store.Storable, error) { return nil, nil }
+func (m *mockStore) List(cat store.Category, prefix string) ([]store.Storable, error) {
+	return nil, nil
+}
+func (m *mockStore) Move(s store.Storable, cat store.Category) (store.Storable, error) {
+	return nil, nil
+}
+func (m *mockStore) Reparent(s store.Storable, folder store.FolderStorable) (store.Storable, error) {
+	return nil, nil
+}
 func (m *mockStore) Rename(s store.Storable, newKey string) (store.Storable, error) { return nil, nil }
-func (m *mockStore) RetrieveVersion(s store.Storable, ref store.VersionRef) (store.VersionedStorable, error) { return store.VersionedStorable{}, nil }
-func (m *mockStore) CreateOrLoadFolder(cat store.Category, name string) (store.FolderStorable, error) { return nil, nil }
-func (m *mockStore) LoadFolder(cat store.Category, name string) (store.FolderStorable, error) { return nil, nil }
-func (m *mockStore) RenameFolder(s store.FolderStorable, name string) (store.FolderStorable, error) { return nil, nil }
-func (m *mockStore) ListFrom(categories []store.Category, prefix string) ([]store.Storable, error) { return nil, nil }
+func (m *mockStore) RetrieveVersion(s store.Storable, ref store.VersionRef) (store.VersionedStorable, error) {
+	return store.VersionedStorable{}, nil
+}
+func (m *mockStore) CreateOrLoadFolder(cat store.Category, name string) (store.FolderStorable, error) {
+	return nil, nil
+}
+func (m *mockStore) LoadFolder(cat store.Category, name string) (store.FolderStorable, error) {
+	return nil, nil
+}
+func (m *mockStore) RenameFolder(s store.FolderStorable, name string) (store.FolderStorable, error) {
+	return nil, nil
+}
+func (m *mockStore) ListFrom(categories []store.Category, prefix string) ([]store.Storable, error) {
+	return nil, nil
+}
 func (m *mockStore) LoadByUUID(uuid string) (store.Storable, error) { return nil, nil }
 func (m *mockStore) LoadAsset(cat store.Category, parentKey, assetKey string) (store.AssetStorable, error) {
 	return nil, nil

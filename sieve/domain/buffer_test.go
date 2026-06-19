@@ -1,4 +1,4 @@
-package sieve
+package domain
 
 import (
 	"path/filepath"
@@ -19,9 +19,9 @@ func TestCleanFolderPath(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := cleanFolderPath(tt.input)
+		got := CleanFolderPath(tt.input)
 		if got != tt.expected {
-			t.Errorf("cleanFolderPath(%q) = %q, expected %q", tt.input, got, tt.expected)
+			t.Errorf("CleanFolderPath(%q) = %q, expected %q", tt.input, got, tt.expected)
 		}
 	}
 }

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"sieve/sieve"
+	"sieve/sieve/domain"
 	"sieve/store"
 )
 
@@ -21,27 +21,27 @@ import (
 // DocumentMetaDTO is the typed projection of a document's frontmatter.
 // The All map carries every key including unknowns so custom fields round-trip.
 type DocumentMetaDTO struct {
-	Status             string            `json:"status"`              // read-only pass-through
-	Version            int               `json:"version"`             // read-only, Store-owned
-	FocusCount         int               `json:"focusCount"`
-	UserIntent         *string           `json:"userIntent"`
-	AiEval             string            `json:"aiEval"`
-	AiLastEvaluated    *string           `json:"aiLastEvaluated"`
-	AiFolderSuggestion *string           `json:"aiFolderSuggestion"`
-	UserSuggestedName  *string           `json:"userSuggestedName"`
-	DisplayName        string            `json:"displayName"`
-	Filename           *string           `json:"filename"`            // frontmatter "filename" field
-	Summary            *string           `json:"summary"`
-	Tags               []string          `json:"tags"`
-	AiJustification    *string           `json:"aiJustification"`
-	DensitySignals     []string          `json:"densitySignals"`
-	Created            string            `json:"created"`             // read-only, Store-owned
-	Modified           string            `json:"modified"`            // read-only, Store-owned
-	CLI                *string           `json:"cli"`
-	AiKeep             *bool             `json:"aiKeep"`
-	Scroll             int               `json:"scroll"`
+	Status             string              `json:"status"`  // read-only pass-through
+	Version            int                 `json:"version"` // read-only, Store-owned
+	FocusCount         int                 `json:"focusCount"`
+	UserIntent         *string             `json:"userIntent"`
+	AiEval             string              `json:"aiEval"`
+	AiLastEvaluated    *string             `json:"aiLastEvaluated"`
+	AiFolderSuggestion *string             `json:"aiFolderSuggestion"`
+	UserSuggestedName  *string             `json:"userSuggestedName"`
+	DisplayName        string              `json:"displayName"`
+	Filename           *string             `json:"filename"` // frontmatter "filename" field
+	Summary            *string             `json:"summary"`
+	Tags               []string            `json:"tags"`
+	AiJustification    *string             `json:"aiJustification"`
+	DensitySignals     []string            `json:"densitySignals"`
+	Created            string              `json:"created"`  // read-only, Store-owned
+	Modified           string              `json:"modified"` // read-only, Store-owned
+	CLI                *string             `json:"cli"`
+	AiKeep             *bool               `json:"aiKeep"`
+	Scroll             int                 `json:"scroll"`
 	Assets             []map[string]string `json:"assets"`
-	All                map[string]string `json:"all"` // full raw map — every key including unknowns
+	All                map[string]string   `json:"all"` // full raw map — every key including unknowns
 }
 
 // BufferDTO is a working-copy document as seen by the frontend.
@@ -95,7 +95,7 @@ type VersionedStorableDTO struct {
 
 // ── Business-type → DTO ───────────────────────────────────────────────────────
 
-func toDocumentMetaDTO(m sieve.DocumentMeta, owns []store.Storable) DocumentMetaDTO {
+func toDocumentMetaDTO(m domain.DocumentMeta, owns []store.Storable) DocumentMetaDTO {
 	tags := m.Tags()
 	if tags == nil {
 		tags = []string{}
@@ -174,7 +174,7 @@ func toVersionRefDTOs(refs []store.VersionRef) []VersionRefDTO {
 	return out
 }
 
-func toBufferDTO(b *sieve.Buffer) BufferDTO {
+func toBufferDTO(b *domain.Buffer) BufferDTO {
 	return BufferDTO{
 		Kind:     "buffer",
 		UUID:     b.UUID(),
@@ -187,7 +187,7 @@ func toBufferDTO(b *sieve.Buffer) BufferDTO {
 
 // toNoteBufferDTO converts a Note to a BufferDTO so the frontend can use a
 // single LoadBuffer/SaveBuffer API regardless of category.
-func toNoteBufferDTO(n *sieve.Note) BufferDTO {
+func toNoteBufferDTO(n *domain.Note) BufferDTO {
 	return BufferDTO{
 		Kind:     "note",
 		UUID:     n.UUID(),
@@ -198,7 +198,7 @@ func toNoteBufferDTO(n *sieve.Note) BufferDTO {
 	}
 }
 
-func toNoteDTO(n *sieve.Note) NoteDTO {
+func toNoteDTO(n *domain.Note) NoteDTO {
 	return NoteDTO{
 		Kind:     "note",
 		UUID:     n.UUID(),
@@ -209,7 +209,7 @@ func toNoteDTO(n *sieve.Note) NoteDTO {
 	}
 }
 
-func toAssetDTO(a *sieve.ImageAsset) AssetDTO {
+func toAssetDTO(a *domain.ImageAsset) AssetDTO {
 	return AssetDTO{
 		ExternalRef: a.ExternalRef(),
 		Encoding:    encodingName(a.Encoding()),
@@ -279,7 +279,7 @@ func rawMapToMetaDTO(m map[string]string) DocumentMetaDTO {
 // applyDTOToMeta writes every writable field from dto back to m.
 // Read-only fields (Status, Version, Created, Modified) are skipped.
 // Called by SaveBuffer and SaveNote on the inbound DTO path.
-func applyDTOToMeta(dto DocumentMetaDTO, m sieve.DocumentMeta) {
+func applyDTOToMeta(dto DocumentMetaDTO, m domain.DocumentMeta) {
 	m.SetFocusCount(dto.FocusCount)
 	m.SetUserIntent(dto.UserIntent)
 	m.SetAiEval(dto.AiEval)
