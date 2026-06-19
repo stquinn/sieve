@@ -87,6 +87,16 @@ func (FencedSerializer) Serialize(block SieveBlock) (string, error) {
 	return serializeFencedBlock(block)
 }
 
+// InlineSerializer is the shared serialization for INLINE flavours — `[!kind]
+// {json} [!kind-end]`, the form the inline parser reads back. Inline-mode
+// processors embed it instead of FencedSerializer.
+type InlineSerializer struct{}
+
+// Serialize renders an inline block as its bracketed JSON form.
+func (InlineSerializer) Serialize(block SieveBlock) (string, error) {
+	return serializeInlineBlock(block)
+}
+
 type BlockServices struct {
 	AI          *AIService
 	Documents   *DocumentService

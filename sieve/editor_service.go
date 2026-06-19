@@ -266,7 +266,7 @@ func (es *EditorService) notifyBlockCreated(uuid string, block SieveBlock) {
 	if l != nil {
 		serialisedForm := ""
 		if processor := GetProcessor(block.Kind); processor != nil {
-			serialisedForm, _ = SerializeBlock(processor, &block)
+			serialisedForm, _ = processor.Serialize(block)
 		}
 		l.OnBlockCreated(uuid, block.Kind, block.ID, block.Attrs, serialisedForm)
 	}
@@ -279,7 +279,7 @@ func (es *EditorService) notifyBlockUpdated(uuid string, block SieveBlock) {
 	if l != nil {
 		serialisedForm := ""
 		if processor := GetProcessor(block.Kind); processor != nil {
-			serialisedForm, _ = SerializeBlock(processor, &block)
+			serialisedForm, _ = processor.Serialize(block)
 		}
 		l.OnBlockUpdated(uuid, block.ID, block.Attrs, serialisedForm)
 	}
@@ -606,10 +606,6 @@ func (es *EditorService) createBlockWithID(uuid, kind, blockID string, overrides
 	return id, rawYaml, nil
 }
 
-// SerializeBlock encodes the block based on its processor mode.
-func (es *EditorService) SerializeBlock(processor BlockProcessor, block SieveBlock) (string, error) {
-	return SerializeBlock(processor, &block)
-}
 
 // HandlePaste runs paste matchers and delegates to CreateBlock on the first match.
 // It is the secondary creation path — prefer CreateBlock directly for UI-triggered creation.

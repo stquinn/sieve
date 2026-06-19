@@ -8,7 +8,7 @@ import (
 
 // SmartLinkProcessor handles the 'smart-link' block kind.
 type SmartLinkProcessor struct{ svc BlockServices
-	FencedSerializer // one shared YAML serialization — free
+	InlineSerializer // inline flavour: [!kind] {json} [!kind-end]
 }
 
 func NewSmartLinkProcessor(svc BlockServices) *SmartLinkProcessor {

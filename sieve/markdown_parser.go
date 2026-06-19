@@ -14,8 +14,6 @@ import (
 	"github.com/yuin/goldmark/text"
 	"github.com/yuin/goldmark/util"
 	"gopkg.in/yaml.v3"
-
-	"sieve/sieve/fencedblock"
 )
 
 var (
@@ -297,25 +295,16 @@ func ParseFirstBlock(markdown string) *SieveBlock {
 	return block
 }
 
-// SerializeBlock safely formats a SieveBlock into markdown string based on its mode
-func SerializeBlock(processor BlockProcessor, block *SieveBlock) (string, error) {
-	if processor.Mode() == BlockModeProse {
-		return processor.Serialize(*block)
-	}
-	if processor.Mode() == BlockModeInline {
-		b, err := json.Marshal(block.Attrs)
-		if err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("[!%s] %s [!%s-end]", block.Kind, string(b), block.Kind), nil
-	}
-
-	// BlockModeBlock
-	serialized, err := fencedblock.SerializeYaml(block.Attrs)
+// serializeInlineBlock renders an inline-mode block as [!kind] {json} [!kind-end]
+// — the form the inline parser (inlineBlockRegex) reads back. It is owned by
+// InlineSerializer, which inline-mode flavours embed; there is no kind-switching
+// serializer function anymore — each flavour serializes itself (Serialize).
+func serializeInlineBlock(block SieveBlock) (string, error) {
+	b, err := json.Marshal(block.Attrs)
 	if err != nil {
 		return "", err
 	}
-	return "```" + block.Kind + "\n" + serialized + "\n```", nil
+	return fmt.Sprintf("[!%s] %s [!%s-end]", block.Kind, string(b), block.Kind), nil
 }
 
 // --- BlockAnchor Parsers and AST Nodes ---
