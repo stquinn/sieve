@@ -6,6 +6,7 @@ import (
 
 type mockProcessor struct {
 	FencedSerializer
+	FencedDeserializer
 	isBlockFn   func([]ContentEntry) bool
 	transformFn func([]ContentEntry) map[string]interface{}
 }

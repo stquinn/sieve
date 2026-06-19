@@ -21,11 +21,12 @@ import (
 // PasteMatch saves the image file synchronously so the block is created with
 // src already set. RunJob is AI-only: it calls DescribeImage on the saved file.
 type SmartImageProcessor struct{ svc BlockServices
-	FencedSerializer // one shared YAML serialization — free
+	FencedSerializer   // one shared YAML serialization — free
+	FencedDeserializer // its mirror — recognise+parse the fenced form
 }
 
 func NewSmartImageProcessor(svc BlockServices) *SmartImageProcessor {
-	return &SmartImageProcessor{svc: svc}
+	return &SmartImageProcessor{svc: svc, FencedDeserializer: FencedDeserializer{Kind: "smart-image"}}
 }
 
 func (p *SmartImageProcessor) Mode() BlockMode  { return BlockModeBlock }

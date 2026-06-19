@@ -7,12 +7,13 @@ import (
 
 // AIBlockProcessor implements BlockProcessor for the "ai-block" kind.
 type AIBlockProcessor struct {
-	svc BlockServices
-	FencedSerializer // one shared YAML serialization — free
+	svc              BlockServices
+	FencedSerializer   // one shared YAML serialization — free
+	FencedDeserializer // its mirror — recognise+parse the fenced form
 }
 
 func NewAIBlockProcessor(svc BlockServices) *AIBlockProcessor {
-	return &AIBlockProcessor{svc: svc}
+	return &AIBlockProcessor{svc: svc, FencedDeserializer: FencedDeserializer{Kind: "ai-block"}}
 }
 
 func (p *AIBlockProcessor) IDPrefix() string { return "ai" }

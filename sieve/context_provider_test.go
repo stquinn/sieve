@@ -4,6 +4,7 @@ import "testing"
 
 type mockContextProcessor struct {
 	FencedSerializer
+	FencedDeserializer
 	returnVal string
 	buildFn   func(SieveBlock) string
 }

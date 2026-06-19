@@ -17,11 +17,12 @@ const minSourceLength = 30
 
 // CodeBlockProcessor handles the 'code' Kind.
 type CodeBlockProcessor struct{ svc BlockServices
-	FencedSerializer // one shared YAML serialization — free
+	FencedSerializer   // one shared YAML serialization — free
+	FencedDeserializer // its mirror — recognise+parse the fenced form
 }
 
 func NewCodeBlockProcessor(svc BlockServices) *CodeBlockProcessor {
-	return &CodeBlockProcessor{svc: svc}
+	return &CodeBlockProcessor{svc: svc, FencedDeserializer: FencedDeserializer{Kind: "code"}}
 }
 
 func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {

@@ -8,7 +8,8 @@ import (
 
 // SmartLinkProcessor handles the 'smart-link' block kind.
 type SmartLinkProcessor struct{ svc BlockServices
-	InlineSerializer // inline flavour: [!kind] {json} [!kind-end]
+	InlineSerializer   // inline flavour: [!kind] {json} [!kind-end]
+	InlineDeserializer // inline things are not recognised from disk (project_inline_not_a_block)
 }
 
 func NewSmartLinkProcessor(svc BlockServices) *SmartLinkProcessor {

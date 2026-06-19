@@ -77,6 +77,13 @@ type BlockProcessor interface {
 	// one implementation (FencedSerializer, embedded — free); prose owns the custom
 	// content + <!--s:ID--> marker form (ProseProcessor). No kind-switch in the spine.
 	Serialize(block SieveBlock) (string, error)
+	// Accepts reports whether this flavour claims a parsed region (the recognition
+	// half of deserialization). Deserialize then builds the block(s) — the inverse
+	// of Serialize. Structured kinds share one impl (FencedDeserializer, embedded);
+	// inline flavours never claim a document region (InlineDeserializer); prose is
+	// the terminal mop-up (ProseProcessor). No kind-switch in the codec.
+	Accepts(region Region) bool
+	Deserialize(region Region) ([]SieveBlock, error)
 }
 
 // FencedSerializer is the ONE shared serialization for YAML/fenced block flavours.

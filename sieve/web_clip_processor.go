@@ -9,11 +9,12 @@ import (
 
 // WebClipBlockProcessor handles the 'web-clip' Kind.
 type WebClipBlockProcessor struct{ svc BlockServices
-	FencedSerializer // one shared YAML serialization — free
+	FencedSerializer   // one shared YAML serialization — free
+	FencedDeserializer // its mirror — recognise+parse the fenced form
 }
 
 func NewWebClipBlockProcessor(svc BlockServices) *WebClipBlockProcessor {
-	return &WebClipBlockProcessor{svc: svc}
+	return &WebClipBlockProcessor{svc: svc, FencedDeserializer: FencedDeserializer{Kind: "web-clip"}}
 }
 
 func (p *WebClipBlockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {

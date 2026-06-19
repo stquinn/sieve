@@ -623,6 +623,7 @@ func TestHandleBlockUpdate_notifySendsSnapshotUnderLock(t *testing.T) {
 
 type testRunJobProcessor struct {
 	FencedSerializer
+	FencedDeserializer
 	runJob func(ctx context.Context, uuid string, block *SieveBlock) error
 }
 

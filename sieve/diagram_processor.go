@@ -12,11 +12,12 @@ var mermaidFenceRe = MermaidFenceRe
 // Rendering is entirely client-side; no async server job is needed.
 // InitAttrs sets status: COMPLETE directly so DispatchJobIfNeeded skips dispatch.
 type DiagramProcessor struct{ svc BlockServices
-	FencedSerializer // one shared YAML serialization — free
+	FencedSerializer   // one shared YAML serialization — free
+	FencedDeserializer // its mirror — recognise+parse the fenced form
 }
 
 func NewDiagramProcessor(svc BlockServices) *DiagramProcessor {
-	return &DiagramProcessor{svc: svc}
+	return &DiagramProcessor{svc: svc, FencedDeserializer: FencedDeserializer{Kind: "diagram"}}
 }
 
 func (p *DiagramProcessor) IDPrefix() string { return "dia" }

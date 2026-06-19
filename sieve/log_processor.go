@@ -51,11 +51,12 @@ func looksLikeLog(source string, customParsers []CustomLogParser) bool {
 }
 
 type LogProcessor struct{ svc BlockServices
-	FencedSerializer // one shared YAML serialization — free
+	FencedSerializer   // one shared YAML serialization — free
+	FencedDeserializer // its mirror — recognise+parse the fenced form
 }
 
 func NewLogProcessor(svc BlockServices) *LogProcessor {
-	return &LogProcessor{svc: svc}
+	return &LogProcessor{svc: svc, FencedDeserializer: FencedDeserializer{Kind: "log"}}
 }
 
 func (p *LogProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
