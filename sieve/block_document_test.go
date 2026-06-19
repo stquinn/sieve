@@ -94,14 +94,14 @@ func TestBlockDoc_RoundTripStable(t *testing.T) {
 	t.Cleanup(func() { UnregisterProcessor("code") })
 
 	// Each prose block is a single paragraph so per-paragraph segmentation
-	// (Stage B.1) preserves the block count through the round-trip.
-	// column-row has no registered processor — it round-trips via the codec's
-	// fence-fallback (unclaimedFenceBlock), so no extra registration needed.
+	// (Stage B.1) preserves the block count through the round-trip. Only kinds
+	// with a registered processor (prose, code) stay structured through the codec;
+	// processor-less kinds (column-row) coalesce to prose until Stage E registers
+	// them, so they are not exercised here.
 	doc := []SieveBlock{
 		newSieveBlock(KindProse, "pr-1", "# Title", nil),
 		newSieveBlock("code", "co-1", "", map[string]interface{}{"id": "co-1", "source": "x = 1"}),
 		newSieveBlock(KindProse, "pr-2", "Between.", nil),
-		newSieveBlock(KindColumnRow, "cr-1", "", map[string]interface{}{"id": "cr-1", "widths": []interface{}{0.5, 0.5}}),
 		newSieveBlock(KindProse, "pr-3", "Tail.", nil),
 	}
 

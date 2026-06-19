@@ -3,8 +3,6 @@ package sieve
 import (
 	"fmt"
 	"strings"
-
-	"sieve/sieve/fencedblock"
 )
 
 // DocumentCodec owns BOTH directions of document SerDes. It sees only the
@@ -52,18 +50,12 @@ func (c *DocumentCodec) Deserialize(markdown string) ([]SieveBlock, error) {
 	for _, region := range regions {
 		p := c.firstAcceptor(region)
 		if p == nil {
-			// Fence-fallback: a fenced region with a YAML body that carries an
-			// "id" field is a structured block whose kind simply has no registered
-			// processor yet (e.g. column-row in Stage E). Keep it structured rather
-			// than melting it into prose — mirrors serializeFencedBlock on the
-			// serialize side.
-			if b, ok := unclaimedFenceBlock(region); ok {
-				if err := flushProse(); err != nil {
-					return nil, err
-				}
-				out = append(out, b)
-				continue
-			}
+			// No registered processor claims this region, so it is not a supported
+			// structured kind: it coalesces into the terminal prose mop-up, its
+			// text (including any fence) preserved verbatim. The registry is the
+			// sole authority on what is structured — no kind-guessing heuristic.
+			// When Stage E registers container kinds (column-row, column), their
+			// processors claim them above and they become structured automatically.
 			pending = append(pending, region)
 			continue
 		}
@@ -142,36 +134,3 @@ func (registryAdapter) Ordered() []BlockProcessor {
 }
 
 func globalRegistry() ProcessorRegistry { return registryAdapter{} }
-
-// unclaimedFenceBlock checks whether a region that has no registered processor
-// is nevertheless a Sieve structured block stored in the fence-fallback format.
-// It returns (block, true) when BOTH conditions hold:
-//  1. region.Kind != "" — it is a fenced region, not a plain text run.
-//  2. region.Body parses as YAML into a map with a non-empty string "id" value.
-//
-// Only when BOTH hold do we reconstruct the block; otherwise we return (_, false)
-// and the caller falls through to the existing pending→prose coalesce path. That
-// keeps stray language fences (```python with no YAML id) safely in prose.
-//
-// Tradeoff (accepted): this gate is KIND-BLIND on purpose — it cannot tell a
-// processor-less Sieve kind (column-row) from a language fence whose body happens
-// to be a YAML map starting with `id: <string>`, so that pathological hand-written
-// fence would also be claimed as structured. The only way to disambiguate is a
-// hardcoded allow-list of known kinds, which would put kind-awareness back into the
-// deliberately kind-blind codec — a worse cost than this contrived edge case (which
-// still round-trips byte-stable). When Stage E gives container kinds a real
-// processor, they go through Accepts and this fallback narrows to true unknowns.
-func unclaimedFenceBlock(region Region) (SieveBlock, bool) {
-	if region.Kind == "" {
-		return SieveBlock{}, false
-	}
-	attrs, err := fencedblock.DeserializeYaml(region.Body)
-	if err != nil {
-		return SieveBlock{}, false
-	}
-	id, _ := attrs["id"].(string)
-	if id == "" {
-		return SieveBlock{}, false
-	}
-	return newSieveBlock(region.Kind, id, "", attrs), true
-}

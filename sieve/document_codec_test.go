@@ -187,11 +187,13 @@ func TestDocumentCodec_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestDocumentCodec_ProcessorlessFenceStaysStructured verifies that a fenced
-// block whose kind has no registered processor (column-row) is kept as a
-// structured block when the YAML body contains a valid "id" field, not melted
-// into prose. This is the deserialization mirror of serializeFencedBlock.
-func TestDocumentCodec_ProcessorlessFenceStaysStructured(t *testing.T) {
+// TestDocumentCodec_ProcessorlessFenceCoalescesToProse verifies that a fenced
+// block whose kind has NO registered processor (column-row) is NOT treated as
+// structured — the registry is the sole authority on supported kinds — so it
+// coalesces into the prose mop-up with its fence text preserved verbatim. When
+// Stage E registers container kinds, their processors claim them and they become
+// structured automatically.
+func TestDocumentCodec_ProcessorlessFenceCoalescesToProse(t *testing.T) {
 	// newFakeRegistry registers only code + prose; column-row has no processor.
 	c := NewDocumentCodec(newFakeRegistry())
 	md := "```column-row\nid: cr-1\nwidths:\n  - 0.5\n  - 0.5\n```"
@@ -199,14 +201,17 @@ func TestDocumentCodec_ProcessorlessFenceStaysStructured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(blocks) != 1 {
-		t.Fatalf("want exactly 1 block, got %d: %#v", len(blocks), blocks)
+	for i, b := range blocks {
+		if b.Kind != KindProse {
+			t.Errorf("block[%d] kind = %q, want prose (column-row has no processor)", i, b.Kind)
+		}
 	}
-	if blocks[0].Kind != "column-row" {
-		t.Errorf("block[0] kind = %q, want \"column-row\"", blocks[0].Kind)
+	var combined string
+	for _, b := range blocks {
+		combined += b.Content()
 	}
-	if blocks[0].ID != "cr-1" {
-		t.Errorf("block[0] id = %q, want \"cr-1\"", blocks[0].ID)
+	if !strings.Contains(combined, "id: cr-1") {
+		t.Errorf("column-row fence text not preserved verbatim in prose: %q", combined)
 	}
 }
 
@@ -235,38 +240,6 @@ func TestDocumentCodec_PlainLanguageFenceStaysProse(t *testing.T) {
 	}
 	if !strings.Contains(combined, "print(1)") {
 		t.Errorf("python fence body not found in prose content: %q", combined)
-	}
-}
-
-// TestDocumentCodec_ProcessorlessFenceRoundTrip proves true round-trip symmetry:
-// Serialize (fence fallback) followed by Deserialize (fence fallback) preserves
-// a column-row block with no registered processor, using the global registry.
-func TestDocumentCodec_ProcessorlessFenceRoundTrip(t *testing.T) {
-	// column-row has no processor in the global registry — both Serialize and
-	// Deserialize must use the fence fallback for this to round-trip.
-	c := NewDocumentCodec(globalRegistry())
-	original := []SieveBlock{
-		newSieveBlock("column-row", "cr-1", "", map[string]interface{}{
-			"id":     "cr-1",
-			"widths": []interface{}{0.5, 0.5},
-		}),
-	}
-	md, err := c.Serialize(original)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := c.Deserialize(md)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("round-trip changed block count: %d → 1 expected\n%s", len(got), md)
-	}
-	if got[0].Kind != "column-row" {
-		t.Errorf("round-trip kind = %q, want \"column-row\"", got[0].Kind)
-	}
-	if got[0].ID != "cr-1" {
-		t.Errorf("round-trip id = %q, want \"cr-1\"", got[0].ID)
 	}
 }
 

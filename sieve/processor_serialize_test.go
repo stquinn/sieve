@@ -11,7 +11,7 @@ import (
 // serializer functions. Prose owns its markers; structured kinds share the fence.
 func TestSerialize_IsProcessorOwned_NoKindSwitch(t *testing.T) {
 	resetRegistry() // restores the built-in prose flavour
-	RegisterProcessor("code", &CodeBlockProcessor{})
+	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
 	t.Cleanup(func() { UnregisterProcessor("code") })
 
 	blocks := []SieveBlock{
@@ -41,7 +41,7 @@ func TestSerialize_IsProcessorOwned_NoKindSwitch(t *testing.T) {
 // that a real defect in the codec actually fails here.
 func TestSerialize_RoundTripsThroughProductionParser(t *testing.T) {
 	resetRegistry() // restores the built-in prose flavour
-	RegisterProcessor("code", &CodeBlockProcessor{})
+	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
 	t.Cleanup(func() { resetRegistry() })
 
 	blocks := []SieveBlock{
