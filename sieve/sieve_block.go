@@ -1,8 +1,8 @@
 package sieve
 
-import (
-	"sieve/sieve/fencedblock"
-)
+// sieve_block.go — the SieveBlock data model: type, constructor, value methods,
+// and reserved-kind constants. No serialization, no parsing; those live in
+// block_serde.go and the codec/processor files.
 
 // SieveBlock is a node in the unified, ordered block tree (spec §2). EVERY kind —
 // prose included — carries its payload in the single Attrs bag, addressed by id;
@@ -23,6 +23,13 @@ type SieveBlock struct {
 	// resolves against ID or any alias.
 	Aliases []string
 }
+
+// Reserved kinds that are not registered BlockProcessors.
+const (
+	KindProse     = "prose"
+	KindColumnRow = "column-row"
+	KindColumn    = "column"
+)
 
 // newSieveBlock is the sole sanctioned way to construct a block, and it enforces
 // the invariant the type cannot enforce on its own (Go has no constructors): a
@@ -90,21 +97,3 @@ func (b SieveBlock) answersTo() []string {
 // The document is an ordered []SieveBlock — the in-memory form the serialization
 // spine round-trips against markdown. There is no wrapper type: ShadowDocument
 // holds the slice directly (no nested "document inside a document").
-
-// Reserved kinds that are not registered BlockProcessors.
-const (
-	KindProse     = "prose"
-	KindColumnRow = "column-row"
-	KindColumn    = "column"
-)
-
-// serializeFencedBlock renders any block-mode kind as ```kind\n<yaml>\n```
-// using the shared literal-style machinery — registry-free, so it serializes
-// code, diagram, column-row, etc. uniformly without needing a BlockProcessor.
-func serializeFencedBlock(b SieveBlock) (string, error) {
-	body, err := fencedblock.SerializeYaml(b.Attrs)
-	if err != nil {
-		return "", err
-	}
-	return "```" + b.Kind + "\n" + body + "\n```", nil
-}

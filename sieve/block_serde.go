@@ -1,20 +1,16 @@
 package sieve
 
-// Stage B.2 — universal prose handles via on-disk markers.
+import "sieve/sieve/fencedblock"
+
+// block_serde.go — block serialization/deserialization helpers and handle
+// split/merge identity rules (spec §7).
 //
-// Every block carries a stable handle so the reference graph survives reopen
-// (spec §3.1). Fenced blocks keep their handle in the YAML `id:` field; prose
-// blocks carry it as a leading own-line HTML comment immediately above the
-// block it labels:
-//
-//	<!--s:pr-3f9a-->
-//	The gateway validates the token.
-//
-// The marker is processed by a deterministic strip-on-load / re-attach-on-save
-// line pass that BYPASSES goldmark (the frontmatter pattern), operating only on
-// prose — fenced-block interiors are never touched, so a marker pasted inside a
-// code block cannot be corrupted. The id is hidden in the editor but always
-// written back to disk.
+// The two public entry-points (ParseBlockDocWithHandles /
+// SerializeBlockDocWithHandles) are thin codec shims retained for callsites
+// that have not yet migrated to DocumentCodec directly.  serializeBlock and
+// serializeFencedBlock are the per-block dispatch helpers used by the save
+// spine.  splitHandles / mergeHandles govern how block identity propagates
+// when the user inserts or removes a block boundary.
 
 // ParseBlockDocWithHandles is the handle-aware loader — now a thin codec shim,
 // exactly mirroring SerializeBlockDocWithHandles. Structure derives ONLY from
@@ -23,6 +19,33 @@ package sieve
 // undelimited runs become a single opaque prose block. Blank lines never split.
 func ParseBlockDocWithHandles(markdown string) ([]SieveBlock, error) {
 	return NewDocumentCodec(globalRegistry()).Deserialize(markdown)
+}
+
+// SerializeBlockDocWithHandles is a thin shim retained during the codec
+// migration; callers move to DocumentCodec.Serialize in Task 8.
+func SerializeBlockDocWithHandles(blocks []SieveBlock) (string, error) {
+	return NewDocumentCodec(globalRegistry()).Serialize(blocks)
+}
+
+// serializeBlock dispatches a single block to its flavour's Serialize. The save
+// spine never decides format by kind — the processor does. The fence fallback
+// covers processor-less kinds (column-row) until Stage E gives them a processor.
+func serializeBlock(b SieveBlock) (string, error) {
+	if p := GetProcessor(b.Kind); p != nil {
+		return p.Serialize(b)
+	}
+	return serializeFencedBlock(b)
+}
+
+// serializeFencedBlock renders any block-mode kind as ```kind\n<yaml>\n```
+// using the shared literal-style machinery — registry-free, so it serializes
+// code, diagram, column-row, etc. uniformly without needing a BlockProcessor.
+func serializeFencedBlock(b SieveBlock) (string, error) {
+	body, err := fencedblock.SerializeYaml(b.Attrs)
+	if err != nil {
+		return "", err
+	}
+	return "```" + b.Kind + "\n" + body + "\n```", nil
 }
 
 // splitHandles applies the split handle rule (Enter mid-block, spec §7): the
@@ -60,22 +83,6 @@ func mergeHandles(head, tail SieveBlock) SieveBlock {
 	}
 	head.Aliases = aliases
 	return head
-}
-
-// SerializeBlockDocWithHandles is a thin shim retained during the codec
-// migration; callers move to DocumentCodec.Serialize in Task 8.
-func SerializeBlockDocWithHandles(blocks []SieveBlock) (string, error) {
-	return NewDocumentCodec(globalRegistry()).Serialize(blocks)
-}
-
-// serializeBlock dispatches a single block to its flavour's Serialize. The save
-// spine never decides format by kind — the processor does. The fence fallback
-// covers processor-less kinds (column-row) until Stage E gives them a processor.
-func serializeBlock(b SieveBlock) (string, error) {
-	if p := GetProcessor(b.Kind); p != nil {
-		return p.Serialize(b)
-	}
-	return serializeFencedBlock(b)
 }
 
 // (prose serialization now lives on ProseProcessor.Serialize — the flavour owns it)
