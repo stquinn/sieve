@@ -3,6 +3,8 @@ package sieve
 import (
 	"fmt"
 	"strings"
+
+	"sieve/sieve/fencedblock"
 )
 
 // DocumentCodec owns BOTH directions of document SerDes. It sees only the
@@ -77,14 +79,14 @@ func (c *DocumentCodec) Deserialize(markdown string) ([]SieveBlock, error) {
 // Serialize renders the block slice to markdown by asking each block's flavour to
 // serialize ITSELF — the mirror of Deserialize. The spine never decides format by
 // kind. A block must carry an id (persistence-boundary invariant). Identical
-// behaviour to the former SerializeBlockDocWithHandles, now on the codec.
+// behaviour to the former shim SerializeBlockDocWithHandles, now fully on the codec.
 func (c *DocumentCodec) Serialize(blocks []SieveBlock) (string, error) {
 	parts := make([]string, 0, len(blocks))
 	for _, b := range blocks {
 		if b.ID == "" {
 			return "", fmt.Errorf("refusing to persist id-less %s block (construct via newSieveBlock)", b.Kind)
 		}
-		s, err := serializeBlock(b)
+		s, err := c.serializeBlock(b)
 		if err != nil {
 			return "", err
 		}
@@ -106,6 +108,27 @@ func (c *DocumentCodec) firstAcceptor(region Region) BlockProcessor {
 		}
 	}
 	return nil
+}
+
+// serializeBlock dispatches one block to its flavour's Serialize via the INJECTED
+// registry (not the package global) — the codec is the serialization authority.
+// The fence fallback covers processor-less kinds (column-row until Stage E).
+func (c *DocumentCodec) serializeBlock(b SieveBlock) (string, error) {
+	if p := c.registry.Get(b.Kind); p != nil {
+		return p.Serialize(b)
+	}
+	return serializeFencedBlock(b)
+}
+
+// serializeFencedBlock renders any block-mode kind as ```kind\n<yaml>\n```
+// using the shared literal-style machinery — registry-free, so it serializes
+// code, diagram, column-row, etc. uniformly without needing a BlockProcessor.
+func serializeFencedBlock(b SieveBlock) (string, error) {
+	body, err := fencedblock.SerializeYaml(b.Attrs)
+	if err != nil {
+		return "", err
+	}
+	return "```" + b.Kind + "\n" + body + "\n```", nil
 }
 
 // ProcessorRegistry is the narrow read-only seam DocumentCodec needs over the

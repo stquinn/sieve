@@ -19,7 +19,7 @@ func TestSerialize_IsProcessorOwned_NoKindSwitch(t *testing.T) {
 		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{"id": "co-1", "source": "x = 1"}},
 	}
 
-	got, err := SerializeBlockDocWithHandles(blocks)
+	got, err := NewDocumentCodec(globalRegistry()).Serialize(blocks)
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
 	}
@@ -37,8 +37,7 @@ func TestSerialize_IsProcessorOwned_NoKindSwitch(t *testing.T) {
 
 // THE meaningful serialization test: a document serialized via the production
 // (processor-owned) spine must parse back via the PRODUCTION codec to the same
-// blocks. It deliberately uses ParseBlockDocWithHandles (a thin codec shim) so
-// that a real defect in the codec actually fails here.
+// blocks — a real defect in the codec actually fails here.
 func TestSerialize_RoundTripsThroughProductionParser(t *testing.T) {
 	resetRegistry() // restores the built-in prose flavour
 	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
@@ -50,11 +49,11 @@ func TestSerialize_RoundTripsThroughProductionParser(t *testing.T) {
 		{ID: "pr-2", Kind: KindProse, Attrs: map[string]interface{}{"content": "Tail."}},
 	}
 
-	md, err := SerializeBlockDocWithHandles(blocks) // production serialize (processor-owned)
+	md, err := NewDocumentCodec(globalRegistry()).Serialize(blocks) // production serialize (processor-owned)
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
 	}
-	back, err := ParseBlockDocWithHandles(md) // production parse — the real thing
+	back, err := NewDocumentCodec(globalRegistry()).Deserialize(md) // production parse — the real thing
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

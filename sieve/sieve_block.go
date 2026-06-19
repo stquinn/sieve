@@ -2,7 +2,7 @@ package sieve
 
 // sieve_block.go — the SieveBlock data model: type, constructor, value methods,
 // and reserved-kind constants. No serialization, no parsing; those live in
-// block_serde.go and the codec/processor files.
+// document_codec.go and the codec/processor files.
 
 // SieveBlock is a node in the unified, ordered block tree (spec §2). EVERY kind —
 // prose included — carries its payload in the single Attrs bag, addressed by id;

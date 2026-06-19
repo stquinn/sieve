@@ -14,7 +14,7 @@ func TestHandles_Bijection(t *testing.T) {
 		"```code\nid: co-1\nsource: x = 1\n```\n\n" +
 		"<!--s:pr-cccc-->\nTail.\n<!--/s:pr-cccc-->"
 
-	doc, err := ParseBlockDocWithHandles(md)
+	doc, err := NewDocumentCodec(globalRegistry()).Deserialize(md)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestHandles_Bijection(t *testing.T) {
 		t.Fatalf("block 3: %+v", doc[3])
 	}
 
-	out, err := SerializeBlockDocWithHandles(doc)
+	out, err := NewDocumentCodec(globalRegistry()).Serialize(doc)
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestHandles_MergedHandleSetPersists(t *testing.T) {
 	doc := []SieveBlock{
 		{ID: "pr-aaaa", Kind: KindProse, Attrs: map[string]interface{}{"content": "Merged block."}, Aliases: []string{"pr-bbbb", "pr-cccc"}},
 	}
-	md, err := SerializeBlockDocWithHandles(doc)
+	md, err := NewDocumentCodec(globalRegistry()).Serialize(doc)
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestHandles_MergedHandleSetPersists(t *testing.T) {
 		t.Fatalf("handle-set marker:\n got: %q\nwant: %q", md, want)
 	}
 
-	got, err := ParseBlockDocWithHandles(md)
+	got, err := NewDocumentCodec(globalRegistry()).Deserialize(md)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -75,14 +75,14 @@ func TestHandles_MergedHandleSetPersists(t *testing.T) {
 func TestHandles_IsolatedEditKeepsHandle(t *testing.T) {
 	md := "<!--s:pr-aaaa-->\nOriginal text.\n<!--/s:pr-aaaa-->\n\n" +
 		"<!--s:pr-bbbb-->\nUntouched.\n<!--/s:pr-bbbb-->"
-	doc, err := ParseBlockDocWithHandles(md)
+	doc, err := NewDocumentCodec(globalRegistry()).Deserialize(md)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	// Edit the first block's prose content in isolation.
 	doc[0].setContent("Edited text.")
 
-	out, err := SerializeBlockDocWithHandles(doc)
+	out, err := NewDocumentCodec(globalRegistry()).Serialize(doc)
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
 	}

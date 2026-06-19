@@ -26,9 +26,9 @@ func TestNewSieveBlock_KeepsGivenID(t *testing.T) {
 // The serializer is the persistence boundary: it must REFUSE to write an id-less
 // block (the runtime backstop behind the factory). A block built by a rogue path
 // that bypassed the factory can never reach disk silently.
-func TestSerializeBlockDocWithHandles_RefusesIdlessProse(t *testing.T) {
+func TestSerialize_RefusesIdlessProse(t *testing.T) {
 	doc := []SieveBlock{{Kind: KindProse, Attrs: map[string]interface{}{"content": "x"}}} // bypasses the factory
-	if _, err := SerializeBlockDocWithHandles(doc); err == nil {
+	if _, err := NewDocumentCodec(globalRegistry()).Serialize(doc); err == nil {
 		t.Fatalf("expected an error refusing to persist an id-less prose block")
 	}
 }
@@ -38,7 +38,7 @@ func TestParseBlockDoc_ProseAndFence(t *testing.T) {
 	t.Cleanup(func() { UnregisterProcessor("code") })
 
 	md := "Hello.\n\n```code\nid: co-1\nsource: x = 1\n```\n\nWorld."
-	doc, err := ParseBlockDocWithHandles(md)
+	doc, err := NewDocumentCodec(globalRegistry()).Deserialize(md)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestParseBlockDoc_UndelimitedRunsBetweenFences(t *testing.T) {
 	t.Cleanup(func() { UnregisterProcessor("code") })
 
 	md := "# Title\n\nIntro prose.\n\n```code\nid: co-1\nsource: x = 1\n```\n\nFirst tail.\n\nSecond tail."
-	doc, err := ParseBlockDocWithHandles(md)
+	doc, err := NewDocumentCodec(globalRegistry()).Deserialize(md)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

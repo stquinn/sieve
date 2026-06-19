@@ -10,7 +10,7 @@ import (
 // do NOT parse the result — any parser here would be DUPLICATE parse code that
 // could never catch a defect in the real document parser. The serialize↔parse
 // ROUND-TRIP is tested in the sieve package against the REAL production parser
-// (ParseBlockDocWithHandles) — the only place a parse regression actually fails.
+// (DocumentCodec.Deserialize) — the only place a parse regression actually fails.
 
 type testBlock struct {
 	ID       string `yaml:"id"`

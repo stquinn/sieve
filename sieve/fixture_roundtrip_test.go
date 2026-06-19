@@ -8,7 +8,7 @@ import (
 
 // The user's real document that triggered thousands of errors: a legacy
 // [!block]...[!block-end] blockRef plus two ai-block fences. It must survive the
-// new Doc-authoritative save path (ParseBlockDocWithHandles -> Serialize) with no
+// new Doc-authoritative save path (Deserialize -> Serialize) with no
 // content loss, and serialization must be stable (a fixpoint).
 func TestRoundTrip_BlockRefAiBlockFixture(t *testing.T) {
 	resetRegistry()
@@ -20,11 +20,11 @@ func TestRoundTrip_BlockRefAiBlockFixture(t *testing.T) {
 	}
 	original := string(src)
 
-	doc, err := ParseBlockDocWithHandles(original)
+	doc, err := NewDocumentCodec(globalRegistry()).Deserialize(original)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	out1, err := SerializeBlockDocWithHandles(doc)
+	out1, err := NewDocumentCodec(globalRegistry()).Serialize(doc)
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
 	}
@@ -32,10 +32,10 @@ func TestRoundTrip_BlockRefAiBlockFixture(t *testing.T) {
 	// No content loss: the load-bearing text from every block survives.
 	mustContain := []string{
 		"test", "data", // prose inside the [!block] region
-		"WHat does this do?",                 // ai-229a question
-		"IS that to standard IO?",            // ai-2b8f question
-		"prints to **Standard Output",        // ai-2b8f response body
-		"ai-229a", "ai-2b8f",                 // block ids
+		"WHat does this do?",          // ai-229a question
+		"IS that to standard IO?",     // ai-2b8f question
+		"prints to **Standard Output", // ai-2b8f response body
+		"ai-229a", "ai-2b8f",          // block ids
 	}
 	for _, frag := range mustContain {
 		if !strings.Contains(out1, frag) {
@@ -44,11 +44,11 @@ func TestRoundTrip_BlockRefAiBlockFixture(t *testing.T) {
 	}
 
 	// Stability: parse -> serialize is a fixpoint after the first normalization.
-	doc2, err := ParseBlockDocWithHandles(out1)
+	doc2, err := NewDocumentCodec(globalRegistry()).Deserialize(out1)
 	if err != nil {
 		t.Fatalf("reparse: %v", err)
 	}
-	out2, err := SerializeBlockDocWithHandles(doc2)
+	out2, err := NewDocumentCodec(globalRegistry()).Serialize(doc2)
 	if err != nil {
 		t.Fatalf("reserialize: %v", err)
 	}
