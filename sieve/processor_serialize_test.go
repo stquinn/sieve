@@ -35,6 +35,45 @@ func TestSerialize_IsProcessorOwned_NoKindSwitch(t *testing.T) {
 	}
 }
 
+// THE meaningful serialization test: a document serialized via the production
+// (processor-owned) spine must parse back via the PRODUCTION parser to the same
+// blocks. It deliberately uses ParseBlockDocWithHandles — NOT a test-local parser
+// — so that a defect in scanBlocks/goldmark (the real parse path) actually fails
+// here. A round-trip validated by duplicate parse code catches nothing.
+func TestSerialize_RoundTripsThroughProductionParser(t *testing.T) {
+	resetRegistry() // restores the built-in prose flavour
+	RegisterProcessor("code", &CodeBlockProcessor{})
+	t.Cleanup(func() { resetRegistry() })
+
+	blocks := []SieveBlock{
+		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Intro **prose**."}},
+		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{"id": "co-1", "source": "x = 1"}},
+		{ID: "pr-2", Kind: KindProse, Attrs: map[string]interface{}{"content": "Tail."}},
+	}
+
+	md, err := SerializeBlockDocWithHandles(blocks) // production serialize (processor-owned)
+	if err != nil {
+		t.Fatalf("serialize: %v", err)
+	}
+	back, err := ParseBlockDocWithHandles(md) // production parse — the real thing
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	if len(back) != 3 {
+		t.Fatalf("want 3 blocks round-tripped, got %d:\n%s", len(back), md)
+	}
+	if back[0].Kind != KindProse || back[0].Content() != "Intro **prose**." {
+		t.Errorf("prose[0] did not round-trip: %+v", back[0])
+	}
+	if back[1].Kind != "code" || back[1].ID != "co-1" || back[1].Attrs["source"] != "x = 1" {
+		t.Errorf("code did not round-trip: %+v", back[1])
+	}
+	if back[2].Kind != KindProse || back[2].Content() != "Tail." {
+		t.Errorf("prose[2] did not round-trip: %+v", back[2])
+	}
+}
+
 // ProseProcessor owns prose serialization directly — the delimiters live ON the
 // flavour, not in the spine.
 func TestProseProcessor_Serialize_InjectsHandleDelimiters(t *testing.T) {
