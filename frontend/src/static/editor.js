@@ -153,7 +153,7 @@
         if (b.kind === 'prose') {
           // Node-granular: a prose block renders to its NATIVE top-level node(s).
           // Stamp the block id onto the FIRST top-level element so
-          // addGlobalAttributes(blockId) carries it onto that node; a legacy
+          // addGlobalAttributes(id) carries it onto that node; a legacy
           // multi-paragraph run parses to N nodes — only the first keeps the
           // loaded id, the rest are id-less (minted on first sync, D-r.4). Push
           // every parsed top-level node (they are all valid blocks now).
@@ -198,7 +198,7 @@
     // needs (node-granular, 2026-06-19). A structured sieve block → its
     // serialisedForm fence, keyed by its `id`. EVERY OTHER top-level node is a
     // prose block: a NATIVE TipTap node (paragraph/heading/list/table/…) whose
-    // identity is its `blockId` attr and whose content is its CLEAN markdown
+    // identity is its `id` attr and whose content is its CLEAN markdown
     // (native nodes never embed markers — Go re-wraps on save). No node returns
     // null now, so the observer never falls back merely on node type.
     function topBlockTriple(ed, node) {
@@ -207,7 +207,7 @@
         return { id: node.attrs.id || '', kind: node.attrs.kind || name, content: node.attrs.serialisedForm || '' }
       }
       var content = (window.TipTap.serializeNode(ed, node) || '').trim()
-      return { id: node.attrs.blockId || '', kind: 'prose', content: content }
+      return { id: node.attrs.id || '', kind: 'prose', content: content }
     }
 
     function collectTopBlocks(ed) {
@@ -270,7 +270,7 @@
     // top-level node, not a custom container. The retired `sieveBlock+` schema
     // (+ its per-keystroke wrapper / minter / trailing-surface plugin) is gone;
     // PM owns node creation/splitting/merging natively. Identity rides on each
-    // native node's `blockId` attr (T.BlockId, addGlobalAttributes); minting is
+    // native node's `id` attr (T.BlockId, addGlobalAttributes); minting is
     // a passive observe-time concern (D-r.4), never a doc mutation here.
     var SieveDocument = T.Node.create({ name: 'doc', topNode: true, content: '(block | sieveBlock)+' })
 
@@ -313,7 +313,7 @@
       ]),
       // Seed one empty native paragraph — the default editing surface of a new
       // doc. renderBlocksIntoEditor replaces it for a non-empty doc; an empty doc
-      // keeps this typeable paragraph (a prose block; its blockId is minted on
+      // keeps this typeable paragraph (a prose block; its id is minted on
       // first sync, D-r.4). A native <p> is a valid top-level node under the new
       // (block | sieveBlock)+ schema, so no custom container is needed.
       content: '<p></p>',
@@ -930,7 +930,7 @@
       }
       // Native node = prose block. The prose kind's toMarkdown wraps it in paired
       // delimiters (and emits bare content when the node has no id yet — Go mints).
-      var wrapped = prose ? prose.toMarkdown(node.attrs.blockId || '', md) : md
+      var wrapped = prose ? prose.toMarkdown(node.attrs.id || '', md) : md
       if (wrapped) parts.push(wrapped)
     })
     return parts.join('\n\n')

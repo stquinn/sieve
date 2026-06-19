@@ -35,12 +35,15 @@ import { registerBlockKind } from './block-kinds.js'
     'table', 'image', 'horizontalRule', 'codeBlock',
   ]
 
-  // blockId: the identity carrier. A global attribute (not a NodeView attr,
-  // because native nodes have no NodeView) added to the prose node types. It
-  // renders to / parses from `data-id`, so renderBlocksIntoEditor can stamp a
-  // loaded block's id straight onto its native node and topBlockTriple can read
-  // it back. The durable identity lives in the on-disk paired markers; this attr
-  // is only the in-editor carrier (attrs don't survive markdown).
+  // id: the identity carrier (D-r.7: unified blockId → id, so prose and
+  // structured sieve-* blocks are both addressed by `attrs.id`). A global
+  // attribute (not a NodeView attr, because native nodes have no NodeView) added
+  // to the prose node types. It renders to / parses from `data-id` — a literal
+  // HTML `id=` is intentionally NOT emitted, to avoid DOM duplicate-id collisions
+  // — so renderBlocksIntoEditor can stamp a loaded block's id straight onto its
+  // native node and topBlockTriple can read it back. The durable identity lives
+  // in the on-disk paired markers; this attr is only the in-editor carrier
+  // (attrs don't survive markdown).
   var mintProseId = function () { return 'pr-' + Math.random().toString(16).slice(2, 6) }
 
   var BlockId = T.Extension.create({
@@ -49,12 +52,13 @@ import { registerBlockKind } from './block-kinds.js'
       return [{
         types: PROSE_NODE_TYPES,
         attributes: {
-          blockId: {
+          id: {
             default: '',
             parseHTML: function (el) { return el.getAttribute('data-id') || '' },
             renderHTML: function (attrs) {
-              // Omit data-id when empty so nested/unminted nodes stay clean.
-              return attrs.blockId ? { 'data-id': attrs.blockId } : {}
+              // Bind to data-id (never a literal id=); omit when empty so
+              // nested/unminted nodes stay clean.
+              return attrs.id ? { 'data-id': attrs.id } : {}
             },
           },
         },
@@ -90,7 +94,7 @@ import { registerBlockKind } from './block-kinds.js'
           var ids = [], positions = []
           newState.doc.forEach(function (node, pos) {
             if (!isProse(node.type.name)) return   // structured nodes own their id
-            ids.push(node.attrs.blockId || '')
+            ids.push(node.attrs.id || '')
             positions.push(pos)
           })
           var need = window.TipTap.mintActions(ids)
@@ -103,7 +107,7 @@ import { registerBlockKind } from './block-kinds.js'
             var pos = positions[i]
             var node = newState.doc.nodeAt(pos)
             if (!node) return
-            tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, { blockId: mintProseId() }))
+            tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, { id: mintProseId() }))
           })
           tr.setMeta('addToHistory', false)
           return tr
@@ -116,7 +120,7 @@ import { registerBlockKind } from './block-kinds.js'
     kind: 'prose',
     native: true,
     nodeTypes: PROSE_NODE_TYPES,
-    identityAttr: 'blockId',
+    identityAttr: 'id',
     identityExtension: BlockId,
     // load: a block's verbatim markdown → native HTML.
     fromBlock: function (b, mdRender) { return renderProseContent((b && b.content) || '', mdRender) },
