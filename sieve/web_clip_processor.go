@@ -150,7 +150,7 @@ func (p *WebClipBlockProcessor) RunJob(jctx JobContext) error {
 	block.Attrs["title"] = title
 	block.Attrs["content"] = content
 	block.Attrs["completedAt"] = time.Now().UTC().Format(time.RFC3339)
-	block.Attrs["model"] = p.svc.AI.state.LoadSettings().Model
+	block.Attrs["model"] = p.svc.State.LoadSettings().Model
 
 	return nil
 }

@@ -137,12 +137,12 @@ func (InlineDeserializer) Accepts(Region) bool                      { return fal
 func (InlineDeserializer) Deserialize(Region) ([]SieveBlock, error) { return nil, nil }
 
 type BlockServices struct {
-	AI          *AIService
-	Documents   *DocumentService
-	Assets      *AssetService
-	Jobs        *JobTracker
-	LinkPreview *LinkPreviewService
-	State       *StateService
+	AI          AIPort
+	Documents   DocumentsPort
+	Assets      AssetsPort
+	Jobs        *JobTracker // not a port: no processor calls it; used by EditorService
+	LinkPreview LinkPreviewPort
+	State       StatePort
 }
 
 var (
