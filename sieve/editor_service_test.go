@@ -61,7 +61,7 @@ func TestContentForSave_roundTripsWysiwyg(t *testing.T) {
 	RegisterProcessor("ai-block", &testRunJobProcessor{})
 	t.Cleanup(func() { UnregisterProcessor("ai-block") })
 	md := "# Hello\n\n```ai-block\nid: ab-1234\nresponse: untouched\n```"
-	shadow := newShadow("test-uuid", md, 0, nil)
+	shadow := newShadow("test-uuid", md, NewDocumentCodec(globalRegistry()), 0, nil)
 
 	result := shadow.contentForSave()
 
@@ -70,7 +70,7 @@ func TestContentForSave_roundTripsWysiwyg(t *testing.T) {
 		t.Fatalf("expected content preserved, got:\n%s", result)
 	}
 	// ...and the serialization is stable (parse -> serialize -> parse is a fixpoint).
-	if again := newShadow("test-uuid", result, 0, nil).contentForSave(); again != result {
+	if again := newShadow("test-uuid", result, NewDocumentCodec(globalRegistry()), 0, nil).contentForSave(); again != result {
 		t.Fatalf("serialization not stable:\n first: %q\nsecond: %q", result, again)
 	}
 }
@@ -80,7 +80,7 @@ func TestContentForSave_roundTripsWysiwyg(t *testing.T) {
 // id-less prose block on reparse, so contentForSave always emits a delimited,
 // addressable block. Backend discipline — a block has an id, period.
 func TestShadowDocument_DocUpdateMintsHandlesForIdlessProse(t *testing.T) {
-	shadow := newShadow("test-uuid", "", 0, nil) // empty doc, wysiwyg
+	shadow := newShadow("test-uuid", "", NewDocumentCodec(globalRegistry()), 0, nil) // empty doc, wysiwyg
 	shadow.setMarkdown("First paragraph.\n\nSecond paragraph.")
 
 	// Every prose block in the authoritative tree now carries an id.
@@ -97,7 +97,7 @@ func TestShadowDocument_DocUpdateMintsHandlesForIdlessProse(t *testing.T) {
 	}
 
 	// And the minted identity is stable across reopen (idempotent).
-	if again := newShadow("test-uuid", out, 0, nil).contentForSave(); again != out {
+	if again := newShadow("test-uuid", out, NewDocumentCodec(globalRegistry()), 0, nil).contentForSave(); again != out {
 		t.Fatalf("minted handles not stable:\n first: %q\nsecond: %q", out, again)
 	}
 }
@@ -163,7 +163,7 @@ func TestShadowDocument_setBlockMergesAttrs(t *testing.T) {
 func TestEditorService_FlushWritesToDisk(t *testing.T) {
 	RegisterProcessor("ai-block", &testRunJobProcessor{})
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, time.Second)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), time.Second)
 
 	doc, err := ds.New()
 	if err != nil {
@@ -207,7 +207,7 @@ func TestEditorService_EnterMarkdownEmbedsBlocks(t *testing.T) {
 	RegisterProcessor("code", &CodeBlockProcessor{})
 	t.Cleanup(func() { UnregisterProcessor("code") })
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, time.Second)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), time.Second)
 
 	doc, _ := ds.New()
 	doc.SetBody([]byte("# Doc\n\n```code\nid: cb-0001\nsource: old\nstatus: COMPLETE\n```"))
@@ -244,7 +244,7 @@ func TestEditorService_EnterMarkdownEmbedsBlocks(t *testing.T) {
 
 func TestEditorService_CloseFlushesAndRemovesShadow(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, time.Second)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), time.Second)
 
 	doc, _ := ds.New()
 	doc.SetBody([]byte("# Hello\n\nSome prose."))
@@ -276,7 +276,7 @@ func TestEditorService_CloseFlushesAndRemovesShadow(t *testing.T) {
 
 func TestEditorService_FlushAllWritesAllShadows(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, time.Second)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), time.Second)
 
 	var uuids []string
 	for i, body := range []string{"doc one body", "doc two body"} {
@@ -304,20 +304,20 @@ func TestEditorService_FlushAllWritesAllShadows(t *testing.T) {
 
 func TestEditorService_UpdateMarkdown_NoShadowIsNoop(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, time.Second)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), time.Second)
 	// No Open — shadow doesn't exist; should not panic.
 	es.UpdateMarkdown("nonexistent-uuid", "some content")
 }
 
 func TestEditorService_UpdateBlock_NoShadowIsNoop(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, time.Second)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), time.Second)
 	es.UpdateBlock("nonexistent-uuid", SieveBlock{Kind: "ai-block", ID: "ab-0001", Attrs: map[string]interface{}{"id": "ab-0001"}})
 }
 
 func TestEditorService_EnterMarkdown_NoShadowReturnsEmpty(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, time.Second)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), time.Second)
 	result := es.EnterMarkdown("nonexistent-uuid")
 	if result != "" {
 		t.Errorf("expected empty string for missing shadow, got %q", result)
@@ -326,14 +326,14 @@ func TestEditorService_EnterMarkdown_NoShadowReturnsEmpty(t *testing.T) {
 
 func TestEditorService_EnterWysiwyg_NoShadowIsNoop(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, time.Second)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), time.Second)
 	es.EnterWysiwyg("nonexistent-uuid") // must not panic
 }
 
 func TestEditorService_NotifySavedCalledAfterDebounce(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
 	// Use a very short debounce so the test doesn't take long.
-	es := NewEditorService(ds, 50*time.Millisecond)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 50*time.Millisecond)
 
 	doc, _ := ds.New()
 	doc.SetBody([]byte("original"))
@@ -361,7 +361,7 @@ func TestEditorService_EnterWysiwygReparsesBlocks(t *testing.T) {
 	RegisterProcessor("code", &CodeBlockProcessor{})
 	t.Cleanup(func() { UnregisterProcessor("code") })
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, time.Second)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), time.Second)
 
 	doc, _ := ds.New()
 	doc.SetBody([]byte("# Doc\n\n```code\nid: cb-0001\nsource: original\nstatus: COMPLETE\n```"))
@@ -402,7 +402,7 @@ func TestEditorService_CreateBlock_code(t *testing.T) {
 	RegisterProcessor("code", &CodeBlockProcessor{})
 
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, 0)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
 
 	doc, _ := ds.New()
 	doc.SetBody([]byte("# Hello"))
@@ -448,7 +448,7 @@ func TestEditorService_CreateBlock_withOverrides(t *testing.T) {
 	RegisterProcessor("code", &CodeBlockProcessor{})
 
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, 0)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
 	doc, _ := ds.New()
 	doc.SetBody([]byte("# Hello"))
 	doc, _ = ds.Save(doc)
@@ -474,7 +474,7 @@ func TestEditorService_HandlePaste_delegatesToCreateBlock(t *testing.T) {
 	RegisterProcessor("code", &CodeBlockProcessor{})
 
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, 0)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
 	doc, _ := ds.New()
 	doc.SetBody([]byte("# Hello"))
 	doc, _ = ds.Save(doc)
@@ -506,7 +506,7 @@ func TestEditorService_HandlePaste_noMatch(t *testing.T) {
 	RegisterProcessor("code", &CodeBlockProcessor{})
 
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, 0)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
 	doc, _ := ds.New()
 	doc.SetBody([]byte("# Hello"))
 	doc, _ = ds.Save(doc)
@@ -542,7 +542,7 @@ func TestHandleBlockUpdate_notifySendsSnapshotUnderLock(t *testing.T) {
 	RegisterProcessor("code", &CodeBlockProcessor{})
 
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, 0)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
 
 	var notifyID string
 	var notifyYaml string
@@ -656,7 +656,7 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 	resetRegistry()
 
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, 0)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
 	doc, _ := ds.New()
 	doc.SetBody([]byte("# Test"))
 	doc, _ = ds.Save(doc)
@@ -742,7 +742,7 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 	resetRegistry()
 
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, 0)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
 	doc, _ := ds.New()
 	doc.SetBody([]byte("# Test"))
 	doc, _ = ds.Save(doc)

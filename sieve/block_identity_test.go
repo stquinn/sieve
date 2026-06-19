@@ -47,7 +47,7 @@ func TestMintProseIDs_Idempotent(t *testing.T) {
 // is the single source of identity (load-through-shadow then returns real ids).
 func TestOpen_MintsHandlelessProseIntoShadow(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, 0)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
 
 	doc, _ := ds.New()
 	doc.SetBody([]byte("Just some prose with no handle."))
@@ -70,7 +70,7 @@ func TestOpen_MintsHandlelessProseIntoShadow(t *testing.T) {
 // minting only fills empty handles, so identity is stable across reopen.
 func TestOpen_PersistedHandleSurvivesReopen(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, 0)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
 
 	doc, _ := ds.New()
 	doc.SetBody([]byte("Stable prose."))
@@ -100,7 +100,7 @@ func TestOpen_PersistedHandleSurvivesReopen(t *testing.T) {
 // one identity. (The HTTP load ensures-open before the WS connection does.)
 func TestOpen_Idempotent_ReusesShadow(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, 0)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
 
 	doc, _ := ds.New()
 	doc.SetBody([]byte("Some prose."))
@@ -129,7 +129,7 @@ func TestOpen_Idempotent_ReusesShadow(t *testing.T) {
 // minted prose handle reaches the client as a real data-id (sync cache seeded).
 func TestFrontendBlocks_ReturnsShadowMintedIDs(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, 0)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
 
 	doc, _ := ds.New()
 	doc.SetBody([]byte("Prose needing a handle."))
@@ -153,7 +153,7 @@ func TestFrontendBlocks_ReturnsShadowMintedIDs(t *testing.T) {
 
 func TestFrontendBlocks_ClosedDocReturnsFalse(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, 0)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
 	if _, ok := es.FrontendBlocks("not-open"); ok {
 		t.Fatal("expected ok=false for an unopened uuid")
 	}

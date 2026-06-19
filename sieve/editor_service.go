@@ -28,6 +28,7 @@ type ShadowDocument struct {
 	// (the old Markdown field drifted: a prose-only session left it stale).
 	mdModeBuffer string
 	Mode         string // "wysiwyg" (default) or "markdown"
+	codec        *DocumentCodec
 	debounce     time.Duration
 	closed       bool // set by stopDebounce; prevents re-arming after Close
 	mu           sync.Mutex
@@ -53,11 +54,11 @@ func (s *ShadowDocument) getNotifySaved() func() {
 	return s.notifySaved
 }
 
-func newShadow(uuid, body string, debounce time.Duration, onFlush func()) *ShadowDocument {
-	// ParseBlockDocWithHandles constructs every block via newSieveBlock, which mints
+func newShadow(uuid, body string, codec *DocumentCodec, debounce time.Duration, onFlush func()) *ShadowDocument {
+	// codec.Deserialize constructs every block via newSieveBlock, which mints
 	// an id for any id-less (marker-less) prose at construction — so the shadow's
 	// tree is disciplined the moment it exists, with no separate mint sweep.
-	blocks, err := ParseBlockDocWithHandles(body)
+	blocks, err := codec.Deserialize(body)
 	if err != nil {
 		logger.Warn("editor: parse block doc failed", "uuid", uuid, "err", err)
 	}
@@ -65,6 +66,7 @@ func newShadow(uuid, body string, debounce time.Duration, onFlush func()) *Shado
 		UUID:     uuid,
 		Blocks:   blocks,
 		Mode:     "wysiwyg",
+		codec:    codec,
 		debounce: debounce,
 		onFlush:  onFlush,
 	}
@@ -84,6 +86,7 @@ type DocView struct {
 	Mode         string
 	mdModeBuffer string
 	Blocks       []SieveBlock
+	codec        *DocumentCodec
 }
 
 // getBlock resolves a block by id from the snapshot tree, regardless of kind. It
@@ -107,7 +110,7 @@ func (d DocView) deriveMarkdown() string {
 	if d.Mode == "markdown" {
 		return d.mdModeBuffer
 	}
-	md, err := SerializeBlockDocWithHandles(d.Blocks)
+	md, err := d.codec.Serialize(d.Blocks)
 	if err != nil {
 		logger.Warn("editor: serialize block doc failed", "uuid", d.UUID, "err", err)
 		return ""
@@ -120,7 +123,7 @@ func (d DocView) deriveMarkdown() string {
 // id-less prose arriving on the doc-update fallback is minted at construction —
 // it can never reach contentForSave id-less.
 func (s *ShadowDocument) reparseDoc(md string) {
-	if blocks, err := ParseBlockDocWithHandles(md); err == nil {
+	if blocks, err := s.codec.Deserialize(md); err == nil {
 		s.Blocks = blocks
 	} else {
 		logger.Warn("editor: reparse block doc failed", "uuid", s.UUID, "err", err)
@@ -131,7 +134,7 @@ func (s *ShadowDocument) reparseDoc(md string) {
 // holds s.mu; the transient DocView shares the slice read-only under that lock,
 // so the single derivation logic lives on DocView.
 func (s *ShadowDocument) deriveMarkdown() string {
-	return DocView{UUID: s.UUID, Mode: s.Mode, mdModeBuffer: s.mdModeBuffer, Blocks: s.Blocks}.deriveMarkdown()
+	return DocView{UUID: s.UUID, Mode: s.Mode, mdModeBuffer: s.mdModeBuffer, Blocks: s.Blocks, codec: s.codec}.deriveMarkdown()
 }
 
 func (s *ShadowDocument) setMarkdown(md string) {
@@ -230,6 +233,7 @@ func (s *ShadowDocument) contentForSave() string {
 // open document and coordinates all save operations. DocumentService owns disk.
 type EditorService struct {
 	documents *DocumentService
+	codec     *DocumentCodec
 	services  BlockServices
 	debounce  time.Duration
 	mu        sync.RWMutex
@@ -238,8 +242,9 @@ type EditorService struct {
 }
 
 // NewEditorService creates an EditorService backed by the given DocumentService.
-// debounce controls the autosave delay; pass 0 to use the default (30s).
-func NewEditorService(documents *DocumentService, debounce time.Duration) *EditorService {
+// codec owns document serialization/deserialization; debounce controls the
+// autosave delay (pass 0 to use the default 30s).
+func NewEditorService(documents *DocumentService, codec *DocumentCodec, debounce time.Duration) *EditorService {
 	d := debounce
 	if d <= 0 {
 		d = defaultAutosaveDebounce
@@ -247,6 +252,7 @@ func NewEditorService(documents *DocumentService, debounce time.Duration) *Edito
 	logger.Info("editor: initialized", "autosave_debounce", d)
 	return &EditorService{
 		documents: documents,
+		codec:     codec,
 		debounce:  d,
 		shadows:   make(map[string]*ShadowDocument),
 	}
@@ -319,7 +325,7 @@ func (es *EditorService) Open(uuid string, notifySaved func()) error {
 	}
 	// Declare shadow before the closure so the closure can capture the variable.
 	var shadow *ShadowDocument
-	shadow = newShadow(uuid, string(doc.Body()), es.debounce, func() {
+	shadow = newShadow(uuid, string(doc.Body()), es.codec, es.debounce, func() {
 		if err := es.flushShadow(shadow, "debounce"); err == nil {
 			if ns := shadow.getNotifySaved(); ns != nil {
 				ns()
@@ -805,7 +811,7 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 			return
 		}
 		body := string(doc.Body())
-		diskBlocks, err := ParseBlockDocWithHandles(body)
+		diskBlocks, err := es.codec.Deserialize(body)
 		if err != nil {
 			logger.Warn("editor: job update failed to parse doc", "uuid", uuid, "err", err)
 			return
@@ -826,7 +832,7 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 			delete(blk.Attrs, k)
 		}
 
-		newBody, err := SerializeBlockDocWithHandles(diskBlocks)
+		newBody, err := es.codec.Serialize(diskBlocks)
 		if err != nil {
 			logger.Warn("editor: job update failed to serialize doc", "uuid", uuid, "err", err)
 			return
@@ -900,7 +906,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	jctx := JobContext{
 		Ctx:    ctx,
 		UUID:   uuid,
-		Doc: DocView{UUID: uuid, mdModeBuffer: mdBuf, Mode: mode, Blocks: blocksCopy},
+		Doc: DocView{UUID: uuid, mdModeBuffer: mdBuf, Mode: mode, Blocks: blocksCopy, codec: es.codec},
 		Block:  blkCopy,
 		Notify: notify,
 	}

@@ -24,11 +24,11 @@ func (p *testMarkdownProcessor) BuildContext(_ SieveBlock, _ DocView, _ map[stri
 func (p *testMarkdownProcessor) MarkdownRepresentation(_ SieveBlock) string { return p.md }
 
 func TestEditorService_PromoteBlock_wrapsInBlockAnchor(t *testing.T) {
-	RegisterProcessor("test-md", &testMarkdownProcessor{md: "promoted content"})
+	RegisterProcessor("test-md", &testMarkdownProcessor{md: "promoted content", FencedDeserializer: FencedDeserializer{Kind: "test-md"}})
 	t.Cleanup(func() { UnregisterProcessor("test-md") })
 
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, 0)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
 	es.SetLifecycleListener(&mockLifecycleListener{})
 
 	doc, _ := ds.New()

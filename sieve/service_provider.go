@@ -56,7 +56,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	s.LinkPreview = NewLinkPreviewService()
 	settings := s.State.LoadSettings()
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
-	s.Editor = NewEditorService(s.Documents, autosave)
+	s.Editor = NewEditorService(s.Documents, NewDocumentCodec(globalRegistry()), autosave)
 	s.Editor.SetServices(s.BlockServices())
 	svc := s.BlockServices()
 	RegisterProcessor("diagram", NewDiagramProcessor(svc))

@@ -51,10 +51,10 @@ func TestBlockOp_DecodesWireEnvelope(t *testing.T) {
 // and the change persists on flush.
 func TestEditorService_HandleBlockOp_UpdatesAndPersists(t *testing.T) {
 	resetRegistry()
-	RegisterProcessor("code", &CodeBlockProcessor{})
+	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
 
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, 0)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
 	doc, _ := ds.New()
 	doc.SetBody([]byte("Intro.\n\n```code\nid: co-1\nsource: x = 1\n```"))
 	doc, _ = ds.Save(doc)
@@ -83,7 +83,7 @@ func TestEditorService_HandleBlockOp_UpdatesAndPersists(t *testing.T) {
 
 func TestEditorService_HandleBlockOp_NoShadowErrors(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, 0)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
 	if err := es.HandleBlockOp("missing", BlockOp{Type: "update-block", BlockID: "x"}); err == nil {
 		t.Fatal("expected error when no document is open")
 	}
@@ -94,10 +94,10 @@ func TestEditorService_HandleBlockOp_NoShadowErrors(t *testing.T) {
 // preserved across the refactor.
 func TestApplyJobUpdate_NoShadow_WritesViaSpine(t *testing.T) {
 	resetRegistry()
-	RegisterProcessor("ai-block", &testRunJobProcessor{})
+	RegisterProcessor("ai-block", &testRunJobProcessor{FencedDeserializer: FencedDeserializer{Kind: "ai-block"}})
 
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, 0)
+	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
 	doc, _ := ds.New()
 	doc.SetBody([]byte("```ai-block\nid: ab-1\nresponse: old\nstatus: PENDING\n```"))
 	doc, _ = ds.Save(doc)
@@ -123,11 +123,11 @@ func TestApplyJobUpdate_NoShadow_WritesViaSpine(t *testing.T) {
 // C.1 — contentForSave serializes the authoritative Doc (blocks 1..N), not the
 // old InjectBlocks overlay. A change made only to Doc must surface on save.
 func TestShadowDocument_ContentForSave_SerializesDoc(t *testing.T) {
-	RegisterProcessor("code", &CodeBlockProcessor{})
+	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
 	t.Cleanup(func() { UnregisterProcessor("code") })
 
 	md := "Hello.\n\n```code\nid: co-1\nsource: x = 1\n```"
-	shadow := newShadow("u", md, 0, nil)
+	shadow := newShadow("u", md, NewDocumentCodec(globalRegistry()), 0, nil)
 
 	// Mutate ONLY the Doc (not Markdown / Blocks): contentForSave must reflect it.
 	if err := ApplyOp(&shadow.Blocks, BlockOp{
