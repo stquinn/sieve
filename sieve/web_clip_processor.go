@@ -72,7 +72,7 @@ func (p *WebClipBlockProcessor) Transform(entries []ContentEntry, uuid, blockID 
 
 func (p *WebClipBlockProcessor) OnChange(_ *SieveBlock) {}
 
-func (p *WebClipBlockProcessor) BuildContext(block SieveBlock, _ ShadowDocument, seen map[string]bool) string {
+func (p *WebClipBlockProcessor) BuildContext(block SieveBlock, _ DocView, seen map[string]bool) string {
 	source, _ := block.Attrs["source"].(string)
 	title, _ := block.Attrs["title"].(string)
 	content, _ := block.Attrs["content"].(string)

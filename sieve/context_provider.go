@@ -10,7 +10,7 @@ import (
 // seen is threaded through recursion to prevent cycles — pass it on
 // whenever calling BuildContextForID from within BuildContext.
 type ContextProvider interface {
-	BuildContext(block SieveBlock, doc ShadowDocument, seen map[string]bool) string
+	BuildContext(block SieveBlock, doc DocView, seen map[string]bool) string
 }
 
 var (
@@ -46,7 +46,7 @@ func GetContextProvider(kind string) ContextProvider {
 // seen prevents cycles; always pass the same map through a recursion chain.
 // Returns "" if id is already seen, block not found, or no provider registered.
 //
-//	func BuildContextForID(id string, doc ShadowDocument, seen map[string]bool) string {
+//	func BuildContextForID(id string, doc DocView, seen map[string]bool) string {
 //		if id == "" || id == "doc" || seen[id] {
 //			return ""
 //		}
@@ -61,7 +61,7 @@ func GetContextProvider(kind string) ContextProvider {
 //		}
 //		return cp.BuildContext(block, doc, seen)
 //	}
-func BuildContextForID(id string, doc ShadowDocument, seen map[string]bool) string {
+func BuildContextForID(id string, doc DocView, seen map[string]bool) string {
 	if id == "" || seen[id] {
 		return ""
 	}

@@ -47,7 +47,9 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 4. ✅ `Children` removed (a block is a leaf; containers are Stage E). `BlockDoc` wrapper collapsed — `ShadowDocument.Blocks []SieveBlock` directly. `DocBlock` merged into `SieveBlock` (one in-memory block type).
 5. ✅ Wire shape unified (B-E): prose body in `attrs.content`, `FrontendBlock.Content` dropped; JS reads via `proseContent()`.
 
-**Spun off (open):** `B-F` lock-free `DocView` snapshot for the job/context boundary (removes pre-existing `copylocks` vet warnings); `B-G` retire `serialisedForm` + collapse `FrontendBlock` into json-tagged `SieveBlock` (copy/paste round-trips on-demand). Both need WebKit by-eye verification.
+**Spun off:**
+- ✅ **B-F (DONE 2026-06-19)** — lock-free `DocView{UUID, Mode, mdModeBuffer, Blocks []SieveBlock}` snapshot for the job/context boundary. `JobContext.Doc` and `ContextProvider.BuildContext` / `BuildContextForID` take `DocView` (no mutex), built from the live `ShadowDocument` at dispatch. `go vet ./sieve/` is now copylocks-clean. (NOT "fixed" by passing `*ShadowDocument` — that would leak the live mutable cell into the concurrent `RunJob`; the copy is deliberate isolation.)
+- ⬜ **B-G** (open, needs WebKit by-eye) — retire `serialisedForm` from the wire (old markdown-model hangover; client renders structured kinds from `attrs` alone) → then `FrontendBlock == SieveBlock + json tags`, delete it and serialise `[]SieveBlock` straight to the wire. Copy/paste round-trips on-demand (serialize the fence from attrs AT COPY TIME), not shipped every load.
 
 ## B-D: AI chain-active bracket doesn't render on native prose blocks
 

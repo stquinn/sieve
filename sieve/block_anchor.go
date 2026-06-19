@@ -21,7 +21,7 @@ type BlockAnchorProvider struct {
 	svc BlockServices
 }
 
-func (p *BlockAnchorProvider) BuildContext(block SieveBlock, doc ShadowDocument, seen map[string]bool) string {
+func (p *BlockAnchorProvider) BuildContext(block SieveBlock, doc DocView, seen map[string]bool) string {
 	source := []byte(doc.deriveMarkdown())
 	parsed := mdParser().Parser().Parse(text.NewReader(source))
 

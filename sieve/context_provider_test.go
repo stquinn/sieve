@@ -7,7 +7,7 @@ type mockContextProcessor struct {
 	buildFn   func(SieveBlock) string
 }
 
-func (m *mockContextProcessor) BuildContext(block SieveBlock, doc ShadowDocument, seen map[string]bool) string {
+func (m *mockContextProcessor) BuildContext(block SieveBlock, doc DocView, seen map[string]bool) string {
 	if m.buildFn != nil {
 		return m.buildFn(block)
 	}
@@ -30,7 +30,7 @@ func TestGetContextProviderFallsBackToProcessor(t *testing.T) {
 	if cp == nil {
 		t.Fatal("expected ContextProvider, got nil")
 	}
-	result := cp.BuildContext(SieveBlock{ID: "x", Kind: "test-cp-kind"}, ShadowDocument{}, map[string]bool{})
+	result := cp.BuildContext(SieveBlock{ID: "x", Kind: "test-cp-kind"}, DocView{}, map[string]bool{})
 	if result != "from-processor" {
 		t.Errorf("expected 'from-processor', got %q", result)
 	}
@@ -43,7 +43,7 @@ func TestGetContextProviderUsesRegisteredOverride(t *testing.T) {
 	if cp == nil {
 		t.Fatal("expected ContextProvider, got nil")
 	}
-	result := cp.BuildContext(SieveBlock{ID: "y", Kind: "test-override-kind"}, ShadowDocument{}, map[string]bool{})
+	result := cp.BuildContext(SieveBlock{ID: "y", Kind: "test-override-kind"}, DocView{}, map[string]bool{})
 	if result != "from-override" {
 		t.Errorf("expected 'from-override', got %q", result)
 	}

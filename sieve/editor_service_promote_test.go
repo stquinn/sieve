@@ -18,7 +18,7 @@ func (p *testMarkdownProcessor) RunJob(_ JobContext) error         { return nil 
 func (p *testMarkdownProcessor) JobLabel(_ *SieveBlock) string     { return "" }
 func (p *testMarkdownProcessor) OnChange(_ *SieveBlock)            {}
 func (p *testMarkdownProcessor) Mode() BlockMode                   { return BlockModeBlock }
-func (p *testMarkdownProcessor) BuildContext(_ SieveBlock, _ ShadowDocument, _ map[string]bool) string {
+func (p *testMarkdownProcessor) BuildContext(_ SieveBlock, _ DocView, _ map[string]bool) string {
 	return ""
 }
 func (p *testMarkdownProcessor) MarkdownRepresentation(_ SieveBlock) string { return p.md }

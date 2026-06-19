@@ -115,7 +115,7 @@ func TestDiagramProcessor_BuildContext_withSource(t *testing.T) {
 		Kind:  "diagram",
 		Attrs: map[string]interface{}{"source": "graph TD\n  A-->B"},
 	}
-	ctx := p.BuildContext(block, ShadowDocument{}, map[string]bool{})
+	ctx := p.BuildContext(block, DocView{}, map[string]bool{})
 	if ctx == "" {
 		t.Error("BuildContext must return non-empty string when source is set")
 	}
@@ -130,7 +130,7 @@ func TestDiagramProcessor_BuildContext_withSource(t *testing.T) {
 func TestDiagramProcessor_BuildContext_emptySource(t *testing.T) {
 	p := NewDiagramProcessor(BlockServices{})
 	block := SieveBlock{ID: "di-0001", Kind: "diagram", Attrs: map[string]interface{}{"source": ""}}
-	if ctx := p.BuildContext(block, ShadowDocument{}, map[string]bool{}); ctx != "" {
+	if ctx := p.BuildContext(block, DocView{}, map[string]bool{}); ctx != "" {
 		t.Errorf("BuildContext must return empty for empty source; got %q", ctx)
 	}
 }

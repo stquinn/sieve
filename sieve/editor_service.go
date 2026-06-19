@@ -71,24 +71,54 @@ func newShadow(uuid, body string, debounce time.Duration, onFlush func()) *Shado
 	return s
 }
 
-// getBlock resolves a block by id from the authoritative block tree, regardless
-// of kind. It is the SOLE accessor: "everything is a block", so lookup never
-// discriminates on kind; only context/serialisation does. Returns the block and
-// true, or nil/false.
-func (s ShadowDocument) getBlock(id string) (*SieveBlock, bool) {
+// DocView is an immutable, lock-free SNAPSHOT of a document's data: the block
+// tree plus the bits needed to derive markdown. It is what a background job or a
+// context provider reasons about — WITHOUT the live editor machinery (mutex,
+// timers, debounce). The stateful ShadowDocument builds one at the boundary;
+// passing a DocView by value copies no lock (unlike ShadowDocument, whose
+// embedded sync.Mutex made every by-value pass a `go vet` copylocks hazard, and
+// — worse — passing the live *ShadowDocument would leak the mutable cell into a
+// concurrent job; the copy is deliberate isolation).
+type DocView struct {
+	UUID         string
+	Mode         string
+	mdModeBuffer string
+	Blocks       []SieveBlock
+}
+
+// getBlock resolves a block by id from the snapshot tree, regardless of kind. It
+// is the SOLE accessor: "everything is a block", so lookup never discriminates on
+// kind; only context/serialisation does. Returns the block and true, or nil/false.
+func (d DocView) getBlock(id string) (*SieveBlock, bool) {
 	if id == "" {
 		return nil, false
 	}
-	if b := findBlockIn(s.Blocks, id); b != nil {
+	if b := findBlockIn(d.Blocks, id); b != nil {
 		return b, true
 	}
 	return nil, false
 }
 
-// reparseDoc replaces Doc from the given markdown (WYSIWYG only). Caller holds
-// s.mu. The parser constructs every block via newSieveBlock, so id-less prose
-// arriving on the doc-update fallback is minted at construction — it can never
-// reach contentForSave id-less.
+// deriveMarkdown returns the whole-doc markdown a consumer needs (save, an
+// id=="doc" AI ask, block-anchor context). Mode-aware, stores nothing: in
+// markdown mode the raw buffer IS the document; in WYSIWYG the tree is serialized
+// fresh, so it can never drift.
+func (d DocView) deriveMarkdown() string {
+	if d.Mode == "markdown" {
+		return d.mdModeBuffer
+	}
+	md, err := SerializeBlockDocWithHandles(d.Blocks)
+	if err != nil {
+		logger.Warn("editor: serialize block doc failed", "uuid", d.UUID, "err", err)
+		return ""
+	}
+	return md
+}
+
+// reparseDoc replaces the block tree from the given markdown (WYSIWYG only).
+// Caller holds s.mu. The parser constructs every block via newSieveBlock, so
+// id-less prose arriving on the doc-update fallback is minted at construction —
+// it can never reach contentForSave id-less.
 func (s *ShadowDocument) reparseDoc(md string) {
 	if blocks, err := ParseBlockDocWithHandles(md); err == nil {
 		s.Blocks = blocks
@@ -97,22 +127,11 @@ func (s *ShadowDocument) reparseDoc(md string) {
 	}
 }
 
-// deriveMarkdown returns the whole-doc markdown a consumer needs (save, an
-// id=="doc" AI ask, block-anchor context). It is mode-aware and stores nothing:
-// in markdown mode the user's raw buffer IS the document; in WYSIWYG the tree is
-// serialized fresh, so it can never drift. Pointer receiver so it never copies
-// the held mutex; it does NOT lock — callers that hold s.mu (editor_service) or
-// hold a private copy (context providers) are already safe.
+// deriveMarkdown derives the whole-doc markdown from the LIVE document. Caller
+// holds s.mu; the transient DocView shares the slice read-only under that lock,
+// so the single derivation logic lives on DocView.
 func (s *ShadowDocument) deriveMarkdown() string {
-	if s.Mode == "markdown" {
-		return s.mdModeBuffer
-	}
-	md, err := SerializeBlockDocWithHandles(s.Blocks)
-	if err != nil {
-		logger.Warn("editor: serialize block doc failed", "uuid", s.UUID, "err", err)
-		return ""
-	}
-	return md
+	return DocView{UUID: s.UUID, Mode: s.Mode, mdModeBuffer: s.mdModeBuffer, Blocks: s.Blocks}.deriveMarkdown()
 }
 
 func (s *ShadowDocument) setMarkdown(md string) {
@@ -885,7 +904,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	jctx := JobContext{
 		Ctx:    ctx,
 		UUID:   uuid,
-		Shadow: ShadowDocument{UUID: uuid, mdModeBuffer: mdBuf, Mode: mode, Blocks: blocksCopy},
+		Doc: DocView{UUID: uuid, mdModeBuffer: mdBuf, Mode: mode, Blocks: blocksCopy},
 		Block:  blkCopy,
 		Notify: notify,
 	}

@@ -637,7 +637,7 @@ func (p *testRunJobProcessor) IsBlock(entries []ContentEntry) bool { return fals
 func (p *testRunJobProcessor) Transform(entries []ContentEntry, _ string, _ string) map[string]interface{} {
 	return nil
 }
-func (p *testRunJobProcessor) BuildContext(_ SieveBlock, _ ShadowDocument, _ map[string]bool) string {
+func (p *testRunJobProcessor) BuildContext(_ SieveBlock, _ DocView, _ map[string]bool) string {
 	return ""
 }
 func (p *testRunJobProcessor) MarkdownRepresentation(_ SieveBlock) string { return "" }

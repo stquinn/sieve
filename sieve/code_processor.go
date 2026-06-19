@@ -169,7 +169,7 @@ func (p *CodeBlockProcessor) OnChange(block *SieveBlock) {
 	block.Attrs["status"] = BlockStatusPending
 }
 
-func (p *CodeBlockProcessor) BuildContext(block SieveBlock, _ ShadowDocument, seen map[string]bool) string {
+func (p *CodeBlockProcessor) BuildContext(block SieveBlock, _ DocView, seen map[string]bool) string {
 	src, _ := block.Attrs["source"].(string)
 	language, _ := block.Attrs["language"].(string)
 	if src != "" {

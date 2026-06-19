@@ -149,7 +149,7 @@ func (p *LogProcessor) Transform(entries []ContentEntry, uuid string, blockID st
 
 func (p *LogProcessor) OnChange(_ *SieveBlock) {}
 
-func (p *LogProcessor) BuildContext(block SieveBlock, _ ShadowDocument, seen map[string]bool) string {
+func (p *LogProcessor) BuildContext(block SieveBlock, _ DocView, seen map[string]bool) string {
 	src, _ := block.Attrs["source"].(string)
 	if strings.TrimSpace(src) == "" {
 		return ""

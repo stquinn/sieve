@@ -34,7 +34,7 @@ const (
 type JobContext struct {
 	Ctx    context.Context
 	UUID   string
-	Shadow ShadowDocument
+	Doc    DocView // immutable, lock-free snapshot of the document
 	Block  *SieveBlock
 	Notify func(blockID string, attrs map[string]interface{})
 }
@@ -66,7 +66,7 @@ type BlockProcessor interface {
 	JobLabel(block *SieveBlock) string
 	OnChange(block *SieveBlock)
 	Mode() BlockMode
-	BuildContext(block SieveBlock, doc ShadowDocument, seen map[string]bool) string
+	BuildContext(block SieveBlock, doc DocView, seen map[string]bool) string
 	MarkdownRepresentation(block SieveBlock) string
 }
 

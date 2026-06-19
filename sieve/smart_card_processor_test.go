@@ -176,7 +176,7 @@ func TestSmartCardProcessor_BuildContext(t *testing.T) {
 			"siteName":    "Example.com",
 		},
 	}
-	ctx := p.BuildContext(block, ShadowDocument{}, map[string]bool{})
+	ctx := p.BuildContext(block, DocView{}, map[string]bool{})
 	if ctx == "" {
 		t.Error("BuildContext must return non-empty string for complete block")
 	}

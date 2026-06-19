@@ -73,7 +73,7 @@ func (p *SmartLinkProcessor) Mode() BlockMode {
 	return BlockModeInline
 }
 
-func (p *SmartLinkProcessor) BuildContext(block SieveBlock, _ ShadowDocument, seen map[string]bool) string {
+func (p *SmartLinkProcessor) BuildContext(block SieveBlock, _ DocView, seen map[string]bool) string {
 	href, _ := block.Attrs["href"].(string)
 	label, _ := block.Attrs["label"].(string)
 	if href == "" {

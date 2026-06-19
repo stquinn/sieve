@@ -147,7 +147,7 @@ func (p *SmartImageProcessor) Transform(entries []ContentEntry, uuid string, blo
 
 func (p *SmartImageProcessor) OnChange(_ *SieveBlock) {}
 
-func (p *SmartImageProcessor) BuildContext(block SieveBlock, _ ShadowDocument, seen map[string]bool) string {
+func (p *SmartImageProcessor) BuildContext(block SieveBlock, _ DocView, seen map[string]bool) string {
 	src, _ := block.Attrs["src"].(string)
 	alt, _ := block.Attrs["alt"].(string)
 	summary, _ := block.Attrs["summary"].(string)

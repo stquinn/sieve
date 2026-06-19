@@ -86,7 +86,7 @@ func (p *SmartCardProcessor) JobLabel(block *SieveBlock) string {
 	return "Fetching link…"
 }
 
-func (p *SmartCardProcessor) BuildContext(block SieveBlock, _ ShadowDocument, _ map[string]bool) string {
+func (p *SmartCardProcessor) BuildContext(block SieveBlock, _ DocView, _ map[string]bool) string {
 	href, _ := block.Attrs["href"].(string)
 	if href == "" {
 		return ""

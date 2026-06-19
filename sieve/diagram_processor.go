@@ -88,7 +88,7 @@ func (p *DiagramProcessor) Transform(entries []ContentEntry, _ string, _ string)
 
 func (p *DiagramProcessor) OnChange(_ *SieveBlock) {}
 
-func (p *DiagramProcessor) BuildContext(block SieveBlock, _ ShadowDocument, _ map[string]bool) string {
+func (p *DiagramProcessor) BuildContext(block SieveBlock, _ DocView, _ map[string]bool) string {
 	src, _ := block.Attrs["source"].(string)
 	if strings.TrimSpace(src) == "" {
 		return ""

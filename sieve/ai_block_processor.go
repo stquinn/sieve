@@ -53,7 +53,7 @@ func (p *AIBlockProcessor) JobLabel(block *SieveBlock) string {
 }
 
 // BuildContext returns a Q&A summary for when this block appears in another block's ref chain.
-func (p *AIBlockProcessor) BuildContext(block SieveBlock, doc ShadowDocument, seen map[string]bool) string {
+func (p *AIBlockProcessor) BuildContext(block SieveBlock, doc DocView, seen map[string]bool) string {
 	q, _ := block.Attrs["question"].(string)
 	r, _ := block.Attrs["response"].(string)
 	t, _ := block.Attrs["type"].(string)
@@ -102,7 +102,7 @@ func (p *AIBlockProcessor) BuildContext(block SieveBlock, doc ShadowDocument, se
 // followed by itself. This lets the caller pass a single ai-block ID and still
 // receive the original source content as primary context and the prior Q&A as
 // history — without the frontend needing to pre-build the chain.
-func expandAIBlockRefs(refs []string, doc ShadowDocument) []string {
+func expandAIBlockRefs(refs []string, doc DocView) []string {
 	var result []string
 	for _, id := range refs {
 		id = strings.TrimSpace(id)
@@ -139,7 +139,7 @@ func (p *AIBlockProcessor) RunJob(jctx JobContext) error {
 	var historyParts []string
 	// Expand any ai-block refs so the original source is primary content
 	// and the prior Q&A becomes history — no chain-building needed in the frontend.
-	refs := expandAIBlockRefs(strings.Split(ref, ","), jctx.Shadow)
+	refs := expandAIBlockRefs(strings.Split(ref, ","), jctx.Doc)
 
 	var validCtxs []string
 	for _, id := range refs {
@@ -147,7 +147,7 @@ func (p *AIBlockProcessor) RunJob(jctx JobContext) error {
 		if id == "" {
 			continue
 		}
-		ctx := BuildContextForID(id, jctx.Shadow, seen)
+		ctx := BuildContextForID(id, jctx.Doc, seen)
 		if ctx != "" {
 			validCtxs = append(validCtxs, ctx)
 		}
@@ -162,7 +162,7 @@ func (p *AIBlockProcessor) RunJob(jctx JobContext) error {
 	history := strings.Join(historyParts, "\n\n---\n\n")
 
 	// Call BuildContext on the current block to form the question
-	questionCtx := p.BuildContext(*block, jctx.Shadow, seen)
+	questionCtx := p.BuildContext(*block, jctx.Doc, seen)
 
 	var response string
 	var runErr error

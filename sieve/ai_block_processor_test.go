@@ -60,7 +60,7 @@ func TestAIBlockBuildContext(t *testing.T) {
 			"response": "A compiled language.",
 		},
 	}
-	ctx := p.BuildContext(block, ShadowDocument{}, map[string]bool{})
+	ctx := p.BuildContext(block, DocView{}, map[string]bool{})
 	if !strings.Contains(ctx, "What is Go?") || !strings.Contains(ctx, "A compiled language.") {
 		t.Errorf("unexpected context: %q", ctx)
 	}
