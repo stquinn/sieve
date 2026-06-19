@@ -42,7 +42,8 @@ func (s *RegionScanner) Scan(markdown string) []Region {
 	cursor := 0
 	emitText := func(end int) {
 		if end > cursor {
-			regions = append(regions, Region{Raw: string(source[cursor:end])})
+			raw := string(source[cursor:end])
+			regions = append(regions, Region{Body: raw, Raw: raw})
 		}
 	}
 
@@ -80,18 +81,23 @@ func fenceBody(cb *ast.FencedCodeBlock, source []byte) string {
 // sieveBlockASTTransformer: from the first content line, walk back over the
 // opening fence line; from the last content line, walk forward over the closing
 // fence line.
+//
+// For an empty-body fence (zero content lines), goldmark provides no line
+// segments at all, so we anchor on cb.Info.Segment.Start — the start of the
+// info string (e.g. "code" in "```code\n```\n"). Walking back from there to
+// the beginning of the line gives us the opening fence. We then scan forward
+// to consume the opening fence line and the closing fence line.
 func fenceBounds(cb *ast.FencedCodeBlock, source []byte) (int, int) {
-	start := 0
-	end := len(source)
 	if cb.Lines().Len() > 0 {
-		start = cb.Lines().At(0).Start
+		// Normal path: anchor on content lines.
+		start := cb.Lines().At(0).Start
 		if start > 0 && source[start-1] == '\n' {
 			start--
 		}
 		for start > 0 && source[start-1] != '\n' {
 			start--
 		}
-		end = cb.Lines().At(cb.Lines().Len() - 1).Stop
+		end := cb.Lines().At(cb.Lines().Len() - 1).Stop
 		if end < len(source) && source[end] == '\n' {
 			end++
 		}
@@ -102,6 +108,36 @@ func fenceBounds(cb *ast.FencedCodeBlock, source []byte) (int, int) {
 		if end < len(source) && source[end] == '\n' {
 			end++
 		}
+		return start, end
+	}
+
+	// Empty-body fence: use the info-string segment to locate the opening fence.
+	// cb.Info is non-nil for a named fence (e.g. ```code); for an unnamed empty
+	// fence (``` ```), Info may be nil — in that case Start falls back to 0 which
+	// is safe because the fence is the first thing in the document.
+	infoStart := 0
+	if cb.Info != nil {
+		infoStart = cb.Info.Segment.Start
+	}
+	// Walk back to the beginning of the opening fence line (the ``` prefix).
+	start := infoStart
+	for start > 0 && source[start-1] != '\n' {
+		start--
+	}
+	// Walk forward to consume the opening fence line (past its newline).
+	end := infoStart
+	for end < len(source) && source[end] != '\n' {
+		end++
+	}
+	if end < len(source) { // consume the '\n' at end of opening fence
+		end++
+	}
+	// Now consume the closing fence line (e.g. "```\n").
+	for end < len(source) && source[end] != '\n' {
+		end++
+	}
+	if end < len(source) { // consume the '\n' at end of closing fence
+		end++
 	}
 	return start, end
 }
