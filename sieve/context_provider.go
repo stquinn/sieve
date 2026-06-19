@@ -67,7 +67,7 @@ func BuildContextForID(id string, doc ShadowDocument, seen map[string]bool) stri
 	}
 	seen[id] = true
 	if id == "doc" {
-		return doc.Markdown
+		return doc.deriveMarkdown()
 	}
 	// Uniform resolution: every block — prose or structured — is addressable by id
 	// in the block tree (getBlock). Kind only matters here, at context-build time:
@@ -85,7 +85,7 @@ func BuildContextForID(id string, doc ShadowDocument, seen map[string]bool) stri
 		return cp.BuildContext(SieveBlock{ID: b.ID, Kind: b.Kind, Attrs: b.Attrs}, doc, seen)
 	}
 	// Fallback: structured blocks parseable straight from markdown (markdown mode).
-	found, ok := FindBlockByID(doc.Markdown, id)
+	found, ok := FindBlockByID(doc.deriveMarkdown(), id)
 	if !ok {
 		logger.Warn("ContextProvider: block ID %q not found in doc or blocks map", id)
 		return ""

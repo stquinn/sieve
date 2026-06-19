@@ -22,7 +22,7 @@ type BlockAnchorProvider struct {
 }
 
 func (p *BlockAnchorProvider) BuildContext(block SieveBlock, doc ShadowDocument, seen map[string]bool) string {
-	source := []byte(doc.Markdown)
+	source := []byte(doc.deriveMarkdown())
 	parsed := mdParser().Parser().Parse(text.NewReader(source))
 
 	var anchor *blockAnchorNode

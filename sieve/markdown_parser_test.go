@@ -288,7 +288,7 @@ func TestBlockAnchorProviderReturnsTextContent(t *testing.T) {
 	}
 	result := cp.BuildContext(
 		SieveBlock{ID: "blk-1234", Kind: "block-anchor"},
-		ShadowDocument{Markdown: md},
+		ShadowDocument{Mode: "markdown", mdModeBuffer: md},
 		map[string]bool{"blk-1234": true},
 	)
 	if !strings.Contains(result, "Hello world") {
@@ -301,7 +301,7 @@ func TestBlockAnchorProviderIncludesTargets(t *testing.T) {
 	cp := GetContextProvider("block-anchor")
 	result := cp.BuildContext(
 		SieveBlock{ID: "blk-1234", Kind: "block-anchor"},
-		ShadowDocument{Markdown: md},
+		ShadowDocument{Mode: "markdown", mdModeBuffer: md},
 		map[string]bool{"blk-1234": true},
 	)
 	if !strings.Contains(result, "acute") {
@@ -317,7 +317,7 @@ func TestBlockAnchorProviderReturnsEmptyForUnknownID(t *testing.T) {
 	cp := GetContextProvider("block-anchor")
 	result := cp.BuildContext(
 		SieveBlock{ID: "blk-9999", Kind: "block-anchor"},
-		ShadowDocument{Markdown: md},
+		ShadowDocument{Mode: "markdown", mdModeBuffer: md},
 		map[string]bool{"blk-9999": true},
 	)
 	if result != "" {
@@ -329,7 +329,7 @@ func TestBuildContextForIDDispatchesByKind(t *testing.T) {
 	// "img-1234" would route to SmartImageProcessor; "blk-1234" routes to BlockAnchorProvider.
 	// This tests that the kind-based dispatch works end-to-end.
 	md := "[!block] id=\"blk-abc\"\n\nSome prose.\n\n[!block-end]\n"
-	doc := ShadowDocument{Markdown: md}
+	doc := ShadowDocument{Mode: "markdown", mdModeBuffer: md}
 	result := BuildContextForID("blk-abc", doc, map[string]bool{})
 	if !strings.Contains(result, "Some prose") {
 		t.Errorf("expected anchor content, got %q", result)
@@ -340,7 +340,7 @@ func TestBuildContextForIDPreventsCycles(t *testing.T) {
 	// seen map already contains the ID — must return "" without panicking
 	md := "[!block] id=\"blk-abc\"\n\nContent.\n\n[!block-end]\n"
 	seen := map[string]bool{"blk-abc": true}
-	result := BuildContextForID("blk-abc", ShadowDocument{Markdown: md}, seen)
+	result := BuildContextForID("blk-abc", ShadowDocument{Mode: "markdown", mdModeBuffer: md}, seen)
 	if result != "" {
 		t.Errorf("expected empty for already-seen ID, got %q", result)
 	}

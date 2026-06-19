@@ -45,9 +45,9 @@ func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
 func TestContentForSave_markdownModeIsVerbatim(t *testing.T) {
 	md := "# Hello\n\n```ai-block\nid: ab-1234\nresponse: original\n```"
 	shadow := &ShadowDocument{
-		UUID:     "test-uuid",
-		Markdown: md,
-		Mode:     "markdown",
+		UUID:         "test-uuid",
+		mdModeBuffer: md,
+		Mode:         "markdown",
 	}
 
 	result := shadow.contentForSave()

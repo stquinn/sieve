@@ -29,9 +29,13 @@ type ShadowDocument struct {
 	// is the single source of truth for what gets saved — contentForSave just
 	// serializes it (blocks 1..N). It replaces the old "markdown is the model"
 	// pair (Markdown + Blocks overlaid via InjectBlocks).
-	Doc      BlockDoc
-	Markdown string // last full markdown (markdown mode + raw-markdown consumers)
-	Mode     string // "wysiwyg" (default) or "markdown"
+	Doc BlockDoc
+	// mdModeBuffer holds the raw text the user edits in MARKDOWN MODE ONLY. In
+	// WYSIWYG mode the tree (Doc) is authoritative and whole-doc markdown is
+	// derived on demand (deriveMarkdown) — there is no stored markdown to drift
+	// (the old Markdown field drifted: a prose-only session left it stale).
+	mdModeBuffer string
+	Mode         string // "wysiwyg" (default) or "markdown"
 	debounce time.Duration
 	closed   bool // set by stopDebounce; prevents re-arming after Close
 	mu       sync.Mutex
@@ -68,7 +72,6 @@ func newShadow(uuid, body string, debounce time.Duration, onFlush func()) *Shado
 	s := &ShadowDocument{
 		UUID:     uuid,
 		Doc:      doc,
-		Markdown: body,
 		Mode:     "wysiwyg",
 		debounce: debounce,
 		onFlush:  onFlush,
@@ -102,12 +105,31 @@ func (s *ShadowDocument) reparseDoc(md string) {
 	}
 }
 
+// deriveMarkdown returns the whole-doc markdown a consumer needs (save, an
+// id=="doc" AI ask, block-anchor context). It is mode-aware and stores nothing:
+// in markdown mode the user's raw buffer IS the document; in WYSIWYG the tree is
+// serialized fresh, so it can never drift. Pointer receiver so it never copies
+// the held mutex; it does NOT lock — callers that hold s.mu (editor_service) or
+// hold a private copy (context providers) are already safe.
+func (s *ShadowDocument) deriveMarkdown() string {
+	if s.Mode == "markdown" {
+		return s.mdModeBuffer
+	}
+	md, err := SerializeBlockDocWithHandles(s.Doc)
+	if err != nil {
+		logger.Warn("editor: serialize block doc failed", "uuid", s.UUID, "err", err)
+		return ""
+	}
+	return md
+}
+
 func (s *ShadowDocument) setMarkdown(md string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.Markdown = md
 	if s.Mode == "wysiwyg" {
 		s.reparseDoc(md)
+	} else {
+		s.mdModeBuffer = md
 	}
 	s.resetDebounce()
 }
@@ -182,23 +204,13 @@ func (s *ShadowDocument) stopDebounce() {
 	}
 }
 
-// contentForSave returns the content that should be written to disk.
-// In markdown mode the user is editing raw YAML directly, so shadow.Markdown
-// is returned verbatim — no block substitution.
-// In WYSIWYG mode the authoritative block tree is serialized (blocks 1..N) via
-// the single serialization spine — there is no InjectBlocks overlay anymore.
+// contentForSave returns the content that should be written to disk: in markdown
+// mode the raw buffer verbatim, in WYSIWYG the tree serialized fresh. Both come
+// from deriveMarkdown — the single whole-doc markdown source.
 func (s *ShadowDocument) contentForSave() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.Mode == "markdown" {
-		return s.Markdown
-	}
-	md, err := SerializeBlockDocWithHandles(s.Doc)
-	if err != nil {
-		logger.Warn("editor: serialize block doc failed", "uuid", s.UUID, "err", err)
-		return s.Markdown
-	}
-	return md
+	return s.deriveMarkdown()
 }
 
 // Markdown parsing is now handled by markdown_parser.go
@@ -442,10 +454,9 @@ func (es *EditorService) UpdateBlock(uuid string, block SieveBlock) {
 	shadow.setBlock(block)
 }
 
-// EnterMarkdown switches the shadow to markdown mode.
-// It first computes Remux() to embed all current block state into shadow.Markdown,
-// then sets mode = "markdown" so that subsequent Flush calls save verbatim.
-// Returns the merged markdown to use as the seed for the markdown editor.
+// EnterMarkdown switches the shadow to markdown mode. It derives whole-doc
+// markdown from the tree, seeds the markdown-mode raw buffer with it, then flips
+// mode so subsequent Flush calls save the raw buffer verbatim. Returns the seed.
 func (es *EditorService) EnterMarkdown(uuid string) string {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
@@ -454,18 +465,18 @@ func (es *EditorService) EnterMarkdown(uuid string) string {
 		logger.Warn("editor: enter-markdown — no shadow", "uuid", uuid)
 		return ""
 	}
-	merged := shadow.contentForSave() // embeds block state before mode switch
+	merged := shadow.contentForSave() // derives from the tree before the mode switch
 	shadow.mu.Lock()
-	shadow.Markdown = merged
+	shadow.mdModeBuffer = merged
 	shadow.Mode = "markdown"
 	shadow.mu.Unlock()
 	logger.Info("editor: enter-markdown", "uuid", uuid, "bytes", len(merged))
 	return merged
 }
 
-// EnterWysiwyg switches the shadow back to WYSIWYG mode.
-// It re-parses the authoritative Doc from the current shadow.Markdown so that any
-// block YAML the user edited directly in markdown mode is picked up for save.
+// EnterWysiwyg switches the shadow back to WYSIWYG mode. It re-parses the
+// authoritative Doc from the markdown-mode raw buffer so any block YAML the user
+// edited directly in markdown mode is picked up for save.
 func (es *EditorService) EnterWysiwyg(uuid string) {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
@@ -475,15 +486,14 @@ func (es *EditorService) EnterWysiwyg(uuid string) {
 		return
 	}
 	shadow.mu.Lock()
-	shadow.reparseDoc(shadow.Markdown)
+	shadow.reparseDoc(shadow.mdModeBuffer)
 	shadow.Mode = "wysiwyg"
 	n := len(shadow.Doc.Blocks)
 	shadow.mu.Unlock()
 	logger.Info("editor: enter-wysiwyg", "uuid", uuid, "blocks_reparsed", n)
 }
 
-// Flush writes the Remuxed shadow to disk via DocumentService.
-// In markdown mode Remux() returns shadow.Markdown verbatim.
+// Flush writes the shadow's contentForSave to disk via DocumentService.
 func (es *EditorService) Flush(uuid string) error {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
@@ -854,7 +864,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 		blkCopy.Attrs[k] = v
 		attrsBefore[k] = v
 	}
-	markdown := shadow.Markdown
+	mdBuf := shadow.mdModeBuffer
 	mode := shadow.Mode
 	// Snapshot the authoritative block tree so the job can resolve ANY block by id
 	// (prose included) via getBlock. Top-level slice copy under lock; Content is
@@ -887,7 +897,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	jctx := JobContext{
 		Ctx:    ctx,
 		UUID:   uuid,
-		Shadow: ShadowDocument{UUID: uuid, Markdown: markdown, Mode: mode, Doc: docCopy},
+		Shadow: ShadowDocument{UUID: uuid, mdModeBuffer: mdBuf, Mode: mode, Doc: docCopy},
 		Block:  blkCopy,
 		Notify: notify,
 	}
@@ -948,19 +958,21 @@ func (es *EditorService) PromoteBlock(uuid, blockID string) error {
 	markdownReplacement := fmt.Sprintf("[!block] id=%q\n\n%s\n\n[!block-end]", blockID, plainContent)
 
 	shadow.mu.Lock()
-	newMarkdown, ok := PromoteBlock(shadow.Markdown, blockID, markdownReplacement)
+	// Source markdown is derived fresh from the tree (WYSIWYG) or the raw buffer
+	// (markdown mode) — never a stale stored field, which is exactly what drifted.
+	newMarkdown, ok := PromoteBlock(shadow.deriveMarkdown(), blockID, markdownReplacement)
 	if !ok {
 		shadow.mu.Unlock()
 		return fmt.Errorf("block not found in markdown AST")
 	}
-	shadow.Markdown = newMarkdown
 	// In WYSIWYG mode the authoritative Doc drives the save, so refresh it from
 	// the promoted markdown (this also drops the promoted block from the tree).
 	if shadow.Mode == "wysiwyg" {
 		shadow.reparseDoc(newMarkdown)
 	} else {
-		// Markdown mode serializes shadow.Markdown verbatim, but keep the tree
-		// honest: drop the promoted block so a later WYSIWYG flush can't resurrect it.
+		// Markdown mode serializes the raw buffer verbatim; update it, and keep the
+		// tree honest by dropping the promoted block so a later flush can't resurrect it.
+		shadow.mdModeBuffer = newMarkdown
 		removeBlock(&shadow.Doc.Blocks, blockID)
 	}
 	shadow.resetDebounce()
