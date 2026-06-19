@@ -3,7 +3,45 @@ package fencedblock
 import (
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
+
+// parseAll is TEST-ONLY scaffolding — production never parses fenced YAML this way
+// (the document parser is scanBlocks/goldmark; serialization is a BlockProcessor
+// concern). It lives in this _test.go file so it is compiled ONLY for tests: the
+// round-trip checks below need an inverse for SerializeYaml, but that inverse must
+// not masquerade as a production API in fencedblock.go.
+func parseAll[T any](body, tag string) []T {
+	fence := "```" + tag
+	lines := strings.Split(body, "\n")
+	var out []T
+	i := 0
+	for i < len(lines) {
+		if lines[i] == fence {
+			j := i + 1
+			for j < len(lines) && lines[j] != "```" {
+				j++
+			}
+			if j < len(lines) {
+				content := strings.Join(lines[i+1:j], "\n")
+				var meta struct {
+					ID string `yaml:"id"`
+				}
+				if yaml.Unmarshal([]byte(content), &meta) == nil && meta.ID != "" {
+					var v T
+					if yaml.Unmarshal([]byte(content), &v) == nil {
+						out = append(out, v)
+					}
+				}
+				i = j + 1
+				continue
+			}
+		}
+		i++
+	}
+	return out
+}
 
 type testBlock struct {
 	ID       string `yaml:"id"`
@@ -14,7 +52,7 @@ type testBlock struct {
 
 func TestParseAll_Basic(t *testing.T) {
 	body := "```test-block\nid: abc\nstatus: COMPLETE\nquestion: Q?\n```"
-	blocks := ParseAll[testBlock](body, "test-block")
+	blocks := parseAll[testBlock](body, "test-block")
 	if len(blocks) != 1 {
 		t.Fatalf("expected 1, got %d", len(blocks))
 	}
@@ -25,21 +63,21 @@ func TestParseAll_Basic(t *testing.T) {
 
 func TestParseAll_SkipsMissingID(t *testing.T) {
 	body := "```test-block\nstatus: PENDING\n```"
-	if len(ParseAll[testBlock](body, "test-block")) != 0 {
+	if len(parseAll[testBlock](body, "test-block")) != 0 {
 		t.Error("block without id should be skipped")
 	}
 }
 
 func TestParseAll_WrongTag(t *testing.T) {
 	body := "```other-block\nid: x\nstatus: PENDING\n```"
-	if len(ParseAll[testBlock](body, "test-block")) != 0 {
+	if len(parseAll[testBlock](body, "test-block")) != 0 {
 		t.Error("different tag should not be matched")
 	}
 }
 
 func TestParseAll_Multiple(t *testing.T) {
 	body := "```test-block\nid: a\nstatus: PENDING\n```\ntext\n```test-block\nid: b\nstatus: COMPLETE\n```"
-	blocks := ParseAll[testBlock](body, "test-block")
+	blocks := parseAll[testBlock](body, "test-block")
 	if len(blocks) != 2 {
 		t.Fatalf("expected 2, got %d", len(blocks))
 	}
@@ -84,7 +122,7 @@ func TestSerialize_SpecialCharsQuoted(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Round-trip must preserve the value regardless of quoting style.
-	blocks := ParseAll[testBlock]("```test-block\n"+s+"\n```", "test-block")
+	blocks := parseAll[testBlock]("```test-block\n"+s+"\n```", "test-block")
 	if len(blocks) != 1 || blocks[0].Question != b.Question {
 		t.Errorf("round-trip failed: got %q", blocks[0].Question)
 	}
@@ -109,7 +147,7 @@ func TestSerialize_CodeFenceInResponse(t *testing.T) {
 		t.Errorf("expected literal block indicator 'response: |', got:\n%s", s)
 	}
 	// Round-trip must preserve the code fence content.
-	blocks := ParseAll[testBlock]("```test-block\n"+s+"\n```", "test-block")
+	blocks := parseAll[testBlock]("```test-block\n"+s+"\n```", "test-block")
 	if len(blocks) != 1 {
 		t.Fatalf("expected 1 block after round-trip, got %d", len(blocks))
 	}
@@ -129,7 +167,7 @@ func TestRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	blocks := ParseAll[testBlock]("```test-block\n"+s+"\n```", "test-block")
+	blocks := parseAll[testBlock]("```test-block\n"+s+"\n```", "test-block")
 	if len(blocks) != 1 {
 		t.Fatalf("expected 1 block, got %d", len(blocks))
 	}

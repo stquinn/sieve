@@ -7,39 +7,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ParseAll scans body for ```tag…``` fences and unmarshals each into T.
-// Blocks that fail to unmarshal or have an empty "id" field are skipped.
-func ParseAll[T any](body, tag string) []T {
-	fence := "```" + tag
-	lines := strings.Split(body, "\n")
-	var out []T
-	i := 0
-	for i < len(lines) {
-		if lines[i] == fence {
-			j := i + 1
-			for j < len(lines) && lines[j] != "```" {
-				j++
-			}
-			if j < len(lines) {
-				content := strings.Join(lines[i+1:j], "\n")
-				var meta struct {
-					ID string `yaml:"id"`
-				}
-				if yaml.Unmarshal([]byte(content), &meta) == nil && meta.ID != "" {
-					var v T
-					if yaml.Unmarshal([]byte(content), &v) == nil {
-						out = append(out, v)
-					}
-				}
-				i = j + 1
-				continue
-			}
-		}
-		i++
-	}
-	return out
-}
-
 // SerializeYaml encodes v as YAML with 4-space indentation using yaml.v3.
 // All multiline strings are forced to literal block style (|) regardless of
 // content — this prevents yaml.v3 from choosing double-quoted style for
