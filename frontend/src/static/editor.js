@@ -150,17 +150,30 @@
       try {
         var tmp = document.createElement('div')
         tmp.innerHTML = bhtml.trim()
-        // Take ONLY the block node we expect for this Go block (sieve-<kind>),
-        // ignoring any extra nodes the parse invents — chiefly empty sieve-prose
-        // that PM fabricates from stray whitespace between blocks. The shadow is
-        // authoritative: we render exactly its blocks, never parser artifacts.
-        var want = 'sieve-' + b.kind
-        var pushed = 0
-        parser.parse(tmp).content.forEach(function (n) {
-          if (n.type.name === want) { nodes.push(n); pushed++ }
-        })
-        if (!pushed) {
-          console.error('[editor] block ' + i + ' (' + b.kind + ' ' + (b.id || '') + ') produced no ' + want + ' node from:\n' + bhtml.trim().slice(0, 200))
+        if (b.kind === 'prose') {
+          // Node-granular: a prose block renders to its NATIVE top-level node(s).
+          // Stamp the block id onto the FIRST top-level element so
+          // addGlobalAttributes(blockId) carries it onto that node; a legacy
+          // multi-paragraph run parses to N nodes — only the first keeps the
+          // loaded id, the rest are id-less (minted on first sync, D-r.4). Push
+          // every parsed top-level node (they are all valid blocks now).
+          if (b.id && tmp.firstElementChild) tmp.firstElementChild.setAttribute('data-id', b.id)
+          var emitted = 0
+          parser.parse(tmp).content.forEach(function (n) { nodes.push(n); emitted++ })
+          if (!emitted) {
+            console.error('[editor] prose block ' + i + ' (' + (b.id || '') + ') produced no node from:\n' + bhtml.trim().slice(0, 200))
+          }
+        } else {
+          // Structured: take ONLY the sieve-<kind> node we expect, ignoring any
+          // stray nodes the parse invents. The shadow is authoritative.
+          var want = 'sieve-' + b.kind
+          var pushed = 0
+          parser.parse(tmp).content.forEach(function (n) {
+            if (n.type.name === want) { nodes.push(n); pushed++ }
+          })
+          if (!pushed) {
+            console.error('[editor] block ' + i + ' (' + b.kind + ' ' + (b.id || '') + ') produced no ' + want + ' node from:\n' + bhtml.trim().slice(0, 200))
+          }
         }
       } catch (e) {
         console.error('[editor] block ' + i + ' (' + b.kind + ' ' + (b.id || '') + ') failed to render:', e, '\n--- HTML ---\n' + bhtml)
@@ -182,27 +195,19 @@
     var blockContentCache = null
 
     // Serialize one top-level block to the (id, kind, content) the sync diff
-    // needs. Prose anchors → clean child markdown (handle markers stripped; Go
-    // re-prepends them on save). Structured sieve blocks → their serialisedForm
-    // fence. A native top-level node (no anchor wrapper) returns null, which
-    // forces the caller to a whole-document doc-update.
+    // needs (node-granular, 2026-06-19). A structured sieve block → its
+    // serialisedForm fence, keyed by its `id`. EVERY OTHER top-level node is a
+    // prose block: a NATIVE TipTap node (paragraph/heading/list/table/…) whose
+    // identity is its `blockId` attr and whose content is its CLEAN markdown
+    // (native nodes never embed markers — Go re-wraps on save). No node returns
+    // null now, so the observer never falls back merely on node type.
     function topBlockTriple(ed, node) {
       var name = node.type.name
-      if (name === 'sieve-prose') {
-        var full = window.TipTap.serializeNode(ed, node) || ''
-        // Strip the paired delimiters the prose markdownSerialize adds (open
-        // handle-list marker + trailing close) — the sync sends CLEAN content and
-        // Go re-wraps it. Tolerate the legacy stacked single-marker form too.
-        var content = full
-          .replace(/^(?:<!--s:[\w\- ]+-->\n)+/, '')
-          .replace(/\n?<!--\/s:[\w-]+-->\s*$/, '')
-          .trim()
-        return { id: node.attrs.id || '', kind: 'prose', content: content, aliases: node.attrs.aliases || [] }
-      }
       if (name.indexOf('sieve-') === 0) {
         return { id: node.attrs.id || '', kind: node.attrs.kind || name, content: node.attrs.serialisedForm || '' }
       }
-      return null
+      var content = (window.TipTap.serializeNode(ed, node) || '').trim()
+      return { id: node.attrs.blockId || '', kind: 'prose', content: content }
     }
 
     function collectTopBlocks(ed) {
@@ -228,16 +233,17 @@
           id: b.id,
           kind: b.kind,
           content: b.kind === 'prose' ? (b.content || '') : (b.serialisedForm || ''),
-          aliases: b.aliases || [],
         }
       })
-      blockContentCache = window.TipTap.computeBlockSync
-        ? window.TipTap.computeBlockSync(triples, null).next
+      // seedBaseline includes EVERY id'd server block (even an empty one) so the
+      // first edit to a loaded block is an update-block, never a duplicate create.
+      blockContentCache = window.TipTap.seedBaseline
+        ? window.TipTap.seedBaseline(triples)
         : {}
     }
 
     function sendDocUpdate(ed, id) {
-      var md = ed.storage.markdown.getMarkdown() || ''
+      var md = wysiwygMarkdown(ed)
       lastSyncedBody = md
       wsSend({ type: 'doc-update', uuid: id, markdown: md })
     }
@@ -255,82 +261,24 @@
       r.ops.forEach(function (op) { wsSend({ type: 'block-op', uuid: id, op: op }) })
     }
 
-    // Step 5: the doc top level holds ONLY sieve blocks (group "sieveBlock") —
-    // PM structurally forbids a bare top-level paragraph, so "all content is
-    // blocks" holds without a per-keystroke wrapper. An empty doc createAndFills
-    // to one empty sieve-prose (PM creates the block, not Go).
-    var SieveDocument = T.Node.create({ name: 'doc', topNode: true, content: 'sieveBlock+' })
-
-    // Mint a client-side prose id when PM creates a NEW prose block (matches Go's
-    // pr-xxxx). Bounded + idempotent: fires only for an id-less sieve-prose and
-    // only on a doc change — it never wraps and never re-mints an existing block
-    // (the schema removed the bare-paragraph churn that made the old minter loop).
-    var mintProseId = function () { return 'pr-' + Math.random().toString(16).slice(2, 6) }
-    // Defense-in-depth: appendTransaction runs inside EditorState.apply's
-    // stabilisation loop — if it never stops returning a doc-changing tr the main
-    // thread spins at 100% (a frozen app). This plugin is additive + idempotent so
-    // it stabilises, but a runaway guard turns any future regression into a logged
-    // warning + a disabled plugin instead of a hard freeze. A real loop fires
-    // hundreds of times in microseconds; real edits are spaced out, so reset the
-    // counter once calls stop arriving back-to-back.
-    var piCalls = 0, piLast = 0
-    var ProseIdentity = T.Extension.create({
-      name: 'proseIdentity',
-      addProseMirrorPlugins: function () {
-        return [new T.Plugin({
-          key: new T.PluginKey('proseIdentity'),
-          appendTransaction: function (trs, _oldState, newState) {
-            var now = Date.now()
-            if (now - piLast > 100) piCalls = 0   // calls stopped arriving → reset
-            piLast = now
-            if (++piCalls > 100) {
-              console.error('[proseIdentity] RUNAWAY (' + piCalls + ' calls) — disabling to avoid a freeze. doc:', JSON.stringify(newState.doc.toJSON()))
-              return null
-            }
-            if (!trs.some(function (tr) { return tr.docChanged })) return null
-            var tr = null
-            // (1) Mint a handle for any id-less sieve-prose that has REAL TEXT.
-            // An EMPTY prose (just an empty paragraph) and a size-0 parse artifact
-            // are editing surfaces, NOT committed blocks: leave them id-less so they
-            // never fire create-block until the user actually types. NEVER delete a
-            // size-0 prose — deleting fights PM's re-fill (it re-fabricates the node
-            // every pass → the appendTransaction loop that froze the app).
-            newState.doc.forEach(function (node, pos) {
-              if (node.type.name !== 'sieve-prose' || node.attrs.id) return
-              if (node.textContent.length === 0) return // surface/artifact: leave id-less
-              if (!tr) tr = newState.tr
-              tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, { id: mintProseId() }))
-            })
-            // (2) Ensure a trailing prose editing surface. If the doc ends in a
-            // structured block there is nowhere to put a caret, so append ONE valid
-            // empty prose (createAndFill → it has a paragraph, so it is selectable &
-            // typeable). Idempotent: once the last child is a prose this is a no-op,
-            // so it ADDS-if-missing (monotonic) and never loops. It is id-less, so it
-            // is the same transient surface an empty doc shows — typing into it mints
-            // an id + round-trips via create-block; it is never persisted to Go.
-            var last = newState.doc.lastChild
-            if (last && last.type.name !== 'sieve-prose') {
-              if (!tr) tr = newState.tr
-              var surface = newState.schema.nodes['sieve-prose'].createAndFill()
-              if (surface) tr.insert(tr.doc.content.size, surface)
-            }
-            return tr
-          },
-        })]
-      },
-    })
+    // Node-granular (2026-06-19): the doc top level holds NATIVE block nodes
+    // (paragraph/heading/list/table/blockquote/…, group "block") AND structured
+    // sieve blocks (group "sieveBlock") as siblings — a prose block IS one native
+    // top-level node, not a custom container. The retired `sieveBlock+` schema
+    // (+ its per-keystroke wrapper / minter / trailing-surface plugin) is gone;
+    // PM owns node creation/splitting/merging natively. Identity rides on each
+    // native node's `blockId` attr (T.BlockId, addGlobalAttributes); minting is
+    // a passive observe-time concern (D-r.4), never a doc mutation here.
+    var SieveDocument = T.Node.create({ name: 'doc', topNode: true, content: '(block | sieveBlock)+' })
 
     var editor = new T.Editor({
       element: el,
       extensions: [
         SieveDocument,
-        ProseIdentity,
-        // trailingNode:false — StarterKit's TrailingNode appends a node after the
-        // last block; under our 'sieveBlock+' top level it is coerced into an empty,
-        // INVALID sieve-prose (no paragraph) that is unselectable/un-typeable and is
-        // a local fabrication the shadow never sent. We render EXACTLY the shadow's
-        // blocks; typing after the last block goes through the Gapcursor → a real new
-        // prose block → create-block.
+        T.BlockId,
+        // trailingNode:false — we let PM's native Gapcursor place a caret after a
+        // trailing atom (structured) block; typing there creates a real native
+        // paragraph (a new prose block). No fabricated trailing surface.
         T.StarterKit.configure({ document: false, link: false, codeBlock: false, trailingNode: false, history: { depth: 10000, newGroupDelay: 500 } }),
         T.Placeholder.configure({ placeholder: function (p) { return p.editor.isEmpty ? 'Start writing\u2026' : '' } }),
         T.BlockNode,
@@ -360,13 +308,12 @@
           onToggleAiBlocks: toggleAiBlocks,
         }),
       ]),
-      // Seed an explicit empty prose block. Under the strict top-level-blocks
-      // schema a raw markdown body (bare paragraphs) is invalid, and an empty
-      // string makes PM createAndFill pick the FIRST sieveBlock type — which is
-      // NOT sieve-prose (it grabbed an ai-block atom → empty ERROR box on every
-      // new doc). Seeding sieve-prose explicitly is deterministic; the minter ids
-      // it, and renderBlocksIntoEditor replaces it for a non-empty doc.
-      content: '<div data-type="sieve-prose"><p></p></div>',
+      // Seed one empty native paragraph — the default editing surface of a new
+      // doc. renderBlocksIntoEditor replaces it for a non-empty doc; an empty doc
+      // keeps this typeable paragraph (a prose block; its blockId is minted on
+      // first sync, D-r.4). A native <p> is a valid top-level node under the new
+      // (block | sieveBlock)+ schema, so no custom container is needed.
+      content: '<p></p>',
       editorProps: {
         attributes: { spellcheck: 'true' },
         handleDOMEvents: {
@@ -533,7 +480,7 @@
     window.__tiptap = editor
 
     // Stage D.2: the block list IS the document model. When the load supplied it,
-    // render the document from the blocks (prose → sieve-prose; structured →
+    // render the document from the blocks (prose → native node(s); structured →
     // its fence rule), bypassing the markdown `content:` seed above. We build the
     // HTML with the editor's OWN markdownit (so the fence parse rules are live)
     // and parse it through ProseMirror's DOMParser — reusing every node's
@@ -543,7 +490,7 @@
       suppressUpdate = true
       try {
         renderBlocksIntoEditor(editor, blocks)
-        lastSyncedBody = editor.storage.markdown.getMarkdown() || lastSyncedBody
+        lastSyncedBody = wysiwygMarkdown(editor) || lastSyncedBody
       } catch (err) {
         console.error('[editor] block render failed; keeping markdown seed', err)
       } finally {
@@ -955,10 +902,36 @@
     document.dispatchEvent(new CustomEvent('editor:stats', { detail: { chars: chars, lines: lines } }))
   }
 
+  // wysiwygMarkdown serializes the live editor document to disk markdown,
+  // node-granular (2026-06-19): each TOP-LEVEL node is one block. Structured
+  // sieve blocks self-delimit (their fence carries id: in YAML); every native
+  // node (a prose block) is wrapped in its paired <!--s:ID-->…<!--/s:ID-->
+  // markers via wrapProseBlock, so a whole-document round-trip (doc-update
+  // fallback / save / markdown-mode toggle) preserves block identity byte-for-
+  // byte and matches Go's SerializeBlockDocWithHandles. serializeNode renders
+  // each node through the editor's own markdown serializer (never hand-built).
+  function wysiwygMarkdown(ed) {
+    if (!ed) return ''
+    var T = window.TipTap
+    var parts = []
+    ed.state.doc.forEach(function (node) {
+      var md = (T.serializeNode(ed, node) || '').trim()
+      if (node.type.name.indexOf('sieve-') === 0) {
+        if (md) parts.push(md)
+        return
+      }
+      // Native node = prose block. wrapProseBlock emits bare content when the
+      // node has no id yet (pre-mint); Go mints on Open.
+      var wrapped = T.wrapProseBlock(node.attrs.blockId || '', md)
+      if (wrapped) parts.push(wrapped)
+    })
+    return parts.join('\n\n')
+  }
+
   function getMarkdown() {
     if (currentMode === 'markdown') return lastSyncedBody
     if (!currentEditor) return ''
-    return currentEditor.storage.markdown.getMarkdown() || ''
+    return wysiwygMarkdown(currentEditor)
   }
 
   function ensureOverlays() {
@@ -1713,7 +1686,7 @@
       // Flush any pending block-sync so Go's shadow is current before it merges
       // the markdown view (enter-markdown serializes the shadow, not local md).
       if (docSyncFlush) docSyncFlush()
-      content = currentEditor.storage.markdown.getMarkdown() || ''
+      content = wysiwygMarkdown(currentEditor)
     } else {
       content = lastSyncedBody
     }

@@ -48,6 +48,24 @@ function isPendingEmptyProse(b, prev) {
   return b.kind === 'prose' && !(b.content && b.content.length) && !(prev && b.id in prev)
 }
 
+// seedBaseline builds the initial change-signature map directly from the SERVER's
+// blocks (what Go already holds), so the first diff against it produces the right
+// verb. EVERY id'd server block is included — including an empty one — because Go
+// has it: editing it must be an update-block, never a duplicate create-block. (We
+// must NOT route this through computeBlockSync's pending-empty filter, which would
+// drop a loaded empty prose block from the baseline and make its first content
+// create-block an id Go already had → two blocks with one id on disk.) An id-less
+// block (a fresh client surface with no server origin) is skipped — it becomes a
+// real block, via create-block, once it has an id + content.
+export function seedBaseline(curr) {
+  var next = {}
+  for (var i = 0; i < (curr || []).length; i++) {
+    var b = curr[i]
+    if (b && b.id) next[b.id] = blockSig(b)
+  }
+  return next
+}
+
 export function computeBlockSync(curr, prev) {
   var next = {}
   var anyEmptyId = false
@@ -102,4 +120,5 @@ export function computeBlockSync(curr, prev) {
 if (typeof window !== 'undefined') {
   window.TipTap = window.TipTap || {}
   window.TipTap.computeBlockSync = computeBlockSync
+  window.TipTap.seedBaseline = seedBaseline
 }

@@ -1,5 +1,33 @@
 import { describe, it, expect } from 'vitest'
-import { computeBlockSync } from '../src/static/block-sync.js'
+import { computeBlockSync, seedBaseline } from '../src/static/block-sync.js'
+
+// seedBaseline builds the initial change-signature map from the SERVER's blocks
+// (what Go already holds). Every id'd server block belongs in the baseline —
+// INCLUDING an empty one — so the first edit to it is an update-block, never a
+// duplicate create-block. (Regression: a loaded empty prose block was wrongly
+// excluded via the pending-empty filter, so typing into it create-block'd an id
+// Go already had → two blocks with the same id on disk.)
+describe('seedBaseline', () => {
+  it('includes a loaded empty prose block so its first content is an update, not a duplicate create', () => {
+    const loaded = [{ id: 'pr-1', kind: 'prose', content: '' }]
+    const base = seedBaseline(loaded)
+    expect('pr-1' in base).toBe(true)
+
+    const r = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'Hi!' }], base)
+    expect(r.mode).toBe('ops')
+    expect(r.ops).toEqual([{ type: 'update-block', blockId: 'pr-1', kind: 'prose', content: 'Hi!' }])
+  })
+
+  it('skips id-less blocks (a fresh client surface with no server origin)', () => {
+    const base = seedBaseline([{ id: '', kind: 'prose', content: '' }])
+    expect(Object.keys(base)).toHaveLength(0)
+  })
+
+  it('seeds structured blocks by their stable content signature', () => {
+    const base = seedBaseline([{ id: 'co-1', kind: 'code', content: '```code\nid: co-1\n```' }])
+    expect('co-1' in base).toBe(true)
+  })
+})
 
 // computeBlockSync(curr, prev) is the pure heart of the D.4 thin observer — a
 // full id-keyed diff over top-level blocks.

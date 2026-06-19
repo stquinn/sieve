@@ -407,6 +407,38 @@
     },
   })
 
+  // ── BlockId ──────────────────────────────────────────────────────────────
+  // Node-granular prose (2026-06-19): identity is a `blockId` GLOBAL attribute on
+  // the native top-level node types (paragraph/heading/list/table/blockquote/…).
+  // It is the in-editor carrier only — the durable identity lives in the on-disk
+  // paired `<!--s:ID-->…<!--/s:ID-->` markers (attrs don't survive markdown). It
+  // renders to `data-id` and parses from it, so renderBlocksIntoEditor can stamp a
+  // loaded block's id straight onto its native node and topBlockTriple can read it
+  // back. Nested paragraphs (inside lists/tables/blockquotes) carry an empty
+  // blockId (harmless); only the doc's TOP-LEVEL nodes are treated as blocks.
+  var BlockId = Extension.create({
+    name: 'blockId',
+    addGlobalAttributes: function () {
+      return [{
+        types: [
+          'paragraph', 'heading', 'blockquote',
+          'bulletList', 'orderedList', 'taskList',
+          'table', 'image', 'horizontalRule', 'codeBlock',
+        ],
+        attributes: {
+          blockId: {
+            default: '',
+            parseHTML: function (el) { return el.getAttribute('data-id') || '' },
+            renderHTML: function (attrs) {
+              // Omit data-id when empty so nested/unminted nodes stay clean.
+              return attrs.blockId ? { 'data-id': attrs.blockId } : {}
+            },
+          },
+        },
+      }]
+    },
+  })
+
   var AiShortcuts = Extension.create({
     name: 'aiShortcuts',
     addOptions: function() {
@@ -444,5 +476,6 @@
   T.getAiTargetLabel = getAiTargetLabel
   T.HighlightMark = HighlightMark
   T.AiShortcuts = AiShortcuts
+  T.BlockId = BlockId
 
 })()

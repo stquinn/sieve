@@ -3,36 +3,31 @@
 // Pure function: turns the flat []FrontendBlock the WYSIWYG load sends into the
 // HTML string the editor parses (via tiptap-markdown's markdownit + each node's
 // existing parseHTML). It does NOT build ProseMirror JSON — that is the whole
-// point of the spine: prose travels as rendered markdown wrapped in a
-// `sieve-prose`; structured blocks travel as their canonical fence text,
-// which markdownit + the per-kind fence rule turn into the right data-* div.
+// point of the spine: a prose block travels as its NATIVE markdown (rendered to
+// native nodes — node-granular, 2026-06-19), and structured blocks travel as
+// their canonical fence text, which markdownit + the per-kind fence rule turn
+// into the right data-* div. The loaded block id is stamped onto the native node
+// by renderBlocksIntoEditor (real DOM), so this builder emits no wrapper.
 //
 // `mdRender` is injected (the editor passes
 // `editor.storage.markdown.parser.md.render`) so this module stays free of any
 // editor/DOM dependency and is unit-testable in isolation.
 
-// Minimal attribute-value escaper. Only the characters that can break out of a
-// double-quoted HTML attribute matter here.
-function escAttr(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-}
-
 // Build the HTML for a single block.
 function blockHTML(b, mdRender) {
   if (b.kind === 'prose') {
+    // 2026-06-19 node-granular: a prose block IS its native top-level node(s)
+    // (paragraph/heading/list/table/blockquote/…), NOT a custom sieve-prose
+    // container. Emit the block's markdown verbatim — markdownit produces the
+    // native HTML, which ProseMirror's DOMParser turns back into native nodes.
+    // A multi-paragraph run (legacy, marker-less) renders to N top-level nodes;
+    // a markered doc delivers one block per node so this stays one node.
+    // The block's id is stamped onto the resulting native node by
+    // renderBlocksIntoEditor (real DOM); the pure builder carries no wrapper.
     let inner = b.content ? mdRender(b.content) : '<p></p>'
-    // A prose block needs at least one block-level child (content: 'block+');
-    // whitespace-only content renders to nothing, which is invalid.
+    // Whitespace-only content renders to nothing, which is not a valid node.
     if (!inner || !inner.trim()) inner = '<p></p>'
-    let attrs = ` data-id="${escAttr(b.id || '')}"`
-    if (b.aliases && b.aliases.length) {
-      attrs += ` data-aliases="${escAttr(JSON.stringify(b.aliases))}"`
-    }
-    return `<div data-type="sieve-prose"${attrs}>${inner}</div>`
+    return inner
   }
   // Structured / container: build the node's data-* div straight from the block's
   // PROPERTIES (attrs), reusing the SAME parseAttrs/data-* builder the markdownit

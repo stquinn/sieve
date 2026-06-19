@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { buildBlocksHTML } from '../src/static/block-render.js'
 
-// mdRender stub: marks its input so we can assert WHICH text was rendered and
-// that the prose wrapper put it in the right place.
+// mdRender stub: marks its input so we can assert WHICH text was rendered.
 const md = (t) => `<R>${t}</R>`
 
 describe('buildBlocksHTML', () => {
@@ -19,19 +18,28 @@ describe('buildBlocksHTML', () => {
       return `<div data-type="sieve-${kind}" data-id="${(attrs && attrs.id) || ''}"></div>`
     }
   })
-  it('wraps a prose block in a sieve-prose carrying its id', () => {
+
+  // 2026-06-19 node-granular: a prose block renders as its NATIVE markdown nodes
+  // (paragraph/heading/list/…), NOT a custom sieve-prose container. The block id
+  // is carried onto the native node by renderBlocksIntoEditor (real DOM), so the
+  // pure HTML builder emits no wrapper and no data-id — just the rendered markdown.
+  it('renders a prose block as bare native markdown (no sieve-prose wrapper)', () => {
     const html = buildBlocksHTML([{ kind: 'prose', id: 'pr-1', content: 'Hello' }], md)
-    expect(html).toBe('<div data-type="sieve-prose" data-id="pr-1"><R>Hello</R></div>')
+    expect(html).toBe('<R>Hello</R>')
+    expect(html).not.toContain('sieve-prose')
   })
 
-  it('emits data-aliases as a JSON array when present', () => {
-    const html = buildBlocksHTML([{ kind: 'prose', id: 'pr-1', content: 'x', aliases: ['pr-0', 'pr-9'] }], md)
-    expect(html).toContain('data-aliases="[&quot;pr-0&quot;,&quot;pr-9&quot;]"')
+  it('renders multi-paragraph prose content verbatim (markdownit splits it into N nodes)', () => {
+    // The stub does not split; the real markdownit produces <p>a</p><p>b</p>. We
+    // assert the builder hands the WHOLE run to the renderer untouched — the split
+    // into N top-level nodes is markdownit's job, observed at parse time.
+    const html = buildBlocksHTML([{ kind: 'prose', id: 'pr-1', content: 'a\n\nb' }], md)
+    expect(html).toBe('<R>a\n\nb</R>')
   })
 
-  it('omits data-aliases when there are none', () => {
-    const html = buildBlocksHTML([{ kind: 'prose', id: 'pr-1', content: 'x' }], md)
-    expect(html).not.toContain('data-aliases')
+  it('falls back to an empty paragraph for empty prose so it parses to a valid node', () => {
+    const html = buildBlocksHTML([{ kind: 'prose', id: 'pr-1', content: '' }], md)
+    expect(html).toBe('<p></p>')
   })
 
   it('builds a structured block from its attrs via buildSieveBlockHTML (no markdown)', () => {
@@ -46,21 +54,11 @@ describe('buildBlocksHTML', () => {
     expect(html).not.toContain('sieve-prose')
   })
 
-  it('escapes the id attribute', () => {
-    const html = buildBlocksHTML([{ kind: 'prose', id: 'a"b', content: 'x' }], md)
-    expect(html).toContain('data-id="a&quot;b"')
-  })
-
-  it('falls back to an empty paragraph for empty prose so the anchor is non-empty', () => {
-    const html = buildBlocksHTML([{ kind: 'prose', id: 'pr-1', content: '' }], md)
-    expect(html).toBe('<div data-type="sieve-prose" data-id="pr-1"><p></p></div>')
-  })
-
   it('joins multiple blocks in order with newlines', () => {
     const html = buildBlocksHTML([
       { kind: 'prose', id: 'pr-1', content: 'A' },
       { kind: 'code', id: 'co-1', attrs: { id: 'co-1' } },
     ], md)
-    expect(html).toBe('<div data-type="sieve-prose" data-id="pr-1"><R>A</R></div>\n<div data-type="sieve-code" data-id="co-1"></div>')
+    expect(html).toBe('<R>A</R>\n<div data-type="sieve-code" data-id="co-1"></div>')
   })
 })
