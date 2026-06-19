@@ -2,6 +2,58 @@ package sieve
 
 import "testing"
 
+// fakeRegistry lets us exercise the codec dispatch with a controlled processor set.
+type fakeRegistry struct {
+	byKind  map[string]BlockProcessor
+	ordered []BlockProcessor
+}
+
+func (f fakeRegistry) Get(kind string) BlockProcessor { return f.byKind[kind] }
+func (f fakeRegistry) Ordered() []BlockProcessor      { return f.ordered }
+
+func newFakeRegistry() fakeRegistry {
+	prose := &ProseProcessor{}
+	code := NewCodeBlockProcessor(BlockServices{})
+	return fakeRegistry{
+		byKind:  map[string]BlockProcessor{KindProse: prose, "code": code},
+		ordered: []BlockProcessor{code, prose}, // structured first, prose terminal
+	}
+}
+
+func TestDocumentCodec_DeserializeStructuredAndProse(t *testing.T) {
+	c := NewDocumentCodec(newFakeRegistry())
+	md := "intro prose\n\n```code\nid: co-1\nsource: x\n```\n\ntrailing prose"
+	blocks, err := c.Deserialize(md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 3 {
+		t.Fatalf("want prose, code, prose = 3 blocks, got %d: %#v", len(blocks), blocks)
+	}
+	if blocks[0].Kind != KindProse || blocks[1].Kind != "code" || blocks[2].Kind != KindProse {
+		t.Errorf("kinds = %q/%q/%q", blocks[0].Kind, blocks[1].Kind, blocks[2].Kind)
+	}
+	if blocks[1].ID != "co-1" {
+		t.Errorf("code id = %q, want co-1", blocks[1].ID)
+	}
+}
+
+func TestDocumentCodec_UnclaimedFenceCoalescesIntoProse(t *testing.T) {
+	c := NewDocumentCodec(newFakeRegistry())
+	// ```python is unclaimed → it must stay as ONE prose block with its neighbours.
+	md := "before\n```python\nprint(1)\n```\nafter"
+	blocks, err := c.Deserialize(md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 1 || blocks[0].Kind != KindProse {
+		t.Fatalf("want a single prose block, got %#v", blocks)
+	}
+	if blocks[0].Content() != md {
+		t.Errorf("prose content = %q, want verbatim %q", blocks[0].Content(), md)
+	}
+}
+
 func TestFencedDeserializer_AcceptsOnlyMatchingKind(t *testing.T) {
 	d := FencedDeserializer{Kind: "code"}
 	if !d.Accepts(Region{Kind: "code", Body: "id: co-1\n"}) {
