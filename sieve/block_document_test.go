@@ -2,6 +2,37 @@ package sieve
 
 import "testing"
 
+// newDocBlock is the sole sanctioned construction point for a block: it mints an
+// id when none is given, so the invariant "a block never exists without an id"
+// is owned in ONE place rather than swept after the fact. (Go has no enforced
+// constructors; this factory + the serialize-time guard are the idiomatic teeth.)
+func TestNewDocBlock_MintsWhenNoID(t *testing.T) {
+	b := newDocBlock(KindProse, "", "hello", nil)
+	if b.ID == "" {
+		t.Fatalf("expected a minted id, got empty")
+	}
+	if b.Kind != KindProse || b.Content != "hello" {
+		t.Fatalf("unexpected block: %+v", b)
+	}
+}
+
+func TestNewDocBlock_KeepsGivenID(t *testing.T) {
+	b := newDocBlock(KindProse, "pr-given", "hi", nil)
+	if b.ID != "pr-given" {
+		t.Fatalf("id = %q, want the supplied %q", b.ID, "pr-given")
+	}
+}
+
+// The serializer is the persistence boundary: it must REFUSE to write an id-less
+// block (the runtime backstop behind the factory). A block built by a rogue path
+// that bypassed the factory can never reach disk silently.
+func TestSerializeBlockDocWithHandles_RefusesIdlessProse(t *testing.T) {
+	doc := BlockDoc{Blocks: []DocBlock{{Kind: KindProse, Content: "x"}}} // bypasses the factory
+	if _, err := SerializeBlockDocWithHandles(doc); err == nil {
+		t.Fatalf("expected an error refusing to persist an id-less prose block")
+	}
+}
+
 func TestSerializeBlockDoc_ProseAndFence(t *testing.T) {
 	doc := BlockDoc{Blocks: []DocBlock{
 		{Kind: KindProse, Content: "Hello."},

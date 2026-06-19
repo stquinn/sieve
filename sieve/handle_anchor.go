@@ -1,6 +1,7 @@
 package sieve
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -87,6 +88,13 @@ func mergeHandles(head, tail DocBlock) DocBlock {
 func SerializeBlockDocWithHandles(doc BlockDoc) (string, error) {
 	parts := make([]string, 0, len(doc.Blocks))
 	for _, b := range doc.Blocks {
+		// Persistence-boundary guard (the runtime teeth behind newDocBlock): a
+		// block must never reach disk id-less. If this fires, a code path built a
+		// block via a raw literal instead of the factory — fix the construction
+		// site, don't relax the guard.
+		if b.ID == "" {
+			return "", fmt.Errorf("refusing to persist id-less %s block (construct via newDocBlock)", b.Kind)
+		}
 		if b.Kind == KindProse {
 			parts = append(parts, serializeProseBlock(b))
 			continue

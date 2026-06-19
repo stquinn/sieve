@@ -14,14 +14,14 @@ func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
 		UUID: "test-uuid",
 		Mode: "wysiwyg",
 		Doc: BlockDoc{Blocks: []DocBlock{
-			{Kind: KindProse, Content: "# Hello"},
+			{ID: "pr-hello", Kind: KindProse, Content: "# Hello"},
 			{ID: "ab-1234", Kind: "ai-block", Attrs: map[string]interface{}{
 				"id":       "ab-1234",
 				"question": "What?",
 				"response": "Old answer",
 				"status":   "COMPLETE",
 			}},
-			{Kind: KindProse, Content: "Some prose."},
+			{ID: "pr-some", Kind: KindProse, Content: "Some prose."},
 		}},
 	}
 	shadow.syncBlocksView()

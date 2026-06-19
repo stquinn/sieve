@@ -31,6 +31,22 @@ type DocBlock struct {
 	Aliases []string
 }
 
+// newDocBlock is the sole sanctioned way to construct a block, and it enforces
+// the invariant the type cannot enforce on its own (Go has no constructors): a
+// block is GIVEN an id or it GENERATES one — it never exists id-less. Every
+// construction site (the parser, ApplyOp create, split) routes through here, so
+// the rule lives in ONE place instead of being swept after the fact. Pass id=""
+// to mint (GenerateBlockIDFor honors a registered processor's prefix); pass a
+// known id (a marker's handle, a frontend-minted blockId) to keep it. The
+// serialize-time guard in SerializeBlockDocWithHandles is the runtime backstop
+// for any future code path that bypasses this factory with a raw literal.
+func newDocBlock(kind, id, content string, attrs map[string]interface{}) DocBlock {
+	if id == "" {
+		id = GenerateBlockIDFor(kind)
+	}
+	return DocBlock{ID: id, Kind: kind, Content: content, Attrs: attrs}
+}
+
 // answersTo returns every handle this block resolves to — its primary ID plus
 // any aliases absorbed via merges (spec §7).
 func (b DocBlock) answersTo() []string {
@@ -112,11 +128,8 @@ func scanBlocks(markdown string) []DocBlock {
 			continue // prose/anchor: absorbed into the surrounding prose region
 		}
 		emitProse(sn.StartByte())
-		out = append(out, DocBlock{
-			ID:    sn.SieveBlock.ID,
-			Kind:  sn.SieveBlock.Kind,
-			Attrs: sn.SieveBlock.Attrs,
-		})
+		b := newDocBlock(sn.SieveBlock.Kind, sn.SieveBlock.ID, "", sn.SieveBlock.Attrs)
+		out = append(out, b)
 		cursor = sn.EndByte()
 	}
 	emitProse(len(source))
@@ -141,7 +154,10 @@ func scanProseRegion(region string) []DocBlock {
 		content := strings.Trim(strings.Join(pending, "\n"), "\n")
 		pending = pending[:0]
 		if strings.TrimSpace(content) != "" {
-			out = append(out, DocBlock{Kind: KindProse, Content: content})
+			// Undelimited (marker-less) prose: no id on disk → the factory mints
+			// one now (hydration on parse), so the block exists with an id from
+			// the moment it is constructed — never swept in afterward.
+			out = append(out, newDocBlock(KindProse, "", content, nil))
 		}
 	}
 
@@ -151,11 +167,9 @@ func scanProseRegion(region string) []DocBlock {
 			primary := handles[0]
 			if closeIdx := findClose(lines, i+1, primary); closeIdx != -1 {
 				flushPending()
-				blk := DocBlock{
-					ID:      primary,
-					Kind:    KindProse,
-					Content: strings.Join(lines[i+1:closeIdx], "\n"),
-				}
+				// Delimited prose: the marker carries the primary handle, so the
+				// factory keeps it (no mint).
+				blk := newDocBlock(KindProse, primary, strings.Join(lines[i+1:closeIdx], "\n"), nil)
 				if len(handles) > 1 {
 					blk.Aliases = append([]string(nil), handles[1:]...)
 				}

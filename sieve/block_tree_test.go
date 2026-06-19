@@ -94,8 +94,11 @@ func TestUndelimited_IsSingleBlock(t *testing.T) {
 	if len(doc.Blocks) != 1 {
 		t.Fatalf("want 1 block (no blank-line split), got %d: %+v", len(doc.Blocks), doc.Blocks)
 	}
-	if doc.Blocks[0].ID != "" || doc.Blocks[0].Content != md {
-		t.Fatalf("undelimited block: %+v", doc.Blocks[0])
+	// The run is one block whose content is verbatim. It is minted an id at
+	// construction (the invariant: a block never exists id-less) — hydration of a
+	// marker-less doc on parse.
+	if doc.Blocks[0].ID == "" || doc.Blocks[0].Content != md {
+		t.Fatalf("undelimited block should be one minted block: %+v", doc.Blocks[0])
 	}
 }
 
@@ -110,8 +113,10 @@ func TestUnbalancedOpen_IsLiteralText(t *testing.T) {
 	if len(doc.Blocks) != 1 {
 		t.Fatalf("want 1 block, got %d: %+v", len(doc.Blocks), doc.Blocks)
 	}
-	if doc.Blocks[0].ID != "" || doc.Blocks[0].Content != md {
-		t.Fatalf("unbalanced open should be literal: %+v", doc.Blocks[0])
+	// The marker line stays verbatim in content; the block is minted an id at
+	// construction (the invariant) since it carries no usable handle of its own.
+	if doc.Blocks[0].ID == "" || doc.Blocks[0].Content != md {
+		t.Fatalf("unbalanced open should be literal (one minted block): %+v", doc.Blocks[0])
 	}
 }
 
