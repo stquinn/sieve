@@ -47,6 +47,25 @@ func newDocBlock(kind, id, content string, attrs map[string]interface{}) DocBloc
 	return DocBlock{ID: id, Kind: kind, Content: content, Attrs: attrs}
 }
 
+// StringAttr reads a string-valued attr, returning "" when the key is absent,
+// nil, or not a string. It is the single safe primitive the named accessors
+// below are built on — replacing brittle b.Attrs["x"].(string) casts (spec #5)
+// that panic or silently mis-type. Storage stays kind-agnostic (one Attrs bag);
+// only the read is typed.
+func (b DocBlock) StringAttr(key string) string {
+	s, _ := b.Attrs[key].(string)
+	return s
+}
+
+// Source is the code/log/diagram authored payload (Attrs["source"]).
+func (b DocBlock) Source() string { return b.StringAttr("source") }
+
+// Ref is the AI-chain reference list (Attrs["ref"]), comma-separated block ids.
+func (b DocBlock) Ref() string { return b.StringAttr("ref") }
+
+// Status is the job lifecycle state (Attrs["status"]): PENDING/DISPATCHED/…
+func (b DocBlock) Status() string { return b.StringAttr("status") }
+
 // answersTo returns every handle this block resolves to — its primary ID plus
 // any aliases absorbed via merges (spec §7).
 func (b DocBlock) answersTo() []string {
