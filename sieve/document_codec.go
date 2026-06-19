@@ -3,6 +3,8 @@ package sieve
 import (
 	"fmt"
 	"strings"
+
+	"sieve/sieve/fencedblock"
 )
 
 // DocumentCodec owns BOTH directions of document SerDes. It sees only the
@@ -50,6 +52,18 @@ func (c *DocumentCodec) Deserialize(markdown string) ([]SieveBlock, error) {
 	for _, region := range regions {
 		p := c.firstAcceptor(region)
 		if p == nil {
+			// Fence-fallback: a fenced region with a YAML body that carries an
+			// "id" field is a structured block whose kind simply has no registered
+			// processor yet (e.g. column-row in Stage E). Keep it structured rather
+			// than melting it into prose — mirrors serializeFencedBlock on the
+			// serialize side.
+			if b, ok := unclaimedFenceBlock(region); ok {
+				if err := flushProse(); err != nil {
+					return nil, err
+				}
+				out = append(out, b)
+				continue
+			}
 			pending = append(pending, region)
 			continue
 		}
@@ -128,3 +142,27 @@ func (registryAdapter) Ordered() []BlockProcessor {
 }
 
 func globalRegistry() ProcessorRegistry { return registryAdapter{} }
+
+// unclaimedFenceBlock checks whether a region that has no registered processor
+// is nevertheless a Sieve structured block stored in the fence-fallback format.
+// It returns (block, true) when BOTH conditions hold:
+//  1. region.Kind != "" — it is a fenced region, not a plain text run.
+//  2. region.Body parses as YAML into a map with a non-empty string "id" value.
+//
+// Only when BOTH hold do we reconstruct the block; otherwise we return (_, false)
+// and the caller falls through to the existing pending→prose coalesce path. That
+// keeps stray language fences (```python with no YAML id) safely in prose.
+func unclaimedFenceBlock(region Region) (SieveBlock, bool) {
+	if region.Kind == "" {
+		return SieveBlock{}, false
+	}
+	attrs, err := fencedblock.DeserializeYaml(region.Body)
+	if err != nil {
+		return SieveBlock{}, false
+	}
+	id, _ := attrs["id"].(string)
+	if id == "" {
+		return SieveBlock{}, false
+	}
+	return newSieveBlock(region.Kind, id, "", attrs), true
+}
