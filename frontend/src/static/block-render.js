@@ -13,21 +13,26 @@
 // `editor.storage.markdown.parser.md.render`) so this module stays free of any
 // editor/DOM dependency and is unit-testable in isolation.
 
+// renderProseContent is the prose kind's LOAD mapping (block → native HTML): a
+// prose block IS its native top-level node(s) (paragraph/heading/list/table/
+// blockquote/…), NOT a custom sieve-prose container. markdownit produces the
+// native HTML, which ProseMirror's DOMParser turns back into native nodes. A
+// multi-paragraph run (legacy, marker-less) renders to N top-level nodes; a
+// markered doc delivers one block per node so this stays one node. The block's
+// id is stamped onto the resulting native node by renderBlocksIntoEditor (real
+// DOM); this builder carries no wrapper. This function is referenced by
+// prose-block.js's ProseBlock.fromBlock (single implementation, one home).
+export function renderProseContent(content, mdRender) {
+  let inner = content ? mdRender(content) : '<p></p>'
+  // Whitespace-only content renders to nothing, which is not a valid node.
+  if (!inner || !inner.trim()) inner = '<p></p>'
+  return inner
+}
+
 // Build the HTML for a single block.
 function blockHTML(b, mdRender) {
   if (b.kind === 'prose') {
-    // 2026-06-19 node-granular: a prose block IS its native top-level node(s)
-    // (paragraph/heading/list/table/blockquote/…), NOT a custom sieve-prose
-    // container. Emit the block's markdown verbatim — markdownit produces the
-    // native HTML, which ProseMirror's DOMParser turns back into native nodes.
-    // A multi-paragraph run (legacy, marker-less) renders to N top-level nodes;
-    // a markered doc delivers one block per node so this stays one node.
-    // The block's id is stamped onto the resulting native node by
-    // renderBlocksIntoEditor (real DOM); the pure builder carries no wrapper.
-    let inner = b.content ? mdRender(b.content) : '<p></p>'
-    // Whitespace-only content renders to nothing, which is not a valid node.
-    if (!inner || !inner.trim()) inner = '<p></p>'
-    return inner
+    return renderProseContent(b.content, mdRender)
   }
   // Structured / container: build the node's data-* div straight from the block's
   // PROPERTIES (attrs), reusing the SAME parseAttrs/data-* builder the markdownit

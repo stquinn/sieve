@@ -448,6 +448,14 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from
   function registerSieveRenderer(kind, renderer) {
     nodeRegistry[kind] = createSieveNode(kind, renderer)
     renderers[kind] = renderer
+    // Also record the kind in the shared block-kind registry (model-layer
+    // symmetry): structured kinds are native:false (a sieve-<kind> NodeView
+    // renders their payload). Prose registers itself as native:true in
+    // prose-block.js. registerBlockKind is exposed on window.TipTap by
+    // block-kinds.js; guard in case load order ever changes.
+    if (window.TipTap && window.TipTap.registerBlockKind) {
+      window.TipTap.registerBlockKind({ kind: kind, native: false, renderer: renderer })
+    }
   }
 
   // buildSieveBlockHTML assembles a structured block's data-* div from its

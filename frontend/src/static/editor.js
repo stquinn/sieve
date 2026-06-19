@@ -913,16 +913,18 @@
   function wysiwygMarkdown(ed) {
     if (!ed) return ''
     var T = window.TipTap
+    var prose = T.getBlockKind ? T.getBlockKind('prose') : null
     var parts = []
     ed.state.doc.forEach(function (node) {
       var md = (T.serializeNode(ed, node) || '').trim()
-      if (node.type.name.indexOf('sieve-') === 0) {
+      if (!T.isNativeProseNodeName(node.type.name)) {
+        // Structured sieve block: self-delimiting fence (id: in YAML).
         if (md) parts.push(md)
         return
       }
-      // Native node = prose block. wrapProseBlock emits bare content when the
-      // node has no id yet (pre-mint); Go mints on Open.
-      var wrapped = T.wrapProseBlock(node.attrs.blockId || '', md)
+      // Native node = prose block. The prose kind's toMarkdown wraps it in paired
+      // delimiters (and emits bare content when the node has no id yet — Go mints).
+      var wrapped = prose ? prose.toMarkdown(node.attrs.blockId || '', md) : md
       if (wrapped) parts.push(wrapped)
     })
     return parts.join('\n\n')
