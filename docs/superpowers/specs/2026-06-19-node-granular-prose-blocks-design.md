@@ -54,36 +54,41 @@ by `code`/`diagram`/`log` (`content:'text*'`) and `ai`/`web-clip` (`content:'blo
 
 The document's **top-level nodes are the blocks, 1:1.** Each carries a `blockId`.
 
-**This spec ships exactly one new prose kind: `kind:"prose"`.**
+**A `kind:"prose"` block IS one top-level TipTap node — of ANY type — carrying arbitrary
+markdown as its `content`.** Whatever TipTap decides is one node — paragraph, heading,
+bullet/ordered/task list, table, blockquote, an image-bearing paragraph — is one prose
+block; its `content` is that node's serialized markdown. **No textblock restriction, no
+"single paragraph" restriction.** The app's full document feature set (every list type and
+tables are on the toolbar) appears in the editor, and each such node round-trips as a prose
+block's `content`. We do **not** restrict, categorize, or look inside it.
 
-**`kind:"prose"` — simple, single-paragraph (the everyday, user-typed case).** A prose block
-is a **textblock** (`content:'inline*'`, like `code` is `text*`): one paragraph's worth of
-content, its own block, its own id. There is **no shared top-level container DIV** — that
-container (today's `prose-renderer` `block+`) is exactly the "one DIV holds everything,
-every Enter is an internal paragraph" bug we are fixing. Pressing Enter **natively splits the
-textblock into a new sibling block** (new node → new id) — ProseMirror's own `splitBlock`,
-**no keymap, no Sieve code in the hot path.** Headings/lists typed via markdown shortcuts are
-their own native top-level nodes (each its own block) the same way.
+The implementation is therefore: **let TipTap render its native nodes; attach a `blockId`
+global attribute (`addGlobalAttributes`) to top-level nodes; serialize each node's markdown
+wrapped in paired `<!--s:ID-->…<!--/s:ID-->` delimiters; observe transactions → per-node
+ops.** No custom prose node and no shared container DIV — today's `prose-renderer`
+`content:'block+'` *is* the "one DIV swallows the whole run → 1 doc == 1 block" bug being
+removed.
 
-**Structured atoms** — `sieve-code`, `sieve-ai`, `sieve-diagram`, `web-clip`, … — are
-unchanged: each its own kind, payload in `attrs` (or its own `block+` contentDOM, as
-`ai`/`web-clip` already do). They already cover the rich/tree cases that exist today.
+**No keymap.** Native per-type key behavior is exactly what we want and we don't override
+it: Enter in a paragraph → new node → new block; Enter in a list → adds a list item, stays
+one node → one block (a list is one logical thing); Tab/Enter in a table → native cell
+movement. We only tag and observe.
 
-**Deferred — `kind:"nested-prose"`** (see Out of scope): a `content:'block+'` prose tree
-under one id, created **only by code** when a future actor needs generic rich prose that
-`ai`/`web-clip` don't cover. Not built here; named so the model has an obvious home for it.
+**Structured Sieve blocks** — `sieve-code`, `sieve-ai`, `sieve-diagram`, `web-clip`,
+`smart-image`, … — stay their own kinds (payload in `attrs` / their own contentDOM),
+unchanged. Everything else TipTap renders is a `prose` block.
 
-This is why there is **no keymap**: the only kind we ship is a textblock that splits
-natively, and the one shape that *could* need a split-command (`nested-prose`'s `block+`) is
-deferred and would be code-created, never keyboard-split.
+**Deferred — `kind:"nested-prose"`** (see Out of scope): a code-created prose tree under one
+id, for a future actor that needs it. Not built here; named so the model has a home.
 
 ## Creation is an open API, not a keymap
 
 `create-block` is a capability available to **any actor** with `(kind, markdown-content
 string, index)`:
 
-- **The user pressing Enter** → ProseMirror natively splits the textblock into a new
-  top-level node → the observer sees a new, id-less node → emits `create-block` (id minted
+- **The user editing** → ProseMirror natively creates/splits a top-level node (Enter in a
+  paragraph, a new list, a pasted table) → the observer sees a new, id-less node → emits
+  `create-block` (id minted
   on first sync). **No keymap** — the op is *derived* from the native structure change, not
   driven by an intercepted key.
 - **A plugin / Sieve Action / actor** → calls `create-block` directly with `(kind, content,
@@ -163,7 +168,7 @@ paragraph), each `<!--s:ID-->…<!--/s:ID-->`.
 
 **Reserved for `nested-prose`:** when that kind lands, the **open** tag of the pair records
 the kind (e.g. `<!--s:ID kind=nested-prose-->`, close stays `<!--/s:ID-->`) so a tree
-round-trips back as `block+` instead of collapsing to a flat textblock on reopen.
+round-trips back as a single `block+` tree instead of fragmenting into per-node blocks on reopen.
 
 ## Gutter / lineage
 
@@ -174,19 +179,20 @@ note — the legacy depth-0 `blockRef` *mechanism* may change, but word-granular
 
 ## Schema changes (for the plan to bite-size)
 
-- **Typed prose block = a textblock.** Change `prose-renderer.js` from `content:'block+'`
-  to a textblock content spec (`'inline*'`, mirroring `code`/`diagram`/`log`'s `text*`),
-  keeping its `contentDOM` + `ignoreMutation` guard (per `project_sieve_nodeview_ignoremutation`).
-  This is the change that makes native Enter **split into a new block** instead of adding an
-  internal paragraph — and it removes the "one DIV holds everything" shape. **Verify the
-  Enter→new-block behavior empirically in the running editor** before locking the exact
-  content spec (textblock vs. relying on bare native `paragraph`/`heading`/`list` nodes).
-- **`doc` content** admits the typed-prose textblock + heading/list native nodes +
-  structured `sieve-*` at top level as siblings. (Today `doc` is `sieveBlock+`; widen it.)
-- **`blockId`**: a global attribute on the top-level node types.
-- **No keymap extension.** (Remove the D.4 split/merge keymap from scope entirely.)
+- **A prose block = any single top-level native TipTap node.** Retire the custom
+  `sieve-prose` `content:'block+'` container (today's "one DIV swallows the whole run"). The
+  blocks are TipTap's own native nodes (`paragraph`, `heading`, `bulletList`/`orderedList`/
+  `taskList`, `table`, `blockquote`, …); we don't wrap or restrict them.
+- **`blockId`**: a global attribute added to top-level node types via `addGlobalAttributes`.
+- **`doc` content** admits all those native nodes + structured `sieve-*` at top level as
+  siblings. (Today `doc` is `sieveBlock+`; widen it.)
+- **Per-node markdown serialization**: each top-level node → its markdown, wrapped in the
+  paired `<!--s:ID-->…<!--/s:ID-->` delimiters (generalize what `prose-renderer.js`'s
+  `markdownSerialize` does today from the one container to every top-level node).
+- **No keymap.** (Remove the D.4 split/merge keymap from scope entirely. Native per-type key
+  behavior stands.)
 - **Retire** `block-render.js`'s "one prose container wraps the whole prose run" behavior —
-  render each top-level block into its own node on load.
+  render each top-level node as its own block on load.
 
 ## Hydration (legacy / marker-less docs)
 
@@ -216,6 +222,9 @@ markers define them.
   `delete-block`; native line-delete → one `delete-block`; typing → `update-block`; minting
   is idempotent + convergent (runaway guard + a no-loop stability assertion); **assert
   `onUpdate` performs no doc mutation** when there is no user edit.
+- **vitest, document-feature coverage:** a bullet list, ordered list, task list, table, and
+  blockquote each load as **one** prose block and round-trip through the paired delimiters
+  (proving "any top-level node = one prose block", not just paragraphs).
 - **vitest, `computeBlockSync`:** split → one `create`; edit → one `update`; merge → one
   `delete`; the empty trailing surface emits nothing.
 - **vitest, serialization round-trip:** each block ↔ its paired `<!--s:ID-->…<!--/s:ID-->`
