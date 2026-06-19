@@ -30,9 +30,8 @@ type ShadowDocument struct {
 	// serializes it (blocks 1..N). It replaces the old "markdown is the model"
 	// pair (Markdown + Blocks overlaid via InjectBlocks).
 	Doc      BlockDoc
-	Markdown string                 // last full markdown (markdown mode + raw-markdown consumers)
-	Blocks   map[string]*SieveBlock // DERIVED view over Doc (temporary bridge); Attrs aliases Doc's map
-	Mode     string                 // "wysiwyg" (default) or "markdown"
+	Markdown string // last full markdown (markdown mode + raw-markdown consumers)
+	Mode     string // "wysiwyg" (default) or "markdown"
 	debounce time.Duration
 	closed   bool // set by stopDebounce; prevents re-arming after Close
 	mu       sync.Mutex
@@ -74,17 +73,13 @@ func newShadow(uuid, body string, debounce time.Duration, onFlush func()) *Shado
 		debounce: debounce,
 		onFlush:  onFlush,
 	}
-	s.syncBlocksView()
 	return s
 }
 
 // getBlock resolves a block by id from the authoritative block tree, regardless
-// of kind — the single accessor callers should use instead of poking the derived
-// Blocks map (which is structured-only and slated for removal). It is the first
-// brick of the ShadowDoc → uniform-block-model refactor: "everything is a block",
-// so lookup never discriminates on kind; only context/serialisation does. Falls
-// back to the structured Blocks map so paths that only populate it (and tests)
-// keep resolving. Returns the block and true, or nil/false.
+// of kind. It is the SOLE accessor: "everything is a block", so lookup never
+// discriminates on kind; only context/serialisation does. Returns the block and
+// true, or nil/false.
 func (s ShadowDocument) getBlock(id string) (*DocBlock, bool) {
 	if id == "" {
 		return nil, false
@@ -92,43 +87,16 @@ func (s ShadowDocument) getBlock(id string) (*DocBlock, bool) {
 	if b := findBlockIn(s.Doc.Blocks, id); b != nil {
 		return b, true
 	}
-	if sb, ok := s.Blocks[id]; ok && sb != nil {
-		return &DocBlock{ID: sb.ID, Kind: sb.Kind, Attrs: sb.Attrs}, true
-	}
 	return nil, false
 }
 
-// syncBlocksView rebuilds the derived Blocks map from the authoritative Doc.
-// Each SieveBlock.Attrs ALIASES the DocBlock.Attrs map (same reference), so the
-// existing call sites that mutate attrs in place (AI jobs, lifecycle) propagate
-// straight back into Doc. Prose blocks are excluded — the Blocks map has always
-// held only fenced (structured) blocks. Temporary bridge (caller holds s.mu).
-func (s *ShadowDocument) syncBlocksView() {
-	s.Blocks = make(map[string]*SieveBlock)
-	var walk func(blocks []DocBlock)
-	walk = func(blocks []DocBlock) {
-		for i := range blocks {
-			b := &blocks[i]
-			if b.Kind != KindProse && b.ID != "" {
-				s.Blocks[b.ID] = &SieveBlock{ID: b.ID, Kind: b.Kind, Attrs: b.Attrs}
-			}
-			walk(b.Children)
-		}
-	}
-	walk(s.Doc.Blocks)
-}
-
-// reparseDoc replaces Doc from the given markdown (WYSIWYG only) and refreshes
-// the derived view. Caller holds s.mu.
+// reparseDoc replaces Doc from the given markdown (WYSIWYG only). Caller holds
+// s.mu. The parser constructs every block via newDocBlock, so id-less prose
+// arriving on the doc-update fallback is minted at construction — it can never
+// reach contentForSave id-less.
 func (s *ShadowDocument) reparseDoc(md string) {
 	if doc, err := ParseBlockDocWithHandles(md); err == nil {
-		// The parser constructs every block via newDocBlock, so id-less prose
-		// arriving on the doc-update fallback is minted at construction — it can
-		// never reach contentForSave id-less. (Granular per-node ids come from the
-		// frontend's create-block ops once minting lands there — D-r.4; this
-		// guarantees the floor regardless.)
 		s.Doc = doc
-		s.syncBlocksView()
 	} else {
 		logger.Warn("editor: reparse block doc failed", "uuid", s.UUID, "err", err)
 	}
@@ -163,7 +131,6 @@ func (s *ShadowDocument) setBlock(block SieveBlock) {
 		}
 		s.Doc.Blocks = append(s.Doc.Blocks, DocBlock{ID: block.ID, Kind: block.Kind, Attrs: merged})
 	}
-	s.syncBlocksView()
 	s.resetDebounce()
 }
 
@@ -178,7 +145,6 @@ func (s *ShadowDocument) replaceBlock(blockID string, block SieveBlock) {
 		return
 	}
 	b.Attrs = block.Attrs
-	s.syncBlocksView()
 	s.resetDebounce()
 }
 
@@ -459,7 +425,6 @@ func (es *EditorService) HandleBlockOp(uuid string, op BlockOp) error {
 	if err := shadow.Doc.ApplyOp(op); err != nil {
 		return err
 	}
-	shadow.syncBlocksView()
 	shadow.resetDebounce()
 	return nil
 }
@@ -891,14 +856,9 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	}
 	markdown := shadow.Markdown
 	mode := shadow.Mode
-	blocksCopy := make(map[string]*SieveBlock, len(shadow.Blocks))
-	for k, v := range shadow.Blocks {
-		blocksCopy[k] = v
-	}
 	// Snapshot the authoritative block tree so the job can resolve ANY block by id
-	// (prose included) via getBlock — prose carries its payload as Content, which
-	// the structured-only Blocks map can't hold. Top-level slice copy under lock;
-	// Content is value-copied (race-free), matching the existing Attrs aliasing.
+	// (prose included) via getBlock. Top-level slice copy under lock; Content is
+	// value-copied (race-free), matching the existing Attrs aliasing.
 	docCopy := BlockDoc{Blocks: append([]DocBlock(nil), shadow.Doc.Blocks...)}
 	shadow.mu.Unlock()
 
@@ -927,7 +887,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	jctx := JobContext{
 		Ctx:    ctx,
 		UUID:   uuid,
-		Shadow: ShadowDocument{UUID: uuid, Markdown: markdown, Mode: mode, Blocks: blocksCopy, Doc: docCopy},
+		Shadow: ShadowDocument{UUID: uuid, Markdown: markdown, Mode: mode, Doc: docCopy},
 		Block:  blkCopy,
 		Notify: notify,
 	}
@@ -999,7 +959,9 @@ func (es *EditorService) PromoteBlock(uuid, blockID string) error {
 	if shadow.Mode == "wysiwyg" {
 		shadow.reparseDoc(newMarkdown)
 	} else {
-		delete(shadow.Blocks, blockID)
+		// Markdown mode serializes shadow.Markdown verbatim, but keep the tree
+		// honest: drop the promoted block so a later WYSIWYG flush can't resurrect it.
+		removeBlock(&shadow.Doc.Blocks, blockID)
 	}
 	shadow.resetDebounce()
 	shadow.mu.Unlock()
