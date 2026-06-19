@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"sync"
+
+	"sieve/sieve/fencedblock"
 )
 
 // ContentEntry is one item from the browser clipboard DataTransfer.
@@ -96,6 +98,36 @@ type InlineSerializer struct{}
 func (InlineSerializer) Serialize(block SieveBlock) (string, error) {
 	return serializeInlineBlock(block)
 }
+
+// FencedDeserializer is the ONE shared deserialization for YAML/fenced flavours —
+// the mirror of FencedSerializer. Kind is the fence tag this flavour answers to
+// (set at construction, alongside the FencedSerializer embed). Accepts claims a
+// fenced region whose tag matches; Deserialize parses the YAML body into one
+// block. An id-less body is hydrated by newSieveBlock (mint-on-parse, exactly as
+// prose mints) — serialized docs always carry an id, so round-trips are stable.
+type FencedDeserializer struct{ Kind string }
+
+func (d FencedDeserializer) Accepts(region Region) bool {
+	return region.Kind != "" && region.Kind == d.Kind
+}
+
+func (d FencedDeserializer) Deserialize(region Region) ([]SieveBlock, error) {
+	attrs, err := fencedblock.DeserializeYaml(region.Body)
+	if err != nil {
+		return nil, err
+	}
+	id, _ := attrs["id"].(string)
+	return []SieveBlock{newSieveBlock(d.Kind, id, "", attrs)}, nil
+}
+
+// InlineDeserializer is embedded by inline flavours. Inline things are NOT Sieve
+// blocks (project_inline_not_a_block): they are never recognised from disk during
+// document parse, so Accepts is always false and Deserialize is a no-op. The pair
+// exists only to satisfy the BlockProcessor interface uniformly.
+type InlineDeserializer struct{}
+
+func (InlineDeserializer) Accepts(Region) bool                      { return false }
+func (InlineDeserializer) Deserialize(Region) ([]SieveBlock, error) { return nil, nil }
 
 type BlockServices struct {
 	AI          *AIService

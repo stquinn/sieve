@@ -35,6 +35,20 @@ func SerializeYaml[T any](v T) (string, error) {
 	return strings.TrimRight(buf.String(), "\n"), nil
 }
 
+// DeserializeYaml is the inverse of SerializeYaml: it parses a fenced block's
+// YAML body back into an attribute bag. Kept here so the fenced SerDes lives in
+// one package.
+func DeserializeYaml(body string) (map[string]interface{}, error) {
+	var attrs map[string]interface{}
+	if err := yaml.Unmarshal([]byte(body), &attrs); err != nil {
+		return nil, err
+	}
+	if attrs == nil {
+		attrs = map[string]interface{}{}
+	}
+	return attrs, nil
+}
+
 // forceLiteralStyle walks a yaml.Node tree and sets literal block style on
 // every multiline string scalar. yaml.v3 defaults to double-quoted style for
 // strings that begin with backticks or contain other YAML-special sequences;
