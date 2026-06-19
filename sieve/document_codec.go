@@ -152,6 +152,15 @@ func globalRegistry() ProcessorRegistry { return registryAdapter{} }
 // Only when BOTH hold do we reconstruct the block; otherwise we return (_, false)
 // and the caller falls through to the existing pending→prose coalesce path. That
 // keeps stray language fences (```python with no YAML id) safely in prose.
+//
+// Tradeoff (accepted): this gate is KIND-BLIND on purpose — it cannot tell a
+// processor-less Sieve kind (column-row) from a language fence whose body happens
+// to be a YAML map starting with `id: <string>`, so that pathological hand-written
+// fence would also be claimed as structured. The only way to disambiguate is a
+// hardcoded allow-list of known kinds, which would put kind-awareness back into the
+// deliberately kind-blind codec — a worse cost than this contrived edge case (which
+// still round-trips byte-stable). When Stage E gives container kinds a real
+// processor, they go through Accepts and this fallback narrows to true unknowns.
 func unclaimedFenceBlock(region Region) (SieveBlock, bool) {
 	if region.Kind == "" {
 		return SieveBlock{}, false

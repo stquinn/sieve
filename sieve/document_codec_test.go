@@ -1,6 +1,9 @@
 package sieve
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // fakeRegistry lets us exercise the codec dispatch with a controlled processor set.
 type fakeRegistry struct {
@@ -230,23 +233,9 @@ func TestDocumentCodec_PlainLanguageFenceStaysProse(t *testing.T) {
 	for _, b := range blocks {
 		combined += b.Content()
 	}
-	if !containsSubstring(combined, "print(1)") {
+	if !strings.Contains(combined, "print(1)") {
 		t.Errorf("python fence body not found in prose content: %q", combined)
 	}
-}
-
-// containsSubstring is a tiny helper to avoid importing strings in _test code.
-func containsSubstring(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(s) > 0 && searchStr(s, sub))
-}
-
-func searchStr(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }
 
 // TestDocumentCodec_ProcessorlessFenceRoundTrip proves true round-trip symmetry:
