@@ -21,7 +21,7 @@ func TestHandles_Bijection(t *testing.T) {
 	if len(doc.Blocks) != 4 {
 		t.Fatalf("want 4 blocks, got %d: %+v", len(doc.Blocks), doc.Blocks)
 	}
-	if doc.Blocks[0].ID != "pr-aaaa" || doc.Blocks[0].Content != "First paragraph." {
+	if doc.Blocks[0].ID != "pr-aaaa" || doc.Blocks[0].Content() != "First paragraph." {
 		t.Fatalf("block 0: %+v", doc.Blocks[0])
 	}
 	if doc.Blocks[1].ID != "pr-bbbb" {
@@ -30,7 +30,7 @@ func TestHandles_Bijection(t *testing.T) {
 	if doc.Blocks[2].Kind != "code" || doc.Blocks[2].ID != "co-1" {
 		t.Fatalf("block 2: %+v", doc.Blocks[2])
 	}
-	if doc.Blocks[3].ID != "pr-cccc" || doc.Blocks[3].Content != "Tail." {
+	if doc.Blocks[3].ID != "pr-cccc" || doc.Blocks[3].Content() != "Tail." {
 		t.Fatalf("block 3: %+v", doc.Blocks[3])
 	}
 
@@ -48,7 +48,7 @@ func TestHandles_MergedHandleSetPersists(t *testing.T) {
 	// spec §7) must persist every handle to disk so refs survive reopen. In the
 	// paired-delimiter format the whole handle-set rides in the open marker.
 	doc := BlockDoc{Blocks: []DocBlock{
-		{ID: "pr-aaaa", Kind: KindProse, Content: "Merged block.", Aliases: []string{"pr-bbbb", "pr-cccc"}},
+		{ID: "pr-aaaa", Kind: KindProse, Attrs: map[string]interface{}{"content": "Merged block."}, Aliases: []string{"pr-bbbb", "pr-cccc"}},
 	}}
 	md, err := SerializeBlockDocWithHandles(doc)
 	if err != nil {
@@ -80,7 +80,7 @@ func TestHandles_IsolatedEditKeepsHandle(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	// Edit the first block's prose content in isolation.
-	doc.Blocks[0].Content = "Edited text."
+	doc.Blocks[0].setContent("Edited text.")
 
 	out, err := SerializeBlockDocWithHandles(doc)
 	if err != nil {

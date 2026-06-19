@@ -14,7 +14,7 @@ func TestDeriveMarkdown_WysiwygReflectsLiveTree(t *testing.T) {
 		UUID: "u",
 		Mode: "wysiwyg",
 		Doc: BlockDoc{Blocks: []DocBlock{
-			{ID: "pr-1", Kind: KindProse, Content: "Original prose."},
+			{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Original prose."}},
 		}},
 	}
 

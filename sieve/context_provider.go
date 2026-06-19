@@ -75,7 +75,7 @@ func BuildContextForID(id string, doc ShadowDocument, seen map[string]bool) stri
 	// its registered ContextProvider.
 	if b, ok := doc.getBlock(id); ok {
 		if b.Kind == KindProse {
-			return b.Content
+			return b.Content()
 		}
 		cp := GetContextProvider(b.Kind)
 		if cp == nil {

@@ -8,7 +8,7 @@ import "testing"
 
 func TestPairedDelimiter_SerializeProse(t *testing.T) {
 	doc := BlockDoc{Blocks: []DocBlock{
-		{ID: "pr-1", Kind: KindProse, Content: "Hello."},
+		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Hello."}},
 	}}
 	got, err := SerializeBlockDocWithHandles(doc)
 	if err != nil {
@@ -30,7 +30,7 @@ func TestPairedDelimiter_RoundTripProse(t *testing.T) {
 		t.Fatalf("want 1 block, got %d: %+v", len(doc.Blocks), doc.Blocks)
 	}
 	b := doc.Blocks[0]
-	if b.ID != "pr-1" || b.Kind != KindProse || b.Content != "Hello." {
+	if b.ID != "pr-1" || b.Kind != KindProse || b.Content() != "Hello." {
 		t.Fatalf("block: %+v", b)
 	}
 	out, err := SerializeBlockDocWithHandles(doc)
@@ -46,7 +46,7 @@ func TestPairedDelimiter_RoundTripProse(t *testing.T) {
 // space-separated handle list; the close marker carries the primary id only.
 func TestPairedDelimiter_AliasesRoundTrip(t *testing.T) {
 	doc := BlockDoc{Blocks: []DocBlock{
-		{ID: "pr-1", Kind: KindProse, Content: "Merged.", Aliases: []string{"pr-0", "pr-9"}},
+		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Merged."}, Aliases: []string{"pr-0", "pr-9"}},
 	}}
 	md, err := SerializeBlockDocWithHandles(doc)
 	if err != nil {
@@ -78,8 +78,8 @@ func TestPairedDelimiter_MultiParagraphIsOneBlock(t *testing.T) {
 	if len(doc.Blocks) != 1 {
 		t.Fatalf("want 1 block, got %d: %+v", len(doc.Blocks), doc.Blocks)
 	}
-	if doc.Blocks[0].Content != "A\n\nB" {
-		t.Fatalf("content not verbatim: %q", doc.Blocks[0].Content)
+	if doc.Blocks[0].Content() != "A\n\nB" {
+		t.Fatalf("content not verbatim: %q", doc.Blocks[0].Content())
 	}
 }
 
@@ -97,7 +97,7 @@ func TestUndelimited_IsSingleBlock(t *testing.T) {
 	// The run is one block whose content is verbatim. It is minted an id at
 	// construction (the invariant: a block never exists id-less) — hydration of a
 	// marker-less doc on parse.
-	if doc.Blocks[0].ID == "" || doc.Blocks[0].Content != md {
+	if doc.Blocks[0].ID == "" || doc.Blocks[0].Content() != md {
 		t.Fatalf("undelimited block should be one minted block: %+v", doc.Blocks[0])
 	}
 }
@@ -115,7 +115,7 @@ func TestUnbalancedOpen_IsLiteralText(t *testing.T) {
 	}
 	// The marker line stays verbatim in content; the block is minted an id at
 	// construction (the invariant) since it carries no usable handle of its own.
-	if doc.Blocks[0].ID == "" || doc.Blocks[0].Content != md {
+	if doc.Blocks[0].ID == "" || doc.Blocks[0].Content() != md {
 		t.Fatalf("unbalanced open should be literal (one minted block): %+v", doc.Blocks[0])
 	}
 }

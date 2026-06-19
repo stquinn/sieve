@@ -36,7 +36,7 @@ func BlockDocToFrontendBlocks(doc BlockDoc) ([]FrontendBlock, error) {
 	for _, b := range doc.Blocks {
 		fb := FrontendBlock{ID: b.ID, Kind: b.Kind, Aliases: b.Aliases}
 		if b.Kind == KindProse {
-			fb.Content = b.Content
+			fb.Content = b.Content()
 		} else {
 			// Properties-native: the client renders structured NodeViews from Attrs.
 			fb.Attrs = b.Attrs

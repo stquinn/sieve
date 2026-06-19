@@ -24,12 +24,17 @@ func (d *BlockDoc) ApplyOp(op BlockOp) error {
 		if b == nil {
 			return fmt.Errorf("update-block: block %q not found", op.BlockID)
 		}
-		b.Content = op.Content
 		if op.Attrs != nil {
 			b.Attrs = op.Attrs
 		}
 		if op.Aliases != nil {
 			b.Aliases = op.Aliases
+		}
+		// Prose carries its body in the content attr (set last so it survives an
+		// attrs replacement above). Structured blocks keep their payload in Attrs
+		// and never get a spurious content key.
+		if b.Kind == KindProse {
+			b.setContent(op.Content)
 		}
 		return nil
 

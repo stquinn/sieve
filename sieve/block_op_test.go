@@ -164,8 +164,8 @@ func TestBlockDoc_ApplyOp_CreateBlockGeneratesIdWhenMissing(t *testing.T) {
 	if doc.Blocks[0].ID == "" {
 		t.Fatalf("created block has no id — the constructor must generate one")
 	}
-	if doc.Blocks[0].Content != "fresh" {
-		t.Fatalf("content = %q, want %q", doc.Blocks[0].Content, "fresh")
+	if doc.Blocks[0].Content() != "fresh" {
+		t.Fatalf("content = %q, want %q", doc.Blocks[0].Content(), "fresh")
 	}
 }
 
@@ -181,13 +181,13 @@ func TestBlockDoc_ApplyOp_CreateBlockKeepsGivenId(t *testing.T) {
 
 func TestBlockDoc_ApplyOp_UpdateProseContent(t *testing.T) {
 	doc := BlockDoc{Blocks: []DocBlock{
-		{ID: "pr-1", Kind: KindProse, Content: "old"},
+		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "old"}},
 	}}
 	if err := doc.ApplyOp(BlockOp{Type: "update-block", BlockID: "pr-1", Content: "new"}); err != nil {
 		t.Fatalf("ApplyOp: %v", err)
 	}
-	if doc.Blocks[0].Content != "new" {
-		t.Fatalf("content = %q, want %q", doc.Blocks[0].Content, "new")
+	if doc.Blocks[0].Content() != "new" {
+		t.Fatalf("content = %q, want %q", doc.Blocks[0].Content(), "new")
 	}
 }
 
@@ -214,7 +214,7 @@ func TestBlockDoc_ApplyOp_UpdateAttrsAndAliases(t *testing.T) {
 }
 
 func TestBlockDoc_ApplyOp_UnknownBlockErrors(t *testing.T) {
-	doc := BlockDoc{Blocks: []DocBlock{{ID: "pr-1", Kind: KindProse, Content: "x"}}}
+	doc := BlockDoc{Blocks: []DocBlock{{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "x"}}}}
 	if err := doc.ApplyOp(BlockOp{Type: "update-block", BlockID: "nope", Content: "y"}); err == nil {
 		t.Fatal("expected error updating a missing block, got nil")
 	}
@@ -222,9 +222,9 @@ func TestBlockDoc_ApplyOp_UnknownBlockErrors(t *testing.T) {
 
 func TestBlockDoc_ApplyOp_DeleteTopLevel(t *testing.T) {
 	doc := BlockDoc{Blocks: []DocBlock{
-		{ID: "pr-1", Kind: KindProse, Content: "a"},
-		{ID: "pr-2", Kind: KindProse, Content: "b"},
-		{ID: "pr-3", Kind: KindProse, Content: "c"},
+		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "a"}},
+		{ID: "pr-2", Kind: KindProse, Attrs: map[string]interface{}{"content": "b"}},
+		{ID: "pr-3", Kind: KindProse, Attrs: map[string]interface{}{"content": "c"}},
 	}}
 	if err := doc.ApplyOp(BlockOp{Type: "delete-block", BlockID: "pr-2"}); err != nil {
 		t.Fatalf("ApplyOp: %v", err)
@@ -238,7 +238,7 @@ func TestBlockDoc_ApplyOp_DeleteNested(t *testing.T) {
 	doc := BlockDoc{Blocks: []DocBlock{
 		{ID: "cr-1", Kind: KindColumnRow, Children: []DocBlock{
 			{ID: "col-1", Kind: KindColumn, Children: []DocBlock{
-				{ID: "pr-1", Kind: KindProse, Content: "inside"},
+				{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "inside"}},
 			}},
 		}},
 	}}
@@ -252,9 +252,9 @@ func TestBlockDoc_ApplyOp_DeleteNested(t *testing.T) {
 
 func TestBlockDoc_ApplyOp_MoveReordersWithinParent(t *testing.T) {
 	doc := BlockDoc{Blocks: []DocBlock{
-		{ID: "pr-1", Kind: KindProse, Content: "a"},
-		{ID: "pr-2", Kind: KindProse, Content: "b"},
-		{ID: "pr-3", Kind: KindProse, Content: "c"},
+		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "a"}},
+		{ID: "pr-2", Kind: KindProse, Attrs: map[string]interface{}{"content": "b"}},
+		{ID: "pr-3", Kind: KindProse, Attrs: map[string]interface{}{"content": "c"}},
 	}}
 	// Move pr-3 to the front (index 0).
 	if err := doc.ApplyOp(BlockOp{Type: "move", BlockID: "pr-3", Index: 0}); err != nil {
@@ -269,8 +269,8 @@ func TestBlockDoc_ApplyOp_MoveReordersWithinParent(t *testing.T) {
 
 func TestBlockDoc_ApplyOp_CreateTopLevelAtIndex(t *testing.T) {
 	doc := BlockDoc{Blocks: []DocBlock{
-		{ID: "pr-1", Kind: KindProse, Content: "a"},
-		{ID: "pr-2", Kind: KindProse, Content: "b"},
+		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "a"}},
+		{ID: "pr-2", Kind: KindProse, Attrs: map[string]interface{}{"content": "b"}},
 	}}
 	op := BlockOp{Type: "create-block", BlockID: "pr-mid", Kind: KindProse, Content: "mid", Index: 1}
 	if err := doc.ApplyOp(op); err != nil {
@@ -279,15 +279,15 @@ func TestBlockDoc_ApplyOp_CreateTopLevelAtIndex(t *testing.T) {
 	if got, want := ids(doc.Blocks), []string{"pr-1", "pr-mid", "pr-2"}; !equalStrs(got, want) {
 		t.Fatalf("order = %v, want %v", got, want)
 	}
-	if doc.Blocks[1].Content != "mid" {
-		t.Fatalf("new block content = %q", doc.Blocks[1].Content)
+	if doc.Blocks[1].Content() != "mid" {
+		t.Fatalf("new block content = %q", doc.Blocks[1].Content())
 	}
 }
 
 func TestBlockDoc_ApplyOp_CreateStructuredIntoParent(t *testing.T) {
 	doc := BlockDoc{Blocks: []DocBlock{
 		{ID: "col-1", Kind: KindColumn, Children: []DocBlock{
-			{ID: "pr-1", Kind: KindProse, Content: "a"},
+			{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "a"}},
 		}},
 	}}
 	op := BlockOp{

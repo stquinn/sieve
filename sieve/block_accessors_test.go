@@ -29,8 +29,11 @@ func TestDocBlock_TypedAccessors(t *testing.T) {
 	if got := b.StringAttr("language"); got != "go" {
 		t.Errorf("StringAttr(language) = %q, want %q", got, "go")
 	}
-	// Content() arrives in Task 4, when the colliding Content string field is
-	// removed and prose moves to Attrs["content"].
+
+	pr := DocBlock{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "verbatim prose body"}}
+	if got := pr.Content(); got != "verbatim prose body" {
+		t.Errorf("Content() = %q, want %q", got, "verbatim prose body")
+	}
 }
 
 // Missing/nil/wrong-type attrs return "" rather than panicking — the whole point

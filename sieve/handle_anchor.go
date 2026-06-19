@@ -113,10 +113,10 @@ func SerializeBlockDocWithHandles(doc BlockDoc) (string, error) {
 // the handle-less spine and minting-on-Open stay decoupled.
 func serializeProseBlock(b DocBlock) string {
 	if b.ID == "" {
-		return b.Content
+		return b.Content()
 	}
 	handles := append([]string{b.ID}, b.Aliases...)
 	open := "<!--s:" + strings.Join(handles, " ") + "-->"
 	closeTag := "<!--/s:" + b.ID + "-->"
-	return open + "\n" + b.Content + "\n" + closeTag
+	return open + "\n" + b.Content() + "\n" + closeTag
 }

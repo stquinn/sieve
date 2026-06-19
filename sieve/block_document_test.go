@@ -11,7 +11,7 @@ func TestNewDocBlock_MintsWhenNoID(t *testing.T) {
 	if b.ID == "" {
 		t.Fatalf("expected a minted id, got empty")
 	}
-	if b.Kind != KindProse || b.Content != "hello" {
+	if b.Kind != KindProse || b.Content() != "hello" {
 		t.Fatalf("unexpected block: %+v", b)
 	}
 }
@@ -27,7 +27,7 @@ func TestNewDocBlock_KeepsGivenID(t *testing.T) {
 // block (the runtime backstop behind the factory). A block built by a rogue path
 // that bypassed the factory can never reach disk silently.
 func TestSerializeBlockDocWithHandles_RefusesIdlessProse(t *testing.T) {
-	doc := BlockDoc{Blocks: []DocBlock{{Kind: KindProse, Content: "x"}}} // bypasses the factory
+	doc := BlockDoc{Blocks: []DocBlock{{Kind: KindProse, Attrs: map[string]interface{}{"content": "x"}}}} // bypasses the factory
 	if _, err := SerializeBlockDocWithHandles(doc); err == nil {
 		t.Fatalf("expected an error refusing to persist an id-less prose block")
 	}
@@ -35,7 +35,7 @@ func TestSerializeBlockDocWithHandles_RefusesIdlessProse(t *testing.T) {
 
 func TestSerializeBlockDoc_ProseAndFence(t *testing.T) {
 	doc := BlockDoc{Blocks: []DocBlock{
-		{Kind: KindProse, Content: "Hello."},
+		{Kind: KindProse, Attrs: map[string]interface{}{"content": "Hello."}},
 		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{
 			"id":     "co-1",
 			"source": "x = 1",
@@ -63,13 +63,13 @@ func TestParseBlockDoc_ProseAndFence(t *testing.T) {
 	if len(doc.Blocks) != 3 {
 		t.Fatalf("want 3 blocks, got %d: %+v", len(doc.Blocks), doc.Blocks)
 	}
-	if doc.Blocks[0].Kind != KindProse || doc.Blocks[0].Content != "Hello." {
+	if doc.Blocks[0].Kind != KindProse || doc.Blocks[0].Content() != "Hello." {
 		t.Fatalf("block 0: %+v", doc.Blocks[0])
 	}
 	if doc.Blocks[1].Kind != "code" || doc.Blocks[1].ID != "co-1" {
 		t.Fatalf("block 1: %+v", doc.Blocks[1])
 	}
-	if doc.Blocks[2].Kind != KindProse || doc.Blocks[2].Content != "World." {
+	if doc.Blocks[2].Kind != KindProse || doc.Blocks[2].Content() != "World." {
 		t.Fatalf("block 2: %+v", doc.Blocks[2])
 	}
 }
@@ -101,8 +101,8 @@ func TestParseBlockDoc_UndelimitedRunsBetweenFences(t *testing.T) {
 		if doc.Blocks[i].Kind != w.kind {
 			t.Fatalf("block %d kind: want %q got %q", i, w.kind, doc.Blocks[i].Kind)
 		}
-		if w.kind == KindProse && doc.Blocks[i].Content != w.content {
-			t.Fatalf("block %d content: want %q got %q", i, w.content, doc.Blocks[i].Content)
+		if w.kind == KindProse && doc.Blocks[i].Content() != w.content {
+			t.Fatalf("block %d content: want %q got %q", i, w.content, doc.Blocks[i].Content())
 		}
 	}
 }
@@ -116,11 +116,11 @@ func TestBlockDoc_RoundTripStable(t *testing.T) {
 	// Each prose block is a single paragraph so per-paragraph segmentation
 	// (Stage B.1) preserves the block count through the round-trip.
 	doc := BlockDoc{Blocks: []DocBlock{
-		{Kind: KindProse, Content: "# Title"},
+		{Kind: KindProse, Attrs: map[string]interface{}{"content": "# Title"}},
 		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{"id": "co-1", "source": "x = 1"}},
-		{Kind: KindProse, Content: "Between."},
+		{Kind: KindProse, Attrs: map[string]interface{}{"content": "Between."}},
 		{ID: "cr-1", Kind: KindColumnRow, Attrs: map[string]interface{}{"id": "cr-1", "widths": []interface{}{0.5, 0.5}}},
-		{Kind: KindProse, Content: "Tail."},
+		{Kind: KindProse, Attrs: map[string]interface{}{"content": "Tail."}},
 	}}
 
 	md1, err := SerializeBlockDoc(doc)

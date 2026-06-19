@@ -8,21 +8,15 @@ import (
 	"github.com/yuin/goldmark/text"
 )
 
-// DocBlock is a node in the unified, ordered block tree (spec §2). It supersedes
-// the flat map[id]*SieveBlock model for serialization. A Sieve Block is a
-// kind-homogeneous LEAF — one content kind per block. Which payload field is
-// meaningful depends on Kind:
-//   - prose kind       → Content holds verbatim markdown; Attrs/Children nil
-//   - structured kinds → Attrs holds the fenced YAML payload; Content ""; Children nil
-//   - container kinds  → Children holds the subtree; Attrs may hold layout (e.g. widths)
-//
-// ID is the block's primary handle, minted on Open. A prose block's content is
-// arbitrary markdown (multiple paragraphs); whitespace inside it is content, not
-// a structural boundary.
+// DocBlock is a node in the unified, ordered block tree (spec §2). EVERY kind —
+// prose included — carries its payload in the single Attrs bag, addressed by id;
+// kind is consulted only at render/serialise time. There is no per-kind payload
+// field: prose's body is Attrs["content"] (read via Content()), exactly as code
+// is Attrs["source"], web-clip Attrs["content"], ai Attrs["response"]. Containers
+// hold their subtree in Children (Stage E).
 type DocBlock struct {
 	ID       string
 	Kind     string
-	Content  string
 	Attrs    map[string]interface{}
 	Children []DocBlock
 	// Aliases are additional handles this block answers to, accumulated when
@@ -44,7 +38,25 @@ func newDocBlock(kind, id, content string, attrs map[string]interface{}) DocBloc
 	if id == "" {
 		id = GenerateBlockIDFor(kind)
 	}
-	return DocBlock{ID: id, Kind: kind, Content: content, Attrs: attrs}
+	b := DocBlock{ID: id, Kind: kind, Attrs: attrs}
+	if content != "" {
+		b.setContent(content)
+	}
+	return b
+}
+
+// Content is the block's authored text payload (Attrs["content"]) — a prose
+// block's verbatim markdown, a web-clip's clipped text. "" for kinds that carry
+// no content attr. The typed read that replaces the old DocBlock.Content field.
+func (b DocBlock) Content() string { return b.StringAttr("content") }
+
+// setContent writes the authored text payload into the Attrs bag, lazily
+// allocating it. The single write-side counterpart to Content().
+func (b *DocBlock) setContent(content string) {
+	if b.Attrs == nil {
+		b.Attrs = map[string]interface{}{}
+	}
+	b.Attrs["content"] = content
 }
 
 // StringAttr reads a string-valued attr, returning "" when the key is absent,
@@ -98,7 +110,7 @@ func SerializeBlockDoc(doc BlockDoc) (string, error) {
 	parts := make([]string, 0, len(doc.Blocks))
 	for _, b := range doc.Blocks {
 		if b.Kind == KindProse {
-			parts = append(parts, b.Content)
+			parts = append(parts, b.Content())
 			continue
 		}
 		s, err := serializeFencedBlock(b)

@@ -4,9 +4,9 @@ import "testing"
 
 func TestBlockDocToFrontendBlocks_ProseAndStructured(t *testing.T) {
 	doc := BlockDoc{Blocks: []DocBlock{
-		{ID: "pr-1", Kind: KindProse, Content: "Hello **world**.", Aliases: []string{"pr-0"}},
+		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Hello **world**."}, Aliases: []string{"pr-0"}},
 		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{"id": "co-1", "source": "x = 1"}},
-		{Kind: KindProse, Content: "Tail."},
+		{Kind: KindProse, Attrs: map[string]interface{}{"content": "Tail."}},
 	}}
 
 	fbs, err := BlockDocToFrontendBlocks(doc)
@@ -52,7 +52,7 @@ func TestBlockDocToFrontendBlocks_ProseAndStructured(t *testing.T) {
 func TestBlockDocToFrontendBlocks_StructuredCarriesAttrs(t *testing.T) {
 	doc := BlockDoc{Blocks: []DocBlock{
 		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{"id": "co-1", "source": "x = 1"}},
-		{ID: "pr-1", Kind: KindProse, Content: "Prose."},
+		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Prose."}},
 	}}
 	fbs, err := BlockDocToFrontendBlocks(doc)
 	if err != nil {
