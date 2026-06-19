@@ -91,12 +91,9 @@ func (b DocBlock) answersTo() []string {
 	return append(out, b.Aliases...)
 }
 
-// BlockDoc is an ordered list of top-level blocks — a tree wherever containers
-// nest Children. It is the in-memory form the serialization spine round-trips
-// against markdown.
-type BlockDoc struct {
-	Blocks []DocBlock
-}
+// The document is an ordered []DocBlock — the in-memory form the serialization
+// spine round-trips against markdown. There is no wrapper type: ShadowDocument
+// holds the slice directly (no nested "document inside a document").
 
 // Reserved kinds that are not registered BlockProcessors.
 const (
@@ -109,9 +106,9 @@ const (
 // delimiters — a handle-less convenience over the spine (the delimited writer is
 // SerializeBlockDocWithHandles). Prose blocks emit their verbatim Content;
 // structured blocks emit a fenced YAML block. Blocks are joined by a blank line.
-func SerializeBlockDoc(doc BlockDoc) (string, error) {
-	parts := make([]string, 0, len(doc.Blocks))
-	for _, b := range doc.Blocks {
+func SerializeBlockDoc(blocks []DocBlock) (string, error) {
+	parts := make([]string, 0, len(blocks))
+	for _, b := range blocks {
 		if b.Kind == KindProse {
 			parts = append(parts, b.Content())
 			continue
@@ -130,8 +127,8 @@ func SerializeBlockDoc(doc BlockDoc) (string, error) {
 // aware loader is ParseBlockDocWithHandles). Top-level structured fences become
 // structured blocks; paired `<!--s:ID-->` regions and undelimited runs become
 // prose blocks. Blank lines never split.
-func ParseBlockDoc(markdown string) (BlockDoc, error) {
-	return BlockDoc{Blocks: scanBlocks(markdown)}, nil
+func ParseBlockDoc(markdown string) ([]DocBlock, error) {
+	return scanBlocks(markdown), nil
 }
 
 // scanBlocks is the D.4 spine scanner. Structure derives ONLY from delimiters:

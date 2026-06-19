@@ -30,9 +30,9 @@ type FrontendBlock struct {
 // to its fence text via the shared serializer. Containers are opaque here — their
 // by-value child expansion is Stage E; for now a column-row serializes as a
 // single structured fence, exactly as ParseBlockDoc round-trips it.
-func BlockDocToFrontendBlocks(doc BlockDoc) ([]FrontendBlock, error) {
-	out := make([]FrontendBlock, 0, len(doc.Blocks))
-	for _, b := range doc.Blocks {
+func BlockDocToFrontendBlocks(blocks []DocBlock) ([]FrontendBlock, error) {
+	out := make([]FrontendBlock, 0, len(blocks))
+	for _, b := range blocks {
 		// Uniform wire shape: every kind carries its payload in Attrs (prose's body
 		// is Attrs["content"], the same bag code keeps "source" in). The client
 		// renderer branches on kind, not on where the payload lives.

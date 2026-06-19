@@ -7,9 +7,9 @@ import "testing"
 // derives ONLY from these delimiters, never from blank lines.
 
 func TestPairedDelimiter_SerializeProse(t *testing.T) {
-	doc := BlockDoc{Blocks: []DocBlock{
+	doc := []DocBlock{
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Hello."}},
-	}}
+	}
 	got, err := SerializeBlockDocWithHandles(doc)
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
@@ -26,10 +26,10 @@ func TestPairedDelimiter_RoundTripProse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(doc.Blocks) != 1 {
-		t.Fatalf("want 1 block, got %d: %+v", len(doc.Blocks), doc.Blocks)
+	if len(doc) != 1 {
+		t.Fatalf("want 1 block, got %d: %+v", len(doc), doc)
 	}
-	b := doc.Blocks[0]
+	b := doc[0]
 	if b.ID != "pr-1" || b.Kind != KindProse || b.Content() != "Hello." {
 		t.Fatalf("block: %+v", b)
 	}
@@ -45,9 +45,9 @@ func TestPairedDelimiter_RoundTripProse(t *testing.T) {
 // Aliases (post-merge handle-set, spec §7) ride in the open marker as a
 // space-separated handle list; the close marker carries the primary id only.
 func TestPairedDelimiter_AliasesRoundTrip(t *testing.T) {
-	doc := BlockDoc{Blocks: []DocBlock{
+	doc := []DocBlock{
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Merged."}, Aliases: []string{"pr-0", "pr-9"}},
-	}}
+	}
 	md, err := SerializeBlockDocWithHandles(doc)
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
@@ -60,7 +60,7 @@ func TestPairedDelimiter_AliasesRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	b := got.Blocks[0]
+	b := got[0]
 	if b.ID != "pr-1" || len(b.Aliases) != 2 || b.Aliases[0] != "pr-0" || b.Aliases[1] != "pr-9" {
 		t.Fatalf("alias not restored: %+v", b)
 	}
@@ -75,11 +75,11 @@ func TestPairedDelimiter_MultiParagraphIsOneBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(doc.Blocks) != 1 {
-		t.Fatalf("want 1 block, got %d: %+v", len(doc.Blocks), doc.Blocks)
+	if len(doc) != 1 {
+		t.Fatalf("want 1 block, got %d: %+v", len(doc), doc)
 	}
-	if doc.Blocks[0].Content() != "A\n\nB" {
-		t.Fatalf("content not verbatim: %q", doc.Blocks[0].Content())
+	if doc[0].Content() != "A\n\nB" {
+		t.Fatalf("content not verbatim: %q", doc[0].Content())
 	}
 }
 
@@ -91,14 +91,14 @@ func TestUndelimited_IsSingleBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(doc.Blocks) != 1 {
-		t.Fatalf("want 1 block (no blank-line split), got %d: %+v", len(doc.Blocks), doc.Blocks)
+	if len(doc) != 1 {
+		t.Fatalf("want 1 block (no blank-line split), got %d: %+v", len(doc), doc)
 	}
 	// The run is one block whose content is verbatim. It is minted an id at
 	// construction (the invariant: a block never exists id-less) — hydration of a
 	// marker-less doc on parse.
-	if doc.Blocks[0].ID == "" || doc.Blocks[0].Content() != md {
-		t.Fatalf("undelimited block should be one minted block: %+v", doc.Blocks[0])
+	if doc[0].ID == "" || doc[0].Content() != md {
+		t.Fatalf("undelimited block should be one minted block: %+v", doc[0])
 	}
 }
 
@@ -110,13 +110,13 @@ func TestUnbalancedOpen_IsLiteralText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(doc.Blocks) != 1 {
-		t.Fatalf("want 1 block, got %d: %+v", len(doc.Blocks), doc.Blocks)
+	if len(doc) != 1 {
+		t.Fatalf("want 1 block, got %d: %+v", len(doc), doc)
 	}
 	// The marker line stays verbatim in content; the block is minted an id at
 	// construction (the invariant) since it carries no usable handle of its own.
-	if doc.Blocks[0].ID == "" || doc.Blocks[0].Content() != md {
-		t.Fatalf("unbalanced open should be literal (one minted block): %+v", doc.Blocks[0])
+	if doc[0].ID == "" || doc[0].Content() != md {
+		t.Fatalf("unbalanced open should be literal (one minted block): %+v", doc[0])
 	}
 }
 
@@ -133,11 +133,11 @@ func TestOpacity_MarkerInsideCodeFenceNotParsed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(doc.Blocks) != 3 {
-		t.Fatalf("want 3 blocks (prose, code, prose), got %d: %+v", len(doc.Blocks), doc.Blocks)
+	if len(doc) != 3 {
+		t.Fatalf("want 3 blocks (prose, code, prose), got %d: %+v", len(doc), doc)
 	}
-	if doc.Blocks[0].ID != "pr-1" || doc.Blocks[1].Kind != "code" || doc.Blocks[1].ID != "co-1" || doc.Blocks[2].ID != "pr-2" {
-		t.Fatalf("structure wrong: %+v", doc.Blocks)
+	if doc[0].ID != "pr-1" || doc[1].Kind != "code" || doc[1].ID != "co-1" || doc[2].ID != "pr-2" {
+		t.Fatalf("structure wrong: %+v", doc)
 	}
 }
 
@@ -153,8 +153,8 @@ func TestPairedDelimiter_BijectionWithFence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(doc.Blocks) != 3 {
-		t.Fatalf("want 3 blocks, got %d: %+v", len(doc.Blocks), doc.Blocks)
+	if len(doc) != 3 {
+		t.Fatalf("want 3 blocks, got %d: %+v", len(doc), doc)
 	}
 	out, err := SerializeBlockDocWithHandles(doc)
 	if err != nil {

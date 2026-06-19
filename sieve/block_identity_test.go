@@ -58,11 +58,11 @@ func TestOpen_MintsHandlelessProseIntoShadow(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	shadow := es.shadows[uuid]
-	if shadow == nil || len(shadow.Doc.Blocks) != 1 {
+	if shadow == nil || len(shadow.Blocks) != 1 {
 		t.Fatalf("unexpected shadow doc: %+v", shadow)
 	}
-	if !strings.HasPrefix(shadow.Doc.Blocks[0].ID, "pr-") {
-		t.Fatalf("Open did not mint a prose handle: %q", shadow.Doc.Blocks[0].ID)
+	if !strings.HasPrefix(shadow.Blocks[0].ID, "pr-") {
+		t.Fatalf("Open did not mint a prose handle: %q", shadow.Blocks[0].ID)
 	}
 }
 
@@ -80,7 +80,7 @@ func TestOpen_PersistedHandleSurvivesReopen(t *testing.T) {
 	if err := es.Open(uuid, nil); err != nil {
 		t.Fatalf("Open 1: %v", err)
 	}
-	first := es.shadows[uuid].Doc.Blocks[0].ID
+	first := es.shadows[uuid].Blocks[0].ID
 	if err := es.Flush(uuid); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestOpen_PersistedHandleSurvivesReopen(t *testing.T) {
 	if err := es.Open(uuid, nil); err != nil {
 		t.Fatalf("Open 2: %v", err)
 	}
-	second := es.shadows[uuid].Doc.Blocks[0].ID
+	second := es.shadows[uuid].Blocks[0].ID
 	if second != first {
 		t.Fatalf("handle not stable across reopen: %q -> %q", first, second)
 	}
@@ -111,7 +111,7 @@ func TestOpen_Idempotent_ReusesShadow(t *testing.T) {
 		t.Fatalf("Open 1: %v", err)
 	}
 	shadow1 := es.shadows[uuid]
-	id1 := shadow1.Doc.Blocks[0].ID
+	id1 := shadow1.Blocks[0].ID
 
 	if err := es.Open(uuid, nil); err != nil {
 		t.Fatalf("Open 2: %v", err)
@@ -120,8 +120,8 @@ func TestOpen_Idempotent_ReusesShadow(t *testing.T) {
 	if shadow2 != shadow1 {
 		t.Fatal("second Open replaced the shadow instead of reusing it")
 	}
-	if shadow2.Doc.Blocks[0].ID != id1 {
-		t.Fatalf("second Open re-minted: %q -> %q", id1, shadow2.Doc.Blocks[0].ID)
+	if shadow2.Blocks[0].ID != id1 {
+		t.Fatalf("second Open re-minted: %q -> %q", id1, shadow2.Blocks[0].ID)
 	}
 }
 

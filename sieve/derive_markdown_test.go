@@ -13,9 +13,9 @@ func TestDeriveMarkdown_WysiwygReflectsLiveTree(t *testing.T) {
 	shadow := &ShadowDocument{
 		UUID: "u",
 		Mode: "wysiwyg",
-		Doc: BlockDoc{Blocks: []DocBlock{
+		Blocks: []DocBlock{
 			{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Original prose."}},
-		}},
+		},
 	}
 
 	// Mutate the tree the way an edit would — no Markdown field to keep in sync.
@@ -23,7 +23,7 @@ func TestDeriveMarkdown_WysiwygReflectsLiveTree(t *testing.T) {
 		"id": "ab-1", "response": "fresh answer",
 	}})
 
-	got := BuildContextForID("doc", ShadowDocument{Mode: "wysiwyg", Doc: shadow.Doc}, map[string]bool{})
+	got := BuildContextForID("doc", ShadowDocument{Mode: "wysiwyg", Blocks: shadow.Blocks}, map[string]bool{})
 	if !strings.Contains(got, "Original prose.") {
 		t.Errorf("doc context lost prose: %q", got)
 	}

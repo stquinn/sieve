@@ -15,12 +15,12 @@ type BlockOp struct {
 	ParentID string                 `json:"parentId,omitempty"`
 }
 
-// ApplyOp mutates the BlockDoc tree in place according to op. It returns an
+// ApplyOp mutates the ordered block slice in place according to op. It returns an
 // error (never silently no-ops) so the wire layer can surface failures.
-func (d *BlockDoc) ApplyOp(op BlockOp) error {
+func ApplyOp(blocks *[]DocBlock, op BlockOp) error {
 	switch op.Type {
 	case "update-block":
-		b := d.findBlock(op.BlockID)
+		b := findBlockIn(*blocks, op.BlockID)
 		if b == nil {
 			return fmt.Errorf("update-block: block %q not found", op.BlockID)
 		}
@@ -47,11 +47,11 @@ func (d *BlockDoc) ApplyOp(op BlockOp) error {
 		}
 		nb := newDocBlock(op.Kind, op.BlockID, op.Content, op.Attrs)
 		nb.Aliases = op.Aliases
-		insertBlockAt(&d.Blocks, op.Index, nb)
+		insertBlockAt(blocks, op.Index, nb)
 		return nil
 
 	case "delete-block":
-		if _, ok := removeBlock(&d.Blocks, op.BlockID); !ok {
+		if _, ok := removeBlock(blocks, op.BlockID); !ok {
 			return fmt.Errorf("delete-block: block %q not found", op.BlockID)
 		}
 		return nil
@@ -60,11 +60,11 @@ func (d *BlockDoc) ApplyOp(op BlockOp) error {
 		if op.ParentID != "" {
 			return fmt.Errorf("move: nesting into parent %q is Stage E (no Children yet)", op.ParentID)
 		}
-		removed, ok := removeBlock(&d.Blocks, op.BlockID)
+		removed, ok := removeBlock(blocks, op.BlockID)
 		if !ok {
 			return fmt.Errorf("move: block %q not found", op.BlockID)
 		}
-		insertBlockAt(&d.Blocks, op.Index, removed)
+		insertBlockAt(blocks, op.Index, removed)
 		return nil
 
 	default:
@@ -99,12 +99,8 @@ func insertBlockAt(blocks *[]DocBlock, index int, b DocBlock) {
 	(*blocks)[index] = b
 }
 
-// findBlock returns a pointer to the block with the given ID anywhere in the
-// tree, or nil. The pointer aliases the live tree so callers can mutate it.
-func (d *BlockDoc) findBlock(id string) *DocBlock {
-	return findBlockIn(d.Blocks, id)
-}
-
+// findBlockIn returns a pointer to the block with the given ID, or nil. The
+// pointer aliases the live slice so callers can mutate it.
 func findBlockIn(blocks []DocBlock, id string) *DocBlock {
 	for i := range blocks {
 		if blocks[i].ID == id {

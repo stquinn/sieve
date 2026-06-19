@@ -37,8 +37,8 @@ var (
 // from delimiters: top-level structured fences (atomic, opaque) and paired
 // `<!--s:ID--> … <!--/s:ID-->` prose blocks. Unbalanced opens are literal text;
 // undelimited runs become a single opaque prose block. Blank lines never split.
-func ParseBlockDocWithHandles(markdown string) (BlockDoc, error) {
-	return BlockDoc{Blocks: scanBlocks(markdown)}, nil
+func ParseBlockDocWithHandles(markdown string) ([]DocBlock, error) {
+	return scanBlocks(markdown), nil
 }
 
 // splitHandles applies the split handle rule (Enter mid-block, spec §7): the
@@ -85,9 +85,9 @@ func mergeHandles(head, tail DocBlock) DocBlock {
 // primary id only. Handle-less prose (not yet minted) emits bare content.
 // Fenced blocks already persist their handle in the YAML `id:` field and stay
 // self-delimiting, so they are unchanged.
-func SerializeBlockDocWithHandles(doc BlockDoc) (string, error) {
-	parts := make([]string, 0, len(doc.Blocks))
-	for _, b := range doc.Blocks {
+func SerializeBlockDocWithHandles(blocks []DocBlock) (string, error) {
+	parts := make([]string, 0, len(blocks))
+	for _, b := range blocks {
 		// Persistence-boundary guard (the runtime teeth behind newDocBlock): a
 		// block must never reach disk id-less. If this fires, a code path built a
 		// block via a raw literal instead of the factory — fix the construction

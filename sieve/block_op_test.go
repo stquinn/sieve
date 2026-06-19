@@ -130,7 +130,7 @@ func TestShadowDocument_ContentForSave_SerializesDoc(t *testing.T) {
 	shadow := newShadow("u", md, 0, nil)
 
 	// Mutate ONLY the Doc (not Markdown / Blocks): contentForSave must reflect it.
-	if err := shadow.Doc.ApplyOp(BlockOp{
+	if err := ApplyOp(&shadow.Blocks, BlockOp{
 		Type: "update-block", BlockID: "co-1", Kind: "code",
 		Attrs: map[string]interface{}{"id": "co-1", "source": "y = 2"},
 	}); err != nil {
@@ -154,57 +154,57 @@ func TestShadowDocument_ContentForSave_SerializesDoc(t *testing.T) {
 // block. The frontend mints client-side and supplies it; this is the backend
 // floor that guarantees the invariant regardless of caller.
 func TestBlockDoc_ApplyOp_CreateBlockGeneratesIdWhenMissing(t *testing.T) {
-	doc := BlockDoc{}
-	if err := doc.ApplyOp(BlockOp{Type: "create-block", Kind: KindProse, Content: "fresh", Index: 0}); err != nil {
+	doc := []DocBlock{}
+	if err := ApplyOp(&doc, BlockOp{Type: "create-block", Kind: KindProse, Content: "fresh", Index: 0}); err != nil {
 		t.Fatalf("ApplyOp create-block with no id should generate one, got error: %v", err)
 	}
-	if len(doc.Blocks) != 1 {
-		t.Fatalf("want 1 block, got %d", len(doc.Blocks))
+	if len(doc) != 1 {
+		t.Fatalf("want 1 block, got %d", len(doc))
 	}
-	if doc.Blocks[0].ID == "" {
+	if doc[0].ID == "" {
 		t.Fatalf("created block has no id — the constructor must generate one")
 	}
-	if doc.Blocks[0].Content() != "fresh" {
-		t.Fatalf("content = %q, want %q", doc.Blocks[0].Content(), "fresh")
+	if doc[0].Content() != "fresh" {
+		t.Fatalf("content = %q, want %q", doc[0].Content(), "fresh")
 	}
 }
 
 func TestBlockDoc_ApplyOp_CreateBlockKeepsGivenId(t *testing.T) {
-	doc := BlockDoc{}
-	if err := doc.ApplyOp(BlockOp{Type: "create-block", BlockID: "pr-given", Kind: KindProse, Content: "x", Index: 0}); err != nil {
+	doc := []DocBlock{}
+	if err := ApplyOp(&doc, BlockOp{Type: "create-block", BlockID: "pr-given", Kind: KindProse, Content: "x", Index: 0}); err != nil {
 		t.Fatalf("ApplyOp: %v", err)
 	}
-	if doc.Blocks[0].ID != "pr-given" {
-		t.Fatalf("id = %q, want the supplied %q", doc.Blocks[0].ID, "pr-given")
+	if doc[0].ID != "pr-given" {
+		t.Fatalf("id = %q, want the supplied %q", doc[0].ID, "pr-given")
 	}
 }
 
 func TestBlockDoc_ApplyOp_UpdateProseContent(t *testing.T) {
-	doc := BlockDoc{Blocks: []DocBlock{
+	doc := []DocBlock{
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "old"}},
-	}}
-	if err := doc.ApplyOp(BlockOp{Type: "update-block", BlockID: "pr-1", Content: "new"}); err != nil {
+	}
+	if err := ApplyOp(&doc, BlockOp{Type: "update-block", BlockID: "pr-1", Content: "new"}); err != nil {
 		t.Fatalf("ApplyOp: %v", err)
 	}
-	if doc.Blocks[0].Content() != "new" {
-		t.Fatalf("content = %q, want %q", doc.Blocks[0].Content(), "new")
+	if doc[0].Content() != "new" {
+		t.Fatalf("content = %q, want %q", doc[0].Content(), "new")
 	}
 }
 
 func TestBlockDoc_ApplyOp_UpdateAttrsAndAliases(t *testing.T) {
-	doc := BlockDoc{Blocks: []DocBlock{
+	doc := []DocBlock{
 		{ID: "ai-1", Kind: "ai-block", Attrs: map[string]interface{}{"status": "PENDING"}},
-	}}
+	}
 	op := BlockOp{
 		Type:    "update-block",
 		BlockID: "ai-1",
 		Attrs:   map[string]interface{}{"status": "COMPLETE", "response": "hi"},
 		Aliases: []string{"ai-old"},
 	}
-	if err := doc.ApplyOp(op); err != nil {
+	if err := ApplyOp(&doc, op); err != nil {
 		t.Fatalf("ApplyOp: %v", err)
 	}
-	got := doc.Blocks[0]
+	got := doc[0]
 	if got.Attrs["status"] != "COMPLETE" || got.Attrs["response"] != "hi" {
 		t.Fatalf("attrs not replaced: %+v", got.Attrs)
 	}
@@ -214,37 +214,37 @@ func TestBlockDoc_ApplyOp_UpdateAttrsAndAliases(t *testing.T) {
 }
 
 func TestBlockDoc_ApplyOp_UnknownBlockErrors(t *testing.T) {
-	doc := BlockDoc{Blocks: []DocBlock{{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "x"}}}}
-	if err := doc.ApplyOp(BlockOp{Type: "update-block", BlockID: "nope", Content: "y"}); err == nil {
+	doc := []DocBlock{{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "x"}}}
+	if err := ApplyOp(&doc, BlockOp{Type: "update-block", BlockID: "nope", Content: "y"}); err == nil {
 		t.Fatal("expected error updating a missing block, got nil")
 	}
 }
 
 func TestBlockDoc_ApplyOp_DeleteTopLevel(t *testing.T) {
-	doc := BlockDoc{Blocks: []DocBlock{
+	doc := []DocBlock{
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "a"}},
 		{ID: "pr-2", Kind: KindProse, Attrs: map[string]interface{}{"content": "b"}},
 		{ID: "pr-3", Kind: KindProse, Attrs: map[string]interface{}{"content": "c"}},
-	}}
-	if err := doc.ApplyOp(BlockOp{Type: "delete-block", BlockID: "pr-2"}); err != nil {
+	}
+	if err := ApplyOp(&doc, BlockOp{Type: "delete-block", BlockID: "pr-2"}); err != nil {
 		t.Fatalf("ApplyOp: %v", err)
 	}
-	if len(doc.Blocks) != 2 || doc.Blocks[0].ID != "pr-1" || doc.Blocks[1].ID != "pr-3" {
-		t.Fatalf("after delete: %+v", ids(doc.Blocks))
+	if len(doc) != 2 || doc[0].ID != "pr-1" || doc[1].ID != "pr-3" {
+		t.Fatalf("after delete: %+v", ids(doc))
 	}
 }
 
 func TestBlockDoc_ApplyOp_MoveReordersWithinParent(t *testing.T) {
-	doc := BlockDoc{Blocks: []DocBlock{
+	doc := []DocBlock{
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "a"}},
 		{ID: "pr-2", Kind: KindProse, Attrs: map[string]interface{}{"content": "b"}},
 		{ID: "pr-3", Kind: KindProse, Attrs: map[string]interface{}{"content": "c"}},
-	}}
+	}
 	// Move pr-3 to the front (index 0).
-	if err := doc.ApplyOp(BlockOp{Type: "move", BlockID: "pr-3", Index: 0}); err != nil {
+	if err := ApplyOp(&doc, BlockOp{Type: "move", BlockID: "pr-3", Index: 0}); err != nil {
 		t.Fatalf("ApplyOp: %v", err)
 	}
-	got := ids(doc.Blocks)
+	got := ids(doc)
 	want := []string{"pr-3", "pr-1", "pr-2"}
 	if !equalStrs(got, want) {
 		t.Fatalf("order = %v, want %v", got, want)
@@ -252,36 +252,36 @@ func TestBlockDoc_ApplyOp_MoveReordersWithinParent(t *testing.T) {
 }
 
 func TestBlockDoc_ApplyOp_CreateTopLevelAtIndex(t *testing.T) {
-	doc := BlockDoc{Blocks: []DocBlock{
+	doc := []DocBlock{
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "a"}},
 		{ID: "pr-2", Kind: KindProse, Attrs: map[string]interface{}{"content": "b"}},
-	}}
+	}
 	op := BlockOp{Type: "create-block", BlockID: "pr-mid", Kind: KindProse, Content: "mid", Index: 1}
-	if err := doc.ApplyOp(op); err != nil {
+	if err := ApplyOp(&doc, op); err != nil {
 		t.Fatalf("ApplyOp: %v", err)
 	}
-	if got, want := ids(doc.Blocks), []string{"pr-1", "pr-mid", "pr-2"}; !equalStrs(got, want) {
+	if got, want := ids(doc), []string{"pr-1", "pr-mid", "pr-2"}; !equalStrs(got, want) {
 		t.Fatalf("order = %v, want %v", got, want)
 	}
-	if doc.Blocks[1].Content() != "mid" {
-		t.Fatalf("new block content = %q", doc.Blocks[1].Content())
+	if doc[1].Content() != "mid" {
+		t.Fatalf("new block content = %q", doc[1].Content())
 	}
 }
 
 // Nesting into a parent is rejected until Stage E re-introduces containers.
 func TestBlockDoc_ApplyOp_CreateIntoParentRejected(t *testing.T) {
-	doc := BlockDoc{Blocks: []DocBlock{
+	doc := []DocBlock{
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "a"}},
-	}}
+	}
 	op := BlockOp{
 		Type: "create-block", BlockID: "co-1", Kind: "code",
 		Attrs: map[string]interface{}{"source": "x = 1"}, Index: 0, ParentID: "pr-1",
 	}
-	if err := doc.ApplyOp(op); err == nil {
+	if err := ApplyOp(&doc, op); err == nil {
 		t.Fatal("expected create-block with ParentID to be rejected (no Children until Stage E)")
 	}
-	if len(doc.Blocks) != 1 {
-		t.Fatalf("rejected op must not mutate the tree: %+v", ids(doc.Blocks))
+	if len(doc) != 1 {
+		t.Fatalf("rejected op must not mutate the tree: %+v", ids(doc))
 	}
 }
 

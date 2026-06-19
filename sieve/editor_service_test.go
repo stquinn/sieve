@@ -13,7 +13,7 @@ func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
 	shadow := &ShadowDocument{
 		UUID: "test-uuid",
 		Mode: "wysiwyg",
-		Doc: BlockDoc{Blocks: []DocBlock{
+		Blocks: []DocBlock{
 			{ID: "pr-hello", Kind: KindProse, Attrs: map[string]interface{}{"content": "# Hello"}},
 			{ID: "ab-1234", Kind: "ai-block", Attrs: map[string]interface{}{
 				"id":       "ab-1234",
@@ -22,7 +22,7 @@ func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
 				"status":   "COMPLETE",
 			}},
 			{ID: "pr-some", Kind: KindProse, Attrs: map[string]interface{}{"content": "Some prose."}},
-		}},
+		},
 	}
 
 	shadow.setBlock(SieveBlock{ID: "ab-1234", Kind: "ai-block", Attrs: map[string]interface{}{
@@ -84,7 +84,7 @@ func TestShadowDocument_DocUpdateMintsHandlesForIdlessProse(t *testing.T) {
 	shadow.setMarkdown("First paragraph.\n\nSecond paragraph.")
 
 	// Every prose block in the authoritative tree now carries an id.
-	for i, b := range shadow.Doc.Blocks {
+	for i, b := range shadow.Blocks {
 		if b.Kind == KindProse && b.ID == "" {
 			t.Fatalf("block %d persisted id-less: %+v", i, b)
 		}
@@ -117,7 +117,7 @@ func TestShadowDocument_setBlockCreatesEntry(t *testing.T) {
 		},
 	})
 
-	blk := shadow.Doc.findBlock("cb-0001")
+	blk := findBlockIn(shadow.Blocks, "cb-0001")
 	if blk == nil {
 		t.Fatal("expected block cb-0001 to exist")
 	}
@@ -130,13 +130,13 @@ func TestShadowDocument_setBlockMergesAttrs(t *testing.T) {
 	shadow := &ShadowDocument{
 		UUID: "test-uuid",
 		Mode: "wysiwyg",
-		Doc: BlockDoc{Blocks: []DocBlock{
+		Blocks: []DocBlock{
 			{ID: "cb-0001", Kind: "code", Attrs: map[string]interface{}{
 				"id":       "cb-0001",
 				"source":   "old",
 				"language": "unknown",
 			}},
-		}},
+		},
 	}
 
 	shadow.setBlock(SieveBlock{
@@ -148,7 +148,7 @@ func TestShadowDocument_setBlockMergesAttrs(t *testing.T) {
 		},
 	})
 
-	blk := shadow.Doc.findBlock("cb-0001")
+	blk := findBlockIn(shadow.Blocks, "cb-0001")
 	if blk.Attrs["source"] != "old" {
 		t.Errorf("expected source to be preserved, got %v", blk.Attrs["source"])
 	}
@@ -427,7 +427,7 @@ func TestEditorService_CreateBlock_code(t *testing.T) {
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
 	shadow.mu.Lock()
-	blk := shadow.Doc.findBlock(id)
+	blk := findBlockIn(shadow.Blocks, id)
 	shadow.mu.Unlock()
 	if blk == nil {
 		t.Fatal("expected block in shadow")
@@ -607,7 +607,7 @@ func TestHandleBlockUpdate_notifySendsSnapshotUnderLock(t *testing.T) {
 		es.mu.Unlock()
 		if shadow != nil {
 			shadow.mu.Lock()
-			blk := shadow.Doc.findBlock(id)
+			blk := findBlockIn(shadow.Blocks, id)
 			status := ""
 			if blk != nil {
 				status, _ = blk.Attrs["status"].(string)
@@ -681,7 +681,7 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 			shadow := es.shadows[uuid]
 			es.mu.Unlock()
 			shadow.mu.Lock()
-			shadow.Doc.findBlock(blockID).Attrs["source"] = "concurrent user edit"
+			findBlockIn(shadow.Blocks, blockID).Attrs["source"] = "concurrent user edit"
 			shadow.mu.Unlock()
 
 			return nil
@@ -703,7 +703,7 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 	es.mu.Unlock()
 
 	shadow.mu.Lock()
-	blk := shadow.Doc.findBlock(blockID)
+	blk := findBlockIn(shadow.Blocks, blockID)
 	shadow.mu.Unlock()
 
 	if blk == nil {
@@ -785,7 +785,7 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 	}
 
 	shadow.mu.Lock()
-	blk := shadow.Doc.findBlock(blockID)
+	blk := findBlockIn(shadow.Blocks, blockID)
 	shadow.mu.Unlock()
 
 	if blk == nil {
@@ -808,8 +808,8 @@ func waitJobs(t *testing.T, es *EditorService, uuid string) {
 		}
 		shadow.mu.Lock()
 		allDone := true
-		for i := range shadow.Doc.Blocks {
-			status := shadow.Doc.Blocks[i].Status()
+		for i := range shadow.Blocks {
+			status := shadow.Blocks[i].Status()
 			if status == BlockStatusPending || status == BlockStatusDispatched {
 				allDone = false
 				break

@@ -25,11 +25,11 @@ type SieveBlock struct {
 // Mode controls how Flush and Remux behave ("wysiwyg" or "markdown").
 type ShadowDocument struct {
 	UUID string
-	// Doc is the authoritative ordered block tree (spec §2). In WYSIWYG mode it
-	// is the single source of truth for what gets saved — contentForSave just
-	// serializes it (blocks 1..N). It replaces the old "markdown is the model"
-	// pair (Markdown + Blocks overlaid via InjectBlocks).
-	Doc BlockDoc
+	// Blocks is the authoritative ordered block tree (spec §2), held DIRECTLY —
+	// no BlockDoc wrapper, no nested "document inside a document". In WYSIWYG mode
+	// it is the single source of truth for what gets saved (contentForSave just
+	// serializes it); markdown is derived on demand, never stored.
+	Blocks []DocBlock
 	// mdModeBuffer holds the raw text the user edits in MARKDOWN MODE ONLY. In
 	// WYSIWYG mode the tree (Doc) is authoritative and whole-doc markdown is
 	// derived on demand (deriveMarkdown) — there is no stored markdown to drift
@@ -65,13 +65,13 @@ func newShadow(uuid, body string, debounce time.Duration, onFlush func()) *Shado
 	// ParseBlockDocWithHandles constructs every block via newDocBlock, which mints
 	// an id for any id-less (marker-less) prose at construction — so the shadow's
 	// tree is disciplined the moment it exists, with no separate mint sweep.
-	doc, err := ParseBlockDocWithHandles(body)
+	blocks, err := ParseBlockDocWithHandles(body)
 	if err != nil {
 		logger.Warn("editor: parse block doc failed", "uuid", uuid, "err", err)
 	}
 	s := &ShadowDocument{
 		UUID:     uuid,
-		Doc:      doc,
+		Blocks:   blocks,
 		Mode:     "wysiwyg",
 		debounce: debounce,
 		onFlush:  onFlush,
@@ -87,7 +87,7 @@ func (s ShadowDocument) getBlock(id string) (*DocBlock, bool) {
 	if id == "" {
 		return nil, false
 	}
-	if b := findBlockIn(s.Doc.Blocks, id); b != nil {
+	if b := findBlockIn(s.Blocks, id); b != nil {
 		return b, true
 	}
 	return nil, false
@@ -98,8 +98,8 @@ func (s ShadowDocument) getBlock(id string) (*DocBlock, bool) {
 // arriving on the doc-update fallback is minted at construction — it can never
 // reach contentForSave id-less.
 func (s *ShadowDocument) reparseDoc(md string) {
-	if doc, err := ParseBlockDocWithHandles(md); err == nil {
-		s.Doc = doc
+	if blocks, err := ParseBlockDocWithHandles(md); err == nil {
+		s.Blocks = blocks
 	} else {
 		logger.Warn("editor: reparse block doc failed", "uuid", s.UUID, "err", err)
 	}
@@ -115,7 +115,7 @@ func (s *ShadowDocument) deriveMarkdown() string {
 	if s.Mode == "markdown" {
 		return s.mdModeBuffer
 	}
-	md, err := SerializeBlockDocWithHandles(s.Doc)
+	md, err := SerializeBlockDocWithHandles(s.Blocks)
 	if err != nil {
 		logger.Warn("editor: serialize block doc failed", "uuid", s.UUID, "err", err)
 		return ""
@@ -139,7 +139,7 @@ func (s *ShadowDocument) setMarkdown(md string) {
 func (s *ShadowDocument) setBlock(block SieveBlock) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if b := s.Doc.findBlock(block.ID); b != nil {
+	if b := findBlockIn(s.Blocks, block.ID); b != nil {
 		if b.Attrs == nil {
 			b.Attrs = make(map[string]interface{}, len(block.Attrs))
 		}
@@ -151,7 +151,7 @@ func (s *ShadowDocument) setBlock(block SieveBlock) {
 		for k, v := range block.Attrs {
 			merged[k] = v
 		}
-		s.Doc.Blocks = append(s.Doc.Blocks, DocBlock{ID: block.ID, Kind: block.Kind, Attrs: merged})
+		s.Blocks = append(s.Blocks, DocBlock{ID: block.ID, Kind: block.Kind, Attrs: merged})
 	}
 	s.resetDebounce()
 }
@@ -162,7 +162,7 @@ func (s *ShadowDocument) setBlock(block SieveBlock) {
 func (s *ShadowDocument) replaceBlock(blockID string, block SieveBlock) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	b := s.Doc.findBlock(blockID)
+	b := findBlockIn(s.Blocks, blockID)
 	if b == nil {
 		return
 	}
@@ -175,7 +175,7 @@ func (s *ShadowDocument) replaceBlock(blockID string, block SieveBlock) {
 func (s *ShadowDocument) deleteBlockAttr(blockID, key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if b := s.Doc.findBlock(blockID); b != nil {
+	if b := findBlockIn(s.Blocks, blockID); b != nil {
 		delete(b.Attrs, key)
 	}
 }
@@ -351,9 +351,9 @@ func (es *EditorService) FrontendBlocks(uuid string) ([]FrontendBlock, bool) {
 		return nil, false
 	}
 	shadow.mu.Lock()
-	doc := shadow.Doc
+	tree := append([]DocBlock(nil), shadow.Blocks...)
 	shadow.mu.Unlock()
-	blocks, err := BlockDocToFrontendBlocks(doc)
+	blocks, err := BlockDocToFrontendBlocks(tree)
 	if err != nil {
 		return nil, false
 	}
@@ -365,8 +365,8 @@ func (es *EditorService) FrontendBlocks(uuid string) ([]FrontendBlock, bool) {
 func (es *EditorService) resetStuckDispatched(uuid string, shadow *ShadowDocument) {
 	shadow.mu.Lock()
 	var stuck []string
-	for i := range shadow.Doc.Blocks {
-		blk := &shadow.Doc.Blocks[i]
+	for i := range shadow.Blocks {
+		blk := &shadow.Blocks[i]
 		if blk.Status() != BlockStatusDispatched {
 			continue
 		}
@@ -430,7 +430,7 @@ func (es *EditorService) HandleBlockOp(uuid string, op BlockOp) error {
 
 	shadow.mu.Lock()
 	defer shadow.mu.Unlock()
-	if err := shadow.Doc.ApplyOp(op); err != nil {
+	if err := ApplyOp(&shadow.Blocks, op); err != nil {
 		return err
 	}
 	shadow.resetDebounce()
@@ -484,7 +484,7 @@ func (es *EditorService) EnterWysiwyg(uuid string) {
 	shadow.mu.Lock()
 	shadow.reparseDoc(shadow.mdModeBuffer)
 	shadow.Mode = "wysiwyg"
-	n := len(shadow.Doc.Blocks)
+	n := len(shadow.Blocks)
 	shadow.mu.Unlock()
 	logger.Info("editor: enter-wysiwyg", "uuid", uuid, "blocks_reparsed", n)
 }
@@ -667,7 +667,7 @@ func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map
 	}
 
 	shadow.mu.Lock()
-	blk := shadow.Doc.findBlock(blockID)
+	blk := findBlockIn(shadow.Blocks, blockID)
 	if blk == nil {
 		shadow.mu.Unlock()
 		return
@@ -702,7 +702,7 @@ func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map
 
 	// Always notify client so it gets the re-computed serialisedForm and UI updates
 	shadow.mu.Lock()
-	blkFinal := shadow.Doc.findBlock(blockID)
+	blkFinal := findBlockIn(shadow.Blocks, blockID)
 	okFinal := blkFinal != nil
 	var finalAttrs map[string]interface{}
 	if okFinal {
@@ -731,7 +731,7 @@ func (es *EditorService) DispatchJobIfNeeded(uuid, blockID string) {
 	}
 
 	shadow.mu.Lock()
-	blk := shadow.Doc.findBlock(blockID)
+	blk := findBlockIn(shadow.Blocks, blockID)
 	if blk == nil {
 		shadow.mu.Unlock()
 		return
@@ -777,7 +777,7 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 		}
 		
 		shadow.mu.Lock()
-		blk := shadow.Doc.findBlock(blockID)
+		blk := findBlockIn(shadow.Blocks, blockID)
 		ok := blk != nil
 		var attrsCopy map[string]interface{}
 		if ok {
@@ -798,12 +798,12 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 			return
 		}
 		body := string(doc.Body())
-		blockDoc, err := ParseBlockDocWithHandles(body)
+		diskBlocks, err := ParseBlockDocWithHandles(body)
 		if err != nil {
 			logger.Warn("editor: job update failed to parse doc", "uuid", uuid, "err", err)
 			return
 		}
-		blk := blockDoc.findBlock(blockID)
+		blk := findBlockIn(diskBlocks, blockID)
 		if blk == nil {
 			logger.Warn("editor: job update target block missing from disk", "uuid", uuid, "block", blockID)
 			return
@@ -819,7 +819,7 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 			delete(blk.Attrs, k)
 		}
 
-		newBody, err := SerializeBlockDocWithHandles(blockDoc)
+		newBody, err := SerializeBlockDocWithHandles(diskBlocks)
 		if err != nil {
 			logger.Warn("editor: job update failed to serialize doc", "uuid", uuid, "err", err)
 			return
@@ -844,7 +844,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	}
 
 	shadow.mu.Lock()
-	blk := shadow.Doc.findBlock(blockID)
+	blk := findBlockIn(shadow.Blocks, blockID)
 	if blk == nil {
 		shadow.mu.Unlock()
 		return
@@ -865,7 +865,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	// Snapshot the authoritative block tree so the job can resolve ANY block by id
 	// (prose included) via getBlock. Top-level slice copy under lock; Content is
 	// value-copied (race-free), matching the existing Attrs aliasing.
-	docCopy := BlockDoc{Blocks: append([]DocBlock(nil), shadow.Doc.Blocks...)}
+	blocksCopy := append([]DocBlock(nil), shadow.Blocks...)
 	shadow.mu.Unlock()
 
 	processor := GetProcessor(kind)
@@ -893,7 +893,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	jctx := JobContext{
 		Ctx:    ctx,
 		UUID:   uuid,
-		Shadow: ShadowDocument{UUID: uuid, mdModeBuffer: mdBuf, Mode: mode, Doc: docCopy},
+		Shadow: ShadowDocument{UUID: uuid, mdModeBuffer: mdBuf, Mode: mode, Blocks: blocksCopy},
 		Block:  blkCopy,
 		Notify: notify,
 	}
@@ -929,7 +929,7 @@ func (es *EditorService) PromoteBlock(uuid, blockID string) error {
 	}
 
 	shadow.mu.Lock()
-	blk := shadow.Doc.findBlock(blockID)
+	blk := findBlockIn(shadow.Blocks, blockID)
 	if blk == nil {
 		shadow.mu.Unlock()
 		return fmt.Errorf("block not found")
@@ -969,7 +969,7 @@ func (es *EditorService) PromoteBlock(uuid, blockID string) error {
 		// Markdown mode serializes the raw buffer verbatim; update it, and keep the
 		// tree honest by dropping the promoted block so a later flush can't resurrect it.
 		shadow.mdModeBuffer = newMarkdown
-		removeBlock(&shadow.Doc.Blocks, blockID)
+		removeBlock(&shadow.Blocks, blockID)
 	}
 	shadow.resetDebounce()
 	shadow.mu.Unlock()
