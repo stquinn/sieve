@@ -387,23 +387,27 @@ func (es *EditorService) FrontendBlocks(uuid string) ([]FrontendBlock, bool) {
 func (es *EditorService) resetStuckDispatched(uuid string, shadow *ShadowDocument) {
 	shadow.mu.Lock()
 	var stuck []string
-	for id, blk := range shadow.Blocks {
-		if status, _ := blk.Attrs["status"].(string); status != BlockStatusDispatched {
-			continue
-		}
-		createdAt, _ := blk.Attrs["createdAt"].(string)
-		if createdAt == "" {
-			blk.Attrs["status"] = BlockStatusPending
-			stuck = append(stuck, id)
-			continue
-		}
-		if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
-			if time.Since(t) > dispatchedStuckThreshold {
-				blk.Attrs["status"] = BlockStatusPending
-				stuck = append(stuck, id)
+	var walk func(blocks []DocBlock)
+	walk = func(blocks []DocBlock) {
+		for i := range blocks {
+			blk := &blocks[i]
+			if blk.Status() == BlockStatusDispatched {
+				createdAt := blk.StringAttr("createdAt")
+				stale := createdAt == ""
+				if !stale {
+					if t, err := time.Parse(time.RFC3339, createdAt); err == nil && time.Since(t) > dispatchedStuckThreshold {
+						stale = true
+					}
+				}
+				if stale {
+					blk.Attrs["status"] = BlockStatusPending
+					stuck = append(stuck, blk.ID)
+				}
 			}
+			walk(blk.Children)
 		}
 	}
+	walk(shadow.Doc.Blocks)
 	shadow.mu.Unlock()
 
 	for _, id := range stuck {
@@ -508,7 +512,7 @@ func (es *EditorService) EnterWysiwyg(uuid string) {
 	shadow.mu.Lock()
 	shadow.reparseDoc(shadow.Markdown)
 	shadow.Mode = "wysiwyg"
-	n := len(shadow.Blocks)
+	n := len(shadow.Doc.Blocks)
 	shadow.mu.Unlock()
 	logger.Info("editor: enter-wysiwyg", "uuid", uuid, "blocks_reparsed", n)
 }
@@ -692,8 +696,8 @@ func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map
 	}
 
 	shadow.mu.Lock()
-	blk, ok := shadow.Blocks[blockID]
-	if !ok {
+	blk := shadow.Doc.findBlock(blockID)
+	if blk == nil {
 		shadow.mu.Unlock()
 		return
 	}
@@ -727,7 +731,8 @@ func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map
 
 	// Always notify client so it gets the re-computed serialisedForm and UI updates
 	shadow.mu.Lock()
-	blkFinal, okFinal := shadow.Blocks[blockID]
+	blkFinal := shadow.Doc.findBlock(blockID)
+	okFinal := blkFinal != nil
 	var finalAttrs map[string]interface{}
 	if okFinal {
 		finalAttrs = make(map[string]interface{}, len(blkFinal.Attrs))
@@ -755,13 +760,12 @@ func (es *EditorService) DispatchJobIfNeeded(uuid, blockID string) {
 	}
 
 	shadow.mu.Lock()
-	blk, ok := shadow.Blocks[blockID]
-	if !ok {
+	blk := shadow.Doc.findBlock(blockID)
+	if blk == nil {
 		shadow.mu.Unlock()
 		return
 	}
-	status, _ := blk.Attrs["status"].(string)
-	if status == BlockStatusPending {
+	if blk.Status() == BlockStatusPending {
 		blk.Attrs["status"] = BlockStatusDispatched
 
 		// Take copy of attributes under lock to serialize and notify listener
@@ -802,7 +806,8 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 		}
 		
 		shadow.mu.Lock()
-		blk, ok := shadow.Blocks[blockID]
+		blk := shadow.Doc.findBlock(blockID)
+		ok := blk != nil
 		var attrsCopy map[string]interface{}
 		if ok {
 			attrsCopy = make(map[string]interface{}, len(blk.Attrs))
@@ -868,8 +873,8 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	}
 
 	shadow.mu.Lock()
-	blk, ok := shadow.Blocks[blockID]
-	if !ok {
+	blk := shadow.Doc.findBlock(blockID)
+	if blk == nil {
 		shadow.mu.Unlock()
 		return
 	}
@@ -958,8 +963,8 @@ func (es *EditorService) PromoteBlock(uuid, blockID string) error {
 	}
 
 	shadow.mu.Lock()
-	blk, ok := shadow.Blocks[blockID]
-	if !ok {
+	blk := shadow.Doc.findBlock(blockID)
+	if blk == nil {
 		shadow.mu.Unlock()
 		return fmt.Errorf("block not found")
 	}
