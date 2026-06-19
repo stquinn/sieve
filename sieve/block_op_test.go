@@ -234,22 +234,6 @@ func TestBlockDoc_ApplyOp_DeleteTopLevel(t *testing.T) {
 	}
 }
 
-func TestBlockDoc_ApplyOp_DeleteNested(t *testing.T) {
-	doc := BlockDoc{Blocks: []DocBlock{
-		{ID: "cr-1", Kind: KindColumnRow, Children: []DocBlock{
-			{ID: "col-1", Kind: KindColumn, Children: []DocBlock{
-				{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "inside"}},
-			}},
-		}},
-	}}
-	if err := doc.ApplyOp(BlockOp{Type: "delete-block", BlockID: "pr-1"}); err != nil {
-		t.Fatalf("ApplyOp: %v", err)
-	}
-	if len(doc.Blocks[0].Children[0].Children) != 0 {
-		t.Fatalf("nested block not deleted: %+v", doc.Blocks[0].Children[0].Children)
-	}
-}
-
 func TestBlockDoc_ApplyOp_MoveReordersWithinParent(t *testing.T) {
 	doc := BlockDoc{Blocks: []DocBlock{
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "a"}},
@@ -284,25 +268,20 @@ func TestBlockDoc_ApplyOp_CreateTopLevelAtIndex(t *testing.T) {
 	}
 }
 
-func TestBlockDoc_ApplyOp_CreateStructuredIntoParent(t *testing.T) {
+// Nesting into a parent is rejected until Stage E re-introduces containers.
+func TestBlockDoc_ApplyOp_CreateIntoParentRejected(t *testing.T) {
 	doc := BlockDoc{Blocks: []DocBlock{
-		{ID: "col-1", Kind: KindColumn, Children: []DocBlock{
-			{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "a"}},
-		}},
+		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "a"}},
 	}}
 	op := BlockOp{
 		Type: "create-block", BlockID: "co-1", Kind: "code",
-		Attrs: map[string]interface{}{"source": "x = 1"}, Index: 0, ParentID: "col-1",
+		Attrs: map[string]interface{}{"source": "x = 1"}, Index: 0, ParentID: "pr-1",
 	}
-	if err := doc.ApplyOp(op); err != nil {
-		t.Fatalf("ApplyOp: %v", err)
+	if err := doc.ApplyOp(op); err == nil {
+		t.Fatal("expected create-block with ParentID to be rejected (no Children until Stage E)")
 	}
-	kids := doc.Blocks[0].Children
-	if got, want := ids(kids), []string{"co-1", "pr-1"}; !equalStrs(got, want) {
-		t.Fatalf("children order = %v, want %v", got, want)
-	}
-	if kids[0].Kind != "code" || kids[0].Attrs["source"] != "x = 1" {
-		t.Fatalf("created block wrong: %+v", kids[0])
+	if len(doc.Blocks) != 1 {
+		t.Fatalf("rejected op must not mutate the tree: %+v", ids(doc.Blocks))
 	}
 }
 

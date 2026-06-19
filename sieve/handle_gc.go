@@ -12,24 +12,18 @@ package sieve
 // "resolvable" / "referenced" sets is wired in later stages (E/F); here the
 // rules are proven in isolation, consistent with the Stage A/B testability bar.
 
-// collectHandles walks the whole block tree (descending container Children) and
-// returns the set of every handle present — each block's primary ID plus its
-// aliases. This is the resolution index: a ref resolves iff its target is in
-// this set. (Also the basis for the Stage F structured-facet search index.)
+// collectHandles returns the set of every handle present — each block's primary
+// ID plus its aliases. This is the resolution index: a ref resolves iff its
+// target is in this set. (Also the basis for the Stage F structured-facet search
+// index.) Flat today; Stage E containers re-introduce a tree walk via the Node
+// interface.
 func collectHandles(doc BlockDoc) map[string]bool {
 	out := map[string]bool{}
-	var walk func(blocks []DocBlock)
-	walk = func(blocks []DocBlock) {
-		for _, b := range blocks {
-			for _, h := range b.answersTo() {
-				out[h] = true
-			}
-			if len(b.Children) > 0 {
-				walk(b.Children)
-			}
+	for _, b := range doc.Blocks {
+		for _, h := range b.answersTo() {
+			out[h] = true
 		}
 	}
-	walk(doc.Blocks)
 	return out
 }
 
@@ -67,7 +61,6 @@ func gcAliasesBlocks(blocks []DocBlock, referenced map[string]bool) []DocBlock {
 			}
 		}
 		b.Aliases = kept
-		b.Children = gcAliasesBlocks(b.Children, referenced)
 		out[i] = b
 	}
 	return out

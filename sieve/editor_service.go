@@ -365,27 +365,23 @@ func (es *EditorService) FrontendBlocks(uuid string) ([]FrontendBlock, bool) {
 func (es *EditorService) resetStuckDispatched(uuid string, shadow *ShadowDocument) {
 	shadow.mu.Lock()
 	var stuck []string
-	var walk func(blocks []DocBlock)
-	walk = func(blocks []DocBlock) {
-		for i := range blocks {
-			blk := &blocks[i]
-			if blk.Status() == BlockStatusDispatched {
-				createdAt := blk.StringAttr("createdAt")
-				stale := createdAt == ""
-				if !stale {
-					if t, err := time.Parse(time.RFC3339, createdAt); err == nil && time.Since(t) > dispatchedStuckThreshold {
-						stale = true
-					}
-				}
-				if stale {
-					blk.Attrs["status"] = BlockStatusPending
-					stuck = append(stuck, blk.ID)
-				}
+	for i := range shadow.Doc.Blocks {
+		blk := &shadow.Doc.Blocks[i]
+		if blk.Status() != BlockStatusDispatched {
+			continue
+		}
+		createdAt := blk.StringAttr("createdAt")
+		stale := createdAt == ""
+		if !stale {
+			if t, err := time.Parse(time.RFC3339, createdAt); err == nil && time.Since(t) > dispatchedStuckThreshold {
+				stale = true
 			}
-			walk(blk.Children)
+		}
+		if stale {
+			blk.Attrs["status"] = BlockStatusPending
+			stuck = append(stuck, blk.ID)
 		}
 	}
-	walk(shadow.Doc.Blocks)
 	shadow.mu.Unlock()
 
 	for _, id := range stuck {

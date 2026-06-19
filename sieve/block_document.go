@@ -12,13 +12,16 @@ import (
 // prose included — carries its payload in the single Attrs bag, addressed by id;
 // kind is consulted only at render/serialise time. There is no per-kind payload
 // field: prose's body is Attrs["content"] (read via Content()), exactly as code
-// is Attrs["source"], web-clip Attrs["content"], ai Attrs["response"]. Containers
-// hold their subtree in Children (Stage E).
+// is Attrs["source"], web-clip Attrs["content"], ai Attrs["response"].
+//
+// There is no Children field: a block is a LEAF. Containers (columns) are a
+// distinct structural type — they HOLD blocks but are not blocks (no payload, no
+// content) — and arrive in Stage E behind a small Node interface (ID()/Kind())
+// both implement. Until then nothing nests at runtime.
 type DocBlock struct {
-	ID       string
-	Kind     string
-	Attrs    map[string]interface{}
-	Children []DocBlock
+	ID    string
+	Kind  string
+	Attrs map[string]interface{}
 	// Aliases are additional handles this block answers to, accumulated when
 	// other blocks merge into it (spec §7). ID is the primary handle; a ref
 	// resolves against ID or any alias.
@@ -228,11 +231,11 @@ func findClose(lines []string, start int, primary string) int {
 	return -1
 }
 
-// mintProseIDs assigns a fresh handle to every prose block with an empty ID,
-// recursing into container children. Structured blocks already carry their id in
-// YAML, and prose blocks that already hold a handle are left untouched — so it is
-// idempotent and silent (IDs are invisible plumbing minted automatically on
-// Open). Returns the number of handles minted. Mutates blocks in place.
+// mintProseIDs assigns a fresh handle to every prose block with an empty ID.
+// Structured blocks already carry their id in YAML, and prose blocks that already
+// hold a handle are left untouched — so it is idempotent and silent (IDs are
+// invisible plumbing minted automatically on Open). Returns the number of handles
+// minted. Mutates blocks in place.
 func mintProseIDs(blocks []DocBlock) int {
 	minted := 0
 	for i := range blocks {
@@ -240,7 +243,6 @@ func mintProseIDs(blocks []DocBlock) int {
 			blocks[i].ID = GenerateBlockID(KindProse)
 			minted++
 		}
-		minted += mintProseIDs(blocks[i].Children)
 	}
 	return minted
 }

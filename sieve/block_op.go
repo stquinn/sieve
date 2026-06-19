@@ -42,17 +42,12 @@ func (d *BlockDoc) ApplyOp(op BlockOp) error {
 		// create-block is a construction point: route through the factory so an
 		// op with no blockId gets one minted (given an id or generate one) rather
 		// than admitting an id-less block. The frontend normally supplies the id.
+		if op.ParentID != "" {
+			return fmt.Errorf("create-block: nesting into parent %q is Stage E (no Children yet)", op.ParentID)
+		}
 		nb := newDocBlock(op.Kind, op.BlockID, op.Content, op.Attrs)
 		nb.Aliases = op.Aliases
-		target := &d.Blocks
-		if op.ParentID != "" {
-			parent := d.findBlock(op.ParentID)
-			if parent == nil {
-				return fmt.Errorf("create-block: parent %q not found", op.ParentID)
-			}
-			target = &parent.Children
-		}
-		insertBlockAt(target, op.Index, nb)
+		insertBlockAt(&d.Blocks, op.Index, nb)
 		return nil
 
 	case "delete-block":
@@ -62,19 +57,14 @@ func (d *BlockDoc) ApplyOp(op BlockOp) error {
 		return nil
 
 	case "move", "reorder":
+		if op.ParentID != "" {
+			return fmt.Errorf("move: nesting into parent %q is Stage E (no Children yet)", op.ParentID)
+		}
 		removed, ok := removeBlock(&d.Blocks, op.BlockID)
 		if !ok {
 			return fmt.Errorf("move: block %q not found", op.BlockID)
 		}
-		target := &d.Blocks
-		if op.ParentID != "" {
-			parent := d.findBlock(op.ParentID)
-			if parent == nil {
-				return fmt.Errorf("move: parent %q not found", op.ParentID)
-			}
-			target = &parent.Children
-		}
-		insertBlockAt(target, op.Index, removed)
+		insertBlockAt(&d.Blocks, op.Index, removed)
 		return nil
 
 	default:
@@ -90,9 +80,6 @@ func removeBlock(blocks *[]DocBlock, id string) (DocBlock, bool) {
 			removed := (*blocks)[i]
 			*blocks = append((*blocks)[:i], (*blocks)[i+1:]...)
 			return removed, true
-		}
-		if r, ok := removeBlock(&(*blocks)[i].Children, id); ok {
-			return r, true
 		}
 	}
 	return DocBlock{}, false
@@ -122,9 +109,6 @@ func findBlockIn(blocks []DocBlock, id string) *DocBlock {
 	for i := range blocks {
 		if blocks[i].ID == id {
 			return &blocks[i]
-		}
-		if found := findBlockIn(blocks[i].Children, id); found != nil {
-			return found
 		}
 	}
 	return nil

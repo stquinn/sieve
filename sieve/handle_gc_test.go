@@ -5,18 +5,16 @@ import (
 	"testing"
 )
 
-func TestCollectHandles_TraversesTree(t *testing.T) {
+func TestCollectHandles_IndexesEveryHandle(t *testing.T) {
 	doc := BlockDoc{Blocks: []DocBlock{
 		{ID: "pr-a", Kind: KindProse, Aliases: []string{"pr-x"}},
-		{ID: "cr-1", Kind: KindColumnRow, Children: []DocBlock{
-			{ID: "pr-b", Kind: KindProse},
-			{ID: "co-1", Kind: "code"},
-		}},
+		{ID: "pr-b", Kind: KindProse},
+		{ID: "co-1", Kind: "code"},
 	}}
 	got := collectHandles(doc)
-	for _, h := range []string{"pr-a", "pr-x", "cr-1", "pr-b", "co-1"} {
+	for _, h := range []string{"pr-a", "pr-x", "pr-b", "co-1"} {
 		if !got[h] {
-			t.Fatalf("collectHandles missing %q (nested handles must be indexed): %v", h, got)
+			t.Fatalf("collectHandles missing %q (every primary + alias must be indexed): %v", h, got)
 		}
 	}
 }
@@ -47,20 +45,18 @@ func TestGCAliases_DropsUnreferenced(t *testing.T) {
 	}
 }
 
-func TestGCAliases_RecursesAndIsPure(t *testing.T) {
+func TestGCAliases_IsPure(t *testing.T) {
 	doc := BlockDoc{Blocks: []DocBlock{
-		{ID: "cr-1", Kind: KindColumnRow, Children: []DocBlock{
-			{ID: "pr-b", Kind: KindProse, Aliases: []string{"pr-stale"}},
-		}},
+		{ID: "pr-b", Kind: KindProse, Aliases: []string{"pr-stale"}},
 	}}
 	_ = gcAliases(doc, map[string]bool{}) // nothing referenced
 
 	// Input must be untouched (purity).
-	if len(doc.Blocks[0].Children[0].Aliases) != 1 {
-		t.Fatalf("gcAliases mutated input: %+v", doc.Blocks[0].Children[0].Aliases)
+	if len(doc.Blocks[0].Aliases) != 1 {
+		t.Fatalf("gcAliases mutated input: %+v", doc.Blocks[0].Aliases)
 	}
 	got := gcAliases(doc, map[string]bool{})
-	if len(got.Blocks[0].Children[0].Aliases) != 0 {
-		t.Fatalf("nested stale alias not GC'd: %+v", got.Blocks[0].Children[0].Aliases)
+	if len(got.Blocks[0].Aliases) != 0 {
+		t.Fatalf("stale alias not GC'd: %+v", got.Blocks[0].Aliases)
 	}
 }

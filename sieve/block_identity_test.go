@@ -159,14 +159,3 @@ func TestFrontendBlocks_ClosedDocReturnsFalse(t *testing.T) {
 	}
 }
 
-func TestMintProseIDs_RecursesIntoContainers(t *testing.T) {
-	blocks := []DocBlock{
-		{ID: "cr-1", Kind: KindColumnRow, Children: []DocBlock{
-			{Kind: KindProse, Attrs: map[string]interface{}{"content": "nested"}},
-		}},
-	}
-	n := mintProseIDs(blocks)
-	if n != 1 || blocks[0].Children[0].ID == "" {
-		t.Fatalf("nested prose not minted: n=%d %+v", n, blocks[0].Children[0])
-	}
-}
