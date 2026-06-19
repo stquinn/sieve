@@ -1,6 +1,9 @@
 package sieve
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // ProseProcessor makes prose a FIRST-CLASS block flavour — not a special case the
 // spine hardcodes. Prose is a SieveBlock whose payload is Attrs["content"]; this
@@ -86,3 +89,89 @@ func (p *ProseProcessor) JobLabel(_ *SieveBlock) string { return "" }
 
 // OnChange: prose has no synchronous reaction.
 func (p *ProseProcessor) OnChange(_ *SieveBlock) {}
+
+// markerOpenRe / markerCloseRe match the paired comment-tag delimiters that
+// bound every block (spec §"Storage format: a comment-tag block tree"). The open
+// marker's capture is a SPACE-SEPARATED handle list: the first token is the
+// block's primary ID, any remaining tokens are aliases it also answers to
+// (post-merge handle-set, spec §7). The close marker carries the primary ID
+// only. The `s:` sentinel namespace distinguishes these from user HTML comments.
+var (
+	markerOpenRe  = regexp.MustCompile(`^\s*<!--s:([\w-]+(?:\s+[\w-]+)*)\s*-->\s*$`)
+	markerCloseRe = regexp.MustCompile(`^\s*<!--/s:([\w-]+)\s*-->\s*$`)
+)
+
+// scanProseRegion splits a non-fenced region into prose blocks using paired
+// comment-tag delimiters. A matched `<!--s:ID …-->` / `<!--/s:ID-->` pair is one
+// prose block whose interior is taken verbatim (opaque — never re-scanned for
+// nested markers; nesting is container-only, Stage E). An open with no matching
+// close is unbalanced → literal text. Any maximal run of undelimited lines is a
+// SINGLE prose block (never blank-line split); whitespace-only runs are dropped.
+func scanProseRegion(region string) []SieveBlock {
+	lines := strings.Split(region, "\n")
+	var out []SieveBlock
+	var pending []string
+
+	flushPending := func() {
+		if len(pending) == 0 {
+			return
+		}
+		content := strings.Trim(strings.Join(pending, "\n"), "\n")
+		pending = pending[:0]
+		if strings.TrimSpace(content) != "" {
+			// Undelimited (marker-less) prose: no id on disk → the factory mints
+			// one now (hydration on parse), so the block exists with an id from
+			// the moment it is constructed — never swept in afterward.
+			out = append(out, newSieveBlock(KindProse, "", content, nil))
+		}
+	}
+
+	for i := 0; i < len(lines); {
+		if m := markerOpenRe.FindStringSubmatch(lines[i]); m != nil {
+			handles := strings.Fields(m[1])
+			primary := handles[0]
+			if closeIdx := findClose(lines, i+1, primary); closeIdx != -1 {
+				flushPending()
+				// Delimited prose: the marker carries the primary handle, so the
+				// factory keeps it (no mint).
+				blk := newSieveBlock(KindProse, primary, strings.Join(lines[i+1:closeIdx], "\n"), nil)
+				if len(handles) > 1 {
+					blk.Aliases = append([]string(nil), handles[1:]...)
+				}
+				out = append(out, blk)
+				i = closeIdx + 1
+				continue
+			}
+			// unbalanced open → fall through; the marker line is literal content
+		}
+		pending = append(pending, lines[i])
+		i++
+	}
+	flushPending()
+	return out
+}
+
+// findClose returns the index of the first close marker at or after start whose
+// primary id matches, or -1 if none (the open is then unbalanced → literal text).
+func findClose(lines []string, start int, primary string) int {
+	for k := start; k < len(lines); k++ {
+		if cm := markerCloseRe.FindStringSubmatch(lines[k]); cm != nil && cm[1] == primary {
+			return k
+		}
+	}
+	return -1
+}
+
+// Accepts always returns true: prose is the terminal mop-up. The codec EXCLUDES
+// prose from its Accepts loop (it skips Mode()==BlockModeProse) and invokes
+// Deserialize explicitly on the coalesced run of unclaimed regions — so this
+// truthful "I accept anything" never shadows a structured recogniser.
+func (p *ProseProcessor) Accepts(region Region) bool { return true }
+
+// Deserialize splits a raw prose run into prose blocks at its paired
+// <!--s:ID--> / <!--/s:ID--> markers (delimited blocks keep their handle; an
+// undelimited run mints one). The inverse of ProseProcessor.Serialize, which
+// writes those markers. Owns both sides of prose's SerDes.
+func (p *ProseProcessor) Deserialize(region Region) ([]SieveBlock, error) {
+	return scanProseRegion(region.Raw), nil
+}

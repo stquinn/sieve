@@ -2,7 +2,6 @@ package sieve
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 )
 
@@ -21,17 +20,6 @@ import (
 // prose — fenced-block interiors are never touched, so a marker pasted inside a
 // code block cannot be corrupted. The id is hidden in the editor but always
 // written back to disk.
-
-// markerOpenRe / markerCloseRe match the paired comment-tag delimiters that
-// bound every block (spec §"Storage format: a comment-tag block tree"). The open
-// marker's capture is a SPACE-SEPARATED handle list: the first token is the
-// block's primary ID, any remaining tokens are aliases it also answers to
-// (post-merge handle-set, spec §7). The close marker carries the primary ID
-// only. The `s:` sentinel namespace distinguishes these from user HTML comments.
-var (
-	markerOpenRe  = regexp.MustCompile(`^\s*<!--s:([\w-]+(?:\s+[\w-]+)*)\s*-->\s*$`)
-	markerCloseRe = regexp.MustCompile(`^\s*<!--/s:([\w-]+)\s*-->\s*$`)
-)
 
 // ParseBlockDocWithHandles is the handle-aware loader. Structure derives ONLY
 // from delimiters: top-level structured fences (atomic, opaque) and paired
