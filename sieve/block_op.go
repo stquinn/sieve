@@ -15,9 +15,10 @@ type BlockOp struct {
 	ParentID string                 `json:"parentId,omitempty"`
 }
 
-// ApplyOp mutates the ordered block slice in place according to op. It returns an
-// error (never silently no-ops) so the wire layer can surface failures.
-func ApplyOp(blocks *[]SieveBlock, op BlockOp) error {
+// applyOpTo mutates the ordered block slice in place according to op. It returns
+// an error (never silently no-ops) so callers can surface failures. Pure slice
+// logic — no locks, no debounce. Use ShadowDocument.ApplyOp for the live tree.
+func applyOpTo(blocks *[]SieveBlock, op BlockOp) error {
 	switch op.Type {
 	case "update-block":
 		b := findBlockIn(*blocks, op.BlockID)
@@ -108,4 +109,23 @@ func findBlockIn(blocks []SieveBlock, id string) *SieveBlock {
 		}
 	}
 	return nil
+}
+
+// ApplyOp applies a granular block mutation to the live tree, taking s.mu and
+// arming the debounce. The wire layer's single entry point for block ops.
+func (s *ShadowDocument) ApplyOp(op BlockOp) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := applyOpTo(&s.Blocks, op); err != nil {
+		return err
+	}
+	s.resetDebounce()
+	return nil
+}
+
+// findBlock returns a pointer to the block with the given ID within the live
+// tree, or nil. ASSUMES s.mu is held by the caller — the returned pointer
+// aliases the live slice and the caller must mutate it under that lock.
+func (s *ShadowDocument) findBlock(id string) *SieveBlock {
+	return findBlockIn(s.Blocks, id)
 }

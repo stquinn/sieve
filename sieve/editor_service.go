@@ -153,7 +153,7 @@ func (s *ShadowDocument) setMarkdown(md string) {
 func (s *ShadowDocument) setBlock(block SieveBlock) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if b := findBlockIn(s.Blocks, block.ID); b != nil {
+	if b := s.findBlock(block.ID); b != nil {
 		if b.Attrs == nil {
 			b.Attrs = make(map[string]interface{}, len(block.Attrs))
 		}
@@ -176,7 +176,7 @@ func (s *ShadowDocument) setBlock(block SieveBlock) {
 func (s *ShadowDocument) replaceBlock(blockID string, block SieveBlock) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	b := findBlockIn(s.Blocks, blockID)
+	b := s.findBlock(blockID)
 	if b == nil {
 		return
 	}
@@ -189,7 +189,7 @@ func (s *ShadowDocument) replaceBlock(blockID string, block SieveBlock) {
 func (s *ShadowDocument) deleteBlockAttr(blockID, key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if b := findBlockIn(s.Blocks, blockID); b != nil {
+	if b := s.findBlock(blockID); b != nil {
 		delete(b.Attrs, key)
 	}
 }
@@ -445,13 +445,7 @@ func (es *EditorService) HandleBlockOp(uuid string, op BlockOp) error {
 		return fmt.Errorf("block-op: no open document for uuid %q", uuid)
 	}
 
-	shadow.mu.Lock()
-	defer shadow.mu.Unlock()
-	if err := ApplyOp(&shadow.Blocks, op); err != nil {
-		return err
-	}
-	shadow.resetDebounce()
-	return nil
+	return shadow.ApplyOp(op)
 }
 
 // UpdateBlock merges attrs into the named block, creating it if needed.
@@ -680,7 +674,7 @@ func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map
 	}
 
 	shadow.mu.Lock()
-	blk := findBlockIn(shadow.Blocks, blockID)
+	blk := shadow.findBlock(blockID)
 	if blk == nil {
 		shadow.mu.Unlock()
 		return
@@ -715,7 +709,7 @@ func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map
 
 	// Always notify client so it gets the re-computed serialisedForm and UI updates
 	shadow.mu.Lock()
-	blkFinal := findBlockIn(shadow.Blocks, blockID)
+	blkFinal := shadow.findBlock(blockID)
 	okFinal := blkFinal != nil
 	var finalAttrs map[string]interface{}
 	if okFinal {
@@ -744,7 +738,7 @@ func (es *EditorService) DispatchJobIfNeeded(uuid, blockID string) {
 	}
 
 	shadow.mu.Lock()
-	blk := findBlockIn(shadow.Blocks, blockID)
+	blk := shadow.findBlock(blockID)
 	if blk == nil {
 		shadow.mu.Unlock()
 		return
@@ -790,7 +784,7 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 		}
 
 		shadow.mu.Lock()
-		blk := findBlockIn(shadow.Blocks, blockID)
+		blk := shadow.findBlock(blockID)
 		ok := blk != nil
 		var attrsCopy map[string]interface{}
 		if ok {
@@ -857,7 +851,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	}
 
 	shadow.mu.Lock()
-	blk := findBlockIn(shadow.Blocks, blockID)
+	blk := shadow.findBlock(blockID)
 	if blk == nil {
 		shadow.mu.Unlock()
 		return
@@ -942,7 +936,7 @@ func (es *EditorService) PromoteBlock(uuid, blockID string) error {
 	}
 
 	shadow.mu.Lock()
-	blk := findBlockIn(shadow.Blocks, blockID)
+	blk := shadow.findBlock(blockID)
 	if blk == nil {
 		shadow.mu.Unlock()
 		return fmt.Errorf("block not found")

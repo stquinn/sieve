@@ -130,7 +130,7 @@ func TestShadowDocument_ContentForSave_SerializesDoc(t *testing.T) {
 	shadow := newShadow("u", md, NewDocumentCodec(globalRegistry()), 0, nil)
 
 	// Mutate ONLY the Doc (not Markdown / Blocks): contentForSave must reflect it.
-	if err := ApplyOp(&shadow.Blocks, BlockOp{
+	if err := applyOpTo(&shadow.Blocks, BlockOp{
 		Type: "update-block", BlockID: "co-1", Kind: "code",
 		Attrs: map[string]interface{}{"id": "co-1", "source": "y = 2"},
 	}); err != nil {
@@ -155,8 +155,8 @@ func TestShadowDocument_ContentForSave_SerializesDoc(t *testing.T) {
 // floor that guarantees the invariant regardless of caller.
 func TestBlockDoc_ApplyOp_CreateBlockGeneratesIdWhenMissing(t *testing.T) {
 	doc := []SieveBlock{}
-	if err := ApplyOp(&doc, BlockOp{Type: "create-block", Kind: KindProse, Content: "fresh", Index: 0}); err != nil {
-		t.Fatalf("ApplyOp create-block with no id should generate one, got error: %v", err)
+	if err := applyOpTo(&doc, BlockOp{Type: "create-block", Kind: KindProse, Content: "fresh", Index: 0}); err != nil {
+		t.Fatalf("applyOpTo create-block with no id should generate one, got error: %v", err)
 	}
 	if len(doc) != 1 {
 		t.Fatalf("want 1 block, got %d", len(doc))
@@ -171,8 +171,8 @@ func TestBlockDoc_ApplyOp_CreateBlockGeneratesIdWhenMissing(t *testing.T) {
 
 func TestBlockDoc_ApplyOp_CreateBlockKeepsGivenId(t *testing.T) {
 	doc := []SieveBlock{}
-	if err := ApplyOp(&doc, BlockOp{Type: "create-block", BlockID: "pr-given", Kind: KindProse, Content: "x", Index: 0}); err != nil {
-		t.Fatalf("ApplyOp: %v", err)
+	if err := applyOpTo(&doc, BlockOp{Type: "create-block", BlockID: "pr-given", Kind: KindProse, Content: "x", Index: 0}); err != nil {
+		t.Fatalf("applyOpTo: %v", err)
 	}
 	if doc[0].ID != "pr-given" {
 		t.Fatalf("id = %q, want the supplied %q", doc[0].ID, "pr-given")
@@ -183,8 +183,8 @@ func TestBlockDoc_ApplyOp_UpdateProseContent(t *testing.T) {
 	doc := []SieveBlock{
 		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "old"}},
 	}
-	if err := ApplyOp(&doc, BlockOp{Type: "update-block", BlockID: "pr-1", Content: "new"}); err != nil {
-		t.Fatalf("ApplyOp: %v", err)
+	if err := applyOpTo(&doc, BlockOp{Type: "update-block", BlockID: "pr-1", Content: "new"}); err != nil {
+		t.Fatalf("applyOpTo: %v", err)
 	}
 	if doc[0].Content() != "new" {
 		t.Fatalf("content = %q, want %q", doc[0].Content(), "new")
@@ -201,8 +201,8 @@ func TestBlockDoc_ApplyOp_UpdateAttrsAndAliases(t *testing.T) {
 		Attrs:   map[string]interface{}{"status": "COMPLETE", "response": "hi"},
 		Aliases: []string{"ai-old"},
 	}
-	if err := ApplyOp(&doc, op); err != nil {
-		t.Fatalf("ApplyOp: %v", err)
+	if err := applyOpTo(&doc, op); err != nil {
+		t.Fatalf("applyOpTo: %v", err)
 	}
 	got := doc[0]
 	if got.Attrs["status"] != "COMPLETE" || got.Attrs["response"] != "hi" {
@@ -215,7 +215,7 @@ func TestBlockDoc_ApplyOp_UpdateAttrsAndAliases(t *testing.T) {
 
 func TestBlockDoc_ApplyOp_UnknownBlockErrors(t *testing.T) {
 	doc := []SieveBlock{{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "x"}}}
-	if err := ApplyOp(&doc, BlockOp{Type: "update-block", BlockID: "nope", Content: "y"}); err == nil {
+	if err := applyOpTo(&doc, BlockOp{Type: "update-block", BlockID: "nope", Content: "y"}); err == nil {
 		t.Fatal("expected error updating a missing block, got nil")
 	}
 }
@@ -226,8 +226,8 @@ func TestBlockDoc_ApplyOp_DeleteTopLevel(t *testing.T) {
 		{ID: "pr-2", Kind: KindProse, Attrs: map[string]interface{}{"content": "b"}},
 		{ID: "pr-3", Kind: KindProse, Attrs: map[string]interface{}{"content": "c"}},
 	}
-	if err := ApplyOp(&doc, BlockOp{Type: "delete-block", BlockID: "pr-2"}); err != nil {
-		t.Fatalf("ApplyOp: %v", err)
+	if err := applyOpTo(&doc, BlockOp{Type: "delete-block", BlockID: "pr-2"}); err != nil {
+		t.Fatalf("applyOpTo: %v", err)
 	}
 	if len(doc) != 2 || doc[0].ID != "pr-1" || doc[1].ID != "pr-3" {
 		t.Fatalf("after delete: %+v", ids(doc))
@@ -241,8 +241,8 @@ func TestBlockDoc_ApplyOp_MoveReordersWithinParent(t *testing.T) {
 		{ID: "pr-3", Kind: KindProse, Attrs: map[string]interface{}{"content": "c"}},
 	}
 	// Move pr-3 to the front (index 0).
-	if err := ApplyOp(&doc, BlockOp{Type: "move", BlockID: "pr-3", Index: 0}); err != nil {
-		t.Fatalf("ApplyOp: %v", err)
+	if err := applyOpTo(&doc, BlockOp{Type: "move", BlockID: "pr-3", Index: 0}); err != nil {
+		t.Fatalf("applyOpTo: %v", err)
 	}
 	got := ids(doc)
 	want := []string{"pr-3", "pr-1", "pr-2"}
@@ -257,8 +257,8 @@ func TestBlockDoc_ApplyOp_CreateTopLevelAtIndex(t *testing.T) {
 		{ID: "pr-2", Kind: KindProse, Attrs: map[string]interface{}{"content": "b"}},
 	}
 	op := BlockOp{Type: "create-block", BlockID: "pr-mid", Kind: KindProse, Content: "mid", Index: 1}
-	if err := ApplyOp(&doc, op); err != nil {
-		t.Fatalf("ApplyOp: %v", err)
+	if err := applyOpTo(&doc, op); err != nil {
+		t.Fatalf("applyOpTo: %v", err)
 	}
 	if got, want := ids(doc), []string{"pr-1", "pr-mid", "pr-2"}; !equalStrs(got, want) {
 		t.Fatalf("order = %v, want %v", got, want)
@@ -277,11 +277,41 @@ func TestBlockDoc_ApplyOp_CreateIntoParentRejected(t *testing.T) {
 		Type: "create-block", BlockID: "co-1", Kind: "code",
 		Attrs: map[string]interface{}{"source": "x = 1"}, Index: 0, ParentID: "pr-1",
 	}
-	if err := ApplyOp(&doc, op); err == nil {
+	if err := applyOpTo(&doc, op); err == nil {
 		t.Fatal("expected create-block with ParentID to be rejected (no Children until Stage E)")
 	}
 	if len(doc) != 1 {
 		t.Fatalf("rejected op must not mutate the tree: %+v", ids(doc))
+	}
+}
+
+// ShadowDocument.ApplyOp must lock, apply, arm debounce, and leave the tree
+// consistent — same semantics as applyOpTo but through the live-doc entry point.
+func TestShadowDocument_ApplyOp_UpdatesTree(t *testing.T) {
+	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
+	t.Cleanup(func() { UnregisterProcessor("code") })
+
+	md := "Hello.\n\n```code\nid: co-1\nsource: x = 1\n```"
+	shadow := newShadow("u", md, NewDocumentCodec(globalRegistry()), 0, nil)
+
+	if err := shadow.ApplyOp(BlockOp{
+		Type: "update-block", BlockID: "co-1", Kind: "code",
+		Attrs: map[string]interface{}{"id": "co-1", "source": "z = 99"},
+	}); err != nil {
+		t.Fatalf("shadow.ApplyOp: %v", err)
+	}
+
+	shadow.mu.Lock()
+	blk := shadow.findBlock("co-1")
+	if blk == nil {
+		shadow.mu.Unlock()
+		t.Fatal("block co-1 not found after ApplyOp")
+	}
+	got, _ := blk.Attrs["source"].(string)
+	shadow.mu.Unlock()
+
+	if got != "z = 99" {
+		t.Fatalf("source = %q, want %q", got, "z = 99")
 	}
 }
 
