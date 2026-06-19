@@ -18,7 +18,7 @@
 // Depends on window.TipTap (vendor/tiptap.js) for Extension.
 
 import { wrapProseBlock } from './prose-markers.js'
-import { renderProseContent } from './block-render.js'
+import { renderProseContent, proseContent } from './block-render.js'
 import { registerBlockKind } from './block-kinds.js'
 
 ;(function () {
@@ -123,7 +123,7 @@ import { registerBlockKind } from './block-kinds.js'
     identityAttr: 'id',
     identityExtension: BlockId,
     // load: a block's verbatim markdown → native HTML.
-    fromBlock: function (b, mdRender) { return renderProseContent((b && b.content) || '', mdRender) },
+    fromBlock: function (b, mdRender) { return renderProseContent(proseContent(b), mdRender) },
     // save: one top-level native node's clean markdown → paired-delimiter block.
     toMarkdown: function (id, content) { return wrapProseBlock(id, content) },
   }

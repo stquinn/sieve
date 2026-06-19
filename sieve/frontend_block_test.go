@@ -17,8 +17,8 @@ func TestBlockDocToFrontendBlocks_ProseAndStructured(t *testing.T) {
 		t.Fatalf("want 3 frontend blocks, got %d: %+v", len(fbs), fbs)
 	}
 
-	// Prose carries Content + handle + aliases; no fence text.
-	if fbs[0].Kind != KindProse || fbs[0].ID != "pr-1" || fbs[0].Content != "Hello **world**." {
+	// Prose carries its body in Attrs["content"] + handle + aliases; no fence text.
+	if fbs[0].Kind != KindProse || fbs[0].ID != "pr-1" || fbs[0].Attrs["content"] != "Hello **world**." {
 		t.Fatalf("prose block 0: %+v", fbs[0])
 	}
 	if len(fbs[0].Aliases) != 1 || fbs[0].Aliases[0] != "pr-0" {
@@ -28,12 +28,12 @@ func TestBlockDocToFrontendBlocks_ProseAndStructured(t *testing.T) {
 		t.Fatalf("prose block 0 should have no serialised form: %q", fbs[0].SerialisedForm)
 	}
 
-	// Structured carries the fence text in SerialisedForm; no prose content.
+	// Structured carries the fence text in SerialisedForm; no content attr.
 	if fbs[1].Kind != "code" || fbs[1].ID != "co-1" {
 		t.Fatalf("structured block 1: %+v", fbs[1])
 	}
-	if fbs[1].Content != "" {
-		t.Fatalf("structured block 1 should have no content: %q", fbs[1].Content)
+	if fbs[1].Attrs["content"] != nil {
+		t.Fatalf("structured block 1 should have no content attr: %v", fbs[1].Attrs["content"])
 	}
 	want := "```code\nid: co-1\nsource: x = 1\n```"
 	if fbs[1].SerialisedForm != want {
@@ -41,14 +41,14 @@ func TestBlockDocToFrontendBlocks_ProseAndStructured(t *testing.T) {
 	}
 
 	// Handle-less prose still converts (positional id is empty for now).
-	if fbs[2].Kind != KindProse || fbs[2].ID != "" || fbs[2].Content != "Tail." {
+	if fbs[2].Kind != KindProse || fbs[2].ID != "" || fbs[2].Attrs["content"] != "Tail." {
 		t.Fatalf("prose block 2: %+v", fbs[2])
 	}
 }
 
-// Structured blocks travel as their PROPERTIES (Attrs), not just a fence string —
-// the block model is properties-in/properties-out, so the client renders the
-// NodeView straight from attrs (no markdown re-parse). Prose carries no attrs.
+// Every block travels as its PROPERTIES (Attrs) — uniform shape. Structured
+// blocks carry their YAML props; prose carries its body at Attrs["content"]. The
+// client renders the right thing by KIND, not by which field holds the payload.
 func TestBlockDocToFrontendBlocks_StructuredCarriesAttrs(t *testing.T) {
 	doc := BlockDoc{Blocks: []DocBlock{
 		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{"id": "co-1", "source": "x = 1"}},
@@ -61,7 +61,7 @@ func TestBlockDocToFrontendBlocks_StructuredCarriesAttrs(t *testing.T) {
 	if fbs[0].Attrs == nil || fbs[0].Attrs["source"] != "x = 1" || fbs[0].Attrs["id"] != "co-1" {
 		t.Fatalf("structured block must carry attrs: %+v", fbs[0].Attrs)
 	}
-	if fbs[1].Attrs != nil {
-		t.Fatalf("prose block must not carry attrs: %+v", fbs[1].Attrs)
+	if fbs[1].Attrs == nil || fbs[1].Attrs["content"] != "Prose." {
+		t.Fatalf("prose block must carry its body in Attrs[content]: %+v", fbs[1].Attrs)
 	}
 }

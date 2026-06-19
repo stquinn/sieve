@@ -29,10 +29,19 @@ export function renderProseContent(content, mdRender) {
   return inner
 }
 
+// proseContent resolves a block's prose body from the uniform Attrs bag — the
+// same place EVERY kind keeps its payload (code → attrs.source, prose →
+// attrs.content). The wire shape is uniform: a block is {id, kind, attrs}; the
+// renderer branches on kind, not on where the payload lives. Temporary FE
+// shorthand for the prose load sites while they read attrs.content.
+export function proseContent(b) {
+  return (b && b.attrs && b.attrs.content) || ''
+}
+
 // Build the HTML for a single block.
 function blockHTML(b, mdRender) {
   if (b.kind === 'prose') {
-    return renderProseContent(b.content, mdRender)
+    return renderProseContent(proseContent(b), mdRender)
   }
   // Structured / container: build the node's data-* div straight from the block's
   // PROPERTIES (attrs), reusing the SAME parseAttrs/data-* builder the markdownit
@@ -62,4 +71,5 @@ export function buildBlocksHTML(blocks, mdRender) {
 if (typeof window !== 'undefined') {
   window.TipTap = window.TipTap || {}
   window.TipTap.buildBlocksHTML = buildBlocksHTML
+  window.TipTap.proseContent = proseContent
 }

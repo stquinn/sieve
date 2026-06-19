@@ -251,7 +251,9 @@
         return {
           id: b.id,
           kind: b.kind,
-          content: b.kind === 'prose' ? (b.content || '') : (b.serialisedForm || ''),
+          // Uniform wire shape: prose body rides in attrs.content (proseContent),
+          // structured signs on its stable serialisedForm.
+          content: b.kind === 'prose' ? window.TipTap.proseContent(b) : (b.serialisedForm || ''),
         }
       })
       // seedBaseline includes EVERY id'd server block (even an empty one) so the

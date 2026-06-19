@@ -146,8 +146,8 @@ func TestFrontendBlocks_ReturnsShadowMintedIDs(t *testing.T) {
 	if blocks[0].Kind != KindProse || !strings.HasPrefix(blocks[0].ID, "pr-") {
 		t.Fatalf("expected minted prose block, got %+v", blocks[0])
 	}
-	if blocks[0].Content != "Prose needing a handle." {
-		t.Fatalf("content not preserved: %q", blocks[0].Content)
+	if blocks[0].Attrs["content"] != "Prose needing a handle." {
+		t.Fatalf("content not preserved: %v", blocks[0].Attrs["content"])
 	}
 }
 
