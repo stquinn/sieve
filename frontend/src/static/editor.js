@@ -28,6 +28,25 @@
   // value can never leak into a later insert.
   var sieveInsertPos = null
 
+  // kindIsInline reads from the schema whether a sieve-<kind> node is inline (e.g.
+  // smart-link) — so blockInsertPos places it at the caret rather than after the
+  // top-level block. Unknown kind → block (the safe default; lands after the
+  // enclosing top-level node, never splitting it).
+  function kindIsInline(kind) {
+    if (!currentEditor || !kind) return false
+    var nt = currentEditor.schema.nodes['sieve-' + kind]
+    return !!(nt && nt.isInline)
+  }
+
+  // captureInsertPos resolves WHERE the next inserted block goes, the single way
+  // every additive creation path stamps sieveInsertPos (D-r.7). Delegates to the
+  // shared blockInsertPos helper so block answers land after the top-level block
+  // and inline kinds land at the caret. (In-place conversion / explicit-position
+  // pastes set sieveInsertPos directly with their own {from,to} / coord position.)
+  function captureInsertPos(isInline) {
+    return currentEditor ? window.TipTap.blockInsertPos(currentEditor.state, isInline) : null
+  }
+
 
   var askDialog = null
   var internalizeDialog = null
@@ -767,7 +786,7 @@
   // detail: { kind: 'code', attrs: {} }
   document.addEventListener('sieve:create-block', function (e) {
     if (!currentUuid || currentUuid.startsWith('prompt:') || !e.detail.kind) return
-    sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
+    sieveInsertPos = captureInsertPos(kindIsInline(e.detail.kind))
     var attrs = e.detail.attrs || {}
     if (e.detail.kind === 'diagram' && !attrs.source) {
       attrs.mode = 'edit'
@@ -775,9 +794,10 @@
     wsSend({ type: 'create-block', kind: e.detail.kind, attrs: attrs, uuid: currentUuid })
   })
 
-  // Explicitly capture insertion position for async flows (like image upload)
+  // Explicitly capture insertion position for async flows (like image upload).
+  // These insert block kinds (smart-image / web-clip), so capture as a block.
   document.addEventListener('sieve:capture-insert-pos', function () {
-    sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
+    sieveInsertPos = captureInsertPos(false)
   })
 
   // NodeViews fire sieve:block-update when the user edits block content.
@@ -1145,7 +1165,7 @@
   function doCreateSmartCard(href) {
     if (!currentUuid) return
     if (!currentEditor && currentMode !== 'markdown') return
-    sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
+    sieveInsertPos = captureInsertPos(kindIsInline('smart-card'))
     wsSend({ type: 'create-block', kind: 'smart-card', attrs: { href: href }, uuid: currentUuid })
   }
 
@@ -1223,7 +1243,7 @@
   function doInternalize(source, mode) {
     if (!currentUuid) return
     if (!currentEditor && currentMode !== 'markdown') return
-    sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
+    sieveInsertPos = captureInsertPos(kindIsInline('web-clip'))
     wsSend({ type: 'create-block', kind: 'web-clip', attrs: { source: source, mode: mode }, uuid: currentUuid })
   }
 
@@ -1407,10 +1427,10 @@
       var refId = (ctx && ctx.blockRef) || 'doc'
       var blockType = type === 'explain' ? 'EXPLAIN' : 'ASK'
 
-      // Insert the answer AFTER the target block (anchor/sieve), never nested
-      // inside it. After a SEND-time mint the caret sits inside the fresh anchor,
-      // so selection.to alone would place the block inside it. See ai-target.js.
-      sieveInsertPos = currentEditor ? window.TipTap.aiInsertPos(currentEditor.state) : null
+      // Insert the answer AFTER the caret's top-level block — never at the caret,
+      // which would split the paragraph into first-half / answer / second-half.
+      // An AI block is always a block kind. See blockInsertPos in ai-target.js.
+      sieveInsertPos = captureInsertPos(false)
 
       flushSave().then(function () {
         wsSend({
@@ -1558,7 +1578,9 @@
           }
         })
 
-        sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
+        // Smart-paste resolves a block kind server-side (web-clip / smart-image /
+        // smart-card) → capture as a block (after the top-level node).
+        sieveInsertPos = captureInsertPos(false)
         event.preventDefault()
 
         Promise.all(promises).then(function(results) {

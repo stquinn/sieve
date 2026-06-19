@@ -24,10 +24,6 @@
     return '"' + s + '"'
   }
 
-  function isSieveName(name) { return name === 'aiBlock' || name === 'sieve-ai-block' || name.indexOf('sieve-') === 0 }
-  function isAnchorName(name) { return name === 'blockRef' }
-  function isTargetName(name) { return isSieveName(name) || isAnchorName(name) }
-
   // Read a block id from the DOM focus / native selection (mirrors buildAiContext).
   // Returns '' if none (e.g. in Node tests with no real DOM focus).
   function domBlockId() {
@@ -179,20 +175,21 @@
     return { kind: 'document', ref: 'doc', range: null, label: 'Document' }
   }
 
-  // aiInsertPos(state) → doc position where the AI answer block should be inserted.
-  // The answer must be a SIBLING that FOLLOWS the target block, never nested inside
-  // it. After a SEND-time mint the caret sits inside a freshly-wrapped blockRef
-  // anchor, so selection.to would land the block inside the anchor — this returns
-  // the position immediately after the shallowest enclosing target block instead.
-  // Plain cursor / document targets fall back to the caret (selection.to).
-  function aiInsertPos(state) {
+  // blockInsertPos(state, isInline) → doc position for an additive block/inline
+  // insert (D-r.7). The single source for every create-block / AI-answer insert,
+  // replacing the scattered `sieveInsertPos = selection.to` defaults:
+  //   - inline kind (e.g. smart-link, schema isInline) → the caret;
+  //   - NodeSelection → selection.to (already right after the selected node);
+  //   - otherwise → after the enclosing TOP-LEVEL (depth-1) block, so a block
+  //     answer lands as a sibling and never splits the paragraph. Even a
+  //     document-scoped answer lands after the caret's current top-level block.
+  // At a doc-level gap (caret after an atom / at doc end, depth 0) the caret is
+  // already a valid top-level point → use it.
+  function blockInsertPos(state, isInline) {
     var sel = state.selection
-    // Whole-node selection (e.g. a sieve block): selection.to already sits after it.
+    if (isInline) return sel.to
     if (sel.node) return sel.to
-    var $from = sel.$from
-    for (var d = 1; d <= $from.depth; d++) {
-      if (isTargetName($from.node(d).type.name)) return $from.after(d)
-    }
+    if (sel.$to.depth >= 1) return sel.$to.after(1)
     return sel.to
   }
 
@@ -200,5 +197,5 @@
   T.quoteSnippet = quoteSnippet
   T.describeTarget = describeTarget
   T.resolveAiTarget = resolveAiTarget
-  T.aiInsertPos = aiInsertPos
+  T.blockInsertPos = blockInsertPos
 })()
