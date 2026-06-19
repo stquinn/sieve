@@ -1,6 +1,9 @@
 package sieve
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // DocumentCodec owns BOTH directions of document SerDes. It sees only the
 // registry + the BlockProcessor interface, so it CANNOT switch on kind — the
@@ -21,6 +24,9 @@ func NewDocumentCodec(reg ProcessorRegistry) *DocumentCodec {
 func (c *DocumentCodec) Deserialize(markdown string) ([]SieveBlock, error) {
 	regions := c.scanner.Scan(markdown)
 	prose := c.registry.Get(KindProse)
+	if prose == nil {
+		return nil, fmt.Errorf("DocumentCodec: no prose processor registered (KindProse) — registry is misconfigured")
+	}
 
 	var out []SieveBlock
 	var pending []Region
