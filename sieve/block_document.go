@@ -1,11 +1,7 @@
 package sieve
 
 import (
-	"strings"
-
 	"sieve/sieve/fencedblock"
-
-	"github.com/yuin/goldmark/text"
 )
 
 // SieveBlock is a node in the unified, ordered block tree (spec §2). EVERY kind —
@@ -35,7 +31,7 @@ type SieveBlock struct {
 // the rule lives in ONE place instead of being swept after the fact. Pass id=""
 // to mint (GenerateBlockIDFor honors a registered processor's prefix); pass a
 // known id (a marker's handle, a frontend-minted blockId) to keep it. The
-// serialize-time guard in SerializeBlockDocWithHandles is the runtime backstop
+// serialize-time guard in DocumentCodec.Serialize is the runtime backstop
 // for any future code path that bypasses this factory with a raw literal.
 func newSieveBlock(kind, id, content string, attrs map[string]interface{}) SieveBlock {
 	if id == "" {
@@ -101,87 +97,6 @@ const (
 	KindColumnRow = "column-row"
 	KindColumn    = "column"
 )
-
-// SerializeBlockDoc assembles markdown from the block tree WITHOUT handle
-// delimiters — a handle-less convenience over the spine (the delimited writer is
-// SerializeBlockDocWithHandles). Prose blocks emit their verbatim Content;
-// structured blocks emit a fenced YAML block. Blocks are joined by a blank line.
-func SerializeBlockDoc(blocks []SieveBlock) (string, error) {
-	parts := make([]string, 0, len(blocks))
-	for _, b := range blocks {
-		if b.Kind == KindProse {
-			parts = append(parts, b.Content())
-			continue
-		}
-		s, err := serializeFencedBlock(b)
-		if err != nil {
-			return "", err
-		}
-		parts = append(parts, s)
-	}
-	return strings.Join(parts, "\n\n"), nil
-}
-
-// ParseBlockDoc parses markdown into an ordered BlockDoc using the paired-
-// delimiter tree rules (handle-less convenience over scanBlocks; the handle-
-// aware loader is ParseBlockDocWithHandles). Top-level structured fences become
-// structured blocks; paired `<!--s:ID-->` regions and undelimited runs become
-// prose blocks. Blank lines never split.
-func ParseBlockDoc(markdown string) ([]SieveBlock, error) {
-	return scanBlocks(markdown), nil
-}
-
-// scanBlocks is the D.4 spine scanner. Structure derives ONLY from delimiters:
-//   - a top-level structured fence (registered block-mode kind + id) is an
-//     atomic, opaque structured block — goldmark already isolates it, so a
-//     literal marker inside it is fence content, never a prose boundary (leaf
-//     opacity);
-//   - the byte gaps between fences are prose regions, scanned for paired
-//     `<!--s:ID-->` / `<!--/s:ID-->` delimiters (scanProseRegion).
-//
-// Whitespace is never read for structure; blank lines carry no signal.
-func scanBlocks(markdown string) []SieveBlock {
-	source := []byte(markdown)
-	root := mdParser().Parser().Parse(text.NewReader(source))
-
-	var out []SieveBlock
-	cursor := 0
-	emitProse := func(end int) {
-		if end <= cursor {
-			return
-		}
-		out = append(out, scanProseRegion(string(source[cursor:end]))...)
-	}
-
-	for n := root.FirstChild(); n != nil; n = n.NextSibling() {
-		sn, ok := n.(*sieveBlockNode)
-		if !ok {
-			continue // prose/anchor: absorbed into the surrounding prose region
-		}
-		emitProse(sn.StartByte())
-		b := newSieveBlock(sn.SieveBlock.Kind, sn.SieveBlock.ID, "", sn.SieveBlock.Attrs)
-		out = append(out, b)
-		cursor = sn.EndByte()
-	}
-	emitProse(len(source))
-	return out
-}
-
-// mintProseIDs assigns a fresh handle to every prose block with an empty ID.
-// Structured blocks already carry their id in YAML, and prose blocks that already
-// hold a handle are left untouched — so it is idempotent and silent (IDs are
-// invisible plumbing minted automatically on Open). Returns the number of handles
-// minted. Mutates blocks in place.
-func mintProseIDs(blocks []SieveBlock) int {
-	minted := 0
-	for i := range blocks {
-		if blocks[i].Kind == KindProse && blocks[i].ID == "" {
-			blocks[i].ID = GenerateBlockID(KindProse)
-			minted++
-		}
-	}
-	return minted
-}
 
 // serializeFencedBlock renders any block-mode kind as ```kind\n<yaml>\n```
 // using the shared literal-style machinery — registry-free, so it serializes

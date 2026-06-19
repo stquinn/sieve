@@ -16,12 +16,13 @@ package sieve
 // code block cannot be corrupted. The id is hidden in the editor but always
 // written back to disk.
 
-// ParseBlockDocWithHandles is the handle-aware loader. Structure derives ONLY
-// from delimiters: top-level structured fences (atomic, opaque) and paired
+// ParseBlockDocWithHandles is the handle-aware loader — now a thin codec shim,
+// exactly mirroring SerializeBlockDocWithHandles. Structure derives ONLY from
+// delimiters: top-level structured fences (atomic, opaque) and paired
 // `<!--s:ID--> … <!--/s:ID-->` prose blocks. Unbalanced opens are literal text;
 // undelimited runs become a single opaque prose block. Blank lines never split.
 func ParseBlockDocWithHandles(markdown string) ([]SieveBlock, error) {
-	return scanBlocks(markdown), nil
+	return NewDocumentCodec(globalRegistry()).Deserialize(markdown)
 }
 
 // splitHandles applies the split handle rule (Enter mid-block, spec §7): the

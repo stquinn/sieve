@@ -5,44 +5,6 @@ import (
 	"testing"
 )
 
-// Identity: the shadow is the single source of truth. Open mints a handle for
-// every prose block with an empty ID (silently, automatically). Structured
-// blocks already carry their id in YAML; prose blocks that already have a handle
-// keep it (idempotent).
-func TestMintProseIDs_AssignsToHandlelessProse(t *testing.T) {
-	blocks := []SieveBlock{
-		{Kind: KindProse, Attrs: map[string]interface{}{"content": "A"}},                // empty ID → mint
-		{ID: "co-1", Kind: "code"},                                                      // structured → untouched
-		{ID: "pr-keep", Kind: KindProse, Attrs: map[string]interface{}{"content": "B"}}, // already minted → untouched
-	}
-	n := mintProseIDs(blocks)
-	if n != 1 {
-		t.Fatalf("want 1 mint, got %d", n)
-	}
-	if !strings.HasPrefix(blocks[0].ID, "pr-") {
-		t.Fatalf("block 0 not minted with pr- handle: %q", blocks[0].ID)
-	}
-	if blocks[1].ID != "co-1" {
-		t.Fatalf("structured block id changed: %q", blocks[1].ID)
-	}
-	if blocks[2].ID != "pr-keep" {
-		t.Fatalf("existing prose handle changed: %q", blocks[2].ID)
-	}
-}
-
-func TestMintProseIDs_Idempotent(t *testing.T) {
-	blocks := []SieveBlock{{Kind: KindProse, Attrs: map[string]interface{}{"content": "A"}}}
-	mintProseIDs(blocks)
-	first := blocks[0].ID
-	if first == "" {
-		t.Fatal("first pass minted nothing")
-	}
-	n := mintProseIDs(blocks)
-	if n != 0 || blocks[0].ID != first {
-		t.Fatalf("second pass not idempotent: n=%d id=%q (was %q)", n, blocks[0].ID, first)
-	}
-}
-
 // Open mints handles for handle-less prose into the shadow's Doc, so the shadow
 // is the single source of identity (load-through-shadow then returns real ids).
 func TestOpen_MintsHandlelessProseIntoShadow(t *testing.T) {

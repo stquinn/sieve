@@ -33,30 +33,12 @@ func TestSerializeBlockDocWithHandles_RefusesIdlessProse(t *testing.T) {
 	}
 }
 
-func TestSerializeBlockDoc_ProseAndFence(t *testing.T) {
-	doc := []SieveBlock{
-		{Kind: KindProse, Attrs: map[string]interface{}{"content": "Hello."}},
-		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{
-			"id":     "co-1",
-			"source": "x = 1",
-		}},
-	}
-	got, err := SerializeBlockDoc(doc)
-	if err != nil {
-		t.Fatalf("serialize: %v", err)
-	}
-	want := "Hello.\n\n```code\nid: co-1\nsource: x = 1\n```"
-	if got != want {
-		t.Fatalf("serialize mismatch:\n got: %q\nwant: %q", got, want)
-	}
-}
-
 func TestParseBlockDoc_ProseAndFence(t *testing.T) {
-	RegisterProcessor("code", &CodeBlockProcessor{})
+	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
 	t.Cleanup(func() { UnregisterProcessor("code") })
 
 	md := "Hello.\n\n```code\nid: co-1\nsource: x = 1\n```\n\nWorld."
-	doc, err := ParseBlockDoc(md)
+	doc, err := ParseBlockDocWithHandles(md)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -78,11 +60,11 @@ func TestParseBlockDoc_ProseAndFence(t *testing.T) {
 // run never split it: each maximal run between fences is one prose block (D.4 —
 // whitespace is parse-meaningless). Multi-paragraph content stays verbatim.
 func TestParseBlockDoc_UndelimitedRunsBetweenFences(t *testing.T) {
-	RegisterProcessor("code", &CodeBlockProcessor{})
+	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
 	t.Cleanup(func() { UnregisterProcessor("code") })
 
 	md := "# Title\n\nIntro prose.\n\n```code\nid: co-1\nsource: x = 1\n```\n\nFirst tail.\n\nSecond tail."
-	doc, err := ParseBlockDoc(md)
+	doc, err := ParseBlockDocWithHandles(md)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -108,33 +90,34 @@ func TestParseBlockDoc_UndelimitedRunsBetweenFences(t *testing.T) {
 }
 
 func TestBlockDoc_RoundTripStable(t *testing.T) {
-	RegisterProcessor("code", &CodeBlockProcessor{})
+	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
 	t.Cleanup(func() { UnregisterProcessor("code") })
-	RegisterProcessor("column-row", &CodeBlockProcessor{}) // any block-mode processor suffices for the parse gate
-	t.Cleanup(func() { UnregisterProcessor("column-row") })
 
 	// Each prose block is a single paragraph so per-paragraph segmentation
 	// (Stage B.1) preserves the block count through the round-trip.
+	// column-row has no registered processor — it round-trips via the codec's
+	// fence-fallback (unclaimedFenceBlock), so no extra registration needed.
 	doc := []SieveBlock{
-		{Kind: KindProse, Attrs: map[string]interface{}{"content": "# Title"}},
-		{ID: "co-1", Kind: "code", Attrs: map[string]interface{}{"id": "co-1", "source": "x = 1"}},
-		{Kind: KindProse, Attrs: map[string]interface{}{"content": "Between."}},
-		{ID: "cr-1", Kind: KindColumnRow, Attrs: map[string]interface{}{"id": "cr-1", "widths": []interface{}{0.5, 0.5}}},
-		{Kind: KindProse, Attrs: map[string]interface{}{"content": "Tail."}},
+		newSieveBlock(KindProse, "pr-1", "# Title", nil),
+		newSieveBlock("code", "co-1", "", map[string]interface{}{"id": "co-1", "source": "x = 1"}),
+		newSieveBlock(KindProse, "pr-2", "Between.", nil),
+		newSieveBlock(KindColumnRow, "cr-1", "", map[string]interface{}{"id": "cr-1", "widths": []interface{}{0.5, 0.5}}),
+		newSieveBlock(KindProse, "pr-3", "Tail.", nil),
 	}
 
-	md1, err := SerializeBlockDoc(doc)
+	c := NewDocumentCodec(globalRegistry())
+	md1, err := c.Serialize(doc)
 	if err != nil {
 		t.Fatalf("serialize 1: %v", err)
 	}
-	parsed, err := ParseBlockDoc(md1)
+	parsed, err := c.Deserialize(md1)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if len(parsed) != len(doc) {
 		t.Fatalf("block count drift: want %d got %d", len(doc), len(parsed))
 	}
-	md2, err := SerializeBlockDoc(parsed)
+	md2, err := c.Serialize(parsed)
 	if err != nil {
 		t.Fatalf("serialize 2: %v", err)
 	}

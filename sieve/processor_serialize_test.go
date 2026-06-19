@@ -36,10 +36,9 @@ func TestSerialize_IsProcessorOwned_NoKindSwitch(t *testing.T) {
 }
 
 // THE meaningful serialization test: a document serialized via the production
-// (processor-owned) spine must parse back via the PRODUCTION parser to the same
-// blocks. It deliberately uses ParseBlockDocWithHandles — NOT a test-local parser
-// — so that a defect in scanBlocks/goldmark (the real parse path) actually fails
-// here. A round-trip validated by duplicate parse code catches nothing.
+// (processor-owned) spine must parse back via the PRODUCTION codec to the same
+// blocks. It deliberately uses ParseBlockDocWithHandles (a thin codec shim) so
+// that a real defect in the codec actually fails here.
 func TestSerialize_RoundTripsThroughProductionParser(t *testing.T) {
 	resetRegistry() // restores the built-in prose flavour
 	RegisterProcessor("code", &CodeBlockProcessor{})
