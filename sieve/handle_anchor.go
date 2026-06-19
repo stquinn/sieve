@@ -1,6 +1,5 @@
 package sieve
 
-
 // Stage B.2 — universal prose handles via on-disk markers.
 //
 // Every block carries a stable handle so the reference graph survives reopen
