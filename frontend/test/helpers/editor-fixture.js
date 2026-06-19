@@ -1,20 +1,54 @@
 import { Schema } from '@tiptap/pm/model'
 import { EditorState, TextSelection, NodeSelection } from '@tiptap/pm/state'
 
-// Minimal schema: enough node NAMES for resolveAiTarget's type checks.
-// sieve-* atoms carry id/kind/serialisedForm like real Sieve blocks.
+// Minimal schema mirroring the node-granular model (D-r.7): every top-level node
+// — native prose (paragraph/heading/blockquote/list/table/codeBlock/image/hr) AND
+// structured sieve-* — carries an `id` attribute (unified identity). resolveAiTarget
+// keys off node NAME (flowing-text vs unit) + that id, so the schema only needs the
+// right names, groups, and an `id` attr per top-level node type.
 export const schema = new Schema({
   nodes: {
     doc: { content: 'block+' },
-    paragraph: { group: 'block', content: 'inline*', toDOM: () => ['p', 0], parseDOM: [{ tag: 'p' }] },
+    paragraph: {
+      group: 'block', content: 'inline*', attrs: { id: { default: '' } },
+      toDOM: (nd) => ['p', { 'data-id': nd.attrs.id }, 0], parseDOM: [{ tag: 'p' }],
+    },
+    heading: {
+      group: 'block', content: 'inline*', attrs: { id: { default: '' } },
+      toDOM: (nd) => ['h1', { 'data-id': nd.attrs.id }, 0],
+    },
+    blockquote: {
+      group: 'block', content: 'block+', attrs: { id: { default: '' } },
+      toDOM: (nd) => ['blockquote', { 'data-id': nd.attrs.id }, 0],
+    },
+    bulletList: {
+      group: 'block', content: 'listItem+', attrs: { id: { default: '' } },
+      toDOM: (nd) => ['ul', { 'data-id': nd.attrs.id }, 0],
+    },
+    listItem: { content: 'paragraph+', toDOM: () => ['li', 0] },
+    table: {
+      group: 'block', content: 'paragraph+', attrs: { id: { default: '' } },
+      toDOM: (nd) => ['table', { 'data-id': nd.attrs.id }, ['tbody', 0]],
+    },
+    codeBlock: {
+      group: 'block', content: 'text*', code: true, attrs: { id: { default: '' } },
+      toDOM: (nd) => ['pre', { 'data-id': nd.attrs.id }, ['code', 0]],
+    },
+    image: {
+      group: 'block', atom: true, selectable: true,
+      attrs: { id: { default: '' }, src: { default: '' } },
+      toDOM: (nd) => ['img', { 'data-id': nd.attrs.id, src: nd.attrs.src }],
+    },
+    horizontalRule: {
+      group: 'block', atom: true, selectable: true, attrs: { id: { default: '' } },
+      toDOM: (nd) => ['hr', { 'data-id': nd.attrs.id }],
+    },
     text: { group: 'inline' },
-    codeBlock: { group: 'block', content: 'text*', code: true, toDOM: () => ['pre', ['code', 0]] },
-    table: { group: 'block', content: 'paragraph+', toDOM: () => ['table', ['tbody', 0]] },
-    // blockRef = anchor: wraps a block, carries an id
+    // blockRef = legacy anchor: wraps a block, carries an id (retired in Stage E)
     blockRef: {
       group: 'block', content: 'block+',
       attrs: { id: { default: '' } },
-      toDOM: (n) => ['div', { 'data-id': n.attrs.id, class: 'block-ref' }, 0],
+      toDOM: (nd) => ['div', { 'data-id': nd.attrs.id, class: 'block-ref' }, 0],
     },
     // a generic sieve atom (e.g. sieve-code), and the ai-block follow-up atom
     'sieve-code': sieveAtom('code'),
@@ -29,7 +63,7 @@ function sieveAtom(kind) {
   return {
     group: 'block', atom: true, selectable: true,
     attrs: { id: { default: '' }, kind: { default: kind }, serialisedForm: { default: '' }, ref: { default: '' } },
-    toDOM: (n) => ['div', { 'data-id': n.attrs.id, 'data-type': 'sieve-' + n.attrs.kind }],
+    toDOM: (nd) => ['div', { 'data-id': nd.attrs.id, 'data-type': 'sieve-' + nd.attrs.kind }],
   }
 }
 
@@ -47,6 +81,24 @@ export function docWithCaret(nodes, blockIndex, charOffset) {
   const sel = TextSelection.create(state.doc, pos + 1 + (charOffset || 0))
   state = state.apply(state.tr.setSelection(sel))
   return { editor: { state }, schema }
+}
+
+// Build a doc and place a collapsed caret at the nearest valid text position to
+// `absPos` — robust for nested top-level nodes (lists, blockquotes, tables) where
+// the inner text position is awkward to compute by hand.
+export function docWithCaretNear(nodes, absPos) {
+  const doc = n.doc.create(null, nodes)
+  let state = EditorState.create({ schema, doc })
+  state = state.apply(state.tr.setSelection(TextSelection.near(state.doc.resolve(absPos), 1)))
+  return { editor: { state }, state, schema }
+}
+
+// Build a doc with a collapsed caret at an exact absolute doc position.
+export function docWithCaretAt(nodes, pos) {
+  const doc = n.doc.create(null, nodes)
+  let state = EditorState.create({ schema, doc })
+  state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, pos)))
+  return { editor: { state }, state, schema }
 }
 
 // Build a doc with a TextSelection spanning [from,to] (absolute doc positions).
@@ -67,10 +119,18 @@ export function docWithNodeSelection(nodes, blockIndex) {
   return { editor: { state }, schema }
 }
 
-// Convenience node builders for tests
+// Convenience node builders for tests. Native nodes accept an optional id so a
+// test can address the block it expects to resolve.
 export const build = {
-  p: (text) => n.paragraph.create(null, text ? t(text) : null),
-  code: (text) => n.codeBlock.create(null, text ? t(text) : null),
+  p: (text, id) => n.paragraph.create(id ? { id } : null, text ? t(text) : null),
+  heading: (text, id) => n.heading.create(id ? { id } : null, text ? t(text) : null),
+  code: (text, id) => n.codeBlock.create(id ? { id } : null, text ? t(text) : null),
+  blockquote: (id, inner) => n.blockquote.create(id ? { id } : null, inner || [n.paragraph.create(null, t('quote'))]),
+  bulletList: (id, items) => n.bulletList.create(id ? { id } : null,
+    (items || ['item']).map((s) => n.listItem.create(null, n.paragraph.create(null, t(s))))),
+  table: (id, text) => n.table.create(id ? { id } : null, n.paragraph.create(null, t(text || 'cell'))),
+  image: (id) => n.image.create({ id: id || '', src: 'x.png' }),
+  hr: (id) => n.horizontalRule.create(id ? { id } : null),
   sieveCode: (id) => n['sieve-code'].create({ id, kind: 'code', serialisedForm: '' }),
   aiBlock: (id, ref) => n['sieve-ai-block'].create({ id, kind: 'ai-block', serialisedForm: '', ref: ref || '' }),
   anchor: (id, inner) => n.blockRef.create({ id }, inner),

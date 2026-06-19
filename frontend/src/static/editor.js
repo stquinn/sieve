@@ -1337,8 +1337,8 @@
     if (pendingAskCtx) {
       ctx = pendingAskCtx
     } else {
-      // Resolve once at SEND. Mint an anchor ONLY for a live selection — the one
-      // mutating case. applyTargetHighlight wraps in blockRef + applies ==.
+      // Resolve once at SEND. Apply the == highlight ONLY for a live selection —
+      // the one mutating case (D-r.7: just the mark; the block already has an id).
       var t = window.TipTap.resolveAiTarget(currentEditor, currentMode === 'markdown')
       if (t.kind === 'selection' && currentMode !== 'markdown') {
         window.TipTap.applyTargetHighlight(currentEditor)

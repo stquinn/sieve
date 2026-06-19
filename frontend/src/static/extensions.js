@@ -315,9 +315,11 @@
     var t = T.resolveAiTarget(editor, isMarkdownMode)
 
     if (t.kind === 'document') return { blockRef: 'doc', contextLabel: 'Document' }
-    if (t.kind === 'selection') return { blockRef: t.blockRef || 'doc', contextLabel: t.label }
+    // selection → the ref chain of every top-level block the selection crosses
+    // (D-r.7 bug-1 fix); each block already carries an id, no blockRef wrap.
+    if (t.kind === 'selection') return { blockRef: t.ref || 'doc', contextLabel: t.label }
 
-    // sieveBlock / anchor → reference the existing id (no mutation).
+    // block → reference the existing id (no mutation).
     var n = t.node
     if (n && (n.type.name === 'aiBlock' || n.type.name === 'sieve-ai-block')) {
       // Follow-up: chain this AI block onto its own ref so Go assembles history.
@@ -326,7 +328,7 @@
       var newRef = aiBlockRef && aiBlockRef !== 'doc' ? aiBlockRef + ',' + aiBlockId : aiBlockId
       return { blockRef: newRef, contextLabel: 'Follow-up' }
     }
-    return { blockRef: t.id || 'doc', contextLabel: t.label }
+    return { blockRef: t.ref || t.id || 'doc', contextLabel: t.label }
   }
 
   // ── getAiTargetLabel ───────────────────────────────────────────────────────
@@ -336,49 +338,17 @@
   }
 
   // ── applyTargetHighlight ─────────────────────────────────────────────────────
-  // Canonical "mark this selection as the AI target": wraps the parent block in a
-  // BlockAnchor (blockRef) and applies the == highlight mark, so the target is both
-  // visible and resolvable by buildAiContext. Single source of truth shared by the
-  // context menu's "Highlight Target" item and by the Ask AI / Explain event handler
-  // in editor.js — so every entry point produces an identical target.
-  function wrapInBlockAnchor(editor) {
-    var s = editor.state
-    var sel = s.selection
-    var blockRef = 'blk-' + Math.random().toString(16).substring(2, 6)
-    var blockRange = sel.$from.blockRange(sel.$to)
-    if (!blockRange) return
-    var topRange = new T.NodeRange(blockRange.$from, blockRange.$to, 0)
-    var tr = s.tr
-    try {
-      tr.wrap(topRange, [{ type: s.schema.nodes.blockRef, attrs: { id: blockRef } }])
-      editor.view.dispatch(tr)
-    } catch (e) { /* selection too complex to wrap */ }
-  }
-
+  // Canonical "mark this selection as the AI target". D-r.7: every top-level block
+  // already carries an id (D-r.4 minting), so the AI target resolves by id and the
+  // legacy blockRef wrap is no longer needed — we simply apply the == highlight
+  // mark to the selected words. (The blockRef node type itself is retired in Stage
+  // E; here it just stops being created.) Single source of truth shared by the
+  // context menu's "Highlight Target" item and the Ask AI / Explain handler in
+  // editor.js, so every entry point produces an identical target.
   function applyTargetHighlight(editor) {
-    var s = editor.state
-    var sel = s.selection
-    if (sel.empty) return
-
-    // Detect if the selection covers the entire parent node (discounting whitespace)
-    var $from = sel.$from
-    var nodeStart = $from.start($from.depth)
-    var nodeEnd = $from.end($from.depth)
-    var coversNode =
-      s.doc.textBetween(sel.from, sel.to).trim() ===
-      s.doc.textBetween(nodeStart, nodeEnd).trim()
-
-    // Detect if already inside a BlockAnchor (blockRef node)
-    var inBlockAnchor = false
-    for (var d = $from.depth; d >= 0; d--) {
-      if ($from.node(d).type.name === 'blockRef') { inBlockAnchor = true; break }
-    }
-
-    if (coversNode && inBlockAnchor) return            // block already defines the target
-    if (coversNode && !inBlockAnchor) { wrapInBlockAnchor(editor); return } // wrap node, no mark
-
-    // Word/phrase selected: wrap parent in BlockAnchor (if needed) then apply == mark.
-    if (!inBlockAnchor) wrapInBlockAnchor(editor)
+    var sel = editor.state.selection
+    if (sel.empty) return                  // nothing selected → nothing to mark
+    if (editor.isActive && editor.isActive('highlight')) return // already marked
     editor.commands.setMark('highlight')
   }
   T.applyTargetHighlight = applyTargetHighlight
