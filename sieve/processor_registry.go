@@ -27,6 +27,7 @@ type BlockMode string
 const (
 	BlockModeBlock  BlockMode = "block"
 	BlockModeInline BlockMode = "inline"
+	BlockModeProse  BlockMode = "prose" // content + <!--s:ID--> markers, owned by ProseProcessor
 )
 
 // JobContext is the complete input to a processor's RunJob.
@@ -68,6 +69,22 @@ type BlockProcessor interface {
 	Mode() BlockMode
 	BuildContext(block SieveBlock, doc DocView, seen map[string]bool) string
 	MarkdownRepresentation(block SieveBlock) string
+	// Serialize renders the block to its on-disk form. THIS is the whole point of
+	// the block-document model: each flavour owns how its kind persists, and the
+	// save spine just walks blocks and asks each one. Structured (YAML) kinds share
+	// one implementation (FencedSerializer, embedded — free); prose owns the custom
+	// content + <!--s:ID--> marker form (ProseProcessor). No kind-switch in the spine.
+	Serialize(block SieveBlock) (string, error)
+}
+
+// FencedSerializer is the ONE shared serialization for YAML/fenced block flavours.
+// Every structured processor embeds it, so code/diagram/ai/log/web-clip/card/image/
+// link all persist as ```kind\n<yaml>\n``` for free — "one implementation."
+type FencedSerializer struct{}
+
+// Serialize renders a structured block as its canonical fenced YAML form.
+func (FencedSerializer) Serialize(block SieveBlock) (string, error) {
+	return serializeFencedBlock(block)
 }
 
 type BlockServices struct {

@@ -69,14 +69,11 @@ func BuildContextForID(id string, doc DocView, seen map[string]bool) string {
 	if id == "doc" {
 		return doc.deriveMarkdown()
 	}
-	// Uniform resolution: every block — prose or structured — is addressable by id
-	// in the block tree (getBlock). Kind only matters here, at context-build time:
-	// a prose block's payload IS its markdown content; a structured block routes to
-	// its registered ContextProvider.
+	// Uniform dispatch: every block — prose included — resolves by id (getBlock) and
+	// routes to its kind's registered ContextProvider. Prose is NOT special-cased
+	// here; ProseProcessor.BuildContext returns its content, exactly as the code
+	// provider returns its source. Kind matters only inside the provider.
 	if b, ok := doc.getBlock(id); ok {
-		if b.Kind == KindProse {
-			return b.Content()
-		}
 		cp := GetContextProvider(b.Kind)
 		if cp == nil {
 			logger.Warn("ContextProvider: no provider registered for block kind %q", b.Kind)

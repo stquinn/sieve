@@ -8,7 +8,9 @@ import (
 )
 
 // WebClipBlockProcessor handles the 'web-clip' Kind.
-type WebClipBlockProcessor struct{ svc BlockServices }
+type WebClipBlockProcessor struct{ svc BlockServices
+	FencedSerializer // one shared YAML serialization — free
+}
 
 func NewWebClipBlockProcessor(svc BlockServices) *WebClipBlockProcessor {
 	return &WebClipBlockProcessor{svc: svc}

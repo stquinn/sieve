@@ -5,6 +5,7 @@ import (
 )
 
 type mockProcessor struct {
+	FencedSerializer
 	isBlockFn   func([]ContentEntry) bool
 	transformFn func([]ContentEntry) map[string]interface{}
 }
@@ -41,6 +42,9 @@ func (p *mockProcessor) OnChange(_ *SieveBlock) {}
 func resetRegistry() {
 	processorRegistry = map[string]BlockProcessor{}
 	pasteMatchers = nil
+	// Prose is a BUILT-IN flavour (registered in init()), not an app-wired one — it
+	// must survive a registry reset, exactly as it always exists in a real system.
+	RegisterProcessor(KindProse, &ProseProcessor{})
 }
 
 func TestRegisterProcessor_storesInRegistry(t *testing.T) {

@@ -3,6 +3,7 @@ package sieve
 import "testing"
 
 type mockContextProcessor struct {
+	FencedSerializer
 	returnVal string
 	buildFn   func(SieveBlock) string
 }

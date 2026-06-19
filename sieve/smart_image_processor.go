@@ -20,7 +20,9 @@ import (
 // SmartImageProcessor handles the 'smart-image' Kind.
 // PasteMatch saves the image file synchronously so the block is created with
 // src already set. RunJob is AI-only: it calls DescribeImage on the saved file.
-type SmartImageProcessor struct{ svc BlockServices }
+type SmartImageProcessor struct{ svc BlockServices
+	FencedSerializer // one shared YAML serialization — free
+}
 
 func NewSmartImageProcessor(svc BlockServices) *SmartImageProcessor {
 	return &SmartImageProcessor{svc: svc}

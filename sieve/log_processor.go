@@ -50,7 +50,9 @@ func looksLikeLog(source string, customParsers []CustomLogParser) bool {
 	return false
 }
 
-type LogProcessor struct{ svc BlockServices }
+type LogProcessor struct{ svc BlockServices
+	FencedSerializer // one shared YAML serialization — free
+}
 
 func NewLogProcessor(svc BlockServices) *LogProcessor {
 	return &LogProcessor{svc: svc}

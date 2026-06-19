@@ -7,7 +7,7 @@ import (
 
 // testMarkdownProcessor returns a fixed MarkdownRepresentation so we can
 // assert the block anchor wrapper without depending on any real processor.
-type testMarkdownProcessor struct{ md string }
+type testMarkdownProcessor struct{ md string; FencedSerializer }
 
 func (p *testMarkdownProcessor) InitAttrs(id string, _ map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{"id": id}

@@ -12,7 +12,9 @@ import (
 // SmartCardProcessor handles the 'smart-card' block kind.
 // It fetches Open Graph metadata for a URL and stores the result as block attrs.
 // Image download is best-effort; failures are non-fatal.
-type SmartCardProcessor struct{ svc BlockServices }
+type SmartCardProcessor struct{ svc BlockServices
+	FencedSerializer // one shared YAML serialization — free
+}
 
 func NewSmartCardProcessor(svc BlockServices) *SmartCardProcessor {
 	return &SmartCardProcessor{svc: svc}

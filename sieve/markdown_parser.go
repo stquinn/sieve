@@ -299,6 +299,9 @@ func ParseFirstBlock(markdown string) *SieveBlock {
 
 // SerializeBlock safely formats a SieveBlock into markdown string based on its mode
 func SerializeBlock(processor BlockProcessor, block *SieveBlock) (string, error) {
+	if processor.Mode() == BlockModeProse {
+		return processor.Serialize(*block)
+	}
 	if processor.Mode() == BlockModeInline {
 		b, err := json.Marshal(block.Attrs)
 		if err != nil {

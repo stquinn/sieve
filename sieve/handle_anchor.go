@@ -88,18 +88,18 @@ func mergeHandles(head, tail SieveBlock) SieveBlock {
 func SerializeBlockDocWithHandles(blocks []SieveBlock) (string, error) {
 	parts := make([]string, 0, len(blocks))
 	for _, b := range blocks {
-		// Persistence-boundary guard (the runtime teeth behind newSieveBlock): a
+		// Persistence-boundary guard (universal invariant, not a kind concern): a
 		// block must never reach disk id-less. If this fires, a code path built a
 		// block via a raw literal instead of the factory — fix the construction
 		// site, don't relax the guard.
 		if b.ID == "" {
 			return "", fmt.Errorf("refusing to persist id-less %s block (construct via newSieveBlock)", b.Kind)
 		}
-		if b.Kind == KindProse {
-			parts = append(parts, serializeProseBlock(b))
-			continue
-		}
-		s, err := serializeFencedBlock(b)
+		// Ask the flavour to serialize ITSELF — the whole point of the block model.
+		// Prose owns its <!--s:ID--> markers (ProseProcessor); structured kinds share
+		// the fenced YAML form (FencedSerializer). No kind-switch here. A kind with no
+		// registered processor (a container pre-Stage-E) falls back to the fence.
+		s, err := serializeBlock(b)
 		if err != nil {
 			return "", err
 		}
@@ -108,15 +108,14 @@ func SerializeBlockDocWithHandles(blocks []SieveBlock) (string, error) {
 	return strings.Join(parts, "\n\n"), nil
 }
 
-// serializeProseBlock wraps a prose block in its paired comment-tag delimiters.
-// Handle-less prose (empty ID — undelimited, pre-mint) is emitted verbatim so
-// the handle-less spine and minting-on-Open stay decoupled.
-func serializeProseBlock(b SieveBlock) string {
-	if b.ID == "" {
-		return b.Content()
+// serializeBlock dispatches a single block to its flavour's Serialize. The save
+// spine never decides format by kind — the processor does. The fence fallback
+// covers processor-less kinds (column-row) until Stage E gives them a processor.
+func serializeBlock(b SieveBlock) (string, error) {
+	if p := GetProcessor(b.Kind); p != nil {
+		return p.Serialize(b)
 	}
-	handles := append([]string{b.ID}, b.Aliases...)
-	open := "<!--s:" + strings.Join(handles, " ") + "-->"
-	closeTag := "<!--/s:" + b.ID + "-->"
-	return open + "\n" + b.Content() + "\n" + closeTag
+	return serializeFencedBlock(b)
 }
+
+// (prose serialization now lives on ProseProcessor.Serialize — the flavour owns it)

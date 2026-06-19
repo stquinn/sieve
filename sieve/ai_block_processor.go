@@ -8,6 +8,7 @@ import (
 // AIBlockProcessor implements BlockProcessor for the "ai-block" kind.
 type AIBlockProcessor struct {
 	svc BlockServices
+	FencedSerializer // one shared YAML serialization — free
 }
 
 func NewAIBlockProcessor(svc BlockServices) *AIBlockProcessor {
