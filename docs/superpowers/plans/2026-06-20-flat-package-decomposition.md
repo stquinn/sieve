@@ -143,7 +143,7 @@ Move the leaf types nothing depends inward on. Includes two type/logic splits.
 **Files:**
 - Create: `sieve/domain/` and move into it (set `package domain`):
   `document.go`, `buffer.go`, `note.go`, `document_meta.go`, `image_asset.go`, `categories.go`, `session.go`, `settings.go`
-- Split `sieve/eval.go`: move the `FilingRecommendation` type → `sieve/domain/filing.go` (`package domain`); leave `ImageDesc`, `detectContentType`, `extractJSONFallback` in `sieve/eval.go` for now (they go to `ai/` in Task 6).
+- Split `sieve/eval.go`: move the **data types** `FilingRecommendation` AND `ImageDesc` → `sieve/domain/filing.go` (`package domain`). Both are port return types referenced by `block/`'s ports (`AIPort.DescribeImage` returns `ImageDesc`; `DocumentService.UpdateAiMetadata` takes `*FilingRecommendation`), so they MUST sit in the leaf. Leave the helpers `detectContentType`, `extractJSONFallback` in `sieve/eval.go` for now (they go to `ai/` in Task 6).
 - Split `sieve/link_preview_service.go`: move the `LinkPreviewResult` type → `sieve/domain/link_preview.go` (`package domain`); leave `LinkPreviewService` (the logic) in place for now (goes to `services/` in Task 5).
 - Move the matching tests: `buffer_test.go`, `categories_test.go` (the one in `sieve/`), `session_test.go`, and any `document_*`/`settings` tests → `sieve/domain/` (set `package domain`).
 
@@ -300,7 +300,7 @@ git commit -m "S-A: extract services/ (document, asset, state, jobs, link-previe
 ## Task 6: Extract `ai/` (AIService + cli + prompts + eval pipeline + image-localise)
 
 **Files (move into `sieve/ai/`, set `package ai`):**
-`ai_service.go`, `cli.go`, `prompts.go`, `image_localise.go`, and the remainder of `eval.go` (`ImageDesc`, `detectContentType`, `extractJSONFallback` — the `FilingRecommendation` type already left for `domain/` in Task 2). Rename the eval remainder file to `sieve/ai/eval.go`.
+`ai_service.go`, `cli.go`, `prompts.go`, `image_localise.go`, and the remainder of `eval.go` (`detectContentType`, `extractJSONFallback` helpers — the `FilingRecommendation` and `ImageDesc` types already left for `domain/` in Task 2). Rename the eval remainder file to `sieve/ai/eval.go`.
 
 **Tests (move with them, set `package ai`):**
 `prompts_test.go`, `image_localise_test.go`, any `ai_service`/`cli`/`eval` tests. (`ai_block_processor_test.go` is a *processor* test — it stays in `block/processors/` from Task 4.)
