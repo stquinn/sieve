@@ -11,8 +11,9 @@ func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
 	RegisterProcessor("ai-block", &testRunJobProcessor{})
 	// Authoritative block state lives in Doc; a setBlock update must win on save.
 	shadow := &ShadowDocument{
-		UUID: "test-uuid",
-		Mode: "wysiwyg",
+		UUID:  "test-uuid",
+		Mode:  "wysiwyg",
+		codec: NewDocumentCodec(globalRegistry()),
 		Blocks: []SieveBlock{
 			{ID: "pr-hello", Kind: KindProse, Attrs: map[string]interface{}{"content": "# Hello"}},
 			{ID: "ab-1234", Kind: "ai-block", Attrs: map[string]interface{}{
@@ -117,7 +118,7 @@ func TestShadowDocument_setBlockCreatesEntry(t *testing.T) {
 		},
 	})
 
-	blk := findBlockIn(shadow.Blocks, "cb-0001")
+	blk := shadow.findBlockIn("cb-0001")
 	if blk == nil {
 		t.Fatal("expected block cb-0001 to exist")
 	}
@@ -148,7 +149,7 @@ func TestShadowDocument_setBlockMergesAttrs(t *testing.T) {
 		},
 	})
 
-	blk := findBlockIn(shadow.Blocks, "cb-0001")
+	blk := shadow.findBlockIn("cb-0001")
 	if blk.Attrs["source"] != "old" {
 		t.Errorf("expected source to be preserved, got %v", blk.Attrs["source"])
 	}
@@ -427,7 +428,7 @@ func TestEditorService_CreateBlock_code(t *testing.T) {
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
 	shadow.mu.Lock()
-	blk := findBlockIn(shadow.Blocks, id)
+	blk := shadow.findBlockIn(id)
 	shadow.mu.Unlock()
 	if blk == nil {
 		t.Fatal("expected block in shadow")
@@ -607,7 +608,7 @@ func TestHandleBlockUpdate_notifySendsSnapshotUnderLock(t *testing.T) {
 		es.mu.Unlock()
 		if shadow != nil {
 			shadow.mu.Lock()
-			blk := findBlockIn(shadow.Blocks, id)
+			blk := shadow.findBlockIn(id)
 			status := ""
 			if blk != nil {
 				status, _ = blk.Attrs["status"].(string)
@@ -687,7 +688,7 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 			shadow := es.shadows[uuid]
 			es.mu.Unlock()
 			shadow.mu.Lock()
-			findBlockIn(shadow.Blocks, blockID).Attrs["source"] = "concurrent user edit"
+			shadow.findBlockIn(blockID).Attrs["source"] = "concurrent user edit"
 			shadow.mu.Unlock()
 
 			return nil
@@ -709,7 +710,7 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 	es.mu.Unlock()
 
 	shadow.mu.Lock()
-	blk := findBlockIn(shadow.Blocks, blockID)
+	blk := shadow.findBlockIn(blockID)
 	shadow.mu.Unlock()
 
 	if blk == nil {
@@ -791,7 +792,7 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 	}
 
 	shadow.mu.Lock()
-	blk := findBlockIn(shadow.Blocks, blockID)
+	blk := shadow.findBlockIn(blockID)
 	shadow.mu.Unlock()
 
 	if blk == nil {

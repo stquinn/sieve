@@ -13,66 +13,6 @@ import (
 
 const defaultAutosaveDebounce = 30 * time.Second
 
-// ShadowDocument holds the in-memory editor state for one open document.
-// Mode controls how Flush and Remux behave ("wysiwyg" or "markdown").
-type ShadowDocument struct {
-	UUID string
-	// Blocks is the authoritative ordered block tree (spec §2), held DIRECTLY —
-	// no BlockDoc wrapper, no nested "document inside a document". In WYSIWYG mode
-	// it is the single source of truth for what gets saved (contentForSave just
-	// serializes it); markdown is derived on demand, never stored.
-	Blocks []SieveBlock
-	// mdModeBuffer holds the raw text the user edits in MARKDOWN MODE ONLY. In
-	// WYSIWYG mode the tree (Doc) is authoritative and whole-doc markdown is
-	// derived on demand (deriveMarkdown) — there is no stored markdown to drift
-	// (the old Markdown field drifted: a prose-only session left it stale).
-	mdModeBuffer string
-	Mode         string // "wysiwyg" (default) or "markdown"
-	codec        *DocumentCodec
-	debounce     time.Duration
-	closed       bool // set by stopDebounce; prevents re-arming after Close
-	mu           sync.Mutex
-	timer        *time.Timer
-	onFlush      func()
-	// notifySaved is invoked after each successful debounce flush (flush-ack to
-	// the WS client). It is rewired when an already-open shadow is reused by a
-	// later Open (idempotent Open), so the debounce closure reads it live.
-	notifySaved func()
-}
-
-// setNotifySaved rewires the post-flush callback (idempotent Open reuse).
-func (s *ShadowDocument) setNotifySaved(fn func()) {
-	s.mu.Lock()
-	s.notifySaved = fn
-	s.mu.Unlock()
-}
-
-// getNotifySaved reads the post-flush callback under lock for the debounce timer.
-func (s *ShadowDocument) getNotifySaved() func() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.notifySaved
-}
-
-func newShadow(uuid, body string, codec *DocumentCodec, debounce time.Duration, onFlush func()) *ShadowDocument {
-	// codec.Deserialize constructs every block via newSieveBlock, which mints
-	// an id for any id-less (marker-less) prose at construction — so the shadow's
-	// tree is disciplined the moment it exists, with no separate mint sweep.
-	blocks, err := codec.Deserialize(body)
-	if err != nil {
-		logger.Warn("editor: parse block doc failed", "uuid", uuid, "err", err)
-	}
-	s := &ShadowDocument{
-		UUID:     uuid,
-		Blocks:   blocks,
-		Mode:     "wysiwyg",
-		codec:    codec,
-		debounce: debounce,
-		onFlush:  onFlush,
-	}
-	return s
-}
-
 // DocView is an immutable, lock-free SNAPSHOT of a document's data: the block
 // tree plus the bits needed to derive markdown. It is what a background job or a
 // context provider reasons about — WITHOUT the live editor machinery (mutex,
@@ -96,8 +36,10 @@ func (d DocView) getBlock(id string) (*SieveBlock, bool) {
 	if id == "" {
 		return nil, false
 	}
-	if b := findBlockIn(d.Blocks, id); b != nil {
-		return b, true
+	for i := range d.Blocks {
+		if d.Blocks[i].ID == id {
+			return &d.Blocks[i], true
+		}
 	}
 	return nil, false
 }
@@ -116,115 +58,6 @@ func (d DocView) deriveMarkdown() string {
 		return ""
 	}
 	return md
-}
-
-// reparseDoc replaces the block tree from the given markdown (WYSIWYG only).
-// Caller holds s.mu. The parser constructs every block via newSieveBlock, so
-// id-less prose arriving on the doc-update fallback is minted at construction —
-// it can never reach contentForSave id-less.
-func (s *ShadowDocument) reparseDoc(md string) {
-	if blocks, err := s.codec.Deserialize(md); err == nil {
-		s.Blocks = blocks
-	} else {
-		logger.Warn("editor: reparse block doc failed", "uuid", s.UUID, "err", err)
-	}
-}
-
-// deriveMarkdown derives the whole-doc markdown from the LIVE document. Caller
-// holds s.mu; the transient DocView shares the slice read-only under that lock,
-// so the single derivation logic lives on DocView.
-func (s *ShadowDocument) deriveMarkdown() string {
-	return DocView{UUID: s.UUID, Mode: s.Mode, mdModeBuffer: s.mdModeBuffer, Blocks: s.Blocks, codec: s.codec}.deriveMarkdown()
-}
-
-func (s *ShadowDocument) setMarkdown(md string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.Mode == "wysiwyg" {
-		s.reparseDoc(md)
-	} else {
-		s.mdModeBuffer = md
-	}
-	s.resetDebounce()
-}
-
-// setBlock creates or merges attrs into the named block in Doc. kind is only
-// used when creating a new entry; subsequent calls preserve the existing Kind.
-func (s *ShadowDocument) setBlock(block SieveBlock) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if b := s.findBlock(block.ID); b != nil {
-		if b.Attrs == nil {
-			b.Attrs = make(map[string]interface{}, len(block.Attrs))
-		}
-		for k, v := range block.Attrs {
-			b.Attrs[k] = v
-		}
-	} else {
-		merged := make(map[string]interface{}, len(block.Attrs))
-		for k, v := range block.Attrs {
-			merged[k] = v
-		}
-		s.Blocks = append(s.Blocks, SieveBlock{ID: block.ID, Kind: block.Kind, Attrs: merged})
-	}
-	s.resetDebounce()
-}
-
-// replaceBlock atomically replaces the attrs map for an existing block.
-// Unlike setBlock (additive merge), deleted keys in attrs are propagated —
-// the old map is discarded entirely. No-op if the block does not exist.
-func (s *ShadowDocument) replaceBlock(blockID string, block SieveBlock) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	b := s.findBlock(blockID)
-	if b == nil {
-		return
-	}
-	b.Attrs = block.Attrs
-	s.resetDebounce()
-}
-
-// deleteBlockAttr removes a single key from an existing block's attrs.
-// Used to expunge transient fields (e.g. hint) that a job has consumed.
-func (s *ShadowDocument) deleteBlockAttr(blockID, key string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if b := s.findBlock(blockID); b != nil {
-		delete(b.Attrs, key)
-	}
-}
-
-func (s *ShadowDocument) resetDebounce() {
-	if s.onFlush == nil || s.closed {
-		return
-	}
-	if s.timer != nil {
-		s.timer.Stop()
-	}
-	d := s.debounce
-	if d <= 0 {
-		d = defaultAutosaveDebounce
-	}
-	s.timer = time.AfterFunc(d, s.onFlush)
-}
-
-func (s *ShadowDocument) stopDebounce() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.closed = true
-	if s.timer != nil {
-		s.timer.Stop()
-		s.timer = nil
-	}
-}
-
-// contentForSave returns the content that should be written to disk: in markdown
-// mode the raw buffer verbatim, in WYSIWYG the tree serialized fresh. Both come
-// from deriveMarkdown — the single whole-doc markdown source.
-func (s *ShadowDocument) contentForSave() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.deriveMarkdown()
 }
 
 // Markdown parsing is now handled by markdown_parser.go
@@ -307,7 +140,18 @@ const dispatchedStuckThreshold = 10 * time.Minute
 // Open loads a document from disk and creates an in-memory ShadowDocument.
 // notifySaved is called (if non-nil) after each successful debounce flush so the
 // WebSocket connection can send a flush-ack to the client.
+// Open ensures a shadow for uuid (idempotent) and recovers stuck DISPATCHED
+// blocks — the user-open path. Background callers that must not trigger recovery
+// (a transient open to apply a job result) use open() with recoverStuck=false.
 func (es *EditorService) Open(uuid string, notifySaved func()) error {
+	return es.open(uuid, notifySaved, true)
+}
+
+// open ensures a shadow for uuid. recoverStuck gates stuck-job recovery: a
+// transient background open passes false so it does NOT spawn recovery jobs —
+// that would both churn (the doc would reopen ~10s later) and RACE the immediate
+// Close. Recovery is a user-open concern.
+func (es *EditorService) open(uuid string, notifySaved func(), recoverStuck bool) error {
 	// Idempotent: reuse an already-open shadow (the HTTP load ensures-open before
 	// the WS connection does, so both share ONE identity — minted ids stay
 	// stable). Just rewire the post-flush callback for this caller.
@@ -350,7 +194,11 @@ func (es *EditorService) Open(uuid string, notifySaved func()) error {
 
 	// Reset any DISPATCHED blocks that pre-date this session — they are stuck
 	// (server crash or restart). Re-queue them so they run again on reconnect.
-	es.resetStuckDispatched(uuid, shadow)
+	// Skipped for transient background opens (recoverStuck=false): they must not
+	// spawn jobs that race the immediate Close.
+	if recoverStuck {
+		es.resetStuckDispatched(uuid, shadow)
+	}
 
 	logger.Info("editor: open", "uuid", uuid, "body_bytes", len(doc.Body()))
 	return nil
@@ -606,7 +454,6 @@ func (es *EditorService) createBlockWithID(uuid, kind, blockID string, overrides
 	return id, rawYaml, nil
 }
 
-
 // HandlePaste runs paste matchers and delegates to CreateBlock on the first match.
 // It is the secondary creation path — prefer CreateBlock directly for UI-triggered creation.
 func (es *EditorService) HandlePaste(uuid string, entries []ContentEntry) (kind, id, rawYaml string, matched bool) {
@@ -777,8 +624,9 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 	openedTransiently := false
 	if shadow == nil {
 		// Document is closed: open it transiently so the update flows through
-		// the ShadowDocument. Do NOT hold es.mu across Open (Open acquires it).
-		if err := es.Open(uuid, nil); err != nil {
+		// the ShadowDocument. recoverStuck=false — a background open must not spawn
+		// recovery jobs that race the Close below. Do NOT hold es.mu across open.
+		if err := es.open(uuid, nil, false); err != nil {
 			logger.Warn("editor: job update failed to open doc transiently", "uuid", uuid, "err", err)
 			return
 		}
@@ -884,7 +732,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	jctx := JobContext{
 		Ctx:    ctx,
 		UUID:   uuid,
-		Doc: DocView{UUID: uuid, mdModeBuffer: mdBuf, Mode: mode, Blocks: blocksCopy, codec: es.codec},
+		Doc:    DocView{UUID: uuid, mdModeBuffer: mdBuf, Mode: mode, Blocks: blocksCopy, codec: es.codec},
 		Block:  blkCopy,
 		Notify: notify,
 	}
@@ -960,7 +808,7 @@ func (es *EditorService) PromoteBlock(uuid, blockID string) error {
 		// Markdown mode serializes the raw buffer verbatim; update it, and keep the
 		// tree honest by dropping the promoted block so a later flush can't resurrect it.
 		shadow.mdModeBuffer = newMarkdown
-		removeBlock(&shadow.Blocks, blockID)
+		shadow.removeBlock(blockID)
 	}
 	shadow.resetDebounce()
 	shadow.mu.Unlock()
