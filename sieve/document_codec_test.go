@@ -39,3 +39,16 @@ func TestInlineDeserializer_NeverClaimsDuringDocParse(t *testing.T) {
 		t.Error("inline deserializer must never accept a document region")
 	}
 }
+
+func TestGlobalRegistry_GetAndOrdered(t *testing.T) {
+	reg := globalRegistry()
+	if reg.Get(KindProse) == nil {
+		t.Fatal("prose must always be resolvable")
+	}
+	if reg.Get("definitely-not-a-kind") != nil {
+		t.Error("unknown kind must resolve to nil")
+	}
+	if len(reg.Ordered()) == 0 {
+		t.Error("Ordered must return the registered processors")
+	}
+}
