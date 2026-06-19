@@ -120,7 +120,7 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 		case "enter-markdown":
 			h.handleEnterMarkdown(writeMsg, uuid)
 		case "enter-wysiwyg":
-			h.handleEnterWysiwyg(uuid)
+			h.handleEnterWysiwyg(uuid, raw, writeMsg)
 		case "retry-block-job":
 			h.handleRetryBlockJob(uuid, raw, writeMsg)
 		case "promote-block":
@@ -193,10 +193,30 @@ func (h *WsHandler) handleEnterMarkdown(writeMsg func(interface{}), uuid string)
 	})
 }
 
-// handleEnterWysiwyg re-parses shadow.Blocks from shadow.Markdown and sets mode = wysiwyg.
-func (h *WsHandler) handleEnterWysiwyg(uuid string) {
+// handleEnterWysiwyg picks up the latest markdown (the frontend's textarea value,
+// since a pending doc-update may not have flushed), re-parses shadow.Doc from it,
+// sets mode = wysiwyg, and returns the reparsed blocks so JS can render the
+// WYSIWYG editor immediately — symmetric to handleEnterMarkdown returning
+// markdown-content. Without the blocks the editor mounts empty until a tab switch
+// reloads via /api/editor/load.
+func (h *WsHandler) handleEnterWysiwyg(uuid string, raw []byte, writeMsg func(interface{})) {
+	// A pointer distinguishes "no markdown field" (other callers) from an
+	// intentionally-empty doc; only adopt the markdown when the field is present.
+	var msg struct {
+		Markdown *string `json:"markdown"`
+	}
+	if err := json.Unmarshal(raw, &msg); err == nil && msg.Markdown != nil {
+		h.ServiceProvider.Editor.UpdateMarkdown(uuid, *msg.Markdown)
+	}
 	h.ServiceProvider.Editor.EnterWysiwyg(uuid)
 	h.persistTabMode(uuid, "wysiwyg")
+	if blocks, ok := h.ServiceProvider.Editor.FrontendBlocks(uuid); ok {
+		writeMsg(map[string]interface{}{
+			"type":   "wysiwyg-content",
+			"uuid":   uuid,
+			"blocks": blocks,
+		})
+	}
 }
 
 // persistTabMode updates the session tab's mode field so the tab bar renders correctly.

@@ -683,6 +683,9 @@
       if (msg.type === 'markdown-content') {
         document.dispatchEvent(new CustomEvent('editor:markdown-content', { detail: msg }))
       }
+      if (msg.type === 'wysiwyg-content') {
+        document.dispatchEvent(new CustomEvent('editor:wysiwyg-content', { detail: msg }))
+      }
       if (msg.type === 'insert-block') {
         document.dispatchEvent(new CustomEvent('editor:insert-block', { detail: msg }))
       }
@@ -1684,6 +1687,9 @@
     if (currentMode === 'markdown') {
       var ta = currentMountEl.querySelector('.markdown-editor')
       if (ta) content = ta.value
+      // Drop any pending markdown doc-update — we hand the latest content to the
+      // server via enter-wysiwyg below, and a late timer must not fire post-switch.
+      if (docUpdateTimer) { clearTimeout(docUpdateTimer); docUpdateTimer = null }
     } else if (currentEditor) {
       // Flush any pending block-sync so Go's shadow is current before it merges
       // the markdown view (enter-markdown serializes the shadow, not local md).
@@ -1701,10 +1707,20 @@
     currentMountEl.innerHTML = ''
     
     if (currentMode === 'wysiwyg') {
-      wsSend({ type: 'enter-wysiwyg', uuid: currentUuid })
-      mountWysiwyg(currentMountEl, currentUuid, content)
-      dispatchStats()
-      if (window.htmx) window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' })
+      // Symmetric to the markdown branch: hand the current markdown to the server,
+      // which reparses the authoritative Doc and returns the blocks. We mount the
+      // WYSIWYG editor from THOSE blocks (so ids from the markers survive) — not
+      // from a blockless mountWysiwyg, which would render only the empty seed and
+      // stay blank until a tab switch reloaded it.
+      document.addEventListener('editor:wysiwyg-content', function onWyContent(e) {
+        if (e.detail.uuid !== currentUuid) return
+        if (currentMode !== 'wysiwyg') return  // user toggled back before response arrived
+        document.removeEventListener('editor:wysiwyg-content', onWyContent)
+        mountWysiwyg(currentMountEl, currentUuid, content, e.detail.blocks)
+        dispatchStats()
+        if (window.htmx) window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' })
+      }, { once: true })
+      wsSend({ type: 'enter-wysiwyg', uuid: currentUuid, markdown: content })
     } else {
       // Switching to markdown — request merged content from EditorService
       wsSend({ type: 'enter-markdown', uuid: currentUuid })
