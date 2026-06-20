@@ -19,7 +19,7 @@ func TestDeriveMarkdown_WysiwygReflectsLiveTree(t *testing.T) {
 	}
 
 	// Mutate the tree the way an edit would — no Markdown field to keep in sync.
-	shadow.setBlock(SieveBlock{ID: "ab-1", Kind: "ai-block", Attrs: map[string]interface{}{
+	shadow.SetBlock(SieveBlock{ID: "ab-1", Kind: "ai-block", Attrs: map[string]interface{}{
 		"id": "ab-1", "response": "fresh answer",
 	}})
 

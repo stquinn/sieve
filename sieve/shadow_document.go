@@ -14,7 +14,7 @@ type ShadowDocument struct {
 	UUID string
 	// Blocks is the authoritative ordered block tree (spec §2), held DIRECTLY —
 	// no BlockDoc wrapper, no nested "document inside a document". In WYSIWYG mode
-	// it is the single source of truth for what gets saved (contentForSave just
+	// it is the single source of truth for what gets saved (ContentForSave just
 	// serializes it); markdown is derived on demand, never stored.
 	Blocks []SieveBlock
 	// mdModeBuffer holds the raw text the user edits in MARKDOWN MODE ONLY. In
@@ -25,7 +25,7 @@ type ShadowDocument struct {
 	Mode         string // "wysiwyg" (default) or "markdown"
 	codec        *DocumentCodec
 	debounce     time.Duration
-	closed       bool // set by stopDebounce; prevents re-arming after Close
+	closed       bool // set by StopDebounce; prevents re-arming after Close
 	mu           sync.Mutex
 	timer        *time.Timer
 	onFlush      func()
@@ -35,15 +35,15 @@ type ShadowDocument struct {
 	notifySaved func()
 }
 
-// setNotifySaved rewires the post-flush callback (idempotent Open reuse).
-func (s *ShadowDocument) setNotifySaved(fn func()) {
+// SetNotifySaved rewires the post-flush callback (idempotent Open reuse).
+func (s *ShadowDocument) SetNotifySaved(fn func()) {
 	s.mu.Lock()
 	s.notifySaved = fn
 	s.mu.Unlock()
 }
 
-// getNotifySaved reads the post-flush callback under lock for the debounce timer.
-func (s *ShadowDocument) getNotifySaved() func() {
+// GetNotifySaved reads the post-flush callback under lock for the debounce timer.
+func (s *ShadowDocument) GetNotifySaved() func() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.notifySaved
@@ -71,7 +71,7 @@ func newShadow(uuid, body string, codec *DocumentCodec, debounce time.Duration, 
 // reparseDoc replaces the block tree from the given markdown (WYSIWYG only).
 // Caller holds s.mu. The parser constructs every block via newSieveBlock, so
 // id-less prose arriving on the doc-update fallback is minted at construction —
-// it can never reach contentForSave id-less.
+// it can never reach ContentForSave id-less.
 func (s *ShadowDocument) reparseDoc(md string) {
 	if blocks, err := s.codec.Deserialize(md); err == nil {
 		s.Blocks = blocks
@@ -87,7 +87,7 @@ func (s *ShadowDocument) deriveMarkdown() string {
 	return DocView{UUID: s.UUID, Mode: s.Mode, mdModeBuffer: s.mdModeBuffer, Blocks: s.Blocks, codec: s.codec}.deriveMarkdown()
 }
 
-func (s *ShadowDocument) setMarkdown(md string) {
+func (s *ShadowDocument) SetMarkdown(md string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.Mode == "wysiwyg" {
@@ -98,9 +98,9 @@ func (s *ShadowDocument) setMarkdown(md string) {
 	s.resetDebounce()
 }
 
-// setBlock creates or merges attrs into the named block in Doc. kind is only
+// SetBlock creates or merges attrs into the named block in Doc. kind is only
 // used when creating a new entry; subsequent calls preserve the existing Kind.
-func (s *ShadowDocument) setBlock(block SieveBlock) {
+func (s *ShadowDocument) SetBlock(block SieveBlock) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if b := s.findBlock(block.ID); b != nil {
@@ -121,7 +121,7 @@ func (s *ShadowDocument) setBlock(block SieveBlock) {
 }
 
 // replaceBlock atomically replaces the attrs map for an existing block.
-// Unlike setBlock (additive merge), deleted keys in attrs are propagated —
+// Unlike SetBlock (additive merge), deleted keys in attrs are propagated —
 // the old map is discarded entirely. No-op if the block does not exist.
 func (s *ShadowDocument) replaceBlock(blockID string, block SieveBlock) {
 	s.mu.Lock()
@@ -134,9 +134,9 @@ func (s *ShadowDocument) replaceBlock(blockID string, block SieveBlock) {
 	s.resetDebounce()
 }
 
-// deleteBlockAttr removes a single key from an existing block's attrs.
+// DeleteBlockAttr removes a single key from an existing block's attrs.
 // Used to expunge transient fields (e.g. hint) that a job has consumed.
-func (s *ShadowDocument) deleteBlockAttr(blockID, key string) {
+func (s *ShadowDocument) DeleteBlockAttr(blockID, key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if b := s.findBlock(blockID); b != nil {
@@ -158,7 +158,7 @@ func (s *ShadowDocument) resetDebounce() {
 	s.timer = time.AfterFunc(d, s.onFlush)
 }
 
-func (s *ShadowDocument) stopDebounce() {
+func (s *ShadowDocument) StopDebounce() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
@@ -168,10 +168,10 @@ func (s *ShadowDocument) stopDebounce() {
 	}
 }
 
-// contentForSave returns the content that should be written to disk: in markdown
+// ContentForSave returns the content that should be written to disk: in markdown
 // mode the raw buffer verbatim, in WYSIWYG the tree serialized fresh. Both come
 // from deriveMarkdown — the single whole-doc markdown source.
-func (s *ShadowDocument) contentForSave() string {
+func (s *ShadowDocument) ContentForSave() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.deriveMarkdown()

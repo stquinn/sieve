@@ -120,7 +120,7 @@ func TestApplyJobUpdate_NoShadow_WritesViaSpine(t *testing.T) {
 	}
 }
 
-// C.1 — contentForSave serializes the authoritative Doc (blocks 1..N), not the
+// C.1 — ContentForSave serializes the authoritative Doc (blocks 1..N), not the
 // old InjectBlocks overlay. A change made only to Doc must surface on save.
 func TestShadowDocument_ContentForSave_SerializesDoc(t *testing.T) {
 	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
@@ -129,22 +129,22 @@ func TestShadowDocument_ContentForSave_SerializesDoc(t *testing.T) {
 	md := "Hello.\n\n```code\nid: co-1\nsource: x = 1\n```"
 	shadow := newShadow("u", md, NewDocumentCodec(globalRegistry()), 0, nil)
 
-	// Mutate ONLY the Doc (not Markdown / Blocks): contentForSave must reflect it.
+	// Mutate ONLY the Doc (not Markdown / Blocks): ContentForSave must reflect it.
 	if err := shadow.applyOpTo(BlockOp{
 		Type: "update-block", BlockID: "co-1", Kind: "code",
 		Attrs: map[string]interface{}{"id": "co-1", "source": "y = 2"},
 	}); err != nil {
 		t.Fatalf("ApplyOp: %v", err)
 	}
-	out := shadow.contentForSave()
+	out := shadow.ContentForSave()
 	if !strings.Contains(out, "source: y = 2") {
-		t.Fatalf("contentForSave did not serialize Doc change:\n%s", out)
+		t.Fatalf("ContentForSave did not serialize Doc change:\n%s", out)
 	}
 	if strings.Contains(out, "source: x = 1") {
-		t.Fatalf("contentForSave still has stale content:\n%s", out)
+		t.Fatalf("ContentForSave still has stale content:\n%s", out)
 	}
 	if !strings.Contains(out, "Hello.") {
-		t.Fatalf("contentForSave dropped prose:\n%s", out)
+		t.Fatalf("ContentForSave dropped prose:\n%s", out)
 	}
 }
 

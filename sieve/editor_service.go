@@ -158,7 +158,7 @@ func (es *EditorService) open(uuid string, notifySaved func(), recoverStuck bool
 	es.mu.Lock()
 	if existing, ok := es.shadows[uuid]; ok {
 		es.mu.Unlock()
-		existing.setNotifySaved(notifySaved)
+		existing.SetNotifySaved(notifySaved)
 		return nil
 	}
 	es.mu.Unlock()
@@ -171,12 +171,12 @@ func (es *EditorService) open(uuid string, notifySaved func(), recoverStuck bool
 	var shadow *ShadowDocument
 	shadow = newShadow(uuid, string(doc.Body()), es.codec, es.debounce, func() {
 		if err := es.flushShadow(shadow, "debounce"); err == nil {
-			if ns := shadow.getNotifySaved(); ns != nil {
+			if ns := shadow.GetNotifySaved(); ns != nil {
 				ns()
 			}
 		}
 	})
-	shadow.notifySaved = notifySaved
+	shadow.SetNotifySaved(notifySaved)
 	// Handle minting now happens in newShadow (the constructor invariant: no block
 	// without an id) and on every reparse — no separate mint pass needed here.
 
@@ -185,8 +185,8 @@ func (es *EditorService) open(uuid string, notifySaved func(), recoverStuck bool
 	// here; if so, discard ours and reuse theirs (rewiring the callback).
 	if existing, ok := es.shadows[uuid]; ok {
 		es.mu.Unlock()
-		shadow.stopDebounce()
-		existing.setNotifySaved(notifySaved)
+		shadow.StopDebounce()
+		existing.SetNotifySaved(notifySaved)
 		return nil
 	}
 	es.shadows[uuid] = shadow
@@ -215,9 +215,7 @@ func (es *EditorService) FrontendBlocks(uuid string) ([]FrontendBlock, bool) {
 	if shadow == nil {
 		return nil, false
 	}
-	shadow.mu.Lock()
-	tree := append([]SieveBlock(nil), shadow.Blocks...)
-	shadow.mu.Unlock()
+	tree := shadow.SnapshotBlocks()
 	blocks, err := BlockDocToFrontendBlocks(tree)
 	if err != nil {
 		return nil, false
@@ -228,27 +226,7 @@ func (es *EditorService) FrontendBlocks(uuid string) ([]FrontendBlock, bool) {
 // resetStuckDispatched finds DISPATCHED blocks older than dispatchedStuckThreshold
 // and resets them to PENDING so DispatchJobIfNeeded will re-run their jobs.
 func (es *EditorService) resetStuckDispatched(uuid string, shadow *ShadowDocument) {
-	shadow.mu.Lock()
-	var stuck []string
-	for i := range shadow.Blocks {
-		blk := &shadow.Blocks[i]
-		if blk.Status() != BlockStatusDispatched {
-			continue
-		}
-		createdAt := blk.StringAttr("createdAt")
-		stale := createdAt == ""
-		if !stale {
-			if t, err := time.Parse(time.RFC3339, createdAt); err == nil && time.Since(t) > dispatchedStuckThreshold {
-				stale = true
-			}
-		}
-		if stale {
-			blk.Attrs["status"] = BlockStatusPending
-			stuck = append(stuck, blk.ID)
-		}
-	}
-	shadow.mu.Unlock()
-
+	stuck := shadow.ResetStuckDispatched(dispatchedStuckThreshold)
 	for _, id := range stuck {
 		logger.Info("editor: resetting stuck DISPATCHED block", "uuid", uuid, "block", id)
 		es.DispatchJobIfNeeded(uuid, id)
@@ -267,7 +245,7 @@ func (es *EditorService) Close(uuid string) {
 		return
 	}
 	logger.Info("editor: close", "uuid", uuid)
-	shadow.stopDebounce()
+	shadow.StopDebounce()
 	_ = es.flushShadow(shadow, "close")
 }
 
@@ -280,7 +258,7 @@ func (es *EditorService) UpdateMarkdown(uuid, markdown string) {
 		logger.Warn("editor: doc-update dropped — no shadow", "uuid", uuid)
 		return
 	}
-	shadow.setMarkdown(markdown)
+	shadow.SetMarkdown(markdown)
 }
 
 // HandleBlockOp applies a granular wire op (create/update/delete/move) to the
@@ -306,7 +284,7 @@ func (es *EditorService) UpdateBlock(uuid string, block SieveBlock) {
 		logger.Warn("editor: block-update dropped — no shadow", "uuid", uuid, "block", block.ID)
 		return
 	}
-	shadow.setBlock(block)
+	shadow.SetBlock(block)
 }
 
 // EnterMarkdown switches the shadow to markdown mode. It derives whole-doc
@@ -320,11 +298,8 @@ func (es *EditorService) EnterMarkdown(uuid string) string {
 		logger.Warn("editor: enter-markdown — no shadow", "uuid", uuid)
 		return ""
 	}
-	merged := shadow.contentForSave() // derives from the tree before the mode switch
-	shadow.mu.Lock()
-	shadow.mdModeBuffer = merged
-	shadow.Mode = "markdown"
-	shadow.mu.Unlock()
+	merged := shadow.ContentForSave() // derives from the tree before the mode switch
+	shadow.EnterMarkdownMode(merged)
 	logger.Info("editor: enter-markdown", "uuid", uuid, "bytes", len(merged))
 	return merged
 }
@@ -340,15 +315,11 @@ func (es *EditorService) EnterWysiwyg(uuid string) {
 		logger.Warn("editor: enter-wysiwyg — no shadow", "uuid", uuid)
 		return
 	}
-	shadow.mu.Lock()
-	shadow.reparseDoc(shadow.mdModeBuffer)
-	shadow.Mode = "wysiwyg"
-	n := len(shadow.Blocks)
-	shadow.mu.Unlock()
+	n := shadow.EnterWysiwygMode()
 	logger.Info("editor: enter-wysiwyg", "uuid", uuid, "blocks_reparsed", n)
 }
 
-// Flush writes the shadow's contentForSave to disk via DocumentService.
+// Flush writes the shadow's ContentForSave to disk via DocumentService.
 func (es *EditorService) Flush(uuid string) error {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
@@ -361,7 +332,7 @@ func (es *EditorService) Flush(uuid string) error {
 }
 
 func (es *EditorService) flushShadow(shadow *ShadowDocument, source string) error {
-	merged := shadow.contentForSave()
+	merged := shadow.ContentForSave()
 	doc, err := es.documents.LoadByUUID(shadow.UUID)
 	if err != nil {
 		logger.Warn("editor: flush load failed", "uuid", shadow.UUID, "source", source, "err", err)
@@ -406,7 +377,7 @@ func (es *EditorService) CloseAll() {
 	es.mu.Unlock()
 	logger.Info("editor: close-all", "count", len(shadows))
 	for _, sh := range shadows {
-		sh.stopDebounce()
+		sh.StopDebounce()
 		_ = es.flushShadow(sh, "close-all")
 	}
 }
@@ -520,24 +491,16 @@ func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map
 		return
 	}
 
-	shadow.mu.Lock()
-	blk := shadow.findBlock(blockID)
-	if blk == nil {
-		shadow.mu.Unlock()
+	// Snapshot the current merged state (user patch + existing attrs) for OnChange.
+	snap, ok := shadow.SnapshotBlock(blockID)
+	if !ok {
 		return
 	}
-	// Copy the current merged state (user patch + existing attrs) for OnChange.
-	blkCopy := &SieveBlock{
-		ID:    blk.ID,
-		Kind:  blk.Kind,
-		Attrs: make(map[string]interface{}, len(blk.Attrs)),
-	}
-	attrsBefore := make(map[string]interface{}, len(blk.Attrs))
-	for k, v := range blk.Attrs {
-		blkCopy.Attrs[k] = v
+	blkCopy := &SieveBlock{ID: snap.ID, Kind: snap.Kind, Attrs: snap.Attrs}
+	attrsBefore := make(map[string]interface{}, len(snap.Attrs))
+	for k, v := range snap.Attrs {
 		attrsBefore[k] = v
 	}
-	shadow.mu.Unlock()
 
 	processor.OnChange(blkCopy)
 
@@ -550,25 +513,12 @@ func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map
 	}
 
 	if len(attrsChanged) > 0 {
-		updatedBlock := SieveBlock{ID: blockID, Kind: kind, Attrs: attrsChanged}
-		shadow.setBlock(updatedBlock)
+		shadow.SetBlock(SieveBlock{ID: blockID, Kind: kind, Attrs: attrsChanged})
 	}
 
 	// Always notify client so it gets the re-computed serialisedForm and UI updates
-	shadow.mu.Lock()
-	blkFinal := shadow.findBlock(blockID)
-	okFinal := blkFinal != nil
-	var finalAttrs map[string]interface{}
-	if okFinal {
-		finalAttrs = make(map[string]interface{}, len(blkFinal.Attrs))
-		for k, v := range blkFinal.Attrs {
-			finalAttrs[k] = v
-		}
-	}
-	shadow.mu.Unlock()
-
-	if okFinal {
-		es.notifyBlockUpdated(uuid, SieveBlock{ID: blockID, Kind: kind, Attrs: finalAttrs})
+	if blkFinal, okFinal := shadow.SnapshotBlock(blockID); okFinal {
+		es.notifyBlockUpdated(uuid, SieveBlock{ID: blockID, Kind: kind, Attrs: blkFinal.Attrs})
 	}
 
 	es.DispatchJobIfNeeded(uuid, blockID)
@@ -584,32 +534,18 @@ func (es *EditorService) DispatchJobIfNeeded(uuid, blockID string) {
 		return
 	}
 
-	shadow.mu.Lock()
-	blk := shadow.findBlock(blockID)
-	if blk == nil {
-		shadow.mu.Unlock()
+	// Atomically claim the block (PENDING -> DISPATCHED). If it wasn't PENDING,
+	// nothing to do — guarantees the job dispatches exactly once.
+	blkCopy, ok := shadow.TryDispatch(blockID)
+	if !ok {
 		return
 	}
-	if blk.Status() == BlockStatusPending {
-		blk.Attrs["status"] = BlockStatusDispatched
+	es.notifyBlockUpdated(uuid, blkCopy)
 
-		// Take copy of attributes under lock to serialize and notify listener
-		attrsCopy := make(map[string]interface{}, len(blk.Attrs))
-		for k, v := range blk.Attrs {
-			attrsCopy[k] = v
-		}
-		shadow.mu.Unlock()
+	// Flush state to disk
+	_ = es.Flush(uuid)
 
-		blkCopy := SieveBlock{ID: blockID, Kind: blk.Kind, Attrs: attrsCopy}
-		es.notifyBlockUpdated(uuid, blkCopy)
-
-		// Flush state to disk
-		_ = es.Flush(uuid)
-
-		go es.RunJob(context.Background(), uuid, blockID)
-	} else {
-		shadow.mu.Unlock()
-	}
+	go es.RunJob(context.Background(), uuid, blockID)
 }
 
 // applyJobUpdate safely applies block updates resulting from a background job.
@@ -642,28 +578,17 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 	}
 
 	if len(updates) > 0 {
-		shadow.setBlock(SieveBlock{ID: blockID, Kind: kind, Attrs: updates})
+		shadow.SetBlock(SieveBlock{ID: blockID, Kind: kind, Attrs: updates})
 	}
 	for _, k := range deletes {
-		shadow.deleteBlockAttr(blockID, k)
+		shadow.DeleteBlockAttr(blockID, k)
 	}
 	if flushReason != "" {
 		_ = es.flushShadow(shadow, flushReason)
 	}
 
-	shadow.mu.Lock()
-	blk := shadow.findBlock(blockID)
-	ok := blk != nil
-	var attrsCopy map[string]interface{}
-	if ok {
-		attrsCopy = make(map[string]interface{}, len(blk.Attrs))
-		for k, v := range blk.Attrs {
-			attrsCopy[k] = v
-		}
-	}
-	shadow.mu.Unlock()
-	if ok {
-		es.notifyBlockUpdated(uuid, SieveBlock{ID: blockID, Kind: kind, Attrs: attrsCopy})
+	if blk, ok := shadow.SnapshotBlock(blockID); ok {
+		es.notifyBlockUpdated(uuid, SieveBlock{ID: blockID, Kind: kind, Attrs: blk.Attrs})
 	}
 
 	if openedTransiently {
@@ -682,30 +607,18 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 		return
 	}
 
-	shadow.mu.Lock()
-	blk := shadow.findBlock(blockID)
-	if blk == nil {
-		shadow.mu.Unlock()
+	// One lock: a deep copy of the target block (for the processor to mutate) plus
+	// an immutable DocView the job uses to resolve any block by id.
+	snap, doc, ok := shadow.SnapshotForJob(blockID)
+	if !ok {
 		return
 	}
-	kind := blk.Kind
-	blkCopy := &SieveBlock{
-		ID:    blk.ID,
-		Kind:  blk.Kind,
-		Attrs: make(map[string]interface{}, len(blk.Attrs)),
-	}
-	attrsBefore := make(map[string]interface{}, len(blk.Attrs))
-	for k, v := range blk.Attrs {
-		blkCopy.Attrs[k] = v
+	kind := snap.Kind
+	blkCopy := &SieveBlock{ID: snap.ID, Kind: snap.Kind, Attrs: snap.Attrs}
+	attrsBefore := make(map[string]interface{}, len(snap.Attrs))
+	for k, v := range snap.Attrs {
 		attrsBefore[k] = v
 	}
-	mdBuf := shadow.mdModeBuffer
-	mode := shadow.Mode
-	// Snapshot the authoritative block tree so the job can resolve ANY block by id
-	// (prose included) via getBlock. Top-level slice copy under lock; Content is
-	// value-copied (race-free), matching the existing Attrs aliasing.
-	blocksCopy := append([]SieveBlock(nil), shadow.Blocks...)
-	shadow.mu.Unlock()
 
 	processor := GetProcessor(kind)
 	if processor == nil {
@@ -732,7 +645,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	jctx := JobContext{
 		Ctx:    ctx,
 		UUID:   uuid,
-		Doc:    DocView{UUID: uuid, mdModeBuffer: mdBuf, Mode: mode, Blocks: blocksCopy, codec: es.codec},
+		Doc:    doc,
 		Block:  blkCopy,
 		Notify: notify,
 	}
@@ -767,23 +680,14 @@ func (es *EditorService) PromoteBlock(uuid, blockID string) error {
 		return fmt.Errorf("no open document")
 	}
 
-	shadow.mu.Lock()
-	blk := shadow.findBlock(blockID)
-	if blk == nil {
-		shadow.mu.Unlock()
+	blkCopy, found := shadow.SnapshotBlock(blockID)
+	if !found {
 		return fmt.Errorf("block not found")
 	}
-	processor := GetProcessor(blk.Kind)
+	processor := GetProcessor(blkCopy.Kind)
 	if processor == nil {
-		shadow.mu.Unlock()
 		return fmt.Errorf("processor not found")
 	}
-
-	blkCopy := SieveBlock{ID: blk.ID, Kind: blk.Kind, Attrs: make(map[string]interface{}, len(blk.Attrs))}
-	for k, v := range blk.Attrs {
-		blkCopy.Attrs[k] = v
-	}
-	shadow.mu.Unlock()
 
 	plainContent := processor.MarkdownRepresentation(blkCopy)
 	if plainContent == "" {
@@ -792,26 +696,12 @@ func (es *EditorService) PromoteBlock(uuid, blockID string) error {
 
 	markdownReplacement := fmt.Sprintf("[!block] id=%q\n\n%s\n\n[!block-end]", blockID, plainContent)
 
-	shadow.mu.Lock()
 	// Source markdown is derived fresh from the tree (WYSIWYG) or the raw buffer
 	// (markdown mode) — never a stale stored field, which is exactly what drifted.
-	newMarkdown, ok := PromoteBlock(shadow.deriveMarkdown(), blockID, markdownReplacement)
-	if !ok {
-		shadow.mu.Unlock()
+	// ApplyPromotion splices in the replacement and reconciles the tree under lock.
+	if !shadow.ApplyPromotion(blockID, markdownReplacement) {
 		return fmt.Errorf("block not found in markdown AST")
 	}
-	// In WYSIWYG mode the authoritative Doc drives the save, so refresh it from
-	// the promoted markdown (this also drops the promoted block from the tree).
-	if shadow.Mode == "wysiwyg" {
-		shadow.reparseDoc(newMarkdown)
-	} else {
-		// Markdown mode serializes the raw buffer verbatim; update it, and keep the
-		// tree honest by dropping the promoted block so a later flush can't resurrect it.
-		shadow.mdModeBuffer = newMarkdown
-		shadow.removeBlock(blockID)
-	}
-	shadow.resetDebounce()
-	shadow.mu.Unlock()
 
 	_ = es.Flush(uuid)
 	es.notifyBlockPromoted(uuid, blockID, plainContent)

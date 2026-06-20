@@ -9,7 +9,7 @@ import (
 
 func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
 	RegisterProcessor("ai-block", &testRunJobProcessor{})
-	// Authoritative block state lives in Doc; a setBlock update must win on save.
+	// Authoritative block state lives in Doc; a SetBlock update must win on save.
 	shadow := &ShadowDocument{
 		UUID:  "test-uuid",
 		Mode:  "wysiwyg",
@@ -26,17 +26,17 @@ func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
 		},
 	}
 
-	shadow.setBlock(SieveBlock{ID: "ab-1234", Kind: "ai-block", Attrs: map[string]interface{}{
+	shadow.SetBlock(SieveBlock{ID: "ab-1234", Kind: "ai-block", Attrs: map[string]interface{}{
 		"response": "New answer",
 	}})
 
-	result := shadow.contentForSave()
+	result := shadow.ContentForSave()
 
 	if !strings.Contains(result, "response: New answer") {
-		t.Errorf("expected contentForSave to update response, got:\n%s", result)
+		t.Errorf("expected ContentForSave to update response, got:\n%s", result)
 	}
 	if strings.Contains(result, "response: Old answer") {
-		t.Errorf("expected contentForSave to remove old response, got:\n%s", result)
+		t.Errorf("expected ContentForSave to remove old response, got:\n%s", result)
 	}
 	if !strings.Contains(result, "Some prose.") {
 		t.Errorf("expected prose to be preserved, got:\n%s", result)
@@ -51,10 +51,10 @@ func TestContentForSave_markdownModeIsVerbatim(t *testing.T) {
 		Mode:         "markdown",
 	}
 
-	result := shadow.contentForSave()
+	result := shadow.ContentForSave()
 
 	if result != md {
-		t.Errorf("expected contentForSave to return markdown verbatim, got:\n%s", result)
+		t.Errorf("expected ContentForSave to return markdown verbatim, got:\n%s", result)
 	}
 }
 
@@ -64,25 +64,25 @@ func TestContentForSave_roundTripsWysiwyg(t *testing.T) {
 	md := "# Hello\n\n```ai-block\nid: ab-1234\nresponse: untouched\n```"
 	shadow := newShadow("test-uuid", md, NewDocumentCodec(globalRegistry()), 0, nil)
 
-	result := shadow.contentForSave()
+	result := shadow.ContentForSave()
 
 	// Content is preserved through the serialization spine...
 	if !strings.Contains(result, "# Hello") || !strings.Contains(result, "response: untouched") {
 		t.Fatalf("expected content preserved, got:\n%s", result)
 	}
 	// ...and the serialization is stable (parse -> serialize -> parse is a fixpoint).
-	if again := newShadow("test-uuid", result, NewDocumentCodec(globalRegistry()), 0, nil).contentForSave(); again != result {
+	if again := newShadow("test-uuid", result, NewDocumentCodec(globalRegistry()), 0, nil).ContentForSave(); again != result {
 		t.Fatalf("serialization not stable:\n first: %q\nsecond: %q", result, again)
 	}
 }
 
 // A doc-update carrying id-less prose (the pre-mint frontend fallback writes
 // bare markdown) must never be persisted id-less: Go mints a handle for every
-// id-less prose block on reparse, so contentForSave always emits a delimited,
+// id-less prose block on reparse, so ContentForSave always emits a delimited,
 // addressable block. Backend discipline — a block has an id, period.
 func TestShadowDocument_DocUpdateMintsHandlesForIdlessProse(t *testing.T) {
 	shadow := newShadow("test-uuid", "", NewDocumentCodec(globalRegistry()), 0, nil) // empty doc, wysiwyg
-	shadow.setMarkdown("First paragraph.\n\nSecond paragraph.")
+	shadow.SetMarkdown("First paragraph.\n\nSecond paragraph.")
 
 	// Every prose block in the authoritative tree now carries an id.
 	for i, b := range shadow.Blocks {
@@ -92,13 +92,13 @@ func TestShadowDocument_DocUpdateMintsHandlesForIdlessProse(t *testing.T) {
 	}
 
 	// ...so the saved markdown is delimited (addressable), not bare prose.
-	out := shadow.contentForSave()
+	out := shadow.ContentForSave()
 	if !strings.Contains(out, "<!--s:") || !strings.Contains(out, "<!--/s:") {
 		t.Fatalf("expected delimited (id-bearing) prose on save, got:\n%s", out)
 	}
 
 	// And the minted identity is stable across reopen (idempotent).
-	if again := newShadow("test-uuid", out, NewDocumentCodec(globalRegistry()), 0, nil).contentForSave(); again != out {
+	if again := newShadow("test-uuid", out, NewDocumentCodec(globalRegistry()), 0, nil).ContentForSave(); again != out {
 		t.Fatalf("minted handles not stable:\n first: %q\nsecond: %q", out, again)
 	}
 }
@@ -109,7 +109,7 @@ func TestShadowDocument_setBlockCreatesEntry(t *testing.T) {
 		Mode: "wysiwyg",
 	}
 
-	shadow.setBlock(SieveBlock{
+	shadow.SetBlock(SieveBlock{
 		Kind: "code",
 		ID:   "cb-0001",
 		Attrs: map[string]interface{}{
@@ -140,7 +140,7 @@ func TestShadowDocument_setBlockMergesAttrs(t *testing.T) {
 		},
 	}
 
-	shadow.setBlock(SieveBlock{
+	shadow.SetBlock(SieveBlock{
 		Kind: "code",
 		ID:   "cb-0001",
 		Attrs: map[string]interface{}{
