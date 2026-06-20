@@ -172,8 +172,13 @@ func (d FencedDeserializer) fencedBody(raw string) string {
 }
 
 // Shape derives the fenced delimiter pair from Kind — every structured flavour
-// gets ```Kind … ``` recognition for free by embedding.
+// gets ```Kind … ``` recognition for free by embedding. Returns a zero
+// RegionShape when Kind is empty so that partially-constructed mocks (Kind: "")
+// are never misidentified as a catch-all shape by DocumentCodec.scanner.
 func (d FencedDeserializer) Shape() RegionShape {
+	if d.Kind == "" {
+		return RegionShape{}
+	}
 	return RegionShape{Kind: d.Kind, Head: "```" + d.Kind, Tail: "```"}
 }
 
