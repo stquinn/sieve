@@ -106,14 +106,11 @@ func TestRegionScanner_EmptyBodyFenceMidDocument(t *testing.T) {
 }
 
 func TestRegionScanner_EmptyBodyFenceAtEndOfDocument(t *testing.T) {
-	// Empty-body fence as the last node in the document. Gapless tiling is
-	// the invariant; the exact region boundaries depend on the shape parser's
-	// interaction with goldmark's block lifecycle at EOF.
+	// Empty-body fence as the last node in the document.
 	md := "before\n\n```code\n```\n"
 	shapes := []RegionShape{{Kind: "code", Head: "```code", Tail: "```"}}
 	regions := NewRegionScanner(shapes).Scan(md)
 
-	// Tiling must be exact regardless of how many regions the scanner produces.
 	var sum string
 	for _, r := range regions {
 		sum += r.Raw
@@ -122,18 +119,18 @@ func TestRegionScanner_EmptyBodyFenceAtEndOfDocument(t *testing.T) {
 		t.Fatalf("empty-body fence at EOF destroyed tiling.\n got: %q\nwant: %q", sum, md)
 	}
 
-	// At least one region must carry Kind="code".
-	foundCode := false
-	for _, r := range regions {
-		if r.Kind == "code" {
-			foundCode = true
-			if r.Body != r.Raw {
-				t.Errorf("code region Body must equal Raw: Body=%q Raw=%q", r.Body, r.Raw)
-			}
-		}
+	if len(regions) != 2 {
+		t.Fatalf("want 2 regions (text, fence), got %d: %#v", len(regions), regions)
 	}
-	if !foundCode {
-		t.Fatalf("no code region found in %#v", regions)
+	if regions[1].Kind != "code" {
+		t.Errorf("region[1] should be fence Kind=code, got Kind=%q", regions[1].Kind)
+	}
+	if regions[1].Raw != "```code\n```\n" {
+		t.Errorf("region[1] Raw = %q, want %q", regions[1].Raw, "```code\n```\n")
+	}
+	// In the shape-driven scanner, Body == Raw for shape regions.
+	if regions[1].Body != regions[1].Raw {
+		t.Errorf("region[1] Body must equal Raw for shape regions: Body=%q Raw=%q", regions[1].Body, regions[1].Raw)
 	}
 }
 
