@@ -12,17 +12,26 @@ import (
 // structural guarantee inherited from the serialization half.
 type DocumentCodec struct {
 	registry ProcessorRegistry
-	scanner  *RegionScanner
 }
 
 func NewDocumentCodec(reg ProcessorRegistry) *DocumentCodec {
+	return &DocumentCodec{registry: reg}
+}
+
+// scanner builds a RegionScanner from the registry's CURRENT shapes. Shapes are
+// collected per call, NOT cached at construction: in production the codec is wired
+// BEFORE the fenced processors register (service_provider builds the codec, then
+// registers diagram/code/ai-block/…), so a construction-time snapshot would know
+// only prose and every fence would fall through to the prose mop-up. Reading the
+// live registry here keeps segmentation correct regardless of wiring order.
+func (c *DocumentCodec) scanner() *RegionScanner {
 	var shapes []RegionShape
-	for _, p := range reg.Ordered() {
+	for _, p := range c.registry.Ordered() {
 		if s := p.Shape(); !s.IsZero() {
 			shapes = append(shapes, s)
 		}
 	}
-	return &DocumentCodec{registry: reg, scanner: NewRegionScanner(shapes)}
+	return NewRegionScanner(shapes)
 }
 
 // Deserialize parses markdown into an ordered block slice. It splits into regions,
@@ -30,7 +39,7 @@ func NewDocumentCodec(reg ProcessorRegistry) *DocumentCodec {
 // acceptor build the block(s). A run of unclaimed regions is coalesced and handed
 // to prose (terminal mop-up), so a stray fence survives as verbatim prose content.
 func (c *DocumentCodec) Deserialize(markdown string) ([]SieveBlock, error) {
-	regions := c.scanner.Scan(markdown)
+	regions := c.scanner().Scan(markdown)
 	prose := c.registry.Get(KindProse)
 	if prose == nil {
 		return nil, fmt.Errorf("DocumentCodec: no prose processor registered (KindProse) — registry is misconfigured")
