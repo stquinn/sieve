@@ -1,4 +1,4 @@
-package sieve
+package ai
 
 import (
 	"strings"

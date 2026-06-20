@@ -18,6 +18,7 @@ import (
 
 	"sieve/logger"
 	"sieve/sieve"
+	"sieve/sieve/ai"
 	"sieve/sieve/domain"
 	"sieve/sieve/services"
 	"sieve/store"
@@ -37,8 +38,8 @@ type App struct {
 	Documents       *services.DocumentService
 	Assets          *services.AssetService
 	State           *services.StateService
-	Prompts         *sieve.PromptService
-	AI              *sieve.AIService
+	Prompts         *ai.PromptService
+	AI              *ai.AIService
 
 	library  services.LibraryService // owns library discovery, recents, naming
 	themesFS fs.FS

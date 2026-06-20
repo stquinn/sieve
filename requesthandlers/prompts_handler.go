@@ -4,6 +4,7 @@ import (
 	"html/template"
 	"net/http"
 	"sieve/sieve"
+	"sieve/sieve/ai"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -33,7 +34,7 @@ func (p *PromptsHandler) handlePrompts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := struct {
-		Prompts  []sieve.PromptEntry
+		Prompts  []ai.PromptEntry
 		ActiveID string
 	}{
 		Prompts:  prompts,

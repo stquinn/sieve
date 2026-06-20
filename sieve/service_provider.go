@@ -2,6 +2,7 @@ package sieve
 
 import (
 	"sieve/logger"
+	"sieve/sieve/ai"
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
 	"sieve/sieve/services"
@@ -15,8 +16,8 @@ type ServiceProvider struct {
 	Documents   *services.DocumentService
 	Assets      *services.AssetService
 	State       *services.StateService
-	Prompts     *PromptService
-	AI          *AIService
+	Prompts     *ai.PromptService
+	AI          *ai.AIService
 	Editor      *services.EditorService
 	Jobs        *services.JobTracker
 	LinkPreview *services.LinkPreviewService
@@ -41,7 +42,7 @@ var (
 	_ block.AssetsPort      = (*services.AssetService)(nil)
 	_ block.StatePort       = (*services.StateService)(nil)
 	_ block.LinkPreviewPort = (*services.LinkPreviewService)(nil)
-	_ block.AIPort          = (*AIService)(nil)
+	_ block.AIPort          = (*ai.AIService)(nil)
 )
 
 func (s *ServiceProvider) Init(store store.Store, storePath string) {
@@ -59,12 +60,12 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 		logger.Error("state init failed", "err", err)
 		return
 	}
-	s.Prompts, err = NewPromptService(store)
+	s.Prompts, err = ai.NewPromptService(store)
 	if err != nil {
 		logger.Error("prompts init failed", "err", err)
 		return
 	}
-	s.AI = NewAIService(s.State, s.Prompts, s.Documents, storePath)
+	s.AI = ai.NewAIService(s.State, s.Prompts, s.Documents, storePath)
 	s.LinkPreview = services.NewLinkPreviewService()
 	settings := s.State.LoadSettings()
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
