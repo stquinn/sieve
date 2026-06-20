@@ -6,6 +6,16 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 
 ---
 
+## E-1: "Embed in document" (promote-to-prose) is broken — multi-node embeds fragment and lose their id
+
+**What:** Embedding a structured block (e.g. an `ai-block`) into the document via "Embed in document" / Promote-to-Prose is **broken for multi-node content**, which is the common case. `EditorService.PromoteBlock` correctly creates ONE prose block carrying the original id (e.g. `ai-d63e`) with the block's `MarkdownRepresentation` as content (Go is right; the test passes; `scanProseRegion` keeps the delimited block whole). But that representation is multi-node markdown (e.g. `### question\n\n<answer>` = heading + paragraph), and the **frontend** renders `kind:prose` as **native top-level nodes (D-r.7 node-granular)** — so the one backend block is parsed into N native nodes, the mint plugin gives each a fresh `pr-…` id, and the next sync persists N separate blocks. **The original id is destroyed and any AI ref chain pointing at it breaks.** Observed live: embedding `ai-d63e` produced `pr-12ed` + `pr-ca6d`, no `ai-d63e`. It also violates "the backend owns the data" — the frontend silently posts back a lossy mutation *on load*, with no user interaction (the mint plugin fires on the `setContent` transaction); roundtrips don't roundtrip.
+
+**Scope:** a SINGLE-node embed works — the finalised content is one native node, maps to one `kind:prose` block, id rides through. Only MULTI-node embeds break.
+
+**Root cause:** there is no editor representation for "one prose block spanning multiple top-level nodes." `kind:prose` = one native top-level node (typed prose, node-granular — *correct, keep it*). A multi-node, actor-created block has no home, so it fragments.
+
+**Retires when:** build the **`kind:"nested-prose"`** kind, which the 2026-06-19 node-granular spec (`docs/superpowers/specs/2026-06-19-node-granular-prose-blocks-design.md`) already designed and deferred ("a code-created prose tree under one id, for a future actor that needs it; kind-in-marker; never keyboard-split"). The embed/rewrite/extract/transform actors are that concrete actor. Concretely: (1) codec supports `<!--s:ID kind=nested-prose-->…<!--/s:ID-->` (open-tag kind on serialize/parse); (2) a transparent never-split container NodeView on the frontend (`content:'block+'`, one `data-id`, no chrome) renders a `nested-prose` block as ONE node → edits emit `update-block`, never split → the id is immortal; (3) `PromoteBlock` (and later rewrite/extract/transform) emits `kind:nested-prose`. `nested-prose` is actor/backend-created, so its id is backend-minted from birth — it sidesteps **B-A** (the typed-prose frontend-mint, still separately open). Decision locked 2026-06-20: container (id survives load + edit), NOT unpack-on-edit (loses the id). A near-term partial mitigation (independent of the kind work): the frontend must not post a mutation as a side-effect of *loading* backend data — honour the existing `aiReloadInProgress` flag in the mint/sync so a load is read-only.
+
 ## P-A: OS file drag-and-drop not implemented
 
 **What:** Dragging files from the OS file manager onto the Sieve window does nothing. Wails `DragAndDrop` config and an `OnFileDrop` Go handler are needed.
