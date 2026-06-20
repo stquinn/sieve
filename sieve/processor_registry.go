@@ -140,7 +140,6 @@ type BlockServices struct {
 	AI          AIPort
 	Documents   DocumentsPort
 	Assets      AssetsPort
-	Jobs        *JobTracker // not a port: no processor calls it; used by EditorService
 	LinkPreview LinkPreviewPort
 	State       StatePort
 }

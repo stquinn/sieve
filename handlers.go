@@ -121,6 +121,9 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 	jobTracker := sieve.NewJobTracker()
 	jobTracker.Broadcast = hub.broadcast
 	sp.Jobs = jobTracker
+	if sp.Editor != nil {
+		sp.Editor.SetJobs(jobTracker)
+	}
 	requestHandlers := []requesthandlers.RequestHandler{
 		&requesthandlers.SideBarHandler{ServiceProvider: sp, Tmpl: tmpl},
 		&requesthandlers.TabHandler{ServiceProvider: sp, Tmpl: tmpl},

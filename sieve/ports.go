@@ -43,12 +43,3 @@ type AIPort interface {
 	DescribeImage(uuid, storeRelPath, blkId string) (domain.ImageDesc, error)
 	RunWebClip(uuid, id, source, mode, docContent string) (title, content string, err error)
 }
-
-// Compile-time proof the concrete services satisfy the ports.
-var (
-	_ DocumentsPort   = (*DocumentService)(nil)
-	_ AssetsPort      = (*AssetService)(nil)
-	_ StatePort       = (*StateService)(nil)
-	_ LinkPreviewPort = (*LinkPreviewService)(nil)
-	_ AIPort          = (*AIService)(nil)
-)

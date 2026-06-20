@@ -13,61 +13,13 @@ import (
 
 const defaultAutosaveDebounce = 30 * time.Second
 
-// DocView is an immutable, lock-free SNAPSHOT of a document's data: the block
-// tree plus the bits needed to derive markdown. It is what a background job or a
-// context provider reasons about — WITHOUT the live editor machinery (mutex,
-// timers, debounce). The stateful ShadowDocument builds one at the boundary;
-// passing a DocView by value copies no lock (unlike ShadowDocument, whose
-// embedded sync.Mutex made every by-value pass a `go vet` copylocks hazard, and
-// — worse — passing the live *ShadowDocument would leak the mutable cell into a
-// concurrent job; the copy is deliberate isolation).
-type DocView struct {
-	UUID         string
-	Mode         string
-	mdModeBuffer string
-	Blocks       []SieveBlock
-	codec        *DocumentCodec
-}
-
-// getBlock resolves a block by id from the snapshot tree, regardless of kind. It
-// is the SOLE accessor: "everything is a block", so lookup never discriminates on
-// kind; only context/serialisation does. Returns the block and true, or nil/false.
-func (d DocView) getBlock(id string) (*SieveBlock, bool) {
-	if id == "" {
-		return nil, false
-	}
-	for i := range d.Blocks {
-		if d.Blocks[i].ID == id {
-			return &d.Blocks[i], true
-		}
-	}
-	return nil, false
-}
-
-// deriveMarkdown returns the whole-doc markdown a consumer needs (save, an
-// id=="doc" AI ask, block-anchor context). Mode-aware, stores nothing: in
-// markdown mode the raw buffer IS the document; in WYSIWYG the tree is serialized
-// fresh, so it can never drift.
-func (d DocView) deriveMarkdown() string {
-	if d.Mode == "markdown" {
-		return d.mdModeBuffer
-	}
-	md, err := d.codec.Serialize(d.Blocks)
-	if err != nil {
-		logger.Warn("editor: serialize block doc failed", "uuid", d.UUID, "err", err)
-		return ""
-	}
-	return md
-}
-
-// Markdown parsing is now handled by markdown_parser.go
-
 // EditorService is the Go-side editor model. It holds one ShadowDocument per
 // open document and coordinates all save operations. DocumentService owns disk.
 type EditorService struct {
 	documents *DocumentService
 	codec     *DocumentCodec
 	services  BlockServices
+	jobs      *JobTracker // not a processor concern; EditorService tracks job spinners directly
 	debounce  time.Duration
 	mu        sync.RWMutex
 	shadows   map[string]*ShadowDocument
@@ -382,6 +334,12 @@ func (es *EditorService) CloseAll() {
 	}
 }
 
+// SetJobs wires the JobTracker EditorService uses for job-spinner lifecycle.
+// Separate from BlockServices (a processor bundle) because no processor needs it.
+func (es *EditorService) SetJobs(j *JobTracker) {
+	es.jobs = j
+}
+
 func (es *EditorService) SetServices(svc BlockServices) {
 	es.services = svc
 }
@@ -626,14 +584,14 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	}
 
 	label := processor.JobLabel(blkCopy)
-	if label != "" && es.services.Jobs != nil {
-		es.services.Jobs.Start(JobInfo{
+	if label != "" && es.jobs != nil {
+		es.jobs.Start(JobInfo{
 			JobID:   blockID,
 			Label:   label,
 			DocID:   uuid,
 			SpinTab: false,
 		})
-		defer es.services.Jobs.End(blockID)
+		defer es.jobs.End(blockID)
 	}
 
 	// notify lets the processor push intermediate attr updates mid-job

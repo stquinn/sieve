@@ -26,11 +26,20 @@ func (s *ServiceProvider) BlockServices() BlockServices {
 		AI:          s.AI,
 		Documents:   s.Documents,
 		Assets:      s.Assets,
-		Jobs:        s.Jobs,
 		LinkPreview: s.LinkPreview,
 		State:       s.State,
 	}
 }
+
+// Compile-time proof the concrete services satisfy the block ports. Lives at the
+// composition root — the only place that knows both the ports and the concretes.
+var (
+	_ DocumentsPort   = (*DocumentService)(nil)
+	_ AssetsPort      = (*AssetService)(nil)
+	_ StatePort       = (*StateService)(nil)
+	_ LinkPreviewPort = (*LinkPreviewService)(nil)
+	_ AIPort          = (*AIService)(nil)
+)
 
 func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	s.Store = store
@@ -58,6 +67,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
 	s.Editor = NewEditorService(s.Documents, NewDocumentCodec(globalRegistry()), autosave)
 	s.Editor.SetServices(s.BlockServices())
+	s.Editor.SetJobs(s.Jobs) // re-set in handlers.go once the real JobTracker (with hub) exists
 	svc := s.BlockServices()
 	RegisterProcessor("diagram", NewDiagramProcessor(svc))
 	RegisterProcessor("smart-image", NewSmartImageProcessor(svc))
