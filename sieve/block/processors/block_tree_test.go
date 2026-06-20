@@ -1,16 +1,19 @@
-package block
+package processors
 
-import "testing"
+import (
+	"sieve/sieve/block"
+	"testing"
+)
 
 // D.4 spine: blocks are delimited by matched open/close comment-tag pairs.
 // A prose block serializes as `<!--s:ID-->\n<content>\n<!--/s:ID-->`; structure
 // derives ONLY from these delimiters, never from blank lines.
 
 func TestPairedDelimiter_SerializeProse(t *testing.T) {
-	doc := []SieveBlock{
-		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Hello."}},
+	doc := []block.SieveBlock{
+		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "Hello."}},
 	}
-	got, err := NewDocumentCodec(GlobalRegistry()).Serialize(doc)
+	got, err := block.NewDocumentCodec(block.GlobalRegistry()).Serialize(doc)
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
 	}
@@ -22,7 +25,7 @@ func TestPairedDelimiter_SerializeProse(t *testing.T) {
 
 func TestPairedDelimiter_RoundTripProse(t *testing.T) {
 	md := "<!--s:pr-1-->\nHello.\n<!--/s:pr-1-->"
-	doc, err := NewDocumentCodec(GlobalRegistry()).Deserialize(md)
+	doc, err := block.NewDocumentCodec(block.GlobalRegistry()).Deserialize(md)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -30,10 +33,10 @@ func TestPairedDelimiter_RoundTripProse(t *testing.T) {
 		t.Fatalf("want 1 block, got %d: %+v", len(doc), doc)
 	}
 	b := doc[0]
-	if b.ID != "pr-1" || b.Kind != KindProse || b.Content() != "Hello." {
+	if b.ID != "pr-1" || b.Kind != block.KindProse || b.Content() != "Hello." {
 		t.Fatalf("block: %+v", b)
 	}
-	out, err := NewDocumentCodec(GlobalRegistry()).Serialize(doc)
+	out, err := block.NewDocumentCodec(block.GlobalRegistry()).Serialize(doc)
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
 	}
@@ -45,10 +48,10 @@ func TestPairedDelimiter_RoundTripProse(t *testing.T) {
 // Aliases (post-merge handle-set, spec §7) ride in the open marker as a
 // space-separated handle list; the close marker carries the primary id only.
 func TestPairedDelimiter_AliasesRoundTrip(t *testing.T) {
-	doc := []SieveBlock{
-		{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Merged."}, Aliases: []string{"pr-0", "pr-9"}},
+	doc := []block.SieveBlock{
+		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "Merged."}, Aliases: []string{"pr-0", "pr-9"}},
 	}
-	md, err := NewDocumentCodec(GlobalRegistry()).Serialize(doc)
+	md, err := block.NewDocumentCodec(block.GlobalRegistry()).Serialize(doc)
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
 	}
@@ -56,7 +59,7 @@ func TestPairedDelimiter_AliasesRoundTrip(t *testing.T) {
 	if md != want {
 		t.Fatalf("alias serialize:\n got: %q\nwant: %q", md, want)
 	}
-	got, err := NewDocumentCodec(GlobalRegistry()).Deserialize(md)
+	got, err := block.NewDocumentCodec(block.GlobalRegistry()).Deserialize(md)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -71,7 +74,7 @@ func TestPairedDelimiter_AliasesRoundTrip(t *testing.T) {
 // structural boundary.
 func TestPairedDelimiter_MultiParagraphIsOneBlock(t *testing.T) {
 	md := "<!--s:pr-1-->\nA\n\nB\n<!--/s:pr-1-->"
-	doc, err := NewDocumentCodec(GlobalRegistry()).Deserialize(md)
+	doc, err := block.NewDocumentCodec(block.GlobalRegistry()).Deserialize(md)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -87,7 +90,7 @@ func TestPairedDelimiter_MultiParagraphIsOneBlock(t *testing.T) {
 // never blank-line split. Blank lines carry no structural signal.
 func TestUndelimited_IsSingleBlock(t *testing.T) {
 	md := "First.\n\nSecond.\n\nThird."
-	doc, err := NewDocumentCodec(GlobalRegistry()).Deserialize(md)
+	doc, err := block.NewDocumentCodec(block.GlobalRegistry()).Deserialize(md)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -106,7 +109,7 @@ func TestUndelimited_IsSingleBlock(t *testing.T) {
 // block boundary. The marker line stays verbatim in the prose content.
 func TestUnbalancedOpen_IsLiteralText(t *testing.T) {
 	md := "<!--s:pr-1-->\nHello."
-	doc, err := NewDocumentCodec(GlobalRegistry()).Deserialize(md)
+	doc, err := block.NewDocumentCodec(block.GlobalRegistry()).Deserialize(md)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -123,13 +126,13 @@ func TestUnbalancedOpen_IsLiteralText(t *testing.T) {
 // Leaf opacity: a literal `<!--s:…-->`/`<!--/s:…-->` inside a structured fence
 // is fence content, never re-scanned as a prose-block boundary.
 func TestOpacity_MarkerInsideCodeFenceNotParsed(t *testing.T) {
-	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
-	t.Cleanup(func() { UnregisterProcessor("code") })
+	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	t.Cleanup(func() { block.UnregisterProcessor("code") })
 
 	md := "<!--s:pr-1-->\nIntro.\n<!--/s:pr-1-->\n\n" +
 		"```code\nid: co-1\nsource: |\n    <!--s:evil-->\n    not a block\n    <!--/s:evil-->\n```\n\n" +
 		"<!--s:pr-2-->\nOutro.\n<!--/s:pr-2-->"
-	doc, err := NewDocumentCodec(GlobalRegistry()).Deserialize(md)
+	doc, err := block.NewDocumentCodec(block.GlobalRegistry()).Deserialize(md)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -143,20 +146,20 @@ func TestOpacity_MarkerInsideCodeFenceNotParsed(t *testing.T) {
 
 // Full bijection: prose + structured fence + prose round-trips byte-stable.
 func TestPairedDelimiter_BijectionWithFence(t *testing.T) {
-	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
-	t.Cleanup(func() { UnregisterProcessor("code") })
+	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	t.Cleanup(func() { block.UnregisterProcessor("code") })
 
 	md := "<!--s:pr-a-->\nFirst.\n<!--/s:pr-a-->\n\n" +
 		"```code\nid: co-1\nsource: x = 1\n```\n\n" +
 		"<!--s:pr-c-->\nTail.\n<!--/s:pr-c-->"
-	doc, err := NewDocumentCodec(GlobalRegistry()).Deserialize(md)
+	doc, err := block.NewDocumentCodec(block.GlobalRegistry()).Deserialize(md)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if len(doc) != 3 {
 		t.Fatalf("want 3 blocks, got %d: %+v", len(doc), doc)
 	}
-	out, err := NewDocumentCodec(GlobalRegistry()).Serialize(doc)
+	out, err := block.NewDocumentCodec(block.GlobalRegistry()).Serialize(doc)
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
 	}

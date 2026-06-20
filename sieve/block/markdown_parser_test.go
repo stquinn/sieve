@@ -74,7 +74,7 @@ func TestBlockAnchorMissingIDIsIgnored(t *testing.T) {
 }
 
 func TestBlockAnchorChildSieveBlockIsPromoted(t *testing.T) {
-	RegisterProcessor("code", &CodeBlockProcessor{})
+	RegisterProcessor("code", newFakeProc("code"))
 	t.Cleanup(func() { UnregisterProcessor("code") })
 	// A fenced SieveBlock inside a BlockAnchor should be promoted to sieveBlockNode
 	// by the existing sieveBlockASTTransformer.

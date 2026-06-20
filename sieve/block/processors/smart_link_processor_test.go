@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sieve/sieve/block"
+	"sieve/sieve/services"
 	"testing"
 	"time"
 )
@@ -120,7 +121,7 @@ func TestSmartLinkProcessor_RunJob_fetchesTitle(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewSmartLinkProcessor(block.BlockServices{LinkPreview: NewLinkPreviewService()})
+	p := NewSmartLinkProcessor(block.BlockServices{LinkPreview: services.NewLinkPreviewService()})
 	blk := &block.SieveBlock{
 		ID:   "sl-0001",
 		Kind: "smart-link",
@@ -152,7 +153,7 @@ func TestSmartLinkProcessor_RunJob_gracefulOnTitleFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewSmartLinkProcessor(block.BlockServices{LinkPreview: NewLinkPreviewService()})
+	p := NewSmartLinkProcessor(block.BlockServices{LinkPreview: services.NewLinkPreviewService()})
 	blk := &block.SieveBlock{
 		ID:   "sl-0002",
 		Kind: "smart-link",

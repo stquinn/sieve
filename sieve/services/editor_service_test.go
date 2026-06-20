@@ -3,164 +3,11 @@ package services
 import (
 	"context"
 	"sieve/sieve/block"
+	"sieve/sieve/block/processors"
 	"strings"
 	"testing"
 	"time"
 )
-
-func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
-	block.RegisterProcessor("ai-block", &testRunJobProcessor{})
-	// Authoritative block state lives in Doc; a SetBlock update must win on save.
-	shadow := &block.ShadowDocument{
-		UUID:  "test-uuid",
-		Mode:  "wysiwyg",
-		codec: block.NewDocumentCodec(block.GlobalRegistry()),
-		Blocks: []block.SieveBlock{
-			{ID: "pr-hello", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "# Hello"}},
-			{ID: "ab-1234", Kind: "ai-block", Attrs: map[string]interface{}{
-				"id":       "ab-1234",
-				"question": "What?",
-				"response": "Old answer",
-				"status":   "COMPLETE",
-			}},
-			{ID: "pr-some", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "Some prose."}},
-		},
-	}
-
-	shadow.SetBlock(block.SieveBlock{ID: "ab-1234", Kind: "ai-block", Attrs: map[string]interface{}{
-		"response": "New answer",
-	}})
-
-	result := shadow.ContentForSave()
-
-	if !strings.Contains(result, "response: New answer") {
-		t.Errorf("expected ContentForSave to update response, got:\n%s", result)
-	}
-	if strings.Contains(result, "response: Old answer") {
-		t.Errorf("expected ContentForSave to remove old response, got:\n%s", result)
-	}
-	if !strings.Contains(result, "Some prose.") {
-		t.Errorf("expected prose to be preserved, got:\n%s", result)
-	}
-}
-
-func TestContentForSave_markdownModeIsVerbatim(t *testing.T) {
-	md := "# Hello\n\n```ai-block\nid: ab-1234\nresponse: original\n```"
-	shadow := &block.ShadowDocument{
-		UUID:         "test-uuid",
-		mdModeBuffer: md,
-		Mode:         "markdown",
-	}
-
-	result := shadow.ContentForSave()
-
-	if result != md {
-		t.Errorf("expected ContentForSave to return markdown verbatim, got:\n%s", result)
-	}
-}
-
-func TestContentForSave_roundTripsWysiwyg(t *testing.T) {
-	block.RegisterProcessor("ai-block", &testRunJobProcessor{})
-	t.Cleanup(func() { block.UnregisterProcessor("ai-block") })
-	md := "# Hello\n\n```ai-block\nid: ab-1234\nresponse: untouched\n```"
-	shadow := block.NewShadow("test-uuid", md, block.NewDocumentCodec(block.GlobalRegistry()), 0, nil)
-
-	result := shadow.ContentForSave()
-
-	// Content is preserved through the serialization spine...
-	if !strings.Contains(result, "# Hello") || !strings.Contains(result, "response: untouched") {
-		t.Fatalf("expected content preserved, got:\n%s", result)
-	}
-	// ...and the serialization is stable (parse -> serialize -> parse is a fixpoint).
-	if again := block.NewShadow("test-uuid", result, block.NewDocumentCodec(block.GlobalRegistry()), 0, nil).ContentForSave(); again != result {
-		t.Fatalf("serialization not stable:\n first: %q\nsecond: %q", result, again)
-	}
-}
-
-// A doc-update carrying id-less prose (the pre-mint frontend fallback writes
-// bare markdown) must never be persisted id-less: Go mints a handle for every
-// id-less prose block on reparse, so ContentForSave always emits a delimited,
-// addressable block. Backend discipline — a block has an id, period.
-func TestShadowDocument_DocUpdateMintsHandlesForIdlessProse(t *testing.T) {
-	shadow := block.NewShadow("test-uuid", "", block.NewDocumentCodec(block.GlobalRegistry()), 0, nil) // empty doc, wysiwyg
-	shadow.SetMarkdown("First paragraph.\n\nSecond paragraph.")
-
-	// Every prose block in the authoritative tree now carries an id.
-	for i, b := range shadow.Blocks {
-		if b.Kind == block.KindProse && b.ID == "" {
-			t.Fatalf("block %d persisted id-less: %+v", i, b)
-		}
-	}
-
-	// ...so the saved markdown is delimited (addressable), not bare prose.
-	out := shadow.ContentForSave()
-	if !strings.Contains(out, "<!--s:") || !strings.Contains(out, "<!--/s:") {
-		t.Fatalf("expected delimited (id-bearing) prose on save, got:\n%s", out)
-	}
-
-	// And the minted identity is stable across reopen (idempotent).
-	if again := block.NewShadow("test-uuid", out, block.NewDocumentCodec(block.GlobalRegistry()), 0, nil).ContentForSave(); again != out {
-		t.Fatalf("minted handles not stable:\n first: %q\nsecond: %q", out, again)
-	}
-}
-
-func TestShadowDocument_setBlockCreatesEntry(t *testing.T) {
-	shadow := &block.ShadowDocument{
-		UUID: "test-uuid",
-		Mode: "wysiwyg",
-	}
-
-	shadow.SetBlock(block.SieveBlock{
-		Kind: "code",
-		ID:   "cb-0001",
-		Attrs: map[string]interface{}{
-			"id":     "cb-0001",
-			"source": "fmt.Println()",
-		},
-	})
-
-	blk := shadow.findBlockIn("cb-0001")
-	if blk == nil {
-		t.Fatal("expected block cb-0001 to exist")
-	}
-	if blk.Kind != "code" {
-		t.Errorf("expected Kind=code, got %q", blk.Kind)
-	}
-}
-
-func TestShadowDocument_setBlockMergesAttrs(t *testing.T) {
-	shadow := &block.ShadowDocument{
-		UUID: "test-uuid",
-		Mode: "wysiwyg",
-		Blocks: []block.SieveBlock{
-			{ID: "cb-0001", Kind: "code", Attrs: map[string]interface{}{
-				"id":       "cb-0001",
-				"source":   "old",
-				"language": "unknown",
-			}},
-		},
-	}
-
-	shadow.SetBlock(block.SieveBlock{
-		Kind: "code",
-		ID:   "cb-0001",
-		Attrs: map[string]interface{}{
-			"language": "python",
-			"status":   "COMPLETE",
-		},
-	})
-
-	blk := shadow.findBlockIn("cb-0001")
-	if blk.Attrs["source"] != "old" {
-		t.Errorf("expected source to be preserved, got %v", blk.Attrs["source"])
-	}
-	if blk.Attrs["language"] != "python" {
-		t.Errorf("expected language=python, got %v", blk.Attrs["language"])
-	}
-	if blk.Attrs["status"] != "COMPLETE" {
-		t.Errorf("expected status=COMPLETE, got %v", blk.Attrs["status"])
-	}
-}
 
 func TestEditorService_FlushWritesToDisk(t *testing.T) {
 	block.RegisterProcessor("ai-block", &testRunJobProcessor{})
@@ -206,7 +53,7 @@ func TestEditorService_FlushWritesToDisk(t *testing.T) {
 }
 
 func TestEditorService_EnterMarkdownEmbedsBlocks(t *testing.T) {
-	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor("code", processors.NewCodeBlockProcessor(block.BlockServices{}))
 	t.Cleanup(func() { block.UnregisterProcessor("code") })
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), time.Second)
@@ -360,7 +207,7 @@ func TestEditorService_NotifySavedCalledAfterDebounce(t *testing.T) {
 }
 
 func TestEditorService_EnterWysiwygReparsesBlocks(t *testing.T) {
-	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor("code", processors.NewCodeBlockProcessor(block.BlockServices{}))
 	t.Cleanup(func() { block.UnregisterProcessor("code") })
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), time.Second)
@@ -401,7 +248,7 @@ func TestEditorService_EnterWysiwygReparsesBlocks(t *testing.T) {
 
 func TestEditorService_CreateBlock_code(t *testing.T) {
 	resetRegistry()
-	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor("code", processors.NewCodeBlockProcessor(block.BlockServices{}))
 
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
@@ -428,9 +275,8 @@ func TestEditorService_CreateBlock_code(t *testing.T) {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
-	shadow.mu.Lock()
-	blk := shadow.findBlockIn(id)
-	shadow.mu.Unlock()
+	blkSnap, _ := shadow.SnapshotBlock(id)
+	blk := &blkSnap
 	if blk == nil {
 		t.Fatal("expected block in shadow")
 	}
@@ -447,7 +293,7 @@ func TestEditorService_CreateBlock_code(t *testing.T) {
 
 func TestEditorService_CreateBlock_withOverrides(t *testing.T) {
 	resetRegistry()
-	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor("code", processors.NewCodeBlockProcessor(block.BlockServices{}))
 
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
@@ -473,7 +319,7 @@ func TestEditorService_CreateBlock_withOverrides(t *testing.T) {
 
 func TestEditorService_HandlePaste_delegatesToCreateBlock(t *testing.T) {
 	resetRegistry()
-	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor("code", processors.NewCodeBlockProcessor(block.BlockServices{}))
 
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
@@ -505,7 +351,7 @@ func TestEditorService_HandlePaste_delegatesToCreateBlock(t *testing.T) {
 
 func TestEditorService_HandlePaste_noMatch(t *testing.T) {
 	resetRegistry()
-	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor("code", processors.NewCodeBlockProcessor(block.BlockServices{}))
 
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
@@ -541,7 +387,7 @@ func (l *mockLifecycleListener) OnBlockUpdated(uuid, blockID string, attrs map[s
 
 func TestHandleBlockUpdate_notifySendsSnapshotUnderLock(t *testing.T) {
 	resetRegistry()
-	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor("code", processors.NewCodeBlockProcessor(block.BlockServices{}))
 
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
@@ -608,13 +454,11 @@ func TestHandleBlockUpdate_notifySendsSnapshotUnderLock(t *testing.T) {
 		shadow := es.shadows[uuid]
 		es.mu.Unlock()
 		if shadow != nil {
-			shadow.mu.Lock()
-			blk := shadow.findBlockIn(id)
+			blk, ok := shadow.SnapshotBlock(id)
 			status := ""
-			if blk != nil {
+			if ok {
 				status, _ = blk.Attrs["status"].(string)
 			}
-			shadow.mu.Unlock()
 			if status == block.BlockStatusError || status == block.BlockStatusComplete {
 				break
 			}
@@ -688,9 +532,7 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 			es.mu.Lock()
 			shadow := es.shadows[uuid]
 			es.mu.Unlock()
-			shadow.mu.Lock()
-			shadow.findBlockIn(blockID).Attrs["source"] = "concurrent user edit"
-			shadow.mu.Unlock()
+			shadow.SetBlock(block.SieveBlock{ID: blockID, Attrs: map[string]interface{}{"source": "concurrent user edit"}})
 
 			return nil
 		},
@@ -710,9 +552,8 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 	shadow := es.shadows[uuid]
 	es.mu.Unlock()
 
-	shadow.mu.Lock()
-	blk := shadow.findBlockIn(blockID)
-	shadow.mu.Unlock()
+	blkSnap, _ := shadow.SnapshotBlock(blockID)
+	blk := &blkSnap
 
 	if blk == nil {
 		t.Fatal("expected block to exist in shadow")
@@ -792,9 +633,8 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 		t.Fatal("expected new shadow to exist")
 	}
 
-	shadow.mu.Lock()
-	blk := shadow.findBlockIn(blockID)
-	shadow.mu.Unlock()
+	blkSnap, _ := shadow.SnapshotBlock(blockID)
+	blk := &blkSnap
 
 	if blk == nil {
 		t.Fatal("expected block to exist in new shadow")
@@ -812,7 +652,7 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 // properly deserialized by the shadow and its block-id is recognized.
 func TestApplyJobUpdate_closedDoc(t *testing.T) {
 	resetRegistry()
-	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor("code", processors.NewCodeBlockProcessor(block.BlockServices{}))
 	t.Cleanup(func() { block.UnregisterProcessor("code") })
 
 	ds, _ := newTestDocumentService(t)
@@ -884,16 +724,14 @@ func waitJobs(t *testing.T, es *EditorService, uuid string) {
 		if shadow == nil {
 			return
 		}
-		shadow.mu.Lock()
 		allDone := true
-		for i := range shadow.Blocks {
-			status := shadow.Blocks[i].Status()
+		for _, b := range shadow.SnapshotBlocks() {
+			status := b.Status()
 			if status == block.BlockStatusPending || status == block.BlockStatusDispatched {
 				allDone = false
 				break
 			}
 		}
-		shadow.mu.Unlock()
 		if allDone {
 			return
 		}

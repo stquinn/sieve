@@ -1,20 +1,21 @@
-package block
+package processors
 
 import (
+	"sieve/sieve/block"
 	"strings"
 	"testing"
 )
 
 func TestHandles_Bijection(t *testing.T) {
-	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
-	t.Cleanup(func() { UnregisterProcessor("code") })
+	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	t.Cleanup(func() { block.UnregisterProcessor("code") })
 
 	md := "<!--s:pr-aaaa-->\nFirst paragraph.\n<!--/s:pr-aaaa-->\n\n" +
 		"<!--s:pr-bbbb-->\nSecond paragraph.\n<!--/s:pr-bbbb-->\n\n" +
 		"```code\nid: co-1\nsource: x = 1\n```\n\n" +
 		"<!--s:pr-cccc-->\nTail.\n<!--/s:pr-cccc-->"
 
-	doc, err := NewDocumentCodec(GlobalRegistry()).Deserialize(md)
+	doc, err := block.NewDocumentCodec(block.GlobalRegistry()).Deserialize(md)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -34,7 +35,7 @@ func TestHandles_Bijection(t *testing.T) {
 		t.Fatalf("block 3: %+v", doc[3])
 	}
 
-	out, err := NewDocumentCodec(GlobalRegistry()).Serialize(doc)
+	out, err := block.NewDocumentCodec(block.GlobalRegistry()).Serialize(doc)
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
 	}
@@ -47,10 +48,10 @@ func TestHandles_MergedHandleSetPersists(t *testing.T) {
 	// A block that answers to a primary handle plus absorbed aliases (post-merge,
 	// spec §7) must persist every handle to disk so refs survive reopen. In the
 	// paired-delimiter format the whole handle-set rides in the open marker.
-	doc := []SieveBlock{
-		{ID: "pr-aaaa", Kind: KindProse, Attrs: map[string]interface{}{"content": "Merged block."}, Aliases: []string{"pr-bbbb", "pr-cccc"}},
+	doc := []block.SieveBlock{
+		{ID: "pr-aaaa", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "Merged block."}, Aliases: []string{"pr-bbbb", "pr-cccc"}},
 	}
-	md, err := NewDocumentCodec(GlobalRegistry()).Serialize(doc)
+	md, err := block.NewDocumentCodec(block.GlobalRegistry()).Serialize(doc)
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
 	}
@@ -59,7 +60,7 @@ func TestHandles_MergedHandleSetPersists(t *testing.T) {
 		t.Fatalf("handle-set marker:\n got: %q\nwant: %q", md, want)
 	}
 
-	got, err := NewDocumentCodec(GlobalRegistry()).Deserialize(md)
+	got, err := block.NewDocumentCodec(block.GlobalRegistry()).Deserialize(md)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -75,17 +76,13 @@ func TestHandles_MergedHandleSetPersists(t *testing.T) {
 func TestHandles_IsolatedEditKeepsHandle(t *testing.T) {
 	md := "<!--s:pr-aaaa-->\nOriginal text.\n<!--/s:pr-aaaa-->\n\n" +
 		"<!--s:pr-bbbb-->\nUntouched.\n<!--/s:pr-bbbb-->"
-	doc, err := NewDocumentCodec(GlobalRegistry()).Deserialize(md)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
+	// Edit the first prose block's content through the PUBLIC block op (update-block
+	// carries prose content) — no poking SieveBlock internals.
+	shadow := block.NewShadow("u", md, block.NewDocumentCodec(block.GlobalRegistry()), 0, nil)
+	if err := shadow.ApplyOp(block.BlockOp{Type: "update-block", BlockID: "pr-aaaa", Content: "Edited text."}); err != nil {
+		t.Fatalf("apply op: %v", err)
 	}
-	// Edit the first block's prose content in isolation.
-	doc[0].setContent("Edited text.")
-
-	out, err := NewDocumentCodec(GlobalRegistry()).Serialize(doc)
-	if err != nil {
-		t.Fatalf("serialize: %v", err)
-	}
+	out := shadow.ContentForSave()
 	want := "<!--s:pr-aaaa-->\nEdited text.\n<!--/s:pr-aaaa-->\n\n" +
 		"<!--s:pr-bbbb-->\nUntouched.\n<!--/s:pr-bbbb-->"
 	if out != want {

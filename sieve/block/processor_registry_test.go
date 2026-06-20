@@ -40,16 +40,9 @@ func (p *mockProcessor) RunJob(_ JobContext) error                              
 func (p *mockProcessor) JobLabel(_ *SieveBlock) string                                  { return "" }
 func (p *mockProcessor) OnChange(_ *SieveBlock)                                         {}
 
-func resetRegistry() {
-	processorRegistry = map[string]BlockProcessor{}
-	pasteMatchers = nil
-	// Prose is a BUILT-IN flavour (registered in init()), not an app-wired one — it
-	// must survive a registry reset, exactly as it always exists in a real system.
-	RegisterProcessor(KindProse, &ProseProcessor{})
-}
 
 func TestRegisterProcessor_storesInRegistry(t *testing.T) {
-	resetRegistry()
+	ResetRegistry()
 	mock := &mockProcessor{}
 	RegisterProcessor("test-kind", mock)
 	if GetProcessor("test-kind") == nil {
@@ -58,14 +51,14 @@ func TestRegisterProcessor_storesInRegistry(t *testing.T) {
 }
 
 func TestRegisterProcessor_unknownKindReturnsNil(t *testing.T) {
-	resetRegistry()
+	ResetRegistry()
 	if GetProcessor("no-such-kind") != nil {
 		t.Fatal("expected nil for unregistered kind")
 	}
 }
 
 func TestPasteMatchers_firstMatchWins(t *testing.T) {
-	resetRegistry()
+	ResetRegistry()
 	specific := &mockProcessor{
 		isBlockFn: func(entries []ContentEntry) bool {
 			for _, e := range entries {
@@ -104,7 +97,7 @@ func TestPasteMatchers_firstMatchWins(t *testing.T) {
 }
 
 func TestUnregisterProcessor_removesFromRegistryAndMatchers(t *testing.T) {
-	resetRegistry()
+	ResetRegistry()
 	mock := &mockProcessor{}
 	RegisterProcessor("tmp-kind", mock)
 	UnregisterProcessor("tmp-kind")

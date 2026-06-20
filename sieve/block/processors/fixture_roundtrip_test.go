@@ -1,7 +1,8 @@
-package block
+package processors
 
 import (
 	"os"
+	"sieve/sieve/block"
 	"strings"
 	"testing"
 )
@@ -12,7 +13,7 @@ import (
 // content loss, and serialization must be stable (a fixpoint).
 func TestRoundTrip_BlockRefAiBlockFixture(t *testing.T) {
 	resetRegistry()
-	RegisterProcessor("ai-block", &testRunJobProcessor{})
+	block.RegisterProcessor("ai-block", NewAIBlockProcessor(block.BlockServices{}))
 
 	src, err := os.ReadFile("testdata/blockref_aiblock.md")
 	if err != nil {
@@ -20,11 +21,11 @@ func TestRoundTrip_BlockRefAiBlockFixture(t *testing.T) {
 	}
 	original := string(src)
 
-	doc, err := NewDocumentCodec(GlobalRegistry()).Deserialize(original)
+	doc, err := block.NewDocumentCodec(block.GlobalRegistry()).Deserialize(original)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	out1, err := NewDocumentCodec(GlobalRegistry()).Serialize(doc)
+	out1, err := block.NewDocumentCodec(block.GlobalRegistry()).Serialize(doc)
 	if err != nil {
 		t.Fatalf("serialize: %v", err)
 	}
@@ -44,11 +45,11 @@ func TestRoundTrip_BlockRefAiBlockFixture(t *testing.T) {
 	}
 
 	// Stability: parse -> serialize is a fixpoint after the first normalization.
-	doc2, err := NewDocumentCodec(GlobalRegistry()).Deserialize(out1)
+	doc2, err := block.NewDocumentCodec(block.GlobalRegistry()).Deserialize(out1)
 	if err != nil {
 		t.Fatalf("reparse: %v", err)
 	}
-	out2, err := NewDocumentCodec(GlobalRegistry()).Serialize(doc2)
+	out2, err := block.NewDocumentCodec(block.GlobalRegistry()).Serialize(doc2)
 	if err != nil {
 		t.Fatalf("reserialize: %v", err)
 	}

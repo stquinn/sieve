@@ -4,8 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sieve/sieve/ai"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
+	"sieve/sieve/services"
 	"strings"
 	"testing"
 )
@@ -209,12 +211,12 @@ func TestCodeBlockProcessor_IsBlock_htmlEntry(t *testing.T) {
 
 func TestCodeBlockProcessor_RunJob_ai(t *testing.T) {
 	ds, fs := newTestDocumentService(t)
-	assets := NewAssetService(fs)
-	state, err := NewStateService(fs)
+	assets := services.NewAssetService(fs)
+	state, err := services.NewStateService(fs)
 	if err != nil {
 		t.Fatalf("NewStateService: %v", err)
 	}
-	prompts, err := NewPromptService(fs)
+	prompts, err := ai.NewPromptService(fs)
 	if err != nil {
 		t.Fatalf("NewPromptService: %v", err)
 	}
@@ -237,7 +239,7 @@ func TestCodeBlockProcessor_RunJob_ai(t *testing.T) {
 	// Write the "refine" prompt content (needed by RefineLanguage)
 	_, _ = fs.CreateText(domain.Prompts, "refine.txt", []byte("Refine this: {content}"))
 
-	ai := NewAIService(state, prompts, ds, tmpDir)
+	ai := ai.NewAIService(state, prompts, ds, tmpDir)
 	svc := block.BlockServices{
 		AI:        ai,
 		Documents: ds,
@@ -275,12 +277,12 @@ func TestCodeBlockProcessor_RunJob_ai(t *testing.T) {
 
 func TestCodeBlockProcessor_RunJob_aiFallback(t *testing.T) {
 	ds, fs := newTestDocumentService(t)
-	assets := NewAssetService(fs)
-	state, err := NewStateService(fs)
+	assets := services.NewAssetService(fs)
+	state, err := services.NewStateService(fs)
 	if err != nil {
 		t.Fatalf("NewStateService: %v", err)
 	}
-	prompts, err := NewPromptService(fs)
+	prompts, err := ai.NewPromptService(fs)
 	if err != nil {
 		t.Fatalf("NewPromptService: %v", err)
 	}
@@ -299,7 +301,7 @@ func TestCodeBlockProcessor_RunJob_aiFallback(t *testing.T) {
 		t.Fatalf("SaveSettings: %v", err)
 	}
 
-	ai := NewAIService(state, prompts, ds, tmpDir)
+	ai := ai.NewAIService(state, prompts, ds, tmpDir)
 	svc := block.BlockServices{
 		AI:        ai,
 		Documents: ds,

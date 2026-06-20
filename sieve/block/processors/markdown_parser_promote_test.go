@@ -1,16 +1,17 @@
-package block
+package processors
 
 import (
+	"sieve/sieve/block"
 	"testing"
 )
 
 func TestPromoteBlock_replacesBlockWithContent(t *testing.T) {
 	markdown := "Before\n\n```smart-card\nid: ri-0001\nhref: https://example.com\n```\n\nAfter"
 	// Register a minimal processor so the parser recognises smart-card
-	RegisterProcessor("smart-card", NewSmartCardProcessor(BlockServices{}))
-	defer UnregisterProcessor("smart-card")
+	block.RegisterProcessor("smart-card", NewSmartCardProcessor(block.BlockServices{}))
+	defer block.UnregisterProcessor("smart-card")
 
-	result, ok := PromoteBlock(markdown, "ri-0001", "### [Example](https://example.com)")
+	result, ok := block.PromoteBlock(markdown, "ri-0001", "### [Example](https://example.com)")
 	if !ok {
 		t.Fatal("PromoteBlock: block not found")
 	}
@@ -30,7 +31,7 @@ func TestPromoteBlock_replacesBlockWithContent(t *testing.T) {
 
 func TestPromoteBlock_unknownIDReturnsFalse(t *testing.T) {
 	markdown := "Some content without any blocks"
-	result, ok := PromoteBlock(markdown, "ri-9999", "replacement")
+	result, ok := block.PromoteBlock(markdown, "ri-9999", "replacement")
 	if ok {
 		t.Error("PromoteBlock: expected false for unknown blockID")
 	}

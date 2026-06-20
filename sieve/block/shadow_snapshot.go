@@ -35,13 +35,18 @@ func (s *ShadowDocument) SnapshotBlock(id string) (SieveBlock, bool) {
 	return cloneBlockDeep(*b), true
 }
 
-// SnapshotBlocks returns a top-level slice copy of the live tree. Element structs
-// are value-copied (Content included); Attrs maps are aliased, matching the
-// existing job-snapshot semantics — callers read, they do not mutate Attrs.
+// SnapshotBlocks returns a DEEP copy of the live tree (each block's Attrs is a
+// fresh map). The copy is therefore safe to read after the lock is released, even
+// while a concurrent job mutates the live tree — callers (FrontendBlocks, status
+// polls) must not race the live Attrs maps, which an aliased copy would.
 func (s *ShadowDocument) SnapshotBlocks() []SieveBlock {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]SieveBlock(nil), s.Blocks...)
+	out := make([]SieveBlock, len(s.Blocks))
+	for i := range s.Blocks {
+		out[i] = cloneBlockDeep(s.Blocks[i])
+	}
+	return out
 }
 
 // SnapshotForJob captures, under ONE lock, both a deep copy of the target block

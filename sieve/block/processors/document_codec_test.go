@@ -1,30 +1,31 @@
-package block
+package processors
 
 import (
+	"sieve/sieve/block"
 	"strings"
 	"testing"
 )
 
 // fakeRegistry lets us exercise the codec dispatch with a controlled processor set.
 type fakeRegistry struct {
-	byKind  map[string]BlockProcessor
-	ordered []BlockProcessor
+	byKind  map[string]block.BlockProcessor
+	ordered []block.BlockProcessor
 }
 
-func (f fakeRegistry) Get(kind string) BlockProcessor { return f.byKind[kind] }
-func (f fakeRegistry) Ordered() []BlockProcessor      { return f.ordered }
+func (f fakeRegistry) Get(kind string) block.BlockProcessor { return f.byKind[kind] }
+func (f fakeRegistry) Ordered() []block.BlockProcessor      { return f.ordered }
 
 func newFakeRegistry() fakeRegistry {
 	prose := &ProseProcessor{}
-	code := NewCodeBlockProcessor(BlockServices{})
+	code := NewCodeBlockProcessor(block.BlockServices{})
 	return fakeRegistry{
-		byKind:  map[string]BlockProcessor{KindProse: prose, "code": code},
-		ordered: []BlockProcessor{code, prose}, // structured first, prose terminal
+		byKind:  map[string]block.BlockProcessor{block.KindProse: prose, "code": code},
+		ordered: []block.BlockProcessor{code, prose}, // structured first, prose terminal
 	}
 }
 
 func TestDocumentCodec_DeserializeStructuredAndProse(t *testing.T) {
-	c := NewDocumentCodec(newFakeRegistry())
+	c := block.NewDocumentCodec(newFakeRegistry())
 	md := "intro prose\n\n```code\nid: co-1\nsource: x\n```\n\ntrailing prose"
 	blocks, err := c.Deserialize(md)
 	if err != nil {
@@ -33,7 +34,7 @@ func TestDocumentCodec_DeserializeStructuredAndProse(t *testing.T) {
 	if len(blocks) != 3 {
 		t.Fatalf("want prose, code, prose = 3 blocks, got %d: %#v", len(blocks), blocks)
 	}
-	if blocks[0].Kind != KindProse || blocks[1].Kind != "code" || blocks[2].Kind != KindProse {
+	if blocks[0].Kind != block.KindProse || blocks[1].Kind != "code" || blocks[2].Kind != block.KindProse {
 		t.Errorf("kinds = %q/%q/%q", blocks[0].Kind, blocks[1].Kind, blocks[2].Kind)
 	}
 	if blocks[1].ID != "co-1" {
@@ -42,14 +43,14 @@ func TestDocumentCodec_DeserializeStructuredAndProse(t *testing.T) {
 }
 
 func TestDocumentCodec_UnclaimedFenceCoalescesIntoProse(t *testing.T) {
-	c := NewDocumentCodec(newFakeRegistry())
+	c := block.NewDocumentCodec(newFakeRegistry())
 	// ```python is unclaimed → it must stay as ONE prose block with its neighbours.
 	md := "before\n```python\nprint(1)\n```\nafter"
 	blocks, err := c.Deserialize(md)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(blocks) != 1 || blocks[0].Kind != KindProse {
+	if len(blocks) != 1 || blocks[0].Kind != block.KindProse {
 		t.Fatalf("want a single prose block, got %#v", blocks)
 	}
 	if blocks[0].Content() != md {
@@ -58,21 +59,21 @@ func TestDocumentCodec_UnclaimedFenceCoalescesIntoProse(t *testing.T) {
 }
 
 func TestFencedDeserializer_AcceptsOnlyMatchingKind(t *testing.T) {
-	d := FencedDeserializer{Kind: "code"}
-	if !d.Accepts(Region{Kind: "code", Body: "id: co-1\n"}) {
+	d := block.FencedDeserializer{Kind: "code"}
+	if !d.Accepts(block.Region{Kind: "code", Body: "id: co-1\n"}) {
 		t.Error("must accept a region whose Kind matches")
 	}
-	if d.Accepts(Region{Kind: "diagram", Body: "id: dg-1\n"}) {
+	if d.Accepts(block.Region{Kind: "diagram", Body: "id: dg-1\n"}) {
 		t.Error("must reject a region of a different kind")
 	}
-	if d.Accepts(Region{Kind: "", Body: "plain text"}) {
+	if d.Accepts(block.Region{Kind: "", Body: "plain text"}) {
 		t.Error("must reject a text region (empty Kind)")
 	}
 }
 
 func TestFencedDeserializer_DeserializeBuildsOneBlock(t *testing.T) {
-	d := FencedDeserializer{Kind: "code"}
-	blocks, err := d.Deserialize(Region{Kind: "code", Body: "id: co-1\nsource: hi\n"})
+	d := block.FencedDeserializer{Kind: "code"}
+	blocks, err := d.Deserialize(block.Region{Kind: "code", Body: "id: co-1\nsource: hi\n"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,14 +90,14 @@ func TestFencedDeserializer_DeserializeBuildsOneBlock(t *testing.T) {
 
 func TestInlineDeserializer_NeverClaimsDuringDocParse(t *testing.T) {
 	// inline != block: inline flavours are not recognised from disk this pass.
-	var d InlineDeserializer
-	if d.Accepts(Region{Kind: "smart-link", Body: "{}"}) {
+	var d block.InlineDeserializer
+	if d.Accepts(block.Region{Kind: "smart-link", Body: "{}"}) {
 		t.Error("inline deserializer must never accept a document region")
 	}
 }
 
 func TestDocumentCodec_AllProse(t *testing.T) {
-	c := NewDocumentCodec(newFakeRegistry())
+	c := block.NewDocumentCodec(newFakeRegistry())
 	md := "just a paragraph\n\nand another"
 	blocks, err := c.Deserialize(md)
 	if err != nil {
@@ -106,14 +107,14 @@ func TestDocumentCodec_AllProse(t *testing.T) {
 		t.Fatalf("want at least 1 prose block, got 0")
 	}
 	for i, b := range blocks {
-		if b.Kind != KindProse {
-			t.Errorf("block[%d] kind = %q, want %q", i, b.Kind, KindProse)
+		if b.Kind != block.KindProse {
+			t.Errorf("block[%d] kind = %q, want %q", i, b.Kind, block.KindProse)
 		}
 	}
 }
 
 func TestDocumentCodec_OnlyStructuredNoSpuriousProse(t *testing.T) {
-	c := NewDocumentCodec(newFakeRegistry())
+	c := block.NewDocumentCodec(newFakeRegistry())
 	md := "```code\nid: co-1\nsource: x\n```"
 	blocks, err := c.Deserialize(md)
 	if err != nil {
@@ -131,7 +132,7 @@ func TestDocumentCodec_OnlyStructuredNoSpuriousProse(t *testing.T) {
 }
 
 func TestDocumentCodec_BackToBackStructured(t *testing.T) {
-	c := NewDocumentCodec(newFakeRegistry())
+	c := block.NewDocumentCodec(newFakeRegistry())
 	md := "```code\nid: co-1\nsource: a\n```\n\n```code\nid: co-2\nsource: b\n```"
 	blocks, err := c.Deserialize(md)
 	if err != nil {
@@ -152,14 +153,14 @@ func TestDocumentCodec_RoundTrip(t *testing.T) {
 	// Register the "code" processor in the global registry so GlobalRegistry()
 	// can accept code regions during Deserialize. ProseProcessor self-registers
 	// via init(), so KindProse is always present.
-	RegisterProcessor("code", NewCodeBlockProcessor(BlockServices{}))
-	t.Cleanup(func() { UnregisterProcessor("code") })
+	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	t.Cleanup(func() { block.UnregisterProcessor("code") })
 
-	c := NewDocumentCodec(GlobalRegistry()) // REAL registry — production path
-	original := []SieveBlock{
-		NewSieveBlock(KindProse, "pr-1", "An intro paragraph.", nil),
-		NewSieveBlock("code", "co-1", "", map[string]interface{}{"id": "co-1", "source": "x := 1"}),
-		NewSieveBlock(KindProse, "pr-2", "A closing paragraph.", nil),
+	c := block.NewDocumentCodec(block.GlobalRegistry()) // REAL registry — production path
+	original := []block.SieveBlock{
+		block.NewSieveBlock(block.KindProse, "pr-1", "An intro paragraph.", nil),
+		block.NewSieveBlock("code", "co-1", "", map[string]interface{}{"id": "co-1", "source": "x := 1"}),
+		block.NewSieveBlock(block.KindProse, "pr-2", "A closing paragraph.", nil),
 	}
 	md, err := c.Serialize(original)
 	if err != nil {
@@ -195,14 +196,14 @@ func TestDocumentCodec_RoundTrip(t *testing.T) {
 // structured automatically.
 func TestDocumentCodec_ProcessorlessFenceCoalescesToProse(t *testing.T) {
 	// newFakeRegistry registers only code + prose; column-row has no processor.
-	c := NewDocumentCodec(newFakeRegistry())
+	c := block.NewDocumentCodec(newFakeRegistry())
 	md := "```column-row\nid: cr-1\nwidths:\n  - 0.5\n  - 0.5\n```"
 	blocks, err := c.Deserialize(md)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i, b := range blocks {
-		if b.Kind != KindProse {
+		if b.Kind != block.KindProse {
 			t.Errorf("block[%d] kind = %q, want prose (column-row has no processor)", i, b.Kind)
 		}
 	}
@@ -221,7 +222,7 @@ func TestDocumentCodec_ProcessorlessFenceCoalescesToProse(t *testing.T) {
 // TestDocumentCodec_UnclaimedFenceCoalescesIntoProse covers a minimal case;
 // this test exercises the three-segment (before + fence + after) variant.
 func TestDocumentCodec_PlainLanguageFenceStaysProse(t *testing.T) {
-	c := NewDocumentCodec(newFakeRegistry())
+	c := block.NewDocumentCodec(newFakeRegistry())
 	md := "text\n\n```python\nprint(1)\n```\n\nmore"
 	blocks, err := c.Deserialize(md)
 	if err != nil {
@@ -229,7 +230,7 @@ func TestDocumentCodec_PlainLanguageFenceStaysProse(t *testing.T) {
 	}
 	// All blocks must be prose.
 	for i, b := range blocks {
-		if b.Kind != KindProse {
+		if b.Kind != block.KindProse {
 			t.Errorf("block[%d] kind = %q, want prose (python fence has no YAML id)", i, b.Kind)
 		}
 	}
@@ -244,8 +245,8 @@ func TestDocumentCodec_PlainLanguageFenceStaysProse(t *testing.T) {
 }
 
 func TestGlobalRegistry_GetAndOrdered(t *testing.T) {
-	reg := GlobalRegistry()
-	if reg.Get(KindProse) == nil {
+	reg := block.GlobalRegistry()
+	if reg.Get(block.KindProse) == nil {
 		t.Fatal("prose must always be resolvable")
 	}
 	if reg.Get("definitely-not-a-kind") != nil {

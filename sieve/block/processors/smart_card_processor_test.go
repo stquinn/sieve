@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sieve/sieve/block"
+	"sieve/sieve/services"
 	"testing"
 	"time"
 )
@@ -74,7 +75,7 @@ func TestSmartCardProcessor_RunJob_fetchesOGData(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewSmartCardProcessor(block.BlockServices{LinkPreview: NewLinkPreviewService()})
+	p := NewSmartCardProcessor(block.BlockServices{LinkPreview: services.NewLinkPreviewService()})
 	blk := &block.SieveBlock{
 		ID:   "ri-0001",
 		Kind: "smart-card",
@@ -109,7 +110,7 @@ func TestSmartCardProcessor_RunJob_fetchesOGData(t *testing.T) {
 }
 
 func TestSmartCardProcessor_RunJob_emptyHrefCompletes(t *testing.T) {
-	p := NewSmartCardProcessor(block.BlockServices{LinkPreview: NewLinkPreviewService()})
+	p := NewSmartCardProcessor(block.BlockServices{LinkPreview: services.NewLinkPreviewService()})
 	blk := &block.SieveBlock{
 		ID:   "ri-0002",
 		Kind: "smart-card",
@@ -143,7 +144,7 @@ func TestSmartCardProcessor_RunJob_imageFailureIsNonFatal(t *testing.T) {
 	}))
 	defer pageSrv.Close()
 
-	p := NewSmartCardProcessor(block.BlockServices{LinkPreview: NewLinkPreviewService()})
+	p := NewSmartCardProcessor(block.BlockServices{LinkPreview: services.NewLinkPreviewService()})
 	blk := &block.SieveBlock{
 		ID:   "ri-0003",
 		Kind: "smart-card",

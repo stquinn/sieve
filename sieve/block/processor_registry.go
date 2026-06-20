@@ -185,6 +185,16 @@ func UnregisterProcessor(kind string) {
 	}
 }
 
+// ResetRegistry clears the processor registry and paste-matcher list. Test
+// support only — lets a test start from a known-empty registry across packages
+// (the registry is package-global). Not used in production.
+func ResetRegistry() {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	processorRegistry = map[string]BlockProcessor{}
+	pasteMatchers = nil
+}
+
 // GetProcessor returns the registered processor for kind, or nil.
 func GetProcessor(kind string) BlockProcessor {
 	registryMu.RLock()

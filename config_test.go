@@ -1,9 +1,8 @@
 package main
 
 import (
+	"sieve/sieve/services"
 	"testing"
-
-	"sieve/sieve"
 )
 
 func TestLibraryDisplayName(t *testing.T) {
@@ -19,7 +18,7 @@ func TestLibraryDisplayName(t *testing.T) {
 		{"/home/user/my-dev_notes", "My Dev Notes"},
 	}
 	for _, tt := range tests {
-		got := sieve.LibraryDisplayName(tt.path)
+		got := services.LibraryDisplayName(tt.path)
 		if got != tt.want {
 			t.Errorf("LibraryDisplayName(%q) = %q, want %q", tt.path, got, tt.want)
 		}
