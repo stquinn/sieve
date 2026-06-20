@@ -124,7 +124,6 @@
     if (node) {
       var name = node.type.name
       if (name === 'aiBlock' || name === 'sieve-ai-block') return 'Follow-up'
-      if (name === 'blockRef') return quoteSnippet(node.textContent || '')
       if (name.indexOf('sieve-') === 0) {
         return (T.getSieveBlockLabel ? T.getSieveBlockLabel(node) : titleCase(node.attrs.kind))
       }

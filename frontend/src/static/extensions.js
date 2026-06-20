@@ -8,7 +8,6 @@
   var T = window.TipTap
   var Node = T.Node
   var Extension = T.Extension
-  var mergeAttributes = T.mergeAttributes
   var Plugin = T.Plugin
   var PluginKey = T.PluginKey
   var Decoration = T.Decoration
@@ -37,110 +36,6 @@
     var dot = filename.lastIndexOf('.')
     return dot > 0 ? filename.substring(0, dot) : filename
   }
-
-  // ── BlockNode ──────────────────────────────────────────────────────────────
-
-  function makeBlockNodeView({ node }) {
-    var dom = document.createElement('div')
-    dom.className = 'block-node'
-    dom.setAttribute('data-id', node.attrs.id || '')
-    var contentEl = document.createElement('div')
-    dom.appendChild(contentEl)
-    return {
-      dom: dom,
-      contentDOM: contentEl,
-      update: function (updatedNode) {
-        if (updatedNode.type.name !== 'blockRef') return false
-        dom.setAttribute('data-id', updatedNode.attrs.id || '')
-        return true
-      },
-      // This is a custom property we can hook into
-      selectNode: () => {
-        dom.classList.add('block-ref-active')
-      },
-      deselectNode: () => {
-        dom.classList.remove('block-ref-active')
-      },
-      ignoreMutation: function (mutation) {
-        // Ignore if only the class attribute changed
-        if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
-          return true
-        }
-        return false
-      }
-    }
-  }
-
-  var BlockNode = Node.create({
-    name: 'blockRef',
-    group: 'block',
-    content: 'block+',
-    defining: true,
-
-    addAttributes() {
-      return {
-        id: {
-          default: '',
-          parseHTML: function (el) { return el.getAttribute('data-id') || '' },
-          renderHTML: function (attrs) { return { 'data-id': attrs.id } },
-        },
-      }
-    },
-
-    parseHTML() { return [{ tag: 'div[data-type="blockRef"]' }] },
-
-    renderHTML({ HTMLAttributes }) {
-      return ['div', mergeAttributes({ 'data-type': 'blockRef' }, HTMLAttributes), 0]
-    },
-
-    addNodeView() { return makeBlockNodeView },
-
-    addStorage() {
-      return {
-        markdown: {
-          serialize: function (state, node) {
-            state.write('[!block] id="' + node.attrs.id + '"')
-            state.closeBlock(node)
-            state.renderContent(node)
-            state.write('[!block-end]')
-            state.closeBlock(node)
-          },
-          parse: {
-            updateDOM: function (element) {
-              var changed = true
-              while (changed) {
-                changed = false
-                var children = Array.from(element.children)
-                for (var i = 0; i < children.length; i++) {
-                  var child = children[i]
-                  if (child.tagName !== 'P') continue
-                  var text = child.textContent || ''
-                  if (!text.startsWith('[!block]')) continue
-                  var endIdx = -1
-                  for (var j = i + 1; j < children.length; j++) {
-                    if (children[j].tagName === 'P' && (children[j].textContent || '').startsWith('[!block-end]')) {
-                      endIdx = j; break
-                    }
-                  }
-                  if (endIdx === -1) break
-                  var idMatch = text.match(/id="([^"]+)"/)
-                  var wrapper = document.createElement('div')
-                  wrapper.setAttribute('data-type', 'blockRef')
-                  wrapper.setAttribute('data-id', idMatch ? idMatch[1] : '')
-                  for (var k = i + 1; k < endIdx; k++) wrapper.appendChild(children[k])
-                  element.insertBefore(wrapper, child)
-                  child.remove()
-                  children[endIdx].remove()
-                  changed = true
-                  break
-                }
-              }
-            },
-          },
-        },
-      }
-    },
-  })
 
   // ── Search ─────────────────────────────────────────────────────────────────
 
@@ -292,7 +187,7 @@
               if (sel.empty || sel.node) return DecorationSet.empty
               var decos = []
               state.doc.nodesBetween(sel.from, sel.to, function (node, pos) {
-                if (node.isLeaf && (node.type.name.startsWith('sieve-') || node.type.name === 'blockRef')) {
+                if (node.isLeaf && node.type.name.startsWith('sieve-')) {
                   if (pos >= sel.from && pos + node.nodeSize <= sel.to) {
                     // A sieve block that is part of a multi-block RANGE selection.
                     // Use the range tint (background) — NOT ProseMirror-selectednode,
@@ -410,7 +305,6 @@
 
   // ── Expose on window.TipTap ────────────────────────────────────────────────
 
-  T.BlockNode = BlockNode
   T.Search = Search
   T.SelectionHighlight = SelectionHighlight
   T.buildAiContext = buildAiContext

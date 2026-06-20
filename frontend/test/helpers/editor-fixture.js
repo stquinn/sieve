@@ -44,12 +44,6 @@ export const schema = new Schema({
       toDOM: (nd) => ['hr', { 'data-id': nd.attrs.id }],
     },
     text: { group: 'inline' },
-    // blockRef = legacy anchor: wraps a block, carries an id (retired in Stage E)
-    blockRef: {
-      group: 'block', content: 'block+',
-      attrs: { id: { default: '' } },
-      toDOM: (nd) => ['div', { 'data-id': nd.attrs.id, class: 'block-ref' }, 0],
-    },
     // a generic sieve atom (e.g. sieve-code), and the ai-block follow-up atom
     'sieve-code': sieveAtom('code'),
     'sieve-ai-block': sieveAtom('ai-block'),
@@ -133,5 +127,4 @@ export const build = {
   hr: (id) => n.horizontalRule.create(id ? { id } : null),
   sieveCode: (id) => n['sieve-code'].create({ id, kind: 'code', serialisedForm: '' }),
   aiBlock: (id, ref) => n['sieve-ai-block'].create({ id, kind: 'ai-block', serialisedForm: '', ref: ref || '' }),
-  anchor: (id, inner) => n.blockRef.create({ id }, inner),
 }
