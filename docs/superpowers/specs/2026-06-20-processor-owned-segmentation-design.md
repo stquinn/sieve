@@ -48,9 +48,15 @@ A future container (columns, Stage E) registers another shape (e.g. `(<col …>,
 
 ## 3. Design
 
-### 3.1 Shape registration
+### 3.1 The shape travels with the SerDes
 
-Every block-mode processor exposes one `(head, tail)` shape — its kind-qualified delimiter pair (`` ```diagram `` / `` ``` ``, `<!--s:` / `<!--/s:`, …). The codec collects the union of shapes from the injected `ProcessorRegistry` and feeds them to a single segmenter. A region is tagged with the owning kind for dispatch. There is no per-category branch: the same registration and the same matching apply to fences and markers alike.
+`Shape()` becomes a new method on the **`BlockProcessor`** interface (`processor_registry.go`), joining `Serialize` / `Accepts` / `Deserialize` as the processor's SerDes surface — it belongs on the **recognition (deserialize) side**, since it describes *where* a region is found. It is **not a separate registration**: the delimiters and the (de)serialization are *coupled* (the code that writes `<!--s:…-->` is the code that finds it), so the shape rides with the SerDes the processor already embeds, and falls out for free:
+
+- `FencedDeserializer{Kind}` already holds `Kind`, so `Shape() → (```+Kind, ```)` — **no per-processor code**; every fenced processor (code, diagram, ai-block, log, smart-*) inherits it by embedding, exactly as it already inherits `Accepts`/`Deserialize`.
+- `ProseProcessor.Shape() → (<!--s:, <!--/s:)`, alongside its own Serialize/Deserialize.
+- `InlineDeserializer.Shape() → no shape` (inline things are never document regions; their `Accepts` is already always-false).
+
+The codec collects the union of non-empty shapes from the injected `ProcessorRegistry` and feeds them to a single segmenter. A region is tagged with the owning kind for dispatch. There is no per-category branch — the same `Shape()` and the same matching apply to fences and markers alike. This is "serialization is a processor concern" taken to its conclusion: segmentation is *intrinsic* to the SerDes, not bolted on beside it.
 
 ### 3.2 Custom goldmark block parser (B2)
 
