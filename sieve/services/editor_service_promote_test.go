@@ -7,7 +7,7 @@ import (
 )
 
 // testMarkdownProcessor returns a fixed MarkdownRepresentation so we can
-// assert the block anchor wrapper without depending on any real processor.
+// assert the promote-to-prose transform without depending on any real processor.
 type testMarkdownProcessor struct {
 	md string
 	block.FencedSerializer
@@ -30,7 +30,11 @@ func (p *testMarkdownProcessor) BuildContext(_ block.SieveBlock, _ block.DocView
 }
 func (p *testMarkdownProcessor) MarkdownRepresentation(_ block.SieveBlock) string { return p.md }
 
-func TestEditorService_PromoteBlock_wrapsInBlockAnchor(t *testing.T) {
+// Promote-to-Doc is a Transform-to-Prose: the block's MarkdownRepresentation is
+// inserted as a PROSE block carrying the block's id (via the canonical
+// <!--s:ID-->…<!--/s:ID--> prose markers). The id is a like-for-like replacement
+// for the retired [!block] anchor, so AI ref chains keep resolving — no anchor.
+func TestEditorService_PromoteBlock_transformsToProse(t *testing.T) {
 	block.RegisterProcessor("test-md", &testMarkdownProcessor{md: "promoted content", FencedDeserializer: block.FencedDeserializer{Kind: "test-md"}})
 	t.Cleanup(func() { block.UnregisterProcessor("test-md") })
 
@@ -55,24 +59,42 @@ func TestEditorService_PromoteBlock_wrapsInBlockAnchor(t *testing.T) {
 	}
 	body := string(saved.Body())
 
-	if !strings.Contains(body, `[!block] id="tm-0001"`) {
-		t.Errorf("expected block anchor header in saved markdown, got:\n%s", body)
+	if strings.Contains(body, "[!block") {
+		t.Errorf("retired anchor must not appear in saved markdown, got:\n%s", body)
+	}
+	// Promoted content is a prose block carrying the original id via prose markers.
+	if !strings.Contains(body, `<!--s:tm-0001-->`) || !strings.Contains(body, `<!--/s:tm-0001-->`) {
+		t.Errorf("expected prose markers carrying id tm-0001, got:\n%s", body)
 	}
 	if !strings.Contains(body, "promoted content") {
 		t.Errorf("expected promoted content in saved markdown, got:\n%s", body)
-	}
-	if !strings.Contains(body, "[!block-end]") {
-		t.Errorf("expected [!block-end] in saved markdown, got:\n%s", body)
-	}
-	// Blank lines around the content are required so markdownit renders [!block] and
-	// [!block-end] as isolated <p> elements, which the blockRef updateDOM step can find.
-	if !strings.Contains(body, "[!block] id=\"tm-0001\"\n\npromoted content\n\n[!block-end]") {
-		t.Errorf("expected blank lines separating block anchor sentinels from content, got:\n%s", body)
 	}
 	if strings.Contains(body, "```test-md") {
 		t.Errorf("expected original fence to be gone, got:\n%s", body)
 	}
 	if !strings.Contains(body, "Before") || !strings.Contains(body, "After") {
 		t.Errorf("expected surrounding prose to be preserved, got:\n%s", body)
+	}
+
+	// End-to-end: reopening parses the promoted region back as an id-bearing prose
+	// block, so AI ref chains pointing at tm-0001 still resolve.
+	blocks, err := block.NewDocumentCodec(block.GlobalRegistry()).Deserialize(body)
+	if err != nil {
+		t.Fatalf("Deserialize saved body: %v", err)
+	}
+	var found bool
+	for _, b := range blocks {
+		if b.ID == "tm-0001" {
+			found = true
+			if b.Kind != block.KindProse {
+				t.Errorf("promoted block kind = %q, want prose", b.Kind)
+			}
+			if !strings.Contains(b.Content(), "promoted content") {
+				t.Errorf("promoted prose content = %q, want to contain 'promoted content'", b.Content())
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no block with preserved id tm-0001 after reopen:\n%#v", blocks)
 	}
 }

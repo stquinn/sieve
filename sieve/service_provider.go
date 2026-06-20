@@ -83,7 +83,6 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	block.RegisterProcessor("code", processors.NewCodeBlockProcessor(svc))
 
 	block.RegisterProcessor("ai-block", processors.NewAIBlockProcessor(svc))
-	block.RegisterContextProvider("block-anchor", block.NewBlockAnchorProvider(svc))
 }
 
 func isUUID(s string) bool {

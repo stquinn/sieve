@@ -643,13 +643,19 @@ func (es *EditorService) PromoteBlock(uuid, blockID string) error {
 		return fmt.Errorf("block cannot be promoted")
 	}
 
-	markdownReplacement := fmt.Sprintf("[!block] id=%q\n\n%s\n\n[!block-end]", blockID, plainContent)
-
-	// Source markdown is derived fresh from the tree (WYSIWYG) or the raw buffer
-	// (markdown mode) — never a stale stored field, which is exactly what drifted.
-	// ApplyPromotion splices in the replacement and reconciles the tree under lock.
-	if !shadow.ApplyPromotion(blockID, markdownReplacement) {
-		return fmt.Errorf("block not found in markdown AST")
+	// Promote-to-Doc is a Transform-to-Prose: build a prose block carrying the
+	// promoted content and the ORIGINAL id via prose's own InitAttrs (the standard
+	// block-creation flow — no hand-rolled serialization), then replace the
+	// structured block IN PLACE so it keeps its document position. The preserved id
+	// is a like-for-like replacement for the retired [!block] anchor (D-r.7 made
+	// prose carry its own id), so AI ref chains keep resolving.
+	proseProc := block.GetProcessor(block.KindProse)
+	if proseProc == nil {
+		return fmt.Errorf("prose processor not registered")
+	}
+	attrs := proseProc.InitAttrs(blockID, map[string]interface{}{"content": plainContent})
+	if !shadow.ReplaceBlock(blockID, block.SieveBlock{ID: blockID, Kind: block.KindProse, Attrs: attrs}) {
+		return fmt.Errorf("block not found in tree")
 	}
 
 	_ = es.Flush(uuid)

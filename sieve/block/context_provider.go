@@ -19,7 +19,7 @@ var (
 )
 
 // RegisterContextProvider registers a ContextProvider override for kind.
-// Use this for non-processor implementors (e.g. BlockAnchorProvider).
+// Use this for non-processor implementors of context assembly.
 func RegisterContextProvider(kind string, provider ContextProvider) {
 	contextProviderMu.Lock()
 	defer contextProviderMu.Unlock()
@@ -42,7 +42,7 @@ func GetContextProvider(kind string) ContextProvider {
 // BuildContextForID is the single recursive primitive for context assembly.
 // It finds the block with id, looks up its provider by kind, and calls BuildContext.
 // The dispatch is entirely by block kind — a ref to "img-1234" routes to
-// SmartImageProcessor, "blk-1234" routes to BlockAnchorProvider, etc.
+// SmartImageProcessor, a prose ref routes to ProseProcessor, etc.
 // seen prevents cycles; always pass the same map through a recursion chain.
 // Returns "" if id is already seen, block not found, or no provider registered.
 //

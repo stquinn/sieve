@@ -43,9 +43,39 @@ func (p *ProseProcessor) Serialize(blk block.SieveBlock) (string, error) {
 }
 
 // BuildContext: a prose block's AI context IS its content (the uniform dispatch in
-// BuildContextForID now routes here by kind — no hardcoded prose branch).
+// BuildContextForID now routes here by kind — no hardcoded prose branch). If the
+// block carries ==highlighted== words, they are appended as explicit AI targets —
+// the "Specifically regarding" hint the retired block-anchor used to provide,
+// now derived from the highlights that live in the prose content (the source of
+// truth). So the highlight-as-target feature survives the anchor's removal.
 func (p *ProseProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, _ map[string]bool) string {
-	return blk.Content()
+	content := blk.Content()
+	targets := extractTargets(content)
+	if len(targets) == 0 {
+		return content
+	}
+	quoted := make([]string, len(targets))
+	for i, t := range targets {
+		quoted[i] = `"` + t + `"`
+	}
+	return content + "\n\nSpecifically regarding: " + strings.Join(quoted, ", ")
+}
+
+// targetHighlightRe matches a ==highlighted== span; the capture is its interior.
+var targetHighlightRe = regexp.MustCompile(`==([^=]+)==`)
+
+// extractTargets pulls the ==highlighted== words/phrases out of prose content,
+// trimmed and in document order. These are the AI "targets" the user marked —
+// the successor to the retired block-anchor's Targets, sourced from the highlight
+// markers that round-trip in the content itself.
+func extractTargets(content string) []string {
+	var targets []string
+	for _, m := range targetHighlightRe.FindAllStringSubmatch(content, -1) {
+		if t := strings.TrimSpace(m[1]); t != "" {
+			targets = append(targets, t)
+		}
+	}
+	return targets
 }
 
 // MarkdownRepresentation: prose's markdown is its content verbatim.
@@ -102,6 +132,15 @@ var (
 	markerCloseRe = regexp.MustCompile(`^\s*<!--/s:([\w-]+)\s*-->\s*$`)
 )
 
+// Retired block-anchor delimiters ([!block] id="X" … [!block-end]). Recognised
+// ONLY so old documents upgrade silently to id-bearing prose — see
+// scanProseRegion. New saves never emit these; promote-to-prose now writes the
+// canonical <!--s:ID--> markers above. Delete once no library carries anchors.
+var (
+	legacyAnchorOpenRe  = regexp.MustCompile(`^\s*\[!block\]\s+id="([^"]+)"\s*$`)
+	legacyAnchorCloseRe = regexp.MustCompile(`^\s*\[!block-end\]\s*$`)
+)
+
 // scanProseRegion splits a non-fenced region into prose blocks using paired
 // comment-tag delimiters. A matched `<!--s:ID …-->` / `<!--/s:ID-->` pair is one
 // prose block whose interior is taken verbatim (opaque — never re-scanned for
@@ -145,6 +184,29 @@ func scanProseRegion(region string) []block.SieveBlock {
 			}
 			// unbalanced open → fall through; the marker line is literal content
 		}
+		// Retired [!block] id="X" … [!block-end] anchors silently upgrade to
+		// id-bearing prose (D-r.7 made prose carry its own id, so the wrapper is
+		// redundant). A paired anchor becomes one prose block CARRYING X, so AI ref
+		// chains that pointed at X still resolve. An orphaned delimiter — the anchor
+		// wrapped a fenced block, which split the open/close into separate regions —
+		// is stripped, never leaked as literal prose text.
+		if m := legacyAnchorOpenRe.FindStringSubmatch(lines[i]); m != nil {
+			if closeIdx := findLegacyClose(lines, i+1); closeIdx != -1 {
+				flushPending()
+				content := strings.Trim(strings.Join(lines[i+1:closeIdx], "\n"), "\n")
+				if content != "" {
+					out = append(out, block.NewSieveBlock(block.KindProse, m[1], content, nil))
+				}
+				i = closeIdx + 1
+				continue
+			}
+			i++ // orphaned open → strip
+			continue
+		}
+		if legacyAnchorCloseRe.MatchString(lines[i]) {
+			i++ // orphaned close → strip
+			continue
+		}
 		pending = append(pending, lines[i])
 		i++
 	}
@@ -157,6 +219,18 @@ func scanProseRegion(region string) []block.SieveBlock {
 func findClose(lines []string, start int, primary string) int {
 	for k := start; k < len(lines); k++ {
 		if cm := markerCloseRe.FindStringSubmatch(lines[k]); cm != nil && cm[1] == primary {
+			return k
+		}
+	}
+	return -1
+}
+
+// findLegacyClose returns the index of the first retired [!block-end] line at or
+// after start, or -1. The legacy close carries no id, so it pairs with the
+// nearest preceding [!block] open (anchors were never nested).
+func findLegacyClose(lines []string, start int) int {
+	for k := start; k < len(lines); k++ {
+		if legacyAnchorCloseRe.MatchString(lines[k]) {
 			return k
 		}
 	}

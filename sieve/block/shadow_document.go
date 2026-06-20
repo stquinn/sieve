@@ -137,6 +137,23 @@ func (s *ShadowDocument) replaceBlock(blockID string, block SieveBlock) {
 	s.resetDebounce()
 }
 
+// ReplaceBlock swaps the block with id for newBlock AT THE SAME INDEX, preserving
+// its document position. It is the primitive promote-to-prose needs: update-block
+// cannot change a block's Kind, and delete+insert would lose position. Returns
+// false if no block with id exists. Caller must NOT hold s.mu.
+func (s *ShadowDocument) ReplaceBlock(id string, newBlock SieveBlock) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.Blocks {
+		if s.Blocks[i].ID == id {
+			s.Blocks[i] = newBlock
+			s.resetDebounce()
+			return true
+		}
+	}
+	return false
+}
+
 // DeleteBlockAttr removes a single key from an existing block's attrs.
 // Used to expunge transient fields (e.g. hint) that a job has consumed.
 func (s *ShadowDocument) DeleteBlockAttr(blockID, key string) {

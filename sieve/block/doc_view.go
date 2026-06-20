@@ -34,7 +34,7 @@ func (d DocView) GetBlock(id string) (*SieveBlock, bool) {
 }
 
 // deriveMarkdown returns the whole-doc markdown a consumer needs (save, an
-// id=="doc" AI ask, block-anchor context). Mode-aware, stores nothing: in
+// id=="doc" AI ask, block context). Mode-aware, stores nothing: in
 // markdown mode the raw buffer IS the document; in WYSIWYG the tree is serialized
 // fresh, so it can never drift.
 func (d DocView) deriveMarkdown() string {

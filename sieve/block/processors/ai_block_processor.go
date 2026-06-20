@@ -130,7 +130,7 @@ func expandAIBlockRefs(refs []string, doc block.DocView) []string {
 
 // RunJob resolves each ID in the ref chain via BuildContextForID.
 // Dispatch is by block kind: img-1234 → SmartImageProcessor,
-// blk-1234 → BlockAnchorProvider, a prior AI block → AIBlockProcessor.BuildContext.
+// a prose ref → ProseProcessor, a prior AI block → AIBlockProcessor.BuildContext.
 // Image block IDs are derived from the seen map after context resolution —
 // the frontend sends nothing about images.
 func (p *AIBlockProcessor) RunJob(jctx block.JobContext) error {

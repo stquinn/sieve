@@ -7,11 +7,13 @@ import (
 	"testing"
 )
 
-// The user's real document that triggered thousands of errors: a legacy
-// [!block]...[!block-end] blockRef plus two ai-block fences. It must survive the
-// new Doc-authoritative save path (Deserialize -> Serialize) with no
-// content loss, and serialization must be stable (a fixpoint).
-func TestRoundTrip_BlockRefAiBlockFixture(t *testing.T) {
+// A real user document with a legacy [!block]...[!block-end] anchor (wrapping
+// prose with a ==data== highlight) plus two ai-block fences. After the anchor
+// retirement it must (a) survive the Doc-authoritative save path
+// (Deserialize -> Serialize) with no content loss, (b) silently UPGRADE the
+// anchor to an id-bearing prose block (delimiters stripped, the blk-4cea id
+// preserved so AI chains resolve), and (c) be a serialization fixpoint.
+func TestRoundTrip_LegacyAnchorUpgrade_AiBlockFixture(t *testing.T) {
 	resetRegistry()
 	block.RegisterProcessor("ai-block", NewAIBlockProcessor(block.BlockServices{}))
 
@@ -32,15 +34,23 @@ func TestRoundTrip_BlockRefAiBlockFixture(t *testing.T) {
 
 	// No content loss: the load-bearing text from every block survives.
 	mustContain := []string{
-		"test", "data", // prose inside the [!block] region
+		"test", "==data==", // prose inside the upgraded anchor (highlight preserved)
 		"WHat does this do?",          // ai-229a question
 		"IS that to standard IO?",     // ai-2b8f question
 		"prints to **Standard Output", // ai-2b8f response body
 		"ai-229a", "ai-2b8f",          // block ids
+		`<!--s:blk-4cea-->`, // anchor id preserved as an id-bearing prose block
 	}
 	for _, frag := range mustContain {
 		if !strings.Contains(out1, frag) {
 			t.Errorf("round-trip dropped %q\n--- output ---\n%s", frag, out1)
+		}
+	}
+
+	// The retired anchor delimiters must be gone — silently upgraded, not leaked.
+	for _, gone := range []string{"[!block]", "[!block-end]"} {
+		if strings.Contains(out1, gone) {
+			t.Errorf("legacy anchor delimiter %q leaked into output\n--- output ---\n%s", gone, out1)
 		}
 	}
 

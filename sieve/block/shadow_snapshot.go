@@ -130,25 +130,3 @@ func (s *ShadowDocument) EnterWysiwygMode() int {
 	s.Mode = "wysiwyg"
 	return len(s.Blocks)
 }
-
-// ApplyPromotion rewrites the document so blockID is replaced by its promoted
-// markdown: it derives the source markdown, splices in markdownReplacement, and
-// reconciles the live tree (reparse in WYSIWYG; buffer + drop-block in markdown
-// mode), arming the debounce. Returns false if the block isn't found in the
-// markdown. The caller owns producing markdownReplacement (a processor concern).
-func (s *ShadowDocument) ApplyPromotion(blockID, markdownReplacement string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	newMarkdown, ok := PromoteBlock(s.deriveMarkdown(), blockID, markdownReplacement)
-	if !ok {
-		return false
-	}
-	if s.Mode == "wysiwyg" {
-		s.reparseDoc(newMarkdown)
-	} else {
-		s.mdModeBuffer = newMarkdown
-		s.removeBlock(blockID)
-	}
-	s.resetDebounce()
-	return true
-}

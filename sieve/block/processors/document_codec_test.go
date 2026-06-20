@@ -42,6 +42,61 @@ func TestDocumentCodec_DeserializeStructuredAndProse(t *testing.T) {
 	}
 }
 
+// TestDocumentCodec_LegacyBlockAnchorUpgradesToProse verifies the retired
+// [!block] id="X" … [!block-end] anchor format silently upgrades on read: the
+// region becomes a prose block CARRYING the anchor's id (so AI ref chains that
+// pointed at "X" still resolve), wrapper delimiters stripped. Anchors were
+// prose's id-carrier before native prose ids (D-r.7); prose now carries the id
+// directly, so the anchor is redundant and reads as plain id-bearing prose.
+func TestDocumentCodec_LegacyBlockAnchorUpgradesToProse(t *testing.T) {
+	c := block.NewDocumentCodec(newFakeRegistry())
+	md := "[!block] id=\"blk-1\"\n\nHello world.\n\n[!block-end]"
+	blocks, err := c.Deserialize(md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("want 1 prose block, got %d: %#v", len(blocks), blocks)
+	}
+	if blocks[0].Kind != block.KindProse {
+		t.Errorf("kind = %q, want prose", blocks[0].Kind)
+	}
+	if blocks[0].ID != "blk-1" {
+		t.Errorf("id = %q, want blk-1 (anchor id preserved)", blocks[0].ID)
+	}
+	if blocks[0].Content() != "Hello world." {
+		t.Errorf("content = %q, want %q (delimiters stripped)", blocks[0].Content(), "Hello world.")
+	}
+}
+
+// TestDocumentCodec_LegacyAnchorWrappingStructuredBlockStrips: when a retired
+// anchor wrapped a STRUCTURED block, the fence splits the open/close into
+// separate prose regions that cannot pair. The inner block survives as itself;
+// the orphaned delimiter lines are stripped, never leaking as literal prose.
+func TestDocumentCodec_LegacyAnchorWrappingStructuredBlockStrips(t *testing.T) {
+	c := block.NewDocumentCodec(newFakeRegistry())
+	md := "[!block] id=\"blk-1\"\n\n```code\nid: co-1\nsource: x\n```\n\n[!block-end]"
+	blocks, err := c.Deserialize(md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var codeCount int
+	for _, b := range blocks {
+		if b.Kind == block.KindProse && strings.Contains(b.Content(), "[!block") {
+			t.Errorf("anchor delimiter leaked into prose: %q", b.Content())
+		}
+		if b.Kind == "code" {
+			codeCount++
+			if b.ID != "co-1" {
+				t.Errorf("code id = %q, want co-1", b.ID)
+			}
+		}
+	}
+	if codeCount != 1 {
+		t.Fatalf("want exactly 1 code block, got %d: %#v", codeCount, blocks)
+	}
+}
+
 func TestDocumentCodec_UnclaimedFenceCoalescesIntoProse(t *testing.T) {
 	c := block.NewDocumentCodec(newFakeRegistry())
 	// ```python is unclaimed → it must stay as ONE prose block with its neighbours.
