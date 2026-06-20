@@ -34,59 +34,27 @@ func (c *DocumentCodec) scanner() *RegionScanner {
 	return NewRegionScanner(shapes)
 }
 
-// Deserialize parses markdown into an ordered block slice. It splits into regions,
-// asks each non-prose processor Accepts in priority order, and lets the first
-// acceptor build the block(s). A run of unclaimed regions is coalesced and handed
-// to prose (terminal mop-up), so a stray fence survives as verbatim prose content.
+// Deserialize parses markdown into an ordered block slice. The scanner (driven by
+// the registered shapes) yields gapless regions, each already a whole unit — a
+// prose <!--s:--> span arrives intact, opaque interior and all. Each region goes to
+// the first processor whose Accepts claims it. The terminal prose processor sorts
+// LAST (orderedProseLast), so its always-true Accepts mops up gap text and
+// unsupported fences without ever shadowing a structured recogniser. No coalescing:
+// the shape parser already delivers maximal units, so a prose block containing a
+// fence is one region, and an unsupported fence stays inside its surrounding gap.
 func (c *DocumentCodec) Deserialize(markdown string) ([]SieveBlock, error) {
-	regions := c.scanner().Scan(markdown)
-	prose := c.registry.Get(KindProse)
-	if prose == nil {
-		return nil, fmt.Errorf("DocumentCodec: no prose processor registered (KindProse) — registry is misconfigured")
-	}
-
+	ordered := c.orderedProseLast()
 	var out []SieveBlock
-	var pending []Region
-	flushProse := func() error {
-		if len(pending) == 0 {
-			return nil
-		}
-		var raw strings.Builder
-		for _, r := range pending {
-			raw.WriteString(r.Raw)
-		}
-		pending = nil
-		blocks, err := prose.Deserialize(Region{Raw: raw.String()})
-		if err != nil {
-			return err
-		}
-		out = append(out, blocks...)
-		return nil
-	}
-
-	for _, region := range regions {
-		p := c.firstAcceptor(region)
+	for _, region := range c.scanner().Scan(markdown) {
+		p := c.firstAccepting(ordered, region)
 		if p == nil {
-			// No registered processor claims this region, so it is not a supported
-			// structured kind: it coalesces into the terminal prose mop-up, its
-			// text (including any fence) preserved verbatim. The registry is the
-			// sole authority on what is structured — no kind-guessing heuristic.
-			// Any future kind that registers a processor is claimed above and
-			// becomes structured automatically.
-			pending = append(pending, region)
-			continue
-		}
-		if err := flushProse(); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("DocumentCodec: no processor accepted region kind %q (prose terminal missing?)", region.Kind)
 		}
 		blocks, err := p.Deserialize(region)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, blocks...)
-	}
-	if err := flushProse(); err != nil {
-		return nil, err
 	}
 	return out, nil
 }
@@ -110,14 +78,29 @@ func (c *DocumentCodec) Serialize(blocks []SieveBlock) (string, error) {
 	return strings.Join(parts, "\n\n"), nil
 }
 
-// firstAcceptor returns the first non-prose processor (registry priority order)
-// that claims the region, or nil. Prose is excluded here — it is the terminal
-// mop-up, invoked explicitly by flushProse, never asked in the loop.
-func (c *DocumentCodec) firstAcceptor(region Region) BlockProcessor {
-	for _, p := range c.registry.Ordered() {
+// orderedProseLast returns the registry's processors with the terminal prose
+// (BlockModeProse) flavour moved to the end, so first-acceptor dispatch lets
+// structured recognisers win and prose mops up gap text and unsupported fences.
+// This is the ONLY place prose is "special" — a single ordering rule reflecting its
+// genuine catch-all role, not a per-region branch.
+func (c *DocumentCodec) orderedProseLast() []BlockProcessor {
+	all := c.registry.Ordered()
+	out := make([]BlockProcessor, 0, len(all))
+	var prose []BlockProcessor
+	for _, p := range all {
 		if p.Mode() == BlockModeProse {
+			prose = append(prose, p)
 			continue
 		}
+		out = append(out, p)
+	}
+	return append(out, prose...)
+}
+
+// firstAccepting returns the first processor (in the given order) that claims the
+// region, or nil.
+func (c *DocumentCodec) firstAccepting(ordered []BlockProcessor, region Region) BlockProcessor {
+	for _, p := range ordered {
 		if p.Accepts(region) {
 			return p
 		}
