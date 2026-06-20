@@ -1,4 +1,4 @@
-package sieve
+package processors
 
 import (
 	"fmt"
@@ -47,7 +47,7 @@ func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface
 	logger.Debug("CodeBlockProcessor InitAttrs: initial attrs: %+v", attrs)
 	source, _ := attrs["source"].(string)
 	hint, _ := attrs["hint"].(string)
-	if lang, ok := detectByHeuristics(source, hint); ok {
+	if lang, ok := block.DetectByHeuristics(source, hint); ok {
 		attrs["language"] = lang
 		attrs["detectionMethod"] = "heuristic"
 	}
@@ -132,10 +132,10 @@ func unfencedCodeContent(entry block.ContentEntry) (string, bool) {
 	if !strings.Contains(trimmed, "\n") {
 		return "", false
 	}
-	if _, ok := detectByHeuristics(trimmed, ""); ok {
+	if _, ok := block.DetectByHeuristics(trimmed, ""); ok {
 		return trimmed, true
 	}
-	if looksLikeCode(trimmed) {
+	if block.LooksLikeCode(trimmed) {
 		return trimmed, true
 	}
 	return "", false
@@ -153,7 +153,7 @@ func (p *CodeBlockProcessor) OnChange(blk *block.SieveBlock) {
 	}
 
 	hint, _ := blk.Attrs["hint"].(string)
-	if detected, ok := detectByHeuristics(source, hint); ok {
+	if detected, ok := block.DetectByHeuristics(source, hint); ok {
 		lang, _ := blk.Attrs["language"].(string)
 		if detected != lang {
 			blk.Attrs["language"] = detected

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"sieve/logger"
+	"sieve/sieve/block"
 	"sieve/sieve/domain"
 	"sieve/store"
 
@@ -202,11 +203,11 @@ func (s *AIService) RefineLanguage(content, currentLanguage, detectionMethod str
 	}
 	lang = strings.Trim(lang, ".,;:'\"")
 
-	if canonical, ok := canonicalLanguages[lang]; ok {
+	if canonical, ok := block.CanonicalLanguages[lang]; ok {
 		lang = canonical
 	}
 
-	if knownLanguages[lang] {
+	if block.KnownLanguages[lang] {
 		return lang, nil
 	}
 	return "", nil
@@ -216,7 +217,7 @@ func (s *AIService) RefineLanguage(content, currentLanguage, detectionMethod str
 // It tries heuristics first (fast, no AI call). If heuristics are not
 // confident, RefineLanguage is called. Returns "unknown" on failure.
 func (s *AIService) DetectCodeLanguage(source, hint string) (string, error) {
-	if lang, ok := detectByHeuristics(source, hint); ok {
+	if lang, ok := block.DetectByHeuristics(source, hint); ok {
 		return lang, nil
 	}
 	lang, err := s.RefineLanguage(source, "", "")

@@ -1,4 +1,4 @@
-package sieve
+package block
 
 import (
 	"encoding/json"
@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// canonicalLanguages maps language hints or aliases to their canonical, lowercase names.
-var canonicalLanguages = map[string]string{
+// CanonicalLanguages maps language hints or aliases to their canonical, lowercase names.
+var CanonicalLanguages = map[string]string{
 	"python":     "python",
 	"py":         "python",
 	"go":         "go",
@@ -61,9 +61,9 @@ var canonicalLanguages = map[string]string{
 	"txt":        "text",
 }
 
-// knownLanguages is the set of canonical language names this system recognises.
+// KnownLanguages is the set of canonical language names this system recognises.
 // A hint that is in this set is trusted directly without pattern matching.
-var knownLanguages = map[string]bool{
+var KnownLanguages = map[string]bool{
 	"python": true, "go": true, "javascript": true, "typescript": true,
 	"rust": true, "java": true, "kotlin": true, "dart": true,
 	"swift": true, "c": true, "cpp": true, "sql": true,
@@ -142,7 +142,7 @@ var tier2 = []struct {
 	{regexp.MustCompile(`(?m)!\[([^\]\n]*)\]\([^)\n]+\)`), "markdown"},
 }
 
-// looksLikeCode is the tier-3 gate. It returns true when source has structural
+// LooksLikeCode is the tier-3 gate. It returns true when source has structural
 // signals that make it code-likely, even when no specific language can be
 // identified. This preserves the original paste-pipeline behaviour where:
 //   - tier 1/2 → language identified → code block
@@ -151,7 +151,7 @@ var tier2 = []struct {
 //
 // Mirrors the JS tier-3 check: braceCount>2 || semicolonCount>2 ||
 // anyWeakSignal || indentedLines > 40% of total lines.
-func looksLikeCode(source string) bool {
+func LooksLikeCode(source string) bool {
 	trimmed := strings.TrimSpace(source)
 	lines := strings.Split(trimmed, "\n")
 	if len(lines) <= 2 {
@@ -181,14 +181,14 @@ func looksLikeCode(source string) bool {
 	return braceCount > 2 || semicolonCount > 2 || anyWeakSignal || indented*10 > len(lines)*4
 }
 
-// detectByHeuristics returns the detected language and true if confident,
+// DetectByHeuristics returns the detected language and true if confident,
 // or ("", false) if no strong signal was found.
 // hint is the fence info string (e.g. "python" from ```python). If it is a
 // known language name it is trusted unconditionally — no pattern matching needed.
-func detectByHeuristics(source, hint string) (string, bool) {
+func DetectByHeuristics(source, hint string) (string, bool) {
 	h := strings.ToLower(strings.TrimSpace(hint))
 	if h != "" {
-		if canonical, ok := canonicalLanguages[h]; ok {
+		if canonical, ok := CanonicalLanguages[h]; ok {
 			return canonical, true
 		}
 	}

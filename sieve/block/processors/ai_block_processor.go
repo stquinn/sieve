@@ -1,4 +1,4 @@
-package sieve
+package processors
 
 import (
 	"sieve/sieve/block"
