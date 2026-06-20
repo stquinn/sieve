@@ -1,303 +1,20 @@
 package block
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"sync"
-
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/parser"
-	"github.com/yuin/goldmark/text"
-	"github.com/yuin/goldmark/util"
-	"gopkg.in/yaml.v3"
 )
 
 var (
-	// Matches [!kind] { "json":"here" } [!somekind-end]
+	// inlineBlockRegex matches [!kind] { "json":"here" } [!somekind-end] — the
+	// on-disk form written by serializeInlineBlock and read by sieve-block-extension.js.
 	inlineBlockRegex = regexp.MustCompile(`^\[!([A-Za-z0-9_-]+)\]\s*(\{.*?\})\s*\[!([A-Za-z0-9_-]+)-end\]`)
 )
 
-// sieveNode is the interface that all custom Sieve AST nodes implement.
-type sieveNode interface {
-	ast.Node
-	GetSieveBlock() *SieveBlock
-	StartByte() int
-	EndByte() int
-}
-
-// sieveBlockNode represents a fenced block
-type sieveBlockNode struct {
-	ast.BaseBlock
-	SieveBlock
-	start int
-	end   int
-}
-
-func (n *sieveBlockNode) Dump(source []byte, level int) {
-	ast.DumpHelper(n, source, level, nil, nil)
-}
-
-var kindSieveBlock = ast.NewNodeKind("SieveBlock")
-
-func (n *sieveBlockNode) Kind() ast.NodeKind         { return kindSieveBlock }
-func (n *sieveBlockNode) GetSieveBlock() *SieveBlock { return &n.SieveBlock }
-func (n *sieveBlockNode) StartByte() int             { return n.start }
-func (n *sieveBlockNode) EndByte() int               { return n.end }
-
-// sieveInlineNode represents [TEXT](URL) { ... }
-type sieveInlineNode struct {
-	ast.BaseInline
-	SieveBlock
-	start int
-	end   int
-}
-
-func (n *sieveInlineNode) Dump(source []byte, level int) {
-	ast.DumpHelper(n, source, level, nil, nil)
-}
-
-var kindSieveInline = ast.NewNodeKind("SieveInline")
-
-func (n *sieveInlineNode) Kind() ast.NodeKind         { return kindSieveInline }
-func (n *sieveInlineNode) GetSieveBlock() *SieveBlock { return &n.SieveBlock }
-func (n *sieveInlineNode) StartByte() int             { return n.start }
-func (n *sieveInlineNode) EndByte() int               { return n.end }
-
-// --- AST Transformer for Block Nodes ---
-
-type sieveBlockASTTransformer struct{}
-
-func (t *sieveBlockASTTransformer) Transform(node *ast.Document, reader text.Reader, pc parser.Context) {
-	source := reader.Source()
-
-	// First pass: collect candidates without touching the tree.
-	// Calling ReplaceChild inside ast.Walk clears the replaced node's sibling
-	// pointers, which breaks the walk loop (NextSibling returns nil early).
-	type pending struct {
-		cb   *ast.FencedCodeBlock
-		node *sieveBlockNode
-	}
-	var candidates []pending
-
-	_ = ast.Walk(node, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
-		if !entering {
-			return ast.WalkContinue, nil
-		}
-		cb, ok := n.(*ast.FencedCodeBlock)
-		if !ok {
-			return ast.WalkContinue, nil
-		}
-
-		kind := string(cb.Language(source))
-		if kind == "" {
-			return ast.WalkContinue, nil
-		}
-		processor := GetProcessor(kind)
-		if processor == nil || processor.Mode() != BlockModeBlock {
-			return ast.WalkContinue, nil
-		}
-
-		var buf bytes.Buffer
-		l := cb.Lines().Len()
-		for i := 0; i < l; i++ {
-			seg := cb.Lines().At(i)
-			buf.Write(seg.Value(source))
-		}
-
-		var attrs map[string]interface{}
-		if err := yaml.Unmarshal(buf.Bytes(), &attrs); err != nil {
-			return ast.WalkContinue, nil
-		}
-		id, _ := attrs["id"].(string)
-		if id == "" {
-			return ast.WalkContinue, nil
-		}
-
-		startIdx := 0
-		if cb.Lines().Len() > 0 {
-			startIdx = cb.Lines().At(0).Start
-			if startIdx > 0 && source[startIdx-1] == '\n' {
-				startIdx--
-			}
-			for startIdx > 0 && source[startIdx-1] != '\n' {
-				startIdx--
-			}
-		}
-		endIdx := len(source)
-		if cb.Lines().Len() > 0 {
-			endIdx = cb.Lines().At(cb.Lines().Len() - 1).Stop
-			if endIdx < len(source) && source[endIdx] == '\n' {
-				endIdx++
-			}
-			for endIdx < len(source) && source[endIdx] != '\n' {
-				endIdx++
-			}
-		}
-
-		candidates = append(candidates, pending{
-			cb: cb,
-			node: &sieveBlockNode{
-				SieveBlock: SieveBlock{ID: id, Kind: kind, Attrs: attrs},
-				start:      startIdx,
-				end:        endIdx,
-			},
-		})
-		return ast.WalkContinue, nil
-	})
-
-	// Second pass: apply replacements now that the walk is complete.
-	for _, p := range candidates {
-		parent := p.cb.Parent()
-		if parent == nil {
-			continue
-		}
-		parent.ReplaceChild(parent, p.cb, p.node)
-	}
-}
-
-// --- Inline Parser ---
-
-type sieveInlineParser struct{}
-
-func (s *sieveInlineParser) Trigger() []byte {
-	return []byte{'['}
-}
-
-func (s *sieveInlineParser) Parse(parent ast.Node, reader text.Reader, pc parser.Context) ast.Node {
-	line, segment := reader.PeekLine()
-	match := inlineBlockRegex.FindSubmatchIndex(line)
-	if match == nil {
-		return nil
-	}
-
-	startKind := string(line[match[2]:match[3]])
-	jsonStr := string(line[match[4]:match[5]])
-	endKind := string(line[match[6]:match[7]])
-
-	if startKind != endKind {
-		return nil
-	}
-
-	var attrs map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &attrs); err != nil {
-		return nil
-	}
-
-	id, _ := attrs["id"].(string)
-	if id == "" {
-		return nil
-	}
-
-	processor := GetProcessor(startKind)
-	if processor == nil || processor.Mode() != BlockModeInline {
-		return nil
-	}
-
-	start := segment.Start
-	end := segment.Start + match[1]
-
-	node := &sieveInlineNode{
-		SieveBlock: SieveBlock{
-			ID:    id,
-			Kind:  startKind,
-			Attrs: attrs,
-		},
-		start: start,
-		end:   end,
-	}
-
-	reader.Advance(match[1])
-	return node
-}
-
-// --- Extension ---
-
-type sieveExtension struct{}
-
-func (e *sieveExtension) Extend(m goldmark.Markdown) {
-	m.Parser().AddOptions(
-		parser.WithASTTransformers(
-			util.Prioritized(&sieveBlockASTTransformer{}, 100),
-		),
-		parser.WithInlineParsers(
-			util.Prioritized(&sieveInlineParser{}, 100),
-		),
-	)
-}
-
-var sieveExtensionPlugin = &sieveExtension{}
-
-// --- Public API for EditorService ---
-
-var sharedMDParser = sync.OnceValue(func() goldmark.Markdown {
-	return goldmark.New(
-		goldmark.WithExtensions(sieveExtensionPlugin),
-	)
-})
-
-func mdParser() goldmark.Markdown { return sharedMDParser() }
-
-// ParseAllBlocks parses markdown and extracts all Sieve blocks
-func ParseAllBlocks(markdown string) map[string]*SieveBlock {
-	blocks := make(map[string]*SieveBlock)
-	doc := mdParser().Parser().Parse(text.NewReader([]byte(markdown)))
-
-	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
-		if !entering {
-			return ast.WalkContinue, nil
-		}
-		if sn, ok := n.(sieveNode); ok {
-			blk := sn.GetSieveBlock()
-
-			copyBlk := &SieveBlock{
-				ID:    blk.ID,
-				Kind:  blk.Kind,
-				Attrs: make(map[string]interface{}),
-			}
-			for k, v := range blk.Attrs {
-				copyBlk.Attrs[k] = v
-			}
-			blocks[blk.ID] = copyBlk
-		}
-		return ast.WalkContinue, nil
-	})
-	return blocks
-}
-
-// ParseAllBlocks parses markdown and extracts all Sieve blocks
-func ParseFirstBlock(markdown string) *SieveBlock {
-	var block *SieveBlock
-	doc := mdParser().Parser().Parse(text.NewReader([]byte(markdown)))
-
-	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
-		if !entering {
-			return ast.WalkContinue, nil
-		}
-		if sn, ok := n.(sieveNode); ok {
-			blk := sn.GetSieveBlock()
-
-			copyBlk := &SieveBlock{
-				ID:    blk.ID,
-				Kind:  blk.Kind,
-				Attrs: make(map[string]interface{}),
-			}
-			for k, v := range blk.Attrs {
-				copyBlk.Attrs[k] = v
-			}
-			block = copyBlk
-		}
-		return ast.WalkContinue, nil
-	})
-	return block
-}
-
 // serializeInlineBlock renders an inline-mode block as [!kind] {json} [!kind-end]
-// — the form the inline parser (inlineBlockRegex) reads back. It is owned by
-// InlineSerializer, which inline-mode flavours embed; there is no kind-switching
-// serializer function anymore — each flavour serializes itself (Serialize).
+// — the form sieve-block-extension.js reads back on the frontend. It is owned by
+// InlineSerializer, which inline-mode flavours embed.
 func serializeInlineBlock(block SieveBlock) (string, error) {
 	b, err := json.Marshal(block.Attrs)
 	if err != nil {
@@ -306,24 +23,40 @@ func serializeInlineBlock(block SieveBlock) (string, error) {
 	return fmt.Sprintf("[!%s] %s [!%s-end]", block.Kind, string(b), block.Kind), nil
 }
 
-// FindBlockByID parses markdown and returns the structured SieveBlock for the
-// given ID, or (SieveBlock{}, false) if not found.
-func FindBlockByID(markdown string, id string) (SieveBlock, bool) {
-	source := []byte(markdown)
-	doc := mdParser().Parser().Parse(text.NewReader(source))
+// ParseFirstBlock parses markdown and returns the first structured (non-prose)
+// SieveBlock found, or nil if the content contains no structured block.
+// Callers use this to unpack clipboard entries whose MIME type signals a Sieve
+// block payload (e.g. "sieve/code", "sieve/diagram", "sieve/log").
+// The DocumentCodec drives recognition via the global registry so the same
+// processors that deserialize documents are reused here — no second parse path.
+func ParseFirstBlock(markdown string) *SieveBlock {
+	codec := NewDocumentCodec(GlobalRegistry())
+	blocks, err := codec.Deserialize(markdown)
+	if err != nil {
+		return nil
+	}
+	for i := range blocks {
+		if blocks[i].Kind != KindProse {
+			return &blocks[i]
+		}
+	}
+	return nil
+}
 
-	var result SieveBlock
-	found := false
-	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
-		if !entering {
-			return ast.WalkContinue, nil
+// FindBlockByID parses markdown and returns the SieveBlock whose ID matches id,
+// or (SieveBlock{}, false) if not found. Used as a fallback in BuildContextForID
+// when the document is in markdown mode and its blocks tree is not populated.
+// The DocumentCodec drives recognition via the global registry.
+func FindBlockByID(markdown string, id string) (SieveBlock, bool) {
+	codec := NewDocumentCodec(GlobalRegistry())
+	blocks, err := codec.Deserialize(markdown)
+	if err != nil {
+		return SieveBlock{}, false
+	}
+	for _, b := range blocks {
+		if b.ID == id {
+			return b, true
 		}
-		if sn, ok := n.(*sieveBlockNode); ok && sn.SieveBlock.ID == id {
-			result = sn.SieveBlock
-			found = true
-			return ast.WalkStop, nil
-		}
-		return ast.WalkContinue, nil
-	})
-	return result, found
+	}
+	return SieveBlock{}, false
 }
