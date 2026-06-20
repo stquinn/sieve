@@ -485,8 +485,8 @@ func (p *testRunJobProcessor) IsBlock(entries []block.ContentEntry) bool { retur
 func (p *testRunJobProcessor) Transform(entries []block.ContentEntry, _ string, _ string) map[string]interface{} {
 	return nil
 }
-func (p *testRunJobProcessor) BuildContext(_ block.SieveBlock, _ block.DocView, _ map[string]bool) string {
-	return ""
+func (p *testRunJobProcessor) BuildContext(_ block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
+	return block.AIContext{}
 }
 func (p *testRunJobProcessor) MarkdownRepresentation(_ block.SieveBlock) string { return "" }
 func (p *testRunJobProcessor) OnChange(_ *block.SieveBlock)                     {}

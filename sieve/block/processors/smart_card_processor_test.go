@@ -179,7 +179,7 @@ func TestSmartCardProcessor_BuildContext(t *testing.T) {
 		},
 	}
 	ctx := p.BuildContext(blk, block.DocView{}, map[string]bool{})
-	if ctx == "" {
+	if ctx.IsEmpty() {
 		t.Error("BuildContext must return non-empty string for complete block")
 	}
 }

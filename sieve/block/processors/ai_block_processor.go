@@ -57,17 +57,16 @@ func (p *AIBlockProcessor) JobLabel(blk *block.SieveBlock) string {
 	return "Asking AI…"
 }
 
-// BuildContext returns a Q&A summary for when this block appears in another block's ref chain.
-func (p *AIBlockProcessor) BuildContext(blk block.SieveBlock, doc block.DocView, seen map[string]bool) string {
+// BuildContext returns a Q&A summary for when this block appears in another block's
+// ref chain. The NODE ID header is rendered by AIContext.String (from NodeIDs); the
+// QUESTION ABOUT / EXPLAIN NODE line stays in Content because it is a header before
+// the Q&A, not a mergeable trailer.
+func (p *AIBlockProcessor) BuildContext(blk block.SieveBlock, doc block.DocView, seen map[string]bool) block.AIContext {
 	q, _ := blk.Attrs["question"].(string)
 	r, _ := blk.Attrs["response"].(string)
 	t, _ := blk.Attrs["type"].(string)
 
 	var sb strings.Builder
-	sb.WriteString("NODE ID: ")
-	sb.WriteString(blk.ID)
-	sb.WriteString("\n")
-
 	// Under the point-to-point model a block's ref IS its direct target(s) — the
 	// whole ref is what it is about (a MANY when the question spans several blocks),
 	// so reference all of it, not just the last segment.
@@ -92,7 +91,7 @@ func (p *AIBlockProcessor) BuildContext(blk block.SieveBlock, doc block.DocView,
 		}
 	}
 
-	return sb.String()
+	return block.AIContext{NodeIDs: []string{blk.ID}, Content: sb.String()}
 }
 
 // resolveChain walks the point-to-point ref graph from the action block (selfID,
@@ -139,19 +138,19 @@ func (p *AIBlockProcessor) resolveChain(selfID, startRef string, doc block.DocVi
 	return targets, thread
 }
 
-// buildTargets renders the terminal MANY (the target node) by asking each member
-// block for its own AI representation through the registry (BuildContextForID) and
-// joining them. Type-agnostic: every block self-describes, so a multi-block
-// selection, a single block, or "doc" all render the same way. Empty contexts
-// (e.g. an empty prose block) drop out.
+// buildTargets renders the terminal MANY by asking each member block for its
+// AIContext (BuildContextForID) and MERGING them into one — node ids concat into a
+// single header, contents append, and the "Specifically regarding" trailers union
+// into ONE focus line. Type-agnostic: a multi-block selection, a single block, or
+// "doc" all merge the same way; empty contexts drop out.
 func (p *AIBlockProcessor) buildTargets(targets []string, doc block.DocView) string {
-	var parts []string
+	var ctxs []block.AIContext
 	for _, id := range targets {
-		if c := block.BuildContextForID(id, doc, map[string]bool{}); c != "" {
-			parts = append(parts, c)
+		if c := block.BuildContextForID(id, doc, map[string]bool{}); !c.IsEmpty() {
+			ctxs = append(ctxs, c)
 		}
 	}
-	return strings.Join(parts, "\n\n")
+	return block.MergeContexts(ctxs).String()
 }
 
 // RunJob builds the prompt by walking this block's point-to-point ref graph and
@@ -169,18 +168,19 @@ func (p *AIBlockProcessor) RunJob(jctx block.JobContext) error {
 	// TARGET: the terminal MANY, each member rendered and grouped.
 	content := p.buildTargets(targets, jctx.Doc)
 
-	// THREAD: the interior nodes, oldest-first, each as its own Q&A entry.
+	// THREAD: the interior nodes, oldest-first, each rendered as its own Q&A entry
+	// (NOT merged — distinct entries, each keeping its own trailer).
 	seen := map[string]bool{blk.ID: true}
 	var historyParts []string
 	for _, id := range threadIDs {
-		if ctx := block.BuildContextForID(id, jctx.Doc, seen); ctx != "" {
-			historyParts = append(historyParts, ctx)
+		if ctx := block.BuildContextForID(id, jctx.Doc, seen); !ctx.IsEmpty() {
+			historyParts = append(historyParts, ctx.String())
 		}
 	}
 	history := strings.Join(historyParts, "\n\n---\n\n")
 
 	// ACTION: this block's own question.
-	questionCtx := p.BuildContext(*blk, jctx.Doc, map[string]bool{})
+	questionCtx := p.BuildContext(*blk, jctx.Doc, map[string]bool{}).String()
 
 	var response string
 	var runErr error

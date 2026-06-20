@@ -12,7 +12,7 @@ import (
 func TestProseProcessor_BuildContextEmitsHighlightTargets(t *testing.T) {
 	var p ProseProcessor
 	blk := block.NewSieveBlock(block.KindProse, "pr-1", "The patient showed ==acute== and ==rapid onset== symptoms.", nil)
-	ctx := p.BuildContext(blk, block.DocView{}, nil)
+	ctx := p.BuildContext(blk, block.DocView{}, nil).String()
 	if !strings.Contains(ctx, "Specifically regarding") {
 		t.Errorf("expected targets hint, got %q", ctx)
 	}
@@ -27,7 +27,7 @@ func TestProseProcessor_BuildContextEmitsHighlightTargets(t *testing.T) {
 func TestProseProcessor_BuildContextNoHighlightsNoHint(t *testing.T) {
 	var p ProseProcessor
 	blk := block.NewSieveBlock(block.KindProse, "pr-1", "Plain prose, no highlights.", nil)
-	ctx := p.BuildContext(blk, block.DocView{}, nil)
+	ctx := p.BuildContext(blk, block.DocView{}, nil).String()
 	if strings.Contains(ctx, "Specifically regarding") {
 		t.Errorf("expected no hint without highlights, got %q", ctx)
 	}

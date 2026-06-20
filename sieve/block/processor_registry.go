@@ -84,7 +84,7 @@ type BlockProcessor interface {
 	JobLabel(block *SieveBlock) string
 	OnChange(block *SieveBlock)
 	Mode() BlockMode
-	BuildContext(block SieveBlock, doc DocView, seen map[string]bool) string
+	BuildContext(block SieveBlock, doc DocView, seen map[string]bool) AIContext
 	MarkdownRepresentation(block SieveBlock) string
 	// Serialize renders the block to its on-disk form. THIS is the whole point of
 	// the block-document model: each flavour owns how its kind persists, and the

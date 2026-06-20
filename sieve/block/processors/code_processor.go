@@ -174,13 +174,13 @@ func (p *CodeBlockProcessor) OnChange(blk *block.SieveBlock) {
 	blk.Attrs["status"] = block.BlockStatusPending
 }
 
-func (p *CodeBlockProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, seen map[string]bool) string {
+func (p *CodeBlockProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, seen map[string]bool) block.AIContext {
 	src, _ := blk.Attrs["source"].(string)
 	language, _ := blk.Attrs["language"].(string)
-	if src != "" {
-		return "NODE ID: " + blk.ID + "\n\n" + "```" + language + "\n" + src + "\n```"
+	if src == "" {
+		return block.AIContext{}
 	}
-	return ""
+	return block.AIContext{NodeIDs: []string{blk.ID}, Content: "```" + language + "\n" + src + "\n```"}
 }
 
 func (p *CodeBlockProcessor) JobLabel(_ *block.SieveBlock) string {

@@ -153,16 +153,15 @@ func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid strin
 
 func (p *SmartImageProcessor) OnChange(_ *block.SieveBlock) {}
 
-func (p *SmartImageProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, seen map[string]bool) string {
+func (p *SmartImageProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, seen map[string]bool) block.AIContext {
 	src, _ := blk.Attrs["src"].(string)
 	alt, _ := blk.Attrs["alt"].(string)
 	summary, _ := blk.Attrs["summary"].(string)
 	if src == "" {
-		return ""
+		return block.AIContext{}
 	}
 	filename := filepath.Base(src)
 	var sb strings.Builder
-	sb.WriteString("NODE ID: " + blk.ID + "\n\n")
 	sb.WriteString("Image: " + filename + "\n")
 	if alt != "" {
 		sb.WriteString("Alt: " + alt + "\n")
@@ -170,7 +169,7 @@ func (p *SmartImageProcessor) BuildContext(blk block.SieveBlock, _ block.DocView
 	if summary != "" {
 		sb.WriteString("Summary: " + summary)
 	}
-	return sb.String()
+	return block.AIContext{NodeIDs: []string{blk.ID}, Content: sb.String()}
 }
 
 func (p *SmartImageProcessor) JobLabel(_ *block.SieveBlock) string { return "Describing image…" }

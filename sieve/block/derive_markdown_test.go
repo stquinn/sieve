@@ -24,10 +24,10 @@ func TestDeriveMarkdown_WysiwygReflectsLiveTree(t *testing.T) {
 	}})
 
 	got := BuildContextForID("doc", DocView{Mode: "wysiwyg", Blocks: shadow.Blocks, codec: NewDocumentCodec(GlobalRegistry())}, map[string]bool{})
-	if !strings.Contains(got, "Original prose.") {
+	if !strings.Contains(got.String(), "Original prose.") {
 		t.Errorf("doc context lost prose: %q", got)
 	}
-	if !strings.Contains(got, "fresh answer") {
+	if !strings.Contains(got.String(), "fresh answer") {
 		t.Errorf("doc context did not reflect the live tree edit: %q", got)
 	}
 }

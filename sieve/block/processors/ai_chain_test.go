@@ -81,7 +81,7 @@ func TestAIBlockBuildContext_questionAboutUsesFullDirectRef(t *testing.T) {
 		"ref": "pr-c2dc,pr-e51a,pr-f405", "question": "Multi span", "type": "ASK",
 	}}
 	ctx := p.BuildContext(blk, block.DocView{}, map[string]bool{})
-	if !strings.Contains(ctx, "pr-c2dc,pr-e51a,pr-f405") {
+	if !strings.Contains(ctx.String(), "pr-c2dc,pr-e51a,pr-f405") {
 		t.Fatalf("QUESTION ABOUT should reference the full direct ref, got: %q", ctx)
 	}
 }

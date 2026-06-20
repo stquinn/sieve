@@ -39,9 +39,8 @@ func newShapeParser(shapes []RegionShape) *shapeBlockParser {
 
 // shapeParseState rides on the parser context while a span is open.
 type shapeParseState struct {
-	tail  string
-	start int
-	stop  int
+	tail string
+	stop int
 }
 
 var shapeStateKey = gmparser.NewContextKey()
@@ -85,7 +84,7 @@ func (p *shapeBlockParser) Open(parent ast.Node, reader text.Reader, pc gmparser
 	// AdvanceLine on the trailing \n + parseBlocks' AdvanceLine), which loses
 	// the first body line.
 	node := &shapeNode{ShapeKind: shape.Kind, Start: segment.Start, Stop: segment.Stop}
-	pc.Set(shapeStateKey, &shapeParseState{tail: shape.Tail, start: segment.Start, stop: segment.Stop})
+	pc.Set(shapeStateKey, &shapeParseState{tail: shape.Tail, stop: segment.Stop})
 	return node, gmparser.NoChildren
 }
 

@@ -77,15 +77,14 @@ func (p *WebClipBlockProcessor) Transform(entries []block.ContentEntry, uuid, bl
 
 func (p *WebClipBlockProcessor) OnChange(_ *block.SieveBlock) {}
 
-func (p *WebClipBlockProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, seen map[string]bool) string {
+func (p *WebClipBlockProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, seen map[string]bool) block.AIContext {
 	source, _ := blk.Attrs["source"].(string)
 	title, _ := blk.Attrs["title"].(string)
 	content, _ := blk.Attrs["content"].(string)
 	if source == "" && content == "" {
-		return ""
+		return block.AIContext{}
 	}
 	var sb strings.Builder
-	sb.WriteString("NODE ID: " + blk.ID + "\n\n")
 	if source != "" {
 		sb.WriteString("Source: " + source + "\n")
 	}
@@ -95,7 +94,7 @@ func (p *WebClipBlockProcessor) BuildContext(blk block.SieveBlock, _ block.DocVi
 	if content != "" {
 		sb.WriteString("\n" + content)
 	}
-	return sb.String()
+	return block.AIContext{NodeIDs: []string{blk.ID}, Content: sb.String()}
 }
 
 func (p *WebClipBlockProcessor) JobLabel(blk *block.SieveBlock) string {

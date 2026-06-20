@@ -10,7 +10,7 @@ import (
 // seen is threaded through recursion to prevent cycles — pass it on
 // whenever calling BuildContextForID from within BuildContext.
 type ContextProvider interface {
-	BuildContext(block SieveBlock, doc DocView, seen map[string]bool) string
+	BuildContext(block SieveBlock, doc DocView, seen map[string]bool) AIContext
 }
 
 var (
@@ -61,13 +61,13 @@ func GetContextProvider(kind string) ContextProvider {
 //		}
 //		return cp.BuildContext(block, doc, seen)
 //	}
-func BuildContextForID(id string, doc DocView, seen map[string]bool) string {
+func BuildContextForID(id string, doc DocView, seen map[string]bool) AIContext {
 	if id == "" || seen[id] {
-		return ""
+		return AIContext{}
 	}
 	seen[id] = true
 	if id == "doc" {
-		return doc.deriveMarkdown()
+		return AIContext{Content: doc.deriveMarkdown()}
 	}
 	// Uniform dispatch: every block — prose included — resolves by id (GetBlock) and
 	// routes to its kind's registered ContextProvider. Prose is NOT special-cased
@@ -77,7 +77,7 @@ func BuildContextForID(id string, doc DocView, seen map[string]bool) string {
 		cp := GetContextProvider(b.Kind)
 		if cp == nil {
 			logger.Warn("ContextProvider: no provider registered for block kind %q", b.Kind)
-			return ""
+			return AIContext{}
 		}
 		return cp.BuildContext(SieveBlock{ID: b.ID, Kind: b.Kind, Attrs: b.Attrs}, doc, seen)
 	}
@@ -85,12 +85,12 @@ func BuildContextForID(id string, doc DocView, seen map[string]bool) string {
 	found, ok := FindBlockByID(doc.deriveMarkdown(), id)
 	if !ok {
 		logger.Warn("ContextProvider: block ID %q not found in doc or blocks map", id)
-		return ""
+		return AIContext{}
 	}
 	cp := GetContextProvider(found.Kind)
 	if cp == nil {
 		logger.Warn("ContextProvider: no provider registered for block kind %q", found.Kind)
-		return ""
+		return AIContext{}
 	}
 	return cp.BuildContext(found, doc, seen)
 }

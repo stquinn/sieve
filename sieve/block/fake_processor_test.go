@@ -26,5 +26,5 @@ func (fakeProc) RunJob(JobContext) error                                  { retu
 func (fakeProc) JobLabel(*SieveBlock) string                              { return "" }
 func (fakeProc) OnChange(*SieveBlock)                                     {}
 func (fakeProc) Mode() BlockMode                                          { return BlockModeBlock }
-func (fakeProc) BuildContext(SieveBlock, DocView, map[string]bool) string { return "" }
+func (fakeProc) BuildContext(SieveBlock, DocView, map[string]bool) AIContext { return AIContext{} }
 func (fakeProc) MarkdownRepresentation(SieveBlock) string                 { return "" }

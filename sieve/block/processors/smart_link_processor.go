@@ -78,19 +78,18 @@ func (p *SmartLinkProcessor) Mode() block.BlockMode {
 	return block.BlockModeInline
 }
 
-func (p *SmartLinkProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, seen map[string]bool) string {
+func (p *SmartLinkProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, seen map[string]bool) block.AIContext {
 	href, _ := blk.Attrs["href"].(string)
 	label, _ := blk.Attrs["label"].(string)
 	if href == "" {
-		return ""
+		return block.AIContext{}
 	}
 	var sb strings.Builder
-	sb.WriteString("NODE ID: " + blk.ID + "\n\n")
 	sb.WriteString("Link: " + href + "\n")
 	if label != "" && label != href {
 		sb.WriteString("Label: " + label)
 	}
-	return sb.String()
+	return block.AIContext{NodeIDs: []string{blk.ID}, Content: sb.String()}
 }
 
 func (p *SmartLinkProcessor) JobLabel(blk *block.SieveBlock) string {

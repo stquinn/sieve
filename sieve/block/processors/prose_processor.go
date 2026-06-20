@@ -42,23 +42,19 @@ func (p *ProseProcessor) Serialize(blk block.SieveBlock) (string, error) {
 	return open + "\n" + blk.Content() + "\n" + closeTag, nil
 }
 
-// BuildContext: a prose block's AI context IS its content (the uniform dispatch in
-// BuildContextForID now routes here by kind — no hardcoded prose branch). If the
-// block carries ==highlighted== words, they are appended as explicit AI targets —
-// the "Specifically regarding" hint the retired block-anchor used to provide,
-// now derived from the highlights that live in the prose content (the source of
-// truth). So the highlight-as-target feature survives the anchor's removal.
-func (p *ProseProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, _ map[string]bool) string {
+// BuildContext: a prose block's AI context IS its content. If the block carries
+// ==highlighted== words they become a "Specifically regarding" trailer Tag — NOT
+// appended to the string here. The framework's collection merge unions that Tag
+// across a multi-block target into ONE focus line (and renders it once via
+// AIContext.String). This is the highlight-as-target feature the retired
+// block-anchor provided, now a mergeable trailer instead of a per-block suffix.
+func (p *ProseProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
 	content := blk.Content()
-	targets := extractTargets(content)
-	if len(targets) == 0 {
-		return content
+	ctx := block.AIContext{NodeIDs: []string{blk.ID}, Content: content}
+	if targets := extractTargets(content); len(targets) > 0 {
+		ctx.Tags = []block.Tag{{Label: "Specifically regarding", Values: targets}}
 	}
-	quoted := make([]string, len(targets))
-	for i, t := range targets {
-		quoted[i] = `"` + t + `"`
-	}
-	return content + "\n\nSpecifically regarding: " + strings.Join(quoted, ", ")
+	return ctx
 }
 
 // targetHighlightRe matches a ==highlighted== span; the capture is its interior.
@@ -243,10 +239,10 @@ func (p *ProseProcessor) Shape() block.RegionShape {
 	return block.RegionShape{Kind: block.KindProse, Head: "<!--s:", Tail: "<!--/s:"}
 }
 
-// Accepts always returns true: prose is the terminal mop-up. The codec EXCLUDES
-// prose from its Accepts loop (it skips Mode()==BlockModeProse) and invokes
-// Deserialize explicitly on the coalesced run of unclaimed regions — so this
-// truthful "I accept anything" never shadows a structured recogniser.
+// Accepts always returns true: prose is the terminal mop-up. The codec sorts prose
+// LAST (DocumentCodec.orderedProseLast), so this truthful "I accept anything" runs
+// only after every structured recogniser has had first refusal and never shadows
+// them. It claims its own <!--s:--> shape regions plus any gap text / unclaimed fence.
 func (p *ProseProcessor) Accepts(region block.Region) bool { return true }
 
 // Deserialize splits a raw prose run into prose blocks at its paired

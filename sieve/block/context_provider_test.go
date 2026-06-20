@@ -9,11 +9,11 @@ type mockContextProcessor struct {
 	buildFn   func(SieveBlock) string
 }
 
-func (m *mockContextProcessor) BuildContext(block SieveBlock, doc DocView, seen map[string]bool) string {
+func (m *mockContextProcessor) BuildContext(block SieveBlock, doc DocView, seen map[string]bool) AIContext {
 	if m.buildFn != nil {
-		return m.buildFn(block)
+		return AIContext{Content: m.buildFn(block)}
 	}
-	return m.returnVal
+	return AIContext{Content: m.returnVal}
 }
 func (m *mockContextProcessor) MarkdownRepresentation(_ SieveBlock) string { return "" }
 func (m *mockContextProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
@@ -35,7 +35,7 @@ func TestGetContextProviderFallsBackToProcessor(t *testing.T) {
 		t.Fatal("expected ContextProvider, got nil")
 	}
 	result := cp.BuildContext(SieveBlock{ID: "x", Kind: "test-cp-kind"}, DocView{}, map[string]bool{})
-	if result != "from-processor" {
+	if result.String() != "from-processor" {
 		t.Errorf("expected 'from-processor', got %q", result)
 	}
 }
@@ -48,7 +48,7 @@ func TestGetContextProviderUsesRegisteredOverride(t *testing.T) {
 		t.Fatal("expected ContextProvider, got nil")
 	}
 	result := cp.BuildContext(SieveBlock{ID: "y", Kind: "test-override-kind"}, DocView{}, map[string]bool{})
-	if result != "from-override" {
+	if result.String() != "from-override" {
 		t.Errorf("expected 'from-override', got %q", result)
 	}
 }

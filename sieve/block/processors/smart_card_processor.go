@@ -92,17 +92,16 @@ func (p *SmartCardProcessor) JobLabel(blk *block.SieveBlock) string {
 	return "Fetching link…"
 }
 
-func (p *SmartCardProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, _ map[string]bool) string {
+func (p *SmartCardProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
 	href, _ := blk.Attrs["href"].(string)
 	if href == "" {
-		return ""
+		return block.AIContext{}
 	}
 	title, _ := blk.Attrs["title"].(string)
 	desc, _ := blk.Attrs["description"].(string)
 	site, _ := blk.Attrs["siteName"].(string)
 
 	var sb strings.Builder
-	sb.WriteString("NODE ID: " + blk.ID + "\n\n")
 	sb.WriteString("Link: " + href + "\n")
 	if title != "" {
 		sb.WriteString("Title: " + title + "\n")
@@ -113,7 +112,7 @@ func (p *SmartCardProcessor) BuildContext(blk block.SieveBlock, _ block.DocView,
 	if desc != "" {
 		sb.WriteString("Description: " + desc + "\n")
 	}
-	return sb.String()
+	return block.AIContext{NodeIDs: []string{blk.ID}, Content: sb.String()}
 }
 
 func (p *SmartCardProcessor) RunJob(jctx block.JobContext) error {

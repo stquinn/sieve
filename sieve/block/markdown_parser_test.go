@@ -30,7 +30,7 @@ func TestBuildContextForIDDispatchesByKind(t *testing.T) {
 	defer UnregisterProcessor("code")
 	md := "```code\nid: co-abc\nsource: x\n```\n"
 	result := BuildContextForID("co-abc", DocView{Mode: "markdown", mdModeBuffer: md}, map[string]bool{})
-	if !strings.Contains(result, "CODE CONTEXT") {
+	if !strings.Contains(result.String(), "CODE CONTEXT") {
 		t.Errorf("expected dispatched processor context, got %q", result)
 	}
 }
@@ -42,7 +42,7 @@ func TestBuildContextForIDPreventsCycles(t *testing.T) {
 	md := "```code\nid: co-abc\nsource: x\n```\n"
 	seen := map[string]bool{"co-abc": true}
 	result := BuildContextForID("co-abc", DocView{Mode: "markdown", mdModeBuffer: md}, seen)
-	if result != "" {
+	if !result.IsEmpty() {
 		t.Errorf("expected empty for already-seen ID, got %q", result)
 	}
 }

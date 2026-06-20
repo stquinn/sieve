@@ -33,8 +33,8 @@ func TestBuildContextForID_resolvesProseContentFromDoc(t *testing.T) {
 		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "the quick brown fox"}},
 		{ID: "pr-2", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "second paragraph"}},
 	}}
-	if got := block.BuildContextForID("pr-1", doc, map[string]bool{}); got != "the quick brown fox" {
-		t.Fatalf("prose context: got %q", got)
+	if got := block.BuildContextForID("pr-1", doc, map[string]bool{}); got.Content != "the quick brown fox" {
+		t.Fatalf("prose context: got %q", got.Content)
 	}
 }
 
@@ -49,8 +49,8 @@ func TestBuildContextForID_gathersProseRefChain(t *testing.T) {
 	seen := map[string]bool{}
 	var got []string
 	for _, id := range []string{"pr-1", "pr-2", "pr-3"} {
-		if c := block.BuildContextForID(id, doc, seen); c != "" {
-			got = append(got, c)
+		if c := block.BuildContextForID(id, doc, seen); !c.IsEmpty() {
+			got = append(got, c.Content)
 		}
 	}
 	if len(got) != 3 || got[0] != "alpha" || got[1] != "beta" || got[2] != "gamma" {

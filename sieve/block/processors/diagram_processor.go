@@ -93,12 +93,12 @@ func (p *DiagramProcessor) Transform(entries []block.ContentEntry, _ string, _ s
 
 func (p *DiagramProcessor) OnChange(_ *block.SieveBlock) {}
 
-func (p *DiagramProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, _ map[string]bool) string {
+func (p *DiagramProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
 	src, _ := blk.Attrs["source"].(string)
 	if strings.TrimSpace(src) == "" {
-		return ""
+		return block.AIContext{}
 	}
-	return "NODE ID: " + blk.ID + "\n\n```mermaid\n" + src + "\n```"
+	return block.AIContext{NodeIDs: []string{blk.ID}, Content: "```mermaid\n" + src + "\n```"}
 }
 
 func (p *DiagramProcessor) JobLabel(_ *block.SieveBlock) string { return "" }
