@@ -91,8 +91,11 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
       function applyChain(action) {
         var id = dom.getAttribute('data-id') || ''
         var ref = dom.getAttribute('data-ai-ref') || ''
-        gatherChain(id, ref).forEach(function (cid) {
+        var chain = gatherChain(id, ref)
+        chain.forEach(function (cid) {
           if (cid === id) return
+          // Structured blocks are NodeViews — their DOM is opaque to ProseMirror,
+          // so a directly-toggled class persists.
           var blockEl = document.querySelector('[data-id="' + cid + '"], [data-block-id="' + cid + '"]')
           if (blockEl) blockEl.classList[action]('block-ref-active')
           var aiEl = document.querySelector('.sieve-ai-block[data-id="' + cid + '"]')
@@ -100,6 +103,19 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
           var wcEl = document.querySelector('.web-clip-block[data-id="' + cid + '"]')
           if (wcEl) wcEl.classList[action]('web-clip-block--chain-active')
         })
+        // Native prose <p> blocks are owned by ProseMirror, which reverts any
+        // externally-set class on its next view update. Drive their glow through a
+        // PM decoration instead (T.setRefChain), so PM renders block-ref-active and
+        // it survives. Harmless no-op on the structured ids handled above.
+        if (T && editor && editor.view) {
+          if (action === 'add' && T.setRefChain) {
+            var proseIds = []
+            chain.forEach(function (cid) { if (cid !== id) proseIds.push(cid) })
+            T.setRefChain(editor.view, proseIds)
+          } else if (T.clearRefChain) {
+            T.clearRefChain(editor.view)
+          }
+        }
       }
 
       dom.addEventListener('dragstart', function (e) { e.preventDefault() })
