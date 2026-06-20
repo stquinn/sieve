@@ -41,15 +41,10 @@
             decorations: function (state) {
               var ps = refChainKey.getState(state)
               if (!ps || !ps.ids || !ps.ids.length) return DecorationSet.empty
-              var want = {}
-              ps.ids.forEach(function (id) { want[id] = true })
-              var isProse = T.isNativeProseNodeName || function () { return false }
-              var decos = []
-              state.doc.forEach(function (node, offset) {
-                var id = node.attrs && node.attrs.id
-                if (id && want[id] && isProse(node.type.name)) {
-                  decos.push(Decoration.node(offset, offset + node.nodeSize, { class: 'block-ref-active' }))
-                }
+              var hits = (T.proseChainHits || function () { return [] })(state.doc, ps.ids)
+              if (!hits.length) return DecorationSet.empty
+              var decos = hits.map(function (h) {
+                return Decoration.node(h.from, h.to, { class: 'block-ref-active' })
               })
               return DecorationSet.create(state.doc, decos)
             },

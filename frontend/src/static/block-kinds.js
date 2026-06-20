@@ -43,10 +43,32 @@ export function isNativeProseNodeName(name) {
   return String(name).indexOf('sieve-') !== 0
 }
 
+// proseChainHits returns the {from,to,id} ranges of the top-level NATIVE PROSE
+// nodes whose id is in `ids` — the nodes the AI ref-chain hover-glow decorates.
+// Structured sieve blocks are deliberately EXCLUDED: they are NodeViews whose DOM
+// is opaque to ProseMirror, so ai-block-renderer's applyChain toggles their class
+// via classList. A native prose <p> is owned by PM (which reverts a directly-set
+// class on its next view update), so it gets `block-ref-active` via a PM
+// decoration instead — and this is the pure selection that decoration is built
+// from. Pure (walks the doc, no TipTap/DOM deps) so it is unit-testable.
+export function proseChainHits(doc, ids) {
+  var want = {}
+  ;(ids || []).forEach(function (id) { if (id) want[id] = true })
+  var hits = []
+  doc.forEach(function (node, offset) {
+    var id = node.attrs && node.attrs.id
+    if (id && want[id] && isNativeProseNodeName(node.type.name)) {
+      hits.push({ from: offset, to: offset + node.nodeSize, id: id })
+    }
+  })
+  return hits
+}
+
 if (typeof window !== 'undefined') {
   window.TipTap = window.TipTap || {}
   window.TipTap.registerBlockKind = registerBlockKind
   window.TipTap.getBlockKind = getBlockKind
   window.TipTap.listBlockKinds = listBlockKinds
   window.TipTap.isNativeProseNodeName = isNativeProseNodeName
+  window.TipTap.proseChainHits = proseChainHits
 }
