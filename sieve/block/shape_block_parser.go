@@ -79,9 +79,13 @@ func (p *shapeBlockParser) Open(parent ast.Node, reader text.Reader, pc gmparser
 	if !ok {
 		return nil, gmparser.NoChildren
 	}
+	// Do NOT call reader.Advance here: goldmark's parseBlocks calls AdvanceLine()
+	// once after Open returns, which is sufficient to move past the head line.
+	// Calling Advance inside Open causes a double-skip (Advance's internal
+	// AdvanceLine on the trailing \n + parseBlocks' AdvanceLine), which loses
+	// the first body line.
 	node := &shapeNode{ShapeKind: shape.Kind, Start: segment.Start, Stop: segment.Stop}
 	pc.Set(shapeStateKey, &shapeParseState{tail: shape.Tail, start: segment.Start, stop: segment.Stop})
-	reader.Advance(segment.Len())
 	return node, gmparser.NoChildren
 }
 
@@ -92,7 +96,12 @@ func (p *shapeBlockParser) Continue(node ast.Node, reader text.Reader, pc gmpars
 		return gmparser.Close
 	}
 	st.stop = segment.Stop
-	reader.Advance(segment.Len())
+	// Use AdvanceToEOL (not Advance(segment.Len())) to position the reader AT
+	// the line's trailing \n without crossing into the next line. parseBlocks
+	// calls AdvanceLine() after Continue returns, which is what moves to the
+	// next line. Advance(segment.Len()) would trigger an internal AdvanceLine
+	// on the \n, and parseBlocks' AdvanceLine would then double-skip a line.
+	reader.AdvanceToEOL()
 	if strings.HasPrefix(strings.TrimSpace(string(line)), st.tail) {
 		return gmparser.Close
 	}

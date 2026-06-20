@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"strings"
 	"sync"
 
 	"sieve/sieve/fencedblock"
@@ -137,12 +138,37 @@ func (d FencedDeserializer) Accepts(region Region) bool {
 }
 
 func (d FencedDeserializer) Deserialize(region Region) ([]SieveBlock, error) {
-	attrs, err := fencedblock.DeserializeYaml(region.Body)
+	// region.Body == region.Raw (shape-driven scanner: verbatim span).
+	// Strip the opening fence line ("```kind\n") and closing fence line ("```"
+	// with optional trailing newline) to recover the YAML interior.
+	body := d.fencedBody(region.Raw)
+	attrs, err := fencedblock.DeserializeYaml(body)
 	if err != nil {
 		return nil, err
 	}
 	id, _ := attrs["id"].(string)
 	return []SieveBlock{NewSieveBlock(d.Kind, id, "", attrs)}, nil
+}
+
+// fencedBody strips the opening and closing fence delimiter lines from the raw
+// shape span, returning just the YAML interior. The raw span is of the form:
+// "```{kind}\n{yaml}\n```\n". An empty-body fence returns "".
+func (d FencedDeserializer) fencedBody(raw string) string {
+	// Drop the opening fence line (everything up to and including the first \n).
+	nl := strings.IndexByte(raw, '\n')
+	if nl < 0 {
+		return ""
+	}
+	after := raw[nl+1:]
+	// Drop the closing fence line (last non-empty line starting with "```").
+	// Walk back from the end to find the start of the closing fence line.
+	s := strings.TrimRight(after, "\n")
+	last := strings.LastIndexByte(s, '\n')
+	if last < 0 {
+		// Only one line between delimiters (the closing fence itself).
+		return ""
+	}
+	return s[:last+1] // includes the trailing \n of the last body line
 }
 
 // Shape derives the fenced delimiter pair from Kind — every structured flavour

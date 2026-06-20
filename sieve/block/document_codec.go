@@ -16,7 +16,13 @@ type DocumentCodec struct {
 }
 
 func NewDocumentCodec(reg ProcessorRegistry) *DocumentCodec {
-	return &DocumentCodec{registry: reg, scanner: NewRegionScanner()}
+	var shapes []RegionShape
+	for _, p := range reg.Ordered() {
+		if s := p.Shape(); !s.IsZero() {
+			shapes = append(shapes, s)
+		}
+	}
+	return &DocumentCodec{registry: reg, scanner: NewRegionScanner(shapes)}
 }
 
 // Deserialize parses markdown into an ordered block slice. It splits into regions,

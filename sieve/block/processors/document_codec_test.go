@@ -127,8 +127,12 @@ func TestFencedDeserializer_AcceptsOnlyMatchingKind(t *testing.T) {
 }
 
 func TestFencedDeserializer_DeserializeBuildsOneBlock(t *testing.T) {
+	// In the shape-driven scanner, Body == Raw (verbatim span including delimiters).
+	// The FencedDeserializer.fencedBody strips the opening/closing fence lines to
+	// recover the YAML interior.
+	raw := "```code\nid: co-1\nsource: hi\n```\n"
 	d := block.FencedDeserializer{Kind: "code"}
-	blocks, err := d.Deserialize(block.Region{Kind: "code", Body: "id: co-1\nsource: hi\n"})
+	blocks, err := d.Deserialize(block.Region{Kind: "code", Body: raw, Raw: raw})
 	if err != nil {
 		t.Fatal(err)
 	}
