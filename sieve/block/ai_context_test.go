@@ -66,6 +66,23 @@ func TestAIContext_String_docHasNoHeader(t *testing.T) {
 	}
 }
 
+func TestAIContext_String_skipsEmptyTagValuesAndTags(t *testing.T) {
+	// A renderer may add tags unconditionally (e.g. smart-image ALT/Summary); empty
+	// values must not render as `Label: ""`. A tag with NO non-empty value drops.
+	c := AIContext{
+		NodeIDs: []string{"img-1"},
+		Content: "Image: x.png",
+		Tags: []Tag{
+			{Label: "ALT", Values: []string{""}},                 // all empty → dropped
+			{Label: "Summary", Values: []string{"", "a real one"}}, // empty filtered, keep the real
+		},
+	}
+	want := "NODE ID: img-1\nImage: x.png\n\n" + `Summary: "a real one"`
+	if got := c.String(); got != want {
+		t.Errorf("String():\n got %q\nwant %q", got, want)
+	}
+}
+
 func TestAIContext_String_taglessBlock(t *testing.T) {
 	c := AIContext{NodeIDs: []string{"co-1"}, Content: "source: x"}
 	if got := c.String(); got != "NODE ID: co-1\nsource: x" {

@@ -163,13 +163,12 @@ func (p *SmartImageProcessor) BuildContext(blk block.SieveBlock, _ block.DocView
 	filename := filepath.Base(src)
 	var sb strings.Builder
 	sb.WriteString("Image: " + filename + "\n")
-	if alt != "" {
-		sb.WriteString("Alt: " + alt + "\n")
+	ctx := block.AIContext{NodeIDs: []string{blk.ID}, Content: sb.String()}
+	ctx.Tags = []block.Tag{
+		{Label: "ALT", Values: []string{alt}},
+		{Label: "Summary", Values: []string{summary}},
 	}
-	if summary != "" {
-		sb.WriteString("Summary: " + summary)
-	}
-	return block.AIContext{NodeIDs: []string{blk.ID}, Content: sb.String()}
+	return ctx
 }
 
 func (p *SmartImageProcessor) JobLabel(_ *block.SieveBlock) string { return "Describing image…" }

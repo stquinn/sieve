@@ -83,12 +83,18 @@ func (c AIContext) String() string {
 	}
 	b.WriteString(c.Content)
 	for _, t := range c.Tags {
-		if len(t.Values) == 0 {
-			continue
+		// Skip empty/whitespace values so a renderer can add tags unconditionally
+		// (e.g. smart-image ALT/Summary before description) without `Label: ""` noise;
+		// a tag with no non-empty value is dropped entirely.
+		var quoted []string
+		for _, v := range t.Values {
+			if strings.TrimSpace(v) == "" {
+				continue
+			}
+			quoted = append(quoted, `"`+v+`"`)
 		}
-		quoted := make([]string, len(t.Values))
-		for i, v := range t.Values {
-			quoted[i] = `"` + v + `"`
+		if len(quoted) == 0 {
+			continue
 		}
 		b.WriteString("\n\n")
 		b.WriteString(t.Label)

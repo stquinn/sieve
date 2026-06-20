@@ -180,7 +180,8 @@ func (p *CodeBlockProcessor) BuildContext(blk block.SieveBlock, _ block.DocView,
 	if src == "" {
 		return block.AIContext{}
 	}
-	return block.AIContext{NodeIDs: []string{blk.ID}, Content: "```" + language + "\n" + src + "\n```"}
+	ctx := block.AIContext{NodeIDs: []string{blk.ID}, Content: "```" + language + "\n" + src + "\n```"}
+	return ctx
 }
 
 func (p *CodeBlockProcessor) JobLabel(_ *block.SieveBlock) string {

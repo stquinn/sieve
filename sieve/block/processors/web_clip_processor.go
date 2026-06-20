@@ -85,16 +85,15 @@ func (p *WebClipBlockProcessor) BuildContext(blk block.SieveBlock, _ block.DocVi
 		return block.AIContext{}
 	}
 	var sb strings.Builder
-	if source != "" {
-		sb.WriteString("Source: " + source + "\n")
-	}
-	if title != "" {
-		sb.WriteString("Title: " + title + "\n")
-	}
 	if content != "" {
 		sb.WriteString("\n" + content)
 	}
-	return block.AIContext{NodeIDs: []string{blk.ID}, Content: sb.String()}
+	ctx := block.AIContext{NodeIDs: []string{blk.ID}, Content: sb.String()}
+	ctx.Tags = []block.Tag{
+		{Label: "URL", Values: []string{source}},
+		{Label: "Title", Values: []string{title}},
+	}
+	return ctx
 }
 
 func (p *WebClipBlockProcessor) JobLabel(blk *block.SieveBlock) string {
