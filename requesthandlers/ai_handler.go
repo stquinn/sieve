@@ -6,6 +6,7 @@ import (
 
 	"sieve/sieve"
 	"sieve/sieve/domain"
+	"sieve/sieve/services"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -14,12 +15,12 @@ type AiHandler struct {
 	ServiceProvider  *sieve.ServiceProvider
 	EmitNotesChanged func()
 	Broadcast        func(event, data string)
-	JobTracker       *sieve.JobTracker
+	JobTracker       *services.JobTracker
 }
 
 func (h *AiHandler) emitJobStarted(jobID, label, docID string, spinTab bool) {
 	if h.JobTracker != nil {
-		h.JobTracker.Start(sieve.JobInfo{JobID: jobID, Label: label, DocID: docID, SpinTab: spinTab})
+		h.JobTracker.Start(services.JobInfo{JobID: jobID, Label: label, DocID: docID, SpinTab: spinTab})
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"net/http"
 	"sieve/sieve"
+	"sieve/sieve/services"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -32,7 +33,7 @@ type sidebarEntry struct {
 	ParentID    string
 }
 
-func prepSidebarEntries(entries []sieve.NoteEntry, openFolders map[string]bool, depth int, parentId string) []sidebarEntry {
+func prepSidebarEntries(entries []services.NoteEntry, openFolders map[string]bool, depth int, parentId string) []sidebarEntry {
 	out := make([]sidebarEntry, 0, len(entries))
 	for _, e := range entries {
 		se := sidebarEntry{
@@ -56,7 +57,7 @@ func prepSidebarEntries(entries []sieve.NoteEntry, openFolders map[string]bool, 
 
 // RenderSidebar writes the sidebar HTML fragment to w. It is shared by the
 // sidebar handler and any action handler that needs to return a refreshed tree.
-func RenderSidebar(w http.ResponseWriter, notes *sieve.DocumentService, state *sieve.StateService, tmpl *template.Template) {
+func RenderSidebar(w http.ResponseWriter, notes *services.DocumentService, state *services.StateService, tmpl *template.Template) {
 	w.Header().Set("Cache-Control", "no-store")
 	if notes == nil {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

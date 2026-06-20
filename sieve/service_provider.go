@@ -4,21 +4,22 @@ import (
 	"sieve/logger"
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
+	"sieve/sieve/services"
 	"sieve/store"
 	"time"
 )
 
 type ServiceProvider struct {
 	Store       store.Store
-	Library     LibraryService
-	Documents   *DocumentService
-	Assets      *AssetService
-	State       *StateService
+	Library     services.LibraryService
+	Documents   *services.DocumentService
+	Assets      *services.AssetService
+	State       *services.StateService
 	Prompts     *PromptService
 	AI          *AIService
-	Editor      *EditorService
-	Jobs        *JobTracker
-	LinkPreview *LinkPreviewService
+	Editor      *services.EditorService
+	Jobs        *services.JobTracker
+	LinkPreview *services.LinkPreviewService
 }
 
 // BlockServices returns the scoped dependency bag for block processors.
@@ -36,10 +37,10 @@ func (s *ServiceProvider) BlockServices() block.BlockServices {
 // Compile-time proof the concrete services satisfy the block ports. Lives at the
 // composition root — the only place that knows both the ports and the concretes.
 var (
-	_ block.DocumentsPort   = (*DocumentService)(nil)
-	_ block.AssetsPort      = (*AssetService)(nil)
-	_ block.StatePort       = (*StateService)(nil)
-	_ block.LinkPreviewPort = (*LinkPreviewService)(nil)
+	_ block.DocumentsPort   = (*services.DocumentService)(nil)
+	_ block.AssetsPort      = (*services.AssetService)(nil)
+	_ block.StatePort       = (*services.StateService)(nil)
+	_ block.LinkPreviewPort = (*services.LinkPreviewService)(nil)
 	_ block.AIPort          = (*AIService)(nil)
 )
 
@@ -47,13 +48,13 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	s.Store = store
 	var err error
 
-	s.Documents, err = NewDocumentService(store)
+	s.Documents, err = services.NewDocumentService(store)
 	if err != nil {
 		logger.Error("buffers init failed", "err", err)
 		return
 	}
-	s.Assets = NewAssetService(store)
-	s.State, err = NewStateService(store)
+	s.Assets = services.NewAssetService(store)
+	s.State, err = services.NewStateService(store)
 	if err != nil {
 		logger.Error("state init failed", "err", err)
 		return
@@ -64,10 +65,10 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 		return
 	}
 	s.AI = NewAIService(s.State, s.Prompts, s.Documents, storePath)
-	s.LinkPreview = NewLinkPreviewService()
+	s.LinkPreview = services.NewLinkPreviewService()
 	settings := s.State.LoadSettings()
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
-	s.Editor = NewEditorService(s.Documents, block.NewDocumentCodec(block.GlobalRegistry()), autosave)
+	s.Editor = services.NewEditorService(s.Documents, block.NewDocumentCodec(block.GlobalRegistry()), autosave)
 	s.Editor.SetServices(s.BlockServices())
 	s.Editor.SetJobs(s.Jobs) // re-set in handlers.go once the real JobTracker (with hub) exists
 	svc := s.BlockServices()

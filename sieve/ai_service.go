@@ -13,6 +13,7 @@ import (
 	"sieve/logger"
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
+	"sieve/sieve/services"
 	"sieve/store"
 
 	"golang.org/x/net/html"
@@ -21,13 +22,13 @@ import (
 // AIService owns all AI evaluation and filing operations. It resolves prompt
 // templates, settings, and folder lists internally so callers need no boilerplate.
 type AIService struct {
-	state     *StateService
+	state     *services.StateService
 	prompts   *PromptService
-	documents *DocumentService
+	documents *services.DocumentService
 	storePath string
 }
 
-func NewAIService(state *StateService, prompts *PromptService, documents *DocumentService, storePath string) *AIService {
+func NewAIService(state *services.StateService, prompts *PromptService, documents *services.DocumentService, storePath string) *AIService {
 	return &AIService{state: state, prompts: prompts, documents: documents, storePath: storePath}
 }
 
@@ -371,7 +372,7 @@ type FilingOutcome struct {
 	Document  domain.Document
 }
 
-func filingCommitDocument(n domain.Document, documents *DocumentService, save bool, fileAfter bool) (FilingOutcome, error) {
+func filingCommitDocument(n domain.Document, documents *services.DocumentService, save bool, fileAfter bool) (FilingOutcome, error) {
 	if save {
 		var err error
 		if fileAfter {

@@ -19,6 +19,7 @@ import (
 	"sieve/logger"
 	"sieve/sieve"
 	"sieve/sieve/domain"
+	"sieve/sieve/services"
 	"sieve/store"
 	"sieve/store/filestore"
 
@@ -33,13 +34,13 @@ type App struct {
 	hostname  string
 
 	ServiceProvider *sieve.ServiceProvider
-	Documents       *sieve.DocumentService
-	Assets          *sieve.AssetService
-	State           *sieve.StateService
+	Documents       *services.DocumentService
+	Assets          *services.AssetService
+	State           *services.StateService
 	Prompts         *sieve.PromptService
 	AI              *sieve.AIService
 
-	library  sieve.LibraryService // owns library discovery, recents, naming
+	library  services.LibraryService // owns library discovery, recents, naming
 	themesFS fs.FS
 	hub      *sseHub
 	watcher  *notesWatcher
@@ -49,7 +50,7 @@ type App struct {
 	DevServerPort int
 }
 
-func NewApp(storePath string, themesFS fs.FS, hub *sseHub, serviceProvider *sieve.ServiceProvider, library sieve.LibraryService) *App {
+func NewApp(storePath string, themesFS fs.FS, hub *sseHub, serviceProvider *sieve.ServiceProvider, library services.LibraryService) *App {
 	hostname, _ := os.Hostname()
 	if hostname == "" {
 		hostname = "localhost"

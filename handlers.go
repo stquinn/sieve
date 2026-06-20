@@ -11,6 +11,7 @@ import (
 	"sieve/requesthandlers"
 	"sieve/sieve"
 	"sieve/sieve/domain"
+	"sieve/sieve/services"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -118,7 +119,7 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 		tmpl:   tmpl,
 		static: http.FileServer(http.FS(staticFS)),
 	}
-	jobTracker := sieve.NewJobTracker()
+	jobTracker := services.NewJobTracker()
 	jobTracker.Broadcast = hub.broadcast
 	sp.Jobs = jobTracker
 	if sp.Editor != nil {
