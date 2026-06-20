@@ -56,8 +56,8 @@ func (c *DocumentCodec) Deserialize(markdown string) ([]SieveBlock, error) {
 			// structured kind: it coalesces into the terminal prose mop-up, its
 			// text (including any fence) preserved verbatim. The registry is the
 			// sole authority on what is structured — no kind-guessing heuristic.
-			// When Stage E registers container kinds (column-row, column), their
-			// processors claim them above and they become structured automatically.
+			// Any future kind that registers a processor is claimed above and
+			// becomes structured automatically.
 			pending = append(pending, region)
 			continue
 		}
@@ -112,7 +112,7 @@ func (c *DocumentCodec) firstAcceptor(region Region) BlockProcessor {
 
 // serializeBlock dispatches one block to its flavour's Serialize via the INJECTED
 // registry (not the package global) — the codec is the serialization authority.
-// The fence fallback covers processor-less kinds (column-row until Stage E).
+// The fence fallback covers any block-mode kind with no registered processor.
 func (c *DocumentCodec) serializeBlock(b SieveBlock) (string, error) {
 	if p := c.registry.Get(b.Kind); p != nil {
 		return p.Serialize(b)
@@ -122,7 +122,7 @@ func (c *DocumentCodec) serializeBlock(b SieveBlock) (string, error) {
 
 // serializeFencedBlock renders any block-mode kind as ```kind\n<yaml>\n```
 // using the shared literal-style machinery — registry-free, so it serializes
-// code, diagram, column-row, etc. uniformly without needing a BlockProcessor.
+// code, diagram, etc. uniformly without needing a BlockProcessor.
 func serializeFencedBlock(b SieveBlock) (string, error) {
 	body, err := fencedblock.SerializeYaml(b.Attrs)
 	if err != nil {

@@ -24,12 +24,10 @@ type SieveBlock struct {
 	Aliases []string
 }
 
-// Reserved kinds that are not registered BlockProcessors.
-const (
-	KindProse     = "prose"
-	KindColumnRow = "column-row"
-	KindColumn    = "column"
-)
+// KindProse is the terminal prose kind. Prose is registered as a processor but
+// is special: it is the mop-up that absorbs any region no structured processor
+// claims (see DocumentCodec.firstAcceptor / ProseProcessor.Accepts).
+const KindProse = "prose"
 
 // NewSieveBlock is the sole sanctioned way to construct a block, and it enforces
 // the invariant the type cannot enforce on its own (Go has no constructors): a

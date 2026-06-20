@@ -189,30 +189,29 @@ func TestDocumentCodec_RoundTrip(t *testing.T) {
 }
 
 // TestDocumentCodec_ProcessorlessFenceCoalescesToProse verifies that a fenced
-// block whose kind has NO registered processor (column-row) is NOT treated as
-// structured — the registry is the sole authority on supported kinds — so it
-// coalesces into the prose mop-up with its fence text preserved verbatim. When
-// Stage E registers container kinds, their processors claim them and they become
-// structured automatically.
+// block whose kind has NO registered processor is NOT treated as structured —
+// the registry is the sole authority on supported kinds — so it coalesces into
+// the prose mop-up with its fence text preserved verbatim. Any future kind that
+// registers a processor is claimed and becomes structured automatically.
 func TestDocumentCodec_ProcessorlessFenceCoalescesToProse(t *testing.T) {
-	// newFakeRegistry registers only code + prose; column-row has no processor.
+	// newFakeRegistry registers only code + prose; "mystery" has no processor.
 	c := block.NewDocumentCodec(newFakeRegistry())
-	md := "```column-row\nid: cr-1\nwidths:\n  - 0.5\n  - 0.5\n```"
+	md := "```mystery\nfoo: bar\nbaz: 1\n```"
 	blocks, err := c.Deserialize(md)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i, b := range blocks {
 		if b.Kind != block.KindProse {
-			t.Errorf("block[%d] kind = %q, want prose (column-row has no processor)", i, b.Kind)
+			t.Errorf("block[%d] kind = %q, want prose (mystery has no processor)", i, b.Kind)
 		}
 	}
 	var combined string
 	for _, b := range blocks {
 		combined += b.Content()
 	}
-	if !strings.Contains(combined, "id: cr-1") {
-		t.Errorf("column-row fence text not preserved verbatim in prose: %q", combined)
+	if !strings.Contains(combined, "foo: bar") {
+		t.Errorf("processor-less fence text not preserved verbatim in prose: %q", combined)
 	}
 }
 

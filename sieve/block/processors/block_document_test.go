@@ -99,8 +99,7 @@ func TestBlockDoc_RoundTripStable(t *testing.T) {
 	// Each prose block is a single paragraph so per-paragraph segmentation
 	// (Stage B.1) preserves the block count through the round-trip. Only kinds
 	// with a registered processor (prose, code) stay structured through the codec;
-	// processor-less kinds (column-row) coalesce to prose until Stage E registers
-	// them, so they are not exercised here.
+	// processor-less kinds coalesce to prose, so they are not exercised here.
 	doc := []block.SieveBlock{
 		block.NewSieveBlock(block.KindProse, "pr-1", "# Title", nil),
 		block.NewSieveBlock("code", "co-1", "", map[string]interface{}{"id": "co-1", "source": "x = 1"}),

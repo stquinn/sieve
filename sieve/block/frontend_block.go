@@ -26,10 +26,8 @@ type FrontendBlock struct {
 
 // BlockDocToFrontendBlocks projects an ordered BlockDoc into the flat
 // []FrontendBlock the WYSIWYG load sends to the client. Prose blocks pass their
-// Content through verbatim; every other (structured/container) block is rendered
-// to its fence text via the shared serializer. Containers are opaque here — their
-// by-value child expansion is Stage E; for now a column-row serializes as a
-// single structured fence, exactly as the codec round-trips it.
+// Content through verbatim; every other (structured) block is rendered to its
+// fence text via the shared serializer, exactly as the codec round-trips it.
 func BlockDocToFrontendBlocks(blocks []SieveBlock) ([]FrontendBlock, error) {
 	out := make([]FrontendBlock, 0, len(blocks))
 	for _, b := range blocks {
