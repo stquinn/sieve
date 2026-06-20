@@ -1,6 +1,10 @@
 package block
 
-import "time"
+import (
+	"time"
+
+	"sieve/logger"
+)
 
 // This file holds ShadowDocument's snapshot + atomic-mutation methods. Together
 // with shadow_document.go they make ShadowDocument the SOLE owner of its data and
@@ -52,21 +56,47 @@ func (s *ShadowDocument) SnapshotBlocks() []SieveBlock {
 // SnapshotForJob captures, under ONE lock, both a deep copy of the target block
 // (for the processor to mutate) and an immutable DocView of the whole document
 // (for the job to resolve any block by id). Returns false if the block is absent.
+//
+// The DocView is READ-ONLY, job-creation-time context: a background job (any async
+// task, not just AI) reads it ONLY to build its prompt/context before its long
+// operation, and never writes back through it — results flow as a delta merged into
+// the LIVE shadow by EditorService. So a snapshot going stale during a minutes-long
+// job is correct by design; only the context the job reasoned about is frozen.
+//
+// In markdown (breakglass) mode the live Blocks tree is frozen while the user edits
+// the raw buffer, so a snapshot built from it would be incoherent — a per-block read
+// would see stale content. Derive the tree from the authoritative buffer instead, so
+// the snapshot is internally consistent. Save is unaffected: deriveMarkdown returns
+// the buffer verbatim in markdown mode, never a re-serialization of this tree.
 func (s *ShadowDocument) SnapshotForJob(blockID string) (SieveBlock, DocView, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	b := s.findBlock(blockID)
-	if b == nil {
+	blocks := s.Blocks
+	if s.Mode == "markdown" {
+		if reparsed, err := s.codec.Deserialize(s.mdModeBuffer); err == nil {
+			blocks = reparsed
+		} else {
+			logger.Warn("editor: markdown-mode snapshot reparse failed", "uuid", s.UUID, "err", err)
+		}
+	}
+	var target *SieveBlock
+	for i := range blocks {
+		if blocks[i].ID == blockID {
+			target = &blocks[i]
+			break
+		}
+	}
+	if target == nil {
 		return SieveBlock{}, DocView{}, false
 	}
 	doc := DocView{
 		UUID:         s.UUID,
 		Mode:         s.Mode,
 		mdModeBuffer: s.mdModeBuffer,
-		Blocks:       append([]SieveBlock(nil), s.Blocks...),
+		Blocks:       append([]SieveBlock(nil), blocks...),
 		codec:        s.codec,
 	}
-	return cloneBlockDeep(*b), doc, true
+	return cloneBlockDeep(*target), doc, true
 }
 
 // TryDispatch atomically transitions the block from PENDING to DISPATCHED and

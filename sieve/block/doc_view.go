@@ -10,6 +10,16 @@ import "sieve/logger"
 // embedded sync.Mutex made every by-value pass a `go vet` copylocks hazard, and
 // — worse — passing the live *ShadowDocument would leak the mutable cell into a
 // concurrent job; the copy is deliberate isolation).
+//
+// CONTRACT (load-bearing): a DocView is READ-ONLY, job-creation-time context. A
+// background job (any async task — only AI even reads it today) consults it ONLY to
+// assemble its prompt/context BEFORE its long operation, and NEVER writes back
+// through it. Results flow as a delta that EditorService merges into the LIVE shadow
+// (RunJob diffs the job's block copy → applyJobUpdate → SetBlock). So a DocView going
+// stale during a minutes-long job is correct by design — nothing past job creation
+// reads it, and no live state is mutated through it. Do NOT route writes or
+// post-completion decisions through a DocView; if you need live state, look the
+// ShadowDocument up again.
 type DocView struct {
 	UUID         string
 	Mode         string
