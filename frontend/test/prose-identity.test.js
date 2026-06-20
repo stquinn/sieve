@@ -31,9 +31,9 @@ describe('prose identity unification (blockId → id)', () => {
     expect(Object.keys(attrs)).not.toContain('blockId')
   })
 
-  it('renderHTML binds the id to data-id (never a literal id=), and omits it when empty', () => {
+  it('renderHTML binds the id to data-id (never a literal id=) and tags the shared block-node class, omitting both when empty', () => {
     const def = BlockId.addGlobalAttributes()[0].attributes.id
-    expect(def.renderHTML({ id: 'pr-1' })).toEqual({ 'data-id': 'pr-1' })
+    expect(def.renderHTML({ id: 'pr-1' })).toEqual({ 'data-id': 'pr-1', class: 'block-node' })
     expect(def.renderHTML({ id: '' })).toEqual({})
   })
 

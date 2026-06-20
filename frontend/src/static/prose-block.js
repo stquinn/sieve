@@ -57,8 +57,11 @@ import { registerBlockKind } from './block-kinds.js'
             parseHTML: function (el) { return el.getAttribute('data-id') || '' },
             renderHTML: function (attrs) {
               // Bind to data-id (never a literal id=); omit when empty so
-              // nested/unminted nodes stay clean.
-              return attrs.id ? { 'data-id': attrs.id } : {}
+              // nested/unminted nodes stay clean. Also tag top-level prose blocks
+              // with the shared `block-node` class so they participate in the same
+              // block styling as structured sieve blocks (rest padding + the AI
+              // ref-chain-active accent/highlight) — one class hook for every block.
+              return attrs.id ? { 'data-id': attrs.id, class: 'block-node' } : {}
             },
           },
         },

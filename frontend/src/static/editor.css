@@ -766,10 +766,12 @@ textarea::selection {
 }
 
 /* ── Block target nodes ──────────────────────────────────────────────── */
-/* BlockNode is a transparent wrapper — content looks identical to        */
-/* unwrapped content at rest.  When the cursor is inside or hovering over */
-/* a referencing aiBlock, the class `block-ref-active` is toggled via     */
-/* direct DOM manipulation in AiBlockView, fading in a subtle highlight.  */
+/* `block-node` is the shared block class carried by EVERY block: prose    */
+/* blocks tag themselves with it (prose-block.js blockId renderHTML), and  */
+/* structured wrappers (image/code) match the same rules — so all blocks   */
+/* align and style uniformly. When the cursor hovers a referencing aiBlock */
+/* its ref chain toggles `block-ref-active` (ai-block-renderer applyChain), */
+/* fading in the left accent + promoting any ==highlighted== mark.         */
 
 .block-node,
 .image-block,
