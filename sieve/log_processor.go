@@ -3,6 +3,7 @@ package sieve
 import (
 	"encoding/json"
 	"regexp"
+	"sieve/sieve/block"
 	"sieve/sieve/domain"
 	"strings"
 	"time"
@@ -52,19 +53,19 @@ func looksLikeLog(source string, customParsers []domain.CustomLogParser) bool {
 }
 
 type LogProcessor struct {
-	svc                BlockServices
-	FencedSerializer   // one shared YAML serialization — free
-	FencedDeserializer // its mirror — recognise+parse the fenced form
+	svc                      block.BlockServices
+	block.FencedSerializer   // one shared YAML serialization — free
+	block.FencedDeserializer // its mirror — recognise+parse the fenced form
 }
 
-func NewLogProcessor(svc BlockServices) *LogProcessor {
-	return &LogProcessor{svc: svc, FencedDeserializer: FencedDeserializer{Kind: "log"}}
+func NewLogProcessor(svc block.BlockServices) *LogProcessor {
+	return &LogProcessor{svc: svc, FencedDeserializer: block.FencedDeserializer{Kind: "log"}}
 }
 
 func (p *LogProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
 		"id":                id,
-		"status":            BlockStatusPending,
+		"status":            block.BlockStatusPending,
 		"source":            "",
 		"language":          "log",
 		"createdAt":         time.Now().UTC().Format(time.RFC3339),
@@ -79,7 +80,7 @@ func (p *LogProcessor) InitAttrs(id string, overrides map[string]interface{}) ma
 	return attrs
 }
 
-func (p *LogProcessor) IsBlock(entries []ContentEntry) bool {
+func (p *LogProcessor) IsBlock(entries []block.ContentEntry) bool {
 	custom := p.customParsers()
 	for _, e := range entries {
 		// Native Sieve Log block
@@ -88,10 +89,10 @@ func (p *LogProcessor) IsBlock(entries []ContentEntry) bool {
 		}
 		// Code block with language "log" or matching heuristics
 		if e.MIMEType == "sieve/code" && strings.TrimSpace(e.Content) != "" {
-			block := ParseFirstBlock(e.Content)
-			if block != nil {
-				source, _ := block.Attrs["source"].(string)
-				if block.Attrs["language"] == "log" && strings.TrimSpace(source) != "" {
+			blk := block.ParseFirstBlock(e.Content)
+			if blk != nil {
+				source, _ := blk.Attrs["source"].(string)
+				if blk.Attrs["language"] == "log" && strings.TrimSpace(source) != "" {
 					return true
 				}
 				if looksLikeLog(source, custom) {
@@ -119,22 +120,22 @@ func (p *LogProcessor) customParsers() []domain.CustomLogParser {
 	return p.svc.State.LoadSettings().CustomLogParsers
 }
 
-func (p *LogProcessor) Transform(entries []ContentEntry, uuid string, blockID string) map[string]interface{} {
+func (p *LogProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string) map[string]interface{} {
 	custom := p.customParsers()
 	for _, e := range entries {
 		if e.MIMEType == "sieve/log" {
-			block := ParseFirstBlock(e.Content)
-			if block != nil {
-				source, _ := block.Attrs["source"].(string)
+			blk := block.ParseFirstBlock(e.Content)
+			if blk != nil {
+				source, _ := blk.Attrs["source"].(string)
 				return map[string]interface{}{"source": strings.TrimSpace(source)}
 			}
 		}
 		if e.MIMEType == "sieve/code" && strings.TrimSpace(e.Content) != "" {
-			block := ParseFirstBlock(e.Content)
-			if block != nil {
-				source, _ := block.Attrs["source"].(string)
+			blk := block.ParseFirstBlock(e.Content)
+			if blk != nil {
+				source, _ := blk.Attrs["source"].(string)
 				trimmed := strings.TrimSpace(source)
-				if block.Attrs["language"] == "log" && trimmed != "" {
+				if blk.Attrs["language"] == "log" && trimmed != "" {
 					return map[string]interface{}{"source": trimmed}
 				}
 				if looksLikeLog(trimmed, custom) {
@@ -152,22 +153,22 @@ func (p *LogProcessor) Transform(entries []ContentEntry, uuid string, blockID st
 	return nil
 }
 
-func (p *LogProcessor) OnChange(_ *SieveBlock) {}
+func (p *LogProcessor) OnChange(_ *block.SieveBlock) {}
 
-func (p *LogProcessor) BuildContext(block SieveBlock, _ DocView, seen map[string]bool) string {
-	src, _ := block.Attrs["source"].(string)
+func (p *LogProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, seen map[string]bool) string {
+	src, _ := blk.Attrs["source"].(string)
 	if strings.TrimSpace(src) == "" {
 		return ""
 	}
-	return "NODE ID: " + block.ID + "\n\n```log\n" + src + "\n```"
+	return "NODE ID: " + blk.ID + "\n\n```log\n" + src + "\n```"
 }
 
-func (p *LogProcessor) JobLabel(_ *SieveBlock) string { return "" }
+func (p *LogProcessor) JobLabel(_ *block.SieveBlock) string { return "" }
 
 func (p *LogProcessor) IDPrefix() string { return "log" }
 
-func (p *LogProcessor) Mode() BlockMode {
-	return BlockModeBlock
+func (p *LogProcessor) Mode() block.BlockMode {
+	return block.BlockModeBlock
 }
 
 type LogLineData struct {
@@ -447,12 +448,12 @@ func mapLevelToSeverity(level string) string {
 	return "none"
 }
 
-func (p *LogProcessor) RunJob(jctx JobContext) error {
-	block := jctx.Block
-	source, _ := block.Attrs["source"].(string)
+func (p *LogProcessor) RunJob(jctx block.JobContext) error {
+	blk := jctx.Block
+	source, _ := blk.Attrs["source"].(string)
 
 	if strings.TrimSpace(source) == "" {
-		block.Attrs["status"] = BlockStatusComplete
+		blk.Attrs["status"] = block.BlockStatusComplete
 		return nil
 	}
 
@@ -469,20 +470,20 @@ func (p *LogProcessor) RunJob(jctx JobContext) error {
 		cat = domain.LibraryCategory
 	}
 
-	asset, err := p.svc.Assets.Save(cat, jctx.UUID, block.ID+"-parsed", jsonData)
+	asset, err := p.svc.Assets.Save(cat, jctx.UUID, blk.ID+"-parsed", jsonData)
 	if err != nil {
 		return err
 	}
 
-	block.Attrs["parsedAssetRef"] = asset.ExternalRef()
-	block.Attrs["logFormatName"] = parsedData.Format
-	block.Attrs["logFormatRegex"] = parsedData.Pattern
-	block.Attrs["status"] = BlockStatusComplete
+	blk.Attrs["parsedAssetRef"] = asset.ExternalRef()
+	blk.Attrs["logFormatName"] = parsedData.Format
+	blk.Attrs["logFormatRegex"] = parsedData.Pattern
+	blk.Attrs["status"] = block.BlockStatusComplete
 	return nil
 }
 
-func (p *LogProcessor) MarkdownRepresentation(block SieveBlock) string {
-	source, _ := block.Attrs["source"].(string)
+func (p *LogProcessor) MarkdownRepresentation(blk block.SieveBlock) string {
+	source, _ := blk.Attrs["source"].(string)
 	source = strings.TrimSpace(source)
 	if source == "" {
 		return ""

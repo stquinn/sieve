@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sieve/sieve/block"
 	"sieve/sieve/domain"
 	"strings"
 	"time"
@@ -14,18 +15,18 @@ import (
 // It fetches Open Graph metadata for a URL and stores the result as block attrs.
 // Image download is best-effort; failures are non-fatal.
 type SmartCardProcessor struct {
-	svc                BlockServices
-	FencedSerializer   // one shared YAML serialization — free
-	FencedDeserializer // its mirror — recognise+parse the fenced form
+	svc                      block.BlockServices
+	block.FencedSerializer   // one shared YAML serialization — free
+	block.FencedDeserializer // its mirror — recognise+parse the fenced form
 }
 
-func NewSmartCardProcessor(svc BlockServices) *SmartCardProcessor {
-	return &SmartCardProcessor{svc: svc, FencedDeserializer: FencedDeserializer{Kind: "smart-card"}}
+func NewSmartCardProcessor(svc block.BlockServices) *SmartCardProcessor {
+	return &SmartCardProcessor{svc: svc, FencedDeserializer: block.FencedDeserializer{Kind: "smart-card"}}
 }
 
 func (p *SmartCardProcessor) IDPrefix() string { return "crd" }
 
-func (p *SmartCardProcessor) Mode() BlockMode { return BlockModeBlock }
+func (p *SmartCardProcessor) Mode() block.BlockMode { return block.BlockModeBlock }
 
 func (p *SmartCardProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
@@ -36,7 +37,7 @@ func (p *SmartCardProcessor) InitAttrs(id string, overrides map[string]interface
 		"image":             "",
 		"siteName":          "",
 		"fetchedAt":         "",
-		"status":            BlockStatusPending,
+		"status":            block.BlockStatusPending,
 		"createdAt":         time.Now().UTC().Format(time.RFC3339),
 		"completedAt":       "",
 		"error":             "",
@@ -51,7 +52,7 @@ func (p *SmartCardProcessor) InitAttrs(id string, overrides map[string]interface
 	return attrs
 }
 
-func (p *SmartCardProcessor) IsBlock(entries []ContentEntry) bool {
+func (p *SmartCardProcessor) IsBlock(entries []block.ContentEntry) bool {
 	for _, e := range entries {
 		trimmed := strings.TrimSpace(e.Content)
 		if trimmed == "" || strings.ContainsAny(trimmed, " \t\n\r") {
@@ -68,7 +69,7 @@ func (p *SmartCardProcessor) IsBlock(entries []ContentEntry) bool {
 	return false
 }
 
-func (p *SmartCardProcessor) Transform(entries []ContentEntry, uuid, blockID string) map[string]interface{} {
+func (p *SmartCardProcessor) Transform(entries []block.ContentEntry, uuid, blockID string) map[string]interface{} {
 	for _, e := range entries {
 		trimmed := strings.TrimSpace(e.Content)
 		if trimmed != "" && (strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://")) && !strings.ContainsAny(trimmed, " \t\n\r") {
@@ -78,10 +79,10 @@ func (p *SmartCardProcessor) Transform(entries []ContentEntry, uuid, blockID str
 	return nil
 }
 
-func (p *SmartCardProcessor) OnChange(_ *SieveBlock) {}
+func (p *SmartCardProcessor) OnChange(_ *block.SieveBlock) {}
 
-func (p *SmartCardProcessor) JobLabel(block *SieveBlock) string {
-	href, _ := block.Attrs["href"].(string)
+func (p *SmartCardProcessor) JobLabel(blk *block.SieveBlock) string {
+	href, _ := blk.Attrs["href"].(string)
 	if href == "" {
 		return "Fetching link…"
 	}
@@ -91,17 +92,17 @@ func (p *SmartCardProcessor) JobLabel(block *SieveBlock) string {
 	return "Fetching link…"
 }
 
-func (p *SmartCardProcessor) BuildContext(block SieveBlock, _ DocView, _ map[string]bool) string {
-	href, _ := block.Attrs["href"].(string)
+func (p *SmartCardProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, _ map[string]bool) string {
+	href, _ := blk.Attrs["href"].(string)
 	if href == "" {
 		return ""
 	}
-	title, _ := block.Attrs["title"].(string)
-	desc, _ := block.Attrs["description"].(string)
-	site, _ := block.Attrs["siteName"].(string)
+	title, _ := blk.Attrs["title"].(string)
+	desc, _ := blk.Attrs["description"].(string)
+	site, _ := blk.Attrs["siteName"].(string)
 
 	var sb strings.Builder
-	sb.WriteString("NODE ID: " + block.ID + "\n\n")
+	sb.WriteString("NODE ID: " + blk.ID + "\n\n")
 	sb.WriteString("Link: " + href + "\n")
 	if title != "" {
 		sb.WriteString("Title: " + title + "\n")
@@ -115,34 +116,34 @@ func (p *SmartCardProcessor) BuildContext(block SieveBlock, _ DocView, _ map[str
 	return sb.String()
 }
 
-func (p *SmartCardProcessor) RunJob(jctx JobContext) error {
-	block := jctx.Block
-	href, _ := block.Attrs["href"].(string)
+func (p *SmartCardProcessor) RunJob(jctx block.JobContext) error {
+	blk := jctx.Block
+	href, _ := blk.Attrs["href"].(string)
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	if href == "" {
-		block.Attrs["status"] = BlockStatusComplete
-		block.Attrs["completedAt"] = now
-		block.Attrs["fetchedAt"] = now
+		blk.Attrs["status"] = block.BlockStatusComplete
+		blk.Attrs["completedAt"] = now
+		blk.Attrs["fetchedAt"] = now
 		return nil
 	}
 
 	result := p.svc.LinkPreview.FetchFull(href)
 
-	block.Attrs["title"] = result.Title
-	block.Attrs["description"] = result.Description
-	block.Attrs["siteName"] = result.SiteName
+	blk.Attrs["title"] = result.Title
+	blk.Attrs["description"] = result.Description
+	blk.Attrs["siteName"] = result.SiteName
 
 	if result.OGImageURL != "" && p.svc.Assets != nil && p.svc.Documents != nil {
-		if ref, err := p.downloadImage(jctx.UUID, block.ID, result.OGImageURL); err == nil {
-			block.Attrs["image"] = ref
+		if ref, err := p.downloadImage(jctx.UUID, blk.ID, result.OGImageURL); err == nil {
+			blk.Attrs["image"] = ref
 		}
 		// image download failure is non-fatal
 	}
 
-	block.Attrs["status"] = BlockStatusComplete
-	block.Attrs["completedAt"] = now
-	block.Attrs["fetchedAt"] = now
+	blk.Attrs["status"] = block.BlockStatusComplete
+	blk.Attrs["completedAt"] = now
+	blk.Attrs["fetchedAt"] = now
 	return nil
 }
 
@@ -176,17 +177,17 @@ func (p *SmartCardProcessor) downloadImage(uuid, blockID, imageURL string) (stri
 	return asset.ExternalRef(), nil
 }
 
-func (p *SmartCardProcessor) MarkdownRepresentation(block SieveBlock) string {
-	href, _ := block.Attrs["href"].(string)
+func (p *SmartCardProcessor) MarkdownRepresentation(blk block.SieveBlock) string {
+	href, _ := blk.Attrs["href"].(string)
 	if href == "" {
 		return ""
 	}
-	title, _ := block.Attrs["title"].(string)
+	title, _ := blk.Attrs["title"].(string)
 	if strings.TrimSpace(title) == "" {
 		title = href
 	}
-	siteName, _ := block.Attrs["siteName"].(string)
-	description, _ := block.Attrs["description"].(string)
+	siteName, _ := blk.Attrs["siteName"].(string)
+	description, _ := blk.Attrs["description"].(string)
 
 	var sb strings.Builder
 	sb.WriteString("### [" + strings.TrimSpace(title) + "](" + href + ")")

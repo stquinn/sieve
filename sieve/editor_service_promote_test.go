@@ -1,6 +1,7 @@
 package sieve
 
 import (
+	"sieve/sieve/block"
 	"strings"
 	"testing"
 )
@@ -9,32 +10,32 @@ import (
 // assert the block anchor wrapper without depending on any real processor.
 type testMarkdownProcessor struct {
 	md string
-	FencedSerializer
-	FencedDeserializer
+	block.FencedSerializer
+	block.FencedDeserializer
 }
 
 func (p *testMarkdownProcessor) InitAttrs(id string, _ map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{"id": id}
 }
-func (p *testMarkdownProcessor) IsBlock(_ []ContentEntry) bool { return false }
-func (p *testMarkdownProcessor) Transform(_ []ContentEntry, _, _ string) map[string]interface{} {
+func (p *testMarkdownProcessor) IsBlock(_ []block.ContentEntry) bool { return false }
+func (p *testMarkdownProcessor) Transform(_ []block.ContentEntry, _, _ string) map[string]interface{} {
 	return nil
 }
-func (p *testMarkdownProcessor) RunJob(_ JobContext) error     { return nil }
-func (p *testMarkdownProcessor) JobLabel(_ *SieveBlock) string { return "" }
-func (p *testMarkdownProcessor) OnChange(_ *SieveBlock)        {}
-func (p *testMarkdownProcessor) Mode() BlockMode               { return BlockModeBlock }
-func (p *testMarkdownProcessor) BuildContext(_ SieveBlock, _ DocView, _ map[string]bool) string {
+func (p *testMarkdownProcessor) RunJob(_ block.JobContext) error     { return nil }
+func (p *testMarkdownProcessor) JobLabel(_ *block.SieveBlock) string { return "" }
+func (p *testMarkdownProcessor) OnChange(_ *block.SieveBlock)        {}
+func (p *testMarkdownProcessor) Mode() block.BlockMode               { return block.BlockModeBlock }
+func (p *testMarkdownProcessor) BuildContext(_ block.SieveBlock, _ block.DocView, _ map[string]bool) string {
 	return ""
 }
-func (p *testMarkdownProcessor) MarkdownRepresentation(_ SieveBlock) string { return p.md }
+func (p *testMarkdownProcessor) MarkdownRepresentation(_ block.SieveBlock) string { return p.md }
 
 func TestEditorService_PromoteBlock_wrapsInBlockAnchor(t *testing.T) {
-	RegisterProcessor("test-md", &testMarkdownProcessor{md: "promoted content", FencedDeserializer: FencedDeserializer{Kind: "test-md"}})
-	t.Cleanup(func() { UnregisterProcessor("test-md") })
+	block.RegisterProcessor("test-md", &testMarkdownProcessor{md: "promoted content", FencedDeserializer: block.FencedDeserializer{Kind: "test-md"}})
+	t.Cleanup(func() { block.UnregisterProcessor("test-md") })
 
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, NewDocumentCodec(globalRegistry()), 0)
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
 	es.SetLifecycleListener(&mockLifecycleListener{})
 
 	doc, _ := ds.New()

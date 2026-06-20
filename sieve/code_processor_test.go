@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sieve/sieve/block"
 	"sieve/sieve/domain"
 	"strings"
 	"testing"
@@ -12,12 +13,12 @@ import (
 // ── InitAttrs ────────────────────────────────────────────────────────────────
 
 func TestCodeBlockProcessor_InitAttrs_zeroState(t *testing.T) {
-	p := NewCodeBlockProcessor(BlockServices{})
+	p := NewCodeBlockProcessor(block.BlockServices{})
 	attrs := p.InitAttrs("co-0001", nil)
 	if attrs["id"] != "co-0001" {
 		t.Errorf("expected id=co-0001, got %v", attrs["id"])
 	}
-	if attrs["status"] != BlockStatusPending {
+	if attrs["status"] != block.BlockStatusPending {
 		t.Errorf("expected status=PENDING, got %v", attrs["status"])
 	}
 	if attrs["source"] != "" {
@@ -33,7 +34,7 @@ func TestCodeBlockProcessor_InitAttrs_zeroState(t *testing.T) {
 }
 
 func TestCodeBlockProcessor_InitAttrs_heuristicsApplied(t *testing.T) {
-	p := NewCodeBlockProcessor(BlockServices{})
+	p := NewCodeBlockProcessor(block.BlockServices{})
 	// InitAttrs must run heuristics synchronously so the user sees a language
 	// badge immediately, before RunJob (AI) completes.
 	attrs := p.InitAttrs("co-0002", map[string]interface{}{
@@ -46,13 +47,13 @@ func TestCodeBlockProcessor_InitAttrs_heuristicsApplied(t *testing.T) {
 		t.Errorf("expected detectionMethod=heuristic, got %v", attrs["detectionMethod"])
 	}
 	// Status stays PENDING — AI enrichment still runs in RunJob
-	if attrs["status"] != BlockStatusPending {
+	if attrs["status"] != block.BlockStatusPending {
 		t.Errorf("expected PENDING (AI enrichment not done yet), got %v", attrs["status"])
 	}
 }
 
 func TestCodeBlockProcessor_InitAttrs_withOverrides(t *testing.T) {
-	p := NewCodeBlockProcessor(BlockServices{})
+	p := NewCodeBlockProcessor(block.BlockServices{})
 	attrs := p.InitAttrs("co-0003", map[string]interface{}{
 		"source": "print('hello')",
 		"hint":   "python",
@@ -77,15 +78,15 @@ func TestCodeBlockProcessor_InitAttrs_withOverrides(t *testing.T) {
 // ── IsBlock + Transform ───────────────────────────────────────────────────────
 
 func TestCodeBlockProcessor_IsBlock_withLanguage(t *testing.T) {
-	p := NewCodeBlockProcessor(BlockServices{})
-	if !p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\nprint('world')\n```"}}) {
+	p := NewCodeBlockProcessor(block.BlockServices{})
+	if !p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\nprint('world')\n```"}}) {
 		t.Fatal("IsBlock must return true for a fenced code block")
 	}
 }
 
 func TestCodeBlockProcessor_Transform_withLanguage(t *testing.T) {
-	p := NewCodeBlockProcessor(BlockServices{})
-	overrides := p.Transform([]ContentEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\nprint('world')\n```"}}, "", "")
+	p := NewCodeBlockProcessor(block.BlockServices{})
+	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\nprint('world')\n```"}}, "", "")
 	if overrides == nil {
 		t.Fatal("Transform must return non-nil for a fenced code block")
 	}
@@ -105,15 +106,15 @@ func TestCodeBlockProcessor_Transform_withLanguage(t *testing.T) {
 }
 
 func TestCodeBlockProcessor_Transform_wideFenceWithNestedFences(t *testing.T) {
-	p := NewCodeBlockProcessor(BlockServices{})
+	p := NewCodeBlockProcessor(block.BlockServices{})
 	// A native ````markdown block whose content itself contains a ```http fence.
 	// The editor sizes the outer fence to 4 backticks; detection/extraction must
 	// recognise it and capture the inner content verbatim (inner fences intact).
 	content := "````markdown\n### Get User Profile\n```http\nGET /\n```\n````"
-	if !p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: content}}) {
+	if !p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: content}}) {
 		t.Fatal("IsBlock must return true for a 4-backtick fence")
 	}
-	overrides := p.Transform([]ContentEntry{{MIMEType: "text/plain", Content: content}}, "", "")
+	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: content}}, "", "")
 	if overrides == nil {
 		t.Fatal("Transform must return non-nil for a 4-backtick fence")
 	}
@@ -126,14 +127,14 @@ func TestCodeBlockProcessor_Transform_wideFenceWithNestedFences(t *testing.T) {
 }
 
 func TestCodeBlockProcessor_IsBlock_unfencedCode(t *testing.T) {
-	p := NewCodeBlockProcessor(BlockServices{})
+	p := NewCodeBlockProcessor(block.BlockServices{})
 	// Smart-paste of raw, unfenced source must still be detected as code
 	// (restored from the pre-framework PasteMatch).
 	src := "func main() {\n\tfmt.Println(\"hi\")\n\treturn\n}"
-	if !p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: src}}) {
+	if !p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: src}}) {
 		t.Fatal("IsBlock must return true for unfenced code that heuristics recognise")
 	}
-	overrides := p.Transform([]ContentEntry{{MIMEType: "text/plain", Content: src}}, "", "")
+	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: src}}, "", "")
 	if overrides == nil {
 		t.Fatal("Transform must return non-nil for unfenced code")
 	}
@@ -143,23 +144,23 @@ func TestCodeBlockProcessor_IsBlock_unfencedCode(t *testing.T) {
 }
 
 func TestCodeBlockProcessor_IsBlock_unfencedProseIsNotCode(t *testing.T) {
-	p := NewCodeBlockProcessor(BlockServices{})
+	p := NewCodeBlockProcessor(block.BlockServices{})
 	prose := "This is a normal paragraph of prose.\nIt spans a couple of lines.\nNothing here resembles source code at all."
-	if p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: prose}}) {
+	if p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: prose}}) {
 		t.Fatal("IsBlock must not treat ordinary multi-line prose as code")
 	}
 }
 
 func TestCodeBlockProcessor_IsBlock_noLanguage(t *testing.T) {
-	p := NewCodeBlockProcessor(BlockServices{})
-	if !p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "```\nsome code\n```"}}) {
+	p := NewCodeBlockProcessor(block.BlockServices{})
+	if !p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "```\nsome code\n```"}}) {
 		t.Fatal("IsBlock must return true for a fence without language")
 	}
 }
 
 func TestCodeBlockProcessor_Transform_noLanguage(t *testing.T) {
-	p := NewCodeBlockProcessor(BlockServices{})
-	overrides := p.Transform([]ContentEntry{{MIMEType: "text/plain", Content: "```\nsome code\n```"}}, "", "")
+	p := NewCodeBlockProcessor(block.BlockServices{})
+	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: "```\nsome code\n```"}}, "", "")
 	if overrides == nil {
 		t.Fatal("Transform must return non-nil for a fence without language")
 	}
@@ -172,25 +173,25 @@ func TestCodeBlockProcessor_Transform_noLanguage(t *testing.T) {
 }
 
 func TestCodeBlockProcessor_IsBlock_noMatch(t *testing.T) {
-	p := NewCodeBlockProcessor(BlockServices{})
-	if p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "just plain text"}}) {
+	p := NewCodeBlockProcessor(block.BlockServices{})
+	if p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "just plain text"}}) {
 		t.Fatal("IsBlock must return false for plain text")
 	}
-	if p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "`inline code`"}}) {
+	if p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "`inline code`"}}) {
 		t.Fatal("IsBlock must return false for inline code")
 	}
 }
 
 func TestCodeBlockProcessor_IsBlock_multiline(t *testing.T) {
-	p := NewCodeBlockProcessor(BlockServices{})
-	if !p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "```go\npackage main\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n```"}}) {
+	p := NewCodeBlockProcessor(block.BlockServices{})
+	if !p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "```go\npackage main\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n```"}}) {
 		t.Fatal("IsBlock must return true for a multiline fence")
 	}
 }
 
 func TestCodeBlockProcessor_Transform_multiline(t *testing.T) {
-	p := NewCodeBlockProcessor(BlockServices{})
-	overrides := p.Transform([]ContentEntry{{MIMEType: "text/plain", Content: "```go\npackage main\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n```"}}, "", "")
+	p := NewCodeBlockProcessor(block.BlockServices{})
+	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: "```go\npackage main\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n```"}}, "", "")
 	if overrides == nil {
 		t.Fatal("Transform must return non-nil for a multiline fence")
 	}
@@ -200,8 +201,8 @@ func TestCodeBlockProcessor_Transform_multiline(t *testing.T) {
 }
 
 func TestCodeBlockProcessor_IsBlock_htmlEntry(t *testing.T) {
-	p := NewCodeBlockProcessor(BlockServices{})
-	if p.IsBlock([]ContentEntry{{MIMEType: "text/html", Content: "<b>hello</b>"}}) {
+	p := NewCodeBlockProcessor(block.BlockServices{})
+	if p.IsBlock([]block.ContentEntry{{MIMEType: "text/html", Content: "<b>hello</b>"}}) {
 		t.Fatal("IsBlock must return false for HTML-only entry with no code content")
 	}
 }
@@ -237,19 +238,19 @@ func TestCodeBlockProcessor_RunJob_ai(t *testing.T) {
 	_, _ = fs.CreateText(domain.Prompts, "refine.txt", []byte("Refine this: {content}"))
 
 	ai := NewAIService(state, prompts, ds, tmpDir)
-	svc := BlockServices{
+	svc := block.BlockServices{
 		AI:        ai,
 		Documents: ds,
 		Assets:    assets,
 	}
 
 	p := NewCodeBlockProcessor(svc)
-	block := &SieveBlock{
+	blk := &block.SieveBlock{
 		ID:   "co-1234",
 		Kind: "code",
 		Attrs: map[string]interface{}{
 			"id":              "co-1234",
-			"status":          BlockStatusPending,
+			"status":          block.BlockStatusPending,
 			"source":          "package main",
 			"language":        "",
 			"detectionMethod": "",
@@ -257,18 +258,18 @@ func TestCodeBlockProcessor_RunJob_ai(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := p.RunJob(JobContext{Ctx: ctx, UUID: "", Block: block}); err != nil {
+	if err := p.RunJob(block.JobContext{Ctx: ctx, UUID: "", Block: blk}); err != nil {
 		t.Fatalf("RunJob failed: %v", err)
 	}
 
-	if block.Attrs["status"] != BlockStatusComplete {
-		t.Errorf("expected status COMPLETE, got %v", block.Attrs["status"])
+	if blk.Attrs["status"] != block.BlockStatusComplete {
+		t.Errorf("expected status COMPLETE, got %v", blk.Attrs["status"])
 	}
-	if block.Attrs["language"] != "go" {
-		t.Errorf("expected language refined to 'go', got %v", block.Attrs["language"])
+	if blk.Attrs["language"] != "go" {
+		t.Errorf("expected language refined to 'go', got %v", blk.Attrs["language"])
 	}
-	if block.Attrs["detectionMethod"] != BlockStatusPending && block.Attrs["detectionMethod"] != "ai" {
-		t.Errorf("expected detectionMethod refined to 'ai', got %v", block.Attrs["detectionMethod"])
+	if blk.Attrs["detectionMethod"] != block.BlockStatusPending && blk.Attrs["detectionMethod"] != "ai" {
+		t.Errorf("expected detectionMethod refined to 'ai', got %v", blk.Attrs["detectionMethod"])
 	}
 }
 
@@ -299,19 +300,19 @@ func TestCodeBlockProcessor_RunJob_aiFallback(t *testing.T) {
 	}
 
 	ai := NewAIService(state, prompts, ds, tmpDir)
-	svc := BlockServices{
+	svc := block.BlockServices{
 		AI:        ai,
 		Documents: ds,
 		Assets:    assets,
 	}
 
 	p := NewCodeBlockProcessor(svc)
-	block := &SieveBlock{
+	blk := &block.SieveBlock{
 		ID:   "co-1234",
 		Kind: "code",
 		Attrs: map[string]interface{}{
 			"id":              "co-1234",
-			"status":          BlockStatusPending,
+			"status":          block.BlockStatusPending,
 			"source":          "package main",
 			"language":        "heuristic-detected-lang",
 			"detectionMethod": "heuristic",
@@ -319,32 +320,32 @@ func TestCodeBlockProcessor_RunJob_aiFallback(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	err = p.RunJob(JobContext{Ctx: ctx, UUID: "", Block: block})
+	err = p.RunJob(block.JobContext{Ctx: ctx, UUID: "", Block: blk})
 
 	// AI failure must surface as an error so EditorService can set status=ERROR.
 	if err == nil {
 		t.Fatal("expected RunJob to return an error when the AI CLI fails")
 	}
 	// The block's status must be ERROR so callers know the job did not complete.
-	if block.Attrs["status"] != BlockStatusError {
-		t.Errorf("expected status ERROR, got %v", block.Attrs["status"])
+	if blk.Attrs["status"] != block.BlockStatusError {
+		t.Errorf("expected status ERROR, got %v", blk.Attrs["status"])
 	}
 }
 
 func TestCodeBlockProcessor_RunJob_returnsErrorOnAIFailure(t *testing.T) {
-	proc := NewCodeBlockProcessor(BlockServices{})
-	block := &SieveBlock{
+	proc := NewCodeBlockProcessor(block.BlockServices{})
+	blk := &block.SieveBlock{
 		ID:   "co-test",
 		Kind: "code",
 		Attrs: map[string]interface{}{
 			"id":     "co-test",
 			"source": "fmt.Println(\"hello\")",
-			"status": BlockStatusPending,
+			"status": block.BlockStatusPending,
 		},
 	}
 	// nil AI service — this should cause RunJob to return an error
 	// rather than silently setting status=COMPLETE.
-	err := proc.RunJob(JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: block})
+	err := proc.RunJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk})
 	if err == nil {
 		t.Error("expected RunJob to return an error when AI service is unavailable")
 	}
@@ -353,70 +354,70 @@ func TestCodeBlockProcessor_RunJob_returnsErrorOnAIFailure(t *testing.T) {
 // ── OnChange ─────────────────────────────────────────────────────────────────
 
 func TestOnChange_alwaysRunsHeuristicsWhenLanguageAlreadySet(t *testing.T) {
-	proc := NewCodeBlockProcessor(BlockServices{})
+	proc := NewCodeBlockProcessor(block.BlockServices{})
 
-	block := &SieveBlock{
+	blk := &block.SieveBlock{
 		ID:   "co-0001",
 		Kind: "code",
 		Attrs: map[string]interface{}{
 			"id":       "co-0001",
 			"language": "python",
-			"status":   BlockStatusComplete,
+			"status":   block.BlockStatusComplete,
 			"source":   strings.Repeat("fmt.Println(\"hello\")\nif err != nil { return err }\n", 5),
 		},
 	}
 
-	proc.OnChange(block)
+	proc.OnChange(blk)
 
-	if status, _ := block.Attrs["status"].(string); status == BlockStatusPending {
+	if status, _ := blk.Attrs["status"].(string); status == block.BlockStatusPending {
 		t.Error("expected status not to be PENDING: heuristics should identify Go without AI")
 	}
-	if lang, _ := block.Attrs["language"].(string); lang != "go" {
+	if lang, _ := blk.Attrs["language"].(string); lang != "go" {
 		t.Errorf("expected language=go after heuristics, got %q", lang)
 	}
 }
 
 func TestOnChange_doesNotScheduleAIWhenLanguageSetAndHeuristicsBlind(t *testing.T) {
-	proc := NewCodeBlockProcessor(BlockServices{})
+	proc := NewCodeBlockProcessor(block.BlockServices{})
 
-	block := &SieveBlock{
+	blk := &block.SieveBlock{
 		ID:   "co-0002",
 		Kind: "code",
 		Attrs: map[string]interface{}{
 			"id":       "co-0002",
 			"language": "rust",
-			"status":   BlockStatusComplete,
+			"status":   block.BlockStatusComplete,
 			"source":   "x = 1\ny = 2\nz = x + y",
 		},
 	}
 
-	proc.OnChange(block)
+	proc.OnChange(blk)
 
-	if status, _ := block.Attrs["status"].(string); status == BlockStatusPending {
+	if status, _ := blk.Attrs["status"].(string); status == block.BlockStatusPending {
 		t.Error("expected status not to be PENDING: AI result should be trusted when heuristics are silent")
 	}
-	if lang, _ := block.Attrs["language"].(string); lang != "rust" {
+	if lang, _ := blk.Attrs["language"].(string); lang != "rust" {
 		t.Errorf("expected language=rust (untouched), got %q", lang)
 	}
 }
 
 func TestOnChange_schedulesAIWhenNoLanguageAndHeuristicsBlind(t *testing.T) {
-	proc := NewCodeBlockProcessor(BlockServices{})
+	proc := NewCodeBlockProcessor(block.BlockServices{})
 
-	block := &SieveBlock{
+	blk := &block.SieveBlock{
 		ID:   "co-0003",
 		Kind: "code",
 		Attrs: map[string]interface{}{
 			"id":       "co-0003",
 			"language": "unknown",
-			"status":   BlockStatusComplete,
+			"status":   block.BlockStatusComplete,
 			"source":   strings.Repeat("x = 1\ny = 2\n", 10),
 		},
 	}
 
-	proc.OnChange(block)
+	proc.OnChange(blk)
 
-	if status, _ := block.Attrs["status"].(string); status != BlockStatusPending {
+	if status, _ := blk.Attrs["status"].(string); status != block.BlockStatusPending {
 		t.Errorf("expected status to transition to PENDING, got %q", status)
 	}
 }

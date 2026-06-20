@@ -2,6 +2,7 @@ package sieve
 
 import (
 	"regexp"
+	"sieve/sieve/block"
 	"strings"
 )
 
@@ -17,38 +18,38 @@ import (
 // serialization tests — the spine can ask any block, including prose, to serialize.
 type ProseProcessor struct{}
 
-func init() { RegisterProcessor(KindProse, &ProseProcessor{}) }
+func init() { block.RegisterProcessor(block.KindProse, &ProseProcessor{}) }
 
 // IDPrefix mints "pr-…" handles for prose.
 func (p *ProseProcessor) IDPrefix() string { return "pr" }
 
 // Mode marks prose as its own serialization shape (content + markers), distinct
 // from fenced YAML / inline.
-func (p *ProseProcessor) Mode() BlockMode { return BlockModeProse }
+func (p *ProseProcessor) Mode() block.BlockMode { return block.BlockModeProse }
 
 // Serialize is the CUSTOM, non-standard serialization the block model put on the
 // processor: a prose block carrying an ID is wrapped in paired comment-tag handle
 // markers; the open marker lists the full handle-set, the close the primary id.
 // Handle-less prose (not yet minted) emits bare content. This is the only thing
 // that makes prose's on-disk form a flavour concern instead of a spine if-branch.
-func (p *ProseProcessor) Serialize(block SieveBlock) (string, error) {
-	if block.ID == "" {
-		return block.Content(), nil
+func (p *ProseProcessor) Serialize(blk block.SieveBlock) (string, error) {
+	if blk.ID == "" {
+		return blk.Content(), nil
 	}
-	handles := append([]string{block.ID}, block.Aliases...)
+	handles := append([]string{blk.ID}, blk.Aliases...)
 	open := "<!--s:" + strings.Join(handles, " ") + "-->"
-	closeTag := "<!--/s:" + block.ID + "-->"
-	return open + "\n" + block.Content() + "\n" + closeTag, nil
+	closeTag := "<!--/s:" + blk.ID + "-->"
+	return open + "\n" + blk.Content() + "\n" + closeTag, nil
 }
 
 // BuildContext: a prose block's AI context IS its content (the uniform dispatch in
 // BuildContextForID now routes here by kind — no hardcoded prose branch).
-func (p *ProseProcessor) BuildContext(block SieveBlock, _ DocView, _ map[string]bool) string {
-	return block.Content()
+func (p *ProseProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, _ map[string]bool) string {
+	return blk.Content()
 }
 
 // MarkdownRepresentation: prose's markdown is its content verbatim.
-func (p *ProseProcessor) MarkdownRepresentation(block SieveBlock) string { return block.Content() }
+func (p *ProseProcessor) MarkdownRepresentation(blk block.SieveBlock) string { return blk.Content() }
 
 // InitAttrs seeds a prose block's payload from overrides (the content).
 func (p *ProseProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
@@ -65,12 +66,12 @@ func (p *ProseProcessor) InitAttrs(id string, overrides map[string]interface{}) 
 // IsBlock is false: prose is never auto-detected on paste (it is the thing you get
 // when you type, or the explicit target of an extract) — so it never hijacks the
 // paste-matcher chain.
-func (p *ProseProcessor) IsBlock(_ []ContentEntry) bool { return false }
+func (p *ProseProcessor) IsBlock(_ []block.ContentEntry) bool { return false }
 
 // Transform is the EXTRACT seam: turn clipboard/extraction entries into a prose
 // block by collecting their content as the block's markdown body. This is how an
 // AI block's table (or any rich payload) becomes a prose block in the document.
-func (p *ProseProcessor) Transform(entries []ContentEntry, _ string, _ string) map[string]interface{} {
+func (p *ProseProcessor) Transform(entries []block.ContentEntry, _ string, _ string) map[string]interface{} {
 	var parts []string
 	for _, e := range entries {
 		if s := strings.TrimSpace(e.Content); s != "" {
@@ -82,13 +83,13 @@ func (p *ProseProcessor) Transform(entries []ContentEntry, _ string, _ string) m
 
 // RunJob is the rewrite/enrich seam — a no-op until a prose job is wired, but the
 // seam exists so prose can be a producer/consumer like any other block.
-func (p *ProseProcessor) RunJob(_ JobContext) error { return nil }
+func (p *ProseProcessor) RunJob(_ block.JobContext) error { return nil }
 
 // JobLabel: no prose job yet.
-func (p *ProseProcessor) JobLabel(_ *SieveBlock) string { return "" }
+func (p *ProseProcessor) JobLabel(_ *block.SieveBlock) string { return "" }
 
 // OnChange: prose has no synchronous reaction.
-func (p *ProseProcessor) OnChange(_ *SieveBlock) {}
+func (p *ProseProcessor) OnChange(_ *block.SieveBlock) {}
 
 // markerOpenRe / markerCloseRe match the paired comment-tag delimiters that
 // bound every block (spec §"Storage format: a comment-tag block tree"). The open
@@ -107,9 +108,9 @@ var (
 // nested markers; nesting is container-only, Stage E). An open with no matching
 // close is unbalanced → literal text. Any maximal run of undelimited lines is a
 // SINGLE prose block (never blank-line split); whitespace-only runs are dropped.
-func scanProseRegion(region string) []SieveBlock {
+func scanProseRegion(region string) []block.SieveBlock {
 	lines := strings.Split(region, "\n")
-	var out []SieveBlock
+	var out []block.SieveBlock
 	var pending []string
 
 	flushPending := func() {
@@ -122,7 +123,7 @@ func scanProseRegion(region string) []SieveBlock {
 			// Undelimited (marker-less) prose: no id on disk → the factory mints
 			// one now (hydration on parse), so the block exists with an id from
 			// the moment it is constructed — never swept in afterward.
-			out = append(out, newSieveBlock(KindProse, "", content, nil))
+			out = append(out, block.NewSieveBlock(block.KindProse, "", content, nil))
 		}
 	}
 
@@ -134,7 +135,7 @@ func scanProseRegion(region string) []SieveBlock {
 				flushPending()
 				// Delimited prose: the marker carries the primary handle, so the
 				// factory keeps it (no mint).
-				blk := newSieveBlock(KindProse, primary, strings.Join(lines[i+1:closeIdx], "\n"), nil)
+				blk := block.NewSieveBlock(block.KindProse, primary, strings.Join(lines[i+1:closeIdx], "\n"), nil)
 				if len(handles) > 1 {
 					blk.Aliases = append([]string(nil), handles[1:]...)
 				}
@@ -166,12 +167,12 @@ func findClose(lines []string, start int, primary string) int {
 // prose from its Accepts loop (it skips Mode()==BlockModeProse) and invokes
 // Deserialize explicitly on the coalesced run of unclaimed regions — so this
 // truthful "I accept anything" never shadows a structured recogniser.
-func (p *ProseProcessor) Accepts(region Region) bool { return true }
+func (p *ProseProcessor) Accepts(region block.Region) bool { return true }
 
 // Deserialize splits a raw prose run into prose blocks at its paired
 // <!--s:ID--> / <!--/s:ID--> markers (delimited blocks keep their handle; an
 // undelimited run mints one). The inverse of ProseProcessor.Serialize, which
 // writes those markers. Owns both sides of prose's SerDes.
-func (p *ProseProcessor) Deserialize(region Region) ([]SieveBlock, error) {
+func (p *ProseProcessor) Deserialize(region block.Region) ([]block.SieveBlock, error) {
 	return scanProseRegion(region.Raw), nil
 }

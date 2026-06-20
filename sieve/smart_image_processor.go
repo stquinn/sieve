@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"sieve/logger"
+	"sieve/sieve/block"
 	"sieve/sieve/domain"
 )
 
@@ -22,17 +23,17 @@ import (
 // PasteMatch saves the image file synchronously so the block is created with
 // src already set. RunJob is AI-only: it calls DescribeImage on the saved file.
 type SmartImageProcessor struct {
-	svc                BlockServices
-	FencedSerializer   // one shared YAML serialization — free
-	FencedDeserializer // its mirror — recognise+parse the fenced form
+	svc                      block.BlockServices
+	block.FencedSerializer   // one shared YAML serialization — free
+	block.FencedDeserializer // its mirror — recognise+parse the fenced form
 }
 
-func NewSmartImageProcessor(svc BlockServices) *SmartImageProcessor {
-	return &SmartImageProcessor{svc: svc, FencedDeserializer: FencedDeserializer{Kind: "smart-image"}}
+func NewSmartImageProcessor(svc block.BlockServices) *SmartImageProcessor {
+	return &SmartImageProcessor{svc: svc, FencedDeserializer: block.FencedDeserializer{Kind: "smart-image"}}
 }
 
-func (p *SmartImageProcessor) Mode() BlockMode  { return BlockModeBlock }
-func (p *SmartImageProcessor) IDPrefix() string { return "img" }
+func (p *SmartImageProcessor) Mode() block.BlockMode { return block.BlockModeBlock }
+func (p *SmartImageProcessor) IDPrefix() string      { return "img" }
 
 func (p *SmartImageProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
@@ -43,7 +44,7 @@ func (p *SmartImageProcessor) InitAttrs(id string, overrides map[string]interfac
 		"detect":            "",
 		"width":             "",
 		"height":            "",
-		"status":            BlockStatusComplete, // default: no job unless src is provided
+		"status":            block.BlockStatusComplete,
 		"supportsEmbedding": true,
 	}
 	for k, v := range overrides {
@@ -54,13 +55,13 @@ func (p *SmartImageProcessor) InitAttrs(id string, overrides map[string]interfac
 	}
 	// If PasteMatch set a src, we need AI to describe it.
 	if src, _ := attrs["src"].(string); src != "" {
-		attrs["status"] = BlockStatusPending
+		attrs["status"] = block.BlockStatusPending
 		attrs["createdAt"] = time.Now().UTC().Format(time.RFC3339)
 	}
 	return attrs
 }
 
-func (p *SmartImageProcessor) IsBlock(entries []ContentEntry) bool {
+func (p *SmartImageProcessor) IsBlock(entries []block.ContentEntry) bool {
 	for _, e := range entries {
 		if strings.HasPrefix(e.MIMEType, "image/") && strings.HasPrefix(e.Content, "data:image/") {
 			return true
@@ -76,7 +77,7 @@ func (p *SmartImageProcessor) IsBlock(entries []ContentEntry) bool {
 			return true
 		}
 		// Mermaid source — JS resolveEntries will render it to SVG before Transform is called
-		if MermaidFenceRe.MatchString(e.Content) {
+		if block.MermaidFenceRe.MatchString(e.Content) {
 			return true
 		}
 		if e.MIMEType == "text/html" {
@@ -88,7 +89,7 @@ func (p *SmartImageProcessor) IsBlock(entries []ContentEntry) bool {
 	return false
 }
 
-func (p *SmartImageProcessor) Transform(entries []ContentEntry, uuid string, blockID string) map[string]interface{} {
+func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string) map[string]interface{} {
 	for _, e := range entries {
 		// Base64 data URI (paste from clipboard)
 		if strings.HasPrefix(e.MIMEType, "image/") && strings.HasPrefix(e.Content, "data:image/") {
@@ -142,7 +143,7 @@ func (p *SmartImageProcessor) Transform(entries []ContentEntry, uuid string, blo
 		}
 		// Mermaid source arriving without JS pre-processing — cannot render server-side.
 		// resolveEntries in SmartImageRenderer must convert mermaid to SVG before this is called.
-		if MermaidFenceRe.MatchString(e.Content) {
+		if block.MermaidFenceRe.MatchString(e.Content) {
 			logger.Warn("smart-image: mermaid source reached Transform unresolved; resolveEntries must render SVG locally", "block", blockID)
 			return nil
 		}
@@ -150,18 +151,18 @@ func (p *SmartImageProcessor) Transform(entries []ContentEntry, uuid string, blo
 	return nil
 }
 
-func (p *SmartImageProcessor) OnChange(_ *SieveBlock) {}
+func (p *SmartImageProcessor) OnChange(_ *block.SieveBlock) {}
 
-func (p *SmartImageProcessor) BuildContext(block SieveBlock, _ DocView, seen map[string]bool) string {
-	src, _ := block.Attrs["src"].(string)
-	alt, _ := block.Attrs["alt"].(string)
-	summary, _ := block.Attrs["summary"].(string)
+func (p *SmartImageProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, seen map[string]bool) string {
+	src, _ := blk.Attrs["src"].(string)
+	alt, _ := blk.Attrs["alt"].(string)
+	summary, _ := blk.Attrs["summary"].(string)
 	if src == "" {
 		return ""
 	}
 	filename := filepath.Base(src)
 	var sb strings.Builder
-	sb.WriteString("NODE ID: " + block.ID + "\n\n")
+	sb.WriteString("NODE ID: " + blk.ID + "\n\n")
 	sb.WriteString("Image: " + filename + "\n")
 	if alt != "" {
 		sb.WriteString("Alt: " + alt + "\n")
@@ -172,32 +173,32 @@ func (p *SmartImageProcessor) BuildContext(block SieveBlock, _ DocView, seen map
 	return sb.String()
 }
 
-func (p *SmartImageProcessor) JobLabel(_ *SieveBlock) string { return "Describing image…" }
+func (p *SmartImageProcessor) JobLabel(_ *block.SieveBlock) string { return "Describing image…" }
 
 // RunJob is AI-only. The image file is already saved; this calls DescribeImage.
-func (p *SmartImageProcessor) RunJob(jctx JobContext) error {
-	uuid, block := jctx.UUID, jctx.Block
-	src, _ := block.Attrs["src"].(string)
+func (p *SmartImageProcessor) RunJob(jctx block.JobContext) error {
+	uuid, blk := jctx.UUID, jctx.Block
+	src, _ := blk.Attrs["src"].(string)
 	if src == "" {
-		logger.Warn("smart-image: RunJob called with no src", "block", block.ID)
-		block.Attrs["status"] = BlockStatusError
+		logger.Warn("smart-image: RunJob called with no src", "block", blk.ID)
+		blk.Attrs["status"] = block.BlockStatusError
 		return fmt.Errorf("no image src to describe")
 	}
 
-	logger.Info("smart-image: calling DescribeImage", "block", block.ID, "src", src)
-	desc, err := p.svc.AI.DescribeImage(uuid, src, block.ID)
+	logger.Info("smart-image: calling DescribeImage", "block", blk.ID, "src", src)
+	desc, err := p.svc.AI.DescribeImage(uuid, src, blk.ID)
 	if err != nil {
-		logger.Warn("smart-image: DescribeImage failed", "block", block.ID, "err", err)
-		block.Attrs["summary"] = "AI Description failed: " + err.Error()
-		block.Attrs["status"] = BlockStatusError
+		logger.Warn("smart-image: DescribeImage failed", "block", blk.ID, "err", err)
+		blk.Attrs["summary"] = "AI Description failed: " + err.Error()
+		blk.Attrs["status"] = block.BlockStatusError
 		return err
 	}
 
-	logger.Info("smart-image: DescribeImage complete", "block", block.ID, "summary_len", len(desc.Summary))
-	block.Attrs["summary"] = desc.Summary
-	block.Attrs["alt"] = desc.Alt
-	block.Attrs["detect"] = desc.Detect
-	block.Attrs["status"] = BlockStatusComplete
+	logger.Info("smart-image: DescribeImage complete", "block", blk.ID, "summary_len", len(desc.Summary))
+	blk.Attrs["summary"] = desc.Summary
+	blk.Attrs["alt"] = desc.Alt
+	blk.Attrs["detect"] = desc.Detect
+	blk.Attrs["status"] = block.BlockStatusComplete
 	return nil
 }
 
@@ -333,14 +334,14 @@ func (p *SmartImageProcessor) saveAsset(uuid, blockID string, data []byte) (stri
 	return asset.ExternalRef(), nil
 }
 
-func (p *SmartImageProcessor) MarkdownRepresentation(block SieveBlock) string {
-	src, _ := block.Attrs["src"].(string)
+func (p *SmartImageProcessor) MarkdownRepresentation(blk block.SieveBlock) string {
+	src, _ := blk.Attrs["src"].(string)
 	if src == "" {
 		return ""
 	}
-	alt, _ := block.Attrs["alt"].(string)
+	alt, _ := blk.Attrs["alt"].(string)
 	if strings.TrimSpace(alt) == "" {
-		alt, _ = block.Attrs["summary"].(string)
+		alt, _ = blk.Attrs["summary"].(string)
 	}
 	return "![" + strings.TrimSpace(alt) + "](" + src + ")"
 }

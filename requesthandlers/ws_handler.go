@@ -9,6 +9,7 @@ import (
 
 	"sieve/logger"
 	"sieve/sieve"
+	"sieve/sieve/block"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -137,7 +138,7 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 // to the open document's authoritative block tree.
 func (h *WsHandler) handleBlockOp(uuid string, raw []byte, writeMsg func(interface{})) {
 	var msg struct {
-		Op sieve.BlockOp `json:"op"`
+		Op block.BlockOp `json:"op"`
 	}
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		logger.Warn("ws: block-op decode failed", "uuid", uuid, "err", err)
@@ -261,10 +262,10 @@ func (h *WsHandler) handleRetryBlockJob(uuid string, raw []byte, writeMsg func(i
 	// Reset both status and createdAt. The DISPATCHED notifyBlockUpdated that fires
 	// immediately will carry the fresh createdAt, so the frontend's isJobStale()
 	// won't fire and re-show "interrupted" instead of the spinner.
-	h.ServiceProvider.Editor.UpdateBlock(uuid, sieve.SieveBlock{
+	h.ServiceProvider.Editor.UpdateBlock(uuid, block.SieveBlock{
 		ID: msg.ID,
 		Attrs: map[string]interface{}{
-			"status":    sieve.BlockStatusPending,
+			"status":    block.BlockStatusPending,
 			"createdAt": time.Now().UTC().Format(time.RFC3339),
 			"error":     "",
 		},
@@ -332,7 +333,7 @@ func (h *WsHandler) handleExtract(uuid string, raw []byte, writeMsg func(interfa
 	var p struct {
 		BlockID    string               `json:"blockId"`
 		TargetKind string               `json:"targetKind"`
-		Entries    []sieve.ContentEntry `json:"entries"`
+		Entries    []block.ContentEntry `json:"entries"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		logger.Warn("ws: bad extract payload", "err", err)

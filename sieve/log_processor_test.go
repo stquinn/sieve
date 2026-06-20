@@ -1,6 +1,7 @@
 package sieve
 
 import (
+	"sieve/sieve/block"
 	"sieve/sieve/domain"
 	"testing"
 )
@@ -121,40 +122,40 @@ func TestParseLogLines_JSON(t *testing.T) {
 }
 
 func TestLogProcessor_IsBlock(t *testing.T) {
-	proc := NewLogProcessor(BlockServices{})
+	proc := NewLogProcessor(block.BlockServices{})
 
 	// Test generic block text that looks like a log
-	entries := []ContentEntry{{MIMEType: "text/plain", Content: "[ERROR] Something went wrong"}}
+	entries := []block.ContentEntry{{MIMEType: "text/plain", Content: "[ERROR] Something went wrong"}}
 	if !proc.IsBlock(entries) {
 		t.Errorf("Expected IsBlock to be true for '[ERROR]'")
 	}
 
 	// Test code block extraction
-	codeEntry := []ContentEntry{{MIMEType: "sieve/code", Content: "```\n2026-06-12T13:20:01.984+01:00 INFO\n```"}}
+	codeEntry := []block.ContentEntry{{MIMEType: "sieve/code", Content: "```\n2026-06-12T13:20:01.984+01:00 INFO\n```"}}
 	if !proc.IsBlock(codeEntry) {
 		t.Errorf("Expected IsBlock to be true for code block with ISO date and INFO")
 	}
 
 	// Test negative case
-	nonLogEntry := []ContentEntry{{MIMEType: "text/plain", Content: "Just a regular sentence without log signatures."}}
+	nonLogEntry := []block.ContentEntry{{MIMEType: "text/plain", Content: "Just a regular sentence without log signatures."}}
 	if proc.IsBlock(nonLogEntry) {
 		t.Errorf("Expected IsBlock to be false for generic text")
 	}
 }
 
 func TestLogProcessor_CodeWithExceptionIsNotLog(t *testing.T) {
-	proc := NewLogProcessor(BlockServices{})
+	proc := NewLogProcessor(block.BlockServices{})
 	// Ordinary source code that merely mentions Exception / a date must NOT be
 	// misdetected as a log (the old logDetectRe matched the bare word "Exception").
 	src := "try {\n  doThing(); // since 2026-01-01\n} catch (Exception e) {\n  throw new RuntimeException(e);\n}"
-	if proc.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: src}}) {
+	if proc.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: src}}) {
 		t.Error("code containing 'Exception' should not be detected as a log")
 	}
 }
 
 func TestLogProcessor_BracketedLevelIsLog(t *testing.T) {
-	proc := NewLogProcessor(BlockServices{})
-	if !proc.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "[INFO] starting up\n[WARN] disk low"}}) {
+	proc := NewLogProcessor(block.BlockServices{})
+	if !proc.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "[INFO] starting up\n[WARN] disk low"}}) {
 		t.Error("bracketed-level lines should be detected as a log")
 	}
 }

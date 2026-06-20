@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"sieve/logger"
+	"sieve/sieve/block"
 	"strings"
 	"time"
 )
@@ -17,19 +18,19 @@ const minSourceLength = 30
 
 // CodeBlockProcessor handles the 'code' Kind.
 type CodeBlockProcessor struct {
-	svc                BlockServices
-	FencedSerializer   // one shared YAML serialization — free
-	FencedDeserializer // its mirror — recognise+parse the fenced form
+	svc                      block.BlockServices
+	block.FencedSerializer   // one shared YAML serialization — free
+	block.FencedDeserializer // its mirror — recognise+parse the fenced form
 }
 
-func NewCodeBlockProcessor(svc BlockServices) *CodeBlockProcessor {
-	return &CodeBlockProcessor{svc: svc, FencedDeserializer: FencedDeserializer{Kind: "code"}}
+func NewCodeBlockProcessor(svc block.BlockServices) *CodeBlockProcessor {
+	return &CodeBlockProcessor{svc: svc, FencedDeserializer: block.FencedDeserializer{Kind: "code"}}
 }
 
 func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
 		"id":                id,
-		"status":            BlockStatusPending,
+		"status":            block.BlockStatusPending,
 		"source":            "",
 		"language":          "",
 		"detectionMethod":   "",
@@ -53,7 +54,7 @@ func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface
 	return attrs
 }
 
-func (p *CodeBlockProcessor) IsBlock(entries []ContentEntry) bool {
+func (p *CodeBlockProcessor) IsBlock(entries []block.ContentEntry) bool {
 	for _, e := range entries {
 		m := codeFenceRe.FindStringSubmatch(e.Content)
 		if m != nil {
@@ -64,8 +65,8 @@ func (p *CodeBlockProcessor) IsBlock(entries []ContentEntry) bool {
 			return true
 		}
 		if e.MIMEType == "sieve/diagram" && strings.TrimSpace(e.Content) != "" {
-			block := ParseFirstBlock(e.Content)
-			if block != nil && block.Attrs["diagramType"] == "mermaid" && strings.TrimSpace(block.Attrs["source"].(string)) != "" {
+			blk := block.ParseFirstBlock(e.Content)
+			if blk != nil && blk.Attrs["diagramType"] == "mermaid" && strings.TrimSpace(blk.Attrs["source"].(string)) != "" {
 				logger.Debug("MATCHED DIAGRAM BLOCK AS CODE")
 				return true
 			}
@@ -77,18 +78,18 @@ func (p *CodeBlockProcessor) IsBlock(entries []ContentEntry) bool {
 	return false
 }
 
-func (p *CodeBlockProcessor) Transform(entries []ContentEntry, uuid string, blockID string) map[string]interface{} {
+func (p *CodeBlockProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string) map[string]interface{} {
 	for _, e := range entries {
 		if e.MIMEType == "sieve/diagram" && strings.TrimSpace(e.Content) != "" {
-			block := ParseFirstBlock(e.Content)
-			if block != nil {
-				if block.Attrs["diagramType"] == "mermaid" && strings.TrimSpace(block.Attrs["source"].(string)) != "" {
+			blk := block.ParseFirstBlock(e.Content)
+			if blk != nil {
+				if blk.Attrs["diagramType"] == "mermaid" && strings.TrimSpace(blk.Attrs["source"].(string)) != "" {
 					logger.Debug("TRANSFORMING DIAGRAM BLOCK AS CODE")
 					return map[string]interface{}{
 						"language":        "mermaid",
-						"source":          strings.TrimSpace(block.Attrs["source"].(string)),
+						"source":          strings.TrimSpace(blk.Attrs["source"].(string)),
 						"detectionMethod": "Converted from diagram block",
-						"status":          BlockStatusComplete,
+						"status":          block.BlockStatusComplete,
 					}
 				}
 			}
@@ -117,7 +118,7 @@ func (p *CodeBlockProcessor) Transform(entries []ContentEntry, uuid string, bloc
 // structural cues (braces, semicolons, indentation). This restores the smart-paste
 // behaviour the pre-framework PasteMatch had: raw, unfenced source pasted into the
 // editor still becomes a code block. Language is left to heuristics/AI in InitAttrs.
-func unfencedCodeContent(entry ContentEntry) (string, bool) {
+func unfencedCodeContent(entry block.ContentEntry) (string, bool) {
 
 	if entry.MIMEType != "" && entry.MIMEType != "text/plain" {
 		return "", false
@@ -140,95 +141,95 @@ func unfencedCodeContent(entry ContentEntry) (string, bool) {
 	return "", false
 }
 
-func (p *CodeBlockProcessor) OnChange(block *SieveBlock) {
-	status, _ := block.Attrs["status"].(string)
-	if status == BlockStatusDispatched {
+func (p *CodeBlockProcessor) OnChange(blk *block.SieveBlock) {
+	status, _ := blk.Attrs["status"].(string)
+	if status == block.BlockStatusDispatched {
 		return
 	}
 
-	source, _ := block.Attrs["source"].(string)
+	source, _ := blk.Attrs["source"].(string)
 	if len(strings.TrimSpace(source)) < minSourceLength {
 		return
 	}
 
-	hint, _ := block.Attrs["hint"].(string)
+	hint, _ := blk.Attrs["hint"].(string)
 	if detected, ok := detectByHeuristics(source, hint); ok {
-		lang, _ := block.Attrs["language"].(string)
+		lang, _ := blk.Attrs["language"].(string)
 		if detected != lang {
-			block.Attrs["language"] = detected
-			block.Attrs["detectionMethod"] = "heuristic"
+			blk.Attrs["language"] = detected
+			blk.Attrs["detectionMethod"] = "heuristic"
 		}
 		return
 	}
 
-	lang, _ := block.Attrs["language"].(string)
+	lang, _ := blk.Attrs["language"].(string)
 	if lang != "" && lang != "unknown" {
 		return
 	}
 
-	if status == BlockStatusPending {
+	if status == block.BlockStatusPending {
 		return
 	}
 
-	block.Attrs["status"] = BlockStatusPending
+	blk.Attrs["status"] = block.BlockStatusPending
 }
 
-func (p *CodeBlockProcessor) BuildContext(block SieveBlock, _ DocView, seen map[string]bool) string {
-	src, _ := block.Attrs["source"].(string)
-	language, _ := block.Attrs["language"].(string)
+func (p *CodeBlockProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, seen map[string]bool) string {
+	src, _ := blk.Attrs["source"].(string)
+	language, _ := blk.Attrs["language"].(string)
 	if src != "" {
-		return "NODE ID: " + block.ID + "\n\n" + "```" + language + "\n" + src + "\n```"
+		return "NODE ID: " + blk.ID + "\n\n" + "```" + language + "\n" + src + "\n```"
 	}
 	return ""
 }
 
-func (p *CodeBlockProcessor) JobLabel(_ *SieveBlock) string {
+func (p *CodeBlockProcessor) JobLabel(_ *block.SieveBlock) string {
 	return "Refining language..."
 }
 
 func (p *CodeBlockProcessor) IDPrefix() string { return "cod" }
 
-func (p *CodeBlockProcessor) Mode() BlockMode {
-	return BlockModeBlock
+func (p *CodeBlockProcessor) Mode() block.BlockMode {
+	return block.BlockModeBlock
 }
 
-func (p *CodeBlockProcessor) RunJob(jctx JobContext) error {
-	block := jctx.Block
-	source, _ := block.Attrs["source"].(string)
+func (p *CodeBlockProcessor) RunJob(jctx block.JobContext) error {
+	blk := jctx.Block
+	source, _ := blk.Attrs["source"].(string)
 	if strings.TrimSpace(source) == "" {
-		block.Attrs["status"] = BlockStatusComplete
-		delete(block.Attrs, "hint")
+		blk.Attrs["status"] = block.BlockStatusComplete
+		delete(blk.Attrs, "hint")
 		return nil
 	}
 
 	if p.svc.AI == nil {
-		block.Attrs["status"] = BlockStatusError
+		blk.Attrs["status"] = block.BlockStatusError
 		return fmt.Errorf("AI detection failed: AI service unavailable")
 	}
 
-	currentLang, _ := block.Attrs["language"].(string)
-	method, _ := block.Attrs["detectionMethod"].(string)
+	currentLang, _ := blk.Attrs["language"].(string)
+	method, _ := blk.Attrs["detectionMethod"].(string)
 	lang, err := p.svc.AI.RefineLanguage(source, currentLang, method)
 	if err != nil {
-		block.Attrs["status"] = BlockStatusError
+		blk.Attrs["status"] = block.BlockStatusError
 		return fmt.Errorf("AI detection failed: %w", err)
 	}
 	if lang != "" {
-		block.Attrs["language"] = lang
-		block.Attrs["detectionMethod"] = "ai"
+		blk.Attrs["language"] = lang
+		blk.Attrs["detectionMethod"] = "ai"
 	}
-	block.Attrs["status"] = BlockStatusComplete
-	delete(block.Attrs, "hint")
+	blk.Attrs["status"] = block.BlockStatusComplete
+	delete(blk.Attrs, "hint")
 	return nil
 }
 
-func (p *CodeBlockProcessor) MarkdownRepresentation(block SieveBlock) string {
-	source, _ := block.Attrs["source"].(string)
+func (p *CodeBlockProcessor) MarkdownRepresentation(blk block.SieveBlock) string {
+	source, _ := blk.Attrs["source"].(string)
 	source = strings.TrimSpace(source)
 	if source == "" {
 		return ""
 	}
-	lang, _ := block.Attrs["language"].(string)
+	lang, _ := blk.Attrs["language"].(string)
 	fence := getFence(source)
 	return fence + lang + "\n" + source + "\n" + fence
 }

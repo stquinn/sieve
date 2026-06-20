@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"sieve/sieve"
+	"sieve/sieve/block"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -52,7 +53,7 @@ func (h *EditorHandler) handleEditorLoad(w http.ResponseWriter, r *http.Request)
 		Body   string                `json:"body"`
 		Mode   string                `json:"mode"`
 		UUID   string                `json:"uuid"`
-		Blocks []sieve.FrontendBlock `json:"blocks,omitempty"`
+		Blocks []block.FrontendBlock `json:"blocks,omitempty"`
 	}
 
 	if strings.HasPrefix(uuid, "prompt:") {
@@ -149,7 +150,7 @@ func (h *EditorHandler) handleEditorSave(w http.ResponseWriter, r *http.Request)
 func (h *EditorHandler) handleSmartPaste(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UUID    string               `json:"uuid"`
-		Entries []sieve.ContentEntry `json:"entries"`
+		Entries []block.ContentEntry `json:"entries"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UUID == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -175,15 +176,15 @@ func (h *EditorHandler) handleSmartPaste(w http.ResponseWriter, r *http.Request)
 func (h *EditorHandler) handleDetectExtractions(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SourceKind string               `json:"sourceKind"`
-		Entries    []sieve.ContentEntry `json:"entries"`
+		Entries    []block.ContentEntry `json:"entries"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	candidates := sieve.DetectExtractions(req.SourceKind, req.Entries)
+	candidates := block.DetectExtractions(req.SourceKind, req.Entries)
 	if candidates == nil {
-		candidates = []sieve.ExtractionCandidate{}
+		candidates = []block.ExtractionCandidate{}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(candidates)

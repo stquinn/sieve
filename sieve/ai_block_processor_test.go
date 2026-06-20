@@ -1,6 +1,7 @@
 package sieve
 
 import (
+	"sieve/sieve/block"
 	"strings"
 	"testing"
 )
@@ -15,7 +16,7 @@ func TestAIBlockInitAttrs(t *testing.T) {
 	if attrs["id"] != "ai-ab12" {
 		t.Errorf("expected id=ai-ab12, got %v", attrs["id"])
 	}
-	if attrs["status"] != BlockStatusPending {
+	if attrs["status"] != block.BlockStatusPending {
 		t.Errorf("expected status=PENDING, got %v", attrs["status"])
 	}
 	if attrs["ref"] != "blk-1234" {
@@ -35,24 +36,24 @@ func TestAIBlockInitAttrsDefaultRef(t *testing.T) {
 }
 
 func TestAIBlockMode(t *testing.T) {
-	if (&AIBlockProcessor{}).Mode() != BlockModeBlock {
+	if (&AIBlockProcessor{}).Mode() != block.BlockModeBlock {
 		t.Error("expected BlockModeBlock")
 	}
 }
 
 func TestAIBlockJobLabel(t *testing.T) {
 	p := &AIBlockProcessor{}
-	if p.JobLabel(&SieveBlock{Attrs: map[string]interface{}{"type": "ASK"}}) == "" {
+	if p.JobLabel(&block.SieveBlock{Attrs: map[string]interface{}{"type": "ASK"}}) == "" {
 		t.Error("expected non-empty label for ASK")
 	}
-	if p.JobLabel(&SieveBlock{Attrs: map[string]interface{}{"type": "EXPLAIN"}}) == "" {
+	if p.JobLabel(&block.SieveBlock{Attrs: map[string]interface{}{"type": "EXPLAIN"}}) == "" {
 		t.Error("expected non-empty label for EXPLAIN")
 	}
 }
 
 func TestAIBlockBuildContext(t *testing.T) {
 	p := &AIBlockProcessor{}
-	block := SieveBlock{
+	blk := block.SieveBlock{
 		ID:   "ai-ab12",
 		Kind: "ai-block",
 		Attrs: map[string]interface{}{
@@ -60,7 +61,7 @@ func TestAIBlockBuildContext(t *testing.T) {
 			"response": "A compiled language.",
 		},
 	}
-	ctx := p.BuildContext(block, DocView{}, map[string]bool{})
+	ctx := p.BuildContext(blk, block.DocView{}, map[string]bool{})
 	if !strings.Contains(ctx, "What is Go?") || !strings.Contains(ctx, "A compiled language.") {
 		t.Errorf("unexpected context: %q", ctx)
 	}

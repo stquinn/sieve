@@ -3,19 +3,20 @@ package sieve
 import (
 	"fmt"
 	"net/url"
+	"sieve/sieve/block"
 	"strings"
 	"time"
 )
 
 // WebClipBlockProcessor handles the 'web-clip' Kind.
 type WebClipBlockProcessor struct {
-	svc                BlockServices
-	FencedSerializer   // one shared YAML serialization — free
-	FencedDeserializer // its mirror — recognise+parse the fenced form
+	svc                      block.BlockServices
+	block.FencedSerializer   // one shared YAML serialization — free
+	block.FencedDeserializer // its mirror — recognise+parse the fenced form
 }
 
-func NewWebClipBlockProcessor(svc BlockServices) *WebClipBlockProcessor {
-	return &WebClipBlockProcessor{svc: svc, FencedDeserializer: FencedDeserializer{Kind: "web-clip"}}
+func NewWebClipBlockProcessor(svc block.BlockServices) *WebClipBlockProcessor {
+	return &WebClipBlockProcessor{svc: svc, FencedDeserializer: block.FencedDeserializer{Kind: "web-clip"}}
 }
 
 func (p *WebClipBlockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
@@ -24,7 +25,7 @@ func (p *WebClipBlockProcessor) InitAttrs(id string, overrides map[string]interf
 		"source":            "",
 		"title":             "",
 		"mode":              "fetch",
-		"status":            BlockStatusPending,
+		"status":            block.BlockStatusPending,
 		"model":             "",
 		"createdAt":         time.Now().UTC().Format(time.RFC3339),
 		"completedAt":       "",
@@ -41,7 +42,7 @@ func (p *WebClipBlockProcessor) InitAttrs(id string, overrides map[string]interf
 	return attrs
 }
 
-func (p *WebClipBlockProcessor) IsBlock(entries []ContentEntry) bool {
+func (p *WebClipBlockProcessor) IsBlock(entries []block.ContentEntry) bool {
 	for _, e := range entries {
 		trimmed := strings.TrimSpace(e.Content)
 		if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
@@ -55,7 +56,7 @@ func (p *WebClipBlockProcessor) AllowSelfExtraction() bool {
 	return true
 }
 
-func (p *WebClipBlockProcessor) Transform(entries []ContentEntry, uuid, blockID string) map[string]interface{} {
+func (p *WebClipBlockProcessor) Transform(entries []block.ContentEntry, uuid, blockID string) map[string]interface{} {
 	for _, e := range entries {
 		trimmed := strings.TrimSpace(e.Content)
 		if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
@@ -74,17 +75,17 @@ func (p *WebClipBlockProcessor) Transform(entries []ContentEntry, uuid, blockID 
 	return nil
 }
 
-func (p *WebClipBlockProcessor) OnChange(_ *SieveBlock) {}
+func (p *WebClipBlockProcessor) OnChange(_ *block.SieveBlock) {}
 
-func (p *WebClipBlockProcessor) BuildContext(block SieveBlock, _ DocView, seen map[string]bool) string {
-	source, _ := block.Attrs["source"].(string)
-	title, _ := block.Attrs["title"].(string)
-	content, _ := block.Attrs["content"].(string)
+func (p *WebClipBlockProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, seen map[string]bool) string {
+	source, _ := blk.Attrs["source"].(string)
+	title, _ := blk.Attrs["title"].(string)
+	content, _ := blk.Attrs["content"].(string)
 	if source == "" && content == "" {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString("NODE ID: " + block.ID + "\n\n")
+	sb.WriteString("NODE ID: " + blk.ID + "\n\n")
 	if source != "" {
 		sb.WriteString("Source: " + source + "\n")
 	}
@@ -97,9 +98,9 @@ func (p *WebClipBlockProcessor) BuildContext(block SieveBlock, _ DocView, seen m
 	return sb.String()
 }
 
-func (p *WebClipBlockProcessor) JobLabel(block *SieveBlock) string {
-	mode, _ := block.Attrs["mode"].(string)
-	source, _ := block.Attrs["source"].(string)
+func (p *WebClipBlockProcessor) JobLabel(blk *block.SieveBlock) string {
+	mode, _ := blk.Attrs["mode"].(string)
+	source, _ := blk.Attrs["source"].(string)
 	host := source
 	if u, err := url.Parse(source); err == nil && u.Host != "" {
 		host = u.Host
@@ -112,14 +113,14 @@ func (p *WebClipBlockProcessor) JobLabel(block *SieveBlock) string {
 
 func (p *WebClipBlockProcessor) IDPrefix() string { return "web" }
 
-func (p *WebClipBlockProcessor) Mode() BlockMode {
-	return BlockModeBlock
+func (p *WebClipBlockProcessor) Mode() block.BlockMode {
+	return block.BlockModeBlock
 }
 
-func (p *WebClipBlockProcessor) RunJob(jctx JobContext) error {
-	uuid, block := jctx.UUID, jctx.Block
-	source, _ := block.Attrs["source"].(string)
-	mode, _ := block.Attrs["mode"].(string)
+func (p *WebClipBlockProcessor) RunJob(jctx block.JobContext) error {
+	uuid, blk := jctx.UUID, jctx.Block
+	source, _ := blk.Attrs["source"].(string)
+	mode, _ := blk.Attrs["mode"].(string)
 	if mode == "" {
 		mode = "fetch"
 	}
@@ -130,40 +131,40 @@ func (p *WebClipBlockProcessor) RunJob(jctx JobContext) error {
 	}
 
 	if p.svc.AI == nil {
-		block.Attrs["status"] = BlockStatusError
-		block.Attrs["error"] = "AI service is unavailable"
+		blk.Attrs["status"] = block.BlockStatusError
+		blk.Attrs["error"] = "AI service is unavailable"
 		return fmt.Errorf("webclip RunJob failed: AI service is unavailable")
 	}
 
-	title, content, cliErr := p.svc.AI.RunWebClip(uuid, block.ID, source, mode, docContent)
+	title, content, cliErr := p.svc.AI.RunWebClip(uuid, blk.ID, source, mode, docContent)
 
 	if cliErr != nil {
 		if strings.Contains(cliErr.Error(), "timeout") {
-			block.Attrs["status"] = "TIMEOUT"
+			blk.Attrs["status"] = "TIMEOUT"
 		} else {
-			block.Attrs["status"] = BlockStatusError
-			block.Attrs["error"] = "Claude could not retrieve this page. Check that your MCP configuration can access this URL."
+			blk.Attrs["status"] = block.BlockStatusError
+			blk.Attrs["error"] = "Claude could not retrieve this page. Check that your MCP configuration can access this URL."
 		}
 		return cliErr
 	}
 
-	block.Attrs["status"] = BlockStatusComplete
-	block.Attrs["title"] = title
-	block.Attrs["content"] = content
-	block.Attrs["completedAt"] = time.Now().UTC().Format(time.RFC3339)
-	block.Attrs["model"] = p.svc.State.LoadSettings().Model
+	blk.Attrs["status"] = block.BlockStatusComplete
+	blk.Attrs["title"] = title
+	blk.Attrs["content"] = content
+	blk.Attrs["completedAt"] = time.Now().UTC().Format(time.RFC3339)
+	blk.Attrs["model"] = p.svc.State.LoadSettings().Model
 
 	return nil
 }
 
-func (p *WebClipBlockProcessor) MarkdownRepresentation(block SieveBlock) string {
-	content, _ := block.Attrs["content"].(string)
+func (p *WebClipBlockProcessor) MarkdownRepresentation(blk block.SieveBlock) string {
+	content, _ := blk.Attrs["content"].(string)
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return ""
 	}
-	title, _ := block.Attrs["title"].(string)
-	source, _ := block.Attrs["source"].(string)
+	title, _ := blk.Attrs["title"].(string)
+	source, _ := blk.Attrs["source"].(string)
 	var sb strings.Builder
 	if title != "" && source != "" {
 		sb.WriteString("### [" + title + "](" + source + ")\n\n")

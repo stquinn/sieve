@@ -2,19 +2,20 @@ package sieve
 
 import (
 	"context"
+	"sieve/sieve/block"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestDiagramProcessor_InitAttrs_defaults(t *testing.T) {
-	p := NewDiagramProcessor(BlockServices{})
+	p := NewDiagramProcessor(block.BlockServices{})
 	attrs := p.InitAttrs("di-a1b2", nil)
 
 	if attrs["id"] != "di-a1b2" {
 		t.Errorf("id: got %v, want di-a1b2", attrs["id"])
 	}
-	if attrs["status"] != BlockStatusComplete {
+	if attrs["status"] != block.BlockStatusComplete {
 		t.Errorf("status: got %v, want COMPLETE", attrs["status"])
 	}
 	if attrs["diagramType"] != "mermaid" {
@@ -38,18 +39,18 @@ func TestDiagramProcessor_InitAttrs_defaults(t *testing.T) {
 }
 
 func TestDiagramProcessor_InitAttrs_withSourceSetsRenderMode(t *testing.T) {
-	p := NewDiagramProcessor(BlockServices{})
+	p := NewDiagramProcessor(block.BlockServices{})
 	attrs := p.InitAttrs("di-a1b2", map[string]interface{}{"source": "graph TD\n  A-->B"})
 	if attrs["mode"] != "render" {
 		t.Errorf("mode with source: got %v, want render", attrs["mode"])
 	}
-	if attrs["status"] != BlockStatusComplete {
+	if attrs["status"] != block.BlockStatusComplete {
 		t.Errorf("status: got %v, want COMPLETE", attrs["status"])
 	}
 }
 
 func TestDiagramProcessor_InitAttrs_idNotOverridable(t *testing.T) {
-	p := NewDiagramProcessor(BlockServices{})
+	p := NewDiagramProcessor(block.BlockServices{})
 	attrs := p.InitAttrs("di-0001", map[string]interface{}{"id": "injected"})
 	if attrs["id"] != "di-0001" {
 		t.Error("id must not be overridable via overrides")
@@ -57,26 +58,26 @@ func TestDiagramProcessor_InitAttrs_idNotOverridable(t *testing.T) {
 }
 
 func TestDiagramProcessor_Mode(t *testing.T) {
-	p := NewDiagramProcessor(BlockServices{})
-	if p.Mode() != BlockModeBlock {
+	p := NewDiagramProcessor(block.BlockServices{})
+	if p.Mode() != block.BlockModeBlock {
 		t.Errorf("Mode: got %v, want block", p.Mode())
 	}
 }
 
 func TestDiagramProcessor_IsBlock_mermaidFence(t *testing.T) {
-	p := NewDiagramProcessor(BlockServices{})
+	p := NewDiagramProcessor(block.BlockServices{})
 	src := "graph TD\n  A[Start] --> B[End]"
 	content := "```mermaid\n" + src + "\n```"
-	if !p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: content}}) {
+	if !p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: content}}) {
 		t.Fatal("IsBlock must return true for a mermaid fenced block")
 	}
 }
 
 func TestDiagramProcessor_Transform_mermaidFence(t *testing.T) {
-	p := NewDiagramProcessor(BlockServices{})
+	p := NewDiagramProcessor(block.BlockServices{})
 	src := "graph TD\n  A[Start] --> B[End]"
 	content := "```mermaid\n" + src + "\n```"
-	overrides := p.Transform([]ContentEntry{{MIMEType: "text/plain", Content: content}}, "", "")
+	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: content}}, "", "")
 	if overrides == nil {
 		t.Fatal("Transform must return non-nil for a mermaid fenced block")
 	}
@@ -87,35 +88,35 @@ func TestDiagramProcessor_Transform_mermaidFence(t *testing.T) {
 }
 
 func TestDiagramProcessor_IsBlock_otherFence(t *testing.T) {
-	p := NewDiagramProcessor(BlockServices{})
-	if p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "```go\nfunc main() {}\n```"}}) {
+	p := NewDiagramProcessor(block.BlockServices{})
+	if p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "```go\nfunc main() {}\n```"}}) {
 		t.Error("IsBlock must return false for non-mermaid fenced block")
 	}
 }
 
 func TestDiagramProcessor_IsBlock_plainText(t *testing.T) {
-	p := NewDiagramProcessor(BlockServices{})
-	if p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "hello world"}}) {
+	p := NewDiagramProcessor(block.BlockServices{})
+	if p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "hello world"}}) {
 		t.Error("IsBlock must return false for plain text")
 	}
 }
 
 func TestDiagramProcessor_Transform_notIsBlock(t *testing.T) {
-	p := NewDiagramProcessor(BlockServices{})
-	overrides := p.Transform([]ContentEntry{{MIMEType: "text/plain", Content: "hello world"}}, "", "")
+	p := NewDiagramProcessor(block.BlockServices{})
+	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: "hello world"}}, "", "")
 	if overrides != nil {
 		t.Error("Transform must return nil when IsBlock is false")
 	}
 }
 
 func TestDiagramProcessor_BuildContext_withSource(t *testing.T) {
-	p := NewDiagramProcessor(BlockServices{})
-	block := SieveBlock{
+	p := NewDiagramProcessor(block.BlockServices{})
+	blk := block.SieveBlock{
 		ID:    "di-0001",
 		Kind:  "diagram",
 		Attrs: map[string]interface{}{"source": "graph TD\n  A-->B"},
 	}
-	ctx := p.BuildContext(block, DocView{}, map[string]bool{})
+	ctx := p.BuildContext(blk, block.DocView{}, map[string]bool{})
 	if ctx == "" {
 		t.Error("BuildContext must return non-empty string when source is set")
 	}
@@ -128,17 +129,17 @@ func TestDiagramProcessor_BuildContext_withSource(t *testing.T) {
 }
 
 func TestDiagramProcessor_BuildContext_emptySource(t *testing.T) {
-	p := NewDiagramProcessor(BlockServices{})
-	block := SieveBlock{ID: "di-0001", Kind: "diagram", Attrs: map[string]interface{}{"source": ""}}
-	if ctx := p.BuildContext(block, DocView{}, map[string]bool{}); ctx != "" {
+	p := NewDiagramProcessor(block.BlockServices{})
+	blk := block.SieveBlock{ID: "di-0001", Kind: "diagram", Attrs: map[string]interface{}{"source": ""}}
+	if ctx := p.BuildContext(blk, block.DocView{}, map[string]bool{}); ctx != "" {
 		t.Errorf("BuildContext must return empty for empty source; got %q", ctx)
 	}
 }
 
 func TestDiagramProcessor_MarkdownRepresentation_withSource(t *testing.T) {
-	p := NewDiagramProcessor(BlockServices{})
-	block := SieveBlock{Attrs: map[string]interface{}{"source": "graph TD\n  A-->B"}}
-	got := p.MarkdownRepresentation(block)
+	p := NewDiagramProcessor(block.BlockServices{})
+	blk := block.SieveBlock{Attrs: map[string]interface{}{"source": "graph TD\n  A-->B"}}
+	got := p.MarkdownRepresentation(blk)
 	want := "```mermaid\ngraph TD\n  A-->B\n```"
 	if got != want {
 		t.Errorf("MarkdownRepresentation: got %q, want %q", got, want)
@@ -146,27 +147,27 @@ func TestDiagramProcessor_MarkdownRepresentation_withSource(t *testing.T) {
 }
 
 func TestDiagramProcessor_MarkdownRepresentation_emptySource(t *testing.T) {
-	p := NewDiagramProcessor(BlockServices{})
-	block := SieveBlock{Attrs: map[string]interface{}{"source": ""}}
-	if got := p.MarkdownRepresentation(block); got != "" {
+	p := NewDiagramProcessor(block.BlockServices{})
+	blk := block.SieveBlock{Attrs: map[string]interface{}{"source": ""}}
+	if got := p.MarkdownRepresentation(blk); got != "" {
 		t.Errorf("MarkdownRepresentation must return empty string for empty source; got %q", got)
 	}
 }
 
 func TestDiagramProcessor_RunJob_noopComplete(t *testing.T) {
-	p := NewDiagramProcessor(BlockServices{})
-	block := &SieveBlock{
+	p := NewDiagramProcessor(block.BlockServices{})
+	blk := &block.SieveBlock{
 		ID:   "di-0001",
 		Kind: "diagram",
 		Attrs: map[string]interface{}{
-			"status":    BlockStatusComplete,
+			"status":    block.BlockStatusComplete,
 			"createdAt": time.Now().UTC().Format(time.RFC3339),
 		},
 	}
-	if err := p.RunJob(JobContext{Ctx: context.Background(), UUID: "test", Block: block}); err != nil {
+	if err := p.RunJob(block.JobContext{Ctx: context.Background(), UUID: "test", Block: blk}); err != nil {
 		t.Fatalf("RunJob must not error; got %v", err)
 	}
-	if block.Attrs["status"] != BlockStatusComplete {
-		t.Errorf("status: got %v, want COMPLETE", block.Attrs["status"])
+	if blk.Attrs["status"] != block.BlockStatusComplete {
+		t.Errorf("status: got %v, want COMPLETE", blk.Attrs["status"])
 	}
 }

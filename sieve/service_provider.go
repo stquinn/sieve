@@ -2,6 +2,7 @@ package sieve
 
 import (
 	"sieve/logger"
+	"sieve/sieve/block"
 	"sieve/store"
 	"time"
 )
@@ -21,8 +22,8 @@ type ServiceProvider struct {
 
 // BlockServices returns the scoped dependency bag for block processors.
 // Add a field here when a new service should be available inside RunJob / OnChange.
-func (s *ServiceProvider) BlockServices() BlockServices {
-	return BlockServices{
+func (s *ServiceProvider) BlockServices() block.BlockServices {
+	return block.BlockServices{
 		AI:          s.AI,
 		Documents:   s.Documents,
 		Assets:      s.Assets,
@@ -34,11 +35,11 @@ func (s *ServiceProvider) BlockServices() BlockServices {
 // Compile-time proof the concrete services satisfy the block ports. Lives at the
 // composition root — the only place that knows both the ports and the concretes.
 var (
-	_ DocumentsPort   = (*DocumentService)(nil)
-	_ AssetsPort      = (*AssetService)(nil)
-	_ StatePort       = (*StateService)(nil)
-	_ LinkPreviewPort = (*LinkPreviewService)(nil)
-	_ AIPort          = (*AIService)(nil)
+	_ block.DocumentsPort   = (*DocumentService)(nil)
+	_ block.AssetsPort      = (*AssetService)(nil)
+	_ block.StatePort       = (*StateService)(nil)
+	_ block.LinkPreviewPort = (*LinkPreviewService)(nil)
+	_ block.AIPort          = (*AIService)(nil)
 )
 
 func (s *ServiceProvider) Init(store store.Store, storePath string) {
@@ -65,21 +66,21 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	s.LinkPreview = NewLinkPreviewService()
 	settings := s.State.LoadSettings()
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
-	s.Editor = NewEditorService(s.Documents, NewDocumentCodec(globalRegistry()), autosave)
+	s.Editor = NewEditorService(s.Documents, block.NewDocumentCodec(block.GlobalRegistry()), autosave)
 	s.Editor.SetServices(s.BlockServices())
 	s.Editor.SetJobs(s.Jobs) // re-set in handlers.go once the real JobTracker (with hub) exists
 	svc := s.BlockServices()
-	RegisterProcessor("diagram", NewDiagramProcessor(svc))
-	RegisterProcessor("smart-image", NewSmartImageProcessor(svc))
+	block.RegisterProcessor("diagram", NewDiagramProcessor(svc))
+	block.RegisterProcessor("smart-image", NewSmartImageProcessor(svc))
 
-	RegisterProcessor("smart-link", NewSmartLinkProcessor(svc))
-	RegisterProcessor("smart-card", NewSmartCardProcessor(svc))
-	RegisterProcessor("web-clip", NewWebClipBlockProcessor(svc))
-	RegisterProcessor("log", NewLogProcessor(svc))
-	RegisterProcessor("code", NewCodeBlockProcessor(svc))
+	block.RegisterProcessor("smart-link", NewSmartLinkProcessor(svc))
+	block.RegisterProcessor("smart-card", NewSmartCardProcessor(svc))
+	block.RegisterProcessor("web-clip", NewWebClipBlockProcessor(svc))
+	block.RegisterProcessor("log", NewLogProcessor(svc))
+	block.RegisterProcessor("code", NewCodeBlockProcessor(svc))
 
-	RegisterProcessor("ai-block", NewAIBlockProcessor(svc))
-	RegisterContextProvider("block-anchor", &BlockAnchorProvider{svc: svc})
+	block.RegisterProcessor("ai-block", NewAIBlockProcessor(svc))
+	block.RegisterContextProvider("block-anchor", block.NewBlockAnchorProvider(svc))
 }
 
 func isUUID(s string) bool {

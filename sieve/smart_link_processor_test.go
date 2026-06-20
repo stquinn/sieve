@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sieve/sieve/block"
 	"testing"
 	"time"
 )
@@ -11,13 +12,13 @@ import (
 // ── InitAttrs ────────────────────────────────────────────────────────────────
 
 func TestSmartLinkProcessor_InitAttrs_defaults(t *testing.T) {
-	p := NewSmartLinkProcessor(BlockServices{})
+	p := NewSmartLinkProcessor(block.BlockServices{})
 	attrs := p.InitAttrs("sl-a1b2", nil)
 
 	if attrs["id"] != "sl-a1b2" {
 		t.Errorf("id: got %q, want sl-a1b2", attrs["id"])
 	}
-	if attrs["status"] != BlockStatusPending {
+	if attrs["status"] != block.BlockStatusPending {
 		t.Errorf("status: got %q, want PENDING", attrs["status"])
 	}
 	if attrs["href"] != "" {
@@ -29,7 +30,7 @@ func TestSmartLinkProcessor_InitAttrs_defaults(t *testing.T) {
 }
 
 func TestSmartLinkProcessor_InitAttrs_labelDefaultsToHref(t *testing.T) {
-	p := NewSmartLinkProcessor(BlockServices{})
+	p := NewSmartLinkProcessor(block.BlockServices{})
 	attrs := p.InitAttrs("sl-0001", map[string]interface{}{"href": "https://example.com"})
 	if attrs["label"] != "https://example.com" {
 		t.Errorf("label should default to href; got %q", attrs["label"])
@@ -37,7 +38,7 @@ func TestSmartLinkProcessor_InitAttrs_labelDefaultsToHref(t *testing.T) {
 }
 
 func TestSmartLinkProcessor_InitAttrs_explicitLabelPreserved(t *testing.T) {
-	p := NewSmartLinkProcessor(BlockServices{})
+	p := NewSmartLinkProcessor(block.BlockServices{})
 	attrs := p.InitAttrs("sl-0001", map[string]interface{}{
 		"href":  "https://example.com",
 		"label": "My Site",
@@ -48,7 +49,7 @@ func TestSmartLinkProcessor_InitAttrs_explicitLabelPreserved(t *testing.T) {
 }
 
 func TestSmartLinkProcessor_InitAttrs_idNotOverridable(t *testing.T) {
-	p := NewSmartLinkProcessor(BlockServices{})
+	p := NewSmartLinkProcessor(block.BlockServices{})
 	attrs := p.InitAttrs("sl-0001", map[string]interface{}{"id": "injected"})
 	if attrs["id"] != "sl-0001" {
 		t.Error("id must not be overridable via overrides")
@@ -58,15 +59,15 @@ func TestSmartLinkProcessor_InitAttrs_idNotOverridable(t *testing.T) {
 // ── IsBlock + Transform ───────────────────────────────────────────────────────
 
 func TestSmartLinkProcessor_IsBlock_httpsURL(t *testing.T) {
-	p := NewSmartLinkProcessor(BlockServices{})
-	if !p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "https://example.com"}}) {
+	p := NewSmartLinkProcessor(block.BlockServices{})
+	if !p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "https://example.com"}}) {
 		t.Fatal("IsBlock must return true for a plain HTTPS URL")
 	}
 }
 
 func TestSmartLinkProcessor_Transform_httpsURL(t *testing.T) {
-	p := NewSmartLinkProcessor(BlockServices{})
-	overrides := p.Transform([]ContentEntry{{MIMEType: "text/plain", Content: "https://example.com"}}, "", "")
+	p := NewSmartLinkProcessor(block.BlockServices{})
+	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: "https://example.com"}}, "", "")
 	if overrides == nil {
 		t.Fatal("Transform must return non-nil for a plain HTTPS URL")
 	}
@@ -83,28 +84,28 @@ func TestSmartLinkProcessor_Transform_httpsURL(t *testing.T) {
 }
 
 func TestSmartLinkProcessor_IsBlock_httpURL(t *testing.T) {
-	p := NewSmartLinkProcessor(BlockServices{})
-	if !p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "http://example.com/path?q=1"}}) {
+	p := NewSmartLinkProcessor(block.BlockServices{})
+	if !p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "http://example.com/path?q=1"}}) {
 		t.Fatal("IsBlock must return true for a plain HTTP URL")
 	}
 }
 
 func TestSmartLinkProcessor_IsBlock_multiLine(t *testing.T) {
-	p := NewSmartLinkProcessor(BlockServices{})
-	if p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "https://a.com\nhttps://b.com"}}) {
+	p := NewSmartLinkProcessor(block.BlockServices{})
+	if p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "https://a.com\nhttps://b.com"}}) {
 		t.Error("IsBlock must return false for multi-line content")
 	}
 }
 
 func TestSmartLinkProcessor_IsBlock_plainText(t *testing.T) {
-	p := NewSmartLinkProcessor(BlockServices{})
-	if p.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "just some text"}}) {
+	p := NewSmartLinkProcessor(block.BlockServices{})
+	if p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "just some text"}}) {
 		t.Error("IsBlock must return false for plain text")
 	}
 }
 
 func TestSmartLinkProcessor_IsBlock_noEntries(t *testing.T) {
-	p := NewSmartLinkProcessor(BlockServices{})
+	p := NewSmartLinkProcessor(block.BlockServices{})
 	if p.IsBlock(nil) {
 		t.Error("IsBlock must return false for nil entries")
 	}
@@ -119,28 +120,28 @@ func TestSmartLinkProcessor_RunJob_fetchesTitle(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewSmartLinkProcessor(BlockServices{LinkPreview: NewLinkPreviewService()})
-	block := &SieveBlock{
+	p := NewSmartLinkProcessor(block.BlockServices{LinkPreview: NewLinkPreviewService()})
+	blk := &block.SieveBlock{
 		ID:   "sl-0001",
 		Kind: "smart-link",
 		Attrs: map[string]interface{}{
 			"href":      srv.URL,
 			"label":     srv.URL,
-			"status":    BlockStatusPending,
+			"status":    block.BlockStatusPending,
 			"createdAt": time.Now().UTC().Format(time.RFC3339),
 		},
 	}
 
-	if err := p.RunJob(JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: block}); err != nil {
+	if err := p.RunJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk}); err != nil {
 		t.Fatalf("RunJob returned error: %v", err)
 	}
-	if block.Attrs["status"] != BlockStatusComplete {
-		t.Errorf("status: got %q, want COMPLETE", block.Attrs["status"])
+	if blk.Attrs["status"] != block.BlockStatusComplete {
+		t.Errorf("status: got %q, want COMPLETE", blk.Attrs["status"])
 	}
-	if block.Attrs["label"] != "Example Domain" {
-		t.Errorf("label: got %q, want Example Domain", block.Attrs["label"])
+	if blk.Attrs["label"] != "Example Domain" {
+		t.Errorf("label: got %q, want Example Domain", blk.Attrs["label"])
 	}
-	if block.Attrs["completedAt"] == "" {
+	if blk.Attrs["completedAt"] == "" {
 		t.Error("completedAt must be set on success")
 	}
 }
@@ -151,45 +152,45 @@ func TestSmartLinkProcessor_RunJob_gracefulOnTitleFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewSmartLinkProcessor(BlockServices{LinkPreview: NewLinkPreviewService()})
-	block := &SieveBlock{
+	p := NewSmartLinkProcessor(block.BlockServices{LinkPreview: NewLinkPreviewService()})
+	blk := &block.SieveBlock{
 		ID:   "sl-0002",
 		Kind: "smart-link",
 		Attrs: map[string]interface{}{
 			"href":      srv.URL,
 			"label":     srv.URL,
-			"status":    BlockStatusPending,
+			"status":    block.BlockStatusPending,
 			"createdAt": time.Now().UTC().Format(time.RFC3339),
 		},
 	}
 
-	if err := p.RunJob(JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: block}); err != nil {
+	if err := p.RunJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk}); err != nil {
 		t.Fatalf("RunJob must not return error on non-200; got %v", err)
 	}
-	if block.Attrs["status"] != BlockStatusComplete {
-		t.Errorf("status: got %q; non-200 must still COMPLETE the block", block.Attrs["status"])
+	if blk.Attrs["status"] != block.BlockStatusComplete {
+		t.Errorf("status: got %q; non-200 must still COMPLETE the block", blk.Attrs["status"])
 	}
-	if block.Attrs["label"] != srv.URL {
-		t.Errorf("label must fall back to href; got %q", block.Attrs["label"])
+	if blk.Attrs["label"] != srv.URL {
+		t.Errorf("label must fall back to href; got %q", blk.Attrs["label"])
 	}
 }
 
 func TestSmartLinkProcessor_RunJob_emptyHref(t *testing.T) {
-	p := NewSmartLinkProcessor(BlockServices{})
-	block := &SieveBlock{
+	p := NewSmartLinkProcessor(block.BlockServices{})
+	blk := &block.SieveBlock{
 		ID:   "sl-0003",
 		Kind: "smart-link",
 		Attrs: map[string]interface{}{
 			"href":      "",
 			"label":     "",
-			"status":    BlockStatusPending,
+			"status":    block.BlockStatusPending,
 			"createdAt": time.Now().UTC().Format(time.RFC3339),
 		},
 	}
-	if err := p.RunJob(JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: block}); err != nil {
+	if err := p.RunJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk}); err != nil {
 		t.Fatalf("RunJob must not error on empty href; got %v", err)
 	}
-	if block.Attrs["status"] != BlockStatusComplete {
-		t.Errorf("status: got %q, want COMPLETE", block.Attrs["status"])
+	if blk.Attrs["status"] != block.BlockStatusComplete {
+		t.Errorf("status: got %q, want COMPLETE", blk.Attrs["status"])
 	}
 }
