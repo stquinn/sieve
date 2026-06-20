@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -288,6 +289,15 @@ func (es *EditorService) flushShadow(shadow *block.ShadowDocument, source string
 	if err != nil {
 		logger.Warn("editor: flush load failed", "uuid", shadow.UUID, "source", source, "err", err)
 		return err
+	}
+	// DATA-LOSS GUARD: never overwrite a non-empty document with empty content.
+	// Empty `merged` here means a failed serialize (deriveMarkdown returns "" on a
+	// codec error) or a transient empty markdown-mode buffer — NOT a user genuinely
+	// clearing the doc through the tree. Refuse the save so the on-disk content
+	// survives; the next good flush persists normally.
+	if strings.TrimSpace(merged) == "" && strings.TrimSpace(string(doc.Body())) != "" {
+		logger.Warn("editor: REFUSED empty overwrite of non-empty doc (failed serialize/roundtrip)", "uuid", shadow.UUID, "source", source)
+		return nil
 	}
 	doc.SetBody([]byte(merged))
 	if _, err = es.documents.Save(doc); err != nil {
