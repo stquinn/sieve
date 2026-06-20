@@ -68,28 +68,20 @@ func (p *AIBlockProcessor) BuildContext(blk block.SieveBlock, doc block.DocView,
 	sb.WriteString(blk.ID)
 	sb.WriteString("\n")
 
+	// Under the point-to-point model a block's ref IS its direct target(s) — the
+	// whole ref is what it is about (a MANY when the question spans several blocks),
+	// so reference all of it, not just the last segment.
+	ref, _ := blk.Attrs["ref"].(string)
 	if t == "EXPLAIN" {
 		sb.WriteString("EXPLAIN NODE: ")
-		ref, _ := blk.Attrs["ref"].(string)
-		// The last segment of the comma-separated ref is the specific node being
-		// explained; earlier segments are the broader context chain.
-		if lastComma := strings.LastIndex(ref, ","); lastComma != -1 {
-			sb.WriteString(strings.TrimSpace(ref[lastComma+1:]))
-		} else {
-			sb.WriteString(strings.TrimSpace(ref))
-		}
+		sb.WriteString(strings.TrimSpace(ref))
 		if r != "" {
 			sb.WriteString("\n**ANSWER:** ")
 			sb.WriteString(strings.TrimSpace(r))
 		}
 	} else {
 		sb.WriteString("QUESTION ABOUT: ")
-		ref, _ := blk.Attrs["ref"].(string)
-		if lastComma := strings.LastIndex(ref, ","); lastComma != -1 {
-			sb.WriteString(strings.TrimSpace(ref[lastComma+1:]))
-		} else {
-			sb.WriteString(strings.TrimSpace(ref))
-		}
+		sb.WriteString(strings.TrimSpace(ref))
 		if q != "" {
 			sb.WriteString("\n")
 			sb.WriteString(strings.TrimSpace(q))
@@ -103,71 +95,92 @@ func (p *AIBlockProcessor) BuildContext(blk block.SieveBlock, doc block.DocView,
 	return sb.String()
 }
 
-// expandAIBlockRefs replaces any ai-block ID in refs with its own ref chain
-// followed by itself. This lets the caller pass a single ai-block ID and still
-// receive the original source content as primary context and the prior Q&A as
-// history — without the frontend needing to pre-build the chain.
-func expandAIBlockRefs(refs []string, doc block.DocView) []string {
-	var result []string
-	for _, id := range refs {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		if blk, ok := doc.GetBlock(id); ok && blk.Kind == "ai-block" {
-			if aiRef, _ := blk.Attrs["ref"].(string); aiRef != "" && aiRef != "doc" {
-				for _, part := range strings.Split(aiRef, ",") {
-					if part = strings.TrimSpace(part); part != "" {
-						result = append(result, part)
-					}
-				}
+// resolveChain walks the point-to-point ref graph from the action block (selfID,
+// startRef) and classifies each reachable node by GEOMETRY, not type: a node that
+// has its own ref is INTERIOR — part of the THREAD (the conversation/derivation
+// history) — and is recursed into; a node with no ref is a LEAF — part of the
+// TARGET, the terminal MANY the chain bottoms out at. "doc" is a leaf (the whole
+// document). A seen-guard makes cyclic graphs terminate. thread is returned
+// oldest-first (the deepest interior node is the oldest). Type never enters the
+// decision, so a future DATA → GRAPH → AI chain classifies correctly with no change.
+func (p *AIBlockProcessor) resolveChain(selfID, startRef string, doc block.DocView) (targets, thread []string) {
+	seen := map[string]bool{}
+	if selfID != "" {
+		seen[selfID] = true
+	}
+	var descend func(ref string)
+	descend = func(ref string) {
+		for _, raw := range strings.Split(ref, ",") {
+			id := strings.TrimSpace(raw)
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			if id == "doc" {
+				targets = append(targets, id)
+				continue
+			}
+			childRef := ""
+			if b, ok := doc.GetBlock(id); ok {
+				childRef, _ = b.Attrs["ref"].(string)
+			}
+			if strings.TrimSpace(childRef) == "" {
+				targets = append(targets, id) // leaf → target
+			} else {
+				thread = append(thread, id) // interior → thread
+				descend(childRef)
 			}
 		}
-		result = append(result, id)
 	}
-	return result
+	descend(startRef)
+	for i, j := 0, len(thread)-1; i < j; i, j = i+1, j-1 {
+		thread[i], thread[j] = thread[j], thread[i] // shallow-first → oldest-first
+	}
+	return targets, thread
 }
 
-// RunJob resolves each ID in the ref chain via BuildContextForID.
-// Dispatch is by block kind: img-1234 → SmartImageProcessor,
-// a prose ref → ProseProcessor, a prior AI block → AIBlockProcessor.BuildContext.
-// Image block IDs are derived from the seen map after context resolution —
-// the frontend sends nothing about images.
+// buildTargets renders the terminal MANY (the target node) by asking each member
+// block for its own AI representation through the registry (BuildContextForID) and
+// joining them. Type-agnostic: every block self-describes, so a multi-block
+// selection, a single block, or "doc" all render the same way. Empty contexts
+// (e.g. an empty prose block) drop out.
+func (p *AIBlockProcessor) buildTargets(targets []string, doc block.DocView) string {
+	var parts []string
+	for _, id := range targets {
+		if c := block.BuildContextForID(id, doc, map[string]bool{}); c != "" {
+			parts = append(parts, c)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// RunJob builds the prompt by walking this block's point-to-point ref graph and
+// splitting it by GEOMETRY (resolveChain): the terminal MANY of leaf nodes is the
+// TARGET (the content being asked about), the interior nodes are the THREAD (prior
+// Q&A / derivation history), and this block is the ACTION. Each node self-describes
+// through the registry (BuildContextForID), so dispatch stays kind-agnostic.
 func (p *AIBlockProcessor) RunJob(jctx block.JobContext) error {
 	blk := jctx.Block
 	ref, _ := blk.Attrs["ref"].(string)
 	blockType, _ := blk.Attrs["type"].(string)
 
-	// Seed seen with this block's own ID to prevent self-reference.
+	targets, threadIDs := p.resolveChain(blk.ID, ref, jctx.Doc)
+
+	// TARGET: the terminal MANY, each member rendered and grouped.
+	content := p.buildTargets(targets, jctx.Doc)
+
+	// THREAD: the interior nodes, oldest-first, each as its own Q&A entry.
 	seen := map[string]bool{blk.ID: true}
-	var content string
 	var historyParts []string
-	// Expand any ai-block refs so the original source is primary content
-	// and the prior Q&A becomes history — no chain-building needed in the frontend.
-	refs := expandAIBlockRefs(strings.Split(ref, ","), jctx.Doc)
-
-	var validCtxs []string
-	for _, id := range refs {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		ctx := block.BuildContextForID(id, jctx.Doc, seen)
-		if ctx != "" {
-			validCtxs = append(validCtxs, ctx)
-		}
-	}
-
-	if len(validCtxs) > 0 {
-		content = validCtxs[0]
-		if len(validCtxs) > 1 {
-			historyParts = validCtxs[1:]
+	for _, id := range threadIDs {
+		if ctx := block.BuildContextForID(id, jctx.Doc, seen); ctx != "" {
+			historyParts = append(historyParts, ctx)
 		}
 	}
 	history := strings.Join(historyParts, "\n\n---\n\n")
 
-	// Call BuildContext on the current block to form the question
-	questionCtx := p.BuildContext(*blk, jctx.Doc, seen)
+	// ACTION: this block's own question.
+	questionCtx := p.BuildContext(*blk, jctx.Doc, map[string]bool{})
 
 	var response string
 	var runErr error
