@@ -31,41 +31,39 @@ Because a prose block's identity markers can straddle a fence the scanner *does*
 
 A processor contributes a **shape hint**: the "angle brackets" that bound its regions — a `(head, tail)` token pair. The segmenter is driven by the union of registered shapes; it is delimiter-aware but still kind-blind. `Accepts` remains the authority on *claiming* a found region. Shapes help *find*; `Accepts` decides *own*.
 
-A shape is **kind-qualified**, not generic. A fenced processor registers its specific opener kind (`diagram`, `ai-block`, `code`, …), NOT a bare `` ``` ``. This is the key to leaving ordinary markdown alone:
+**One mechanism, no categories.** Every block-mode processor registers the *same* thing — a **kind-qualified `(head, tail)` delimiter pair** it relies on. There is no "fenced vs marker" split; the segmenter handles every registered shape identically.
 
-| Kind of processor | what it registers | recognised by |
+| Kind | head | tail |
 |---|---|---|
-| fenced (code, diagram, ai-block, log, smart-*) | its **kind name** (`` ```diagram ``, `` ```ai-block ``, …) | native goldmark fence parse; AST walk treats a fence as a structured candidate **only if its info string is a registered Sieve kind** |
-| prose | `(head, tail)` = `(<!--s:, <!--/s:)` | custom goldmark block node (opaque interior) |
+| code | `` ```code `` | `` ``` `` |
+| diagram | `` ```diagram `` | `` ``` `` |
+| ai-block | `` ```ai-block `` | `` ``` `` |
+| prose | `<!--s:` | `<!--/s:` |
 
-**Standard code fences (`` ```java ``, `` ```python ``, bare `` ``` ``) match no registered Sieve kind, so they are never candidates** — goldmark parses them as ordinary code blocks and they remain **prose content** (a code sample in a note stays inside its surrounding prose block rather than being carved out and splitting the prose). `Accepts`/`Deserialize` remain the backstop for the rare case of someone literally typing a reserved kind (` ```diagram `) as a code sample — it is rejected for lacking valid Sieve YAML + id and falls to prose.
+The head is **kind-qualified**, so a standard code fence (`` ```java ``, `` ```python ``, bare `` ``` ``) matches no registered head and is never a candidate — it is ordinary content and stays **prose** (a code sample in a note stays inside its surrounding prose block rather than being carved out). `Accepts`/`Deserialize` remain the backstop if someone types a reserved kind (` ```diagram `) as a literal code sample — it is rejected for lacking valid Sieve YAML + id and falls to prose.
 
-A future container (columns, Stage E) registers another marker shape (e.g. `<col …>` / `</col>`) and the segmenter is unchanged.
+**Prose is not a special category.** It registers its shape like every other kind. Its *additional* role is the under-the-hood **catch-all**: any bytes no shape claims (undelimited text, standard fences, legacy notes) are prose, and prose silently **upgrades them to delimited, id-bearing blocks on save** so no data is lost. That behaviour lives in the prose *processor's* `Deserialize`/`Serialize` — it is NOT a second segmentation path.
+
+A future container (columns, Stage E) registers another shape (e.g. `(<col …>, </col>)`) the same way; the segmenter is unchanged.
 
 ## 3. Design
 
 ### 3.1 Shape registration
 
-A custom-node shape is only needed for a delimiter goldmark does **not** already understand:
-
-- **Fenced kinds** (code/diagram/ai-block/…) need no custom node — goldmark recognises `` ``` `` natively. Their "shape" is simply their **registered kind name**, which the registry already holds. The AST walk treats a fence as a structured candidate **iff its info string is a registered Sieve kind**; `Accepts` then confirms. Unregistered info strings (`` ```java ``, bare `` ``` ``) are ordinary code blocks → prose content, never carved out.
-- **Bespoke marker kinds** (prose now; columns later) register a `(head, tail)` shape. The codec collects the union of these from the injected `ProcessorRegistry` and feeds them to the custom goldmark block parser (§3.2).
-
-A region is tagged with a kind for dispatch: a fence's kind is its info string; a marker region's kind comes from its shape (e.g. `prose`).
+Every block-mode processor exposes one `(head, tail)` shape — its kind-qualified delimiter pair (`` ```diagram `` / `` ``` ``, `<!--s:` / `<!--/s:`, …). The codec collects the union of shapes from the injected `ProcessorRegistry` and feeds them to a single segmenter. A region is tagged with the owning kind for dispatch. There is no per-category branch: the same registration and the same matching apply to fences and markers alike.
 
 ### 3.2 Custom goldmark block parser (B2)
 
-Recognition is implemented as a **custom goldmark block parser**, fed the registered shapes, plus goldmark's **native** fenced-code parsing:
+Recognition is a **single custom goldmark block parser** fed *all* registered shapes (not one path for fences and another for markers):
 
-- For each bespoke marker shape (`<!--s:` …), the custom parser triggers on the head, then **consumes raw lines** until the matching tail — exactly as goldmark's fenced-code / HTML blocks consume raw lines. The interior is **opaque**: goldmark does not parse it into paragraphs/headings, and any inner `` ``` `` is *not* split out. The parser emits a custom AST node carrying `{kind, rawInterior, byteSpan}`.
-- The custom marker parser must be registered with **higher priority than goldmark's native HTML-comment block parser**, or goldmark will consume `<!--s:pr-1-->` as a standalone HTML comment block (the current bug). The `s:` / `/s:` sentinel distinguishes our markers from user HTML comments.
-- `` ``` `` fences are parsed by goldmark **natively** (mature fence-length / indentation handling — we keep that for free; this is the reason B2 was chosen over a hand-rolled scanner).
+- It triggers on any registered head; when a line opens a registered shape, it **consumes raw lines** until that shape's matching tail — exactly as goldmark's fenced-code / HTML blocks consume raw lines. The interior is **opaque**: goldmark does not parse it into paragraphs/headings, and any inner delimiter (a `` ``` `` inside a prose block, an `<!--s:` inside a code sample) is *not* split out. It emits a custom AST node carrying `{kind, rawInterior, byteSpan}`.
+- It must be registered with **higher priority than goldmark's native HTML-comment block parser** (so `<!--s:pr-1-->` is taken as a shape head, not a standalone comment block — the current bug) and the native fenced-code parser (so `` ```diagram `` is taken as our shape, not a plain code block). The `s:` / `/s:` sentinel distinguishes our markers from user HTML comments.
+- A fence whose info string is **not** a registered kind (`` ```java ``, bare `` ``` ``) opens no shape, so the custom parser ignores it and goldmark parses it **natively** as an ordinary code block → it becomes gap/prose content. This is the only place native fence handling is used, and it is exactly the standard-markdown case we *want* left alone.
 
 The codec parses once, then **walks the top-level AST children** to produce an ordered region list:
 
-- a custom marker node → a region tagged with its shape kind, `Raw` = the whole span, interior verbatim;
-- a `*ast.FencedCodeBlock` node → a region tagged with its info string, `Raw` = the whole fence;
-- any other node (paragraph, heading, list, table, …) → contributes to a **gap text region** via byte offsets (gapless tiling, as today).
+- a custom shape node → a region tagged with its kind, `Raw` = the whole span, interior verbatim;
+- any other node (ordinary code block, paragraph, heading, list, table, …) → contributes to a **gap text region** via byte offsets (gapless tiling, as today) → prose.
 
 ### 3.3 Dispatch — unchanged, and now simple
 
