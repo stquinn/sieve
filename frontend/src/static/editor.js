@@ -170,18 +170,17 @@
         var tmp = document.createElement('div')
         tmp.innerHTML = bhtml.trim()
         if (b.kind === 'prose') {
-          // Node-granular: a prose block renders to its NATIVE top-level node(s).
-          // Stamp the block id onto the FIRST top-level element so
-          // addGlobalAttributes(id) carries it onto that node; a legacy
-          // multi-paragraph run parses to N nodes — only the first keeps the
-          // loaded id, the rest are id-less (minted on first sync, D-r.4). Push
-          // every parsed top-level node (they are all valid blocks now).
-          if (b.id && tmp.firstElementChild) tmp.firstElementChild.setAttribute('data-id', b.id)
-          var emitted = 0
-          parser.parse(tmp).content.forEach(function (n) { nodes.push(n); emitted++ })
-          if (!emitted) {
+          // Node-granular: a prose block parses to its NATIVE top-level node(s). One
+          // node → that node carries the block id (the native path). >1 nodes → ONE
+          // proseGroup container carries the id and wraps them, so a multi-node embed
+          // stays ONE block (proseBlockNodes, prose-group.js). The id is stamped onto
+          // the node, not the DOM — children are never top-level, never minted.
+          var parsed = parser.parse(tmp).content
+          var produced = window.TipTap.proseBlockNodes(parsed, b.id || '', editor.state.schema)
+          if (!produced.length) {
             console.error('[editor] prose block ' + i + ' (' + (b.id || '') + ') produced no node from:\n' + bhtml.trim().slice(0, 200))
           }
+          produced.forEach(function (n) { nodes.push(n) })
         } else {
           // Structured: take ONLY the sieve-<kind> node we expect, ignoring any
           // stray nodes the parse invents. The shadow is authoritative.
@@ -317,7 +316,9 @@
         T.Image.configure({ inline: false, allowBase64: true, HTMLAttributes: { class: 'editor-image' } }),
         T.HighlightMark,
         T.SelectionHighlight,
-      ].concat(window.SieveNativeCodeBlock ? [window.SieveNativeCodeBlock] : []).concat(T.getSieveNodes()).concat([
+      ].concat(window.SieveNativeCodeBlock ? [window.SieveNativeCodeBlock] : [])
+       .concat(window.TipTap.ProseGroup ? [window.TipTap.ProseGroup] : [])
+       .concat(T.getSieveNodes()).concat([
         T.TaskList,
         T.TaskItem.configure({ nested: true }),
         T.Markdown.configure({ html: true, transformPastedText: true, link: { openOnClick: false } }),
@@ -1401,7 +1402,16 @@
         if (currentUuid !== uuid) { aiReloadInProgress = false; return }
         var body = data.body || ''
         if (currentMode === 'wysiwyg' && currentEditor) {
-          currentEditor.commands.setContent(body)
+          // Wysiwyg renders the backend's AUTHORITATIVE block list — markdown is
+          // NOT a wysiwyg render input. A flat setContent(body) re-parse ignores
+          // block boundaries and invents ids, fragmenting a multi-node prose block
+          // and losing its id (the embed bug). The doc structure + every id come
+          // from data.blocks; renderBlocksIntoEditor + proseBlockNodes wrap a multi-
+          // node block into ONE container carrying its id. (Per-block prose content
+          // is still markdown, but rendered WITHIN its own block by the block list —
+          // it never crosses a boundary.) No setContent fallback: there is no
+          // markdown render path for wysiwyg.
+          renderBlocksIntoEditor(currentEditor, data.blocks || [])
           lastSyncedBody = body
           aiReloadInProgress = false
           var maxPos = currentEditor.state.doc.content.size

@@ -2638,4 +2638,10 @@ pre.tiptap-code-block code {
   box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.25);
 }
 
+/* proseGroup: the multi-node prose container. Transparent — no chrome; it relies on
+   the shared .block-node styling. This rule only ensures its children sit as a
+   normal block run. */
+.prose-group > * {
+  margin-block: 0;
+}
 
