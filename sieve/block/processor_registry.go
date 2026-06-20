@@ -9,6 +9,20 @@ import (
 	"sieve/sieve/fencedblock"
 )
 
+// RegionShape is the kind-qualified delimiter pair a processor relies on — the
+// "angle brackets" that bound its on-disk regions. It rides with the SerDes
+// (the code that writes <!--s:…--> is the code that finds it), so it is supplied
+// for free by the embedded FencedDeserializer / ProseProcessor. A zero value
+// (empty Head) means "I have no document region" — inline flavours.
+type RegionShape struct {
+	Kind string // the kind a matched region is tagged with (e.g. "diagram", "prose")
+	Head string // opening token, kind-qualified (e.g. "```diagram", "<!--s:")
+	Tail string // closing token (e.g. "```", "<!--/s:")
+}
+
+// IsZero reports that the processor declares no document region (inline flavours).
+func (s RegionShape) IsZero() bool { return s.Head == "" }
+
 // ContentEntry is one item from the browser clipboard DataTransfer.
 type ContentEntry struct {
 	MIMEType string                 `json:"mimeType"`
@@ -84,6 +98,10 @@ type BlockProcessor interface {
 	// the terminal mop-up (ProseProcessor). No kind-switch in the codec.
 	Accepts(region Region) bool
 	Deserialize(region Region) ([]SieveBlock, error)
+	// Shape returns the kind-qualified delimiter pair this flavour's regions use
+	// on disk — the segmentation half of recognition. Supplied for free by the
+	// embedded FencedDeserializer (from Kind); inline flavours return a zero shape.
+	Shape() RegionShape
 }
 
 // FencedSerializer is the ONE shared serialization for YAML/fenced block flavours.
@@ -127,6 +145,12 @@ func (d FencedDeserializer) Deserialize(region Region) ([]SieveBlock, error) {
 	return []SieveBlock{NewSieveBlock(d.Kind, id, "", attrs)}, nil
 }
 
+// Shape derives the fenced delimiter pair from Kind — every structured flavour
+// gets ```Kind … ``` recognition for free by embedding.
+func (d FencedDeserializer) Shape() RegionShape {
+	return RegionShape{Kind: d.Kind, Head: "```" + d.Kind, Tail: "```"}
+}
+
 // InlineDeserializer is embedded by inline flavours. Inline things are NOT Sieve
 // blocks (project_inline_not_a_block): they are never recognised from disk during
 // document parse, so Accepts is always false and Deserialize is a no-op. The pair
@@ -135,6 +159,9 @@ type InlineDeserializer struct{}
 
 func (InlineDeserializer) Accepts(Region) bool                      { return false }
 func (InlineDeserializer) Deserialize(Region) ([]SieveBlock, error) { return nil, nil }
+
+// Shape: inline things are never document regions (Accepts is already false).
+func (InlineDeserializer) Shape() RegionShape { return RegionShape{} }
 
 type BlockServices struct {
 	AI          AIPort

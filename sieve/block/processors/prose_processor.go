@@ -237,6 +237,12 @@ func findLegacyClose(lines []string, start int) int {
 	return -1
 }
 
+// Shape: prose regions are delimited by paired <!--s:ID--> / <!--/s:ID--> markers.
+// Kind is "prose"; the markers are kind-blind so Head/Tail carry no id.
+func (p *ProseProcessor) Shape() block.RegionShape {
+	return block.RegionShape{Kind: block.KindProse, Head: "<!--s:", Tail: "<!--/s:"}
+}
+
 // Accepts always returns true: prose is the terminal mop-up. The codec EXCLUDES
 // prose from its Accepts loop (it skips Mode()==BlockModeProse) and invokes
 // Deserialize explicitly on the coalesced run of unclaimed regions — so this
