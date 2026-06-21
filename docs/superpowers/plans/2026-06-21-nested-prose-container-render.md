@@ -11,6 +11,7 @@
 ## Global Constraints
 
 - **Backend is UNCHANGED.** No Go edits, no codec change, no on-disk flag. The wire `kind` is always `prose`. The container is purely a frontend rendering of an existing multi-node prose block.
+- **Wysiwyg renders from the structured block list (`attrs`) — NEVER from a doc-level markdown string.** Markdown and `serialisedForm` are storage/transitional representations being retired from the model; re-deriving the document (its blocks, structure, or ids) from a markdown string via `setContent(<flat markdown>)` is FORBIDDEN in the wysiwyg path — it is the embed-fragmentation bug, and it depends on a representation that is going away. The doc and every id come from `data.blocks`. (A single *prose* block's `content` is still a markdown string rendered *within its own block boundary* — that is allowed; what is forbidden is the doc-level re-parse that ignores boundaries and invents ids.) Markdown MODE (the breakglass textarea) is the only place a flat markdown body is an input.
 - **Created ONLY by code** — `proseBlockNodes`, called from `renderBlocksIntoEditor` at load. The editor / keyboard / toolbar NEVER creates a container (the doc top is `(block | sieveBlock)+` with native nodes as first-class sibling blocks, so typing makes native sibling blocks, never a container). Future toolbar containers (columns/cells) are out of scope.
 - **Node name MUST be `proseGroup`** — NOT `sieve-*`. This is load-bearing: `isNativeProseNodeName('proseGroup') === true` is what routes the container through every prose path (save, chain, identity) with zero bridge code. Naming it `sieve-prose` would break this and require teaching four paths to treat it as prose.
 - **Root DOM MUST carry `class="block-node"` and `data-id="<id>"`** — the hooks the block CSS and the AI ref-chain accent target (CSS matches `.block-node[data-id]`). Native prose nodes get these from the `BlockId` global attr; `proseGroup` is not in that list, so its own `renderHTML` emits them.
@@ -242,15 +243,18 @@ git commit -m "Add proseGroup container node + proseBlockNodes mapper (transpare
 
 ---
 
-### Task 2: Register the container + switch `renderBlocksIntoEditor` to `proseBlockNodes`
+### Task 2: Register the container + route ALL wysiwyg doc render through `renderBlocksIntoEditor`/`proseBlockNodes`
+
+**Why this task is bigger than "the childCount switch":** the embed (AI block → prose) re-renders via `block-promoted` → `softReloadContent` → `setContent(data.body)` — a frontend-local **flat-markdown re-parse**, NOT `renderBlocksIntoEditor`. That flat re-parse is the fragmentation engine: it splits a multi-node prose block into N native nodes AND loses the backend's block id (observed: an embedded AI answer became `pr-9306`/`pr-c97f`/`pr-e27f`, the original `ai-c53d` id gone). So patching `renderBlocksIntoEditor` alone (2a) never fires for the embed — the embed must also be routed through the block-list path (2b). The backend half is already correct (`PromoteBlock` creates one prose block, reuses the embedded id); the bug is purely that the frontend re-derives the doc from flat markdown instead of **faithfully rendering the backend's authoritative block list**. `/api/editor/load` already returns `data.blocks` (`requesthandlers/editor_handler.go:56,85`); `softReloadContent` currently ignores them.
 
 **Files:**
 - Modify: `frontend/src/index.html` (add the module script)
-- Modify: `frontend/src/static/editor.js` (register `T.ProseGroup`; rewrite the prose branch of `renderBlocksIntoEditor`)
+- Modify: `frontend/src/static/editor.js` (register `T.ProseGroup`; rewrite the prose branch of `renderBlocksIntoEditor` [2a]; route `softReloadContent`'s wysiwyg branch through `renderBlocksIntoEditor(data.blocks)` [2b])
 - Modify: `frontend/src/static/editor.css` (minimal `.prose-group` spacing)
 
 **Interfaces:**
 - Consumes: `window.TipTap.ProseGroup`, `window.TipTap.proseBlockNodes` (Task 1).
+- `renderBlocksIntoEditor(editor, blocks)` already exists (editor.js:158) and replaces the whole doc via a non-undoable transaction — 2b reuses it; it must keep `softReloadContent`'s cursor-restore (`setTextSelection` after).
 
 - [ ] **Step 1: Load the container module in `index.html`**
 
@@ -295,6 +299,47 @@ In `frontend/src/static/editor.js`, `renderBlocksIntoEditor` (around lines 172�
 ```
 
 (Leave the `else` structured branch — `var want = 'sieve-' + b.kind; ...` — exactly as-is.)
+
+- [ ] **Step 3b: Route `softReloadContent`'s wysiwyg branch through the block list (THE EMBED FIX)**
+
+This is the path the embed actually uses (`block-promoted` → `softReloadContent`, editor.js:718–719). Currently its wysiwyg branch does `setContent(data.body)` — a flat re-parse that fragments a multi-node prose block and loses the backend id. In `frontend/src/static/editor.js`, `softReloadContent` (around lines 1402–1409), replace ONLY the wysiwyg branch:
+
+```js
+        if (currentMode === 'wysiwyg' && currentEditor) {
+          currentEditor.commands.setContent(body)
+          lastSyncedBody = body
+          aiReloadInProgress = false
+          var maxPos = currentEditor.state.doc.content.size
+          currentEditor.commands.setTextSelection(Math.min(savedAnchor, maxPos - 1))
+        }
+```
+
+with:
+
+```js
+        if (currentMode === 'wysiwyg' && currentEditor) {
+          // Wysiwyg renders the backend's AUTHORITATIVE block list — markdown is
+          // NOT a wysiwyg render input. A flat setContent(body) re-parse ignores
+          // block boundaries and invents ids, fragmenting a multi-node prose block
+          // and losing its id (the embed bug). The doc structure + every id come
+          // from data.blocks; renderBlocksIntoEditor + proseBlockNodes wrap a multi-
+          // node block into ONE container carrying its id. (Per-block prose content
+          // is still markdown, but rendered WITHIN its own block by the block list —
+          // it never crosses a boundary.) No setContent fallback: there is no
+          // markdown render path for wysiwyg.
+          renderBlocksIntoEditor(currentEditor, data.blocks || [])
+          lastSyncedBody = body
+          aiReloadInProgress = false
+          var maxPos = currentEditor.state.doc.content.size
+          currentEditor.commands.setTextSelection(Math.min(savedAnchor, maxPos - 1))
+        }
+```
+
+(`renderBlocksIntoEditor` is in module scope, callable here. `lastSyncedBody = body` stays — it is the sync-diff baseline bookkeeping, not a render input. The markdown-MODE branch below — the breakglass textarea — keeps its flat body; only wysiwyg render changes. `renderBlocksIntoEditor` already early-returns when `nodes.length === 0`, matching `mountWysiwyg`'s empty handling — confirm this is acceptable for an emptied-doc reload, and if the doc must be cleared to empty, handle it explicitly rather than via `setContent`.)
+
+- [ ] **Step 3c: Audit the remaining wysiwyg `setContent(body)` doc-load callers**
+
+Use the language-server `references` tool (or grep) on `setContent` in `editor.js`. For EACH call site that loads a whole document into the **wysiwyg** editor from disk/backend body (candidates: the `setContent(data.body)` near line 1911, the `setContent` helper near line 1687 when used for a doc load), confirm whether it should instead render `data.blocks` via `renderBlocksIntoEditor`. Convert the ones that are wysiwyg doc-loads (same fragmentation risk); leave markdown-mode and non-doc uses alone. If a call site is ambiguous, note it in the report and leave it — do not guess. The flat re-parse must not be a wysiwyg doc-render path anywhere.
 
 - [ ] **Step 4: Add a minimal `.prose-group` style**
 
