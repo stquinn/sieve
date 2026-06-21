@@ -116,3 +116,15 @@ Remaining surface:
 - **The markdownit sieve fence-rules** in `sieve-block-extension.js` (`renderer.rules.fence` / inline ruler per kind) — the frontend's knowledge of ```` ```kind ```` document structure. With `setContent` retired, these are now only reachable via `buildBlocksHTML`'s `serialisedForm` fallback (a structured block built from a fence rather than from `attrs`). Target: build every structured block from `attrs` (`buildSieveBlockHTML`) and retire the fence-rules.
 
 **Why deferred:** the corrupting half (IN-direction `setContent` load, which re-minted ids and persisted the corruption — see the restore-corruption fix `c508aaa`) is eliminated. This remaining half is lower-risk and touches the save/sync path, so it deserves its own focused pass rather than being tacked onto the nested-prose/restore work. Decision 2026-06-21: log and move on; close the current branch first.
+
+## T-A: Flaky test — `TestHandleBlockUpdate_notifySendsSnapshotUnderLock`
+
+**What:** This `sieve/services` test flakes (~1-in-3) with `TempDir RemoveAll cleanup: ... directory not empty` — a teardown race: a watcher/async writer still touching the test's `buffers/` dir when `t.TempDir()` cleanup runs. It is NOT a logic failure (the assertions pass; only the teardown errors) and is **pre-existing** — it flakes identically on clean `main`/`HEAD` with no relation to any block-model change (verified by stash-test). 
+
+**Why deferred:** cosmetic test-infra flake, not a product bug; the suite is otherwise green. **Retires when:** the test stops the watcher / drains async writers before returning (so cleanup has no live handles), or uses a non-`t.TempDir` dir it removes explicitly after quiescing.
+
+## L-A: `renderBlocksIntoEditor` leaves stale content on an empty-blocks reload
+
+**What:** `renderBlocksIntoEditor` early-returns when the backend block list is empty (`if (!nodes.length) return` — "keep existing content rather than blow away on a transient empty parse"). Since `softReloadContent` and `editor:restore` now render via this path, reloading a doc that has legitimately become **empty** leaves the prior (stale) content on screen instead of clearing it. 
+
+**Why deferred:** an edge case — the live reload triggers (AI resolve, embed promote, version restore) don't empty a document in practice, and the old `setContent("")` behavior wasn't a guaranteed clear either (it rendered one empty paragraph). **Retires when:** `renderBlocksIntoEditor` distinguishes "no blocks parsed (transient/error → keep)" from "the document is genuinely empty (→ clear to one empty paragraph)", e.g. the caller passes an explicit `allowEmpty`/clear intent for a known-good reload.
