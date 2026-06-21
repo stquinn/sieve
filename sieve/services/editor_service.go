@@ -122,11 +122,9 @@ func (es *EditorService) open(uuid string, notifySaved func(), recoverStuck bool
 	// Declare shadow before the closure so the closure can capture the variable.
 	var shadow *block.ShadowDocument
 	shadow = block.NewShadow(uuid, string(doc.Body()), es.codec, es.debounce, func() {
-		if err := es.flushShadow(shadow, "debounce"); err == nil {
-			if ns := shadow.GetNotifySaved(); ns != nil {
-				ns()
-			}
-		}
+		// notifySaved is posted inside flushShadow now (every save path notifies),
+		// so the debounce closure just flushes.
+		_ = es.flushShadow(shadow, "debounce")
 	})
 	shadow.SetNotifySaved(notifySaved)
 	// Handle minting now happens in NewShadow (the constructor invariant: no block
@@ -305,6 +303,15 @@ func (es *EditorService) flushShadow(shadow *block.ShadowDocument, source string
 		return err
 	}
 	logger.Info("editor: saved", "uuid", shadow.UUID, "source", source, "bytes", len(merged))
+	// Post the saved event on EVERY successful save — not just the debounce path.
+	// flushShadow is the single chokepoint every saver funnels through (Flush,
+	// the debounce closure, FlushAll, applyJobUpdate, PromoteBlock), so notifying
+	// here makes "the frontend hears about the save" a property of the save itself.
+	// The data-loss-guard early-return above does NOT reach here, so a refused
+	// (non-)save correctly posts nothing.
+	if ns := shadow.GetNotifySaved(); ns != nil {
+		ns()
+	}
 	return nil
 }
 

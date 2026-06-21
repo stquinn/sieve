@@ -206,6 +206,36 @@ func TestEditorService_NotifySavedCalledAfterDebounce(t *testing.T) {
 	}
 }
 
+// A DIRECT save (es.Flush — the path PromoteBlock/applyJobUpdate/FlushAll use)
+// must also post the saved event, so the frontend clears its dirty indicator after
+// an embed/AI-job save, not only after a debounce flush. The notify is a property
+// of the save (flushShadow), not of the debounce timer.
+func TestEditorService_NotifySavedCalledAfterDirectFlush(t *testing.T) {
+	ds, _ := newTestDocumentService(t)
+	// A long debounce so ONLY the direct Flush can fire the notify in this test.
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), time.Hour)
+
+	doc, _ := ds.New()
+	doc.SetBody([]byte("original"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+
+	notified := make(chan struct{}, 1)
+	_ = es.Open(uuid, func() { notified <- struct{}{} })
+	es.UpdateMarkdown(uuid, "updated content")
+
+	if err := es.Flush(uuid); err != nil {
+		t.Fatalf("Flush failed: %v", err)
+	}
+
+	select {
+	case <-notified:
+		// good — the direct Flush posted the saved event
+	case <-time.After(time.Second):
+		t.Fatal("notifySaved was not called after a direct Flush")
+	}
+}
+
 func TestEditorService_EnterWysiwygReparsesBlocks(t *testing.T) {
 	block.RegisterProcessor("code", processors.NewCodeBlockProcessor(block.BlockServices{}))
 	t.Cleanup(func() { block.UnregisterProcessor("code") })
