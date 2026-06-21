@@ -9,11 +9,17 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 
 ## Key File Locations
 
+> **Go package layout (S-A decomposition, 2026-06-20).** `sieve/` is no longer a flat package — it is 6 cohesive packages with an acyclic DAG: `domain ← block ← {block/processors, services} ← ai ← root`. The cycle is broken by **port interfaces owned by `block/`** (`AIPort`/`DocumentsPort`/`AssetsPort`/`StatePort`/`LinkPreviewPort`); concrete services implement them, the root wires them. `block/` imports no service. See `docs/superpowers/specs/2026-06-20-flat-package-decomposition-design.md`.
+
 | What | Where |
 |------|-------|
 | Wails App struct + lifecycle | `app.go` |
-| All services (DI container) | `sieve/service_provider.go` |
-| Session + Settings types | `sieve/session.go`, `sieve/settings.go` |
+| Composition root (DI: wires ports, registers processors) | `sieve/service_provider.go` (package `sieve`, root) |
+| **Block model + codec + registry + ports** | `sieve/block/` (SieveBlock, DocumentCodec, RegionScanner, ShadowDocument, ports.go, processor_registry.go, markdown_parser.go) |
+| **Block processors** (9 concrete flavours) | `sieve/block/processors/` (code, diagram, log, prose, smart-image/link/card, web-clip, ai-block) |
+| **Domain leaf types** (persistent) | `sieve/domain/` (Document, Buffer, Note, Session, Settings, Categories, ImageAsset, FilingRecommendation, ImageDesc, LinkPreviewResult) |
+| **Services** (persistence + editor) | `sieve/services/` (DocumentService, AssetService, StateService, JobTracker, LinkPreviewService, LibraryService, EditorService) |
+| **AI subsystem** | `sieve/ai/` (AIService, cli.go=RunCLI [future API-backend swap point], prompts, eval helpers, image_localise) |
 | HTTP router + handler registration | `handlers.go` |
 | One file per HTTP concern | `requesthandlers/*.go` |
 | Go HTML templates (HTMX fragments) | `frontend/src/templates/*.html` |
@@ -22,7 +28,6 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 | TipTap vanilla island | `frontend/src/static/editor.js` |
 | Custom TipTap extensions (vanilla JS) | `frontend/src/static/extensions.js` |
 | Pre-built TipTap core bundle | `frontend/src/static/vendor/tiptap.js` |
-| AI + CLI integration | `sieve/ai_service.go`, `sieve/cli.go` |
 | Store abstraction + FileStore | `store/interfaces.go`, `store/filestore/` |
 | SSE hub | `sse.go` |
 | File watcher | `watcher.go` |
@@ -66,7 +71,14 @@ Custom extensions live in `extensions.js` (vanilla JS) — they are NOT in the b
 
 ## Architecture in One Paragraph
 
-`main.go` builds a chi router and SSE hub. `handlers.go` registers each `RequestHandler` (one struct per concern in `requesthandlers/`). Handlers call `sieve.ServiceProvider` which owns all services (DocumentService, StateService, AIService, PromptService, AssetService). The Store abstraction (`store.Store`) is the only layer that touches disk — `filestore.FileStore` implements it. The frontend is HTMX: Go templates render HTML fragments on request; SSE events (`notes:changed`, `session:changed`, etc.) trigger HTMX swaps. TipTap runs as a vanilla JS island (`editor.js`) mounted in `#editor-container`.
+`main.go` builds a chi router and SSE hub. `handlers.go` registers each `RequestHandler` (one struct per concern in `requesthandlers/`). Handlers call `sieve.ServiceProvider` (the composition root, package `sieve`) which constructs the concrete services and wires them into `block.BlockServices` as **port interfaces**. The block model (`block/`: SieveBlock, DocumentCodec, RegionScanner, ShadowDocument) is a leaf that depends only on `domain/` — processors and services depend on it, never the reverse. `ai/` (AIService + CLI) implements `block.AIPort`. The Store abstraction (`store.Store`) is the only layer that touches disk — `filestore.FileStore` implements it. The frontend is HTMX: Go templates render HTML fragments on request; SSE events (`notes:changed`, `session:changed`, etc.) trigger HTMX swaps. TipTap runs as a vanilla JS island (`editor.js`) mounted in `#editor-container`.
+
+---
+
+## Design Principles
+
+- **No loose/free functions (OOP cohesion).** Behaviour belongs as a **method on the type or service that owns its data** — not a package-level `func`. If a function genuinely has no owning type, attach it to a Utilities service; it does not float. Dangling package-level symbols hide their callers, which is exactly what made the S-A package split painful. Data mutations live with the data (e.g. block ops + snapshots are `ShadowDocument` methods; serialize/deserialize are `BlockProcessor`/`DocumentCodec` methods; paste-matching is a registry method `FirstPasteMatch`). **Known backlog applying this:** `block/`'s codec/parser still has free funcs (`scanProseRegion`, `mdParser`, goldmark helpers, `handle_gc`'s `gcRefs`/`gcAliases`) and `ai/eval` helpers — attach them to their owning type as opportunity allows.
+- **Tests live with the type they exercise.** A test that touches a type's internals (`Attrs`, unexported methods, the mutex) is white-box and belongs **in that type's package**. Cross-package tests use the public method API only — never add a construction seam to poke across a package boundary. Editor-mechanic tests use a **FakeBlock**; only prose-*specific* tests need the real `ProseProcessor` (which lives in `block/processors/`).
 
 ---
 

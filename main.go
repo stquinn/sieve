@@ -16,6 +16,7 @@ import (
 
 	"sieve/logger"
 	"sieve/sieve"
+	"sieve/sieve/services"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/menu"
@@ -256,7 +257,7 @@ func buildMenu(app *App) *menu.Menu {
 	file.AddText("Open Library…", keys.Combo("o", keys.CmdOrCtrlKey, keys.ShiftKey),
 		js("window.sieveSelectLibrary()"))
 	recentMenu := file.AddSubmenu("Open Recent")
-	var recents []sieve.Library
+	var recents []services.Library
 	if app.ServiceProvider != nil && app.ServiceProvider.Library != nil {
 		recents = app.ServiceProvider.Library.Recent()
 	} else {
@@ -277,7 +278,7 @@ func buildMenu(app *App) *menu.Menu {
 	if isMac {
 		settingsLabel = "Preferences"
 	}
-	file.AddText(settingsLabel, keys.CmdOrCtrl(","), openSettings)	
+	file.AddText(settingsLabel, keys.CmdOrCtrl(","), openSettings)
 	file.AddSeparator()
 	if !isMac {
 		// On macOS: Settings lives in Sieve > Preferences (injected by AppMenu role),
@@ -339,7 +340,7 @@ func main() {
 	if len(os.Args) > 1 {
 		cliArg = os.Args[1]
 	}
-	libSvc := sieve.NewLibraryService(configRecorder{}, ValidateStore)
+	libSvc := services.NewLibraryService(configRecorder{}, ValidateStore)
 	storePath := libSvc.BestOnStartup(cliArg, os.Getenv("SIEVE_STORE"))
 
 	hub := newSSEHub()

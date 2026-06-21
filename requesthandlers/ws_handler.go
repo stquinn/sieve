@@ -9,6 +9,7 @@ import (
 
 	"sieve/logger"
 	"sieve/sieve"
+	"sieve/sieve/block"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -76,7 +77,7 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logger.Info("ws: connection established", "uuid", uuid)
-	
+
 	h.channelsMu.Lock()
 	h.channels[uuid] = writeMsg
 	h.channelsMu.Unlock()
@@ -120,14 +121,35 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 		case "enter-markdown":
 			h.handleEnterMarkdown(writeMsg, uuid)
 		case "enter-wysiwyg":
-			h.handleEnterWysiwyg(uuid)
+			h.handleEnterWysiwyg(uuid, raw, writeMsg)
 		case "retry-block-job":
 			h.handleRetryBlockJob(uuid, raw, writeMsg)
 		case "promote-block":
 			h.handlePromoteBlock(uuid, raw, writeMsg)
 		case "extract":
 			h.handleExtract(uuid, raw, writeMsg)
+		case "block-op":
+			h.handleBlockOp(uuid, raw, writeMsg)
 		}
+	}
+}
+
+// handleBlockOp applies one granular block operation (create/update/delete/move)
+// to the open document's authoritative block tree.
+func (h *WsHandler) handleBlockOp(uuid string, raw []byte, writeMsg func(interface{})) {
+	var msg struct {
+		Op block.BlockOp `json:"op"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		logger.Warn("ws: block-op decode failed", "uuid", uuid, "err", err)
+		return
+	}
+	if err := h.ServiceProvider.Editor.HandleBlockOp(uuid, msg.Op); err != nil {
+		logger.Warn("ws: block-op failed", "uuid", uuid, "op", msg.Op.Type, "block", msg.Op.BlockID, "err", err)
+		writeMsg(map[string]interface{}{
+			"type":    "error",
+			"message": fmt.Sprintf("block-op %s failed: %v", msg.Op.Type, err),
+		})
 	}
 }
 
@@ -172,10 +194,30 @@ func (h *WsHandler) handleEnterMarkdown(writeMsg func(interface{}), uuid string)
 	})
 }
 
-// handleEnterWysiwyg re-parses shadow.Blocks from shadow.Markdown and sets mode = wysiwyg.
-func (h *WsHandler) handleEnterWysiwyg(uuid string) {
+// handleEnterWysiwyg picks up the latest markdown (the frontend's textarea value,
+// since a pending doc-update may not have flushed), re-parses shadow.Doc from it,
+// sets mode = wysiwyg, and returns the reparsed blocks so JS can render the
+// WYSIWYG editor immediately — symmetric to handleEnterMarkdown returning
+// markdown-content. Without the blocks the editor mounts empty until a tab switch
+// reloads via /api/editor/load.
+func (h *WsHandler) handleEnterWysiwyg(uuid string, raw []byte, writeMsg func(interface{})) {
+	// A pointer distinguishes "no markdown field" (other callers) from an
+	// intentionally-empty doc; only adopt the markdown when the field is present.
+	var msg struct {
+		Markdown *string `json:"markdown"`
+	}
+	if err := json.Unmarshal(raw, &msg); err == nil && msg.Markdown != nil {
+		h.ServiceProvider.Editor.UpdateMarkdown(uuid, *msg.Markdown)
+	}
 	h.ServiceProvider.Editor.EnterWysiwyg(uuid)
 	h.persistTabMode(uuid, "wysiwyg")
+	if blocks, ok := h.ServiceProvider.Editor.FrontendBlocks(uuid); ok {
+		writeMsg(map[string]interface{}{
+			"type":   "wysiwyg-content",
+			"uuid":   uuid,
+			"blocks": blocks,
+		})
+	}
 }
 
 // persistTabMode updates the session tab's mode field so the tab bar renders correctly.
@@ -220,10 +262,10 @@ func (h *WsHandler) handleRetryBlockJob(uuid string, raw []byte, writeMsg func(i
 	// Reset both status and createdAt. The DISPATCHED notifyBlockUpdated that fires
 	// immediately will carry the fresh createdAt, so the frontend's isJobStale()
 	// won't fire and re-show "interrupted" instead of the spinner.
-	h.ServiceProvider.Editor.UpdateBlock(uuid, sieve.SieveBlock{
+	h.ServiceProvider.Editor.UpdateBlock(uuid, block.SieveBlock{
 		ID: msg.ID,
 		Attrs: map[string]interface{}{
-			"status":    sieve.BlockStatusPending,
+			"status":    block.BlockStatusPending,
 			"createdAt": time.Now().UTC().Format(time.RFC3339),
 			"error":     "",
 		},
@@ -291,7 +333,7 @@ func (h *WsHandler) handleExtract(uuid string, raw []byte, writeMsg func(interfa
 	var p struct {
 		BlockID    string               `json:"blockId"`
 		TargetKind string               `json:"targetKind"`
-		Entries    []sieve.ContentEntry `json:"entries"`
+		Entries    []block.ContentEntry `json:"entries"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		logger.Warn("ws: bad extract payload", "err", err)
@@ -318,4 +360,3 @@ func (h *WsHandler) handleExtract(uuid string, raw []byte, writeMsg func(interfa
 		"newYaml":    rawYaml,
 	})
 }
-

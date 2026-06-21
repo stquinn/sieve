@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"sieve/sieve"
+	"sieve/sieve/block"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -49,9 +50,10 @@ func (h *EditorHandler) handleEditorLoad(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 
 	type loadResponse struct {
-		Body string `json:"body"`
-		Mode string `json:"mode"`
-		UUID string `json:"uuid"`
+		Body   string                `json:"body"`
+		Mode   string                `json:"mode"`
+		UUID   string                `json:"uuid"`
+		Blocks []block.FrontendBlock `json:"blocks,omitempty"`
 	}
 
 	if strings.HasPrefix(uuid, "prompt:") {
@@ -69,7 +71,21 @@ func (h *EditorHandler) handleEditorLoad(w http.ResponseWriter, r *http.Request)
 		if mode == "" {
 			mode = "wysiwyg"
 		}
-		json.NewEncoder(w).Encode(loadResponse{Body: string(b.Body()), Mode: mode, UUID: b.UUID()})
+		body := string(b.Body())
+		resp := loadResponse{Body: body, Mode: mode, UUID: b.UUID()}
+		// WYSIWYG renders from the block list (Stage D.2). Load THROUGH the shadow
+		// (identity step): ensure the shadow is open — minting prose handles — and
+		// return its blocks, so the editor and shadow share identity (anchors get a
+		// real data-id, the sync cache is seeded). Open is idempotent, so the WS
+		// connection that follows reuses this same shadow. Markdown mode keeps
+		// serving raw body only; the client never builds blocks there.
+		if mode != "markdown" {
+			_ = h.ServiceProvider.Editor.Open(uuid, nil)
+			if blocks, ok := h.ServiceProvider.Editor.FrontendBlocks(uuid); ok {
+				resp.Blocks = blocks
+			}
+		}
+		json.NewEncoder(w).Encode(resp)
 		return
 	}
 	json.NewEncoder(w).Encode(loadResponse{Body: "", Mode: "wysiwyg", UUID: ""})
@@ -133,8 +149,8 @@ func (h *EditorHandler) handleEditorSave(w http.ResponseWriter, r *http.Request)
 
 func (h *EditorHandler) handleSmartPaste(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		UUID    string             `json:"uuid"`
-		Entries []sieve.ContentEntry `json:"entries"`
+		UUID    string               `json:"uuid"`
+		Entries []block.ContentEntry `json:"entries"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UUID == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -160,15 +176,15 @@ func (h *EditorHandler) handleSmartPaste(w http.ResponseWriter, r *http.Request)
 func (h *EditorHandler) handleDetectExtractions(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SourceKind string               `json:"sourceKind"`
-		Entries    []sieve.ContentEntry `json:"entries"`
+		Entries    []block.ContentEntry `json:"entries"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	candidates := sieve.DetectExtractions(req.SourceKind, req.Entries)
+	candidates := block.DetectExtractions(req.SourceKind, req.Entries)
 	if candidates == nil {
-		candidates = []sieve.ExtractionCandidate{}
+		candidates = []block.ExtractionCandidate{}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(candidates)

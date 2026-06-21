@@ -6,6 +6,20 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 
 ---
 
+## E-1: "Embed in document" (promote-to-prose) is broken — multi-node embeds fragment and lose their id — ✅ RESOLVED 2026-06-21
+
+**RESOLVED** (user-verified in-app) — but NOT via the `kind:nested-prose` design below. The fix is simpler and content-derived: a multi-node prose block renders as ONE chrome-less, editable `content:'block+'` container node (`proseGroup`, `frontend/src/static/prose-group.js`), chosen by the **renderer's own parse count** in `renderBlocksIntoEditor` (`proseBlockNodes`: 1 top-level node → native, >1 → one container carrying the id). No new on-disk `kind`, no flag — the wire kind stays `prose`; the container is a pure frontend rendering of a multi-node prose block. Because it is one top-level node with the backend's id, the mint plugin never re-mints it. `proseGroup` is `isNativeProseNodeName` so it flows through every existing prose path (save/chain/identity) with zero bridge code; its markdown serialize is transparent (children only, Go owns the markers). **It does NOT depend on B-A** — backend-authoritative by construction (the id comes from the backend block and is never invented). Commits: `77ad7ae` (node + mapper), `cd6c66d` (wire-in + `softReloadContent` block-list render). Note: the *embed re-render* path (`block-promoted` → `softReloadContent`) was also fixed to render the block list, not a flat `setContent` re-parse. B-A (typed-prose frontend mint) remains separately open.
+
+**What (historical):** Embedding a structured block (e.g. an `ai-block`) into the document via "Embed in document" / Promote-to-Prose is **broken for multi-node content**, which is the common case. `EditorService.PromoteBlock` correctly creates ONE prose block carrying the original id (e.g. `ai-d63e`) with the block's `MarkdownRepresentation` as content (Go is right; the test passes; `scanProseRegion` keeps the delimited block whole). But that representation is multi-node markdown (e.g. `### question\n\n<answer>` = heading + paragraph), and the **frontend** renders `kind:prose` as **native top-level nodes (D-r.7 node-granular)** — so the one backend block is parsed into N native nodes, the mint plugin gives each a fresh `pr-…` id, and the next sync persists N separate blocks. **The original id is destroyed and any AI ref chain pointing at it breaks.** Observed live: embedding `ai-d63e` produced `pr-12ed` + `pr-ca6d`, no `ai-d63e`. It also violates "the backend owns the data" — the frontend silently posts back a lossy mutation *on load*, with no user interaction (the mint plugin fires on the `setContent` transaction); roundtrips don't roundtrip.
+
+**Related to B-A (frontend-minted prose ids).** Same root cause: the frontend *invents* block identity instead of honouring the backend's. The actual mechanism that destroys `ai-d63e` here IS B-A's frontend mint plugin — it fires on the split nodes and stamps fresh `pr-…` ids, overwriting the backend's authoritative id. So E-1 is the multi-node-block face of B-A: B-A is "the frontend mints ids for *new typed* prose"; E-1 is "the frontend re-mints ids for a *backend-authored* block it fragmented." A truly backend-authoritative identity flow (B-A's retirement: token→mint→ack, frontend never invents ids, load never mutates) would also prevent E-1's id loss. They should be fixed together, or at least with the same principle.
+
+**Scope:** a SINGLE-node embed works — the finalised content is one native node, maps to one `kind:prose` block, id rides through. Only MULTI-node embeds break.
+
+**Root cause:** there is no editor representation for "one prose block spanning multiple top-level nodes." `kind:prose` = one native top-level node (typed prose, node-granular — *correct, keep it*). A multi-node, actor-created block has no home, so it fragments.
+
+**Retires when:** build the **`kind:"nested-prose"`** kind, which the 2026-06-19 node-granular spec (`docs/superpowers/specs/2026-06-19-node-granular-prose-blocks-design.md`) already designed and deferred ("a code-created prose tree under one id, for a future actor that needs it; kind-in-marker; never keyboard-split"). The embed/rewrite/extract/transform actors are that concrete actor. Concretely: (1) codec supports `<!--s:ID kind=nested-prose-->…<!--/s:ID-->` (open-tag kind on serialize/parse); (2) a transparent never-split container NodeView on the frontend (`content:'block+'`, one `data-id`, no chrome) renders a `nested-prose` block as ONE node → edits emit `update-block`, never split → the id is immortal; (3) `PromoteBlock` (and later rewrite/extract/transform) emits `kind:nested-prose`. `nested-prose` is actor/backend-created, so its id is backend-minted from birth — it sidesteps **B-A** (the typed-prose frontend-mint, still separately open). Decision locked 2026-06-20: container (id survives load + edit), NOT unpack-on-edit (loses the id). A near-term partial mitigation (independent of the kind work): the frontend must not post a mutation as a side-effect of *loading* backend data — honour the existing `aiReloadInProgress` flag in the mint/sync so a load is read-only.
+
 ## P-A: OS file drag-and-drop not implemented
 
 **What:** Dragging files from the OS file manager onto the Sieve window does nothing. Wails `DragAndDrop` config and an `OnFileDrop` Go handler are needed.
@@ -13,3 +27,122 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 **Why deferred:** Separate feature; no blocking dependency.
 
 **Retires when:** Implemented as a follow-on feature.
+
+## B-A: Prose block ids are frontend-minted, not backend-authoritative
+
+**What:** New prose blocks get their durable `blockId` minted on the **frontend** (`prose-block.js` `mintProseId` in the `blockId` minting plugin, via `mintActions`), then sent on `create-block`. Every **structured** Sieve Block instead gets its id from the **backend** (`GenerateBlockIDFor`, e.g. `EditorService.CreateBlock`) — the backend is the sole id authority and the frontend only ever receives the id. Prose is therefore inconsistent with the rest of the block model: the frontend invents a durable identity that should originate in Go.
+
+**Why deferred (2026-06-19, user decision):** The backend-authoritative path for *native* prose needs an async `create-block` → mint → ack round-trip plus a per-node "pending" state (so the debounced observer doesn't double-create a node whose id is in flight). That state machine lands in the highest-churn area of the editor (two prior reverts). Mid-arc on a long, high-risk migration, the pragmatic call was to keep the frontend-mint model (which is synchronous and already working) and record the inconsistency here. `ApplyOp` create-block already mints server-side when the id is absent, so the backend is a correct floor regardless.
+
+**Retires when:** D-r.4's frontend mint is replaced by a backend-authoritative flow: `create-block` carries content + index + a transient correlation **token** (not a durable id) and marks the node pending; `HandleBlockOp` mints the id and the WS layer acks `{token → blockId}` back via `writeMsg`; the frontend applies the backend's id (a backend-sourced attribute update) and clears pending; the observer skips pending nodes. The `splitBlock` duplicate is then handled by **clearing** the copied id (reuse `mintActions` detection) so the new half becomes id-less → `create-block`, rather than re-minting locally.
+
+**Related: E-1** (embed-in-document broken). The same frontend-mint mechanism destroys a *backend-authored* block's id when a multi-node embed fragments — E-1 is the multi-node face of this debt. Retiring B-A (backend-authoritative identity, load never mutates) is the principle that also fixes E-1.
+
+## B-B: AI ref chain resolves to `doc`; answer blocks split the target (native-prose targeting) — ✅ RETIRED 2026-06-19 (D-r.7)
+
+**RETIRED:** Fixed by D-r.7 (commits "D-r.7 (1/3)…(3/3)" on `feature/refactor_editor_layout`), implementing the approved spec via TDD. (1) prose identity unified `blockId` → `id` (PM-attr layer only; disk markers carry the value, round-trip untouched). (2) `resolveAiTarget` keys on node *character* — `isFlowingText`(paragraph/heading) → `doc`; every other top-level node (unit) or NodeSelection → that block by id; non-empty TextSelection → `==` + ref chain of every crossed top-level block (`topLevelIdsBetween`). (3) one `blockInsertPos(state,isInline)` (inline → caret, NodeSelection → after node, else `$to.after(1)`) replaces the scattered `sieveInsertPos = selection.to` and the old `aiInsertPos`; all six additive create sites route through `captureInsertPos`/`kindIsInline`. `applyTargetHighlight` dropped the `blockRef` wrap (just applies `==`). vitest: `prose-identity` (4), `ai-target` (20), `block-insert-pos` (6) all green; in-app CDP gate confirmed answers land after the block (no split) and a selection refs its block id (not `doc`). The `blockRef` node-type retirement remains Stage E. **B-A (frontend-minted prose ids) is still open.**
+
+<details><summary>Original defect (historical)</summary>
+
+**What:** The AI targeting/insert layer (`ai-target.js` `resolveAiTarget`/`findBlockTarget`/`aiInsertPos`, `extensions.js` `buildAiContext`/`applyTargetHighlight`) predates the node-granular prose pivot. It recognizes a block only when the node is `blockRef` or `sieve-*` and reads `attrs.id`. Native prose is now a top-level node carrying `attrs.blockId`, so: (1) a **text selection** in prose refs `doc` instead of the block(s) it crosses (`resolveAiTarget`'s selection branch returns no id → `buildAiContext` falls to `'doc'`), and (2) `aiInsertPos` finds no `blockRef`/`sieve-*` ancestor → returns the caret → the Ask/Explain answer **splits** the target paragraph instead of landing as a sibling after it. (Originally recorded as the `project_ai_targeting_blockref_defect` memory.)
+
+**Why deferred:** Block-level addressing needed prose ids, which only landed with D-r.4 minting; doing the rewire before that would have been built on sand.
+
+**Retires when:** The **approved design** [`docs/superpowers/specs/2026-06-19-unified-block-targeting-design.md`](superpowers/specs/2026-06-19-unified-block-targeting-design.md) is implemented (folded into the block-document-model plan as task set **D-r.7**): unify the prose identity attr `blockId` → `id`; resolve targets by node *character* (NodeSelection/unit → that block by id, TextSelection → `==` + ref chain of every crossed block, bare caret in flowing text → `doc`); and route every additive block insert through one `blockInsertPos` (inline → caret, block → after the enclosing top-level node) so answers never split.
+
+</details>
+
+## B-C: ShadowDocument uniform-block refactor — ✅ RETIRED 2026-06-19
+
+**What it was:** `ShadowDocument` carried a `Markdown string` and a `Blocks map[string]*SieveBlock` that **excluded prose** (`syncBlocksView`: `if b.Kind != KindProse`) and exposed blocks via raw map / `Attrs["..."]` access — contradicting the committed model ("everything is a block, addressed by id; kind matters only at render/serialise").
+
+**Resolved by** the bite-sized plan [`docs/superpowers/plans/2026-06-19-shadowdoc-uniform-block-refactor.md`](superpowers/plans/2026-06-19-shadowdoc-uniform-block-refactor.md) (one commit per step, app runnable + green throughout — no big-bang):
+1. ✅ `getBlock(id)` / `findBlockIn` is the sole accessor; the `Blocks map` + `syncBlocksView` are deleted (all readers on the tree).
+2. ✅ The `Markdown` field is gone — whole-doc markdown is derived on demand (`deriveMarkdown`, mode-aware); markdown-mode keeps a scoped `mdModeBuffer`. Closed the D-r.5 `id=="doc"` drift bug.
+3. ✅ Prose body lives in `Attrs["content"]` (typed `Content()` accessor) — prose is a `SieveBlock` like every kind; the bespoke `Content` field is gone. Typed accessors (`Source/Ref/Status/StringAttr`) replace brittle casts (spec #5).
+4. ✅ `Children` removed (a block is a leaf; containers are Stage E). `BlockDoc` wrapper collapsed — `ShadowDocument.Blocks []SieveBlock` directly. `DocBlock` merged into `SieveBlock` (one in-memory block type).
+5. ✅ Wire shape unified (B-E): prose body in `attrs.content`, `FrontendBlock.Content` dropped; JS reads via `proseContent()`.
+
+**Spun off:**
+- ✅ **B-F (DONE 2026-06-19)** — lock-free `DocView{UUID, Mode, mdModeBuffer, Blocks []SieveBlock}` snapshot for the job/context boundary. `JobContext.Doc` and `ContextProvider.BuildContext` / `BuildContextForID` take `DocView` (no mutex), built from the live `ShadowDocument` at dispatch. `go vet ./sieve/` is now copylocks-clean. (NOT "fixed" by passing `*ShadowDocument` — that would leak the live mutable cell into the concurrent `RunJob`; the copy is deliberate isolation.)
+- ⬜ **B-G** (open, needs WebKit by-eye) — retire `serialisedForm` from the wire (old markdown-model hangover; client renders structured kinds from `attrs` alone) → then `FrontendBlock == SieveBlock + json tags`, delete it and serialise `[]SieveBlock` straight to the wire. Copy/paste round-trips on-demand (serialize the fence from attrs AT COPY TIME), not shipped every load.
+
+## SoT: single-source-of-truth (`mdModeBuffer`) — ✅ RESOLVED-BY-INVESTIGATION 2026-06-20
+
+**The framing was wrong.** The fold-in was stated as "retire `mdModeBuffer` as authoritative; markdown mode reparses into `Blocks` via the codec." Walking it through (user, 2026-06-20) reframed it: **markdown mode is a breakglass/dev convenience, and doc save MUST be independent of a potentially-faulty block tree.** So the verbatim-buffer save (`ContentForSave` returns `mdModeBuffer` raw in markdown mode) is *correct*, not drift — reparse-on-edit (Option A) would canonicalise the user's bytes and churn through invalid intermediate states. Current behaviour is functionally correct; only the code reads unintuitively.
+
+**The only real gap** was per-block reads against the *frozen* tree while in markdown mode. Investigation also confirmed (empirically, all RunJob processors) that `DocView` is **read-only, job-creation-time prompt context** — only `ai_block_processor` even reads it, and only to build the prompt before the long call; results flow back as a delta merged into the LIVE shadow (`RunJob` diffs the block copy → `applyJobUpdate` → `SetBlock`), never through the `DocView`. So a stale snapshot is correct by design.
+
+**Fix (Option C, minimal guard):** `ShadowDocument.SnapshotForJob` derives the `DocView`'s block tree from the authoritative buffer when `Mode=="markdown"`, so a ref chain resolved while a job runs in a breakglass session sees fresh per-block content. Save unaffected (still verbatim). The `DocView` read-only contract is now pinned in its doc comment. Commit `abf8390`; test `TestSnapshotForJob_markdownModeDerivesBlocksFromBuffer`. Memory `project_single_source_of_truth_blocks` updated.
+
+## B-D: AI chain-active bracket doesn't render on native prose blocks
+
+**What:** The persistent AI-chain affordance (`block-ref-active`, the curved left-rail bracket toggled by `ai-block-renderer.js` `applyChain` when you focus/hover an AI block) renders only on **structured** blocks — its CSS is gated on `.block-node` / `.image-block` / `.code-block-wrapper` / `.sieve-block--*`. A **native prose** block is `<p class="block-with-chrome" data-id>`, which none of those match, so the class is added (the comma ref chain IS split correctly) but paints nothing. Verified: `block-ref-active` on such a `<p>` → `border-left: 0 none`, `::after content: none`.
+
+**Why deferred (2026-06-19):** Outside D-r.7's locked scope (identity/targeting/insert); folded into the ShadowDoc-refactor work as an adjacent "uniform block" visual fix.
+
+**Retires when:** The persistent bracket is driven through the SAME `.block-chrome-rail` the ephemeral `block-ai-target` glow already uses (`ai-target-decoration.js` + `editor.css:2628`), so prose and structured share one visual language (per `project_block_anchor_lineage`). Verify by eye in WebKitGTK. Detail in the ShadowDoc-refactor spec ("folded-in follow-up").
+
+## S-A: Flat-package decomposition — no internal boundaries (Go `sieve/` AND JS `static/`)
+
+**Go half — DONE (2026-06-20).** `sieve/` is now 6 cohesive packages, acyclic, full suite + `-race` green: `domain ← block ← {block/processors, services} ← ai ← root`. Cycle broken via `block`-owned port interfaces (`AIPort`/`DocumentsPort`/`AssetsPort`/`StatePort`/`LinkPreviewPort`); `BlockServices` is now a struct of ports. Plan `docs/superpowers/plans/2026-06-20-flat-package-decomposition.md`, spec `…/specs/2026-06-20-flat-package-decomposition-design.md`. Along the way: ShadowDocument now owns its data+mutex (EditorService never touches `shadow.mu`); registry owns paste-matching (`FirstPasteMatch`); a latent `FrontendBlocks` data race fixed (`SnapshotBlocks` deep-copies Attrs). **Still OPEN:** (1) the **JS `static/` regroup** (mirror the Go packages — untouched); (2) ✅ **single-source-of-truth** — RESOLVED-BY-INVESTIGATION 2026-06-20 (see `SoT` section above: the verbatim-buffer save is correct; only added a markdown-mode coherence guard in `SnapshotForJob`); (3) the **no-loose-functions backlog** (free funcs still in `block/` codec/parser + `ai/eval`, see CLAUDE.md Design Principles). The original problem statement below is retained for the remaining (JS) half.
+
+**What:** Both the Go backend package and the JS frontend folder are flat dumping grounds with no internal boundaries, so it is hard to see wheat from chaff and coupling is uncontrolled.
+- **Go `sieve/`** — one package, ~40 production + ~37 test files (~14k lines). Block model, codec, processors, editor service, AI service, library service, prompts, sessions all share one namespace; everything can call everything. Every audit finding this era (`block_serde.go`, `block_op.go`, `frontend_block.go`, `DocView`/`mdModeBuffer`, the test-file sprawl) is one symptom of this: no domain ownership → behaviour leaks into free functions and the directory listing is unreadable.
+- **JS `frontend/src/static/`** — the same shape: `editor.js` + a flat pile of `*-renderer.js` / `*-block.js` / `block-*.js` / `ai-*.js` with no grouping.
+
+**Why deferred (2026-06-19, user-flagged):** The deserialization-is-a-processor-concern + ShadowDocument-consolidation refactors had to land first — they carved the seams (`DocumentCodec`, the narrow `ProcessorRegistry`, block ops as `ShadowDocument` methods) a `block/` package needs. Decomposition is a deliberate, leaf-first effort, NOT a bolt-on; doing it mid-feature would churn. The concrete blocker to a clean Go split: `BlockServices` (`processor_registry.go`) holds **concrete** `*AIService`/`*DocumentService`/`*AssetService` pointers → a `service ↔ processor` import cycle. Until that's interfaces, Go rejects the split.
+
+**Retires when:** Decompose leaf-first into a small number of cohesive packages (NOT Java-style package-per-concept; aim ~4–5). Go: make `BlockServices` an interface owned by the core, then extract `sieve/block/` (SieveBlock model + DocumentCodec + RegionScanner + processor registry + their tests) — the tests move WITH their code, which is what fixes the "37 test files in one dir" sprawl — then `sieve/processors/`, leaving `services/` + the composition root. JS: group the block/editor/AI modules into folders mirroring the Go packages. Related cleanup formerly folded in here: single-source-of-truth — now ✅ RESOLVED-BY-INVESTIGATION (see the `SoT` section; the verbatim-buffer save is correct, not drift). Memories: `project_package_layout_direction`, `project_single_source_of_truth_blocks`; aligns with `project_architecture_direction` (Go server + S3 + web/mobile).
+
+## S-B: `DocumentCodec.Deserialize` prose fallback — ✅ RETIRED 2026-06-20
+
+**Resolved by** processor-owned segmentation (spec `docs/superpowers/specs/2026-06-20-processor-owned-segmentation-design.md`, plan `…/plans/2026-06-20-processor-owned-segmentation.md`). Segmentation became a processor concern: a `Shape()` `(head,tail)` delimiter pair rides on the `BlockProcessor` SerDes surface (free via the embedded `FencedDeserializer{Kind}`/`ProseProcessor`); a single custom goldmark block parser recognises every registered shape as an opaque raw span, so a prose `<!--s:-->` block arrives WHOLE (inner fence not split). `Deserialize` collapsed to first-acceptor-wins with the terminal prose processor sorted last (`orderedProseLast`) — `firstAcceptor` (the prose-exclusion) and `flushProse`/coalescing are DELETED. The coalescing is no longer needed because the scanner delivers maximal units. Standard fences (` ```java `) match no registered shape and stay prose content. Construction-order gotcha fixed along the way (codec collects shapes from the live registry per scan; it is wired before the fenced processors register). Memory `feedback_prefer_uniform_patterns` (don't split common patterns) captured from this work. Follow-up NOT done (out of scope): consolidate the two goldmark parsers + retire `markdown_parser.go`'s legacy `sieveBlockASTTransformer` (Stage E).
+
+<details><summary>Original problem (retained for context)</summary>
+
+**What:** The codec's prose handling (`block/document_codec.go` `Deserialize` + `firstAcceptor` + `flushProse`) read as over-explicit and confused the user. `ProseProcessor.Accepts()` returns `true` unconditionally and prose IS registered, yet `firstAcceptor` deliberately SKIPS prose (`if p.Mode()==BlockModeProse { continue }`) and unclaimed regions accumulate in `pending` for an explicit `flushProse`. Two real reasons (not redundancy): (1) **coalescing** — consecutive unclaimed regions are concatenated into ONE prose run so a stray fence survives verbatim inside flowing prose and `scanProseRegion` segments correctly; per-region prose-as-last-acceptor would fragment at every fence boundary. (2) **order-independence** — prose `Accepts→true` would hijack regions ahead of structured processors if it were in the accept loop, so skipping it guarantees structured-first regardless of registration order.
+
+**Why it was debt:** the mechanism was correct but read as a smell; a clarity problem, not a behaviour bug.
+
+</details>
+
+## F-A: Frontend still owns document-structure-as-markdown on the OUT direction
+
+**What:** The IN direction is clean (2026-06-21): no `setContent(markdown)` document-load remains — every wysiwyg load renders the backend **block list** via `renderBlocksIntoEditor`, and only Go parses document structure from markdown. But the OUT direction and the structure-parse rules still live in the frontend, contrary to the principle *"only markdown editor mode may know document structure as markdown; everything else deals in blocks."*
+
+Remaining surface:
+- **`wysiwygMarkdown` + `wrapProseBlock` (`prose-markers.js`) + the `doc-update` fallback (`sendDocUpdate`)** — the frontend serializes the WHOLE document to markdown for (a) seeding the markdown-mode textarea and (b) a sync fallback on structured-block edits. Lower-risk than the retired `setContent` load because **Go's codec re-parses it** (the authoritative parser) and ids now survive from the block-list render — but it is still the frontend knowing document structure as markdown. Target: the save/sync path emits **block-ops only**; markdown-mode seeds from Go (`EnterMarkdown` already derives via the codec).
+- **The markdownit sieve fence-rules** in `sieve-block-extension.js` (`renderer.rules.fence` / inline ruler per kind) — the frontend's knowledge of ```` ```kind ```` document structure. With `setContent` retired, these are now only reachable via `buildBlocksHTML`'s `serialisedForm` fallback (a structured block built from a fence rather than from `attrs`). Target: build every structured block from `attrs` (`buildSieveBlockHTML`) and retire the fence-rules.
+
+**Why deferred:** the corrupting half (IN-direction `setContent` load, which re-minted ids and persisted the corruption — see the restore-corruption fix `c508aaa`) is eliminated. This remaining half is lower-risk and touches the save/sync path, so it deserves its own focused pass rather than being tacked onto the nested-prose/restore work. Decision 2026-06-21: log and move on; close the current branch first.
+
+## T-A: Flaky test — `TestHandleBlockUpdate_notifySendsSnapshotUnderLock`
+
+**What:** This `sieve/services` test flakes (~1-in-3) with `TempDir RemoveAll cleanup: ... directory not empty` — a teardown race: a watcher/async writer still touching the test's `buffers/` dir when `t.TempDir()` cleanup runs. It is NOT a logic failure (the assertions pass; only the teardown errors) and is **pre-existing** — it flakes identically on clean `main`/`HEAD` with no relation to any block-model change (verified by stash-test). 
+
+**Why deferred:** cosmetic test-infra flake, not a product bug; the suite is otherwise green. **Retires when:** the test stops the watcher / drains async writers before returning (so cleanup has no live handles), or uses a non-`t.TempDir` dir it removes explicitly after quiescing.
+
+## L-A: `renderBlocksIntoEditor` leaves stale content on an empty-blocks reload
+
+**What:** `renderBlocksIntoEditor` early-returns when the backend block list is empty (`if (!nodes.length) return` — "keep existing content rather than blow away on a transient empty parse"). Since `softReloadContent` and `editor:restore` now render via this path, reloading a doc that has legitimately become **empty** leaves the prior (stale) content on screen instead of clearing it. 
+
+**Why deferred:** an edge case — the live reload triggers (AI resolve, embed promote, version restore) don't empty a document in practice, and the old `setContent("")` behavior wasn't a guaranteed clear either (it rendered one empty paragraph). **Retires when:** `renderBlocksIntoEditor` distinguishes "no blocks parsed (transient/error → keep)" from "the document is genuinely empty (→ clear to one empty paragraph)", e.g. the caller passes an explicit `allowEmpty`/clear intent for a known-good reload.
+
+## D-L: Data-loss root cause (empty-overwrite) — PARKED, guard makes it non-fatal
+
+**What:** A flush occasionally derived **empty** markdown for a **non-empty** document and wiped the file. `flushShadow` now refuses to overwrite a non-empty doc with empty content (commit `b7dd63e`, regression test reproduces the wipe), so it is **non-fatal** — but the ROOT CAUSE (why the derive went empty: a failed `codec.Serialize` → `deriveMarkdown` returns `""`, or a transient empty markdown-mode buffer) was never pinned.
+
+**Why parked (user decision 2026-06-20):** not reproducible on demand; the guard removed the danger. **Retires when:** it recurs and is captured — look for the log line `"serialize block doc failed"` (the failed derive) vs. the guard's `"editor: REFUSED empty overwrite of non-empty doc"`; the first one names the block/codec path that produced empty. Moved here from the (now-archived) block-document-model plan so it isn't lost.
+
+## P-D: Smart paste duplicates the source block id
+
+**What:** Pasting a copied Sieve block keeps the **source** block's id, so the document ends with two blocks sharing one id (observed in D-r.6 regression sweep: a `sieve-code` copy/paste produced `co-test` ×2). The duplicate lives in `handleSmartPaste` (frontend) and is independent of the block-model work (pre-existing).
+
+**Why deferred:** not a block-model regression; surfaced during verification. **Retires when:** the paste path mints a fresh id for the pasted block (clear the copied id so it routes through `create-block` / server mint, the same discipline `mintActions` uses for `splitBlock`). Moved here from the archived plan.
+
+## C-T: Stale test files pin retired designs
+
+**What:** Two vitest files assert behavior of designs that were since retired and should be deleted or rewritten to the current model: `frontend/test/render-exact-shadow.test.js` and `frontend/test/proseidentity-loop.test.js` (they pin pre-node-granular / pre-`proseGroup` expectations). They currently pass but encode obsolete intent.
+
+**Why deferred:** cosmetic/test-hygiene, not a product bug. **Retires when:** each is reviewed against the current block model and deleted (if its concern is now covered elsewhere) or rewritten. Moved here from the archived plan.

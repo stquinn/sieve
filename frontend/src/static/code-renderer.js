@@ -19,11 +19,21 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
 
   var CodeRenderer = {
 
-    // No nodeConfig overrides: all sieve blocks share the default schema
-    // (atom + selectable + draggable) for a uniform, non-disjoint selection.
-    // Clicks/typing inside the textarea are shielded from ProseMirror centrally
-    // via the stopEvent hook in sieve-block-extension.js, so this block stays
-    // selectable without editor interactions triggering a stray NodeSelection.
+    nodeConfig: {
+      atom: false,
+      selectable: true,
+      draggable: false,
+      group: 'block',
+      inline: false,
+      content: 'text*',
+      marks: '',
+      code: true,
+      defining: true
+    },
+
+    getInitialContentHTML: function(data) {
+      return esc(typeof data.source === 'string' ? data.source : '')
+    },
 
     attrs: {
       source:          { default: '', parseHTML: function (el) { return el.getAttribute('data-source')           || '' } },
@@ -36,9 +46,10 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
 
 
     asContentEntry: function(node) {
-      if (!node.attrs.source) return null
+      var src = node.textContent || node.attrs.source
+      if (!src) return null
       return  [
-        { mimeType: 'text/plain', content: node.attrs.source }
+        { mimeType: 'text/plain', content: src }
       ]
     },
 
@@ -63,6 +74,7 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
       // Header + badge
       var header = document.createElement('div')
       header.className = 'sieve-block__header'
+      header.contentEditable = 'false'
       var badge = document.createElement('span')
       badge.className = 'sieve-block__badge'
       header.appendChild(badge)
@@ -74,25 +86,25 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
 
       var gutter = document.createElement('div')
       gutter.className = 'sieve-block__gutter'
+      gutter.contentEditable = 'false'
 
-      // CSS Grid cell — highlight layer (behind) + textarea layer (in front)
+      // CSS Grid cell — code area
       var codeArea = document.createElement('div')
       codeArea.className = 'sieve-block__code-area'
 
-      var highlightPre = document.createElement('pre')
-      highlightPre.className = 'sieve-block__highlight'
-      var highlightCode = document.createElement('code')
-      highlightPre.appendChild(highlightCode)
-
-      var editEl = document.createElement('textarea')
-      editEl.className = 'sieve-block__edit'
-      editEl.spellcheck = false
-      editEl.setAttribute('autocorrect', 'off')
-      editEl.setAttribute('autocapitalize', 'off')
-      editEl.setAttribute('autocomplete', 'off')
-
-      codeArea.appendChild(highlightPre)
-      codeArea.appendChild(editEl)
+      var pre = document.createElement('pre')
+      // Re-use the edit class for padding/fonts, but ensure it acts like a block
+      pre.className = 'sieve-block__edit' 
+      pre.style.whiteSpace = 'pre-wrap'
+      pre.style.pointerEvents = 'auto'
+      pre.style.outline = 'none'
+      pre.style.color = 'var(--theme-text)' // Fix transparent text
+      
+      var contentDOM = document.createElement('code')
+      contentDOM.className = 'hljs'
+      
+      pre.appendChild(contentDOM)
+      codeArea.appendChild(pre)
       body.appendChild(gutter)
       body.appendChild(codeArea)
       dom.appendChild(body)
@@ -111,17 +123,9 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
         }
       }
 
-      function applyHighlight(source, lang) {
-        // The trailing space prevents the last line collapsing in the overlay
-        var display = source ? source + '\n' : '\n'
-        highlightCode.textContent = display
-        highlightCode.className = (lang && lang !== 'unknown') ? 'language-' + lang + ' hljs' : 'hljs'
-        var low = getLowlight()
-        if (low && lang && lang !== 'unknown' && lang !== 'text' && source) {
-          try {
-            highlightCode.innerHTML = hastToHtml(low.highlight(lang, source).children) + '\n'
-          } catch (_) {}
-        }
+      // Syntax highlighting is handled by the ProseMirror plugin below.
+      function applyHighlight(lang) {
+        contentDOM.className = (lang && lang !== 'unknown') ? 'language-' + lang + ' hljs' : 'hljs'
       }
 
       function updateBadge(attrs) {
@@ -135,7 +139,7 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
           badge.textContent = attrs.language
           badge.className   = 'sieve-block__badge'
         } else {
-          badge.textContent = attrs.language || ''
+          badge.textContent = (attrs.language === 'unknown' ? 'CODE' : attrs.language) || 'CODE'
           badge.className   = 'sieve-block__badge sieve-block__badge--unknown'
         }
         if (attrs.detectionMethod) {
@@ -147,104 +151,133 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
         }
       }
 
-      // Skip DOM content update if the user is actively editing — their typed
-      // content (in editEl.value) takes precedence over an incoming AI update.
-      function render(attrs) {
+      // Content updates are now managed by ProseMirror.
+      // We just update the non-content UI (badge, gutter).
+      function render(attrs, textContent) {
         currentAttrs = attrs
         updateBadge(attrs)
-        if (document.activeElement !== editEl) {
-          editEl.value = attrs.source || ''
-          applyHighlight(attrs.source || '', attrs.language || '')
-          updateGutter(attrs.source || '')
-        }
+        applyHighlight(attrs.language || '')
+        updateGutter(textContent || '')
       }
 
-      render(node.attrs)
+      render(node.attrs, node.textContent)
 
-      // ── Events ────────────────────────────────────────────────────────────────
-
-      var inputTimer    = null
-      var highlightTimer = null
-
-      function flushSource() {
-        document.dispatchEvent(new CustomEvent('sieve:block-update', {
-          detail: { id: currentAttrs.id, kind: 'code', attrs: { source: editEl.value } },
-        }))
-      }
-
-      editEl.addEventListener('input', function () {
-        // Immediate gutter update
-        updateGutter(editEl.value)
-
-        // Highlight overlay update — 50ms debounce is imperceptible to humans
-        clearTimeout(highlightTimer)
-        highlightTimer = setTimeout(function () {
-          applyHighlight(editEl.value, currentAttrs.language || '')
-        }, 50)
-
-        // Flush to Go shadow
-        clearTimeout(inputTimer)
-        inputTimer = setTimeout(flushSource, 200)
+      var updateTimer = null
+      var observer = new MutationObserver(function() {
+        var text = contentDOM.textContent
+        updateGutter(text)
+        clearTimeout(updateTimer)
+        updateTimer = setTimeout(function() {
+          if (currentAttrs.id) {
+            document.dispatchEvent(new CustomEvent('sieve:block-update', {
+              detail: { id: currentAttrs.id, kind: 'code', attrs: { source: text } }
+            }))
+          }
+        }, 200)
       })
-
-      editEl.addEventListener('blur', function () {
-        clearTimeout(highlightTimer)
-        clearTimeout(inputTimer)
-        flushSource()
-        applyHighlight(editEl.value, currentAttrs.language || '')
-        updateGutter(editEl.value)
-      })
-
-      editEl.addEventListener('paste', function (e) {
-        e.stopPropagation()
-      })
-
-      editEl.addEventListener('keydown', function (e) {
-        if (e.key === 'Tab') {
-          e.preventDefault()
-          var start = editEl.selectionStart
-          var end   = editEl.selectionEnd
-          editEl.value = editEl.value.substring(0, start) + '  ' + editEl.value.substring(end)
-          editEl.selectionStart = editEl.selectionEnd = start + 2
-          updateGutter(editEl.value)
-          clearTimeout(highlightTimer)
-          highlightTimer = setTimeout(function () {
-            applyHighlight(editEl.value, currentAttrs.language || '')
-          }, 50)
-          clearTimeout(inputTimer)
-          inputTimer = setTimeout(flushSource, 200)
-          return
-        }
-        if (e.metaKey || e.ctrlKey) return
-        e.stopPropagation()
-      })
+      observer.observe(contentDOM, { characterData: true, childList: true, subtree: true })
 
       // ── NodeView ──────────────────────────────────────────────────────────────
 
       return {
         dom:        dom,
-        contentDOM: null,
+        contentDOM: contentDOM,
 
         update: function (updatedNode) {
           if (updatedNode.type.name !== nodeTypeName) return false
-          render(updatedNode.attrs)
+          render(updatedNode.attrs, updatedNode.textContent)
           return true
         },
 
-        selectNode: function () { editEl.focus() },
-
-        ignoreMutation: function () { return true },
-
-        stopEvent: function (event) {
-          if (event.type === 'keydown' && (event.metaKey || event.ctrlKey)) return false
-          return event.type === 'keydown' || event.type === 'keyup' || event.type === 'keypress'
+        ignoreMutation: function (mutation) {
+          // Allow ProseMirror to handle content mutations natively.
+          return !contentDOM.contains(mutation.target)
         },
 
         destroy: function () {
-          clearTimeout(inputTimer)
-          clearTimeout(highlightTimer)
+          observer.disconnect()
+          clearTimeout(updateTimer)
         },
       }
+    },
+
+    // ── Plugins ───────────────────────────────────────────────────────────────
+    
+    buildPlugins: function(nodeType) {
+      var Plugin = T.Plugin
+      var Decoration = T.Decoration
+      var DecorationSet = T.DecorationSet
+      
+      function getDecorations(node, pos) {
+        var low = getLowlight()
+        if (!low) return []
+        var lang = node.attrs.language || ''
+        if (!lang || lang === 'unknown' || lang === 'text') return []
+        
+        try {
+          var result = low.highlight(lang, node.textContent)
+          var decos = []
+          function parseNodes(nodes, offset, classes) {
+            nodes.forEach(function(n) {
+              if (n.type === 'text') {
+                if (classes.length > 0) {
+                  decos.push(Decoration.inline(offset, offset + n.value.length, { class: classes.join(' ') }))
+                }
+                offset += n.value.length
+              } else if (n.type === 'element') {
+                var cls = classes.concat(n.properties.className || [])
+                offset = parseNodes(n.children || [], offset, cls)
+              }
+            })
+            return offset
+          }
+          parseNodes(result.children, pos + 1, [])
+          return decos
+        } catch (e) { return [] }
+      }
+
+
+      return [
+        new Plugin({
+          state: {
+            init: function(_, instance) {
+              var decos = []
+              instance.doc.descendants(function(node, pos) {
+                if (node.type === nodeType) decos = decos.concat(getDecorations(node, pos))
+              })
+              return DecorationSet.create(instance.doc, decos)
+            },
+            apply: function(tr, set) {
+              if (!tr.docChanged) return set.map(tr.mapping, tr.doc)
+              var decos = []
+              tr.doc.descendants(function(node, pos) {
+                if (node.type === nodeType) decos = decos.concat(getDecorations(node, pos))
+              })
+              return DecorationSet.create(tr.doc, decos)
+            }
+          },
+          props: {
+            decorations: function(state) {
+              return this.getState(state)
+            },
+            handleKeyDown: function(view, event) {
+              var state = view.state
+              var selection = state.selection
+              if (selection.$from.parent.type !== nodeType) return false
+              
+              if (event.key === 'Enter') {
+                view.dispatch(state.tr.insertText('\n').scrollIntoView())
+                return true
+              }
+              if (event.key === 'Tab' && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
+                view.dispatch(state.tr.insertText('  ').scrollIntoView())
+                return true
+              }
+              return false
+            }
+          }
+        })
+      ]
     },
   }
 

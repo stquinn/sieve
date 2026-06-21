@@ -1,3 +1,26 @@
+export namespace domain {
+	
+	export class ImageDesc {
+	    filename: string;
+	    alt: string;
+	    summary: string;
+	    detect?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ImageDesc(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.filename = source["filename"];
+	        this.alt = source["alt"];
+	        this.summary = source["summary"];
+	        this.detect = source["detect"];
+	    }
+	}
+
+}
+
 export namespace main {
 	
 	export class AssetDTO {
@@ -50,29 +73,6 @@ export namespace main {
 	        this.maxHistoryVersions = source["maxHistoryVersions"];
 	        this.cliTimeoutLong = source["cliTimeoutLong"];
 	        this.showPrompts = source["showPrompts"];
-	    }
-	}
-
-}
-
-export namespace sieve {
-	
-	export class ImageDesc {
-	    filename: string;
-	    alt: string;
-	    summary: string;
-	    detect?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new ImageDesc(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.filename = source["filename"];
-	        this.alt = source["alt"];
-	        this.summary = source["summary"];
-	        this.detect = source["detect"];
 	    }
 	}
 

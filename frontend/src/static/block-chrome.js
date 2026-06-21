@@ -268,13 +268,18 @@
       var to   = offset + node.nodeSize
 
       // Mark the block for CSS gutter positioning.
-      // For sieve blocks (contentEditable=false atoms), also add block-in-selection
-      // when the effective range overlaps them — the browser won't render a native
-      // selection highlight on non-editable elements, so we drive it via decoration.
-      // EXCEPTION: if it's a single NodeSelection exactly on this block, Tiptap applies
-      // .ProseMirror-selectednode itself, so we don't want to double-tint it here.
+      // block-in-selection drives a FULL-NODE tint, but only for blocks that cannot
+      // show a native selection highlight: content-less atoms (smart-card, smart-image),
+      // whose DOM is contentEditable=false. Content-bearing sieve blocks (code, ai-block,
+      // web-clip, diagram, log) render real editable content, so the browser draws the
+      // native sub-text highlight — tinting the whole node there makes a partial text
+      // drag look like (and copy as) a whole-block selection. Still tint any sieve node
+      // that is part of an explicit gutter block-range.
+      // EXCEPTION: a single NodeSelection exactly on this block gets .ProseMirror-
+      // selectednode from Tiptap, so we don't double-tint it here.
       var isSingleNodeSel = !er.isBlockRange && er.isNodeSelection && er.from === from
-      var inSel = isSieveNode(node) && er.active && er.from < to && er.to > from && !isSingleNodeSel
+      var tintWhole = isSieveNode(node) && (node.isAtom || er.isBlockRange)
+      var inSel = tintWhole && er.active && er.from < to && er.to > from && !isSingleNodeSel
       decos.push(
         Decoration.node(from, to, { class: inSel ? 'block-with-chrome block-in-selection' : 'block-with-chrome' })
       )

@@ -7,14 +7,14 @@ import (
 	"path/filepath"
 
 	"sieve/logger"
-	"sieve/sieve"
+	"sieve/sieve/services"
 )
 
 // GlobalConfig stores machine-level settings that are not specific to any one
 // library. It is persisted to the OS config directory (~/.config/sieve/).
 type GlobalConfig struct {
-	LastStorePath   string         `json:"lastStorePath"`
-	RecentLibraries []sieve.Library `json:"recentLibraries,omitempty"`
+	LastStorePath   string             `json:"lastStorePath"`
+	RecentLibraries []services.Library `json:"recentLibraries,omitempty"`
 }
 
 func globalConfigPath() (string, error) {
@@ -61,7 +61,7 @@ func (c GlobalConfig) Save() error {
 // It is stateless — each method reads and writes the config file fresh.
 type configRecorder struct{}
 
-func (configRecorder) Recent() []sieve.Library {
+func (configRecorder) Recent() []services.Library {
 	return LoadGlobalConfig().RecentLibraries
 }
 
@@ -75,15 +75,15 @@ func (configRecorder) SetLastUsed(id string) {
 	_ = c.Save()
 }
 
-func (configRecorder) AddRecent(lib sieve.Library) {
+func (configRecorder) AddRecent(lib services.Library) {
 	c := LoadGlobalConfig()
-	filtered := make([]sieve.Library, 0, len(c.RecentLibraries))
+	filtered := make([]services.Library, 0, len(c.RecentLibraries))
 	for _, e := range c.RecentLibraries {
 		if e.Ref != lib.Ref {
 			filtered = append(filtered, e)
 		}
 	}
-	c.RecentLibraries = append([]sieve.Library{lib}, filtered...)
+	c.RecentLibraries = append([]services.Library{lib}, filtered...)
 	if len(c.RecentLibraries) > 8 {
 		c.RecentLibraries = c.RecentLibraries[:8]
 	}

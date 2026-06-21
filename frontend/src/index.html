@@ -204,7 +204,10 @@
                   <div class="status-bar__lib" hx-get="/api/library/current" hx-trigger="load" hx-swap="innerHTML"></div>
                   <div class="status-bar__jobs"></div>
                 </div>
-                <div class="status-bar__right"></div>
+                <div class="status-bar__right flex items-center">
+                  <div class="status-bar__save" style="margin-right: 8px; color: var(--theme-muted); transition: opacity 0.5s; opacity: 0;"></div>
+                  <div class="status-bar__stats flex items-center"></div>
+                </div>
             </div>
 
             <div id="pending-close-overlay" class="pending-close-backdrop" style="display: none;">
@@ -275,6 +278,7 @@
     <script src="/static/focus-context.js"></script>
     <script src="/static/block-chrome.js"></script>
     <script src="/static/ai-target-decoration.js"></script>
+    <script type="module" src="/static/block-kinds.js"></script>
     <script type="module" src="/static/sieve-block-extension.js"></script>
     <script type="module" src="/static/ai-block-renderer.js"></script>
     <script type="module" src="/static/code-renderer.js"></script>
@@ -284,6 +288,11 @@
     <script type="module" src="/static/smart-image-renderer.js"></script>
     <script type="module" src="/static/smart-card-renderer.js"></script>
     <script type="module" src="/static/diagram-renderer.js"></script>
+    <script type="module" src="/static/prose-markers.js"></script>
+    <script type="module" src="/static/block-render.js"></script>
+    <script type="module" src="/static/block-sync.js"></script>
+    <script type="module" src="/static/prose-block.js"></script>
+    <script type="module" src="/static/prose-group.js"></script>
     <script src="/static/editor.js"></script>
     <script src="/static/ai-actions.js"></script>
     <script src="/static/tabbar.js"></script>
@@ -314,18 +323,29 @@
         if (link) link.href = '/theme.css?t=' + new Date().getTime();
     });
 
-    // sieve:meta-dirty — dispatched by editor.js, updates the save-state dot in the path crumb
+    // sieve:meta-dirty — dispatched by editor.js, updates the save-state dot in the path crumb and the status bar save indicator
     document.addEventListener('sieve:meta-dirty', function(e) {
         var dirty = e.detail && e.detail.dirty;
         var dot = document.getElementById('meta-dirty-dot');
-        if (!dot) return;
-        if (dirty) {
-            dot.classList.remove('bg-tn-green');
-            dot.classList.add('bg-tn-red');
-        } else {
-            dot.classList.remove('bg-tn-red');
-            dot.classList.add('bg-tn-green');
+        if (dot) {
+            if (dirty) {
+                dot.classList.remove('bg-tn-green');
+                dot.classList.add('bg-tn-red');
+            } else {
+                dot.classList.remove('bg-tn-red');
+                dot.classList.add('bg-tn-green');
+            }
         }
+        
+        var saveText = document.querySelector('.status-bar__save');
+        if (!saveText) return;
+        
+        saveText.style.opacity = '1';
+        
+        var dotColor = dirty ? "bg-tn-red" : "bg-tn-green";
+        var label = dirty ? "Unsaved" : "Saved";
+        
+        saveText.innerHTML = '<div class="flex items-center gap-[0.4rem]"><span class="w-2 h-2 rounded-full shrink-0 ' + dotColor + '"></span><span style="color: var(--theme-textDim);">' + label + '</span></div>';
     });
 
     // Measure real tabbar height and expose as --tabbar-h for the gutter separator.
@@ -436,10 +456,10 @@
 
 
     document.addEventListener('editor:stats', function(e) {
-        var sbRight = document.querySelector('.status-bar__right');
-        if (sbRight && e.detail) {
-            sbRight.innerHTML = '<span title="Characters">' + (e.detail.chars || 0) + ' chars</span>' +
-                                '<span class="status-bar__sep">|</span>' +
+        var sbStats = document.querySelector('.status-bar__stats');
+        if (sbStats && e.detail) {
+            sbStats.innerHTML = '<span title="Characters">' + (e.detail.chars || 0) + ' chars</span>' +
+                                '<span class="status-bar__sep mx-1">|</span>' +
                                 '<span title="Lines">' + (e.detail.lines || 0) + ' lines</span>';
         }
     });

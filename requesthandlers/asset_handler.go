@@ -5,8 +5,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"sieve/sieve"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type AssetHandler struct {
@@ -16,8 +17,6 @@ type AssetHandler struct {
 func (h *AssetHandler) RegisterPaths(r chi.Router) {
 	r.Get("/sieve/{uuid}/{filename}", h.serveAsset)
 }
-
-
 
 func (h *AssetHandler) serveAsset(w http.ResponseWriter, r *http.Request) {
 	uuid := chi.URLParam(r, "uuid")

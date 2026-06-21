@@ -1,0 +1,83 @@
+package ai
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+)
+
+const testDocUUID = "test-uuid-1234"
+
+func TestLocaliseImages_NoImages(t *testing.T) {
+	result := localiseImages("# Heading\n\nSome text with no images.", t.TempDir(), testDocUUID)
+	if result != "# Heading\n\nSome text with no images." {
+		t.Errorf("content should be unchanged: %q", result)
+	}
+}
+
+func TestLocaliseImages_RemoteImage_Success(t *testing.T) {
+	// Serve a fake PNG
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		// Minimal 1x1 PNG bytes
+		w.Write([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"))
+	}))
+	defer srv.Close()
+
+	docDir := t.TempDir()
+	content := "![alt](" + srv.URL + "/img.png)"
+	result := localiseImages(content, docDir, testDocUUID)
+
+	if strings.Contains(result, srv.URL) {
+		t.Error("remote URL should have been replaced")
+	}
+	expected := "/sieve/" + testDocUUID + "/"
+	if !strings.Contains(result, expected) {
+		t.Errorf("expected %q path in result, got: %q", expected, result)
+	}
+
+	// Verify file was saved directly in docDir (not a subdirectory)
+	entries, err := os.ReadDir(docDir)
+	if err != nil || len(entries) == 0 {
+		t.Error("expected at least one file saved in docDir")
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			t.Errorf("image should be saved directly in docDir, got subdirectory: %s", e.Name())
+		}
+	}
+}
+
+func TestLocaliseImages_RemoteImage_Failure(t *testing.T) {
+	// Server that returns 404
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	content := "![alt](" + srv.URL + "/missing.png)"
+	result := localiseImages(content, t.TempDir(), testDocUUID)
+
+	// URL should remain unchanged on failure
+	if !strings.Contains(result, srv.URL) {
+		t.Error("failed fetch should leave remote URL unchanged")
+	}
+}
+
+func TestLocaliseImages_MultipleImages(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write([]byte("\x89PNG\r\n\x1a\n"))
+	}))
+	defer srv.Close()
+
+	docDir := t.TempDir()
+	content := "![a](" + srv.URL + "/a.png)\n\n![b](" + srv.URL + "/b.png)"
+	result := localiseImages(content, docDir, testDocUUID)
+
+	if strings.Contains(result, srv.URL) {
+		t.Error("all remote URLs should have been replaced")
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sieve/logger"
 	"sieve/sieve"
+	"sieve/sieve/domain"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -50,7 +51,11 @@ func (h *ContextMenuHandler) handleIntent(w http.ResponseWriter, r *http.Request
 	for i := range session.Tabs {
 		if session.Tabs[i].ID == id {
 
-			session.Tabs[i].Status = doc.Meta().Status()
+			status := "unfiled"
+			if doc.Kind() == domain.KindNote {
+				status = "filed"
+			}
+			session.Tabs[i].Status = status
 			session.Tabs[i].DisplayName = doc.Meta().DisplayName()
 			if doc.Meta().UserIntent() != nil {
 				session.Tabs[i].UserIntent = *doc.Meta().UserIntent()

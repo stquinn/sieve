@@ -4,20 +4,23 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
 	"sieve/sieve"
+	"sieve/sieve/domain"
+	"sieve/sieve/services"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type AiHandler struct {
 	ServiceProvider  *sieve.ServiceProvider
 	EmitNotesChanged func()
 	Broadcast        func(event, data string)
-	JobTracker       *sieve.JobTracker
+	JobTracker       *services.JobTracker
 }
 
 func (h *AiHandler) emitJobStarted(jobID, label, docID string, spinTab bool) {
 	if h.JobTracker != nil {
-		h.JobTracker.Start(sieve.JobInfo{JobID: jobID, Label: label, DocID: docID, SpinTab: spinTab})
+		h.JobTracker.Start(services.JobInfo{JobID: jobID, Label: label, DocID: docID, SpinTab: spinTab})
 	}
 }
 
@@ -95,7 +98,11 @@ func (h *AiHandler) evaluateAndFile(w http.ResponseWriter, id string, fileAfter 
 	if !outcome.Discarded && outcome.Document != nil {
 		for i := range session.Tabs {
 			if session.Tabs[i].ID == id {
-				session.Tabs[i].Status = outcome.Document.Meta().Status()
+				status := "unfiled"
+				if outcome.Document.Kind() == domain.KindNote {
+					status = "filed"
+				}
+				session.Tabs[i].Status = status
 				session.Tabs[i].DisplayName = outcome.Document.Meta().DisplayName()
 				if outcome.Document.Meta().UserIntent() != nil {
 					session.Tabs[i].UserIntent = *outcome.Document.Meta().UserIntent()
@@ -107,8 +114,8 @@ func (h *AiHandler) evaluateAndFile(w http.ResponseWriter, id string, fileAfter 
 	_ = h.ServiceProvider.State.SaveSession(session)
 
 	type EvaluateAndFileResult struct {
-		Discarded bool           `json:"discarded"`
-		Doc       sieve.Document `json:"doc"`
+		Discarded bool            `json:"discarded"`
+		Doc       domain.Document `json:"doc"`
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -117,8 +124,6 @@ func (h *AiHandler) evaluateAndFile(w http.ResponseWriter, id string, fileAfter 
 		h.EmitNotesChanged()
 	}
 }
-
-
 
 type refineLanguageRequest struct {
 	Content string `json:"content"`
@@ -138,5 +143,3 @@ func (h *AiHandler) handleRefineLanguage(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write([]byte(lang))
 }
-
-

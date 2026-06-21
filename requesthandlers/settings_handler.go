@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sieve/logger"
 	"sieve/sieve"
+	"sieve/sieve/domain"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -34,7 +35,7 @@ func (h *SettingsHandler) handleSettings(w http.ResponseWriter, r *http.Request)
 	session := h.ServiceProvider.State.LoadSession()
 
 	data := struct {
-		sieve.Settings
+		domain.Settings
 		LastSettingsPanel string
 	}{
 		Settings:          settings,
@@ -73,12 +74,12 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 	}
 	settings.Debug = r.FormValue("debug") == "on"
 
-	var customParsers []sieve.CustomLogParser
+	var customParsers []domain.CustomLogParser
 	names := r.PostForm["parser_name"]
 	patterns := r.PostForm["parser_pattern"]
 	for i := 0; i < len(names); i++ {
 		if i < len(patterns) && names[i] != "" && patterns[i] != "" {
-			customParsers = append(customParsers, sieve.CustomLogParser{
+			customParsers = append(customParsers, domain.CustomLogParser{
 				Name:    names[i],
 				Pattern: patterns[i],
 			})
@@ -103,7 +104,7 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 	}
 
 	data := struct {
-		sieve.Settings
+		domain.Settings
 		LastSettingsPanel string
 	}{
 		Settings:          settings,
@@ -120,7 +121,7 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 	// because the response is swapped into #settings-dialog-content (innerHTML).
 	// settings.Tier() re-resolves the CLI on PATH, so it reflects the just-saved CLI.
 	tierStr := "dumb"
-	if settings.Tier() == sieve.TierSmart {
+	if settings.Tier() == domain.TierSmart {
 		tierStr = "smart"
 	}
 	fmt.Fprintf(w, `<script>var r=document.getElementById('app-root');if(r)r.className=r.className.replace(/tier-\S+/,'tier-%s');</script>`, tierStr)

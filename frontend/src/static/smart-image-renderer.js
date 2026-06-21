@@ -25,6 +25,7 @@ import { isJobStale } from './fenced-block-base.js'
     var currentAttrs = Object.assign({}, node.attrs)
 
     // dom matches old ImageWithAttrs: inline-block wrapper that owns selection CSS
+    var nodeTypeName = 'sieve-smart-image'
     var dom = document.createElement('div')
     dom.className = 'image-block node-image'
     dom.style.display = 'inline-block'
@@ -116,31 +117,28 @@ import { isJobStale } from './fenced-block-base.js'
 
     return {
       dom: dom,
-      contentDOM: null,
       update: function (updatedNode) {
-        if (updatedNode.type.name !== 'sieve-smart-image') return false
+        if (updatedNode.type.name !== nodeTypeName) return false
         applyAttrs(updatedNode.attrs)
         return true
-      },
-      ignoreMutation: function (mutation) {
-        return mutation.type === 'attributes'
       },
     }
   }
 
-  // Ask AI, Explain, and Delete are injected by sieve-block-extension.js framework.
-  // imageIds passes the block ID so Go can include the image in the AI context.
-  function buildAiCtx(node) {
-    return { contextLabel: 'Image', imageIds: node.attrs.id ? [node.attrs.id] : [] }
-  }
+  var SmartImageRenderer = {
+    getIcon: function() { return window.SieveIcons && window.SieveIcons.image },
+    getFriendlyName: function() { return 'Image' },
 
-  T.registerSieveRenderer('smart-image', {
+    // Pure display-only image — no editable body. A true atom (no contentDOM), so the
+    // framework forces contentEditable=false and there is no phantom caret region.
     nodeConfig: {
       atom: true,
       selectable: true,
-      draggable: true,
+      draggable: false,
       group: 'block',
+      inline: false
     },
+
     attrs: {
       src:     { default: '', parseHTML: function (el) { return el.getAttribute('data-src')     || '' } },
       alt:     { default: '', parseHTML: function (el) { return el.getAttribute('data-alt')     || '' } },
@@ -149,15 +147,18 @@ import { isJobStale } from './fenced-block-base.js'
       width:   { default: '', parseHTML: function (el) { return el.getAttribute('data-width')   || '' } },
       height:  { default: '', parseHTML: function (el) { return el.getAttribute('data-height')  || '' } },
     },
+
     asContentEntry: function(node) {
-      var src = resolveSrc(node.attrs.src || '')
-      if (!src) return null
+      if (!node.attrs.src) return null
       return [{ mimeType: 'text/uri-list', content: node.attrs.src }]
     },
-    getIcon: function() { return window.SieveIcons && window.SieveIcons.image },
-    getFriendlyName: function(node) {
-      return 'Image'
+    
+    makeNodeView: makeNodeView,
+
+    buildAiCtx: function(node) {
+      return { contextLabel: 'Image', imageIds: node.attrs.id ? [node.attrs.id] : [] }
     },
+    
     parseAttrs: function (data) {
       return {
         src:     data.src     || '',
@@ -168,8 +169,6 @@ import { isJobStale } from './fenced-block-base.js'
         height:  String(data.height || ''),
       }
     },
-    makeNodeView: makeNodeView,
-    buildAiCtx: buildAiCtx,
     buildContextMenuItems: function(ctx) {
       var n = ctx.node
       return [
@@ -212,6 +211,8 @@ import { isJobStale } from './fenced-block-base.js'
         return entries
       })
     }
-  })
+  }
+
+  T.registerSieveRenderer('smart-image', SmartImageRenderer)
 
 })()

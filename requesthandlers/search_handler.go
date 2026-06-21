@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"sieve/sieve"
+	"sieve/sieve/services"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -26,7 +27,7 @@ func (h *SearchHandler) handleSidebarSearch(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	query := r.URL.Query().Get("q")
-	var results []sieve.SearchResult
+	var results []services.SearchResult
 	var err error
 
 	if query != "" {
@@ -39,7 +40,7 @@ func (h *SearchHandler) handleSidebarSearch(w http.ResponseWriter, r *http.Reque
 
 	data := struct {
 		Query   string
-		Results []sieve.SearchResult
+		Results []services.SearchResult
 	}{
 		Query:   query,
 		Results: results,
@@ -63,7 +64,7 @@ type switchItem struct {
 	IsOpen      bool
 }
 
-func flattenNotes(entries []sieve.NoteEntry, currentPath string) []switchItem {
+func flattenNotes(entries []services.NoteEntry, currentPath string) []switchItem {
 	var list []switchItem
 	for _, entry := range entries {
 		if entry.IsDir {

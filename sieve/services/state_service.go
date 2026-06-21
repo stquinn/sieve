@@ -1,0 +1,125 @@
+package services
+
+import (
+	"errors"
+	"os"
+	"sieve/logger"
+	"sieve/sieve/domain"
+	"sieve/store"
+	"strings"
+	"sync"
+)
+
+// StateService manages application state (session and settings) through the
+// Store interface. State items live in the State category (store/{hostname}/config/).
+// Create one with NewStateService — do not construct directly.
+type StateService struct {
+	st             store.Store
+	mu             sync.RWMutex
+	cachedSession  *domain.Session
+	cachedSettings *domain.Settings
+}
+
+// NewStateService creates a StateService backed by st.
+// Store returns the underlying Store.
+func (ss *StateService) Store() store.Store {
+	return ss.st
+}
+
+func NewStateService(st store.Store) (*StateService, error) {
+	if err := st.PrepareCategory(domain.State); err != nil {
+		return nil, err
+	}
+	return &StateService{st: st}, nil
+}
+
+// LoadSession returns the current session. If no session exists in the Store
+// yet, sensible defaults are returned.
+func (ss *StateService) LoadSession() domain.Session {
+	ss.mu.RLock()
+	if ss.cachedSession != nil {
+		defer ss.mu.RUnlock()
+		return *ss.cachedSession
+	}
+	ss.mu.RUnlock()
+
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+
+	if ss.cachedSession != nil {
+		return *ss.cachedSession
+	}
+
+	s, err := ss.st.Load(domain.State, "session.json")
+	if err != nil {
+		parsed := domain.ParseSession(nil)
+		ss.cachedSession = &parsed
+		return parsed
+	}
+	parsed := domain.ParseSession(s.Body())
+	ss.cachedSession = &parsed
+	return parsed
+}
+
+// SaveSession persists session to the Store, replacing any existing session.
+func (ss *StateService) SaveSession(session domain.Session) error {
+	ss.mu.Lock()
+	ss.cachedSession = &session
+	ss.mu.Unlock()
+
+	data, err := session.Marshal()
+	if err != nil {
+		return err
+	}
+	_, err = ss.st.CreateText(domain.State, "session.json", data)
+	return err
+}
+
+// LoadSettings returns the current settings merged with defaults. If no
+// settings file exists yet, defaults are written to the Store so the user can
+// inspect and edit them.
+func (ss *StateService) LoadSettings() domain.Settings {
+	ss.mu.RLock()
+	if ss.cachedSettings != nil {
+		defer ss.mu.RUnlock()
+		return *ss.cachedSettings
+	}
+	ss.mu.RUnlock()
+
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+
+	if ss.cachedSettings != nil {
+		return *ss.cachedSettings
+	}
+
+	s, err := ss.st.Load(domain.State, "settings.json")
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "not found") {
+			// First run — write defaults so the user can see all available options.
+			defaults := domain.DefaultSettings()
+			if data, e := defaults.Marshal(); e == nil {
+				if _, e2 := ss.st.CreateText(domain.State, "settings.json", data); e2 != nil {
+					logger.Warn("StateService: could not write default settings", "err", e2)
+				}
+			}
+			return defaults
+		}
+		logger.Error("StateService: failed to load settings", "err", err)
+		return domain.DefaultSettings()
+	}
+	temp := domain.ParseSettings(s.Body())
+	ss.cachedSettings = &temp
+	return *ss.cachedSettings
+}
+
+// SaveSettings persists settings to the Store, replacing any existing file.
+func (ss *StateService) SaveSettings(settings domain.Settings) error {
+	data, err := settings.Marshal()
+	if err != nil {
+		return err
+	}
+	_, err = ss.st.CreateText(domain.State, "settings.json", data)
+	ss.cachedSettings = nil
+	return err
+}

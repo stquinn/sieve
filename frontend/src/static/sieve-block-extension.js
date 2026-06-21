@@ -40,7 +40,7 @@
 //      after sieve-block-extension.js
 //   That's it.
 
-import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block-base.js'
+import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from './fenced-block-base.js'
 
 ;(function () {
   'use strict'
@@ -76,11 +76,24 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
 
     return Node.create({
       name:       nodeName,
-      group:      cfg.group,
+      // Step 5: block-mode sieve blocks form the "sieveBlock" group — the ONLY
+      // thing the doc top level allows. That keeps the top level all-blocks
+      // (no bare paragraphs) and, because prose content is the "block" group,
+      // excludes sieve blocks from inside prose (kind-homogeneity). Inline sieve
+      // nodes keep their own group.
+      group:      cfg.inline ? cfg.group : 'sieveBlock',
       inline:     cfg.inline,
       atom:       cfg.atom,
       selectable: cfg.selectable,
       draggable:  cfg.draggable,
+      content:    cfg.content,
+      marks:      cfg.marks,
+      code:       cfg.code,
+      defining:   cfg.defining,
+
+      addProseMirrorPlugins() {
+        return renderer.buildPlugins ? renderer.buildPlugins(this.type) : []
+      },
 
       addAttributes() {
         return Object.assign({}, BASE_ATTRS, renderer.attrs || {})
@@ -100,7 +113,7 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
 
       addNodeView() {
         return function ({ node, editor, getPos }) {
-          var view = renderer.makeNodeView(node, editor)
+          var view = renderer.makeNodeView(node, editor, getPos)
           if (view.dom) {
             // Inject the chrome host slot as the FIRST child.
             // BlockChrome will find it via .block-chrome-host and populate it
@@ -114,17 +127,9 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
             // Explicitly non-editable: prevents the block root from inheriting
             // contentEditable="true" from the ProseMirror root, which would let
             // the browser treat it as an editable area and break PM atom snapping.
-            // Form elements (textarea, input) inside remain independently focusable.
-            view.dom.contentEditable = 'false'
-
-            // Prevent browser text insertion into block DOM.
-            // beforeinput covers typing, paste, cut, drag-drop, IME — but not navigation keys.
-            // Skip if the event originates from an editable sub-element (code/diagram textarea).
-            if (!cfg.atom) {
-              view.dom.addEventListener('beforeinput', function (e) {
-                if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return
-                e.preventDefault()
-              })
+            // Only apply this to blocks without a contentDOM (i.e., pure atoms).
+            if (!view.contentDOM) {
+              view.dom.contentEditable = 'false'
             }
 
             view.dom.addEventListener('contextmenu', function (e) {
@@ -215,12 +220,15 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
               var { entries, extractSourceLabel } = extractContentEntryFromEditor( e, editor);
 
               if(entries == undefined || !entries) {
-                //nothign more intersting than the sieve block itself was clicked on, 
-                // but if the renderer supports it, we can extract a content entry from 
+                //nothign more intersting than the sieve block itself was clicked on,
+                // but if the renderer supports it, we can extract a content entry from
                 extractSourceLabel = renderer.getFriendlyName ? renderer.getFriendlyName(n) : n.attrs.kind || 'block';
-                entries =  renderer.asContentEntry(n);
+                entries = renderer.asContentEntry ? renderer.asContentEntry(n) : null;
               }
-              
+              // A renderer may have no content entry (e.g. a prose block) → ensure
+              // an array before the framework push so we never crash on null.
+              if (!entries) entries = [];
+
               //framework-level auto extraction for any sieve block, if the renderer supports it.
               entries.push({ mimeType: 'sieve/' + node.attrs.kind, content: node.attrs.serialisedForm })
               
@@ -269,6 +277,52 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
             return false
           }
 
+          // ── Framework-level markdown body sync ──────────────────────────────────
+          // Any display block that declares `markdownAttr` (e.g. ai-block → 'response',
+          // web-clip → 'content') gets that markdown rendered into its contentDOM as
+          // real ProseMirror nodes, using the LIVE editor. renderMarkdown needs the
+          // editor's markdownit instance, which getInitialContentHTML cannot reach
+          // during parse — so this NodeView seam is where it belongs. Declare the attr
+          // and a markdown display block "just works": rich render + native copy/paste.
+          if (view.contentDOM && renderer.markdownAttr) {
+            var mdAttr = renderer.markdownAttr
+            var lastMd = node.attrs[mdAttr]
+            var syncMd = function (md) {
+              setTimeout(function () {
+                if (!editor || !editor.view) return
+                var html = renderMarkdown(md || '', editor) || '<p></p>'
+                var tmp = document.createElement('div')
+                tmp.innerHTML = html
+                var PMDP = window.TipTap.ProseMirrorDOMParser || window.TipTap.DOMParser
+                var slice = PMDP.fromSchema(editor.state.schema).parseSlice(tmp)
+                var pos = typeof getPos === 'function' ? getPos() : -1
+                // getPos can be stale by the time this deferred sync runs (the doc
+                // may have shrunk), and doc.nodeAt THROWS (not returns null) for an
+                // out-of-range pos. Bounds-check before touching the doc.
+                var pmDoc = editor.state.doc
+                if (pos == null || pos < 0 || pos >= pmDoc.content.size) return
+                var cur = pmDoc.nodeAt(pos)
+                if (!cur || !cur.type.name.startsWith('sieve-')) return
+                var tr = editor.state.tr
+                tr.replace(pos + 1, pos + 1 + cur.content.size, slice)
+                tr.setMeta('sieve-md-sync', true)
+                tr.setMeta('addToHistory', false)
+                editor.view.dispatch(tr)
+              }, 0)
+            }
+            if (lastMd) syncMd(lastMd)
+            var origUpdate = (typeof view.update === 'function') ? view.update.bind(view) : null
+            view.update = function (updatedNode) {
+              var ok = origUpdate ? origUpdate(updatedNode) : true
+              if (!ok) return false
+              if (updatedNode.attrs[mdAttr] !== lastMd) {
+                lastMd = updatedNode.attrs[mdAttr]
+                syncMd(lastMd)
+              }
+              return true
+            }
+          }
+
           return view
         }
       },
@@ -278,7 +332,11 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
           markdown: {
             // Serialise: replay serialisedForm verbatim.
             // Go owns all Markdown generation; JS never reconstructs fences or inline blocks manually.
-            serialize: function (state, node) {
+            //
+            // markdownSerialize override: a TRANSPARENT node (e.g. sieve-prose) is
+            // not a fence — it owns real prose children and must serialise them, not
+            // a serialisedForm. Renderers that declare it take full control here.
+            serialize: renderer.markdownSerialize ? renderer.markdownSerialize : function (state, node) {
               if (cfg.inline) {
                 state.write(node.attrs.serialisedForm || '')
               } else {
@@ -366,30 +424,13 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
                       : self.renderToken(tokens, idx, options)
                   }
 
+                  // The fence reconstructs the properties map (data) by parsing
+                  // its YAML; build the data-* div from it via the SAME helper
+                  // block-render.js uses with Go-sent attrs — one builder, exact
+                  // parity across the load-from-markdown and load-from-attrs paths.
                   var markup = token.markup || '```'
                   var serialisedForm = markup + token.info + '\n' + token.content + markup
-
-                  var htmlAttrs = [
-                    'data-type="'     + dataType + '"',
-                    'data-kind="'     + esc(kind) + '"',
-                    'data-id="'       + esc(data.id) + '"',
-                    'data-serialised-form="' + esc(serialisedForm) + '"',
-                    'data-status="'   + esc(data.status || 'PENDING') + '"',
-                  ]
-                  if (renderer.parseAttrs) {
-                    var extra = renderer.parseAttrs(data)
-                    Object.keys(extra).forEach(function (k) {
-                      var kebab = k.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()
-                      htmlAttrs.push('data-' + kebab + '="' + esc(String(extra[k] != null ? extra[k] : '')) + '"')
-                    })
-                  }
-                  if (data.createdAt) {
-                    htmlAttrs.push('data-created-at="' + esc(data.createdAt) + '"')
-                  }
-                  if (data.supportsEmbedding) {
-                    htmlAttrs.push('data-supports-embedding="true"')
-                  }
-                  return '<' + tag + ' ' + htmlAttrs.join(' ') + '></' + tag + '>\n'
+                  return buildSieveBlockHTML(kind, data, serialisedForm)
                 }
               },
             },
@@ -407,6 +448,57 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
   function registerSieveRenderer(kind, renderer) {
     nodeRegistry[kind] = createSieveNode(kind, renderer)
     renderers[kind] = renderer
+    // Also record the kind in the shared block-kind registry (model-layer
+    // symmetry): structured kinds are native:false (a sieve-<kind> NodeView
+    // renders their payload). Prose registers itself as native:true in
+    // prose-block.js. registerBlockKind is exposed on window.TipTap by
+    // block-kinds.js; guard in case load order ever changes.
+    if (window.TipTap && window.TipTap.registerBlockKind) {
+      window.TipTap.registerBlockKind({ kind: kind, native: false, renderer: renderer })
+    }
+  }
+
+  // buildSieveBlockHTML assembles a structured block's data-* div from its
+  // PROPERTIES map (data) — the single builder shared by the markdownit fence
+  // rule (load-from-markdown) and block-render.js (load-from-attrs), so both emit
+  // byte-identical HTML that each renderer's parseHTML consumes. The block model
+  // is properties-in: block-render passes Go-sent attrs straight in, no fence
+  // parse. serialisedForm is the TRANSITIONAL data-serialised-form payload (paste
+  // / markdown-serialize) and may be '' once those paths migrate off it.
+  function buildSieveBlockHTML(kind, data, serialisedForm) {
+    var renderer = renderers[kind]
+    if (!renderer || !data || !data.id) return ''
+    var cfg = Object.assign({}, DEFAULT_NODE_CONFIG, renderer.nodeConfig || {})
+    var tag = cfg.inline ? 'span' : 'div'
+    var dataType = 'sieve-' + kind
+
+    var htmlAttrs = [
+      'data-type="'     + dataType + '"',
+      'data-kind="'     + esc(kind) + '"',
+      'data-id="'       + esc(data.id) + '"',
+      'data-serialised-form="' + esc(serialisedForm || '') + '"',
+      'data-status="'   + esc(data.status || 'PENDING') + '"',
+    ]
+    if (renderer.parseAttrs) {
+      var extra = renderer.parseAttrs(data)
+      Object.keys(extra).forEach(function (k) {
+        var kebab = k.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()
+        htmlAttrs.push('data-' + kebab + '="' + esc(String(extra[k] != null ? extra[k] : '')) + '"')
+      })
+    }
+    if (data.createdAt) {
+      htmlAttrs.push('data-created-at="' + esc(data.createdAt) + '"')
+    }
+    if (data.supportsEmbedding) {
+      htmlAttrs.push('data-supports-embedding="true"')
+    }
+
+    var innerHTML = ''
+    if (!cfg.atom && renderer.getInitialContentHTML) {
+      innerHTML = renderer.getInitialContentHTML(data)
+    }
+
+    return '<' + tag + ' ' + htmlAttrs.join(' ') + '>' + innerHTML + '</' + tag + '>\n'
   }
 
   // Canonical friendly name for a sieve block node — the ONE source the live
@@ -436,7 +528,15 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
   }
 
   function getSieveNodes() {
-    return Object.keys(nodeRegistry).map(function (k) { return nodeRegistry[k] })
+    // sieve-prose MUST be declared first among the sieveBlock group: PM's
+    // createAndFill auto-fill is purely structural — it grabs the FIRST
+    // instantiable node type in the required group (schema-declaration order),
+    // with no notion of a default. Listing prose first makes every auto-fill
+    // (empty doc, trailing/gap fill) a prose block, not a stray ai-block atom.
+    var keys = Object.keys(nodeRegistry).sort(function (a, b) {
+      return a === 'prose' ? -1 : b === 'prose' ? 1 : 0
+    })
+    return keys.map(function (k) { return nodeRegistry[k] })
   }
 
   // replaceSource: when true the source node is REPLACED by the new Sieve block
@@ -564,6 +664,7 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM } from './fenced-block
   // ── Exports ───────────────────────────────────────────────────────────────────
 
   T.registerSieveRenderer = registerSieveRenderer
+  T.buildSieveBlockHTML = buildSieveBlockHTML
   T.getSieveNodes         = getSieveNodes
   // serializeNode turns a single block node into markdown via the editor's OWN
   // markdown serialiser. The serialiser sizes code fences longer than any backtick

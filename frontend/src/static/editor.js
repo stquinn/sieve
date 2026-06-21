@@ -14,6 +14,9 @@
   var editorWsPending = []
   var editorWsAwaiters = {}   // type → { resolve, reject }
   var docUpdateTimer = null
+  // Stage D.3: the WYSIWYG observer flushes the pending block-sync immediately on
+  // demand (tab switch / save). Set by mountWysiwyg, called by flushSave.
+  var docSyncFlush = null
   var aiReloadInProgress = false
   var currentMarkdownTextarea = null
   var showAiBlocks = true
@@ -24,6 +27,25 @@
   // native code block). Every block-creating operation sets this fresh, so a stale
   // value can never leak into a later insert.
   var sieveInsertPos = null
+
+  // kindIsInline reads from the schema whether a sieve-<kind> node is inline (e.g.
+  // smart-link) — so blockInsertPos places it at the caret rather than after the
+  // top-level block. Unknown kind → block (the safe default; lands after the
+  // enclosing top-level node, never splitting it).
+  function kindIsInline(kind) {
+    if (!currentEditor || !kind) return false
+    var nt = currentEditor.schema.nodes['sieve-' + kind]
+    return !!(nt && nt.isInline)
+  }
+
+  // captureInsertPos resolves WHERE the next inserted block goes, the single way
+  // every additive creation path stamps sieveInsertPos (D-r.7). Delegates to the
+  // shared blockInsertPos helper so block answers land after the top-level block
+  // and inline kinds land at the caret. (In-place conversion / explicit-position
+  // pastes set sieveInsertPos directly with their own {from,to} / coord position.)
+  function captureInsertPos(isInline) {
+    return currentEditor ? window.TipTap.blockInsertPos(currentEditor.state, isInline) : null
+  }
 
 
   var askDialog = null
@@ -100,7 +122,7 @@
           mountMarkdown(mountEl, uuid, data.body || '')
         } else {
           currentMode = 'wysiwyg'
-          mountWysiwyg(mountEl, uuid, data.body || '')
+          mountWysiwyg(mountEl, uuid, data.body || '', data.blocks)
         }
         tabModes[uuid] = currentMode
         updateModeUI()
@@ -127,16 +149,161 @@
 
   // ── WYSIWYG mode ─────────────────────────────────────────────────────────────
 
-  function mountWysiwyg(el, uuid, body) {
+  // renderBlocksIntoEditor replaces the whole document with content built from
+  // the block list. It uses the editor's live markdownit (carrying the fence
+  // parse rules) to render each block to HTML, then parses that HTML through
+  // ProseMirror's DOMParser and swaps it in via a single non-undoable
+  // transaction. This is the proven syncMd pattern scaled to the whole doc: it
+  // reuses each node's parseHTML, so no ProseMirror JSON is ever hand-built.
+  function renderBlocksIntoEditor(editor, blocks) {
+    var mdRender = function (t) { return editor.storage.markdown.parser.md.render(t) }
+    var PMDP = window.TipTap.ProseMirrorDOMParser || window.TipTap.DOMParser
+    var parser = PMDP.fromSchema(editor.state.schema)
+
+    // Parse each block in ISOLATION so one block with content the schema rejects
+    // (e.g. a sieve node or raw HTML that slipped into prose) is logged + skipped
+    // instead of aborting the whole document render (which dropped EVERY block).
+    var nodes = []
+    ;(blocks || []).forEach(function (b, i) {
+      var bhtml = window.TipTap.buildBlocksHTML([b], mdRender)
+      try {
+        var tmp = document.createElement('div')
+        tmp.innerHTML = bhtml.trim()
+        if (b.kind === 'prose') {
+          // Node-granular: a prose block parses to its NATIVE top-level node(s). One
+          // node → that node carries the block id (the native path). >1 nodes → ONE
+          // proseGroup container carries the id and wraps them, so a multi-node embed
+          // stays ONE block (proseBlockNodes, prose-group.js). The id is stamped onto
+          // the node, not the DOM — children are never top-level, never minted.
+          var parsed = parser.parse(tmp).content
+          var produced = window.TipTap.proseBlockNodes(parsed, b.id || '', editor.state.schema)
+          if (!produced.length) {
+            console.error('[editor] prose block ' + i + ' (' + (b.id || '') + ') produced no node from:\n' + bhtml.trim().slice(0, 200))
+          }
+          produced.forEach(function (n) { nodes.push(n) })
+        } else {
+          // Structured: take ONLY the sieve-<kind> node we expect, ignoring any
+          // stray nodes the parse invents. The shadow is authoritative.
+          var want = 'sieve-' + b.kind
+          var pushed = 0
+          parser.parse(tmp).content.forEach(function (n) {
+            if (n.type.name === want) { nodes.push(n); pushed++ }
+          })
+          if (!pushed) {
+            console.error('[editor] block ' + i + ' (' + b.kind + ' ' + (b.id || '') + ') produced no ' + want + ' node from:\n' + bhtml.trim().slice(0, 200))
+          }
+        }
+      } catch (e) {
+        console.error('[editor] block ' + i + ' (' + b.kind + ' ' + (b.id || '') + ') failed to render:', e, '\n--- HTML ---\n' + bhtml)
+      }
+    })
+    if (!nodes.length) return // nothing valid parsed — keep the existing content
+    var tr = editor.state.tr
+    tr.replaceWith(0, editor.state.doc.content.size, nodes)
+    tr.setMeta('addToHistory', false)
+    editor.view.dispatch(tr)
+  }
+
+  function mountWysiwyg(el, uuid, body, blocks) {
     var T = window.TipTap
     var initialized = false
+    var suppressUpdate = false
+    // Per-editor block-sync cache: { [blockId]: serializedContent } as of the
+    // last successful sync. The thin observer (Stage D.3) diffs against it.
+    var blockContentCache = null
+
+    // Serialize one top-level block to the (id, kind, content) the sync diff
+    // needs (node-granular, 2026-06-19). A structured sieve block → its
+    // serialisedForm fence, keyed by its `id`. EVERY OTHER top-level node is a
+    // prose block: a NATIVE TipTap node (paragraph/heading/list/table/…) whose
+    // identity is its `id` attr and whose content is its CLEAN markdown
+    // (native nodes never embed markers — Go re-wraps on save). No node returns
+    // null now, so the observer never falls back merely on node type.
+    function topBlockTriple(ed, node) {
+      var name = node.type.name
+      if (name.indexOf('sieve-') === 0) {
+        return { id: node.attrs.id || '', kind: node.attrs.kind || name, content: node.attrs.serialisedForm || '' }
+      }
+      var content = (window.TipTap.serializeNode(ed, node) || '').trim()
+      return { id: node.attrs.id || '', kind: 'prose', content: content }
+    }
+
+    function collectTopBlocks(ed) {
+      var out = []
+      var doc = ed.state.doc
+      for (var i = 0; i < doc.childCount; i++) {
+        var t = topBlockTriple(ed, doc.child(i))
+        if (!t) return null
+        out.push(t)
+      }
+      return out
+    }
+
+    // Seed the sync baseline from GO's view (the server block list), NOT the
+    // editor — so a block PM created client-side (e.g. the prose block an empty
+    // doc createAndFills, or a split) is absent from the baseline and the first
+    // sync emits a create-block for it. Seeding from the editor would hide such a
+    // block from Go forever (its update-block would fail "block not found"). For a
+    // loaded doc the server blocks ARE the editor blocks, so nothing spurious.
+    function seedBlockCache(serverBlocks) {
+      var triples = (serverBlocks || []).map(function (b) {
+        return {
+          id: b.id,
+          kind: b.kind,
+          // Uniform wire shape: prose body rides in attrs.content (proseContent),
+          // structured signs on its stable serialisedForm.
+          content: b.kind === 'prose' ? window.TipTap.proseContent(b) : (b.serialisedForm || ''),
+        }
+      })
+      // seedBaseline includes EVERY id'd server block (even an empty one) so the
+      // first edit to a loaded block is an update-block, never a duplicate create.
+      blockContentCache = window.TipTap.seedBaseline
+        ? window.TipTap.seedBaseline(triples)
+        : {}
+    }
+
+    function sendDocUpdate(ed, id) {
+      var md = wysiwygMarkdown(ed)
+      lastSyncedBody = md
+      wsSend({ type: 'doc-update', uuid: id, markdown: md })
+    }
+
+    // syncDocument is the debounced wire send: prefer granular block-ops, fall
+    // back to a whole-document doc-update only when computeBlockSync says so. As
+    // of D-r.5 that fallback fires ONLY for a structured-block edit (Go's
+    // structured update-block takes parsed Attrs the client can't rebuild from a
+    // fence) — prose is fully granular (an id-less prose node is pending, not a
+    // fallback). Markdown mode keeps its own raw doc-update path, outside here.
+    // It NEVER mutates the document — pure read + send.
+    function syncDocument(ed, id) {
+      var curr = collectTopBlocks(ed)
+      if (!curr || !window.TipTap.computeBlockSync) { sendDocUpdate(ed, id); return }
+      var r = window.TipTap.computeBlockSync(curr, blockContentCache)
+      blockContentCache = r.next
+      if (r.mode === 'fallback') { sendDocUpdate(ed, id); return }
+      r.ops.forEach(function (op) { wsSend({ type: 'block-op', uuid: id, op: op }) })
+    }
+
+    // Node-granular (2026-06-19): the doc top level holds NATIVE block nodes
+    // (paragraph/heading/list/table/blockquote/…, group "block") AND structured
+    // sieve blocks (group "sieveBlock") as siblings — a prose block IS one native
+    // top-level node, not a custom container. The retired `sieveBlock+` schema
+    // (+ its per-keystroke wrapper / minter / trailing-surface plugin) is gone;
+    // PM owns node creation/splitting/merging natively. Identity rides on each
+    // native node's `id` attr (T.BlockId, addGlobalAttributes); minting is
+    // a passive observe-time concern (D-r.4), never a doc mutation here.
+    var SieveDocument = T.Node.create({ name: 'doc', topNode: true, content: '(block | sieveBlock)+' })
 
     var editor = new T.Editor({
       element: el,
       extensions: [
-        T.StarterKit.configure({ link: false, codeBlock: false, history: { depth: 10000, newGroupDelay: 500 } }),
+        SieveDocument,
+        T.BlockId,
+        // trailingNode:false — we let PM's native Gapcursor place a caret after a
+        // trailing atom (structured) block; typing there creates a real native
+        // paragraph (a new prose block). No fabricated trailing surface.
+        T.StarterKit.configure({ document: false, link: false, codeBlock: false, trailingNode: false, history: { depth: 10000, newGroupDelay: 500 } }),
         T.Placeholder.configure({ placeholder: function (p) { return p.editor.isEmpty ? 'Start writing\u2026' : '' } }),
-        T.BlockNode,
         T.BlockChrome,
         T.AiTargetDecoration,
         T.Table.configure({ resizable: false }),
@@ -149,7 +316,9 @@
         T.Image.configure({ inline: false, allowBase64: true, HTMLAttributes: { class: 'editor-image' } }),
         T.HighlightMark,
         T.SelectionHighlight,
-      ].concat(window.SieveNativeCodeBlock ? [window.SieveNativeCodeBlock] : []).concat(T.getSieveNodes()).concat([
+      ].concat(window.SieveNativeCodeBlock ? [window.SieveNativeCodeBlock] : [])
+       .concat(window.TipTap.ProseGroup ? [window.TipTap.ProseGroup] : [])
+       .concat(T.getSieveNodes()).concat([
         T.TaskList,
         T.TaskItem.configure({ nested: true }),
         T.Markdown.configure({ html: true, transformPastedText: true, link: { openOnClick: false } }),
@@ -163,23 +332,29 @@
           onToggleAiBlocks: toggleAiBlocks,
         }),
       ]),
-      content: body,
+      // Seed one empty native paragraph — the default editing surface of a new
+      // doc. renderBlocksIntoEditor replaces it for a non-empty doc; an empty doc
+      // keeps this typeable paragraph (a prose block; its id is minted on
+      // first sync, D-r.4). A native <p> is a valid top-level node under the new
+      // (block | sieveBlock)+ schema, so no custom container is needed.
+      content: '<p></p>',
       editorProps: {
         attributes: { spellcheck: 'true' },
         handleDOMEvents: {
           copy: function(view, event) {
+            // Copy is delegated to ProseMirror now that sieve blocks are real PM nodes.
+            // text/plain + text/html are whatever PM produces. This handler only steps
+            // in for the two things PM can't express:
+            //   (1) smart-image → copy the actual bitmap, and
+            //   (2) a WHOLE-block copy (single sieve NodeSelection or a gutter
+            //       block-range) → ADD sieve/slice + sieve/<kind> so smart paste can
+            //       rebuild the proper kind. We mirror PM's text/plain (the block's
+            //       serialisedForm) and provide a richer text/html from the rendered DOM.
+            // Sub-text highlights, bare cursors, and prose all fall through to native.
             var sel = view.state.selection
-            // Authoritative selection range: our own block range (shift-click /
-            // gutter drag) when set, else the live PM selection.  { from, to,
-            // active, isBlockRange }.
-            var er = (window.TipTap && window.TipTap.getBlockSelectionRange)
-              ? window.TipTap.getBlockSelectionRange(view)
-              : { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false }
 
-            // ── Smart image copy ────────────────────────────────────────────────
-            // Only for a lone image NodeSelection — never when a multi-block range
-            // is active (then the image is just one item in the slice).
-            if (!er.isBlockRange && sel && sel.node && sel.node.type.name === 'sieve-smart-image') {
+            // (1) Smart-image bitmap.
+            if (sel && sel.node && sel.node.type.name === 'sieve-smart-image') {
               var src = sel.node.attrs.src
               if (!src) return false
               if (src.startsWith('http://') || src.startsWith('https://')) {
@@ -193,47 +368,13 @@
               return true
             }
 
-            // ── Sieve block copy ────────────────────────────────────────────────
-            // If a textarea/input has a text selection, let the browser copy it
-            // natively — the user is copying code/source text from within a block.
-            var activeEl = document.activeElement
-            if (activeEl && (activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'INPUT')) {
-              if (activeEl.selectionStart !== activeEl.selectionEnd) return false
-            }
+            // Whole-block? Either a gutter block-range, or a NodeSelection on a sieve node.
+            var er = (window.TipTap && window.TipTap.getBlockSelectionRange)
+              ? window.TipTap.getBlockSelectionRange(view)
+              : { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false }
+            var isSieveNodeSel = !!(sel.node && sel.node.type && String(sel.node.type.name).indexOf('sieve-') === 0)
+            if (!er.isBlockRange && !isSieveNodeSel) return false   // ← native ProseMirror
 
-            // Sub-block highlight: if the user highlighted text *within a single
-            // block* (a rendered card's content), copy exactly that — not the whole
-            // block.  (Textarea/input selections are handled by the guard above.)
-            var domSel = window.getSelection && window.getSelection()
-            if (domSel && !domSel.isCollapsed && String(domSel).trim()) {
-              var blkOf = function (n) {
-                var el = n && (n.nodeType === 1 ? n : n.parentElement)
-                while (el && el !== view.dom) {
-                  if (el.classList && el.classList.contains('block-with-chrome')) return el
-                  el = el.parentElement
-                }
-                return null
-              }
-              var ab = blkOf(domSel.anchorNode)
-              if (ab && ab === blkOf(domSel.focusNode)) return false   // native sub-text copy
-            }
-
-            // Per-block readable text / html (one consistent rule; chrome stripped).
-            // text/plain priority: source (code/diagram) → response (AI) → DOM text → YAML.
-            var blockText = function (node, dom) {
-              if (node.attrs.source) return node.attrs.source
-              if (node.attrs.response) return node.attrs.response
-              if (dom) {
-                var parts = []
-                Array.prototype.forEach.call(dom.children, function (c) {
-                  if (c.classList && c.classList.contains('block-chrome-host')) return
-                  parts.push(c.innerText)
-                })
-                var t = parts.join('').trim()
-                if (t) return t
-              }
-              return node.attrs.serialisedForm || ''
-            }
             var blockHTML = function (dom) {
               if (!dom) return ''
               var clone = dom.cloneNode(true)
@@ -242,10 +383,6 @@
               return clone.outerHTML
             }
 
-            // Collect top-level nodes overlapping the effective range (prose + sieve).
-            // The range comes from our plugin-state block selection (shift-click /
-            // gutter drag) or the live PM selection — either way it is a clean,
-            // non-snapped span, so this collection reliably includes sieve atoms.
             var sliceItems = []
             var plainParts = []
             var htmlParts = []
@@ -255,13 +392,9 @@
 
             view.state.doc.forEach(function (node, offset) {
               var nodeEnd = offset + node.nodeSize
-              // Active range: include nodes that overlap it.
-              if (er.active && (nodeEnd <= er.from || offset >= er.to)) return
-              // Empty cursor: only include a sieve node the cursor sits within.
-              if (!er.active && (er.from < offset || er.from >= nodeEnd)) return
-
+              if (nodeEnd <= er.from || offset >= er.to) return
               var dom = view.nodeDOM(offset)
-              if (node.type.name.startsWith('sieve-')) {
+              if (String(node.type.name).indexOf('sieve-') === 0) {
                 hasSieve = true
                 singleSieveKind = node.attrs.kind
                 singleSieveForm = node.attrs.serialisedForm || ''
@@ -270,25 +403,21 @@
                   if (Object.prototype.hasOwnProperty.call(node.attrs, k)) attrs[k] = node.attrs[k]
                 }
                 sliceItems.push({ _type: 'sieve', kind: node.attrs.kind, attrs: attrs })
-                plainParts.push(blockText(node, dom))
+                plainParts.push(node.attrs.serialisedForm || '')
                 htmlParts.push(blockHTML(dom))
-              } else if (!sel.empty) {
+              } else {
                 sliceItems.push({ _type: 'prose', json: node.toJSON() })
                 plainParts.push(dom ? dom.innerText : '')
                 htmlParts.push(blockHTML(dom))
               }
             })
 
-            if (!hasSieve) return false   // pure prose — let TipTap/markdown handle it natively
+            if (!hasSieve) return false   // no sieve block in range — let PM handle it natively
 
-            // Emit all four flavours.  sieve/slice (+ sieve/<kind> for a lone block)
-            // are authoritative for in-app reconstruct and the Go paste handlers
-            // (fresh IDs, smart-paste routing); text/plain + text/html are lossy
-            // external fallbacks.
             event.preventDefault()
-            event.clipboardData.setData('sieve/slice', JSON.stringify(sliceItems))
             event.clipboardData.setData('text/plain', plainParts.filter(Boolean).join('\n\n'))
             event.clipboardData.setData('text/html', htmlParts.filter(Boolean).join('\n'))
+            event.clipboardData.setData('sieve/slice', JSON.stringify(sliceItems))
             if (sliceItems.length === 1 && sliceItems[0]._type === 'sieve') {
               event.clipboardData.setData('sieve/' + singleSieveKind, singleSieveForm)
             }
@@ -354,23 +483,58 @@
         syncToolbar(p.editor)
       },
       onUpdate: function (p) {
-        if (!initialized) return
-        var md = p.editor.storage.markdown.getMarkdown() || ''
-        if (md === lastSyncedBody) return
-        lastSyncedBody = md
+        if (!initialized || suppressUpdate) return
+        // Stage D.3: the thin observer. We no longer serialize the whole document
+        // on every keystroke — onUpdate only marks dirty and (re)arms a debounce.
+        // The actual diff + wire send happens once typing settles, in
+        // syncDocument, which prefers granular block-ops and falls back to a
+        // whole-document doc-update only when a block can't be addressed yet.
         document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
         document.dispatchEvent(new CustomEvent('editor:changed'))
         dispatchStats()
         if (docUpdateTimer) clearTimeout(docUpdateTimer)
         docUpdateTimer = setTimeout(function () {
           docUpdateTimer = null
-          wsSend({ type: 'doc-update', uuid: uuid, markdown: md })
+          syncDocument(editor, uuid)
         }, 500)
       },
     })
 
     currentEditor = editor
     window.__tiptap = editor
+
+    // Stage D.2: the block list IS the document model. When the load supplied it,
+    // render the document from the blocks (prose → native node(s); structured →
+    // its fence rule), bypassing the markdown `content:` seed above. We build the
+    // HTML with the editor's OWN markdownit (so the fence parse rules are live)
+    // and parse it through ProseMirror's DOMParser — reusing every node's
+    // parseHTML, never hand-building ProseMirror JSON. suppressUpdate guards the
+    // initial replace so it isn't mistaken for a user edit / doc-update.
+    if (blocks && blocks.length && window.TipTap.buildBlocksHTML) {
+      suppressUpdate = true
+      try {
+        renderBlocksIntoEditor(editor, blocks)
+        lastSyncedBody = wysiwygMarkdown(editor) || lastSyncedBody
+      } catch (err) {
+        console.error('[editor] block render failed; keeping markdown seed', err)
+      } finally {
+        suppressUpdate = false
+      }
+    }
+
+    // Seed the block-sync baseline from GO's block list (what the server has),
+    // so a PM-created block (empty-doc fill / split) is seen as new and synced.
+    seedBlockCache(blocks)
+
+    // Expose an immediate flush of the pending debounced sync (used by flushSave
+    // / tab switch / mode toggle). Cleared by mountMarkdown so a stale wysiwyg
+    // flush can't fire against a destroyed editor.
+    docSyncFlush = function () {
+      if (!docUpdateTimer) return
+      clearTimeout(docUpdateTimer)
+      docUpdateTimer = null
+      syncDocument(editor, uuid)
+    }
 
     // Catch focus events on inner form controls (like Sieve Code block textareas)
     // where ProseMirror's native onSelectionUpdate won't fire.
@@ -386,6 +550,9 @@
   function mountMarkdown(mountEl, uuid, body) {
     currentMode = 'markdown'
     currentMarkdownTextarea = null
+    // No WYSIWYG editor here — drop any block-sync flush from a prior mount so
+    // flushSave can't run syncDocument against a destroyed editor.
+    docSyncFlush = null
 
     var wrapper = document.createElement('div')
     wrapper.style.cssText = 'display:flex;flex-direction:row;height:100%;overflow:hidden;background:var(--theme-bg);position:relative'
@@ -454,11 +621,17 @@
 
   function flushSave() {
     if (!currentUuid) return Promise.resolve()
-    // Flush any pending debounced doc-update immediately so Go has the latest content.
-    if (docUpdateTimer) {
-      clearTimeout(docUpdateTimer)
-      docUpdateTimer = null
-      wsSend({ type: 'doc-update', uuid: currentUuid, markdown: lastSyncedBody })
+    // Flush any pending debounced sync immediately so Go has the latest content.
+    // WYSIWYG goes through the block-sync flush (granular ops or doc-update
+    // fallback); markdown mode sends its raw textarea body directly.
+    if (currentMode === 'markdown') {
+      if (docUpdateTimer) {
+        clearTimeout(docUpdateTimer)
+        docUpdateTimer = null
+        wsSend({ type: 'doc-update', uuid: currentUuid, markdown: lastSyncedBody })
+      }
+    } else if (docSyncFlush) {
+      docSyncFlush()
     }
     if (currentUuid.startsWith('prompt:')) {
       return doSave(currentUuid, getMarkdown())
@@ -533,6 +706,9 @@
       }
       if (msg.type === 'markdown-content') {
         document.dispatchEvent(new CustomEvent('editor:markdown-content', { detail: msg }))
+      }
+      if (msg.type === 'wysiwyg-content') {
+        document.dispatchEvent(new CustomEvent('editor:wysiwyg-content', { detail: msg }))
       }
       if (msg.type === 'insert-block') {
         document.dispatchEvent(new CustomEvent('editor:insert-block', { detail: msg }))
@@ -612,7 +788,7 @@
   // detail: { kind: 'code', attrs: {} }
   document.addEventListener('sieve:create-block', function (e) {
     if (!currentUuid || currentUuid.startsWith('prompt:') || !e.detail.kind) return
-    sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
+    sieveInsertPos = captureInsertPos(kindIsInline(e.detail.kind))
     var attrs = e.detail.attrs || {}
     if (e.detail.kind === 'diagram' && !attrs.source) {
       attrs.mode = 'edit'
@@ -620,9 +796,10 @@
     wsSend({ type: 'create-block', kind: e.detail.kind, attrs: attrs, uuid: currentUuid })
   })
 
-  // Explicitly capture insertion position for async flows (like image upload)
+  // Explicitly capture insertion position for async flows (like image upload).
+  // These insert block kinds (smart-image / web-clip), so capture as a block.
   document.addEventListener('sieve:capture-insert-pos', function () {
-    sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
+    sieveInsertPos = captureInsertPos(false)
   })
 
   // NodeViews fire sieve:block-update when the user edits block content.
@@ -667,6 +844,15 @@
     var newBlock = {
       type: 'sieve-' + (msg.kind || 'code'),
       attrs: attrs,
+    }
+
+    var nodeType = currentEditor.schema.nodes[newBlock.type]
+    if (nodeType && nodeType.spec.content) {
+      if (nodeType.spec.content.indexOf('block') !== -1) {
+        newBlock.content = [{ type: 'paragraph' }]
+      } else if (nodeType.spec.content.indexOf('text') !== -1 && attrs.source) {
+        newBlock.content = [{ type: 'text', text: attrs.source }]
+      }
     }
     // Object target → in-place conversion: replace the native source node's range
     // with the Sieve block (one transaction → one Undo). Number/null → insert at
@@ -719,6 +905,7 @@
           })
           try {
             tr.setNodeMarkup(pos, null, nextAttrs)
+            tr.setMeta('addToHistory', false)
           } catch (err) {
             console.error('[editor] setNodeMarkup failed:', err, nextAttrs)
           }
@@ -735,7 +922,7 @@
     var text = getMarkdown()
     var chars = text.length
     var lines = text === '' ? 0 : text.split('\n').length
-    
+
     var blockCount = currentEditor ? currentEditor.state.doc.childCount : lines
     var digits = Math.max(1, String(blockCount).length)
     document.documentElement.style.setProperty('--line-digits', digits)
@@ -743,10 +930,38 @@
     document.dispatchEvent(new CustomEvent('editor:stats', { detail: { chars: chars, lines: lines } }))
   }
 
+  // wysiwygMarkdown serializes the live editor document to disk markdown,
+  // node-granular (2026-06-19): each TOP-LEVEL node is one block. Structured
+  // sieve blocks self-delimit (their fence carries id: in YAML); every native
+  // node (a prose block) is wrapped in its paired <!--s:ID-->…<!--/s:ID-->
+  // markers via wrapProseBlock, so a whole-document round-trip (doc-update
+  // fallback / save / markdown-mode toggle) preserves block identity byte-for-
+  // byte and matches Go's SerializeBlockDocWithHandles. serializeNode renders
+  // each node through the editor's own markdown serializer (never hand-built).
+  function wysiwygMarkdown(ed) {
+    if (!ed) return ''
+    var T = window.TipTap
+    var prose = T.getBlockKind ? T.getBlockKind('prose') : null
+    var parts = []
+    ed.state.doc.forEach(function (node) {
+      var md = (T.serializeNode(ed, node) || '').trim()
+      if (!T.isNativeProseNodeName(node.type.name)) {
+        // Structured sieve block: self-delimiting fence (id: in YAML).
+        if (md) parts.push(md)
+        return
+      }
+      // Native node = prose block. The prose kind's toMarkdown wraps it in paired
+      // delimiters (and emits bare content when the node has no id yet — Go mints).
+      var wrapped = prose ? prose.toMarkdown(node.attrs.id || '', md) : md
+      if (wrapped) parts.push(wrapped)
+    })
+    return parts.join('\n\n')
+  }
+
   function getMarkdown() {
     if (currentMode === 'markdown') return lastSyncedBody
     if (!currentEditor) return ''
-    return currentEditor.storage.markdown.getMarkdown() || ''
+    return wysiwygMarkdown(currentEditor)
   }
 
   function ensureOverlays() {
@@ -952,7 +1167,7 @@
   function doCreateSmartCard(href) {
     if (!currentUuid) return
     if (!currentEditor && currentMode !== 'markdown') return
-    sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
+    sieveInsertPos = captureInsertPos(kindIsInline('smart-card'))
     wsSend({ type: 'create-block', kind: 'smart-card', attrs: { href: href }, uuid: currentUuid })
   }
 
@@ -1030,7 +1245,7 @@
   function doInternalize(source, mode) {
     if (!currentUuid) return
     if (!currentEditor && currentMode !== 'markdown') return
-    sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
+    sieveInsertPos = captureInsertPos(kindIsInline('web-clip'))
     wsSend({ type: 'create-block', kind: 'web-clip', attrs: { source: source, mode: mode }, uuid: currentUuid })
   }
 
@@ -1144,8 +1359,8 @@
     if (pendingAskCtx) {
       ctx = pendingAskCtx
     } else {
-      // Resolve once at SEND. Mint an anchor ONLY for a live selection — the one
-      // mutating case. applyTargetHighlight wraps in blockRef + applies ==.
+      // Resolve once at SEND. Apply the == highlight ONLY for a live selection —
+      // the one mutating case (D-r.7: just the mark; the block already has an id).
       var t = window.TipTap.resolveAiTarget(currentEditor, currentMode === 'markdown')
       if (t.kind === 'selection' && currentMode !== 'markdown') {
         window.TipTap.applyTargetHighlight(currentEditor)
@@ -1187,7 +1402,16 @@
         if (currentUuid !== uuid) { aiReloadInProgress = false; return }
         var body = data.body || ''
         if (currentMode === 'wysiwyg' && currentEditor) {
-          currentEditor.commands.setContent(body)
+          // Wysiwyg renders the backend's AUTHORITATIVE block list — markdown is
+          // NOT a wysiwyg render input. A flat setContent(body) re-parse ignores
+          // block boundaries and invents ids, fragmenting a multi-node prose block
+          // and losing its id (the embed bug). The doc structure + every id come
+          // from data.blocks; renderBlocksIntoEditor + proseBlockNodes wrap a multi-
+          // node block into ONE container carrying its id. (Per-block prose content
+          // is still markdown, but rendered WITHIN its own block by the block list —
+          // it never crosses a boundary.) No setContent fallback: there is no
+          // markdown render path for wysiwyg.
+          renderBlocksIntoEditor(currentEditor, data.blocks || [])
           lastSyncedBody = body
           aiReloadInProgress = false
           var maxPos = currentEditor.state.doc.content.size
@@ -1214,10 +1438,10 @@
       var refId = (ctx && ctx.blockRef) || 'doc'
       var blockType = type === 'explain' ? 'EXPLAIN' : 'ASK'
 
-      // Insert the answer AFTER the target block (anchor/sieve), never nested
-      // inside it. After a SEND-time mint the caret sits inside the fresh anchor,
-      // so selection.to alone would place the block inside it. See ai-target.js.
-      sieveInsertPos = currentEditor ? window.TipTap.aiInsertPos(currentEditor.state) : null
+      // Insert the answer AFTER the caret's top-level block — never at the caret,
+      // which would split the paragraph into first-half / answer / second-half.
+      // An AI block is always a block kind. See blockInsertPos in ai-target.js.
+      sieveInsertPos = captureInsertPos(false)
 
       flushSave().then(function () {
         wsSend({
@@ -1313,7 +1537,18 @@
                 pasteAttrs[attrKey] = nodeAttrs[attrKey]
               }
             }
-            return { type: 'sieve-' + entry.kind, attrs: pasteAttrs }
+            var result = { type: 'sieve-' + entry.kind, attrs: pasteAttrs }
+            if (currentEditor) {
+              var nodeType = currentEditor.schema.nodes[result.type]
+              if (nodeType && nodeType.spec.content) {
+                if (nodeType.spec.content.indexOf('block') !== -1) {
+                  result.content = [{ type: 'paragraph' }]
+                } else if (nodeType.spec.content.indexOf('text') !== -1 && pasteAttrs.source) {
+                  result.content = [{ type: 'text', text: pasteAttrs.source }]
+                }
+              }
+            }
+            return result
           })
           currentEditor.commands.insertContent(sliceContent)
           return true
@@ -1354,7 +1589,9 @@
           }
         })
 
-        sieveInsertPos = currentEditor ? currentEditor.state.selection.to : null
+        // Smart-paste resolves a block kind server-side (web-clip / smart-image /
+        // smart-card) → capture as a block (after the top-level node).
+        sieveInsertPos = captureInsertPos(false)
         event.preventDefault()
 
         Promise.all(promises).then(function(results) {
@@ -1457,15 +1694,11 @@
 
   // ── Module-level editor commands (dispatched via sieve:* custom events) ─────
 
-  function setContent(content) {
-    if (currentMode === 'markdown') {
-      var ta = currentMountEl && currentMountEl.querySelector('.markdown-editor')
-      if (ta) { ta.value = content; lastSyncedBody = content }
-    } else if (currentEditor) {
-      currentEditor.commands.setContent(content)
-      lastSyncedBody = content
-    }
-  }
+  // (Retired) The setContent(markdown) doc-load helper is GONE: a flat markdown
+  // re-parse is a second, lossy document parser (it can't read <!--s:ID--> markers
+  // → re-mints ids → corrupts on save-back). All wysiwyg loads now render the
+  // backend BLOCK LIST via renderBlocksIntoEditor; markdown is set only into the
+  // markdown-mode textarea, and only Go parses document structure from markdown.
 
   function toggleSearch() {
     if (!searchOverlay) ensureOverlays()
@@ -1486,8 +1719,14 @@
     if (currentMode === 'markdown') {
       var ta = currentMountEl.querySelector('.markdown-editor')
       if (ta) content = ta.value
+      // Drop any pending markdown doc-update — we hand the latest content to the
+      // server via enter-wysiwyg below, and a late timer must not fire post-switch.
+      if (docUpdateTimer) { clearTimeout(docUpdateTimer); docUpdateTimer = null }
     } else if (currentEditor) {
-      content = currentEditor.storage.markdown.getMarkdown() || ''
+      // Flush any pending block-sync so Go's shadow is current before it merges
+      // the markdown view (enter-markdown serializes the shadow, not local md).
+      if (docSyncFlush) docSyncFlush()
+      content = wysiwygMarkdown(currentEditor)
     } else {
       content = lastSyncedBody
     }
@@ -1500,10 +1739,20 @@
     currentMountEl.innerHTML = ''
     
     if (currentMode === 'wysiwyg') {
-      wsSend({ type: 'enter-wysiwyg', uuid: currentUuid })
-      mountWysiwyg(currentMountEl, currentUuid, content)
-      dispatchStats()
-      if (window.htmx) window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' })
+      // Symmetric to the markdown branch: hand the current markdown to the server,
+      // which reparses the authoritative Doc and returns the blocks. We mount the
+      // WYSIWYG editor from THOSE blocks (so ids from the markers survive) — not
+      // from a blockless mountWysiwyg, which would render only the empty seed and
+      // stay blank until a tab switch reloaded it.
+      document.addEventListener('editor:wysiwyg-content', function onWyContent(e) {
+        if (e.detail.uuid !== currentUuid) return
+        if (currentMode !== 'wysiwyg') return  // user toggled back before response arrived
+        document.removeEventListener('editor:wysiwyg-content', onWyContent)
+        mountWysiwyg(currentMountEl, currentUuid, content, e.detail.blocks)
+        dispatchStats()
+        if (window.htmx) window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' })
+      }, { once: true })
+      wsSend({ type: 'enter-wysiwyg', uuid: currentUuid, markdown: content })
     } else {
       // Switching to markdown — request merged content from EditorService
       wsSend({ type: 'enter-markdown', uuid: currentUuid })
@@ -1665,7 +1914,11 @@
 
   document.body.addEventListener('editor:restore', function (e) {
     var data = e.detail
-    if (data && data.body) setContent(data.body)
+    // Restore renders the backend's RELOADED block list (ids intact), never a flat
+    // setContent re-parse — which can't read <!--s:ID--> markers and would re-mint
+    // ids, then persist that corruption on save-back. softReloadContent renders via
+    // the block list and guards the save-back (aiReloadInProgress).
+    if (data && data.uuid) softReloadContent(data.uuid)
   })
 
   document.addEventListener('contextmenu', function (e) {

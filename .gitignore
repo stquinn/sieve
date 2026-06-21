@@ -53,3 +53,6 @@ Screenshot*.png
 
 # ── Superpowers brainstorm sessions ───────────────────────────────────────────
 .superpowers/
+
+# Compiled Wails binary
+/main
