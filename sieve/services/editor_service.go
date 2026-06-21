@@ -315,6 +315,29 @@ func (es *EditorService) flushShadow(shadow *block.ShadowDocument, source string
 	return nil
 }
 
+// ReloadFromDisk replaces the open shadow's content with the on-disk document,
+// reparsed through the codec (so marker ids survive — the frontend can't recover
+// them). Used after an OUT-OF-BAND disk change such as a version restore, which
+// writes the file behind the shadow's back: without this the stale shadow is both
+// served to the editor AND overwrites the restored file on the next flush. No-op
+// when the doc isn't open. It does NOT flush — the disk is already authoritative.
+func (es *EditorService) ReloadFromDisk(uuid string) error {
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if shadow == nil {
+		return nil
+	}
+	doc, err := es.documents.LoadByUUID(uuid)
+	if err != nil {
+		logger.Warn("editor: reload-from-disk load failed", "uuid", uuid, "err", err)
+		return err
+	}
+	shadow.SetMarkdown(string(doc.Body()))
+	logger.Info("editor: reloaded shadow from disk", "uuid", uuid, "bytes", len(doc.Body()))
+	return nil
+}
+
 // FlushAll writes all open shadows to disk. Called on application shutdown.
 func (es *EditorService) FlushAll() {
 	es.mu.RLock()

@@ -206,6 +206,46 @@ func TestEditorService_NotifySavedCalledAfterDebounce(t *testing.T) {
 	}
 }
 
+// Version restore writes the good document straight to disk (ReplaceWithVersion),
+// behind the open shadow's back. Without a from-disk reload, the stale shadow (a)
+// is served by /api/editor/load and (b) overwrites the restored file on the next
+// flush — corrupting it. ReloadFromDisk must replace the shadow with the on-disk
+// content (codec-parsed, so marker ids survive), so neither happens.
+func TestEditorService_ReloadFromDisk_replacesStaleShadowAndPreservesIDs(t *testing.T) {
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), time.Hour)
+
+	doc, _ := ds.New()
+	doc.SetBody([]byte("<!--s:co-1-->\nalpha\n<!--/s:co-1-->"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+	_ = es.Open(uuid, func() {})
+
+	// The live shadow diverges (an edit not yet on disk).
+	es.UpdateMarkdown(uuid, "<!--s:co-1-->\nMANGLED\n<!--/s:co-1-->")
+
+	// A restore writes the good version B straight to disk, around the shadow.
+	doc, _ = ds.LoadByUUID(uuid)
+	doc.SetBody([]byte("<!--s:co-1-->\nrestored\n<!--/s:co-1-->"))
+	_, _ = ds.Save(doc)
+
+	if err := es.ReloadFromDisk(uuid); err != nil {
+		t.Fatalf("ReloadFromDisk: %v", err)
+	}
+
+	// Shadow now reflects the restored disk — marker id co-1 preserved.
+	blocks, ok := es.FrontendBlocks(uuid)
+	if !ok || len(blocks) != 1 || blocks[0].ID != "co-1" {
+		t.Fatalf("reload must yield restored block id co-1; got ok=%v %#v", ok, blocks)
+	}
+	// And a flush must NOT clobber the restored disk with the stale shadow.
+	_ = es.Flush(uuid)
+	reloaded, _ := ds.LoadByUUID(uuid)
+	if !strings.Contains(string(reloaded.Body()), "restored") {
+		t.Fatalf("stale shadow overwrote the restore; disk=%q", reloaded.Body())
+	}
+}
+
 // A DIRECT save (es.Flush — the path PromoteBlock/applyJobUpdate/FlushAll use)
 // must also post the saved event, so the frontend clears its dirty indicator after
 // an embed/AI-job save, not only after a debounce flush. The notify is a property

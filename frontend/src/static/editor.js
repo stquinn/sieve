@@ -1918,7 +1918,11 @@
 
   document.body.addEventListener('editor:restore', function (e) {
     var data = e.detail
-    if (data && data.body) setContent(data.body)
+    // Restore renders the backend's RELOADED block list (ids intact), never a flat
+    // setContent re-parse — which can't read <!--s:ID--> markers and would re-mint
+    // ids, then persist that corruption on save-back. softReloadContent renders via
+    // the block list and guards the save-back (aiReloadInProgress).
+    if (data && data.uuid) softReloadContent(data.uuid)
   })
 
   document.addEventListener('contextmenu', function (e) {

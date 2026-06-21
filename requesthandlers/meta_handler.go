@@ -153,8 +153,15 @@ func (h *MetaHandler) handleRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	h.EmitNotesChanged()
 
+	// Reload the open shadow from the just-restored disk so the editor renders the
+	// restored BLOCKS (codec-parsed, marker ids intact) via the block-list path —
+	// NOT a frontend setContent re-parse, which can't read <!--s:ID--> markers and
+	// would re-mint ids, then persist that corruption on save-back. Send only the
+	// uuid; the frontend reloads blocks from /api/editor/load (now the fresh shadow).
+	_ = h.ServiceProvider.Editor.ReloadFromDisk(doc.UUID())
+
 	trigger, _ := json.Marshal(map[string]interface{}{
-		"editor:restore": map[string]string{"body": string(doc.Body()), "uuid": doc.UUID()},
+		"editor:restore": map[string]string{"uuid": doc.UUID()},
 	})
 	w.Header().Set("HX-Trigger", string(trigger))
 	w.WriteHeader(http.StatusOK)
