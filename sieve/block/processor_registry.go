@@ -106,7 +106,7 @@ type JobContext struct {
 // ONLY by the breakglass markdown-mode editor (a verbatim buffer that must hold a
 // parseable, id-preserving fence for a block inserted while in that mode).
 type BlockLifecycleListener interface {
-	OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string)
+	OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string, index int)
 	OnBlockUpdated(uuid, blockID string, attrs map[string]interface{})
 	OnBlockPromoted(uuid, blockID string, replacement string)
 }
@@ -402,17 +402,56 @@ type SelfExtractable interface {
 	AllowSelfExtraction() bool
 }
 
-// FirstPasteMatch returns the kind and processor of the first registered paste
-// matcher that claims these entries (registration order = priority), or ok=false.
+// FirstPasteMatch returns the kind and processor that claims these entries on a
+// PASTE (registration order = priority), or ok=false. This is the paste operation
+// ONLY — extract/convert goes through DetectExtractions, which is free to offer
+// cross-kind upgrades the way paste must not.
+//
+// Two passes, because a paste has two jobs and they must not collide:
+//
+//  1. SELF-KIND (round-trip): a copied block carries a sieve/<kind> view; the
+//     processor whose Kind() == that view claims it FIRST. A copied code block
+//     comes back as code — never silently "upgraded" to another kind just because
+//     some other processor (e.g. diagram on mermaid source) would also match it.
+//     Because the right processor is *selected* here, the upgrading processor's
+//     Transform is never invoked on the paste, so nothing needs to gate Transform.
+//
+//  2. GENERAL (new content / upgrades): nobody's own view → first registered
+//     claimer wins, with PROSE consulted LAST (it is the terminal flavour and can
+//     claim any sieve view). This is where "paste raw mermaid text → diagram" lives.
+//
 // The registry owns its internals (matcher list + lock); callers ask, they do not
 // iterate pasteMatchers directly.
 func FirstPasteMatch(entries []ContentEntry) (kind string, processor BlockProcessor, ok bool) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
-	for _, pm := range pasteMatchers {
-		if pm.Processor.IsBlock(entries) {
-			return pm.Kind, pm.Processor, true
+
+	// Pass 1 — self-kind: a sieve/<kind> view is reclaimed by its own processor.
+	for _, e := range entries {
+		k, _, sieveOK := e.SieveAttrs()
+		if !sieveOK {
+			continue
 		}
+		for i := range pasteMatchers {
+			if pasteMatchers[i].Kind == k && pasteMatchers[i].Processor.IsBlock(entries) {
+				return pasteMatchers[i].Kind, pasteMatchers[i].Processor, true
+			}
+		}
+	}
+
+	// Pass 2 — general detection, prose terminal last.
+	proseIdx := -1
+	for i := range pasteMatchers {
+		if pasteMatchers[i].Processor.Mode() == BlockModeProse {
+			proseIdx = i // defer prose to last
+			continue
+		}
+		if pasteMatchers[i].Processor.IsBlock(entries) {
+			return pasteMatchers[i].Kind, pasteMatchers[i].Processor, true
+		}
+	}
+	if proseIdx >= 0 && pasteMatchers[proseIdx].Processor.IsBlock(entries) {
+		return pasteMatchers[proseIdx].Kind, pasteMatchers[proseIdx].Processor, true
 	}
 	return "", nil, false
 }

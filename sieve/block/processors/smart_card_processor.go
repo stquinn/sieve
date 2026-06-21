@@ -55,6 +55,9 @@ func (p *SmartCardProcessor) InitAttrs(id string, overrides map[string]interface
 
 func (p *SmartCardProcessor) IsBlock(entries []block.ContentEntry) bool {
 	for _, e := range entries {
+		if e.IsSieveType(p) {
+			return true
+		}
 		trimmed := strings.TrimSpace(e.Content)
 		if trimmed == "" || strings.ContainsAny(trimmed, " \t\n\r") {
 			continue
@@ -72,6 +75,9 @@ func (p *SmartCardProcessor) IsBlock(entries []block.ContentEntry) bool {
 
 func (p *SmartCardProcessor) Transform(entries []block.ContentEntry, uuid, blockID string) map[string]interface{} {
 	for _, e := range entries {
+		if e.IsSieveType(p) {
+			return e.AsAttrsForNewBlock(p)
+		}
 		trimmed := strings.TrimSpace(e.Content)
 		if trimmed != "" && (strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://")) && !strings.ContainsAny(trimmed, " \t\n\r") {
 			return map[string]interface{}{"href": trimmed}

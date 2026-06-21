@@ -84,7 +84,7 @@ func (p *LogProcessor) IsBlock(entries []block.ContentEntry) bool {
 	custom := p.customParsers()
 	for _, e := range entries {
 		// Native Sieve Log block
-		if e.MIMEType == "sieve/log" {
+		if e.IsSieveType(p) {
 			return true
 		}
 		// Code block with language "log" or matching heuristics
@@ -118,9 +118,8 @@ func (p *LogProcessor) customParsers() []domain.CustomLogParser {
 func (p *LogProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string) map[string]interface{} {
 	custom := p.customParsers()
 	for _, e := range entries {
-		if kind, attrs, ok := e.SieveAttrs(); ok && kind == "log" {
-			source, _ := attrs["source"].(string)
-			return map[string]interface{}{"source": strings.TrimSpace(source)}
+		if e.IsSieveType(p) {
+			return e.AsAttrsForNewBlock(p)
 		}
 		if kind, attrs, ok := e.SieveAttrs(); ok && kind == "code" {
 			source, _ := attrs["source"].(string)
@@ -132,6 +131,7 @@ func (p *LogProcessor) Transform(entries []block.ContentEntry, uuid string, bloc
 				return map[string]interface{}{"source": trimmed}
 			}
 		}
+
 		if e.MIMEType == "text/plain" {
 			trimmed := strings.TrimSpace(e.Content)
 			if looksLikeLog(trimmed, custom) {

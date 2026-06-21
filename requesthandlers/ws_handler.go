@@ -255,7 +255,7 @@ func (h *WsHandler) handleRetryBlockJob(uuid string, raw []byte, writeMsg func(i
 }
 
 // OnBlockCreated implements sieve.BlockLifecycleListener.
-func (h *WsHandler) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string) {
+func (h *WsHandler) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string, index int) {
 	h.channelsMu.RLock()
 	writeMsg, ok := h.channels[uuid]
 	h.channelsMu.RUnlock()
@@ -265,6 +265,7 @@ func (h *WsHandler) OnBlockCreated(uuid, kind, blockID string, attrs map[string]
 			"kind":     kind,
 			"id":       blockID,
 			"attrs":    attrs,
+			"index":    index, // document position for the render-back insert
 			"markdown": markdown, // markdown-mode buffer only; WYSIWYG renders from attrs
 		})
 	}

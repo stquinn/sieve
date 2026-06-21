@@ -64,6 +64,21 @@
     return idx
   }
 
+  // docPosForBlockIndex maps a top-level BLOCK index (Go's tree position, echoed on
+  // insert-block) to the editor doc position before that node — so a render-back
+  // lands where Go put it, even for a batch (a paste slice).
+  function docPosForBlockIndex(editor, idx) {
+    var doc = editor.state.doc
+    if (idx == null || idx >= doc.childCount) return doc.content.size
+    var pos = 0
+    for (var i = 0; i < idx && i < doc.childCount; i++) pos += doc.child(i).nodeSize
+    return pos
+  }
+
+  // noteServerBlock is set by mountWysiwyg — baselines a server-created block into
+  // the sync cache so the observer treats it as already-present (never re-creates it).
+  var noteServerBlock = null
+
   // sendCreateBlock is the ONE UI-triggered create path: a create-block block-op
   // carrying kind, attrs, and the document index from the captured insert position
   // (sieveInsertPos). There is no separate create-block message — every kind creates
@@ -186,47 +201,45 @@
   // ProseMirror's DOMParser and swaps it in via a single non-undoable
   // transaction. This is the proven syncMd pattern scaled to the whole doc: it
   // reuses each node's parseHTML, so no ProseMirror JSON is ever hand-built.
-  function renderBlocksIntoEditor(editor, blocks) {
+  // blockToNodes renders ONE block (prose or structured) to its ProseMirror
+  // node(s) via the editor's live markdownit + each node's parseHTML — the single
+  // place that knows how a block becomes editor nodes. Shared by the whole-document
+  // load (renderBlocksIntoEditor) and the per-block render-back (insert-block), so a
+  // server-created block renders identically however it arrives. Parsed in
+  // ISOLATION so a block the schema rejects is logged + skipped, never aborting.
+  function blockToNodes(editor, b) {
     var mdRender = function (t) { return editor.storage.markdown.parser.md.render(t) }
     var PMDP = window.TipTap.ProseMirrorDOMParser || window.TipTap.DOMParser
     var parser = PMDP.fromSchema(editor.state.schema)
-
-    // Parse each block in ISOLATION so one block with content the schema rejects
-    // (e.g. a sieve node or raw HTML that slipped into prose) is logged + skipped
-    // instead of aborting the whole document render (which dropped EVERY block).
-    var nodes = []
-    ;(blocks || []).forEach(function (b, i) {
-      var bhtml = window.TipTap.buildBlocksHTML([b], mdRender)
-      try {
-        var tmp = document.createElement('div')
-        tmp.innerHTML = bhtml.trim()
-        if (b.kind === 'prose') {
-          // Node-granular: a prose block parses to its NATIVE top-level node(s). One
-          // node → that node carries the block id (the native path). >1 nodes → ONE
-          // proseGroup container carries the id and wraps them, so a multi-node embed
-          // stays ONE block (proseBlockNodes, prose-group.js). The id is stamped onto
-          // the node, not the DOM — children are never top-level, never minted.
-          var parsed = parser.parse(tmp).content
-          var produced = window.TipTap.proseBlockNodes(parsed, b.id || '', editor.state.schema)
-          if (!produced.length) {
-            console.error('[editor] prose block ' + i + ' (' + (b.id || '') + ') produced no node from:\n' + bhtml.trim().slice(0, 200))
-          }
-          produced.forEach(function (n) { nodes.push(n) })
-        } else {
-          // Structured: take ONLY the sieve-<kind> node we expect, ignoring any
-          // stray nodes the parse invents. The shadow is authoritative.
-          var want = 'sieve-' + b.kind
-          var pushed = 0
-          parser.parse(tmp).content.forEach(function (n) {
-            if (n.type.name === want) { nodes.push(n); pushed++ }
-          })
-          if (!pushed) {
-            console.error('[editor] block ' + i + ' (' + b.kind + ' ' + (b.id || '') + ') produced no ' + want + ' node from:\n' + bhtml.trim().slice(0, 200))
-          }
-        }
-      } catch (e) {
-        console.error('[editor] block ' + i + ' (' + b.kind + ' ' + (b.id || '') + ') failed to render:', e, '\n--- HTML ---\n' + bhtml)
+    var bhtml = window.TipTap.buildBlocksHTML([b], mdRender)
+    var out = []
+    try {
+      var tmp = document.createElement('div')
+      tmp.innerHTML = (bhtml || '').trim()
+      if (b.kind === 'prose') {
+        // A prose block parses to its NATIVE top-level node(s); proseBlockNodes
+        // stamps the block id (one node → that node; >1 → one proseGroup container).
+        var produced = window.TipTap.proseBlockNodes(parser.parse(tmp).content, b.id || '', editor.state.schema)
+        if (!produced.length) console.error('[editor] prose block (' + (b.id || '') + ') produced no node from:\n' + (bhtml || '').trim().slice(0, 200))
+        produced.forEach(function (n) { out.push(n) })
+      } else {
+        // Structured: take ONLY the sieve-<kind> node, ignoring stray parse output.
+        var want = 'sieve-' + b.kind
+        parser.parse(tmp).content.forEach(function (n) { if (n.type.name === want) out.push(n) })
+        if (!out.length) console.error('[editor] block (' + b.kind + ' ' + (b.id || '') + ') produced no ' + want + ' node from:\n' + (bhtml || '').trim().slice(0, 200))
       }
+    } catch (e) {
+      console.error('[editor] block (' + b.kind + ' ' + (b.id || '') + ') failed to render:', e, '\n--- HTML ---\n' + bhtml)
+    }
+    return out
+  }
+
+  // renderBlocksIntoEditor replaces the whole document with the block list, each
+  // block rendered via blockToNodes, swapped in via one non-undoable transaction.
+  function renderBlocksIntoEditor(editor, blocks) {
+    var nodes = []
+    ;(blocks || []).forEach(function (b) {
+      blockToNodes(editor, b).forEach(function (n) { nodes.push(n) })
     })
     if (!nodes.length) return // nothing valid parsed — keep the existing content
     var tr = editor.state.tr
@@ -435,45 +448,41 @@
             var hasSieve = false
             var singleSieveEntries = null  // the framework ContentEntry array, if exactly one sieve block
 
+            // sieve/slice is [][]ContentEntry — an ordered list of per-block entry
+            // sets (a sequence of "normal pastes"), reconstructed server-side. Each
+            // block contributes its FULL view set (sieve → framework views, prose →
+            // its sieve/prose + text). text/plain + text/html follow the selection.
+            var sieveCount = 0
+            var proseKind = window.TipTap.getBlockKind && window.TipTap.getBlockKind('prose')
             view.state.doc.forEach(function (node, offset) {
               var nodeEnd = offset + node.nodeSize
               if (nodeEnd <= er.from || offset >= er.to) return
               var dom = view.nodeDOM(offset)
+              var entries
               if (String(node.type.name).indexOf('sieve-') === 0) {
                 hasSieve = true
-                // Ask the FRAMEWORK for this block's ContentEntry array (the renderer's
-                // own views + the universal sieve/<kind> view) — the same set extraction
-                // uses. text/plain + text/html are picked from it when the renderer
-                // tailors them (code → source, diagram → mermaid), else the rendered DOM.
-                // Go owns markdown; the frontend never serialises a block to a fence.
-                var entries = window.TipTap.sieveBlockEntries(node, window.TipTap.rendererFor(node.attrs.kind))
+                sieveCount++
+                entries = window.TipTap.sieveBlockEntries(node, window.TipTap.rendererFor(node.attrs.kind))
                 singleSieveEntries = entries
-                var pick = function (mime) {
-                  for (var vi = 0; vi < entries.length; vi++) {
-                    if (entries[vi].mimeType === mime && entries[vi].content) return entries[vi].content
-                  }
-                  return null
-                }
-                // sieve/slice carries the WHOLE block (reconstructable on paste).
-                sliceItems.push({ _type: 'sieve', kind: node.attrs.kind, attrs: window.TipTap.sieveBlockAttrs(node) })
-                if (partial(offset, nodeEnd)) {
-                  // Cut by the selection → just the highlighted text.
-                  plainParts.push(selText(offset, nodeEnd))
-                  htmlParts.push(escHtml(selText(offset, nodeEnd)))
-                } else {
-                  // Whole block / bare cursor → the renderer's full text + html views.
-                  plainParts.push(pick('text/plain') || node.textContent || (dom ? dom.innerText : ''))
-                  htmlParts.push(pick('text/html') || blockHTML(dom))
-                }
               } else {
-                sliceItems.push({ _type: 'prose', json: node.toJSON() })
-                if (partial(offset, nodeEnd)) {
-                  plainParts.push(selText(offset, nodeEnd))
-                  htmlParts.push(escHtml(selText(offset, nodeEnd)))
-                } else {
-                  plainParts.push(dom ? dom.innerText : '')
-                  htmlParts.push(blockHTML(dom))
+                entries = (proseKind && proseKind.asContentEntry && proseKind.asContentEntry(node, currentEditor)) || []
+              }
+              sliceItems.push(entries)
+
+              var pick = function (mime) {
+                for (var vi = 0; vi < entries.length; vi++) {
+                  if (entries[vi].mimeType === mime && entries[vi].content) return entries[vi].content
                 }
+                return null
+              }
+              if (partial(offset, nodeEnd)) {
+                // Cut by the selection → just the highlighted text.
+                plainParts.push(selText(offset, nodeEnd))
+                htmlParts.push(escHtml(selText(offset, nodeEnd)))
+              } else {
+                // Whole block / bare cursor → the block's full text + html views.
+                plainParts.push(pick('text/plain') || node.textContent || (dom ? dom.innerText : ''))
+                htmlParts.push(pick('text/html') || blockHTML(dom))
               }
             })
 
@@ -483,8 +492,6 @@
             // copy — let PM copy the raw selected text, don't hijack the whole block.
             // (Gutter block-range, node selection, multi-block, or a bare cursor on
             // the block all fall through to the rich slice copy below.)
-            var sieveCount = 0
-            for (var si = 0; si < sliceItems.length; si++) if (sliceItems[si]._type === 'sieve') sieveCount++
             if (!er.isBlockRange && !isSieveNodeSel && sliceItems.length === 1 && sieveCount === 1 && er.to > er.from) {
               return false
             }
@@ -611,6 +618,20 @@
       clearTimeout(docUpdateTimer)
       docUpdateTimer = null
       syncDocument(editor, uuid)
+    }
+
+    // Baseline a server-created block (by id) into the sync cache so the thin
+    // observer sees it as already-present and never re-creates it. Derived from the
+    // rendered node so its signature matches topBlockTriple exactly.
+    noteServerBlock = function (id) {
+      if (!blockContentCache || !id) return
+      var found = null
+      editor.state.doc.forEach(function (node) {
+        if (!found && node.attrs && node.attrs.id === id) found = node
+      })
+      if (!found) return
+      var seed = window.TipTap.seedBaseline ? window.TipTap.seedBaseline([topBlockTriple(editor, found)]) : null
+      if (seed) for (var k in seed) blockContentCache[k] = seed[k]
     }
 
     // Catch focus events on inner form controls (like Sieve Code block textareas)
@@ -901,43 +922,33 @@
     }
     if (!currentEditor) return
     var parsed = msg.attrs || {}
+    var kind = msg.kind || 'code'
 
-    var target = sieveInsertPos
+    // An in-place conversion sets sieveInsertPos to a {from,to} RANGE (replace the
+    // source). Otherwise the op's index (echoed on the message) is the document
+    // position — robust for a batch (a paste slice renders many blocks in order).
+    var replaceRange = (sieveInsertPos && typeof sieveInsertPos === 'object') ? sieveInsertPos : null
+    var numericPos = (typeof sieveInsertPos === 'number') ? sieveInsertPos : null
     sieveInsertPos = null
 
-    var attrs = {
-      kind:            msg.kind || 'code',
-      id:              msg.id || parsed.id || '',
-      status:          parsed.status || 'PENDING',
-      createdAt:       parsed.createdAt || null,
-    }
-    Object.keys(parsed).forEach(function (k) {
-      if (k !== 'id' && k !== 'status' && k !== 'createdAt') {
-        attrs[k] = parsed[k]
-      }
-    })
+    // Prose IS a block: render the server-created block (prose or structured) to its
+    // editor node(s) through the SAME path the document load uses (id-stamped) —
+    // never a hand-built node, never a sieve-<kind> assumption.
+    var blk = { id: msg.id || parsed.id, kind: kind, attrs: Object.assign({ id: msg.id || parsed.id }, parsed) }
+    var content = blockToNodes(currentEditor, blk).map(function (n) { return n.toJSON() })
+    if (!content.length) return
 
-    var newBlock = {
-      type: 'sieve-' + (msg.kind || 'code'),
-      attrs: attrs,
-    }
-
-    var nodeType = currentEditor.schema.nodes[newBlock.type]
-    if (nodeType && nodeType.spec.content) {
-      if (nodeType.spec.content.indexOf('block') !== -1) {
-        newBlock.content = [{ type: 'paragraph' }]
-      } else if (nodeType.spec.content.indexOf('text') !== -1 && attrs.source) {
-        newBlock.content = [{ type: 'text', text: attrs.source }]
-      }
-    }
-    // Object target → in-place conversion: replace the native source node's range
-    // with the Sieve block (one transaction → one Undo). Number/null → insert at
-    // that point (additive extraction / paste / create).
-    if (target && typeof target === 'object') {
-      currentEditor.commands.insertContentAt(target, newBlock)
+    if (replaceRange) {
+      currentEditor.commands.insertContentAt(replaceRange, content)
+    } else if (typeof msg.index === 'number') {
+      currentEditor.commands.insertContentAt(docPosForBlockIndex(currentEditor, msg.index), content)
     } else {
-      currentEditor.commands.insertContentAt(target !== null ? target : currentEditor.state.doc.content.size, newBlock)
+      currentEditor.commands.insertContentAt(numericPos !== null ? numericPos : currentEditor.state.doc.content.size, content)
     }
+
+    // A server-created block is authoritative (carries the backend id) — baseline it
+    // so the observer never re-creates it (prose especially, which it otherwise owns).
+    if (typeof noteServerBlock === 'function') noteServerBlock(msg.id || parsed.id)
 
     if (!parsed.source && (msg.kind === 'code' || msg.kind === 'diagram')) {
       setTimeout(function () {
@@ -1556,43 +1567,25 @@
       }
     }
 
-    // ── 1b. sieve/slice reconstruct ──────────────────────────────────────────────
+    // ── 1b. sieve/slice → server-side reconstruct ───────────────────────────────
+    // A multi-block slice ([][]ContentEntry) is reconstructed by Go: FirstPasteMatch
+    // per item → a block at cursorIndex+i with a fresh backend id (prose claims its
+    // sieve/prose). Each created block render-backs via insert-block at its index.
+    // A single-block slice falls through to the smart-paste pipeline, which resolves
+    // it from its sieve/<kind> view the same way.
     var sliceData = event.clipboardData.getData('sieve/slice')
-    if (sliceData) {
+    if (sliceData && currentUuid && !currentUuid.startsWith('prompt:')) {
       try {
-        var blocks = JSON.parse(sliceData)
-        if (Array.isArray(blocks) && blocks.length > 0) {
+        var slice = JSON.parse(sliceData)
+        if (Array.isArray(slice) && slice.length > 1) {
           event.preventDefault()
-          // Build the whole ordered content array and insert it in ONE call.
-          // Inserting block-by-block in a loop dropped trailing blocks because
-          // each insert moved the selection the next insert relied on.
-          var sliceContent = blocks.map(function (entry) {
-            if (entry._type === 'prose') {
-              // Prose node — PM JSON (preserves heading level, bold, links, etc.)
-              return entry.json
-            }
-            // Sieve block — new format (_type:'sieve') or legacy format (no _type)
-            var nodeAttrs = (entry._type === 'sieve') ? entry.attrs : entry
-            var pasteAttrs = {}
-            for (var attrKey in nodeAttrs) {
-              if (Object.prototype.hasOwnProperty.call(nodeAttrs, attrKey) && attrKey !== 'type') {
-                pasteAttrs[attrKey] = nodeAttrs[attrKey]
-              }
-            }
-            var result = { type: 'sieve-' + entry.kind, attrs: pasteAttrs }
-            if (currentEditor) {
-              var nodeType = currentEditor.schema.nodes[result.type]
-              if (nodeType && nodeType.spec.content) {
-                if (nodeType.spec.content.indexOf('block') !== -1) {
-                  result.content = [{ type: 'paragraph' }]
-                } else if (nodeType.spec.content.indexOf('text') !== -1 && pasteAttrs.source) {
-                  result.content = [{ type: 'text', text: pasteAttrs.source }]
-                }
-              }
-            }
-            return result
-          })
-          currentEditor.commands.insertContent(sliceContent)
+          var sliceIndex = blockIndexForInsert(captureInsertPos(false))
+          sieveInsertPos = null // slice render-backs position by op index, not this
+          fetch('/api/editor/paste-slice', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uuid: currentUuid, slice: slice, index: sliceIndex }),
+          }).catch(function (err) { console.error('[editor.js] paste-slice failed', err) })
           return true
         }
       } catch (e) {

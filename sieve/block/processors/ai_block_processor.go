@@ -45,8 +45,23 @@ func (p *AIBlockProcessor) InitAttrs(id string, overrides map[string]interface{}
 	return attrs
 }
 
-func (p *AIBlockProcessor) IsBlock(entries []block.ContentEntry) bool { return false }
+// most basic version we can do
+func (p *AIBlockProcessor) IsBlock(entries []block.ContentEntry) bool {
+	for _, e := range entries {
+		if e.IsSieveType(p) {
+			return true
+		}
+	}
+	return false
+}
+
+// most basic version we can do - just copy the block with a new id
 func (p *AIBlockProcessor) Transform(entries []block.ContentEntry, uuid, blockID string) map[string]interface{} {
+	for _, e := range entries {
+		if e.IsSieveType(p) {
+			return e.AsAttrsForNewBlock(p)
+		}
+	}
 	return nil
 }
 

@@ -50,19 +50,20 @@ func (es *EditorService) SetLifecycleListener(l block.BlockLifecycleListener) {
 	es.listener = l
 }
 
-func (es *EditorService) notifyBlockCreated(uuid string, blk block.SieveBlock) {
+func (es *EditorService) notifyBlockCreated(uuid string, blk block.SieveBlock, index int) {
 	es.mu.RLock()
 	l := es.listener
 	es.mu.RUnlock()
 	if l != nil {
 		// markdown is the block's serialized fence — used ONLY by the breakglass
 		// markdown-mode editor (a verbatim buffer); the WYSIWYG client renders from
-		// attrs. Empty for a kind with no processor.
+		// attrs. Empty for a kind with no processor. index is the block's document
+		// position so the render-back lands in the right place (a slice creates many).
 		markdown := ""
 		if processor := block.GetProcessor(blk.Kind); processor != nil {
 			markdown, _ = processor.Serialize(blk)
 		}
-		l.OnBlockCreated(uuid, blk.Kind, blk.ID, blk.Attrs, markdown)
+		l.OnBlockCreated(uuid, blk.Kind, blk.ID, blk.Attrs, markdown, index)
 	}
 }
 
@@ -406,6 +407,14 @@ func (es *EditorService) CreateBlock(uuid, kind string, overrides map[string]int
 // (out-of-range indices clamp to the end). The block is inserted through the SAME
 // create-block op as every other create — no separate append path.
 func (es *EditorService) createBlockWithID(uuid, kind, blockID string, overrides map[string]interface{}, index int) (id string, rawYaml string, err error) {
+	return es.createBlock(uuid, kind, blockID, overrides, index, true)
+}
+
+// createBlock is the one creation primitive. notify controls the WS render-back
+// (insert-block): true for single UI-triggered creates (the frontend has no node
+// yet), false for the slice paste (the HTTP response renders the whole batch, so a
+// per-block WS push would double-insert).
+func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[string]interface{}, index int, notify bool) (id string, rawYaml string, err error) {
 	defer func() {
 		if err == nil {
 			es.DispatchJobIfNeeded(uuid, id)
@@ -436,9 +445,41 @@ func (es *EditorService) createBlockWithID(uuid, kind, blockID string, overrides
 		return "", "", err
 	}
 
-	es.notifyBlockCreated(uuid, sieveBlock)
+	if notify {
+		es.notifyBlockCreated(uuid, sieveBlock, index)
+	}
 
 	return id, rawYaml, nil
+}
+
+// HandlePasteSlice reconstructs a copied multi-block selection server-side. The
+// slice is an ordered list of per-block ContentEntry sets (a sequence of "normal
+// pastes"). Each item is paste-matched (prose claims its sieve/prose terminally),
+// Transformed, and created at cursorIndex+i with a fresh backend id — so the whole
+// selection round-trips into Go's tree, positioned, ids and all. Returns the created
+// blocks in order for the frontend to render in one batch (no per-block WS push).
+func (es *EditorService) HandlePasteSlice(uuid string, slice [][]block.ContentEntry, index int) ([]block.FrontendBlock, error) {
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if shadow == nil {
+		return nil, fmt.Errorf("paste-slice: no open document for uuid %q", uuid)
+	}
+	if index < 0 {
+		index = len(shadow.SnapshotBlocks())
+	}
+	var created []block.FrontendBlock
+	for i, entries := range slice {
+		kind, id, _, ok := es.HandlePaste(uuid, entries, index+i)
+		if !ok {
+			logger.Warn("paste-slice: create failed", "uuid", uuid, "kind", kind)
+			continue
+		}
+		if blk, found := shadow.SnapshotBlock(id); found {
+			created = append(created, block.FrontendBlock{ID: blk.ID, Kind: blk.Kind, Attrs: blk.Attrs, Aliases: blk.Aliases})
+		}
+	}
+	return created, nil
 }
 
 // HandlePaste runs paste matchers and delegates to CreateBlock on the first match.

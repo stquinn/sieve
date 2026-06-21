@@ -129,6 +129,17 @@ import { registerBlockKind } from './block-kinds.js'
     fromBlock: function (b, mdRender) { return renderProseContent(proseContent(b), mdRender) },
     // save: one top-level native node's clean markdown → paired-delimiter block.
     toMarkdown: function (id, content) { return wrapProseBlock(id, content) },
+    // copy: a prose block's ContentEntry views for a slice — a `sieve/prose` view
+    // (so ProseProcessor claims it server-side and creates a prose block) plus a
+    // plain-text view. The content is the node's clean markdown (Go re-parses it).
+    asContentEntry: function (node, editor) {
+      var md = (T.serializeNode(editor, node) || '').trim()
+      if (!md) return null
+      return [
+        { mimeType: 'sieve/prose', content: JSON.stringify({ content: md }) },
+        { mimeType: 'text/plain', content: md },
+      ]
+    },
   }
 
   registerBlockKind(ProseBlock)

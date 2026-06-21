@@ -375,6 +375,27 @@
               return buildDecorations(state)
             },
 
+            // ── Backspace / Delete over a gutter block-range ───────────────
+            // A whole-block selection lives in OUR plugin state (effectiveRange),
+            // not in the PM selection — a PM TextSelection snaps off the
+            // contentEditable=false sieve atoms, so we never set one. That means
+            // PM's own deleteSelection sees only a collapsed caret and Backspace
+            // is a no-op on the highlighted blocks (the user had to fall back to
+            // the context-menu Delete). Own the keystroke when — and only when —
+            // a block-range is active: delete that exact doc range and clear it.
+            // A plain text selection (isBlockRange:false) still falls through to
+            // PM's native deletion untouched.
+            handleKeyDown: function (view, event) {
+              if (event.key !== 'Backspace' && event.key !== 'Delete') return false
+              var er = effectiveRange(view.state)
+              if (!er.isBlockRange || !er.active) return false
+              event.preventDefault()
+              var tr = view.state.tr.delete(er.from, er.to)
+              tr.setMeta(blockChromeKey, { range: null })
+              view.dispatch(tr.scrollIntoView())
+              return true
+            },
+
             // ── DOM event handlers ─────────────────────────────────────────
             handleDOMEvents: {
 

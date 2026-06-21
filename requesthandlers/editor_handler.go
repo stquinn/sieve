@@ -28,6 +28,7 @@ func (h *EditorHandler) RegisterPaths(r chi.Router) {
 	r.Get("/api/editor/load", h.handleEditorLoad)
 	r.Post("/api/editor/save", h.handleEditorSave)
 	r.Post("/api/editor/smart-paste", h.handleSmartPaste)
+	r.Post("/api/editor/paste-slice", h.handlePasteSlice)
 	r.Post("/api/detect-extractions", h.handleDetectExtractions)
 }
 
@@ -173,6 +174,36 @@ func (h *EditorHandler) handleSmartPaste(w http.ResponseWriter, r *http.Request)
 		ID:      id,
 		RawYaml: rawYaml,
 	})
+}
+
+// handlePasteSlice reconstructs a copied multi-block selection server-side. The
+// slice is an ordered list of per-block ContentEntry sets; each is paste-matched +
+// created with a fresh backend id at cursorIndex+i. Returns the created blocks for
+// the frontend to render in one batch.
+func (h *EditorHandler) handlePasteSlice(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UUID  string                 `json:"uuid"`
+		Slice [][]block.ContentEntry `json:"slice"`
+		Index int                    `json:"index"`
+	}
+	req.Index = -1
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UUID == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	blocks, err := h.ServiceProvider.Editor.HandlePasteSlice(req.UUID, req.Slice, req.Index)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if blocks == nil {
+		blocks = []block.FrontendBlock{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		Blocks []block.FrontendBlock `json:"blocks"`
+	}{Blocks: blocks})
 }
 
 func (h *EditorHandler) handleDetectExtractions(w http.ResponseWriter, r *http.Request) {

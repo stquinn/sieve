@@ -101,6 +101,61 @@ func TestPasteMatchers_firstMatchWins(t *testing.T) {
 	}
 }
 
+// A copied block round-trips as its own kind: an upgrading processor (diagram,
+// which greedily claims mermaid source) is registered FIRST, yet a pasted
+// sieve/code view still comes back as code — the self-kind pass wins. The same
+// raw mermaid TEXT (no sieve view) still upgrades to diagram in the general pass.
+func TestFirstPasteMatch_selfKindBeatsUpgrade(t *testing.T) {
+	ResetRegistry()
+	// diagram: registered first, claims anything mermaid (sieve/code w/ mermaid OR raw text).
+	diagram := &mockProcessor{
+		FencedDeserializer: FencedDeserializer{Kind: "diagram"},
+		isBlockFn: func(entries []ContentEntry) bool {
+			for _, e := range entries {
+				if e.MIMEType == "sieve/diagram" {
+					return true
+				}
+				if k, attrs, ok := e.SieveAttrs(); ok && k == "code" && attrs["language"] == "mermaid" {
+					return true // "upgrade" a mermaid code block to a diagram
+				}
+				if e.MIMEType == "text/plain" && e.Content == "graph TD; A-->B" {
+					return true // raw mermaid text → diagram
+				}
+			}
+			return false
+		},
+	}
+	// code: claims its own sieve/code view.
+	code := &mockProcessor{
+		FencedDeserializer: FencedDeserializer{Kind: "code"},
+		isBlockFn: func(entries []ContentEntry) bool {
+			for _, e := range entries {
+				if k, _, ok := e.SieveAttrs(); ok && k == "code" {
+					return true
+				}
+			}
+			return false
+		},
+	}
+	RegisterProcessor(diagram)
+	RegisterProcessor(code)
+
+	// Copied mermaid code block: sieve/code (lang=mermaid) + its text view.
+	copied := []ContentEntry{
+		{MIMEType: "sieve/code", Content: `{"id":"co-1","language":"mermaid","source":"graph TD; A-->B"}`},
+		{MIMEType: "text/plain", Content: "graph TD; A-->B"},
+	}
+	if kind, _, ok := FirstPasteMatch(copied); !ok || kind != "code" {
+		t.Fatalf("copied sieve/code (mermaid) should round-trip as code, got kind=%q ok=%v", kind, ok)
+	}
+
+	// Raw mermaid text only (no sieve view): general pass → diagram upgrade.
+	raw := []ContentEntry{{MIMEType: "text/plain", Content: "graph TD; A-->B"}}
+	if kind, _, ok := FirstPasteMatch(raw); !ok || kind != "diagram" {
+		t.Fatalf("raw mermaid text should upgrade to diagram, got kind=%q ok=%v", kind, ok)
+	}
+}
+
 func TestUnregisterProcessor_removesFromRegistryAndMatchers(t *testing.T) {
 	ResetRegistry()
 	mock := &mockProcessor{FencedDeserializer: FencedDeserializer{Kind: "tmp-kind"}}

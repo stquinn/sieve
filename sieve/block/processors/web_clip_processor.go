@@ -46,6 +46,9 @@ func (p *WebClipBlockProcessor) InitAttrs(id string, overrides map[string]interf
 
 func (p *WebClipBlockProcessor) IsBlock(entries []block.ContentEntry) bool {
 	for _, e := range entries {
+		if e.IsSieveType(p) {
+			return true
+		}
 		trimmed := strings.TrimSpace(e.Content)
 		if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
 			return true
@@ -60,6 +63,9 @@ func (p *WebClipBlockProcessor) AllowSelfExtraction() bool {
 
 func (p *WebClipBlockProcessor) Transform(entries []block.ContentEntry, uuid, blockID string) map[string]interface{} {
 	for _, e := range entries {
+		if e.IsSieveType(p) {
+			return e.AsAttrsForNewBlock(p)
+		}
 		trimmed := strings.TrimSpace(e.Content)
 		if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
 			mode := "fetch" // default

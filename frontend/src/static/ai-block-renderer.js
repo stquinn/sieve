@@ -213,6 +213,29 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
         return inside
       }
 
+      // deleteEditsAiBody decides whether a Backspace/Delete would EDIT an ai-block's
+      // read-only response text (block it) versus remove the WHOLE block (allow it —
+      // the block is an atom, keyboard delete == context-menu Delete, and a mistake
+      // is undoable). Delete IS a text-modifying op, so we can't just wave it through;
+      // we wave through only the whole-block cases:
+      //   • a NodeSelection on the block, or
+      //   • a selection that fully CONTAINS the block (multi-block range).
+      // A selection that overlaps the block only PARTIALLY would cut into its text —
+      // that we still block.
+      function deleteEditsAiBody(state) {
+        var sel = state.selection
+        if (sel.node && sel.node.type === nodeType) return false // whole-block NodeSelection
+        var edits = false
+        state.doc.descendants(function(node, pos) {
+          if (node.type !== nodeType) return
+          var start = pos, end = pos + node.nodeSize
+          var contained = sel.from <= start && sel.to >= end       // selection swallows whole block
+          var overlaps  = sel.from < end && sel.to > start          // touches the block at all
+          if (overlaps && !contained) edits = true                  // partial → would edit body text
+        })
+        return edits
+      }
+
       return [
         new Plugin({
           props: {
@@ -220,11 +243,16 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
               return isInsideAiBlock(view.state, from, to)
             },
             handleKeyDown: function(view, event) {
-              // Block deletion and enter/formatting keys inside AI block
-              if (event.key === 'Backspace' || event.key === 'Delete' || event.key === 'Enter') {
+              // Backspace/Delete: allowed to remove the whole block (undoable),
+              // blocked only when they would edit the read-only response body.
+              if (event.key === 'Backspace' || event.key === 'Delete') {
+                return deleteEditsAiBody(view.state)
+              }
+              // Enter and ordinary typing would replace/insert text — never allowed
+              // when the selection touches an ai-block at all.
+              if (event.key === 'Enter') {
                 return isInsideAiBlock(view.state, view.state.selection.from, view.state.selection.to)
               }
-              // Block normal typing just in case handleTextInput misses it
               if (event.key.length === 1 && !event.metaKey && !event.ctrlKey) {
                 return isInsideAiBlock(view.state, view.state.selection.from, view.state.selection.to)
               }
