@@ -24,6 +24,7 @@ in pkgs.mkShell {
     wails
     nodejs_22
     pkg-config
+    tea            # Gitea/Forgejo CLI — `tea pr create` against git.stephenquinn.ie
   ] ++ lib.optionals isLinux [ gcc ]
     ++ linuxDeps;
 
@@ -96,5 +97,6 @@ EOF
     echo "  wails   $(wails version 2>/dev/null || echo 'check wails install')"
     echo "  node    $(node --version)"
     echo "  npm     $(npm --version)"
+    echo "  tea     $(tea --version 2>/dev/null | head -1 || echo 'check tea install')"
   '';
 }
