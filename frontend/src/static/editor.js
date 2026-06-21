@@ -1694,15 +1694,11 @@
 
   // ── Module-level editor commands (dispatched via sieve:* custom events) ─────
 
-  function setContent(content) {
-    if (currentMode === 'markdown') {
-      var ta = currentMountEl && currentMountEl.querySelector('.markdown-editor')
-      if (ta) { ta.value = content; lastSyncedBody = content }
-    } else if (currentEditor) {
-      currentEditor.commands.setContent(content)
-      lastSyncedBody = content
-    }
-  }
+  // (Retired) The setContent(markdown) doc-load helper is GONE: a flat markdown
+  // re-parse is a second, lossy document parser (it can't read <!--s:ID--> markers
+  // → re-mints ids → corrupts on save-back). All wysiwyg loads now render the
+  // backend BLOCK LIST via renderBlocksIntoEditor; markdown is set only into the
+  // markdown-mode textarea, and only Go parses document structure from markdown.
 
   function toggleSearch() {
     if (!searchOverlay) ensureOverlays()
