@@ -9,8 +9,48 @@ import (
 	"time"
 )
 
+// A structured create-block op must land the block AT its index, not appended —
+// the single positioned create path (toolbar/AI/extract all ride this). Regression:
+// removing the doc-update fallback exposed createBlockWithID's old SetBlock-append.
+func TestHandleBlockOp_structuredCreateInsertsAtIndex(t *testing.T) {
+	resetRegistry()
+	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+
+	doc, _ := ds.New()
+	doc.SetBody([]byte("```code\nid: co-1\nsource: a\nstatus: COMPLETE\n```\n\n```code\nid: co-2\nsource: b\nstatus: COMPLETE\n```"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+	if err := es.Open(uuid, nil); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	// Insert a new code block at index 1 — between co-1 and co-2, NOT appended.
+	if err := es.HandleBlockOp(uuid, block.BlockOp{
+		Type:  "create-block",
+		Kind:  "code",
+		Attrs: map[string]interface{}{"source": "new"},
+		Index: 1,
+	}); err != nil {
+		t.Fatalf("HandleBlockOp create: %v", err)
+	}
+
+	blocks, ok := es.FrontendBlocks(uuid)
+	if !ok || len(blocks) != 3 {
+		t.Fatalf("expected 3 blocks, got %d (ok=%v)", len(blocks), ok)
+	}
+	order := []string{blocks[0].ID, blocks[1].ID, blocks[2].ID}
+	if blocks[0].ID != "co-1" || blocks[2].ID != "co-2" {
+		t.Fatalf("flanking blocks moved — not positioned at index 1: %v", order)
+	}
+	if blocks[1].ID == "co-1" || blocks[1].ID == "co-2" {
+		t.Fatalf("new block was not inserted at index 1: %v", order)
+	}
+}
+
 func TestEditorService_FlushWritesToDisk(t *testing.T) {
-	block.RegisterProcessor("ai-block", &testRunJobProcessor{})
+	block.RegisterProcessor(&testRunJobProcessor{FencedDeserializer: block.FencedDeserializer{Kind: "ai-block"}})
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), time.Second)
 
@@ -53,7 +93,7 @@ func TestEditorService_FlushWritesToDisk(t *testing.T) {
 }
 
 func TestEditorService_EnterMarkdownEmbedsBlocks(t *testing.T) {
-	block.RegisterProcessor("code", processors.NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
 	t.Cleanup(func() { block.UnregisterProcessor("code") })
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), time.Second)
@@ -277,7 +317,7 @@ func TestEditorService_NotifySavedCalledAfterDirectFlush(t *testing.T) {
 }
 
 func TestEditorService_EnterWysiwygReparsesBlocks(t *testing.T) {
-	block.RegisterProcessor("code", processors.NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
 	t.Cleanup(func() { block.UnregisterProcessor("code") })
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), time.Second)
@@ -318,7 +358,7 @@ func TestEditorService_EnterWysiwygReparsesBlocks(t *testing.T) {
 
 func TestEditorService_CreateBlock_code(t *testing.T) {
 	resetRegistry()
-	block.RegisterProcessor("code", processors.NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
 
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
@@ -330,7 +370,7 @@ func TestEditorService_CreateBlock_code(t *testing.T) {
 	_ = es.Open(uuid, nil)
 	defer waitJobs(t, es, uuid)
 
-	id, rawYaml, err := es.CreateBlock(uuid, "code", nil)
+	id, rawYaml, err := es.CreateBlock(uuid, "code", nil, -1)
 	if err != nil {
 		t.Fatalf("CreateBlock: %v", err)
 	}
@@ -363,7 +403,7 @@ func TestEditorService_CreateBlock_code(t *testing.T) {
 
 func TestEditorService_CreateBlock_withOverrides(t *testing.T) {
 	resetRegistry()
-	block.RegisterProcessor("code", processors.NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
 
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
@@ -377,7 +417,7 @@ func TestEditorService_CreateBlock_withOverrides(t *testing.T) {
 	id, rawYaml, err := es.CreateBlock(doc.UUID(), "code", map[string]interface{}{
 		"source": "print('hello')",
 		"hint":   "python",
-	})
+	}, -1)
 	if err != nil {
 		t.Fatalf("CreateBlock: %v", err)
 	}
@@ -389,7 +429,7 @@ func TestEditorService_CreateBlock_withOverrides(t *testing.T) {
 
 func TestEditorService_HandlePaste_delegatesToCreateBlock(t *testing.T) {
 	resetRegistry()
-	block.RegisterProcessor("code", processors.NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
 
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
@@ -400,7 +440,7 @@ func TestEditorService_HandlePaste_delegatesToCreateBlock(t *testing.T) {
 	_ = es.Open(uuid, nil)
 	defer waitJobs(t, es, uuid)
 
-	kind, id, rawYaml, matched := es.HandlePaste(uuid, []block.ContentEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\n```"}})
+	kind, id, rawYaml, matched := es.HandlePaste(uuid, []block.ContentEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\n```"}}, -1)
 	if !matched {
 		t.Fatal("expected match")
 	}
@@ -421,7 +461,7 @@ func TestEditorService_HandlePaste_delegatesToCreateBlock(t *testing.T) {
 
 func TestEditorService_HandlePaste_noMatch(t *testing.T) {
 	resetRegistry()
-	block.RegisterProcessor("code", processors.NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
 
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
@@ -430,47 +470,51 @@ func TestEditorService_HandlePaste_noMatch(t *testing.T) {
 	doc, _ = ds.Save(doc)
 	_ = es.Open(doc.UUID(), nil)
 
-	_, _, _, matched := es.HandlePaste(doc.UUID(), []block.ContentEntry{{MIMEType: "text/plain", Content: "just plain text"}})
+	_, _, _, matched := es.HandlePaste(doc.UUID(), []block.ContentEntry{{MIMEType: "text/plain", Content: "just plain text"}}, -1)
 	if matched {
 		t.Fatal("expected no match for plain text")
 	}
 }
 
 type mockLifecycleListener struct {
-	onCreated func(uuid, kind, blockID, rawYaml string)
-	onUpdated func(uuid, blockID string, attrs map[string]interface{}, rawYaml string)
+	onCreated func(uuid, kind, blockID, markdown string)
+	onUpdated func(uuid, blockID string, attrs map[string]interface{})
 }
 
 func (l *mockLifecycleListener) OnBlockPromoted(uuid, blockID string, replacement string) {}
 
-func (l *mockLifecycleListener) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, rawYaml string) {
+func (l *mockLifecycleListener) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string) {
 	if l.onCreated != nil {
-		l.onCreated(uuid, kind, blockID, rawYaml)
+		l.onCreated(uuid, kind, blockID, markdown)
 	}
 }
 
-func (l *mockLifecycleListener) OnBlockUpdated(uuid, blockID string, attrs map[string]interface{}, rawYaml string) {
+func (l *mockLifecycleListener) OnBlockUpdated(uuid, blockID string, attrs map[string]interface{}) {
 	if l.onUpdated != nil {
-		l.onUpdated(uuid, blockID, attrs, rawYaml)
+		l.onUpdated(uuid, blockID, attrs)
 	}
 }
 
 func TestHandleBlockUpdate_notifySendsSnapshotUnderLock(t *testing.T) {
 	resetRegistry()
-	block.RegisterProcessor("code", processors.NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
 
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
 
 	var notifyID string
-	var notifyYaml string
+	var notifySource string
 	notifyCalled := make(chan struct{}, 1)
+	const goMarker = "package main"
 
 	listener := &mockLifecycleListener{
-		onUpdated: func(uuid, blockID string, attrs map[string]interface{}, rawYaml string) {
-			if strings.Contains(rawYaml, "language:") {
+		// The notify carries the merged attrs snapshot captured under lock — observe
+		// the just-updated source landing in it (no markdown/serialised form on the
+		// wire). A torn read would not carry the committed source.
+		onUpdated: func(uuid, blockID string, attrs map[string]interface{}) {
+			if src, _ := attrs["source"].(string); strings.Contains(src, goMarker) {
 				notifyID = blockID
-				notifyYaml = rawYaml
+				notifySource = src
 				select {
 				case notifyCalled <- struct{}{}:
 				default:
@@ -486,19 +530,16 @@ func TestHandleBlockUpdate_notifySendsSnapshotUnderLock(t *testing.T) {
 	uuid := doc.UUID()
 	_ = es.Open(uuid, nil)
 
-	// Create a code block with a very short source (<30 chars) so heuristics
-	// do not fire in InitAttrs and language stays empty. OnChange will then
-	// receive a long Go source (>=30 chars) that triggers heuristic detection,
-	// producing a non-empty attrsChanged and exercising the notify path.
+	// Create a code block, then update its source. The notify after the update
+	// must carry the merged snapshot (captured under the shadow lock) — i.e. the
+	// new source — proving notify never reads a torn/partial block state.
 	id, _, err := es.CreateBlock(uuid, "code", map[string]interface{}{
-		"source": "x", // too short for heuristics; language stays ""
-	})
+		"source": "x",
+	}, -1)
 	if err != nil {
 		t.Fatalf("CreateBlock: %v", err)
 	}
 
-	// Supply a Go source long enough to pass minSourceLength (30) so that
-	// OnChange detects "go" and sets language, making attrsChanged non-empty.
 	goSource := "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(\"hello\") }"
 	es.HandleBlockUpdate(uuid, "code", id, map[string]interface{}{
 		"source": goSource,
@@ -514,8 +555,8 @@ func TestHandleBlockUpdate_notifySendsSnapshotUnderLock(t *testing.T) {
 	if notifyID != id {
 		t.Errorf("expected notify block id=%q, got %q", id, notifyID)
 	}
-	if !strings.Contains(notifyYaml, "language:") {
-		t.Errorf("expected notify rawYaml to contain language: key, got:\n%s", notifyYaml)
+	if !strings.Contains(notifySource, goMarker) {
+		t.Errorf("expected notify attrs to carry the updated source, got %q", notifySource)
 	}
 
 	// Wait for background RunJob to complete so the temp dir cleanup doesn't race
@@ -543,6 +584,7 @@ type testRunJobProcessor struct {
 	runJob func(ctx context.Context, uuid string, blk *block.SieveBlock) error
 }
 
+func (p *testRunJobProcessor) Kind() string          { return p.FencedDeserializer.Kind }
 func (p *testRunJobProcessor) Mode() block.BlockMode { return block.BlockModeBlock }
 func (p *testRunJobProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{"id": id, "status": block.BlockStatusPending}
@@ -591,6 +633,7 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 
 	// Register a mock processor
 	proc := &testRunJobProcessor{
+		FencedDeserializer: block.FencedDeserializer{Kind: "mock-kind"},
 		runJob: func(ctx context.Context, uuid string, blk *block.SieveBlock) error {
 			// Simulate job modifying attrs
 			blk.Attrs["language"] = "go"         // modified
@@ -607,9 +650,9 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 			return nil
 		},
 	}
-	block.RegisterProcessor("mock-kind", proc)
+	block.RegisterProcessor(proc)
 
-	blockID, _, err := es.CreateBlock(uuid, "mock-kind", initialAttrs)
+	blockID, _, err := es.CreateBlock(uuid, "mock-kind", initialAttrs, -1)
 	if err != nil {
 		t.Fatalf("CreateBlock failed: %v", err)
 	}
@@ -674,6 +717,7 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 	var blockID string
 
 	proc := &testRunJobProcessor{
+		FencedDeserializer: block.FencedDeserializer{Kind: "mock-kind2"},
 		runJob: func(ctx context.Context, jobUUID string, blk *block.SieveBlock) error {
 			// Simulate the user navigating away (Close) and back (Open) while the job runs
 			es.Close(uuid)
@@ -685,9 +729,9 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 			return nil
 		},
 	}
-	block.RegisterProcessor("mock-kind2", proc)
+	block.RegisterProcessor(proc)
 
-	blockID, _, err := es.CreateBlock(uuid, "mock-kind2", initialAttrs)
+	blockID, _, err := es.CreateBlock(uuid, "mock-kind2", initialAttrs, -1)
 	if err != nil {
 		t.Fatalf("CreateBlock failed: %v", err)
 	}
@@ -722,7 +766,7 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 // properly deserialized by the shadow and its block-id is recognized.
 func TestApplyJobUpdate_closedDoc(t *testing.T) {
 	resetRegistry()
-	block.RegisterProcessor("code", processors.NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
 	t.Cleanup(func() { block.UnregisterProcessor("code") })
 
 	ds, _ := newTestDocumentService(t)

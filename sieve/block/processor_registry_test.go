@@ -11,6 +11,8 @@ type mockProcessor struct {
 	transformFn func([]ContentEntry) map[string]interface{}
 }
 
+func (p *mockProcessor) Kind() string { return p.FencedDeserializer.Kind }
+
 func (p *mockProcessor) Mode() BlockMode {
 	return BlockModeBlock
 }
@@ -34,17 +36,18 @@ func (p *mockProcessor) Transform(entries []ContentEntry, _ string, _ string) ma
 	}
 	return nil
 }
-func (p *mockProcessor) BuildContext(_ SieveBlock, _ DocView, _ map[string]bool) AIContext { return AIContext{} }
-func (p *mockProcessor) MarkdownRepresentation(_ SieveBlock) string                     { return "" }
-func (p *mockProcessor) RunJob(_ JobContext) error                                      { return nil }
-func (p *mockProcessor) JobLabel(_ *SieveBlock) string                                  { return "" }
-func (p *mockProcessor) OnChange(_ *SieveBlock)                                         {}
-
+func (p *mockProcessor) BuildContext(_ SieveBlock, _ DocView, _ map[string]bool) AIContext {
+	return AIContext{}
+}
+func (p *mockProcessor) MarkdownRepresentation(_ SieveBlock) string { return "" }
+func (p *mockProcessor) RunJob(_ JobContext) error                  { return nil }
+func (p *mockProcessor) JobLabel(_ *SieveBlock) string              { return "" }
+func (p *mockProcessor) OnChange(_ *SieveBlock)                     {}
 
 func TestRegisterProcessor_storesInRegistry(t *testing.T) {
 	ResetRegistry()
-	mock := &mockProcessor{}
-	RegisterProcessor("test-kind", mock)
+	mock := &mockProcessor{FencedDeserializer: FencedDeserializer{Kind: "test-kind"}}
+	RegisterProcessor(mock)
 	if GetProcessor("test-kind") == nil {
 		t.Fatal("expected processor to be registered, got nil")
 	}
@@ -60,6 +63,7 @@ func TestRegisterProcessor_unknownKindReturnsNil(t *testing.T) {
 func TestPasteMatchers_firstMatchWins(t *testing.T) {
 	ResetRegistry()
 	specific := &mockProcessor{
+		FencedDeserializer: FencedDeserializer{Kind: "specific"},
 		isBlockFn: func(entries []ContentEntry) bool {
 			for _, e := range entries {
 				if e.MIMEType == "text/plain" && e.Content == "target" {
@@ -73,13 +77,14 @@ func TestPasteMatchers_firstMatchWins(t *testing.T) {
 		},
 	}
 	general := &mockProcessor{
-		isBlockFn: func(_ []ContentEntry) bool { return true },
+		FencedDeserializer: FencedDeserializer{Kind: "general"},
+		isBlockFn:          func(_ []ContentEntry) bool { return true },
 		transformFn: func(_ []ContentEntry) map[string]interface{} {
 			return map[string]interface{}{"winner": "general"}
 		},
 	}
-	RegisterProcessor("specific", specific)
-	RegisterProcessor("general", general)
+	RegisterProcessor(specific)
+	RegisterProcessor(general)
 
 	registryMu.RLock()
 	matchers := pasteMatchers
@@ -98,8 +103,8 @@ func TestPasteMatchers_firstMatchWins(t *testing.T) {
 
 func TestUnregisterProcessor_removesFromRegistryAndMatchers(t *testing.T) {
 	ResetRegistry()
-	mock := &mockProcessor{}
-	RegisterProcessor("tmp-kind", mock)
+	mock := &mockProcessor{FencedDeserializer: FencedDeserializer{Kind: "tmp-kind"}}
+	RegisterProcessor(mock)
 	UnregisterProcessor("tmp-kind")
 	if GetProcessor("tmp-kind") != nil {
 		t.Error("expected nil after UnregisterProcessor, still registered")

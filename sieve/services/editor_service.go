@@ -55,11 +55,14 @@ func (es *EditorService) notifyBlockCreated(uuid string, blk block.SieveBlock) {
 	l := es.listener
 	es.mu.RUnlock()
 	if l != nil {
-		serialisedForm := ""
+		// markdown is the block's serialized fence — used ONLY by the breakglass
+		// markdown-mode editor (a verbatim buffer); the WYSIWYG client renders from
+		// attrs. Empty for a kind with no processor.
+		markdown := ""
 		if processor := block.GetProcessor(blk.Kind); processor != nil {
-			serialisedForm, _ = processor.Serialize(blk)
+			markdown, _ = processor.Serialize(blk)
 		}
-		l.OnBlockCreated(uuid, blk.Kind, blk.ID, blk.Attrs, serialisedForm)
+		l.OnBlockCreated(uuid, blk.Kind, blk.ID, blk.Attrs, markdown)
 	}
 }
 
@@ -68,11 +71,7 @@ func (es *EditorService) notifyBlockUpdated(uuid string, blk block.SieveBlock) {
 	l := es.listener
 	es.mu.RUnlock()
 	if l != nil {
-		serialisedForm := ""
-		if processor := block.GetProcessor(blk.Kind); processor != nil {
-			serialisedForm, _ = processor.Serialize(blk)
-		}
-		l.OnBlockUpdated(uuid, blk.ID, blk.Attrs, serialisedForm)
+		l.OnBlockUpdated(uuid, blk.ID, blk.Attrs)
 	}
 }
 
@@ -212,15 +211,27 @@ func (es *EditorService) UpdateMarkdown(uuid, markdown string) {
 }
 
 // HandleBlockOp applies a granular wire op (create/update/delete/move) to the
-// open document's authoritative block tree and re-arms the autosave debounce.
+// open document's authoritative block tree. It is THE single mutation path —
+// create/update/delete are not separate messages. A STRUCTURED create-block runs
+// the full create lifecycle (InitAttrs → positioned insert → job dispatch → notify
+// render-back); prose create and every other op apply straight to the tree (prose
+// already exists in the editor; delete/move/update are pure tree mutations).
 func (es *EditorService) HandleBlockOp(uuid string, op block.BlockOp) error {
+	if op.Type == "create-block" && op.Kind != "" && op.Kind != block.KindProse {
+		id := op.BlockID
+		if id == "" {
+			id = block.GenerateBlockIDFor(op.Kind)
+		}
+		_, _, err := es.createBlockWithID(uuid, op.Kind, id, op.Attrs, op.Index)
+		return err
+	}
+
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
 	if shadow == nil {
 		return fmt.Errorf("block-op: no open document for uuid %q", uuid)
 	}
-
 	return shadow.ApplyOp(op)
 }
 
@@ -385,13 +396,16 @@ func (es *EditorService) SetServices(svc block.BlockServices) {
 
 // CreateBlock is the canonical block creation path for UI-triggered creation
 // (keyboard shortcut, toolbar button). Generates a fresh block ID.
-func (es *EditorService) CreateBlock(uuid, kind string, overrides map[string]interface{}) (id string, rawYaml string, err error) {
-	return es.createBlockWithID(uuid, kind, block.GenerateBlockIDFor(kind), overrides)
+func (es *EditorService) CreateBlock(uuid, kind string, overrides map[string]interface{}, index int) (id string, rawYaml string, err error) {
+	return es.createBlockWithID(uuid, kind, block.GenerateBlockIDFor(kind), overrides, index)
 }
 
-// createBlockWithID creates a block using a caller-supplied ID. Used by
-// HandlePaste so the pre-generated ID (passed to PasteMatch) is reused.
-func (es *EditorService) createBlockWithID(uuid, kind, blockID string, overrides map[string]interface{}) (id string, rawYaml string, err error) {
+// createBlockWithID creates a block using a caller-supplied ID at a caller-supplied
+// document index. Used by HandlePaste so the pre-generated ID (passed to PasteMatch)
+// is reused. index is the position among top-level blocks; a negative index appends
+// (out-of-range indices clamp to the end). The block is inserted through the SAME
+// create-block op as every other create — no separate append path.
+func (es *EditorService) createBlockWithID(uuid, kind, blockID string, overrides map[string]interface{}, index int) (id string, rawYaml string, err error) {
 	defer func() {
 		if err == nil {
 			es.DispatchJobIfNeeded(uuid, id)
@@ -411,7 +425,12 @@ func (es *EditorService) createBlockWithID(uuid, kind, blockID string, overrides
 	id = blockID
 	attrs := processor.InitAttrs(id, overrides)
 	sieveBlock := block.SieveBlock{ID: id, Kind: kind, Attrs: attrs}
-	es.UpdateBlock(uuid, sieveBlock)
+	if index < 0 {
+		index = 1 << 30 // append: insertBlockAt clamps an out-of-range index to the end
+	}
+	if err = shadow.ApplyOp(block.BlockOp{Type: "create-block", BlockID: id, Kind: kind, Attrs: attrs, Index: index}); err != nil {
+		return "", "", err
+	}
 	rawYaml, err = fencedblock.SerializeYaml[map[string]interface{}](attrs)
 	if err != nil {
 		return "", "", err
@@ -424,14 +443,14 @@ func (es *EditorService) createBlockWithID(uuid, kind, blockID string, overrides
 
 // HandlePaste runs paste matchers and delegates to CreateBlock on the first match.
 // It is the secondary creation path — prefer CreateBlock directly for UI-triggered creation.
-func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry) (kind, id, rawYaml string, matched bool) {
+func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry, index int) (kind, id, rawYaml string, matched bool) {
 	matchKind, processor, ok := block.FirstPasteMatch(entries)
 	if !ok {
 		return "", "", "", false
 	}
 	blockID := block.GenerateBlockIDFor(matchKind)
 	overrides := processor.Transform(entries, uuid, blockID)
-	id, raw, err := es.createBlockWithID(uuid, matchKind, blockID, overrides)
+	id, raw, err := es.createBlockWithID(uuid, matchKind, blockID, overrides, index)
 	if err != nil {
 		return "", "", "", false
 	}
@@ -440,7 +459,8 @@ func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry) 
 
 // CreateBlockFromEntries is the extraction creation path. It is identical to Paste
 // except the backend skips detection — the frontend explicitly requested this Kind.
-func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []block.ContentEntry) (id, rawYaml string, err error) {
+// index is the document position to insert at (negative = append).
+func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []block.ContentEntry, index int) (id, rawYaml string, err error) {
 	processor := block.GetProcessor(kind)
 	if processor == nil {
 		return "", "", fmt.Errorf("no processor registered for kind %q", kind)
@@ -453,7 +473,7 @@ func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []blo
 		return "", "", fmt.Errorf("extract: processor %q could not transform entries into a block", kind)
 	}
 
-	return es.createBlockWithID(uuid, kind, blockID, overrides)
+	return es.createBlockWithID(uuid, kind, blockID, overrides, index)
 }
 
 // HandleBlockUpdate processes a block-update from the client: merges the user's

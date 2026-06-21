@@ -4,31 +4,24 @@
 // whole-document markdown blob. computeBlockSync is an id-keyed diff over the
 // top-level blocks that emits create-block / update-block / delete-block ops.
 //
-// SCOPE: the observer owns PROSE blocks. Structured (sieve-*) blocks have their
-// own sync channels — content via `sieve:block-update` ({attrs}), insertion via
-// `editor:insert-block` — and their `serialisedForm` is a stable backend-sourced
-// snapshot the frontend never mutates. So this observer must NOT emit content ops
-// for structured blocks. A change that CREATES/DELETES/edits a structured block
-// defers to the whole-document fallback this slice (unchanged from before);
-// structured ops go granular in a later slice once their lifecycle is unified.
+// SCOPE: the observer owns PROSE block content. Structured (sieve-*) blocks have
+// their own sync channels — content via `sieve:block-update` ({attrs}), insertion
+// via `editor:insert-block` — and their change-signature is a hash of their attrs
+// (the frontend never serialises them to markdown). So this observer emits no
+// create/update content op for a structured block; it tracks them only for the
+// baseline and for DELETE detection (a delete-block is kind-agnostic).
 //
-// D-r.5: the prose-path fallback is RETIRED. Prose create/update/delete are fully
-// granular, so an id-less prose node no longer forces a doc-update — it is treated
-// as a pending editing surface (the minting plugin fills its id before the next
-// sync) and simply skipped. The fallback survives ONLY for (a) structured-block
-// edits (above) and (b) markdown mode (handled in editor.js, outside this diff).
-// The remaining id-less fallback here is structured-only and purely defensive — a
-// structured block should always carry a backend-authoritative id.
+// There is NO whole-document fallback. Every WYSIWYG edit is a granular block-op
+// over the WS — that is the only channel. (Markdown mode is a separate, verbatim
+// breakglass buffer, also over the WS, handled in editor.js.) An id-less node is a
+// pending editing surface (the minting plugin fills its id before the next sync)
+// and is simply skipped — never a fallback.
 
 // blockSig is a block's change-signature, prefixed with kind so a cached entry's
-// kind is recoverable. Prose hashes on content + aliases; structured hashes on
-// its stable serialisedForm content (carried in `content` for structured).
+// kind is recoverable. Prose hashes on content + aliases; structured hashes on its
+// attrs-JSON (carried in `content` for structured — a signature, never an op body).
 function blockSig(b) {
   return b.kind + '\x00' + (b.content || '') + '\x00' + ((b.aliases || []).join(','))
-}
-
-function sigKind(sig) {
-  return sig.split('\x00', 1)[0]
 }
 
 // proseOp builds a create/update op for a prose block; aliases ride along when
@@ -41,8 +34,8 @@ function proseOp(type, b, index) {
 }
 
 // curr: [{ id, kind, content, aliases? }] in document order. For prose, content
-// is markdown; for structured, content is the stable serialisedForm (used only as
-// a change-signature, never emitted as an op here).
+// is markdown; for structured, content is the attrs-JSON hash (used only as a
+// change-signature, never emitted as an op here).
 // prev: { [id]: sig } from the last successful sync, or null on the first call.
 // → { mode: 'ops' | 'fallback', ops: [BlockOp], next: { [id]: sig } }
 // isPendingEmptyProse reports a brand-new prose block with no content — the empty
@@ -92,43 +85,27 @@ export function mintActions(ids) {
 
 export function computeBlockSync(curr, prev) {
   var next = {}
-  var structuredNoId = false
   for (var i = 0; i < curr.length; i++) {
     var cb = curr[i]
     if (!cb.id) {
-      // D-r.5: an id-less PROSE node is a pending editing surface — the minting
-      // plugin fills its id before the next sync — so SKIP it (emit nothing) and
-      // keep syncing the addressable prose blocks granularly. No doc-update.
-      // An id-less STRUCTURED block can't be addressed (it should always carry a
-      // backend-authoritative id) → defensive whole-document fallback survives.
-      if (cb.kind !== 'prose') structuredNoId = true
+      // An id-less node is not yet addressable, so it is SKIPPED (emits nothing,
+      // not baselined). For PROSE that is a pending editing surface — the minting
+      // plugin fills its id before the next sync. A STRUCTURED block should always
+      // carry a backend-authoritative id; if one ever arrives id-less it simply
+      // waits. There is NO whole-document fallback — every edit is a block-op.
       continue
     }
     if (isPendingEmptyProse(cb, prev)) continue
     next[cb.id] = blockSig(cb)
   }
 
-  if (structuredNoId) return { mode: 'fallback', ops: [], next: next }
-
   // First call: just seed the baseline, never emit ops.
-  if (!prev) return { mode: 'ops', ops: [], next: next }
+  if (!prev) return { ops: [], next: next }
 
-  // Any structured (non-prose) block created, deleted, or changed → fall back to
-  // a whole-document update this slice (structured sync is not granular yet).
-  for (var c = 0; c < curr.length; c++) {
-    var b = curr[c]
-    if (b.kind === 'prose') continue
-    if (!(b.id in prev) || prev[b.id] !== next[b.id]) {
-      return { mode: 'fallback', ops: [], next: next }
-    }
-  }
-  for (var pid in prev) {
-    if (sigKind(prev[pid]) !== 'prose' && !(pid in next)) {
-      return { mode: 'fallback', ops: [], next: next }
-    }
-  }
-
-  // Structured blocks are stable → emit granular PROSE create/update/delete.
+  // Creates + updates in document order. PROSE is observed here; STRUCTURED
+  // creates/changes emit NOTHING — they sync through their own channels
+  // (`sieve:block-update` for edits, `editor:insert-block` for creation). The
+  // observer tracks structured blocks only for the baseline + delete detection.
   var ops = []
   for (var k = 0; k < curr.length; k++) {
     var p = curr[k]
@@ -140,12 +117,14 @@ export function computeBlockSync(curr, prev) {
       ops.push(proseOp('update-block', p, k))
     }
   }
+  // Deletes are kind-agnostic: an id in prev that is gone → delete-block (Go's
+  // delete-block op drops a block of any kind by id).
   for (var id in prev) {
-    if (sigKind(prev[id]) === 'prose' && !(id in next)) {
+    if (!(id in next)) {
       ops.push({ type: 'delete-block', blockId: id })
     }
   }
-  return { mode: 'ops', ops: ops, next: next }
+  return { ops: ops, next: next }
 }
 
 if (typeof window !== 'undefined') {

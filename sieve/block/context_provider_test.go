@@ -9,6 +9,8 @@ type mockContextProcessor struct {
 	buildFn   func(SieveBlock) string
 }
 
+func (m *mockContextProcessor) Kind() string { return m.FencedDeserializer.Kind }
+
 func (m *mockContextProcessor) BuildContext(block SieveBlock, doc DocView, seen map[string]bool) AIContext {
 	if m.buildFn != nil {
 		return AIContext{Content: m.buildFn(block)}
@@ -29,7 +31,7 @@ func (m *mockContextProcessor) OnChange(_ *SieveBlock)        {}
 func (m *mockContextProcessor) Mode() BlockMode               { return BlockModeBlock }
 
 func TestGetContextProviderFallsBackToProcessor(t *testing.T) {
-	RegisterProcessor("test-cp-kind", &mockContextProcessor{returnVal: "from-processor"})
+	RegisterProcessor(&mockContextProcessor{FencedDeserializer: FencedDeserializer{Kind: "test-cp-kind"}, returnVal: "from-processor"})
 	cp := GetContextProvider("test-cp-kind")
 	if cp == nil {
 		t.Fatal("expected ContextProvider, got nil")
@@ -41,7 +43,7 @@ func TestGetContextProviderFallsBackToProcessor(t *testing.T) {
 }
 
 func TestGetContextProviderUsesRegisteredOverride(t *testing.T) {
-	RegisterProcessor("test-override-kind", &mockContextProcessor{returnVal: "from-processor"})
+	RegisterProcessor(&mockContextProcessor{FencedDeserializer: FencedDeserializer{Kind: "test-override-kind"}, returnVal: "from-processor"})
 	RegisterContextProvider("test-override-kind", &mockContextProcessor{returnVal: "from-override"})
 	cp := GetContextProvider("test-override-kind")
 	if cp == nil {

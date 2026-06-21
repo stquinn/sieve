@@ -7,7 +7,7 @@ import (
 )
 
 func TestHandles_Bijection(t *testing.T) {
-	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(NewCodeBlockProcessor(block.BlockServices{}))
 	t.Cleanup(func() { block.UnregisterProcessor("code") })
 
 	md := "<!--s:pr-aaaa-->\nFirst paragraph.\n<!--/s:pr-aaaa-->\n\n" +

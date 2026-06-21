@@ -9,5 +9,5 @@ import (
 // prose terminal — the production baseline an editor/codec test starts from.
 func resetRegistry() {
 	block.ResetRegistry()
-	block.RegisterProcessor(block.KindProse, &processors.ProseProcessor{})
+	block.RegisterProcessor(&processors.ProseProcessor{})
 }

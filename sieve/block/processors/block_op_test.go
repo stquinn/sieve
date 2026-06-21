@@ -51,7 +51,7 @@ func TestBlockOp_DecodesWireEnvelope(t *testing.T) {
 // C.1 — ContentForSave serializes the authoritative Doc (blocks 1..N), not the
 // old InjectBlocks overlay. A change made only to Doc must surface on save.
 func TestShadowDocument_ContentForSave_SerializesDoc(t *testing.T) {
-	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(NewCodeBlockProcessor(block.BlockServices{}))
 	t.Cleanup(func() { block.UnregisterProcessor("code") })
 
 	md := "Hello.\n\n```code\nid: co-1\nsource: x = 1\n```"
@@ -224,7 +224,7 @@ func TestBlockDoc_ApplyOp_CreateIntoParentRejected(t *testing.T) {
 // ShadowDocument.ApplyOp must lock, apply, arm debounce, and leave the tree
 // consistent — same semantics as applyOpTo but through the live-doc entry point.
 func TestShadowDocument_ApplyOp_UpdatesTree(t *testing.T) {
-	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(NewCodeBlockProcessor(block.BlockServices{}))
 	t.Cleanup(func() { block.UnregisterProcessor("code") })
 
 	md := "Hello.\n\n```code\nid: co-1\nsource: x = 1\n```"

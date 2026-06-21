@@ -12,7 +12,7 @@ import (
 // and the change persists on flush.
 func TestEditorService_HandleBlockOp_UpdatesAndPersists(t *testing.T) {
 	resetRegistry()
-	block.RegisterProcessor("code", processors.NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
 
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
@@ -55,7 +55,7 @@ func TestEditorService_HandleBlockOp_NoShadowErrors(t *testing.T) {
 // preserved across the refactor.
 func TestApplyJobUpdate_NoShadow_WritesViaSpine(t *testing.T) {
 	resetRegistry()
-	block.RegisterProcessor("ai-block", &testRunJobProcessor{FencedDeserializer: block.FencedDeserializer{Kind: "ai-block"}})
+	block.RegisterProcessor(&testRunJobProcessor{FencedDeserializer: block.FencedDeserializer{Kind: "ai-block"}})
 
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)

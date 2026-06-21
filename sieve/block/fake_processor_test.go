@@ -13,6 +13,7 @@ func newFakeProc(kind string) *fakeProc {
 	return &fakeProc{FencedDeserializer: FencedDeserializer{Kind: kind}}
 }
 
+func (p fakeProc) Kind() string { return p.FencedDeserializer.Kind }
 func (fakeProc) InitAttrs(id string, o map[string]interface{}) map[string]interface{} {
 	if o == nil {
 		o = map[string]interface{}{}
@@ -20,11 +21,11 @@ func (fakeProc) InitAttrs(id string, o map[string]interface{}) map[string]interf
 	o["id"] = id
 	return o
 }
-func (fakeProc) IsBlock([]ContentEntry) bool                              { return false }
-func (fakeProc) Transform([]ContentEntry, string, string) map[string]any  { return nil }
-func (fakeProc) RunJob(JobContext) error                                  { return nil }
-func (fakeProc) JobLabel(*SieveBlock) string                              { return "" }
-func (fakeProc) OnChange(*SieveBlock)                                     {}
-func (fakeProc) Mode() BlockMode                                          { return BlockModeBlock }
+func (fakeProc) IsBlock([]ContentEntry) bool                                 { return false }
+func (fakeProc) Transform([]ContentEntry, string, string) map[string]any     { return nil }
+func (fakeProc) RunJob(JobContext) error                                     { return nil }
+func (fakeProc) JobLabel(*SieveBlock) string                                 { return "" }
+func (fakeProc) OnChange(*SieveBlock)                                        {}
+func (fakeProc) Mode() BlockMode                                             { return BlockModeBlock }
 func (fakeProc) BuildContext(SieveBlock, DocView, map[string]bool) AIContext { return AIContext{} }
-func (fakeProc) MarkdownRepresentation(SieveBlock) string                 { return "" }
+func (fakeProc) MarkdownRepresentation(SieveBlock) string                    { return "" }

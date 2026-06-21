@@ -53,7 +53,6 @@ describe('seedBaseline', () => {
     expect('pr-1' in base).toBe(true)
 
     const r = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'Hi!' }], base)
-    expect(r.mode).toBe('ops')
     expect(r.ops).toEqual([{ type: 'update-block', blockId: 'pr-1', kind: 'prose', content: 'Hi!' }])
   })
 
@@ -75,18 +74,17 @@ describe('seedBaseline', () => {
 //         properties map — the block model is properties-native, no fence text).
 //   prev: { [id]: sig } change-signatures from the last sync, or null on the
 //         first call (baseline only — never emits ops).
-// Returns { mode, ops, next } where mode is 'ops' (granular block-ops) or
-// 'fallback' (defensive: a block has no id, so it can't be addressed).
-//   create: id in curr not in prev → create-block {blockId, kind, …, index}
-//   delete: id in prev not in curr → delete-block {blockId}
-//   update: changed sig            → update-block {blockId, kind, …}
-//   order-only (same ids+sigs)     → no ops (drag-reorder keeps its move path)
+// Returns { ops, next } — always granular block-ops, NO fallback.
+//   prose create: id in curr not in prev → create-block {blockId, kind, …, index}
+//   prose update: changed sig            → update-block {blockId, kind, …}
+//   delete (any kind): id in prev gone   → delete-block {blockId}
+//   structured create/change             → no op (synced via its own channels)
+//   order-only (same ids+sigs)           → no ops (drag-reorder keeps its move path)
 
 describe('computeBlockSync', () => {
   it('first call (no prev) just establishes the baseline — no ops', () => {
     const curr = [{ id: 'pr-1', kind: 'prose', content: 'Hello' }]
     const r = computeBlockSync(curr, null)
-    expect(r.mode).toBe('ops')
     expect(r.ops).toEqual([])
     expect(r.next).toHaveProperty('pr-1')
   })
@@ -94,7 +92,6 @@ describe('computeBlockSync', () => {
   it('emits update-block {content} for a changed prose block', () => {
     const base = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'Hello' }], null)
     const r = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'Hello there' }], base.next)
-    expect(r.mode).toBe('ops')
     expect(r.ops).toEqual([
       { type: 'update-block', blockId: 'pr-1', kind: 'prose', content: 'Hello there' },
     ])
@@ -109,35 +106,44 @@ describe('computeBlockSync', () => {
       { id: 'pr-1', kind: 'prose', content: 'A2' },
       { id: 'co-1', kind: 'code', content: '```code\nid: co-1\nsource: a\n```' },
     ], prev)
-    expect(r.mode).toBe('ops')
     expect(r.ops).toEqual([
       { type: 'update-block', blockId: 'pr-1', kind: 'prose', content: 'A2' },
     ])
   })
 
-  it('falls back when a structured block changes (structured sync not granular yet)', () => {
+  it('emits NOTHING when a structured block changes (its edits sync via sieve:block-update)', () => {
     const prev = computeBlockSync(
-      [{ id: 'co-1', kind: 'code', content: '```code\nid: co-1\nsource: a\n```' }], null,
+      [{ id: 'co-1', kind: 'code', content: '{"id":"co-1","source":"a"}' }], null,
     ).next
     const r = computeBlockSync(
-      [{ id: 'co-1', kind: 'code', content: '```code\nid: co-1\nsource: b\n```' }], prev,
+      [{ id: 'co-1', kind: 'code', content: '{"id":"co-1","source":"b"}' }], prev,
     )
-    expect(r.mode).toBe('fallback')
+    expect(r.ops).toEqual([])
   })
 
-  it('falls back when a structured block is created or deleted', () => {
+  it('emits NOTHING when a structured block is created (Go created it via editor:insert-block)', () => {
     const prev = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'A' }], null).next
     const added = computeBlockSync([
       { id: 'pr-1', kind: 'prose', content: 'A' },
-      { id: 'co-1', kind: 'code', content: '```code\nid: co-1\n```' },
+      { id: 'co-1', kind: 'code', content: '{"id":"co-1"}' },
     ], prev)
-    expect(added.mode).toBe('fallback')
+    expect(added.ops).toEqual([])
+    // ...but it IS baselined, so a later delete is detected.
+    expect(added.next).toHaveProperty('co-1')
+  })
+
+  it('emits delete-block when a structured block is removed', () => {
+    const prev = computeBlockSync([
+      { id: 'pr-1', kind: 'prose', content: 'A' },
+      { id: 'co-1', kind: 'code', content: '{"id":"co-1"}' },
+    ], null).next
+    const r = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'A' }], prev)
+    expect(r.ops).toEqual([{ type: 'delete-block', blockId: 'co-1' }])
   })
 
   it('emits nothing when nothing changed', () => {
     const prev = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'Hello' }], null).next
     const r = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'Hello' }], prev)
-    expect(r.mode).toBe('ops')
     expect(r.ops).toEqual([])
   })
 
@@ -147,7 +153,6 @@ describe('computeBlockSync', () => {
       { id: 'pr-1', kind: 'prose', content: 'A' },
       { id: 'pr-2', kind: 'prose', content: 'B' },
     ], prev)
-    expect(r.mode).toBe('ops')
     expect(r.ops).toEqual([
       { type: 'create-block', blockId: 'pr-2', kind: 'prose', content: 'B', index: 1 },
     ])
@@ -159,7 +164,6 @@ describe('computeBlockSync', () => {
       { id: 'pr-2', kind: 'prose', content: 'B' },
     ], null).next
     const r = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'A' }], prev)
-    expect(r.mode).toBe('ops')
     expect(r.ops).toEqual([{ type: 'delete-block', blockId: 'pr-2' }])
   })
 
@@ -172,7 +176,6 @@ describe('computeBlockSync', () => {
       { id: 'pr-2', kind: 'prose', content: 'B' },
       { id: 'pr-1', kind: 'prose', content: 'A' },
     ], prev)
-    expect(r.mode).toBe('ops')
     expect(r.ops).toEqual([])
   })
 
@@ -183,7 +186,6 @@ describe('computeBlockSync', () => {
     const r = computeBlockSync(
       [{ id: 'pr-1', kind: 'prose', content: 'A', aliases: ['pr-0'] }], prev,
     )
-    expect(r.mode).toBe('ops')
     expect(r.ops).toEqual([
       { type: 'update-block', blockId: 'pr-1', kind: 'prose', content: 'A', aliases: ['pr-0'] },
     ])
@@ -215,7 +217,6 @@ describe('computeBlockSync', () => {
       { id: 'pr-1', kind: 'prose', content: 'A2' },
       { id: '', kind: 'prose', content: 'new' }, // minting fills this id next sync
     ], prev)
-    expect(r.mode).toBe('ops')
     expect(r.ops).toEqual([
       { type: 'update-block', blockId: 'pr-1', kind: 'prose', content: 'A2' },
     ])
@@ -230,26 +231,23 @@ describe('computeBlockSync', () => {
       { id: 'pr-1', kind: 'prose', content: 'A' },
       { id: 'pr-2', kind: 'prose', content: 'B' },
     ], prev)
-    expect(created.mode).toBe('ops')
     prev = created.next
     // update
     const updated = computeBlockSync([
       { id: 'pr-1', kind: 'prose', content: 'A!' },
       { id: 'pr-2', kind: 'prose', content: 'B' },
     ], prev)
-    expect(updated.mode).toBe('ops')
     prev = updated.next
     // delete
     const deleted = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'A!' }], prev)
-    expect(deleted.mode).toBe('ops')
   })
 
-  // The fallback survives ONLY for structured blocks, whose granular sync isn't
-  // wired yet. A structured block should always carry a backend-authoritative id,
-  // but if one ever arrives id-less it can't be addressed → defensive fallback.
-  it('still falls back for an id-less STRUCTURED block (defensive)', () => {
-    const r = computeBlockSync([{ id: '', kind: 'code', content: '```code\n```' }], {})
-    expect(r.mode).toBe('fallback')
+  // No fallback exists for any kind. An id-less structured block (it should always
+  // carry a backend id) is simply not addressable yet → skipped, emits nothing.
+  it('skips an id-less STRUCTURED block instead of falling back', () => {
+    const r = computeBlockSync([{ id: '', kind: 'code', content: '{}' }], {})
+    expect(r.ops).toEqual([])
+    expect(r.next).toEqual({})
   })
 
   it('emits one op per changed block, in document order', () => {

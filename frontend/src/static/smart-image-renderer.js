@@ -190,12 +190,18 @@ import { isJobStale } from './fenced-block-base.js'
       ]
     },
     resolveEntries: function(sourceNode, entries) {
-      if (!entries || entries.length === 0) return entries
-      var textContent = entries[0].content || ''
-      var mermaidMatch = /^```mermaid\n([\s\S]*?)```$/.exec(textContent.trim())
-      if (!mermaidMatch) return entries
-
-      var src = mermaidMatch[1].trim()
+      var src = ''
+      // Direct diagram block → render its real mermaid source.
+      if (sourceNode && sourceNode.attrs && sourceNode.attrs.kind === 'diagram') {
+        src = String(sourceNode.attrs.source || '').trim()
+      }
+      // Otherwise an embedded ```mermaid fence among the entries (e.g. from prose/code).
+      if (!src) {
+        for (var i = 0; i < (entries || []).length; i++) {
+          var m = /^```mermaid\n([\s\S]*?)```$/.exec(String((entries[i] && entries[i].content) || '').trim())
+          if (m) { src = m[1].trim(); break }
+        }
+      }
       if (!src || !window.TipTap.ensureMermaid) return entries
 
       return window.TipTap.ensureMermaid().then(function() {

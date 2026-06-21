@@ -13,7 +13,7 @@ import (
 
 func TestContentForSave_roundTripsWysiwyg(t *testing.T) {
 	resetRegistry()
-	block.RegisterProcessor("ai-block", NewAIBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(NewAIBlockProcessor(block.BlockServices{}))
 	t.Cleanup(resetRegistry)
 
 	md := "# Hello\n\n```ai-block\nid: ab-1234\nresponse: untouched\n```"

@@ -73,16 +73,16 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	s.Editor.SetServices(s.BlockServices())
 	s.Editor.SetJobs(s.Jobs) // re-set in handlers.go once the real JobTracker (with hub) exists
 	svc := s.BlockServices()
-	block.RegisterProcessor("diagram", processors.NewDiagramProcessor(svc))
-	block.RegisterProcessor("smart-image", processors.NewSmartImageProcessor(svc))
+	block.RegisterProcessor(processors.NewDiagramProcessor(svc))
+	block.RegisterProcessor(processors.NewSmartImageProcessor(svc))
 
-	block.RegisterProcessor("smart-link", processors.NewSmartLinkProcessor(svc))
-	block.RegisterProcessor("smart-card", processors.NewSmartCardProcessor(svc))
-	block.RegisterProcessor("web-clip", processors.NewWebClipBlockProcessor(svc))
-	block.RegisterProcessor("log", processors.NewLogProcessor(svc))
-	block.RegisterProcessor("code", processors.NewCodeBlockProcessor(svc))
+	block.RegisterProcessor(processors.NewSmartLinkProcessor(svc))
+	block.RegisterProcessor(processors.NewSmartCardProcessor(svc))
+	block.RegisterProcessor(processors.NewWebClipBlockProcessor(svc))
+	block.RegisterProcessor(processors.NewLogProcessor(svc))
+	block.RegisterProcessor(processors.NewCodeBlockProcessor(svc))
 
-	block.RegisterProcessor("ai-block", processors.NewAIBlockProcessor(svc))
+	block.RegisterProcessor(processors.NewAIBlockProcessor(svc))
 }
 
 func isUUID(s string) bool {

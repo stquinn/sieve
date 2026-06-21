@@ -130,8 +130,8 @@ func TestLogProcessor_IsBlock(t *testing.T) {
 		t.Errorf("Expected IsBlock to be true for '[ERROR]'")
 	}
 
-	// Test code block extraction
-	codeEntry := []block.ContentEntry{{MIMEType: "sieve/code", Content: "```\n2026-06-12T13:20:01.984+01:00 INFO\n```"}}
+	// Test code block extraction — sieve/<kind> entries carry attrs as a JSON map.
+	codeEntry := []block.ContentEntry{{MIMEType: "sieve/code", Content: `{"language":"","source":"2026-06-12T13:20:01.984+01:00 INFO"}`}}
 	if !proc.IsBlock(codeEntry) {
 		t.Errorf("Expected IsBlock to be true for code block with ISO date and INFO")
 	}

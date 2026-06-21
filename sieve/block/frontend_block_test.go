@@ -17,27 +17,20 @@ func TestBlockDocToFrontendBlocks_ProseAndStructured(t *testing.T) {
 		t.Fatalf("want 3 frontend blocks, got %d: %+v", len(fbs), fbs)
 	}
 
-	// Prose carries its body in Attrs["content"] + handle + aliases; no fence text.
+	// Prose carries its body in Attrs["content"] + handle + aliases.
 	if fbs[0].Kind != KindProse || fbs[0].ID != "pr-1" || fbs[0].Attrs["content"] != "Hello **world**." {
 		t.Fatalf("prose block 0: %+v", fbs[0])
 	}
 	if len(fbs[0].Aliases) != 1 || fbs[0].Aliases[0] != "pr-0" {
 		t.Fatalf("prose block 0 aliases: %+v", fbs[0].Aliases)
 	}
-	if fbs[0].SerialisedForm != "" {
-		t.Fatalf("prose block 0 should have no serialised form: %q", fbs[0].SerialisedForm)
-	}
 
-	// Structured carries the fence text in SerialisedForm; no content attr.
+	// Structured carries its props in Attrs — no markdown/fence on the wire.
 	if fbs[1].Kind != "code" || fbs[1].ID != "co-1" {
 		t.Fatalf("structured block 1: %+v", fbs[1])
 	}
-	if fbs[1].Attrs["content"] != nil {
-		t.Fatalf("structured block 1 should have no content attr: %v", fbs[1].Attrs["content"])
-	}
-	want := "```code\nid: co-1\nsource: x = 1\n```"
-	if fbs[1].SerialisedForm != want {
-		t.Fatalf("structured block 1 serialised form:\n got: %q\nwant: %q", fbs[1].SerialisedForm, want)
+	if fbs[1].Attrs["source"] != "x = 1" || fbs[1].Attrs["id"] != "co-1" {
+		t.Fatalf("structured block 1 must carry its props in attrs: %+v", fbs[1].Attrs)
 	}
 
 	// Handle-less prose still converts (positional id is empty for now).

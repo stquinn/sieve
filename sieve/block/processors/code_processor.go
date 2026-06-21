@@ -27,6 +27,8 @@ func NewCodeBlockProcessor(svc block.BlockServices) *CodeBlockProcessor {
 	return &CodeBlockProcessor{svc: svc, FencedDeserializer: block.FencedDeserializer{Kind: "code"}}
 }
 
+func (p *CodeBlockProcessor) Kind() string { return p.FencedDeserializer.Kind }
+
 func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
 		"id":                id,
@@ -64,35 +66,47 @@ func (p *CodeBlockProcessor) IsBlock(entries []block.ContentEntry) bool {
 			}
 			return true
 		}
-		if e.MIMEType == "sieve/diagram" && strings.TrimSpace(e.Content) != "" {
-			blk := block.ParseFirstBlock(e.Content)
-			if blk != nil && blk.Attrs["diagramType"] == "mermaid" && strings.TrimSpace(blk.Attrs["source"].(string)) != "" {
-				logger.Debug("MATCHED DIAGRAM BLOCK AS CODE")
-				return true
+		// A mermaid diagram's source is code — offer to extract it as a code block.
+		if kind, attrs, ok := e.SieveAttrs(); ok && kind == "diagram" {
+			//TODO: examine why we care if the type is mermaid - diagrams - have code... why do we care if mermaid
+			if dt, _ := attrs["diagramType"].(string); dt == "mermaid" {
+				if src, _ := attrs["source"].(string); strings.TrimSpace(src) != "" {
+					return true
+				}
 			}
+		}
+		if e.IsSieveType(p) {
+			return true
 		}
 		if _, ok := unfencedCodeContent(e); ok {
 			return true
 		}
+
 	}
 	return false
 }
 
 func (p *CodeBlockProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string) map[string]interface{} {
+	// A typed sieve/diagram view wins over the generic text heuristics below — a
+	// diagram's raw source could otherwise be claimed as plain code, losing its
+	// mermaid language. Scan for it across all entries first.
 	for _, e := range entries {
-		if e.MIMEType == "sieve/diagram" && strings.TrimSpace(e.Content) != "" {
-			blk := block.ParseFirstBlock(e.Content)
-			if blk != nil {
-				if blk.Attrs["diagramType"] == "mermaid" && strings.TrimSpace(blk.Attrs["source"].(string)) != "" {
-					logger.Debug("TRANSFORMING DIAGRAM BLOCK AS CODE")
+
+		if kind, attrs, ok := e.SieveAttrs(); ok && kind == "diagram" {
+			//TODO: examine why we care if the type is mermaid - diagrams - have code... why do we care if mermaid
+			if dt, _ := attrs["diagramType"].(string); dt == "mermaid" {
+				if src, _ := attrs["source"].(string); strings.TrimSpace(src) != "" {
 					return map[string]interface{}{
 						"language":        "mermaid",
-						"source":          strings.TrimSpace(blk.Attrs["source"].(string)),
+						"source":          strings.TrimSpace(src),
 						"detectionMethod": "Converted from diagram block",
 						"status":          block.BlockStatusComplete,
 					}
 				}
 			}
+		}
+		if e.IsSieveType(p) {
+			return e.AsAttrsForNewBlock(p)
 		}
 		m := codeFenceRe.FindStringSubmatch(e.Content)
 		if m != nil {
@@ -110,6 +124,7 @@ func (p *CodeBlockProcessor) Transform(entries []block.ContentEntry, uuid string
 			return map[string]interface{}{"source": src}
 		}
 	}
+
 	return nil
 }
 

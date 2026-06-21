@@ -114,8 +114,6 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 			h.handleDocUpdate(uuid, raw)
 		case "block-update":
 			h.handleBlockUpdate(uuid, raw, writeMsg)
-		case "create-block":
-			h.handleCreateBlock(uuid, raw, writeMsg)
 		case "flush":
 			h.handleFlush(writeMsg, uuid)
 		case "enter-markdown":
@@ -235,23 +233,6 @@ func (h *WsHandler) persistTabMode(uuid, mode string) {
 	_ = h.ServiceProvider.State.SaveSession(session)
 }
 
-// handleCreateBlock is the primary UI-triggered block creation path.
-// JS sends this when the user uses a keyboard shortcut, toolbar button, or command.
-func (h *WsHandler) handleCreateBlock(uuid string, raw []byte, writeMsg func(interface{})) {
-	var msg struct {
-		Kind  string                 `json:"kind"`
-		Attrs map[string]interface{} `json:"attrs"`
-	}
-	if err := json.Unmarshal(raw, &msg); err != nil || msg.Kind == "" {
-		return
-	}
-	_, _, err := h.ServiceProvider.Editor.CreateBlock(uuid, msg.Kind, msg.Attrs)
-	if err != nil {
-		logger.Warn("ws: create-block failed", "uuid", uuid, "kind", msg.Kind, "err", err)
-		return
-	}
-}
-
 func (h *WsHandler) handleRetryBlockJob(uuid string, raw []byte, writeMsg func(interface{})) {
 	var msg struct {
 		ID string `json:"id"`
@@ -274,32 +255,31 @@ func (h *WsHandler) handleRetryBlockJob(uuid string, raw []byte, writeMsg func(i
 }
 
 // OnBlockCreated implements sieve.BlockLifecycleListener.
-func (h *WsHandler) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, serialisedForm string) {
+func (h *WsHandler) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string) {
 	h.channelsMu.RLock()
 	writeMsg, ok := h.channels[uuid]
 	h.channelsMu.RUnlock()
 	if ok {
 		writeMsg(map[string]interface{}{
-			"type":           "insert-block",
-			"kind":           kind,
-			"id":             blockID,
-			"attrs":          attrs,
-			"serialisedForm": serialisedForm,
+			"type":     "insert-block",
+			"kind":     kind,
+			"id":       blockID,
+			"attrs":    attrs,
+			"markdown": markdown, // markdown-mode buffer only; WYSIWYG renders from attrs
 		})
 	}
 }
 
 // OnBlockUpdated implements sieve.BlockLifecycleListener.
-func (h *WsHandler) OnBlockUpdated(uuid, blockID string, attrs map[string]interface{}, serialisedForm string) {
+func (h *WsHandler) OnBlockUpdated(uuid, blockID string, attrs map[string]interface{}) {
 	h.channelsMu.RLock()
 	writeMsg, ok := h.channels[uuid]
 	h.channelsMu.RUnlock()
 	if ok {
 		writeMsg(map[string]interface{}{
-			"type":           "block-attrs-updated",
-			"id":             blockID,
-			"attrs":          attrs,
-			"serialisedForm": serialisedForm,
+			"type":  "block-attrs-updated",
+			"id":    blockID,
+			"attrs": attrs,
 		})
 	}
 }
@@ -334,13 +314,15 @@ func (h *WsHandler) handleExtract(uuid string, raw []byte, writeMsg func(interfa
 		BlockID    string               `json:"blockId"`
 		TargetKind string               `json:"targetKind"`
 		Entries    []block.ContentEntry `json:"entries"`
+		Index      int                  `json:"index"`
 	}
+	p.Index = -1 // default: append when the frontend doesn't specify a position
 	if err := json.Unmarshal(raw, &p); err != nil {
 		logger.Warn("ws: bad extract payload", "err", err)
 		return
 	}
 
-	newID, rawYaml, err := h.ServiceProvider.Editor.CreateBlockFromEntries(uuid, p.TargetKind, p.Entries)
+	newID, rawYaml, err := h.ServiceProvider.Editor.CreateBlockFromEntries(uuid, p.TargetKind, p.Entries, p.Index)
 	if err != nil {
 		logger.Warn("ws: extract block failed", "err", err)
 		writeMsg(map[string]interface{}{

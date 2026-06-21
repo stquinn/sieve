@@ -18,6 +18,8 @@ func NewSmartLinkProcessor(svc block.BlockServices) *SmartLinkProcessor {
 	return &SmartLinkProcessor{svc: svc}
 }
 
+func (p *SmartLinkProcessor) Kind() string { return "smart-link" }
+
 func (p *SmartLinkProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
 		"id":          id,

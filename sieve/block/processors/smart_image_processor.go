@@ -32,6 +32,8 @@ func NewSmartImageProcessor(svc block.BlockServices) *SmartImageProcessor {
 	return &SmartImageProcessor{svc: svc, FencedDeserializer: block.FencedDeserializer{Kind: "smart-image"}}
 }
 
+func (p *SmartImageProcessor) Kind() string { return p.FencedDeserializer.Kind }
+
 func (p *SmartImageProcessor) Mode() block.BlockMode { return block.BlockModeBlock }
 func (p *SmartImageProcessor) IDPrefix() string      { return "img" }
 
@@ -79,6 +81,15 @@ func (p *SmartImageProcessor) IsBlock(entries []block.ContentEntry) bool {
 		// Mermaid source — JS resolveEntries will render it to SVG before Transform is called
 		if block.MermaidFenceRe.MatchString(e.Content) {
 			return true
+		}
+		// A diagram block extracts to an image: the JS resolveEntries renders its
+		// mermaid source to SVG locally before Transform runs.
+		if kind, attrs, ok := e.SieveAttrs(); ok && kind == "diagram" {
+			if dt, _ := attrs["diagramType"].(string); dt == "mermaid" {
+				if src, _ := attrs["source"].(string); strings.TrimSpace(src) != "" {
+					return true
+				}
+			}
 		}
 		if e.MIMEType == "text/html" {
 			if src := extractHTMLImageSrc(e.Content); src != "" && isImageURL(src) {

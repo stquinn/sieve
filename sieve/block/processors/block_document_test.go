@@ -37,7 +37,7 @@ func TestSerialize_RefusesIdlessProse(t *testing.T) {
 }
 
 func TestParseBlockDoc_ProseAndFence(t *testing.T) {
-	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(NewCodeBlockProcessor(block.BlockServices{}))
 	t.Cleanup(func() { block.UnregisterProcessor("code") })
 
 	md := "Hello.\n\n```code\nid: co-1\nsource: x = 1\n```\n\nWorld."
@@ -63,7 +63,7 @@ func TestParseBlockDoc_ProseAndFence(t *testing.T) {
 // run never split it: each maximal run between fences is one prose block (D.4 —
 // whitespace is parse-meaningless). Multi-paragraph content stays verbatim.
 func TestParseBlockDoc_UndelimitedRunsBetweenFences(t *testing.T) {
-	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(NewCodeBlockProcessor(block.BlockServices{}))
 	t.Cleanup(func() { block.UnregisterProcessor("code") })
 
 	md := "# Title\n\nIntro prose.\n\n```code\nid: co-1\nsource: x = 1\n```\n\nFirst tail.\n\nSecond tail."
@@ -93,7 +93,7 @@ func TestParseBlockDoc_UndelimitedRunsBetweenFences(t *testing.T) {
 }
 
 func TestBlockDoc_RoundTripStable(t *testing.T) {
-	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(NewCodeBlockProcessor(block.BlockServices{}))
 	t.Cleanup(func() { block.UnregisterProcessor("code") })
 
 	// Each prose block is a single paragraph so per-paragraph segmentation

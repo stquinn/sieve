@@ -22,6 +22,8 @@ func NewDiagramProcessor(svc block.BlockServices) *DiagramProcessor {
 	return &DiagramProcessor{svc: svc, FencedDeserializer: block.FencedDeserializer{Kind: "diagram"}}
 }
 
+func (p *DiagramProcessor) Kind() string { return p.FencedDeserializer.Kind }
+
 func (p *DiagramProcessor) IDPrefix() string { return "dia" }
 
 func (p *DiagramProcessor) Mode() block.BlockMode { return block.BlockModeBlock }
@@ -56,14 +58,15 @@ func (p *DiagramProcessor) IsBlock(entries []block.ContentEntry) bool {
 		if mermaidFenceRe.MatchString(e.Content) {
 			return true
 		}
-		if e.MIMEType == "sieve/code" && strings.TrimSpace(e.Content) != "" {
-			blk := block.ParseFirstBlock(e.Content)
-
-			if blk == nil {
-				continue
-			}
-			if blk.Attrs["language"] == "mermaid" && strings.TrimSpace(blk.Attrs["source"].(string)) != "" {
-				return true
+		if e.IsSieveType(p) {
+			return true
+		}
+		// A code block whose language is mermaid is really a diagram.
+		if kind, attrs, ok := e.SieveAttrs(); ok && kind == "code" {
+			if lang, _ := attrs["language"].(string); lang == "mermaid" {
+				if src, _ := attrs["source"].(string); strings.TrimSpace(src) != "" {
+					return true
+				}
 			}
 		}
 	}
@@ -73,17 +76,16 @@ func (p *DiagramProcessor) IsBlock(entries []block.ContentEntry) bool {
 func (p *DiagramProcessor) Transform(entries []block.ContentEntry, _ string, _ string) map[string]interface{} {
 	for _, e := range entries {
 		m := mermaidFenceRe.FindStringSubmatch(e.Content)
+		if e.IsSieveType(p) {
+			return e.AsAttrsForNewBlock(p)
+		}
 		if m != nil {
 			return map[string]interface{}{"source": strings.TrimSpace(m[1])}
 		}
-		if e.MIMEType == "sieve/code" && strings.TrimSpace(e.Content) != "" {
-			blk := block.ParseFirstBlock(e.Content)
-			if blk == nil {
-				continue
-			}
-			if source, ok := blk.Attrs["source"]; ok {
-				if language, ok := blk.Attrs["language"]; ok && language == "mermaid" && strings.TrimSpace(source.(string)) != "" {
-					return map[string]interface{}{"source": source.(string)}
+		if kind, attrs, ok := e.SieveAttrs(); ok && kind == "code" {
+			if lang, _ := attrs["language"].(string); lang == "mermaid" {
+				if src, _ := attrs["source"].(string); strings.TrimSpace(src) != "" {
+					return map[string]interface{}{"source": src}
 				}
 			}
 		}

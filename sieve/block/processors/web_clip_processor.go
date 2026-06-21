@@ -19,6 +19,8 @@ func NewWebClipBlockProcessor(svc block.BlockServices) *WebClipBlockProcessor {
 	return &WebClipBlockProcessor{svc: svc, FencedDeserializer: block.FencedDeserializer{Kind: "web-clip"}}
 }
 
+func (p *WebClipBlockProcessor) Kind() string { return p.FencedDeserializer.Kind }
+
 func (p *WebClipBlockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
 		"id":                id,

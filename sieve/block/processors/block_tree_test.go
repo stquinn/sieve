@@ -126,7 +126,7 @@ func TestUnbalancedOpen_IsLiteralText(t *testing.T) {
 // Leaf opacity: a literal `<!--s:…-->`/`<!--/s:…-->` inside a structured fence
 // is fence content, never re-scanned as a prose-block boundary.
 func TestOpacity_MarkerInsideCodeFenceNotParsed(t *testing.T) {
-	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(NewCodeBlockProcessor(block.BlockServices{}))
 	t.Cleanup(func() { block.UnregisterProcessor("code") })
 
 	md := "<!--s:pr-1-->\nIntro.\n<!--/s:pr-1-->\n\n" +
@@ -146,7 +146,7 @@ func TestOpacity_MarkerInsideCodeFenceNotParsed(t *testing.T) {
 
 // Full bijection: prose + structured fence + prose round-trips byte-stable.
 func TestPairedDelimiter_BijectionWithFence(t *testing.T) {
-	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(NewCodeBlockProcessor(block.BlockServices{}))
 	t.Cleanup(func() { block.UnregisterProcessor("code") })
 
 	md := "<!--s:pr-a-->\nFirst.\n<!--/s:pr-a-->\n\n" +

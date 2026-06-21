@@ -6,7 +6,7 @@ import (
 )
 
 func TestFindBlockByIDSieveBlock(t *testing.T) {
-	RegisterProcessor("code", &mockContextProcessor{FencedDeserializer: FencedDeserializer{Kind: "code"}})
+	RegisterProcessor(&mockContextProcessor{FencedDeserializer: FencedDeserializer{Kind: "code"}})
 	defer UnregisterProcessor("code")
 	md := "```code\nid: co-abcd\nstatus: COMPLETE\nsource: fmt.Println()\n```\n"
 	block, found := FindBlockByID(md, "co-abcd")
@@ -26,7 +26,7 @@ func TestFindBlockByIDNotFound(t *testing.T) {
 }
 
 func TestBuildContextForIDDispatchesByKind(t *testing.T) {
-	RegisterProcessor("code", &mockContextProcessor{FencedDeserializer: FencedDeserializer{Kind: "code"}, returnVal: "CODE CONTEXT"})
+	RegisterProcessor(&mockContextProcessor{FencedDeserializer: FencedDeserializer{Kind: "code"}, returnVal: "CODE CONTEXT"})
 	defer UnregisterProcessor("code")
 	md := "```code\nid: co-abc\nsource: x\n```\n"
 	result := BuildContextForID("co-abc", DocView{Mode: "markdown", mdModeBuffer: md}, map[string]bool{})
@@ -36,7 +36,7 @@ func TestBuildContextForIDDispatchesByKind(t *testing.T) {
 }
 
 func TestBuildContextForIDPreventsCycles(t *testing.T) {
-	RegisterProcessor("code", &mockContextProcessor{FencedDeserializer: FencedDeserializer{Kind: "code"}, returnVal: "CODE CONTEXT"})
+	RegisterProcessor(&mockContextProcessor{FencedDeserializer: FencedDeserializer{Kind: "code"}, returnVal: "CODE CONTEXT"})
 	defer UnregisterProcessor("code")
 	// seen map already contains the ID — must return "" without recursing.
 	md := "```code\nid: co-abc\nsource: x\n```\n"

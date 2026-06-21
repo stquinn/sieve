@@ -13,7 +13,7 @@ import (
 // segmentation work and must hold across the dispatch rewrite.
 func TestCodec_proseBlockContainingFence_roundTripsAsOneBlock(t *testing.T) {
 	resetRegistry()
-	block.RegisterProcessor("ai-block", NewAIBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(NewAIBlockProcessor(block.BlockServices{}))
 	t.Cleanup(resetRegistry)
 
 	codec := block.NewDocumentCodec(block.GlobalRegistry())
@@ -38,7 +38,7 @@ func TestCodec_proseBlockContainingFence_roundTripsAsOneBlock(t *testing.T) {
 // shadowing a structured recogniser.
 func TestCodec_structuredBlockBetweenProse_dispatchesByKind(t *testing.T) {
 	resetRegistry()
-	block.RegisterProcessor("ai-block", NewAIBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(NewAIBlockProcessor(block.BlockServices{}))
 	t.Cleanup(resetRegistry)
 
 	codec := block.NewDocumentCodec(block.GlobalRegistry())

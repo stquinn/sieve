@@ -88,17 +88,12 @@ func (p *LogProcessor) IsBlock(entries []block.ContentEntry) bool {
 			return true
 		}
 		// Code block with language "log" or matching heuristics
-		if e.MIMEType == "sieve/code" && strings.TrimSpace(e.Content) != "" {
-			blk := block.ParseFirstBlock(e.Content)
-			if blk != nil {
-				source, _ := blk.Attrs["source"].(string)
-				if blk.Attrs["language"] == "log" && strings.TrimSpace(source) != "" {
-					return true
-				}
-				if looksLikeLog(source, custom) {
-					return true
-				}
-			} else if looksLikeLog(e.Content, custom) {
+		if kind, attrs, ok := e.SieveAttrs(); ok && kind == "code" {
+			source, _ := attrs["source"].(string)
+			if lang, _ := attrs["language"].(string); lang == "log" && strings.TrimSpace(source) != "" {
+				return true
+			}
+			if looksLikeLog(source, custom) {
 				return true
 			}
 		}
@@ -123,24 +118,18 @@ func (p *LogProcessor) customParsers() []domain.CustomLogParser {
 func (p *LogProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string) map[string]interface{} {
 	custom := p.customParsers()
 	for _, e := range entries {
-		if e.MIMEType == "sieve/log" {
-			blk := block.ParseFirstBlock(e.Content)
-			if blk != nil {
-				source, _ := blk.Attrs["source"].(string)
-				return map[string]interface{}{"source": strings.TrimSpace(source)}
-			}
+		if kind, attrs, ok := e.SieveAttrs(); ok && kind == "log" {
+			source, _ := attrs["source"].(string)
+			return map[string]interface{}{"source": strings.TrimSpace(source)}
 		}
-		if e.MIMEType == "sieve/code" && strings.TrimSpace(e.Content) != "" {
-			blk := block.ParseFirstBlock(e.Content)
-			if blk != nil {
-				source, _ := blk.Attrs["source"].(string)
-				trimmed := strings.TrimSpace(source)
-				if blk.Attrs["language"] == "log" && trimmed != "" {
-					return map[string]interface{}{"source": trimmed}
-				}
-				if looksLikeLog(trimmed, custom) {
-					return map[string]interface{}{"source": trimmed}
-				}
+		if kind, attrs, ok := e.SieveAttrs(); ok && kind == "code" {
+			source, _ := attrs["source"].(string)
+			trimmed := strings.TrimSpace(source)
+			if lang, _ := attrs["language"].(string); lang == "log" && trimmed != "" {
+				return map[string]interface{}{"source": trimmed}
+			}
+			if looksLikeLog(trimmed, custom) {
+				return map[string]interface{}{"source": trimmed}
 			}
 		}
 		if e.MIMEType == "text/plain" {
@@ -166,6 +155,8 @@ func (p *LogProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, seen 
 func (p *LogProcessor) JobLabel(_ *block.SieveBlock) string { return "" }
 
 func (p *LogProcessor) IDPrefix() string { return "log" }
+
+func (p *LogProcessor) Kind() string { return p.FencedDeserializer.Kind }
 
 func (p *LogProcessor) Mode() block.BlockMode {
 	return block.BlockModeBlock

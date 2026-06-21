@@ -27,5 +27,5 @@ func newTestDocumentService(t *testing.T) (*services.DocumentService, *filestore
 // restore must too.)
 func resetRegistry() {
 	block.ResetRegistry()
-	block.RegisterProcessor(block.KindProse, &ProseProcessor{})
+	block.RegisterProcessor(&ProseProcessor{})
 }

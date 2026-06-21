@@ -54,7 +54,6 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from
   var BASE_ATTRS = {
     kind:             { default: '',        parseHTML: function (el) { return el.getAttribute('data-kind')        || '' } },
     id:               { default: '',        parseHTML: function (el) { return el.getAttribute('data-id')          || '' } },
-    serialisedForm:   { default: '',        parseHTML: function (el) { return el.getAttribute('data-serialised-form') || '' } },
     status:           { default: 'PENDING', parseHTML: function (el) { return el.getAttribute('data-status')      || 'PENDING' } },
     createdAt:        { default: null,      parseHTML: function (el) { return el.getAttribute('data-created-at')  || null } },
     supportsEmbedding: { default: false, parseHTML: function (el) { return el.getAttribute('data-supports-embedding') === 'true' } },
@@ -108,7 +107,18 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from
       },
 
       renderText({ node }) {
-        return node.attrs.serialisedForm || ''
+        // Plain-text view of the block for native copy / textBetween: the renderer's
+        // own text/plain view (code → source, diagram → mermaid) if it tailors one,
+        // else the node's text. Not markdown — Go owns that.
+        if (renderer && typeof renderer.asContentEntry === 'function') {
+          var ents = renderer.asContentEntry(node)
+          if (ents) {
+            for (var i = 0; i < ents.length; i++) {
+              if (ents[i].mimeType === 'text/plain' && ents[i].content) return ents[i].content
+            }
+          }
+        }
+        return node.textContent || ''
       },
 
       addNodeView() {
@@ -223,15 +233,18 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from
                 //nothign more intersting than the sieve block itself was clicked on,
                 // but if the renderer supports it, we can extract a content entry from
                 extractSourceLabel = renderer.getFriendlyName ? renderer.getFriendlyName(n) : n.attrs.kind || 'block';
-                entries = renderer.asContentEntry ? renderer.asContentEntry(n) : null;
+                // The block's own views (asContentEntry) PLUS the framework's
+                // universal sieve/<kind> JSON view — the same array the clipboard emits.
+                entries = sieveBlockEntries(n, renderer);
+              } else {
+                // Specific sub-content was clicked → lead with it, then still hand the
+                // backend the framework view so it can key off the source kind/attrs.
+                entries.push(sieveFrameworkEntry(n));
               }
               // A renderer may have no content entry (e.g. a prose block) → ensure
-              // an array before the framework push so we never crash on null.
+              // an array so we never crash on null.
               if (!entries) entries = [];
 
-              //framework-level auto extraction for any sieve block, if the renderer supports it.
-              entries.push({ mimeType: 'sieve/' + node.attrs.kind, content: node.attrs.serialisedForm })
-              
 
               if (entries) {
                 detectAndAppendExtractions({
@@ -330,20 +343,16 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from
       addStorage() {
         return {
           markdown: {
-            // Serialise: replay serialisedForm verbatim.
-            // Go owns all Markdown generation; JS never reconstructs fences or inline blocks manually.
+            // Go owns ALL markdown generation (disk + markdown mode, derived from
+            // the authoritative tree). The frontend never serialises a structured
+            // block to markdown, so this default is a no-op — it is reached only by
+            // serializeNode for a structured node (e.g. clipboard text/plain), whose
+            // real payload is the sieve/<kind> + custom views, not markdown.
             //
-            // markdownSerialize override: a TRANSPARENT node (e.g. sieve-prose) is
-            // not a fence — it owns real prose children and must serialise them, not
-            // a serialisedForm. Renderers that declare it take full control here.
+            // markdownSerialize override: a TRANSPARENT node (e.g. sieve-prose) owns
+            // real prose children and must serialise them; it takes full control here.
             serialize: renderer.markdownSerialize ? renderer.markdownSerialize : function (state, node) {
-              if (cfg.inline) {
-                state.write(node.attrs.serialisedForm || '')
-              } else {
-                state.ensureNewLine()
-                state.write(node.attrs.serialisedForm || '```' + kind + '\n\n```')
-                state.closeBlock(node)
-              }
+              if (!cfg.inline) state.closeBlock(node)
             },
 
             parse: {
@@ -372,7 +381,6 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from
                         ['data-type', dataType],
                         ['data-kind', kind],
                         ['data-id', data.id],
-                        ['data-serialised-form', match[0]],
                         ['data-status', data.status || 'PENDING']
                       ]
                       if (renderer.parseAttrs) {
@@ -428,9 +436,7 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from
                   // its YAML; build the data-* div from it via the SAME helper
                   // block-render.js uses with Go-sent attrs — one builder, exact
                   // parity across the load-from-markdown and load-from-attrs paths.
-                  var markup = token.markup || '```'
-                  var serialisedForm = markup + token.info + '\n' + token.content + markup
-                  return buildSieveBlockHTML(kind, data, serialisedForm)
+                  return buildSieveBlockHTML(kind, data)
                 }
               },
             },
@@ -462,10 +468,8 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from
   // PROPERTIES map (data) — the single builder shared by the markdownit fence
   // rule (load-from-markdown) and block-render.js (load-from-attrs), so both emit
   // byte-identical HTML that each renderer's parseHTML consumes. The block model
-  // is properties-in: block-render passes Go-sent attrs straight in, no fence
-  // parse. serialisedForm is the TRANSITIONAL data-serialised-form payload (paste
-  // / markdown-serialize) and may be '' once those paths migrate off it.
-  function buildSieveBlockHTML(kind, data, serialisedForm) {
+  // is properties-in: block-render passes Go-sent attrs straight in, no fence parse.
+  function buildSieveBlockHTML(kind, data) {
     var renderer = renderers[kind]
     if (!renderer || !data || !data.id) return ''
     var cfg = Object.assign({}, DEFAULT_NODE_CONFIG, renderer.nodeConfig || {})
@@ -476,7 +480,6 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from
       'data-type="'     + dataType + '"',
       'data-kind="'     + esc(kind) + '"',
       'data-id="'       + esc(data.id) + '"',
-      'data-serialised-form="' + esc(serialisedForm || '') + '"',
       'data-status="'   + esc(data.status || 'PENDING') + '"',
     ]
     if (renderer.parseAttrs) {
@@ -681,9 +684,46 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from
     }
   }
 
+  // sieveBlockAttrs returns a plain own-property copy of a sieve node's attrs — the
+  // canonical serialisable representation of a block. Single source of truth so every
+  // wire path (extraction entries, single-block clipboard, sieve/slice) serialises a
+  // block identically, and none reaches for the retired serialisedForm.
+  function sieveBlockAttrs(node) {
+    var attrs = {}
+    for (var k in node.attrs) {
+      if (Object.prototype.hasOwnProperty.call(node.attrs, k)) attrs[k] = node.attrs[k]
+    }
+    return attrs
+  }
+
+  // sieveFrameworkEntry is the universal "sieve/<kind>" view every block exposes:
+  // its attrs as a JSON map. The backend (block.SieveAttrs) keys off the kind and
+  // reads the attrs — rebuilding a block or reading fields, its choice.
+  function sieveFrameworkEntry(node) {
+    return { mimeType: 'sieve/' + node.attrs.kind, content: JSON.stringify(sieveBlockAttrs(node)) }
+  }
+
+  // sieveBlockEntries is the ContentEntry array describing a sieve block: the
+  // renderer's own custom views (asContentEntry, e.g. a diagram's raw source) PLUS
+  // the framework's sieve/<kind> view. Both the context-menu extraction push and the
+  // clipboard copy path use this, so the backend always receives the same two views.
+  function sieveBlockEntries(node, renderer) {
+    var entries = []
+    if (renderer && typeof renderer.asContentEntry === 'function') {
+      var custom = renderer.asContentEntry(node)
+      if (custom && custom.length) entries = entries.concat(custom)
+    }
+    entries.push(sieveFrameworkEntry(node))
+    return entries
+  }
+
   T.detectAndAppendExtractions = detectAndAppendExtractions
   T.extractContentEntryFromEditor = extractContentEntryFromEditor
   T.serializeNode = serializeNode
+  T.sieveBlockAttrs = sieveBlockAttrs
+  T.sieveFrameworkEntry = sieveFrameworkEntry
+  T.sieveBlockEntries = sieveBlockEntries
+  T.rendererFor = function (kind) { return renderers[kind] }
 
 })()
 // extractContentEntryFromEditor inspects whatever DOM element was clicked (event.target)

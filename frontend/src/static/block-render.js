@@ -46,17 +46,15 @@ function blockHTML(b, mdRender) {
   // Structured / container: build the node's data-* div straight from the block's
   // PROPERTIES (attrs), reusing the SAME parseAttrs/data-* builder the markdownit
   // fence rule uses (buildSieveBlockHTML) — no markdown round-trip, the block
-  // model is properties-in. serialisedForm is passed through transitionally for
-  // the data-serialised-form attr (paste/markdown-serialize) until those migrate.
+  // model is properties-in.
   const T = (typeof window !== 'undefined' && window.TipTap) || {}
   if (typeof T.buildSieveBlockHTML === 'function') {
-    const built = T.buildSieveBlockHTML(b.kind, b.attrs || {}, b.serialisedForm || '')
+    const built = T.buildSieveBlockHTML(b.kind, b.attrs || {})
     if (built) return built
   }
-  // Fallback: build from the serialised fence via markdownit (no attrs, an
-  // unregistered renderer, or a bare unit env). Never return empty — an empty
-  // structured block would parse to an invalid prose node.
-  return mdRender(b.serialisedForm || '')
+  // Defensive (builder unavailable, e.g. a bare unit env): a non-empty placeholder
+  // so the block never collapses into an invalid prose node.
+  return '<div data-type="sieve-block" data-kind="' + (b.kind || '') + '"></div>'
 }
 
 // buildBlocksHTML projects the block list into a single document-HTML string,

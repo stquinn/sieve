@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"strings"
 	"sync"
 
@@ -29,6 +30,48 @@ type ContentEntry struct {
 	MIMEType string                 `json:"mimeType"`
 	Content  string                 `json:"content"`
 	Context  map[string]interface{} `json:"context,omitempty"`
+}
+
+// SieveAttrs deserializes a framework "sieve/<kind>" view. Alongside a renderer's
+// own custom views, the frontend emits one such entry for every sieve block —
+// mimeType "sieve/<kind>", content = JSON.stringify(attrs) — so a matcher can key
+// off the kind and read the block's attrs directly (rebuild a block from them, or
+// just read fields). kind is the mime suffix; ok is false when the entry is not a
+// sieve view or its body is not a JSON object (e.g. the "sieve/slice" array).
+func (e ContentEntry) SieveAttrs() (kind string, attrs map[string]interface{}, ok bool) {
+	if !strings.HasPrefix(e.MIMEType, "sieve/") {
+		return "", nil, false
+	}
+	kind = strings.TrimPrefix(e.MIMEType, "sieve/")
+	if strings.TrimSpace(e.Content) == "" {
+		return kind, nil, false
+	}
+	if err := json.Unmarshal([]byte(e.Content), &attrs); err != nil {
+		return kind, nil, false
+	}
+	return kind, attrs, true
+}
+
+func (e ContentEntry) IsSieveType(p BlockProcessor) bool {
+	kind, _, ok := e.SieveAttrs()
+	return ok && kind == p.Kind()
+}
+
+func (e ContentEntry) AsAttrsForNewBlock(p BlockProcessor) map[string]interface{} {
+	if !e.IsSieveType(p) {
+		return nil
+	}
+	_, attrs, ok := e.SieveAttrs()
+	if !ok {
+		return nil
+	}
+	dst := make(map[string]interface{}, len(attrs))
+	for k, v := range attrs {
+		if k != "id" {
+			dst[k] = v
+		}
+	}
+	return dst
 }
 
 // Block status constants.
@@ -58,33 +101,99 @@ type JobContext struct {
 }
 
 // BlockLifecycleListener listens to block lifecycle events from the framework.
+// The WYSIWYG client renders structured blocks from attrs alone — no markdown is
+// used for rendering. markdown carries the block's backend-serialized fence, used
+// ONLY by the breakglass markdown-mode editor (a verbatim buffer that must hold a
+// parseable, id-preserving fence for a block inserted while in that mode).
 type BlockLifecycleListener interface {
-	OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, serialisedForm string)
-	OnBlockUpdated(uuid, blockID string, attrs map[string]interface{}, serialisedForm string)
+	OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string)
+	OnBlockUpdated(uuid, blockID string, attrs map[string]interface{})
 	OnBlockPromoted(uuid, blockID string, replacement string)
 }
 
-// BlockProcessor is implemented by every SieveBlock Kind.
+// BlockProcessor is the contract every SieveBlock Kind implements — the central
+// extension point of the block-document model. One processor owns everything about
+// its kind: how it is recognised from pasted/extracted content, how a new block is
+// seeded, what async work it runs, how it reacts to edits, how it feeds AI, and how
+// it persists to and parses back from disk. The framework never switches on kind;
+// it walks blocks and asks each processor.
 //
-// Services are injected at construction via NewXxxProcessor(svc BlockServices)
-// and available on every method as p.svc — no need to pass them call by call.
+// Construction & services: a processor is built once via NewXxxProcessor(svc
+// BlockServices); the injected services are held as p.svc and available on every
+// method, so service handles are never threaded through call signatures.
 //
-// PasteMatch receives uuid and blockID so processors that need to persist
-// assets synchronously during paste (e.g. smart-image) can do so with the
-// correct ID before CreateBlock is called.
+// The methods fall into lifecycle phases:
 //
-// RunJob receives a notify func so processors can push intermediate attr
-// updates to the client mid-job (e.g. push src immediately after save,
-// before the slower AI describe completes).
+//   - Recognition & creation (paste + extract): IsBlock, Transform, InitAttrs
+//   - Async work after creation:                RunJob, JobLabel
+//   - Reaction to user edits:                   OnChange
+//   - Identity:                                 Mode
+//   - AI context:                               BuildContext, MarkdownRepresentation
+//   - Persistence — serialize:                  Serialize
+//   - Persistence — deserialize:                Accepts, Deserialize, Shape
+//
+// Recognition & creation in detail. A "source" (clipboard paste or an explicit
+// Extract action) arrives as an ordered []ContentEntry — multiple *views* of the
+// same thing: a renderer's custom views (e.g. a diagram's raw source as text/plain)
+// plus the framework's universal "sieve/<kind>" view carrying the source block's
+// attrs as a JSON map (decode with ContentEntry.SieveAttrs). The flow is:
+//
+//  1. IsBlock(entries) — pure predicate: "can a block of MY kind be built from these
+//     views?" Used by FirstPasteMatch (paste) and DetectExtractions (the Extract
+//     menu). It must be side-effect free and order-independent (any matching entry
+//     wins). Typed "sieve/<kind>" views should be preferred over loose text so a
+//     diagram is not mistaken for plain code.
+//  2. Transform(entries, uuid, blockID) — runs ONLY on the chosen processor, on
+//     both the paste and extract paths. It distils the entries into the attr
+//     *overrides* that seed the new block, and performs any synchronous, id-keyed
+//     side effects. When a view spans more than one entry, prefer the typed
+//     "sieve/<kind>" view (it wins over generic text heuristics). Parameters:
+//     • entries — the same views handed to IsBlock.
+//     • uuid    — the document/tab this block is being created in (asset scope).
+//     • blockID — the *pre-allocated id of the new block*. It is minted by
+//     GenerateBlockIDFor(kind) BEFORE Transform precisely so Transform can key
+//     side effects to it — e.g. smart-image writes the SVG/asset file under this
+//     id, so the asset filename and the block share identity. The framework then
+//     creates the block with this exact id and these overrides.
+//     Return nil to decline (extract reports an error; paste falls through).
+//  3. InitAttrs(id, overrides) — builds the canonical attr map for a fresh block of
+//     this kind: sets defaults (status, createdAt, kind-specific fields), then layers
+//     the Transform overrides on top. id is never overridable via overrides.
+//
+// RunJob receives a notify func (on JobContext) so a processor can push intermediate
+// attr updates to the client mid-job — e.g. push src immediately after saving an
+// asset, before the slower AI describe completes. OnChange is the synchronous hook
+// after a user edit; setting status to PENDING schedules a follow-up RunJob.
 type BlockProcessor interface {
+	//return the KIND of Block this processor supports
+	Kind() string
+	// InitAttrs returns the full attr map for a new block of this kind: kind
+	// defaults plus the Transform overrides, with id pinned (not overridable).
 	InitAttrs(id string, overrides map[string]interface{}) map[string]interface{}
+	// IsBlock reports whether a block of this kind can be built from these content
+	// views. Side-effect free, order-independent; drives paste-match and the Extract
+	// menu. See the interface doc for the entry/views model.
 	IsBlock(entries []ContentEntry) bool
+	// Transform distils the matched entries into attr overrides for the new block,
+	// doing any synchronous id-keyed side effects. blockID is the pre-allocated id of
+	// the block being created (see the interface doc). Returns nil to decline.
 	Transform(entries []ContentEntry, uuid string, blockID string) map[string]interface{}
+	// RunJob performs this kind's async post-create work (AI describe, language
+	// refine, image localise). jctx carries an immutable doc snapshot and a notify
+	// func for mid-job attr pushes.
 	RunJob(jctx JobContext) error
+	// JobLabel is the human-readable label shown while RunJob is in flight ("" = no job).
 	JobLabel(block *SieveBlock) string
+	// OnChange reacts synchronously to a user edit of this block (e.g. re-run
+	// heuristics). Setting status to PENDING schedules a follow-up RunJob.
 	OnChange(block *SieveBlock)
+	// Mode reports how this kind renders and persists: block, inline, or prose.
 	Mode() BlockMode
+	// BuildContext produces this block's contribution to AI context. seen guards
+	// against ref cycles when a block pulls in others.
 	BuildContext(block SieveBlock, doc DocView, seen map[string]bool) AIContext
+	// MarkdownRepresentation renders the block as human/AI-facing markdown (e.g. a
+	// diagram → ```mermaid …```). Distinct from Serialize, which is the on-disk form.
 	MarkdownRepresentation(block SieveBlock) string
 	// Serialize renders the block to its on-disk form. THIS is the whole point of
 	// the block-document model: each flavour owns how its kind persists, and the
@@ -213,8 +322,9 @@ var (
 
 // RegisterProcessor registers kind → processor. Registration order sets
 // paste-match priority — more-specific kinds must be registered first.
-func RegisterProcessor(kind string, processor BlockProcessor) {
+func RegisterProcessor(processor BlockProcessor) {
 	registryMu.Lock()
+	kind := processor.Kind()
 	defer registryMu.Unlock()
 	processorRegistry[kind] = processor
 	for i, pm := range pasteMatchers {

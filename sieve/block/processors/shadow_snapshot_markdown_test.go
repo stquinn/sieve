@@ -14,7 +14,7 @@ import (
 // with the real ProseProcessor and uses only ShadowDocument's PUBLIC API.
 func TestSnapshotForJob_markdownModeDerivesBlocksFromBuffer(t *testing.T) {
 	resetRegistry()
-	block.RegisterProcessor("ai-block", NewAIBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(NewAIBlockProcessor(block.BlockServices{}))
 	t.Cleanup(resetRegistry)
 
 	codec := block.NewDocumentCodec(block.GlobalRegistry())

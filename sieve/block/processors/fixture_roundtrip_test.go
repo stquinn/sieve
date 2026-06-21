@@ -15,7 +15,7 @@ import (
 // preserved so AI chains resolve), and (c) be a serialization fixpoint.
 func TestRoundTrip_LegacyAnchorUpgrade_AiBlockFixture(t *testing.T) {
 	resetRegistry()
-	block.RegisterProcessor("ai-block", NewAIBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(NewAIBlockProcessor(block.BlockServices{}))
 
 	src, err := os.ReadFile("testdata/blockref_aiblock.md")
 	if err != nil {

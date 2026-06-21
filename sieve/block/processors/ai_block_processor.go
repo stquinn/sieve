@@ -19,6 +19,8 @@ func NewAIBlockProcessor(svc block.BlockServices) *AIBlockProcessor {
 
 func (p *AIBlockProcessor) IDPrefix() string { return "ai" }
 
+func (p *AIBlockProcessor) Kind() string { return p.FencedDeserializer.Kind }
+
 func (p *AIBlockProcessor) Mode() block.BlockMode { return block.BlockModeBlock }
 
 func (p *AIBlockProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {

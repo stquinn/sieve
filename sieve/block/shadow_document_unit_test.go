@@ -29,7 +29,7 @@ func TestContentForSave_markdownModeIsVerbatim(t *testing.T) {
 // not a prose test).
 func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
 	ResetRegistry()
-	RegisterProcessor("fk", newFakeProc("fk"))
+	RegisterProcessor(newFakeProc("fk"))
 	t.Cleanup(ResetRegistry)
 
 	shadow := &ShadowDocument{

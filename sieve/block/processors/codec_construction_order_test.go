@@ -17,7 +17,7 @@ func TestCodec_collectsShapesFromLiveRegistry_notConstructionTime(t *testing.T) 
 	// Build the codec FIRST — mirrors service_provider wiring order.
 	codec := block.NewDocumentCodec(block.GlobalRegistry())
 	// Register the fenced processor AFTER the codec exists.
-	block.RegisterProcessor("ai-block", NewAIBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(NewAIBlockProcessor(block.BlockServices{}))
 	t.Cleanup(resetRegistry)
 
 	src := "```ai-block\nid: ab-1\nresponse: hi\n```"

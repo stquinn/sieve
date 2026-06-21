@@ -212,7 +212,7 @@ func TestDocumentCodec_RoundTrip(t *testing.T) {
 	// Register the "code" processor in the global registry so GlobalRegistry()
 	// can accept code regions during Deserialize. ProseProcessor self-registers
 	// via init(), so KindProse is always present.
-	block.RegisterProcessor("code", NewCodeBlockProcessor(block.BlockServices{}))
+	block.RegisterProcessor(NewCodeBlockProcessor(block.BlockServices{}))
 	t.Cleanup(func() { block.UnregisterProcessor("code") })
 
 	c := block.NewDocumentCodec(block.GlobalRegistry()) // REAL registry — production path

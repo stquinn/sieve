@@ -14,6 +14,7 @@ type testMarkdownProcessor struct {
 	block.FencedDeserializer
 }
 
+func (p *testMarkdownProcessor) Kind() string { return p.FencedDeserializer.Kind }
 func (p *testMarkdownProcessor) InitAttrs(id string, _ map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{"id": id}
 }
@@ -35,7 +36,7 @@ func (p *testMarkdownProcessor) MarkdownRepresentation(_ block.SieveBlock) strin
 // <!--s:ID-->…<!--/s:ID--> prose markers). The id is a like-for-like replacement
 // for the retired [!block] anchor, so AI ref chains keep resolving — no anchor.
 func TestEditorService_PromoteBlock_transformsToProse(t *testing.T) {
-	block.RegisterProcessor("test-md", &testMarkdownProcessor{md: "promoted content", FencedDeserializer: block.FencedDeserializer{Kind: "test-md"}})
+	block.RegisterProcessor(&testMarkdownProcessor{md: "promoted content", FencedDeserializer: block.FencedDeserializer{Kind: "test-md"}})
 	t.Cleanup(func() { block.UnregisterProcessor("test-md") })
 
 	ds, _ := newTestDocumentService(t)

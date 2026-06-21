@@ -23,6 +23,7 @@ type SmartCardProcessor struct {
 func NewSmartCardProcessor(svc block.BlockServices) *SmartCardProcessor {
 	return &SmartCardProcessor{svc: svc, FencedDeserializer: block.FencedDeserializer{Kind: "smart-card"}}
 }
+func (p *SmartCardProcessor) Kind() string { return p.FencedDeserializer.Kind }
 
 func (p *SmartCardProcessor) IDPrefix() string { return "crd" }
 

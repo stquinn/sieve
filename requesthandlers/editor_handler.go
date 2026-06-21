@@ -151,13 +151,15 @@ func (h *EditorHandler) handleSmartPaste(w http.ResponseWriter, r *http.Request)
 	var req struct {
 		UUID    string               `json:"uuid"`
 		Entries []block.ContentEntry `json:"entries"`
+		Index   int                  `json:"index"`
 	}
+	req.Index = -1 // default: append when no position is supplied
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UUID == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
 
-	kind, id, rawYaml, matched := h.ServiceProvider.Editor.HandlePaste(req.UUID, req.Entries)
+	kind, id, rawYaml, matched := h.ServiceProvider.Editor.HandlePaste(req.UUID, req.Entries, req.Index)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(struct {

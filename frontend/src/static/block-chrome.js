@@ -78,10 +78,11 @@
   }
 
   // ── Is this a Sieve block node? ──────────────────────────────────────────────
-  // Sieve blocks carry serialisedForm in BASE_ATTRS. Prose nodes never do.
+  // Identity is the node TYPE: every structured Sieve block is a `sieve-*` node.
+  // Prose/native nodes (paragraph, heading, proseGroup, …) never carry that prefix.
 
   function isSieveNode(node) {
-    return node.attrs && node.attrs.serialisedForm !== undefined
+    return !!(node && node.type && node.type.name.indexOf('sieve-') === 0)
   }
 
   // ── Create chrome host DOM for a widget (Strategy A — prose nodes) ───────────

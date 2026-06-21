@@ -18,7 +18,7 @@ import (
 // serialization tests — the spine can ask any block, including prose, to serialize.
 type ProseProcessor struct{}
 
-func init() { block.RegisterProcessor(block.KindProse, &ProseProcessor{}) }
+func init() { block.RegisterProcessor(&ProseProcessor{}) }
 
 // IDPrefix mints "pr-…" handles for prose.
 func (p *ProseProcessor) IDPrefix() string { return "pr" }
@@ -232,6 +232,8 @@ func findLegacyClose(lines []string, start int) int {
 	}
 	return -1
 }
+
+func (p *ProseProcessor) Kind() string { return "prose" }
 
 // Shape: prose regions are delimited by paired <!--s:ID--> / <!--/s:ID--> markers.
 // Kind is "prose"; the markers are kind-blind so Head/Tail carry no id.
