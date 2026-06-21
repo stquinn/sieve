@@ -128,3 +128,21 @@ Remaining surface:
 **What:** `renderBlocksIntoEditor` early-returns when the backend block list is empty (`if (!nodes.length) return` — "keep existing content rather than blow away on a transient empty parse"). Since `softReloadContent` and `editor:restore` now render via this path, reloading a doc that has legitimately become **empty** leaves the prior (stale) content on screen instead of clearing it. 
 
 **Why deferred:** an edge case — the live reload triggers (AI resolve, embed promote, version restore) don't empty a document in practice, and the old `setContent("")` behavior wasn't a guaranteed clear either (it rendered one empty paragraph). **Retires when:** `renderBlocksIntoEditor` distinguishes "no blocks parsed (transient/error → keep)" from "the document is genuinely empty (→ clear to one empty paragraph)", e.g. the caller passes an explicit `allowEmpty`/clear intent for a known-good reload.
+
+## D-L: Data-loss root cause (empty-overwrite) — PARKED, guard makes it non-fatal
+
+**What:** A flush occasionally derived **empty** markdown for a **non-empty** document and wiped the file. `flushShadow` now refuses to overwrite a non-empty doc with empty content (commit `b7dd63e`, regression test reproduces the wipe), so it is **non-fatal** — but the ROOT CAUSE (why the derive went empty: a failed `codec.Serialize` → `deriveMarkdown` returns `""`, or a transient empty markdown-mode buffer) was never pinned.
+
+**Why parked (user decision 2026-06-20):** not reproducible on demand; the guard removed the danger. **Retires when:** it recurs and is captured — look for the log line `"serialize block doc failed"` (the failed derive) vs. the guard's `"editor: REFUSED empty overwrite of non-empty doc"`; the first one names the block/codec path that produced empty. Moved here from the (now-archived) block-document-model plan so it isn't lost.
+
+## P-D: Smart paste duplicates the source block id
+
+**What:** Pasting a copied Sieve block keeps the **source** block's id, so the document ends with two blocks sharing one id (observed in D-r.6 regression sweep: a `sieve-code` copy/paste produced `co-test` ×2). The duplicate lives in `handleSmartPaste` (frontend) and is independent of the block-model work (pre-existing).
+
+**Why deferred:** not a block-model regression; surfaced during verification. **Retires when:** the paste path mints a fresh id for the pasted block (clear the copied id so it routes through `create-block` / server mint, the same discipline `mintActions` uses for `splitBlock`). Moved here from the archived plan.
+
+## C-T: Stale test files pin retired designs
+
+**What:** Two vitest files assert behavior of designs that were since retired and should be deleted or rewritten to the current model: `frontend/test/render-exact-shadow.test.js` and `frontend/test/proseidentity-loop.test.js` (they pin pre-node-granular / pre-`proseGroup` expectations). They currently pass but encode obsolete intent.
+
+**Why deferred:** cosmetic/test-hygiene, not a product bug. **Retires when:** each is reviewed against the current block model and deleted (if its concern is now covered elsewhere) or rewritten. Moved here from the archived plan.
