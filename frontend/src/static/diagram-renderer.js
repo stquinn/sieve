@@ -134,9 +134,58 @@ import { esc, getLowlight, hastToHtml } from './fenced-block-base.js'
     highlightCode.className = 'hljs'
   }
 
+  // ── Header (toolbar) ──────────────────────────────────────────────────────────
+  // Declared header: badge + 'mermaid' label + an edit/render toggle. The framework
+  // seam renders this and re-runs it on attr change, so the active toggle tracks
+  // attrs.mode. Toggle clicks persist via ctx.updateAttribute (the one update path);
+  // for the prototype the toggle keeps diagram's existing classes/SVGs (zero visual
+  // change) — sharing segmentedToggle + CSS promotion is a follow-up.
+  var EDIT_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
+    '<path d="M1 7.5 L6 2 L8 4 L3 9 L1 9 Z"/><line x1="5" y1="3" x2="7" y2="5"/></svg>'
+  var RENDER_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
+    '<ellipse cx="5" cy="5" rx="4" ry="2.5"/><circle cx="5" cy="5" r="1.2" fill="currentColor" stroke="none"/></svg>'
+
+  function toggleBtn(label, icon, active, activeCls, onClick) {
+    var b = document.createElement('button')
+    b.className = 'diagram-block__toggle-btn' + (active ? ' ' + activeCls : '')
+    b.innerHTML = icon + ' ' + label
+    b.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); onClick() })
+    return b
+  }
+
+  class DiagramHeader extends window.TipTap.AdvancedHeaderProvider {
+    badge() { return 'diagram' }
+    left() {
+      var t = document.createElement('span')
+      t.className = 'sieve-block__type-label'
+      t.textContent = 'mermaid'
+      return [t]
+    }
+    right(attrs, ctx) {
+      var mode = attrs.mode || 'render'
+      var toggle = document.createElement('div')
+      toggle.className = 'diagram-block__toggle'
+      toggle.appendChild(toggleBtn('Edit', EDIT_SVG, mode === 'edit', 'diagram-block__toggle-btn--active-edit', function () {
+        if (mode !== 'edit') ctx.updateAttribute({ mode: 'edit' })
+      }))
+      toggle.appendChild(toggleBtn('Render', RENDER_SVG, mode === 'render', 'diagram-block__toggle-btn--active-render', function () {
+        if (mode === 'render') return
+        var patch = { mode: 'render' }
+        var sel = ctx.editor.view.state.selection
+        if (sel.$from.parent.type.name === 'sieve-diagram' && sel.$from.parent.attrs.id === ctx.id) {
+          patch.cursorPos = sel.$from.parentOffset
+        }
+        ctx.updateAttribute(patch)
+      }))
+      return [toggle]
+    }
+  }
+
   // ── DiagramRenderer ───────────────────────────────────────────────────────────
 
   var DiagramRenderer = {
+
+    headerProvider: new DiagramHeader(),
 
     nodeConfig: {
       atom: false,
@@ -194,46 +243,9 @@ import { esc, getLowlight, hastToHtml } from './fenced-block-base.js'
       dom.addEventListener('dragstart', function (e) { e.preventDefault() })
 
       // ── Header ────────────────────────────────────────────────────────────────
-
-      var header = document.createElement('div')
-      header.className = 'sieve-block__header'
-      header.contentEditable = 'false'
-      var badge = document.createElement('span')
-      badge.className = 'sieve-block__badge'
-      badge.textContent = 'diagram'
-
-      var typeLabel = document.createElement('span')
-      typeLabel.className = 'sieve-block__type-label'
-      typeLabel.textContent = 'mermaid'
-
-      var headerSpacer = document.createElement('div')
-      headerSpacer.style.flex = '1'
-
-      var toggle = document.createElement('div')
-      toggle.className = 'diagram-block__toggle'
-
-      var editBtn = document.createElement('button')
-      editBtn.className = 'diagram-block__toggle-btn'
-      editBtn.setAttribute('data-toggle', 'edit')
-      editBtn.innerHTML =
-        '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
-        '<path d="M1 7.5 L6 2 L8 4 L3 9 L1 9 Z"/><line x1="5" y1="3" x2="7" y2="5"/></svg> Edit'
-
-      var renderBtn = document.createElement('button')
-      renderBtn.className = 'diagram-block__toggle-btn'
-      renderBtn.setAttribute('data-toggle', 'render')
-      renderBtn.innerHTML =
-        '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
-        '<ellipse cx="5" cy="5" rx="4" ry="2.5"/>' +
-        '<circle cx="5" cy="5" r="1.2" fill="currentColor" stroke="none"/></svg> Render'
-
-      toggle.appendChild(editBtn)
-      toggle.appendChild(renderBtn)
-      header.appendChild(badge)
-      header.appendChild(typeLabel)
-      header.appendChild(headerSpacer)
-      header.appendChild(toggle)
-      dom.appendChild(header)
+      // The toolbar (badge + mermaid label + edit/render toggle) is now declared as
+      // `headerProvider: new DiagramHeader()` and rendered by the framework seam.
+      // The toggle dispatches via ctx.updateAttribute instead of the old switchMode.
 
       // ── Edit body ─────────────────────────────────────────────────────────────
 
@@ -280,12 +292,8 @@ import { esc, getLowlight, hastToHtml } from './fenced-block-base.js'
         }))
       }
 
-      function updateToggle(mode) {
-        editBtn.className = 'diagram-block__toggle-btn' +
-          (mode === 'edit' ? ' diagram-block__toggle-btn--active-edit' : '')
-        renderBtn.className = 'diagram-block__toggle-btn' +
-          (mode === 'render' ? ' diagram-block__toggle-btn--active-render' : '')
-      }
+      // (toggle active-state is now rendered by DiagramHeader from attrs.mode,
+      // re-run by the seam on each update — no updateToggle needed here.)
 
       // ── Render functions ──────────────────────────────────────────────────────
 
@@ -352,7 +360,6 @@ import { esc, getLowlight, hastToHtml } from './fenced-block-base.js'
 
       function render(attrs, textContent) {
         currentAttrs = attrs
-        updateToggle(attrs.mode)
         if (attrs.mode === 'render') {
           showRender(attrs, textContent)
         } else {
@@ -385,29 +392,7 @@ import { esc, getLowlight, hastToHtml } from './fenced-block-base.js'
 
       // ── Events ────────────────────────────────────────────────────────────────
 
-      editBtn.addEventListener('mousedown', function (e) {
-        e.preventDefault()
-        e.stopPropagation()
-        if (currentAttrs.mode !== 'edit') {
-          switchMode('edit')
-        } else {
-          contentDOM.focus()
-        }
-      })
-
-      renderBtn.addEventListener('mousedown', function (e) {
-        e.preventDefault()
-        e.stopPropagation()
-        if (currentAttrs.mode !== 'render') {
-          var pos = 0
-          if (editor.view && editor.view.state.selection.$from.parent.type.name === nodeTypeName) {
-            if (editor.view.state.selection.$from.parent.attrs.id === currentAttrs.id) {
-               pos = editor.view.state.selection.$from.parentOffset
-            }
-          }
-          switchMode('render', pos)
-        }
-      })
+      // (edit/render toggle clicks are wired in DiagramHeader via ctx.updateAttribute.)
 
       // Note: contentDOM keydown is usually swallowed by ProseMirror's root listener.
       // Ctrl+Enter for switching to render mode is handled in buildPlugins below.

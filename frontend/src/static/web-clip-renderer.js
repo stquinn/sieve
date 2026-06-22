@@ -38,9 +38,9 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
     getIcon: function() { return window.SieveIcons && window.SieveIcons.externalLink },
     getFriendlyName: function(node) { return 'Web Clip' },
 
-    // HEADER (metadata) = the title; CONTENT (data) = the fetched article. The
+    // TITLE (metadata) = the title; CONTENT (data) = the fetched article. The
     // interactive source link stays as chrome (an <a href> the renderer builds).
-    headerProvider: 'title',
+    titleProvider: 'title',
     contentProvider: 'content',
 
     getInitialContentHTML: function() { return '<p></p>' },

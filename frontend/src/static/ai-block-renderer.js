@@ -32,11 +32,11 @@ import { isJobStale } from './fenced-block-base.js'
       content: 'block+'
     },
 
-    // HEADER (metadata) = the question; CONTENT (data) = the response, or a
-    // status line while it is not yet complete. The framework renders the header
+    // TITLE (metadata) = the question; CONTENT (data) = the response, or a
+    // status line while it is not yet complete. The framework renders the title
     // as its own region with a divider, hidden when empty (an EXPLAIN has no
-    // question → header collapses, no divider). The badge carries the type.
-    headerProvider: 'question',
+    // question → title collapses, no divider). The badge carries the type.
+    titleProvider: 'question',
     contentProvider: function (a) {
       var status = a.status || 'PENDING'
       if (status === 'COMPLETE') return (a.response || '').trim()
@@ -51,7 +51,7 @@ import { isJobStale } from './fenced-block-base.js'
     attrs: {
       supportsEmbedding: { default: true },
       ref:      { default: 'doc', parseHTML: function (el) { return el.getAttribute('data-ref') || 'doc' } },
-      type:     { default: 'ASK', parseHTML: function (el) { return el.getAttribute('data-type') || 'ASK' } },
+      type:     { default: 'ASK', parseHTML: function (el) { return el.getAttribute('data-ai-type') || 'ASK' } },
       model:    { default: null,  parseHTML: function (el) { return el.getAttribute('data-model') || null } },
       question: { default: '',    parseHTML: function (el) { return el.getAttribute('data-question') || '' } },
       response: { default: null,  parseHTML: function (el) { return el.getAttribute('data-response') || null } },
@@ -69,7 +69,9 @@ import { isJobStale } from './fenced-block-base.js'
     parseAttrs: function (data) {
       return {
         ref:      data.ref      || 'doc',
-        type:     data.type     || 'ASK',
+        // emitted as data-ai-type (buildSieveBlockHTML kebabs the key); the `type`
+        // attr's parseHTML reads data-ai-type. Avoids the data-type node-marker clash.
+        aiType:   data.type     || 'ASK',
         model:    data.model    || null,
         question: data.question || '',
         response: data.response || null,

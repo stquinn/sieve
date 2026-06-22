@@ -49,6 +49,102 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
   var Node = T.Node
   var mergeAttributes = T.mergeAttributes
 
+  // ── HEADER slot providers ────────────────────────────────────────────────────
+  // The HEADER slot of the Sieve Block anatomy (Header · Title · Content) lives
+  // here, with the seam that consumes it — one foundation, not a satellite file.
+  // A block declares `headerProvider: <instance>`; the seam calls
+  // provider.render(attrs, ctx) and places the result as the block's top bar.
+  // Behaviour lives on the provider TYPE; instances are stateless and shared, so
+  // per-block state travels in `ctx` (see the seam for the ctx contract):
+  //   ctx = { id, kind, attrs (live), editor, getPos, state (transient bag),
+  //           update(patch) → persist via sieve:block-update }
+  // Durable state → ctx.update(patch). Transient view state → ctx.state.
+  // Exposed on window.TipTap so renderers subclass without a separate import.
+
+  function hdrEl(cls, tag) {
+    var e = document.createElement(tag || 'div')
+    if (cls) e.className = cls
+    return e
+  }
+  function badgeEl(text, extraCls) {
+    var b = hdrEl('sieve-block__badge' + (extraCls ? ' ' + extraCls : ''), 'span')
+    b.textContent = (text == null) ? '' : String(text)
+    return b
+  }
+  function appendAll(parent, nodes) {
+    (nodes || []).forEach(function (n) { if (n) parent.appendChild(n) })
+  }
+  // A badge value is a literal string/number or a function(attrs) — NOT an attr
+  // name (ambiguous with a literal like 'diagram'). For an attr: `a => a.language`.
+  function resolveBadge(badge, attrs) {
+    return (typeof badge === 'function') ? badge(attrs) : badge
+  }
+
+  // Base slot — override render() or subclass AdvancedHeaderProvider.
+  class SieveBlockHeader {
+    render(/* attrs, ctx */) { return hdrEl('sieve-block__header') }
+  }
+
+  // Built-in 1: badge only (the framework default is new BadgeOnlyHeader(kind)).
+  class BadgeOnlyHeader extends SieveBlockHeader {
+    constructor(badge) { super(); this._badge = badge }
+    render(attrs /*, ctx */) {
+      var bar = hdrEl('sieve-block__header')
+      bar.contentEditable = 'false'
+      var text = resolveBadge(this._badge, attrs)
+      if (text != null && text !== '') bar.appendChild(badgeEl(text))
+      return bar
+    }
+  }
+
+  // Built-in 2: the toolbar. render() is the template:
+  //   [badge][...left][...center][spacer][...right]. Subclass + override hooks.
+  class AdvancedHeaderProvider extends SieveBlockHeader {
+    badge(/* attrs */)       { return null }   // string | number | Element | null
+    left(/* attrs, ctx */)   { return [] }
+    center(/* attrs, ctx */) { return [] }
+    right(/* attrs, ctx */)  { return [] }
+    render(attrs, ctx) {
+      var bar = hdrEl('sieve-block__header')
+      bar.contentEditable = 'false'
+      var b = this.badge(attrs)
+      if (b != null && b !== '') bar.appendChild((b instanceof Element) ? b : badgeEl(b))
+      appendAll(bar, this.left(attrs, ctx))
+      appendAll(bar, this.center(attrs, ctx))
+      var spacer = hdrEl(); spacer.style.flex = '1'; bar.appendChild(spacer)
+      appendAll(bar, this.right(attrs, ctx))
+      return bar
+    }
+  }
+
+  // Shared control: the segmented toggle log (raw/explore) and diagram
+  // (edit/render) both hand-built. onChange(value) is the durable action.
+  //   options: [{ value, label, icon? }]
+  function segmentedToggle(options, activeValue, onChange) {
+    var wrap = hdrEl('sieve-block__toggle')
+    ;(options || []).forEach(function (opt) {
+      var btn = document.createElement('button')
+      btn.className = 'sieve-block__toggle-btn' + (opt.value === activeValue ? ' sieve-block__toggle-btn--active' : '')
+      btn.innerHTML = (opt.icon ? opt.icon + ' ' : '') + opt.label
+      btn.onclick = function (e) { e.preventDefault(); e.stopPropagation(); onChange(opt.value) }
+      wrap.appendChild(btn)
+    })
+    return wrap
+  }
+
+  // The ONE owner of the block-update protocol. ctx.updateAttribute and any
+  // renderer route attr changes through here — nothing else names the event.
+  function updateBlockAttrs(id, kind, patch) {
+    document.dispatchEvent(new CustomEvent('sieve:block-update', { detail: { id: id, kind: kind, attrs: patch } }))
+  }
+
+  T.SieveBlockHeader = SieveBlockHeader
+  T.BadgeOnlyHeader = BadgeOnlyHeader
+  T.AdvancedHeaderProvider = AdvancedHeaderProvider
+  T.segmentedToggle = segmentedToggle
+  T.badgeEl = badgeEl
+  T.updateBlockAttrs = updateBlockAttrs
+
   // ── Base attributes shared by every sieve block kind ─────────────────────────
 
   var BASE_ATTRS = {
@@ -290,37 +386,77 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
             return false
           }
 
-          // ── Framework-level Header + Content sync ────────────────────────────────
-          // A Sieve Block has three slots: CHROME (window decoration — badge, links,
-          // built by the renderer's NodeView), HEADER (semantic framing — title /
-          // question), and CONTENT (the data — response / clipped article). The
-          // framework owns header + content here; both are declared by the renderer
-          // as a `headerProvider` / `contentProvider`, each a string (read that attr)
-          // or a function (compose from attrs). Header renders as a static metadata
-          // region (read-only HTML) above the content; the CSS border on it is the
-          // divider. Content renders into contentDOM as live PM nodes (rich render +
-          // native copy/paste). An empty header renders nothing — no region, no
-          // divider. (markdownProvider/markdownAttr are legacy aliases of content.)
+          // ── Framework-level Header · Title · Content slots ───────────────────────
+          // A Sieve Block has slots the framework owns here. CHROME (window
+          // decoration) is still built by the renderer's NodeView; these three are
+          // declared:
+          //   headerProvider  — a SieveBlockHeader instance → the top TOOLBAR bar
+          //                     (badge + controls), via provider.render(attrs, ctx).
+          //   titleProvider   — string-attr | fn → the semantic lead (title/question),
+          //                     a static metadata region above content; its CSS border
+          //                     is the divider; empty → hidden (no region, no divider).
+          //   contentProvider — string-attr | fn → the data, live PM nodes in contentDOM
+          //                     (markdownProvider/markdownAttr are legacy aliases).
           var resolve = function (p) {
             return (typeof p === 'function') ? p : function (attrs) { return attrs[p] }
           }
 
-          // HEADER — static metadata region inserted before contentDOM.
+          // ctx — the per-block handle a headerProvider renders against. Provider
+          // instances are stateless/shared, so per-block state lives here. Durable
+          // changes → ctx.updateAttribute (the one updateBlockAttrs dispatch);
+          // transient view state → ctx.state. attrs is a LIVE read of current attrs.
+          var blockCtx = {
+            id: node.attrs.id,
+            kind: kind,
+            editor: editor,
+            getPos: getPos,
+            state: {},
+            get attrs() {
+              var p = (typeof getPos === 'function') ? getPos() : -1
+              if (p != null && p >= 0 && p < editor.state.doc.content.size) {
+                var cur = editor.state.doc.nodeAt(p)
+                if (cur && cur.attrs) return cur.attrs
+              }
+              return node.attrs
+            },
+            getAttribute: function (name) { return blockCtx.attrs[name] },
+            updateAttribute: function (patch) { updateBlockAttrs(node.attrs.id, kind, patch) },
+          }
+
+          // HEADER (toolbar) — a SieveBlockHeader instance → the top bar. Placed
+          // right after the gutter chrome host. Re-rendered on attr change so e.g.
+          // a mode toggle reflects the active state.
           var headerProvider = renderer.headerProvider
-          if (view.contentDOM && headerProvider) {
-            var resolveHeader = resolve(headerProvider)
-            var headerEl = document.createElement('div')
-            // NOTE: not 'sieve-block__header' — that class is the fenced-block
-            // chrome badge-bar (flex + background). This is the semantic heading slot.
-            headerEl.className = 'sieve-block__heading'
-            headerEl.contentEditable = 'false'
-            view.contentDOM.parentNode.insertBefore(headerEl, view.contentDOM)
-            var lastHeader
-            var syncHeader = function (h) {
+          var headerBarEl, renderHeaderBar
+          if (headerProvider && typeof headerProvider.render === 'function') {
+            renderHeaderBar = function () {
+              var fresh = headerProvider.render(blockCtx.attrs, blockCtx)
+              if (headerBarEl && headerBarEl.parentNode) {
+                headerBarEl.parentNode.replaceChild(fresh, headerBarEl)
+              } else {
+                var anchor = view.dom.querySelector(':scope > .block-chrome-host')
+                view.dom.insertBefore(fresh, anchor ? anchor.nextSibling : view.dom.firstChild)
+              }
+              headerBarEl = fresh
+            }
+            renderHeaderBar()
+          }
+
+          // TITLE — static metadata region inserted before contentDOM.
+          var titleProvider = renderer.titleProvider
+          var resolveTitle, lastTitle, syncTitle
+          if (view.contentDOM && titleProvider) {
+            resolveTitle = resolve(titleProvider)
+            var titleEl = document.createElement('div')
+            // .sieve-block__heading, NOT .sieve-block__header (the chrome badge-bar).
+            titleEl.className = 'sieve-block__heading'
+            titleEl.contentEditable = 'false'
+            view.contentDOM.parentNode.insertBefore(titleEl, view.contentDOM)
+            syncTitle = function (h) {
               h = (h || '').trim()
-              headerEl.innerHTML = h ? renderMarkdown(h, editor) : ''
-              headerEl.style.display = h ? '' : 'none'   // empty → no region, no divider
-              if (h) applyHighlighting(headerEl)
+              titleEl.innerHTML = h ? renderMarkdown(h, editor) : ''
+              titleEl.style.display = h ? '' : 'none'   // empty → no region, no divider
+              if (h) applyHighlighting(titleEl)
             }
           }
 
@@ -354,21 +490,25 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
             }
           }
 
-          // Initial fill + one shared update wrapper for both slots. Gate on the
-          // sync fns (only defined when view.contentDOM exists), so a provider on
-          // a contentDOM-less atom is simply inert rather than throwing.
-          if (syncHeader) { lastHeader = resolveHeader(node.attrs); syncHeader(lastHeader) }
+          // Initial fill + one shared update wrapper for all slots. Gate on the
+          // sync fns (only defined when view.contentDOM exists), so a title/content
+          // provider on a contentDOM-less atom is simply inert rather than throwing.
+          if (syncTitle) { lastTitle = resolveTitle(node.attrs); syncTitle(lastTitle) }
           if (syncMd) { lastMd = resolveBody(node.attrs); if (lastMd) syncMd(lastMd) }
-          if (syncHeader || syncMd) {
+          if (renderHeaderBar || syncTitle || syncMd) {
             var origUpdate = (typeof view.update === 'function') ? view.update.bind(view) : null
             view.update = function (updatedNode) {
               var ok = origUpdate ? origUpdate(updatedNode) : true
               if (!ok) return false
-              // Re-sync each slot when its RESOLVED value changes — a function
-              // provider fires whenever any attr it composes from changes.
-              if (syncHeader) {
-                var nh = resolveHeader(updatedNode.attrs)
-                if (nh !== lastHeader) { lastHeader = nh; syncHeader(nh) }
+              // Toolbar re-renders on every update so active states (a mode toggle)
+              // track the live attrs. (A future refinement: only when its inputs
+              // change — needed once a header carries a focusable control like a
+              // filter field. Diagram's toggle has no focus state, so re-render is fine.)
+              if (renderHeaderBar) renderHeaderBar()
+              // Title/content re-sync only when their RESOLVED value changes.
+              if (syncTitle) {
+                var nh = resolveTitle(updatedNode.attrs)
+                if (nh !== lastTitle) { lastTitle = nh; syncTitle(nh) }
               }
               if (syncMd) {
                 var nextMd = resolveBody(updatedNode.attrs)
