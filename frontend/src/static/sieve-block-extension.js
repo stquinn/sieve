@@ -219,7 +219,33 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
 
       addNodeView() {
         return function ({ node, editor, getPos }) {
-          var view = renderer.makeNodeView(node, editor, getPos)
+          // ctx — the per-block handle, shared by the header seam AND makeNodeView
+          // (passed as the 4th arg; other renderers ignore it). Provider instances
+          // are stateless/shared, so per-block state lives here. Durable changes →
+          // ctx.updateAttribute (the one updateBlockAttrs dispatch); transient view
+          // state → ctx.state. attrs is a LIVE read. refreshHeader re-renders the
+          // toolbar — for a renderer that must rebuild it after async data lands
+          // (e.g. log's column toggles once the parsed JSON loads).
+          var renderHeaderBar   // assigned by the header seam below
+          var blockCtx = {
+            id: node.attrs.id,
+            kind: kind,
+            editor: editor,
+            getPos: getPos,
+            state: {},
+            get attrs() {
+              var p = (typeof getPos === 'function') ? getPos() : -1
+              if (p != null && p >= 0 && p < editor.state.doc.content.size) {
+                var cur = editor.state.doc.nodeAt(p)
+                if (cur && cur.attrs) return cur.attrs
+              }
+              return node.attrs
+            },
+            getAttribute: function (name) { return blockCtx.attrs[name] },
+            updateAttribute: function (patch) { updateBlockAttrs(node.attrs.id, kind, patch) },
+            refreshHeader: function () { if (renderHeaderBar) renderHeaderBar() },
+          }
+          var view = renderer.makeNodeView(node, editor, getPos, blockCtx)
           if (view.dom) {
             // Inject the chrome host slot as the FIRST child.
             // BlockChrome will find it via .block-chrome-host and populate it
@@ -401,33 +427,15 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
             return (typeof p === 'function') ? p : function (attrs) { return attrs[p] }
           }
 
-          // ctx — the per-block handle a headerProvider renders against. Provider
-          // instances are stateless/shared, so per-block state lives here. Durable
-          // changes → ctx.updateAttribute (the one updateBlockAttrs dispatch);
-          // transient view state → ctx.state. attrs is a LIVE read of current attrs.
-          var blockCtx = {
-            id: node.attrs.id,
-            kind: kind,
-            editor: editor,
-            getPos: getPos,
-            state: {},
-            get attrs() {
-              var p = (typeof getPos === 'function') ? getPos() : -1
-              if (p != null && p >= 0 && p < editor.state.doc.content.size) {
-                var cur = editor.state.doc.nodeAt(p)
-                if (cur && cur.attrs) return cur.attrs
-              }
-              return node.attrs
-            },
-            getAttribute: function (name) { return blockCtx.attrs[name] },
-            updateAttribute: function (patch) { updateBlockAttrs(node.attrs.id, kind, patch) },
-          }
+          // blockCtx + renderHeaderBar are declared at the top of the NodeView
+          // wrapper (so makeNodeView receives ctx and refreshHeader can reach the
+          // bar). The header seam just assigns the renderer here.
 
           // HEADER (toolbar) — a SieveBlockHeader instance → the top bar. Placed
           // right after the gutter chrome host. Re-rendered on attr change so e.g.
           // a mode toggle reflects the active state.
           var headerProvider = renderer.headerProvider
-          var headerBarEl, renderHeaderBar
+          var headerBarEl
           if (headerProvider && typeof headerProvider.render === 'function') {
             renderHeaderBar = function () {
               var fresh = headerProvider.render(blockCtx.attrs, blockCtx)
@@ -501,10 +509,14 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
               var ok = origUpdate ? origUpdate(updatedNode) : true
               if (!ok) return false
               // Toolbar re-renders on every update so active states (a mode toggle)
-              // track the live attrs. (A future refinement: only when its inputs
-              // change — needed once a header carries a focusable control like a
-              // filter field. Diagram's toggle has no focus state, so re-render is fine.)
-              if (renderHeaderBar) renderHeaderBar()
+              // track the live attrs — EXCEPT while focus is inside the bar, so a
+              // focusable control (a filter field) isn't recreated mid-type and
+              // robbed of focus. The body still re-renders via the attr cycle; the
+              // bar catches up on the next update once focus leaves (a button click
+              // doesn't take focus, so toggles still refresh immediately).
+              if (renderHeaderBar && !(headerBarEl && headerBarEl.contains(document.activeElement))) {
+                renderHeaderBar()
+              }
               // Title/content re-sync only when their RESOLVED value changes.
               if (syncTitle) {
                 var nh = resolveTitle(updatedNode.attrs)
