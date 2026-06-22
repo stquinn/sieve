@@ -54,6 +54,23 @@ func TestShapeParser_proseMarkerSpanIsOneOpaqueNode(t *testing.T) {
 	}
 }
 
+// A fenced block whose YAML body contains an INDENTED nested ``` (a code fence
+// inside a literal scalar) must NOT close the span early. The 4-space indent is
+// the protection that keeps the inner fence off column zero; only a column-zero
+// ``` is the real tail. Regression: ai-block responses carrying code fences were
+// torn apart at the first indented ``` (artefact dispute-id, block ai-b42a).
+func TestShapeParser_indentedInnerFenceDoesNotCloseSpan(t *testing.T) {
+	src := "```diagram\nid: dg-1\nresponse: |+\n    text before\n    ```\n    code here\n    ```\n    text after\n```\n"
+	nodes, source := parseShapeNodes(t, src, shapesFor())
+	if len(nodes) != 1 {
+		t.Fatalf("want 1 shape node spanning the whole block, got %d", len(nodes))
+	}
+	got := string(source[nodes[0].Start:nodes[0].Stop])
+	if got != src {
+		t.Fatalf("span truncated at indented inner fence:\n got %q\nwant %q", got, src)
+	}
+}
+
 func TestShapeParser_registeredFenceIsANode_standardFenceIsNot(t *testing.T) {
 	src := "```diagram\nid: dg-1\n```\n\n```java\nx();\n```\n"
 	nodes, source := parseShapeNodes(t, src, shapesFor())

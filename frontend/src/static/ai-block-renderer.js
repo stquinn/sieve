@@ -133,9 +133,20 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
         var qEl = document.createElement('div')
         qEl.className = 'ai-question'
         var qLabel = document.createElement('strong')
-        qLabel.textContent = (n.type === 'EXPLAIN' || n.attrs && n.attrs.type === 'EXPLAIN') ? 'Explain: ' : 'Ask: '
+        qLabel.className = 'ai-question__label'
+        qLabel.textContent = (n.type === 'EXPLAIN' || n.attrs && n.attrs.type === 'EXPLAIN') ? 'Explain' : 'Ask'
         qEl.appendChild(qLabel)
-        qEl.appendChild(document.createTextNode(question))
+        // Render the question through the SAME markdown path as the response
+        // (renderMarkdown + applyHighlighting) so both honour full markdown —
+        // code blocks, lists, emphasis. The response becomes live PM nodes via
+        // the framework markdownAttr seam (one contentDOM, which it owns); the
+        // question is read-only chrome, so it renders as static HTML here, but
+        // through the identical renderer for a consistent result.
+        var qBody = document.createElement('div')
+        qBody.className = 'ai-question__body'
+        qBody.innerHTML = renderMarkdown(question, editor)
+        applyHighlighting(qBody)
+        qEl.appendChild(qBody)
         contentEl.appendChild(qEl)
       }
 

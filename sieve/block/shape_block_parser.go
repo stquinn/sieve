@@ -101,7 +101,13 @@ func (p *shapeBlockParser) Continue(node ast.Node, reader text.Reader, pc gmpars
 	// next line. Advance(segment.Len()) would trigger an internal AdvanceLine
 	// on the \n, and parseBlocks' AdvanceLine would then double-skip a line.
 	reader.AdvanceToEOL()
-	if strings.HasPrefix(strings.TrimSpace(string(line)), st.tail) {
+	// The tail must be at column zero. Serialized blocks always write the closing
+	// delimiter flush-left, and a fenced block's YAML body indents its content
+	// (e.g. a literal scalar) by 4 spaces precisely so an INNER ``` is kept off
+	// column zero — TrimSpace-ing here would defeat that protection and close the
+	// span at the first nested fence, tearing the block apart (regression: ai-block
+	// responses carrying code fences, artefact dispute-id block ai-b42a).
+	if strings.HasPrefix(string(line), st.tail) {
 		return gmparser.Close
 	}
 	return gmparser.Continue | gmparser.NoChildren

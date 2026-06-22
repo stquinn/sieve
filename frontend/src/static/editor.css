@@ -990,8 +990,31 @@ div.node-image.ProseMirror-selectednode {
   padding-bottom: 8px;
   border-bottom: 1px solid color-mix(in srgb, var(--theme-accentPrimary) 30%, transparent);
 }
-.ai-block .ai-question strong {
+/* Label sits on its own line above the rendered question body. */
+.ai-block .ai-question__label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--theme-accentPrimary);
+}
+/* The body is rendered markdown (same renderMarkdown path as the response) —
+   give its block children sane spacing so a multi-paragraph / list / fenced-code
+   question reads cleanly. No white-space:pre-wrap: block elements own the layout,
+   exactly as the response does, and pre-wrap would turn markdownit's inter-block
+   newlines into stray gaps. Full markdown semantics — blank line = paragraph. */
+.ai-block .ai-question__body > :first-child { margin-top: 0; }
+.ai-block .ai-question__body > :last-child { margin-bottom: 0; }
+.ai-block .ai-question__body p,
+.ai-block .ai-question__body ul,
+.ai-block .ai-question__body ol,
+.ai-block .ai-question__body blockquote {
+  margin: 0.4em 0;
+}
+.ai-block .ai-question__body ul,
+.ai-block .ai-question__body ol {
+  padding-left: 1.4em;
 }
 
 /* Hide the structural divider - the ai-question border does this job */
