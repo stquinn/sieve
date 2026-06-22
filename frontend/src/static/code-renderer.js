@@ -15,9 +15,33 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
 
   var T = window.TipTap
 
+  // ── Header (toolbar) ──────────────────────────────────────────────────────────
+  // Badge only — but stateful: 'detecting…' while the language job runs, the
+  // language once known, else 'CODE'. badge() returns a styled Element so the
+  // pending/unknown classes and the detection-method tooltip carry over.
+  class CodeHeader extends T.AdvancedHeaderProvider {
+    badge(attrs) {
+      var isPending     = attrs.status === 'PENDING' || attrs.status === 'DISPATCHED'
+      var isStale       = isPending && isJobStale(attrs.createdAt, attrs.id)
+      var showDetecting = isPending && !isStale && (!attrs.language || attrs.language === '')
+      var text, cls
+      if (showDetecting) { text = 'detecting…'; cls = 'sieve-block__badge--pending' }
+      else if (attrs.language && attrs.language !== 'unknown') { text = attrs.language; cls = '' }
+      else { text = (attrs.language === 'unknown' ? 'CODE' : attrs.language) || 'CODE'; cls = 'sieve-block__badge--unknown' }
+      var b = T.badgeEl(text, cls)
+      if (attrs.detectionMethod) {
+        b.setAttribute('data-detection-method', attrs.detectionMethod)
+        b.title = 'Detected via ' + attrs.detectionMethod
+      }
+      return b
+    }
+  }
+
   // ── CodeRenderer ─────────────────────────────────────────────────────────────
 
   var CodeRenderer = {
+
+    headerProvider: new CodeHeader(),
 
     nodeConfig: {
       atom: false,
@@ -71,14 +95,9 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
       dom.className = 'sieve-block sieve-block--code'
       dom.setAttribute('data-id', node.attrs.id || '')
 
-      // Header + badge
-      var header = document.createElement('div')
-      header.className = 'sieve-block__header'
-      header.contentEditable = 'false'
-      var badge = document.createElement('span')
-      badge.className = 'sieve-block__badge'
-      header.appendChild(badge)
-      dom.appendChild(header)
+      // Header (badge: language / detecting… / CODE) is declared as
+      // `headerProvider: new CodeHeader()` and rendered by the framework seam,
+      // re-run on attr change so the badge tracks status/language.
 
       // Body: flex row — gutter + code-area
       var body = document.createElement('div')
@@ -128,34 +147,12 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
         contentDOM.className = (lang && lang !== 'unknown') ? 'language-' + lang + ' hljs' : 'hljs'
       }
 
-      function updateBadge(attrs) {
-        var isPending     = attrs.status === 'PENDING' || attrs.status === 'DISPATCHED'
-        var isStale       = isPending && isJobStale(attrs.createdAt, attrs.id)
-        var showDetecting = isPending && !isStale && (!attrs.language || attrs.language === '')
-        if (showDetecting) {
-          badge.textContent = 'detecting…'
-          badge.className   = 'sieve-block__badge sieve-block__badge--pending'
-        } else if (attrs.language && attrs.language !== 'unknown') {
-          badge.textContent = attrs.language
-          badge.className   = 'sieve-block__badge'
-        } else {
-          badge.textContent = (attrs.language === 'unknown' ? 'CODE' : attrs.language) || 'CODE'
-          badge.className   = 'sieve-block__badge sieve-block__badge--unknown'
-        }
-        if (attrs.detectionMethod) {
-          badge.setAttribute('data-detection-method', attrs.detectionMethod)
-          badge.title = 'Detected via ' + attrs.detectionMethod
-        } else {
-          badge.removeAttribute('data-detection-method')
-          badge.removeAttribute('title')
-        }
-      }
+      // (badge is rendered by CodeHeader from attrs, re-run by the seam on update.)
 
       // Content updates are now managed by ProseMirror.
-      // We just update the non-content UI (badge, gutter).
+      // We just update the non-content UI (gutter).
       function render(attrs, textContent) {
         currentAttrs = attrs
-        updateBadge(attrs)
         applyHighlight(attrs.language || '')
         updateGutter(textContent || '')
       }
