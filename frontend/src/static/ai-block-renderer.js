@@ -1,5 +1,5 @@
 // ai-block-renderer.js — SieveBlock renderer for the ai-block kind.
-import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-base.js'
+import { isJobStale } from './fenced-block-base.js'
 
 ;(function () {
   'use strict'
@@ -32,9 +32,19 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
       content: 'block+'
     },
 
-    // Framework renders attrs.response into contentDOM as real PM nodes (see the
-    // markdown body sync in sieve-block-extension.js). Seed empty; the seam fills it.
-    markdownAttr: 'response',
+    // HEADER (metadata) = the question; CONTENT (data) = the response, or a
+    // status line while it is not yet complete. The framework renders the header
+    // as its own region with a divider, hidden when empty (an EXPLAIN has no
+    // question → header collapses, no divider). The badge carries the type.
+    headerProvider: 'question',
+    contentProvider: function (a) {
+      var status = a.status || 'PENDING'
+      if (status === 'COMPLETE') return (a.response || '').trim()
+      if (status === 'PENDING' || status === 'DISPATCHED') {
+        return isJobStale(a.createdAt, a.id) ? 'Request timed out. (Right-click to Retry)' : '*(thinking…)*'
+      }
+      return (a.error || 'Request failed. (Right-click to Retry)').trim()
+    },
 
     getInitialContentHTML: function() { return '<p></p>' },
 
@@ -77,15 +87,13 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
       var badge = document.createElement('span')
       badge.className = 'ai-block__badge'
       badge.contentEditable = 'false'
-      var contentEl = document.createElement('div')
-      contentEl.className = 'ai-block__content'
-      contentEl.contentEditable = 'false'
-      
+
+      // contentDOM holds the WHOLE composed body (question + divider + response or
+      // status line) as real PM nodes, filled by the framework markdownProvider seam.
       var contentDOM = document.createElement('div')
       contentDOM.className = 'sieve-block__content tiptap' // Use tiptap class for internal styling
-      
+
       dom.appendChild(badge)
-      dom.appendChild(contentEl)
       dom.appendChild(contentDOM)
 
       function applyChain(action) {
@@ -125,69 +133,22 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
       })
       dom.addEventListener('mouseleave', function () { applyChain('remove') })
 
-      function renderQuestion(n) {
-        // n may be the attrs object (n.question) or a PM node (n.attrs.question);
-        // guard so an empty/missing question never throws and aborts the load.
-        var question = n.attrs ? n.attrs.question : n.question
-        if (!question) return
-        var qEl = document.createElement('div')
-        qEl.className = 'ai-question'
-        var qLabel = document.createElement('strong')
-        qLabel.className = 'ai-question__label'
-        qLabel.textContent = (n.type === 'EXPLAIN' || n.attrs && n.attrs.type === 'EXPLAIN') ? 'Explain' : 'Ask'
-        qEl.appendChild(qLabel)
-        // Render the question through the SAME markdown path as the response
-        // (renderMarkdown + applyHighlighting) so both honour full markdown —
-        // code blocks, lists, emphasis. The response becomes live PM nodes via
-        // the framework markdownAttr seam (one contentDOM, which it owns); the
-        // question is read-only chrome, so it renders as static HTML here, but
-        // through the identical renderer for a consistent result.
-        var qBody = document.createElement('div')
-        qBody.className = 'ai-question__body'
-        qBody.innerHTML = renderMarkdown(question, editor)
-        applyHighlighting(qBody)
-        qEl.appendChild(qBody)
-        contentEl.appendChild(qEl)
-      }
-
+      // render maintains only the badge (the visual status indicator) and the
+      // data attributes the chain-glow reads. All textual content — question,
+      // response, AND the thinking/timeout/error line — is the composed body in
+      // contentDOM, owned by the markdownProvider seam.
       function render(attrs) {
-        contentEl.innerHTML = ''
         dom.setAttribute('data-id', attrs.id || '')
         dom.setAttribute('data-ai-ref', attrs.ref || 'doc')
         var status = attrs.status || 'PENDING'
-
+        var cls = 'ai-block__badge'
         if (status === 'PENDING' || status === 'DISPATCHED') {
-          if (isJobStale(attrs.createdAt, attrs.id)) {
-            badge.className = 'ai-block__badge ai-block__badge--error'
-            badge.textContent = 'AI'
-            renderQuestion(attrs)
-            var errEl = document.createElement('p')
-            errEl.className = 'ai-block__timeout'
-            errEl.textContent = 'Request timed out. (Right-click to Retry)'
-            contentEl.appendChild(errEl)
-          } else {
-            badge.className = 'ai-block__badge ai-block__badge--thinking'
-            badge.textContent = 'AI'
-            renderQuestion(attrs)
-            var thinking = document.createElement('p')
-            var em = document.createElement('em')
-            em.textContent = '(thinking…)'
-            thinking.appendChild(em)
-            contentEl.appendChild(thinking)
-          }
-        } else if (status === 'COMPLETE') {
-          badge.className = 'ai-block__badge'
-          badge.textContent = 'AI'
-          renderQuestion(attrs)
-        } else {
-          badge.className = 'ai-block__badge ai-block__badge--error'
-          badge.textContent = 'AI'
-          renderQuestion(attrs)
-          var errEl2 = document.createElement('p')
-          errEl2.className = 'ai-block__timeout'
-          errEl2.textContent = attrs.error || 'Request failed. (Right-click to Retry)'
-          contentEl.appendChild(errEl2)
+          cls += isJobStale(attrs.createdAt, attrs.id) ? ' ai-block__badge--error' : ' ai-block__badge--thinking'
+        } else if (status !== 'COMPLETE') {
+          cls += ' ai-block__badge--error'
         }
+        badge.className = cls
+        badge.textContent = attrs.type === 'EXPLAIN' ? 'EXPLAIN' : 'ASK'
       }
 
       render(node.attrs)

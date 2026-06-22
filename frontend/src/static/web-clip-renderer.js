@@ -38,9 +38,10 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
     getIcon: function() { return window.SieveIcons && window.SieveIcons.externalLink },
     getFriendlyName: function(node) { return 'Web Clip' },
 
-    // Framework renders attrs.content into contentDOM as real PM nodes (see the
-    // markdown body sync in sieve-block-extension.js). Seed empty; the seam fills it.
-    markdownAttr: 'content',
+    // HEADER (metadata) = the title; CONTENT (data) = the fetched article. The
+    // interactive source link stays as chrome (an <a href> the renderer builds).
+    headerProvider: 'title',
+    contentProvider: 'content',
 
     getInitialContentHTML: function() { return '<p></p>' },
 
@@ -191,15 +192,10 @@ import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-ba
           srcLink.target = '_blank'
           srcLink.rel = 'noopener noreferrer'
           header.appendChild(srcLink)
-          if (attrs.title) {
-            var titleEl = document.createElement('span')
-            titleEl.className = 'web-clip-block__title'
-            titleEl.textContent = attrs.title
-            header.appendChild(titleEl)
-          }
           renderEl.appendChild(header)
-          // The fetched/summarised body is rendered into contentDOM as real PM nodes
-          // (see getInitialContentHTML + the content-sync in update()), not here.
+          // The title + fetched body are rendered into contentDOM as real PM nodes
+          // via the markdownProvider seam (title folds in as an h1), not here — only
+          // the interactive source link stays as header chrome.
 
         } else if (status === 'TIMEOUT') {
           header.innerHTML = '<span class="web-clip-block__icon web-clip-block__icon--warn">⚠</span>' +

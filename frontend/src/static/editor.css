@@ -982,45 +982,30 @@ div.node-image.ProseMirror-selectednode {
   to { transform: rotate(360deg); }
 }
 
-/* Question area inside AI block */
-.ai-block .ai-question {
-  font-size: 14px;
+/* Heading slot (framework): the semantic framing — a block's title / question —
+   a static metadata region above the content. Its 2px bottom border IS the
+   divider between heading and content (a clean rule, like the old hr but double
+   width); the seam sets display:none when the heading resolves empty (e.g. an
+   EXPLAIN with no question), so the divider vanishes with it. No box/background.
+   Shared by every block that declares a headerProvider.
+   (Named __heading, not __header: __header is the fenced-block chrome badge-bar.) */
+.sieve-block__heading {
+  margin-bottom: 0.7rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 2px solid color-mix(in srgb, var(--theme-accentPrimary) 35%, transparent);
   color: var(--theme-textPrimary);
-  margin-bottom: 0.75rem;
-  padding-bottom: 8px;
-  border-bottom: 1px solid color-mix(in srgb, var(--theme-accentPrimary) 30%, transparent);
+  font-weight: 600;
 }
-/* Label sits on its own line above the rendered question body. */
-.ai-block .ai-question__label {
-  display: block;
-  margin-bottom: 4px;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--theme-accentPrimary);
-}
-/* The body is rendered markdown (same renderMarkdown path as the response) —
-   give its block children sane spacing so a multi-paragraph / list / fenced-code
-   question reads cleanly. No white-space:pre-wrap: block elements own the layout,
-   exactly as the response does, and pre-wrap would turn markdownit's inter-block
-   newlines into stray gaps. Full markdown semantics — blank line = paragraph. */
-.ai-block .ai-question__body > :first-child { margin-top: 0; }
-.ai-block .ai-question__body > :last-child { margin-bottom: 0; }
-.ai-block .ai-question__body p,
-.ai-block .ai-question__body ul,
-.ai-block .ai-question__body ol,
-.ai-block .ai-question__body blockquote {
-  margin: 0.4em 0;
-}
-.ai-block .ai-question__body ul,
-.ai-block .ai-question__body ol {
-  padding-left: 1.4em;
+.sieve-block__heading > :first-child { margin-top: 0; }
+.sieve-block__heading > :last-child { margin-bottom: 0; }
+
+/* A literal `---` inside a response is a real markdown hr; render it subtly. */
+.ai-block hr {
+  border: none;
+  border-top: 1px solid color-mix(in srgb, var(--theme-accentPrimary) 30%, transparent);
+  margin: 0.75rem 0;
 }
 
-/* Hide the structural divider - the ai-question border does this job */
-.ai-block hr {
-  display: none;
-}
 
 /* Inline code inside AI blocks (excludes block code inside <pre>) */
 .ai-block :not(pre) > code {
@@ -1118,14 +1103,6 @@ div.node-image.ProseMirror-selectednode {
   word-break: break-all;
 }
 .web-clip-block__source-link:hover { opacity: 1; text-decoration: underline; }
-
-.web-clip-block__title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--theme-text);
-  width: 100%;
-  margin-top: 2px;
-}
 
 /* Reset tiptap defaults for the internal web-clip content renderer (it is a real
    PM-owned contentDOM carrying the .tiptap class — without this it inherits the

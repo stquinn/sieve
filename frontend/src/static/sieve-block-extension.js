@@ -40,7 +40,7 @@
 //      after sieve-block-extension.js
 //   That's it.
 
-import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from './fenced-block-base.js'
+import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, applyHighlighting } from './fenced-block-base.js'
 
 ;(function () {
   'use strict'
@@ -290,17 +290,46 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from
             return false
           }
 
-          // ── Framework-level markdown body sync ──────────────────────────────────
-          // Any display block that declares `markdownAttr` (e.g. ai-block → 'response',
-          // web-clip → 'content') gets that markdown rendered into its contentDOM as
-          // real ProseMirror nodes, using the LIVE editor. renderMarkdown needs the
-          // editor's markdownit instance, which getInitialContentHTML cannot reach
-          // during parse — so this NodeView seam is where it belongs. Declare the attr
-          // and a markdown display block "just works": rich render + native copy/paste.
-          if (view.contentDOM && renderer.markdownAttr) {
-            var mdAttr = renderer.markdownAttr
-            var lastMd = node.attrs[mdAttr]
-            var syncMd = function (md) {
+          // ── Framework-level Header + Content sync ────────────────────────────────
+          // A Sieve Block has three slots: CHROME (window decoration — badge, links,
+          // built by the renderer's NodeView), HEADER (semantic framing — title /
+          // question), and CONTENT (the data — response / clipped article). The
+          // framework owns header + content here; both are declared by the renderer
+          // as a `headerProvider` / `contentProvider`, each a string (read that attr)
+          // or a function (compose from attrs). Header renders as a static metadata
+          // region (read-only HTML) above the content; the CSS border on it is the
+          // divider. Content renders into contentDOM as live PM nodes (rich render +
+          // native copy/paste). An empty header renders nothing — no region, no
+          // divider. (markdownProvider/markdownAttr are legacy aliases of content.)
+          var resolve = function (p) {
+            return (typeof p === 'function') ? p : function (attrs) { return attrs[p] }
+          }
+
+          // HEADER — static metadata region inserted before contentDOM.
+          var headerProvider = renderer.headerProvider
+          if (view.contentDOM && headerProvider) {
+            var resolveHeader = resolve(headerProvider)
+            var headerEl = document.createElement('div')
+            // NOTE: not 'sieve-block__header' — that class is the fenced-block
+            // chrome badge-bar (flex + background). This is the semantic heading slot.
+            headerEl.className = 'sieve-block__heading'
+            headerEl.contentEditable = 'false'
+            view.contentDOM.parentNode.insertBefore(headerEl, view.contentDOM)
+            var lastHeader
+            var syncHeader = function (h) {
+              h = (h || '').trim()
+              headerEl.innerHTML = h ? renderMarkdown(h, editor) : ''
+              headerEl.style.display = h ? '' : 'none'   // empty → no region, no divider
+              if (h) applyHighlighting(headerEl)
+            }
+          }
+
+          // CONTENT — live PM nodes in contentDOM via the editor schema.
+          var contentProvider = renderer.contentProvider || renderer.markdownProvider || renderer.markdownAttr
+          var resolveBody, lastMd, syncMd
+          if (view.contentDOM && contentProvider) {
+            resolveBody = resolve(contentProvider)
+            syncMd = function (md) {
               setTimeout(function () {
                 if (!editor || !editor.view) return
                 var html = renderMarkdown(md || '', editor) || '<p></p>'
@@ -323,14 +352,27 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown } from
                 editor.view.dispatch(tr)
               }, 0)
             }
-            if (lastMd) syncMd(lastMd)
+          }
+
+          // Initial fill + one shared update wrapper for both slots. Gate on the
+          // sync fns (only defined when view.contentDOM exists), so a provider on
+          // a contentDOM-less atom is simply inert rather than throwing.
+          if (syncHeader) { lastHeader = resolveHeader(node.attrs); syncHeader(lastHeader) }
+          if (syncMd) { lastMd = resolveBody(node.attrs); if (lastMd) syncMd(lastMd) }
+          if (syncHeader || syncMd) {
             var origUpdate = (typeof view.update === 'function') ? view.update.bind(view) : null
             view.update = function (updatedNode) {
               var ok = origUpdate ? origUpdate(updatedNode) : true
               if (!ok) return false
-              if (updatedNode.attrs[mdAttr] !== lastMd) {
-                lastMd = updatedNode.attrs[mdAttr]
-                syncMd(lastMd)
+              // Re-sync each slot when its RESOLVED value changes — a function
+              // provider fires whenever any attr it composes from changes.
+              if (syncHeader) {
+                var nh = resolveHeader(updatedNode.attrs)
+                if (nh !== lastHeader) { lastHeader = nh; syncHeader(nh) }
+              }
+              if (syncMd) {
+                var nextMd = resolveBody(updatedNode.attrs)
+                if (nextMd !== lastMd) { lastMd = nextMd; syncMd(nextMd) }
               }
               return true
             }
