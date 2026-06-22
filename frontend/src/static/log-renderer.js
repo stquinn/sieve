@@ -10,7 +10,113 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
   // Spring Boot log line — compiled once (was recompiled per line in applyHighlight).
   var SPRING_LINE_RE = /^(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)\s+(\w+)\s+(.*?)\s+---\s+\[(.*?)\]\s+(.*?)\s+:\s+(.*)$/
 
+  // ── Header (toolbar) ──────────────────────────────────────────────────────────
+  // The richest toolbar: badge + format + raw/explore toggle + (noise | filter +
+  // column toggles), all mode-dependent. State is persisted attrs (mode/filter/
+  // disabledCols/hideNoise), written via ctx.updateAttribute. WHICH column buttons
+  // exist is data-driven — the body sets ctx.state.cols (+ ctx.refreshHeader) once
+  // the parsed JSON loads; disabledCols is the pocketed on/off state.
+  var RAW_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
+    '<path d="M1 7.5 L6 2 L8 4 L3 9 L1 9 Z"/><line x1="5" y1="3" x2="7" y2="5"/></svg>'
+  var EXPLORE_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
+    '<rect x="1" y="1" width="8" height="8" rx="1"/><line x1="1" y1="4" x2="9" y2="4"/><line x1="4" y1="4" x2="4" y2="9"/></svg>'
+
+  function logMode(attrs)  { return attrs.mode || (attrs.parsedAssetRef ? 'explore' : 'edit') }
+  function isExplore(attrs) { return logMode(attrs) === 'explore' }
+  function disabledSet(attrs) {
+    var s = {}
+    ;(attrs.disabledCols || '').split(',').forEach(function (k) { if (k) s[k] = true })
+    return s
+  }
+  function toggleDisabled(attrs, key) {
+    var s = disabledSet(attrs)
+    if (s[key]) delete s[key]; else s[key] = true
+    return Object.keys(s).join(',')
+  }
+
+  class LogHeader extends T.AdvancedHeaderProvider {
+    badge() { return 'Log' }
+
+    left(attrs, ctx) {
+      var items = []
+      if (attrs.logFormatName) {
+        var fb = T.badgeEl('Format: ' + attrs.logFormatName)
+        fb.style.background = 'var(--theme-bg)'
+        fb.style.color = 'var(--theme-textSubtle)'
+        fb.style.border = '1px solid var(--theme-border)'
+        fb.style.fontWeight = 'normal'
+        fb.style.marginLeft = '12px'
+        if (attrs.logFormatRegex) fb.title = 'Regex: ' + attrs.logFormatRegex
+        items.push(fb)
+      }
+      var explore = isExplore(attrs)
+      var toggle = document.createElement('div')
+      toggle.className = 'diagram-block__toggle'
+      toggle.style.marginLeft = '8px'
+      var rawBtn = document.createElement('button')
+      rawBtn.className = 'diagram-block__toggle-btn' + (!explore ? ' diagram-block__toggle-btn--active-edit' : '')
+      rawBtn.innerHTML = RAW_SVG + ' Raw'
+      rawBtn.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); if (explore) ctx.updateAttribute({ mode: 'raw' }) })
+      var exploreBtn = document.createElement('button')
+      exploreBtn.className = 'diagram-block__toggle-btn' + (explore ? ' diagram-block__toggle-btn--active-render' : '')
+      exploreBtn.innerHTML = EXPLORE_SVG + ' Explore'
+      exploreBtn.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); if (!explore) ctx.updateAttribute({ mode: 'explore' }) })
+      toggle.appendChild(rawBtn); toggle.appendChild(exploreBtn)
+      items.push(toggle)
+      if (!explore) {
+        var noiseBtn = document.createElement('button')
+        noiseBtn.className = 'sieve-block__badge sieve-block__badge--clickable' + (attrs.hideNoise ? ' sieve-block__badge--active' : '')
+        noiseBtn.textContent = attrs.hideNoise ? 'Show Noise' : 'Toggle Noise'
+        noiseBtn.style.cursor = 'pointer'
+        noiseBtn.style.marginLeft = '8px'
+        noiseBtn.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); ctx.updateAttribute({ hideNoise: !attrs.hideNoise }) })
+        items.push(noiseBtn)
+      }
+      return items
+    }
+
+    right(attrs, ctx) {
+      if (!isExplore(attrs)) return []
+      var items = []
+      var filter = document.createElement('input')
+      filter.type = 'text'
+      filter.placeholder = 'Filter...'
+      filter.className = 'sieve-block__badge'
+      filter.value = attrs.filter || ''
+      filter.style.background = 'transparent'
+      filter.style.border = '1px solid var(--theme-border)'
+      filter.style.color = 'var(--theme-text)'
+      filter.style.outline = 'none'
+      filter.addEventListener('mousedown', function (e) { e.stopPropagation() })
+      filter.addEventListener('input', function (e) { e.stopPropagation(); ctx.updateAttribute({ filter: filter.value }) })
+      items.push(filter)
+
+      var cols = ctx.state.cols || []
+      if (cols.length) {
+        var disabled = disabledSet(attrs)
+        var wrap = document.createElement('div')
+        wrap.style.display = 'flex'
+        wrap.style.alignItems = 'center'
+        wrap.style.marginLeft = '8px'
+        cols.forEach(function (col) {
+          var btn = document.createElement('div')
+          btn.className = 'sieve-block__badge sieve-block__badge--clickable' + (!disabled[col.key] ? ' sieve-block__badge--active' : '')
+          btn.textContent = col.name
+          btn.style.opacity = disabled[col.key] ? '0.4' : '1'
+          btn.style.cursor = 'pointer'
+          btn.style.marginLeft = '4px'
+          btn.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); ctx.updateAttribute({ disabledCols: toggleDisabled(attrs, col.key) }) })
+          wrap.appendChild(btn)
+        })
+        items.push(wrap)
+      }
+      return items
+    }
+  }
+
   var LogRenderer = {
+    headerProvider: new LogHeader(),
+
     attrs: {
       source:          { default: '', parseHTML: function (el) { return el.getAttribute('data-source')           || '' } },
       language:        { default: 'log', parseHTML: function (el) { return el.getAttribute('data-language')         || 'log' } },
@@ -19,6 +125,12 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
       logFormatName:   { default: '', parseHTML: function (el) { return el.getAttribute('data-log-format-name') || '' } },
       logFormatRegex:  { default: '', parseHTML: function (el) { return el.getAttribute('data-log-format-regex') || '' } },
       status:          { default: 'COMPLETE', parseHTML: function (el) { return el.getAttribute('data-status') || 'COMPLETE' } },
+      // Persisted view settings — the header controls write these via
+      // ctx.updateAttribute, so a configured log comes back configured.
+      mode:            { default: '', parseHTML: function (el) { return el.getAttribute('data-mode') || '' } },
+      filter:          { default: '', parseHTML: function (el) { return el.getAttribute('data-filter') || '' } },
+      disabledCols:    { default: '', parseHTML: function (el) { return el.getAttribute('data-disabled-cols') || '' } },
+      hideNoise:       { default: false, parseHTML: function (el) { return el.getAttribute('data-hide-noise') === 'true' } },
     },
 
     // text* + code:true — the raw captured log lines ARE the node's text content,
@@ -59,13 +171,16 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
         logFormatName:   data.logFormatName || '',
         logFormatRegex:  data.logFormatRegex || '',
         status:          data.status || 'COMPLETE',
+        mode:            data.mode || '',
+        filter:          data.filter || '',
+        disabledCols:    data.disabledCols || '',
+        hideNoise:       !!data.hideNoise,
       }
     },
 
-    makeNodeView: function (node) {
+    makeNodeView: function (node, editor, getPos, ctx) {
       var nodeTypeName = node.type.name
       var currentAttrs = Object.assign({}, node.attrs)
-      var mode = currentAttrs.parsedAssetRef ? 'explore' : 'edit'
       var loadedJson = null
       var loadingAsset = false       // guards against a double-fetch on first explore render
       var logObserver = null         // per-instance lazy-scroll observer (was a global → clobbered sibling log blocks)
@@ -74,80 +189,10 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
       dom.className = 'sieve-block sieve-block--code sieve-block--log'
       dom.setAttribute('data-id', node.attrs.id || '')
 
-      var header = document.createElement('div')
-      header.className = 'sieve-block__header'
-      
-      var title = document.createElement('span')
-      title.className = 'sieve-block__badge'
-      title.innerText = LogRenderer.getFriendlyName()
-      header.appendChild(title)
-
-      var formatBadge = document.createElement('span')
-      formatBadge.className = 'sieve-block__badge'
-      formatBadge.style.background = 'var(--theme-bg)'
-      formatBadge.style.color = 'var(--theme-textSubtle)'
-      formatBadge.style.border = '1px solid var(--theme-border)'
-      formatBadge.style.fontWeight = 'normal'
-      formatBadge.style.marginLeft = '12px'
-      
-      if (currentAttrs.logFormatName) {
-        formatBadge.innerText = 'Format: ' + currentAttrs.logFormatName
-        formatBadge.style.display = 'inline-block'
-        if (currentAttrs.logFormatRegex) {
-          formatBadge.title = 'Regex: ' + currentAttrs.logFormatRegex
-        }
-      } else {
-        formatBadge.style.display = 'none'
-      }
-      header.appendChild(formatBadge)
-      
-      var toggle = document.createElement('div')
-      toggle.className = 'diagram-block__toggle'
-      toggle.style.marginLeft = '8px'
-
-      var rawBtn = document.createElement('button')
-      rawBtn.className = 'diagram-block__toggle-btn diagram-block__toggle-btn--active-edit'
-      rawBtn.innerHTML = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
-        '<path d="M1 7.5 L6 2 L8 4 L3 9 L1 9 Z"/><line x1="5" y1="3" x2="7" y2="5"/></svg> Raw'
-      rawBtn.onclick = function(e) { e.preventDefault(); e.stopPropagation(); mode = 'raw'; updateUI(); }
-
-      var exploreBtn = document.createElement('button')
-      exploreBtn.className = 'diagram-block__toggle-btn'
-      exploreBtn.innerHTML = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
-        '<rect x="1" y="1" width="8" height="8" rx="1"/><line x1="1" y1="4" x2="9" y2="4"/><line x1="4" y1="4" x2="4" y2="9"/></svg> Explore'
-      exploreBtn.onclick = function(e) { e.preventDefault(); e.stopPropagation(); mode = 'explore'; updateUI(); }
-
-      toggle.appendChild(rawBtn)
-      toggle.appendChild(exploreBtn)
-      header.appendChild(toggle)
-
-      var noiseBtn = document.createElement('button')
-      noiseBtn.className = 'sieve-block__badge sieve-block__badge--clickable'
-      noiseBtn.textContent = 'Toggle Noise'
-      noiseBtn.style.cursor = 'pointer'
-      noiseBtn.style.marginLeft = '8px'
-      header.appendChild(noiseBtn)
-
-      var filterInput = document.createElement('input')
-      filterInput.type = 'text'
-      filterInput.placeholder = 'Filter...'
-      filterInput.className = 'sieve-block__badge'
-      filterInput.style.marginLeft = 'auto'
-      filterInput.style.background = 'transparent'
-      filterInput.style.border = '1px solid var(--theme-border)'
-      filterInput.style.color = 'var(--theme-text)'
-      filterInput.style.outline = 'none'
-      filterInput.style.display = 'none'
-      header.appendChild(filterInput)
-
-      var colsContainer = document.createElement('div')
-      colsContainer.style.display = 'none'
-      colsContainer.style.flexDirection = 'row'
-      colsContainer.style.alignItems = 'center'
-      colsContainer.style.marginLeft = '8px'
-      header.appendChild(colsContainer)
-
-      dom.appendChild(header)
+      // Header (badge + format + raw/explore toggle + noise|filter+cols) is declared
+      // as `headerProvider: new LogHeader()` and rendered by the framework seam. The
+      // view settings (mode/filter/disabledCols/hideNoise) are persisted attrs the
+      // header writes via ctx.updateAttribute; this NodeView only reads them.
 
       var body = document.createElement('div')
       body.className = 'sieve-block__body'
@@ -221,51 +266,35 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
       body.appendChild(exploreArea)
       dom.appendChild(body)
 
-      var hideNoise = false
-      var hiddenCols = {}
-      
+      // availableCols scans the loaded JSON for which columns exist, and publishes
+      // them to the header (ctx.state.cols) so LogHeader can render their toggles.
+      // The enabled/disabled state is the pocketed disabledCols attr.
+      function availableCols() {
+          if (!loadedJson || !loadedJson.lines) return [];
+          var out = [];
+          if (loadedJson.lines.some(function(l){ return l.date }))   out.push({ key: 'date',   name: 'Date' });
+          if (loadedJson.lines.some(function(l){ return l.level }))  out.push({ key: 'level',  name: 'Level' });
+          if (loadedJson.lines.some(function(l){ return l.thread })) out.push({ key: 'thread', name: 'Thread' });
+          if (loadedJson.lines.some(function(l){ return l.logger })) out.push({ key: 'logger', name: 'Logger' });
+          return out;
+      }
+
       function renderTable() {
           if (!loadedJson || !loadedJson.lines) return;
           tableContainer.innerHTML = '';
-          var filterText = filterInput.value.toLowerCase();
-          
+          var filterText = (currentAttrs.filter || '').toLowerCase();
+          var disabled = disabledSet(currentAttrs);
+
           var hasDate = loadedJson.lines.some(function(l) { return l.date });
           var hasLevel = loadedJson.lines.some(function(l) { return l.level });
           var hasThread = loadedJson.lines.some(function(l) { return l.thread });
           var hasLogger = loadedJson.lines.some(function(l) { return l.logger });
-          
-          // Render Column Toggles
-          colsContainer.innerHTML = '';
-          function makeColToggle(name, key, exists) {
-              if (!exists) return;
-              var btn = document.createElement('div');
-              btn.className = 'sieve-block__badge sieve-block__badge--clickable';
-              btn.textContent = name;
-              if (!hiddenCols[key]) {
-                  btn.classList.add('sieve-block__badge--active');
-                  btn.style.opacity = '1';
-              } else {
-                  btn.style.opacity = '0.4';
-              }
-              btn.style.cursor = 'pointer';
-              btn.style.marginLeft = '4px';
-              btn.onclick = function(e) {
-                  e.preventDefault(); e.stopPropagation();
-                  hiddenCols[key] = !hiddenCols[key];
-                  renderTable();
-              };
-              colsContainer.appendChild(btn);
-          }
-          makeColToggle('Date', 'date', hasDate);
-          makeColToggle('Level', 'level', hasLevel);
-          makeColToggle('Thread', 'thread', hasThread);
-          makeColToggle('Logger', 'logger', hasLogger);
-          
-          var showDate = hasDate && !hiddenCols['date'];
-          var showLevel = hasLevel && !hiddenCols['level'];
-          var showThread = hasThread && !hiddenCols['thread'];
-          var showLogger = hasLogger && !hiddenCols['logger'];
-          
+
+          var showDate = hasDate && !disabled['date'];
+          var showLevel = hasLevel && !disabled['level'];
+          var showThread = hasThread && !disabled['thread'];
+          var showLogger = hasLogger && !disabled['logger'];
+
           if (logObserver) {
               logObserver.disconnect();
               logObserver = null;
@@ -406,6 +435,9 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
           fetch(url).then(function(res) { return res.json(); }).then(function(data) {
               loadingAsset = false;
               loadedJson = data;
+              // Publish which columns the data has so LogHeader can render their
+              // toggles; their disabled state is the pocketed disabledCols attr.
+              if (ctx) { ctx.state.cols = availableCols(); ctx.refreshHeader(); }
               renderTable();
           }).catch(function(err) {
               loadingAsset = false;
@@ -413,52 +445,20 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
           });
       }
 
+      // updateUI switches ONLY the body (raw/edit text vs explore table). Toolbar
+      // state (toggle active, noise/filter/cols visibility) is the header's job now,
+      // driven by the persisted attrs.
       function updateUI() {
-          if (mode === 'explore') {
+          if (isExplore(currentAttrs)) {
               editArea.style.display = 'none';
               exploreArea.style.display = 'flex';
-              noiseBtn.style.display = 'none';
-              filterInput.style.display = 'inline-block';
-              colsContainer.style.display = 'flex';
-              
-              rawBtn.className = 'diagram-block__toggle-btn';
-              rawBtn.style.color = '';
-              exploreBtn.className = 'diagram-block__toggle-btn diagram-block__toggle-btn--active-render';
-              
               if (!loadedJson) loadAsset();
               else renderTable();
           } else {
               editArea.style.display = 'flex';
               exploreArea.style.display = 'none';
-              noiseBtn.style.display = 'inline-block';
-              filterInput.style.display = 'none';
-              colsContainer.style.display = 'none';
-              
-              rawBtn.className = 'diagram-block__toggle-btn diagram-block__toggle-btn--active-edit';
-              rawBtn.style.color = 'var(--theme-accentPrimary)';
-              exploreBtn.className = 'diagram-block__toggle-btn';
           }
       }
-
-      filterInput.addEventListener('input', function(e) {
-          e.stopPropagation();
-          renderTable();
-      });
-
-      noiseBtn.addEventListener('mousedown', function(e) {
-          e.preventDefault()
-          e.stopPropagation()
-          hideNoise = !hideNoise
-          noiseBtn.textContent = hideNoise ? 'Show Noise' : 'Toggle Noise'
-          if (hideNoise) {
-              noiseBtn.classList.add('sieve-block__badge--active')
-          } else {
-              noiseBtn.classList.remove('sieve-block__badge--active')
-          }
-          // Noise dimming is a view-level concern; decorations stay constant and CSS
-          // dims .log-tok-noise / .log-line-info under .log--hide-noise.
-          dom.classList.toggle('log--hide-noise', hideNoise)
-      })
 
       function updateGutter(source) {
         var lines = (source || '').split('\n')
@@ -476,24 +476,12 @@ import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js
         var statusChanged = currentAttrs.status !== attrs.status;
         var assetChanged = currentAttrs.parsedAssetRef !== attrs.parsedAssetRef;
         currentAttrs = attrs;
-        
-        if (currentAttrs.logFormatName) {
-            formatBadge.innerText = 'Format: ' + currentAttrs.logFormatName;
-            formatBadge.style.display = 'inline-block';
-        } else {
-            formatBadge.style.display = 'none';
-        }
-        
-        if (currentAttrs.logFormatRegex) {
-            formatBadge.title = 'Regex: ' + currentAttrs.logFormatRegex;
-        } else {
-            formatBadge.title = '';
-        }
-        
-        if (!mode) {
-           mode = attrs.parsedAssetRef ? 'explore' : 'edit';
-        }
-        
+
+        // Noise dimming is a persisted view setting (hideNoise attr); CSS dims
+        // .log-tok-noise / .log-line-info under .log--hide-noise. (Format badge,
+        // mode toggle, filter and column toggles are all the header's job now.)
+        dom.classList.toggle('log--hide-noise', !!attrs.hideNoise);
+
         if (statusChanged || assetChanged) {
             loadAsset();
         }
