@@ -814,7 +814,8 @@
       if (msg.type === 'block-attrs-updated') {
         document.dispatchEvent(new CustomEvent('editor:block-attrs-updated', { detail: msg }))
       }
-      if (msg.type === 'block-promoted') {
+      if (msg.type === 'replace-block') {
+        // Backend already did the in-place ReplaceBlock on its tree; re-render from it.
         softReloadContent(currentUuid)
       }
       if (msg.type === 'block-extracted') {
@@ -2024,11 +2025,16 @@
     sendCreateBlock('web-clip', { source: href, mode: mode })
   })
 
-  // ── Extract (sieve:extract) ──────────────────────────────────────────────────
+  // ── Extract / Transform (sieve:extract) ─────────────────────────────────────
+  // Dumb playback: post {operation, targetKind, entries, blockId}. The backend mutates
+  // (PASTE/EXTRACT -> new block via insert-block; TRANSFORM -> ReplaceBlock on its tree,
+  // then a replace-block render-back the editor answers by re-rendering). The frontend
+  // never swaps nodes itself.
   document.addEventListener('sieve:extract', function (e) {
     if (!currentUuid || !currentEditor) return
     var blockId = e.detail.blockId
     var targetKind = e.detail.targetKind
+    var operation = e.detail.operation || 'extract'
     var entries = e.detail.entries || []
     var sourceNode = e.detail.sourceNode
     var context = e.detail.context || {}
@@ -2037,55 +2043,32 @@
       entries[0].context = context
     }
 
-    var targetPos = e.detail.sourcePos !== undefined ? e.detail.sourcePos : null
-    var targetNode = e.detail.sourceNode || null
-
-    if (blockId) {
+    // Additive ops (extract/paste) land via insert-block at a document index; clear any
+    // stale insert position so insert-block uses the op's own index, not a leftover range.
+    sieveInsertPos = null
+    var index = -1
+    if (operation !== 'transform' && blockId) {
       currentEditor.state.doc.descendants(function (node, pos) {
         if (node.attrs.id === blockId) {
-          targetPos = pos
-          targetNode = node
+          index = blockIndexForInsert(pos + node.nodeSize)
           return false
         }
       })
     }
 
-    // Additive extraction (Sieve-block sources): insert AFTER the source, leaving
-    // it intact. In-place conversion (native code blocks, replaceSource): replace
-    // the source node's range with the new Sieve block — a single transaction, so
-    // one Undo restores the native block.
-    if (targetPos !== null && targetNode !== null) {
-      sieveInsertPos = e.detail.replaceSource
-        ? { from: targetPos, to: targetPos + targetNode.nodeSize }
-        : targetPos + targetNode.nodeSize
+    function send(resolved) {
+      wsSend({ type: 'extract', blockId: blockId, targetKind: targetKind, operation: operation, entries: resolved, index: index })
     }
 
     if (window.TipTap && window.TipTap.resolveEntriesForKind) {
       var res = window.TipTap.resolveEntriesForKind(targetKind, sourceNode, entries)
       if (res && typeof res.then === 'function') {
-        res.then(function(resolved) {
-          wsSend({
-            type: 'extract',
-            blockId: blockId,
-            targetKind: targetKind,
-            entries: resolved,
-            index: blockIndexForInsert(sieveInsertPos)
-          })
-        }).catch(function(err) {
-          console.error('[sieve:extract] extraction failed', err)
-        })
+        res.then(send).catch(function (err) { console.error('[sieve:extract] failed', err) })
         return
       }
       entries = res
     }
-
-    wsSend({
-      type: 'extract',
-      blockId: blockId,
-      targetKind: targetKind,
-      entries: entries,
-      index: blockIndexForInsert(sieveInsertPos)
-    })
+    send(entries)
   })
 
   window.sieveInitEditor = initEditor
