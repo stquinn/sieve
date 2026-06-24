@@ -237,10 +237,9 @@
     }})
 
     // Native node → Sieve block conversion (in-place UPGRADE). A native node IS its
-    // own content, so converting REPLACES it (replaceSource:true) — unlike extraction
-    // from a Sieve block, whose content is a fragment that survives. We reuse the exact
-    // extraction path the Sieve-block NodeView uses: extractContentEntryFromEditor reads
-    // whatever DOM element was clicked. The context menu has no DOM event, but it has the
+    // own content, so converting is an in-place TRANSFORM — the backend decides additive-vs-replace.
+    // We reuse the exact extraction path the Sieve-block NodeView uses: extractContentEntryFromEditor
+    // reads whatever DOM element was clicked. The context menu has no DOM event, but it has the
     // click coords, so we reconstruct the same target with elementFromPoint and pass a
     // synthetic { target } — the function reads nothing else off the event. Detection
     // (all processors) decides the conversion targets; we only describe the source.
@@ -255,9 +254,9 @@
             sourceNode: targetNode,
             sourceKind: targetNode.type.name,
             entries: res.entries,
+            blockId: targetNode.attrs ? targetNode.attrs.id : null,
             sourcePos: targetPos,
-            extractSourceLabel: res.extractSourceLabel,
-            replaceSource: true
+            extractSourceLabel: res.extractSourceLabel
           })
         }
       }

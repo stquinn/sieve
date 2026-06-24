@@ -736,79 +736,56 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
     return keys.map(function (k) { return nodeRegistry[k] })
   }
 
-  // replaceSource: when true the source node is REPLACED by the new Sieve block
-  // (an in-place upgrade — used for native nodes, whose content IS the block).
-  // When false/omitted the operation is additive — the source survives (used for
-  // Sieve-block sources like AI/Web Clip, which are read-only composites).
-  //
-  // additiveKinds: target kinds that stay ADDITIVE even when replaceSource is true.
-  // A native source can replace in place only when the target occupies the same slot
-  // (block image → smart-image, inline link → smart-link). When the target is a
-  // different shape (inline link → block smart-card/web-clip) there is no node to
-  // swap, so those kinds are inserted alongside instead. Decided per candidate.
-  function detectAndAppendExtractions({ sourceNode, sourceKind, entries, blockId, sourcePos, extractSourceLabel, replaceSource, additiveKinds }) {
-    var additive = additiveKinds || []
+  // The backend returns [{kind, actions}]. The frontend is a dumb renderer: it shows
+  // each offered (kind, action) and plays back {operation} — no replaceSource heuristic.
+  function detectAndAppendExtractions({ sourceNode, sourceKind, entries, blockId, sourcePos, extractSourceLabel }) {
     fetch('/api/detect-extractions', {
       method: 'POST',
       body: JSON.stringify({ sourceKind: sourceKind, entries: entries }),
       headers: { 'Content-Type': 'application/json' }
-    }).then(function (res) { return res.json() }).then(function (candidates) {
-      if (!candidates || candidates.length === 0) return
+    }).then(function (res) { return res.json() }).then(function (offers) {
+      if (!offers || offers.length === 0) return
       if (!window.SieveContextMenu || !window.SieveContextMenu.appendItems) return
 
       var IC = window.SieveIcons || {}
-      // Header always names the SOURCE (what was clicked) — "EXTRACT FROM IMAGE" /
-      // "CONVERT FROM CODE". The verb signals additive vs in-place; the menu items
-      // themselves name the target, so the header must not.
-      var headerLabel = (replaceSource ? 'CONVERT FROM ' : 'EXTRACT FROM ') +
-        (extractSourceLabel || sourceKind).toUpperCase().replace('-', ' ')
-      var extraItems = [
-        { type: 'divider' },
-        { type: 'header', label: headerLabel }
-      ]
-      candidates.forEach(function (c) {
-        var icon = IC[c.kind] || IC.code
-        var r = renderers[c.kind]
+      var VERB = { extract: 'Extract as ', transform: 'Convert to ' }
+      var headerLabel = 'FROM ' + (extractSourceLabel || sourceKind).toUpperCase().replace('-', ' ')
+      var extraItems = [{ type: 'divider' }, { type: 'header', label: headerLabel }]
+
+      offers.forEach(function (offer) {
+        var icon = IC[offer.kind] || IC.code
+        var r = renderers[offer.kind]
         var prettyKind = (r && typeof r.getFriendlyName === 'function')
           ? r.getFriendlyName()
-          : c.kind.split('-').map(function(w) { return w.charAt(0).toUpperCase() + w.slice(1) }).join(' ')
+          : offer.kind.split('-').map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1) }).join(' ')
 
-        var replace = !!replaceSource && additive.indexOf(c.kind) === -1
+        // Menu offers the source-mutating ops (extract/transform); paste is never shown here.
+        ;(offer.actions || []).forEach(function (action) {
+          if (action !== 'extract' && action !== 'transform') return
 
-        var defaultAction = function (context) {
-          document.dispatchEvent(new CustomEvent('sieve:extract', {
-            detail: {
-              blockId: blockId || null,
-              targetKind: c.kind,
-              sourceNode: sourceNode,
-              sourcePos: sourcePos,
-              entries: entries,
-              context: context || {},
-              replaceSource: replace
-            }
-          }))
-        }
-
-        if (r && typeof r.getExtractionMenuItems === 'function') {
-          // Pass the operation kind so a renderer that emits its own labels can match
-          // the framework's verb: replace=true is an in-place UPGRADE (native → sieve),
-          // replace=false is additive EXTRACTION (a child of a sieve block — the source
-          // survives). Without this a renderer can't tell the two apart and mislabels.
-          var items = r.getExtractionMenuItems(sourceNode, entries, defaultAction, { replace: replace })
-          if (items && items.length) {
-            items.forEach(function(item) { extraItems.push(item) })
-            return
+          var dispatch = function (context) {
+            document.dispatchEvent(new CustomEvent('sieve:extract', {
+              detail: {
+                blockId: blockId || (sourceNode && sourceNode.attrs ? sourceNode.attrs.id : null),
+                targetKind: offer.kind,
+                operation: action,
+                sourceNode: sourceNode,
+                sourcePos: sourcePos,
+                entries: entries,
+                context: context || {}
+              }
+            }))
           }
-        }
 
-        extraItems.push({
-          icon: icon,
-          label: (replace ? 'Convert to ' : 'Extract as ') + prettyKind,
-          action: function () { defaultAction({}) }
+          if (r && typeof r.getExtractionMenuItems === 'function') {
+            var items = r.getExtractionMenuItems(sourceNode, entries, dispatch, { operation: action })
+            if (items && items.length) { items.forEach(function (it) { extraItems.push(it) }); return }
+          }
+          extraItems.push({ icon: icon, label: VERB[action] + prettyKind, action: function () { dispatch({}) } })
         })
       })
       window.SieveContextMenu.appendItems(extraItems)
-    }).catch(function() {})
+    }).catch(function () {})
   }
 
   // ── Native Code Block (syntax highlighting via CodeBlockLowlight) ─────────────
