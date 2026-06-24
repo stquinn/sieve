@@ -30,8 +30,13 @@ type ShadowDocument struct {
 	debounce     time.Duration
 	closed       bool // set by StopDebounce; prevents re-arming after Close
 	mu           sync.Mutex
-	timer        *time.Timer
-	onFlush      func()
+	// flushMu serializes whole-document writes (WithFlushLock). It is SEPARATE from
+	// mu so a flush's disk I/O does not block tree mutations (which take mu): the
+	// slow part runs under flushMu only, the brief tree snapshot under mu. Scoped to
+	// the shadow's lifetime, so per-document serialization needs no external map.
+	flushMu sync.Mutex
+	timer   *time.Timer
+	onFlush func()
 	// notifySaved is invoked after each successful debounce flush (flush-ack to
 	// the WS client). It is rewired when an already-open shadow is reused by a
 	// later Open (idempotent Open), so the debounce closure reads it live.
@@ -101,39 +106,21 @@ func (s *ShadowDocument) SetMarkdown(md string) {
 	s.resetDebounce()
 }
 
-// SetBlock creates or merges attrs into the named block in Doc. kind is only
-// used when creating a new entry; subsequent calls preserve the existing Kind.
-func (s *ShadowDocument) SetBlock(block SieveBlock) {
+// MergeBlock creates or patches the named block, applying the merge semantic
+// (SieveBlock.Merge: attrs additive, aliases replaced when present). For a new id
+// it appends a fresh block. kind is only used when creating the entry; subsequent
+// merges preserve the existing Kind. The locked entry point for external callers;
+// applyOpTo's update-block calls SieveBlock.Merge directly under its own lock.
+func (s *ShadowDocument) MergeBlock(patch SieveBlock) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if b := s.findBlock(block.ID); b != nil {
-		if b.Attrs == nil {
-			b.Attrs = make(map[string]interface{}, len(block.Attrs))
-		}
-		for k, v := range block.Attrs {
-			b.Attrs[k] = v
-		}
+	if b := s.findBlock(patch.ID); b != nil {
+		b.Merge(patch)
 	} else {
-		merged := make(map[string]interface{}, len(block.Attrs))
-		for k, v := range block.Attrs {
-			merged[k] = v
-		}
-		s.Blocks = append(s.Blocks, SieveBlock{ID: block.ID, Kind: block.Kind, Attrs: merged})
+		nb := SieveBlock{ID: patch.ID, Kind: patch.Kind}
+		nb.Merge(patch)
+		s.Blocks = append(s.Blocks, nb)
 	}
-	s.resetDebounce()
-}
-
-// replaceBlock atomically replaces the attrs map for an existing block.
-// Unlike SetBlock (additive merge), deleted keys in attrs are propagated —
-// the old map is discarded entirely. No-op if the block does not exist.
-func (s *ShadowDocument) replaceBlock(blockID string, block SieveBlock) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	b := s.findBlock(blockID)
-	if b == nil {
-		return
-	}
-	b.Attrs = block.Attrs
 	s.resetDebounce()
 }
 
@@ -197,6 +184,19 @@ func (s *ShadowDocument) ContentForSave() string {
 	return s.deriveMarkdown()
 }
 
+// WithFlushLock runs fn holding the document's flush lock, serializing whole-document
+// writes for this shadow against each other (the debounce, an explicit Flush, Close,
+// and a background job's flush all funnel through here). The shadow owns *serializing*
+// a flush — like it owns mu for tree ops — while the caller supplies *what* the flush
+// does (the store I/O lives in EditorService; block must not depend on the store). fn
+// may take mu itself (e.g. ContentForSave): flushMu is a distinct lock, so no
+// reentrancy, and the slow I/O never blocks tree mutations.
+func (s *ShadowDocument) WithFlushLock(fn func() error) error {
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
+	return fn()
+}
+
 // ApplyOp applies a granular block mutation to the live tree, taking s.mu and
 // arming the debounce. The wire layer's single entry point for block ops.
 func (s *ShadowDocument) ApplyOp(op BlockOp) error {
@@ -219,10 +219,12 @@ func (s *ShadowDocument) findBlock(id string) *SieveBlock {
 // BlockOp is a granular mutation of the BlockDoc tree, carried over the wire
 // (Stage C, spec §4). One op == one user-visible block change.
 type BlockOp struct {
-	Type     string                 `json:"type"` // "create-block","update-block","delete-block","move"
-	BlockID  string                 `json:"blockId"`
-	Kind     string                 `json:"kind,omitempty"`
-	Content  string                 `json:"content,omitempty"`
+	Type    string `json:"type"` // "create-block","update-block","delete-block","move"
+	BlockID string `json:"blockId"`
+	Kind    string `json:"kind,omitempty"`
+	// Attrs is the block's payload bag — uniform across kinds. Every kind's body
+	// rides here (prose's at Attrs["content"], code's at Attrs["source"]); there is
+	// no kind-special-cased Content field. update merges it, create constructs from it.
 	Attrs    map[string]interface{} `json:"attrs,omitempty"`
 	Aliases  []string               `json:"aliases,omitempty"`
 	Index    int                    `json:"index"`
@@ -239,28 +241,21 @@ func (s *ShadowDocument) applyOpTo(op BlockOp) error {
 		if b == nil {
 			return fmt.Errorf("update-block: block %q not found", op.BlockID)
 		}
-		if op.Attrs != nil {
-			b.Attrs = op.Attrs
-		}
-		if op.Aliases != nil {
-			b.Aliases = op.Aliases
-		}
-		// Prose carries its body in the content attr (set last so it survives an
-		// attrs replacement above). Structured blocks keep their payload in Attrs
-		// and never get a spurious content key.
-		if b.Kind == KindProse {
-			b.setContent(op.Content)
-		}
+		// One block-patch semantic for every kind: attrs MERGE (a partial patch keeps
+		// existing keys), aliases REPLACE when present. Prose's body is just
+		// Attrs["content"], carried in the merge like any other key — no kind branch.
+		b.Merge(SieveBlock{Attrs: op.Attrs, Aliases: op.Aliases})
 		return nil
 
 	case "create-block":
 		// create-block is a construction point: route through the factory so an
 		// op with no blockId gets one minted (given an id or generate one) rather
 		// than admitting an id-less block. The frontend normally supplies the id.
+		// The payload (incl. prose's content) rides in op.Attrs.
 		if op.ParentID != "" {
 			return fmt.Errorf("create-block: nesting into parent %q is Stage E (no Children yet)", op.ParentID)
 		}
-		nb := NewSieveBlock(op.Kind, op.BlockID, op.Content, op.Attrs)
+		nb := NewSieveBlock(op.Kind, op.BlockID, op.Attrs)
 		nb.Aliases = op.Aliases
 		s.insertBlockAt(op.Index, nb)
 		return nil

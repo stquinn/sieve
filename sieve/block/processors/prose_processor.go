@@ -161,7 +161,15 @@ var (
 // nested markers; nesting is container-only, Stage E). An open with no matching
 // close is unbalanced → literal text. Any maximal run of undelimited lines is a
 // SINGLE prose block (never blank-line split); whitespace-only runs are dropped.
-func scanProseRegion(region string) []block.SieveBlock {
+// newProseBlock is the ONE constructor for a prose SieveBlock — the single place
+// that knows prose keeps its body in Attrs["content"] (prose's schema, exactly as
+// code's is "source"). Production parsing and tests both build prose blocks through
+// here so that knowledge is never copy-pasted. An empty id mints one on parse.
+func (ProseProcessor) newProseBlock(id, content string) block.SieveBlock {
+	return block.NewSieveBlock(block.KindProse, id, map[string]interface{}{"content": content})
+}
+
+func (p ProseProcessor) scanProseRegion(region string) []block.SieveBlock {
 	lines := strings.Split(region, "\n")
 	var out []block.SieveBlock
 	var pending []string
@@ -176,7 +184,7 @@ func scanProseRegion(region string) []block.SieveBlock {
 			// Undelimited (marker-less) prose: no id on disk → the factory mints
 			// one now (hydration on parse), so the block exists with an id from
 			// the moment it is constructed — never swept in afterward.
-			out = append(out, block.NewSieveBlock(block.KindProse, "", content, nil))
+			out = append(out, p.newProseBlock("", content))
 		}
 	}
 
@@ -188,7 +196,7 @@ func scanProseRegion(region string) []block.SieveBlock {
 				flushPending()
 				// Delimited prose: the marker carries the primary handle, so the
 				// factory keeps it (no mint).
-				blk := block.NewSieveBlock(block.KindProse, primary, strings.Join(lines[i+1:closeIdx], "\n"), nil)
+				blk := p.newProseBlock(primary, strings.Join(lines[i+1:closeIdx], "\n"))
 				if len(handles) > 1 {
 					blk.Aliases = append([]string(nil), handles[1:]...)
 				}
@@ -209,7 +217,7 @@ func scanProseRegion(region string) []block.SieveBlock {
 				flushPending()
 				content := strings.Trim(strings.Join(lines[i+1:closeIdx], "\n"), "\n")
 				if content != "" {
-					out = append(out, block.NewSieveBlock(block.KindProse, m[1], content, nil))
+					out = append(out, p.newProseBlock(m[1], content))
 				}
 				i = closeIdx + 1
 				continue
@@ -270,5 +278,5 @@ func (p *ProseProcessor) Accepts(region block.Region) bool { return true }
 // undelimited run mints one). The inverse of ProseProcessor.Serialize, which
 // writes those markers. Owns both sides of prose's SerDes.
 func (p *ProseProcessor) Deserialize(region block.Region) ([]block.SieveBlock, error) {
-	return scanProseRegion(region.Raw), nil
+	return p.scanProseRegion(region.Raw), nil
 }

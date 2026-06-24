@@ -16,7 +16,6 @@ func TestBlockOp_DecodesWireEnvelope(t *testing.T) {
 			"type": "create-block",
 			"blockId": "co-1",
 			"kind": "code",
-			"content": "x = 1",
 			"attrs": {"source": "x = 1"},
 			"aliases": ["co-old"],
 			"index": 2,
@@ -33,8 +32,8 @@ func TestBlockOp_DecodesWireEnvelope(t *testing.T) {
 	if op.Type != "create-block" || op.BlockID != "co-1" || op.Kind != "code" {
 		t.Fatalf("scalar fields wrong: %+v", op)
 	}
-	if op.Content != "x = 1" || op.Index != 2 || op.ParentID != "col-1" {
-		t.Fatalf("content/index/parent wrong: %+v", op)
+	if op.Index != 2 || op.ParentID != "col-1" {
+		t.Fatalf("index/parent wrong: %+v", op)
 	}
 	if op.Attrs["source"] != "x = 1" {
 		t.Fatalf("attrs wrong: %+v", op.Attrs)
@@ -83,7 +82,7 @@ func TestShadowDocument_ContentForSave_SerializesDoc(t *testing.T) {
 // floor that guarantees the invariant regardless of caller.
 func TestBlockDoc_ApplyOp_CreateBlockGeneratesIdWhenMissing(t *testing.T) {
 	s := &block.ShadowDocument{Blocks: []block.SieveBlock{}}
-	if err := s.ApplyOp(block.BlockOp{Type: "create-block", Kind: block.KindProse, Content: "fresh", Index: 0}); err != nil {
+	if err := s.ApplyOp(block.BlockOp{Type: "create-block", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "fresh"}, Index: 0}); err != nil {
 		t.Fatalf("applyOpTo create-block with no id should generate one, got error: %v", err)
 	}
 	doc := s.Blocks
@@ -100,7 +99,7 @@ func TestBlockDoc_ApplyOp_CreateBlockGeneratesIdWhenMissing(t *testing.T) {
 
 func TestBlockDoc_ApplyOp_CreateBlockKeepsGivenId(t *testing.T) {
 	s := &block.ShadowDocument{Blocks: []block.SieveBlock{}}
-	if err := s.ApplyOp(block.BlockOp{Type: "create-block", BlockID: "pr-given", Kind: block.KindProse, Content: "x", Index: 0}); err != nil {
+	if err := s.ApplyOp(block.BlockOp{Type: "create-block", BlockID: "pr-given", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "x"}, Index: 0}); err != nil {
 		t.Fatalf("applyOpTo: %v", err)
 	}
 	doc := s.Blocks
@@ -113,7 +112,7 @@ func TestBlockDoc_ApplyOp_UpdateProseContent(t *testing.T) {
 	s := &block.ShadowDocument{Blocks: []block.SieveBlock{
 		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "old"}},
 	}}
-	if err := s.ApplyOp(block.BlockOp{Type: "update-block", BlockID: "pr-1", Content: "new"}); err != nil {
+	if err := s.ApplyOp(block.BlockOp{Type: "update-block", BlockID: "pr-1", Attrs: map[string]interface{}{"content": "new"}}); err != nil {
 		t.Fatalf("applyOpTo: %v", err)
 	}
 	doc := s.Blocks
@@ -138,7 +137,7 @@ func TestBlockDoc_ApplyOp_UpdateAttrsAndAliases(t *testing.T) {
 	doc := s.Blocks
 	got := doc[0]
 	if got.Attrs["status"] != "COMPLETE" || got.Attrs["response"] != "hi" {
-		t.Fatalf("attrs not replaced: %+v", got.Attrs)
+		t.Fatalf("attrs not merged: %+v", got.Attrs)
 	}
 	if len(got.Aliases) != 1 || got.Aliases[0] != "ai-old" {
 		t.Fatalf("aliases = %+v, want [ai-old]", got.Aliases)
@@ -147,7 +146,7 @@ func TestBlockDoc_ApplyOp_UpdateAttrsAndAliases(t *testing.T) {
 
 func TestBlockDoc_ApplyOp_UnknownBlockErrors(t *testing.T) {
 	s := &block.ShadowDocument{Blocks: []block.SieveBlock{{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "x"}}}}
-	if err := s.ApplyOp(block.BlockOp{Type: "update-block", BlockID: "nope", Content: "y"}); err == nil {
+	if err := s.ApplyOp(block.BlockOp{Type: "update-block", BlockID: "nope", Attrs: map[string]interface{}{"content": "y"}}); err == nil {
 		t.Fatal("expected error updating a missing block, got nil")
 	}
 }
@@ -190,7 +189,7 @@ func TestBlockDoc_ApplyOp_CreateTopLevelAtIndex(t *testing.T) {
 		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "a"}},
 		{ID: "pr-2", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "b"}},
 	}}
-	op := block.BlockOp{Type: "create-block", BlockID: "pr-mid", Kind: block.KindProse, Content: "mid", Index: 1}
+	op := block.BlockOp{Type: "create-block", BlockID: "pr-mid", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "mid"}, Index: 1}
 	if err := s.ApplyOp(op); err != nil {
 		t.Fatalf("applyOpTo: %v", err)
 	}

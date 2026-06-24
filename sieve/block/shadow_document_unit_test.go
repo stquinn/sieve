@@ -42,7 +42,7 @@ func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
 		},
 	}
 
-	shadow.SetBlock(SieveBlock{ID: "fk-1", Kind: "fk", Attrs: map[string]interface{}{"response": "New answer"}})
+	shadow.MergeBlock(SieveBlock{ID: "fk-1", Kind: "fk", Attrs: map[string]interface{}{"response": "New answer"}})
 
 	result := shadow.ContentForSave()
 	if !strings.Contains(result, "response: New answer") {
@@ -59,7 +59,7 @@ func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
 func TestShadowDocument_setBlockCreatesEntry(t *testing.T) {
 	shadow := &ShadowDocument{UUID: "test-uuid", Mode: "wysiwyg"}
 
-	shadow.SetBlock(SieveBlock{
+	shadow.MergeBlock(SieveBlock{
 		Kind:  "code",
 		ID:    "cb-0001",
 		Attrs: map[string]interface{}{"id": "cb-0001", "source": "fmt.Println()"},
@@ -85,7 +85,7 @@ func TestShadowDocument_setBlockMergesAttrs(t *testing.T) {
 		},
 	}
 
-	shadow.SetBlock(SieveBlock{
+	shadow.MergeBlock(SieveBlock{
 		Kind:  "code",
 		ID:    "cb-0001",
 		Attrs: map[string]interface{}{"language": "python", "status": "COMPLETE"},

@@ -900,10 +900,12 @@
     sieveInsertPos = captureInsertPos(false)
   })
 
-  // NodeViews fire sieve:block-update when the user edits block content.
+  // NodeViews fire sieve:block-update when the user edits block content. It rides
+  // the SAME granular block-op as prose (built by block-sync.updateBlockOp) — the
+  // bespoke block-update message is retired; block-op is the one mutation path.
   document.addEventListener('sieve:block-update', function (e) {
     if (!currentUuid || !e.detail.id) return
-    wsSend({ type: 'block-update', uuid: currentUuid, id: e.detail.id, kind: e.detail.kind, attrs: e.detail.attrs })
+    wsSend({ type: 'block-op', uuid: currentUuid, op: window.TipTap.updateBlockOp(e.detail) })
   })
 
   document.addEventListener('sieve:promote-block', function (e) {

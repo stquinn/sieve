@@ -218,13 +218,24 @@ func (es *EditorService) UpdateMarkdown(uuid, markdown string) {
 // render-back); prose create and every other op apply straight to the tree (prose
 // already exists in the editor; delete/move/update are pure tree mutations).
 func (es *EditorService) HandleBlockOp(uuid string, op block.BlockOp) error {
-	if op.Type == "create-block" && op.Kind != "" && op.Kind != block.KindProse {
-		id := op.BlockID
-		if id == "" {
-			id = block.GenerateBlockIDFor(op.Kind)
+	switch op.Type {
+	case "create-block":
+		// Structured create runs the full lifecycle (InitAttrs → positioned insert →
+		// job dispatch → render-back insert-block); prose create falls through to a
+		// plain tree insert because the editor already holds the prose node.
+		if op.Kind != "" && op.Kind != block.KindProse {
+			id := op.BlockID
+			if id == "" {
+				id = block.GenerateBlockIDFor(op.Kind)
+			}
+			_, _, err := es.createBlockWithID(uuid, op.Kind, id, op.Attrs, op.Index)
+			return err
 		}
-		_, _, err := es.createBlockWithID(uuid, op.Kind, id, op.Attrs, op.Index)
-		return err
+	case "update-block":
+		// Update is uniform for EVERY kind (prose included): merge the patch, run the
+		// processor's OnChange, notify, dispatch any job. The per-kind behaviour lives
+		// in the processor — this path does not branch on kind.
+		return es.applyBlockUpdate(uuid, op)
 	}
 
 	es.mu.RLock()
@@ -246,7 +257,7 @@ func (es *EditorService) UpdateBlock(uuid string, blk block.SieveBlock) {
 		logger.Warn("editor: block-update dropped — no shadow", "uuid", uuid, "block", blk.ID)
 		return
 	}
-	shadow.SetBlock(blk)
+	shadow.MergeBlock(blk)
 }
 
 // EnterMarkdown switches the shadow to markdown mode. It derives whole-doc
@@ -294,37 +305,43 @@ func (es *EditorService) Flush(uuid string) error {
 }
 
 func (es *EditorService) flushShadow(shadow *block.ShadowDocument, source string) error {
-	merged := shadow.ContentForSave()
-	doc, err := es.documents.LoadByUUID(shadow.UUID)
-	if err != nil {
-		logger.Warn("editor: flush load failed", "uuid", shadow.UUID, "source", source, "err", err)
-		return err
-	}
-	// DATA-LOSS GUARD: never overwrite a non-empty document with empty content.
-	// Empty `merged` here means a failed serialize (deriveMarkdown returns "" on a
-	// codec error) or a transient empty markdown-mode buffer — NOT a user genuinely
-	// clearing the doc through the tree. Refuse the save so the on-disk content
-	// survives; the next good flush persists normally.
-	if strings.TrimSpace(merged) == "" && strings.TrimSpace(string(doc.Body())) != "" {
-		logger.Warn("editor: REFUSED empty overwrite of non-empty doc (failed serialize/roundtrip)", "uuid", shadow.UUID, "source", source)
+	// Serialize whole-document writes per shadow: concurrent flushes (a background
+	// job / the debounce timer / Close) otherwise race the store's shared buffer.
+	// The slow disk I/O runs under flushMu only — the brief tree snapshot
+	// (ContentForSave) takes the shadow's mu, so editing is not blocked by saves.
+	return shadow.WithFlushLock(func() error {
+		merged := shadow.ContentForSave()
+		doc, err := es.documents.LoadByUUID(shadow.UUID)
+		if err != nil {
+			logger.Warn("editor: flush load failed", "uuid", shadow.UUID, "source", source, "err", err)
+			return err
+		}
+		// DATA-LOSS GUARD: never overwrite a non-empty document with empty content.
+		// Empty `merged` here means a failed serialize (deriveMarkdown returns "" on a
+		// codec error) or a transient empty markdown-mode buffer — NOT a user genuinely
+		// clearing the doc through the tree. Refuse the save so the on-disk content
+		// survives; the next good flush persists normally.
+		if strings.TrimSpace(merged) == "" && strings.TrimSpace(string(doc.Body())) != "" {
+			logger.Warn("editor: REFUSED empty overwrite of non-empty doc (failed serialize/roundtrip)", "uuid", shadow.UUID, "source", source)
+			return nil
+		}
+		doc.SetBody([]byte(merged))
+		if _, err = es.documents.Save(doc); err != nil {
+			logger.Warn("editor: flush save failed", "uuid", shadow.UUID, "source", source, "err", err)
+			return err
+		}
+		logger.Info("editor: saved", "uuid", shadow.UUID, "source", source, "bytes", len(merged))
+		// Post the saved event on EVERY successful save — not just the debounce path.
+		// flushShadow is the single chokepoint every saver funnels through (Flush,
+		// the debounce closure, FlushAll, applyJobUpdate, PromoteBlock), so notifying
+		// here makes "the frontend hears about the save" a property of the save itself.
+		// The data-loss-guard early-return above does NOT reach here, so a refused
+		// (non-)save correctly posts nothing.
+		if ns := shadow.GetNotifySaved(); ns != nil {
+			ns()
+		}
 		return nil
-	}
-	doc.SetBody([]byte(merged))
-	if _, err = es.documents.Save(doc); err != nil {
-		logger.Warn("editor: flush save failed", "uuid", shadow.UUID, "source", source, "err", err)
-		return err
-	}
-	logger.Info("editor: saved", "uuid", shadow.UUID, "source", source, "bytes", len(merged))
-	// Post the saved event on EVERY successful save — not just the debounce path.
-	// flushShadow is the single chokepoint every saver funnels through (Flush,
-	// the debounce closure, FlushAll, applyJobUpdate, PromoteBlock), so notifying
-	// here makes "the frontend hears about the save" a property of the save itself.
-	// The data-loss-guard early-return above does NOT reach here, so a refused
-	// (non-)save correctly posts nothing.
-	if ns := shadow.GetNotifySaved(); ns != nil {
-		ns()
-	}
-	return nil
+	})
 }
 
 // ReloadFromDisk replaces the open shadow's content with the on-disk document,
@@ -517,34 +534,35 @@ func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []blo
 	return es.createBlockWithID(uuid, kind, blockID, overrides, index)
 }
 
-// HandleBlockUpdate processes a block-update from the client: merges the user's
-// attr patch into the shadow, then calls OnChange on the processor so it can
-// react synchronously (e.g. re-run heuristics). Any resulting async work is
-// dispatched automatically if the block status is set to PENDING.
-func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map[string]interface{}) {
-	sieveBlock := block.SieveBlock{
-		ID:    blockID,
-		Kind:  kind,
-		Attrs: attrs,
-	}
-	es.UpdateBlock(uuid, sieveBlock)
-
-	processor := block.GetProcessor(kind)
-	if processor == nil {
-		return
-	}
-
+// applyBlockUpdate is THE uniform update path, run identically for every kind
+// (prose/code/diagram/log): merge the patch into the live tree (attrs additive,
+// aliases replaced when present), let the processor react via OnChange, notify the
+// client with the merged result, and dispatch any job the change moved to PENDING.
+// The per-kind behaviour lives entirely in the processor (OnChange/RunJob) — this
+// orchestration never branches on kind. Reached only through HandleBlockOp's
+// update-block case (block-op is the single granular mutation path).
+func (es *EditorService) applyBlockUpdate(uuid string, op block.BlockOp) error {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
 	if shadow == nil {
-		return
+		return fmt.Errorf("update-block: no open document for uuid %q", uuid)
 	}
 
-	// Snapshot the current merged state (user patch + existing attrs) for OnChange.
-	snap, ok := shadow.SnapshotBlock(blockID)
+	// Merge the patch (attrs + aliases) into the live tree. Prose's body is just
+	// Attrs["content"], merged like any other key — no kind-special handling.
+	shadow.MergeBlock(block.SieveBlock{ID: op.BlockID, Kind: op.Kind, Attrs: op.Attrs, Aliases: op.Aliases})
+
+	processor := block.GetProcessor(op.Kind)
+	if processor == nil {
+		return nil
+	}
+
+	// Snapshot the merged state (patch + existing attrs) for OnChange, then merge
+	// back only what OnChange itself changed.
+	snap, ok := shadow.SnapshotBlock(op.BlockID)
 	if !ok {
-		return
+		return nil
 	}
 	blkCopy := &block.SieveBlock{ID: snap.ID, Kind: snap.Kind, Attrs: snap.Attrs}
 	attrsBefore := make(map[string]interface{}, len(snap.Attrs))
@@ -554,24 +572,23 @@ func (es *EditorService) HandleBlockUpdate(uuid, kind, blockID string, attrs map
 
 	processor.OnChange(blkCopy)
 
-	// Compute which attrs OnChange changed and merge only those back.
 	attrsChanged := make(map[string]interface{})
 	for k, v := range blkCopy.Attrs {
 		if attrsBefore[k] != v {
 			attrsChanged[k] = v
 		}
 	}
-
 	if len(attrsChanged) > 0 {
-		shadow.SetBlock(block.SieveBlock{ID: blockID, Kind: kind, Attrs: attrsChanged})
+		shadow.MergeBlock(block.SieveBlock{ID: op.BlockID, Kind: op.Kind, Attrs: attrsChanged})
 	}
 
-	// Always notify client so it gets the re-computed serialisedForm and UI updates
-	if blkFinal, okFinal := shadow.SnapshotBlock(blockID); okFinal {
-		es.notifyBlockUpdated(uuid, block.SieveBlock{ID: blockID, Kind: kind, Attrs: blkFinal.Attrs})
+	// Always notify so the client gets the merged + OnChanged attrs.
+	if blkFinal, okFinal := shadow.SnapshotBlock(op.BlockID); okFinal {
+		es.notifyBlockUpdated(uuid, block.SieveBlock{ID: op.BlockID, Kind: op.Kind, Attrs: blkFinal.Attrs})
 	}
 
-	es.DispatchJobIfNeeded(uuid, blockID)
+	es.DispatchJobIfNeeded(uuid, op.BlockID)
+	return nil
 }
 
 // DispatchJobIfNeeded checks if the block has status PENDING. If so, it transitions the block
@@ -628,7 +645,7 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 	}
 
 	if len(updates) > 0 {
-		shadow.SetBlock(block.SieveBlock{ID: blockID, Kind: kind, Attrs: updates})
+		shadow.MergeBlock(block.SieveBlock{ID: blockID, Kind: kind, Attrs: updates})
 	}
 	for _, k := range deletes {
 		shadow.DeleteBlockAttr(blockID, k)

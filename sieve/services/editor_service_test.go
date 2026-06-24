@@ -5,9 +5,43 @@ import (
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+// Concurrent flushes of the SAME document must not race on the shared store buffer.
+// flushShadow does Load -> SetBody -> Save; the store hands back a shared storable
+// per uuid, so two overlapping flushes (background job / debounce / close) collide.
+// Serialized by ShadowDocument.WithFlushLock. The assertion is the -race detector:
+// red under `go test -race` before the fix, clean after.
+func TestEditorService_ConcurrentFlush_NoRace(t *testing.T) {
+	resetRegistry()
+	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+
+	doc, _ := ds.New()
+	doc.SetBody([]byte("# Doc\n\n```code\nid: co-1\nsource: x = 1\nstatus: COMPLETE\n```"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+	if err := es.Open(uuid, nil); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer es.Close(uuid)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 10; j++ {
+				_ = es.Flush(uuid)
+			}
+		}()
+	}
+	wg.Wait()
+}
 
 // A structured create-block op must land the block AT its index, not appended —
 // the single positioned create path (toolbar/AI/extract all ride this). Regression:
@@ -495,86 +529,63 @@ func (l *mockLifecycleListener) OnBlockUpdated(uuid, blockID string, attrs map[s
 	}
 }
 
-func TestHandleBlockUpdate_notifySendsSnapshotUnderLock(t *testing.T) {
+func TestHandleBlockOp_updateNotifySendsMergedSnapshotUnderLock(t *testing.T) {
 	resetRegistry()
 	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
 
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
 
-	var notifyID string
-	var notifySource string
-	notifyCalled := make(chan struct{}, 1)
 	const goMarker = "package main"
-
-	listener := &mockLifecycleListener{
-		// The notify carries the merged attrs snapshot captured under lock — observe
-		// the just-updated source landing in it (no markdown/serialised form on the
-		// wire). A torn read would not carry the committed source.
-		onUpdated: func(uuid, blockID string, attrs map[string]interface{}) {
+	type notifyEvent struct{ id, source string }
+	notifies := make(chan notifyEvent, 8)
+	es.SetLifecycleListener(&mockLifecycleListener{
+		onUpdated: func(_, blockID string, attrs map[string]interface{}) {
 			if src, _ := attrs["source"].(string); strings.Contains(src, goMarker) {
-				notifyID = blockID
-				notifySource = src
 				select {
-				case notifyCalled <- struct{}{}:
+				case notifies <- notifyEvent{blockID, src}:
 				default:
 				}
 			}
 		},
-	}
-	es.SetLifecycleListener(listener)
-
-	doc, _ := ds.New()
-	doc.SetBody([]byte("# Hello"))
-	doc, _ = ds.Save(doc)
-	uuid := doc.UUID()
-	_ = es.Open(uuid, nil)
-
-	// Create a code block, then update its source. The notify after the update
-	// must carry the merged snapshot (captured under the shadow lock) — i.e. the
-	// new source — proving notify never reads a torn/partial block state.
-	id, _, err := es.CreateBlock(uuid, "code", map[string]interface{}{
-		"source": "x",
-	}, -1)
-	if err != nil {
-		t.Fatalf("CreateBlock: %v", err)
-	}
-
-	goSource := "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(\"hello\") }"
-	es.HandleBlockUpdate(uuid, "code", id, map[string]interface{}{
-		"source": goSource,
 	})
 
+	// Seed an already-COMPLETE code block so the update under test is the ONLY
+	// mutation — no create-job, hence no background flusher. (The old test created a
+	// PENDING block, whose async job flushed concurrently with the test's own flush:
+	// that exposed a genuine — but PRE-EXISTING and separate — concurrent-flushShadow
+	// race, and made this test flaky. A unit test of the update path must not depend
+	// on an incidental job; isolating it is the fix.)
+	doc, _ := ds.New()
+	doc.SetBody([]byte("```code\nid: co-1\nsource: x\nlanguage: go\nstatus: COMPLETE\n```"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+	if err := es.Open(uuid, nil); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer es.Close(uuid)
+
+	// Update the source through the SINGLE mutation path (block-op update-block). The
+	// notify must carry the merged snapshot captured under the shadow lock — the new
+	// source — proving notify never reads a torn/partial block state.
+	goSource := "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(\"hello\") }"
+	if err := es.HandleBlockOp(uuid, block.BlockOp{
+		Type: "update-block", BlockID: "co-1", Kind: "code",
+		Attrs: map[string]interface{}{"source": goSource},
+	}); err != nil {
+		t.Fatalf("HandleBlockOp update: %v", err)
+	}
+
 	select {
-	case <-notifyCalled:
-		// notify was invoked synchronously by the OnChange heuristic path
-	case <-time.After(2 * time.Second):
-		t.Fatal("notify was not called within 2s")
-	}
-
-	if notifyID != id {
-		t.Errorf("expected notify block id=%q, got %q", id, notifyID)
-	}
-	if !strings.Contains(notifySource, goMarker) {
-		t.Errorf("expected notify attrs to carry the updated source, got %q", notifySource)
-	}
-
-	// Wait for background RunJob to complete so the temp dir cleanup doesn't race
-	for i := 0; i < 50; i++ {
-		es.mu.Lock()
-		shadow := es.shadows[uuid]
-		es.mu.Unlock()
-		if shadow != nil {
-			blk, ok := shadow.SnapshotBlock(id)
-			status := ""
-			if ok {
-				status, _ = blk.Attrs["status"].(string)
-			}
-			if status == block.BlockStatusError || status == block.BlockStatusComplete {
-				break
-			}
+	case ev := <-notifies:
+		if ev.id != "co-1" {
+			t.Errorf("notify block id = %q, want co-1", ev.id)
 		}
-		time.Sleep(10 * time.Millisecond)
+		if !strings.Contains(ev.source, goMarker) {
+			t.Errorf("notify did not carry the merged source: %q", ev.source)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("update did not notify within 2s")
 	}
 }
 
@@ -645,7 +656,7 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 			es.mu.Lock()
 			shadow := es.shadows[uuid]
 			es.mu.Unlock()
-			shadow.SetBlock(block.SieveBlock{ID: blockID, Attrs: map[string]interface{}{"source": "concurrent user edit"}})
+			shadow.MergeBlock(block.SieveBlock{ID: blockID, Attrs: map[string]interface{}{"source": "concurrent user edit"}})
 
 			return nil
 		},

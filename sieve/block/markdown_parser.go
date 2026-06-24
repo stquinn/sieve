@@ -23,26 +23,6 @@ func serializeInlineBlock(block SieveBlock) (string, error) {
 	return fmt.Sprintf("[!%s] %s [!%s-end]", block.Kind, string(b), block.Kind), nil
 }
 
-// ParseFirstBlock parses markdown and returns the first structured (non-prose)
-// SieveBlock found, or nil if the content contains no structured block.
-// Callers use this to unpack clipboard entries whose MIME type signals a Sieve
-// block payload (e.g. "sieve/code", "sieve/diagram", "sieve/log").
-// The DocumentCodec drives recognition via the global registry so the same
-// processors that deserialize documents are reused here — no second parse path.
-func ParseFirstBlock(markdown string) *SieveBlock {
-	codec := NewDocumentCodec(GlobalRegistry())
-	blocks, err := codec.Deserialize(markdown)
-	if err != nil {
-		return nil
-	}
-	for i := range blocks {
-		if blocks[i].Kind != KindProse {
-			return &blocks[i]
-		}
-	}
-	return nil
-}
-
 // FindBlockByID parses markdown and returns the SieveBlock whose ID matches id,
 // or (SieveBlock{}, false) if not found. Used as a fallback in BuildContextForID
 // when the document is in markdown mode and its blocks tree is not populated.
