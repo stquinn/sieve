@@ -516,7 +516,7 @@ func DetectExtractions(sourceKind string, entries []ContentEntry) []ExtractionCa
 			}
 		}
 
-		if pm.Processor.IsSupportedContent(entries).Has(ActionPaste) {
+		if sa := pm.Processor.IsSupportedContent(entries); sa.Has(ActionExtract) || sa.Has(ActionTransform) {
 			candidates = append(candidates, ExtractionCandidate{Kind: pm.Kind})
 		}
 	}

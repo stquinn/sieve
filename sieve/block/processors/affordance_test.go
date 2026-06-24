@@ -25,6 +25,9 @@ func TestCodeProcessor_IsSupportedContent_sieveDiagram_offersPasteAndExtract(t *
 		MIMEType: "sieve/diagram",
 		Content:  `{"diagramType":"mermaid","source":"graph TD;A-->B"}`,
 	}})
+	if !hasAction(got, block.ActionPaste) {
+		t.Fatalf("sieve source should also offer paste, got %v", got.Actions)
+	}
 	if !hasAction(got, block.ActionExtract) {
 		t.Fatalf("sieve source should offer extract, got %v", got.Actions)
 	}
