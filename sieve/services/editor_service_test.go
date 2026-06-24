@@ -5,9 +5,43 @@ import (
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+// Concurrent flushes of the SAME document must not race on the shared store buffer.
+// flushShadow does Load -> SetBody -> Save; the store hands back a shared storable
+// per uuid, so two overlapping flushes (background job / debounce / close) collide.
+// Serialized by ShadowDocument.WithFlushLock. The assertion is the -race detector:
+// red under `go test -race` before the fix, clean after.
+func TestEditorService_ConcurrentFlush_NoRace(t *testing.T) {
+	resetRegistry()
+	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+
+	doc, _ := ds.New()
+	doc.SetBody([]byte("# Doc\n\n```code\nid: co-1\nsource: x = 1\nstatus: COMPLETE\n```"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+	if err := es.Open(uuid, nil); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer es.Close(uuid)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 10; j++ {
+				_ = es.Flush(uuid)
+			}
+		}()
+	}
+	wg.Wait()
+}
 
 // A structured create-block op must land the block AT its index, not appended —
 // the single positioned create path (toolbar/AI/extract all ride this). Regression:

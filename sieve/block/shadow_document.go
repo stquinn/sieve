@@ -30,8 +30,13 @@ type ShadowDocument struct {
 	debounce     time.Duration
 	closed       bool // set by StopDebounce; prevents re-arming after Close
 	mu           sync.Mutex
-	timer        *time.Timer
-	onFlush      func()
+	// flushMu serializes whole-document writes (WithFlushLock). It is SEPARATE from
+	// mu so a flush's disk I/O does not block tree mutations (which take mu): the
+	// slow part runs under flushMu only, the brief tree snapshot under mu. Scoped to
+	// the shadow's lifetime, so per-document serialization needs no external map.
+	flushMu sync.Mutex
+	timer   *time.Timer
+	onFlush func()
 	// notifySaved is invoked after each successful debounce flush (flush-ack to
 	// the WS client). It is rewired when an already-open shadow is reused by a
 	// later Open (idempotent Open), so the debounce closure reads it live.
@@ -177,6 +182,19 @@ func (s *ShadowDocument) ContentForSave() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.deriveMarkdown()
+}
+
+// WithFlushLock runs fn holding the document's flush lock, serializing whole-document
+// writes for this shadow against each other (the debounce, an explicit Flush, Close,
+// and a background job's flush all funnel through here). The shadow owns *serializing*
+// a flush — like it owns mu for tree ops — while the caller supplies *what* the flush
+// does (the store I/O lives in EditorService; block must not depend on the store). fn
+// may take mu itself (e.g. ContentForSave): flushMu is a distinct lock, so no
+// reentrancy, and the slow I/O never blocks tree mutations.
+func (s *ShadowDocument) WithFlushLock(fn func() error) error {
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
+	return fn()
 }
 
 // ApplyOp applies a granular block mutation to the live tree, taking s.mu and

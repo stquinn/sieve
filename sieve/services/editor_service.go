@@ -305,37 +305,43 @@ func (es *EditorService) Flush(uuid string) error {
 }
 
 func (es *EditorService) flushShadow(shadow *block.ShadowDocument, source string) error {
-	merged := shadow.ContentForSave()
-	doc, err := es.documents.LoadByUUID(shadow.UUID)
-	if err != nil {
-		logger.Warn("editor: flush load failed", "uuid", shadow.UUID, "source", source, "err", err)
-		return err
-	}
-	// DATA-LOSS GUARD: never overwrite a non-empty document with empty content.
-	// Empty `merged` here means a failed serialize (deriveMarkdown returns "" on a
-	// codec error) or a transient empty markdown-mode buffer — NOT a user genuinely
-	// clearing the doc through the tree. Refuse the save so the on-disk content
-	// survives; the next good flush persists normally.
-	if strings.TrimSpace(merged) == "" && strings.TrimSpace(string(doc.Body())) != "" {
-		logger.Warn("editor: REFUSED empty overwrite of non-empty doc (failed serialize/roundtrip)", "uuid", shadow.UUID, "source", source)
+	// Serialize whole-document writes per shadow: concurrent flushes (a background
+	// job / the debounce timer / Close) otherwise race the store's shared buffer.
+	// The slow disk I/O runs under flushMu only — the brief tree snapshot
+	// (ContentForSave) takes the shadow's mu, so editing is not blocked by saves.
+	return shadow.WithFlushLock(func() error {
+		merged := shadow.ContentForSave()
+		doc, err := es.documents.LoadByUUID(shadow.UUID)
+		if err != nil {
+			logger.Warn("editor: flush load failed", "uuid", shadow.UUID, "source", source, "err", err)
+			return err
+		}
+		// DATA-LOSS GUARD: never overwrite a non-empty document with empty content.
+		// Empty `merged` here means a failed serialize (deriveMarkdown returns "" on a
+		// codec error) or a transient empty markdown-mode buffer — NOT a user genuinely
+		// clearing the doc through the tree. Refuse the save so the on-disk content
+		// survives; the next good flush persists normally.
+		if strings.TrimSpace(merged) == "" && strings.TrimSpace(string(doc.Body())) != "" {
+			logger.Warn("editor: REFUSED empty overwrite of non-empty doc (failed serialize/roundtrip)", "uuid", shadow.UUID, "source", source)
+			return nil
+		}
+		doc.SetBody([]byte(merged))
+		if _, err = es.documents.Save(doc); err != nil {
+			logger.Warn("editor: flush save failed", "uuid", shadow.UUID, "source", source, "err", err)
+			return err
+		}
+		logger.Info("editor: saved", "uuid", shadow.UUID, "source", source, "bytes", len(merged))
+		// Post the saved event on EVERY successful save — not just the debounce path.
+		// flushShadow is the single chokepoint every saver funnels through (Flush,
+		// the debounce closure, FlushAll, applyJobUpdate, PromoteBlock), so notifying
+		// here makes "the frontend hears about the save" a property of the save itself.
+		// The data-loss-guard early-return above does NOT reach here, so a refused
+		// (non-)save correctly posts nothing.
+		if ns := shadow.GetNotifySaved(); ns != nil {
+			ns()
+		}
 		return nil
-	}
-	doc.SetBody([]byte(merged))
-	if _, err = es.documents.Save(doc); err != nil {
-		logger.Warn("editor: flush save failed", "uuid", shadow.UUID, "source", source, "err", err)
-		return err
-	}
-	logger.Info("editor: saved", "uuid", shadow.UUID, "source", source, "bytes", len(merged))
-	// Post the saved event on EVERY successful save — not just the debounce path.
-	// flushShadow is the single chokepoint every saver funnels through (Flush,
-	// the debounce closure, FlushAll, applyJobUpdate, PromoteBlock), so notifying
-	// here makes "the frontend hears about the save" a property of the save itself.
-	// The data-loss-guard early-return above does NOT reach here, so a refused
-	// (non-)save correctly posts nothing.
-	if ns := shadow.GetNotifySaved(); ns != nil {
-		ns()
-	}
-	return nil
+	})
 }
 
 // ReloadFromDisk replaces the open shadow's content with the on-disk document,
