@@ -7,7 +7,7 @@ import (
 type mockProcessor struct {
 	FencedSerializer
 	FencedDeserializer
-	isBlockFn   func([]ContentEntry) bool
+	actionsFn   func([]ContentEntry) SupportedActions
 	transformFn func([]ContentEntry) map[string]interface{}
 }
 
@@ -24,13 +24,13 @@ func (p *mockProcessor) InitAttrs(id string, overrides map[string]interface{}) m
 	}
 	return attrs
 }
-func (p *mockProcessor) IsBlock(entries []ContentEntry) bool {
-	if p.isBlockFn != nil {
-		return p.isBlockFn(entries)
+func (p *mockProcessor) IsSupportedContent(entries []ContentEntry) SupportedActions {
+	if p.actionsFn != nil {
+		return p.actionsFn(entries)
 	}
-	return false
+	return SupportedActions{}
 }
-func (p *mockProcessor) Transform(entries []ContentEntry, _ string, _ string) map[string]interface{} {
+func (p *mockProcessor) Transform(entries []ContentEntry, _ string, _ string, action Action) map[string]interface{} {
 	if p.transformFn != nil {
 		return p.transformFn(entries)
 	}
@@ -64,13 +64,13 @@ func TestPasteMatchers_firstMatchWins(t *testing.T) {
 	ResetRegistry()
 	specific := &mockProcessor{
 		FencedDeserializer: FencedDeserializer{Kind: "specific"},
-		isBlockFn: func(entries []ContentEntry) bool {
+		actionsFn: func(entries []ContentEntry) SupportedActions {
 			for _, e := range entries {
 				if e.MIMEType == "text/plain" && e.Content == "target" {
-					return true
+					return SupportedActions{Kind: "specific", Actions: []Action{ActionPaste}}
 				}
 			}
-			return false
+			return SupportedActions{Kind: "specific"}
 		},
 		transformFn: func(entries []ContentEntry) map[string]interface{} {
 			return map[string]interface{}{"winner": "specific"}
@@ -78,7 +78,7 @@ func TestPasteMatchers_firstMatchWins(t *testing.T) {
 	}
 	general := &mockProcessor{
 		FencedDeserializer: FencedDeserializer{Kind: "general"},
-		isBlockFn:          func(_ []ContentEntry) bool { return true },
+		actionsFn:          func(_ []ContentEntry) SupportedActions { return SupportedActions{Kind: "general", Actions: []Action{ActionPaste}} },
 		transformFn: func(_ []ContentEntry) map[string]interface{} {
 			return map[string]interface{}{"winner": "general"}
 		},
@@ -91,8 +91,8 @@ func TestPasteMatchers_firstMatchWins(t *testing.T) {
 	registryMu.RUnlock()
 
 	for _, pm := range matchers {
-		if pm.Processor.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "target"}}) {
-			overrides := pm.Processor.Transform([]ContentEntry{{MIMEType: "text/plain", Content: "target"}}, "", "")
+		if pm.Processor.IsSupportedContent([]ContentEntry{{MIMEType: "text/plain", Content: "target"}}).Has(ActionPaste) {
+			overrides := pm.Processor.Transform([]ContentEntry{{MIMEType: "text/plain", Content: "target"}}, "", "", ActionPaste)
 			if overrides["winner"] != "specific" {
 				t.Errorf("expected specific to win, got %v", overrides["winner"])
 			}
@@ -110,31 +110,31 @@ func TestFirstPasteMatch_selfKindBeatsUpgrade(t *testing.T) {
 	// diagram: registered first, claims anything mermaid (sieve/code w/ mermaid OR raw text).
 	diagram := &mockProcessor{
 		FencedDeserializer: FencedDeserializer{Kind: "diagram"},
-		isBlockFn: func(entries []ContentEntry) bool {
+		actionsFn: func(entries []ContentEntry) SupportedActions {
 			for _, e := range entries {
 				if e.MIMEType == "sieve/diagram" {
-					return true
+					return SupportedActions{Kind: "diagram", Actions: []Action{ActionPaste}}
 				}
 				if k, attrs, ok := e.SieveAttrs(); ok && k == "code" && attrs["language"] == "mermaid" {
-					return true // "upgrade" a mermaid code block to a diagram
+					return SupportedActions{Kind: "diagram", Actions: []Action{ActionPaste}} // "upgrade" a mermaid code block to a diagram
 				}
 				if e.MIMEType == "text/plain" && e.Content == "graph TD; A-->B" {
-					return true // raw mermaid text → diagram
+					return SupportedActions{Kind: "diagram", Actions: []Action{ActionPaste}} // raw mermaid text → diagram
 				}
 			}
-			return false
+			return SupportedActions{Kind: "diagram"}
 		},
 	}
 	// code: claims its own sieve/code view.
 	code := &mockProcessor{
 		FencedDeserializer: FencedDeserializer{Kind: "code"},
-		isBlockFn: func(entries []ContentEntry) bool {
+		actionsFn: func(entries []ContentEntry) SupportedActions {
 			for _, e := range entries {
 				if k, _, ok := e.SieveAttrs(); ok && k == "code" {
-					return true
+					return SupportedActions{Kind: "code", Actions: []Action{ActionPaste}}
 				}
 			}
-			return false
+			return SupportedActions{Kind: "code"}
 		},
 	}
 	RegisterProcessor(diagram)

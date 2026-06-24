@@ -53,10 +53,10 @@ func (p *SmartCardProcessor) InitAttrs(id string, overrides map[string]interface
 	return attrs
 }
 
-func (p *SmartCardProcessor) IsBlock(entries []block.ContentEntry) bool {
+func (p *SmartCardProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionExtract}}
 		}
 		trimmed := strings.TrimSpace(e.Content)
 		if trimmed == "" || strings.ContainsAny(trimmed, " \t\n\r") {
@@ -68,12 +68,12 @@ func (p *SmartCardProcessor) IsBlock(entries []block.ContentEntry) bool {
 		if isImageURL(trimmed) {
 			continue
 		}
-		return true
+		return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionTransform}}
 	}
-	return false
+	return block.SupportedActions{Kind: p.Kind()}
 }
 
-func (p *SmartCardProcessor) Transform(entries []block.ContentEntry, uuid, blockID string) map[string]interface{} {
+func (p *SmartCardProcessor) Transform(entries []block.ContentEntry, uuid, blockID string, action block.Action) map[string]interface{} {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
 			return e.AsAttrsForNewBlock(p)

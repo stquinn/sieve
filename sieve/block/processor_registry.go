@@ -90,6 +90,36 @@ const (
 	BlockModeProse  BlockMode = "prose" // content + <!--s:ID--> markers, owned by ProseProcessor
 )
 
+// Action is an operation a processor can perform on a set of ContentEntry views.
+// Recognition (IsSupportedContent) enumerates the actions an entry set supports,
+// context-blind; each endpoint filters for the action it cares about (smart-paste →
+// ActionPaste; extract menu → ActionExtract/ActionTransform).
+type Action string
+
+const (
+	ActionPaste     Action = "paste"     // clipboard/source content -> new block
+	ActionExtract   Action = "extract"   // additive: new block alongside (source survives)
+	ActionTransform Action = "transform" // replace the source block in place
+)
+
+// SupportedActions is one processor's offer for a set of entries: its Kind plus the
+// operations it supports. Empty Actions == "this kind cannot be built from these
+// entries" (the old IsBlock==false). The registry composes a []SupportedActions.
+type SupportedActions struct {
+	Kind    string   `json:"kind"`
+	Actions []Action `json:"actions"`
+}
+
+// Has reports whether this offer includes action a.
+func (s SupportedActions) Has(a Action) bool {
+	for _, x := range s.Actions {
+		if x == a {
+			return true
+		}
+	}
+	return false
+}
+
 // KindProse is the prose kind name. It lives with the registry/kind constants, NOT
 // in the kind-agnostic data model. Parsing never branches on it (that is
 // ProseProcessor.Accepts + orderedProseLast); it remains only because prose names
@@ -132,7 +162,7 @@ type BlockLifecycleListener interface {
 //
 // The methods fall into lifecycle phases:
 //
-//   - Recognition & creation (paste + extract): IsBlock, Transform, InitAttrs
+//   - Recognition & creation (paste + extract): IsSupportedContent, Transform, InitAttrs
 //   - Async work after creation:                RunJob, JobLabel
 //   - Reaction to user edits:                   OnChange
 //   - Identity:                                 Mode
@@ -146,23 +176,25 @@ type BlockLifecycleListener interface {
 // plus the framework's universal "sieve/<kind>" view carrying the source block's
 // attrs as a JSON map (decode with ContentEntry.SieveAttrs). The flow is:
 //
-//  1. IsBlock(entries) — pure predicate: "can a block of MY kind be built from these
-//     views?" Used by FirstPasteMatch (paste) and DetectExtractions (the Extract
-//     menu). It must be side-effect free and order-independent (any matching entry
-//     wins). Typed "sieve/<kind>" views should be preferred over loose text so a
-//     diagram is not mistaken for plain code.
-//  2. Transform(entries, uuid, blockID) — runs ONLY on the chosen processor, on
-//     both the paste and extract paths. It distils the entries into the attr
+//  1. IsSupportedContent(entries) — enumerates the operations a block of MY kind
+//     supports for these views. Empty Actions == no match. Used by FirstPasteMatch
+//     (paste) and DetectExtractions (the Extract menu). It must be side-effect free
+//     and order-independent (any matching entry wins). Typed "sieve/<kind>" views
+//     should be preferred over loose text so a diagram is not mistaken for plain code.
+//  2. Transform(entries, uuid, blockID, action) — runs ONLY on the chosen processor,
+//     on both the paste and extract paths. It distils the entries into the attr
 //     *overrides* that seed the new block, and performs any synchronous, id-keyed
 //     side effects. When a view spans more than one entry, prefer the typed
 //     "sieve/<kind>" view (it wins over generic text heuristics). Parameters:
-//     • entries — the same views handed to IsBlock.
+//     • entries — the same views handed to IsSupportedContent.
 //     • uuid    — the document/tab this block is being created in (asset scope).
 //     • blockID — the *pre-allocated id of the new block*. It is minted by
 //     GenerateBlockIDFor(kind) BEFORE Transform precisely so Transform can key
 //     side effects to it — e.g. smart-image writes the SVG/asset file under this
 //     id, so the asset filename and the block share identity. The framework then
 //     creates the block with this exact id and these overrides.
+//     • action  — the operation chosen by the caller (ActionPaste/Extract/Transform);
+//     a processor reads it only if its overrides differ by operation.
 //     Return nil to decline (extract reports an error; paste falls through).
 //  3. InitAttrs(id, overrides) — builds the canonical attr map for a fresh block of
 //     this kind: sets defaults (status, createdAt, kind-specific fields), then layers
@@ -178,14 +210,16 @@ type BlockProcessor interface {
 	// InitAttrs returns the full attr map for a new block of this kind: kind
 	// defaults plus the Transform overrides, with id pinned (not overridable).
 	InitAttrs(id string, overrides map[string]interface{}) map[string]interface{}
-	// IsBlock reports whether a block of this kind can be built from these content
-	// views. Side-effect free, order-independent; drives paste-match and the Extract
-	// menu. See the interface doc for the entry/views model.
-	IsBlock(entries []ContentEntry) bool
+	// IsSupportedContent enumerates the operations a block of this kind supports for
+	// these content views, context-blind. Empty Actions == no match. Side-effect free,
+	// order-independent. Drives paste-match and the extract menu. See the interface doc.
+	IsSupportedContent(entries []ContentEntry) SupportedActions
 	// Transform distils the matched entries into attr overrides for the new block,
-	// doing any synchronous id-keyed side effects. blockID is the pre-allocated id of
-	// the block being created (see the interface doc). Returns nil to decline.
-	Transform(entries []ContentEntry, uuid string, blockID string) map[string]interface{}
+	// doing any synchronous id-keyed side effects. blockID is the pre-allocated id.
+	// action is the operation chosen by the caller (ActionPaste/Extract/Transform);
+	// a processor reads it only if its overrides differ by operation (e.g. prose embed).
+	// Returns nil to decline.
+	Transform(entries []ContentEntry, uuid string, blockID string, action Action) map[string]interface{}
 	// RunJob performs this kind's async post-create work (AI describe, language
 	// refine, image localise). jctx carries an immutable doc snapshot and a notify
 	// func for mid-job attr pushes.
@@ -441,7 +475,7 @@ func FirstPasteMatch(entries []ContentEntry) (kind string, processor BlockProces
 			continue
 		}
 		for i := range pasteMatchers {
-			if pasteMatchers[i].Kind == k && pasteMatchers[i].Processor.IsBlock(entries) {
+			if pasteMatchers[i].Kind == k && pasteMatchers[i].Processor.IsSupportedContent(entries).Has(ActionPaste) {
 				return pasteMatchers[i].Kind, pasteMatchers[i].Processor, true
 			}
 		}
@@ -454,11 +488,11 @@ func FirstPasteMatch(entries []ContentEntry) (kind string, processor BlockProces
 			proseIdx = i // defer prose to last
 			continue
 		}
-		if pasteMatchers[i].Processor.IsBlock(entries) {
+		if pasteMatchers[i].Processor.IsSupportedContent(entries).Has(ActionPaste) {
 			return pasteMatchers[i].Kind, pasteMatchers[i].Processor, true
 		}
 	}
-	if proseIdx >= 0 && pasteMatchers[proseIdx].Processor.IsBlock(entries) {
+	if proseIdx >= 0 && pasteMatchers[proseIdx].Processor.IsSupportedContent(entries).Has(ActionPaste) {
 		return pasteMatchers[proseIdx].Kind, pasteMatchers[proseIdx].Processor, true
 	}
 	return "", nil, false
@@ -482,7 +516,7 @@ func DetectExtractions(sourceKind string, entries []ContentEntry) []ExtractionCa
 			}
 		}
 
-		if pm.Processor.IsBlock(entries) {
+		if pm.Processor.IsSupportedContent(entries).Has(ActionPaste) {
 			candidates = append(candidates, ExtractionCandidate{Kind: pm.Kind})
 		}
 	}

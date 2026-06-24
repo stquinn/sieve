@@ -604,8 +604,10 @@ func (p *testRunJobProcessor) InitAttrs(id string, overrides map[string]interfac
 	}
 	return attrs
 }
-func (p *testRunJobProcessor) IsBlock(entries []block.ContentEntry) bool { return false }
-func (p *testRunJobProcessor) Transform(entries []block.ContentEntry, _ string, _ string) map[string]interface{} {
+func (p *testRunJobProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
+	return block.SupportedActions{}
+}
+func (p *testRunJobProcessor) Transform(entries []block.ContentEntry, _ string, _ string, action block.Action) map[string]interface{} {
 	return nil
 }
 func (p *testRunJobProcessor) BuildContext(_ block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {

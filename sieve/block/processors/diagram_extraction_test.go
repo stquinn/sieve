@@ -30,7 +30,7 @@ func sieveDiagramEntries(t *testing.T, source string) []block.ContentEntry {
 // missing when serialisedForm was retired and the framework pushed an empty view.
 func TestDiagram_ExtractsAsImage(t *testing.T) {
 	entries := sieveDiagramEntries(t, "graph TD\n  A-->B")
-	if !NewSmartImageProcessor(block.BlockServices{}).IsBlock(entries) {
+	if !NewSmartImageProcessor(block.BlockServices{}).IsSupportedContent(entries).Has(block.ActionPaste) {
 		t.Fatal("smart-image must offer extraction from a sieve/diagram view (Extract as Image)")
 	}
 }
@@ -40,10 +40,10 @@ func TestDiagram_ExtractsAsImage(t *testing.T) {
 func TestDiagram_ExtractsAsCode(t *testing.T) {
 	entries := sieveDiagramEntries(t, "graph TD\n  A-->B")
 	code := NewCodeBlockProcessor(block.BlockServices{})
-	if !code.IsBlock(entries) {
+	if !code.IsSupportedContent(entries).Has(block.ActionPaste) {
 		t.Fatal("code must offer extraction from a sieve/diagram view (Extract as Code)")
 	}
-	got := code.Transform(entries, "", "")
+	got := code.Transform(entries, "", "", block.ActionExtract)
 	if got == nil {
 		t.Fatal("code.Transform returned nil for a diagram view")
 	}
@@ -58,10 +58,10 @@ func TestDiagram_ExtractsAsCode(t *testing.T) {
 // A non-image, non-code target must NOT claim a diagram.
 func TestDiagram_NotACardOrWebClip(t *testing.T) {
 	entries := sieveDiagramEntries(t, "graph TD\n  A-->B")
-	if NewSmartCardProcessor(block.BlockServices{}).IsBlock(entries) {
+	if NewSmartCardProcessor(block.BlockServices{}).IsSupportedContent(entries).Has(block.ActionPaste) {
 		t.Error("smart-card must not claim a diagram view")
 	}
-	if NewWebClipBlockProcessor(block.BlockServices{}).IsBlock(entries) {
+	if NewWebClipBlockProcessor(block.BlockServices{}).IsSupportedContent(entries).Has(block.ActionPaste) {
 		t.Error("web-clip must not claim a diagram view")
 	}
 }
@@ -74,10 +74,10 @@ func TestCodeMermaid_ExtractsAsDiagram(t *testing.T) {
 	entries := []block.ContentEntry{{MIMEType: "sieve/code", Content: string(js)}}
 
 	dia := NewDiagramProcessor(block.BlockServices{})
-	if !dia.IsBlock(entries) {
+	if !dia.IsSupportedContent(entries).Has(block.ActionPaste) {
 		t.Fatal("diagram must recognise a sieve/code view with language mermaid")
 	}
-	got := dia.Transform(entries, "", "")
+	got := dia.Transform(entries, "", "", block.ActionExtract)
 	if got == nil || got["source"] != "graph TD\n  A-->B" {
 		t.Errorf("diagram.Transform: got %v", got)
 	}

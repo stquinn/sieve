@@ -57,18 +57,18 @@ func TestSmartLinkProcessor_InitAttrs_idNotOverridable(t *testing.T) {
 	}
 }
 
-// ── IsBlock + Transform ───────────────────────────────────────────────────────
+// ── IsSupportedContent + Transform ───────────────────────────────────────────
 
 func TestSmartLinkProcessor_IsBlock_httpsURL(t *testing.T) {
 	p := NewSmartLinkProcessor(block.BlockServices{})
-	if !p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "https://example.com"}}) {
-		t.Fatal("IsBlock must return true for a plain HTTPS URL")
+	if !p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: "https://example.com"}}).Has(block.ActionPaste) {
+		t.Fatal("IsSupportedContent must offer paste for a plain HTTPS URL")
 	}
 }
 
 func TestSmartLinkProcessor_Transform_httpsURL(t *testing.T) {
 	p := NewSmartLinkProcessor(block.BlockServices{})
-	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: "https://example.com"}}, "", "")
+	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: "https://example.com"}}, "", "", block.ActionPaste)
 	if overrides == nil {
 		t.Fatal("Transform must return non-nil for a plain HTTPS URL")
 	}
@@ -86,29 +86,29 @@ func TestSmartLinkProcessor_Transform_httpsURL(t *testing.T) {
 
 func TestSmartLinkProcessor_IsBlock_httpURL(t *testing.T) {
 	p := NewSmartLinkProcessor(block.BlockServices{})
-	if !p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "http://example.com/path?q=1"}}) {
-		t.Fatal("IsBlock must return true for a plain HTTP URL")
+	if !p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: "http://example.com/path?q=1"}}).Has(block.ActionPaste) {
+		t.Fatal("IsSupportedContent must offer paste for a plain HTTP URL")
 	}
 }
 
 func TestSmartLinkProcessor_IsBlock_multiLine(t *testing.T) {
 	p := NewSmartLinkProcessor(block.BlockServices{})
-	if p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "https://a.com\nhttps://b.com"}}) {
-		t.Error("IsBlock must return false for multi-line content")
+	if p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: "https://a.com\nhttps://b.com"}}).Has(block.ActionPaste) {
+		t.Error("IsSupportedContent must not offer paste for multi-line content")
 	}
 }
 
 func TestSmartLinkProcessor_IsBlock_plainText(t *testing.T) {
 	p := NewSmartLinkProcessor(block.BlockServices{})
-	if p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "just some text"}}) {
-		t.Error("IsBlock must return false for plain text")
+	if p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: "just some text"}}).Has(block.ActionPaste) {
+		t.Error("IsSupportedContent must not offer paste for plain text")
 	}
 }
 
 func TestSmartLinkProcessor_IsBlock_noEntries(t *testing.T) {
 	p := NewSmartLinkProcessor(block.BlockServices{})
-	if p.IsBlock(nil) {
-		t.Error("IsBlock must return false for nil entries")
+	if p.IsSupportedContent(nil).Has(block.ActionPaste) {
+		t.Error("IsSupportedContent must not offer paste for nil entries")
 	}
 }
 

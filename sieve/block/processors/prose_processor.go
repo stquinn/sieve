@@ -89,28 +89,25 @@ func (p *ProseProcessor) InitAttrs(id string, overrides map[string]interface{}) 
 	return attrs
 }
 
-// IsBlock is false: prose is never auto-detected on paste (it is the thing you get
-// when you type, or the explicit target of an extract) — so it never hijacks the
-// paste-matcher chain.
-// IsBlock claims a `sieve/prose` view — a copied prose block carrying its content.
-// Prose is a SPECIFIC matcher (its own sieve/<kind>), NOT a catch-all: it never
-// claims a bare text/* mime, so inline text paste is untouched. Registered LAST
+// IsSupportedContent claims a `sieve/prose` view — a copied prose block carrying its
+// content. Prose is a SPECIFIC matcher (its own sieve/<kind>), NOT a catch-all: it
+// never claims a bare text/* mime, so inline text paste is untouched. Registered LAST
 // (orderedProseLast) so structured kinds claim their own sieve/<kind> first. (A
 // future broadening — claim ANY `sieve/X` so any block converts to prose — keeps the
-// one invariant: never a non-sieve mime.)
-func (p *ProseProcessor) IsBlock(entries []block.ContentEntry) bool {
+// one invariant: never a non-sieve mime.) Broadening to any source is a LATER task.
+func (p *ProseProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste}}
 		}
 	}
-	return false
+	return block.SupportedActions{Kind: p.Kind()}
 }
 
 // Transform turns entries into a prose block's content. A `sieve/prose` view carries
 // its markdown in attrs.content (the slice-paste path); otherwise the entries' raw
 // content is joined (the extract seam — an AI block's table → a prose block).
-func (p *ProseProcessor) Transform(entries []block.ContentEntry, _ string, _ string) map[string]interface{} {
+func (p *ProseProcessor) Transform(entries []block.ContentEntry, _ string, _ string, action block.Action) map[string]interface{} {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
 			return e.AsAttrsForNewBlock(p)

@@ -56,37 +56,33 @@ func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface
 	return attrs
 }
 
-func (p *CodeBlockProcessor) IsBlock(entries []block.ContentEntry) bool {
+func (p *CodeBlockProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
 	for _, e := range entries {
 		m := codeFenceRe.FindStringSubmatch(e.Content)
 		if m != nil {
-			lang := m[1]
-			if lang == "mermaid" {
+			if m[1] == "mermaid" {
 				continue
 			}
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionTransform}}
 		}
-		// A mermaid diagram's source is code — offer to extract it as a code block.
 		if kind, attrs, ok := e.SieveAttrs(); ok && kind == "diagram" {
-			//TODO: examine why we care if the type is mermaid - diagrams - have code... why do we care if mermaid
 			if dt, _ := attrs["diagramType"].(string); dt == "mermaid" {
 				if src, _ := attrs["source"].(string); strings.TrimSpace(src) != "" {
-					return true
+					return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionExtract}}
 				}
 			}
 		}
 		if e.IsSieveType(p) {
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionExtract}}
 		}
 		if _, ok := unfencedCodeContent(e); ok {
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionTransform}}
 		}
-
 	}
-	return false
+	return block.SupportedActions{Kind: p.Kind()}
 }
 
-func (p *CodeBlockProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string) map[string]interface{} {
+func (p *CodeBlockProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string, action block.Action) map[string]interface{} {
 	// A typed sieve/diagram view wins over the generic text heuristics below — a
 	// diagram's raw source could otherwise be claimed as plain code, losing its
 	// mermaid language. Scan for it across all entries first.

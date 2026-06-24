@@ -512,7 +512,7 @@ func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry, 
 		return "", "", "", false
 	}
 	blockID := block.GenerateBlockIDFor(matchKind)
-	overrides := processor.Transform(entries, uuid, blockID)
+	overrides := processor.Transform(entries, uuid, blockID, block.ActionPaste)
 	id, raw, err := es.createBlockWithID(uuid, matchKind, blockID, overrides, nil, index)
 	if err != nil {
 		return "", "", "", false
@@ -531,7 +531,7 @@ func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []blo
 
 	blockID := block.GenerateBlockIDFor(kind)
 	// Execute the transformation (e.g. smart-image saves the file synchronously)
-	overrides := processor.Transform(entries, uuid, blockID)
+	overrides := processor.Transform(entries, uuid, blockID, block.ActionExtract)
 	if overrides == nil {
 		return "", "", fmt.Errorf("extract: processor %q could not transform entries into a block", kind)
 	}

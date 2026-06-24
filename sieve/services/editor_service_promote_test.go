@@ -18,8 +18,10 @@ func (p *testMarkdownProcessor) Kind() string { return p.FencedDeserializer.Kind
 func (p *testMarkdownProcessor) InitAttrs(id string, _ map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{"id": id}
 }
-func (p *testMarkdownProcessor) IsBlock(_ []block.ContentEntry) bool { return false }
-func (p *testMarkdownProcessor) Transform(_ []block.ContentEntry, _, _ string) map[string]interface{} {
+func (p *testMarkdownProcessor) IsSupportedContent(_ []block.ContentEntry) block.SupportedActions {
+	return block.SupportedActions{}
+}
+func (p *testMarkdownProcessor) Transform(_ []block.ContentEntry, _, _ string, action block.Action) map[string]interface{} {
 	return nil
 }
 func (p *testMarkdownProcessor) RunJob(_ block.JobContext) error     { return nil }

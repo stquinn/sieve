@@ -53,27 +53,26 @@ func (p *DiagramProcessor) InitAttrs(id string, overrides map[string]interface{}
 	return attrs
 }
 
-func (p *DiagramProcessor) IsBlock(entries []block.ContentEntry) bool {
+func (p *DiagramProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
 	for _, e := range entries {
 		if mermaidFenceRe.MatchString(e.Content) {
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionTransform}}
 		}
 		if e.IsSieveType(p) {
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionExtract}}
 		}
-		// A code block whose language is mermaid is really a diagram.
 		if kind, attrs, ok := e.SieveAttrs(); ok && kind == "code" {
 			if lang, _ := attrs["language"].(string); lang == "mermaid" {
 				if src, _ := attrs["source"].(string); strings.TrimSpace(src) != "" {
-					return true
+					return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionExtract}}
 				}
 			}
 		}
 	}
-	return false
+	return block.SupportedActions{Kind: p.Kind()}
 }
 
-func (p *DiagramProcessor) Transform(entries []block.ContentEntry, _ string, _ string) map[string]interface{} {
+func (p *DiagramProcessor) Transform(entries []block.ContentEntry, _ string, _ string, action block.Action) map[string]interface{} {
 	for _, e := range entries {
 		m := mermaidFenceRe.FindStringSubmatch(e.Content)
 		if e.IsSieveType(p) {

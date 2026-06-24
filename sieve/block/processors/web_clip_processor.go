@@ -44,24 +44,24 @@ func (p *WebClipBlockProcessor) InitAttrs(id string, overrides map[string]interf
 	return attrs
 }
 
-func (p *WebClipBlockProcessor) IsBlock(entries []block.ContentEntry) bool {
+func (p *WebClipBlockProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionExtract}}
 		}
 		trimmed := strings.TrimSpace(e.Content)
 		if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionTransform}}
 		}
 	}
-	return false
+	return block.SupportedActions{Kind: p.Kind()}
 }
 
 func (p *WebClipBlockProcessor) AllowSelfExtraction() bool {
 	return true
 }
 
-func (p *WebClipBlockProcessor) Transform(entries []block.ContentEntry, uuid, blockID string) map[string]interface{} {
+func (p *WebClipBlockProcessor) Transform(entries []block.ContentEntry, uuid, blockID string, action block.Action) map[string]interface{} {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
 			return e.AsAttrsForNewBlock(p)

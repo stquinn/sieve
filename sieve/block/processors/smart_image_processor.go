@@ -63,44 +63,42 @@ func (p *SmartImageProcessor) InitAttrs(id string, overrides map[string]interfac
 	return attrs
 }
 
-func (p *SmartImageProcessor) IsBlock(entries []block.ContentEntry) bool {
+func (p *SmartImageProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
+	native := []block.Action{block.ActionPaste, block.ActionTransform}
+	sieve := []block.Action{block.ActionPaste, block.ActionExtract}
 	for _, e := range entries {
 		if strings.HasPrefix(e.MIMEType, "image/") && strings.HasPrefix(e.Content, "data:image/") {
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: native}
 		}
-		// Raw SVG rendered locally by the JS frontend (resolveEntries)
 		if e.MIMEType == "image/svg+xml" {
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: native}
 		}
 		if e.MIMEType == "sieve/image" {
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: sieve}
 		}
 		if isImageURL(strings.TrimSpace(e.Content)) {
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: native}
 		}
-		// Mermaid source — JS resolveEntries will render it to SVG before Transform is called
 		if block.MermaidFenceRe.MatchString(e.Content) {
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: native}
 		}
-		// A diagram block extracts to an image: the JS resolveEntries renders its
-		// mermaid source to SVG locally before Transform runs.
 		if kind, attrs, ok := e.SieveAttrs(); ok && kind == "diagram" {
 			if dt, _ := attrs["diagramType"].(string); dt == "mermaid" {
 				if src, _ := attrs["source"].(string); strings.TrimSpace(src) != "" {
-					return true
+					return block.SupportedActions{Kind: p.Kind(), Actions: sieve}
 				}
 			}
 		}
 		if e.MIMEType == "text/html" {
 			if src := extractHTMLImageSrc(e.Content); src != "" && isImageURL(src) {
-				return true
+				return block.SupportedActions{Kind: p.Kind(), Actions: native}
 			}
 		}
 	}
-	return false
+	return block.SupportedActions{Kind: p.Kind()}
 }
 
-func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string) map[string]interface{} {
+func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string, action block.Action) map[string]interface{} {
 	for _, e := range entries {
 		// Base64 data URI (paste from clipboard)
 		if strings.HasPrefix(e.MIMEType, "image/") && strings.HasPrefix(e.Content, "data:image/") {

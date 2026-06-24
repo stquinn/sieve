@@ -80,31 +80,28 @@ func (p *LogProcessor) InitAttrs(id string, overrides map[string]interface{}) ma
 	return attrs
 }
 
-func (p *LogProcessor) IsBlock(entries []block.ContentEntry) bool {
+func (p *LogProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
 	custom := p.customParsers()
 	for _, e := range entries {
-		// Native Sieve Log block
 		if e.IsSieveType(p) {
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionExtract}}
 		}
-		// Code block with language "log" or matching heuristics
 		if kind, attrs, ok := e.SieveAttrs(); ok && kind == "code" {
 			source, _ := attrs["source"].(string)
 			if lang, _ := attrs["language"].(string); lang == "log" && strings.TrimSpace(source) != "" {
-				return true
+				return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionExtract}}
 			}
 			if looksLikeLog(source, custom) {
-				return true
+				return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionExtract}}
 			}
 		}
-		// Raw text that looks like a log
 		if e.MIMEType == "text/plain" {
 			if looksLikeLog(e.Content, custom) {
-				return true
+				return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionTransform}}
 			}
 		}
 	}
-	return false
+	return block.SupportedActions{Kind: p.Kind()}
 }
 
 // customParsers loads the user-configured log parsers from settings (nil-safe).
@@ -115,7 +112,7 @@ func (p *LogProcessor) customParsers() []domain.CustomLogParser {
 	return p.svc.State.LoadSettings().CustomLogParsers
 }
 
-func (p *LogProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string) map[string]interface{} {
+func (p *LogProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string, action block.Action) map[string]interface{} {
 	custom := p.customParsers()
 	for _, e := range entries {
 		if e.IsSieveType(p) {

@@ -21,8 +21,8 @@ func (fakeProc) InitAttrs(id string, o map[string]interface{}) map[string]interf
 	o["id"] = id
 	return o
 }
-func (fakeProc) IsBlock([]ContentEntry) bool                                 { return false }
-func (fakeProc) Transform([]ContentEntry, string, string) map[string]any     { return nil }
+func (fakeProc) IsSupportedContent([]ContentEntry) SupportedActions          { return SupportedActions{} }
+func (fakeProc) Transform([]ContentEntry, string, string, Action) map[string]any { return nil }
 func (fakeProc) RunJob(JobContext) error                                     { return nil }
 func (fakeProc) JobLabel(*SieveBlock) string                                 { return "" }
 func (fakeProc) OnChange(*SieveBlock)                                        {}
