@@ -933,6 +933,19 @@
     var numericPos = (typeof sieveInsertPos === 'number') ? sieveInsertPos : null
     sieveInsertPos = null
 
+    // Insert-if-absent: the backend creates EVERY kind through the one lifecycle and
+    // render-backs uniformly — including prose, whose node the editor already holds
+    // (the user typed it). "Does the editor have this node?" is the client's concern,
+    // not the backend's: if a node with this id is already in the doc, the echo is
+    // redundant — baseline it so the observer never re-creates it, then skip the
+    // insert (a second insert would duplicate the paragraph). An in-place conversion
+    // mints a fresh id, so it is never skipped here.
+    var echoedId = msg.id || parsed.id
+    if (!replaceRange && echoedId && currentEditor.view.dom.querySelector('[data-id="' + echoedId + '"]')) {
+      if (typeof noteServerBlock === 'function') noteServerBlock(echoedId)
+      return
+    }
+
     // Prose IS a block: render the server-created block (prose or structured) to its
     // editor node(s) through the SAME path the document load uses (id-stamped) —
     // never a hand-built node, never a sieve-<kind> assumption.

@@ -213,22 +213,26 @@ func (es *EditorService) UpdateMarkdown(uuid, markdown string) {
 
 // HandleBlockOp applies a granular wire op (create/update/delete/move) to the
 // open document's authoritative block tree. It is THE single mutation path —
-// create/update/delete are not separate messages. A STRUCTURED create-block runs
-// the full create lifecycle (InitAttrs → positioned insert → job dispatch → notify
-// render-back); prose create and every other op apply straight to the tree (prose
-// already exists in the editor; delete/move/update are pure tree mutations).
+// create/update/delete are not separate messages. Create is uniform for EVERY
+// kind (prose included): the one create lifecycle (InitAttrs → positioned insert →
+// job dispatch → render-back). The backend does NOT branch on kind — "the editor
+// already holds this node" is the client's concern (it suppresses the redundant
+// insert: insert-if-absent), not the backend's. delete/move/update are pure tree
+// mutations.
 func (es *EditorService) HandleBlockOp(uuid string, op block.BlockOp) error {
 	switch op.Type {
 	case "create-block":
-		// Structured create runs the full lifecycle (InitAttrs → positioned insert →
-		// job dispatch → render-back insert-block); prose create falls through to a
-		// plain tree insert because the editor already holds the prose node.
-		if op.Kind != "" && op.Kind != block.KindProse {
+		// Every kind-bearing create runs the one lifecycle (InitAttrs → positioned
+		// insert → job dispatch → render-back insert-block). The client ignores a
+		// render-back for a node it already has, so prose needs no special path. A
+		// kind-less op can't run the lifecycle (no processor) — it falls through to
+		// the plain tree insert below.
+		if op.Kind != "" {
 			id := op.BlockID
 			if id == "" {
 				id = block.GenerateBlockIDFor(op.Kind)
 			}
-			_, _, err := es.createBlockWithID(uuid, op.Kind, id, op.Attrs, op.Index)
+			_, _, err := es.createBlockWithID(uuid, op.Kind, id, op.Attrs, op.Aliases, op.Index)
 			return err
 		}
 	case "update-block":
@@ -415,7 +419,7 @@ func (es *EditorService) SetServices(svc block.BlockServices) {
 // CreateBlock is the canonical block creation path for UI-triggered creation
 // (keyboard shortcut, toolbar button). Generates a fresh block ID.
 func (es *EditorService) CreateBlock(uuid, kind string, overrides map[string]interface{}, index int) (id string, rawYaml string, err error) {
-	return es.createBlockWithID(uuid, kind, block.GenerateBlockIDFor(kind), overrides, index)
+	return es.createBlockWithID(uuid, kind, block.GenerateBlockIDFor(kind), overrides, nil, index)
 }
 
 // createBlockWithID creates a block using a caller-supplied ID at a caller-supplied
@@ -423,15 +427,16 @@ func (es *EditorService) CreateBlock(uuid, kind string, overrides map[string]int
 // is reused. index is the position among top-level blocks; a negative index appends
 // (out-of-range indices clamp to the end). The block is inserted through the SAME
 // create-block op as every other create — no separate append path.
-func (es *EditorService) createBlockWithID(uuid, kind, blockID string, overrides map[string]interface{}, index int) (id string, rawYaml string, err error) {
-	return es.createBlock(uuid, kind, blockID, overrides, index, true)
+func (es *EditorService) createBlockWithID(uuid, kind, blockID string, overrides map[string]interface{}, aliases []string, index int) (id string, rawYaml string, err error) {
+	return es.createBlock(uuid, kind, blockID, overrides, aliases, index, true)
 }
 
 // createBlock is the one creation primitive. notify controls the WS render-back
 // (insert-block): true for single UI-triggered creates (the frontend has no node
 // yet), false for the slice paste (the HTTP response renders the whole batch, so a
-// per-block WS push would double-insert).
-func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[string]interface{}, index int, notify bool) (id string, rawYaml string, err error) {
+// per-block WS push would double-insert). aliases carries the block's lineage when
+// a create op brings it (usually nil — lineage normally accrues via gc/merge).
+func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[string]interface{}, aliases []string, index int, notify bool) (id string, rawYaml string, err error) {
 	defer func() {
 		if err == nil {
 			es.DispatchJobIfNeeded(uuid, id)
@@ -450,11 +455,11 @@ func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[s
 	}
 	id = blockID
 	attrs := processor.InitAttrs(id, overrides)
-	sieveBlock := block.SieveBlock{ID: id, Kind: kind, Attrs: attrs}
+	sieveBlock := block.SieveBlock{ID: id, Kind: kind, Attrs: attrs, Aliases: aliases}
 	if index < 0 {
 		index = 1 << 30 // append: insertBlockAt clamps an out-of-range index to the end
 	}
-	if err = shadow.ApplyOp(block.BlockOp{Type: "create-block", BlockID: id, Kind: kind, Attrs: attrs, Index: index}); err != nil {
+	if err = shadow.ApplyOp(block.BlockOp{Type: "create-block", BlockID: id, Kind: kind, Attrs: attrs, Aliases: aliases, Index: index}); err != nil {
 		return "", "", err
 	}
 	rawYaml, err = fencedblock.SerializeYaml[map[string]interface{}](attrs)
@@ -508,7 +513,7 @@ func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry, 
 	}
 	blockID := block.GenerateBlockIDFor(matchKind)
 	overrides := processor.Transform(entries, uuid, blockID)
-	id, raw, err := es.createBlockWithID(uuid, matchKind, blockID, overrides, index)
+	id, raw, err := es.createBlockWithID(uuid, matchKind, blockID, overrides, nil, index)
 	if err != nil {
 		return "", "", "", false
 	}
@@ -531,7 +536,7 @@ func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []blo
 		return "", "", fmt.Errorf("extract: processor %q could not transform entries into a block", kind)
 	}
 
-	return es.createBlockWithID(uuid, kind, blockID, overrides, index)
+	return es.createBlockWithID(uuid, kind, blockID, overrides, nil, index)
 }
 
 // applyBlockUpdate is THE uniform update path, run identically for every kind
