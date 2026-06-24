@@ -302,6 +302,7 @@ func (h *WsHandler) handleExtract(uuid string, raw []byte, writeMsg func(interfa
 	var p struct {
 		BlockID    string               `json:"blockId"`
 		TargetKind string               `json:"targetKind"`
+		Operation  string               `json:"operation"`
 		Entries    []block.ContentEntry `json:"entries"`
 		Index      int                  `json:"index"`
 	}
@@ -311,7 +312,13 @@ func (h *WsHandler) handleExtract(uuid string, raw []byte, writeMsg func(interfa
 		return
 	}
 
-	newID, rawYaml, err := h.ServiceProvider.Editor.CreateBlockFromEntries(uuid, p.TargetKind, p.Entries, p.Index, block.ActionExtract, p.BlockID)
+	action := block.Action(p.Operation)
+	if action == "" {
+		action = block.ActionExtract // back-compat default: additive
+	}
+
+	newID, rawYaml, err := h.ServiceProvider.Editor.CreateBlockFromEntries(
+		uuid, p.TargetKind, p.Entries, p.Index, action, p.BlockID)
 	if err != nil {
 		logger.Warn("ws: extract block failed", "err", err)
 		writeMsg(map[string]interface{}{
@@ -321,13 +328,16 @@ func (h *WsHandler) handleExtract(uuid string, raw []byte, writeMsg func(interfa
 		return
 	}
 
-	// This is broadcast to the caller so they know to replace their local placeholder.
-	// Other connected clients will receive the standard 'insert-block' from the lifecycle listener.
-	writeMsg(map[string]interface{}{
-		"type":       "block-extracted",
-		"originalId": p.BlockID,
-		"newId":      newID,
-		"newKind":    p.TargetKind,
-		"newYaml":    rawYaml,
-	})
+	// TRANSFORM replaces in place — its render-back goes out via OnBlockReplaced
+	// ("replace-block"). Only the additive ops (paste/extract) need this caller hint
+	// to swap their local placeholder for the newly created block.
+	if action != block.ActionTransform {
+		writeMsg(map[string]interface{}{
+			"type":       "block-extracted",
+			"originalId": p.BlockID,
+			"newId":      newID,
+			"newKind":    p.TargetKind,
+			"newYaml":    rawYaml,
+		})
+	}
 }
