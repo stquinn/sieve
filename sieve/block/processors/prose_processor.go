@@ -20,6 +20,11 @@ type ProseProcessor struct{}
 
 func init() { block.RegisterProcessor(&ProseProcessor{}) }
 
+// NewProseProcessor returns a ProseProcessor. The BlockServices argument is
+// accepted for API consistency with other processor constructors — prose has
+// no service dependencies.
+func NewProseProcessor(_ block.BlockServices) *ProseProcessor { return &ProseProcessor{} }
+
 // IDPrefix mints "pr-…" handles for prose.
 func (p *ProseProcessor) IDPrefix() string { return "pr" }
 
@@ -89,28 +94,45 @@ func (p *ProseProcessor) InitAttrs(id string, overrides map[string]interface{}) 
 	return attrs
 }
 
-// IsSupportedContent claims a `sieve/prose` view — a copied prose block carrying its
-// content. Prose is a SPECIFIC matcher (its own sieve/<kind>), NOT a catch-all: it
-// never claims a bare text/* mime, so inline text paste is untouched. Registered LAST
-// (orderedProseLast) so structured kinds claim their own sieve/<kind> first. (A
-// future broadening — claim ANY `sieve/X` so any block converts to prose — keeps the
-// one invariant: never a non-sieve mime.) Broadening to any source is a LATER task.
+// IsSupportedContent claims any `sieve/<kind>` view — prose is the universal sink.
+// A copied prose block (sieve/prose) round-trips on paste AND can be embedded via
+// transform. Any other sieve block source offers only transform (structured kinds
+// claim their own sieve view first; prose is registered LAST). Never a non-sieve
+// mime: inline text paste is untouched. SieveAttrs() is used (not HasPrefix) so the
+// "sieve/slice" JSON-array entry (which is not a block object) is never matched.
 func (p *ProseProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
-			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste}}
+			// A copied prose block round-trips on paste; embedding prose-in-prose is also a transform.
+			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionTransform}}
+		}
+		if _, _, ok := e.SieveAttrs(); ok {
+			// Any other block source → embed it as prose (the universal sink). Not paste:
+			// structured kinds claim their own sieve view first (registration order).
+			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionTransform}}
 		}
 	}
 	return block.SupportedActions{Kind: p.Kind()}
 }
 
 // Transform turns entries into a prose block's content. A `sieve/prose` view carries
-// its markdown in attrs.content (the slice-paste path); otherwise the entries' raw
-// content is joined (the extract seam — an AI block's table → a prose block).
-func (p *ProseProcessor) Transform(entries []block.ContentEntry, _ string, _ string, action block.Action) map[string]interface{} {
+// its markdown in attrs.content (the slice-paste path). A foreign sieve source is
+// rebuilt and its MarkdownRepresentation is fetched via the registry — prose owns
+// this lookup (the "prose is the universal sink" contract). As a final fallback the
+// entries' raw content is joined (the extract seam — an AI block's table → prose).
+func (p *ProseProcessor) Transform(entries []block.ContentEntry, _ string, _ string, _ block.Action) map[string]interface{} {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
 			return e.AsAttrsForNewBlock(p)
+		}
+		// A foreign sieve source: rebuild it and take its markdown representation.
+		if kind, attrs, ok := e.SieveAttrs(); ok {
+			if proc := block.GetProcessor(kind); proc != nil {
+				src := block.NewSieveBlock(kind, "", attrs)
+				if md := proc.MarkdownRepresentation(src); strings.TrimSpace(md) != "" {
+					return map[string]interface{}{"content": md}
+				}
+			}
 		}
 	}
 	var parts []string

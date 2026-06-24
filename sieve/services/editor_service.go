@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -791,6 +792,9 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	}
 }
 
+// PromoteBlock embeds a block's content as prose, in place. It is now a thin adapter
+// over the generic TRANSFORM-to-prose path: build the source's sieve view entry and ask
+// prose to transform it. Prose owns the MarkdownRepresentation resolve (prose_processor).
 func (es *EditorService) PromoteBlock(uuid, blockID string) error {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
@@ -798,37 +802,18 @@ func (es *EditorService) PromoteBlock(uuid, blockID string) error {
 	if shadow == nil {
 		return fmt.Errorf("no open document")
 	}
-
-	blkCopy, found := shadow.SnapshotBlock(blockID)
+	src, found := shadow.SnapshotBlock(blockID)
 	if !found {
 		return fmt.Errorf("block not found")
 	}
-	processor := block.GetProcessor(blkCopy.Kind)
-	if processor == nil {
-		return fmt.Errorf("processor not found")
+	attrsJSON, err := json.Marshal(src.Attrs)
+	if err != nil {
+		return err
 	}
-
-	plainContent := processor.MarkdownRepresentation(blkCopy)
-	if plainContent == "" {
-		return fmt.Errorf("block cannot be promoted")
+	entries := []block.ContentEntry{{MIMEType: "sieve/" + src.Kind, Content: string(attrsJSON)}}
+	_, _, err = es.CreateBlockFromEntries(uuid, block.GetProcessor("prose").Kind(), entries, 0, block.ActionTransform, blockID)
+	if err != nil {
+		return err
 	}
-
-	// Promote-to-Doc is a Transform-to-Prose: build a prose block carrying the
-	// promoted content and the ORIGINAL id via prose's own InitAttrs (the standard
-	// block-creation flow — no hand-rolled serialization), then replace the
-	// structured block IN PLACE so it keeps its document position. The preserved id
-	// is a like-for-like replacement for the retired [!block] anchor (D-r.7 made
-	// prose carry its own id), so AI ref chains keep resolving.
-	proseProc := block.GetProcessor(block.KindProse)
-	if proseProc == nil {
-		return fmt.Errorf("prose processor not registered")
-	}
-	attrs := proseProc.InitAttrs(blockID, map[string]interface{}{"content": plainContent})
-	if !shadow.ReplaceBlock(blockID, block.SieveBlock{ID: blockID, Kind: block.KindProse, Attrs: attrs}) {
-		return fmt.Errorf("block not found in tree")
-	}
-
-	_ = es.Flush(uuid)
-	es.notifyBlockPromoted(uuid, blockID, plainContent)
-	return nil
+	return es.Flush(uuid)
 }
