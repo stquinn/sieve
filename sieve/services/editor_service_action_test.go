@@ -30,6 +30,8 @@ func newTestEditorServiceWithProseBlock(t *testing.T) (*EditorService, string) {
 	}
 	// Sync the shadow markdown so the tree reflects the body.
 	es.UpdateMarkdown(uuid, body)
+	// Drain any background jobs before TempDir cleanup.
+	t.Cleanup(func() { waitJobs(t, es, uuid) })
 	return es, uuid
 }
 
