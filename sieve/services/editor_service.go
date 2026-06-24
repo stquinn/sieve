@@ -85,6 +85,19 @@ func (es *EditorService) notifyBlockPromoted(uuid, blockID, replacement string) 
 	}
 }
 
+func (es *EditorService) notifyBlockReplaced(uuid, oldID string, blk block.SieveBlock) {
+	es.mu.RLock()
+	l := es.listener
+	es.mu.RUnlock()
+	if l != nil {
+		markdown := ""
+		if processor := block.GetProcessor(blk.Kind); processor != nil {
+			markdown, _ = processor.Serialize(blk)
+		}
+		l.OnBlockReplaced(uuid, oldID, blk.Kind, blk.ID, blk.Attrs, markdown)
+	}
+}
+
 // dispatchedStuckThreshold is how old a DISPATCHED block must be before it is
 // assumed stuck (server crash, OOM) and reset to PENDING on reconnect.
 const dispatchedStuckThreshold = 10 * time.Minute
@@ -520,23 +533,57 @@ func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry, 
 	return matchKind, id, raw, true
 }
 
-// CreateBlockFromEntries is the extraction creation path. It is identical to Paste
-// except the backend skips detection — the frontend explicitly requested this Kind.
-// index is the document position to insert at (negative = append).
-func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []block.ContentEntry, index int) (id, rawYaml string, err error) {
+// CreateBlockFromEntries applies a recognised action. PASTE/EXTRACT create a new block;
+// TRANSFORM replaces sourceID in place (preserving its document position). The frontend
+// posted the operation — the backend does not re-derive it. For TRANSFORM, sourceID is
+// the id of the top-level block being replaced (native nodes are prose blocks with ids).
+func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []block.ContentEntry, index int, action block.Action, sourceID string) (id, rawYaml string, err error) {
 	processor := block.GetProcessor(kind)
 	if processor == nil {
 		return "", "", fmt.Errorf("no processor registered for kind %q", kind)
 	}
 
-	blockID := block.GenerateBlockIDFor(kind)
-	// Execute the transformation (e.g. smart-image saves the file synchronously)
-	overrides := processor.Transform(entries, uuid, blockID, block.ActionExtract)
-	if overrides == nil {
-		return "", "", fmt.Errorf("extract: processor %q could not transform entries into a block", kind)
+	if action == block.ActionTransform {
+		return es.transformInPlace(uuid, kind, processor, entries, sourceID)
 	}
 
+	blockID := block.GenerateBlockIDFor(kind)
+	overrides := processor.Transform(entries, uuid, blockID, action)
+	if overrides == nil {
+		return "", "", fmt.Errorf("%s: processor %q could not transform entries into a block", action, kind)
+	}
 	return es.createBlockWithID(uuid, kind, blockID, overrides, nil, index)
+}
+
+// transformInPlace replaces sourceID with a new block of kind, preserving the source's
+// id and document position (the OpTransform definition). Mirrors PromoteBlock's mechanic
+// but for any target kind.
+func (es *EditorService) transformInPlace(uuid, kind string, processor block.BlockProcessor, entries []block.ContentEntry, sourceID string) (id, rawYaml string, err error) {
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if shadow == nil {
+		return "", "", fmt.Errorf("transform: no open document for uuid %q", uuid)
+	}
+	if sourceID == "" {
+		return "", "", fmt.Errorf("transform: no source block id")
+	}
+	overrides := processor.Transform(entries, uuid, sourceID, block.ActionTransform)
+	if overrides == nil {
+		return "", "", fmt.Errorf("transform: processor %q could not transform entries", kind)
+	}
+	attrs := processor.InitAttrs(sourceID, overrides)
+	newBlock := block.SieveBlock{ID: sourceID, Kind: kind, Attrs: attrs}
+	if !shadow.ReplaceBlock(sourceID, newBlock) {
+		return "", "", fmt.Errorf("transform: source block %q not found", sourceID)
+	}
+	rawYaml, err = fencedblock.SerializeYaml[map[string]interface{}](attrs)
+	if err != nil {
+		return "", "", err
+	}
+	es.notifyBlockReplaced(uuid, sourceID, newBlock)
+	es.DispatchJobIfNeeded(uuid, sourceID)
+	return sourceID, rawYaml, nil
 }
 
 // applyBlockUpdate is THE uniform update path, run identically for every kind

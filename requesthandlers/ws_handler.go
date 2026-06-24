@@ -282,6 +282,23 @@ func (h *WsHandler) OnBlockPromoted(uuid, blockID, replacement string) {
 	}
 }
 
+// OnBlockReplaced implements block.BlockLifecycleListener.
+func (h *WsHandler) OnBlockReplaced(uuid, oldID, newKind, newID string, attrs map[string]interface{}, markdown string) {
+	h.channelsMu.RLock()
+	writeMsg, ok := h.channels[uuid]
+	h.channelsMu.RUnlock()
+	if ok {
+		writeMsg(map[string]interface{}{
+			"type":    "replace-block",
+			"oldId":   oldID,
+			"newId":   newID,
+			"newKind": newKind,
+			"attrs":   attrs,
+			"newYaml": markdown,
+		})
+	}
+}
+
 func (h *WsHandler) handlePromoteBlock(uuid string, raw []byte, writeMsg func(interface{})) {
 	var msg struct {
 		ID string `json:"id"`
@@ -307,7 +324,7 @@ func (h *WsHandler) handleExtract(uuid string, raw []byte, writeMsg func(interfa
 		return
 	}
 
-	newID, rawYaml, err := h.ServiceProvider.Editor.CreateBlockFromEntries(uuid, p.TargetKind, p.Entries, p.Index)
+	newID, rawYaml, err := h.ServiceProvider.Editor.CreateBlockFromEntries(uuid, p.TargetKind, p.Entries, p.Index, block.ActionExtract, p.BlockID)
 	if err != nil {
 		logger.Warn("ws: extract block failed", "err", err)
 		writeMsg(map[string]interface{}{
