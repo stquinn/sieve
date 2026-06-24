@@ -436,10 +436,6 @@ func GenerateBlockIDFor(kind string) string {
 	return GenerateBlockID(kind)
 }
 
-type ExtractionCandidate struct {
-	Kind string `json:"kind"`
-}
-
 type SelfExtractable interface {
 	AllowSelfExtraction() bool
 }
@@ -498,13 +494,14 @@ func FirstPasteMatch(entries []ContentEntry) (kind string, processor BlockProces
 	return "", nil, false
 }
 
-// DetectExtractions finds which registered blocks can handle the given entries.
-// Used by the frontend context menu to offer "Extract as Diagram", etc.
-func DetectExtractions(sourceKind string, entries []ContentEntry) []ExtractionCandidate {
+// DetectExtractions composes the affordance offer: for each registered kind that can
+// build from these entries via extract/transform, its SupportedActions. The frontend
+// renders the menu from this. Self-kind is skipped unless AllowSelfExtraction.
+func DetectExtractions(sourceKind string, entries []ContentEntry) []SupportedActions {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 
-	var candidates []ExtractionCandidate
+	var offers []SupportedActions
 	for _, pm := range pasteMatchers {
 		if pm.Kind == sourceKind {
 			allowSelf := false
@@ -515,10 +512,9 @@ func DetectExtractions(sourceKind string, entries []ContentEntry) []ExtractionCa
 				continue
 			}
 		}
-
 		if sa := pm.Processor.IsSupportedContent(entries); sa.Has(ActionExtract) || sa.Has(ActionTransform) {
-			candidates = append(candidates, ExtractionCandidate{Kind: pm.Kind})
+			offers = append(offers, sa)
 		}
 	}
-	return candidates
+	return offers
 }

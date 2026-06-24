@@ -175,6 +175,35 @@ func TestUnregisterProcessor_removesFromRegistryAndMatchers(t *testing.T) {
 	registryMu.RUnlock()
 }
 
+func TestDetectExtractions_returnsActionsPerKind(t *testing.T) {
+	ResetRegistry()
+	// Register a mock that offers extract for a specific sieve/diagram entry.
+	extractable := &mockProcessor{
+		FencedDeserializer: FencedDeserializer{Kind: "diagram"},
+		actionsFn: func(entries []ContentEntry) SupportedActions {
+			for _, e := range entries {
+				if e.MIMEType == "sieve/diagram" {
+					return SupportedActions{Kind: "diagram", Actions: []Action{ActionExtract}}
+				}
+			}
+			return SupportedActions{Kind: "diagram"}
+		},
+	}
+	RegisterProcessor(extractable)
+	defer UnregisterProcessor("diagram")
+
+	entries := []ContentEntry{{MIMEType: "sieve/diagram", Content: `{"diagramType":"mermaid","source":"graph TD;A-->B"}`}}
+	offers := DetectExtractions("prose", entries)
+	if len(offers) == 0 {
+		t.Fatal("expected at least one offer, got none")
+	}
+	for _, o := range offers {
+		if len(o.Actions) == 0 {
+			t.Fatalf("offer for kind %q has no actions", o.Kind)
+		}
+	}
+}
+
 func TestGenerateBlockID_formatAndUniqueness(t *testing.T) {
 	id1 := GenerateBlockID("code")
 	id2 := GenerateBlockID("code")
