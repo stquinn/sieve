@@ -146,10 +146,9 @@ type JobContext struct {
 type BlockLifecycleListener interface {
 	OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string, index int)
 	OnBlockUpdated(uuid, blockID string, attrs map[string]interface{})
-	OnBlockPromoted(uuid, blockID string, replacement string)
 	// OnBlockReplaced renders an in-place TRANSFORM: swap the block identified by oldID
 	// with a new block (newKind/newID + attrs). markdown is the serialized fence for the
-	// breakglass markdown editor. Generalises OnBlockPromoted (prose-only).
+	// breakglass markdown editor.
 	OnBlockReplaced(uuid, oldID, newKind, newID string, attrs map[string]interface{}, markdown string)
 }
 

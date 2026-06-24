@@ -77,15 +77,6 @@ func (es *EditorService) notifyBlockUpdated(uuid string, blk block.SieveBlock) {
 	}
 }
 
-func (es *EditorService) notifyBlockPromoted(uuid, blockID, replacement string) {
-	es.mu.RLock()
-	l := es.listener
-	es.mu.RUnlock()
-	if l != nil {
-		l.OnBlockPromoted(uuid, blockID, replacement)
-	}
-}
-
 func (es *EditorService) notifyBlockReplaced(uuid, oldID string, blk block.SieveBlock) {
 	es.mu.RLock()
 	l := es.listener
@@ -351,7 +342,7 @@ func (es *EditorService) flushShadow(shadow *block.ShadowDocument, source string
 		logger.Info("editor: saved", "uuid", shadow.UUID, "source", source, "bytes", len(merged))
 		// Post the saved event on EVERY successful save — not just the debounce path.
 		// flushShadow is the single chokepoint every saver funnels through (Flush,
-		// the debounce closure, FlushAll, applyJobUpdate, PromoteBlock), so notifying
+		// the debounce closure, FlushAll, applyJobUpdate), so notifying
 		// here makes "the frontend hears about the save" a property of the save itself.
 		// The data-loss-guard early-return above does NOT reach here, so a refused
 		// (non-)save correctly posts nothing.

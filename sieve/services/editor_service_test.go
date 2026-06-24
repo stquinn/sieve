@@ -515,7 +515,6 @@ type mockLifecycleListener struct {
 	onUpdated func(uuid, blockID string, attrs map[string]interface{})
 }
 
-func (l *mockLifecycleListener) OnBlockPromoted(uuid, blockID string, replacement string) {}
 func (l *mockLifecycleListener) OnBlockReplaced(uuid, oldID, newKind, newID string, attrs map[string]interface{}, markdown string) {
 }
 

@@ -269,19 +269,6 @@ func (h *WsHandler) OnBlockUpdated(uuid, blockID string, attrs map[string]interf
 	}
 }
 
-func (h *WsHandler) OnBlockPromoted(uuid, blockID, replacement string) {
-	h.channelsMu.RLock()
-	writeMsg, ok := h.channels[uuid]
-	h.channelsMu.RUnlock()
-	if ok {
-		writeMsg(map[string]interface{}{
-			"type":        "block-promoted",
-			"id":          blockID,
-			"replacement": replacement,
-		})
-	}
-}
-
 // OnBlockReplaced implements block.BlockLifecycleListener.
 func (h *WsHandler) OnBlockReplaced(uuid, oldID, newKind, newID string, attrs map[string]interface{}, markdown string) {
 	h.channelsMu.RLock()
