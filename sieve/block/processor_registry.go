@@ -90,6 +90,14 @@ const (
 	BlockModeProse  BlockMode = "prose" // content + <!--s:ID--> markers, owned by ProseProcessor
 )
 
+// KindProse is the prose kind name. It lives with the registry/kind constants, NOT
+// in the kind-agnostic data model. Parsing never branches on it (that is
+// ProseProcessor.Accepts + orderedProseLast); it remains only because prose names
+// its own identity and EditorService.PromoteBlock still hand-builds a prose block.
+// TRANSITIONAL: the affordances redesign (recognition returns offers; promote
+// becomes prose's TRANSFORM) dissolves the PromoteBlock dependency and retires this.
+const KindProse = "prose"
+
 // JobContext is the complete input to a processor's RunJob.
 // EditorService assembles it at dispatch time — processors never reach back into services.
 type JobContext struct {
@@ -256,7 +264,7 @@ func (d FencedDeserializer) Deserialize(region Region) ([]SieveBlock, error) {
 		return nil, err
 	}
 	id, _ := attrs["id"].(string)
-	return []SieveBlock{NewSieveBlock(d.Kind, id, "", attrs)}, nil
+	return []SieveBlock{NewSieveBlock(d.Kind, id, attrs)}, nil
 }
 
 // fencedBody strips the opening and closing fence delimiter lines from the raw

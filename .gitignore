@@ -47,6 +47,9 @@ Thumbs.db
 *.log
 Screenshot*.png
 
+./artefacts
+./debug screenshots
+
 #-- Syncthing
 **/*.tmp
 **/.syncthing.*.tmp
@@ -56,3 +59,5 @@ Screenshot*.png
 
 # Compiled Wails binary
 /main
+
+

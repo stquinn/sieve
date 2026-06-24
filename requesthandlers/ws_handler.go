@@ -112,8 +112,6 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 			writeMsg(map[string]string{"type": "pong"})
 		case "doc-update":
 			h.handleDocUpdate(uuid, raw)
-		case "block-update":
-			h.handleBlockUpdate(uuid, raw, writeMsg)
 		case "flush":
 			h.handleFlush(writeMsg, uuid)
 		case "enter-markdown":
@@ -159,20 +157,6 @@ func (h *WsHandler) handleDocUpdate(uuid string, raw []byte) {
 		return
 	}
 	h.ServiceProvider.Editor.UpdateMarkdown(uuid, msg.Markdown)
-}
-
-// handleBlockUpdate merges the user's attr patch into the shadow, then calls
-// OnChange on the processor so it can re-run heuristics.
-func (h *WsHandler) handleBlockUpdate(uuid string, raw []byte, writeMsg func(interface{})) {
-	var msg struct {
-		ID    string                 `json:"id"`
-		Kind  string                 `json:"kind"`
-		Attrs map[string]interface{} `json:"attrs"`
-	}
-	if err := json.Unmarshal(raw, &msg); err != nil {
-		return
-	}
-	h.ServiceProvider.Editor.HandleBlockUpdate(uuid, msg.Kind, msg.ID, msg.Attrs)
 }
 
 func (h *WsHandler) handleFlush(writeMsg func(interface{}), uuid string) {

@@ -217,9 +217,9 @@ func TestDocumentCodec_RoundTrip(t *testing.T) {
 
 	c := block.NewDocumentCodec(block.GlobalRegistry()) // REAL registry — production path
 	original := []block.SieveBlock{
-		block.NewSieveBlock(block.KindProse, "pr-1", "An intro paragraph.", nil),
-		block.NewSieveBlock("code", "co-1", "", map[string]interface{}{"id": "co-1", "source": "x := 1"}),
-		block.NewSieveBlock(block.KindProse, "pr-2", "A closing paragraph.", nil),
+		(ProseProcessor{}).newProseBlock("pr-1", "An intro paragraph."),
+		block.NewSieveBlock("code", "co-1", map[string]interface{}{"id": "co-1", "source": "x := 1"}),
+		(ProseProcessor{}).newProseBlock("pr-2", "A closing paragraph."),
 	}
 	md, err := c.Serialize(original)
 	if err != nil {

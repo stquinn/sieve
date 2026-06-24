@@ -1,8 +1,8 @@
 package block
 
-// sieve_block.go — the SieveBlock data model: type, constructor, value methods,
-// and reserved-kind constants. No serialization, no parsing; those live in
-// document_codec.go and the codec/processor files.
+// sieve_block.go — the SieveBlock data model: type, constructor, and value
+// methods. No serialization, no parsing, and no per-kind names — the data model is
+// kind-agnostic; those live in document_codec.go and the codec/processor files.
 
 // SieveBlock is a node in the unified, ordered block tree (spec §2). EVERY kind —
 // prose included — carries its payload in the single Attrs bag, addressed by id;
@@ -24,11 +24,6 @@ type SieveBlock struct {
 	Aliases []string
 }
 
-// KindProse is the terminal prose kind. Prose is registered as a processor but
-// is special: it is the mop-up that absorbs any region no structured processor
-// claims (see DocumentCodec.orderedProseLast / ProseProcessor.Accepts).
-const KindProse = "prose"
-
 // NewSieveBlock is the sole sanctioned way to construct a block, and it enforces
 // the invariant the type cannot enforce on its own (Go has no constructors): a
 // block is GIVEN an id or it GENERATES one — it never exists id-less. Every
@@ -38,29 +33,36 @@ const KindProse = "prose"
 // known id (a marker's handle, a frontend-minted blockId) to keep it. The
 // serialize-time guard in DocumentCodec.Serialize is the runtime backstop
 // for any future code path that bypasses this factory with a raw literal.
-func NewSieveBlock(kind, id, content string, attrs map[string]interface{}) SieveBlock {
+func NewSieveBlock(kind, id string, attrs map[string]interface{}) SieveBlock {
 	if id == "" {
 		id = GenerateBlockIDFor(kind)
 	}
-	b := SieveBlock{ID: id, Kind: kind, Attrs: attrs}
-	if content != "" {
-		b.setContent(content)
-	}
-	return b
+	return SieveBlock{ID: id, Kind: kind, Attrs: attrs}
 }
 
 // Content is the block's authored text payload (Attrs["content"]) — a prose
-// block's verbatim markdown, a web-clip's clipped text. "" for kinds that carry
-// no content attr. The typed read that replaces the old SieveBlock.Content field.
+// block's verbatim markdown, a web-clip's clipped text. "" when absent. A nil-safe
+// typed read of one attr key (sibling of Source/Status/Ref); whether this accessor
+// family earns its keep over direct Attrs access is a separate question.
 func (b SieveBlock) Content() string { return b.StringAttr("content") }
 
-// setContent writes the authored text payload into the Attrs bag, lazily
-// allocating it. The single write-side counterpart to Content().
-func (b *SieveBlock) setContent(content string) {
+// Merge applies a patch onto this block: attrs merge additively (a partial patch
+// keeps existing keys — a NodeView sending only {source} must not drop status),
+// and aliases REPLACE the current set when the patch carries them (nil leaves
+// them untouched). This is the single block-patch semantic, shared by
+// ShadowDocument.MergeBlock and the update-block op. Content is just
+// Attrs["content"], so prose needs no special handling here — the attr merge
+// carries it like any other key.
+func (b *SieveBlock) Merge(patch SieveBlock) {
 	if b.Attrs == nil {
-		b.Attrs = map[string]interface{}{}
+		b.Attrs = make(map[string]interface{}, len(patch.Attrs))
 	}
-	b.Attrs["content"] = content
+	for k, v := range patch.Attrs {
+		b.Attrs[k] = v
+	}
+	if patch.Aliases != nil {
+		b.Aliases = patch.Aliases
+	}
 }
 
 // StringAttr reads a string-valued attr, returning "" when the key is absent,

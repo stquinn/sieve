@@ -24,13 +24,32 @@ function blockSig(b) {
   return b.kind + '\x00' + (b.content || '') + '\x00' + ((b.aliases || []).join(','))
 }
 
-// proseOp builds a create/update op for a prose block; aliases ride along when
-// present, and create carries its document index.
-function proseOp(type, b, index) {
-  var op = { type: type, blockId: b.id, kind: 'prose', content: b.content || '' }
-  if (b.aliases && b.aliases.length) op.aliases = b.aliases
+// blockOp is the single block-op constructor. EVERY kind's payload rides in
+// `attrs` (prose's body at attrs.content, exactly as code's at attrs.source) —
+// there is no kind-special-cased top-level field on the wire. aliases are an
+// optional field; create-block carries its document index. Both the prose
+// observer (proseOp) and structured NodeView edits (updateBlockOp) build through
+// here, so prose and structured updates emit a byte-identical shape.
+function blockOp(type, blockId, kind, attrs, aliases, index) {
+  var op = { type: type, blockId: blockId, kind: kind, attrs: attrs || {} }
+  if (aliases && aliases.length) op.aliases = aliases
   if (type === 'create-block') op.index = index
   return op
+}
+
+// proseOp builds a create/update op for a prose block. Prose's body rides in
+// attrs.content — the SAME uniform shape structured edits use (see updateBlockOp).
+function proseOp(type, b, index) {
+  return blockOp(type, b.id, 'prose', { content: b.content || '' }, b.aliases, index)
+}
+
+// updateBlockOp maps a structured NodeView edit detail ({ id, kind, attrs,
+// aliases? }, dispatched as `sieve:block-update`) to an update-block block-op —
+// the same shape proseOp emits. Both rides converge on ONE wire op, retiring the
+// bespoke block-update message: every block update, prose or structured, is a
+// block-op {update-block, blockId, kind, attrs, aliases?}.
+export function updateBlockOp(detail) {
+  return blockOp('update-block', detail.id, detail.kind, detail.attrs, detail.aliases)
 }
 
 // curr: [{ id, kind, content, aliases? }] in document order. For prose, content
@@ -132,4 +151,5 @@ if (typeof window !== 'undefined') {
   window.TipTap.computeBlockSync = computeBlockSync
   window.TipTap.seedBaseline = seedBaseline
   window.TipTap.mintActions = mintActions
+  window.TipTap.updateBlockOp = updateBlockOp
 }

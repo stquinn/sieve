@@ -1,5 +1,48 @@
 import { describe, it, expect } from 'vitest'
-import { computeBlockSync, seedBaseline, mintActions } from '../src/static/block-sync.js'
+import { computeBlockSync, seedBaseline, mintActions, updateBlockOp } from '../src/static/block-sync.js'
+
+// updateBlockOp is the structured-edit counterpart to computeBlockSync's prose
+// ops: a NodeView (code/diagram/log) fires `sieve:block-update` with
+// { id, kind, attrs } when the user edits it, and that detail must become the
+// SAME `update-block` block-op shape prose already rides — so every block update,
+// prose or structured, converges on one wire op (block-update message retired).
+describe('updateBlockOp', () => {
+  it('maps a structured NodeView edit detail to an update-block block-op', () => {
+    const op = updateBlockOp({ id: 'co-1', kind: 'code', attrs: { source: 'x = 1' } })
+    expect(op).toEqual({
+      type: 'update-block',
+      blockId: 'co-1',
+      kind: 'code',
+      attrs: { source: 'x = 1' },
+    })
+  })
+
+  it('omits aliases when the edit carries none', () => {
+    const op = updateBlockOp({ id: 'dg-1', kind: 'diagram', attrs: { mode: 'render' } })
+    expect('aliases' in op).toBe(false)
+  })
+
+  it('carries aliases when present (same optional field prose uses)', () => {
+    const op = updateBlockOp({ id: 'lg-1', kind: 'log', attrs: { filter: 'warn' }, aliases: ['lg-0'] })
+    expect(op.aliases).toEqual(['lg-0'])
+  })
+
+  it('defaults attrs to an empty object when the detail omits them', () => {
+    const op = updateBlockOp({ id: 'co-2', kind: 'code' })
+    expect(op.attrs).toEqual({})
+  })
+
+  it('produces the SAME op type+verb prose updates ride (one converged path)', () => {
+    const prose = computeBlockSync(
+      [{ id: 'pr-1', kind: 'prose', content: 'B' }],
+      computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'A' }], null).next,
+    ).ops[0]
+    const structured = updateBlockOp({ id: 'co-1', kind: 'code', attrs: { source: 's' } })
+    expect(structured.type).toBe(prose.type) // both 'update-block'
+    expect(structured.blockId).toBeTruthy()
+    expect(prose.blockId).toBeTruthy()
+  })
+})
 
 // mintActions is the pure minting decision: given the blockIds of the top-level
 // nodes in document order, return the INDICES that need a fresh id. A node needs
@@ -53,7 +96,7 @@ describe('seedBaseline', () => {
     expect('pr-1' in base).toBe(true)
 
     const r = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'Hi!' }], base)
-    expect(r.ops).toEqual([{ type: 'update-block', blockId: 'pr-1', kind: 'prose', content: 'Hi!' }])
+    expect(r.ops).toEqual([{ type: 'update-block', blockId: 'pr-1', kind: 'prose', attrs: { content: 'Hi!' } }])
   })
 
   it('skips id-less blocks (a fresh client surface with no server origin)', () => {
@@ -93,7 +136,7 @@ describe('computeBlockSync', () => {
     const base = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'Hello' }], null)
     const r = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'Hello there' }], base.next)
     expect(r.ops).toEqual([
-      { type: 'update-block', blockId: 'pr-1', kind: 'prose', content: 'Hello there' },
+      { type: 'update-block', blockId: 'pr-1', kind: 'prose', attrs: { content: 'Hello there' } },
     ])
   })
 
@@ -107,7 +150,7 @@ describe('computeBlockSync', () => {
       { id: 'co-1', kind: 'code', content: '```code\nid: co-1\nsource: a\n```' },
     ], prev)
     expect(r.ops).toEqual([
-      { type: 'update-block', blockId: 'pr-1', kind: 'prose', content: 'A2' },
+      { type: 'update-block', blockId: 'pr-1', kind: 'prose', attrs: { content: 'A2' } },
     ])
   })
 
@@ -154,7 +197,7 @@ describe('computeBlockSync', () => {
       { id: 'pr-2', kind: 'prose', content: 'B' },
     ], prev)
     expect(r.ops).toEqual([
-      { type: 'create-block', blockId: 'pr-2', kind: 'prose', content: 'B', index: 1 },
+      { type: 'create-block', blockId: 'pr-2', kind: 'prose', attrs: { content: 'B' }, index: 1 },
     ])
   })
 
@@ -187,7 +230,7 @@ describe('computeBlockSync', () => {
       [{ id: 'pr-1', kind: 'prose', content: 'A', aliases: ['pr-0'] }], prev,
     )
     expect(r.ops).toEqual([
-      { type: 'update-block', blockId: 'pr-1', kind: 'prose', content: 'A', aliases: ['pr-0'] },
+      { type: 'update-block', blockId: 'pr-1', kind: 'prose', attrs: { content: 'A' }, aliases: ['pr-0'] },
     ])
   })
 
@@ -198,13 +241,13 @@ describe('computeBlockSync', () => {
     expect(r1.ops).toEqual([])
     expect(r1.next).toEqual({}) // not tracked, so a later content-add reads as new
     const r2 = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'hi' }], r1.next)
-    expect(r2.ops).toEqual([{ type: 'create-block', blockId: 'pr-1', kind: 'prose', content: 'hi', index: 0 }])
+    expect(r2.ops).toEqual([{ type: 'create-block', blockId: 'pr-1', kind: 'prose', attrs: { content: 'hi' }, index: 0 }])
   })
 
   it('emptying an EXISTING prose block emits an update, not a skip', () => {
     const prev = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'hello' }], null).next
     const r = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: '' }], prev)
-    expect(r.ops).toEqual([{ type: 'update-block', blockId: 'pr-1', kind: 'prose', content: '' }])
+    expect(r.ops).toEqual([{ type: 'update-block', blockId: 'pr-1', kind: 'prose', attrs: { content: '' } }])
   })
 
   // D-r.5: the prose-path doc-update fallback is retired. An id-less PROSE node is
@@ -218,7 +261,7 @@ describe('computeBlockSync', () => {
       { id: '', kind: 'prose', content: 'new' }, // minting fills this id next sync
     ], prev)
     expect(r.ops).toEqual([
-      { type: 'update-block', blockId: 'pr-1', kind: 'prose', content: 'A2' },
+      { type: 'update-block', blockId: 'pr-1', kind: 'prose', attrs: { content: 'A2' } },
     ])
   })
 

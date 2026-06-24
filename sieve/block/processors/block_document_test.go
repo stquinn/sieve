@@ -10,7 +10,7 @@ import (
 // is owned in ONE place rather than swept after the fact. (Go has no enforced
 // constructors; this factory + the serialize-time guard are the idiomatic teeth.)
 func TestNewSieveBlock_MintsWhenNoID(t *testing.T) {
-	b := block.NewSieveBlock(block.KindProse, "", "hello", nil)
+	b := block.NewSieveBlock(block.KindProse, "", map[string]interface{}{"content": "hello"})
 	if b.ID == "" {
 		t.Fatalf("expected a minted id, got empty")
 	}
@@ -20,7 +20,7 @@ func TestNewSieveBlock_MintsWhenNoID(t *testing.T) {
 }
 
 func TestNewSieveBlock_KeepsGivenID(t *testing.T) {
-	b := block.NewSieveBlock(block.KindProse, "pr-given", "hi", nil)
+	b := block.NewSieveBlock(block.KindProse, "pr-given", map[string]interface{}{"content": "hi"})
 	if b.ID != "pr-given" {
 		t.Fatalf("id = %q, want the supplied %q", b.ID, "pr-given")
 	}
@@ -101,10 +101,10 @@ func TestBlockDoc_RoundTripStable(t *testing.T) {
 	// with a registered processor (prose, code) stay structured through the codec;
 	// processor-less kinds coalesce to prose, so they are not exercised here.
 	doc := []block.SieveBlock{
-		block.NewSieveBlock(block.KindProse, "pr-1", "# Title", nil),
-		block.NewSieveBlock("code", "co-1", "", map[string]interface{}{"id": "co-1", "source": "x = 1"}),
-		block.NewSieveBlock(block.KindProse, "pr-2", "Between.", nil),
-		block.NewSieveBlock(block.KindProse, "pr-3", "Tail.", nil),
+		(ProseProcessor{}).newProseBlock("pr-1", "# Title"),
+		block.NewSieveBlock("code", "co-1", map[string]interface{}{"id": "co-1", "source": "x = 1"}),
+		(ProseProcessor{}).newProseBlock("pr-2", "Between."),
+		(ProseProcessor{}).newProseBlock("pr-3", "Tail."),
 	}
 
 	c := block.NewDocumentCodec(block.GlobalRegistry())

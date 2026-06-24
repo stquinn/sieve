@@ -77,9 +77,9 @@ func TestHandles_IsolatedEditKeepsHandle(t *testing.T) {
 	md := "<!--s:pr-aaaa-->\nOriginal text.\n<!--/s:pr-aaaa-->\n\n" +
 		"<!--s:pr-bbbb-->\nUntouched.\n<!--/s:pr-bbbb-->"
 	// Edit the first prose block's content through the PUBLIC block op (update-block
-	// carries prose content) — no poking SieveBlock internals.
+	// carries prose content in attrs.content, like every kind) — no poking internals.
 	shadow := block.NewShadow("u", md, block.NewDocumentCodec(block.GlobalRegistry()), 0, nil)
-	if err := shadow.ApplyOp(block.BlockOp{Type: "update-block", BlockID: "pr-aaaa", Content: "Edited text."}); err != nil {
+	if err := shadow.ApplyOp(block.BlockOp{Type: "update-block", BlockID: "pr-aaaa", Attrs: map[string]interface{}{"content": "Edited text."}}); err != nil {
 		t.Fatalf("apply op: %v", err)
 	}
 	out := shadow.ContentForSave()
