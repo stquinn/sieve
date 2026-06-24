@@ -211,4 +211,5 @@ lookup. Only a **Sieve-block source** (a composite carrying just attrs) needs th
   `block-op-create-convergence` thread, not this one — but it likely also wants intent
   on the op rather than a kind check. Note, don't fold in blindly.
 - The pre-existing concurrent-`flushShadow` race (two flush paths writing the shared
-  document buffer) surfaced during C-W; unrelated to this design but still open.
+  document buffer) surfaced during C-W; FIXED in `899090d` (per-shadow `flushMu` via
+  `WithFlushLock`). Unrelated to this design — noted for completeness.
