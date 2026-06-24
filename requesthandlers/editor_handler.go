@@ -160,7 +160,9 @@ func (h *EditorHandler) handleSmartPaste(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	kind, id, rawYaml, matched := h.ServiceProvider.Editor.HandlePaste(req.UUID, req.Entries, req.Index)
+	// notify=false: smart-paste re-renders from the ShadowDoc via softReloadContent
+	// (triggered client-side on result.matched). insert-block is suppressed.
+	kind, id, rawYaml, matched := h.ServiceProvider.Editor.HandlePaste(req.UUID, req.Entries, req.Index, false)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(struct {

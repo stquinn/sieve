@@ -819,7 +819,9 @@
         softReloadContent(currentUuid)
       }
       if (msg.type === 'block-extracted') {
-        // Rely on insert-block to place the new node; do not reload.
+        // Re-render from the ShadowDoc — the authoritative source after extract.
+        // insert-block is suppressed (notify=false) so the WS push is this message.
+        softReloadContent(currentUuid)
       }
     }
 
@@ -1468,12 +1470,17 @@
   // ── AI jobs ───────────────────────────────────────────────────────────────────
 
   // softReloadContent fetches the latest body from disk and replaces editor content,
-  // preserving the cursor position. Called when an ai:block-resolved SSE event arrives.
+  // preserving the cursor position. Called when an ai:block-resolved SSE event arrives,
+  // and after extract/paste operations that re-render from the ShadowDoc.
   function softReloadContent(uuid) {
     if (currentMode !== 'wysiwyg' && currentMode !== 'markdown') return
     if (currentMode === 'wysiwyg' && !currentEditor) return
     aiReloadInProgress = true
-    var savedAnchor = currentMode === 'wysiwyg' ? currentEditor.state.selection.anchor : null
+    // Capture focus context before the async fetch so caret is preserved across
+    // the re-render (covers TRANSFORM, paste, extract, and AI block resolve).
+    var fctx = (currentMode === 'wysiwyg' && window.TipTap && window.TipTap.captureFocusContext)
+      ? window.TipTap.captureFocusContext(currentEditor)
+      : null
     fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid))
       .then(function (r) { return r.json() })
       .then(function (data) {
@@ -1492,8 +1499,9 @@
           renderBlocksIntoEditor(currentEditor, data.blocks || [])
           lastSyncedBody = body
           aiReloadInProgress = false
-          var maxPos = currentEditor.state.doc.content.size
-          currentEditor.commands.setTextSelection(Math.min(savedAnchor, maxPos - 1))
+          if (window.TipTap && window.TipTap.restoreFocusContext) {
+            window.TipTap.restoreFocusContext(currentEditor, fctx)
+          }
         } else if (currentMode === 'markdown' && currentMarkdownTextarea) {
           currentMarkdownTextarea.value = body
           lastSyncedBody = body
@@ -1641,8 +1649,8 @@
         })
 
         // Smart-paste resolves a block kind server-side (web-clip / smart-image /
-        // smart-card) → capture as a block (after the top-level node).
-        sieveInsertPos = captureInsertPos(false)
+        // smart-card) → capture insert position as a block index for Go to position.
+        var smartPasteIndex = blockIndexForInsert(captureInsertPos(false))
         event.preventDefault()
 
         Promise.all(promises).then(function(results) {
@@ -1650,15 +1658,17 @@
           fetch('/api/editor/smart-paste', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uuid: currentUuid, entries: validEntries }),
+            body: JSON.stringify({ uuid: currentUuid, entries: validEntries, index: smartPasteIndex }),
           })
             .then(function (r) { return r.json() })
             .then(function (result) {
               if (!currentEditor) return
               if (result.matched) {
-                // Handled entirely via WebSocket push. Nothing to insert here.
+                // Re-render from the ShadowDoc — the authoritative source after paste.
+                // notify=false suppresses insert-block; position is server-owned.
+                softReloadContent(currentUuid)
               } else {
-                // No processor matched — clear the stashed insert position and replay original clipboard content.
+                // No processor matched — replay original clipboard content locally.
                 sieveInsertPos = null
                 if (html) {
                   currentEditor.commands.insertContent(html)
@@ -1715,23 +1725,25 @@
 
       var pos = currentEditor.view.posAtCoords({ left: event.clientX, top: event.clientY })
       var insertPos = pos ? pos.pos : currentEditor.state.selection.to
-      
+      var dropIndex = blockIndexForInsert(insertPos)
+
       event.preventDefault()
 
       Promise.all(promises).then(function(results) {
         var validEntries = results.filter(function(r) { return r !== null })
         if (validEntries.length === 0) return
-        sieveInsertPos = insertPos
         fetch('/api/editor/smart-paste', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ uuid: currentUuid, entries: validEntries }),
+          body: JSON.stringify({ uuid: currentUuid, entries: validEntries, index: dropIndex }),
         })
           .then(function (r) { return r.json() })
           .then(function (result) {
             if (!currentEditor) return
             if (result.matched) {
-              // Handled entirely via WebSocket push. Nothing to insert here.
+              // Re-render from the ShadowDoc — the authoritative source after drop.
+              // notify=false suppresses insert-block; position is server-owned.
+              softReloadContent(currentUuid)
             }
           })
           .catch(function (err) {
