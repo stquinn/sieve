@@ -34,3 +34,22 @@ func TestProse_IsSupportedContent_plainText_noMatch(t *testing.T) {
 		t.Fatalf("prose must never claim a non-sieve mime, got %v", got.Actions)
 	}
 }
+
+// A code/diagram/log source embeds as its raw source text (not a fence).
+func TestProse_Transform_codeSource_embedsRawSourceText(t *testing.T) {
+	p := NewProseProcessor(block.BlockServices{})
+	out := p.Transform([]block.ContentEntry{{MIMEType: "sieve/code", Content: `{"source":"x := 1","language":"go"}`}}, "uuid", "id", block.ActionTransform)
+	if out["content"] != "x := 1" {
+		t.Fatalf("code source should embed as its raw source text, got %v", out["content"])
+	}
+}
+
+// Guards the data-loss bug: a code source with a MISSING "source" key must NOT yield
+// content:nil (a silent blank block) — it falls through instead.
+func TestProse_Transform_codeNoSource_neverNilContent(t *testing.T) {
+	p := NewProseProcessor(block.BlockServices{})
+	out := p.Transform([]block.ContentEntry{{MIMEType: "sieve/code", Content: `{"language":"go"}`}}, "uuid", "id", block.ActionTransform)
+	if c, ok := out["content"]; !ok || c == nil {
+		t.Fatalf("missing source must not produce nil content (data loss), got %#v", out["content"])
+	}
+}

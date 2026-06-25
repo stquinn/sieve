@@ -127,10 +127,14 @@ func (p *ProseProcessor) Transform(entries []block.ContentEntry, _ string, _ str
 		}
 		// A foreign sieve source: rebuild it and take its markdown representation.
 		if kind, attrs, ok := e.SieveAttrs(); ok {
-			// code types as prose arent fenced - just text
+			// Code-like sources embed as their raw source text, not a fenced block.
+			// Guard against a missing/non-string/empty source (older blocks may lack
+			// it): fall through to MarkdownRepresentation rather than embed a blank
+			// block (which would silently drop the content). TODO: preserve newlines.
 			if kind == "code" || kind == "diagram" || kind == "log" {
-				//TODO: maintain newlines
-				return map[string]interface{}{"content": attrs["source"]}
+				if src, _ := attrs["source"].(string); strings.TrimSpace(src) != "" {
+					return map[string]interface{}{"content": src}
+				}
 			}
 			//for any other sieve type just go with there default Markdown
 			if proc := block.GetProcessor(kind); proc != nil {

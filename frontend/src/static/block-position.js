@@ -20,7 +20,9 @@ export function blockIndexForInsert(doc, pos) {
 // docPosForBlockIndex(doc, idx): the doc position at the start of top-level block
 // `idx`. idx >= childCount or null → doc.content.size (end of doc).
 export function docPosForBlockIndex(doc, idx) {
-  if (idx == null || idx >= doc.childCount) return doc.content.size
+  // null / negative (e.g. a missed blockIndexAfter lookup) / out-of-range → end of doc.
+  // Without the `< 0` guard a negative idx skips the loop and returns 0 (doc START).
+  if (idx == null || idx < 0 || idx >= doc.childCount) return doc.content.size
   var pos = 0
   for (var i = 0; i < idx && i < doc.childCount; i++) pos += doc.child(i).nodeSize
   return pos

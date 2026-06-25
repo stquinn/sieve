@@ -138,6 +138,11 @@ describe('docPosForBlockIndex', () => {
     const doc = buildExtractDoc()
     expect(docPosForBlockIndex(doc, null)).toBe(doc.content.size)
   })
+
+  it('returns doc.content.size for a NEGATIVE idx (e.g. a missed lookup), not 0/doc-start', () => {
+    const doc = buildExtractDoc()
+    expect(docPosForBlockIndex(doc, -1)).toBe(doc.content.size)
+  })
 })
 
 // ── blockIndexForInsert ───────────────────────────────────────────────────────
