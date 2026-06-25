@@ -73,7 +73,7 @@ func (p *SmartImageProcessor) IsSupportedContent(entries []block.ContentEntry) b
 		if e.MIMEType == "image/svg+xml" {
 			return block.SupportedActions{Kind: p.Kind(), Actions: native}
 		}
-		if e.MIMEType == "sieve/image" {
+		if e.IsSieveType(p) {
 			return block.SupportedActions{Kind: p.Kind(), Actions: sieve}
 		}
 		if isImageURL(strings.TrimSpace(e.Content)) {

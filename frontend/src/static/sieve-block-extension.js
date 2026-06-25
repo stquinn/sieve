@@ -898,8 +898,13 @@ function extractContentEntryFromEditor(event, editor) {
   //an image would be interesting to extract, and we can get a data-uri for it if needed.
   var closestImg = event.target.tagName === 'IMG' ? event.target : (event.target.closest ? event.target.closest('img') : null);
   if (closestImg && closestImg.src && view.dom.contains(closestImg)) {
-    //not sure this is the right MIME type to use for an image
-    entries = [{ mimeType: 'sieve/image', content: closestImg.src }];
+    // A native <img> is a NATIVE source → use a NATIVE mime so recognition offers
+    // TRANSFORM (Convert), not EXTRACT. (The old 'sieve/image' mime made it look like
+    // a Sieve-block source.) A data: URI needs an image/* mime; a served asset URL is
+    // matched by smart-image's isImageURL on the content, so any non-sieve mime works.
+    var imgSrc = closestImg.src
+    var imgMime = imgSrc.indexOf('data:') === 0 ? (imgSrc.slice(5).split(/[;,]/)[0] || 'image/png') : 'text/uri-list'
+    entries = [{ mimeType: imgMime, content: imgSrc }];
     extractSourceLabel = 'image';
   }
 
