@@ -330,20 +330,6 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
                 ])
               }
 
-              // Embed in document — automatic for any block with supportsEmbedding: true.
-              if (n.attrs.supportsEmbedding && status === 'COMPLETE') {
-                items = items.concat([
-                  { type: 'divider' },
-                  { icon: IC.promote, label: 'Embed in document',
-                    action: function () {
-                      document.dispatchEvent(new CustomEvent('sieve:promote-block', {
-                        detail: { id: n.attrs.id }
-                      }))
-                    }
-                  },
-                ])
-              }
-
               document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
                 detail: { x: e.clientX, y: e.clientY, context: { type: 'sieveBlock', items: items } },
               }))
@@ -752,12 +738,14 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
       var headerLabel = 'FROM ' + (extractSourceLabel || sourceKind).toUpperCase().replace('-', ' ')
       var extraItems = [{ type: 'divider' }, { type: 'header', label: headerLabel }]
 
+      var FRIENDLY = { prose: 'Text' }
       offers.forEach(function (offer) {
         var icon = IC[offer.kind] || IC.code
         var r = renderers[offer.kind]
-        var prettyKind = (r && typeof r.getFriendlyName === 'function')
-          ? r.getFriendlyName()
-          : offer.kind.split('-').map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1) }).join(' ')
+        var prettyKind = FRIENDLY[offer.kind]
+          || (r && typeof r.getFriendlyName === 'function'
+            ? r.getFriendlyName()
+            : offer.kind.split('-').map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1) }).join(' '))
 
         // Menu offers the source-mutating ops (extract/transform); paste is never shown here.
         ;(offer.actions || []).forEach(function (action) {

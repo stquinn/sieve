@@ -908,11 +908,6 @@
     wsSend({ type: 'block-op', uuid: currentUuid, op: window.TipTap.updateBlockOp(e.detail) })
   })
 
-  document.addEventListener('sieve:promote-block', function (e) {
-    if (!currentUuid || !e.detail || !e.detail.id) return
-    wsSend({ type: 'promote-block', id: e.detail.id, uuid: currentUuid })
-  })
-
   document.addEventListener('editor:insert-block', function (e) {
     var msg = e.detail
     if (currentMode === 'markdown' && currentMarkdownTextarea) {

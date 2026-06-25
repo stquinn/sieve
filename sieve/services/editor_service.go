@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -552,8 +551,7 @@ func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []blo
 }
 
 // transformInPlace replaces sourceID with a new block of kind, preserving the source's
-// id and document position (the OpTransform definition). Mirrors PromoteBlock's mechanic
-// but for any target kind.
+// id and document position (the OpTransform definition).
 func (es *EditorService) transformInPlace(uuid, kind string, processor block.BlockProcessor, entries []block.ContentEntry, sourceID string) (id, rawYaml string, err error) {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
@@ -787,28 +785,3 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	}
 }
 
-// PromoteBlock embeds a block's content as prose, in place. It is now a thin adapter
-// over the generic TRANSFORM-to-prose path: build the source's sieve view entry and ask
-// prose to transform it. Prose owns the MarkdownRepresentation resolve (prose_processor).
-func (es *EditorService) PromoteBlock(uuid, blockID string) error {
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
-	if shadow == nil {
-		return fmt.Errorf("no open document")
-	}
-	src, found := shadow.SnapshotBlock(blockID)
-	if !found {
-		return fmt.Errorf("block not found")
-	}
-	attrsJSON, err := json.Marshal(src.Attrs)
-	if err != nil {
-		return err
-	}
-	entries := []block.ContentEntry{{MIMEType: "sieve/" + src.Kind, Content: string(attrsJSON)}}
-	_, _, err = es.CreateBlockFromEntries(uuid, block.GetProcessor("prose").Kind(), entries, 0, block.ActionTransform, blockID)
-	if err != nil {
-		return err
-	}
-	return es.Flush(uuid)
-}

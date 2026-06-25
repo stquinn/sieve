@@ -320,15 +320,6 @@
         document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
       }},
       { type: 'divider' },
-      { icon: IC.promote, label: 'Promote to Document',
-        disabled: n.attrs.status !== 'COMPLETE' || !n.attrs.response,
-        action: function () {
-          document.dispatchEvent(new CustomEvent('sieve:promote-block', {
-            detail: { id: n.attrs.id }
-          }))
-        }
-      },
-      { type: 'divider' },
       { icon: IC.refresh, label: isError ? 'Retry' : 'Replay', action: function () {
         document.dispatchEvent(new CustomEvent('sieve:ai-retry', {
           detail: { id: n.attrs.id, question: n.attrs.question, ref: n.attrs.ref, type: n.attrs.type }

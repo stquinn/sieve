@@ -120,8 +120,6 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 			h.handleEnterWysiwyg(uuid, raw, writeMsg)
 		case "retry-block-job":
 			h.handleRetryBlockJob(uuid, raw, writeMsg)
-		case "promote-block":
-			h.handlePromoteBlock(uuid, raw, writeMsg)
 		case "extract":
 			h.handleExtract(uuid, raw, writeMsg)
 		case "block-op":
@@ -283,18 +281,6 @@ func (h *WsHandler) OnBlockReplaced(uuid, oldID, newKind, newID string, attrs ma
 			"attrs":   attrs,
 			"newYaml": markdown,
 		})
-	}
-}
-
-func (h *WsHandler) handlePromoteBlock(uuid string, raw []byte, writeMsg func(interface{})) {
-	var msg struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(raw, &msg); err != nil || msg.ID == "" {
-		return
-	}
-	if err := h.ServiceProvider.Editor.PromoteBlock(uuid, msg.ID); err != nil {
-		logger.Warn("ws: promote-block failed", "uuid", uuid, "block", msg.ID, "err", err)
 	}
 }
 

@@ -122,10 +122,7 @@ func (s SupportedActions) Has(a Action) bool {
 
 // KindProse is the prose kind name. It lives with the registry/kind constants, NOT
 // in the kind-agnostic data model. Parsing never branches on it (that is
-// ProseProcessor.Accepts + orderedProseLast); it remains only because prose names
-// its own identity and EditorService.PromoteBlock still hand-builds a prose block.
-// TRANSITIONAL: the affordances redesign (recognition returns offers; promote
-// becomes prose's TRANSFORM) dissolves the PromoteBlock dependency and retires this.
+// ProseProcessor.Accepts + orderedProseLast).
 const KindProse = "prose"
 
 // JobContext is the complete input to a processor's RunJob.

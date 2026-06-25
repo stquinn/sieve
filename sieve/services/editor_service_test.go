@@ -320,9 +320,9 @@ func TestEditorService_ReloadFromDisk_replacesStaleShadowAndPreservesIDs(t *test
 	}
 }
 
-// A DIRECT save (es.Flush — the path PromoteBlock/applyJobUpdate/FlushAll use)
+// A DIRECT save (es.Flush — the path applyJobUpdate/FlushAll use)
 // must also post the saved event, so the frontend clears its dirty indicator after
-// an embed/AI-job save, not only after a debounce flush. The notify is a property
+// an AI-job save, not only after a debounce flush. The notify is a property
 // of the save (flushShadow), not of the debounce timer.
 func TestEditorService_NotifySavedCalledAfterDirectFlush(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
