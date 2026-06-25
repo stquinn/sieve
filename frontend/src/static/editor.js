@@ -50,29 +50,18 @@
   // blockIndexForInsert maps a captured insert position (a PM doc position, or null
   // for "append") to the top-level BLOCK index Go's create-block op inserts at —
   // the number of top-level nodes that end at or before the position.
+  // Delegates to the tested window.TipTap.blockIndexForInsert (block-position.js).
   function blockIndexForInsert(pos) {
     if (!currentEditor) return -1
-    var doc = currentEditor.state.doc
-    if (pos == null) return doc.childCount
-    var p = (typeof pos === 'object') ? pos.from : pos
-    var idx = 0, offset = 0
-    for (var i = 0; i < doc.childCount; i++) {
-      offset += doc.child(i).nodeSize
-      if (offset <= p) idx = i + 1
-      else break
-    }
-    return idx
+    return window.TipTap.blockIndexForInsert(currentEditor.state.doc, pos)
   }
 
   // docPosForBlockIndex maps a top-level BLOCK index (Go's tree position, echoed on
   // insert-block) to the editor doc position before that node — so a render-back
   // lands where Go put it, even for a batch (a paste slice).
+  // Delegates to the tested window.TipTap.docPosForBlockIndex (block-position.js).
   function docPosForBlockIndex(editor, idx) {
-    var doc = editor.state.doc
-    if (idx == null || idx >= doc.childCount) return doc.content.size
-    var pos = 0
-    for (var i = 0; i < idx && i < doc.childCount; i++) pos += doc.child(i).nodeSize
-    return pos
+    return window.TipTap.docPosForBlockIndex(editor.state.doc, idx)
   }
 
   // noteServerBlock is set by mountWysiwyg — baselines a server-created block into
@@ -2079,12 +2068,10 @@
     sieveInsertPos = null
     var index = -1
     if (operation !== 'transform' && blockId) {
-      currentEditor.state.doc.descendants(function (node, pos) {
-        if (node.attrs.id === blockId) {
-          index = blockIndexForInsert(pos + node.nodeSize)
-          return false
-        }
-      })
+      // Use top-level-only scan (blockIndexAfter) — descendants() was buggy because
+      // it visited nested nodes, potentially matching an inner node's id and computing
+      // an index relative to that nested position rather than the top-level tree.
+      index = window.TipTap.blockIndexAfter(currentEditor.state.doc, blockId)
     }
 
     function send(resolved) {

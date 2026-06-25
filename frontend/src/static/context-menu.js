@@ -254,7 +254,9 @@
             sourceNode: targetNode,
             sourceKind: targetNode.type.name,
             entries: res.entries,
-            blockId: targetNode.attrs ? targetNode.attrs.id : null,
+            blockId: (targetNode.attrs && targetNode.attrs.id)
+              ? targetNode.attrs.id
+              : window.TipTap.enclosingBlockId(editor.state.doc, targetPos),
             sourcePos: targetPos,
             extractSourceLabel: res.extractSourceLabel
           })
