@@ -750,10 +750,13 @@
           var reader = new FileReader();
           reader.onload = function(ev) {
             if (!ev.target || !ev.target.result) return;
+            // Use the BLOCK INDEX captured BEFORE the file dialog opened (the dialog
+            // blurred the editor, so re-deriving the caret now would land at the end).
+            var imgIndex = (typeof window.__sieveCapturedInsertIndex === 'number') ? window.__sieveCapturedInsertIndex : -1;
             fetch('/api/editor/smart-paste', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ uuid: uuid, entries: [{ mimeType: file.type, content: ev.target.result }] }),
+              body: JSON.stringify({ uuid: uuid, entries: [{ mimeType: file.type, content: ev.target.result }], index: imgIndex }),
             }).catch(function(err) { console.error('[toolbar] image upload failed', err); });
           };
           reader.readAsDataURL(file);

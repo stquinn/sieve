@@ -887,6 +887,11 @@
   // These insert block kinds (smart-image / web-clip), so capture as a block.
   document.addEventListener('sieve:capture-insert-pos', function () {
     sieveInsertPos = captureInsertPos(false)
+    // A file dialog (toolbar image) blurs the editor and loses the caret. Stash the
+    // resolved BLOCK INDEX now (pre-dialog); the cross-file upload handler in index.html
+    // can't see the editor-private sieveInsertPos, so it reads this and sends it to
+    // smart-paste — without it the new image appends to the end of the document.
+    window.__sieveCapturedInsertIndex = blockIndexForInsert(sieveInsertPos)
   })
 
   // NodeViews fire sieve:block-update when the user edits block content. It rides
