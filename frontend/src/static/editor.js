@@ -957,6 +957,19 @@
         var el = document.querySelector('[data-id="' + (msg.id || parsed.id) + '"] .sieve-block__edit')
         if (el) el.focus()
       }, 50)
+    } else if (msg.kind !== 'ai-block') {
+      // Anything else the user just inserted (image, web-clip, card, …): return focus
+      // to the editor with the caret AFTER the new block so they can keep typing. (A
+      // file dialog / toolbar click leaves focus elsewhere; code/diagram focus their own
+      // edit surface above; async AI answers intentionally never steal focus.)
+      setTimeout(function () {
+        if (!currentEditor) return
+        var doc = currentEditor.state.doc
+        var idxAfter = window.TipTap.blockIndexAfter(doc, msg.id || parsed.id)
+        if (idxAfter < 0) { currentEditor.commands.focus(); return }
+        var pos = window.TipTap.docPosForBlockIndex(doc, idxAfter)
+        currentEditor.chain().focus().setTextSelection(Math.min(pos, currentEditor.state.doc.content.size)).run()
+      }, 60)
     }
 
     // Bring the new block into view. Async answer blocks (ask/explain) carry no
