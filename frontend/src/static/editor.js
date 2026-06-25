@@ -815,13 +815,10 @@
         document.dispatchEvent(new CustomEvent('editor:block-attrs-updated', { detail: msg }))
       }
       if (msg.type === 'replace-block') {
-        // Backend already did the in-place ReplaceBlock on its tree; re-render from it.
-        softReloadContent(currentUuid)
+        document.dispatchEvent(new CustomEvent('editor:replace-block', { detail: msg }))
       }
       if (msg.type === 'block-extracted') {
-        // Re-render from the ShadowDoc — the authoritative source after extract.
-        // insert-block is suppressed (notify=false) so the WS push is this message.
-        softReloadContent(currentUuid)
+        // The new block renders via insert-block (tracked insert at its index). Nothing to do.
       }
     }
 
@@ -929,10 +926,11 @@
     var parsed = msg.attrs || {}
     var kind = msg.kind || 'code'
 
-    // An in-place conversion sets sieveInsertPos to a {from,to} RANGE (replace the
-    // source). Otherwise the op's index (echoed on the message) is the document
+    // Insert position: the op's index (echoed on the message) is the document
     // position — robust for a batch (a paste slice renders many blocks in order).
-    var replaceRange = (sieveInsertPos && typeof sieveInsertPos === 'object') ? sieveInsertPos : null
+    // A numeric sieveInsertPos is still used by AI-block creates (which set a raw
+    // editor position before the WS round-trip). In-place transforms now use the
+    // dedicated editor:replace-block handler; replaceRange is retired.
     var numericPos = (typeof sieveInsertPos === 'number') ? sieveInsertPos : null
     sieveInsertPos = null
 
@@ -941,10 +939,9 @@
     // (the user typed it). "Does the editor have this node?" is the client's concern,
     // not the backend's: if a node with this id is already in the doc, the echo is
     // redundant — baseline it so the observer never re-creates it, then skip the
-    // insert (a second insert would duplicate the paragraph). An in-place conversion
-    // mints a fresh id, so it is never skipped here.
+    // insert (a second insert would duplicate the paragraph).
     var echoedId = msg.id || parsed.id
-    if (!replaceRange && echoedId && currentEditor.view.dom.querySelector('[data-id="' + echoedId + '"]')) {
+    if (echoedId && currentEditor.view.dom.querySelector('[data-id="' + echoedId + '"]')) {
       if (typeof noteServerBlock === 'function') noteServerBlock(echoedId)
       return
     }
@@ -956,9 +953,7 @@
     var content = blockToNodes(currentEditor, blk).map(function (n) { return n.toJSON() })
     if (!content.length) return
 
-    if (replaceRange) {
-      currentEditor.commands.insertContentAt(replaceRange, content)
-    } else if (typeof msg.index === 'number') {
+    if (typeof msg.index === 'number') {
       currentEditor.commands.insertContentAt(docPosForBlockIndex(currentEditor, msg.index), content)
     } else {
       currentEditor.commands.insertContentAt(numericPos !== null ? numericPos : currentEditor.state.doc.content.size, content)
@@ -985,6 +980,39 @@
         if (node) node.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
       }, 60)
     }
+  })
+
+  // ── Replace block (in-place TRANSFORM render-back) ──────────────────────────
+  // Tracked replace-by-id: swap the node carrying oldId with the server's new node.
+  // A normal insertContentAt(range, ...) is undoable (and the observer propagates an
+  // undo to the backend). Markdown mode is breakglass → full reload is acceptable there.
+  document.addEventListener('editor:replace-block', function (e) {
+    var msg = e.detail
+    if (currentMode === 'markdown') { softReloadContent(currentUuid); return }
+    if (!currentEditor) return
+    var oldId = msg.oldId
+    var newId = msg.newId || oldId
+    var kind = msg.newKind || 'prose'
+    var parsed = msg.attrs || {}
+
+    var range = null
+    currentEditor.state.doc.descendants(function (node, pos) {
+      if (range) return false
+      if (node.attrs && node.attrs.id === oldId) { range = { from: pos, to: pos + node.nodeSize }; return false }
+    })
+    if (!range) return
+
+    var blk = { id: newId, kind: kind, attrs: Object.assign({ id: newId }, parsed) }
+    var content = blockToNodes(currentEditor, blk).map(function (n) { return n.toJSON() })
+    if (!content.length) return
+
+    currentEditor.commands.insertContentAt(range, content) // tracked → undoable
+    if (typeof noteServerBlock === 'function') noteServerBlock(newId)
+
+    setTimeout(function () {
+      var node = document.querySelector('[data-id="' + newId + '"]')
+      if (node) node.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }, 60)
   })
 
   document.addEventListener('editor:block-attrs-updated', function (e) {
@@ -1664,9 +1692,7 @@
             .then(function (result) {
               if (!currentEditor) return
               if (result.matched) {
-                // Re-render from the ShadowDoc — the authoritative source after paste.
-                // notify=false suppresses insert-block; position is server-owned.
-                softReloadContent(currentUuid)
+                // Rendered via insert-block (tracked insert at its server index). Nothing to do.
               } else {
                 // No processor matched — replay original clipboard content locally.
                 sieveInsertPos = null
@@ -1741,9 +1767,7 @@
           .then(function (result) {
             if (!currentEditor) return
             if (result.matched) {
-              // Re-render from the ShadowDoc — the authoritative source after drop.
-              // notify=false suppresses insert-block; position is server-owned.
-              softReloadContent(currentUuid)
+              // Rendered via insert-block (tracked insert at its server index). Nothing to do.
             }
           })
           .catch(function (err) {

@@ -437,10 +437,10 @@ func (es *EditorService) createBlockWithID(uuid, kind, blockID string, overrides
 }
 
 // createBlock is the one creation primitive. notify controls the WS render-back
-// (insert-block): true for single UI-triggered creates (the frontend has no node
-// yet), false for the slice paste (the HTTP response renders the whole batch, so a
-// per-block WS push would double-insert). aliases carries the block's lineage when
-// a create op brings it (usually nil — lineage normally accrues via gc/merge).
+// (insert-block): true for all create paths (the frontend inserts the new block
+// positionally as a tracked PM transaction, preserving undo). aliases carries the
+// block's lineage when a create op brings it (usually nil — lineage normally accrues
+// via gc/merge).
 func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[string]interface{}, aliases []string, index int, notify bool) (id string, rawYaml string, err error) {
 	defer func() {
 		if err == nil {
@@ -497,9 +497,9 @@ func (es *EditorService) HandlePasteSlice(uuid string, slice [][]block.ContentEn
 	}
 	var created []block.FrontendBlock
 	for i, entries := range slice {
-		// paste-slice keeps notify=true: each block renders back via insert-block
-		// so the frontend can render the whole batch positionally (per-block index).
-		kind, id, _, ok := es.HandlePaste(uuid, entries, index+i, true)
+		// Each created block renders back via insert-block (tracked insert at its index),
+		// so the frontend renders the whole batch positionally without a full reload.
+		kind, id, _, ok := es.HandlePaste(uuid, entries, index+i)
 		if !ok {
 			logger.Warn("paste-slice: create failed", "uuid", uuid, "kind", kind)
 			continue
@@ -512,18 +512,17 @@ func (es *EditorService) HandlePasteSlice(uuid string, slice [][]block.ContentEn
 }
 
 // HandlePaste runs paste matchers and delegates to CreateBlock on the first match.
-// notify controls the WS render-back (insert-block): true for paste-slice (the
-// frontend renders each block positionally); false for smart-paste (the matched
-// path triggers a softReloadContent from the ShadowDoc instead).
-// It is the secondary creation path — prefer CreateBlock directly for UI-triggered creation.
-func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry, index int, notify bool) (kind, id, rawYaml string, matched bool) {
+// The created block renders back via insert-block (tracked insert at its index) —
+// no separate softReloadContent needed. It is the secondary creation path; prefer
+// CreateBlock directly for UI-triggered creation.
+func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry, index int) (kind, id, rawYaml string, matched bool) {
 	matchKind, processor, ok := block.FirstPasteMatch(entries)
 	if !ok {
 		return "", "", "", false
 	}
 	blockID := block.GenerateBlockIDFor(matchKind)
 	overrides := processor.Transform(entries, uuid, blockID, block.ActionPaste)
-	id, raw, err := es.createBlock(uuid, matchKind, blockID, overrides, nil, index, notify)
+	id, raw, err := es.createBlockWithID(uuid, matchKind, blockID, overrides, nil, index)
 	if err != nil {
 		return "", "", "", false
 	}
@@ -549,10 +548,7 @@ func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []blo
 	if overrides == nil {
 		return "", "", fmt.Errorf("%s: processor %q could not transform entries into a block", action, kind)
 	}
-	// notify=false: extract/paste create via CreateBlockFromEntries suppress the
-	// insert-block WS push. The frontend re-renders from the ShadowDoc via
-	// softReloadContent triggered by the block-extracted message.
-	return es.createBlock(uuid, kind, blockID, overrides, nil, index, false)
+	return es.createBlockWithID(uuid, kind, blockID, overrides, nil, index)
 }
 
 // transformInPlace replaces sourceID with a new block of kind, preserving the source's
