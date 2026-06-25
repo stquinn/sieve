@@ -769,7 +769,16 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
             var items = r.getExtractionMenuItems(sourceNode, entries, dispatch, { operation: action })
             if (items && items.length) { items.forEach(function (it) { extraItems.push(it) }); return }
           }
-          extraItems.push({ icon: icon, label: VERB[action] + prettyKind, action: function () { dispatch({}) } })
+          // Prose's TRANSFORM is the universal "flatten this block into the document"
+          // affordance — it is NOT "convert to a block kind" (an image embeds as a plain
+          // image, code as a fence, etc.), so "Convert to Text" misnames it. Label it
+          // "Embed in Document" (the wording the retired bespoke item used).
+          var isEmbed = offer.kind === 'prose' && action === 'transform'
+          extraItems.push({
+            icon: isEmbed ? (IC.promote || icon) : icon,
+            label: isEmbed ? 'Embed in Document' : VERB[action] + prettyKind,
+            action: function () { dispatch({}) }
+          })
         })
       })
       window.SieveContextMenu.appendItems(extraItems)
