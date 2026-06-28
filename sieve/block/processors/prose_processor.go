@@ -106,13 +106,35 @@ func (p *ProseProcessor) IsSupportedContent(entries []block.ContentEntry) block.
 			// A copied prose block round-trips on paste; embedding prose-in-prose is also a transform.
 			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionTransform}}
 		}
-		if _, _, ok := e.SieveAttrs(); ok {
-			// Any other block source → embed it as prose (the universal sink). Not paste:
-			// structured kinds claim their own sieve view first (registration order).
-			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionTransform}}
+		if _, attrs, ok := e.SieveAttrs(); ok {
+			// Any other block source → embed it as prose (the universal sink).
+			actions := []block.Action{block.ActionTransform}
+			// Smart-pasted source with recoverable raw text → also offer "Undo Smart
+			// Paste" (revert detection to the raw text). Detection-and-action are both
+			// framework-side; the frontend never decides whether to offer it.
+			if sp, _ := attrs["smartPaste"].(bool); sp && p.taggedSourceHasRawText(e) {
+				actions = append(actions, block.ActionUndoSmartPaste)
+			}
+			return block.SupportedActions{Kind: p.Kind(), Actions: actions}
 		}
 	}
 	return block.SupportedActions{Kind: p.Kind()}
+}
+
+// taggedSourceHasRawText reports whether the entry's sieve source kind can recover raw
+// text (block.RawContenter with a non-empty result). Undo with nothing to revert to is
+// not offered.
+func (p *ProseProcessor) taggedSourceHasRawText(e block.ContentEntry) bool {
+	kind, attrs, ok := e.SieveAttrs()
+	if !ok {
+		return false
+	}
+	proc := block.GetProcessor(kind)
+	rc, isRaw := proc.(block.RawContenter)
+	if proc == nil || !isRaw {
+		return false
+	}
+	return strings.TrimSpace(rc.RawContent(block.NewSieveBlock(kind, "", attrs))) != ""
 }
 
 // Transform turns entries into a prose block's content. A `sieve/prose` view carries

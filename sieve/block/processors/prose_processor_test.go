@@ -134,3 +134,26 @@ func TestProseProcessor_AcceptsIsTerminal(t *testing.T) {
 		t.Error("prose must accept everything (terminal mop-up)")
 	}
 }
+
+func TestProseProcessor_IsSupportedContent_offersUndoForTaggedSource(t *testing.T) {
+	block.ResetRegistry()
+	// Restore prose registration after the test so other tests that rely on the
+	// prose processor (registered via init()) are not left with an empty registry.
+	t.Cleanup(func() { block.RegisterProcessor(&ProseProcessor{}) })
+	block.RegisterProcessor(&CodeBlockProcessor{FencedDeserializer: block.FencedDeserializer{Kind: "code"}})
+	defer block.UnregisterProcessor("code")
+	var p ProseProcessor
+
+	tagged := []block.ContentEntry{{MIMEType: "sieve/code", Content: `{"source":"x = 1\ny = 2","smartPaste":true}`}}
+	if !p.IsSupportedContent(tagged).Has(block.ActionUndoSmartPaste) {
+		t.Error("tagged smart-pasted source must offer undo-smart-paste")
+	}
+
+	plain := []block.ContentEntry{{MIMEType: "sieve/code", Content: `{"source":"x = 1\ny = 2"}`}}
+	if p.IsSupportedContent(plain).Has(block.ActionUndoSmartPaste) {
+		t.Error("a hand-made (untagged) source must NOT offer undo-smart-paste")
+	}
+	if !p.IsSupportedContent(plain).Has(block.ActionTransform) {
+		t.Error("prose must still offer transform (embed) for any sieve source")
+	}
+}
