@@ -1,10 +1,58 @@
 package processors
 
 import (
+	"bytes"
 	"sieve/sieve/block"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/yuin/goldmark"
 )
+
+// Embedding a code/diagram/log block into prose is the "this was wrongly detected as
+// code — give me the TEXT" escape hatch. The raw source can't be stored verbatim as
+// prose markdown: 4-space indents render as an indented code block (a stray fence) and
+// bare newlines soft-join lines (the split header/tail the user saw). The embed must
+// neutralise both so the source renders as plain text.
+func TestProseProcessor_Transform_codeSourceEmbedsAsSafePlainText(t *testing.T) {
+	var p ProseProcessor
+	// The exact structure that mangled: 0-indent braces, 4-space-indented bodies,
+	// a blank line between members.
+	src := "public class Greeter {\n    private final String name;\n\n    public Greeter(String name) {\n        this.name = name;\n    }\n}"
+	entries := []block.ContentEntry{{
+		MIMEType: "sieve/code",
+		Content:  `{"language":"java","source":` + strconv.Quote(src) + `}`,
+	}}
+
+	overrides := p.Transform(entries, "", "", block.ActionTransform)
+	content, _ := overrides["content"].(string)
+	if strings.TrimSpace(content) == "" {
+		t.Fatal("expected embedded content, got empty")
+	}
+
+	var buf bytes.Buffer
+	if err := goldmark.New().Convert([]byte(content), &buf); err != nil {
+		t.Fatal(err)
+	}
+	html := buf.String()
+
+	// Must NOT render as a code block — that is the stray fence with the header/tail
+	// lines pushed outside it.
+	if strings.Contains(html, "<pre") {
+		t.Errorf("embedded source rendered as a code block (stray fence):\n%s", html)
+	}
+	// Lines must stay distinct (hard breaks), not soft-join into one paragraph line.
+	if !strings.Contains(html, "<br") {
+		t.Errorf("source lines soft-joined (no hard break) — would merge in markdown:\n%s", html)
+	}
+	// The source text survives (de-indented).
+	for _, want := range []string{"public class Greeter {", "private final String name;", "this.name = name;"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("expected source line %q preserved, got:\n%s", want, html)
+		}
+	}
+}
 
 // TestProseProcessor_BuildContextEmitsHighlightTargets: the retired block-anchor's
 // "Specifically regarding" targets feature is replicated on prose — derived from

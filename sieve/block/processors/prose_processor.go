@@ -127,13 +127,14 @@ func (p *ProseProcessor) Transform(entries []block.ContentEntry, _ string, _ str
 		}
 		// A foreign sieve source: rebuild it and take its markdown representation.
 		if kind, attrs, ok := e.SieveAttrs(); ok {
-			// Code-like sources embed as their raw source text, not a fenced block.
-			// Guard against a missing/non-string/empty source (older blocks may lack
-			// it): fall through to MarkdownRepresentation rather than embed a blank
-			// block (which would silently drop the content). TODO: preserve newlines.
+			// Code-like sources embed as plain TEXT, not a fenced block — this is the
+			// "smart-detection over-grabbed; I wanted text" escape hatch. Guard against a
+			// missing/non-string/empty source (older blocks may lack it): fall through to
+			// MarkdownRepresentation rather than embed a blank block (which would silently
+			// drop the content).
 			if kind == "code" || kind == "diagram" || kind == "log" {
 				if src, _ := attrs["source"].(string); strings.TrimSpace(src) != "" {
-					return map[string]interface{}{"content": src}
+					return map[string]interface{}{"content": p.sourceAsPlainText(src)}
 				}
 			}
 			//for any other sieve type just go with there default Markdown
@@ -152,6 +153,24 @@ func (p *ProseProcessor) Transform(entries []block.ContentEntry, _ string, _ str
 		}
 	}
 	return map[string]interface{}{"content": strings.Join(parts, "\n\n")}
+}
+
+// sourceAsPlainText renders a structured block's raw source for embedding into prose
+// as plain TEXT (the "Embed in Document" escape hatch when smart-detection grabbed
+// text as code — brackets like {}<>[] trip a language match). Markdown can't carry
+// code as text verbatim: a 4-space indent IS an indented code block (a stray fence)
+// and a bare newline soft-joins lines (the split header/tail). So de-indent every
+// line and join with markdown hard breaks, dropping blank lines (a blank line re-opens
+// a code block before the next indented line). The result reads as the user's text,
+// never a fence — indentation is intentionally dropped (it's text now, not code).
+func (p *ProseProcessor) sourceAsPlainText(src string) string {
+	var lines []string
+	for _, line := range strings.Split(src, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "  \n") // two-space suffix = markdown hard break
 }
 
 // RunJob is the rewrite/enrich seam — a no-op until a prose job is wired, but the
