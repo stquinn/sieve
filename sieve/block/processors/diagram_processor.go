@@ -64,7 +64,8 @@ func (p *DiagramProcessor) IsSupportedContent(entries []block.ContentEntry) bloc
 		if kind, attrs, ok := e.SieveAttrs(); ok && kind == "code" {
 			if lang, _ := attrs["language"].(string); lang == "mermaid" {
 				if src, _ := attrs["source"].(string); strings.TrimSpace(src) != "" {
-					return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionExtract}}
+					return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste,
+						block.ActionExtract, block.ActionTransform}}
 				}
 			}
 		}
