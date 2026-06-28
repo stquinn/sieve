@@ -1,5 +1,7 @@
 # DocumentCodec Deserialization Implementation Plan
 
+> **STATUS — ✅ COMPLETE (closed out 2026-06-28).** Deserialization is a per-`BlockProcessor` concern orchestrated by `DocumentCodec` (`sieve/block/document_codec.go`), fed by `RegionScanner` (`sieve/block/region_scanner.go`); full Go suite green. Block-model **Stage A**. The region-scanning approach was subsequently evolved by [processor-owned-segmentation](2026-06-20-processor-owned-segmentation.md) (shapes declared per processor; `firstAcceptor`/`flushProse` deleted).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make deserialization a per-`BlockProcessor` concern (the mirror of `Serialize`), orchestrated by a new `DocumentCodec` service that owns both directions.

@@ -1,5 +1,13 @@
 # Sieve Block Document Model — Implementation Plan
 
+> **STATUS — CORE COMPLETE (closed out 2026-06-28); Stages E–F deferred.** This is the spine the whole branch hangs off. The migration succeeded: `go build ./...` and the full Go suite are green, and the app is **runnable end-to-end** (the Stage-D milestone).
+> - **Stage A** (backend block model + serialization spine) — ✅ DONE. `shadow_document.go`, `document_codec.go`, per-processor `Serialize`/`Deserialize`. Delivered via the [shadowdoc-uniform-block-refactor](2026-06-19-shadowdoc-uniform-block-refactor.md) + [deserialization-documentcodec](2026-06-19-deserialization-documentcodec.md) side-plans.
+> - **Stage B** (universal handles) — ✅ DONE. Handle markers, `handle_gc.go`, `region_scanner.go`. **Exception: B-A** (backend-authoritative prose-id mint, `token→mint→ack`) is ⏸ **DEFERRED** — frontend still mints prose ids (tracked in `docs/TECH-DEBT.md`).
+> - **Stage C** (wire protocol / block ops) — ✅ DONE. `HandleBlockOp`/`ApplyOp`; create/update/delete/reorder/move.
+> - **Stage D** (native frontend) — ✅ DONE. Node-granular prose, `prose-group.js`, document-level JS serializer retired. **App runnable from here.** Both delivery-critical close-out items (legacy goldmark cleanup; nested-prose `proseGroup` render → E-1) done.
+> - **Stage E** (by-value containers/tree, `column-row` columns, **retire `blockRef`**) — ⏸ **DEFERRED** to a future branch. Absorbs the old layout-engine columns work.
+> - **Stage F** (layout/lineage lenses + server-side tree search) — ⏸ **DEFERRED** to a future branch (lineage live-glow still gated on the reconciler project).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Pivot Sieve from "markdown is the model" to "blocks are the model" — a uniform, ordered, addressable block tree where markdown is a storage serialization produced by one backend spine, delivered as a staged cutover (Go-testable core first).

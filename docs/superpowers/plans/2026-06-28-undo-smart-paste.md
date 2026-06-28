@@ -1,5 +1,7 @@
 # Undo Smart Paste Implementation Plan
 
+> **STATUS — ✅ COMPLETE (closed out 2026-06-28).** `ActionUndoSmartPaste` is a first-class action flowing through the recognition→action pipeline; detection in `ProseProcessor`, replace-by-id via `transformInPlace`. `RawContenter` exposes code/diagram/log source. Frontend renders the offer + maps the action to a label (`action-label.js`). Built with the follow-on prose-embed-as-markdown/image series (commits through `1d444db`). Go + vitest green. Last plan landed on the branch.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Un-fuse "Embed in Document" (faithful markdown) from the smart-paste escape hatch by adding a framework-detected, framework-actioned `ActionUndoSmartPaste` transformation.

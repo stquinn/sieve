@@ -1,5 +1,7 @@
 # Block Affordance Recognition Implementation Plan
 
+> **STATUS — ✅ COMPLETE (closed out 2026-06-28).** This is the branch's headline feature (`feature/transform_operation_frameworkk`). Recognition returns affordances (`IsSupportedContent`/`SupportedActions`); `Transform(action)`; backend owns the mutation (PASTE/EXTRACT → new block, TRANSFORM → replace-by-id); frontend is a dumb renderer. `replaceSource`/`additiveKinds` heuristics deleted. Data-loss defect #1 (composite clobber) fixed (`188cc9c`); two-reviewer whole-branch review passed. Full detail in the **IMPLEMENTATION STATUS & BACKLOG** section below (updated 2026-06-25). **Deferred / parked:** **Task 8** (prose sub-range split `PRE/TARGET/POST`) — non-blocking; only needed to *move* a child out of a multi-child prose block (composites already covered by defect-#1's additive approach).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Move the extract-vs-transform decision out of the frontend into the backend processor contract, so recognition returns *affordances* (which operations apply) and the chosen operation round-trips end-to-end; the backend owns the mutation (PASTE/EXTRACT → new block, TRANSFORM → replace block) and the editor re-renders through the normal lifecycle.
