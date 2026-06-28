@@ -79,6 +79,25 @@ import { esc, getLowlight, hastToHtml } from './fenced-block-base.js'
         specNodeLabelColor:   bgDark,
         attributeBackgroundColorOdd:  bgAlt,
         attributeBackgroundColorEven: bgDark,
+
+        // Sequence diagrams — these have their own variables that ignore the
+        // generic label colours above, so message/note text falls back to
+        // black-on-dark (invisible) unless set explicitly.
+        actorBkg:             accent,
+        actorBorder:          accent,
+        actorTextColor:       bgDark,
+        actorLineColor:       textDim,
+        signalColor:          textDim,   // arrow/lifeline lines
+        signalTextColor:      text,      // message labels above arrows
+        labelBoxBkgColor:     bgAlt,
+        labelBoxBorderColor:  border2,
+        loopTextColor:        text,
+        noteBkgColor:         bgAlt,
+        noteBorderColor:      border2,
+        noteTextColor:        text,
+        activationBkgColor:   bgAlt,
+        activationBorderColor: border2,
+        sequenceNumberColor:  bgDark,
       },
     }
   }
