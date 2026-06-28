@@ -31,6 +31,17 @@ export function getBlockKind(kind) {
   return registry[kind] || null
 }
 
+// containsChildBlocks reports whether a node holds block-level CHILDREN (schema
+// content 'block+') — a true container (ai-block, web-clip) — versus a leaf that holds
+// its own text ('text*': code, diagram) or nothing (atom: smart-image). This is the
+// structural signal for "a real nested child was clicked" vs "the block's own content":
+// clicking content inside a container is a child (stamp parentId so an in-place
+// TRANSFORM can't clobber siblings); clicking a leaf's content IS the block itself.
+// Derived from the schema (the single source of truth) — no separate flag to drift.
+export function containsChildBlocks(node) {
+  return !!node && !node.type.isLeaf && !node.type.inlineContent
+}
+
 // getBlockBehaviour returns the object that holds a kind's behaviour hooks
 // (asContentEntry, resolveEntries, …) for ANY block — uniform across native and
 // structured. A native def (prose) IS its own behaviour holder; a structured def
@@ -80,6 +91,7 @@ if (typeof window !== 'undefined') {
   window.TipTap.registerBlockKind = registerBlockKind
   window.TipTap.getBlockKind = getBlockKind
   window.TipTap.getBlockBehaviour = getBlockBehaviour
+  window.TipTap.containsChildBlocks = containsChildBlocks
   window.TipTap.listBlockKinds = listBlockKinds
   window.TipTap.isNativeProseNodeName = isNativeProseNodeName
   window.TipTap.proseChainHits = proseChainHits
