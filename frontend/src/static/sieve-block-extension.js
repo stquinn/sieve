@@ -754,7 +754,6 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
       if (!window.SieveContextMenu || !window.SieveContextMenu.appendItems) return
 
       var IC = window.SieveIcons || {}
-      var VERB = { extract: 'Extract as ', transform: 'Convert to ' }
       var headerLabel = 'FROM ' + (extractSourceLabel || sourceKind).toUpperCase().replace('-', ' ')
       var extraItems = [{ type: 'divider' }, { type: 'header', label: headerLabel }]
 
