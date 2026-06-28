@@ -44,13 +44,24 @@ CustomEvent feeding a status-bar slot, exactly like `editor:stats` →
 
 ## Components
 
-### 1. `block-hover-id.js` — new module
+The feature is too small to warrant a new module. It is the same shape as the
+existing character-count readout, which lives in exactly two places:
 
-Location: `frontend/src/static/block-hover-id.js`. Loaded as a `<script>` in
-`index.html` next to the other static JS modules.
+- **Producer:** `dispatchStats()` inside `editor.js` (computes, dispatches the
+  `editor:stats` CustomEvent on editor update).
+- **Consumer:** the `editor:stats` handler in `index.html` (writes
+  `.status-bar__stats`).
 
-- Attaches one delegated `mouseover` and one `mouseout` listener on
-  `#editor-container`.
+The hover readout follows the same split — putting it anywhere else would be the
+asymmetry we want to avoid (its twin already lives in `editor.js`).
+
+### 1. Producer — in `editor.js`, beside the Stats section
+
+When the editor mounts, attach one delegated `mouseover` and one `mouseout`
+listener to the editor container (`editor.js` already owns the container at
+mount; the char-count fires on *update*, so this is the one new wrinkle — a DOM
+listener rather than an update hook).
+
 - On `mouseover`: `e.target.closest('[data-id]')`.
   - If none → fire clear (see below).
   - Else read (pure DOM, no PM doc access):
@@ -64,9 +75,7 @@ Location: `frontend/src/static/block-hover-id.js`. Loaded as a `<script>` in
 `mouseover` fires on element entry (not per-pixel like `mousemove`), so no
 throttling is needed.
 
-### 3. Status-bar slot + handler
-
-`frontend/src/index.html`:
+### 2. Consumer — status-bar slot + handler in `index.html`
 
 - Add `<div class="status-bar__blockid"></div>` inside `.status-bar__right`,
   **before** `.status-bar__stats`. Styled dim + monospace:
