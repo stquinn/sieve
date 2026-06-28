@@ -241,7 +241,7 @@ func (p *CodeBlockProcessor) RawContent(blk block.SieveBlock) string {
 	return src
 }
 
-func (p *CodeBlockProcessor) MarkdownRepresentation(blk block.SieveBlock) string {
+func (p *CodeBlockProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {
 	source, _ := blk.Attrs["source"].(string)
 	source = strings.TrimSpace(source)
 	if source == "" {

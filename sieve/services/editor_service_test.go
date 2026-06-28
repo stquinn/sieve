@@ -614,7 +614,9 @@ func (p *testRunJobProcessor) Transform(entries []block.ContentEntry, _ string, 
 func (p *testRunJobProcessor) BuildContext(_ block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
 	return block.AIContext{}
 }
-func (p *testRunJobProcessor) MarkdownRepresentation(_ block.SieveBlock) string { return "" }
+func (p *testRunJobProcessor) MarkdownRepresentation(_ block.SieveBlock, _ string) string {
+	return ""
+}
 func (p *testRunJobProcessor) OnChange(_ *block.SieveBlock)                     {}
 func (p *testRunJobProcessor) RunJob(jctx block.JobContext) error {
 	if p.runJob != nil {

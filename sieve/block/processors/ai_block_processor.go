@@ -224,7 +224,7 @@ func (p *AIBlockProcessor) RunJob(jctx block.JobContext) error {
 	return nil
 }
 
-func (p *AIBlockProcessor) MarkdownRepresentation(blk block.SieveBlock) string {
+func (p *AIBlockProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {
 	status, _ := blk.Attrs["status"].(string)
 	response, _ := blk.Attrs["response"].(string)
 	response = strings.TrimSpace(response)

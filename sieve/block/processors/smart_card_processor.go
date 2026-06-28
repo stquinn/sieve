@@ -183,7 +183,7 @@ func (p *SmartCardProcessor) downloadImage(uuid, blockID, imageURL string) (stri
 	return asset.ExternalRef(), nil
 }
 
-func (p *SmartCardProcessor) MarkdownRepresentation(blk block.SieveBlock) string {
+func (p *SmartCardProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {
 	href, _ := blk.Attrs["href"].(string)
 	if href == "" {
 		return ""

@@ -32,7 +32,9 @@ func (p *testMarkdownProcessor) Mode() block.BlockMode               { return bl
 func (p *testMarkdownProcessor) BuildContext(_ block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
 	return block.AIContext{}
 }
-func (p *testMarkdownProcessor) MarkdownRepresentation(_ block.SieveBlock) string { return p.md }
+func (p *testMarkdownProcessor) MarkdownRepresentation(_ block.SieveBlock, _ string) string {
+	return p.md
+}
 
 // TestEditorService_TransformToProse verifies that transforming a block to prose via the
 // affordance path (CreateBlockFromEntries + ActionTransform) is equivalent to the

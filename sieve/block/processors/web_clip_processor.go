@@ -163,7 +163,7 @@ func (p *WebClipBlockProcessor) RunJob(jctx block.JobContext) error {
 	return nil
 }
 
-func (p *WebClipBlockProcessor) MarkdownRepresentation(blk block.SieveBlock) string {
+func (p *WebClipBlockProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {
 	content, _ := blk.Attrs["content"].(string)
 	content = strings.TrimSpace(content)
 	if content == "" {

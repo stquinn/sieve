@@ -109,7 +109,7 @@ func (p *DiagramProcessor) RunJob(jctx block.JobContext) error {
 	return nil
 }
 
-func (p *DiagramProcessor) MarkdownRepresentation(blk block.SieveBlock) string {
+func (p *DiagramProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {
 	src, _ := blk.Attrs["source"].(string)
 	src = strings.TrimSpace(src)
 	if src == "" {

@@ -470,7 +470,7 @@ func (p *LogProcessor) RunJob(jctx block.JobContext) error {
 	return nil
 }
 
-func (p *LogProcessor) MarkdownRepresentation(blk block.SieveBlock) string {
+func (p *LogProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {
 	source, _ := blk.Attrs["source"].(string)
 	source = strings.TrimSpace(source)
 	if source == "" {

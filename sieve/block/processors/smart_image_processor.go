@@ -341,7 +341,7 @@ func (p *SmartImageProcessor) saveAsset(uuid, blockID string, data []byte) (stri
 	return asset.ExternalRef(), nil
 }
 
-func (p *SmartImageProcessor) MarkdownRepresentation(blk block.SieveBlock) string {
+func (p *SmartImageProcessor) MarkdownRepresentation(blk block.SieveBlock, uuid string) string {
 	src, _ := blk.Attrs["src"].(string)
 	if src == "" {
 		return ""
@@ -350,5 +350,22 @@ func (p *SmartImageProcessor) MarkdownRepresentation(blk block.SieveBlock) strin
 	if strings.TrimSpace(alt) == "" {
 		alt, _ = blk.Attrs["summary"].(string)
 	}
-	return "![" + strings.TrimSpace(alt) + "](" + src + ")"
+	return "![" + strings.TrimSpace(alt) + "](" + p.assetURL(uuid, src) + ")"
+}
+
+// assetURL builds the served URL the document renders: /sieve/<uuid>/<filename>. A
+// stored smart-image src is always a local asset filename (Transform downloads/renders
+// everything to disk), so this only needs to prefix it with the asset route — the
+// markdown must carry a working URL, since prose-embedded images render as a plain
+// <img> (the NodeView's resolveSrc never runs on them). The .assets/ strip + basename
+// are defensive against an older/path-qualified src.
+func (p *SmartImageProcessor) assetURL(uuid, src string) string {
+	if src == "" {
+		return ""
+	}
+	src = strings.TrimPrefix(src, ".assets/")
+	if i := strings.LastIndex(src, "/"); i >= 0 {
+		src = src[i+1:]
+	}
+	return "/sieve/" + uuid + "/" + src
 }

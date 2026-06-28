@@ -80,7 +80,9 @@ func extractTargets(content string) []string {
 }
 
 // MarkdownRepresentation: prose's markdown is its content verbatim.
-func (p *ProseProcessor) MarkdownRepresentation(blk block.SieveBlock) string { return blk.Content() }
+func (p *ProseProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {
+	return blk.Content()
+}
 
 // InitAttrs seeds a prose block's payload from overrides (the content).
 func (p *ProseProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
@@ -142,7 +144,7 @@ func (p *ProseProcessor) taggedSourceHasRawText(e block.ContentEntry) bool {
 // rebuilt and its MarkdownRepresentation is fetched via the registry — prose owns
 // this lookup (the "prose is the universal sink" contract). As a final fallback the
 // entries' raw content is joined (the extract seam — an AI block's table → prose).
-func (p *ProseProcessor) Transform(entries []block.ContentEntry, _ string, _ string, action block.Action) map[string]interface{} {
+func (p *ProseProcessor) Transform(entries []block.ContentEntry, uuid string, _ string, action block.Action) map[string]interface{} {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
 			return e.AsAttrsForNewBlock(p)
@@ -161,7 +163,7 @@ func (p *ProseProcessor) Transform(entries []block.ContentEntry, _ string, _ str
 			}
 			if proc != nil {
 				src := block.NewSieveBlock(kind, "", attrs)
-				if md := proc.MarkdownRepresentation(src); strings.TrimSpace(md) != "" {
+				if md := proc.MarkdownRepresentation(src, uuid); strings.TrimSpace(md) != "" {
 					return map[string]interface{}{"content": md}
 				}
 			}

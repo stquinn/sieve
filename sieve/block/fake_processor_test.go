@@ -28,4 +28,4 @@ func (fakeProc) JobLabel(*SieveBlock) string                                 { r
 func (fakeProc) OnChange(*SieveBlock)                                        {}
 func (fakeProc) Mode() BlockMode                                             { return BlockModeBlock }
 func (fakeProc) BuildContext(SieveBlock, DocView, map[string]bool) AIContext { return AIContext{} }
-func (fakeProc) MarkdownRepresentation(SieveBlock) string                    { return "" }
+func (fakeProc) MarkdownRepresentation(SieveBlock, string) string { return "" }

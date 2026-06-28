@@ -17,7 +17,7 @@ func (m *mockContextProcessor) BuildContext(block SieveBlock, doc DocView, seen 
 	}
 	return AIContext{Content: m.returnVal}
 }
-func (m *mockContextProcessor) MarkdownRepresentation(_ SieveBlock) string { return "" }
+func (m *mockContextProcessor) MarkdownRepresentation(_ SieveBlock, _ string) string { return "" }
 func (m *mockContextProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{"id": id}
 }

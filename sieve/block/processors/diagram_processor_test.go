@@ -139,7 +139,7 @@ func TestDiagramProcessor_BuildContext_emptySource(t *testing.T) {
 func TestDiagramProcessor_MarkdownRepresentation_withSource(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{})
 	blk := block.SieveBlock{Attrs: map[string]interface{}{"source": "graph TD\n  A-->B"}}
-	got := p.MarkdownRepresentation(blk)
+	got := p.MarkdownRepresentation(blk, "")
 	want := "```mermaid\ngraph TD\n  A-->B\n```"
 	if got != want {
 		t.Errorf("MarkdownRepresentation: got %q, want %q", got, want)
@@ -149,7 +149,7 @@ func TestDiagramProcessor_MarkdownRepresentation_withSource(t *testing.T) {
 func TestDiagramProcessor_MarkdownRepresentation_emptySource(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{})
 	blk := block.SieveBlock{Attrs: map[string]interface{}{"source": ""}}
-	if got := p.MarkdownRepresentation(blk); got != "" {
+	if got := p.MarkdownRepresentation(blk, ""); got != "" {
 		t.Errorf("MarkdownRepresentation must return empty string for empty source; got %q", got)
 	}
 }

@@ -124,7 +124,7 @@ func (p *SmartLinkProcessor) RunJob(jctx block.JobContext) error {
 	return nil
 }
 
-func (p *SmartLinkProcessor) MarkdownRepresentation(blk block.SieveBlock) string {
+func (p *SmartLinkProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {
 	href, _ := blk.Attrs["href"].(string)
 	if href == "" {
 		return ""
