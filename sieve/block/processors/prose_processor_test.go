@@ -158,3 +158,63 @@ func TestProseProcessor_IsSupportedContent_offersUndoForTaggedSource(t *testing.
 		t.Error("prose must still offer transform (embed) for any sieve source")
 	}
 }
+
+// fakeSmartImage stands in for the real smart-image processor so prose's image-embed
+// DELEGATION can be tested without a real AssetService: it reports the src + served
+// markdown the real one would produce. The actual saveSVG is smart-image's concern.
+type fakeSmartImage struct {
+	block.FencedSerializer
+	block.FencedDeserializer
+}
+
+func (f *fakeSmartImage) Kind() string          { return "smart-image" }
+func (f *fakeSmartImage) Mode() block.BlockMode { return block.BlockModeBlock }
+func (f *fakeSmartImage) InitAttrs(_ string, o map[string]interface{}) map[string]interface{} {
+	return o
+}
+func (f *fakeSmartImage) IsSupportedContent(_ []block.ContentEntry) block.SupportedActions {
+	return block.SupportedActions{Kind: "smart-image"}
+}
+func (f *fakeSmartImage) Transform(entries []block.ContentEntry, _ string, _ string, _ block.Action) map[string]interface{} {
+	for _, e := range entries {
+		if strings.HasPrefix(e.MIMEType, "image/") {
+			return map[string]interface{}{"src": "diagram-x.svg"}
+		}
+	}
+	return nil
+}
+func (f *fakeSmartImage) MarkdownRepresentation(blk block.SieveBlock, uuid string) string {
+	src, _ := blk.Attrs["src"].(string)
+	if src == "" {
+		return ""
+	}
+	return "![](/sieve/" + uuid + "/" + src + ")"
+}
+func (f *fakeSmartImage) BuildContext(_ block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
+	return block.AIContext{}
+}
+func (f *fakeSmartImage) RunJob(_ block.JobContext) error     { return nil }
+func (f *fakeSmartImage) JobLabel(_ *block.SieveBlock) string { return "" }
+func (f *fakeSmartImage) OnChange(_ *block.SieveBlock)        {}
+
+// "Embed in Document" of a diagram: prose's resolveEntries renders the mermaid to an
+// SVG and inserts an image/svg+xml entry. prose.Transform must embed THAT as served
+// image markdown — delegating the asset-save AND the ![](url) to smart-image — not fall
+// through to the diagram's mermaid-fence MarkdownRepresentation.
+func TestProseProcessor_Transform_embedImageDelegatesToSmartImage(t *testing.T) {
+	block.ResetRegistry()
+	t.Cleanup(func() { block.RegisterProcessor(&ProseProcessor{}) })
+	block.RegisterProcessor(&fakeSmartImage{FencedDeserializer: block.FencedDeserializer{Kind: "smart-image"}})
+	var p ProseProcessor
+
+	// Entries as prose's resolveEntries hands them: the diagram source text PLUS the
+	// rendered SVG image entry it inserted.
+	entries := []block.ContentEntry{
+		{MIMEType: "sieve/diagram", Content: `{"diagramType":"mermaid","source":"graph TD;A-->B"}`},
+		{MIMEType: "image/svg+xml", Content: "<svg>...</svg>"},
+	}
+	content, _ := p.Transform(entries, "uuid-1", "pr-1", block.ActionTransform)["content"].(string)
+	if content != "![](/sieve/uuid-1/diagram-x.svg)" {
+		t.Errorf("embed of an image source must produce served image markdown via smart-image, got %q", content)
+	}
+}

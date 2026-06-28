@@ -144,7 +144,16 @@ func (p *ProseProcessor) taggedSourceHasRawText(e block.ContentEntry) bool {
 // rebuilt and its MarkdownRepresentation is fetched via the registry — prose owns
 // this lookup (the "prose is the universal sink" contract). As a final fallback the
 // entries' raw content is joined (the extract seam — an AI block's table → prose).
-func (p *ProseProcessor) Transform(entries []block.ContentEntry, uuid string, _ string, action block.Action) map[string]interface{} {
+func (p *ProseProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string, action block.Action) map[string]interface{} {
+	// An image source (a diagram rendered to SVG by prose's resolveEntries, or any
+	// pasted/extracted image) embeds as served image markdown. The smart-image processor
+	// owns image saving + the ![](url) form, so delegate BOTH to it via the registry —
+	// prose stays service-free. Checked first so a rendered image wins over a co-present
+	// source-text entry (e.g. the diagram's sieve view, which would otherwise embed as a
+	// mermaid fence).
+	if md, ok := p.embedImageMarkdown(entries, uuid, blockID, action); ok {
+		return map[string]interface{}{"content": md}
+	}
 	for _, e := range entries {
 		if e.IsSieveType(p) {
 			return e.AsAttrsForNewBlock(p)
@@ -176,6 +185,37 @@ func (p *ProseProcessor) Transform(entries []block.ContentEntry, uuid string, _ 
 		}
 	}
 	return map[string]interface{}{"content": strings.Join(parts, "\n\n")}
+}
+
+// embedImageMarkdown turns an image entry into served image markdown by delegating to
+// the smart-image processor: its Transform saves the bytes (saveSVG/saveBase64) and
+// returns the asset src; its MarkdownRepresentation (uuid-aware) builds ![](/sieve/
+// <uuid>/<file>). prose holds no AssetsPort — the registered smart-image instance does.
+// ok is false when there is no image entry or smart-image is absent/declines.
+func (p *ProseProcessor) embedImageMarkdown(entries []block.ContentEntry, uuid, blockID string, action block.Action) (string, bool) {
+	hasImage := false
+	for _, e := range entries {
+		if strings.HasPrefix(e.MIMEType, "image/") {
+			hasImage = true
+			break
+		}
+	}
+	if !hasImage {
+		return "", false
+	}
+	si := block.GetProcessor("smart-image")
+	if si == nil {
+		return "", false
+	}
+	attrs := si.Transform(entries, uuid, blockID, action)
+	if attrs == nil {
+		return "", false
+	}
+	md := si.MarkdownRepresentation(block.NewSieveBlock("smart-image", "", attrs), uuid)
+	if strings.TrimSpace(md) == "" {
+		return "", false
+	}
+	return md, true
 }
 
 // sourceAsPlainText renders a structured block's raw source for embedding into prose
