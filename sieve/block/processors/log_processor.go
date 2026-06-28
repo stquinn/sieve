@@ -479,3 +479,9 @@ func (p *LogProcessor) MarkdownRepresentation(blk block.SieveBlock) string {
 	fence := getFence(source) // Reusing the package-level getFence from code_processor.go
 	return fence + "log\n" + source + "\n" + fence
 }
+
+// RawContent returns the source text this block was built from (block.RawContenter).
+func (p *LogProcessor) RawContent(blk block.SieveBlock) string {
+	src, _ := blk.Attrs["source"].(string)
+	return src
+}

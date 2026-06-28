@@ -114,9 +114,10 @@ const (
 type Action string
 
 const (
-	ActionPaste     Action = "paste"     // clipboard/source content -> new block
-	ActionExtract   Action = "extract"   // additive: new block alongside (source survives)
-	ActionTransform Action = "transform" // replace the source block in place
+	ActionPaste          Action = "paste"          // clipboard/source content -> new block
+	ActionExtract        Action = "extract"         // additive: new block alongside (source survives)
+	ActionTransform      Action = "transform"       // replace the source block in place
+	ActionUndoSmartPaste Action = "undo-smart-paste" // replace a smart-pasted block with its raw text as prose
 )
 
 // SupportedActions is one processor's offer for a set of entries: its Kind plus the
@@ -475,6 +476,14 @@ func GenerateBlockIDFor(kind string) string {
 
 type SelfExtractable interface {
 	AllowSelfExtraction() bool
+}
+
+// RawContenter is the optional interface a processor implements to expose the raw
+// source text its block was built from. Used by "Undo Smart Paste" to recover the
+// pre-detection text, and lets prose embedding avoid hard-coding source-bearing kinds
+// by name. A kind that has no raw text simply does not implement it.
+type RawContenter interface {
+	RawContent(blk SieveBlock) string
 }
 
 // FirstPasteMatch returns the kind and processor that claims these entries on a

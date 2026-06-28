@@ -117,3 +117,9 @@ func (p *DiagramProcessor) MarkdownRepresentation(blk block.SieveBlock) string {
 	}
 	return "```mermaid\n" + src + "\n```"
 }
+
+// RawContent returns the source text this block was built from (block.RawContenter).
+func (p *DiagramProcessor) RawContent(blk block.SieveBlock) string {
+	src, _ := blk.Attrs["source"].(string)
+	return src
+}

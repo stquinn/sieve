@@ -235,6 +235,12 @@ func (p *CodeBlockProcessor) RunJob(jctx block.JobContext) error {
 	return nil
 }
 
+// RawContent returns the source text this block was built from (block.RawContenter).
+func (p *CodeBlockProcessor) RawContent(blk block.SieveBlock) string {
+	src, _ := blk.Attrs["source"].(string)
+	return src
+}
+
 func (p *CodeBlockProcessor) MarkdownRepresentation(blk block.SieveBlock) string {
 	source, _ := blk.Attrs["source"].(string)
 	source = strings.TrimSpace(source)

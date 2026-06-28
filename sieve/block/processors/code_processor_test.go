@@ -423,3 +423,15 @@ func TestOnChange_schedulesAIWhenNoLanguageAndHeuristicsBlind(t *testing.T) {
 		t.Errorf("expected status to transition to PENDING, got %q", status)
 	}
 }
+
+func TestCodeBlockProcessor_RawContent_returnsSource(t *testing.T) {
+	var p CodeBlockProcessor
+	blk := block.NewSieveBlock("code", "co-1", map[string]interface{}{"source": "x = 1\ny = 2"})
+	if got := p.RawContent(blk); got != "x = 1\ny = 2" {
+		t.Errorf("RawContent = %q, want the source verbatim", got)
+	}
+	empty := block.NewSieveBlock("code", "co-2", map[string]interface{}{})
+	if got := p.RawContent(empty); got != "" {
+		t.Errorf("RawContent of source-less block = %q, want empty", got)
+	}
+}
