@@ -2016,6 +2016,22 @@ pre.tiptap-code-block code {
   justify-content: flex-end;
 }
 
+/* Vertical dividers between the status-bar right-group cells AND the chars/lines
+   split — one shared rule so every divider is identical. --theme-border2 (the
+   more prominent border token) reads as a defined line on the dark bar. The
+   explicit height is content-independent: it keeps the divider the same size for
+   every font and, crucially, visible even when a cell (e.g. blockid) is empty —
+   a content-height border would collapse to 0 and disappear. */
+.status-bar__right > .status-bar__blockid,
+.status-bar__right > .status-bar__stats,
+.status-bar__sep {
+  border-left: 1px solid var(--theme-border2);
+  padding-left: 0.75rem;
+  height: 16px;
+  line-height: 16px;
+  box-sizing: border-box;
+}
+
 .status-bar__center {
   font-family: var(--theme-monoFont);
   color: var(--theme-accentPrimary);
@@ -2053,8 +2069,10 @@ pre.tiptap-code-block code {
   flex-shrink: 0;
 }
 
+/* Divider styling is shared with the cell rule above; __sep only needs its own
+   left margin because it sits inside .status-bar__stats (no container gap). */
 .status-bar__sep {
-  opacity: 0.35;
+  margin-left: 0.75rem;
   flex-shrink: 0;
 }
 

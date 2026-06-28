@@ -256,6 +256,12 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
             chromeHost.setAttribute('contenteditable', 'false')
             view.dom.insertBefore(chromeHost, view.dom.firstChild)
 
+            // Stamp data-kind on the block root (renderers already set data-id
+            // there, but not the kind). One uniform spot for every sieve flavour —
+            // lets the block-ID hover readout report `kind · id` rather than
+            // defaulting to 'prose'.
+            view.dom.setAttribute('data-kind', kind)
+
             // Explicitly non-editable: prevents the block root from inheriting
             // contentEditable="true" from the ProseMirror root, which would let
             // the browser treat it as an editable area and break PM atom snapping.

@@ -2029,6 +2029,25 @@
     }))
   })
 
+  // Block-ID hover readout (dev/debug). Hovering any block — prose or Sieve —
+  // surfaces `kind · id` in the status bar. Both kinds carry data-id in the DOM
+  // (prose via the blockId global attr; Sieve via its NodeView host); Sieve
+  // blocks also carry data-kind, prose don't (→ implicitly 'prose'). Pure DOM
+  // read, no PM doc access. Producer half of the same pattern as dispatchStats →
+  // editor:stats; the consumer lives beside that handler in index.html. The
+  // gutter line number already gives the block's index, so it's not duplicated.
+  var lastHoverKey = null
+  document.addEventListener('mouseover', function (e) {
+    var inMount = e.target.closest && e.target.closest('#tiptap-mount')
+    var el = inMount ? e.target.closest('[data-id]') : null
+    var key = el ? (el.getAttribute('data-kind') || 'prose') + '·' + el.getAttribute('data-id') : null
+    if (key === lastHoverKey) return   // only fire when the hovered block changes
+    lastHoverKey = key
+    document.dispatchEvent(new CustomEvent('editor:blockhover', {
+      detail: el ? { id: el.getAttribute('data-id'), kind: el.getAttribute('data-kind') || 'prose' } : null
+    }))
+  })
+
   document.addEventListener('keydown', function (e) {
     if (e.key === 'W' && window.isMod(e) && e.shiftKey && !e.altKey) {
       e.preventDefault()
