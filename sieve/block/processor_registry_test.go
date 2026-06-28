@@ -145,13 +145,13 @@ func TestFirstPasteMatch_selfKindBeatsUpgrade(t *testing.T) {
 		{MIMEType: "sieve/code", Content: `{"id":"co-1","language":"mermaid","source":"graph TD; A-->B"}`},
 		{MIMEType: "text/plain", Content: "graph TD; A-->B"},
 	}
-	if kind, _, ok := FirstPasteMatch(copied); !ok || kind != "code" {
+	if kind, _, _, ok := FirstPasteMatch(copied); !ok || kind != "code" {
 		t.Fatalf("copied sieve/code (mermaid) should round-trip as code, got kind=%q ok=%v", kind, ok)
 	}
 
 	// Raw mermaid text only (no sieve view): general pass → diagram upgrade.
 	raw := []ContentEntry{{MIMEType: "text/plain", Content: "graph TD; A-->B"}}
-	if kind, _, ok := FirstPasteMatch(raw); !ok || kind != "diagram" {
+	if kind, _, _, ok := FirstPasteMatch(raw); !ok || kind != "diagram" {
 		t.Fatalf("raw mermaid text should upgrade to diagram, got kind=%q ok=%v", kind, ok)
 	}
 }

@@ -506,11 +506,11 @@ type RawContenter interface {
 //
 // The registry owns its internals (matcher list + lock); callers ask, they do not
 // iterate pasteMatchers directly.
-func FirstPasteMatch(entries []ContentEntry) (kind string, processor BlockProcessor, ok bool) {
+func FirstPasteMatch(entries []ContentEntry) (kind string, processor BlockProcessor, fromDetection bool, ok bool) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 
-	// Pass 1 — self-kind: a sieve/<kind> view is reclaimed by its own processor.
+	// Pass 1 — self-kind round-trip (NOT detection).
 	for _, e := range entries {
 		k, _, sieveOK := e.SieveAttrs()
 		if !sieveOK {
@@ -518,26 +518,26 @@ func FirstPasteMatch(entries []ContentEntry) (kind string, processor BlockProces
 		}
 		for i := range pasteMatchers {
 			if pasteMatchers[i].Kind == k && pasteMatchers[i].Processor.IsSupportedContent(entries).Has(ActionPaste) {
-				return pasteMatchers[i].Kind, pasteMatchers[i].Processor, true
+				return pasteMatchers[i].Kind, pasteMatchers[i].Processor, false, true
 			}
 		}
 	}
 
-	// Pass 2 — general detection, prose terminal last.
+	// Pass 2 — general detection (smart paste being clever).
 	proseIdx := -1
 	for i := range pasteMatchers {
 		if pasteMatchers[i].Processor.Mode() == BlockModeProse {
-			proseIdx = i // defer prose to last
+			proseIdx = i
 			continue
 		}
 		if pasteMatchers[i].Processor.IsSupportedContent(entries).Has(ActionPaste) {
-			return pasteMatchers[i].Kind, pasteMatchers[i].Processor, true
+			return pasteMatchers[i].Kind, pasteMatchers[i].Processor, true, true
 		}
 	}
 	if proseIdx >= 0 && pasteMatchers[proseIdx].Processor.IsSupportedContent(entries).Has(ActionPaste) {
-		return pasteMatchers[proseIdx].Kind, pasteMatchers[proseIdx].Processor, true
+		return pasteMatchers[proseIdx].Kind, pasteMatchers[proseIdx].Processor, true, true
 	}
-	return "", nil, false
+	return "", nil, false, false
 }
 
 // DetectExtractions composes the affordance offer: for each registered kind that can

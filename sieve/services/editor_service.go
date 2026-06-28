@@ -515,12 +515,18 @@ func (es *EditorService) HandlePasteSlice(uuid string, slice [][]block.ContentEn
 // no separate softReloadContent needed. It is the secondary creation path; prefer
 // CreateBlock directly for UI-triggered creation.
 func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry, index int) (kind, id, rawYaml string, matched bool) {
-	matchKind, processor, ok := block.FirstPasteMatch(entries)
+	matchKind, processor, fromDetection, ok := block.FirstPasteMatch(entries)
 	if !ok {
 		return "", "", "", false
 	}
 	blockID := block.GenerateBlockIDFor(matchKind)
 	overrides := processor.Transform(entries, uuid, blockID, block.ActionPaste)
+	if fromDetection {
+		if overrides == nil {
+			overrides = map[string]interface{}{}
+		}
+		overrides["smartPaste"] = true
+	}
 	id, raw, err := es.createBlockWithID(uuid, matchKind, blockID, overrides, nil, index)
 	if err != nil {
 		return "", "", "", false
