@@ -153,6 +153,7 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
     status:           { default: 'PENDING', parseHTML: function (el) { return el.getAttribute('data-status')      || 'PENDING' } },
     createdAt:        { default: null,      parseHTML: function (el) { return el.getAttribute('data-created-at')  || null } },
     supportsEmbedding: { default: false, parseHTML: function (el) { return el.getAttribute('data-supports-embedding') === 'true' } },
+    smartPaste: { default: false, parseHTML: function (el) { return el.getAttribute('data-smart-paste') === 'true' } },
   }
 
   // draggable:false — reordering is done via the custom gutter handle (block-chrome.js),
@@ -691,6 +692,9 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
     if (data.supportsEmbedding) {
       htmlAttrs.push('data-supports-embedding="true"')
     }
+    if (data.smartPaste) {
+      htmlAttrs.push('data-smart-paste="true"')
+    }
 
     var innerHTML = ''
     if (!cfg.atom && renderer.getInitialContentHTML) {
@@ -763,9 +767,9 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
             ? r.getFriendlyName()
             : offer.kind.split('-').map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1) }).join(' '))
 
-        // Menu offers the source-mutating ops (extract/transform); paste is never shown here.
+        // Menu offers the source-mutating ops (extract/transform/undo-smart-paste); paste is never shown here.
         ;(offer.actions || []).forEach(function (action) {
-          if (action !== 'extract' && action !== 'transform') return
+          if (action !== 'extract' && action !== 'transform' && action !== 'undo-smart-paste') return
 
           var dispatch = function (context) {
             document.dispatchEvent(new CustomEvent('sieve:extract', {
@@ -792,7 +796,7 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
           var isEmbed = offer.kind === 'prose' && action === 'transform'
           extraItems.push({
             icon: isEmbed ? (IC.promote || icon) : icon,
-            label: isEmbed ? 'Embed in Document' : VERB[action] + prettyKind,
+            label: (window.TipTap.labelForAction || function (a, k) { return a + ' ' + k })(action, prettyKind, offer),
             action: function () { dispatch({}) }
           })
         })

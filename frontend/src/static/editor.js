@@ -2104,7 +2104,7 @@
     // stale insert position so insert-block uses the op's own index, not a leftover range.
     sieveInsertPos = null
     var index = -1
-    if (operation !== 'transform' && blockId) {
+    if (operation !== 'transform' && operation !== 'undo-smart-paste' && blockId) {
       // Use top-level-only scan (blockIndexAfter) — descendants() was buggy because
       // it visited nested nodes, potentially matching an inner node's id and computing
       // an index relative to that nested position rather than the top-level tree.
