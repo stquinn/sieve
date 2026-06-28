@@ -1581,6 +1581,14 @@
       return false
     }
 
+    // Caret inside a raw-text fenced block (code / diagram / log — code:true
+    // nodes): paste is a literal text paste into that block, not a smart-paste
+    // that mints a new block. Step aside; PM's default handler inserts the text.
+    if (window.TipTap && window.TipTap.caretInRawTextBlock &&
+        window.TipTap.caretInRawTextBlock(currentEditor)) {
+      return false
+    }
+
     var text = event.clipboardData.getData('text/plain')
     var html = event.clipboardData.getData('text/html')
     var files = Array.from(event.clipboardData.files)
