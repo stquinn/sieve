@@ -1,5 +1,11 @@
 # Editor Layout Engine — Implementation Plan
 
+> **STATUS — PARTIAL / SUPERSEDED (closed out 2026-06-28).** This plan was **reframed by the [block-document-model design](../specs/2026-06-17-block-document-model-design.md)** mid-flight (see that spec §12): containers/columns/lineage are now "structure + lenses over one block model," not three standalone subsystems. Disposition by stage:
+> - **Stage 1 (chrome/reorder/gap-cursor/selection/clipboard)** — *partially landed.* `block-chrome.js` shipped (per-block chrome substrate). The standalone `block-selection.js`/`clipboard.js` modules were **not** built as specced; block selection & clipboard evolved under the block-model + affordance work instead.
+> - **Stage 2 Go core (`column-row` serializer, Tasks 2.1/2.2)** — ✅ **DONE** (`sieve/.../columnrow_serializer*`). Became the precedent for the per-`BlockProcessor` serialization spine.
+> - **Stage 2 UI + Stage 3 (columns UI)** — ⏸ **DEFERRED** → re-expressed as block-model **Stage E** (by-value containers, `column-row`, retire `blockRef`).
+> - **Stage 4a/4b (lineage rail, doc-map, dirty-glow)** — ⏸ **DEFERRED** → block-model **Stage F** (lenses); 4b still gated on the separate reconciler project.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Rebuild the editor pane into a consistent, rock-solid layout engine on ProseMirror/TipTap — uniform per-block chrome, block-level selection/clipboard, drag-reorder, manual columns, and a gutter lineage rail — delivered in stages but planned as one coherent arc.

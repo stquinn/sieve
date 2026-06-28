@@ -77,18 +77,18 @@ func TestCodeBlockProcessor_InitAttrs_withOverrides(t *testing.T) {
 	}
 }
 
-// ── IsBlock + Transform ───────────────────────────────────────────────────────
+// ── IsSupportedContent + Transform ───────────────────────────────────────────
 
 func TestCodeBlockProcessor_IsBlock_withLanguage(t *testing.T) {
 	p := NewCodeBlockProcessor(block.BlockServices{})
-	if !p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\nprint('world')\n```"}}) {
-		t.Fatal("IsBlock must return true for a fenced code block")
+	if !p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\nprint('world')\n```"}}).Has(block.ActionPaste) {
+		t.Fatal("IsSupportedContent must offer paste for a fenced code block")
 	}
 }
 
 func TestCodeBlockProcessor_Transform_withLanguage(t *testing.T) {
 	p := NewCodeBlockProcessor(block.BlockServices{})
-	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\nprint('world')\n```"}}, "", "")
+	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\nprint('world')\n```"}}, "", "", block.ActionPaste)
 	if overrides == nil {
 		t.Fatal("Transform must return non-nil for a fenced code block")
 	}
@@ -113,10 +113,10 @@ func TestCodeBlockProcessor_Transform_wideFenceWithNestedFences(t *testing.T) {
 	// The editor sizes the outer fence to 4 backticks; detection/extraction must
 	// recognise it and capture the inner content verbatim (inner fences intact).
 	content := "````markdown\n### Get User Profile\n```http\nGET /\n```\n````"
-	if !p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: content}}) {
-		t.Fatal("IsBlock must return true for a 4-backtick fence")
+	if !p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: content}}).Has(block.ActionPaste) {
+		t.Fatal("IsSupportedContent must offer paste for a 4-backtick fence")
 	}
-	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: content}}, "", "")
+	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: content}}, "", "", block.ActionPaste)
 	if overrides == nil {
 		t.Fatal("Transform must return non-nil for a 4-backtick fence")
 	}
@@ -133,10 +133,10 @@ func TestCodeBlockProcessor_IsBlock_unfencedCode(t *testing.T) {
 	// Smart-paste of raw, unfenced source must still be detected as code
 	// (restored from the pre-framework PasteMatch).
 	src := "func main() {\n\tfmt.Println(\"hi\")\n\treturn\n}"
-	if !p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: src}}) {
-		t.Fatal("IsBlock must return true for unfenced code that heuristics recognise")
+	if !p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: src}}).Has(block.ActionPaste) {
+		t.Fatal("IsSupportedContent must offer paste for unfenced code that heuristics recognise")
 	}
-	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: src}}, "", "")
+	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: src}}, "", "", block.ActionPaste)
 	if overrides == nil {
 		t.Fatal("Transform must return non-nil for unfenced code")
 	}
@@ -148,21 +148,21 @@ func TestCodeBlockProcessor_IsBlock_unfencedCode(t *testing.T) {
 func TestCodeBlockProcessor_IsBlock_unfencedProseIsNotCode(t *testing.T) {
 	p := NewCodeBlockProcessor(block.BlockServices{})
 	prose := "This is a normal paragraph of prose.\nIt spans a couple of lines.\nNothing here resembles source code at all."
-	if p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: prose}}) {
-		t.Fatal("IsBlock must not treat ordinary multi-line prose as code")
+	if p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: prose}}).Has(block.ActionPaste) {
+		t.Fatal("IsSupportedContent must not offer paste for ordinary multi-line prose")
 	}
 }
 
 func TestCodeBlockProcessor_IsBlock_noLanguage(t *testing.T) {
 	p := NewCodeBlockProcessor(block.BlockServices{})
-	if !p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "```\nsome code\n```"}}) {
-		t.Fatal("IsBlock must return true for a fence without language")
+	if !p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: "```\nsome code\n```"}}).Has(block.ActionPaste) {
+		t.Fatal("IsSupportedContent must offer paste for a fence without language")
 	}
 }
 
 func TestCodeBlockProcessor_Transform_noLanguage(t *testing.T) {
 	p := NewCodeBlockProcessor(block.BlockServices{})
-	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: "```\nsome code\n```"}}, "", "")
+	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: "```\nsome code\n```"}}, "", "", block.ActionPaste)
 	if overrides == nil {
 		t.Fatal("Transform must return non-nil for a fence without language")
 	}
@@ -176,24 +176,24 @@ func TestCodeBlockProcessor_Transform_noLanguage(t *testing.T) {
 
 func TestCodeBlockProcessor_IsBlock_noMatch(t *testing.T) {
 	p := NewCodeBlockProcessor(block.BlockServices{})
-	if p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "just plain text"}}) {
-		t.Fatal("IsBlock must return false for plain text")
+	if p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: "just plain text"}}).Has(block.ActionPaste) {
+		t.Fatal("IsSupportedContent must not offer paste for plain text")
 	}
-	if p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "`inline code`"}}) {
-		t.Fatal("IsBlock must return false for inline code")
+	if p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: "`inline code`"}}).Has(block.ActionPaste) {
+		t.Fatal("IsSupportedContent must not offer paste for inline code")
 	}
 }
 
 func TestCodeBlockProcessor_IsBlock_multiline(t *testing.T) {
 	p := NewCodeBlockProcessor(block.BlockServices{})
-	if !p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "```go\npackage main\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n```"}}) {
-		t.Fatal("IsBlock must return true for a multiline fence")
+	if !p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: "```go\npackage main\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n```"}}).Has(block.ActionPaste) {
+		t.Fatal("IsSupportedContent must offer paste for a multiline fence")
 	}
 }
 
 func TestCodeBlockProcessor_Transform_multiline(t *testing.T) {
 	p := NewCodeBlockProcessor(block.BlockServices{})
-	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: "```go\npackage main\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n```"}}, "", "")
+	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: "```go\npackage main\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n```"}}, "", "", block.ActionPaste)
 	if overrides == nil {
 		t.Fatal("Transform must return non-nil for a multiline fence")
 	}
@@ -204,8 +204,8 @@ func TestCodeBlockProcessor_Transform_multiline(t *testing.T) {
 
 func TestCodeBlockProcessor_IsBlock_htmlEntry(t *testing.T) {
 	p := NewCodeBlockProcessor(block.BlockServices{})
-	if p.IsBlock([]block.ContentEntry{{MIMEType: "text/html", Content: "<b>hello</b>"}}) {
-		t.Fatal("IsBlock must return false for HTML-only entry with no code content")
+	if p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/html", Content: "<b>hello</b>"}}).Has(block.ActionPaste) {
+		t.Fatal("IsSupportedContent must not offer paste for HTML-only entry with no code content")
 	}
 }
 
@@ -421,5 +421,17 @@ func TestOnChange_schedulesAIWhenNoLanguageAndHeuristicsBlind(t *testing.T) {
 
 	if status, _ := blk.Attrs["status"].(string); status != block.BlockStatusPending {
 		t.Errorf("expected status to transition to PENDING, got %q", status)
+	}
+}
+
+func TestCodeBlockProcessor_RawContent_returnsSource(t *testing.T) {
+	var p CodeBlockProcessor
+	blk := block.NewSieveBlock("code", "co-1", map[string]interface{}{"source": "x = 1\ny = 2"})
+	if got := p.RawContent(blk); got != "x = 1\ny = 2" {
+		t.Errorf("RawContent = %q, want the source verbatim", got)
+	}
+	empty := block.NewSieveBlock("code", "co-2", map[string]interface{}{})
+	if got := p.RawContent(empty); got != "" {
+		t.Errorf("RawContent of source-less block = %q, want empty", got)
 	}
 }

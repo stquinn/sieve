@@ -63,44 +63,42 @@ func (p *SmartImageProcessor) InitAttrs(id string, overrides map[string]interfac
 	return attrs
 }
 
-func (p *SmartImageProcessor) IsBlock(entries []block.ContentEntry) bool {
+func (p *SmartImageProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
+	native := []block.Action{block.ActionPaste, block.ActionTransform}
+	sieve := []block.Action{block.ActionPaste, block.ActionExtract}
 	for _, e := range entries {
 		if strings.HasPrefix(e.MIMEType, "image/") && strings.HasPrefix(e.Content, "data:image/") {
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: native}
 		}
-		// Raw SVG rendered locally by the JS frontend (resolveEntries)
 		if e.MIMEType == "image/svg+xml" {
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: native}
 		}
-		if e.MIMEType == "sieve/image" {
-			return true
+		if e.IsSieveType(p) {
+			return block.SupportedActions{Kind: p.Kind(), Actions: sieve}
 		}
 		if isImageURL(strings.TrimSpace(e.Content)) {
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: native}
 		}
-		// Mermaid source — JS resolveEntries will render it to SVG before Transform is called
 		if block.MermaidFenceRe.MatchString(e.Content) {
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: native}
 		}
-		// A diagram block extracts to an image: the JS resolveEntries renders its
-		// mermaid source to SVG locally before Transform runs.
 		if kind, attrs, ok := e.SieveAttrs(); ok && kind == "diagram" {
 			if dt, _ := attrs["diagramType"].(string); dt == "mermaid" {
 				if src, _ := attrs["source"].(string); strings.TrimSpace(src) != "" {
-					return true
+					return block.SupportedActions{Kind: p.Kind(), Actions: sieve}
 				}
 			}
 		}
 		if e.MIMEType == "text/html" {
 			if src := extractHTMLImageSrc(e.Content); src != "" && isImageURL(src) {
-				return true
+				return block.SupportedActions{Kind: p.Kind(), Actions: native}
 			}
 		}
 	}
-	return false
+	return block.SupportedActions{Kind: p.Kind()}
 }
 
-func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string) map[string]interface{} {
+func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string, action block.Action) map[string]interface{} {
 	for _, e := range entries {
 		// Base64 data URI (paste from clipboard)
 		if strings.HasPrefix(e.MIMEType, "image/") && strings.HasPrefix(e.Content, "data:image/") {
@@ -343,7 +341,7 @@ func (p *SmartImageProcessor) saveAsset(uuid, blockID string, data []byte) (stri
 	return asset.ExternalRef(), nil
 }
 
-func (p *SmartImageProcessor) MarkdownRepresentation(blk block.SieveBlock) string {
+func (p *SmartImageProcessor) MarkdownRepresentation(blk block.SieveBlock, uuid string) string {
 	src, _ := blk.Attrs["src"].(string)
 	if src == "" {
 		return ""
@@ -352,5 +350,22 @@ func (p *SmartImageProcessor) MarkdownRepresentation(blk block.SieveBlock) strin
 	if strings.TrimSpace(alt) == "" {
 		alt, _ = blk.Attrs["summary"].(string)
 	}
-	return "![" + strings.TrimSpace(alt) + "](" + src + ")"
+	return "![" + strings.TrimSpace(alt) + "](" + p.assetURL(uuid, src) + ")"
+}
+
+// assetURL builds the served URL the document renders: /sieve/<uuid>/<filename>. A
+// stored smart-image src is always a local asset filename (Transform downloads/renders
+// everything to disk), so this only needs to prefix it with the asset route — the
+// markdown must carry a working URL, since prose-embedded images render as a plain
+// <img> (the NodeView's resolveSrc never runs on them). The .assets/ strip + basename
+// are defensive against an older/path-qualified src.
+func (p *SmartImageProcessor) assetURL(uuid, src string) string {
+	if src == "" {
+		return ""
+	}
+	src = strings.TrimPrefix(src, ".assets/")
+	if i := strings.LastIndex(src, "/"); i >= 0 {
+		src = src[i+1:]
+	}
+	return "/sieve/" + uuid + "/" + src
 }

@@ -53,27 +53,27 @@ func (p *DiagramProcessor) InitAttrs(id string, overrides map[string]interface{}
 	return attrs
 }
 
-func (p *DiagramProcessor) IsBlock(entries []block.ContentEntry) bool {
+func (p *DiagramProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
 	for _, e := range entries {
 		if mermaidFenceRe.MatchString(e.Content) {
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionTransform}}
 		}
 		if e.IsSieveType(p) {
-			return true
+			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionExtract}}
 		}
-		// A code block whose language is mermaid is really a diagram.
 		if kind, attrs, ok := e.SieveAttrs(); ok && kind == "code" {
 			if lang, _ := attrs["language"].(string); lang == "mermaid" {
 				if src, _ := attrs["source"].(string); strings.TrimSpace(src) != "" {
-					return true
+					return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste,
+						block.ActionExtract, block.ActionTransform}}
 				}
 			}
 		}
 	}
-	return false
+	return block.SupportedActions{Kind: p.Kind()}
 }
 
-func (p *DiagramProcessor) Transform(entries []block.ContentEntry, _ string, _ string) map[string]interface{} {
+func (p *DiagramProcessor) Transform(entries []block.ContentEntry, _ string, _ string, action block.Action) map[string]interface{} {
 	for _, e := range entries {
 		m := mermaidFenceRe.FindStringSubmatch(e.Content)
 		if e.IsSieveType(p) {
@@ -110,11 +110,17 @@ func (p *DiagramProcessor) RunJob(jctx block.JobContext) error {
 	return nil
 }
 
-func (p *DiagramProcessor) MarkdownRepresentation(blk block.SieveBlock) string {
+func (p *DiagramProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {
 	src, _ := blk.Attrs["source"].(string)
 	src = strings.TrimSpace(src)
 	if src == "" {
 		return ""
 	}
 	return "```mermaid\n" + src + "\n```"
+}
+
+// RawContent returns the source text this block was built from (block.RawContenter).
+func (p *DiagramProcessor) RawContent(blk block.SieveBlock) string {
+	src, _ := blk.Attrs["source"].(string)
+	return src
 }

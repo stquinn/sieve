@@ -1,5 +1,7 @@
 # Processor-Owned Segmentation Implementation Plan
 
+> **STATUS — ✅ COMPLETE (closed out 2026-06-28).** Segmentation is a processor concern: a `Shape()` `(head,tail)` delimiter pair rides the `BlockProcessor` SerDes surface; one custom goldmark block parser recognises every registered shape as an opaque raw span (prose `<!--s:-->` blocks arrive whole, inner fences intact). `Deserialize` collapsed to first-acceptor-wins (prose last); `firstAcceptor`/`flushProse`/coalescing **deleted**. Full Go suite green. **Deferred follow-up (Stage E):** consolidate the two goldmark parsers + retire `markdown_parser.go`'s legacy `sieveBlockASTTransformer`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make document segmentation a processor concern — each processor declares the delimiter shape it relies on — so `DocumentCodec.Deserialize` collapses to "for each region, first acceptor wins (prose last)" and the `firstAcceptor`-exclusion / `flushProse` / coalescing complexity is deleted.

@@ -44,7 +44,7 @@ func (p *SmartLinkProcessor) InitAttrs(id string, overrides map[string]interface
 	return attrs
 }
 
-func (p *SmartLinkProcessor) IsBlock(entries []block.ContentEntry) bool {
+func (p *SmartLinkProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
 	for _, e := range entries {
 		trimmed := strings.TrimSpace(e.Content)
 		if trimmed == "" || strings.ContainsAny(trimmed, " \t\n\r") {
@@ -53,16 +53,15 @@ func (p *SmartLinkProcessor) IsBlock(entries []block.ContentEntry) bool {
 		if !strings.HasPrefix(trimmed, "http://") && !strings.HasPrefix(trimmed, "https://") {
 			continue
 		}
-		// Defer image URLs to SmartImageProcessor
 		if isImageURL(trimmed) {
 			continue
 		}
-		return true
+		return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionTransform}}
 	}
-	return false
+	return block.SupportedActions{Kind: p.Kind()}
 }
 
-func (p *SmartLinkProcessor) Transform(entries []block.ContentEntry, _ string, _ string) map[string]interface{} {
+func (p *SmartLinkProcessor) Transform(entries []block.ContentEntry, _ string, _ string, action block.Action) map[string]interface{} {
 	for _, e := range entries {
 		trimmed := strings.TrimSpace(e.Content)
 		if trimmed != "" && (strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://")) && !strings.ContainsAny(trimmed, " \t\n\r") {
@@ -125,7 +124,7 @@ func (p *SmartLinkProcessor) RunJob(jctx block.JobContext) error {
 	return nil
 }
 
-func (p *SmartLinkProcessor) MarkdownRepresentation(blk block.SieveBlock) string {
+func (p *SmartLinkProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {
 	href, _ := blk.Attrs["href"].(string)
 	if href == "" {
 		return ""

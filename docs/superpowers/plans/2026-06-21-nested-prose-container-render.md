@@ -1,5 +1,7 @@
 # Nested-Prose Container Render Implementation Plan
 
+> **STATUS — ✅ COMPLETE (closed out 2026-06-28).** A multi-node prose block renders as ONE chrome-less editable `proseGroup` container (`frontend/src/static/prose-group.js`), chosen by the renderer's own parse count. Tech-debt **E-1 (embed fragmentation) RESOLVED** (user-verified in-app; commits `77ad7ae`, `cd6c66d`). Block-model close-out item for Stage D. **Note:** this is backend-authoritative *by construction* and does **not** depend on **B-A** (frontend-minted prose ids), which remains separately ⏸ **DEFERRED** (`docs/TECH-DEBT.md`).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Render a multi-node `kind:prose` block (an embedded AI answer / Web Clip) as ONE editable block with ONE id, instead of fragmenting it into N native nodes that mint N separate block ids (the embed-fragmentation bug, tech-debt E-1).

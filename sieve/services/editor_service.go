@@ -76,12 +76,16 @@ func (es *EditorService) notifyBlockUpdated(uuid string, blk block.SieveBlock) {
 	}
 }
 
-func (es *EditorService) notifyBlockPromoted(uuid, blockID, replacement string) {
+func (es *EditorService) notifyBlockReplaced(uuid, oldID string, blk block.SieveBlock) {
 	es.mu.RLock()
 	l := es.listener
 	es.mu.RUnlock()
 	if l != nil {
-		l.OnBlockPromoted(uuid, blockID, replacement)
+		markdown := ""
+		if processor := block.GetProcessor(blk.Kind); processor != nil {
+			markdown, _ = processor.Serialize(blk)
+		}
+		l.OnBlockReplaced(uuid, oldID, blk.Kind, blk.ID, blk.Attrs, markdown)
 	}
 }
 
@@ -213,22 +217,26 @@ func (es *EditorService) UpdateMarkdown(uuid, markdown string) {
 
 // HandleBlockOp applies a granular wire op (create/update/delete/move) to the
 // open document's authoritative block tree. It is THE single mutation path —
-// create/update/delete are not separate messages. A STRUCTURED create-block runs
-// the full create lifecycle (InitAttrs → positioned insert → job dispatch → notify
-// render-back); prose create and every other op apply straight to the tree (prose
-// already exists in the editor; delete/move/update are pure tree mutations).
+// create/update/delete are not separate messages. Create is uniform for EVERY
+// kind (prose included): the one create lifecycle (InitAttrs → positioned insert →
+// job dispatch → render-back). The backend does NOT branch on kind — "the editor
+// already holds this node" is the client's concern (it suppresses the redundant
+// insert: insert-if-absent), not the backend's. delete/move/update are pure tree
+// mutations.
 func (es *EditorService) HandleBlockOp(uuid string, op block.BlockOp) error {
 	switch op.Type {
 	case "create-block":
-		// Structured create runs the full lifecycle (InitAttrs → positioned insert →
-		// job dispatch → render-back insert-block); prose create falls through to a
-		// plain tree insert because the editor already holds the prose node.
-		if op.Kind != "" && op.Kind != block.KindProse {
+		// Every kind-bearing create runs the one lifecycle (InitAttrs → positioned
+		// insert → job dispatch → render-back insert-block). The client ignores a
+		// render-back for a node it already has, so prose needs no special path. A
+		// kind-less op can't run the lifecycle (no processor) — it falls through to
+		// the plain tree insert below.
+		if op.Kind != "" {
 			id := op.BlockID
 			if id == "" {
 				id = block.GenerateBlockIDFor(op.Kind)
 			}
-			_, _, err := es.createBlockWithID(uuid, op.Kind, id, op.Attrs, op.Index)
+			_, _, err := es.createBlockWithID(uuid, op.Kind, id, op.Attrs, op.Aliases, op.Index)
 			return err
 		}
 	case "update-block":
@@ -333,7 +341,7 @@ func (es *EditorService) flushShadow(shadow *block.ShadowDocument, source string
 		logger.Info("editor: saved", "uuid", shadow.UUID, "source", source, "bytes", len(merged))
 		// Post the saved event on EVERY successful save — not just the debounce path.
 		// flushShadow is the single chokepoint every saver funnels through (Flush,
-		// the debounce closure, FlushAll, applyJobUpdate, PromoteBlock), so notifying
+		// the debounce closure, FlushAll, applyJobUpdate), so notifying
 		// here makes "the frontend hears about the save" a property of the save itself.
 		// The data-loss-guard early-return above does NOT reach here, so a refused
 		// (non-)save correctly posts nothing.
@@ -415,7 +423,7 @@ func (es *EditorService) SetServices(svc block.BlockServices) {
 // CreateBlock is the canonical block creation path for UI-triggered creation
 // (keyboard shortcut, toolbar button). Generates a fresh block ID.
 func (es *EditorService) CreateBlock(uuid, kind string, overrides map[string]interface{}, index int) (id string, rawYaml string, err error) {
-	return es.createBlockWithID(uuid, kind, block.GenerateBlockIDFor(kind), overrides, index)
+	return es.createBlockWithID(uuid, kind, block.GenerateBlockIDFor(kind), overrides, nil, index)
 }
 
 // createBlockWithID creates a block using a caller-supplied ID at a caller-supplied
@@ -423,15 +431,16 @@ func (es *EditorService) CreateBlock(uuid, kind string, overrides map[string]int
 // is reused. index is the position among top-level blocks; a negative index appends
 // (out-of-range indices clamp to the end). The block is inserted through the SAME
 // create-block op as every other create — no separate append path.
-func (es *EditorService) createBlockWithID(uuid, kind, blockID string, overrides map[string]interface{}, index int) (id string, rawYaml string, err error) {
-	return es.createBlock(uuid, kind, blockID, overrides, index, true)
+func (es *EditorService) createBlockWithID(uuid, kind, blockID string, overrides map[string]interface{}, aliases []string, index int) (id string, rawYaml string, err error) {
+	return es.createBlock(uuid, kind, blockID, overrides, aliases, index, true)
 }
 
 // createBlock is the one creation primitive. notify controls the WS render-back
-// (insert-block): true for single UI-triggered creates (the frontend has no node
-// yet), false for the slice paste (the HTTP response renders the whole batch, so a
-// per-block WS push would double-insert).
-func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[string]interface{}, index int, notify bool) (id string, rawYaml string, err error) {
+// (insert-block): true for all create paths (the frontend inserts the new block
+// positionally as a tracked PM transaction, preserving undo). aliases carries the
+// block's lineage when a create op brings it (usually nil — lineage normally accrues
+// via gc/merge).
+func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[string]interface{}, aliases []string, index int, notify bool) (id string, rawYaml string, err error) {
 	defer func() {
 		if err == nil {
 			es.DispatchJobIfNeeded(uuid, id)
@@ -450,11 +459,11 @@ func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[s
 	}
 	id = blockID
 	attrs := processor.InitAttrs(id, overrides)
-	sieveBlock := block.SieveBlock{ID: id, Kind: kind, Attrs: attrs}
+	sieveBlock := block.SieveBlock{ID: id, Kind: kind, Attrs: attrs, Aliases: aliases}
 	if index < 0 {
 		index = 1 << 30 // append: insertBlockAt clamps an out-of-range index to the end
 	}
-	if err = shadow.ApplyOp(block.BlockOp{Type: "create-block", BlockID: id, Kind: kind, Attrs: attrs, Index: index}); err != nil {
+	if err = shadow.ApplyOp(block.BlockOp{Type: "create-block", BlockID: id, Kind: kind, Attrs: attrs, Aliases: aliases, Index: index}); err != nil {
 		return "", "", err
 	}
 	rawYaml, err = fencedblock.SerializeYaml[map[string]interface{}](attrs)
@@ -487,6 +496,8 @@ func (es *EditorService) HandlePasteSlice(uuid string, slice [][]block.ContentEn
 	}
 	var created []block.FrontendBlock
 	for i, entries := range slice {
+		// Each created block renders back via insert-block (tracked insert at its index),
+		// so the frontend renders the whole batch positionally without a full reload.
 		kind, id, _, ok := es.HandlePaste(uuid, entries, index+i)
 		if !ok {
 			logger.Warn("paste-slice: create failed", "uuid", uuid, "kind", kind)
@@ -500,38 +511,79 @@ func (es *EditorService) HandlePasteSlice(uuid string, slice [][]block.ContentEn
 }
 
 // HandlePaste runs paste matchers and delegates to CreateBlock on the first match.
-// It is the secondary creation path — prefer CreateBlock directly for UI-triggered creation.
+// The created block renders back via insert-block (tracked insert at its index) —
+// no separate softReloadContent needed. It is the secondary creation path; prefer
+// CreateBlock directly for UI-triggered creation.
 func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry, index int) (kind, id, rawYaml string, matched bool) {
-	matchKind, processor, ok := block.FirstPasteMatch(entries)
+	matchKind, processor, fromDetection, ok := block.FirstPasteMatch(entries)
 	if !ok {
 		return "", "", "", false
 	}
 	blockID := block.GenerateBlockIDFor(matchKind)
-	overrides := processor.Transform(entries, uuid, blockID)
-	id, raw, err := es.createBlockWithID(uuid, matchKind, blockID, overrides, index)
+	overrides := processor.Transform(entries, uuid, blockID, block.ActionPaste)
+	if fromDetection {
+		if overrides == nil {
+			overrides = map[string]interface{}{}
+		}
+		overrides["smartPaste"] = true
+	}
+	id, raw, err := es.createBlockWithID(uuid, matchKind, blockID, overrides, nil, index)
 	if err != nil {
 		return "", "", "", false
 	}
 	return matchKind, id, raw, true
 }
 
-// CreateBlockFromEntries is the extraction creation path. It is identical to Paste
-// except the backend skips detection — the frontend explicitly requested this Kind.
-// index is the document position to insert at (negative = append).
-func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []block.ContentEntry, index int) (id, rawYaml string, err error) {
+// CreateBlockFromEntries applies a recognised action. PASTE/EXTRACT create a new block;
+// TRANSFORM replaces sourceID in place (preserving its document position). The frontend
+// posted the operation — the backend does not re-derive it. For TRANSFORM, sourceID is
+// the id of the top-level block being replaced (native nodes are prose blocks with ids).
+func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []block.ContentEntry, index int, action block.Action, sourceID string) (id, rawYaml string, err error) {
 	processor := block.GetProcessor(kind)
 	if processor == nil {
 		return "", "", fmt.Errorf("no processor registered for kind %q", kind)
 	}
 
-	blockID := block.GenerateBlockIDFor(kind)
-	// Execute the transformation (e.g. smart-image saves the file synchronously)
-	overrides := processor.Transform(entries, uuid, blockID)
-	if overrides == nil {
-		return "", "", fmt.Errorf("extract: processor %q could not transform entries into a block", kind)
+	if action == block.ActionTransform || action == block.ActionUndoSmartPaste {
+		return es.transformInPlace(uuid, kind, processor, entries, sourceID, action)
 	}
 
-	return es.createBlockWithID(uuid, kind, blockID, overrides, index)
+	blockID := block.GenerateBlockIDFor(kind)
+	overrides := processor.Transform(entries, uuid, blockID, action)
+	if overrides == nil {
+		return "", "", fmt.Errorf("%s: processor %q could not transform entries into a block", action, kind)
+	}
+	return es.createBlockWithID(uuid, kind, blockID, overrides, nil, index)
+}
+
+// transformInPlace replaces sourceID with a new block of kind, preserving the source's
+// id and document position (the OpTransform definition).
+func (es *EditorService) transformInPlace(uuid, kind string, processor block.BlockProcessor, entries []block.ContentEntry, sourceID string, action block.Action) (id, rawYaml string, err error) {
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if shadow == nil {
+		return "", "", fmt.Errorf("transform: no open document for uuid %q", uuid)
+	}
+	if sourceID == "" {
+		return "", "", fmt.Errorf("transform: no source block id")
+	}
+	overrides := processor.Transform(entries, uuid, sourceID, action)
+	if overrides == nil {
+		return "", "", fmt.Errorf("transform: processor %q could not transform entries", kind)
+	}
+	attrs := processor.InitAttrs(sourceID, overrides)
+	newBlock := block.SieveBlock{ID: sourceID, Kind: kind, Attrs: attrs}
+	if !shadow.ReplaceBlock(sourceID, newBlock) {
+		return "", "", fmt.Errorf("transform: source block %q not found", sourceID)
+	}
+	rawYaml, err = fencedblock.SerializeYaml[map[string]interface{}](attrs)
+	if err != nil {
+		return "", "", err
+	}
+	es.notifyBlockReplaced(uuid, sourceID, newBlock)
+	es.DispatchJobIfNeeded(uuid, sourceID)
+	return sourceID, rawYaml, nil
 }
 
 // applyBlockUpdate is THE uniform update path, run identically for every kind
@@ -739,44 +791,3 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	}
 }
 
-func (es *EditorService) PromoteBlock(uuid, blockID string) error {
-	es.mu.RLock()
-	shadow := es.shadows[uuid]
-	es.mu.RUnlock()
-	if shadow == nil {
-		return fmt.Errorf("no open document")
-	}
-
-	blkCopy, found := shadow.SnapshotBlock(blockID)
-	if !found {
-		return fmt.Errorf("block not found")
-	}
-	processor := block.GetProcessor(blkCopy.Kind)
-	if processor == nil {
-		return fmt.Errorf("processor not found")
-	}
-
-	plainContent := processor.MarkdownRepresentation(blkCopy)
-	if plainContent == "" {
-		return fmt.Errorf("block cannot be promoted")
-	}
-
-	// Promote-to-Doc is a Transform-to-Prose: build a prose block carrying the
-	// promoted content and the ORIGINAL id via prose's own InitAttrs (the standard
-	// block-creation flow — no hand-rolled serialization), then replace the
-	// structured block IN PLACE so it keeps its document position. The preserved id
-	// is a like-for-like replacement for the retired [!block] anchor (D-r.7 made
-	// prose carry its own id), so AI ref chains keep resolving.
-	proseProc := block.GetProcessor(block.KindProse)
-	if proseProc == nil {
-		return fmt.Errorf("prose processor not registered")
-	}
-	attrs := proseProc.InitAttrs(blockID, map[string]interface{}{"content": plainContent})
-	if !shadow.ReplaceBlock(blockID, block.SieveBlock{ID: blockID, Kind: block.KindProse, Attrs: attrs}) {
-		return fmt.Errorf("block not found in tree")
-	}
-
-	_ = es.Flush(uuid)
-	es.notifyBlockPromoted(uuid, blockID, plainContent)
-	return nil
-}

@@ -237,10 +237,9 @@
     }})
 
     // Native node → Sieve block conversion (in-place UPGRADE). A native node IS its
-    // own content, so converting REPLACES it (replaceSource:true) — unlike extraction
-    // from a Sieve block, whose content is a fragment that survives. We reuse the exact
-    // extraction path the Sieve-block NodeView uses: extractContentEntryFromEditor reads
-    // whatever DOM element was clicked. The context menu has no DOM event, but it has the
+    // own content, so converting is an in-place TRANSFORM — the backend decides additive-vs-replace.
+    // We reuse the exact extraction path the Sieve-block NodeView uses: extractContentEntryFromEditor
+    // reads whatever DOM element was clicked. The context menu has no DOM event, but it has the
     // click coords, so we reconstruct the same target with elementFromPoint and pass a
     // synthetic { target } — the function reads nothing else off the event. Detection
     // (all processors) decides the conversion targets; we only describe the source.
@@ -255,9 +254,11 @@
             sourceNode: targetNode,
             sourceKind: targetNode.type.name,
             entries: res.entries,
+            blockId: (targetNode.attrs && targetNode.attrs.id)
+              ? targetNode.attrs.id
+              : window.TipTap.enclosingBlockId(editor.state.doc, targetPos),
             sourcePos: targetPos,
-            extractSourceLabel: res.extractSourceLabel,
-            replaceSource: true
+            extractSourceLabel: res.extractSourceLabel
           })
         }
       }
@@ -320,15 +321,6 @@
         else editor.commands.focus()
         document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
       }},
-      { type: 'divider' },
-      { icon: IC.promote, label: 'Promote to Document',
-        disabled: n.attrs.status !== 'COMPLETE' || !n.attrs.response,
-        action: function () {
-          document.dispatchEvent(new CustomEvent('sieve:promote-block', {
-            detail: { id: n.attrs.id }
-          }))
-        }
-      },
       { type: 'divider' },
       { icon: IC.refresh, label: isError ? 'Retry' : 'Replay', action: function () {
         document.dispatchEvent(new CustomEvent('sieve:ai-retry', {

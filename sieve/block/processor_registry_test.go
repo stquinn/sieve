@@ -7,7 +7,7 @@ import (
 type mockProcessor struct {
 	FencedSerializer
 	FencedDeserializer
-	isBlockFn   func([]ContentEntry) bool
+	actionsFn   func([]ContentEntry) SupportedActions
 	transformFn func([]ContentEntry) map[string]interface{}
 }
 
@@ -24,13 +24,13 @@ func (p *mockProcessor) InitAttrs(id string, overrides map[string]interface{}) m
 	}
 	return attrs
 }
-func (p *mockProcessor) IsBlock(entries []ContentEntry) bool {
-	if p.isBlockFn != nil {
-		return p.isBlockFn(entries)
+func (p *mockProcessor) IsSupportedContent(entries []ContentEntry) SupportedActions {
+	if p.actionsFn != nil {
+		return p.actionsFn(entries)
 	}
-	return false
+	return SupportedActions{}
 }
-func (p *mockProcessor) Transform(entries []ContentEntry, _ string, _ string) map[string]interface{} {
+func (p *mockProcessor) Transform(entries []ContentEntry, _ string, _ string, action Action) map[string]interface{} {
 	if p.transformFn != nil {
 		return p.transformFn(entries)
 	}
@@ -39,7 +39,7 @@ func (p *mockProcessor) Transform(entries []ContentEntry, _ string, _ string) ma
 func (p *mockProcessor) BuildContext(_ SieveBlock, _ DocView, _ map[string]bool) AIContext {
 	return AIContext{}
 }
-func (p *mockProcessor) MarkdownRepresentation(_ SieveBlock) string { return "" }
+func (p *mockProcessor) MarkdownRepresentation(_ SieveBlock, _ string) string { return "" }
 func (p *mockProcessor) RunJob(_ JobContext) error                  { return nil }
 func (p *mockProcessor) JobLabel(_ *SieveBlock) string              { return "" }
 func (p *mockProcessor) OnChange(_ *SieveBlock)                     {}
@@ -64,13 +64,13 @@ func TestPasteMatchers_firstMatchWins(t *testing.T) {
 	ResetRegistry()
 	specific := &mockProcessor{
 		FencedDeserializer: FencedDeserializer{Kind: "specific"},
-		isBlockFn: func(entries []ContentEntry) bool {
+		actionsFn: func(entries []ContentEntry) SupportedActions {
 			for _, e := range entries {
 				if e.MIMEType == "text/plain" && e.Content == "target" {
-					return true
+					return SupportedActions{Kind: "specific", Actions: []Action{ActionPaste}}
 				}
 			}
-			return false
+			return SupportedActions{Kind: "specific"}
 		},
 		transformFn: func(entries []ContentEntry) map[string]interface{} {
 			return map[string]interface{}{"winner": "specific"}
@@ -78,7 +78,7 @@ func TestPasteMatchers_firstMatchWins(t *testing.T) {
 	}
 	general := &mockProcessor{
 		FencedDeserializer: FencedDeserializer{Kind: "general"},
-		isBlockFn:          func(_ []ContentEntry) bool { return true },
+		actionsFn:          func(_ []ContentEntry) SupportedActions { return SupportedActions{Kind: "general", Actions: []Action{ActionPaste}} },
 		transformFn: func(_ []ContentEntry) map[string]interface{} {
 			return map[string]interface{}{"winner": "general"}
 		},
@@ -91,8 +91,8 @@ func TestPasteMatchers_firstMatchWins(t *testing.T) {
 	registryMu.RUnlock()
 
 	for _, pm := range matchers {
-		if pm.Processor.IsBlock([]ContentEntry{{MIMEType: "text/plain", Content: "target"}}) {
-			overrides := pm.Processor.Transform([]ContentEntry{{MIMEType: "text/plain", Content: "target"}}, "", "")
+		if pm.Processor.IsSupportedContent([]ContentEntry{{MIMEType: "text/plain", Content: "target"}}).Has(ActionPaste) {
+			overrides := pm.Processor.Transform([]ContentEntry{{MIMEType: "text/plain", Content: "target"}}, "", "", ActionPaste)
 			if overrides["winner"] != "specific" {
 				t.Errorf("expected specific to win, got %v", overrides["winner"])
 			}
@@ -110,31 +110,31 @@ func TestFirstPasteMatch_selfKindBeatsUpgrade(t *testing.T) {
 	// diagram: registered first, claims anything mermaid (sieve/code w/ mermaid OR raw text).
 	diagram := &mockProcessor{
 		FencedDeserializer: FencedDeserializer{Kind: "diagram"},
-		isBlockFn: func(entries []ContentEntry) bool {
+		actionsFn: func(entries []ContentEntry) SupportedActions {
 			for _, e := range entries {
 				if e.MIMEType == "sieve/diagram" {
-					return true
+					return SupportedActions{Kind: "diagram", Actions: []Action{ActionPaste}}
 				}
 				if k, attrs, ok := e.SieveAttrs(); ok && k == "code" && attrs["language"] == "mermaid" {
-					return true // "upgrade" a mermaid code block to a diagram
+					return SupportedActions{Kind: "diagram", Actions: []Action{ActionPaste}} // "upgrade" a mermaid code block to a diagram
 				}
 				if e.MIMEType == "text/plain" && e.Content == "graph TD; A-->B" {
-					return true // raw mermaid text → diagram
+					return SupportedActions{Kind: "diagram", Actions: []Action{ActionPaste}} // raw mermaid text → diagram
 				}
 			}
-			return false
+			return SupportedActions{Kind: "diagram"}
 		},
 	}
 	// code: claims its own sieve/code view.
 	code := &mockProcessor{
 		FencedDeserializer: FencedDeserializer{Kind: "code"},
-		isBlockFn: func(entries []ContentEntry) bool {
+		actionsFn: func(entries []ContentEntry) SupportedActions {
 			for _, e := range entries {
 				if k, _, ok := e.SieveAttrs(); ok && k == "code" {
-					return true
+					return SupportedActions{Kind: "code", Actions: []Action{ActionPaste}}
 				}
 			}
-			return false
+			return SupportedActions{Kind: "code"}
 		},
 	}
 	RegisterProcessor(diagram)
@@ -145,13 +145,13 @@ func TestFirstPasteMatch_selfKindBeatsUpgrade(t *testing.T) {
 		{MIMEType: "sieve/code", Content: `{"id":"co-1","language":"mermaid","source":"graph TD; A-->B"}`},
 		{MIMEType: "text/plain", Content: "graph TD; A-->B"},
 	}
-	if kind, _, ok := FirstPasteMatch(copied); !ok || kind != "code" {
+	if kind, _, _, ok := FirstPasteMatch(copied); !ok || kind != "code" {
 		t.Fatalf("copied sieve/code (mermaid) should round-trip as code, got kind=%q ok=%v", kind, ok)
 	}
 
 	// Raw mermaid text only (no sieve view): general pass → diagram upgrade.
 	raw := []ContentEntry{{MIMEType: "text/plain", Content: "graph TD; A-->B"}}
-	if kind, _, ok := FirstPasteMatch(raw); !ok || kind != "diagram" {
+	if kind, _, _, ok := FirstPasteMatch(raw); !ok || kind != "diagram" {
 		t.Fatalf("raw mermaid text should upgrade to diagram, got kind=%q ok=%v", kind, ok)
 	}
 }
@@ -173,6 +173,71 @@ func TestUnregisterProcessor_removesFromRegistryAndMatchers(t *testing.T) {
 		}
 	}
 	registryMu.RUnlock()
+}
+
+func TestDetectExtractions_returnsActionsPerKind(t *testing.T) {
+	ResetRegistry()
+	// Register a mock that offers extract for a specific sieve/diagram entry.
+	extractable := &mockProcessor{
+		FencedDeserializer: FencedDeserializer{Kind: "diagram"},
+		actionsFn: func(entries []ContentEntry) SupportedActions {
+			for _, e := range entries {
+				if e.MIMEType == "sieve/diagram" {
+					return SupportedActions{Kind: "diagram", Actions: []Action{ActionExtract}}
+				}
+			}
+			return SupportedActions{Kind: "diagram"}
+		},
+	}
+	RegisterProcessor(extractable)
+	defer UnregisterProcessor("diagram")
+
+	entries := []ContentEntry{{MIMEType: "sieve/diagram", Content: `{"diagramType":"mermaid","source":"graph TD;A-->B"}`}}
+	offers := DetectExtractions("prose", entries)
+	if len(offers) == 0 {
+		t.Fatal("expected at least one offer, got none")
+	}
+	for _, o := range offers {
+		if len(o.Actions) == 0 {
+			t.Fatalf("offer for kind %q has no actions", o.Kind)
+		}
+	}
+}
+
+// A source nested inside a composite (its entries carry Context["parentId"]) must
+// never be offered an in-place TRANSFORM: TRANSFORM replaces the source block by id,
+// and the only id available is the parent composite's — replacing it would clobber
+// the whole composite (e.g. an AI block's response). Defect #1, data loss. The fix:
+// DetectExtractions maps any Transform -> Extract for nested sources (additive-only;
+// the extracted copy lands after the parent, which survives).
+func TestDetectExtractions_nestedSourceNeverOffersTransform(t *testing.T) {
+	ResetRegistry()
+	mock := &mockProcessor{
+		FencedDeserializer: FencedDeserializer{Kind: "diagram"},
+		actionsFn: func(entries []ContentEntry) SupportedActions {
+			return SupportedActions{Kind: "diagram", Actions: []Action{ActionExtract, ActionTransform}}
+		},
+	}
+	RegisterProcessor(mock)
+	defer UnregisterProcessor("diagram")
+
+	entries := []ContentEntry{{
+		MIMEType: "text/plain",
+		Content:  "graph TD;A-->B",
+		Context:  map[string]interface{}{"parentId": "ai-b42a"},
+	}}
+	offers := DetectExtractions("prose", entries)
+	if len(offers) == 0 {
+		t.Fatal("expected at least one offer, got none")
+	}
+	for _, o := range offers {
+		if o.Has(ActionTransform) {
+			t.Errorf("nested source (parentId set) must not be offered TRANSFORM; got %v for kind %q", o.Actions, o.Kind)
+		}
+		if !o.Has(ActionExtract) {
+			t.Errorf("nested source must still be offered EXTRACT (additive); got %v for kind %q", o.Actions, o.Kind)
+		}
+	}
 }
 
 func TestGenerateBlockID_formatAndUniqueness(t *testing.T) {

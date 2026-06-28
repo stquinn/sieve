@@ -20,6 +20,11 @@ type ProseProcessor struct{}
 
 func init() { block.RegisterProcessor(&ProseProcessor{}) }
 
+// NewProseProcessor returns a ProseProcessor. The BlockServices argument is
+// accepted for API consistency with other processor constructors — prose has
+// no service dependencies.
+func NewProseProcessor(_ block.BlockServices) *ProseProcessor { return &ProseProcessor{} }
+
 // IDPrefix mints "pr-…" handles for prose.
 func (p *ProseProcessor) IDPrefix() string { return "pr" }
 
@@ -75,7 +80,9 @@ func extractTargets(content string) []string {
 }
 
 // MarkdownRepresentation: prose's markdown is its content verbatim.
-func (p *ProseProcessor) MarkdownRepresentation(blk block.SieveBlock) string { return blk.Content() }
+func (p *ProseProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {
+	return blk.Content()
+}
 
 // InitAttrs seeds a prose block's payload from overrides (the content).
 func (p *ProseProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
@@ -89,31 +96,86 @@ func (p *ProseProcessor) InitAttrs(id string, overrides map[string]interface{}) 
 	return attrs
 }
 
-// IsBlock is false: prose is never auto-detected on paste (it is the thing you get
-// when you type, or the explicit target of an extract) — so it never hijacks the
-// paste-matcher chain.
-// IsBlock claims a `sieve/prose` view — a copied prose block carrying its content.
-// Prose is a SPECIFIC matcher (its own sieve/<kind>), NOT a catch-all: it never
-// claims a bare text/* mime, so inline text paste is untouched. Registered LAST
-// (orderedProseLast) so structured kinds claim their own sieve/<kind> first. (A
-// future broadening — claim ANY `sieve/X` so any block converts to prose — keeps the
-// one invariant: never a non-sieve mime.)
-func (p *ProseProcessor) IsBlock(entries []block.ContentEntry) bool {
+// IsSupportedContent claims any `sieve/<kind>` view — prose is the universal sink.
+// A copied prose block (sieve/prose) round-trips on paste AND can be embedded via
+// transform. Any other sieve block source offers only transform (structured kinds
+// claim their own sieve view first; prose is registered LAST). Never a non-sieve
+// mime: inline text paste is untouched. SieveAttrs() is used (not HasPrefix) so the
+// "sieve/slice" JSON-array entry (which is not a block object) is never matched.
+func (p *ProseProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
-			return true
+			// A copied prose block round-trips on paste; embedding prose-in-prose is also a transform.
+			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionTransform}}
+		}
+		if _, attrs, ok := e.SieveAttrs(); ok {
+			// Any other block source → embed it as prose (the universal sink).
+			actions := []block.Action{block.ActionTransform}
+			// Smart-pasted source with recoverable raw text → also offer "Undo Smart
+			// Paste" (revert detection to the raw text). Detection-and-action are both
+			// framework-side; the frontend never decides whether to offer it.
+			if sp, _ := attrs["smartPaste"].(bool); sp && p.taggedSourceHasRawText(e) {
+				actions = append(actions, block.ActionUndoSmartPaste)
+			}
+			return block.SupportedActions{Kind: p.Kind(), Actions: actions}
 		}
 	}
-	return false
+	return block.SupportedActions{Kind: p.Kind()}
+}
+
+// taggedSourceHasRawText reports whether the entry's sieve source kind can recover raw
+// text (block.RawContenter with a non-empty result). Undo with nothing to revert to is
+// not offered.
+func (p *ProseProcessor) taggedSourceHasRawText(e block.ContentEntry) bool {
+	kind, attrs, ok := e.SieveAttrs()
+	if !ok {
+		return false
+	}
+	proc := block.GetProcessor(kind)
+	rc, isRaw := proc.(block.RawContenter)
+	if proc == nil || !isRaw {
+		return false
+	}
+	return strings.TrimSpace(rc.RawContent(block.NewSieveBlock(kind, "", attrs))) != ""
 }
 
 // Transform turns entries into a prose block's content. A `sieve/prose` view carries
-// its markdown in attrs.content (the slice-paste path); otherwise the entries' raw
-// content is joined (the extract seam — an AI block's table → a prose block).
-func (p *ProseProcessor) Transform(entries []block.ContentEntry, _ string, _ string) map[string]interface{} {
+// its markdown in attrs.content (the slice-paste path). A foreign sieve source is
+// rebuilt and its MarkdownRepresentation is fetched via the registry — prose owns
+// this lookup (the "prose is the universal sink" contract). As a final fallback the
+// entries' raw content is joined (the extract seam — an AI block's table → prose).
+func (p *ProseProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string, action block.Action) map[string]interface{} {
+	// An image source (a diagram rendered to SVG by prose's resolveEntries, or any
+	// pasted/extracted image) embeds as served image markdown. The smart-image processor
+	// owns image saving + the ![](url) form, so delegate BOTH to it via the registry —
+	// prose stays service-free. Checked first so a rendered image wins over a co-present
+	// source-text entry (e.g. the diagram's sieve view, which would otherwise embed as a
+	// mermaid fence).
+	if md, ok := p.embedImageMarkdown(entries, uuid, blockID, action); ok {
+		return map[string]interface{}{"content": md}
+	}
 	for _, e := range entries {
 		if e.IsSieveType(p) {
 			return e.AsAttrsForNewBlock(p)
+		}
+		// A foreign sieve source. Two prose-targeted transforms share this entry:
+		//   ActionUndoSmartPaste → the source's raw text as plain prose (escape hatch).
+		//   ActionTransform      → faithful markdown ("Embed in Document").
+		if kind, attrs, ok := e.SieveAttrs(); ok {
+			proc := block.GetProcessor(kind)
+			if action == block.ActionUndoSmartPaste {
+				if rc, isRaw := proc.(block.RawContenter); isRaw {
+					if raw := rc.RawContent(block.NewSieveBlock(kind, "", attrs)); strings.TrimSpace(raw) != "" {
+						return map[string]interface{}{"content": p.sourceAsPlainText(raw)}
+					}
+				}
+			}
+			if proc != nil {
+				src := block.NewSieveBlock(kind, "", attrs)
+				if md := proc.MarkdownRepresentation(src, uuid); strings.TrimSpace(md) != "" {
+					return map[string]interface{}{"content": md}
+				}
+			}
 		}
 	}
 	var parts []string
@@ -123,6 +185,55 @@ func (p *ProseProcessor) Transform(entries []block.ContentEntry, _ string, _ str
 		}
 	}
 	return map[string]interface{}{"content": strings.Join(parts, "\n\n")}
+}
+
+// embedImageMarkdown turns an image entry into served image markdown by delegating to
+// the smart-image processor: its Transform saves the bytes (saveSVG/saveBase64) and
+// returns the asset src; its MarkdownRepresentation (uuid-aware) builds ![](/sieve/
+// <uuid>/<file>). prose holds no AssetsPort — the registered smart-image instance does.
+// ok is false when there is no image entry or smart-image is absent/declines.
+func (p *ProseProcessor) embedImageMarkdown(entries []block.ContentEntry, uuid, blockID string, action block.Action) (string, bool) {
+	hasImage := false
+	for _, e := range entries {
+		if strings.HasPrefix(e.MIMEType, "image/") {
+			hasImage = true
+			break
+		}
+	}
+	if !hasImage {
+		return "", false
+	}
+	si := block.GetProcessor("smart-image")
+	if si == nil {
+		return "", false
+	}
+	attrs := si.Transform(entries, uuid, blockID, action)
+	if attrs == nil {
+		return "", false
+	}
+	md := si.MarkdownRepresentation(block.NewSieveBlock("smart-image", "", attrs), uuid)
+	if strings.TrimSpace(md) == "" {
+		return "", false
+	}
+	return md, true
+}
+
+// sourceAsPlainText renders a structured block's raw source for embedding into prose
+// as plain TEXT (the "Embed in Document" escape hatch when smart-detection grabbed
+// text as code — brackets like {}<>[] trip a language match). Markdown can't carry
+// code as text verbatim: a 4-space indent IS an indented code block (a stray fence)
+// and a bare newline soft-joins lines (the split header/tail). So de-indent every
+// line and join with markdown hard breaks, dropping blank lines (a blank line re-opens
+// a code block before the next indented line). The result reads as the user's text,
+// never a fence — indentation is intentionally dropped (it's text now, not code).
+func (p *ProseProcessor) sourceAsPlainText(src string) string {
+	var lines []string
+	for _, line := range strings.Split(src, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "  \n") // two-space suffix = markdown hard break
 }
 
 // RunJob is the rewrite/enrich seam — a no-op until a prose job is wired, but the

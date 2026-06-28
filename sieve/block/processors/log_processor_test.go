@@ -126,20 +126,20 @@ func TestLogProcessor_IsBlock(t *testing.T) {
 
 	// Test generic block text that looks like a log
 	entries := []block.ContentEntry{{MIMEType: "text/plain", Content: "[ERROR] Something went wrong"}}
-	if !proc.IsBlock(entries) {
-		t.Errorf("Expected IsBlock to be true for '[ERROR]'")
+	if !proc.IsSupportedContent(entries).Has(block.ActionPaste) {
+		t.Errorf("Expected IsSupportedContent to offer paste for '[ERROR]'")
 	}
 
 	// Test code block extraction — sieve/<kind> entries carry attrs as a JSON map.
 	codeEntry := []block.ContentEntry{{MIMEType: "sieve/code", Content: `{"language":"","source":"2026-06-12T13:20:01.984+01:00 INFO"}`}}
-	if !proc.IsBlock(codeEntry) {
-		t.Errorf("Expected IsBlock to be true for code block with ISO date and INFO")
+	if !proc.IsSupportedContent(codeEntry).Has(block.ActionPaste) {
+		t.Errorf("Expected IsSupportedContent to offer paste for code block with ISO date and INFO")
 	}
 
 	// Test negative case
 	nonLogEntry := []block.ContentEntry{{MIMEType: "text/plain", Content: "Just a regular sentence without log signatures."}}
-	if proc.IsBlock(nonLogEntry) {
-		t.Errorf("Expected IsBlock to be false for generic text")
+	if proc.IsSupportedContent(nonLogEntry).Has(block.ActionPaste) {
+		t.Errorf("Expected IsSupportedContent to not offer paste for generic text")
 	}
 }
 
@@ -148,14 +148,14 @@ func TestLogProcessor_CodeWithExceptionIsNotLog(t *testing.T) {
 	// Ordinary source code that merely mentions Exception / a date must NOT be
 	// misdetected as a log (the old logDetectRe matched the bare word "Exception").
 	src := "try {\n  doThing(); // since 2026-01-01\n} catch (Exception e) {\n  throw new RuntimeException(e);\n}"
-	if proc.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: src}}) {
+	if proc.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: src}}).Has(block.ActionPaste) {
 		t.Error("code containing 'Exception' should not be detected as a log")
 	}
 }
 
 func TestLogProcessor_BracketedLevelIsLog(t *testing.T) {
 	proc := NewLogProcessor(block.BlockServices{})
-	if !proc.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "[INFO] starting up\n[WARN] disk low"}}) {
+	if !proc.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: "[INFO] starting up\n[WARN] disk low"}}).Has(block.ActionPaste) {
 		t.Error("bracketed-level lines should be detected as a log")
 	}
 }

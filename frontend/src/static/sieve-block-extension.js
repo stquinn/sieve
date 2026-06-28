@@ -153,6 +153,7 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
     status:           { default: 'PENDING', parseHTML: function (el) { return el.getAttribute('data-status')      || 'PENDING' } },
     createdAt:        { default: null,      parseHTML: function (el) { return el.getAttribute('data-created-at')  || null } },
     supportsEmbedding: { default: false, parseHTML: function (el) { return el.getAttribute('data-supports-embedding') === 'true' } },
+    smartPaste: { default: false, parseHTML: function (el) { return el.getAttribute('data-smart-paste') === 'true' } },
   }
 
   // draggable:false — reordering is done via the custom gutter handle (block-chrome.js),
@@ -256,6 +257,12 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
             chromeHost.setAttribute('contenteditable', 'false')
             view.dom.insertBefore(chromeHost, view.dom.firstChild)
 
+            // Stamp data-kind on the block root (renderers already set data-id
+            // there, but not the kind). One uniform spot for every sieve flavour —
+            // lets the block-ID hover readout report `kind · id` rather than
+            // defaulting to 'prose'.
+            view.dom.setAttribute('data-kind', kind)
+
             // Explicitly non-editable: prevents the block root from inheriting
             // contentEditable="true" from the ProseMirror root, which would let
             // the browser treat it as an editable area and break PM atom snapping.
@@ -330,20 +337,6 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
                 ])
               }
 
-              // Embed in document — automatic for any block with supportsEmbedding: true.
-              if (n.attrs.supportsEmbedding && status === 'COMPLETE') {
-                items = items.concat([
-                  { type: 'divider' },
-                  { icon: IC.promote, label: 'Embed in document',
-                    action: function () {
-                      document.dispatchEvent(new CustomEvent('sieve:promote-block', {
-                        detail: { id: n.attrs.id }
-                      }))
-                    }
-                  },
-                ])
-              }
-
               document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
                 detail: { x: e.clientX, y: e.clientY, context: { type: 'sieveBlock', items: items } },
               }))
@@ -359,8 +352,21 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
                 // universal sieve/<kind> JSON view — the same array the clipboard emits.
                 entries = sieveBlockEntries(n, renderer);
               } else {
-                // Specific sub-content was clicked → lead with it, then still hand the
-                // backend the framework view so it can key off the source kind/attrs.
+                // Specific sub-content was clicked. Stamp parentId ONLY when n is a true
+                // CONTAINER — a block that holds child blocks (schema content 'block+':
+                // ai-block, web-clip). Then the clicked thing is a genuine nested child, and
+                // an in-place TRANSFORM would ReplaceBlock(n.id) and clobber the parent's
+                // other content (e.g. an AI block's response) — defect #1, data loss; the
+                // backend demotes TRANSFORM→EXTRACT so the copy lands after the surviving
+                // parent. For a LEAF block (code/diagram 'text*', smart-image atom) the
+                // clicked content IS the block itself — no parentId, so its own in-place
+                // TRANSFORM ("Embed in Document") survives.
+                if (n.attrs && n.attrs.id && T.containsChildBlocks(n)) {
+                  entries.forEach(function (en) {
+                    en.context = Object.assign({}, en.context, { parentId: n.attrs.id });
+                  });
+                }
+                // Still hand the backend the framework view so it can key off the source kind/attrs.
                 entries.push(sieveFrameworkEntry(n));
               }
               // A renderer may have no content entry (e.g. a prose block) → ensure
@@ -689,6 +695,9 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
     if (data.supportsEmbedding) {
       htmlAttrs.push('data-supports-embedding="true"')
     }
+    if (data.smartPaste) {
+      htmlAttrs.push('data-smart-paste="true"')
+    }
 
     var innerHTML = ''
     if (!cfg.atom && renderer.getInitialContentHTML) {
@@ -717,9 +726,11 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
   }
 
   T.resolveEntriesForKind = function(kind, sourceNode, entries) {
-    var r = renderers[kind]
-    if (r && typeof r.resolveEntries === 'function') {
-      return r.resolveEntries(sourceNode, entries)
+    // Look up the behaviour for ANY block via the uniform block-kind registry — prose
+    // (native) resolves identically to structured kinds, no special-case fork.
+    var h = T.getBlockBehaviour && T.getBlockBehaviour(kind)
+    if (h && typeof h.resolveEntries === 'function') {
+      return h.resolveEntries(sourceNode, entries)
     }
     return entries
   }
@@ -736,79 +747,66 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
     return keys.map(function (k) { return nodeRegistry[k] })
   }
 
-  // replaceSource: when true the source node is REPLACED by the new Sieve block
-  // (an in-place upgrade — used for native nodes, whose content IS the block).
-  // When false/omitted the operation is additive — the source survives (used for
-  // Sieve-block sources like AI/Web Clip, which are read-only composites).
-  //
-  // additiveKinds: target kinds that stay ADDITIVE even when replaceSource is true.
-  // A native source can replace in place only when the target occupies the same slot
-  // (block image → smart-image, inline link → smart-link). When the target is a
-  // different shape (inline link → block smart-card/web-clip) there is no node to
-  // swap, so those kinds are inserted alongside instead. Decided per candidate.
-  function detectAndAppendExtractions({ sourceNode, sourceKind, entries, blockId, sourcePos, extractSourceLabel, replaceSource, additiveKinds }) {
-    var additive = additiveKinds || []
+  // The backend returns [{kind, actions}]. The frontend is a dumb renderer: it shows
+  // each offered (kind, action) and plays back {operation} — no replaceSource heuristic.
+  function detectAndAppendExtractions({ sourceNode, sourceKind, entries, blockId, sourcePos, extractSourceLabel }) {
     fetch('/api/detect-extractions', {
       method: 'POST',
       body: JSON.stringify({ sourceKind: sourceKind, entries: entries }),
       headers: { 'Content-Type': 'application/json' }
-    }).then(function (res) { return res.json() }).then(function (candidates) {
-      if (!candidates || candidates.length === 0) return
+    }).then(function (res) { return res.json() }).then(function (offers) {
+      if (!offers || offers.length === 0) return
       if (!window.SieveContextMenu || !window.SieveContextMenu.appendItems) return
 
       var IC = window.SieveIcons || {}
-      // Header always names the SOURCE (what was clicked) — "EXTRACT FROM IMAGE" /
-      // "CONVERT FROM CODE". The verb signals additive vs in-place; the menu items
-      // themselves name the target, so the header must not.
-      var headerLabel = (replaceSource ? 'CONVERT FROM ' : 'EXTRACT FROM ') +
-        (extractSourceLabel || sourceKind).toUpperCase().replace('-', ' ')
-      var extraItems = [
-        { type: 'divider' },
-        { type: 'header', label: headerLabel }
-      ]
-      candidates.forEach(function (c) {
-        var icon = IC[c.kind] || IC.code
-        var r = renderers[c.kind]
-        var prettyKind = (r && typeof r.getFriendlyName === 'function')
-          ? r.getFriendlyName()
-          : c.kind.split('-').map(function(w) { return w.charAt(0).toUpperCase() + w.slice(1) }).join(' ')
+      var headerLabel = 'FROM ' + (extractSourceLabel || sourceKind).toUpperCase().replace('-', ' ')
+      var extraItems = [{ type: 'divider' }, { type: 'header', label: headerLabel }]
 
-        var replace = !!replaceSource && additive.indexOf(c.kind) === -1
+      var FRIENDLY = { prose: 'Text' }
+      offers.forEach(function (offer) {
+        var icon = IC[offer.kind] || IC.code
+        var r = renderers[offer.kind]
+        var prettyKind = FRIENDLY[offer.kind]
+          || (r && typeof r.getFriendlyName === 'function'
+            ? r.getFriendlyName()
+            : offer.kind.split('-').map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1) }).join(' '))
 
-        var defaultAction = function (context) {
-          document.dispatchEvent(new CustomEvent('sieve:extract', {
-            detail: {
-              blockId: blockId || null,
-              targetKind: c.kind,
-              sourceNode: sourceNode,
-              sourcePos: sourcePos,
-              entries: entries,
-              context: context || {},
-              replaceSource: replace
-            }
-          }))
-        }
+        // Menu offers the source-mutating ops (extract/transform/undo-smart-paste); paste is never shown here.
+        ;(offer.actions || []).forEach(function (action) {
+          if (action !== 'extract' && action !== 'transform' && action !== 'undo-smart-paste') return
 
-        if (r && typeof r.getExtractionMenuItems === 'function') {
-          // Pass the operation kind so a renderer that emits its own labels can match
-          // the framework's verb: replace=true is an in-place UPGRADE (native → sieve),
-          // replace=false is additive EXTRACTION (a child of a sieve block — the source
-          // survives). Without this a renderer can't tell the two apart and mislabels.
-          var items = r.getExtractionMenuItems(sourceNode, entries, defaultAction, { replace: replace })
-          if (items && items.length) {
-            items.forEach(function(item) { extraItems.push(item) })
-            return
+          var dispatch = function (context) {
+            document.dispatchEvent(new CustomEvent('sieve:extract', {
+              detail: {
+                blockId: blockId || (sourceNode && sourceNode.attrs ? sourceNode.attrs.id : null),
+                targetKind: offer.kind,
+                operation: action,
+                sourceNode: sourceNode,
+                sourcePos: sourcePos,
+                entries: entries,
+                context: context || {}
+              }
+            }))
           }
-        }
 
-        extraItems.push({
-          icon: icon,
-          label: (replace ? 'Convert to ' : 'Extract as ') + prettyKind,
-          action: function () { defaultAction({}) }
+          if (r && typeof r.getExtractionMenuItems === 'function') {
+            var items = r.getExtractionMenuItems(sourceNode, entries, dispatch, { operation: action })
+            if (items && items.length) { items.forEach(function (it) { extraItems.push(it) }); return }
+          }
+          // Prose's TRANSFORM is the universal "flatten this block into the document"
+          // affordance — it is NOT "convert to a block kind" (an image embeds as a plain
+          // image, code as a fence, etc.), so "Convert to Text" misnames it. Label it
+          // "Embed in Document" (the wording the retired bespoke item used).
+          var isEmbed = offer.kind === 'prose' && action === 'transform'
+          extraItems.push({
+            icon: isEmbed ? (IC.promote || icon) : icon,
+            label: (window.TipTap.labelForAction || function (a, k) { return a + ' ' + k })(action, prettyKind, offer, sourceKind),
+            action: function () { dispatch({}) }
+          })
         })
       })
       window.SieveContextMenu.appendItems(extraItems)
-    }).catch(function() {})
+    }).catch(function () {})
   }
 
   // ── Native Code Block (syntax highlighting via CodeBlockLowlight) ─────────────
@@ -933,8 +931,13 @@ function extractContentEntryFromEditor(event, editor) {
   //an image would be interesting to extract, and we can get a data-uri for it if needed.
   var closestImg = event.target.tagName === 'IMG' ? event.target : (event.target.closest ? event.target.closest('img') : null);
   if (closestImg && closestImg.src && view.dom.contains(closestImg)) {
-    //not sure this is the right MIME type to use for an image
-    entries = [{ mimeType: 'sieve/image', content: closestImg.src }];
+    // A native <img> is a NATIVE source → use a NATIVE mime so recognition offers
+    // TRANSFORM (Convert), not EXTRACT. (The old 'sieve/image' mime made it look like
+    // a Sieve-block source.) A data: URI needs an image/* mime; a served asset URL is
+    // matched by smart-image's isImageURL on the content, so any non-sieve mime works.
+    var imgSrc = closestImg.src
+    var imgMime = imgSrc.indexOf('data:') === 0 ? (imgSrc.slice(5).split(/[;,]/)[0] || 'image/png') : 'text/uri-list'
+    entries = [{ mimeType: imgMime, content: imgSrc }];
     extractSourceLabel = 'image';
   }
 

@@ -1,6 +1,7 @@
 package services
 
 import (
+	"encoding/json"
 	"sieve/sieve/block"
 	"strings"
 	"testing"
@@ -18,8 +19,10 @@ func (p *testMarkdownProcessor) Kind() string { return p.FencedDeserializer.Kind
 func (p *testMarkdownProcessor) InitAttrs(id string, _ map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{"id": id}
 }
-func (p *testMarkdownProcessor) IsBlock(_ []block.ContentEntry) bool { return false }
-func (p *testMarkdownProcessor) Transform(_ []block.ContentEntry, _, _ string) map[string]interface{} {
+func (p *testMarkdownProcessor) IsSupportedContent(_ []block.ContentEntry) block.SupportedActions {
+	return block.SupportedActions{}
+}
+func (p *testMarkdownProcessor) Transform(_ []block.ContentEntry, _, _ string, action block.Action) map[string]interface{} {
 	return nil
 }
 func (p *testMarkdownProcessor) RunJob(_ block.JobContext) error     { return nil }
@@ -29,13 +32,16 @@ func (p *testMarkdownProcessor) Mode() block.BlockMode               { return bl
 func (p *testMarkdownProcessor) BuildContext(_ block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
 	return block.AIContext{}
 }
-func (p *testMarkdownProcessor) MarkdownRepresentation(_ block.SieveBlock) string { return p.md }
+func (p *testMarkdownProcessor) MarkdownRepresentation(_ block.SieveBlock, _ string) string {
+	return p.md
+}
 
-// Promote-to-Doc is a Transform-to-Prose: the block's MarkdownRepresentation is
-// inserted as a PROSE block carrying the block's id (via the canonical
-// <!--s:ID-->…<!--/s:ID--> prose markers). The id is a like-for-like replacement
-// for the retired [!block] anchor, so AI ref chains keep resolving — no anchor.
-func TestEditorService_PromoteBlock_transformsToProse(t *testing.T) {
+// TestEditorService_TransformToProse verifies that transforming a block to prose via the
+// affordance path (CreateBlockFromEntries + ActionTransform) is equivalent to the
+// retired PromoteBlock bespoke path: the block's MarkdownRepresentation is inserted
+// as a PROSE block carrying the block's id (via the canonical <!--s:ID-->…<!--/s:ID-->
+// prose markers), so AI ref chains keep resolving.
+func TestEditorService_TransformToProse(t *testing.T) {
 	block.RegisterProcessor(&testMarkdownProcessor{md: "promoted content", FencedDeserializer: block.FencedDeserializer{Kind: "test-md"}})
 	t.Cleanup(func() { block.UnregisterProcessor("test-md") })
 
@@ -50,9 +56,21 @@ func TestEditorService_PromoteBlock_transformsToProse(t *testing.T) {
 	_ = es.Open(uuid, nil)
 	es.UpdateMarkdown(uuid, "Before\n\n```test-md\nid: tm-0001\n```\n\nAfter")
 
-	if err := es.PromoteBlock(uuid, "tm-0001"); err != nil {
-		t.Fatalf("PromoteBlock: %v", err)
+	// Replicate the retired PromoteBlock body: snapshot the block, build the
+	// sieve/<kind> content entry, and ask CreateBlockFromEntries to transform it.
+	src, found := es.shadows[uuid].SnapshotBlock("tm-0001")
+	if !found {
+		t.Fatalf("block tm-0001 not found in shadow")
 	}
+	attrsJSON, err := json.Marshal(src.Attrs)
+	if err != nil {
+		t.Fatalf("marshal attrs: %v", err)
+	}
+	entries := []block.ContentEntry{{MIMEType: "sieve/" + src.Kind, Content: string(attrsJSON)}}
+	if _, _, err := es.CreateBlockFromEntries(uuid, "prose", entries, 0, block.ActionTransform, "tm-0001"); err != nil {
+		t.Fatalf("transform-to-prose: %v", err)
+	}
+	_ = es.Flush(uuid)
 
 	saved, err := ds.LoadByUUID(uuid)
 	if err != nil {
@@ -83,10 +101,10 @@ func TestEditorService_PromoteBlock_transformsToProse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Deserialize saved body: %v", err)
 	}
-	var found bool
+	var found2 bool
 	for _, b := range blocks {
 		if b.ID == "tm-0001" {
-			found = true
+			found2 = true
 			if b.Kind != block.KindProse {
 				t.Errorf("promoted block kind = %q, want prose", b.Kind)
 			}
@@ -95,7 +113,7 @@ func TestEditorService_PromoteBlock_transformsToProse(t *testing.T) {
 			}
 		}
 	}
-	if !found {
+	if !found2 {
 		t.Errorf("no block with preserved id tm-0001 after reopen:\n%#v", blocks)
 	}
 }

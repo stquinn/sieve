@@ -320,9 +320,9 @@ func TestEditorService_ReloadFromDisk_replacesStaleShadowAndPreservesIDs(t *test
 	}
 }
 
-// A DIRECT save (es.Flush — the path PromoteBlock/applyJobUpdate/FlushAll use)
+// A DIRECT save (es.Flush — the path applyJobUpdate/FlushAll use)
 // must also post the saved event, so the frontend clears its dirty indicator after
-// an embed/AI-job save, not only after a debounce flush. The notify is a property
+// an AI-job save, not only after a debounce flush. The notify is a property
 // of the save (flushShadow), not of the debounce timer.
 func TestEditorService_NotifySavedCalledAfterDirectFlush(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
@@ -515,7 +515,8 @@ type mockLifecycleListener struct {
 	onUpdated func(uuid, blockID string, attrs map[string]interface{})
 }
 
-func (l *mockLifecycleListener) OnBlockPromoted(uuid, blockID string, replacement string) {}
+func (l *mockLifecycleListener) OnBlockReplaced(uuid, oldID, newKind, newID string, attrs map[string]interface{}, markdown string) {
+}
 
 func (l *mockLifecycleListener) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string, index int) {
 	if l.onCreated != nil {
@@ -604,14 +605,18 @@ func (p *testRunJobProcessor) InitAttrs(id string, overrides map[string]interfac
 	}
 	return attrs
 }
-func (p *testRunJobProcessor) IsBlock(entries []block.ContentEntry) bool { return false }
-func (p *testRunJobProcessor) Transform(entries []block.ContentEntry, _ string, _ string) map[string]interface{} {
+func (p *testRunJobProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
+	return block.SupportedActions{}
+}
+func (p *testRunJobProcessor) Transform(entries []block.ContentEntry, _ string, _ string, action block.Action) map[string]interface{} {
 	return nil
 }
 func (p *testRunJobProcessor) BuildContext(_ block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
 	return block.AIContext{}
 }
-func (p *testRunJobProcessor) MarkdownRepresentation(_ block.SieveBlock) string { return "" }
+func (p *testRunJobProcessor) MarkdownRepresentation(_ block.SieveBlock, _ string) string {
+	return ""
+}
 func (p *testRunJobProcessor) OnChange(_ *block.SieveBlock)                     {}
 func (p *testRunJobProcessor) RunJob(jctx block.JobContext) error {
 	if p.runJob != nil {

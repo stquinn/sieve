@@ -195,17 +195,20 @@
             </div>
 
             <div class="status-bar">
-                <!-- Three dedicated, non-overlapping slots: each owner writes only
+                <!-- Dedicated, non-overlapping slots: each owner writes only
                      into its own element, so no update can clobber another.
-                       __lib   — library chip   (GET /api/library/current)
-                       __jobs  — AI job spinner (ai-actions.js updateStatusBar)
-                       __right — document stats  (editor:stats handler) -->
+                       __lib     — library chip       (GET /api/library/current)
+                       __jobs    — AI job spinner      (ai-actions.js updateStatusBar)
+                       __save    — save indicator      (editor:saved handler)
+                       __blockid — hovered block kind·id (editor:blockhover handler)
+                       __stats   — document stats       (editor:stats handler) -->
                 <div class="status-bar__left">
                   <div class="status-bar__lib" hx-get="/api/library/current" hx-trigger="load" hx-swap="innerHTML"></div>
                   <div class="status-bar__jobs"></div>
                 </div>
                 <div class="status-bar__right flex items-center">
                   <div class="status-bar__save" style="margin-right: 8px; color: var(--theme-muted); transition: opacity 0.5s; opacity: 0;"></div>
+                  <div class="status-bar__blockid" style="width: 70px; flex: none; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--theme-muted); font-family: var(--theme-monoFont); font-size: 11px;"></div>
                   <div class="status-bar__stats flex items-center"></div>
                 </div>
             </div>
@@ -276,9 +279,11 @@
     <script src="/static/extensions.js"></script>
     <script src="/static/ai-target.js"></script>
     <script src="/static/focus-context.js"></script>
+    <script src="/static/paste-context.js"></script>
     <script src="/static/block-chrome.js"></script>
     <script src="/static/ai-target-decoration.js"></script>
     <script type="module" src="/static/block-kinds.js"></script>
+    <script type="module" src="/static/action-label.js"></script>
     <script type="module" src="/static/sieve-block-extension.js"></script>
     <script type="module" src="/static/ai-block-renderer.js"></script>
     <script type="module" src="/static/code-renderer.js"></script>
@@ -293,6 +298,7 @@
     <script type="module" src="/static/block-sync.js"></script>
     <script type="module" src="/static/prose-block.js"></script>
     <script type="module" src="/static/prose-group.js"></script>
+    <script type="module" src="/static/block-position.js"></script>
     <script src="/static/editor.js"></script>
     <script src="/static/ai-actions.js"></script>
     <script src="/static/tabbar.js"></script>
@@ -459,9 +465,18 @@
         var sbStats = document.querySelector('.status-bar__stats');
         if (sbStats && e.detail) {
             sbStats.innerHTML = '<span title="Characters">' + (e.detail.chars || 0) + ' chars</span>' +
-                                '<span class="status-bar__sep mx-1">|</span>' +
-                                '<span title="Lines">' + (e.detail.lines || 0) + ' lines</span>';
+                                '<span class="status-bar__sep" title="Lines">' + (e.detail.lines || 0) + ' lines</span>';
         }
+    });
+
+    // Block-ID hover readout (dev/debug). Writes ONLY into its own __blockid cell.
+    // detail is { kind, id } over a block, or null to clear. Producer: the
+    // mouseover listener in editor.js. The block's index is read off the gutter.
+    document.addEventListener('editor:blockhover', function(e) {
+        var slot = document.querySelector('.status-bar__blockid');
+        if (!slot) return;
+        // slot.textContent = e.detail ? (e.detail.kind + ' · ' + e.detail.id) : '';
+        slot.textContent = e.detail ? (e.detail.id) : '';
     });
 
     // Listen for HTMX load to re-init editor if mount changes
@@ -749,10 +764,13 @@
           var reader = new FileReader();
           reader.onload = function(ev) {
             if (!ev.target || !ev.target.result) return;
+            // Use the BLOCK INDEX captured BEFORE the file dialog opened (the dialog
+            // blurred the editor, so re-deriving the caret now would land at the end).
+            var imgIndex = (typeof window.__sieveCapturedInsertIndex === 'number') ? window.__sieveCapturedInsertIndex : -1;
             fetch('/api/editor/smart-paste', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ uuid: uuid, entries: [{ mimeType: file.type, content: ev.target.result }] }),
+              body: JSON.stringify({ uuid: uuid, entries: [{ mimeType: file.type, content: ev.target.result }], index: imgIndex }),
             }).catch(function(err) { console.error('[toolbar] image upload failed', err); });
           };
           reader.readAsDataURL(file);

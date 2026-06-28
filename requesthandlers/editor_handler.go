@@ -215,10 +215,10 @@ func (h *EditorHandler) handleDetectExtractions(w http.ResponseWriter, r *http.R
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	candidates := block.DetectExtractions(req.SourceKind, req.Entries)
-	if candidates == nil {
-		candidates = []block.ExtractionCandidate{}
+	offers := block.DetectExtractions(req.SourceKind, req.Entries)
+	if offers == nil {
+		offers = []block.SupportedActions{}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(candidates)
+	json.NewEncoder(w).Encode(offers)
 }

@@ -140,6 +140,17 @@ import { registerBlockKind } from './block-kinds.js'
         { mimeType: 'text/plain', content: md },
       ]
     },
+    // Embed in Document: when the source is a diagram (or carries a ```mermaid fence),
+    // render it to an SVG and INSERT that image entry (keeping the source). prose.Transform
+    // then embeds the image (![](url)) instead of the mermaid fence. Render failure or a
+    // non-diagram source → entries unchanged → the normal embed path (fence/markdown/text).
+    resolveEntries: function (sourceNode, entries) {
+      return T.renderMermaidSvgEntry(sourceNode, entries).then(function (svg) {
+        return svg ? (entries || []).concat([svg]) : entries
+      }).catch(function () {
+        return entries
+      })
+    },
   }
 
   registerBlockKind(ProseBlock)

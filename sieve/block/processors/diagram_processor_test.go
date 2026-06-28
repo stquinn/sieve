@@ -68,8 +68,8 @@ func TestDiagramProcessor_IsBlock_mermaidFence(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{})
 	src := "graph TD\n  A[Start] --> B[End]"
 	content := "```mermaid\n" + src + "\n```"
-	if !p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: content}}) {
-		t.Fatal("IsBlock must return true for a mermaid fenced block")
+	if !p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: content}}).Has(block.ActionPaste) {
+		t.Fatal("IsSupportedContent must offer paste for a mermaid fenced block")
 	}
 }
 
@@ -77,7 +77,7 @@ func TestDiagramProcessor_Transform_mermaidFence(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{})
 	src := "graph TD\n  A[Start] --> B[End]"
 	content := "```mermaid\n" + src + "\n```"
-	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: content}}, "", "")
+	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: content}}, "", "", block.ActionPaste)
 	if overrides == nil {
 		t.Fatal("Transform must return non-nil for a mermaid fenced block")
 	}
@@ -89,23 +89,23 @@ func TestDiagramProcessor_Transform_mermaidFence(t *testing.T) {
 
 func TestDiagramProcessor_IsBlock_otherFence(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{})
-	if p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "```go\nfunc main() {}\n```"}}) {
-		t.Error("IsBlock must return false for non-mermaid fenced block")
+	if p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: "```go\nfunc main() {}\n```"}}).Has(block.ActionPaste) {
+		t.Error("IsSupportedContent must not offer paste for non-mermaid fenced block")
 	}
 }
 
 func TestDiagramProcessor_IsBlock_plainText(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{})
-	if p.IsBlock([]block.ContentEntry{{MIMEType: "text/plain", Content: "hello world"}}) {
-		t.Error("IsBlock must return false for plain text")
+	if p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: "hello world"}}).Has(block.ActionPaste) {
+		t.Error("IsSupportedContent must not offer paste for plain text")
 	}
 }
 
 func TestDiagramProcessor_Transform_notIsBlock(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{})
-	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: "hello world"}}, "", "")
+	overrides := p.Transform([]block.ContentEntry{{MIMEType: "text/plain", Content: "hello world"}}, "", "", block.ActionPaste)
 	if overrides != nil {
-		t.Error("Transform must return nil when IsBlock is false")
+		t.Error("Transform must return nil when IsSupportedContent offers no paste")
 	}
 }
 
@@ -139,7 +139,7 @@ func TestDiagramProcessor_BuildContext_emptySource(t *testing.T) {
 func TestDiagramProcessor_MarkdownRepresentation_withSource(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{})
 	blk := block.SieveBlock{Attrs: map[string]interface{}{"source": "graph TD\n  A-->B"}}
-	got := p.MarkdownRepresentation(blk)
+	got := p.MarkdownRepresentation(blk, "")
 	want := "```mermaid\ngraph TD\n  A-->B\n```"
 	if got != want {
 		t.Errorf("MarkdownRepresentation: got %q, want %q", got, want)
@@ -149,7 +149,7 @@ func TestDiagramProcessor_MarkdownRepresentation_withSource(t *testing.T) {
 func TestDiagramProcessor_MarkdownRepresentation_emptySource(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{})
 	blk := block.SieveBlock{Attrs: map[string]interface{}{"source": ""}}
-	if got := p.MarkdownRepresentation(blk); got != "" {
+	if got := p.MarkdownRepresentation(blk, ""); got != "" {
 		t.Errorf("MarkdownRepresentation must return empty string for empty source; got %q", got)
 	}
 }

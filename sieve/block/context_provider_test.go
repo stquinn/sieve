@@ -17,12 +17,14 @@ func (m *mockContextProcessor) BuildContext(block SieveBlock, doc DocView, seen 
 	}
 	return AIContext{Content: m.returnVal}
 }
-func (m *mockContextProcessor) MarkdownRepresentation(_ SieveBlock) string { return "" }
+func (m *mockContextProcessor) MarkdownRepresentation(_ SieveBlock, _ string) string { return "" }
 func (m *mockContextProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	return map[string]interface{}{"id": id}
 }
-func (m *mockContextProcessor) IsBlock(entries []ContentEntry) bool { return false }
-func (m *mockContextProcessor) Transform(entries []ContentEntry, uuid, blockID string) map[string]interface{} {
+func (m *mockContextProcessor) IsSupportedContent(entries []ContentEntry) SupportedActions {
+	return SupportedActions{}
+}
+func (m *mockContextProcessor) Transform(entries []ContentEntry, uuid, blockID string, action Action) map[string]interface{} {
 	return nil
 }
 func (m *mockContextProcessor) RunJob(jctx JobContext) error  { return nil }

@@ -162,6 +162,58 @@ func TestHandleBlockOp_proseUpdateUsesAttrsContentAndKeepsAliases(t *testing.T) 
 	}
 }
 
+// Create is uniform for EVERY kind, prose included: a create-block runs the one
+// create lifecycle and notifies the client (render-back). The backend does not
+// branch on kind — "the editor already holds this node" is the client's concern
+// (it suppresses the redundant insert: insert-if-absent), not the backend's.
+// Guards the removal of the KindProse fork in HandleBlockOp.
+func TestHandleBlockOp_proseCreateNotifiesLikeEveryKind(t *testing.T) {
+	resetRegistry() // registers the prose terminal
+
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+
+	created := make(chan string, 1)
+	es.SetLifecycleListener(&mockLifecycleListener{
+		onCreated: func(_, _, blockID, _ string) {
+			select {
+			case created <- blockID:
+			default:
+			}
+		},
+	})
+
+	doc, _ := ds.New()
+	doc.SetBody([]byte("seed"))
+	doc, _ = ds.Save(doc)
+	uuid := doc.UUID()
+	if err := es.Open(uuid, nil); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	if err := es.HandleBlockOp(uuid, block.BlockOp{
+		Type: "create-block", Kind: "prose", BlockID: "pr-1",
+		Attrs: map[string]interface{}{"content": "hello"}, Index: 0,
+	}); err != nil {
+		t.Fatalf("create-block: %v", err)
+	}
+
+	select {
+	case id := <-created:
+		if id != "pr-1" {
+			t.Errorf("notified for wrong block: %q (want pr-1)", id)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("prose create-block did not notify the client — still on the forked path")
+	}
+
+	// The block still lands in the tree with its content (existing behavior preserved).
+	blk := frontendBlockByID(t, es, uuid, "pr-1")
+	if got, _ := blk.Attrs["content"].(string); got != "hello" {
+		t.Errorf("prose content missing after create: %q (want \"hello\")", got)
+	}
+}
+
 // C.2b — EditorService.HandleBlockOp applies a wire op to the open shadow's Doc
 // and the change persists on flush.
 func TestEditorService_HandleBlockOp_UpdatesAndPersists(t *testing.T) {

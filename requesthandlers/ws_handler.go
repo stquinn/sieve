@@ -120,8 +120,6 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 			h.handleEnterWysiwyg(uuid, raw, writeMsg)
 		case "retry-block-job":
 			h.handleRetryBlockJob(uuid, raw, writeMsg)
-		case "promote-block":
-			h.handlePromoteBlock(uuid, raw, writeMsg)
 		case "extract":
 			h.handleExtract(uuid, raw, writeMsg)
 		case "block-op":
@@ -269,28 +267,20 @@ func (h *WsHandler) OnBlockUpdated(uuid, blockID string, attrs map[string]interf
 	}
 }
 
-func (h *WsHandler) OnBlockPromoted(uuid, blockID, replacement string) {
+// OnBlockReplaced implements block.BlockLifecycleListener.
+func (h *WsHandler) OnBlockReplaced(uuid, oldID, newKind, newID string, attrs map[string]interface{}, markdown string) {
 	h.channelsMu.RLock()
 	writeMsg, ok := h.channels[uuid]
 	h.channelsMu.RUnlock()
 	if ok {
 		writeMsg(map[string]interface{}{
-			"type":        "block-promoted",
-			"id":          blockID,
-			"replacement": replacement,
+			"type":    "replace-block",
+			"oldId":   oldID,
+			"newId":   newID,
+			"newKind": newKind,
+			"attrs":   attrs,
+			"newYaml": markdown,
 		})
-	}
-}
-
-func (h *WsHandler) handlePromoteBlock(uuid string, raw []byte, writeMsg func(interface{})) {
-	var msg struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(raw, &msg); err != nil || msg.ID == "" {
-		return
-	}
-	if err := h.ServiceProvider.Editor.PromoteBlock(uuid, msg.ID); err != nil {
-		logger.Warn("ws: promote-block failed", "uuid", uuid, "block", msg.ID, "err", err)
 	}
 }
 
@@ -298,6 +288,7 @@ func (h *WsHandler) handleExtract(uuid string, raw []byte, writeMsg func(interfa
 	var p struct {
 		BlockID    string               `json:"blockId"`
 		TargetKind string               `json:"targetKind"`
+		Operation  string               `json:"operation"`
 		Entries    []block.ContentEntry `json:"entries"`
 		Index      int                  `json:"index"`
 	}
@@ -307,7 +298,13 @@ func (h *WsHandler) handleExtract(uuid string, raw []byte, writeMsg func(interfa
 		return
 	}
 
-	newID, rawYaml, err := h.ServiceProvider.Editor.CreateBlockFromEntries(uuid, p.TargetKind, p.Entries, p.Index)
+	action := block.Action(p.Operation)
+	if action == "" {
+		action = block.ActionExtract // back-compat default: additive
+	}
+
+	newID, rawYaml, err := h.ServiceProvider.Editor.CreateBlockFromEntries(
+		uuid, p.TargetKind, p.Entries, p.Index, action, p.BlockID)
 	if err != nil {
 		logger.Warn("ws: extract block failed", "err", err)
 		writeMsg(map[string]interface{}{
@@ -317,13 +314,16 @@ func (h *WsHandler) handleExtract(uuid string, raw []byte, writeMsg func(interfa
 		return
 	}
 
-	// This is broadcast to the caller so they know to replace their local placeholder.
-	// Other connected clients will receive the standard 'insert-block' from the lifecycle listener.
-	writeMsg(map[string]interface{}{
-		"type":       "block-extracted",
-		"originalId": p.BlockID,
-		"newId":      newID,
-		"newKind":    p.TargetKind,
-		"newYaml":    rawYaml,
-	})
+	// TRANSFORM replaces in place — its render-back goes out via OnBlockReplaced
+	// ("replace-block"). Only the additive ops (paste/extract) need this caller hint
+	// to swap their local placeholder for the newly created block.
+	if action != block.ActionTransform {
+		writeMsg(map[string]interface{}{
+			"type":       "block-extracted",
+			"originalId": p.BlockID,
+			"newId":      newID,
+			"newKind":    p.TargetKind,
+			"newYaml":    rawYaml,
+		})
+	}
 }

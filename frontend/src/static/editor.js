@@ -50,29 +50,18 @@
   // blockIndexForInsert maps a captured insert position (a PM doc position, or null
   // for "append") to the top-level BLOCK index Go's create-block op inserts at —
   // the number of top-level nodes that end at or before the position.
+  // Delegates to the tested window.TipTap.blockIndexForInsert (block-position.js).
   function blockIndexForInsert(pos) {
     if (!currentEditor) return -1
-    var doc = currentEditor.state.doc
-    if (pos == null) return doc.childCount
-    var p = (typeof pos === 'object') ? pos.from : pos
-    var idx = 0, offset = 0
-    for (var i = 0; i < doc.childCount; i++) {
-      offset += doc.child(i).nodeSize
-      if (offset <= p) idx = i + 1
-      else break
-    }
-    return idx
+    return window.TipTap.blockIndexForInsert(currentEditor.state.doc, pos)
   }
 
   // docPosForBlockIndex maps a top-level BLOCK index (Go's tree position, echoed on
   // insert-block) to the editor doc position before that node — so a render-back
   // lands where Go put it, even for a batch (a paste slice).
+  // Delegates to the tested window.TipTap.docPosForBlockIndex (block-position.js).
   function docPosForBlockIndex(editor, idx) {
-    var doc = editor.state.doc
-    if (idx == null || idx >= doc.childCount) return doc.content.size
-    var pos = 0
-    for (var i = 0; i < idx && i < doc.childCount; i++) pos += doc.child(i).nodeSize
-    return pos
+    return window.TipTap.docPosForBlockIndex(editor.state.doc, idx)
   }
 
   // noteServerBlock is set by mountWysiwyg — baselines a server-created block into
@@ -814,11 +803,11 @@
       if (msg.type === 'block-attrs-updated') {
         document.dispatchEvent(new CustomEvent('editor:block-attrs-updated', { detail: msg }))
       }
-      if (msg.type === 'block-promoted') {
-        softReloadContent(currentUuid)
+      if (msg.type === 'replace-block') {
+        document.dispatchEvent(new CustomEvent('editor:replace-block', { detail: msg }))
       }
       if (msg.type === 'block-extracted') {
-        // Rely on insert-block to place the new node; do not reload.
+        // The new block renders via insert-block (tracked insert at its index). Nothing to do.
       }
     }
 
@@ -898,6 +887,11 @@
   // These insert block kinds (smart-image / web-clip), so capture as a block.
   document.addEventListener('sieve:capture-insert-pos', function () {
     sieveInsertPos = captureInsertPos(false)
+    // A file dialog (toolbar image) blurs the editor and loses the caret. Stash the
+    // resolved BLOCK INDEX now (pre-dialog); the cross-file upload handler in index.html
+    // can't see the editor-private sieveInsertPos, so it reads this and sends it to
+    // smart-paste — without it the new image appends to the end of the document.
+    window.__sieveCapturedInsertIndex = blockIndexForInsert(sieveInsertPos)
   })
 
   // NodeViews fire sieve:block-update when the user edits block content. It rides
@@ -906,11 +900,6 @@
   document.addEventListener('sieve:block-update', function (e) {
     if (!currentUuid || !e.detail.id) return
     wsSend({ type: 'block-op', uuid: currentUuid, op: window.TipTap.updateBlockOp(e.detail) })
-  })
-
-  document.addEventListener('sieve:promote-block', function (e) {
-    if (!currentUuid || !e.detail || !e.detail.id) return
-    wsSend({ type: 'promote-block', id: e.detail.id, uuid: currentUuid })
   })
 
   document.addEventListener('editor:insert-block', function (e) {
@@ -926,12 +915,25 @@
     var parsed = msg.attrs || {}
     var kind = msg.kind || 'code'
 
-    // An in-place conversion sets sieveInsertPos to a {from,to} RANGE (replace the
-    // source). Otherwise the op's index (echoed on the message) is the document
+    // Insert position: the op's index (echoed on the message) is the document
     // position — robust for a batch (a paste slice renders many blocks in order).
-    var replaceRange = (sieveInsertPos && typeof sieveInsertPos === 'object') ? sieveInsertPos : null
+    // A numeric sieveInsertPos is still used by AI-block creates (which set a raw
+    // editor position before the WS round-trip). In-place transforms now use the
+    // dedicated editor:replace-block handler; replaceRange is retired.
     var numericPos = (typeof sieveInsertPos === 'number') ? sieveInsertPos : null
     sieveInsertPos = null
+
+    // Insert-if-absent: the backend creates EVERY kind through the one lifecycle and
+    // render-backs uniformly — including prose, whose node the editor already holds
+    // (the user typed it). "Does the editor have this node?" is the client's concern,
+    // not the backend's: if a node with this id is already in the doc, the echo is
+    // redundant — baseline it so the observer never re-creates it, then skip the
+    // insert (a second insert would duplicate the paragraph).
+    var echoedId = msg.id || parsed.id
+    if (echoedId && currentEditor.view.dom.querySelector('[data-id="' + echoedId + '"]')) {
+      if (typeof noteServerBlock === 'function') noteServerBlock(echoedId)
+      return
+    }
 
     // Prose IS a block: render the server-created block (prose or structured) to its
     // editor node(s) through the SAME path the document load uses (id-stamped) —
@@ -940,9 +942,7 @@
     var content = blockToNodes(currentEditor, blk).map(function (n) { return n.toJSON() })
     if (!content.length) return
 
-    if (replaceRange) {
-      currentEditor.commands.insertContentAt(replaceRange, content)
-    } else if (typeof msg.index === 'number') {
+    if (typeof msg.index === 'number') {
       currentEditor.commands.insertContentAt(docPosForBlockIndex(currentEditor, msg.index), content)
     } else {
       currentEditor.commands.insertContentAt(numericPos !== null ? numericPos : currentEditor.state.doc.content.size, content)
@@ -957,6 +957,19 @@
         var el = document.querySelector('[data-id="' + (msg.id || parsed.id) + '"] .sieve-block__edit')
         if (el) el.focus()
       }, 50)
+    } else if (msg.kind !== 'ai-block') {
+      // Anything else the user just inserted (image, web-clip, card, …): return focus
+      // to the editor with the caret AFTER the new block so they can keep typing. (A
+      // file dialog / toolbar click leaves focus elsewhere; code/diagram focus their own
+      // edit surface above; async AI answers intentionally never steal focus.)
+      setTimeout(function () {
+        if (!currentEditor) return
+        var doc = currentEditor.state.doc
+        var idxAfter = window.TipTap.blockIndexAfter(doc, msg.id || parsed.id)
+        if (idxAfter < 0) { currentEditor.commands.focus(); return }
+        var pos = window.TipTap.docPosForBlockIndex(doc, idxAfter)
+        currentEditor.chain().focus().setTextSelection(Math.min(pos, currentEditor.state.doc.content.size)).run()
+      }, 60)
     }
 
     // Bring the new block into view. Async answer blocks (ask/explain) carry no
@@ -969,6 +982,39 @@
         if (node) node.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
       }, 60)
     }
+  })
+
+  // ── Replace block (in-place TRANSFORM render-back) ──────────────────────────
+  // Tracked replace-by-id: swap the node carrying oldId with the server's new node.
+  // A normal insertContentAt(range, ...) is undoable (and the observer propagates an
+  // undo to the backend). Markdown mode is breakglass → full reload is acceptable there.
+  document.addEventListener('editor:replace-block', function (e) {
+    var msg = e.detail
+    if (currentMode === 'markdown') { softReloadContent(currentUuid); return }
+    if (!currentEditor) return
+    var oldId = msg.oldId
+    var newId = msg.newId || oldId
+    var kind = msg.newKind || 'prose'
+    var parsed = msg.attrs || {}
+
+    var range = null
+    currentEditor.state.doc.descendants(function (node, pos) {
+      if (range) return false
+      if (node.attrs && node.attrs.id === oldId) { range = { from: pos, to: pos + node.nodeSize }; return false }
+    })
+    if (!range) return
+
+    var blk = { id: newId, kind: kind, attrs: Object.assign({ id: newId }, parsed) }
+    var content = blockToNodes(currentEditor, blk).map(function (n) { return n.toJSON() })
+    if (!content.length) return
+
+    currentEditor.commands.insertContentAt(range, content) // tracked → undoable
+    if (typeof noteServerBlock === 'function') noteServerBlock(newId)
+
+    setTimeout(function () {
+      var node = document.querySelector('[data-id="' + newId + '"]')
+      if (node) node.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }, 60)
   })
 
   document.addEventListener('editor:block-attrs-updated', function (e) {
@@ -1454,12 +1500,17 @@
   // ── AI jobs ───────────────────────────────────────────────────────────────────
 
   // softReloadContent fetches the latest body from disk and replaces editor content,
-  // preserving the cursor position. Called when an ai:block-resolved SSE event arrives.
+  // preserving the cursor position. Called when an ai:block-resolved SSE event arrives,
+  // and after extract/paste operations that re-render from the ShadowDoc.
   function softReloadContent(uuid) {
     if (currentMode !== 'wysiwyg' && currentMode !== 'markdown') return
     if (currentMode === 'wysiwyg' && !currentEditor) return
     aiReloadInProgress = true
-    var savedAnchor = currentMode === 'wysiwyg' ? currentEditor.state.selection.anchor : null
+    // Capture focus context before the async fetch so caret is preserved across
+    // the re-render (covers TRANSFORM, paste, extract, and AI block resolve).
+    var fctx = (currentMode === 'wysiwyg' && window.TipTap && window.TipTap.captureFocusContext)
+      ? window.TipTap.captureFocusContext(currentEditor)
+      : null
     fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid))
       .then(function (r) { return r.json() })
       .then(function (data) {
@@ -1478,8 +1529,9 @@
           renderBlocksIntoEditor(currentEditor, data.blocks || [])
           lastSyncedBody = body
           aiReloadInProgress = false
-          var maxPos = currentEditor.state.doc.content.size
-          currentEditor.commands.setTextSelection(Math.min(savedAnchor, maxPos - 1))
+          if (window.TipTap && window.TipTap.restoreFocusContext) {
+            window.TipTap.restoreFocusContext(currentEditor, fctx)
+          }
         } else if (currentMode === 'markdown' && currentMarkdownTextarea) {
           currentMarkdownTextarea.value = body
           lastSyncedBody = body
@@ -1526,6 +1578,14 @@
     if (!event.clipboardData || !currentEditor) return false
 
     if (event.target && (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA')) {
+      return false
+    }
+
+    // Caret inside a raw-text fenced block (code / diagram / log — code:true
+    // nodes): paste is a literal text paste into that block, not a smart-paste
+    // that mints a new block. Step aside; PM's default handler inserts the text.
+    if (window.TipTap && window.TipTap.caretInRawTextBlock &&
+        window.TipTap.caretInRawTextBlock(currentEditor)) {
       return false
     }
 
@@ -1627,8 +1687,8 @@
         })
 
         // Smart-paste resolves a block kind server-side (web-clip / smart-image /
-        // smart-card) → capture as a block (after the top-level node).
-        sieveInsertPos = captureInsertPos(false)
+        // smart-card) → capture insert position as a block index for Go to position.
+        var smartPasteIndex = blockIndexForInsert(captureInsertPos(false))
         event.preventDefault()
 
         Promise.all(promises).then(function(results) {
@@ -1636,15 +1696,15 @@
           fetch('/api/editor/smart-paste', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uuid: currentUuid, entries: validEntries }),
+            body: JSON.stringify({ uuid: currentUuid, entries: validEntries, index: smartPasteIndex }),
           })
             .then(function (r) { return r.json() })
             .then(function (result) {
               if (!currentEditor) return
               if (result.matched) {
-                // Handled entirely via WebSocket push. Nothing to insert here.
+                // Rendered via insert-block (tracked insert at its server index). Nothing to do.
               } else {
-                // No processor matched — clear the stashed insert position and replay original clipboard content.
+                // No processor matched — replay original clipboard content locally.
                 sieveInsertPos = null
                 if (html) {
                   currentEditor.commands.insertContent(html)
@@ -1701,23 +1761,23 @@
 
       var pos = currentEditor.view.posAtCoords({ left: event.clientX, top: event.clientY })
       var insertPos = pos ? pos.pos : currentEditor.state.selection.to
-      
+      var dropIndex = blockIndexForInsert(insertPos)
+
       event.preventDefault()
 
       Promise.all(promises).then(function(results) {
         var validEntries = results.filter(function(r) { return r !== null })
         if (validEntries.length === 0) return
-        sieveInsertPos = insertPos
         fetch('/api/editor/smart-paste', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ uuid: currentUuid, entries: validEntries }),
+          body: JSON.stringify({ uuid: currentUuid, entries: validEntries, index: dropIndex }),
         })
           .then(function (r) { return r.json() })
           .then(function (result) {
             if (!currentEditor) return
             if (result.matched) {
-              // Handled entirely via WebSocket push. Nothing to insert here.
+              // Rendered via insert-block (tracked insert at its server index). Nothing to do.
             }
           })
           .catch(function (err) {
@@ -1977,6 +2037,25 @@
     }))
   })
 
+  // Block-ID hover readout (dev/debug). Hovering any block — prose or Sieve —
+  // surfaces `kind · id` in the status bar. Both kinds carry data-id in the DOM
+  // (prose via the blockId global attr; Sieve via its NodeView host); Sieve
+  // blocks also carry data-kind, prose don't (→ implicitly 'prose'). Pure DOM
+  // read, no PM doc access. Producer half of the same pattern as dispatchStats →
+  // editor:stats; the consumer lives beside that handler in index.html. The
+  // gutter line number already gives the block's index, so it's not duplicated.
+  var lastHoverKey = null
+  document.addEventListener('mouseover', function (e) {
+    var inMount = e.target.closest && e.target.closest('#tiptap-mount')
+    var el = inMount ? e.target.closest('[data-id]') : null
+    var key = el ? (el.getAttribute('data-kind') || 'prose') + '·' + el.getAttribute('data-id') : null
+    if (key === lastHoverKey) return   // only fire when the hovered block changes
+    lastHoverKey = key
+    document.dispatchEvent(new CustomEvent('editor:blockhover', {
+      detail: el ? { id: el.getAttribute('data-id'), kind: el.getAttribute('data-kind') || 'prose' } : null
+    }))
+  })
+
   document.addEventListener('keydown', function (e) {
     if (e.key === 'W' && window.isMod(e) && e.shiftKey && !e.altKey) {
       e.preventDefault()
@@ -2011,11 +2090,16 @@
     sendCreateBlock('web-clip', { source: href, mode: mode })
   })
 
-  // ── Extract (sieve:extract) ──────────────────────────────────────────────────
+  // ── Extract / Transform (sieve:extract) ─────────────────────────────────────
+  // Dumb playback: post {operation, targetKind, entries, blockId}. The backend mutates
+  // (PASTE/EXTRACT -> new block via insert-block; TRANSFORM -> ReplaceBlock on its tree,
+  // then a replace-block render-back the editor answers by re-rendering). The frontend
+  // never swaps nodes itself.
   document.addEventListener('sieve:extract', function (e) {
     if (!currentUuid || !currentEditor) return
     var blockId = e.detail.blockId
     var targetKind = e.detail.targetKind
+    var operation = e.detail.operation || 'extract'
     var entries = e.detail.entries || []
     var sourceNode = e.detail.sourceNode
     var context = e.detail.context || {}
@@ -2024,55 +2108,30 @@
       entries[0].context = context
     }
 
-    var targetPos = e.detail.sourcePos !== undefined ? e.detail.sourcePos : null
-    var targetNode = e.detail.sourceNode || null
-
-    if (blockId) {
-      currentEditor.state.doc.descendants(function (node, pos) {
-        if (node.attrs.id === blockId) {
-          targetPos = pos
-          targetNode = node
-          return false
-        }
-      })
+    // Additive ops (extract/paste) land via insert-block at a document index; clear any
+    // stale insert position so insert-block uses the op's own index, not a leftover range.
+    sieveInsertPos = null
+    var index = -1
+    if (operation !== 'transform' && operation !== 'undo-smart-paste' && blockId) {
+      // Use top-level-only scan (blockIndexAfter) — descendants() was buggy because
+      // it visited nested nodes, potentially matching an inner node's id and computing
+      // an index relative to that nested position rather than the top-level tree.
+      index = window.TipTap.blockIndexAfter(currentEditor.state.doc, blockId)
     }
 
-    // Additive extraction (Sieve-block sources): insert AFTER the source, leaving
-    // it intact. In-place conversion (native code blocks, replaceSource): replace
-    // the source node's range with the new Sieve block — a single transaction, so
-    // one Undo restores the native block.
-    if (targetPos !== null && targetNode !== null) {
-      sieveInsertPos = e.detail.replaceSource
-        ? { from: targetPos, to: targetPos + targetNode.nodeSize }
-        : targetPos + targetNode.nodeSize
+    function send(resolved) {
+      wsSend({ type: 'extract', blockId: blockId, targetKind: targetKind, operation: operation, entries: resolved, index: index })
     }
 
     if (window.TipTap && window.TipTap.resolveEntriesForKind) {
       var res = window.TipTap.resolveEntriesForKind(targetKind, sourceNode, entries)
       if (res && typeof res.then === 'function') {
-        res.then(function(resolved) {
-          wsSend({
-            type: 'extract',
-            blockId: blockId,
-            targetKind: targetKind,
-            entries: resolved,
-            index: blockIndexForInsert(sieveInsertPos)
-          })
-        }).catch(function(err) {
-          console.error('[sieve:extract] extraction failed', err)
-        })
+        res.then(send).catch(function (err) { console.error('[sieve:extract] failed', err) })
         return
       }
       entries = res
     }
-
-    wsSend({
-      type: 'extract',
-      blockId: blockId,
-      targetKind: targetKind,
-      entries: entries,
-      index: blockIndexForInsert(sieveInsertPos)
-    })
+    send(entries)
   })
 
   window.sieveInitEditor = initEditor

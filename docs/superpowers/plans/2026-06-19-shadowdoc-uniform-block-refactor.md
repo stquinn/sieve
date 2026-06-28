@@ -1,5 +1,7 @@
 # ShadowDoc uniform-block refactor (B-C) — Implementation Plan
 
+> **STATUS — ✅ COMPLETE (closed out 2026-06-28).** ONE `SieveBlock` type, payload in `Attrs`, tree held directly on `ShadowDocument` (`sieve/block/`); markdown derived. Full Go suite green; app runnable throughout (one commit per step, no big-bang). Block-model **Stage A/B-C**. **Out of scope here (Stage E, deferred):** containers/`Children` and the `Container` type promoted from `ColumnRow`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:test-driven-development per task; commit per task. Steps are checkboxes.
 
 **Goal:** Collapse the Go block model to ONE in-memory type (`SieveBlock`) addressed by id, held directly on `ShadowDocument.Blocks []SieveBlock`. Prose is just `Kind:"prose"` with its body in `Attrs["content"]`. Delete every parallel/derived structure.

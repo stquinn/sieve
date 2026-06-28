@@ -98,7 +98,7 @@ func TestProseProcessor_Transform_ExtractsEntriesToContent(t *testing.T) {
 	p := &ProseProcessor{}
 	attrs := p.Transform([]block.ContentEntry{
 		{MIMEType: "text/markdown", Content: "| a | b |\n|---|---|\n| 1 | 2 |"},
-	}, "uuid", "pr-1")
+	}, "uuid", "pr-1", block.ActionExtract)
 	if attrs["content"] != "| a | b |\n|---|---|\n| 1 | 2 |" {
 		t.Fatalf("extract to prose content failed: %+v", attrs)
 	}
