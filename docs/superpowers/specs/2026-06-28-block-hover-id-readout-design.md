@@ -6,12 +6,20 @@
 
 ## Goal
 
-Hovering any block in the editor — prose or Sieve — shows a subtle
-`kind · id · index` readout in the status bar. This is a developer/debug
-affordance: nearly every recent defect (data-loss #1, AI-targeting, extraction)
-is reasoned about in terms of block ids and top-level indices, so being able to
-hover and read "this is `prose · pr-3f2a · 4`" while debugging is directly
-useful.
+Hovering any block in the editor — prose or Sieve — shows a subtle `kind · id`
+readout in the status bar. This is a developer/debug affordance: nearly every
+recent defect (data-loss #1, AI-targeting, extraction) is reasoned about in
+terms of block ids, so being able to hover and read "this is `prose · pr-3f2a`"
+while debugging is directly useful.
+
+**Index is deliberately NOT in the readout.** The gutter already renders a
+line number for every top-level block (prose and Sieve alike) — `i + 1` over
+the doc's direct children (`block-chrome.js`). That number sitting beside the
+hovered block already gives the block's position, so duplicating it in JS would
+mean reaching into the live PM doc on every hover for no new information.
+Caveat the developer should keep in mind: the gutter is **1-based** while the
+backend's `msg.index` is **0-based** (gutter "line 5" = backend index 4). If
+that off-by-one ever needs to be eliminated, revisit — out of scope for now.
 
 Always-on and dim. No settings, no toggle, no backend. If it ever feels noisy
 it can be gated behind a debug flag later (explicitly out of scope now).
@@ -36,31 +44,7 @@ CustomEvent feeding a status-bar slot, exactly like `editor:stats` →
 
 ## Components
 
-### 1. `blockIndexOf(doc, blockId)` — new pure helper
-
-Location: `frontend/src/static/block-position.js`, beside `blockIndexAfter`.
-
-Returns the **top-level** block index of the node whose `attrs.id === blockId`,
-or `-1` if no top-level child matches. Differs from the existing
-`blockIndexAfter` only in returning `i` rather than `i + 1`.
-
-```js
-// blockIndexOf(doc, blockId): the top-level block index of the node whose
-// attrs.id === blockId; -1 if no DIRECT child of doc matches.
-export function blockIndexOf(doc, blockId) {
-  if (!blockId) return -1
-  for (var i = 0; i < doc.childCount; i++) {
-    var child = doc.child(i)
-    if (child.attrs && child.attrs.id === blockId) return i
-  }
-  return -1
-}
-```
-
-Exposed on `window.TipTap` alongside the other position helpers. Pure and
-unit-testable without the editor.
-
-### 2. `block-hover-id.js` — new module
+### 1. `block-hover-id.js` — new module
 
 Location: `frontend/src/static/block-hover-id.js`. Loaded as a `<script>` in
 `index.html` next to the other static JS modules.
@@ -69,13 +53,11 @@ Location: `frontend/src/static/block-hover-id.js`. Loaded as a `<script>` in
   `#editor-container`.
 - On `mouseover`: `e.target.closest('[data-id]')`.
   - If none → fire clear (see below).
-  - Else read:
+  - Else read (pure DOM, no PM doc access):
     - `id = el.dataset.id`
     - `kind = el.dataset.kind || 'prose'`
-    - `index = (window.__tiptap && window.__tiptap.state)
-        ? window.TipTap.blockIndexOf(window.__tiptap.state.doc, id) : -1`
   - Fire `document.dispatchEvent(new CustomEvent('editor:blockhover',
-    { detail: { id: id, kind: kind, index: index } }))`.
+    { detail: { id: id, kind: kind } }))`.
 - On `mouseout` that leaves the editor container (or lands on a non-block) →
   fire `editor:blockhover` with `{ detail: null }` to clear.
 
@@ -98,33 +80,25 @@ document.addEventListener('editor:blockhover', function (e) {
   if (!slot) return;
   var d = e.detail;
   if (!d) { slot.textContent = ''; return; }
-  var idx = (d.index != null && d.index >= 0) ? ' · ' + d.index : '';
-  slot.textContent = d.kind + ' · ' + d.id + idx;
+  slot.textContent = d.kind + ' · ' + d.id;
 });
 ```
-
-When `blockIndexOf` returns `-1` (nested block id, or not found) the index is
-omitted — the readout degrades to `kind · id`.
 
 ## Edge cases
 
 - **Nested blocks:** `closest('[data-id]')` returns the innermost block element,
-  which is the correct "what am I over" answer. `blockIndexOf` only matches
-  top-level children, so a nested id yields `-1` → readout shows `kind · id`
-  with no index. Acceptable for a debug tool.
-- **No editor / empty doc:** `window.__tiptap` is null between loads → index
-  resolves to `-1`; the readout still shows `kind · id` if a stray `[data-id]`
-  is hovered, otherwise stays cleared.
+  which is the correct "what am I over" answer. The gutter line number still
+  reflects the enclosing top-level block — fine for a debug tool.
 - **Leaving the editor:** `mouseout` clears the slot so a stale id never lingers.
 
 ## Testing
 
-- **`blockIndexOf`:** vitest unit tests alongside the existing `block-position`
-  tests — found at index 0 / middle / last, not-found → `-1`, empty id → `-1`,
-  nested-only id → `-1`.
-- **Hover wiring + status-bar rendering:** UI glue; manual verification in the
-  actual WebKitGTK app (per the project testing strategy — the Playwright
-  browser harness is a separate future spec).
+The whole feature is UI glue — a delegated DOM listener and a status-bar text
+swap, with no pure logic to unit-test (the index lookup that would have needed
+a vitest test was cut). Manual verification in the actual WebKitGTK app, per the
+project testing strategy (the Playwright browser harness is a separate future
+spec): hover a prose block → `prose · pr-xxxx`; hover each Sieve kind →
+`<kind> · <id>`; move off into whitespace → readout clears.
 
 ## Out of scope (YAGNI)
 
