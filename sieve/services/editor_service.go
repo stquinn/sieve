@@ -544,8 +544,8 @@ func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []blo
 		return "", "", fmt.Errorf("no processor registered for kind %q", kind)
 	}
 
-	if action == block.ActionTransform {
-		return es.transformInPlace(uuid, kind, processor, entries, sourceID)
+	if action == block.ActionTransform || action == block.ActionUndoSmartPaste {
+		return es.transformInPlace(uuid, kind, processor, entries, sourceID, action)
 	}
 
 	blockID := block.GenerateBlockIDFor(kind)
@@ -558,7 +558,7 @@ func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []blo
 
 // transformInPlace replaces sourceID with a new block of kind, preserving the source's
 // id and document position (the OpTransform definition).
-func (es *EditorService) transformInPlace(uuid, kind string, processor block.BlockProcessor, entries []block.ContentEntry, sourceID string) (id, rawYaml string, err error) {
+func (es *EditorService) transformInPlace(uuid, kind string, processor block.BlockProcessor, entries []block.ContentEntry, sourceID string, action block.Action) (id, rawYaml string, err error) {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
@@ -568,7 +568,7 @@ func (es *EditorService) transformInPlace(uuid, kind string, processor block.Blo
 	if sourceID == "" {
 		return "", "", fmt.Errorf("transform: no source block id")
 	}
-	overrides := processor.Transform(entries, uuid, sourceID, block.ActionTransform)
+	overrides := processor.Transform(entries, uuid, sourceID, action)
 	if overrides == nil {
 		return "", "", fmt.Errorf("transform: processor %q could not transform entries", kind)
 	}

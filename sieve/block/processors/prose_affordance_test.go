@@ -35,12 +35,15 @@ func TestProse_IsSupportedContent_plainText_noMatch(t *testing.T) {
 	}
 }
 
-// A code/diagram/log source embeds as its raw source text (not a fence).
+// ActionUndoSmartPaste on a code source returns the raw source text (the escape hatch).
 func TestProse_Transform_codeSource_embedsRawSourceText(t *testing.T) {
+	block.ResetRegistry()
+	block.RegisterProcessor(&CodeBlockProcessor{FencedDeserializer: block.FencedDeserializer{Kind: "code"}})
+	defer block.UnregisterProcessor("code")
 	p := NewProseProcessor(block.BlockServices{})
-	out := p.Transform([]block.ContentEntry{{MIMEType: "sieve/code", Content: `{"source":"x := 1","language":"go"}`}}, "uuid", "id", block.ActionTransform)
+	out := p.Transform([]block.ContentEntry{{MIMEType: "sieve/code", Content: `{"source":"x := 1","language":"go"}`}}, "uuid", "id", block.ActionUndoSmartPaste)
 	if out["content"] != "x := 1" {
-		t.Fatalf("code source should embed as its raw source text, got %v", out["content"])
+		t.Fatalf("code source should embed as its raw source text for undo, got %v", out["content"])
 	}
 }
 

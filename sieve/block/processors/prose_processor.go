@@ -142,25 +142,24 @@ func (p *ProseProcessor) taggedSourceHasRawText(e block.ContentEntry) bool {
 // rebuilt and its MarkdownRepresentation is fetched via the registry — prose owns
 // this lookup (the "prose is the universal sink" contract). As a final fallback the
 // entries' raw content is joined (the extract seam — an AI block's table → prose).
-func (p *ProseProcessor) Transform(entries []block.ContentEntry, _ string, _ string, _ block.Action) map[string]interface{} {
+func (p *ProseProcessor) Transform(entries []block.ContentEntry, _ string, _ string, action block.Action) map[string]interface{} {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
 			return e.AsAttrsForNewBlock(p)
 		}
-		// A foreign sieve source: rebuild it and take its markdown representation.
+		// A foreign sieve source. Two prose-targeted transforms share this entry:
+		//   ActionUndoSmartPaste → the source's raw text as plain prose (escape hatch).
+		//   ActionTransform      → faithful markdown ("Embed in Document").
 		if kind, attrs, ok := e.SieveAttrs(); ok {
-			// Code-like sources embed as plain TEXT, not a fenced block — this is the
-			// "smart-detection over-grabbed; I wanted text" escape hatch. Guard against a
-			// missing/non-string/empty source (older blocks may lack it): fall through to
-			// MarkdownRepresentation rather than embed a blank block (which would silently
-			// drop the content).
-			if kind == "code" || kind == "diagram" || kind == "log" {
-				if src, _ := attrs["source"].(string); strings.TrimSpace(src) != "" {
-					return map[string]interface{}{"content": p.sourceAsPlainText(src)}
+			proc := block.GetProcessor(kind)
+			if action == block.ActionUndoSmartPaste {
+				if rc, isRaw := proc.(block.RawContenter); isRaw {
+					if raw := rc.RawContent(block.NewSieveBlock(kind, "", attrs)); strings.TrimSpace(raw) != "" {
+						return map[string]interface{}{"content": p.sourceAsPlainText(raw)}
+					}
 				}
 			}
-			//for any other sieve type just go with there default Markdown
-			if proc := block.GetProcessor(kind); proc != nil {
+			if proc != nil {
 				src := block.NewSieveBlock(kind, "", attrs)
 				if md := proc.MarkdownRepresentation(src); strings.TrimSpace(md) != "" {
 					return map[string]interface{}{"content": md}
