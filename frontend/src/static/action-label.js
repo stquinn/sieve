@@ -1,5 +1,5 @@
-// labelForAction maps an affordance action (+ optional offer context) to its menu
-// label. Pure and tested so the verb wording has a regression gate.
+// labelForAction maps a block action (+ optional offer context) to its menu label.
+// Pure and tested so the verb wording has a regression gate.
 export function labelForAction(action, prettyKind, offer) {
   offer = offer || {}
   if (action === 'undo-smart-paste') return 'Undo Smart Paste'

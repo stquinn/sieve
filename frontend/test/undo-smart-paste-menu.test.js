@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 // labelForAction is the small pure map extracted from detectAndAppendExtractions.
-import { labelForAction } from '../src/static/affordance-label.js'
+import { labelForAction } from '../src/static/action-label.js'
 
-describe('affordance menu labels', () => {
+describe('action menu labels', () => {
   it('labels undo-smart-paste as "Undo Smart Paste"', () => {
     expect(labelForAction('undo-smart-paste', 'Code')).toBe('Undo Smart Paste')
   })
