@@ -723,9 +723,11 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
   }
 
   T.resolveEntriesForKind = function(kind, sourceNode, entries) {
-    var r = renderers[kind]
-    if (r && typeof r.resolveEntries === 'function') {
-      return r.resolveEntries(sourceNode, entries)
+    // Look up the behaviour for ANY block via the uniform block-kind registry — prose
+    // (native) resolves identically to structured kinds, no special-case fork.
+    var h = T.getBlockBehaviour && T.getBlockBehaviour(kind)
+    if (h && typeof h.resolveEntries === 'function') {
+      return h.resolveEntries(sourceNode, entries)
     }
     return entries
   }
@@ -795,7 +797,7 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
           var isEmbed = offer.kind === 'prose' && action === 'transform'
           extraItems.push({
             icon: isEmbed ? (IC.promote || icon) : icon,
-            label: (window.TipTap.labelForAction || function (a, k) { return a + ' ' + k })(action, prettyKind, offer),
+            label: (window.TipTap.labelForAction || function (a, k) { return a + ' ' + k })(action, prettyKind, offer, sourceKind),
             action: function () { dispatch({}) }
           })
         })

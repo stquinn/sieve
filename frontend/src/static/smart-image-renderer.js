@@ -189,29 +189,13 @@ import { isJobStale } from './fenced-block-base.js'
         
       ]
     },
+    // Extract → Image: render the diagram's mermaid to SVG and REPLACE the entries with
+    // it, so Transform's saveSVG writes the image. Shared render helper lives in
+    // diagram-renderer.js; null = no mermaid here (pass entries through unchanged).
     resolveEntries: function(sourceNode, entries) {
-      var src = ''
-      // Direct diagram block → render its real mermaid source.
-      if (sourceNode && sourceNode.attrs && sourceNode.attrs.kind === 'diagram') {
-        src = String(sourceNode.attrs.source || '').trim()
-      }
-      // Otherwise an embedded ```mermaid fence among the entries (e.g. from prose/code).
-      if (!src) {
-        for (var i = 0; i < (entries || []).length; i++) {
-          var m = /^```mermaid\n([\s\S]*?)```$/.exec(String((entries[i] && entries[i].content) || '').trim())
-          if (m) { src = m[1].trim(); break }
-        }
-      }
-      if (!src || !window.TipTap.ensureMermaid) return entries
-
-      return window.TipTap.ensureMermaid().then(function() {
-        var id = 'mermaid-extract-' + Date.now() + '-' + Math.floor(Math.random() * 1000)
-        return window.mermaid.render(id, src)
-      }).then(function(result) {
-        // Return raw SVG so saveSVG on the backend writes it directly.
-        // Never send to an external rendering server.
-        return [{ mimeType: 'image/svg+xml', content: result.svg }]
-      }).catch(function(err) {
+      return window.TipTap.renderMermaidSvgEntry(sourceNode, entries).then(function (svg) {
+        return svg ? [svg] : entries
+      }).catch(function (err) {
         console.error('[smart-image] mermaid render failed for extraction', err)
         window.alert('Failed to extract diagram: ' + err.message)
         return entries

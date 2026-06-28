@@ -29,6 +29,31 @@ import { esc, getLowlight, hastToHtml } from './fenced-block-base.js'
   }
   T.ensureMermaid = ensureMermaid
 
+  // renderMermaidSvgEntry renders a mermaid source — from a diagram node OR an embedded
+  // ```mermaid fence among the entries — into an image/svg+xml ContentEntry. Resolves to
+  // null when there is no mermaid here; render FAILURES reject so each caller chooses to
+  // alert (smart-image extract) or degrade (prose embed). Browser-only (window.mermaid).
+  // Shared by smart-image's and prose's resolveEntries so the render lives in one place.
+  T.renderMermaidSvgEntry = function (sourceNode, entries) {
+    var src = ''
+    if (sourceNode && sourceNode.attrs && sourceNode.attrs.kind === 'diagram') {
+      src = String(sourceNode.attrs.source || '').trim()
+    }
+    if (!src) {
+      for (var i = 0; i < (entries || []).length; i++) {
+        var m = /^```mermaid\n([\s\S]*?)```$/.exec(String((entries[i] && entries[i].content) || '').trim())
+        if (m) { src = m[1].trim(); break }
+      }
+    }
+    if (!src) return Promise.resolve(null)
+    return ensureMermaid().then(function () {
+      var id = 'mermaid-render-' + Date.now() + '-' + Math.floor(Math.random() * 1000)
+      return window.mermaid.render(id, src)
+    }).then(function (result) {
+      return { mimeType: 'image/svg+xml', content: result.svg }
+    })
+  }
+
   function buildMermaidTheme() {
     var s = getComputedStyle(document.documentElement)
     function v(name) { return s.getPropertyValue(name).trim() }
