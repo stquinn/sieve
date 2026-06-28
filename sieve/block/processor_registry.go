@@ -52,6 +52,23 @@ func (e ContentEntry) SieveAttrs() (kind string, attrs map[string]interface{}, o
 	return kind, attrs, true
 }
 
+// NestedParentID reports the id of the composite block this source was rendered
+// inside, when the entry came from a sub-element nested in another sieve block (the
+// frontend stamps Context["parentId"]). ok is false for a top-level source. A nested
+// source has no addressable id of its own — only the parent's — so it can never be
+// replaced in place; see SupportedActions.asAdditive.
+func (e ContentEntry) NestedParentID() (string, bool) {
+	if e.Context == nil {
+		return "", false
+	}
+	if v, present := e.Context["parentId"]; present {
+		if s, isStr := v.(string); isStr && s != "" {
+			return s, true
+		}
+	}
+	return "", false
+}
+
 func (e ContentEntry) IsSieveType(p BlockProcessor) bool {
 	kind, _, ok := e.SieveAttrs()
 	return ok && kind == p.Kind()
@@ -118,6 +135,26 @@ func (s SupportedActions) Has(a Action) bool {
 		}
 	}
 	return false
+}
+
+// asAdditive returns a copy of this offer with any in-place TRANSFORM demoted to an
+// additive EXTRACT. Used for a source nested inside a composite (entries carry a
+// parentId): TRANSFORM would ReplaceBlock(parentId) and clobber the whole composite —
+// its only addressable id is the parent's. Extracting a copy alongside the surviving
+// parent is the only safe mechanic. The label the user sees ("Convert to X") is
+// unchanged; only the mechanic goes additive.
+func (s SupportedActions) asAdditive() SupportedActions {
+	out := SupportedActions{Kind: s.Kind}
+	for _, a := range s.Actions {
+		if a == ActionTransform {
+			continue // drop the in-place transform
+		}
+		out.Actions = append(out.Actions, a)
+	}
+	if !out.Has(ActionExtract) && s.Has(ActionTransform) {
+		out.Actions = append(out.Actions, ActionExtract) // ...replacing it with an extract
+	}
+	return out
 }
 
 // KindProse is the prose kind name. It lives with the registry/kind constants, NOT
@@ -501,6 +538,17 @@ func DetectExtractions(sourceKind string, entries []ContentEntry) []SupportedAct
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 
+	// A source nested inside a composite has no id of its own — TRANSFORM would
+	// replace the parent and clobber it (defect #1, data loss). Demote every offer to
+	// additive-only when any entry carries a parentId.
+	nested := false
+	for _, e := range entries {
+		if _, ok := e.NestedParentID(); ok {
+			nested = true
+			break
+		}
+	}
+
 	var offers []SupportedActions
 	for _, pm := range pasteMatchers {
 		if pm.Kind == sourceKind {
@@ -513,6 +561,9 @@ func DetectExtractions(sourceKind string, entries []ContentEntry) []SupportedAct
 			}
 		}
 		if sa := pm.Processor.IsSupportedContent(entries); sa.Has(ActionExtract) || sa.Has(ActionTransform) {
+			if nested {
+				sa = sa.asAdditive()
+			}
 			offers = append(offers, sa)
 		}
 	}

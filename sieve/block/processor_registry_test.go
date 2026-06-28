@@ -204,6 +204,42 @@ func TestDetectExtractions_returnsActionsPerKind(t *testing.T) {
 	}
 }
 
+// A source nested inside a composite (its entries carry Context["parentId"]) must
+// never be offered an in-place TRANSFORM: TRANSFORM replaces the source block by id,
+// and the only id available is the parent composite's — replacing it would clobber
+// the whole composite (e.g. an AI block's response). Defect #1, data loss. The fix:
+// DetectExtractions maps any Transform -> Extract for nested sources (additive-only;
+// the extracted copy lands after the parent, which survives).
+func TestDetectExtractions_nestedSourceNeverOffersTransform(t *testing.T) {
+	ResetRegistry()
+	mock := &mockProcessor{
+		FencedDeserializer: FencedDeserializer{Kind: "diagram"},
+		actionsFn: func(entries []ContentEntry) SupportedActions {
+			return SupportedActions{Kind: "diagram", Actions: []Action{ActionExtract, ActionTransform}}
+		},
+	}
+	RegisterProcessor(mock)
+	defer UnregisterProcessor("diagram")
+
+	entries := []ContentEntry{{
+		MIMEType: "text/plain",
+		Content:  "graph TD;A-->B",
+		Context:  map[string]interface{}{"parentId": "ai-b42a"},
+	}}
+	offers := DetectExtractions("prose", entries)
+	if len(offers) == 0 {
+		t.Fatal("expected at least one offer, got none")
+	}
+	for _, o := range offers {
+		if o.Has(ActionTransform) {
+			t.Errorf("nested source (parentId set) must not be offered TRANSFORM; got %v for kind %q", o.Actions, o.Kind)
+		}
+		if !o.Has(ActionExtract) {
+			t.Errorf("nested source must still be offered EXTRACT (additive); got %v for kind %q", o.Actions, o.Kind)
+		}
+	}
+}
+
 func TestGenerateBlockID_formatAndUniqueness(t *testing.T) {
 	id1 := GenerateBlockID("code")
 	id2 := GenerateBlockID("code")

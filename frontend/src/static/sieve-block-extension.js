@@ -345,8 +345,18 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
                 // universal sieve/<kind> JSON view — the same array the clipboard emits.
                 entries = sieveBlockEntries(n, renderer);
               } else {
-                // Specific sub-content was clicked → lead with it, then still hand the
-                // backend the framework view so it can key off the source kind/attrs.
+                // Specific sub-content was clicked INSIDE the composite block n → it is a
+                // nested sub-element. Stamp parentId on each so the backend demotes any
+                // in-place TRANSFORM to an additive EXTRACT (DetectExtractions): TRANSFORM
+                // would ReplaceBlock(n.id) and clobber the whole composite (e.g. an AI
+                // block's response) — defect #1, data loss. The extracted copy lands after
+                // the surviving parent (EXTRACT positions off blockId=n.id).
+                if (n.attrs && n.attrs.id) {
+                  entries.forEach(function (en) {
+                    en.context = Object.assign({}, en.context, { parentId: n.attrs.id });
+                  });
+                }
+                // Still hand the backend the framework view so it can key off the source kind/attrs.
                 entries.push(sieveFrameworkEntry(n));
               }
               // A renderer may have no content entry (e.g. a prose block) → ensure
