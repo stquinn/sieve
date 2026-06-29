@@ -1,5 +1,7 @@
 package block
 
+import "strings"
+
 // sieve_block.go — the SieveBlock data model: type, constructor, and value
 // methods. No serialization, no parsing, and no per-kind names — the data model is
 // kind-agnostic; those live in document_codec.go and the codec/processor files.
@@ -92,6 +94,24 @@ func (b SieveBlock) answersTo() []string {
 		out = append(out, b.ID)
 	}
 	return append(out, b.Aliases...)
+}
+
+// outgoingRefs returns this block's outgoing ref targets (Attrs["ref"]) as an
+// ordered, whitespace-trimmed, non-empty slice — the tokenized form of the
+// comma-separated Ref() string. Mirrors answersTo() for the outgoing direction.
+func (b SieveBlock) outgoingRefs() []string {
+	ref := b.Ref()
+	if ref == "" {
+		return nil
+	}
+	var out []string
+	for _, raw := range strings.Split(ref, ",") {
+		r := strings.TrimSpace(raw)
+		if r != "" {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // The document is an ordered []SieveBlock — the in-memory form the serialization
