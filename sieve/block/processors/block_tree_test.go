@@ -105,6 +105,40 @@ func TestUndelimited_IsSingleBlock(t *testing.T) {
 	}
 }
 
+// Structural blank lines: an EMPTY delimited prose block (a blank paragraph the
+// user placed between content) round-trips as its own block, and N of them stay
+// N. This is the backend half of "structural empty prose persists": each empty
+// paragraph is a normal delimited prose block (id + markers), so markdown's
+// blank-line collapsing never merges them. The frontend decides which empties to
+// persist (block-sync: content-after = structural); the codec stores faithfully.
+func TestPairedDelimiter_EmptyStructuralBlocksRoundTrip(t *testing.T) {
+	doc := []block.SieveBlock{
+		{ID: "pr-1", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "A"}},
+		{ID: "pr-2", Kind: block.KindProse, Attrs: map[string]interface{}{"content": ""}},
+		{ID: "pr-3", Kind: block.KindProse, Attrs: map[string]interface{}{"content": ""}},
+		{ID: "pr-4", Kind: block.KindProse, Attrs: map[string]interface{}{"content": "B"}},
+	}
+	codec := block.NewDocumentCodec(block.GlobalRegistry())
+	md, err := codec.Serialize(doc)
+	if err != nil {
+		t.Fatalf("serialize: %v", err)
+	}
+	got, err := codec.Deserialize(md)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("want 4 blocks (2 content + 2 structural empties), got %d:\n md: %q\n blocks: %+v", len(got), md, got)
+	}
+	for i, want := range []struct {
+		id, content string
+	}{{"pr-1", "A"}, {"pr-2", ""}, {"pr-3", ""}, {"pr-4", "B"}} {
+		if got[i].ID != want.id || got[i].Content() != want.content {
+			t.Fatalf("block %d: got {id:%q content:%q}, want {id:%q content:%q}", i, got[i].ID, got[i].Content(), want.id, want.content)
+		}
+	}
+}
+
 // An open marker with no matching close is unbalanced → literal text, not a
 // block boundary. The marker line stays verbatim in the prose content.
 func TestUnbalancedOpen_IsLiteralText(t *testing.T) {

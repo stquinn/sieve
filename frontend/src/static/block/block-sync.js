@@ -57,11 +57,19 @@ export function updateBlockOp(detail) {
 // change-signature, never emitted as an op here).
 // prev: { [id]: sig } from the last successful sync, or null on the first call.
 // → { mode: 'ops' | 'fallback', ops: [BlockOp], next: { [id]: sig } }
-// isPendingEmptyProse reports a brand-new prose block with no content — the empty
-// editing surface of a new doc. It is not a real block until the user types, so
-// it is excluded from the baseline + ops; create-block fires on first content.
-function isPendingEmptyProse(b, prev) {
-  return b.kind === 'prose' && !(b.content && b.content.length) && !(prev && b.id in prev)
+// isEmptyProse reports a prose block whose content is empty — a blank paragraph.
+function isEmptyProse(b) {
+  return b.kind === 'prose' && !(b.content && b.content.length)
+}
+
+// isPendingEmptyProse reports a brand-new blank prose paragraph that is just the
+// TRAILING editing surface — no content-bearing block of any kind follows it. That
+// one is ephemeral (excluded from the baseline + ops; create-block fires on first
+// content). A blank paragraph with content AFTER it is a STRUCTURAL blank line the
+// user placed deliberately — it is real content and syncs as a normal create-block
+// (each blank is its own delimited prose block, so N blanks round-trip as N blocks).
+function isPendingEmptyProse(b, prev, hasContentAfter) {
+  return isEmptyProse(b) && !hasContentAfter && !(prev && b.id in prev)
 }
 
 // seedBaseline builds the initial change-signature map directly from the SERVER's
@@ -104,6 +112,13 @@ export function mintActions(ids) {
 
 export function computeBlockSync(curr, prev) {
   var next = {}
+  // Index of the LAST content-bearing block (any kind that is not a blank prose
+  // paragraph). A blank prose block before this index has content after it →
+  // structural; at or after it → trailing editing surface.
+  var lastContentIdx = -1
+  for (var j = 0; j < curr.length; j++) {
+    if (!isEmptyProse(curr[j])) lastContentIdx = j
+  }
   for (var i = 0; i < curr.length; i++) {
     var cb = curr[i]
     if (!cb.id) {
@@ -114,7 +129,7 @@ export function computeBlockSync(curr, prev) {
       // waits. There is NO whole-document fallback — every edit is a block-op.
       continue
     }
-    if (isPendingEmptyProse(cb, prev)) continue
+    if (isPendingEmptyProse(cb, prev, i < lastContentIdx)) continue
     next[cb.id] = blockSig(cb)
   }
 
