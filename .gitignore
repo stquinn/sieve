@@ -61,3 +61,6 @@ Screenshot*.png
 /main
 
 
+
+# ── Git worktrees ─────────────────────────────────────────────────────────────
+.worktrees/
