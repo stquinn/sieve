@@ -306,4 +306,58 @@ describe('computeBlockSync', () => {
     ], prev)
     expect(r.ops.map((o) => o.blockId)).toEqual(['pr-1', 'pr-3'])
   })
+
+  // Structural blank lines: a deliberately-empty prose paragraph that has a
+  // content-bearing block AFTER it is real content (the user placed it for
+  // spacing) and must persist — unlike the TRAILING empty paragraph, which is
+  // just the editing surface (still ephemeral). The rule is symmetric: an empty
+  // prose block is "pending" iff NO content-bearing block of any kind follows it.
+  it('syncs a brand-new EMPTY prose block when a content block follows it (structural blank line)', () => {
+    const prev = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'A' }], null).next
+    const r = computeBlockSync([
+      { id: 'pr-1', kind: 'prose', content: 'A' },
+      { id: 'pr-2', kind: 'prose', content: '' }, // structural blank — content follows
+      { id: 'pr-3', kind: 'prose', content: 'B' },
+    ], prev)
+    expect(r.ops).toEqual([
+      { type: 'create-block', blockId: 'pr-2', kind: 'prose', attrs: { content: '' }, index: 1 },
+      { type: 'create-block', blockId: 'pr-3', kind: 'prose', attrs: { content: 'B' }, index: 2 },
+    ])
+  })
+
+  it('does NOT sync a trailing EMPTY prose block even with content before it (the editing surface)', () => {
+    const prev = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'A' }], null).next
+    const r = computeBlockSync([
+      { id: 'pr-1', kind: 'prose', content: 'A' },
+      { id: 'pr-2', kind: 'prose', content: '' }, // trailing — nothing after → ephemeral
+    ], prev)
+    expect(r.ops).toEqual([])
+    expect('pr-2' in r.next).toBe(false)
+  })
+
+  it('preserves EACH of multiple structural blank lines as its own block (3 blanks → 3 blocks)', () => {
+    const prev = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'A' }], null).next
+    const r = computeBlockSync([
+      { id: 'pr-1', kind: 'prose', content: 'A' },
+      { id: 'pr-2', kind: 'prose', content: '' },
+      { id: 'pr-3', kind: 'prose', content: '' },
+      { id: 'pr-4', kind: 'prose', content: '' },
+      { id: 'pr-5', kind: 'prose', content: 'B' },
+    ], prev)
+    expect(r.ops.filter((o) => o.type === 'create-block').map((o) => o.blockId))
+      .toEqual(['pr-2', 'pr-3', 'pr-4', 'pr-5'])
+  })
+
+  it('treats a STRUCTURED block after an empty prose as content (empty prose is structural, not trailing)', () => {
+    const prev = computeBlockSync([{ id: 'pr-1', kind: 'prose', content: 'A' }], null).next
+    const r = computeBlockSync([
+      { id: 'pr-1', kind: 'prose', content: 'A' },
+      { id: 'pr-2', kind: 'prose', content: '' }, // blank before an image → structural
+      { id: 'im-1', kind: 'smart-image', content: '{"id":"im-1"}' },
+    ], prev)
+    // pr-2 persists (image follows); the structured block emits nothing of its own.
+    expect(r.ops).toEqual([
+      { type: 'create-block', blockId: 'pr-2', kind: 'prose', attrs: { content: '' }, index: 1 },
+    ])
+  })
 })
