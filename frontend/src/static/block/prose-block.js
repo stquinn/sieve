@@ -82,7 +82,7 @@ import { registerBlockKind } from './block-kinds.js'
     // On splitBlock (Enter), PM copies attrs so the new half is born with the
     // original's id AND token; we CLEAR the 2nd occurrence of each (never re-mint —
     // the frontend invents no durable identity); the cleared half re-acquires its
-    // own token next pass → its own create round-trip. Runs in appendTransaction
+    // own token in the same pass → its own create round-trip. Runs in appendTransaction
     // (NOT onUpdate), history-excluded, only fills/clears attrs (creates no nodes)
     // so it converges; a runaway guard is the backstop.
     addProseMirrorPlugins: function () {
