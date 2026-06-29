@@ -110,6 +110,25 @@ export function mintActions(ids) {
   return need
 }
 
+// dedupeActions is the split-defense decision: given the identity values (ids or
+// tokens) of the top-level prose nodes in document order, return the INDICES of
+// the 2nd-and-later occurrences of any NON-EMPTY value. ProseMirror's Enter copies
+// the split node's attrs, so the new half is born carrying the original's id/token;
+// the first occurrence keeps it, every later duplicate is CLEARED (not re-minted —
+// the frontend never invents durable identity). Empty values are left untouched:
+// an id-less node is legitimately pending (it acquires a token, then a backend id).
+export function dedupeActions(values) {
+  var seen = {}
+  var dup = []
+  for (var i = 0; i < (values || []).length; i++) {
+    var v = values[i]
+    if (!v) continue
+    if (seen[v]) { dup.push(i); continue }
+    seen[v] = true
+  }
+  return dup
+}
+
 export function computeBlockSync(curr, prev) {
   var next = {}
   // Index of the LAST content-bearing block (any kind that is not a blank prose
@@ -166,5 +185,6 @@ if (typeof window !== 'undefined') {
   window.TipTap.computeBlockSync = computeBlockSync
   window.TipTap.seedBaseline = seedBaseline
   window.TipTap.mintActions = mintActions
+  window.TipTap.dedupeActions = dedupeActions
   window.TipTap.updateBlockOp = updateBlockOp
 }

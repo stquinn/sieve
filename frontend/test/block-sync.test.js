@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeBlockSync, seedBaseline, mintActions, updateBlockOp } from '../src/static/block/block-sync.js'
+import { computeBlockSync, seedBaseline, mintActions, dedupeActions, updateBlockOp } from '../src/static/block/block-sync.js'
 
 // updateBlockOp is the structured-edit counterpart to computeBlockSync's prose
 // ops: a NodeView (code/diagram/log) fires `sieve:block-update` with
@@ -80,6 +80,27 @@ describe('mintActions', () => {
     // simulate minting fresh ids at the flagged indices
     need.forEach((i, k) => { ids[i] = 'pr-new' + k })
     expect(mintActions(ids)).toEqual([])
+  })
+})
+
+describe('dedupeActions', () => {
+  it('returns nothing when every id is unique and non-empty', () => {
+    expect(dedupeActions(['pr-1', 'pr-2', 'pr-3'])).toEqual([])
+  })
+  it('does NOT flag empty ids (they are legitimately pending — no frontend mint)', () => {
+    expect(dedupeActions(['pr-1', '', 'pr-3', ''])).toEqual([])
+  })
+  it('flags the DUPLICATE second occurrence — the splitBlock attr-copy trap', () => {
+    expect(dedupeActions(['pr-1', 'pr-1'])).toEqual([1])
+  })
+  it('flags every later duplicate, first occurrence always kept', () => {
+    expect(dedupeActions(['pr-1', 'pr-2', 'pr-1', 'pr-2', 'pr-2'])).toEqual([2, 3, 4])
+  })
+  it('flags duplicate tokens too (split copies a pending token)', () => {
+    expect(dedupeActions(['tok-aa', 'tok-aa'])).toEqual([1])
+  })
+  it('is empty for an empty list', () => {
+    expect(dedupeActions([])).toEqual([])
   })
 })
 
