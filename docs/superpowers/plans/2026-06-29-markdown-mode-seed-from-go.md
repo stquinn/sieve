@@ -1,5 +1,7 @@
 # Markdown-mode Seed from Go (F-A) Implementation Plan
 
+> **STATUS — ✅ COMPLETE (closed out 2026-06-29).** F-A's primary objective (markdown-mode seeds its textarea from Go's codec, not a JS whole-doc serialize) was already met by **B-G**; this plan retired the **TECH-DEBT F-A** entry (docs) and removed the last dead remnant — the `toMarkdown` registry field on `ProseBlock` plus its now-unused `wrapProseBlock` import, the test mock+assertion that fed it, and four stale comments (`prose-block.js` header, `prose-group.js`, `block-chrome.js`, `editor.js`). Executed via SDD (2 tasks, two-stage reviews + a final whole-branch review that added 2 doc/comment hygiene fixes). Merged to `main` via `feature/markdown-mode-seed-from-go` (merge `b77e802`); vitest 137/137, `go build` green. Tech-debt **F-A RETIRED**. `wrapProseBlock`/`prose-markers.js` intentionally kept (still exported + tested).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Verify the scope of TECH-DEBT F-A, confirm what B-G already retired, and update the register accurately.
