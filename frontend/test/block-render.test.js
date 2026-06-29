@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { buildBlocksHTML } from '../src/static/block-render.js'
+import { buildBlocksHTML } from '../src/static/block/block-render.js'
 
 // mdRender stub: marks its input so we can assert WHICH text was rendered.
 const md = (t) => `<R>${t}</R>`

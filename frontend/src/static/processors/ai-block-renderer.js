@@ -1,5 +1,5 @@
 // ai-block-renderer.js — SieveBlock renderer for the ai-block kind.
-import { isJobStale } from './fenced-block-base.js'
+import { isJobStale } from '../base/fenced-block-base.js'
 
 ;(function () {
   'use strict'

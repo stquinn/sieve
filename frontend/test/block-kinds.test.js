@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { registerBlockKind, getBlockKind, listBlockKinds, isNativeProseNodeName } from '../src/static/block-kinds.js'
+import { registerBlockKind, getBlockKind, listBlockKinds, isNativeProseNodeName } from '../src/static/block/block-kinds.js'
 
 // block-kinds is the shared block-kind registry that restores model-layer
 // symmetry: EVERY kind — prose included — is a registered block definition, so

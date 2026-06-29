@@ -15,7 +15,7 @@ let resolveAiTarget
 beforeEach(async () => {
   global.window.TipTap = global.window.TipTap || {}
   window.TipTap.getSieveBlockLabel = (node) => (node.attrs.kind === 'code' ? 'Code Block' : 'Block')
-  await import('../src/static/ai-target.js')
+  await import('../src/static/ai/ai-target.js')
   resolveAiTarget = window.TipTap.resolveAiTarget
 })
 

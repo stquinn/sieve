@@ -16,7 +16,7 @@ import { Editor, Node } from '@tiptap/core'
 import { StarterKit } from '@tiptap/starter-kit'
 import { Markdown } from 'tiptap-markdown'
 import { Fragment } from '@tiptap/pm/model'
-import { proseBlockNodes, proseGroupMarkdownSerialize } from '../src/static/prose-group.js'
+import { proseBlockNodes, proseGroupMarkdownSerialize } from '../src/static/block/prose-group.js'
 
 // A ProseGroup node extension whose markdown.serialize uses the REAL
 // proseGroupMarkdownSerialize (imported from the source module being tested).

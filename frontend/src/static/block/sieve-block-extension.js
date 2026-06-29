@@ -35,12 +35,12 @@
 //   → getSieveNodes() includes it automatically — no editor.js changes needed
 //
 // Adding a new block kind:
-//   1. Create <kind>-renderer.js following the interface above
-//   2. Add <script type="module" src="/static/<kind>-renderer.js"> to index.html
-//      after sieve-block-extension.js
+//   1. Create processors/<kind>-renderer.js following the interface above
+//   2. Add <script type="module" src="/static/processors/<kind>-renderer.js"> to
+//      index.html after block/sieve-block-extension.js
 //   That's it.
 
-import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, applyHighlighting } from './fenced-block-base.js'
+import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, applyHighlighting } from '../base/fenced-block-base.js'
 
 ;(function () {
   'use strict'

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { schema } from './helpers/editor-fixture.js'
-import { reloadReplacement } from '../src/static/render-empty.js'
+import { reloadReplacement } from '../src/static/base/render-empty.js'
 
 describe('reloadReplacement — empty-reload decision', () => {
   it('clears to one empty paragraph when allowEmpty and blocks are empty', () => {

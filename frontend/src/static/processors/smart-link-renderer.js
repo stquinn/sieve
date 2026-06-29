@@ -3,7 +3,7 @@
 // Renders as an inline <a> in flowing text. Go's RunJob fetches the page title;
 // the label updates in place when the job completes.
 
-import { isJobStale } from './fenced-block-base.js'
+import { isJobStale } from '../base/fenced-block-base.js'
 
 ;(function () {
   'use strict'

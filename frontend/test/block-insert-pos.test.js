@@ -8,7 +8,7 @@ import { docWithCaret, docWithCaretAt, docWithRange, docWithNodeSelection, build
 let blockInsertPos
 beforeEach(async () => {
   global.window.TipTap = global.window.TipTap || {}
-  await import('../src/static/ai-target.js')
+  await import('../src/static/ai/ai-target.js')
   blockInsertPos = window.TipTap.blockInsertPos
 })
 

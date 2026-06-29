@@ -16,7 +16,7 @@ global.window.TipTap = {
   Plugin: function (spec) { this.spec = spec },
   PluginKey: function (k) { this.k = k },
 }
-await import('../src/static/prose-block.js')
+await import('../src/static/block/prose-block.js')
 const ProseBlock = global.window.TipTap.ProseBlock
 const BlockId = global.window.TipTap.BlockId
 
