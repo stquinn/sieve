@@ -114,6 +114,21 @@ func (b SieveBlock) outgoingRefs() []string {
 	return out
 }
 
+// cloneDeep returns a value copy of b with a freshly-allocated Attrs map (and
+// Aliases slice), so a caller can hand it to a processor / background job that
+// mutates Attrs without racing the live tree. Content lives in Attrs, so the map
+// copy carries it.
+func (b SieveBlock) cloneDeep() SieveBlock {
+	cp := SieveBlock{ID: b.ID, Kind: b.Kind, Attrs: make(map[string]interface{}, len(b.Attrs))}
+	for k, v := range b.Attrs {
+		cp.Attrs[k] = v
+	}
+	if len(b.Aliases) > 0 {
+		cp.Aliases = append([]string(nil), b.Aliases...)
+	}
+	return cp
+}
+
 // The document is an ordered []SieveBlock — the in-memory form the serialization
 // spine round-trips against markdown. There is no wrapper type: ShadowDocument
 // holds the slice directly (no nested "document inside a document").

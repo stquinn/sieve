@@ -9,7 +9,7 @@ func TestFindBlockByIDSieveBlock(t *testing.T) {
 	RegisterProcessor(&mockContextProcessor{FencedDeserializer: FencedDeserializer{Kind: "code"}})
 	defer UnregisterProcessor("code")
 	md := "```code\nid: co-abcd\nstatus: COMPLETE\nsource: fmt.Println()\n```\n"
-	block, found := FindBlockByID(md, "co-abcd")
+	block, found := NewDocumentCodec(GlobalRegistry()).findBlockByID(md, "co-abcd")
 	if !found {
 		t.Fatal("expected to find co-abcd")
 	}
@@ -19,7 +19,7 @@ func TestFindBlockByIDSieveBlock(t *testing.T) {
 }
 
 func TestFindBlockByIDNotFound(t *testing.T) {
-	_, found := FindBlockByID("Just some plain markdown.\n", "co-9999")
+	_, found := NewDocumentCodec(GlobalRegistry()).findBlockByID("Just some plain markdown.\n", "co-9999")
 	if found {
 		t.Error("expected not found")
 	}

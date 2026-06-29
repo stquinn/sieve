@@ -12,21 +12,6 @@ import (
 // under s.mu internally. EditorService orchestrates (processor dispatch, listener
 // notify, persistence) by CALLING these — it never touches s.mu or s's fields.
 
-// cloneBlockDeep returns a value copy of b with a freshly-allocated Attrs map (and
-// Aliases slice), so a caller can hand it to a processor / background job that
-// mutates Attrs without racing the live tree. Content lives in Attrs, so the map
-// copy carries it.
-func cloneBlockDeep(b SieveBlock) SieveBlock {
-	cp := SieveBlock{ID: b.ID, Kind: b.Kind, Attrs: make(map[string]interface{}, len(b.Attrs))}
-	for k, v := range b.Attrs {
-		cp.Attrs[k] = v
-	}
-	if len(b.Aliases) > 0 {
-		cp.Aliases = append([]string(nil), b.Aliases...)
-	}
-	return cp
-}
-
 // SnapshotBlock returns a deep copy of the block with id (fresh Attrs map), or
 // false if absent. The copy is safe to read/mutate outside the lock.
 func (s *ShadowDocument) SnapshotBlock(id string) (SieveBlock, bool) {
@@ -36,7 +21,7 @@ func (s *ShadowDocument) SnapshotBlock(id string) (SieveBlock, bool) {
 	if b == nil {
 		return SieveBlock{}, false
 	}
-	return cloneBlockDeep(*b), true
+	return b.cloneDeep(), true
 }
 
 // SnapshotBlocks returns a DEEP copy of the live tree (each block's Attrs is a
@@ -48,7 +33,7 @@ func (s *ShadowDocument) SnapshotBlocks() []SieveBlock {
 	defer s.mu.Unlock()
 	out := make([]SieveBlock, len(s.Blocks))
 	for i := range s.Blocks {
-		out[i] = cloneBlockDeep(s.Blocks[i])
+		out[i] = s.Blocks[i].cloneDeep()
 	}
 	return out
 }
@@ -96,7 +81,7 @@ func (s *ShadowDocument) SnapshotForJob(blockID string) (SieveBlock, DocView, bo
 		Blocks:       append([]SieveBlock(nil), blocks...),
 		codec:        s.codec,
 	}
-	return cloneBlockDeep(*target), doc, true
+	return target.cloneDeep(), doc, true
 }
 
 // TryDispatch atomically transitions the block from PENDING to DISPATCHED and
@@ -111,7 +96,7 @@ func (s *ShadowDocument) TryDispatch(id string) (SieveBlock, bool) {
 		return SieveBlock{}, false
 	}
 	b.Attrs["status"] = BlockStatusDispatched
-	return cloneBlockDeep(*b), true
+	return b.cloneDeep(), true
 }
 
 // ResetStuckDispatched flips every DISPATCHED block older than threshold (or with

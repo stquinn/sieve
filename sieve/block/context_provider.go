@@ -51,7 +51,7 @@ func GetContextProvider(kind string) ContextProvider {
 //			return ""
 //		}
 //		seen[id] = true
-//		block, found := FindBlockByID(doc.Markdown, id)
+//		block, found := NewDocumentCodec(GlobalRegistry()).findBlockByID(doc.Markdown, id)
 //		if !found {
 //			return ""
 //		}
@@ -82,7 +82,7 @@ func BuildContextForID(id string, doc DocView, seen map[string]bool) AIContext {
 		return cp.BuildContext(SieveBlock{ID: b.ID, Kind: b.Kind, Attrs: b.Attrs}, doc, seen)
 	}
 	// Fallback: structured blocks parseable straight from markdown (markdown mode).
-	found, ok := FindBlockByID(doc.deriveMarkdown(), id)
+	found, ok := NewDocumentCodec(GlobalRegistry()).findBlockByID(doc.deriveMarkdown(), id)
 	if !ok {
 		logger.Warn("ContextProvider: block ID %q not found in doc or blocks map", id)
 		return AIContext{}
