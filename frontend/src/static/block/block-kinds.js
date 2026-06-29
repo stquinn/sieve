@@ -20,7 +20,7 @@ var registry = {}
 
 // registerBlockKind records a kind definition and returns it. Definitions are
 // keyed by `kind`; re-registering replaces. A native definition supplies
-// { native:true, nodeTypes, identityAttr, fromBlock, toMarkdown }; a structured
+// { native:true, nodeTypes, identityAttr, fromBlock }; a structured
 // one supplies { native:false, renderer }.
 export function registerBlockKind(def) {
   registry[def.kind] = def

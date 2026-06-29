@@ -137,7 +137,7 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 
 3. markdownit fence-rules in `sieve-block-extension.js` — still live for the paste/raw-markdown round-trip; `buildBlocksHTML` now uses `buildSieveBlockHTML` from attrs directly (block-render.js), so `serialisedForm` is gone and the fence-rules are no longer the load path (only the paste-reconstruct path).
 
-**Remaining (minor cleanup, not the F-A objective):** the `toMarkdown` registry field on `ProseBlock` (`prose-block.js:131`) has no production call site (prose save flows via granular `block-op`, not a whole-doc markdown round-trip); three stale comments mislead the reader (`prose-group.js:12`, `block-chrome.js:20`, `editor.js:569`). Clean up in a separate commit.
+**Cleanup (done in this F-A close-out):** the `toMarkdown` registry field on `ProseBlock` had no production call site and was removed; three stale comments (`prose-group.js`, `block-chrome.js`, `editor.js`) were fixed in the same cleanup commit.
 
 ## T-A: Flaky test — `TestHandleBlockUpdate_notifySendsSnapshotUnderLock`
 
