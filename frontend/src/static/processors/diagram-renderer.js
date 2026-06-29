@@ -113,7 +113,10 @@ import { esc, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
       defaultLinkColor:     textDim,
 
       // ── Edge / generic labels (float on the dark canvas → light) ──
-      edgeLabelBackground:  'transparent',
+      // NOT 'transparent': flowchart's .labelBkg does fade(edgeLabelBackground, .5),
+      // and fade('transparent') → semi-opaque BLACK (a black box behind edge
+      // labels like Yes/No). Use the canvas colour so the box blends into the bg.
+      edgeLabelBackground:  bgDark,
       labelColor:           text,
       labelTextColor:       text,
       labelBackgroundColor: bgAlt,

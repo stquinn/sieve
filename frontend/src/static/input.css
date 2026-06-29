@@ -316,6 +316,21 @@
   height: auto;
 }
 
+/* Flowchart edge labels (Yes/No on links) share mermaid's `.label` colour with
+   node labels, which we theme dark for text sitting on light node fills. But
+   edge labels float on the dark canvas, so that dark text is invisible. Mermaid
+   exposes no separate variable, so force edge-label text light here. Node labels
+   use `.nodeLabel` (untouched); only `.edgeLabel` descendants are overridden. */
+.diagram-block__render .edgeLabel,
+.diagram-block__render .edgeLabel .label,
+.diagram-block__render .edgeLabel span,
+.diagram-block__render .edgeLabel p,
+.diagram-block__render .edgeLabel text,
+.diagram-block__render .edgeLabel tspan {
+  color: var(--theme-text) !important;
+  fill: var(--theme-text) !important;
+}
+
 /* Error state */
 .diagram-block__error {
   padding: 14px 16px;
