@@ -4,7 +4,7 @@ import { docWithCaret, build } from './helpers/editor-fixture.js'
 let capture, restore
 beforeEach(async () => {
   global.window.TipTap = global.window.TipTap || {}
-  await import('../src/static/focus-context.js')
+  await import('../src/static/editor/focus-context.js')
   capture = window.TipTap.captureFocusContext
   restore = window.TipTap.restoreFocusContext
   document.body.innerHTML = ''

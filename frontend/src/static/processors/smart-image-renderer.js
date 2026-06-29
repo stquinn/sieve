@@ -2,7 +2,7 @@
 // Matches the visual structure of the old ImageWithAttrs NodeView so existing
 // image CSS (.image-block, .node-image, .image-resizer) works unchanged.
 
-import { isJobStale } from './fenced-block-base.js'
+import { isJobStale } from '../base/fenced-block-base.js'
 
 ;(function () {
   'use strict'

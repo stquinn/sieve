@@ -9,17 +9,14 @@ package block
 //     handle once no ref targets it; its primary ID always persists as identity)
 //
 // These are pure transforms. The live ref-producer that supplies the
-// "resolvable" / "referenced" sets is wired in later stages (E/F); here the
-// rules are proven in isolation, consistent with the Stage A/B testability bar.
+// "resolvable" / "referenced" sets is wired in later stages (E/F); the Stage E/F
+// orchestrator will be a ShadowDocument method that chains these.
 
-// collectHandles returns the set of every handle present — each block's primary
-// ID plus its aliases. This is the resolution index: a ref resolves iff its
-// target is in this set. (Also the basis for the Stage F structured-facet search
-// index.) Flat today; Stage E containers re-introduce a tree walk via the Node
-// interface.
-func collectHandles(blocks []SieveBlock) map[string]bool {
+// collectHandles builds the resolution index over this document's blocks: every
+// block's primary ID plus its aliases. A ref resolves iff its target is here.
+func (s *ShadowDocument) collectHandles() map[string]bool {
 	out := map[string]bool{}
-	for _, b := range blocks {
+	for _, b := range s.Blocks {
 		for _, h := range b.answersTo() {
 			out[h] = true
 		}
@@ -27,33 +24,15 @@ func collectHandles(blocks []SieveBlock) map[string]bool {
 	return out
 }
 
-// gcRefs strips outgoing refs that do not resolve against the given set, and
-// dedupes while preserving first-seen order.
-func gcRefs(refs []string, resolvable map[string]bool) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, r := range refs {
-		if resolvable[r] && !seen[r] {
-			seen[r] = true
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-// gcAliases returns a copy of the tree with each block's alias handles filtered
-// to those that something still references. Primary IDs are never dropped. The
-// input doc is not mutated, so undo can restore the prior assignment.
-func gcAliases(blocks []SieveBlock, referenced map[string]bool) []SieveBlock {
-	return gcAliasesBlocks(blocks, referenced)
-}
-
-func gcAliasesBlocks(blocks []SieveBlock, referenced map[string]bool) []SieveBlock {
-	if blocks == nil {
+// gcAliases returns a copy of this document's block tree with each block's alias
+// handles filtered to those still referenced. Primary IDs are never dropped. The
+// live tree is not mutated, so undo can restore the prior assignment.
+func (s *ShadowDocument) gcAliases(referenced map[string]bool) []SieveBlock {
+	if s.Blocks == nil {
 		return nil
 	}
-	out := make([]SieveBlock, len(blocks))
-	for i, b := range blocks {
+	out := make([]SieveBlock, len(s.Blocks))
+	for i, b := range s.Blocks {
 		var kept []string
 		for _, a := range b.Aliases {
 			if referenced[a] {
@@ -62,6 +41,20 @@ func gcAliasesBlocks(blocks []SieveBlock, referenced map[string]bool) []SieveBlo
 		}
 		b.Aliases = kept
 		out[i] = b
+	}
+	return out
+}
+
+// gcRefs returns this block's outgoing refs (Attrs["ref"]) filtered to those
+// that resolve against the index, deduped in first-seen order.
+func (b SieveBlock) gcRefs(resolvable map[string]bool) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, r := range b.outgoingRefs() {
+		if resolvable[r] && !seen[r] {
+			seen[r] = true
+			out = append(out, r)
+		}
 	}
 	return out
 }

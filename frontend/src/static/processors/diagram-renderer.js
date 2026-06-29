@@ -4,7 +4,7 @@
 // Render mode: SVG from mermaid.js, lazy-loaded from vendor/mermaid.min.js.
 // Mode and cursor position are persisted in YAML via sieve:block-update so they survive reloads.
 
-import { esc, getLowlight, hastToHtml } from './fenced-block-base.js'
+import { esc, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
 
 ;(function () {
   'use strict'

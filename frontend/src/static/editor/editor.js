@@ -225,14 +225,18 @@
 
   // renderBlocksIntoEditor replaces the whole document with the block list, each
   // block rendered via blockToNodes, swapped in via one non-undoable transaction.
-  function renderBlocksIntoEditor(editor, blocks) {
+  // opts.allowEmpty — when true, a genuinely-empty block list clears the editor
+  // to one empty paragraph instead of keeping stale content. Set only by the
+  // known-good reload caller (softReloadContent); omit for all other callers.
+  function renderBlocksIntoEditor(editor, blocks, opts) {
     var nodes = []
     ;(blocks || []).forEach(function (b) {
       blockToNodes(editor, b).forEach(function (n) { nodes.push(n) })
     })
-    if (!nodes.length) return // nothing valid parsed — keep the existing content
+    var replacement = window.TipTap.reloadReplacement(nodes, opts || {}, editor.state.schema)
+    if (replacement === null) return // keep existing content (transient empty)
     var tr = editor.state.tr
-    tr.replaceWith(0, editor.state.doc.content.size, nodes)
+    tr.replaceWith(0, editor.state.doc.content.size, replacement)
     tr.setMeta('addToHistory', false)
     editor.view.dispatch(tr)
   }
@@ -1526,7 +1530,7 @@
           // is still markdown, but rendered WITHIN its own block by the block list —
           // it never crosses a boundary.) No setContent fallback: there is no
           // markdown render path for wysiwyg.
-          renderBlocksIntoEditor(currentEditor, data.blocks || [])
+          renderBlocksIntoEditor(currentEditor, data.blocks || [], { allowEmpty: true })
           lastSyncedBody = body
           aiReloadInProgress = false
           if (window.TipTap && window.TipTap.restoreFocusContext) {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Schema } from '@tiptap/pm/model'
-import { isNativeProseNodeName, proseChainHits } from '../src/static/block-kinds.js'
+import { isNativeProseNodeName, proseChainHits } from '../src/static/block/block-kinds.js'
 
 describe('proseGroup is routed as native prose (the linchpin)', () => {
   it('isNativeProseNodeName("proseGroup") is true (so save/chain/identity treat it as prose)', () => {

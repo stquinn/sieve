@@ -1,7 +1,7 @@
 // web-clip-renderer.js — Web Clip block renderer.
 // Registers window.TipTap.registerSieveRenderer('web-clip', WebClipRenderer)
 
-import { renderMarkdown, applyHighlighting, isJobStale } from './fenced-block-base.js'
+import { renderMarkdown, applyHighlighting, isJobStale } from '../base/fenced-block-base.js'
 
 ;(function () {
   'use strict'

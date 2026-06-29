@@ -1,6 +1,6 @@
 // log-renderer.js — Sieve block renderer for the 'log' kind.
 
-import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js'
+import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
 
 ;(function () {
   'use strict'

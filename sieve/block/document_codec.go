@@ -3,8 +3,6 @@ package block
 import (
 	"fmt"
 	"strings"
-
-	"sieve/sieve/fencedblock"
 )
 
 // DocumentCodec owns BOTH directions of document SerDes. It sees only the
@@ -115,18 +113,23 @@ func (c *DocumentCodec) serializeBlock(b SieveBlock) (string, error) {
 	if p := c.registry.Get(b.Kind); p != nil {
 		return p.Serialize(b)
 	}
-	return serializeFencedBlock(b)
+	return FencedSerializer{}.Serialize(b)
 }
 
-// serializeFencedBlock renders any block-mode kind as ```kind\n<yaml>\n```
-// using the shared literal-style machinery — registry-free, so it serializes
-// code, diagram, etc. uniformly without needing a BlockProcessor.
-func serializeFencedBlock(b SieveBlock) (string, error) {
-	body, err := fencedblock.SerializeYaml(b.Attrs)
+// findBlockByID parses markdown and returns the SieveBlock whose ID matches id,
+// or (SieveBlock{}, false) if not found. Used as a fallback in BuildContextForID
+// when the document is in markdown mode and its blocks tree is not populated.
+func (c *DocumentCodec) findBlockByID(markdown string, id string) (SieveBlock, bool) {
+	blocks, err := c.Deserialize(markdown)
 	if err != nil {
-		return "", err
+		return SieveBlock{}, false
 	}
-	return "```" + b.Kind + "\n" + body + "\n```", nil
+	for _, b := range blocks {
+		if b.ID == id {
+			return b, true
+		}
+	}
+	return SieveBlock{}, false
 }
 
 // ProcessorRegistry is the narrow read-only seam DocumentCodec needs over the

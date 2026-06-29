@@ -49,7 +49,7 @@ func (s *AIService) EvaluateAndFileDoc(id string, fileAfter bool, allowDiscard b
 		userIntent = *ui
 	}
 
-	if isHTMLBodyEmpty(string(body)) {
+	if s.isHTMLBodyEmpty(string(body)) {
 		if fileAfter && allowDiscard && userIntent != "keep" {
 			return FilingOutcome{Discarded: true}, s.documents.Delete(doc)
 		}
@@ -76,7 +76,7 @@ func (s *AIService) EvaluateAndFileDoc(id string, fileAfter bool, allowDiscard b
 		evaluated = true
 	}
 
-	return filingCommitDocument(doc, s.documents, evaluated || userIntent == "keep", fileAfter)
+	return s.filingCommitDocument(doc, evaluated || userIntent == "keep", fileAfter)
 }
 
 // EvaluateBuffer runs the AI evaluation over a loaded document and returns the
@@ -101,7 +101,7 @@ func (s *AIService) RunExplain(content, history, question, noteUUID string) (str
 	prompt, _ := s.prompts.GetPromptContent("explain")
 	noteCwd := filepath.Dir(s.resolvePath(s.resolveNotePath(noteUUID)))
 
-	contentType := detectContentType(content)
+	contentType := s.detectContentType(content)
 	p := strings.ReplaceAll(prompt, "{type}", contentType)
 	p = strings.ReplaceAll(p, "{content}", content)
 	p = strings.ReplaceAll(p, "{history}", history)
@@ -121,7 +121,7 @@ func (s *AIService) RunAsk(content, history, question, noteUUID string) (string,
 	prompt, _ := s.prompts.GetPromptContent("ask")
 	noteCwd := filepath.Dir(s.resolvePath(s.resolveNotePath(noteUUID)))
 
-	contentType := detectContentType(content)
+	contentType := s.detectContentType(content)
 	p := strings.ReplaceAll(prompt, "{type}", contentType)
 	p = strings.ReplaceAll(p, "{content}", content)
 	p = strings.ReplaceAll(p, "{history}", history)
@@ -175,7 +175,7 @@ func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string
 		return domain.ImageDesc{}, err
 	}
 
-	cleaned := extractJSONFallback(resp)
+	cleaned := s.extractJSONFallback(resp)
 	var desc domain.ImageDesc
 	if err := json.Unmarshal([]byte(cleaned), &desc); err != nil {
 		return domain.ImageDesc{}, fmt.Errorf("parse image desc: %w", err)
@@ -314,7 +314,7 @@ func (s *AIService) runEvaluateBuffer(meta domain.DocumentMeta, body []byte, set
 		return nil, err
 	}
 
-	jsonBlock := extractJSONFallback(respText)
+	jsonBlock := s.extractJSONFallback(respText)
 	var rec domain.FilingRecommendation
 	if err := json.Unmarshal([]byte(jsonBlock), &rec); err != nil {
 		return nil, fmt.Errorf("could not parse AI json response: %v\nJSON was: %s", err, jsonBlock)
@@ -372,27 +372,27 @@ type FilingOutcome struct {
 	Document  domain.Document
 }
 
-func filingCommitDocument(n domain.Document, documents *services.DocumentService, save bool, fileAfter bool) (FilingOutcome, error) {
+func (s *AIService) filingCommitDocument(n domain.Document, save bool, fileAfter bool) (FilingOutcome, error) {
 	if save {
 		var err error
 		if fileAfter {
 			// Refresh the body from disk before a full save so that concurrent
 			// body writes (e.g. an in-flight explain inserting a PENDING block)
 			// are not overwritten by stale body data read at evaluation start.
-			if fresh, loadErr := documents.LoadByUUID(n.UUID()); loadErr == nil {
+			if fresh, loadErr := s.documents.LoadByUUID(n.UUID()); loadErr == nil {
 				n.SetBody(fresh.Body())
 			}
-			n, err = documents.Save(n)
+			n, err = s.documents.Save(n)
 		} else {
 			// If just saving metadata (e.g. evaluation results), don't bump version
-			n, err = documents.SaveMeta(n)
+			n, err = s.documents.SaveMeta(n)
 		}
 		if err != nil {
 			return FilingOutcome{}, fmt.Errorf("filing: save note: %w", err)
 		}
 	}
 	if fileAfter {
-		refiled, err := documents.File(n)
+		refiled, err := s.documents.File(n)
 		if err != nil {
 			return FilingOutcome{}, fmt.Errorf("filing: refile: %w", err)
 		}
@@ -404,7 +404,7 @@ func filingCommitDocument(n domain.Document, documents *services.DocumentService
 // isHTMLBodyEmpty returns true if html contains no visible text content —
 // only tags, whitespace, and self-closing elements. Used to detect blank
 // buffers before discarding them without involving the AI.
-func isHTMLBodyEmpty(html string) bool {
+func (s *AIService) isHTMLBodyEmpty(html string) bool {
 	inTag := false
 	for _, r := range html {
 		switch {
@@ -423,7 +423,7 @@ func isHTMLBodyEmpty(html string) bool {
 
 // extractFirstHeading returns the text of the first ATX heading in content,
 // or empty string if none found.
-func extractFirstHeading(content string) string {
+func (s *AIService) extractFirstHeading(content string) string {
 	for _, line := range strings.Split(content, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "# ") {
@@ -462,7 +462,7 @@ func (s *AIService) RunWebClip(uuid, id, source, mode, docContent string) (title
 	}
 
 	content = localiseImages(raw, docDir, uuid)
-	title = extractFirstHeading(content)
+	title = s.extractFirstHeading(content)
 	if title == "" {
 		if t, err2 := s.GetLinkTitle(source); err2 == nil {
 			title = t

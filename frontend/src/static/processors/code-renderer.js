@@ -8,7 +8,7 @@
 // no div/br newline issues, no cursor-restoration needed.
 // Highlight re-applies on input (debounced 50ms) by updating the overlay innerHTML.
 
-import { esc, isJobStale, getLowlight, hastToHtml } from './fenced-block-base.js'
+import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
 
 ;(function () {
   'use strict'

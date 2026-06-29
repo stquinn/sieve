@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -301,9 +302,15 @@ type BlockProcessor interface {
 // link all persist as ```kind\n<yaml>\n``` for free — "one implementation."
 type FencedSerializer struct{}
 
-// Serialize renders a structured block as its canonical fenced YAML form.
+// Serialize renders any block-mode kind as ```kind\n<yaml>\n``` using the shared
+// literal-style machinery — registry-free, so it serializes code, diagram, etc.
+// uniformly without needing a BlockProcessor.
 func (FencedSerializer) Serialize(block SieveBlock) (string, error) {
-	return serializeFencedBlock(block)
+	body, err := fencedblock.SerializeYaml(block.Attrs)
+	if err != nil {
+		return "", err
+	}
+	return "```" + block.Kind + "\n" + body + "\n```", nil
 }
 
 // InlineSerializer is the shared serialization for INLINE flavours — `[!kind]
@@ -311,9 +318,14 @@ func (FencedSerializer) Serialize(block SieveBlock) (string, error) {
 // processors embed it instead of FencedSerializer.
 type InlineSerializer struct{}
 
-// Serialize renders an inline block as its bracketed JSON form.
+// Serialize renders an inline-mode block as [!kind] {json} [!kind-end] — the
+// form sieve-block-extension.js reads back on the frontend.
 func (InlineSerializer) Serialize(block SieveBlock) (string, error) {
-	return serializeInlineBlock(block)
+	b, err := json.Marshal(block.Attrs)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("[!%s] %s [!%s-end]", block.Kind, string(b), block.Kind), nil
 }
 
 // FencedDeserializer is the ONE shared deserialization for YAML/fenced flavours —

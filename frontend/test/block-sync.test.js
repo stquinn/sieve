@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeBlockSync, seedBaseline, mintActions, updateBlockOp } from '../src/static/block-sync.js'
+import { computeBlockSync, seedBaseline, mintActions, updateBlockOp } from '../src/static/block/block-sync.js'
 
 // updateBlockOp is the structured-edit counterpart to computeBlockSync's prose
 // ops: a NodeView (code/diagram/log) fires `sieve:block-update` with

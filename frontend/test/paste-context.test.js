@@ -8,7 +8,7 @@ import { docWithCaret, build } from './helpers/editor-fixture.js'
 let caretInRawTextBlock
 beforeEach(async () => {
   global.window.TipTap = global.window.TipTap || {}
-  await import('../src/static/paste-context.js')
+  await import('../src/static/editor/paste-context.js')
   caretInRawTextBlock = window.TipTap.caretInRawTextBlock
 })
 

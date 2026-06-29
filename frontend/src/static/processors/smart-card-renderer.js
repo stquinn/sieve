@@ -2,7 +2,7 @@
 // Registers window.TipTap.registerSieveRenderer('smart-card', SmartCardRenderer)
 // Renders OG metadata as a visual card block. Display-only (no editable content).
 
-import { isJobStale } from './fenced-block-base.js'
+import { isJobStale } from '../base/fenced-block-base.js'
 
 ;(function () {
   'use strict'
