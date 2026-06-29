@@ -17,7 +17,7 @@
 //     view.update() finds that pre-existing slot and populates it.
 //
 // Discriminator: a top-level node is a Sieve block when its attrs contain
-// serialisedForm (present in BASE_ATTRS for every sieve- node).
+// node type name starting with 'sieve-' (checked at line 85 via indexOf).
 //
 // Depends on window.TipTap (vendor/tiptap.js) loaded first.
 ;(function () {

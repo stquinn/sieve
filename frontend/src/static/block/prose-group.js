@@ -9,8 +9,9 @@
 // NodeView. Because its node name is `proseGroup` (not `sieve-*`),
 // isNativeProseNodeName(name) === true, so every prose path already handles it as
 // ONE native prose block, with no bridge:
-//   - save:     topBlockTriple + wysiwygMarkdown serialize it via serializeNode and
-//               (wysiwyg) wrap it in <!--s:id--> markers — like single-node prose.
+//   - save:     topBlockTriple serializes it via serializeNode (raw markdown, no
+//               markers); the block-sync observer emits a granular block-op with
+//               attrs.content. Go wraps in <!--s:id--> markers on its side.
 //   - chain:    proseChainHits matches it (top-level, native-named, id) so the AI
 //               ref-chain decoration lands on its root.
 //   - identity: the mint observer counts it as one top-level prose node; it carries

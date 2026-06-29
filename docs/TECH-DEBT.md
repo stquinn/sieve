@@ -127,15 +127,17 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 
 </details>
 
-## F-A: Frontend still owns document-structure-as-markdown on the OUT direction
+## F-A: Frontend still owns document-structure-as-markdown on the OUT direction — ✅ RETIRED (B-G, 2026-06-21)
 
-**What:** The IN direction is clean (2026-06-21): no `setContent(markdown)` document-load remains — every wysiwyg load renders the backend **block list** via `renderBlocksIntoEditor`, and only Go parses document structure from markdown. But the OUT direction and the structure-parse rules still live in the frontend, contrary to the principle *"only markdown editor mode may know document structure as markdown; everything else deals in blocks."*
+**RETIRED:** Both sub-surfaces are gone.
 
-Remaining surface:
-- **`wysiwygMarkdown` + `wrapProseBlock` (`prose-markers.js`) + the `doc-update` fallback (`sendDocUpdate`)** — the frontend serializes the WHOLE document to markdown for (a) seeding the markdown-mode textarea and (b) a sync fallback on structured-block edits. Lower-risk than the retired `setContent` load because **Go's codec re-parses it** (the authoritative parser) and ids now survive from the block-list render — but it is still the frontend knowing document structure as markdown. Target: the save/sync path emits **block-ops only**; markdown-mode seeds from Go (`EnterMarkdown` already derives via the codec).
-- **The markdownit sieve fence-rules** in `sieve-block-extension.js` (`renderer.rules.fence` / inline ruler per kind) — the frontend's knowledge of ```` ```kind ```` document structure. With `setContent` retired, these are now only reachable via `buildBlocksHTML`'s `serialisedForm` fallback (a structured block built from a fence rather than from `attrs`). Target: build every structured block from `attrs` (`buildSieveBlockHTML`) and retire the fence-rules.
+1. `wysiwygMarkdown` + the `doc-update` fallback in WYSIWYG mode — **retired by B-G (2026-06-21)**: `computeBlockSync` emits only granular `block-op` messages (no whole-doc fallback); `wysiwygMarkdown` and `sendDocUpdate` no longer exist in `editor.js`. The stale comment at `editor.js:569` ("falls back to a whole-document doc-update") is cosmetic and can be removed.
 
-**Why deferred:** the corrupting half (IN-direction `setContent` load, which re-minted ids and persisted the corruption — see the restore-corruption fix `c508aaa`) is eliminated. This remaining half is lower-risk and touches the save/sync path, so it deserves its own focused pass rather than being tacked onto the nested-prose/restore work. Decision 2026-06-21: log and move on; close the current branch first.
+2. Markdown-mode textarea seeded from Go — **already true in every path**: mode-switch sends `enter-markdown` over WS → `EditorService.EnterMarkdown` (`sieve/services/editor_service.go:274`) derives markdown via `ContentForSave()` → `editor:markdown-content` event seeds the textarea (`editor.js:1862–1869`). Soft-reload seeds from `data.body` (`editor.js:1539`). No JS whole-doc serialise occurs.
+
+3. markdownit fence-rules in `sieve-block-extension.js` — still live for the paste/raw-markdown round-trip; `buildBlocksHTML` now uses `buildSieveBlockHTML` from attrs directly (block-render.js), so `serialisedForm` is gone and the fence-rules are no longer the load path (only the paste-reconstruct path).
+
+**Cleanup (done in this F-A close-out):** the `toMarkdown` registry field on `ProseBlock` had no production call site and was removed; three stale comments (`prose-group.js`, `block-chrome.js`, `editor.js`) were fixed in the same cleanup commit.
 
 ## T-A: Flaky test — `TestHandleBlockUpdate_notifySendsSnapshotUnderLock`
 

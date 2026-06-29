@@ -565,8 +565,8 @@
         // Stage D.3: the thin observer. We no longer serialize the whole document
         // on every keystroke — onUpdate only marks dirty and (re)arms a debounce.
         // The actual diff + wire send happens once typing settles, in
-        // syncDocument, which prefers granular block-ops and falls back to a
-        // whole-document doc-update only when a block can't be addressed yet.
+        // syncDocument, which emits granular block-ops (id-less nodes are
+        // skipped until minted — no whole-document fallback).
         document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
         document.dispatchEvent(new CustomEvent('editor:changed'))
         dispatchStats()

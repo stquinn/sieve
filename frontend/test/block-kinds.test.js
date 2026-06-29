@@ -17,12 +17,10 @@ describe('block-kinds registry', () => {
       kind: 'prose', native: true,
       nodeTypes: ['paragraph', 'heading'],
       identityAttr: 'blockId',
-      toMarkdown: (id, c) => `<!--s:${id}-->\n${c}\n<!--/s:${id}-->`,
     })
     expect(def).toBe(getBlockKind('prose'))
     expect(getBlockKind('prose').native).toBe(true)
     expect(getBlockKind('prose').identityAttr).toBe('blockId')
-    expect(getBlockKind('prose').toMarkdown('pr-1', 'Hi')).toBe('<!--s:pr-1-->\nHi\n<!--/s:pr-1-->')
   })
 
   it('registers a structured kind flagged non-native', () => {

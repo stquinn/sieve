@@ -12,12 +12,11 @@
 //   - identity    → the blockId global attr (addGlobalAttributes; here, not in a
 //                    NodeView, because native nodes have no NodeView)
 //   - load        → fromBlock: a block's markdown → native HTML (renderProseContent)
-//   - save        → toMarkdown: one node's clean markdown → paired-delimiter block
-//                    (wrapProseBlock — symmetry with Go's serializeProseBlock)
+//   - save        → prose saves via granular block-op (raw markdown content, no
+//                    markers); Go wraps in <!--s:id--> markers on its side.
 //
 // Depends on window.TipTap (vendor/tiptap.js) for Extension.
 
-import { wrapProseBlock } from './prose-markers.js'
 import { renderProseContent, proseContent } from './block-render.js'
 import { registerBlockKind } from './block-kinds.js'
 
@@ -127,8 +126,6 @@ import { registerBlockKind } from './block-kinds.js'
     identityExtension: BlockId,
     // load: a block's verbatim markdown → native HTML.
     fromBlock: function (b, mdRender) { return renderProseContent(proseContent(b), mdRender) },
-    // save: one top-level native node's clean markdown → paired-delimiter block.
-    toMarkdown: function (id, content) { return wrapProseBlock(id, content) },
     // copy: a prose block's ContentEntry views for a slice — a `sieve/prose` view
     // (so ProseProcessor claims it server-side and creates a prose block) plus a
     // plain-text view. The content is the node's clean markdown (Go re-parses it).
