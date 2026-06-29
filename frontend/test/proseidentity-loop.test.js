@@ -1,122 +1,123 @@
 import { describe, it, expect } from 'vitest'
 import { Schema } from '@tiptap/pm/model'
 import { EditorState, Plugin, PluginKey } from '@tiptap/pm/state'
+import { dedupeActions } from '../src/static/block/block-sync.js'
 
-// Reproduction + contract harness for editor.js's proseIdentity appendTransaction.
-//
-// EditorState.apply runs appendTransaction in a LOOP until every plugin stops
-// returning a transaction. A plugin that never stabilises spins apply() forever
-// (frozen main thread — the "app + browser locked up" symptom). The two jobs here
-// are both idempotent so they stabilise; a runaway counter turns any regression
-// into a throw instead of a hang.
-//
-// Contract:
-//   - MINT an id for an id-less sieve-prose that has REAL TEXT content.
-//   - Leave an EMPTY prose (only an empty paragraph) and a size-0 artifact id-less
-//     — they are editing surfaces / artifacts, NOT committed blocks. Never delete.
-//   - ENSURE a trailing prose editing surface: if the doc ends in a non-prose
-//     block there is nowhere to type, so append ONE valid empty prose (createAndFill
-//     → it has a paragraph, so it is selectable). Idempotent: once the last child
-//     is a prose, it is not appended again.
+// Contract + loop-stability harness for prose-block.js's identity appendTransaction
+// under the BACKEND-AUTHORITATIVE id model (B-A retired). The plugin:
+//   - STAMPS a transient token (tok-…) on a content-bearing prose with no id+token;
+//   - NEVER fills a durable id (Go mints it; the insert-block ack swaps it in);
+//   - CLEARS the 2nd occurrence of any duplicate id/token (the splitBlock attr-copy
+//     trap) so the new half re-acquires its own token → one create round-trip;
+//   - CONVERGES (only fills/clears attrs, creates no nodes) — a runaway counter
+//     turns a regression into a throw, not a frozen main thread.
 
 const schema = new Schema({
   nodes: {
-    doc: { content: 'sieveBlock+' },
-    'sieve-prose': {
-      group: 'sieveBlock', content: 'block+', defining: true,
-      attrs: { id: { default: '' } },
-      toDOM: () => ['div', { 'data-type': 'sieve-prose' }, 0],
+    doc: { content: 'block+' },
+    paragraph: {
+      group: 'block', content: 'inline*',
+      attrs: { id: { default: '' }, token: { default: '' } },
+      toDOM: () => ['p', 0],
     },
-    'sieve-log': {
-      group: 'sieveBlock', atom: true,
-      attrs: { id: { default: '' } },
-      toDOM: () => ['div', { 'data-type': 'sieve-log' }],
-    },
-    paragraph: { group: 'block', content: 'inline*', toDOM: () => ['p', 0] },
     text: { group: 'inline' },
   },
 })
-
 const n = schema.nodes
-const mintProseId = () => 'pr-' + Math.random().toString(16).slice(2, 6)
+const mintToken = () => 'tok-' + Math.random().toString(16).slice(2, 10)
 
 const LIMIT = 100
-function proseIdentityPlugin(counter) {
+function identityPlugin(counter) {
   return new Plugin({
-    key: new PluginKey('proseIdentity'),
+    key: new PluginKey('blockIdentity'),
     appendTransaction(trs, _oldState, newState) {
       counter.n++
-      if (counter.n > LIMIT) throw new Error('proseIdentity never stabilised (infinite appendTransaction loop)')
+      if (counter.n > LIMIT) throw new Error('blockIdentity never stabilised (infinite appendTransaction loop)')
       if (!trs.some((tr) => tr.docChanged)) return null
+      const ids = [], tokens = [], positions = []
+      newState.doc.forEach((node, pos) => { ids.push(node.attrs.id || ''); tokens.push(node.attrs.token || ''); positions.push(pos) })
+      const clearId = {}, clearTok = {}
+      dedupeActions(ids).forEach((i) => { clearId[i] = true })
+      dedupeActions(tokens).forEach((i) => { clearTok[i] = true })
       let tr = null
-      // 1. Mint ids for id-less prose that has real text content.
-      newState.doc.forEach((node, pos) => {
-        if (node.type.name !== 'sieve-prose' || node.attrs.id) return
-        if (node.textContent.length === 0) return // empty surface/artifact: leave id-less
-        if (!tr) tr = newState.tr
-        tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, { id: mintProseId() }))
+      positions.forEach((pos, idx) => {
+        const node = newState.doc.nodeAt(pos)
+        if (!node) return
+        const attrs = Object.assign({}, node.attrs)
+        let changed = false
+        if (clearId[idx]) { attrs.id = ''; changed = true }
+        if (clearTok[idx]) { attrs.token = ''; changed = true }
+        if (!attrs.id && !attrs.token && node.textContent.length > 0) { attrs.token = mintToken(); changed = true }
+        if (changed) { if (!tr) tr = newState.tr; tr.setNodeMarkup(pos, undefined, attrs) }
       })
-      // 2. Ensure a trailing prose editing surface when the doc ends in a non-prose.
-      const last = newState.doc.lastChild
-      if (last && last.type.name !== 'sieve-prose') {
-        if (!tr) tr = newState.tr
-        const surface = n['sieve-prose'].createAndFill()
-        if (surface) tr.insert(tr.doc.content.size, surface)
-      }
+      if (tr) tr.setMeta('addToHistory', false)
       return tr
     },
   })
 }
-
 function stateWith(doc, counter) {
-  return EditorState.create({ schema, doc, plugins: [proseIdentityPlugin(counter)] })
+  return EditorState.create({ schema, doc, plugins: [identityPlugin(counter)] })
 }
 
-const kindsOf = (doc) => { const k = []; doc.forEach((c) => k.push(c.type.name)); return k }
-
-describe('proseIdentity: mint, trailing surface, and no infinite loop', () => {
-  it('appends a valid, selectable trailing prose when the doc ends in a structured block', () => {
+describe('blockIdentity: token stamp, split clear, no durable mint, no infinite loop', () => {
+  it('stamps a TRANSIENT token (not a durable id) on a content-bearing prose', () => {
     const counter = { n: 0 }
-    const doc = n.doc.create(null, [
-      n['sieve-prose'].create({ id: 'pr-1' }, n.paragraph.create(null, schema.text('hi'))),
-      n['sieve-log'].create({ id: 'lo-1' }),
-    ])
+    const doc = n.doc.create(null, [n.paragraph.create(null, schema.text('hi'))])
     let state = stateWith(doc, counter)
-    const tr = state.tr.setNodeMarkup(state.doc.child(0).nodeSize, undefined, { id: 'lo-1b' })
-    state = state.apply(tr)
-    expect(kindsOf(state.doc)).toEqual(['sieve-prose', 'sieve-log', 'sieve-prose'])
-    const surface = state.doc.lastChild
-    expect(surface.childCount).toBe(1)          // has a paragraph → selectable
-    expect(surface.attrs.id).toBe('')           // id-less → no create-block until typed
-    expect(counter.n).toBeLessThan(LIMIT)       // stabilised, no freeze
-  })
-
-  it('does NOT append a surface when the doc already ends in a prose', () => {
-    const counter = { n: 0 }
-    const doc = n.doc.create(null, [
-      n['sieve-log'].create({ id: 'lo-1' }),
-      n['sieve-prose'].create({ id: '' }, n.paragraph.create()),
-    ])
-    let state = stateWith(doc, counter)
-    const tr = state.tr.setNodeMarkup(0, undefined, { id: 'lo-1b' })
-    state = state.apply(tr)
-    expect(kindsOf(state.doc)).toEqual(['sieve-log', 'sieve-prose'])
+    // a docChanged trigger
+    state = state.apply(state.tr.insertText('!', 1))
+    const p = state.doc.child(0)
+    expect(p.attrs.id).toBe('')                  // durable id NEVER invented on the frontend
+    expect(p.attrs.token).toMatch(/^tok-/)       // transient correlation token only
     expect(counter.n).toBeLessThan(LIMIT)
   })
 
-  it('mints a text-bearing prose but leaves an empty surface and a size-0 artifact id-less', () => {
+  it('leaves an EMPTY prose bare (no token until it has content)', () => {
     const counter = { n: 0 }
+    const doc = n.doc.create(null, [n.paragraph.create(), n.paragraph.create(null, schema.text('x'))])
+    let state = stateWith(doc, counter)
+    state = state.apply(state.tr.insertText('!', state.doc.child(0).nodeSize + 1))
+    expect(state.doc.child(0).attrs.token).toBe('')      // empty surface: bare
+    expect(state.doc.child(1).attrs.token).toMatch(/^tok-/)
+    expect(counter.n).toBeLessThan(LIMIT)
+  })
+
+  it('CLEARS a split-copied token on the new half (the attr-copy trap) → it re-acquires its own', () => {
+    const counter = { n: 0 }
+    // both halves born with the same token, both content-bearing (post-split)
     const doc = n.doc.create(null, [
-      n['sieve-prose'].create({ id: '' }, n.paragraph.create(null, schema.text('real'))),
-      n['sieve-prose'].create({ id: '' }, n.paragraph.create()), // empty surface
-      n['sieve-prose'].create({ id: '' }),                       // size-0 artifact
+      n.paragraph.create({ token: 'tok-aa' }, schema.text('left')),
+      n.paragraph.create({ token: 'tok-aa' }, schema.text('right')),
     ])
     let state = stateWith(doc, counter)
-    const tr = state.tr.setNodeMarkup(0, undefined, { id: '' }) // docChanged trigger
-    state = state.apply(tr)
-    expect(state.doc.child(0).attrs.id).toMatch(/^pr-/) // text → minted
-    expect(state.doc.child(1).attrs.id).toBe('')        // empty paragraph → id-less
-    expect(state.doc.child(2).attrs.id).toBe('')        // size-0 → id-less, not deleted
+    state = state.apply(state.tr.insertText('!', 1)) // docChanged trigger
+    expect(state.doc.child(0).attrs.token).toBe('tok-aa')   // first occurrence kept
+    expect(state.doc.child(1).attrs.token).toMatch(/^tok-/) // re-stamped fresh
+    expect(state.doc.child(1).attrs.token).not.toBe('tok-aa')
+    expect(counter.n).toBeLessThan(LIMIT)
+  })
+
+  it('CLEARS a split-copied durable id on the new half (acked block split)', () => {
+    const counter = { n: 0 }
+    const doc = n.doc.create(null, [
+      n.paragraph.create({ id: 'pr-1' }, schema.text('left')),
+      n.paragraph.create({ id: 'pr-1' }, schema.text('right')),
+    ])
+    let state = stateWith(doc, counter)
+    state = state.apply(state.tr.insertText('!', 1))
+    expect(state.doc.child(0).attrs.id).toBe('pr-1')        // original keeps its id
+    expect(state.doc.child(1).attrs.id).toBe('')            // duplicate cleared
+    expect(state.doc.child(1).attrs.token).toMatch(/^tok-/) // → re-acquires a token
+    expect(counter.n).toBeLessThan(LIMIT)
+  })
+
+  it('converges: once every node has an id or a token, a further edit stamps nothing new', () => {
+    const counter = { n: 0 }
+    const doc = n.doc.create(null, [n.paragraph.create({ id: 'pr-1' }, schema.text('hi'))])
+    let state = stateWith(doc, counter)
+    state = state.apply(state.tr.insertText('!', 1))
+    expect(state.doc.child(0).attrs.id).toBe('pr-1')
+    expect(state.doc.child(0).attrs.token).toBe('')
     expect(counter.n).toBeLessThan(LIMIT)
   })
 })

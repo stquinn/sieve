@@ -42,4 +42,11 @@ describe('prose identity unification (blockId → id)', () => {
     const el = { getAttribute: (k) => (k === 'data-id' ? 'pr-9' : null) }
     expect(def.parseHTML(el)).toBe('pr-9')
   })
+
+  it('declares a transient `token` global attr that is never rendered to HTML or markdown', () => {
+    const attrs = BlockId.addGlobalAttributes()[0].attributes
+    expect(Object.keys(attrs)).toContain('token')
+    expect(attrs.token.default).toBe('')
+    expect(attrs.token.rendered).toBe(false)
+  })
 })
