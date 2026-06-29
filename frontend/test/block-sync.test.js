@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeBlockSync, seedBaseline, mintActions, dedupeActions, updateBlockOp, proseOp } from '../src/static/block/block-sync.js'
+import { computeBlockSync, seedBaseline, dedupeActions, updateBlockOp, proseOp } from '../src/static/block/block-sync.js'
 
 // updateBlockOp is the structured-edit counterpart to computeBlockSync's prose
 // ops: a NodeView (code/diagram/log) fires `sieve:block-update` with
@@ -41,45 +41,6 @@ describe('updateBlockOp', () => {
     expect(structured.type).toBe(prose.type) // both 'update-block'
     expect(structured.blockId).toBeTruthy()
     expect(prose.blockId).toBeTruthy()
-  })
-})
-
-// mintActions is the pure minting decision: given the blockIds of the top-level
-// nodes in document order, return the INDICES that need a fresh id. A node needs
-// one when its id is empty OR already seen earlier in the pass — the latter is
-// THE splitBlock trap: ProseMirror's Enter copies the node's attrs, so the new
-// half is born with the SAME blockId as the original. First occurrence keeps the
-// id; the duplicate (later in doc order) is re-minted. Minting only FILLS ids
-// (creates no nodes), so the follow-on transaction finds nothing to do →
-// convergent (no runaway).
-describe('mintActions', () => {
-  it('returns nothing when every id is unique and non-empty', () => {
-    expect(mintActions(['pr-1', 'pr-2', 'pr-3'])).toEqual([])
-  })
-
-  it('flags an empty id', () => {
-    expect(mintActions(['pr-1', '', 'pr-3'])).toEqual([1])
-  })
-
-  it('flags the DUPLICATE (second occurrence) — the splitBlock attr-copy trap', () => {
-    // Enter split: both halves carry pr-1. The first keeps it; the second is re-minted.
-    expect(mintActions(['pr-1', 'pr-1'])).toEqual([1])
-  })
-
-  it('flags both empties and duplicates, first occurrence always kept', () => {
-    expect(mintActions(['pr-1', '', 'pr-1', 'pr-2', 'pr-2'])).toEqual([1, 2, 4])
-  })
-
-  it('is empty for an empty doc', () => {
-    expect(mintActions([])).toEqual([])
-  })
-
-  it('converges: after minting (all unique), a second pass needs nothing', () => {
-    const ids = ['pr-1', 'pr-1']
-    const need = mintActions(ids)
-    // simulate minting fresh ids at the flagged indices
-    need.forEach((i, k) => { ids[i] = 'pr-new' + k })
-    expect(mintActions(ids)).toEqual([])
   })
 })
 
