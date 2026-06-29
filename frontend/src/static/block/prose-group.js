@@ -76,6 +76,19 @@ if (T.Node) {
           parseHTML(el) { return el.getAttribute('data-id') || '' },
           renderHTML() { return {} },
         },
+        // Transient B-A correlation token — the SAME handle the single native prose
+        // node types carry (PROSE_NODE_TYPES in prose-block.js), declared here too
+        // because a proseGroup is a node type in its own right. When a multi-node
+        // block is SPLIT (Enter), PM copies attrs so the new half is born with the
+        // original's id; the identity plugin CLEARS that duplicate id and stamps a
+        // token. Without this attr the token would be silently dropped (unknown attr),
+        // leaving the split half with neither id nor token → the observer skips it
+        // (key = id||token = '') → everything after the split is LOST. Never rendered
+        // (transient); Go mints the durable id and the insert-block ack swaps it in.
+        token: {
+          default: '',
+          rendered: false,
+        },
       }
     },
     parseHTML() { return [{ tag: 'div.prose-group' }] },
