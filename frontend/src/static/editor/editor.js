@@ -68,6 +68,11 @@
   // the sync cache so the observer treats it as already-present (never re-creates it).
   var noteServerBlock = null
 
+  // reconcilePendingToken is set by mountWysiwyg — the insert-block token ack runs at
+  // module scope and cannot see blockContentCache (mountWysiwyg-private); this seam
+  // mirrors noteServerBlock.
+  var reconcilePendingToken = null
+
   // sendCreateBlock is the ONE UI-triggered create path: a create-block block-op
   // carrying kind, attrs, and the document index from the captured insert position
   // (sieveInsertPos). There is no separate create-block message — every kind creates
@@ -263,7 +268,7 @@
         return { id: node.attrs.id || '', kind: node.attrs.kind || name, content: JSON.stringify(window.TipTap.sieveBlockAttrs(node)) }
       }
       var content = (window.TipTap.serializeNode(ed, node) || '').trim()
-      return { id: node.attrs.id || '', kind: 'prose', content: content }
+      return { id: node.attrs.id || '', kind: 'prose', content: content, token: node.attrs.token || '' }
     }
 
     function collectTopBlocks(ed) {
@@ -627,6 +632,22 @@
       if (seed) for (var k in seed) blockContentCache[k] = seed[k]
     }
 
+    // reconcilePendingToken swaps a pending prose node's token baseline for the backend
+    // id in the sync cache (a flight-edit then surfaces as update-block by the real id;
+    // the token key never reads as a delete). A falsy id = the node was deleted while its
+    // create was in flight → just drop the stale token key (the delete-by-real-id already
+    // went over the WS; the delete loop skips tok- keys regardless, this is hygiene).
+    reconcilePendingToken = function (token, id) {
+      if (!blockContentCache) return
+      if (!id) { delete blockContentCache[token]; return }
+      if (token in blockContentCache) {
+        blockContentCache[id] = blockContentCache[token]
+        delete blockContentCache[token]
+      } else {
+        noteServerBlock(id)
+      }
+    }
+
     // Catch focus events on inner form controls (like Sieve Code block textareas)
     // where ProseMirror's native onSelectionUpdate won't fire.
     editor.view.dom.addEventListener('focusin', function() {
@@ -916,6 +937,30 @@
       return
     }
     if (!currentEditor) return
+    // Backend-authoritative prose id (B-A): the create carried a transient token and no
+    // durable id; Go minted the id and echoed the token. Swap the pending node's token
+    // for the authoritative id (tracked, history-EXCLUDED — never a re-insert), reconcile
+    // the sync cache, and DO NOT insert (the node already exists — the user typed it).
+    if (msg.token) {
+      var ed = currentEditor, foundPos = -1
+      ed.state.doc.forEach(function (node, pos) {
+        if (foundPos < 0 && node.attrs && node.attrs.token === msg.token) foundPos = pos
+      })
+      if (foundPos >= 0) {
+        var pendingNode = ed.state.doc.nodeAt(foundPos)
+        var tr = ed.state.tr.setNodeMarkup(foundPos, undefined,
+          Object.assign({}, pendingNode.attrs, { id: msg.id, token: '' }))
+        tr.setMeta('addToHistory', false)
+        ed.view.dispatch(tr)
+        if (typeof reconcilePendingToken === 'function') reconcilePendingToken(msg.token, msg.id)
+      } else {
+        // Deleted while the create was in flight — Go has a block we can't see. Delete it
+        // by the authoritative id, then drop the stale token baseline (falsy id sentinel).
+        wsSend({ type: 'block-op', uuid: currentUuid, op: { type: 'delete-block', blockId: msg.id } })
+        if (typeof reconcilePendingToken === 'function') reconcilePendingToken(msg.token, null)
+      }
+      return
+    }
     var parsed = msg.attrs || {}
     var kind = msg.kind || 'code'
 
