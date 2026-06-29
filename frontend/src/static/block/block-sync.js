@@ -38,9 +38,13 @@ function blockOp(type, blockId, kind, attrs, aliases, index) {
 }
 
 // proseOp builds a create/update op for a prose block. Prose's body rides in
-// attrs.content — the SAME uniform shape structured edits use (see updateBlockOp).
-function proseOp(type, b, index) {
-  return blockOp(type, b.id, 'prose', { content: b.content || '' }, b.aliases, index)
+// attrs.content. A pending CREATE carries a transient correlation TOKEN (not a
+// durable id) and an empty blockId, so Go mints the durable id and echoes the
+// token back (insert-block). update/loaded nodes carry their durable id.
+export function proseOp(type, b, index) {
+  var op = blockOp(type, b.id || '', 'prose', { content: b.content || '' }, b.aliases, index)
+  if (type === 'create-block' && b.token) op.token = b.token
+  return op
 }
 
 // updateBlockOp maps a structured NodeView edit detail ({ id, kind, attrs,
@@ -66,10 +70,13 @@ function isEmptyProse(b) {
 // TRAILING editing surface — no content-bearing block of any kind follows it. That
 // one is ephemeral (excluded from the baseline + ops; create-block fires on first
 // content). A blank paragraph with content AFTER it is a STRUCTURAL blank line the
-// user placed deliberately — it is real content and syncs as a normal create-block
-// (each blank is its own delimited prose block, so N blanks round-trip as N blocks).
+// user placed deliberately — it is a real block, so it acquires a token and syncs
+// through the SAME create-block path as every other block (no special case), and
+// round-trips as its own delimited prose block. Keyed by id || token: a real block
+// in flight is addressed by its transient token until the backend id acks (B-A).
 function isPendingEmptyProse(b, prev, hasContentAfter) {
-  return isEmptyProse(b) && !hasContentAfter && !(prev && b.id in prev)
+  var key = b.id || b.token
+  return isEmptyProse(b) && !hasContentAfter && !(prev && key && key in prev)
 }
 
 // seedBaseline builds the initial change-signature map directly from the SERVER's
@@ -140,16 +147,10 @@ export function computeBlockSync(curr, prev) {
   }
   for (var i = 0; i < curr.length; i++) {
     var cb = curr[i]
-    if (!cb.id) {
-      // An id-less node is not yet addressable, so it is SKIPPED (emits nothing,
-      // not baselined). For PROSE that is a pending editing surface — the minting
-      // plugin fills its id before the next sync. A STRUCTURED block should always
-      // carry a backend-authoritative id; if one ever arrives id-less it simply
-      // waits. There is NO whole-document fallback — every edit is a block-op.
-      continue
-    }
+    var key = cb.id || cb.token   // durable id once acked, else the in-flight token
+    if (!key) continue            // an id-less, token-less surface — not addressable
     if (isPendingEmptyProse(cb, prev, i < lastContentIdx)) continue
-    next[cb.id] = blockSig(cb)
+    next[key] = blockSig(cb)
   }
 
   // First call: just seed the baseline, never emit ops.
@@ -163,11 +164,16 @@ export function computeBlockSync(curr, prev) {
   for (var k = 0; k < curr.length; k++) {
     var p = curr[k]
     if (p.kind !== 'prose') continue
-    if (!(p.id in next)) continue // pending empty surface — not a real block yet
-    if (!(p.id in prev)) {
-      ops.push(proseOp('create-block', p, k))
-    } else if (prev[p.id] !== next[p.id]) {
-      ops.push(proseOp('update-block', p, k))
+    if (p.id) {
+      // A node with a durable id: created already (in prev) → update on change.
+      if (!(p.id in next)) continue
+      if (!(p.id in prev)) ops.push(proseOp('create-block', p, k))
+      else if (prev[p.id] !== next[p.id]) ops.push(proseOp('update-block', p, k))
+    } else if (p.token) {
+      // Pending: emit ONE create carrying the token; skip while it is in flight.
+      if (!(p.token in next)) continue       // empty pending surface, not baselined
+      if (!(p.token in prev)) ops.push(proseOp('create-block', p, k))
+      // p.token in prev → in flight, awaiting the backend id → SKIP.
     }
   }
   // Deletes are kind-agnostic: an id in prev that is gone → delete-block (Go's

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeBlockSync, seedBaseline, mintActions, dedupeActions, updateBlockOp } from '../src/static/block/block-sync.js'
+import { computeBlockSync, seedBaseline, mintActions, dedupeActions, updateBlockOp, proseOp } from '../src/static/block/block-sync.js'
 
 // updateBlockOp is the structured-edit counterpart to computeBlockSync's prose
 // ops: a NodeView (code/diagram/log) fires `sieve:block-update` with
@@ -380,5 +380,34 @@ describe('computeBlockSync', () => {
     expect(r.ops).toEqual([
       { type: 'create-block', blockId: 'pr-2', kind: 'prose', attrs: { content: '' }, index: 1 },
     ])
+  })
+})
+
+describe('computeBlockSync — token (backend-authoritative) prose create', () => {
+  it('emits create-block with a token and NO durable blockId for a pending prose node', () => {
+    const r = computeBlockSync([{ id: '', token: 'tok-aa', kind: 'prose', content: 'hi' }], {})
+    expect(r.ops).toEqual([
+      { type: 'create-block', blockId: '', kind: 'prose', attrs: { content: 'hi' }, index: 0, token: 'tok-aa' },
+    ])
+    expect(r.next).toHaveProperty('tok-aa') // token baselined so it is not re-emitted
+  })
+
+  it('SKIPS a pending node whose token is already in flight (baselined) — no duplicate create, no update', () => {
+    const base = computeBlockSync([{ id: '', token: 'tok-aa', kind: 'prose', content: 'hi' }], {}).next
+    const r = computeBlockSync([{ id: '', token: 'tok-aa', kind: 'prose', content: 'hi EDITED in flight' }], base)
+    expect(r.ops).toEqual([]) // held until the backend acks the id
+  })
+
+  it('a node that has acquired a backend id updates by that id (post-ack)', () => {
+    // ack swapped the cache key tok-aa -> pr-9 (editor.js); the node now carries id pr-9.
+    const prev = { 'pr-9': 'prose\x00hi\x00' }
+    const r = computeBlockSync([{ id: 'pr-9', kind: 'prose', content: 'hi there' }], prev)
+    expect(r.ops).toEqual([{ type: 'update-block', blockId: 'pr-9', kind: 'prose', attrs: { content: 'hi there' } }])
+  })
+
+  it('a tokenless, idless empty surface is still skipped and not baselined', () => {
+    const r = computeBlockSync([{ id: '', kind: 'prose', content: '' }], {})
+    expect(r.ops).toEqual([])
+    expect(r.next).toEqual({})
   })
 })
