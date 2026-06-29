@@ -5,7 +5,10 @@ import { dedupeActions } from '../src/static/block/block-sync.js'
 
 // Contract + loop-stability harness for prose-block.js's identity appendTransaction
 // under the BACKEND-AUTHORITATIVE id model (B-A retired). The plugin:
-//   - STAMPS a transient token (tok-…) on a content-bearing prose with no id+token;
+//   - STAMPS a transient token (tok-…) on any REAL prose block with no id+token:
+//     a content-bearing prose, or a STRUCTURAL blank (empty paragraph with a
+//     content-bearing block after it → its childIdx < lastContentIdx);
+//   - Leaves the TRAILING empty surface bare (childIdx >= lastContentIdx);
 //   - NEVER fills a durable id (Go mints it; the insert-block ack swaps it in);
 //   - CLEARS the 2nd occurrence of any duplicate id/token (the splitBlock attr-copy
 //     trap) so the new half re-acquires its own token → one create round-trip;
@@ -34,8 +37,22 @@ function identityPlugin(counter) {
       counter.n++
       if (counter.n > LIMIT) throw new Error('blockIdentity never stabilised (infinite appendTransaction loop)')
       if (!trs.some((tr) => tr.docChanged)) return null
-      const ids = [], tokens = [], positions = []
-      newState.doc.forEach((node, pos) => { ids.push(node.attrs.id || ''); tokens.push(node.attrs.token || ''); positions.push(pos) })
+      // Walk every top-level child once: collect prose nodes for identity stamping,
+      // and compute lastContentIdx = the index of the LAST child that is a real
+      // content-bearing block. A blank prose BEFORE lastContentIdx is a STRUCTURAL
+      // blank (a real block); AT/AFTER it is the trailing editing surface.
+      // (In this harness all nodes are prose paragraphs, so no isProse guard is needed.)
+      const ids = [], tokens = [], positions = [], childIdxs = []
+      let lastContentIdx = -1, ci = -1
+      newState.doc.forEach((node, pos) => {
+        ci++
+        const emptyProse = node.textContent.length === 0
+        if (!emptyProse) lastContentIdx = ci
+        ids.push(node.attrs.id || '')
+        tokens.push(node.attrs.token || '')
+        positions.push(pos)
+        childIdxs.push(ci)
+      })
       const clearId = {}, clearTok = {}
       dedupeActions(ids).forEach((i) => { clearId[i] = true })
       dedupeActions(tokens).forEach((i) => { clearTok[i] = true })
@@ -47,7 +64,8 @@ function identityPlugin(counter) {
         let changed = false
         if (clearId[idx]) { attrs.id = ''; changed = true }
         if (clearTok[idx]) { attrs.token = ''; changed = true }
-        if (!attrs.id && !attrs.token && node.textContent.length > 0) { attrs.token = mintToken(); changed = true }
+        const isRealBlock = (node.textContent && node.textContent.length > 0) || childIdxs[idx] < lastContentIdx
+        if (!attrs.id && !attrs.token && isRealBlock) { attrs.token = mintToken(); changed = true }
         if (changed) { if (!tr) tr = newState.tr; tr.setNodeMarkup(pos, undefined, attrs) }
       })
       if (tr) tr.setMeta('addToHistory', false)
@@ -72,13 +90,29 @@ describe('blockIdentity: token stamp, split clear, no durable mint, no infinite 
     expect(counter.n).toBeLessThan(LIMIT)
   })
 
-  it('leaves an EMPTY prose bare (no token until it has content)', () => {
+  it('a TRAILING empty surface (nothing after) stays bare — not a real block', () => {
     const counter = { n: 0 }
+    // para('x') has content; the trailing empty paragraph has NOTHING after it →
+    // it is the ephemeral editing surface, not a real block.
+    const doc = n.doc.create(null, [n.paragraph.create(null, schema.text('x')), n.paragraph.create()])
+    let state = stateWith(doc, counter)
+    // trigger inside para('x') at position 1 — does not change which paras are empty
+    state = state.apply(state.tr.insertText('!', 1))
+    expect(state.doc.child(0).attrs.token).toMatch(/^tok-/) // content-bearing → gets token
+    expect(state.doc.child(1).attrs.token).toBe('')          // trailing empty → stays bare
+    expect(counter.n).toBeLessThan(LIMIT)
+  })
+
+  it('a STRUCTURAL blank (empty paragraph with content after) gets a token like any block', () => {
+    const counter = { n: 0 }
+    // empty para has content after it (para('x')) → STRUCTURAL blank → must get a token
     const doc = n.doc.create(null, [n.paragraph.create(), n.paragraph.create(null, schema.text('x'))])
     let state = stateWith(doc, counter)
+    // trigger inside para('x') — empty para stays empty (structural), does NOT become content
     state = state.apply(state.tr.insertText('!', state.doc.child(0).nodeSize + 1))
-    expect(state.doc.child(0).attrs.token).toBe('')      // empty surface: bare
-    expect(state.doc.child(1).attrs.token).toMatch(/^tok-/)
+    expect(state.doc.child(0).attrs.token).toMatch(/^tok-/) // structural blank → gets a token
+    expect(state.doc.child(0).attrs.id).toBe('')             // never a durable id
+    expect(state.doc.child(1).attrs.token).toMatch(/^tok-/) // content-bearing → also gets token
     expect(counter.n).toBeLessThan(LIMIT)
   })
 

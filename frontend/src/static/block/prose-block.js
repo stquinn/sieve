@@ -75,10 +75,15 @@ import { registerBlockKind } from './block-kinds.js'
     },
 
     // The identity plugin (B-A / D-r.4). It is the PASSIVE half of "TipTap runs
-    // the editor": PM creates/splits/merges nodes natively; we ensure each
-    // content-bearing top-level prose node carries a TRANSIENT token so the block
-    // observer can drive a single create-block. The plugin NEVER fills the durable
-    // id — Go mints it; the insert-block ack (editor.js) swaps it in once Go acks.
+    // the editor": PM creates/splits/merges nodes natively; we ensure each REAL
+    // top-level prose block carries a TRANSIENT token so the block observer can
+    // drive a single create-block. A "real block" is either a content-bearing prose
+    // node OR a STRUCTURAL blank — an empty paragraph that has a content-bearing
+    // block after it (the user placed it deliberately). The TRAILING empty paragraph
+    // (nothing after it) is the ephemeral editing surface and stays bare. Both
+    // content-bearing and structural blanks sync through the same create-block path
+    // as any block — no special case. The plugin NEVER fills the durable id — Go
+    // mints it; the insert-block ack (editor.js) swaps it in once Go acks.
     // On splitBlock (Enter), PM copies attrs so the new half is born with the
     // original's id AND token; we CLEAR the 2nd occurrence of each (never re-mint —
     // the frontend invents no durable identity); the cleared half re-acquires its
@@ -101,12 +106,23 @@ import { registerBlockKind } from './block-kinds.js'
           if (!trs.some(function (t) { return t.docChanged })) return null
 
           var isProse = window.TipTap.isNativeProseNodeName
-          var ids = [], tokens = [], positions = []
+          // Walk every top-level child once: collect prose nodes for identity stamping,
+          // and compute lastContentIdx = the index of the LAST child that is a real
+          // content-bearing block (anything that is NOT an empty prose paragraph — a
+          // structured block always counts). A blank prose BEFORE lastContentIdx is a
+          // STRUCTURAL blank (a real block); a blank prose AT/AFTER it is the trailing
+          // editing surface. This mirrors computeBlockSync (block-sync.js).
+          var ids = [], tokens = [], positions = [], childIdxs = []
+          var lastContentIdx = -1, ci = -1
           newState.doc.forEach(function (node, pos) {
+            ci++
+            var emptyProse = isProse(node.type.name) && node.textContent.length === 0
+            if (!emptyProse) lastContentIdx = ci
             if (!isProse(node.type.name)) return // structured nodes own their id
             ids.push(node.attrs.id || '')
             tokens.push(node.attrs.token || '')
             positions.push(pos)
+            childIdxs.push(ci)
           })
 
           // Split defense: Enter copies attrs, so the new half is born with the
@@ -126,11 +142,14 @@ import { registerBlockKind } from './block-kinds.js'
             var changed = false
             if (clearId[idx]) { attrs.id = ''; changed = true }
             if (clearTok[idx]) { attrs.token = ''; changed = true }
-            // Stamp a token on a content-bearing prose that has neither id nor token
-            // (a freshly typed block). Empty surfaces stay bare (no churn); loaded /
-            // acked nodes already carry an id, so they are left untouched — a LOAD
-            // never triggers a create.
-            if (!attrs.id && !attrs.token && node.textContent && node.textContent.length > 0) {
+            // Stamp a token on a REAL block with no identity: a content-bearing prose OR
+            // a STRUCTURAL blank (an empty paragraph with a content-bearing block after
+            // it → childIdx < lastContentIdx). Both sync through the SAME create-block
+            // path as any block — no special case. The TRAILING empty surface
+            // (childIdx >= lastContentIdx) stays bare. Loaded/acked nodes carry an id →
+            // untouched (a LOAD never triggers a create).
+            var isRealBlock = (node.textContent && node.textContent.length > 0) || childIdxs[idx] < lastContentIdx
+            if (!attrs.id && !attrs.token && isRealBlock) {
               attrs.token = mintToken(); changed = true
             }
             if (changed) {

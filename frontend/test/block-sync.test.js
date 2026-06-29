@@ -388,6 +388,15 @@ describe('computeBlockSync — token (backend-authoritative) prose create', () =
     const r = computeBlockSync([{ id: 'pr-9', kind: 'prose', content: 'hi there' }], prev)
     expect(r.ops).toEqual([{ type: 'update-block', blockId: 'pr-9', kind: 'prose', attrs: { content: 'hi there' } }])
   })
+
+  it('emits create-block for a STRUCTURAL blank (empty prose with content after) carrying a token', () => {
+    const r = computeBlockSync([
+      { id: '', token: 'tok-bb', kind: 'prose', content: '' },
+      { id: 'pr-2', kind: 'prose', content: 'after' },
+    ], {})
+    const created = r.ops.filter(o => o.type === 'create-block').map(o => o.token || o.blockId)
+    expect(created).toContain('tok-bb')   // the structural blank is a real block, synced
+  })
 })
 
 describe('computeBlockSync — delete loop ignores in-flight tokens', () => {
