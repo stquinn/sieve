@@ -535,7 +535,10 @@ func TestHandleBlockOp_updateNotifySendsMergedSnapshotUnderLock(t *testing.T) {
 	block.RegisterProcessor(processors.NewCodeBlockProcessor(block.BlockServices{}))
 
 	ds, _ := newTestDocumentService(t)
-	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+	// Use a large debounce so the AfterFunc never fires during the test body.
+	// The assertion comes from the synchronous OnChange notify; Close's explicit
+	// flushShadow("close") persists the doc before TempDir cleanup runs.
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), time.Hour)
 
 	const goMarker = "package main"
 	type notifyEvent struct{ id, source string }
