@@ -176,9 +176,11 @@ export function computeBlockSync(curr, prev) {
       // p.token in prev → in flight, awaiting the backend id → SKIP.
     }
   }
-  // Deletes are kind-agnostic: an id in prev that is gone → delete-block (Go's
-  // delete-block op drops a block of any kind by id).
+  // Deletes are kind-agnostic, BUT an in-flight token (tok-…) is not a backend id —
+  // deleting it would 404. A node deleted while its create is in flight is handled
+  // by the insert-block ack (it deletes by the real id once known).
   for (var id in prev) {
+    if (id.indexOf('tok-') === 0) continue
     if (!(id in next)) {
       ops.push({ type: 'delete-block', blockId: id })
     }

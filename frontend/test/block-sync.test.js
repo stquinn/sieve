@@ -411,3 +411,16 @@ describe('computeBlockSync — token (backend-authoritative) prose create', () =
     expect(r.next).toEqual({})
   })
 })
+
+describe('computeBlockSync — delete loop ignores in-flight tokens', () => {
+  it('does NOT emit delete-block for a tok- baseline key that vanished (no backend id yet)', () => {
+    const prev = { 'tok-aa': 'prose\x00hi\x00' } // create in flight, node then removed
+    const r = computeBlockSync([], prev)
+    expect(r.ops).toEqual([]) // the insert-block ack handles a deleted-in-flight node by real id
+  })
+  it('still emits delete-block for a durable id that disappeared', () => {
+    const prev = { 'pr-1': 'prose\x00A\x00' }
+    const r = computeBlockSync([], prev)
+    expect(r.ops).toEqual([{ type: 'delete-block', blockId: 'pr-1' }])
+  })
+})
