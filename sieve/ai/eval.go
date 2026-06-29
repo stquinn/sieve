@@ -6,7 +6,7 @@ import (
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
-func detectContentType(content string) string {
+func (s *AIService) detectContentType(content string) string {
 	trimmed := strings.TrimSpace(content)
 	if strings.HasPrefix(trimmed, "```") {
 		firstLine := strings.SplitN(trimmed, "\n", 2)[0]
@@ -25,7 +25,7 @@ func detectContentType(content string) string {
 	return "markdown"
 }
 
-func extractJSONFallback(text string) string {
+func (s *AIService) extractJSONFallback(text string) string {
 	text = strings.TrimSpace(text)
 	text = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(
 		strings.TrimSpace(text), "```json\n"), "\n```"))
