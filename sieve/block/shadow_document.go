@@ -229,6 +229,11 @@ type BlockOp struct {
 	Aliases  []string               `json:"aliases,omitempty"`
 	Index    int                    `json:"index"`
 	ParentID string                 `json:"parentId,omitempty"`
+	// Token is a TRANSIENT frontend correlation handle (tok-…) for a prose create —
+	// NOT a durable id. Go mints the durable id (GenerateBlockIDFor) and echoes the
+	// token back on insert-block so the client can swap its pending node's token for
+	// the authoritative id. Never persisted.
+	Token string `json:"token,omitempty"`
 }
 
 // applyOpTo mutates the ordered block slice in place according to op. It returns

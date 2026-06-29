@@ -518,7 +518,7 @@ type mockLifecycleListener struct {
 func (l *mockLifecycleListener) OnBlockReplaced(uuid, oldID, newKind, newID string, attrs map[string]interface{}, markdown string) {
 }
 
-func (l *mockLifecycleListener) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string, index int) {
+func (l *mockLifecycleListener) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string, index int, token string) {
 	if l.onCreated != nil {
 		l.onCreated(uuid, kind, blockID, markdown)
 	}
@@ -527,6 +527,42 @@ func (l *mockLifecycleListener) OnBlockCreated(uuid, kind, blockID string, attrs
 func (l *mockLifecycleListener) OnBlockUpdated(uuid, blockID string, attrs map[string]interface{}) {
 	if l.onUpdated != nil {
 		l.onUpdated(uuid, blockID, attrs)
+	}
+}
+
+type tokenCaptureListener struct{ id, token string }
+
+func (l *tokenCaptureListener) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string, index int, token string) {
+	l.id, l.token = blockID, token
+}
+func (l *tokenCaptureListener) OnBlockUpdated(uuid, blockID string, attrs map[string]interface{}) {}
+func (l *tokenCaptureListener) OnBlockReplaced(uuid, oldID, newKind, newID string, attrs map[string]interface{}, markdown string) {
+}
+
+func TestHandleBlockOp_proseCreateMintsIdAndEchoesToken(t *testing.T) {
+	resetRegistry()
+	block.RegisterProcessor(processors.NewProseProcessor(block.BlockServices{}))
+
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), time.Hour)
+	doc, _ := ds.New()
+	_ = es.Open(doc.UUID(), nil)
+
+	capListener := &tokenCaptureListener{}
+	es.SetLifecycleListener(capListener)
+
+	err := es.HandleBlockOp(doc.UUID(), block.BlockOp{
+		Type: "create-block", Kind: "prose", BlockID: "", Token: "tok-abc",
+		Attrs: map[string]interface{}{"content": "hello"}, Index: 0,
+	})
+	if err != nil {
+		t.Fatalf("HandleBlockOp: %v", err)
+	}
+	if capListener.token != "tok-abc" {
+		t.Fatalf("token not echoed: got %q want tok-abc", capListener.token)
+	}
+	if capListener.id == "" || strings.HasPrefix(capListener.id, "tok-") {
+		t.Fatalf("expected a backend-minted durable id, got %q", capListener.id)
 	}
 }
 

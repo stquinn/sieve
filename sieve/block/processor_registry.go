@@ -180,7 +180,7 @@ type JobContext struct {
 // ONLY by the breakglass markdown-mode editor (a verbatim buffer that must hold a
 // parseable, id-preserving fence for a block inserted while in that mode).
 type BlockLifecycleListener interface {
-	OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string, index int)
+	OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string, index int, token string)
 	OnBlockUpdated(uuid, blockID string, attrs map[string]interface{})
 	// OnBlockReplaced renders an in-place TRANSFORM: swap the block identified by oldID
 	// with a new block (newKind/newID + attrs). markdown is the serialized fence for the

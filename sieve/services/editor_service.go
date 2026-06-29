@@ -50,7 +50,7 @@ func (es *EditorService) SetLifecycleListener(l block.BlockLifecycleListener) {
 	es.listener = l
 }
 
-func (es *EditorService) notifyBlockCreated(uuid string, blk block.SieveBlock, index int) {
+func (es *EditorService) notifyBlockCreated(uuid string, blk block.SieveBlock, index int, token string) {
 	es.mu.RLock()
 	l := es.listener
 	es.mu.RUnlock()
@@ -63,7 +63,7 @@ func (es *EditorService) notifyBlockCreated(uuid string, blk block.SieveBlock, i
 		if processor := block.GetProcessor(blk.Kind); processor != nil {
 			markdown, _ = processor.Serialize(blk)
 		}
-		l.OnBlockCreated(uuid, blk.Kind, blk.ID, blk.Attrs, markdown, index)
+		l.OnBlockCreated(uuid, blk.Kind, blk.ID, blk.Attrs, markdown, index, token)
 	}
 }
 
@@ -236,7 +236,7 @@ func (es *EditorService) HandleBlockOp(uuid string, op block.BlockOp) error {
 			if id == "" {
 				id = block.GenerateBlockIDFor(op.Kind)
 			}
-			_, _, err := es.createBlockWithID(uuid, op.Kind, id, op.Attrs, op.Aliases, op.Index)
+			_, _, err := es.createBlock(uuid, op.Kind, id, op.Attrs, op.Aliases, op.Index, true, op.Token)
 			return err
 		}
 	case "update-block":
@@ -432,7 +432,7 @@ func (es *EditorService) CreateBlock(uuid, kind string, overrides map[string]int
 // (out-of-range indices clamp to the end). The block is inserted through the SAME
 // create-block op as every other create — no separate append path.
 func (es *EditorService) createBlockWithID(uuid, kind, blockID string, overrides map[string]interface{}, aliases []string, index int) (id string, rawYaml string, err error) {
-	return es.createBlock(uuid, kind, blockID, overrides, aliases, index, true)
+	return es.createBlock(uuid, kind, blockID, overrides, aliases, index, true, "")
 }
 
 // createBlock is the one creation primitive. notify controls the WS render-back
@@ -440,7 +440,7 @@ func (es *EditorService) createBlockWithID(uuid, kind, blockID string, overrides
 // positionally as a tracked PM transaction, preserving undo). aliases carries the
 // block's lineage when a create op brings it (usually nil — lineage normally accrues
 // via gc/merge).
-func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[string]interface{}, aliases []string, index int, notify bool) (id string, rawYaml string, err error) {
+func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[string]interface{}, aliases []string, index int, notify bool, token string) (id string, rawYaml string, err error) {
 	defer func() {
 		if err == nil {
 			es.DispatchJobIfNeeded(uuid, id)
@@ -472,7 +472,7 @@ func (es *EditorService) createBlock(uuid, kind, blockID string, overrides map[s
 	}
 
 	if notify {
-		es.notifyBlockCreated(uuid, sieveBlock, index)
+		es.notifyBlockCreated(uuid, sieveBlock, index, token)
 	}
 
 	return id, rawYaml, nil
