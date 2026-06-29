@@ -43,7 +43,10 @@ import { registerBlockKind } from './block-kinds.js'
   // native node and topBlockTriple can read it back. The durable identity lives
   // in the on-disk paired markers; this attr is only the in-editor carrier
   // (attrs don't survive markdown).
-  var mintProseId = function () { return 'pr-' + Math.random().toString(16).slice(2, 6) }
+  // A TRANSIENT correlation token (not a durable id): the frontend never invents
+  // durable block identity (B-A). The token rides the create-block round-trip; Go
+  // mints the durable id and the insert-block ack swaps it in (editor.js).
+  var mintToken = function () { return 'tok-' + Math.random().toString(16).slice(2, 10) }
 
   var BlockId = T.Extension.create({
     name: 'blockId',
@@ -63,20 +66,25 @@ import { registerBlockKind } from './block-kinds.js'
               return attrs.id ? { 'data-id': attrs.id, class: 'block-node' } : {}
             },
           },
+          token: {
+            default: '',
+            rendered: false, // transient correlation handle: never in HTML or markdown
+          },
         },
       }]
     },
 
-    // The minting plugin (D-r.4). It is the PASSIVE half of "TipTap runs the
-    // editor": PM creates/splits/merges nodes natively; we only ensure each
-    // top-level prose node carries a UNIQUE blockId, so PM's N nodes == N blocks.
-    // A node needs an id when its blockId is empty (paste, gap-cursor paragraph)
-    // OR duplicated — the splitBlock attr-copy trap: Enter copies the node's
-    // attrs, so the new half is born with the original's id (mintActions flags the
-    // second occurrence → re-mint → original keeps its id, new half gets a fresh
-    // one → exactly one create-block). Runs in appendTransaction (NOT onUpdate),
-    // history-excluded, and ONLY fills ids (creates no nodes) so it converges; a
-    // runaway guard is the backstop.
+    // The identity plugin (B-A / D-r.4). It is the PASSIVE half of "TipTap runs
+    // the editor": PM creates/splits/merges nodes natively; we ensure each
+    // content-bearing top-level prose node carries a TRANSIENT token so the block
+    // observer can drive a single create-block. The plugin NEVER fills the durable
+    // id — Go mints it; the insert-block ack (editor.js) swaps it in once Go acks.
+    // On splitBlock (Enter), PM copies attrs so the new half is born with the
+    // original's id AND token; we CLEAR the 2nd occurrence of each (never re-mint —
+    // the frontend invents no durable identity); the cleared half re-acquires its
+    // own token next pass → its own create round-trip. Runs in appendTransaction
+    // (NOT onUpdate), history-excluded, only fills/clears attrs (creates no nodes)
+    // so it converges; a runaway guard is the backstop.
     addProseMirrorPlugins: function () {
       var Plugin = T.Plugin, PluginKey = T.PluginKey
       var calls = 0, last = 0
@@ -84,33 +92,53 @@ import { registerBlockKind } from './block-kinds.js'
         key: new PluginKey('blockIdMint'),
         appendTransaction: function (trs, _oldState, newState) {
           var now = Date.now()
-          if (now - last > 100) calls = 0   // edits are spaced out → reset
+          if (now - last > 100) calls = 0
           last = now
           if (++calls > 100) {
-            console.error('[blockId] RUNAWAY mint pass — disabling to avoid a freeze')
+            console.error('[blockId] RUNAWAY identity pass — disabling to avoid a freeze')
             return null
           }
           if (!trs.some(function (t) { return t.docChanged })) return null
 
           var isProse = window.TipTap.isNativeProseNodeName
-          var ids = [], positions = []
+          var ids = [], tokens = [], positions = []
           newState.doc.forEach(function (node, pos) {
-            if (!isProse(node.type.name)) return   // structured nodes own their id
+            if (!isProse(node.type.name)) return // structured nodes own their id
             ids.push(node.attrs.id || '')
+            tokens.push(node.attrs.token || '')
             positions.push(pos)
           })
-          var need = window.TipTap.mintActions(ids)
-          if (!need.length) return null
 
-          // setNodeMarkup changes attrs only (no size change) → positions are
-          // stable across the loop. History-excluded so minting is never undone.
-          var tr = newState.tr
-          need.forEach(function (i) {
-            var pos = positions[i]
+          // Split defense: Enter copies attrs, so the new half is born with the
+          // original's id AND token. CLEAR the 2nd occurrence of each (never re-mint —
+          // the frontend invents no durable identity); the cleared half re-acquires a
+          // fresh token below → its own create round-trip. First occurrence is kept.
+          var clearId = {}, clearTok = {}
+          window.TipTap.dedupeActions(ids).forEach(function (i) { clearId[i] = true })
+          window.TipTap.dedupeActions(tokens).forEach(function (i) { clearTok[i] = true })
+
+          var tr = null
+          for (var idx = 0; idx < positions.length; idx++) {
+            var pos = positions[idx]
             var node = newState.doc.nodeAt(pos)
-            if (!node) return
-            tr.setNodeMarkup(pos, undefined, Object.assign({}, node.attrs, { id: mintProseId() }))
-          })
+            if (!node) continue
+            var attrs = Object.assign({}, node.attrs)
+            var changed = false
+            if (clearId[idx]) { attrs.id = ''; changed = true }
+            if (clearTok[idx]) { attrs.token = ''; changed = true }
+            // Stamp a token on a content-bearing prose that has neither id nor token
+            // (a freshly typed block). Empty surfaces stay bare (no churn); loaded /
+            // acked nodes already carry an id, so they are left untouched — a LOAD
+            // never triggers a create.
+            if (!attrs.id && !attrs.token && node.textContent && node.textContent.length > 0) {
+              attrs.token = mintToken(); changed = true
+            }
+            if (changed) {
+              if (!tr) tr = newState.tr
+              tr.setNodeMarkup(pos, undefined, attrs)
+            }
+          }
+          if (!tr) return null
           tr.setMeta('addToHistory', false)
           return tr
         },
