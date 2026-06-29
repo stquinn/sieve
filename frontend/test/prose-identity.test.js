@@ -49,4 +49,11 @@ describe('prose identity unification (blockId → id)', () => {
     expect(attrs.token.default).toBe('')
     expect(attrs.token.rendered).toBe(false)
   })
+
+  it('renderHTML applies block-node to a pending (token-only) block too — no data-id — so padding does not pop in when the id acks', () => {
+    const def = BlockId.addGlobalAttributes()[0].attributes.id
+    expect(def.renderHTML({ id: '', token: 'tok-aa' })).toEqual({ class: 'block-node' })
+    expect(def.renderHTML({ id: '', token: '' })).toEqual({})
+    expect(def.renderHTML({ id: 'pr-1', token: 'tok-x' })).toEqual({ 'data-id': 'pr-1', class: 'block-node' })
+  })
 })

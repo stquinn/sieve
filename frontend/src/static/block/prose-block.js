@@ -58,12 +58,15 @@ import { registerBlockKind } from './block-kinds.js'
             default: '',
             parseHTML: function (el) { return el.getAttribute('data-id') || '' },
             renderHTML: function (attrs) {
-              // Bind to data-id (never a literal id=); omit when empty so
-              // nested/unminted nodes stay clean. Also tag top-level prose blocks
-              // with the shared `block-node` class so they participate in the same
-              // block styling as structured sieve blocks (rest padding + the AI
-              // ref-chain-active accent/highlight) — one class hook for every block.
-              return attrs.id ? { 'data-id': attrs.id, class: 'block-node' } : {}
+              // block-node = "this is a top-level block" (rest padding + the AI
+              // ref-chain accent), independent of whether the durable id has acked yet.
+              // A pending top-level block carries a transient token (nested nodes never
+              // do), so style it the SAME immediately — otherwise the block padding pops
+              // in ~1s later when the backend id arrives (B-A) and the layout jumps.
+              // data-id is emitted only once the durable id exists (a token is not an id).
+              if (attrs.id) return { 'data-id': attrs.id, class: 'block-node' }
+              if (attrs.token) return { class: 'block-node' }
+              return {}
             },
           },
           token: {
