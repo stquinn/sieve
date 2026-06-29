@@ -104,6 +104,9 @@ export function seedBaseline(curr) {
 // the first occurrence keeps it, every later duplicate is CLEARED (not re-minted —
 // the frontend never invents durable identity). Empty values are left untouched:
 // an id-less node is legitimately pending (it acquires a token, then a backend id).
+// NOTE (E-1 forward): this pass assumes ONE top-level prose node per id. If E-1's
+// proseGroup is ever represented as several top-level nodes sharing one backend id,
+// this clears all-but-first; keep a proseGroup as a single top-level node instead.
 export function dedupeActions(values) {
   var seen = {}
   var dup = []
@@ -130,7 +133,16 @@ export function computeBlockSync(curr, prev) {
     var key = cb.id || cb.token   // durable id once acked, else the in-flight token
     if (!key) continue            // an id-less, token-less surface — not addressable
     if (isPendingEmptyProse(cb, prev, i < lastContentIdx)) continue
-    next[key] = blockSig(cb)
+    // While a prose create is IN FLIGHT (token already baselined, awaiting the backend
+    // id), PIN its baseline to what Go received (prev[token]) — do NOT advance it to the
+    // current editor content. Otherwise an edit made during the flight is masked:
+    // reconcilePendingToken copies this baseline onto the real id, and if it already held
+    // the latest content the post-ack diff would emit no update-block → silent prose loss.
+    if (!cb.id && cb.token && prev && (cb.token in prev)) {
+      next[key] = prev[key]
+    } else {
+      next[key] = blockSig(cb)
+    }
   }
 
   // First call: just seed the baseline, never emit ops.

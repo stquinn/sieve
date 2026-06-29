@@ -371,6 +371,23 @@ describe('computeBlockSync — token (backend-authoritative) prose create', () =
     expect(r.ops).toEqual([])
     expect(r.next).toEqual({})
   })
+
+  it('PINS the in-flight token baseline to the create-time sig (a flight-edit is not masked)', () => {
+    const base = computeBlockSync([{ id: '', token: 'tok-aa', kind: 'prose', content: 'hi' }], {}).next
+    const createSig = base['tok-aa']
+    const r = computeBlockSync([{ id: '', token: 'tok-aa', kind: 'prose', content: 'hi there' }], base)
+    expect(r.ops).toEqual([])                  // still in flight → no op
+    expect(r.next['tok-aa']).toBe(createSig)   // baseline PINNED, not advanced to 'hi there'
+  })
+
+  it('emits the flight-edit as one update-block after the ack swaps the cache key to the real id', () => {
+    const base = computeBlockSync([{ id: '', token: 'tok-aa', kind: 'prose', content: 'hi' }], {}).next
+    const mid = computeBlockSync([{ id: '', token: 'tok-aa', kind: 'prose', content: 'hi there' }], base).next
+    // reconcilePendingToken swaps tok-aa -> pr-9 carrying the PINNED create-time sig:
+    const prev = { 'pr-9': mid['tok-aa'] }
+    const r = computeBlockSync([{ id: 'pr-9', kind: 'prose', content: 'hi there' }], prev)
+    expect(r.ops).toEqual([{ type: 'update-block', blockId: 'pr-9', kind: 'prose', attrs: { content: 'hi there' } }])
+  })
 })
 
 describe('computeBlockSync — delete loop ignores in-flight tokens', () => {
