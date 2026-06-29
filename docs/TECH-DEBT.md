@@ -83,7 +83,9 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 
 **Why deferred (2026-06-19):** Outside D-r.7's locked scope (identity/targeting/insert); folded into the ShadowDoc-refactor work as an adjacent "uniform block" visual fix.
 
-**Retires when:** The persistent bracket is driven through the SAME `.block-chrome-rail` the ephemeral `block-ai-target` glow already uses (`ai-target-decoration.js` + `editor.css:2628`), so prose and structured share one visual language (per `project_block_anchor_lineage`). Verify by eye in WebKitGTK. Detail in the ShadowDoc-refactor spec ("folded-in follow-up").
+**Retires when:** The persistent bracket is driven through the SAME `.block-chrome-rail` the ephemeral `block-ai-target` glow already uses (`ai-target-decoration.js` + `editor.css:2628`), so prose and structured share one visual language (per `project_block_anchor_lineage`). Verify by eye in WebKitGTK.
+
+**Superseded 2026-06-29 → folded into U-A (deferred to Stage F re-plan).** Do not patch piecemeal: the whole rail/lineage L&F diverged from the §8 design and is being re-planned as a set. (Live check showed the orange chain affordance *does* now paint on prose; the real problem is design-level, not this gating.) Detail in the ShadowDoc-refactor spec ("folded-in follow-up").
 
 ## S-A: Flat-package decomposition — no internal boundaries (Go `sieve/` AND JS `static/`)
 
@@ -162,6 +164,18 @@ Remaining surface:
 **What:** Structured block edits (`sieve:block-update` → `handleBlockUpdate`) still ride a bespoke WS message that merges partial attrs + runs `OnChange` + dispatches the job + notifies — a path parallel to `block-op`. It is the last of the three pre-block-op mutation messages in `ws_handler.go` (`create-block` retired 2026-06-21; `doc-update` legitimately kept as the markdown-mode verbatim path).
 
 **Why deferred:** the create convergence landed first; update is its mirror. **Retires when:** folded into `block-op {update-block}` — `HandleBlockOp`'s update case gains the structured merge + `OnChange` + dispatch + notify (`applyOpTo` currently *replaces* attrs and does none of that), and `sieve:block-update` emits the op. Then `block-op` is the single granular mutation path (create/update/delete) and only `doc-update` (markdown mode) remains beside it.
+
+## U-A: Editor-layout affordances need a holistic re-look — DEFERRED to a Stage E/F re-brainstorm (2026-06-29)
+
+**Scope (user decision 2026-06-29):** The *whole* Editor Layout affordance set from the 2026-06-11 brainstorm needs to be re-looked at as one body of design work before any of it is implemented — not just the lineage rail. The affordances (`docs/superpowers/specs/assets/2026-06-11-editor-layout/`): per-node chrome (§3 `block-unit`), columns (§6 `columns` → Stage E), the gutter-lineage rail (§8 `gutter-lineage` → Stage F), and the document map (§8 `doc-map` → Stage F). Several shipped partially or diverged in implementation; the design itself is "not landing where we thought." **Leave ALL affordance UI alone during the current close-out; re-brainstorm §8/§3/§6 against what was learned building the block model, then re-plan Stage E/F.** The lineage rail below is the most-diagnosed example of the divergence.
+
+**What (lineage rail — worked example):** The shipped rail affordances do not realise the §8 gutter/lineage design (`docs/superpowers/specs/assets/2026-06-11-editor-layout/gutter-lineage.html`, decision C — Hybrid). That design is ONE coherent gutter language: (1) a faint always-on "participates in lineage" tick in the rail — the `.gut`, `rgba(120,140,255,.22)` — which DID ship as `.block-chrome-rail`; (2) **bracket-chain connectors** drawn in the gutter, spanning a source block down to its consumers on hover/select — the actual ref *edge*, which is the whole point ("references cause spooky-action-at-a-distance; the rail makes it legible"); (3) always-on dirty-glow for stale blocks (safety; gated on the separate reconciler project); plus the doc-map. **Only layer 1 shipped.** What shipped *instead* for active states are two ad-hoc per-block solid left-accents in unrelated colours — orange (`block-ref-active`, AI-chain hover/active) and indigo (`block-ai-target`, the `ctrl+shift+a` jump-to-ASK cue) — a **parallel** visual system, exactly what `project_block_anchor_lineage` warned against. They mark "this block is involved" but never draw the edge/topology.
+
+**Specific defects observed (2026-06-29, in-app):** the indigo jump-to-ASK rail is an imprecise, overlapping blue *blob* — **not** gutter-aligned, does not sit where §8 put it. Likely cause: the line-number column is in the way; the highlight needs to live in the **gap to the LEFT of the line number**, in the gutter. (B-D — chain-bracket gating on prose — folds in here; live check showed the orange chain affordance now paints on prose, so B-D as written is moot.)
+
+**Why deferred:** This is **Stage F** (layout/lineage lenses), already deferred to a future branch. The affordances must be re-planned AS A SET against the §8 design — not patched piecemeal, which would only make the placeholder more uniform without delivering the lineage language. User decision 2026-06-29: **leave all rail/bracket/highlight UI affordances alone during the current close-out.**
+
+**Retires when:** Stage F is planned and built — re-brainstorm §8 against what was learned building the block model, then implement the unified gutter language (participation tick + on-hover bracket-chain connectors, positioned in the gutter gap left of the line number), with dirty-glow following the reconciler project.
 
 ## C-T: Stale test files pin retired designs
 
