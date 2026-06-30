@@ -3,6 +3,8 @@
 > **Status — DESIGN (awaiting review).** Brainstormed 2026-06-30. **Rewritten 2026-06-30** after an extended design review that materially changed the architecture. Supersedes the close-all-local concurrency limiter shipped in the working tree (`AIService.runCloseFiling`/`closeFilingLimit`), which folds into this framework. Successor artifact: an implementation plan under `docs/superpowers/plans/`.
 >
 > **What changed from the first draft (and why):** the first draft kept `block.AIPort` and a per-subsystem async engine inside `AIService`, fronted by a transitional `BlockingAIPort` sync adapter. Review found three things wrong with that: (1) the `block.AIPort` "port" only existed to break an import cycle that is itself *manufactured* by misfiled language code; (2) requiring each processor to remember to call a completion hook is a footgun, not a framework; (3) a per-subsystem engine cannot express the heterogeneous concurrency the smart-code-blocks roadmap needs once everything funnels through one editor. The redesign extracts the language leaf (killing the cycle), removes the port, inverts processors to **declare** jobs rather than execute them, makes `AIService` a blind synchronous business service, and routes **every** async job through **one communal `JobEngine`** that sizes a worker pool per `Category`. See *Rejected alternatives* for the supersession record.
+>
+> **Layering revision (cycle resolution).** Because `EditorService` lives in `services` and `ai` already imports `services`, having the editor call `AIService` (to instigate Smart File etc.) would close an `ai ↔ services` cycle. Resolved by **lifting `EditorService` into a new top-level `sieve/editor` package above `ai`** — the orchestrator sits above the things it orchestrates — leaving the general job framework low in `services` and `AIService` unmoved in `ai`. No port. This is folded into Phase 0 of the foundation plan as a pure package move.
 
 ## Problem
 
@@ -28,19 +30,19 @@ The trigger for this work: a regression where "Close All Tabs" filed *nothing* (
 
 ## Architecture
 
-The package DAG, after Phase 0 (`lang` extracted):
+The package DAG, after Phase 0 (`lang` extracted, `EditorService` lifted to `sieve/editor`):
 
 ```
-domain, lang  ←  block  ←  {block/processors, services}  ←  ai  ←  root
+domain, lang  ←  block  ←  {block/processors, services}  ←  ai  ←  editor  ←  root
 ```
 
-`ai` no longer imports `block` (its only `block` references were the language helpers). `block` never imports `ai`. They are fully decoupled.
+`ai` no longer imports `block` (its only `block` references were the language helpers). `block` never imports `ai`. **`EditorService` lives in a new top-level `sieve/editor` package, above `ai`** — it is the orchestrator that *uses* `services`, `block/processors`, and `ai` to do its job, and is imported by nothing below it. That placement is what lets the editor instigate AI-powered document jobs (Smart File etc.) **without** an `ai ↔ services` cycle: the orchestrator sits above the things it orchestrates. The general job framework (`JobEngine`/`JobTracker`/`JobDescriptor`/`JobRunner`) stays **low in `services`** so any future (non-editor) producer can submit to it without importing the editor; `EditorService` merely holds the root-constructed engine instance. `AIService` stays in `ai`, unmoved.
 
 ```
 Producers
-  ├─ processors (DescribeJob → block.ProcessorJob)         [block jobs]
-  └─ EditorService document entries (file/keep/metadata)   [document jobs]
-        │  both build a services.JobDescriptor
+  ├─ processors (DescribeJob → block.ProcessorJob)              [block jobs]
+  └─ editor.EditorService document entries (file/keep/metadata) [document jobs]
+        │  both reach the framework via a services.JobDescriptor
         ▼
 ┌ services.JobRunner — the framework wrap (injected into EditorService) ─────┐
 │  • snapshots, builds the Apply→finish closure, sets Meta, picks Category   │
@@ -72,7 +74,7 @@ Producers
 - **Language extraction kills the cycle (Phase 0).** `block.language_heuristics.go` is not a block concept — it is a standalone "guess a language" capability used by *both* the code processor and `AIService`. Misfiling it in `block` is the *only* reason `ai` imported `block`. Moving it to a neutral leaf (`sieve/lang`) removes that edge entirely, so `AIService` becomes genuinely blind to blocks.
 - **No port.** With the cycle gone, `block.AIPort` has no job: it existed solely to let `block` reach `ai` without importing it. A port that exists only to break a cycle is a smell once the cycle is removed. It is deleted, not replaced. (A provider-owned `ai.AIService` interface for *mocking* is a separate, later decision — there are zero AI mocks today, so it is YAGNI for this pass.)
 - **Declarative jobs remove the footgun.** Processors return a descriptor; they never touch lifecycle. The framework owns the `Apply → finish` wrap, so completion is structurally unforgettable. This is the difference between a framework and a convention.
-- **`EditorService` owns the document slice.** Save/close are editor operations; filing/keep/metadata are consequences of them. The editor instigates them; the *logic* stays in `AIService`; the *bounding/tracking* is the engine's. `EditorService` orchestrates via an injected `JobRunner` so it does not become a god-object.
+- **`EditorService` owns the document slice — from above.** Save/close are editor operations; filing/keep/metadata are consequences of them. The editor instigates them; the *logic* stays in `AIService`; the *bounding/tracking* is the engine's. `EditorService` lives in `sieve/editor` **above `ai`**, so it can call `AIService` directly with no cycle; it orchestrates via an injected `JobRunner` (which stays low in `services`) so it does not become a god-object. Its supra-`services` position was an artifact of the old `ai → block` edge (now removed); lifting the *orchestrator* up — rather than pushing `AIService` *down* — is the placement fix that dissolves the `ai ↔ services` cycle without any port.
 - **One communal engine, worker pool per `Category`.** Once everything funnels through the editor, per-subsystem engine *instances* would just be `EditorService` holding `map[subsystem]*Engine` and routing — identical to one engine holding `map[category]*pool`, with a clumsier API. One engine, one Submit, one tracker relationship, config-driven pools.
 
 #### `Category` is data, not behaviour (staying uniform)
@@ -101,7 +103,7 @@ The `Category` on a descriptor is a **producer-side classification** ("what this
 
 **`services.JobRunner`** — the framework wrap (injected into `EditorService`).
 - *Does*: for a block job, takes the `ProcessorJob` + the `attrsBefore` snapshot, builds a `JobDescriptor` whose `OnFinished` runs `Apply(result, blkCopy)` then the **finish** closure (the attr-diff + `applyJobUpdate` that today lives after `processor.RunJob` returns), and whose `OnError` runs finish with the error. For a document job, `EditorService` builds the `JobDescriptor` directly. Either way `JobRunner.Submit` guarantees finish-exactly-once.
-- *Depends on*: `JobEngine`, `block` (for `ProcessorJob`/`SieveBlock`).
+- *Depends on*: `JobEngine`, `block` (for `ProcessorJob`/`SieveBlock`). *Lives in `services`* (low, general); the editor imports and uses it.
 
 **`services.JobTracker`** (generalised) — the advertiser.
 - `JobInfo` gains `State string` (`"queued"|"active"`) and optional `Category string`; keeps `JobID/Label/DocID/SpinTab`.
@@ -110,10 +112,11 @@ The `Category` on a descriptor is a **producer-side classification** ("what this
 
 **`ai.AIService`** (synchronous, blind) — the AI brain, unchanged in responsibility.
 - Keeps **all** logic: `RefineLanguage(source, currentLang, method) (string, error)`, `EvaluateAndFileDoc(id, fileAfter, allowDiscard) (FilingOutcome, error)`, File-and-Keep, Metadata, Describe-Image, Web-Clip, Ask/Explain — as ordinary synchronous methods.
-- Owns **no** engine, **no** goroutines, **no** block types, **no** `JobTracker`. Imports `lang`, `services` (data types), `domain`, `store`.
+- Owns **no** engine, **no** goroutines, **no** block types, **no** `JobTracker`. Imports `lang`, `services` (data types), `domain`, `store`. **Stays in `ai`, unmoved** — it is a peer business service that the existing `ai → services` edge already lets reach persistence; the editor reaches *it* from above (`editor → ai`), so nothing about `AIService`'s location changes.
 - The tier-Dumb gate stays here: a Dumb-tier `RefineLanguage` returns `("", nil)` (callers already tolerate `""`); filing entries check tier before building a descriptor.
 
-**`EditorService`** — the server-side editor; the document-job owner.
+**`editor.EditorService`** (lifted to the new top-level `sieve/editor` package, above `ai`) — the server-side editor; the document-job owner.
+- *Lives in `sieve/editor`* precisely so it can import `ai` and call `AIService` directly without an `ai ↔ services` cycle (it sits above both `ai` and `services`). Imported only by root/handlers; nothing below it depends on it (verified: no peer in `services` and nothing in `ai`/`block` references it).
 - Owns the injected `JobRunner`. Runs block jobs by calling `processor.DescribeJob(jctx)` and handing the result to the runner. Exposes the document-lifecycle entries that instigate document jobs: `CloseDocument(id)`, `CloseAll(ids)`, `FileDocument(id)`, `KeepAndFile(uuid)`, `UpdateMetadata(id)` — each builds a `JobDescriptor` whose `Work` calls the matching synchronous `AIService` method.
 - HTTP/WS handlers become thin pass-throughs to these methods.
 
@@ -181,10 +184,11 @@ By the end of this work, **every AI call site produces a descriptor for the comm
 - **Processor calls a completion hook in its own callback.** Rejected. Correctness would depend on every processor author repeating a `Finish` call; one omission silently breaks rendering/tracking. A framework whose contract can be silently broken is a convention. The descriptor inversion moves the wrap into framework code that runs once for everyone.
 - **Per-subsystem engine instances (first-draft design).** Superseded. It was correct *while each subsystem owned its own execution path*. The `EditorService` consolidation changed the premise: everything now submits through one editor-owned framework, so per-subsystem instances reduce to `map[subsystem]*Engine` routing — functionally identical to one engine with `map[category]*pool`, but with a clumsier API and a split tracker relationship. One communal engine with per-`Category` worker pools is the same capability with one Submit and one tracker writer.
 - **Singleton engine + `JobType` enum with per-type code.** Still rejected — but note the distinction from the chosen design. The smell is an engine that *switches on* the type (different code per kind) and a *central enum* every new kind must edit. The chosen design has neither: `Category` is opaque data the engine routes on via a config map, and category constants are owned by the submitting subsystems. Same uniform mechanism, no behavioural branching.
+- **Resolve the `ai ↔ services` cycle by pushing `AIService` down / inverting with a port.** Rejected. With `EditorService` in `services` and `ai → services` already present, the editor calling `AIService` closes a cycle. Two fixes were considered: (a) move `AIService` *down* into `services` so the call is intra-package, or (b) keep `ai` separate and depend on a `services`-owned filing interface that `AIService` implements. (a) drags a large business service plus its CLI/prompt plumbing into `services` and conflates altitudes; (b) re-introduces exactly the consumer-owned port this design spent its budget removing, just relocated to the `services↔ai` seam. The chosen fix instead **lifts the orchestrator up**: `EditorService` moves to a new top-level `sieve/editor` package above `ai`. An orchestrator that *uses* services + processors + AI belongs above all three; once it sits there, the call points downward and no cycle or port exists. This is the same move as the `lang` extraction — fix the *placement* of the misfiled thing rather than insert an abstraction. (The general job framework deliberately does **not** ride up with the editor — it stays low in `services` so non-editor producers can submit without importing the editor.)
 
 ## Self-review
 
 - **Placeholders**: none. Every component has a stated responsibility, interface, and dependencies.
-- **Internal consistency**: layering matches the post-Phase-0 DAG (`lang`/`domain` leaves; engine/tracker/runner in `services`; `AIService` blind in `ai`; no `block.AIPort`); the bound is enforced by routing all async work through the one engine; the footgun is removed by the descriptor inversion; heterogeneous concurrency is expressed by per-`Category` worker pools without a type-switch.
-- **Scope**: one cohesive feature, sizable. Natural phasing for the plan: **(0)** extract `sieve/lang`, delete `block.AIPort`, make `AIService` synchronous + blind (pure refactor, no behaviour change); **(A)** `JobEngine` + `JobRunner` + generalised `JobTracker` + tests; **(B)** processors → `DescribeJob`/`ProcessorJob`, `EditorService` document entries, close-all fold, both tracker-writers retired; **(C)** status bar + rename + dead-code removal. Phase 0 must land first — it is what makes the rest clean.
+- **Internal consistency**: layering matches the post-Phase-0 DAG (`lang`/`domain` leaves; engine/tracker/runner in `services`; `AIService` blind in `ai`; `EditorService` in `sieve/editor` above `ai`; no `block.AIPort`); the bound is enforced by routing all async work through the one engine; the footgun is removed by the descriptor inversion; heterogeneous concurrency is expressed by per-`Category` worker pools without a type-switch; the `ai ↔ services` cycle is avoided by the editor's altitude, not a port.
+- **Scope**: one cohesive feature, sizable. Natural phasing for the plan: **(0)** repackaging — extract `sieve/lang` **and** lift `EditorService` into `sieve/editor` (both pure package moves, no behaviour change); **(A)** `JobEngine` + generalised `JobTracker` + tests; **(B)** delete `block.AIPort`, processors → `DescribeJob`/`ProcessorJob`, `JobRunner`, `EditorService` document entries, close-all fold, both tracker-writers retired; **(C)** status bar + rename + dead-code removal. Phase 0 must land first — it is what makes the rest clean. **Plan split:** Phase 0 + A ship as the foundation plan (`docs/superpowers/plans/2026-06-30-job-engine-foundation.md`); Phase B/C as a follow-up plan written once the foundation lands. Note Phase 0 now also pre-creates `sieve/editor`, so the Phase-B document entries have a home.
 - **Ambiguity**: the only genuine one — whether to introduce a provider-owned `ai.AIService` mocking interface now — is resolved as *not now* (no mocks exist; YAGNI), to be revisited when `RunAPI` or the first real AI mock arrives.

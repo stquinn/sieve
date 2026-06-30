@@ -1,10 +1,10 @@
-# Job Engine Foundation Implementation Plan
+# Job Engine Foundation & Repackaging Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Extract the language leaf that breaks the `ai → block` import cycle, then build the communal `JobEngine` + generalised `JobTracker` foundation — fully unit-tested, wired to no production caller yet.
+**Goal:** Do the two repackaging moves that unblock the communal-job-engine design — extract the `sieve/lang` leaf (breaking `ai → block`) and lift `EditorService` into a new `sieve/editor` package (pre-empting the `ai ↔ services` cycle) — then build the communal `JobEngine` + generalised `JobTracker` foundation, fully unit-tested, wired to no production caller yet.
 
-**Architecture:** This is **Phase 0 + Phase A** of the communal-job-engine design (`docs/superpowers/specs/2026-06-30-async-ai-job-queue-design.md`). Phase 0 moves `block/language_heuristics.go` to a new `sieve/lang` leaf so `ai` stops importing `block` (the smell that forced `block.AIPort`). Phase A adds the generalised `JobTracker` (Active **and** Queued lists, `jobs:changed`, `/api/jobs`) and the `JobEngine` (one communal instance, a bounded worker pool per `Category`) as new, additive code in `services`. **Nothing existing is rewired or deleted here** — both changes are non-breaking, every commit builds green. The behaviour-changing cutover (delete `block.AIPort`, declarative processors, `EditorService` document entries, retire the old tracker writers, fold in close-all, frontend) is **Plan 2 (Phase B/C)**, written after this lands.
+**Architecture:** This is **Phase 0 + Phase A** of the communal-job-engine design (`docs/superpowers/specs/2026-06-30-async-ai-job-queue-design.md`). Phase 0 is pure repackaging: (1) move `block/language_heuristics.go` to a new `sieve/lang` leaf so `ai` stops importing `block` (the smell that forced `block.AIPort`); (2) move `EditorService` from `services` into a new top-level `sieve/editor` package above `ai`, so that when Phase B makes the editor instigate AI document jobs it can call `AIService` directly without an `ai ↔ services` cycle. Both are behaviour-neutral relocations. Phase A adds the generalised `JobTracker` (Active **and** Queued lists, `jobs:changed`, `/api/jobs`) and the `JobEngine` (one communal instance, a bounded worker pool per `Category`) as new, additive code in `services`. **Nothing existing is rewired or deleted here beyond the package moves** — every commit builds green. The behaviour-changing cutover (delete `block.AIPort`, declarative processors, `EditorService` document entries, retire the old tracker writers, fold in close-all, frontend) is **Plan 2 (Phase B/C)**, written after this lands.
 
 **Tech Stack:** Go. Tests: `go test ./...`; concurrency tests run under `-race` (`go test ./sieve/services/... -race`). Compile check: `go build ./...` (no npm step). Module path root is `sieve` (packages import as `sieve/sieve/<pkg>`).
 
@@ -13,7 +13,7 @@
 - **No loose/free functions** — behaviour belongs as a method on the type that owns its data. (CLAUDE.md Design Principles.)
 - **`Category` is opaque data to the engine** — no `switch category`, no central enum. Category constants are owned by the *submitting* subsystem, not defined in `services`.
 - **Worker pools size the *consumer* side** — `worker_pools` values are worker counts, never queue depth. Queues are effectively unbounded (a fixed large channel buffer is the runaway backstop).
-- **Additive only** — do not modify `block.AIPort`, processors, `EditorService.RunJob`, `ai_handler`, or the frontend in this plan. Keep existing `JobTracker.Start/End/Active/ServeActiveJobs` working.
+- **Additive / behaviour-neutral only** — do not change the *logic* of `block.AIPort`, processors, `EditorService.RunJob`, `ai_handler`, or the frontend. Keep existing `JobTracker.Start/End/Active/ServeActiveJobs` working. (Task 2 *relocates* `EditorService`'s package — a move, not a logic change; its method bodies are untouched apart from qualifying `services.`-package types.)
 - **Commit messages:** no `Co-Authored-By` trailer (project convention).
 - **Tests live with the type they exercise** — white-box tests go in the type's own package.
 
@@ -21,7 +21,7 @@
 
 - Deleting `block.AIPort` / retyping `BlockServices.AI` / `BlockingAIPort`.
 - `block.ProcessorJob`, `DescribeJob`, `services.JobRunner`, the `Apply→finish` wrap.
-- `EditorService` document-lifecycle entries (`CloseDocument`/`CloseAll`/`FileDocument`/…).
+- `EditorService` document-lifecycle entries (`CloseDocument`/`CloseAll`/`FileDocument`/…). *(The `sieve/editor` package move itself IS in scope — Task 2 — but it is a pure relocation; no new entries, no `AIService` calls added here.)*
 - Retiring `editor_service.go`'s `jobs.Start/End` or `ai_handler.go`'s `emitJob*`.
 - `worker_pools` settings field + root wiring of the engine (engine is constructed only in tests here).
 - Frontend status-bar lists / event rename consumption / removing `/api/ai/active-jobs`.
@@ -94,7 +94,75 @@ import edge (verified via go list -deps); neither knows the other."
 
 ---
 
-## Task 2: Generalise `JobTracker` (Active + Queued, `jobs:changed`, `/api/jobs`) — additive
+## Task 2: Lift `EditorService` into a new `sieve/editor` package (Phase 0 — pre-empts the `ai ↔ services` cycle)
+
+> **Why now:** `EditorService` lives in `services`, and `ai` already imports `services`. In Phase B the editor will instigate AI document jobs (Smart File etc.) by calling `AIService` — which from `services` would close an `ai ↔ services` cycle. Moving the *orchestrator* up to a package above `ai` resolves that structurally. This task is a **pure relocation** — no new methods, no `AIService` call, no behaviour change. Verified safe: no peer in `services` (non-test) references `EditorService`, and nothing in `ai`/`block` references it (the `block` matches are comments only — `block` cannot import `services`).
+
+**Files:**
+- Create dir + move: `sieve/services/editor_service.go` → `sieve/editor/editor_service.go` (package `services` → `editor`)
+- Move (all `EditorService` tests + their sole helper): `sieve/services/editor_service_test.go`, `editor_service_action_test.go`, `editor_service_datalossguard_test.go`, `editor_service_promote_test.go`, `editor_blockop_test.go`, `block_identity_test.go`, `testhelpers_test.go` → `sieve/editor/` (package `services` → `editor`)
+- Modify (retype `services.EditorService` → `editor.EditorService` + imports): `sieve/service_provider.go`, `handlers.go`, `app.go`, `requesthandlers/editor_handler.go`, `requesthandlers/meta_handler.go`, `requesthandlers/ws_handler.go`
+
+**Interfaces:**
+- Consumes: `services.DocumentService`, `services.JobTracker`, `block.*` (unchanged — now reached by qualified import from the new package).
+- Produces: `editor.EditorService` with the **same exported API** it has today (`NewEditorService(...)`, `SetJobs(*services.JobTracker)`, `RunJob`, save/open methods). Only its package path changes (`services.EditorService` → `editor.EditorService`).
+
+- [ ] **Step 1: Create the package and move the implementation file**
+
+Run: `mkdir -p sieve/editor && git mv sieve/services/editor_service.go sieve/editor/editor_service.go`
+Change its `package services` clause to `package editor`. Add `"sieve/sieve/services"` to its import block. Then qualify every `services`-package type it references — at minimum the struct fields and constructor: `*DocumentService` → `*services.DocumentService`, `*JobTracker` → `*services.JobTracker`, and any bare `JobInfo` → `services.JobInfo`. Leave `block.*`, `fencedblock.*`, and `logger.*` imports/usages as-is (those packages are unchanged and sit below `editor`).
+
+- [ ] **Step 2: Let the compiler enumerate any remaining unqualified `services` references**
+
+Run: `go build ./sieve/editor/ 2>&1 | head -40`
+Expected: a list of `undefined: <Name>` errors for any `services` symbol not yet qualified. For each, prefix it with `services.`. Repeat until `go build ./sieve/editor/` reports only the *test* failures (production file compiles). Do **not** export anything new in `services` — `EditorService` only consumes the already-exported `DocumentService`/`JobTracker`/`JobInfo` APIs; if you hit an *unexported* `services` symbol, stop and report it (it means a hidden coupling the move must address deliberately).
+
+- [ ] **Step 3: Move the tests + helper**
+
+Run:
+```bash
+git mv sieve/services/editor_service_test.go sieve/services/editor_service_action_test.go \
+       sieve/services/editor_service_datalossguard_test.go sieve/services/editor_service_promote_test.go \
+       sieve/services/editor_blockop_test.go sieve/services/block_identity_test.go \
+       sieve/services/testhelpers_test.go sieve/editor/
+```
+Change each moved file's `package services` clause to `package editor`. These are white-box `EditorService` tests, so they keep white-box access to its now-`editor` unexported methods. Qualify any `services`-package construction they do (e.g. `NewDocumentService` → `services.NewDocumentService`, `NewJobTracker` → `services.NewJobTracker`, `NewStateService` → `services.NewStateService`). `resetRegistry()` (from `testhelpers_test.go`) touches the `block` processor registry only, so it moves unchanged. (`resetRegistry` is used solely by these editor tests — confirmed — so removing it from `services` breaks no remaining `services` test.)
+
+- [ ] **Step 4: Retype the production referrers**
+
+In each of `sieve/service_provider.go`, `handlers.go`, `app.go`, `requesthandlers/editor_handler.go`, `requesthandlers/meta_handler.go`, `requesthandlers/ws_handler.go`: add `"sieve/sieve/editor"` to imports and change `services.EditorService` → `editor.EditorService` (e.g. the `Editor *services.EditorService` field in the ServiceProvider becomes `Editor *editor.EditorService`). `SetJobs` still takes `*services.JobTracker`, so the `sp.Editor.SetJobs(jobTracker)` wiring is unchanged apart from the field's type. Where a file no longer uses any other `services` symbol, drop the now-unused `services` import (the compiler will flag it).
+
+- [ ] **Step 5: Build + full test suite**
+
+Run: `go build ./... && go vet ./sieve/editor/...`
+Expected: no errors.
+Run: `go test ./sieve/editor/... ./sieve/services/... ./requesthandlers/...`
+Expected: PASS — the moved tests run as `package editor`; the trimmed `services` suite still passes (it never used `resetRegistry` or `EditorService`).
+
+- [ ] **Step 6: Confirm the layering is correct and acyclic**
+
+Run: `go list -deps sieve/sieve/editor | grep -xE "sieve/sieve/(services|block|ai)"`
+Expected: lists `sieve/sieve/services` and `sieve/sieve/block` (editor imports both). It should **not** list `sieve/sieve/ai` yet — the editor doesn't call AI until Phase B. (If `ai` appears, something pulled an AI call into the move; revert it — this task is relocation only.)
+Run: `go list -deps sieve/sieve/services | grep -x sieve/sieve/editor && echo "CYCLE — services imports editor" || echo "OK: services does not import editor"`
+Expected: `OK: services does not import editor`.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add sieve/editor/ sieve/services/ sieve/service_provider.go handlers.go app.go requesthandlers/
+git commit -m "refactor(editor): lift EditorService into sieve/editor package
+
+Pure relocation of EditorService (+ its white-box tests) from
+services into a new top-level sieve/editor package above ai. No
+behaviour change. This pre-empts the ai<->services cycle that would
+otherwise form in Phase B when the editor instigates AI document
+jobs: the orchestrator now sits above the things it orchestrates.
+The general job framework stays low in services."
+```
+
+---
+
+## Task 3: Generalise `JobTracker` (Active + Queued, `jobs:changed`, `/api/jobs`) — additive
 
 **Files:**
 - Modify: `sieve/services/job_tracker.go`
@@ -102,7 +170,7 @@ import edge (verified via go list -deps); neither knows the other."
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces (new, used by Task 3 and Plan 2):
+- Produces (new, used by Task 4 and Plan 2):
   - `JobInfo` gains `State string \`json:"state,omitempty"\`` and `Category string \`json:"category,omitempty"\`` (keeps existing `JobID`, `Label`, `DocID`, `SpinTab`).
   - `func (t *JobTracker) Enqueue(info JobInfo)` — records `State:"queued"`, broadcasts `jobs:changed`.
   - `func (t *JobTracker) Activate(jobID string)` — sets `State:"active"`, broadcasts `jobs:changed`.
@@ -346,14 +414,14 @@ callers; engine becomes the sole new-method writer in a later task."
 
 ---
 
-## Task 3: `JobDescriptor` + communal `JobEngine` (per-`Category` bounded worker pools)
+## Task 4: `JobDescriptor` + communal `JobEngine` (per-`Category` bounded worker pools)
 
 **Files:**
 - Create: `sieve/services/job_engine.go`
 - Test: `sieve/services/job_engine_test.go`
 
 **Interfaces:**
-- Consumes (from Task 2): `*JobTracker`, `JobInfo`, `Enqueue/Activate/Finish`.
+- Consumes (from Task 3): `*JobTracker`, `JobInfo`, `Enqueue/Activate/Finish`.
 - Produces (used by Plan 2):
   - `type JobDescriptor struct { Category string; Meta JobInfo; Work func() (any, error); OnFinished func(result any); OnError func(err error) }`
   - `func NewJobEngine(sizes map[string]int, defaultN int, tracker *JobTracker) *JobEngine`
@@ -656,12 +724,13 @@ no enum. Not yet wired to producers (Plan 2)."
 
 **Spec coverage (this plan = Phase 0 + Phase A only):**
 - `sieve/lang` extraction killing `ai → block` → Task 1 (with an explicit `go list -deps` assertion).
-- Generalised `JobTracker` (Active+Queued, `jobs:changed`, `/api/jobs` via `ServeJobs`) → Task 2.
-- Communal `JobEngine`, per-`Category` bounded worker pools, opaque-`Category` routing, panic isolation, tracker drive → Task 3.
+- `EditorService` lifted to `sieve/editor` above `ai` (pre-empts the `ai ↔ services` cycle) → Task 2 (pure relocation, with `go list -deps` acyclicity assertions).
+- Generalised `JobTracker` (Active+Queued, `jobs:changed`, `/api/jobs` via `ServeJobs`) → Task 3.
+- Communal `JobEngine`, per-`Category` bounded worker pools, opaque-`Category` routing, panic isolation, tracker drive → Task 4.
 - Everything else in the spec (port deletion, declarative processors, `JobRunner`, `EditorService` document entries, tracker-writer retirement, close-all fold, settings `worker_pools`, frontend, name-rename consumption) is **explicitly Plan 2** — listed in *Out of Scope*. Each of these depends on the foundation built here and on signatures that emerge from it.
 
 **Placeholder scan:** none — every code step shows complete code; every run step shows the exact command and expected result.
 
-**Type consistency:** `JobInfo` fields (`State`, `Category`) introduced in Task 2 are consumed unchanged in Task 3 (`meta.Category = d.Category`; `Enqueue/Activate/Finish` by `JobID`). `JobDescriptor`/`NewJobEngine`/`Submit` signatures in Task 3's Interfaces match the test usage and implementation. `lang` symbol names in Task 1 are kept identical to their `block` originals (no rename), so the consumer edits are pure requalification.
+**Type consistency:** `JobInfo` fields (`State`, `Category`) introduced in Task 3 are consumed unchanged in Task 4 (`meta.Category = d.Category`; `Enqueue/Activate/Finish` by `JobID`). `JobDescriptor`/`NewJobEngine`/`Submit` signatures in Task 4's Interfaces match the test usage and implementation. `lang` symbol names in Task 1 are kept identical to their `block` originals (no rename), so the consumer edits are pure requalification. Task 2 changes only `EditorService`'s package path (`services.EditorService` → `editor.EditorService`), not its exported API, so the engine/tracker tasks are unaffected by it.
 
 **Note on naming:** `lang.IsConfidentLanguage` stutters slightly in the new package; a de-stutter to `lang.IsConfident` is deliberately deferred (it would add rename churn across `code_processor.go` for no functional gain). Plan 2 can fold that rename in when it rewrites the code processor's job to `DescribeJob`.
