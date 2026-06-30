@@ -148,13 +148,22 @@ func (h *NoteHandler) handleNoteNew(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *NoteHandler) handleTabsCloseAll(w http.ResponseWriter, r *http.Request) {
+	session := h.ServiceProvider.State.LoadSession()
+
+	// Smart Close background evaluation for every open doc — the same centralised
+	// path as a single tab close. Capture the ids before the tabs are wiped below.
+	closing := make([]string, 0, len(session.Tabs))
+	for _, t := range session.Tabs {
+		closing = append(closing, t.ID)
+	}
+	h.ServiceProvider.AI.EvaluateOnClose(closing...)
+
 	newNote, err := h.ServiceProvider.Documents.New()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	session := h.ServiceProvider.State.LoadSession()
 	session.Tabs = []domain.Tab{{
 		ID:          newNote.UUID(),
 		Mode:        "wysiwyg",
@@ -199,15 +208,8 @@ func (h *NoteHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 		session.ActiveIdx = 0
 	}
 
-	// Smart Close background evaluation
-	settings := h.ServiceProvider.State.LoadSettings()
-	if settings.Tier() == domain.TierSmart {
-		if _, err := h.ServiceProvider.Documents.LoadByUUID(id); err == nil {
-			go func(id string) {
-				_, _ = h.ServiceProvider.AI.EvaluateAndFileDoc(id, true, true)
-			}(id)
-		}
-	}
+	// Smart Close background evaluation (centralised so close-all shares it).
+	h.ServiceProvider.AI.EvaluateOnClose(id)
 
 	if len(session.Tabs) == 0 {
 		newNote, _ := h.ServiceProvider.Documents.New()
