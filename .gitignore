@@ -47,8 +47,8 @@ Thumbs.db
 *.log
 Screenshot*.png
 
-./artefacts
-./debug screenshots
+artefacts
+debug screenshots
 
 #-- Syncthing
 **/*.tmp
