@@ -160,14 +160,24 @@ import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-b
       render(node.attrs, node.textContent)
 
       var updateTimer = null
+      // lastSource is the text we last OBSERVED. Syntax highlighting rewrites the
+      // inner <span> tree whenever the language attr changes (e.g. the AI refines
+      // the language), which fires this observer with byte-identical text. Guarding
+      // on a real text change skips that decoration-only re-render — otherwise we
+      // emit a phantom `source` block-update for content that did not change, which
+      // is what let a stale heuristic clobber the AI's language. Updated ONLY here
+      // (never in update()) so genuine user edits still dispatch.
+      var lastSource = node.textContent
       var observer = new MutationObserver(function() {
         var text = contentDOM.textContent
+        if (text === lastSource) return   // decoration-only re-render — not an edit
+        lastSource = text
         updateGutter(text)
         clearTimeout(updateTimer)
         updateTimer = setTimeout(function() {
           if (currentAttrs.id) {
             document.dispatchEvent(new CustomEvent('sieve:block-update', {
-              detail: { id: currentAttrs.id, kind: 'code', attrs: { source: text } }
+              detail: { id: currentAttrs.id, kind: 'code', attrs: { source: lastSource } }
             }))
           }
         }, 200)
