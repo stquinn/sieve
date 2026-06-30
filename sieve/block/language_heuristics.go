@@ -84,7 +84,11 @@ var tier1 = []struct {
 	// Kubernetes YAML (unambiguous field combo)
 	{regexp.MustCompile(`(?m)^apiVersion:\s*\S+`), "yaml"},
 	// Go
-	{regexp.MustCompile(`(?m)^package\s+\w+`), "go"},
+	// A Go package clause is a single bare identifier on its own line ("package
+	// main"). Anchoring to end-of-line keeps this from matching Java/Kotlin's
+	// dotted, semicolon-terminated "package com.example;" — which, sitting above
+	// the Java rules, used to steal every package-led Java file as Go.
+	{regexp.MustCompile(`(?m)^package\s+\w+\s*(?://.*)?$`), "go"},
 	{regexp.MustCompile(`(?m)^type\s+\w+\s+struct\s*\{`), "go"},
 	{regexp.MustCompile(`(?m)^type\s+\w+\s+interface\s*\{`), "go"},
 	{regexp.MustCompile("(?m)`(?:json|yaml|db|bson|form|validate):\"[^\"]*\"`"), "go"},
@@ -179,6 +183,20 @@ func LooksLikeCode(source string) bool {
 
 	// indented > 40% of lines  →  indented*10 > len(lines)*4
 	return braceCount > 2 || semicolonCount > 2 || anyWeakSignal || indented*10 > len(lines)*4
+}
+
+// IsConfidentLanguage reports whether lang names a specific programming language
+// rather than a non-answer. "", "unknown" and "text" are non-answers: a detector
+// returning one of them has DECLINED to identify the content. A non-answer must
+// never overwrite a confident language (whoever produced it), and must never be
+// treated as sticky against re-detection — so a replay after the user adds content
+// is free to take the newly detected language.
+func IsConfidentLanguage(lang string) bool {
+	switch strings.ToLower(strings.TrimSpace(lang)) {
+	case "", "unknown", "text":
+		return false
+	}
+	return true
 }
 
 // DetectByHeuristics returns the detected language and true if confident,

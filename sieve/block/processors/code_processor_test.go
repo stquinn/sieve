@@ -275,6 +275,65 @@ func TestCodeBlockProcessor_RunJob_ai(t *testing.T) {
 	}
 }
 
+// When the AI declines ("text") but the heuristic already found a confident
+// language while the user was typing, RunJob must KEEP the heuristic's language
+// rather than overwrite it with the AI's non-answer.
+func TestCodeBlockProcessor_RunJob_aiNonAnswerKeepsHeuristic(t *testing.T) {
+	ds, fs := newTestDocumentService(t)
+	assets := services.NewAssetService(fs)
+	state, err := services.NewStateService(fs)
+	if err != nil {
+		t.Fatalf("NewStateService: %v", err)
+	}
+	prompts, err := ai.NewPromptService(fs)
+	if err != nil {
+		t.Fatalf("NewPromptService: %v", err)
+	}
+
+	// Mock CLI that declines to identify the language.
+	tmpDir := t.TempDir()
+	cliPath := filepath.Join(tmpDir, "mock_cli.sh")
+	if err := os.WriteFile(cliPath, []byte("#!/bin/sh\necho \"text\"\n"), 0755); err != nil {
+		t.Fatalf("WriteFile mock CLI: %v", err)
+	}
+
+	settings := domain.DefaultSettings()
+	settings.CLI = cliPath
+	if err := state.SaveSettings(settings); err != nil {
+		t.Fatalf("SaveSettings: %v", err)
+	}
+	_, _ = fs.CreateText(domain.Prompts, "refine.txt", []byte("Refine this: {content}"))
+
+	aiSvc := ai.NewAIService(state, prompts, ds, tmpDir)
+	p := NewCodeBlockProcessor(block.BlockServices{AI: aiSvc, Documents: ds, Assets: assets})
+
+	blk := &block.SieveBlock{
+		ID:   "cod-9999",
+		Kind: "code",
+		Attrs: map[string]interface{}{
+			"id":              "cod-9999",
+			"status":          block.BlockStatusPending,
+			"source":          "def greet(self):\n    return self.name",
+			"language":        "python", // confident heuristic, found while typing
+			"detectionMethod": "heuristic",
+		},
+	}
+
+	if err := p.RunJob(block.JobContext{Ctx: context.Background(), UUID: "", Block: blk}); err != nil {
+		t.Fatalf("RunJob failed: %v", err)
+	}
+
+	if blk.Attrs["language"] != "python" {
+		t.Errorf("AI non-answer clobbered the heuristic: expected python, got %v", blk.Attrs["language"])
+	}
+	if blk.Attrs["detectionMethod"] != "heuristic" {
+		t.Errorf("expected detectionMethod=heuristic (untouched), got %v", blk.Attrs["detectionMethod"])
+	}
+	if blk.Attrs["status"] != block.BlockStatusComplete {
+		t.Errorf("expected status COMPLETE, got %v", blk.Attrs["status"])
+	}
+}
+
 func TestCodeBlockProcessor_RunJob_aiFallback(t *testing.T) {
 	ds, fs := newTestDocumentService(t)
 	assets := services.NewAssetService(fs)
@@ -376,6 +435,67 @@ func TestOnChange_alwaysRunsHeuristicsWhenLanguageAlreadySet(t *testing.T) {
 	}
 	if lang, _ := blk.Attrs["language"].(string); lang != "go" {
 		t.Errorf("expected language=go after heuristics, got %q", lang)
+	}
+}
+
+// An AI-authored language must survive a later source update even when the
+// heuristic disagrees. The AI refine step exists precisely because the heuristic
+// is unreliable (it reads a Java `package` line as Go). When the AI corrects the
+// language to java/ai, a spurious source `block-update` (fired by the syntax-
+// highlight re-render) must NOT let OnChange revert it to the heuristic's go.
+func TestOnChange_doesNotClobberAIAuthoredLanguage(t *testing.T) {
+	proc := NewCodeBlockProcessor(block.BlockServices{})
+
+	// Java source the Go heuristic mis-detects as "go" (the `package` line).
+	java := "package com.example.demo;\n\nimport java.util.List;\n\npublic class Greeter {\n\tprivate final String name;\n}"
+	blk := &block.SieveBlock{
+		ID:   "cod-0007",
+		Kind: "code",
+		Attrs: map[string]interface{}{
+			"id":              "cod-0007",
+			"language":        "java",
+			"detectionMethod": "ai",
+			"status":          block.BlockStatusComplete,
+			"source":          java,
+		},
+	}
+
+	proc.OnChange(blk)
+
+	if lang, _ := blk.Attrs["language"].(string); lang != "java" {
+		t.Errorf("AI-authored language clobbered by heuristic: expected java, got %q", lang)
+	}
+	if method, _ := blk.Attrs["detectionMethod"].(string); method != "ai" {
+		t.Errorf("detectionMethod clobbered: expected ai, got %q", method)
+	}
+}
+
+// A NON-ANSWER AI verdict ("text") is not sticky: when the user adds content and
+// the heuristic now finds a real language, OnChange must take it. This is the
+// mirror of the clobber guard — the guard protects a CONFIDENT AI language only.
+func TestOnChange_replacesNonAnswerAIWithConfidentHeuristic(t *testing.T) {
+	proc := NewCodeBlockProcessor(block.BlockServices{})
+
+	blk := &block.SieveBlock{
+		ID:   "cod-0008",
+		Kind: "code",
+		Attrs: map[string]interface{}{
+			"id":              "cod-0008",
+			"language":        "text", // AI previously declined to identify
+			"detectionMethod": "ai",
+			"status":          block.BlockStatusComplete,
+			// user has now pasted enough Go for the heuristic to be confident
+			"source": strings.Repeat("fmt.Println(\"hello\")\nif err != nil { return err }\n", 5),
+		},
+	}
+
+	proc.OnChange(blk)
+
+	if lang, _ := blk.Attrs["language"].(string); lang != "go" {
+		t.Errorf("non-answer AI verdict should yield to a confident heuristic: expected go, got %q", lang)
+	}
+	if method, _ := blk.Attrs["detectionMethod"].(string); method != "heuristic" {
+		t.Errorf("expected detectionMethod=heuristic, got %q", method)
 	}
 }
 

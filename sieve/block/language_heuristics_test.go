@@ -40,6 +40,18 @@ func TestDetectByHeuristics_java_tier1(t *testing.T) {
 	}
 }
 
+// A package-led Java class must NOT be claimed as Go. A Go package clause is a
+// single bare identifier ("package main"); Java's is dotted with a semicolon
+// ("package com.example;"). The old greedy `^package\s+\w+` matched both and,
+// sitting above the Java rules, stole every package-led Java/Kotlin file as Go.
+func TestDetectByHeuristics_javaWithPackage_notGo(t *testing.T) {
+	java := "package com.example.demo;\n\nimport java.util.List;\nimport lombok.Getter;\n\n@Getter\npublic class Greeter {\n\tprivate final String name;\n}"
+	lang, ok := DetectByHeuristics(java, "")
+	if !ok || lang != "java" {
+		t.Errorf("expected java/true for package-led Java, got %q/%v", lang, ok)
+	}
+}
+
 func TestDetectByHeuristics_python(t *testing.T) {
 	lang, ok := DetectByHeuristics("def greet(self):\n    return self.name", "")
 	if !ok || lang != "python" {

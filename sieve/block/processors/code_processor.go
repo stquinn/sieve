@@ -166,6 +166,17 @@ func (p *CodeBlockProcessor) OnChange(blk *block.SieveBlock) {
 	hint, _ := blk.Attrs["hint"].(string)
 	if detected, ok := block.DetectByHeuristics(source, hint); ok {
 		lang, _ := blk.Attrs["language"].(string)
+		method, _ := blk.Attrs["detectionMethod"].(string)
+		// The AI refine step is the authority that exists precisely because the
+		// heuristic is unreliable (it reads a Java `package` line as Go). Once the
+		// AI has settled a CONFIDENT language, never let a heuristic re-detection
+		// revert it — the highlight re-render fires a spurious source update after
+		// the job completes, and clobbering here would silently undo the correction.
+		// A non-answer AI verdict ("text") is NOT sticky: if the user adds content
+		// and the heuristic now finds a real language, we take it.
+		if method == "ai" && block.IsConfidentLanguage(lang) {
+			return
+		}
 		if detected != lang {
 			blk.Attrs["language"] = detected
 			blk.Attrs["detectionMethod"] = "heuristic"
@@ -226,9 +237,14 @@ func (p *CodeBlockProcessor) RunJob(jctx block.JobContext) error {
 		blk.Attrs["status"] = block.BlockStatusError
 		return fmt.Errorf("AI detection failed: %w", err)
 	}
-	if lang != "" {
-		blk.Attrs["language"] = lang
-		blk.Attrs["detectionMethod"] = "ai"
+	// Take the AI's answer when it is confident, OR when we have no confident
+	// language yet. A non-answer from the AI ("text") must not clobber a real
+	// language the heuristic already found while the user was typing.
+	if block.IsConfidentLanguage(lang) || !block.IsConfidentLanguage(currentLang) {
+		if lang != "" {
+			blk.Attrs["language"] = lang
+			blk.Attrs["detectionMethod"] = "ai"
+		}
 	}
 	blk.Attrs["status"] = block.BlockStatusComplete
 	delete(blk.Attrs, "hint")
