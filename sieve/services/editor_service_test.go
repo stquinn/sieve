@@ -59,6 +59,10 @@ func TestHandleBlockOp_structuredCreateInsertsAtIndex(t *testing.T) {
 	if err := es.Open(uuid, nil); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+	// The code-block create dispatches an async job; wait for it to finish before the
+	// test returns, else its buffer write races t.TempDir's RemoveAll cleanup
+	// ("directory not empty"). Matches the sibling CreateBlock/HandlePaste tests.
+	defer waitJobs(t, es, uuid)
 
 	// Insert a new code block at index 1 — between co-1 and co-2, NOT appended.
 	if err := es.HandleBlockOp(uuid, block.BlockOp{
