@@ -36,7 +36,11 @@ const CategoryAI = "ai"           // AI (claude CLI) work
 const CategoryDefault = "default" // non-AI async work (network/parse/io) — the default worker pool, DECLARED explicitly (never rely on the engine's ""→default fallback)
 
 // package block — BlockProcessor interface (processor_registry.go), replacing RunJob+JobLabel:
-//   DescribeJob(jctx JobContext) ProcessorJob
+//   DescribeJob(jctx JobContext) *ProcessorJob   // nil = NO async job — never submitted to the engine
+// A non-nil *ProcessorJob is always real async work and MUST have a non-empty Label
+// (submitBlockJob panics on empty Label). A block with no async work is born COMPLETE:
+// its InitAttrs sets status=Complete using the SAME predicate DescribeJob uses to return nil
+// (so it is never dispatched, never hangs in pending). No runtime "settle", no zero-value sentinel.
 
 // package editor — EditorService gains a PRIVATE helper (NOT a separate type):
 //   func (es *EditorService) submitBlockJob(job block.ProcessorJob, meta services.JobInfo,
@@ -406,7 +410,7 @@ any block path."
 
 **Interfaces:**
 - Consumes: `block.ProcessorJob`, `block.CategoryAI` (B2), `EditorService.submitBlockJob` (B2). Processors keep reaching AI via `p.svc.AI` (no new dependency in the processor structs).
-- Produces: `BlockProcessor.DescribeJob(jctx JobContext) block.ProcessorJob`; `BlockServices.AI` retyped from the `AIPort` interface to the concrete `*ai.AIService`. This makes `block` core import `ai`, which is CORRECT under the governing principle below — not a compromise.
+- Produces: `BlockProcessor.DescribeJob(jctx JobContext) *block.ProcessorJob` (nil = no job); `BlockServices.AI` retyped from the `AIPort` interface to the concrete `*ai.AIService`. This makes `block` core import `ai`, which is CORRECT under the governing principle below — not a compromise.
 
 > **DECISION (Option B) & the governing principle.** The invariant that matters is **directional: a business service must never depend on `block`.** `ai` is a business service in a specialty package; it must stay blind to `block` (`ai` imports no `block`, verified). A `block` package depending on the `ai` business service is an *acceptable* direction — so `AIPort` was dependency-inverting an edge that never needed inverting. Therefore we DELETE `AIPort` and let `block.BlockServices.AI` hold the concrete `*ai.AIService` directly; `block core → ai` is fine, `ai → block` remains forbidden. Processors keep reaching AI through the existing `p.svc.AI` (only the field's *type* changes, interface → concrete) — **no processor constructor/field changes, no test-constructor churn.** A reviewer must NOT "restore" `AIPort`, push the AI handle into processor constructors, or flag `block core → ai` as a layering violation — it is the intended shape.
 
@@ -417,9 +421,9 @@ any block path."
 In `sieve/block/processor_registry.go`, replace the interface methods `RunJob(jctx JobContext) error` (`:265`) and `JobLabel(block *SieveBlock) string` (`:267`) with:
 
 ```go
-	// DescribeJob returns the async work (if any) this block needs. A zero
-	// ProcessorJob (Category=="" && Work==nil && Apply==nil) means no job.
-	DescribeJob(jctx JobContext) ProcessorJob
+	// DescribeJob returns the async work this block needs, or nil if there is
+	// none (nil is never submitted). A non-nil job MUST have a non-empty Label.
+	DescribeJob(jctx JobContext) *ProcessorJob
 ```
 
 - [ ] **Step 2: Convert each NON-AI processor**
