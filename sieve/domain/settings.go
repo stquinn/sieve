@@ -35,6 +35,7 @@ type Settings struct {
 	Theme              string            `json:"theme,omitempty"`
 	MaxHistoryVersions int               `json:"max_history_versions,omitempty"`
 	CustomLogParsers   []CustomLogParser `json:"custom_log_parsers,omitempty"`
+	WorkerPools        map[string]int    `json:"worker_pools,omitempty"`
 }
 
 // Tier returns the capability tier based on whether the configured CLI is
@@ -115,6 +116,9 @@ func ParseSettings(data []byte) Settings {
 	if len(loaded.CustomLogParsers) > 0 {
 		s.CustomLogParsers = loaded.CustomLogParsers
 	}
+	if len(loaded.WorkerPools) > 0 {
+		s.WorkerPools = loaded.WorkerPools
+	}
 
 	if pretty, err := json.MarshalIndent(s, "", "  "); err == nil {
 		logger.Debug("ParseSettings: loaded", "settings", string(pretty))
@@ -136,6 +140,7 @@ func DefaultSettings() Settings {
 		AutosaveDebounce:   30,
 		Theme:              "sublime",
 		MaxHistoryVersions: 200,
+		WorkerPools:        map[string]int{}, // empty ⇒ every category uses the engine's defaultN
 	}
 }
 
