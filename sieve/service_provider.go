@@ -21,6 +21,7 @@ type ServiceProvider struct {
 	AI          *ai.AIService
 	Editor      *editor.EditorService
 	Jobs        *services.JobTracker
+	Engine      *services.JobEngine
 	LinkPreview *services.LinkPreviewService
 }
 
