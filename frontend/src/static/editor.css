@@ -2095,6 +2095,48 @@ pre.tiptap-code-block code {
   to { transform: rotate(360deg); }
 }
 
+/* Job status area: an Active cell (spinner + task, +N more) and a Queued cell,
+   using the same cell/divider language as the right-group status-bar cells. */
+.status-bar__jobs {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  overflow: hidden;
+}
+.status-bar__job-active {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.status-bar__job-active .status-bar__task {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.status-bar__job-more {
+  color: var(--theme-muted);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.status-bar__job-queued {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+  color: var(--theme-textDim);
+  font-variant-numeric: tabular-nums;
+}
+/* Divider only when a Queued cell follows an Active cell — mirrors the right-group
+   cell dividers (same token, padding and fixed height so it never collapses). */
+.status-bar__job-active + .status-bar__job-queued {
+  border-left: 1px solid var(--theme-border2);
+  padding-left: 0.75rem;
+  height: 16px;
+  box-sizing: border-box;
+}
+
 /* ── Pending-close blocking dialog ──────────────────────────────────── */
 
 .pending-close-backdrop {

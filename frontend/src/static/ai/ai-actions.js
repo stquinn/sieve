@@ -17,36 +17,33 @@
 
     var frag = document.createDocumentFragment();
 
-    // ── Active section ────────────────────────────────────────────────────────
+    // ── Active cell: spinner + first label (+N more) ──────────────────────────
     if (ids.length > 0) {
-      var firstLabel = activeJobs[ids[0]].label;
-      var activeSpan = document.createElement('span');
-      activeSpan.className = 'flex items-center gap-1.5';
+      var active = document.createElement('span');
+      active.className = 'status-bar__job-active';
       var spinner = document.createElement('span');
-      spinner.className = 'w-[10px] h-[10px] shrink-0 rounded-full border-[1.5px] border-solid border-tn-cyan border-t-transparent animate-spin';
-      var activeText = document.createElement('span');
-      var extra = ids.length > 1 ? ' +' + (ids.length - 1) + ' more' : '';
-      activeText.textContent = firstLabel + extra;
-      activeSpan.appendChild(spinner);
-      activeSpan.appendChild(activeText);
-      frag.appendChild(activeSpan);
+      spinner.className = 'status-bar__spinner';
+      var task = document.createElement('span');
+      task.className = 'status-bar__task';
+      task.textContent = activeJobs[ids[0]].label || 'Working…';
+      active.appendChild(spinner);
+      active.appendChild(task);
+      if (ids.length > 1) {
+        var more = document.createElement('span');
+        more.className = 'status-bar__job-more';
+        more.textContent = '+' + (ids.length - 1) + ' more';
+        active.appendChild(more);
+      }
+      frag.appendChild(active);
     }
 
-    // ── Queued section ────────────────────────────────────────────────────────
+    // ── Queued cell: waiting count (divider vs the active cell is CSS) ─────────
     if (queuedJobs.length > 0) {
-      var queuedSpan = document.createElement('span');
-      queuedSpan.className = 'flex items-center gap-1';
-      queuedSpan.style.opacity = '0.6';
-      var sep = document.createElement('span');
-      sep.textContent = ids.length > 0 ? '·' : '';
-      sep.style.marginRight = '2px';
-      var qText = document.createElement('span');
-      qText.textContent = queuedJobs.length === 1
-        ? (queuedJobs[0].label || '1 queued')
-        : queuedJobs.length + ' queued';
-      if (ids.length > 0) queuedSpan.appendChild(sep);
-      queuedSpan.appendChild(qText);
-      frag.appendChild(queuedSpan);
+      var queued = document.createElement('span');
+      queued.className = 'status-bar__job-queued';
+      queued.textContent = queuedJobs.length + ' queued';
+      queued.title = queuedJobs.map(function (j) { return j.label || 'queued'; }).join('\n');
+      frag.appendChild(queued);
     }
 
     sbLeft.innerHTML = '';
