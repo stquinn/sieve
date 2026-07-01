@@ -21,6 +21,7 @@ type EditorService struct {
 	codec     *block.DocumentCodec
 	services  block.BlockServices
 	jobs      *services.JobTracker // not a processor concern; EditorService tracks job spinners directly
+	engine    *services.JobEngine
 	debounce  time.Duration
 	mu        sync.RWMutex
 	shadows   map[string]*block.ShadowDocument
@@ -415,6 +416,30 @@ func (es *EditorService) CloseAll() {
 // Separate from BlockServices (a processor bundle) because no processor needs it.
 func (es *EditorService) SetJobs(j *services.JobTracker) {
 	es.jobs = j
+}
+
+// SetEngine injects the communal job engine. Post-construction (like SetJobs) so
+// the root can build it after the hub-wired JobTracker exists, and so the ~25
+// test constructors need no change.
+func (es *EditorService) SetEngine(e *services.JobEngine) { es.engine = e }
+
+// submitBlockJob turns a block ProcessorJob into a JobDescriptor and submits it
+// to the communal engine, guaranteeing Apply-before-finish and finish-once. The
+// wrap lives here because Apply and onDone (the attr-diff/shadow merge) operate
+// on EditorService-owned data. onDone is the caller's finish closure.
+func (es *EditorService) submitBlockJob(job block.ProcessorJob, meta services.JobInfo, blk *block.SieveBlock, onDone func(err error)) {
+	es.engine.Submit(services.JobDescriptor{
+		Category: job.Category,
+		Meta:     meta,
+		Work:     job.Work,
+		OnFinished: func(result any) {
+			if job.Apply != nil {
+				job.Apply(result, blk)
+			}
+			onDone(nil)
+		},
+		OnError: func(err error) { onDone(err) },
+	})
 }
 
 func (es *EditorService) SetServices(svc block.BlockServices) {
