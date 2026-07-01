@@ -464,10 +464,10 @@ func (es *EditorService) closeFilingAllowed() bool {
 
 // submitDocFiling builds and submits one document filing JobDescriptor. label
 // must be non-empty. Filing failure is non-fatal — it is logged, never surfaced.
-func (es *EditorService) submitDocFiling(id, jobPrefix, label string, fileAfter, allowDiscard bool) {
+func (es *EditorService) submitDocFiling(id, jobPrefix, label string, fileAfter, allowDiscard, spinTab bool) {
 	es.engine.Submit(services.JobDescriptor{
 		Category: block.CategoryAI,
-		Meta:     services.JobInfo{JobID: jobPrefix + id, Label: label, DocID: id},
+		Meta:     services.JobInfo{JobID: jobPrefix + id, Label: label, DocID: id, SpinTab: spinTab},
 		Work:     func() (any, error) { return es.ai.EvaluateAndFileDoc(id, fileAfter, allowDiscard) },
 		OnError: func(err error) {
 			logger.Warn("editor: document filing failed", "job", jobPrefix+id, "uuid", id, "err", err)
@@ -484,7 +484,7 @@ func (es *EditorService) CloseAllAndFile(ids []string) {
 		return
 	}
 	for _, id := range ids {
-		es.submitDocFiling(id, "file:", "Filing…", true, true)
+		es.submitDocFiling(id, "file:", "Filing…", true, true, false)
 	}
 }
 
@@ -496,26 +496,26 @@ func (es *EditorService) CloseDocument(id string) {
 		return
 	}
 	_ = es.Flush(id)
-	es.submitDocFiling(id, "file:", "Filing…", true, true)
+	es.submitDocFiling(id, "file:", "Filing…", true, true, false)
 }
 
 // FileDocument submits an explicit "file this note" user action (evaluate + file,
 // no discard). Unlike CloseDocument this is NOT tier-gated: the user explicitly
 // asked for it. Routed through the engine's ai pool like every other filing job.
 func (es *EditorService) FileDocument(id string) {
-	es.submitDocFiling(id, "file:", "Filing note…", true, false)
+	es.submitDocFiling(id, "file:", "Filing note…", true, false, true)
 }
 
 // UpdateMetadata submits an explicit metadata-only evaluation (no file, no
 // discard). Not tier-gated — the user asked for it directly.
 func (es *EditorService) UpdateMetadata(id string) {
-	es.submitDocFiling(id, "meta:", "Updating metadata…", false, false)
+	es.submitDocFiling(id, "meta:", "Updating metadata…", false, false, true)
 }
 
 // KeepAndFile files a note the user explicitly kept (evaluate + file, no discard).
 // Not tier-gated. The user_intent="keep" write stays in the handler (user-owned).
 func (es *EditorService) KeepAndFile(uuid string) {
-	es.submitDocFiling(uuid, "file:", "Filing note…", true, false)
+	es.submitDocFiling(uuid, "file:", "Filing note…", true, false, true)
 }
 
 // submitBlockJob turns a block ProcessorJob into a JobDescriptor and submits it

@@ -79,6 +79,19 @@ func TestSubmitBlockJob_ErrorSkipsApply(t *testing.T) {
 	}
 }
 
+func TestSubmitBlockJob_panicsOnEmptyLabel(t *testing.T) {
+	es := newEngineEditor(t)
+	blk := &block.SieveBlock{ID: "b1", Attrs: map[string]interface{}{}}
+	job := block.ProcessorJob{Category: block.CategoryAI, Label: "Refining…", Work: func() (any, error) { return nil, nil }}
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("submitBlockJob must panic when meta.Label is empty")
+		}
+	}()
+	// meta.Label is empty — a submitted ProcessorJob must declare a non-empty Label.
+	es.submitBlockJob(job, services.JobInfo{JobID: "b1", Label: ""}, blk, func(error) {})
+}
+
 func TestSubmitBlockJob_NilWorkStillApplies(t *testing.T) {
 	es := newEngineEditor(t)
 	blk := &block.SieveBlock{ID: "b1", Attrs: map[string]interface{}{}}

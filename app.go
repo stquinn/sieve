@@ -39,7 +39,6 @@ type App struct {
 	Assets          *services.AssetService
 	State           *services.StateService
 	Prompts         *ai.PromptService
-	AI              *ai.AIService
 
 	library  services.LibraryService // owns library discovery, recents, naming
 	themesFS fs.FS
@@ -174,7 +173,6 @@ func (a *App) startup(ctx context.Context) {
 	a.Assets = a.ServiceProvider.Assets
 	a.State = a.ServiceProvider.State
 	a.Prompts = a.ServiceProvider.Prompts
-	a.AI = a.ServiceProvider.AI
 
 	if err := fs.RunMigrationIfNeeded([]store.Category{domain.LibraryCategory, domain.WorkingCopy}); err != nil {
 		logger.Error("store migration failed", "err", err)

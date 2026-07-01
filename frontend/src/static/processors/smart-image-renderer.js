@@ -68,11 +68,16 @@ import { isJobStale } from '../base/fenced-block-base.js'
         badge.style.display = 'block'
         badge.style.background = 'rgba(0,0,0,0.55)'
         badge.style.color = '#fff'
-      } else if (isStale || status === 'ERROR') {
-        badge.textContent = 'Failed'
+      } else if (isStale || status === 'ERROR' || status === 'TIMEOUT') {
+        // Surface the framework's specific error text (classifyJobError writes
+        // {status, error}); fall back to a generic label. TIMEOUT mirrors
+        // web-clip-renderer's timeout state.
+        var errText = (attrs.error || '').trim()
+        badge.textContent = errText || (status === 'TIMEOUT' ? 'Timed out' : 'Failed')
         badge.style.display = 'block'
         badge.style.background = 'rgba(180,0,0,0.75)'
         badge.style.color = '#fff'
+        if (errText) dom.setAttribute('data-tooltip', errText)
       } else {
         badge.style.display = 'none'
       }
@@ -146,6 +151,7 @@ import { isJobStale } from '../base/fenced-block-base.js'
       detect:  { default: '', parseHTML: function (el) { return el.getAttribute('data-detect')  || '' } },
       width:   { default: '', parseHTML: function (el) { return el.getAttribute('data-width')   || '' } },
       height:  { default: '', parseHTML: function (el) { return el.getAttribute('data-height')  || '' } },
+      error:   { default: '', parseHTML: function (el) { return el.getAttribute('data-error')   || '' } },
     },
 
     asContentEntry: function(node) {
@@ -167,6 +173,7 @@ import { isJobStale } from '../base/fenced-block-base.js'
         detect:  data.detect  || '',
         width:   String(data.width  || ''),
         height:  String(data.height || ''),
+        error:   data.error   || '',
       }
     },
     buildContextMenuItems: function(ctx) {

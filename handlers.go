@@ -124,7 +124,15 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 	sp.Jobs = jobTracker
 
 	const defaultWorkers = 4
-	sp.Engine = services.NewJobEngine(sp.State.LoadSettings().WorkerPools, defaultWorkers, jobTracker)
+	// Spec Global Constraint: the "ai" pool defaults to 3 (min 1) when unconfigured
+	// — not defaultWorkers. Build a fresh sizes map (never mutate the cached
+	// settings) seeded with that default; explicit user worker_pools config wins.
+	settings := sp.State.LoadSettings()
+	poolSizes := map[string]int{"ai": 3} // "ai" == block.CategoryAI
+	for k, v := range settings.WorkerPools {
+		poolSizes[k] = v
+	}
+	sp.Engine = services.NewJobEngine(poolSizes, defaultWorkers, jobTracker)
 	if sp.Editor != nil {
 		sp.Editor.SetJobs(jobTracker)
 		sp.Editor.SetEngine(sp.Engine)
