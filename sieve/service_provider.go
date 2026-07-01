@@ -72,7 +72,19 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
 	s.Editor = editor.NewEditorService(s.Documents, block.NewDocumentCodec(block.GlobalRegistry()), autosave)
 	s.Editor.SetServices(s.BlockServices())
-	s.Editor.SetJobs(s.Jobs) // re-set in handlers.go once the real JobTracker (with hub) exists
+	s.Editor.SetJobs(s.Jobs) // s.Jobs is the hub-wired tracker set by newAPIHandler before startup
+	// Communal JobEngine + Editor wiring. Built HERE (not in newAPIHandler) because
+	// it needs settings (State) and the Editor, which only exist after Init. The
+	// "ai" pool defaults to 3 (spec Global Constraint); explicit worker_pools config
+	// wins; other unconfigured categories fall to defaultWorkers.
+	const defaultWorkers = 4
+	poolSizes := map[string]int{block.CategoryAI: 3}
+	for k, v := range settings.WorkerPools {
+		poolSizes[k] = v
+	}
+	s.Engine = services.NewJobEngine(poolSizes, defaultWorkers, s.Jobs)
+	s.Editor.SetEngine(s.Engine)
+	s.Editor.SetAI(s.AI)
 	svc := s.BlockServices()
 	block.RegisterProcessor(processors.NewDiagramProcessor(svc))
 	block.RegisterProcessor(processors.NewSmartImageProcessor(svc))
