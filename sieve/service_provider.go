@@ -44,7 +44,6 @@ var (
 	_ block.AssetsPort      = (*services.AssetService)(nil)
 	_ block.StatePort       = (*services.StateService)(nil)
 	_ block.LinkPreviewPort = (*services.LinkPreviewService)(nil)
-	_ block.AIPort          = (*ai.AIService)(nil)
 )
 
 func (s *ServiceProvider) Init(store store.Store, storePath string) {

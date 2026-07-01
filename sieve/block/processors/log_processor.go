@@ -149,7 +149,12 @@ func (p *LogProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, seen 
 	return block.AIContext{NodeIDs: []string{blk.ID}, Content: "```log\n" + src + "\n```"}
 }
 
-func (p *LogProcessor) JobLabel(_ *block.SieveBlock) string { return "" }
+// logParseResult is Work's result: the saved parsed-asset ref plus format metadata.
+type logParseResult struct {
+	assetRef   string
+	formatName string
+	formatRe   string
+}
 
 func (p *LogProcessor) IDPrefix() string { return "log" }
 
@@ -436,38 +441,58 @@ func mapLevelToSeverity(level string) string {
 	return "none"
 }
 
-func (p *LogProcessor) RunJob(jctx block.JobContext) error {
+// DescribeJob declares the log-parse job. The parse + asset-save (which can error)
+// lives in Work so a failure surfaces to the framework as status ERROR; Apply
+// writes the success attrs. An empty source completes synchronously (nil Work).
+func (p *LogProcessor) DescribeJob(jctx block.JobContext) block.ProcessorJob {
 	blk := jctx.Block
+	uuid, id := jctx.UUID, blk.ID
 	source, _ := blk.Attrs["source"].(string)
 
 	if strings.TrimSpace(source) == "" {
-		blk.Attrs["status"] = block.BlockStatusComplete
-		return nil
+		return block.ProcessorJob{
+			Category: block.CategoryDefault,
+			Apply: func(_ any, b *block.SieveBlock) {
+				b.Attrs["status"] = block.BlockStatusComplete
+			},
+		}
 	}
 
-	settings := p.svc.State.LoadSettings()
-	parsedData := parseLogLines(source, settings.CustomLogParsers)
+	return block.ProcessorJob{
+		Category: block.CategoryDefault,
+		Work: func() (any, error) {
+			settings := p.svc.State.LoadSettings()
+			parsedData := parseLogLines(source, settings.CustomLogParsers)
 
-	jsonData, err := json.Marshal(parsedData)
-	if err != nil {
-		return err
+			jsonData, err := json.Marshal(parsedData)
+			if err != nil {
+				return nil, err
+			}
+
+			cat := domain.WorkingCopy
+			if d, err := p.svc.Documents.LoadByUUID(uuid); err == nil && d.Kind() == domain.KindNote {
+				cat = domain.LibraryCategory
+			}
+
+			asset, err := p.svc.Assets.Save(cat, uuid, id+"-parsed", jsonData)
+			if err != nil {
+				return nil, err
+			}
+
+			return logParseResult{
+				assetRef:   asset.ExternalRef(),
+				formatName: parsedData.Format,
+				formatRe:   parsedData.Pattern,
+			}, nil
+		},
+		Apply: func(result any, b *block.SieveBlock) {
+			r := result.(logParseResult)
+			b.Attrs["parsedAssetRef"] = r.assetRef
+			b.Attrs["logFormatName"] = r.formatName
+			b.Attrs["logFormatRegex"] = r.formatRe
+			b.Attrs["status"] = block.BlockStatusComplete
+		},
 	}
-
-	cat := domain.WorkingCopy
-	if d, err := p.svc.Documents.LoadByUUID(jctx.UUID); err == nil && d.Kind() == domain.KindNote {
-		cat = domain.LibraryCategory
-	}
-
-	asset, err := p.svc.Assets.Save(cat, jctx.UUID, blk.ID+"-parsed", jsonData)
-	if err != nil {
-		return err
-	}
-
-	blk.Attrs["parsedAssetRef"] = asset.ExternalRef()
-	blk.Attrs["logFormatName"] = parsedData.Format
-	blk.Attrs["logFormatRegex"] = parsedData.Pattern
-	blk.Attrs["status"] = block.BlockStatusComplete
-	return nil
 }
 
 func (p *LogProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {

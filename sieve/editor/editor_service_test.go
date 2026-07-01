@@ -636,7 +636,7 @@ func TestHandleBlockOp_updateNotifySendsMergedSnapshotUnderLock(t *testing.T) {
 type testRunJobProcessor struct {
 	block.FencedSerializer
 	block.FencedDeserializer
-	runJob func(ctx context.Context, uuid string, blk *block.SieveBlock) error
+	describe func(jctx block.JobContext) block.ProcessorJob
 }
 
 func (p *testRunJobProcessor) Kind() string          { return p.FencedDeserializer.Kind }
@@ -661,13 +661,12 @@ func (p *testRunJobProcessor) MarkdownRepresentation(_ block.SieveBlock, _ strin
 	return ""
 }
 func (p *testRunJobProcessor) OnChange(_ *block.SieveBlock)                     {}
-func (p *testRunJobProcessor) RunJob(jctx block.JobContext) error {
-	if p.runJob != nil {
-		return p.runJob(jctx.Ctx, jctx.UUID, jctx.Block)
+func (p *testRunJobProcessor) DescribeJob(jctx block.JobContext) block.ProcessorJob {
+	if p.describe != nil {
+		return p.describe(jctx)
 	}
-	return nil
+	return block.ProcessorJob{}
 }
-func (p *testRunJobProcessor) JobLabel(_ *block.SieveBlock) string { return "" }
 
 func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 	resetRegistry()
@@ -693,20 +692,23 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 	// Register a mock processor
 	proc := &testRunJobProcessor{
 		FencedDeserializer: block.FencedDeserializer{Kind: "mock-kind"},
-		runJob: func(ctx context.Context, uuid string, blk *block.SieveBlock) error {
-			// Simulate job modifying attrs
-			blk.Attrs["language"] = "go"         // modified
-			blk.Attrs["added_key"] = "new value" // added
-			blk.Attrs["status"] = block.BlockStatusComplete
-			delete(blk.Attrs, "hint") // deleted
-
-			// Simulate a concurrent user edit to "source" during the job execution
-			es.mu.Lock()
-			shadow := es.shadows[uuid]
-			es.mu.Unlock()
-			shadow.MergeBlock(block.SieveBlock{ID: blockID, Attrs: map[string]interface{}{"source": "concurrent user edit"}})
-
-			return nil
+		describe: func(jctx block.JobContext) block.ProcessorJob {
+			return block.ProcessorJob{
+				Work: func() (any, error) {
+					// Simulate a concurrent user edit to "source" while the job runs.
+					es.mu.Lock()
+					shadow := es.shadows[uuid]
+					es.mu.Unlock()
+					shadow.MergeBlock(block.SieveBlock{ID: blockID, Attrs: map[string]interface{}{"source": "concurrent user edit"}})
+					return nil, nil
+				},
+				Apply: func(_ any, blk *block.SieveBlock) {
+					blk.Attrs["language"] = "go"         // modified
+					blk.Attrs["added_key"] = "new value" // added
+					blk.Attrs["status"] = block.BlockStatusComplete
+					delete(blk.Attrs, "hint") // deleted
+				},
+			}
 		},
 	}
 	block.RegisterProcessor(proc)
@@ -777,15 +779,20 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 
 	proc := &testRunJobProcessor{
 		FencedDeserializer: block.FencedDeserializer{Kind: "mock-kind2"},
-		runJob: func(ctx context.Context, jobUUID string, blk *block.SieveBlock) error {
-			// Simulate the user navigating away (Close) and back (Open) while the job runs
-			es.Close(uuid)
-			if errOpen := es.Open(uuid, nil); errOpen != nil {
-				t.Logf("Open error: %v", errOpen)
+		describe: func(jctx block.JobContext) block.ProcessorJob {
+			return block.ProcessorJob{
+				Work: func() (any, error) {
+					// Simulate the user navigating away (Close) and back (Open) while the job runs
+					es.Close(uuid)
+					if errOpen := es.Open(uuid, nil); errOpen != nil {
+						t.Logf("Open error: %v", errOpen)
+					}
+					return nil, nil
+				},
+				Apply: func(_ any, blk *block.SieveBlock) {
+					blk.Attrs["status"] = block.BlockStatusComplete
+				},
 			}
-
-			blk.Attrs["status"] = block.BlockStatusComplete
-			return nil
 		},
 	}
 	block.RegisterProcessor(proc)

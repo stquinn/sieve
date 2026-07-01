@@ -67,7 +67,8 @@ func (p *AIBlockProcessor) Transform(entries []block.ContentEntry, uuid, blockID
 
 func (p *AIBlockProcessor) OnChange(blk *block.SieveBlock) {}
 
-func (p *AIBlockProcessor) JobLabel(blk *block.SieveBlock) string {
+// aiBlockLabel is the in-flight status label for an ai-block job.
+func (p *AIBlockProcessor) aiBlockLabel(blk *block.SieveBlock) string {
 	if t, _ := blk.Attrs["type"].(string); t == "EXPLAIN" {
 		return "Explaining…"
 	}
@@ -170,13 +171,17 @@ func (p *AIBlockProcessor) buildTargets(targets []string, doc block.DocView) str
 	return block.MergeContexts(ctxs).String()
 }
 
-// RunJob builds the prompt by walking this block's point-to-point ref graph and
+// DescribeJob builds the prompt by walking this block's point-to-point ref graph and
 // splitting it by GEOMETRY (resolveChain): the terminal MANY of leaf nodes is the
 // TARGET (the content being asked about), the interior nodes are the THREAD (prior
 // Q&A / derivation history), and this block is the ACTION. Each node self-describes
-// through the registry (BuildContextForID), so dispatch stays kind-agnostic.
-func (p *AIBlockProcessor) RunJob(jctx block.JobContext) error {
+// through the registry (BuildContextForID), so dispatch stays kind-agnostic. The
+// prompt is assembled synchronously here (it needs the immutable jctx.Doc snapshot),
+// then captured by Work; Apply writes the success attrs. The error path (status
+// ERROR) is the framework's job in EditorService.onDone, so Apply is success-only.
+func (p *AIBlockProcessor) DescribeJob(jctx block.JobContext) block.ProcessorJob {
 	blk := jctx.Block
+	uuid := jctx.UUID
 	ref, _ := blk.Attrs["ref"].(string)
 	blockType, _ := blk.Attrs["type"].(string)
 
@@ -199,29 +204,22 @@ func (p *AIBlockProcessor) RunJob(jctx block.JobContext) error {
 	// ACTION: this block's own question.
 	questionCtx := p.BuildContext(*blk, jctx.Doc, map[string]bool{}).String()
 
-	var response string
-	var runErr error
-	if blockType == "EXPLAIN" {
-		response, runErr = p.svc.AI.RunExplain(content, history, questionCtx, jctx.UUID)
-	} else {
-		response, runErr = p.svc.AI.RunAsk(content, history, questionCtx, jctx.UUID)
+	isExplain := blockType == "EXPLAIN"
+	return block.ProcessorJob{
+		Category: block.CategoryAI,
+		Label:    p.aiBlockLabel(blk),
+		Work: func() (any, error) {
+			if isExplain {
+				return p.svc.AI.RunExplain(content, history, questionCtx, uuid)
+			}
+			return p.svc.AI.RunAsk(content, history, questionCtx, uuid)
+		},
+		Apply: func(result any, b *block.SieveBlock) {
+			b.Attrs["status"] = block.BlockStatusComplete
+			b.Attrs["response"] = result.(string)
+			b.Attrs["completedAt"] = time.Now().UTC().Format(time.RFC3339)
+		},
 	}
-
-	if runErr != nil {
-		errMsg := runErr.Error()
-		if strings.Contains(errMsg, "timeout") {
-			blk.Attrs["status"] = "TIMEOUT"
-		} else {
-			blk.Attrs["status"] = block.BlockStatusError
-		}
-		blk.Attrs["error"] = errMsg
-		return runErr
-	}
-
-	blk.Attrs["status"] = block.BlockStatusComplete
-	blk.Attrs["response"] = response
-	blk.Attrs["completedAt"] = time.Now().UTC().Format(time.RFC3339)
-	return nil
 }
 
 func (p *AIBlockProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {

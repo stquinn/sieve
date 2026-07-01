@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"sieve/sieve/ai"
 	"sieve/sieve/fencedblock"
 )
 
@@ -164,7 +165,7 @@ func (s SupportedActions) asAdditive() SupportedActions {
 // ProseProcessor.Accepts + orderedProseLast).
 const KindProse = "prose"
 
-// JobContext is the complete input to a processor's RunJob.
+// JobContext is the complete input to a processor's DescribeJob.
 // EditorService assembles it at dispatch time — processors never reach back into services.
 type JobContext struct {
 	Ctx    context.Context
@@ -202,7 +203,7 @@ type BlockLifecycleListener interface {
 // The methods fall into lifecycle phases:
 //
 //   - Recognition & creation (paste + extract): IsSupportedContent, Transform, InitAttrs
-//   - Async work after creation:                RunJob, JobLabel
+//   - Async work after creation:                DescribeJob
 //   - Reaction to user edits:                   OnChange
 //   - Identity:                                 Mode
 //   - AI context:                               BuildContext, MarkdownRepresentation
@@ -239,10 +240,10 @@ type BlockLifecycleListener interface {
 //     this kind: sets defaults (status, createdAt, kind-specific fields), then layers
 //     the Transform overrides on top. id is never overridable via overrides.
 //
-// RunJob receives a notify func (on JobContext) so a processor can push intermediate
+// DescribeJob's JobContext carries a notify func so a processor can push intermediate
 // attr updates to the client mid-job — e.g. push src immediately after saving an
 // asset, before the slower AI describe completes. OnChange is the synchronous hook
-// after a user edit; setting status to PENDING schedules a follow-up RunJob.
+// after a user edit; setting status to PENDING schedules a follow-up job.
 type BlockProcessor interface {
 	//return the KIND of Block this processor supports
 	Kind() string
@@ -259,12 +260,13 @@ type BlockProcessor interface {
 	// a processor reads it only if its overrides differ by operation (e.g. prose embed).
 	// Returns nil to decline.
 	Transform(entries []ContentEntry, uuid string, blockID string, action Action) map[string]interface{}
-	// RunJob performs this kind's async post-create work (AI describe, language
-	// refine, image localise). jctx carries an immutable doc snapshot and a notify
-	// func for mid-job attr pushes.
-	RunJob(jctx JobContext) error
-	// JobLabel is the human-readable label shown while RunJob is in flight ("" = no job).
-	JobLabel(block *SieveBlock) string
+	// DescribeJob returns the async work (if any) this block needs after creation
+	// (AI describe, language refine, image localise, link fetch). jctx carries an
+	// immutable doc snapshot and a notify func for mid-job attr pushes. The
+	// framework owns the lifecycle: it runs Work on a category worker pool, then
+	// Apply on success. A zero ProcessorJob (Category=="" && Work==nil &&
+	// Apply==nil) means "no job for this block".
+	DescribeJob(jctx JobContext) ProcessorJob
 	// OnChange reacts synchronously to a user edit of this block (e.g. re-run
 	// heuristics). Setting status to PENDING schedules a follow-up RunJob.
 	OnChange(block *SieveBlock)
@@ -398,7 +400,11 @@ func (InlineDeserializer) Deserialize(Region) ([]SieveBlock, error) { return nil
 func (InlineDeserializer) Shape() RegionShape { return RegionShape{} }
 
 type BlockServices struct {
-	AI          AIPort
+	// AI is the concrete AI business service. block core deliberately imports ai
+	// here: the governing invariant is directional — a business service must never
+	// depend on block (ai imports no block), but block depending on the ai service
+	// is fine. So AIPort was inverting an edge that never needed inverting.
+	AI          *ai.AIService
 	Documents   DocumentsPort
 	Assets      AssetsPort
 	LinkPreview LinkPreviewPort

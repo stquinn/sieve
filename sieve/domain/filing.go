@@ -18,8 +18,8 @@ type FilingRecommendation struct {
 }
 
 // ImageDesc is the structured response from AIService.DescribeImage. It is a
-// return type of block.AIPort, so it lives in the leaf (block/ must be able to
-// name it without importing ai/).
+// shared data type consumed by block processors' DescribeJob (via *ai.AIService),
+// so it lives in the leaf domain/ that both ai/ and block/ can name.
 type ImageDesc struct {
 	Filename string `json:"filename"`
 	Alt      string `json:"alt"`

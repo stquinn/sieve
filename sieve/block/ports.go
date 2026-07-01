@@ -33,13 +33,3 @@ type LinkPreviewPort interface {
 	FetchTitle(targetURL string) string
 	FetchFull(targetURL string) domain.LinkPreviewResult
 }
-
-// AIPort is the AI surface processors use. ImageDesc is a return type here, so it
-// is a shared data type (moves to domain/ during decomposition, not ai/).
-type AIPort interface {
-	RunExplain(content, history, question, noteUUID string) (string, error)
-	RunAsk(content, history, question, noteUUID string) (string, error)
-	RefineLanguage(content, currentLanguage, detectionMethod string) (string, error)
-	DescribeImage(uuid, storeRelPath, blkId string) (domain.ImageDesc, error)
-	RunWebClip(uuid, id, source, mode, docContent string) (title, content string, err error)
-}

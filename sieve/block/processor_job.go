@@ -17,3 +17,10 @@ type ProcessorJob struct {
 // deliberately ignorant of categories and the engine. Future categories
 // (exec/http/dag) live beside their own producers.
 const CategoryAI = "ai"
+
+// CategoryDefault is the explicit category for non-AI block jobs (link/log fetch,
+// settle-to-complete). Every ProcessorJob that will be submitted DECLARES its
+// category — a job that runs on the default pool must say "default" rather than
+// leaning on the engine's empty-string fallback. A truly zero ProcessorJob{} (no
+// Work, no Apply — the "no job" case) is never submitted and carries no category.
+const CategoryDefault = "default"

@@ -104,7 +104,8 @@ func (p *WebClipBlockProcessor) BuildContext(blk block.SieveBlock, _ block.DocVi
 	return ctx
 }
 
-func (p *WebClipBlockProcessor) JobLabel(blk *block.SieveBlock) string {
+// webClipLabel is the in-flight status label for a clip job (kind-qualified host).
+func (p *WebClipBlockProcessor) webClipLabel(blk *block.SieveBlock) string {
 	mode, _ := blk.Attrs["mode"].(string)
 	source, _ := blk.Attrs["source"].(string)
 	host := source
@@ -123,8 +124,13 @@ func (p *WebClipBlockProcessor) Mode() block.BlockMode {
 	return block.BlockModeBlock
 }
 
-func (p *WebClipBlockProcessor) RunJob(jctx block.JobContext) error {
+// DescribeJob declares the AI clip job. The document body is read synchronously
+// here (before the AI call, mirroring the old RunJob), then captured by Work.
+// Apply writes the success attrs; the error path (status ERROR) is the framework's
+// job in EditorService.onDone, so Apply is success-only.
+func (p *WebClipBlockProcessor) DescribeJob(jctx block.JobContext) block.ProcessorJob {
 	uuid, blk := jctx.UUID, jctx.Block
+	id := blk.ID
 	source, _ := blk.Attrs["source"].(string)
 	mode, _ := blk.Attrs["mode"].(string)
 	if mode == "" {
@@ -136,31 +142,28 @@ func (p *WebClipBlockProcessor) RunJob(jctx block.JobContext) error {
 		docContent = string(doc.Body())
 	}
 
-	if p.svc.AI == nil {
-		blk.Attrs["status"] = block.BlockStatusError
-		blk.Attrs["error"] = "AI service is unavailable"
-		return fmt.Errorf("webclip RunJob failed: AI service is unavailable")
+	return block.ProcessorJob{
+		Category: block.CategoryAI,
+		Label:    p.webClipLabel(blk),
+		Work: func() (any, error) {
+			if p.svc.AI == nil {
+				return nil, fmt.Errorf("webclip job failed: AI service is unavailable")
+			}
+			title, content, cliErr := p.svc.AI.RunWebClip(uuid, id, source, mode, docContent)
+			if cliErr != nil {
+				return nil, cliErr
+			}
+			return []string{title, content}, nil
+		},
+		Apply: func(result any, b *block.SieveBlock) {
+			tc := result.([]string)
+			b.Attrs["status"] = block.BlockStatusComplete
+			b.Attrs["title"] = tc[0]
+			b.Attrs["content"] = tc[1]
+			b.Attrs["completedAt"] = time.Now().UTC().Format(time.RFC3339)
+			b.Attrs["model"] = p.svc.State.LoadSettings().Model
+		},
 	}
-
-	title, content, cliErr := p.svc.AI.RunWebClip(uuid, blk.ID, source, mode, docContent)
-
-	if cliErr != nil {
-		if strings.Contains(cliErr.Error(), "timeout") {
-			blk.Attrs["status"] = "TIMEOUT"
-		} else {
-			blk.Attrs["status"] = block.BlockStatusError
-			blk.Attrs["error"] = "Claude could not retrieve this page. Check that your MCP configuration can access this URL."
-		}
-		return cliErr
-	}
-
-	blk.Attrs["status"] = block.BlockStatusComplete
-	blk.Attrs["title"] = title
-	blk.Attrs["content"] = content
-	blk.Attrs["completedAt"] = time.Now().UTC().Format(time.RFC3339)
-	blk.Attrs["model"] = p.svc.State.LoadSettings().Model
-
-	return nil
 }
 
 func (p *WebClipBlockProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {

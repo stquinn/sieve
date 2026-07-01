@@ -742,8 +742,13 @@ func (es *EditorService) applyJobUpdate(uuid, blockID, kind string, updates map[
 	}
 }
 
-// RunJob executes the background job for blockID, merges results into the shadow,
-// flushes to disk, and notifies the listener with the updated rawYaml.
+// RunJob asks the block's processor to DESCRIBE its job (DescribeJob), then routes
+// it through the communal engine via submitBlockJob. The framework owns the
+// lifecycle: the engine runs Work on a per-Category worker pool and drives the job
+// tracker via meta; on success it runs the processor's Apply against blkCopy, then
+// the finish closure diffs blkCopy vs the pre-job snapshot and merges the delta into
+// the shadow (applyJobUpdate). On error the finish closure sets status=ERROR — the
+// framework's uniform error handling, so no processor writes tracking/finish code.
 func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
@@ -752,8 +757,8 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 		return
 	}
 
-	// One lock: a deep copy of the target block (for the processor to mutate) plus
-	// an immutable DocView the job uses to resolve any block by id.
+	// One lock: a deep copy of the target block (for Apply to mutate) plus an
+	// immutable DocView the job uses to resolve any block by id.
 	snap, doc, ok := shadow.SnapshotForJob(blockID)
 	if !ok {
 		return
@@ -770,37 +775,34 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 		return
 	}
 
-	label := processor.JobLabel(blkCopy)
-	if label != "" && es.jobs != nil {
-		es.jobs.Start(services.JobInfo{
-			JobID:   blockID,
-			Label:   label,
-			DocID:   uuid,
-			SpinTab: false,
-		})
-		defer es.jobs.End(blockID)
-	}
-
 	// notify lets the processor push intermediate attr updates mid-job
 	// (e.g. push src immediately after saving, before slow AI describe).
 	notify := func(bID string, partialAttrs map[string]interface{}) {
 		es.applyJobUpdate(uuid, bID, kind, partialAttrs, nil, "job-progress")
 	}
 
-	jctx := block.JobContext{
+	job := processor.DescribeJob(block.JobContext{
 		Ctx:    ctx,
 		UUID:   uuid,
 		Doc:    doc,
 		Block:  blkCopy,
 		Notify: notify,
+	})
+	// A zero ProcessorJob means "no job for this block".
+	if job.Category == "" && job.Work == nil && job.Apply == nil {
+		return
 	}
-	if err := processor.RunJob(jctx); err != nil {
-		es.applyJobUpdate(uuid, blockID, kind, map[string]interface{}{"status": block.BlockStatusError}, nil, "job-complete")
-	} else {
-		// Dynamically determine what attributes the job updated.
+
+	// finish runs after Work (+Apply on success). It merges the attr delta the
+	// job produced (or sets status=ERROR) into the shadow through the single
+	// update path.
+	finish := func(err error) {
+		if err != nil {
+			es.applyJobUpdate(uuid, blockID, kind, map[string]interface{}{"status": block.BlockStatusError}, nil, "job-complete")
+			return
+		}
 		updates := make(map[string]interface{})
 		var deletes []string
-
 		for k, vAfter := range blkCopy.Attrs {
 			vBefore, exists := attrsBefore[k]
 			if !exists || !reflect.DeepEqual(vBefore, vAfter) {
@@ -812,8 +814,30 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 				deletes = append(deletes, k)
 			}
 		}
-
 		es.applyJobUpdate(uuid, blockID, kind, updates, deletes, "job-complete")
 	}
+
+	meta := services.JobInfo{JobID: blockID, Label: job.Label, DocID: uuid, SpinTab: false}
+
+	if es.engine != nil {
+		es.submitBlockJob(job, meta, blkCopy, finish)
+		return
+	}
+
+	// Fallback for tests where no engine is wired: run the job inline, preserving
+	// Apply-before-finish and finish-once.
+	if job.Work != nil {
+		r, e := job.Work()
+		if e != nil {
+			finish(e)
+			return
+		}
+		if job.Apply != nil {
+			job.Apply(r, blkCopy)
+		}
+	} else if job.Apply != nil {
+		job.Apply(nil, blkCopy)
+	}
+	finish(nil)
 }
 

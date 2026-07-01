@@ -236,12 +236,12 @@ func (p *ProseProcessor) sourceAsPlainText(src string) string {
 	return strings.Join(lines, "  \n") // two-space suffix = markdown hard break
 }
 
-// RunJob is the rewrite/enrich seam — a no-op until a prose job is wired, but the
-// seam exists so prose can be a producer/consumer like any other block.
-func (p *ProseProcessor) RunJob(_ block.JobContext) error { return nil }
-
-// JobLabel: no prose job yet.
-func (p *ProseProcessor) JobLabel(_ *block.SieveBlock) string { return "" }
+// DescribeJob is the rewrite/enrich seam — a zero ProcessorJob (no async work)
+// until a prose job is wired, but the seam exists so prose can be a
+// producer/consumer like any other block.
+func (p *ProseProcessor) DescribeJob(_ block.JobContext) block.ProcessorJob {
+	return block.ProcessorJob{}
+}
 
 // OnChange: prose has no synchronous reaction.
 func (p *ProseProcessor) OnChange(_ *block.SieveBlock) {}

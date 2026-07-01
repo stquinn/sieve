@@ -43,10 +43,15 @@ func TestAIBlockMode(t *testing.T) {
 
 func TestAIBlockJobLabel(t *testing.T) {
 	p := &AIBlockProcessor{}
-	if p.JobLabel(&block.SieveBlock{Attrs: map[string]interface{}{"type": "ASK"}}) == "" {
+	ask := p.DescribeJob(block.JobContext{Block: &block.SieveBlock{ID: "ai-ask", Attrs: map[string]interface{}{"type": "ASK"}}})
+	if ask.Label == "" {
 		t.Error("expected non-empty label for ASK")
 	}
-	if p.JobLabel(&block.SieveBlock{Attrs: map[string]interface{}{"type": "EXPLAIN"}}) == "" {
+	if ask.Category != block.CategoryAI {
+		t.Errorf("expected CategoryAI, got %q", ask.Category)
+	}
+	explain := p.DescribeJob(block.JobContext{Block: &block.SieveBlock{ID: "ai-exp", Attrs: map[string]interface{}{"type": "EXPLAIN"}}})
+	if explain.Label == "" {
 		t.Error("expected non-empty label for EXPLAIN")
 	}
 }

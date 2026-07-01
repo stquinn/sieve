@@ -88,7 +88,7 @@ func (p *SmartCardProcessor) Transform(entries []block.ContentEntry, uuid, block
 
 func (p *SmartCardProcessor) OnChange(_ *block.SieveBlock) {}
 
-func (p *SmartCardProcessor) JobLabel(blk *block.SieveBlock) string {
+func (p *SmartCardProcessor) smartCardLabel(blk *block.SieveBlock) string {
 	href, _ := blk.Attrs["href"].(string)
 	if href == "" {
 		return "Fetching link…"
@@ -97,6 +97,12 @@ func (p *SmartCardProcessor) JobLabel(blk *block.SieveBlock) string {
 		return "Fetching " + u.Hostname()
 	}
 	return "Fetching link…"
+}
+
+// smartCardFetch is Work's result: the OG metadata plus a best-effort image ref.
+type smartCardFetch struct {
+	preview  domain.LinkPreviewResult
+	imageRef string
 }
 
 func (p *SmartCardProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
@@ -122,35 +128,54 @@ func (p *SmartCardProcessor) BuildContext(blk block.SieveBlock, _ block.DocView,
 	return block.AIContext{NodeIDs: []string{blk.ID}, Content: sb.String()}
 }
 
-func (p *SmartCardProcessor) RunJob(jctx block.JobContext) error {
+// DescribeJob declares the OG-metadata fetch job. The blocking network work (OG
+// fetch + best-effort image download) lives in Work; Apply writes the attrs,
+// mirroring the old RunJob body. An empty href completes synchronously (nil Work).
+func (p *SmartCardProcessor) DescribeJob(jctx block.JobContext) block.ProcessorJob {
 	blk := jctx.Block
+	uuid, id := jctx.UUID, blk.ID
 	href, _ := blk.Attrs["href"].(string)
-	now := time.Now().UTC().Format(time.RFC3339)
 
 	if href == "" {
-		blk.Attrs["status"] = block.BlockStatusComplete
-		blk.Attrs["completedAt"] = now
-		blk.Attrs["fetchedAt"] = now
-		return nil
-	}
-
-	result := p.svc.LinkPreview.FetchFull(href)
-
-	blk.Attrs["title"] = result.Title
-	blk.Attrs["description"] = result.Description
-	blk.Attrs["siteName"] = result.SiteName
-
-	if result.OGImageURL != "" && p.svc.Assets != nil && p.svc.Documents != nil {
-		if ref, err := p.downloadImage(jctx.UUID, blk.ID, result.OGImageURL); err == nil {
-			blk.Attrs["image"] = ref
+		return block.ProcessorJob{
+			Category: block.CategoryDefault,
+			Apply: func(_ any, b *block.SieveBlock) {
+				now := time.Now().UTC().Format(time.RFC3339)
+				b.Attrs["status"] = block.BlockStatusComplete
+				b.Attrs["completedAt"] = now
+				b.Attrs["fetchedAt"] = now
+			},
 		}
-		// image download failure is non-fatal
 	}
 
-	blk.Attrs["status"] = block.BlockStatusComplete
-	blk.Attrs["completedAt"] = now
-	blk.Attrs["fetchedAt"] = now
-	return nil
+	return block.ProcessorJob{
+		Category: block.CategoryDefault,
+		Label:    p.smartCardLabel(blk),
+		Work: func() (any, error) {
+			result := p.svc.LinkPreview.FetchFull(href)
+			imageRef := ""
+			if result.OGImageURL != "" && p.svc.Assets != nil && p.svc.Documents != nil {
+				if ref, err := p.downloadImage(uuid, id, result.OGImageURL); err == nil {
+					imageRef = ref
+				}
+				// image download failure is non-fatal
+			}
+			return smartCardFetch{preview: result, imageRef: imageRef}, nil
+		},
+		Apply: func(result any, b *block.SieveBlock) {
+			f := result.(smartCardFetch)
+			now := time.Now().UTC().Format(time.RFC3339)
+			b.Attrs["title"] = f.preview.Title
+			b.Attrs["description"] = f.preview.Description
+			b.Attrs["siteName"] = f.preview.SiteName
+			if f.imageRef != "" {
+				b.Attrs["image"] = f.imageRef
+			}
+			b.Attrs["status"] = block.BlockStatusComplete
+			b.Attrs["completedAt"] = now
+			b.Attrs["fetchedAt"] = now
+		},
+	}
 }
 
 func (p *SmartCardProcessor) downloadImage(uuid, blockID, imageURL string) (string, error) {

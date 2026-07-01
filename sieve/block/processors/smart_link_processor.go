@@ -93,7 +93,8 @@ func (p *SmartLinkProcessor) BuildContext(blk block.SieveBlock, _ block.DocView,
 	return block.AIContext{NodeIDs: []string{blk.ID}, Content: sb.String()}
 }
 
-func (p *SmartLinkProcessor) JobLabel(blk *block.SieveBlock) string {
+// smartLinkLabel is the in-flight status label for a title-fetch job.
+func (p *SmartLinkProcessor) smartLinkLabel(blk *block.SieveBlock) string {
 	href, _ := blk.Attrs["href"].(string)
 	host := href
 	if u, err := url.Parse(href); err == nil && u.Host != "" {
@@ -102,26 +103,39 @@ func (p *SmartLinkProcessor) JobLabel(blk *block.SieveBlock) string {
 	return "Fetching " + host
 }
 
-func (p *SmartLinkProcessor) RunJob(jctx block.JobContext) error {
+// DescribeJob declares the title-fetch job. The blocking network fetch lives in
+// Work; Apply writes the attrs (falling back to the href when no title is found),
+// mirroring the old RunJob body. An empty href completes synchronously (nil Work).
+func (p *SmartLinkProcessor) DescribeJob(jctx block.JobContext) block.ProcessorJob {
 	blk := jctx.Block
 	href, _ := blk.Attrs["href"].(string)
-	now := time.Now().UTC().Format(time.RFC3339)
 
 	if href == "" {
-		blk.Attrs["status"] = block.BlockStatusComplete
-		blk.Attrs["completedAt"] = now
-		return nil
+		return block.ProcessorJob{
+			Category: block.CategoryDefault,
+			Apply: func(_ any, b *block.SieveBlock) {
+				b.Attrs["status"] = block.BlockStatusComplete
+				b.Attrs["completedAt"] = time.Now().UTC().Format(time.RFC3339)
+			},
+		}
 	}
 
-	title := p.svc.LinkPreview.FetchTitle(href)
-	if title == "" {
-		title = href
+	return block.ProcessorJob{
+		Category: block.CategoryDefault,
+		Label:    p.smartLinkLabel(blk),
+		Work: func() (any, error) {
+			return p.svc.LinkPreview.FetchTitle(href), nil
+		},
+		Apply: func(result any, b *block.SieveBlock) {
+			title, _ := result.(string)
+			if title == "" {
+				title = href
+			}
+			b.Attrs["status"] = block.BlockStatusComplete
+			b.Attrs["label"] = title
+			b.Attrs["completedAt"] = time.Now().UTC().Format(time.RFC3339)
+		},
 	}
-
-	blk.Attrs["status"] = block.BlockStatusComplete
-	blk.Attrs["label"] = title
-	blk.Attrs["completedAt"] = now
-	return nil
 }
 
 func (p *SmartLinkProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {

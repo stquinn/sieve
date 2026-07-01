@@ -133,9 +133,12 @@ func TestSmartLinkProcessor_RunJob_fetchesTitle(t *testing.T) {
 		},
 	}
 
-	if err := p.RunJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk}); err != nil {
-		t.Fatalf("RunJob returned error: %v", err)
+	job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk})
+	res, werr := job.Work()
+	if werr != nil {
+		t.Fatalf("Work returned error: %v", werr)
 	}
+	job.Apply(res, blk)
 	if blk.Attrs["status"] != block.BlockStatusComplete {
 		t.Errorf("status: got %q, want COMPLETE", blk.Attrs["status"])
 	}
@@ -165,9 +168,12 @@ func TestSmartLinkProcessor_RunJob_gracefulOnTitleFailure(t *testing.T) {
 		},
 	}
 
-	if err := p.RunJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk}); err != nil {
-		t.Fatalf("RunJob must not return error on non-200; got %v", err)
+	job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk})
+	res, werr := job.Work()
+	if werr != nil {
+		t.Fatalf("Work must not return error on non-200; got %v", werr)
 	}
+	job.Apply(res, blk)
 	if blk.Attrs["status"] != block.BlockStatusComplete {
 		t.Errorf("status: got %q; non-200 must still COMPLETE the block", blk.Attrs["status"])
 	}
@@ -188,9 +194,11 @@ func TestSmartLinkProcessor_RunJob_emptyHref(t *testing.T) {
 			"createdAt": time.Now().UTC().Format(time.RFC3339),
 		},
 	}
-	if err := p.RunJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk}); err != nil {
-		t.Fatalf("RunJob must not error on empty href; got %v", err)
+	job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk})
+	if job.Work != nil {
+		t.Error("empty href needs no async work; Work must be nil")
 	}
+	job.Apply(nil, blk)
 	if blk.Attrs["status"] != block.BlockStatusComplete {
 		t.Errorf("status: got %q, want COMPLETE", blk.Attrs["status"])
 	}

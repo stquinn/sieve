@@ -11,7 +11,8 @@
 ## Global Constraints
 
 - **No loose/free functions** — behaviour belongs as a method on the type that owns its data; `New…` constructors are the only exempt package-level funcs. (This is why the Apply→finish wrap is a method on `EditorService`, not a standalone `JobRunner`.)
-- **`Category` is opaque data** — no `switch category`, no central enum. The category constant is **producer-owned and lives with the submitters**: `block.CategoryAI = "ai"`, beside `block.ProcessorJob` (used by `block/processors` and `editor`). It must **not** live in `ai` — the `ai` package knows nothing about categories or the engine. Future categories (`exec`, `http`, `dag`) live beside their own producers.
+- **`Category` is opaque data** — no `switch category`, no central enum. The category constant is **producer-owned and lives with the submitters**: `block.CategoryAI = "ai"` and `block.CategoryDefault = "default"`, beside `block.ProcessorJob` (used by `block/processors` and `editor`). They must **not** live in `ai` — the `ai` package knows nothing about categories or the engine. Future categories (`exec`, `http`, `dag`) live beside their own producers.
+- **Category is DECLARED, never inferred.** Every `ProcessorJob`/`JobDescriptor` that gets **submitted** carries an explicit `Category` (`CategoryAI` or `CategoryDefault`) — a producer must NOT leave `Category==""` and lean on the engine's empty-string→default-pool fallback. If a job runs on the default pool it says `"default"`. (The engine keeps the `""`→default backstop only as a defensive last resort, not an API contract.)
 - **`ai` is the blind brain** — imports `lang`, `services` (data types only), `domain`, `store`; never `block`, never the engine, never a category. Every AIService method is synchronous.
 - **Worker-pool config values are worker COUNTS**, never queue depth. `worker_pools["ai"]` default **3**, min **1**; unconfigured category → `default` (default **4** if absent).
 - **The engine is the sole `JobTracker` writer** by the end — every AI call site produces a descriptor; nothing runs a CLI outside the engine.
@@ -26,12 +27,13 @@
 ```go
 // package block — new file sieve/block/processor_job.go
 type ProcessorJob struct {
-    Category string                            // e.g. block.CategoryAI; "" ⇒ no async job
+    Category string                            // REQUIRED for any submitted job — block.CategoryAI or block.CategoryDefault; "" only on the zero (no-job) value
     Label    string                            // status-bar label; "" ⇒ no tracker entry
     Work     func() (any, error)               // nil ⇒ Apply runs synchronously, immediate success
     Apply    func(result any, blk *SieveBlock) // mutates blk.Attrs from the Work result
 }
-const CategoryAI = "ai" // producer-owned category label; ai package stays ignorant of it
+const CategoryAI = "ai"           // AI (claude CLI) work
+const CategoryDefault = "default" // non-AI async work (network/parse/io) — the default worker pool, DECLARED explicitly (never rely on the engine's ""→default fallback)
 
 // package block — BlockProcessor interface (processor_registry.go), replacing RunJob+JobLabel:
 //   DescribeJob(jctx JobContext) ProcessorJob
@@ -422,7 +424,9 @@ In `sieve/block/processor_registry.go`, replace the interface methods `RunJob(jc
 
 - [ ] **Step 2: Convert each NON-AI processor**
 
-For every processor whose `RunJob` does no AI work (inspect `sieve/block/processors/`; typically prose, diagram, log, smart-link, smart-card), replace its `RunJob`+`JobLabel` with a `DescribeJob`. If the old `RunJob` was a no-op, return a zero `ProcessorJob`:
+For every processor whose `RunJob` does no AI work (inspect `sieve/block/processors/`; typically prose, diagram, log, smart-link, smart-card), replace its `RunJob`+`JobLabel` with a `DescribeJob`. Two cases:
+
+**(i) No job at all** — return the zero `ProcessorJob{}` (no `Category`, since it is never submitted):
 
 ```go
 // DescribeJob: prose blocks have no async work.
@@ -431,17 +435,18 @@ func (p *ProseProcessor) DescribeJob(jctx block.JobContext) block.ProcessorJob {
 }
 ```
 
-If a non-AI `RunJob` did real synchronous work, move that body into `Apply` with `Work: nil` (the framework still runs it):
+**(ii) It DOES submit a job** (has async `Work` — e.g. smart-card's OG fetch, log's parse+save — or real synchronous work moved to `Apply` with `Work: nil`). It is non-AI, so it MUST set `Category: block.CategoryDefault` EXPLICITLY (do not leave `Category==""` and rely on the engine's default-pool fallback — see Global Constraints):
 
 ```go
 func (p *DiagramProcessor) DescribeJob(jctx block.JobContext) block.ProcessorJob {
 	return block.ProcessorJob{
-		Apply: func(_ any, blk *block.SieveBlock) { /* the old synchronous RunJob body, mutating blk.Attrs */ },
+		Category: block.CategoryDefault, // non-AI → default pool, declared explicitly
+		Apply:    func(_ any, blk *block.SieveBlock) { /* the old synchronous RunJob body, mutating blk.Attrs */ },
 	}
 }
 ```
 
-Inspect each non-AI `RunJob` body first; if it referenced AI, re-classify it for B4b.
+Set `Category: block.CategoryDefault` on EVERY branch that returns a submitted job (e.g. both smart-card's empty-href branch and its fetch branch). Inspect each non-AI `RunJob` body first; if it referenced AI, re-classify it for B4b.
 
 ### B4b — the four AI processors
 

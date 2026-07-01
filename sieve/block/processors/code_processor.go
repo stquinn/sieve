@@ -207,49 +207,57 @@ func (p *CodeBlockProcessor) BuildContext(blk block.SieveBlock, _ block.DocView,
 	return ctx
 }
 
-func (p *CodeBlockProcessor) JobLabel(_ *block.SieveBlock) string {
-	return "Refining language..."
-}
-
 func (p *CodeBlockProcessor) IDPrefix() string { return "cod" }
 
 func (p *CodeBlockProcessor) Mode() block.BlockMode {
 	return block.BlockModeBlock
 }
 
-func (p *CodeBlockProcessor) RunJob(jctx block.JobContext) error {
+// DescribeJob declares the language-refine AI job. The confidence gate — take the
+// AI's answer only when it is confident OR we have no confident language yet, so a
+// non-answer ("text") never clobbers a heuristic language found while typing —
+// lives in Apply, exactly as the old RunJob body did. The error path (status ERROR)
+// is the framework's job (EditorService onDone), so Apply is success-only.
+func (p *CodeBlockProcessor) DescribeJob(jctx block.JobContext) block.ProcessorJob {
 	blk := jctx.Block
 	source, _ := blk.Attrs["source"].(string)
 	if strings.TrimSpace(source) == "" {
-		blk.Attrs["status"] = block.BlockStatusComplete
-		delete(blk.Attrs, "hint")
-		return nil
-	}
-
-	if p.svc.AI == nil {
-		blk.Attrs["status"] = block.BlockStatusError
-		return fmt.Errorf("AI detection failed: AI service unavailable")
+		// No source: complete synchronously, no AI work.
+		return block.ProcessorJob{
+			Apply: func(_ any, b *block.SieveBlock) {
+				b.Attrs["status"] = block.BlockStatusComplete
+				delete(b.Attrs, "hint")
+			},
+		}
 	}
 
 	currentLang, _ := blk.Attrs["language"].(string)
 	method, _ := blk.Attrs["detectionMethod"].(string)
-	lang, err := p.svc.AI.RefineLanguage(source, currentLang, method)
-	if err != nil {
-		blk.Attrs["status"] = block.BlockStatusError
-		return fmt.Errorf("AI detection failed: %w", err)
+	return block.ProcessorJob{
+		Category: block.CategoryAI,
+		Label:    "Refining language...",
+		Work: func() (any, error) {
+			if p.svc.AI == nil {
+				return nil, fmt.Errorf("AI detection failed: AI service unavailable")
+			}
+			lang, err := p.svc.AI.RefineLanguage(source, currentLang, method)
+			if err != nil {
+				return nil, fmt.Errorf("AI detection failed: %w", err)
+			}
+			return lang, nil
+		},
+		Apply: func(result any, b *block.SieveBlock) {
+			lang, _ := result.(string)
+			if lheur.IsConfidentLanguage(lang) || !lheur.IsConfidentLanguage(currentLang) {
+				if lang != "" {
+					b.Attrs["language"] = lang
+					b.Attrs["detectionMethod"] = "ai"
+				}
+			}
+			b.Attrs["status"] = block.BlockStatusComplete
+			delete(b.Attrs, "hint")
+		},
 	}
-	// Take the AI's answer when it is confident, OR when we have no confident
-	// language yet. A non-answer from the AI ("text") must not clobber a real
-	// language the heuristic already found while the user was typing.
-	if lheur.IsConfidentLanguage(lang) || !lheur.IsConfidentLanguage(currentLang) {
-		if lang != "" {
-			blk.Attrs["language"] = lang
-			blk.Attrs["detectionMethod"] = "ai"
-		}
-	}
-	blk.Attrs["status"] = block.BlockStatusComplete
-	delete(blk.Attrs, "hint")
-	return nil
 }
 
 // RawContent returns the source text this block was built from (block.RawContenter).

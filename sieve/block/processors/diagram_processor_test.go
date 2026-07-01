@@ -154,7 +154,7 @@ func TestDiagramProcessor_MarkdownRepresentation_emptySource(t *testing.T) {
 	}
 }
 
-func TestDiagramProcessor_RunJob_noopComplete(t *testing.T) {
+func TestDiagramProcessor_DescribeJob_noopComplete(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{})
 	blk := &block.SieveBlock{
 		ID:   "di-0001",
@@ -164,9 +164,15 @@ func TestDiagramProcessor_RunJob_noopComplete(t *testing.T) {
 			"createdAt": time.Now().UTC().Format(time.RFC3339),
 		},
 	}
-	if err := p.RunJob(block.JobContext{Ctx: context.Background(), UUID: "test", Block: blk}); err != nil {
-		t.Fatalf("RunJob must not error; got %v", err)
+	job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "test", Block: blk})
+	if job.Work != nil {
+		t.Error("diagram has no async work; Work must be nil")
 	}
+	if job.Category != block.CategoryDefault {
+		t.Errorf("expected explicit CategoryDefault, got %q", job.Category)
+	}
+	// Apply settles the block to COMPLETE, exactly as the old RunJob no-op did.
+	job.Apply(nil, blk)
 	if blk.Attrs["status"] != block.BlockStatusComplete {
 		t.Errorf("status: got %v, want COMPLETE", blk.Attrs["status"])
 	}

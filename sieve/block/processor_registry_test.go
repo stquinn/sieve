@@ -40,8 +40,7 @@ func (p *mockProcessor) BuildContext(_ SieveBlock, _ DocView, _ map[string]bool)
 	return AIContext{}
 }
 func (p *mockProcessor) MarkdownRepresentation(_ SieveBlock, _ string) string { return "" }
-func (p *mockProcessor) RunJob(_ JobContext) error                  { return nil }
-func (p *mockProcessor) JobLabel(_ *SieveBlock) string              { return "" }
+func (p *mockProcessor) DescribeJob(_ JobContext) ProcessorJob      { return ProcessorJob{} }
 func (p *mockProcessor) OnChange(_ *SieveBlock)                     {}
 
 func TestRegisterProcessor_storesInRegistry(t *testing.T) {

@@ -260,9 +260,15 @@ func TestCodeBlockProcessor_RunJob_ai(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := p.RunJob(block.JobContext{Ctx: ctx, UUID: "", Block: blk}); err != nil {
-		t.Fatalf("RunJob failed: %v", err)
+	job := p.DescribeJob(block.JobContext{Ctx: ctx, UUID: "", Block: blk})
+	if job.Category != block.CategoryAI {
+		t.Fatalf("expected CategoryAI, got %q", job.Category)
 	}
+	res, werr := job.Work()
+	if werr != nil {
+		t.Fatalf("Work failed: %v", werr)
+	}
+	job.Apply(res, blk)
 
 	if blk.Attrs["status"] != block.BlockStatusComplete {
 		t.Errorf("expected status COMPLETE, got %v", blk.Attrs["status"])
@@ -319,9 +325,12 @@ func TestCodeBlockProcessor_RunJob_aiNonAnswerKeepsHeuristic(t *testing.T) {
 		},
 	}
 
-	if err := p.RunJob(block.JobContext{Ctx: context.Background(), UUID: "", Block: blk}); err != nil {
-		t.Fatalf("RunJob failed: %v", err)
+	job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "", Block: blk})
+	res, werr := job.Work()
+	if werr != nil {
+		t.Fatalf("Work failed: %v", werr)
 	}
+	job.Apply(res, blk)
 
 	if blk.Attrs["language"] != "python" {
 		t.Errorf("AI non-answer clobbered the heuristic: expected python, got %v", blk.Attrs["language"])
@@ -381,15 +390,13 @@ func TestCodeBlockProcessor_RunJob_aiFallback(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	err = p.RunJob(block.JobContext{Ctx: ctx, UUID: "", Block: blk})
+	job := p.DescribeJob(block.JobContext{Ctx: ctx, UUID: "", Block: blk})
 
-	// AI failure must surface as an error so EditorService can set status=ERROR.
-	if err == nil {
-		t.Fatal("expected RunJob to return an error when the AI CLI fails")
-	}
-	// The block's status must be ERROR so callers know the job did not complete.
-	if blk.Attrs["status"] != block.BlockStatusError {
-		t.Errorf("expected status ERROR, got %v", blk.Attrs["status"])
+	// AI failure must surface from Work as an error so the framework (EditorService
+	// finish closure) can set status=ERROR — the error path is no longer the
+	// processor's job (Apply is success-only).
+	if _, werr := job.Work(); werr == nil {
+		t.Fatal("expected Work to return an error when the AI CLI fails")
 	}
 }
 
@@ -404,11 +411,13 @@ func TestCodeBlockProcessor_RunJob_returnsErrorOnAIFailure(t *testing.T) {
 			"status": block.BlockStatusPending,
 		},
 	}
-	// nil AI service — this should cause RunJob to return an error
-	// rather than silently setting status=COMPLETE.
-	err := proc.RunJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk})
-	if err == nil {
-		t.Error("expected RunJob to return an error when AI service is unavailable")
+	// nil AI service — Work must return an error rather than silently succeeding.
+	job := proc.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk})
+	if job.Work == nil {
+		t.Fatal("expected an AI Work job for a non-empty source")
+	}
+	if _, werr := job.Work(); werr == nil {
+		t.Error("expected Work to return an error when AI service is unavailable")
 	}
 }
 

@@ -86,9 +86,12 @@ func TestSmartCardProcessor_RunJob_fetchesOGData(t *testing.T) {
 		},
 	}
 
-	if err := p.RunJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk}); err != nil {
-		t.Fatalf("RunJob returned error: %v", err)
+	job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk})
+	res, werr := job.Work()
+	if werr != nil {
+		t.Fatalf("Work returned error: %v", werr)
 	}
+	job.Apply(res, blk)
 	if blk.Attrs["status"] != block.BlockStatusComplete {
 		t.Errorf("status: got %v, want COMPLETE", blk.Attrs["status"])
 	}
@@ -120,9 +123,11 @@ func TestSmartCardProcessor_RunJob_emptyHrefCompletes(t *testing.T) {
 			"createdAt": time.Now().UTC().Format(time.RFC3339),
 		},
 	}
-	if err := p.RunJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk}); err != nil {
-		t.Fatalf("RunJob must not error on empty href; got %v", err)
+	job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk})
+	if job.Work != nil {
+		t.Error("empty href needs no async work; Work must be nil")
 	}
+	job.Apply(nil, blk)
 	if blk.Attrs["status"] != block.BlockStatusComplete {
 		t.Errorf("status: got %v, want COMPLETE", blk.Attrs["status"])
 	}
@@ -155,9 +160,12 @@ func TestSmartCardProcessor_RunJob_imageFailureIsNonFatal(t *testing.T) {
 		},
 	}
 
-	if err := p.RunJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk}); err != nil {
-		t.Fatalf("RunJob must not error when image download fails; got %v", err)
+	job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk})
+	res, werr := job.Work()
+	if werr != nil {
+		t.Fatalf("Work must not error when image download fails; got %v", werr)
 	}
+	job.Apply(res, blk)
 	if blk.Attrs["status"] != block.BlockStatusComplete {
 		t.Errorf("status: got %v, want COMPLETE even when image fails", blk.Attrs["status"])
 	}

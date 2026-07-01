@@ -27,8 +27,7 @@ func (m *mockContextProcessor) IsSupportedContent(entries []ContentEntry) Suppor
 func (m *mockContextProcessor) Transform(entries []ContentEntry, uuid, blockID string, action Action) map[string]interface{} {
 	return nil
 }
-func (m *mockContextProcessor) RunJob(jctx JobContext) error  { return nil }
-func (m *mockContextProcessor) JobLabel(_ *SieveBlock) string { return "" }
+func (m *mockContextProcessor) DescribeJob(_ JobContext) ProcessorJob { return ProcessorJob{} }
 func (m *mockContextProcessor) OnChange(_ *SieveBlock)        {}
 func (m *mockContextProcessor) Mode() BlockMode               { return BlockModeBlock }
 

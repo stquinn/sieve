@@ -180,33 +180,38 @@ func (p *SmartImageProcessor) BuildContext(blk block.SieveBlock, _ block.DocView
 	return ctx
 }
 
-func (p *SmartImageProcessor) JobLabel(_ *block.SieveBlock) string { return "Describing image…" }
-
-// RunJob is AI-only. The image file is already saved; this calls DescribeImage.
-func (p *SmartImageProcessor) RunJob(jctx block.JobContext) error {
+// DescribeJob is AI-only. The image file is already saved; Work calls DescribeImage
+// and Apply writes the description attrs. The error path (status ERROR) is the
+// framework's job, so Apply is success-only.
+func (p *SmartImageProcessor) DescribeJob(jctx block.JobContext) block.ProcessorJob {
 	uuid, blk := jctx.UUID, jctx.Block
 	src, _ := blk.Attrs["src"].(string)
-	if src == "" {
-		logger.Warn("smart-image: RunJob called with no src", "block", blk.ID)
-		blk.Attrs["status"] = block.BlockStatusError
-		return fmt.Errorf("no image src to describe")
+	id := blk.ID
+	return block.ProcessorJob{
+		Category: block.CategoryAI,
+		Label:    "Describing image…",
+		Work: func() (any, error) {
+			if src == "" {
+				logger.Warn("smart-image: DescribeJob called with no src", "block", id)
+				return nil, fmt.Errorf("no image src to describe")
+			}
+			logger.Info("smart-image: calling DescribeImage", "block", id, "src", src)
+			desc, err := p.svc.AI.DescribeImage(uuid, src, id)
+			if err != nil {
+				logger.Warn("smart-image: DescribeImage failed", "block", id, "err", err)
+				return nil, err
+			}
+			logger.Info("smart-image: DescribeImage complete", "block", id, "summary_len", len(desc.Summary))
+			return desc, nil
+		},
+		Apply: func(result any, b *block.SieveBlock) {
+			desc := result.(domain.ImageDesc)
+			b.Attrs["summary"] = desc.Summary
+			b.Attrs["alt"] = desc.Alt
+			b.Attrs["detect"] = desc.Detect
+			b.Attrs["status"] = block.BlockStatusComplete
+		},
 	}
-
-	logger.Info("smart-image: calling DescribeImage", "block", blk.ID, "src", src)
-	desc, err := p.svc.AI.DescribeImage(uuid, src, blk.ID)
-	if err != nil {
-		logger.Warn("smart-image: DescribeImage failed", "block", blk.ID, "err", err)
-		blk.Attrs["summary"] = "AI Description failed: " + err.Error()
-		blk.Attrs["status"] = block.BlockStatusError
-		return err
-	}
-
-	logger.Info("smart-image: DescribeImage complete", "block", blk.ID, "summary_len", len(desc.Summary))
-	blk.Attrs["summary"] = desc.Summary
-	blk.Attrs["alt"] = desc.Alt
-	blk.Attrs["detect"] = desc.Detect
-	blk.Attrs["status"] = block.BlockStatusComplete
-	return nil
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

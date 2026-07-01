@@ -23,8 +23,7 @@ func (fakeProc) InitAttrs(id string, o map[string]interface{}) map[string]interf
 }
 func (fakeProc) IsSupportedContent([]ContentEntry) SupportedActions          { return SupportedActions{} }
 func (fakeProc) Transform([]ContentEntry, string, string, Action) map[string]any { return nil }
-func (fakeProc) RunJob(JobContext) error                                     { return nil }
-func (fakeProc) JobLabel(*SieveBlock) string                                 { return "" }
+func (fakeProc) DescribeJob(JobContext) ProcessorJob                         { return ProcessorJob{} }
 func (fakeProc) OnChange(*SieveBlock)                                        {}
 func (fakeProc) Mode() BlockMode                                             { return BlockModeBlock }
 func (fakeProc) BuildContext(SieveBlock, DocView, map[string]bool) AIContext { return AIContext{} }
