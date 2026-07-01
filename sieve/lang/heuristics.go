@@ -1,4 +1,4 @@
-package block
+package lang
 
 import (
 	"encoding/json"

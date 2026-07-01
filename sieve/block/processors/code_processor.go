@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"sieve/logger"
 	"sieve/sieve/block"
+	lheur "sieve/sieve/lang"
 	"strings"
 	"time"
 )
@@ -49,8 +50,8 @@ func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface
 	logger.Debug("CodeBlockProcessor InitAttrs: initial attrs: %+v", attrs)
 	source, _ := attrs["source"].(string)
 	hint, _ := attrs["hint"].(string)
-	if lang, ok := block.DetectByHeuristics(source, hint); ok {
-		attrs["language"] = lang
+	if l, ok := lheur.DetectByHeuristics(source, hint); ok {
+		attrs["language"] = l
 		attrs["detectionMethod"] = "heuristic"
 	}
 	return attrs
@@ -143,10 +144,10 @@ func unfencedCodeContent(entry block.ContentEntry) (string, bool) {
 	if !strings.Contains(trimmed, "\n") {
 		return "", false
 	}
-	if _, ok := block.DetectByHeuristics(trimmed, ""); ok {
+	if _, ok := lheur.DetectByHeuristics(trimmed, ""); ok {
 		return trimmed, true
 	}
-	if block.LooksLikeCode(trimmed) {
+	if lheur.LooksLikeCode(trimmed) {
 		return trimmed, true
 	}
 	return "", false
@@ -164,8 +165,8 @@ func (p *CodeBlockProcessor) OnChange(blk *block.SieveBlock) {
 	}
 
 	hint, _ := blk.Attrs["hint"].(string)
-	if detected, ok := block.DetectByHeuristics(source, hint); ok {
-		lang, _ := blk.Attrs["language"].(string)
+	if detected, ok := lheur.DetectByHeuristics(source, hint); ok {
+		curLang, _ := blk.Attrs["language"].(string)
 		method, _ := blk.Attrs["detectionMethod"].(string)
 		// The AI refine step is the authority that exists precisely because the
 		// heuristic is unreliable (it reads a Java `package` line as Go). Once the
@@ -174,10 +175,10 @@ func (p *CodeBlockProcessor) OnChange(blk *block.SieveBlock) {
 		// the job completes, and clobbering here would silently undo the correction.
 		// A non-answer AI verdict ("text") is NOT sticky: if the user adds content
 		// and the heuristic now finds a real language, we take it.
-		if method == "ai" && block.IsConfidentLanguage(lang) {
+		if method == "ai" && lheur.IsConfidentLanguage(curLang) {
 			return
 		}
-		if detected != lang {
+		if detected != curLang {
 			blk.Attrs["language"] = detected
 			blk.Attrs["detectionMethod"] = "heuristic"
 		}
@@ -240,7 +241,7 @@ func (p *CodeBlockProcessor) RunJob(jctx block.JobContext) error {
 	// Take the AI's answer when it is confident, OR when we have no confident
 	// language yet. A non-answer from the AI ("text") must not clobber a real
 	// language the heuristic already found while the user was typing.
-	if block.IsConfidentLanguage(lang) || !block.IsConfidentLanguage(currentLang) {
+	if lheur.IsConfidentLanguage(lang) || !lheur.IsConfidentLanguage(currentLang) {
 		if lang != "" {
 			blk.Attrs["language"] = lang
 			blk.Attrs["detectionMethod"] = "ai"
