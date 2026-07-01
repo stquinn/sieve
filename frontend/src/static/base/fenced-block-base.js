@@ -114,35 +114,45 @@ export function isStaleByTime(createdAt) {
 // load; kept current via jobs:changed (full snapshot) — the sole driver.
 
 var _activeJobIds = new Set()
+var _queuedJobIds = new Set()
 
 // Seed on module load from /api/jobs → {active:[...],queued:[...]}.
 fetch('/api/jobs')
   .then(function (r) { return r.json() })
   .then(function (data) {
     ;(data.active || []).forEach(function (j) { if (j.jobId) _activeJobIds.add(j.jobId) })
+    ;(data.queued || []).forEach(function (j) { if (j.jobId) _queuedJobIds.add(j.jobId) })
   })
   .catch(function () {})
 
-// Full-snapshot listener: authoritative replacement of the tracked set.
+// Full-snapshot listener: authoritative replacement of both tracked sets.
 document.addEventListener('sse:jobs:changed', function (e) {
   try {
     var raw = e.detail && e.detail.data != null ? e.detail.data : (typeof e.detail === 'string' ? e.detail : '{}')
     var payload = JSON.parse(raw)
     _activeJobIds.clear()
+    _queuedJobIds.clear()
     ;(payload.active || []).forEach(function (j) { if (j.jobId) _activeJobIds.add(j.jobId) })
+    ;(payload.queued || []).forEach(function (j) { if (j.jobId) _queuedJobIds.add(j.jobId) })
   } catch (_) {}
 })
 
-// isJobActive — returns true if the given job ID is currently in-flight on the server.
-// Use this in block isStale checks before falling back to isStaleByTime.
+// isJobActive — true if the job is running on the server right now.
 export function isJobActive(id) {
   return !!id && _activeJobIds.has(id)
 }
 
-// isJobStale — checks if a job block is stale. Returns false if the job is active on the server.
-// If the job is not active, it falls back to checking the configured CLI timeout threshold.
+// isJobQueued — true if the job is waiting in the engine queue (not yet running).
+export function isJobQueued(id) {
+  return !!id && _queuedJobIds.has(id)
+}
+
+// isJobStale — a block's job is stale only if the server has NO record of it
+// (neither active NOR queued) AND it has exceeded the CLI-timeout threshold. A
+// QUEUED job is waiting to run on a bounded worker pool — it is NOT stale/timed
+// out, even once createdAt passes the threshold. This is the queued≠timeout fix.
 export function isJobStale(createdAt, id) {
-  if (isJobActive(id)) return false
+  if (isJobActive(id) || isJobQueued(id)) return false
   return isStaleByTime(createdAt)
 }
 
