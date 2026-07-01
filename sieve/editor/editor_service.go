@@ -1,4 +1,4 @@
-package services
+package editor
 
 import (
 	"context"
@@ -11,15 +11,16 @@ import (
 	"sieve/logger"
 	"sieve/sieve/block"
 	"sieve/sieve/fencedblock"
+	"sieve/sieve/services"
 )
 
 // EditorService is the Go-side editor model. It holds one ShadowDocument per
 // open document and coordinates all save operations. DocumentService owns disk.
 type EditorService struct {
-	documents *DocumentService
+	documents *services.DocumentService
 	codec     *block.DocumentCodec
 	services  block.BlockServices
-	jobs      *JobTracker // not a processor concern; EditorService tracks job spinners directly
+	jobs      *services.JobTracker // not a processor concern; EditorService tracks job spinners directly
 	debounce  time.Duration
 	mu        sync.RWMutex
 	shadows   map[string]*block.ShadowDocument
@@ -29,7 +30,7 @@ type EditorService struct {
 // NewEditorService creates an EditorService backed by the given DocumentService.
 // codec owns document serialization/deserialization; debounce controls the
 // autosave delay (pass 0 to use the default 30s).
-func NewEditorService(documents *DocumentService, codec *block.DocumentCodec, debounce time.Duration) *EditorService {
+func NewEditorService(documents *services.DocumentService, codec *block.DocumentCodec, debounce time.Duration) *EditorService {
 	d := debounce
 	if d <= 0 {
 		d = block.DefaultAutosaveDebounce
@@ -412,7 +413,7 @@ func (es *EditorService) CloseAll() {
 
 // SetJobs wires the JobTracker EditorService uses for job-spinner lifecycle.
 // Separate from BlockServices (a processor bundle) because no processor needs it.
-func (es *EditorService) SetJobs(j *JobTracker) {
+func (es *EditorService) SetJobs(j *services.JobTracker) {
 	es.jobs = j
 }
 
@@ -746,7 +747,7 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 
 	label := processor.JobLabel(blkCopy)
 	if label != "" && es.jobs != nil {
-		es.jobs.Start(JobInfo{
+		es.jobs.Start(services.JobInfo{
 			JobID:   blockID,
 			Label:   label,
 			DocID:   uuid,

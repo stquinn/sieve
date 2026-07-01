@@ -5,6 +5,7 @@ import (
 	"sieve/sieve/ai"
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
+	"sieve/sieve/editor"
 	"sieve/sieve/services"
 	"sieve/store"
 	"time"
@@ -18,7 +19,7 @@ type ServiceProvider struct {
 	State       *services.StateService
 	Prompts     *ai.PromptService
 	AI          *ai.AIService
-	Editor      *services.EditorService
+	Editor      *editor.EditorService
 	Jobs        *services.JobTracker
 	LinkPreview *services.LinkPreviewService
 }
@@ -69,7 +70,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	s.LinkPreview = services.NewLinkPreviewService()
 	settings := s.State.LoadSettings()
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
-	s.Editor = services.NewEditorService(s.Documents, block.NewDocumentCodec(block.GlobalRegistry()), autosave)
+	s.Editor = editor.NewEditorService(s.Documents, block.NewDocumentCodec(block.GlobalRegistry()), autosave)
 	s.Editor.SetServices(s.BlockServices())
 	s.Editor.SetJobs(s.Jobs) // re-set in handlers.go once the real JobTracker (with hub) exists
 	svc := s.BlockServices()
