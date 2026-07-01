@@ -516,33 +516,6 @@ func (a *App) DownloadAsset(uuid, targetURL, id string) (AssetDTO, error) {
 	return toAssetDTO(asset), nil
 }
 
-// ── AI / CLI operations ───────────────────────────────────────────────────────
-
-// window.__stashActiveTabUuid, mdPath, blkId
-func (a *App) DescribeImage(uuid string, storeRelPath string, blkId string) (domain.ImageDesc, error) {
-	if a.AI == nil {
-		return domain.ImageDesc{}, fmt.Errorf("store not open")
-	}
-	desc, err := a.AI.DescribeImage(uuid, storeRelPath, blkId)
-	if err != nil {
-		logger.Warn("DescribeImage failed", "err", err)
-		return domain.ImageDesc{}, err
-	}
-	return desc, nil
-}
-
-func (a *App) RefineLanguage(content, currentLanguage, detectionMethod string) (string, error) {
-	if a.AI == nil {
-		return "", fmt.Errorf("store not open")
-	}
-	lang, err := a.AI.RefineLanguage(content, currentLanguage, detectionMethod)
-	if err != nil {
-		logger.Warn("RefineLanguage failed", "err", err)
-		return "", err
-	}
-	return lang, nil
-}
-
 func (a *App) GetLinkTitle(url string) (string, error) {
 	logger.Info("Getting title for ", url)
 	if url == "" {

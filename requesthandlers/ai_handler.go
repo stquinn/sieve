@@ -1,7 +1,6 @@
 package requesthandlers
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"sieve/sieve"
@@ -22,15 +21,6 @@ func (h *AiHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/ai/smartMetadata/{id}", h.handleAiSmartMetadata)
 	r.Post("/api/ai/keepAndFile/{uuid}", h.handleAiKeepAndFile)
 
-	r.Post("/api/ai/refine-language", h.handleRefineLanguage)
-	r.Get("/api/ai/active-jobs", func(w http.ResponseWriter, r *http.Request) {
-		if h.JobTracker != nil {
-			h.JobTracker.ServeActiveJobs(w, r)
-		} else {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"jobs":[]}`))
-		}
-	})
 	r.Get("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
 		if h.JobTracker != nil {
 			h.JobTracker.ServeJobs(w, r)
@@ -89,21 +79,3 @@ func (h *AiHandler) handleAiKeepAndFile(w http.ResponseWriter, r *http.Request) 
 	h.ack(w)
 }
 
-type refineLanguageRequest struct {
-	Content string `json:"content"`
-}
-
-func (h *AiHandler) handleRefineLanguage(w http.ResponseWriter, r *http.Request) {
-	var req refineLanguageRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	lang, err := h.ServiceProvider.AI.RefineLanguage(req.Content, "", "")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte(lang))
-}

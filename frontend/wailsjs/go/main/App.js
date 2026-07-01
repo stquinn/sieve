@@ -6,10 +6,6 @@ export function CreateVault() {
   return window['go']['main']['App']['CreateVault']();
 }
 
-export function DescribeImage(arg1, arg2, arg3) {
-  return window['go']['main']['App']['DescribeImage'](arg1, arg2, arg3);
-}
-
 export function DownloadAsset(arg1, arg2, arg3) {
   return window['go']['main']['App']['DownloadAsset'](arg1, arg2, arg3);
 }
@@ -40,10 +36,6 @@ export function InitVault(arg1) {
 
 export function Quit() {
   return window['go']['main']['App']['Quit']();
-}
-
-export function RefineLanguage(arg1, arg2, arg3) {
-  return window['go']['main']['App']['RefineLanguage'](arg1, arg2, arg3);
 }
 
 export function SelectVault() {

@@ -115,13 +115,11 @@ export function isStaleByTime(createdAt) {
 
 var _activeJobIds = new Set()
 
-// Seed on module load from /api/jobs ({active:[...],queued:[...]}).
-// Robust to legacy /api/ai/active-jobs shape ({jobs:[...]}) for safe rollout.
+// Seed on module load from /api/jobs → {active:[...],queued:[...]}.
 fetch('/api/jobs')
   .then(function (r) { return r.json() })
   .then(function (data) {
-    var list = Array.isArray(data.active) ? data.active : (data.jobs || [])
-    list.forEach(function (j) { if (j.jobId) _activeJobIds.add(j.jobId) })
+    ;(data.active || []).forEach(function (j) { if (j.jobId) _activeJobIds.add(j.jobId) })
   })
   .catch(function () {})
 

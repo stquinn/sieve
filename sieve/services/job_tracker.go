@@ -6,8 +6,7 @@ import (
 	"sync"
 )
 
-// JobInfo is the payload for jobs:changed SSE events and GET /api/jobs (and the
-// legacy GET /api/ai/active-jobs route, retired in C2).
+// JobInfo is the payload for jobs:changed SSE events and GET /api/jobs.
 type JobInfo struct {
 	JobID    string `json:"jobId"`
 	Label    string `json:"label"`
@@ -30,17 +29,6 @@ func NewJobTracker() *JobTracker {
 }
 
 func (t *JobTracker) Active() []JobInfo { return t.listByState("active") }
-
-// ServeActiveJobs handles GET /api/ai/active-jobs.
-// Returns {"jobs": [...]} for the JS status bar to restore state after a tab switch.
-func (t *JobTracker) ServeActiveJobs(w http.ResponseWriter, r *http.Request) {
-	jobs := t.Active()
-	if jobs == nil {
-		jobs = []JobInfo{}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string][]JobInfo{"jobs": jobs})
-}
 
 // Enqueue records a job as queued and broadcasts jobs:changed.
 func (t *JobTracker) Enqueue(info JobInfo) {

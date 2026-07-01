@@ -96,12 +96,6 @@
     updateStatusBar();
   }
 
-  function parseSSEDetail(e) {
-    var raw = e.detail && e.detail.data != null ? e.detail.data : (typeof e.detail === 'string' ? e.detail : null)
-    if (!raw) return {}
-    try { return JSON.parse(raw); } catch (_) { return {}; }
-  }
-
   // ── Full-snapshot listener (jobs:changed) — sole driver of status bar state ──
   document.addEventListener('sse:jobs:changed', function(e) {
     var raw = e.detail && e.detail.data != null ? e.detail.data : (typeof e.detail === 'string' ? e.detail : null);
@@ -126,27 +120,11 @@
 
   window.SieveAI = {
     // loadActiveJobs: called by editor.js on tab load to restore status bar state.
-    // Reads from /api/jobs (new two-list shape); falls back gracefully to legacy
-    // /api/ai/active-jobs shape (data.jobs[]) so the old route still works.
+    // Reads from /api/jobs → {active:[...], queued:[...]} and applies snapshot.
     loadActiveJobs: function() {
       fetch('/api/jobs')
         .then(function(r) { return r.json(); })
-        .then(function(data) {
-          // New shape: {active:[...], queued:[...]}
-          if (Array.isArray(data.active)) {
-            applyJobsSnapshot(data);
-          } else {
-            // Legacy fallback: {jobs:[...]}
-            var jobs = data.jobs || [];
-            jobs.forEach(function(job) {
-              if (!job.jobId) return;
-              activeJobs[job.jobId] = { label: job.label || 'Working...', docId: job.docId, spinTab: !!job.spinTab };
-              if (job.spinTab && job.docId) setEvaluating(job.docId, true);
-            });
-            window.__sieveActiveJobs = Object.keys(activeJobs).length;
-            updateStatusBar();
-          }
-        })
+        .then(function(data) { applyJobsSnapshot(data); })
         .catch(function() {});
     },
     smartFile:        function(id) { saveAndPost('/api/ai/smartFile/',    id); },
