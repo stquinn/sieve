@@ -1,5 +1,4 @@
-// ai-actions.js — Status bar driven by ai:job-started / ai:job-ended SSE events from Go.
-// Also consumes jobs:changed (full snapshot) for accurate two-list rendering.
+// ai-actions.js — Status bar driven by jobs:changed (full snapshot) SSE events from Go.
 // Exposes window.SieveAI namespace; maintains window.__sieveActiveJobs for the close-guard.
 (function() {
   // activeJobs: jobId → {label, docId, spinTab}. Populated by SSE events and loadActiveJobs().
@@ -14,20 +13,44 @@
     var sbLeft = document.querySelector('.status-bar__jobs');
     if (!sbLeft) return;
     var ids = Object.keys(activeJobs);
-    if (ids.length === 0) { sbLeft.innerHTML = ''; return; }
+    if (ids.length === 0 && queuedJobs.length === 0) { sbLeft.innerHTML = ''; return; }
 
-    var firstLabel = activeJobs[ids[0]].label;
-    var span = document.createElement('span');
-    span.className = 'flex items-center gap-1.5';
-    var spinner = document.createElement('span');
-    spinner.className = 'w-[10px] h-[10px] shrink-0 rounded-full border-[1.5px] border-solid border-tn-cyan border-t-transparent animate-spin';
-    var text = document.createElement('span');
-    var extra = ids.length > 1 ? ' +' + (ids.length - 1) + ' more' : '';
-    text.textContent = firstLabel + extra;
-    span.appendChild(spinner);
-    span.appendChild(text);
+    var frag = document.createDocumentFragment();
+
+    // ── Active section ────────────────────────────────────────────────────────
+    if (ids.length > 0) {
+      var firstLabel = activeJobs[ids[0]].label;
+      var activeSpan = document.createElement('span');
+      activeSpan.className = 'flex items-center gap-1.5';
+      var spinner = document.createElement('span');
+      spinner.className = 'w-[10px] h-[10px] shrink-0 rounded-full border-[1.5px] border-solid border-tn-cyan border-t-transparent animate-spin';
+      var activeText = document.createElement('span');
+      var extra = ids.length > 1 ? ' +' + (ids.length - 1) + ' more' : '';
+      activeText.textContent = firstLabel + extra;
+      activeSpan.appendChild(spinner);
+      activeSpan.appendChild(activeText);
+      frag.appendChild(activeSpan);
+    }
+
+    // ── Queued section ────────────────────────────────────────────────────────
+    if (queuedJobs.length > 0) {
+      var queuedSpan = document.createElement('span');
+      queuedSpan.className = 'flex items-center gap-1';
+      queuedSpan.style.opacity = '0.6';
+      var sep = document.createElement('span');
+      sep.textContent = ids.length > 0 ? '·' : '';
+      sep.style.marginRight = '2px';
+      var qText = document.createElement('span');
+      qText.textContent = queuedJobs.length === 1
+        ? (queuedJobs[0].label || '1 queued')
+        : queuedJobs.length + ' queued';
+      if (ids.length > 0) queuedSpan.appendChild(sep);
+      queuedSpan.appendChild(qText);
+      frag.appendChild(queuedSpan);
+    }
+
     sbLeft.innerHTML = '';
-    sbLeft.appendChild(span);
+    sbLeft.appendChild(frag);
   }
 
   function setEvaluating(id, isEval) {
@@ -79,36 +102,12 @@
     try { return JSON.parse(raw); } catch (_) { return {}; }
   }
 
-  // ── New: full-snapshot listener (jobs:changed) ───────────────────────────────
+  // ── Full-snapshot listener (jobs:changed) — sole driver of status bar state ──
   document.addEventListener('sse:jobs:changed', function(e) {
     var raw = e.detail && e.detail.data != null ? e.detail.data : (typeof e.detail === 'string' ? e.detail : null);
     if (!raw) return;
     var payload; try { payload = JSON.parse(raw); } catch (_) { return; }
     applyJobsSnapshot(payload);
-  });
-
-  // ── Legacy: per-event listeners (ai:job-started / ai:job-ended) ─────────────
-  // Kept for dual-listen: these still fire during Phase B while the backend
-  // emits both. Phase C will remove the legacy events; this block retires then.
-  document.addEventListener('sse:ai:job-started', function(e) {
-    var data = parseSSEDetail(e);
-    if (!data.jobId) return;
-    activeJobs[data.jobId] = { label: data.label || 'Working...', docId: data.docId, spinTab: !!data.spinTab };
-    window.__sieveActiveJobs = Object.keys(activeJobs).length;
-    if (data.spinTab && data.docId) setEvaluating(data.docId, true);
-    updateStatusBar();
-  });
-
-  document.addEventListener('sse:ai:job-ended', function(e) {
-    var data = parseSSEDetail(e);
-    if (!data.jobId) return;
-    var job = activeJobs[data.jobId] || {};
-    delete activeJobs[data.jobId];
-    window.__sieveActiveJobs = Object.keys(activeJobs).length;
-    var docId = job.docId || data.docId;
-    var spinTab = job.spinTab != null ? job.spinTab : !!data.spinTab;
-    if (spinTab && docId) setEvaluating(docId, false);
-    updateStatusBar();
   });
 
   function saveAndPost(url, id) {
@@ -120,7 +119,7 @@
       }
       if (id) {
         fetch(url + id, { method: 'POST' });
-        // Go emits ai:job-started and ai:job-ended via SSE — no JS tracking needed here.
+        // Go emits jobs:changed via SSE — status bar updates via applyJobsSnapshot.
       }
     });
   }

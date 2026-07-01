@@ -111,8 +111,7 @@ export function isStaleByTime(createdAt) {
 
 // ── Active job tracking ───────────────────────────────────────────────────────
 // Shared across all fenced block extensions. Seeded from /api/jobs on module
-// load; kept current via jobs:changed (full snapshot) and legacy ai:job-started /
-// ai:job-ended SSE events (dual-listen; legacy events retire in Phase C).
+// load; kept current via jobs:changed (full snapshot) — the sole driver.
 
 var _activeJobIds = new Set()
 
@@ -134,14 +133,6 @@ document.addEventListener('sse:jobs:changed', function (e) {
     _activeJobIds.clear()
     ;(payload.active || []).forEach(function (j) { if (j.jobId) _activeJobIds.add(j.jobId) })
   } catch (_) {}
-})
-
-// Legacy per-event listeners (kept for dual-listen; retire with Phase C).
-document.addEventListener('sse:ai:job-started', function (e) {
-  try { var d = JSON.parse(e.detail || '{}'); if (d.jobId) _activeJobIds.add(d.jobId) } catch (_) {}
-})
-document.addEventListener('sse:ai:job-ended', function (e) {
-  try { var d = JSON.parse(e.detail || '{}'); if (d.jobId) _activeJobIds.delete(d.jobId) } catch (_) {}
 })
 
 // isJobActive — returns true if the given job ID is currently in-flight on the server.
