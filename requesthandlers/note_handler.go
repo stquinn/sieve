@@ -154,6 +154,9 @@ func (h *NoteHandler) handleTabsCloseAll(w http.ResponseWriter, r *http.Request)
 	// path as a single tab close. Capture the ids before the tabs are wiped below.
 	closing := make([]string, 0, len(session.Tabs))
 	for _, t := range session.Tabs {
+		if strings.HasPrefix(t.ID, "prompt:") {
+			continue // prompt tabs are not documents — nothing to file
+		}
 		closing = append(closing, t.ID)
 	}
 	h.ServiceProvider.Editor.CloseAllAndFile(closing)
@@ -209,7 +212,10 @@ func (h *NoteHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Smart Close background filing (centralised so close-all shares it).
-	h.ServiceProvider.Editor.CloseDocument(id)
+	// Prompt tabs are not documents — nothing to file.
+	if !strings.HasPrefix(id, "prompt:") {
+		h.ServiceProvider.Editor.CloseDocument(id)
+	}
 
 	if len(session.Tabs) == 0 {
 		newNote, _ := h.ServiceProvider.Documents.New()
