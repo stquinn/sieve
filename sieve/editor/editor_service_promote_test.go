@@ -25,11 +25,11 @@ func (p *testMarkdownProcessor) IsSupportedContent(_ []block.ContentEntry) block
 func (p *testMarkdownProcessor) Transform(_ []block.ContentEntry, _, _ string, action block.Action) map[string]interface{} {
 	return nil
 }
-func (p *testMarkdownProcessor) DescribeJob(_ block.JobContext) block.ProcessorJob {
-	return block.ProcessorJob{}
+func (p *testMarkdownProcessor) DescribeJob(_ block.JobContext) *block.ProcessorJob {
+	return nil
 }
-func (p *testMarkdownProcessor) OnChange(_ *block.SieveBlock)        {}
-func (p *testMarkdownProcessor) Mode() block.BlockMode               { return block.BlockModeBlock }
+func (p *testMarkdownProcessor) OnChange(_ *block.SieveBlock) {}
+func (p *testMarkdownProcessor) Mode() block.BlockMode        { return block.BlockModeBlock }
 func (p *testMarkdownProcessor) BuildContext(_ block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
 	return block.AIContext{}
 }

@@ -2,6 +2,7 @@ package editor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -427,7 +428,14 @@ func (es *EditorService) SetEngine(e *services.JobEngine) { es.engine = e }
 // to the communal engine, guaranteeing Apply-before-finish and finish-once. The
 // wrap lives here because Apply and onDone (the attr-diff/shadow merge) operate
 // on EditorService-owned data. onDone is the caller's finish closure.
+//
+// INVARIANT: every submitted job has a non-empty Label — a nil DescribeJob is
+// never submitted, and a non-nil ProcessorJob is real async work that MUST label
+// itself for the status bar. An empty Label is a processor programming error.
 func (es *EditorService) submitBlockJob(job block.ProcessorJob, meta services.JobInfo, blk *block.SieveBlock, onDone func(err error)) {
+	if meta.Label == "" {
+		panic(fmt.Sprintf("submitBlockJob: block %q (kind via meta) has an empty Label — a submitted ProcessorJob must declare a non-empty Label", meta.JobID))
+	}
 	es.engine.Submit(services.JobDescriptor{
 		Category: job.Category,
 		Meta:     meta,
@@ -788,17 +796,23 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 		Block:  blkCopy,
 		Notify: notify,
 	})
-	// A zero ProcessorJob means "no job for this block".
-	if job.Category == "" && job.Work == nil && job.Apply == nil {
+	// A nil *ProcessorJob means "no async work for this block". Such blocks are
+	// created COMPLETE by their processor's InitAttrs (the settle-at-creation rule),
+	// so there is nothing to do here — never submit, never settle at runtime.
+	if job == nil {
 		return
 	}
 
 	// finish runs after Work (+Apply on success). It merges the attr delta the
-	// job produced (or sets status=ERROR) into the shadow through the single
-	// update path.
+	// job produced into the shadow through the single update path, or on error sets
+	// the UNIFORM framework error state ({status, error}) — TIMEOUT vs ERROR — so no
+	// processor writes error-rendering code.
 	finish := func(err error) {
 		if err != nil {
-			es.applyJobUpdate(uuid, blockID, kind, map[string]interface{}{"status": block.BlockStatusError}, nil, "job-complete")
+			es.applyJobUpdate(uuid, blockID, kind, map[string]interface{}{
+				"status": es.classifyJobError(err),
+				"error":  err.Error(),
+			}, nil, "job-complete")
 			return
 		}
 		updates := make(map[string]interface{})
@@ -820,12 +834,12 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	meta := services.JobInfo{JobID: blockID, Label: job.Label, DocID: uuid, SpinTab: false}
 
 	if es.engine != nil {
-		es.submitBlockJob(job, meta, blkCopy, finish)
+		es.submitBlockJob(*job, meta, blkCopy, finish)
 		return
 	}
 
 	// Fallback for tests where no engine is wired: run the job inline, preserving
-	// Apply-before-finish and finish-once.
+	// Apply-before-finish and finish-once. A submitted job always has non-nil Work.
 	if job.Work != nil {
 		r, e := job.Work()
 		if e != nil {
@@ -841,3 +855,14 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 	finish(nil)
 }
 
+// classifyJobError maps a job's Work error to the uniform terminal status the
+// framework writes for every block kind: BlockStatusTimeout when the failure is a
+// deadline/timeout (either a wrapped context.DeadlineExceeded or the CLI's
+// "cli timeout after N seconds" string, which does not wrap it), else
+// BlockStatusError. Processors never classify errors themselves.
+func (es *EditorService) classifyJobError(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) || strings.Contains(strings.ToLower(err.Error()), "timeout") {
+		return block.BlockStatusTimeout
+	}
+	return block.BlockStatusError
+}

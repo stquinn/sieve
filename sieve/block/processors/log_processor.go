@@ -77,6 +77,11 @@ func (p *LogProcessor) InitAttrs(id string, overrides map[string]interface{}) ma
 		}
 		attrs[k] = v
 	}
+	// Complete-vs-pending predicate MUST mirror DescribeJob: no source ⇒ no parse
+	// job ⇒ born COMPLETE (never dispatched); a source present ⇒ PENDING.
+	if src, _ := attrs["source"].(string); strings.TrimSpace(src) == "" {
+		attrs["status"] = block.BlockStatusComplete
+	}
 	return attrs
 }
 
@@ -441,25 +446,22 @@ func mapLevelToSeverity(level string) string {
 	return "none"
 }
 
-// DescribeJob declares the log-parse job. The parse + asset-save (which can error)
-// lives in Work so a failure surfaces to the framework as status ERROR; Apply
-// writes the success attrs. An empty source completes synchronously (nil Work).
-func (p *LogProcessor) DescribeJob(jctx block.JobContext) block.ProcessorJob {
+// DescribeJob declares the log-parse job, or nil when there is no source to parse
+// (the block is born COMPLETE by InitAttrs — same empty-source predicate). The
+// parse + asset-save (which can error) lives in Work so a failure surfaces to the
+// framework as status ERROR; Apply writes the success attrs.
+func (p *LogProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJob {
 	blk := jctx.Block
 	uuid, id := jctx.UUID, blk.ID
 	source, _ := blk.Attrs["source"].(string)
 
 	if strings.TrimSpace(source) == "" {
-		return block.ProcessorJob{
-			Category: block.CategoryDefault,
-			Apply: func(_ any, b *block.SieveBlock) {
-				b.Attrs["status"] = block.BlockStatusComplete
-			},
-		}
+		return nil // no source: no parse job (created COMPLETE)
 	}
 
-	return block.ProcessorJob{
+	return &block.ProcessorJob{
 		Category: block.CategoryDefault,
+		Label:    "Parsing log…",
 		Work: func() (any, error) {
 			settings := p.svc.State.LoadSettings()
 			parsedData := parseLogLines(source, settings.CustomLogParsers)

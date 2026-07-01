@@ -99,6 +99,10 @@ const (
 	BlockStatusDispatched = "DISPATCHED"
 	BlockStatusComplete   = "COMPLETE"
 	BlockStatusError      = "ERROR"
+	// BlockStatusTimeout is the terminal state a job whose Work timed out settles
+	// into (distinct from a generic ERROR so the client can say "timed out"). The
+	// literal "TIMEOUT" is what the frontend renderers key off — keep it in sync.
+	BlockStatusTimeout = "TIMEOUT"
 )
 
 type BlockMode string
@@ -116,9 +120,9 @@ const (
 type Action string
 
 const (
-	ActionPaste          Action = "paste"          // clipboard/source content -> new block
-	ActionExtract        Action = "extract"         // additive: new block alongside (source survives)
-	ActionTransform      Action = "transform"       // replace the source block in place
+	ActionPaste          Action = "paste"            // clipboard/source content -> new block
+	ActionExtract        Action = "extract"          // additive: new block alongside (source survives)
+	ActionTransform      Action = "transform"        // replace the source block in place
 	ActionUndoSmartPaste Action = "undo-smart-paste" // replace a smart-pasted block with its raw text as prose
 )
 
@@ -260,13 +264,17 @@ type BlockProcessor interface {
 	// a processor reads it only if its overrides differ by operation (e.g. prose embed).
 	// Returns nil to decline.
 	Transform(entries []ContentEntry, uuid string, blockID string, action Action) map[string]interface{}
-	// DescribeJob returns the async work (if any) this block needs after creation
-	// (AI describe, language refine, image localise, link fetch). jctx carries an
-	// immutable doc snapshot and a notify func for mid-job attr pushes. The
-	// framework owns the lifecycle: it runs Work on a category worker pool, then
-	// Apply on success. A zero ProcessorJob (Category=="" && Work==nil &&
-	// Apply==nil) means "no job for this block".
-	DescribeJob(jctx JobContext) ProcessorJob
+	// DescribeJob returns the async work this block needs after creation (AI
+	// describe, language refine, image localise, link fetch), or nil when the block
+	// has NO async work. jctx carries an immutable doc snapshot and a notify func
+	// for mid-job attr pushes. The framework owns the lifecycle: it runs Work on a
+	// category worker pool, then Apply on success. A nil *ProcessorJob is NEVER
+	// submitted to the engine — it means "no job for this block". A non-nil
+	// *ProcessorJob is always real async work and MUST carry a non-empty Label. The
+	// "no async work" predicate MUST match InitAttrs' complete-vs-pending predicate
+	// on the same attrs: a block created PENDING here must return a job, and one
+	// created COMPLETE must return nil — otherwise it hangs (created pending, no job).
+	DescribeJob(jctx JobContext) *ProcessorJob
 	// OnChange reacts synchronously to a user edit of this block (e.g. re-run
 	// heuristics). Setting status to PENDING schedules a follow-up RunJob.
 	OnChange(block *SieveBlock)

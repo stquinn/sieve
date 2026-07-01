@@ -19,8 +19,9 @@ func TestSmartLinkProcessor_InitAttrs_defaults(t *testing.T) {
 	if attrs["id"] != "sl-a1b2" {
 		t.Errorf("id: got %q, want sl-a1b2", attrs["id"])
 	}
-	if attrs["status"] != block.BlockStatusPending {
-		t.Errorf("status: got %q, want PENDING", attrs["status"])
+	// No href ⇒ no fetch job ⇒ born COMPLETE (mirrors DescribeJob==nil).
+	if attrs["status"] != block.BlockStatusComplete {
+		t.Errorf("status: got %q, want COMPLETE for empty href", attrs["status"])
 	}
 	if attrs["href"] != "" {
 		t.Errorf("href: got %q, want empty", attrs["href"])
@@ -182,7 +183,7 @@ func TestSmartLinkProcessor_RunJob_gracefulOnTitleFailure(t *testing.T) {
 	}
 }
 
-func TestSmartLinkProcessor_RunJob_emptyHref(t *testing.T) {
+func TestSmartLinkProcessor_RunJob_emptyHrefNoJob(t *testing.T) {
 	p := NewSmartLinkProcessor(block.BlockServices{})
 	blk := &block.SieveBlock{
 		ID:   "sl-0003",
@@ -190,16 +191,13 @@ func TestSmartLinkProcessor_RunJob_emptyHref(t *testing.T) {
 		Attrs: map[string]interface{}{
 			"href":      "",
 			"label":     "",
-			"status":    block.BlockStatusPending,
+			"status":    block.BlockStatusComplete,
 			"createdAt": time.Now().UTC().Format(time.RFC3339),
 		},
 	}
-	job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk})
-	if job.Work != nil {
-		t.Error("empty href needs no async work; Work must be nil")
-	}
-	job.Apply(nil, blk)
-	if blk.Attrs["status"] != block.BlockStatusComplete {
-		t.Errorf("status: got %q, want COMPLETE", blk.Attrs["status"])
+	// No href ⇒ no fetch job. The block is born COMPLETE by InitAttrs, so it is
+	// never dispatched; DescribeJob returns nil.
+	if job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk}); job != nil {
+		t.Errorf("empty href must return a nil job, got %+v", job)
 	}
 }

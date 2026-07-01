@@ -103,15 +103,10 @@ func (p *DiagramProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, _
 	return block.AIContext{NodeIDs: []string{blk.ID}, Content: "```mermaid\n" + src + "\n```"}
 }
 
-// DescribeJob: a diagram has no async work — it just settles to COMPLETE. Apply
-// (with nil Work) runs synchronously on the framework's finish path.
-func (p *DiagramProcessor) DescribeJob(_ block.JobContext) block.ProcessorJob {
-	return block.ProcessorJob{
-		Category: block.CategoryDefault,
-		Apply: func(_ any, b *block.SieveBlock) {
-			b.Attrs["status"] = block.BlockStatusComplete
-		},
-	}
+// DescribeJob: a diagram has no async work — it renders client-side and is
+// created COMPLETE by InitAttrs, so it is never dispatched. nil == no job.
+func (p *DiagramProcessor) DescribeJob(_ block.JobContext) *block.ProcessorJob {
+	return nil
 }
 
 func (p *DiagramProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {

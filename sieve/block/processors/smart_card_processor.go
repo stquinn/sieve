@@ -50,6 +50,11 @@ func (p *SmartCardProcessor) InitAttrs(id string, overrides map[string]interface
 		}
 		attrs[k] = v
 	}
+	// Complete-vs-pending predicate MUST mirror DescribeJob: no href ⇒ no fetch job
+	// ⇒ born COMPLETE (never dispatched); an href present ⇒ PENDING.
+	if href, _ := attrs["href"].(string); href == "" {
+		attrs["status"] = block.BlockStatusComplete
+	}
 	return attrs
 }
 
@@ -128,27 +133,20 @@ func (p *SmartCardProcessor) BuildContext(blk block.SieveBlock, _ block.DocView,
 	return block.AIContext{NodeIDs: []string{blk.ID}, Content: sb.String()}
 }
 
-// DescribeJob declares the OG-metadata fetch job. The blocking network work (OG
-// fetch + best-effort image download) lives in Work; Apply writes the attrs,
-// mirroring the old RunJob body. An empty href completes synchronously (nil Work).
-func (p *SmartCardProcessor) DescribeJob(jctx block.JobContext) block.ProcessorJob {
+// DescribeJob declares the OG-metadata fetch job, or nil when there is no href to
+// fetch (the block is born COMPLETE by InitAttrs — same empty-href predicate). The
+// blocking network work (OG fetch + best-effort image download) lives in Work;
+// Apply writes the attrs, mirroring the old RunJob body.
+func (p *SmartCardProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJob {
 	blk := jctx.Block
 	uuid, id := jctx.UUID, blk.ID
 	href, _ := blk.Attrs["href"].(string)
 
 	if href == "" {
-		return block.ProcessorJob{
-			Category: block.CategoryDefault,
-			Apply: func(_ any, b *block.SieveBlock) {
-				now := time.Now().UTC().Format(time.RFC3339)
-				b.Attrs["status"] = block.BlockStatusComplete
-				b.Attrs["completedAt"] = now
-				b.Attrs["fetchedAt"] = now
-			},
-		}
+		return nil // no href: no fetch job (created COMPLETE)
 	}
 
-	return block.ProcessorJob{
+	return &block.ProcessorJob{
 		Category: block.CategoryDefault,
 		Label:    p.smartCardLabel(blk),
 		Work: func() (any, error) {

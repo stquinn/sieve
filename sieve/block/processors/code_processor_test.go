@@ -20,8 +20,9 @@ func TestCodeBlockProcessor_InitAttrs_zeroState(t *testing.T) {
 	if attrs["id"] != "co-0001" {
 		t.Errorf("expected id=co-0001, got %v", attrs["id"])
 	}
-	if attrs["status"] != block.BlockStatusPending {
-		t.Errorf("expected status=PENDING, got %v", attrs["status"])
+	// Empty source ⇒ no async refine job ⇒ born COMPLETE (mirrors DescribeJob==nil).
+	if attrs["status"] != block.BlockStatusComplete {
+		t.Errorf("expected status=COMPLETE for empty source, got %v", attrs["status"])
 	}
 	if attrs["source"] != "" {
 		t.Errorf("expected empty source, got %v", attrs["source"])

@@ -193,10 +193,10 @@ func (f *fakeSmartImage) MarkdownRepresentation(blk block.SieveBlock, uuid strin
 func (f *fakeSmartImage) BuildContext(_ block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
 	return block.AIContext{}
 }
-func (f *fakeSmartImage) DescribeJob(_ block.JobContext) block.ProcessorJob {
-	return block.ProcessorJob{}
+func (f *fakeSmartImage) DescribeJob(_ block.JobContext) *block.ProcessorJob {
+	return nil
 }
-func (f *fakeSmartImage) OnChange(_ *block.SieveBlock)        {}
+func (f *fakeSmartImage) OnChange(_ *block.SieveBlock) {}
 
 // "Embed in Document" of a diagram: prose's resolveEntries renders the mermaid to an
 // SVG and inserts an image/svg+xml entry. prose.Transform must embed THAT as served

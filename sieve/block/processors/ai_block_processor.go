@@ -177,9 +177,11 @@ func (p *AIBlockProcessor) buildTargets(targets []string, doc block.DocView) str
 // Q&A / derivation history), and this block is the ACTION. Each node self-describes
 // through the registry (BuildContextForID), so dispatch stays kind-agnostic. The
 // prompt is assembled synchronously here (it needs the immutable jctx.Doc snapshot),
-// then captured by Work; Apply writes the success attrs. The error path (status
-// ERROR) is the framework's job in EditorService.onDone, so Apply is success-only.
-func (p *AIBlockProcessor) DescribeJob(jctx block.JobContext) block.ProcessorJob {
+// then captured by Work; Apply writes the success attrs. An ai-block always has
+// async work (born PENDING), so DescribeJob never returns nil. The error path
+// (status ERROR/TIMEOUT) is the framework's job in EditorService.finish, so Apply
+// is success-only.
+func (p *AIBlockProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJob {
 	blk := jctx.Block
 	uuid := jctx.UUID
 	ref, _ := blk.Attrs["ref"].(string)
@@ -205,7 +207,7 @@ func (p *AIBlockProcessor) DescribeJob(jctx block.JobContext) block.ProcessorJob
 	questionCtx := p.BuildContext(*blk, jctx.Doc, map[string]bool{}).String()
 
 	isExplain := blockType == "EXPLAIN"
-	return block.ProcessorJob{
+	return &block.ProcessorJob{
 		Category: block.CategoryAI,
 		Label:    p.aiBlockLabel(blk),
 		Work: func() (any, error) {

@@ -154,7 +154,7 @@ func TestDiagramProcessor_MarkdownRepresentation_emptySource(t *testing.T) {
 	}
 }
 
-func TestDiagramProcessor_DescribeJob_noopComplete(t *testing.T) {
+func TestDiagramProcessor_DescribeJob_noJob(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{})
 	blk := &block.SieveBlock{
 		ID:   "di-0001",
@@ -164,16 +164,9 @@ func TestDiagramProcessor_DescribeJob_noopComplete(t *testing.T) {
 			"createdAt": time.Now().UTC().Format(time.RFC3339),
 		},
 	}
-	job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "test", Block: blk})
-	if job.Work != nil {
-		t.Error("diagram has no async work; Work must be nil")
-	}
-	if job.Category != block.CategoryDefault {
-		t.Errorf("expected explicit CategoryDefault, got %q", job.Category)
-	}
-	// Apply settles the block to COMPLETE, exactly as the old RunJob no-op did.
-	job.Apply(nil, blk)
-	if blk.Attrs["status"] != block.BlockStatusComplete {
-		t.Errorf("status: got %v, want COMPLETE", blk.Attrs["status"])
+	// A diagram has no async work: it renders client-side and is born COMPLETE by
+	// InitAttrs, so DescribeJob returns nil (never dispatched, never submitted).
+	if job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "test", Block: blk}); job != nil {
+		t.Errorf("diagram must return a nil job, got %+v", job)
 	}
 }

@@ -180,21 +180,22 @@ func (p *SmartImageProcessor) BuildContext(blk block.SieveBlock, _ block.DocView
 	return ctx
 }
 
-// DescribeJob is AI-only. The image file is already saved; Work calls DescribeImage
-// and Apply writes the description attrs. The error path (status ERROR) is the
+// DescribeJob is AI-only, or nil when there is no src to describe. The predicate
+// mirrors InitAttrs (PENDING iff src != ""): an src-less image is born COMPLETE and
+// never dispatched. The image file is already saved; Work calls DescribeImage and
+// Apply writes the description attrs. The error path (status ERROR/TIMEOUT) is the
 // framework's job, so Apply is success-only.
-func (p *SmartImageProcessor) DescribeJob(jctx block.JobContext) block.ProcessorJob {
+func (p *SmartImageProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJob {
 	uuid, blk := jctx.UUID, jctx.Block
 	src, _ := blk.Attrs["src"].(string)
 	id := blk.ID
-	return block.ProcessorJob{
+	if src == "" {
+		return nil // no src: no describe job (created COMPLETE)
+	}
+	return &block.ProcessorJob{
 		Category: block.CategoryAI,
 		Label:    "Describing image…",
 		Work: func() (any, error) {
-			if src == "" {
-				logger.Warn("smart-image: DescribeJob called with no src", "block", id)
-				return nil, fmt.Errorf("no image src to describe")
-			}
 			logger.Info("smart-image: calling DescribeImage", "block", id, "src", src)
 			desc, err := p.svc.AI.DescribeImage(uuid, src, id)
 			if err != nil {

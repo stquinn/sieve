@@ -27,9 +27,9 @@ func (m *mockContextProcessor) IsSupportedContent(entries []ContentEntry) Suppor
 func (m *mockContextProcessor) Transform(entries []ContentEntry, uuid, blockID string, action Action) map[string]interface{} {
 	return nil
 }
-func (m *mockContextProcessor) DescribeJob(_ JobContext) ProcessorJob { return ProcessorJob{} }
-func (m *mockContextProcessor) OnChange(_ *SieveBlock)        {}
-func (m *mockContextProcessor) Mode() BlockMode               { return BlockModeBlock }
+func (m *mockContextProcessor) DescribeJob(_ JobContext) *ProcessorJob { return nil }
+func (m *mockContextProcessor) OnChange(_ *SieveBlock)                 {}
+func (m *mockContextProcessor) Mode() BlockMode                        { return BlockModeBlock }
 
 func TestGetContextProviderFallsBackToProcessor(t *testing.T) {
 	RegisterProcessor(&mockContextProcessor{FencedDeserializer: FencedDeserializer{Kind: "test-cp-kind"}, returnVal: "from-processor"})

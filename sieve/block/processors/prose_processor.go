@@ -86,7 +86,9 @@ func (p *ProseProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) 
 
 // InitAttrs seeds a prose block's payload from overrides (the content).
 func (p *ProseProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
-	attrs := map[string]interface{}{"id": id}
+	// Prose has no async work (DescribeJob is always nil), so it is born COMPLETE —
+	// the complete-vs-pending predicate is unconditional, mirroring DescribeJob.
+	attrs := map[string]interface{}{"id": id, "status": block.BlockStatusComplete}
 	for k, v := range overrides {
 		if k == "id" {
 			continue
@@ -236,11 +238,11 @@ func (p *ProseProcessor) sourceAsPlainText(src string) string {
 	return strings.Join(lines, "  \n") // two-space suffix = markdown hard break
 }
 
-// DescribeJob is the rewrite/enrich seam — a zero ProcessorJob (no async work)
-// until a prose job is wired, but the seam exists so prose can be a
-// producer/consumer like any other block.
-func (p *ProseProcessor) DescribeJob(_ block.JobContext) block.ProcessorJob {
-	return block.ProcessorJob{}
+// DescribeJob is the rewrite/enrich seam — nil (no async work) until a prose job
+// is wired, but the seam exists so prose can be a producer/consumer like any
+// other block. Prose is created COMPLETE by InitAttrs, so it is never dispatched.
+func (p *ProseProcessor) DescribeJob(_ block.JobContext) *block.ProcessorJob {
+	return nil
 }
 
 // OnChange: prose has no synchronous reaction.

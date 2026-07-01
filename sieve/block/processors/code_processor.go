@@ -54,6 +54,14 @@ func (p *CodeBlockProcessor) InitAttrs(id string, overrides map[string]interface
 		attrs["language"] = l
 		attrs["detectionMethod"] = "heuristic"
 	}
+	// Complete-vs-pending predicate MUST mirror DescribeJob: an empty-source block
+	// has no async refine job, so it is born COMPLETE (never dispatched); the hint,
+	// having been consumed for heuristic detection above, is dropped as the settle
+	// path used to do.
+	if strings.TrimSpace(source) == "" {
+		attrs["status"] = block.BlockStatusComplete
+		delete(attrs, "hint")
+	}
 	return attrs
 }
 
@@ -213,27 +221,23 @@ func (p *CodeBlockProcessor) Mode() block.BlockMode {
 	return block.BlockModeBlock
 }
 
-// DescribeJob declares the language-refine AI job. The confidence gate — take the
-// AI's answer only when it is confident OR we have no confident language yet, so a
-// non-answer ("text") never clobbers a heuristic language found while typing —
-// lives in Apply, exactly as the old RunJob body did. The error path (status ERROR)
-// is the framework's job (EditorService onDone), so Apply is success-only.
-func (p *CodeBlockProcessor) DescribeJob(jctx block.JobContext) block.ProcessorJob {
+// DescribeJob declares the language-refine AI job, or nil when there is no source
+// to refine (the block is born COMPLETE by InitAttrs — same empty-source predicate).
+// The confidence gate — take the AI's answer only when it is confident OR we have no
+// confident language yet, so a non-answer ("text") never clobbers a heuristic
+// language found while typing — lives in Apply, exactly as the old RunJob body did.
+// The error path (status ERROR/TIMEOUT) is the framework's job (EditorService
+// finish), so Apply is success-only.
+func (p *CodeBlockProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJob {
 	blk := jctx.Block
 	source, _ := blk.Attrs["source"].(string)
 	if strings.TrimSpace(source) == "" {
-		// No source: complete synchronously, no AI work.
-		return block.ProcessorJob{
-			Apply: func(_ any, b *block.SieveBlock) {
-				b.Attrs["status"] = block.BlockStatusComplete
-				delete(b.Attrs, "hint")
-			},
-		}
+		return nil // no source: no async work (created COMPLETE)
 	}
 
 	currentLang, _ := blk.Attrs["language"].(string)
 	method, _ := blk.Attrs["detectionMethod"].(string)
-	return block.ProcessorJob{
+	return &block.ProcessorJob{
 		Category: block.CategoryAI,
 		Label:    "Refining language...",
 		Work: func() (any, error) {

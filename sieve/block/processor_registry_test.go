@@ -40,8 +40,8 @@ func (p *mockProcessor) BuildContext(_ SieveBlock, _ DocView, _ map[string]bool)
 	return AIContext{}
 }
 func (p *mockProcessor) MarkdownRepresentation(_ SieveBlock, _ string) string { return "" }
-func (p *mockProcessor) DescribeJob(_ JobContext) ProcessorJob      { return ProcessorJob{} }
-func (p *mockProcessor) OnChange(_ *SieveBlock)                     {}
+func (p *mockProcessor) DescribeJob(_ JobContext) *ProcessorJob               { return nil }
+func (p *mockProcessor) OnChange(_ *SieveBlock)                               {}
 
 func TestRegisterProcessor_storesInRegistry(t *testing.T) {
 	ResetRegistry()
@@ -77,7 +77,9 @@ func TestPasteMatchers_firstMatchWins(t *testing.T) {
 	}
 	general := &mockProcessor{
 		FencedDeserializer: FencedDeserializer{Kind: "general"},
-		actionsFn:          func(_ []ContentEntry) SupportedActions { return SupportedActions{Kind: "general", Actions: []Action{ActionPaste}} },
+		actionsFn: func(_ []ContentEntry) SupportedActions {
+			return SupportedActions{Kind: "general", Actions: []Action{ActionPaste}}
+		},
 		transformFn: func(_ []ContentEntry) map[string]interface{} {
 			return map[string]interface{}{"winner": "general"}
 		},

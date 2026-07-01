@@ -36,10 +36,14 @@ func (p *SmartLinkProcessor) InitAttrs(id string, overrides map[string]interface
 		}
 		attrs[k] = v
 	}
-	if label, _ := attrs["label"].(string); label == "" {
-		if href, _ := attrs["href"].(string); href != "" {
-			attrs["label"] = href
-		}
+	href, _ := attrs["href"].(string)
+	if label, _ := attrs["label"].(string); label == "" && href != "" {
+		attrs["label"] = href
+	}
+	// Complete-vs-pending predicate MUST mirror DescribeJob: no href ⇒ no fetch job
+	// ⇒ born COMPLETE (never dispatched); an href present ⇒ PENDING.
+	if href == "" {
+		attrs["status"] = block.BlockStatusComplete
 	}
 	return attrs
 }
@@ -103,24 +107,19 @@ func (p *SmartLinkProcessor) smartLinkLabel(blk *block.SieveBlock) string {
 	return "Fetching " + host
 }
 
-// DescribeJob declares the title-fetch job. The blocking network fetch lives in
-// Work; Apply writes the attrs (falling back to the href when no title is found),
-// mirroring the old RunJob body. An empty href completes synchronously (nil Work).
-func (p *SmartLinkProcessor) DescribeJob(jctx block.JobContext) block.ProcessorJob {
+// DescribeJob declares the title-fetch job, or nil when there is no href to fetch
+// (the block is born COMPLETE by InitAttrs — same empty-href predicate). The
+// blocking network fetch lives in Work; Apply writes the attrs (falling back to
+// the href when no title is found), mirroring the old RunJob body.
+func (p *SmartLinkProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJob {
 	blk := jctx.Block
 	href, _ := blk.Attrs["href"].(string)
 
 	if href == "" {
-		return block.ProcessorJob{
-			Category: block.CategoryDefault,
-			Apply: func(_ any, b *block.SieveBlock) {
-				b.Attrs["status"] = block.BlockStatusComplete
-				b.Attrs["completedAt"] = time.Now().UTC().Format(time.RFC3339)
-			},
-		}
+		return nil // no href: no fetch job (created COMPLETE)
 	}
 
-	return block.ProcessorJob{
+	return &block.ProcessorJob{
 		Category: block.CategoryDefault,
 		Label:    p.smartLinkLabel(blk),
 		Work: func() (any, error) {

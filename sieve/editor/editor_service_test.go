@@ -415,8 +415,10 @@ func TestEditorService_CreateBlock_code(t *testing.T) {
 	if len(id) < 5 {
 		t.Errorf("expected valid id, got %q", id)
 	}
-	if !strings.Contains(rawYaml, "status: PENDING") {
-		t.Errorf("expected PENDING in rawYaml, got:\n%s", rawYaml)
+	// Empty-source code block has no async refine job, so it is born COMPLETE
+	// (mirrors DescribeJob==nil) and is never dispatched.
+	if !strings.Contains(rawYaml, "status: COMPLETE") {
+		t.Errorf("expected COMPLETE in rawYaml, got:\n%s", rawYaml)
 	}
 
 	// Block must be in shadow with complete attrs
@@ -636,7 +638,7 @@ func TestHandleBlockOp_updateNotifySendsMergedSnapshotUnderLock(t *testing.T) {
 type testRunJobProcessor struct {
 	block.FencedSerializer
 	block.FencedDeserializer
-	describe func(jctx block.JobContext) block.ProcessorJob
+	describe func(jctx block.JobContext) *block.ProcessorJob
 }
 
 func (p *testRunJobProcessor) Kind() string          { return p.FencedDeserializer.Kind }
@@ -660,12 +662,12 @@ func (p *testRunJobProcessor) BuildContext(_ block.SieveBlock, _ block.DocView, 
 func (p *testRunJobProcessor) MarkdownRepresentation(_ block.SieveBlock, _ string) string {
 	return ""
 }
-func (p *testRunJobProcessor) OnChange(_ *block.SieveBlock)                     {}
-func (p *testRunJobProcessor) DescribeJob(jctx block.JobContext) block.ProcessorJob {
+func (p *testRunJobProcessor) OnChange(_ *block.SieveBlock) {}
+func (p *testRunJobProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJob {
 	if p.describe != nil {
 		return p.describe(jctx)
 	}
-	return block.ProcessorJob{}
+	return nil
 }
 
 func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
@@ -692,8 +694,8 @@ func TestEditorService_RunJob_dynamicMerging(t *testing.T) {
 	// Register a mock processor
 	proc := &testRunJobProcessor{
 		FencedDeserializer: block.FencedDeserializer{Kind: "mock-kind"},
-		describe: func(jctx block.JobContext) block.ProcessorJob {
-			return block.ProcessorJob{
+		describe: func(jctx block.JobContext) *block.ProcessorJob {
+			return &block.ProcessorJob{
 				Work: func() (any, error) {
 					// Simulate a concurrent user edit to "source" while the job runs.
 					es.mu.Lock()
@@ -779,8 +781,8 @@ func TestEditorService_RunJob_shadowRecreatedMidJob(t *testing.T) {
 
 	proc := &testRunJobProcessor{
 		FencedDeserializer: block.FencedDeserializer{Kind: "mock-kind2"},
-		describe: func(jctx block.JobContext) block.ProcessorJob {
-			return block.ProcessorJob{
+		describe: func(jctx block.JobContext) *block.ProcessorJob {
+			return &block.ProcessorJob{
 				Work: func() (any, error) {
 					// Simulate the user navigating away (Close) and back (Open) while the job runs
 					es.Close(uuid)

@@ -18,8 +18,9 @@ func TestSmartCardProcessor_InitAttrs_defaults(t *testing.T) {
 	if attrs["id"] != "ri-a1b2" {
 		t.Errorf("id: got %v, want ri-a1b2", attrs["id"])
 	}
-	if attrs["status"] != block.BlockStatusPending {
-		t.Errorf("status: got %v, want PENDING", attrs["status"])
+	// No href ⇒ no fetch job ⇒ born COMPLETE (mirrors DescribeJob==nil).
+	if attrs["status"] != block.BlockStatusComplete {
+		t.Errorf("status: got %v, want COMPLETE for empty href", attrs["status"])
 	}
 	if attrs["href"] != "" {
 		t.Errorf("href: got %v, want empty", attrs["href"])
@@ -112,24 +113,21 @@ func TestSmartCardProcessor_RunJob_fetchesOGData(t *testing.T) {
 	}
 }
 
-func TestSmartCardProcessor_RunJob_emptyHrefCompletes(t *testing.T) {
+func TestSmartCardProcessor_RunJob_emptyHrefNoJob(t *testing.T) {
 	p := NewSmartCardProcessor(block.BlockServices{LinkPreview: services.NewLinkPreviewService()})
 	blk := &block.SieveBlock{
 		ID:   "ri-0002",
 		Kind: "smart-card",
 		Attrs: map[string]interface{}{
 			"href":      "",
-			"status":    block.BlockStatusPending,
+			"status":    block.BlockStatusComplete,
 			"createdAt": time.Now().UTC().Format(time.RFC3339),
 		},
 	}
-	job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk})
-	if job.Work != nil {
-		t.Error("empty href needs no async work; Work must be nil")
-	}
-	job.Apply(nil, blk)
-	if blk.Attrs["status"] != block.BlockStatusComplete {
-		t.Errorf("status: got %v, want COMPLETE", blk.Attrs["status"])
+	// No href ⇒ no fetch job. The block is born COMPLETE by InitAttrs, so it is
+	// never dispatched; DescribeJob returns nil.
+	if job := p.DescribeJob(block.JobContext{Ctx: context.Background(), UUID: "test-uuid", Block: blk}); job != nil {
+		t.Errorf("empty href must return a nil job, got %+v", job)
 	}
 }
 
