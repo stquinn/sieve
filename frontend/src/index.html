@@ -44,6 +44,7 @@
     <div id="ai-sse-relay" hx-trigger="sse:ai:block-resolved" style="display:none"></div>
     <div id="ai-job-started-relay" hx-trigger="sse:ai:job-started" style="display:none"></div>
     <div id="ai-job-ended-relay" hx-trigger="sse:ai:job-ended" style="display:none"></div>
+    <div id="jobs-changed-relay" hx-trigger="sse:jobs:changed" style="display:none"></div>
     {{if .StoreRoot}}
     <div id="app-root" class="theme-{{.ThemeName}} tier-{{.Tier}}" style="--sidebar-w: {{if .ShowSidebar}}{{.SidebarWidth}}{{else}}0{{end}}px; --meta-w: {{if .ShowMeta}}{{.MetaWidth}}{{else}}0{{end}}px;">
         

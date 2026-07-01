@@ -1,8 +1,10 @@
 // ai-actions.js — Status bar driven by ai:job-started / ai:job-ended SSE events from Go.
+// Also consumes jobs:changed (full snapshot) for accurate two-list rendering.
 // Exposes window.SieveAI namespace; maintains window.__sieveActiveJobs for the close-guard.
 (function() {
   // activeJobs: jobId → {label, docId, spinTab}. Populated by SSE events and loadActiveJobs().
   var activeJobs = {};
+  var queuedJobs = [];
   window.__sieveActiveJobs = 0;
 
   function updateStatusBar() {
@@ -51,12 +53,43 @@
     }
   }
 
+  // applyJobsSnapshot — replaces activeJobs/queuedJobs from a full server snapshot.
+  // Called by the sse:jobs:changed listener and by loadActiveJobs() on page load.
+  function applyJobsSnapshot(payload) {
+    // Clear spinners for jobs that are about to be removed.
+    Object.keys(activeJobs).forEach(function(id) {
+      var job = activeJobs[id];
+      if (job.spinTab && job.docId) setEvaluating(job.docId, false);
+    });
+    // Rebuild from snapshot.
+    activeJobs = {};
+    (payload.active || []).forEach(function(j) {
+      if (!j.jobId) return;
+      activeJobs[j.jobId] = { label: j.label || 'Working...', docId: j.docId || '', spinTab: !!j.spinTab };
+      if (j.spinTab && j.docId) setEvaluating(j.docId, true);
+    });
+    queuedJobs = payload.queued || [];
+    window.__sieveActiveJobs = Object.keys(activeJobs).length;
+    updateStatusBar();
+  }
+
   function parseSSEDetail(e) {
     var raw = e.detail && e.detail.data != null ? e.detail.data : (typeof e.detail === 'string' ? e.detail : null)
     if (!raw) return {}
     try { return JSON.parse(raw); } catch (_) { return {}; }
   }
 
+  // ── New: full-snapshot listener (jobs:changed) ───────────────────────────────
+  document.addEventListener('sse:jobs:changed', function(e) {
+    var raw = e.detail && e.detail.data != null ? e.detail.data : (typeof e.detail === 'string' ? e.detail : null);
+    if (!raw) return;
+    var payload; try { payload = JSON.parse(raw); } catch (_) { return; }
+    applyJobsSnapshot(payload);
+  });
+
+  // ── Legacy: per-event listeners (ai:job-started / ai:job-ended) ─────────────
+  // Kept for dual-listen: these still fire during Phase B while the backend
+  // emits both. Phase C will remove the legacy events; this block retires then.
   document.addEventListener('sse:ai:job-started', function(e) {
     var data = parseSSEDetail(e);
     if (!data.jobId) return;
@@ -94,18 +127,26 @@
 
   window.SieveAI = {
     // loadActiveJobs: called by editor.js on tab load to restore status bar state.
+    // Reads from /api/jobs (new two-list shape); falls back gracefully to legacy
+    // /api/ai/active-jobs shape (data.jobs[]) so the old route still works.
     loadActiveJobs: function() {
-      fetch('/api/ai/active-jobs')
+      fetch('/api/jobs')
         .then(function(r) { return r.json(); })
         .then(function(data) {
-          var jobs = data.jobs || [];
-          jobs.forEach(function(job) {
-            if (!job.jobId) return;
-            activeJobs[job.jobId] = { label: job.label || 'Working...', docId: job.docId, spinTab: !!job.spinTab };
-            if (job.spinTab && job.docId) setEvaluating(job.docId, true);
-          });
-          window.__sieveActiveJobs = Object.keys(activeJobs).length;
-          updateStatusBar();
+          // New shape: {active:[...], queued:[...]}
+          if (Array.isArray(data.active)) {
+            applyJobsSnapshot(data);
+          } else {
+            // Legacy fallback: {jobs:[...]}
+            var jobs = data.jobs || [];
+            jobs.forEach(function(job) {
+              if (!job.jobId) return;
+              activeJobs[job.jobId] = { label: job.label || 'Working...', docId: job.docId, spinTab: !!job.spinTab };
+              if (job.spinTab && job.docId) setEvaluating(job.docId, true);
+            });
+            window.__sieveActiveJobs = Object.keys(activeJobs).length;
+            updateStatusBar();
+          }
         })
         .catch(function() {});
     },

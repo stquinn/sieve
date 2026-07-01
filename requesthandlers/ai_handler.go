@@ -44,6 +44,7 @@ func (h *AiHandler) RegisterPaths(r chi.Router) {
 			_, _ = w.Write([]byte(`{"jobs":[]}`))
 		}
 	})
+	r.Get("/api/jobs", func(w http.ResponseWriter, r *http.Request) { h.JobTracker.ServeJobs(w, r) })
 }
 
 func (h *AiHandler) handleAiSmartFile(w http.ResponseWriter, r *http.Request) {

@@ -110,16 +110,33 @@ export function isStaleByTime(createdAt) {
 }
 
 // ── Active job tracking ───────────────────────────────────────────────────────
-// Shared across all fenced block extensions. Seeded from /api/ai/active-jobs on
-// module load; kept current via ai:job-started / ai:job-ended SSE events.
+// Shared across all fenced block extensions. Seeded from /api/jobs on module
+// load; kept current via jobs:changed (full snapshot) and legacy ai:job-started /
+// ai:job-ended SSE events (dual-listen; legacy events retire in Phase C).
 
 var _activeJobIds = new Set()
 
-fetch('/api/ai/active-jobs')
+// Seed on module load from /api/jobs ({active:[...],queued:[...]}).
+// Robust to legacy /api/ai/active-jobs shape ({jobs:[...]}) for safe rollout.
+fetch('/api/jobs')
   .then(function (r) { return r.json() })
-  .then(function (data) { (data.jobs || []).forEach(function (j) { if (j.jobId) _activeJobIds.add(j.jobId) }) })
+  .then(function (data) {
+    var list = Array.isArray(data.active) ? data.active : (data.jobs || [])
+    list.forEach(function (j) { if (j.jobId) _activeJobIds.add(j.jobId) })
+  })
   .catch(function () {})
 
+// Full-snapshot listener: authoritative replacement of the tracked set.
+document.addEventListener('sse:jobs:changed', function (e) {
+  try {
+    var raw = e.detail && e.detail.data != null ? e.detail.data : (typeof e.detail === 'string' ? e.detail : '{}')
+    var payload = JSON.parse(raw)
+    _activeJobIds.clear()
+    ;(payload.active || []).forEach(function (j) { if (j.jobId) _activeJobIds.add(j.jobId) })
+  } catch (_) {}
+})
+
+// Legacy per-event listeners (kept for dual-listen; retire with Phase C).
 document.addEventListener('sse:ai:job-started', function (e) {
   try { var d = JSON.parse(e.detail || '{}'); if (d.jobId) _activeJobIds.add(d.jobId) } catch (_) {}
 })
