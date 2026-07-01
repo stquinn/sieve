@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"sieve/sieve"
-	"sieve/sieve/domain"
 	"sieve/sieve/services"
 
 	"github.com/go-chi/chi/v5"
@@ -16,18 +15,6 @@ type AiHandler struct {
 	EmitNotesChanged func()
 	Broadcast        func(event, data string)
 	JobTracker       *services.JobTracker
-}
-
-func (h *AiHandler) emitJobStarted(jobID, label, docID string, spinTab bool) {
-	if h.JobTracker != nil {
-		h.JobTracker.Start(services.JobInfo{JobID: jobID, Label: label, DocID: docID, SpinTab: spinTab})
-	}
-}
-
-func (h *AiHandler) emitJobEnded(jobID, docID string) {
-	if h.JobTracker != nil {
-		h.JobTracker.End(jobID)
-	}
 }
 
 func (h *AiHandler) RegisterPaths(r chi.Router) {
@@ -54,14 +41,33 @@ func (h *AiHandler) RegisterPaths(r chi.Router) {
 	})
 }
 
+// ack writes the fire-and-forget queued acknowledgement. The frontend
+// (ai-actions.js saveAndPost) ignores the response body — the filing result
+// reaches the UI via SSE (notes:changed for the moved doc, jobs:changed for the
+// spinner), so these handlers only confirm the job was queued.
+func (h *AiHandler) ack(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"queued":true}`))
+}
+
 func (h *AiHandler) handleAiSmartFile(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	h.evaluateAndFile(w, id, true, false)
+	if _, err := h.ServiceProvider.Documents.LoadByUUID(id); err != nil {
+		http.Error(w, "document not found", http.StatusNotFound)
+		return
+	}
+	h.ServiceProvider.Editor.FileDocument(id)
+	h.ack(w)
 }
 
 func (h *AiHandler) handleAiSmartMetadata(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	h.evaluateAndFile(w, id, false, false)
+	if _, err := h.ServiceProvider.Documents.LoadByUUID(id); err != nil {
+		http.Error(w, "document not found", http.StatusNotFound)
+		return
+	}
+	h.ServiceProvider.Editor.UpdateMetadata(id)
+	h.ack(w)
 }
 
 func (h *AiHandler) handleAiKeepAndFile(w http.ResponseWriter, r *http.Request) {
@@ -71,66 +77,16 @@ func (h *AiHandler) handleAiKeepAndFile(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	doc, err = h.ServiceProvider.Documents.SetUserIntent(doc, "keep")
-	if err != nil {
+	// user_intent is user-owned — set it here, in the explicit user-action handler.
+	if _, err = h.ServiceProvider.Documents.SetUserIntent(doc, "keep"); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if h.EmitNotesChanged != nil {
 		h.EmitNotesChanged()
 	}
-	h.evaluateAndFile(w, id, true, false)
-}
-
-func (h *AiHandler) evaluateAndFile(w http.ResponseWriter, id string, fileAfter bool, allowDiscard bool) {
-	_, err := h.ServiceProvider.Documents.LoadByUUID(id)
-	if err != nil {
-		http.Error(w, "document not found", http.StatusNotFound)
-		return
-	}
-
-	label := "Updating metadata..."
-	if fileAfter {
-		label = "Filing note..."
-	}
-	h.emitJobStarted(id, label, id, true)
-	defer h.emitJobEnded(id, id)
-
-	outcome, err := h.ServiceProvider.AI.EvaluateAndFileDoc(id, fileAfter, allowDiscard)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	session := h.ServiceProvider.State.LoadSession()
-	if !outcome.Discarded && outcome.Document != nil {
-		for i := range session.Tabs {
-			if session.Tabs[i].ID == id {
-				status := "unfiled"
-				if outcome.Document.Kind() == domain.KindNote {
-					status = "filed"
-				}
-				session.Tabs[i].Status = status
-				session.Tabs[i].DisplayName = outcome.Document.Meta().DisplayName()
-				if outcome.Document.Meta().UserIntent() != nil {
-					session.Tabs[i].UserIntent = *outcome.Document.Meta().UserIntent()
-				}
-				break
-			}
-		}
-	}
-	_ = h.ServiceProvider.State.SaveSession(session)
-
-	type EvaluateAndFileResult struct {
-		Discarded bool            `json:"discarded"`
-		Doc       domain.Document `json:"doc"`
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(outcome)
-	if h.EmitNotesChanged != nil {
-		h.EmitNotesChanged()
-	}
+	h.ServiceProvider.Editor.KeepAndFile(id)
+	h.ack(w)
 }
 
 type refineLanguageRequest struct {

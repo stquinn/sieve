@@ -499,6 +499,25 @@ func (es *EditorService) CloseDocument(id string) {
 	es.submitDocFiling(id, "file:", "Filing…", true, true)
 }
 
+// FileDocument submits an explicit "file this note" user action (evaluate + file,
+// no discard). Unlike CloseDocument this is NOT tier-gated: the user explicitly
+// asked for it. Routed through the engine's ai pool like every other filing job.
+func (es *EditorService) FileDocument(id string) {
+	es.submitDocFiling(id, "file:", "Filing note…", true, false)
+}
+
+// UpdateMetadata submits an explicit metadata-only evaluation (no file, no
+// discard). Not tier-gated — the user asked for it directly.
+func (es *EditorService) UpdateMetadata(id string) {
+	es.submitDocFiling(id, "meta:", "Updating metadata…", false, false)
+}
+
+// KeepAndFile files a note the user explicitly kept (evaluate + file, no discard).
+// Not tier-gated. The user_intent="keep" write stays in the handler (user-owned).
+func (es *EditorService) KeepAndFile(uuid string) {
+	es.submitDocFiling(uuid, "file:", "Filing note…", true, false)
+}
+
 // submitBlockJob turns a block ProcessorJob into a JobDescriptor and submits it
 // to the communal engine, guaranteeing Apply-before-finish and finish-once. The
 // wrap lives here because Apply and onDone (the attr-diff/shadow merge) operate

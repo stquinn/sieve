@@ -6,7 +6,8 @@ import (
 	"sync"
 )
 
-// JobInfo is the payload for ai:job-started SSE events and GET /api/ai/active-jobs.
+// JobInfo is the payload for jobs:changed SSE events and GET /api/jobs (and the
+// legacy GET /api/ai/active-jobs route, retired in C2).
 type JobInfo struct {
 	JobID    string `json:"jobId"`
 	Label    string `json:"label"`
@@ -26,41 +27,6 @@ type JobTracker struct {
 
 func NewJobTracker() *JobTracker {
 	return &JobTracker{jobs: make(map[string]JobInfo)}
-}
-
-func (t *JobTracker) Start(info JobInfo) {
-	info.State = "active"
-	t.mu.Lock()
-	if _, exists := t.jobs[info.JobID]; !exists {
-		t.order = append(t.order, info.JobID)
-	}
-	t.jobs[info.JobID] = info
-	t.mu.Unlock()
-
-	if t.Broadcast != nil {
-		data, _ := json.Marshal(info)
-		t.Broadcast("ai:job-started", string(data)) // legacy event unchanged
-	}
-}
-
-func (t *JobTracker) End(jobID string) {
-	t.mu.Lock()
-	info, exists := t.jobs[jobID]
-	if exists {
-		delete(t.jobs, jobID)
-		for i, id := range t.order {
-			if id == jobID {
-				t.order = append(t.order[:i], t.order[i+1:]...)
-				break
-			}
-		}
-	}
-	t.mu.Unlock()
-
-	if exists && t.Broadcast != nil {
-		data, _ := json.Marshal(map[string]string{"jobId": jobID, "docId": info.DocID})
-		t.Broadcast("ai:job-ended", string(data))
-	}
 }
 
 func (t *JobTracker) Active() []JobInfo { return t.listByState("active") }
