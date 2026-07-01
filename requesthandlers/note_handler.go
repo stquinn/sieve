@@ -156,7 +156,7 @@ func (h *NoteHandler) handleTabsCloseAll(w http.ResponseWriter, r *http.Request)
 	for _, t := range session.Tabs {
 		closing = append(closing, t.ID)
 	}
-	h.ServiceProvider.AI.EvaluateOnClose(closing...)
+	h.ServiceProvider.Editor.CloseAllAndFile(closing)
 
 	newNote, err := h.ServiceProvider.Documents.New()
 	if err != nil {
@@ -208,8 +208,8 @@ func (h *NoteHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
 		session.ActiveIdx = 0
 	}
 
-	// Smart Close background evaluation (centralised so close-all shares it).
-	h.ServiceProvider.AI.EvaluateOnClose(id)
+	// Smart Close background filing (centralised so close-all shares it).
+	h.ServiceProvider.Editor.CloseDocument(id)
 
 	if len(session.Tabs) == 0 {
 		newNote, _ := h.ServiceProvider.Documents.New()

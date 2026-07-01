@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"sieve/logger"
@@ -27,78 +26,15 @@ type AIService struct {
 	prompts   *PromptService
 	documents *services.DocumentService
 	storePath string
-
-	// closeFilingLimit caps how many close-time filing evaluations run at once,
-	// so a large "Close All Tabs" does not spawn one CLI process per open tab.
-	closeFilingLimit int
-	// fileOnClose evaluates-and-files a single closing doc by id. It is a field
-	// (not a direct method call) so tests can inject a fake and exercise the
-	// bounded fan-out without invoking the real AI CLI. Defaults to fileOneOnClose.
-	fileOnClose func(id string)
 }
 
 func NewAIService(state *services.StateService, prompts *PromptService, documents *services.DocumentService, storePath string) *AIService {
-	s := &AIService{
-		state:            state,
-		prompts:          prompts,
-		documents:        documents,
-		storePath:        storePath,
-		closeFilingLimit: closeFilingConcurrency,
+	return &AIService{
+		state:     state,
+		prompts:   prompts,
+		documents: documents,
+		storePath: storePath,
 	}
-	s.fileOnClose = s.fileOneOnClose
-	return s
-}
-
-// closeFilingConcurrency bounds concurrent close-time filing evaluations.
-const closeFilingConcurrency = 3
-
-// EvaluateOnClose schedules background Smart-Close filing for every doc being
-// closed — a single id for "Close Tab", all open ids for "Close All Tabs". Both
-// close paths route through here so they cannot drift again (the regression: a
-// "Close All" filed nothing, while closing tabs one by one filed each). The tier
-// gate is applied once; evaluations then run in the background, capped at
-// closeFilingLimit concurrent CLI calls.
-func (s *AIService) EvaluateOnClose(ids ...string) {
-	if s.state.LoadSettings().Tier() != domain.TierSmart {
-		return
-	}
-	go s.runCloseFiling(ids)
-}
-
-// runCloseFiling evaluates each id through fileOnClose with bounded concurrency.
-// It blocks until all evaluations finish, so the single goroutine spawned by
-// EvaluateOnClose owns the whole background batch.
-func (s *AIService) runCloseFiling(ids []string) {
-	if len(ids) == 0 {
-		return
-	}
-	limit := s.closeFilingLimit
-	if limit < 1 {
-		limit = 1
-	}
-	sem := make(chan struct{}, limit)
-	var wg sync.WaitGroup
-	for _, id := range ids {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(id string) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			s.fileOnClose(id)
-		}(id)
-	}
-	wg.Wait()
-}
-
-// fileOneOnClose is the production close-time filing action: it skips ids that
-// are not real documents (prompt: tabs, already-deleted docs) and otherwise runs
-// the full evaluate-and-file pipeline, allowing discard of empty/trash buffers —
-// mirroring the original single-tab close behaviour.
-func (s *AIService) fileOneOnClose(id string) {
-	if _, err := s.documents.LoadByUUID(id); err != nil {
-		return
-	}
-	_, _ = s.EvaluateAndFileDoc(id, true, true)
 }
 
 // EvaluateAndFileDoc runs the full evaluate-and-file pipeline for the document

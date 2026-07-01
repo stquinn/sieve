@@ -10,10 +10,21 @@ import (
 	"time"
 
 	"sieve/logger"
+	"sieve/sieve/ai"
 	"sieve/sieve/block"
+	"sieve/sieve/domain"
 	"sieve/sieve/fencedblock"
 	"sieve/sieve/services"
 )
+
+// docFiler is the synchronous filing surface EditorService's document-lifecycle
+// jobs call. The concrete *ai.AIService satisfies it (SetAI stores one); a test
+// injects a fake to observe the engine-bounded fan-out without a real CLI. This
+// mirrors the seam the retired AIService.fileOnClose field used to provide —
+// relocated onto the type that now owns the job lifecycle.
+type docFiler interface {
+	EvaluateAndFileDoc(id string, fileAfter, allowDiscard bool) (ai.FilingOutcome, error)
+}
 
 // EditorService is the Go-side editor model. It holds one ShadowDocument per
 // open document and coordinates all save operations. DocumentService owns disk.
@@ -23,6 +34,7 @@ type EditorService struct {
 	services  block.BlockServices
 	jobs      *services.JobTracker // not a processor concern; EditorService tracks job spinners directly
 	engine    *services.JobEngine
+	ai        docFiler // synchronous AI brain; document-lifecycle jobs call it inside their Work
 	debounce  time.Duration
 	mu        sync.RWMutex
 	shadows   map[string]*block.ShadowDocument
@@ -423,6 +435,69 @@ func (es *EditorService) SetJobs(j *services.JobTracker) {
 // the root can build it after the hub-wired JobTracker exists, and so the ~25
 // test constructors need no change.
 func (es *EditorService) SetEngine(e *services.JobEngine) { es.engine = e }
+
+// SetAI injects the synchronous AI brain. Post-construction (like SetEngine) so
+// the root can wire it after Init. The document-lifecycle entries below call its
+// sync methods inside a JobDescriptor.Work — the engine (not AIService) owns all
+// concurrency now.
+func (es *EditorService) SetAI(a *ai.AIService) { es.ai = a }
+
+// ── Document-lifecycle jobs ─────────────────────────────────────────────────
+//
+// These submit document (not block) filing work to the communal engine's ai
+// pool. They are the new home of what AIService.EvaluateOnClose used to do: the
+// pool's worker count now bounds close-time filing concurrency (the retired
+// local semaphore). Every JobDescriptor sets a non-empty Meta.Label — the status
+// bar keys off it. Document jobs go through es.engine.Submit directly (not
+// submitBlockJob, which is block-shaped).
+
+// closeFilingAllowed gates automatic close-time filing to the Smart tier,
+// exactly as AIService.EvaluateOnClose did (dumb mode = no CLI, so a close must
+// not auto-file/discard). State is nil only in tests that bypass wiring; there we
+// proceed so the fan-out is exercised.
+func (es *EditorService) closeFilingAllowed() bool {
+	if es.services.State == nil {
+		return true
+	}
+	return es.services.State.LoadSettings().Tier() == domain.TierSmart
+}
+
+// submitDocFiling builds and submits one document filing JobDescriptor. label
+// must be non-empty. Filing failure is non-fatal — it is logged, never surfaced.
+func (es *EditorService) submitDocFiling(id, jobPrefix, label string, fileAfter, allowDiscard bool) {
+	es.engine.Submit(services.JobDescriptor{
+		Category: block.CategoryAI,
+		Meta:     services.JobInfo{JobID: jobPrefix + id, Label: label, DocID: id},
+		Work:     func() (any, error) { return es.ai.EvaluateAndFileDoc(id, fileAfter, allowDiscard) },
+		OnError: func(err error) {
+			logger.Warn("editor: document filing failed", "job", jobPrefix+id, "uuid", id, "err", err)
+		},
+	})
+}
+
+// CloseAllAndFile evaluates + files every closing document on the ai worker pool.
+// Replaces AIService.EvaluateOnClose/runCloseFiling for the "Close All Tabs" path:
+// the local semaphore folds into the engine's ai pool. EVERY open doc is still
+// evaluated on close (the regression the old fan-out fixed stays fixed).
+func (es *EditorService) CloseAllAndFile(ids []string) {
+	if !es.closeFilingAllowed() {
+		return
+	}
+	for _, id := range ids {
+		es.submitDocFiling(id, "file:", "Filing…", true, true)
+	}
+}
+
+// CloseDocument flushes the open shadow (so the latest content is on disk) then
+// submits one close-time filing job. Replaces AIService.EvaluateOnClose(id) for
+// the single-tab HTTP close path. Flush no-ops when the doc is not open.
+func (es *EditorService) CloseDocument(id string) {
+	if !es.closeFilingAllowed() {
+		return
+	}
+	_ = es.Flush(id)
+	es.submitDocFiling(id, "file:", "Filing…", true, true)
+}
 
 // submitBlockJob turns a block ProcessorJob into a JobDescriptor and submits it
 // to the communal engine, guaranteeing Apply-before-finish and finish-once. The

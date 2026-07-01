@@ -128,6 +128,7 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 	if sp.Editor != nil {
 		sp.Editor.SetJobs(jobTracker)
 		sp.Editor.SetEngine(sp.Engine)
+		sp.Editor.SetAI(sp.AI)
 	}
 	requestHandlers := []requesthandlers.RequestHandler{
 		&requesthandlers.SideBarHandler{ServiceProvider: sp, Tmpl: tmpl},
