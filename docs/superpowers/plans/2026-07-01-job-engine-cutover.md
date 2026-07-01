@@ -396,15 +396,17 @@ any block path."
 > Behaviour-changing core. Implement B4a→B4b→B4c and land as ONE green commit (the interface flip cannot build until all processors and the dispatch site are converted). Each sub-section below is a checkpoint, not a separate commit.
 
 **Files:**
-- Modify: `sieve/block/processor_registry.go` (interface `:265`, `JobLabel` `:267`, `BlockServices` `:400-406`)
+- Modify: `sieve/block/processor_registry.go` (interface `:265`, `JobLabel` `:267`, `BlockServices.AI` field type `:400-406`)
 - Modify: `sieve/block/ports.go` (delete `AIPort` `:39-45`)
-- Modify: all `sieve/block/processors/*.go` implementing `RunJob`/`JobLabel`
+- Modify: all `sieve/block/processors/*.go` implementing `RunJob`/`JobLabel` (DescribeJob rewrite only — NO constructor/field changes)
 - Modify: `sieve/editor/editor_service.go` (`RunJob :722`)
-- Modify: `sieve/service_provider.go` (processor construction `:77-86`)
+- Modify: `sieve/service_provider.go` (delete the `AIPort` compile assertion `:46`)
 
 **Interfaces:**
-- Consumes: `block.ProcessorJob`, `block.CategoryAI` (B2), `ai.AIService` (AI processors import `ai` directly), `EditorService.submitBlockJob` (B2).
-- Produces: `BlockProcessor.DescribeJob(jctx JobContext) block.ProcessorJob`; `BlockServices` with **no** `AI` field; AI processors holding `*ai.AIService`.
+- Consumes: `block.ProcessorJob`, `block.CategoryAI` (B2), `EditorService.submitBlockJob` (B2). Processors keep reaching AI via `p.svc.AI` (no new dependency in the processor structs).
+- Produces: `BlockProcessor.DescribeJob(jctx JobContext) block.ProcessorJob`; `BlockServices.AI` retyped from the `AIPort` interface to the concrete `*ai.AIService`. This makes `block` core import `ai`, which is CORRECT under the governing principle below — not a compromise.
+
+> **DECISION (Option B) & the governing principle.** The invariant that matters is **directional: a business service must never depend on `block`.** `ai` is a business service in a specialty package; it must stay blind to `block` (`ai` imports no `block`, verified). A `block` package depending on the `ai` business service is an *acceptable* direction — so `AIPort` was dependency-inverting an edge that never needed inverting. Therefore we DELETE `AIPort` and let `block.BlockServices.AI` hold the concrete `*ai.AIService` directly; `block core → ai` is fine, `ai → block` remains forbidden. Processors keep reaching AI through the existing `p.svc.AI` (only the field's *type* changes, interface → concrete) — **no processor constructor/field changes, no test-constructor churn.** A reviewer must NOT "restore" `AIPort`, push the AI handle into processor constructors, or flag `block core → ai` as a layering violation — it is the intended shape.
 
 ### B4a — interface flip + non-AI processors
 
@@ -443,29 +445,27 @@ Inspect each non-AI `RunJob` body first; if it referenced AI, re-classify it for
 
 ### B4b — the four AI processors
 
-- [ ] **Step 3: Give AI processors a direct `*ai.AIService`; delete `AIPort`**
+- [ ] **Step 3: Delete `AIPort`; retype `BlockServices.AI` to the concrete `*ai.AIService`**
 
-Delete the `AI AIPort` field from `block.BlockServices` (`processor_registry.go:400-406`) and the `AIPort` interface from `sieve/block/ports.go` (`:39-45`). Each of the four AI processors adds an `ai *ai.AIService` field + constructor param, importing `"sieve/sieve/ai"`. Example (code processor):
+In `sieve/block/processor_registry.go`, change the `BlockServices.AI` field type from `AIPort` to `*ai.AIService` (add `import "sieve/sieve/ai"` to that file — this is the single edit that makes `block` core import `ai`). Delete the `AIPort` interface from `sieve/block/ports.go` (`:39-45`). Delete the now-invalid compile-time assertion `var _ block.AIPort = (*ai.AIService)(nil)` in `sieve/service_provider.go` (`:46`).
 
 ```go
+// sieve/block/processor_registry.go
 import (
 	// …existing…
 	"sieve/sieve/ai"
-	"sieve/sieve/lang"
 )
 
-type CodeBlockProcessor struct {
-	svc block.BlockServices
-	ai  *ai.AIService
-	// …existing fields…
-}
-
-func NewCodeBlockProcessor(svc block.BlockServices, aiSvc *ai.AIService) *CodeBlockProcessor {
-	return &CodeBlockProcessor{svc: svc, ai: aiSvc /*, …*/}
+type BlockServices struct {
+	AI          *ai.AIService // was: AIPort — block core now imports ai (deliberate; ai never imports block)
+	Documents   DocumentsPort
+	Assets      AssetsPort
+	LinkPreview LinkPreviewPort
+	State       StatePort
 }
 ```
 
-Same for `SmartImageProcessor`, `WebClipBlockProcessor`, `AIBlockProcessor`. (`block/processors → ai` is a new, acyclic edge — `ai` never imports `block`/`block/processors`.)
+Processor structs and constructors are **UNCHANGED** — they already hold `svc block.BlockServices` and reach AI through `p.svc.AI`. The root's `block.BlockServices{AI: s.AI, …}` literal (`service_provider.go:31`) also stays valid because `s.AI` is already `*ai.AIService`. `ai` still imports neither `block` nor `block/processors`, so the graph stays acyclic (`block core → ai → services/domain/lang/store`).
 
 - [ ] **Step 4: Rewrite each AI `RunJob` as `DescribeJob`**
 
@@ -480,7 +480,7 @@ func (p *CodeBlockProcessor) DescribeJob(jctx block.JobContext) block.ProcessorJ
 	return block.ProcessorJob{
 		Category: block.CategoryAI,
 		Label:    "Refining language...",
-		Work:     func() (any, error) { return p.ai.RefineLanguage(source, currentLang, method) },
+		Work:     func() (any, error) { return p.svc.AI.RefineLanguage(source, currentLang, method) },
 		Apply: func(result any, b *block.SieveBlock) {
 			detected, _ := result.(string)
 			if detected != "" && (lang.IsConfidentLanguage(detected) || !lang.IsConfidentLanguage(currentLang)) {
@@ -506,7 +506,7 @@ func (p *SmartImageProcessor) DescribeJob(jctx block.JobContext) block.Processor
 	return block.ProcessorJob{
 		Category: block.CategoryAI,
 		Label:    "Describing image…",
-		Work:     func() (any, error) { return p.ai.DescribeImage(uuid, src, id) },
+		Work:     func() (any, error) { return p.svc.AI.DescribeImage(uuid, src, id) },
 		Apply: func(result any, b *block.SieveBlock) {
 			desc := result.(domain.ImageDesc)
 			b.Attrs["summary"] = desc.Summary
@@ -531,7 +531,7 @@ func (p *WebClipBlockProcessor) DescribeJob(jctx block.JobContext) block.Process
 		Category: block.CategoryAI,
 		Label:    "Clipping…", // use the current JobLabel string
 		Work: func() (any, error) {
-			title, content, err := p.ai.RunWebClip(uuid, blk.ID, source, mode, docContent)
+			title, content, err := p.svc.AI.RunWebClip(uuid, blk.ID, source, mode, docContent)
 			return []string{title, content}, err
 		},
 		Apply: func(result any, b *block.SieveBlock) {
@@ -557,9 +557,9 @@ func (p *AIBlockProcessor) DescribeJob(jctx block.JobContext) block.ProcessorJob
 		Label:    "Thinking…", // current JobLabel
 		Work: func() (any, error) {
 			if isExplain {
-				return p.ai.RunExplain(content, history, question, uuid)
+				return p.svc.AI.RunExplain(content, history, question, uuid)
 			}
-			return p.ai.RunAsk(content, history, question, uuid)
+			return p.svc.AI.RunAsk(content, history, question, uuid)
 		},
 		Apply: func(result any, b *block.SieveBlock) {
 			b.Attrs["response"] = result.(string)
@@ -634,20 +634,20 @@ func (es *EditorService) RunJob(ctx context.Context, uuid, blockID string) {
 
 Match `es.shadowFor`/`snap.Clone`/`cloneAttrs`/`notify` to the CURRENT helper names in the file — inspect and reuse verbatim; do not invent names. The `es.jobs` field/`SetJobs` stay for now (legacy `ServeActiveJobs` still reads the tracker); removed in Phase C.
 
-- [ ] **Step 6: Update processor construction at the root**
+- [ ] **Step 6: Root construction — minimal (Option B)**
 
-In `sieve/service_provider.go:77-86`, drop `AI` from the `BlockServices` literal (`:31`) and pass `s.AI` as the new `*ai.AIService` arg to the four AI processors (e.g. `processors.NewCodeBlockProcessor(svc, s.AI)`). Non-AI processors keep their single-`svc` constructor.
+In `sieve/service_provider.go`: the `block.BlockServices{AI: s.AI, …}` literal (`:31`) is UNCHANGED (`s.AI` is already `*ai.AIService`, matching the retyped field). Delete only the obsolete `var _ block.AIPort = (*ai.AIService)(nil)` assertion (`:46`). Processor constructor calls (`:77-86`) are UNCHANGED — no new args under Option B.
 
 - [ ] **Step 7: Build + fix compile errors iteratively; assert `ai` stays clean**
 
 Run: `go build ./... 2>&1 | head -50`
-Fix remaining `RunJob`/`JobLabel`/`AIPort`/`BlockServices.AI` references until clean.
+Fix remaining `RunJob`/`JobLabel`/`AIPort` references until clean. (Note: `BlockServices.AI` STAYS — it is only retyped to `*ai.AIService`; do not remove the field.)
 Run: `go list -f '{{.Imports}}' sieve/sieve/ai | grep -x sieve/sieve/block || echo "OK: ai does not import block"`
-Expected: `OK: ai does not import block`.
+Expected: `OK: ai does not import block` (the governing invariant — `block core → ai` is expected and fine).
 
 - [ ] **Step 8: Port + run processor tests**
 
-Port each processor test from `RunJob` to `DescribeJob`: assert the returned `ProcessorJob.Category`/`Label`, and that calling `job.Apply(fakeResult, blk)` produces the expected `blk.Attrs` (confidence-gate cases move onto `Apply`, using `lang` for heuristics). Assert the backend is called ONLY inside `Work`. Update `NewCodeBlockProcessor(...)` etc. to the new 2-arg signature.
+Port each processor test from `RunJob` to `DescribeJob`: assert the returned `ProcessorJob.Category`/`Label`, and that calling `job.Apply(fakeResult, blk)` produces the expected `blk.Attrs` (confidence-gate cases move onto `Apply`, using `lang` for heuristics). Assert the backend is only reachable inside `Work`. **Processor constructors are UNCHANGED (Option B), so no constructor-signature edits.** DescribeJob tests call `job.Apply(fabricatedResult, blk)` directly and never invoke `Work`, so they need no working AI — where a test previously injected a fake AI via the `AIPort` interface, pass `block.BlockServices{AI: nil, …}` (the concrete field is unused when `Work` isn't executed). Only a test that genuinely executes `Work` end-to-end needs a real `*ai.AIService` (construct it with the existing `ai` test seam) — prefer restructuring such a test to assert `Apply` with a fabricated result instead.
 
 Run: `go test ./sieve/block/... ./sieve/editor/... -v`
 Expected: PASS.
@@ -664,10 +664,11 @@ git add sieve/block/ sieve/editor/editor_service.go sieve/service_provider.go
 git commit -m "feat(block,editor): invert processors to DescribeJob; route block jobs through the engine
 
 BlockProcessor.RunJob/JobLabel -> DescribeJob returning a ProcessorJob.
-AI processors import ai directly and hold *ai.AIService; block.AIPort and
-BlockServices.AI deleted. EditorService.RunJob describes the job and
-submits via submitBlockJob (engine drives the tracker); the attr-diff +
-shadow merge is unchanged. ai still never imports block."
+block.AIPort deleted; BlockServices.AI retyped to the concrete
+*ai.AIService (block core -> ai; the governing invariant is ai must not
+import block, which holds). Processors unchanged (still use p.svc.AI).
+EditorService.RunJob describes the job and submits via submitBlockJob
+(engine drives the tracker); attr-diff + shadow merge unchanged."
 ```
 
 ---
@@ -926,7 +927,7 @@ DescribeImage/RefineLanguage bindings. All verified caller-free."
 - One communal engine as sole tracker writer → B3 (wire) + B4c (block path) + B6 (document path) + C1 (retire legacy writers).
 - `AIService` synchronous & blind (no categories/engine) → B6 (delete `EvaluateOnClose`/`runCloseFiling`); `CategoryAI` kept OUT of `ai` (in `block`).
 - `EditorService` owns document jobs → B6.
-- `block.AIPort` deleted; `ai` doesn't import `block`; processors import `ai` → B4b (+ `go list` assertion B4 Step 7).
+- `block.AIPort` deleted; `ai` doesn't import `block` (the governing invariant); `block core → ai` via the retyped `BlockServices.AI` (Option B) → B4b (+ `go list` assertion B4 Step 7).
 - Close-all folds into the `"ai"` pool; regression preserved → B6.
 - `worker_pools` setting → B1; root wiring → B3.
 - Status bar two lists + `jobs:changed`/`/api/jobs`, dual-listen bridge → B5 + C1.
@@ -938,6 +939,7 @@ DescribeImage/RefineLanguage bindings. All verified caller-free."
 **Deviations from the spec (deliberate, with rationale):**
 1. **No `JobRunner` type** — folded into `EditorService.submitBlockJob`. The spec placed `JobRunner` "low in services for non-editor producers," but the only cited non-editor producer (the Ask panel) submits a raw descriptor with no block `Apply`, so it uses `engine.Submit` directly; document jobs likewise. With one real caller and block-specific shape, a separate type was premature indirection, and the wrap manipulates `EditorService`-owned data — so it belongs there per "behaviour on the owning type."
 2. **`CategoryAI` lives in `block`, not `ai`** — the spec put it "near AIService," but `ai` is the blind brain and is not the submitter; the submitters (`block/processors`, `editor`) share `block`, where `ProcessorJob.Category` already lives.
+3. **AIPort removed by RETYPING `BlockServices.AI` to `*ai.AIService` (Option B), not by moving the AI handle into processor constructors.** Governing principle: the invariant is directional — a business service (`ai`) must never depend on `block`; a `block` package depending on the `ai` business service is fine. So `AIPort` inverted an edge that never needed inverting. `block core → ai` is the intended shape; `ai → block` stays forbidden (asserted via `go list`). This keeps processors and their ~40 test constructors completely unchanged.
 
 **Placeholder scan:** the AI-processor `DescribeJob` bodies (B4b) and document entries (B6) instruct the implementer to port EXACT current attr keys/conditionals from cited `file:line` ranges — deliberate (the current code is the source of truth the implementer must read), not a placeholder. Every framework-novel unit (ProcessorJob, submitBlockJob, wiring, dispatch, bridge) has complete code.
 
