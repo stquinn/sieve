@@ -21,8 +21,10 @@ sieve
 coverage.txt
 
 # ── Node / TypeScript ─────────────────────────────────────────────────────────
-node_modules/
-frontend/node_modules/
+# No trailing slash: also ignores a stray `node_modules` symlink (e.g. a worktree
+# convenience link), not just the real directory.
+node_modules
+frontend/node_modules
 frontend/dist/
 frontend/.cache/
 *.tsbuildinfo
