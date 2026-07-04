@@ -35,7 +35,7 @@ The Sieve block functionality has matured, but the editor *feel* has become inco
 | Question | Decision |
 |---|---|
 | Tab in plain paragraph | **No-op: consumed, nothing inserted.** Focus never escapes the editor. |
-| Tab in lists / tables | **Native TipTap behaviour, untouched** (indent/outdent list items; next/prev table cell). Sieve does not interject. |
+| Tab in lists / tables | **Native TipTap behaviour, untouched** (indent/outdent list items; Tab/Shift+Tab move to next/previous table cell). Sieve does not interject. The policy plugin consumes Tab only when nothing structural claims it. Table edges to pin in the contract doc: Tab in the *last* cell (TipTap default appends a row — adopt or override explicitly), Shift+Tab in the *first* cell (must stay consumed, never a focus escape). |
 | Indent width in raw-text blocks (code/diagram/log) | **Uniform 2 spaces.** Shift+Tab de-indents up to 2. |
 | Smart paste into prose | **Silent conversion stays** (status quo blessed). |
 | Paste into raw-text blocks | **Literal text** (status quo blessed; `caretInRawTextBlock` becomes a policy flag). |
