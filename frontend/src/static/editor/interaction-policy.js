@@ -32,7 +32,11 @@ var TABLE_TYPES = { table: 1, tableRow: 1, tableCell: 1, tableHeader: 1 }
 
 function kindFromTypeName(name) {
   if (!name) return 'prose'
-  return name.indexOf('sieve-') === 0 ? name.slice('sieve-'.length) : 'prose'
+  if (name.indexOf('sieve-') === 0) return name.slice('sieve-'.length)
+  // Native TipTap code blocks share the 'code' interaction policy — the
+  // contract's Code row applies to BOTH code surfaces (uniform mechanism).
+  if (name === 'codeBlock') return 'code'
+  return 'prose'
 }
 
 // classifyContext is pure: the extension extracts names from PM state and

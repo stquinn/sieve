@@ -35,6 +35,10 @@ describe('classifyContext', () => {
     const c = classifyContext({ parentTypeName: 'paragraph', ancestorTypeNames: ['table', 'tableRow', 'tableCell'] })
     expect(c.inTable).toBe(true)
   })
+  it('native codeBlock → kind code (both code surfaces share one policy)', () => {
+    const c = classifyContext({ parentTypeName: 'codeBlock', ancestorTypeNames: [] })
+    expect(c.kind).toBe('code')
+  })
   it('node selection on sieve-web-clip → kind web-clip, isNodeSelection', () => {
     const c = classifyContext({ parentTypeName: 'doc', ancestorTypeNames: [], nodeSelectionTypeName: 'sieve-web-clip' })
     expect(c.kind).toBe('web-clip')
