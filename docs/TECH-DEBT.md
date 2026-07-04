@@ -216,3 +216,11 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 **What:** The policy extension consumes editing keys inside `readOnlyText` blocks (log) as a low-priority backstop. Mid-text this is airtight (core keymap commands fail there and fall through), but at block **boundaries** core `joinBackward`/`joinForward` may act before the backstop (they run earlier). Pre-existing edge — the old per-renderer guard had the same ordering.
 
 **Retires when:** boundary cases are pinned in the contract matrix during a conformance pass and, if confirmed, guarded via a `filterTransaction` on the policy extension (transaction-level, ordering-immune) rather than more key handling.
+
+## W-A: wails devserver panics on external-browser WebSocket upgrades (assetdir mode)
+
+**What:** `wails dev` in assetdir mode (no external frontend dev server) leaves the devserver's `wsHandler` nil; ANY WebSocket upgrade hitting the external port (`:34115`) panics at `devserver.go:113` (`invalid memory address`, recovered per-connection by echo). The app's own webview is unaffected (it reaches the asset server directly), but **external browsers can never open `/api/ws` through the dev port** — so browser-driven testing (headless Chrome/CDP, the planned Playwright harness) cannot exercise any WS-dependent editor path in dev mode.
+
+**Why deferred:** upstream wails v2.12.0 bug (`internal/frontend/devserver/devserver.go` — `wsHandler` only assigned when a frontenddevserverurl exists). Not fixable in-repo without a go.mod replace/patch.
+
+**Retires when:** wails fixes it (or v3 migration lands — see WAILS-V3-MIGRATION), or we add a go.mod patch. Interim workaround for WS-path testing: in-process Go tests dialing the chi handler directly (see `requesthandlers/ws_takeover_test.go` harness).
