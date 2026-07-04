@@ -3,31 +3,48 @@ package filestore
 import (
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"sieve/store"
 )
 
 // fileStorable is the base concrete type that satisfies store.Storable.
 // It is a pure value object — no I/O, no business logic.
-// All fields are stamped by FileStore at creation time and are immutable
-// after the Storable is returned to the caller.
+// Identity fields (key/path/category/extRef/versions) are stamped by FileStore
+// at creation time and immutable after the Storable is returned. body/meta are
+// NOT immutable (SetBody/SetMeta mutate in place) and the store hands back a
+// SHARED storable per uuid — so mutable-field access is mutex-guarded: a
+// reconnect-overlap teardown flush (SetBody) races the successor's Open
+// (Body) otherwise (caught by go test -race via ws_takeover_test.go).
 type fileStorable struct {
-	key        string // logical identity (UUID for docs/folders, filename for assets)
-	path       string // filesystem identity (category-relative directory key)
-	category   store.Category
+	key      string // logical identity (UUID for docs/folders, filename for assets)
+	path     string // filesystem identity (category-relative directory key)
+	category store.Category
+	extRef   string
+	versions []store.VersionRef
+
+	mu         sync.RWMutex // guards body, isModified (and meta/owns in embedders)
 	body       []byte
-	extRef     string
-	versions   []store.VersionRef
 	isModified bool
 }
 
 func (s *fileStorable) Key() string                  { return s.key }
 func (s *fileStorable) Path() string                 { return s.path }
 func (s *fileStorable) Category() store.Category     { return s.category }
-func (s *fileStorable) Body() []byte                 { return s.body }
 func (s *fileStorable) ExternalRef() string          { return s.extRef }
 func (s *fileStorable) Versions() []store.VersionRef { return s.versions }
-func (s *fileStorable) IsModified() bool             { return s.isModified }
+
+func (s *fileStorable) Body() []byte {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.body
+}
+
+func (s *fileStorable) IsModified() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.isModified
+}
 
 // fileMetaStorable extends fileStorable with a structured metadata map.
 // It satisfies store.MetaStorable.
@@ -41,12 +58,45 @@ type fileMetaStorable struct {
 	owns []store.Storable
 }
 
-func (s *fileMetaStorable) Meta() map[string]string     { return s.meta }
-func (s *fileMetaStorable) SetBody(body []byte)         { s.body = body; s.isModified = true }
-func (s *fileMetaStorable) SetMeta(m map[string]string) { s.meta = m; s.isModified = true }
-func (s *fileMetaStorable) Owns() []store.Storable             { return s.owns }
-func (s *fileMetaStorable) AttachAsset(a store.Storable)       { s.owns = append(s.owns, a); s.isModified = true }
-func (s *fileMetaStorable) ClearOwns()                         { s.owns = nil; s.isModified = true }
+func (s *fileMetaStorable) Meta() map[string]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.meta
+}
+
+func (s *fileMetaStorable) SetBody(body []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.body = body
+	s.isModified = true
+}
+
+func (s *fileMetaStorable) SetMeta(m map[string]string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.meta = m
+	s.isModified = true
+}
+
+func (s *fileMetaStorable) Owns() []store.Storable {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.owns
+}
+
+func (s *fileMetaStorable) AttachAsset(a store.Storable) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.owns = append(s.owns, a)
+	s.isModified = true
+}
+
+func (s *fileMetaStorable) ClearOwns() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.owns = nil
+	s.isModified = true
+}
 
 // fileAssetStorable extends fileStorable for binary content such as images.
 // Encoding is inferred by FileStore at Create time from magic bytes — never
