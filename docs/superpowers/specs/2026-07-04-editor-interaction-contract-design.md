@@ -95,10 +95,15 @@ The surface *feels* like a bare textarea because it lacks code-editor affordance
 Caret control is a first-class part of the contract, not an implementation detail:
 
 1. **No dead-ends** — every document position is reachable by arrow keys alone; the caret can always leave any block upward and downward. The trailing-node guarantee + unified Enter-escape decision (block-cursor affordance defect, B+A) is *encoded here* as contract clauses; its implementation status is verified during planning, not re-designed.
-2. **Boundary behaviour is uniform across block kinds** — ArrowDown on the last line of *any* block reaches the content below it (or the guaranteed trailing paragraph); ArrowUp symmetrically. Entering a raw-text block from above places the caret at line start; from below, at line end — the same for code, diagram-edit, and log.
-3. **Click placement is predictable** — clicking anywhere in a block's body places a text caret at that point; clicking chrome (header/gutter) selects the block (NodeSelection), never silently focuses nothing.
-4. **The caret is always visible** — entering a block never leaves focus in a state where typing goes nowhere.
-5. **Mode flips preserve position** — diagram edit↔render round-trips restore the caret to where it was (or block-start if content changed).
+2. **Boundary behaviour is uniform across block kinds.** Editable code-like blocks (code, diagram-edit, log) are just text to the caret:
+   - ArrowDown from the block above enters the **first line as a text caret** (never a NodeSelection, never skipped), preserving the horizontal column; ArrowUp from below enters the last line symmetrically.
+   - ArrowDown on the **last line exits to the next block** (or the guaranteed trailing paragraph) **without modifying content** — leaving never inserts a newline; ArrowUp from the first line symmetrically.
+   - **Enter at the end of a raw-text block always inserts a newline inside the block** — it never auto-escapes (trailing newlines are legitimate code content; "sometimes Enter escapes" is the inconsistency being eliminated).
+3. **Read-only blocks (web-clip, ai-block, diagram-render, smart-image) are a single caret stop.** Arrowing onto one selects the whole block (the selection ring *is* the caret at that position); arrowing again moves past it. Never skipped invisibly, never a trap.
+4. **Escape is one uniform gesture, not per-block magic.** Mod+Enter inserts a paragraph after the current block and moves the caret there — identical for every block kind. When a read-only block is NodeSelected, plain Enter does the same (this is also how prose is inserted between two adjacent read-only blocks). The trailing-node guarantee ensures a landing place after a final block. This standardises the prior piecemeal "attempts" (trailing-node + unified Enter-escape, B+A) as contract law.
+5. **Click placement is predictable** — clicking anywhere in a block's body places a text caret at that point; clicking chrome (header/gutter) selects the block (NodeSelection), never silently focuses nothing.
+6. **The caret is always visible** — entering a block never leaves focus in a state where typing goes nowhere.
+7. **Mode flips preserve position** — diagram edit↔render round-trips restore the caret to where it was (or block-start if content changed).
 
 The contract doc's key matrix includes an "Arrow keys at boundaries" column so every block kind has an explicit, testable answer.
 
