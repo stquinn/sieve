@@ -202,3 +202,17 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 **What:** Two vitest files assert behavior of designs that were since retired and should be deleted or rewritten to the current model: `frontend/test/render-exact-shadow.test.js` and `frontend/test/proseidentity-loop.test.js` (they pin pre-node-granular / pre-`proseGroup` expectations). They currently pass but encode obsolete intent.
 
 **Why deferred:** cosmetic/test-hygiene, not a product bug. **Retires when:** each is reviewed against the current block model and deleted (if its concern is now covered elsewhere) or rewritten. Moved here from the archived plan.
+
+## I-A: Interaction-contract deferred items (auto-pair, Playwright matrices)
+
+**What:** (1) Bracket/quote auto-pairing in code blocks — designed as an `autoPair` policy flag on the interaction-policy extension, deferred until it can be proven not to fight PM input rules. (2) The contract matrices in `docs/editor-interaction-contract.md` are the intended test inventory for the planned Playwright browser harness; until it lands they are a manual checklist.
+
+**Why deferred:** Auto-pair is a stretch affordance (spec 2026-07-04); the harness is its own spec (`project_testing_strategy`).
+
+**Retires when:** auto-pair ships behind the policy flag, and the matrices are encoded as Playwright tests.
+
+## I-B: Backspace/Delete at read-only block boundaries can still join via core keymap
+
+**What:** The policy extension consumes editing keys inside `readOnlyText` blocks (log) as a low-priority backstop. Mid-text this is airtight (core keymap commands fail there and fall through), but at block **boundaries** core `joinBackward`/`joinForward` may act before the backstop (they run earlier). Pre-existing edge — the old per-renderer guard had the same ordering.
+
+**Retires when:** boundary cases are pinned in the contract matrix during a conformance pass and, if confirmed, guarded via a `filterTransaction` on the policy extension (transaction-level, ordering-immune) rather than more key handling.
