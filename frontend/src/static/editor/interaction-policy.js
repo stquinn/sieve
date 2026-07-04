@@ -359,8 +359,14 @@ export function buildInteractionPolicyExtension(T) {
                   return true
                 }
               }
-              if (event.key !== 'Tab') return false
+              // keyCode 9 matters: WebKitGTK can report Shift+Tab as the X11
+              // keysym ISO_Left_Tab in event.key (Chrome always says 'Tab'),
+              // which made Shift+Tab fall through to focus navigation in the
+              // wails app while working in Chrome.
+              var isTabKey = event.key === 'Tab' || event.key === 'ISO_Left_Tab' || event.keyCode === 9
+              if (!isTabKey) return false
               if (event.metaKey || event.ctrlKey || event.altKey) return false
+              var isShiftTab = event.shiftKey || event.key === 'ISO_Left_Tab'
               var ctx = resolveContext(view.state)
               // Native structural keymaps already ran (priority order); from
               // here we own the key so focus can never escape the editor.
@@ -371,7 +377,7 @@ export function buildInteractionPolicyExtension(T) {
               }
               if (ctx.policy.rawText && !ctx.isNodeSelection && ctx.mode !== 'render') {
                 event.preventDefault()
-                return event.shiftKey
+                return isShiftTab
                   ? applyDedent(view, ctx.policy.indentWidth)
                   : applyIndent(view, ctx.policy.indentWidth)
               }
