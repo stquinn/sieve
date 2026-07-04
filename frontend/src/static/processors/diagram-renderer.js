@@ -1,8 +1,13 @@
 // diagram-renderer.js — Sieve block renderer for the 'diagram' kind.
 //
-// Edit mode: textarea + syntax-highlight overlay + line gutter (same pattern as code-renderer.js).
-// Render mode: SVG from mermaid.js, lazy-loaded from vendor/mermaid.min.js.
-// Mode and cursor position are persisted in YAML via sieve:block-update so they survive reloads.
+// Edit mode: ProseMirror contentDOM (pre>code, code:true node — NOT a
+// textarea) + decoration-based highlight + line gutter, same pattern as
+// code-renderer.js. Render mode: SVG from mermaid.js, lazy-loaded from
+// vendor/mermaid.min.js. Mode and cursor position are persisted in YAML via
+// sieve:block-update so they survive reloads.
+// Keyboard behaviour (Tab/Enter/Mod+Enter toggle) comes from the shared
+// interaction-policy extension via interactionPolicy + onModEnter — do NOT
+// add handleKeyDown here (docs/editor-interaction-contract.md is normative).
 
 import { esc, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
 

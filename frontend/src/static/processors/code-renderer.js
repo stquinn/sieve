@@ -1,12 +1,11 @@
 // code-renderer.js — Sieve block renderer for the 'code' kind.
 //
-// Rendering: textarea + syntax-highlight overlay in the same CSS Grid cell.
-//   - textarea (.sieve-block__edit)    transparent text, handles all input natively
-//   - pre>code (.sieve-block__highlight)  highlighted HTML, pointer-events:none, sits behind
-//
-// The textarea's value is the authoritative source — no innerText tricks,
-// no div/br newline issues, no cursor-restoration needed.
-// Highlight re-applies on input (debounced 50ms) by updating the overlay innerHTML.
+// Editing surface: a ProseMirror contentDOM (pre>code, code:true node) — NOT
+// a textarea (that implementation is long gone). Syntax highlighting is
+// decoration-based (plugin below); the node's text content is authoritative.
+// Keyboard behaviour (Tab/Enter/Home) comes from the shared interaction-policy
+// extension via this renderer's interactionPolicy declaration — do NOT add
+// handleKeyDown here (docs/editor-interaction-contract.md is normative).
 
 import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
 
