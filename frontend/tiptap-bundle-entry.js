@@ -5,7 +5,7 @@
 
 export { Editor, Node, Extension, mergeAttributes } from '@tiptap/core'
 export { DOMParser as ProseMirrorDOMParser, NodeRange } from '@tiptap/pm/model'
-export { Plugin, PluginKey } from '@tiptap/pm/state'
+export { Plugin, PluginKey, Selection, TextSelection, NodeSelection } from '@tiptap/pm/state'
 export { Decoration, DecorationSet } from '@tiptap/pm/view'
 export { default as StarterKit } from '@tiptap/starter-kit'
 export { default as Link } from '@tiptap/extension-link'

@@ -153,15 +153,42 @@ function applyDedent(view, width) {
   return true
 }
 
+// TT — the TipTap/PM namespace captured by buildInteractionPolicyExtension
+// (window.TipTap in the app; a shim of the same classes in vitest). Needed
+// because this file is loaded raw in the browser: bare '@tiptap/pm/state'
+// imports cannot resolve here.
+var TT = null
+
+// insertParagraphAfter — the universal block escape (Shift+Enter anywhere in
+// a sieve block; plain Enter on a selected read-only block): a new paragraph
+// after the caret's TOP-LEVEL block, caret placed inside it.
+function insertParagraphAfter(view) {
+  var state = view.state
+  var sel = state.selection
+  var after
+  if (sel.node) {
+    after = sel.to
+  } else if (sel.$from.depth >= 1) {
+    after = sel.$from.after(1)
+  } else {
+    return false
+  }
+  var para = state.schema.nodes.paragraph.create()
+  var tr = state.tr.insert(after, para)
+  tr = tr.setSelection(TT.TextSelection.create(tr.doc, after + 1)).scrollIntoView()
+  view.dispatch(tr)
+  return true
+}
+
 // policyEnterKeydown — the Enter-family entry point, called from editor.js's
 // editorProps.handleKeyDown (NOT from the plugin below). Ordering rationale:
 // TipTap's core Keymap binds Enter→newlineInCode and Mod-Enter→exitCode, which
 // run BEFORE any extension plugin and would consume Enter inside code:true
 // blocks (plain newline, no auto-indent; exitCode instead of mode toggle).
 // editorProps runs before core, and this function returns false in every
-// context the policy does not own, so native prose/list/table Enter is
-// untouched. Tab is the mirror case: native keymaps must win, so it lives in
-// the priority-50 backstop plugin below.
+// context the policy does not own, so native prose/list/table Enter (and
+// prose Shift+Enter soft breaks) are untouched. Tab is the mirror case:
+// native keymaps must win, so it lives in the priority-50 backstop plugin.
 export function policyEnterKeydown(view, event) {
   if (event.key !== 'Enter') return false
   return handleEnter(view, event)
@@ -170,29 +197,103 @@ export function policyEnterKeydown(view, event) {
 function handleEnter(view, event) {
   var ctx = resolveContext(view.state)
   var isMod = event.metaKey || event.ctrlKey
-  if (isMod && ctx.policy.modEnterTogglesMode) {
-    // Declared per-kind override (diagram): Mod+Enter flips edit/render.
-    var beh = getBlockBehaviour(ctx.kind)
-    if (beh && beh.onModEnter) {
-      event.preventDefault()
-      return beh.onModEnter(view, view.state.selection) === true
-    }
+  var inSieveBlock = ctx.kind !== 'prose'
+
+  // Shift+Enter: THE universal block escape (contract: "Two chords, one
+  // meaning each"). Prose keeps its native soft break (we return false).
+  if (event.shiftKey && !isMod) {
+    if (!inSieveBlock) return false
+    event.preventDefault()
+    return insertParagraphAfter(view)
   }
-  if (ctx.policy.readOnlyText && !isMod) {
+
+  // Mod+Enter: mode toggle for kinds that declare it; native otherwise.
+  if (isMod) {
+    if (ctx.policy.modEnterTogglesMode) {
+      var beh = getBlockBehaviour(ctx.kind)
+      if (beh && beh.onModEnter) {
+        event.preventDefault()
+        return beh.onModEnter(view, view.state.selection) === true
+      }
+    }
+    return false
+  }
+
+  // Plain Enter on a selected caret-stop block: escape (this is how prose is
+  // planted between two adjacent read-only blocks).
+  if (ctx.isNodeSelection && stopActive(ctx.policy, view.state.selection.node.attrs)) {
+    event.preventDefault()
+    return insertParagraphAfter(view)
+  }
+  if (ctx.policy.readOnlyText) {
     event.preventDefault()
     return true // read-only text: consume
   }
-  if (ctx.policy.enterInsertsNewline && !ctx.isNodeSelection && ctx.mode !== 'render' && !isMod) {
+  if (ctx.policy.enterInsertsNewline && !ctx.isNodeSelection && ctx.mode !== 'render') {
     event.preventDefault()
     var s = rawTextSpan(view.state)
     var indent = ctx.policy.autoIndentOnEnter ? leadingIndentAt(s.text, s.from) : ''
     view.dispatch(view.state.tr.insertText('\n' + indent).scrollIntoView())
     return true
   }
-  return false // native Enter (prose split etc.); Mod+Enter escape is added by the caret-contract layer
+  return false // native Enter (prose split etc.)
+}
+
+// stopActive — is this kind a caret stop right now? ('render' = only while
+// the block is in render mode; true = always.)
+function stopActive(policy, attrs) {
+  if (policy.caretStop === 'render') return !!(attrs && attrs.mode === 'render')
+  return !!policy.caretStop
+}
+
+// atBoundary — is the caret on the block's boundary line in the arrow
+// direction? endOfTextblock needs real layout; fall back to hard start/end
+// offsets where none exists (unit tests, degenerate views).
+function atBoundary(view, down) {
+  try {
+    return view.endOfTextblock(down ? 'down' : 'up')
+  } catch (e) {
+    var $h = view.state.selection.$head
+    return down ? $h.parentOffset === $h.parent.content.size : $h.parentOffset === 0
+  }
+}
+
+// handleArrowStop — caret contract clause 4: read-only blocks are a single
+// caret stop. Arrow onto one → whole-block NodeSelection; arrow again → past
+// it. Prevents the caret diving into non-atom read-only containers.
+function handleArrowStop(view, down) {
+  var st = view.state
+  var sel = st.selection
+
+  // A caret-stop block is selected → move past it.
+  if (sel.node) {
+    var ctx = resolveContext(st)
+    if (stopActive(ctx.policy, sel.node.attrs)) {
+      var target = down ? sel.to : sel.from
+      var next = TT.Selection.near(st.doc.resolve(target), down ? 1 : -1)
+      view.dispatch(st.tr.setSelection(next).scrollIntoView())
+      return true
+    }
+    return false
+  }
+
+  // Caret on a boundary line adjacent to a caret-stop block → select it.
+  var $head = sel.$head
+  if ($head.depth === 0) return false
+  if (!atBoundary(view, down)) return false
+  var bound = down ? $head.after(1) : $head.before(1)
+  var $bound = st.doc.resolve(bound)
+  var adjacent = down ? $bound.nodeAfter : $bound.nodeBefore
+  if (!adjacent || adjacent.type.name.indexOf('sieve-') !== 0) return false
+  var kind = adjacent.type.name.slice('sieve-'.length)
+  if (!stopActive(policyFor(kind), adjacent.attrs)) return false
+  var pos = down ? bound : bound - adjacent.nodeSize
+  view.dispatch(st.tr.setSelection(TT.NodeSelection.create(st.doc, pos)).scrollIntoView())
+  return true
 }
 
 export function buildInteractionPolicyExtension(T) {
+  TT = T
   return T.Extension.create({
     name: 'sieveInteractionPolicy',
     // Lower than the default 100: native keymaps (list indent/outdent, table
@@ -203,6 +304,10 @@ export function buildInteractionPolicyExtension(T) {
         new T.Plugin({
           props: {
             handleKeyDown: function (view, event) {
+              if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') &&
+                  !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+                return handleArrowStop(view, event.key === 'ArrowDown')
+              }
               if (event.key !== 'Tab') return false
               if (event.metaKey || event.ctrlKey || event.altKey) return false
               var ctx = resolveContext(view.state)

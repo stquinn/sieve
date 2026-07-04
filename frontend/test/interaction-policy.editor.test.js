@@ -11,7 +11,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { Editor, Node, Extension } from '@tiptap/core'
 import { StarterKit } from '@tiptap/starter-kit'
 import { Table, TableRow, TableCell, TableHeader } from '@tiptap/extension-table'
-import { Plugin, TextSelection } from '@tiptap/pm/state'
+import { Plugin, Selection, TextSelection, NodeSelection } from '@tiptap/pm/state'
 import { registerBlockKind } from '../src/static/block/block-kinds.js'
 import { buildInteractionPolicyExtension, policyEnterKeydown } from '../src/static/editor/interaction-policy.js'
 
@@ -75,6 +75,23 @@ const SieveLog = Node.create({
   renderHTML() { return ['pre', { class: 'sieve-log' }, ['code', 0]] },
 })
 
+// Read-only container (web-clip/ai-block shape): block+ content, caretStop.
+registerBlockKind({
+  kind: 'clip',
+  native: false,
+  renderer: { interactionPolicy: { caretStop: true } },
+})
+
+const SieveClip = Node.create({
+  name: 'sieve-clip',
+  group: 'block',
+  content: 'block+',
+  selectable: true,
+  defining: true,
+  parseHTML() { return [{ tag: 'div.sieve-clip' }] },
+  renderHTML() { return ['div', { class: 'sieve-clip' }, 0] },
+})
+
 let editor = null
 afterEach(() => { if (editor) { editor.destroy(); editor = null } })
 
@@ -88,11 +105,11 @@ function makeEditor(contentJSON) {
       handleKeyDown: (view, event) => policyEnterKeydown(view, event),
     },
     extensions: [
-      StarterKit.configure({ trailingNode: false }),
+      StarterKit.configure({ trailingNode: true }), // mirrors editor.js (caret contract clause 1)
       Table.configure({ resizable: false }),
       TableRow, TableHeader, TableCell,
-      SieveCode, SieveDiagram, SieveLog,
-      buildInteractionPolicyExtension({ Extension, Plugin }),
+      SieveCode, SieveDiagram, SieveLog, SieveClip,
+      buildInteractionPolicyExtension({ Extension, Plugin, Selection, TextSelection, NodeSelection }),
     ],
     content: contentJSON,
   })
@@ -275,5 +292,100 @@ describe('Enter (contract: raw-text newline + auto-indent; native prose untouche
     const { handled } = press('Enter')
     expect(handled).toBe(true)
     expect(docText()).toBe('line1')
+  })
+})
+
+describe('Shift+Enter universal escape (contract: insert ¶ after block)', () => {
+  it('escapes a code block to a new paragraph below', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-code', content: [{ type: 'text', text: 'code' }] },
+      { type: 'paragraph', content: [{ type: 'text', text: 'tail' }] },
+    ] })
+    caretAt(3) // inside the code text
+    const { handled } = press('Enter', { shiftKey: true })
+    expect(handled).toBe(true)
+    // New paragraph inserted between code block and 'tail'; caret inside it.
+    const json = editor.getJSON()
+    expect(json.content[0].type).toBe('sieve-code')
+    expect(json.content[0].content[0].text).toBe('code') // content untouched
+    expect(json.content[1].type).toBe('paragraph')
+    expect(json.content[1].content).toBeUndefined() // the new empty paragraph
+    expect(editor.state.selection.$from.parent.type.name).toBe('paragraph')
+  })
+  it('escapes read-only log text', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-log', content: [{ type: 'text', text: 'line' }] },
+      { type: 'paragraph' },
+    ] })
+    caretAt(3)
+    const { handled } = press('Enter', { shiftKey: true })
+    expect(handled).toBe(true)
+    expect(editor.getJSON().content[1].type).toBe('paragraph')
+  })
+  it('leaves prose Shift+Enter native (soft break)', () => {
+    makeEditor({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'ab' }] }] })
+    caretAt(2)
+    press('Enter', { shiftKey: true })
+    // HardBreak keymap (native) handles it — our handler returned false.
+    expect(JSON.stringify(editor.getJSON())).toContain('hardBreak')
+  })
+})
+
+describe('Read-only caret stops (contract clause 4)', () => {
+  function makeClipDoc() {
+    makeEditor({ type: 'doc', content: [
+      { type: 'paragraph', content: [{ type: 'text', text: 'above' }] },
+      { type: 'sieve-clip', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'inner' }] }] },
+      { type: 'paragraph', content: [{ type: 'text', text: 'below' }] },
+    ] })
+  }
+  it('ArrowDown from the paragraph above selects the clip whole (no dive)', () => {
+    makeClipDoc()
+    caretAt(6) // end of 'above'
+    const { handled } = press('ArrowDown')
+    expect(handled).toBe(true)
+    expect(editor.state.selection.node?.type.name).toBe('sieve-clip')
+  })
+  it('ArrowDown while the clip is selected lands below it', () => {
+    makeClipDoc()
+    editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, 7)))
+    const { handled } = press('ArrowDown')
+    expect(handled).toBe(true)
+    expect(editor.state.selection.node).toBeUndefined()
+    expect(editor.state.selection.$from.parent.textContent).toBe('below')
+  })
+  it('ArrowUp from below selects the clip; ArrowUp again lands above', () => {
+    makeClipDoc()
+    let belowPos = null
+    editor.state.doc.descendants((node, p) => { if (node.isText && node.text === 'below') belowPos = p + 1 })
+    caretAt(belowPos)
+    expect(press('ArrowUp').handled).toBe(true)
+    expect(editor.state.selection.node?.type.name).toBe('sieve-clip')
+    expect(press('ArrowUp').handled).toBe(true)
+    expect(editor.state.selection.$from.parent.textContent).toBe('above')
+  })
+  it('plain Enter on the selected clip inserts a paragraph after it', () => {
+    makeClipDoc()
+    editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, 7)))
+    const { handled } = press('Enter')
+    expect(handled).toBe(true)
+    const json = editor.getJSON()
+    expect(json.content[1].type).toBe('sieve-clip')
+    expect(json.content[2].type).toBe('paragraph')
+    expect(json.content[2].content).toBeUndefined() // new empty paragraph
+  })
+})
+
+describe('Trailing node (contract clause 1: no dead-ends)', () => {
+  it('a doc ending in a structured block gets a trailing paragraph on first edit', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'paragraph', content: [{ type: 'text', text: 'x' }] },
+      { type: 'sieve-code', content: [{ type: 'text', text: 'end' }] },
+    ] })
+    // TrailingNode applies via appendTransaction — i.e. from the first
+    // transaction onward (app docs render through transactions).
+    editor.view.dispatch(editor.state.tr.insertText('!', 2))
+    const json = editor.getJSON()
+    expect(json.content[json.content.length - 1].type).toBe('paragraph')
   })
 })

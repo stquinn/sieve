@@ -10,25 +10,30 @@ regression pass. Source spec:
 "consume ∅" = event consumed, nothing happens, focus stays in the editor.
 "native" = TipTap/ProseMirror default; Sieve does not interject.
 
-| Context | Tab | Shift+Tab | Enter | Mod+Enter | ArrowDown at end | ArrowUp at start | Home |
-|---|---|---|---|---|---|---|---|
-| Plain paragraph | consume ∅ | consume ∅ | native (split para) | insert ¶ after block | native | native | native |
-| List item | native (indent) | native (outdent) | native | insert ¶ after list | native | native | native |
-| Table cell | native (next cell; last cell appends row — adopted TipTap default) | native (prev cell; consume ∅ in first cell) | native | insert ¶ after table | native | native | native |
-| Code block | indent 2 (multi-line: indent each selected line) | de-indent ≤2 per line | newline + auto-indent (copy previous line's leading whitespace) | insert ¶ after block | exit to next block, content unchanged | exit to previous block | 1st press: first non-ws char; 2nd: column 0 |
-| Diagram (edit) | indent 2 (as code) | de-indent ≤2 (as code) | newline + auto-indent | **toggle to render mode** (declared policy override; cursor position preserved) | exit to next block | exit to previous block | as code |
-| Diagram (render) | consume ∅ | consume ∅ | insert ¶ after (block is a caret stop) | **toggle to edit mode** (works with block selected OR render body focused — one function, two entry points) | pass to next block | pass to previous block | n/a |
-| Log block | consume ∅ | consume ∅ | consume ∅ (read-only text) | **toggle raw↔explore** (declared policy override, same mechanism as diagram) | exit to next block | exit to previous block | native |
-| ai-block | consume ∅ | consume ∅ | insert ¶ after (caret stop) | insert ¶ after | pass | pass | n/a |
-| web-clip | consume ∅ | consume ∅ | insert ¶ after (caret stop) | insert ¶ after | pass | pass | n/a |
-| smart-image | consume ∅ | consume ∅ | insert ¶ after (caret stop) | insert ¶ after | pass | pass | n/a |
+| Context | Tab | Shift+Tab | Enter | Shift+Enter | Mod+Enter | ArrowDown at end | ArrowUp at start | Home |
+|---|---|---|---|---|---|---|---|---|
+| Plain paragraph | consume ∅ | consume ∅ | native (split para) | native (soft break) | native | native | native | native |
+| List item | native (indent) | native (outdent) | native | native (soft break) | native | native | native | native |
+| Table cell | native (next cell; last cell appends row — adopted TipTap default) | native (prev cell; consume ∅ in first cell) | native | native (soft break) | native | native | native | native |
+| Code block | indent 2 (multi-line: indent each selected line) | de-indent ≤2 per line | newline + auto-indent (copy previous line's leading whitespace) | **escape: insert ¶ after block** | native (core exitCode — same effect as escape; undocumented alias) | exit to next block, content unchanged | exit to previous block | 1st press: first non-ws char; 2nd: column 0 |
+| Diagram (edit) | indent 2 (as code) | de-indent ≤2 (as code) | newline + auto-indent | **escape: insert ¶ after block** | **toggle to render mode** (cursor position preserved) | exit to next block | exit to previous block | as code |
+| Diagram (render) | consume ∅ | consume ∅ | insert ¶ after (block is a caret stop) | **escape: insert ¶ after block** | **toggle to edit mode** (block selected OR render body focused — one function, two entry points) | pass to next block | pass to previous block | n/a |
+| Log block | consume ∅ | consume ∅ | consume ∅ (read-only text) | **escape: insert ¶ after block** | **toggle raw↔explore** | exit to next block | exit to previous block | native |
+| ai-block | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a |
+| web-clip | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a |
+| smart-image | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a |
 
-**Mode toggling is a policy mechanism, not a special case:** any kind with two
-view modes declares `modEnterTogglesMode: true` and provides an `onModEnter`
-behaviour hook; the policy extension routes Mod+Enter to it. Current users:
-diagram (edit↔render), log (raw↔explore). For these kinds the toggle replaces
-the default Mod+Enter escape — escape remains available via arrows and the
-trailing paragraph.
+**Two chords, one meaning each (decided 2026-07-04):**
+
+- **Shift+Enter = the universal block escape** — inside ANY sieve block (or
+  with one selected), insert a new paragraph after the block and move the
+  caret there. Free of clashes: HardBreak (the native Shift+Enter soft break)
+  cannot exist inside `text*` blocks, and prose keeps it natively. Precedent:
+  Jupyter's "Shift+Enter leaves the cell downward".
+- **Mod+Enter = mode toggle**, a policy mechanism, not a special case: any
+  kind with two view modes declares `modEnterTogglesMode: true` and provides
+  an `onModEnter` hook. Current users: diagram (edit↔render, preserving the
+  long-standing Ctrl+Enter habit), log (raw↔explore).
 
 ## Caret contract
 
@@ -40,8 +45,8 @@ trailing paragraph.
 3. Leaving a block never modifies its content (no phantom newlines).
 4. Read-only blocks (web-clip, ai-block, diagram-render, smart-image) are a
    single caret stop: arrow onto → whole-block selection; arrow again → past
-   it. Enter while selected inserts a paragraph after (this is how prose is
-   added between two adjacent read-only blocks).
+   it. Enter or Shift+Enter while selected inserts a paragraph after (this is
+   how prose is added between two adjacent read-only blocks).
 5. Click in a block body → text caret there; click on chrome (header/gutter)
    → block selection. Never silent nothing.
 6. Typing always goes somewhere visible after entering a block.

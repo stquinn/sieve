@@ -341,10 +341,11 @@
       extensions: [
         SieveDocument,
         T.BlockId,
-        // trailingNode:false — we let PM's native Gapcursor place a caret after a
-        // trailing atom (structured) block; typing there creates a real native
-        // paragraph (a new prose block). No fabricated trailing surface.
-        T.StarterKit.configure({ document: false, link: false, codeBlock: false, trailingNode: false, history: { depth: 10000, newGroupDelay: 500 } }),
+        // trailingNode:true — caret contract clause 1 (no dead-ends): a
+        // paragraph is guaranteed after a final structured block. The earlier
+        // Gapcursor-only bet failed for non-atom read-only containers
+        // (web-clip/ai-block) — see docs/editor-interaction-contract.md.
+        T.StarterKit.configure({ document: false, link: false, codeBlock: false, trailingNode: true, history: { depth: 10000, newGroupDelay: 500 } }),
         T.Placeholder.configure({ placeholder: function (p) { return p.editor.isEmpty ? 'Start writing\u2026' : '' } }),
         T.BlockChrome,
         T.AiTargetDecoration,
