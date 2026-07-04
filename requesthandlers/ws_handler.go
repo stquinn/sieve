@@ -21,7 +21,16 @@ type WsHandler struct {
 	ServiceProvider *sieve.ServiceProvider
 	upgrader        websocket.Upgrader
 	channelsMu      sync.RWMutex
-	channels        map[string]func(interface{}) // uuid -> writeMsg function
+	channels        map[string]*wsConn // uuid -> the LATEST connection's channel
+}
+
+// wsConn identifies one live connection's write channel. The uuid's channel —
+// and shadow-teardown responsibility — belongs to the LATEST registrant: a
+// stale connection dying after its successor registered must not evict the
+// successor's channel or close its shadow (that race silently dropped
+// render-backs and lost updates on reconnect overlap; ws_takeover_test.go).
+type wsConn struct {
+	write func(interface{})
 }
 
 func NewWsHandler(sp *sieve.ServiceProvider) *WsHandler {
@@ -30,9 +39,39 @@ func NewWsHandler(sp *sieve.ServiceProvider) *WsHandler {
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
-		channels: make(map[string]func(interface{})),
+		channels: make(map[string]*wsConn),
 	}
 	return h
+}
+
+// register installs c as uuid's channel, taking over from any predecessor.
+func (h *WsHandler) register(uuid string, c *wsConn) {
+	h.channelsMu.Lock()
+	h.channels[uuid] = c
+	h.channelsMu.Unlock()
+}
+
+// unregister removes uuid's channel ONLY if c still owns it. Returns true when
+// c was the owner — the caller then also owns shadow teardown. A stale
+// connection (owner == a successor) must touch nothing.
+func (h *WsHandler) unregister(uuid string, c *wsConn) bool {
+	h.channelsMu.Lock()
+	defer h.channelsMu.Unlock()
+	if h.channels[uuid] != c {
+		return false
+	}
+	delete(h.channels, uuid)
+	return true
+}
+
+// sendTo writes v to uuid's CURRENT channel, if any (render-back path).
+func (h *WsHandler) sendTo(uuid string, v interface{}) {
+	h.channelsMu.RLock()
+	c := h.channels[uuid]
+	h.channelsMu.RUnlock()
+	if c != nil {
+		c.write(v)
+	}
 }
 
 func (h *WsHandler) RegisterPaths(r chi.Router) {
@@ -78,21 +117,24 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	logger.Info("ws: connection established", "uuid", uuid)
 
-	h.channelsMu.Lock()
-	h.channels[uuid] = writeMsg
-	h.channelsMu.Unlock()
+	ch := &wsConn{write: writeMsg}
+	h.register(uuid, ch)
 
+	// ONE teardown path, ownership-guarded: only the connection that still owns
+	// the channel closes the shadow. A stale connection whose successor already
+	// registered must not evict the successor's channel or close its shadow.
 	defer func() {
-		h.channelsMu.Lock()
-		delete(h.channels, uuid)
-		h.channelsMu.Unlock()
+		if h.unregister(uuid, ch) {
+			h.ServiceProvider.Editor.Close(uuid)
+		} else {
+			logger.Info("ws: stale teardown — successor active, skipping close", "uuid", uuid)
+		}
+		logger.Info("ws: connection closed", "uuid", uuid)
 	}()
 
 	if err := h.ServiceProvider.Editor.Open(uuid, notifySaved); err != nil {
 		logger.Warn("ws: could not open shadow", "uuid", uuid, "err", err)
 	}
-	defer h.ServiceProvider.Editor.Close(uuid)
-	defer logger.Info("ws: connection closed", "uuid", uuid)
 
 	for {
 		_, raw, err := conn.ReadMessage()
@@ -238,51 +280,36 @@ func (h *WsHandler) handleRetryBlockJob(uuid string, raw []byte, writeMsg func(i
 
 // OnBlockCreated implements sieve.BlockLifecycleListener.
 func (h *WsHandler) OnBlockCreated(uuid, kind, blockID string, attrs map[string]interface{}, markdown string, index int, token string) {
-	h.channelsMu.RLock()
-	writeMsg, ok := h.channels[uuid]
-	h.channelsMu.RUnlock()
-	if ok {
-		writeMsg(map[string]interface{}{
-			"type":     "insert-block",
-			"kind":     kind,
-			"id":       blockID,
-			"attrs":    attrs,
-			"index":    index,   // document position for the render-back insert
-			"markdown": markdown, // markdown-mode buffer only; WYSIWYG renders from attrs
-			"token":    token,   // transient correlation handle echoed for the pending-prose swap
-		})
-	}
+	h.sendTo(uuid, map[string]interface{}{
+		"type":     "insert-block",
+		"kind":     kind,
+		"id":       blockID,
+		"attrs":    attrs,
+		"index":    index,    // document position for the render-back insert
+		"markdown": markdown, // markdown-mode buffer only; WYSIWYG renders from attrs
+		"token":    token,    // transient correlation handle echoed for the pending-prose swap
+	})
 }
 
 // OnBlockUpdated implements sieve.BlockLifecycleListener.
 func (h *WsHandler) OnBlockUpdated(uuid, blockID string, attrs map[string]interface{}) {
-	h.channelsMu.RLock()
-	writeMsg, ok := h.channels[uuid]
-	h.channelsMu.RUnlock()
-	if ok {
-		writeMsg(map[string]interface{}{
-			"type":  "block-attrs-updated",
-			"id":    blockID,
-			"attrs": attrs,
-		})
-	}
+	h.sendTo(uuid, map[string]interface{}{
+		"type":  "block-attrs-updated",
+		"id":    blockID,
+		"attrs": attrs,
+	})
 }
 
 // OnBlockReplaced implements block.BlockLifecycleListener.
 func (h *WsHandler) OnBlockReplaced(uuid, oldID, newKind, newID string, attrs map[string]interface{}, markdown string) {
-	h.channelsMu.RLock()
-	writeMsg, ok := h.channels[uuid]
-	h.channelsMu.RUnlock()
-	if ok {
-		writeMsg(map[string]interface{}{
-			"type":    "replace-block",
-			"oldId":   oldID,
-			"newId":   newID,
-			"newKind": newKind,
-			"attrs":   attrs,
-			"newYaml": markdown,
-		})
-	}
+	h.sendTo(uuid, map[string]interface{}{
+		"type":    "replace-block",
+		"oldId":   oldID,
+		"newId":   newID,
+		"newKind": newKind,
+		"attrs":   attrs,
+		"newYaml": markdown,
+	})
 }
 
 func (h *WsHandler) handleExtract(uuid string, raw []byte, writeMsg func(interface{})) {
