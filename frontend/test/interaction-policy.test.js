@@ -48,8 +48,8 @@ describe('indent transforms', () => {
     const ins = indentInsertions(text, 0, text.length, 2)
     expect(ins).toEqual([{ pos: 8, insert: '  ' }, { pos: 3, insert: '  ' }, { pos: 0, insert: '  ' }])
   })
-  it('single caret indents only its line', () => {
-    expect(indentInsertions(text, 4, 4, 2)).toEqual([{ pos: 3, insert: '  ' }])
+  it('collapsed caret inserts at the caret (VS Code semantics)', () => {
+    expect(indentInsertions(text, 4, 4, 2)).toEqual([{ pos: 4, insert: '  ' }])
   })
   it('dedentDeletions removes at most w leading spaces per line', () => {
     const del = dedentDeletions(text, 0, text.length, 2)

@@ -280,10 +280,8 @@ import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-b
                 view.dispatch(state.tr.insertText('\n').scrollIntoView())
                 return true
               }
-              if (event.key === 'Tab' && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
-                view.dispatch(state.tr.insertText('  ').scrollIntoView())
-                return true
-              }
+              // Tab is owned by the interaction-policy extension (declared
+              // via interactionPolicy above) — no per-renderer key handling.
               return false
             }
           }

@@ -353,6 +353,10 @@
         T.TableHeader,
         T.TableCell,
         T.Search,
+        // Shared keyboard policy (priority 50 — runs AFTER native keymaps like
+        // list indent and table cell-nav; docs/editor-interaction-contract.md).
+        // Per-renderer key handlers are forbidden; kinds declare interactionPolicy.
+        T.buildInteractionPolicyExtension(T),
 
         T.AiBlockLegacy,
         T.Image.configure({ inline: false, allowBase64: true, HTMLAttributes: { class: 'editor-image' } }),
@@ -531,13 +535,10 @@
             flushSave()
             return true
           }
-          if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey) {
-            if (currentEditor && currentEditor.isActive('listItem')) return false
-            if (event.shiftKey) return false
-            event.preventDefault()
-            view.dispatch(view.state.tr.insertText('    '))
-            return true
-          }
+          // Tab/Shift+Tab are owned by the interaction-policy extension
+          // (docs/editor-interaction-contract.md) — never handle them here:
+          // editorProps runs BEFORE extension keymaps and would shadow
+          // list indent and table cell navigation (that was defect #6).
           if (event.key === 'W' && window.isMod(event) && event.shiftKey) {
             event.preventDefault()
             ensureOverlays()

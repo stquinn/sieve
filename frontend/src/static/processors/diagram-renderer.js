@@ -703,12 +703,8 @@ import { esc, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
                 return false
               }
               
-              if (event.key === 'Tab' && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
-                if (!isNodeSelection && node.attrs.mode !== 'render') {
-                  view.dispatch(state.tr.insertText('  ').scrollIntoView())
-                  return true
-                }
-              }
+              // Tab is owned by the interaction-policy extension (declared
+              // via interactionPolicy above) — no per-renderer key handling.
               return false
             }
           }

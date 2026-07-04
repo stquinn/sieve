@@ -72,6 +72,9 @@ function lineStartsInRange(text, from, to) {
 
 export function indentInsertions(text, from, to, width) {
   var pad = new Array(width + 1).join(' ')
+  // Collapsed caret: insert at the caret (VS Code semantics — push text right).
+  // Selection: indent every touched line at its start.
+  if (from === to) return [{ pos: from, insert: pad }]
   return lineStartsInRange(text, from, to)
     .map(function (s) { return { pos: s, insert: pad } })
     .sort(function (a, b) { return b.pos - a.pos })
@@ -98,4 +101,98 @@ export function leadingIndentAt(text, offset) {
 export function smartHomeTarget(lineText, col) {
   var first = /^[ \t]*/.exec(lineText)[0].length
   return col === first ? 0 : first
+}
+
+// ── browser layer: PM state → classified context, and the TipTap extension ──
+
+export function resolveContext(state) {
+  var sel = state.selection
+  var nodeSelName = sel.node ? sel.node.type.name : null
+  var $from = sel.$from
+  var ancestors = []
+  for (var d = $from.depth; d >= 0; d--) ancestors.push($from.node(d).type.name)
+  var parent = $from.parent
+  return classifyContext({
+    parentTypeName: parent.type.name,
+    ancestorTypeNames: ancestors,
+    nodeSelectionTypeName: nodeSelName,
+    mode: (sel.node ? sel.node.attrs && sel.node.attrs.mode : parent.attrs && parent.attrs.mode) || null,
+  })
+}
+
+// Block-local text + offsets for raw-text transforms.
+function rawTextSpan(state) {
+  var $from = state.selection.$from
+  var $to = state.selection.$to
+  var blockStart = $from.start()
+  return {
+    text: $from.parent.textContent,
+    from: $from.pos - blockStart,
+    to: $to.pos - blockStart,
+    blockStart: blockStart,
+  }
+}
+
+function applyIndent(view, width) {
+  var s = rawTextSpan(view.state)
+  var tr = view.state.tr
+  indentInsertions(s.text, s.from, s.to, width).forEach(function (ins) {
+    tr.insertText(ins.insert, s.blockStart + ins.pos)
+  })
+  view.dispatch(tr.scrollIntoView())
+  return true
+}
+
+function applyDedent(view, width) {
+  var s = rawTextSpan(view.state)
+  var tr = view.state.tr
+  var dels = dedentDeletions(s.text, s.from, s.to, width)
+  if (!dels.length) return true // consumed: nothing to dedent, but never escape
+  dels.forEach(function (d) { tr.delete(s.blockStart + d.from, s.blockStart + d.to) })
+  view.dispatch(tr.scrollIntoView())
+  return true
+}
+
+export function buildInteractionPolicyExtension(T) {
+  return T.Extension.create({
+    name: 'sieveInteractionPolicy',
+    // Lower than the default 100: native keymaps (list indent/outdent, table
+    // goToNextCell/PreviousCell) run FIRST. We are the backstop, never a shadow.
+    priority: 50,
+    addProseMirrorPlugins: function () {
+      return [
+        new T.Plugin({
+          props: {
+            handleKeyDown: function (view, event) {
+              if (event.key !== 'Tab') return false
+              if (event.metaKey || event.ctrlKey || event.altKey) return false
+              var ctx = resolveContext(view.state)
+              // Native structural keymaps already ran (priority order); from
+              // here we own the key so focus can never escape the editor.
+              if (ctx.inList || ctx.inTable) {
+                // e.g. Shift+Tab in the first table cell: consume ∅.
+                event.preventDefault()
+                return true
+              }
+              if (ctx.policy.rawText && !ctx.isNodeSelection && ctx.mode !== 'render') {
+                event.preventDefault()
+                return event.shiftKey
+                  ? applyDedent(view, ctx.policy.indentWidth)
+                  : applyIndent(view, ctx.policy.indentWidth)
+              }
+              // Plain paragraph / read-only / caret-stop: consume ∅.
+              event.preventDefault()
+              return true
+            },
+          },
+        }),
+      ]
+    },
+  })
+}
+
+if (typeof window !== 'undefined') {
+  window.TipTap = window.TipTap || {}
+  window.TipTap.buildInteractionPolicyExtension = buildInteractionPolicyExtension
+  window.TipTap.resolveInteractionContext = resolveContext
 }
