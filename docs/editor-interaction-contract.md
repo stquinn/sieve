@@ -57,6 +57,27 @@ line-start gesture (VS Code parity). Shift-selection variants stay native.
 7. Diagram edit↔render round-trip restores cursor position (block-start if
    content changed).
 
+## Block insertion placement (decided 2026-07-04)
+
+Additive block creation (toolbar insert, AI-block create, extract, smart-paste,
+paste-slice, drop) places the new block **after the caret's top-level block —
+never splitting it**. ONE uniform exception:
+
+**An empty paragraph is a placement target, not an anchor.** If the caret's
+block is a bare empty paragraph (type `paragraph`, empty or whitespace-only),
+the new block **takes its index and the paragraph is consumed** — no orphan
+blank line above the insertion. Empty headings/list items/table cells are NOT
+consumed (their emptiness carries chosen structure). Sole-block documents keep
+the paragraph — it becomes the paragraph after the new block.
+
+Mechanism (no replace op, no backend emptiness-sniffing): at COMMIT time the
+frontend deletes the paragraph as an ordinary tracked prose edit (the same
+delete-block op a backspace emits), flushes the block-sync so Go's shadow
+applies the delete first, then sends create-block at the freed index — two
+existing primitives, ordered on one socket. Capture-time never consumes: a
+cancelled dialog must not eat the blank line (known gap: the async image-upload
+dialog path commits outside the editor and does not consume — acceptable).
+
 ## Copy matrix
 
 | Selection | Result |

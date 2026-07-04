@@ -73,6 +73,28 @@
   // mirrors noteServerBlock.
   var reconcilePendingToken = null
 
+  // commitInsertIndex — maps a captured insert position to the index Go creates
+  // at, applying the empty-paragraph placement rule AT COMMIT TIME (never at
+  // capture: a cancelled dialog must not eat the blank line). If the anchor is
+  // a bare empty paragraph, delete it as an ordinary tracked prose edit (the
+  // block-sync emits the same delete-block op a backspace would), flush the
+  // sync so Go's shadow applies the delete BEFORE the create arrives on the
+  // same socket, and return the anchor's own index — the new block takes its
+  // place. No replace op, no backend emptiness-sniffing: two existing
+  // primitives in order (docs/editor-interaction-contract.md).
+  function commitInsertIndex(pos) {
+    if (!currentEditor) return -1
+    var anchor = window.TipTap.emptyParagraphAnchor(currentEditor.state.doc, pos)
+    if (!anchor) return blockIndexForInsert(pos)
+    // Sole-block doc: keep the paragraph (deleting the doc's only child is
+    // schema-invalid) — it simply becomes the paragraph after the new block.
+    if (currentEditor.state.doc.childCount > 1) {
+      currentEditor.view.dispatch(currentEditor.state.tr.delete(anchor.from, anchor.to))
+      if (docSyncFlush) docSyncFlush()
+    }
+    return anchor.index
+  }
+
   // sendCreateBlock is the ONE UI-triggered create path: a create-block block-op
   // carrying kind, attrs, and the document index from the captured insert position
   // (sieveInsertPos). There is no separate create-block message — every kind creates
@@ -83,7 +105,7 @@
     wsSend({
       type: 'block-op',
       uuid: currentUuid,
-      op: { type: 'create-block', kind: kind, attrs: attrs || {}, index: blockIndexForInsert(sieveInsertPos) },
+      op: { type: 'create-block', kind: kind, attrs: attrs || {}, index: commitInsertIndex(sieveInsertPos) },
     })
   }
 
@@ -1700,7 +1722,7 @@
         var slice = JSON.parse(sliceData)
         if (Array.isArray(slice) && slice.length > 1) {
           event.preventDefault()
-          var sliceIndex = blockIndexForInsert(captureInsertPos(false))
+          var sliceIndex = commitInsertIndex(captureInsertPos(false))
           sieveInsertPos = null // slice render-backs position by op index, not this
           fetch('/api/editor/paste-slice', {
             method: 'POST',
@@ -1747,7 +1769,7 @@
 
         // Smart-paste resolves a block kind server-side (web-clip / smart-image /
         // smart-card) → capture insert position as a block index for Go to position.
-        var smartPasteIndex = blockIndexForInsert(captureInsertPos(false))
+        var smartPasteIndex = commitInsertIndex(captureInsertPos(false))
         event.preventDefault()
 
         Promise.all(promises).then(function(results) {
@@ -1820,7 +1842,7 @@
 
       var pos = currentEditor.view.posAtCoords({ left: event.clientX, top: event.clientY })
       var insertPos = pos ? pos.pos : currentEditor.state.selection.to
-      var dropIndex = blockIndexForInsert(insertPos)
+      var dropIndex = commitInsertIndex(insertPos)
 
       event.preventDefault()
 

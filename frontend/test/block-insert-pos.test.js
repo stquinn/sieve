@@ -51,3 +51,52 @@ describe('blockInsertPos — additive block placement', () => {
     expect(blockInsertPos(editor.state, false)).toBe(end)
   })
 })
+
+// Contract "Block insertion placement": an empty paragraph is a placement
+// TARGET, not an anchor — the new block takes its index and the paragraph is
+// consumed (editor.js commitInsertIndex deletes it at commit time).
+describe('emptyParagraphAnchor — empty paragraph is a placement target', () => {
+  let emptyParagraphAnchor
+  beforeEach(async () => {
+    await import('../src/static/base/block-position.js')
+    emptyParagraphAnchor = window.TipTap.emptyParagraphAnchor
+  })
+
+  it('caret on an empty paragraph between blocks → its own index + bounds', () => {
+    const nodes = [build.p('above', 'pr-1'), build.p('', 'pr-2'), build.p('below', 'pr-3')]
+    const { editor } = docWithCaret(nodes, 1, 0)
+    const pos = blockInsertPos(editor.state, false) // boundary after the empty para
+    const anchor = emptyParagraphAnchor(editor.state.doc, pos)
+    expect(anchor).not.toBeNull()
+    expect(anchor.index).toBe(1)
+    expect(anchor.from).toBe(nodes[0].nodeSize)
+    expect(anchor.to).toBe(nodes[0].nodeSize + nodes[1].nodeSize)
+  })
+
+  it('whitespace-only paragraph counts as empty', () => {
+    const nodes = [build.p('   ', 'pr-1'), build.p('x', 'pr-2')]
+    const { editor } = docWithCaret(nodes, 0, 1)
+    const pos = blockInsertPos(editor.state, false)
+    expect(emptyParagraphAnchor(editor.state.doc, pos)).not.toBeNull()
+  })
+
+  it('non-empty paragraph → null (insert stays after)', () => {
+    const nodes = [build.p('text', 'pr-1')]
+    const { editor } = docWithCaret(nodes, 0, 2)
+    const pos = blockInsertPos(editor.state, false)
+    expect(emptyParagraphAnchor(editor.state.doc, pos)).toBeNull()
+  })
+
+  it('empty HEADING → null (structural emptiness is chosen, not consumed)', () => {
+    const nodes = [build.heading('', 'h-1'), build.p('x', 'pr-2')]
+    const { editor } = docWithCaret(nodes, 0, 0)
+    const pos = blockInsertPos(editor.state, false)
+    expect(emptyParagraphAnchor(editor.state.doc, pos)).toBeNull()
+  })
+
+  it('null pos and {from,to} range form → null', () => {
+    const { editor } = docWithCaret([build.p('x', 'pr-1')], 0, 0)
+    expect(emptyParagraphAnchor(editor.state.doc, null)).toBeNull()
+    expect(emptyParagraphAnchor(editor.state.doc, { from: 0, to: 2 })).toBeNull()
+  })
+})

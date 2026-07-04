@@ -59,6 +59,31 @@ export function enclosingBlockId(doc, pos) {
   return ''
 }
 
+// emptyParagraphAnchor(doc, pos): the top-level node that anchors insert
+// position `pos` (a blockInsertPos result — the boundary AFTER the caret's
+// block), IF that node is a bare empty paragraph. Contract rule ("Block
+// insertion placement"): an empty paragraph is a placement TARGET, not an
+// anchor — the new block takes its index and the paragraph is consumed.
+// Bare = type 'paragraph', no content or whitespace-only. Empty headings/list
+// items never match: their emptiness carries chosen structure. Returns
+// { from, to, index } or null (incl. for the {from,to} replace-range form and
+// doc-level gap positions, which anchor no node).
+export function emptyParagraphAnchor(doc, pos) {
+  if (pos == null || typeof pos === 'object') return null
+  var offset = 0
+  for (var i = 0; i < doc.childCount; i++) {
+    var child = doc.child(i)
+    var end = offset + child.nodeSize
+    if (pos > offset && pos <= end) {
+      if (child.type.name !== 'paragraph') return null
+      if (child.textContent.trim() !== '') return null
+      return { from: offset, to: end, index: i }
+    }
+    offset = end
+  }
+  return null
+}
+
 // Expose on window.TipTap for non-module callers (editor.js IIFE, context-menu.js).
 if (typeof window !== 'undefined') {
   var T = window.TipTap || (window.TipTap = {})
@@ -66,4 +91,5 @@ if (typeof window !== 'undefined') {
   T.docPosForBlockIndex = docPosForBlockIndex
   T.blockIndexAfter = blockIndexAfter
   T.enclosingBlockId = enclosingBlockId
+  T.emptyParagraphAnchor = emptyParagraphAnchor
 }
