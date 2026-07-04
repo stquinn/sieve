@@ -18,10 +18,17 @@ regression pass. Source spec:
 | Code block | indent 2 (multi-line: indent each selected line) | de-indent ≤2 per line | newline + auto-indent (copy previous line's leading whitespace) | insert ¶ after block | exit to next block, content unchanged | exit to previous block | 1st press: first non-ws char; 2nd: column 0 |
 | Diagram (edit) | indent 2 (as code) | de-indent ≤2 (as code) | newline + auto-indent | **toggle to render mode** (declared policy override; cursor position preserved) | exit to next block | exit to previous block | as code |
 | Diagram (render) | consume ∅ | consume ∅ | insert ¶ after (block is a caret stop) | **toggle to edit mode** (works with block selected OR render body focused — one function, two entry points) | pass to next block | pass to previous block | n/a |
-| Log block | consume ∅ | consume ∅ | consume ∅ (read-only text) | insert ¶ after block | exit to next block | exit to previous block | native |
+| Log block | consume ∅ | consume ∅ | consume ∅ (read-only text) | **toggle raw↔explore** (declared policy override, same mechanism as diagram) | exit to next block | exit to previous block | native |
 | ai-block | consume ∅ | consume ∅ | insert ¶ after (caret stop) | insert ¶ after | pass | pass | n/a |
 | web-clip | consume ∅ | consume ∅ | insert ¶ after (caret stop) | insert ¶ after | pass | pass | n/a |
 | smart-image | consume ∅ | consume ∅ | insert ¶ after (caret stop) | insert ¶ after | pass | pass | n/a |
+
+**Mode toggling is a policy mechanism, not a special case:** any kind with two
+view modes declares `modEnterTogglesMode: true` and provides an `onModEnter`
+behaviour hook; the policy extension routes Mod+Enter to it. Current users:
+diagram (edit↔render), log (raw↔explore). For these kinds the toggle replaces
+the default Mod+Enter escape — escape remains available via arrows and the
+trailing paragraph.
 
 ## Caret contract
 

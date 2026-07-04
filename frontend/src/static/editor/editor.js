@@ -535,6 +535,14 @@
             flushSave()
             return true
           }
+          // Enter family routes through the interaction policy FROM HERE
+          // (pre-core: TipTap's core Keymap would otherwise consume Enter in
+          // code:true blocks). Returns false in every context the policy
+          // does not own, so native prose/list/table Enter is untouched.
+          if (event.key === 'Enter' && window.TipTap.policyEnterKeydown &&
+              window.TipTap.policyEnterKeydown(view, event)) {
+            return true
+          }
           // Tab/Shift+Tab are owned by the interaction-policy extension
           // (docs/editor-interaction-contract.md) — never handle them here:
           // editorProps runs BEFORE extension keymaps and would shadow

@@ -134,7 +134,20 @@ import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-b
     },
 
     // Read-only text: caret may enter (select/copy), typing is consumed.
-    interactionPolicy: { readOnlyText: true },
+    // Mod+Enter toggles raw↔explore (declared policy override, same
+    // mechanism as diagram's edit↔render — see interaction-policy.js).
+    interactionPolicy: { readOnlyText: true, modEnterTogglesMode: true },
+
+    // onModEnter — policy-extension entry point: flip raw↔explore.
+    onModEnter: function (view, selection) {
+      var node = selection.node || selection.$from.parent
+      if (!node || node.type.name !== 'sieve-log' || !node.attrs.id) return false
+      var newMode = logMode(node.attrs) === 'explore' ? 'raw' : 'explore'
+      document.dispatchEvent(new CustomEvent('sieve:block-update', {
+        detail: { id: node.attrs.id, kind: 'log', attrs: { mode: newMode } }
+      }))
+      return true
+    },
 
     // text* + code:true — the raw captured log lines ARE the node's text content,
     // exactly like code/diagram. Editing is blocked by the read-only plugin below.

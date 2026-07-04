@@ -271,19 +271,9 @@ import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-b
             decorations: function(state) {
               return this.getState(state)
             },
-            handleKeyDown: function(view, event) {
-              var state = view.state
-              var selection = state.selection
-              if (selection.$from.parent.type !== nodeType) return false
-              
-              if (event.key === 'Enter') {
-                view.dispatch(state.tr.insertText('\n').scrollIntoView())
-                return true
-              }
-              // Tab is owned by the interaction-policy extension (declared
-              // via interactionPolicy above) — no per-renderer key handling.
-              return false
-            }
+            // Keyboard behaviour (Tab/Enter/Home) is owned by the
+            // interaction-policy extension via interactionPolicy above —
+            // no per-renderer key handling (contract rule).
           }
         })
       ]

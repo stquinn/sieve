@@ -335,6 +335,30 @@ import { esc, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
   // ── DiagramRenderer ───────────────────────────────────────────────────────────
 
   var DiagramRenderer = {
+    // flipMode — THE mode-flip dispatch (contract: one function, two entry
+    // points). Called by onModEnter (caret/selection inside PM, via the
+    // interaction-policy extension) and by the render body's DOM keydown
+    // listener (focus outside PM in render mode). Both MUST dispatch the
+    // identical sieve:block-update.
+    flipMode: function (attrs, cursorPos) {
+      if (!attrs || !attrs.id) return false
+      var newMode = attrs.mode === 'render' ? 'edit' : 'render'
+      document.dispatchEvent(new CustomEvent('sieve:block-update', {
+        detail: { id: attrs.id, kind: 'diagram', attrs: { mode: newMode, cursorPos: typeof cursorPos === 'number' ? cursorPos : (attrs.cursorPos || 0) } }
+      }))
+      return true
+    },
+
+    // onModEnter — policy-extension entry point (modEnterTogglesMode).
+    onModEnter: function (view, selection) {
+      var node = selection.node || selection.$from.parent
+      if (!node || node.type.name !== 'sieve-diagram') return false
+      var cursorPos = selection.node
+        ? (typeof node.attrs.cursorPos === 'number' ? node.attrs.cursorPos : 0)
+        : selection.$from.parentOffset
+      return DiagramRenderer.flipMode(node.attrs, cursorPos)
+    },
+
 
     headerProvider: new DiagramHeader(),
 
@@ -555,13 +579,15 @@ import { esc, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
       // Note: contentDOM keydown is usually swallowed by ProseMirror's root listener.
       // Ctrl+Enter for switching to render mode is handled in buildPlugins below.
 
-      // Ctrl+Enter / Cmd+Enter in render mode: flip back to edit.
-      // stopPropagation prevents the event bubbling to TipTap's root listener.
+      // Ctrl+Enter / Cmd+Enter in render mode: flip back to edit — via the
+      // SAME flipMode dispatch the policy extension uses (contract: one
+      // function, two entry points). stopPropagation prevents the event
+      // bubbling to TipTap's root listener.
       renderBody.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
           e.preventDefault()
           e.stopPropagation()
-          switchMode('edit')
+          DiagramRenderer.flipMode(currentAttrs, currentAttrs.cursorPos)
         }
       })
 
@@ -657,56 +683,10 @@ import { esc, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
           props: {
             decorations: function(state) {
               return this.getState(state)
-            },
-            handleKeyDown: function(view, event) {
-              if (event.key !== 'Enter' && event.key !== 'Tab') return false
-              
-              var state = view.state
-              var selection = state.selection
-              var isDiagram = false
-              var node = null
-              var isNodeSelection = !!selection.node
-              var pos = 0
-              
-              if (isNodeSelection) {
-                if (selection.node.type === nodeType) {
-                  isDiagram = true
-                  node = selection.node
-                }
-              } else {
-                if (selection.$from.parent.type === nodeType) {
-                  isDiagram = true
-                  node = selection.$from.parent
-                  pos = selection.$from.parentOffset
-                }
-              }
-              
-              if (!isDiagram) return false
-              
-              if (event.key === 'Enter') {
-                if (event.metaKey || event.ctrlKey) {
-                  var id = node.attrs.id
-                  if (id) {
-                    var currentPos = isNodeSelection ? (typeof node.attrs.cursorPos === 'number' ? node.attrs.cursorPos : 0) : pos
-                    var newMode = node.attrs.mode === 'render' ? 'edit' : 'render'
-                    document.dispatchEvent(new CustomEvent('sieve:block-update', {
-                      detail: { id: id, kind: 'diagram', attrs: { mode: newMode, cursorPos: currentPos } }
-                    }))
-                  }
-                  return true
-                }
-                
-                if (!isNodeSelection && node.attrs.mode !== 'render') {
-                  view.dispatch(state.tr.insertText('\n').scrollIntoView())
-                  return true
-                }
-                return false
-              }
-              
-              // Tab is owned by the interaction-policy extension (declared
-              // via interactionPolicy above) — no per-renderer key handling.
-              return false
             }
+            // Keyboard behaviour (Tab/Enter/Mod+Enter) is owned by the
+            // interaction-policy extension via interactionPolicy + onModEnter
+            // above — no per-renderer key handling (contract rule).
           }
         })
       ]

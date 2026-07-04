@@ -13,13 +13,32 @@ import { StarterKit } from '@tiptap/starter-kit'
 import { Table, TableRow, TableCell, TableHeader } from '@tiptap/extension-table'
 import { Plugin, TextSelection } from '@tiptap/pm/state'
 import { registerBlockKind } from '../src/static/block/block-kinds.js'
-import { buildInteractionPolicyExtension } from '../src/static/editor/interaction-policy.js'
+import { buildInteractionPolicyExtension, policyEnterKeydown } from '../src/static/editor/interaction-policy.js'
 
 registerBlockKind({
   kind: 'code',
   native: false,
   renderer: {
     interactionPolicy: { rawText: true, indentWidth: 2, enterInsertsNewline: true, autoIndentOnEnter: true },
+  },
+})
+
+// Mode-toggling kind (diagram/log pattern): Mod+Enter routes to onModEnter.
+let modEnterCalls = 0
+registerBlockKind({
+  kind: 'diagram',
+  native: false,
+  renderer: {
+    interactionPolicy: { rawText: true, indentWidth: 2, enterInsertsNewline: true, modEnterTogglesMode: true },
+    onModEnter() { modEnterCalls++; return true },
+  },
+})
+
+registerBlockKind({
+  kind: 'log',
+  native: false,
+  renderer: {
+    interactionPolicy: { readOnlyText: true },
   },
 })
 
@@ -34,17 +53,45 @@ const SieveCode = Node.create({
   renderHTML() { return ['pre', { class: 'sieve-code' }, ['code', 0]] },
 })
 
+const SieveDiagram = Node.create({
+  name: 'sieve-diagram',
+  group: 'block',
+  content: 'text*',
+  marks: '',
+  code: true,
+  defining: true,
+  parseHTML() { return [{ tag: 'pre.sieve-diagram' }] },
+  renderHTML() { return ['pre', { class: 'sieve-diagram' }, ['code', 0]] },
+})
+
+const SieveLog = Node.create({
+  name: 'sieve-log',
+  group: 'block',
+  content: 'text*',
+  marks: '',
+  code: true,
+  defining: true,
+  parseHTML() { return [{ tag: 'pre.sieve-log' }] },
+  renderHTML() { return ['pre', { class: 'sieve-log' }, ['code', 0]] },
+})
+
 let editor = null
 afterEach(() => { if (editor) { editor.destroy(); editor = null } })
 
 function makeEditor(contentJSON) {
   editor = new Editor({
     element: document.createElement('div'),
+    // Mirrors editor.js: Enter dispatches pre-core from editorProps (core
+    // Keymap would otherwise claim it in code:true blocks); Tab is the
+    // post-native backstop plugin inside the extension.
+    editorProps: {
+      handleKeyDown: (view, event) => policyEnterKeydown(view, event),
+    },
     extensions: [
       StarterKit.configure({ trailingNode: false }),
       Table.configure({ resizable: false }),
       TableRow, TableHeader, TableCell,
-      SieveCode,
+      SieveCode, SieveDiagram, SieveLog,
       buildInteractionPolicyExtension({ Extension, Plugin }),
     ],
     content: contentJSON,
@@ -186,5 +233,47 @@ describe('Tab in sieve-code (contract: indent 2)', () => {
     const { handled } = press('Tab', { shiftKey: true })
     expect(handled).toBe(true)
     expect(docText()).toBe('aa')
+  })
+})
+
+describe('Enter (contract: raw-text newline + auto-indent; native prose untouched)', () => {
+  it('Enter in sieve-code inserts newline copying leading whitespace', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-code', content: [{ type: 'text', text: '  ab' }] },
+      { type: 'paragraph' },
+    ] })
+    caretAt(5) // end of "  ab" (block starts at 1)
+    const { handled } = press('Enter')
+    expect(handled).toBe(true)
+    expect(docText()).toBe('  ab\n  ')
+  })
+  it('Enter in a paragraph stays native (splits into two paragraphs)', () => {
+    makeEditor({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'ab' }] }] })
+    caretAt(2)
+    const { handled } = press('Enter')
+    expect(handled).toBe(true) // handled by StarterKit's keymap, not swallowed
+    expect(editor.getJSON().content.length).toBe(2)
+  })
+  it('Mod+Enter in a mode-toggling kind routes to onModEnter', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-diagram', content: [{ type: 'text', text: 'graph' }] },
+      { type: 'paragraph' },
+    ] })
+    caretAt(3)
+    const before = modEnterCalls
+    const { handled } = press('Enter', { ctrlKey: true })
+    expect(handled).toBe(true)
+    expect(modEnterCalls).toBe(before + 1)
+    expect(docText()).toBe('graph') // toggle, not newline, not escape
+  })
+  it('Enter in read-only text (log) is consumed', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-log', content: [{ type: 'text', text: 'line1' }] },
+      { type: 'paragraph' },
+    ] })
+    caretAt(3)
+    const { handled } = press('Enter')
+    expect(handled).toBe(true)
+    expect(docText()).toBe('line1')
   })
 })

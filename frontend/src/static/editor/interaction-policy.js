@@ -153,6 +153,45 @@ function applyDedent(view, width) {
   return true
 }
 
+// policyEnterKeydown — the Enter-family entry point, called from editor.js's
+// editorProps.handleKeyDown (NOT from the plugin below). Ordering rationale:
+// TipTap's core Keymap binds Enter→newlineInCode and Mod-Enter→exitCode, which
+// run BEFORE any extension plugin and would consume Enter inside code:true
+// blocks (plain newline, no auto-indent; exitCode instead of mode toggle).
+// editorProps runs before core, and this function returns false in every
+// context the policy does not own, so native prose/list/table Enter is
+// untouched. Tab is the mirror case: native keymaps must win, so it lives in
+// the priority-50 backstop plugin below.
+export function policyEnterKeydown(view, event) {
+  if (event.key !== 'Enter') return false
+  return handleEnter(view, event)
+}
+
+function handleEnter(view, event) {
+  var ctx = resolveContext(view.state)
+  var isMod = event.metaKey || event.ctrlKey
+  if (isMod && ctx.policy.modEnterTogglesMode) {
+    // Declared per-kind override (diagram): Mod+Enter flips edit/render.
+    var beh = getBlockBehaviour(ctx.kind)
+    if (beh && beh.onModEnter) {
+      event.preventDefault()
+      return beh.onModEnter(view, view.state.selection) === true
+    }
+  }
+  if (ctx.policy.readOnlyText && !isMod) {
+    event.preventDefault()
+    return true // read-only text: consume
+  }
+  if (ctx.policy.enterInsertsNewline && !ctx.isNodeSelection && ctx.mode !== 'render' && !isMod) {
+    event.preventDefault()
+    var s = rawTextSpan(view.state)
+    var indent = ctx.policy.autoIndentOnEnter ? leadingIndentAt(s.text, s.from) : ''
+    view.dispatch(view.state.tr.insertText('\n' + indent).scrollIntoView())
+    return true
+  }
+  return false // native Enter (prose split etc.); Mod+Enter escape is added by the caret-contract layer
+}
+
 export function buildInteractionPolicyExtension(T) {
   return T.Extension.create({
     name: 'sieveInteractionPolicy',
@@ -195,4 +234,5 @@ if (typeof window !== 'undefined') {
   window.TipTap = window.TipTap || {}
   window.TipTap.buildInteractionPolicyExtension = buildInteractionPolicyExtension
   window.TipTap.resolveInteractionContext = resolveContext
+  window.TipTap.policyEnterKeydown = policyEnterKeydown
 }
