@@ -9,7 +9,7 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 
 ## Key File Locations
 
-> **Go package layout (S-A decomposition, 2026-06-20).** `sieve/` is no longer a flat package — it is 6 cohesive packages with an acyclic DAG: `domain ← block ← {block/processors, services} ← ai ← root`. The cycle is broken by **port interfaces owned by `block/`** (`AIPort`/`DocumentsPort`/`AssetsPort`/`StatePort`/`LinkPreviewPort`); concrete services implement them, the root wires them. `block/` imports no service. See `docs/superpowers/specs/2026-06-20-flat-package-decomposition-design.md`.
+> **Go package layout (S-A decomposition, 2026-06-20).** `sieve/` is no longer a flat package — it is 6 cohesive packages with an acyclic DAG: `domain ← block ← {block/processors, services} ← ai ← root`. The cycle is broken by **port interfaces owned by `block/`** (`AIPort`/`DocumentsPort`/`AssetsPort`/`StatePort`/`LinkPreviewPort`); concrete services implement them, the root wires them. `block/` imports no service. See `docs/design/superpowers/specs/2026-06-20-flat-package-decomposition-design.md`.
 
 | What | Where |
 |------|-------|
@@ -32,7 +32,9 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 | SSE hub | `sse.go` |
 | File watcher | `watcher.go` |
 | Tech debt register | `docs/TECH-DEBT.md` |
-| Current milestone plan | `docs/PHASE9-PLAN.md` (completed), `docs/FEATURE-BACKLOG.md` |
+| **Editor interaction contract (NORMATIVE)** | `docs/editor-interaction-contract.md` |
+| **Docs layout** | `docs/` root = long-lived contracts, behaviour specs, living registers, how-tos. `docs/design/` = design history: brainstorms, one-off specs/plans, `superpowers/{specs,plans}` (write NEW superpowers specs/plans there), `archive/` |
+| Current milestone plan | `docs/FEATURE-BACKLOG.md` (PHASE9 completed → `docs/design/archive/PHASE9-PLAN.md`) |
 | Current Guuidance on how to use the Sieve Block Framework | `docs/how-to-sieve-block-framework.md` |
 | **How to build a fenced block** | `docs/how-to-intelligent-fenced-blocks.md` |
 | Shared fenced block JS base | `frontend/src/static/fenced-block-base.js` |
