@@ -19,6 +19,8 @@ import { isJobStale } from '../base/fenced-block-base.js'
       return [{ mimeType: 'text/uri-list', content: node.attrs.href }]
     },
 
+    interactionPolicy: { caretStop: true },
+
     // Pure display-only metadata card — no editable body. A true atom: the framework
     // forces contentEditable=false (no contentDOM), so there is no phantom caret region.
     nodeConfig: {

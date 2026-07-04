@@ -8,6 +8,7 @@ frontend/wailsjs/
 # ── Go ────────────────────────────────────────────────────────────────────────
 # Compiled binaries
 sieve
+build/sieve-bin
 #block bianry above but allow package
 !sieve/
 *.exe

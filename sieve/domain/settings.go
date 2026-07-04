@@ -58,7 +58,7 @@ func (s Settings) Tier() Tier {
 	}
 
 	// Log which-results for all supported CLIs so we can see what's visible.
-	for _, name := range []string{"claude", "gemini", "copilot"} {
+	for _, name := range []string{"claude", "agy", "copilot"} {
 		if p, err := exec.LookPath(name); err == nil {
 			logger.Debug("which "+name, "path", p)
 		} else {

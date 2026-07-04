@@ -385,6 +385,35 @@
         T.Image.configure({ inline: false, allowBase64: true, HTMLAttributes: { class: 'editor-image' } }),
         T.HighlightMark,
         T.SelectionHighlight,
+        T.Extension.create({
+          name: 'sieveFocusPlugin',
+          addProseMirrorPlugins: function () {
+            return [
+              new T.Plugin({
+                props: {
+                  decorations: function (state) {
+                    var sel = state.selection
+                    if (!sel) return T.DecorationSet.empty
+                    var decos = []
+                    if (sel.node && String(sel.node.type.name).indexOf('sieve-') === 0) {
+                      decos.push(T.Decoration.node(sel.from, sel.to, { class: 'sieve-block--focused' }))
+                    } else if (sel.$from) {
+                      var $from = sel.$from
+                      for (var d = $from.depth; d >= 0; d--) {
+                        var node = $from.node(d)
+                        if (node && String(node.type.name).indexOf('sieve-') === 0) {
+                          decos.push(T.Decoration.node($from.before(d), $from.after(d), { class: 'sieve-block--focused' }))
+                          break
+                        }
+                      }
+                    }
+                    return T.DecorationSet.create(state.doc, decos)
+                  }
+                }
+              })
+            ]
+          }
+        }),
       ].concat(window.SieveNativeCodeBlock ? [window.SieveNativeCodeBlock] : [])
        .concat(window.TipTap.ProseGroup ? [window.TipTap.ProseGroup] : [])
        .concat(T.getSieveNodes()).concat([
@@ -437,11 +466,11 @@
               return true
             }
 
-            // Whole-block? Either a gutter block-range, or a NodeSelection on a sieve node.
+            // Range covered by the selection (a gutter block-range, a NodeSelection,
+            // or a text range) — drives which blocks the loop below visits.
             var er = (window.TipTap && window.TipTap.getBlockSelectionRange)
               ? window.TipTap.getBlockSelectionRange(view)
               : { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false }
-            var isSieveNodeSel = !!(sel.node && sel.node.type && String(sel.node.type.name).indexOf('sieve-') === 0)
 
             var blockHTML = function (dom) {
               if (!dom) return ''
@@ -467,6 +496,22 @@
               return er.to > er.from && (er.from > nodeFrom || er.to < nodeEnd)
             }
 
+            // Native DOM text highlight (once). A block's custom region (the log
+            // Explore table) holds text PM does not own, so a highlight there
+            // leaves PM's selection a whole-block NodeSelection — without this the
+            // rich copy below would grab the ENTIRE block. text/plain + text/html
+            // follow this highlight per-block (via domSelectionTextInside); the
+            // sieve/slice + sieve/<kind> mimes stay whole-block (only-meaningful-whole).
+            var domSel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null
+            var domSelHtml = ''
+            if (domSel && !domSel.isCollapsed && domSel.toString().trim()) {
+              try {
+                var frag = document.createElement('div')
+                for (var dri = 0; dri < domSel.rangeCount; dri++) frag.appendChild(domSel.getRangeAt(dri).cloneContents())
+                domSelHtml = frag.innerHTML
+              } catch (e) {}
+            }
+
             var sliceItems = []
             var plainParts = []
             var htmlParts = []
@@ -477,7 +522,6 @@
             // sets (a sequence of "normal pastes"), reconstructed server-side. Each
             // block contributes its FULL view set (sieve → framework views, prose →
             // its sieve/prose + text). text/plain + text/html follow the selection.
-            var sieveCount = 0
             var proseKind = window.TipTap.getBlockKind && window.TipTap.getBlockKind('prose')
             view.state.doc.forEach(function (node, offset) {
               var nodeEnd = offset + node.nodeSize
@@ -486,7 +530,6 @@
               var entries
               if (String(node.type.name).indexOf('sieve-') === 0) {
                 hasSieve = true
-                sieveCount++
                 entries = window.TipTap.sieveBlockEntries(node, window.TipTap.rendererFor(node.attrs.kind))
                 singleSieveEntries = entries
               } else {
@@ -500,8 +543,16 @@
                 }
                 return null
               }
-              if (partial(offset, nodeEnd)) {
-                // Cut by the selection → just the highlighted text.
+              // A native DOM highlight INSIDE this block's custom region (log
+              // Explore table) → text/plain + text/html follow it, even though PM
+              // sees the whole block selected. (sliceItems already holds the full
+              // block above.)
+              var domInBlock = window.TipTap.domSelectionTextInside(domSel, dom)
+              if (domInBlock) {
+                plainParts.push(domInBlock)
+                htmlParts.push(domSelHtml || escHtml(domInBlock))
+              } else if (partial(offset, nodeEnd)) {
+                // Cut by the PM selection → just the highlighted text.
                 plainParts.push(selText(offset, nodeEnd))
                 htmlParts.push(escHtml(selText(offset, nodeEnd)))
               } else {
@@ -513,14 +564,13 @@
 
             if (!hasSieve) return false   // pure prose → native PM copy
 
-            // A non-empty sub-text selection INSIDE a single sieve block is a text
-            // copy — let PM copy the raw selected text, don't hijack the whole block.
-            // (Gutter block-range, node selection, multi-block, or a bare cursor on
-            // the block all fall through to the rich slice copy below.)
-            if (!er.isBlockRange && !isSieveNodeSel && sliceItems.length === 1 && sieveCount === 1 && er.to > er.from) {
-              return false
-            }
-
+            // Every sieve-involving copy is served HERE — never deferred to native
+            // PM copy. A sub-text selection used to fall through to native, but a
+            // slice inside a `defining`/`code` block (code, diagram, log-raw)
+            // re-wraps the WHOLE node, so native copied the entire block. Instead
+            // the loop above already put the SELECTION into text/plain + text/html
+            // (per-block, via the DOM highlight or the PM range) while sieve/slice +
+            // sieve/<kind> carry the whole block — one uniform rule, every kind.
             event.preventDefault()
             event.clipboardData.setData('text/plain', plainParts.filter(Boolean).join('\n\n'))
             event.clipboardData.setData('text/html', htmlParts.filter(Boolean).join('\n'))

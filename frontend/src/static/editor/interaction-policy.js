@@ -109,18 +109,46 @@ export function smartHomeTarget(lineText, col) {
 
 // ── browser layer: PM state → classified context, and the TipTap extension ──
 
-export function resolveContext(state) {
+export function resolveContext(state, view) {
   var sel = state.selection
   var nodeSelName = sel.node ? sel.node.type.name : null
   var $from = sel.$from
   var ancestors = []
-  for (var d = $from.depth; d >= 0; d--) ancestors.push($from.node(d).type.name)
   var parent = $from.parent
+  var mode = (sel.node ? sel.node.attrs && sel.node.attrs.mode : parent.attrs && parent.attrs.mode) || null
+
+  // If focus is inside a block sub-element (e.g. log table filter input), resolve that block
+  if (view && document.activeElement && view.dom.contains(document.activeElement)) {
+    var blockEl = document.activeElement.closest('.sieve-block')
+    if (blockEl) {
+      try {
+        var contentDOM = blockEl.querySelector('code')
+        var targetDOM = contentDOM || blockEl
+        var pos = view.posAtDOM(targetDOM, 0)
+        if (pos !== undefined && pos !== null && pos >= 0) {
+          var $pos = view.state.doc.resolve(pos)
+          var resolvedNode = $pos.node(1)
+          if (resolvedNode) {
+            parent = resolvedNode
+            ancestors = [resolvedNode.type.name]
+            mode = resolvedNode.attrs && resolvedNode.attrs.mode
+          }
+        }
+      } catch (e) {
+        // Fallback to selection-based logic
+      }
+    }
+  }
+
+  if (ancestors.length === 0) {
+    for (var d = $from.depth; d >= 0; d--) ancestors.push($from.node(d).type.name)
+  }
+
   return classifyContext({
     parentTypeName: parent.type.name,
     ancestorTypeNames: ancestors,
     nodeSelectionTypeName: nodeSelName,
-    mode: (sel.node ? sel.node.attrs && sel.node.attrs.mode : parent.attrs && parent.attrs.mode) || null,
+    mode: mode || null,
   })
 }
 
@@ -199,7 +227,7 @@ export function policyEnterKeydown(view, event) {
 }
 
 function handleEnter(view, event) {
-  var ctx = resolveContext(view.state)
+  var ctx = resolveContext(view.state, view)
   var isMod = event.metaKey || event.ctrlKey
   var inSieveBlock = ctx.kind !== 'prose'
 
@@ -273,7 +301,7 @@ function isEditingKey(event) {
 // handleSmartHome — contract Home column for raw-text blocks: first press
 // jumps to the first non-whitespace character of the line, second to col 0.
 function handleSmartHome(view, event) {
-  var ctx = resolveContext(view.state)
+  var ctx = resolveContext(view.state, view)
   if (!ctx.policy.rawText || ctx.isNodeSelection || ctx.mode === 'render') return false
   var s = rawTextSpan(view.state)
   var lineStart = s.text.lastIndexOf('\n', s.from - 1) + 1
@@ -297,7 +325,7 @@ function handleArrowStop(view, down) {
 
   // A caret-stop block is selected → move past it.
   if (sel.node) {
-    var ctx = resolveContext(st)
+    var ctx = resolveContext(st, view)
     if (stopActive(ctx.policy, sel.node.attrs)) {
       var target = down ? sel.to : sel.from
       var next = TT.Selection.near(st.doc.resolve(target), down ? 1 : -1)
@@ -353,7 +381,7 @@ export function buildInteractionPolicyExtension(T) {
               // Read-only text (log): consume typing/deleting keys so the
               // content cannot be edited; caret movement and copy still work.
               if (isEditingKey(event)) {
-                var roCtx = resolveContext(view.state)
+                var roCtx = resolveContext(view.state, view)
                 if (roCtx.policy.readOnlyText && !roCtx.isNodeSelection) {
                   event.preventDefault()
                   return true
@@ -367,7 +395,7 @@ export function buildInteractionPolicyExtension(T) {
               if (!isTabKey) return false
               if (event.metaKey || event.ctrlKey || event.altKey) return false
               var isShiftTab = event.shiftKey || event.key === 'ISO_Left_Tab'
-              var ctx = resolveContext(view.state)
+              var ctx = resolveContext(view.state, view)
               // Native structural keymaps already ran (priority order); from
               // here we own the key so focus can never escape the editor.
               if (ctx.inList || ctx.inTable) {

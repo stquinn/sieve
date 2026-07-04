@@ -357,10 +357,31 @@ import { esc, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
     // onModEnter — policy-extension entry point (modEnterTogglesMode).
     onModEnter: function (view, selection) {
       var node = selection.node || selection.$from.parent
-      if (!node || node.type.name !== 'sieve-diagram') return false
       var cursorPos = selection.node
         ? (typeof node.attrs.cursorPos === 'number' ? node.attrs.cursorPos : 0)
         : selection.$from.parentOffset
+
+      // If the selection is stale and focus is actually in the diagram block DOM, resolve it
+      if (document.activeElement && view.dom.contains(document.activeElement)) {
+        var blockEl = document.activeElement.closest('.sieve-block')
+        if (blockEl) {
+          try {
+            var contentDOM = blockEl.querySelector('code')
+            var targetDOM = contentDOM || blockEl
+            var blockPos = view.posAtDOM(targetDOM, 0)
+            if (blockPos !== undefined && blockPos !== null && blockPos >= 0) {
+              var $pos = view.state.doc.resolve(blockPos)
+              var resolvedNode = $pos.node(1)
+              if (resolvedNode && resolvedNode.type.name === 'sieve-diagram') {
+                node = resolvedNode
+                cursorPos = typeof node.attrs.cursorPos === 'number' ? node.attrs.cursorPos : 0
+              }
+            }
+          } catch (e) {}
+        }
+      }
+
+      if (!node || node.type.name !== 'sieve-diagram') return false
       return DiagramRenderer.flipMode(node.attrs, cursorPos)
     },
 

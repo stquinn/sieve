@@ -3,5 +3,6 @@
   "terminal.integrated.automationProfile.linux": {
     "path": "${workspaceFolder}/nix-shell-wrapper.sh",
     "args": []
-  }
+  },
+  "chat.editor.fontSize": 16
 }

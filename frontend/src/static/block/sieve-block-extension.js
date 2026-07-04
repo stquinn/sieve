@@ -42,8 +42,94 @@
 
 import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, applyHighlighting } from '../base/fenced-block-base.js'
 
+// ── Header focus preservation ────────────────────────────────────────────────
+// A header re-render (renderHeaderBar) rebuilds the whole toolbar so button
+// states track the live attrs. But a header may hold a control the user is
+// actively in — log's `Filter…` input — and a naive wholesale swap would rob it
+// of focus + caret and reset its value mid-type (which is why the header seam
+// once SKIPPED the re-render entirely while focus was inside the bar, leaving
+// button states stale — the log toolbar "doesn't redraw" bug). Instead we keep
+// the LIVE focused control across the rebuild: move its actual DOM node into the
+// fresh tree at the matching slot (value/caret intact) and re-focus it after the
+// bar is mounted (reparenting blurs it). Uniform — no renderer knowledge; a
+// header with nothing focused just swaps wholesale.
+var HEADER_FOCUSABLE = 'input, textarea, select, button'
+
+// adoptFocusedControl moves the live focused control from oldBar into freshBar at
+// the matching slot (same index among focusable descendants, same tag). Returns a
+// snapshot for restoreFocusedControl, or null if nothing in oldBar was focused.
+// Call BEFORE freshBar is mounted; call restoreFocusedControl AFTER mounting (a
+// detached element can't hold focus).
+export function adoptFocusedControl(oldBar, freshBar) {
+  var active = (typeof document !== 'undefined') ? document.activeElement : null
+  if (!oldBar || !freshBar || !active || !oldBar.contains(active)) return null
+  var oldList = Array.prototype.slice.call(oldBar.querySelectorAll(HEADER_FOCUSABLE))
+  var idx = oldList.indexOf(active)
+  if (idx < 0) return null
+  var freshList = Array.prototype.slice.call(freshBar.querySelectorAll(HEADER_FOCUSABLE))
+  var twin = freshList[idx]
+  if (!twin || twin.tagName !== active.tagName || !twin.parentNode) return null
+  var ss = (typeof active.selectionStart === 'number') ? active.selectionStart : null
+  var se = (typeof active.selectionEnd === 'number') ? active.selectionEnd : null
+  twin.parentNode.replaceChild(active, twin)   // fresh tree now holds the LIVE control
+  return { el: active, selectionStart: ss, selectionEnd: se }
+}
+
+// restoreFocusedControl re-focuses the adopted control (the reparent blurred it)
+// and restores its caret. No-op when adoptFocusedControl returned null.
+export function restoreFocusedControl(snap) {
+  if (!snap || !snap.el) return
+  if (typeof snap.el.focus === 'function') snap.el.focus()
+  if (snap.selectionStart !== null && typeof snap.el.setSelectionRange === 'function') {
+    try { snap.el.setSelectionRange(snap.selectionStart, snap.selectionEnd) } catch (e) {}
+  }
+}
+
+// ── Click-to-own-selection ───────────────────────────────────────────────────
+// A click anywhere in a block makes it the caret/selection owner (a NodeSelection
+// + editor focus), so keyboard chords (Mod+Enter mode toggle, etc.) route to it
+// via the policy extension — uniform for every kind, no per-renderer handling.
+// BLOCK_CLICK_SKIP lists what a click must NOT claim the block: interactive
+// controls + the header/chrome own their own clicks.
+var BLOCK_CLICK_SKIP = 'input, textarea, button, select, option, a[href], ' +
+  '.sieve-block__header, .block-chrome-host, .block-chrome-handle, .drag-handle'
+
+// shouldClaimBlockSelection — the click decision (pure, testable). A plain click
+// claims the whole block UNLESS it lands on an interactive control/chrome, inside
+// the block's editable text (contentDOM — PM places a text caret there, which IS
+// caret ownership), or while a real text selection sits inside the block (a
+// drag-select for copy, e.g. a log table — leave it alone).
+export function shouldClaimBlockSelection(target, blockDom, contentDOM, domSelection) {
+  if (!target || !blockDom || !blockDom.contains(target)) return false
+  if (target.closest && target.closest(BLOCK_CLICK_SKIP)) return false
+  if (contentDOM && contentDOM.contains(target)) return false
+  if (domSelection && !domSelection.isCollapsed && domSelection.anchorNode &&
+      blockDom.contains(domSelection.anchorNode)) return false
+  return true
+}
+
+// domSelectionTextInside — the highlighted text of a native DOM selection IF it
+// sits inside blockDom, else '' (pure, testable). A block's custom region (e.g.
+// the log Explore table) holds text PM does not own, so a highlight there is
+// invisible to PM's position-based selection — on copy PM sees a whole-block
+// NodeSelection and the rich copy would grab the ENTIRE block. The copy handler
+// uses this so text/plain + text/html follow the DOM highlight while sieve/slice
+// + sieve/<kind> still carry the whole block (a block is only meaningful whole).
+export function domSelectionTextInside(domSelection, blockDom) {
+  if (!domSelection || domSelection.isCollapsed || !blockDom) return ''
+  var text = domSelection.toString()
+  if (!text || !text.trim()) return ''
+  var a = domSelection.anchorNode
+  var el = a ? (a.nodeType === 1 ? a : a.parentElement) : null
+  return (el && blockDom.contains(el)) ? text : ''
+}
+
 ;(function () {
   'use strict'
+
+  // Registration machinery needs the TipTap runtime. In unit tests the module is
+  // imported for the exported helpers above with no runtime present — no-op then.
+  if (typeof window === 'undefined' || !window.TipTap) return
 
   var T = window.TipTap
   var Node = T.Node
@@ -144,6 +230,7 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
   T.segmentedToggle = segmentedToggle
   T.badgeEl = badgeEl
   T.updateBlockAttrs = updateBlockAttrs
+  T.domSelectionTextInside = domSelectionTextInside
 
   // ── Base attributes shared by every sieve block kind ─────────────────────────
 
@@ -384,6 +471,27 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
                 })
               }
             })
+
+            // ── Click-to-own-selection ────────────────────────────────────────────
+            // A click anywhere in the block makes it the caret/selection owner: a
+            // NodeSelection at the block's position + editor focus, so keyboard
+            // chords (Mod+Enter mode toggle, arrows, escape) route through the
+            // policy extension uniformly — no per-renderer click/keydown handling.
+            // shouldClaimBlockSelection filters out controls/chrome, editable text
+            // (PM's own caret), and a text drag-select (copy). mouseup (not
+            // mousedown) so a drag that selects text is left intact.
+            view.dom.addEventListener('mouseup', function (event) {
+              if (typeof getPos !== 'function') return
+              var domSel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null
+              if (!shouldClaimBlockSelection(event.target, view.dom, view.contentDOM, domSel)) return
+              var pos = getPos()
+              if (pos == null || pos < 0 || pos >= editor.state.doc.content.size) return
+              try {
+                var sel = T.NodeSelection.create(editor.state.doc, pos)
+                editor.view.dispatch(editor.state.tr.setSelection(sel))
+                editor.view.focus()
+              } catch (e) {}
+            })
           }
 
           // ── Central stopEvent: shield interactive sub-elements from ProseMirror ──
@@ -445,6 +553,10 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
           if (headerProvider && typeof headerProvider.render === 'function') {
             renderHeaderBar = function () {
               var fresh = headerProvider.render(blockCtx.attrs, blockCtx)
+              // Keep a control the user is actively in (log's filter input) alive
+              // across the rebuild: adopt its live node into the fresh tree, then
+              // re-focus after mounting. See adoptFocusedControl above.
+              var focusSnap = headerBarEl ? adoptFocusedControl(headerBarEl, fresh) : null
               if (headerBarEl && headerBarEl.parentNode) {
                 headerBarEl.parentNode.replaceChild(fresh, headerBarEl)
               } else {
@@ -452,6 +564,7 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
                 view.dom.insertBefore(fresh, anchor ? anchor.nextSibling : view.dom.firstChild)
               }
               headerBarEl = fresh
+              restoreFocusedControl(focusSnap)
             }
             renderHeaderBar()
           }
@@ -514,15 +627,14 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
             view.update = function (updatedNode) {
               var ok = origUpdate ? origUpdate(updatedNode) : true
               if (!ok) return false
-              // Toolbar re-renders on every update so active states (a mode toggle)
-              // track the live attrs — EXCEPT while focus is inside the bar, so a
-              // focusable control (a filter field) isn't recreated mid-type and
-              // robbed of focus. The body still re-renders via the attr cycle; the
-              // bar catches up on the next update once focus leaves (a button click
-              // doesn't take focus, so toggles still refresh immediately).
-              if (renderHeaderBar && !(headerBarEl && headerBarEl.contains(document.activeElement))) {
-                renderHeaderBar()
-              }
+              // Toolbar re-renders on EVERY update so active states (a mode toggle,
+              // a column toggle) track the live attrs. A control the user is
+              // actively in (log's filter input) is preserved across the rebuild
+              // by renderHeaderBar (adoptFocusedControl), so re-rendering no longer
+              // robs it of focus — the old "skip while focus is inside the bar"
+              // guard left button states stale (log toolbar "doesn't redraw") and
+              // is retired.
+              if (renderHeaderBar) renderHeaderBar()
               // Title/content re-sync only when their RESOLVED value changes.
               if (syncTitle) {
                 var nh = resolveTitle(updatedNode.attrs)

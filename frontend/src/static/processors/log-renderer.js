@@ -136,11 +136,31 @@ import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-b
     // Read-only text: caret may enter (select/copy), typing is consumed.
     // Mod+Enter toggles raw↔explore (declared policy override, same
     // mechanism as diagram's edit↔render — see interaction-policy.js).
-    interactionPolicy: { readOnlyText: true, modEnterTogglesMode: true },
+    // 
+    interactionPolicy: { caretStop: true, modEnterTogglesMode: true},
 
     // onModEnter — policy-extension entry point: flip raw↔explore.
     onModEnter: function (view, selection) {
       var node = selection.node || selection.$from.parent
+
+      if (document.activeElement && view.dom.contains(document.activeElement)) {
+        var blockEl = document.activeElement.closest('.sieve-block')
+        if (blockEl) {
+          try {
+            var contentDOM = blockEl.querySelector('code')
+            var targetDOM = contentDOM || blockEl
+            var blockPos = view.posAtDOM(targetDOM, 0)
+            if (blockPos !== undefined && blockPos !== null && blockPos >= 0) {
+              var $pos = view.state.doc.resolve(blockPos)
+              var resolvedNode = $pos.node(1)
+              if (resolvedNode && resolvedNode.type.name === 'sieve-log') {
+                node = resolvedNode
+              }
+            }
+          } catch (e) {}
+        }
+      }
+
       if (!node || node.type.name !== 'sieve-log' || !node.attrs.id) return false
       var newMode = logMode(node.attrs) === 'explore' ? 'raw' : 'explore'
       document.dispatchEvent(new CustomEvent('sieve:block-update', {
@@ -267,8 +287,14 @@ import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-b
       tableContainer.style.webkitUserSelect = 'text'
       tableContainer.style.cursor = 'text'
       
-      // Stop Prosemirror from hijacking native text selection
+      // Block SELECTION is owned by the framework (click-to-own-selection in
+      // sieve-block-extension.js) — a click anywhere in the block makes it the
+      // caret/selection owner via a NodeSelection, uniformly for every kind. The
+      // only thing local to this text-table block is shielding PM from hijacking
+      // the native text selection users drag to copy log lines: stop mousedown
+      // propagation (except on the framework's own controls) and cancel dragstart.
       exploreArea.addEventListener('mousedown', function(e) {
+          if (e.target.closest('input, textarea, button, select')) return
           e.stopPropagation()
       })
       exploreArea.addEventListener('dragstart', function(e) {
@@ -466,11 +492,23 @@ import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-b
       // driven by the persisted attrs.
       function updateUI() {
           if (isExplore(currentAttrs)) {
-              editArea.style.display = 'none';
+              // Keep editArea in the layout tree but make it visually hidden
+              // so WebKit's caret drawing engine doesn't break for empty sibling blocks.
+              editArea.style.position = 'absolute';
+              editArea.style.opacity = '0';
+              editArea.style.pointerEvents = 'none';
+              editArea.style.height = '0';
+              editArea.style.overflow = 'hidden';
               exploreArea.style.display = 'flex';
               if (!loadedJson) loadAsset();
               else renderTable();
           } else {
+              // Restore normal styles for raw/edit mode
+              editArea.style.position = '';
+              editArea.style.opacity = '';
+              editArea.style.pointerEvents = '';
+              editArea.style.height = '';
+              editArea.style.overflow = '';
               editArea.style.display = 'flex';
               exploreArea.style.display = 'none';
           }

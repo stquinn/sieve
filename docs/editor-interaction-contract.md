@@ -51,8 +51,19 @@ line-start gesture (VS Code parity). Shift-selection variants stay native.
    single caret stop: arrow onto → whole-block selection; arrow again → past
    it. Enter or Shift+Enter while selected inserts a paragraph after (this is
    how prose is added between two adjacent read-only blocks).
-5. Click in a block body → text caret there; click on chrome (header/gutter)
-   → block selection. Never silent nothing.
+5. Click-to-own-selection (framework-uniform, every kind): a click anywhere in
+   a block makes it the caret/selection owner — never silent nothing.
+   - Click in editable text (a block's `contentDOM`) → text caret there.
+   - Click on any non-editable region (a custom render area, the log Explore
+     table, an image) → whole-block `NodeSelection` + editor focus, so keyboard
+     chords (Mod+Enter mode toggle, arrows, escape) route to the block.
+   - Interactive controls and the header/gutter chrome own their own clicks and
+     do NOT move the document selection (the gutter handle drives its own
+     block-selection/reorder).
+   - A drag that leaves a text selection inside the block is preserved (copy);
+     it does not collapse into a block selection.
+   Owned by `shouldClaimBlockSelection` + the `mouseup` seam in
+   `sieve-block-extension.js` — never per-renderer.
 6. Typing always goes somewhere visible after entering a block.
 7. Diagram edit↔render round-trip restores cursor position (block-start if
    content changed).
@@ -82,7 +93,7 @@ dialog path commits outside the editor and does not consume — acceptable).
 
 | Selection | Result |
 |---|---|
-| Partial text inside any block | plain text/HTML only — no sieve MIMEs (by design) |
+| Partial text inside any sieve block (PM content — code/diagram/log-raw — OR a non-PM region like the log Explore table) | **Uniform rule:** text/plain + text/html follow the selection (the DOM highlight, or the PM range as fallback); `sieve/slice` + `sieve/<kind>` carry the WHOLE block (only-meaningful-whole). NEVER deferred to native PM copy — a slice inside a `defining`/`code` block re-wraps the whole node, so native copied everything. Served by the copy handler's per-block loop + `domSelectionTextInside`. |
 | Single whole sieve block (gutter / NodeSelection) | text/plain + text/html + `sieve/slice` + `sieve/<kind>` + renderer custom views |
 | Gutter block-range | `sieve/slice` = ordered ContentEntry sets, one per block |
 | Smart-image node selection | real bitmap to clipboard |
