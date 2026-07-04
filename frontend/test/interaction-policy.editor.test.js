@@ -376,6 +376,46 @@ describe('Read-only caret stops (contract clause 4)', () => {
   })
 })
 
+describe('Smart Home in raw-text blocks', () => {
+  it('first press → first non-ws char; second press → column 0', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-code', content: [{ type: 'text', text: '    code' }] },
+      { type: 'paragraph' },
+    ] })
+    caretAt(9) // end of '    code' (block starts at 1)
+    expect(press('Home').handled).toBe(true)
+    expect(editor.state.selection.from).toBe(5) // first non-ws
+    expect(press('Home').handled).toBe(true)
+    expect(editor.state.selection.from).toBe(1) // column 0
+  })
+  it('Home in prose stays native', () => {
+    makeEditor({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'ab' }] }] })
+    caretAt(2)
+    expect(press('Home').handled).toBe(false)
+  })
+})
+
+describe('Read-only text typing (log) via policy', () => {
+  it('typing a character is consumed', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-log', content: [{ type: 'text', text: 'line' }] },
+      { type: 'paragraph' },
+    ] })
+    caretAt(3)
+    expect(press('x').handled).toBe(true)
+    expect(docText()).toBe('line')
+  })
+  it('Backspace mid-text is consumed', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-log', content: [{ type: 'text', text: 'line' }] },
+      { type: 'paragraph' },
+    ] })
+    caretAt(3)
+    expect(press('Backspace').handled).toBe(true)
+    expect(docText()).toBe('line')
+  })
+})
+
 describe('Trailing node (contract clause 1: no dead-ends)', () => {
   it('a doc ending in a structured block gets a trailing paragraph on first edit', () => {
     makeEditor({ type: 'doc', content: [

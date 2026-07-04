@@ -35,6 +35,10 @@ regression pass. Source spec:
   an `onModEnter` hook. Current users: diagram (edit↔render, preserving the
   long-standing Ctrl+Enter habit), log (raw↔explore).
 
+**Smart Home platform note:** the Home column applies to the `Home` key
+(Linux/Windows; fn+Left on Mac) AND to Cmd+Left on macOS — the idiomatic Mac
+line-start gesture (VS Code parity). Shift-selection variants stay native.
+
 ## Caret contract
 
 1. No dead-ends: every position reachable by arrows alone; a trailing

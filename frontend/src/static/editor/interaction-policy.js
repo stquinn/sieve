@@ -258,6 +258,32 @@ function atBoundary(view, down) {
   }
 }
 
+var IS_MAC = typeof navigator !== 'undefined' && /Mac|iP(hone|ad|od)/.test(navigator.platform || '')
+
+// isEditingKey — keys that would mutate text content (used for readOnlyText).
+function isEditingKey(event) {
+  if (event.key === 'Backspace' || event.key === 'Delete') return true
+  return event.key.length === 1 && !event.metaKey && !event.ctrlKey
+}
+
+// handleSmartHome — contract Home column for raw-text blocks: first press
+// jumps to the first non-whitespace character of the line, second to col 0.
+function handleSmartHome(view, event) {
+  var ctx = resolveContext(view.state)
+  if (!ctx.policy.rawText || ctx.isNodeSelection || ctx.mode === 'render') return false
+  var s = rawTextSpan(view.state)
+  var lineStart = s.text.lastIndexOf('\n', s.from - 1) + 1
+  var lineEnd = s.text.indexOf('\n', lineStart)
+  if (lineEnd === -1) lineEnd = s.text.length
+  var lineText = s.text.slice(lineStart, lineEnd)
+  var col = s.from - lineStart
+  var targetCol = smartHomeTarget(lineText, col)
+  var pos = s.blockStart + lineStart + targetCol
+  event.preventDefault()
+  view.dispatch(view.state.tr.setSelection(TT.TextSelection.create(view.state.doc, pos)).scrollIntoView())
+  return true
+}
+
 // handleArrowStop — caret contract clause 4: read-only blocks are a single
 // caret stop. Arrow onto one → whole-block NodeSelection; arrow again → past
 // it. Prevents the caret diving into non-atom read-only containers.
@@ -307,6 +333,27 @@ export function buildInteractionPolicyExtension(T) {
               if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') &&
                   !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
                 return handleArrowStop(view, event.key === 'ArrowDown')
+              }
+              // Smart home: the Home key (Linux/Windows; fn+Left on Mac), and
+              // Cmd+Left on macOS — the idiomatic line-start gesture there
+              // (VS Code treats it as smart-home too). Only in raw-text
+              // blocks; native everywhere else. Shift variants (selection)
+              // stay native.
+              if (event.key === 'Home' && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+                return handleSmartHome(view, event)
+              }
+              if (IS_MAC && event.key === 'ArrowLeft' && event.metaKey &&
+                  !event.shiftKey && !event.ctrlKey && !event.altKey) {
+                return handleSmartHome(view, event)
+              }
+              // Read-only text (log): consume typing/deleting keys so the
+              // content cannot be edited; caret movement and copy still work.
+              if (isEditingKey(event)) {
+                var roCtx = resolveContext(view.state)
+                if (roCtx.policy.readOnlyText && !roCtx.isNodeSelection) {
+                  event.preventDefault()
+                  return true
+                }
               }
               if (event.key !== 'Tab') return false
               if (event.metaKey || event.ctrlKey || event.altKey) return false

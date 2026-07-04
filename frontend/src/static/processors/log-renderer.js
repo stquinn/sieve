@@ -633,15 +633,10 @@ import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-b
             handleTextInput: function(view, from, to, text) {
               return isInside(view.state, from, to)
             },
-            handleKeyDown: function(view, event) {
-              if (event.key === 'Backspace' || event.key === 'Delete' || event.key === 'Enter') {
-                return isInside(view.state, view.state.selection.from, view.state.selection.to)
-              }
-              if (event.key.length === 1 && !event.metaKey && !event.ctrlKey) {
-                return isInside(view.state, view.state.selection.from, view.state.selection.to)
-              }
-              return false
-            },
+            // Keyboard read-only enforcement lives in the interaction-policy
+            // extension (interactionPolicy.readOnlyText above) — contract
+            // rule: no per-renderer key handling. handleTextInput/Paste/Drop
+            // stay here: they guard input paths, not keys.
             handlePaste: function(view, event, slice) {
               return isInside(view.state, view.state.selection.from, view.state.selection.to)
             },
