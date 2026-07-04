@@ -13,6 +13,7 @@ The Sieve block functionality has matured, but the editor *feel* has become inco
 3. Pasting a URL into prose silently becomes a smart-card; the same paste into a code block stays literal text (asymmetry is by design, but nowhere written down).
 4. Copying a partial text selection from inside a sieve block yields plain text with no block identity (also correct by design — but undocumented, so it reads as a bug).
 5. The diagram block's Ctrl+Enter works via two different mechanisms depending on mode (PM plugin in edit mode, DOM listener on the render body in render mode).
+6. Tab in a table cell inserts 4 spaces instead of moving to the next cell (user-confirmed 2026-07-04): the root `editorProps.handleKeyDown` carves out only `listItem` and consumes Tab before TipTap Table's `goToNextCell` keymap can run.
 
 **Root cause:** Tab/Enter/caret handling is implemented per-block-renderer (`code-renderer.js`, `diagram-renderer.js` each carry their own `handleKeyDown` plugin), while copy and paste-detection already flow through one shared pipeline. Half the code follows the uniform-mechanism principle; half doesn't. Every new block kind drifts a little further.
 
@@ -65,7 +66,11 @@ interactionPolicy: {
 }
 ```
 
-A single new module `frontend/src/static/editor/interaction-policy.js` exports one ProseMirror plugin that resolves the caret's context to a policy and applies it uniformly. Consequences:
+A single new module `frontend/src/static/editor/interaction-policy.js` exports one ProseMirror plugin that resolves the caret's context to a policy and applies it uniformly.
+
+**Ordering is load-bearing (verified failure mode):** the plugin must run *after* native extension keymaps — defer first, consume last. Today's root `editorProps.handleKeyDown` runs *before* all extension keymaps and carves out only `listItem`, which is why Tab in a table cell inserts 4 spaces (TipTap Table's `goToNextCell` keymap never runs) and Shift+Tab in prose escapes to the browser. The policy plugin therefore registers as a low-priority plugin (not `editorProps`), so list indent, table cell navigation, and any future structural keymap win by construction; the plain-paragraph no-op is the last-resort backstop, never a shadow.
+
+Consequences:
 
 - The Tab/Enter `handleKeyDown` code in `code-renderer.js` and `diagram-renderer.js` is **deleted**.
 - The root `handleKeyDown` Tab branch in `editor.js` (4-space insert) is **deleted**; the policy plugin consumes Tab/Shift+Tab in plain paragraphs as no-ops.
@@ -106,6 +111,7 @@ The contract doc's key matrix includes an "Arrow keys at boundaries" column so e
 | Paste asymmetry | Blessed + documented in paste matrix; `caretInRawTextBlock` becomes the `rawText` policy flag |
 | Partial-copy metadata loss | Blessed + documented in copy matrix |
 | Diagram Ctrl+Enter split | Both entry points route through one policy function |
+| Tab in table cell inserts 4 spaces | Root `editorProps` Tab branch deleted; policy plugin runs after native keymaps, so Table's Tab/Shift+Tab cell navigation wins by construction |
 | (stale docs) | `code-renderer.js` / `diagram-renderer.js` header comments corrected to describe the contentDOM implementation |
 
 ## Testing
