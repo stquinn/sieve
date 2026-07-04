@@ -338,6 +338,10 @@ import { esc, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
 
     headerProvider: new DiagramHeader(),
 
+    // caretStop:'render' — a caret stop only in render mode; edit mode is raw text.
+    // Mod+Enter is this kind's declared override: mode toggle, not escape.
+    interactionPolicy: { rawText: true, indentWidth: 2, enterInsertsNewline: true, autoIndentOnEnter: true, modEnterTogglesMode: true, caretStop: 'render' },
+
     nodeConfig: {
       atom: false,
       selectable: true,

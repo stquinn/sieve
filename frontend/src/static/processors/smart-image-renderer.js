@@ -134,6 +134,9 @@ import { isJobStale } from '../base/fenced-block-base.js'
     getIcon: function() { return window.SieveIcons && window.SieveIcons.image },
     getFriendlyName: function() { return 'Image' },
 
+    // Atom: arrows treat it as a single caret stop.
+    interactionPolicy: { caretStop: true },
+
     // Pure display-only image — no editable body. A true atom (no contentDOM), so the
     // framework forces contentEditable=false and there is no phantom caret region.
     nodeConfig: {

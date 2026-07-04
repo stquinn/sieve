@@ -57,6 +57,19 @@ describe('indent transforms', () => {
   })
 })
 
+describe('declared policies', () => {
+  it('a raw-text declaration matches the code/diagram contract row', () => {
+    registerBlockKind({ kind: 'code', native: false, renderer: {
+      interactionPolicy: { rawText: true, indentWidth: 2, enterInsertsNewline: true, autoIndentOnEnter: true },
+    }})
+    const p = policyFor('code')
+    expect(p.rawText).toBe(true)
+    expect(p.indentWidth).toBe(2)
+    expect(p.autoIndentOnEnter).toBe(true)
+    expect(p.modEnterTogglesMode).toBe(false)
+  })
+})
+
 describe('auto-indent + home', () => {
   it('leadingIndentAt copies the current line indent', () => {
     expect(leadingIndentAt('if x:\n    y = 1', 12)).toBe('    ')

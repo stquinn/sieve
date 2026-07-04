@@ -70,6 +70,9 @@ import { renderMarkdown, applyHighlighting, isJobStale } from '../base/fenced-bl
       ]
     },
 
+    // Read-only container: arrows treat it as a single caret stop.
+    interactionPolicy: { caretStop: true },
+
     nodeConfig: {
       atom: false,
       selectable: true,

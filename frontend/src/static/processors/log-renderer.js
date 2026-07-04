@@ -133,6 +133,9 @@ import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-b
       hideNoise:       { default: false, parseHTML: function (el) { return el.getAttribute('data-hide-noise') === 'true' } },
     },
 
+    // Read-only text: caret may enter (select/copy), typing is consumed.
+    interactionPolicy: { readOnlyText: true },
+
     // text* + code:true — the raw captured log lines ARE the node's text content,
     // exactly like code/diagram. Editing is blocked by the read-only plugin below.
     nodeConfig: {

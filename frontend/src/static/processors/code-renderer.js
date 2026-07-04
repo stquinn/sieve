@@ -43,6 +43,10 @@ import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-b
 
     headerProvider: new CodeHeader(),
 
+    // Keyboard behaviour is DECLARED here and applied by the shared
+    // interaction-policy extension (docs/editor-interaction-contract.md).
+    interactionPolicy: { rawText: true, indentWidth: 2, enterInsertsNewline: true, autoIndentOnEnter: true },
+
     nodeConfig: {
       atom: false,
       selectable: true,
