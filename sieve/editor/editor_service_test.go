@@ -897,27 +897,14 @@ func TestApplyJobUpdate_closedDoc(t *testing.T) {
 	}
 }
 
-func waitJobs(t *testing.T, es *EditorService, uuid string) {
+// waitJobs drains every dispatched block-job goroutine before TempDir cleanup.
+// It delegates to the real EditorService.WaitForJobs drain seam: blocking on the
+// job WaitGroup waits for the goroutine to FULLY return, including the flush a
+// completing job writes to disk. The previous status-poll returned as soon as a
+// block left PENDING/DISPATCHED — i.e. while applyJobUpdate's flushShadow Save was
+// still in flight — so the Save raced t.TempDir's RemoveAll (the T-A flake). uuid
+// is retained for call-site clarity; the drain is service-wide.
+func waitJobs(t *testing.T, es *EditorService, _ string) {
 	t.Helper()
-	for i := 0; i < 100; i++ {
-		es.mu.Lock()
-		shadow := es.shadows[uuid]
-		es.mu.Unlock()
-		if shadow == nil {
-			return
-		}
-		allDone := true
-		for _, b := range shadow.SnapshotBlocks() {
-			status := b.Status()
-			if status == block.BlockStatusPending || status == block.BlockStatusDispatched {
-				allDone = false
-				break
-			}
-		}
-		if allDone {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Log("warning: waitJobs timed out")
+	es.WaitForJobs()
 }

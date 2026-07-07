@@ -39,6 +39,12 @@ type EditorService struct {
 	mu        sync.RWMutex
 	shadows   map[string]*block.ShadowDocument
 	listener  block.BlockLifecycleListener
+	// jobsWG tracks every dispatched block-job goroutine (DispatchJobIfNeeded's
+	// `go RunJob`). It is the drain a retiring service (CloseAll) and callers that
+	// must settle dispatched work (WaitForJobs) wait on — a job's completion writes
+	// a flush to disk, so "the goroutine returned" is the only safe "the write
+	// finished" signal.
+	jobsWG sync.WaitGroup
 }
 
 // NewEditorService creates an EditorService backed by the given DocumentService.
@@ -423,6 +429,12 @@ func (es *EditorService) CloseAll() {
 		sh.StopDebounce()
 		_ = es.flushShadow(sh, "close-all")
 	}
+	// Drain in-flight job goroutines. Retiring the service (e.g. a library switch)
+	// must not leave a completing job writing a flush against the store we are
+	// abandoning — that would leak the old handle and race the successor. StopDebounce
+	// above already set closed=true on every dropped shadow, so a late job flush cannot
+	// re-arm a timer; here we simply wait for the flush itself to finish.
+	es.jobsWG.Wait()
 }
 
 // SetJobs wires the JobTracker EditorService uses for job-spinner lifecycle.
@@ -819,7 +831,22 @@ func (es *EditorService) DispatchJobIfNeeded(uuid, blockID string) {
 	// Flush state to disk
 	_ = es.Flush(uuid)
 
-	go es.RunJob(context.Background(), uuid, blockID)
+	// Track the goroutine so a retiring service / a WaitForJobs caller can block
+	// until the job (and the flush its completion writes) has fully finished.
+	es.jobsWG.Add(1)
+	go func() {
+		defer es.jobsWG.Done()
+		es.RunJob(context.Background(), uuid, blockID)
+	}()
+}
+
+// WaitForJobs blocks until every dispatched block-job goroutine has fully
+// returned — INCLUDING the flush a completing job writes to disk. It is the
+// settle seam: a caller (or a test before TempDir cleanup) that needs dispatched
+// work to be durably on disk waits here. It does NOT stop the autosave debounce
+// timer — that is Close/CloseAll's concern.
+func (es *EditorService) WaitForJobs() {
+	es.jobsWG.Wait()
 }
 
 // applyJobUpdate safely applies block updates resulting from a background job.
