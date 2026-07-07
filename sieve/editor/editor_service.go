@@ -475,27 +475,54 @@ func (es *EditorService) submitDocFiling(id, jobPrefix, label string, fileAfter,
 	})
 }
 
+// alreadyFiled reports whether id names a document that has already been promoted
+// to the Library (a Note). Close-time smart filing skips these: re-running the AI
+// evaluation on an already-filed note wastes a CLI call and never changes its
+// filed state. A load error (unknown/deleted uuid, or a test with a synthetic id)
+// returns false so a legitimate unfiled buffer is never silently skipped. Only the
+// CLOSE paths consult this — explicit user file actions (FileDocument/KeepAndFile/
+// UpdateMetadata) deliberately re-evaluate filed notes.
+func (es *EditorService) alreadyFiled(id string) bool {
+	if es.documents == nil {
+		return false
+	}
+	doc, err := es.documents.LoadByUUID(id)
+	if err != nil {
+		return false
+	}
+	return doc.Kind() == domain.KindNote
+}
+
 // CloseAllAndFile evaluates + files every closing document on the ai worker pool.
 // Replaces AIService.EvaluateOnClose/runCloseFiling for the "Close All Tabs" path:
-// the local semaphore folds into the engine's ai pool. EVERY open doc is still
-// evaluated on close (the regression the old fan-out fixed stays fixed).
+// the local semaphore folds into the engine's ai pool. Every UNFILED closing doc
+// is still evaluated on close (the close-files-nothing regression stays fixed);
+// already-filed notes are skipped — re-filing a Note on close is wasted AI work.
 func (es *EditorService) CloseAllAndFile(ids []string) {
 	if !es.closeFilingAllowed() {
 		return
 	}
 	for _, id := range ids {
+		if es.alreadyFiled(id) {
+			continue
+		}
 		es.submitDocFiling(id, "file:", "Filing…", true, true, false)
 	}
 }
 
 // CloseDocument flushes the open shadow (so the latest content is on disk) then
 // submits one close-time filing job. Replaces AIService.EvaluateOnClose(id) for
-// the single-tab HTTP close path. Flush no-ops when the doc is not open.
+// the single-tab HTTP close path. Flush no-ops when the doc is not open. An
+// already-filed note is flushed but NOT re-filed — smart filing on close is only
+// for unfiled buffers.
 func (es *EditorService) CloseDocument(id string) {
 	if !es.closeFilingAllowed() {
 		return
 	}
 	_ = es.Flush(id)
+	if es.alreadyFiled(id) {
+		return
+	}
 	es.submitDocFiling(id, "file:", "Filing…", true, true, false)
 }
 

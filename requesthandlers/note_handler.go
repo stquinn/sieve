@@ -42,10 +42,7 @@ func (h *NoteHandler) handleNoteOpen(w http.ResponseWriter, r *http.Request) {
 	note, err := h.ServiceProvider.Documents.LoadByUUID(id)
 	if err == nil {
 		displayName = note.Meta().DisplayName()
-		status = "unfiled"
-		if note.Kind() == domain.KindNote {
-			status = "filed"
-		}
+		status = note.Kind().FiledStatus()
 		if note.Meta().UserIntent() != nil {
 			userIntent = *note.Meta().UserIntent()
 		}
