@@ -1,4 +1,6 @@
-package main
+// Package watcher watches the store's notes directory tree for filesystem
+// changes (e.g. external edits or sync) and fires a debounced callback.
+package watcher
 
 import (
 	"io/fs"
@@ -13,9 +15,9 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// notesWatcher watches a directory tree for filesystem changes and calls
+// NotesWatcher watches a directory tree for filesystem changes and calls
 // notify (debounced) whenever a relevant change occurs.
-type notesWatcher struct {
+type NotesWatcher struct {
 	fw     *fsnotify.Watcher
 	mu     sync.Mutex
 	timer  *time.Timer
@@ -23,13 +25,15 @@ type notesWatcher struct {
 	done   chan struct{}
 }
 
-func newNotesWatcher(root string, notify func()) (*notesWatcher, error) {
+// New starts a NotesWatcher rooted at root, invoking notify (debounced) on
+// every relevant filesystem change.
+func New(root string, notify func()) (*NotesWatcher, error) {
 	fw, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
 	}
 
-	w := &notesWatcher{
+	w := &NotesWatcher{
 		fw:     fw,
 		notify: notify,
 		done:   make(chan struct{}),
@@ -46,7 +50,7 @@ func newNotesWatcher(root string, notify func()) (*notesWatcher, error) {
 	return w, nil
 }
 
-func (w *notesWatcher) addRecursive(root string) error {
+func (w *NotesWatcher) addRecursive(root string) error {
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip unreadable entries, keep walking
@@ -63,7 +67,7 @@ func (w *notesWatcher) addRecursive(root string) error {
 	})
 }
 
-func (w *notesWatcher) run() {
+func (w *NotesWatcher) run() {
 	defer close(w.done)
 	for {
 		select {
@@ -90,7 +94,7 @@ func (w *notesWatcher) run() {
 
 // schedule debounces the notify call — coalesces rapid bursts of events
 // (e.g. an editor writing multiple temp files) into a single callback.
-func (w *notesWatcher) schedule() {
+func (w *NotesWatcher) schedule() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.timer != nil {
@@ -105,7 +109,7 @@ func (w *notesWatcher) schedule() {
 	})
 }
 
-func (w *notesWatcher) Close() {
+func (w *NotesWatcher) Close() {
 	w.fw.Close()
 	<-w.done
 }

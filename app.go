@@ -21,8 +21,10 @@ import (
 	"sieve/sieve/ai"
 	"sieve/sieve/domain"
 	"sieve/sieve/services"
+	"sieve/sse"
 	"sieve/store"
 	"sieve/store/filestore"
+	"sieve/watcher"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/net/html"
@@ -42,15 +44,15 @@ type App struct {
 
 	library  services.LibraryService // owns library discovery, recents, naming
 	themesFS fs.FS
-	hub      *sseHub
-	watcher  *notesWatcher
+	hub      *sse.Hub
+	watcher  *watcher.NotesWatcher
 	closing  bool
 	mu       sync.Mutex
 
 	DevServerPort int
 }
 
-func NewApp(storePath string, themesFS fs.FS, hub *sseHub, serviceProvider *sieve.ServiceProvider, library services.LibraryService) *App {
+func NewApp(storePath string, themesFS fs.FS, hub *sse.Hub, serviceProvider *sieve.ServiceProvider, library services.LibraryService) *App {
 	hostname, _ := os.Hostname()
 	if hostname == "" {
 		hostname = "localhost"
@@ -184,7 +186,7 @@ func (a *App) startup(ctx context.Context) {
 	a.library.Attach(a.storePath, fs)
 	a.library.RecordSwitch(a.storePath)
 	a.ServiceProvider.Library = a.library
-	a.hub.broadcast("library:changed", "")
+	a.hub.Broadcast("library:changed", "")
 
 	logger.Info("store ready",
 		"root", a.storePath,
@@ -212,11 +214,11 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	// File-system watcher for notes.
-	w, err := newNotesWatcher(a.notesDir(), func() {
+	w, err := watcher.New(a.notesDir(), func() {
 		logger.Debug("notes changed — emitting event")
 		runtime.EventsEmit(a.ctx, "notes:changed")
 		if a.hub != nil {
-			a.hub.broadcast("notes:changed", "{}")
+			a.hub.Broadcast("notes:changed", "{}")
 		}
 	})
 	if err != nil {

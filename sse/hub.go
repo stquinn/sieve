@@ -1,4 +1,6 @@
-package main
+// Package sse implements the server-sent-events fan-out hub that pushes
+// live UI events (notes:changed, session:changed, …) to connected clients.
+package sse
 
 import (
 	"fmt"
@@ -6,16 +8,19 @@ import (
 	"sync"
 )
 
-type sseHub struct {
+// Hub is a server-sent-events fan-out: clients subscribe over /sse and
+// receive every broadcast message.
+type Hub struct {
 	mu      sync.RWMutex
 	clients map[chan string]struct{}
 }
 
-func newSSEHub() *sseHub {
-	return &sseHub{clients: make(map[chan string]struct{})}
+// NewHub returns a ready-to-use SSE Hub.
+func NewHub() *Hub {
+	return &Hub{clients: make(map[chan string]struct{})}
 }
 
-func (h *sseHub) subscribe() chan string {
+func (h *Hub) subscribe() chan string {
 	ch := make(chan string, 32)
 	h.mu.Lock()
 	h.clients[ch] = struct{}{}
@@ -23,14 +28,16 @@ func (h *sseHub) subscribe() chan string {
 	return ch
 }
 
-func (h *sseHub) unsubscribe(ch chan string) {
+func (h *Hub) unsubscribe(ch chan string) {
 	h.mu.Lock()
 	delete(h.clients, ch)
 	h.mu.Unlock()
 	close(ch)
 }
 
-func (h *sseHub) broadcast(event, data string) {
+// Broadcast delivers an SSE event to every subscribed client. Slow clients
+// are skipped rather than blocking the caller.
+func (h *Hub) Broadcast(event, data string) {
 	msg := fmt.Sprintf("event: %s\ndata: %s\n\n", event, data)
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -42,7 +49,9 @@ func (h *sseHub) broadcast(event, data string) {
 	}
 }
 
-func (h *sseHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// ServeHTTP streams events to a single subscribed client until the request
+// context is cancelled.
+func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")

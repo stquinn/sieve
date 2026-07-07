@@ -1,7 +1,6 @@
 package main
 
 import (
-	"embed"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -12,24 +11,18 @@ import (
 	"sieve/sieve"
 	"sieve/sieve/domain"
 	"sieve/sieve/services"
-	"strconv"
+	"sieve/sse"
 
 	"github.com/go-chi/chi/v5"
 )
 
-//go:embed frontend/src/templates
-var uiTemplates embed.FS
-
-//go:embed frontend/src/static
-var uiStatic embed.FS
-
-//go:embed frontend/src/index.html
-var uiIndexHTML string
-
-// apiHandler owns the chi router, templates, SSE hub, and static files.
+// apiHandler owns the chi router, templates, SSE hub, and static files. It is
+// bound to *App (composition root) because handleIndex reads live store state,
+// so it stays in package main; the per-concern request handlers it mounts live
+// in the requesthandlers package (see requesthandlers.Registry).
 type apiHandler struct {
 	app    *App
-	hub    *sseHub
+	hub    *sse.Hub
 	tmpl   *template.Template
 	static http.Handler
 	routes *chi.Mux
@@ -88,7 +81,7 @@ func promptVarsForType(t string) []promptVarDef {
 	return m[t]
 }
 
-func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandler, error) {
+func newAPIHandler(app *App, hub *sse.Hub, sp *sieve.ServiceProvider) (*apiHandler, error) {
 	tmpl := template.New("").Funcs(template.FuncMap{
 		"indent": func(depth int) string {
 			return fmt.Sprintf("%.2frem", 0.75+float64(depth)*1.0)
@@ -120,69 +113,19 @@ func newAPIHandler(app *App, hub *sseHub, sp *sieve.ServiceProvider) (*apiHandle
 		static: http.FileServer(http.FS(staticFS)),
 	}
 	jobTracker := services.NewJobTracker()
-	jobTracker.Broadcast = hub.broadcast
+	jobTracker.Broadcast = hub.Broadcast
 	sp.Jobs = jobTracker
 	// NOTE: the JobEngine and the Editor's SetJobs/SetEngine/SetAI wiring live in
 	// ServiceProvider.Init (runs at Wails startup, AFTER this) — that is where
 	// State/AI/Editor exist. Doing it here nil-derefs: sp is an empty struct until
 	// Init. Init consumes sp.Jobs (the hub-wired tracker set just above).
-	requestHandlers := []requesthandlers.RequestHandler{
-		&requesthandlers.SideBarHandler{ServiceProvider: sp, Tmpl: tmpl},
-		&requesthandlers.TabHandler{ServiceProvider: sp, Tmpl: tmpl},
-		&requesthandlers.ContextMenuHandler{
-			ServiceProvider: sp,
-			Tmpl:            tmpl,
-			EmitNotesChanged: func() {
-				hub.broadcast("notes:changed", "{}")
-			},
-			EmitPromptsChanged: func() {
-				hub.broadcast("prompts:changed", "{}")
-			},
-		},
-		&requesthandlers.MetaHandler{
-			ServiceProvider: sp,
-			Tmpl:            tmpl,
-			EmitNotesChanged: func() {
-				logger.Info("MetaHandler: notes changed event")
-				hub.broadcast("notes:changed", "{}")
-			},
-		},
-		&requesthandlers.EditorHandler{ServiceProvider: sp, Tmpl: tmpl, Broadcast: hub.broadcast},
-		&requesthandlers.SettingsHandler{ServiceProvider: sp, Tmpl: tmpl},
-		&requesthandlers.HelpHandler{Tmpl: tmpl},
-		&requesthandlers.SearchHandler{ServiceProvider: sp, Tmpl: tmpl},
-		&requesthandlers.AssetHandler{ServiceProvider: sp},
-		&requesthandlers.PromptsHandler{ServiceProvider: sp, Tmpl: tmpl},
-		&requesthandlers.SessionHandler{
-			ServiceProvider: sp,
-			Broadcast:       hub.broadcast,
-		},
-		&requesthandlers.NoteHandler{
-			ServiceProvider: sp,
-			Tmpl:            tmpl,
-			EmitSessionChanged: func() {
-				hub.broadcast("session:changed", "{}")
-			},
-		},
-		&requesthandlers.AiHandler{
-			ServiceProvider: sp,
-			JobTracker:      jobTracker,
-			EmitNotesChanged: func() {
-				logger.Info("AI: notes changed event")
-				hub.broadcast("notes:changed", "{}")
-			},
-			Broadcast: hub.broadcast,
-		},
-		requesthandlers.NewWsHandler(sp),
-		&requesthandlers.LibraryHandler{
-			Tmpl:            tmpl,
-			ServiceProvider: sp,
-		},
-	}
 	r := chi.NewRouter()
-	for _, requestHandler := range requestHandlers {
-		requestHandler.RegisterPaths(r)
-	}
+	requesthandlers.Registry{
+		ServiceProvider: sp,
+		Tmpl:            tmpl,
+		Broadcast:       hub.Broadcast,
+		Jobs:            jobTracker,
+	}.Mount(r)
 	r.Get("/sse", h.hub.ServeHTTP)
 	r.Handle("/static/*", http.StripPrefix("/static", h.static))
 	r.Get("/", h.handleIndex)
@@ -275,173 +218,4 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if err := tmpl.Execute(w, data); err != nil {
 		logger.Error("failed to execute index template", "err", err)
 	}
-}
-
-// ── Note & Tab Operations ───────────────────────────────────────────────────
-
-func (h *apiHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	session := h.app.ServiceProvider.State.LoadSession()
-
-	newTabs := []domain.Tab{}
-	for _, t := range session.Tabs {
-		if t.ID != id {
-			newTabs = append(newTabs, t)
-		}
-	}
-	session.Tabs = newTabs
-	if session.ActiveIdx >= len(session.Tabs) {
-		session.ActiveIdx = len(session.Tabs) - 1
-	}
-	if session.ActiveIdx < 0 && len(session.Tabs) > 0 {
-		session.ActiveIdx = 0
-	}
-
-	if len(session.Tabs) == 0 {
-		dto, _ := h.app.ServiceProvider.Documents.New()
-		session.Tabs = []domain.Tab{{ID: dto.UUID(), Mode: "wysiwyg"}}
-		session.ActiveIdx = 0
-	}
-
-	_ = h.app.ServiceProvider.State.SaveSession(session)
-
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-	if err := h.tmpl.ExecuteTemplate(w, "tabbar.html", session); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	activeID := session.Tabs[session.ActiveIdx].ID
-	fmt.Fprintf(w, `<div id="htmx-editor" hx-swap-oob="true" class="editor-wrapper" style="flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column;">
-		<div id="tiptap-mount" data-uuid="%s" data-mode="wysiwyg" style="flex: 1; min-height: 0; height: 100%%; display: flex; flex-direction: column;"></div>
-	</div>`, activeID)
-}
-
-func (h *apiHandler) handleTabsReorder(w http.ResponseWriter, r *http.Request) {
-	fromStr := r.FormValue("from")
-	toStr := r.FormValue("to")
-
-	fromIdx, _ := strconv.Atoi(fromStr)
-	toIdx, _ := strconv.Atoi(toStr)
-
-	session := h.app.ServiceProvider.State.LoadSession()
-	if fromIdx < 0 || fromIdx >= len(session.Tabs) || toIdx < 0 || toIdx > len(session.Tabs) {
-		http.Error(w, "invalid indices", http.StatusBadRequest)
-		return
-	}
-
-	tabs := session.Tabs
-	moved := tabs[fromIdx]
-
-	tabs = append(tabs[:fromIdx], tabs[fromIdx+1:]...)
-
-	if toIdx > fromIdx {
-		toIdx--
-	}
-
-	tabs = append(tabs[:toIdx], append([]domain.Tab{moved}, tabs[toIdx:]...)...)
-	session.Tabs = tabs
-
-	activeIdx := session.ActiveIdx
-	if activeIdx == fromIdx {
-		activeIdx = toIdx
-	} else if activeIdx > fromIdx && activeIdx <= toIdx {
-		activeIdx--
-	} else if activeIdx < fromIdx && activeIdx >= toIdx {
-		activeIdx++
-	}
-	session.ActiveIdx = activeIdx
-
-	_ = h.app.ServiceProvider.State.SaveSession(session)
-
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.tmpl.ExecuteTemplate(w, "tabbar.html", session); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
-// ── Session & Layout Operations ───────────────────────────────────────────────
-
-func (h *apiHandler) handleSidebarToggle(w http.ResponseWriter, r *http.Request) {
-	session := h.app.ServiceProvider.State.LoadSession()
-	session.ShowSidebar = !session.ShowSidebar
-	_ = h.app.ServiceProvider.State.SaveSession(session)
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<style id="layout-overrides" hx-swap-oob="true">
-		#app-root {
-			--sidebar-w: %dpx;
-		}
-		#htmx-sidebar {
-			display: %s;
-		}
-	</style>`, map[bool]int{true: session.SidebarWidth, false: 0}[session.ShowSidebar],
-		map[bool]string{true: "block", false: "none"}[session.ShowSidebar])
-}
-
-func (h *apiHandler) handleMetaToggle(w http.ResponseWriter, r *http.Request) {
-	session := h.app.ServiceProvider.State.LoadSession()
-	session.ShowMeta = !session.ShowMeta
-	_ = h.app.ServiceProvider.State.SaveSession(session)
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<style id="layout-overrides" hx-swap-oob="true">
-		#app-root {
-			--meta-w: %dpx;
-		}
-		#htmx-meta-panel {
-			display: %s;
-		}
-	</style>`, map[bool]int{true: session.MetaWidth, false: 0}[session.ShowMeta],
-		map[bool]string{true: "flex", false: "none"}[session.ShowMeta])
-}
-
-func (h *apiHandler) handlePromptsToggle(w http.ResponseWriter, r *http.Request) {
-	session := h.app.ServiceProvider.State.LoadSession()
-	session.ShowPrompts = !session.ShowPrompts
-	_ = h.app.ServiceProvider.State.SaveSession(session)
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<style id="layout-overrides" hx-swap-oob="true">
-		#prompts-panel {
-			display: %s;
-		}
-	</style>`, map[bool]string{true: "block", false: "none"}[session.ShowPrompts])
-}
-
-func (h *apiHandler) handleSessionLayout(w http.ResponseWriter, r *http.Request) {
-	session := h.app.ServiceProvider.State.LoadSession()
-
-	if wStr := r.FormValue("sidebarWidth"); wStr != "" {
-		if wInt, err := strconv.Atoi(wStr); err == nil {
-			session.SidebarWidth = wInt
-		}
-	}
-	if wStr := r.FormValue("metaWidth"); wStr != "" {
-		if wInt, err := strconv.Atoi(wStr); err == nil {
-			session.MetaWidth = wInt
-		}
-	}
-	if hStr := r.FormValue("promptsHeight"); hStr != "" {
-		if hInt, err := strconv.Atoi(hStr); err == nil {
-			session.PromptsHeight = hInt
-		}
-	}
-
-	_ = h.app.ServiceProvider.State.SaveSession(session)
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *apiHandler) handleSessionRefresh(w http.ResponseWriter, r *http.Request) {
-	info := h.app.GetStoreInfo()
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<script hx-swap-oob="true">
-		var root = document.documentElement;
-		var themeName = "%s";
-		root.className = root.className.replace(/theme-\S+/, 'theme-' + themeName);
-	</script>`, info.ThemeName)
 }

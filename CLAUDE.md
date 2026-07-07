@@ -20,7 +20,8 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 | **Domain leaf types** (persistent) | `sieve/domain/` (Document, Buffer, Note, Session, Settings, Categories, ImageAsset, FilingRecommendation, ImageDesc, LinkPreviewResult) |
 | **Services** (persistence + editor) | `sieve/services/` (DocumentService, AssetService, StateService, JobTracker, LinkPreviewService, LibraryService, EditorService) |
 | **AI subsystem** | `sieve/ai/` (AIService, cli.go=RunCLI [future API-backend swap point], prompts, eval helpers, image_localise) |
-| HTTP router + handler registration | `handlers.go` |
+| HTTP router assembly (App-bound: index + /sse + /static wiring) | `handlers.go` (root, `apiHandler`) |
+| Request-handler registration (builds & mounts all handlers) | `requesthandlers/registry.go` (`Registry.Mount`) |
 | One file per HTTP concern | `requesthandlers/*.go` |
 | Go HTML templates (HTMX fragments) | `frontend/src/templates/*.html` |
 | Static JS/CSS | `frontend/src/static/` |
@@ -29,8 +30,8 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 | Custom TipTap extensions (vanilla JS) | `frontend/src/static/extensions.js` |
 | Pre-built TipTap core bundle | `frontend/src/static/vendor/tiptap.js` |
 | Store abstraction + FileStore | `store/interfaces.go`, `store/filestore/` |
-| SSE hub | `sse.go` |
-| File watcher | `watcher.go` |
+| SSE hub | `sse/` (package `sse`: `Hub`, `NewHub`) |
+| File watcher | `watcher/` (package `watcher`: `NotesWatcher`, `New`) |
 | Tech debt register | `docs/TECH-DEBT.md` |
 | **Editor interaction contract (NORMATIVE)** | `docs/editor-interaction-contract.md` |
 | **Docs layout** | `docs/` root = long-lived contracts, behaviour specs, living registers, how-tos. `docs/design/` = design history: brainstorms + `specs/` + `plans/` (legacy) + `archive/`. `docs/design/specs/` = design/decision docs (thin: problem, decision, architecture, rationale); header carries `Tracked: #N` when work is active. Plans are Forgejo issues, NOT files (epic issue + per-phase issues for large work; drafted in scratchpad → posted via `tea api`; reviewed on the issue) — `docs/design/plans/` holds legacy plans only, never add to it. Completed/superseded specs are stamped with a status banner and `git mv`'d to `docs/design/archive/specs/` in the same change that closes their issue. |
@@ -64,7 +65,7 @@ go build ./...   # compile check — no npm step required
 **TipTap bundle:** rebuild only when TipTap core/deps change: `npm run bundle:tiptap` in `frontend/`.
 Custom extensions live in `extensions.js` (vanilla JS) — they are NOT in the bundle.
 
-**Embeds** (in `handlers.go`):
+**Embeds** (in `embeds.go` — go:embed paths are relative to the declaring file and cannot climb, so these stay at root and are threaded into `newAPIHandler`):
 - `//go:embed frontend/src/templates` → Go templates
 - `//go:embed frontend/src/static` → static files served at `/static/`
 - `//go:embed frontend/src/index.html` → app shell
@@ -73,7 +74,7 @@ Custom extensions live in `extensions.js` (vanilla JS) — they are NOT in the b
 
 ## Architecture in One Paragraph
 
-`main.go` builds a chi router and SSE hub. `handlers.go` registers each `RequestHandler` (one struct per concern in `requesthandlers/`). Handlers call `sieve.ServiceProvider` (the composition root, package `sieve`) which constructs the concrete services and wires them into `block.BlockServices` as **port interfaces**. The block model (`block/`: SieveBlock, DocumentCodec, RegionScanner, ShadowDocument) is a leaf that depends only on `domain/` — processors and services depend on it, never the reverse. `ai/` (AIService + CLI) implements `block.AIPort`. The Store abstraction (`store.Store`) is the only layer that touches disk — `filestore.FileStore` implements it. The frontend is HTMX: Go templates render HTML fragments on request; SSE events (`notes:changed`, `session:changed`, etc.) trigger HTMX swaps. TipTap runs as a vanilla JS island (`editor.js`) mounted in `#editor-container`.
+`main.go` constructs the SSE hub (`sse.NewHub`, package `sse`) and the `App`, then builds the root `apiHandler` (`handlers.go`). `apiHandler` owns the chi router and the index/`/sse`/`/static` wiring (it stays in package main because it reads live `App` store state); it delegates registration of the per-concern `RequestHandler`s (one struct per concern in `requesthandlers/`) to `requesthandlers.Registry.Mount`. The file watcher lives in package `watcher` (`watcher.New`), constructed by `App` at startup. Handlers call `sieve.ServiceProvider` (the composition root, package `sieve`) which constructs the concrete services and wires them into `block.BlockServices` as **port interfaces**. The block model (`block/`: SieveBlock, DocumentCodec, RegionScanner, ShadowDocument) is a leaf that depends only on `domain/` — processors and services depend on it, never the reverse. `ai/` (AIService + CLI) implements `block.AIPort`. The Store abstraction (`store.Store`) is the only layer that touches disk — `filestore.FileStore` implements it. The frontend is HTMX: Go templates render HTML fragments on request; SSE events (`notes:changed`, `session:changed`, etc.) trigger HTMX swaps. TipTap runs as a vanilla JS island (`editor.js`) mounted in `#editor-container`.
 
 ---
 

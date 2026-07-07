@@ -17,6 +17,7 @@ import (
 	"sieve/logger"
 	"sieve/sieve"
 	"sieve/sieve/services"
+	"sieve/sse"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/menu"
@@ -343,7 +344,7 @@ func main() {
 	libSvc := services.NewLibraryService(configRecorder{}, ValidateStore)
 	storePath := libSvc.BestOnStartup(cliArg, os.Getenv("SIEVE_STORE"))
 
-	hub := newSSEHub()
+	hub := sse.NewHub()
 	serviceProvider := &sieve.ServiceProvider{}
 	app := NewApp(storePath, themes, hub, serviceProvider, libSvc)
 	api, err := newAPIHandler(app, hub, serviceProvider)
