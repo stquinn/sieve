@@ -141,9 +141,11 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 
 **Cleanup (done in this F-A close-out):** the `toMarkdown` registry field on `ProseBlock` had no production call site and was removed; three stale comments (`prose-group.js`, `block-chrome.js`, `editor.js`) were fixed in the same cleanup commit.
 
-## T-A: Flaky test — `TestHandleBlockUpdate_notifySendsSnapshotUnderLock`
+## T-A: Flaky test — `TestHandleBlockUpdate_notifySendsSnapshotUnderLock` — ✅ RETIRED 2026-07-07
 
-**What:** This `sieve/services` test flakes (~1-in-3) with `TempDir RemoveAll cleanup: ... directory not empty` — a teardown race: a watcher/async writer still touching the test's `buffers/` dir when `t.TempDir()` cleanup runs. It is NOT a logic failure (the assertions pass; only the teardown errors) and is **pre-existing** — it flakes identically on clean `main`/`HEAD` with no relation to any block-model change (verified by stash-test). 
+**RETIRED 2026-07-07.** The flake was a shared-harness teardown race, not that one test: `EditorService.DispatchJobIfNeeded` spawned job goroutines UNTRACKED; a completing job's `applyJobUpdate` does `MergeBlock` then `flushShadow`→`Save` into the test's temp `buffers/`; the `waitJobs` helper polled block STATUS, which leaves PENDING/DISPATCHED before the goroutine's Save finishes — so an in-flight Save recreated files during `t.TempDir()` RemoveAll. Fix: `EditorService` gains a `jobsWG sync.WaitGroup` tracking dispatched job goroutines and a `WaitForJobs()` drain seam; `waitJobs` delegates to it; `CloseAll()` now also drains jobs (production improvement — retiring the service, e.g. library switch, can no longer leave a completing job writing against an abandoned store). Verified `-count=30 -race` on the named test and `-count=20 -race` package-wide.
+
+**What (historical):** This `sieve/editor` test (`TestHandleBlockOp_updateNotifySendsMergedSnapshotUnderLock`, `editor_service_test.go`) flakes (~1-in-3) with `TempDir RemoveAll cleanup: ... directory not empty` — a teardown race: a watcher/async writer still touching the test's `buffers/` dir when `t.TempDir()` cleanup runs. It is NOT a logic failure (the assertions pass; only the teardown errors) and is **pre-existing** — it flakes identically on clean `main`/`HEAD` with no relation to any block-model change (verified by stash-test).
 
 **Why deferred:** cosmetic test-infra flake, not a product bug; the suite is otherwise green. **Retires when:** the test stops the watcher / drains async writers before returning (so cleanup has no live handles), or uses a non-`t.TempDir` dir it removes explicitly after quiescing.
 
@@ -179,11 +181,11 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 
 **RESOLVED:** Two reasons a sieve block resisted Backspace/Delete, forcing the context-menu Delete: (1) a **gutter block-range** lives in the `blockChrome` plugin state (a `{from,to}` pair), NOT a PM selection — a PM `TextSelection` snaps off the `contentEditable=false` sieve atoms — so PM's deleteSelection saw only a collapsed caret. Added `blockChrome` `handleKeyDown`: Backspace/Delete over an active block-range `tr.delete`s the exact doc range (a plain text selection still falls through to PM). (2) The **ai-block** NodeView plugin swallowed Backspace/Delete whenever the selection merely *overlapped* the block (its read-only-body guard used `nodesBetween`), so a wholly-selected ai-block couldn't be deleted. Narrowed the guard (`deleteEditsAiBody`): a NodeSelection on the block, or a selection that fully *contains* it, is a whole-block delete (allowed, undoable); only a selection that *partially* overlaps the body — which would edit the read-only response text — is blocked. Enter + typing stay blocked on any overlap (they change text). The caret CAN enter the body (children render as editable text), so the guard remains load-bearing for in-body edits.
 
-## C-W: `block-update` is not yet a `block-op`
+## C-W: `block-update` is not yet a `block-op` — ✅ RETIRED 2026-06-24
 
-**What:** Structured block edits (`sieve:block-update` → `handleBlockUpdate`) still ride a bespoke WS message that merges partial attrs + runs `OnChange` + dispatches the job + notifies — a path parallel to `block-op`. It is the last of the three pre-block-op mutation messages in `ws_handler.go` (`create-block` retired 2026-06-21; `doc-update` legitimately kept as the markdown-mode verbatim path).
+**RETIRED:** Converged onto `block-op {update-block}` (commit `47525b4`, merged via PR #17, merge commit `02b4ce8`). `HandleBlockOp`'s update case now runs the full uniform pipeline: structured partial-attrs merge + `OnChange` + job dispatch + notify. `handleBlockUpdate` and the `case "block-update"` are removed from `requesthandlers/ws_handler.go`; `sieve:block-update` on the frontend now emits `block-op {op: "update-block"}` instead. `block-op` is now the single granular mutation path (create/update/delete); only `doc-update` (markdown-mode verbatim) remains beside it.
 
-**Why deferred:** the create convergence landed first; update is its mirror. **Retires when:** folded into `block-op {update-block}` — `HandleBlockOp`'s update case gains the structured merge + `OnChange` + dispatch + notify (`applyOpTo` currently *replaces* attrs and does none of that), and `sieve:block-update` emits the op. Then `block-op` is the single granular mutation path (create/update/delete) and only `doc-update` (markdown mode) remains beside it.
+**Original — What:** Structured block edits (`sieve:block-update` → `handleBlockUpdate`) still rode a bespoke WS message that merged partial attrs + ran `OnChange` + dispatched the job + notified — a path parallel to `block-op`. It was the last of the three pre-block-op mutation messages in `ws_handler.go` (`create-block` retired 2026-06-21; `doc-update` legitimately kept as the markdown-mode verbatim path).
 
 ## U-A: Editor-layout affordances need a holistic re-look — DEFERRED to a Stage E/F re-brainstorm (2026-06-29)
 
@@ -197,9 +199,11 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 
 **Retires when:** Stage F is planned and built — re-brainstorm §8 against what was learned building the block model, then implement the unified gutter language (participation tick + on-hover bracket-chain connectors, positioned in the gutter gap left of the line number), with dirty-glow following the reconciler project.
 
-## C-T: Stale test files pin retired designs
+## C-T: Stale test files pin retired designs — ✅ RETIRED 2026-07-07
 
-**What:** Two vitest files assert behavior of designs that were since retired and should be deleted or rewritten to the current model: `frontend/test/render-exact-shadow.test.js` and `frontend/test/proseidentity-loop.test.js` (they pin pre-node-granular / pre-`proseGroup` expectations). They currently pass but encode obsolete intent.
+**RETIRED:** 2026-07-07 — resolved by earlier work, verified today. `frontend/test/render-exact-shadow.test.js` was already deleted in commit `d6f6d94` (its concern — exact server-shadow render with synthetic trailing node / proseIdentity delete — retired when TrailingNode was dropped). `frontend/test/proseidentity-loop.test.js` was already rewritten during the B-A close-out and now pins the CURRENT token→mint→ack model (transient `tok-…` stamps, split-copy clears via `dedupeActions`, convergence guard) — verified assertion-by-assertion 2026-07-07; it stays.
+
+**What (historical):** Two vitest files assert behavior of designs that were since retired and should be deleted or rewritten to the current model: `frontend/test/render-exact-shadow.test.js` and `frontend/test/proseidentity-loop.test.js` (they pin pre-node-granular / pre-`proseGroup` expectations). They currently pass but encode obsolete intent.
 
 **Why deferred:** cosmetic/test-hygiene, not a product bug. **Retires when:** each is reviewed against the current block model and deleted (if its concern is now covered elsewhere) or rewritten. Moved here from the archived plan.
 
