@@ -99,8 +99,9 @@ Phase-2 contract tests above, plus unit tests for the registry type and generato
 2. **API surface consolidation** — see amendment below. Executed against the phase-1 registry + contract tests; frontend `hx-*` attributes and `fetch()` calls updated in the same change.
 3. `tools/protocolgen` + the four artifacts + `editor.js` constant switch-over.
 4. Contract-test suite.
-5. Dev API test ground page.
-6. CLAUDE.md upkeep rules.
+5. CLAUDE.md upkeep rules.
+
+(The dev API test ground page is no longer a phase of this work — it is a consumer of the finished contract with nothing depending on it; tracked separately in issue #20.)
 
 ---
 
@@ -147,3 +148,7 @@ Current routes: `POST /api/ai/keepAndFile/{uuid}`, `POST /api/ai/smartFile/{id}`
 ### Guardrail
 
 Target: ≤ 30 operational routes after consolidation (excluding the ~20 fragment-view GETs and the WS/asset endpoints). Do **not** collapse into a generic `POST /api/do {action}` RPC — typed request structs are the point of the contract work.
+
+### Split (2026-07-07)
+
+The dev API test ground (`/api/docs`) is tracked separately in issue #20 — it is pure tooling, a consumer of the finished contract, and no phase of this work depends on it.
