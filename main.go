@@ -53,7 +53,7 @@ func (h *storeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	root := h.app.library.StorePath()
+	root := h.app.getStorePath()
 	if root == "" {
 		http.Error(w, "store not initialized", http.StatusServiceUnavailable)
 		return
@@ -119,7 +119,7 @@ func (m *muxHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Try serving from store root as a fallback for relative markdown images
-	storeRoot := m.app.library.StorePath()
+	storeRoot := m.app.getStorePath()
 	if storeRoot != "" {
 		abs, _ := filepath.Abs(storeRoot)
 		rel := filepath.FromSlash(strings.TrimPrefix(r.URL.Path, "/"))
@@ -219,10 +219,10 @@ func (m *muxHandler) serveThemeCSS(w http.ResponseWriter, _ *http.Request) {
 	if m.app.ServiceProvider.State != nil {
 		settings := m.app.ServiceProvider.State.LoadSettings()
 		themeName = settings.Theme
-		themeOverride = m.app.library.ThemeOverride(themeName)
+		themeOverride = m.app.loadThemeOverride(themeName)
 	}
 
-	vars := sieve.LoadTheme(themeName, themeOverride, m.app.library.ThemesFS())
+	vars := sieve.LoadTheme(themeName, themeOverride, m.app.getThemesFS())
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("html:root {\n"))
@@ -343,11 +343,12 @@ func main() {
 		cliArg = os.Args[1]
 	}
 	recorder := config.Recorder{}
+	libSvc := services.NewLibraryService(recorder, recorder.ValidateStore)
+	storePath := libSvc.BestOnStartup(cliArg, os.Getenv("SIEVE_STORE"))
+
 	hub := sse.NewHub()
 	serviceProvider := &sieve.ServiceProvider{}
-	library := sieve.NewLibraryService(recorder, recorder.ValidateStore, serviceProvider, hub.Broadcast, themes)
-	library.SetStorePath(library.BestOnStartup(cliArg, os.Getenv("SIEVE_STORE")))
-	app := NewApp(hub, serviceProvider, library)
+	app := NewApp(storePath, themes, hub, serviceProvider, libSvc)
 	api, err := newAPIHandler(app, hub, serviceProvider)
 	if err != nil {
 		logger.Error("failed to init API handler", "err", err)

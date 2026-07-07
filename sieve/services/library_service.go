@@ -1,8 +1,10 @@
 package services
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"unicode"
 )
 
@@ -15,23 +17,11 @@ type Library struct {
 	Name string `json:"name"`
 }
 
-// LibraryService is the single abstraction for all library-level operations:
-// discovery (which library to open on startup), recents, validation, naming, AND
-// the lifecycle of opening, switching and initialising a library. Everything
-// above this layer — App, handlers, menus — talks only to LibraryService.
-// Swapping the backing store means a new implementation, not rewired callers.
-//
-// There is exactly ONE implementation: sieve.FileLibraryService (the file-backed
-// store). It lives in package sieve rather than here because Open must call
-// ServiceProvider.Init and construct a concrete filestore.FileStore, which
-// package services cannot import without a cycle. The narrow collaborator
-// contracts it depends on (LibraryNamer, LibraryRecorder, Library) and the
-// LibraryDisplayName helper stay here so the config package can reuse them.
-//
-// Path/layout knowledge (notes dir, resolve, theme override) is deliberately NOT
-// on this interface — that is file-backend specific and would break the "Ref is
-// opaque" contract for a future S3/URL backend. The concrete implementation
-// exposes those as extra methods that only App (composition-root adjacent) holds.
+// LibraryService is the single abstraction for all library-level operations.
+// It owns discovery (which library to open on startup), recents, validation,
+// and naming. Everything above this layer — App, handlers, menus — talks only
+// to LibraryService. Swapping the backing store means a new implementation, not
+// rewired callers.
 type LibraryService interface {
 	// BestOnStartup returns the ID of the best library to open given optional
 	// CLI arg and environment variable overrides. It checks those, then recents,
@@ -57,20 +47,6 @@ type LibraryService interface {
 
 	// DisplayName derives a human-readable name from an opaque library ID.
 	DisplayName(id string) string
-
-	// Open resolves, validates and opens the library at path, wiring services
-	// and broadcasting library:changed on success. Returns the resolved library
-	// ID, or "" if it fell back to bootstrap mode (no valid library). The
-	// isFirstStartup flag enables the recents/cwd fallback used on cold start.
-	Open(path string, isFirstStartup bool) (string, error)
-
-	// Switch closes the active editor then opens the library at path. Returns the
-	// resolved ID, or an error if path is invalid or fails to load.
-	Switch(path string) (string, error)
-
-	// InitAt creates the directory at path (expanding a leading ~), opens it as a
-	// library, and records it as the last-used store in global config.
-	InitAt(path string) error
 }
 
 // LibraryNamer is the narrow store-layer contract required by LibraryService.
@@ -112,4 +88,109 @@ func LibraryDisplayName(id string) string {
 		}
 	}
 	return strings.Join(words, " ")
+}
+
+// NewLibraryService constructs the LibraryService.
+//   - recorder: persists the machine-level recents list (config.GlobalConfig)
+//   - validate:  reports whether an ID can be opened (config.Recorder.ValidateStore)
+//
+// Call Attach after opening the store so Current() can read the library name.
+func NewLibraryService(recorder LibraryRecorder, validate func(string) error) LibraryService {
+	return &fileLibraryService{
+		recorder: recorder,
+		validate: validate,
+	}
+}
+
+type fileLibraryService struct {
+	// mu guards currentID and namer, which are written by Attach/RecordSwitch on
+	// the startup goroutine and read by Current/Recent on HTTP goroutines (the
+	// status-bar chip refetches via /api/library/current on library:changed).
+	// recorder and validate are set once at construction and never mutated.
+	mu        sync.RWMutex
+	currentID string
+	namer     LibraryNamer // nil until Attach is called
+	recorder  LibraryRecorder
+	validate  func(string) error
+}
+
+func (s *fileLibraryService) BestOnStartup(cliArg, envVar string) string {
+	if cliArg != "" {
+		return cliArg
+	}
+	if envVar != "" {
+		if s.validate == nil || s.validate(envVar) == nil {
+			return envVar
+		}
+	}
+	// Walk recents — return first one that still validates.
+	for _, lib := range s.recorder.Recent() {
+		if s.validate == nil || s.validate(lib.Ref) == nil {
+			return lib.Ref
+		}
+	}
+	// Legacy fallback: last-used path from older config format.
+	if last := s.recorder.LastUsed(); last != "" {
+		if s.validate == nil || s.validate(last) == nil {
+			return last
+		}
+	}
+	// Final fallback: current working directory.
+	if cwd, err := os.Getwd(); err == nil {
+		if s.validate == nil || s.validate(cwd) == nil {
+			return cwd
+		}
+	}
+	return ""
+}
+
+func (s *fileLibraryService) Attach(id string, namer LibraryNamer) {
+	s.mu.Lock()
+	s.currentID = id
+	s.namer = namer
+	s.mu.Unlock()
+}
+
+func (s *fileLibraryService) Current() Library {
+	s.mu.RLock()
+	id, namer := s.currentID, s.namer
+	s.mu.RUnlock()
+	name := ""
+	if namer != nil {
+		name = namer.LibraryName()
+	}
+	if name == "" {
+		name = LibraryDisplayName(id)
+	}
+	return Library{Ref: id, Name: name}
+}
+
+func (s *fileLibraryService) Recent() []Library {
+	return s.recorder.Recent()
+}
+
+func (s *fileLibraryService) Validate(id string) error {
+	if s.validate != nil {
+		return s.validate(id)
+	}
+	return nil
+}
+
+func (s *fileLibraryService) RecordSwitch(id string) {
+	s.mu.RLock()
+	namer := s.namer
+	s.mu.RUnlock()
+	s.recorder.SetLastUsed(id)
+	name := ""
+	if namer != nil {
+		name = namer.LibraryName()
+	}
+	if name == "" {
+		name = LibraryDisplayName(id)
+	}
+	s.recorder.AddRecent(Library{Ref: id, Name: name})
+}
+
+func (s *fileLibraryService) DisplayName(id string) string {
+	return LibraryDisplayName(id)
 }

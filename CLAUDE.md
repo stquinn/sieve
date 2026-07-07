@@ -13,8 +13,7 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 
 | What | Where |
 |------|-------|
-| Wails App struct (native shell: ctx, dialogs, watcher, window geometry) | `app.go` |
-| **Library service** (single impl of `services.LibraryService`: discovery/recents/validation/naming + Open/Switch/InitAt lifecycle + file-layout accessors + StoreInfo) | `sieve/sieve/library_service.go` (type `FileLibraryService`, package `sieve` root; interface + collaborators in `sieve/sieve/services/library_service.go`) |
+| Wails App struct + lifecycle | `app.go` |
 | Composition root (DI: wires ports, registers processors) | `sieve/service_provider.go` (package `sieve`, root) |
 | **Block model + codec + registry + ports** | `sieve/block/` (SieveBlock, DocumentCodec, RegionScanner, ShadowDocument, ports.go, processor_registry.go, markdown_parser.go) |
 | **Block processors** (9 concrete flavours) | `sieve/block/processors/` (code, diagram, log, prose, smart-image/link/card, web-clip, ai-block) |
