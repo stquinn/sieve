@@ -96,7 +96,54 @@ Phase-2 contract tests above, plus unit tests for the registry type and generato
 ## Implementation Phases (sketch — detail in the plan)
 
 1. `sieve/protocol` package: constants + structs + registry; refactor `ws_handler.go` and SSE call sites onto it. Pure refactor, wire-identical.
-2. `tools/protocolgen` + the four artifacts + `editor.js` constant switch-over.
-3. Contract-test suite.
-4. Dev API test ground page.
-5. CLAUDE.md upkeep rules.
+2. **API surface consolidation** — see amendment below. Executed against the phase-1 registry + contract tests; frontend `hx-*` attributes and `fetch()` calls updated in the same change.
+3. `tools/protocolgen` + the four artifacts + `editor.js` constant switch-over.
+4. Contract-test suite.
+5. Dev API test ground page.
+6. CLAUDE.md upkeep rules.
+
+---
+
+## Amendment 2026-07-07 — API surface consolidation (new phase 2)
+
+### Rationale
+
+Once the phase-1 ProtocolRegistry lands it gives full visibility into all ~54 registered routes — and that visibility immediately reveals systematic endpoint-per-parameter redundancy. Consolidating before generating artifacts (old phase 2, now phase 3) is critical: the generator must never document endpoints that are about to die. Sequencing: build the ProtocolRegistry first (phase 1 provides the contract-test safety net), consolidate against it (phase 2), then generate artifacts and switch frontend constants (phase 3).
+
+### Goal scoping
+
+Original goal 7 ("Wire format unchanged") needs scoping. It holds **absolutely** for the WebSocket/SSE protocol and for **phase 1** (a wire-identical refactor). Phase 2 deliberately changes HTTP routes as a designed consolidation. The frontend's `hx-*` attributes and `fetch()` calls are updated in the same phase-2 change; the contract-test suite (phase 4, previously phase 3) must pass after the consolidation is applied.
+
+### What to leave alone
+
+The ~20 HTMX fragment-view GETs (`/api/sidebar`, `/api/meta`, `/api/tabs`, `/api/settings`, `/api/help`, `/api/search`, `/api/search-prompt`, `/api/sidebar/search`, `/api/prompts`, `/api/editor`, `/api/library/current`, `/api/library/switch-layout`, `/api/jobs`, …) are each legitimately a separate route in HTML-over-the-wire — they carry distinct template context. They receive a light inventory in `API.md` and are not touched by the consolidation.
+
+### Consolidation mapping (verified against `requesthandlers/*.go`)
+
+**1. Session UI toggles → `POST /api/session/toggle/{panel}` (6→1)**
+
+Current routes take the form `/api/session/{panel}/toggle` — six routes: panel = `sidebar`, `meta`, `prompts`, `toolbar`, `linenumbers`, `askpanel`. Consolidate to a single `POST /api/session/toggle/{panel}` where one handler reads `chi.URLParam(r, "panel")`. The two non-toggle session routes (`POST /api/session/layout`, `POST /api/session/refresh`) are unaffected.
+
+**2. Sidebar item CRUD → `POST /api/sidebar/{op}` + `GET /api/sidebar/dialog/{kind}` (~7→~3)**
+
+Current mutation POSTs: `rename-note`, `rename-folder`, `delete-note`, `delete-folder` (4 routes) share identical business logic split only by item type. Consolidate to `POST /api/sidebar/rename` and `POST /api/sidebar/delete`, each accepting `{"id": "...", "type": "note|folder"}` in the body.
+
+Current dialog GETs: `create-folder-prompt`, `delete-prompt`, `rename-prompt` (3 routes) all follow the same confirm-dialog template-render pattern. Consolidate to `GET /api/sidebar/dialog/{kind}` (kind = `create-folder`, `delete`, `rename`).
+
+Notes on exclusions:
+- `POST /api/sidebar/revert-prompt` — despite its name this is **not** a dialog fetcher; it is an action endpoint that executes prompt deletion directly. It stays as-is pending a rename cleanup (tracked separately in TECH-DEBT).
+- `GET /api/meta/restore-prompt` — follows the same dialog-render pattern but belongs to the meta/versions namespace; **not** included in the sidebar dialog consolidation.
+- `POST /api/sidebar/intent`, `POST /api/sidebar/create-folder`, `POST /api/sidebar/move` — distinct operations, unaffected.
+
+**3. AI job triggers → `POST /api/jobs/{kind}/{id}` (3→1)**
+
+Current routes: `POST /api/ai/keepAndFile/{uuid}`, `POST /api/ai/smartFile/{id}`, `POST /api/ai/smartMetadata/{id}`. Note the existing `{uuid}`/`{id}` parameter-name inconsistency. Consolidate to `POST /api/jobs/{kind}/{id}` (kind = `keep-and-file`, `smart-file`, `smart-metadata`). New job kinds added by the communal JobEngine declare a kind; the single route handles them without minting new endpoints.
+
+**4. True duplicates to collapse**
+
+- `DELETE /api/note/{id}` and `POST /api/sidebar/delete-note` are two live code paths to the same deletion operation. Retire `POST /api/sidebar/delete-note` (subsumed by the sidebar CRUD consolidation above); `DELETE /api/note/{id}` is the canonical path.
+- `POST /api/editor/smart-paste` and `POST /api/editor/paste-slice`: paste-slice already delegates to `HandlePaste` server-side. Consolidate to `POST /api/editor/paste` with a payload discriminant (`{"kind": "smart"|"slice", ...}`).
+
+### Guardrail
+
+Target: ≤ 30 operational routes after consolidation (excluding the ~20 fragment-view GETs and the WS/asset endpoints). Do **not** collapse into a generic `POST /api/do {action}` RPC — typed request structs are the point of the contract work.
