@@ -1,3 +1,5 @@
+> **STATUS: DONE** — shipped; ONE SieveBlock type with Attrs payload live in sieve/block/. Archived 2026-07-07.
+
 # ShadowDoc → uniform block model — "everything is a block, addressed by id"
 
 **Status:** Design direction captured 2026-06-19 (user-locked principles below; one

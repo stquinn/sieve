@@ -1,5 +1,7 @@
 # API Contract Single-Source-of-Truth Implementation Plan
 
+> Tracked: Forgejo issue #19 (amended 2026-07-07; dev test ground split to #20)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make `sieve/protocol` the typed single source of truth for the WS protocol, SSE events, and JSON endpoints, with generated docs/OpenAPI/AsyncAPI/JS-constants artifacts, contract tests, and a dev-only `/api/docs` test ground.

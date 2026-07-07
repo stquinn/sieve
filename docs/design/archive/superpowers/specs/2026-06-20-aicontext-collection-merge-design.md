@@ -1,3 +1,5 @@
+> **STATUS: DONE** — shipped; sieve/block/ai_context.go: AIContext/Tag/MergeContexts live. Archived 2026-07-07.
+
 # AIContext: structured block context + collection merge — Design
 
 **Date:** 2026-06-20

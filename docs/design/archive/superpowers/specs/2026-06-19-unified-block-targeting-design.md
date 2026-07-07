@@ -1,3 +1,5 @@
+> **STATUS: DONE** — shipped; D-r.7 resolveAiTarget/blockInsertPos live. Archived 2026-07-07.
+
 # Unified Block Identity + AI Targeting — "they're all Sieve blocks, just different kinds"
 
 **Status:** Approved design (2026-06-19). Branch `feature/refactor_editor_layout`.

@@ -1,5 +1,7 @@
 # Job Engine Foundation & Repackaging Implementation Plan
 
+> **STATUS: DONE** — shipped; sieve/services/job_engine.go, sieve/lang/, and sieve/editor/ all live. Archived 2026-07-07.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Do the two repackaging moves that unblock the communal-job-engine design — extract the `sieve/lang` leaf (breaking `ai → block`) and lift `EditorService` into a new `sieve/editor` package (pre-empting the `ai ↔ services` cycle) — then build the communal `JobEngine` + generalised `JobTracker` foundation, fully unit-tested, wired to no production caller yet.

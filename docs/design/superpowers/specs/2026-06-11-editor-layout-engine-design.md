@@ -1,3 +1,5 @@
+> **STATUS: PARTIAL — INPUT TO STAGE E/F RE-BRAINSTORM (TECH-DEBT U-A).** Stage 1 chrome partially shipped; Stages 2–4 deferred.
+
 # Editor-Pane / Layout-Engine Rebuild — Design
 
 **Status:** Design (approved in brainstorm 2026-06-11)

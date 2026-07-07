@@ -1,3 +1,5 @@
+> **STATUS: DONE** — shipped; paired comment-tag block tree is the shipped spine (DocumentCodec/RegionScanner in sieve/block/). Archived 2026-07-07.
+
 # D.4 (revised) Design — Delimited Block Tree + Shadow-as-Source Identity
 
 Status: **design in progress** — 2026-06-18. Supersedes the single-marker handle

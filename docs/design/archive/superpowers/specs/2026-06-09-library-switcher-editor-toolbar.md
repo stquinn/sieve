@@ -1,3 +1,5 @@
+> **STATUS: DONE** — shipped; see companion plan (LibraryHandler + library_chip.html + #editor-toolbar all live). Archived 2026-07-07.
+
 # Design Spec: Library Switcher + Editor Toolbar
 
 Date: 2026-06-09

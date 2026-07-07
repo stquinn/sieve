@@ -1,3 +1,5 @@
+> **STATUS: DONE** — shipped; DocumentCodec/RegionScanner live in sieve/block/. Archived 2026-07-07.
+
 # Deserialization is a BlockProcessor concern — the DocumentCodec service
 
 **Status:** Design approved 2026-06-19 (branch `feature/refactor_editor_layout`).

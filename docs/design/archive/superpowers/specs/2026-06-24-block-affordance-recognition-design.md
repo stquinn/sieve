@@ -1,3 +1,5 @@
+> **STATUS: DONE** — shipped; IsSupportedContent/SupportedActions/Transform live. Archived 2026-07-07.
+
 # Block Affordance Recognition — design
 
 **Status:** proposed (2026-06-24). Successor to the C-W convergence (commit `47525b4`).

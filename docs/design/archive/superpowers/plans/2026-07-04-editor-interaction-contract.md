@@ -1,5 +1,7 @@
 # Editor Interaction Contract Implementation Plan
 
+> **STATUS: DONE** — shipped; interaction-policy.js ships all tasks (commits c536300–f48e4fe); checkboxes in this file are unticked but work is verified shipped in-app. Archived 2026-07-07.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** One shared interaction-policy plugin (declared per-kind, applied uniformly) replacing scattered per-renderer key handlers; the six confirmed defects fixed as conformance; the caret contract (boundaries, trailing node, uniform escape) implemented; a normative contract doc that doubles as the regression checklist.

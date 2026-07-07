@@ -1,3 +1,5 @@
+> **STATUS: DONE** — shipped; 6-package Go DAG (2026-06-28) + JS static/ regrouped into 6 subfolders (2026-06-29). Archived 2026-07-07.
+
 # S-A: Flat-package decomposition (Go) — design
 
 **Date:** 2026-06-20

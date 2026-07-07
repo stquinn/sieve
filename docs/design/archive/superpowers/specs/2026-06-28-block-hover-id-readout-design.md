@@ -1,3 +1,5 @@
+> **STATUS: DONE** — shipped; commit d6724e6. Archived 2026-07-07.
+
 # Block-ID Hover Readout — Design
 
 **Date:** 2026-06-28

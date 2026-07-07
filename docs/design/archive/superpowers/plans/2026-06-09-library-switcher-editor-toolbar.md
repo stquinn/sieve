@@ -1,5 +1,7 @@
 # Library Switcher + Editor Toolbar Implementation Plan
 
+> **STATUS: DONE** — shipped; LibraryHandler + library_chip.html + #editor-toolbar all live in codebase. Archived 2026-07-07.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a recent-libraries switcher with status-bar chip, a docked editor toolbar with formatting/insert/AI-filing actions, and refresh the Tools menu to match.

@@ -1,5 +1,7 @@
 # Block Cursor Affordance (B + A) Implementation Plan
 
+> **STATUS: DONE** — shipped; trailingNode:true + caretStop/insertParagraphAfter live (commit f48e4fe). Archived 2026-07-07.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the caret behave naturally around Sieve blocks — you can always type past the last block, and pressing Enter on/in a non-text-editable Sieve block creates a paragraph after it.

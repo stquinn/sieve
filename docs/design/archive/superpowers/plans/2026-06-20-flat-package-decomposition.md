@@ -1,6 +1,6 @@
 # S-A Flat-Package Decomposition (Go) — Implementation Plan
 
-> **STATUS — ✅ GO HALF COMPLETE (closed out 2026-06-28); JS half deferred.** `sieve/` is now 6 cohesive packages with an acyclic DAG (`domain ← block ← {block/processors, services} ← ai ← root`); cycle broken by `block`-owned port interfaces; full suite + `-race` green. **Deferred (tracked in `docs/TECH-DEBT.md`):** (1) the **JS `static/` regroup** to mirror the Go packages — untouched; (2) the **no-loose-functions backlog** — free funcs still in `block/` codec/parser (`scanProseRegion`, goldmark helpers, `handle_gc` refs/aliases) + `ai/eval`, attach to owning types as opportunity allows.
+> **STATUS: DONE** — shipped; Go 6-package DAG (2026-06-28) + `frontend/src/static/` regrouped into 6 subfolders (2026-06-29); TECH-DEBT S-A retired (see TECH-DEBT.md). Archived 2026-07-07.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

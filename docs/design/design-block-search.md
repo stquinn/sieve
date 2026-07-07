@@ -1,6 +1,6 @@
 # Block Search: server-side structured query over the block graph
 
-> **Status: idea / not started.** Worthwhile and to be done — but **enabled by** the Block Document Model, not part of delivering it. Library search already covers the doc-level, full-text need today; this is the block-level, *structured* successor for when cross-note querying becomes a priority. Spun out of Stage F of [`docs/superpowers/plans/2026-06-17-block-document-model.md`](superpowers/plans/2026-06-17-block-document-model.md) (the search half — F.1/F.2). The lineage/lens half of Stage F (F.3/F.4) is a separate idea, gated on the reconciler project.
+> **Status: idea / not started.** Worthwhile and to be done — but **enabled by** the Block Document Model, not part of delivering it. Library search already covers the doc-level, full-text need today; this is the block-level, *structured* successor for when cross-note querying becomes a priority. Spun out of Stage F of [`docs/design/archive/superpowers/plans/2026-06-17-block-document-model.md`](archive/superpowers/plans/2026-06-17-block-document-model.md) (the search half — F.1/F.2). The lineage/lens half of Stage F (F.3/F.4) is a separate idea, gated on the reconciler project.
 
 ## The Core Idea
 

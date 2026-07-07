@@ -1,3 +1,5 @@
+> **STATUS: DONE** — shipped; ActionUndoSmartPaste in ProseProcessor live. Archived 2026-07-07.
+
 # Undo Smart Paste — design
 
 **Date:** 2026-06-28

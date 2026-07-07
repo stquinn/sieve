@@ -1,3 +1,5 @@
+> **STATUS: DONE** — shipped; Stages A–D shipped; E/F deferred to Stage E/F re-brainstorm (TECH-DEBT U-A). Archived 2026-07-07.
+
 # Sieve Block Document Model — Design
 
 **Status:** Design (approved in brainstorm 2026-06-17)

@@ -1,5 +1,7 @@
 # Ambient Context-Aware Ask AI Panel — Implementation Plan
 
+> **STATUS: DONE** — shipped; resolveAiTarget, persistent #ask-panel, and Ctrl+Shift+A toggleAskFocus all live. Archived 2026-07-07.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Turn the Ask AI dialog into a persistent, context-aware panel whose target (Sieve block / anchor / selection / document) tracks the caret live with zero document mutation, commits an anchor only at SEND, and lets `Ctrl+Shift+A` bounce focus in/out restoring the caret.

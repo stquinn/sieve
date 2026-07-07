@@ -1,3 +1,5 @@
+> **STATUS: DONE** — shipped; prose as native PM nodes + blockId global attr live. Archived 2026-07-07.
+
 # Node-granular Prose Blocks — TipTap runs the editor; we observe and tag
 
 **Status:** Approved design (2026-06-19). Branch `feature/refactor_editor_layout`.

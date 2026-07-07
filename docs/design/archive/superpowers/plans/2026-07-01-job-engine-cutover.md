@@ -1,5 +1,7 @@
 # Job Engine Cutover (Phase B + C) Implementation Plan
 
+> **STATUS: DONE** — shipped; DescribeJob/ProcessorJob, AIPort deleted, /api/jobs, and jobs:changed SSE all live. Archived 2026-07-07.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Complete the communal-job-engine cutover — invert processors to *declare* jobs (`DescribeJob`/`ProcessorJob`), route **every** async job through the `JobEngine`, make `EditorService` the owner of document-lifecycle AI jobs, reduce `AIService` to a blind synchronous brain, delete `block.AIPort`, retire the legacy `JobTracker` writers and `ai:job-*` events, and switch the frontend to the two-list `jobs:changed`/`/api/jobs` model.

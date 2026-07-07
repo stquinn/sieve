@@ -1,5 +1,7 @@
 # Sieve Block Selection & Copy Implementation Plan
 
+> **STATUS: SUPERSEDED** — atom:false/makeWidget architecture never built; problem solved by caretStop + the interaction-policy extension instead. Archived 2026-07-07.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Fix mouse/keyboard selection and Cmd+C copy across sieve block boundaries by removing `atom: true` and `contentEditable="false"` from block wrappers.

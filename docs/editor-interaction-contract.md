@@ -3,7 +3,7 @@
 **Normative.** Any interaction change MUST update this document in the same
 change. Each cell is a testable behaviour; ✅-mark cells during a manual
 regression pass. Source spec:
-`docs/design/superpowers/specs/2026-07-04-editor-interaction-contract-design.md`.
+`docs/design/archive/superpowers/specs/2026-07-04-editor-interaction-contract-design.md`.
 
 ## Key matrix
 

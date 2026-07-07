@@ -1,5 +1,7 @@
 # Implementation Plan: Sieve Block Selection, Copy, and Paste Refactoring
 
+> **STATUS: DONE** — shipped; sieve/slice clipboard + /api/editor/paste-slice live. Archived 2026-07-07.
+
 Date: 2026-06-11
 Status: Approved / In Execution
 

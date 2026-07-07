@@ -1,3 +1,5 @@
+> **STATUS: SUPERSEDED** — informal scratch notes; every issue resolved by the block-model arc. Archived 2026-07-07.
+
 - Code Renderis a mess
     - layout is completely wrong coe highliughting doesnt work
     - Code Rneder is dumped into the same file as SieveExtension.  Its not aprt of any dynamic registry

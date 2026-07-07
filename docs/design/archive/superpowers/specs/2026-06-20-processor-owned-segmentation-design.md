@@ -1,3 +1,5 @@
+> **STATUS: DONE** — shipped; Shape() on BlockProcessor; firstAcceptor/flushProse deleted. Archived 2026-07-07.
+
 # Processor-Owned Segmentation — Design
 
 **Date:** 2026-06-20

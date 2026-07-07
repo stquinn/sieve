@@ -1,3 +1,5 @@
+> **STATUS: DONE** — shipped; interaction-policy.js live; normative contract lives on as docs/editor-interaction-contract.md. Archived 2026-07-07.
+
 # Editor Interaction Contract (Design)
 
 **Date:** 2026-07-04

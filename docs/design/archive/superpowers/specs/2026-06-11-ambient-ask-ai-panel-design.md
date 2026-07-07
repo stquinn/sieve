@@ -1,3 +1,5 @@
+> **STATUS: DONE** — shipped; all features live (resolveAiTarget, persistent #ask-panel, Ctrl+Shift+A toggleAskFocus). Archived 2026-07-07.
+
 # Ambient, Context-Aware Ask AI Panel — Design
 
 **Date:** 2026-06-11
