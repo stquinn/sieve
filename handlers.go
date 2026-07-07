@@ -72,7 +72,7 @@ func (h *apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
-	info := h.app.GetStoreInfo()
+	info := h.app.getStoreInfo()
 
 	var session domain.Session
 	if h.app.ServiceProvider.State != nil {

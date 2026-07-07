@@ -2,12 +2,9 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/fs"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,7 +25,6 @@ import (
 	"sieve/watcher"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
-	"golang.org/x/net/html"
 )
 
 // App is the Wails application backend.
@@ -85,11 +81,11 @@ func (a *App) promptsDir() string {
 	return filepath.Join(a.storePath, a.hostname, "prompts")
 }
 
-// GetThemesFS returns the embedded themes filesystem.
-func (a *App) GetThemesFS() fs.FS { return a.themesFS }
+// getThemesFS returns the embedded themes filesystem.
+func (a *App) getThemesFS() fs.FS { return a.themesFS }
 
-// GetStorePath returns the active store root path.
-func (a *App) GetStorePath() string { return a.storePath }
+// getStorePath returns the active store root path.
+func (a *App) getStorePath() string { return a.storePath }
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
@@ -284,15 +280,15 @@ type StoreInfo struct {
 	ShowPrompts        bool            `json:"showPrompts"`
 }
 
-func (a *App) GetStoreInfo() StoreInfo {
+func (a *App) getStoreInfo() StoreInfo {
 	if a.storePath == "" || a.State == nil {
-		logger.Warn("GetStoreInfo: store not open")
+		logger.Warn("getStoreInfo: store not open")
 		return StoreInfo{
 			ThemeVars: sieve.ThemeVars{},
 		}
 	}
 
-	logger.Info("GetStoreInfo", "root", a.storePath)
+	logger.Info("getStoreInfo", "root", a.storePath)
 	liveSettings := a.State.LoadSettings()
 
 	return StoreInfo{
@@ -475,112 +471,24 @@ func (a *App) InitVault(path string) error {
 	return nil
 }
 
-// ── Assets ────────────────────────────────────────────────────────────────────
-
-// DownloadAsset fetches an image from a URL and stores it as an asset.
-// uuid identifies the owning document (or "" when no document is active).
-// Called directly from editor.js via the Wails bridge.
-func (a *App) DownloadAsset(uuid, targetURL, id string) (AssetDTO, error) {
-	if a.Assets == nil {
-		return AssetDTO{}, fmt.Errorf("store not open")
-	}
-	data, err := downloadURL(targetURL)
-	if err != nil {
-		logger.Error("DownloadAsset: fetch failed", "url", targetURL, "err", err)
-		return AssetDTO{}, err
-	}
-
-	cat := domain.WorkingCopy
-	var doc domain.Document
-	if uuid != "" && a.Documents != nil {
-		if d, err := a.Documents.LoadByUUID(uuid); err == nil {
-			doc = d
-			if doc.Kind() == domain.KindNote {
-				cat = domain.LibraryCategory
-			}
-		}
-	}
-
-	asset, err := a.Assets.Save(cat, uuid, id, data)
-	if err != nil {
-		logger.Error("DownloadAsset: save failed", "id", id, "err", err)
-		return AssetDTO{}, err
-	}
-
-	if doc != nil {
-		doc.Storable().AttachAsset(asset.Storable())
-		if _, err := a.Documents.Save(doc); err != nil {
-			logger.Warn("DownloadAsset: failed to attach asset", "err", err)
-		}
-	}
-	logger.Info("asset downloaded", "url", targetURL, "externalRef", asset.ExternalRef())
-	return toAssetDTO(asset), nil
-}
-
-func (a *App) GetLinkTitle(url string) (string, error) {
-	logger.Info("Getting title for ", url)
-	if url == "" {
-		return "", fmt.Errorf("store not open")
-	}
-	var title string = ""
-	// 1. Make the HTTP GET request
-	client := &http.Client{}
-	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("status code error: %d %s", resp.StatusCode, resp.Status)
-	}
-
-	// 2. Parse the HTML document
-	doc, err := html.Parse(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	// 3. Recursively find the <title> node
-
-	var f func(*html.Node)
-	f = func(n *html.Node) {
-		if title != "" {
-			return
-		}
-		if n.Type == html.ElementNode && n.Data == "title" && n.FirstChild != nil {
-			title = n.FirstChild.Data
-			return
-		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			f(c)
-		}
-	}
-	f(doc)
-	logger.Info("Returning title", "url", url, "title", title)
-	return strings.TrimSpace(title), nil
-}
-
 // ── File manager ──────────────────────────────────────────────────────────────
 
 // ShowInFilesByID reveals a document or folder in the OS file manager.
 // id is a UUID (note/buffer), an opaque folder ID (ExternalRef), or "prompt:name".
 func (a *App) ShowInFilesByID(id string) error {
 	if strings.HasPrefix(id, "prompt:") {
-		return a.ShowInFiles(a.promptsDir())
+		return a.showInFiles(a.promptsDir())
 	}
 	if a.Documents != nil {
 		if doc, err := a.Documents.LoadByUUID(id); err == nil {
-			return a.ShowInFiles(doc.Storable().ExternalRef())
+			return a.showInFiles(doc.Storable().ExternalRef())
 		}
 	}
 	// Folder: id is an ExternalRef (e.g. "store/my-folder") — resolvePath handles it.
-	return a.ShowInFiles(id)
+	return a.showInFiles(id)
 }
 
-func (a *App) ShowInFiles(path string) error {
+func (a *App) showInFiles(path string) error {
 	resolved := a.resolvePath(path)
 	info, err := os.Stat(resolved)
 	if err != nil {
@@ -690,30 +598,3 @@ func migrateSettings(oldPath, newPath string) {
 	logger.Info("migrated settings.json (cli merge)", "from", oldPath, "to", newPath)
 }
 
-// downloadURL fetches a URL and returns the body bytes. Used by DownloadAsset.
-func downloadURL(targetURL string) ([]byte, error) {
-	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
-		Timeout: 30 * time.Second,
-	}
-	req, err := http.NewRequest(http.MethodGet, targetURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("server returned status %d", resp.StatusCode)
-	}
-	contentType := resp.Header.Get("Content-Type")
-	if !strings.HasPrefix(contentType, "image/") {
-		return nil, fmt.Errorf("not an image (Content-Type: %s)", contentType)
-	}
-	return io.ReadAll(resp.Body)
-}

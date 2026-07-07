@@ -72,12 +72,6 @@ type EvaluateAndFileResult struct {
 	Doc       BufferDTO `json:"doc"`
 }
 
-// AssetDTO carries the ExternalRef the frontend inserts directly into markdown.
-type AssetDTO struct {
-	ExternalRef string `json:"externalRef"`
-	Encoding    string `json:"encoding"`
-}
-
 // VersionRefDTO is a lightweight history reference.
 type VersionRefDTO struct {
 	ID      string `json:"id"`
@@ -206,26 +200,6 @@ func toNoteDTO(n *domain.Note) NoteDTO {
 		Body:     string(n.Body()),
 		Meta:     toDocumentMetaDTO(n.Meta(), n.Storable().Owns()),
 		Versions: toVersionRefDTOs(n.Versions()),
-	}
-}
-
-func toAssetDTO(a *domain.ImageAsset) AssetDTO {
-	return AssetDTO{
-		ExternalRef: a.ExternalRef(),
-		Encoding:    encodingName(a.Encoding()),
-	}
-}
-
-func encodingName(e store.Encoding) string {
-	switch e {
-	case store.Base64:
-		return "base64"
-	case store.LZCompressed:
-		return "lz-compressed"
-	case store.Zipped:
-		return "zipped"
-	default:
-		return "raw"
 	}
 }
 
