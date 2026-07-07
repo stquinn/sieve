@@ -44,30 +44,21 @@ func GetContextProvider(kind string) ContextProvider {
 // The dispatch is entirely by block kind — a ref to "img-1234" routes to
 // SmartImageProcessor, a prose ref routes to ProseProcessor, etc.
 // seen prevents cycles; always pass the same map through a recursion chain.
-// Returns "" if id is already seen, block not found, or no provider registered.
+// Returns an empty AIContext if id is already seen, block not found, or no
+// provider registered.
 //
-//	func BuildContextForID(id string, doc DocView, seen map[string]bool) string {
-//		if id == "" || id == "doc" || seen[id] {
-//			return ""
-//		}
-//		seen[id] = true
-//		block, found := NewDocumentCodec(GlobalRegistry()).findBlockByID(doc.Markdown, id)
-//		if !found {
-//			return ""
-//		}
-//		cp := GetContextProvider(block.Kind)
-//		if cp == nil {
-//			return ""
-//		}
-//		return cp.BuildContext(block, doc, seen)
-//	}
-func BuildContextForID(id string, doc DocView, seen map[string]bool) AIContext {
+// filter applies ONLY to the id=="doc" branch (whole-doc markdown derivation): it
+// lets a consumer exclude kinds from the document-truth slot — the ai-block
+// processor passes itself so its own kind never leaks prior answers into TARGET.
+// Nil = accept all (existing behaviour). Targeting a SPECIFIC block by id is
+// unaffected: a block resolved by id is returned as itself, filter untouched.
+func BuildContextForID(id string, doc DocView, seen map[string]bool, filter BlockFilter) AIContext {
 	if id == "" || seen[id] {
 		return AIContext{}
 	}
 	seen[id] = true
 	if id == "doc" {
-		return AIContext{Content: doc.deriveMarkdown()}
+		return AIContext{Content: doc.deriveMarkdownFiltered(filter)}
 	}
 	// Uniform dispatch: every block — prose included — resolves by id (GetBlock) and
 	// routes to its kind's registered ContextProvider. Prose is NOT special-cased

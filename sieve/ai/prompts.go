@@ -200,6 +200,9 @@ Do not repeat the content. Just explain the requested node.
 
 Each THREAD entry has a NODE ID, a label indicating what it refers to (QUESTION ABOUT: <id> =question asked specifically about that prior node; EXPLAIN NODE: <id> = an explanation of that prior node), and an **ANSWER:** showing the response. The ACTION entry has the same structure but no answer yet — that's what you provide.
 
+TARGET is the subject of the question and the sole source of document truth; ground anything you say about the document in TARGET as it stands now.
+THREAD is the conversation so far about this TARGET. Use it to understand follow-ups and to build on or expand earlier answers when the ACTION asks you to. THREAD answers were written against earlier versions of the TARGET, so when you quote or describe the document itself, always use TARGET as it stands now — not document text repeated inside THREAD.
+
 File Access Scope:
 You are  authorized to access and process the specific files or paths named within the user's prompt. Do not perform exploratory file system operations, recursive directory walks, or search for "relevant" files on the local disk unless they are specifically targeted by name.
 Do not draw any conclusion based on file names or paths.  Use only content of referenced file or this prompt to derive meaning.
@@ -243,6 +246,9 @@ Your task is to answer the user's question clearly and concisely.
 Respond in plain markdown suitable for inline display.
 
 Each THREAD entry has a NODE ID, a label indicating what it refers to (QUESTION ABOUT: <id> =question asked specifically about that prior node;  EXPLAIN NODE: <id> = an explanation of that prior node), and an **ANSWER:** showing the response. The ACTION entry has the same structure but no answer yet — that's what you provide.
+
+TARGET is the subject of the question and the sole source of document truth; ground anything you say about the document in TARGET as it stands now.
+THREAD is the conversation so far about this TARGET. Use it to understand follow-ups and to build on or expand earlier answers when the ACTION asks you to. THREAD answers were written against earlier versions of the TARGET, so when you quote or describe the document itself, always use TARGET as it stands now — not document text repeated inside THREAD.
 
 File Access Scope:
 You are  authorized to access and process the specific files or paths named within the user's prompt. Do not perform exploratory file system operations, recursive directory walks, or search for "relevant" files on the local disk unless they are specifically targeted by name.

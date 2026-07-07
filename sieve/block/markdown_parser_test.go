@@ -29,7 +29,7 @@ func TestBuildContextForIDDispatchesByKind(t *testing.T) {
 	RegisterProcessor(&mockContextProcessor{FencedDeserializer: FencedDeserializer{Kind: "code"}, returnVal: "CODE CONTEXT"})
 	defer UnregisterProcessor("code")
 	md := "```code\nid: co-abc\nsource: x\n```\n"
-	result := BuildContextForID("co-abc", DocView{Mode: "markdown", mdModeBuffer: md}, map[string]bool{})
+	result := BuildContextForID("co-abc", DocView{Mode: "markdown", mdModeBuffer: md}, map[string]bool{}, nil)
 	if !strings.Contains(result.String(), "CODE CONTEXT") {
 		t.Errorf("expected dispatched processor context, got %q", result)
 	}
@@ -41,7 +41,7 @@ func TestBuildContextForIDPreventsCycles(t *testing.T) {
 	// seen map already contains the ID — must return "" without recursing.
 	md := "```code\nid: co-abc\nsource: x\n```\n"
 	seen := map[string]bool{"co-abc": true}
-	result := BuildContextForID("co-abc", DocView{Mode: "markdown", mdModeBuffer: md}, seen)
+	result := BuildContextForID("co-abc", DocView{Mode: "markdown", mdModeBuffer: md}, seen, nil)
 	if !result.IsEmpty() {
 		t.Errorf("expected empty for already-seen ID, got %q", result)
 	}

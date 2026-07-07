@@ -58,3 +58,47 @@ func (d DocView) deriveMarkdown() string {
 	}
 	return md
 }
+
+// BlockFilter decides which blocks a consumer includes when deriving whole-doc
+// markdown. Accept returns true to keep a block. It lives in block/ because the
+// filtered derive it drives is a DocView concern; the policy (which kinds to drop)
+// belongs to the consumer that implements it (e.g. AIBlockProcessor drops ai-blocks
+// so prior answers don't leak into the AI TARGET slot).
+type BlockFilter interface {
+	Accept(b SieveBlock) bool
+}
+
+// deriveMarkdownFiltered is deriveMarkdown with a per-block filter: a block is
+// serialized only when f.Accept(b). A nil filter accepts everything, so it is
+// byte-identical to deriveMarkdown (existing behaviour unchanged). AI TARGET
+// assembly uses this to exclude ai-blocks — otherwise every prior answer's raw
+// YAML fence (response: …) lands in the slot the model treats as document truth,
+// and it fixates on / resurrects stale text.
+//
+// MARKDOWN-MODE GAP — conscious decision: in breakglass markdown mode there is no
+// block tree to filter (the raw buffer IS the document), so the filter cannot be
+// applied. We return the raw buffer as-is rather than regex-stripping ai-block
+// fences: the 4-space inner-fence protection makes naive fence matching dangerous
+// (it tears ai-blocks apart — see the region-scanner tail-column-zero defect), and
+// markdown mode is breakglass anyway. The prompt's TARGET/THREAD rules partially
+// mitigate the resulting leak.
+func (d DocView) deriveMarkdownFiltered(f BlockFilter) string {
+	if f == nil {
+		return d.deriveMarkdown()
+	}
+	if d.Mode == "markdown" {
+		return d.mdModeBuffer
+	}
+	kept := make([]SieveBlock, 0, len(d.Blocks))
+	for _, b := range d.Blocks {
+		if f.Accept(b) {
+			kept = append(kept, b)
+		}
+	}
+	md, err := d.codec.Serialize(kept)
+	if err != nil {
+		logger.Warn("editor: serialize filtered block doc failed", "uuid", d.UUID, "err", err)
+		return ""
+	}
+	return md
+}
