@@ -47,7 +47,7 @@
     <div id="app-root" class="theme-{{.ThemeName}} tier-{{.Tier}}" style="--sidebar-w: {{if .ShowSidebar}}{{.SidebarWidth}}{{else}}0{{end}}px; --meta-w: {{if .ShowMeta}}{{.MetaWidth}}{{else}}0{{end}}px;">
         
         <div id="sidebar-wrapper" style="width: var(--sidebar-w); display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; border-right: 1px solid var(--theme-border);">
-            <div id="htmx-sidebar" class="sidebar" style="flex: 1; min-height: 0; border-right: none; display: flex; flex-direction: column;" hx-get="/api/sidebar" hx-trigger="load, sse:notes:changed, notes:changed from:body"></div>
+            <div id="htmx-sidebar" class="sidebar" style="flex: 1; min-height: 0; border-right: none; display: flex; flex-direction: column;" hx-get="/api/sidebar" hx-trigger="load, sse:session:changed, sse:notes:changed, session:changed from:body, notes:changed from:body"></div>
             <div class="prompts-handle"></div>
             <div id="prompts-panel" style="height: {{.PromptsHeight}}px; flex-shrink: 0;" hx-get="/api/prompts" hx-trigger="load, sse:prompts:changed, sse:notes:changed, prompts:changed from:body, notes:changed from:body"></div>
         </div>

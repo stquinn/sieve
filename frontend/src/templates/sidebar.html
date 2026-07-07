@@ -70,7 +70,7 @@
 <button
   class="sidebar__file"
   draggable="true"
-  style="position:relative;width:100%;text-align:left;display:flex;align-items:center;gap:8px;padding-left:{{fileIndent .Depth}};"
+  style="position:relative;width:100%;text-align:left;display:flex;align-items:center;gap:8px;padding-left:{{fileIndent .Depth}};{{if .IsActive}}background:var(--theme-bgAlt);color:var(--theme-text);box-shadow:inset 2px 0 0 var(--theme-accentPrimary);{{end}}"
   onmousedown="window.htmx && window.htmx.ajax('POST', '/api/note/open/{{.ID}}', {target:'#htmx-tabbar',swap:'innerHTML'})"
   data-ctx-id="{{.ID}}"
   data-ctx-parent-id="{{.ParentID}}"
@@ -87,7 +87,7 @@
         {{if eq .UserIntent "trash"}}
         <span style="width:6px;height:6px;border-radius:50%;flex-shrink:0;display:inline-block;background:var(--theme-accentRed);"></span>
         {{end}}
-        <span style="font-size:15px;font-weight:500;color:var(--theme-textDim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">{{if .DisplayName}}{{.DisplayName}}{{else}}{{.Name}}{{end}}</span>
+        <span style="font-size:15px;font-weight:{{if .IsActive}}600{{else}}500{{end}};color:{{if .IsActive}}var(--theme-text){{else}}var(--theme-textDim){{end}};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">{{if .DisplayName}}{{.DisplayName}}{{else}}{{.Name}}{{end}}</span>
       </div>
     </div>
   </div>

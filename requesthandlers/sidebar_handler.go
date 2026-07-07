@@ -28,12 +28,13 @@ type sidebarEntry struct {
 	Status      string
 	IsDir       bool
 	IsOpen      bool
+	IsActive    bool
 	Children    []sidebarEntry
 	Depth       int
 	ParentID    string
 }
 
-func prepSidebarEntries(entries []services.NoteEntry, openFolders map[string]bool, depth int, parentId string) []sidebarEntry {
+func prepSidebarEntries(entries []services.NoteEntry, openFolders map[string]bool, depth int, parentId string, activeID string) []sidebarEntry {
 	out := make([]sidebarEntry, 0, len(entries))
 	for _, e := range entries {
 		se := sidebarEntry{
@@ -44,11 +45,12 @@ func prepSidebarEntries(entries []services.NoteEntry, openFolders map[string]boo
 			Status:      e.Status,
 			IsDir:       e.IsDir,
 			IsOpen:      e.IsDir && openFolders[e.ID],
+			IsActive:    !e.IsDir && e.ID == activeID,
 			Depth:       depth,
 			ParentID:    parentId,
 		}
 		if se.IsOpen && len(e.Children) > 0 {
-			se.Children = prepSidebarEntries(e.Children, openFolders, depth+1, e.ID)
+			se.Children = prepSidebarEntries(e.Children, openFolders, depth+1, e.ID, activeID)
 		}
 		out = append(out, se)
 	}
@@ -71,13 +73,18 @@ func RenderSidebar(w http.ResponseWriter, notes *services.DocumentService, state
 		openFolders[id] = true
 	}
 
+	var activeID string
+	if session.ActiveIdx >= 0 && session.ActiveIdx < len(session.Tabs) {
+		activeID = session.Tabs[session.ActiveIdx].ID
+	}
+
 	entries, err := notes.List()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	data := prepSidebarEntries(entries, openFolders, 0, "")
+	data := prepSidebarEntries(entries, openFolders, 0, "", activeID)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.ExecuteTemplate(w, "sidebar.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
