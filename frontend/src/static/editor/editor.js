@@ -510,6 +510,26 @@
                 for (var dri = 0; dri < domSel.rangeCount; dri++) frag.appendChild(domSel.getRangeAt(dri).cloneContents())
                 domSelHtml = frag.innerHTML
               } catch (e) {}
+
+              // Re-target `er` when the highlight lives in a block's READ-ONLY
+              // region (the ai-block question title, the log Explore table —
+              // contentEditable=false DOM PM cannot track). There PM's selection
+              // stays on whatever block last held the caret, so the loop below —
+              // driven by `er` — would visit and copy the WRONG (previously
+              // selected) block. domSelectionBlockRange finds the block the user
+              // actually highlighted and points the loop at it; when PM already
+              // owns the highlighted text (er covers it) it returns null and er is
+              // left untouched.
+              var blockDescs = []
+              view.state.doc.forEach(function (node, offset) {
+                if (String(node.type.name).indexOf('sieve-') === 0) {
+                  blockDescs.push({ from: offset, to: offset + node.nodeSize, dom: view.nodeDOM(offset) })
+                }
+              })
+              var retarget = window.TipTap.domSelectionBlockRange(domSel, er, blockDescs)
+              if (retarget) {
+                er = { from: retarget.from, to: retarget.to, active: true, isBlockRange: false, isNodeSelection: false }
+              }
             }
 
             var sliceItems = []

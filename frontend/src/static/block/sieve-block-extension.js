@@ -124,6 +124,32 @@ export function domSelectionTextInside(domSelection, blockDom) {
   return (el && blockDom.contains(el)) ? text : ''
 }
 
+// domSelectionBlockRange — the {from,to} PM range of the block a visible DOM
+// highlight actually lives in, IF that block is NOT already covered by the PM
+// selection `er` (else null). Pure, testable.
+//
+// A block's READ-ONLY region (the ai-block question title, the log Explore table
+// — contentEditable=false DOM PM does not own) can hold a highlight that PM's
+// position-based selection knows nothing about: PM's selection stays on whatever
+// block last held the caret. Driving the copy off `er` alone would then serialize
+// the WRONG (previously-selected) block. The copy handler calls this to re-target
+// the range it visits onto the block the user actually highlighted. When `er`
+// already covers the matched block, PM owns that text (the block's live PM
+// content, e.g. an ai-block response) — return null and leave `er` alone.
+//   blocks: ordered [{ from, to, dom }] top-level sieve-block descriptors.
+export function domSelectionBlockRange(domSelection, er, blocks) {
+  if (!domSelection || domSelection.isCollapsed) return null
+  var text = domSelection.toString()
+  if (!text || !text.trim()) return null
+  for (var i = 0; i < (blocks || []).length; i++) {
+    var blk = blocks[i]
+    if (!domSelectionTextInside(domSelection, blk.dom)) continue
+    var erCovers = !!(er && er.to > blk.from && er.from < blk.to)
+    return erCovers ? null : { from: blk.from, to: blk.to }
+  }
+  return null
+}
+
 ;(function () {
   'use strict'
 
@@ -231,6 +257,7 @@ export function domSelectionTextInside(domSelection, blockDom) {
   T.badgeEl = badgeEl
   T.updateBlockAttrs = updateBlockAttrs
   T.domSelectionTextInside = domSelectionTextInside
+  T.domSelectionBlockRange = domSelectionBlockRange
 
   // ── Base attributes shared by every sieve block kind ─────────────────────────
 

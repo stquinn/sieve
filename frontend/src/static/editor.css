@@ -999,6 +999,15 @@ div.node-image.ProseMirror-selectednode {
 }
 .sieve-block__heading > :first-child { margin-top: 0; }
 .sieve-block__heading > :last-child { margin-bottom: 0; }
+/* Preserve the whitespace the user typed in the question. markdown-it keeps
+   multi-space runs and single newlines verbatim in its HTML output — the browser
+   collapses them at display under the default `white-space: normal`; pre-wrap
+   restores them (runs of spaces, indentation, line breaks) while still wrapping
+   long lines. (Leading indentation on continuation lines and 4-space code-block
+   promotion are collapsed by markdown itself, upstream of CSS — inherent, not a
+   bug. Storage round-trips every case losslessly.) Scoped to the paragraphs so
+   the inter-element newlines markdown-it emits between block tags don't render. */
+.sieve-block__heading p { white-space: pre-wrap; }
 
 /* A literal `---` inside a response is a real markdown hr; render it subtly. */
 .ai-block hr {

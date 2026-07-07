@@ -45,6 +45,44 @@ func TestSerialize_MultilineUsesIndentedBlockScalar(t *testing.T) {
 	}
 }
 
+// TestRoundTrip_PreservesQuestionWhitespace pins the ai-block whitespace fix
+// (bug 4): the question's whitespace must survive storage losslessly. Both halves
+// of the SerDes pair (SerializeYaml + DeserializeYaml) are owned HERE, so their
+// round-trip is this package's own contract to test — it is NOT the document
+// parser (that round-trip lives in the sieve package). Any residual whitespace
+// loss the user sees is presentation-only (markdown-it collapse at render),
+// never storage; this guards that boundary.
+func TestRoundTrip_PreservesQuestionWhitespace(t *testing.T) {
+	cases := map[string]string{
+		"multi-space run":           "hello    world",
+		"internal newlines":         "line1\nline2\nline3",
+		"leading spaces":            "    indented start",
+		"trailing spaces":           "trailing spaces   ",
+		"indented middle line":      "a\n        indented middle\nb",
+		"tab":                       "tab\there",
+		"trailing spaces mid-block": "line with trailing   \nnext",
+		"consecutive blank lines":   "multi\n\n\nblank lines",
+		"code fence in question":    "```go\nfunc main() {}\n```",
+	}
+	for name, q := range cases {
+		t.Run(name, func(t *testing.T) {
+			attrs := map[string]interface{}{"id": "ai-x", "question": q}
+			body, err := SerializeYaml(attrs)
+			if err != nil {
+				t.Fatalf("serialize: %v", err)
+			}
+			got, err := DeserializeYaml(body)
+			if err != nil {
+				t.Fatalf("deserialize: %v", err)
+			}
+			back, _ := got["question"].(string)
+			if back != q {
+				t.Errorf("whitespace lost in storage round-trip\n in=%q\nout=%q\nyaml:\n%s", q, back, body)
+			}
+		})
+	}
+}
+
 func TestSerialize_CodeFenceForcesLiteralStyle(t *testing.T) {
 	// yaml.v3 defaults to double-quoted style for strings starting with backticks;
 	// SerializeYaml must force literal block style — human-readable, unescaped.
