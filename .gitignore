@@ -8,6 +8,9 @@ frontend/wailsjs/
 # ── Go ────────────────────────────────────────────────────────────────────────
 # Compiled binaries
 sieve
+sieve-app
+tmp-bin
+bin/
 build/sieve-bin
 #block bianry above but allow package
 !sieve/
@@ -49,6 +52,9 @@ Thumbs.db
 # ── Logs & screenshots ────────────────────────────────────────────────────────
 *.log
 Screenshot*.png
+/*.png
+.startup-probe
+watch_*
 
 artefacts
 debug screenshots
@@ -56,6 +62,7 @@ debug screenshots
 #-- Syncthing
 **/*.tmp
 **/.syncthing.*.tmp
+*.sync-conflict-*
 
 # ── Superpowers brainstorm sessions ───────────────────────────────────────────
 .superpowers/

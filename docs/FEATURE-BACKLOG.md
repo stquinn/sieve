@@ -146,3 +146,10 @@ Currently `focus_count` increments whenever a tab holds focus for more than 2 mi
 - With the `.meta` separation (`spec-document-as-directory.md`), incrementing focus count is a `SaveMeta` call — cheap, no snapshot, no version bump. This makes the change low-risk to implement.
 
 **Why it matters:** `focus_count` combined with `version` are the two importance signals passed to the filing prompt. If focus count is inflated by idle time, the signal is misleading and the AI filing decision degrades.
+
+---
+
+## Micro-defects / polish
+
+- Markdown editor doesnt have lines, should it?
+- buffer names could be better - more natural to call them "untitled 1" or something.
