@@ -8,7 +8,7 @@
 
 **Tech Stack:** Vanilla JS, TipTap 2 (markdown extension via `editor.storage.markdown.parser.md`), ProseMirror transactions via TipTap's command API, CSS custom properties for theming.
 
-**Spec:** `docs/superpowers/specs/2026-05-21-promote-to-document-design.md`
+**Spec:** `docs/design/archive/2026-05-21-promote-to-document-design.md`
 
 ---
 

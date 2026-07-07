@@ -14,7 +14,7 @@
 
 **Tech Stack:** Wails v2 + Go + chi + HTMX, TipTap 3.x (`@tiptap/core`, `@tiptap/pm` for ProseMirror primitives), vanilla JS extensions augmenting `window.TipTap`, esbuild bundling, js-yaml. No React. No new npm deps in this plan.
 
-**Spec:** [`docs/superpowers/specs/2026-06-11-editor-layout-engine-design.md`](../specs/2026-06-11-editor-layout-engine-design.md) · **Illustrations:** [`specs/assets/2026-06-11-editor-layout/index.html`](../specs/assets/2026-06-11-editor-layout/index.html)
+**Spec:** [`docs/design/specs/2026-06-11-editor-layout-engine-design.md`](../specs/2026-06-11-editor-layout-engine-design.md) · **Illustrations:** [`specs/assets/2026-06-11-editor-layout/index.html`](../specs/assets/2026-06-11-editor-layout/index.html)
 
 **Testing convention (agreed):** the repo has 28 Go tests and **no JS test harness**, and a "discuss new npm deps first" rule. So: **Go tests** for logic that lives or can live Go-side (serialization, payload assembly, parse round-trips); **explicit manual `wails dev` protocols** for ProseMirror UI. Each UI task ships a numbered manual protocol with expected observations. No vitest/Playwright.
 

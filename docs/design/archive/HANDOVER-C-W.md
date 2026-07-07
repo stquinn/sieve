@@ -4,7 +4,7 @@
 - Branch: `feature/block-op-create-convergence`. Last commit: `00f66c3`
   ("Slice-paste sync (C-V/P-D), paste self-kind round-trip, block delete fixes").
 - Working tree is clean except untracked junk to IGNORE (don't commit):
-  `debug screenshots/*.png`, `docs/superpowers/plans/rabbit hole mess`, `log_iotc.txt`.
+  `debug screenshots/*.png`, `docs/design/plans/rabbit hole mess` (old plans folder, since deleted), `log_iotc.txt`.
 - Full suite green at handover: `go build ./...`, `go test ./...`, and
   `cd frontend && npx vitest run` (101 passed).
 

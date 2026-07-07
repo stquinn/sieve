@@ -932,7 +932,7 @@ DescribeImage/RefineLanguage bindings. All verified caller-free."
 
 ## Self-Review
 
-**Spec coverage** (against `docs/superpowers/specs/2026-06-30-async-ai-job-queue-design.md`):
+**Spec coverage** (against `docs/design/archive/specs/2026-06-30-async-ai-job-queue-design.md`):
 - Declarative jobs (`block.ProcessorJob`, `DescribeJob`) → B2 (type) + B4 (inversion).
 - Framework Apply→finish, finish-exactly-once → B2 (`submitBlockJob` on `EditorService`, not a separate `JobRunner` — the spec's `JobRunner` type is deliberately NOT built; its one caller and block-specific shape made it an unjustified indirection, and the wrap belongs on the type that owns the block/attr-diff data).
 - One communal engine as sole tracker writer → B3 (wire) + B4c (block path) + B6 (document path) + C1 (retire legacy writers).

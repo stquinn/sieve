@@ -4,7 +4,7 @@
 
 **Goal:** Add a `diagram` Sieve block kind that renders Mermaid diagrams inline, with a persistent header pill-toggle to switch between edit (code editor) and render (SVG) modes, persisted in YAML.
 
-**Architecture:** Pure Sieve Block Framework block — no server-side job (`status: COMPLETE` from `InitAttrs`), client-side mermaid rendering via vendored `mermaid.min.js` lazy-loaded on first render. Mode (`"edit"` | `"render"`) is stored as a YAML attr and persisted via `block-update` WS. Edit mode mirrors the code block's textarea + highlight overlay pattern; render mode injects mermaid SVG. Spec: `docs/superpowers/specs/2026-06-08-diagram-blocks-design.md`.
+**Architecture:** Pure Sieve Block Framework block — no server-side job (`status: COMPLETE` from `InitAttrs`), client-side mermaid rendering via vendored `mermaid.min.js` lazy-loaded on first render. Mode (`"edit"` | `"render"`) is stored as a YAML attr and persisted via `block-update` WS. Edit mode mirrors the code block's textarea + highlight overlay pattern; render mode injects mermaid SVG. Spec: `docs/design/archive/2026-06-08-diagram-blocks-design.md`.
 
 **Tech Stack:** Go (processor), vanilla JS ES module (renderer), mermaid.js v10 (vendored), Tailwind + custom CSS
 

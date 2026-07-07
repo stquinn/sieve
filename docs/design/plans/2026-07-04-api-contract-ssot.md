@@ -10,7 +10,7 @@
 
 **Tech Stack:** Go 1.25, chi v5, gorilla/websocket, gopkg.in/yaml.v3 (already in go.mod), vanilla JS (no build step).
 
-**Spec:** `docs/design/superpowers/specs/2026-07-04-api-contract-single-source-of-truth-design.md`
+**Spec:** `docs/design/specs/2026-07-04-api-contract-single-source-of-truth-design.md`
 
 ## Global Constraints
 

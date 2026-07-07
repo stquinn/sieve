@@ -5,7 +5,7 @@
 **Status:** Design direction captured 2026-06-19 (user-locked principles below; one
 open naming decision). Branch `feature/refactor_editor_layout`. **Not yet planned
 task-by-task** — bite-size via superpowers:writing-plans before executing.
-**Plan it belongs under:** [`docs/superpowers/plans/2026-06-17-block-document-model.md`](../plans/2026-06-17-block-document-model.md)
+**Plan it belongs under:** [`docs/design/archive/plans/2026-06-17-block-document-model.md`](../plans/2026-06-17-block-document-model.md)
 (this is the cleanup the post-D-r.7 arc exposed; sequence it before/with Stage E).
 
 ## Why this exists

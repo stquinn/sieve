@@ -6,7 +6,7 @@ Status: **design in progress** — 2026-06-18. Supersedes the single-marker hand
 scheme (Stage B) and blank-line segmentation. Approved direction; written spec
 pending final user review.
 Branch: `feature/refactor_editor_layout`
-Plan: `docs/superpowers/plans/2026-06-17-block-document-model.md` (Stage D)
+Plan: `docs/design/archive/plans/2026-06-17-block-document-model.md` (Stage D)
 
 ## Governing principle (NEW — load-bearing)
 

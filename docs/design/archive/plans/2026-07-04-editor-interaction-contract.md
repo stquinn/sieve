@@ -10,7 +10,7 @@
 
 **Tech Stack:** Vanilla JS (ES modules), TipTap 3 / ProseMirror (window.TipTap bundle), vitest + happy-dom (existing `frontend/test/` setup), headless Chrome against `wails dev :34115` for UI verification.
 
-**Spec:** `docs/design/superpowers/specs/2026-07-04-editor-interaction-contract-design.md`
+**Spec:** `docs/design/archive/specs/2026-07-04-editor-interaction-contract-design.md`
 
 ## Global Constraints
 
@@ -41,7 +41,7 @@ This document is the arbiter of "correct" for every later task and the manual re
 **Normative.** Any interaction change MUST update this document in the same
 change. Each cell is a testable behaviour; ✅-mark cells during a manual
 regression pass. Source spec:
-`docs/design/superpowers/specs/2026-07-04-editor-interaction-contract-design.md`.
+`docs/design/archive/specs/2026-07-04-editor-interaction-contract-design.md`.
 
 ## Key matrix
 

@@ -10,7 +10,7 @@
 
 **Tech Stack:** Go (module `sieve`; package dir `sieve/` imports as `sieve/sieve`). New packages: `sieve/sieve/domain`, `sieve/sieve/block`, `sieve/sieve/block/processors`, `sieve/sieve/services`, `sieve/sieve/ai`.
 
-**Spec:** [`docs/superpowers/specs/2026-06-20-flat-package-decomposition-design.md`](../specs/2026-06-20-flat-package-decomposition-design.md) — read it first (DAG, port surface, full file-assignment table).
+**Spec:** [`docs/design/archive/specs/2026-06-20-flat-package-decomposition-design.md`](../specs/2026-06-20-flat-package-decomposition-design.md) — read it first (DAG, port surface, full file-assignment table).
 
 ## Global Constraints
 
@@ -385,7 +385,7 @@ The decomposition changes the project's mental map — the "Key File Locations" 
 **Files:**
 - Modify: `CLAUDE.md` (Key File Locations table; Architecture-in-one-paragraph)
 - Modify: `docs/TECH-DEBT.md` (mark S-A's Go half done; the JS `static/` half remains)
-- Modify: `docs/superpowers/plans/2026-06-17-block-document-model.md` (Progress/handoff log + NEXT: Go decomposition done; JS regroup + single-source-of-truth still open; Stage E next)
+- Modify: `docs/design/archive/plans/2026-06-17-block-document-model.md` (Progress/handoff log + NEXT: Go decomposition done; JS regroup + single-source-of-truth still open; Stage E next)
 
 - [ ] **Step 1: Update the CLAUDE.md "Key File Locations" table** to point at the new packages, e.g.:
   - All services (DI container) → `sieve/service_provider.go` (composition root) wiring `sieve/services/`, `sieve/ai/`
@@ -401,7 +401,7 @@ The decomposition changes the project's mental map — the "Key File Locations" 
 - [ ] **Step 4: Commit.**
 
 ```bash
-git add CLAUDE.md docs/TECH-DEBT.md docs/superpowers/plans/2026-06-17-block-document-model.md
+git add CLAUDE.md docs/TECH-DEBT.md docs/design/archive/plans/2026-06-17-block-document-model.md
 git commit -m "Docs: reflect S-A Go package decomposition (domain/block/processors/services/ai)"
 ```
 

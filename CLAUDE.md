@@ -9,7 +9,7 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 
 ## Key File Locations
 
-> **Go package layout (S-A decomposition, 2026-06-20).** `sieve/` is no longer a flat package — it is 6 cohesive packages with an acyclic DAG: `domain ← block ← {block/processors, services} ← ai ← root`. The cycle is broken by **port interfaces owned by `block/`** (`AIPort`/`DocumentsPort`/`AssetsPort`/`StatePort`/`LinkPreviewPort`); concrete services implement them, the root wires them. `block/` imports no service. See `docs/design/archive/superpowers/specs/2026-06-20-flat-package-decomposition-design.md`.
+> **Go package layout (S-A decomposition, 2026-06-20).** `sieve/` is no longer a flat package — it is 6 cohesive packages with an acyclic DAG: `domain ← block ← {block/processors, services} ← ai ← root`. The cycle is broken by **port interfaces owned by `block/`** (`AIPort`/`DocumentsPort`/`AssetsPort`/`StatePort`/`LinkPreviewPort`); concrete services implement them, the root wires them. `block/` imports no service. See `docs/design/archive/specs/2026-06-20-flat-package-decomposition-design.md`.
 
 | What | Where |
 |------|-------|
@@ -33,7 +33,7 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 | File watcher | `watcher.go` |
 | Tech debt register | `docs/TECH-DEBT.md` |
 | **Editor interaction contract (NORMATIVE)** | `docs/editor-interaction-contract.md` |
-| **Docs layout** | `docs/` root = long-lived contracts, behaviour specs, living registers, how-tos. `docs/design/` = design history: brainstorms, one-off specs/plans, `superpowers/{specs,plans}` (write NEW superpowers specs/plans there), `archive/`. Completed/superseded specs & plans are stamped with a status banner and `git mv`'d to `docs/design/archive/superpowers/{specs,plans}/` in the same change that retires their register entry. |
+| **Docs layout** | `docs/` root = long-lived contracts, behaviour specs, living registers, how-tos. `docs/design/` = design history: brainstorms + `specs/` + `plans/` (legacy) + `archive/`. `docs/design/specs/` = design/decision docs (thin: problem, decision, architecture, rationale); header carries `Tracked: #N` when work is active. Plans are Forgejo issues, NOT files (epic issue + per-phase issues for large work; drafted in scratchpad → posted via `tea api`; reviewed on the issue) — `docs/design/plans/` holds legacy plans only, never add to it. Completed/superseded specs are stamped with a status banner and `git mv`'d to `docs/design/archive/specs/` in the same change that closes their issue. |
 | Current milestone plan | `docs/FEATURE-BACKLOG.md` (PHASE9 completed → `docs/design/archive/PHASE9-PLAN.md`) |
 | Current Guuidance on how to use the Sieve Block Framework | `docs/how-to-sieve-block-framework.md` |
 | **How to build a fenced block** | `docs/how-to-intelligent-fenced-blocks.md` |

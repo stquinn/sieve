@@ -11,8 +11,8 @@
 4. **Frontend migration** — `ai-block-renderer.js` replaces `ai-block-extension.js`; `buildAiContext` is **deleted** and replaced by a minimal `resolveTargetRef` that only determines the target block ID; `editor.js` sends `create-block` with `type`, `ref`, and `question` only.
 
 **Prerequisites:**
-- `docs/superpowers/plans/2026-06-04-block-anchors.md` — **DONE.**
-- `docs/superpowers/plans/2026-06-04-target-highlighting.md` — **DONE.** `ParseBlockAnchors` returns `[]*BlockAnchor`. Goldmark AST types (`blockAnchorNode`, `sieveBlockNode`, `targetHighlightNode`) are **unexported** in `markdown_parser.go`.
+- `docs/design/archive/2026-06-04-block-anchors.md` — **DONE.**
+- `docs/design/archive/2026-06-04-target-highlighting.md` — **DONE.** `ParseBlockAnchors` returns `[]*BlockAnchor`. Goldmark AST types (`blockAnchorNode`, `sieveBlockNode`, `targetHighlightNode`) are **unexported** in `markdown_parser.go`.
 
 ---
 

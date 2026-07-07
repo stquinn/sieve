@@ -3,7 +3,7 @@
 # Unified Block Identity + AI Targeting — "they're all Sieve blocks, just different kinds"
 
 **Status:** Approved design (2026-06-19). Branch `feature/refactor_editor_layout`.
-**Plan:** [`docs/superpowers/plans/2026-06-17-block-document-model.md`](../plans/2026-06-17-block-document-model.md) — folds in as a new bite-sized task set under Stage D (it is the deferred AI-targeting rewire, now unblocked by D-r.4 id minting).
+**Plan:** [`docs/design/archive/plans/2026-06-17-block-document-model.md`](../plans/2026-06-17-block-document-model.md) — folds in as a new bite-sized task set under Stage D (it is the deferred AI-targeting rewire, now unblocked by D-r.4 id minting).
 **Retires tech-debt:** `project_ai_targeting_blockref_defect` (Ask AI → `ref:doc`; legacy depth-0 `blockRef` wrap vs native prose).
 
 ## Why this exists

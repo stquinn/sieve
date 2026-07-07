@@ -15,7 +15,7 @@
 - **No loose/free functions.** Behaviour attaches to the owning type/service.
 - **Backend ShadowDoc is the document source of truth.** Operations render as TRACKED incremental insert/replace; never `softReloadContent` for an operation.
 - **TDD.** Failing test first, watch it fail, minimal code, watch it pass, commit.
-- **Spec:** `docs/superpowers/specs/2026-06-28-undo-smart-paste-design.md`.
+- **Spec:** `docs/design/archive/specs/2026-06-28-undo-smart-paste-design.md`.
 - Run Go tests with `go test ./<pkg>/ -run <Name> -v`; full suite `go test ./...`; frontend `cd frontend && npx vitest run`.
 
 ---
@@ -597,12 +597,12 @@ Run: `cd frontend && npx vitest run` → all PASS
 
 - [ ] **Step 3: Update the affordance plan ledger**
 
-In `docs/superpowers/plans/2026-06-24-block-affordance-recognition.md`, note that the prose-embed behaviour is now split (Embed=markdown, Undo=text) per the `2026-06-28-undo-smart-paste` plan, superseding the `5a59c45` interim fix.
+In `docs/design/archive/plans/2026-06-24-block-affordance-recognition.md`, note that the prose-embed behaviour is now split (Embed=markdown, Undo=text) per the `2026-06-28-undo-smart-paste` plan, superseding the `5a59c45` interim fix.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add docs/superpowers/plans/2026-06-24-block-affordance-recognition.md
+git add docs/design/archive/plans/2026-06-24-block-affordance-recognition.md
 git commit -m "docs: record Embed/Undo split shipped (supersedes 5a59c45 interim prose-embed fix)"
 ```
 

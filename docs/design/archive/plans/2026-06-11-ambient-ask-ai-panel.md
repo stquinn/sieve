@@ -10,7 +10,7 @@
 
 **Tech Stack:** Vanilla JS (TipTap 2 / ProseMirror), vitest + happy-dom for unit tests (new, dev-only), Go (`go build` compile check), `wails dev` for manual UI verification.
 
-**Spec:** `docs/superpowers/specs/2026-06-11-ambient-ask-ai-panel-design.md`
+**Spec:** `docs/design/archive/specs/2026-06-11-ambient-ask-ai-panel-design.md`
 
 **Testing note:** This plan unit-tests the *pure logic* (`resolveAiTarget` / `describeTarget`). The *UI rendering* (glow, focus, live label) is verified manually in `wails dev` here and will get real browser-driven coverage in the separate Playwright harness spec (deliberately out of scope).
 

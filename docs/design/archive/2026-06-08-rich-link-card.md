@@ -15,7 +15,7 @@
 - `frontend/src/static/web-clip-renderer.js` — renderer to model
 - `frontend/src/static/smart-link-renderer.js` — renderer to modify
 - `frontend/src/static/editor.js` — `createInternalizeDialog` pattern + event system
-- `docs/superpowers/specs/2026-06-08-rich-link-cards-design.md` — the spec
+- `docs/design/archive/2026-06-08-rich-link-cards-design.md` — the spec
 
 ---
 

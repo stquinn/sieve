@@ -1,7 +1,7 @@
 # Brainstorm — Sieve Document Model: Blocks, Lenses, and the Store
 
 **Status:** Brainstorm / thinking-in-progress — **NOT a committed design.** (2026-06-14)
-**Origin:** Began as the Stage 2 `column-row` serialization work ([editor-layout-engine spec](superpowers/specs/2026-06-11-editor-layout-engine-design.md) / [plan](superpowers/plans/2026-06-11-editor-layout-engine.md)) and expanded into a re-examination of what a Sieve *document* fundamentally is.
+**Origin:** Began as the Stage 2 `column-row` serialization work ([editor-layout-engine spec](specs/2026-06-11-editor-layout-engine-design.md) / [plan](plans/2026-06-11-editor-layout-engine.md)) and expanded into a re-examination of what a Sieve *document* fundamentally is.
 **Companions:** [brainstorm-blocks-all-the-way-up](brainstorm-blocks-all-the-way-up.md), the architecture direction (Go server + Store + web/mobile frontends). This brainstorm **reframes** the layout-engine spec's container/lineage/layout framing.
 
 ---

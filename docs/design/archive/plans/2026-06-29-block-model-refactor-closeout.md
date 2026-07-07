@@ -280,7 +280,7 @@ git commit -m "fix(editor): clear to empty paragraph on genuinely-empty reload (
 
 ## Task 5 (meta): Write the B-A dedicated plan
 
-**Deliverable:** `docs/superpowers/plans/2026-06-29-backend-authoritative-prose-id.md`, written via the writing-plans skill on its **own branch**, with strict TDD.
+**Deliverable:** `docs/design/archive/plans/2026-06-29-backend-authoritative-prose-id.md`, written via the writing-plans skill on its **own branch**, with strict TDD.
 
 **Why its own plan:** B-A retires the frontend prose-id mint in the highest-churn area of the editor (two prior reverts). It needs investigation of the current `prose-block.js` mint plugin, `ws_handler.go`, and the debounced observer before any code — fabricating steps here would be guesswork.
 
@@ -294,7 +294,7 @@ git commit -m "fix(editor): clear to empty paragraph on genuinely-empty reload (
 
 ## Task 6 (meta): Write the F-A dedicated plan
 
-**Deliverable:** `docs/superpowers/plans/2026-06-29-markdown-mode-seed-from-go.md`.
+**Deliverable:** `docs/design/archive/plans/2026-06-29-markdown-mode-seed-from-go.md`.
 
 **Why its own plan:** F-A is narrower than its register entry (the structured-edit `doc-update` fallback was already retired by B-G). The remaining surface is "markdown-mode seeds its textarea from JS-serialized whole-doc markdown; seed it from Go's codec instead." It needs a quick scoping pass to confirm the exact remaining `wysiwygMarkdown`/`wrapProseBlock` call paths in `prose-group.js`/`prose-markers.js`/`prose-block.js`.
 

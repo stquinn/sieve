@@ -10,7 +10,7 @@
 
 **Tech Stack:** TipTap 2 / ProseMirror, vanilla JS ES modules, no build step.
 
-**Spec:** `docs/superpowers/specs/2026-06-09-sieve-block-selection-design.md`
+**Spec:** `docs/design/archive/2026-06-09-sieve-block-selection-design.md`
 
 ---
 

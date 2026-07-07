@@ -10,7 +10,7 @@
 
 **Tech Stack:** Go; goldmark v1.8.2 (`github.com/yuin/goldmark`, already a dependency); `gopkg.in/yaml.v3` via the existing `fencedblock` helpers. No new dependencies.
 
-**Spec:** [`docs/superpowers/specs/2026-06-20-processor-owned-segmentation-design.md`](../specs/2026-06-20-processor-owned-segmentation-design.md)
+**Spec:** [`docs/design/archive/specs/2026-06-20-processor-owned-segmentation-design.md`](../specs/2026-06-20-processor-owned-segmentation-design.md)
 
 ## Global Constraints
 

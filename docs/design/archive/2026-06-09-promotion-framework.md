@@ -10,7 +10,7 @@
 
 **Robustness Principle (Postel's Law):** The JS client sends MIME types as accurately as possible — `text/plain` for text content, `text/uri-list` for URLs, `image/svg+xml` for SVG, `image/*` for binary blobs. The Go `IsBlock` implementations are tolerant of what they accept — text-pattern processors (Diagram, Code, SmartLink) check content only and do not gate on MIME type. A wrong MIME type must never cause a paste or extract to silently fail. MIME type is used as a primary signal only where content alone is insufficient (binary image blobs in SmartImageProcessor).
 
-**Spec:** `docs/superpowers/specs/2026-06-08-sieve-block-promotion-framework.md`
+**Spec:** `docs/design/archive/2026-06-08-sieve-block-promotion-framework.md`
 
 ---
 

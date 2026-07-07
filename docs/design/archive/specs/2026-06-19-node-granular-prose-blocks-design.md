@@ -8,7 +8,7 @@
 (the D.4 spec). **Supersedes** the deleted `2026-06-18-node-granular-blocks-design.md`
 (removed in `b069bde` together with a broken implementation — reverted because the *code*
 churned and the spec was thrashing, **not** because the model was wrong).
-**Plan:** [`docs/superpowers/plans/2026-06-17-block-document-model.md`](../plans/2026-06-17-block-document-model.md) (Stage D).
+**Plan:** [`docs/design/archive/plans/2026-06-17-block-document-model.md`](../plans/2026-06-17-block-document-model.md) (Stage D).
 
 ## Why this exists / what it corrects
 
