@@ -1,4 +1,6 @@
-package main
+// Package config manages machine-level Sieve settings that are not specific to
+// any one library. It is persisted to the OS config directory (~/.config/sieve/).
+package config
 
 import (
 	"encoding/json"
@@ -57,25 +59,25 @@ func (c GlobalConfig) Save() error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// configRecorder implements sieve.LibraryRecorder backed by GlobalConfig.
+// Recorder implements services.LibraryRecorder backed by GlobalConfig.
 // It is stateless — each method reads and writes the config file fresh.
-type configRecorder struct{}
+type Recorder struct{}
 
-func (configRecorder) Recent() []services.Library {
+func (Recorder) Recent() []services.Library {
 	return LoadGlobalConfig().RecentLibraries
 }
 
-func (configRecorder) LastUsed() string {
+func (Recorder) LastUsed() string {
 	return LoadGlobalConfig().LastStorePath
 }
 
-func (configRecorder) SetLastUsed(id string) {
+func (Recorder) SetLastUsed(id string) {
 	c := LoadGlobalConfig()
 	c.LastStorePath = id
 	_ = c.Save()
 }
 
-func (configRecorder) AddRecent(lib services.Library) {
+func (Recorder) AddRecent(lib services.Library) {
 	c := LoadGlobalConfig()
 	filtered := make([]services.Library, 0, len(c.RecentLibraries))
 	for _, e := range c.RecentLibraries {
@@ -92,7 +94,7 @@ func (configRecorder) AddRecent(lib services.Library) {
 
 // ValidateStore checks if a directory looks like a Sieve store without
 // creating any files. Passed to LibraryService as the validate function.
-func ValidateStore(path string) error {
+func (Recorder) ValidateStore(path string) error {
 	localDevDirectory := filepath.Join(path, "main.go")
 	if _, err := os.Stat(localDevDirectory); err == nil {
 		logger.Warn("config: store path looks like source directory", "path", path)

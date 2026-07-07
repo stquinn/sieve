@@ -1,11 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"html/template"
 	"io/fs"
 	"net/http"
-	"net/url"
 	"sieve/logger"
 	"sieve/requesthandlers"
 	"sieve/sieve"
@@ -28,77 +26,10 @@ type apiHandler struct {
 	routes *chi.Mux
 }
 
-type metaRowData struct {
-	Label string
-	Value string
-}
-
-type promptVarDef struct {
-	Name string
-	Desc string
-}
-
-func promptVarsForType(t string) []promptVarDef {
-	m := map[string][]promptVarDef{
-		"file": {
-			{"{content}", "Note body text"},
-			{"{folder_list}", "Existing store folders"},
-			{"{version}", "Doc version number"},
-			{"{focus_count}", "Open frequency"},
-			{"{created}", "Creation timestamp"},
-			{"{modified}", "Last modified timestamp"},
-			{"{now}", "Current timestamp"},
-		},
-		"explain": {
-			{"{type}", "Detected content type"},
-			{"{history}", "Relevant conversation context"},
-			{"{content}", "Target text to explain"},
-			{"{images}", "List of relevant asset names"},
-		},
-		"ask": {
-			{"{type}", "Detected content type"},
-			{"{content}", "Context document text"},
-			{"{history}", "Conversation history"},
-			{"{question}", "User question"},
-			{"{images}", "List of relevant asset names"},
-		},
-		"refine": {
-			{"{content}", "The code block text to identify"},
-			{"{current_language}", "The language currently detected by heuristics"},
-			{"{detection_method}", "The method used to detect the current language"},
-		},
-		"image": {
-			{"{image_filename}", "The original filename of the image"},
-		},
-		"web-clip-fetch": {
-			{"{source}", "URL to retrieve"},
-		},
-		"web-clip-summarise": {
-			{"{source}", "URL to summarise"},
-			{"{document}", "Current document content (sent automatically — not manually editable)"},
-		},
-	}
-	return m[t]
-}
-
 func newAPIHandler(app *App, hub *sse.Hub, sp *sieve.ServiceProvider) (*apiHandler, error) {
-	tmpl := template.New("").Funcs(template.FuncMap{
-		"indent": func(depth int) string {
-			return fmt.Sprintf("%.2frem", 0.75+float64(depth)*1.0)
-		},
-		"fileIndent": func(depth int) string {
-			return fmt.Sprintf("%.2frem", 1.5+float64(depth)*1.0)
-		},
-		"urlenc": url.QueryEscape,
-		"metaRow": func(label, value string) metaRowData {
-			return metaRowData{Label: label, Value: value}
-		},
-		"promptVars": promptVarsForType,
-	})
-	var err error
-	tmpl, err = tmpl.ParseFS(uiTemplates, "frontend/src/templates/*.html")
+	tmpl, err := requesthandlers.NewTemplates(uiTemplates)
 	if err != nil {
-		return nil, fmt.Errorf("parse templates: %w", err)
+		return nil, err
 	}
 
 	staticFS, err := fs.Sub(uiStatic, "frontend/src/static")

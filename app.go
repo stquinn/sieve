@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"sieve/config"
 	"sieve/logger"
 	"sieve/sieve"
 	"sieve/sieve/ai"
@@ -464,9 +465,9 @@ func (a *App) InitVault(path string) error {
 		return fmt.Errorf("folder must be empty or an existing Sieve store")
 	}
 
-	config := LoadGlobalConfig()
-	config.LastStorePath = abs
-	if err := config.Save(); err != nil {
+	cfg := config.LoadGlobalConfig()
+	cfg.LastStorePath = abs
+	if err := cfg.Save(); err != nil {
 		logger.Warn("InitVault: failed to save global config", "err", err)
 		return fmt.Errorf("could not update global config: %w", err)
 	}

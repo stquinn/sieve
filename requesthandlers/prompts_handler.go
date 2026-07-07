@@ -14,6 +14,61 @@ type PromptsHandler struct {
 	Tmpl            *template.Template
 }
 
+// PromptVarDef documents one template variable available to a prompt type.
+type PromptVarDef struct {
+	Name string
+	Desc string
+}
+
+// PromptVarDocs owns the per-prompt-type table of template variables surfaced
+// to the prompt editor via the `promptVars` template func. It sits with the
+// prompts concern because that is where the documentation is consumed.
+type PromptVarDocs struct{}
+
+// For returns the documented template variables for prompt type t.
+func (PromptVarDocs) For(t string) []PromptVarDef {
+	m := map[string][]PromptVarDef{
+		"file": {
+			{"{content}", "Note body text"},
+			{"{folder_list}", "Existing store folders"},
+			{"{version}", "Doc version number"},
+			{"{focus_count}", "Open frequency"},
+			{"{created}", "Creation timestamp"},
+			{"{modified}", "Last modified timestamp"},
+			{"{now}", "Current timestamp"},
+		},
+		"explain": {
+			{"{type}", "Detected content type"},
+			{"{history}", "Relevant conversation context"},
+			{"{content}", "Target text to explain"},
+			{"{images}", "List of relevant asset names"},
+		},
+		"ask": {
+			{"{type}", "Detected content type"},
+			{"{content}", "Context document text"},
+			{"{history}", "Conversation history"},
+			{"{question}", "User question"},
+			{"{images}", "List of relevant asset names"},
+		},
+		"refine": {
+			{"{content}", "The code block text to identify"},
+			{"{current_language}", "The language currently detected by heuristics"},
+			{"{detection_method}", "The method used to detect the current language"},
+		},
+		"image": {
+			{"{image_filename}", "The original filename of the image"},
+		},
+		"web-clip-fetch": {
+			{"{source}", "URL to retrieve"},
+		},
+		"web-clip-summarise": {
+			{"{source}", "URL to summarise"},
+			{"{document}", "Current document content (sent automatically — not manually editable)"},
+		},
+	}
+	return m[t]
+}
+
 func (p *PromptsHandler) RegisterPaths(r chi.Router) {
 	r.Get("/api/prompts", p.handlePrompts)
 }

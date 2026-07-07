@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"sieve/config"
 	"sieve/logger"
 	"sieve/sieve"
 	"sieve/sieve/services"
@@ -341,7 +342,8 @@ func main() {
 	if len(os.Args) > 1 {
 		cliArg = os.Args[1]
 	}
-	libSvc := services.NewLibraryService(configRecorder{}, ValidateStore)
+	recorder := config.Recorder{}
+	libSvc := services.NewLibraryService(recorder, recorder.ValidateStore)
 	storePath := libSvc.BestOnStartup(cliArg, os.Getenv("SIEVE_STORE"))
 
 	hub := sse.NewHub()

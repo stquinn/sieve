@@ -56,7 +56,7 @@ type LibraryNamer interface {
 }
 
 // LibraryRecorder persists the machine-level recents list.
-// The concrete implementation in main (configRecorder) reads and writes
+// The concrete implementation (config.Recorder) reads and writes
 // GlobalConfig on every call — no state is held in memory.
 type LibraryRecorder interface {
 	Recent() []Library
@@ -68,7 +68,7 @@ type LibraryRecorder interface {
 // LibraryDisplayName converts an opaque library ID to a human-readable name.
 // For file-based stores the ID is a path: the basename is split on hyphens,
 // underscores, and camelCase word boundaries, then title-cased.
-// Exported so config.go (package main) can call it for the recents recorder.
+// Exported so the config package can call it for the recents recorder.
 func LibraryDisplayName(id string) string {
 	base := filepath.Base(id)
 	var runes []rune
@@ -91,8 +91,8 @@ func LibraryDisplayName(id string) string {
 }
 
 // NewLibraryService constructs the LibraryService.
-//   - recorder: persists the machine-level recents list (GlobalConfig in main)
-//   - validate:  reports whether an ID can be opened (ValidateStore in main)
+//   - recorder: persists the machine-level recents list (config.GlobalConfig)
+//   - validate:  reports whether an ID can be opened (config.Recorder.ValidateStore)
 //
 // Call Attach after opening the store so Current() can read the library name.
 func NewLibraryService(recorder LibraryRecorder, validate func(string) error) LibraryService {
