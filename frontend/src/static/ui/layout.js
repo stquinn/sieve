@@ -39,11 +39,30 @@
         e.preventDefault();
     }
 
+    // The server owns the layout width vars: it renders them into
+    // <style id="layout-overrides-*"> blocks with !important (index.html initial
+    // render, hx-swap-oob replacements from session_handler.go toggles). Drag
+    // updates must therefore edit THAT stylesheet's rule via CSSOM — an inline
+    // style on #app-root either loses to the stylesheet !important (no flag) or,
+    // with an !important flag, permanently beats the server's later hide-toggle
+    // (which sets --sidebar-w: 0px), leaving an empty column. Editing the
+    // server's own rule keeps one owner: the next OOB swap replaces the whole
+    // <style> element and cleanly wins. Match by selectorText, not rule index —
+    // the block also contains #htmx-sidebar / .sidebar-handle rules.
+    function setLayoutVar(styleElId, varName, value) {
+        const styleEl = document.getElementById(styleElId);
+        if (!styleEl || !styleEl.sheet) return;
+        for (const rule of styleEl.sheet.cssRules) {
+            if (rule.selectorText === '#app-root') {
+                rule.style.setProperty(varName, value, 'important');
+                break;
+            }
+        }
+    }
+
     function onMouseMove(e) {
         if (!isDragging) return;
 
-        const appRoot = document.getElementById('app-root');
-        const sidebarWrapper = document.getElementById('sidebar-wrapper');
         const metaPanel = document.getElementById('htmx-meta-panel');
         const promptsPanel = document.getElementById('prompts-panel');
 
@@ -52,13 +71,13 @@
             let newWidth = startWidth + dx;
             if (newWidth < 150) newWidth = 150;
             if (newWidth > 600) newWidth = 600;
-            appRoot.style.setProperty('--sidebar-w', newWidth + 'px');
+            setLayoutVar('layout-overrides-sidebar', '--sidebar-w', newWidth + 'px');
         } else if (currentHandle.classList.contains('meta-handle')) {
             const dx = startX - e.clientX; // Reverse because it's on the right
             let newWidth = startWidth + dx;
             if (newWidth < 150) newWidth = 150;
             if (newWidth > 600) newWidth = 600;
-            appRoot.style.setProperty('--meta-w', newWidth + 'px');
+            setLayoutVar('layout-overrides-meta', '--meta-w', newWidth + 'px');
             metaPanel.style.width = newWidth + 'px';
         } else if (currentHandle.classList.contains('prompts-handle')) {
             const dy = startY - e.clientY; // Dragging up increases height
