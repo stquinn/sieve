@@ -110,6 +110,21 @@ AbstractEditor.
    exists because Go cannot hold a TipTap island — a runtime conveyance of
    session state, never a second copy of it.
 
+   **Context menus** follow the same split: the singleton menu renderer
+   (today's `context-menu.js`, fired via a `sieve:contextmenu` broadcast
+   carrying a hand-rolled proto-context object) becomes a Workspace-owned
+   chrome service. The REQUEST percolates upward through the registered
+   listener chain — `contextMenuRequested(ctx, x, y, domain)` is a typed
+   outbound callback on the Editor (detected where the click landed),
+   forwarded Editor → Tab → Workspace, which services it. It is the one
+   editor event that legitimately travels to the top, and it still rides
+   the registration contract, never a DOM broadcast. Menu construction
+   reads the real `getSelectionContext()` (the right-click asserts
+   selection first, per the companion spec) plus `{x, y}` and the
+   requesting domain (editor content / sidebar note / prompt); the
+   `context.type` string switch dies. Item actions are API calls — the
+   same transport migration as the native menu.
+
    **Ownership boundaries.** The Ask panel and meta panel are OWNED by the
    Workspace — they are expressions of working with documents, not shell;
    as owned children they are wired internally and need no public registry.
@@ -154,8 +169,10 @@ AbstractEditor.
 
 ## Design discipline (normative)
 
-"Vanilla JS" means no build step — it does NOT mean loose function bags. The
-JS side adopts the same law CLAUDE.md already imposes on Go ("no loose/free
+"Vanilla JS" is a LANGUAGE choice — plain JavaScript, no React/JSX/
+TypeScript. Build steps (esbuild, tailwind) and libraries are fine and
+already exist. It is never an excuse for loose function bags. The JS side
+adopts the same law CLAUDE.md already imposes on Go ("no loose/free
 functions; behaviour is a method on the type that owns its data"):
 
 - **Real ES classes** with constructors and `#private` fields for Workspace,
@@ -164,9 +181,9 @@ functions; behaviour is a method on the type that owns its data"):
 - **`Object.freeze`** for every `SelectionContext` (immutability enforced).
 - **JSDoc types + `// @ts-check`**: contracts (listener signatures,
   SelectionContext shape, the input-surface interface) are annotated in
-  JSDoc and machine-checked by `tsc --noEmit` — no build step, files ship as
-  plain `.js`. Optional CI line; mandatory annotations on the three public
-  contracts.
+  JSDoc and machine-checked by `tsc --noEmit` — types live in comments, the
+  code stays plain JavaScript. Optional CI line; mandatory annotations on
+  the three public contracts.
 - No new IIFE namespace bags, no state as module-scope `var`s. The existing
   ones die per phase 4.
 
