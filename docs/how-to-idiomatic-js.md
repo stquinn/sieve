@@ -1,0 +1,194 @@
+# How-To: Idiomatic JavaScript in Sieve
+
+**Status:** Normative for all new JS (CLAUDE.md § Design Principles, 2026-07-08).
+**Companion:** `design/specs/2026-07-08-workspace-editor-component-model.md`
+(§ Design discipline) — the component architecture these idioms serve.
+
+"Vanilla JS" is a **language choice** — plain JavaScript, no React/JSX/
+TypeScript. Build steps (esbuild, tailwind) and libraries are fine. The choice
+is never an excuse for loose function bags: JS here is written with the same
+OOP discipline as the Go side ("no loose/free functions; behaviour is a method
+on the type that owns its data"). The pleasant surprise for a Go-shaped brain:
+modern JS agrees with Go more than folklore suggests — interfaces are
+structural in both, capability checks are idiomatic in both, composition roots
+exist in both.
+
+---
+
+## 1. Objects: `class`, constructor, `#private`
+
+```js
+// editor.js — one class per file, file named for the class
+export class Editor {
+  #socket; #surface; #mode = 'wysiwyg';   // #private is REAL: reach-in throws
+
+  constructor(tab, doc) {
+    if (!doc?.uuid) throw new ContractViolation('Editor requires a document')
+    …
+  }
+
+  static forPrompt(tab, name, content) { … }   // alternative constructors are
+                                               // static factories — Go's NewX()
+  get mode() { return this.#mode }
+  setMode(m) { … }                             // behaviour on the owner
+}
+```
+
+- `#private` fields for everything not on the public contract. A typo or a
+  reach-in is a thrown error, not a silent `undefined`.
+- Getters for derived/read-only state; methods for behaviour. No public
+  mutable fields on components.
+- **Never:** prototype fiddling, `Object.create`, closures returning object
+  literals, `var self = this`. All legacy folklore.
+
+## 2. Contracts — three layers (all three, each for its job)
+
+JS has no `interface` keyword, but Go interfaces are *structural* — satisfied
+by shape — and that is exactly what JSDoc + duck typing give you.
+
+### 2a. Declaration: JSDoc `@typedef` (the `.go` interface block)
+
+```js
+// @ts-check
+/**
+ * @typedef {object} InputSurface
+ * @property {(host: HTMLElement, doc: DocView) => void} mount
+ * @property {() => void} unmount
+ * @property {(msg: ServerOp) => void} applyServerOp
+ */
+```
+
+With `// @ts-check` at the top of the file, `tsc --noEmit` enforces the shape
+structurally — a surface missing `unmount` fails the check, exactly like a Go
+type failing to satisfy an interface. Types live in comments; code stays JS.
+**Mandatory on public contracts** (component APIs, listener signatures,
+SelectionContext); encouraged everywhere.
+
+### 2b. Shared behaviour + required overrides: abstract base class
+
+```js
+export class AbstractEditor {
+  save() { … }                        // mode-agnostic, written once, inherited
+  getSelectionContext() { … }
+
+  _mountSurface() {                   // subclass MUST provide
+    throw new ContractViolation(
+      `${this.constructor.name} must implement _mountSurface()`)
+  }
+}
+```
+
+Runtime enforcement, loud failure, zero tooling.
+
+### 2c. Optional capabilities: duck-typed boundary checks
+
+The JS twin of the Go idiom you already use daily
+(`s.Store.(interface{ SetMaxVersions(int) })`, `ExportRepresenter`):
+
+```js
+if (typeof surface.observeSelection === 'function') {
+  surface.observeSelection(this.#model)
+}
+```
+
+Check once at the boundary, then trust. Never sprinkle `typeof` checks through
+call sites — that is the boundary leaking.
+
+## 3. Value objects and enums: freeze at the factory
+
+```js
+export class SelectionContext {
+  static #gen = 0
+  /** @returns {Readonly<SelectionContextFields>} */
+  static mint(fields) {
+    return Object.freeze({ ...fields, generation: ++SelectionContext.#gen })
+  }
+}
+
+export const Mode = Object.freeze({ WYSIWYG: 'wysiwyg', MARKDOWN: 'markdown' })
+/** @typedef {typeof Mode[keyof typeof Mode]} ModeValue */
+```
+
+- Value objects are born frozen; mutation throws (ES modules are strict mode
+  automatically). Consumers hold snapshots, never live references.
+- Enums are frozen const objects + a JSDoc union so `setMode('markdwon')`
+  fails the check.
+- Copies via `structuredClone`; never hand-rolled deep copies.
+
+## 4. Events: typed registration methods, never string channels
+
+Registered listeners are the house event model (no `document.dispatchEvent`,
+no global CustomEvents — a DOM broadcast is a global bus wearing event
+clothing). The idiom is **named registration methods**, not a generic
+`on('someString', fn)` — string channels are the bus in miniature:
+
+```js
+export class Workspace {
+  #selectionListeners = []
+
+  /** @param {(ctx: SelectionContext) => void} fn @returns {() => void} unsubscribe */
+  onSelectionUpdate(fn) {
+    this.#selectionListeners.push(fn)
+    return () => { this.#selectionListeners = this.#selectionListeners.filter(l => l !== fn) }
+  }
+}
+```
+
+- Returning the unsubscribe function is the standard lifecycle idiom.
+- The class's `on*` methods ARE the published event contract — enumerable by
+  reading the class, greppable at every registration call site.
+- One exception route exists by design: `contextMenuRequested` percolates
+  Editor → Tab → Workspace — still via these registrations, never a broadcast.
+
+## 5. Modules are the package DAG
+
+- `import`/`export` per file. Export **classes, not instances**.
+- Singletons (Workspace) are created once at the composition root — the JS
+  equivalent of `service_provider.go` — and handed down, never grabbed from
+  `window`.
+- Nothing new on `window.*`. The import graph IS the dependency structure:
+  greppable, cycle-checkable, the same discipline as the Go package DAG from
+  the S-A split.
+
+## 6. Errors: throw early, throw named
+
+```js
+export class ContractViolation extends Error {}
+```
+
+- Constructors validate their arguments and throw.
+- Contract breaches are `ContractViolation`, not `undefined` limping through
+  three files before something NPEs.
+- Exceptions are JS's error discipline — use them where Go returns errors: at
+  the boundary, immediately, with the offending thing named in the message.
+
+## 7. The one genuine footgun: `this` binding
+
+Passing a method as a callback detaches `this`. One rule kills it:
+**arrow functions at registration sites**:
+
+```js
+workspace.onSelectionUpdate((ctx) => this.#refresh(ctx))   // ✓
+workspace.onSelectionUpdate(this.#refresh)                 // ✗ detached this
+```
+
+## 8. Enforcement (build steps are allowed — use them)
+
+- `// @ts-check` per file + `tsc --noEmit` in CI: machine-checks every JSDoc
+  contract without emitting anything or requiring TypeScript authorship.
+- ESLint with a minimal config (`no-var`, `eqeqeq`, `prefer-const`,
+  `no-implicit-globals`): the discipline becomes enforced, not aspirational.
+
+## 9. What dies (quarantined debt, not precedent — X-C, epic #31)
+
+| Anti-pattern | Replacement |
+|---|---|
+| IIFE assembling functions onto `window.TipTap` / `window.Sieve*` | `class` + ES module export |
+| State as module-scope `var` (`currentEditor`, `tabModes`, …) | `#private` fields on the owning component |
+| `document.dispatchEvent(new CustomEvent('sieve:*'))` | typed registration methods / direct API calls |
+| Hand-rolled context objects bubbled with events | frozen `SelectionContext` via pull or push |
+| `window.getSelection()` / `activeElement` peeking outside the SelectionModel | `getSelectionContext()` |
+| String-switch pseudo-types (`context.type === 'aiBlock'`) | JSDoc-typed unions + capability checks |
+
+Existing code in these shapes is migrated per epic #31's phases; new code in
+these shapes fails review.
