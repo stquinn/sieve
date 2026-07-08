@@ -1,7 +1,7 @@
 # SelectionModel — one owner for selection, focus, and AI-target state
 
 **Status:** Draft
-**Tracked:** (Forgejo epic to be filed — tea login pending on this machine)
+**Tracked:** #31 (epic) — implemented in phase #29
 **Date:** 2026-07-08
 
 ## Problem

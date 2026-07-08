@@ -1,7 +1,7 @@
 # The Workspace/Editor Component Model — encapsulated components, three public contracts
 
 **Status:** Draft
-**Tracked:** (Forgejo epic to be filed — tea login pending on this machine)
+**Tracked:** #31 (epic) — phases #27 #28 #29 #30
 **Date:** 2026-07-08
 **Companion:** `2026-07-08-selection-model-design.md` (the SelectionModel is a
 facet of this object; this spec is its prerequisite). Backbone for tech-debt
@@ -121,11 +121,17 @@ AbstractEditor.
    siblings; internal panels never use it.
 2. **JS event contract — registered listeners, not DOM events.** No
    `document.dispatchEvent`, no global CustomEvents — a DOM broadcast is
-   still a global bus wearing event clothing. Instead, a two-tier observer
-   registration:
-   - The **Editor notifies only its Holder** (the Tab that created it) via
-     typed callbacks it registered for: selection updates (frozen
-     `SelectionContext`), dirty/saved.
+   still a global bus wearing event clothing. The invariant is **ONE typed
+   event contract and ONE mode of registration**: every component exposes
+   the same strongly-typed listener interface, and a formal registration
+   call is the only way to receive anything — "who listens to what, when"
+   is always answerable from the registration call sites. Two tiers, same
+   idiom:
+   - The **Editor's registrants** are, in practice, only its Holder (the
+     Tab that created it) — a consequence of the object model rather than a
+     bespoke exclusivity rule: nothing else holds an Editor reference.
+     Typed callbacks: selection updates (frozen `SelectionContext`),
+     dirty/saved.
    - **Residents** (Ask panel, chrome) register on the permanent
      **Workspace** object (`workspace.onSelectionUpdate(fn)`, …) — a DEFINED
      listener registry, enumerable and discoverable at call sites. The
