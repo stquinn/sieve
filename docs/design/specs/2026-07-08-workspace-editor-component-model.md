@@ -152,6 +152,24 @@ AbstractEditor.
    full reload for ops) are obligations of the surface-facing side,
    unchanged.
 
+## Design discipline (normative)
+
+"Vanilla JS" means no build step — it does NOT mean loose function bags. The
+JS side adopts the same law CLAUDE.md already imposes on Go ("no loose/free
+functions; behaviour is a method on the type that owns its data"):
+
+- **Real ES classes** with constructors and `#private` fields for Workspace,
+  Tab, Editor, SelectionModel, and the input surfaces. Encapsulation is
+  enforced by the language (a reach-in throws), not by convention.
+- **`Object.freeze`** for every `SelectionContext` (immutability enforced).
+- **JSDoc types + `// @ts-check`**: contracts (listener signatures,
+  SelectionContext shape, the input-surface interface) are annotated in
+  JSDoc and machine-checked by `tsc --noEmit` — no build step, files ship as
+  plain `.js`. Optional CI line; mandatory annotations on the three public
+  contracts.
+- No new IIFE namespace bags, no state as module-scope `var`s. The existing
+  ones die per phase 4.
+
 ## Phases
 
 1. **Shell + contract freeze.** Introduce the Editor class; per-tab instance
