@@ -115,7 +115,17 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 
 **Why deferred:** Real fix is a separate epic; the close-out kept the cosmetic foldering and tracked this. The global-bus pattern is also entangled with the load-order dependency management currently done by `<script>` tag ordering in `index.html`.
 
-**Retires when:** The `window.TipTap` / `window.Sieve*` global bus is replaced by explicit ES `import`/`export` modules (boundaries enforced by the import graph), and `editor.js` is decomposed into cohesive, independently-importable units. Aligns with the Go-server + web/mobile direction (a global god-object won't survive a bundler/SSR boundary). User decision 2026-06-29.
+**Retires when:** The `window.TipTap` / `window.Sieve*` global bus is replaced by explicit ES `import`/`export` modules (boundaries enforced by the import graph), and `editor.js` is decomposed into cohesive, independently-importable units. Aligns with the Go-server + web/mobile direction (a global god-object won't survive a bundler/SSR boundary). User decision 2026-06-29. **Update 2026-07-08:** the epic now exists — Forgejo #31 (Workspace/Editor component model, phases #27–#30) with normative specs (`docs/design/specs/2026-07-08-workspace-editor-component-model.md` + companion) and `docs/how-to-idiomatic-js.md`.
+
+## X-D: Sieve block renderers are duck-typed config bags, not a class hierarchy
+
+**Tracked:** register only (kept OUT of epic #31 by user decision 2026-07-08 — the epic stays scoped to Workspace/Editor to remain manageable).
+
+**What:** The 8 renderers in `frontend/src/static/processors/` are duck-typed config objects (`{ getIcon: function() {…}, … }`) whose required shape is documented nowhere — it is implicit in what `sieve-block-extension.js` calls, learned by reverse-engineering. `fenced-block-base.js` is a base in name only: a grab-bag of free functions (`getLowlight`, `hastToHtml`, `applyHighlighting`) imported piecemeal. There is no `BaseSieveBlockRenderer` to open and understand the family — the readability gap the JS-OOP principle (CLAUDE.md 2026-07-08) exists to close.
+
+**Why deferred:** Epic #31 is deliberately scoped to Workspace/Editor. Renderers live inside the Editor boundary and can be classed after its P2 (input surfaces) without blocking anything; doing it inside the epic would bloat it.
+
+**Retires when:** A class hierarchy mirroring the Go processor side (`BlockProcessor` interface / `FencedSerializer` embed): abstract `BaseSieveBlockRenderer` (NodeView lifecycle, chrome hooks, `interactionPolicy` declaration, attr sync, registration contract) → abstract `FencedBlockRenderer` (YAML replay, highlighting, job/status rendering — `fenced-block-base.js`'s free functions become methods) → 8 concrete classes. Registration via a typed registry method, JSDoc-typed contract per `docs/how-to-idiomatic-js.md`; `docs/how-to-sieve-block-framework.md` rewritten as "extend the class". Note: `smart-link-renderer` is expected to be DELETED under the parked links decision (memory: project-links-decision-parked) — build it last or not at all.
 
 ---
 
