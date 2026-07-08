@@ -43,6 +43,12 @@ export const schema = new Schema({
       group: 'block', atom: true, selectable: true, attrs: { id: { default: '' } },
       toDOM: (nd) => ['hr', { 'data-id': nd.attrs.id }],
     },
+    // The invisible multi-paragraph wrapper (one backend prose block rendered
+    // under a shared id) — mirrors prose-group.js. Flowing text for AI targeting.
+    proseGroup: {
+      group: 'block', content: 'block+', attrs: { id: { default: '' } },
+      toDOM: (nd) => ['div', { 'data-id': nd.attrs.id, class: 'block-node prose-group' }, 0],
+    },
     text: { group: 'inline' },
     // a generic sieve atom (e.g. sieve-code), and the ai-block follow-up atom
     'sieve-code': sieveAtom('code'),
@@ -126,5 +132,7 @@ export const build = {
   image: (id) => n.image.create({ id: id || '', src: 'x.png' }),
   hr: (id) => n.horizontalRule.create(id ? { id } : null),
   sieveCode: (id) => n['sieve-code'].create({ id, kind: 'code', serialisedForm: '' }),
+  proseGroup: (id, texts) => n.proseGroup.create(id ? { id } : null,
+    (texts || ['one', 'two']).map((s) => n.paragraph.create(null, t(s)))),
   aiBlock: (id, ref) => n['sieve-ai-block'].create({ id, kind: 'ai-block', serialisedForm: '', ref: ref || '' }),
 }

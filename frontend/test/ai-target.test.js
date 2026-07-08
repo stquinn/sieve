@@ -51,6 +51,30 @@ describe('resolveAiTarget — bare caret by node character', () => {
     expect(resolveAiTarget(editor, false).kind).toBe('document')
   })
 
+  it('caret inside a proseGroup paragraph → document (invisible grouping is flowing text)', () => {
+    // A proseGroup is one backend prose block (import/embed) rendered under a
+    // shared id — visually identical to minted paragraphs, so a bare caret must
+    // resolve the same way: to the document, never to a "ProseGroup" block.
+    const { editor } = docWithCaretNear([build.proseGroup('pr-g', ['first para', 'second para'])], 3)
+    const tg = resolveAiTarget(editor, false)
+    expect(tg.kind).toBe('document')
+    expect(tg.ref).toBe('doc')
+  })
+
+  it('NodeSelection of a proseGroup → selection over its passage, never a block target', () => {
+    const { editor } = docWithNodeSelection([build.p('x', 'pr-1'), build.proseGroup('pr-g', ['aa', 'bb'])], 1)
+    const tg = resolveAiTarget(editor, false)
+    expect(tg.kind).toBe('selection')
+    expect(tg.ref).toBe('pr-g')
+  })
+
+  it('text selection inside a proseGroup → selection, ref = the group id', () => {
+    const { editor } = docWithRange([build.proseGroup('pr-g', ['hello there', 'world'])], 3, 8)
+    const tg = resolveAiTarget(editor, false)
+    expect(tg.kind).toBe('selection')
+    expect(tg.ref).toBe('pr-g')
+  })
+
   it('caret in a bullet list → block, ref = the list id', () => {
     const { editor } = docWithCaretNear([build.bulletList('pr-l', ['a', 'b'])], 3)
     const tg = resolveAiTarget(editor, false)

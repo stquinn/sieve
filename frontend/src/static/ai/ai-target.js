@@ -46,14 +46,21 @@
   }
 
   // isFlowingText: the ONE discriminator (D-r.7). A top-level node is flowing text
-  // iff it is a paragraph or heading — content a bare caret can't disambiguate, so
-  // it targets the whole document. EVERY other top-level node (blockquote, code,
-  // list, table, image, hr, and all structured sieve-*) is a discrete UNIT you
-  // target as a whole by its id.
+  // iff it is a paragraph, heading, or proseGroup — content a bare caret can't
+  // disambiguate, so it targets the whole document. EVERY other top-level node
+  // (blockquote, code, list, table, image, hr, and all structured sieve-*) is a
+  // discrete UNIT you target as a whole by its id.
+  //
+  // proseGroup counts as flowing text because it is a backend contrivance: one
+  // multi-paragraph prose block (an import, an embedded answer) rendered under a
+  // shared id. It is visually indistinguishable from individually-minted
+  // paragraphs, and a target must never depend on how prose ARRIVED. A bare caret
+  // may only target units the user can SEE as units; selecting text is the one
+  // way to target specific prose.
   function isFlowingText(node) {
     if (!node) return false
     var nm = node.type.name
-    return nm === 'paragraph' || nm === 'heading'
+    return nm === 'paragraph' || nm === 'heading' || nm === 'proseGroup'
   }
 
   // topLevelIdsBetween: the distinct ids of every top-level (depth-1) block the
@@ -153,8 +160,11 @@
     var doc = state.doc
     var from = sel.from, to = sel.to
 
-    // (a) NodeSelection of any block → that block by id.
-    if (sel.node) return blockResult(sel.node, sel.from)
+    // (a) NodeSelection of any UNIT block → that block by id. A node-selected
+    // proseGroup falls through to (b) instead: selecting a whole invisible
+    // grouping IS a text selection of its passage, so it resolves as one —
+    // ref = the group's id, label = a snippet — never a "ProseGroup" block.
+    if (sel.node && sel.node.type.name !== 'proseGroup') return blockResult(sel.node, sel.from)
 
     // (b) non-empty TextSelection → selection + ref chain of every crossed block.
     if (from !== to) {
