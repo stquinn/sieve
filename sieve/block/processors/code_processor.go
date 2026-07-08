@@ -152,7 +152,15 @@ func unfencedCodeContent(entry block.ContentEntry) (string, bool) {
 	if !strings.Contains(trimmed, "\n") {
 		return "", false
 	}
-	if _, ok := lheur.DetectByHeuristics(trimmed, ""); ok {
+	if lang, ok := lheur.DetectByHeuristics(trimmed, ""); ok {
+		// Markdown is a detectable "language" so that EXPLICIT markdown code
+		// blocks work (a ```markdown fence, a language hint) — but on a
+		// smart-paste claim a markdown detection means the text IS document
+		// content. Decline it: the paste falls through to the editor's default
+		// insertion, which renders pasted markdown as document markdown.
+		if lang == "markdown" {
+			return "", false
+		}
 		return trimmed, true
 	}
 	if lheur.LooksLikeCode(trimmed) {
@@ -268,6 +276,15 @@ func (p *CodeBlockProcessor) DescribeJob(jctx block.JobContext) *block.Processor
 func (p *CodeBlockProcessor) RawContent(blk block.SieveBlock) string {
 	src, _ := blk.Attrs["source"].(string)
 	return src
+}
+
+// ContentIsMarkdown reports whether this block's source is itself document
+// markdown (block.MarkdownContenter): embedding such a block in the document
+// inserts the source directly rather than a ```markdown fence.
+func (p *CodeBlockProcessor) ContentIsMarkdown(blk block.SieveBlock) bool {
+	lang, _ := blk.Attrs["language"].(string)
+	lang = strings.ToLower(strings.TrimSpace(lang))
+	return lang == "markdown" || lang == "md"
 }
 
 func (p *CodeBlockProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {

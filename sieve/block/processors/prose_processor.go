@@ -174,6 +174,18 @@ func (p *ProseProcessor) Transform(entries []block.ContentEntry, uuid string, bl
 			}
 			if proc != nil {
 				src := block.NewSieveBlock(kind, "", attrs)
+				// Markdown-bearing source (block.MarkdownContenter — e.g. a code
+				// block whose language is markdown): the content already IS
+				// document markdown, so embed the raw source directly instead of
+				// a ```markdown fence. This is the escape hatch for markdown
+				// captured as a code block.
+				if mc, isMD := proc.(block.MarkdownContenter); isMD && mc.ContentIsMarkdown(src) {
+					if rc, isRaw := proc.(block.RawContenter); isRaw {
+						if raw := strings.TrimSpace(rc.RawContent(src)); raw != "" {
+							return map[string]interface{}{"content": raw}
+						}
+					}
+				}
 				if md := proc.MarkdownRepresentation(src, uuid); strings.TrimSpace(md) != "" {
 					return map[string]interface{}{"content": md}
 				}

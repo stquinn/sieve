@@ -154,6 +154,17 @@ func TestCodeBlockProcessor_IsBlock_unfencedProseIsNotCode(t *testing.T) {
 	}
 }
 
+func TestCodeBlockProcessor_IsBlock_unfencedMarkdownIsNotCode(t *testing.T) {
+	p := NewCodeBlockProcessor(block.BlockServices{})
+	// Markdown is a detectable "language" (explicit ```markdown fences work), but
+	// a smart-paste of raw markdown is document content — code must decline it so
+	// it enters the document as markdown, not a code block.
+	md := "# Release Notes\n\n- fixed the parser\n- improved paste handling\n\nSee [the docs](https://example.com/docs) for **details**."
+	if p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: md}}).Has(block.ActionPaste) {
+		t.Fatal("IsSupportedContent must not claim unfenced markdown as code")
+	}
+}
+
 func TestCodeBlockProcessor_IsBlock_noLanguage(t *testing.T) {
 	p := NewCodeBlockProcessor(block.BlockServices{})
 	if !p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: "```\nsome code\n```"}}).Has(block.ActionPaste) {

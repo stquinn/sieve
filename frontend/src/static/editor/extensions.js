@@ -281,11 +281,12 @@
       return {
         onExplain: function() {},
         onAsk: function() {},
-        onSmartFile: function() {},
-        onKeepAndSmartFile: function() {},
-        onToggleAiBlocks: function() {},
       }
     },
+    // Only caret-contextual chords the native menu does NOT claim live here.
+    // Smart File (Mod+Shift+E), Keep & Smart File (Mod+Shift+Return) and Toggle
+    // AI Blocks (Mod+J) are owned by the menu (App-Level Chords, see
+    // docs/editor-interaction-contract.md) — do not rebind them in the editor.
     addKeyboardShortcuts: function() {
       var self = this
       return {
@@ -293,12 +294,6 @@
         'Mod-E': function() { self.options.onExplain(); return true },
         'Mod-Shift-a': function() { self.options.onAsk(); return true },
         'Mod-Shift-A': function() { self.options.onAsk(); return true },
-        'Mod-Shift-e': function() { self.options.onSmartFile(); return true },
-        'Mod-Shift-E': function() { self.options.onSmartFile(); return true },
-        'Mod-Shift-w': function() { self.options.onKeepAndSmartFile(); return true },
-        'Mod-Shift-W': function() { self.options.onKeepAndSmartFile(); return true },
-        'Mod-j': function() { self.options.onToggleAiBlocks(); return true },
-        'Mod-J': function() { self.options.onToggleAiBlocks(); return true },
       }
     }
   })

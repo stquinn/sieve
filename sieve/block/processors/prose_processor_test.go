@@ -24,6 +24,23 @@ func TestProseProcessor_Transform_embedReturnsFence(t *testing.T) {
 	}
 }
 
+// Embed in Document on a markdown-language code block UNWRAPS: the source already
+// IS document markdown (block.MarkdownContenter), so it embeds directly — no
+// ```markdown fence. The escape hatch for markdown captured as a code block.
+func TestProseProcessor_Transform_embedMarkdownCodeUnwraps(t *testing.T) {
+	block.ResetRegistry()
+	block.RegisterProcessor(&CodeBlockProcessor{FencedDeserializer: block.FencedDeserializer{Kind: "code"}})
+	defer block.UnregisterProcessor("code")
+	var p ProseProcessor
+	src := "# Notes\n\n- item one\n- item two"
+	entries := []block.ContentEntry{{MIMEType: "sieve/code", Content: `{"language":"markdown","source":` + strconv.Quote(src) + `}`}}
+
+	content, _ := p.Transform(entries, "", "", block.ActionTransform)["content"].(string)
+	if content != src {
+		t.Errorf("markdown-language code must embed its source directly, got:\n%s", content)
+	}
+}
+
 // Undo Smart Paste (ActionUndoSmartPaste) is the escape hatch: raw text, no stray fence.
 func TestProseProcessor_Transform_undoReturnsSafePlainText(t *testing.T) {
 	block.ResetRegistry()

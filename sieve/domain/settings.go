@@ -28,7 +28,6 @@ type CustomLogParser struct {
 type Settings struct {
 	CLI                string            `json:"cli,omitempty"`
 	Model              string            `json:"model,omitempty"`
-	CLITimeout         int               `json:"cli_timeout,omitempty"`
 	CLITimeoutLong     int               `json:"cli_timeout_long,omitempty"`
 	AutosaveDebounce   int               `json:"autosave_debounce,omitempty"`
 	Debug              bool              `json:"debug,omitempty"`
@@ -36,6 +35,9 @@ type Settings struct {
 	MaxHistoryVersions int               `json:"max_history_versions,omitempty"`
 	CustomLogParsers   []CustomLogParser `json:"custom_log_parsers,omitempty"`
 	WorkerPools        map[string]int    `json:"worker_pools,omitempty"`
+	// PromptTimeouts overrides the CLI timeout (seconds) per prompt name. A
+	// zero or absent entry falls back to CLITimeoutLong.
+	PromptTimeouts map[string]int `json:"prompt_timeouts,omitempty"`
 }
 
 // Tier returns the capability tier based on whether the configured CLI is
@@ -97,9 +99,6 @@ func ParseSettings(data []byte) Settings {
 	if loaded.Model != "" {
 		s.Model = loaded.Model
 	}
-	if loaded.CLITimeout > 0 {
-		s.CLITimeout = loaded.CLITimeout
-	}
 	if loaded.CLITimeoutLong > 0 {
 		s.CLITimeoutLong = loaded.CLITimeoutLong
 	}
@@ -119,6 +118,9 @@ func ParseSettings(data []byte) Settings {
 	if len(loaded.WorkerPools) > 0 {
 		s.WorkerPools = loaded.WorkerPools
 	}
+	if len(loaded.PromptTimeouts) > 0 {
+		s.PromptTimeouts = loaded.PromptTimeouts
+	}
 
 	if pretty, err := json.MarshalIndent(s, "", "  "); err == nil {
 		logger.Debug("ParseSettings: loaded", "settings", string(pretty))
@@ -135,7 +137,6 @@ func (s Settings) Marshal() ([]byte, error) {
 // DefaultSettings returns the out-of-the-box settings with sensible defaults.
 func DefaultSettings() Settings {
 	return Settings{
-		CLITimeout:         20,
 		CLITimeoutLong:     60,
 		AutosaveDebounce:   30,
 		Theme:              "sublime",

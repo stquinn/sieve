@@ -289,6 +289,28 @@ func (es *EditorService) UpdateBlock(uuid string, blk block.SieveBlock) {
 	shadow.MergeBlock(blk)
 }
 
+// ExportMarkdown derives CLEAN whole-doc markdown for "Copy as Markdown" from the
+// LIVE shadow: ai-blocks are filtered out, and every surviving block reduces to its
+// user-authored export representation (NOT the on-disk Serialize). The ai-block
+// filter is the AIBlockProcessor itself (it implements block.BlockFilter via Accept),
+// obtained from the registry — the same policy the AI TARGET slot reuses. Returns an
+// error when the document is not open.
+func (es *EditorService) ExportMarkdown(uuid string) (string, error) {
+	es.mu.RLock()
+	shadow := es.shadows[uuid]
+	es.mu.RUnlock()
+	if shadow == nil {
+		return "", fmt.Errorf("export-markdown: no open document for uuid %q", uuid)
+	}
+	var filter block.BlockFilter
+	if p := block.GetProcessor("ai-block"); p != nil {
+		if f, ok := p.(block.BlockFilter); ok {
+			filter = f
+		}
+	}
+	return shadow.ExportMarkdown(filter), nil
+}
+
 // EnterMarkdown switches the shadow to markdown mode. It derives whole-doc
 // markdown from the tree, seeds the markdown-mode raw buffer with it, then flips
 // mode so subsequent Flush calls save the raw buffer verbatim. Returns the seed.

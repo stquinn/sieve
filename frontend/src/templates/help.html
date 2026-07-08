@@ -62,7 +62,11 @@
           </tr>
           <tr>
             <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Shift</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Enter</kbd></td>
-            <td class="help-modal__desc">Promote AI</td>
+            <td class="help-modal__desc">Keep & Smart File</td>
+          </tr>
+          <tr>
+            <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">Alt</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">M</kbd></td>
+            <td class="help-modal__desc">Smart Metadata</td>
           </tr>
           <tr>
             <td class="help-modal__keys"><kbd class="help-modal__kbd">Mod</kbd><span class="help-modal__plus">+</span><kbd class="help-modal__kbd">E</kbd></td>
@@ -216,6 +220,8 @@
   kbds.forEach(function(kbd) {
     if (kbd.textContent === 'Mod') {
       kbd.textContent = modKey;
+    } else if (kbd.textContent === 'Alt' && isMac) {
+      kbd.textContent = 'Option';
     }
   });
 })();

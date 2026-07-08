@@ -6,28 +6,8 @@ export function CreateVault() {
   return window['go']['main']['App']['CreateVault']();
 }
 
-export function DownloadAsset(arg1, arg2, arg3) {
-  return window['go']['main']['App']['DownloadAsset'](arg1, arg2, arg3);
-}
-
 export function GetActiveUUID() {
   return window['go']['main']['App']['GetActiveUUID']();
-}
-
-export function GetLinkTitle(arg1) {
-  return window['go']['main']['App']['GetLinkTitle'](arg1);
-}
-
-export function GetStoreInfo() {
-  return window['go']['main']['App']['GetStoreInfo']();
-}
-
-export function GetStorePath() {
-  return window['go']['main']['App']['GetStorePath']();
-}
-
-export function GetThemesFS() {
-  return window['go']['main']['App']['GetThemesFS']();
 }
 
 export function InitVault(arg1) {
@@ -40,10 +20,6 @@ export function Quit() {
 
 export function SelectVault() {
   return window['go']['main']['App']['SelectVault']();
-}
-
-export function ShowInFiles(arg1) {
-  return window['go']['main']['App']['ShowInFiles'](arg1);
 }
 
 export function ShowInFilesByID(arg1) {

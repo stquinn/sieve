@@ -26,6 +26,7 @@ type editorShellData struct {
 func (h *EditorHandler) RegisterPaths(r chi.Router) {
 	r.Get("/api/editor", h.handleEditorShell)
 	r.Get("/api/editor/load", h.handleEditorLoad)
+	r.Get("/api/editor/export", h.handleEditorExport)
 	r.Post("/api/editor/save", h.handleEditorSave)
 	r.Post("/api/editor/smart-paste", h.handleSmartPaste)
 	r.Post("/api/editor/paste-slice", h.handlePasteSlice)
@@ -90,6 +91,51 @@ func (h *EditorHandler) handleEditorLoad(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	json.NewEncoder(w).Encode(loadResponse{Body: "", Mode: "wysiwyg", UUID: ""})
+}
+
+// handleEditorExport serves CLEAN whole-doc markdown for "Copy as Markdown":
+// ai-blocks filtered out, every surviving block reduced to its user-authored export
+// representation (EditorService.ExportMarkdown). Prompt pseudo-docs have no block
+// tree, so they export their raw content verbatim.
+//
+// format selects the output format so the route survives future export targets
+// (html, pdf, …). Only "markdown" exists today; absent defaults to it, unknown
+// values are rejected rather than silently served as markdown.
+func (h *EditorHandler) handleEditorExport(w http.ResponseWriter, r *http.Request) {
+	uuid := r.URL.Query().Get("uuid")
+	if uuid == "" {
+		http.Error(w, "missing uuid", http.StatusBadRequest)
+		return
+	}
+	format := r.URL.Query().Get("format")
+	if format == "" {
+		format = "markdown"
+	}
+	if format != "markdown" {
+		http.Error(w, "unsupported format: "+format, http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+
+	if strings.HasPrefix(uuid, "prompt:") {
+		name := strings.TrimPrefix(uuid, "prompt:")
+		body, err := h.ServiceProvider.Prompts.GetPromptContent(name)
+		if err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		_, _ = w.Write([]byte(body))
+		return
+	}
+
+	md, err := h.ServiceProvider.Editor.ExportMarkdown(uuid)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	_, _ = w.Write([]byte(md))
 }
 
 func (h *EditorHandler) handleEditorSave(w http.ResponseWriter, r *http.Request) {

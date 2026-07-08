@@ -109,6 +109,59 @@ dialog path commits outside the editor and does not consume — acceptable).
 | Anywhere | ```` ```ai-block ```` fence | ai-block re-import |
 | Log block | anything | consumed (read-only) |
 
+## App-Level Chords
+
+**Ownership rule (NORMATIVE).** The native menu (`main.go` `buildMenu`) is the
+**single owner** of every app-level chord. A menu item declares the accelerator
+and, in its callback, dispatches a `sieve:*` `CustomEvent` (or runs an
+`htmx.ajax` call); the frontend listener turns that event into behaviour. This
+is the only reliable ownership on both platforms — on macOS native menu
+accelerators intercept chords **before** the webview, so any editor/DOM keydown
+binding on the same chord is silently shadowed; on Linux GTK the webview sees
+keys first. Owning them in the menu makes the resolution identical everywhere.
+
+Consequences:
+
+- The TipTap editor keymap (`extensions.js`) may bind **only caret-contextual
+  chords the menu does not claim** (currently `Mod+E` Explain and `Mod+Shift+A`
+  Ask — no menu item exists for either).
+- **Document-level DOM `keydown` shortcut listeners are FORBIDDEN.** Insertion
+  and app gestures ride the menu → event path, never a global `keydown`.
+- Never bind the same chord in two places, even to the same action — the menu
+  wins on Mac and the duplicate is dead weight.
+
+### Menu accelerator table
+
+| Chord | Menu item | Action / dispatched event |
+|---|---|---|
+| Mod+N | File › New Note | `htmx.ajax` POST `/api/note/new` |
+| Mod+S | File › Save | `sieve:save` |
+| Mod+W | File › Close Tab | `htmx.ajax` POST `/api/tabs/close/{id}` |
+| (menu-click only) | File › Export › Clipboard (Markdown) | `sieve:export-markdown` |
+| Mod+Shift+O | File › Open Library… | `window.sieveSelectLibrary()` |
+| Mod+, | File › Settings/Preferences | open settings dialog |
+| Mod+Q | File › Quit (non-Mac) | `wailsruntime.Quit` |
+| Mod+\\ | View › Toggle Sidebar | `htmx.ajax` POST `/api/session/sidebar/toggle` |
+| Mod+Shift+I | View › Toggle Meta Panel | `htmx.ajax` POST `/api/session/meta/toggle` |
+| Mod+Shift+P | View › Toggle Prompts | `htmx.ajax` POST `/api/session/prompts/toggle` |
+| (menu-click only) | View › Toggle Line Numbers | `htmx.ajax` POST `/api/session/linenumbers/toggle` |
+| Mod+Shift+M | View › Toggle Editor Mode | `sieve:toggle-mode` |
+| Mod+F | View › Toggle Search | `sieve:toggle-search` |
+| Mod+Shift+F | View › Sidebar Search | `window.sieveSidebarSearch()` |
+| Mod+J | View › Toggle AI Blocks | `sieve:toggle-ai-blocks` |
+| Mod+P | View › Quick Switcher | open quick-switcher dialog |
+| Mod+Shift+T | View › Show Toolbar | `htmx.ajax` POST `/api/session/toolbar/toggle` |
+| Mod+Alt+M | Tools › Smart Metadata | `window.SieveAI.smartMetadata()` |
+| Mod+Shift+E | Tools › Smart File | `window.SieveAI.smartFile()` |
+| Mod+Shift+Return | Tools › Keep & Smart File | `window.SieveAI.keepAndSmartFile()` |
+| Mod+Shift+W | Tools › Insert WebClip | `sieve:insert-webclip` |
+| Mod+Shift+L | Tools › Insert URL Card | `sieve:insert-url-card` |
+| Mod+Shift+D | Tools › Insert Diagram | `sieve:insert-diagram` |
+| Mod+/ | Help › Shortcuts | open help dialog |
+
+Editor-owned caret chords (NOT in the menu, bound in `extensions.js`):
+`Mod+E` = Explain block, `Mod+Shift+A` = Ask AI block.
+
 ## Deferred (recorded, not shipped)
 
 - Bracket/quote auto-pairing in code blocks (`autoPair` policy flag) —

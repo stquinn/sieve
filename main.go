@@ -255,6 +255,11 @@ func buildMenu(app *App) *menu.Menu {
 	file.AddText("New Note", keys.CmdOrCtrl("n"), js("htmx.ajax('POST','/api/note/new',{target:'#htmx-tabbar',swap:'innerHTML'})"))
 	file.AddText("Save", keys.CmdOrCtrl("s"), js("document.dispatchEvent(new CustomEvent('sieve:save'))"))
 	file.AddText("Close Tab", keys.CmdOrCtrl("w"), js("var id=document.getElementById('tiptap-mount')?.getAttribute('data-uuid');if(id)htmx.ajax('POST','/api/tabs/close/'+id,{target:'#htmx-tabbar',swap:'innerHTML'})"))
+	// Export submenu — a home for future export targets (file, PDF, …); only the
+	// clipboard target ships today. No accelerator; dispatches sieve:export-markdown,
+	// which the editor.js listener turns into a fetch + clipboard copy.
+	exportMenu := file.AddSubmenu("Export")
+	exportMenu.AddText("Clipboard (Markdown)", nil, js("document.dispatchEvent(new CustomEvent('sieve:export-markdown'))"))
 	file.AddSeparator()
 	file.AddText("Open Library…", keys.Combo("o", keys.CmdOrCtrlKey, keys.ShiftKey),
 		js("window.sieveSelectLibrary()"))
@@ -298,7 +303,7 @@ func buildMenu(app *App) *menu.Menu {
 	view.AddText("Toggle Meta Panel", keys.Combo("i", keys.CmdOrCtrlKey, keys.ShiftKey), js("htmx.ajax('POST','/api/session/meta/toggle',{swap:'none'})"))
 	view.AddText("Toggle Ask Panel", nil, js("htmx.ajax('POST','/api/session/askpanel/toggle',{swap:'none'})"))
 	view.AddText("Toggle Prompts", keys.Combo("p", keys.CmdOrCtrlKey, keys.ShiftKey), js("htmx.ajax('POST','/api/session/prompts/toggle',{swap:'none'})"))
-	view.AddText("Toggle Line Numbers", keys.Combo("l", keys.CmdOrCtrlKey, keys.ShiftKey), js("htmx.ajax('POST','/api/session/linenumbers/toggle',{swap:'none'})"))
+	view.AddText("Toggle Line Numbers", nil, js("htmx.ajax('POST','/api/session/linenumbers/toggle',{swap:'none'})"))
 	view.AddText("Toggle Editor Mode", keys.Combo("m", keys.CmdOrCtrlKey, keys.ShiftKey), js("document.dispatchEvent(new CustomEvent('sieve:toggle-mode'))"))
 	view.AddSeparator()
 	view.AddText("Toggle Search", keys.CmdOrCtrl("f"), js("document.dispatchEvent(new CustomEvent('sieve:toggle-search'))"))
@@ -310,11 +315,22 @@ func buildMenu(app *App) *menu.Menu {
 		js("htmx.ajax('POST','/api/session/toolbar/toggle',{swap:'none'})"))
 
 	tools := appMenu.AddSubmenu("Tools")
-	tools.AddText("Smart Metadata", keys.Combo("m", keys.CmdOrCtrlKey, keys.ShiftKey),
+	tools.AddText("Smart Metadata", keys.Combo("m", keys.CmdOrCtrlKey, keys.OptionOrAltKey),
 		js("window.SieveAI?.smartMetadata()"))
 	tools.AddSeparator()
 	tools.AddText("Smart File", keys.Combo("e", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.SieveAI?.smartFile()"))
 	tools.AddText("Keep & Smart File", keys.Combo("return", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.SieveAI?.keepAndSmartFile()"))
+	tools.AddSeparator()
+	// Block-insertion chords. The native menu is the single owner of these
+	// app-level accelerators (see docs/editor-interaction-contract.md → App-Level
+	// Chords); each dispatches an event the editor.js listener turns into the
+	// corresponding insert-dialog / create-block call.
+	tools.AddText("Insert WebClip", keys.Combo("w", keys.CmdOrCtrlKey, keys.ShiftKey),
+		js("document.dispatchEvent(new CustomEvent('sieve:insert-webclip'))"))
+	tools.AddText("Insert URL Card", keys.Combo("l", keys.CmdOrCtrlKey, keys.ShiftKey),
+		js("document.dispatchEvent(new CustomEvent('sieve:insert-url-card'))"))
+	tools.AddText("Insert Diagram", keys.Combo("d", keys.CmdOrCtrlKey, keys.ShiftKey),
+		js("document.dispatchEvent(new CustomEvent('sieve:insert-diagram'))"))
 
 	help := appMenu.AddSubmenu("Help")
 	help.AddText("Shortcuts", keys.CmdOrCtrl("/"), js("htmx.ajax('GET','/api/help',{target:'#help-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('help-dialog').showModal()})"))

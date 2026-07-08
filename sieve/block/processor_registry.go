@@ -514,6 +514,16 @@ type RawContenter interface {
 	RawContent(blk SieveBlock) string
 }
 
+// MarkdownContenter is the optional interface a processor implements when a given
+// block's raw content can itself BE document markdown (e.g. a code block whose
+// language is markdown). Prose embedding ("Embed in Document") consults it to
+// insert such content directly into the document instead of a fenced
+// representation — the escape hatch for markdown captured as a code block.
+// Pairs with RawContenter, which supplies the content to unwrap.
+type MarkdownContenter interface {
+	ContentIsMarkdown(blk SieveBlock) bool
+}
+
 // FirstPasteMatch returns the kind and processor that claims these entries on a
 // PASTE (registration order = priority), or ok=false. This is the paste operation
 // ONLY — extract/convert goes through DetectExtractions, which is free to offer

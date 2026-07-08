@@ -69,6 +69,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	s.AI = ai.NewAIService(s.State, s.Prompts, s.Documents, storePath)
 	s.LinkPreview = services.NewLinkPreviewService()
 	settings := s.State.LoadSettings()
+	s.ApplyRetention(settings.MaxHistoryVersions)
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second
 	s.Editor = editor.NewEditorService(s.Documents, block.NewDocumentCodec(block.GlobalRegistry()), autosave)
 	s.Editor.SetServices(s.BlockServices())
@@ -96,6 +97,21 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	block.RegisterProcessor(processors.NewCodeBlockProcessor(svc))
 
 	block.RegisterProcessor(processors.NewAIBlockProcessor(svc))
+}
+
+// ApplyRetention pushes the history-retention limit into the concrete store so
+// snapshot pruning honours the user's max_history_versions setting. n <= 0 is
+// ignored (keeps the current limit). The type assertion lives here — the
+// composition root is the one place that legitimately knows both the
+// store.Store interface and its concrete FileStore capability; retention is not
+// part of the persistence boundary contract, so it is not on store.Store.
+func (s *ServiceProvider) ApplyRetention(n int) {
+	if n <= 0 || s.Store == nil {
+		return
+	}
+	if setter, ok := s.Store.(interface{ SetMaxVersions(int) }); ok {
+		setter.SetMaxVersions(n)
+	}
 }
 
 func isUUID(s string) bool {

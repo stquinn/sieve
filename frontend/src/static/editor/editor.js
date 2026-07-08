@@ -425,9 +425,6 @@
           // runs identical business logic (target highlight + focus + run).
           onExplain: function () { document.dispatchEvent(new CustomEvent('sieve:ai-explain')) },
           onAsk: function () { document.dispatchEvent(new CustomEvent('sieve:ai-ask')) },
-          onSmartFile: function () { window.SieveAI && window.SieveAI.smartFile(uuid) },
-          onKeepAndSmartFile: function () { window.SieveAI && window.SieveAI.keepAndSmartFile(uuid) },
-          onToggleAiBlocks: toggleAiBlocks,
         }),
       ]),
       // Seed one empty native paragraph — the default editing surface of a new
@@ -640,18 +637,8 @@
           // (docs/editor-interaction-contract.md) — never handle them here:
           // editorProps runs BEFORE extension keymaps and would shadow
           // list indent and table cell navigation (that was defect #6).
-          if (event.key === 'W' && window.isMod(event) && event.shiftKey) {
-            event.preventDefault()
-            ensureOverlays()
-            openInternalizeDialog()
-            return true
-          }
-          if (event.key === 'L' && window.isMod(event) && event.shiftKey) {
-            event.preventDefault()
-            ensureOverlays()
-            openSmartCardDialog()
-            return true
-          }
+          // Block-insertion chords (Mod+Shift+W/L/D) are owned by the native
+          // menu (App-Level Chords); the editor no longer binds them.
           return false
         },
       },
@@ -2031,6 +2018,44 @@
   document.addEventListener('sieve:toggle-search',    toggleSearch)
   document.addEventListener('sieve:toggle-ai-blocks', toggleAiBlocks)
 
+  // ── Block-insertion menu chords (App-Level Chords) ────────────────────────────
+  // The native menu owns Mod+Shift+W/L/D (docs/editor-interaction-contract.md);
+  // each accelerator dispatches one of these events, which open the same insert
+  // dialog / create the same block the toolbar buttons do.
+  document.addEventListener('sieve:insert-webclip', function () {
+    ensureOverlays()
+    openInternalizeDialog()
+  })
+  document.addEventListener('sieve:insert-url-card', function () {
+    ensureOverlays()
+    openSmartCardDialog()
+  })
+  document.addEventListener('sieve:insert-diagram', function () {
+    if (!currentUuid || !currentEditor) return
+    sendCreateBlock('diagram', {})
+  })
+
+  // Copy as Markdown (File › Export › Clipboard (Markdown)). Fetch the server's
+  // clean whole-doc export (ai-blocks filtered, cards/clips reduced to links) and
+  // copy it to the clipboard. A native menu click carries no DOM user gesture and
+  // steals document focus, so WebKit rejects navigator.clipboard here — the Wails
+  // native pasteboard (runtime.ClipboardSetText) is the primary path; the browser
+  // API is only the fallback for non-Wails (plain browser) dev.
+  // No toast system exists, so feedback is left to the OS clipboard affordance.
+  document.addEventListener('sieve:export-markdown', function () {
+    if (!currentUuid) return
+    fetch('/api/editor/export?uuid=' + encodeURIComponent(currentUuid) + '&format=markdown')
+      .then(function (resp) { return resp.ok ? resp.text() : null })
+      .then(function (md) {
+        if (md == null) return
+        if (window.runtime && window.runtime.ClipboardSetText) {
+          return window.runtime.ClipboardSetText(md)
+        }
+        return navigator.clipboard.writeText(md)
+      })
+      .catch(function (err) { console.warn('export-markdown copy failed', err) })
+  })
+
   // ── Ask AI / Explain: the single business-logic seam ──────────────────────────
   // Every entry point — toolbar button, context menu, keyboard shortcut, sieve
   // block — just fires sieve:ai-ask / sieve:ai-explain. These two handlers are the
@@ -2206,25 +2231,6 @@
       detail: el ? { id: el.getAttribute('data-id'), kind: el.getAttribute('data-kind') || 'prose' } : null
     }))
   })
-
-  document.addEventListener('keydown', function (e) {
-    if (e.key === 'W' && window.isMod(e) && e.shiftKey && !e.altKey) {
-      e.preventDefault()
-      ensureOverlays()
-      openInternalizeDialog()
-    }
-    if (e.key === 'L' && window.isMod(e) && e.shiftKey && !e.altKey) {
-      e.preventDefault()
-      ensureOverlays()
-      openSmartCardDialog()
-    }
-    if (e.key === 'D' && window.isMod(e) && e.shiftKey && !e.altKey) {
-      e.preventDefault()
-      if (!currentUuid || !currentEditor) return
-      sendCreateBlock('diagram', {})
-    }
-  })
-
 
   // ── Upgrade to Web Clip (Rich Link → Web Clip) ────────────────────────────────
   // Fired by smart-card-renderer.js context menu "Upgrade to Web Clip".

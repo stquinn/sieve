@@ -1,6 +1,10 @@
 package block
 
-import "sieve/logger"
+import (
+	"strings"
+
+	"sieve/logger"
+)
 
 // DocView is an immutable, lock-free SNAPSHOT of a document's data: the block
 // tree plus the bits needed to derive markdown. It is what a background job or a
@@ -101,4 +105,69 @@ func (d DocView) deriveMarkdownFiltered(f BlockFilter) string {
 		return ""
 	}
 	return md
+}
+
+// ExportRepresenter is an OPTIONAL capability a processor implements when its
+// EXPORT markdown must differ from its AI-facing MarkdownRepresentation. Clean
+// export ("Copy as Markdown") preserves user-authored content only, so kinds whose
+// MarkdownRepresentation carries DERIVED content (a card's fetched description, a
+// web-clip's AI summary) reduce here to their user-authored seed (a plain link).
+// The interface lives in block/ (the export mechanism's home); the reduction policy
+// belongs to each implementing processor. deriveExportMarkdown type-asserts each
+// processor to this and falls back to MarkdownRepresentation when it is absent.
+type ExportRepresenter interface {
+	ExportMarkdown(block SieveBlock, uuid string) string
+}
+
+// deriveExportMarkdown renders the whole document as CLEAN markdown for "Copy as
+// Markdown": filter first, then render each SURVIVING block via its export
+// representation — NOT the on-disk Serialize. The principle is that export preserves
+// user-authored content only; derived content reduces to its user-authored seed
+// (see ExportRepresenter). Empty renders (a pending block, an ai-block with no
+// answer) are skipped; survivors join with a blank line. No frontmatter, no prose
+// <!--s:--> sentinels, no fenced YAML — that is the Serialize (on-disk) form, which
+// this deliberately avoids.
+//
+// MARKDOWN-MODE — unlike deriveMarkdownFiltered, this does NOT return the raw buffer
+// verbatim (which would leak prose sentinels and cannot honour the filter). It
+// re-parses the raw buffer through the codec (mirroring findBlockByID) so the same
+// per-block export render and filter apply. On a re-parse error it falls back to the
+// raw buffer rather than losing the user's content (breakglass-mode best effort).
+func (d DocView) deriveExportMarkdown(f BlockFilter) string {
+	blocks := d.Blocks
+	if d.Mode == "markdown" {
+		parsed, err := d.codec.Deserialize(d.mdModeBuffer)
+		if err != nil {
+			logger.Warn("editor: export re-parse of markdown buffer failed", "uuid", d.UUID, "err", err)
+			return d.mdModeBuffer
+		}
+		blocks = parsed
+	}
+	parts := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		if f != nil && !f.Accept(b) {
+			continue
+		}
+		md := d.renderBlockExport(b)
+		if strings.TrimSpace(md) == "" {
+			continue
+		}
+		parts = append(parts, md)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// renderBlockExport asks a single block's processor for its EXPORT markdown:
+// ExportMarkdown when the processor implements ExportRepresenter (the reduced,
+// user-authored form), else its MarkdownRepresentation. A kind with no registered
+// processor contributes nothing (it has no export representation).
+func (d DocView) renderBlockExport(b SieveBlock) string {
+	p := d.codec.registry.Get(b.Kind)
+	if p == nil {
+		return ""
+	}
+	if er, ok := p.(ExportRepresenter); ok {
+		return er.ExportMarkdown(b, d.UUID)
+	}
+	return p.MarkdownRepresentation(b, d.UUID)
 }

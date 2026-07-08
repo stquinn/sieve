@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sieve/logger"
 	"sieve/sieve"
+	"sieve/sieve/ai"
 	"sieve/sieve/domain"
 	"strconv"
 
@@ -15,6 +16,29 @@ import (
 type SettingsHandler struct {
 	ServiceProvider *sieve.ServiceProvider
 	Tmpl            *template.Template
+}
+
+// settingsView is the template payload for settings.html. Settings is embedded
+// so its fields (Theme, CLITimeoutLong, PromptTimeouts, …) are promoted; Prompts
+// drives the per-prompt timeout override table.
+type settingsView struct {
+	domain.Settings
+	LastSettingsPanel string
+	Prompts           []ai.PromptEntry
+}
+
+// buildView assembles the template payload, resolving the prompt list from the
+// PromptService when available.
+func (h *SettingsHandler) buildView(settings domain.Settings, lastPanel string) settingsView {
+	var prompts []ai.PromptEntry
+	if h.ServiceProvider.Prompts != nil {
+		prompts = h.ServiceProvider.Prompts.ListPrompts()
+	}
+	return settingsView{
+		Settings:          settings,
+		LastSettingsPanel: lastPanel,
+		Prompts:           prompts,
+	}
 }
 
 func (h *SettingsHandler) RegisterPaths(r chi.Router) {
@@ -34,13 +58,7 @@ func (h *SettingsHandler) handleSettings(w http.ResponseWriter, r *http.Request)
 	settings := h.ServiceProvider.State.LoadSettings()
 	session := h.ServiceProvider.State.LoadSession()
 
-	data := struct {
-		domain.Settings
-		LastSettingsPanel string
-	}{
-		Settings:          settings,
-		LastSettingsPanel: session.LastSettingsPanel,
-	}
+	data := h.buildView(settings, session.LastSettingsPanel)
 
 	if err := h.Tmpl.ExecuteTemplate(w, "settings.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -72,6 +90,27 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 			settings.MaxHistoryVersions = val
 		}
 	}
+	if longStr := r.FormValue("cli_timeout_long"); longStr != "" {
+		if val, err := strconv.Atoi(longStr); err == nil && val > 0 {
+			settings.CLITimeoutLong = val
+		}
+	}
+
+	// Per-prompt timeout overrides. Blank/0/invalid ⇒ absent from the map, which
+	// falls back to CLITimeoutLong. Rebuild the map from the form each save so a
+	// cleared field removes its override.
+	promptTimeouts := map[string]int{}
+	if h.ServiceProvider.Prompts != nil {
+		for _, p := range h.ServiceProvider.Prompts.ListPrompts() {
+			if v := r.FormValue("prompt_timeout_" + p.Name); v != "" {
+				if val, err := strconv.Atoi(v); err == nil && val > 0 {
+					promptTimeouts[p.Name] = val
+				}
+			}
+		}
+	}
+	settings.PromptTimeouts = promptTimeouts
+
 	settings.Debug = r.FormValue("debug") == "on"
 
 	var customParsers []domain.CustomLogParser
@@ -95,6 +134,10 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Apply history retention live so a changed max_history_versions takes effect
+	// without an app restart.
+	h.ServiceProvider.ApplyRetention(settings.MaxHistoryVersions)
+
 	w.Header().Set("HX-Trigger", "settings:changed")
 
 	session := h.ServiceProvider.State.LoadSession()
@@ -103,13 +146,7 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 		_ = h.ServiceProvider.State.SaveSession(session)
 	}
 
-	data := struct {
-		domain.Settings
-		LastSettingsPanel string
-	}{
-		Settings:          settings,
-		LastSettingsPanel: session.LastSettingsPanel,
-	}
+	data := h.buildView(settings, session.LastSettingsPanel)
 
 	if err := h.Tmpl.ExecuteTemplate(w, "settings.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

@@ -112,7 +112,7 @@ func (s *AIService) RunExplain(content, history, question, noteUUID string) (str
 	p = strings.ReplaceAll(p, "{history}", history)
 	p = strings.ReplaceAll(p, "{action}", question)
 
-	return RunCLI(settings.CLI, p, settings.Model, settings.CLITimeoutLong, noteCwd)
+	return RunCLI(settings.CLI, p, settings.Model, s.timeoutFor(settings, "explain"), noteCwd)
 }
 
 // RunAsk asks the AI a question with the given content as context. history may
@@ -132,7 +132,7 @@ func (s *AIService) RunAsk(content, history, question, noteUUID string) (string,
 	p = strings.ReplaceAll(p, "{history}", history)
 	p = strings.ReplaceAll(p, "{action}", question)
 
-	return RunCLI(settings.CLI, p, settings.Model, settings.CLITimeoutLong, noteCwd)
+	return RunCLI(settings.CLI, p, settings.Model, s.timeoutFor(settings, "ask"), noteCwd)
 }
 
 // DescribeImage sends an image to the configured AI and returns alt text, a
@@ -175,7 +175,7 @@ func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string
 	logger.Info("About to Describe", "path", imagePath)
 	p := strings.ReplaceAll(prompt, "{image_filename}", filepath.Base(imagePath))
 	cwd := filepath.Dir(imagePath)
-	resp, err := RunCLI(settings.CLI, p, settings.Model, settings.CLITimeoutLong, cwd)
+	resp, err := RunCLI(settings.CLI, p, settings.Model, s.timeoutFor(settings, "image"), cwd)
 	if err != nil {
 		return domain.ImageDesc{}, err
 	}
@@ -198,7 +198,7 @@ func (s *AIService) RefineLanguage(content, currentLanguage, detectionMethod str
 	p = strings.ReplaceAll(p, "{current_language}", currentLanguage)
 	p = strings.ReplaceAll(p, "{detection_method}", detectionMethod)
 
-	resp, err := RunCLI(settings.CLI, p, settings.Model, settings.CLITimeoutLong, "")
+	resp, err := RunCLI(settings.CLI, p, settings.Model, s.timeoutFor(settings, "refine"), "")
 	if err != nil {
 		return "", err
 	}
@@ -282,6 +282,16 @@ func (s *AIService) GetLinkTitle(targetURL string) (string, error) {
 
 // ── Private helpers ───────────────────────────────────────────────────────────
 
+// timeoutFor returns the CLI timeout (seconds) for the named prompt: the
+// per-prompt override in settings when set (> 0), otherwise the global
+// CLITimeoutLong default.
+func (s *AIService) timeoutFor(settings domain.Settings, promptName string) int {
+	if t, ok := settings.PromptTimeouts[promptName]; ok && t > 0 {
+		return t
+	}
+	return settings.CLITimeoutLong
+}
+
 func (s *AIService) runEvaluateBuffer(meta domain.DocumentMeta, body []byte, settings domain.Settings) (*domain.FilingRecommendation, error) {
 	prompt, _ := s.prompts.GetPromptContent("file")
 	folders := s.libraryFolders()
@@ -314,7 +324,7 @@ func (s *AIService) runEvaluateBuffer(meta domain.DocumentMeta, body []byte, set
 	p = strings.ReplaceAll(p, "{now}", time.Now().Format(time.RFC3339))
 	p = strings.ReplaceAll(p, "{content}", string(body))
 
-	respText, err := RunCLI(settings.CLI, p, settings.Model, settings.CLITimeoutLong, "")
+	respText, err := RunCLI(settings.CLI, p, settings.Model, s.timeoutFor(settings, "file"), "")
 	if err != nil {
 		return nil, err
 	}
@@ -461,7 +471,7 @@ func (s *AIService) RunWebClip(uuid, id, source, mode, docContent string) (title
 		docDir = filepath.Join(s.storePath, doc.Storable().ExternalRef())
 	}
 
-	raw, err := RunCLI(settings.CLI, prompt, settings.Model, settings.CLITimeoutLong, cwd)
+	raw, err := RunCLI(settings.CLI, prompt, settings.Model, s.timeoutFor(settings, promptName), cwd)
 	if err != nil {
 		return "", "", err
 	}

@@ -95,6 +95,17 @@ func (s *ShadowDocument) deriveMarkdown() string {
 	return DocView{UUID: s.UUID, Mode: s.Mode, mdModeBuffer: s.mdModeBuffer, Blocks: s.Blocks, codec: s.codec}.deriveMarkdown()
 }
 
+// ExportMarkdown derives CLEAN whole-doc markdown for "Copy as Markdown" from the
+// LIVE document: each surviving block (after filter) rendered via its export
+// representation, NOT the on-disk Serialize (see DocView.deriveExportMarkdown).
+// Takes s.mu like deriveMarkdown; the transient DocView shares the slice read-only
+// under the lock. filter drops kinds the consumer excludes (ai-blocks).
+func (s *ShadowDocument) ExportMarkdown(filter BlockFilter) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return DocView{UUID: s.UUID, Mode: s.Mode, mdModeBuffer: s.mdModeBuffer, Blocks: s.Blocks, codec: s.codec}.deriveExportMarkdown(filter)
+}
+
 func (s *ShadowDocument) SetMarkdown(md string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
