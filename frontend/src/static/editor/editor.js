@@ -39,8 +39,10 @@
   })
 
   // _activeEditor returns the live editor instance for the active tab (a
-  // NoteEditor or PromptEditor), or null. The thin module wrappers below delegate
-  // to it so the ~many wsSend/flushSave call sites need no rewrite.
+  // NoteEditor or PromptEditor), or null. Call sites speak the editor's DOMAIN
+  // methods (applyBlockOps/updateText/retryBlockJob/extract/flushSave) — the
+  // transport underneath is AbstractEditor's private business; a disconnected
+  // editor (PromptEditor) no-ops them safely, so nothing here probes for it.
   function _activeEditor() {
     var ws = window.sieveWorkspace
     return (ws && ws.activeTab && ws.activeTab.editor) || null
@@ -60,8 +62,8 @@
 
   // makeSurface builds a concrete input surface (shell/surfaces/*.js). A
   // surface's dependency bag holds ONLY (a) DOMAIN-SHAPED content services —
-  // submitBlockOps/updateText (the editor's own transport methods, threaded
-  // through as `services`; the WS enveloping lives in NoteEditor), requestSave,
+  // applyBlockOps/updateText (the editor's own transport methods, threaded
+  // through as `services`; the WS enveloping lives in AbstractEditor), requestSave,
   // requestReload, takeInsertPos, the paste+drop pipelines — and (b) the single
   // outbound `notify`. Zero app-level concepts (no chrome names, no AI, no
   // chords) and zero wire vocabulary. Everything app-flavoured lives in
@@ -83,7 +85,7 @@
       deps.requestReload = function () { softReloadContent(uuid) }
       return new window.SieveMarkdownSurface(deps)
     }
-    deps.submitBlockOps = services.submitBlockOps
+    deps.applyBlockOps = services.applyBlockOps
     // requestSave backs the PM-internal Mod+S (editorProps handleKeyDown must
     // run pre-core inside ProseMirror's key routing — the interaction contract).
     deps.requestSave = flushSave
@@ -208,12 +210,11 @@
   // through block-op, exactly like update/delete. Go positions it via the index and
   // renders it back (insert-block) for structured kinds.
   function sendCreateBlock(kind, attrs) {
-    if (!currentUuid) return
-    wsSend({
-      type: 'block-op',
-      uuid: currentUuid,
-      op: { type: 'create-block', kind: kind, attrs: attrs || {}, index: commitInsertIndex(sieveInsertPos) },
-    })
+    var ed = _activeEditor()
+    if (!currentUuid || !ed) return
+    ed.applyBlockOps([
+      { type: 'create-block', kind: kind, attrs: attrs || {}, index: commitInsertIndex(sieveInsertPos) },
+    ])
   }
 
 
@@ -335,27 +336,18 @@
   // editor.js reaches them only through the editor object (presentSurface /
   // setMode / applyServerOp / flushPending).
 
-  // ── Save + WS (thin wrappers over the live editor instance) ──────────────────
-  // The WS channel, save pipeline, and wsSendAndAwait now live in NoteEditor /
-  // PromptEditor (shell/*.js). These module-level functions are thin delegators so
-  // the ~many call sites (sendCreateBlock, block-op, doc-update, toggleMode, retry,
-  // extract, index.html's window._editorSave) need no rewrite. STATE lives only in
-  // the class; nothing here owns a socket or a timer.
+  // ── Save (thin wrapper over the live editor instance) ────────────────────────
+  // The transport lives entirely inside AbstractEditor (#private, P2.B.2); this
+  // module speaks only the editor's domain methods. STATE lives only in the
+  // class; nothing here owns a socket or a timer.
 
-  // flushSave delegates to the active editor's flushSave (NoteEditor: WS flush;
-  // PromptEditor: HTTP save). Returns a Promise so callers can await the save.
+  // flushSave delegates to the active editor's flushSave (NoteEditor: channel
+  // flush; PromptEditor: HTTP save override). Returns a Promise so callers can
+  // await the save.
   function flushSave() {
     var ed = _activeEditor()
     if (!ed) return Promise.resolve()
     return ed.flushSave()
-  }
-
-  // wsSend delegates to the active editor when it owns a socket (NoteEditor). For a
-  // PromptEditor (no wsSend method) it is a no-op — a prompt has no WS, exactly as
-  // the old wsSend pushed prompt messages into a queue that never drained.
-  function wsSend(msg) {
-    var ed = _activeEditor()
-    if (ed && typeof ed.wsSend === 'function') ed.wsSend(msg)
   }
 
   // Primary creation path. JS fires sieve:create-block when the user uses a
@@ -386,8 +378,9 @@
   // the SAME granular block-op as prose (built by block-sync.updateBlockOp) — the
   // bespoke block-update message is retired; block-op is the one mutation path.
   document.addEventListener('sieve:block-update', function (e) {
-    if (!currentUuid || !e.detail.id) return
-    wsSend({ type: 'block-op', uuid: currentUuid, op: window.TipTap.updateBlockOp(e.detail) })
+    var ed = _activeEditor()
+    if (!currentUuid || !e.detail.id || !ed) return
+    ed.applyBlockOps([window.TipTap.updateBlockOp(e.detail)])
   })
 
   // Server render-back ops (insert-block / replace-block / block-attrs-updated)
@@ -1303,7 +1296,8 @@
       })
       return found
     })
-    wsSend({ type: 'retry-block-job', id: blkId, uuid: currentUuid })
+    var edRetry = _activeEditor()
+    if (edRetry) edRetry.retryBlockJob(blkId)
   })
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1471,7 +1465,8 @@
     }
 
     function send(resolved) {
-      wsSend({ type: 'extract', blockId: blockId, targetKind: targetKind, operation: operation, entries: resolved, index: index })
+      var ed = _activeEditor()
+      if (ed) ed.extract({ blockId: blockId, targetKind: targetKind, operation: operation, entries: resolved, index: index })
     }
 
     if (window.TipTap && window.TipTap.resolveEntriesForKind) {

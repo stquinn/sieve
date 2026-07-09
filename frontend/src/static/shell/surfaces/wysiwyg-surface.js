@@ -36,7 +36,7 @@ import { AbstractSurface, SurfaceEvent } from './abstract-surface.js'
  * docs/editor-interaction-contract.md, so it cannot move to the document-level
  * transitional listener the markdown surface uses.)
  * @typedef {object} WysiwygSurfaceDeps
- * @property {(ops: object[]) => void}    submitBlockOps  — block-domain ops → editor transport (the editor owns the WS enveloping)
+ * @property {(ops: object[]) => void}    applyBlockOps   — block-domain ops → editor transport (the editor owns the WS enveloping)
  * @property {() => unknown}              requestSave     — save command (module flushSave)
  * @property {(event: ClipboardEvent) => boolean} onPaste — smart-paste pipeline (handleSmartPaste)
  * @property {(event: DragEvent) => boolean}      onDrop  — smart-drop pipeline (handleSmartDrop)
@@ -522,7 +522,7 @@ export class WysiwygSurface extends AbstractSurface {
       } else {
         // Deleted while the create was in flight — Go has a block we can't see. Delete it
         // by the authoritative id, then drop the stale token baseline (falsy id sentinel).
-        this.#deps.submitBlockOps([{ type: 'delete-block', blockId: msg.id }])
+        this.#deps.applyBlockOps([{ type: 'delete-block', blockId: msg.id }])
         this.#reconcilePendingToken(msg.token, null)
       }
       return
@@ -827,7 +827,7 @@ export class WysiwygSurface extends AbstractSurface {
     if (!curr || !this.#T.computeBlockSync) return
     var r = this.#T.computeBlockSync(curr, this.#blockContentCache)
     this.#blockContentCache = r.next
-    if (r.ops.length) this.#deps.submitBlockOps(r.ops)
+    if (r.ops.length) this.#deps.applyBlockOps(r.ops)
   }
 
   /**

@@ -258,11 +258,13 @@ describe('SieveWorkspace', () => {
 // ── P2.A: AbstractEditor hierarchy owns WS + save + doc/dirty state ──────────────
 
 describe('AbstractEditor (P2.A base, P2.B surfaces)', () => {
-  it('flushSave stays abstract; destroy is concrete (unmounts the surface)', () => {
+  it('flushSave is concrete on the base (P2.B.2); destroy unmounts the surface', async () => {
     const ed = new AbstractEditor('u', { surfaceFactory: (m) => new FakeSurface(m) })
-    expect(() => ed.flushSave()).toThrow('must implement flushSave')
     const root = document.createElement('div')
     const surface = ed.presentSurface('markdown', root, 'x')
+    // Disconnected editor: flushPending fires on the surface, flush() resolves.
+    await expect(ed.flushSave()).resolves.toBeDefined()
+    expect(surface.flushCount).toBe(1)
     expect(() => ed.destroy()).not.toThrow()
     expect(surface.unmountCount).toBe(1)
     expect(ed.surface).toBeNull()
@@ -320,20 +322,20 @@ describe('AbstractEditor surface events + domain services (P2.B corrections)', (
     expect(seen).toEqual(['doc-changed'])
   })
 
-  it('base submitBlockOps/updateText DROP domain output (prompt behavior)', () => {
+  it('base applyBlockOps/updateText DROP domain output (socketless prompt behavior)', () => {
     const { services } = rigWithServices()
-    expect(() => services().submitBlockOps([{ type: 'update-block', blockId: 'b' }])).not.toThrow()
+    expect(() => services().applyBlockOps([{ type: 'update-block', blockId: 'b' }])).not.toThrow()
     expect(() => services().updateText('md')).not.toThrow()
   })
 })
 
-describe('NoteEditor domain → wire enveloping (P2.B correction 3)', () => {
+describe('AbstractEditor domain → wire enveloping (P2.B.2: moved from NoteEditor)', () => {
   beforeEach(() => FakeSocket.reset())
 
-  it('submitBlockOps envelopes each domain op as block-op, in order, with the uuid', () => {
+  it('applyBlockOps envelopes each domain op as block-op, in order, with the uuid', () => {
     const rig = noteRig('n')
     rig.sock().driveOpen()
-    rig.ed.submitBlockOps([
+    rig.ed.applyBlockOps([
       { type: 'create-block', kind: 'code', index: 1 },
       { type: 'delete-block', blockId: 'b9' },
     ])
@@ -359,7 +361,7 @@ describe('NoteEditor domain → wire enveloping (P2.B correction 3)', () => {
     })
     rig.sock().driveOpen()
     rig.ed.presentSurface('wysiwyg', document.createElement('div'), { body: '', blocks: [] })
-    services.submitBlockOps([{ type: 'update-block', blockId: 'b1' }])
+    services.applyBlockOps([{ type: 'update-block', blockId: 'b1' }])
     expect(rig.sock().sentOfType('block-op')).toEqual([
       { type: 'block-op', uuid: 'n', op: { type: 'update-block', blockId: 'b1' } },
     ])
@@ -434,21 +436,35 @@ describe('NoteEditor WS lifecycle (P2.A)', () => {
     expect(FakeSocket.instances[0].url).toContain('uuid=n')
   })
 
-  it('queues sends before open and flushes on open', () => {
+  it('queues domain sends before open and flushes on open', () => {
     const ed = makeNote('n')
     const sock = FakeSocket.instances[0]
-    ed.wsSend({ type: 'block-op', uuid: 'n' }) // socket still CONNECTING → queued
+    ed.applyBlockOps([{ type: 'create-block', kind: 'code' }]) // CONNECTING → queued
     expect(sock.sent.length).toBe(0)
     sock.driveOpen()
     expect(sock.sentTypes()).toContain('block-op')
   })
 
-  it('sends directly once the socket is OPEN', () => {
+  it('sends directly once the socket is OPEN, with the frozen envelope (C3 pin)', () => {
     const ed = makeNote('n')
     const sock = FakeSocket.instances[0]
     sock.driveOpen()
-    ed.wsSend({ type: 'block-op', uuid: 'n' })
-    expect(sock.sentTypes()).toContain('block-op')
+    ed.applyBlockOps([{ type: 'update-block', blockId: 'b1' }])
+    const sent = sock.sent.map((s) => JSON.parse(s)).find((m) => m.type === 'block-op')
+    // The wire envelope is composed ONLY inside AbstractEditor — pinned here.
+    expect(sent).toEqual({ type: 'block-op', uuid: 'n', op: { type: 'update-block', blockId: 'b1' } })
+  })
+
+  it('retryBlockJob and extract envelope with the frozen shapes', () => {
+    const ed = makeNote('n')
+    const sock = FakeSocket.instances[0]
+    sock.driveOpen()
+    ed.retryBlockJob('blk-1')
+    ed.extract({ blockId: 'blk-1', targetKind: 'diagram', operation: 'extract', entries: [], index: 2 })
+    const msgs = sock.sent.map((s) => JSON.parse(s))
+    expect(msgs).toContainEqual({ type: 'retry-block-job', uuid: 'n', id: 'blk-1' })
+    // extract carries no uuid — the server resolves the doc from the channel.
+    expect(msgs).toContainEqual({ type: 'extract', blockId: 'blk-1', targetKind: 'diagram', operation: 'extract', entries: [], index: 2 })
   })
 
   it('closes the socket and cancels timers on destroy', () => {
@@ -509,16 +525,17 @@ describe('NoteEditor WS lifecycle (P2.A)', () => {
   })
 })
 
-describe('NoteEditor.wsSendAndAwait (P2.A)', () => {
+describe('AbstractEditor.flush() — the awaited save ack (P2.B.2 domain method)', () => {
   beforeEach(() => FakeSocket.reset())
   afterEach(() => vi.useRealTimers())
 
-  it('resolves with the matching ack message', async () => {
+  it('sends the frozen flush envelope and resolves with the ack', async () => {
     const ed = makeNote('n')
     const sock = FakeSocket.instances[0]
     sock.driveOpen()
-    const p = ed.wsSendAndAwait('flush', { type: 'flush', uuid: 'n' })
-    expect(sock.sentTypes()).toContain('flush')
+    const p = ed.flush()
+    const sent = sock.sent.map((s) => JSON.parse(s)).find((m) => m.type === 'flush')
+    expect(sent).toEqual({ type: 'flush', uuid: 'n' })
     sock.driveMessage({ type: 'flush-ack', uuid: 'n' })
     const msg = await p
     expect(msg.type).toBe('flush-ack')
@@ -528,7 +545,7 @@ describe('NoteEditor.wsSendAndAwait (P2.A)', () => {
     vi.useFakeTimers()
     const ed = makeNote('n')
     FakeSocket.instances[0].driveOpen()
-    const p = ed.wsSendAndAwait('flush', { type: 'flush', uuid: 'n' })
+    const p = ed.flush()
     const assertion = expect(p).rejects.toThrow('ws timeout: flush')
     await vi.advanceTimersByTimeAsync(5000)
     await assertion
@@ -847,19 +864,70 @@ describe('NoteEditor.destroy idempotence (P2.A fix wave)', () => {
   })
 })
 
-describe('module wsSend delegation contract (P2.A fix wave)', () => {
-  it('PromptEditor exposes no wsSend, so the editor.js wrapper is a silent no-op', () => {
-    const ed = new PromptEditor('prompt:p')
-    // editor.js's module-level wsSend guard is `typeof ed.wsSend === 'function'`;
-    // PromptEditor must not grow one, or prompt docs would start WS-sending.
-    expect(typeof ed.wsSend).not.toBe('function')
+describe('transport is invisible in the public contract (P2.B.2)', () => {
+  beforeEach(() => FakeSocket.reset())
 
-    // Replicate the wrapper exactly (editor.js is an IIFE, not importable):
-    // it must swallow the message without throwing when the editor has no socket.
-    const wsSendWrapper = (editor, msg) => {
-      if (editor && typeof editor.wsSend === 'function') editor.wsSend(msg)
+  it('neither editor type exposes any transport method — the domain methods ARE the protocol surface', () => {
+    const note = makeNote('n')
+    const prompt = new PromptEditor('prompt:p')
+    for (const ed of [note, prompt]) {
+      for (const name of ['wsSend', 'wsSendAndAwait', '_wsSend', '_wsSendAndAwait', '_awaitReply']) {
+        expect(typeof (/** @type {any} */ (ed))[name]).not.toBe('function')
+      }
+      // The domain surface is uniform across the hierarchy.
+      for (const name of ['applyBlockOps', 'updateText', 'flush', 'enterMarkdown', 'enterWysiwyg', 'retryBlockJob', 'extract', 'flushSave']) {
+        expect(typeof (/** @type {any} */ (ed))[name]).toBe('function')
+      }
     }
-    expect(() => wsSendWrapper(ed, { type: 'block-op', uuid: 'prompt:p' })).not.toThrow()
+  })
+})
+
+// ── P2.B.2: socketless editor (PromptEditor) — no socket, domain no-ops ─────────
+
+describe('disconnected editor (PromptEditor — no `connect` declared, P2.B.2)', () => {
+  beforeEach(() => FakeSocket.reset())
+
+  it('PromptEditor never constructs a socket', () => {
+    new PromptEditor('prompt:x', {
+      socketFactory: (url) => new FakeSocket(url),
+    })
+    expect(FakeSocket.instances.length).toBe(0)
+  })
+
+  it('applyBlockOps is a silent no-op for a socketless editor', () => {
+    const ed = new PromptEditor('prompt:x')
+    expect(() => ed.applyBlockOps([{ type: 'create-block', kind: 'code', index: 0 }])).not.toThrow()
+  })
+
+  it('updateText is a silent no-op for a socketless editor', () => {
+    const ed = new PromptEditor('prompt:x')
+    expect(() => ed.updateText('# hello')).not.toThrow()
+  })
+
+  it('flush() resolves immediately for a socketless editor', async () => {
+    const ed = new PromptEditor('prompt:x')
+    await expect(ed.flush()).resolves.toBeDefined()
+  })
+
+  it('enterMarkdown() rejects for a disconnected editor', async () => {
+    const ed = new PromptEditor('prompt:x')
+    await expect(ed.enterMarkdown()).rejects.toThrow('no live channel')
+  })
+
+  it('enterWysiwyg() rejects for a disconnected editor', async () => {
+    const ed = new PromptEditor('prompt:x')
+    await expect(ed.enterWysiwyg('# md')).rejects.toThrow('no live channel')
+  })
+
+  it('setMode is a no-op resolving false for a socketless editor', async () => {
+    const ed = new PromptEditor('prompt:x', { surfaceFactory: (m) => new FakeSurface(m) })
+    ed.presentSurface('markdown', document.createElement('div'), 'x')
+    await expect(ed.setMode('wysiwyg')).resolves.toBe(false)
+  })
+
+  it('PromptEditor exposes no wsSend (socketless guard for editor.js)', () => {
+    const ed = new PromptEditor('prompt:x')
+    expect(typeof (/** @type {any} */ (ed)).wsSend).not.toBe('function')
   })
 })
 

@@ -30,6 +30,10 @@ export class PromptEditor extends AbstractEditor {
    * @param {PromptEditorOptions} [options]
    */
   constructor(uuid, options = {}) {
+    // A prompt never declares `connect` — AbstractEditor's default is
+    // disconnected, so no channel exists and domain methods are safe no-ops.
+    // Persistence is handled by flushSave's HTTP POST override below (proper
+    // OOP: per-type behavior as a method override on the type).
     super(uuid, options)
     this.#saveFn = options.saveFn || PromptEditor.#defaultSave
     this.#isSaveSuppressed = options.isSaveSuppressed || (() => false)

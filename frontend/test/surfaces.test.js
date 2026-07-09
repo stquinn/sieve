@@ -160,7 +160,7 @@ const tokSchema = new Schema({
 
 function wyDeps(overrides = {}) {
   return Object.assign({
-    submitBlockOps: vi.fn(),
+    applyBlockOps: vi.fn(),
     requestSave: vi.fn(),
     onPaste: vi.fn(() => false),
     onDrop: vi.fn(() => false),
@@ -275,7 +275,7 @@ describe('WysiwygSurface.applyServerOp (P2.B call-shape, undo-sacred)', () => {
     const s = new TestWysiwygSurface('doc-1', deps, ed)
     s.applyServerOp({ type: 'insert-block', kind: 'prose', token: 'tok-gone', id: 'real-2' })
     // Domain-shaped: the delete-block op only — the WS envelope is NoteEditor's.
-    expect(deps.submitBlockOps).toHaveBeenCalledWith([{ type: 'delete-block', blockId: 'real-2' }])
+    expect(deps.applyBlockOps).toHaveBeenCalledWith([{ type: 'delete-block', blockId: 'real-2' }])
     expect(ed.dispatched.length).toBe(0)
     expect(ed.calls.find((c) => c[0] === 'insertContentAt')).toBeUndefined()
   })
@@ -382,10 +382,10 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
   it('onUpdate debounces 500ms then submits granular block-domain ops', () => {
     const { deps, T, ed } = mountWy()
     ed.options.onUpdate({ editor: ed })
-    expect(deps.submitBlockOps).not.toHaveBeenCalled()
+    expect(deps.applyBlockOps).not.toHaveBeenCalled()
     vi.advanceTimersByTime(500)
     expect(T.computeBlockSync).toHaveBeenCalledTimes(1)
-    expect(deps.submitBlockOps).toHaveBeenCalledWith([{ type: 'update-block', blockId: 'b1' }])
+    expect(deps.applyBlockOps).toHaveBeenCalledWith([{ type: 'update-block', blockId: 'b1' }])
   })
 
   it('onUpdate notifies doc-changed; selection/transaction/focus emit their events', () => {
@@ -404,11 +404,11 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     const { s, deps, ed } = mountWy()
     ed.options.onUpdate({ editor: ed })
     s.flushPending()
-    expect(deps.submitBlockOps).toHaveBeenCalledTimes(1)
+    expect(deps.applyBlockOps).toHaveBeenCalledTimes(1)
     vi.advanceTimersByTime(1000)
-    expect(deps.submitBlockOps).toHaveBeenCalledTimes(1) // timer cancelled — no double sync
+    expect(deps.applyBlockOps).toHaveBeenCalledTimes(1) // timer cancelled — no double sync
     s.flushPending()                                      // idle → no-op
-    expect(deps.submitBlockOps).toHaveBeenCalledTimes(1)
+    expect(deps.applyBlockOps).toHaveBeenCalledTimes(1)
   })
 
   it('unmount destroys the island, clears the root and window.__tiptap, kills the timer', () => {
@@ -420,6 +420,6 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     expect(window.__tiptap).toBeNull()
     expect(s.tiptap).toBeNull()
     vi.advanceTimersByTime(1000)
-    expect(deps.submitBlockOps).not.toHaveBeenCalled()
+    expect(deps.applyBlockOps).not.toHaveBeenCalled()
   })
 })
