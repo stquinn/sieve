@@ -1,20 +1,21 @@
 // @ts-check
-// tab.js — Tab shell object (P1: zero-behavior skeleton).
-// A Tab is the identity of one open document session. It holds a uuid, a mode
-// preference (persisted across mode toggles — retiring the tabModes global in
-// a later phase), and a reference to its Editor shell object once the editor
-// is mounted. In P1 it is a thin holder; no business logic lives here yet.
-// Dual-use ES module (block-position.js pattern): `export` for vitest imports,
-// window.* assignment for classic-script access. Loaded in index.html with
-// type="module" — a plain <script> tag would fail at parse on `export`.
+// tab.js — Tab shell object + editor factory (P2.A).
+// A Tab is the identity of one open document session. It holds a uuid and a
+// reference to its editor (an AbstractEditor subclass) once mounted. The Tab is
+// also the editor FACTORY: createEditor is the ONE place that decides NoteEditor
+// vs PromptEditor from the uuid — every other former `prompt:` guard becomes type
+// dispatch. Dual-use ES module: `export` for vitest imports, window.* for
+// classic-script access.
 
-import { SieveEditor } from './editor-shell.js'
+import { AbstractEditor } from './abstract-editor.js'
+import { NoteEditor } from './note-editor.js'
+import { PromptEditor } from './prompt-editor.js'
 
 export class SieveTab {
   /** @type {string} */
   #uuid
 
-  /** @type {SieveEditor|null} */
+  /** @type {AbstractEditor|null} */
   #editor = null
 
   /**
@@ -29,23 +30,38 @@ export class SieveTab {
   get uuid() { return this.#uuid }
 
   /**
-   * The Editor shell object for this tab, or null before the editor mounts.
-   * @returns {SieveEditor|null}
+   * The editor for this tab, or null before it mounts.
+   * @returns {AbstractEditor|null}
    */
   get editor() { return this.#editor }
 
   /**
-   * Called by editor.js when initEditor mounts for this tab's uuid.
-   * @param {SieveEditor} ed
+   * Editor factory — the SOLE place the `prompt:` prefix decides an editor type.
+   * A prompt document has no WebSocket (PromptEditor); everything else is a
+   * NoteEditor that owns a WS channel.
+   * @param {string} uuid — document uuid (matches this tab's uuid)
+   * @param {import('./abstract-editor.js').EditorAccessors} accessors
+   * @param {object} [options] — passed to the concrete editor constructor
+   * @returns {AbstractEditor}
+   */
+  createEditor(uuid, accessors, options = {}) {
+    return uuid.startsWith('prompt:')
+      ? new PromptEditor(uuid, accessors, options)
+      : new NoteEditor(uuid, accessors, options)
+  }
+
+  /**
+   * Called by editor.js when initEditor mounts an editor for this tab.
+   * @param {AbstractEditor} ed
    */
   attachEditor(ed) {
-    if (!(ed instanceof SieveEditor)) throw new Error('SieveTab.attachEditor: expected SieveEditor')
+    if (!(ed instanceof AbstractEditor)) throw new Error('SieveTab.attachEditor: expected SieveEditor')
     this.#editor = ed
   }
 
   /**
-   * Called by editor.js when the tab is torn down (initEditor with empty uuid,
-   * or a tab close). Detaches the editor reference so the Tab is inert.
+   * Called by editor.js when the editor is torn down. Detaches the reference so
+   * the Tab is inert (the caller is responsible for editor.destroy()).
    */
   detachEditor() {
     this.#editor = null

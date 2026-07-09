@@ -22,41 +22,85 @@
   // (uuid is NOT an accessor: it is the Editor's IDENTITY, fixed at construction,
   // so SieveEditor holds it directly. Accessors are read-only by design in P1.)
 
-  /** @type {{ getMode:()=>string, getTiptap:()=>unknown|null }} */
+  // Read closures into the still-module-level editor.js state that the editor
+  // instances (NoteEditor/PromptEditor) need but do not yet own. This is the P2.A
+  // transitional seam (P2.B moves mountWysiwyg/mountMarkdown state onto the editor
+  // and retires the bag). getDocSyncFlush/takePendingMarkdown feed NoteEditor's WS
+  // flush; getBody/isSaveSuppressed feed PromptEditor's HTTP save.
   var _editorAccessors = {
     getMode:   function () { return currentMode },
     getTiptap: function () { return currentEditor },
+    // WYSIWYG pending-block-sync flush (mountWysiwyg-owned), or null.
+    getDocSyncFlush: function () { return docSyncFlush },
+    // Pending markdown body to flush: cancels the debounce timer and returns the
+    // latest body, or null when nothing is pending. Mirrors the old flushSave
+    // markdown branch without touching mountMarkdown internals.
+    takePendingMarkdown: function () {
+      if (docUpdateTimer) {
+        clearTimeout(docUpdateTimer)
+        docUpdateTimer = null
+        return lastSyncedBody
+      }
+      return null
+    },
+    // Plain-text/markdown body for a prompt's HTTP save (getMarkdown()).
+    getBody: function () { return getMarkdown() },
+    // True while an AI reload is mid-flight (suppress prompt save).
+    isSaveSuppressed: function () { return aiReloadInProgress },
   }
 
-  // _syncShell keeps window.sieveWorkspace in sync with the four vars at each
-  // tab-lifecycle transition point (open/close/mode-toggle). It is intentionally
-  // lightweight: open the tab when a uuid is set, close when it is cleared,
-  // attach/detach the SieveEditor when the TipTap instance appears/disappears.
+  // _activeEditor returns the live editor instance for the active tab (a
+  // NoteEditor or PromptEditor), or null. The thin module wrappers below delegate
+  // to it so the ~many wsSend/flushSave call sites need no rewrite.
+  function _activeEditor() {
+    var ws = window.sieveWorkspace
+    return (ws && ws.activeTab && ws.activeTab.editor) || null
+  }
+
+  // routeServerMessage does the DOM routing for WS render-back messages. NoteEditor
+  // owns the WS protocol (pong/awaiters/flush-ack); this handles the rest by
+  // re-dispatching the same document CustomEvents the old onmessage did (P2.B
+  // replaces this event routing with the surface interface).
+  function routeServerMessage(msg) {
+    if (msg.type === 'error') {
+      window.alert(msg.message || 'An error occurred.')
+    }
+    if (msg.type === 'markdown-content') {
+      document.dispatchEvent(new CustomEvent('editor:markdown-content', { detail: msg }))
+    }
+    if (msg.type === 'wysiwyg-content') {
+      document.dispatchEvent(new CustomEvent('editor:wysiwyg-content', { detail: msg }))
+    }
+    if (msg.type === 'insert-block') {
+      document.dispatchEvent(new CustomEvent('editor:insert-block', { detail: msg }))
+    }
+    if (msg.type === 'block-attrs-updated') {
+      document.dispatchEvent(new CustomEvent('editor:block-attrs-updated', { detail: msg }))
+    }
+    if (msg.type === 'replace-block') {
+      document.dispatchEvent(new CustomEvent('editor:replace-block', { detail: msg }))
+    }
+    // block-extracted: the new block renders via insert-block (tracked). Nothing to do.
+  }
+
+  // _syncShell keeps window.sieveWorkspace in sync at each tab-lifecycle
+  // transition. It is a thin adapter over SieveWorkspace.activateDocument — the
+  // ONE authoritative editor-lifecycle path: destroy the previous editor on a
+  // genuine tab switch or teardown (old WS closes BEFORE the new one opens, as
+  // the Go takeover guard needs), keep the instance on a same-uuid re-activation
+  // (toggleMode / prompt re-init reuse the SAME editor and its live socket).
+  // initEditor never destroys editors directly — all teardown goes through here.
   function _syncShell(uuid) {
     var ws = window.sieveWorkspace
     if (!ws) return
-
-    if (!uuid) {
-      // Teardown: the previous tab (if any) is being closed.
-      if (currentUuid) ws.closeTab(currentUuid)
-      return
-    }
-
-    // Open or retrieve the Tab for this uuid and mark it active.
-    var tab = ws.openTab(uuid)
-
-    // Attach an Editor shell if the TipTap instance just appeared (mountWysiwyg
-    // finished) or if we are entering a mode where tiptap is null (markdown).
-    // A fresh SieveEditor is created each time initEditor runs for a uuid so its
-    // accessor closures are always in sync with the live vars.
-    var ed = new window.SieveEditor(uuid, _editorAccessors)
-    tab.attachEditor(ed)
+    ws.activateDocument(uuid, _editorAccessors, { onServerMessage: routeServerMessage })
   }
 
+  // lastSyncedBody is the shared "latest markdown body" both modes and prompt save
+  // read; it stays module-level (not moved into NoteEditor) because it is written
+  // by mount internals + AI paths that are out of P2.A scope. The WS channel state
+  // (socket/pending/awaiters/timers) moved into NoteEditor (shell/note-editor.js).
   var lastSyncedBody = ''
-  var editorWs = null
-  var editorWsPending = []
-  var editorWsAwaiters = {}   // type → { resolve, reject }
   var docUpdateTimer = null
   // Stage D.3: the WYSIWYG observer flushes the pending block-sync immediately on
   // demand (tab switch / save). Set by mountWysiwyg, called by flushSave.
@@ -199,11 +243,16 @@
       currentEditor.destroy()
       currentEditor = null
       window.__tiptap = null
-      if (currentUuid && !currentUuid.startsWith('prompt:')) closeEditorWs()
     }
+    // NOTE: initEditor destroys only the TipTap view (above). The shell EDITOR
+    // instance (NoteEditor/PromptEditor — the WS owner) is destroyed in exactly
+    // one place: SieveWorkspace.activateDocument, reached via _syncShell below.
+    // flushSave above runs while the previous editor is still attached, so the
+    // pending edits go out on its socket before any teardown.
 
     if (!mountEl || !uuid) {
-      // P1: teardown — close the shell tab for the uuid being cleared.
+      // Teardown — _syncShell destroys the active editor (closes its WS) and
+      // closes its shell tab.
       _syncShell('')
       currentUuid = ''
       currentMode = 'wysiwyg'
@@ -211,11 +260,13 @@
     }
 
     currentUuid = uuid
-    // P1: open / activate the shell Tab for this uuid. The Editor shell is
-    // attached now with the accessor closures; mountWysiwyg will set
-    // currentEditor and the accessors already close over that var.
+    // Open/activate the shell Tab and create its editor (the Tab factory picks
+    // NoteEditor vs PromptEditor; NoteEditor opens the WS in its constructor). On
+    // a tab SWITCH the previous editor is destroyed first (old WS closes before
+    // the new one opens); on a same-uuid re-init the editor + socket are kept.
+    // The accessor closures read the live module vars, so mountWysiwyg /
+    // mountMarkdown set currentEditor exactly as before with no editor handshake.
     _syncShell(uuid)
-    if (!uuid.startsWith('prompt:')) openEditorWs(uuid)
     currentMountEl = mountEl
     currentMode = mode || tabModes[uuid] || 'wysiwyg'
 
@@ -868,170 +919,27 @@
     }
   }
 
-  // ── Save ─────────────────────────────────────────────────────────────────────
+  // ── Save + WS (thin wrappers over the live editor instance) ──────────────────
+  // The WS channel, save pipeline, and wsSendAndAwait now live in NoteEditor /
+  // PromptEditor (shell/*.js). These module-level functions are thin delegators so
+  // the ~many call sites (sendCreateBlock, block-op, doc-update, toggleMode, retry,
+  // extract, index.html's window._editorSave) need no rewrite. STATE lives only in
+  // the class; nothing here owns a socket or a timer.
 
+  // flushSave delegates to the active editor's flushSave (NoteEditor: WS flush;
+  // PromptEditor: HTTP save). Returns a Promise so callers can await the save.
   function flushSave() {
-    if (!currentUuid) return Promise.resolve()
-    // Flush any pending debounced sync immediately so Go has the latest content.
-    // WYSIWYG goes through the block-sync flush (granular ops or doc-update
-    // fallback); markdown mode sends its raw textarea body directly.
-    if (currentMode === 'markdown') {
-      if (docUpdateTimer) {
-        clearTimeout(docUpdateTimer)
-        docUpdateTimer = null
-        wsSend({ type: 'doc-update', uuid: currentUuid, markdown: lastSyncedBody })
-      }
-    } else if (docSyncFlush) {
-      docSyncFlush()
-    }
-    if (currentUuid.startsWith('prompt:')) {
-      return doSave(currentUuid, getMarkdown())
-    }
-    return wsSendAndAwait('flush', { type: 'flush', uuid: currentUuid })
-      .catch(function (err) {
-        console.warn('[editor] flush timeout, continuing:', err)
-      })
+    var ed = _activeEditor()
+    if (!ed) return Promise.resolve()
+    return ed.flushSave()
   }
 
-  function doSave(uuid, body) {
-    if (aiReloadInProgress) return Promise.resolve()
-    return fetch('/api/editor/save?uuid=' + encodeURIComponent(uuid), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ body: body, mode: currentMode }),
-    }).then(function () {
-      document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: false } }))
-      document.dispatchEvent(new CustomEvent('editor:saved', { detail: { uuid: uuid } }))
-    }).catch(function (err) { console.error('[editor] save failed', err) })
-  }
-
-  function openEditorWs(uuid) {
-    closeEditorWs()
-
-    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    var host = location.host
-    if (window.__sieveDevServerPort) {
-      host = '127.0.0.1:' + window.__sieveDevServerPort
-    }
-    editorWs = new WebSocket(proto + '//' + host + '/api/ws?uuid=' + encodeURIComponent(uuid))
-
-    editorWs.onopen = function () {
-      console.log('[editor] ws connected')
-      reconnectDelay = 1000
-      lastPong = Date.now()
-      
-      editorWsPending.forEach(function (m) { editorWs.send(m) })
-      editorWsPending = []
-
-      clearInterval(pingInterval)
-      pingInterval = setInterval(function() {
-        if (Date.now() - lastPong > 45000) {
-          console.warn('[editor] ws: watchdog timeout, forcing reconnect')
-          if (editorWs) editorWs.close()
-          return
-        }
-        if (editorWs && editorWs.readyState === WebSocket.OPEN) {
-          editorWs.send(JSON.stringify({ type: 'ping' }))
-        }
-      }, 15000)
-    }
-
-    editorWs.onmessage = function (event) {
-      var msg = JSON.parse(event.data || '{}')
-      if (msg.type === 'pong') {
-        lastPong = Date.now()
-        return
-      }
-
-      var awaiter = editorWsAwaiters[msg.type]
-      if (awaiter) {
-        delete editorWsAwaiters[msg.type]
-        awaiter.resolve(msg)
-      }
-      if (msg.type === 'flush-ack') {
-        document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: false } }))
-        document.dispatchEvent(new CustomEvent('editor:saved', { detail: { uuid: msg.uuid } }))
-      }
-      if (msg.type === 'error') {
-        window.alert(msg.message || 'An error occurred.')
-      }
-      if (msg.type === 'markdown-content') {
-        document.dispatchEvent(new CustomEvent('editor:markdown-content', { detail: msg }))
-      }
-      if (msg.type === 'wysiwyg-content') {
-        document.dispatchEvent(new CustomEvent('editor:wysiwyg-content', { detail: msg }))
-      }
-      if (msg.type === 'insert-block') {
-        document.dispatchEvent(new CustomEvent('editor:insert-block', { detail: msg }))
-      }
-      if (msg.type === 'block-attrs-updated') {
-        document.dispatchEvent(new CustomEvent('editor:block-attrs-updated', { detail: msg }))
-      }
-      if (msg.type === 'replace-block') {
-        document.dispatchEvent(new CustomEvent('editor:replace-block', { detail: msg }))
-      }
-      if (msg.type === 'block-extracted') {
-        // The new block renders via insert-block (tracked insert at its index). Nothing to do.
-      }
-    }
-
-    editorWs.onclose = function () {
-      clearInterval(pingInterval)
-      console.warn('[editor] ws closed. Reconnecting in ' + reconnectDelay + 'ms...')
-      
-      clearTimeout(reconnectTimer)
-      reconnectTimer = setTimeout(function() {
-        reconnectDelay = Math.min(reconnectDelay * 2, 30000)
-        openEditorWs(uuid)
-      }, reconnectDelay)
-    }
-
-    editorWs.onerror = function (err) { console.error('[editor] ws error', err) }
-  }
-
-  var editorWs = null
-  var editorWsPending = []
-  var editorWsAwaiters = {}
-  
-  var reconnectTimer = null
-  var pingInterval = null
-  var reconnectDelay = 1000
-  var lastPong = Date.now()
-
-  function closeEditorWs() {
-    clearTimeout(reconnectTimer)
-    clearInterval(pingInterval)
-    if (editorWs) { 
-      editorWs.onclose = null
-      editorWs.close()
-      editorWs = null 
-    }
-    editorWsPending = []
-    editorWsAwaiters = {}
-  }
-
+  // wsSend delegates to the active editor when it owns a socket (NoteEditor). For a
+  // PromptEditor (no wsSend method) it is a no-op — a prompt has no WS, exactly as
+  // the old wsSend pushed prompt messages into a queue that never drained.
   function wsSend(msg) {
-    var data = JSON.stringify(msg)
-    if (editorWs && editorWs.readyState === WebSocket.OPEN) {
-      editorWs.send(data)
-    } else {
-      editorWsPending.push(data)
-    }
-  }
-
-  function wsSendAndAwait(type, msg) {
-    return new Promise(function (resolve, reject) {
-      var ackType = type + '-ack'
-      var timer = setTimeout(function () {
-        delete editorWsAwaiters[ackType]
-        reject(new Error('ws timeout: ' + type))
-      }, 5000)
-      editorWsAwaiters[ackType] = {
-        resolve: function (m) { clearTimeout(timer); resolve(m) },
-        reject: function (e) { clearTimeout(timer); reject(e) },
-      }
-      wsSend(msg)
-    })
+    var ed = _activeEditor()
+    if (ed && typeof ed.wsSend === 'function') ed.wsSend(msg)
   }
 
   // Primary creation path. JS fires sieve:create-block when the user uses a
@@ -2020,7 +1928,8 @@
     lastSyncedBody = content
     currentMode = newMode
     tabModes[currentUuid] = currentMode
-    // P1: re-sync shell so SieveEditor.mode reflects the toggle immediately.
+    // Re-activate the shell tab. The editor instance PERSISTS across a mode toggle
+    // (create-if-absent), so its WS channel survives; .mode reads currentMode live.
     _syncShell(currentUuid)
     updateModeUI()
 

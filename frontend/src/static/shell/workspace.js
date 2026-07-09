@@ -76,6 +76,48 @@ export class SieveWorkspace {
    */
   get activeTab() { return this.#activeTab }
 
+  // ── Editor lifecycle (P2.A fix wave: the ONE authoritative teardown path) ────
+
+  /**
+   * Activates the document for a uuid, owning the editor lifecycle end-to-end.
+   * This is the SINGLE place a previous editor is destroyed:
+   *
+   * - Genuine tab SWITCH (uuid differs from the active tab's): the previous
+   *   editor is destroyed (its WS closes) BEFORE the new tab's editor is
+   *   created (its WS opens). That close-before-open ordering is load-bearing
+   *   for the Go WS takeover guard (ws_handler.go pointer-identity unregister)
+   *   and matches the old openEditorWs behavior (closeEditorWs() first).
+   * - TEARDOWN (uuid ''): the active editor is destroyed and its tab closed.
+   * - Same-uuid re-activation (toggleMode, a prompt re-init, and any editor.html
+   *   re-render for the unchanged active note — e.g. re-opening the active note
+   *   from the sidebar, or closing a background tab): the editor instance and
+   *   its live socket are KEPT — destroy is never spurious. (Behavior delta vs
+   *   the pre-P2.A code, which recycled the socket on those note paths; keeping
+   *   it avoids the takeover race entirely.)
+   *
+   * @param {string} uuid — target document uuid, or '' to tear down
+   * @param {import('./abstract-editor.js').EditorAccessors} accessors
+   * @param {object} [options] — passed to the Tab's editor factory
+   * @returns {SieveTab|null} the activated Tab, or null after a teardown
+   */
+  activateDocument(uuid, accessors, options) {
+    const prev = this.#activeTab
+    if (prev && prev.uuid !== uuid) {
+      if (prev.editor) {
+        prev.editor.destroy()
+        prev.detachEditor()
+      }
+      if (!uuid) this.closeTab(prev.uuid)
+    }
+    if (!uuid) return null
+
+    const tab = this.openTab(uuid)
+    if (!tab.editor) {
+      tab.attachEditor(tab.createEditor(uuid, accessors, options))
+    }
+    return tab
+  }
+
   // ── Listener registry (P1: registration methods exist, empty — wired P2) ─────
 
   /**
