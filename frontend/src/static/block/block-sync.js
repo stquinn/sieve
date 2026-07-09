@@ -6,7 +6,7 @@
 //
 // SCOPE: the observer owns PROSE block content. Structured (sieve-*) blocks have
 // their own sync channels — content via `sieve:block-update` ({attrs}), insertion
-// via `editor:insert-block` — and their change-signature is a hash of their attrs
+// via the `insert-block` render-back (surface applyServerOp) — and their change-signature is a hash of their attrs
 // (the frontend never serialises them to markdown). So this observer emits no
 // create/update content op for a structured block; it tracks them only for the
 // baseline and for DELETE detection (a delete-block is kind-agnostic).
@@ -150,7 +150,7 @@ export function computeBlockSync(curr, prev) {
 
   // Creates + updates in document order. PROSE is observed here; STRUCTURED
   // creates/changes emit NOTHING — they sync through their own channels
-  // (`sieve:block-update` for edits, `editor:insert-block` for creation). The
+  // (`sieve:block-update` for edits, the `insert-block` render-back for creation). The
   // observer tracks structured blocks only for the baseline + delete detection.
   var ops = []
   for (var k = 0; k < curr.length; k++) {

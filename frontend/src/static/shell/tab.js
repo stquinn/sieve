@@ -40,14 +40,14 @@ export class SieveTab {
    * A prompt document has no WebSocket (PromptEditor); everything else is a
    * NoteEditor that owns a WS channel.
    * @param {string} uuid — document uuid (matches this tab's uuid)
-   * @param {import('./abstract-editor.js').EditorAccessors} accessors
    * @param {object} [options] — passed to the concrete editor constructor
+   *   (surfaceFactory, onServerMessage, socketFactory/wsUrl, saveFn, …)
    * @returns {AbstractEditor}
    */
-  createEditor(uuid, accessors, options = {}) {
+  createEditor(uuid, options = {}) {
     return uuid.startsWith('prompt:')
-      ? new PromptEditor(uuid, accessors, options)
-      : new NoteEditor(uuid, accessors, options)
+      ? new PromptEditor(uuid, options)
+      : new NoteEditor(uuid, options)
   }
 
   /**

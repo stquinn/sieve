@@ -96,11 +96,11 @@ export class SieveWorkspace {
    *   it avoids the takeover race entirely.)
    *
    * @param {string} uuid — target document uuid, or '' to tear down
-   * @param {import('./abstract-editor.js').EditorAccessors} accessors
    * @param {object} [options] — passed to the Tab's editor factory
+   *   (surfaceFactory, onServerMessage, …)
    * @returns {SieveTab|null} the activated Tab, or null after a teardown
    */
-  activateDocument(uuid, accessors, options) {
+  activateDocument(uuid, options) {
     const prev = this.#activeTab
     if (prev && prev.uuid !== uuid) {
       if (prev.editor) {
@@ -113,7 +113,7 @@ export class SieveWorkspace {
 
     const tab = this.openTab(uuid)
     if (!tab.editor) {
-      tab.attachEditor(tab.createEditor(uuid, accessors, options))
+      tab.attachEditor(tab.createEditor(uuid, options))
     }
     return tab
   }

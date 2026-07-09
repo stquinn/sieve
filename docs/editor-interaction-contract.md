@@ -129,6 +129,15 @@ Consequences:
   and app gestures ride the menu → event path, never a global `keydown`.
 - Never bind the same chord in two places, even to the same action — the menu
   wins on Mac and the duplicate is dead weight.
+- **Transitional exception (P2.B; removed by P2.C's chord-transport
+  migration):** ONE quarantined document-level `keydown` listener in
+  `editor.js` transports `Mod+S` / `Mod+J` **in markdown mode only**. The
+  raw-markdown surface (`shell/surfaces/markdown-surface.js`) handles no
+  app-level chords (it replaced the old textarea-local Mod+S/Mod+J handlers —
+  the same duplicate-binding exception, previously element-scoped and
+  unrecorded); in the dev browser no native menu exists to own these rows.
+  Ownership is unchanged — the menu rows below stay authoritative in the app;
+  the listener guards on mode so the WYSIWYG PM path never double-fires.
 
 ### Menu accelerator table
 
