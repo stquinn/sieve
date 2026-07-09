@@ -67,17 +67,6 @@ func (p *AIBlockProcessor) Transform(entries []block.ContentEntry, uuid, blockID
 
 func (p *AIBlockProcessor) OnChange(blk *block.SieveBlock) {}
 
-// Accept implements block.BlockFilter: exclude ai-blocks from whole-doc TARGET
-// assembly. TARGET is the document-truth slot the model grounds answers in; an
-// ai-block serializes as its raw YAML fence (question + response), so including
-// prior answers makes the model fixate on its own stale output and resurrect
-// document text quoted inside old answers. THREAD (a separate slot) still carries
-// the conversation. The processor owns this policy because it assembles the prompt.
-// Everything that is not this kind is accepted unchanged.
-func (p *AIBlockProcessor) Accept(b block.SieveBlock) bool {
-	return b.Kind != p.Kind()
-}
-
 // aiBlockLabel is the in-flight status label for an ai-block job.
 func (p *AIBlockProcessor) aiBlockLabel(blk *block.SieveBlock) string {
 	if t, _ := blk.Attrs["type"].(string); t == "EXPLAIN" {
@@ -174,11 +163,15 @@ func (p *AIBlockProcessor) resolveChain(selfID, startRef string, doc block.DocVi
 // "doc" all merge the same way; empty contexts drop out.
 func (p *AIBlockProcessor) buildTargets(targets []string, doc block.DocView) string {
 	var ctxs []block.AIContext
+	// Exclude this processor's own kind: when a target is the whole doc, its derived
+	// markdown must not carry prior ai-block answers — an ai-block serializes as its
+	// raw YAML fence (question + response), and including prior answers makes the
+	// model fixate on its own stale output and resurrect document text quoted inside
+	// old answers. THREAD (a separate slot) still carries the conversation. A
+	// specific-block target ignores the filter (returned as-is).
+	noSelfKind := func(b block.SieveBlock) bool { return b.Kind != p.Kind() }
 	for _, id := range targets {
-		// Pass this processor as the BlockFilter: when a target is the whole doc,
-		// its derived markdown excludes ai-blocks (Accept) so prior answers don't
-		// pollute TARGET. A specific-block target ignores the filter (returned as-is).
-		if c := block.BuildContextForID(id, doc, map[string]bool{}, p); !c.IsEmpty() {
+		if c := block.BuildContextForID(id, doc, map[string]bool{}, noSelfKind); !c.IsEmpty() {
 			ctxs = append(ctxs, c)
 		}
 	}

@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-// acceptAllBut is a test BlockFilter that drops exactly the named kind.
-type acceptAllBut struct{ drop string }
-
-func (f acceptAllBut) Accept(b SieveBlock) bool { return b.Kind != f.drop }
+// dropKind builds the closure BlockFilter callers pass to drop exactly one kind.
+func dropKind(kind string) BlockFilter {
+	return func(b SieveBlock) bool { return b.Kind != kind }
+}
 
 // deriveMarkdownFiltered with a filter dropping ai-blocks must serialize prose +
 // code UNCHANGED (byte-identical to the unfiltered whole minus the ai-block), and
@@ -35,7 +35,7 @@ func TestDeriveMarkdownFiltered_DropsAIBlock(t *testing.T) {
 	}
 
 	// Filtered: ai-block gone, everything else byte-identical.
-	filtered := doc.deriveMarkdownFiltered(acceptAllBut{drop: "ai-block"})
+	filtered := doc.deriveMarkdownFiltered(dropKind("ai-block"))
 	if strings.Contains(filtered, "ai-block") || strings.Contains(filtered, "stale answer about x") {
 		t.Fatalf("filtered output must not contain the ai-block fence or its response, got %q", filtered)
 	}
@@ -58,7 +58,7 @@ func TestDeriveMarkdownFiltered_DropsAIBlock(t *testing.T) {
 func TestDeriveMarkdownFiltered_MarkdownModeReturnsRawBuffer(t *testing.T) {
 	raw := "# Heading\n\n```ai-block\nid: ab-1\nresponse: still here\n```"
 	doc := DocView{Mode: "markdown", mdModeBuffer: raw}
-	if got := doc.deriveMarkdownFiltered(acceptAllBut{drop: "ai-block"}); got != raw {
+	if got := doc.deriveMarkdownFiltered(dropKind("ai-block")); got != raw {
 		t.Fatalf("markdown mode must return raw buffer verbatim even with a filter, got %q", got)
 	}
 }

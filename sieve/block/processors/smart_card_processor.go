@@ -206,25 +206,6 @@ func (p *SmartCardProcessor) downloadImage(uuid, blockID, imageURL string) (stri
 	return asset.ExternalRef(), nil
 }
 
-// ExportMarkdown implements block.ExportRepresenter: for clean "Copy as Markdown"
-// export a URL card reduces to a plain link. The siteName/description are DERIVED
-// (fetched) content — export keeps only the user-authored seed (the URL, plus the
-// resolved title as the link text), so a card becomes `[title](href)`, or a bare URL
-// when there is no title. This is deliberately distinct from MarkdownRepresentation,
-// which AI context relies on and must keep its richer form.
-func (p *SmartCardProcessor) ExportMarkdown(blk block.SieveBlock, _ string) string {
-	href, _ := blk.Attrs["href"].(string)
-	if href == "" {
-		return ""
-	}
-	title, _ := blk.Attrs["title"].(string)
-	title = strings.TrimSpace(title)
-	if title == "" {
-		return href
-	}
-	return "[" + title + "](" + href + ")"
-}
-
 func (p *SmartCardProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {
 	href, _ := blk.Attrs["href"].(string)
 	if href == "" {

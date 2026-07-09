@@ -7,24 +7,11 @@ import (
 	"sieve/sieve/block"
 )
 
-// Accept (block.BlockFilter) rejects ONLY the ai-block kind; every other kind is
-// kept. This is the policy that keeps prior AI answers out of the TARGET slot.
-func TestAIBlockProcessor_Accept(t *testing.T) {
-	p := NewAIBlockProcessor(block.BlockServices{})
-	if p.Accept(block.SieveBlock{Kind: "ai-block"}) {
-		t.Error("Accept must reject the ai-block kind")
-	}
-	for _, k := range []string{"prose", "code", "diagram", "web-clip", "smart-image"} {
-		if !p.Accept(block.SieveBlock{Kind: k}) {
-			t.Errorf("Accept must keep kind %q", k)
-		}
-	}
-}
-
 // Integration-style: a doc-targeted follow-up ai-block. TARGET (whole-doc content)
 // must EXCLUDE the prior completed ai-block's response, while THREAD (the resolved
 // conversation chain) must STILL carry it. This is the TARGET-leak fix end to end:
-// buildTargets applies the processor as the filter; the thread loop does not.
+// buildTargets passes its exclude-own-kind closure as the filter; the thread loop
+// does not.
 // The DocView is built via the real markdown -> shadow -> snapshot path (no
 // cross-package construction seam).
 func TestAIBlock_DocTarget_ExcludesPriorAnswerButThreadKeepsIt(t *testing.T) {

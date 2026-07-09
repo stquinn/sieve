@@ -83,7 +83,7 @@ Runtime enforcement, loud failure, zero tooling.
 ### 2c. Optional capabilities: duck-typed boundary checks
 
 The JS twin of the Go idiom you already use daily
-(`s.Store.(interface{ SetMaxVersions(int) })`, `ExportRepresenter`):
+(`s.Store.(interface{ SetMaxVersions(int) })`, the registry's `hasPrefix`):
 
 ```js
 if (typeof surface.observeSelection === 'function') {
