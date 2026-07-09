@@ -1,5 +1,6 @@
 // editor.js — vanilla JS TipTap island. Loaded once; re-initialized per tab switch.
 // Depends on window.TipTap (ui/static/vendor/tiptap.js).
+// Depends on window.sieveWorkspace (shell/workspace.js) for the P1 shell skeleton.
 
 (function () {
   'use strict'
@@ -9,6 +10,49 @@
   var currentMountEl = null
   var currentMode = 'wysiwyg'
   var tabModes = {}
+
+  // ── P1 Shell integration ──────────────────────────────────────────────────────
+  // The Workspace/Tab/Editor shell skeleton (shell/*.js) is wired here as thin
+  // delegation: the four vars above remain the working storage (zero behavior
+  // change); the shell objects expose a structured view via getter closures that
+  // read the same vars. No business logic moves in this phase.
+  //
+  // Accessor closures close over the IIFE vars so SieveEditor.mode/.tiptap
+  // always return the live value — there is no second copy of the state.
+  // (uuid is NOT an accessor: it is the Editor's IDENTITY, fixed at construction,
+  // so SieveEditor holds it directly. Accessors are read-only by design in P1.)
+
+  /** @type {{ getMode:()=>string, getTiptap:()=>unknown|null }} */
+  var _editorAccessors = {
+    getMode:   function () { return currentMode },
+    getTiptap: function () { return currentEditor },
+  }
+
+  // _syncShell keeps window.sieveWorkspace in sync with the four vars at each
+  // tab-lifecycle transition point (open/close/mode-toggle). It is intentionally
+  // lightweight: open the tab when a uuid is set, close when it is cleared,
+  // attach/detach the SieveEditor when the TipTap instance appears/disappears.
+  function _syncShell(uuid) {
+    var ws = window.sieveWorkspace
+    if (!ws) return
+
+    if (!uuid) {
+      // Teardown: the previous tab (if any) is being closed.
+      if (currentUuid) ws.closeTab(currentUuid)
+      return
+    }
+
+    // Open or retrieve the Tab for this uuid and mark it active.
+    var tab = ws.openTab(uuid)
+
+    // Attach an Editor shell if the TipTap instance just appeared (mountWysiwyg
+    // finished) or if we are entering a mode where tiptap is null (markdown).
+    // A fresh SieveEditor is created each time initEditor runs for a uuid so its
+    // accessor closures are always in sync with the live vars.
+    var ed = new window.SieveEditor(uuid, _editorAccessors)
+    tab.attachEditor(ed)
+  }
+
   var lastSyncedBody = ''
   var editorWs = null
   var editorWsPending = []
@@ -159,12 +203,18 @@
     }
 
     if (!mountEl || !uuid) {
+      // P1: teardown — close the shell tab for the uuid being cleared.
+      _syncShell('')
       currentUuid = ''
       currentMode = 'wysiwyg'
       return
     }
 
     currentUuid = uuid
+    // P1: open / activate the shell Tab for this uuid. The Editor shell is
+    // attached now with the accessor closures; mountWysiwyg will set
+    // currentEditor and the accessors already close over that var.
+    _syncShell(uuid)
     if (!uuid.startsWith('prompt:')) openEditorWs(uuid)
     currentMountEl = mountEl
     currentMode = mode || tabModes[uuid] || 'wysiwyg'
@@ -1970,8 +2020,10 @@
     lastSyncedBody = content
     currentMode = newMode
     tabModes[currentUuid] = currentMode
+    // P1: re-sync shell so SieveEditor.mode reflects the toggle immediately.
+    _syncShell(currentUuid)
     updateModeUI()
-    
+
     if (currentEditor) { currentEditor.destroy(); currentEditor = null; window.__tiptap = null }
     currentMountEl.innerHTML = ''
     
