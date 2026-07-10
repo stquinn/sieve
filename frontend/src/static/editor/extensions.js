@@ -205,9 +205,12 @@
   })
 
   // ── buildAiContext ─────────────────────────────────────────────────────────
-
-  function buildAiContext(editor, isMarkdownMode, rawMd, uuid) {
-    var t = T.resolveAiTarget(editor, isMarkdownMode)
+  // P3.C: reads the resolved AI target the editor STORED in its SelectionContext
+  // (context.target = {kind, ref, range, label}) — no PM walk, no node. The
+  // ai-block follow-up chain reads context.blockKind/blockId/ref (the primary block
+  // the NodeSelection targets), replacing the old node.attrs reads.
+  function buildAiContext(context, rawMd, uuid) {
+    var t = context.target
 
     if (t.kind === 'document') return { blockRef: 'doc', contextLabel: 'Document' }
     // selection → the ref chain of every top-level block the selection crosses
@@ -215,21 +218,14 @@
     if (t.kind === 'selection') return { blockRef: t.ref || 'doc', contextLabel: t.label }
 
     // block → reference the existing id (no mutation).
-    var n = t.node
-    if (n && (n.type.name === 'aiBlock' || n.type.name === 'sieve-ai-block')) {
+    if (context.blockKind === 'aiBlock' || context.blockKind === 'ai-block') {
       // Follow-up: chain this AI block onto its own ref so Go assembles history.
-      var aiBlockId = n.attrs.id || ''
-      var aiBlockRef = n.attrs.ref || ''
+      var aiBlockId = context.blockId || ''
+      var aiBlockRef = context.ref || ''
       var newRef = aiBlockRef && aiBlockRef !== 'doc' ? aiBlockRef + ',' + aiBlockId : aiBlockId
       return { blockRef: newRef, contextLabel: 'Follow-up' }
     }
-    return { blockRef: t.ref || t.id || 'doc', contextLabel: t.label }
-  }
-
-  // ── getAiTargetLabel ───────────────────────────────────────────────────────
-  // Read-only label for the live Ask panel. Single source: resolveAiTarget.
-  function getAiTargetLabel(editor, isMarkdownMode) {
-    return T.resolveAiTarget(editor, isMarkdownMode).label
+    return { blockRef: t.ref || context.blockId || 'doc', contextLabel: t.label }
   }
 
   // ── applyTargetHighlight ─────────────────────────────────────────────────────
@@ -303,7 +299,6 @@
   T.Search = Search
   T.SelectionHighlight = SelectionHighlight
   T.buildAiContext = buildAiContext
-  T.getAiTargetLabel = getAiTargetLabel
   T.HighlightMark = HighlightMark
   T.AiShortcuts = AiShortcuts
 

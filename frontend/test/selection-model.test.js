@@ -22,7 +22,8 @@ function raw(overrides = {}) {
     blockIds: ['b1'],
     blockKind: 'prose',
     ref: null,
-    label: '',
+    // P3.C: the surface resolves the AI target and hands it in (label lives inside).
+    target: { kind: 'document', ref: 'doc', range: null, label: 'Document' },
   }, overrides)
 }
 
@@ -41,7 +42,8 @@ describe('SelectionModel — initial context (P3.A)', () => {
       blockKind: null,
       ref: null,
       focusZone: 'editor',
-      label: '',
+      // P3.C: 'none'/initial ⇒ the document target (label ALWAYS present).
+      target: { kind: 'document', ref: 'doc', range: null, label: 'Document' },
     })
   })
 

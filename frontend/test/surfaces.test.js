@@ -142,11 +142,13 @@ describe('MarkdownSurface (P2.B)', () => {
     expect(textarea.value).toBe('fresh from disk')
   })
 
-  it('feedSelection reports a none descriptor (opaque buffer, no block model) — P3.A', () => {
+  it('feedSelection reports a none descriptor (opaque buffer, no block model) — the document target', () => {
     const s = new MarkdownSurface(mdDeps())
     expect(s.feedSelection()).toEqual({
       selectionType: 'none', caret: null, range: null, selectedText: null,
-      blockId: null, blockIds: [], blockKind: null, ref: null, label: '',
+      blockId: null, blockIds: [], blockKind: null, ref: null,
+      // P3.C: markdown mode with no textarea selection → the document target.
+      target: { kind: 'document', ref: 'doc', range: null, label: 'Document' },
     })
   })
 })
@@ -443,7 +445,9 @@ describe('WysiwygSurface.feedSelection (P3.A raw descriptor from live PM)', () =
     const s = new TestWysiwygSurface('doc-1', wyDeps(), null)
     expect(s.feedSelection()).toEqual({
       selectionType: 'none', caret: null, range: null, selectedText: null,
-      blockId: null, blockIds: [], blockKind: null, ref: null, label: '',
+      blockId: null, blockIds: [], blockKind: null, ref: null,
+      // P3.C: no editor → the document target.
+      target: { kind: 'document', ref: 'doc', range: null, label: 'Document' },
     })
   })
 
@@ -457,7 +461,8 @@ describe('WysiwygSurface.feedSelection (P3.A raw descriptor from live PM)', () =
     expect(d.blockKind).toBe('paragraph') // native node type name
     expect(d.selectedText).toBeNull()
     expect(d.ref).toBeNull()
-    expect(d.label).toBe('')
+    // P3.C: label lives inside the resolved target; a caret in flowing prose → document.
+    expect(d.target).toEqual({ kind: 'document', ref: 'doc', range: null, label: 'Document' })
   })
 
   it('a non-empty text selection → range with selectedText', () => {
@@ -479,8 +484,19 @@ describe('WysiwygSurface.feedSelection (P3.A raw descriptor from live PM)', () =
     expect(d.blockIds).toEqual(['ai-1'])
     expect(d.blockKind).toBe('ai-block') // sieve node attrs.kind, not type.name
     expect(d.ref).toBe('anchor-x')
-    // No PM node leaks into the plain descriptor.
-    Object.values(d).forEach((v) => expect(typeof v !== 'object' || v === null || Array.isArray(v) || ('from' in v)).toBe(true))
+    // The resolved target is plain values only (P3.C: no PM node in or out).
+    expect(d.target.kind).toBe('block')
+    expect(d.target.ref).toBe('ai-1')
+    expect(d.target.label).toBe('Follow-up')
+    expect('node' in d.target).toBe(false)
+    // No PM node leaks into the plain descriptor (target is a plain sub-object).
+    Object.values(d).forEach((v) => {
+      if (v === null || Array.isArray(v)) return
+      if (typeof v !== 'object') return
+      if ('from' in v) return                 // a range
+      if ('kind' in v) return                 // the plain target sub-object
+      throw new Error('unexpected object in descriptor: ' + JSON.stringify(v))
+    })
   })
 })
 

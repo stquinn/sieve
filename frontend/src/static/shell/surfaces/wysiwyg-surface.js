@@ -28,6 +28,7 @@
 
 import { AbstractSurface, SurfaceEvent } from './abstract-surface.js'
 import { EditorMode } from '../editor-mode.js'
+import { buildSelectionDescriptor } from './selection-descriptor.js'
 
 /**
  * Injected collaborators — content services commanding into this document's
@@ -518,21 +519,15 @@ export class WysiwygSurface extends AbstractSurface {
    * Builds a RAW selection descriptor from the LIVE PM state — the ONLY place PM
    * selection is read for the SelectionModel (the model itself never touches PM).
    * PLAIN data only: no PM node escapes; blockId/blockKind/ref are extracted as
-   * strings. Classification: single NodeSelection → 'block'; a block-chrome
-   * multi-block range OR a read-only-region DOM fold → 'range'; empty → 'caret';
-   * non-empty text → 'range'; no editor → 'none'.
+   * strings, and the resolved AI `target` ({kind,ref,range,label}) is baked in.
    *
-   * P3.B grows the P3.A minimal descriptor to full richness:
-   *  - the EFFECTIVE range comes from block-chrome (getBlockSelectionRange), so a
-   *    gutter shift-click / drag multi-block selection is seen (block-chrome keeps
-   *    its own range in plugin state — not raw state.selection);
-   *  - a read-only-region highlight (F5: ai-block title, log Explore table —
-   *    contentEditable=false PM cannot track) is folded via domSelectionBlockRange
-   *    onto the block the user actually highlighted, becoming a range there;
-   *  - blockIds spans EVERY top-level block the effective range overlaps
-   *    (blockIds ⊇ [blockId]); blockId stays the PRIMARY (selection head / first).
-   * label is still '' (surface label production is P3.C). NO PM node in the
-   * descriptor — plain strings/numbers only.
+   * This method owns the PARTS THAT NEED THE LIVE VIEW/DOM: the effective range
+   * (block-chrome getBlockSelectionRange — its own plugin state for gutter/shift-
+   * click multi-block; falls back to the live PM selection) and the read-only-region
+   * DOM highlight fold (F5: ai-block title / log Explore table — contentEditable=false
+   * PM can't track). It then delegates the PM-only descriptor assembly (classification,
+   * blockIds span, primary, target + label) to `buildSelectionDescriptor` — the SAME
+   * pure core the vitest adapter reuses, so they can't drift (P3.C).
    * @returns {import('../selection-model.js').RawSelectionDescriptor}
    */
   feedSelection() {
@@ -540,12 +535,15 @@ export class WysiwygSurface extends AbstractSurface {
     // do) — the live instance, whatever a subclass injects.
     const ed = /** @type {any} */ (this.tiptap)
     if (!ed || !ed.state) {
-      return { selectionType: 'none', caret: null, range: null, selectedText: null, blockId: null, blockIds: [], blockKind: null, ref: null, label: '' }
+      return {
+        selectionType: 'none', caret: null, range: null, selectedText: null,
+        blockId: null, blockIds: [], blockKind: null, ref: null,
+        target: { kind: 'document', ref: 'doc', range: null, label: 'Document' },
+      }
     }
     const T = this.#T
     const state = ed.state
     const sel = state.selection
-    const doc = state.doc
 
     // The EFFECTIVE range: block-chrome's authoritative range (its own plugin
     // state for gutter/shift-click multi-block; falls back to the live PM
@@ -568,48 +566,7 @@ export class WysiwygSurface extends AbstractSurface {
       }
     }
 
-    // Classification (the locked ruling folds dom/block-range → 'range'):
-    //   single NodeSelection → 'block'; block-range OR dom-fold → 'range';
-    //   collapsed → 'caret'; else non-empty text → 'range'.
-    let selectionType
-    if (er.isNodeSelection && !er.isBlockRange) selectionType = 'block'
-    else if (er.isBlockRange) selectionType = 'range'
-    else if (domSelText !== null) selectionType = 'range'
-    else if (er.from === er.to) selectionType = 'caret'
-    else selectionType = 'range'
-
-    // The blocks the effective range spans (D3) — ordered, keyed by id — and the
-    // PRIMARY block/node (the block at the selection head / the first overlapped).
-    const span = this.#blocksInRange(doc, er.from, er.to)
-    const primary = this.#primaryBlock(doc, sel, er, span)
-
-    let selectedText = null
-    if (selectionType === 'range') {
-      selectedText = domSelText !== null ? domSelText : doc.textBetween(er.from, er.to, ' ')
-    }
-
-    const primaryId = WysiwygSurface.#nodeBlockId(primary)
-    // A COLLAPSED caret spans exactly ONE block — its primary. A boundary caret
-    // sits at both the block it ENDS and the one it STARTS, so the raw overlap
-    // span would list TWO; that would flip blockIds on a mere caret move
-    // (boundary→interior) and spuriously break the "caret-only move does NOT
-    // push" contract. Collapse to the single primary (keeps blockId ∈ blockIds).
-    // A RANGE keeps the full multi-block overlap span (D3).
-    const blockIds = (selectionType === 'caret')
-      ? (primaryId ? [primaryId] : [])
-      : span.map((b) => b.id).filter(Boolean)
-
-    return {
-      selectionType: selectionType,
-      caret: sel.head,
-      range: { from: er.from, to: er.to },
-      selectedText: selectedText,
-      blockId: primaryId,
-      blockIds: blockIds,
-      blockKind: WysiwygSurface.#nodeBlockKind(primary),
-      ref: WysiwygSurface.#nodeRef(primary),
-      label: '',
-    }
+    return buildSelectionDescriptor(state.doc, sel, er, T, domSelText)
   }
 
   /**
@@ -627,73 +584,6 @@ export class WysiwygSurface extends AbstractSurface {
       }
     })
     return out
-  }
-
-  /**
-   * Every top-level block whose extent overlaps `[from,to]`, in document order,
-   * as `{node, id}` (overlap: `from < node.to && to > node.from`). A collapsed
-   * caret still lands in exactly the block it sits in.
-   * @param {any} doc @param {number} from @param {number} to
-   * @returns {Array<{node:any,id:string|null}>}
-   */
-  #blocksInRange(doc, from, to) {
-    const out = []
-    doc.forEach((node, offset) => {
-      const nodeFrom = offset
-      const nodeTo = offset + node.nodeSize
-      const overlaps = (from === to)
-        ? (from >= nodeFrom && from <= nodeTo)
-        : (from < nodeTo && to > nodeFrom)
-      if (overlaps) out.push({ node, id: WysiwygSurface.#nodeBlockId(node) })
-    })
-    return out
-  }
-
-  /**
-   * The PRIMARY block node: a NodeSelection targets its own node; otherwise the
-   * block at the selection HEAD (via $from) WHEN that block is inside the spanned
-   * range — so a plain caret/range keeps its head block. When the effective range
-   * was re-targeted (a read-only-region DOM fold / a block-chrome range that
-   * doesn't cover the PM head), the head block is NOT in the span, so fall to the
-   * FIRST block the range spans.
-   * @param {any} doc @param {any} sel @param {any} er @param {Array<{node:any}>} span
-   * @returns {any|null}
-   */
-  #primaryBlock(doc, sel, er, span) {
-    if (sel.node) return sel.node
-    const spanNodes = span.map((b) => b.node)
-    let head = null
-    if (sel.$from && sel.$from.depth >= 1) head = sel.$from.node(1)
-    else if (sel.$from && doc.childCount) {
-      const idx = Math.max(0, doc.resolve(sel.$from.pos).index(0))
-      head = doc.child(Math.min(idx, doc.childCount - 1))
-    }
-    if (head && spanNodes.indexOf(head) >= 0) return head
-    return span.length ? span[0].node : head
-  }
-
-  /** @param {any} node @returns {string|null} the block's durable id, or null */
-  static #nodeBlockId(node) {
-    const id = node && node.attrs && node.attrs.id
-    return id || null
-  }
-
-  /**
-   * The block kind as a PLAIN string: a sieve-* node carries `attrs.kind`; a
-   * native prose node is its PM type name (paragraph/heading/…). Null when no
-   * node owns the selection.
-   * @param {any} node @returns {string|null}
-   */
-  static #nodeBlockKind(node) {
-    if (!node || !node.type) return null
-    if (node.attrs && node.attrs.kind) return node.attrs.kind
-    return node.type.name || null
-  }
-
-  /** @param {any} node @returns {string|null} block ref/anchor (ai-block re-chain) */
-  static #nodeRef(node) {
-    const ref = node && node.attrs && node.attrs.ref
-    return ref || null
   }
 
   // ── Server render-backs (verbatim from the old document-event handlers) ────────

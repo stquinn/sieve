@@ -490,7 +490,7 @@
       if (!currentEditor || currentMode === 'markdown') return
       var range = (pendingAskCtx && pendingAskCtx.range)
         ? pendingAskCtx.range
-        : window.TipTap.resolveAiTarget(currentEditor, false).range
+        : _activeEditor().getSelectionContext().target.range
       window.TipTap.setAiTargetGlow(currentEditor.view, range)
     })
     textarea.addEventListener('blur', function () {
@@ -508,7 +508,7 @@
     if (askLabelTimeout) clearTimeout(askLabelTimeout)
     askLabelTimeout = setTimeout(function () {
       if (pendingAskCtx) return
-      var t = window.TipTap.resolveAiTarget(editor, currentMode === 'markdown')
+      var t = _activeEditor().getSelectionContext().target
       var label = askDialog.querySelector('.ask-popup__label')
       label.textContent = t.label === 'Follow-up' ? 'Ask Follow-up' : 'Ask About ' + t.label
       // NB: no glow here. The label tracks the caret ambiently, but the glow (which
@@ -821,13 +821,13 @@
     if (pendingAskCtx) {
       ctx = pendingAskCtx
     } else {
-      // Resolve once at SEND. Apply the == highlight ONLY for a live selection —
-      // the one mutating case (D-r.7: just the mark; the block already has an id).
-      var t = window.TipTap.resolveAiTarget(currentEditor, currentMode === 'markdown')
-      if (t.kind === 'selection' && currentMode !== 'markdown') {
+      // Read the target the editor STORED (P3.C). Apply the == highlight ONLY for a
+      // live selection — the one mutating case (D-r.7: just the mark, block has an id).
+      var context = _activeEditor().getSelectionContext()
+      if (context.target.kind === 'selection' && currentMode !== 'markdown') {
         window.TipTap.applyTargetHighlight(currentEditor)
       }
-      ctx = window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', getMarkdown(), currentUuid)
+      ctx = window.TipTap.buildAiContext(context, getMarkdown(), currentUuid)
     }
 
     runAiJob('ask', val, ctx)
@@ -902,7 +902,7 @@
     function runAiJob(type, question, precomputedCtx) {
       if (!currentEditor && currentMode !== 'markdown') return
 
-      var ctx = precomputedCtx || window.TipTap.buildAiContext(currentEditor, currentMode === 'markdown', getMarkdown(), currentUuid)
+      var ctx = precomputedCtx || window.TipTap.buildAiContext(_activeEditor().getSelectionContext(), getMarkdown(), currentUuid)
       var refId = (ctx && ctx.blockRef) || 'doc'
       var blockType = type === 'explain' ? 'EXPLAIN' : 'ASK'
 

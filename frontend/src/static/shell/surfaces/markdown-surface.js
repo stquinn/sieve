@@ -19,6 +19,7 @@
 
 import { AbstractSurface, SurfaceEvent } from './abstract-surface.js'
 import { EditorMode } from '../editor-mode.js'
+import { quoteSnippet } from './selection-descriptor.js'
 
 /**
  * Injected collaborators — content services commanding into this document's
@@ -150,15 +151,33 @@ export class MarkdownSurface extends AbstractSurface {
   }
 
   /**
-   * Raw selection descriptor for the SelectionModel (P3.A). Markdown mode is an
-   * opaque verbatim buffer — there is no block model to key a selection on — so
-   * the surface reports a 'none'-ish descriptor; the model's focusZone is
-   * 'markdown' while this surface is mounted (set by the editor's focus channel).
-   * Textarea sub-string selection targeting is P3.B.
+   * Raw selection descriptor for the SelectionModel. Markdown mode is an opaque
+   * verbatim buffer — there is no block model to key a selection on — so the AI
+   * target is always the whole DOCUMENT; the model's focusZone is 'markdown' while
+   * this surface is mounted (set by the editor's focus channel).
+   *
+   * P3.C: a textarea sub-string selection resolves to a document-scoped 'selection'
+   * (ref 'doc') with a snippet label; otherwise the document target with a 'Document'
+   * label. The `target` is ALWAYS present (label folded in), matching the wysiwyg
+   * surface's contract.
    * @returns {import('../selection-model.js').RawSelectionDescriptor}
    */
   feedSelection() {
-    return { selectionType: 'none', caret: null, range: null, selectedText: null, blockId: null, blockIds: [], blockKind: null, ref: null, label: '' }
+    const ta = this.#textarea
+    if (ta && ta.selectionStart !== ta.selectionEnd) {
+      const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd)
+      return {
+        selectionType: 'range', caret: ta.selectionStart,
+        range: { from: ta.selectionStart, to: ta.selectionEnd },
+        selectedText: sel, blockId: null, blockIds: [], blockKind: null, ref: null,
+        target: { kind: 'selection', ref: 'doc', range: null, label: quoteSnippet(sel) },
+      }
+    }
+    return {
+      selectionType: 'none', caret: null, range: null, selectedText: null,
+      blockId: null, blockIds: [], blockKind: null, ref: null,
+      target: { kind: 'document', ref: 'doc', range: null, label: 'Document' },
+    }
   }
 
   /**

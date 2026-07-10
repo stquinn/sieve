@@ -17,6 +17,17 @@
 // solely through AbstractEditor (which owns the instance + the pull path).
 
 /**
+ * @typedef {Object} AiTarget — the resolved AI target, editor-generated, plain values (NO PM node)
+ * @property {'block'|'selection'|'document'} kind                what Ask AI acts on
+ * @property {string} ref                                         block id / ref chain / 'doc'
+ * @property {{from:number,to:number}|null} range                 target extent (null for a document target)
+ * @property {string} label                                       finished friendly display noun/snippet (ALWAYS populated; rich sieve labels preserved)
+ */
+
+/** The coherent 'none'/initial target: nothing selected ⇒ Ask targets the document. */
+const DOCUMENT_TARGET = Object.freeze({ kind: 'document', ref: 'doc', range: null, label: 'Document' })
+
+/**
  * @typedef {Object} SelectionContext — frozen; the one authority on editor selection/caret/context OUTSIDE the surface
  * @property {string} docUuid                                     which document (also the staleness guard)
  * @property {'none'|'caret'|'range'|'block'} selectionType       nothing / cursor / ranged / whole-block NodeSelection
@@ -28,14 +39,15 @@
  * @property {string|null} blockKind                              primary block kind (plain string; replaces node.type reads)
  * @property {string|null} ref                                    block ref/anchor (ai-block re-chain); replaces node.attrs.ref
  * @property {'editor'|'block-inner'|'ask'|'markdown'|'outside'} focusZone   doc selection persists across 'ask'
- * @property {string} label                                       finished display noun/snippet (surface-produced)
+ * @property {AiTarget} target                                    resolved AI target + its friendly label (P3.C; ALWAYS present)
  */
 
 /**
  * A raw selection descriptor a surface hands to `ingest`: PLAIN data only (no PM
  * node, no DOM). The surface classifies `selectionType` (it alone knows the PM
  * shape); the model trusts it. docUuid + focusZone are the model's to own and
- * are ignored/overwritten if present on a descriptor.
+ * are ignored/overwritten if present on a descriptor. `target` is surface-resolved
+ * (P3.C) — the model just freezes it through.
  * @typedef {Object} RawSelectionDescriptor
  * @property {'none'|'caret'|'range'|'block'} [selectionType]
  * @property {number|null} [caret]
@@ -45,7 +57,7 @@
  * @property {string[]}    [blockIds]
  * @property {string|null} [blockKind]
  * @property {string|null} [ref]
- * @property {string} [label]
+ * @property {AiTarget} [target]
  */
 
 /** Keys whose change is MEANINGFUL (a push): identity/context, not the caret coordinate. */
@@ -81,7 +93,7 @@ export class SelectionModel {
       blockKind: null,
       ref: null,
       focusZone: 'editor',
-      label: '',
+      target: DOCUMENT_TARGET,
     })
   }
 
@@ -125,7 +137,7 @@ export class SelectionModel {
       blockKind: c.blockKind,
       ref: c.ref,
       focusZone: zone,
-      label: c.label,
+      target: c.target,
     })
     this.#commit(next)
   }
@@ -186,19 +198,31 @@ export class SelectionModel {
       blockKind: (raw.blockKind === undefined) ? null : raw.blockKind,
       ref: (raw.ref === undefined) ? null : raw.ref,
       focusZone: focusZone,
-      label: raw.label || '',
+      // target is surface-resolved (P3.C); default to the document target when a
+      // descriptor omits it (e.g. a 'none' feed), so `target` is ALWAYS present.
+      target: raw.target ? {
+        kind: raw.target.kind,
+        ref: raw.target.ref,
+        range: raw.target.range ? { from: raw.target.range.from, to: raw.target.range.to } : null,
+        label: raw.target.label,
+      } : DOCUMENT_TARGET,
     })
   }
 
   /**
-   * Deep-freezes a context: the object, its nested `range`, and its `blockIds`
-   * array — so a holder can't mutate any part of a pulled/emitted snapshot.
+   * Deep-freezes a context: the object, its nested `range`, its `blockIds` array,
+   * and its `target` (+ the target's nested `range`) — so a holder can't mutate any
+   * part of a pulled/emitted snapshot.
    * @param {SelectionContext} ctx
    * @returns {Readonly<SelectionContext>}
    */
   static #freeze(ctx) {
     if (ctx.range) Object.freeze(ctx.range)
     Object.freeze(ctx.blockIds)
+    if (ctx.target) {
+      if (ctx.target.range) Object.freeze(ctx.target.range)
+      Object.freeze(ctx.target)
+    }
     return Object.freeze(ctx)
   }
 
