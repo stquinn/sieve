@@ -54,7 +54,12 @@
         <div class="sidebar-handle"></div>
 
         <div id="right-panel">
-            <div id="htmx-tabbar" class="flex items-stretch bg-tn-bg-dark border-0 border-t border-b border-solid border-tn-border-2 h-[44px] shrink-0" hx-get="/api/tabs" hx-trigger="load, sse:session:changed, sse:notes:changed, session:changed from:body, notes:changed from:body"></div>
+            <!-- P2.D: bare mount. The Workspace owns the tab strip render — it
+                 boots the first load and refetches on SSE session/notes changes
+                 (shell/workspace.js loadTabs). The hx-get/hx-trigger relocated
+                 off this div; the sidebar/prompts/meta divs still register the
+                 SSE EventSource listeners, so sse:* events bubble to document. -->
+            <div id="htmx-tabbar" class="flex items-stretch bg-tn-bg-dark border-0 border-t border-b border-solid border-tn-border-2 h-[44px] shrink-0"></div>
 
             <dialog id="settings-dialog" style="background: transparent; border: none; padding: 0; outline: none;">
                 <div id="settings-dialog-content" style="background: var(--theme-bgDark); width: 75vw; max-width: 1200px; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.6);"></div>
@@ -551,7 +556,7 @@
         var target = e.detail && e.detail.target;
         if (!target) return;
         if (target.id === 'htmx-sidebar' || (target.closest && target.closest('#htmx-sidebar'))) {
-            window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' });
+            window.sieveWorkspace.loadTabs();
             var mount = document.getElementById('tiptap-mount');
             var activeUuid = mount ? mount.getAttribute('data-uuid') : null;
             var metaPanel = document.getElementById('htmx-meta-panel');
@@ -578,7 +583,7 @@
       // 2. Refresh all library-specific panels in parallel.
       await Promise.all([
         htmx.ajax('GET', '/api/sidebar',  { target: '#htmx-sidebar',   swap: 'innerHTML' }),
-        htmx.ajax('GET', '/api/tabs',     { target: '#htmx-tabbar',    swap: 'innerHTML' }),
+        window.sieveWorkspace.loadTabs(),
         htmx.ajax('GET', '/api/meta',     { target: '#htmx-meta-panel', swap: 'innerHTML' }),
         htmx.ajax('GET', '/api/prompts',  { target: '#prompts-panel',  swap: 'innerHTML' }),
       ]);

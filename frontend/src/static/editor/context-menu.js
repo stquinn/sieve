@@ -93,10 +93,10 @@
     return [
       { type: 'divider' },
       { icon: IC.close, label: 'Close Tab', action: function () {
-        hx('POST', '/api/tabs/close/' + encodeURIComponent(id), { target: '#htmx-tabbar', swap: 'innerHTML' })
+        window.sieveWorkspace.close(id)
       }},
       { icon: IC.closeAll, label: 'Close All Tabs', action: function () {
-        hx('POST', '/api/tabs/closeAll', { target: '#htmx-tabbar', swap: 'innerHTML' })
+        window.sieveWorkspace.closeAll()
       }},
     ]
   }
@@ -419,7 +419,7 @@
     if (name) items.push({ type: 'header', label: name })
 
     items.push({ icon: IC.edit, label: 'Edit Prompt', action: function () {
-      hx('POST', '/api/note/open/' + encodeURIComponent(id), { target: '#htmx-tabbar', swap: 'innerHTML' })
+      window.sieveWorkspace.open(id)
     }})
 
     if (!isVirtual) {

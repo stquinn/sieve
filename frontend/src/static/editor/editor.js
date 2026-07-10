@@ -7,7 +7,6 @@
 
   var currentUuid = ''
   var currentMountEl = null
-  var tabModes = {}
 
   // ── Shell integration (P1 skeleton → P2.B surfaces) ───────────────────────────
   // The Workspace/Tab/Editor/Surface component model (shell/*.js) is the working
@@ -87,12 +86,12 @@
         break
       case 'mode-changed':
         // The editor flipped its surface (AbstractEditor.setMode producer
-        // emission — exactly once per actual flip). Chrome only: remember the
-        // tab's mode, refresh the mode button + body class, stats, tabbar.
-        tabModes[currentUuid] = event.mode
+        // emission — exactly once per actual flip). The Tab self-records the mode
+        // (it subscribed to this stream in attachEditor); chrome only here:
+        // refresh the mode button + body class, stats, and the tabbar strip.
         updateModeUI()
         dispatchStats()
-        if (window.htmx) window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' })
+        if (window.sieveWorkspace) window.sieveWorkspace.loadTabs()
         break
       case 'mode-change-failed':
         console.error('[editor] mode toggle failed; staying in ' + event.mode, event.error)
@@ -292,7 +291,8 @@
     // the new one opens); on a same-uuid re-init the editor + socket are kept.
     _syncShell(uuid)
     currentMountEl = mountEl
-    var wantMode = mode || tabModes[uuid] || 'wysiwyg'
+    var ws = window.sieveWorkspace
+    var wantMode = mode || (ws && ws.activeTab && ws.activeTab.mode) || 'wysiwyg'
 
     fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid))
       .then(function (r) { return r.json() })
@@ -313,7 +313,9 @@
           mountEl,
           isMarkdown ? (data.body || '') : { body: data.body || '', blocks: data.blocks }
         )
-        tabModes[uuid] = ed.mode
+        // Seed the Tab's mode record after the initial present (mode-changed
+        // does not fire on initial mount — only on an actual flip).
+        if (ws && ws.activeTab) ws.activeTab.recordMode(ed.mode)
         updateModeUI()
         dispatchStats()
       })

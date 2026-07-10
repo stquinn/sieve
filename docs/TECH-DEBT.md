@@ -262,3 +262,13 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 **Why deferred:** upstream wails v2.12.0 bug (`internal/frontend/devserver/devserver.go` — `wsHandler` only assigned when a frontenddevserverurl exists). Not fixable in-repo without a go.mod replace/patch.
 
 **Retires when:** wails fixes it (or v3 migration lands — see WAILS-V3-MIGRATION), or we add a go.mod patch. Interim workaround for WS-path testing: in-process Go tests dialing the chi handler directly (see `requesthandlers/ws_takeover_test.go` harness).
+
+## V-B: Tabs render via HTMX templates behind the Workspace API facade, not a self-rendering JSON component
+
+**Tracked:** Forgejo #31 (X-C epic)
+
+**What:** P2.D (2026-07-10) gave the Workspace the correct EXTERNAL posture — `open/newNote/close/closeActiveTab/closeAll/reorder/loadTabs` are the sole front-end entry points for tab mutation and the tabbar render. The INTERNALS still drive the existing server-rendered HTMX templates (`tabbar.html` + OOB `editor.html`) via HTML swaps; `SieveTab` is a passive identity, not a self-rendering component. Intended end-state: a read-only session-tabs JSON endpoint (`LoadSession → RefreshTabStatus → marshal {tabs, activeIdx}`); the Workspace fetches JSON and reconciles `SieveTab` children; each `SieveTab` renders its own element and wires its own handlers; the Workspace owns the strip chrome (`+`, overflow). This collapses stale-tab handling, the `session:changed` refetch, the `data-uuid` scrape, and the OOB editor mount into one model-diff loop, and makes the tabbar the first mover of "components own themselves."
+
+**Why deferred:** de-risking + avoiding scope creep — the API facade (the load-bearing part) lands now behind the proven templates; the render port (~150 lines faithful to `tabbar.html`) + the Go endpoint + the consistency divergence (first JS-rendered component while sidebar/meta/prompts stay HTMX) are a separate phase the facade *enables*.
+
+**Retires when:** the tabs-JSON endpoint + self-rendering `SieveTab` land; callers are untouched (they depend only on the Workspace verbs).

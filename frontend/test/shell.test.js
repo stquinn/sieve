@@ -173,6 +173,62 @@ describe('SieveTab', () => {
   it('throws if uuid missing', () => {
     expect(() => new SieveTab('')).toThrow('uuid is required')
   })
+
+  // ── P2.D: SieveTab owns #mode (retires the tabModes module global) ────────────
+
+  it('mode defaults to wysiwyg', () => {
+    const tab = new SieveTab('tab-uuid')
+    expect(tab.mode).toBe(EditorMode.WYSIWYG)
+  })
+
+  it('recordMode updates the mode (the load-path seed)', () => {
+    const tab = new SieveTab('tab-uuid')
+    tab.recordMode(EditorMode.MARKDOWN)
+    expect(tab.mode).toBe(EditorMode.MARKDOWN)
+  })
+
+  it('attachEditor subscribes to the editor stream; a mode-changed event records the tab mode', () => {
+    const tab = new SieveTab('tab-uuid')
+    const ed = new SieveEditor('tab-uuid')
+    let emit
+    ed.onEvent = (fn) => { emit = fn; return () => { emit = null } }
+    tab.attachEditor(ed)
+    expect(tab.mode).toBe(EditorMode.WYSIWYG)
+    emit({ type: 'mode-changed', mode: EditorMode.MARKDOWN })
+    expect(tab.mode).toBe(EditorMode.MARKDOWN)
+  })
+
+  it('non-mode events do not disturb the recorded mode', () => {
+    const tab = new SieveTab('tab-uuid')
+    const ed = new SieveEditor('tab-uuid')
+    let emit
+    ed.onEvent = (fn) => { emit = fn; return () => {} }
+    tab.attachEditor(ed)
+    tab.recordMode(EditorMode.MARKDOWN)
+    emit({ type: 'doc-changed' })
+    expect(tab.mode).toBe(EditorMode.MARKDOWN)
+  })
+
+  it('detachEditor unsubscribes from the editor stream', () => {
+    const tab = new SieveTab('tab-uuid')
+    const ed = new SieveEditor('tab-uuid')
+    let emit
+    let unsubscribed = false
+    ed.onEvent = (fn) => { emit = fn; return () => { unsubscribed = true; emit = null } }
+    tab.attachEditor(ed)
+    tab.detachEditor()
+    expect(unsubscribed).toBe(true)
+  })
+
+  it('the tab mode survives detach (client-side record persists across tab switch)', () => {
+    const tab = new SieveTab('tab-uuid')
+    const ed = new SieveEditor('tab-uuid')
+    ed.onEvent = (fn) => { return () => {} }
+    tab.attachEditor(ed)
+    tab.recordMode(EditorMode.MARKDOWN)
+    tab.detachEditor()
+    expect(tab.mode).toBe(EditorMode.MARKDOWN)
+  })
 })
 
 describe('SieveWorkspace', () => {
@@ -1203,5 +1259,139 @@ describe('SieveWorkspace chrome delegation (P2.C transitional)', () => {
     } finally {
       warn.mockRestore()
     }
+  })
+})
+
+// ── P2.D: Workspace tab-lifecycle verbs (the external API facade) ─────────────
+// The verbs are thin owners over the EXISTING htmx.ajax calls the templates run
+// today (identical swap semantics). Tests stub window.htmx.ajax to record the
+// calls and to resolve so the post-swap prune (.then) fires.
+
+describe('SieveWorkspace tab-lifecycle verbs (P2.D facade)', () => {
+  let ws
+  let ajaxCalls
+  let prevHtmx
+
+  beforeEach(() => {
+    ws = new SieveWorkspace()
+    ajaxCalls = []
+    prevHtmx = window.htmx
+    window.htmx = {
+      ajax: (method, url, opts) => {
+        ajaxCalls.push({ method, url, opts })
+        return Promise.resolve()
+      },
+    }
+  })
+
+  afterEach(() => { window.htmx = prevHtmx })
+
+  it('open posts to /api/note/open/{uuid} with the tabbar swap', () => {
+    ws.open('doc-1')
+    expect(ajaxCalls).toEqual([
+      { method: 'POST', url: '/api/note/open/doc-1', opts: { target: '#htmx-tabbar', swap: 'innerHTML' } },
+    ])
+  })
+
+  it('newNote posts to /api/note/new with the tabbar swap', () => {
+    ws.newNote()
+    expect(ajaxCalls).toEqual([
+      { method: 'POST', url: '/api/note/new', opts: { target: '#htmx-tabbar', swap: 'innerHTML' } },
+    ])
+  })
+
+  it('reorder posts to /api/tabs/reorder with from/to values', () => {
+    ws.reorder(2, 0)
+    expect(ajaxCalls).toEqual([
+      { method: 'POST', url: '/api/tabs/reorder', opts: { target: '#htmx-tabbar', swap: 'innerHTML', values: { from: 2, to: 0 } } },
+    ])
+  })
+
+  it('loadTabs GETs /api/tabs into the tabbar', () => {
+    ws.loadTabs()
+    expect(ajaxCalls).toEqual([
+      { method: 'GET', url: '/api/tabs', opts: { target: '#htmx-tabbar', swap: 'innerHTML' } },
+    ])
+  })
+
+  it('close posts to /api/tabs/close/{uuid} and prunes the closed identity after the swap settles', async () => {
+    ws.openTab('doc-a')
+    ws.openTab('doc-b') // doc-b active
+    await ws.close('doc-a') // background close
+    expect(ajaxCalls[0]).toEqual({ method: 'POST', url: '/api/tabs/close/doc-a', opts: { target: '#htmx-tabbar', swap: 'innerHTML' } })
+    expect(ws.getTab('doc-a')).toBeNull()          // pruned
+    expect(ws.activeTab?.uuid).toBe('doc-b')       // active untouched
+  })
+
+  it('close of the active tab prunes it without a stale entry (active already re-set by the swap re-init)', async () => {
+    // Model the real flow: the swap+OOB re-init has already activated the successor
+    // before the .then prune runs; here doc-a stays active (no successor) so the
+    // prune nulls it. Either way close() leaves no leaked entry.
+    ws.openTab('doc-a')
+    await ws.close('doc-a')
+    expect(ws.getTab('doc-a')).toBeNull()
+    expect(ws.activeTab).toBeNull()
+  })
+
+  it('close leaks no editor: the pruned tab is the one whose editor was already destroyed', async () => {
+    FakeSocket.reset()
+    const opts = {
+      socketFactory: (url) => new FakeSocket(url),
+      wsUrl: () => 'ws://test',
+      onServerMessage: () => {},
+    }
+    const tabA = ws.activateDocument('doc-a', opts)
+    FakeSocket.instances[0].driveOpen()
+    // Successor activates (destroys A's editor, detaches it), THEN the prune runs.
+    ws.activateDocument('doc-b', opts)
+    expect(tabA.editor).toBeNull() // destroyed+detached by activateDocument
+    await ws.close('doc-a')
+    expect(ws.getTab('doc-a')).toBeNull()
+    expect(ws.activeTab?.uuid).toBe('doc-b')
+  })
+
+  it('closeActiveTab closes the active tab; noop when none active', () => {
+    ws.closeActiveTab() // no active tab
+    expect(ajaxCalls).toEqual([])
+    ws.openTab('doc-x')
+    ws.closeActiveTab()
+    expect(ajaxCalls).toEqual([
+      { method: 'POST', url: '/api/tabs/close/doc-x', opts: { target: '#htmx-tabbar', swap: 'innerHTML' } },
+    ])
+  })
+
+  it('closeAll posts to /api/tabs/closeAll and prunes every tab except the new active', async () => {
+    // Model the swap+OOB re-init: the new single note becomes active BEFORE the
+    // .then prune runs. Here we simulate that by activating the successor.
+    ws.openTab('doc-a')
+    ws.openTab('doc-b')
+    const p = ws.closeAll()
+    // Simulate the OOB re-init activating the fresh note synchronously after the ajax.
+    ws.openTab('new-note')
+    await p
+    expect(ajaxCalls[0]).toEqual({ method: 'POST', url: '/api/tabs/closeAll', opts: { target: '#htmx-tabbar', swap: 'innerHTML' } })
+    expect(ws.getTab('doc-a')).toBeNull()
+    expect(ws.getTab('doc-b')).toBeNull()
+    expect(ws.getTab('new-note')).not.toBeNull() // the new active survives
+    expect(ws.activeTab?.uuid).toBe('new-note')
+  })
+
+  it('every verb returns the htmx.ajax promise', () => {
+    expect(ws.open('d')).toBeInstanceOf(Promise)
+    expect(ws.newNote()).toBeInstanceOf(Promise)
+    expect(ws.reorder(0, 1)).toBeInstanceOf(Promise)
+    expect(ws.loadTabs()).toBeInstanceOf(Promise)
+    expect(ws.close('d')).toBeInstanceOf(Promise)
+    expect(ws.closeAll()).toBeInstanceOf(Promise)
+  })
+
+  it('verbs guard on window.htmx (no throw when htmx is absent)', () => {
+    window.htmx = undefined
+    expect(() => ws.open('d')).not.toThrow()
+    expect(() => ws.newNote()).not.toThrow()
+    expect(() => ws.close('d')).not.toThrow()
+    expect(() => ws.closeAll()).not.toThrow()
+    expect(() => ws.reorder(0, 1)).not.toThrow()
+    expect(() => ws.loadTabs()).not.toThrow()
   })
 })

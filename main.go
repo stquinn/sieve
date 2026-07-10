@@ -252,9 +252,9 @@ func buildMenu(app *App) *menu.Menu {
 	}
 
 	file := appMenu.AddSubmenu("File")
-	file.AddText("New Note", keys.CmdOrCtrl("n"), js("htmx.ajax('POST','/api/note/new',{target:'#htmx-tabbar',swap:'innerHTML'})"))
+	file.AddText("New Note", keys.CmdOrCtrl("n"), js("window.sieveWorkspace?.newNote()"))
 	file.AddText("Save", keys.CmdOrCtrl("s"), js("window.sieveWorkspace?.activeTab?.editor?.flushSave()"))
-	file.AddText("Close Tab", keys.CmdOrCtrl("w"), js("var id=document.getElementById('tiptap-mount')?.getAttribute('data-uuid');if(id)htmx.ajax('POST','/api/tabs/close/'+id,{target:'#htmx-tabbar',swap:'innerHTML'})"))
+	file.AddText("Close Tab", keys.CmdOrCtrl("w"), js("window.sieveWorkspace?.closeActiveTab()"))
 	// Export submenu — a home for future export targets (file, PDF, …); only the
 	// clipboard target ships today. No accelerator; calls the workspace component
 	// API, which fetches the clean export and copies it to the clipboard.

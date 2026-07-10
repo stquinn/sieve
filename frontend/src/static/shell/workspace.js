@@ -86,6 +86,113 @@ export class SieveWorkspace {
    */
   get activeTab() { return this.#activeTab }
 
+  // ── Tab-lifecycle verbs (P2.D — the external API facade) ─────────────────────
+  // These are the ONLY front-end entry points for tab mutation and the tabbar
+  // render. Each is a thin owner over the SAME htmx.ajax call the templates ran
+  // before P2.D (identical swap semantics; the OOB editor mount is preserved).
+  // The INTERNALS still drive the server-rendered HTMX templates (tabbar.html +
+  // OOB editor.html); the self-rendering-JSON version is deferred to tech-debt
+  // V-B. Each guards htmx (mirrors the templates' `window.htmx && …`) and returns
+  // the htmx.ajax promise. See docs/design/specs/2026-07-08-workspace-editor-
+  // component-model.md.
+
+  /**
+   * Opens (or focuses) the document for a uuid: POST /api/note/open/{uuid},
+   * swapping the tabbar. The server re-renders the strip and OOB-mounts the
+   * editor; the OOB re-init drives activateDocument, so no client prune here.
+   * @param {string} uuid
+   * @returns {Promise<any>}
+   */
+  open(uuid) {
+    return this.#ajax('POST', '/api/note/open/' + encodeURIComponent(uuid))
+  }
+
+  /**
+   * Creates a new untitled note and opens it: POST /api/note/new, tabbar swap.
+   * @returns {Promise<any>}
+   */
+  newNote() {
+    return this.#ajax('POST', '/api/note/new')
+  }
+
+  /**
+   * Closes the tab for a uuid: POST /api/tabs/close/{uuid}, tabbar swap. Prunes
+   * the closed identity AFTER the swap + OOB editor mount + htmx:load settle:
+   * by the time `.then` runs, initEditor → activateDocument has already
+   * destroyed/detached the outgoing editor and set the new active, so
+   * closeTab(uuid) just removes the now-defunct entry (uuid is no longer active,
+   * so it won't null #activeTab). Works for both active-tab and background close.
+   * @param {string} uuid
+   * @returns {Promise<any>}
+   */
+  close(uuid) {
+    return this.#ajax('POST', '/api/tabs/close/' + encodeURIComponent(uuid))
+      .then((r) => { this.closeTab(uuid); return r })
+  }
+
+  /**
+   * Closes the currently active tab, or no-ops when nothing is active. Replaces
+   * the native menu's `data-uuid` DOM scrape.
+   * @returns {Promise<any>|void}
+   */
+  closeActiveTab() {
+    if (this.#activeTab) return this.close(this.#activeTab.uuid)
+  }
+
+  /**
+   * Closes every tab: POST /api/tabs/closeAll, tabbar swap. The server wipes the
+   * session and creates one fresh note; the OOB re-init activates it before the
+   * `.then` prune runs, so pruning every tracked tab EXCEPT the new active
+   * collapses the stale entries without touching the fresh note.
+   * @returns {Promise<any>}
+   */
+  closeAll() {
+    return this.#ajax('POST', '/api/tabs/closeAll')
+      .then((r) => {
+        const keep = this.#activeTab
+        for (const uuid of [...this.#tabs.keys()]) {
+          if (!keep || uuid !== keep.uuid) this.closeTab(uuid)
+        }
+        return r
+      })
+  }
+
+  /**
+   * Reorders the tab strip: POST /api/tabs/reorder with from/to indices, tabbar
+   * swap.
+   * @param {number} fromIdx — source tab index
+   * @param {number} toPos — target insertion position
+   * @returns {Promise<any>}
+   */
+  reorder(fromIdx, toPos) {
+    return this.#ajax('POST', '/api/tabs/reorder', { values: { from: fromIdx, to: toPos } })
+  }
+
+  /**
+   * Fetches and renders the tab strip: GET /api/tabs, tabbar swap. The boot +
+   * SSE refetch entry point (P2.D relocated this off the #htmx-tabbar div's
+   * hx-get/hx-trigger).
+   * @returns {Promise<any>}
+   */
+  loadTabs() {
+    return this.#ajax('GET', '/api/tabs')
+  }
+
+  /**
+   * Shared htmx.ajax over the tabbar mount. Guards htmx (mirrors the templates)
+   * and always resolves to a promise so `.then` prunes are safe even without
+   * htmx present (tests, early boot).
+   * @param {'GET'|'POST'} method
+   * @param {string} url
+   * @param {object} [extraOpts] — merged into the swap options (e.g. values)
+   * @returns {Promise<any>}
+   */
+  #ajax(method, url, extraOpts) {
+    if (!window.htmx) return Promise.resolve()
+    const opts = Object.assign({ target: '#htmx-tabbar', swap: 'innerHTML' }, extraOpts)
+    return window.htmx.ajax(method, url, opts)
+  }
+
   // ── Editor lifecycle (P2.A fix wave: the ONE authoritative teardown path) ────
 
   /**
@@ -199,6 +306,31 @@ export class SieveWorkspace {
       try { fn(tab) } catch (e) { console.error('[SieveWorkspace] activeTabChanged listener threw', e) }
     }
   }
+
+  // ── Tabbar boot + SSE ownership (P2.D — relocated off the #htmx-tabbar div) ──
+
+  /**
+   * Boots the tab strip and subscribes to the out-of-band refresh signals the
+   * div's hx-trigger carried before P2.D. The Workspace now OWNS the tabbar
+   * render (loadTabs). MECHANISM: htmx's SSE extension fires `sse:*` as bubbling
+   * CustomEvents on the divs that declare `hx-trigger="sse:…"` (sidebar/prompts/
+   * meta still do), so a document-level listener receives them. The `… from:body`
+   * body events (session:changed / notes:changed) likewise bubble to document.
+   * Idempotent-safe to call once at module load; guards on #htmx-tabbar existing.
+   */
+  startTabbar() {
+    const boot = () => { if (document.getElementById('htmx-tabbar')) this.loadTabs() }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', boot, { once: true })
+    } else {
+      boot()
+    }
+    const refresh = () => this.loadTabs()
+    document.addEventListener('sse:session:changed', refresh)
+    document.addEventListener('sse:notes:changed', refresh)
+    document.addEventListener('session:changed', refresh)
+    document.addEventListener('notes:changed', refresh)
+  }
 }
 
 // ── Singleton ─────────────────────────────────────────────────────────────────
@@ -206,3 +338,9 @@ export class SieveWorkspace {
 // Acceptance criterion: window.sieveWorkspace.activeTab.editor.uuid works from console.
 const workspace = new SieveWorkspace()
 window.sieveWorkspace = workspace
+
+// P2.D: the Workspace owns the tab strip render. Boot it + subscribe to the SSE
+// refresh signals here (module load — this is the deferred module, so the DOM
+// mount exists or DOMContentLoaded is still pending, both handled). Guarded so
+// vitest (which imports the class without a real document tab mount) is unaffected.
+if (typeof document !== 'undefined') workspace.startTabbar()
