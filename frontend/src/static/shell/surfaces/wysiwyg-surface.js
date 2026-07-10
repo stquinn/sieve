@@ -27,14 +27,15 @@
 // classic-script editor.js factory.
 
 import { AbstractSurface, SurfaceEvent } from './abstract-surface.js'
+import { EditorMode } from '../editor-mode.js'
 
 /**
  * Injected collaborators — content services commanding into this document's
  * context, plus the ONE outbound notifier. Nothing app-level: no chrome names,
  * no AI concepts. (requestSave backs the PM-internal Mod+S in editorProps
  * handleKeyDown — it must run pre-core inside ProseMirror's key routing per
- * docs/editor-interaction-contract.md, so it cannot move to the document-level
- * transitional listener the markdown surface uses.)
+ * docs/editor-interaction-contract.md; it is caret-contextual, not an
+ * app-level chord, so it stays surface-injected.)
  * @typedef {object} WysiwygSurfaceDeps
  * @property {(ops: object[]) => void}    applyBlockOps   — block-domain ops → editor transport (the editor owns the WS enveloping)
  * @property {() => unknown}              requestSave     — save command (module flushSave)
@@ -84,8 +85,8 @@ export class WysiwygSurface extends AbstractSurface {
     this.#T = deps.T || /** @type {any} */ (window).TipTap
   }
 
-  /** @returns {string} */
-  get mode() { return 'wysiwyg' }
+  /** @returns {import('../editor-mode.js').EditorModeValue} */
+  get mode() { return EditorMode.WYSIWYG }
 
   /** @returns {unknown|null} the live TipTap instance */
   get tiptap() { return this.#editor }

@@ -10,6 +10,7 @@
 // SieveTab.createEditor factory.
 
 import { AbstractEditor } from './abstract-editor.js'
+import { EditorMode } from './editor-mode.js'
 
 /**
  * @typedef {object} PromptEditorOptions
@@ -43,9 +44,9 @@ export class PromptEditor extends AbstractEditor {
    * A prompt is fixed markdown — the pre-mount default matches the only
    * surface it ever presents.
    * @protected
-   * @returns {string}
+   * @returns {import('./editor-mode.js').EditorModeValue}
    */
-  get _defaultMode() { return 'markdown' }
+  get _defaultMode() { return EditorMode.MARKDOWN }
 
   /**
    * @param {string} uuid

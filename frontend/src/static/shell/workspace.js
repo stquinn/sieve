@@ -13,6 +13,16 @@
 
 import { SieveTab } from './tab.js'
 
+/**
+ * TRANSITIONAL (P2.C; dies P4 when chrome becomes Workspace-owned children):
+ * the legacy chrome implementations editor.js registers via provideChrome.
+ * @typedef {object} WorkspaceChrome
+ * @property {() => void} toggleSearch — show/hide the document search overlay
+ * @property {() => void} openWebClipDialog — the Insert WebClip dialog
+ * @property {() => void} openUrlCardDialog — the Insert URL Card dialog
+ * @property {() => void} copyDocumentAsMarkdown — clean markdown export → clipboard
+ */
+
 export class SieveWorkspace {
   /** @type {Map<string, SieveTab>} uuid → Tab */
   #tabs = new Map()
@@ -116,6 +126,47 @@ export class SieveWorkspace {
       tab.attachEditor(tab.createEditor(uuid, options))
     }
     return tab
+  }
+
+  // ── TRANSITIONAL chrome seam (P2.C; DEATH DATE P4 — chrome becomes Workspace-
+  // owned child components and this registry dies). The implementations (search
+  // overlay, insert dialogs, export fetch) still live in editor.js's IIFE; it
+  // registers them once at boot, and the four public methods below ARE the
+  // component API the native menu calls (main.go buildMenu). Mirrors the
+  // sanctioned P2.B DI pattern: scaffolding with a death date, named as such.
+
+  /** @type {Partial<WorkspaceChrome>} */
+  #chrome = {}
+
+  /**
+   * Registers legacy chrome implementations (TRANSITIONAL — see banner above).
+   * Partial registrations merge.
+   * @param {Partial<WorkspaceChrome>} impls
+   */
+  provideChrome(impls) {
+    this.#chrome = Object.assign({}, this.#chrome, impls)
+  }
+
+  /** Shows/hides the document search overlay. */
+  toggleSearch() { this.#chromeCall('toggleSearch') }
+
+  /** Opens the Insert WebClip dialog. */
+  openWebClipDialog() { this.#chromeCall('openWebClipDialog') }
+
+  /** Opens the Insert URL Card dialog. */
+  openUrlCardDialog() { this.#chromeCall('openUrlCardDialog') }
+
+  /** Copies the active document's clean markdown export to the clipboard. */
+  copyDocumentAsMarkdown() { this.#chromeCall('copyDocumentAsMarkdown') }
+
+  /** @param {keyof WorkspaceChrome} name */
+  #chromeCall(name) {
+    const fn = this.#chrome[name]
+    if (typeof fn !== 'function') {
+      console.warn('[workspace] chrome method not registered: ' + name)
+      return
+    }
+    fn()
   }
 
   // ── Listener registry (P1: registration methods exist, empty — wired P2) ─────

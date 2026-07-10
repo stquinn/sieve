@@ -446,10 +446,6 @@
         }
     });
 
-    document.addEventListener('sieve:save', function() {
-        if (window._editorSave) window._editorSave();
-    });
-
     document.addEventListener('editor:saved', function(e) {
         var uuid = e.detail && e.detail.uuid;
         var metaPanel = document.getElementById('htmx-meta-panel');
@@ -683,7 +679,7 @@
             return;
           }
           if (btn.id === 'tb-toggle-mode-btn') {
-            document.dispatchEvent(new CustomEvent('sieve:toggle-mode'));
+            window.sieveWorkspace?.activeTab?.editor?.toggleMode();
             return;
           }
           

@@ -113,8 +113,10 @@ dialog path commits outside the editor and does not consume — acceptable).
 
 **Ownership rule (NORMATIVE).** The native menu (`main.go` `buildMenu`) is the
 **single owner** of every app-level chord. A menu item declares the accelerator
-and, in its callback, dispatches a `sieve:*` `CustomEvent` (or runs an
-`htmx.ajax` call); the frontend listener turns that event into behaviour. This
+and, in its callback, **calls the component API directly**
+(`window.sieveWorkspace…` — with optional-chaining guards) or runs an
+`htmx.ajax` call. The `sieve:*` `CustomEvent` hop is gone for the migrated rows
+(P2.C); remaining `sieve:*` events are in-page seams, not menu transport. This
 is the only reliable ownership on both platforms — on macOS native menu
 accelerators intercept chords **before** the webview, so any editor/DOM keydown
 binding on the same chord is silently shadowed; on Linux GTK the webview sees
@@ -129,24 +131,22 @@ Consequences:
   and app gestures ride the menu → event path, never a global `keydown`.
 - Never bind the same chord in two places, even to the same action — the menu
   wins on Mac and the duplicate is dead weight.
-- **Transitional exception (P2.B; removed by P2.C's chord-transport
-  migration):** ONE quarantined document-level `keydown` listener in
-  `editor.js` transports `Mod+S` / `Mod+J` **in markdown mode only**. The
-  raw-markdown surface (`shell/surfaces/markdown-surface.js`) handles no
-  app-level chords (it replaced the old textarea-local Mod+S/Mod+J handlers —
-  the same duplicate-binding exception, previously element-scoped and
-  unrecorded); in the dev browser no native menu exists to own these rows.
-  Ownership is unchanged — the menu rows below stay authoritative in the app;
-  the listener guards on mode so the WYSIWYG PM path never double-fires.
+- Dev-browser note: with no native menu, menu-owned chords are simply absent —
+  since P2.C this includes markdown-mode `Mod+S`/`Mod+J`, whose quarantined
+  transitional `keydown` listener is removed. The transitional P2.B exception
+  is gone. One pre-existing document-level `keydown` listener remains ledgered:
+  the `Mod+Shift+A` ask-focus router in `editor.js` (covers the cases the PM
+  keymap can't see — the Ask box, a block's inner editor; the menu deliberately
+  does not claim this chord). It migrates with the `sieve:ai-ask` family (P4).
 
 ### Menu accelerator table
 
-| Chord | Menu item | Action / dispatched event |
+| Chord | Menu item | Action |
 |---|---|---|
 | Mod+N | File › New Note | `htmx.ajax` POST `/api/note/new` |
-| Mod+S | File › Save | `sieve:save` |
+| Mod+S | File › Save | `window.sieveWorkspace?.activeTab?.editor?.flushSave()` |
 | Mod+W | File › Close Tab | `htmx.ajax` POST `/api/tabs/close/{id}` |
-| (menu-click only) | File › Export › Clipboard (Markdown) | `sieve:export-markdown` |
+| (menu-click only) | File › Export › Clipboard (Markdown) | `window.sieveWorkspace?.copyDocumentAsMarkdown()` |
 | Mod+Shift+O | File › Open Library… | `window.sieveSelectLibrary()` |
 | Mod+, | File › Settings/Preferences | open settings dialog |
 | Mod+Q | File › Quit (non-Mac) | `wailsruntime.Quit` |
@@ -154,18 +154,18 @@ Consequences:
 | Mod+Shift+I | View › Toggle Meta Panel | `htmx.ajax` POST `/api/session/meta/toggle` |
 | Mod+Shift+P | View › Toggle Prompts | `htmx.ajax` POST `/api/session/prompts/toggle` |
 | (menu-click only) | View › Toggle Line Numbers | `htmx.ajax` POST `/api/session/linenumbers/toggle` |
-| Mod+Shift+M | View › Toggle Editor Mode | `sieve:toggle-mode` |
-| Mod+F | View › Toggle Search | `sieve:toggle-search` |
+| Mod+Shift+M | View › Toggle Editor Mode | `window.sieveWorkspace?.activeTab?.editor?.toggleMode()` |
+| Mod+F | View › Toggle Search | `window.sieveWorkspace?.toggleSearch()` |
 | Mod+Shift+F | View › Sidebar Search | `window.sieveSidebarSearch()` |
-| Mod+J | View › Toggle AI Blocks | `sieve:toggle-ai-blocks` |
+| Mod+J | View › Toggle AI Blocks | `window.sieveWorkspace?.activeTab?.editor?.toggleAiBlocks()` |
 | Mod+P | View › Quick Switcher | open quick-switcher dialog |
 | Mod+Shift+T | View › Show Toolbar | `htmx.ajax` POST `/api/session/toolbar/toggle` |
 | Mod+Alt+M | Tools › Smart Metadata | `window.SieveAI.smartMetadata()` |
 | Mod+Shift+E | Tools › Smart File | `window.SieveAI.smartFile()` |
 | Mod+Shift+Return | Tools › Keep & Smart File | `window.SieveAI.keepAndSmartFile()` |
-| Mod+Shift+W | Tools › Insert WebClip | `sieve:insert-webclip` |
-| Mod+Shift+L | Tools › Insert URL Card | `sieve:insert-url-card` |
-| Mod+Shift+D | Tools › Insert Diagram | `sieve:insert-diagram` |
+| Mod+Shift+W | Tools › Insert WebClip | `window.sieveWorkspace?.openWebClipDialog()` |
+| Mod+Shift+L | Tools › Insert URL Card | `window.sieveWorkspace?.openUrlCardDialog()` |
+| Mod+Shift+D | Tools › Insert Diagram | `window.sieveWorkspace?.activeTab?.editor?.createBlock('diagram', {})` |
 | Mod+/ | Help › Shortcuts | open help dialog |
 
 Editor-owned caret chords (NOT in the menu, bound in `extensions.js`):

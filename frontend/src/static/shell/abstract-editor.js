@@ -25,9 +25,11 @@
 // P1 `SieveEditor` name for backward compatibility).
 
 import { AbstractSurface } from './surfaces/abstract-surface.js'
+import { EditorMode } from './editor-mode.js'
 
 /**
  * @typedef {import('./surfaces/abstract-surface.js').SurfaceEventMsg} SurfaceEventMsg
+ * @typedef {import('./editor-mode.js').EditorModeValue} EditorModeValue
  */
 
 /**
@@ -56,9 +58,12 @@ import { AbstractSurface } from './surfaces/abstract-surface.js'
  * @property {(msg: object) => void} [onServerMessage]
  *   — routing for messages not consumed here (error, block-extracted, …)
  * @property {(mode: string, services: EditorSurfaceServices) => AbstractSurface} [surfaceFactory]
- *   — builds a fresh surface for a mode ('wysiwyg' | 'markdown'); injected by
+ *   — builds a fresh surface for a mode (an EditorMode value); injected by
  *   editor.js with the content-service dependency bag closed over. The editor
  *   passes its own domain services so surface output flows through the editor.
+ * @property {(kind: string, attrs: object) => void} [createBlockAtCaret]
+ *   — TRANSITIONAL (P2.C; dies P3/P4 with the SelectionModel): the caret-aware
+ *   create pipeline still lives in editor.js; createBlock() delegates to it.
  */
 
 // WebSocket.readyState OPEN, fixed at 1 by the WHATWG spec. Referenced directly
@@ -128,6 +133,14 @@ export class AbstractEditor {
   /** @type {Promise<boolean>|null} the in-flight mode flip; reentrant setMode coalesces onto it */
   #modeFlip = null
 
+  // ── Editor-bound command state (P2.C) ─────────────────────────────────────────
+
+  /** @type {boolean} AI-block visibility for THIS editor (mirrored as a CSS class on the root) */
+  #showAiBlocks = true
+
+  /** @type {((kind: string, attrs: object) => void)|null} TRANSITIONAL P2.C seam — see createBlock() */
+  #createBlockAtCaret
+
   /**
    * @param {string}                uuid    — document uuid; the editor's fixed identity
    * @param {AbstractEditorOptions} [options]
@@ -136,6 +149,7 @@ export class AbstractEditor {
     if (!uuid) throw new Error('AbstractEditor: uuid is required')
     this.#uuid = uuid
     this.#surfaceFactory = options.surfaceFactory || null
+    this.#createBlockAtCaret = options.createBlockAtCaret || null
     this.#socketless = options.connect !== true
 
     if (!this.#socketless) {
@@ -162,16 +176,16 @@ export class AbstractEditor {
   /**
    * Current editing mode — DERIVED from the mounted surface; the subclass
    * default applies before any surface mounts.
-   * @returns {string} 'wysiwyg' | 'markdown'
+   * @returns {EditorModeValue}
    */
-  get mode() { return this.#surface ? this.#surface.mode : this._defaultMode }
+  get mode() { return this.#surface ? /** @type {EditorModeValue} */ (this.#surface.mode) : this._defaultMode }
 
   /**
-   * The pre-mount default mode. PromptEditor overrides to 'markdown' (fixed).
+   * The pre-mount default mode. PromptEditor overrides to EditorMode.MARKDOWN (fixed).
    * @protected
-   * @returns {string}
+   * @returns {EditorModeValue}
    */
-  get _defaultMode() { return 'wysiwyg' }
+  get _defaultMode() { return EditorMode.WYSIWYG }
 
   /** @returns {unknown|null} The live TipTap instance, or null (markdown / unmounted). */
   get tiptap() { return this.#surface ? this.#surface.tiptap : null }
@@ -195,11 +209,12 @@ export class AbstractEditor {
   // ── Surface events ───────────────────────────────────────────────────────────
 
   /**
-   * Registers a listener for the surface's editor-domain events
-   * (doc-changed / selection-changed / transaction / focus-changed — see
-   * SurfaceEvent). The editor forwards every event its mounted surface reports.
-   * This is the seed of the P3 SelectionModel stream; today its one production
-   * registrant is editor.js's transitional legacy-chrome fan-out.
+   * Registers a listener for the editor-domain event stream: the mounted
+   * surface's events (doc-changed / selection-changed / transaction /
+   * focus-changed — see SurfaceEvent) plus the editor's OWN producer events
+   * (mode-changed / mode-change-failed, emitted by the setMode flip path —
+   * P2.C). This is the seed of the P3 SelectionModel stream; today its one
+   * production registrant is editor.js's transitional legacy-chrome fan-out.
    * @param {(event: SurfaceEventMsg) => void} fn
    * @returns {() => void} unsubscribe
    */
@@ -224,7 +239,7 @@ export class AbstractEditor {
    * any), creates a fresh one via the factory, and mounts it on the root. The
    * ONE place surfaces are swapped — initEditor's initial mount and setMode's
    * in-place flip both land here.
-   * @param {string}      mode    — 'wysiwyg' | 'markdown'
+   * @param {EditorModeValue} mode
    * @param {HTMLElement} rootEl  — the editor's root (today: #tiptap-mount)
    * @param {unknown}     content — surface seed (markdown string, or {body, blocks})
    * @returns {AbstractSurface} the mounted surface
@@ -494,19 +509,48 @@ export class AbstractEditor {
    * timeout finds no awaiter and is dropped (never a stale mount). A reentrant
    * call while a flip is in flight coalesces onto the in-flight promise.
    * Socketless editors (PromptEditor): base no-op resolving false (mode is fixed).
-   * @param {string} target — 'wysiwyg' | 'markdown'
+   * A value not in EditorMode resolves false (the no-op family) and sends nothing.
+   *
+   * The EDITOR is the producer of the mode events wherever the flip happens
+   * (P2.C): exactly ONE {type:'mode-changed', mode} is emitted per ACTUAL flip
+   * — however many callers coalesced onto it — and ONE
+   * {type:'mode-change-failed', mode, error} per failed flip. The handlers are
+   * attached here, where the flip is created, so a caller that ignores the
+   * promise (the native menu) never produces an unhandled rejection. No-op
+   * paths emit nothing.
+   * @param {EditorModeValue} target
    * @returns {Promise<boolean>} whether the mode changed
    */
   setMode(target) {
+    if (target !== EditorMode.WYSIWYG && target !== EditorMode.MARKDOWN) return Promise.resolve(false)
     if (this.#socketless) return Promise.resolve(false)
     if (!this.#surface || target === this.mode) return Promise.resolve(false)
     if (this.#modeFlip) return this.#modeFlip
     this.#modeFlip = this.#flipTo(target).finally(() => { this.#modeFlip = null })
+    this.#modeFlip.then(
+      (changed) => { if (changed) this.#emitEvent({ type: 'mode-changed', mode: this.mode }) },
+      (err) => { this.#emitEvent({ type: 'mode-change-failed', mode: this.mode, error: err }) },
+    )
     return this.#modeFlip
   }
 
   /**
-   * @param {string} target
+   * BINARY-FLIP SUGAR over setMode: derives the target from the current mode
+   * (EditorMode.WYSIWYG ⇄ EditorMode.MARKDOWN) and returns setMode's own
+   * promise. setMode(mode) is the N-mode primitive — a future third mode adds
+   * explicit setMode call sites; it does not grow this method. All flip
+   * mechanics, coalescing, and the mode-changed / mode-change-failed producer
+   * emissions live in setMode; no state or chrome lives here. Fixed-mode
+   * editors (PromptEditor) resolve false polymorphically.
+   * @returns {Promise<boolean>} whether the mode changed
+   */
+  toggleMode() {
+    const target = this.mode === EditorMode.MARKDOWN ? EditorMode.WYSIWYG : EditorMode.MARKDOWN
+    return this.setMode(target)
+  }
+
+  /**
+   * @param {EditorModeValue} target
    * @returns {Promise<boolean>}
    */
   async #flipTo(target) {
@@ -516,7 +560,7 @@ export class AbstractEditor {
     old.flushPending()
 
     let payload
-    if (target === 'markdown') {
+    if (target === EditorMode.MARKDOWN) {
       // Go merges the shadow and replies with the authoritative markdown
       // (ContentForSave over the tree). The frontend never serialises the doc.
       const markdown = await this.enterMarkdown()
@@ -533,6 +577,37 @@ export class AbstractEditor {
     // Success only — the swap is unreachable on timeout/error.
     this.presentSurface(target, /** @type {HTMLElement} */ (this.#rootEl), payload)
     return true
+  }
+
+  // ── Editor-bound commands (P2.C: the component API the menu/toolbar calls) ────
+
+  /**
+   * Toggles AI-block visibility for THIS editor: flips #showAiBlocks and
+   * mirrors it as the `hide-ai-blocks` class on the editor-owned root element
+   * (editor.css does the hiding). Editor-scoped state — no app chrome here.
+   * @returns {boolean} whether AI blocks are now shown
+   */
+  toggleAiBlocks() {
+    this.#showAiBlocks = !this.#showAiBlocks
+    if (this.#rootEl) this.#rootEl.classList.toggle('hide-ai-blocks', !this.#showAiBlocks)
+    return this.#showAiBlocks
+  }
+
+  /**
+   * Creates a block of `kind` at the caret. TRANSITIONAL (P2.C): delegates to
+   * the injected `createBlockAtCaret` seam (editor.js's commit-index +
+   * create-block pipeline) because the caret lives in IIFE land until the P3
+   * SelectionModel; DEATH DATE P3/P4 — this method then resolves the insert
+   * index itself. Without a seam (bare/test editors): warn + no-op.
+   * @param {string} kind
+   * @param {object} [attrs]
+   */
+  createBlock(kind, attrs) {
+    if (!this.#createBlockAtCaret) {
+      console.warn('[editor] createBlock(' + kind + '): no createBlockAtCaret seam injected')
+      return
+    }
+    this.#createBlockAtCaret(kind, attrs || {})
   }
 
   // ── Save ─────────────────────────────────────────────────────────────────────

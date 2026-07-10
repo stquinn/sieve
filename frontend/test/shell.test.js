@@ -10,6 +10,7 @@ import { AbstractEditor } from '../src/static/shell/abstract-editor.js'
 import { NoteEditor } from '../src/static/shell/note-editor.js'
 import { PromptEditor } from '../src/static/shell/prompt-editor.js'
 import { AbstractSurface } from '../src/static/shell/surfaces/abstract-surface.js'
+import { EditorMode } from '../src/static/shell/editor-mode.js'
 
 // ── Test doubles ─────────────────────────────────────────────────────────────
 
@@ -624,6 +625,14 @@ describe('NoteEditor.setMode (P2.B handshake)', () => {
     expect(rig.ed.mode).toBe('markdown')
   })
 
+  it('setMode with a value not in EditorMode resolves false and mounts nothing (P2.C)', async () => {
+    const rig = flipRig('markdown')
+    await expect(rig.ed.setMode('markdwon')).resolves.toBe(false)
+    expect(rig.sock().sentTypes()).toEqual([])   // no handshake ever sent
+    expect(rig.made.length).toBe(1)              // no new surface created
+    expect(rig.ed.mode).toBe('markdown')
+  })
+
   it('setMode to the current mode is a no-op resolving false', async () => {
     const rig = flipRig('markdown')
     await expect(rig.ed.setMode('markdown')).resolves.toBe(false)
@@ -958,5 +967,210 @@ describe('dirty-state transitions (P2.A)', () => {
     ed.markDirty()
     await ed.flushSave()
     expect(ed.isDirty).toBe(false)
+  })
+})
+
+// ── P2.C: EditorMode + editor-bound commands + workspace chrome delegation ─────
+
+describe('EditorMode (P2.C)', () => {
+  it('is frozen and enumerates exactly the two modes', () => {
+    expect(Object.isFrozen(EditorMode)).toBe(true)
+    expect(EditorMode).toEqual({ WYSIWYG: 'wysiwyg', MARKDOWN: 'markdown' })
+    expect(window.SieveEditorMode).toBe(EditorMode)
+  })
+})
+
+describe('AbstractEditor.toggleMode (P2.C — binary-flip sugar over setMode)', () => {
+  beforeEach(() => FakeSocket.reset())
+  afterEach(() => vi.useRealTimers())
+
+  // Like flipRig, plus an unfiltered event collector so specs can assert the
+  // producer emissions (mode-changed / mode-change-failed) exactly.
+  function modeRig(startMode = 'markdown') {
+    const rig = noteRig('n')
+    const root = document.createElement('div')
+    rig.sock().driveOpen()
+    const content = startMode === 'markdown' ? 'seed' : { body: '', blocks: [] }
+    rig.ed.presentSurface(startMode, root, content)
+    const events = []
+    rig.ed.onEvent((ev) => events.push(ev))
+    return Object.assign(rig, { root, events })
+  }
+
+  it("derives the target from the current mode and returns setMode's promise", async () => {
+    const rig = modeRig('markdown')
+    const p = rig.ed.toggleMode()
+    expect(rig.sock().sentOfType('enter-wysiwyg').length).toBe(1)
+    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [] })
+    await expect(p).resolves.toBe(true)
+    expect(rig.ed.mode).toBe(EditorMode.WYSIWYG)
+  })
+
+  it('emits mode-changed with the NEW mode exactly once on a successful flip', async () => {
+    const rig = modeRig('markdown')
+    const p = rig.ed.toggleMode()
+    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [] })
+    await p
+    expect(rig.events).toEqual([{ type: 'mode-changed', mode: 'wysiwyg' }])
+  })
+
+  it('a direct setMode caller also produces the mode-changed emission (producer lives in the flip path)', async () => {
+    const rig = modeRig('markdown')
+    const p = rig.ed.setMode('wysiwyg')
+    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [] })
+    await p
+    expect(rig.events).toEqual([{ type: 'mode-changed', mode: 'wysiwyg' }])
+  })
+
+  it('on timeout: rejects and emits mode-change-failed once with the UNCHANGED mode', async () => {
+    vi.useFakeTimers()
+    const rig = modeRig('markdown')
+    const p = rig.ed.toggleMode()
+    const assertion = expect(p).rejects.toThrow('ws timeout')
+    await vi.advanceTimersByTimeAsync(5000)
+    await assertion
+    expect(rig.events).toEqual([
+      { type: 'mode-change-failed', mode: 'markdown', error: expect.any(Error) },
+    ])
+    expect(rig.ed.mode).toBe(EditorMode.MARKDOWN) // stay-on-failure
+  })
+
+  it('a no-op toggle (no surface mounted) resolves false and emits nothing', async () => {
+    const rig = noteRig('n')
+    rig.sock().driveOpen()
+    const events = []
+    rig.ed.onEvent((ev) => events.push(ev))
+    await expect(rig.ed.toggleMode()).resolves.toBe(false)
+    expect(events).toEqual([])
+  })
+
+  it('socketless PromptEditor: toggleMode resolves false and emits nothing', async () => {
+    const ed = new PromptEditor('prompt:p', { surfaceFactory: (m) => new FakeSurface(m) })
+    ed.presentSurface('markdown', document.createElement('div'), 'x')
+    const events = []
+    ed.onEvent((ev) => events.push(ev))
+    await expect(ed.toggleMode()).resolves.toBe(false)
+    expect(events).toEqual([])
+  })
+
+  it('reentrant toggleMode coalesces onto the in-flight flip and emits mode-changed ONCE', async () => {
+    const rig = modeRig('markdown')
+    const p1 = rig.ed.toggleMode()
+    const p2 = rig.ed.toggleMode()
+    expect(p2).toBe(p1)
+    expect(rig.sock().sentOfType('enter-wysiwyg').length).toBe(1) // one handshake
+    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [] })
+    await p1
+    expect(rig.events).toEqual([{ type: 'mode-changed', mode: 'wysiwyg' }])
+  })
+})
+
+describe('AbstractEditor.toggleAiBlocks (P2.C)', () => {
+  function rigWithRoot() {
+    const ed = new AbstractEditor('u', { surfaceFactory: (m) => new FakeSurface(m) })
+    const root = document.createElement('div')
+    ed.presentSurface('markdown', root, 'x')
+    return { ed, root }
+  }
+
+  it('starts showing AI blocks — no class before any toggle', () => {
+    const { root } = rigWithRoot()
+    expect(root.classList.contains('hide-ai-blocks')).toBe(false)
+  })
+
+  it('first toggle hides: adds hide-ai-blocks to the editor root and returns false', () => {
+    const { ed, root } = rigWithRoot()
+    expect(ed.toggleAiBlocks()).toBe(false)
+    expect(root.classList.contains('hide-ai-blocks')).toBe(true)
+  })
+
+  it('second toggle shows again: class removed, returns true', () => {
+    const { ed, root } = rigWithRoot()
+    ed.toggleAiBlocks()
+    expect(ed.toggleAiBlocks()).toBe(true)
+    expect(root.classList.contains('hide-ai-blocks')).toBe(false)
+  })
+
+  it('without a mounted root it flips state without throwing', () => {
+    const ed = new AbstractEditor('u')
+    expect(() => ed.toggleAiBlocks()).not.toThrow()
+  })
+
+  it('state is per-editor: toggling one editor does not touch another root', () => {
+    const a = rigWithRoot()
+    const b = rigWithRoot()
+    a.ed.toggleAiBlocks()
+    expect(a.root.classList.contains('hide-ai-blocks')).toBe(true)
+    expect(b.root.classList.contains('hide-ai-blocks')).toBe(false)
+  })
+})
+
+describe('AbstractEditor.createBlock (P2.C transitional seam)', () => {
+  it('delegates kind + attrs to the injected createBlockAtCaret seam', () => {
+    const seam = vi.fn()
+    const ed = new AbstractEditor('u', { createBlockAtCaret: seam })
+    ed.createBlock('diagram', { a: 1 })
+    expect(seam).toHaveBeenCalledTimes(1)
+    expect(seam).toHaveBeenCalledWith('diagram', { a: 1 })
+  })
+
+  it('defaults attrs to {} when omitted', () => {
+    const seam = vi.fn()
+    const ed = new AbstractEditor('u', { createBlockAtCaret: seam })
+    ed.createBlock('diagram')
+    expect(seam).toHaveBeenCalledWith('diagram', {})
+  })
+
+  it('warns and no-ops when no seam is injected', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const ed = new AbstractEditor('u')
+      expect(() => ed.createBlock('diagram', {})).not.toThrow()
+      expect(warn).toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+})
+
+describe('SieveWorkspace chrome delegation (P2.C transitional)', () => {
+  it('provideChrome registers impls and each public method delegates', () => {
+    const w = new SieveWorkspace()
+    const impls = {
+      toggleSearch: vi.fn(),
+      openWebClipDialog: vi.fn(),
+      openUrlCardDialog: vi.fn(),
+      copyDocumentAsMarkdown: vi.fn(),
+    }
+    w.provideChrome(impls)
+    w.toggleSearch()
+    w.openWebClipDialog()
+    w.openUrlCardDialog()
+    w.copyDocumentAsMarkdown()
+    expect(impls.toggleSearch).toHaveBeenCalledTimes(1)
+    expect(impls.openWebClipDialog).toHaveBeenCalledTimes(1)
+    expect(impls.openUrlCardDialog).toHaveBeenCalledTimes(1)
+    expect(impls.copyDocumentAsMarkdown).toHaveBeenCalledTimes(1)
+  })
+
+  it('unregistered chrome methods warn and no-op; partial registration merges', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const w = new SieveWorkspace()
+      expect(() => {
+        w.toggleSearch(); w.openWebClipDialog(); w.openUrlCardDialog(); w.copyDocumentAsMarkdown()
+      }).not.toThrow()
+      expect(warn).toHaveBeenCalledTimes(4)
+      const a = vi.fn()
+      const b = vi.fn()
+      w.provideChrome({ toggleSearch: a })
+      w.provideChrome({ copyDocumentAsMarkdown: b }) // merges, does not replace
+      w.toggleSearch()
+      w.copyDocumentAsMarkdown()
+      expect(a).toHaveBeenCalledTimes(1)
+      expect(b).toHaveBeenCalledTimes(1)
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

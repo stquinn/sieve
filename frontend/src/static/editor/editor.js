@@ -67,7 +67,8 @@
   // requestReload, takeInsertPos, the paste+drop pipelines — and (b) the single
   // outbound `notify`. Zero app-level concepts (no chrome names, no AI, no
   // chords) and zero wire vocabulary. Everything app-flavoured lives in
-  // legacyChromeFanout + the transitional chord listener below.
+  // legacyChromeFanout (app-level chords are owned by the native menu, which
+  // calls the component API directly — docs/editor-interaction-contract.md).
   function makeSurface(uuid, mode, services) {
     var deps = {
       notify: services.notify,
@@ -95,10 +96,11 @@
   }
 
   // legacyChromeFanout — TRANSITIONAL (quarantined with the X-C debt, epic #31).
-  // The ONE place the surfaces' producer-named events (doc-changed /
-  // selection-changed / transaction / focus-changed) fan out to the legacy
-  // chrome functions. Consumer names appear ONLY here; dies in P2.C/P4 when
-  // chrome becomes Workspace-owned children.
+  // The ONE place the editor's producer-named events — the surfaces' doc-changed /
+  // selection-changed / transaction / focus-changed AND the editor's own
+  // mode-changed / mode-change-failed (P2.C) — fan out to the legacy chrome
+  // functions. Consumer names appear ONLY here; dies in P4 when chrome becomes
+  // Workspace-owned children.
   function legacyChromeFanout(event) {
     switch (event.type) {
       case 'doc-changed':
@@ -117,6 +119,19 @@
         break
       case 'focus-changed':
         if (currentEditor) updateAskPanelLabelLive(currentEditor)
+        break
+      case 'mode-changed':
+        // The editor flipped its surface (AbstractEditor.setMode producer
+        // emission — exactly once per actual flip). Chrome only: remember the
+        // tab's mode, refresh the mode button + body class, stats, tabbar.
+        tabModes[currentUuid] = event.mode
+        updateModeUI()
+        dispatchStats()
+        if (window.htmx) window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' })
+        break
+      case 'mode-change-failed':
+        console.error('[editor] mode toggle failed; staying in ' + event.mode, event.error)
+        window.alert('Mode switch failed — staying in ' + event.mode + ' mode.')
         break
     }
   }
@@ -139,12 +154,19 @@
       onServerMessage: routeServerMessage,
       surfaceFactory: function (mode, services) { return makeSurface(uuid, mode, services) },
       isSaveSuppressed: function () { return aiReloadInProgress },
+      createBlockAtCaret: function (kind, attrs) {
+        // TRANSITIONAL P2.C seam for AbstractEditor.createBlock (dies P3/P4
+        // with the SelectionModel). Parity with the retired insert-diagram
+        // menu-event listener: menu inserts are wysiwyg-only — commitInsertIndex
+        // needs the live PM doc, so a null currentEditor (markdown mode) no-ops.
+        if (!currentUuid || !currentEditor) return
+        sendCreateBlock(kind, attrs)
+      },
     })
     if (tab && tab.editor && !hadEditor) tab.editor.onEvent(legacyChromeFanout)
   }
 
   var aiReloadInProgress = false
-  var showAiBlocks = true
   var blobInterceptorCleanup = null
   var searchOverlay = null
   // Where the next inserted Sieve block goes. A number = insert at that point
@@ -560,22 +582,6 @@
     toggleAskFocus()
   })
 
-  // TRANSITIONAL markdown-mode chord transport (quarantined legacy glue; P2.C
-  // owns the proper chord migration). The markdown surface handles NO app-level
-  // chords — Mod+S / Mod+J bubble from its textarea to here. Guarded on
-  // mode==='markdown' so the wysiwyg PM keymap path (editorProps handleKeyDown,
-  // pre-core per the interaction contract) never double-fires.
-  document.addEventListener('keydown', function (e) {
-    if (currentMode !== 'markdown') return
-    if (e.key === 's' && window.isMod(e)) {
-      e.preventDefault()
-      flushSave()
-    } else if (e.key === 'j' && window.isMod(e)) {
-      e.preventDefault()
-      toggleAiBlocks()
-    }
-  })
-
   // ── Rich Link dialog ──────────────────────────────────────────────────────────
 
   function createSmartCardDialog() {
@@ -924,14 +930,6 @@
       })
     }
 
-    function toggleAiBlocks() {
-    showAiBlocks = !showAiBlocks
-    var panel = currentMountEl || document.querySelector('.editor-panel')
-    if (panel) {
-      panel.classList.toggle('hide-ai-blocks', !showAiBlocks)
-    }
-  }
-
   function handleSmartPaste(event) {
     if (!event.clipboardData || !currentEditor) return false
 
@@ -1147,7 +1145,7 @@
     return false
   }
 
-  // ── Module-level editor commands (dispatched via sieve:* custom events) ─────
+  // ── Module-level editor commands ──────────────────────────────────────────────
 
   // (Retired) The setContent(markdown) doc-load helper is GONE: a flat markdown
   // re-parse is a second, lossy document parser (it can't read <!--s:ID--> markers
@@ -1167,30 +1165,13 @@
     }
   }
 
-  function toggleMode() {
-    // P2.B: the mode flip is NoteEditor.setMode — an AWAITED in-place surface
-    // swap (flush → enter-markdown/enter-wysiwyg → await markdown-content/
-    // wysiwyg-content → swap). The old teardown-then-one-shot-listener dance is
-    // gone: nothing is unmounted until the server replies, so a timeout leaves
-    // the editor fully functional in its current mode (stay-on-failure), and
-    // the WS channel + editor instance survive every flip. A reentrant toggle
-    // coalesces onto the in-flight flip inside setMode.
-    var ed = _activeEditor()
-    if (!ed || !ed.surface) return
-    var target = (ed.mode === 'markdown') ? 'wysiwyg' : 'markdown'
-    ed.setMode(target)
-      .then(function (changed) {
-        if (!changed) return
-        tabModes[currentUuid] = ed.mode
-        updateModeUI()
-        dispatchStats()
-        if (window.htmx) window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' })
-      })
-      .catch(function (err) {
-        console.error('[editor] mode toggle failed; staying in ' + ed.mode, err)
-        window.alert('Mode switch failed — staying in ' + ed.mode + ' mode.')
-      })
-  }
+  // The mode flip itself is AbstractEditor.toggleMode/setMode (P2.B/P2.C): an
+  // AWAITED in-place surface swap with stay-on-failure semantics. The menu and
+  // the toolbar button call the component API directly
+  // (window.sieveWorkspace?.activeTab?.editor?.toggleMode()); the chrome
+  // reaction to a flip lives in legacyChromeFanout's mode-changed /
+  // mode-change-failed cases (the editor is the producer, emitted once per
+  // actual flip inside setMode).
 
   function updateModeUI() {
     document.body.classList.toggle('markdown-mode', currentMode === 'markdown')
@@ -1201,35 +1182,15 @@
     }
   }
 
-  document.addEventListener('sieve:toggle-mode',      toggleMode)
-  document.addEventListener('sieve:toggle-search',    toggleSearch)
-  document.addEventListener('sieve:toggle-ai-blocks', toggleAiBlocks)
-
-  // ── Block-insertion menu chords (App-Level Chords) ────────────────────────────
-  // The native menu owns Mod+Shift+W/L/D (docs/editor-interaction-contract.md);
-  // each accelerator dispatches one of these events, which open the same insert
-  // dialog / create the same block the toolbar buttons do.
-  document.addEventListener('sieve:insert-webclip', function () {
-    ensureOverlays()
-    openInternalizeDialog()
-  })
-  document.addEventListener('sieve:insert-url-card', function () {
-    ensureOverlays()
-    openSmartCardDialog()
-  })
-  document.addEventListener('sieve:insert-diagram', function () {
-    if (!currentUuid || !currentEditor) return
-    sendCreateBlock('diagram', {})
-  })
-
-  // Copy as Markdown (File › Export › Clipboard (Markdown)). Fetch the server's
-  // clean whole-doc export (ai-blocks filtered, cards/clips reduced to links) and
-  // copy it to the clipboard. A native menu click carries no DOM user gesture and
-  // steals document focus, so WebKit rejects navigator.clipboard here — the Wails
-  // native pasteboard (runtime.ClipboardSetText) is the primary path; the browser
-  // API is only the fallback for non-Wails (plain browser) dev.
+  // Copy as Markdown (File › Export › Clipboard (Markdown) — the menu calls
+  // window.sieveWorkspace.copyDocumentAsMarkdown()). Fetch the server's clean
+  // whole-doc export (ai-blocks filtered, cards/clips reduced to links) and
+  // copy it to the clipboard. A native menu click carries no DOM user gesture
+  // and steals document focus, so WebKit rejects navigator.clipboard here — the
+  // Wails native pasteboard (runtime.ClipboardSetText) is the primary path; the
+  // browser API is only the fallback for non-Wails (plain browser) dev.
   // No toast system exists, so feedback is left to the OS clipboard affordance.
-  document.addEventListener('sieve:export-markdown', function () {
+  function copyDocumentAsMarkdown() {
     if (!currentUuid) return
     fetch('/api/editor/export?uuid=' + encodeURIComponent(currentUuid) + '&format=markdown')
       .then(function (resp) { return resp.ok ? resp.text() : null })
@@ -1241,6 +1202,27 @@
         return navigator.clipboard.writeText(md)
       })
       .catch(function (err) { console.warn('export-markdown copy failed', err) })
+  }
+
+  // ── TRANSITIONAL workspace-chrome registration (P2.C; dies P4) ────────────────
+  // The native menu (main.go buildMenu) now calls the component API directly —
+  // window.sieveWorkspace.toggleSearch() / openWebClipDialog() /
+  // openUrlCardDialog() / copyDocumentAsMarkdown(); the four chrome CustomEvent
+  // hops (toggle-search / insert-webclip / insert-url-card / export-markdown)
+  // are GONE. The implementations still live in this IIFE; this single boot-time
+  // registration fronts them on the workspace until chrome becomes
+  // Workspace-owned children (P4). DOMContentLoaded ordering is safe: the shell
+  // modules are deferred scripts, so window.sieveWorkspace exists by then; this
+  // IIFE must never touch it at parse time (index.html script order).
+  document.addEventListener('DOMContentLoaded', function () {
+    var ws = window.sieveWorkspace
+    if (!ws || typeof ws.provideChrome !== 'function') return
+    ws.provideChrome({
+      toggleSearch: toggleSearch,
+      openWebClipDialog: function () { ensureOverlays(); openInternalizeDialog() },
+      openUrlCardDialog: function () { ensureOverlays(); openSmartCardDialog() },
+      copyDocumentAsMarkdown: copyDocumentAsMarkdown,
+    })
   })
 
   // ── Ask AI / Explain: the single business-logic seam ──────────────────────────

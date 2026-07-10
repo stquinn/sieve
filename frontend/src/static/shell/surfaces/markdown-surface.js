@@ -18,12 +18,13 @@
 // the classic-script editor.js factory.
 
 import { AbstractSurface, SurfaceEvent } from './abstract-surface.js'
+import { EditorMode } from '../editor-mode.js'
 
 /**
  * Injected collaborators — content services commanding into this document's
  * context, plus the ONE outbound notifier. Nothing app-level: no chrome names,
- * no AI concepts, no chords (app-level chords are transported by the
- * transitional document-level listener in editor.js until P2.C).
+ * no AI concepts, no chords (app-level chords are owned by the native menu,
+ * which calls the component API directly — P2.C).
  * @typedef {object} MarkdownSurfaceDeps
  * @property {(markdown: string) => void} updateText — whole-buffer text update → editor transport (dropped by prompts)
  * @property {() => void}            requestReload — full reload for replace-block (softReloadContent)
@@ -64,8 +65,8 @@ export class MarkdownSurface extends AbstractSurface {
     this.#deps = deps
   }
 
-  /** @returns {string} */
-  get mode() { return 'markdown' }
+  /** @returns {import('../editor-mode.js').EditorModeValue} */
+  get mode() { return EditorMode.MARKDOWN }
 
   /** @returns {string} the latest raw markdown body */
   get body() { return this.#body }
