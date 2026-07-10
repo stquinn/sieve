@@ -33,15 +33,29 @@ import { EditorMode } from './editor-mode.js'
  */
 
 /**
- * The editor-owned services a surface receives (threaded through the
- * surfaceFactory). All DOMAIN-shaped: no wire envelopes, no transport
- * vocabulary, no uuid-for-transport — the WS contract is owned exclusively by
- * AbstractEditor. If a dep's implementation would change when the transport
- * changes, it belongs here, not in a surface.
+ * The editor-owned services a surface receives (handed to `_createSurface`).
+ * All DOMAIN-shaped: no wire envelopes, no transport vocabulary, no
+ * uuid-for-transport — the WS contract is owned exclusively by AbstractEditor.
+ * If a dep's implementation would change when the transport changes, it belongs
+ * here, not in a surface.
  * @typedef {object} EditorSurfaceServices
  * @property {(event: SurfaceEventMsg) => void} notify — outbound editor-domain events → editor registrants
  * @property {(ops: object[]) => void} applyBlockOps — block-domain ops (create/update/delete-block) → transport
  * @property {(markdown: string) => void} updateText — whole-buffer text update (markdown mode) → transport
+ */
+
+/**
+ * TRANSITIONAL (P2.C.2) content pipelines editor.js's IIFE still owns — NOT DOM
+ * constructors. A concrete `_createSurface` merges the relevant ones into the
+ * deps it hands its own surfaces. Death dates unchanged: takeInsertPos /
+ * requestSave die with the P3 SelectionModel; onPaste / onDrop / requestReload
+ * die P4.
+ * @typedef {object} SurfaceCollaborators
+ * @property {() => number|null}                  [takeInsertPos] — read-and-clear the module sieveInsertPos capture
+ * @property {() => unknown}                       [requestSave]  — wysiwyg PM-internal Mod+S (module flushSave)
+ * @property {(event: ClipboardEvent) => boolean}  [onPaste]     — smart-paste pipeline
+ * @property {(event: DragEvent) => boolean}       [onDrop]      — smart-drop pipeline
+ * @property {() => void}                          [requestReload] — markdown replace-block full reload (softReloadContent)
  */
 
 /**
@@ -57,10 +71,10 @@ import { EditorMode } from './editor-mode.js'
  *   — injected for tests; defaults to the /api/ws URL for this uuid
  * @property {(msg: object) => void} [onServerMessage]
  *   — routing for messages not consumed here (error, block-extracted, …)
- * @property {(mode: string, services: EditorSurfaceServices) => AbstractSurface} [surfaceFactory]
- *   — builds a fresh surface for a mode (an EditorMode value); injected by
- *   editor.js with the content-service dependency bag closed over. The editor
- *   passes its own domain services so surface output flows through the editor.
+ * @property {SurfaceCollaborators} [surfaceCollaborators]
+ *   — TRANSITIONAL (P2.C.2): editor.js's IIFE-resident content pipelines. The
+ *   editor — not the IIFE — decides and constructs what lives under its root
+ *   (`_createSurface`); it merges these pipelines into the surface deps.
  * @property {(kind: string, attrs: object) => void} [createBlockAtCaret]
  *   — TRANSITIONAL (P2.C; dies P3/P4 with the SelectionModel): the caret-aware
  *   create pipeline still lives in editor.js; createBlock() delegates to it.
@@ -89,8 +103,8 @@ export class AbstractEditor {
   /** @type {HTMLElement|null} the editor-owned root the surfaces mount under */
   #rootEl = null
 
-  /** @type {((mode: string, services: EditorSurfaceServices) => AbstractSurface)|null} */
-  #surfaceFactory
+  /** @type {SurfaceCollaborators} — transitional IIFE content pipelines (P2.C.2) */
+  #surfaceCollaborators
 
   /** @type {Array<(event: SurfaceEventMsg) => void>} surface-event registrants */
   #eventListeners = []
@@ -148,7 +162,7 @@ export class AbstractEditor {
   constructor(uuid, options = {}) {
     if (!uuid) throw new Error('AbstractEditor: uuid is required')
     this.#uuid = uuid
-    this.#surfaceFactory = options.surfaceFactory || null
+    this.#surfaceCollaborators = options.surfaceCollaborators || {}
     this.#createBlockAtCaret = options.createBlockAtCaret || null
     this.#socketless = options.connect !== true
 
@@ -200,6 +214,14 @@ export class AbstractEditor {
    */
   get _rootEl() { return this.#rootEl }
 
+  /**
+   * The transitional IIFE content pipelines (P2.C.2), for the concrete
+   * `_createSurface` to merge into its surface deps.
+   * @protected
+   * @returns {SurfaceCollaborators}
+   */
+  get _surfaceCollaborators() { return this.#surfaceCollaborators }
+
   /** Marks the document dirty (unsaved changes present). */
   markDirty() { this.#dirty = true }
 
@@ -235,25 +257,41 @@ export class AbstractEditor {
   // ── Surface lifecycle ────────────────────────────────────────────────────────
 
   /**
+   * Builds the input surface for a mode. ABSTRACT: the surface repertoire (which
+   * surface classes this editor can present) is TYPE-DEFINING knowledge that
+   * lives on the concrete editor types, alongside the channel declaration —
+   * nothing outside the editor decides or constructs what lives under its root.
+   * @protected
+   * @param {EditorModeValue}       mode
+   * @param {EditorSurfaceServices} services — the editor's own domain services
+   * @returns {AbstractSurface}
+   */
+  _createSurface(mode, services) {
+    throw new Error('AbstractEditor: _createSurface must be implemented by the concrete editor type')
+  }
+
+  /**
    * Presents the input surface for a mode: unmounts the current surface (if
-   * any), creates a fresh one via the factory, and mounts it on the root. The
-   * ONE place surfaces are swapped — initEditor's initial mount and setMode's
-   * in-place flip both land here.
+   * any), asks the concrete type to build a fresh one (`_createSurface`), and
+   * mounts it on the root. The ONE place surfaces are swapped — initEditor's
+   * initial mount and setMode's in-place flip both land here.
    * @param {EditorModeValue} mode
    * @param {HTMLElement} rootEl  — the editor's root (today: #tiptap-mount)
    * @param {unknown}     content — surface seed (markdown string, or {body, blocks})
    * @returns {AbstractSurface} the mounted surface
    */
   presentSurface(mode, rootEl, content) {
-    if (!this.#surfaceFactory) throw new Error('AbstractEditor: no surfaceFactory injected')
     if (this.#surface) this.#surface.unmount()
     this.#rootEl = rootEl
-    const next = this.#surfaceFactory(mode, {
+    const next = this._createSurface(mode, {
       notify: (event) => this.#emitEvent(event),
       applyBlockOps: (ops) => this.applyBlockOps(ops),
       updateText: (markdown) => this.updateText(markdown),
     })
-    if (!(next instanceof AbstractSurface)) throw new Error('AbstractEditor: surfaceFactory must return an AbstractSurface')
+    if (!(next instanceof AbstractSurface)) throw new Error('AbstractEditor: _createSurface must return an AbstractSurface')
+    // A mount root can arrive pre-classed by a PREVIOUS editor's toggle — sync
+    // the class to THIS editor's state so DOM and #showAiBlocks never desync.
+    rootEl.classList.toggle('hide-ai-blocks', !this.#showAiBlocks)
     next.mount(rootEl, content)
     this.#surface = next
     return next

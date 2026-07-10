@@ -71,20 +71,41 @@ class FakeSurface extends AbstractSurface {
   flushPending() { this.flushCount++; this.log.push('flush:' + this._mode) }
 }
 
-// Builds a NoteEditor wired to fakes. The surfaceFactory records every surface
-// it makes into `made` and logs lifecycle order into `log`.
+// P2.C.2: the injected-factory seam died — editors construct their own surfaces
+// (protected _createSurface, the type-defining repertoire). Tests exercise the
+// REAL editor types through that protected contract via a subclass mixin
+// (no-construction-seams rule; tests use the public/protected contract). The
+// override records every surface into `made`, logs lifecycle order into
+// `surfaceLog`, and captures the last domain services bag into `services`.
+function withFakeSurfaces(Base) {
+  return class extends Base {
+    surfaceLog = []
+    made = []
+    services = null
+    _createSurface(mode, services) {
+      this.services = services
+      const s = new FakeSurface(mode, this.surfaceLog)
+      this.made.push(s)
+      return s
+    }
+  }
+}
+const FakeSurfaceEditor = withFakeSurfaces(AbstractEditor)
+const FakeSurfaceSieveEditor = withFakeSurfaces(SieveEditor) // P1 alias kept exercised
+const FakeSurfaceNoteEditor = withFakeSurfaces(NoteEditor)
+const FakeSurfacePromptEditor = withFakeSurfaces(PromptEditor)
+
+// Builds a NoteEditor wired to fakes. The _createSurface override records every
+// surface it makes into `made` and logs lifecycle order into `log`.
 function noteRig(uuid, options = {}) {
-  const log = []
-  const made = []
   const onServerMessage = vi.fn()
   const opts = Object.assign({
     socketFactory: (url) => new FakeSocket(url),
     wsUrl: () => 'ws://test/api/ws?uuid=' + uuid,
     onServerMessage,
-    surfaceFactory: (mode) => { const s = new FakeSurface(mode, log); made.push(s); return s },
   }, options)
-  const ed = new NoteEditor(uuid, opts)
-  return { ed, log, made, onServerMessage, sock: () => FakeSocket.instances[FakeSocket.instances.length - 1] }
+  const ed = new FakeSurfaceNoteEditor(uuid, opts)
+  return { ed, log: ed.surfaceLog, made: ed.made, onServerMessage, sock: () => FakeSocket.instances[FakeSocket.instances.length - 1] }
 }
 
 function makeNote(uuid, options = {}) {
@@ -100,14 +121,14 @@ describe('SieveEditor (P1 identity, P2.B surface-derived)', () => {
   })
 
   it('mode defaults to wysiwyg with no surface, and derives from the mounted surface', () => {
-    const ed = new SieveEditor('abc-123', { surfaceFactory: (m) => new FakeSurface(m) })
+    const ed = new FakeSurfaceSieveEditor('abc-123')
     expect(ed.mode).toBe('wysiwyg')
     ed.presentSurface('markdown', document.createElement('div'), 'body')
     expect(ed.mode).toBe('markdown') // live derivation
   })
 
   it('tiptap is null with no surface and derives from the mounted surface', () => {
-    const ed = new SieveEditor('abc-123', { surfaceFactory: (m) => new FakeSurface(m) })
+    const ed = new FakeSurfaceSieveEditor('abc-123')
     expect(ed.tiptap).toBeNull()
     ed.presentSurface('wysiwyg', document.createElement('div'), { body: '', blocks: [] })
     expect(ed.tiptap).toEqual({ fake: 'tiptap' })
@@ -260,7 +281,7 @@ describe('SieveWorkspace', () => {
 
 describe('AbstractEditor (P2.A base, P2.B surfaces)', () => {
   it('flushSave is concrete on the base (P2.B.2); destroy unmounts the surface', async () => {
-    const ed = new AbstractEditor('u', { surfaceFactory: (m) => new FakeSurface(m) })
+    const ed = new FakeSurfaceEditor('u')
     const root = document.createElement('div')
     const surface = ed.presentSurface('markdown', root, 'x')
     // Disconnected editor: flushPending fires on the surface, flush() resolves.
@@ -293,14 +314,11 @@ describe('AbstractEditor (P2.A base, P2.B surfaces)', () => {
 })
 
 describe('AbstractEditor surface events + domain services (P2.B corrections)', () => {
-  // Captures the editor-provided services bag the factory receives.
+  // Captures the editor-provided services bag _createSurface receives.
   function rigWithServices() {
-    let services = null
-    const ed = new AbstractEditor('u', {
-      surfaceFactory: (m, svc) => { services = svc; return new FakeSurface(m) },
-    })
+    const ed = new FakeSurfaceEditor('u')
     ed.presentSurface('markdown', document.createElement('div'), 'x')
-    return { ed, services: () => services }
+    return { ed, services: () => ed.services }
   }
 
   it('forwards surface notifications to registered listeners; unsubscribe stops them', () => {
@@ -355,14 +373,11 @@ describe('AbstractEditor domain → wire enveloping (P2.B.2: moved from NoteEdit
     ])
   })
 
-  it('the services handed to the surface factory route through the enveloping', () => {
-    let services = null
-    const rig = noteRig('n', {
-      surfaceFactory: (m, svc) => { services = svc; return new FakeSurface(m) },
-    })
+  it('the services handed to _createSurface route through the enveloping', () => {
+    const rig = noteRig('n')
     rig.sock().driveOpen()
     rig.ed.presentSurface('wysiwyg', document.createElement('div'), { body: '', blocks: [] })
-    services.applyBlockOps([{ type: 'update-block', blockId: 'b1' }])
+    rig.ed.services.applyBlockOps([{ type: 'update-block', blockId: 'b1' }])
     expect(rig.sock().sentOfType('block-op')).toEqual([
       { type: 'block-op', uuid: 'n', op: { type: 'update-block', blockId: 'b1' } },
     ])
@@ -370,28 +385,26 @@ describe('AbstractEditor domain → wire enveloping (P2.B.2: moved from NoteEdit
 })
 
 describe('AbstractEditor.presentSurface (P2.B lifecycle)', () => {
-  it('mounts via the factory and stores the root', () => {
-    const made = []
-    const ed = new AbstractEditor('u', { surfaceFactory: (m) => { const s = new FakeSurface(m); made.push(s); return s } })
+  it('mounts via _createSurface and stores the root', () => {
+    const ed = new FakeSurfaceEditor('u')
     const root = document.createElement('div')
     const s = ed.presentSurface('markdown', root, 'seed')
-    expect(made).toEqual([s])
+    expect(ed.made).toEqual([s])
     expect(s.mountArgs).toEqual([root, 'seed'])
     expect(ed.surface).toBe(s)
   })
 
   it('unmounts the previous surface BEFORE mounting the next', () => {
-    const log = []
-    const ed = new AbstractEditor('u', { surfaceFactory: (m) => new FakeSurface(m, log) })
+    const ed = new FakeSurfaceEditor('u')
     const root = document.createElement('div')
     ed.presentSurface('markdown', root, 'seed')
     ed.presentSurface('wysiwyg', root, { body: '', blocks: [] })
-    expect(log).toEqual(['mount:markdown', 'unmount:markdown', 'mount:wysiwyg'])
+    expect(ed.surfaceLog).toEqual(['mount:markdown', 'unmount:markdown', 'mount:wysiwyg'])
   })
 
-  it('throws without a surfaceFactory', () => {
+  it('presentSurface on the abstract base throws — the repertoire lives on concrete types', () => {
     const ed = new AbstractEditor('u')
-    expect(() => ed.presentSurface('markdown', document.createElement('div'), '')).toThrow('surfaceFactory')
+    expect(() => ed.presentSurface('markdown', document.createElement('div'), '')).toThrow('_createSurface')
   })
 })
 
@@ -745,7 +758,7 @@ describe('flushSave routing (P2.A → P2.B surfaces)', () => {
 
   it('PromptEditor saves the surface body over the injected saveFn (no WS)', async () => {
     const saveFn = vi.fn(() => Promise.resolve())
-    const ed = new PromptEditor('prompt:p', { saveFn, surfaceFactory: (m) => new FakeSurface(m) })
+    const ed = new FakeSurfacePromptEditor('prompt:p', { saveFn })
     const s = ed.presentSurface('markdown', document.createElement('div'), 'seed')
     s.bodyValue = 'prompt body'
     await ed.flushSave()
@@ -929,7 +942,7 @@ describe('disconnected editor (PromptEditor — no `connect` declared, P2.B.2)',
   })
 
   it('setMode is a no-op resolving false for a socketless editor', async () => {
-    const ed = new PromptEditor('prompt:x', { surfaceFactory: (m) => new FakeSurface(m) })
+    const ed = new FakeSurfacePromptEditor('prompt:x')
     ed.presentSurface('markdown', document.createElement('div'), 'x')
     await expect(ed.setMode('wysiwyg')).resolves.toBe(false)
   })
@@ -962,7 +975,7 @@ describe('dirty-state transitions (P2.A)', () => {
   })
 
   it('PromptEditor clears dirty after a successful save', async () => {
-    const ed = new PromptEditor('prompt:p', { saveFn: () => Promise.resolve(), surfaceFactory: (m) => new FakeSurface(m) })
+    const ed = new FakeSurfacePromptEditor('prompt:p', { saveFn: () => Promise.resolve() })
     ed.presentSurface('markdown', document.createElement('div'), 'b')
     ed.markDirty()
     await ed.flushSave()
@@ -1045,7 +1058,7 @@ describe('AbstractEditor.toggleMode (P2.C — binary-flip sugar over setMode)', 
   })
 
   it('socketless PromptEditor: toggleMode resolves false and emits nothing', async () => {
-    const ed = new PromptEditor('prompt:p', { surfaceFactory: (m) => new FakeSurface(m) })
+    const ed = new FakeSurfacePromptEditor('prompt:p')
     ed.presentSurface('markdown', document.createElement('div'), 'x')
     const events = []
     ed.onEvent((ev) => events.push(ev))
@@ -1067,7 +1080,7 @@ describe('AbstractEditor.toggleMode (P2.C — binary-flip sugar over setMode)', 
 
 describe('AbstractEditor.toggleAiBlocks (P2.C)', () => {
   function rigWithRoot() {
-    const ed = new AbstractEditor('u', { surfaceFactory: (m) => new FakeSurface(m) })
+    const ed = new FakeSurfaceEditor('u')
     const root = document.createElement('div')
     ed.presentSurface('markdown', root, 'x')
     return { ed, root }
@@ -1102,6 +1115,24 @@ describe('AbstractEditor.toggleAiBlocks (P2.C)', () => {
     a.ed.toggleAiBlocks()
     expect(a.root.classList.contains('hide-ai-blocks')).toBe(true)
     expect(b.root.classList.contains('hide-ai-blocks')).toBe(false)
+  })
+
+  it('presentSurface clears a stale hide-ai-blocks class a previous editor left on the mount root (P2.C.2)', () => {
+    const root = document.createElement('div')
+    root.classList.add('hide-ai-blocks') // stale — THIS editor never toggled
+    const ed = new FakeSurfaceEditor('u')
+    ed.presentSurface('markdown', root, 'x')
+    expect(root.classList.contains('hide-ai-blocks')).toBe(false)
+  })
+
+  it('presentSurface KEEPS hide-ai-blocks for an editor that toggled hidden (remount is state-driven, not a blind clear)', () => {
+    const root = document.createElement('div')
+    const ed = new FakeSurfaceEditor('u')
+    ed.presentSurface('markdown', root, 'x')
+    ed.toggleAiBlocks() // hide
+    expect(root.classList.contains('hide-ai-blocks')).toBe(true)
+    ed.presentSurface('markdown', root, 'x') // remount (flip-path parity)
+    expect(root.classList.contains('hide-ai-blocks')).toBe(true)
   })
 })
 

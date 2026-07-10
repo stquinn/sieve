@@ -14,18 +14,19 @@
 // app via the SieveTab.createEditor factory.
 
 import { AbstractEditor } from './abstract-editor.js'
-// The concrete surfaces are the note editor's private input surfaces; importing
-// them here also assigns their window.* handles for the classic-script
-// editor.js factory (no index.html change needed).
-import './surfaces/wysiwyg-surface.js'
-import './surfaces/markdown-surface.js'
+import { EditorMode } from './editor-mode.js'
+// The concrete surfaces are the note editor's private input surfaces — used
+// directly by _createSurface below (its type-defining repertoire). Importing
+// the modules also assigns their window.* handles as a side effect (still read
+// by any remaining classic-script consumers; no index.html change needed).
+import { WysiwygSurface } from './surfaces/wysiwyg-surface.js'
+import { MarkdownSurface } from './surfaces/markdown-surface.js'
 
 /**
  * @typedef {object} NoteEditorOptions
  * @property {(url: string) => WebSocket} [socketFactory] — injected for tests; defaults to `new WebSocket(url)`
  * @property {() => string}               [wsUrl]         — injected for tests; defaults to the /api/ws URL for this uuid
  * @property {(msg: object) => void}      [onServerMessage] — routing for the remaining messages (editor.js owns it)
- * @property {(mode: string, services: import('./abstract-editor.js').EditorSurfaceServices) => import('./surfaces/abstract-surface.js').AbstractSurface} [surfaceFactory]
  */
 
 export class NoteEditor extends AbstractEditor {
@@ -37,5 +38,34 @@ export class NoteEditor extends AbstractEditor {
    */
   constructor(uuid, options = {}) {
     super(uuid, Object.assign({}, options, { connect: true }))
+  }
+
+  /**
+   * NoteEditor's repertoire: BOTH surfaces, mode-mapped (moved verbatim from
+   * editor.js's makeSurface, P2.C.2). Deps = the editor's own domain services
+   * plus the transitional IIFE collaborators bag (P3/P4 death dates unchanged).
+   * @protected
+   * @param {import('./editor-mode.js').EditorModeValue} mode
+   * @param {import('./abstract-editor.js').EditorSurfaceServices} services
+   * @returns {import('./surfaces/abstract-surface.js').AbstractSurface}
+   */
+  _createSurface(mode, services) {
+    const c = this._surfaceCollaborators
+    const deps = {
+      notify: services.notify,
+      takeInsertPos: c.takeInsertPos,
+    }
+    if (mode === EditorMode.MARKDOWN) {
+      deps.updateText = services.updateText
+      deps.requestReload = c.requestReload
+      return new MarkdownSurface(deps)
+    }
+    deps.applyBlockOps = services.applyBlockOps
+    // requestSave backs the PM-internal Mod+S (editorProps handleKeyDown must
+    // run pre-core inside ProseMirror's key routing — the interaction contract).
+    deps.requestSave = c.requestSave
+    deps.onPaste = c.onPaste
+    deps.onDrop = c.onDrop
+    return new WysiwygSurface(this.uuid, deps)
   }
 }

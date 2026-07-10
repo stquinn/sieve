@@ -60,41 +60,6 @@
     // block-extracted: the new block renders via insert-block (tracked). Nothing to do.
   }
 
-  // makeSurface builds a concrete input surface (shell/surfaces/*.js). A
-  // surface's dependency bag holds ONLY (a) DOMAIN-SHAPED content services —
-  // applyBlockOps/updateText (the editor's own transport methods, threaded
-  // through as `services`; the WS enveloping lives in AbstractEditor), requestSave,
-  // requestReload, takeInsertPos, the paste+drop pipelines — and (b) the single
-  // outbound `notify`. Zero app-level concepts (no chrome names, no AI, no
-  // chords) and zero wire vocabulary. Everything app-flavoured lives in
-  // legacyChromeFanout (app-level chords are owned by the native menu, which
-  // calls the component API directly — docs/editor-interaction-contract.md).
-  function makeSurface(uuid, mode, services) {
-    var deps = {
-      notify: services.notify,
-      // Read-and-clear the captured insert position: a numeric pos feeds the
-      // AI-block insert fallback; any other shape just clears (fresh capture per
-      // operation — a stale value can never leak into a later insert).
-      takeInsertPos: function () {
-        var p = (typeof sieveInsertPos === 'number') ? sieveInsertPos : null
-        sieveInsertPos = null
-        return p
-      },
-    }
-    if (mode === 'markdown') {
-      deps.updateText = services.updateText
-      deps.requestReload = function () { softReloadContent(uuid) }
-      return new window.SieveMarkdownSurface(deps)
-    }
-    deps.applyBlockOps = services.applyBlockOps
-    // requestSave backs the PM-internal Mod+S (editorProps handleKeyDown must
-    // run pre-core inside ProseMirror's key routing — the interaction contract).
-    deps.requestSave = flushSave
-    deps.onPaste = handleSmartPaste
-    deps.onDrop = handleSmartDrop
-    return new window.SieveWysiwygSurface(uuid, deps)
-  }
-
   // legacyChromeFanout — TRANSITIONAL (quarantined with the X-C debt, epic #31).
   // The ONE place the editor's producer-named events — the surfaces' doc-changed /
   // selection-changed / transaction / focus-changed AND the editor's own
@@ -152,7 +117,28 @@
     var hadEditor = !!(existing && existing.editor)
     var tab = ws.activateDocument(uuid, {
       onServerMessage: routeServerMessage,
-      surfaceFactory: function (mode, services) { return makeSurface(uuid, mode, services) },
+      // TRANSITIONAL P2.C.2 (deaths: P3 SelectionModel / P4): the IIFE-resident
+      // CONTENT pipelines the editor merges into its own surfaces' deps. The
+      // editor — not this IIFE — decides and constructs what lives under its
+      // root (_createSurface owns the mode→surface-class repertoire). Zero
+      // app-level concepts (no chrome names, no AI, no chords) and zero wire
+      // vocabulary; everything app-flavoured lives in legacyChromeFanout.
+      surfaceCollaborators: {
+        // Read-and-clear the captured insert position: a numeric pos feeds the
+        // AI-block insert fallback; any other shape just clears (fresh capture
+        // per operation — a stale value can never leak into a later insert).
+        takeInsertPos: function () {
+          var p = (typeof sieveInsertPos === 'number') ? sieveInsertPos : null
+          sieveInsertPos = null
+          return p
+        },
+        // requestSave backs the PM-internal Mod+S (editorProps handleKeyDown
+        // must run pre-core inside ProseMirror's key routing — the contract).
+        requestSave: flushSave,
+        onPaste: handleSmartPaste,
+        onDrop: handleSmartDrop,
+        requestReload: function () { softReloadContent(uuid) },
+      },
       isSaveSuppressed: function () { return aiReloadInProgress },
       createBlockAtCaret: function (kind, attrs) {
         // TRANSITIONAL P2.C seam for AbstractEditor.createBlock (dies P3/P4

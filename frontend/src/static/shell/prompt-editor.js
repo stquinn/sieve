@@ -11,12 +11,14 @@
 
 import { AbstractEditor } from './abstract-editor.js'
 import { EditorMode } from './editor-mode.js'
+// MarkdownSurface is the prompt's ONLY surface (its fixed mode) — its whole
+// repertoire, built by _createSurface below.
+import { MarkdownSurface } from './surfaces/markdown-surface.js'
 
 /**
  * @typedef {object} PromptEditorOptions
  * @property {(uuid: string, body: string, mode: string) => Promise<unknown>} [saveFn] — injected for tests; defaults to the HTTP POST
  * @property {() => boolean} [isSaveSuppressed] — true while an AI reload is mid-flight
- * @property {(mode: string) => import('./surfaces/abstract-surface.js').AbstractSurface} [surfaceFactory]
  */
 
 export class PromptEditor extends AbstractEditor {
@@ -47,6 +49,24 @@ export class PromptEditor extends AbstractEditor {
    * @returns {import('./editor-mode.js').EditorModeValue}
    */
   get _defaultMode() { return EditorMode.MARKDOWN }
+
+  /**
+   * A prompt's repertoire is markdown ONLY (its fixed mode) — `mode` is
+   * deliberately ignored; there is no other surface this type can present.
+   * @protected
+   * @param {import('./editor-mode.js').EditorModeValue} mode
+   * @param {import('./abstract-editor.js').EditorSurfaceServices} services
+   * @returns {import('./surfaces/abstract-surface.js').AbstractSurface}
+   */
+  _createSurface(mode, services) {
+    const c = this._surfaceCollaborators
+    return new MarkdownSurface({
+      notify: services.notify,
+      takeInsertPos: c.takeInsertPos,
+      updateText: services.updateText,
+      requestReload: c.requestReload,
+    })
+  }
 
   /**
    * @param {string} uuid

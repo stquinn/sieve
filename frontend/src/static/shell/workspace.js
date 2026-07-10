@@ -107,7 +107,7 @@ export class SieveWorkspace {
    *
    * @param {string} uuid — target document uuid, or '' to tear down
    * @param {object} [options] — passed to the Tab's editor factory
-   *   (surfaceFactory, onServerMessage, …)
+   *   (surfaceCollaborators, onServerMessage, …)
    * @returns {SieveTab|null} the activated Tab, or null after a teardown
    */
   activateDocument(uuid, options) {

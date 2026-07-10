@@ -41,7 +41,7 @@ export class SieveTab {
    * NoteEditor that owns a WS channel.
    * @param {string} uuid — document uuid (matches this tab's uuid)
    * @param {object} [options] — passed to the concrete editor constructor
-   *   (surfaceFactory, onServerMessage, socketFactory/wsUrl, saveFn, …)
+   *   (surfaceCollaborators, onServerMessage, socketFactory/wsUrl, saveFn, …)
    * @returns {AbstractEditor}
    */
   createEditor(uuid, options = {}) {

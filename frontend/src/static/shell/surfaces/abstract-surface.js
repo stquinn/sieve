@@ -10,11 +10,13 @@
 // into a surface's DOM — it drives only this contract.
 //
 // The concrete surfaces are standalone ES modules with their collaborators
-// injected via constructor DI (docs/how-to-idiomatic-js.md): editor.js builds
-// the dependency bag (wsSend, save, paste/drop, toolbar sync, …) and passes a
-// surfaceFactory into the editor. State that used to be editor.js module vars
-// (lastSyncedBody, docUpdateTimer, docSyncFlush, currentMarkdownTextarea, the
-// noteServerBlock/reconcilePendingToken seams) is #private surface state.
+// injected via constructor DI (docs/how-to-idiomatic-js.md): the editor
+// constructs its own surfaces (_createSurface owns the mode→surface repertoire),
+// merging editor.js's transitional surfaceCollaborators content pipelines
+// (paste/drop, save, insert-pos, reload) into the deps. State that used to be
+// editor.js module vars (lastSyncedBody, docUpdateTimer, docSyncFlush,
+// currentMarkdownTextarea, the noteServerBlock/reconcilePendingToken seams) is
+// #private surface state.
 //
 // Dual-use ES module: `export` for vitest imports; `window.SieveSurface` for
 // the classic-script editor.js.
