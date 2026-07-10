@@ -73,6 +73,16 @@ export class WysiwygSurface extends AbstractSurface {
   #syncTimer = null
 
   /**
+   * The document-level `selectionchange` handler (P3.B). Read-only-region
+   * highlights (contentEditable=false: ai-block title, log Explore table) do NOT
+   * fire PM's onSelectionUpdate, so the model would never hear them. This feeds
+   * the SAME path (deps.notify → editor #feedSelectionModel → feedSelection).
+   * Stored so unmount removes it — no leak across remounts.
+   * @type {(() => void)|null}
+   */
+  #onDocSelectionChange = null
+
+  /**
    * @param {string}             uuid
    * @param {WysiwygSurfaceDeps} deps
    */
@@ -457,6 +467,15 @@ export class WysiwygSurface extends AbstractSurface {
     editor.view.dom.addEventListener('focusin', function() {
       deps.notify(SurfaceEvent.FOCUS_CHANGED)
     })
+
+    // P3.B: a highlight dragged inside a block's READ-ONLY region (ai-block title,
+    // log Explore table — contentEditable=false) does NOT fire PM's
+    // onSelectionUpdate, so feed the model via the SAME selection-changed path.
+    // The model already coalesces caret-only noise; the read-only-region drags
+    // that matter change range/selectedText, which ARE meaningful — no debounce
+    // added (revisit only if the smoke shows churn).
+    this.#onDocSelectionChange = function () { deps.notify(SurfaceEvent.SELECTION_CHANGED) }
+    document.addEventListener('selectionchange', this.#onDocSelectionChange)
   }
 
   /**
@@ -466,6 +485,10 @@ export class WysiwygSurface extends AbstractSurface {
    */
   unmount() {
     if (this.#syncTimer) { clearTimeout(this.#syncTimer); this.#syncTimer = null }
+    if (this.#onDocSelectionChange) {
+      document.removeEventListener('selectionchange', this.#onDocSelectionChange)
+      this.#onDocSelectionChange = null
+    }
     if (this.#editor) {
       this.#editor.destroy()
       this.#editor = null
@@ -495,12 +518,21 @@ export class WysiwygSurface extends AbstractSurface {
    * Builds a RAW selection descriptor from the LIVE PM state — the ONLY place PM
    * selection is read for the SelectionModel (the model itself never touches PM).
    * PLAIN data only: no PM node escapes; blockId/blockKind/ref are extracted as
-   * strings. Classification: NodeSelection → 'block'; empty → 'caret'; non-empty
-   * text → 'range'; no editor → 'none'.
+   * strings. Classification: single NodeSelection → 'block'; a block-chrome
+   * multi-block range OR a read-only-region DOM fold → 'range'; empty → 'caret';
+   * non-empty text → 'range'; no editor → 'none'.
    *
-   * MINIMAL for P3.A: label is left '' (surface label production is P3.C) and
-   * blockIds is the single-block [blockId] (the full multi-block dom-range span
-   * is P3.B).
+   * P3.B grows the P3.A minimal descriptor to full richness:
+   *  - the EFFECTIVE range comes from block-chrome (getBlockSelectionRange), so a
+   *    gutter shift-click / drag multi-block selection is seen (block-chrome keeps
+   *    its own range in plugin state — not raw state.selection);
+   *  - a read-only-region highlight (F5: ai-block title, log Explore table —
+   *    contentEditable=false PM cannot track) is folded via domSelectionBlockRange
+   *    onto the block the user actually highlighted, becoming a range there;
+   *  - blockIds spans EVERY top-level block the effective range overlaps
+   *    (blockIds ⊇ [blockId]); blockId stays the PRIMARY (selection head / first).
+   * label is still '' (surface label production is P3.C). NO PM node in the
+   * descriptor — plain strings/numbers only.
    * @returns {import('../selection-model.js').RawSelectionDescriptor}
    */
   feedSelection() {
@@ -510,53 +542,140 @@ export class WysiwygSurface extends AbstractSurface {
     if (!ed || !ed.state) {
       return { selectionType: 'none', caret: null, range: null, selectedText: null, blockId: null, blockIds: [], blockKind: null, ref: null, label: '' }
     }
+    const T = this.#T
     const state = ed.state
     const sel = state.selection
     const doc = state.doc
-    const from = sel.from
-    const to = sel.to
 
-    // The block node the selection sits in/on: a NodeSelection targets its own
-    // node; a caret/range resolves the enclosing TOP-LEVEL block via $from.
-    let node = null
-    if (sel.node) {
-      node = sel.node
-    } else if (sel.$from && sel.$from.depth >= 1) {
-      node = sel.$from.node(1)
-    } else if (sel.$from) {
-      // Caret at doc level (no enclosing block depth) — the top-level node the
-      // position falls in, if any.
-      node = doc.childCount ? doc.child(Math.max(0, doc.resolve(from).index(0))) : null
+    // The EFFECTIVE range: block-chrome's authoritative range (its own plugin
+    // state for gutter/shift-click multi-block; falls back to the live PM
+    // selection for a caret / single NodeSelection / native prose drag).
+    let er = (T && T.getBlockSelectionRange)
+      ? T.getBlockSelectionRange(ed.view)
+      : { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false, isNodeSelection: !!sel.node }
+
+    // Read-only-region DOM highlight fold (F5): a highlight inside a block's
+    // contentEditable=false region leaves PM's selection elsewhere. Re-target the
+    // effective range onto the block the highlight actually lives in.
+    const domSel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null
+    let domSelText = null
+    if (domSel && !domSel.isCollapsed && domSel.toString && domSel.toString().trim() && T && T.domSelectionBlockRange) {
+      const blockDescs = this.#topBlockDescriptors(ed)
+      const retarget = T.domSelectionBlockRange(domSel, er, blockDescs)
+      if (retarget) {
+        er = { from: retarget.from, to: retarget.to, active: true, isBlockRange: false, isNodeSelection: false }
+        domSelText = domSel.toString()
+      }
     }
 
+    // Classification (the locked ruling folds dom/block-range → 'range'):
+    //   single NodeSelection → 'block'; block-range OR dom-fold → 'range';
+    //   collapsed → 'caret'; else non-empty text → 'range'.
     let selectionType
-    if (sel.node) selectionType = 'block'
-    else if (from === to) selectionType = 'caret'
+    if (er.isNodeSelection && !er.isBlockRange) selectionType = 'block'
+    else if (er.isBlockRange) selectionType = 'range'
+    else if (domSelText !== null) selectionType = 'range'
+    else if (er.from === er.to) selectionType = 'caret'
     else selectionType = 'range'
+
+    // The blocks the effective range spans (D3) — ordered, keyed by id — and the
+    // PRIMARY block/node (the block at the selection head / the first overlapped).
+    const span = this.#blocksInRange(doc, er.from, er.to)
+    const primary = this.#primaryBlock(doc, sel, er, span)
+
+    let selectedText = null
+    if (selectionType === 'range') {
+      selectedText = domSelText !== null ? domSelText : doc.textBetween(er.from, er.to, ' ')
+    }
+
+    const primaryId = WysiwygSurface.#nodeBlockId(primary)
+    // A COLLAPSED caret spans exactly ONE block — its primary. A boundary caret
+    // sits at both the block it ENDS and the one it STARTS, so the raw overlap
+    // span would list TWO; that would flip blockIds on a mere caret move
+    // (boundary→interior) and spuriously break the "caret-only move does NOT
+    // push" contract. Collapse to the single primary (keeps blockId ∈ blockIds).
+    // A RANGE keeps the full multi-block overlap span (D3).
+    const blockIds = (selectionType === 'caret')
+      ? (primaryId ? [primaryId] : [])
+      : span.map((b) => b.id).filter(Boolean)
 
     return {
       selectionType: selectionType,
       caret: sel.head,
-      range: { from: from, to: to },
-      selectedText: selectionType === 'range' ? doc.textBetween(from, to, ' ') : null,
-      blockId: WysiwygSurface.#nodeBlockId(node),
-      blockIds: WysiwygSurface.#nodeBlockIds(node),
-      blockKind: WysiwygSurface.#nodeBlockKind(node),
-      ref: WysiwygSurface.#nodeRef(node),
+      range: { from: er.from, to: er.to },
+      selectedText: selectedText,
+      blockId: primaryId,
+      blockIds: blockIds,
+      blockKind: WysiwygSurface.#nodeBlockKind(primary),
+      ref: WysiwygSurface.#nodeRef(primary),
       label: '',
     }
+  }
+
+  /**
+   * Ordered top-level sieve-block descriptors `[{from, to, dom}]` (the copy
+   * handler's pattern, 6ee94bd) — the read-only-region fold input. Only sieve
+   * nodes hold a read-only region PM cannot track; native prose is PM-owned.
+   * @param {any} ed @returns {Array<{from:number,to:number,dom:any}>}
+   */
+  #topBlockDescriptors(ed) {
+    const out = []
+    const view = ed.view
+    ed.state.doc.forEach((node, offset) => {
+      if (String(node.type.name).indexOf('sieve-') === 0) {
+        out.push({ from: offset, to: offset + node.nodeSize, dom: view && view.nodeDOM ? view.nodeDOM(offset) : null })
+      }
+    })
+    return out
+  }
+
+  /**
+   * Every top-level block whose extent overlaps `[from,to]`, in document order,
+   * as `{node, id}` (overlap: `from < node.to && to > node.from`). A collapsed
+   * caret still lands in exactly the block it sits in.
+   * @param {any} doc @param {number} from @param {number} to
+   * @returns {Array<{node:any,id:string|null}>}
+   */
+  #blocksInRange(doc, from, to) {
+    const out = []
+    doc.forEach((node, offset) => {
+      const nodeFrom = offset
+      const nodeTo = offset + node.nodeSize
+      const overlaps = (from === to)
+        ? (from >= nodeFrom && from <= nodeTo)
+        : (from < nodeTo && to > nodeFrom)
+      if (overlaps) out.push({ node, id: WysiwygSurface.#nodeBlockId(node) })
+    })
+    return out
+  }
+
+  /**
+   * The PRIMARY block node: a NodeSelection targets its own node; otherwise the
+   * block at the selection HEAD (via $from) WHEN that block is inside the spanned
+   * range — so a plain caret/range keeps its head block. When the effective range
+   * was re-targeted (a read-only-region DOM fold / a block-chrome range that
+   * doesn't cover the PM head), the head block is NOT in the span, so fall to the
+   * FIRST block the range spans.
+   * @param {any} doc @param {any} sel @param {any} er @param {Array<{node:any}>} span
+   * @returns {any|null}
+   */
+  #primaryBlock(doc, sel, er, span) {
+    if (sel.node) return sel.node
+    const spanNodes = span.map((b) => b.node)
+    let head = null
+    if (sel.$from && sel.$from.depth >= 1) head = sel.$from.node(1)
+    else if (sel.$from && doc.childCount) {
+      const idx = Math.max(0, doc.resolve(sel.$from.pos).index(0))
+      head = doc.child(Math.min(idx, doc.childCount - 1))
+    }
+    if (head && spanNodes.indexOf(head) >= 0) return head
+    return span.length ? span[0].node : head
   }
 
   /** @param {any} node @returns {string|null} the block's durable id, or null */
   static #nodeBlockId(node) {
     const id = node && node.attrs && node.attrs.id
     return id || null
-  }
-
-  /** @param {any} node @returns {string[]} minimal single-block span (P3.B grows this) */
-  static #nodeBlockIds(node) {
-    const id = WysiwygSurface.#nodeBlockId(node)
-    return id ? [id] : []
   }
 
   /**

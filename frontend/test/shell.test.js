@@ -461,7 +461,10 @@ describe('AbstractEditor SelectionModel wiring (P3.A)', () => {
     surface().feedDescriptor = { selectionType: 'caret', caret: 1, range: { from: 1, to: 1 }, blockId: 'b1', blockIds: ['b1'], blockKind: 'prose' }
     notify()({ type: 'selection-changed' })
     expect(selUpdates).toEqual(['b1'])
-    expect(events).toEqual(['selection-changed']) // legacy fan-out preserved
+    // The raw selection-changed still reaches onEvent (legacy fan-out preserved);
+    // P3.B ALSO bridges the model push as a selection-update on the same stream.
+    expect(events).toContain('selection-changed')
+    expect(events).toContain('selection-update')
   })
 
   it('a caret-only move within the same block does not fire onSelectionUpdate but is pullable', () => {
@@ -481,6 +484,217 @@ describe('AbstractEditor SelectionModel wiring (P3.A)', () => {
     surface().feedDescriptor = { selectionType: 'none' }
     notify()({ type: 'focus-changed' })
     expect(ed.getSelectionContext().focusZone).toBe('markdown')
+  })
+})
+
+// ── P3.B: the push plumbing editor → tab → workspace ─────────────────────────────
+
+describe('AbstractEditor selection-update onEvent bridge (P3.B)', () => {
+  // Mounts a fake surface + scripts feedSelection; drives notify to push the model.
+  function rig() {
+    const ed = new FakeSurfaceEditor('u')
+    ed.presentSurface('wysiwyg', document.createElement('div'), 'x')
+    return { ed, surface: () => ed.surface, notify: () => ed.services.notify }
+  }
+
+  it("the model's meaningful push emits {type:'selection-update', context} on onEvent", () => {
+    const { ed, surface, notify } = rig()
+    const events = []
+    ed.onEvent((ev) => events.push(ev))
+    surface().feedDescriptor = { selectionType: 'caret', caret: 1, range: { from: 1, to: 1 }, blockId: 'b1', blockIds: ['b1'], blockKind: 'prose' }
+    notify()({ type: 'selection-changed' })
+    // BOTH the raw selection-changed (legacy fan-out food) and the model bridge event.
+    const bridge = events.find((e) => e.type === 'selection-update')
+    expect(bridge).toBeTruthy()
+    expect(bridge.context.blockId).toBe('b1')
+    expect(bridge.context.docUuid).toBe('u')
+    expect(events.map((e) => e.type)).toContain('selection-changed')
+  })
+
+  it('a coalesced caret-only move does NOT emit a selection-update onEvent', () => {
+    const { ed, surface, notify } = rig()
+    surface().feedDescriptor = { selectionType: 'caret', caret: 1, range: { from: 1, to: 1 }, blockId: 'b1', blockIds: ['b1'], blockKind: 'prose' }
+    notify()({ type: 'selection-changed' }) // baseline (fires once)
+    const bridges = []
+    ed.onEvent((ev) => { if (ev.type === 'selection-update') bridges.push(ev) })
+    surface().feedDescriptor = { selectionType: 'caret', caret: 4, range: { from: 4, to: 4 }, blockId: 'b1', blockIds: ['b1'], blockKind: 'prose' }
+    notify()({ type: 'selection-changed' })
+    expect(bridges).toEqual([]) // coalesced — no meaningful change
+  })
+})
+
+describe('SieveTab selection-update forwarding (P3.B)', () => {
+  // A minimal fake editor with a hand-driven onEvent stream + a getSelectionContext.
+  function fakeEd(uuid = 'u') {
+    let emit = null
+    const ed = new AbstractEditor(uuid)
+    ed.onEvent = (fn) => { emit = fn; return () => { emit = null } }
+    return { ed, fire: (ev) => emit && emit(ev) }
+  }
+
+  it('onSelectionUpdate fires when the editor emits a selection-update event', () => {
+    const tab = new SieveTab('u')
+    const { ed, fire } = fakeEd('u')
+    tab.attachEditor(ed)
+    const seen = []
+    tab.onSelectionUpdate((ctx) => seen.push(ctx))
+    fire({ type: 'selection-update', context: { blockId: 'b1', docUuid: 'u' } })
+    expect(seen).toEqual([{ blockId: 'b1', docUuid: 'u' }])
+  })
+
+  it('non-selection events do not reach selection listeners', () => {
+    const tab = new SieveTab('u')
+    const { ed, fire } = fakeEd('u')
+    tab.attachEditor(ed)
+    const seen = []
+    tab.onSelectionUpdate((ctx) => seen.push(ctx))
+    fire({ type: 'mode-changed', mode: 'markdown' })
+    fire({ type: 'doc-changed' })
+    expect(seen).toEqual([])
+  })
+
+  it('a Tab-level listener survives an editor detach/attach cycle (Tab identity persists)', () => {
+    const tab = new SieveTab('u')
+    const seen = []
+    tab.onSelectionUpdate((ctx) => seen.push(ctx.blockId))
+    const a = fakeEd('u')
+    tab.attachEditor(a.ed)
+    a.fire({ type: 'selection-update', context: { blockId: 'from-a' } })
+    tab.detachEditor()
+    const b = fakeEd('u')
+    tab.attachEditor(b.ed)
+    b.fire({ type: 'selection-update', context: { blockId: 'from-b' } })
+    a.fire({ type: 'selection-update', context: { blockId: 'stale-a' } }) // old editor is inert
+    expect(seen).toEqual(['from-a', 'from-b'])
+  })
+
+  it('unsubscribe stops selection delivery', () => {
+    const tab = new SieveTab('u')
+    const { ed, fire } = fakeEd('u')
+    tab.attachEditor(ed)
+    const seen = []
+    const unsub = tab.onSelectionUpdate((ctx) => seen.push(ctx.blockId))
+    fire({ type: 'selection-update', context: { blockId: 'b1' } })
+    unsub()
+    fire({ type: 'selection-update', context: { blockId: 'b2' } })
+    expect(seen).toEqual(['b1'])
+  })
+
+  it('a throwing selection listener does not break the others', () => {
+    const tab = new SieveTab('u')
+    const { ed, fire } = fakeEd('u')
+    tab.attachEditor(ed)
+    const seen = []
+    tab.onSelectionUpdate(() => { throw new Error('boom') })
+    tab.onSelectionUpdate((ctx) => seen.push(ctx.blockId))
+    expect(() => fire({ type: 'selection-update', context: { blockId: 'b1' } })).not.toThrow()
+    expect(seen).toEqual(['b1'])
+  })
+})
+
+describe('SieveWorkspace.onSelectionUpdate republish (P3.B)', () => {
+  // A fake editor with a hand-driven onEvent stream + a scriptable
+  // getSelectionContext (D4 synth). Attached to a REAL SieveTab via the public
+  // attachEditor — the workspace subscribes to the tab's REAL onSelectionUpdate,
+  // so the whole editor→tab→workspace chain is exercised with no construction
+  // seam. push() fires a selection-update through the tab's forward.
+  function fakeEditor(uuid, ctx = null) {
+    let emit = null
+    const ed = {
+      constructor: { name: 'x' },
+      getSelectionContext: () => ctx,
+      onEvent: (fn) => { emit = fn; return () => { emit = null } },
+    }
+    // attachEditor's instanceof guard — masquerade as an AbstractEditor.
+    Object.setPrototypeOf(ed, AbstractEditor.prototype)
+    return { ed, setContext: (c) => { ed.getSelectionContext = () => c }, push: (c) => emit && emit({ type: 'selection-update', context: c }) }
+  }
+
+  // Opens a uuid on the workspace (real openTab → #setActiveTab) and attaches a
+  // fake editor to the created tab so its selection stream is live. Mirrors the
+  // real activateDocument ordering: openTab (which may run the synth against a
+  // not-yet-attached editor → null-guarded no synth) THEN attachEditor.
+  function open(ws, uuid, ctx = null) {
+    const f = fakeEditor(uuid, ctx)
+    const tab = ws.openTab(uuid)
+    tab.attachEditor(f.ed)
+    return f
+  }
+
+  // Re-activates an ALREADY-open+attached tab (the same-uuid re-activation flow —
+  // the editor is kept). This is the switch where D4-synth fires: the target tab
+  // already holds an editor with a context.
+  function switchTo(ws, uuid) { ws.openTab(uuid) }
+
+  it('republishes the ACTIVE tab pushes to onSelectionUpdate subscribers', () => {
+    const ws = new SieveWorkspace()
+    const active = open(ws, 'doc-a')
+    const seen = []
+    ws.onSelectionUpdate((ctx) => seen.push(ctx && ctx.blockId))
+    active.push({ blockId: 'b1' })
+    expect(seen).toEqual(['b1'])
+  })
+
+  it('a BACKGROUND tab push does NOT reach onSelectionUpdate', () => {
+    const ws = new SieveWorkspace()
+    const a = open(ws, 'doc-a')
+    const b = open(ws, 'doc-b') // b now active, a background
+    const seen = []
+    ws.onSelectionUpdate((ctx) => seen.push(ctx && ctx.blockId))
+    a.push({ blockId: 'from-bg' }) // background — ignored
+    b.push({ blockId: 'from-active' })
+    expect(seen).toEqual(['from-active'])
+  })
+
+  it('unsubscribe stops delivery', () => {
+    const ws = new SieveWorkspace()
+    const a = open(ws, 'doc-a')
+    const seen = []
+    const unsub = ws.onSelectionUpdate((ctx) => seen.push(ctx && ctx.blockId))
+    a.push({ blockId: 'b1' })
+    unsub()
+    a.push({ blockId: 'b2' })
+    expect(seen).toEqual(['b1'])
+  })
+
+  it('D4: switching to a tab whose editor has a context synthesizes an immediate republish', () => {
+    const ws = new SieveWorkspace()
+    open(ws, 'doc-a', { blockId: 'a-ctx' })
+    open(ws, 'doc-b', { blockId: 'b-ctx' }) // both open+attached; b active
+    const seen = []
+    ws.onSelectionUpdate((ctx) => seen.push(ctx && ctx.blockId))
+    switchTo(ws, 'doc-a') // re-activate the already-attached A → synth a-ctx now
+    expect(seen).toEqual(['a-ctx'])
+  })
+
+  it('D4: active → null (teardown) emits a null context', () => {
+    const ws = new SieveWorkspace()
+    open(ws, 'doc-a', { blockId: 'a-ctx' })
+    const seen = []
+    ws.onSelectionUpdate((ctx) => seen.push(ctx))
+    ws.closeTab('doc-a') // active closed → null
+    expect(seen).toEqual([null])
+  })
+
+  it('D4 null-guard: switching to a tab with no editor context synthesizes nothing', () => {
+    const ws = new SieveWorkspace()
+    open(ws, 'doc-a', null) // editor present, getSelectionContext() null
+    const seen = []
+    ws.onSelectionUpdate((ctx) => seen.push(ctx))
+    // the tab is already active from open(); switch to a second null-context tab.
+    open(ws, 'doc-b', null)
+    expect(seen).toEqual([]) // no synth for a null context
+  })
+
+  it('after a switch, the OLD tab is unsubscribed (no leak)', () => {
+    const ws = new SieveWorkspace()
+    const a = open(ws, 'doc-a')
+    const b = open(ws, 'doc-b') // now b active, a should be unsubscribed
+    const seen = []
+    ws.onSelectionUpdate((ctx) => seen.push(ctx && ctx.blockId))
+    a.push({ blockId: 'stale' }) // a is background AND unsubscribed
+    b.push({ blockId: 'live' })
+    expect(seen).toEqual(['live'])
   })
 })
 

@@ -176,6 +176,12 @@ export class AbstractEditor {
     this.#selectionModel = new SelectionModel(uuid)
     this.#surfaceCollaborators = options.surfaceCollaborators || {}
     this.#createBlockAtCaret = options.createBlockAtCaret || null
+    // P3.B: bridge the SelectionModel's own push onto the editor's ONE onEvent
+    // stream so the Tab/Workspace republish (and editor.js's legacy fan-out, which
+    // ignores the new type) receive selection updates through the same channel the
+    // spec prescribes. SurfaceEventMsg is {type}-minimum, so the extra `context`
+    // field is fine; the model already fires only on a meaningful change.
+    this.#selectionModel.onUpdate((ctx) => this.#emitEvent({ type: 'selection-update', context: ctx }))
     this.#socketless = options.connect !== true
 
     if (!this.#socketless) {

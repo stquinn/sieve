@@ -35,6 +35,18 @@ export class SieveWorkspace {
   /** @type {Array<(tab: SieveTab|null) => void>} */
   #activeTabListeners = []
 
+  /**
+   * Public selection-update registry (P3.B). Mirrors #activeTabListeners: it
+   * republishes the ACTIVE tab's selection stream only (a background tab's push
+   * never reaches here). Consumers arrive in P3.D (the Ask panel); today it has
+   * no production consumer.
+   * @type {Array<(ctx: import('./selection-model.js').SelectionContext|null) => void>}
+   */
+  #selectionListeners = []
+
+  /** @type {(() => void)|null} unsubscribe from the ACTIVE tab's onSelectionUpdate */
+  #unsubActiveSelection = null
+
   constructor() {}
 
   // ── Tab management ────────────────────────────────────────────────────────────
@@ -76,6 +88,7 @@ export class SieveWorkspace {
     this.#tabs.delete(uuid)
     if (this.#activeTab === tab) {
       this.#activeTab = null
+      this.#switchSelectionSource(null)
       this.#notifyActiveTabListeners()
     }
   }
@@ -291,19 +304,63 @@ export class SieveWorkspace {
     }
   }
 
+  /**
+   * Register a listener for the ACTIVE tab's selection stream (P3.B). Returns an
+   * unsubscribe. The Workspace republishes only the active tab's contexts; a
+   * background tab's push is not delivered. On an active-tab change the previous
+   * subscription is dropped and the new tab's is taken up, with an immediate
+   * D4-synth republish from the new editor's current context (null-guarded); an
+   * active→null teardown emits a null context so consumers can clear.
+   * @param {(ctx: import('./selection-model.js').SelectionContext|null) => void} fn
+   * @returns {() => void} unsubscribe
+   */
+  onSelectionUpdate(fn) {
+    this.#selectionListeners.push(fn)
+    return () => {
+      this.#selectionListeners = this.#selectionListeners.filter(l => l !== fn)
+    }
+  }
+
   // ── Private helpers ────────────────────────────────────────────────────────────
 
   /** @param {SieveTab|null} tab */
   #setActiveTab(tab) {
     if (this.#activeTab === tab) return
     this.#activeTab = tab
+    this.#switchSelectionSource(tab)
     this.#notifyActiveTabListeners()
+  }
+
+  /**
+   * Re-points the republished selection stream at the new active tab (P3.B):
+   * drops the old tab's subscription, subscribes to the new one's
+   * onSelectionUpdate, and synthesizes an immediate republish (D4 — a tab change
+   * IS a selection change). The synth is null-guarded: when the new tab has no
+   * editor yet (openTab→#setActiveTab can precede attachEditor) or its editor's
+   * context is null, nothing is synthesized — the tab's own forward delivers the
+   * first context once attached. A null active tab (teardown) emits a null
+   * context to clear consumers.
+   * @param {SieveTab|null} tab
+   */
+  #switchSelectionSource(tab) {
+    if (this.#unsubActiveSelection) { this.#unsubActiveSelection(); this.#unsubActiveSelection = null }
+    if (!tab) { this.#notifySelectionListeners(null); return }
+    this.#unsubActiveSelection = tab.onSelectionUpdate((ctx) => this.#notifySelectionListeners(ctx))
+    const synth = tab.editor ? tab.editor.getSelectionContext() : null
+    if (synth) this.#notifySelectionListeners(synth)
   }
 
   #notifyActiveTabListeners() {
     const tab = this.#activeTab
     for (const fn of this.#activeTabListeners) {
       try { fn(tab) } catch (e) { console.error('[SieveWorkspace] activeTabChanged listener threw', e) }
+    }
+  }
+
+  /** @param {import('./selection-model.js').SelectionContext|null} ctx */
+  #notifySelectionListeners(ctx) {
+    for (const fn of this.#selectionListeners) {
+      try { fn(ctx) } catch (e) { console.error('[SieveWorkspace] selectionUpdate listener threw', e) }
     }
   }
 

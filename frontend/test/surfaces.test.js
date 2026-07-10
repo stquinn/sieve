@@ -15,7 +15,7 @@ import { AbstractSurface, SurfaceEvent } from '../src/static/shell/surfaces/abst
 import { MarkdownSurface } from '../src/static/shell/surfaces/markdown-surface.js'
 import { WysiwygSurface } from '../src/static/shell/surfaces/wysiwyg-surface.js'
 import { buildBlocksHTML } from '../src/static/block/block-render.js'
-import { schema as fxSchema, build, docWithCaret, docWithRange, docWithNodeSelection } from './helpers/editor-fixture.js'
+import { schema as fxSchema, build, docWithCaret, docWithCaretAt, docWithRange, docWithNodeSelection } from './helpers/editor-fixture.js'
 
 // window.isMod is an index.html global in the app; provide it for keydown tests.
 beforeEach(() => { window.isMod = (e) => !!(e.ctrlKey || e.metaKey) })
@@ -481,5 +481,123 @@ describe('WysiwygSurface.feedSelection (P3.A raw descriptor from live PM)', () =
     expect(d.ref).toBe('anchor-x')
     // No PM node leaks into the plain descriptor.
     Object.values(d).forEach((v) => expect(typeof v !== 'object' || v === null || Array.isArray(v) || ('from' in v)).toBe(true))
+  })
+})
+
+describe('WysiwygSurface.feedSelection richness (P3.B: block-range, dom-fold, multi-block)', () => {
+  // Injects a fake TipTap bundle providing getBlockSelectionRange (block-chrome's
+  // authoritative range) + domSelectionBlockRange (the read-only-region fold).
+  // The surface reads BOTH through deps.T, never raw state.selection alone.
+  function surfaceWith(fixture, T) {
+    return new TestWysiwygSurface('doc-1', wyDeps({ T }), fixture.editor)
+  }
+
+  it('block-chrome multi-block range (isBlockRange) → range spanning every overlapped blockId', () => {
+    // Three prose blocks; block-chrome reports a gutter range covering b1 + b2.
+    const nodes = [build.p('alpha', 'b1'), build.p('beta', 'b2'), build.p('gamma', 'b3')]
+    const fx = docWithCaret(nodes, 0, 0) // PM selection is a caret in b1; the block-range overrides
+    // Doc positions: b1 [0..7), b2 [7..13), b3 [13..20) roughly — cover b1..b2.
+    const b1End = nodes[0].nodeSize            // 7
+    const T = {
+      getBlockSelectionRange: () => ({ from: 1, to: b1End + 2, active: true, isBlockRange: true, isNodeSelection: false }),
+      domSelectionBlockRange: () => null,
+    }
+    const d = surfaceWith(fx, T).feedSelection()
+    expect(d.selectionType).toBe('range')          // block-range folds to 'range'
+    expect(d.blockIds).toEqual(['b1', 'b2'])        // full overlap span
+    expect(d.blockId).toBe('b1')                    // primary = first/head block
+    expect(d.blockIds).toContain(d.blockId)         // blockIds ⊇ [blockId]
+  })
+
+  it('a single NodeSelection is still block (not folded to range)', () => {
+    const fx = docWithNodeSelection([build.aiBlock('ai-1', 'r')], 0)
+    // block-chrome falls back to the PM NodeSelection (isBlockRange:false).
+    const sel = fx.editor.state.selection
+    const T = {
+      getBlockSelectionRange: () => ({ from: sel.from, to: sel.to, active: true, isBlockRange: false, isNodeSelection: true }),
+      domSelectionBlockRange: () => null,
+    }
+    const d = surfaceWith(fx, T).feedSelection()
+    expect(d.selectionType).toBe('block')
+    expect(d.blockIds).toEqual(['ai-1'])
+  })
+
+  it('read-only-region DOM highlight (F5): domSelectionBlockRange fold → range on that block', () => {
+    // PM selection is a caret in b1, but the user highlighted read-only text in b2.
+    const nodes = [build.p('alpha', 'b1'), build.aiBlock('ai-2', 'r2')]
+    const fx = docWithCaret(nodes, 0, 0)
+    const b1End = nodes[0].nodeSize
+    const T = {
+      getBlockSelectionRange: () => ({ from: 1, to: 1, active: false, isBlockRange: false, isNodeSelection: false }),
+      // The fold re-targets onto b2's range.
+      domSelectionBlockRange: () => ({ from: b1End, to: b1End + nodes[1].nodeSize }),
+    }
+    // Stub window.getSelection so the surface can read the highlighted string.
+    const prev = window.getSelection
+    window.getSelection = () => ({ isCollapsed: false, toString: () => 'highlighted', rangeCount: 1 })
+    try {
+      const d = surfaceWith(fx, T).feedSelection()
+      expect(d.selectionType).toBe('range')     // folded to range
+      expect(d.blockId).toBe('ai-2')            // the block the highlight actually lives in
+      expect(d.blockIds).toContain('ai-2')
+      expect(d.selectedText).toBe('highlighted')
+    } finally {
+      window.getSelection = prev
+    }
+  })
+
+  it('a collapsed caret AT a block boundary reports a single-block blockIds === [blockId]', () => {
+    // child(0) is an empty paragraph (nodeSize 2), so pos 2 is the exact boundary
+    // between the two blocks — the defect: overlap matched BOTH. A collapsed caret
+    // spans exactly one block (its primary); blockIds must be [blockId].
+    const nodes = [build.p('', 'lo-223d'), build.p('interior', 'co-48ef')]
+    const boundary = nodes[0].nodeSize // 2 — end of block 0 / start of block 1
+    const fx = docWithCaretAt(nodes, boundary)
+    const T = {
+      getBlockSelectionRange: () => ({ from: boundary, to: boundary, active: false, isBlockRange: false, isNodeSelection: false }),
+      domSelectionBlockRange: () => null,
+    }
+    const d = surfaceWith(fx, T).feedSelection()
+    expect(d.selectionType).toBe('caret')
+    expect(d.blockIds).toEqual([d.blockId]) // single-block; no spurious second block
+    expect(d.blockIds.length).toBe(1)
+  })
+
+  it('a caret straddling a block boundary within the same primary block is stable (no spurious blockIds change)', () => {
+    // Two caret positions whose PRIMARY block is the SAME (co-48ef): the boundary
+    // caret (pos 2) and an interior caret (pos 4). blockIds must be identical so
+    // the model's meaningful-diff coalesces the move (no spurious push).
+    const nodes = [build.p('', 'lo-223d'), build.p('interior', 'co-48ef')]
+    const boundary = nodes[0].nodeSize            // 2
+    const interior = boundary + 2                 // 4 — inside co-48ef
+    const rangeT = (pos) => ({
+      getBlockSelectionRange: () => ({ from: pos, to: pos, active: false, isBlockRange: false, isNodeSelection: false }),
+      domSelectionBlockRange: () => null,
+    })
+    const atBoundary = surfaceWith(docWithCaretAt(nodes, boundary), rangeT(boundary)).feedSelection()
+    const atInterior = surfaceWith(docWithCaretAt(nodes, interior), rangeT(interior)).feedSelection()
+    // Both carets sit in co-48ef (the boundary caret STARTS co-48ef). blockId +
+    // blockIds identical → the meaningful-diff won't fire on the 2→4 move.
+    expect(atBoundary.blockId).toBe('co-48ef')
+    expect(atInterior.blockId).toBe('co-48ef')
+    expect(atBoundary.blockIds).toEqual(atInterior.blockIds)
+  })
+
+  it('no block-range and no dom fold → the P3.A single-block behaviour is preserved', () => {
+    const fx = docWithRange([build.p('hello world', 'b1')], 2, 7)
+    const T = {
+      getBlockSelectionRange: () => ({ from: 2, to: 7, active: true, isBlockRange: false, isNodeSelection: false }),
+      domSelectionBlockRange: () => null,
+    }
+    const prev = window.getSelection
+    window.getSelection = () => ({ isCollapsed: true, toString: () => '', rangeCount: 0 })
+    try {
+      const d = surfaceWith(fx, T).feedSelection()
+      expect(d.selectionType).toBe('range')
+      expect(d.blockId).toBe('b1')
+      expect(d.blockIds).toEqual(['b1'])
+    } finally {
+      window.getSelection = prev
+    }
   })
 })

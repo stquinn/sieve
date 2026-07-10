@@ -37,6 +37,17 @@ export class SieveTab {
   #unsubEditor = null
 
   /**
+   * Tab-level selection-update registry (P3.B). Mirrors the workspace's
+   * onActiveTabChanged shape: republishes the attached editor's
+   * `selection-update` context. The registry belongs to the Tab IDENTITY (not the
+   * editor), so its subscribers keep working when a new editor attaches after a
+   * mode flip / re-init — attachEditor re-subscribes the forward, the listeners
+   * are untouched.
+   * @type {Array<(ctx: import('./selection-model.js').SelectionContext) => void>}
+   */
+  #selectionListeners = []
+
+  /**
    * @param {string} uuid — document uuid for this tab
    */
   constructor(uuid) {
@@ -91,7 +102,28 @@ export class SieveTab {
     this.#editor = ed
     this.#unsubEditor = ed.onEvent((e) => {
       if (e.type === 'mode-changed') this.#mode = e.mode
+      else if (e.type === 'selection-update') this.#notifySelectionListeners(e.context)
     })
+  }
+
+  /**
+   * Registers a listener for this tab's selection-update stream (the attached
+   * editor's SelectionModel push, forwarded here). Returns an unsubscribe.
+   * Mirrors SieveWorkspace.onActiveTabChanged. Survives editor swaps — the
+   * registry lives on the Tab identity, not the editor.
+   * @param {(ctx: import('./selection-model.js').SelectionContext) => void} fn
+   * @returns {() => void} unsubscribe
+   */
+  onSelectionUpdate(fn) {
+    this.#selectionListeners.push(fn)
+    return () => { this.#selectionListeners = this.#selectionListeners.filter((l) => l !== fn) }
+  }
+
+  /** @param {import('./selection-model.js').SelectionContext} ctx */
+  #notifySelectionListeners(ctx) {
+    for (const fn of this.#selectionListeners) {
+      try { fn(ctx) } catch (e) { console.error('[SieveTab] selectionUpdate listener threw', e) }
+    }
   }
 
   /**
