@@ -26,6 +26,7 @@
 
 import { AbstractSurface } from './surfaces/abstract-surface.js'
 import { EditorMode } from './editor-mode.js'
+import { SelectionModel } from './selection-model.js'
 
 /**
  * @typedef {import('./surfaces/abstract-surface.js').SurfaceEventMsg} SurfaceEventMsg
@@ -109,6 +110,16 @@ export class AbstractEditor {
   /** @type {Array<(event: SurfaceEventMsg) => void>} surface-event registrants */
   #eventListeners = []
 
+  /**
+   * The editor-private authority on selection/caret/context OUTSIDE the surface
+   * (P3.A). Fed from the surface events (selection-changed / transaction /
+   * focus-changed) via #feedSelectionModel; pulled through getSelectionContext.
+   * The push up to Tab/Workspace is P3.B — the model emits to its own onUpdate
+   * registry only for now.
+   * @type {SelectionModel}
+   */
+  #selectionModel
+
   // ── WS transport state (socketless editors keep these null/empty) ─────────────
 
   /** @type {boolean} */
@@ -162,6 +173,7 @@ export class AbstractEditor {
   constructor(uuid, options = {}) {
     if (!uuid) throw new Error('AbstractEditor: uuid is required')
     this.#uuid = uuid
+    this.#selectionModel = new SelectionModel(uuid)
     this.#surfaceCollaborators = options.surfaceCollaborators || {}
     this.#createBlockAtCaret = options.createBlockAtCaret || null
     this.#socketless = options.connect !== true
@@ -254,6 +266,66 @@ export class AbstractEditor {
     }
   }
 
+  // ── Selection context (P3.A: the SelectionModel pull + subscribe) ─────────────
+
+  /**
+   * The current frozen SelectionContext — the pull path for actions that need
+   * the caret/selection/block context (AI target, chrome glow, …) WITHOUT
+   * reaching into PM or the DOM. Delegates to the editor-private SelectionModel,
+   * fed from the surface events.
+   * @returns {import('./selection-model.js').SelectionContext}
+   */
+  getSelectionContext() { return this.#selectionModel.getContext() }
+
+  /**
+   * Subscribes to the SelectionModel's `selection-update` (fired on meaningful
+   * change only; the frozen context is the payload). A passthrough to the
+   * model's own registry — the Tab/Workspace republish of this stream is P3.B;
+   * in P3.A only the editor's own tests/consumers subscribe here.
+   * @param {(ctx: import('./selection-model.js').SelectionContext) => void} fn
+   * @returns {() => void} unsubscribe
+   */
+  onSelectionUpdate(fn) { return this.#selectionModel.onUpdate(fn) }
+
+  /**
+   * Interposes on a surface event to feed the SelectionModel: on a selection /
+   * transaction / focus event, pull the surface's raw descriptor and ingest it;
+   * on focus, also derive + set the focus zone (minimal for P3.A: 'block-inner'
+   * when focus sits in an inner form control, else the surface's editing zone).
+   * The ONE place the model is fed. Called BEFORE the legacy #emitEvent fan-out
+   * so a subscriber reading getSelectionContext() in an onEvent handler sees the
+   * fresh context.
+   * @param {SurfaceEventMsg} event
+   */
+  #feedSelectionModel(event) {
+    const s = this.#surface
+    if (!s) return
+    const t = event && event.type
+    if (t === 'selection-changed' || t === 'transaction' || t === 'focus-changed') {
+      const raw = s.feedSelection()
+      if (raw) this.#selectionModel.ingest(raw)
+    }
+    if (t === 'focus-changed') {
+      this.#selectionModel.setFocusZone(this.#deriveFocusZone())
+    }
+  }
+
+  /**
+   * Derives the focus zone from the live DOM focus + the mounted surface
+   * (minimal for P3.A; refined for the Ask panel in P3.D and snapshot/restore in
+   * P3.E). 'block-inner' when the active element is an inner form control inside
+   * a sieve block; 'markdown' for the markdown surface; else 'editor'.
+   * @returns {import('./selection-model.js').SelectionContext['focusZone']}
+   */
+  #deriveFocusZone() {
+    if (this.mode === EditorMode.MARKDOWN) return 'markdown'
+    const active = (typeof document !== 'undefined') ? document.activeElement : null
+    if (active && typeof active.closest === 'function' && active.closest('.sieve-block__edit')) {
+      return 'block-inner'
+    }
+    return 'editor'
+  }
+
   // ── Surface lifecycle ────────────────────────────────────────────────────────
 
   /**
@@ -284,7 +356,10 @@ export class AbstractEditor {
     if (this.#surface) this.#surface.unmount()
     this.#rootEl = rootEl
     const next = this._createSurface(mode, {
-      notify: (event) => this.#emitEvent(event),
+      // P3.A: feed the SelectionModel from the surface event FIRST (so an onEvent
+      // handler that pulls getSelectionContext() sees the fresh context), then
+      // run the legacy chrome fan-out unchanged.
+      notify: (event) => { this.#feedSelectionModel(event); this.#emitEvent(event) },
       applyBlockOps: (ops) => this.applyBlockOps(ops),
       updateText: (markdown) => this.updateText(markdown),
     })

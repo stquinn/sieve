@@ -69,6 +69,9 @@ class FakeSurface extends AbstractSurface {
   unmount() { this.mounted = false; this.unmountCount++; this.log.push('unmount:' + this._mode) }
   applyServerOp(msg) { this.ops.push(msg); this.log.push('op:' + msg.type) }
   flushPending() { this.flushCount++; this.log.push('flush:' + this._mode) }
+  // P3.A: raw selection descriptor the editor pulls on a selection/transaction/
+  // focus event. `feedDescriptor` lets a test script what the surface reports.
+  feedSelection() { this.feedCount = (this.feedCount || 0) + 1; return this.feedDescriptor || null }
 }
 
 // P2.C.2: the injected-factory seam died — editors construct their own surfaces
@@ -401,6 +404,83 @@ describe('AbstractEditor surface events + domain services (P2.B corrections)', (
     const { services } = rigWithServices()
     expect(() => services().applyBlockOps([{ type: 'update-block', blockId: 'b' }])).not.toThrow()
     expect(() => services().updateText('md')).not.toThrow()
+  })
+})
+
+describe('AbstractEditor SelectionModel wiring (P3.A)', () => {
+  // Mounts a fake surface and returns handles to drive its notify + script its
+  // feedSelection descriptor.
+  function rig(mode = 'wysiwyg') {
+    const ed = new FakeSurfaceEditor('u')
+    ed.presentSurface(mode, document.createElement('div'), 'x')
+    return { ed, surface: () => ed.surface, notify: () => ed.services.notify }
+  }
+
+  it('exposes an initial none SelectionContext for the editor uuid', () => {
+    const ed = new FakeSurfaceEditor('doc-9')
+    const ctx = ed.getSelectionContext()
+    expect(ctx.docUuid).toBe('doc-9')
+    expect(ctx.selectionType).toBe('none')
+    expect(ctx.focusZone).toBe('editor')
+    expect(Object.isFrozen(ctx)).toBe(true)
+  })
+
+  it('feeds the model on selection-changed → getSelectionContext reflects the descriptor', () => {
+    const { ed, surface, notify } = rig()
+    surface().feedDescriptor = { selectionType: 'caret', caret: 3, range: { from: 3, to: 3 }, blockId: 'b1', blockIds: ['b1'], blockKind: 'prose' }
+    notify()({ type: 'selection-changed' })
+    const ctx = ed.getSelectionContext()
+    expect(ctx.blockId).toBe('b1')
+    expect(ctx.caret).toBe(3)
+    expect(ctx.selectionType).toBe('caret')
+  })
+
+  it('feeds on transaction and on focus-changed too', () => {
+    const { ed, surface, notify } = rig()
+    surface().feedDescriptor = { selectionType: 'block', blockId: 'bt', blockIds: ['bt'], blockKind: 'code', caret: 1, range: { from: 0, to: 2 } }
+    notify()({ type: 'transaction' })
+    expect(ed.getSelectionContext().blockId).toBe('bt')
+    surface().feedDescriptor = { selectionType: 'block', blockId: 'bf', blockIds: ['bf'], blockKind: 'code', caret: 1, range: { from: 0, to: 2 } }
+    notify()({ type: 'focus-changed' })
+    expect(ed.getSelectionContext().blockId).toBe('bf')
+  })
+
+  it('does NOT feed the model on doc-changed (not a selection event)', () => {
+    const { ed, surface, notify } = rig()
+    notify()({ type: 'doc-changed' })
+    expect(surface().feedCount).toBeUndefined() // feedSelection never called
+    expect(ed.getSelectionContext().selectionType).toBe('none')
+  })
+
+  it('onSelectionUpdate fires on a meaningful change and still runs the legacy onEvent fan-out', () => {
+    const { ed, surface, notify } = rig()
+    const selUpdates = []
+    const events = []
+    ed.onSelectionUpdate((ctx) => selUpdates.push(ctx.blockId))
+    ed.onEvent((ev) => events.push(ev.type))
+    surface().feedDescriptor = { selectionType: 'caret', caret: 1, range: { from: 1, to: 1 }, blockId: 'b1', blockIds: ['b1'], blockKind: 'prose' }
+    notify()({ type: 'selection-changed' })
+    expect(selUpdates).toEqual(['b1'])
+    expect(events).toEqual(['selection-changed']) // legacy fan-out preserved
+  })
+
+  it('a caret-only move within the same block does not fire onSelectionUpdate but is pullable', () => {
+    const { ed, surface, notify } = rig()
+    surface().feedDescriptor = { selectionType: 'caret', caret: 1, range: { from: 1, to: 1 }, blockId: 'b1', blockIds: ['b1'], blockKind: 'prose' }
+    notify()({ type: 'selection-changed' }) // baseline
+    const selUpdates = []
+    ed.onSelectionUpdate((ctx) => selUpdates.push(ctx.caret))
+    surface().feedDescriptor = { selectionType: 'caret', caret: 4, range: { from: 4, to: 4 }, blockId: 'b1', blockIds: ['b1'], blockKind: 'prose' }
+    notify()({ type: 'selection-changed' })
+    expect(selUpdates).toEqual([]) // coalesced
+    expect(ed.getSelectionContext().caret).toBe(4) // but pullable
+  })
+
+  it('markdown surface focus-changed derives the markdown focus zone', () => {
+    const { ed, surface, notify } = rig('markdown')
+    surface().feedDescriptor = { selectionType: 'none' }
+    notify()({ type: 'focus-changed' })
+    expect(ed.getSelectionContext().focusZone).toBe('markdown')
   })
 })
 

@@ -489,6 +489,94 @@ export class WysiwygSurface extends AbstractSurface {
     if (ed) this.#syncDocument(ed)
   }
 
+  // ── Selection feed (P3.A: the SelectionModel raw source) ───────────────────────
+
+  /**
+   * Builds a RAW selection descriptor from the LIVE PM state — the ONLY place PM
+   * selection is read for the SelectionModel (the model itself never touches PM).
+   * PLAIN data only: no PM node escapes; blockId/blockKind/ref are extracted as
+   * strings. Classification: NodeSelection → 'block'; empty → 'caret'; non-empty
+   * text → 'range'; no editor → 'none'.
+   *
+   * MINIMAL for P3.A: label is left '' (surface label production is P3.C) and
+   * blockIds is the single-block [blockId] (the full multi-block dom-range span
+   * is P3.B).
+   * @returns {import('../selection-model.js').RawSelectionDescriptor}
+   */
+  feedSelection() {
+    // Read through the public `tiptap` accessor (as applyServerOp/flushPending
+    // do) — the live instance, whatever a subclass injects.
+    const ed = /** @type {any} */ (this.tiptap)
+    if (!ed || !ed.state) {
+      return { selectionType: 'none', caret: null, range: null, selectedText: null, blockId: null, blockIds: [], blockKind: null, ref: null, label: '' }
+    }
+    const state = ed.state
+    const sel = state.selection
+    const doc = state.doc
+    const from = sel.from
+    const to = sel.to
+
+    // The block node the selection sits in/on: a NodeSelection targets its own
+    // node; a caret/range resolves the enclosing TOP-LEVEL block via $from.
+    let node = null
+    if (sel.node) {
+      node = sel.node
+    } else if (sel.$from && sel.$from.depth >= 1) {
+      node = sel.$from.node(1)
+    } else if (sel.$from) {
+      // Caret at doc level (no enclosing block depth) — the top-level node the
+      // position falls in, if any.
+      node = doc.childCount ? doc.child(Math.max(0, doc.resolve(from).index(0))) : null
+    }
+
+    let selectionType
+    if (sel.node) selectionType = 'block'
+    else if (from === to) selectionType = 'caret'
+    else selectionType = 'range'
+
+    return {
+      selectionType: selectionType,
+      caret: sel.head,
+      range: { from: from, to: to },
+      selectedText: selectionType === 'range' ? doc.textBetween(from, to, ' ') : null,
+      blockId: WysiwygSurface.#nodeBlockId(node),
+      blockIds: WysiwygSurface.#nodeBlockIds(node),
+      blockKind: WysiwygSurface.#nodeBlockKind(node),
+      ref: WysiwygSurface.#nodeRef(node),
+      label: '',
+    }
+  }
+
+  /** @param {any} node @returns {string|null} the block's durable id, or null */
+  static #nodeBlockId(node) {
+    const id = node && node.attrs && node.attrs.id
+    return id || null
+  }
+
+  /** @param {any} node @returns {string[]} minimal single-block span (P3.B grows this) */
+  static #nodeBlockIds(node) {
+    const id = WysiwygSurface.#nodeBlockId(node)
+    return id ? [id] : []
+  }
+
+  /**
+   * The block kind as a PLAIN string: a sieve-* node carries `attrs.kind`; a
+   * native prose node is its PM type name (paragraph/heading/…). Null when no
+   * node owns the selection.
+   * @param {any} node @returns {string|null}
+   */
+  static #nodeBlockKind(node) {
+    if (!node || !node.type) return null
+    if (node.attrs && node.attrs.kind) return node.attrs.kind
+    return node.type.name || null
+  }
+
+  /** @param {any} node @returns {string|null} block ref/anchor (ai-block re-chain) */
+  static #nodeRef(node) {
+    const ref = node && node.attrs && node.attrs.ref
+    return ref || null
+  }
+
   // ── Server render-backs (verbatim from the old document-event handlers) ────────
 
   /** @param {any} msg */

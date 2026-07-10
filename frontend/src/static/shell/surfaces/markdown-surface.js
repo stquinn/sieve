@@ -150,6 +150,18 @@ export class MarkdownSurface extends AbstractSurface {
   }
 
   /**
+   * Raw selection descriptor for the SelectionModel (P3.A). Markdown mode is an
+   * opaque verbatim buffer — there is no block model to key a selection on — so
+   * the surface reports a 'none'-ish descriptor; the model's focusZone is
+   * 'markdown' while this surface is mounted (set by the editor's focus channel).
+   * Textarea sub-string selection targeting is P3.B.
+   * @returns {import('../selection-model.js').RawSelectionDescriptor}
+   */
+  feedSelection() {
+    return { selectionType: 'none', caret: null, range: null, selectedText: null, blockId: null, blockIds: [], blockKind: null, ref: null, label: '' }
+  }
+
+  /**
    * Markdown-mode render-back behavior (verbatim from the old handlers):
    * insert-block appends the block's markdown to the buffer and syncs it;
    * replace-block is breakglass → full reload; block-attrs-updated has no

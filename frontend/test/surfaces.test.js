@@ -15,7 +15,7 @@ import { AbstractSurface, SurfaceEvent } from '../src/static/shell/surfaces/abst
 import { MarkdownSurface } from '../src/static/shell/surfaces/markdown-surface.js'
 import { WysiwygSurface } from '../src/static/shell/surfaces/wysiwyg-surface.js'
 import { buildBlocksHTML } from '../src/static/block/block-render.js'
-import { schema as fxSchema, build } from './helpers/editor-fixture.js'
+import { schema as fxSchema, build, docWithCaret, docWithRange, docWithNodeSelection } from './helpers/editor-fixture.js'
 
 // window.isMod is an index.html global in the app; provide it for keydown tests.
 beforeEach(() => { window.isMod = (e) => !!(e.ctrlKey || e.metaKey) })
@@ -140,6 +140,14 @@ describe('MarkdownSurface (P2.B)', () => {
     s.replaceBody('fresh from disk')
     expect(s.body).toBe('fresh from disk')
     expect(textarea.value).toBe('fresh from disk')
+  })
+
+  it('feedSelection reports a none descriptor (opaque buffer, no block model) — P3.A', () => {
+    const s = new MarkdownSurface(mdDeps())
+    expect(s.feedSelection()).toEqual({
+      selectionType: 'none', caret: null, range: null, selectedText: null,
+      blockId: null, blockIds: [], blockKind: null, ref: null, label: '',
+    })
   })
 })
 
@@ -421,5 +429,57 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     expect(s.tiptap).toBeNull()
     vi.advanceTimersByTime(1000)
     expect(deps.applyBlockOps).not.toHaveBeenCalled()
+  })
+})
+
+describe('WysiwygSurface.feedSelection (P3.A raw descriptor from live PM)', () => {
+  // Injects a real PM state (fixture) as the surface's live editor and reads
+  // feedSelection — PLAIN strings only, no PM node escapes.
+  function surfaceOver(fixture) {
+    return new TestWysiwygSurface('doc-1', wyDeps(), fixture.editor)
+  }
+
+  it('no editor → a none descriptor', () => {
+    const s = new TestWysiwygSurface('doc-1', wyDeps(), null)
+    expect(s.feedSelection()).toEqual({
+      selectionType: 'none', caret: null, range: null, selectedText: null,
+      blockId: null, blockIds: [], blockKind: null, ref: null, label: '',
+    })
+  })
+
+  it('a caret in a prose block → caret, blockId + native kind, single-block span', () => {
+    const s = surfaceOver(docWithCaret([build.p('hello world', 'b1')], 0, 2))
+    const d = s.feedSelection()
+    expect(d.selectionType).toBe('caret')
+    expect(d.range.from).toBe(d.range.to) // collapsed
+    expect(d.blockId).toBe('b1')
+    expect(d.blockIds).toEqual(['b1'])
+    expect(d.blockKind).toBe('paragraph') // native node type name
+    expect(d.selectedText).toBeNull()
+    expect(d.ref).toBeNull()
+    expect(d.label).toBe('')
+  })
+
+  it('a non-empty text selection → range with selectedText', () => {
+    // "hello world" in block b1: select a middle span.
+    const s = surfaceOver(docWithRange([build.p('hello world', 'b1')], 2, 7))
+    const d = s.feedSelection()
+    expect(d.selectionType).toBe('range')
+    expect(d.range).toEqual({ from: 2, to: 7 })
+    expect(typeof d.selectedText).toBe('string')
+    expect(d.selectedText.length).toBeGreaterThan(0)
+    expect(d.blockId).toBe('b1')
+  })
+
+  it('a NodeSelection on a sieve block → block, its kind + ref, no PM node', () => {
+    const s = surfaceOver(docWithNodeSelection([build.aiBlock('ai-1', 'anchor-x')], 0))
+    const d = s.feedSelection()
+    expect(d.selectionType).toBe('block')
+    expect(d.blockId).toBe('ai-1')
+    expect(d.blockIds).toEqual(['ai-1'])
+    expect(d.blockKind).toBe('ai-block') // sieve node attrs.kind, not type.name
+    expect(d.ref).toBe('anchor-x')
+    // No PM node leaks into the plain descriptor.
+    Object.values(d).forEach((v) => expect(typeof v !== 'object' || v === null || Array.isArray(v) || ('from' in v)).toBe(true))
   })
 })
