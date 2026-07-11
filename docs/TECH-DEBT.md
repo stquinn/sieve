@@ -272,3 +272,13 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 **Why deferred:** de-risking + avoiding scope creep — the API facade (the load-bearing part) lands now behind the proven templates; the render port (~150 lines faithful to `tabbar.html`) + the Go endpoint + the consistency divergence (first JS-rendered component while sidebar/meta/prompts stay HTMX) are a separate phase the facade *enables*.
 
 **Retires when:** the tabs-JSON endpoint + self-rendering `SieveTab` land; callers are untouched (they depend only on the Workspace verbs).
+
+## V-C: `agy` (Antigravity CLI) AI backend returns agentic non-answers
+
+**Tracked:** (unfiled)
+
+**What:** `sieve/ai/cli.go` `buildBaseArgs` invokes the configured AI CLI. For `claude` it passes `--print --no-session-persistence --dangerously-skip-permissions` (a clean one-shot: prompt in via stdin, answer out). For `agy` it passes `--print --dangerously-skip-permissions`, but `agy`'s `--print` is NOT a clean one-shot mode — it runs **agentically** (narrates its own tool calls, `ash cwd=…` banner) and **fixates on the `--dangerously-skip-permissions` flag it was handed**, returning a canned explanation of `agy --dangerously-skip-permissions` / "YOLO mode" instead of answering the prompt. Confirmed live 2026-07-11: the same doc + question yields correct answers under `claude` and permission-flag nonsense under `agy` (two repros, different libraries). The prompt assembly, frontend selection, and SelectionModel are all correct — the TARGET/ACTION in the dump are right; only the CLI backend misbehaves.
+
+**Why deferred:** backend/config, not core Sieve logic; the `claude` backend works today. Needs the correct `agy` non-interactive invocation (likely drop `--dangerously-skip-permissions` for `agy` and/or use its real "answer stdin and exit" flags — cf. the default case's `--prompt "" --yolo --silent`), or `agy` is documented as unsupported.
+
+**Retires when:** the `agy` `buildBaseArgs` case produces clean one-shot answers (or `agy` support is removed). NOTE: a *separate, related* prompt-contamination bug found while diagnosing this — the ACTION entry leaking the ai-block's own prior answer — was FIXED (commit `bc07b89`, `ai_block_processor.go` `qaHeader`), not deferred.
