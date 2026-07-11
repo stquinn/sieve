@@ -170,14 +170,34 @@ export class MarkdownSurface extends AbstractSurface {
         selectionType: 'range', caret: ta.selectionStart,
         range: { from: ta.selectionStart, to: ta.selectionEnd },
         selectedText: sel, blockId: null, blockIds: [], blockKind: null, ref: null,
+        // Markdown is a verbatim buffer — no block hosts an inner cursor.
+        blockCursor: null,
         target: { kind: 'selection', ref: 'doc', range: null, label: quoteSnippet(sel) },
       }
     }
     return {
       selectionType: 'none', caret: null, range: null, selectedText: null,
-      blockId: null, blockIds: [], blockKind: null, ref: null,
+      blockId: null, blockIds: [], blockKind: null, ref: null, blockCursor: null,
       target: { kind: 'document', ref: 'doc', range: null, label: 'Document' },
     }
+  }
+
+  /**
+   * Restores focus/selection from a SelectionContext coordinate (P3.E write side).
+   * Markdown is the degenerate whole-text case: map the DOCUMENT coordinate
+   * (`caret`/`range`, textarea offsets) back onto the textarea. No blockCursor —
+   * markdown has no block-inner cursor. Behaviour-equivalent to the retired
+   * `{kind:'markdown',start,end}` focus token.
+   * @param {import('../selection-model.js').SelectionContext} ctx
+   */
+  applyPosition(ctx) {
+    const ta = this.#textarea
+    if (!ta) return
+    ta.focus()
+    const len = ta.value.length
+    const from = Math.min((ctx && ctx.caret != null) ? ctx.caret : 0, len)
+    const to = Math.min((ctx && ctx.range) ? ctx.range.to : from, len)
+    try { ta.selectionStart = from; ta.selectionEnd = to } catch (_) {}
   }
 
   /**

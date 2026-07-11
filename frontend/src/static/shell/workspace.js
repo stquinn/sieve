@@ -321,6 +321,31 @@ export class SieveWorkspace {
     }
   }
 
+  /**
+   * Pull the active tab's current frozen SelectionContext, or null when no document
+   * is open (P3.E — the read half of the read/write coordinate symmetry). Mirrors
+   * the internal pull `#switchSelectionSource` already performs.
+   * @returns {import('./selection-model.js').SelectionContext|null}
+   */
+  getSelectionContext() {
+    return this.#activeTab && this.#activeTab.editor
+      ? this.#activeTab.editor.getSelectionContext()
+      : null
+  }
+
+  /**
+   * Restore focus/selection on the active tab from a (previously pulled) coordinate
+   * (P3.E — the WRITE half; a VERB on the Workspace, never on the frozen context).
+   * Routes straight to the active editor's applyPosition (Tab holds no position
+   * write). Safe no-op when no document is open or ctx is null.
+   * @param {import('./selection-model.js').SelectionContext|null} ctx
+   */
+  setPosition(ctx) {
+    if (ctx && this.#activeTab && this.#activeTab.editor) {
+      this.#activeTab.editor.applyPosition(ctx)
+    }
+  }
+
   // ── Private helpers ────────────────────────────────────────────────────────────
 
   /** @param {SieveTab|null} tab */

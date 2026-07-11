@@ -22,6 +22,9 @@ function raw(overrides = {}) {
     blockIds: ['b1'],
     blockKind: 'prose',
     ref: null,
+    // P3.E: the block's own inner cursor (opaque, caret-like); null for a plain
+    // prose caret. Excluded from the meaningful diff — a change to it alone is silent.
+    blockCursor: null,
     // P3.C: the surface resolves the AI target and hands it in (label lives inside).
     target: { kind: 'document', ref: 'doc', range: null, label: 'Document' },
   }, overrides)
@@ -42,6 +45,8 @@ describe('SelectionModel — initial context (P3.A)', () => {
       blockKind: null,
       ref: null,
       focusZone: 'editor',
+      // P3.E: no block hosts an inner cursor at 'none'.
+      blockCursor: null,
       // P3.C: 'none'/initial ⇒ the document target (label ALWAYS present).
       target: { kind: 'document', ref: 'doc', range: null, label: 'Document' },
     })
@@ -115,6 +120,18 @@ describe('SelectionModel — meaningful-change coalescing (P3.A)', () => {
     // …but the pull reflects the new caret + range.
     expect(m.getContext().caret).toBe(8)
     expect(m.getContext().range).toEqual({ from: 8, to: 8 })
+  })
+
+  it('a blockCursor-only change does NOT emit but IS pullable (caret-like)', () => {
+    const m = new SelectionModel(UUID)
+    const fn = vi.fn()
+    m.ingest(raw({ blockCursor: { start: 1, end: 1 } })) // baseline (emits)
+    m.onUpdate(fn)
+    // Only the block's inner cursor moved; every meaningful key is identical.
+    m.ingest(raw({ blockCursor: { start: 9, end: 9 } }))
+    expect(fn).not.toHaveBeenCalled()
+    // …but the pull reflects the new inner cursor (silent, still pullable).
+    expect(m.getContext().blockCursor).toEqual({ start: 9, end: 9 })
   })
 
   it('a blockId change emits', () => {

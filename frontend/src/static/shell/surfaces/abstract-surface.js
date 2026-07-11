@@ -119,6 +119,15 @@ export class AbstractSurface {
    * @returns {null}
    */
   feedSelection() { return null }
+
+  /**
+   * Restores focus/selection from a SelectionContext coordinate — the symmetric
+   * WRITE side of feedSelection (P3.E). The concrete surface turns the plain
+   * coordinate back into a PM selection / block-inner focus / textarea focus.
+   * Base surfaces have no live view; the default is a no-op focus fallback.
+   * @param {import('../selection-model.js').SelectionContext} ctx
+   */
+  applyPosition(ctx) { /* base: nothing to focus */ }
 }
 
 // Expose on window for classic-script access from editor.js.

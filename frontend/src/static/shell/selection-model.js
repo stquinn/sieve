@@ -15,6 +15,25 @@
 // SelectionModel is editor-private per the component spec: no window.* handle.
 // Dual-use ES module only insofar as vitest `import`s it; the app reaches it
 // solely through AbstractEditor (which owns the instance + the pull path).
+//
+// COORDINATE CONVENTION (P3.E): `caret`/`range` are the DOCUMENT coordinate — they
+// pick the block AND the position within it. Restoring focus into a code block's
+// source, a diagram's source, prose — anything editable — rides `caret`/`range`,
+// because EVERY current Sieve block edits through ProseMirror (its edit pane is a PM
+// contentDOM `<pre><code>`), so its inner caret IS a PM position PM already tracks.
+//
+// `blockCursor` is a FORWARD SEAM, not an active field: it exists to carry the caret
+// inside a block whose editor is NOT ProseMirror — a separate control PM can't see
+// into (a raw <textarea>, a CodeMirror/terminal/canvas, opted in via the
+// `.sieve-block__edit` form-control convention or `host.__sieveFocus`). NO block is
+// built that way today, so NOTHING populates it and it is `null` in practice. It is
+// kept as the documented extension point (see WysiwygSurface#captureBlockCursor);
+// when a genuine non-PM inner editor ever ships, it plugs in here with a real
+// consumer. The model treats it as OPAQUE inert data (never inspected, carried +
+// frozen) and CARET-LIKE (excluded from the meaningful diff). The symmetric WRITE
+// side is Workspace.setPosition → editor.applyPosition → surface.applyPosition (each
+// surface restores in its own applyPosition — WysiwygSurface the doc caret/range,
+// MarkdownSurface the textarea; the block-inner branch is the dormant seam).
 
 /**
  * @typedef {Object} AiTarget — the resolved AI target, editor-generated, plain values (NO PM node)
@@ -39,6 +58,7 @@ const DOCUMENT_TARGET = Object.freeze({ kind: 'document', ref: 'doc', range: nul
  * @property {string|null} blockKind                              primary block kind (plain string; replaces node.type reads)
  * @property {string|null} ref                                    block ref/anchor (ai-block re-chain); replaces node.attrs.ref
  * @property {'editor'|'block-inner'|'ask'|'markdown'|'outside'} focusZone   doc selection persists across 'ask'
+ * @property {object|null} blockCursor                            FORWARD SEAM (P3.E): the caret inside a block whose editor is NOT ProseMirror. NO current block populates it — every Sieve edit pane is a PM contentDOM, so its inner caret is already `caret`/`range`. `null` in practice; kept as the documented extension point for a future non-PM inner editor. OPAQUE + CARET-LIKE (excluded from the meaningful diff). See the module CONVENTION.
  * @property {AiTarget} target                                    resolved AI target + its friendly label (P3.C; ALWAYS present)
  */
 
@@ -57,6 +77,7 @@ const DOCUMENT_TARGET = Object.freeze({ kind: 'document', ref: 'doc', range: nul
  * @property {string[]}    [blockIds]
  * @property {string|null} [blockKind]
  * @property {string|null} [ref]
+ * @property {object|null} [blockCursor]
  * @property {AiTarget} [target]
  */
 
@@ -93,6 +114,7 @@ export class SelectionModel {
       blockKind: null,
       ref: null,
       focusZone: 'editor',
+      blockCursor: null,
       target: DOCUMENT_TARGET,
     })
   }
@@ -137,6 +159,7 @@ export class SelectionModel {
       blockKind: c.blockKind,
       ref: c.ref,
       focusZone: zone,
+      blockCursor: c.blockCursor,
       target: c.target,
     })
     this.#commit(next)
@@ -198,6 +221,10 @@ export class SelectionModel {
       blockKind: (raw.blockKind === undefined) ? null : raw.blockKind,
       ref: (raw.ref === undefined) ? null : raw.ref,
       focusZone: focusZone,
+      // The block's own inner cursor (opaque, block-owned, caret-like). Carried
+      // through untouched; excluded from the meaningful diff (a change to it alone
+      // is silent). Null for a plain prose caret.
+      blockCursor: (raw.blockCursor == null) ? null : raw.blockCursor,
       // target is surface-resolved (P3.C); default to the document target when a
       // descriptor omits it (e.g. a 'none' feed), so `target` is ALWAYS present.
       target: raw.target ? {
@@ -210,14 +237,15 @@ export class SelectionModel {
   }
 
   /**
-   * Deep-freezes a context: the object, its nested `range`, its `blockIds` array,
-   * and its `target` (+ the target's nested `range`) — so a holder can't mutate any
-   * part of a pulled/emitted snapshot.
+   * Deep-freezes a context: the object, its nested `range`, its `blockCursor` token,
+   * its `blockIds` array, and its `target` (+ the target's nested `range`) — so a
+   * holder can't mutate any part of a pulled/emitted snapshot.
    * @param {SelectionContext} ctx
    * @returns {Readonly<SelectionContext>}
    */
   static #freeze(ctx) {
     if (ctx.range) Object.freeze(ctx.range)
+    if (ctx.blockCursor) Object.freeze(ctx.blockCursor)
     Object.freeze(ctx.blockIds)
     if (ctx.target) {
       if (ctx.target.range) Object.freeze(ctx.target.range)

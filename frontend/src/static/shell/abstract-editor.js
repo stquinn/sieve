@@ -612,6 +612,17 @@ export class AbstractEditor {
     if (s) s.applyServerOp(/** @type {any} */ (msg))
   }
 
+  /**
+   * Restores focus/selection from a SelectionContext coordinate — the WRITE side of
+   * getSelectionContext (P3.E). Delegates straight to the #private surface, which
+   * owns the PM/DOM (TipTap lives ONLY in the surface — no `tiptap` read here).
+   * Safe no-op when no surface is mounted.
+   * @param {import('./selection-model.js').SelectionContext} ctx
+   */
+  applyPosition(ctx) {
+    if (this.#surface) this.#surface.applyPosition(ctx)
+  }
+
   // ── Mode flip (P2.B: the awaited in-place surface swap) ──────────────────────
 
   /**

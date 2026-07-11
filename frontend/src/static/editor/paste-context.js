@@ -9,7 +9,7 @@
 // shared by every raw-text fenced block, so we key off that rather than naming
 // individual kinds — any future raw-text block is covered for free.
 //
-// Loaded as a classic script (like focus-context.js): attaches to window.TipTap
+// Loaded as a classic script (like ai-target.js): attaches to window.TipTap
 // so editor.js's IIFE can read it at paste time.
 ;(function () {
   var T = (typeof window !== 'undefined' && window.TipTap) ? window.TipTap : (window.TipTap = {})

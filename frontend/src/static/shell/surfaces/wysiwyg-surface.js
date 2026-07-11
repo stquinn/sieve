@@ -537,7 +537,7 @@ export class WysiwygSurface extends AbstractSurface {
     if (!ed || !ed.state) {
       return {
         selectionType: 'none', caret: null, range: null, selectedText: null,
-        blockId: null, blockIds: [], blockKind: null, ref: null,
+        blockId: null, blockIds: [], blockKind: null, ref: null, blockCursor: null,
         target: { kind: 'document', ref: 'doc', range: null, label: 'Document' },
       }
     }
@@ -566,7 +566,80 @@ export class WysiwygSurface extends AbstractSurface {
       }
     }
 
-    return buildSelectionDescriptor(state.doc, sel, er, T, domSelText)
+    const raw = buildSelectionDescriptor(state.doc, sel, er, T, domSelText)
+    // The DOM read the pure PM core must NOT do: if focus sits inside a block's
+    // inner editor (`.sieve-block__edit`), merge its OWN cursor as the opaque,
+    // caret-like blockCursor (P3.E). Null for a plain prose caret. This is the
+    // P3.C split extended by one surface-owned DOM read.
+    raw.blockCursor = this.#captureBlockCursor()
+    return raw
+  }
+
+  /**
+   * DORMANT SEAM (P3.E — see selection-model CONVENTION): captures a block's inner
+   * cursor ONLY when focus sits in a `.sieve-block__edit` FORM CONTROL (selectionStart)
+   * or a block opting in via `host.__sieveFocus.capture()`. NO current block is built
+   * that way — code/diagram/log edit via a PM contentDOM (`activeElement` stays on
+   * `.ProseMirror`, their caret is already `caret`/`range`), so this returns `null` in
+   * practice. Kept as the extension point for a future non-PM inner editor. Surface-
+   * owned DOM read; no PM/YAML.
+   * @returns {object|null}
+   */
+  #captureBlockCursor() {
+    const ae = document.activeElement
+    if (ae && ae.classList && ae.classList.contains('sieve-block__edit')) {
+      const host = ae.closest ? ae.closest('[data-id]') : null
+      if (host) {
+        const hook = /** @type {any} */ (host).__sieveFocus
+        return (hook && typeof hook.capture === 'function')
+          ? hook.capture()
+          : { start: /** @type {any} */ (ae).selectionStart, end: /** @type {any} */ (ae).selectionEnd }
+      }
+    }
+    return null
+  }
+
+  /**
+   * Restores focus/selection from a SelectionContext coordinate (P3.E write side) —
+   * the symmetric WRITE of feedSelection, inlined like MarkdownSurface.applyPosition.
+   * When the ctx names a block that hosts an inner editor AND carries a blockCursor,
+   * restore INSIDE that block (per-flavour `__sieveFocus.restore`, else the generic
+   * `.sieve-block__edit` textarea with a stale-token clamp). Otherwise re-resolve the
+   * DOCUMENT caret/range against the current doc size and drive the editor. TipTap via
+   * `this.tiptap` (its own accessor, as flushPending/applyServerOp do) — never exposed.
+   * @param {import('../selection-model.js').SelectionContext} ctx
+   */
+  applyPosition(ctx) {
+    // (a) block-inner cursor.
+    if (ctx && ctx.blockId && ctx.blockCursor != null) {
+      const host = document.querySelector('[data-id="' + ctx.blockId + '"]')
+      if (host) {
+        const hook = /** @type {any} */ (host).__sieveFocus
+        if (hook && typeof hook.restore === 'function') { hook.restore(ctx.blockCursor); return }
+        const ta = /** @type {any} */ (host.querySelector('.sieve-block__edit'))
+        if (ta) {
+          ta.focus()
+          const tk = /** @type {any} */ (ctx.blockCursor) || {}
+          const len = ta.value.length
+          const s = Math.min(tk.start || 0, len)
+          const e = Math.min(tk.end != null ? tk.end : s, len)
+          try { ta.selectionStart = s; ta.selectionEnd = e } catch (_) {}
+          return
+        }
+      }
+      // block/textarea gone → fall through to the doc caret.
+    }
+    // (b) doc caret/range re-resolved against the CURRENT doc: a captured Selection is
+    // bound to its doc instance and would throw if anything edited in between.
+    const ed = /** @type {any} */ (this.tiptap)
+    if (ed) {
+      ed.view.focus()
+      const size = ed.state.doc.content.size
+      const c = ctx && ctx.range ? ctx.range : { from: ctx && ctx.caret, to: ctx && ctx.caret }
+      const from = Math.min(c.from != null ? c.from : 0, size)
+      const to = Math.min(c.to != null ? c.to : from, size)
+      try { ed.commands.setTextSelection({ from: from, to: to }) } catch (_) {}
+    }
   }
 
   /**

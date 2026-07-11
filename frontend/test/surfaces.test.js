@@ -146,7 +146,7 @@ describe('MarkdownSurface (P2.B)', () => {
     const s = new MarkdownSurface(mdDeps())
     expect(s.feedSelection()).toEqual({
       selectionType: 'none', caret: null, range: null, selectedText: null,
-      blockId: null, blockIds: [], blockKind: null, ref: null,
+      blockId: null, blockIds: [], blockKind: null, ref: null, blockCursor: null,
       // P3.C: markdown mode with no textarea selection → the document target.
       target: { kind: 'document', ref: 'doc', range: null, label: 'Document' },
     })
@@ -445,7 +445,7 @@ describe('WysiwygSurface.feedSelection (P3.A raw descriptor from live PM)', () =
     const s = new TestWysiwygSurface('doc-1', wyDeps(), null)
     expect(s.feedSelection()).toEqual({
       selectionType: 'none', caret: null, range: null, selectedText: null,
-      blockId: null, blockIds: [], blockKind: null, ref: null,
+      blockId: null, blockIds: [], blockKind: null, ref: null, blockCursor: null,
       // P3.C: no editor → the document target.
       target: { kind: 'document', ref: 'doc', range: null, label: 'Document' },
     })
@@ -615,5 +615,132 @@ describe('WysiwygSurface.feedSelection richness (P3.B: block-range, dom-fold, mu
     } finally {
       window.getSelection = prev
     }
+  })
+})
+
+// P3.E — the blockCursor half of the coordinate + the symmetric WRITE side, now
+// OWNED by the surface (inlined, symmetric with MarkdownSurface.applyPosition). The
+// block branch is DOM-only (no editor); the doc-caret branch drives `this.tiptap`.
+describe('WysiwygSurface blockCursor capture + applyPosition (P3.E)', () => {
+  // A surface over a real PM fixture, so feedSelection gets past the `!ed` guard and
+  // we can read the surface-merged blockCursor (the block-inner DOM read).
+  function surfaceWithDoc() {
+    return new TestWysiwygSurface('doc-1', wyDeps(), docWithCaret([build.p('hello', 'b1')], 0, 2).editor)
+  }
+  beforeEach(() => { document.body.innerHTML = '' })
+  afterEach(() => { document.body.innerHTML = '' })
+
+  // ── capture (feedSelection merges the block-inner cursor) ──────────────────────
+  it('focus not in a block → feedSelection blockCursor is null', () => {
+    const s = surfaceWithDoc()
+    expect(s.feedSelection().blockCursor).toBeNull()
+  })
+
+  it('focused .sieve-block__edit → feedSelection blockCursor is the { start, end } token', () => {
+    const host = document.createElement('div')
+    host.setAttribute('data-id', 'code-7')
+    const ta = document.createElement('textarea')
+    ta.className = 'sieve-block__edit'
+    ta.value = 'print(1)'
+    host.appendChild(ta)
+    document.body.appendChild(host)
+    ta.focus()
+    ta.selectionStart = ta.selectionEnd = 5
+
+    const token = surfaceWithDoc().feedSelection().blockCursor
+    expect(token.start).toBe(5)
+    expect(token.end).toBe(5)
+  })
+
+  it('per-flavour hook overrides the generic textarea read', () => {
+    const host = document.createElement('div')
+    host.setAttribute('data-id', 'blk-9')
+    host.__sieveFocus = { capture: () => ({ pane: 'stdout', line: 12 }) }
+    const ta = document.createElement('textarea')
+    ta.className = 'sieve-block__edit'
+    host.appendChild(ta)
+    document.body.appendChild(host)
+    ta.focus()
+
+    expect(surfaceWithDoc().feedSelection().blockCursor).toEqual({ pane: 'stdout', line: 12 })
+  })
+
+  // ── restore (applyPosition) ────────────────────────────────────────────────────
+  it('block ctx → focuses the block textarea and restores selection', () => {
+    const host = document.createElement('div')
+    host.setAttribute('data-id', 'code-7')
+    const ta = document.createElement('textarea')
+    ta.className = 'sieve-block__edit'
+    ta.value = 'print(1)'
+    host.appendChild(ta)
+    document.body.appendChild(host)
+
+    new TestWysiwygSurface('doc-1', wyDeps(), null)
+      .applyPosition({ blockId: 'code-7', blockCursor: { start: 3, end: 6 } })
+    expect(document.activeElement).toBe(ta)
+    expect(ta.selectionStart).toBe(3)
+    expect(ta.selectionEnd).toBe(6)
+  })
+
+  it('per-flavour restore hook is used when present', () => {
+    const host = document.createElement('div')
+    host.setAttribute('data-id', 'blk-9')
+    let restored = null
+    host.__sieveFocus = { restore: (t) => { restored = t } }
+    document.body.appendChild(host)
+
+    new TestWysiwygSurface('doc-1', wyDeps(), null)
+      .applyPosition({ blockId: 'blk-9', blockCursor: { pane: 'stdout' } })
+    expect(restored).toEqual({ pane: 'stdout' })
+  })
+
+  it('clamps a stale token past the textarea length', () => {
+    const host = document.createElement('div')
+    host.setAttribute('data-id', 'code-7')
+    const ta = document.createElement('textarea')
+    ta.className = 'sieve-block__edit'
+    ta.value = 'ab'
+    host.appendChild(ta)
+    document.body.appendChild(host)
+
+    new TestWysiwygSurface('doc-1', wyDeps(), null)
+      .applyPosition({ blockId: 'code-7', blockCursor: { start: 99, end: 99 } })
+    expect(ta.selectionStart).toBe(2)
+    expect(ta.selectionEnd).toBe(2)
+  })
+
+  // ── round-trip: capture → context → applyPosition restores the inner cursor ─────
+  it('blockCursor round-trips through capture → context → applyPosition', () => {
+    const host = document.createElement('div')
+    host.setAttribute('data-id', 'code-7')
+    const ta = document.createElement('textarea')
+    ta.className = 'sieve-block__edit'
+    ta.value = 'print(1)'
+    host.appendChild(ta)
+    document.body.appendChild(host)
+    ta.focus()
+    ta.selectionStart = ta.selectionEnd = 4
+
+    const blockCursor = surfaceWithDoc().feedSelection().blockCursor
+    expect(blockCursor).toEqual({ start: 4, end: 4 })
+
+    ta.blur()
+    new TestWysiwygSurface('doc-1', wyDeps(), null)
+      .applyPosition({ blockId: 'code-7', blockCursor, caret: 12 })
+    expect(document.activeElement).toBe(ta)
+    expect(ta.selectionStart).toBe(4)
+  })
+
+  // ── doc-caret CLAMP branch, driving the surface's own this.tiptap seam ──────────
+  it('doc-caret branch clamps a range past the current doc size', () => {
+    let captured = null
+    const stubEd = {
+      view: { focus() {} },
+      state: { doc: { content: { size: 10 } } },
+      commands: { setTextSelection(r) { captured = r } },
+    }
+    new TestWysiwygSurface('doc-1', wyDeps(), stubEd)
+      .applyPosition({ blockId: null, blockCursor: null, range: { from: 99, to: 99 } })
+    expect(captured).toEqual({ from: 10, to: 10 })
   })
 })

@@ -433,7 +433,7 @@
 
   var isAskPanelPinned = window.initAskPanelPinned || false
   var askLabelTimeout = null
-  var focusReturn = null   // focus context (editor/block/markdown) captured on jump-in to the Ask box
+  var focusReturn = null   // SelectionContext coordinate pulled on jump-in to the Ask box
 
   document.addEventListener('sieve:ask-panel-toggled', function(e) {
     isAskPanelPinned = e.detail
@@ -515,10 +515,10 @@
       returnToEditor()
       return
     }
-    // Jump IN: capture where focus was (main editor, a block's inner editor, or
-    // the markdown textarea) so jump-out restores it exactly. Must run before the
-    // textarea steals focus below — activeElement is still the source here.
-    focusReturn = window.TipTap.captureFocusContext(currentEditor)
+    // Jump IN: pull where focus was (the SelectionContext coordinate — doc caret +
+    // optional block-inner blockCursor) so jump-out restores it exactly. Must run
+    // before the textarea steals focus below — the coordinate is still live here.
+    focusReturn = window.sieveWorkspace.getSelectionContext()
 
     askDialog.classList.add('is-open')
     // Seed the label from the live target (pull-at-open); the D4c subscription keeps it
@@ -795,10 +795,10 @@
   function returnToEditor() {
     if (!isAskPanelPinned && askDialog) askDialog.classList.remove('is-open')
     // Restore wherever we were on jump-in: main editor caret, a block's inner
-    // editor caret, or the markdown textarea. restoreFocusContext re-resolves by
-    // position against the current doc, so a doc edit while we were in the box
-    // can't make the restore silently throw.
-    window.TipTap.restoreFocusContext(currentEditor, focusReturn)
+    // editor caret, or the markdown textarea. setPosition re-resolves by position
+    // against the current doc, so a doc edit while we were in the box can't make the
+    // restore silently throw.
+    window.sieveWorkspace.setPosition(focusReturn)
   }
 
   function doAsk(textarea, panel) {
@@ -840,11 +840,10 @@
     if (currentMode !== 'wysiwyg' && currentMode !== 'markdown') return
     if (currentMode === 'wysiwyg' && !currentEditor) return
     aiReloadInProgress = true
-    // Capture focus context before the async fetch so caret is preserved across
-    // the re-render (covers TRANSFORM, paste, extract, and AI block resolve).
-    var fctx = (currentMode === 'wysiwyg' && window.TipTap && window.TipTap.captureFocusContext)
-      ? window.TipTap.captureFocusContext(currentEditor)
-      : null
+    // Pull the focus coordinate before the async fetch so caret is preserved across
+    // the re-render (covers TRANSFORM, paste, extract, and AI block resolve). The
+    // pull/restore is surface-polymorphic, so no wysiwyg/markdown guard is needed.
+    var fctx = window.sieveWorkspace.getSelectionContext()
     fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid))
       .then(function (r) { return r.json() })
       .then(function (data) {
@@ -864,9 +863,7 @@
           // markdown render path for wysiwyg.
           surface.reloadFromBlocks(data.blocks || [], { allowEmpty: true })
           aiReloadInProgress = false
-          if (window.TipTap && window.TipTap.restoreFocusContext) {
-            window.TipTap.restoreFocusContext(currentEditor, fctx)
-          }
+          window.sieveWorkspace.setPosition(fctx)
         } else if (currentMode === 'markdown' && surface) {
           surface.replaceBody(body)
           aiReloadInProgress = false
