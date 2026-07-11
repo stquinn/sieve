@@ -199,10 +199,10 @@
     var T = window.TipTap || {}
     var getIcon = T.getSieveIcon || function() { return '' }
     items.push({ icon: getIcon('web-clip'), label: linkUrl ? 'Insert Web Clip from Link' : 'Insert Web Clip...', action: function () {
-      window._sieveOpenInternalize && window._sieveOpenInternalize(linkUrl || '')
+      window.sieveWorkspace && window.sieveWorkspace.openWebClipDialog(linkUrl || '')
     }})
     items.push({ icon: getIcon('smart-card'), label: linkUrl ? 'Insert URL Card from Link' : 'Insert URL Card...', action: function () {
-      window._sieveOpenSmartCard && window._sieveOpenSmartCard(linkUrl || '')
+      window.sieveWorkspace && window.sieveWorkspace.openUrlCardDialog(linkUrl || '')
     }})
     items.push({ icon: getIcon('code'), label: 'Insert Code Block', action: function () {
       document.dispatchEvent(new CustomEvent('sieve:create-block', { detail: { kind: 'code' } }))

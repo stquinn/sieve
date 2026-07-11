@@ -1906,45 +1906,71 @@ describe('AbstractEditor.softReload (P4.A)', () => {
   })
 })
 
-describe('SieveWorkspace chrome delegation (P2.C transitional)', () => {
-  it('provideChrome registers impls and each public method delegates', () => {
+describe('SieveWorkspace chrome delegation (P2.C transitional; P4.C dissolved)', () => {
+  // P4.C moved the search overlay + the two insert dialogs OUT of the provideChrome
+  // registry into Workspace-owned children (SearchOverlay / InsertDialogs, built by
+  // bootChrome). Their verbs (toggleSearch / openWebClipDialog / openUrlCardDialog)
+  // now delegate to the children DIRECTLY — they no longer route through
+  // provideChrome/#chromeCall. Only copyDocumentAsMarkdown still rides the registry
+  // (its impl stays in editor.js until P4.D). These tests pin the post-P4.C contract.
+
+  it('copyDocumentAsMarkdown still delegates through provideChrome/#chromeCall', () => {
     const w = new SieveWorkspace()
-    const impls = {
-      toggleSearch: vi.fn(),
-      openWebClipDialog: vi.fn(),
-      openUrlCardDialog: vi.fn(),
-      copyDocumentAsMarkdown: vi.fn(),
-    }
+    const impls = { copyDocumentAsMarkdown: vi.fn() }
     w.provideChrome(impls)
-    w.toggleSearch()
-    w.openWebClipDialog()
-    w.openUrlCardDialog()
     w.copyDocumentAsMarkdown()
-    expect(impls.toggleSearch).toHaveBeenCalledTimes(1)
-    expect(impls.openWebClipDialog).toHaveBeenCalledTimes(1)
-    expect(impls.openUrlCardDialog).toHaveBeenCalledTimes(1)
     expect(impls.copyDocumentAsMarkdown).toHaveBeenCalledTimes(1)
   })
 
-  it('unregistered chrome methods warn and no-op; partial registration merges', () => {
+  it('unregistered copyDocumentAsMarkdown warns and no-ops; partial registration merges', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       const w = new SieveWorkspace()
-      expect(() => {
-        w.toggleSearch(); w.openWebClipDialog(); w.openUrlCardDialog(); w.copyDocumentAsMarkdown()
-      }).not.toThrow()
-      expect(warn).toHaveBeenCalledTimes(4)
+      expect(() => { w.copyDocumentAsMarkdown() }).not.toThrow()
+      expect(warn).toHaveBeenCalledTimes(1)
       const a = vi.fn()
       const b = vi.fn()
-      w.provideChrome({ toggleSearch: a })
-      w.provideChrome({ copyDocumentAsMarkdown: b }) // merges, does not replace
-      w.toggleSearch()
+      w.provideChrome({ copyDocumentAsMarkdown: a })
+      w.provideChrome({ copyDocumentAsMarkdown: b }) // merges, does not replace (b wins)
       w.copyDocumentAsMarkdown()
-      expect(a).toHaveBeenCalledTimes(1)
+      expect(a).not.toHaveBeenCalled()
       expect(b).toHaveBeenCalledTimes(1)
     } finally {
       warn.mockRestore()
     }
+  })
+
+  it('the search + insert-dialog verbs delegate to the Workspace children, NOT #chromeCall', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const w = new SieveWorkspace()
+      w.bootChrome()
+      const search = w.searchOverlay
+      const dialogs = w.insertDialogs
+      expect(search).toBeTruthy()
+      expect(dialogs).toBeTruthy()
+      const toggle = vi.spyOn(search, 'toggle').mockImplementation(() => {})
+      const clip = vi.spyOn(dialogs, 'openWebClip').mockImplementation(() => {})
+      const card = vi.spyOn(dialogs, 'openUrlCard').mockImplementation(() => {})
+
+      w.toggleSearch()
+      w.openWebClipDialog('https://a.example')
+      w.openUrlCardDialog('https://b.example')
+
+      expect(toggle).toHaveBeenCalledTimes(1)
+      expect(clip).toHaveBeenCalledWith('https://a.example')
+      expect(card).toHaveBeenCalledWith('https://b.example')
+      // These verbs never hit the provideChrome registry → no unregistered-chrome warn.
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('the search + insert-dialog verbs null-guard safely before bootChrome', () => {
+    const w = new SieveWorkspace()
+    // No bootChrome() → children are null; verbs must no-op, not throw.
+    expect(() => { w.toggleSearch(); w.openWebClipDialog(); w.openUrlCardDialog() }).not.toThrow()
   })
 })
 

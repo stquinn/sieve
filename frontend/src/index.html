@@ -688,7 +688,7 @@
           }
           
           if (btn.id === 'tb-clip-btn') {
-            if (window._sieveOpenInternalize) window._sieveOpenInternalize();
+            window.sieveWorkspace?.openWebClipDialog();
             return;
           }
           if (btn.id === 'tb-explain-btn') {

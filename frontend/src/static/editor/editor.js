@@ -124,7 +124,6 @@
   }
 
   var blobInterceptorCleanup = null
-  var searchOverlay = null
 
   // sendCreateBlock is the ONE UI-triggered create path: a create-block block-op
   // carrying kind, attrs, and the document index from the editor's captured insert
@@ -140,9 +139,6 @@
     ])
   }
 
-
-  var internalizeDialog = null
-  var richLinkDialog = null
 
   // ── Toolbar active-state sync ─────────────────────────────────────────────────
 
@@ -217,7 +213,6 @@
         window.__stashActiveTabUuid = uuid
 
         var isMarkdown = wantMode === 'markdown' || data.mode === 'markdown' || uuid.startsWith('prompt:')
-        ensureOverlays()
 
         var ed = _activeEditor()
         if (!ed) return
@@ -346,251 +341,19 @@
     return currentEditor.state.doc.textContent
   }
 
-  function ensureOverlays() {
-    if (!searchOverlay) searchOverlay = createSearchOverlay()
-    if (!internalizeDialog) internalizeDialog = createInternalizeDialog()
-    if (!richLinkDialog) richLinkDialog = createSmartCardDialog()
-  }
-
   // ── Ask panel (P4.B) ──────────────────────────────────────────────────────────
   // The Ask panel + the AI ask/explain seam moved OUT of this IIFE: the Ask panel
   // is now a permanent Workspace child (shell/ask-panel.js), and the ai-block doc
   // mutation is a single editor method (AbstractEditor.askAi). editor.js no longer
   // wires the panel, owns the pinned flag, or consumes sieve:ai-ask/sieve:ai-explain.
 
-  // ── Rich Link dialog ──────────────────────────────────────────────────────────
-
-  function createSmartCardDialog() {
-    var dialog = document.createElement('dialog')
-    dialog.className = 'internalize-popup ask-popup'
-
-    var header = document.createElement('div'); header.className = 'ask-popup__header'
-    var label = document.createElement('span'); label.className = 'ask-popup__label'; label.textContent = 'Insert Link Card'
-    var closeBtn = makeBtn('ask-popup__close', '✕', function () { dialog.close() })
-    closeBtn.title = 'Close (Esc)'
-    header.appendChild(label); header.appendChild(closeBtn)
-
-    var urlInput = document.createElement('input')
-    urlInput.type = 'url'
-    urlInput.className = 'internalize-popup__input'
-    urlInput.placeholder = 'https://…'
-
-    var errorMsg = document.createElement('div')
-    errorMsg.className = 'internalize-popup__error'
-    errorMsg.textContent = 'Please enter a valid http:// or https:// URL'
-    errorMsg.style.display = 'none'
-
-    urlInput.addEventListener('input', function () { errorMsg.style.display = 'none' })
-
-    function trySubmit() {
-      var url = urlInput.value.trim()
-      if (!isValidURL(url)) { errorMsg.style.display = ''; return }
-      doCreateSmartCard(url)
-      dialog.close()
-    }
-
-    var footer = document.createElement('div'); footer.className = 'ask-popup__footer'
-    var insertBtn = makeBtn('internalize-popup__btn', 'Insert Card', trySubmit)
-    footer.appendChild(insertBtn)
-
-    urlInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') { e.preventDefault(); dialog.close() }
-      if (e.key === 'Enter') { e.preventDefault(); trySubmit() }
-    })
-
-    dialog.appendChild(header)
-    dialog.appendChild(urlInput)
-    dialog.appendChild(errorMsg)
-    dialog.appendChild(footer)
-    document.body.appendChild(dialog)
-    return dialog
-  }
-
-  function openSmartCardDialog(prefillUrl) {
-    if (!richLinkDialog) return
-    var urlInput = richLinkDialog.querySelector('input')
-    if (urlInput) urlInput.value = prefillUrl || ''
-    if (!richLinkDialog.open) richLinkDialog.showModal()
-    if (urlInput) urlInput.focus()
-  }
-
-  function doCreateSmartCard(href) {
-    if (!currentUuid) return
-    if (!currentEditor && currentMode !== 'markdown') return
-    var ed = _activeEditor()
-    if (ed) ed.setInsertPos(ed.captureInsertPos(ed.kindIsInline('smart-card')))
-    sendCreateBlock('smart-card', { href: href })
-  }
-
-  // ── Internalize dialog ────────────────────────────────────────────────────────
-
-  function isValidURL(url) {
-    try {
-      var u = new URL(url)
-      return u.protocol === 'http:' || u.protocol === 'https:'
-    } catch (e) {
-      return false
-    }
-  }
-
-  function createInternalizeDialog() {
-    var dialog = document.createElement('dialog')
-    dialog.className = 'internalize-popup ask-popup'
-
-    var header = document.createElement('div'); header.className = 'ask-popup__header'
-    var label = document.createElement('span'); label.className = 'ask-popup__label'; label.textContent = 'Insert Web Clip'
-    var closeBtn = makeBtn('ask-popup__close', '✕', function () { dialog.close() })
-    closeBtn.title = 'Close (Esc)'
-    header.appendChild(label); header.appendChild(closeBtn)
-
-    var urlInput = document.createElement('input')
-    urlInput.type = 'url'
-    urlInput.className = 'internalize-popup__input'
-    urlInput.placeholder = 'https://…'
-
-    var errorMsg = document.createElement('div')
-    errorMsg.className = 'internalize-popup__error'
-    errorMsg.textContent = 'Please enter a valid http:// or https:// URL'
-    errorMsg.style.display = 'none'
-
-    urlInput.addEventListener('input', function () { errorMsg.style.display = 'none' })
-
-    function trySubmit(mode) {
-      var url = urlInput.value.trim()
-      if (!isValidURL(url)) { errorMsg.style.display = ''; return }
-      if (mode === 'card') {
-        doCreateSmartCard(url)
-      } else {
-        doInternalize(url, mode)
-      }
-      dialog.close()
-    }
-
-    var footer = document.createElement('div'); footer.className = 'ask-popup__footer'
-    var fetchBtn = makeBtn('internalize-popup__btn', 'Fetch', function () { trySubmit('fetch') })
-    var summariseBtn = makeBtn('internalize-popup__btn', 'Summarise', function () { trySubmit('summarise') })
-    var cardBtn = makeBtn('internalize-popup__btn', 'Card', function () { trySubmit('card') })
-    footer.appendChild(fetchBtn); footer.appendChild(summariseBtn); footer.appendChild(cardBtn)
-
-    urlInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') { e.preventDefault(); dialog.close() }
-      if (e.key === 'Enter') { e.preventDefault(); trySubmit('fetch') }
-    })
-
-    dialog.appendChild(header)
-    dialog.appendChild(urlInput)
-    dialog.appendChild(errorMsg)
-    dialog.appendChild(footer)
-    document.body.appendChild(dialog)
-    return dialog
-  }
-
-  function openInternalizeDialog(prefillUrl) {
-    if (!internalizeDialog) return
-    var urlInput = internalizeDialog.querySelector('input')
-    if (urlInput) urlInput.value = prefillUrl || ''
-    if (!internalizeDialog.open) internalizeDialog.showModal()
-    if (urlInput) urlInput.focus()
-  }
-
-  function doInternalize(source, mode) {
-    if (!currentUuid) return
-    if (!currentEditor && currentMode !== 'markdown') return
-    var ed = _activeEditor()
-    if (ed) ed.setInsertPos(ed.captureInsertPos(ed.kindIsInline('web-clip')))
-    sendCreateBlock('web-clip', { source: source, mode: mode })
-  }
-
-  // ── Search overlay ────────────────────────────────────────────────────────────
-
-  function createSearchOverlay() {
-    var overlay = document.createElement('div')
-    overlay.className = 'editor-search-overlay'
-
-    var topRow = document.createElement('div')
-    topRow.className = 'editor-search__top-row'
-
-    var input = document.createElement('input')
-    input.placeholder = 'Search...'
-    input.className = 'editor-search__input'
-
-    var stats = document.createElement('span')
-    stats.className = 'editor-search__stats'
-    stats.textContent = '0/0'
-
-    topRow.appendChild(input); topRow.appendChild(stats)
-
-    var bottomRow = document.createElement('div')
-    bottomRow.className = 'editor-search__bottom-row'
-
-    var btnPrev = makeBtn('editor-search__btn', '\u2191', function() {
-        if (currentMode === 'markdown') { /* TODO */ }
-        else if (currentEditor) currentEditor.commands.prevSearchResult()
-        updateStats()
-    })
-    
-    var btnNext = makeBtn('editor-search__btn', '\u2193', function() {
-        if (currentMode === 'markdown') { /* TODO */ }
-        else if (currentEditor) currentEditor.commands.nextSearchResult()
-        updateStats()
-    })
-
-    var btnClose = makeBtn('editor-search__close', '\u2715', function() {
-        overlay.style.display = 'none'
-        if (currentEditor) {
-            currentEditor.commands.clearSearch()
-            currentEditor.commands.focus()
-        }
-    })
-
-    bottomRow.appendChild(btnPrev); bottomRow.appendChild(btnNext); bottomRow.appendChild(btnClose)
-    overlay.appendChild(topRow); overlay.appendChild(bottomRow)
-
-    function updateStats() {
-        if (currentMode === 'markdown') {
-            stats.textContent = '0/0'
-            return
-        }
-        if (!currentEditor) return
-        var s = currentEditor.storage.search
-        if (s && s.results) {
-            stats.textContent = (s.results.length > 0 ? (s.currentIndex + 1) : 0) + '/' + s.results.length
-        }
-    }
-
-    input.addEventListener('input', function() {
-        var term = input.value
-        if (currentMode === 'markdown') {
-            // Placeholder
-        } else if (currentEditor) {
-            currentEditor.commands.setSearchTerm(term)
-            updateStats()
-        }
-    })
-
-    input.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter') {
-            e.preventDefault()
-            if (e.shiftKey) {
-                if (currentEditor) currentEditor.commands.prevSearchResult()
-            } else {
-                if (currentEditor) currentEditor.commands.nextSearchResult()
-            }
-            updateStats()
-        }
-        if (e.key === 'Escape') {
-            e.preventDefault()
-            overlay.style.display = 'none'
-            if (currentEditor) {
-                currentEditor.commands.clearSearch()
-                currentEditor.commands.focus()
-            }
-        }
-    })
-
-    document.body.appendChild(overlay)
-    return overlay
-  }
+  // ── Insert dialogs + search overlay (P4.C) ────────────────────────────────────
+  // The two URL insert dialogs (smart-card + web-clip) and the document search
+  // overlay moved OUT of this IIFE into Workspace-owned children:
+  // shell/insert-dialogs.js (InsertDialogs) and shell/search-overlay.js
+  // (SearchOverlay). editor.js no longer builds their DOM, owns the isValidURL
+  // gate, or wires the search commands — the workspace verbs
+  // (openWebClipDialog / openUrlCardDialog / toggleSearch) delegate to the children.
 
   // ── AI jobs (P4.B) ─────────────────────────────────────────────────────────────
   //
@@ -610,18 +373,6 @@
   // → re-mints ids → corrupts on save-back). All wysiwyg loads now render the
   // backend BLOCK LIST via renderBlocksIntoEditor; markdown is set only into the
   // markdown-mode textarea, and only Go parses document structure from markdown.
-
-  function toggleSearch() {
-    if (!searchOverlay) ensureOverlays()
-    if (searchOverlay.style.display === 'none') {
-      searchOverlay.style.display = 'flex'
-      var input = searchOverlay.querySelector('input')
-      if (input) { input.focus(); input.select() }
-    } else {
-      searchOverlay.style.display = 'none'
-      if (currentEditor) currentEditor.commands.clearSearch()
-    }
-  }
 
   // The mode flip itself is AbstractEditor.toggleMode/setMode (P2.B/P2.C): an
   // AWAITED in-place surface swap with stay-on-failure semantics. The menu and
@@ -662,23 +413,18 @@
       .catch(function (err) { console.warn('export-markdown copy failed', err) })
   }
 
-  // ── TRANSITIONAL workspace-chrome registration (P2.C; dies P4) ────────────────
-  // The native menu (main.go buildMenu) now calls the component API directly —
-  // window.sieveWorkspace.toggleSearch() / openWebClipDialog() /
-  // openUrlCardDialog() / copyDocumentAsMarkdown(); the four chrome CustomEvent
-  // hops (toggle-search / insert-webclip / insert-url-card / export-markdown)
-  // are GONE. The implementations still live in this IIFE; this single boot-time
-  // registration fronts them on the workspace until chrome becomes
-  // Workspace-owned children (P4). DOMContentLoaded ordering is safe: the shell
-  // modules are deferred scripts, so window.sieveWorkspace exists by then; this
-  // IIFE must never touch it at parse time (index.html script order).
+  // ── TRANSITIONAL workspace-chrome registration (P2.C; dies P4.D) ──────────────
+  // The search overlay + the two insert dialogs dissolved out of this registry in
+  // P4.C (now Workspace-owned children; their verbs delegate directly). Only
+  // copyDocumentAsMarkdown still rides provideChrome — its impl stays in this IIFE
+  // until P4.D. The native menu calls the component API directly
+  // (window.sieveWorkspace.copyDocumentAsMarkdown()). DOMContentLoaded ordering is
+  // safe: the shell modules are deferred scripts, so window.sieveWorkspace exists
+  // by then; this IIFE must never touch it at parse time (index.html script order).
   document.addEventListener('DOMContentLoaded', function () {
     var ws = window.sieveWorkspace
     if (!ws || typeof ws.provideChrome !== 'function') return
     ws.provideChrome({
-      toggleSearch: toggleSearch,
-      openWebClipDialog: function () { ensureOverlays(); openInternalizeDialog() },
-      openUrlCardDialog: function () { ensureOverlays(); openSmartCardDialog() },
       copyDocumentAsMarkdown: copyDocumentAsMarkdown,
     })
     // The Ask panel's selection-stream subscription (label re-render) moved into
@@ -724,17 +470,13 @@
   function extractDomain(url) {
     try { return new URL(url).hostname } catch (_) { return url }
   }
-
-  function makeBtn(cls, text, onClick) {
-    var btn = document.createElement('button')
-    btn.className = cls; btn.textContent = text
-    btn.addEventListener('click', onClick)
-    return btn
-  }
+  // makeBtn moved into the P4.C children (InsertDialogs / SearchOverlay each own a
+  // private #makeBtn) — it had no remaining caller in this IIFE after the moves.
 
   window._editorSave = flushSave
-  window._sieveOpenInternalize = function (url) { ensureOverlays(); openInternalizeDialog(url) }
-  window._sieveOpenSmartCard = function (url) { ensureOverlays(); openSmartCardDialog(url) }
+  // The former window._sieveOpenInternalize / _sieveOpenSmartCard globals retired
+  // in P4.C: the insert dialogs are Workspace children; callers (context-menu,
+  // toolbar) call window.sieveWorkspace.openWebClipDialog(url) / openUrlCardDialog(url).
 
   window._sieveCopyImageToClipboard = function(src) {
     if (!navigator.clipboard || !navigator.clipboard.write) return

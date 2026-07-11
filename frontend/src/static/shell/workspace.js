@@ -13,14 +13,14 @@
 
 import { SieveTab } from './tab.js'
 import { AskPanel } from './ask-panel.js'
+import { InsertDialogs } from './insert-dialogs.js'
+import { SearchOverlay } from './search-overlay.js'
 
 /**
- * TRANSITIONAL (P2.C; dies P4 when chrome becomes Workspace-owned children):
- * the legacy chrome implementations editor.js registers via provideChrome.
+ * TRANSITIONAL (P2.C; the search/dialogs half dissolved in P4.C — those verbs now
+ * delegate to Workspace-owned children directly. Only copyDocumentAsMarkdown still
+ * rides this registry, until P4.D retires it too).
  * @typedef {object} WorkspaceChrome
- * @property {() => void} toggleSearch — show/hide the document search overlay
- * @property {() => void} openWebClipDialog — the Insert WebClip dialog
- * @property {() => void} openUrlCardDialog — the Insert URL Card dialog
  * @property {() => void} copyDocumentAsMarkdown — clean markdown export → clipboard
  */
 
@@ -249,33 +249,41 @@ export class SieveWorkspace {
     return tab
   }
 
-  // ── TRANSITIONAL chrome seam (P2.C; DEATH DATE P4 — chrome becomes Workspace-
-  // owned child components and this registry dies). The implementations (search
-  // overlay, insert dialogs, export fetch) still live in editor.js's IIFE; it
-  // registers them once at boot, and the four public methods below ARE the
-  // component API the native menu calls (main.go buildMenu). Mirrors the
-  // sanctioned P2.B DI pattern: scaffolding with a death date, named as such.
+  // ── Chrome seam (P4.C dissolved the search/dialogs half) ──────────────────────
+  // The search overlay and the two insert dialogs are now Workspace-owned children
+  // (SearchOverlay / InsertDialogs, constructed in bootChrome); their verbs below
+  // delegate to the children DIRECTLY (no registry hop). Only copyDocumentAsMarkdown
+  // still rides the TRANSITIONAL provideChrome registry (its impl stays in editor.js
+  // until P4.D). The public verbs ARE the component API the native menu calls
+  // (main.go buildMenu). Mirrors the sanctioned P2.B DI pattern: scaffolding with a
+  // death date, named as such.
 
   /** @type {Partial<WorkspaceChrome>} */
   #chrome = {}
 
   /**
-   * Registers legacy chrome implementations (TRANSITIONAL — see banner above).
-   * Partial registrations merge.
+   * Registers legacy chrome implementations (TRANSITIONAL — copyDocumentAsMarkdown
+   * only, post-P4.C). Partial registrations merge.
    * @param {Partial<WorkspaceChrome>} impls
    */
   provideChrome(impls) {
     this.#chrome = Object.assign({}, this.#chrome, impls)
   }
 
-  /** Shows/hides the document search overlay. */
-  toggleSearch() { this.#chromeCall('toggleSearch') }
+  /** Shows/hides the document search overlay (P4.C child). */
+  toggleSearch() { this.#searchOverlay?.toggle() }
 
-  /** Opens the Insert WebClip dialog. */
-  openWebClipDialog() { this.#chromeCall('openWebClipDialog') }
+  /**
+   * Opens the Insert Web Clip dialog (P4.C child).
+   * @param {string} [url] optional href prefill (context-menu link flow)
+   */
+  openWebClipDialog(url) { this.#insertDialogs?.openWebClip(url) }
 
-  /** Opens the Insert URL Card dialog. */
-  openUrlCardDialog() { this.#chromeCall('openUrlCardDialog') }
+  /**
+   * Opens the Insert URL Card dialog (P4.C child).
+   * @param {string} [url] optional href prefill (context-menu link flow)
+   */
+  openUrlCardDialog(url) { this.#insertDialogs?.openUrlCard(url) }
 
   /** Copies the active document's clean markdown export to the clipboard. */
   copyDocumentAsMarkdown() { this.#chromeCall('copyDocumentAsMarkdown') }
@@ -390,23 +398,38 @@ export class SieveWorkspace {
     }
   }
 
-  // ── Workspace-owned chrome children (P4.B: the Ask panel) ────────────────────
+  // ── Workspace-owned chrome children (P4.B: Ask panel; P4.C: dialogs + search) ─
 
   /** @type {AskPanel|null} the permanent Ask-panel child (constructed once) */
   #askPanel = null
 
+  /** @type {InsertDialogs|null} the URL insert dialogs child (P4.C) */
+  #insertDialogs = null
+
+  /** @type {SearchOverlay|null} the document search overlay child (P4.C) */
+  #searchOverlay = null
+
   /**
-   * Constructs the Workspace-owned chrome children (P4.B: the Ask panel). Called
-   * once at module load next to startTabbar() (DOM-touch stays out of the
-   * constructor so vitest can import the class headless). The AskPanel wires the
-   * structural #ask-panel and null-guards its absence.
+   * Constructs the Workspace-owned chrome children (P4.B: the Ask panel; P4.C: the
+   * insert dialogs + search overlay). Called once at module load next to
+   * startTabbar() (DOM-touch stays out of the constructors so vitest can import the
+   * classes headless; the children build their own DOM lazily on first open). The
+   * AskPanel wires the structural #ask-panel and null-guards its absence.
    */
   bootChrome() {
     if (!this.#askPanel) this.#askPanel = new AskPanel(this)
+    if (!this.#insertDialogs) this.#insertDialogs = new InsertDialogs(this)
+    if (!this.#searchOverlay) this.#searchOverlay = new SearchOverlay(this)
   }
 
   /** @returns {AskPanel|null} the permanent Ask-panel child (entry points reach it here) */
   get askPanel() { return this.#askPanel }
+
+  /** @returns {InsertDialogs|null} the URL insert dialogs child (P4.C) */
+  get insertDialogs() { return this.#insertDialogs }
+
+  /** @returns {SearchOverlay|null} the document search overlay child (P4.C) */
+  get searchOverlay() { return this.#searchOverlay }
 
   // ── Tabbar boot + SSE ownership (P2.D — relocated off the #htmx-tabbar div) ──
 
