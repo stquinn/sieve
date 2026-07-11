@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { docWithRange, docWithNodeSelection, docWithCaretNear, build } from './helpers/editor-fixture.js'
 import { contextFor } from './helpers/selection-context.js'
-import { buildSelectionDescriptor } from '../src/static/shell/surfaces/selection-descriptor.js'
+import { WysiwygSurface } from '../src/static/shell/surfaces/wysiwyg-surface.js'
 
 // ask-context.test.js — P3.D (stateless Ask panel, #29 task 5).
 //
@@ -161,16 +161,46 @@ describe('read-only-region DOM drag folds into a non-document target (F5)', () =
   // read-only NodeView region yields a `selection` target whose range IS the folded
   // region, never a `document` target. The panel just reads context.target — this guards
   // the fold P3.D relies on.
+  //
+  // P3.F folded the descriptor core into WysiwygSurface, so this drives the REAL
+  // dom-fold path (the surfaces.test.js F5 recipe): a caret in the doc, then a stubbed
+  // window.getSelection + injected T.domSelectionBlockRange retarget the effective range
+  // onto the sieve region and supply the drag text. More faithful than the old
+  // hand-built `er` — it runs feedSelection's actual read-only-region fold branch.
+
+  // Local surface driving the fixture through feedSelection with an injected T (the
+  // TestWysiwygSurface seam: public ctor + `get tiptap()` override — no backdoor). T
+  // is forwarded into deps so the surface's #T picks it up.
+  class F5Surface extends WysiwygSurface {
+    constructor(editor, T) {
+      super('t', {
+        applyBlockOps() {}, requestSave() {}, onPaste() { return false },
+        onDrop() { return false }, takeInsertPos() { return null }, notify() {}, T,
+      })
+      this._ed = editor
+    }
+    get tiptap() { return this._ed }
+  }
+
   it('a dom-fold selection over a sieve region → range/selection target, not document', () => {
     const nodes = [build.p('x', 'pr-1'), build.sieveCode('co-1')]
     const { editor } = docWithCaretNear(nodes, 1)   // caret in the doc; the DOM fold drives the range
     const regionFrom = nodes[0].nodeSize             // start of the sieve-code node
     const regionTo = regionFrom + nodes[1].nodeSize  // its end
-    const er = { from: regionFrom, to: regionTo, active: true, isBlockRange: false, isNodeSelection: false }
-    const raw = buildSelectionDescriptor(
-      editor.state.doc, editor.state.selection, er, window.TipTap, 'dragged text')
-    expect(raw.selectionType).toBe('range')          // dom fold → 'range' (descriptor rule)
-    expect(raw.target.kind).toBe('selection')        // NOT 'document'
-    expect(raw.target.range).toEqual({ from: regionFrom, to: regionTo })
+    const T = {
+      getSieveBlockLabel: window.TipTap.getSieveBlockLabel,
+      getBlockSelectionRange: () => ({ from: 1, to: 1, active: false, isBlockRange: false, isNodeSelection: false }),
+      domSelectionBlockRange: () => ({ from: regionFrom, to: regionTo }),
+    }
+    const prev = window.getSelection
+    window.getSelection = () => ({ isCollapsed: false, toString: () => 'dragged text', rangeCount: 1 })
+    try {
+      const raw = new F5Surface(editor, T).feedSelection()
+      expect(raw.selectionType).toBe('range')          // dom fold → 'range' (descriptor rule)
+      expect(raw.target.kind).toBe('selection')        // NOT 'document'
+      expect(raw.target.range).toEqual({ from: regionFrom, to: regionTo })
+    } finally {
+      window.getSelection = prev
+    }
   })
 })

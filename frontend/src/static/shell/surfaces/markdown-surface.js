@@ -19,7 +19,6 @@
 
 import { AbstractSurface, SurfaceEvent } from './abstract-surface.js'
 import { EditorMode } from '../editor-mode.js'
-import { quoteSnippet } from './selection-descriptor.js'
 
 /**
  * Injected collaborators — content services commanding into this document's
@@ -172,7 +171,7 @@ export class MarkdownSurface extends AbstractSurface {
         selectedText: sel, blockId: null, blockIds: [], blockKind: null, ref: null,
         // Markdown is a verbatim buffer — no block hosts an inner cursor.
         blockCursor: null,
-        target: { kind: 'selection', ref: 'doc', range: null, label: quoteSnippet(sel) },
+        target: { kind: 'selection', ref: 'doc', range: null, label: this.quoteSnippet(sel) },
       }
     }
     return {

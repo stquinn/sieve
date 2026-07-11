@@ -128,6 +128,26 @@ export class AbstractSurface {
    * @param {import('../selection-model.js').SelectionContext} ctx
    */
   applyPosition(ctx) { /* base: nothing to focus */ }
+
+  /**
+   * Quote + truncate a snippet on a word boundary near 20 chars — the ONE
+   * content-blind label helper both surfaces share (MarkdownSurface for its
+   * textarea sub-range label; WysiwygSurface's block-label path). String-only:
+   * no PM/block knowledge, so it belongs on the shared base.
+   * @param {string} text
+   * @returns {string}
+   */
+  quoteSnippet(text) {
+    const s = (text || '').replace(/\s+/g, ' ').trim()
+    if (!s) return 'Selection'
+    if (s.length > 20) {
+      let cut = s.slice(0, 20)
+      const sp = cut.lastIndexOf(' ')
+      if (sp > 8) cut = cut.slice(0, sp)
+      return '"' + cut + '…"'
+    }
+    return '"' + s + '"'
+  }
 }
 
 // Expose on window for classic-script access from editor.js.
