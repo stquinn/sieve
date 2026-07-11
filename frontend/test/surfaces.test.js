@@ -172,8 +172,13 @@ function wyDeps(overrides = {}) {
   return Object.assign({
     applyBlockOps: vi.fn(),
     requestSave: vi.fn(),
-    onPaste: vi.fn(() => false),
-    onDrop: vi.fn(() => false),
+    // P4.A: the surface OWNS #handleSmartPaste/#handleSmartDrop now (no onPaste/
+    // onDrop deps). The insert-index math it needs is editor-sourced (D-1):
+    // insertIndexForBlock = commitInsertIndex(captureInsertPos(false)),
+    // insertIndexForBlockAt(pos) = commitInsertIndex(pos), plus clearInsertPos.
+    insertIndexForBlock: vi.fn(() => 0),
+    insertIndexForBlockAt: vi.fn(() => 0),
+    clearInsertPos: vi.fn(),
     takeInsertPos: vi.fn(() => null),
     notify: vi.fn(),
   }, overrides)
@@ -356,7 +361,7 @@ function mountBundle(state) {
       this.schema = state.schema
       this.view = { dom: document.createElement('div'), dispatch: vi.fn() }
       this.storage = { markdown: { parser: { md: { render: (t) => t } } } }
-      this.commands = { insertContentAt: vi.fn(), focus: vi.fn() }
+      this.commands = { insertContentAt: vi.fn(), insertContent: vi.fn(), focus: vi.fn() }
       this.destroyed = false
       this.destroy = () => { this.destroyed = true }
       if (opts.onCreate) opts.onCreate()
@@ -431,6 +436,149 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     expect(s.tiptap).toBeNull()
     vi.advanceTimersByTime(1000)
     expect(deps.applyBlockOps).not.toHaveBeenCalled()
+  })
+})
+
+// ── WysiwygSurface: #handleSmartPaste / #handleSmartDrop (P4.A) ────────────────
+// The smart-paste / smart-drop pipelines moved off editor.js's IIFE into the
+// surface as #private methods, wired at editorProps.handlePaste / handleDrop.
+// They call the editor-sourced insert-index deps (insertIndexForBlock /
+// insertIndexForBlockAt / clearInsertPos) rather than the retired IIFE closures.
+// Undo-sacred: the ai-block reimport insertContent stays a TRACKED command.
+
+describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
+  let prevFetch
+  let prevWinFetch
+  let prevJsyaml
+  let prevTipTap
+  beforeEach(() => {
+    prevFetch = global.fetch
+    prevWinFetch = window.fetch
+    prevJsyaml = window.jsyaml
+    prevTipTap = window.TipTap
+    window.jsyaml = { load: (s) => JSON.parse(s) }
+    // The moved code reads window.TipTap.caretInRawTextBlock VERBATIM (P4.E keeps
+    // the bus). Default false (a normal prose caret); tests override per-case.
+    window.TipTap = { caretInRawTextBlock: () => false }
+  })
+  afterEach(() => {
+    global.fetch = prevFetch
+    window.fetch = prevWinFetch
+    window.jsyaml = prevJsyaml
+    window.TipTap = prevTipTap
+  })
+
+  // The surface calls bare fetch() — stub BOTH global + window so no test hits
+  // the network (happy-dom binds window.fetch).
+  function stubFetch(fn) { global.fetch = fn; window.fetch = fn }
+
+  // Mount a real WysiwygSurface via the recording bundle; expose the editorProps
+  // handlers (the wiring the editor gives ProseMirror) + the fake editor + deps.
+  function mountPaste(deps = wyDeps(), uuid = 'doc-1', opts = {}) {
+    if (opts.caretInRawTextBlock) window.TipTap.caretInRawTextBlock = opts.caretInRawTextBlock
+    const doc = fxSchema.nodes.doc.create(null, [build.p('one', 'b1')])
+    const state = EditorState.create({ schema: fxSchema, doc })
+    const bundle = mountBundle(state)
+    const s = new WysiwygSurface(uuid, Object.assign(deps, { T: bundle.T }))
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    s.mount(root, { body: '', blocks: [] })
+    const ed = bundle.editor()
+    return { s, ed, deps, props: ed.options.editorProps, uuid }
+  }
+
+  function clip({ text = '', html = '', slice = '', items = [] } = {}) {
+    return {
+      getData: (mime) => ({ 'text/plain': text, 'text/html': html, 'sieve/slice': slice }[mime] || ''),
+      items,
+      files: [],
+    }
+  }
+
+  it('editorProps.handlePaste is wired to the surface pipeline (not a retired onPaste dep)', () => {
+    const { props } = mountPaste()
+    expect(typeof props.handlePaste).toBe('function')
+    expect(typeof props.handleDrop).toBe('function')
+  })
+
+  it('ai-block reimport: a pasted ```ai-block fence → TRACKED commands.insertContent(sieve-ai-block), returns true', () => {
+    const { ed, props } = mountPaste()
+    const yaml = 'id: ab-1\nref: doc\nstatus: PENDING'
+    const text = '```ai-block\n' + JSON.stringify({ id: 'ab-1', ref: 'doc', status: 'PENDING' }) + '\n```'
+    const event = { clipboardData: clip({ text }), target: {}, preventDefault: vi.fn() }
+    const handled = props.handlePaste({}, event)
+    expect(handled).toBe(true)
+    expect(event.preventDefault).toHaveBeenCalled()
+    expect(ed.commands.insertContent).toHaveBeenCalledTimes(1)
+    const arg = ed.commands.insertContent.mock.calls[0][0]
+    expect(arg.type).toBe('sieve-ai-block')
+    expect(arg.attrs.id).toBe('ab-1')
+  })
+
+  it('caret in a raw-text block → returns false (native paste), no insert', () => {
+    const { ed, props } = mountPaste(wyDeps(), 'doc-1', { caretInRawTextBlock: () => true })
+    const event = { clipboardData: clip({ text: 'plain' }), target: {}, preventDefault: vi.fn() }
+    expect(props.handlePaste({}, event)).toBe(false)
+    expect(ed.commands.insertContent).not.toHaveBeenCalled()
+  })
+
+  it('smart-paste pipeline: computes the block index via insertIndexForBlock, POSTs, returns true', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ matched: true }) }))
+    stubFetch(fetchMock)
+    const deps = wyDeps({ insertIndexForBlock: vi.fn(() => 4) })
+    const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('hello') }
+    const { props } = mountPaste(deps, 'doc-1')
+    const event = { clipboardData: Object.assign(clip({ text: 'hello', items: [strItem] }), { items: [strItem] }), target: {}, preventDefault: vi.fn() }
+    const handled = props.handlePaste({}, event)
+    expect(handled).toBe(true)
+    expect(deps.insertIndexForBlock).toHaveBeenCalledTimes(1)
+    expect(event.preventDefault).toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(fetchMock).toHaveBeenCalledWith('/api/editor/smart-paste', expect.objectContaining({ method: 'POST' }))
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.index).toBe(4)
+  })
+
+  it('smart-paste no-match fallback: replays the original clipboard content via TRACKED insertContent', async () => {
+    stubFetch(vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ matched: false }) })))
+    const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('hello') }
+    const { ed, deps, props } = mountPaste(wyDeps(), 'doc-1')
+    const event = { clipboardData: Object.assign(clip({ text: 'hello', items: [strItem] }), { items: [strItem] }), target: {}, preventDefault: vi.fn() }
+    props.handlePaste({}, event)
+    // Drain the async chain: Promise.all → fetch → r.json() → result handler.
+    await new Promise((r) => setTimeout(r, 0))
+    expect(deps.clearInsertPos).toHaveBeenCalled()   // stale insert pos cleared
+    expect(ed.commands.insertContent).toHaveBeenCalledWith('hello')
+  })
+
+  it('handleSmartDrop: image file → insertIndexForBlockAt(dropPos), POSTs smart-paste, returns true', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ matched: true }) }))
+    stubFetch(fetchMock)
+    const deps = wyDeps({ insertIndexForBlockAt: vi.fn(() => 9) })
+    const { ed, props } = mountPaste(deps, 'doc-1')
+    // The surface reads posAtCoords + selection.to off the live editor.
+    ed.view.posAtCoords = () => ({ pos: 12 })
+    ed.state.selection = { to: 0 }
+    const fileItem = { kind: 'file', getAsFile: () => ({ type: 'image/png', name: 'x.png' }) }
+    const dt = { items: [fileItem] }
+    const event = { dataTransfer: dt, clientX: 1, clientY: 1, preventDefault: vi.fn() }
+    const handled = props.handleDrop({}, event, null, false)
+    expect(handled).toBe(true)
+    expect(deps.insertIndexForBlockAt).toHaveBeenCalledWith(12)
+    expect(event.preventDefault).toHaveBeenCalled()
+  })
+
+  it('handleSmartDrop with no files → returns false (native drop)', () => {
+    const { props } = mountPaste(wyDeps(), 'doc-1')
+    const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('t') }
+    const event = { dataTransfer: { items: [strItem] }, clientX: 1, clientY: 1, preventDefault: vi.fn() }
+    expect(props.handleDrop({}, event, null, false)).toBe(false)
+  })
+
+  it('paste in a prompt: uuid prompt: → no server round trip (returns false)', () => {
+    const { props } = mountPaste(wyDeps(), 'prompt:p')
+    const event = { clipboardData: clip({ text: 'plain', items: [] }), target: {}, preventDefault: vi.fn() }
+    expect(props.handlePaste({}, event)).toBe(false)
   })
 })
 

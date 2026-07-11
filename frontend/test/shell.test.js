@@ -69,6 +69,10 @@ class FakeSurface extends AbstractSurface {
   unmount() { this.mounted = false; this.unmountCount++; this.log.push('unmount:' + this._mode) }
   applyServerOp(msg) { this.ops.push(msg); this.log.push('op:' + msg.type) }
   flushPending() { this.flushCount++; this.log.push('flush:' + this._mode) }
+  // P4.A: softReload calls these polymorphically (wysiwyg → reloadFromBlocks,
+  // markdown → replaceBody). Recorders so the softReload tests can assert.
+  reloadFromBlocks(blocks, opts) { this.reloaded = { blocks, opts } }
+  replaceBody(body) { this.replacedBody = body; this.bodyValue = body }
   // P3.A: raw selection descriptor the editor pulls on a selection/transaction/
   // focus event. `feedDescriptor` lets a test script what the surface reports.
   feedSelection() { this.feedCount = (this.feedCount || 0) + 1; return this.feedDescriptor || null }
@@ -1120,11 +1124,30 @@ describe('flushSave routing (P2.A → P2.B surfaces)', () => {
     expect(ed.mode).toBe('markdown')
   })
 
-  it('PromptEditor skips the save while a reload is suppressed', async () => {
+  it('PromptEditor skips the save while a reload is suppressed (softReload mid-flight)', async () => {
+    // P4.A: suppression is no longer an injected closure — it is
+    // AbstractEditor.isSaveSuppressed reading #reloadInProgress, armed by
+    // softReload. Hold the reload fetch mid-flight so the guard is active.
     const saveFn = vi.fn(() => Promise.resolve())
-    const ed = new PromptEditor('prompt:p', { saveFn, isSaveSuppressed: () => true })
-    await ed.flushSave()
-    expect(saveFn).not.toHaveBeenCalled()
+    const prevFetch = global.fetch
+    const prevWs = window.sieveWorkspace
+    window.sieveWorkspace = { getSelectionContext: () => ({}), setPosition: vi.fn() }
+    let resolveJson
+    global.fetch = vi.fn(() => Promise.resolve({ json: () => new Promise((r) => { resolveJson = r }) }))
+    try {
+      const ed = new FakeSurfacePromptEditor('prompt:p', { saveFn })
+      ed.presentSurface('markdown', document.createElement('div'), 'seed')
+      const reload = ed.softReload()          // arms #reloadInProgress
+      expect(ed.isSaveSuppressed()).toBe(true)
+      await ed.flushSave()
+      expect(saveFn).not.toHaveBeenCalled()   // save skipped while suppressed
+      resolveJson({ body: 'x', blocks: [] })
+      await reload
+      expect(ed.isSaveSuppressed()).toBe(false)
+    } finally {
+      global.fetch = prevFetch
+      window.sieveWorkspace = prevWs
+    }
   })
 })
 
@@ -1511,6 +1534,250 @@ describe('AbstractEditor.createBlock (P2.C transitional seam)', () => {
     } finally {
       warn.mockRestore()
     }
+  })
+})
+
+// ── P4.A: AbstractEditor absorbs the insert-position math + softReload ─────────
+// The insert-pos machinery (sieveInsertPos + kindIsInline / captureInsertPos /
+// blockIndexForInsert / commitInsertIndex) and softReloadContent moved off
+// editor.js's IIFE onto the editor (D-1: public methods, reachable from the
+// classic-script create paths via _activeEditor()). These tests pin the moved
+// contract — ESPECIALLY the undo guard: commitInsertIndex's empty-paragraph
+// delete stays a PLAIN TRACKED delete (no addToHistory:false meta).
+
+// A recording fake tiptap: a doc with `childCount`, a fresh `tr` per read whose
+// delete records (from,to) and whose meta stays whatever the code sets it to,
+// and a view that records dispatched trs. The insert-pos helpers read this via
+// the surface's `tiptap` accessor.
+function fakeInsertPosTiptap(childCount = 2) {
+  const dispatched = []
+  const makeTr = () => {
+    const meta = {}
+    return {
+      deletedRange: null,
+      delete(from, to) { this.deletedRange = { from, to }; return this },
+      setMeta(k, v) { meta[k] = v; return this },
+      getMeta(k) { return meta[k] },
+    }
+  }
+  let currentTr = makeTr()
+  return {
+    dispatched,
+    state: {
+      doc: { childCount },
+      get tr() { currentTr = makeTr(); return currentTr },
+    },
+    view: { dispatch(tr) { dispatched.push(tr) } },
+    schema: { nodes: { 'sieve-smart-link': { isInline: true }, 'sieve-code': { isInline: false } } },
+  }
+}
+
+// A minimal surface exposing an injected tiptap + a flushPending recorder, so an
+// AbstractEditor's insert-pos methods have a live `this.tiptap` / `this.surface`.
+class InsertPosSurface extends AbstractSurface {
+  constructor(tiptap) { super(); this._tt = tiptap; this.flushCount = 0 }
+  get mode() { return 'wysiwyg' }
+  get tiptap() { return this.mounted ? this._tt : null }
+  mount() { this.mounted = true }
+  unmount() { this.mounted = false }
+  applyServerOp() {}
+  flushPending() { this.flushCount++ }
+  feedSelection() { return null }
+}
+
+class InsertPosEditor extends AbstractEditor {
+  constructor(uuid, tiptap) { super(uuid); this._tt = tiptap }
+  _createSurface() { return new InsertPosSurface(this._tt) }
+}
+
+function insertPosEditor(tiptap = fakeInsertPosTiptap()) {
+  const ed = new InsertPosEditor('u', tiptap)
+  ed.presentSurface('wysiwyg', document.createElement('div'), { body: '', blocks: [] })
+  return { ed, tiptap }
+}
+
+describe('AbstractEditor insert-position math (P4.A)', () => {
+  let prevTipTap
+  beforeEach(() => {
+    prevTipTap = window.TipTap
+    window.TipTap = {
+      blockInsertPos: vi.fn((_state, isInline) => (isInline ? 11 : 42)),
+      blockIndexForInsert: vi.fn(() => 3),
+      emptyParagraphAnchor: vi.fn(() => null),
+    }
+  })
+  afterEach(() => { window.TipTap = prevTipTap })
+
+  it('setInsertPos / takeInsertPos read-and-clear (numeric fallback), second take is null', () => {
+    const { ed } = insertPosEditor()
+    ed.setInsertPos(7)
+    expect(ed.takeInsertPos()).toBe(7)
+    expect(ed.takeInsertPos()).toBeNull() // cleared
+  })
+
+  it('takeInsertPos returns null for a non-numeric captured shape (in-place {from,to})', () => {
+    const { ed } = insertPosEditor()
+    ed.setInsertPos({ from: 1, to: 2 })
+    expect(ed.takeInsertPos()).toBeNull()
+  })
+
+  it('clearInsertPos wipes the captured position', () => {
+    const { ed } = insertPosEditor()
+    ed.setInsertPos(5)
+    ed.clearInsertPos()
+    expect(ed.takeInsertPos()).toBeNull()
+  })
+
+  it('kindIsInline reads the schema; unknown kind → block (false)', () => {
+    const { ed } = insertPosEditor()
+    expect(ed.kindIsInline('smart-link')).toBe(true)
+    expect(ed.kindIsInline('code')).toBe(false)
+    expect(ed.kindIsInline('nope')).toBe(false)
+    expect(ed.kindIsInline('')).toBe(false)
+  })
+
+  it('captureInsertPos delegates to window.TipTap.blockInsertPos (inline vs block)', () => {
+    const { ed } = insertPosEditor()
+    expect(ed.captureInsertPos(false)).toBe(42)
+    expect(ed.captureInsertPos(true)).toBe(11)
+  })
+
+  it('blockIndexForInsert delegates to window.TipTap.blockIndexForInsert', () => {
+    const { ed } = insertPosEditor()
+    expect(ed.blockIndexForInsert(42)).toBe(3)
+    expect(window.TipTap.blockIndexForInsert).toHaveBeenCalled()
+  })
+
+  it('commitInsertIndex with NO empty-paragraph anchor → the plain block index, no dispatch', () => {
+    const { ed, tiptap } = insertPosEditor()
+    window.TipTap.emptyParagraphAnchor.mockReturnValue(null)
+    expect(ed.commitInsertIndex(42)).toBe(3)
+    expect(tiptap.dispatched.length).toBe(0)
+  })
+
+  it('commitInsertIndex with an empty-paragraph anchor dispatches a PLAIN TRACKED delete (NO addToHistory:false) + flushPending, returns the anchor index', () => {
+    const tiptap = fakeInsertPosTiptap(2) // childCount > 1 → the delete branch
+    const { ed } = insertPosEditor(tiptap)
+    window.TipTap.emptyParagraphAnchor.mockReturnValue({ from: 4, to: 6, index: 1 })
+    const idx = ed.commitInsertIndex(42)
+    expect(idx).toBe(1) // the anchor's own index — the new block takes its place
+    expect(tiptap.dispatched.length).toBe(1)
+    const tr = tiptap.dispatched[0]
+    expect(tr.deletedRange).toEqual({ from: 4, to: 6 })
+    // THE UNDO GUARD: the empty-paragraph delete is an ORDINARY tracked prose
+    // edit — never addToHistory:false. A prior P2 regression turned this into a
+    // softReload / history-excluded delete; it must stay plain + tracked.
+    expect(tr.getMeta('addToHistory')).toBeUndefined()
+    expect(ed.surface.flushCount).toBe(1)
+  })
+
+  it('commitInsertIndex on a sole-block doc keeps the paragraph (no delete dispatched), returns its index', () => {
+    const tiptap = fakeInsertPosTiptap(1) // childCount === 1 → keep the only child
+    const { ed } = insertPosEditor(tiptap)
+    window.TipTap.emptyParagraphAnchor.mockReturnValue({ from: 0, to: 2, index: 0 })
+    expect(ed.commitInsertIndex(42)).toBe(0)
+    expect(tiptap.dispatched.length).toBe(0)
+  })
+
+  it('insertIndexForBlock composes captureInsertPos(false) → commitInsertIndex (the paste/drop path)', () => {
+    const { ed } = insertPosEditor()
+    window.TipTap.emptyParagraphAnchor.mockReturnValue(null)
+    // captureInsertPos(false) → 42 → blockIndexForInsert → 3
+    expect(ed.insertIndexForBlock()).toBe(3)
+    expect(window.TipTap.blockInsertPos).toHaveBeenCalledWith(expect.anything(), false)
+  })
+
+  it('insertIndexForBlockAt(pos) → commitInsertIndex(pos) directly (the drop-coord path)', () => {
+    const { ed } = insertPosEditor()
+    window.TipTap.emptyParagraphAnchor.mockReturnValue(null)
+    expect(ed.insertIndexForBlockAt(99)).toBe(3)
+  })
+
+  it('insert-pos methods with no mounted surface are safe (return -1 / null)', () => {
+    const ed = new InsertPosEditor('u', fakeInsertPosTiptap())
+    expect(ed.commitInsertIndex(1)).toBe(-1)
+    expect(ed.blockIndexForInsert(1)).toBe(-1)
+    expect(ed.captureInsertPos(false)).toBeNull()
+    expect(ed.kindIsInline('code')).toBe(false)
+  })
+})
+
+describe('AbstractEditor.softReload (P4.A)', () => {
+  let prevFetch
+  let prevWs
+  afterEach(() => {
+    if (prevFetch !== undefined) global.fetch = prevFetch
+    if (prevWs !== undefined) window.sieveWorkspace = prevWs
+  })
+
+  // A fake workspace whose getSelectionContext/setPosition are recorded — the
+  // softReload path keeps these verbatim (D-2: not swapped to this.*).
+  function fakeWorkspace() {
+    const ctx = { caret: 5 }
+    const setPosition = vi.fn()
+    window.sieveWorkspace = { getSelectionContext: () => ctx, setPosition }
+    return { ctx, setPosition }
+  }
+
+  function fetchReturning(data) {
+    global.fetch = vi.fn(() => Promise.resolve({ json: () => Promise.resolve(data) }))
+  }
+
+  // A wysiwyg surface with reloadFromBlocks; a markdown surface with replaceBody.
+  class ReloadSurface extends AbstractSurface {
+    constructor(mode) { super(); this._mode = mode; this.reloaded = null; this.replaced = null }
+    get mode() { return this._mode }
+    get tiptap() { return this._mode === 'wysiwyg' ? { fake: true } : null }
+    get body() { return this._mode === 'markdown' ? 'md' : null }
+    mount() { this.mounted = true }
+    unmount() { this.mounted = false }
+    applyServerOp() {}
+    flushPending() {}
+    feedSelection() { return null }
+    reloadFromBlocks(blocks, opts) { this.reloaded = { blocks, opts } }
+    replaceBody(body) { this.replaced = body }
+  }
+  class ReloadEditor extends AbstractEditor {
+    _createSurface(mode) { return new ReloadSurface(mode) }
+  }
+
+  it('wysiwyg branch: fetches, reloadFromBlocks with the block list, restores caret, clears suppression', async () => {
+    prevFetch = global.fetch; prevWs = window.sieveWorkspace
+    const { ctx, setPosition } = fakeWorkspace()
+    fetchReturning({ body: 'ignored', blocks: [{ id: 'b1' }] })
+    const ed = new ReloadEditor('u')
+    ed.presentSurface('wysiwyg', document.createElement('div'), { body: '', blocks: [] })
+    await ed.softReload()
+    expect(ed.surface.reloaded).toEqual({ blocks: [{ id: 'b1' }], opts: { allowEmpty: true } })
+    expect(setPosition).toHaveBeenCalledWith(ctx)
+    expect(ed.isSaveSuppressed()).toBe(false)
+  })
+
+  it('markdown branch: fetches, replaceBody with the body, clears suppression', async () => {
+    prevFetch = global.fetch; prevWs = window.sieveWorkspace
+    fakeWorkspace()
+    fetchReturning({ body: 'fresh markdown', blocks: [] })
+    const ed = new ReloadEditor('u')
+    ed.presentSurface('markdown', document.createElement('div'), 'seed')
+    await ed.softReload()
+    expect(ed.surface.replaced).toBe('fresh markdown')
+    expect(ed.isSaveSuppressed()).toBe(false)
+  })
+
+  it('isSaveSuppressed is true mid-flight (before the fetch resolves), false after', async () => {
+    prevFetch = global.fetch; prevWs = window.sieveWorkspace
+    fakeWorkspace()
+    let resolveJson
+    global.fetch = vi.fn(() => Promise.resolve({ json: () => new Promise((r) => { resolveJson = r }) }))
+    const ed = new ReloadEditor('u')
+    ed.presentSurface('wysiwyg', document.createElement('div'), { body: '', blocks: [] })
+    const p = ed.softReload()
+    expect(ed.isSaveSuppressed()).toBe(true) // reload armed the guard synchronously
+    await Promise.resolve()                  // let fetch() resolve so json() is invoked
+    expect(ed.isSaveSuppressed()).toBe(true) // still armed while json() is pending
+    resolveJson({ body: '', blocks: [] })
+    await p
+    expect(ed.isSaveSuppressed()).toBe(false)
   })
 })
 

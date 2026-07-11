@@ -42,30 +42,37 @@ export class NoteEditor extends AbstractEditor {
 
   /**
    * NoteEditor's repertoire: BOTH surfaces, mode-mapped (moved verbatim from
-   * editor.js's makeSurface, P2.C.2). Deps = the editor's own domain services
-   * plus the transitional IIFE collaborators bag (P3/P4 death dates unchanged).
+   * editor.js's makeSurface, P2.C.2). Every former surfaceCollaborators dep is
+   * now sourced from the editor's OWN methods (P4.A) — the IIFE bag is dissolved.
+   * takeInsertPos / requestSave / requestReload survive by NAME as surface deps
+   * (the surface genuinely calls UP to the editor: applyServerOp fallback, Mod+S,
+   * replace-block reload) but are editor-method closures, uniform with the
+   * applyBlockOps / updateText services. Paste/drop are surface #private now — no
+   * onPaste/onDrop dep; the surface's smart-paste/drop use the editor's insert-
+   * index methods (insertIndexForBlock / insertIndexForBlockAt / clearInsertPos).
    * @protected
    * @param {import('./editor-mode.js').EditorModeValue} mode
    * @param {import('./abstract-editor.js').EditorSurfaceServices} services
    * @returns {import('./surfaces/abstract-surface.js').AbstractSurface}
    */
   _createSurface(mode, services) {
-    const c = this._surfaceCollaborators
     const deps = {
       notify: services.notify,
-      takeInsertPos: c.takeInsertPos,
+      takeInsertPos: () => this.takeInsertPos(),
     }
     if (mode === EditorMode.MARKDOWN) {
       deps.updateText = services.updateText
-      deps.requestReload = c.requestReload
+      deps.requestReload = () => this.softReload()
       return new MarkdownSurface(deps)
     }
     deps.applyBlockOps = services.applyBlockOps
     // requestSave backs the PM-internal Mod+S (editorProps handleKeyDown must
     // run pre-core inside ProseMirror's key routing — the interaction contract).
-    deps.requestSave = c.requestSave
-    deps.onPaste = c.onPaste
-    deps.onDrop = c.onDrop
+    deps.requestSave = () => this.flushSave()
+    // Editor-sourced insert-index math for the surface's #handleSmartPaste/Drop.
+    deps.insertIndexForBlock = () => this.insertIndexForBlock()
+    deps.insertIndexForBlockAt = (pos) => this.insertIndexForBlockAt(pos)
+    deps.clearInsertPos = () => this.clearInsertPos()
     return new WysiwygSurface(this.uuid, deps)
   }
 }

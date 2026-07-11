@@ -48,12 +48,18 @@ const NATIVE_UNIT_LABEL = Object.freeze({
  * app-level chord, so it stays surface-injected.)
  * @typedef {object} WysiwygSurfaceDeps
  * @property {(ops: object[]) => void}    applyBlockOps   — block-domain ops → editor transport (the editor owns the WS enveloping)
- * @property {() => unknown}              requestSave     — save command (module flushSave)
- * @property {(event: ClipboardEvent) => boolean} onPaste — smart-paste pipeline (handleSmartPaste)
- * @property {(event: DragEvent) => boolean}      onDrop  — smart-drop pipeline (handleSmartDrop)
- * @property {() => number|null}          takeInsertPos   — read-and-clear the module sieveInsertPos capture
+ * @property {() => unknown}              requestSave     — save command (editor.flushSave)
+ * @property {() => number}               insertIndexForBlock   — commit a caret block-insert index (editor: commitInsertIndex(captureInsertPos(false)))
+ * @property {(pos: number) => number}    insertIndexForBlockAt — commit an explicit drop-coord index (editor: commitInsertIndex(pos))
+ * @property {() => void}                 clearInsertPos  — clear a stale captured insert position (editor)
+ * @property {() => number|null}          takeInsertPos   — read-and-clear the editor's captured insert position (applyServerOp numeric fallback)
  * @property {(event: import('./abstract-surface.js').SurfaceEventMsg) => void} notify — outbound editor-domain events
  * @property {object}                     [T]             — TipTap vendor bundle (defaults to window.TipTap)
+ *
+ * P4.A: smart-paste / smart-drop are the surface's OWN #private methods (wired at
+ * editorProps.handlePaste/handleDrop) — no onPaste/onDrop deps. The insert-index
+ * math they need is editor-sourced (the editor owns the shared insert-position
+ * state; classic-script create paths reach it too — the classic/module boundary).
  */
 
 export class WysiwygSurface extends AbstractSurface {
@@ -397,8 +403,8 @@ export class WysiwygSurface extends AbstractSurface {
             return false
           },
         },
-        handlePaste: function (_view, event) { return deps.onPaste(event) },
-        handleDrop: function (_view, event, slice, moved) { return deps.onDrop(event) },
+        handlePaste: function (_view, event) { return self.#handleSmartPaste(event) },
+        handleDrop: function (_view, event, slice, moved) { return self.#handleSmartDrop(event) },
         handleKeyDown: function (view, event) {
           if (event.key === 's' && window.isMod(event)) {
             event.preventDefault()
@@ -520,6 +526,237 @@ export class WysiwygSurface extends AbstractSurface {
     this.#syncTimer = null
     const ed = this.tiptap
     if (ed) this.#syncDocument(ed)
+  }
+
+  // ── Smart paste / drop (P4.A: moved off editor.js's IIFE) ──────────────────────
+  //
+  // Tiptap-bound clipboard/drag I/O, wired at editorProps.handlePaste/handleDrop.
+  // Verbatim code motion of editor.js's handleSmartPaste/handleSmartDrop: the
+  // transaction dispatches (ai-block reimport insertContent, no-match fallback
+  // insertContent) keep their TRACKED (default addToHistory) semantics and their
+  // preventDefault gates. The insert-index math is editor-sourced via #deps
+  // (insertIndexForBlock / insertIndexForBlockAt / clearInsertPos) — the shared
+  // insert-position state lives on the editor (D-1). window.jsyaml / window.TipTap
+  // reads stay VERBATIM (bus retirement is P4.E).
+
+  /**
+   * @param {ClipboardEvent} event
+   * @returns {boolean} true when handled (native paste suppressed)
+   */
+  #handleSmartPaste(event) {
+    if (!event.clipboardData || !this.#editor) return false
+
+    if (event.target && (/** @type {any} */ (event.target).tagName === 'INPUT' || /** @type {any} */ (event.target).tagName === 'TEXTAREA')) {
+      return false
+    }
+
+    // Caret inside a raw-text fenced block (code / diagram / log — code:true
+    // nodes): paste is a literal text paste into that block, not a smart-paste
+    // that mints a new block. Step aside; PM's default handler inserts the text.
+    if (window.TipTap && window.TipTap.caretInRawTextBlock &&
+        window.TipTap.caretInRawTextBlock(this.#editor)) {
+      return false
+    }
+
+    var text = event.clipboardData.getData('text/plain')
+    var html = event.clipboardData.getData('text/html')
+
+    // ── 1. ai-block re-import (JS-owned) ────────────────────────────────────────
+    // Pasting a complete ```ai-block…``` fence reconstructs the existing block
+    // node with its original ID — no Go round-trip needed.
+    if (text && text.trim().startsWith('```ai-block')) {
+      var cleanText = text.trim()
+      var firstLineEnd = cleanText.indexOf('\n')
+      var lastBackticks = cleanText.lastIndexOf('```')
+      if (firstLineEnd !== -1 && lastBackticks !== -1 && lastBackticks > firstLineEnd) {
+        var yamlText = cleanText.substring(firstLineEnd + 1, lastBackticks).trim()
+        try {
+          var data = window.jsyaml.load(yamlText)
+          if (data && data.id) {
+            event.preventDefault()
+            this.#editor.commands.insertContent({
+              type: 'sieve-ai-block',
+              attrs: {
+                rawYaml:     yamlText,
+                id:          data.id || '',
+                ref:         data.ref || 'doc',
+                status:      data.status || 'PENDING',
+                type:        data.type || null,
+                model:       data.model || null,
+                createdAt:   data.createdAt || null,
+                completedAt: data.completedAt || null,
+                question:    data.question || '',
+                response:    data.response || null,
+              }
+            })
+            return true
+          }
+        } catch (e) {
+          console.error('[editor.js] Failed to parse pasted ai-block yaml', e)
+        }
+      }
+    }
+
+    // ── 1b. sieve/slice → server-side reconstruct ───────────────────────────────
+    // A multi-block slice ([][]ContentEntry) is reconstructed by Go: FirstPasteMatch
+    // per item → a block at cursorIndex+i with a fresh backend id (prose claims its
+    // sieve/prose). Each created block render-backs via insert-block at its index.
+    // A single-block slice falls through to the smart-paste pipeline, which resolves
+    // it from its sieve/<kind> view the same way.
+    var sliceData = event.clipboardData.getData('sieve/slice')
+    if (sliceData && this.#uuid && !this.#uuid.startsWith('prompt:')) {
+      try {
+        var slice = JSON.parse(sliceData)
+        if (Array.isArray(slice) && slice.length > 1) {
+          event.preventDefault()
+          var sliceIndex = this.#deps.insertIndexForBlock()
+          this.#deps.clearInsertPos() // slice render-backs position by op index, not this
+          fetch('/api/editor/paste-slice', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uuid: this.#uuid, slice: slice, index: sliceIndex }),
+          }).catch(function (err) { console.error('[editor.js] paste-slice failed', err) })
+          return true
+        }
+      } catch (e) {
+        console.error('[editor.js] Failed to parse sieve/slice paste', e)
+      }
+    }
+
+    // ── 2. Smart-paste pipeline (including images) ────────────────────────────────
+    // Collect all clipboard entries. For files, we use FileReader to get base64.
+    if (this.#uuid && !this.#uuid.startsWith('prompt:')) {
+      var self = this
+      if (event.clipboardData && event.clipboardData.items) {
+        var promises = []
+        Array.from(event.clipboardData.items).forEach(function(item) {
+          if (item.kind === 'file') {
+            var file = item.getAsFile()
+            if (file) {
+              promises.push(new Promise(function(resolve) {
+                var reader = new FileReader()
+                reader.onload = function(e) {
+                  resolve({ mimeType: file.type, content: /** @type {any} */ (e.target).result })
+                }
+                reader.onerror = function() { resolve(null) }
+                reader.readAsDataURL(file)
+              }))
+            }
+          } else if (item.kind === 'string') {
+            promises.push(new Promise(function(resolve) {
+              item.getAsString(function(str) {
+                resolve({ mimeType: item.type, content: str })
+              })
+            }))
+          }
+        })
+
+        // Smart-paste resolves a block kind server-side (web-clip / smart-image /
+        // smart-card) → capture insert position as a block index for Go to position.
+        var smartPasteIndex = this.#deps.insertIndexForBlock()
+        event.preventDefault()
+
+        Promise.all(promises).then(function(results) {
+          var validEntries = results.filter(function(r) { return r !== null })
+          fetch('/api/editor/smart-paste', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uuid: self.#uuid, entries: validEntries, index: smartPasteIndex }),
+          })
+            .then(function (r) { return r.json() })
+            .then(function (result) {
+              if (!self.#editor) return
+              if (result.matched) {
+                // Rendered via insert-block (tracked insert at its server index). Nothing to do.
+              } else {
+                // No processor matched — replay original clipboard content locally.
+                self.#deps.clearInsertPos()
+                if (html) {
+                  self.#editor.commands.insertContent(html)
+                } else if (text) {
+                  self.#editor.commands.insertContent(text)
+                }
+              }
+            })
+            .catch(function (err) {
+              console.error('[editor.js] smart-paste fetch failed', err)
+              self.#deps.clearInsertPos()
+              if (self.#editor) self.#editor.commands.insertContent(text)
+            })
+        })
+        return true
+      }
+    }
+
+    return false
+  }
+
+  /**
+   * @param {DragEvent} event
+   * @returns {boolean} true when handled (native drop suppressed)
+   */
+  #handleSmartDrop(event) {
+    if (!event.dataTransfer || !this.#editor) return false
+
+    if (this.#uuid && !this.#uuid.startsWith('prompt:')) {
+      var self = this
+      var promises = []
+      var hasFiles = false
+      if (event.dataTransfer.items) {
+        Array.from(event.dataTransfer.items).forEach(function(item) {
+          if (item.kind === 'file') {
+            var file = item.getAsFile()
+            if (file && file.type.startsWith('image/')) {
+              hasFiles = true
+              promises.push(new Promise(function(resolve) {
+                var reader = new FileReader()
+                reader.onload = function(e) {
+                  resolve({ mimeType: file.type, content: /** @type {any} */ (e.target).result })
+                }
+                reader.onerror = function() { resolve(null) }
+                reader.readAsDataURL(file)
+              }))
+            }
+          } else if (item.kind === 'string') {
+            promises.push(new Promise(function(resolve) {
+              item.getAsString(function(str) {
+                resolve({ mimeType: item.type, content: str })
+              })
+            }))
+          }
+        })
+      }
+
+      if (!hasFiles) return false
+
+      var pos = this.#editor.view.posAtCoords({ left: event.clientX, top: event.clientY })
+      var insertPos = pos ? pos.pos : this.#editor.state.selection.to
+      var dropIndex = this.#deps.insertIndexForBlockAt(insertPos)
+
+      event.preventDefault()
+
+      Promise.all(promises).then(function(results) {
+        var validEntries = results.filter(function(r) { return r !== null })
+        if (validEntries.length === 0) return
+        fetch('/api/editor/smart-paste', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uuid: self.#uuid, entries: validEntries, index: dropIndex }),
+        })
+          .then(function (r) { return r.json() })
+          .then(function (result) {
+            if (!self.#editor) return
+            if (result.matched) {
+              // Rendered via insert-block (tracked insert at its server index). Nothing to do.
+            }
+          })
+          .catch(function (err) {
+            console.error('[editor.js] smart-drop fetch failed', err)
+          })
+      })
+      return true
+    }
+    return false
   }
 
   // ── Selection feed (P3.A: the SelectionModel raw source) ───────────────────────

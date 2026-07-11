@@ -46,20 +46,6 @@ import { SelectionModel } from './selection-model.js'
  */
 
 /**
- * TRANSITIONAL (P2.C.2) content pipelines editor.js's IIFE still owns — NOT DOM
- * constructors. A concrete `_createSurface` merges the relevant ones into the
- * deps it hands its own surfaces. Death dates unchanged: takeInsertPos /
- * requestSave die with the P3 SelectionModel; onPaste / onDrop / requestReload
- * die P4.
- * @typedef {object} SurfaceCollaborators
- * @property {() => number|null}                  [takeInsertPos] — read-and-clear the module sieveInsertPos capture
- * @property {() => unknown}                       [requestSave]  — wysiwyg PM-internal Mod+S (module flushSave)
- * @property {(event: ClipboardEvent) => boolean}  [onPaste]     — smart-paste pipeline
- * @property {(event: DragEvent) => boolean}       [onDrop]      — smart-drop pipeline
- * @property {() => void}                          [requestReload] — markdown replace-block full reload (softReloadContent)
- */
-
-/**
  * @typedef {object} AbstractEditorOptions
  * @property {boolean} [connect]
  *   — when true, the editor opens its live channel at construction (NoteEditor
@@ -72,10 +58,6 @@ import { SelectionModel } from './selection-model.js'
  *   — injected for tests; defaults to the /api/ws URL for this uuid
  * @property {(msg: object) => void} [onServerMessage]
  *   — routing for messages not consumed here (error, block-extracted, …)
- * @property {SurfaceCollaborators} [surfaceCollaborators]
- *   — TRANSITIONAL (P2.C.2): editor.js's IIFE-resident content pipelines. The
- *   editor — not the IIFE — decides and constructs what lives under its root
- *   (`_createSurface`); it merges these pipelines into the surface deps.
  * @property {(kind: string, attrs: object) => void} [createBlockAtCaret]
  *   — TRANSITIONAL (P2.C; dies P3/P4 with the SelectionModel): the caret-aware
  *   create pipeline still lives in editor.js; createBlock() delegates to it.
@@ -103,9 +85,6 @@ export class AbstractEditor {
 
   /** @type {HTMLElement|null} the editor-owned root the surfaces mount under */
   #rootEl = null
-
-  /** @type {SurfaceCollaborators} — transitional IIFE content pipelines (P2.C.2) */
-  #surfaceCollaborators
 
   /** @type {Array<(event: SurfaceEventMsg) => void>} surface-event registrants */
   #eventListeners = []
@@ -167,6 +146,23 @@ export class AbstractEditor {
   #createBlockAtCaret
 
   /**
+   * Where the next inserted Sieve block goes (P4.A, moved off editor.js's IIFE).
+   * A number = insert at that doc point (additive). A {from,to} object = replace
+   * that range (in-place conversion of a native code block). Every block-creating
+   * operation sets this fresh, so a stale value can never leak into a later insert.
+   * @type {number|{from:number,to:number}|null}
+   */
+  #insertPos = null
+
+  /**
+   * Save-suppression flag while a whole-doc reload (softReload) is mid-flight
+   * (P4.A, formerly editor.js's aiReloadInProgress). A save during the reload
+   * would race the re-render, so PromptEditor.flushSave checks isSaveSuppressed().
+   * @type {boolean}
+   */
+  #reloadInProgress = false
+
+  /**
    * @param {string}                uuid    — document uuid; the editor's fixed identity
    * @param {AbstractEditorOptions} [options]
    */
@@ -174,7 +170,6 @@ export class AbstractEditor {
     if (!uuid) throw new Error('AbstractEditor: uuid is required')
     this.#uuid = uuid
     this.#selectionModel = new SelectionModel(uuid)
-    this.#surfaceCollaborators = options.surfaceCollaborators || {}
     this.#createBlockAtCaret = options.createBlockAtCaret || null
     // P3.B: bridge the SelectionModel's own push onto the editor's ONE onEvent
     // stream so the Tab/Workspace republish (and editor.js's legacy fan-out, which
@@ -231,14 +226,6 @@ export class AbstractEditor {
    * @returns {HTMLElement|null}
    */
   get _rootEl() { return this.#rootEl }
-
-  /**
-   * The transitional IIFE content pipelines (P2.C.2), for the concrete
-   * `_createSurface` to merge into its surface deps.
-   * @protected
-   * @returns {SurfaceCollaborators}
-   */
-  get _surfaceCollaborators() { return this.#surfaceCollaborators }
 
   /** Marks the document dirty (unsaved changes present). */
   markDirty() { this.#dirty = true }
@@ -738,6 +725,178 @@ export class AbstractEditor {
       return
     }
     this.#createBlockAtCaret(kind, attrs || {})
+  }
+
+  // ── Insert position (P4.A: moved off editor.js's IIFE) ────────────────────────
+  //
+  // The insert-position math is EDITOR-scoped shared state: it is read by BOTH
+  // surfaces (applyServerOp numeric fallback) AND the classic-script create paths
+  // in editor.js (sieve:create-block / dialogs / runAiJob / extract), which can
+  // only reach a PUBLIC method on the live editor via _activeEditor() — never a
+  // surface #private (the classic/module boundary). So it lives here as public
+  // methods (D-1). window.TipTap reads stay verbatim (bus retirement is P4.E).
+
+  /**
+   * Stashes where the next inserted block goes (a doc pos, a {from,to} range, or
+   * null). Fresh per creation path — a stale value can never leak into a later
+   * insert.
+   * @param {number|{from:number,to:number}|null} v
+   */
+  setInsertPos(v) { this.#insertPos = v }
+
+  /** Clears the captured insert position. */
+  clearInsertPos() { this.#insertPos = null }
+
+  /**
+   * Read-and-clear the captured insert position: a numeric pos feeds the
+   * numeric-fallback insert (applyServerOp); any other shape just clears (fresh
+   * capture per operation). The surface calls this via its takeInsertPos dep.
+   * @returns {number|null}
+   */
+  takeInsertPos() {
+    const p = (typeof this.#insertPos === 'number') ? this.#insertPos : null
+    this.#insertPos = null
+    return p
+  }
+
+  /**
+   * kindIsInline reads from the schema whether a sieve-<kind> node is inline (e.g.
+   * smart-link) — so blockInsertPos places it at the caret rather than after the
+   * top-level block. Unknown kind → block (the safe default; lands after the
+   * enclosing top-level node, never splitting it).
+   * @param {string} kind
+   * @returns {boolean}
+   */
+  kindIsInline(kind) {
+    const ed = /** @type {any} */ (this.tiptap)
+    if (!ed || !kind) return false
+    const nt = ed.schema.nodes['sieve-' + kind]
+    return !!(nt && nt.isInline)
+  }
+
+  /**
+   * captureInsertPos resolves WHERE the next inserted block goes, the single way
+   * every additive creation path stamps the insert position (D-r.7). Delegates to
+   * the shared blockInsertPos helper so block answers land after the top-level
+   * block and inline kinds land at the caret. (In-place conversion / explicit-
+   * position pastes set the insert position directly with their own {from,to}.)
+   * @param {boolean} isInline
+   * @returns {number|null}
+   */
+  captureInsertPos(isInline) {
+    const ed = /** @type {any} */ (this.tiptap)
+    return ed ? window.TipTap.blockInsertPos(ed.state, isInline) : null
+  }
+
+  /**
+   * blockIndexForInsert maps a captured insert position (a PM doc position, or
+   * null for "append") to the top-level BLOCK index Go's create-block op inserts
+   * at — the number of top-level nodes that end at or before the position.
+   * Delegates to the tested window.TipTap.blockIndexForInsert (block-position.js).
+   * @param {number|null} pos
+   * @returns {number}
+   */
+  blockIndexForInsert(pos) {
+    const ed = /** @type {any} */ (this.tiptap)
+    if (!ed) return -1
+    return window.TipTap.blockIndexForInsert(ed.state.doc, pos)
+  }
+
+  /**
+   * commitInsertIndex — maps a captured insert position to the index Go creates
+   * at, applying the empty-paragraph placement rule AT COMMIT TIME (never at
+   * capture: a cancelled dialog must not eat the blank line). If the anchor is a
+   * bare empty paragraph, delete it as an ordinary tracked prose edit (the
+   * block-sync emits the same delete-block op a backspace would), flush the sync
+   * so Go's shadow applies the delete BEFORE the create arrives on the same
+   * socket, and return the anchor's own index — the new block takes its place.
+   *
+   * UNDO SANCTITY: the empty-paragraph delete is a PLAIN TRACKED prose edit —
+   * NEVER addToHistory:false, never a softReload. Do not touch its tracked-ness.
+   * @param {number|null} pos
+   * @returns {number}
+   */
+  commitInsertIndex(pos) {
+    const ed = /** @type {any} */ (this.tiptap)
+    if (!ed) return -1
+    const anchor = window.TipTap.emptyParagraphAnchor(ed.state.doc, pos)
+    if (!anchor) return this.blockIndexForInsert(pos)
+    // Sole-block doc: keep the paragraph (deleting the doc's only child is
+    // schema-invalid) — it simply becomes the paragraph after the new block.
+    if (ed.state.doc.childCount > 1) {
+      ed.view.dispatch(ed.state.tr.delete(anchor.from, anchor.to))
+      if (this.#surface) this.#surface.flushPending()
+    }
+    return anchor.index
+  }
+
+  /**
+   * insertIndexForBlock — the paste/drop block-insert index: capture at the caret
+   * as a BLOCK (never inline) and commit. Identical to the old
+   * commitInsertIndex(captureInsertPos(false)) inline composition; exists so the
+   * surface's paste/drop never touch the capture+commit composition directly.
+   * @returns {number}
+   */
+  insertIndexForBlock() { return this.commitInsertIndex(this.captureInsertPos(false)) }
+
+  /**
+   * insertIndexForBlockAt(pos) — commit an EXPLICIT position (a drop coordinate).
+   * Identical to the old commitInsertIndex(insertPos) inline call.
+   * @param {number} pos
+   * @returns {number}
+   */
+  insertIndexForBlockAt(pos) { return this.commitInsertIndex(pos) }
+
+  // ── Whole-document reload (P4.A: moved off editor.js's softReloadContent) ──────
+
+  /**
+   * @returns {boolean} whether a save should be suppressed (a whole-doc reload is
+   * mid-flight; a save now would race the re-render).
+   */
+  isSaveSuppressed() { return this.#reloadInProgress }
+
+  /**
+   * softReload fetches the latest body from disk and re-renders the surface,
+   * preserving the caret. ONLY for genuine doc LOADS (AI whole-doc resolve /
+   * restore / extract re-render) — NEVER for an operation render-back
+   * (renderBlocksIntoEditor's addToHistory:false wipes undo history by design;
+   * CLAUDE.md). The pull/restore of the focus coordinate is surface-polymorphic.
+   *
+   * D-2: the window.sieveWorkspace.getSelectionContext()/setPosition() calls are
+   * kept VERBATIM (pure motion) — they resolve to the active editor = this at call
+   * time; not swapped to this.getSelectionContext()/applyPosition() in P4.A.
+   * @returns {Promise<void>}
+   */
+  async softReload() {
+    const mode = this.mode
+    if (mode !== 'wysiwyg' && mode !== 'markdown') return
+    if (mode === 'wysiwyg' && !this.tiptap) return
+    this.#reloadInProgress = true
+    // Pull the focus coordinate before the async fetch so caret is preserved
+    // across the re-render (TRANSFORM, paste, extract, AI block resolve).
+    const fctx = window.sieveWorkspace.getSelectionContext()
+    try {
+      const r = await fetch('/api/editor/load?uuid=' + encodeURIComponent(this.uuid))
+      const data = await r.json()
+      const body = data.body || ''
+      const surface = this.#surface
+      if (mode === 'wysiwyg' && this.tiptap && surface) {
+        // Wysiwyg renders the backend's AUTHORITATIVE block list (markdown is NOT
+        // a wysiwyg render input — a flat re-parse invents ids). reloadFromBlocks
+        // wraps a multi-node prose block into ONE container carrying its id.
+        surface.reloadFromBlocks(data.blocks || [], { allowEmpty: true })
+        this.#reloadInProgress = false
+        window.sieveWorkspace.setPosition(fctx)
+      } else if (mode === 'markdown' && surface) {
+        surface.replaceBody(body)
+        this.#reloadInProgress = false
+      } else {
+        this.#reloadInProgress = false
+      }
+    } catch (err) {
+      this.#reloadInProgress = false
+      console.error('[editor] softReload failed', err)
+    }
   }
 
   // ── Save ─────────────────────────────────────────────────────────────────────

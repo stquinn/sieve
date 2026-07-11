@@ -18,15 +18,11 @@ import { MarkdownSurface } from './surfaces/markdown-surface.js'
 /**
  * @typedef {object} PromptEditorOptions
  * @property {(uuid: string, body: string, mode: string) => Promise<unknown>} [saveFn] — injected for tests; defaults to the HTTP POST
- * @property {() => boolean} [isSaveSuppressed] — true while an AI reload is mid-flight
  */
 
 export class PromptEditor extends AbstractEditor {
   /** @type {(uuid: string, body: string, mode: string) => Promise<unknown>} */
   #saveFn
-
-  /** @type {() => boolean} */
-  #isSaveSuppressed
 
   /**
    * @param {string}              uuid
@@ -39,7 +35,6 @@ export class PromptEditor extends AbstractEditor {
     // OOP: per-type behavior as a method override on the type).
     super(uuid, options)
     this.#saveFn = options.saveFn || PromptEditor.#defaultSave
-    this.#isSaveSuppressed = options.isSaveSuppressed || (() => false)
   }
 
   /**
@@ -59,12 +54,13 @@ export class PromptEditor extends AbstractEditor {
    * @returns {import('./surfaces/abstract-surface.js').AbstractSurface}
    */
   _createSurface(mode, services) {
-    const c = this._surfaceCollaborators
+    // P4.A: takeInsertPos / requestReload are editor-sourced (the surfaceCollaborators
+    // IIFE bag is dissolved) — the surface calls UP to the editor's own methods.
     return new MarkdownSurface({
       notify: services.notify,
-      takeInsertPos: c.takeInsertPos,
+      takeInsertPos: () => this.takeInsertPos(),
       updateText: services.updateText,
-      requestReload: c.requestReload,
+      requestReload: () => this.softReload(),
     })
   }
 
@@ -85,8 +81,9 @@ export class PromptEditor extends AbstractEditor {
   /** @returns {Promise<unknown>} */
   flushSave() {
     // Guard: an AI reload replaces the whole document; a save mid-reload would
-    // race the reload (faithful to doSave's aiReloadInProgress guard).
-    if (this.#isSaveSuppressed()) return Promise.resolve()
+    // race the reload (P4.A: isSaveSuppressed reads AbstractEditor's own
+    // #reloadInProgress, set by softReload — no injected closure).
+    if (this.isSaveSuppressed()) return Promise.resolve()
 
     const s = this.surface
     const body = (s && s.body) || ''

@@ -110,34 +110,12 @@
     var hadEditor = !!(existing && existing.editor)
     var tab = ws.activateDocument(uuid, {
       onServerMessage: routeServerMessage,
-      // TRANSITIONAL P2.C.2 (deaths: P3 SelectionModel / P4): the IIFE-resident
-      // CONTENT pipelines the editor merges into its own surfaces' deps. The
-      // editor — not this IIFE — decides and constructs what lives under its
-      // root (_createSurface owns the mode→surface-class repertoire). Zero
-      // app-level concepts (no chrome names, no AI, no chords) and zero wire
-      // vocabulary; everything app-flavoured lives in legacyChromeFanout.
-      surfaceCollaborators: {
-        // Read-and-clear the captured insert position: a numeric pos feeds the
-        // AI-block insert fallback; any other shape just clears (fresh capture
-        // per operation — a stale value can never leak into a later insert).
-        takeInsertPos: function () {
-          var p = (typeof sieveInsertPos === 'number') ? sieveInsertPos : null
-          sieveInsertPos = null
-          return p
-        },
-        // requestSave backs the PM-internal Mod+S (editorProps handleKeyDown
-        // must run pre-core inside ProseMirror's key routing — the contract).
-        requestSave: flushSave,
-        onPaste: handleSmartPaste,
-        onDrop: handleSmartDrop,
-        requestReload: function () { softReloadContent(uuid) },
-      },
-      isSaveSuppressed: function () { return aiReloadInProgress },
       createBlockAtCaret: function (kind, attrs) {
-        // TRANSITIONAL P2.C seam for AbstractEditor.createBlock (dies P3/P4
-        // with the SelectionModel). Parity with the retired insert-diagram
-        // menu-event listener: menu inserts are wysiwyg-only — commitInsertIndex
-        // needs the live PM doc, so a null currentEditor (markdown mode) no-ops.
+        // TRANSITIONAL P2.C seam for AbstractEditor.createBlock (retires in P4.B
+        // by folding into createBlock). Parity with the retired insert-diagram
+        // menu-event listener: menu inserts are wysiwyg-only — the editor's
+        // commitInsertIndex needs the live PM doc, so a null currentEditor
+        // (markdown mode) no-ops.
         if (!currentUuid || !currentEditor) return
         sendCreateBlock(kind, attrs)
       },
@@ -145,76 +123,20 @@
     if (tab && tab.editor && !hadEditor) tab.editor.onEvent(legacyChromeFanout)
   }
 
-  var aiReloadInProgress = false
   var blobInterceptorCleanup = null
   var searchOverlay = null
-  // Where the next inserted Sieve block goes. A number = insert at that point
-  // (additive). A {from,to} object = replace that range (in-place conversion of a
-  // native code block). Every block-creating operation sets this fresh, so a stale
-  // value can never leak into a later insert.
-  var sieveInsertPos = null
-
-  // kindIsInline reads from the schema whether a sieve-<kind> node is inline (e.g.
-  // smart-link) — so blockInsertPos places it at the caret rather than after the
-  // top-level block. Unknown kind → block (the safe default; lands after the
-  // enclosing top-level node, never splitting it).
-  function kindIsInline(kind) {
-    if (!currentEditor || !kind) return false
-    var nt = currentEditor.schema.nodes['sieve-' + kind]
-    return !!(nt && nt.isInline)
-  }
-
-  // captureInsertPos resolves WHERE the next inserted block goes, the single way
-  // every additive creation path stamps sieveInsertPos (D-r.7). Delegates to the
-  // shared blockInsertPos helper so block answers land after the top-level block
-  // and inline kinds land at the caret. (In-place conversion / explicit-position
-  // pastes set sieveInsertPos directly with their own {from,to} / coord position.)
-  function captureInsertPos(isInline) {
-    return currentEditor ? window.TipTap.blockInsertPos(currentEditor.state, isInline) : null
-  }
-
-  // blockIndexForInsert maps a captured insert position (a PM doc position, or null
-  // for "append") to the top-level BLOCK index Go's create-block op inserts at —
-  // the number of top-level nodes that end at or before the position.
-  // Delegates to the tested window.TipTap.blockIndexForInsert (block-position.js).
-  function blockIndexForInsert(pos) {
-    if (!currentEditor) return -1
-    return window.TipTap.blockIndexForInsert(currentEditor.state.doc, pos)
-  }
-
-  // commitInsertIndex — maps a captured insert position to the index Go creates
-  // at, applying the empty-paragraph placement rule AT COMMIT TIME (never at
-  // capture: a cancelled dialog must not eat the blank line). If the anchor is
-  // a bare empty paragraph, delete it as an ordinary tracked prose edit (the
-  // block-sync emits the same delete-block op a backspace would), flush the
-  // sync so Go's shadow applies the delete BEFORE the create arrives on the
-  // same socket, and return the anchor's own index — the new block takes its
-  // place. No replace op, no backend emptiness-sniffing: two existing
-  // primitives in order (docs/editor-interaction-contract.md).
-  function commitInsertIndex(pos) {
-    if (!currentEditor) return -1
-    var anchor = window.TipTap.emptyParagraphAnchor(currentEditor.state.doc, pos)
-    if (!anchor) return blockIndexForInsert(pos)
-    // Sole-block doc: keep the paragraph (deleting the doc's only child is
-    // schema-invalid) — it simply becomes the paragraph after the new block.
-    if (currentEditor.state.doc.childCount > 1) {
-      currentEditor.view.dispatch(currentEditor.state.tr.delete(anchor.from, anchor.to))
-      var ed = _activeEditor()
-      if (ed && ed.surface) ed.surface.flushPending()
-    }
-    return anchor.index
-  }
 
   // sendCreateBlock is the ONE UI-triggered create path: a create-block block-op
-  // carrying kind, attrs, and the document index from the captured insert position
-  // (sieveInsertPos). There is no separate create-block message — every kind creates
+  // carrying kind, attrs, and the document index from the editor's captured insert
+  // position. There is no separate create-block message — every kind creates
   // through block-op, exactly like update/delete. Go positions it via the index and
-  // renders it back (insert-block) for structured kinds.
+  // renders it back (insert-block) for structured kinds. The insert-position math
+  // now lives on the editor (P4.A: setInsertPos/captureInsertPos/commitInsertIndex).
   function sendCreateBlock(kind, attrs) {
     var ed = _activeEditor()
     if (!currentUuid || !ed) return
     ed.applyBlockOps([
-      { type: 'create-block', kind: kind, attrs: attrs || {}, index: commitInsertIndex(sieveInsertPos) },
+      { type: 'create-block', kind: kind, attrs: attrs || {}, index: ed.commitInsertIndex(ed.takeInsertPos()) },
     ])
   }
 
@@ -359,7 +281,9 @@
   // detail: { kind: 'code', attrs: {} }
   document.addEventListener('sieve:create-block', function (e) {
     if (!currentUuid || currentUuid.startsWith('prompt:') || !e.detail.kind) return
-    sieveInsertPos = captureInsertPos(kindIsInline(e.detail.kind))
+    var ed = _activeEditor()
+    if (!ed) return
+    ed.setInsertPos(ed.captureInsertPos(ed.kindIsInline(e.detail.kind)))
     var attrs = e.detail.attrs || {}
     if (e.detail.kind === 'diagram' && !attrs.source) {
       attrs.mode = 'edit'
@@ -370,12 +294,15 @@
   // Explicitly capture insertion position for async flows (like image upload).
   // These insert block kinds (smart-image / web-clip), so capture as a block.
   document.addEventListener('sieve:capture-insert-pos', function () {
-    sieveInsertPos = captureInsertPos(false)
+    var ed = _activeEditor()
+    if (!ed) return
+    var pos = ed.captureInsertPos(false)
+    ed.setInsertPos(pos)
     // A file dialog (toolbar image) blurs the editor and loses the caret. Stash the
     // resolved BLOCK INDEX now (pre-dialog); the cross-file upload handler in index.html
-    // can't see the editor-private sieveInsertPos, so it reads this and sends it to
+    // can't see the editor-private insert position, so it reads this and sends it to
     // smart-paste — without it the new image appends to the end of the document.
-    window.__sieveCapturedInsertIndex = blockIndexForInsert(sieveInsertPos)
+    window.__sieveCapturedInsertIndex = ed.blockIndexForInsert(pos)
   })
 
   // NodeViews fire sieve:block-update when the user edits block content. It rides
@@ -617,7 +544,8 @@
   function doCreateSmartCard(href) {
     if (!currentUuid) return
     if (!currentEditor && currentMode !== 'markdown') return
-    sieveInsertPos = captureInsertPos(kindIsInline('smart-card'))
+    var ed = _activeEditor()
+    if (ed) ed.setInsertPos(ed.captureInsertPos(ed.kindIsInline('smart-card')))
     sendCreateBlock('smart-card', { href: href })
   }
 
@@ -695,7 +623,8 @@
   function doInternalize(source, mode) {
     if (!currentUuid) return
     if (!currentEditor && currentMode !== 'markdown') return
-    sieveInsertPos = captureInsertPos(kindIsInline('web-clip'))
+    var ed = _activeEditor()
+    if (ed) ed.setInsertPos(ed.captureInsertPos(ed.kindIsInline('web-clip')))
     sendCreateBlock('web-clip', { source: source, mode: mode })
   }
 
@@ -832,63 +761,25 @@
   }
 
   // ── AI jobs ───────────────────────────────────────────────────────────────────
-
-  // softReloadContent fetches the latest body from disk and replaces editor content,
-  // preserving the cursor position. Called when an ai:block-resolved SSE event arrives,
-  // and after extract/paste operations that re-render from the ShadowDoc.
-  function softReloadContent(uuid) {
-    if (currentMode !== 'wysiwyg' && currentMode !== 'markdown') return
-    if (currentMode === 'wysiwyg' && !currentEditor) return
-    aiReloadInProgress = true
-    // Pull the focus coordinate before the async fetch so caret is preserved across
-    // the re-render (covers TRANSFORM, paste, extract, and AI block resolve). The
-    // pull/restore is surface-polymorphic, so no wysiwyg/markdown guard is needed.
-    var fctx = window.sieveWorkspace.getSelectionContext()
-    fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid))
-      .then(function (r) { return r.json() })
-      .then(function (data) {
-        if (currentUuid !== uuid) { aiReloadInProgress = false; return }
-        var body = data.body || ''
-        var ed = _activeEditor()
-        var surface = ed && ed.surface
-        if (currentMode === 'wysiwyg' && currentEditor && surface) {
-          // Wysiwyg renders the backend's AUTHORITATIVE block list — markdown is
-          // NOT a wysiwyg render input. A flat setContent(body) re-parse ignores
-          // block boundaries and invents ids, fragmenting a multi-node prose block
-          // and losing its id (the embed bug). The doc structure + every id come
-          // from data.blocks; reloadFromBlocks + proseBlockNodes wrap a multi-
-          // node block into ONE container carrying its id. (Per-block prose content
-          // is still markdown, but rendered WITHIN its own block by the block list —
-          // it never crosses a boundary.) No setContent fallback: there is no
-          // markdown render path for wysiwyg.
-          surface.reloadFromBlocks(data.blocks || [], { allowEmpty: true })
-          aiReloadInProgress = false
-          window.sieveWorkspace.setPosition(fctx)
-        } else if (currentMode === 'markdown' && surface) {
-          surface.replaceBody(body)
-          aiReloadInProgress = false
-        } else {
-          aiReloadInProgress = false
-        }
-      })
-      .catch(function (err) {
-        aiReloadInProgress = false
-        console.error('[editor] softReloadContent failed', err)
-      })
-  }
-
+  //
+  // The whole-doc soft reload moved to AbstractEditor.softReload (P4.A): it
+  // fetches the latest body from disk and re-renders the surface, preserving the
+  // caret (AI block resolve / restore / extract re-render). Call it via
+  // _activeEditor().softReload().
 
     function runAiJob(type, question) {
       if (!currentEditor && currentMode !== 'markdown') return
 
-      var ctx = window.TipTap.buildAiContext(_activeEditor().getSelectionContext(), getMarkdown(), currentUuid)
+      var ed = _activeEditor()
+      if (!ed) return
+      var ctx = window.TipTap.buildAiContext(ed.getSelectionContext(), getMarkdown(), currentUuid)
       var refId = (ctx && ctx.blockRef) || 'doc'
       var blockType = type === 'explain' ? 'EXPLAIN' : 'ASK'
 
       // Insert the answer AFTER the caret's top-level block — never at the caret,
       // which would split the paragraph into first-half / answer / second-half.
       // An AI block is always a block kind. See blockInsertPos in ai-target.js.
-      sieveInsertPos = captureInsertPos(false)
+      ed.setInsertPos(ed.captureInsertPos(false))
 
       flushSave().then(function () {
         sendCreateBlock('ai-block', { type: blockType, ref: refId, question: question || '' })
@@ -896,221 +787,6 @@
         console.error('runAiJob flush save error:', err)
       })
     }
-
-  function handleSmartPaste(event) {
-    if (!event.clipboardData || !currentEditor) return false
-
-    if (event.target && (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA')) {
-      return false
-    }
-
-    // Caret inside a raw-text fenced block (code / diagram / log — code:true
-    // nodes): paste is a literal text paste into that block, not a smart-paste
-    // that mints a new block. Step aside; PM's default handler inserts the text.
-    if (window.TipTap && window.TipTap.caretInRawTextBlock &&
-        window.TipTap.caretInRawTextBlock(currentEditor)) {
-      return false
-    }
-
-    var text = event.clipboardData.getData('text/plain')
-    var html = event.clipboardData.getData('text/html')
-    var files = Array.from(event.clipboardData.files)
-
-    // ── 1. ai-block re-import (JS-owned) ────────────────────────────────────────
-    // Pasting a complete ```ai-block…``` fence reconstructs the existing block
-    // node with its original ID — no Go round-trip needed.
-    if (text && text.trim().startsWith('```ai-block')) {
-      var cleanText = text.trim()
-      var firstLineEnd = cleanText.indexOf('\n')
-      var lastBackticks = cleanText.lastIndexOf('```')
-      if (firstLineEnd !== -1 && lastBackticks !== -1 && lastBackticks > firstLineEnd) {
-        var yamlText = cleanText.substring(firstLineEnd + 1, lastBackticks).trim()
-        try {
-          var data = window.jsyaml.load(yamlText)
-          if (data && data.id) {
-            event.preventDefault()
-            currentEditor.commands.insertContent({
-              type: 'sieve-ai-block',
-              attrs: {
-                rawYaml:     yamlText,
-                id:          data.id || '',
-                ref:         data.ref || 'doc',
-                status:      data.status || 'PENDING',
-                type:        data.type || null,
-                model:       data.model || null,
-                createdAt:   data.createdAt || null,
-                completedAt: data.completedAt || null,
-                question:    data.question || '',
-                response:    data.response || null,
-              }
-            })
-            return true
-          }
-        } catch (e) {
-          console.error('[editor.js] Failed to parse pasted ai-block yaml', e)
-        }
-      }
-    }
-
-    // ── 1b. sieve/slice → server-side reconstruct ───────────────────────────────
-    // A multi-block slice ([][]ContentEntry) is reconstructed by Go: FirstPasteMatch
-    // per item → a block at cursorIndex+i with a fresh backend id (prose claims its
-    // sieve/prose). Each created block render-backs via insert-block at its index.
-    // A single-block slice falls through to the smart-paste pipeline, which resolves
-    // it from its sieve/<kind> view the same way.
-    var sliceData = event.clipboardData.getData('sieve/slice')
-    if (sliceData && currentUuid && !currentUuid.startsWith('prompt:')) {
-      try {
-        var slice = JSON.parse(sliceData)
-        if (Array.isArray(slice) && slice.length > 1) {
-          event.preventDefault()
-          var sliceIndex = commitInsertIndex(captureInsertPos(false))
-          sieveInsertPos = null // slice render-backs position by op index, not this
-          fetch('/api/editor/paste-slice', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uuid: currentUuid, slice: slice, index: sliceIndex }),
-          }).catch(function (err) { console.error('[editor.js] paste-slice failed', err) })
-          return true
-        }
-      } catch (e) {
-        console.error('[editor.js] Failed to parse sieve/slice paste', e)
-      }
-    }
-
-    // ── 2. Smart-paste pipeline (including images) ────────────────────────────────
-    // Collect all clipboard entries. For files, we use FileReader to get base64.
-    if (currentUuid && !currentUuid.startsWith('prompt:')) {
-      var pasteEntries = []
-      var hasFiles = false
-
-      if (event.clipboardData && event.clipboardData.items) {
-        var promises = []
-        Array.from(event.clipboardData.items).forEach(function(item) {
-          if (item.kind === 'file') {
-            var file = item.getAsFile()
-            if (file) {
-              hasFiles = true
-              promises.push(new Promise(function(resolve) {
-                var reader = new FileReader()
-                reader.onload = function(e) {
-                  resolve({ mimeType: file.type, content: e.target.result })
-                }
-                reader.onerror = function() { resolve(null) }
-                reader.readAsDataURL(file)
-              }))
-            }
-          } else if (item.kind === 'string') {
-            promises.push(new Promise(function(resolve) {
-              item.getAsString(function(str) {
-                resolve({ mimeType: item.type, content: str })
-              })
-            }))
-          }
-        })
-
-        // Smart-paste resolves a block kind server-side (web-clip / smart-image /
-        // smart-card) → capture insert position as a block index for Go to position.
-        var smartPasteIndex = commitInsertIndex(captureInsertPos(false))
-        event.preventDefault()
-
-        Promise.all(promises).then(function(results) {
-          var validEntries = results.filter(function(r) { return r !== null })
-          fetch('/api/editor/smart-paste', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uuid: currentUuid, entries: validEntries, index: smartPasteIndex }),
-          })
-            .then(function (r) { return r.json() })
-            .then(function (result) {
-              if (!currentEditor) return
-              if (result.matched) {
-                // Rendered via insert-block (tracked insert at its server index). Nothing to do.
-              } else {
-                // No processor matched — replay original clipboard content locally.
-                sieveInsertPos = null
-                if (html) {
-                  currentEditor.commands.insertContent(html)
-                } else if (text) {
-                  currentEditor.commands.insertContent(text)
-                }
-              }
-            })
-            .catch(function (err) {
-              console.error('[editor.js] smart-paste fetch failed', err)
-              sieveInsertPos = null
-              if (currentEditor) currentEditor.commands.insertContent(text)
-            })
-        })
-        return true
-      }
-    }
-
-    return false
-  }
-
-  function handleSmartDrop(event) {
-    if (!event.dataTransfer || !currentEditor) return false
-
-    if (currentUuid && !currentUuid.startsWith('prompt:')) {
-      var promises = []
-      var hasFiles = false
-      if (event.dataTransfer.items) {
-        Array.from(event.dataTransfer.items).forEach(function(item) {
-          if (item.kind === 'file') {
-            var file = item.getAsFile()
-            if (file && file.type.startsWith('image/')) {
-              hasFiles = true
-              promises.push(new Promise(function(resolve) {
-                var reader = new FileReader()
-                reader.onload = function(e) {
-                  resolve({ mimeType: file.type, content: e.target.result })
-                }
-                reader.onerror = function() { resolve(null) }
-                reader.readAsDataURL(file)
-              }))
-            }
-          } else if (item.kind === 'string') {
-            promises.push(new Promise(function(resolve) {
-              item.getAsString(function(str) {
-                resolve({ mimeType: item.type, content: str })
-              })
-            }))
-          }
-        })
-      }
-
-      if (!hasFiles) return false
-
-      var pos = currentEditor.view.posAtCoords({ left: event.clientX, top: event.clientY })
-      var insertPos = pos ? pos.pos : currentEditor.state.selection.to
-      var dropIndex = commitInsertIndex(insertPos)
-
-      event.preventDefault()
-
-      Promise.all(promises).then(function(results) {
-        var validEntries = results.filter(function(r) { return r !== null })
-        if (validEntries.length === 0) return
-        fetch('/api/editor/smart-paste', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ uuid: currentUuid, entries: validEntries, index: dropIndex }),
-        })
-          .then(function (r) { return r.json() })
-          .then(function (result) {
-            if (!currentEditor) return
-            if (result.matched) {
-              // Rendered via insert-block (tracked insert at its server index). Nothing to do.
-            }
-          })
-          .catch(function (err) {
-            console.error('[editor.js] smart-drop fetch failed', err)
-          })
-      })
-      return true
-    }
-    return false
-  }
 
   // ── Module-level editor commands ──────────────────────────────────────────────
 
@@ -1338,9 +1014,11 @@
     var data = e.detail
     // Restore renders the backend's RELOADED block list (ids intact), never a flat
     // setContent re-parse — which can't read <!--s:ID--> markers and would re-mint
-    // ids, then persist that corruption on save-back. softReloadContent renders via
-    // the block list and guards the save-back (aiReloadInProgress).
-    if (data && data.uuid) softReloadContent(data.uuid)
+    // ids, then persist that corruption on save-back. editor.softReload renders via
+    // the block list and guards the save-back (isSaveSuppressed).
+    if (!data || !data.uuid) return
+    var ed = _activeEditor()
+    if (ed) ed.softReload()
   })
 
   document.addEventListener('contextmenu', function (e) {
@@ -1383,6 +1061,8 @@
   // Fired by smart-card-renderer.js context menu "Upgrade to Web Clip".
   document.addEventListener('sieve:upgrade-to-web-clip', function (e) {
     if (!currentUuid || !currentEditor) return
+    var ed = _activeEditor()
+    if (!ed) return
     var href = e.detail.href
     var fromPos = e.detail.fromPos
     var fromSize = e.detail.fromSize
@@ -1390,7 +1070,7 @@
     if (!href || fromPos == null) return
     // Delete the smart-card block first, then insert web-clip at its position
     currentEditor.view.dispatch(currentEditor.state.tr.delete(fromPos, fromPos + fromSize))
-    sieveInsertPos = fromPos
+    ed.setInsertPos(fromPos)
     sendCreateBlock('web-clip', { source: href, mode: mode })
   })
 
@@ -1401,6 +1081,8 @@
   // never swaps nodes itself.
   document.addEventListener('sieve:extract', function (e) {
     if (!currentUuid || !currentEditor) return
+    var edExtract = _activeEditor()
+    if (!edExtract) return
     var blockId = e.detail.blockId
     var targetKind = e.detail.targetKind
     var operation = e.detail.operation || 'extract'
@@ -1414,7 +1096,7 @@
 
     // Additive ops (extract/paste) land via insert-block at a document index; clear any
     // stale insert position so insert-block uses the op's own index, not a leftover range.
-    sieveInsertPos = null
+    edExtract.clearInsertPos()
     var index = -1
     if (operation !== 'transform' && operation !== 'undo-smart-paste' && blockId) {
       // Use top-level-only scan (blockIndexAfter) — descendants() was buggy because
