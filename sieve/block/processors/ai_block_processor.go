@@ -75,27 +75,24 @@ func (p *AIBlockProcessor) aiBlockLabel(blk *block.SieveBlock) string {
 	return "Asking AI…"
 }
 
-// BuildContext returns a Q&A summary for when this block appears in another block's
-// ref chain. The NODE ID header is rendered by AIContext.String (from NodeIDs); the
-// QUESTION ABOUT / EXPLAIN NODE line stays in Content because it is a header before
-// the Q&A, not a mergeable trailer.
-func (p *AIBlockProcessor) BuildContext(blk block.SieveBlock, doc block.DocView, seen map[string]bool) block.AIContext {
+// qaHeader renders the QUESTION-side of this block's Q&A WITHOUT its own answer:
+// "EXPLAIN NODE: <ref>" or "QUESTION ABOUT: <ref>\n<question>". It is the ACTION
+// assembly — the block being asked must never carry its own prior `response`, or a
+// retry (where the doc snapshot already holds a stale answer) biases the new answer.
+// BuildContext (THREAD / ref-chain / target callers) calls this then appends the
+// answer, because the conversation history MUST keep prior answers.
+func (p *AIBlockProcessor) qaHeader(blk block.SieveBlock) string {
 	q, _ := blk.Attrs["question"].(string)
-	r, _ := blk.Attrs["response"].(string)
 	t, _ := blk.Attrs["type"].(string)
-
-	var sb strings.Builder
 	// Under the point-to-point model a block's ref IS its direct target(s) — the
 	// whole ref is what it is about (a MANY when the question spans several blocks),
 	// so reference all of it, not just the last segment.
 	ref, _ := blk.Attrs["ref"].(string)
+
+	var sb strings.Builder
 	if t == "EXPLAIN" {
 		sb.WriteString("EXPLAIN NODE: ")
 		sb.WriteString(strings.TrimSpace(ref))
-		if r != "" {
-			sb.WriteString("\n**ANSWER:** ")
-			sb.WriteString(strings.TrimSpace(r))
-		}
 	} else {
 		sb.WriteString("QUESTION ABOUT: ")
 		sb.WriteString(strings.TrimSpace(ref))
@@ -103,10 +100,28 @@ func (p *AIBlockProcessor) BuildContext(blk block.SieveBlock, doc block.DocView,
 			sb.WriteString("\n")
 			sb.WriteString(strings.TrimSpace(q))
 		}
-		if r != "" {
+	}
+	return sb.String()
+}
+
+// BuildContext returns a Q&A summary for when this block appears in another block's
+// ref chain. The NODE ID header is rendered by AIContext.String (from NodeIDs); the
+// QUESTION ABOUT / EXPLAIN NODE line stays in Content because it is a header before
+// the Q&A, not a mergeable trailer. Unlike the ACTION assembly (qaHeader) this DOES
+// append the block's own answer — a ref-chain / THREAD entry is conversation history.
+func (p *AIBlockProcessor) BuildContext(blk block.SieveBlock, doc block.DocView, seen map[string]bool) block.AIContext {
+	r, _ := blk.Attrs["response"].(string)
+	t, _ := blk.Attrs["type"].(string)
+
+	sb := strings.Builder{}
+	sb.WriteString(p.qaHeader(blk))
+	if r != "" {
+		if t == "EXPLAIN" {
+			sb.WriteString("\n**ANSWER:** ")
+		} else {
 			sb.WriteString("\n\n**ANSWER:** ")
-			sb.WriteString(strings.TrimSpace(r))
 		}
+		sb.WriteString(strings.TrimSpace(r))
 	}
 
 	return block.AIContext{NodeIDs: []string{blk.ID}, Content: sb.String()}
@@ -212,8 +227,12 @@ func (p *AIBlockProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJo
 	}
 	history := strings.Join(historyParts, "\n\n---\n\n")
 
-	// ACTION: this block's own question.
-	questionCtx := p.BuildContext(*blk, jctx.Doc, map[string]bool{}).String()
+	// ACTION: this block's own question — the QUESTION-side only. It must NOT carry
+	// its own prior `response`: on a retry the doc snapshot already holds a stale
+	// answer, and leaking it into the ACTION biases the new answer (BuildContext's
+	// answer trailer is for THREAD/ref-chain history, not the block being asked). The
+	// NODE ID header is preserved via NodeIDs.
+	questionCtx := block.AIContext{NodeIDs: []string{blk.ID}, Content: p.qaHeader(*blk)}.String()
 
 	isExplain := blockType == "EXPLAIN"
 	return &block.ProcessorJob{
