@@ -141,7 +141,6 @@
   }
 
 
-  var askDialog = null
   var internalizeDialog = null
   var richLinkDialog = null
 
@@ -348,142 +347,16 @@
   }
 
   function ensureOverlays() {
-    if (!askDialog) askDialog = wireAskPanel()
     if (!searchOverlay) searchOverlay = createSearchOverlay()
     if (!internalizeDialog) internalizeDialog = createInternalizeDialog()
     if (!richLinkDialog) richLinkDialog = createSmartCardDialog()
   }
 
-  
-
-  // ── Ask panel — wires the structural #ask-panel div in index.html ───────────
-
-  var isAskPanelPinned = window.initAskPanelPinned || false
-  var askLabelTimeout = null
-  var focusReturn = null   // SelectionContext coordinate pulled on jump-in to the Ask box
-
-  document.addEventListener('sieve:ask-panel-toggled', function(e) {
-    isAskPanelPinned = e.detail
-    var panel = document.getElementById('ask-panel')
-    if (panel) {
-      if (isAskPanelPinned) panel.classList.add('is-open')
-      else if (document.activeElement !== panel.querySelector('.ask-popup__input')) panel.classList.remove('is-open')
-    }
-  })
-
-  // Wire event handlers onto the structural #ask-panel from index.html. The panel
-  // is not created here — it lives in the DOM; this just binds send/close/keys.
-  function wireAskPanel() {
-    var panel = document.getElementById('ask-panel')
-    if (!panel) return null
-
-    var textarea = panel.querySelector('.ask-popup__input')
-    var sendBtn  = panel.querySelector('.ask-popup__send')
-    var closeBtn = panel.querySelector('.ask-popup__close')
-
-    // "View Ask panel on/off" and "pin" are one construct: a single persisted
-    // boolean (ShowAskPanel) flipped by /api/session/askpanel/toggle — the same
-    // endpoint the View menu uses. So when the panel is pinned ON, ✕ untoggles
-    // it through that endpoint (persisting off). When it's a transient ambient
-    // open (focus-jumped, not pinned), ✕ just hands focus back and hides it.
-    function closePanel() {
-      if (isAskPanelPinned && window.htmx) {
-        window.htmx.ajax('POST', '/api/session/askpanel/toggle', { swap: 'none' })
-      }
-      returnToEditor()
-    }
-
-    sendBtn.addEventListener('click', function () { doAsk(textarea, panel) })
-    if (closeBtn) closeBtn.addEventListener('click', closePanel)
-
-    textarea.addEventListener('keydown', function (e) {
-      // Ctrl+Shift+A (jump back out) is handled by the single global handler below,
-      // so it isn't duplicated here — only Enter/Escape are box-local.
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doAsk(textarea, panel) }
-      if (e.key === 'Escape') { e.preventDefault(); closePanel() }
-    })
-
-    // Glow lifetime == Ask-box focus. The glow shows what the question is linked to
-    // *while you're composing it*, then clears the moment you return to the document
-    // — so normal editing (even with the panel pinned open) never paints a block.
-    textarea.addEventListener('focus', function () {
-      if (!currentEditor || currentMode === 'markdown') return
-      var range = _activeEditor().getSelectionContext().target.range
-      window.TipTap.setAiTargetGlow(currentEditor.view, range)
-    })
-    textarea.addEventListener('blur', function () {
-      if (currentEditor) window.TipTap.clearAiTargetGlow(currentEditor.view)
-    })
-
-    return panel
-  }
-
-  function updateAskPanelLabelLive(editor) {
-    if (!askDialog) return
-    if (!askDialog.classList.contains('is-open')) return
-    if (askLabelTimeout) clearTimeout(askLabelTimeout)
-    askLabelTimeout = setTimeout(function () {
-      var t = _activeEditor().getSelectionContext().target
-      var label = askDialog.querySelector('.ask-popup__label')
-      label.textContent = t.label === 'Follow-up' ? 'Ask Follow-up' : 'Ask About ' + t.label
-      // NB: no glow here. The label tracks the caret ambiently, but the glow (which
-      // paints the document) is applied ONLY while the Ask box is focused — see the
-      // textarea focus/blur handlers in wireAskPanel — so normal editing never glows.
-    }, 100)
-  }
-
-  function openAskPopup() {
-    if (!askDialog) return
-    var textarea = askDialog.querySelector('.ask-popup__input')
-    
-    // Toggle: if the box already has focus, jump back to the editor (focus axis
-    // only — pin/visibility is independent).
-    if (askDialog.classList.contains('is-open') && document.activeElement === textarea) {
-      returnToEditor()
-      return
-    }
-    // Jump IN: pull where focus was (the SelectionContext coordinate — doc caret +
-    // optional block-inner blockCursor) so jump-out restores it exactly. Must run
-    // before the textarea steals focus below — the coordinate is still live here.
-    focusReturn = window.sieveWorkspace.getSelectionContext()
-
-    askDialog.classList.add('is-open')
-    // Seed the label from the live target (pull-at-open); the D4c subscription keeps it
-    // fresh on caret / focus / tab change. The glow is applied by the textarea focus
-    // handler once focus lands in the box below (glow only while focused → never during edit).
-    if (currentEditor) updateAskPanelLabelLive(currentEditor)
-
-    setTimeout(function() {
-      textarea.focus()
-    }, 50)
-  }
-
-  // Single focus-agnostic Ctrl+Shift+A entry point. If the Ask box has focus, jump
-  // back out (restoring focus); otherwise jump in. The ProseMirror Mod-Shift-a
-  // keymap still covers the case where the MAIN editor is focused; this handles the
-  // cases the keymap can't see (the Ask box, a sieve block's inner editor) and
-  // bails when the editor has focus so the two never double-fire.
-  function toggleAskFocus() {
-    ensureOverlays()
-    var textarea = askDialog && askDialog.querySelector('.ask-popup__input')
-    if (askDialog && askDialog.classList.contains('is-open') && document.activeElement === textarea) {
-      returnToEditor()
-    } else {
-      document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
-    }
-  }
-
-  document.addEventListener('keydown', function (e) {
-    if ((e.key !== 'a' && e.key !== 'A') || !window.isMod(e) || !e.shiftKey || e.altKey) return
-    if (!currentEditor && currentMode !== 'markdown') return
-    // The PM keymap owns the main-editor-focused case — let it handle that.
-    if (currentEditor && currentEditor.view.hasFocus()) return
-    // Don't hijack the shortcut inside the sidebar or a modal dialog.
-    var ae = document.activeElement
-    if (ae && ae.closest && ae.closest('#htmx-sidebar, dialog')) return
-    e.preventDefault()
-    toggleAskFocus()
-  })
+  // ── Ask panel (P4.B) ──────────────────────────────────────────────────────────
+  // The Ask panel + the AI ask/explain seam moved OUT of this IIFE: the Ask panel
+  // is now a permanent Workspace child (shell/ask-panel.js), and the ai-block doc
+  // mutation is a single editor method (AbstractEditor.askAi). editor.js no longer
+  // wires the panel, owns the pinned flag, or consumes sieve:ai-ask/sieve:ai-explain.
 
   // ── Rich Link dialog ──────────────────────────────────────────────────────────
 
@@ -719,74 +592,16 @@
     return overlay
   }
 
-  // Jump back to the editor, restoring the caret to where we were when we entered
-  // the Ask box. Focus and panel visibility are independent: only hide if unpinned.
-  function returnToEditor() {
-    if (!isAskPanelPinned && askDialog) askDialog.classList.remove('is-open')
-    // Restore wherever we were on jump-in: main editor caret, a block's inner
-    // editor caret, or the markdown textarea. setPosition re-resolves by position
-    // against the current doc, so a doc edit while we were in the box can't make the
-    // restore silently throw.
-    window.sieveWorkspace.setPosition(focusReturn)
-  }
-
-  function doAsk(textarea, panel) {
-    var val = textarea.value.trim()
-    if (!val) return
-
-    // Read the target the editor STORED (P3.C), PULLED live at SEND — there is no
-    // captured copy to go stale. Apply the == highlight ONLY for a live selection —
-    // the one mutating case (D-r.7: just the mark, block has an id).
-    var context = _activeEditor().getSelectionContext()
-    if (context.target.kind === 'selection' && currentMode !== 'markdown') {
-      window.TipTap.applyTargetHighlight(currentEditor)
-    }
-
-    runAiJob('ask', val)
-    textarea.value = ''
-    if (currentEditor) window.TipTap.clearAiTargetGlow(currentEditor.view)
-    if (!isAskPanelPinned) panel.classList.remove('is-open')
-    // SEND is a doc-mutating action, so focus FOLLOWS the action rather than
-    // restoring the pre-ask caret: a selection got wrapped in an anchor and the
-    // answer block is about to be inserted, which makes the captured position
-    // stale anyway. Hand focus back to the editor (never leave it in the box) and
-    // collapse the caret to the END of the target — right where the answer lands.
-    // (Ctrl+Shift+A jump-out, which is navigation not action, still restores
-    // the exact context via returnToEditor.)
-    if (currentEditor) {
-      currentEditor.view.focus()
-      try { currentEditor.commands.setTextSelection(currentEditor.state.selection.to) } catch (e) {}
-    }
-    focusReturn = null
-  }
-
-  // ── AI jobs ───────────────────────────────────────────────────────────────────
+  // ── AI jobs (P4.B) ─────────────────────────────────────────────────────────────
   //
   // The whole-doc soft reload moved to AbstractEditor.softReload (P4.A): it
   // fetches the latest body from disk and re-renders the surface, preserving the
   // caret (AI block resolve / restore / extract re-render). Call it via
   // _activeEditor().softReload().
-
-    function runAiJob(type, question) {
-      if (!currentEditor && currentMode !== 'markdown') return
-
-      var ed = _activeEditor()
-      if (!ed) return
-      var ctx = window.TipTap.buildAiContext(ed.getSelectionContext(), getMarkdown(), currentUuid)
-      var refId = (ctx && ctx.blockRef) || 'doc'
-      var blockType = type === 'explain' ? 'EXPLAIN' : 'ASK'
-
-      // Insert the answer AFTER the caret's top-level block — never at the caret,
-      // which would split the paragraph into first-half / answer / second-half.
-      // An AI block is always a block kind. See blockInsertPos in ai-target.js.
-      ed.setInsertPos(ed.captureInsertPos(false))
-
-      flushSave().then(function () {
-        sendCreateBlock('ai-block', { type: blockType, ref: refId, question: question || '' })
-      }).catch(function(err) {
-        console.error('runAiJob flush save error:', err)
-      })
-    }
+  //
+  // The AI ask/explain seam (runAiJob) + the target-prep (aiPrepareTarget) moved
+  // to AbstractEditor (askAi / prepareAiTarget), and the Ask box that drove them is
+  // now the Workspace's AskPanel child — see shell/ask-panel.js.
 
   // ── Module-level editor commands ──────────────────────────────────────────────
 
@@ -866,49 +681,18 @@
       openUrlCardDialog: function () { ensureOverlays(); openSmartCardDialog() },
       copyDocumentAsMarkdown: copyDocumentAsMarkdown,
     })
-    // The Ask panel tracks the canonical selection stream (P3.D). The workspace
-    // republishes ONLY the active tab and synthesizes on tab-switch, so the label +
-    // glow refresh on caret move, focus change, AND tab change — replacing the two
-    // legacy selection/focus fanout calls. Label + glow read the SAME live context.
-    ws.onSelectionUpdate(function (ctx) {
-      if (!ctx) return
-      if (askDialog && askDialog.classList.contains('is-open')) updateAskPanelLabelLive(currentEditor)
-      var textarea = askDialog && askDialog.querySelector('.ask-popup__input')
-      if (textarea && document.activeElement === textarea && currentEditor && currentMode !== 'markdown') {
-        window.TipTap.setAiTargetGlow(currentEditor.view, _activeEditor().getSelectionContext().target.range)
-      }
-    })
+    // The Ask panel's selection-stream subscription (label re-render) moved into
+    // the Workspace's AskPanel child (P4.B — shell/ask-panel.js); it owns its own
+    // ws.onSelectionUpdate registration now.
   })
 
-  // ── Ask AI / Explain: the single business-logic seam ──────────────────────────
-  // Every entry point — toolbar button, context menu, keyboard shortcut, sieve
-  // block — just fires sieve:ai-ask / sieve:ai-explain. These two handlers are the
-  // ONE place that prepares the target and runs the job, so all surfaces behave
-  // identically. No surface should call runAiJob/openAskPopup or applyTargetHighlight
-  // itself. aiPrepareTarget returns false to abort (markdown mode has no inline target).
-  function aiPrepareTarget() {
-    if (currentMode === 'markdown') return false
-    if (!currentEditor) return true
-    var sel = currentEditor.state.selection
-    // Visible == target highlight only for a real text selection — skip collapsed
-    // cursors, node selections (e.g. an AI block), and already-highlighted targets.
-    if (sel && !sel.empty && !sel.node && !currentEditor.isActive('highlight')) {
-      window.TipTap.applyTargetHighlight(currentEditor)
-    }
-    currentEditor.commands.focus()
-    return true
-  }
-
-  document.addEventListener('sieve:ai-explain', function () {
-    if (!aiPrepareTarget()) return
-    runAiJob('explain', undefined)
-  })
-  document.addEventListener('sieve:ai-ask', function () {
-    // No mint at open — the target is resolved live and only minted at SEND
-    // (doAsk). Markdown mode is allowed: it asks about the whole doc / selection.
-    ensureOverlays()
-    openAskPopup()
-  })
+  // ── Ask AI / Explain (P4.B) ────────────────────────────────────────────────────
+  // The two sieve:ai-ask / sieve:ai-explain consumers moved into the AskPanel child
+  // (shell/ask-panel.js): it opens on ai-ask and prepares-target + asks on ai-explain
+  // via the editor seam (AbstractEditor.askAi / prepareAiTarget). The transitional
+  // events still ride from the producers that lack a direct handle (surface keymap,
+  // context-menu items, sieve-block affordance); the toolbar + Ctrl+Shift+A hotkey
+  // are de-evented (they call window.sieveWorkspace.askPanel directly).
   document.addEventListener('sieve:block-retry', function (e) {
     if (!currentEditor || !e.detail || !e.detail.id) return
     var blkId = e.detail.id

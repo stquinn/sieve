@@ -692,16 +692,11 @@
             return;
           }
           if (btn.id === 'tb-explain-btn') {
-            document.dispatchEvent(new CustomEvent('sieve:ai-explain'));
+            window.sieveWorkspace?.askPanel?.explainActive();
             return;
           }
           if (btn.id === 'tb-ask-btn') {
-            document.dispatchEvent(new CustomEvent('sieve:ai-ask'));
-            return;
-          }
-
-          if (btn.id === 'tb-ask-btn') {
-            document.dispatchEvent(new CustomEvent('sieve:ai-ask'));
+            window.sieveWorkspace?.askPanel?.open();
             return;
           }
 

@@ -12,6 +12,7 @@
 // window.sieveWorkspace at runtime (initEditor via htmx events), never at parse.
 
 import { SieveTab } from './tab.js'
+import { AskPanel } from './ask-panel.js'
 
 /**
  * TRANSITIONAL (P2.C; dies P4 when chrome becomes Workspace-owned children):
@@ -389,6 +390,24 @@ export class SieveWorkspace {
     }
   }
 
+  // ── Workspace-owned chrome children (P4.B: the Ask panel) ────────────────────
+
+  /** @type {AskPanel|null} the permanent Ask-panel child (constructed once) */
+  #askPanel = null
+
+  /**
+   * Constructs the Workspace-owned chrome children (P4.B: the Ask panel). Called
+   * once at module load next to startTabbar() (DOM-touch stays out of the
+   * constructor so vitest can import the class headless). The AskPanel wires the
+   * structural #ask-panel and null-guards its absence.
+   */
+  bootChrome() {
+    if (!this.#askPanel) this.#askPanel = new AskPanel(this)
+  }
+
+  /** @returns {AskPanel|null} the permanent Ask-panel child (entry points reach it here) */
+  get askPanel() { return this.#askPanel }
+
   // ── Tabbar boot + SSE ownership (P2.D — relocated off the #htmx-tabbar div) ──
 
   /**
@@ -425,4 +444,4 @@ window.sieveWorkspace = workspace
 // refresh signals here (module load — this is the deferred module, so the DOM
 // mount exists or DOMContentLoaded is still pending, both handled). Guarded so
 // vitest (which imports the class without a real document tab mount) is unaffected.
-if (typeof document !== 'undefined') workspace.startTabbar()
+if (typeof document !== 'undefined') { workspace.startTabbar(); workspace.bootChrome() }

@@ -727,6 +727,71 @@ export class AbstractEditor {
     this.#createBlockAtCaret(kind, attrs || {})
   }
 
+  // ── AI job seam (P4.B: the single doc-mutation for ask + explain) ─────────────
+  //
+  // askAi is the ONE business-logic seam every AI entry point ends up at (the Ask
+  // panel's send, the explain entry points). It builds the ai-block Go resolves
+  // from the editor's OWN live selection context — ask and explain differ only by
+  // type + whether a question exists, so they share this body (one seam, never two
+  // paths). Target highlight/focus is NOT here: it is a surface/selection concern
+  // owned by prepareAiTarget (the caller's guard). window.TipTap reads stay
+  // verbatim (bus retirement is P4.E).
+
+  /**
+   * The SINGLE AI-job seam (P4.B). Reads THIS editor's live selection context,
+   * builds the ai-block ref (Go walks the chain), captures the block insert
+   * position (after the caret's top-level block — never at the caret, which would
+   * split a paragraph), flushes the pending sync so Go's shadow is current, then
+   * creates the ai-block. Owns the doc mutation ONLY.
+   * @param {{ type: 'ask'|'explain', question?: string }} job
+   * @returns {Promise<void>}
+   */
+  askAi({ type, question }) {
+    const ctx = window.TipTap.buildAiContext(this.getSelectionContext(), this.#docText(), this.uuid)
+    const ref = (ctx && ctx.blockRef) || 'doc'
+    const blockType = type === 'explain' ? 'EXPLAIN' : 'ASK'
+    // An AI block is always a block kind: land it AFTER the caret's top-level node.
+    this.setInsertPos(this.captureInsertPos(false))
+    return this.flushSave()
+      .then(() => { this.createBlock('ai-block', { type: blockType, ref: ref, question: question || '' }) })
+      .catch((err) => { console.error('[editor] askAi flush error:', err) })
+  }
+
+  /**
+   * Prepares the visible AI target on the surface (the target-prep half of the
+   * former editor.js aiPrepareTarget): highlights a live text selection (mark
+   * only — the block already carries an id) and focuses the editor. Returns false
+   * in markdown mode (no inline target) so the explain caller aborts; true
+   * otherwise. TipTap is reached only through the editor's own `tiptap` handle.
+   * @returns {boolean} whether there is an inline target (false → caller aborts)
+   */
+  prepareAiTarget() {
+    if (this.mode === EditorMode.MARKDOWN) return false
+    const ed = /** @type {any} */ (this.tiptap)
+    if (!ed) return true
+    const sel = ed.state.selection
+    // Visible == target highlight only for a real text selection — skip collapsed
+    // cursors, node selections (e.g. an AI block), and already-highlighted targets.
+    if (sel && !sel.empty && !sel.node && !ed.isActive('highlight')) {
+      window.TipTap.applyTargetHighlight(ed)
+    }
+    ed.commands.focus()
+    return true
+  }
+
+  /**
+   * Whole-doc plain text for buildAiContext (mirrors editor.js's former
+   * getMarkdown): markdown mode is the verbatim surface buffer; wysiwyg is the
+   * PM doc's textContent. The frontend never serialises the document (Go owns
+   * markdown) — this is only a plain-text view for the AI context.
+   * @returns {string}
+   */
+  #docText() {
+    if (this.mode === EditorMode.MARKDOWN) return (this.#surface && this.#surface.body) || ''
+    const ed = /** @type {any} */ (this.tiptap)
+    return ed ? ed.state.doc.textContent : ''
+  }
+
   // ── Insert position (P4.A: moved off editor.js's IIFE) ────────────────────────
   //
   // The insert-position math is EDITOR-scoped shared state: it is read by BOTH

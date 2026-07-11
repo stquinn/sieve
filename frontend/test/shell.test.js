@@ -1537,6 +1537,131 @@ describe('AbstractEditor.createBlock (P2.C transitional seam)', () => {
   })
 })
 
+// ── P4.B: AbstractEditor.askAi + prepareAiTarget (the SINGLE AI-job seam) ───────
+// runAiJob's body moved off editor.js's IIFE onto the editor: ONE method for both
+// ask and explain (they differ only by type + whether a question exists), composing
+// buildAiContext (over the editor's own getSelectionContext) + captureInsertPos +
+// flushSave + createBlock('ai-block', …). prepareAiTarget is the target-prep
+// (highlight a live selection + focus) the explain entry point guards on.
+
+describe('AbstractEditor.askAi (P4.B — the single AI-job seam)', () => {
+  // Builds a wysiwyg FakeSurfaceEditor with a scripted selection descriptor and a
+  // stubbed window.TipTap (buildAiContext returns the fed ref; blockInsertPos is a
+  // fixed position). askAi's collaborators are spied so the composition is pinned.
+  function seamRig(mode = 'wysiwyg', target = { kind: 'block', ref: 'co-9', label: 'Code Block' }) {
+    const ed = new FakeSurfaceEditor('u', { createBlockAtCaret: vi.fn() })
+    ed.presentSurface(mode, document.createElement('div'), mode === 'markdown' ? 'md body' : 'x')
+    // Give the fake wysiwyg tiptap a doc textContent (#docText reads it for buildAiContext).
+    if (mode === 'wysiwyg') ed.surface.tiptapValue = { state: { doc: { textContent: 'doc text' } } }
+    // Seed a resolved AI target into the SelectionModel via the surface descriptor.
+    ed.surface.feedDescriptor = {
+      selectionType: 'block', blockId: 'b1', blockIds: ['b1'], blockKind: 'code',
+      caret: 1, range: { from: 1, to: 3 }, target,
+    }
+    ed.services.notify({ type: 'selection-changed' })
+    return ed
+  }
+
+  let prevTipTap
+  beforeEach(() => {
+    prevTipTap = window.TipTap
+    window.TipTap = {
+      // reads context.target.ref, so askAi threads the LIVE getSelectionContext through
+      buildAiContext: (context) => ({ blockRef: (context && context.target && context.target.ref) || 'doc', contextLabel: 'x' }),
+      blockInsertPos: () => 42,
+      applyTargetHighlight: vi.fn(),
+    }
+  })
+  afterEach(() => { window.TipTap = prevTipTap })
+
+  it('ask: captures the block insert-pos, flushes, then creates the ai-block with type ASK + the live ref + question', async () => {
+    const ed = seamRig('wysiwyg', { kind: 'block', ref: 'co-9', label: 'Code Block' })
+    const setInsertPos = vi.spyOn(ed, 'setInsertPos')
+    const capture = vi.spyOn(ed, 'captureInsertPos')
+    const flushSave = vi.spyOn(ed, 'flushSave')
+    const createBlock = vi.spyOn(ed, 'createBlock')
+    await ed.askAi({ type: 'ask', question: 'why?' })
+    expect(capture).toHaveBeenCalledWith(false)          // block insert (never inline)
+    expect(setInsertPos).toHaveBeenCalledWith(42)         // the captured pos
+    expect(flushSave).toHaveBeenCalled()                  // flush BEFORE create
+    expect(createBlock).toHaveBeenCalledWith('ai-block', { type: 'ASK', ref: 'co-9', question: 'why?' })
+    // ordering: the create runs only AFTER the flush resolves
+    expect(flushSave.mock.invocationCallOrder[0]).toBeLessThan(createBlock.mock.invocationCallOrder[0])
+  })
+
+  it('explain: type is EXPLAIN and the question defaults to empty', async () => {
+    const ed = seamRig('wysiwyg', { kind: 'block', ref: 'pr-1', label: 'Paragraph' })
+    const createBlock = vi.spyOn(ed, 'createBlock')
+    await ed.askAi({ type: 'explain' })
+    expect(createBlock).toHaveBeenCalledWith('ai-block', { type: 'EXPLAIN', ref: 'pr-1', question: '' })
+  })
+
+  it('the ref comes from THIS editor getSelectionContext (single live source, not a captured copy)', async () => {
+    const ed = seamRig('wysiwyg', { kind: 'block', ref: 'co-a', label: 'Code Block' })
+    const createBlock = vi.spyOn(ed, 'createBlock')
+    // Move the target to co-b — the seam must read the NEW context at send.
+    ed.surface.feedDescriptor = {
+      selectionType: 'block', blockId: 'b2', blockIds: ['b2'], blockKind: 'code',
+      caret: 1, range: { from: 1, to: 3 }, target: { kind: 'block', ref: 'co-b', label: 'Code Block' },
+    }
+    ed.services.notify({ type: 'selection-changed' })
+    await ed.askAi({ type: 'ask', question: 'q' })
+    expect(createBlock.mock.calls[0][1].ref).toBe('co-b')  // B, not A
+  })
+
+  it('falls back to a "doc" ref when buildAiContext yields no blockRef', async () => {
+    const ed = seamRig('wysiwyg', { kind: 'document', ref: '', label: 'Document' })
+    window.TipTap.buildAiContext = () => ({})   // no blockRef
+    const createBlock = vi.spyOn(ed, 'createBlock')
+    await ed.askAi({ type: 'ask', question: 'q' })
+    expect(createBlock.mock.calls[0][1].ref).toBe('doc')
+  })
+})
+
+describe('AbstractEditor.prepareAiTarget (P4.B — the explain target-prep guard)', () => {
+  function rig(mode) {
+    const ed = new FakeSurfaceEditor('u')
+    ed.presentSurface(mode, document.createElement('div'), mode === 'markdown' ? 'md' : 'x')
+    return ed
+  }
+  let prevTipTap
+  beforeEach(() => { prevTipTap = window.TipTap; window.TipTap = { applyTargetHighlight: vi.fn() } })
+  afterEach(() => { window.TipTap = prevTipTap })
+
+  it('returns false in markdown mode (no inline target) and highlights nothing', () => {
+    const ed = rig('markdown')
+    expect(ed.prepareAiTarget()).toBe(false)
+    expect(window.TipTap.applyTargetHighlight).not.toHaveBeenCalled()
+  })
+
+  it('wysiwyg with a live text selection: highlights + focuses, returns true', () => {
+    const ed = rig('wysiwyg')
+    // FakeSurface's tiptap is {fake:'tiptap'} — give it the selection shape prepareAiTarget reads.
+    const focus = vi.fn()
+    ed.surface.tiptapValue = {
+      state: { selection: { empty: false, node: null } },
+      isActive: () => false,
+      commands: { focus },
+    }
+    expect(ed.prepareAiTarget()).toBe(true)
+    expect(window.TipTap.applyTargetHighlight).toHaveBeenCalledWith(ed.surface.tiptapValue)
+    expect(focus).toHaveBeenCalled()
+  })
+
+  it('wysiwyg with a collapsed caret: no highlight (only focus), returns true', () => {
+    const ed = rig('wysiwyg')
+    const focus = vi.fn()
+    ed.surface.tiptapValue = {
+      state: { selection: { empty: true, node: null } },
+      isActive: () => false,
+      commands: { focus },
+    }
+    expect(ed.prepareAiTarget()).toBe(true)
+    expect(window.TipTap.applyTargetHighlight).not.toHaveBeenCalled()
+    expect(focus).toHaveBeenCalled()
+  })
+})
+
 // ── P4.A: AbstractEditor absorbs the insert-position math + softReload ─────────
 // The insert-pos machinery (sieveInsertPos + kindIsInline / captureInsertPos /
 // blockIndexForInsert / commitInsertIndex) and softReloadContent moved off
