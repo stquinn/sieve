@@ -73,16 +73,10 @@
         dispatchStats()
         break
       case 'selection-changed':
-        if (currentEditor) {
-          syncToolbar(currentEditor)
-          updateAskPanelLabelLive(currentEditor)
-        }
+        if (currentEditor) syncToolbar(currentEditor)
         break
       case 'transaction':
         if (currentEditor) syncToolbar(currentEditor)
-        break
-      case 'focus-changed':
-        if (currentEditor) updateAskPanelLabelLive(currentEditor)
         break
       case 'mode-changed':
         // The editor flipped its surface (AbstractEditor.setMode producer
@@ -437,7 +431,6 @@
 
   // ── Ask panel — wires the structural #ask-panel div in index.html ───────────
 
-  var pendingAskCtx = null
   var isAskPanelPinned = window.initAskPanelPinned || false
   var askLabelTimeout = null
   var focusReturn = null   // focus context (editor/block/markdown) captured on jump-in to the Ask box
@@ -488,9 +481,7 @@
     // — so normal editing (even with the panel pinned open) never paints a block.
     textarea.addEventListener('focus', function () {
       if (!currentEditor || currentMode === 'markdown') return
-      var range = (pendingAskCtx && pendingAskCtx.range)
-        ? pendingAskCtx.range
-        : _activeEditor().getSelectionContext().target.range
+      var range = _activeEditor().getSelectionContext().target.range
       window.TipTap.setAiTargetGlow(currentEditor.view, range)
     })
     textarea.addEventListener('blur', function () {
@@ -503,11 +494,8 @@
   function updateAskPanelLabelLive(editor) {
     if (!askDialog) return
     if (!askDialog.classList.contains('is-open')) return
-    // A pinned explicit target (right-click / sieve block) overrides ambient.
-    if (pendingAskCtx) return
     if (askLabelTimeout) clearTimeout(askLabelTimeout)
     askLabelTimeout = setTimeout(function () {
-      if (pendingAskCtx) return
       var t = _activeEditor().getSelectionContext().target
       var label = askDialog.querySelector('.ask-popup__label')
       label.textContent = t.label === 'Follow-up' ? 'Ask Follow-up' : 'Ask About ' + t.label
@@ -517,7 +505,7 @@
     }, 100)
   }
 
-  function openAskPopup(precomputedCtx) {
+  function openAskPopup() {
     if (!askDialog) return
     var textarea = askDialog.querySelector('.ask-popup__input')
     
@@ -532,11 +520,11 @@
     // textarea steals focus below — activeElement is still the source here.
     focusReturn = window.TipTap.captureFocusContext(currentEditor)
 
-    pendingAskCtx = precomputedCtx || null
     askDialog.classList.add('is-open')
-    // The label tracks ambiently; the glow is applied by the textarea focus handler
-    // once focus lands in the box below (glow only while focused → never during edit).
-    if (!pendingAskCtx && currentEditor) updateAskPanelLabelLive(currentEditor)
+    // Seed the label from the live target (pull-at-open); the D4c subscription keeps it
+    // fresh on caret / focus / tab change. The glow is applied by the textarea focus
+    // handler once focus lands in the box below (glow only while focused → never during edit).
+    if (currentEditor) updateAskPanelLabelLive(currentEditor)
 
     setTimeout(function() {
       textarea.focus()
@@ -817,21 +805,15 @@
     var val = textarea.value.trim()
     if (!val) return
 
-    var ctx
-    if (pendingAskCtx) {
-      ctx = pendingAskCtx
-    } else {
-      // Read the target the editor STORED (P3.C). Apply the == highlight ONLY for a
-      // live selection — the one mutating case (D-r.7: just the mark, block has an id).
-      var context = _activeEditor().getSelectionContext()
-      if (context.target.kind === 'selection' && currentMode !== 'markdown') {
-        window.TipTap.applyTargetHighlight(currentEditor)
-      }
-      ctx = window.TipTap.buildAiContext(context, getMarkdown(), currentUuid)
+    // Read the target the editor STORED (P3.C), PULLED live at SEND — there is no
+    // captured copy to go stale. Apply the == highlight ONLY for a live selection —
+    // the one mutating case (D-r.7: just the mark, block has an id).
+    var context = _activeEditor().getSelectionContext()
+    if (context.target.kind === 'selection' && currentMode !== 'markdown') {
+      window.TipTap.applyTargetHighlight(currentEditor)
     }
 
-    runAiJob('ask', val, ctx)
-    pendingAskCtx = null
+    runAiJob('ask', val)
     textarea.value = ''
     if (currentEditor) window.TipTap.clearAiTargetGlow(currentEditor.view)
     if (!isAskPanelPinned) panel.classList.remove('is-open')
@@ -899,10 +881,10 @@
   }
 
 
-    function runAiJob(type, question, precomputedCtx) {
+    function runAiJob(type, question) {
       if (!currentEditor && currentMode !== 'markdown') return
 
-      var ctx = precomputedCtx || window.TipTap.buildAiContext(_activeEditor().getSelectionContext(), getMarkdown(), currentUuid)
+      var ctx = window.TipTap.buildAiContext(_activeEditor().getSelectionContext(), getMarkdown(), currentUuid)
       var refId = (ctx && ctx.blockRef) || 'doc'
       var blockType = type === 'explain' ? 'EXPLAIN' : 'ASK'
 
@@ -1211,6 +1193,18 @@
       openUrlCardDialog: function () { ensureOverlays(); openSmartCardDialog() },
       copyDocumentAsMarkdown: copyDocumentAsMarkdown,
     })
+    // The Ask panel tracks the canonical selection stream (P3.D). The workspace
+    // republishes ONLY the active tab and synthesizes on tab-switch, so the label +
+    // glow refresh on caret move, focus change, AND tab change — replacing the two
+    // legacy selection/focus fanout calls. Label + glow read the SAME live context.
+    ws.onSelectionUpdate(function (ctx) {
+      if (!ctx) return
+      if (askDialog && askDialog.classList.contains('is-open')) updateAskPanelLabelLive(currentEditor)
+      var textarea = askDialog && askDialog.querySelector('.ask-popup__input')
+      if (textarea && document.activeElement === textarea && currentEditor && currentMode !== 'markdown') {
+        window.TipTap.setAiTargetGlow(currentEditor.view, _activeEditor().getSelectionContext().target.range)
+      }
+    })
   })
 
   // ── Ask AI / Explain: the single business-logic seam ──────────────────────────
@@ -1219,9 +1213,9 @@
   // ONE place that prepares the target and runs the job, so all surfaces behave
   // identically. No surface should call runAiJob/openAskPopup or applyTargetHighlight
   // itself. aiPrepareTarget returns false to abort (markdown mode has no inline target).
-  function aiPrepareTarget(precomputedCtx) {
+  function aiPrepareTarget() {
     if (currentMode === 'markdown') return false
-    if (precomputedCtx || !currentEditor) return true   // caller supplied context as-is
+    if (!currentEditor) return true
     var sel = currentEditor.state.selection
     // Visible == target highlight only for a real text selection — skip collapsed
     // cursors, node selections (e.g. an AI block), and already-highlighted targets.
@@ -1232,17 +1226,15 @@
     return true
   }
 
-  document.addEventListener('sieve:ai-explain', function (e) {
-    var ctx = e && e.detail && e.detail.precomputedCtx
-    if (!aiPrepareTarget(ctx)) return
-    runAiJob('explain', undefined, ctx)
+  document.addEventListener('sieve:ai-explain', function () {
+    if (!aiPrepareTarget()) return
+    runAiJob('explain', undefined)
   })
-  document.addEventListener('sieve:ai-ask', function (e) {
-    var ctx = e && e.detail && e.detail.precomputedCtx
+  document.addEventListener('sieve:ai-ask', function () {
     // No mint at open — the target is resolved live and only minted at SEND
     // (doAsk). Markdown mode is allowed: it asks about the whole doc / selection.
     ensureOverlays()
-    openAskPopup(ctx)
+    openAskPopup()
   })
   document.addEventListener('sieve:block-retry', function (e) {
     if (!currentEditor || !e.detail || !e.detail.id) return

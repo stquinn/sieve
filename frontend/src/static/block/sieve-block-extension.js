@@ -396,31 +396,22 @@ export function domSelectionBlockRange(domSelection, er, blocks) {
                 ? renderer.buildContextMenuItems({ node: n, editor: editor, getPos: getPos })
                 : []
 
-              // Ask AI + Explain — universal for every sieve block.
-              // blockRef is the block's own ID; Go's BuildContext + expandAIBlockRefs handle context assembly.
-              // Optionally declare buildAiCtx(node) → { contextLabel, imageIds? } to customise the popup label.
-              var aiBase = renderer.buildAiCtx ? renderer.buildAiCtx(n) : {}
-              var kindLabel = n.attrs.kind
-                ? n.attrs.kind.charAt(0).toUpperCase() + n.attrs.kind.slice(1).replace(/-/g, ' ')
-                : 'Block'
-              var aiCtx = {
-                content:      '',
-                blockRef:     n.attrs.id || 'doc',
-                history:      '',
-                contextLabel: (aiBase && aiBase.contextLabel) || kindLabel,
-                imageIds:     (aiBase && aiBase.imageIds) || [],
-              }
+              // Ask AI + Explain — universal for every sieve block. The intent enters
+              // the SELECTION stream: setNodeSelection(getPos()) makes THIS block the
+              // resolved AI target (context.target), so the Ask/Explain handlers pull it
+              // live — no precomputed side-channel (P3.D). Go's BuildContext +
+              // expandAIBlockRefs assemble context server-side from the block id.
               items = items.concat([
                 { type: 'divider' },
                 { icon: IC.sparkle, label: 'Ask AI…', action: function () {
                   if (typeof getPos === 'function') editor.chain().focus().setNodeSelection(getPos()).run()
                   else editor.commands.focus()
-                  document.dispatchEvent(new CustomEvent('sieve:ai-ask', { detail: { precomputedCtx: aiCtx } }))
+                  document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
                 }},
                 { icon: IC.info,    label: 'Explain',  action: function () {
                   if (typeof getPos === 'function') editor.chain().focus().setNodeSelection(getPos()).run()
                   else editor.commands.focus()
-                  document.dispatchEvent(new CustomEvent('sieve:ai-explain', { detail: { precomputedCtx: aiCtx } }))
+                  document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
                 }},
               ])
 

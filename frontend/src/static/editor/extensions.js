@@ -205,10 +205,11 @@
   })
 
   // ── buildAiContext ─────────────────────────────────────────────────────────
-  // P3.C: reads the resolved AI target the editor STORED in its SelectionContext
-  // (context.target = {kind, ref, range, label}) — no PM walk, no node. The
-  // ai-block follow-up chain reads context.blockKind/blockId/ref (the primary block
-  // the NodeSelection targets), replacing the old node.attrs reads.
+  // P3.C/P3.D: reads ONLY the resolved AI target the editor STORED in its
+  // SelectionContext (context.target = {kind, ref, range, label}) — no PM walk, no
+  // node, no per-field re-derivation. For an ai-block follow-up target.ref is the
+  // ai-block's own single id and target.label is already 'Follow-up'; Go walks the
+  // block's ref back-pointer chain server-side (the frontend never pre-walks it).
   function buildAiContext(context, rawMd, uuid) {
     var t = context.target
 
@@ -217,15 +218,12 @@
     // (D-r.7 bug-1 fix); each block already carries an id, no blockRef wrap.
     if (t.kind === 'selection') return { blockRef: t.ref || 'doc', contextLabel: t.label }
 
-    // block → reference the existing id (no mutation).
-    if (context.blockKind === 'aiBlock' || context.blockKind === 'ai-block') {
-      // Follow-up: chain this AI block onto its own ref so Go assembles history.
-      var aiBlockId = context.blockId || ''
-      var aiBlockRef = context.ref || ''
-      var newRef = aiBlockRef && aiBlockRef !== 'doc' ? aiBlockRef + ',' + aiBlockId : aiBlockId
-      return { blockRef: newRef, contextLabel: 'Follow-up' }
-    }
-    return { blockRef: t.ref || context.blockId || 'doc', contextLabel: t.label }
+    // block → the target's SINGLE id (P3.D). For an ai-block follow-up this is the
+    // ai-block's own id and t.label is already 'Follow-up' (resolved in the surface):
+    // Go walks the block's ref back-pointer chain and reconstitutes the thread. The
+    // frontend never pre-walks the chain — sending "<ref>,<id>" did Go's job
+    // incompletely. Every block kind falls through here.
+    return { blockRef: t.ref || 'doc', contextLabel: t.label }
   }
 
   // ── applyTargetHighlight ─────────────────────────────────────────────────────
