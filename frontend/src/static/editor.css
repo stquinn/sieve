@@ -676,6 +676,7 @@ textarea::selection {
 .tiptap ul:not([data-type="taskList"]) > li::before {
   content: "•";
   position: absolute;
+  top: 0;          /* pin vertically — WebKit resolves top:auto (static pos) to a line below the text; Blink doesn't */
   left: 0;
   width: 2rem;
   text-align: left;
@@ -688,6 +689,7 @@ textarea::selection {
 .tiptap ol > li::before {
   content: counter(tiptap-counter) ".";
   position: absolute;
+  top: 0;          /* pin vertically — WebKit resolves top:auto (static pos) to a line below the text; Blink doesn't */
   left: 0;
   width: 2rem;
   text-align: left;
