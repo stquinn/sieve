@@ -61,6 +61,13 @@ describe('MarkdownSurface (P2.B)', () => {
     expect(s.body).toBe('hello world')
   })
 
+  it('stats() derives chars/lines/blockCount from its OWN body (surface owns the read, P4.D)', () => {
+    const { s } = mountMd('line one\nline two\nline three')
+    expect(s.stats()).toEqual({ chars: 28, lines: 3, blockCount: 3 })
+    const { s: empty } = mountMd('')
+    expect(empty.stats()).toEqual({ chars: 0, lines: 0, blockCount: 0 })
+  })
+
   it('input debounces 500ms then submits ONE domain updateText; body updates immediately', () => {
     vi.useFakeTimers()
     const { s, deps, textarea } = mountMd('a')

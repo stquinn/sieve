@@ -135,10 +135,10 @@ dialog {
   flex-shrink: 0;
 }
 
-body.markdown-mode #editor-toolbar .tb-btn:not(#tb-toggle-mode-btn) {
-  opacity: 0.3;
-  pointer-events: none;
-}
+/* P4.D: the markdown-mode toolbar dim rule is RETIRED. Formatting buttons are now
+   surface-owned (MarkdownSurface.toolbarContents() → []), so in markdown mode they
+   are ABSENT, not dimmed — the mode-toggle + editor-level insert/AI/help groups stay
+   live. The body.markdown-mode class remains (it drives the ask-panel/table hide). */
 
 body.markdown-mode #ask-panel {
   display: none !important;
@@ -167,6 +167,14 @@ body.markdown-mode #table-toolbar {
 }
 
 .tb-group { display: flex; align-items: center; gap: 1px; }
+
+/* P4.D: the editor-owned toolbar wraps the surface's formatting groups in a
+   .tb-surface-section span (so the editor can re-render ONLY that section on a mode
+   flip). display:contents dissolves the wrapper from layout — its child .tb-group /
+   .tb-sep participate DIRECTLY in #editor-toolbar's flex row, so the toolbar lays
+   out as ONE clean horizontal row exactly like the old static DOM (no nested
+   inline-span collapsing the groups into a cramped/wrapping block). */
+.tb-surface-section { display: contents; }
 
 .tb-sep {
   width: 1px; height: 16px;

@@ -85,60 +85,12 @@
                 <div id="quickswitcher-dialog-content" style="background: var(--theme-bgDark); width: 600px; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.6);"></div>
             </dialog>
 
-            <!-- Main toolbar — visibility and --toolbar-h controlled by #layout-overrides-toolbar style tag -->
-            <div id="editor-toolbar">
-              <!-- Text formatting -->
-              <div class="tb-group">
-                <button class="tb-btn" data-cmd="bold"   data-icon="bold"   title="Bold"></button>
-                <button class="tb-btn" data-cmd="italic" data-icon="italic" title="Italic"></button>
-                <button class="tb-btn" data-cmd="strike" data-icon="strike" title="Strikethrough"></button>
-                <button class="tb-btn" data-cmd="code"   data-icon="code"   title="Inline code"></button>
-              </div>
-              <div class="tb-sep"></div>
-              <!-- Headings -->
-              <div class="tb-group">
-                <button class="tb-btn" data-cmd="h1" data-icon="h1" title="Heading 1"></button>
-                <button class="tb-btn" data-cmd="h2" data-icon="h2" title="Heading 2"></button>
-                <button class="tb-btn" data-cmd="h3" data-icon="h3" title="Heading 3"></button>
-              </div>
-              <div class="tb-sep"></div>
-              <!-- Lists -->
-              <div class="tb-group">
-                <button class="tb-btn" data-cmd="bulletList"  data-icon="bulletList"  title="Bullet list"></button>
-                <button class="tb-btn" data-cmd="orderedList" data-icon="orderedList" title="Ordered list"></button>
-                <button class="tb-btn" data-cmd="taskList"    data-icon="taskList"    title="Task list"></button>
-              </div>
-              <div class="tb-sep"></div>
-              <!-- Block elements -->
-              <div class="tb-group">
-                <button class="tb-btn" data-cmd="blockquote"     data-icon="blockquote"     title="Blockquote"></button>
-                <button class="tb-btn" data-cmd="insertTable"    data-icon="table"          title="Insert 3&#xD7;3 table"></button>
-                <button class="tb-btn" data-cmd="horizontalRule" data-icon="horizontalRule" title="Horizontal rule"></button>
-              </div>
-              <div class="tb-sep"></div>
-              <div class="tb-group">
-                <button class="tb-btn" id="tb-toggle-mode-btn" title="Toggle Editor Mode"></button>
-              </div>
-              <div class="tb-sep"></div>
-              <!-- Insert content: blocks + AI query (left side, both teal and orange) -->
-              <div class="tb-group">
-                <button class="tb-btn" data-insert="code" data-sieve-kind="code" title="Insert code block"></button>
-                <button class="tb-btn" data-insert="diagram" data-sieve-kind="diagram" title="Insert diagram"></button>
-                <button class="tb-btn" id="tb-clip-btn" data-sieve-kind="web-clip" title="Insert web clip"></button>
-                <button class="tb-btn" id="tb-image-btn" data-sieve-kind="smart-image" title="Insert image from file"></button>
-                <input id="tb-image-input" type="file" accept="image/*" style="display:none">
-              </div>
-              <div class="tb-sep"></div>
-              <!-- AI query: Explain + Ask — orange, tier-gated, still on the left -->
-              <div class="tb-group tb-ai-query">
-                <button class="tb-btn" id="tb-explain-btn" data-icon="info" title="Explain"></button>
-                <button class="tb-btn" id="tb-ask-btn" data-icon="sparkle" title="Ask"></button>
-              </div>
-              <!-- Help -->
-              <div class="tb-help">
-                <button class="tb-btn" id="tb-help-btn" data-icon="help" title="Help"></button>
-              </div>
-            </div>
+            <!-- Main toolbar — visibility and --toolbar-h controlled by #layout-overrides-toolbar style tag.
+                 P4.D: the toolbar is EDITOR-owned — NoteEditor's EditorToolbar renders its buttons into
+                 this host on the first present (the inner button DOM was removed). The hidden image-input
+                 stays here (the toolbar image button + the cross-file upload handler both reach it by id). -->
+            <div id="editor-toolbar"></div>
+            <input id="tb-image-input" type="file" accept="image/*" style="display:none">
 
             <!-- Table toolbar — appears below main toolbar when cursor is inside a table -->
             <div id="table-toolbar">
@@ -343,30 +295,9 @@
         if (link) link.href = '/theme.css?t=' + new Date().getTime();
     });
 
-    // sieve:meta-dirty — dispatched by editor.js, updates the save-state dot in the path crumb and the status bar save indicator
-    document.addEventListener('sieve:meta-dirty', function(e) {
-        var dirty = e.detail && e.detail.dirty;
-        var dot = document.getElementById('meta-dirty-dot');
-        if (dot) {
-            if (dirty) {
-                dot.classList.remove('bg-tn-green');
-                dot.classList.add('bg-tn-red');
-            } else {
-                dot.classList.remove('bg-tn-red');
-                dot.classList.add('bg-tn-green');
-            }
-        }
-        
-        var saveText = document.querySelector('.status-bar__save');
-        if (!saveText) return;
-        
-        saveText.style.opacity = '1';
-        
-        var dotColor = dirty ? "bg-tn-red" : "bg-tn-green";
-        var label = dirty ? "Unsaved" : "Saved";
-        
-        saveText.innerHTML = '<div class="flex items-center gap-[0.4rem]"><span class="w-2 h-2 rounded-full shrink-0 ' + dotColor + '"></span><span style="color: var(--theme-textDim);">' + label + '</span></div>';
-    });
+    // P4.D: the sieve:meta-dirty consumer (save dot + status-bar save slot) moved
+    // into the Workspace's StatusBar child (shell/status-bar.js). Its producer (the
+    // flush-ack) stays a DOM CustomEvent until P4.E/F.
 
     // Measure real tabbar height and expose as --tabbar-h for the gutter separator.
     // The active-tab -mb-[2px] trick makes the visual bottom slightly lower than
@@ -471,23 +402,11 @@
     });
 
 
-    document.addEventListener('editor:stats', function(e) {
-        var sbStats = document.querySelector('.status-bar__stats');
-        if (sbStats && e.detail) {
-            sbStats.innerHTML = '<span title="Characters">' + (e.detail.chars || 0) + ' chars</span>' +
-                                '<span class="status-bar__sep" title="Lines">' + (e.detail.lines || 0) + ' lines</span>';
-        }
-    });
-
-    // Block-ID hover readout (dev/debug). Writes ONLY into its own __blockid cell.
-    // detail is { kind, id } over a block, or null to clear. Producer: the
-    // mouseover listener in editor.js. The block's index is read off the gutter.
-    document.addEventListener('editor:blockhover', function(e) {
-        var slot = document.querySelector('.status-bar__blockid');
-        if (!slot) return;
-        // slot.textContent = e.detail ? (e.detail.kind + ' · ' + e.detail.id) : '';
-        slot.textContent = e.detail ? (e.detail.id) : '';
-    });
+    // P4.D: the editor:stats + editor:blockhover consumers (status-bar __stats /
+    // __blockid slots) moved into the Workspace's StatusBar child. The stats
+    // PRODUCER is now the editor's `stats` stream event (the StatusBar subscribes
+    // to the active editor's onEvent); the blockhover producer (editor.js
+    // mouseover) stays a DOM CustomEvent until P4.F.
 
     // Listen for HTMX load to re-init editor if mount changes
     window.__sieveFocusTimer = null;
@@ -665,73 +584,18 @@
     // Close Handler
     window.addEventListener('DOMContentLoaded', function() {
 
-        // ── Toolbar command dispatch ────────────────────────────────────────────
-        // Single delegated handler covers both main toolbar and table toolbar
-        function handleToolbarClick(e) {
-          var btn = e.target.closest('button,[data-cmd],[data-insert],[data-ai]');
+        // ── Table toolbar command dispatch ──────────────────────────────────────
+        // P4.D: the MAIN toolbar is EDITOR-owned (EditorToolbar — buttons carry
+        // their own click closures, no delegation). The #table-toolbar is left
+        // static this phase, so its delegated command dispatch stays here (table
+        // commands run on window.__tiptap — the icon bus retires in P4.E).
+        function handleTableToolbarClick(e) {
+          var btn = e.target.closest('button,[data-cmd]');
           if (!btn) return;
-
-          // Special buttons by ID
-          if (btn.id === 'tb-help-btn') {
-            htmx.ajax('GET', '/api/help', { target: '#help-dialog-content', swap: 'innerHTML' })
-                .then(function() { document.getElementById('help-dialog').showModal(); });
-            return;
-          }
-          if (btn.id === 'tb-image-btn') {
-            document.dispatchEvent(new CustomEvent('sieve:capture-insert-pos'));
-            document.getElementById('tb-image-input').click();
-            return;
-          }
-          if (btn.id === 'tb-toggle-mode-btn') {
-            window.sieveWorkspace?.activeTab?.editor?.toggleMode();
-            return;
-          }
-          
-          if (btn.id === 'tb-clip-btn') {
-            window.sieveWorkspace?.openWebClipDialog();
-            return;
-          }
-          if (btn.id === 'tb-explain-btn') {
-            window.sieveWorkspace?.askPanel?.explainActive();
-            return;
-          }
-          if (btn.id === 'tb-ask-btn') {
-            window.sieveWorkspace?.askPanel?.open();
-            return;
-          }
-
-          // AI filing actions
-          var ai = btn.dataset.ai;
-          if (ai && window.SieveAI) { window.SieveAI[ai](); return; }
-
-          // Block inserts (code, diagram only — clip handled above)
-          var insert = btn.dataset.insert;
-          if (insert) {
-            var editor = window.__tiptap;
-            if (editor) editor.chain().focus().run();
-            document.dispatchEvent(new CustomEvent('sieve:create-block', { detail: { kind: insert } }));
-            return;
-          }
-
-          // TipTap formatting + table commands
           var editor = window.__tiptap;
           if (!editor) return;
           var c = editor.chain().focus();
           switch (btn.dataset.cmd) {
-            case 'bold':           c.toggleBold().run(); break;
-            case 'italic':         c.toggleItalic().run(); break;
-            case 'strike':         c.toggleStrike().run(); break;
-            case 'code':           c.toggleCode().run(); break;
-            case 'h1':             c.toggleHeading({ level: 1 }).run(); break;
-            case 'h2':             c.toggleHeading({ level: 2 }).run(); break;
-            case 'h3':             c.toggleHeading({ level: 3 }).run(); break;
-            case 'bulletList':     c.toggleBulletList().run(); break;
-            case 'orderedList':    c.toggleOrderedList().run(); break;
-            case 'taskList':       c.toggleTaskList().run(); break;
-            case 'blockquote':     c.toggleBlockquote().run(); break;
-            case 'insertTable':    c.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(); break;
-            case 'horizontalRule': c.setHorizontalRule().run(); break;
-            // Table editing
             case 'addColumnBefore': c.addColumnBefore().run(); break;
             case 'addColumnAfter':  c.addColumnAfter().run(); break;
             case 'deleteColumn':    c.deleteColumn().run(); break;
@@ -743,19 +607,12 @@
             case 'deleteTable':     c.deleteTable().run(); break;
           }
         }
-        var editorToolbar = document.getElementById('editor-toolbar');
-        if (editorToolbar) {
-          editorToolbar.addEventListener('mousedown', function(e) {
-            if (e.target.closest('button,[data-cmd],[data-insert],[data-ai]')) e.preventDefault();
-          });
-          editorToolbar.addEventListener('click', handleToolbarClick);
-        }
         var tableToolbar = document.getElementById('table-toolbar');
         if (tableToolbar) {
           tableToolbar.addEventListener('mousedown', function(e) {
             if (e.target.closest('button,[data-cmd]')) e.preventDefault();
           });
-          tableToolbar.addEventListener('click', handleToolbarClick);
+          tableToolbar.addEventListener('click', handleTableToolbarClick);
         }
 
         // ── Toolbar image upload ────────────────────────────────────────────────

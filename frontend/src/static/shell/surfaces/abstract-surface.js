@@ -72,6 +72,20 @@ export class AbstractSurface {
   get body() { return null }
 
   /**
+   * The surface's current document stats — chars + lines from its OWN plain-text
+   * view + a top-level block count. The editor's stats() delegates here so ALL
+   * TipTap access stays surface-private (P4.D — the epic's TipTap-only-in-surface
+   * discipline). Default derives from the plain-text `body`; WysiwygSurface
+   * overrides with the PM doc's textContent + childCount.
+   * @returns {{ chars: number, lines: number, blockCount: number }}
+   */
+  stats() {
+    const text = this.body || ''
+    const lines = text === '' ? 0 : text.split('\n').length
+    return { chars: text.length, lines, blockCount: lines }
+  }
+
+  /**
    * Mounts the surface into the editor's root element and seeds it with content.
    * The root element is owned by the editor; the DOM the surface builds under it
    * is private to the surface.
@@ -112,6 +126,17 @@ export class AbstractSurface {
   flushPending() {
     throw new Error(this.constructor.name + ' must implement flushPending()')
   }
+
+  /**
+   * The surface's OWN formatting button groups for the editor toolbar (P4.D). The
+   * editor composes these AFTER its persistent editor-level groups and re-renders
+   * ONLY this section on a mode flip. A surface with no rich commands (markdown's
+   * plain textarea) returns [] → its formatting buttons are ABSENT (not dimmed).
+   * Each button's onClick/active closure runs on the surface's OWN live view — no
+   * window.__tiptap, no editor hop.
+   * @returns {import('../toolbar-button.js').ButtonGroup[]}
+   */
+  toolbarContents() { return [] }
 
   /**
    * Raw selection/focus feed — the SelectionModel hook wired in P3. Declared so

@@ -351,8 +351,23 @@ export class AbstractEditor {
     const next = this._createSurface(mode, {
       // P3.A: feed the SelectionModel from the surface event FIRST (so an onEvent
       // handler that pulls getSelectionContext() sees the fresh context), then
-      // run the legacy chrome fan-out unchanged.
-      notify: (event) => { this.#feedSelectionModel(event); this.#emitEvent(event) },
+      // emit on the editor stream. P4.D: a doc-changed also produces a `stats`
+      // event (the retired editor.js dispatchStats — now editor-owned).
+      notify: (event) => {
+        this.#feedSelectionModel(event)
+        this.#emitEvent(event)
+        if (event && event.type === 'doc-changed') {
+          this.#emitStats()
+          // Doc mutation → UNSAVED. The retired legacyChromeFanout dispatched
+          // sieve:meta-dirty{dirty:true} on doc-changed; the flush-ack
+          // (#handleMessage) dispatches the {dirty:false} counterpart + clearDirty().
+          // Consumers: StatusBar #onDirty (the meta-dirty-dot + status-bar save slot).
+          // doc-changed does NOT fire on initial content load, so a freshly loaded
+          // document stays green until the first real edit.
+          this.markDirty()
+          document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
+        }
+      },
       applyBlockOps: (ops) => this.applyBlockOps(ops),
       updateText: (markdown) => this.updateText(markdown),
     })
@@ -362,7 +377,54 @@ export class AbstractEditor {
     rootEl.classList.toggle('hide-ai-blocks', !this.#showAiBlocks)
     next.mount(rootEl, content)
     this.#surface = next
+    // Seed the document stats for the new surface (initial present + mode flip);
+    // doc-changed emits them thereafter. The retired editor.js dispatchStats seed.
+    this.#emitStats()
     return next
+  }
+
+  /**
+   * Emits a `stats` event on the editor stream: chars + lines from the plain-text
+   * view (#docText — markdown mode is the verbatim buffer; wysiwyg is PM
+   * textContent) and the top-level block count. Folds editor.js's dispatchStats +
+   * getMarkdown (P4.D). The StatusBar consumer paints chars/lines and the
+   * --line-digits gutter width; unsaved/saved paint rides sieve:meta-dirty.
+   */
+  #emitStats() { this.#emitEvent({ type: 'stats', ...this.stats() }) }
+
+  /**
+   * The current document stats — DELEGATED to the active surface (which owns the
+   * TipTap/buffer read; no AbstractEditor.tiptap reach here — the epic's
+   * TipTap-only-in-surface discipline). A PULL seam: a consumer that points at this
+   * editor AFTER the initial-present seed already emitted (the StatusBar on cold
+   * boot) reads the current value instead of waiting for the next doc-changed emit.
+   * #emitStats pushes exactly this shape on the `stats` event.
+   * @returns {{ chars: number, lines: number, blockCount: number }}
+   */
+  stats() {
+    return this.#surface ? this.#surface.stats() : { chars: 0, lines: 0, blockCount: 0 }
+  }
+
+  /**
+   * Copies the active document's clean markdown export to the clipboard (moved
+   * verbatim from editor.js copyDocumentAsMarkdown — the File › Export › Clipboard
+   * (Markdown) menu path). Fetches the server's whole-doc export (ai-blocks
+   * filtered, cards/clips reduced to links). A native menu click carries no DOM
+   * gesture + steals focus, so WebKit rejects navigator.clipboard — the Wails
+   * native pasteboard (runtime.ClipboardSetText) is primary; the browser API is the
+   * non-Wails dev fallback. No toast system → feedback is the OS clipboard.
+   */
+  copyAsMarkdown() {
+    if (!this.#uuid) return
+    fetch('/api/editor/export?uuid=' + encodeURIComponent(this.#uuid) + '&format=markdown')
+      .then((resp) => (resp.ok ? resp.text() : null))
+      .then((md) => {
+        if (md == null) return
+        const rt = /** @type {any} */ (window).runtime
+        if (rt && rt.ClipboardSetText) return rt.ClipboardSetText(md)
+        return navigator.clipboard.writeText(md)
+      })
+      .catch((err) => { console.warn('export-markdown copy failed', err) })
   }
 
   // ── WebSocket lifecycle ───────────────────────────────────────────────────────
@@ -789,7 +851,7 @@ export class AbstractEditor {
   #docText() {
     if (this.mode === EditorMode.MARKDOWN) return (this.#surface && this.#surface.body) || ''
     const ed = /** @type {any} */ (this.tiptap)
-    return ed ? ed.state.doc.textContent : ''
+    return ((ed && ed.state && ed.state.doc && ed.state.doc.textContent) || '')
   }
 
   // ── Insert position (P4.A: moved off editor.js's IIFE) ────────────────────────

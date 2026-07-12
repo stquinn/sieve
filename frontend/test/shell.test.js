@@ -387,7 +387,9 @@ describe('AbstractEditor surface events + domain services (P2.B corrections)', (
   it('forwards surface notifications to registered listeners; unsubscribe stops them', () => {
     const { ed, services } = rigWithServices()
     const seen = []
-    const unsub = ed.onEvent((ev) => seen.push(ev.type))
+    // P4.D: a doc-changed ALSO produces a follow-up `stats` event on the same
+    // stream — filter it out; this test is about the forward/unsubscribe mechanism.
+    const unsub = ed.onEvent((ev) => { if (ev.type !== 'stats') seen.push(ev.type) })
     services().notify({ type: 'doc-changed' })
     expect(seen).toEqual(['doc-changed'])
     unsub()
@@ -395,11 +397,30 @@ describe('AbstractEditor surface events + domain services (P2.B corrections)', (
     expect(seen).toEqual(['doc-changed']) // unsubscribed
   })
 
+  it('a doc-changed marks the editor dirty and dispatches sieve:meta-dirty{dirty:true}', () => {
+    // P4.D regression guard: the retired legacyChromeFanout dispatched the
+    // dirty:true signal on doc-changed (the flush-ack dispatches dirty:false). Its
+    // consumers are the StatusBar save slot + the meta-dirty-dot; without this the
+    // save indicators are "always green".
+    const { ed, services } = rigWithServices()
+    expect(ed.isDirty).toBe(false)
+    let dirtyDetail = null
+    const handler = (e) => { dirtyDetail = e.detail }
+    document.addEventListener('sieve:meta-dirty', handler)
+    try {
+      services().notify({ type: 'doc-changed' })
+      expect(ed.isDirty).toBe(true)
+      expect(dirtyDetail).toEqual({ dirty: true })
+    } finally {
+      document.removeEventListener('sieve:meta-dirty', handler)
+    }
+  })
+
   it('a throwing listener does not break the other registrants', () => {
     const { ed, services } = rigWithServices()
     const seen = []
     ed.onEvent(() => { throw new Error('boom') })
-    ed.onEvent((ev) => seen.push(ev.type))
+    ed.onEvent((ev) => { if (ev.type !== 'stats') seen.push(ev.type) })
     expect(() => services().notify({ type: 'doc-changed' })).not.toThrow()
     expect(seen).toEqual(['doc-changed'])
   })
@@ -1379,7 +1400,9 @@ describe('AbstractEditor.toggleMode (P2.C — binary-flip sugar over setMode)', 
     const content = startMode === 'markdown' ? 'seed' : { body: '', blocks: [] }
     rig.ed.presentSurface(startMode, root, content)
     const events = []
-    rig.ed.onEvent((ev) => events.push(ev))
+    // P4.D: presentSurface (the flip mount) also emits a `stats` event; these
+    // tests pin the mode-changed/failed emissions only — filter stats out.
+    rig.ed.onEvent((ev) => { if (ev.type !== 'stats') events.push(ev) })
     return Object.assign(rig, { root, events })
   }
 
@@ -1906,38 +1929,32 @@ describe('AbstractEditor.softReload (P4.A)', () => {
   })
 })
 
-describe('SieveWorkspace chrome delegation (P2.C transitional; P4.C dissolved)', () => {
+describe('SieveWorkspace chrome delegation (P2.C transitional; P4.C/P4.D dissolved)', () => {
   // P4.C moved the search overlay + the two insert dialogs OUT of the provideChrome
   // registry into Workspace-owned children (SearchOverlay / InsertDialogs, built by
-  // bootChrome). Their verbs (toggleSearch / openWebClipDialog / openUrlCardDialog)
-  // now delegate to the children DIRECTLY — they no longer route through
-  // provideChrome/#chromeCall. Only copyDocumentAsMarkdown still rides the registry
-  // (its impl stays in editor.js until P4.D). These tests pin the post-P4.C contract.
+  // bootChrome). P4.D retired the registry ENTIRELY: copyDocumentAsMarkdown now
+  // delegates DIRECTLY to the active editor's copyAsMarkdown (the editor owns the
+  // export). provideChrome / #chromeCall / WorkspaceChrome are GONE. These tests pin
+  // the post-P4.D contract.
 
-  it('copyDocumentAsMarkdown still delegates through provideChrome/#chromeCall', () => {
+  it('the provideChrome registry is GONE (no method on the Workspace)', () => {
     const w = new SieveWorkspace()
-    const impls = { copyDocumentAsMarkdown: vi.fn() }
-    w.provideChrome(impls)
-    w.copyDocumentAsMarkdown()
-    expect(impls.copyDocumentAsMarkdown).toHaveBeenCalledTimes(1)
+    expect(w.provideChrome).toBeUndefined()
   })
 
-  it('unregistered copyDocumentAsMarkdown warns and no-ops; partial registration merges', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    try {
-      const w = new SieveWorkspace()
-      expect(() => { w.copyDocumentAsMarkdown() }).not.toThrow()
-      expect(warn).toHaveBeenCalledTimes(1)
-      const a = vi.fn()
-      const b = vi.fn()
-      w.provideChrome({ copyDocumentAsMarkdown: a })
-      w.provideChrome({ copyDocumentAsMarkdown: b }) // merges, does not replace (b wins)
-      w.copyDocumentAsMarkdown()
-      expect(a).not.toHaveBeenCalled()
-      expect(b).toHaveBeenCalledTimes(1)
-    } finally {
-      warn.mockRestore()
-    }
+  it('copyDocumentAsMarkdown delegates to the active editor copyAsMarkdown (P4.D)', () => {
+    const w = new SieveWorkspace()
+    const copyAsMarkdown = vi.fn()
+    const tab = w.openTab('doc-1')
+    // Masquerade a live editor with the copyAsMarkdown seam onto the tab.
+    tab.attachEditor(Object.setPrototypeOf({ uuid: 'doc-1', copyAsMarkdown, onEvent: () => () => {} }, AbstractEditor.prototype))
+    w.copyDocumentAsMarkdown()
+    expect(copyAsMarkdown).toHaveBeenCalledTimes(1)
+  })
+
+  it('copyDocumentAsMarkdown null-guards no active editor (no throw)', () => {
+    const w = new SieveWorkspace()
+    expect(() => w.copyDocumentAsMarkdown()).not.toThrow()
   })
 
   it('the search + insert-dialog verbs delegate to the Workspace children, NOT #chromeCall', () => {
@@ -1971,6 +1988,123 @@ describe('SieveWorkspace chrome delegation (P2.C transitional; P4.C dissolved)',
     const w = new SieveWorkspace()
     // No bootChrome() → children are null; verbs must no-op, not throw.
     expect(() => { w.toggleSearch(); w.openWebClipDialog(); w.openUrlCardDialog() }).not.toThrow()
+  })
+})
+
+// ── P4.D: AbstractEditor.copyAsMarkdown + the editor `stats` producer ─────────────
+
+describe('AbstractEditor.copyAsMarkdown (P4.D — moved from editor.js)', () => {
+  let prevFetch, prevRuntime, prevClip
+  beforeEach(() => {
+    prevFetch = global.fetch; prevRuntime = window.runtime; prevClip = navigator.clipboard
+  })
+  afterEach(() => {
+    global.fetch = prevFetch; window.fetch = prevFetch; window.runtime = prevRuntime
+    if (prevClip !== undefined) Object.defineProperty(navigator, 'clipboard', { value: prevClip, configurable: true })
+  })
+
+  it('fetches the clean export and writes it to the Wails pasteboard (primary)', async () => {
+    const md = '# clean export'
+    const fetchMock = vi.fn(() => Promise.resolve({ ok: true, text: () => Promise.resolve(md) }))
+    global.fetch = fetchMock; window.fetch = fetchMock
+    const setText = vi.fn(() => Promise.resolve())
+    window.runtime = { ClipboardSetText: setText }
+    const ed = new AbstractEditor('doc-9')
+    ed.copyAsMarkdown()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(fetchMock).toHaveBeenCalledWith('/api/editor/export?uuid=doc-9&format=markdown')
+    expect(setText).toHaveBeenCalledWith(md)
+  })
+
+  it('falls back to navigator.clipboard when no Wails runtime', async () => {
+    global.fetch = vi.fn(() => Promise.resolve({ ok: true, text: () => Promise.resolve('body') }))
+    window.fetch = global.fetch
+    window.runtime = undefined
+    const writeText = vi.fn(() => Promise.resolve())
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    const ed = new AbstractEditor('doc-9')
+    ed.copyAsMarkdown()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(writeText).toHaveBeenCalledWith('body')
+  })
+
+  it('a valid editor fetches the export (the uuid guard positive)', () => {
+    const fetchMock = vi.fn(() => Promise.resolve({ ok: true, text: () => Promise.resolve('x') }))
+    global.fetch = fetchMock; window.fetch = fetchMock
+    window.runtime = { ClipboardSetText: () => Promise.resolve() }
+    // AbstractEditor requires a uuid (constructor throws on ''); the `if (!uuid)`
+    // guard's negative is exercised by the workspace null-editor delegation. Here
+    // we confirm a valid editor DOES fetch (the guard's positive).
+    const ed = new AbstractEditor('u')
+    ed.copyAsMarkdown()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('AbstractEditor stats producer (P4.D)', () => {
+  it('presentSurface emits an initial stats event on the stream', () => {
+    const ed = new FakeSurfaceEditor('u')
+    const events = []
+    ed.onEvent((ev) => events.push(ev))
+    ed.presentSurface('markdown', document.createElement('div'), 'hello\nworld')
+    const stats = events.find((e) => e.type === 'stats')
+    expect(stats).toBeTruthy()
+    // markdown surface body drives #docText → 'the body' (FakeSurface.bodyValue).
+    expect(typeof stats.chars).toBe('number')
+    expect(typeof stats.lines).toBe('number')
+  })
+
+  it('a doc-changed surface event emits a follow-up stats event', () => {
+    const ed = new FakeSurfaceEditor('u')
+    ed.presentSurface('markdown', document.createElement('div'), 'x')
+    const events = []
+    ed.onEvent((ev) => events.push(ev.type))
+    ed.services.notify({ type: 'doc-changed' })
+    expect(events).toContain('doc-changed')
+    expect(events).toContain('stats')
+  })
+})
+
+// ── P4.D: NoteEditor owns the toolbar (mount on present, destroy on teardown) ─────
+
+describe('NoteEditor toolbar ownership (P4.D)', () => {
+  beforeEach(() => FakeSocket.reset())
+
+  // A fake toolbar recording mount/refresh/destroy calls (injected via options).
+  function fakeToolbar() {
+    return { _mounted: false, mount: vi.fn(function () { this._mounted = true }), get mounted() { return this._mounted },
+      refreshSurfaceSection: vi.fn(), destroy: vi.fn() }
+  }
+
+  it('mounts the toolbar on the FIRST present; re-renders its surface section on the next', () => {
+    const tb = fakeToolbar()
+    const ed = new (withFakeSurfaces(NoteEditor))('n', {
+      socketFactory: (url) => new FakeSocket(url), wsUrl: () => 'ws://t', onServerMessage: () => {}, toolbar: tb,
+    })
+    ed.presentSurface('wysiwyg', document.createElement('div'), { body: '', blocks: [] })
+    expect(tb.mount).toHaveBeenCalledTimes(1)
+    expect(tb.refreshSurfaceSection).not.toHaveBeenCalled()
+    // Second present (same-uuid re-init) → re-render the surface section, no re-mount.
+    ed.presentSurface('wysiwyg', document.createElement('div'), { body: '', blocks: [] })
+    expect(tb.mount).toHaveBeenCalledTimes(1)
+    expect(tb.refreshSurfaceSection).toHaveBeenCalledTimes(1)
+  })
+
+  it('destroy tears down the toolbar subscription', () => {
+    const tb = fakeToolbar()
+    const ed = new (withFakeSurfaces(NoteEditor))('n', {
+      socketFactory: (url) => new FakeSocket(url), wsUrl: () => 'ws://t', onServerMessage: () => {}, toolbar: tb,
+    })
+    ed.presentSurface('markdown', document.createElement('div'), 'x')
+    ed.destroy()
+    expect(tb.destroy).toHaveBeenCalledTimes(1)
+  })
+
+  it('a null toolbar (injected) is a safe no-op through present + destroy', () => {
+    const ed = new (withFakeSurfaces(NoteEditor))('n', {
+      socketFactory: (url) => new FakeSocket(url), wsUrl: () => 'ws://t', onServerMessage: () => {}, toolbar: null,
+    })
+    expect(() => { ed.presentSurface('markdown', document.createElement('div'), 'x'); ed.destroy() }).not.toThrow()
   })
 })
 

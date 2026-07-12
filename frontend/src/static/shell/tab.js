@@ -48,6 +48,16 @@ export class SieveTab {
   #selectionListeners = []
 
   /**
+   * Tab-level `stats` listeners (P4.D). Same rationale as #selectionListeners: the
+   * StatusBar points at the TAB, not the editor, so the subscription survives an
+   * editor that attaches AFTER the tab is active (cold boot) and the editor's
+   * initial-present stats seed — emitted after attachEditor subscribes — is
+   * forwarded here.
+   * @type {Array<(ev: { chars: number, lines: number, blockCount: number }) => void>}
+   */
+  #statsListeners = []
+
+  /**
    * @param {string} uuid — document uuid for this tab
    */
   constructor(uuid) {
@@ -103,6 +113,7 @@ export class SieveTab {
     this.#unsubEditor = ed.onEvent((e) => {
       if (e.type === 'mode-changed') this.#mode = e.mode
       else if (e.type === 'selection-update') this.#notifySelectionListeners(e.context)
+      else if (e.type === 'stats') this.#notifyStatsListeners(e)
     })
   }
 
@@ -123,6 +134,25 @@ export class SieveTab {
   #notifySelectionListeners(ctx) {
     for (const fn of this.#selectionListeners) {
       try { fn(ctx) } catch (e) { console.error('[SieveTab] selectionUpdate listener threw', e) }
+    }
+  }
+
+  /**
+   * Registers a listener for this tab's `stats` stream (the attached editor's
+   * doc-stats event, forwarded here). Returns an unsubscribe. Mirrors
+   * onSelectionUpdate — tab-identity registry, survives editor swaps + late attach.
+   * @param {(ev: { chars: number, lines: number, blockCount: number }) => void} fn
+   * @returns {() => void} unsubscribe
+   */
+  onStats(fn) {
+    this.#statsListeners.push(fn)
+    return () => { this.#statsListeners = this.#statsListeners.filter((l) => l !== fn) }
+  }
+
+  /** @param {{ chars: number, lines: number, blockCount: number }} ev */
+  #notifyStatsListeners(ev) {
+    for (const fn of this.#statsListeners) {
+      try { fn(ev) } catch (e) { console.error('[SieveTab] stats listener threw', e) }
     }
   }
 

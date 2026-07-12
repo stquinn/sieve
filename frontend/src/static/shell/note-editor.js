@@ -15,6 +15,7 @@
 
 import { AbstractEditor } from './abstract-editor.js'
 import { EditorMode } from './editor-mode.js'
+import { EditorToolbar } from './editor-toolbar.js'
 // The concrete surfaces are the note editor's private input surfaces — used
 // directly by _createSurface below (its type-defining repertoire). Importing
 // the modules also assigns their window.* handles as a side effect (still read
@@ -27,9 +28,18 @@ import { MarkdownSurface } from './surfaces/markdown-surface.js'
  * @property {(url: string) => WebSocket} [socketFactory] — injected for tests; defaults to `new WebSocket(url)`
  * @property {() => string}               [wsUrl]         — injected for tests; defaults to the /api/ws URL for this uuid
  * @property {(msg: object) => void}      [onServerMessage] — routing for the remaining messages (editor.js owns it)
+ * @property {import('./editor-toolbar.js').EditorToolbar|null} [toolbar] — injected toolbar (tests); defaults to a live EditorToolbar
  */
 
 export class NoteEditor extends AbstractEditor {
+  /**
+   * The editor-owned toolbar (P4.D). Mounted lazily on the first present into the
+   * #editor-toolbar host; re-renders its surface section on each present + on a
+   * mode flip (its own onEvent subscription). Injectable for tests.
+   * @type {EditorToolbar|null}
+   */
+  #toolbar = null
+
   /**
    * Declares the live channel (faithful to editor.js: openEditorWs ran at the
    * end of initEditor for every non-prompt uuid). Everything else is inherited.
@@ -38,6 +48,36 @@ export class NoteEditor extends AbstractEditor {
    */
   constructor(uuid, options = {}) {
     super(uuid, Object.assign({}, options, { connect: true }))
+    // The toolbar is a NoteEditor concern (PromptEditor has none). Injected in
+    // tests via options.toolbar; in the app it lazily binds the #editor-toolbar
+    // host on the first present. A null host (headless / ShowToolbar off) → all
+    // toolbar methods no-op.
+    this.#toolbar = options.toolbar !== undefined ? options.toolbar : new EditorToolbar(this)
+  }
+
+  /**
+   * Presents the surface (inherited behaviour) then binds the toolbar: mount it on
+   * the first present, else re-render its surface section for the new surface (a
+   * same-mode re-init that does not fire mode-changed). The flip's surface swap is
+   * handled by the toolbar's own mode-changed subscription.
+   * @override
+   * @param {import('./editor-mode.js').EditorModeValue} mode
+   * @param {HTMLElement} rootEl
+   * @param {unknown}     content
+   */
+  presentSurface(mode, rootEl, content) {
+    const surface = super.presentSurface(mode, rootEl, content)
+    if (this.#toolbar) {
+      if (this.#toolbar.mounted) this.#toolbar.refreshSurfaceSection()
+      else this.#toolbar.mount()
+    }
+    return surface
+  }
+
+  /** @override — tears down the toolbar subscription alongside the surface + socket. */
+  destroy() {
+    if (this.#toolbar) { this.#toolbar.destroy(); this.#toolbar = null }
+    super.destroy()
   }
 
   /**

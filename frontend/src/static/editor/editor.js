@@ -59,38 +59,30 @@
     // block-extracted: the new block renders via insert-block (tracked). Nothing to do.
   }
 
-  // legacyChromeFanout — TRANSITIONAL (quarantined with the X-C debt, epic #31).
-  // The ONE place the editor's producer-named events — the surfaces' doc-changed /
-  // selection-changed / transaction / focus-changed AND the editor's own
-  // mode-changed / mode-change-failed (P2.C) — fan out to the legacy chrome
-  // functions. Consumer names appear ONLY here; dies in P4 when chrome becomes
-  // Workspace-owned children.
-  function legacyChromeFanout(event) {
-    switch (event.type) {
-      case 'doc-changed':
-        document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
-        document.dispatchEvent(new CustomEvent('editor:changed'))
-        dispatchStats()
-        break
-      case 'selection-changed':
-        if (currentEditor) syncToolbar(currentEditor)
-        break
-      case 'transaction':
-        if (currentEditor) syncToolbar(currentEditor)
-        break
-      case 'mode-changed':
-        // The editor flipped its surface (AbstractEditor.setMode producer
-        // emission — exactly once per actual flip). The Tab self-records the mode
-        // (it subscribed to this stream in attachEditor); chrome only here:
-        // refresh the mode button + body class, stats, and the tabbar strip.
-        updateModeUI()
-        dispatchStats()
-        if (window.sieveWorkspace) window.sieveWorkspace.loadTabs()
-        break
-      case 'mode-change-failed':
-        console.error('[editor] mode toggle failed; staying in ' + event.mode, event.error)
-        window.alert('Mode switch failed — staying in ' + event.mode + ' mode.')
-        break
+  // P4.D: legacyChromeFanout is RETIRED. Its 5 cases re-homed to their owners:
+  //   • selection-changed / transaction → the editor's own toolbar (EditorToolbar
+  //     subscribes to the editor's RAW onEvent stream; active-state refresh).
+  //   • doc-changed → the editor emits a `stats` event (AbstractEditor #emitStats);
+  //     the StatusBar child consumes it. `editor:changed` is DELETED (0 consumers).
+  //   • mode-changed → the EditorToolbar re-renders its surface section + mode
+  //     button; the body `markdown-mode` class + loadTabs move to the mode-changed
+  //     listener below; the flush-ack still paints save state (sieve:meta-dirty).
+  //   • mode-change-failed → the mode-changed listener below (verbatim alert).
+  // The Tab still self-records mode (its own attachEditor subscription); chrome is
+  // now Workspace-owned children (toolbar/status-bar). No consumer names live here.
+
+  // The body `markdown-mode` class + tab-strip refresh on a flip: these are the
+  // two non-toolbar chrome reactions to a mode change that stay editor.js's job
+  // (the toolbar owns the button/icon; the body class drives the ask-panel/table
+  // hide CSS + the loadTabs re-render). A newly created editor gets this listener
+  // as its mode-changed reaction; mode-change-failed keeps the verbatim alert.
+  function onEditorModeEvent(event) {
+    if (event.type === 'mode-changed') {
+      document.body.classList.toggle('markdown-mode', currentMode === 'markdown')
+      if (window.sieveWorkspace) window.sieveWorkspace.loadTabs()
+    } else if (event.type === 'mode-change-failed') {
+      console.error('[editor] mode toggle failed; staying in ' + event.mode, event.error)
+      window.alert('Mode switch failed — staying in ' + event.mode + ' mode.')
     }
   }
 
@@ -101,8 +93,8 @@
   // the Go takeover guard needs), keep the instance on a same-uuid re-activation
   // (toggleMode / prompt re-init reuse the SAME editor and its live socket).
   // initEditor never destroys editors directly — all teardown goes through here.
-  // A NEWLY created editor gets the transitional legacy-chrome fan-out as its
-  // first (and only production) surface-event registrant.
+  // A NEWLY created editor gets the body-class + loadTabs mode reaction as its
+  // surface-event registrant (the toolbar/status-bar own the rest — P4.D).
   function _syncShell(uuid) {
     var ws = window.sieveWorkspace
     if (!ws) return
@@ -120,7 +112,7 @@
         sendCreateBlock(kind, attrs)
       },
     })
-    if (tab && tab.editor && !hadEditor) tab.editor.onEvent(legacyChromeFanout)
+    if (tab && tab.editor && !hadEditor) tab.editor.onEvent(onEditorModeEvent)
   }
 
   var blobInterceptorCleanup = null
@@ -139,39 +131,6 @@
     ])
   }
 
-
-  // ── Toolbar active-state sync ─────────────────────────────────────────────────
-
-  function syncToolbar(editor) {
-    var toolbar = document.getElementById('editor-toolbar')
-    if (!toolbar || toolbar.style.display === 'none') return
-    var map = {
-      bold:        ['bold'],
-      italic:      ['italic'],
-      strike:      ['strike'],
-      code:        ['code'],
-      h1:          ['heading', { level: 1 }],
-      h2:          ['heading', { level: 2 }],
-      h3:          ['heading', { level: 3 }],
-      bulletList:  ['bulletList'],
-      orderedList: ['orderedList'],
-      taskList:    ['taskList'],
-      blockquote:  ['blockquote'],
-    }
-    toolbar.querySelectorAll('[data-cmd]').forEach(function(btn) {
-      var args = map[btn.dataset.cmd]
-      if (args) btn.classList.toggle('active', editor.isActive.apply(editor, args))
-    })
-    // Show the table toolbar when cursor is inside a table; update the CSS variable
-    // so the fixed-position gutter separator adjusts its top offset accordingly.
-    var tableToolbar = document.getElementById('table-toolbar')
-    if (tableToolbar) {
-      var inTable = editor.isActive('table')
-      tableToolbar.style.display = inTable ? 'flex' : 'none'
-      var appRoot = document.getElementById('app-root')
-      if (appRoot) appRoot.style.setProperty('--table-toolbar-h', inTable ? '32px' : '0px')
-    }
-  }
 
   // ── Public entry point called from App.tsx htmx:afterSettle ─────────────────
 
@@ -224,10 +183,14 @@
           isMarkdown ? (data.body || '') : { body: data.body || '', blocks: data.blocks }
         )
         // Seed the Tab's mode record after the initial present (mode-changed
-        // does not fire on initial mount — only on an actual flip).
+        // does not fire on initial mount — only on an actual flip). The toolbar
+        // (mode button + body class seed) and stats are seeded by the editor
+        // itself: EditorToolbar.mount() on first present sets the mode button, and
+        // AbstractEditor.presentSurface emits the initial `stats` event (P4.D).
         if (ws && ws.activeTab) ws.activeTab.recordMode(ed.mode)
-        updateModeUI()
-        dispatchStats()
+        // Seed the body markdown-mode class for the initial present (the flip
+        // listener handles subsequent changes; initial present fires no event).
+        document.body.classList.toggle('markdown-mode', ed.mode === 'markdown')
       })
       .catch(function (err) { console.error('[editor] load failed', err) })
   }
@@ -315,31 +278,10 @@
   // replace-by-block-id, token reconcile + attrs updates as addToHistory:false
   // (shell/surfaces/wysiwyg-surface.js; markdown behavior in markdown-surface.js).
 
-  // ── Stats ─────────────────────────────────────────────────────────────────────
-
-  function dispatchStats() {
-    var text = getMarkdown()
-    var chars = text.length
-    var lines = text === '' ? 0 : text.split('\n').length
-
-    var blockCount = currentEditor ? currentEditor.state.doc.childCount : lines
-    var digits = Math.max(1, String(blockCount).length)
-    document.documentElement.style.setProperty('--line-digits', digits)
-
-    document.dispatchEvent(new CustomEvent('editor:stats', { detail: { chars: chars, lines: lines } }))
-  }
-
-  function getMarkdown() {
-    // Markdown mode is the verbatim buffer (surface-owned since P2.B). In
-    // WYSIWYG the frontend does NOT serialise the document (Go owns markdown,
-    // derived from the tree); callers here (stats, prompt save) only need a
-    // plain-text view, so use the editor's own text — never a frontend-built
-    // markdown document.
-    var ed = _activeEditor()
-    if (ed && ed.mode === 'markdown') return (ed.surface && ed.surface.body) || ''
-    if (!currentEditor) return ''
-    return currentEditor.state.doc.textContent
-  }
+  // ── Stats (P4.D) ────────────────────────────────────────────────────────────
+  // dispatchStats + getMarkdown RETIRED: the editor produces a `stats` event on
+  // its own stream (AbstractEditor #emitStats, folding both), consumed by the
+  // Workspace's StatusBar child. editor.js no longer computes doc stats.
 
   // ── Ask panel (P4.B) ──────────────────────────────────────────────────────────
   // The Ask panel + the AI ask/explain seam moved OUT of this IIFE: the Ask panel
@@ -377,60 +319,12 @@
   // The mode flip itself is AbstractEditor.toggleMode/setMode (P2.B/P2.C): an
   // AWAITED in-place surface swap with stay-on-failure semantics. The menu and
   // the toolbar button call the component API directly
-  // (window.sieveWorkspace?.activeTab?.editor?.toggleMode()); the chrome
-  // reaction to a flip lives in legacyChromeFanout's mode-changed /
-  // mode-change-failed cases (the editor is the producer, emitted once per
-  // actual flip inside setMode).
-
-  function updateModeUI() {
-    document.body.classList.toggle('markdown-mode', currentMode === 'markdown')
-    var toggleBtn = document.getElementById('tb-toggle-mode-btn')
-    if (toggleBtn && window.SieveIcons) {
-      toggleBtn.innerHTML = window.SieveIcons[currentMode === 'markdown' ? 'eye' : 'markdown']
-      toggleBtn.title = currentMode === 'markdown' ? 'Return to WYSIWYG' : 'View Markdown Source'
-    }
-  }
-
-  // Copy as Markdown (File › Export › Clipboard (Markdown) — the menu calls
-  // window.sieveWorkspace.copyDocumentAsMarkdown()). Fetch the server's clean
-  // whole-doc export (ai-blocks filtered, cards/clips reduced to links) and
-  // copy it to the clipboard. A native menu click carries no DOM user gesture
-  // and steals document focus, so WebKit rejects navigator.clipboard here — the
-  // Wails native pasteboard (runtime.ClipboardSetText) is the primary path; the
-  // browser API is only the fallback for non-Wails (plain browser) dev.
-  // No toast system exists, so feedback is left to the OS clipboard affordance.
-  function copyDocumentAsMarkdown() {
-    if (!currentUuid) return
-    fetch('/api/editor/export?uuid=' + encodeURIComponent(currentUuid) + '&format=markdown')
-      .then(function (resp) { return resp.ok ? resp.text() : null })
-      .then(function (md) {
-        if (md == null) return
-        if (window.runtime && window.runtime.ClipboardSetText) {
-          return window.runtime.ClipboardSetText(md)
-        }
-        return navigator.clipboard.writeText(md)
-      })
-      .catch(function (err) { console.warn('export-markdown copy failed', err) })
-  }
-
-  // ── TRANSITIONAL workspace-chrome registration (P2.C; dies P4.D) ──────────────
-  // The search overlay + the two insert dialogs dissolved out of this registry in
-  // P4.C (now Workspace-owned children; their verbs delegate directly). Only
-  // copyDocumentAsMarkdown still rides provideChrome — its impl stays in this IIFE
-  // until P4.D. The native menu calls the component API directly
-  // (window.sieveWorkspace.copyDocumentAsMarkdown()). DOMContentLoaded ordering is
-  // safe: the shell modules are deferred scripts, so window.sieveWorkspace exists
-  // by then; this IIFE must never touch it at parse time (index.html script order).
-  document.addEventListener('DOMContentLoaded', function () {
-    var ws = window.sieveWorkspace
-    if (!ws || typeof ws.provideChrome !== 'function') return
-    ws.provideChrome({
-      copyDocumentAsMarkdown: copyDocumentAsMarkdown,
-    })
-    // The Ask panel's selection-stream subscription (label re-render) moved into
-    // the Workspace's AskPanel child (P4.B — shell/ask-panel.js); it owns its own
-    // ws.onSelectionUpdate registration now.
-  })
+  // (window.sieveWorkspace?.activeTab?.editor?.toggleMode()). P4.D: updateModeUI
+  // RETIRED — the EditorToolbar owns the mode button icon/title (re-rendered on
+  // its own mode-changed subscription); the body `markdown-mode` class + loadTabs
+  // live in onEditorModeEvent above. copyDocumentAsMarkdown RETIRED — moved to
+  // AbstractEditor.copyAsMarkdown; the workspace verb delegates to the active
+  // editor, and the native menu's external API is unchanged.
 
   // ── Ask AI / Explain (P4.B) ────────────────────────────────────────────────────
   // The two sieve:ai-ask / sieve:ai-explain consumers moved into the AskPanel child

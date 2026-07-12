@@ -15,14 +15,7 @@ import { SieveTab } from './tab.js'
 import { AskPanel } from './ask-panel.js'
 import { InsertDialogs } from './insert-dialogs.js'
 import { SearchOverlay } from './search-overlay.js'
-
-/**
- * TRANSITIONAL (P2.C; the search/dialogs half dissolved in P4.C — those verbs now
- * delegate to Workspace-owned children directly. Only copyDocumentAsMarkdown still
- * rides this registry, until P4.D retires it too).
- * @typedef {object} WorkspaceChrome
- * @property {() => void} copyDocumentAsMarkdown — clean markdown export → clipboard
- */
+import { StatusBar } from './status-bar.js'
 
 export class SieveWorkspace {
   /** @type {Map<string, SieveTab>} uuid → Tab */
@@ -249,26 +242,12 @@ export class SieveWorkspace {
     return tab
   }
 
-  // ── Chrome seam (P4.C dissolved the search/dialogs half) ──────────────────────
-  // The search overlay and the two insert dialogs are now Workspace-owned children
-  // (SearchOverlay / InsertDialogs, constructed in bootChrome); their verbs below
-  // delegate to the children DIRECTLY (no registry hop). Only copyDocumentAsMarkdown
-  // still rides the TRANSITIONAL provideChrome registry (its impl stays in editor.js
-  // until P4.D). The public verbs ARE the component API the native menu calls
-  // (main.go buildMenu). Mirrors the sanctioned P2.B DI pattern: scaffolding with a
-  // death date, named as such.
-
-  /** @type {Partial<WorkspaceChrome>} */
-  #chrome = {}
-
-  /**
-   * Registers legacy chrome implementations (TRANSITIONAL — copyDocumentAsMarkdown
-   * only, post-P4.C). Partial registrations merge.
-   * @param {Partial<WorkspaceChrome>} impls
-   */
-  provideChrome(impls) {
-    this.#chrome = Object.assign({}, this.#chrome, impls)
-  }
+  // ── Chrome verbs (P4.D: the provideChrome registry is fully retired) ──────────
+  // Every chrome verb now delegates DIRECTLY to a Workspace-owned child or the
+  // active editor — no registry hop. The search overlay + insert dialogs are P4.C
+  // children; copyDocumentAsMarkdown reaches the active editor's copyAsMarkdown
+  // (P4.D — the editor owns the export). The public verbs ARE the component API
+  // the native menu calls (main.go buildMenu); their external contract is unchanged.
 
   /** Shows/hides the document search overlay (P4.C child). */
   toggleSearch() { this.#searchOverlay?.toggle() }
@@ -285,18 +264,8 @@ export class SieveWorkspace {
    */
   openUrlCardDialog(url) { this.#insertDialogs?.openUrlCard(url) }
 
-  /** Copies the active document's clean markdown export to the clipboard. */
-  copyDocumentAsMarkdown() { this.#chromeCall('copyDocumentAsMarkdown') }
-
-  /** @param {keyof WorkspaceChrome} name */
-  #chromeCall(name) {
-    const fn = this.#chrome[name]
-    if (typeof fn !== 'function') {
-      console.warn('[workspace] chrome method not registered: ' + name)
-      return
-    }
-    fn()
-  }
+  /** Copies the active document's clean markdown export to the clipboard (P4.D: editor-owned). */
+  copyDocumentAsMarkdown() { this.#activeTab?.editor?.copyAsMarkdown() }
 
   // ── Listener registry (P1: registration methods exist, empty — wired P2) ─────
 
@@ -409,17 +378,21 @@ export class SieveWorkspace {
   /** @type {SearchOverlay|null} the document search overlay child (P4.C) */
   #searchOverlay = null
 
+  /** @type {StatusBar|null} the status-bar child (P4.D — stats/dirty/blockid slots) */
+  #statusBar = null
+
   /**
    * Constructs the Workspace-owned chrome children (P4.B: the Ask panel; P4.C: the
-   * insert dialogs + search overlay). Called once at module load next to
-   * startTabbar() (DOM-touch stays out of the constructors so vitest can import the
-   * classes headless; the children build their own DOM lazily on first open). The
-   * AskPanel wires the structural #ask-panel and null-guards its absence.
+   * insert dialogs + search overlay; P4.D: the status bar). Called once at module
+   * load next to startTabbar(). The AskPanel/StatusBar wire their structural DOM
+   * and null-guard its absence (vitest imports the classes headless — the status
+   * bar's slots resolve to null and every write no-ops).
    */
   bootChrome() {
     if (!this.#askPanel) this.#askPanel = new AskPanel(this)
     if (!this.#insertDialogs) this.#insertDialogs = new InsertDialogs(this)
     if (!this.#searchOverlay) this.#searchOverlay = new SearchOverlay(this)
+    if (!this.#statusBar) this.#statusBar = new StatusBar(this)
   }
 
   /** @returns {AskPanel|null} the permanent Ask-panel child (entry points reach it here) */

@@ -28,6 +28,36 @@
 
 import { AbstractSurface, SurfaceEvent } from './abstract-surface.js'
 import { EditorMode } from '../editor-mode.js'
+import { ToolbarButton, ButtonGroup } from '../toolbar-button.js'
+
+// The formatting command spec (P4.D): each entry is one ToolbarButton the WYSIWYG
+// surface contributes to the editor toolbar. `icon` is a SieveIcons key; `cmd`
+// runs on the surface's OWN #editor (the retired handleToolbarClick data-cmd
+// switch — chain().focus().<cmd>().run()); `active` mirrors the retired syncToolbar
+// isActive map. File-private frozen DATA (docs/how-to-idiomatic-js.md).
+const FORMATTING_GROUPS = Object.freeze([
+  Object.freeze([
+    Object.freeze({ icon: 'bold', title: 'Bold', cmd: (c) => c.toggleBold(), active: ['bold'] }),
+    Object.freeze({ icon: 'italic', title: 'Italic', cmd: (c) => c.toggleItalic(), active: ['italic'] }),
+    Object.freeze({ icon: 'strike', title: 'Strikethrough', cmd: (c) => c.toggleStrike(), active: ['strike'] }),
+    Object.freeze({ icon: 'code', title: 'Inline code', cmd: (c) => c.toggleCode(), active: ['code'] }),
+  ]),
+  Object.freeze([
+    Object.freeze({ icon: 'h1', title: 'Heading 1', cmd: (c) => c.toggleHeading({ level: 1 }), active: ['heading', { level: 1 }] }),
+    Object.freeze({ icon: 'h2', title: 'Heading 2', cmd: (c) => c.toggleHeading({ level: 2 }), active: ['heading', { level: 2 }] }),
+    Object.freeze({ icon: 'h3', title: 'Heading 3', cmd: (c) => c.toggleHeading({ level: 3 }), active: ['heading', { level: 3 }] }),
+  ]),
+  Object.freeze([
+    Object.freeze({ icon: 'bulletList', title: 'Bullet list', cmd: (c) => c.toggleBulletList(), active: ['bulletList'] }),
+    Object.freeze({ icon: 'orderedList', title: 'Ordered list', cmd: (c) => c.toggleOrderedList(), active: ['orderedList'] }),
+    Object.freeze({ icon: 'taskList', title: 'Task list', cmd: (c) => c.toggleTaskList(), active: ['taskList'] }),
+  ]),
+  Object.freeze([
+    Object.freeze({ icon: 'blockquote', title: 'Blockquote', cmd: (c) => c.toggleBlockquote(), active: ['blockquote'] }),
+    Object.freeze({ icon: 'table', title: 'Insert 3×3 table', cmd: (c) => c.insertTable({ rows: 3, cols: 3, withHeaderRow: true }), active: null }),
+    Object.freeze({ icon: 'horizontalRule', title: 'Horizontal rule', cmd: (c) => c.setHorizontalRule(), active: null }),
+  ]),
+])
 
 // Human labels for native unit node types, so the Ask panel header ("Ask About
 // <label>") reads naturally (not "Ask About BulletList"). File-private frozen
@@ -116,6 +146,39 @@ export class WysiwygSurface extends AbstractSurface {
 
   /** @returns {unknown|null} the live TipTap instance */
   get tiptap() { return this.#editor }
+
+  /**
+   * @override — chars/lines from the PM doc's textContent, blockCount from its
+   * top-level childCount. Keeps ALL TipTap access surface-private (P4.D). Guards a
+   * partial/absent view (mid-construction) → falls back to the line count.
+   * @returns {{ chars: number, lines: number, blockCount: number }}
+   */
+  stats() {
+    const ed = this.#editor
+    const text = (ed && ed.state && ed.state.doc && ed.state.doc.textContent) || ''
+    const lines = text === '' ? 0 : text.split('\n').length
+    const blockCount = (ed && ed.state && ed.state.doc) ? ed.state.doc.childCount : lines
+    return { chars: text.length, lines, blockCount }
+  }
+
+  /**
+   * The WYSIWYG formatting button groups for the editor toolbar (P4.D). Each
+   * button's onClick runs its command on this surface's OWN #editor
+   * (chain().focus().<cmd>().run() — no window.__tiptap, no editor hop), and its
+   * `active` closure reads this.#editor.isActive(...) (the retired syncToolbar
+   * map, now per-button). Icons come from window.SieveIcons (verbatim bus).
+   * @returns {ButtonGroup[]}
+   */
+  toolbarContents() {
+    const self = this
+    const icons = /** @type {any} */ (window).SieveIcons || {}
+    return FORMATTING_GROUPS.map((specs) => new ButtonGroup(specs.map((spec) => new ToolbarButton({
+      iconHtml: icons[spec.icon] || '',
+      title: spec.title,
+      onClick: () => { const ed = self.#editor; if (ed) spec.cmd(ed.chain().focus()).run() },
+      active: spec.active ? () => { const ed = self.#editor; return !!(ed && ed.isActive.apply(ed, spec.active)) } : undefined,
+    }))))
+  }
 
   // ── Mount: the TipTap island (verbatim mountWysiwyg) ───────────────────────────
 
