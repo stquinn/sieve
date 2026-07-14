@@ -143,6 +143,17 @@ Summary persistence is the open question — see Section 7.
 
 ## 7. Persistence — Open Question
 
+> **Resolution note (2026-07-14):** `search_and_ranking_concept.md` and the
+> #37 view-system direction effectively close this question. The
+> architectural constraints there (no SQLite — locking + breaks
+> Nextcloud/Syncthing file replication; "just files") plus the shared
+> implementation concept (in-memory materialized view built at startup,
+> watcher hot-reload) select the **sidecar-file** option below, with the
+> in-memory index providing global queryability. Sessions become one feed
+> of a shared Doc/View/Search index also consumed by sidebar views (#37)
+> and search ranking — decide details once, at whichever detailed design
+> lands first.
+
 The session grouping and noise filter are pure computation over existing `VersionRef` data. No new storage needed for those.
 
 AI summaries must be persisted — recomputing them on every request is expensive. The right persistence mechanism is the subject of the conversation that follows this spec.
