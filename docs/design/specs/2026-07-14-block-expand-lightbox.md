@@ -55,11 +55,19 @@ For any kind declaring `expandable`, the framework provides:
 1. **Context-menu item** — "Expand" appended alongside the universal
    Ask AI / Explain / Delete items; omitted when `getExpandContent`
    returns `null`.
-2. **Double-click** on the block's render surface opens the lightbox.
+2. **Keyboard chord** — Shift+Mod+Enter expands the block at the caret
+   stop / node selection, wired in the interaction-policy extension (per
+   the contract, per-renderer key handling is forbidden). Sits beside
+   Mod+Enter = mode toggle in the chord family.
 3. **Header expand button** injected when the block has a `headerProvider`
    (diagram gets it next to Edit/Render). Smart-image has no header — it
    gets gestures 1–2 only; retrofitting header chrome onto images is out
    of scope.
+
+Double-click-to-expand was considered and REJECTED (user decision
+2026-07-14): in ProseMirror a click is NodeSelection and a double-click
+starts text/word selection, so dblclick-to-expand misfires against
+selection constantly, especially on images.
 
 ## The lightbox component
 
@@ -97,25 +105,42 @@ Hand-rolled — no library, no npm dependency.
   persisted to block attrs.
 - **Contract doc updated in the same change.**
   `docs/editor-interaction-contract.md` gains: the `expandable` policy row,
-  the double-click-to-expand gesture, and Esc-closes-overlay. No new
-  in-editor keyboard chords — the policy extension's key handling is
-  untouched.
+  the Shift+Mod+Enter expand chord (policy-extension-owned, like the rest
+  of the chord family), and Esc-closes-overlay.
 
 ## Future directions (recorded, not built)
 
 `brainstorm-smart-code-blocks.md` sketches code blocks as executable
-surfaces (run output, servers, logs). The intended UX for "focus on this
-block" is this overlay shell with a `mode: 'live'` content mode: the block
-declares `expandable`, returns its focused surface, and the shell provides
-backdrop/close/focus management while skipping pan/zoom. The hard problem
-deferred with it: an expanded *editable* surface means two live views of one
-PM node — state-syncing that deserves its own design when that work becomes
-real. Nothing in this spec's contract forecloses it; nothing in this spec's
-scope implements it.
+surfaces (run output, servers, terminals, logs). The intended UX for
+"focus on this block" is VALIDATED (2026-07-14), with the vehicle decided
+by **where the surface's state lives**:
+
+- **Backend-state surfaces** (log tail, running-program output, terminal —
+  source of truth is Go: a process stream, PTY, SSE): this overlay shell
+  with a future `mode: 'live'` that skips the pan/zoom controller. Input
+  and all — a terminal's keystrokes route to Go, not to PM, so hosting it
+  in the overlay creates no sync problem. The block declares `expandable`
+  and returns its focused surface; the shell provides backdrop / close /
+  focus management.
+- **PM-document-state surfaces** (an editable code block, where the content
+  IS the document): the overlay is the WRONG vehicle — reparenting the
+  live NodeView out of `view.dom` breaks ProseMirror event routing, and a
+  second synced editor view is the two-live-views problem. Editable focus
+  instead expands IN PLACE: CSS the existing `.sieve-block` to
+  `position: fixed; inset: 0` with a backdrop while it stays in the editor
+  DOM — one view, zero sync, undo intact, the interaction policy still
+  owns the keys. It shares the shell's *conventions* (backdrop, Esc, focus
+  restore), not its DOM hosting.
+
+Post-Wails-v3 (migration already decided), a separate native window is a
+further option for long-running program dashboards. Nothing in this spec's
+contract forecloses any of this; nothing in this spec's scope implements it.
 
 ## Verification
 
 `tsc --noEmit` over the new `@ts-check` file; drive `wails dev` with a large
 flowchart and a large image — confirm inline scroll readability, all three
-open gestures, zoom/pan/fit behaviour, Esc restore-to-editor, and that
-edit-mode diagrams / pending images offer no expand.
+open gestures (header button, context menu, Shift+Mod+Enter), zoom/pan/fit
+behaviour, Esc restore-to-editor, that double-click in the editor does NOT
+expand (selection is undisturbed), and that edit-mode diagrams / pending
+images offer no expand.
