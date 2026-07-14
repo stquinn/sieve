@@ -186,9 +186,9 @@ function applyDedent(view, width) {
 }
 
 // TT — the TipTap/PM namespace captured by buildInteractionPolicyExtension
-// (window.TipTap in the app; a shim of the same classes in vitest). Needed
-// because this file is loaded raw in the browser: bare '@tiptap/pm/state'
-// imports cannot resolve here.
+// (the vendor bundle global in the app; a shim of the same classes in
+// vitest). Needed because this file is loaded raw in the browser: bare
+// '@tiptap/pm/state' imports cannot resolve here.
 var TT = null
 
 // insertParagraphAfter — the universal block escape (Shift+Enter anywhere in
@@ -418,11 +418,4 @@ export function buildInteractionPolicyExtension(T) {
       ]
     },
   })
-}
-
-if (typeof window !== 'undefined') {
-  window.TipTap = window.TipTap || {}
-  window.TipTap.buildInteractionPolicyExtension = buildInteractionPolicyExtension
-  window.TipTap.resolveInteractionContext = resolveContext
-  window.TipTap.policyEnterKeydown = policyEnterKeydown
 }

@@ -1,11 +1,11 @@
 // log-renderer.js — Sieve block renderer for the 'log' kind.
 
 import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
+import { T } from '../base/tiptap-vendor.js'
+import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block/sieve-block-extension.js'
 
 ;(function () {
   'use strict'
-
-  var T = window.TipTap
 
   // Spring Boot log line — compiled once (was recompiled per line in applyHighlight).
   var SPRING_LINE_RE = /^(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)\s+(\w+)\s+(.*?)\s+---\s+\[(.*?)\]\s+(.*?)\s+:\s+(.*)$/
@@ -34,13 +34,13 @@ import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-b
     return Object.keys(s).join(',')
   }
 
-  class LogHeader extends T.AdvancedHeaderProvider {
+  class LogHeader extends AdvancedHeaderProvider {
     badge() { return 'Log' }
 
     left(attrs, ctx) {
       var items = []
       if (attrs.logFormatName) {
-        var fb = T.badgeEl('Format: ' + attrs.logFormatName)
+        var fb = badgeEl('Format: ' + attrs.logFormatName)
         fb.style.background = 'var(--theme-bg)'
         fb.style.color = 'var(--theme-textSubtle)'
         fb.style.border = '1px solid var(--theme-border)'
@@ -571,9 +571,9 @@ import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-b
     // ── Plugins ───────────────────────────────────────────────────────────────
 
     buildPlugins: function(nodeType) {
-      var Plugin = window.TipTap.Plugin
-      var Decoration = window.TipTap.Decoration
-      var DecorationSet = window.TipTap.DecorationSet
+      var Plugin = T.Plugin
+      var Decoration = T.Decoration
+      var DecorationSet = T.DecorationSet
 
       function isInside(state, from, to) {
         var inside = false
@@ -699,6 +699,6 @@ import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-b
     ]
   }
 
-  T.registerSieveRenderer('log', LogRenderer)
+  registerSieveRenderer('log', LogRenderer)
 
 })()

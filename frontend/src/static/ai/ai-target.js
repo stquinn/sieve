@@ -8,27 +8,21 @@
 // keeps only `blockInsertPos`,
 // which is a DOC-position concern (create-block / AI-answer insert), NOT selection
 // context — a separate seam that dies in P3/P4 on its own.
-;(function () {
-  'use strict'
-  var T = (typeof window !== 'undefined' && window.TipTap) ? window.TipTap : (window.TipTap = {})
 
-  // blockInsertPos(state, isInline) → doc position for an additive block/inline
-  // insert (D-r.7). The single source for every create-block / AI-answer insert,
-  // replacing the scattered `sieveInsertPos = selection.to` defaults:
-  //   - inline kind (e.g. smart-link, schema isInline) → the caret;
-  //   - NodeSelection → selection.to (already right after the selected node);
-  //   - otherwise → after the enclosing TOP-LEVEL (depth-1) block, so a block
-  //     answer lands as a sibling and never splits the paragraph. Even a
-  //     document-scoped answer lands after the caret's current top-level block.
-  // At a doc-level gap (caret after an atom / at doc end, depth 0) the caret is
-  // already a valid top-level point → use it.
-  function blockInsertPos(state, isInline) {
-    var sel = state.selection
-    if (isInline) return sel.to
-    if (sel.node) return sel.to
-    if (sel.$to.depth >= 1) return sel.$to.after(1)
-    return sel.to
-  }
-
-  T.blockInsertPos = blockInsertPos
-})()
+// blockInsertPos(state, isInline) → doc position for an additive block/inline
+// insert (D-r.7). The single source for every create-block / AI-answer insert,
+// replacing the scattered `sieveInsertPos = selection.to` defaults:
+//   - inline kind (e.g. smart-link, schema isInline) → the caret;
+//   - NodeSelection → selection.to (already right after the selected node);
+//   - otherwise → after the enclosing TOP-LEVEL (depth-1) block, so a block
+//     answer lands as a sibling and never splits the paragraph. Even a
+//     document-scoped answer lands after the caret's current top-level block.
+// At a doc-level gap (caret after an atom / at doc end, depth 0) the caret is
+// already a valid top-level point → use it.
+export function blockInsertPos(state, isInline) {
+  var sel = state.selection
+  if (isInline) return sel.to
+  if (sel.node) return sel.to
+  if (sel.$to.depth >= 1) return sel.$to.after(1)
+  return sel.to
+}

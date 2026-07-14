@@ -12,26 +12,23 @@
 // feedSelection's fallback path reads (getSieveBlockLabel for rich labels) and
 // deliberately OMITS getBlockSelectionRange/domSelectionBlockRange — so the surface
 // takes its fallback effective range (the plain live selection) and skips the DOM
-// fold, byte-identical to the old hand-built `er` the adapter used to pass. (This is
-// required because ask-context.test.js installs a universal Proxy window.TipTap on
-// which every property is truthy; reading window.TipTap directly would spuriously
-// engage the block-chrome branch with proxy objects for from/to.) The only added
-// field is an inert `blockCursor: null` (happy-dom has no `.sieve-block__edit` active
-// element), part of the real SelectionContext shape and untouched by any assertion.
+// fold, byte-identical to the old hand-built `er` the adapter used to pass. The only
+// added field is an inert `blockCursor: null` (happy-dom has no `.sieve-block__edit`
+// active element), part of the real SelectionContext shape and untouched by any
+// assertion.
 
 import { WysiwygSurface } from '../../src/static/shell/surfaces/wysiwyg-surface.js'
+import { getSieveBlockLabel } from '../../src/static/block/sieve-block-extension.js'
 
 // Minimal test surface: inject the fixture editor as the live PM instance so
 // feedSelection runs the REAL PM→descriptor path (fallback er, no block-chrome)
 // — the same seam surfaces.test.js's TestWysiwygSurface drives. deps.T forwards
-// only getSieveBlockLabel from window.TipTap, with the block-chrome methods absent
-// so the fallback range/no-fold path runs (er-equivalence, plan §1.4).
+// only getSieveBlockLabel (a real/mocked ES import — the bus is retired), with the
+// block-chrome methods absent so the fallback range/no-fold path runs
+// (er-equivalence, plan §1.4).
 class ContextSurface extends WysiwygSurface {
   constructor(editor) {
-    const win = /** @type {any} */ (typeof window !== 'undefined' ? window : {})
-    const T = {
-      getSieveBlockLabel: win.TipTap ? win.TipTap.getSieveBlockLabel : undefined,
-    }
+    const T = { getSieveBlockLabel }
     super('t', {
       applyBlockOps() {}, requestSave() {}, onPaste() { return false },
       onDrop() { return false }, takeInsertPos() { return null }, notify() {}, T,

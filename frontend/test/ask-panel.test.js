@@ -14,6 +14,12 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { AskPanel } from '../src/static/shell/ask-panel.js'
+// GLOW DROPPED (P4.B) regression guard: ask-panel.js does NOT import these — the
+// mock exists purely as a trip-wire so a future re-coupling would be caught here.
+vi.mock('../src/static/ai/ai-target-decoration.js', () => ({
+  setAiTargetGlow: vi.fn(), clearAiTargetGlow: vi.fn(), AiTargetDecoration: {},
+}))
+import { setAiTargetGlow } from '../src/static/ai/ai-target-decoration.js'
 
 // Builds the structural #ask-panel exactly as index.html renders it (the child
 // wires this, never rebuilds it).
@@ -33,14 +39,20 @@ function mountPanelDom({ open = false } = {}) {
   return document.getElementById('ask-panel')
 }
 
-// A fake editor exposing exactly the surface the AskPanel touches.
+// A fake editor exposing exactly the surface the AskPanel touches. P4.E: the
+// panel reaches TipTap ONLY through editor methods now — the fake deliberately
+// has NO `tiptap` handle, so any reach would read undefined and fail loudly.
 function fakeEditor(target = { kind: 'block', ref: 'co-9', label: 'Code Block' }, mode = 'wysiwyg') {
+  // D-5: the panel reaches TipTap ONLY through editor.askAi — it holds no tiptap and
+  // never calls a target-prep/applyPosition seam (the editor owns the highlight/insert/
+  // cursor INSIDE askAi). The fake exposes exactly askAi + getSelectionContext, the
+  // latter returning a STABLE context object so the send's context arg is assertable.
+  const context = { target, caret: 1, range: { from: 1, to: 4 } }
   return {
     mode,
     askAi: vi.fn(() => Promise.resolve()),
-    prepareAiTarget: vi.fn(() => mode !== 'markdown'),
-    getSelectionContext: vi.fn(() => ({ target })),
-    tiptap: { view: { focus: vi.fn() }, commands: { focus: vi.fn(), setTextSelection: vi.fn() }, state: { selection: { to: 3 } } },
+    getSelectionContext: vi.fn(() => context),
+    _context: context,
   }
 }
 
@@ -57,18 +69,11 @@ function fakeWorkspace(editor) {
   }
 }
 
-let prevTipTap
 beforeEach(() => {
-  prevTipTap = window.TipTap
-  window.TipTap = {
-    setAiTargetGlow: vi.fn(),
-    clearAiTargetGlow: vi.fn(),
-    applyTargetHighlight: vi.fn(),
-  }
+  vi.mocked(setAiTargetGlow).mockClear()
   window.initAskPanelPinned = false
 })
 afterEach(() => {
-  window.TipTap = prevTipTap
   document.body.innerHTML = ''
   vi.useRealTimers()
 })
@@ -204,7 +209,7 @@ describe('AskPanel — F1 send targets the ACTIVE editor with the LIVE question'
     const ta = el.querySelector('.ask-popup__input')
     ta.value = 'why is the sky blue?'
     el.querySelector('.ask-popup__send').click()
-    expect(editor.askAi).toHaveBeenCalledWith({ type: 'ask', question: 'why is the sky blue?' })
+    expect(editor.askAi).toHaveBeenCalledWith({ type: 'ask', question: 'why is the sky blue?', context: editor._context })
     expect(ta.value).toBe('')   // cleared after send
   })
 
@@ -228,16 +233,43 @@ describe('AskPanel — F1 send targets the ACTIVE editor with the LIVE question'
     el.querySelector('.ask-popup__input').value = 'q'
     el.querySelector('.ask-popup__send').click()
     expect(first.askAi).not.toHaveBeenCalled()
-    expect(second.askAi).toHaveBeenCalledWith({ type: 'ask', question: 'q' })
+    expect(second.askAi).toHaveBeenCalledWith({ type: 'ask', question: 'q', context: second._context })
   })
 
-  it('send applies the target highlight for a LIVE text selection in wysiwyg', () => {
+  it('send is DUMB UI: it passes the question + context to askAi and touches no tiptap/position seam', () => {
     const el = mountPanelDom({ open: true })
     const editor = fakeEditor({ kind: 'selection', ref: 'pr-1', label: 'Paragraph' }, 'wysiwyg')
     new AskPanel(fakeWorkspace(editor))
     el.querySelector('.ask-popup__input').value = 'q'
     el.querySelector('.ask-popup__send').click()
-    expect(window.TipTap.applyTargetHighlight).toHaveBeenCalledWith(editor.tiptap)
+    // The editor owns EVERYTHING doc-facing inside askAi — the panel only hands over
+    // the question + the context it rendered. No target-prep, no applyPosition.
+    expect(editor.askAi).toHaveBeenCalledWith({ type: 'ask', question: 'q', context: editor._context })
+    expect(editor.askAi).toHaveBeenCalledTimes(1)
+  })
+
+  it('a markdown-mode send still asks (the editor owns any markdown handling in askAi)', () => {
+    const el = mountPanelDom({ open: true })
+    const editor = fakeEditor({ kind: 'document', ref: '', label: 'Document' }, 'markdown')
+    new AskPanel(fakeWorkspace(editor))
+    el.querySelector('.ask-popup__input').value = 'q'
+    el.querySelector('.ask-popup__send').click()
+    expect(editor.askAi).toHaveBeenCalledWith({ type: 'ask', question: 'q', context: editor._context })
+  })
+
+  it('D-5 anti-race: send acts on the context the panel CAPTURED (open/label), not a re-read at send', () => {
+    const el = mountPanelDom()   // closed
+    const editor = fakeEditor({ kind: 'block', ref: 'r1', label: 'A' })
+    const ws = fakeWorkspace(editor)
+    const panel = new AskPanel(ws)
+    panel.open()                 // captures the CURRENT context (r1) as #lastContext
+    // The selection now DRIFTS to a different context (r2) after the label rendered.
+    editor._context = { target: { kind: 'block', ref: 'r2', label: 'B' }, caret: 9, range: null }
+    editor.getSelectionContext = vi.fn(() => editor._context)
+    el.querySelector('.ask-popup__input').value = 'q'
+    el.querySelector('.ask-popup__send').click()
+    // askAi got the CAPTURED r1 context (what was shown), not the drifted r2.
+    expect(editor.askAi.mock.calls[0][0].context.target.ref).toBe('r1')
   })
 
   it('Enter (no shift) in the textarea sends; Escape closes', () => {
@@ -262,22 +294,21 @@ describe('AskPanel — transitional sieve:ai-* consumers (moved OUT of editor.js
     expect(el.classList.contains('is-open')).toBe(true)
   })
 
-  it('sieve:ai-explain prepares the target then asks with type explain', () => {
+  it('sieve:ai-explain asks with type explain + the current context (no target-prep step)', () => {
     mountPanelDom()
     const editor = fakeEditor({ kind: 'selection', ref: 'pr-1', label: 'Paragraph' }, 'wysiwyg')
     new AskPanel(fakeWorkspace(editor))
     document.dispatchEvent(new window.CustomEvent('sieve:ai-explain'))
-    expect(editor.prepareAiTarget).toHaveBeenCalled()
-    expect(editor.askAi).toHaveBeenCalledWith({ type: 'explain' })
+    expect(editor.askAi).toHaveBeenCalledWith({ type: 'explain', context: editor._context })
   })
 
-  it('sieve:ai-explain aborts (no askAi) when prepareAiTarget returns false (markdown)', () => {
+  it('sieve:ai-explain STILL calls askAi in markdown — the editor owns the abort, not the panel', () => {
     mountPanelDom()
     const editor = fakeEditor({ kind: 'document', ref: '', label: 'Document' }, 'markdown')
-    editor.prepareAiTarget = vi.fn(() => false)
     new AskPanel(fakeWorkspace(editor))
     document.dispatchEvent(new window.CustomEvent('sieve:ai-explain'))
-    expect(editor.askAi).not.toHaveBeenCalled()
+    // The panel is dumb: it always invokes the seam; askAi no-ops explain in markdown.
+    expect(editor.askAi).toHaveBeenCalledWith({ type: 'explain', context: editor._context })
   })
 })
 
@@ -286,7 +317,7 @@ describe('AskPanel — GLOW DROPPED (P4.B)', () => {
     const el = mountPanelDom({ open: true })
     new AskPanel(fakeWorkspace(fakeEditor()))
     el.querySelector('.ask-popup__input').dispatchEvent(new window.FocusEvent('focus'))
-    expect(window.TipTap.setAiTargetGlow).not.toHaveBeenCalled()
+    expect(setAiTargetGlow).not.toHaveBeenCalled()
   })
 
   it('a selection-update while the box is focused does NOT paint a glow', () => {
@@ -296,6 +327,6 @@ describe('AskPanel — GLOW DROPPED (P4.B)', () => {
     new AskPanel(ws)
     el.querySelector('.ask-popup__input').focus()
     ws.emit({ target: { kind: 'selection', ref: 'pr-1', label: 'Paragraph', range: { from: 1, to: 4 } } })
-    expect(window.TipTap.setAiTargetGlow).not.toHaveBeenCalled()
+    expect(setAiTargetGlow).not.toHaveBeenCalled()
   })
 })

@@ -27,6 +27,9 @@
 import { AbstractSurface } from './surfaces/abstract-surface.js'
 import { EditorMode } from './editor-mode.js'
 import { SelectionModel } from './selection-model.js'
+import { blockInsertPos } from '../ai/ai-target.js'
+import { blockIndexForInsert, emptyParagraphAnchor, blockIndexAfter, docPosForBlockIndex } from '../base/block-position.js'
+import { buildAiContext, applyTargetHighlight } from '../editor/extensions.js'
 
 /**
  * @typedef {import('./surfaces/abstract-surface.js').SurfaceEventMsg} SurfaceEventMsg
@@ -384,11 +387,11 @@ export class AbstractEditor {
   }
 
   /**
-   * Emits a `stats` event on the editor stream: chars + lines from the plain-text
-   * view (#docText — markdown mode is the verbatim buffer; wysiwyg is PM
-   * textContent) and the top-level block count. Folds editor.js's dispatchStats +
-   * getMarkdown (P4.D). The StatusBar consumer paints chars/lines and the
-   * --line-digits gutter width; unsaved/saved paint rides sieve:meta-dirty.
+   * Emits a `stats` event on the editor stream: chars + lines from the active
+   * surface's plain-text view and the top-level block count. Folds editor.js's
+   * dispatchStats + getMarkdown (P4.D). The StatusBar consumer paints
+   * chars/lines and the --line-digits gutter width; unsaved/saved paint rides
+   * sieve:meta-dirty.
    */
   #emitStats() { this.#emitEvent({ type: 'stats', ...this.stats() }) }
 
@@ -404,6 +407,39 @@ export class AbstractEditor {
   stats() {
     return this.#surface ? this.#surface.stats() : { chars: 0, lines: 0, blockCount: 0 }
   }
+
+  // ── Document search (D-3: SearchOverlay drives these; surface owns TipTap) ─────
+  //
+  // The search overlay reaches the active editor's search verbs (never a surface
+  // #private or `.tiptap`); each DELEGATES to the mounted surface, mirroring
+  // stats(). The Search extension + its match storage live on WysiwygSurface's
+  // OWN #editor — so search stays surface-private, like every other TipTap read.
+  // A surface with no search returns false; the overlay treats that as "no matches".
+
+  /**
+   * Set the search term; returns the surface's current match stats (or false).
+   * @param {string} term
+   * @returns {{current:number,total:number}|false}
+   */
+  searchTerm(term) { return this.#surface ? this.#surface.searchTerm(term) : false }
+
+  /**
+   * Advance to the next match; returns the current match stats (or false).
+   * @returns {{current:number,total:number}|false}
+   */
+  searchNext() { return this.#surface ? this.#surface.searchNext() : false }
+
+  /**
+   * Step to the previous match; returns the current match stats (or false).
+   * @returns {{current:number,total:number}|false}
+   */
+  searchPrev() { return this.#surface ? this.#surface.searchPrev() : false }
+
+  /**
+   * Clear the active search and return focus to the editing view.
+   * @returns {false}
+   */
+  clearSearch() { return this.#surface ? this.#surface.clearSearch() : false }
 
   /**
    * Copies the active document's clean markdown export to the clipboard (moved
@@ -789,69 +825,68 @@ export class AbstractEditor {
     this.#createBlockAtCaret(kind, attrs || {})
   }
 
-  // ── AI job seam (P4.B: the single doc-mutation for ask + explain) ─────────────
+  // ── AI job seam (P4.B/P4.E-D5: the single doc-mutation for ask + explain) ─────
   //
   // askAi is the ONE business-logic seam every AI entry point ends up at (the Ask
-  // panel's send, the explain entry points). It builds the ai-block Go resolves
-  // from the editor's OWN live selection context — ask and explain differ only by
-  // type + whether a question exists, so they share this body (one seam, never two
-  // paths). Target highlight/focus is NOT here: it is a surface/selection concern
-  // owned by prepareAiTarget (the caller's guard). window.TipTap reads stay
-  // verbatim (bus retirement is P4.E).
+  // panel's send, the explain entry points). D-5: it is a PURE OPERATOR over the
+  // SelectionContext the caller passes in — the context the panel LAST RENDERED
+  // (the label the user saw). It NEVER re-reads the editor's live selection/target
+  // on write; a live re-read would race the label (panel shows target C1, editor
+  // acts on drifted C2). Everything — the answer's ref, the == highlight, and the
+  // block index it lands at — derives from that passed context. Ask and explain
+  // differ only by type (+ whether a question exists) and the markdown-explain
+  // abort. Owns the doc mutation AND the target highlight/focus/cursor (the former
+  // explain target-prep step folded in — it is one operation, not a caller pre-step).
 
   /**
-   * The SINGLE AI-job seam (P4.B). Reads THIS editor's live selection context,
-   * builds the ai-block ref (Go walks the chain), captures the block insert
-   * position (after the caret's top-level block — never at the caret, which would
-   * split a paragraph), flushes the pending sync so Go's shadow is current, then
-   * creates the ai-block. Owns the doc mutation ONLY.
-   * @param {{ type: 'ask'|'explain', question?: string }} job
+   * The SINGLE AI-job seam. Pure over `context` (the SelectionContext the panel
+   * rendered): builds the ai-block ref (Go walks the chain), applies the == target
+   * highlight to `context.target.range` (the words the label named — NOT the live
+   * selection), anchors the block insert AFTER the target's top-level block, flushes
+   * the pending sync so Go's shadow is current, creates the ai-block, and collapses
+   * the caret to the target end. EXPLAIN with no inline target (markdown) is a no-op
+   * (the former target-prep abort); ASK still works in markdown.
+   * @param {{ type: 'ask'|'explain', question?: string, context?: import('./selection-model.js').SelectionContext }} job
    * @returns {Promise<void>}
    */
-  askAi({ type, question }) {
-    const ctx = window.TipTap.buildAiContext(this.getSelectionContext(), this.#docText(), this.uuid)
-    const ref = (ctx && ctx.blockRef) || 'doc'
+  askAi({ type, question, context }) {
+    // EXPLAIN needs an inline target; markdown mode has none → nothing to explain.
+    if (type === 'explain' && this.mode === EditorMode.MARKDOWN) return Promise.resolve()
+    const ctx = context || this.getSelectionContext()
+    const aiCtx = buildAiContext(ctx)
+    const ref = (aiCtx && aiCtx.blockRef) || 'doc'
     const blockType = type === 'explain' ? 'EXPLAIN' : 'ASK'
-    // An AI block is always a block kind: land it AFTER the caret's top-level node.
-    this.setInsertPos(this.captureInsertPos(false))
-    return this.flushSave()
+    const target = ctx && ctx.target
+    const ed = /** @type {any} */ (this.tiptap)
+    if (ed) {
+      // Highlight the TARGET the panel showed (context.target.range) — protocol-
+      // significant (the == mark tells Go which words the answer is about). Only a
+      // ranged wysiwyg selection marks; a block/document target carries no == extent.
+      if (target && target.kind === 'selection' && this.mode !== EditorMode.MARKDOWN && target.range) {
+        applyTargetHighlight(ed, target.range)
+      }
+      ed.commands.focus()
+      // Land the AI block AFTER the target's LAST block, anchored on the context's
+      // block ids (what the panel resolved) — NOT the live selection. blockIndexAfter
+      // finds the block by its stable id in the live doc, so the anchor is immune to a
+      // caret that drifted after the label rendered AND to NodeSelection boundary
+      // ambiguity (an ai-block follow-up). The position feeds the existing commit path,
+      // so the empty-paragraph rule is preserved and a non-drift ask is byte-identical.
+      const doc = ed.state.doc
+      const ids = (ctx.blockIds && ctx.blockIds.length) ? ctx.blockIds : (ctx.blockId ? [ctx.blockId] : [])
+      const lastId = ids[ids.length - 1]
+      const idx = lastId ? blockIndexAfter(doc, lastId) : -1
+      this.setInsertPos(idx >= 0 ? docPosForBlockIndex(doc, idx) : null)
+    }
+    const done = this.flushSave()
       .then(() => { this.createBlock('ai-block', { type: blockType, ref: ref, question: question || '' }) })
       .catch((err) => { console.error('[editor] askAi flush error:', err) })
-  }
-
-  /**
-   * Prepares the visible AI target on the surface (the target-prep half of the
-   * former editor.js aiPrepareTarget): highlights a live text selection (mark
-   * only — the block already carries an id) and focuses the editor. Returns false
-   * in markdown mode (no inline target) so the explain caller aborts; true
-   * otherwise. TipTap is reached only through the editor's own `tiptap` handle.
-   * @returns {boolean} whether there is an inline target (false → caller aborts)
-   */
-  prepareAiTarget() {
-    if (this.mode === EditorMode.MARKDOWN) return false
-    const ed = /** @type {any} */ (this.tiptap)
-    if (!ed) return true
-    const sel = ed.state.selection
-    // Visible == target highlight only for a real text selection — skip collapsed
-    // cursors, node selections (e.g. an AI block), and already-highlighted targets.
-    if (sel && !sel.empty && !sel.node && !ed.isActive('highlight')) {
-      window.TipTap.applyTargetHighlight(ed)
+    // Editor owns its cursor: collapse focus to the target end (right where the
+    // answer lands) — the former Ask-panel post-send hop, folded into the seam.
+    if (ed && ed.view) {
+      try { ed.commands.setTextSelection(ed.state.selection.to) } catch (e) { /* best-effort */ }
     }
-    ed.commands.focus()
-    return true
-  }
-
-  /**
-   * Whole-doc plain text for buildAiContext (mirrors editor.js's former
-   * getMarkdown): markdown mode is the verbatim surface buffer; wysiwyg is the
-   * PM doc's textContent. The frontend never serialises the document (Go owns
-   * markdown) — this is only a plain-text view for the AI context.
-   * @returns {string}
-   */
-  #docText() {
-    if (this.mode === EditorMode.MARKDOWN) return (this.#surface && this.#surface.body) || ''
-    const ed = /** @type {any} */ (this.tiptap)
-    return ((ed && ed.state && ed.state.doc && ed.state.doc.textContent) || '')
+    return done
   }
 
   // ── Insert position (P4.A: moved off editor.js's IIFE) ────────────────────────
@@ -861,7 +896,8 @@ export class AbstractEditor {
   // in editor.js (sieve:create-block / dialogs / runAiJob / extract), which can
   // only reach a PUBLIC method on the live editor via _activeEditor() — never a
   // surface #private (the classic/module boundary). So it lives here as public
-  // methods (D-1). window.TipTap reads stay verbatim (bus retirement is P4.E).
+  // methods (D-1). The position helpers are ES imports from their owning modules
+  // (ai/ai-target.js, base/block-position.js) — the shared TipTap bus is retired.
 
   /**
    * Stashes where the next inserted block goes (a doc pos, a {from,to} range, or
@@ -912,21 +948,21 @@ export class AbstractEditor {
    */
   captureInsertPos(isInline) {
     const ed = /** @type {any} */ (this.tiptap)
-    return ed ? window.TipTap.blockInsertPos(ed.state, isInline) : null
+    return ed ? blockInsertPos(ed.state, isInline) : null
   }
 
   /**
    * blockIndexForInsert maps a captured insert position (a PM doc position, or
    * null for "append") to the top-level BLOCK index Go's create-block op inserts
    * at — the number of top-level nodes that end at or before the position.
-   * Delegates to the tested window.TipTap.blockIndexForInsert (block-position.js).
+   * Delegates to the tested blockIndexForInsert import (base/block-position.js).
    * @param {number|null} pos
    * @returns {number}
    */
   blockIndexForInsert(pos) {
     const ed = /** @type {any} */ (this.tiptap)
     if (!ed) return -1
-    return window.TipTap.blockIndexForInsert(ed.state.doc, pos)
+    return blockIndexForInsert(ed.state.doc, pos)
   }
 
   /**
@@ -946,7 +982,7 @@ export class AbstractEditor {
   commitInsertIndex(pos) {
     const ed = /** @type {any} */ (this.tiptap)
     if (!ed) return -1
-    const anchor = window.TipTap.emptyParagraphAnchor(ed.state.doc, pos)
+    const anchor = emptyParagraphAnchor(ed.state.doc, pos)
     if (!anchor) return this.blockIndexForInsert(pos)
     // Sole-block doc: keep the paragraph (deleting the doc's only child is
     // schema-invalid) — it simply becomes the paragraph after the new block.

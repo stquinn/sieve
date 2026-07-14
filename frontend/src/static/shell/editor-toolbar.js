@@ -14,12 +14,14 @@
 // moves, so a caret-into-mark move would leave bold/italic active-state stale.
 //
 // This retires editor.js's syncToolbar + updateModeUI + the legacy-chrome
-// selection/transaction/mode-changed fan-out cases. window.SieveIcons /
-// window.TipTap.getSieveIcon reads stay verbatim (icon bus retirement is P4.E).
+// selection/transaction/mode-changed fan-out cases. Kind icons come from the
+// block-kind registry via getSieveIcon (the icon bus is retired); window.SieveIcons
+// (a distinct bus) still backs #icon.
 // Dual-use ES module: `export` for vitest; imported by note-editor.js.
 
 import { ToolbarButton, ButtonGroup } from './toolbar-button.js'
 import { EditorMode } from './editor-mode.js'
+import { getSieveIcon } from '../block/block-kinds.js'
 
 export class EditorToolbar {
   /** @type {import('./abstract-editor.js').AbstractEditor} */
@@ -273,9 +275,8 @@ export class EditorToolbar {
     return (icons && icons[key]) || ''
   }
 
-  /** @param {string} kind @returns {string} the sieve-kind icon (getSieveIcon bus, retires P4.E) */
+  /** @param {string} kind @returns {string} the sieve-kind icon from the block-kind registry */
   static #kindIcon(kind) {
-    const T = /** @type {any} */ (window).TipTap
-    return (T && T.getSieveIcon && T.getSieveIcon(kind)) || ''
+    return getSieveIcon(kind) || ''
   }
 }

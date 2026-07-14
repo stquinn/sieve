@@ -1,9 +1,11 @@
 // ai-block-renderer.js — SieveBlock renderer for the ai-block kind.
 import { isJobStale } from '../base/fenced-block-base.js'
+import { T } from '../base/tiptap-vendor.js'
+import { registerSieveRenderer } from '../block/sieve-block-extension.js'
+import { setRefChain, clearRefChain } from '../ai/ai-target-decoration.js'
 
 ;(function () {
   'use strict'
-  var T = window.TipTap
   var IC = window.SieveIcons || {}
 
   function gatherChain(startId, refAttr) {
@@ -118,15 +120,15 @@ import { isJobStale } from '../base/fenced-block-base.js'
         })
         // Native prose <p> blocks are owned by ProseMirror, which reverts any
         // externally-set class on its next view update. Drive their glow through a
-        // PM decoration instead (T.setRefChain), so PM renders block-ref-active and
+        // PM decoration instead (setRefChain), so PM renders block-ref-active and
         // it survives. Harmless no-op on the structured ids handled above.
-        if (T && editor && editor.view) {
-          if (action === 'add' && T.setRefChain) {
+        if (editor && editor.view) {
+          if (action === 'add') {
             var proseIds = []
             chain.forEach(function (cid) { if (cid !== id) proseIds.push(cid) })
-            T.setRefChain(editor.view, proseIds)
-          } else if (T.clearRefChain) {
-            T.clearRefChain(editor.view)
+            setRefChain(editor.view, proseIds)
+          } else {
+            clearRefChain(editor.view)
           }
         }
       }
@@ -180,7 +182,7 @@ import { isJobStale } from '../base/fenced-block-base.js'
     // ── Plugins ───────────────────────────────────────────────────────────────
 
     buildPlugins: function(nodeType) {
-      var Plugin = window.TipTap.Plugin
+      var Plugin = T.Plugin
       
       function isInsideAiBlock(state, from, to) {
         var inside = false
@@ -264,5 +266,5 @@ import { isJobStale } from '../base/fenced-block-base.js'
     },
   }
 
-  T.registerSieveRenderer('ai-block', AiBlockRenderer)
+  registerSieveRenderer('ai-block', AiBlockRenderer)
 })()

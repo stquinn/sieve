@@ -1,13 +1,12 @@
 // smart-card-renderer.js — Rich Link Card block renderer.
-// Registers window.TipTap.registerSieveRenderer('smart-card', SmartCardRenderer)
+// Registers registerSieveRenderer('smart-card', SmartCardRenderer)
 // Renders OG metadata as a visual card block. Display-only (no editable content).
 
 import { isJobStale } from '../base/fenced-block-base.js'
+import { registerSieveRenderer } from '../block/sieve-block-extension.js'
 
 ;(function () {
   'use strict'
-
-  var T = window.TipTap
 
   var SmartCardRenderer = {
 
@@ -224,7 +223,7 @@ import { isJobStale } from '../base/fenced-block-base.js'
     },
   }
 
-  T.registerSieveRenderer('smart-card', SmartCardRenderer)
+  registerSieveRenderer('smart-card', SmartCardRenderer)
 
   // ── Edit dialog ──────────────────────────────────────────────────────────────
 

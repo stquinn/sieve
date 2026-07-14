@@ -11,15 +11,91 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { EditorState } from '@tiptap/pm/state'
 import { DOMParser as PMDOMParser, Schema } from '@tiptap/pm/model'
+
+// P4.E: WysiwygSurface now imports its app helpers from their OWNING modules (the
+// shared TipTap bus is retired). The three side-effect extension modules build
+// `Extension.create(...)` at module-eval time, so importing WysiwygSurface would
+// throw against the bare test/setup.js vendor bag; the `let`-exported registry
+// symbols (getSieveNodes, serializeNode, …) are undefined until app registration.
+// We mock those owner modules — replacing the old deps.T injection with vi.mock +
+// per-test vi.mocked overrides. Pure helper modules (block-render, block-kinds,
+// render-empty) stay REAL. getBlockSelectionRange's default mirrors the pre-P4.E
+// "no block-range" fallback (the live PM selection) so the basic feedSelection
+// tests read the same range they used to; richness tests override it.
+vi.mock('../src/static/editor/extensions.js', () => ({
+  Search: {}, SelectionHighlight: {}, HighlightMark: {},
+  AiShortcuts: { configure: () => ({}) },
+}))
+vi.mock('../src/static/editor/block-chrome.js', () => ({
+  BlockChrome: {},
+  getBlockSelectionRange: vi.fn((view) => {
+    const sel = view.state.selection
+    return { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false, isNodeSelection: !!sel.node }
+  }),
+}))
+vi.mock('../src/static/ai/ai-target-decoration.js', () => ({ AiTargetDecoration: {} }))
+vi.mock('../src/static/block/prose-block.js', () => ({ BlockId: {} }))
+vi.mock('../src/static/block/prose-group.js', () => ({
+  ProseGroup: {},
+  proseBlockNodes: vi.fn((content) => { const out = []; content.forEach((n) => out.push(n)); return out }),
+}))
+vi.mock('../src/static/editor/interaction-policy.js', () => ({
+  policyEnterKeydown: vi.fn(() => false),
+  buildInteractionPolicyExtension: vi.fn(() => ({})),
+}))
+vi.mock('../src/static/block/sieve-block-extension.js', () => ({
+  getSieveNodes: vi.fn(() => []),
+  getSieveBlockLabel: vi.fn(() => null),
+  serializeNode: vi.fn(() => 'ser'),
+  sieveBlockAttrs: vi.fn((n) => n.attrs),
+  sieveBlockEntries: vi.fn(() => []),
+  rendererFor: vi.fn(() => null),
+  domSelectionBlockRange: vi.fn(() => null),
+  domSelectionTextInside: vi.fn(() => null),
+}))
+vi.mock('../src/static/block/block-sync.js', () => ({
+  seedBaseline: vi.fn((triples) => { const m = {}; triples.forEach((t) => { if (t.id) m[t.id] = t.content }); return m }),
+  computeBlockSync: vi.fn(() => ({ next: {}, ops: [] })),
+}))
+vi.mock('../src/static/base/block-position.js', () => ({
+  docPosForBlockIndex: vi.fn(() => 7),
+  blockIndexAfter: vi.fn(() => -1),
+}))
+vi.mock('../src/static/editor/paste-context.js', () => ({
+  caretInRawTextBlock: vi.fn(() => false),
+}))
+
 import { AbstractSurface, SurfaceEvent } from '../src/static/shell/surfaces/abstract-surface.js'
 import { MarkdownSurface } from '../src/static/shell/surfaces/markdown-surface.js'
 import { WysiwygSurface } from '../src/static/shell/surfaces/wysiwyg-surface.js'
 import { buildBlocksHTML } from '../src/static/block/block-render.js'
+import { getBlockSelectionRange } from '../src/static/editor/block-chrome.js'
+import { domSelectionBlockRange } from '../src/static/block/sieve-block-extension.js'
+import { computeBlockSync } from '../src/static/block/block-sync.js'
+import { docPosForBlockIndex, blockIndexAfter } from '../src/static/base/block-position.js'
+import { caretInRawTextBlock } from '../src/static/editor/paste-context.js'
 import { schema as fxSchema, build, docWithCaret, docWithCaretAt, docWithRange, docWithNodeSelection } from './helpers/editor-fixture.js'
 
 // window.isMod is an index.html global in the app; provide it for keydown tests.
 beforeEach(() => { window.isMod = (e) => !!(e.ctrlKey || e.metaKey) })
 afterEach(() => { vi.useRealTimers() })
+
+// The app-helper module mocks are shared across tests: clear call history AND
+// re-establish default implementations before each test, so a per-test
+// vi.mocked(...).mockReturnValue override (feedSelection richness / caret-in-raw)
+// never leaks forward and `toHaveBeenCalledTimes` counts only this test's calls.
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.mocked(getBlockSelectionRange).mockImplementation((view) => {
+    const sel = view.state.selection
+    return { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false, isNodeSelection: !!sel.node }
+  })
+  vi.mocked(domSelectionBlockRange).mockReturnValue(null)
+  vi.mocked(docPosForBlockIndex).mockReturnValue(7)
+  vi.mocked(blockIndexAfter).mockReturnValue(-1)
+  vi.mocked(computeBlockSync).mockReturnValue({ next: {}, ops: [] })
+  vi.mocked(caretInRawTextBlock).mockReturnValue(false)
+})
 
 // ── MarkdownSurface ───────────────────────────────────────────────────────────
 
@@ -226,16 +302,11 @@ class TestWysiwygSurface extends WysiwygSurface {
   get tiptap() { return this._ed }
 }
 
+// deps.T now carries ONLY vendor members (the app helpers are ES imports, mocked
+// above). ProseMirrorDOMParser is the one the render pipeline reads off #T.
 function callShapeT(overrides = {}) {
   return Object.assign({
     ProseMirrorDOMParser: PMDOMParser,
-    buildBlocksHTML: buildBlocksHTML,
-    proseBlockNodes: (content) => { const out = []; content.forEach((n) => out.push(n)); return out },
-    docPosForBlockIndex: vi.fn(() => 7),
-    blockIndexAfter: vi.fn(() => -1),
-    seedBaseline: (triples) => { const m = {}; triples.forEach((t) => { if (t.id) m[t.id] = t.content }); return m },
-    serializeNode: () => 'ser',
-    sieveBlockAttrs: (n) => n.attrs,
   }, overrides)
 }
 
@@ -247,7 +318,7 @@ describe('WysiwygSurface.applyServerOp (P2.B call-shape, undo-sacred)', () => {
     const ed = fakeEditorOver(fxSchema, [build.p('one', 'b1')])
     const s = new TestWysiwygSurface('doc-1', wyDeps({ T }), ed)
     s.applyServerOp({ type: 'insert-block', kind: 'prose', id: 'srv-1', attrs: { id: 'srv-1', content: 'Hello' }, index: 1 })
-    expect(T.docPosForBlockIndex).toHaveBeenCalledWith(ed.state.doc, 1)
+    expect(docPosForBlockIndex).toHaveBeenCalledWith(ed.state.doc, 1)
     const ins = ed.calls.find((c) => c[0] === 'insertContentAt')
     expect(ins).toBeTruthy()
     expect(ins[1]).toBe(7)                    // the server's index, mapped — never a JS-chosen pos
@@ -353,7 +424,7 @@ function mountBundle(state) {
     StarterKit: ext, Placeholder: ext, Table: ext, Image: ext, Markdown: ext,
     AiShortcuts: ext, TaskItem: ext,
     TableRow: {}, TableHeader: {}, TableCell: {}, Search: {}, TaskList: {},
-    BlockChrome: {}, AiTargetDecoration: {}, AiBlockLegacy: {},
+    BlockChrome: {}, AiTargetDecoration: {},
     HighlightMark: {}, SelectionHighlight: {}, BlockId: {},
     buildInteractionPolicyExtension: () => ({}),
     getSieveNodes: () => [],
@@ -378,7 +449,12 @@ function mountBundle(state) {
 }
 
 describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
-  beforeEach(() => vi.useFakeTimers())
+  beforeEach(() => {
+    vi.useFakeTimers()
+    // These mounts hold a single block b1; the debounced sync emits its update-block
+    // op (the recording bundle's old computeBlockSync default, now the mocked import).
+    vi.mocked(computeBlockSync).mockReturnValue({ next: {}, ops: [{ type: 'update-block', blockId: 'b1' }] })
+  })
 
   function mountWy() {
     const doc = fxSchema.nodes.doc.create(null, [build.p('one', 'b1')])
@@ -402,11 +478,12 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
   })
 
   it('onUpdate debounces 500ms then submits granular block-domain ops', () => {
-    const { deps, T, ed } = mountWy()
+    vi.mocked(computeBlockSync).mockReturnValue({ next: {}, ops: [{ type: 'update-block', blockId: 'b1' }] })
+    const { deps, ed } = mountWy()
     ed.options.onUpdate({ editor: ed })
     expect(deps.applyBlockOps).not.toHaveBeenCalled()
     vi.advanceTimersByTime(500)
-    expect(T.computeBlockSync).toHaveBeenCalledTimes(1)
+    expect(computeBlockSync).toHaveBeenCalledTimes(1)
     expect(deps.applyBlockOps).toHaveBeenCalledWith([{ type: 'update-block', blockId: 'b1' }])
   })
 
@@ -457,22 +534,19 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
   let prevFetch
   let prevWinFetch
   let prevJsyaml
-  let prevTipTap
   beforeEach(() => {
     prevFetch = global.fetch
     prevWinFetch = window.fetch
     prevJsyaml = window.jsyaml
-    prevTipTap = window.TipTap
     window.jsyaml = { load: (s) => JSON.parse(s) }
-    // The moved code reads window.TipTap.caretInRawTextBlock VERBATIM (P4.E keeps
-    // the bus). Default false (a normal prose caret); tests override per-case.
-    window.TipTap = { caretInRawTextBlock: () => false }
+    // The moved code now reads the caretInRawTextBlock ES import (paste-context.js,
+    // mocked above). Default false (a normal prose caret); tests override per-case.
+    vi.mocked(caretInRawTextBlock).mockReturnValue(false)
   })
   afterEach(() => {
     global.fetch = prevFetch
     window.fetch = prevWinFetch
     window.jsyaml = prevJsyaml
-    window.TipTap = prevTipTap
   })
 
   // The surface calls bare fetch() — stub BOTH global + window so no test hits
@@ -482,7 +556,7 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
   // Mount a real WysiwygSurface via the recording bundle; expose the editorProps
   // handlers (the wiring the editor gives ProseMirror) + the fake editor + deps.
   function mountPaste(deps = wyDeps(), uuid = 'doc-1', opts = {}) {
-    if (opts.caretInRawTextBlock) window.TipTap.caretInRawTextBlock = opts.caretInRawTextBlock
+    if (opts.caretInRawTextBlock) vi.mocked(caretInRawTextBlock).mockImplementation(opts.caretInRawTextBlock)
     const doc = fxSchema.nodes.doc.create(null, [build.p('one', 'b1')])
     const state = EditorState.create({ schema: fxSchema, doc })
     const bundle = mountBundle(state)
@@ -656,12 +730,15 @@ describe('WysiwygSurface.feedSelection (P3.A raw descriptor from live PM)', () =
 })
 
 describe('WysiwygSurface.feedSelection richness (P3.B: block-range, dom-fold, multi-block)', () => {
-  // Injects a fake TipTap bundle providing getBlockSelectionRange (block-chrome's
-  // authoritative range) + domSelectionBlockRange (the read-only-region fold).
-  // The surface reads BOTH through deps.T, never raw state.selection alone.
-  function surfaceWith(fixture, T) {
-    return new TestWysiwygSurface('doc-1', wyDeps({ T }), fixture.editor)
+  // P4.E: getBlockSelectionRange (block-chrome's authoritative range) and
+  // domSelectionBlockRange (the read-only-region fold) are ES imports (mocked
+  // above); each test drives them via vi.mocked. The surface reads BOTH, never
+  // raw state.selection alone. The global beforeEach re-establishes their defaults.
+  function surfaceWith(fixture) {
+    return new TestWysiwygSurface('doc-1', wyDeps(), fixture.editor)
   }
+  const setRange = (range) => vi.mocked(getBlockSelectionRange).mockReturnValue(range)
+  const setFold = (fold) => vi.mocked(domSelectionBlockRange).mockReturnValue(fold)
 
   it('block-chrome multi-block range (isBlockRange) → range spanning every overlapped blockId', () => {
     // Three prose blocks; block-chrome reports a gutter range covering b1 + b2.
@@ -669,11 +746,8 @@ describe('WysiwygSurface.feedSelection richness (P3.B: block-range, dom-fold, mu
     const fx = docWithCaret(nodes, 0, 0) // PM selection is a caret in b1; the block-range overrides
     // Doc positions: b1 [0..7), b2 [7..13), b3 [13..20) roughly — cover b1..b2.
     const b1End = nodes[0].nodeSize            // 7
-    const T = {
-      getBlockSelectionRange: () => ({ from: 1, to: b1End + 2, active: true, isBlockRange: true, isNodeSelection: false }),
-      domSelectionBlockRange: () => null,
-    }
-    const d = surfaceWith(fx, T).feedSelection()
+    setRange({ from: 1, to: b1End + 2, active: true, isBlockRange: true, isNodeSelection: false })
+    const d = surfaceWith(fx).feedSelection()
     expect(d.selectionType).toBe('range')          // block-range folds to 'range'
     expect(d.blockIds).toEqual(['b1', 'b2'])        // full overlap span
     expect(d.blockId).toBe('b1')                    // primary = first/head block
@@ -684,11 +758,8 @@ describe('WysiwygSurface.feedSelection richness (P3.B: block-range, dom-fold, mu
     const fx = docWithNodeSelection([build.aiBlock('ai-1', 'r')], 0)
     // block-chrome falls back to the PM NodeSelection (isBlockRange:false).
     const sel = fx.editor.state.selection
-    const T = {
-      getBlockSelectionRange: () => ({ from: sel.from, to: sel.to, active: true, isBlockRange: false, isNodeSelection: true }),
-      domSelectionBlockRange: () => null,
-    }
-    const d = surfaceWith(fx, T).feedSelection()
+    setRange({ from: sel.from, to: sel.to, active: true, isBlockRange: false, isNodeSelection: true })
+    const d = surfaceWith(fx).feedSelection()
     expect(d.selectionType).toBe('block')
     expect(d.blockIds).toEqual(['ai-1'])
   })
@@ -698,16 +769,14 @@ describe('WysiwygSurface.feedSelection richness (P3.B: block-range, dom-fold, mu
     const nodes = [build.p('alpha', 'b1'), build.aiBlock('ai-2', 'r2')]
     const fx = docWithCaret(nodes, 0, 0)
     const b1End = nodes[0].nodeSize
-    const T = {
-      getBlockSelectionRange: () => ({ from: 1, to: 1, active: false, isBlockRange: false, isNodeSelection: false }),
-      // The fold re-targets onto b2's range.
-      domSelectionBlockRange: () => ({ from: b1End, to: b1End + nodes[1].nodeSize }),
-    }
+    setRange({ from: 1, to: 1, active: false, isBlockRange: false, isNodeSelection: false })
+    // The fold re-targets onto b2's range.
+    setFold({ from: b1End, to: b1End + nodes[1].nodeSize })
     // Stub window.getSelection so the surface can read the highlighted string.
     const prev = window.getSelection
     window.getSelection = () => ({ isCollapsed: false, toString: () => 'highlighted', rangeCount: 1 })
     try {
-      const d = surfaceWith(fx, T).feedSelection()
+      const d = surfaceWith(fx).feedSelection()
       expect(d.selectionType).toBe('range')     // folded to range
       expect(d.blockId).toBe('ai-2')            // the block the highlight actually lives in
       expect(d.blockIds).toContain('ai-2')
@@ -724,11 +793,8 @@ describe('WysiwygSurface.feedSelection richness (P3.B: block-range, dom-fold, mu
     const nodes = [build.p('', 'lo-223d'), build.p('interior', 'co-48ef')]
     const boundary = nodes[0].nodeSize // 2 — end of block 0 / start of block 1
     const fx = docWithCaretAt(nodes, boundary)
-    const T = {
-      getBlockSelectionRange: () => ({ from: boundary, to: boundary, active: false, isBlockRange: false, isNodeSelection: false }),
-      domSelectionBlockRange: () => null,
-    }
-    const d = surfaceWith(fx, T).feedSelection()
+    setRange({ from: boundary, to: boundary, active: false, isBlockRange: false, isNodeSelection: false })
+    const d = surfaceWith(fx).feedSelection()
     expect(d.selectionType).toBe('caret')
     expect(d.blockIds).toEqual([d.blockId]) // single-block; no spurious second block
     expect(d.blockIds.length).toBe(1)
@@ -741,12 +807,10 @@ describe('WysiwygSurface.feedSelection richness (P3.B: block-range, dom-fold, mu
     const nodes = [build.p('', 'lo-223d'), build.p('interior', 'co-48ef')]
     const boundary = nodes[0].nodeSize            // 2
     const interior = boundary + 2                 // 4 — inside co-48ef
-    const rangeT = (pos) => ({
-      getBlockSelectionRange: () => ({ from: pos, to: pos, active: false, isBlockRange: false, isNodeSelection: false }),
-      domSelectionBlockRange: () => null,
-    })
-    const atBoundary = surfaceWith(docWithCaretAt(nodes, boundary), rangeT(boundary)).feedSelection()
-    const atInterior = surfaceWith(docWithCaretAt(nodes, interior), rangeT(interior)).feedSelection()
+    setRange({ from: boundary, to: boundary, active: false, isBlockRange: false, isNodeSelection: false })
+    const atBoundary = surfaceWith(docWithCaretAt(nodes, boundary)).feedSelection()
+    setRange({ from: interior, to: interior, active: false, isBlockRange: false, isNodeSelection: false })
+    const atInterior = surfaceWith(docWithCaretAt(nodes, interior)).feedSelection()
     // Both carets sit in co-48ef (the boundary caret STARTS co-48ef). blockId +
     // blockIds identical → the meaningful-diff won't fire on the 2→4 move.
     expect(atBoundary.blockId).toBe('co-48ef')
@@ -756,14 +820,11 @@ describe('WysiwygSurface.feedSelection richness (P3.B: block-range, dom-fold, mu
 
   it('no block-range and no dom fold → the P3.A single-block behaviour is preserved', () => {
     const fx = docWithRange([build.p('hello world', 'b1')], 2, 7)
-    const T = {
-      getBlockSelectionRange: () => ({ from: 2, to: 7, active: true, isBlockRange: false, isNodeSelection: false }),
-      domSelectionBlockRange: () => null,
-    }
+    setRange({ from: 2, to: 7, active: true, isBlockRange: false, isNodeSelection: false })
     const prev = window.getSelection
     window.getSelection = () => ({ isCollapsed: true, toString: () => '', rangeCount: 0 })
     try {
-      const d = surfaceWith(fx, T).feedSelection()
+      const d = surfaceWith(fx).feedSelection()
       expect(d.selectionType).toBe('range')
       expect(d.blockId).toBe('b1')
       expect(d.blockIds).toEqual(['b1'])

@@ -86,13 +86,13 @@ export function proseChainHits(doc, ids) {
   return hits
 }
 
-if (typeof window !== 'undefined') {
-  window.TipTap = window.TipTap || {}
-  window.TipTap.registerBlockKind = registerBlockKind
-  window.TipTap.getBlockKind = getBlockKind
-  window.TipTap.getBlockBehaviour = getBlockBehaviour
-  window.TipTap.containsChildBlocks = containsChildBlocks
-  window.TipTap.listBlockKinds = listBlockKinds
-  window.TipTap.isNativeProseNodeName = isNativeProseNodeName
-  window.TipTap.proseChainHits = proseChainHits
+// getSieveIcon returns a kind's icon: its behaviour's getIcon() if it declares
+// one, else the generic code-icon fallback. Moved here from
+// sieve-block-extension.js (P4.E D-2, 2026-07-13) — it only needs the
+// kind-registry lookup (getBlockBehaviour), which this module already owns.
+// sieve-block-extension.js imports it back.
+export function getSieveIcon(kind) {
+  var r = getBlockBehaviour(kind)
+  if (r && typeof r.getIcon === 'function') return r.getIcon()
+  return (typeof window !== 'undefined' && window.SieveIcons) ? window.SieveIcons.code : '' // fallback
 }

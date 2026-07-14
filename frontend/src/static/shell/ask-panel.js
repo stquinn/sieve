@@ -10,10 +10,13 @@
 // editor owns the doc mutation.
 //
 // It wires the STRUCTURAL #ask-panel DOM from index.html (never rebuilds it) and
-// null-guards a missing panel (headless boot / vitest import). TipTap is reached
-// ONLY through editor methods (getSelectionContext / askAi / prepareAiTarget) and
-// the transitional window.TipTap.applyTargetHighlight helper (bus retirement is
-// P4.E). The Ask-panel FOCUS GLOW was DROPPED in P4.B — the panel paints nothing.
+// null-guards a missing panel (headless boot / vitest import). D-5 (P4.E): the
+// panel is DUMB UI — it holds NO tiptap and does NO position/protocol work. On send
+// it passes the SelectionContext it LAST RENDERED (the label the user saw) to the
+// ONE editor seam editor.askAi({type,question,context}); the editor owns the target
+// highlight, insert index, flush, block creation, and cursor. Passing the shown
+// context (never a live re-read) is the D-5 anti-race: send acts on exactly what the
+// label described. The Ask-panel FOCUS GLOW was DROPPED in P4.B — panel paints nothing.
 //
 // Dual-use ES module: imported by workspace.js (which constructs it). No window.*
 // export — the singleton is reached via window.sieveWorkspace.askPanel.
@@ -33,6 +36,8 @@ export class AskPanel {
   #labelTimeout = null
   /** @type {import('./selection-model.js').SelectionContext|null} focus coordinate pulled on jump-in */
   #focusReturn = null
+  /** @type {import('./selection-model.js').SelectionContext|null} the context whose label is CURRENTLY shown — what send acts on (D-5: send == shown) */
+  #lastContext = null
 
   /** @param {import('./workspace.js').SieveWorkspace} ws */
   constructor(ws) {
@@ -69,6 +74,10 @@ export class AskPanel {
     // Jump IN: pull where focus was so jump-out restores it exactly. Must run
     // before the textarea steals focus below — the coordinate is still live here.
     this.#focusReturn = this.#ws.getSelectionContext()
+    // Seed the send context to the current selection so an immediate send (before
+    // the first debounced label render) still acts on what's shown; #refreshLabel
+    // keeps it in lock-step with the label thereafter.
+    this.#lastContext = this.#focusReturn
     this.#panel.classList.add('is-open')
     this.#refreshLabel()
     const ta = this.#textarea
@@ -113,12 +122,14 @@ export class AskPanel {
   }
 
   /**
-   * Resolve the active editor + prepare its target, then run an explain job. The
-   * ONE explain entry the transitional sieve:ai-explain (and the toolbar) reach.
+   * Run an explain job on the active editor over its CURRENT selection context
+   * (explain is caret-contextual — fired from Mod+E / the context menu / a block
+   * affordance, so "what's at the caret now" IS the target; no panel label is
+   * involved). The editor owns the markdown abort (askAi no-ops explain in markdown).
    */
   explainActive() {
     const ed = this.#activeEditor()
-    if (ed && ed.prepareAiTarget()) ed.askAi({ type: 'explain' })
+    if (ed) ed.askAi({ type: 'explain', context: ed.getSelectionContext() })
   }
 
   // ── Private ───────────────────────────────────────────────────────────────────
@@ -156,19 +167,14 @@ export class AskPanel {
   }
 
   /**
-   * The non-PM Ctrl/Mod+Shift+A entry: the PM keymap owns the main-editor-focused
-   * case (bail then), and the shortcut is not hijacked inside the sidebar or a
-   * modal dialog.
+   * The Mod+Shift+A entry. D-5: the Ask panel owns this chord WHOLESALE — the editor
+   * keymap no longer binds it (AiShortcuts.onAsk removed), so this document-level
+   * listener handles every case, including when the main editor has focus. It is
+   * still not hijacked inside the sidebar or a modal dialog. No tiptap reach.
    */
   #wireGlobalHotkey() {
     document.addEventListener('keydown', (e) => {
       if ((e.key !== 'a' && e.key !== 'A') || !window.isMod(e) || !e.shiftKey || e.altKey) return
-      const ed = this.#activeEditor()
-      const tiptap = ed && ed.tiptap
-      // No target at all (no editor and not markdown) → nothing to ask about.
-      if (!tiptap && (!ed || ed.mode !== 'markdown')) return
-      // The PM keymap owns the main-editor-focused case — let it handle that.
-      if (tiptap && tiptap.view && tiptap.view.hasFocus && tiptap.view.hasFocus()) return
       const ae = document.activeElement
       if (ae && ae.closest && ae.closest('#htmx-sidebar, dialog')) return
       e.preventDefault()
@@ -191,10 +197,12 @@ export class AskPanel {
   }
 
   /**
-   * SEND: pull the LIVE target the editor STORED (F1 — no captured copy), apply
-   * the == highlight ONLY for a live selection in wysiwyg (the one mutating case),
-   * run the ONE editor seam, then hand focus back to the editor (SEND is a
-   * doc-mutating action — focus follows the action, collapsing to the answer's end).
+   * SEND: hand the question + the context the panel LAST RENDERED (the label the
+   * user saw) to the ONE editor seam. The editor owns EVERYTHING doc-facing — the
+   * == target highlight, the block insert index, the flush, the ai-block creation,
+   * and the post-send cursor collapse. The panel touches NO tiptap and does NO
+   * position/protocol work; passing the shown context (never a live re-read) is the
+   * D-5 anti-race — send acts on exactly what the label described.
    */
   #send() {
     if (!this.#textarea) return
@@ -202,21 +210,10 @@ export class AskPanel {
     if (!val) return
     const ed = this.#activeEditor()
     if (!ed) return
-    const context = ed.getSelectionContext()
-    if (context && context.target && context.target.kind === 'selection' && ed.mode !== 'markdown') {
-      window.TipTap.applyTargetHighlight(ed.tiptap)
-    }
-    ed.askAi({ type: 'ask', question: val })
+    const context = this.#lastContext || ed.getSelectionContext()
+    ed.askAi({ type: 'ask', question: val, context })
     this.#textarea.value = ''
     if (this.#panel && !this.#pinned) this.#panel.classList.remove('is-open')
-    // Focus FOLLOWS the action: hand focus to the editor and collapse the caret to
-    // the END of the target (right where the answer lands). Jump-out (navigation)
-    // still restores the exact context via close().
-    const tiptap = ed.tiptap
-    if (tiptap && tiptap.view) {
-      tiptap.view.focus()
-      try { tiptap.commands.setTextSelection(tiptap.state.selection.to) } catch (e) { /* best-effort */ }
-    }
     this.#focusReturn = null
   }
 
@@ -230,13 +227,18 @@ export class AskPanel {
     if (this.#panel && this.#panel.classList.contains('is-open')) this.#refreshLabel()
   }
 
-  /** Debounced label re-render from the live target label (pull at refresh, F2). */
+  /**
+   * Debounced label re-render from the live target label (pull at refresh, F2). It
+   * also STORES the rendered context as #lastContext, so #send acts on exactly the
+   * context whose label is on screen (D-5: send == shown).
+   */
   #refreshLabel() {
     if (!this.#panel || !this.#label) return
     if (!this.#panel.classList.contains('is-open')) return
     if (this.#labelTimeout) clearTimeout(this.#labelTimeout)
     this.#labelTimeout = setTimeout(() => {
       const ctx = this.#ws.getSelectionContext()
+      this.#lastContext = ctx
       const t = ctx && ctx.target
       if (!t || !this.#label) return
       this.#label.textContent = t.label === 'Follow-up' ? 'Ask Follow-up' : 'Ask About ' + t.label

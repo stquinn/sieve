@@ -4,13 +4,14 @@
 // Go pattern: fencedblock.Serialize generates YAML; JS replays rawYaml verbatim (never regenerates).
 // JS pattern: call applyHighlighting(contentEl) after setting innerHTML — gives box styling + syntax colours.
 
+import { T } from './tiptap-vendor.js'
+
 // ── Lowlight (lazy) ───────────────────────────────────────────────────────────
 
 var _lowlight = null
 
 export function getLowlight() {
   if (!_lowlight) {
-    var T = window.TipTap
     if (T && T.createLowlight && T.common) _lowlight = T.createLowlight(T.common)
   }
   return _lowlight

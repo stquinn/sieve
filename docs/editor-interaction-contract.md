@@ -125,8 +125,8 @@ keys first. Owning them in the menu makes the resolution identical everywhere.
 Consequences:
 
 - The TipTap editor keymap (`extensions.js`) may bind **only caret-contextual
-  chords the menu does not claim** (currently `Mod+E` Explain and `Mod+Shift+A`
-  Ask — no menu item exists for either).
+  chords the menu does not claim** (currently `Mod+E` Explain — `Mod+Shift+A` Ask
+  LEFT the editor keymap in P4.E, see below; no menu item exists for either).
 - **Document-level DOM `keydown` shortcut listeners are FORBIDDEN.** Insertion
   and app gestures ride the menu → event path, never a global `keydown`.
 - Never bind the same chord in two places, even to the same action — the menu
@@ -134,10 +134,13 @@ Consequences:
 - Dev-browser note: with no native menu, menu-owned chords are simply absent —
   since P2.C this includes markdown-mode `Mod+S`/`Mod+J`, whose quarantined
   transitional `keydown` listener is removed. The transitional P2.B exception
-  is gone. One pre-existing document-level `keydown` listener remains ledgered:
-  the `Mod+Shift+A` ask-focus router in `editor.js` (covers the cases the PM
-  keymap can't see — the Ask box, a block's inner editor; the menu deliberately
-  does not claim this chord). It migrates with the `sieve:ai-ask` family (P4).
+  is gone. The `Mod+Shift+A` **Ask** chord is now the ONE sanctioned document-level
+  `keydown` listener: it is owned by the **AskPanel** (a Workspace child, not the
+  editor), because the Ask panel is chrome that must toggle regardless of which
+  editor or block has focus, and the menu deliberately does not claim the chord.
+  This is the P4.E landing of the formerly-ledgered `editor.js` ask-focus router —
+  the editor keymap no longer binds Ask at all (`AiShortcuts.onAsk` removed), so
+  there is no double-binding; the listener is no longer transitional.
 
 ### Menu accelerator table
 
@@ -169,7 +172,8 @@ Consequences:
 | Mod+/ | Help › Shortcuts | open help dialog |
 
 Editor-owned caret chords (NOT in the menu, bound in `extensions.js`):
-`Mod+E` = Explain block, `Mod+Shift+A` = Ask AI block.
+`Mod+E` = Explain block. (`Mod+Shift+A` Ask is NOT editor-bound — the AskPanel's
+document-level listener owns it; see "Consequences" above.)
 
 ## Deferred (recorded, not shipped)
 

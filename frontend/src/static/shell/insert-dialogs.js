@@ -14,7 +14,7 @@
 //
 // It inserts through PUBLIC AbstractEditor methods only (kindIsInline /
 // captureInsertPos / setInsertPos / commitInsertIndex / takeInsertPos /
-// applyBlockOps via workspace.activeTab.editor) — NO tiptap reach, NO window.TipTap.
+// applyBlockOps via workspace.activeTab.editor) — NO tiptap reach, NO shared bus.
 // Backs workspace.openUrlCardDialog(url?) / openWebClipDialog(url?).
 //
 // Dual-use ES module: imported by workspace.js (which constructs it). No window.*

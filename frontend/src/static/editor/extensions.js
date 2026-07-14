@@ -1,17 +1,14 @@
 // extensions.js — vanilla JS TipTap custom extensions.
-// Depends on window.TipTap (ui/static/vendor/tiptap.js) being loaded first.
-// Augments window.TipTap with custom extensions so editor.js finds them as T.*
+// Depends on the vendor TipTap bundle (ui/static/vendor/tiptap.js) being loaded first.
 
-;(function () {
-  'use strict'
+import { T as VENDOR } from '../base/tiptap-vendor.js'
 
-  var T = window.TipTap
-  var Node = T.Node
-  var Extension = T.Extension
-  var Plugin = T.Plugin
-  var PluginKey = T.PluginKey
-  var Decoration = T.Decoration
-  var DecorationSet = T.DecorationSet
+var Node = VENDOR.Node
+var Extension = VENDOR.Extension
+var Plugin = VENDOR.Plugin
+var PluginKey = VENDOR.PluginKey
+var Decoration = VENDOR.Decoration
+var DecorationSet = VENDOR.DecorationSet
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -41,7 +38,7 @@
 
   var searchPluginKey = new PluginKey('search')
 
-  var Search = Extension.create({
+  export var Search = Extension.create({
     name: 'search',
 
     addOptions() {
@@ -174,7 +171,7 @@
 
   // ── SelectionHighlight ─────────────────────────────────────────────────────
 
-  var SelectionHighlight = Extension.create({
+  export var SelectionHighlight = Extension.create({
     name: 'selectionHighlight',
     addProseMirrorPlugins: function () {
       return [
@@ -210,7 +207,7 @@
   // node, no per-field re-derivation. For an ai-block follow-up target.ref is the
   // ai-block's own single id and target.label is already 'Follow-up'; Go walks the
   // block's ref back-pointer chain server-side (the frontend never pre-walks it).
-  function buildAiContext(context, rawMd, uuid) {
+  export function buildAiContext(context) {
     var t = context.target
 
     if (t.kind === 'document') return { blockRef: 'doc', contextLabel: 'Document' }
@@ -234,19 +231,22 @@
   // E; here it just stops being created.) Single source of truth shared by the
   // context menu's "Highlight Target" item and the Ask AI / Explain handler in
   // editor.js, so every entry point produces an identical target.
-  function applyTargetHighlight(editor) {
-    var sel = editor.state.selection
-    if (sel.empty) return                  // nothing selected → nothing to mark
+  export function applyTargetHighlight(editor, range) {
+    // D-5: mark an EXPLICIT range {from,to} (a SelectionContext coordinate) — the
+    // words the label named — and NEVER re-derive the extent from
+    // editor.state.selection (which may have drifted since the label rendered).
+    // Shared by askAi (context.target.range) and the context menu's "Highlight
+    // Target" (its live-selection extent, passed in). No range / collapsed → no-op.
+    if (!range || range.from == null || range.from === range.to) return
     if (editor.isActive && editor.isActive('highlight')) return // already marked
-    editor.commands.setMark('highlight')
+    editor.chain().setTextSelection({ from: range.from, to: range.to }).setMark('highlight').run()
   }
-  T.applyTargetHighlight = applyTargetHighlight
 
   // ── HighlightMark ──────────────────────────────────────────────────────────
   // Extends the built-in Highlight extension with tiptap-markdown storage so
   // ==word== round-trips correctly through the markdown serializer/parser.
 
-  var HighlightMark = T.Highlight.extend({
+  export var HighlightMark = VENDOR.Highlight.extend({
     addStorage: function () {
       return {
         markdown: {
@@ -258,7 +258,7 @@
           },
           parse: {
             setup: function (md) {
-              md.use(T.markdownItMark)
+              md.use(VENDOR.markdownItMark)
             },
           },
         },
@@ -267,37 +267,28 @@
   })
 
   // BlockId (the prose identity attr) now lives in prose-block.js — the cohesive
-  // prose block KIND definition — and is exposed as T.BlockId from there.
+  // prose block KIND definition — exported from there.
 
-  var AiShortcuts = Extension.create({
+  export var AiShortcuts = Extension.create({
     name: 'aiShortcuts',
     addOptions: function() {
       return {
         onExplain: function() {},
-        onAsk: function() {},
       }
     },
     // Only caret-contextual chords the native menu does NOT claim live here.
     // Smart File (Mod+Shift+E), Keep & Smart File (Mod+Shift+Return) and Toggle
     // AI Blocks (Mod+J) are owned by the menu (App-Level Chords, see
     // docs/editor-interaction-contract.md) — do not rebind them in the editor.
+    // ASK (Mod+Shift+A) LEFT the editor keymap in P4.E (D-5): the Ask panel is a
+    // Workspace child and its document-level listener owns the chord wholesale (it
+    // is a chrome action, not a caret-contextual edit). EXPLAIN (Mod+E) STAYS — it
+    // is caret-contextual, so it is a legitimate editor chord.
     addKeyboardShortcuts: function() {
       var self = this
       return {
         'Mod-e': function() { self.options.onExplain(); return true },
         'Mod-E': function() { self.options.onExplain(); return true },
-        'Mod-Shift-a': function() { self.options.onAsk(); return true },
-        'Mod-Shift-A': function() { self.options.onAsk(); return true },
       }
     }
   })
-
-  // ── Expose on window.TipTap ────────────────────────────────────────────────
-
-  T.Search = Search
-  T.SelectionHighlight = SelectionHighlight
-  T.buildAiContext = buildAiContext
-  T.HighlightMark = HighlightMark
-  T.AiShortcuts = AiShortcuts
-
-})()

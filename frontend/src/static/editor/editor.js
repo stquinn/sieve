@@ -1,9 +1,8 @@
 // editor.js — vanilla JS TipTap island. Loaded once; re-initialized per tab switch.
-// Depends on window.TipTap (ui/static/vendor/tiptap.js).
 // Depends on window.sieveWorkspace (shell/workspace.js) for the P1 shell skeleton.
-
-(function () {
-  'use strict'
+import { updateBlockOp } from '../block/block-sync.js'
+import { blockIndexAfter } from '../base/block-position.js'
+import { resolveEntriesForKind } from '../block/sieve-block-extension.js'
 
   var currentUuid = ''
   var currentMountEl = null
@@ -268,7 +267,7 @@
   document.addEventListener('sieve:block-update', function (e) {
     var ed = _activeEditor()
     if (!currentUuid || !e.detail.id || !ed) return
-    ed.applyBlockOps([window.TipTap.updateBlockOp(e.detail)])
+    ed.applyBlockOps([updateBlockOp(e.detail)])
   })
 
   // Server render-back ops (insert-block / replace-block / block-attrs-updated)
@@ -304,9 +303,9 @@
   // caret (AI block resolve / restore / extract re-render). Call it via
   // _activeEditor().softReload().
   //
-  // The AI ask/explain seam (runAiJob) + the target-prep (aiPrepareTarget) moved
-  // to AbstractEditor (askAi / prepareAiTarget), and the Ask box that drove them is
-  // now the Workspace's AskPanel child — see shell/ask-panel.js.
+  // The AI ask/explain seam (runAiJob) + target-prep (aiPrepareTarget) moved to
+  // AbstractEditor.askAi — one pure operator over the SelectionContext the panel
+  // passes in (P4.E/D-5). The Ask box is now the Workspace's AskPanel child.
 
   // ── Module-level editor commands ──────────────────────────────────────────────
 
@@ -326,13 +325,13 @@
   // AbstractEditor.copyAsMarkdown; the workspace verb delegates to the active
   // editor, and the native menu's external API is unchanged.
 
-  // ── Ask AI / Explain (P4.B) ────────────────────────────────────────────────────
+  // ── Ask AI / Explain (P4.B/P4.E) ────────────────────────────────────────────────
   // The two sieve:ai-ask / sieve:ai-explain consumers moved into the AskPanel child
-  // (shell/ask-panel.js): it opens on ai-ask and prepares-target + asks on ai-explain
-  // via the editor seam (AbstractEditor.askAi / prepareAiTarget). The transitional
+  // (shell/ask-panel.js): it opens on ai-ask and asks-explain on ai-explain via the
+  // editor seam (AbstractEditor.askAi over the panel's context). The transitional
   // events still ride from the producers that lack a direct handle (surface keymap,
-  // context-menu items, sieve-block affordance); the toolbar + Ctrl+Shift+A hotkey
-  // are de-evented (they call window.sieveWorkspace.askPanel directly).
+  // context-menu items, sieve-block affordance); the toolbar de-events to the panel
+  // directly, and Mod+Shift+A is now the AskPanel's own document-level listener (D-5).
   document.addEventListener('sieve:block-retry', function (e) {
     if (!currentEditor || !e.detail || !e.detail.id) return
     var blkId = e.detail.id
@@ -522,7 +521,7 @@
       // Use top-level-only scan (blockIndexAfter) — descendants() was buggy because
       // it visited nested nodes, potentially matching an inner node's id and computing
       // an index relative to that nested position rather than the top-level tree.
-      index = window.TipTap.blockIndexAfter(currentEditor.state.doc, blockId)
+      index = blockIndexAfter(currentEditor.state.doc, blockId)
     }
 
     function send(resolved) {
@@ -530,17 +529,12 @@
       if (ed) ed.extract({ blockId: blockId, targetKind: targetKind, operation: operation, entries: resolved, index: index })
     }
 
-    if (window.TipTap && window.TipTap.resolveEntriesForKind) {
-      var res = window.TipTap.resolveEntriesForKind(targetKind, sourceNode, entries)
-      if (res && typeof res.then === 'function') {
-        res.then(send).catch(function (err) { console.error('[sieve:extract] failed', err) })
-        return
-      }
-      entries = res
+    var res = resolveEntriesForKind(targetKind, sourceNode, entries)
+    if (res && typeof res.then === 'function') {
+      res.then(send).catch(function (err) { console.error('[sieve:extract] failed', err) })
+      return
     }
-    send(entries)
+    send(res)
   })
 
   window.sieveInitEditor = initEditor
-
-})()

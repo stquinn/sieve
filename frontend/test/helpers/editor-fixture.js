@@ -80,7 +80,9 @@ export function docWithCaret(nodes, blockIndex, charOffset) {
   for (let i = 0; i < blockIndex; i++) pos += nodes[i].nodeSize
   const sel = TextSelection.create(state.doc, pos + 1 + (charOffset || 0))
   state = state.apply(state.tr.setSelection(sel))
-  return { editor: { state }, schema }
+  // P4.E: feedSelection reads getBlockSelectionRange(ed.view); the view mirrors the
+  // state so a real/mocked range helper can read ed.view.state (no live EditorView).
+  return { editor: { state, view: { state } }, schema }
 }
 
 // Build a doc and place a collapsed caret at the nearest valid text position to
@@ -90,7 +92,7 @@ export function docWithCaretNear(nodes, absPos) {
   const doc = n.doc.create(null, nodes)
   let state = EditorState.create({ schema, doc })
   state = state.apply(state.tr.setSelection(TextSelection.near(state.doc.resolve(absPos), 1)))
-  return { editor: { state }, state, schema }
+  return { editor: { state, view: { state } }, state, schema }
 }
 
 // Build a doc with a collapsed caret at an exact absolute doc position.
@@ -98,7 +100,7 @@ export function docWithCaretAt(nodes, pos) {
   const doc = n.doc.create(null, nodes)
   let state = EditorState.create({ schema, doc })
   state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, pos)))
-  return { editor: { state }, state, schema }
+  return { editor: { state, view: { state } }, state, schema }
 }
 
 // Build a doc with a TextSelection spanning [from,to] (absolute doc positions).
@@ -106,7 +108,9 @@ export function docWithRange(nodes, from, to) {
   const doc = n.doc.create(null, nodes)
   let state = EditorState.create({ schema, doc })
   state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, from, to)))
-  return { editor: { state }, schema }
+  // P4.E: feedSelection reads getBlockSelectionRange(ed.view); the view mirrors the
+  // state so a real/mocked range helper can read ed.view.state (no live EditorView).
+  return { editor: { state, view: { state } }, schema }
 }
 
 // Build a doc with a NodeSelection on the block at `blockIndex`.
@@ -116,7 +120,9 @@ export function docWithNodeSelection(nodes, blockIndex) {
   let pos = 1
   for (let i = 0; i < blockIndex; i++) pos += nodes[i].nodeSize
   state = state.apply(state.tr.setSelection(NodeSelection.create(state.doc, pos - 1)))
-  return { editor: { state }, schema }
+  // P4.E: feedSelection reads getBlockSelectionRange(ed.view); the view mirrors the
+  // state so a real/mocked range helper can read ed.view.state (no live EditorView).
+  return { editor: { state, view: { state } }, schema }
 }
 
 // Convenience node builders for tests. Native nodes accept an optional id so a

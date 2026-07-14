@@ -179,11 +179,3 @@ export function computeBlockSync(curr, prev) {
   }
   return { ops: ops, next: next }
 }
-
-if (typeof window !== 'undefined') {
-  window.TipTap = window.TipTap || {}
-  window.TipTap.computeBlockSync = computeBlockSync
-  window.TipTap.seedBaseline = seedBaseline
-  window.TipTap.dedupeActions = dedupeActions
-  window.TipTap.updateBlockOp = updateBlockOp
-}

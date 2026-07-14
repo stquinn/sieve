@@ -1,6 +1,41 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { docWithCaret, docWithCaretNear, docWithCaretAt, docWithRange, docWithNodeSelection, build } from './helpers/editor-fixture.js'
 import { contextFor } from './helpers/selection-context.js'
+
+// P4.E: contextFor → WysiwygSurface.feedSelection now imports its descriptor helpers
+// from their owner modules (the shared TipTap bus is retired). Mock the three
+// side-effect extension modules + the controllable descriptor helpers, replacing the
+// old bus-based getSieveBlockLabel injection. This file does not use buildAiContext,
+// so extensions.js is mocked too (no vendor seed needed).
+vi.mock('../src/static/editor/extensions.js', () => ({
+  Search: {}, SelectionHighlight: {}, HighlightMark: {}, AiShortcuts: { configure: () => ({}) },
+}))
+vi.mock('../src/static/editor/block-chrome.js', () => ({
+  BlockChrome: {},
+  getBlockSelectionRange: vi.fn((view) => {
+    const sel = view.state.selection
+    return { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false, isNodeSelection: !!sel.node }
+  }),
+}))
+vi.mock('../src/static/ai/ai-target-decoration.js', () => ({ AiTargetDecoration: {} }))
+vi.mock('../src/static/block/prose-block.js', () => ({ BlockId: {} }))
+vi.mock('../src/static/block/prose-group.js', () => ({ ProseGroup: {}, proseBlockNodes: vi.fn(() => []) }))
+vi.mock('../src/static/editor/interaction-policy.js', () => ({
+  policyEnterKeydown: vi.fn(() => false), buildInteractionPolicyExtension: vi.fn(() => ({})),
+}))
+vi.mock('../src/static/block/sieve-block-extension.js', () => ({
+  getSieveNodes: vi.fn(() => []),
+  getSieveBlockLabel: vi.fn(() => null),
+  serializeNode: vi.fn(() => 'ser'),
+  sieveBlockAttrs: vi.fn((n) => n.attrs),
+  sieveBlockEntries: vi.fn(() => []),
+  rendererFor: vi.fn(() => null),
+  domSelectionBlockRange: vi.fn(() => null),
+  domSelectionTextInside: vi.fn(() => null),
+}))
+
+import { getSieveBlockLabel, domSelectionBlockRange } from '../src/static/block/sieve-block-extension.js'
+import { getBlockSelectionRange } from '../src/static/editor/block-chrome.js'
 
 // P3.C — the AI target is RESOLVED IN THE SURFACE and STORED in the SelectionContext
 // as `context.target = { kind, ref, range, label }` (plain values; NO PM node). The
@@ -16,23 +51,30 @@ import { contextFor } from './helpers/selection-context.js'
 //   (c) bare caret in a UNIT            → target.kind 'block', ref = its id
 //   (d) bare caret in flowing text / ∅  → target.kind 'document', ref 'doc'
 
+// A shared renderer registry the mocked getSieveBlockLabel reads (the rich-label
+// test mutates renderers.code directly).
+const renderers = {}
+
 beforeEach(() => {
-  global.window.TipTap = global.window.TipTap || {}
-  // getSieveBlockLabel: the REAL function reads renderer.buildAiCtx(node).contextLabel
-  // (falling back to a title-cased kind). Emulate that here via a small renderer
-  // registry so the rich-label test exercises the contextLabel branch, not just the
-  // fallback (see sieve-block-extension.js:853).
-  const renderers = {
-    code: { buildAiCtx: () => ({ contextLabel: 'Code Block' }) },
-  }
-  window.TipTap.getSieveBlockLabel = (node) => {
+  // getSieveBlockLabel (import, mocked): reads renderer.buildAiCtx(node).contextLabel,
+  // falling back to a title-cased kind — the rich-label test exercises the contextLabel
+  // branch, not just the fallback (see sieve-block-extension.js:853).
+  Object.keys(renderers).forEach((k) => delete renderers[k])
+  renderers.code = { buildAiCtx: () => ({ contextLabel: 'Code Block' }) }
+  vi.mocked(getSieveBlockLabel).mockImplementation((node) => {
     const kind = node && node.attrs ? node.attrs.kind : ''
     const r = renderers[kind]
     const base = (r && typeof r.buildAiCtx === 'function') ? r.buildAiCtx(node) : null
     const fallback = kind ? (kind.charAt(0).toUpperCase() + kind.slice(1).replace(/-/g, ' ')) : 'Block'
     return (base && base.contextLabel) || fallback
-  }
-  window.TipTap.__renderers = renderers
+  })
+  // Default effective range = the plain live PM selection (the pre-P4.E fallback);
+  // no dom fold. block-chrome's mock default already mirrors this, reset it here too.
+  vi.mocked(getBlockSelectionRange).mockImplementation((view) => {
+    const sel = view.state.selection
+    return { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false, isNodeSelection: !!sel.node }
+  })
+  vi.mocked(domSelectionBlockRange).mockReturnValue(null)
 })
 
 describe('AI target — selection ref chains (bug-1 fix)', () => {
@@ -220,7 +262,7 @@ describe('AI target — P3.C store-only contract', () => {
     // Register a renderer whose buildAiCtx surfaces a rich contextLabel — the
     // surface must call getSieveBlockLabel while holding the node so this richness
     // reaches target.label, never regressing to a bare title-cased 'Code'.
-    window.TipTap.__renderers.code = { buildAiCtx: () => ({ contextLabel: 'Javascript Code Block' }) }
+    renderers.code = { buildAiCtx: () => ({ contextLabel: 'Javascript Code Block' }) }
     const { editor } = docWithNodeSelection([build.p('x', 'pr-1'), build.sieveCode('co-1')], 1)
     expect(contextFor(editor, false).target.label).toBe('Javascript Code Block')
   })

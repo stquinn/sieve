@@ -3,6 +3,39 @@
 // same pattern as block-position.js), so class drift is caught by the suite.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+
+// P4.E: NoteEditor → WysiwygSurface now statically imports the three side-effect
+// extension modules (Search/BlockChrome/AiTargetDecoration build Extension.create
+// at module-eval time), which would throw against the bare test/setup.js vendor
+// bag. These tests never mount a real WysiwygSurface (they use fake surfaces), so
+// inert stubs satisfy the imports; the pure position helpers (ai-target /
+// block-position) the editor really calls stay REAL.
+vi.mock('../src/static/editor/extensions.js', () => ({
+  Search: {}, SelectionHighlight: {}, HighlightMark: {},
+  AiShortcuts: { configure: () => ({}) },
+  // askAi imports these (was the shared bus): buildAiContext is pure over
+  // context.target; applyTargetHighlight is spied to assert the ranged D-5 call.
+  buildAiContext: vi.fn((context) => ({ blockRef: (context && context.target && context.target.ref) || 'doc', contextLabel: 'x' })),
+  applyTargetHighlight: vi.fn(),
+}))
+vi.mock('../src/static/editor/block-chrome.js', () => ({
+  BlockChrome: {}, getBlockSelectionRange: vi.fn(),
+}))
+vi.mock('../src/static/ai/ai-target-decoration.js', () => ({ AiTargetDecoration: {} }))
+vi.mock('../src/static/block/prose-block.js', () => ({ BlockId: {} }))
+// P4.E: AbstractEditor's insert-position math now imports these (was the shared bus).
+// Mock them so the insert-position + askAi tests drive the delegation via vi.mocked.
+vi.mock('../src/static/ai/ai-target.js', () => ({
+  blockInsertPos: vi.fn((_state, isInline) => (isInline ? 11 : 42)),
+}))
+vi.mock('../src/static/base/block-position.js', () => ({
+  blockIndexForInsert: vi.fn(() => 3),
+  emptyParagraphAnchor: vi.fn(() => null),
+  docPosForBlockIndex: vi.fn(),
+  blockIndexAfter: vi.fn(),
+  enclosingBlockId: vi.fn(),
+}))
+
 import { SieveEditor } from '../src/static/shell/editor-shell.js'
 import { SieveTab } from '../src/static/shell/tab.js'
 import { SieveWorkspace } from '../src/static/shell/workspace.js'
@@ -11,6 +44,9 @@ import { NoteEditor } from '../src/static/shell/note-editor.js'
 import { PromptEditor } from '../src/static/shell/prompt-editor.js'
 import { AbstractSurface } from '../src/static/shell/surfaces/abstract-surface.js'
 import { EditorMode } from '../src/static/shell/editor-mode.js'
+import { blockInsertPos } from '../src/static/ai/ai-target.js'
+import { blockIndexForInsert, emptyParagraphAnchor, blockIndexAfter, docPosForBlockIndex } from '../src/static/base/block-position.js'
+import { buildAiContext, applyTargetHighlight } from '../src/static/editor/extensions.js'
 
 // ── Test doubles ─────────────────────────────────────────────────────────────
 
@@ -1560,23 +1596,31 @@ describe('AbstractEditor.createBlock (P2.C transitional seam)', () => {
   })
 })
 
-// ── P4.B: AbstractEditor.askAi + prepareAiTarget (the SINGLE AI-job seam) ───────
+// ── P4.E/D-5: AbstractEditor.askAi (the SINGLE AI-job seam, PURE over context) ──
 // runAiJob's body moved off editor.js's IIFE onto the editor: ONE method for both
-// ask and explain (they differ only by type + whether a question exists), composing
-// buildAiContext (over the editor's own getSelectionContext) + captureInsertPos +
-// flushSave + createBlock('ai-block', …). prepareAiTarget is the target-prep
-// (highlight a live selection + focus) the explain entry point guards on.
+// ask and explain (they differ only by type + whether a question exists). D-5: it
+// is a pure operator over the SelectionContext the caller PASSES — buildAiContext
+// (ref), the == highlight (context.target.range), and the block insert index
+// (blockIndexAfter over context.blockIds) all derive from that context, NEVER a
+// live re-read. The old explain target-prep method was DELETED — its highlight/focus/markdown-abort
+// folded into askAi (it is one operation, not a caller-run pre-step).
 
-describe('AbstractEditor.askAi (P4.B — the single AI-job seam)', () => {
-  // Builds a wysiwyg FakeSurfaceEditor with a scripted selection descriptor and a
-  // stubbed window.TipTap (buildAiContext returns the fed ref; blockInsertPos is a
-  // fixed position). askAi's collaborators are spied so the composition is pinned.
+describe('AbstractEditor.askAi (P4.E/D-5 — the single AI-job seam, pure over context)', () => {
+  // A wysiwyg FakeSurfaceEditor with a scripted selection descriptor + a fake tiptap
+  // carrying the handles askAi touches (state/view/commands). buildAiContext +
+  // applyTargetHighlight are module-mocked (top of file); blockIndexAfter /
+  // docPosForBlockIndex are mocked so the insert-anchor delegation is asserted via
+  // vi.mocked without needing a real doc.
   function seamRig(mode = 'wysiwyg', target = { kind: 'block', ref: 'co-9', label: 'Code Block' }) {
     const ed = new FakeSurfaceEditor('u', { createBlockAtCaret: vi.fn() })
     ed.presentSurface(mode, document.createElement('div'), mode === 'markdown' ? 'md body' : 'x')
-    // Give the fake wysiwyg tiptap a doc textContent (#docText reads it for buildAiContext).
-    if (mode === 'wysiwyg') ed.surface.tiptapValue = { state: { doc: { textContent: 'doc text' } } }
-    // Seed a resolved AI target into the SelectionModel via the surface descriptor.
+    if (mode === 'wysiwyg') ed.surface.tiptapValue = {
+      state: { doc: { textContent: 'doc text' }, selection: { to: 5 } },
+      view: {},
+      commands: { focus: vi.fn(), setTextSelection: vi.fn() },
+      isActive: () => false,
+    }
+    // Seed a resolved AI target + block ids into the SelectionModel via the descriptor.
     ed.surface.feedDescriptor = {
       selectionType: 'block', blockId: 'b1', blockIds: ['b1'], blockKind: 'code',
       caret: 1, range: { from: 1, to: 3 }, target,
@@ -1585,103 +1629,87 @@ describe('AbstractEditor.askAi (P4.B — the single AI-job seam)', () => {
     return ed
   }
 
-  let prevTipTap
   beforeEach(() => {
-    prevTipTap = window.TipTap
-    window.TipTap = {
-      // reads context.target.ref, so askAi threads the LIVE getSelectionContext through
-      buildAiContext: (context) => ({ blockRef: (context && context.target && context.target.ref) || 'doc', contextLabel: 'x' }),
-      blockInsertPos: () => 42,
-      applyTargetHighlight: vi.fn(),
-    }
+    vi.mocked(blockIndexAfter).mockReturnValue(7)
+    vi.mocked(docPosForBlockIndex).mockReturnValue(99)
+    vi.mocked(buildAiContext).mockClear()
+    vi.mocked(applyTargetHighlight).mockClear()
   })
-  afterEach(() => { window.TipTap = prevTipTap })
 
-  it('ask: captures the block insert-pos, flushes, then creates the ai-block with type ASK + the live ref + question', async () => {
+  it('ask: anchors the insert AFTER the context target block, flushes, then creates the ai-block (type ASK + ref + question)', async () => {
     const ed = seamRig('wysiwyg', { kind: 'block', ref: 'co-9', label: 'Code Block' })
     const setInsertPos = vi.spyOn(ed, 'setInsertPos')
-    const capture = vi.spyOn(ed, 'captureInsertPos')
     const flushSave = vi.spyOn(ed, 'flushSave')
     const createBlock = vi.spyOn(ed, 'createBlock')
     await ed.askAi({ type: 'ask', question: 'why?' })
-    expect(capture).toHaveBeenCalledWith(false)          // block insert (never inline)
-    expect(setInsertPos).toHaveBeenCalledWith(42)         // the captured pos
+    // Insert anchored on the context's BLOCK ID (blockIndexAfter → docPosForBlockIndex),
+    // NOT a live caret / captureInsertPos.
+    expect(blockIndexAfter).toHaveBeenCalledWith(expect.anything(), 'b1')
+    expect(docPosForBlockIndex).toHaveBeenCalledWith(expect.anything(), 7)
+    expect(setInsertPos).toHaveBeenCalledWith(99)
     expect(flushSave).toHaveBeenCalled()                  // flush BEFORE create
     expect(createBlock).toHaveBeenCalledWith('ai-block', { type: 'ASK', ref: 'co-9', question: 'why?' })
-    // ordering: the create runs only AFTER the flush resolves
     expect(flushSave.mock.invocationCallOrder[0]).toBeLessThan(createBlock.mock.invocationCallOrder[0])
+  })
+
+  it('PURITY: acts on the PASSED context, NEVER the editor live selection (D-5 anti-race)', async () => {
+    // Live selection resolves to co-live / block bLive …
+    const ed = seamRig('wysiwyg', { kind: 'block', ref: 'co-live', label: 'Live' })
+    const createBlock = vi.spyOn(ed, 'createBlock')
+    // … but the caller passes a DIFFERENT context — what the panel actually rendered.
+    const passed = {
+      blockIds: ['bPanel'], blockId: 'bPanel', caret: 2,
+      target: { kind: 'block', ref: 'co-panel', range: { from: 2, to: 4 }, label: 'Panel' },
+    }
+    await ed.askAi({ type: 'ask', question: 'q', context: passed })
+    expect(buildAiContext).toHaveBeenCalledWith(passed)
+    expect(createBlock.mock.calls[0][1].ref).toBe('co-panel')             // panel's ref, not live co-live
+    expect(blockIndexAfter).toHaveBeenCalledWith(expect.anything(), 'bPanel')  // panel's block, not live bLive
+  })
+
+  it('selection target: highlights the CONTEXT target range (not the live selection)', async () => {
+    const ed = seamRig('wysiwyg')
+    const passed = {
+      blockIds: ['b1'], blockId: 'b1', caret: 3,
+      target: { kind: 'selection', ref: 'pr-1', range: { from: 5, to: 9 }, label: 'Paragraph' },
+    }
+    await ed.askAi({ type: 'ask', question: 'q', context: passed })
+    expect(applyTargetHighlight).toHaveBeenCalledWith(ed.surface.tiptapValue, { from: 5, to: 9 })
+  })
+
+  it('block target carries no == extent → no highlight', async () => {
+    const ed = seamRig('wysiwyg', { kind: 'block', ref: 'co-9', label: 'Code Block' })
+    await ed.askAi({ type: 'ask', question: 'q' })
+    expect(applyTargetHighlight).not.toHaveBeenCalled()
   })
 
   it('explain: type is EXPLAIN and the question defaults to empty', async () => {
     const ed = seamRig('wysiwyg', { kind: 'block', ref: 'pr-1', label: 'Paragraph' })
     const createBlock = vi.spyOn(ed, 'createBlock')
-    await ed.askAi({ type: 'explain' })
+    await ed.askAi({ type: 'explain', context: ed.getSelectionContext() })
     expect(createBlock).toHaveBeenCalledWith('ai-block', { type: 'EXPLAIN', ref: 'pr-1', question: '' })
   })
 
-  it('the ref comes from THIS editor getSelectionContext (single live source, not a captured copy)', async () => {
-    const ed = seamRig('wysiwyg', { kind: 'block', ref: 'co-a', label: 'Code Block' })
+  it('explain in markdown mode is a NO-OP (no inline target to explain) — the editor owns the abort', async () => {
+    const ed = seamRig('markdown', { kind: 'document', ref: '', label: 'Document' })
     const createBlock = vi.spyOn(ed, 'createBlock')
-    // Move the target to co-b — the seam must read the NEW context at send.
-    ed.surface.feedDescriptor = {
-      selectionType: 'block', blockId: 'b2', blockIds: ['b2'], blockKind: 'code',
-      caret: 1, range: { from: 1, to: 3 }, target: { kind: 'block', ref: 'co-b', label: 'Code Block' },
-    }
-    ed.services.notify({ type: 'selection-changed' })
-    await ed.askAi({ type: 'ask', question: 'q' })
-    expect(createBlock.mock.calls[0][1].ref).toBe('co-b')  // B, not A
+    await ed.askAi({ type: 'explain', context: ed.getSelectionContext() })
+    expect(createBlock).not.toHaveBeenCalled()
+  })
+
+  it('ask in markdown mode still asks (no tiptap; ref from context)', async () => {
+    const ed = seamRig('markdown', { kind: 'document', ref: '', label: 'Document' })
+    const createBlock = vi.spyOn(ed, 'createBlock')
+    await ed.askAi({ type: 'ask', question: 'q', context: ed.getSelectionContext() })
+    expect(createBlock).toHaveBeenCalledWith('ai-block', { type: 'ASK', ref: 'doc', question: 'q' })
   })
 
   it('falls back to a "doc" ref when buildAiContext yields no blockRef', async () => {
     const ed = seamRig('wysiwyg', { kind: 'document', ref: '', label: 'Document' })
-    window.TipTap.buildAiContext = () => ({})   // no blockRef
+    vi.mocked(buildAiContext).mockReturnValueOnce({})   // no blockRef
     const createBlock = vi.spyOn(ed, 'createBlock')
     await ed.askAi({ type: 'ask', question: 'q' })
     expect(createBlock.mock.calls[0][1].ref).toBe('doc')
-  })
-})
-
-describe('AbstractEditor.prepareAiTarget (P4.B — the explain target-prep guard)', () => {
-  function rig(mode) {
-    const ed = new FakeSurfaceEditor('u')
-    ed.presentSurface(mode, document.createElement('div'), mode === 'markdown' ? 'md' : 'x')
-    return ed
-  }
-  let prevTipTap
-  beforeEach(() => { prevTipTap = window.TipTap; window.TipTap = { applyTargetHighlight: vi.fn() } })
-  afterEach(() => { window.TipTap = prevTipTap })
-
-  it('returns false in markdown mode (no inline target) and highlights nothing', () => {
-    const ed = rig('markdown')
-    expect(ed.prepareAiTarget()).toBe(false)
-    expect(window.TipTap.applyTargetHighlight).not.toHaveBeenCalled()
-  })
-
-  it('wysiwyg with a live text selection: highlights + focuses, returns true', () => {
-    const ed = rig('wysiwyg')
-    // FakeSurface's tiptap is {fake:'tiptap'} — give it the selection shape prepareAiTarget reads.
-    const focus = vi.fn()
-    ed.surface.tiptapValue = {
-      state: { selection: { empty: false, node: null } },
-      isActive: () => false,
-      commands: { focus },
-    }
-    expect(ed.prepareAiTarget()).toBe(true)
-    expect(window.TipTap.applyTargetHighlight).toHaveBeenCalledWith(ed.surface.tiptapValue)
-    expect(focus).toHaveBeenCalled()
-  })
-
-  it('wysiwyg with a collapsed caret: no highlight (only focus), returns true', () => {
-    const ed = rig('wysiwyg')
-    const focus = vi.fn()
-    ed.surface.tiptapValue = {
-      state: { selection: { empty: true, node: null } },
-      isActive: () => false,
-      commands: { focus },
-    }
-    expect(ed.prepareAiTarget()).toBe(true)
-    expect(window.TipTap.applyTargetHighlight).not.toHaveBeenCalled()
-    expect(focus).toHaveBeenCalled()
   })
 })
 
@@ -1745,16 +1773,13 @@ function insertPosEditor(tiptap = fakeInsertPosTiptap()) {
 }
 
 describe('AbstractEditor insert-position math (P4.A)', () => {
-  let prevTipTap
+  // P4.E: the position helpers are ES imports (ai-target.js / block-position.js),
+  // mocked at file scope; re-establish their defaults before each test.
   beforeEach(() => {
-    prevTipTap = window.TipTap
-    window.TipTap = {
-      blockInsertPos: vi.fn((_state, isInline) => (isInline ? 11 : 42)),
-      blockIndexForInsert: vi.fn(() => 3),
-      emptyParagraphAnchor: vi.fn(() => null),
-    }
+    vi.mocked(blockInsertPos).mockImplementation((_state, isInline) => (isInline ? 11 : 42))
+    vi.mocked(blockIndexForInsert).mockReturnValue(3)
+    vi.mocked(emptyParagraphAnchor).mockReturnValue(null)
   })
-  afterEach(() => { window.TipTap = prevTipTap })
 
   it('setInsertPos / takeInsertPos read-and-clear (numeric fallback), second take is null', () => {
     const { ed } = insertPosEditor()
@@ -1784,21 +1809,21 @@ describe('AbstractEditor insert-position math (P4.A)', () => {
     expect(ed.kindIsInline('')).toBe(false)
   })
 
-  it('captureInsertPos delegates to window.TipTap.blockInsertPos (inline vs block)', () => {
+  it('captureInsertPos delegates to the blockInsertPos import (inline vs block)', () => {
     const { ed } = insertPosEditor()
     expect(ed.captureInsertPos(false)).toBe(42)
     expect(ed.captureInsertPos(true)).toBe(11)
   })
 
-  it('blockIndexForInsert delegates to window.TipTap.blockIndexForInsert', () => {
+  it('blockIndexForInsert delegates to the blockIndexForInsert import', () => {
     const { ed } = insertPosEditor()
     expect(ed.blockIndexForInsert(42)).toBe(3)
-    expect(window.TipTap.blockIndexForInsert).toHaveBeenCalled()
+    expect(blockIndexForInsert).toHaveBeenCalled()
   })
 
   it('commitInsertIndex with NO empty-paragraph anchor → the plain block index, no dispatch', () => {
     const { ed, tiptap } = insertPosEditor()
-    window.TipTap.emptyParagraphAnchor.mockReturnValue(null)
+    vi.mocked(emptyParagraphAnchor).mockReturnValue(null)
     expect(ed.commitInsertIndex(42)).toBe(3)
     expect(tiptap.dispatched.length).toBe(0)
   })
@@ -1806,7 +1831,7 @@ describe('AbstractEditor insert-position math (P4.A)', () => {
   it('commitInsertIndex with an empty-paragraph anchor dispatches a PLAIN TRACKED delete (NO addToHistory:false) + flushPending, returns the anchor index', () => {
     const tiptap = fakeInsertPosTiptap(2) // childCount > 1 → the delete branch
     const { ed } = insertPosEditor(tiptap)
-    window.TipTap.emptyParagraphAnchor.mockReturnValue({ from: 4, to: 6, index: 1 })
+    vi.mocked(emptyParagraphAnchor).mockReturnValue({ from: 4, to: 6, index: 1 })
     const idx = ed.commitInsertIndex(42)
     expect(idx).toBe(1) // the anchor's own index — the new block takes its place
     expect(tiptap.dispatched.length).toBe(1)
@@ -1822,22 +1847,22 @@ describe('AbstractEditor insert-position math (P4.A)', () => {
   it('commitInsertIndex on a sole-block doc keeps the paragraph (no delete dispatched), returns its index', () => {
     const tiptap = fakeInsertPosTiptap(1) // childCount === 1 → keep the only child
     const { ed } = insertPosEditor(tiptap)
-    window.TipTap.emptyParagraphAnchor.mockReturnValue({ from: 0, to: 2, index: 0 })
+    vi.mocked(emptyParagraphAnchor).mockReturnValue({ from: 0, to: 2, index: 0 })
     expect(ed.commitInsertIndex(42)).toBe(0)
     expect(tiptap.dispatched.length).toBe(0)
   })
 
   it('insertIndexForBlock composes captureInsertPos(false) → commitInsertIndex (the paste/drop path)', () => {
     const { ed } = insertPosEditor()
-    window.TipTap.emptyParagraphAnchor.mockReturnValue(null)
+    vi.mocked(emptyParagraphAnchor).mockReturnValue(null)
     // captureInsertPos(false) → 42 → blockIndexForInsert → 3
     expect(ed.insertIndexForBlock()).toBe(3)
-    expect(window.TipTap.blockInsertPos).toHaveBeenCalledWith(expect.anything(), false)
+    expect(blockInsertPos).toHaveBeenCalledWith(expect.anything(), false)
   })
 
   it('insertIndexForBlockAt(pos) → commitInsertIndex(pos) directly (the drop-coord path)', () => {
     const { ed } = insertPosEditor()
-    window.TipTap.emptyParagraphAnchor.mockReturnValue(null)
+    vi.mocked(emptyParagraphAnchor).mockReturnValue(null)
     expect(ed.insertIndexForBlockAt(99)).toBe(3)
   })
 

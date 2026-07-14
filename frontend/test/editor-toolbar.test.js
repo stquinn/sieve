@@ -10,6 +10,23 @@ import { EditorToolbar } from '../src/static/shell/editor-toolbar.js'
 import { WysiwygSurface } from '../src/static/shell/surfaces/wysiwyg-surface.js'
 import { MarkdownSurface } from '../src/static/shell/surfaces/markdown-surface.js'
 import { AbstractSurface } from '../src/static/shell/surfaces/abstract-surface.js'
+import { registerBlockKind } from '../src/static/block/block-kinds.js'
+
+// P4.E: wysiwyg-surface imports its app helpers from their owner modules; four of
+// those owners (extensions.js, block-chrome.js, ai-target-decoration.js,
+// prose-block.js) execute vendor calls at IMPORT time and would crash under the
+// bare test/setup.js TipTap seed. This file never mounts a surface, so inert
+// mocks satisfy the imports.
+vi.mock('../src/static/editor/extensions.js', () => ({
+  Search: {}, SelectionHighlight: {}, HighlightMark: {},
+  AiShortcuts: { configure: () => ({}) },
+  buildAiContext: vi.fn(), applyTargetHighlight: vi.fn(),
+}))
+vi.mock('../src/static/editor/block-chrome.js', () => ({
+  BlockChrome: {}, getBlockSelectionRange: vi.fn(),
+}))
+vi.mock('../src/static/ai/ai-target-decoration.js', () => ({ AiTargetDecoration: {} }))
+vi.mock('../src/static/block/prose-block.js', () => ({ BlockId: {} }))
 
 afterEach(() => { document.body.innerHTML = ''; vi.restoreAllMocks() })
 
@@ -301,5 +318,33 @@ describe('EditorToolbar composition (P4.D)', () => {
     active = true
     ed.fire({ type: 'selection-changed' }) // stream detached → no repaint
     expect(btn.el.classList.contains('active')).toBe(false)
+  })
+})
+
+// ── P4.E: insert-button icons come from the kind registry via the ES import ─────
+// #kindIcon used to read getSieveIcon off the shared bus (the transitional icon
+// bus); it now imports getSieveIcon from block/block-kinds.js — the registry
+// lookup. RED before the rewire: with no bus-published getSieveIcon the buttons
+// rendered '' even though the registry declared an icon.
+
+describe('EditorToolbar insert icons via the getSieveIcon import (P4.E)', () => {
+  function mountHost() {
+    const host = document.createElement('div')
+    host.id = 'editor-toolbar'
+    document.body.appendChild(host)
+    return host
+  }
+
+  it('renders the REGISTRY icon for a kind whose behaviour declares getIcon()', () => {
+    // Register mock kind entries in the real registry (per-file module instance).
+    registerBlockKind({ kind: 'code', native: false, renderer: { getIcon: () => '<svg data-icon="reg-code"></svg>' } })
+    registerBlockKind({ kind: 'diagram', native: false, renderer: { getIcon: () => '<svg data-icon="reg-diagram"></svg>' } })
+    const host = mountHost()
+    const ed = fakeEditor({ surface: { toolbarContents: () => [] } })
+    new EditorToolbar(ed, host).mount()
+    // The insert group is the 2nd editor-level group; buttons are code, diagram, clip, image.
+    const insertBtns = [...host.querySelectorAll('.tb-group')[1].querySelectorAll('button')]
+    expect(insertBtns[0].innerHTML).toContain('reg-code')
+    expect(insertBtns[1].innerHTML).toContain('reg-diagram')
   })
 })

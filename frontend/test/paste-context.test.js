@@ -1,16 +1,11 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { docWithCaret, build } from './helpers/editor-fixture.js'
+import { caretInRawTextBlock } from '../src/static/editor/paste-context.js'
 
 // caretInRawTextBlock is the small pure predicate that tells the smart-paste
 // handler to step aside: when the caret sits inside a code:true fenced block
 // (code / diagram / log), a paste must be a literal text paste into that block,
 // not a smart-paste that creates a new block.
-let caretInRawTextBlock
-beforeEach(async () => {
-  global.window.TipTap = global.window.TipTap || {}
-  await import('../src/static/editor/paste-context.js')
-  caretInRawTextBlock = window.TipTap.caretInRawTextBlock
-})
 
 describe('caretInRawTextBlock', () => {
   it('caret inside a code:true block → true (paste stays literal)', () => {

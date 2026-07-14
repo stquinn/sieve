@@ -4,15 +4,15 @@
 // when the committed == highlight / blockRef takes over. Separate plugin from
 // blockChrome on purpose: it must NOT be suppressed by block-chrome's
 // has-selection rule (the target frequently IS the selection).
-// Depends on window.TipTap (vendor/tiptap.js) loaded first.
-;(function () {
-  'use strict'
-  var T = window.TipTap
-  var Extension = T.Extension
-  var Plugin = T.Plugin
-  var PluginKey = T.PluginKey
-  var Decoration = T.Decoration
-  var DecorationSet = T.DecorationSet
+// Depends on the vendor TipTap bundle (vendor/tiptap.js) loaded first.
+import { T as VENDOR } from '../base/tiptap-vendor.js'
+import { proseChainHits } from '../block/block-kinds.js'
+
+var Extension = VENDOR.Extension
+var Plugin = VENDOR.Plugin
+var PluginKey = VENDOR.PluginKey
+var Decoration = VENDOR.Decoration
+var DecorationSet = VENDOR.DecorationSet
 
   var aiTargetKey = new PluginKey('aiTarget')
   // Ref-chain hover glow. Structured blocks are NodeViews (opaque DOM) so
@@ -22,7 +22,7 @@
   // via a decoration (PM renders it, so it survives) instead of raw classList.
   var refChainKey = new PluginKey('refChain')
 
-  var AiTargetDecoration = Extension.create({
+  export var AiTargetDecoration = Extension.create({
     name: 'aiTargetDecoration',
     addProseMirrorPlugins: function () {
       return [
@@ -41,7 +41,7 @@
             decorations: function (state) {
               var ps = refChainKey.getState(state)
               if (!ps || !ps.ids || !ps.ids.length) return DecorationSet.empty
-              var hits = (T.proseChainHits || function () { return [] })(state.doc, ps.ids)
+              var hits = proseChainHits(state.doc, ps.ids)
               if (!hits.length) return DecorationSet.empty
               var decos = hits.map(function (h) {
                 return Decoration.node(h.from, h.to, { class: 'block-ref-active' })
@@ -90,24 +90,17 @@
     },
   })
 
-  // Imperative helpers used by editor.js.
-  T.AiTargetDecoration = AiTargetDecoration
-  T.setAiTargetGlow = function (view, range) {
-    if (!view) return
-    view.dispatch(view.state.tr.setMeta(aiTargetKey, { range: range || null }))
-  }
-  T.clearAiTargetGlow = function (view) {
-    if (!view) return
-    view.dispatch(view.state.tr.setMeta(aiTargetKey, { range: null }))
-  }
+  // (The Ask-target GLOW imperatives setAiTargetGlow/clearAiTargetGlow were removed
+  // in P4.E — the glow was dropped in P4.B and had zero callers. The AiTargetDecoration
+  // plugin's aiTargetKey half is now inert; retiring it is a P4.F/close-out follow-up.)
+
   // Ref-chain glow for native prose blocks (structured blocks use classList in
   // applyChain). ids = the chain's block ids; prose members get block-ref-active.
-  T.setRefChain = function (view, ids) {
+  export var setRefChain = function (view, ids) {
     if (!view) return
     view.dispatch(view.state.tr.setMeta(refChainKey, { ids: ids || [] }))
   }
-  T.clearRefChain = function (view) {
+  export var clearRefChain = function (view) {
     if (!view) return
     view.dispatch(view.state.tr.setMeta(refChainKey, { clear: true }))
   }
-})()

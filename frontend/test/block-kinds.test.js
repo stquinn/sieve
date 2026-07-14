@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { registerBlockKind, getBlockKind, listBlockKinds, isNativeProseNodeName } from '../src/static/block/block-kinds.js'
+import { registerBlockKind, getBlockKind, listBlockKinds, isNativeProseNodeName, getSieveIcon } from '../src/static/block/block-kinds.js'
 
 // block-kinds is the shared block-kind registry that restores model-layer
 // symmetry: EVERY kind — prose included — is a registered block definition, so
@@ -45,5 +45,18 @@ describe('block-kinds registry', () => {
     expect(isNativeProseNodeName('bulletList')).toBe(true)
     expect(isNativeProseNodeName('sieve-code')).toBe(false)
     expect(isNativeProseNodeName('sieve-ai-block')).toBe(false)
+  })
+
+  // getSieveIcon moved here from sieve-block-extension.js (P4.E D-2): it only
+  // needs the kind-registry lookup (getBlockBehaviour), which this module
+  // already owns — no reason for the 1100-line extension file to be the home.
+  it('getSieveIcon returns a registered kind\'s icon via its behaviour', () => {
+    const icon = '<svg>code</svg>'
+    registerBlockKind({ kind: 'code', native: false, renderer: { getIcon: () => icon } })
+    expect(getSieveIcon('code')).toBe(icon)
+  })
+
+  it('getSieveIcon is falsy-safe for an unknown kind', () => {
+    expect(getSieveIcon('does-not-exist')).toBeFalsy()
   })
 })

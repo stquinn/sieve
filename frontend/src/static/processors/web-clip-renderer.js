@@ -1,12 +1,12 @@
 // web-clip-renderer.js — Web Clip block renderer.
-// Registers window.TipTap.registerSieveRenderer('web-clip', WebClipRenderer)
+// Registers registerSieveRenderer('web-clip', WebClipRenderer)
 
 import { renderMarkdown, applyHighlighting, isJobStale } from '../base/fenced-block-base.js'
+import { T } from '../base/tiptap-vendor.js'
+import { registerSieveRenderer } from '../block/sieve-block-extension.js'
 
 ;(function () {
   'use strict'
-
-  var T = window.TipTap
 
   function isStale(createdAt, id) {
     return isJobStale(createdAt, id)
@@ -236,7 +236,7 @@ import { renderMarkdown, applyHighlighting, isJobStale } from '../base/fenced-bl
     // ── Plugins ───────────────────────────────────────────────────────────────
 
     buildPlugins: function(nodeType) {
-      var Plugin = window.TipTap.Plugin
+      var Plugin = T.Plugin
 
       function isInside(state, from, to) {
         var inside = false
@@ -294,5 +294,5 @@ import { renderMarkdown, applyHighlighting, isJobStale } from '../base/fenced-bl
     },
   }
 
-  T.registerSieveRenderer('web-clip', WebClipRenderer)
+  registerSieveRenderer('web-clip', WebClipRenderer)
 })()

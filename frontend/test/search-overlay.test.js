@@ -13,7 +13,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { SearchOverlay } from '../src/static/shell/search-overlay.js'
 
-// A fake surface tiptap exposing the search commands + storage the overlay touches.
+// A fake surface tiptap exposing the search commands + storage. Post-D-3 the
+// overlay no longer reaches this directly — the fake EDITOR's search verbs (below)
+// run these same command spies, so the existing assertions on
+// `ws._tiptap.commands.*` still pin the behaviour the overlay ultimately drives.
 function fakeTiptap() {
   return {
     commands: {
@@ -27,10 +30,25 @@ function fakeTiptap() {
   }
 }
 
+// D-3: the overlay drives the ACTIVE EDITOR'S search verbs (never `ed.tiptap`).
+// The fake editor exposes them; each runs the tiptap command spies (so the search
+// commands are still asserted) and returns the current `{current,total}` stats the
+// overlay renders. clearSearch folds in the editor refocus (the close gesture).
 function fakeWorkspace({ tiptap = fakeTiptap(), mode = 'wysiwyg', editor = true } = {}) {
-  const ed = editor ? { tiptap, mode } : null
+  const stats = () => {
+    const s = tiptap.storage.search
+    return { current: s.results.length > 0 ? s.currentIndex + 1 : 0, total: s.results.length }
+  }
+  const ed = editor ? {
+    mode,
+    searchTerm: vi.fn((t) => { tiptap.commands.setSearchTerm(t); return stats() }),
+    searchNext: vi.fn(() => { tiptap.commands.nextSearchResult(); return stats() }),
+    searchPrev: vi.fn(() => { tiptap.commands.prevSearchResult(); return stats() }),
+    clearSearch: vi.fn(() => { tiptap.commands.clearSearch(); tiptap.commands.focus() }),
+  } : null
   return {
     _tiptap: tiptap,
+    _editor: ed,
     get activeTab() { return ed ? { editor: ed } : null },
   }
 }
@@ -104,8 +122,11 @@ describe('SearchOverlay — find / next / prev / clear via surface commands', ()
     const input = el.querySelector('input')
     input.value = 'needle'
     input.dispatchEvent(new window.Event('input', { bubbles: true }))
+    // D-3: the overlay drives the EDITOR'S searchTerm verb (never ed.tiptap) …
+    expect(ws._editor.searchTerm).toHaveBeenCalledWith('needle')
+    // … which runs the surface search command …
     expect(ws._tiptap.commands.setSearchTerm).toHaveBeenCalledWith('needle')
-    // stats reads storage.search: currentIndex 1 → '2/3'
+    // … and returns stats the overlay renders (currentIndex 1 of 3 → '2/3').
     expect(el.querySelector('.editor-search__stats').textContent).toBe('2/3')
   })
 

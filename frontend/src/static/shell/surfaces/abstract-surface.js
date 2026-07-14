@@ -85,6 +85,41 @@ export class AbstractSurface {
     return { chars: text.length, lines, blockCount: lines }
   }
 
+  // ── Document search (D-3: the editor's search verbs delegate here) ─────────────
+  //
+  // Mirrors the stats() seam: the SearchOverlay drives the active editor's
+  // search methods, which delegate to the mounted surface — so ALL TipTap /
+  // search-extension access stays surface-private (the Search extension lives in
+  // editor/extensions.js and is mounted on WysiwygSurface's OWN #editor). A
+  // surface with no search (markdown's plain textarea, the base) is a no-op that
+  // returns false; WysiwygSurface overrides with the real search commands.
+
+  /**
+   * Set the live search term and return the current match stats, or false when
+   * the surface has no search. WysiwygSurface runs the Search extension command.
+   * @param {string} term
+   * @returns {{current:number,total:number}|false}
+   */
+  searchTerm(term) { return false }
+
+  /**
+   * Advance to the next match; returns the current match stats, or false.
+   * @returns {{current:number,total:number}|false}
+   */
+  searchNext() { return false }
+
+  /**
+   * Step to the previous match; returns the current match stats, or false.
+   * @returns {{current:number,total:number}|false}
+   */
+  searchPrev() { return false }
+
+  /**
+   * Clear the active search (and return focus to the editing view). No-op here.
+   * @returns {false}
+   */
+  clearSearch() { return false }
+
   /**
    * Mounts the surface into the editor's root element and seeds it with content.
    * The root element is owned by the editor; the DOM the surface builds under it

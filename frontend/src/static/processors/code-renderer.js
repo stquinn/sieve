@@ -8,17 +8,17 @@
 // handleKeyDown here (docs/editor-interaction-contract.md is normative).
 
 import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
+import { T } from '../base/tiptap-vendor.js'
+import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block/sieve-block-extension.js'
 
 ;(function () {
   'use strict'
-
-  var T = window.TipTap
 
   // ── Header (toolbar) ──────────────────────────────────────────────────────────
   // Badge only — but stateful: 'detecting…' while the language job runs, the
   // language once known, else 'CODE'. badge() returns a styled Element so the
   // pending/unknown classes and the detection-method tooltip carry over.
-  class CodeHeader extends T.AdvancedHeaderProvider {
+  class CodeHeader extends AdvancedHeaderProvider {
     badge(attrs) {
       var isPending     = attrs.status === 'PENDING' || attrs.status === 'DISPATCHED'
       var isStale       = isPending && isJobStale(attrs.createdAt, attrs.id)
@@ -27,7 +27,7 @@ import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-b
       if (showDetecting) { text = 'detecting…'; cls = 'sieve-block__badge--pending' }
       else if (attrs.language && attrs.language !== 'unknown') { text = attrs.language; cls = '' }
       else { text = (attrs.language === 'unknown' ? 'CODE' : attrs.language) || 'CODE'; cls = 'sieve-block__badge--unknown' }
-      var b = T.badgeEl(text, cls)
+      var b = badgeEl(text, cls)
       if (attrs.detectionMethod) {
         b.setAttribute('data-detection-method', attrs.detectionMethod)
         b.title = 'Detected via ' + attrs.detectionMethod
@@ -294,6 +294,6 @@ import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-b
     ]
   }
 
-  T.registerSieveRenderer('code', CodeRenderer)
+  registerSieveRenderer('code', CodeRenderer)
 
 })()

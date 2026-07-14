@@ -1,14 +1,13 @@
 // smart-link-renderer.js — Smart Link inline renderer.
-// Registers window.TipTap.registerSieveRenderer('smart-link', SmartLinkRenderer)
+// Registers registerSieveRenderer('smart-link', SmartLinkRenderer)
 // Renders as an inline <a> in flowing text. Go's RunJob fetches the page title;
 // the label updates in place when the job completes.
 
 import { isJobStale } from '../base/fenced-block-base.js'
+import { registerSieveRenderer } from '../block/sieve-block-extension.js'
 
 ;(function () {
   'use strict'
-
-  var T = window.TipTap
 
   var SmartLinkRenderer = {
 
@@ -139,7 +138,7 @@ import { isJobStale } from '../base/fenced-block-base.js'
     },
   }
 
-  T.registerSieveRenderer('smart-link', SmartLinkRenderer)
+  registerSieveRenderer('smart-link', SmartLinkRenderer)
 
   // ── Edit dialog ───────────────────────────────────────────────────────────────
   // Opened via sieve:smart-link-edit. Re-uses ask-popup styling.

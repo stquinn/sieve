@@ -4,7 +4,7 @@
 // creates each dialog on first open (document.body.appendChild), validates the URL
 // via the shared http/https gate, and inserts through PUBLIC AbstractEditor methods
 // only (kindIsInline / captureInsertPos / setInsertPos / commitInsertIndex /
-// takeInsertPos / applyBlockOps) — NO tiptap, NO window.TipTap. Backs
+// takeInsertPos / applyBlockOps) — NO tiptap, NO shared bus. Backs
 // workspace.openUrlCardDialog(url?) / openWebClipDialog(url?).
 //
 // The CONTRACT SHIFT pinned here (vs the old editor.js free functions): the insert

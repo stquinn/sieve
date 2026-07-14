@@ -13,6 +13,8 @@
 // `editor.storage.markdown.parser.md.render`) so this module stays free of any
 // editor/DOM dependency and is unit-testable in isolation.
 
+import { buildSieveBlockHTML } from './sieve-block-extension.js'
+
 // renderProseContent is the prose kind's LOAD mapping (block → native HTML): a
 // prose block IS its native top-level node(s) (paragraph/heading/list/table/
 // blockquote/…), NOT a custom sieve-prose container. markdownit produces the
@@ -47,9 +49,8 @@ function blockHTML(b, mdRender) {
   // PROPERTIES (attrs), reusing the SAME parseAttrs/data-* builder the markdownit
   // fence rule uses (buildSieveBlockHTML) — no markdown round-trip, the block
   // model is properties-in.
-  const T = (typeof window !== 'undefined' && window.TipTap) || {}
-  if (typeof T.buildSieveBlockHTML === 'function') {
-    const built = T.buildSieveBlockHTML(b.kind, b.attrs || {})
+  if (typeof buildSieveBlockHTML === 'function') {
+    const built = buildSieveBlockHTML(b.kind, b.attrs || {})
     if (built) return built
   }
   // Defensive (builder unavailable, e.g. a bare unit env): a non-empty placeholder
@@ -62,12 +63,4 @@ function blockHTML(b, mdRender) {
 // top-level construct independently).
 export function buildBlocksHTML(blocks, mdRender) {
   return (blocks || []).map((b) => blockHTML(b, mdRender)).join('\n')
-}
-
-// Expose on the TipTap global so the classic-script editor.js can call it at
-// runtime (mirrors how the renderer modules register themselves).
-if (typeof window !== 'undefined') {
-  window.TipTap = window.TipTap || {}
-  window.TipTap.buildBlocksHTML = buildBlocksHTML
-  window.TipTap.proseContent = proseContent
 }

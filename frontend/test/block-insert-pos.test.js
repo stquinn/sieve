@@ -1,16 +1,12 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { docWithCaret, docWithCaretAt, docWithRange, docWithNodeSelection, build } from './helpers/editor-fixture.js'
+import { blockInsertPos } from '../src/static/ai/ai-target.js'
+import { emptyParagraphAnchor } from '../src/static/base/block-position.js'
 
 // D-r.7 piece 3 — blockInsertPos is the single source for every additive block
 // insert. A block kind lands as a NEW SIBLING after the enclosing top-level block
 // (never at the caret → never splits a paragraph); an inline kind lands at the
 // caret; a NodeSelection is already positioned after its node.
-let blockInsertPos
-beforeEach(async () => {
-  global.window.TipTap = global.window.TipTap || {}
-  await import('../src/static/ai/ai-target.js')
-  blockInsertPos = window.TipTap.blockInsertPos
-})
 
 describe('blockInsertPos — additive block placement', () => {
   it('caret mid-paragraph, BLOCK kind → after the top-level paragraph (no split)', () => {
@@ -56,12 +52,6 @@ describe('blockInsertPos — additive block placement', () => {
 // TARGET, not an anchor — the new block takes its index and the paragraph is
 // consumed (editor.js commitInsertIndex deletes it at commit time).
 describe('emptyParagraphAnchor — empty paragraph is a placement target', () => {
-  let emptyParagraphAnchor
-  beforeEach(async () => {
-    await import('../src/static/base/block-position.js')
-    emptyParagraphAnchor = window.TipTap.emptyParagraphAnchor
-  })
-
   it('caret on an empty paragraph between blocks → its own index + bounds', () => {
     const nodes = [build.p('above', 'pr-1'), build.p('', 'pr-2'), build.p('below', 'pr-3')]
     const { editor } = docWithCaret(nodes, 1, 0)

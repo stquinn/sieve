@@ -9,7 +9,7 @@
 // that the transparent serialize produces no <!--s:--> markers and no wrapper.
 //
 // The node is constructed by hand in the test (Node.create) rather than relying
-// on window.TipTap, so this runs in vitest without any window.TipTap guard issues.
+// on the shared vendor bag, so this runs in vitest without any T.Node guard issues.
 
 import { describe, it, expect, afterEach } from 'vitest'
 import { Editor, Node } from '@tiptap/core'

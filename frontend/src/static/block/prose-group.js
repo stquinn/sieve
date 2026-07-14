@@ -29,11 +29,16 @@
 // Markdown serialize is TRANSPARENT: emit ONLY the children's markdown, no markers.
 // Go re-wraps in <!--s:id--> on save — serialization stays a backend concern.
 //
-// Depends on window.TipTap (vendor/tiptap.js) for Node — guarded so this module is
-// importable in a bare (vitest) env where TipTap is absent; the pure exports
-// (proseBlockNodes, proseGroupMarkdownSerialize) are always available.
+// Depends on the vendor TipTap bundle (vendor/tiptap.js) for Node — guarded so this
+// module is importable in a bare (vitest) env where TipTap is absent; the pure
+// exports (proseBlockNodes, proseGroupMarkdownSerialize) are always available.
 
-const T = (typeof window !== 'undefined' && window.TipTap) || {}
+import { T } from '../base/tiptap-vendor.js'
+
+// Cross-file binding the guarded block below assigns when the TipTap runtime is
+// present (the sieve-block-extension `export let` pattern, P4.E): stays undefined
+// in a bare (vitest) env.
+export let ProseGroup
 
 // proseGroupMarkdownSerialize: TRANSPARENT serialize — render ONLY the children, no
 // wrapper, no markers. state.renderContent walks the child blocks and lets each
@@ -62,7 +67,7 @@ export function proseBlockNodes(fragment, id, schema) {
 }
 
 if (T.Node) {
-  const ProseGroup = T.Node.create({
+  ProseGroup = T.Node.create({
     name: 'proseGroup',
     group: 'block',
     content: 'block+',
@@ -105,7 +110,4 @@ if (T.Node) {
       return { markdown: { serialize: proseGroupMarkdownSerialize } }
     },
   })
-
-  T.ProseGroup = ProseGroup
-  T.proseBlockNodes = proseBlockNodes
 }

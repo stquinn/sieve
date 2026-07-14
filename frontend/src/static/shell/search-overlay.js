@@ -6,12 +6,13 @@
 // the old ensureOverlays laziness); it is NOT wired from index.html markup. Backs
 // workspace.toggleSearch().
 //
-// TRANSITIONAL ed.tiptap reach: the search commands (setSearchTerm / nextSearchResult
-// / prevSearchResult / clearSearch) and the storage.search stats are SURFACE TipTap
-// (the search extension lives in editor/extensions.js), so this reaches
-// workspace.activeTab.editor.tiptap directly — a transitional reach, null-guarded,
-// that retires with the window.TipTap bus in P4.E (a surface-command forward is a
-// P4.D/E concern). NO window.TipTap here; ed.tiptap is not the window bus.
+// The overlay drives the ACTIVE EDITOR'S search verbs (searchTerm / searchNext /
+// searchPrev / clearSearch), which return the current match stats and delegate to
+// the mounted surface (D-3). It no longer reaches the editor's live TipTap handle:
+// the Search
+// extension + its `storage.search` match set are surface-private (WysiwygSurface's
+// OWN #editor). The null-editor guard stays; markdown mode is a local stub (its
+// surface's search verbs no-op).
 //
 // Dual-use ES module: imported by workspace.js (which constructs it). No window.*
 // export — reached via window.sieveWorkspace.searchOverlay.
@@ -51,17 +52,16 @@ export class SearchOverlay {
       if (this.#input) { this.#input.focus(); this.#input.select() }
     } else {
       overlay.style.display = 'none'
-      const tiptap = this.#tiptap()
-      if (tiptap) tiptap.commands.clearSearch()
+      const ed = this.#activeEditor()
+      if (ed) ed.clearSearch()
     }
   }
 
   // ── Private ─────────────────────────────────────────────────────────────────────
 
-  /** @returns {any} the active editor's surface tiptap, or null (transitional reach). */
-  #tiptap() {
-    const ed = (this.#ws.activeTab && this.#ws.activeTab.editor) || null
-    return (ed && ed.tiptap) || null
+  /** @returns {any} the workspace's active editor, or null. */
+  #activeEditor() {
+    return (this.#ws.activeTab && this.#ws.activeTab.editor) || null
   }
 
   /** @returns {string} the active editor's mode, or 'wysiwyg' when none. */
@@ -98,21 +98,19 @@ export class SearchOverlay {
     bottomRow.className = 'editor-search__bottom-row'
 
     const btnPrev = this.#makeBtn('editor-search__btn', '↑', () => {
-      if (this.#mode() === 'markdown') { /* TODO */ }
-      else { const t = this.#tiptap(); if (t) t.commands.prevSearchResult() }
-      this.#updateStats()
+      if (this.#mode() === 'markdown') { this.#renderStats(null) }
+      else { const ed = this.#activeEditor(); if (ed) this.#renderStats(ed.searchPrev()) }
     })
 
     const btnNext = this.#makeBtn('editor-search__btn', '↓', () => {
-      if (this.#mode() === 'markdown') { /* TODO */ }
-      else { const t = this.#tiptap(); if (t) t.commands.nextSearchResult() }
-      this.#updateStats()
+      if (this.#mode() === 'markdown') { this.#renderStats(null) }
+      else { const ed = this.#activeEditor(); if (ed) this.#renderStats(ed.searchNext()) }
     })
 
     const btnClose = this.#makeBtn('editor-search__close', '✕', () => {
       overlay.style.display = 'none'
-      const t = this.#tiptap()
-      if (t) { t.commands.clearSearch(); t.commands.focus() }
+      const ed = this.#activeEditor()
+      if (ed) ed.clearSearch()
     })
 
     bottomRow.appendChild(btnPrev); bottomRow.appendChild(btnNext); bottomRow.appendChild(btnClose)
@@ -123,27 +121,26 @@ export class SearchOverlay {
       if (this.#mode() === 'markdown') {
         // Placeholder
       } else {
-        const t = this.#tiptap()
-        if (t) { t.commands.setSearchTerm(term); this.#updateStats() }
+        const ed = this.#activeEditor()
+        if (ed) this.#renderStats(ed.searchTerm(term))
       }
     })
 
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault()
-        const t = this.#tiptap()
+        const ed = this.#activeEditor()
         if (e.shiftKey) {
-          if (t) t.commands.prevSearchResult()
+          if (ed) this.#renderStats(ed.searchPrev())
         } else {
-          if (t) t.commands.nextSearchResult()
+          if (ed) this.#renderStats(ed.searchNext())
         }
-        this.#updateStats()
       }
       if (e.key === 'Escape') {
         e.preventDefault()
         overlay.style.display = 'none'
-        const t = this.#tiptap()
-        if (t) { t.commands.clearSearch(); t.commands.focus() }
+        const ed = this.#activeEditor()
+        if (ed) ed.clearSearch()
       }
     })
 
@@ -154,18 +151,20 @@ export class SearchOverlay {
     return overlay
   }
 
-  /** Refreshes the n/N match count from the surface search storage. */
-  #updateStats() {
+  /**
+   * Refreshes the n/N match count from a stats object the editor's search verb
+   * returned (`{current,total}`). Markdown mode has no matches → '0/0'; a falsy
+   * stats (no results yet) leaves the count unchanged, as the old storage read did.
+   * @param {{current:number,total:number}|null|false} stats
+   */
+  #renderStats(stats) {
     if (!this.#stats) return
     if (this.#mode() === 'markdown') {
       this.#stats.textContent = '0/0'
       return
     }
-    const t = this.#tiptap()
-    if (!t) return
-    const s = t.storage.search
-    if (s && s.results) {
-      this.#stats.textContent = (s.results.length > 0 ? (s.currentIndex + 1) : 0) + '/' + s.results.length
+    if (stats && typeof stats.total === 'number') {
+      this.#stats.textContent = stats.current + '/' + stats.total
     }
   }
 

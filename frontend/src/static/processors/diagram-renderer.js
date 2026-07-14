@@ -10,17 +10,22 @@
 // add handleKeyDown here (docs/editor-interaction-contract.md is normative).
 
 import { esc, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
+import { T } from '../base/tiptap-vendor.js'
+import { registerSieveRenderer, AdvancedHeaderProvider } from '../block/sieve-block-extension.js'
+
+// Cross-file exports the IIFE below assigns once it runs. prose-block.js
+// and smart-image-renderer.js import renderMermaidSvgEntry directly.
+export let ensureMermaid
+export let renderMermaidSvgEntry
 
 ;(function () {
   'use strict'
-
-  var T = window.TipTap
 
   // ── Mermaid lazy-loader ───────────────────────────────────────────────────────
 
   var mermaidReady = null
 
-  function ensureMermaid() {
+  ensureMermaid = function () {
     if (mermaidReady) return mermaidReady
     mermaidReady = new Promise(function (resolve, reject) {
       if (window.mermaid) { initMermaid(); resolve(); return }
@@ -32,14 +37,13 @@ import { esc, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
     })
     return mermaidReady
   }
-  T.ensureMermaid = ensureMermaid
 
   // renderMermaidSvgEntry renders a mermaid source — from a diagram node OR an embedded
   // ```mermaid fence among the entries — into an image/svg+xml ContentEntry. Resolves to
   // null when there is no mermaid here; render FAILURES reject so each caller chooses to
   // alert (smart-image extract) or degrade (prose embed). Browser-only (window.mermaid).
   // Shared by smart-image's and prose's resolveEntries — keep it; both call it.
-  T.renderMermaidSvgEntry = function (sourceNode, entries) {
+  renderMermaidSvgEntry = function (sourceNode, entries) {
     var src = ''
     if (sourceNode && sourceNode.attrs && sourceNode.attrs.kind === 'diagram') {
       src = String(sourceNode.attrs.source || '').trim()
@@ -309,7 +313,7 @@ import { esc, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
     return b
   }
 
-  class DiagramHeader extends window.TipTap.AdvancedHeaderProvider {
+  class DiagramHeader extends AdvancedHeaderProvider {
     badge() { return 'diagram' }
     left() {
       var t = document.createElement('span')
@@ -750,6 +754,6 @@ import { esc, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
     ]
   }
 
-  T.registerSieveRenderer('diagram', DiagramRenderer)
+  registerSieveRenderer('diagram', DiagramRenderer)
 
 })()

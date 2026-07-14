@@ -3,11 +3,11 @@
 // image CSS (.image-block, .node-image, .image-resizer) works unchanged.
 
 import { isJobStale } from '../base/fenced-block-base.js'
+import { registerSieveRenderer } from '../block/sieve-block-extension.js'
+import { renderMermaidSvgEntry } from './diagram-renderer.js'
 
 ;(function () {
   'use strict'
-
-  var T = window.TipTap
 
   function resolveSrc(src) {
     if (!src) return ''
@@ -203,7 +203,7 @@ import { isJobStale } from '../base/fenced-block-base.js'
     // it, so Transform's saveSVG writes the image. Shared render helper lives in
     // diagram-renderer.js; null = no mermaid here (pass entries through unchanged).
     resolveEntries: function(sourceNode, entries) {
-      return window.TipTap.renderMermaidSvgEntry(sourceNode, entries).then(function (svg) {
+      return renderMermaidSvgEntry(sourceNode, entries).then(function (svg) {
         return svg ? [svg] : entries
       }).catch(function (err) {
         console.error('[smart-image] mermaid render failed for extraction', err)
@@ -213,6 +213,6 @@ import { isJobStale } from '../base/fenced-block-base.js'
     }
   }
 
-  T.registerSieveRenderer('smart-image', SmartImageRenderer)
+  registerSieveRenderer('smart-image', SmartImageRenderer)
 
 })()

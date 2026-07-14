@@ -9,18 +9,10 @@
 // shared by every raw-text fenced block, so we key off that rather than naming
 // individual kinds — any future raw-text block is covered for free.
 //
-// Loaded as a classic script (like ai-target.js): attaches to window.TipTap
-// so editor.js's IIFE can read it at paste time.
-;(function () {
-  var T = (typeof window !== 'undefined' && window.TipTap) ? window.TipTap : (window.TipTap = {})
-
-  // caretInRawTextBlock — true when the editor's selection anchor is inside a
-  // code:true node. Defensive: returns false for a null/partial editor.
-  function caretInRawTextBlock(editor) {
-    var sel = editor && editor.state && editor.state.selection
-    var parent = sel && sel.$from && sel.$from.parent
-    return !!(parent && parent.type && parent.type.spec && parent.type.spec.code)
-  }
-
-  T.caretInRawTextBlock = caretInRawTextBlock
-})()
+// caretInRawTextBlock — true when the editor's selection anchor is inside a
+// code:true node. Defensive: returns false for a null/partial editor.
+export function caretInRawTextBlock(editor) {
+  var sel = editor && editor.state && editor.state.selection
+  var parent = sel && sel.$from && sel.$from.parent
+  return !!(parent && parent.type && parent.type.spec && parent.type.spec.code)
+}

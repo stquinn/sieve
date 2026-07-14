@@ -1,11 +1,14 @@
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import './helpers/seed-vendor.js'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { docWithRange, docWithNodeSelection, docWithCaretNear, build } from './helpers/editor-fixture.js'
 import { contextFor } from './helpers/selection-context.js'
 import { WysiwygSurface } from '../src/static/shell/surfaces/wysiwyg-surface.js'
+import { buildAiContext } from '../src/static/editor/extensions.js'
+import { getSieveBlockLabel, domSelectionBlockRange } from '../src/static/block/sieve-block-extension.js'
+import { getBlockSelectionRange } from '../src/static/editor/block-chrome.js'
 
-// ask-context.test.js — P3.D (stateless Ask panel, #29 task 5).
+// ask-context.test.js — P3.D (stateless Ask panel, #29 task 5). Harness redone P4.E
+// once extensions.js became a real ES module.
 //
 // The Ask panel no longer captures a pinned side-channel (pendingAskCtx / precomputedCtx
 // were DELETED). Every path resolves through the ONE `context.target` the editor stored
@@ -21,68 +24,73 @@ import { WysiwygSurface } from '../src/static/shell/surfaces/wysiwyg-surface.js'
 // resurrected code. We PIN the post-change invariants here so a future regression re-fails;
 // the live smoke on :34115 is their acceptance.
 //
-// Honest harness: buildAiContext is trapped in the extensions.js IIFE (not an ES export),
-// so it is reached the way the app reaches it — load extensions.js under a universal
-// window.TipTap Proxy stub, then call window.TipTap.buildAiContext. The context it consumes
-// is a REAL descriptor from buildSelectionDescriptor (the exact PM→descriptor core the
-// surface runs) via the contextFor adapter over editor-fixture fixtures. No fakes bypass
-// the real path.
+// Harness: buildAiContext is now a genuine `export function` in extensions.js (P4.E),
+// reached the honest way — `import()` the real module and call the export directly. The
+// only wrinkle is extensions.js's OWN vendor dependency: it reads
+// `import { T as VENDOR } from '../base/tiptap-vendor.js'` (a live bag over
+// globalThis.TipTap, installed once by test/setup.js) and calls VENDOR.Extension.create/
+// .extend and `new VENDOR.PluginKey(...)` at MODULE-EVAL time (Search, SelectionHighlight,
+// HighlightMark, AiShortcuts are built as the module loads, not lazily). Those vendor
+// members must therefore exist on globalThis.TipTap BEFORE extensions.js is first
+// imported. Static imports hoist, so the fix is a dynamic `import()` inside beforeAll:
+// mutate the individual VENDOR members extensions.js touches at module scope onto the
+// shared globalThis.TipTap object (never reassign the object itself — tiptap-vendor.js
+// already captured a reference to it), THEN import() the module. No eval(), so
+// extensions.js's own `import` declaration is no longer a SyntaxError. The context
+// buildAiContext consumes is still a REAL descriptor from buildSelectionDescriptor (the
+// exact PM→descriptor core the surface runs) via the contextFor adapter over
+// editor-fixture fixtures — no fakes bypass the real path.
 
-// A universal callable + constructable Proxy: every property access returns another such
-// proxy, and .create()/.extend()/new X() all yield one too. This loads the whole
-// extensions.js IIFE cleanly (it reads T.Node/T.Extension/… and calls create/extend/new
-// PluginKey at parse time) and leaves a working buildAiContext behind.
-function universalStub() {
-  const handler = {
-    get(target, prop) {
-      if (prop in target) return target[prop]
-      const p = makeProxy()
-      target[prop] = p
-      return p
-    },
-  }
-  function makeProxy() {
-    const fn = function () { return makeProxy() }
-    fn.create = () => makeProxy()
-    fn.extend = () => makeProxy()
-    return new Proxy(fn, {
-      apply() { return makeProxy() },
-      construct() { return makeProxy() },
-      get(t, prop) {
-        if (prop in t) return t[prop]
-        const child = makeProxy()
-        t[prop] = child
-        return child
-      },
-    })
-  }
-  return new Proxy({}, handler)
-}
-
-beforeAll(() => {
-  // Install the universal stub, then eval extensions.js so window.TipTap.buildAiContext
-  // exists. The IIFE reads `var T = window.TipTap` at parse time, so the stub must be in
-  // place first.
-  global.window.TipTap = universalStub()
-  // vitest runs with cwd = frontend/, so resolve the source relative to cwd (happy-dom's
-  // window makes import.meta.url a non-file URL, so new URL(...) can't be used here).
-  const src = readFileSync(resolve('src/static/editor/extensions.js'), 'utf8')
-  ;(0, eval)(src)
-})
+// P4.E: WysiwygSurface imports its app helpers from their owner modules. We need
+// extensions.js REAL (buildAiContext) — seed-vendor (imported FIRST) seeds the vendor
+// bag so its Extension.create at module-eval doesn't throw. The controllable
+// descriptor helpers (block-chrome.getBlockSelectionRange, sieve-block-extension.*)
+// and the other side-effect / registry modules are vi.mocked — replacing the retired
+// deps.T / shared-bus injection the ContextSurface adapter used to feed.
+vi.mock('../src/static/editor/block-chrome.js', () => ({
+  BlockChrome: {},
+  getBlockSelectionRange: vi.fn((view) => {
+    const sel = view.state.selection
+    return { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false, isNodeSelection: !!sel.node }
+  }),
+}))
+vi.mock('../src/static/ai/ai-target-decoration.js', () => ({ AiTargetDecoration: {} }))
+vi.mock('../src/static/block/prose-block.js', () => ({ BlockId: {} }))
+vi.mock('../src/static/block/prose-group.js', () => ({ ProseGroup: {}, proseBlockNodes: vi.fn(() => []) }))
+vi.mock('../src/static/editor/interaction-policy.js', () => ({
+  policyEnterKeydown: vi.fn(() => false), buildInteractionPolicyExtension: vi.fn(() => ({})),
+}))
+vi.mock('../src/static/block/sieve-block-extension.js', () => ({
+  getSieveNodes: vi.fn(() => []),
+  getSieveBlockLabel: vi.fn(() => null),
+  serializeNode: vi.fn(() => 'ser'),
+  sieveBlockAttrs: vi.fn((n) => n.attrs),
+  sieveBlockEntries: vi.fn(() => []),
+  rendererFor: vi.fn(() => null),
+  domSelectionBlockRange: vi.fn(() => null),
+  domSelectionTextInside: vi.fn(() => null),
+}))
 
 beforeEach(() => {
-  // Layer the REAL getSieveBlockLabel shim (copied from ai-target.test.js) so the
-  // descriptor's labelFor resolves rich sieve labels rather than the proxy's stub.
+  // Rich sieve labels: feedSelection's #labelFor reads the getSieveBlockLabel import
+  // (the shim copied from ai-target.test.js) so it resolves 'Code Block' etc.
   const renderers = {
     code: { buildAiCtx: () => ({ contextLabel: 'Code Block' }) },
   }
-  window.TipTap.getSieveBlockLabel = (node) => {
+  vi.mocked(getSieveBlockLabel).mockImplementation((node) => {
     const kind = node && node.attrs ? node.attrs.kind : ''
     const r = renderers[kind]
     const base = (r && typeof r.buildAiCtx === 'function') ? r.buildAiCtx(node) : null
     const fallback = kind ? (kind.charAt(0).toUpperCase() + kind.slice(1).replace(/-/g, ' ')) : 'Block'
     return (base && base.contextLabel) || fallback
-  }
+  })
+  // Default effective range = the plain live PM selection (block-chrome absent → the
+  // pre-P4.E fallback the adapter relied on); the dom fold is off. F5 overrides both.
+  vi.mocked(getBlockSelectionRange).mockImplementation((view) => {
+    const sel = view.state.selection
+    return { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false, isNodeSelection: !!sel.node }
+  })
+  vi.mocked(domSelectionBlockRange).mockReturnValue(null)
 })
 
 describe('buildAiContext — ai-block follow-up sends the SINGLE block id (D1)', () => {
@@ -91,7 +99,7 @@ describe('buildAiContext — ai-block follow-up sends the SINGLE block id (D1)',
     // branch computed "co-9,ai-1"; the fix sends 'ai-1' and Go walks the chain.
     const { editor } = docWithNodeSelection([build.p('x', 'pr-1'), build.aiBlock('ai-1', 'co-9')], 1)
     const context = contextFor(editor, false)
-    const ai = window.TipTap.buildAiContext(context, '', 'u')
+    const ai = buildAiContext(context, '', 'u')
     expect(ai.blockRef).toBe('ai-1')          // single id — NOT "co-9,ai-1"
     expect(ai.contextLabel).toBe('Follow-up')
   })
@@ -99,26 +107,26 @@ describe('buildAiContext — ai-block follow-up sends the SINGLE block id (D1)',
   it('GUARD: multi-block text selection still sends the joined chain "A,B,C"', () => {
     const { editor } = docWithRange(
       [build.p('aaa', 'pr-1'), build.p('bbb', 'pr-2'), build.p('ccc', 'pr-3')], 2, 12)
-    const ai = window.TipTap.buildAiContext(contextFor(editor, false), '', 'u')
+    const ai = buildAiContext(contextFor(editor, false), '', 'u')
     expect(ai.blockRef).toBe('pr-1,pr-2,pr-3')
   })
 
   it('GUARD: single-paragraph selection still sends the single id "pr-1"', () => {
     const { editor } = docWithRange([build.p('hello', 'pr-1')], 1, 4)
-    const ai = window.TipTap.buildAiContext(contextFor(editor, false), '', 'u')
+    const ai = buildAiContext(contextFor(editor, false), '', 'u')
     expect(ai.blockRef).toBe('pr-1')
   })
 
   it('GUARD: NodeSelection of a plain sieve block → its own single id', () => {
     const { editor } = docWithNodeSelection([build.p('x', 'pr-1'), build.sieveCode('co-1')], 1)
-    const ai = window.TipTap.buildAiContext(contextFor(editor, false), '', 'u')
+    const ai = buildAiContext(contextFor(editor, false), '', 'u')
     expect(ai.blockRef).toBe('co-1')
     expect(ai.contextLabel).toBe('Code Block')
   })
 
   it('GUARD: bare caret in flowing text → the document', () => {
     const { editor } = docWithCaretNear([build.p('just text', 'pr-1')], 1)
-    const ai = window.TipTap.buildAiContext(contextFor(editor, false), '', 'u')
+    const ai = buildAiContext(contextFor(editor, false), '', 'u')
     expect(ai.blockRef).toBe('doc')
     expect(ai.contextLabel).toBe('Document')
   })
@@ -138,8 +146,8 @@ describe('buildAiContext is a PURE function of the passed context (F1: send pull
       docWithNodeSelection([build.p('x', 'pr-1'), build.sieveCode('co-b')], 1).editor, false)
 
     // SEND resolves NOW off whichever context is live:
-    expect(window.TipTap.buildAiContext(aCtx, '', 'u').blockRef).toBe('ai-a')
-    expect(window.TipTap.buildAiContext(bCtx, '', 'u').blockRef).toBe('co-b')  // B, not A
+    expect(buildAiContext(aCtx, '', 'u').blockRef).toBe('ai-a')
+    expect(buildAiContext(bCtx, '', 'u').blockRef).toBe('co-b')  // B, not A
   })
 })
 
@@ -150,7 +158,7 @@ describe('glow range === send range over the SAME frozen context (F4)', () => {
   it('the range the glow paints is the range the send targets', () => {
     const context = contextFor(docWithRange([build.p('hello', 'pr-1')], 1, 4).editor, false)
     const glowRange = context.target.range            // what the focus handler reads
-    window.TipTap.buildAiContext(context, '', 'u')     // what doAsk reads (same context)
+    buildAiContext(context, '', 'u')     // what doAsk reads (same context)
     expect(glowRange).toEqual({ from: 1, to: 4 })
     expect(context.target.range).toEqual({ from: 1, to: 4 })
   })
@@ -172,10 +180,10 @@ describe('read-only-region DOM drag folds into a non-document target (F5)', () =
   // TestWysiwygSurface seam: public ctor + `get tiptap()` override — no backdoor). T
   // is forwarded into deps so the surface's #T picks it up.
   class F5Surface extends WysiwygSurface {
-    constructor(editor, T) {
+    constructor(editor) {
       super('t', {
         applyBlockOps() {}, requestSave() {}, onPaste() { return false },
-        onDrop() { return false }, takeInsertPos() { return null }, notify() {}, T,
+        onDrop() { return false }, takeInsertPos() { return null }, notify() {},
       })
       this._ed = editor
     }
@@ -187,15 +195,12 @@ describe('read-only-region DOM drag folds into a non-document target (F5)', () =
     const { editor } = docWithCaretNear(nodes, 1)   // caret in the doc; the DOM fold drives the range
     const regionFrom = nodes[0].nodeSize             // start of the sieve-code node
     const regionTo = regionFrom + nodes[1].nodeSize  // its end
-    const T = {
-      getSieveBlockLabel: window.TipTap.getSieveBlockLabel,
-      getBlockSelectionRange: () => ({ from: 1, to: 1, active: false, isBlockRange: false, isNodeSelection: false }),
-      domSelectionBlockRange: () => ({ from: regionFrom, to: regionTo }),
-    }
+    vi.mocked(getBlockSelectionRange).mockReturnValue({ from: 1, to: 1, active: false, isBlockRange: false, isNodeSelection: false })
+    vi.mocked(domSelectionBlockRange).mockReturnValue({ from: regionFrom, to: regionTo })
     const prev = window.getSelection
     window.getSelection = () => ({ isCollapsed: false, toString: () => 'dragged text', rangeCount: 1 })
     try {
-      const raw = new F5Surface(editor, T).feedSelection()
+      const raw = new F5Surface(editor).feedSelection()
       expect(raw.selectionType).toBe('range')          // dom fold → 'range' (descriptor rule)
       expect(raw.target.kind).toBe('selection')        // NOT 'document'
       expect(raw.target.range).toEqual({ from: regionFrom, to: regionTo })

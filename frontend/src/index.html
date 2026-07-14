@@ -232,11 +232,11 @@
     <script src="/static/vendor/tiptap.js"></script>
     <script src="/static/vendor/js-yaml.js"></script>
     <script src="/static/base/icons.js"></script>
-    <script src="/static/editor/extensions.js"></script>
-    <script src="/static/ai/ai-target.js"></script>
-    <script src="/static/editor/paste-context.js"></script>
-    <script src="/static/editor/block-chrome.js"></script>
-    <script src="/static/ai/ai-target-decoration.js"></script>
+    <script type="module" src="/static/editor/extensions.js"></script>
+    <script type="module" src="/static/ai/ai-target.js"></script>
+    <script type="module" src="/static/editor/paste-context.js"></script>
+    <script type="module" src="/static/editor/block-chrome.js"></script>
+    <script type="module" src="/static/ai/ai-target-decoration.js"></script>
     <script type="module" src="/static/block/block-kinds.js"></script>
     <script type="module" src="/static/editor/interaction-policy.js"></script>
     <script type="module" src="/static/base/action-label.js"></script>
@@ -256,6 +256,7 @@
     <script type="module" src="/static/block/prose-group.js"></script>
     <script type="module" src="/static/base/block-position.js"></script>
     <script type="module" src="/static/base/render-empty.js"></script>
+    <script type="module" src="/static/base/globals.js"></script>
     <!-- Shell skeleton (P1: Workspace/Tab/Editor component model). Dual-use ES
          modules: type="module" is MANDATORY — a plain <script> tag fails at
          parse on `export` silently and takes every dependent path down.
@@ -265,11 +266,11 @@
     <script type="module" src="/static/shell/editor-shell.js"></script>
     <script type="module" src="/static/shell/tab.js"></script>
     <script type="module" src="/static/shell/workspace.js"></script>
-    <script src="/static/editor/editor.js"></script>
+    <script type="module" src="/static/editor/editor.js"></script>
     <script src="/static/ai/ai-actions.js"></script>
     <script src="/static/ui/tabbar.js"></script>
     <script src="/static/ui/sidebar.js"></script>
-    <script src="/static/editor/context-menu.js"></script>
+    <script type="module" src="/static/editor/context-menu.js"></script>
     <script src="/static/ui/layout.js"></script>
 
     <script>
@@ -344,7 +345,7 @@
         });
         document.querySelectorAll('[data-sieve-kind]').forEach(function(el) {
             var kind = el.getAttribute('data-sieve-kind');
-            var icon = window.TipTap && window.TipTap.getSieveIcon && window.TipTap.getSieveIcon(kind);
+            var icon = window.GLOBALS && window.GLOBALS.getSieveIcon(kind);
             if (icon) el.insertAdjacentHTML('afterbegin', icon);
         });
 
