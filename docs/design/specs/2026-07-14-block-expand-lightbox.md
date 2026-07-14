@@ -1,6 +1,11 @@
 # Block Expand Lightbox — `expandable` as a declared block capability
 
-**Status:** Draft
+**Status:** Parked (user decision 2026-07-14) — detailed design and
+implementation deferred until epic #31 (workspace/editor component model)
+lands, since the capability wiring targets the exact surfaces #31 reshapes
+(policy extension, block chrome, `editor.js` seams). Direction and
+decisions in this spec stand; revisit the seam names against the post-#31
+landscape before planning.
 **Tracked:** #35
 **Date:** 2026-07-14
 **Future direction:** `docs/design/brainstorm-smart-code-blocks.md` — the same
