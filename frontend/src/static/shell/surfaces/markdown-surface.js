@@ -11,7 +11,7 @@
 // Markdown mode is the breakglass verbatim buffer: edits flow to the editor
 // as whole-buffer updateText commands (500ms debounce) — the editor owns the
 // wire enveloping (doc-update); an in-place transform render-back
-// (replace-block) triggers a full reload via the injected requestReload —
+// (replace-block) triggers a full reload via the host editor's softReload —
 // acceptable only in this mode (WS shapes frozen; see recon §1).
 //
 // Dual-use ES module: `export` for vitest; `window.SieveMarkdownSurface` for
@@ -21,20 +21,18 @@ import { AbstractSurface, SurfaceEvent } from './abstract-surface.js'
 import { EditorMode } from '../editor-mode.js'
 
 /**
- * Injected collaborators — content services commanding into this document's
- * context, plus the ONE outbound notifier. Nothing app-level: no chrome names,
- * no AI concepts, no chords (app-level chords are owned by the native menu,
- * which calls the component API directly — P2.C).
- * @typedef {object} MarkdownSurfaceDeps
- * @property {(markdown: string) => void} updateText — whole-buffer text update → editor transport (dropped by prompts)
- * @property {() => void}            requestReload — full reload for replace-block (softReloadContent)
- * @property {() => number|null}     takeInsertPos — read-and-clear the module sieveInsertPos capture
- * @property {(event: import('./abstract-surface.js').SurfaceEventMsg) => void} notify — outbound editor-domain events
+ * @typedef {import('../abstract-editor.js').AbstractEditor} AbstractEditor
  */
 
 export class MarkdownSurface extends AbstractSurface {
-  /** @type {MarkdownSurfaceDeps} */
-  #deps
+  /**
+   * The parent editor (`host`) — the surface calls its public API directly
+   * (onSurfaceEvent / updateText / takeInsertPos / softReload). No app-level
+   * chrome, no AI concepts, no chords: app-level chords are owned by the native
+   * menu, which calls the editor API directly (P2.C).
+   * @type {AbstractEditor}
+   */
+  #host
 
   /** @type {HTMLElement|null} */
   #rootEl = null
@@ -56,13 +54,13 @@ export class MarkdownSurface extends AbstractSurface {
 
   /**
    * No uuid: this surface holds no content that needs the document identity —
-   * transport identity is the EDITOR's concern (deps rule, P2.B correction 3).
-   * @param {MarkdownSurfaceDeps} deps
+   * transport identity is the EDITOR's concern (host rule, P2.B correction 3).
+   * @param {AbstractEditor} host — the parent editor
    */
-  constructor(deps) {
+  constructor(host) {
     super()
-    if (!deps) throw new Error('MarkdownSurface: deps are required')
-    this.#deps = deps
+    if (!host) throw new Error('MarkdownSurface: host is required')
+    this.#host = host
   }
 
   /** @returns {import('../editor-mode.js').EditorModeValue} */
@@ -106,13 +104,13 @@ export class MarkdownSurface extends AbstractSurface {
       if (val === this.#body) return
       this.#body = val
       this.#updateGutter(val)
-      // Producer-named outbound event; the editor forwards it to registrants
-      // (the legacy chrome fan-out in editor.js dispatches dirty/stats from it).
-      this.#deps.notify(SurfaceEvent.DOC_CHANGED)
+      // Producer-named outbound event; the editor's SurfaceListener handler
+      // (onSurfaceEvent) forwards it to registrants and marks the doc dirty.
+      this.#host.onSurfaceEvent(SurfaceEvent.DOC_CHANGED)
       if (this.#timer) clearTimeout(this.#timer)
       this.#timer = setTimeout(() => {
         this.#timer = null
-        this.#deps.updateText(val)
+        this.#host.updateText(val)
       }, 500)
     })
     // NO app-level chords here: Mod+S / Mod+J bubble from the textarea to the
@@ -146,7 +144,7 @@ export class MarkdownSurface extends AbstractSurface {
     if (!this.#timer) return
     clearTimeout(this.#timer)
     this.#timer = null
-    this.#deps.updateText(this.#body)
+    this.#host.updateText(this.#body)
   }
 
   /**
@@ -208,14 +206,14 @@ export class MarkdownSurface extends AbstractSurface {
    */
   applyServerOp(msg) {
     if (msg.type === 'insert-block') {
-      this.#deps.takeInsertPos()
+      this.#host.takeInsertPos()
       this.#body = this.#body.trim() + '\n\n' + (msg.markdown || '') + '\n'
       if (this.#textarea) this.#textarea.value = this.#body
-      this.#deps.updateText(this.#body)
+      this.#host.updateText(this.#body)
       return
     }
     if (msg.type === 'replace-block') {
-      this.#deps.requestReload()
+      this.#host.softReload()
     }
     // block-attrs-updated: PM node attrs have no raw-markdown representation.
   }

@@ -3,8 +3,8 @@
 // Edit mode: ProseMirror contentDOM (pre>code, code:true node — NOT a
 // textarea) + decoration-based highlight + line gutter, same pattern as
 // code-renderer.js. Render mode: SVG from mermaid.js, lazy-loaded from
-// vendor/mermaid.min.js. Mode and cursor position are persisted in YAML via
-// sieve:block-update so they survive reloads.
+// vendor/mermaid.min.js. Mode and cursor position are persisted in YAML via the
+// held Editor's applyBlockOps so they survive reloads.
 // Keyboard behaviour (Tab/Enter/Mod+Enter toggle) comes from the shared
 // interaction-policy extension via interactionPolicy + onModEnter — do NOT
 // add handleKeyDown here (docs/editor-interaction-contract.md is normative).
@@ -12,6 +12,7 @@
 import { esc, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
 import { T } from '../base/tiptap-vendor.js'
 import { registerSieveRenderer, AdvancedHeaderProvider } from '../block/sieve-block-extension.js'
+import { updateBlockOp } from '../block/block-sync.js'
 
 // Cross-file exports the IIFE below assigns once it runs. prose-block.js
 // and smart-image-renderer.js import renderMermaidSvgEntry directly.
@@ -297,7 +298,7 @@ export let renderMermaidSvgEntry
   // ── Header (toolbar) ──────────────────────────────────────────────────────────
   // Declared header: badge + 'mermaid' label + an edit/render toggle. The framework
   // seam renders this and re-runs it on attr change, so the active toggle tracks
-  // attrs.mode. Toggle clicks persist via ctx.updateAttribute (the one update path);
+  // attrs.mode. Toggle clicks persist via ctx.updateAttributes (the one update path);
   // for the prototype the toggle keeps diagram's existing classes/SVGs (zero visual
   // change) — sharing segmentedToggle + CSS promotion is a follow-up.
   var EDIT_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
@@ -326,16 +327,16 @@ export let renderMermaidSvgEntry
       var toggle = document.createElement('div')
       toggle.className = 'diagram-block__toggle'
       toggle.appendChild(toggleBtn('Edit', EDIT_SVG, mode === 'edit', 'diagram-block__toggle-btn--active-edit', function () {
-        if (mode !== 'edit') ctx.updateAttribute({ mode: 'edit' })
+        if (mode !== 'edit') ctx.updateAttributes({ mode: 'edit' })
       }))
       toggle.appendChild(toggleBtn('Render', RENDER_SVG, mode === 'render', 'diagram-block__toggle-btn--active-render', function () {
         if (mode === 'render') return
         var patch = { mode: 'render' }
-        var sel = ctx.editor.view.state.selection
+        var sel = ctx.editorPane.view.state.selection
         if (sel.$from.parent.type.name === 'sieve-diagram' && sel.$from.parent.attrs.id === ctx.id) {
           patch.cursorPos = sel.$from.parentOffset
         }
-        ctx.updateAttribute(patch)
+        ctx.updateAttributes(patch)
       }))
       return [toggle]
     }
@@ -344,22 +345,23 @@ export let renderMermaidSvgEntry
   // ── DiagramRenderer ───────────────────────────────────────────────────────────
 
   var DiagramRenderer = {
-    // flipMode — THE mode-flip dispatch (contract: one function, two entry
-    // points). Called by onModEnter (caret/selection inside PM, via the
-    // interaction-policy extension) and by the render body's DOM keydown
-    // listener (focus outside PM in render mode). Both MUST dispatch the
-    // identical sieve:block-update.
-    flipMode: function (attrs, cursorPos) {
+    // flipMode — THE mode-flip op (contract: one function, two entry points).
+    // Called by onModEnter (caret/selection inside PM, via the interaction-policy
+    // extension, which threads the Editor `host`) and by the render body's DOM
+    // keydown listener (focus outside PM in render mode, which passes ctx.getEditor()).
+    // Both apply the identical update-block op through the held Editor (P4.F Brief C).
+    flipMode: function (attrs, cursorPos, editor) {
       if (!attrs || !attrs.id) return false
       var newMode = attrs.mode === 'render' ? 'edit' : 'render'
-      document.dispatchEvent(new CustomEvent('sieve:block-update', {
-        detail: { id: attrs.id, kind: 'diagram', attrs: { mode: newMode, cursorPos: typeof cursorPos === 'number' ? cursorPos : (attrs.cursorPos || 0) } }
-      }))
+      if (editor) {
+        editor.applyBlockOps([updateBlockOp({ id: attrs.id, kind: 'diagram', attrs: { mode: newMode, cursorPos: typeof cursorPos === 'number' ? cursorPos : (attrs.cursorPos || 0) } })])
+      }
       return true
     },
 
-    // onModEnter — policy-extension entry point (modEnterTogglesMode).
-    onModEnter: function (view, selection) {
+    // onModEnter — policy-extension entry point (modEnterTogglesMode). `host` is the
+    // parent Editor, threaded by the interaction-policy extension.
+    onModEnter: function (view, selection, host) {
       var node = selection.node || selection.$from.parent
       var cursorPos = selection.node
         ? (typeof node.attrs.cursorPos === 'number' ? node.attrs.cursorPos : 0)
@@ -386,7 +388,7 @@ export let renderMermaidSvgEntry
       }
 
       if (!node || node.type.name !== 'sieve-diagram') return false
-      return DiagramRenderer.flipMode(node.attrs, cursorPos)
+      return DiagramRenderer.flipMode(node.attrs, cursorPos, host)
     },
 
 
@@ -441,7 +443,7 @@ export let renderMermaidSvgEntry
       }
     },
 
-    makeNodeView: function (node, editor, getPos) {
+    makeNodeView: function (node, editorPane, getPos, ctx) {
       var nodeTypeName = node.type.name
       var currentAttrs = Object.assign({}, node.attrs)
       var destroyed    = false
@@ -457,7 +459,7 @@ export let renderMermaidSvgEntry
       // ── Header ────────────────────────────────────────────────────────────────
       // The toolbar (badge + mermaid label + edit/render toggle) is now declared as
       // `headerProvider: new DiagramHeader()` and rendered by the framework seam.
-      // The toggle dispatches via ctx.updateAttribute instead of the old switchMode.
+      // The toggle persists via ctx.updateAttributes.
 
       // ── Edit body ─────────────────────────────────────────────────────────────
 
@@ -496,14 +498,6 @@ export let renderMermaidSvgEntry
 
       // No flushSource needed; PM natively handles input
 
-      // Dispatch a mode change.
-      function switchMode(newMode, pos) {
-        var attrs = { mode: newMode, cursorPos: typeof pos === 'number' ? pos : currentAttrs.cursorPos }
-        document.dispatchEvent(new CustomEvent('sieve:block-update', {
-          detail: { id: currentAttrs.id, kind: 'diagram', attrs: attrs },
-        }))
-      }
-
       // (toggle active-state is now rendered by DiagramHeader from attrs.mode,
       // re-run by the seam on each update — no updateToggle needed here.)
 
@@ -516,12 +510,12 @@ export let renderMermaidSvgEntry
         updateGutter(gutter, textContent || '')
         if (comingFromRender) {
           var pos = typeof attrs.cursorPos === 'number' ? attrs.cursorPos : 0
-          if (editor && editor.commands && getPos) {
+          if (editorPane && editorPane.commands && getPos) {
             setTimeout(function() {
               try {
                 var pmPos = getPos() + 1 + Math.min(pos, (textContent || '').length)
-                editor.commands.setTextSelection(pmPos)
-                editor.commands.focus()
+                editorPane.commands.setTextSelection(pmPos)
+                editorPane.commands.focus()
               } catch (e) {
                 console.error('Failed to restore cursor', e)
                 contentDOM.focus()
@@ -593,18 +587,14 @@ export let renderMermaidSvgEntry
         updateGutter(gutter, text)
         clearTimeout(updateTimer)
         updateTimer = setTimeout(function() {
-          if (currentAttrs.id) {
-            document.dispatchEvent(new CustomEvent('sieve:block-update', {
-              detail: { id: currentAttrs.id, kind: 'diagram', attrs: { source: text } }
-            }))
-          }
+          if (currentAttrs.id) ctx.updateAttributes({ source: text })
         }, 200)
       })
       observer.observe(contentDOM, { characterData: true, childList: true, subtree: true })
 
       // ── Events ────────────────────────────────────────────────────────────────
 
-      // (edit/render toggle clicks are wired in DiagramHeader via ctx.updateAttribute.)
+      // (edit/render toggle clicks are wired in DiagramHeader via ctx.updateAttributes.)
 
       // Note: contentDOM keydown is usually swallowed by ProseMirror's root listener.
       // Ctrl+Enter for switching to render mode is handled in buildPlugins below.
@@ -617,7 +607,7 @@ export let renderMermaidSvgEntry
         if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
           e.preventDefault()
           e.stopPropagation()
-          DiagramRenderer.flipMode(currentAttrs, currentAttrs.cursorPos)
+          DiagramRenderer.flipMode(currentAttrs, currentAttrs.cursorPos, ctx.getEditor())
         }
       })
 
@@ -729,14 +719,13 @@ export let renderMermaidSvgEntry
   DiagramRenderer.buildAiCtx = function () { return { contextLabel: 'Diagram' } }
 
   DiagramRenderer.buildContextMenuItems = function (ctx) {
-    var n = ctx.node, editor = ctx.editor, getPos = ctx.getPos
+    var n = ctx.node, editorPane = ctx.editorPane, getPos = ctx.getPos
     var IC = window.SieveIcons || {}
 
     function toggleMode() {
       var newMode = n.attrs.mode === 'render' ? 'edit' : 'render'
-      document.dispatchEvent(new CustomEvent('sieve:block-update', {
-        detail: { id: n.attrs.id, kind: 'diagram', attrs: { mode: newMode } },
-      }))
+      var host = editorPane && editorPane.sieveHost
+      if (host) host.applyBlockOps([updateBlockOp({ id: n.attrs.id, kind: 'diagram', attrs: { mode: newMode } })])
     }
 
     function copySource() {

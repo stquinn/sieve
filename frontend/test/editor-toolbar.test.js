@@ -115,12 +115,12 @@ describe('surface.toolbarContents() (P4.D)', () => {
   })
 
   it('MarkdownSurface returns [] (formatting ABSENT, not dimmed)', () => {
-    const s = new MarkdownSurface({ updateText: () => {}, requestReload: () => {}, takeInsertPos: () => null, notify: () => {} })
+    const s = new MarkdownSurface({ updateText: () => {}, softReload: () => {}, takeInsertPos: () => null, onSurfaceEvent: () => {} })
     expect(s.toolbarContents()).toEqual([])
   })
 
   it('WysiwygSurface returns the four formatting groups with buttons', () => {
-    const s = new WysiwygSurface('doc-1', { notify: () => {}, applyBlockOps: () => {} })
+    const s = new WysiwygSurface({ uuid: 'doc-1', onSurfaceEvent: () => {}, applyBlockOps: () => {} })
     const groups = s.toolbarContents()
     expect(groups.length).toBe(4)
     expect(groups.every((g) => g instanceof ButtonGroup)).toBe(true)
@@ -133,12 +133,12 @@ describe('surface.toolbarContents() (P4.D)', () => {
     const chain = { focus: () => chain, toggleBold: () => chain, run }
     const fakeEd = { chain: () => chain, isActive: () => false }
     // Inject the live editor via a subclass seam (mirrors surfaces.test.js).
-    class TestWy extends WysiwygSurface { constructor(u, d, ed) { super(u, d); this._ed = ed } get tiptap() { return this._ed } }
-    // toolbarContents reads the PRIVATE #editor, so we must set it — use the mount
+    class TestWy extends WysiwygSurface { constructor(u, d, ed) { super(Object.assign(d, { uuid: u })); this._ed = ed } get editorPane() { return this._ed } }
+    // toolbarContents reads the PRIVATE #editorPane, so we must set it — use the mount
     // path's setter is not exposed; instead assert active-closure wiring below and
-    // verify onClick through a surface whose #editor is the fake.
-    const s = new TestWy('doc-1', { notify: () => {} }, fakeEd)
-    // Force #editor by calling the internal setter path: mount would build a real
+    // verify onClick through a surface whose #editorPane is the fake.
+    const s = new TestWy('doc-1', { onSurfaceEvent: () => {} }, fakeEd)
+    // Force #editorPane by calling the internal setter path: mount would build a real
     // island; for a headless command test, drive toolbarContents active closure.
     const groups = s.toolbarContents()
     // active closure reads isActive on the surface's editor — it must not throw and
@@ -149,13 +149,13 @@ describe('surface.toolbarContents() (P4.D)', () => {
   })
 
   it('the WysiwygSurface active closure reflects the editor isActive result', () => {
-    // A surface whose #editor is injected via mount is heavier; here we assert the
+    // A surface whose #editorPane is injected via mount is heavier; here we assert the
     // closure calls isActive with the mapped args by spying through a subclass that
-    // exposes #editor. Simplest: mount a real recording bundle is out of scope — we
+    // exposes #editorPane. Simplest: mount a real recording bundle is out of scope — we
     // verify the closure SHAPE by constructing a surface, then swapping the private
-    // editor through a mount stub is not available. Instead pin the group COUNT/ORDER
+    // editorPane through a mount stub is not available. Instead pin the group COUNT/ORDER
     // (headings=3, lists=3, block=3) which encodes the syncToolbar map.
-    const s = new WysiwygSurface('doc-1', { notify: () => {} })
+    const s = new WysiwygSurface({ uuid: 'doc-1', onSurfaceEvent: () => {} })
     const groups = s.toolbarContents()
     expect(groups.map((g) => g.buttons.length)).toEqual([4, 3, 3, 3])
   })
@@ -170,11 +170,15 @@ function fakeEditor({ mode = 'wysiwyg', surface = null } = {}) {
     mode,
     get surface() { return this._surface },
     _surface: surface,
-    tiptap: null,
+    editorPane: null,
     onEvent(fn) { emit = fn; return () => { emit = null } },
     fire: (ev) => emit && emit(ev),
     setMode(m) { this.mode = m },
     setSurface(s) { this._surface = s },
+    // P4.F: the insert buttons call the editor's self-sufficient create path
+    // (createBlock) / captureImageInsert directly — no create-block CustomEvent.
+    createBlock: vi.fn(),
+    captureImageInsert: vi.fn(),
   }
 }
 
@@ -287,16 +291,39 @@ describe('EditorToolbar composition (P4.D)', () => {
     } finally { window.sieveWorkspace = prevWs }
   })
 
-  it('the code insert button dispatches sieve:create-block (wysiwyg only)', () => {
+  it('the code insert button calls editor.createBlock (wysiwyg only)', () => {
     const host = mountHost()
-    const seen = []
-    document.addEventListener('sieve:create-block', (e) => seen.push(e.detail))
     const ed = fakeEditor({ mode: 'wysiwyg', surface: { toolbarContents: () => [] } })
     new EditorToolbar(ed, host).mount()
     // The insert group is the 2nd editor-level group; its first button is code.
     const codeBtn = host.querySelectorAll('.tb-group')[1].querySelector('button')
     codeBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    expect(seen).toEqual([{ kind: 'code' }])
+    expect(ed.createBlock).toHaveBeenCalledWith('code', {})
+  })
+
+  it('the insert buttons are inert in markdown mode (no create)', () => {
+    const host = mountHost()
+    const ed = fakeEditor({ mode: 'markdown', surface: { toolbarContents: () => [] } })
+    new EditorToolbar(ed, host).mount()
+    host.querySelectorAll('.tb-group')[1].querySelector('button')
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(ed.createBlock).not.toHaveBeenCalled()
+  })
+
+  it('the image insert button calls editor.captureImageInsert then clicks the file input', () => {
+    const host = mountHost()
+    const input = document.createElement('input')
+    input.id = 'tb-image-input'
+    document.body.appendChild(input)
+    const clicked = vi.fn()
+    input.addEventListener('click', clicked)
+    const ed = fakeEditor({ mode: 'wysiwyg', surface: { toolbarContents: () => [] } })
+    new EditorToolbar(ed, host).mount()
+    // The image button is the 4th button in the insert group (code, diagram, clip, image).
+    const imageBtn = host.querySelectorAll('.tb-group')[1].querySelectorAll('button')[3]
+    imageBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(ed.captureImageInsert).toHaveBeenCalledTimes(1)
+    expect(clicked).toHaveBeenCalledTimes(1)
   })
 
   it('a null host makes every method a safe no-op', () => {

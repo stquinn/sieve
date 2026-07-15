@@ -6,36 +6,33 @@
 // P3.F folded the PM→descriptor core (buildSelectionDescriptor et al.) into
 // WysiwygSurface as #private methods, so the adapter now drives it exactly as the
 // app does: it constructs a WysiwygSurface over the fixture editor (injecting it via
-// a `get tiptap()` override — the existing TestWysiwygSurface seam, no construction
+// a `get editorPane()` override — the existing TestWysiwygSurface seam, no construction
 // backdoor) and calls feedSelection(). The fixtures ({editor:{state}}) have no
-// block-chrome / live DOM, so we inject a `deps.T` that carries ONLY the vendor bits
-// feedSelection's fallback path reads (getSieveBlockLabel for rich labels) and
-// deliberately OMITS getBlockSelectionRange/domSelectionBlockRange — so the surface
-// takes its fallback effective range (the plain live selection) and skips the DOM
-// fold, byte-identical to the old hand-built `er` the adapter used to pass. The only
-// added field is an inert `blockCursor: null` (happy-dom has no `.sieve-block__edit`
-// active element), part of the real SelectionContext shape and untouched by any
-// assertion.
+// block-chrome / live DOM. P4.F: the surface takes its parent editor (`host`) and
+// IMPORTS `T` from the vendor bag directly — the descriptor helpers
+// (getSieveBlockLabel / getBlockSelectionRange / domSelectionBlockRange) are ES
+// imports the caller mocks. The block-chrome fallback range + no-fold path run
+// exactly as before (getBlockSelectionRange mocked to the live selection,
+// domSelectionBlockRange mocked to null). The only added field is an inert
+// `blockCursor: null` (happy-dom has no `.sieve-block__edit` active element), part of
+// the real SelectionContext shape and untouched by any assertion.
 
 import { WysiwygSurface } from '../../src/static/shell/surfaces/wysiwyg-surface.js'
-import { getSieveBlockLabel } from '../../src/static/block/sieve-block-extension.js'
 
 // Minimal test surface: inject the fixture editor as the live PM instance so
 // feedSelection runs the REAL PM→descriptor path (fallback er, no block-chrome)
-// — the same seam surfaces.test.js's TestWysiwygSurface drives. deps.T forwards
-// only getSieveBlockLabel (a real/mocked ES import — the bus is retired), with the
-// block-chrome methods absent so the fallback range/no-fold path runs
-// (er-equivalence, plan §1.4).
+// — the same seam surfaces.test.js's TestWysiwygSurface drives. The host carries
+// only the uuid (feedSelection calls no host methods); the descriptor helpers are
+// ES imports the caller mocks.
 class ContextSurface extends WysiwygSurface {
   constructor(editor) {
-    const T = { getSieveBlockLabel }
-    super('t', {
-      applyBlockOps() {}, requestSave() {}, onPaste() { return false },
-      onDrop() { return false }, takeInsertPos() { return null }, notify() {}, T,
+    super({
+      uuid: 't', applyBlockOps() {}, flushSave() {},
+      takeInsertPos() { return null }, onSurfaceEvent() {},
     })
     this._ed = editor
   }
-  get tiptap() { return this._ed }
+  get editorPane() { return this._ed }
 }
 
 /**

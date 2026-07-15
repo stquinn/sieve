@@ -26,7 +26,7 @@ vi.mock('../src/static/block/prose-block.js', () => ({ BlockId: {} }))
 // P4.E: AbstractEditor's insert-position math now imports these (was the shared bus).
 // Mock them so the insert-position + askAi tests drive the delegation via vi.mocked.
 vi.mock('../src/static/ai/ai-target.js', () => ({
-  blockInsertPos: vi.fn((_state, isInline) => (isInline ? 11 : 42)),
+  blockInsertPos: vi.fn(() => 42),
 }))
 vi.mock('../src/static/base/block-position.js', () => ({
   blockIndexForInsert: vi.fn(() => 3),
@@ -45,7 +45,7 @@ import { PromptEditor } from '../src/static/shell/prompt-editor.js'
 import { AbstractSurface } from '../src/static/shell/surfaces/abstract-surface.js'
 import { EditorMode } from '../src/static/shell/editor-mode.js'
 import { blockInsertPos } from '../src/static/ai/ai-target.js'
-import { blockIndexForInsert, emptyParagraphAnchor, blockIndexAfter, docPosForBlockIndex } from '../src/static/base/block-position.js'
+import { blockIndexForInsert, emptyParagraphAnchor, blockIndexAfter } from '../src/static/base/block-position.js'
 import { buildAiContext, applyTargetHighlight } from '../src/static/editor/extensions.js'
 
 // ── Test doubles ─────────────────────────────────────────────────────────────
@@ -95,11 +95,11 @@ class FakeSurface extends AbstractSurface {
     this.mountArgs = null
     this.ops = []
     this.bodyValue = 'the body'
-    this.tiptapValue = mode === 'wysiwyg' ? { fake: 'tiptap' } : null
+    this.editorPaneValue = mode === 'wysiwyg' ? { fake: 'tiptap' } : null
     this.flushCount = 0
   }
   get mode() { return this._mode }
-  get tiptap() { return this.mounted ? this.tiptapValue : null }
+  get editorPane() { return this.mounted ? this.editorPaneValue : null }
   get body() { return this._mode === 'markdown' ? this.bodyValue : null }
   mount(rootEl, content) { this.mounted = true; this.mountArgs = [rootEl, content]; this.log.push('mount:' + this._mode) }
   unmount() { this.mounted = false; this.unmountCount++; this.log.push('unmount:' + this._mode) }
@@ -118,15 +118,15 @@ class FakeSurface extends AbstractSurface {
 // (protected _createSurface, the type-defining repertoire). Tests exercise the
 // REAL editor types through that protected contract via a subclass mixin
 // (no-construction-seams rule; tests use the public/protected contract). The
-// override records every surface into `made`, logs lifecycle order into
-// `surfaceLog`, and captures the last domain services bag into `services`.
+// override records every surface into `made` and logs lifecycle order into
+// `surfaceLog`. P4.F: the `services` bag is dissolved — the surface calls the
+// editor's public API directly (onSurfaceEvent / applyBlockOps / updateText),
+// which tests drive by calling those editor methods on `ed`.
 function withFakeSurfaces(Base) {
   return class extends Base {
     surfaceLog = []
     made = []
-    services = null
-    _createSurface(mode, services) {
-      this.services = services
+    _createSurface(mode) {
       const s = new FakeSurface(mode, this.surfaceLog)
       this.made.push(s)
       return s
@@ -170,11 +170,11 @@ describe('SieveEditor (P1 identity, P2.B surface-derived)', () => {
     expect(ed.mode).toBe('markdown') // live derivation
   })
 
-  it('tiptap is null with no surface and derives from the mounted surface', () => {
+  it('editorPane is null with no surface and derives from the mounted surface', () => {
     const ed = new FakeSurfaceSieveEditor('abc-123')
-    expect(ed.tiptap).toBeNull()
+    expect(ed.editorPane).toBeNull()
     ed.presentSurface('wysiwyg', document.createElement('div'), { body: '', blocks: [] })
-    expect(ed.tiptap).toEqual({ fake: 'tiptap' })
+    expect(ed.editorPane).toEqual({ fake: 'tiptap' })
   })
 
   it('throws if uuid missing', () => {
@@ -412,24 +412,27 @@ describe('AbstractEditor (P2.A base, P2.B surfaces)', () => {
   })
 })
 
-describe('AbstractEditor surface events + domain services (P2.B corrections)', () => {
-  // Captures the editor-provided services bag _createSurface receives.
-  function rigWithServices() {
+describe('AbstractEditor surface events + domain API (P2.B / P4.F)', () => {
+  // P4.F: the surface calls the editor's PUBLIC API directly (no services bag) —
+  // onSurfaceEvent is the SurfaceListener handler, applyBlockOps/updateText are the
+  // domain methods. Tests drive them by calling those methods on `ed`, exactly as
+  // the surface now does.
+  function rig() {
     const ed = new FakeSurfaceEditor('u')
     ed.presentSurface('markdown', document.createElement('div'), 'x')
-    return { ed, services: () => ed.services }
+    return { ed }
   }
 
   it('forwards surface notifications to registered listeners; unsubscribe stops them', () => {
-    const { ed, services } = rigWithServices()
+    const { ed } = rig()
     const seen = []
     // P4.D: a doc-changed ALSO produces a follow-up `stats` event on the same
     // stream — filter it out; this test is about the forward/unsubscribe mechanism.
     const unsub = ed.onEvent((ev) => { if (ev.type !== 'stats') seen.push(ev.type) })
-    services().notify({ type: 'doc-changed' })
+    ed.onSurfaceEvent({ type: 'doc-changed' })
     expect(seen).toEqual(['doc-changed'])
     unsub()
-    services().notify({ type: 'selection-changed' })
+    ed.onSurfaceEvent({ type: 'selection-changed' })
     expect(seen).toEqual(['doc-changed']) // unsubscribed
   })
 
@@ -438,13 +441,13 @@ describe('AbstractEditor surface events + domain services (P2.B corrections)', (
     // dirty:true signal on doc-changed (the flush-ack dispatches dirty:false). Its
     // consumers are the StatusBar save slot + the meta-dirty-dot; without this the
     // save indicators are "always green".
-    const { ed, services } = rigWithServices()
+    const { ed } = rig()
     expect(ed.isDirty).toBe(false)
     let dirtyDetail = null
     const handler = (e) => { dirtyDetail = e.detail }
     document.addEventListener('sieve:meta-dirty', handler)
     try {
-      services().notify({ type: 'doc-changed' })
+      ed.onSurfaceEvent({ type: 'doc-changed' })
       expect(ed.isDirty).toBe(true)
       expect(dirtyDetail).toEqual({ dirty: true })
     } finally {
@@ -453,18 +456,37 @@ describe('AbstractEditor surface events + domain services (P2.B corrections)', (
   })
 
   it('a throwing listener does not break the other registrants', () => {
-    const { ed, services } = rigWithServices()
+    const { ed } = rig()
     const seen = []
     ed.onEvent(() => { throw new Error('boom') })
     ed.onEvent((ev) => { if (ev.type !== 'stats') seen.push(ev.type) })
-    expect(() => services().notify({ type: 'doc-changed' })).not.toThrow()
+    expect(() => ed.onSurfaceEvent({ type: 'doc-changed' })).not.toThrow()
     expect(seen).toEqual(['doc-changed'])
   })
 
   it('base applyBlockOps/updateText DROP domain output (socketless prompt behavior)', () => {
-    const { services } = rigWithServices()
-    expect(() => services().applyBlockOps([{ type: 'update-block', blockId: 'b' }])).not.toThrow()
-    expect(() => services().updateText('md')).not.toThrow()
+    const { ed } = rig()
+    expect(() => ed.applyBlockOps([{ type: 'update-block', blockId: 'b' }])).not.toThrow()
+    expect(() => ed.updateText('md')).not.toThrow()
+  })
+
+  it('onSurfaceEvent for a NON doc-changed event feeds + emits only (no dirty, no meta-dirty)', () => {
+    // The doc-changed branch (dirty + meta-dirty{dirty:true}) is exclusive; a
+    // selection-changed is forwarded to registrants but must NOT dirty the doc.
+    const { ed } = rig()
+    const seen = []
+    ed.onEvent((ev) => { if (ev.type !== 'stats') seen.push(ev.type) })
+    let metaFired = false
+    const handler = () => { metaFired = true }
+    document.addEventListener('sieve:meta-dirty', handler)
+    try {
+      ed.onSurfaceEvent({ type: 'selection-changed' })
+      expect(seen).toEqual(['selection-changed']) // emitted
+      expect(ed.isDirty).toBe(false)              // NOT marked dirty
+      expect(metaFired).toBe(false)               // NO meta-dirty dispatch
+    } finally {
+      document.removeEventListener('sieve:meta-dirty', handler)
+    }
   })
 })
 
@@ -474,7 +496,7 @@ describe('AbstractEditor SelectionModel wiring (P3.A)', () => {
   function rig(mode = 'wysiwyg') {
     const ed = new FakeSurfaceEditor('u')
     ed.presentSurface(mode, document.createElement('div'), 'x')
-    return { ed, surface: () => ed.surface, notify: () => ed.services.notify }
+    return { ed, surface: () => ed.surface, notify: () => ed.onSurfaceEvent.bind(ed) }
   }
 
   it('exposes an initial none SelectionContext for the editor uuid', () => {
@@ -555,7 +577,7 @@ describe('AbstractEditor selection-update onEvent bridge (P3.B)', () => {
   function rig() {
     const ed = new FakeSurfaceEditor('u')
     ed.presentSurface('wysiwyg', document.createElement('div'), 'x')
-    return { ed, surface: () => ed.surface, notify: () => ed.services.notify }
+    return { ed, surface: () => ed.surface, notify: () => ed.onSurfaceEvent.bind(ed) }
   }
 
   it("the model's meaningful push emits {type:'selection-update', context} on onEvent", () => {
@@ -784,11 +806,11 @@ describe('AbstractEditor domain → wire enveloping (P2.B.2: moved from NoteEdit
     ])
   })
 
-  it('the services handed to _createSurface route through the enveloping', () => {
+  it('the editor domain API the surface calls routes through the enveloping', () => {
     const rig = noteRig('n')
     rig.sock().driveOpen()
     rig.ed.presentSurface('wysiwyg', document.createElement('div'), { body: '', blocks: [] })
-    rig.ed.services.applyBlockOps([{ type: 'update-block', blockId: 'b1' }])
+    rig.ed.applyBlockOps([{ type: 'update-block', blockId: 'b1' }])
     expect(rig.sock().sentOfType('block-op')).toEqual([
       { type: 'block-op', uuid: 'n', op: { type: 'update-block', blockId: 'b1' } },
     ])
@@ -880,16 +902,63 @@ describe('NoteEditor WS lifecycle (P2.A)', () => {
     expect(sent).toEqual({ type: 'block-op', uuid: 'n', op: { type: 'update-block', blockId: 'b1' } })
   })
 
-  it('retryBlockJob and extract envelope with the frozen shapes', () => {
+  it('retryBlockJob and extract envelope with the frozen shapes', async () => {
     const ed = makeNote('n')
     const sock = FakeSocket.instances[0]
     sock.driveOpen()
     ed.retryBlockJob('blk-1')
-    ed.extract({ blockId: 'blk-1', targetKind: 'diagram', operation: 'extract', entries: [], index: 2 })
+    // extract now OWNS its index math (P4.F Brief C): a bare editor has no mounted
+    // surface / doc, so the anchor resolves to -1 (append). It sends async (after
+    // resolveEntriesForKind), so await the returned promise before asserting.
+    await ed.extract({ blockId: 'blk-1', targetKind: 'diagram', operation: 'extract', entries: [] })
     const msgs = sock.sent.map((s) => JSON.parse(s))
     expect(msgs).toContainEqual({ type: 'retry-block-job', uuid: 'n', id: 'blk-1' })
     // extract carries no uuid — the server resolves the doc from the channel.
-    expect(msgs).toContainEqual({ type: 'extract', blockId: 'blk-1', targetKind: 'diagram', operation: 'extract', entries: [], index: 2 })
+    expect(msgs).toContainEqual({ type: 'extract', blockId: 'blk-1', targetKind: 'diagram', operation: 'extract', entries: [], index: -1 })
+  })
+
+  it('extract absorbs its prep: clears the insert pos, stamps context onto entries[0], sends async', async () => {
+    const ed = makeNote('n')
+    const sock = FakeSocket.instances[0]
+    sock.driveOpen()
+    ed.setInsertPos(42)                       // a stale numeric insert pos
+    const entries = [{ mimeType: 'text/plain', content: 'x' }]
+    await ed.extract({ blockId: 'b', targetKind: 'code', operation: 'extract', entries, context: { parentId: 'p' } })
+    expect(entries[0].context).toEqual({ parentId: 'p' })   // context stamped onto the first entry
+    expect(ed.takeInsertPos()).toBeNull()                    // clearInsertPos ran
+    const sent = sock.sent.map((s) => JSON.parse(s)).find((m) => m.type === 'extract')
+    expect(sent).toEqual({ type: 'extract', blockId: 'b', targetKind: 'code', operation: 'extract', entries, index: -1 })
+  })
+
+  it('retryBlock optimistically resets the block to PENDING (tracked) and re-dispatches the job', () => {
+    const ed = makeNote('n')
+    const sock = FakeSocket.instances[0]
+    sock.driveOpen()
+    const surface = ed.presentSurface('wysiwyg', document.createElement('div'), { body: '', blocks: [] })
+    // A minimal PM-shaped pane holding one errored sieve block; retryBlock walks it,
+    // resets the node, and dispatches ONE setNodeMarkup transaction (no addToHistory
+    // suppression — the reset is a normal tracked edit).
+    const node = { type: { name: 'sieve-web-clip' }, attrs: { id: 'blk-1', status: 'ERROR', error: 'boom', content: 'old', title: 't', completedAt: 'ts', response: 'r' } }
+    const markup = []
+    const dispatched = []
+    surface.editorPaneValue = {
+      state: {
+        doc: { descendants(fn) { fn(node, 5) } },
+        tr: { setNodeMarkup(pos, type, attrs) { markup.push({ pos, type, attrs }); return this } },
+      },
+      view: { dispatch(tr) { dispatched.push(tr) } },
+    }
+    ed.retryBlock('blk-1')
+    expect(dispatched.length).toBe(1)                        // one optimistic reset transaction
+    expect(markup[0].pos).toBe(5)
+    expect(markup[0].attrs.status).toBe('PENDING')
+    expect(markup[0].attrs.error).toBeNull()
+    expect(markup[0].attrs.content).toBeNull()
+    expect(markup[0].attrs.response).toBeNull()
+    expect(typeof markup[0].attrs.createdAt).toBe('string')
+    // Backend re-dispatch always fires.
+    const msgs = sock.sent.map((s) => JSON.parse(s))
+    expect(msgs).toContainEqual({ type: 'retry-block-job', uuid: 'n', id: 'blk-1' })
   })
 
   it('closes the socket and cancels timers on destroy', () => {
@@ -1291,6 +1360,103 @@ describe('SieveWorkspace.activateDocument editor lifecycle (P2.A fix wave)', () 
   })
 })
 
+// ── P4.F: the editor.js BOOT/LIFECYCLE half moved onto SieveWorkspace ────────────
+// activeEditor / initEditor / #syncShell / routeServerMessage / onEditorModeEvent /
+// flushSave were editor.js free functions + module vars; they are now Workspace
+// methods (editor.js is DELETED). These pin the load-bearing invariants the move
+// had to preserve: the initEditor staleness guard and onEditorModeEvent attach-once.
+describe('SieveWorkspace editor lifecycle (P4.F — moved from editor.js)', () => {
+  let origFetch
+  beforeEach(() => { FakeSocket.reset(); origFetch = global.fetch })
+  afterEach(() => { global.fetch = origFetch; vi.restoreAllMocks(); document.body.classList.remove('markdown-mode') })
+
+  it('activeEditor mirrors activeTab.editor and is null-safe', () => {
+    const w = new SieveWorkspace()
+    expect(w.activeEditor).toBeNull() // no active tab
+    const tab = w.openTab('doc-a')
+    expect(w.activeEditor).toBeNull() // tab open, no editor attached yet
+    const ed = new SieveEditor('doc-a')
+    tab.attachEditor(ed)
+    expect(w.activeEditor).toBe(ed)
+  })
+
+  it('flushSave resolves quietly with no active editor, else delegates', async () => {
+    const w = new SieveWorkspace()
+    await expect(w.flushSave()).resolves.toBeUndefined()
+    const tab = w.openTab('doc-a')
+    const ed = new SieveEditor('doc-a')
+    ed.flushSave = vi.fn(() => Promise.resolve('flushed'))
+    tab.attachEditor(ed)
+    await expect(w.flushSave()).resolves.toBe('flushed')
+  })
+
+  it('routeServerMessage alerts only on an error message', () => {
+    const w = new SieveWorkspace()
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    w.routeServerMessage({ type: 'error', message: 'boom' })
+    expect(alertSpy).toHaveBeenCalledWith('boom')
+    w.routeServerMessage({ type: 'insert-block' }) // non-error is ignored
+    expect(alertSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('onEditorModeEvent: mode-changed toggles body class + reloads tabs', () => {
+    const w = new SieveWorkspace()
+    const tab = w.openTab('doc-a')
+    const ed = new SieveEditor('doc-a')
+    tab.attachEditor(ed)
+    Object.defineProperty(ed, 'mode', { get: () => 'markdown', configurable: true })
+    const loadSpy = vi.spyOn(w, 'loadTabs').mockReturnValue(Promise.resolve())
+    w.onEditorModeEvent({ type: 'mode-changed' })
+    expect(document.body.classList.contains('markdown-mode')).toBe(true)
+    expect(loadSpy).toHaveBeenCalledOnce()
+  })
+
+  it('onEditorModeEvent: mode-change-failed alerts the stay-on-failure message', () => {
+    const w = new SieveWorkspace()
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    w.onEditorModeEvent({ type: 'mode-change-failed', mode: 'wysiwyg', error: new Error('x') })
+    expect(alertSpy).toHaveBeenCalledWith('Mode switch failed — staying in wysiwyg mode.')
+  })
+
+  it('initEditor: a superseded in-flight load is dropped (staleness guard)', async () => {
+    const w = new SieveWorkspace()
+    /** @type {Record<string, (body: string) => void>} */
+    const resolvers = {}
+    global.fetch = vi.fn((url) => new Promise((res) => {
+      const uuid = decodeURIComponent(url.split('uuid=')[1])
+      resolvers[uuid] = (body) => res({ json: () => Promise.resolve({ body, blocks: [] }) })
+    }))
+    const mount = document.createElement('div')
+
+    w.initEditor(mount, 'prompt:a', 'markdown') // load A pending, currentUuid='prompt:a'
+    w.initEditor(mount, 'prompt:b', 'markdown') // supersedes A, currentUuid='prompt:b'
+    const edB = w.activeEditor
+    const present = vi.spyOn(edB, 'presentSurface').mockImplementation(() => {})
+
+    resolvers['prompt:a']('A') // resolve the STALE load
+    await new Promise((r) => setTimeout(r, 0))
+    expect(present).not.toHaveBeenCalled() // guard dropped it; edB untouched
+
+    resolvers['prompt:b']('B') // resolve the CURRENT load
+    await new Promise((r) => setTimeout(r, 0))
+    expect(present).toHaveBeenCalledOnce() // current load presented into edB
+  })
+
+  it('initEditor: onEditorModeEvent attaches ONCE per editor instance (no re-subscribe on same-uuid re-init)', () => {
+    const w = new SieveWorkspace()
+    global.fetch = vi.fn(() => new Promise(() => {})) // load never resolves; only the sync subscribe path matters
+    const onEventSpy = vi.spyOn(PromptEditor.prototype, 'onEvent')
+    const mount = document.createElement('div')
+
+    w.initEditor(mount, 'prompt:a', 'markdown')
+    const afterFirst = onEventSpy.mock.calls.length // Tab.attachEditor + #syncShell subscribed
+    expect(afterFirst).toBeGreaterThan(0)
+    w.initEditor(mount, 'prompt:a', 'markdown') // same uuid: editor + subscription KEPT
+    expect(onEventSpy.mock.calls.length).toBe(afterFirst) // no new subscription — mode-changed won't double-fire
+  })
+})
+
 describe('NoteEditor.destroy idempotence (P2.A fix wave)', () => {
   beforeEach(() => FakeSocket.reset())
   afterEach(() => vi.useRealTimers())
@@ -1568,31 +1734,81 @@ describe('AbstractEditor.toggleAiBlocks (P2.C)', () => {
   })
 })
 
-describe('AbstractEditor.createBlock (P2.C transitional seam)', () => {
-  it('delegates kind + attrs to the injected createBlockAtCaret seam', () => {
-    const seam = vi.fn()
-    const ed = new AbstractEditor('u', { createBlockAtCaret: seam })
-    ed.createBlock('diagram', { a: 1 })
-    expect(seam).toHaveBeenCalledTimes(1)
-    expect(seam).toHaveBeenCalledWith('diagram', { a: 1 })
+// ── P4.F: AbstractEditor.createBlock — the ONE self-sufficient, block-index-native
+// create path. The injected create-at-caret seam + the two transitional
+// create/capture global CustomEvents are RETIRED. createBlock derives the index
+// itself (insertIndexForBlock, caret-native +1 with empty-paragraph consume) when no
+// anchor is passed; callers that want to insert after a known block pass a stable
+// block ID anchor — the editor resolves id→index INTERNALLY (#indexAfterBlock over
+// blockIndexAfter), so no caller touches a document-model position. Markdown mode has
+// no editorPane → insertIndexForBlock() returns -1, so a dialog insert carries index:-1.
+describe('AbstractEditor.createBlock (P4.F — self-sufficient, block-id-anchored)', () => {
+  function wysiwygEd() {
+    const ed = new FakeSurfaceEditor('u')
+    ed.presentSurface('wysiwyg', document.createElement('div'), { body: '', blocks: [] })
+    // #indexAfterBlock reads this.editorPane.state.doc; give the fake editorPane a doc.
+    ed.surface.editorPaneValue = { state: { doc: { childCount: 5 } } }
+    return ed
+  }
+
+  it('no anchor → applies a create-block op at insertIndexForBlock()', () => {
+    const ed = wysiwygEd()
+    const idxSpy = vi.spyOn(ed, 'insertIndexForBlock').mockReturnValue(4)
+    const applyBlockOps = vi.spyOn(ed, 'applyBlockOps')
+    ed.createBlock('code', {})
+    expect(idxSpy).toHaveBeenCalledTimes(1)
+    expect(applyBlockOps).toHaveBeenCalledWith([{ type: 'create-block', kind: 'code', attrs: {}, index: 4 }])
   })
 
   it('defaults attrs to {} when omitted', () => {
-    const seam = vi.fn()
-    const ed = new AbstractEditor('u', { createBlockAtCaret: seam })
-    ed.createBlock('diagram')
-    expect(seam).toHaveBeenCalledWith('diagram', {})
+    const ed = wysiwygEd()
+    vi.spyOn(ed, 'insertIndexForBlock').mockReturnValue(0)
+    const applyBlockOps = vi.spyOn(ed, 'applyBlockOps')
+    ed.createBlock('code')
+    expect(applyBlockOps).toHaveBeenCalledWith([{ type: 'create-block', kind: 'code', attrs: {}, index: 0 }])
   })
 
-  it('warns and no-ops when no seam is injected', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    try {
-      const ed = new AbstractEditor('u')
-      expect(() => ed.createBlock('diagram', {})).not.toThrow()
-      expect(warn).toHaveBeenCalled()
-    } finally {
-      warn.mockRestore()
-    }
+  it('afterBlockId → resolves to blockIndexAfter(doc, id); insertIndexForBlock is NOT called', () => {
+    const ed = wysiwygEd()
+    const idxSpy = vi.spyOn(ed, 'insertIndexForBlock')
+    const applyBlockOps = vi.spyOn(ed, 'applyBlockOps')
+    vi.mocked(blockIndexAfter).mockClear().mockReturnValue(9)
+    ed.createBlock('code', {}, 'b7')
+    expect(idxSpy).not.toHaveBeenCalled()
+    expect(blockIndexAfter).toHaveBeenCalledWith(ed.surface.editorPaneValue.state.doc, 'b7')
+    expect(applyBlockOps).toHaveBeenCalledWith([{ type: 'create-block', kind: 'code', attrs: {}, index: 9 }])
+  })
+
+  it('afterBlockId that is stale/missing → append at doc.childCount', () => {
+    const ed = wysiwygEd()   // doc.childCount === 5
+    const applyBlockOps = vi.spyOn(ed, 'applyBlockOps')
+    vi.mocked(blockIndexAfter).mockClear().mockReturnValue(-1)   // id not found
+    ed.createBlock('code', {}, 'gone')
+    expect(applyBlockOps).toHaveBeenCalledWith([{ type: 'create-block', kind: 'code', attrs: {}, index: 5 }])
+  })
+
+  it('diagram with no source defaults attrs.mode to edit', () => {
+    const ed = wysiwygEd()
+    vi.spyOn(ed, 'insertIndexForBlock').mockReturnValue(0)
+    const applyBlockOps = vi.spyOn(ed, 'applyBlockOps')
+    ed.createBlock('diagram')
+    expect(applyBlockOps).toHaveBeenCalledWith([{ type: 'create-block', kind: 'diagram', attrs: { mode: 'edit' }, index: 0 }])
+  })
+
+  it('diagram WITH a source keeps its attrs (no mode override)', () => {
+    const ed = wysiwygEd()
+    vi.spyOn(ed, 'insertIndexForBlock').mockReturnValue(0)
+    const applyBlockOps = vi.spyOn(ed, 'applyBlockOps')
+    ed.createBlock('diagram', { source: 'graph TD' })
+    expect(applyBlockOps).toHaveBeenCalledWith([{ type: 'create-block', kind: 'diagram', attrs: { source: 'graph TD' }, index: 0 }])
+  })
+
+  it('markdown mode (no editorPane): insertIndexForBlock() returns -1 → op carries index:-1 (no throw, no no-op)', () => {
+    const ed = new FakeSurfaceEditor('u')
+    ed.presentSurface('markdown', document.createElement('div'), 'body')
+    const applyBlockOps = vi.spyOn(ed, 'applyBlockOps')
+    expect(() => ed.createBlock('smart-card', { href: 'https://x' })).not.toThrow()
+    expect(applyBlockOps).toHaveBeenCalledWith([{ type: 'create-block', kind: 'smart-card', attrs: { href: 'https://x' }, index: -1 }])
   })
 })
 
@@ -1606,16 +1822,15 @@ describe('AbstractEditor.createBlock (P2.C transitional seam)', () => {
 // folded into askAi (it is one operation, not a caller-run pre-step).
 
 describe('AbstractEditor.askAi (P4.E/D-5 — the single AI-job seam, pure over context)', () => {
-  // A wysiwyg FakeSurfaceEditor with a scripted selection descriptor + a fake tiptap
+  // A wysiwyg FakeSurfaceEditor with a scripted selection descriptor + a fake editorPane
   // carrying the handles askAi touches (state/view/commands). buildAiContext +
-  // applyTargetHighlight are module-mocked (top of file); blockIndexAfter /
-  // docPosForBlockIndex are mocked so the insert-anchor delegation is asserted via
-  // vi.mocked without needing a real doc.
+  // applyTargetHighlight are module-mocked (top of file); blockIndexAfter is mocked
+  // so the insert-index delegation is asserted via vi.mocked without a real doc.
   function seamRig(mode = 'wysiwyg', target = { kind: 'block', ref: 'co-9', label: 'Code Block' }) {
-    const ed = new FakeSurfaceEditor('u', { createBlockAtCaret: vi.fn() })
+    const ed = new FakeSurfaceEditor('u')
     ed.presentSurface(mode, document.createElement('div'), mode === 'markdown' ? 'md body' : 'x')
-    if (mode === 'wysiwyg') ed.surface.tiptapValue = {
-      state: { doc: { textContent: 'doc text' }, selection: { to: 5 } },
+    if (mode === 'wysiwyg') ed.surface.editorPaneValue = {
+      state: { doc: { textContent: 'doc text', childCount: 3 }, selection: { to: 5 } },
       view: {},
       commands: { focus: vi.fn(), setTextSelection: vi.fn() },
       isActive: () => false,
@@ -1625,31 +1840,40 @@ describe('AbstractEditor.askAi (P4.E/D-5 — the single AI-job seam, pure over c
       selectionType: 'block', blockId: 'b1', blockIds: ['b1'], blockKind: 'code',
       caret: 1, range: { from: 1, to: 3 }, target,
     }
-    ed.services.notify({ type: 'selection-changed' })
+    ed.onSurfaceEvent({ type: 'selection-changed' })
     return ed
   }
 
   beforeEach(() => {
-    vi.mocked(blockIndexAfter).mockReturnValue(7)
-    vi.mocked(docPosForBlockIndex).mockReturnValue(99)
+    vi.mocked(blockIndexAfter).mockClear().mockReturnValue(7)
     vi.mocked(buildAiContext).mockClear()
     vi.mocked(applyTargetHighlight).mockClear()
   })
 
-  it('ask: anchors the insert AFTER the context target block, flushes, then creates the ai-block (type ASK + ref + question)', async () => {
+  it('ask: passes the context target BLOCK ID as the createBlock anchor, flushes, then creates the ai-block (type ASK + ref + question + anchor)', async () => {
     const ed = seamRig('wysiwyg', { kind: 'block', ref: 'co-9', label: 'Code Block' })
-    const setInsertPos = vi.spyOn(ed, 'setInsertPos')
     const flushSave = vi.spyOn(ed, 'flushSave')
     const createBlock = vi.spyOn(ed, 'createBlock')
     await ed.askAi({ type: 'ask', question: 'why?' })
-    // Insert anchored on the context's BLOCK ID (blockIndexAfter → docPosForBlockIndex),
-    // NOT a live caret / captureInsertPos.
+    // askAi hands createBlock the context's stable BLOCK ID (NOT a live caret /
+    // captureInsertPos, NO setInsertPos/docPos hop). The editor owns id→index resolution
+    // internally (#indexAfterBlock → blockIndexAfter), which the through-called createBlock
+    // exercises for the anchor id — never a caller-computed position.
+    expect(createBlock).toHaveBeenCalledWith('ai-block', { type: 'ASK', ref: 'co-9', question: 'why?' }, 'b1')
     expect(blockIndexAfter).toHaveBeenCalledWith(expect.anything(), 'b1')
-    expect(docPosForBlockIndex).toHaveBeenCalledWith(expect.anything(), 7)
-    expect(setInsertPos).toHaveBeenCalledWith(99)
     expect(flushSave).toHaveBeenCalled()                  // flush BEFORE create
-    expect(createBlock).toHaveBeenCalledWith('ai-block', { type: 'ASK', ref: 'co-9', question: 'why?' })
     expect(flushSave.mock.invocationCallOrder[0]).toBeLessThan(createBlock.mock.invocationCallOrder[0])
+  })
+
+  it('no context block id → no anchor; createBlock caret-derives (3rd arg undefined), askAi computes no index', async () => {
+    const ed = seamRig('wysiwyg', { kind: 'document', ref: '', label: 'Document' })
+    const createBlock = vi.spyOn(ed, 'createBlock').mockImplementation(() => {})
+    // A context with no block ids: anchorId is undefined → askAi passes no anchor →
+    // createBlock caret-derives (insertIndexForBlock). askAi itself never resolves an
+    // index, so blockIndexAfter is not reached.
+    await ed.askAi({ type: 'ask', question: 'q', context: { blockIds: [], target: { kind: 'document', ref: '', label: 'Document' } } })
+    expect(createBlock.mock.calls[0][2]).toBeUndefined()
+    expect(blockIndexAfter).not.toHaveBeenCalled()
   })
 
   it('PURITY: acts on the PASSED context, NEVER the editor live selection (D-5 anti-race)', async () => {
@@ -1664,7 +1888,8 @@ describe('AbstractEditor.askAi (P4.E/D-5 — the single AI-job seam, pure over c
     await ed.askAi({ type: 'ask', question: 'q', context: passed })
     expect(buildAiContext).toHaveBeenCalledWith(passed)
     expect(createBlock.mock.calls[0][1].ref).toBe('co-panel')             // panel's ref, not live co-live
-    expect(blockIndexAfter).toHaveBeenCalledWith(expect.anything(), 'bPanel')  // panel's block, not live bLive
+    expect(createBlock.mock.calls[0][2]).toBe('bPanel')                   // panel's block id anchor, not live bLive
+    expect(blockIndexAfter).toHaveBeenCalledWith(expect.anything(), 'bPanel')  // editor resolves the panel's id, not live bLive
   })
 
   it('selection target: highlights the CONTEXT target range (not the live selection)', async () => {
@@ -1674,7 +1899,7 @@ describe('AbstractEditor.askAi (P4.E/D-5 — the single AI-job seam, pure over c
       target: { kind: 'selection', ref: 'pr-1', range: { from: 5, to: 9 }, label: 'Paragraph' },
     }
     await ed.askAi({ type: 'ask', question: 'q', context: passed })
-    expect(applyTargetHighlight).toHaveBeenCalledWith(ed.surface.tiptapValue, { from: 5, to: 9 })
+    expect(applyTargetHighlight).toHaveBeenCalledWith(ed.surface.editorPaneValue, { from: 5, to: 9 })
   })
 
   it('block target carries no == extent → no highlight', async () => {
@@ -1687,7 +1912,7 @@ describe('AbstractEditor.askAi (P4.E/D-5 — the single AI-job seam, pure over c
     const ed = seamRig('wysiwyg', { kind: 'block', ref: 'pr-1', label: 'Paragraph' })
     const createBlock = vi.spyOn(ed, 'createBlock')
     await ed.askAi({ type: 'explain', context: ed.getSelectionContext() })
-    expect(createBlock).toHaveBeenCalledWith('ai-block', { type: 'EXPLAIN', ref: 'pr-1', question: '' })
+    expect(createBlock).toHaveBeenCalledWith('ai-block', { type: 'EXPLAIN', ref: 'pr-1', question: '' }, 'b1')
   })
 
   it('explain in markdown mode is a NO-OP (no inline target to explain) — the editor owns the abort', async () => {
@@ -1697,11 +1922,20 @@ describe('AbstractEditor.askAi (P4.E/D-5 — the single AI-job seam, pure over c
     expect(createBlock).not.toHaveBeenCalled()
   })
 
-  it('ask in markdown mode still asks (no tiptap; ref from context)', async () => {
+  it('ask in markdown mode still asks (no editorPane; ref from context; no anchor → createBlock derives -1 append)', async () => {
+    // CHARACTERIZATION (P4.F flagged nuance): real markdown selection carries no block
+    // ids (no PM blocks), so anchorId is undefined → askAi passes no anchor. createBlock
+    // then caret-derives via insertIndexForBlock(), which returns -1 for an editorPane-less
+    // editor, so the op carries index:-1 (append) — the same index a markdown dialog
+    // insert produces. (Pre-P4.F the injected editor.js seam no-opped markdown asks
+    // because currentEditor was null; here markdown ask reaches the op.)
     const ed = seamRig('markdown', { kind: 'document', ref: '', label: 'Document' })
     const createBlock = vi.spyOn(ed, 'createBlock')
-    await ed.askAi({ type: 'ask', question: 'q', context: ed.getSelectionContext() })
-    expect(createBlock).toHaveBeenCalledWith('ai-block', { type: 'ASK', ref: 'doc', question: 'q' })
+    await ed.askAi({ type: 'ask', question: 'q', context: { blockIds: [], blockId: null, target: { kind: 'document', ref: '', label: 'Document' } } })
+    const call = createBlock.mock.calls[0]
+    expect(call[0]).toBe('ai-block')
+    expect(call[1]).toEqual({ type: 'ASK', ref: 'doc', question: 'q' })
+    expect(call[2]).toBeUndefined()
   })
 
   it('falls back to a "doc" ref when buildAiContext yields no blockRef', async () => {
@@ -1714,18 +1948,18 @@ describe('AbstractEditor.askAi (P4.E/D-5 — the single AI-job seam, pure over c
 })
 
 // ── P4.A: AbstractEditor absorbs the insert-position math + softReload ─────────
-// The insert-pos machinery (sieveInsertPos + kindIsInline / captureInsertPos /
-// blockIndexForInsert / commitInsertIndex) and softReloadContent moved off
-// editor.js's IIFE onto the editor (D-1: public methods, reachable from the
-// classic-script create paths via _activeEditor()). These tests pin the moved
+// The insert-pos machinery (captureInsertPos / blockIndexForInsert /
+// commitInsertIndex) and softReloadContent moved off editor.js's IIFE onto the
+// editor (D-1: public methods, reachable from the create paths on the live
+// editor). These tests pin the moved
 // contract — ESPECIALLY the undo guard: commitInsertIndex's empty-paragraph
 // delete stays a PLAIN TRACKED delete (no addToHistory:false meta).
 
-// A recording fake tiptap: a doc with `childCount`, a fresh `tr` per read whose
+// A recording fake editorPane: a doc with `childCount`, a fresh `tr` per read whose
 // delete records (from,to) and whose meta stays whatever the code sets it to,
 // and a view that records dispatched trs. The insert-pos helpers read this via
-// the surface's `tiptap` accessor.
-function fakeInsertPosTiptap(childCount = 2) {
+// the surface's `editorPane` accessor.
+function fakeInsertPosEditorPane(childCount = 2) {
   const dispatched = []
   const makeTr = () => {
     const meta = {}
@@ -1748,12 +1982,12 @@ function fakeInsertPosTiptap(childCount = 2) {
   }
 }
 
-// A minimal surface exposing an injected tiptap + a flushPending recorder, so an
-// AbstractEditor's insert-pos methods have a live `this.tiptap` / `this.surface`.
+// A minimal surface exposing an injected editorPane + a flushPending recorder, so an
+// AbstractEditor's insert-pos methods have a live `this.editorPane` / `this.surface`.
 class InsertPosSurface extends AbstractSurface {
-  constructor(tiptap) { super(); this._tt = tiptap; this.flushCount = 0 }
+  constructor(editorPane) { super(); this._tt = editorPane; this.flushCount = 0 }
   get mode() { return 'wysiwyg' }
-  get tiptap() { return this.mounted ? this._tt : null }
+  get editorPane() { return this.mounted ? this._tt : null }
   mount() { this.mounted = true }
   unmount() { this.mounted = false }
   applyServerOp() {}
@@ -1762,21 +1996,21 @@ class InsertPosSurface extends AbstractSurface {
 }
 
 class InsertPosEditor extends AbstractEditor {
-  constructor(uuid, tiptap) { super(uuid); this._tt = tiptap }
+  constructor(uuid, editorPane) { super(uuid); this._tt = editorPane }
   _createSurface() { return new InsertPosSurface(this._tt) }
 }
 
-function insertPosEditor(tiptap = fakeInsertPosTiptap()) {
-  const ed = new InsertPosEditor('u', tiptap)
+function insertPosEditor(editorPane = fakeInsertPosEditorPane()) {
+  const ed = new InsertPosEditor('u', editorPane)
   ed.presentSurface('wysiwyg', document.createElement('div'), { body: '', blocks: [] })
-  return { ed, tiptap }
+  return { ed, editorPane }
 }
 
 describe('AbstractEditor insert-position math (P4.A)', () => {
   // P4.E: the position helpers are ES imports (ai-target.js / block-position.js),
   // mocked at file scope; re-establish their defaults before each test.
   beforeEach(() => {
-    vi.mocked(blockInsertPos).mockImplementation((_state, isInline) => (isInline ? 11 : 42))
+    vi.mocked(blockInsertPos).mockImplementation(() => 42)
     vi.mocked(blockIndexForInsert).mockReturnValue(3)
     vi.mocked(emptyParagraphAnchor).mockReturnValue(null)
   })
@@ -1801,18 +2035,10 @@ describe('AbstractEditor insert-position math (P4.A)', () => {
     expect(ed.takeInsertPos()).toBeNull()
   })
 
-  it('kindIsInline reads the schema; unknown kind → block (false)', () => {
+  it('captureInsertPos delegates to the blockInsertPos import (block placement)', () => {
     const { ed } = insertPosEditor()
-    expect(ed.kindIsInline('smart-link')).toBe(true)
-    expect(ed.kindIsInline('code')).toBe(false)
-    expect(ed.kindIsInline('nope')).toBe(false)
-    expect(ed.kindIsInline('')).toBe(false)
-  })
-
-  it('captureInsertPos delegates to the blockInsertPos import (inline vs block)', () => {
-    const { ed } = insertPosEditor()
-    expect(ed.captureInsertPos(false)).toBe(42)
-    expect(ed.captureInsertPos(true)).toBe(11)
+    expect(ed.captureInsertPos()).toBe(42)
+    expect(blockInsertPos).toHaveBeenCalledWith(expect.anything())
   })
 
   it('blockIndexForInsert delegates to the blockIndexForInsert import', () => {
@@ -1822,20 +2048,20 @@ describe('AbstractEditor insert-position math (P4.A)', () => {
   })
 
   it('commitInsertIndex with NO empty-paragraph anchor → the plain block index, no dispatch', () => {
-    const { ed, tiptap } = insertPosEditor()
+    const { ed, editorPane } = insertPosEditor()
     vi.mocked(emptyParagraphAnchor).mockReturnValue(null)
     expect(ed.commitInsertIndex(42)).toBe(3)
-    expect(tiptap.dispatched.length).toBe(0)
+    expect(editorPane.dispatched.length).toBe(0)
   })
 
   it('commitInsertIndex with an empty-paragraph anchor dispatches a PLAIN TRACKED delete (NO addToHistory:false) + flushPending, returns the anchor index', () => {
-    const tiptap = fakeInsertPosTiptap(2) // childCount > 1 → the delete branch
-    const { ed } = insertPosEditor(tiptap)
+    const editorPane = fakeInsertPosEditorPane(2) // childCount > 1 → the delete branch
+    const { ed } = insertPosEditor(editorPane)
     vi.mocked(emptyParagraphAnchor).mockReturnValue({ from: 4, to: 6, index: 1 })
     const idx = ed.commitInsertIndex(42)
     expect(idx).toBe(1) // the anchor's own index — the new block takes its place
-    expect(tiptap.dispatched.length).toBe(1)
-    const tr = tiptap.dispatched[0]
+    expect(editorPane.dispatched.length).toBe(1)
+    const tr = editorPane.dispatched[0]
     expect(tr.deletedRange).toEqual({ from: 4, to: 6 })
     // THE UNDO GUARD: the empty-paragraph delete is an ORDINARY tracked prose
     // edit — never addToHistory:false. A prior P2 regression turned this into a
@@ -1845,19 +2071,19 @@ describe('AbstractEditor insert-position math (P4.A)', () => {
   })
 
   it('commitInsertIndex on a sole-block doc keeps the paragraph (no delete dispatched), returns its index', () => {
-    const tiptap = fakeInsertPosTiptap(1) // childCount === 1 → keep the only child
-    const { ed } = insertPosEditor(tiptap)
+    const editorPane = fakeInsertPosEditorPane(1) // childCount === 1 → keep the only child
+    const { ed } = insertPosEditor(editorPane)
     vi.mocked(emptyParagraphAnchor).mockReturnValue({ from: 0, to: 2, index: 0 })
     expect(ed.commitInsertIndex(42)).toBe(0)
-    expect(tiptap.dispatched.length).toBe(0)
+    expect(editorPane.dispatched.length).toBe(0)
   })
 
   it('insertIndexForBlock composes captureInsertPos(false) → commitInsertIndex (the paste/drop path)', () => {
     const { ed } = insertPosEditor()
     vi.mocked(emptyParagraphAnchor).mockReturnValue(null)
-    // captureInsertPos(false) → 42 → blockIndexForInsert → 3
+    // captureInsertPos() → 42 → blockIndexForInsert → 3
     expect(ed.insertIndexForBlock()).toBe(3)
-    expect(blockInsertPos).toHaveBeenCalledWith(expect.anything(), false)
+    expect(blockInsertPos).toHaveBeenCalledWith(expect.anything())
   })
 
   it('insertIndexForBlockAt(pos) → commitInsertIndex(pos) directly (the drop-coord path)', () => {
@@ -1867,11 +2093,10 @@ describe('AbstractEditor insert-position math (P4.A)', () => {
   })
 
   it('insert-pos methods with no mounted surface are safe (return -1 / null)', () => {
-    const ed = new InsertPosEditor('u', fakeInsertPosTiptap())
+    const ed = new InsertPosEditor('u', fakeInsertPosEditorPane())
     expect(ed.commitInsertIndex(1)).toBe(-1)
     expect(ed.blockIndexForInsert(1)).toBe(-1)
-    expect(ed.captureInsertPos(false)).toBeNull()
-    expect(ed.kindIsInline('code')).toBe(false)
+    expect(ed.captureInsertPos()).toBeNull()
   })
 })
 
@@ -1900,7 +2125,7 @@ describe('AbstractEditor.softReload (P4.A)', () => {
   class ReloadSurface extends AbstractSurface {
     constructor(mode) { super(); this._mode = mode; this.reloaded = null; this.replaced = null }
     get mode() { return this._mode }
-    get tiptap() { return this._mode === 'wysiwyg' ? { fake: true } : null }
+    get editorPane() { return this._mode === 'wysiwyg' ? { fake: true } : null }
     get body() { return this._mode === 'markdown' ? 'md' : null }
     mount() { this.mounted = true }
     unmount() { this.mounted = false }
@@ -2084,7 +2309,7 @@ describe('AbstractEditor stats producer (P4.D)', () => {
     ed.presentSurface('markdown', document.createElement('div'), 'x')
     const events = []
     ed.onEvent((ev) => events.push(ev.type))
-    ed.services.notify({ type: 'doc-changed' })
+    ed.onSurfaceEvent({ type: 'doc-changed' })
     expect(events).toContain('doc-changed')
     expect(events).toContain('stats')
   })

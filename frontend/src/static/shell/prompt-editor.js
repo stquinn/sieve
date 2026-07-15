@@ -47,21 +47,16 @@ export class PromptEditor extends AbstractEditor {
 
   /**
    * A prompt's repertoire is markdown ONLY (its fixed mode) — `mode` is
-   * deliberately ignored; there is no other surface this type can present.
+   * deliberately ignored; there is no other surface this type can present. The
+   * surface receives THIS editor (`host`) and calls its public API directly
+   * (onSurfaceEvent / updateText / takeInsertPos / softReload) — the pre-bound
+   * `deps` closure bag is dissolved (P4.F).
    * @protected
    * @param {import('./editor-mode.js').EditorModeValue} mode
-   * @param {import('./abstract-editor.js').EditorSurfaceServices} services
    * @returns {import('./surfaces/abstract-surface.js').AbstractSurface}
    */
-  _createSurface(mode, services) {
-    // P4.A: takeInsertPos / requestReload are editor-sourced (the surfaceCollaborators
-    // IIFE bag is dissolved) — the surface calls UP to the editor's own methods.
-    return new MarkdownSurface({
-      notify: services.notify,
-      takeInsertPos: () => this.takeInsertPos(),
-      updateText: services.updateText,
-      requestReload: () => this.softReload(),
-    })
+  _createSurface(mode) {
+    return new MarkdownSurface(this)
   }
 
   /**

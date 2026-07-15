@@ -28,24 +28,13 @@ import { AbstractSurface } from './surfaces/abstract-surface.js'
 import { EditorMode } from './editor-mode.js'
 import { SelectionModel } from './selection-model.js'
 import { blockInsertPos } from '../ai/ai-target.js'
-import { blockIndexForInsert, emptyParagraphAnchor, blockIndexAfter, docPosForBlockIndex } from '../base/block-position.js'
+import { blockIndexForInsert, emptyParagraphAnchor, blockIndexAfter } from '../base/block-position.js'
 import { buildAiContext, applyTargetHighlight } from '../editor/extensions.js'
+import { resolveEntriesForKind } from '../block/sieve-block-extension.js'
 
 /**
  * @typedef {import('./surfaces/abstract-surface.js').SurfaceEventMsg} SurfaceEventMsg
  * @typedef {import('./editor-mode.js').EditorModeValue} EditorModeValue
- */
-
-/**
- * The editor-owned services a surface receives (handed to `_createSurface`).
- * All DOMAIN-shaped: no wire envelopes, no transport vocabulary, no
- * uuid-for-transport — the WS contract is owned exclusively by AbstractEditor.
- * If a dep's implementation would change when the transport changes, it belongs
- * here, not in a surface.
- * @typedef {object} EditorSurfaceServices
- * @property {(event: SurfaceEventMsg) => void} notify — outbound editor-domain events → editor registrants
- * @property {(ops: object[]) => void} applyBlockOps — block-domain ops (create/update/delete-block) → transport
- * @property {(markdown: string) => void} updateText — whole-buffer text update (markdown mode) → transport
  */
 
 /**
@@ -61,9 +50,6 @@ import { buildAiContext, applyTargetHighlight } from '../editor/extensions.js'
  *   — injected for tests; defaults to the /api/ws URL for this uuid
  * @property {(msg: object) => void} [onServerMessage]
  *   — routing for messages not consumed here (error, block-extracted, …)
- * @property {(kind: string, attrs: object) => void} [createBlockAtCaret]
- *   — TRANSITIONAL (P2.C; dies P3/P4 with the SelectionModel): the caret-aware
- *   create pipeline still lives in editor.js; createBlock() delegates to it.
  */
 
 // WebSocket.readyState OPEN, fixed at 1 by the WHATWG spec. Referenced directly
@@ -145,9 +131,6 @@ export class AbstractEditor {
   /** @type {boolean} AI-block visibility for THIS editor (mirrored as a CSS class on the root) */
   #showAiBlocks = true
 
-  /** @type {((kind: string, attrs: object) => void)|null} TRANSITIONAL P2.C seam — see createBlock() */
-  #createBlockAtCaret
-
   /**
    * Where the next inserted Sieve block goes (P4.A, moved off editor.js's IIFE).
    * A number = insert at that doc point (additive). A {from,to} object = replace
@@ -173,7 +156,6 @@ export class AbstractEditor {
     if (!uuid) throw new Error('AbstractEditor: uuid is required')
     this.#uuid = uuid
     this.#selectionModel = new SelectionModel(uuid)
-    this.#createBlockAtCaret = options.createBlockAtCaret || null
     // P3.B: bridge the SelectionModel's own push onto the editor's ONE onEvent
     // stream so the Tab/Workspace republish (and editor.js's legacy fan-out, which
     // ignores the new type) receive selection updates through the same channel the
@@ -218,7 +200,7 @@ export class AbstractEditor {
   get _defaultMode() { return EditorMode.WYSIWYG }
 
   /** @returns {unknown|null} The live TipTap instance, or null (markdown / unmounted). */
-  get tiptap() { return this.#surface ? this.#surface.tiptap : null }
+  get editorPane() { return this.#surface ? this.#surface.editorPane : null }
 
   /** @returns {boolean} Whether the document has unsaved changes. */
   get isDirty() { return this.#dirty }
@@ -259,6 +241,30 @@ export class AbstractEditor {
   #emitEvent(event) {
     for (const fn of this.#eventListeners) {
       try { fn(event) } catch (e) { console.error('[editor] surface-event listener threw', e) }
+    }
+  }
+
+  /**
+   * The Editor's SurfaceListener handler — the mounted surface FIRES its events
+   * (doc-changed / selection-changed / transaction / focus-changed) here and the
+   * Editor HANDLES them. P3.A: feed the SelectionModel from the event FIRST (so an
+   * onEvent handler that pulls getSelectionContext() sees the fresh context), then
+   * emit on the editor stream. P4.D: a doc-changed also produces a `stats` event
+   * (the retired editor.js dispatchStats — now editor-owned) and marks the document
+   * dirty. The retired legacyChromeFanout dispatched sieve:meta-dirty{dirty:true} on
+   * doc-changed; the flush-ack (#handleMessage) dispatches the {dirty:false}
+   * counterpart + clearDirty(). Consumers: StatusBar #onDirty (the meta-dirty-dot +
+   * status-bar save slot). doc-changed does NOT fire on initial content load, so a
+   * freshly loaded document stays green until the first real edit.
+   * @param {SurfaceEventMsg} event
+   */
+  onSurfaceEvent(event) {
+    this.#feedSelectionModel(event)
+    this.#emitEvent(event)
+    if (event && event.type === 'doc-changed') {
+      this.#emitStats()
+      this.markDirty()
+      document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
     }
   }
 
@@ -329,12 +335,14 @@ export class AbstractEditor {
    * surface classes this editor can present) is TYPE-DEFINING knowledge that
    * lives on the concrete editor types, alongside the channel declaration —
    * nothing outside the editor decides or constructs what lives under its root.
+   * The concrete type hands the surface THIS editor (`host`) — the surface calls
+   * the editor's public API directly (onSurfaceEvent / applyBlockOps / updateText /
+   * takeInsertPos / insertIndexForBlock / flushSave / softReload). No services bag.
    * @protected
-   * @param {EditorModeValue}       mode
-   * @param {EditorSurfaceServices} services — the editor's own domain services
+   * @param {EditorModeValue} mode
    * @returns {AbstractSurface}
    */
-  _createSurface(mode, services) {
+  _createSurface(mode) {
     throw new Error('AbstractEditor: _createSurface must be implemented by the concrete editor type')
   }
 
@@ -351,29 +359,7 @@ export class AbstractEditor {
   presentSurface(mode, rootEl, content) {
     if (this.#surface) this.#surface.unmount()
     this.#rootEl = rootEl
-    const next = this._createSurface(mode, {
-      // P3.A: feed the SelectionModel from the surface event FIRST (so an onEvent
-      // handler that pulls getSelectionContext() sees the fresh context), then
-      // emit on the editor stream. P4.D: a doc-changed also produces a `stats`
-      // event (the retired editor.js dispatchStats — now editor-owned).
-      notify: (event) => {
-        this.#feedSelectionModel(event)
-        this.#emitEvent(event)
-        if (event && event.type === 'doc-changed') {
-          this.#emitStats()
-          // Doc mutation → UNSAVED. The retired legacyChromeFanout dispatched
-          // sieve:meta-dirty{dirty:true} on doc-changed; the flush-ack
-          // (#handleMessage) dispatches the {dirty:false} counterpart + clearDirty().
-          // Consumers: StatusBar #onDirty (the meta-dirty-dot + status-bar save slot).
-          // doc-changed does NOT fire on initial content load, so a freshly loaded
-          // document stays green until the first real edit.
-          this.markDirty()
-          document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: true } }))
-        }
-      },
-      applyBlockOps: (ops) => this.applyBlockOps(ops),
-      updateText: (markdown) => this.updateText(markdown),
-    })
+    const next = this._createSurface(mode)
     if (!(next instanceof AbstractSurface)) throw new Error('AbstractEditor: _createSurface must return an AbstractSurface')
     // A mount root can arrive pre-classed by a PREVIOUS editor's toggle — sync
     // the class to THIS editor's state so DOM and #showAiBlocks never desync.
@@ -397,7 +383,7 @@ export class AbstractEditor {
 
   /**
    * The current document stats — DELEGATED to the active surface (which owns the
-   * TipTap/buffer read; no AbstractEditor.tiptap reach here — the epic's
+   * TipTap/buffer read; no AbstractEditor.editorPane reach here — the epic's
    * TipTap-only-in-surface discipline). A PULL seam: a consumer that points at this
    * editor AFTER the initial-present seed already emitted (the StatusBar on cold
    * boot) reads the current value instead of waiting for the next doc-changed emit.
@@ -411,7 +397,7 @@ export class AbstractEditor {
   // ── Document search (D-3: SearchOverlay drives these; surface owns TipTap) ─────
   //
   // The search overlay reaches the active editor's search verbs (never a surface
-  // #private or `.tiptap`); each DELEGATES to the mounted surface, mirroring
+  // #private or `.editorPane`); each DELEGATES to the mounted surface, mirroring
   // stats(). The Search extension + its match storage live on WysiwygSurface's
   // OWN #editor — so search stays surface-private, like every other TipTap read.
   // A surface with no search returns false; the overlay treats that as "no matches".
@@ -643,14 +629,68 @@ export class AbstractEditor {
   }
 
   /**
-   * Requests a block extraction/transform (shape frozen: {type:'extract',
-   * blockId, targetKind, operation, entries, index} — the extract message
-   * carries no uuid; the server resolves the document from the channel).
-   * Disconnected editors: no-op.
-   * @param {{blockId: string, targetKind: string, operation: string, entries: object[], index?: number}} payload
+   * Retries a block: the ONE op that folds the local optimistic reset with the
+   * backend re-dispatch (P4.F Brief C — a NodeView never does setNodeMarkup itself;
+   * it calls ctx.retry() → here). Resets the block node to PENDING (fresh createdAt,
+   * clearing content/error/title/completedAt/response when present) as a TRACKED PM
+   * transaction, then asks the server to re-run its job (retryBlockJob). No-op when
+   * no live pane (markdown mode); retryBlockJob still fires so a mode-agnostic retry
+   * reaches the backend. Behaviour-identical to the retired block-retry event handler.
+   * @param {string} blockId
    */
-  extract(payload) {
-    this.#send(Object.assign({ type: 'extract' }, payload))
+  retryBlock(blockId) {
+    const ed = /** @type {any} */ (this.editorPane)
+    if (ed) {
+      const now = new Date().toISOString()
+      let pos = -1
+      let cur = null
+      ed.state.doc.descendants((node, p) => {
+        if (pos >= 0) return false
+        if (node.type.name.startsWith('sieve-') && node.attrs.id === blockId) {
+          pos = p; cur = node; return false
+        }
+      })
+      if (cur) {
+        const clean = Object.assign({}, cur.attrs, { status: 'PENDING', createdAt: now })
+        if ('content' in clean) clean.content = null
+        if ('error' in clean) clean.error = null
+        if ('title' in clean) clean.title = null
+        if ('completedAt' in clean) clean.completedAt = null
+        if ('response' in clean) clean.response = null
+        ed.view.dispatch(ed.state.tr.setNodeMarkup(pos, null, clean))
+      }
+    }
+    this.retryBlockJob(blockId)
+  }
+
+  /**
+   * Requests a block extraction/transform. ABSORBS the prep the retired extract event
+   * handler did (P4.F Brief C): clears any stale insert position (additive ops land
+   * via insert-block at the op's own index), stamps the caller context onto the first
+   * entry, resolves the target block index from `blockId` (top-level-only scan; skipped
+   * for transform / undo-smart-paste, which mutate in place), and resolves the entries
+   * for the target kind (sync or async) before sending. The wire shape is frozen:
+   * {type:'extract', blockId, targetKind, operation, entries, index} — no uuid; the
+   * server resolves the document from the channel. Disconnected editors: no-op send.
+   * @param {{blockId: string, targetKind: string, operation: string, sourceNode?: object, entries: object[], context?: object}} payload
+   * @returns {Promise<void>}
+   */
+  extract({ blockId, targetKind, operation, sourceNode, entries, context }) {
+    entries = entries || []
+    this.clearInsertPos()
+    if (entries.length > 0 && context && Object.keys(context).length > 0) {
+      entries[0].context = context
+    }
+    let index = -1
+    if (operation !== 'transform' && operation !== 'undo-smart-paste' && blockId && this.editorPane) {
+      // Top-level-only scan (blockIndexAfter) — descendants() could match a nested
+      // node's id and compute an index relative to that nested position.
+      index = blockIndexAfter(/** @type {any} */ (this.editorPane).state.doc, blockId)
+    }
+    const res = resolveEntriesForKind ? resolveEntriesForKind(targetKind, sourceNode, entries) : entries
+    return Promise.resolve(res).then((resolved) => {
+      this.#send({ type: 'extract', blockId: blockId, targetKind: targetKind, operation: operation, entries: resolved, index: index })
+    })
   }
 
   /**
@@ -809,20 +849,59 @@ export class AbstractEditor {
   }
 
   /**
-   * Creates a block of `kind` at the caret. TRANSITIONAL (P2.C): delegates to
-   * the injected `createBlockAtCaret` seam (editor.js's commit-index +
-   * create-block pipeline) because the caret lives in IIFE land until the P3
-   * SelectionModel; DEATH DATE P3/P4 — this method then resolves the insert
-   * index itself. Without a seam (bare/test editors): warn + no-op.
+   * The ONE self-sufficient, block-index-native create path (P4.F): applies a
+   * `create-block` block-op for `kind`+`attrs`. The editor is the SOLE owner of the
+   * index math — callers pass a stable block ID anchor (or nothing), NEVER a
+   * document-model position. When `afterBlockId` is OMITTED, the editor DERIVES the
+   * index from the current caret (insertIndexForBlock — the caret's top-level block
+   * index, +1, with the empty-paragraph consume applied at commit). When
+   * `afterBlockId` is PROVIDED, the editor resolves it to the index immediately AFTER
+   * that block (#indexAfterBlock; a stale/missing id appends). Markdown mode has no
+   * tiptap, so insertIndexForBlock() returns -1 and the op carries index:-1 (append) —
+   * dialogs insert in markdown this way. There is no block-path inline creation, so
+   * every insert is block-index-native.
    * @param {string} kind
    * @param {object} [attrs]
+   * @param {string} [afterBlockId] — insert after the top-level block with this id
+   *   (append if stale/missing); omit to insert at the caret. A stable block id, never
+   *   a position — the editor owns all index math.
    */
-  createBlock(kind, attrs) {
-    if (!this.#createBlockAtCaret) {
-      console.warn('[editor] createBlock(' + kind + '): no createBlockAtCaret seam injected')
-      return
-    }
-    this.#createBlockAtCaret(kind, attrs || {})
+  createBlock(kind, attrs, afterBlockId) {
+    attrs = attrs || {}
+    // diagram default: an empty (source-less) diagram opens straight into edit mode.
+    if (kind === 'diagram' && !attrs.source) attrs.mode = 'edit'
+    const idx = (afterBlockId != null) ? this.#indexAfterBlock(afterBlockId) : this.insertIndexForBlock()
+    this.applyBlockOps([{ type: 'create-block', kind: kind, attrs: attrs, index: idx }])
+  }
+
+  /**
+   * Resolves a stable block id to the top-level block index immediately AFTER it —
+   * the editor-internal id→index step for `createBlock`'s anchor. Markdown / no doc →
+   * -1 (append); a stale/missing id → doc end (append). Keeps all position math inside
+   * the editor so callers never touch the document model.
+   * @param {string} blockId
+   * @returns {number}
+   */
+  #indexAfterBlock(blockId) {
+    const ed = this.editorPane
+    if (!ed) return -1                                   // markdown / no doc → append
+    const i = blockIndexAfter(ed.state.doc, blockId)     // block-position.js import
+    return i >= 0 ? i : ed.state.doc.childCount          // stale / missing id → append
+  }
+
+  /**
+   * Stashes the caret's NON-consuming block index for an async insert that will
+   * outlive the current caret (P4.F, folds in the old pre-file-dialog capture
+   * handler). The toolbar image insert opens a file dialog which blurs the editor
+   * and loses the caret, so the resolved index is captured pre-dialog; the
+   * cross-file upload handler reads window.__sieveCapturedInsertIndex and sends it
+   * to smart-paste (without it a dropped/uploaded image would append to the doc
+   * end). Uses blockIndexForInsert (NON-consuming) — capture must never eat the
+   * caret's empty paragraph (a cancelled upload must leave the blank line). No-op
+   * in markdown mode (no tiptap → nothing to anchor).
+   */
+  captureImageInsert() {
+    if (this.editorPane) window.__sieveCapturedInsertIndex = this.blockIndexForInsert(this.captureInsertPos())
   }
 
   // ── AI job seam (P4.B/P4.E-D5: the single doc-mutation for ask + explain) ─────
@@ -857,7 +936,15 @@ export class AbstractEditor {
     const ref = (aiCtx && aiCtx.blockRef) || 'doc'
     const blockType = type === 'explain' ? 'EXPLAIN' : 'ASK'
     const target = ctx && ctx.target
-    const ed = /** @type {any} */ (this.tiptap)
+    const ed = /** @type {any} */ (this.editorPane)
+    // Anchor the AI block AFTER the target's LAST block, using the context's block ids
+    // (what the panel resolved) — NOT the live selection. This is a PURE context read
+    // (no `ed` needed): createBlock owns the id→index resolution, so the anchor is
+    // immune to a caret that drifted after the label rendered AND to NodeSelection
+    // boundary ambiguity (an ai-block follow-up). A miss/no-anchor appends. Markdown
+    // has no block ids → anchorId undefined → createBlock caret-derives (-1 append).
+    const ids = (ctx.blockIds && ctx.blockIds.length) ? ctx.blockIds : (ctx.blockId ? [ctx.blockId] : [])
+    const anchorId = ids[ids.length - 1]
     if (ed) {
       // Highlight the TARGET the panel showed (context.target.range) — protocol-
       // significant (the == mark tells Go which words the answer is about). Only a
@@ -866,20 +953,9 @@ export class AbstractEditor {
         applyTargetHighlight(ed, target.range)
       }
       ed.commands.focus()
-      // Land the AI block AFTER the target's LAST block, anchored on the context's
-      // block ids (what the panel resolved) — NOT the live selection. blockIndexAfter
-      // finds the block by its stable id in the live doc, so the anchor is immune to a
-      // caret that drifted after the label rendered AND to NodeSelection boundary
-      // ambiguity (an ai-block follow-up). The position feeds the existing commit path,
-      // so the empty-paragraph rule is preserved and a non-drift ask is byte-identical.
-      const doc = ed.state.doc
-      const ids = (ctx.blockIds && ctx.blockIds.length) ? ctx.blockIds : (ctx.blockId ? [ctx.blockId] : [])
-      const lastId = ids[ids.length - 1]
-      const idx = lastId ? blockIndexAfter(doc, lastId) : -1
-      this.setInsertPos(idx >= 0 ? docPosForBlockIndex(doc, idx) : null)
     }
     const done = this.flushSave()
-      .then(() => { this.createBlock('ai-block', { type: blockType, ref: ref, question: question || '' }) })
+      .then(() => { this.createBlock('ai-block', { type: blockType, ref: ref, question: question || '' }, anchorId) })
       .catch((err) => { console.error('[editor] askAi flush error:', err) })
     // Editor owns its cursor: collapse focus to the target end (right where the
     // answer lands) — the former Ask-panel post-send hop, folded into the seam.
@@ -892,12 +968,11 @@ export class AbstractEditor {
   // ── Insert position (P4.A: moved off editor.js's IIFE) ────────────────────────
   //
   // The insert-position math is EDITOR-scoped shared state: it is read by BOTH
-  // surfaces (applyServerOp numeric fallback) AND the classic-script create paths
-  // in editor.js (sieve:create-block / dialogs / runAiJob / extract), which can
-  // only reach a PUBLIC method on the live editor via _activeEditor() — never a
-  // surface #private (the classic/module boundary). So it lives here as public
-  // methods (D-1). The position helpers are ES imports from their owning modules
-  // (ai/ai-target.js, base/block-position.js) — the shared TipTap bus is retired.
+  // surfaces (applyServerOp numeric fallback) AND the create paths (createBlock,
+  // dialogs, askAi, extract), which reach a PUBLIC method on the live editor —
+  // never a surface #private (the classic/module boundary). So it lives here as
+  // public methods (D-1). The position helpers are ES imports from their owning
+  // modules (ai/ai-target.js, base/block-position.js) — the shared TipTap bus is retired.
 
   /**
    * Stashes where the next inserted block goes (a doc pos, a {from,to} range, or
@@ -923,32 +998,17 @@ export class AbstractEditor {
   }
 
   /**
-   * kindIsInline reads from the schema whether a sieve-<kind> node is inline (e.g.
-   * smart-link) — so blockInsertPos places it at the caret rather than after the
-   * top-level block. Unknown kind → block (the safe default; lands after the
-   * enclosing top-level node, never splitting it).
-   * @param {string} kind
-   * @returns {boolean}
-   */
-  kindIsInline(kind) {
-    const ed = /** @type {any} */ (this.tiptap)
-    if (!ed || !kind) return false
-    const nt = ed.schema.nodes['sieve-' + kind]
-    return !!(nt && nt.isInline)
-  }
-
-  /**
    * captureInsertPos resolves WHERE the next inserted block goes, the single way
    * every additive creation path stamps the insert position (D-r.7). Delegates to
-   * the shared blockInsertPos helper so block answers land after the top-level
-   * block and inline kinds land at the caret. (In-place conversion / explicit-
-   * position pastes set the insert position directly with their own {from,to}.)
-   * @param {boolean} isInline
+   * the shared blockInsertPos helper so block answers always land after the top-
+   * level block (never at the caret — there is no block-path inline creation, so
+   * the old isInline branch is gone). (In-place conversion / explicit-position
+   * pastes set the insert position directly with their own {from,to}.)
    * @returns {number|null}
    */
-  captureInsertPos(isInline) {
-    const ed = /** @type {any} */ (this.tiptap)
-    return ed ? blockInsertPos(ed.state, isInline) : null
+  captureInsertPos() {
+    const ed = /** @type {any} */ (this.editorPane)
+    return ed ? blockInsertPos(ed.state) : null
   }
 
   /**
@@ -960,7 +1020,7 @@ export class AbstractEditor {
    * @returns {number}
    */
   blockIndexForInsert(pos) {
-    const ed = /** @type {any} */ (this.tiptap)
+    const ed = /** @type {any} */ (this.editorPane)
     if (!ed) return -1
     return blockIndexForInsert(ed.state.doc, pos)
   }
@@ -980,7 +1040,7 @@ export class AbstractEditor {
    * @returns {number}
    */
   commitInsertIndex(pos) {
-    const ed = /** @type {any} */ (this.tiptap)
+    const ed = /** @type {any} */ (this.editorPane)
     if (!ed) return -1
     const anchor = emptyParagraphAnchor(ed.state.doc, pos)
     if (!anchor) return this.blockIndexForInsert(pos)
@@ -994,13 +1054,13 @@ export class AbstractEditor {
   }
 
   /**
-   * insertIndexForBlock — the paste/drop block-insert index: capture at the caret
-   * as a BLOCK (never inline) and commit. Identical to the old
-   * commitInsertIndex(captureInsertPos(false)) inline composition; exists so the
-   * surface's paste/drop never touch the capture+commit composition directly.
+   * insertIndexForBlock — the caret-derived block-insert index: capture at the caret
+   * as a BLOCK and commit (with the empty-paragraph consume). The default index for
+   * createBlock and the surface's paste/drop; exists so callers never touch the
+   * capture+commit composition directly.
    * @returns {number}
    */
-  insertIndexForBlock() { return this.commitInsertIndex(this.captureInsertPos(false)) }
+  insertIndexForBlock() { return this.commitInsertIndex(this.captureInsertPos()) }
 
   /**
    * insertIndexForBlockAt(pos) — commit an EXPLICIT position (a drop coordinate).
@@ -1033,7 +1093,7 @@ export class AbstractEditor {
   async softReload() {
     const mode = this.mode
     if (mode !== 'wysiwyg' && mode !== 'markdown') return
-    if (mode === 'wysiwyg' && !this.tiptap) return
+    if (mode === 'wysiwyg' && !this.editorPane) return
     this.#reloadInProgress = true
     // Pull the focus coordinate before the async fetch so caret is preserved
     // across the re-render (TRANSFORM, paste, extract, AI block resolve).
@@ -1043,7 +1103,7 @@ export class AbstractEditor {
       const data = await r.json()
       const body = data.body || ''
       const surface = this.#surface
-      if (mode === 'wysiwyg' && this.tiptap && surface) {
+      if (mode === 'wysiwyg' && this.editorPane && surface) {
         // Wysiwyg renders the backend's AUTHORITATIVE block list (markdown is NOT
         // a wysiwyg render input — a flat re-parse invents ids). reloadFromBlocks
         // wraps a multi-node prose block into ONE container carrying its id.

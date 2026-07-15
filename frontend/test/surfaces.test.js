@@ -17,11 +17,17 @@ import { DOMParser as PMDOMParser, Schema } from '@tiptap/pm/model'
 // `Extension.create(...)` at module-eval time, so importing WysiwygSurface would
 // throw against the bare test/setup.js vendor bag; the `let`-exported registry
 // symbols (getSieveNodes, serializeNode, …) are undefined until app registration.
-// We mock those owner modules — replacing the old deps.T injection with vi.mock +
-// per-test vi.mocked overrides. Pure helper modules (block-render, block-kinds,
-// render-empty) stay REAL. getBlockSelectionRange's default mirrors the pre-P4.E
-// "no block-range" fallback (the live PM selection) so the basic feedSelection
-// tests read the same range they used to; richness tests override it.
+// We mock those owner modules with vi.mock + per-test vi.mocked overrides. Pure
+// helper modules (block-render, block-kinds, render-empty) stay REAL.
+// getBlockSelectionRange's default mirrors the pre-P4.E "no block-range" fallback
+// (the live PM selection) so the basic feedSelection tests read the same range
+// they used to; richness tests override it.
+//
+// P4.F: the surfaces IMPORT `T` from base/tiptap-vendor.js (the shared
+// globalThis.TipTap bag installed by test/setup.js) instead of taking a host.T
+// seam. Tests seed the fake vendor members onto that bag (the established P4.E
+// pattern — Object.assign(globalThis.TipTap, …), never reassign) and clear them
+// after each test so a fake bundle never leaks forward.
 vi.mock('../src/static/editor/extensions.js', () => ({
   Search: {}, SelectionHighlight: {}, HighlightMark: {},
   AiShortcuts: { configure: () => ({}) },
@@ -80,6 +86,13 @@ import { schema as fxSchema, build, docWithCaret, docWithCaretAt, docWithRange, 
 beforeEach(() => { window.isMod = (e) => !!(e.ctrlKey || e.metaKey) })
 afterEach(() => { vi.useRealTimers() })
 
+// The shared vendor bag (installed by test/setup.js; base/tiptap-vendor.js's `T`
+// is the same object). Seed fake vendor members onto it; clear them after each
+// test so a fake TipTap bundle from one test never leaks into the next.
+const VENDOR = /** @type {any} */ (globalThis).TipTap
+function seedVendor(members) { Object.assign(VENDOR, members) }
+afterEach(() => { for (const k of Object.keys(VENDOR)) delete VENDOR[k] })
+
 // The app-helper module mocks are shared across tests: clear call history AND
 // re-establish default implementations before each test, so a per-test
 // vi.mocked(...).mockReturnValue override (feedSelection richness / caret-in-raw)
@@ -99,21 +112,23 @@ beforeEach(() => {
 
 // ── MarkdownSurface ───────────────────────────────────────────────────────────
 
-function mdDeps(overrides = {}) {
+// A fake host (the parent editor): the markdown surface calls its public API
+// directly (P4.F) — onSurfaceEvent / updateText / takeInsertPos / softReload.
+function mdHost(overrides = {}) {
   return Object.assign({
     updateText: vi.fn(),
-    requestReload: vi.fn(),
+    softReload: vi.fn(),
     takeInsertPos: vi.fn(() => null),
-    notify: vi.fn(),
+    onSurfaceEvent: vi.fn(),
   }, overrides)
 }
 
-function mountMd(content = 'seed body', deps = mdDeps()) {
+function mountMd(content = 'seed body', host = mdHost()) {
   const root = document.createElement('div')
   document.body.appendChild(root)
-  const s = new MarkdownSurface(deps)
+  const s = new MarkdownSurface(host)
   s.mount(root, content)
-  return { s, root, deps, textarea: root.querySelector('textarea.markdown-editor') }
+  return { s, root, host, textarea: root.querySelector('textarea.markdown-editor') }
 }
 
 function typeInto(textarea, value) {
@@ -122,11 +137,11 @@ function typeInto(textarea, value) {
 }
 
 describe('MarkdownSurface (P2.B)', () => {
-  it('is an AbstractSurface with mode markdown and null tiptap', () => {
-    const s = new MarkdownSurface(mdDeps())
+  it('is an AbstractSurface with mode markdown and null editorPane', () => {
+    const s = new MarkdownSurface(mdHost())
     expect(s).toBeInstanceOf(AbstractSurface)
     expect(s.mode).toBe('markdown')
-    expect(s.tiptap).toBeNull()
+    expect(s.editorPane).toBeNull()
   })
 
   it('mount builds gutter + textarea under the root and seeds body', () => {
@@ -146,64 +161,64 @@ describe('MarkdownSurface (P2.B)', () => {
 
   it('input debounces 500ms then submits ONE domain updateText; body updates immediately', () => {
     vi.useFakeTimers()
-    const { s, deps, textarea } = mountMd('a')
+    const { s, host, textarea } = mountMd('a')
     typeInto(textarea, 'ab')
     expect(s.body).toBe('ab')            // body tracks the keystroke
-    expect(deps.updateText).not.toHaveBeenCalled()
+    expect(host.updateText).not.toHaveBeenCalled()
     vi.advanceTimersByTime(499)
-    expect(deps.updateText).not.toHaveBeenCalled()
+    expect(host.updateText).not.toHaveBeenCalled()
     vi.advanceTimersByTime(1)
-    expect(deps.updateText).toHaveBeenCalledTimes(1)
+    expect(host.updateText).toHaveBeenCalledTimes(1)
     // Domain-shaped: the raw markdown only — NO wire envelope, NO uuid.
-    expect(deps.updateText).toHaveBeenCalledWith('ab')
+    expect(host.updateText).toHaveBeenCalledWith('ab')
   })
 
   it('input notifies the producer-named doc-changed event (no consumer knowledge)', () => {
-    const { deps, textarea } = mountMd('a')
+    const { host, textarea } = mountMd('a')
     typeInto(textarea, 'ab')
-    expect(deps.notify).toHaveBeenCalledWith(SurfaceEvent.DOC_CHANGED)
+    expect(host.onSurfaceEvent).toHaveBeenCalledWith(SurfaceEvent.DOC_CHANGED)
     expect(Object.isFrozen(SurfaceEvent.DOC_CHANGED)).toBe(true)
   })
 
   it('flushPending cancels the timer and submits immediately; idle flush is a no-op', () => {
     vi.useFakeTimers()
-    const { s, deps, textarea } = mountMd('a')
+    const { s, host, textarea } = mountMd('a')
     s.flushPending()                      // idle → nothing
-    expect(deps.updateText).not.toHaveBeenCalled()
+    expect(host.updateText).not.toHaveBeenCalled()
     typeInto(textarea, 'abc')
     s.flushPending()                      // pending → immediate submit
-    expect(deps.updateText).toHaveBeenCalledTimes(1)
-    expect(deps.updateText).toHaveBeenCalledWith('abc')
+    expect(host.updateText).toHaveBeenCalledTimes(1)
+    expect(host.updateText).toHaveBeenCalledWith('abc')
     vi.advanceTimersByTime(1000)          // timer cancelled → no double-submit
-    expect(deps.updateText).toHaveBeenCalledTimes(1)
+    expect(host.updateText).toHaveBeenCalledTimes(1)
   })
 
   it('applyServerOp(insert-block) appends the markdown, clears insert pos, submits the buffer', () => {
-    const { s, deps, textarea } = mountMd('hello')
+    const { s, host, textarea } = mountMd('hello')
     s.applyServerOp({ type: 'insert-block', markdown: '```js\ncode\n```' })
-    expect(deps.takeInsertPos).toHaveBeenCalledTimes(1)
+    expect(host.takeInsertPos).toHaveBeenCalledTimes(1)
     expect(s.body).toBe('hello\n\n```js\ncode\n```\n')
     expect(textarea.value).toBe(s.body)
-    expect(deps.updateText).toHaveBeenCalledWith(s.body)
+    expect(host.updateText).toHaveBeenCalledWith(s.body)
   })
 
   it('applyServerOp(replace-block) requests a reload; block-attrs-updated is a no-op', () => {
-    const { s, deps } = mountMd('x')
+    const { s, host } = mountMd('x')
     s.applyServerOp({ type: 'replace-block', oldId: 'a', newId: 'b' })
-    expect(deps.requestReload).toHaveBeenCalledTimes(1)
+    expect(host.softReload).toHaveBeenCalledTimes(1)
     s.applyServerOp({ type: 'block-attrs-updated', id: 'a', attrs: { status: 'done' } })
-    expect(deps.updateText).not.toHaveBeenCalled()
-    expect(deps.requestReload).toHaveBeenCalledTimes(1) // unchanged
+    expect(host.updateText).not.toHaveBeenCalled()
+    expect(host.softReload).toHaveBeenCalledTimes(1) // unchanged
   })
 
   it('unmount removes the DOM and kills a pending debounce', () => {
     vi.useFakeTimers()
-    const { s, root, deps, textarea } = mountMd('a')
+    const { s, root, host, textarea } = mountMd('a')
     typeInto(textarea, 'ab')
     s.unmount()
     expect(root.children.length).toBe(0)
     vi.advanceTimersByTime(1000)
-    expect(deps.updateText).not.toHaveBeenCalled()
+    expect(host.updateText).not.toHaveBeenCalled()
   })
 
   it('handles NO app-level chords: Mod+S / Mod+J bubble out untouched', () => {
@@ -226,7 +241,7 @@ describe('MarkdownSurface (P2.B)', () => {
   })
 
   it('feedSelection reports a none descriptor (opaque buffer, no block model) — the document target', () => {
-    const s = new MarkdownSurface(mdDeps())
+    const s = new MarkdownSurface(mdHost())
     expect(s.feedSelection()).toEqual({
       selectionType: 'none', caret: null, range: null, selectedText: null,
       blockId: null, blockIds: [], blockKind: null, ref: null, blockCursor: null,
@@ -251,19 +266,21 @@ const tokSchema = new Schema({
   },
 })
 
-function wyDeps(overrides = {}) {
+// A fake host (the parent editor): the wysiwyg surface calls its public API
+// directly (P4.F) — onSurfaceEvent / applyBlockOps / flushSave / takeInsertPos and
+// the insert-index math (insertIndexForBlock = commitInsertIndex(captureInsertPos()),
+// insertIndexForBlockAt(pos) = commitInsertIndex(pos), plus clearInsertPos). `uuid`
+// is read by the surface constructor. TestWysiwygSurface overrides uuid per call.
+function wyHost(overrides = {}) {
   return Object.assign({
     applyBlockOps: vi.fn(),
-    requestSave: vi.fn(),
-    // P4.A: the surface OWNS #handleSmartPaste/#handleSmartDrop now (no onPaste/
-    // onDrop deps). The insert-index math it needs is editor-sourced (D-1):
-    // insertIndexForBlock = commitInsertIndex(captureInsertPos(false)),
-    // insertIndexForBlockAt(pos) = commitInsertIndex(pos), plus clearInsertPos.
+    flushSave: vi.fn(),
     insertIndexForBlock: vi.fn(() => 0),
     insertIndexForBlockAt: vi.fn(() => 0),
     clearInsertPos: vi.fn(),
     takeInsertPos: vi.fn(() => null),
-    notify: vi.fn(),
+    onSurfaceEvent: vi.fn(),
+    uuid: 'doc-1',
   }, overrides)
 }
 
@@ -295,28 +312,27 @@ function fakeEditorOver(schema, docNodes) {
   }
 }
 
-// A surface whose live editor is injected (the mount path builds the real
-// island in-app; these tests pin the applyServerOp contract on the instance).
+// A surface whose live editor is injected (the mount path builds the real island
+// in-app; these tests pin the applyServerOp contract on the instance). The uuid is
+// merged into the host (the surface reads host.uuid, P4.F) so the ('doc-1', host,
+// ed) call shape is preserved.
 class TestWysiwygSurface extends WysiwygSurface {
-  constructor(uuid, deps, editor) { super(uuid, deps); this._ed = editor }
-  get tiptap() { return this._ed }
-}
-
-// deps.T now carries ONLY vendor members (the app helpers are ES imports, mocked
-// above). ProseMirrorDOMParser is the one the render pipeline reads off #T.
-function callShapeT(overrides = {}) {
-  return Object.assign({
-    ProseMirrorDOMParser: PMDOMParser,
-  }, overrides)
+  constructor(uuid, host, editor) { super(Object.assign(host, { uuid })); this._ed = editor }
+  get editorPane() { return this._ed }
 }
 
 describe('WysiwygSurface.applyServerOp (P2.B call-shape, undo-sacred)', () => {
-  beforeEach(() => vi.useFakeTimers()) // deferred focus/scroll callbacks never run
+  // P4.F: the render pipeline (#blockToNodes) reads ProseMirrorDOMParser off the
+  // imported `T` (the shared vendor bag) — seed it (the retired callShapeT bundle,
+  // now the ONE vendor member the applyServerOp path needs).
+  beforeEach(() => {
+    vi.useFakeTimers() // deferred focus/scroll callbacks never run
+    seedVendor({ ProseMirrorDOMParser: PMDOMParser })
+  })
 
   it('insert-block at msg.index → TRACKED insertContentAt(docPosForBlockIndex(index))', () => {
-    const T = callShapeT()
     const ed = fakeEditorOver(fxSchema, [build.p('one', 'b1')])
-    const s = new TestWysiwygSurface('doc-1', wyDeps({ T }), ed)
+    const s = new TestWysiwygSurface('doc-1', wyHost(), ed)
     s.applyServerOp({ type: 'insert-block', kind: 'prose', id: 'srv-1', attrs: { id: 'srv-1', content: 'Hello' }, index: 1 })
     expect(docPosForBlockIndex).toHaveBeenCalledWith(ed.state.doc, 1)
     const ins = ed.calls.find((c) => c[0] === 'insertContentAt')
@@ -327,30 +343,27 @@ describe('WysiwygSurface.applyServerOp (P2.B call-shape, undo-sacred)', () => {
   })
 
   it('insert-block falls back to the captured numeric insert pos when no index', () => {
-    const T = callShapeT()
     const ed = fakeEditorOver(fxSchema, [build.p('one', 'b1')])
-    const deps = wyDeps({ T, takeInsertPos: vi.fn(() => 3) })
-    const s = new TestWysiwygSurface('doc-1', deps, ed)
+    const host = wyHost({ takeInsertPos: vi.fn(() => 3) })
+    const s = new TestWysiwygSurface('doc-1', host, ed)
     s.applyServerOp({ type: 'insert-block', kind: 'prose', id: 'srv-2', attrs: { id: 'srv-2', content: 'Hi' } })
-    expect(deps.takeInsertPos).toHaveBeenCalledTimes(1)
+    expect(host.takeInsertPos).toHaveBeenCalledTimes(1)
     const ins = ed.calls.find((c) => c[0] === 'insertContentAt')
     expect(ins[1]).toBe(3)
   })
 
   it('insert-block skip-if-present: an echoed id already in the DOM never re-inserts', () => {
-    const T = callShapeT()
     const ed = fakeEditorOver(fxSchema, [build.p('one', 'srv-3')])
     ed.view.dom.innerHTML = '<p data-id="srv-3">one</p>'
-    const s = new TestWysiwygSurface('doc-1', wyDeps({ T }), ed)
+    const s = new TestWysiwygSurface('doc-1', wyHost(), ed)
     s.applyServerOp({ type: 'insert-block', kind: 'prose', id: 'srv-3', attrs: { id: 'srv-3', content: 'one' }, index: 0 })
     expect(ed.calls.find((c) => c[0] === 'insertContentAt')).toBeUndefined()
   })
 
   it('insert-block token swap: setNodeMarkup with addToHistory:false, no insert', () => {
-    const T = callShapeT()
     const p = tokSchema.nodes.paragraph.create({ id: '', token: 'tok-1' }, tokSchema.text('typed'))
     const ed = fakeEditorOver(tokSchema, [p])
-    const s = new TestWysiwygSurface('doc-1', wyDeps({ T }), ed)
+    const s = new TestWysiwygSurface('doc-1', wyHost(), ed)
     s.applyServerOp({ type: 'insert-block', kind: 'prose', token: 'tok-1', id: 'real-1' })
     expect(ed.dispatched.length).toBe(1)
     const tr = ed.dispatched[0]
@@ -362,22 +375,20 @@ describe('WysiwygSurface.applyServerOp (P2.B call-shape, undo-sacred)', () => {
   })
 
   it('insert-block token orphan (node deleted in flight): deletes by authoritative id', () => {
-    const T = callShapeT()
     const ed = fakeEditorOver(tokSchema, [tokSchema.nodes.paragraph.create({ id: 'x', token: '' }, tokSchema.text('t'))])
-    const deps = wyDeps({ T })
-    const s = new TestWysiwygSurface('doc-1', deps, ed)
+    const host = wyHost()
+    const s = new TestWysiwygSurface('doc-1', host, ed)
     s.applyServerOp({ type: 'insert-block', kind: 'prose', token: 'tok-gone', id: 'real-2' })
     // Domain-shaped: the delete-block op only — the WS envelope is NoteEditor's.
-    expect(deps.applyBlockOps).toHaveBeenCalledWith([{ type: 'delete-block', blockId: 'real-2' }])
+    expect(host.applyBlockOps).toHaveBeenCalledWith([{ type: 'delete-block', blockId: 'real-2' }])
     expect(ed.dispatched.length).toBe(0)
     expect(ed.calls.find((c) => c[0] === 'insertContentAt')).toBeUndefined()
   })
 
   it('replace-block: TRACKED insertContentAt over the oldId range (undoable transform)', () => {
-    const T = callShapeT()
     const first = build.p('first', 'old-1')
     const ed = fakeEditorOver(fxSchema, [first, build.p('second', 'keep-1')])
-    const s = new TestWysiwygSurface('doc-1', wyDeps({ T }), ed)
+    const s = new TestWysiwygSurface('doc-1', wyHost(), ed)
     s.applyServerOp({ type: 'replace-block', oldId: 'old-1', newId: 'new-1', newKind: 'prose', attrs: { content: 'Replaced' } })
     const ins = ed.calls.find((c) => c[0] === 'insertContentAt')
     expect(ins).toBeTruthy()
@@ -386,17 +397,15 @@ describe('WysiwygSurface.applyServerOp (P2.B call-shape, undo-sacred)', () => {
   })
 
   it('replace-block with unknown oldId does nothing', () => {
-    const T = callShapeT()
     const ed = fakeEditorOver(fxSchema, [build.p('first', 'a')])
-    const s = new TestWysiwygSurface('doc-1', wyDeps({ T }), ed)
+    const s = new TestWysiwygSurface('doc-1', wyHost(), ed)
     s.applyServerOp({ type: 'replace-block', oldId: 'nope', newId: 'new', newKind: 'prose', attrs: {} })
     expect(ed.calls.find((c) => c[0] === 'insertContentAt')).toBeUndefined()
   })
 
   it('block-attrs-updated: setNodeMarkup by id with addToHistory:false', () => {
-    const T = callShapeT()
     const ed = fakeEditorOver(fxSchema, [build.sieveCode('blk-1'), build.p('txt', 'p1')])
-    const s = new TestWysiwygSurface('doc-1', wyDeps({ T }), ed)
+    const s = new TestWysiwygSurface('doc-1', wyHost(), ed)
     s.applyServerOp({ type: 'block-attrs-updated', id: 'blk-1', attrs: { ref: 'r-9' } })
     expect(ed.dispatched.length).toBe(1)
     const tr = ed.dispatched[0]
@@ -405,7 +414,7 @@ describe('WysiwygSurface.applyServerOp (P2.B call-shape, undo-sacred)', () => {
   })
 
   it('applyServerOp without a live editor is a safe no-op', () => {
-    const s = new TestWysiwygSurface('doc-1', wyDeps({ T: callShapeT() }), null)
+    const s = new TestWysiwygSurface('doc-1', wyHost(), null)
     expect(() => s.applyServerOp({ type: 'insert-block', id: 'x', index: 0 })).not.toThrow()
   })
 })
@@ -460,73 +469,81 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     const doc = fxSchema.nodes.doc.create(null, [build.p('one', 'b1')])
     const state = EditorState.create({ schema: fxSchema, doc })
     const { T, editor } = mountBundle(state)
-    const deps = wyDeps({ T })
-    const s = new WysiwygSurface('doc-1', deps)
+    seedVendor(T) // the surface imports T from the vendor bag (P4.F) — seed the fake bundle
+    const host = wyHost()
+    const s = new WysiwygSurface(host)
     const root = document.createElement('div')
     document.body.appendChild(root)
     s.mount(root, { body: '', blocks: [] })
-    return { s, root, deps, T, ed: editor() }
+    return { s, root, host, T, ed: editor() }
   }
 
-  it('mount constructs the island on the root and exposes tiptap + window.__tiptap', () => {
+  it('mount constructs the island on the root and exposes editorPane + window.__tiptap', () => {
     const { s, root, ed } = mountWy()
     expect(ed).toBeTruthy()
     expect(ed.options.element).toBe(root)
-    expect(s.tiptap).toBe(ed)
+    expect(s.editorPane).toBe(ed)
     expect(window.__tiptap).toBe(ed)
     expect(s.mode).toBe('wysiwyg')
   })
 
+  it('mount stamps the parent Editor onto the pane as sieveHost (the NodeView→Editor handle)', () => {
+    // P4.F Brief C: a block capability (ctx.getEditor) reaches the Editor through
+    // editorPane.sieveHost — the pane the surface built, stamped with its host.
+    const { host, ed } = mountWy()
+    expect(ed.sieveHost).toBe(host)
+  })
+
   it('onUpdate debounces 500ms then submits granular block-domain ops', () => {
     vi.mocked(computeBlockSync).mockReturnValue({ next: {}, ops: [{ type: 'update-block', blockId: 'b1' }] })
-    const { deps, ed } = mountWy()
+    const { host, ed } = mountWy()
     ed.options.onUpdate({ editor: ed })
-    expect(deps.applyBlockOps).not.toHaveBeenCalled()
+    expect(host.applyBlockOps).not.toHaveBeenCalled()
     vi.advanceTimersByTime(500)
     expect(computeBlockSync).toHaveBeenCalledTimes(1)
-    expect(deps.applyBlockOps).toHaveBeenCalledWith([{ type: 'update-block', blockId: 'b1' }])
+    expect(host.applyBlockOps).toHaveBeenCalledWith([{ type: 'update-block', blockId: 'b1' }])
   })
 
   it('onUpdate notifies doc-changed; selection/transaction/focus emit their events', () => {
-    const { deps, ed } = mountWy()
+    const { host, ed } = mountWy()
     ed.options.onUpdate({ editor: ed })
-    expect(deps.notify).toHaveBeenCalledWith(SurfaceEvent.DOC_CHANGED)
+    expect(host.onSurfaceEvent).toHaveBeenCalledWith(SurfaceEvent.DOC_CHANGED)
     ed.options.onSelectionUpdate({ editor: ed })
-    expect(deps.notify).toHaveBeenCalledWith(SurfaceEvent.SELECTION_CHANGED)
+    expect(host.onSurfaceEvent).toHaveBeenCalledWith(SurfaceEvent.SELECTION_CHANGED)
     ed.options.onTransaction({ editor: ed })
-    expect(deps.notify).toHaveBeenCalledWith(SurfaceEvent.TRANSACTION)
+    expect(host.onSurfaceEvent).toHaveBeenCalledWith(SurfaceEvent.TRANSACTION)
     ed.view.dom.dispatchEvent(new Event('focusin'))
-    expect(deps.notify).toHaveBeenCalledWith(SurfaceEvent.FOCUS_CHANGED)
+    expect(host.onSurfaceEvent).toHaveBeenCalledWith(SurfaceEvent.FOCUS_CHANGED)
   })
 
   it('flushPending fires the pending sync immediately, exactly once', () => {
-    const { s, deps, ed } = mountWy()
+    const { s, host, ed } = mountWy()
     ed.options.onUpdate({ editor: ed })
     s.flushPending()
-    expect(deps.applyBlockOps).toHaveBeenCalledTimes(1)
+    expect(host.applyBlockOps).toHaveBeenCalledTimes(1)
     vi.advanceTimersByTime(1000)
-    expect(deps.applyBlockOps).toHaveBeenCalledTimes(1) // timer cancelled — no double sync
+    expect(host.applyBlockOps).toHaveBeenCalledTimes(1) // timer cancelled — no double sync
     s.flushPending()                                      // idle → no-op
-    expect(deps.applyBlockOps).toHaveBeenCalledTimes(1)
+    expect(host.applyBlockOps).toHaveBeenCalledTimes(1)
   })
 
   it('unmount destroys the island, clears the root and window.__tiptap, kills the timer', () => {
-    const { s, root, deps, ed } = mountWy()
+    const { s, root, host, ed } = mountWy()
     ed.options.onUpdate({ editor: ed })
     s.unmount()
     expect(ed.destroyed).toBe(true)
     expect(root.innerHTML).toBe('')
     expect(window.__tiptap).toBeNull()
-    expect(s.tiptap).toBeNull()
+    expect(s.editorPane).toBeNull()
     vi.advanceTimersByTime(1000)
-    expect(deps.applyBlockOps).not.toHaveBeenCalled()
+    expect(host.applyBlockOps).not.toHaveBeenCalled()
   })
 })
 
 // ── WysiwygSurface: #handleSmartPaste / #handleSmartDrop (P4.A) ────────────────
 // The smart-paste / smart-drop pipelines moved off editor.js's IIFE into the
 // surface as #private methods, wired at editorProps.handlePaste / handleDrop.
-// They call the editor-sourced insert-index deps (insertIndexForBlock /
+// They call the editor-sourced insert-index host (insertIndexForBlock /
 // insertIndexForBlockAt / clearInsertPos) rather than the retired IIFE closures.
 // Undo-sacred: the ai-block reimport insertContent stays a TRACKED command.
 
@@ -554,18 +571,19 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
   function stubFetch(fn) { global.fetch = fn; window.fetch = fn }
 
   // Mount a real WysiwygSurface via the recording bundle; expose the editorProps
-  // handlers (the wiring the editor gives ProseMirror) + the fake editor + deps.
-  function mountPaste(deps = wyDeps(), uuid = 'doc-1', opts = {}) {
+  // handlers (the wiring the editor gives ProseMirror) + the fake editor + host.
+  function mountPaste(host = wyHost(), uuid = 'doc-1', opts = {}) {
     if (opts.caretInRawTextBlock) vi.mocked(caretInRawTextBlock).mockImplementation(opts.caretInRawTextBlock)
     const doc = fxSchema.nodes.doc.create(null, [build.p('one', 'b1')])
     const state = EditorState.create({ schema: fxSchema, doc })
     const bundle = mountBundle(state)
-    const s = new WysiwygSurface(uuid, Object.assign(deps, { T: bundle.T }))
+    seedVendor(bundle.T) // the surface imports T from the vendor bag (P4.F)
+    const s = new WysiwygSurface(Object.assign(host, { uuid }))
     const root = document.createElement('div')
     document.body.appendChild(root)
     s.mount(root, { body: '', blocks: [] })
     const ed = bundle.editor()
-    return { s, ed, deps, props: ed.options.editorProps, uuid }
+    return { s, ed, host, props: ed.options.editorProps, uuid }
   }
 
   function clip({ text = '', html = '', slice = '', items = [] } = {}) {
@@ -597,7 +615,7 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
   })
 
   it('caret in a raw-text block → returns false (native paste), no insert', () => {
-    const { ed, props } = mountPaste(wyDeps(), 'doc-1', { caretInRawTextBlock: () => true })
+    const { ed, props } = mountPaste(wyHost(), 'doc-1', { caretInRawTextBlock: () => true })
     const event = { clipboardData: clip({ text: 'plain' }), target: {}, preventDefault: vi.fn() }
     expect(props.handlePaste({}, event)).toBe(false)
     expect(ed.commands.insertContent).not.toHaveBeenCalled()
@@ -606,13 +624,13 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
   it('smart-paste pipeline: computes the block index via insertIndexForBlock, POSTs, returns true', async () => {
     const fetchMock = vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ matched: true }) }))
     stubFetch(fetchMock)
-    const deps = wyDeps({ insertIndexForBlock: vi.fn(() => 4) })
+    const host = wyHost({ insertIndexForBlock: vi.fn(() => 4) })
     const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('hello') }
-    const { props } = mountPaste(deps, 'doc-1')
+    const { props } = mountPaste(host, 'doc-1')
     const event = { clipboardData: Object.assign(clip({ text: 'hello', items: [strItem] }), { items: [strItem] }), target: {}, preventDefault: vi.fn() }
     const handled = props.handlePaste({}, event)
     expect(handled).toBe(true)
-    expect(deps.insertIndexForBlock).toHaveBeenCalledTimes(1)
+    expect(host.insertIndexForBlock).toHaveBeenCalledTimes(1)
     expect(event.preventDefault).toHaveBeenCalled()
     await new Promise((r) => setTimeout(r, 0))
     expect(fetchMock).toHaveBeenCalledWith('/api/editor/smart-paste', expect.objectContaining({ method: 'POST' }))
@@ -623,20 +641,26 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
   it('smart-paste no-match fallback: replays the original clipboard content via TRACKED insertContent', async () => {
     stubFetch(vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ matched: false }) })))
     const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('hello') }
-    const { ed, deps, props } = mountPaste(wyDeps(), 'doc-1')
+    const { ed, host, props } = mountPaste(wyHost(), 'doc-1')
     const event = { clipboardData: Object.assign(clip({ text: 'hello', items: [strItem] }), { items: [strItem] }), target: {}, preventDefault: vi.fn() }
     props.handlePaste({}, event)
     // Drain the async chain: Promise.all → fetch → r.json() → result handler.
     await new Promise((r) => setTimeout(r, 0))
-    expect(deps.clearInsertPos).toHaveBeenCalled()   // stale insert pos cleared
+    expect(host.clearInsertPos).toHaveBeenCalled()   // stale insert pos cleared
     expect(ed.commands.insertContent).toHaveBeenCalledWith('hello')
   })
 
   it('handleSmartDrop: image file → insertIndexForBlockAt(dropPos), POSTs smart-paste, returns true', async () => {
+    // happy-dom's FileReader rejects on a non-Blob stub file, leaking an unhandled
+    // rejection AFTER this test's synchronous assertions pass. This test asserts only
+    // the sync drop path, so stub a no-op reader (its Promise stays pending, never rejects).
+    const OrigFileReader = globalThis.FileReader
+    globalThis.FileReader = class { readAsDataURL() {} }
+    try {
     const fetchMock = vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ matched: true }) }))
     stubFetch(fetchMock)
-    const deps = wyDeps({ insertIndexForBlockAt: vi.fn(() => 9) })
-    const { ed, props } = mountPaste(deps, 'doc-1')
+    const host = wyHost({ insertIndexForBlockAt: vi.fn(() => 9) })
+    const { ed, props } = mountPaste(host, 'doc-1')
     // The surface reads posAtCoords + selection.to off the live editor.
     ed.view.posAtCoords = () => ({ pos: 12 })
     ed.state.selection = { to: 0 }
@@ -645,19 +669,20 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     const event = { dataTransfer: dt, clientX: 1, clientY: 1, preventDefault: vi.fn() }
     const handled = props.handleDrop({}, event, null, false)
     expect(handled).toBe(true)
-    expect(deps.insertIndexForBlockAt).toHaveBeenCalledWith(12)
+    expect(host.insertIndexForBlockAt).toHaveBeenCalledWith(12)
     expect(event.preventDefault).toHaveBeenCalled()
+    } finally { globalThis.FileReader = OrigFileReader }
   })
 
   it('handleSmartDrop with no files → returns false (native drop)', () => {
-    const { props } = mountPaste(wyDeps(), 'doc-1')
+    const { props } = mountPaste(wyHost(), 'doc-1')
     const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('t') }
     const event = { dataTransfer: { items: [strItem] }, clientX: 1, clientY: 1, preventDefault: vi.fn() }
     expect(props.handleDrop({}, event, null, false)).toBe(false)
   })
 
   it('paste in a prompt: uuid prompt: → no server round trip (returns false)', () => {
-    const { props } = mountPaste(wyDeps(), 'prompt:p')
+    const { props } = mountPaste(wyHost(), 'prompt:p')
     const event = { clipboardData: clip({ text: 'plain', items: [] }), target: {}, preventDefault: vi.fn() }
     expect(props.handlePaste({}, event)).toBe(false)
   })
@@ -667,11 +692,11 @@ describe('WysiwygSurface.feedSelection (P3.A raw descriptor from live PM)', () =
   // Injects a real PM state (fixture) as the surface's live editor and reads
   // feedSelection — PLAIN strings only, no PM node escapes.
   function surfaceOver(fixture) {
-    return new TestWysiwygSurface('doc-1', wyDeps(), fixture.editor)
+    return new TestWysiwygSurface('doc-1', wyHost(), fixture.editor)
   }
 
   it('no editor → a none descriptor', () => {
-    const s = new TestWysiwygSurface('doc-1', wyDeps(), null)
+    const s = new TestWysiwygSurface('doc-1', wyHost(), null)
     expect(s.feedSelection()).toEqual({
       selectionType: 'none', caret: null, range: null, selectedText: null,
       blockId: null, blockIds: [], blockKind: null, ref: null, blockCursor: null,
@@ -735,7 +760,7 @@ describe('WysiwygSurface.feedSelection richness (P3.B: block-range, dom-fold, mu
   // above); each test drives them via vi.mocked. The surface reads BOTH, never
   // raw state.selection alone. The global beforeEach re-establishes their defaults.
   function surfaceWith(fixture) {
-    return new TestWysiwygSurface('doc-1', wyDeps(), fixture.editor)
+    return new TestWysiwygSurface('doc-1', wyHost(), fixture.editor)
   }
   const setRange = (range) => vi.mocked(getBlockSelectionRange).mockReturnValue(range)
   const setFold = (fold) => vi.mocked(domSelectionBlockRange).mockReturnValue(fold)
@@ -836,12 +861,12 @@ describe('WysiwygSurface.feedSelection richness (P3.B: block-range, dom-fold, mu
 
 // P3.E — the blockCursor half of the coordinate + the symmetric WRITE side, now
 // OWNED by the surface (inlined, symmetric with MarkdownSurface.applyPosition). The
-// block branch is DOM-only (no editor); the doc-caret branch drives `this.tiptap`.
+// block branch is DOM-only (no editor); the doc-caret branch drives `this.editorPane`.
 describe('WysiwygSurface blockCursor capture + applyPosition (P3.E)', () => {
   // A surface over a real PM fixture, so feedSelection gets past the `!ed` guard and
   // we can read the surface-merged blockCursor (the block-inner DOM read).
   function surfaceWithDoc() {
-    return new TestWysiwygSurface('doc-1', wyDeps(), docWithCaret([build.p('hello', 'b1')], 0, 2).editor)
+    return new TestWysiwygSurface('doc-1', wyHost(), docWithCaret([build.p('hello', 'b1')], 0, 2).editor)
   }
   beforeEach(() => { document.body.innerHTML = '' })
   afterEach(() => { document.body.innerHTML = '' })
@@ -891,7 +916,7 @@ describe('WysiwygSurface blockCursor capture + applyPosition (P3.E)', () => {
     host.appendChild(ta)
     document.body.appendChild(host)
 
-    new TestWysiwygSurface('doc-1', wyDeps(), null)
+    new TestWysiwygSurface('doc-1', wyHost(), null)
       .applyPosition({ blockId: 'code-7', blockCursor: { start: 3, end: 6 } })
     expect(document.activeElement).toBe(ta)
     expect(ta.selectionStart).toBe(3)
@@ -905,7 +930,7 @@ describe('WysiwygSurface blockCursor capture + applyPosition (P3.E)', () => {
     host.__sieveFocus = { restore: (t) => { restored = t } }
     document.body.appendChild(host)
 
-    new TestWysiwygSurface('doc-1', wyDeps(), null)
+    new TestWysiwygSurface('doc-1', wyHost(), null)
       .applyPosition({ blockId: 'blk-9', blockCursor: { pane: 'stdout' } })
     expect(restored).toEqual({ pane: 'stdout' })
   })
@@ -919,7 +944,7 @@ describe('WysiwygSurface blockCursor capture + applyPosition (P3.E)', () => {
     host.appendChild(ta)
     document.body.appendChild(host)
 
-    new TestWysiwygSurface('doc-1', wyDeps(), null)
+    new TestWysiwygSurface('doc-1', wyHost(), null)
       .applyPosition({ blockId: 'code-7', blockCursor: { start: 99, end: 99 } })
     expect(ta.selectionStart).toBe(2)
     expect(ta.selectionEnd).toBe(2)
@@ -941,13 +966,13 @@ describe('WysiwygSurface blockCursor capture + applyPosition (P3.E)', () => {
     expect(blockCursor).toEqual({ start: 4, end: 4 })
 
     ta.blur()
-    new TestWysiwygSurface('doc-1', wyDeps(), null)
+    new TestWysiwygSurface('doc-1', wyHost(), null)
       .applyPosition({ blockId: 'code-7', blockCursor, caret: 12 })
     expect(document.activeElement).toBe(ta)
     expect(ta.selectionStart).toBe(4)
   })
 
-  // ── doc-caret CLAMP branch, driving the surface's own this.tiptap seam ──────────
+  // ── doc-caret CLAMP branch, driving the surface's own this.editorPane seam ──────
   it('doc-caret branch clamps a range past the current doc size', () => {
     let captured = null
     const stubEd = {
@@ -955,7 +980,7 @@ describe('WysiwygSurface blockCursor capture + applyPosition (P3.E)', () => {
       state: { doc: { content: { size: 10 } } },
       commands: { setTextSelection(r) { captured = r } },
     }
-    new TestWysiwygSurface('doc-1', wyDeps(), stubEd)
+    new TestWysiwygSurface('doc-1', wyHost(), stubEd)
       .applyPosition({ blockId: null, blockCursor: null, range: { from: 99, to: 99 } })
     expect(captured).toEqual({ from: 10, to: 10 })
   })

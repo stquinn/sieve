@@ -221,12 +221,15 @@ function insertParagraphAfter(view) {
 // context the policy does not own, so native prose/list/table Enter (and
 // prose Shift+Enter soft breaks) are untouched. Tab is the mirror case:
 // native keymaps must win, so it lives in the priority-50 backstop plugin.
-export function policyEnterKeydown(view, event) {
+// `host` is the surface's parent Editor (WysiwygSurface passes self.#host), threaded
+// through to a mode-toggling kind's onModEnter so it can reach the Editor's public API
+// (applyBlockOps) instead of firing a global CustomEvent (P4.F Brief C).
+export function policyEnterKeydown(view, event, host) {
   if (event.key !== 'Enter') return false
-  return handleEnter(view, event)
+  return handleEnter(view, event, host)
 }
 
-function handleEnter(view, event) {
+function handleEnter(view, event, host) {
   var ctx = resolveContext(view.state, view)
   var isMod = event.metaKey || event.ctrlKey
   var inSieveBlock = ctx.kind !== 'prose'
@@ -245,7 +248,7 @@ function handleEnter(view, event) {
       var beh = getBlockBehaviour(ctx.kind)
       if (beh && beh.onModEnter) {
         event.preventDefault()
-        return beh.onModEnter(view, view.state.selection) === true
+        return beh.onModEnter(view, view.state.selection, host) === true
       }
     }
     return false

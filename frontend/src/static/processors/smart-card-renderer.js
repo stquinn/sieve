@@ -4,6 +4,7 @@
 
 import { isJobStale } from '../base/fenced-block-base.js'
 import { registerSieveRenderer } from '../block/sieve-block-extension.js'
+import { updateBlockOp } from '../block/block-sync.js'
 
 ;(function () {
   'use strict'
@@ -54,7 +55,7 @@ import { registerSieveRenderer } from '../block/sieve-block-extension.js'
       }
     },
 
-    makeNodeView: function (node, editor, getPos) {
+    makeNodeView: function (node, editorPane, getPos) {
       var nodeTypeName = 'sieve-smart-card'
       var dom = document.createElement('div')
       dom.className = 'smart-card-card'
@@ -81,7 +82,7 @@ import { registerSieveRenderer } from '../block/sieve-block-extension.js'
         if (!node.attrs.href) {
           if (typeof getPos !== 'function') return
           document.dispatchEvent(new CustomEvent('sieve:smart-card-edit', {
-            detail: { id: node.attrs.id, href: '', title: '', getPos: getPos, editor: editor }
+            detail: { id: node.attrs.id, href: '', title: '', getPos: getPos, editor: editorPane }
           }))
           return
         }
@@ -184,7 +185,7 @@ import { registerSieveRenderer } from '../block/sieve-block-extension.js'
 
     buildContextMenuItems: function (opts) {
       var node   = opts.node
-      var editor = opts.editor
+      var editorPane = opts.editorPane
       var getPos = opts.getPos
       var IC     = window.SieveIcons || {}
       var href   = node.attrs.href  || ''
@@ -208,7 +209,7 @@ import { registerSieveRenderer } from '../block/sieve-block-extension.js'
           label: 'Edit Link…',
           action: function () {
             document.dispatchEvent(new CustomEvent('sieve:smart-card-edit', {
-              detail: { id: id, href: href, title: title, getPos: getPos, editor: editor }
+              detail: { id: id, href: href, title: title, getPos: getPos, editor: editorPane }
             }))
           },
         },
@@ -291,9 +292,11 @@ import { registerSieveRenderer } from '../block/sieve-block-extension.js'
       var newHref  = inputs[0].value.trim()
       var newTitle = inputs[1].value.trim() || newHref
       if (!newHref) return
-      document.dispatchEvent(new CustomEvent('sieve:block-update', {
-        detail: { id: detail.id, kind: 'smart-card', attrs: { href: newHref, title: newTitle } }
-      }))
+      // The edit dialog is a module-level singleton driven by an event that threads
+      // the block's editorPane (detail.editor); reach the held Editor through the pane
+      // the surface stamped (editorPane.sieveHost) — never the backend directly.
+      var host = detail.editor && detail.editor.sieveHost
+      if (host) host.applyBlockOps([updateBlockOp({ id: detail.id, kind: 'smart-card', attrs: { href: newHref, title: newTitle } })])
       dlg.close()
     }
 

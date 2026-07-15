@@ -88,7 +88,7 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
       }
     },
 
-    makeNodeView: function (node) {
+    makeNodeView: function (node, editorPane, getPos, ctx) {
       var nodeTypeName = node.type.name
       var currentAttrs = Object.assign({}, node.attrs)
 
@@ -178,11 +178,7 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
         updateGutter(text)
         clearTimeout(updateTimer)
         updateTimer = setTimeout(function() {
-          if (currentAttrs.id) {
-            document.dispatchEvent(new CustomEvent('sieve:block-update', {
-              detail: { id: currentAttrs.id, kind: 'code', attrs: { source: lastSource } }
-            }))
-          }
+          if (currentAttrs.id) ctx.updateAttributes({ source: lastSource })
         }, 200)
       })
       observer.observe(contentDOM, { characterData: true, childList: true, subtree: true })

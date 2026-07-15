@@ -3,6 +3,7 @@
 import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
 import { T } from '../base/tiptap-vendor.js'
 import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block/sieve-block-extension.js'
+import { updateBlockOp } from '../block/block-sync.js'
 
 ;(function () {
   'use strict'
@@ -13,7 +14,7 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
   // ── Header (toolbar) ──────────────────────────────────────────────────────────
   // The richest toolbar: badge + format + raw/explore toggle + (noise | filter +
   // column toggles), all mode-dependent. State is persisted attrs (mode/filter/
-  // disabledCols/hideNoise), written via ctx.updateAttribute. WHICH column buttons
+  // disabledCols/hideNoise), written via ctx.updateAttributes. WHICH column buttons
   // exist is data-driven — the body sets ctx.state.cols (+ ctx.refreshHeader) once
   // the parsed JSON loads; disabledCols is the pocketed on/off state.
   var RAW_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
@@ -56,11 +57,11 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
       var rawBtn = document.createElement('button')
       rawBtn.className = 'diagram-block__toggle-btn' + (!explore ? ' diagram-block__toggle-btn--active-edit' : '')
       rawBtn.innerHTML = RAW_SVG + ' Raw'
-      rawBtn.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); if (explore) ctx.updateAttribute({ mode: 'raw' }) })
+      rawBtn.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); if (explore) ctx.updateAttributes({ mode: 'raw' }) })
       var exploreBtn = document.createElement('button')
       exploreBtn.className = 'diagram-block__toggle-btn' + (explore ? ' diagram-block__toggle-btn--active-render' : '')
       exploreBtn.innerHTML = EXPLORE_SVG + ' Explore'
-      exploreBtn.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); if (!explore) ctx.updateAttribute({ mode: 'explore' }) })
+      exploreBtn.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); if (!explore) ctx.updateAttributes({ mode: 'explore' }) })
       toggle.appendChild(rawBtn); toggle.appendChild(exploreBtn)
       items.push(toggle)
       if (!explore) {
@@ -69,7 +70,7 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
         noiseBtn.textContent = attrs.hideNoise ? 'Show Noise' : 'Toggle Noise'
         noiseBtn.style.cursor = 'pointer'
         noiseBtn.style.marginLeft = '8px'
-        noiseBtn.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); ctx.updateAttribute({ hideNoise: !attrs.hideNoise }) })
+        noiseBtn.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); ctx.updateAttributes({ hideNoise: !attrs.hideNoise }) })
         items.push(noiseBtn)
       }
       return items
@@ -88,7 +89,7 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
       filter.style.color = 'var(--theme-text)'
       filter.style.outline = 'none'
       filter.addEventListener('mousedown', function (e) { e.stopPropagation() })
-      filter.addEventListener('input', function (e) { e.stopPropagation(); ctx.updateAttribute({ filter: filter.value }) })
+      filter.addEventListener('input', function (e) { e.stopPropagation(); ctx.updateAttributes({ filter: filter.value }) })
       items.push(filter)
 
       var cols = ctx.state.cols || []
@@ -105,7 +106,7 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
           btn.style.opacity = disabled[col.key] ? '0.4' : '1'
           btn.style.cursor = 'pointer'
           btn.style.marginLeft = '4px'
-          btn.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); ctx.updateAttribute({ disabledCols: toggleDisabled(attrs, col.key) }) })
+          btn.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); ctx.updateAttributes({ disabledCols: toggleDisabled(attrs, col.key) }) })
           wrap.appendChild(btn)
         })
         items.push(wrap)
@@ -126,7 +127,7 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
       logFormatRegex:  { default: '', parseHTML: function (el) { return el.getAttribute('data-log-format-regex') || '' } },
       status:          { default: 'COMPLETE', parseHTML: function (el) { return el.getAttribute('data-status') || 'COMPLETE' } },
       // Persisted view settings — the header controls write these via
-      // ctx.updateAttribute, so a configured log comes back configured.
+      // ctx.updateAttributes, so a configured log comes back configured.
       mode:            { default: '', parseHTML: function (el) { return el.getAttribute('data-mode') || '' } },
       filter:          { default: '', parseHTML: function (el) { return el.getAttribute('data-filter') || '' } },
       disabledCols:    { default: '', parseHTML: function (el) { return el.getAttribute('data-disabled-cols') || '' } },
@@ -139,8 +140,9 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
     // 
     interactionPolicy: { caretStop: true, modEnterTogglesMode: true},
 
-    // onModEnter — policy-extension entry point: flip raw↔explore.
-    onModEnter: function (view, selection) {
+    // onModEnter — policy-extension entry point: flip raw↔explore. `host` is the
+    // parent Editor, threaded by the interaction-policy extension.
+    onModEnter: function (view, selection, host) {
       var node = selection.node || selection.$from.parent
 
       if (document.activeElement && view.dom.contains(document.activeElement)) {
@@ -163,9 +165,7 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
 
       if (!node || node.type.name !== 'sieve-log' || !node.attrs.id) return false
       var newMode = logMode(node.attrs) === 'explore' ? 'raw' : 'explore'
-      document.dispatchEvent(new CustomEvent('sieve:block-update', {
-        detail: { id: node.attrs.id, kind: 'log', attrs: { mode: newMode } }
-      }))
+      if (host) host.applyBlockOps([updateBlockOp({ id: node.attrs.id, kind: 'log', attrs: { mode: newMode } })])
       return true
     },
 
@@ -214,7 +214,7 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
       }
     },
 
-    makeNodeView: function (node, editor, getPos, ctx) {
+    makeNodeView: function (node, editorPane, getPos, ctx) {
       var nodeTypeName = node.type.name
       var currentAttrs = Object.assign({}, node.attrs)
       var loadedJson = null
@@ -228,7 +228,7 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
       // Header (badge + format + raw/explore toggle + noise|filter+cols) is declared
       // as `headerProvider: new LogHeader()` and rendered by the framework seam. The
       // view settings (mode/filter/disabledCols/hideNoise) are persisted attrs the
-      // header writes via ctx.updateAttribute; this NodeView only reads them.
+      // header writes via ctx.updateAttributes; this NodeView only reads them.
 
       var body = document.createElement('div')
       body.className = 'sieve-block__body'
@@ -471,7 +471,7 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
           }
           var url = currentAttrs.parsedAssetRef;
           if (!url.startsWith('/')) {
-              url = '/sieve/' + (window.__stashActiveTabUuid || '') + '/' + url.split('/').pop();
+              url = '/sieve/' + (ctx?.getEditor()?.uuid || '') + '/' + url.split('/').pop();
           }
           loadingAsset = true;
           fetch(url).then(function(res) { return res.json(); }).then(function(data) {

@@ -114,7 +114,7 @@ export class EditorToolbar {
   #syncTableToolbar() {
     const tableToolbar = document.getElementById('table-toolbar')
     if (!tableToolbar) return
-    const ed = /** @type {any} */ (this.#editor.tiptap)
+    const ed = /** @type {any} */ (this.#editor.editorPane)
     // FOCUS-GATED: the table utilities bar is an ACTIVE-editing affordance. A doc
     // whose default/restored selection resolves inside a table — e.g. a table as
     // the LAST block, where the doc-end position sits in the trailing table cell —
@@ -256,15 +256,15 @@ export class EditorToolbar {
     return [modeGroup, insertGroup, aiGroup, helpGroup]
   }
 
-  /** create-block for a toolbar insert (code/diagram) — mirrors the old data-insert path. */
+  /** create-block for a toolbar insert (code/diagram) — the editor derives the caret index. */
   #insertBlock(kind) {
     if (this.#editor.mode === EditorMode.MARKDOWN) return
-    document.dispatchEvent(new CustomEvent('sieve:create-block', { detail: { kind } }))
+    this.#editor.createBlock(kind, {})
   }
 
-  /** Toolbar image insert — capture insert-pos (pre-dialog) then click the hidden file input. */
+  /** Toolbar image insert — capture the caret block index (pre-dialog) then click the hidden file input. */
   #insertImage() {
-    document.dispatchEvent(new CustomEvent('sieve:capture-insert-pos'))
+    this.#editor.captureImageInsert()
     const input = document.getElementById('tb-image-input')
     if (input) /** @type {HTMLInputElement} */ (input).click()
   }

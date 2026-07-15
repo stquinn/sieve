@@ -9,14 +9,14 @@
 // block-attrs-updated) land in its representation. The editor never reaches
 // into a surface's DOM — it drives only this contract.
 //
-// The concrete surfaces are standalone ES modules with their collaborators
-// injected via constructor DI (docs/how-to-idiomatic-js.md): the editor
+// The concrete surfaces are standalone ES modules that receive their parent
+// editor (`host`) via constructor DI (docs/how-to-idiomatic-js.md): the editor
 // constructs its own surfaces (_createSurface owns the mode→surface repertoire),
-// merging editor.js's transitional surfaceCollaborators content pipelines
-// (paste/drop, save, insert-pos, reload) into the deps. State that used to be
-// editor.js module vars (lastSyncedBody, docUpdateTimer, docSyncFlush,
-// currentMarkdownTextarea, the noteServerBlock/reconcilePendingToken seams) is
-// #private surface state.
+// and the surface calls the editor's public API directly (onSurfaceEvent,
+// applyBlockOps/updateText, save, insert-pos, reload) — the P4.F dissolution of
+// the pre-bound closure bag. State that used to be editor.js module vars
+// (lastSyncedBody, docUpdateTimer, docSyncFlush, currentMarkdownTextarea, the
+// noteServerBlock/reconcilePendingToken seams) is #private surface state.
 //
 // Dual-use ES module: `export` for vitest imports; `window.SieveSurface` for
 // the classic-script editor.js.
@@ -28,9 +28,9 @@
  */
 
 /**
- * An editor-domain event a surface REPORTS OUTWARD via its injected
- * `deps.notify` — producer-named plain data, never a consumer name (a surface
- * must not know an Ask panel or toolbar exists). The editor forwards these to
+ * An editor-domain event a surface REPORTS OUTWARD via the host editor's
+ * `onSurfaceEvent` handler — producer-named plain data, never a consumer name (a
+ * surface must not know an Ask panel or toolbar exists). The editor forwards these to
  * its registered listeners (AbstractEditor.onEvent); the seed of P3's
  * SelectionModel stream. Frozen shared values (docs/how-to-idiomatic-js.md).
  * @typedef {{type: string}} SurfaceEventMsg
@@ -62,7 +62,7 @@ export class AbstractSurface {
    * The live TipTap instance, or null for surfaces that have none (markdown).
    * @returns {unknown|null}
    */
-  get tiptap() { return null }
+  get editorPane() { return null }
 
   /**
    * The raw markdown body, or null for surfaces that do not hold one (wysiwyg

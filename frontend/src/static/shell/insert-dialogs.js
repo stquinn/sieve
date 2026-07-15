@@ -4,17 +4,17 @@
 // Holds BOTH URL dialogs — the smart-card ("Insert URL Card") and the web-clip
 // ("Insert Web Clip") popups. They are near-identical: same .internalize-popup
 // .ask-popup shell, same url input + error row + isValidURL gate + Enter/Escape
-// wiring, same insert path (captureInsertPos(kindIsInline(kind)) → applyBlockOps
-// [create-block]). They differ only in label text, footer buttons, and target
-// kind — one cohesive concern ("insert a URL-derived block"), so ONE class with
-// two lazily-built <dialog> elements (faithful to the old ensureOverlays laziness).
+// wiring, same insert path (editor.createBlock(kind, attrs)). They differ only in
+// label text, footer buttons, and target kind — one cohesive concern ("insert a
+// URL-derived block"), so ONE class with two lazily-built <dialog> elements
+// (faithful to the old ensureOverlays laziness).
 //
 // The web-clip dialog's "Card" footer button routes to the SAME smart-card create
 // path — they are one intertwined concern, which is why they share a class.
 //
-// It inserts through PUBLIC AbstractEditor methods only (kindIsInline /
-// captureInsertPos / setInsertPos / commitInsertIndex / takeInsertPos /
-// applyBlockOps via workspace.activeTab.editor) — NO tiptap reach, NO shared bus.
+// It inserts through the editor's ONE self-sufficient create path —
+// AbstractEditor.createBlock(kind, attrs) via workspace.activeTab.editor (P4.F: the
+// editor derives the caret block index itself; no insert-pos dance, no shared bus).
 // Backs workspace.openUrlCardDialog(url?) / openWebClipDialog(url?).
 //
 // Dual-use ES module: imported by workspace.js (which constructs it). No window.*
@@ -186,16 +186,15 @@ export class InsertDialogs {
 
   /**
    * Inserts a smart-card block at the caret (was doCreateSmartCard). Guards an
-   * active editor exists + (has tiptap OR markdown mode) — the old currentUuid
+   * active editor exists + (has editorPane OR markdown mode) — the old currentUuid
    * guard collapses into "an active editor exists".
    * @param {string} href
    */
   #createCard(href) {
     const ed = this.#activeEditor()
     if (!ed) return
-    if (!ed.tiptap && ed.mode !== 'markdown') return
-    ed.setInsertPos(ed.captureInsertPos(ed.kindIsInline('smart-card')))
-    this.#insertBlock('smart-card', { href })
+    if (!ed.editorPane && ed.mode !== 'markdown') return
+    ed.createBlock('smart-card', { href })
   }
 
   /**
@@ -206,24 +205,8 @@ export class InsertDialogs {
   #internalize(source, mode) {
     const ed = this.#activeEditor()
     if (!ed) return
-    if (!ed.tiptap && ed.mode !== 'markdown') return
-    ed.setInsertPos(ed.captureInsertPos(ed.kindIsInline('web-clip')))
-    this.#insertBlock('web-clip', { source, mode })
-  }
-
-  /**
-   * The ONE create path for these two kinds (was sendCreateBlock, scoped here): a
-   * create-block block-op carrying kind, attrs, and the document index from the
-   * editor's captured insert position. All through public AbstractEditor methods.
-   * @param {string} kind
-   * @param {object} attrs
-   */
-  #insertBlock(kind, attrs) {
-    const ed = this.#activeEditor()
-    if (!ed) return
-    ed.applyBlockOps([
-      { type: 'create-block', kind, attrs: attrs || {}, index: ed.commitInsertIndex(ed.takeInsertPos()) },
-    ])
+    if (!ed.editorPane && ed.mode !== 'markdown') return
+    ed.createBlock('web-clip', { source, mode })
   }
 
   /**

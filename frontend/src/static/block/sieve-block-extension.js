@@ -44,6 +44,7 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
 import { T } from '../base/tiptap-vendor.js'
 import { registerBlockKind, getBlockBehaviour, containsChildBlocks, getSieveIcon } from './block-kinds.js'
 import { labelForAction } from '../base/action-label.js'
+import { updateBlockOp } from './block-sync.js'
 
 // ── Header focus preservation ────────────────────────────────────────────────
 // A header re-render (renderHeaderBar) rebuilds the whole toolbar so button
@@ -191,9 +192,9 @@ export let rendererFor
   // provider.render(attrs, ctx) and places the result as the block's top bar.
   // Behaviour lives on the provider TYPE; instances are stateless and shared, so
   // per-block state travels in `ctx` (see the seam for the ctx contract):
-  //   ctx = { id, kind, attrs (live), editor, getPos, state (transient bag),
-  //           update(patch) → persist via sieve:block-update }
-  // Durable state → ctx.update(patch). Transient view state → ctx.state.
+  //   ctx = { id, kind, attrs (live), editorPane, getPos, state (transient bag),
+  //           updateAttributes(patch) → persist via the held Editor's applyBlockOps }
+  // Durable state → ctx.updateAttributes(patch). Transient view state → ctx.state.
   // Exposed on the shared vendor bag (T) so renderers subclass without a separate import.
 
   function hdrEl(cls, tag) {
@@ -265,12 +266,6 @@ export let rendererFor
       wrap.appendChild(btn)
     })
     return wrap
-  }
-
-  // The ONE owner of the block-update protocol. ctx.updateAttribute and any
-  // renderer route attr changes through here — nothing else names the event.
-  function updateBlockAttrs(id, kind, patch) {
-    document.dispatchEvent(new CustomEvent('sieve:block-update', { detail: { id: id, kind: kind, attrs: patch } }))
   }
 
   // ── Base attributes shared by every sieve block kind ─────────────────────────
@@ -347,34 +342,45 @@ export let rendererFor
       },
 
       addNodeView() {
-        return function ({ node, editor, getPos }) {
+        return function ({ node, editor: editorPane, getPos }) {
           // ctx — the per-block handle, shared by the header seam AND makeNodeView
           // (passed as the 4th arg; other renderers ignore it). Provider instances
           // are stateless/shared, so per-block state lives here. Durable changes →
-          // ctx.updateAttribute (the one updateBlockAttrs dispatch); transient view
-          // state → ctx.state. attrs is a LIVE read. refreshHeader re-renders the
-          // toolbar — for a renderer that must rebuild it after async data lands
-          // (e.g. log's column toggles once the parsed JSON loads).
+          // ctx.updateAttributes (routes through the held Editor's applyBlockOps, P4.F
+          // Brief C — no global CustomEvent); transient view state → ctx.state. attrs
+          // is a LIVE read. refreshHeader re-renders the toolbar — for a renderer that
+          // must rebuild it after async data lands (e.g. log's column toggles once the
+          // parsed JSON loads). getEditor reaches the parent Editor's PUBLIC API through
+          // the pane the surface stamped (editorPane.sieveHost) — the ONLY way a
+          // NodeView touches the Editor; it never speaks to the backend directly.
           var renderHeaderBar   // assigned by the header seam below
           var blockCtx = {
             id: node.attrs.id,
             kind: kind,
-            editor: editor,
+            editorPane: editorPane,
             getPos: getPos,
             state: {},
             get attrs() {
               var p = (typeof getPos === 'function') ? getPos() : -1
-              if (p != null && p >= 0 && p < editor.state.doc.content.size) {
-                var cur = editor.state.doc.nodeAt(p)
+              if (p != null && p >= 0 && p < editorPane.state.doc.content.size) {
+                var cur = editorPane.state.doc.nodeAt(p)
                 if (cur && cur.attrs) return cur.attrs
               }
               return node.attrs
             },
             getAttribute: function (name) { return blockCtx.attrs[name] },
-            updateAttribute: function (patch) { updateBlockAttrs(node.attrs.id, kind, patch) },
+            getEditor: function () { return editorPane.sieveHost || null },
+            updateAttributes: function (patch) {
+              var ed = blockCtx.getEditor()
+              if (ed) ed.applyBlockOps([updateBlockOp({ id: node.attrs.id, kind: kind, attrs: patch })])
+            },
+            retry: function () {
+              var ed = blockCtx.getEditor()
+              if (ed) ed.retryBlock(node.attrs.id)
+            },
             refreshHeader: function () { if (renderHeaderBar) renderHeaderBar() },
           }
-          var view = renderer.makeNodeView(node, editor, getPos, blockCtx)
+          var view = renderer.makeNodeView(node, editorPane, getPos, blockCtx)
           if (view.dom) {
             // Inject the chrome host slot as the FIRST child.
             // BlockChrome will find it via .block-chrome-host and populate it
@@ -402,12 +408,12 @@ export let rendererFor
             view.dom.addEventListener('contextmenu', function (e) {
               e.preventDefault()
               e.stopPropagation()
-              var currentNode = (typeof getPos === 'function') ? editor.state.doc.nodeAt(getPos()) : node
+              var currentNode = (typeof getPos === 'function') ? editorPane.state.doc.nodeAt(getPos()) : node
               var n = currentNode || node
               var IC = window.SieveIcons || {}
 
               var items = renderer.buildContextMenuItems
-                ? renderer.buildContextMenuItems({ node: n, editor: editor, getPos: getPos })
+                ? renderer.buildContextMenuItems({ node: n, editorPane: editorPane, getPos: getPos })
                 : []
 
               // Ask AI + Explain — universal for every sieve block. The intent enters
@@ -418,13 +424,13 @@ export let rendererFor
               items = items.concat([
                 { type: 'divider' },
                 { icon: IC.sparkle, label: 'Ask AI…', action: function () {
-                  if (typeof getPos === 'function') editor.chain().focus().setNodeSelection(getPos()).run()
-                  else editor.commands.focus()
+                  if (typeof getPos === 'function') editorPane.chain().focus().setNodeSelection(getPos()).run()
+                  else editorPane.commands.focus()
                   document.dispatchEvent(new CustomEvent('sieve:ai-ask'))
                 }},
                 { icon: IC.info,    label: 'Explain',  action: function () {
-                  if (typeof getPos === 'function') editor.chain().focus().setNodeSelection(getPos()).run()
-                  else editor.commands.focus()
+                  if (typeof getPos === 'function') editorPane.chain().focus().setNodeSelection(getPos()).run()
+                  else editorPane.commands.focus()
                   document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
                 }},
               ])
@@ -435,7 +441,7 @@ export let rendererFor
                 { icon: IC.trash, label: 'Delete', action: function () {
                   if (typeof getPos === 'function') {
                     var pos = getPos()
-                    editor.view.dispatch(editor.state.tr.delete(pos, pos + n.nodeSize))
+                    editorPane.view.dispatch(editorPane.state.tr.delete(pos, pos + n.nodeSize))
                   }
                 }},
               ])
@@ -449,9 +455,7 @@ export let rendererFor
                 items = items.concat([
                   { type: 'divider' },
                   { icon: IC.refresh, label: (isStale || isError) ? 'Retry' : 'Replay',
-                    action: function () {
-                      document.dispatchEvent(new CustomEvent('sieve:block-retry', { detail: { id: n.attrs.id } }))
-                    }
+                    action: function () { blockCtx.retry() }
                   },
                 ])
               }
@@ -461,7 +465,7 @@ export let rendererFor
               }))
 
               //now lets see if we clicked on something interesting within the block that we can extract data from. 
-              var { entries, extractSourceLabel } = extractContentEntryFromEditor( e, editor);
+              var { entries, extractSourceLabel } = extractContentEntryFromEditor( e, editorPane);
 
               if(entries == undefined || !entries) {
                 //nothign more intersting than the sieve block itself was clicked on,
@@ -499,7 +503,8 @@ export let rendererFor
                   sourceKind: n.attrs.kind,
                   entries: entries,
                   blockId: n.attrs.id,
-                  extractSourceLabel: extractSourceLabel
+                  extractSourceLabel: extractSourceLabel,
+                  editor: blockCtx.getEditor()
                 })
               }
             })
@@ -517,11 +522,11 @@ export let rendererFor
               var domSel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null
               if (!shouldClaimBlockSelection(event.target, view.dom, view.contentDOM, domSel)) return
               var pos = getPos()
-              if (pos == null || pos < 0 || pos >= editor.state.doc.content.size) return
+              if (pos == null || pos < 0 || pos >= editorPane.state.doc.content.size) return
               try {
-                var sel = T.NodeSelection.create(editor.state.doc, pos)
-                editor.view.dispatch(editor.state.tr.setSelection(sel))
-                editor.view.focus()
+                var sel = T.NodeSelection.create(editorPane.state.doc, pos)
+                editorPane.view.dispatch(editorPane.state.tr.setSelection(sel))
+                editorPane.view.focus()
               } catch (e) {}
             })
           }
@@ -613,7 +618,7 @@ export let rendererFor
             view.contentDOM.parentNode.insertBefore(titleEl, view.contentDOM)
             syncTitle = function (h) {
               h = (h || '').trim()
-              titleEl.innerHTML = h ? renderMarkdown(h, editor) : ''
+              titleEl.innerHTML = h ? renderMarkdown(h, editorPane) : ''
               titleEl.style.display = h ? '' : 'none'   // empty → no region, no divider
               if (h) applyHighlighting(titleEl)
             }
@@ -626,25 +631,25 @@ export let rendererFor
             resolveBody = resolve(contentProvider)
             syncMd = function (md) {
               setTimeout(function () {
-                if (!editor || !editor.view) return
-                var html = renderMarkdown(md || '', editor) || '<p></p>'
+                if (!editorPane || !editorPane.view) return
+                var html = renderMarkdown(md || '', editorPane) || '<p></p>'
                 var tmp = document.createElement('div')
                 tmp.innerHTML = html
                 var PMDP = T.ProseMirrorDOMParser || T.DOMParser
-                var slice = PMDP.fromSchema(editor.state.schema).parseSlice(tmp)
+                var slice = PMDP.fromSchema(editorPane.state.schema).parseSlice(tmp)
                 var pos = typeof getPos === 'function' ? getPos() : -1
                 // getPos can be stale by the time this deferred sync runs (the doc
                 // may have shrunk), and doc.nodeAt THROWS (not returns null) for an
                 // out-of-range pos. Bounds-check before touching the doc.
-                var pmDoc = editor.state.doc
+                var pmDoc = editorPane.state.doc
                 if (pos == null || pos < 0 || pos >= pmDoc.content.size) return
                 var cur = pmDoc.nodeAt(pos)
                 if (!cur || !cur.type.name.startsWith('sieve-')) return
-                var tr = editor.state.tr
+                var tr = editorPane.state.tr
                 tr.replace(pos + 1, pos + 1 + cur.content.size, slice)
                 tr.setMeta('sieve-md-sync', true)
                 tr.setMeta('addToHistory', false)
-                editor.view.dispatch(tr)
+                editorPane.view.dispatch(tr)
               }, 0)
             }
           }
@@ -891,7 +896,7 @@ export let rendererFor
 
   // The backend returns [{kind, actions}]. The frontend is a dumb renderer: it shows
   // each offered (kind, action) and plays back {operation} — no replaceSource heuristic.
-  detectAndAppendExtractions = function ({ sourceNode, sourceKind, entries, blockId, sourcePos, extractSourceLabel }) {
+  detectAndAppendExtractions = function ({ sourceNode, sourceKind, entries, blockId, sourcePos, extractSourceLabel, editor }) {
     fetch('/api/detect-extractions', {
       method: 'POST',
       body: JSON.stringify({ sourceKind: sourceKind, entries: entries }),
@@ -918,17 +923,16 @@ export let rendererFor
           if (action !== 'extract' && action !== 'transform' && action !== 'undo-smart-paste') return
 
           var dispatch = function (context) {
-            document.dispatchEvent(new CustomEvent('sieve:extract', {
-              detail: {
-                blockId: blockId || (sourceNode && sourceNode.attrs ? sourceNode.attrs.id : null),
-                targetKind: offer.kind,
-                operation: action,
-                sourceNode: sourceNode,
-                sourcePos: sourcePos,
-                entries: entries,
-                context: context || {}
-              }
-            }))
+            if (!editor) return
+            editor.extract({
+              blockId: blockId || (sourceNode && sourceNode.attrs ? sourceNode.attrs.id : null),
+              targetKind: offer.kind,
+              operation: action,
+              sourceNode: sourceNode,
+              sourcePos: sourcePos,
+              entries: entries,
+              context: context || {}
+            })
           }
 
           if (r && typeof r.getExtractionMenuItems === 'function') {

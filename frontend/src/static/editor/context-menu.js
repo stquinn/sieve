@@ -205,10 +205,12 @@ import { enclosingBlockId } from '../base/block-position.js'
       window.sieveWorkspace && window.sieveWorkspace.openUrlCardDialog(linkUrl || '')
     }})
     items.push({ icon: getSieveIcon('code'), label: 'Insert Code Block', action: function () {
-      document.dispatchEvent(new CustomEvent('sieve:create-block', { detail: { kind: 'code' } }))
+      var ed = window.sieveWorkspace && window.sieveWorkspace.activeTab && window.sieveWorkspace.activeTab.editor
+      ed && ed.createBlock('code', {})
     }})
     items.push({ icon: getSieveIcon('diagram'), label: 'Insert Diagram', action: function () {
-      document.dispatchEvent(new CustomEvent('sieve:create-block', { detail: { kind: 'diagram' } }))
+      var ed = window.sieveWorkspace && window.sieveWorkspace.activeTab && window.sieveWorkspace.activeTab.editor
+      ed && ed.createBlock('diagram', {})
     }})
 
     var isHighlighted = editor.isActive('highlight')
@@ -261,7 +263,8 @@ import { enclosingBlockId } from '../base/block-position.js'
               ? targetNode.attrs.id
               : enclosingBlockId(editor.state.doc, targetPos),
             sourcePos: targetPos,
-            extractSourceLabel: res.extractSourceLabel
+            extractSourceLabel: res.extractSourceLabel,
+            editor: editor.sieveHost || null
           })
         }
       }

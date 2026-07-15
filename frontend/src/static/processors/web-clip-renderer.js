@@ -12,15 +12,11 @@ import { registerSieveRenderer } from '../block/sieve-block-extension.js'
     return isJobStale(createdAt, id)
   }
 
-  function makeRetryBtn(blkId) {
+  function makeRetryBtn(ctx) {
     var btn = document.createElement('button')
     btn.className = 'web-clip-block__retry'
     btn.textContent = 'Retry'
-    btn.addEventListener('click', function () {
-      document.dispatchEvent(new CustomEvent('sieve:block-retry', {
-        detail: { id: blkId }
-      }))
-    })
+    btn.addEventListener('click', function () { ctx.retry() })
     return btn
   }
 
@@ -104,7 +100,7 @@ import { registerSieveRenderer } from '../block/sieve-block-extension.js'
       }
     },
 
-    makeNodeView: function (node, editor, getPos) {
+    makeNodeView: function (node, editorPane, getPos, ctx) {
 
       var nodeTypeName = 'sieve-web-clip'
       var dom = document.createElement('div')
@@ -176,7 +172,7 @@ import { registerSieveRenderer } from '../block/sieve-block-extension.js'
             header.innerHTML = '<span class="web-clip-block__icon web-clip-block__icon--warn">⚠</span>' +
               '<span class="web-clip-block__label">' + modeLabel.replace('ing', '') + ' interrupted — ' + domain + '</span>'
             renderEl.appendChild(header)
-            renderEl.appendChild(makeRetryBtn(attrs.id))
+            renderEl.appendChild(makeRetryBtn(ctx))
           } else {
             header.innerHTML = '<span class="web-clip-block__spinner"></span>' +
               '<span class="web-clip-block__label">' + modeLabel + ' from ' + domain + '…</span>'
@@ -204,14 +200,14 @@ import { registerSieveRenderer } from '../block/sieve-block-extension.js'
           header.innerHTML = '<span class="web-clip-block__icon web-clip-block__icon--warn">⚠</span>' +
             '<span class="web-clip-block__label">Timed out — ' + domain + '</span>'
           renderEl.appendChild(header)
-          renderEl.appendChild(makeRetryBtn(attrs.id))
+          renderEl.appendChild(makeRetryBtn(ctx))
 
         } else if (status === 'ERROR') {
           var errMsg = (attrs.error || 'Unknown error').trim()
           header.innerHTML = '<span class="web-clip-block__icon web-clip-block__icon--error">✕</span>' +
             '<span class="web-clip-block__label">' + errMsg + '</span>'
           renderEl.appendChild(header)
-          renderEl.appendChild(makeRetryBtn(attrs.id))
+          renderEl.appendChild(makeRetryBtn(ctx))
         }
       }
 

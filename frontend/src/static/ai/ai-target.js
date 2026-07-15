@@ -9,19 +9,18 @@
 // which is a DOC-position concern (create-block / AI-answer insert), NOT selection
 // context — a separate seam that dies in P3/P4 on its own.
 
-// blockInsertPos(state, isInline) → doc position for an additive block/inline
-// insert (D-r.7). The single source for every create-block / AI-answer insert,
-// replacing the scattered `sieveInsertPos = selection.to` defaults:
-//   - inline kind (e.g. smart-link, schema isInline) → the caret;
+// blockInsertPos(state) → doc position for an additive BLOCK insert (D-r.7). The
+// single source for every create-block / AI-answer insert, replacing the scattered
+// `sieveInsertPos = selection.to` defaults:
 //   - NodeSelection → selection.to (already right after the selected node);
 //   - otherwise → after the enclosing TOP-LEVEL (depth-1) block, so a block
 //     answer lands as a sibling and never splits the paragraph. Even a
 //     document-scoped answer lands after the caret's current top-level block.
 // At a doc-level gap (caret after an atom / at doc end, depth 0) the caret is
-// already a valid top-level point → use it.
-export function blockInsertPos(state, isInline) {
+// already a valid top-level point → use it. (P4.F: there is no block-path inline
+// creation, so the old inline-kind branch is gone — every block insert is a sibling.)
+export function blockInsertPos(state) {
   var sel = state.selection
-  if (isInline) return sel.to
   if (sel.node) return sel.to
   if (sel.$to.depth >= 1) return sel.$to.after(1)
   return sel.to

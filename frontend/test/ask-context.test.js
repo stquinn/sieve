@@ -176,18 +176,19 @@ describe('read-only-region DOM drag folds into a non-document target (F5)', () =
   // onto the sieve region and supply the drag text. More faithful than the old
   // hand-built `er` — it runs feedSelection's actual read-only-region fold branch.
 
-  // Local surface driving the fixture through feedSelection with an injected T (the
-  // TestWysiwygSurface seam: public ctor + `get tiptap()` override — no backdoor). T
-  // is forwarded into deps so the surface's #T picks it up.
+  // Local surface driving the fixture through feedSelection (the TestWysiwygSurface
+  // seam: public ctor over a `host` + `get editorPane()` override — no backdoor). P4.F:
+  // the surface IMPORTS `T` from the vendor bag (seeded by helpers/seed-vendor.js at
+  // the top of this file), so #T is truthy and the rich-label path runs.
   class F5Surface extends WysiwygSurface {
     constructor(editor) {
-      super('t', {
-        applyBlockOps() {}, requestSave() {}, onPaste() { return false },
-        onDrop() { return false }, takeInsertPos() { return null }, notify() {},
+      super({
+        uuid: 't', applyBlockOps() {}, flushSave() {},
+        takeInsertPos() { return null }, onSurfaceEvent() {},
       })
       this._ed = editor
     }
-    get tiptap() { return this._ed }
+    get editorPane() { return this._ed }
   }
 
   it('a dom-fold selection over a sieve region → range/selection target, not document', () => {

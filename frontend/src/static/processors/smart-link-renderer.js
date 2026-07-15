@@ -5,6 +5,7 @@
 
 import { isJobStale } from '../base/fenced-block-base.js'
 import { registerSieveRenderer } from '../block/sieve-block-extension.js'
+import { updateBlockOp } from '../block/block-sync.js'
 
 ;(function () {
   'use strict'
@@ -38,7 +39,7 @@ import { registerSieveRenderer } from '../block/sieve-block-extension.js'
       }
     },
 
-    makeNodeView: function (node, editor) {
+    makeNodeView: function (node, editorPane) {
       var dom = document.createElement('a')
       dom.className = 'smart-link-node'
       dom.setAttribute('data-id', node.attrs.id || '')
@@ -99,7 +100,7 @@ import { registerSieveRenderer } from '../block/sieve-block-extension.js'
 
     buildContextMenuItems: function (opts) {
       var node   = opts.node
-      var editor = opts.editor
+      var editorPane = opts.editorPane
       var getPos = opts.getPos
       var IC     = window.SieveIcons || {}
       var href   = node.attrs.href  || ''
@@ -127,9 +128,9 @@ import { registerSieveRenderer } from '../block/sieve-block-extension.js'
           icon: IC.edit,
           label: 'Edit…',
           action: function () {
-            if (typeof getPos === 'function') editor.chain().focus().setNodeSelection(getPos()).run()
+            if (typeof getPos === 'function') editorPane.chain().focus().setNodeSelection(getPos()).run()
             document.dispatchEvent(new CustomEvent('sieve:smart-link-edit', {
-              detail: { id: node.attrs.id, href: href, label: label, getPos: getPos, editor: editor }
+              detail: { id: node.attrs.id, href: href, label: label, getPos: getPos, editor: editorPane }
             }))
           },
         },
@@ -209,9 +210,10 @@ import { registerSieveRenderer } from '../block/sieve-block-extension.js'
       var newHref  = hrefEl.value.trim()
       var newLabel = labelEl.value.trim() || newHref
       if (!newHref) return
-      document.dispatchEvent(new CustomEvent('sieve:block-update', {
-        detail: { id: detail.id, kind: 'smart-link', attrs: { href: newHref, label: newLabel } }
-      }))
+      // Singleton edit dialog: reach the held Editor via the block's editorPane
+      // (detail.editor.sieveHost), the pane the surface stamped — never the backend.
+      var host = detail.editor && detail.editor.sieveHost
+      if (host) host.applyBlockOps([updateBlockOp({ id: detail.id, kind: 'smart-link', attrs: { href: newHref, label: newLabel } })])
       dlg.close()
     }
 

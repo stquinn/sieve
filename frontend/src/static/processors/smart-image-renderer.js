@@ -9,19 +9,19 @@ import { renderMermaidSvgEntry } from './diagram-renderer.js'
 ;(function () {
   'use strict'
 
-  function resolveSrc(src) {
+  function resolveSrc(src, ctx) {
     if (!src) return ''
     if (src.startsWith('http://') || src.startsWith('https://')) {
       return window.location.origin + '/sieve-image-proxy?url=' + encodeURIComponent(src)
     }
     if (src.startsWith('data:') || src.startsWith('blob:') || src.startsWith('/')) return src
     if (src.startsWith('.assets/')) src = src.substring(8)
-    return '/sieve/' + (window.__stashActiveTabUuid || '') + '/' + src.split('/').pop()
+    return '/sieve/' + (ctx?.getEditor()?.uuid || '') + '/' + src.split('/').pop()
   }
 
   
 
-  function makeNodeView(node, editor) {
+  function makeNodeView(node, editorPane, getPos, ctx) {
     var currentAttrs = Object.assign({}, node.attrs)
 
     // dom matches old ImageWithAttrs: inline-block wrapper that owns selection CSS
@@ -48,7 +48,7 @@ import { renderMermaidSvgEntry } from './diagram-renderer.js'
 
     function applyAttrs(attrs) {
       currentAttrs = attrs
-      img.src = resolveSrc(attrs.src || '')
+      img.src = resolveSrc(attrs.src || '', ctx)
       img.alt = attrs.alt || ''
       var w = attrs.width  || ''
       var h = attrs.height || ''
@@ -108,12 +108,10 @@ import { renderMermaidSvgEntry } from './diagram-renderer.js'
         window.removeEventListener('mousemove', onMove)
         window.removeEventListener('mouseup', onUp)
         document.body.style.cursor = ''
-        document.dispatchEvent(new CustomEvent('sieve:block-update', {
-          detail: { id: currentAttrs.id, kind: 'smart-image', attrs: {
-            width:  String(Math.round(img.offsetWidth)),
-            height: String(Math.round(img.offsetHeight)),
-          }}
-        }))
+        ctx.updateAttributes({
+          width:  String(Math.round(img.offsetWidth)),
+          height: String(Math.round(img.offsetHeight)),
+        })
       }
 
       window.addEventListener('mousemove', onMove)
@@ -184,7 +182,7 @@ import { renderMermaidSvgEntry } from './diagram-renderer.js'
       return [
         { type: 'header', label: "Image"},
         { icon: window.SieveIcons.copy, label: 'Copy Image', action: function () {
-          var src = resolveSrc(n.attrs.src)
+          var src = resolveSrc(n.attrs.src, ctx)
           if (!src) return
           fetch(src)
             .then(function (res) { return res.blob() })

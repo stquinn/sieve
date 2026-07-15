@@ -17,7 +17,7 @@
 // skipped, scroll-to-new is universal. No full reload is ever used for an op.
 //
 // Normalization applied during motion (behavior-identical): VENDOR names go
-// through the injected `deps.T` (which defaults to the `T` vendor-bag import);
+// through the `T` vendor-bag import (base/tiptap-vendor.js);
 // every APP helper is a direct ES import from its owning module (P4.E bus
 // retirement). The module vars the old code wrote (currentEditor, docUpdateTimer,
 // docSyncFlush, blockContentCache seams) are #private state; `window.__tiptap` is
@@ -38,6 +38,7 @@ import { ToolbarButton, ButtonGroup } from '../toolbar-button.js'
 import { T } from '../../base/tiptap-vendor.js'
 import { BlockId } from '../../block/prose-block.js'
 import { ProseGroup, proseBlockNodes } from '../../block/prose-group.js'
+import { copyImageToClipboard } from '../../ui/copy-image.js'
 import { BlockChrome, getBlockSelectionRange } from '../../editor/block-chrome.js'
 import { AiTargetDecoration } from '../../ai/ai-target-decoration.js'
 import { Search, SelectionHighlight, HighlightMark, AiShortcuts } from '../../editor/extensions.js'
@@ -55,7 +56,7 @@ import { caretInRawTextBlock } from '../../editor/paste-context.js'
 
 // The formatting command spec (P4.D): each entry is one ToolbarButton the WYSIWYG
 // surface contributes to the editor toolbar. `icon` is a SieveIcons key; `cmd`
-// runs on the surface's OWN #editor (the retired handleToolbarClick data-cmd
+// runs on the surface's OWN #editorPane (the retired handleToolbarClick data-cmd
 // switch — chain().focus().<cmd>().run()); `active` mirrors the retired syncToolbar
 // isActive map. File-private frozen DATA (docs/how-to-idiomatic-js.md).
 const FORMATTING_GROUPS = Object.freeze([
@@ -93,34 +94,25 @@ const NATIVE_UNIT_LABEL = Object.freeze({
 })
 
 /**
- * Injected collaborators — content services commanding into this document's
- * context, plus the ONE outbound notifier. Nothing app-level: no chrome names,
- * no AI concepts. (requestSave backs the PM-internal Mod+S in editorProps
- * handleKeyDown — it must run pre-core inside ProseMirror's key routing per
- * docs/editor-interaction-contract.md; it is caret-contextual, not an
- * app-level chord, so it stays surface-injected.)
- * @typedef {object} WysiwygSurfaceDeps
- * @property {(ops: object[]) => void}    applyBlockOps   — block-domain ops → editor transport (the editor owns the WS enveloping)
- * @property {() => unknown}              requestSave     — save command (editor.flushSave)
- * @property {() => number}               insertIndexForBlock   — commit a caret block-insert index (editor: commitInsertIndex(captureInsertPos(false)))
- * @property {(pos: number) => number}    insertIndexForBlockAt — commit an explicit drop-coord index (editor: commitInsertIndex(pos))
- * @property {() => void}                 clearInsertPos  — clear a stale captured insert position (editor)
- * @property {() => number|null}          takeInsertPos   — read-and-clear the editor's captured insert position (applyServerOp numeric fallback)
- * @property {(event: import('./abstract-surface.js').SurfaceEventMsg) => void} notify — outbound editor-domain events
- * @property {object}                     [T]             — TipTap vendor bundle (defaults to the `T` vendor-bag import)
- *
- * P4.A: smart-paste / smart-drop are the surface's OWN #private methods (wired at
- * editorProps.handlePaste/handleDrop) — no onPaste/onDrop deps. The insert-index
- * math they need is editor-sourced (the editor owns the shared insert-position
- * state; classic-script create paths reach it too — the classic/module boundary).
+ * @typedef {import('../abstract-editor.js').AbstractEditor} AbstractEditor
  */
 
 export class WysiwygSurface extends AbstractSurface {
   /** @type {string} */
   #uuid
 
-  /** @type {WysiwygSurfaceDeps} */
-  #deps
+  /**
+   * The parent editor (`host`) — the surface calls its public API directly:
+   * onSurfaceEvent (outbound editor-domain events), applyBlockOps (block-domain
+   * ops → the editor owns the WS enveloping), flushSave (the PM-internal Mod+S —
+   * caret-contextual, runs pre-core in editorProps handleKeyDown per
+   * docs/editor-interaction-contract.md), takeInsertPos (applyServerOp numeric
+   * fallback), and the insert-index math (insertIndexForBlock /
+   * insertIndexForBlockAt / clearInsertPos) the surface's OWN #handleSmartPaste/Drop
+   * need. Nothing app-level: no chrome names, no AI concepts.
+   * @type {AbstractEditor}
+   */
+  #host
 
   /** @type {any} the TipTap vendor bundle */
   #T
@@ -129,7 +121,7 @@ export class WysiwygSurface extends AbstractSurface {
   #rootEl = null
 
   /** @type {any} the live TipTap Editor instance */
-  #editor = null
+  #editorPane = null
 
   /**
    * Per-mount block-sync cache: { [blockId]: serializedContent } as of the last
@@ -145,30 +137,29 @@ export class WysiwygSurface extends AbstractSurface {
    * The document-level `selectionchange` handler (P3.B). Read-only-region
    * highlights (contentEditable=false: ai-block title, log Explore table) do NOT
    * fire PM's onSelectionUpdate, so the model would never hear them. This feeds
-   * the SAME path (deps.notify → editor #feedSelectionModel → feedSelection).
+   * the SAME path (host.onSurfaceEvent → editor #feedSelectionModel → feedSelection).
    * Stored so unmount removes it — no leak across remounts.
    * @type {(() => void)|null}
    */
   #onDocSelectionChange = null
 
   /**
-   * @param {string}             uuid
-   * @param {WysiwygSurfaceDeps} deps
+   * @param {AbstractEditor} host — the parent editor (supplies uuid + the public API)
    */
-  constructor(uuid, deps) {
+  constructor(host) {
     super()
-    if (!uuid) throw new Error('WysiwygSurface: uuid is required')
-    if (!deps) throw new Error('WysiwygSurface: deps are required')
-    this.#uuid = uuid
-    this.#deps = deps
-    this.#T = deps.T || T
+    if (!host) throw new Error('WysiwygSurface: host is required')
+    if (!host.uuid) throw new Error('WysiwygSurface: uuid is required')
+    this.#uuid = host.uuid
+    this.#host = host
+    this.#T = T
   }
 
   /** @returns {import('../editor-mode.js').EditorModeValue} */
   get mode() { return EditorMode.WYSIWYG }
 
   /** @returns {unknown|null} the live TipTap instance */
-  get tiptap() { return this.#editor }
+  get editorPane() { return this.#editorPane }
 
   /**
    * @override — chars/lines from the PM doc's textContent, blockCount from its
@@ -177,18 +168,18 @@ export class WysiwygSurface extends AbstractSurface {
    * @returns {{ chars: number, lines: number, blockCount: number }}
    */
   stats() {
-    const ed = this.#editor
+    const ed = this.#editorPane
     const text = (ed && ed.state && ed.state.doc && ed.state.doc.textContent) || ''
     const lines = text === '' ? 0 : text.split('\n').length
     const blockCount = (ed && ed.state && ed.state.doc) ? ed.state.doc.childCount : lines
     return { chars: text.length, lines, blockCount }
   }
 
-  // ── Document search (D-3: runs the Search extension on this surface's #editor) ──
+  // ── Document search (D-3: runs the Search extension on this surface's #editorPane) ──
   //
   // The SearchOverlay drives the editor's search verbs; the editor delegates here.
   // These are the exact command bodies that used to live behind SearchOverlay's
-  // ed.tiptap reach — now surface-private, on this surface's OWN #editor (the
+  // ed.editorPane reach — now surface-private, on this surface's OWN #editorPane (the
   // Search extension + its `storage.search` match set live there). searchTerm /
   // searchNext / searchPrev return the current match stats; clearSearch clears the
   // highlight and returns focus to the editing view (the overlay's close gesture).
@@ -199,7 +190,7 @@ export class WysiwygSurface extends AbstractSurface {
    * @returns {{current:number,total:number}|false}
    */
   searchTerm(term) {
-    const ed = /** @type {any} */ (this.tiptap)
+    const ed = /** @type {any} */ (this.editorPane)
     if (!ed) return false
     ed.commands.setSearchTerm(term)
     return this.#searchStats(ed)
@@ -207,7 +198,7 @@ export class WysiwygSurface extends AbstractSurface {
 
   /** @override @returns {{current:number,total:number}|false} */
   searchNext() {
-    const ed = /** @type {any} */ (this.tiptap)
+    const ed = /** @type {any} */ (this.editorPane)
     if (!ed) return false
     ed.commands.nextSearchResult()
     return this.#searchStats(ed)
@@ -215,7 +206,7 @@ export class WysiwygSurface extends AbstractSurface {
 
   /** @override @returns {{current:number,total:number}|false} */
   searchPrev() {
-    const ed = /** @type {any} */ (this.tiptap)
+    const ed = /** @type {any} */ (this.editorPane)
     if (!ed) return false
     ed.commands.prevSearchResult()
     return this.#searchStats(ed)
@@ -223,7 +214,7 @@ export class WysiwygSurface extends AbstractSurface {
 
   /** @override @returns {false} */
   clearSearch() {
-    const ed = /** @type {any} */ (this.tiptap)
+    const ed = /** @type {any} */ (this.editorPane)
     if (!ed) return false
     ed.commands.clearSearch()
     ed.commands.focus()
@@ -243,9 +234,9 @@ export class WysiwygSurface extends AbstractSurface {
 
   /**
    * The WYSIWYG formatting button groups for the editor toolbar (P4.D). Each
-   * button's onClick runs its command on this surface's OWN #editor
+   * button's onClick runs its command on this surface's OWN #editorPane
    * (chain().focus().<cmd>().run() — no window.__tiptap, no editor hop), and its
-   * `active` closure reads this.#editor.isActive(...) (the retired syncToolbar
+   * `active` closure reads this.#editorPane.isActive(...) (the retired syncToolbar
    * map, now per-button). Icons come from window.SieveIcons (verbatim bus).
    * @returns {ButtonGroup[]}
    */
@@ -255,8 +246,8 @@ export class WysiwygSurface extends AbstractSurface {
     return FORMATTING_GROUPS.map((specs) => new ButtonGroup(specs.map((spec) => new ToolbarButton({
       iconHtml: icons[spec.icon] || '',
       title: spec.title,
-      onClick: () => { const ed = self.#editor; if (ed) spec.cmd(ed.chain().focus()).run() },
-      active: spec.active ? () => { const ed = self.#editor; return !!(ed && ed.isActive.apply(ed, spec.active)) } : undefined,
+      onClick: () => { const ed = self.#editorPane; if (ed) spec.cmd(ed.chain().focus()).run() },
+      active: spec.active ? () => { const ed = self.#editorPane; return !!(ed && ed.isActive.apply(ed, spec.active)) } : undefined,
     }))))
   }
 
@@ -269,7 +260,6 @@ export class WysiwygSurface extends AbstractSurface {
   mount(rootEl, content) {
     var self = this
     var T = this.#T
-    var deps = this.#deps
     var uuid = this.#uuid
     var el = rootEl
     var blocks = (content && /** @type {any} */ (content).blocks) || null
@@ -287,7 +277,7 @@ export class WysiwygSurface extends AbstractSurface {
     // a passive observe-time concern (D-r.4), never a doc mutation here.
     var SieveDocument = T.Node.create({ name: 'doc', topNode: true, content: '(block | sieveBlock)+' })
 
-    var editor = new T.Editor({
+    var editorPane = new T.Editor({
       element: el,
       extensions: [
         SieveDocument,
@@ -384,10 +374,10 @@ export class WysiwygSurface extends AbstractSurface {
                 src = window.location.origin + '/sieve-image-proxy?url=' + encodeURIComponent(src)
               } else if (!src.startsWith('data:') && !src.startsWith('blob:') && !src.startsWith('/')) {
                 if (src.startsWith('.assets/')) src = src.substring(8)
-                src = '/sieve/' + (window.__stashActiveTabUuid || uuid) + '/' + src.split('/').pop()
+                src = '/sieve/' + uuid + '/' + src.split('/').pop()
               }
               event.preventDefault()
-              if (window._sieveCopyImageToClipboard) window._sieveCopyImageToClipboard(src)
+              copyImageToClipboard(src)
               return true
             }
 
@@ -478,7 +468,7 @@ export class WysiwygSurface extends AbstractSurface {
                 entries = sieveBlockEntries(node, rendererFor(node.attrs.kind))
                 singleSieveEntries = entries
               } else {
-                entries = (proseKind && proseKind.asContentEntry && proseKind.asContentEntry(node, self.tiptap)) || []
+                entries = (proseKind && proseKind.asContentEntry && proseKind.asContentEntry(node, self.editorPane)) || []
               }
               sliceItems.push(entries)
 
@@ -550,7 +540,7 @@ export class WysiwygSurface extends AbstractSurface {
         handleKeyDown: function (view, event) {
           if (event.key === 's' && window.isMod(event)) {
             event.preventDefault()
-            deps.requestSave()
+            self.#host.flushSave()
             return true
           }
           // Enter family routes through the interaction policy FROM HERE
@@ -558,7 +548,7 @@ export class WysiwygSurface extends AbstractSurface {
           // code:true blocks). Returns false in every context the policy
           // does not own, so native prose/list/table Enter is untouched.
           if (event.key === 'Enter' && policyEnterKeydown &&
-              policyEnterKeydown(view, event)) {
+              policyEnterKeydown(view, event, self.#host)) {
             return true
           }
           // Tab/Shift+Tab are owned by the interaction-policy extension
@@ -574,10 +564,10 @@ export class WysiwygSurface extends AbstractSurface {
         initialized = true
       },
       onSelectionUpdate: function () {
-        deps.notify(SurfaceEvent.SELECTION_CHANGED)
+        self.#host.onSurfaceEvent(SurfaceEvent.SELECTION_CHANGED)
       },
       onTransaction: function () {
-        deps.notify(SurfaceEvent.TRANSACTION)
+        self.#host.onSurfaceEvent(SurfaceEvent.TRANSACTION)
       },
       onUpdate: function (p) {
         if (!initialized || suppressUpdate) return
@@ -586,17 +576,22 @@ export class WysiwygSurface extends AbstractSurface {
         // debounce. The actual diff + wire send happens once typing settles, in
         // syncDocument, which emits granular block-ops (id-less nodes are
         // skipped until minted — no whole-document fallback).
-        deps.notify(SurfaceEvent.DOC_CHANGED)
+        self.#host.onSurfaceEvent(SurfaceEvent.DOC_CHANGED)
         if (self.#syncTimer) clearTimeout(self.#syncTimer)
         self.#syncTimer = setTimeout(function () {
           self.#syncTimer = null
-          self.#syncDocument(editor)
+          self.#syncDocument(editorPane)
         }, 500)
       },
     })
 
-    this.#editor = editor
-    window.__tiptap = editor
+    this.#editorPane = editorPane
+    // The NodeView→Editor handle (P4.F Brief C): stamp the parent Editor onto the
+    // TipTap pane the surface built, so a block capability (ctx.getEditor) can reach
+    // the Editor's PUBLIC API through the held pane — never the backend directly, and
+    // never a window global. Read lazily by getEditor at capability-fire time.
+    editorPane.sieveHost = this.#host
+    window.__tiptap = editorPane
 
     // Stage D.2: the block list IS the document model. When the load supplied it,
     // render the document from the blocks (prose → native node(s); structured →
@@ -608,7 +603,7 @@ export class WysiwygSurface extends AbstractSurface {
     if (blocks && blocks.length && buildBlocksHTML) {
       suppressUpdate = true
       try {
-        this.#renderBlocksIntoEditor(editor, blocks)
+        this.#renderBlocksIntoEditor(editorPane, blocks)
       } catch (err) {
         console.error('[editor] block render failed; keeping markdown seed', err)
       } finally {
@@ -618,12 +613,12 @@ export class WysiwygSurface extends AbstractSurface {
 
     // Seed the block-sync baseline from GO's block list (what the server has),
     // so a PM-created block (empty-doc fill / split) is seen as new and synced.
-    this.#seedBlockCache(editor, blocks)
+    this.#seedBlockCache(editorPane, blocks)
 
     // Catch focus events on inner form controls (like Sieve Code block textareas)
     // where ProseMirror's native onSelectionUpdate won't fire.
-    editor.view.dom.addEventListener('focusin', function() {
-      deps.notify(SurfaceEvent.FOCUS_CHANGED)
+    editorPane.view.dom.addEventListener('focusin', function() {
+      self.#host.onSurfaceEvent(SurfaceEvent.FOCUS_CHANGED)
     })
 
     // P3.B: a highlight dragged inside a block's READ-ONLY region (ai-block title,
@@ -632,7 +627,7 @@ export class WysiwygSurface extends AbstractSurface {
     // The model already coalesces caret-only noise; the read-only-region drags
     // that matter change range/selectedText, which ARE meaningful — no debounce
     // added (revisit only if the smoke shows churn).
-    this.#onDocSelectionChange = function () { deps.notify(SurfaceEvent.SELECTION_CHANGED) }
+    this.#onDocSelectionChange = function () { self.#host.onSurfaceEvent(SurfaceEvent.SELECTION_CHANGED) }
     document.addEventListener('selectionchange', this.#onDocSelectionChange)
   }
 
@@ -647,9 +642,9 @@ export class WysiwygSurface extends AbstractSurface {
       document.removeEventListener('selectionchange', this.#onDocSelectionChange)
       this.#onDocSelectionChange = null
     }
-    if (this.#editor) {
-      this.#editor.destroy()
-      this.#editor = null
+    if (this.#editorPane) {
+      this.#editorPane.destroy()
+      this.#editorPane = null
     }
     if (this.#rootEl) this.#rootEl.innerHTML = ''
     this.#rootEl = null
@@ -666,7 +661,7 @@ export class WysiwygSurface extends AbstractSurface {
     if (!this.#syncTimer) return
     clearTimeout(this.#syncTimer)
     this.#syncTimer = null
-    const ed = this.tiptap
+    const ed = this.editorPane
     if (ed) this.#syncDocument(ed)
   }
 
@@ -676,7 +671,7 @@ export class WysiwygSurface extends AbstractSurface {
   // Verbatim code motion of editor.js's handleSmartPaste/handleSmartDrop: the
   // transaction dispatches (ai-block reimport insertContent, no-match fallback
   // insertContent) keep their TRACKED (default addToHistory) semantics and their
-  // preventDefault gates. The insert-index math is editor-sourced via #deps
+  // preventDefault gates. The insert-index math is editor-sourced via #host
   // (insertIndexForBlock / insertIndexForBlockAt / clearInsertPos) — the shared
   // insert-position state lives on the editor (D-1). caretInRawTextBlock is now an
   // ES import (paste-context.js); the window.jsyaml read stays VERBATIM (jsyaml is
@@ -687,7 +682,7 @@ export class WysiwygSurface extends AbstractSurface {
    * @returns {boolean} true when handled (native paste suppressed)
    */
   #handleSmartPaste(event) {
-    if (!event.clipboardData || !this.#editor) return false
+    if (!event.clipboardData || !this.#editorPane) return false
 
     if (event.target && (/** @type {any} */ (event.target).tagName === 'INPUT' || /** @type {any} */ (event.target).tagName === 'TEXTAREA')) {
       return false
@@ -696,7 +691,7 @@ export class WysiwygSurface extends AbstractSurface {
     // Caret inside a raw-text fenced block (code / diagram / log — code:true
     // nodes): paste is a literal text paste into that block, not a smart-paste
     // that mints a new block. Step aside; PM's default handler inserts the text.
-    if (caretInRawTextBlock && caretInRawTextBlock(this.#editor)) {
+    if (caretInRawTextBlock && caretInRawTextBlock(this.#editorPane)) {
       return false
     }
 
@@ -716,7 +711,7 @@ export class WysiwygSurface extends AbstractSurface {
           var data = window.jsyaml.load(yamlText)
           if (data && data.id) {
             event.preventDefault()
-            this.#editor.commands.insertContent({
+            this.#editorPane.commands.insertContent({
               type: 'sieve-ai-block',
               attrs: {
                 rawYaml:     yamlText,
@@ -751,8 +746,8 @@ export class WysiwygSurface extends AbstractSurface {
         var slice = JSON.parse(sliceData)
         if (Array.isArray(slice) && slice.length > 1) {
           event.preventDefault()
-          var sliceIndex = this.#deps.insertIndexForBlock()
-          this.#deps.clearInsertPos() // slice render-backs position by op index, not this
+          var sliceIndex = this.#host.insertIndexForBlock()
+          this.#host.clearInsertPos() // slice render-backs position by op index, not this
           fetch('/api/editor/paste-slice', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -795,7 +790,7 @@ export class WysiwygSurface extends AbstractSurface {
 
         // Smart-paste resolves a block kind server-side (web-clip / smart-image /
         // smart-card) → capture insert position as a block index for Go to position.
-        var smartPasteIndex = this.#deps.insertIndexForBlock()
+        var smartPasteIndex = this.#host.insertIndexForBlock()
         event.preventDefault()
 
         Promise.all(promises).then(function(results) {
@@ -807,23 +802,23 @@ export class WysiwygSurface extends AbstractSurface {
           })
             .then(function (r) { return r.json() })
             .then(function (result) {
-              if (!self.#editor) return
+              if (!self.#editorPane) return
               if (result.matched) {
                 // Rendered via insert-block (tracked insert at its server index). Nothing to do.
               } else {
                 // No processor matched — replay original clipboard content locally.
-                self.#deps.clearInsertPos()
+                self.#host.clearInsertPos()
                 if (html) {
-                  self.#editor.commands.insertContent(html)
+                  self.#editorPane.commands.insertContent(html)
                 } else if (text) {
-                  self.#editor.commands.insertContent(text)
+                  self.#editorPane.commands.insertContent(text)
                 }
               }
             })
             .catch(function (err) {
               console.error('[editor.js] smart-paste fetch failed', err)
-              self.#deps.clearInsertPos()
-              if (self.#editor) self.#editor.commands.insertContent(text)
+              self.#host.clearInsertPos()
+              if (self.#editorPane) self.#editorPane.commands.insertContent(text)
             })
         })
         return true
@@ -838,7 +833,7 @@ export class WysiwygSurface extends AbstractSurface {
    * @returns {boolean} true when handled (native drop suppressed)
    */
   #handleSmartDrop(event) {
-    if (!event.dataTransfer || !this.#editor) return false
+    if (!event.dataTransfer || !this.#editorPane) return false
 
     if (this.#uuid && !this.#uuid.startsWith('prompt:')) {
       var self = this
@@ -871,9 +866,9 @@ export class WysiwygSurface extends AbstractSurface {
 
       if (!hasFiles) return false
 
-      var pos = this.#editor.view.posAtCoords({ left: event.clientX, top: event.clientY })
-      var insertPos = pos ? pos.pos : this.#editor.state.selection.to
-      var dropIndex = this.#deps.insertIndexForBlockAt(insertPos)
+      var pos = this.#editorPane.view.posAtCoords({ left: event.clientX, top: event.clientY })
+      var insertPos = pos ? pos.pos : this.#editorPane.state.selection.to
+      var dropIndex = this.#host.insertIndexForBlockAt(insertPos)
 
       event.preventDefault()
 
@@ -887,7 +882,7 @@ export class WysiwygSurface extends AbstractSurface {
         })
           .then(function (r) { return r.json() })
           .then(function (result) {
-            if (!self.#editor) return
+            if (!self.#editorPane) return
             if (result.matched) {
               // Rendered via insert-block (tracked insert at its server index). Nothing to do.
             }
@@ -921,7 +916,7 @@ export class WysiwygSurface extends AbstractSurface {
   feedSelection() {
     // Read through the public `tiptap` accessor (as applyServerOp/flushPending
     // do) — the live instance, whatever a subclass injects.
-    const ed = /** @type {any} */ (this.tiptap)
+    const ed = /** @type {any} */ (this.editorPane)
     if (!ed || !ed.state) {
       return {
         selectionType: 'none', caret: null, range: null, selectedText: null,
@@ -994,7 +989,7 @@ export class WysiwygSurface extends AbstractSurface {
    * restore INSIDE that block (per-flavour `__sieveFocus.restore`, else the generic
    * `.sieve-block__edit` textarea with a stale-token clamp). Otherwise re-resolve the
    * DOCUMENT caret/range against the current doc size and drive the editor. TipTap via
-   * `this.tiptap` (its own accessor, as flushPending/applyServerOp do) — never exposed.
+   * `this.editorPane` (its own accessor, as flushPending/applyServerOp do) — never exposed.
    * @param {import('../selection-model.js').SelectionContext} ctx
    */
   applyPosition(ctx) {
@@ -1019,7 +1014,7 @@ export class WysiwygSurface extends AbstractSurface {
     }
     // (b) doc caret/range re-resolved against the CURRENT doc: a captured Selection is
     // bound to its doc instance and would throw if anything edited in between.
-    const ed = /** @type {any} */ (this.tiptap)
+    const ed = /** @type {any} */ (this.editorPane)
     if (ed) {
       ed.view.focus()
       const size = ed.state.doc.content.size
@@ -1297,7 +1292,7 @@ export class WysiwygSurface extends AbstractSurface {
   /** @param {any} msg */
   #applyInsertBlock(msg) {
     var self = this
-    var ed = /** @type {any} */ (this.tiptap)
+    var ed = /** @type {any} */ (this.editorPane)
     if (!ed) return
     // Backend-authoritative prose id (B-A): the create carried a transient token and no
     // durable id; Go minted the id and echoed the token. Swap the pending node's token
@@ -1318,7 +1313,7 @@ export class WysiwygSurface extends AbstractSurface {
       } else {
         // Deleted while the create was in flight — Go has a block we can't see. Delete it
         // by the authoritative id, then drop the stale token baseline (falsy id sentinel).
-        this.#deps.applyBlockOps([{ type: 'delete-block', blockId: msg.id }])
+        this.#host.applyBlockOps([{ type: 'delete-block', blockId: msg.id }])
         this.#reconcilePendingToken(msg.token, null)
       }
       return
@@ -1331,7 +1326,7 @@ export class WysiwygSurface extends AbstractSurface {
     // A numeric sieveInsertPos is still used by AI-block creates (which set a raw
     // editor position before the WS round-trip). In-place transforms now use the
     // dedicated replace-block path; replaceRange is retired.
-    var numericPos = this.#deps.takeInsertPos()
+    var numericPos = this.#host.takeInsertPos()
 
     // Insert-if-absent: the backend creates EVERY kind through the one lifecycle and
     // render-backs uniformly — including prose, whose node the editor already holds
@@ -1373,7 +1368,7 @@ export class WysiwygSurface extends AbstractSurface {
       // file dialog / toolbar click leaves focus elsewhere; code/diagram focus their own
       // edit surface above; async AI answers intentionally never steal focus.)
       setTimeout(function () {
-        var e2 = /** @type {any} */ (self.tiptap)
+        var e2 = /** @type {any} */ (self.editorPane)
         if (!e2) return
         var doc = e2.state.doc
         var idxAfter = blockIndexAfter(doc, msg.id || parsed.id)
@@ -1402,7 +1397,7 @@ export class WysiwygSurface extends AbstractSurface {
    * @param {any} msg
    */
   #applyReplaceBlock(msg) {
-    var ed = /** @type {any} */ (this.tiptap)
+    var ed = /** @type {any} */ (this.editorPane)
     if (!ed) return
     var oldId = msg.oldId
     var newId = msg.newId || oldId
@@ -1431,7 +1426,7 @@ export class WysiwygSurface extends AbstractSurface {
 
   /** @param {any} msg */
   #applyBlockAttrsUpdated(msg) {
-    var ed = /** @type {any} */ (this.tiptap)
+    var ed = /** @type {any} */ (this.editorPane)
     if (!ed) return
     var parsed = msg.attrs || {}
 
@@ -1472,7 +1467,7 @@ export class WysiwygSurface extends AbstractSurface {
    * @param {{allowEmpty?: boolean}} [opts]
    */
   reloadFromBlocks(blocks, opts) {
-    const ed = this.tiptap
+    const ed = this.editorPane
     if (!ed) return
     this.#renderBlocksIntoEditor(ed, blocks, opts)
   }
@@ -1486,13 +1481,13 @@ export class WysiwygSurface extends AbstractSurface {
    * load (renderBlocksIntoEditor) and the per-block render-back (insert-block), so a
    * server-created block renders identically however it arrives. Parsed in
    * ISOLATION so a block the schema rejects is logged + skipped, never aborting.
-   * @param {any} editor @param {any} b @returns {any[]}
+   * @param {any} editorPane @param {any} b @returns {any[]}
    */
-  #blockToNodes(editor, b) {
+  #blockToNodes(editorPane, b) {
     var T = this.#T
-    var mdRender = function (t) { return editor.storage.markdown.parser.md.render(t) }
+    var mdRender = function (t) { return editorPane.storage.markdown.parser.md.render(t) }
     var PMDP = T.ProseMirrorDOMParser || T.DOMParser
-    var parser = PMDP.fromSchema(editor.state.schema)
+    var parser = PMDP.fromSchema(editorPane.state.schema)
     var bhtml = buildBlocksHTML([b], mdRender)
     var out = []
     try {
@@ -1501,7 +1496,7 @@ export class WysiwygSurface extends AbstractSurface {
       if (b.kind === 'prose') {
         // A prose block parses to its NATIVE top-level node(s); proseBlockNodes
         // stamps the block id (one node → that node; >1 → one proseGroup container).
-        var produced = proseBlockNodes(parser.parse(tmp).content, b.id || '', editor.state.schema)
+        var produced = proseBlockNodes(parser.parse(tmp).content, b.id || '', editorPane.state.schema)
         if (!produced.length) console.error('[editor] prose block (' + (b.id || '') + ') produced no node from:\n' + (bhtml || '').trim().slice(0, 200))
         produced.forEach(function (n) { out.push(n) })
       } else {
@@ -1523,20 +1518,20 @@ export class WysiwygSurface extends AbstractSurface {
    * to one empty paragraph instead of keeping stale content. Set only by the
    * known-good reload caller (reloadFromBlocks ← softReloadContent); omit for
    * all other callers.
-   * @param {any} editor @param {Array<object>} blocks @param {{allowEmpty?: boolean}} [opts]
+   * @param {any} editorPane @param {Array<object>} blocks @param {{allowEmpty?: boolean}} [opts]
    */
-  #renderBlocksIntoEditor(editor, blocks, opts) {
+  #renderBlocksIntoEditor(editorPane, blocks, opts) {
     var self = this
     var nodes = []
     ;(blocks || []).forEach(function (b) {
-      self.#blockToNodes(editor, b).forEach(function (n) { nodes.push(n) })
+      self.#blockToNodes(editorPane, b).forEach(function (n) { nodes.push(n) })
     })
-    var replacement = reloadReplacement(nodes, opts || {}, editor.state.schema)
+    var replacement = reloadReplacement(nodes, opts || {}, editorPane.state.schema)
     if (replacement === null) return // keep existing content (transient empty)
-    var tr = editor.state.tr
-    tr.replaceWith(0, editor.state.doc.content.size, replacement)
+    var tr = editorPane.state.tr
+    tr.replaceWith(0, editorPane.state.doc.content.size, replacement)
     tr.setMeta('addToHistory', false)
-    editor.view.dispatch(tr)
+    editorPane.view.dispatch(tr)
   }
 
   // ── Block-sync cache (verbatim mountWysiwyg internals) ─────────────────────────
@@ -1580,15 +1575,15 @@ export class WysiwygSurface extends AbstractSurface {
    * sync emits a create-block for it. Seeding from the editor would hide such a
    * block from Go forever (its update-block would fail "block not found"). For a
    * loaded doc the server blocks ARE the editor blocks, so nothing spurious.
-   * @param {any} editor @param {Array<any>|null} serverBlocks
+   * @param {any} editorPane @param {Array<any>|null} serverBlocks
    */
-  #seedBlockCache(editor, serverBlocks) {
+  #seedBlockCache(editorPane, serverBlocks) {
     // Structured signature is the JSON of the rendered node's attrs (topBlockTriple's
     // derivation). The SERVER block's attrs would stringify differently (key order,
     // schema defaults) and phantom-flag a change on the first diff, so read the
     // structured baseline straight off the just-rendered editor, keyed by id.
     var structuredSig = {}
-    this.#collectTopBlocks(editor).forEach(function (t) {
+    this.#collectTopBlocks(editorPane).forEach(function (t) {
       if (t.kind !== 'prose' && t.id) structuredSig[t.id] = t.content
     })
     var triples = (serverBlocks || []).map(function (b) {
@@ -1621,7 +1616,7 @@ export class WysiwygSurface extends AbstractSurface {
     if (!curr || !computeBlockSync) return
     var r = computeBlockSync(curr, this.#blockContentCache)
     this.#blockContentCache = r.next
-    if (r.ops.length) this.#deps.applyBlockOps(r.ops)
+    if (r.ops.length) this.#host.applyBlockOps(r.ops)
   }
 
   /**
@@ -1631,7 +1626,7 @@ export class WysiwygSurface extends AbstractSurface {
    * @param {string} id
    */
   #noteServerBlock(id) {
-    var ed = /** @type {any} */ (this.tiptap)
+    var ed = /** @type {any} */ (this.editorPane)
     if (!this.#blockContentCache || !id || !ed) return
     var found = null
     ed.state.doc.forEach(function (node) {
@@ -1666,10 +1661,10 @@ export class WysiwygSurface extends AbstractSurface {
    * on insert-block) to the editor doc position before that node — so a
    * render-back lands where Go put it, even for a batch (a paste slice).
    * Delegates to the tested docPosForBlockIndex import (base/block-position.js).
-   * @param {any} editor @param {number} idx
+   * @param {any} editorPane @param {number} idx
    */
-  #docPosForBlockIndex(editor, idx) {
-    return docPosForBlockIndex(editor.state.doc, idx)
+  #docPosForBlockIndex(editorPane, idx) {
+    return docPosForBlockIndex(editorPane.state.doc, idx)
   }
 }
 

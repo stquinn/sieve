@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { computeBlockSync, seedBaseline, dedupeActions, updateBlockOp, proseOp } from '../src/static/block/block-sync.js'
 
 // updateBlockOp is the structured-edit counterpart to computeBlockSync's prose
-// ops: a NodeView (code/diagram/log) fires `sieve:block-update` with
-// { id, kind, attrs } when the user edits it, and that detail must become the
+// ops: a NodeView (code/diagram/log) passes { id, kind, attrs } to
+// ctx.updateAttributes when the user edits it, and that detail must become the
 // SAME `update-block` block-op shape prose already rides — so every block update,
 // prose or structured, converges on one wire op (block-update message retired).
 describe('updateBlockOp', () => {
@@ -136,7 +136,7 @@ describe('computeBlockSync', () => {
     ])
   })
 
-  it('emits NOTHING when a structured block changes (its edits sync via sieve:block-update)', () => {
+  it('emits NOTHING when a structured block changes (its edits sync via ctx.updateAttributes)', () => {
     const prev = computeBlockSync(
       [{ id: 'co-1', kind: 'code', content: '{"id":"co-1","source":"a"}' }], null,
     ).next

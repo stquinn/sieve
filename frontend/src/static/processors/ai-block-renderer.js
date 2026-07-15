@@ -84,7 +84,7 @@ import { setRefChain, clearRefChain } from '../ai/ai-target-decoration.js'
       }
     },
 
-    makeNodeView: function (node, editor, getPos) {
+    makeNodeView: function (node, editorPane, getPos) {
       var nodeTypeName = 'sieve-ai-block'
       var dom = document.createElement('div')
       dom.className = 'sieve-ai-block ai-block'
@@ -122,20 +122,20 @@ import { setRefChain, clearRefChain } from '../ai/ai-target-decoration.js'
         // externally-set class on its next view update. Drive their glow through a
         // PM decoration instead (setRefChain), so PM renders block-ref-active and
         // it survives. Harmless no-op on the structured ids handled above.
-        if (editor && editor.view) {
+        if (editorPane && editorPane.view) {
           if (action === 'add') {
             var proseIds = []
             chain.forEach(function (cid) { if (cid !== id) proseIds.push(cid) })
-            setRefChain(editor.view, proseIds)
+            setRefChain(editorPane.view, proseIds)
           } else {
-            clearRefChain(editor.view)
+            clearRefChain(editorPane.view)
           }
         }
       }
 
       dom.addEventListener('dragstart', function (e) { e.preventDefault() })
       dom.addEventListener('mouseenter', function () {
-        if (editor.view.dom.classList.contains('has-selection')) return
+        if (editorPane.view.dom.classList.contains('has-selection')) return
         applyChain('add')
       })
       dom.addEventListener('mouseleave', function () { applyChain('remove') })
