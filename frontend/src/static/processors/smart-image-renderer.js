@@ -133,7 +133,7 @@ import { renderMermaidSvgEntry } from './diagram-renderer.js'
     getFriendlyName: function() { return 'Image' },
 
     // Atom: arrows treat it as a single caret stop.
-    interactionPolicy: { caretStop: true },
+    interactionPolicy: { caretStop: true, expandable: true },
 
     // Pure display-only image — no editable body. A true atom (no contentDOM), so the
     // framework forces contentEditable=false and there is no phantom caret region.
@@ -165,7 +165,24 @@ import { renderMermaidSvgEntry } from './diagram-renderer.js'
     buildAiCtx: function(node) {
       return { contextLabel: 'Image', imageIds: node.attrs.id ? [node.attrs.id] : [] }
     },
-    
+
+    // getExpandContent — a fresh <img> at the resolved src. Null while the asset
+    // job is PENDING/DISPATCHED or errored (nothing meaningful to show yet).
+    getExpandContent: function (node, _dom) {
+      if (!node || !node.attrs || !node.attrs.src) return null
+      var status = node.attrs.status || 'PENDING'
+      if (status === 'PENDING' || status === 'DISPATCHED' || status === 'ERROR' || status === 'TIMEOUT') return null
+      var img = document.createElement('img')
+      // resolveSrc builds /sieve/<uuid>/<file> from ctx.getEditor().uuid. getExpandContent
+      // gets (node, dom) not the block ctx, so reach the active editor the same way other
+      // view-layer code does — window.sieveWorkspace.activeEditor (has .uuid). A document is
+      // only ever open in the single active tab, so activeEditor is THIS block's editor.
+      img.src = resolveSrc(node.attrs.src, { getEditor: function () { return (window.sieveWorkspace && window.sieveWorkspace.activeEditor) || null } })
+      img.alt = node.attrs.alt || ''
+      return { element: img, title: node.attrs.alt || 'Image', mode: 'media' }
+    },
+
+
     parseAttrs: function (data) {
       return {
         src:     data.src     || '',
