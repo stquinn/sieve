@@ -6,7 +6,7 @@
 // The shell is the deliberate reuse seam for a future mode:'live' focus mode.
 // Pure view-layer: zoom/pan is ephemeral, never persisted (docs spec §Architecture).
 
-/** @typedef {{ element: HTMLElement, title: string, mode: 'media' }} ExpandSpec */
+/** @typedef {{ element: Element, title: string, mode: 'media' }} ExpandSpec */
 
 export class MediaLightbox {
   static #singleton = null
