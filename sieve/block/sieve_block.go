@@ -39,6 +39,23 @@ func NewSieveBlock(kind, id string, attrs map[string]interface{}) SieveBlock {
 	if id == "" {
 		id = GenerateBlockIDFor(kind)
 	}
+	// The invariant is TWO-SIDED: mirror the id into Attrs["id"] too. Both the WYSIWYG
+	// wire (buildSieveBlockHTML reads Attrs["id"] — a missing one drops the block on
+	// load) and the fenced serializer (SerializeYaml(Attrs) writes `id:` FROM Attrs)
+	// read the id out of Attrs, never the ID field — so a minted id that lived only on
+	// ID vanished on both load AND save (the id-less-block bug). Copy-on-write: the
+	// prose processor builds throwaway blocks from LIVE attrs maps, so never mutate the
+	// caller's map. Skip the copy when Attrs already agrees (the common serialized case).
+	if attrs == nil {
+		attrs = map[string]interface{}{"id": id}
+	} else if existing, _ := attrs["id"].(string); existing != id {
+		cloned := make(map[string]interface{}, len(attrs)+1)
+		for k, v := range attrs {
+			cloned[k] = v
+		}
+		cloned["id"] = id
+		attrs = cloned
+	}
 	return SieveBlock{ID: id, Kind: kind, Attrs: attrs}
 }
 
