@@ -45,6 +45,7 @@ import { T } from '../base/tiptap-vendor.js'
 import { registerBlockKind, getBlockBehaviour, containsChildBlocks, getSieveIcon } from './block-kinds.js'
 import { labelForAction } from '../base/action-label.js'
 import { updateBlockOp } from './block-sync.js'
+import { expandBlock } from '../ui/media-lightbox.js'
 
 // ── Header focus preservation ────────────────────────────────────────────────
 // A header re-render (renderHeaderBar) rebuilds the whole toolbar so button
@@ -416,6 +417,21 @@ export let rendererFor
                 ? renderer.buildContextMenuItems({ node: n, editorPane: editorPane, getPos: getPos })
                 : []
 
+              // Expand — universal for kinds declaring the `expandable` policy,
+              // shown only when there is something to expand right now.
+              if (renderer.interactionPolicy && renderer.interactionPolicy.expandable &&
+                  typeof renderer.getExpandContent === 'function') {
+                var exSpec = renderer.getExpandContent(n, view.dom)
+                if (exSpec) {
+                  items = items.concat([
+                    { type: 'divider' },
+                    { icon: IC.expand || IC.search, label: 'Expand', action: function () {
+                      expandBlock(renderer.getExpandContent(n, view.dom))
+                    }},
+                  ])
+                }
+              }
+
               // Ask AI + Explain — universal for every sieve block. The intent enters
               // the SELECTION stream: setNodeSelection(getPos()) makes THIS block the
               // resolved AI target (context.target), so the Ask/Explain handlers pull it
@@ -590,6 +606,28 @@ export let rendererFor
           if (headerProvider && typeof headerProvider.render === 'function') {
             renderHeaderBar = function () {
               var fresh = headerProvider.render(blockCtx.attrs, blockCtx)
+              // Expand button — appended to the header bar for kinds declaring the
+              // `expandable` policy, shown only when there is something to expand now.
+              if (renderer.interactionPolicy && renderer.interactionPolicy.expandable &&
+                  typeof renderer.getExpandContent === 'function') {
+                var pos = (typeof getPos === 'function') ? getPos() : -1
+                var curNode = (pos >= 0 && pos < editorPane.state.doc.content.size)
+                  ? editorPane.state.doc.nodeAt(pos) : node
+                if (curNode && renderer.getExpandContent(curNode, view.dom)) {
+                  var xb = document.createElement('button')
+                  xb.className = 'sieve-block__expand-btn'
+                  xb.setAttribute('aria-label', 'Expand')
+                  xb.innerHTML = (window.SieveIcons && window.SieveIcons.expand) || '⤢'
+                  xb.addEventListener('mousedown', function (e) {
+                    e.preventDefault(); e.stopPropagation()
+                    var p = (typeof getPos === 'function') ? getPos() : -1
+                    var nd = (p >= 0 && p < editorPane.state.doc.content.size)
+                      ? editorPane.state.doc.nodeAt(p) : curNode
+                    expandBlock(renderer.getExpandContent(nd, view.dom))
+                  })
+                  fresh.appendChild(xb)
+                }
+              }
               // Keep a control the user is actively in (log's filter input) alive
               // across the rebuild: adopt its live node into the fresh tree, then
               // re-focus after mounting. See adoptFocusedControl above.

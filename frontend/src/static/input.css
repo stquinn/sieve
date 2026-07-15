@@ -290,18 +290,58 @@
   min-height: 80px;
 }
 
-/* Render mode body */
+/* Render mode body — a fit-to-column OVERVIEW: the whole diagram, centred and
+   scaled to fit, so you get a sense of it at a glance. Reading small labels is the
+   lightbox's job (Mod+Alt+E / header ⤢ → fill-window + zoom). The SVG keeps its
+   natural size (useMaxWidth:false) so the lightbox can size it; CSS scales it down
+   here. max-height guards very tall diagrams; whole thing stays visible, no scroll. */
 .diagram-block__render {
   padding: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 120px;
+  overflow: hidden;      /* clip inline Ctrl-zoom to the pane; pan within */
+  position: relative;    /* anchor for the Ctrl affordance hint */
 }
+
+/* Inline pan/zoom wrapper (renderBody > .diagram-block__panzoom > svg). fit-content
+   sizes it to the SVG's intrinsic width, capped at the column — breaking the
+   circular sizing a plain content-box wrapper would create around max-width:100%. */
+.diagram-block__panzoom {
+  width: fit-content;
+  max-width: 100%;
+  line-height: 0;
+}
+/* Contain the pane's layout + paint so an inline-zoom transform inside it does NOT
+   repaint/re-layout the surrounding contentEditable document (a WebKit cost Chrome
+   hides — it jerked the whole editor). NOTE: NOT `will-change: transform` — that
+   promotes a GPU bitmap layer and the zoom scales the raster (blurry text). Plain
+   `contain` isolates the repaint while the SVG re-rasterises crisply as vector. */
+.diagram-block__render { contain: layout paint; }
 
 .diagram-block__render svg {
   max-width: 100%;
+  max-height: 60vh;
   height: auto;
+  display: block;
+}
+
+/* Armed (Ctrl held): the pane is a pan/zoom surface — grab cursor + a hint. */
+.diagram-block__render--pz { cursor: grab; }
+.diagram-block__render--pz::after {
+  content: "⌃ scroll to zoom · drag to pan";
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  font-family: var(--theme-monoFont);
+  font-size: 10px;
+  color: var(--theme-fg3);
+  background: color-mix(in srgb, var(--theme-bgDark) 85%, transparent);
+  border: 1px solid var(--theme-border);
+  padding: 2px 7px;
+  border-radius: 4px;
+  pointer-events: none;
 }
 
 /* Flowchart edge labels (Yes/No on links) share mermaid's `.label` colour with
@@ -369,3 +409,37 @@
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
+
+/* ── Media lightbox (block expand) ──────────────────────────────────────────── */
+.media-lightbox { position: fixed; inset: 0; z-index: 1000; display: flex;
+  flex-direction: column; outline: none;
+  /* SOLID editor background (not a translucent scrim): the lightbox is a focused
+     view you want to read/screenshot cleanly, with no underlying editor bleeding
+     through. Uses --theme-bg (the editor canvas colour). */
+  background: var(--theme-bg); }
+.media-lightbox__bar { display: flex; align-items: center; gap: 12px;
+  padding: 8px 14px; background: var(--theme-bgAlt);
+  border-bottom: 1px solid var(--theme-border); }
+.media-lightbox__title { font-family: var(--theme-monoFont); font-size: 12px;
+  color: var(--theme-text); }
+.media-lightbox__toolbar { display: flex; align-items: center; gap: 6px;
+  margin-left: auto; }
+.media-lightbox__tool, .media-lightbox__close { font-size: 12px;
+  color: var(--theme-fg2); background: var(--theme-bgLight);
+  border: 1px solid var(--theme-border2); border-radius: 4px;
+  padding: 2px 9px; cursor: pointer; }
+.media-lightbox__tool:hover, .media-lightbox__close:hover { color: var(--theme-text); }
+.media-lightbox__zoom { font-family: var(--theme-monoFont); font-size: 11px;
+  color: var(--theme-fg3); min-width: 42px; text-align: center; }
+.media-lightbox__stage { flex: 1; overflow: hidden; display: flex;
+  align-items: center; justify-content: center; cursor: grab; }
+.media-lightbox__content { max-width: 96%; max-height: 96%; }
+.media-lightbox__content svg,
+.media-lightbox__content img { max-width: 100%; max-height: 100%;
+  height: auto; display: block; }
+
+/* Block header Expand button — injected by the block framework for kinds
+   declaring the `expandable` policy (see sieve-block-extension.js). */
+.sieve-block__expand-btn { font-size: 12px; line-height: 1; color: var(--theme-fg3);
+  background: transparent; border: none; cursor: pointer; padding: 2px 6px; }
+.sieve-block__expand-btn:hover { color: var(--theme-text); }

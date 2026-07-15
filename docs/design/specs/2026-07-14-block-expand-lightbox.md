@@ -1,12 +1,15 @@
 # Block Expand Lightbox — `expandable` as a declared block capability
 
-**Status:** Parked (user decision 2026-07-14) — detailed design and
-implementation deferred until epic #31 (workspace/editor component model)
-lands, since the capability wiring targets the exact surfaces #31 reshapes
-(policy extension, block chrome, `editor.js` seams). Direction and
-decisions in this spec stand; revisit the seam names against the post-#31
-landscape before planning.
-**Tracked:** #35
+**Status:** Active (unparked 2026-07-15) — epic #31 (workspace/editor
+component model) has landed, so the surfaces this capability wires into now
+exist in their final shape. Seam names below are reconciled to the post-#31
+tree: the Enter/chord dispatch that used to live in `editor.js` is now
+`WysiwygSurface`'s `editorProps.handleKeyDown` (`editor/surfaces/wysiwyg-surface.js`)
+plus the interaction-policy extension (`editor/interaction-policy.js`), which
+already threads the parent Editor as `#host` — exactly the handle the expand
+chord needs. The app-wide keyboard-shortcut taxonomy is tracked separately in
+#39; this spec adopts its `Mod+Alt` = appearance/view tier for the expand chord.
+**Tracked:** #35 (taxonomy: #39)
 **Date:** 2026-07-14
 **Future direction:** `docs/design/brainstorm-smart-code-blocks.md` — the same
 overlay shell is the intended home for a later "focus mode" (code editing,
@@ -60,10 +63,14 @@ For any kind declaring `expandable`, the framework provides:
 1. **Context-menu item** — "Expand" appended alongside the universal
    Ask AI / Explain / Delete items; omitted when `getExpandContent`
    returns `null`.
-2. **Keyboard chord** — Shift+Mod+Enter expands the block at the caret
-   stop / node selection, wired in the interaction-policy extension (per
-   the contract, per-renderer key handling is forbidden). Sits beside
-   Mod+Enter = mode toggle in the chord family.
+2. **Keyboard chord** — Mod+Alt+E expands the block at the caret stop /
+   node selection, wired in the interaction-policy extension (per the
+   contract, per-renderer key handling is forbidden). `Mod+Alt` is the
+   appearance/view tier (#39); E = Expand. It is NOT a ProseMirror/TipTap
+   binding (headings occupy Mod+Alt+`<digit>`, not letters), so there is
+   nothing to fight — no pre-core interception, no core-keymap collision.
+   NOTE: #35 does NOT rebind the diagram render toggle (it stays Mod+Enter);
+   moving it to Mod+Alt+Enter is part of the taxonomy work in #39.
 3. **Header expand button** injected when the block has a `headerProvider`
    (diagram gets it next to Edit/Render). Smart-image has no header — it
    gets gestures 1–2 only; retrofitting header chrome onto images is out
@@ -84,14 +91,32 @@ public contracts, `// @ts-check`. One lazily-created instance appended to
 - **Overlay shell** (reused by every future mode): window-filling fixed
   overlay, dimmed backdrop, title bar, toolbar slot, Esc / backdrop-click /
   × close, focus capture on open and restore-to-editor on close.
-- **Media controller** (`mode: 'media'` only): pan/zoom via
-  `transform: translate() scale()` on a content wrapper. Opens at
-  fit-to-window; wheel zooms around the cursor (clamped ~10%–1000%); drag
-  pans; double-click toggles fit ↔ 100%; toolbar − / zoom% / + / Fit /
-  100%. Static content only — live/editable surfaces must never receive a
-  CSS transform.
+- **Media controller** (`mode: 'media'` only): pan/zoom driven by
+  **`@panzoom/panzoom`** (timmywil) — a vendored, zero-dependency, MIT,
+  CSS-transform pan/zoom lib that operates on any element (raster `<img>`,
+  cloned SVG via its built-in `isSVG` handling, or future DOM). The
+  controller owns policy, the lib owns the transform math:
+  `Panzoom(content, { minScale ≈ 0.1, maxScale ≈ 10, startScale: <fit> })`;
+  `parent.addEventListener('wheel', pz.zoomWithWheel)` gives cursor-anchored
+  wheel zoom for free; drag-pan is built in; the toolbar (− / zoom% / + /
+  Fit / 100%) calls `pz.zoomIn/zoomOut/reset` and reads `pz.getScale()` for
+  the % readout; double-click toggles fit ↔ 100% via `pz.zoom()`. Opens at
+  fit-to-window (`startScale` computed from the element's natural size vs
+  the viewport). Static content only — live/editable surfaces must never
+  receive a CSS transform, so the lib is instantiated for `mode:'media'`
+  only and never touches a `live` surface.
 
-Hand-rolled — no library, no npm dependency.
+**Dependency note (approved 2026-07-15).** The overlay shell is hand-rolled
+(it is the reuse seam; every gallery-lightbox library wants to own it and
+impose its own chrome — wrong shape). Only the fiddly, easy-to-get-wrong
+part — cursor-anchored zoom + pinch + clamping — is delegated to
+`@panzoom/panzoom`. It is vendored into `frontend/src/static/vendor/`
+alongside the existing mermaid / js-yaml / htmx vendored libs (consistent
+with the no-runtime-npm pattern); the exact ESM-import vs UMD-global
+mechanism is a plan detail. Gallery libs (PhotoSwipe/GLightbox/Fancybox)
+were rejected: they are image-URL *gallery* engines whose zoom does not
+apply to hosted inline SVG or future terminal DOM, and Fancybox carries a
+commercial licence.
 
 ### Adopters in this change
 
@@ -110,8 +135,8 @@ Hand-rolled — no library, no npm dependency.
   persisted to block attrs.
 - **Contract doc updated in the same change.**
   `docs/editor-interaction-contract.md` gains: the `expandable` policy row,
-  the Shift+Mod+Enter expand chord (policy-extension-owned, like the rest
-  of the chord family), and Esc-closes-overlay.
+  the Mod+Alt+E expand chord (policy-extension-owned, like the rest of the
+  chord family; appearance tier per #39), and Esc-closes-overlay.
 
 ## Future directions (recorded, not built)
 
@@ -145,7 +170,7 @@ contract forecloses any of this; nothing in this spec's scope implements it.
 
 `tsc --noEmit` over the new `@ts-check` file; drive `wails dev` with a large
 flowchart and a large image — confirm inline scroll readability, all three
-open gestures (header button, context menu, Shift+Mod+Enter), zoom/pan/fit
+open gestures (header button, context menu, Mod+Alt+E), zoom/pan/fit
 behaviour, Esc restore-to-editor, that double-click in the editor does NOT
 expand (selection is undisturbed), and that edit-mode diagrams / pending
 images offer no expand.
