@@ -66,8 +66,46 @@ export class MediaLightbox {
     if (spec.mode === 'media') this.#enableMedia(stage, content, toolbar)
   }
 
-  /** Overridden fully in Task 3. Stub keeps the shell usable meanwhile. */
-  #enableMedia(_stage, _content, _toolbar) { /* pan/zoom wired in Task 3 */ }
+  /**
+   * Wires @panzoom/panzoom onto content plus a wheel-zoom listener,
+   * double-click fit↔2× toggle, live zoom-% readout, and toolbar buttons.
+   * @param {HTMLElement} stage @param {HTMLElement} content @param {HTMLElement} toolbar
+   */
+  #enableMedia(stage, content, toolbar) {
+    const PZ = /** @type {any} */ (window).Panzoom
+    if (!PZ) return // no lib (e.g. unit env): shell still shows content statically
+    const pz = PZ(content, {
+      maxScale: 10, minScale: 0.1, step: 0.3,
+      cursor: 'grab', canvas: true, contain: 'outside',
+    })
+    this.#panzoom = pz
+    stage.addEventListener('wheel', pz.zoomWithWheel, { passive: false })
+    // Double-click toggles fit(reset) ↔ 2×.
+    content.addEventListener('dblclick', () => {
+      if (pz.getScale() > 1.05) pz.reset()
+      else pz.zoom(2, { animate: true })
+    })
+
+    const readout = document.createElement('span')
+    readout.className = 'media-lightbox__zoom'
+    const sync = () => { readout.textContent = Math.round(pz.getScale() * 100) + '%' }
+    content.addEventListener('panzoomchange', sync)
+
+    const btn = (label, aria, fn) => {
+      const b = document.createElement('button')
+      b.className = 'media-lightbox__tool'
+      b.textContent = label; b.setAttribute('aria-label', aria)
+      b.addEventListener('click', (e) => { e.preventDefault(); fn() })
+      return b
+    }
+    toolbar.append(
+      btn('−', 'Zoom out', () => pz.zoomOut()),
+      readout,
+      btn('+', 'Zoom in', () => pz.zoomIn()),
+      btn('Fit', 'Fit to window', () => pz.reset()),
+    )
+    sync()
+  }
 
   /** Restores previous focus and cleans up overlay resources. */
   close() {
