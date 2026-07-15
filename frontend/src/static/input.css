@@ -433,10 +433,16 @@
   color: var(--theme-fg3); min-width: 42px; text-align: center; }
 .media-lightbox__stage { flex: 1; overflow: hidden; display: flex;
   align-items: center; justify-content: center; cursor: grab; }
-.media-lightbox__content { max-width: 96%; max-height: 96%; }
+/* content shrink-wraps the media EXACTLY (fit-content) so panzoom's transform
+   target matches the visible media — otherwise `max-width:100%` won the media's
+   sizing while `max-height:100%` failed to cap `height:auto` (a replaced-element
+   quirk), leaving the media taller than content and throwing off cursor-anchored
+   wheel zoom. The media is sized against the viewport (definite) so both dimensions
+   are constrained and aspect is preserved. */
+.media-lightbox__content { width: fit-content; height: fit-content; }
 .media-lightbox__content svg,
-.media-lightbox__content img { max-width: 100%; max-height: 100%;
-  height: auto; display: block; }
+.media-lightbox__content img { display: block; max-width: 94vw; max-height: 88vh;
+  width: auto; height: auto; }
 
 /* Block header Expand button — injected by the block framework for kinds
    declaring the `expandable` policy (see sieve-block-extension.js). */

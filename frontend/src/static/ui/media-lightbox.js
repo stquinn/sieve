@@ -81,7 +81,22 @@ export class MediaLightbox {
     document.addEventListener('keydown', this.#onKey)
     overlay.focus()
 
-    if (spec.mode === 'media') this.#enableMedia(stage, content, toolbar)
+    if (spec.mode === 'media') {
+      // Panzoom measures the content when it initialises. A fresh <img> (smart-image)
+      // has its `src` set but hasn't loaded yet — it's 0x0, so cursor-anchored wheel
+      // zoom would compute its focal against a zero-size element and drift to a corner
+      // (buttons/center-zoom look fine; only zoomWithWheel is wrong). Defer setup until
+      // the image is loaded so panzoom measures real dimensions. A synchronously-sized
+      // element (a diagram's SVG) is already `complete`/absent → set up immediately.
+      const img = spec.element instanceof HTMLImageElement ? spec.element : content.querySelector('img')
+      if (img && !img.complete) {
+        const ready = () => { if (this.#overlay === overlay) this.#enableMedia(stage, content, toolbar) }
+        img.addEventListener('load', ready, { once: true })
+        img.addEventListener('error', ready, { once: true })
+      } else {
+        this.#enableMedia(stage, content, toolbar)
+      }
+    }
   }
 
   /**
