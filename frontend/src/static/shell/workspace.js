@@ -125,7 +125,12 @@ export class SieveWorkspace {
    * @returns {Promise<any>}
    */
   open(uuid) {
-    return this.#ajax('POST', '/api/note/open/' + encodeURIComponent(uuid))
+    // RAW id in the path (no encodeURIComponent): chi.URLParam does not unescape,
+    // and the Go handlers compare against decoded ids (strings.HasPrefix(id,
+    // "prompt:")). A `prompt:` uuid must arrive with a literal colon — a legal
+    // path char — exactly as the pre-P2.D templates sent `{{.ID}}`. Percent-
+    // encoding the colon made prompt opens 404. All ids are URL-path-safe.
+    return this.#ajax('POST', '/api/note/open/' + uuid)
   }
 
   /**
@@ -147,7 +152,9 @@ export class SieveWorkspace {
    * @returns {Promise<any>}
    */
   close(uuid) {
-    return this.#ajax('POST', '/api/tabs/close/' + encodeURIComponent(uuid))
+    // RAW id in the path — see open() above (chi returns path params still
+    // escaped; the handler matches session.Tabs by the decoded id).
+    return this.#ajax('POST', '/api/tabs/close/' + uuid)
       .then((r) => { this.closeTab(uuid); return r })
   }
 
