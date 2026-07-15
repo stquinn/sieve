@@ -60,6 +60,14 @@ regression pass. Source spec:
   the Mod+Alt+E chord above. `getExpandContent` returning `null` (diagram in
   edit mode; image still pending/errored) suppresses all three — the
   renderer writes zero conditional wiring.
+- **Ctrl(=Mod)+wheel = zoom, Ctrl+drag = pan** (inline, render-mode diagram,
+  #35) — a lightweight in-place pan/zoom on the diagram render pane, distinct
+  from the fullscreen lightbox. Ctrl-gated so bare wheel/click always pass
+  through (document scroll, block selection); a grab cursor + hint show only
+  while Ctrl is held. A per-renderer mouse gesture (NOT a key chord — the
+  policy extension owns keys, not pointer/wheel), scoped to a static render
+  surface. The pane uses `contain: layout paint` so the zoom transform does
+  not repaint the surrounding contentEditable document in WebKit.
 
 **Smart Home platform note:** the Home column applies to the `Home` key
 (Linux/Windows; fn+Left on Mac) AND to Cmd+Left on macOS — the idiomatic Mac
