@@ -13,6 +13,7 @@ import { esc, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
 import { T } from '../base/tiptap-vendor.js'
 import { registerSieveRenderer, AdvancedHeaderProvider } from '../block/sieve-block-extension.js'
 import { updateBlockOp } from '../block/block-sync.js'
+import { expandBlock } from '../ui/media-lightbox.js'
 
 // Cross-file exports the IIFE below assigns once it runs. prose-block.js
 // and smart-image-renderer.js import renderMermaidSvgEntry directly.
@@ -241,7 +242,14 @@ export let renderMermaidSvgEntry
       }
     }
 
-    return { startOnLoad: false, theme: 'base', themeVariables: tv }
+    return {
+      startOnLoad: false,
+      theme: 'base',
+      themeVariables: tv,
+      flowchart: { useMaxWidth: false },
+      sequence: { useMaxWidth: false },
+      gantt: { useMaxWidth: false },
+    }
   }
 
   function initMermaid() {
@@ -394,9 +402,21 @@ export let renderMermaidSvgEntry
 
     headerProvider: new DiagramHeader(),
 
+    // getExpandContent — hand the lightbox a CLONE of the already-
+    // rendered SVG (vector: scales losslessly). Null in edit mode or before a
+    // successful render, so the framework offers no expand affordance then.
+    getExpandContent: function (node, dom) {
+      if (!node || (node.attrs && node.attrs.mode) === 'edit') return null
+      var svg = dom && dom.querySelector('.diagram-block__render svg')
+      if (!svg) return null
+      var clone = /** @type {SVGElement} */ (svg.cloneNode(true))
+      clone.removeAttribute('style'); clone.removeAttribute('width'); clone.removeAttribute('height')
+      return { element: clone, title: (node.attrs.diagramType || 'mermaid') + ' diagram', mode: 'media' }
+    },
+
     // caretStop:'render' — a caret stop only in render mode; edit mode is raw text.
     // Mod+Enter is this kind's declared override: mode toggle, not escape.
-    interactionPolicy: { rawText: true, indentWidth: 2, enterInsertsNewline: true, autoIndentOnEnter: true, modEnterTogglesMode: true, caretStop: 'render' },
+    interactionPolicy: { rawText: true, indentWidth: 2, enterInsertsNewline: true, autoIndentOnEnter: true, modEnterTogglesMode: true, caretStop: 'render', expandable: true },
 
     nodeConfig: {
       atom: false,
@@ -608,6 +628,21 @@ export let renderMermaidSvgEntry
           e.preventDefault()
           e.stopPropagation()
           DiagramRenderer.flipMode(currentAttrs, currentAttrs.cursorPos, ctx.getEditor())
+        }
+      })
+
+      // Mod+Alt+E in render mode: focus is OUTSIDE ProseMirror here, so the
+      // shared interaction-policy extension's expand chord never fires — this
+      // raw listener is the render-mode entry point (contract: one capability,
+      // two dispatch paths, mirroring flipMode above). `node` is kept fresh by
+      // the NodeView's update() (reassigns node = updatedNode); `dom` is the
+      // block root element — both in scope here.
+      renderBody.addEventListener('keydown', function (e) {
+        if ((e.key === 'e' || e.key === 'E' || e.code === 'KeyE') &&
+            e.altKey && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
+          e.preventDefault(); e.stopPropagation()
+          var spec = DiagramRenderer.getExpandContent(node, dom)
+          if (spec) expandBlock(spec)
         }
       })
 

@@ -290,17 +290,17 @@
   min-height: 80px;
 }
 
-/* Render mode body */
+/* Render mode body — scroll container so large diagrams stay readable at
+   natural size instead of being squeezed to fit (useMaxWidth:false above). */
 .diagram-block__render {
   padding: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  overflow: auto;
+  max-height: 60vh;
   min-height: 120px;
 }
 
 .diagram-block__render svg {
-  max-width: 100%;
+  max-width: none;
   height: auto;
 }
 
