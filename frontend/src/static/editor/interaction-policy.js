@@ -8,6 +8,7 @@
 // list indent, table cell nav — always run first: defer first, consume last).
 
 import { getBlockBehaviour } from '../block/block-kinds.js'
+import { expandBlock } from '../ui/media-lightbox.js'
 
 export var DEFAULT_POLICY = {
   rawText: false,             // literal paste target; Tab indents inside
@@ -17,6 +18,7 @@ export var DEFAULT_POLICY = {
   modEnterTogglesMode: false, // diagram: Mod+Enter flips edit/render instead of escape
   readOnlyText: false,        // log: caret may enter text, typing is consumed
   caretStop: false,           // read-only block: arrows select it as one stop ('render' = only in render mode)
+  expandable: false,          // block declares a getExpandContent → Mod+Alt+E / header / menu
 }
 
 export function policyFor(kind) {
@@ -353,6 +355,25 @@ function handleArrowStop(view, down) {
   return true
 }
 
+// handleExpand — resolve the caret/selection's block, ask its renderer for
+// expand content, and open the lightbox. Returns false (native) when the block
+// is not expandable or has nothing to expand right now (diagram edit mode,
+// pending image). No per-renderer key handling — the policy owns the chord.
+function handleExpand(view) {
+  var ctx = resolveContext(view.state, view)
+  if (!ctx.policy.expandable) return false
+  var beh = getBlockBehaviour(ctx.kind)
+  if (!beh || typeof beh.getExpandContent !== 'function') return false
+  var sel = view.state.selection
+  var pos = sel.node ? sel.from : (sel.$from.depth >= 1 ? sel.$from.before(1) : -1)
+  if (pos < 0) return false
+  var node = view.state.doc.nodeAt(pos)
+  var dom = view.nodeDOM(pos)
+  if (!node) return false
+  var spec = beh.getExpandContent(node, dom)
+  return expandBlock(spec)
+}
+
 export function buildInteractionPolicyExtension(T) {
   TT = T
   return T.Extension.create({
@@ -365,6 +386,13 @@ export function buildInteractionPolicyExtension(T) {
         new T.Plugin({
           props: {
             handleKeyDown: function (view, event) {
+              // Mod+Alt+E — expand the block at the caret/selection into the
+              // lightbox (appearance tier; contract). Not a PM/TipTap binding.
+              if ((event.key === 'e' || event.key === 'E' || event.code === 'KeyE') &&
+                  event.altKey && (event.metaKey || event.ctrlKey) && !event.shiftKey) {
+                if (handleExpand(view)) { event.preventDefault(); return true }
+                return false
+              }
               if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') &&
                   !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
                 return handleArrowStop(view, event.key === 'ArrowDown')

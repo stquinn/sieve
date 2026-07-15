@@ -18,6 +18,14 @@ describe('policyFor', () => {
   it('unknown kind gets pure defaults', () => {
     expect(policyFor('nope')).toEqual(DEFAULT_POLICY)
   })
+  it('expandable defaults false and merges when declared', () => {
+    expect(DEFAULT_POLICY.expandable).toBe(false)
+    registerBlockKind({ kind: 'test-expand', native: false, renderer: {
+      interactionPolicy: { expandable: true },
+    }})
+    expect(policyFor('test-expand').expandable).toBe(true)
+    expect(policyFor('nope').expandable).toBe(false)
+  })
 })
 
 describe('classifyContext', () => {
