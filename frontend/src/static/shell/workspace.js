@@ -142,21 +142,12 @@ export class SieveWorkspace {
   }
 
   /**
-   * Closes the tab for a uuid: POST /api/tabs/close/{uuid}, tabbar swap. Prunes
-   * the closed identity AFTER the swap + OOB editor mount + htmx:load settle:
-   * by the time `.then` runs, initEditor → activateDocument has already
-   * destroyed/detached the outgoing editor and set the new active, so
-   * closeTab(uuid) just removes the now-defunct entry (uuid is no longer active,
-   * so it won't null #activeTab). Works for both active-tab and background close.
+   * Closes one tab (the ✕ button, context-menu "Close Tab"). A single-element
+   * call into the one close mechanism.
    * @param {string} uuid
    * @returns {Promise<any>}
    */
-  close(uuid) {
-    // RAW id in the path — see open() above (chi returns path params still
-    // escaped; the handler matches session.Tabs by the decoded id).
-    return this.#ajax('POST', '/api/tabs/close/' + uuid)
-      .then((r) => { this.closeTab(uuid); return r })
-  }
+  close(uuid) { return this.#closeTabs([uuid]) }
 
   /**
    * Closes the currently active tab, or no-ops when nothing is active. Replaces
@@ -168,20 +159,61 @@ export class SieveWorkspace {
   }
 
   /**
-   * Closes every tab: POST /api/tabs/closeAll, tabbar swap. The server wipes the
-   * session and creates one fresh note; the OOB re-init activates it before the
-   * `.then` prune runs, so pruning every tracked tab EXCEPT the new active
-   * collapses the stale entries without touching the fresh note.
+   * The authoritative list of ALL open tab ids — read from the rendered strip
+   * (#tabs-area [data-tab-id]), NOT #tabs. #tabs holds only tabs ACTIVATED in this
+   * JS session (each has a live SieveTab/editor); a tab loaded from the session but
+   * never clicked has no #tabs entry. The server session (the strip) is the source
+   * of truth for what is open, so close-all / close-others enumerate from it.
+   * @returns {string[]}
+   */
+  #openTabIds() {
+    return Array.from(document.querySelectorAll('#tabs-area [data-tab-id]'))
+      .map((el) => /** @type {HTMLElement} */ (el).dataset.tabId)
+      .filter((id) => !!id)
+  }
+
+  /**
+   * Closes every open tab (context-menu "Close All Tabs"). The server empties the
+   * session and mints one fresh note; the funnel prunes the old identities.
    * @returns {Promise<any>}
    */
-  closeAll() {
-    return this.#ajax('POST', '/api/tabs/closeAll')
-      .then((r) => {
-        const keep = this.#activeTab
-        for (const uuid of [...this.#tabs.keys()]) {
-          if (!keep || uuid !== keep.uuid) this.closeTab(uuid)
-        }
-        return r
+  closeAll() { return this.#closeTabs(this.#openTabIds()) }
+
+  /**
+   * Closes every tab EXCEPT keepUuid (context-menu "Close Others"). Same funnel,
+   * complement id set over the rendered strip. Close-to-right / close-to-left are
+   * the same shape over a tab-order slice.
+   * @param {string} keepUuid
+   * @returns {Promise<any>}
+   */
+  closeOthers(keepUuid) {
+    return this.#closeTabs(this.#openTabIds().filter((u) => u !== keepUuid))
+  }
+
+  /**
+   * The ONE close path: POST the id SET to /api/tabs/close as JSON {ids}. The
+   * server owns which tabs close, the active-tab re-point, the Smart-Close AI
+   * filing per doc, and the empty⇒fresh-note; it renders tabbar.html + OOB
+   * editor.html. We apply that with htmx.swap (fetch, not htmx.ajax, so the body
+   * can be JSON) and prune the closed identities in afterSettleCallback — i.e.
+   * AFTER the OOB editor mount's initEditor→activateDocument has destroyed the
+   * outgoing editor (its WS) while #activeTab still pointed at it. Pruning earlier
+   * would null #activeTab first and leak that editor.
+   * @param {string[]} uuids
+   * @returns {Promise<any>}
+   */
+  #closeTabs(uuids) {
+    if (!window.htmx || !uuids.length) return Promise.resolve()
+    return fetch('/api/tabs/close', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: uuids }),
+    })
+      .then((res) => res.text())
+      .then((html) => {
+        window.htmx.swap('#htmx-tabbar', html, { swapStyle: 'innerHTML' }, {
+          afterSettleCallback: () => { for (const uuid of uuids) this.closeTab(uuid) },
+        })
       })
   }
 

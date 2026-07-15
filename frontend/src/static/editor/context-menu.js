@@ -97,6 +97,9 @@ import { enclosingBlockId } from '../base/block-position.js'
       { icon: IC.close, label: 'Close Tab', action: function () {
         window.sieveWorkspace.close(id)
       }},
+      { icon: IC.close, label: 'Close Others', action: function () {
+        window.sieveWorkspace.closeOthers(id)
+      }},
       { icon: IC.closeAll, label: 'Close All Tabs', action: function () {
         window.sieveWorkspace.closeAll()
       }},

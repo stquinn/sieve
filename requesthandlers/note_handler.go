@@ -1,6 +1,7 @@
 package requesthandlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -26,8 +27,7 @@ type NoteHandler struct {
 func (h *NoteHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/note/open/{id}", h.handleNoteOpen)
 	r.Post("/api/note/new", h.handleNoteNew)
-	r.Post("/api/tabs/close/{id}", h.handleTabsClose)
-	r.Post("/api/tabs/closeAll", h.handleTabsCloseAll)
+	r.Post("/api/tabs/close", h.handleTabsClose)
 	r.Post("/api/tabs/reorder", h.handleTabsReorder)
 	r.Delete("/api/note/{id}", h.handleNoteDelete)
 	r.Post("/api/note/focus/{id}", h.handleNoteFocus)
@@ -144,78 +144,35 @@ func (h *NoteHandler) handleNoteNew(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func (h *NoteHandler) handleTabsCloseAll(w http.ResponseWriter, r *http.Request) {
-	session := h.ServiceProvider.State.LoadSession()
-
-	// Smart Close background evaluation for every open doc — the same centralised
-	// path as a single tab close. Capture the ids before the tabs are wiped below.
-	closing := make([]string, 0, len(session.Tabs))
-	for _, t := range session.Tabs {
-		if strings.HasPrefix(t.ID, "prompt:") {
-			continue // prompt tabs are not documents — nothing to file
-		}
-		closing = append(closing, t.ID)
-	}
-	h.ServiceProvider.Editor.CloseAllAndFile(closing)
-
-	newNote, err := h.ServiceProvider.Documents.New()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	session.Tabs = []domain.Tab{{
-		ID:          newNote.UUID(),
-		Mode:        "wysiwyg",
-		DisplayName: newNote.Meta().DisplayName(),
-		Status:      "unfiled",
-	}}
-	session.ActiveIdx = 0
-	_ = h.ServiceProvider.State.SaveSession(session)
-	if h.EmitSessionChanged != nil {
-		h.EmitSessionChanged()
-	}
-
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-	if err := h.Tmpl.ExecuteTemplate(w, "tabbar.html", session); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if err := h.Tmpl.ExecuteTemplate(w, "editor.html", editorSwap{UUID: newNote.UUID(), Mode: "wysiwyg"}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-}
-
+// handleTabsClose is the ONE close mechanism: it takes a JSON body {"ids":[…]}
+// and closes every listed tab. A single close sends one id, Close All sends every
+// tab's id, Close Others sends the complement of the kept tab — the frontend
+// computes the set; the server closes it. Session.CloseTabs owns the tab-list +
+// active-index math; each closed DOC (non-prompt) rides the SAME Smart-Close
+// filing path a single close always used (Editor.CloseDocument). An emptied
+// session mints a fresh note, exactly as closing the last tab did before.
 func (h *NoteHandler) handleTabsClose(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	var payload struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
 	session := h.ServiceProvider.State.LoadSession()
 
-	newTabs := []domain.Tab{}
-	for _, t := range session.Tabs {
-		if t.ID != id {
-			newTabs = append(newTabs, t)
-		}
-	}
-	session.Tabs = newTabs
-	if session.ActiveIdx >= len(session.Tabs) {
-		session.ActiveIdx = len(session.Tabs) - 1
-	}
-	if session.ActiveIdx < 0 && len(session.Tabs) > 0 {
-		session.ActiveIdx = 0
-	}
-
-	// Smart Close background filing (centralised so close-all shares it).
-	// Prompt tabs are not documents — nothing to file.
-	if !strings.HasPrefix(id, "prompt:") {
-		h.ServiceProvider.Editor.CloseDocument(id)
+	// Smart Close background filing for every closed document — the SAME per-doc
+	// path a single close used. Prompt tabs return nothing to file.
+	for _, docID := range session.CloseTabs(payload.IDs) {
+		h.ServiceProvider.Editor.CloseDocument(docID)
 	}
 
 	if len(session.Tabs) == 0 {
-		newNote, _ := h.ServiceProvider.Documents.New()
+		newNote, err := h.ServiceProvider.Documents.New()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		session.Tabs = []domain.Tab{{
 			ID:          newNote.UUID(),
 			Mode:        "wysiwyg",

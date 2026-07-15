@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"strings"
 )
 
 // Tab represents one open tab in a session.
@@ -78,4 +79,46 @@ func ParseSession(data []byte) Session {
 // Marshal serialises the session to indented JSON.
 func (s Session) Marshal() ([]byte, error) {
 	return json.MarshalIndent(s, "", "  ")
+}
+
+// CloseTabs removes every tab whose ID is in ids and keeps ActiveIdx pointing at
+// the SAME active tab when it survives — otherwise the nearest surviving tab to
+// its right (clamped left when the active tab was the last). This is the one
+// close mechanism: a single close passes one id, Close All passes every id, Close
+// Others passes the complement of the kept tab. It returns the closed NON-prompt
+// tab ids — the documents the caller must Smart-Close file (`Editor.CloseDocument`);
+// prompt tabs carry nothing to file. An emptied session is the caller's to handle
+// (mint a fresh note): CloseTabs only mutates the tab list + active index.
+func (s *Session) CloseTabs(ids []string) []string {
+	closing := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		closing[id] = true
+	}
+	oldIdx := s.ActiveIdx
+	removedBefore := 0
+	kept := make([]Tab, 0, len(s.Tabs))
+	filed := make([]string, 0, len(ids))
+	for i, t := range s.Tabs {
+		if closing[t.ID] {
+			if i < oldIdx {
+				removedBefore++
+			}
+			if !strings.HasPrefix(t.ID, "prompt:") {
+				filed = append(filed, t.ID)
+			}
+			continue
+		}
+		kept = append(kept, t)
+	}
+	s.Tabs = kept
+	// oldIdx-removedBefore is the active tab's new index if it survived, else the
+	// index the tab to its right slid into (nearest right). Clamp for empty / last.
+	s.ActiveIdx = oldIdx - removedBefore
+	if s.ActiveIdx >= len(s.Tabs) {
+		s.ActiveIdx = len(s.Tabs) - 1
+	}
+	if s.ActiveIdx < 0 {
+		s.ActiveIdx = 0
+	}
+	return filed
 }

@@ -2482,28 +2482,51 @@ describe('NoteEditor toolbar ownership (P4.D)', () => {
 })
 
 // ── P2.D: Workspace tab-lifecycle verbs (the external API facade) ─────────────
-// The verbs are thin owners over the EXISTING htmx.ajax calls the templates run
-// today (identical swap semantics). Tests stub window.htmx.ajax to record the
-// calls and to resolve so the post-swap prune (.then) fires.
+// open/newNote/reorder/loadTabs are thin owners over htmx.ajax (stubbed to record
+// calls). close/closeAll/closeOthers funnel through #closeTabs: a JSON POST to
+// /api/tabs/close applied with htmx.swap, pruning in the afterSettleCallback — so
+// those tests stub fetch + htmx.swap and drive the settle to fire the prune.
 
 describe('SieveWorkspace tab-lifecycle verbs (P2.D facade)', () => {
   let ws
   let ajaxCalls
+  let fetchCalls
   let prevHtmx
+  let prevFetch
 
   beforeEach(() => {
     ws = new SieveWorkspace()
     ajaxCalls = []
+    fetchCalls = []
     prevHtmx = window.htmx
+    prevFetch = global.fetch
     window.htmx = {
       ajax: (method, url, opts) => {
         ajaxCalls.push({ method, url, opts })
         return Promise.resolve()
       },
+      // close funnels through fetch(JSON) + htmx.swap; the prune runs in the
+      // afterSettleCallback (AFTER the OOB editor mount), so drive it here.
+      swap: (target, content, swapSpec, swapOptions) => {
+        if (swapOptions && swapOptions.afterSettleCallback) swapOptions.afterSettleCallback()
+      },
     }
+    const fetchMock = (url, init) => {
+      fetchCalls.push({ url, body: init && init.body })
+      return Promise.resolve({ text: () => Promise.resolve('<div>tabbar</div>') })
+    }
+    global.fetch = fetchMock
+    window.fetch = fetchMock
   })
 
-  afterEach(() => { window.htmx = prevHtmx })
+  afterEach(() => { window.htmx = prevHtmx; global.fetch = prevFetch; document.body.innerHTML = '' })
+
+  // The rendered tab strip — the AUTHORITATIVE list of open tabs that closeAll /
+  // closeOthers enumerate (a session tab need not have a #tabs entry).
+  function renderStrip(...ids) {
+    document.body.innerHTML = '<div id="htmx-tabbar"><div id="tabs-area">' +
+      ids.map((id) => `<div data-tab-id="${id}"></div>`).join('') + '</div></div>'
+  }
 
   it('open posts to /api/note/open/{uuid} with the tabbar swap', () => {
     ws.open('doc-1')
@@ -2533,13 +2556,23 @@ describe('SieveWorkspace tab-lifecycle verbs (P2.D facade)', () => {
     ])
   })
 
-  it('close posts to /api/tabs/close/{uuid} and prunes the closed identity after the swap settles', async () => {
+  it('close POSTs the id SET to /api/tabs/close as JSON and prunes after the swap settles', async () => {
     ws.openTab('doc-a')
     ws.openTab('doc-b') // doc-b active
     await ws.close('doc-a') // background close
-    expect(ajaxCalls[0]).toEqual({ method: 'POST', url: '/api/tabs/close/doc-a', opts: { target: '#htmx-tabbar', swap: 'innerHTML' } })
+    expect(fetchCalls[0].url).toBe('/api/tabs/close')
+    expect(JSON.parse(fetchCalls[0].body)).toEqual({ ids: ['doc-a'] })
     expect(ws.getTab('doc-a')).toBeNull()          // pruned
     expect(ws.activeTab?.uuid).toBe('doc-b')       // active untouched
+  })
+
+  it('closeOthers POSTs every OPEN id EXCEPT the kept one (from the rendered strip, not #tabs)', async () => {
+    renderStrip('doc-a', 'doc-b', 'doc-c') // all three are open in the session…
+    ws.openTab('doc-b')                    // …but only doc-b was ever JS-activated
+    await ws.closeOthers('doc-b')
+    expect(fetchCalls[0].url).toBe('/api/tabs/close')
+    expect(JSON.parse(fetchCalls[0].body).ids.sort()).toEqual(['doc-a', 'doc-c'])
+    expect(ws.getTab('doc-b')).not.toBeNull()      // the kept tab survives
   })
 
   it('close of the active tab prunes it without a stale entry (active already re-set by the swap re-init)', async () => {
@@ -2569,39 +2602,32 @@ describe('SieveWorkspace tab-lifecycle verbs (P2.D facade)', () => {
     expect(ws.activeTab?.uuid).toBe('doc-b')
   })
 
-  it('closeActiveTab closes the active tab; noop when none active', () => {
+  it('closeActiveTab closes the active tab; noop when none active', async () => {
     ws.closeActiveTab() // no active tab
-    expect(ajaxCalls).toEqual([])
+    expect(fetchCalls).toEqual([])
     ws.openTab('doc-x')
-    ws.closeActiveTab()
-    expect(ajaxCalls).toEqual([
-      { method: 'POST', url: '/api/tabs/close/doc-x', opts: { target: '#htmx-tabbar', swap: 'innerHTML' } },
-    ])
+    await ws.closeActiveTab()
+    expect(fetchCalls[0].url).toBe('/api/tabs/close')
+    expect(JSON.parse(fetchCalls[0].body)).toEqual({ ids: ['doc-x'] })
   })
 
-  it('closeAll posts to /api/tabs/closeAll and prunes every tab except the new active', async () => {
-    // Model the swap+OOB re-init: the new single note becomes active BEFORE the
-    // .then prune runs. Here we simulate that by activating the successor.
-    ws.openTab('doc-a')
-    ws.openTab('doc-b')
-    const p = ws.closeAll()
-    // Simulate the OOB re-init activating the fresh note synchronously after the ajax.
-    ws.openTab('new-note')
-    await p
-    expect(ajaxCalls[0]).toEqual({ method: 'POST', url: '/api/tabs/closeAll', opts: { target: '#htmx-tabbar', swap: 'innerHTML' } })
-    expect(ws.getTab('doc-a')).toBeNull()
-    expect(ws.getTab('doc-b')).toBeNull()
-    expect(ws.getTab('new-note')).not.toBeNull() // the new active survives
-    expect(ws.activeTab?.uuid).toBe('new-note')
+  it('closeAll POSTs every OPEN tab id (from the rendered strip, not #tabs) and prunes them', async () => {
+    renderStrip('doc-a', 'doc-b', 'doc-c') // three open in the session
+    ws.openTab('doc-b')                    // only one JS-activated — strip is the source of truth
+    await ws.closeAll()
+    expect(fetchCalls[0].url).toBe('/api/tabs/close')
+    expect(JSON.parse(fetchCalls[0].body).ids.sort()).toEqual(['doc-a', 'doc-b', 'doc-c'])
+    expect(ws.getTab('doc-b')).toBeNull()  // the JS-activated one is pruned
   })
 
-  it('every verb returns the htmx.ajax promise', () => {
+  it('every verb returns a promise', () => {
     expect(ws.open('d')).toBeInstanceOf(Promise)
     expect(ws.newNote()).toBeInstanceOf(Promise)
     expect(ws.reorder(0, 1)).toBeInstanceOf(Promise)
     expect(ws.loadTabs()).toBeInstanceOf(Promise)
     expect(ws.close('d')).toBeInstanceOf(Promise)
     expect(ws.closeAll()).toBeInstanceOf(Promise)
+    expect(ws.closeOthers('d')).toBeInstanceOf(Promise)
   })
 
   it('verbs guard on window.htmx (no throw when htmx is absent)', () => {

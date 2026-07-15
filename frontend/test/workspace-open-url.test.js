@@ -1,12 +1,12 @@
 // workspace-open-url.test.js — regression guard for prompt documents failing
-// to open. The tab-lifecycle facade (open/close) drives chi path-param routes
-// (/api/note/open/{id}, /api/tabs/close/{id}); every Go handler that consumes
-// those params assumes a DECODED id (e.g. strings.HasPrefix(id, "prompt:")) and
+// to open. open() drives the chi path-param route /api/note/open/{id}; the Go
+// handler assumes a DECODED id (strings.HasPrefix(id, "prompt:")) and
 // chi.URLParam does NOT unescape. A `prompt:` uuid must therefore travel the
 // path RAW — exactly as the pre-P2.D templates sent `{{.ID}}`. Percent-encoding
 // the colon (encodeURIComponent → %3A) makes the prefix check miss and the open
 // 404s. All ids are URL-path-safe (hex-hyphen uuids; `prompt:<slug>`), so raw is
-// correct. Query-param routes (editor/load) are unaffected — Go decodes those.
+// correct. (close no longer uses a path id — it POSTs a JSON id set to
+// /api/tabs/close; see shell.test.js's tab-lifecycle suite.)
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
@@ -39,11 +39,6 @@ describe('SieveWorkspace tab-lifecycle URLs', () => {
   it('opens a prompt document with a RAW (unencoded) path id', () => {
     new SieveWorkspace().open('prompt:file')
     expect(ajax).toHaveBeenCalledWith('POST', '/api/note/open/prompt:file', expect.anything())
-  })
-
-  it('closes a prompt tab with a RAW (unencoded) path id', () => {
-    new SieveWorkspace().close('prompt:file')
-    expect(ajax).toHaveBeenCalledWith('POST', '/api/tabs/close/prompt:file', expect.anything())
   })
 
   it('leaves plain (URL-safe) note uuids untouched', () => {
