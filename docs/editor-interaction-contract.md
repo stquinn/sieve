@@ -113,8 +113,10 @@ dialog path commits outside the editor and does not consume — acceptable).
 
 **Ownership rule (NORMATIVE).** The native menu (`main.go` `buildMenu`) is the
 **single owner** of every app-level chord. A menu item declares the accelerator
-and, in its callback, dispatches a `sieve:*` `CustomEvent` (or runs an
-`htmx.ajax` call); the frontend listener turns that event into behaviour. This
+and, in its callback, **calls the component API directly**
+(`window.sieveWorkspace…` — with optional-chaining guards) or runs an
+`htmx.ajax` call. The `sieve:*` `CustomEvent` hop is gone for the migrated rows
+(P2.C); remaining `sieve:*` events are in-page seams, not menu transport. This
 is the only reliable ownership on both platforms — on macOS native menu
 accelerators intercept chords **before** the webview, so any editor/DOM keydown
 binding on the same chord is silently shadowed; on Linux GTK the webview sees
@@ -123,21 +125,31 @@ keys first. Owning them in the menu makes the resolution identical everywhere.
 Consequences:
 
 - The TipTap editor keymap (`extensions.js`) may bind **only caret-contextual
-  chords the menu does not claim** (currently `Mod+E` Explain and `Mod+Shift+A`
-  Ask — no menu item exists for either).
+  chords the menu does not claim** (currently `Mod+E` Explain — `Mod+Shift+A` Ask
+  LEFT the editor keymap in P4.E, see below; no menu item exists for either).
 - **Document-level DOM `keydown` shortcut listeners are FORBIDDEN.** Insertion
   and app gestures ride the menu → event path, never a global `keydown`.
 - Never bind the same chord in two places, even to the same action — the menu
   wins on Mac and the duplicate is dead weight.
+- Dev-browser note: with no native menu, menu-owned chords are simply absent —
+  since P2.C this includes markdown-mode `Mod+S`/`Mod+J`, whose quarantined
+  transitional `keydown` listener is removed. The transitional P2.B exception
+  is gone. The `Mod+Shift+A` **Ask** chord is now the ONE sanctioned document-level
+  `keydown` listener: it is owned by the **AskPanel** (a Workspace child, not the
+  editor), because the Ask panel is chrome that must toggle regardless of which
+  editor or block has focus, and the menu deliberately does not claim the chord.
+  This is the P4.E landing of the formerly-ledgered `editor.js` ask-focus router —
+  the editor keymap no longer binds Ask at all (`AiShortcuts.onAsk` removed), so
+  there is no double-binding; the listener is no longer transitional.
 
 ### Menu accelerator table
 
-| Chord | Menu item | Action / dispatched event |
+| Chord | Menu item | Action |
 |---|---|---|
 | Mod+N | File › New Note | `htmx.ajax` POST `/api/note/new` |
-| Mod+S | File › Save | `sieve:save` |
+| Mod+S | File › Save | `window.sieveWorkspace?.activeTab?.editor?.flushSave()` |
 | Mod+W | File › Close Tab | `htmx.ajax` POST `/api/tabs/close/{id}` |
-| (menu-click only) | File › Export › Clipboard (Markdown) | `sieve:export-markdown` |
+| (menu-click only) | File › Export › Clipboard (Markdown) | `window.sieveWorkspace?.copyDocumentAsMarkdown()` |
 | Mod+Shift+O | File › Open Library… | `window.sieveSelectLibrary()` |
 | Mod+, | File › Settings/Preferences | open settings dialog |
 | Mod+Q | File › Quit (non-Mac) | `wailsruntime.Quit` |
@@ -145,22 +157,23 @@ Consequences:
 | Mod+Shift+I | View › Toggle Meta Panel | `htmx.ajax` POST `/api/session/meta/toggle` |
 | Mod+Shift+P | View › Toggle Prompts | `htmx.ajax` POST `/api/session/prompts/toggle` |
 | (menu-click only) | View › Toggle Line Numbers | `htmx.ajax` POST `/api/session/linenumbers/toggle` |
-| Mod+Shift+M | View › Toggle Editor Mode | `sieve:toggle-mode` |
-| Mod+F | View › Toggle Search | `sieve:toggle-search` |
+| Mod+Shift+M | View › Toggle Editor Mode | `window.sieveWorkspace?.activeTab?.editor?.toggleMode()` |
+| Mod+F | View › Toggle Search | `window.sieveWorkspace?.toggleSearch()` |
 | Mod+Shift+F | View › Sidebar Search | `window.sieveSidebarSearch()` |
-| Mod+J | View › Toggle AI Blocks | `sieve:toggle-ai-blocks` |
+| Mod+J | View › Toggle AI Blocks | `window.sieveWorkspace?.activeTab?.editor?.toggleAiBlocks()` |
 | Mod+P | View › Quick Switcher | open quick-switcher dialog |
 | Mod+Shift+T | View › Show Toolbar | `htmx.ajax` POST `/api/session/toolbar/toggle` |
 | Mod+Alt+M | Tools › Smart Metadata | `window.SieveAI.smartMetadata()` |
 | Mod+Shift+E | Tools › Smart File | `window.SieveAI.smartFile()` |
 | Mod+Shift+Return | Tools › Keep & Smart File | `window.SieveAI.keepAndSmartFile()` |
-| Mod+Shift+W | Tools › Insert WebClip | `sieve:insert-webclip` |
-| Mod+Shift+L | Tools › Insert URL Card | `sieve:insert-url-card` |
-| Mod+Shift+D | Tools › Insert Diagram | `sieve:insert-diagram` |
+| Mod+Shift+W | Tools › Insert WebClip | `window.sieveWorkspace?.openWebClipDialog()` |
+| Mod+Shift+L | Tools › Insert URL Card | `window.sieveWorkspace?.openUrlCardDialog()` |
+| Mod+Shift+D | Tools › Insert Diagram | `window.sieveWorkspace?.activeTab?.editor?.createBlock('diagram', {})` |
 | Mod+/ | Help › Shortcuts | open help dialog |
 
 Editor-owned caret chords (NOT in the menu, bound in `extensions.js`):
-`Mod+E` = Explain block, `Mod+Shift+A` = Ask AI block.
+`Mod+E` = Explain block. (`Mod+Shift+A` Ask is NOT editor-bound — the AskPanel's
+document-level listener owns it; see "Consequences" above.)
 
 ## Deferred (recorded, not shipped)
 

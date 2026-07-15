@@ -1,9 +1,7 @@
 // render-empty.js — pure helper for the renderBlocksIntoEditor empty-reload decision.
 //
 // Extracted as a separate ES module (not inline in the IIFE editor.js) so that
-// vitest can import and unit-test it without a live editor or DOM. The module
-// also registers itself on window.TipTap so the editor.js IIFE can call it at
-// runtime via the same pattern used by block-render.js and block-position.js.
+// vitest can import and unit-test it without a live editor or DOM.
 
 // NOTE: no bare-specifier imports — this file is served raw from /static/ with no
 // bundler or import-map. Fragment is intentionally NOT imported; replaceWith()
@@ -31,9 +29,4 @@ export function reloadReplacement(nodes, opts, schema) {
     return [schema.nodes.paragraph.create()]
   }
   return null
-}
-
-if (typeof window !== 'undefined') {
-  window.TipTap = window.TipTap || {}
-  window.TipTap.reloadReplacement = reloadReplacement
 }

@@ -21,7 +21,7 @@ func RunCLI(cli string, prompt string, model string, timeoutSecs int, cwd string
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
-	args := buildBaseArgs(cli, model)
+	args := buildBaseArgs(cli, model, prompt)
 
 	cmd := exec.CommandContext(ctx, cli, args...)
 	cmd.Stdin = bytes.NewBufferString(prompt)
@@ -57,14 +57,21 @@ func RunCLI(cli string, prompt string, model string, timeoutSecs int, cwd string
 	return out, nil
 }
 
-func buildBaseArgs(cli string, model string) []string {
+func buildBaseArgs(cli string, model string, prompt string) []string {
 	var args []string
 	switch {
 	case strings.Contains(cli, "claude"):
+		// claude reads the prompt from STDIN; --print is a bare boolean.
 		// args = []string{"--print", "--no-session-persistence", "--dangerously-skip-permissions", "--allowedTools", "Read,Write,Edit,WebFetch"}
 		args = []string{"--print", "--no-session-persistence", "--dangerously-skip-permissions"}
 	case strings.Contains(cli, "agy"):
-		args = []string{"--print", "--dangerously-skip-permissions"}
+		// agy does NOT read STDIN: --print takes the prompt as its argument, so
+		// it must come last and the prompt must immediately follow it.
+		args = []string{"--dangerously-skip-permissions"}
+		if model != "" {
+			args = append(args, "--model", model)
+		}
+		return append(args, "--print", prompt)
 	case strings.Contains(cli, "copilot"):
 		args = []string{"--prompt", "", "--yolo", "--silent"}
 	}

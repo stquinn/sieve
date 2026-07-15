@@ -94,9 +94,11 @@ func (h *EditorHandler) handleEditorLoad(w http.ResponseWriter, r *http.Request)
 }
 
 // handleEditorExport serves CLEAN whole-doc markdown for "Copy as Markdown":
-// ai-blocks filtered out, every surviving block reduced to its user-authored export
-// representation (EditorService.ExportMarkdown). Prompt pseudo-docs have no block
-// tree, so they export their raw content verbatim.
+// every block surviving the filter renders via its MarkdownRepresentation
+// (EditorService.ExportMarkdown). THIS handler owns the exclusion policy — it
+// passes the closure dropping ai-blocks (prior Q&A is conversation, not document
+// content); another caller may filter differently. Prompt pseudo-docs have no
+// block tree, so they export their raw content verbatim.
 //
 // format selects the output format so the route survives future export targets
 // (html, pdf, …). Only "markdown" exists today; absent defaults to it, unknown
@@ -129,7 +131,7 @@ func (h *EditorHandler) handleEditorExport(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	md, err := h.ServiceProvider.Editor.ExportMarkdown(uuid)
+	md, err := h.ServiceProvider.Editor.ExportMarkdown(uuid, func(b block.SieveBlock) bool { return b.Kind != "ai-block" })
 	if err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return

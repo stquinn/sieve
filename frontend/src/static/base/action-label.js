@@ -19,8 +19,3 @@ export function labelForAction(action, prettyKind, offer, sourceKind) {
   var VERB = { extract: 'Extract as ', transform: 'Convert to ' }
   return (VERB[action] || '') + prettyKind
 }
-
-if (typeof window !== 'undefined') {
-  window.TipTap = window.TipTap || {}
-  window.TipTap.labelForAction = labelForAction
-}

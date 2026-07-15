@@ -290,23 +290,17 @@ func (es *EditorService) UpdateBlock(uuid string, blk block.SieveBlock) {
 }
 
 // ExportMarkdown derives CLEAN whole-doc markdown for "Copy as Markdown" from the
-// LIVE shadow: ai-blocks are filtered out, and every surviving block reduces to its
-// user-authored export representation (NOT the on-disk Serialize). The ai-block
-// filter is the AIBlockProcessor itself (it implements block.BlockFilter via Accept),
-// obtained from the registry — the same policy the AI TARGET slot reuses. Returns an
-// error when the document is not open.
-func (es *EditorService) ExportMarkdown(uuid string) (string, error) {
+// LIVE shadow: every block surviving the CALLER's filter renders via its
+// MarkdownRepresentation (NOT the on-disk Serialize). The exclusion policy belongs
+// to the call site, which passes a closure (nil exports everything); this service
+// only resolves the shadow and delegates. Returns an error when the document is
+// not open.
+func (es *EditorService) ExportMarkdown(uuid string, filter block.BlockFilter) (string, error) {
 	es.mu.RLock()
 	shadow := es.shadows[uuid]
 	es.mu.RUnlock()
 	if shadow == nil {
 		return "", fmt.Errorf("export-markdown: no open document for uuid %q", uuid)
-	}
-	var filter block.BlockFilter
-	if p := block.GetProcessor("ai-block"); p != nil {
-		if f, ok := p.(block.BlockFilter); ok {
-			filter = f
-		}
 	}
 	return shadow.ExportMarkdown(filter), nil
 }

@@ -11,19 +11,19 @@
 // (key = id||token = ''), and everything after the split is LOST from the shadow
 // doc. So proseGroup MUST carry the transient token too. This test asserts it.
 //
-// prose-group.js builds its real ProseGroup node only when window.TipTap.Node
-// exists (guarded so the module is importable in a bare vitest env). Stub Node so
-// the real node spec is constructed, then inspect its declared attributes.
+// prose-group.js builds its real ProseGroup node only when T.Node exists
+// (guarded so the module is importable in a bare vitest env). Stub Node onto the
+// shared vendor bag (mutate, never reassign — tiptap-vendor.js already captured a
+// reference to it) so the real node spec is constructed, then import once
+// (modules are cached) to get the real ProseGroup ES export (the bus is retired).
 
 import { describe, it, expect } from 'vitest'
 
-global.window = global.window || {}
-global.window.TipTap = Object.assign(global.window.TipTap || {}, {
+Object.assign(globalThis.TipTap, {
   Node: { create: (cfg) => cfg },
 })
 
-await import('../src/static/block/prose-group.js')
-const ProseGroup = global.window.TipTap.ProseGroup
+const { ProseGroup } = await import('../src/static/block/prose-group.js')
 
 describe('proseGroup identity attributes (B-A multi-node split)', () => {
   it('still declares its durable `id` attribute', () => {

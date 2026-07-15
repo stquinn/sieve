@@ -64,13 +64,12 @@ func (d DocView) deriveMarkdown() string {
 }
 
 // BlockFilter decides which blocks a consumer includes when deriving whole-doc
-// markdown. Accept returns true to keep a block. It lives in block/ because the
-// filtered derive it drives is a DocView concern; the policy (which kinds to drop)
-// belongs to the consumer that implements it (e.g. AIBlockProcessor drops ai-blocks
-// so prior answers don't leak into the AI TARGET slot).
-type BlockFilter interface {
-	Accept(b SieveBlock) bool
-}
+// markdown; return true to keep a block. It is a func type, not an interface: the
+// policy (which kinds to drop) belongs to the CALLER, which passes a closure at the
+// call site — TARGET assembly drops ai-blocks so prior answers don't leak into the
+// document-truth slot; the export handler drops ai-blocks from "Copy as Markdown".
+// Nil accepts everything.
+type BlockFilter func(b SieveBlock) bool
 
 // deriveMarkdownFiltered is deriveMarkdown with a per-block filter: a block is
 // serialized only when f.Accept(b). A nil filter accepts everything, so it is
@@ -95,7 +94,7 @@ func (d DocView) deriveMarkdownFiltered(f BlockFilter) string {
 	}
 	kept := make([]SieveBlock, 0, len(d.Blocks))
 	for _, b := range d.Blocks {
-		if f.Accept(b) {
+		if f(b) {
 			kept = append(kept, b)
 		}
 	}
@@ -107,26 +106,13 @@ func (d DocView) deriveMarkdownFiltered(f BlockFilter) string {
 	return md
 }
 
-// ExportRepresenter is an OPTIONAL capability a processor implements when its
-// EXPORT markdown must differ from its AI-facing MarkdownRepresentation. Clean
-// export ("Copy as Markdown") preserves user-authored content only, so kinds whose
-// MarkdownRepresentation carries DERIVED content (a card's fetched description, a
-// web-clip's AI summary) reduce here to their user-authored seed (a plain link).
-// The interface lives in block/ (the export mechanism's home); the reduction policy
-// belongs to each implementing processor. deriveExportMarkdown type-asserts each
-// processor to this and falls back to MarkdownRepresentation when it is absent.
-type ExportRepresenter interface {
-	ExportMarkdown(block SieveBlock, uuid string) string
-}
-
 // deriveExportMarkdown renders the whole document as CLEAN markdown for "Copy as
-// Markdown": filter first, then render each SURVIVING block via its export
-// representation — NOT the on-disk Serialize. The principle is that export preserves
-// user-authored content only; derived content reduces to its user-authored seed
-// (see ExportRepresenter). Empty renders (a pending block, an ai-block with no
-// answer) are skipped; survivors join with a blank line. No frontmatter, no prose
-// <!--s:--> sentinels, no fenced YAML — that is the Serialize (on-disk) form, which
-// this deliberately avoids.
+// Markdown": apply the caller's filter first, then render each SURVIVING block via
+// its MarkdownRepresentation — NOT the on-disk Serialize. A block has ONE markdown
+// representation; the only export policy hook is the caller's BlockFilter. Empty
+// renders (a pending block, an ai-block with no answer) are skipped; survivors join
+// with a blank line. No frontmatter, no prose <!--s:--> sentinels, no fenced YAML —
+// that is the Serialize (on-disk) form, which this deliberately avoids.
 //
 // MARKDOWN-MODE — unlike deriveMarkdownFiltered, this does NOT return the raw buffer
 // verbatim (which would leak prose sentinels and cannot honour the filter). It
@@ -145,7 +131,7 @@ func (d DocView) deriveExportMarkdown(f BlockFilter) string {
 	}
 	parts := make([]string, 0, len(blocks))
 	for _, b := range blocks {
-		if f != nil && !f.Accept(b) {
+		if f != nil && !f(b) {
 			continue
 		}
 		md := d.renderBlockExport(b)
@@ -157,17 +143,12 @@ func (d DocView) deriveExportMarkdown(f BlockFilter) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// renderBlockExport asks a single block's processor for its EXPORT markdown:
-// ExportMarkdown when the processor implements ExportRepresenter (the reduced,
-// user-authored form), else its MarkdownRepresentation. A kind with no registered
-// processor contributes nothing (it has no export representation).
+// renderBlockExport asks a single block's processor for its MarkdownRepresentation.
+// A kind with no registered processor contributes nothing (it has no representation).
 func (d DocView) renderBlockExport(b SieveBlock) string {
 	p := d.codec.registry.Get(b.Kind)
 	if p == nil {
 		return ""
-	}
-	if er, ok := p.(ExportRepresenter); ok {
-		return er.ExportMarkdown(b, d.UUID)
 	}
 	return p.MarkdownRepresentation(b, d.UUID)
 }

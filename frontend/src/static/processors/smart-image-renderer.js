@@ -3,25 +3,25 @@
 // image CSS (.image-block, .node-image, .image-resizer) works unchanged.
 
 import { isJobStale } from '../base/fenced-block-base.js'
+import { registerSieveRenderer } from '../block/sieve-block-extension.js'
+import { renderMermaidSvgEntry } from './diagram-renderer.js'
 
 ;(function () {
   'use strict'
 
-  var T = window.TipTap
-
-  function resolveSrc(src) {
+  function resolveSrc(src, ctx) {
     if (!src) return ''
     if (src.startsWith('http://') || src.startsWith('https://')) {
       return window.location.origin + '/sieve-image-proxy?url=' + encodeURIComponent(src)
     }
     if (src.startsWith('data:') || src.startsWith('blob:') || src.startsWith('/')) return src
     if (src.startsWith('.assets/')) src = src.substring(8)
-    return '/sieve/' + (window.__stashActiveTabUuid || '') + '/' + src.split('/').pop()
+    return '/sieve/' + (ctx?.getEditor()?.uuid || '') + '/' + src.split('/').pop()
   }
 
   
 
-  function makeNodeView(node, editor) {
+  function makeNodeView(node, editorPane, getPos, ctx) {
     var currentAttrs = Object.assign({}, node.attrs)
 
     // dom matches old ImageWithAttrs: inline-block wrapper that owns selection CSS
@@ -48,7 +48,7 @@ import { isJobStale } from '../base/fenced-block-base.js'
 
     function applyAttrs(attrs) {
       currentAttrs = attrs
-      img.src = resolveSrc(attrs.src || '')
+      img.src = resolveSrc(attrs.src || '', ctx)
       img.alt = attrs.alt || ''
       var w = attrs.width  || ''
       var h = attrs.height || ''
@@ -108,12 +108,10 @@ import { isJobStale } from '../base/fenced-block-base.js'
         window.removeEventListener('mousemove', onMove)
         window.removeEventListener('mouseup', onUp)
         document.body.style.cursor = ''
-        document.dispatchEvent(new CustomEvent('sieve:block-update', {
-          detail: { id: currentAttrs.id, kind: 'smart-image', attrs: {
-            width:  String(Math.round(img.offsetWidth)),
-            height: String(Math.round(img.offsetHeight)),
-          }}
-        }))
+        ctx.updateAttributes({
+          width:  String(Math.round(img.offsetWidth)),
+          height: String(Math.round(img.offsetHeight)),
+        })
       }
 
       window.addEventListener('mousemove', onMove)
@@ -184,7 +182,7 @@ import { isJobStale } from '../base/fenced-block-base.js'
       return [
         { type: 'header', label: "Image"},
         { icon: window.SieveIcons.copy, label: 'Copy Image', action: function () {
-          var src = resolveSrc(n.attrs.src)
+          var src = resolveSrc(n.attrs.src, ctx)
           if (!src) return
           fetch(src)
             .then(function (res) { return res.blob() })
@@ -203,7 +201,7 @@ import { isJobStale } from '../base/fenced-block-base.js'
     // it, so Transform's saveSVG writes the image. Shared render helper lives in
     // diagram-renderer.js; null = no mermaid here (pass entries through unchanged).
     resolveEntries: function(sourceNode, entries) {
-      return window.TipTap.renderMermaidSvgEntry(sourceNode, entries).then(function (svg) {
+      return renderMermaidSvgEntry(sourceNode, entries).then(function (svg) {
         return svg ? [svg] : entries
       }).catch(function (err) {
         console.error('[smart-image] mermaid render failed for extraction', err)
@@ -213,6 +211,6 @@ import { isJobStale } from '../base/fenced-block-base.js'
     }
   }
 
-  T.registerSieveRenderer('smart-image', SmartImageRenderer)
+  registerSieveRenderer('smart-image', SmartImageRenderer)
 
 })()

@@ -7,18 +7,17 @@ import { describe, it, expect } from 'vitest'
 // avoid duplicate-id collisions), and the on-disk markers carry the id VALUE, so
 // the byte-stable round-trip is untouched.
 
-// prose-block.js is a non-module IIFE that reads window.TipTap.{Extension,Plugin,
-// PluginKey} at import and attaches ProseBlock / BlockId back onto it. Stub the
-// minimum, import once (modules are cached), then inspect.
-global.window = global.window || {}
-global.window.TipTap = {
+// prose-block.js reads Extension/Plugin/PluginKey off the shared vendor bag
+// (base/tiptap-vendor.js) at import time. Stub the minimum onto the shared bag
+// test/setup.js seeded (mutate, never reassign — tiptap-vendor.js already
+// captured a reference to it), then import once (modules are cached) to get the
+// real ProseBlock / BlockId ES exports (the bus is retired).
+Object.assign(globalThis.TipTap, {
   Extension: { create: (cfg) => cfg },
   Plugin: function (spec) { this.spec = spec },
   PluginKey: function (k) { this.k = k },
-}
-await import('../src/static/block/prose-block.js')
-const ProseBlock = global.window.TipTap.ProseBlock
-const BlockId = global.window.TipTap.BlockId
+})
+const { ProseBlock, BlockId } = await import('../src/static/block/prose-block.js')
 
 describe('prose identity unification (blockId → id)', () => {
   it('the prose kind declares its identity attr as `id`', () => {

@@ -54,7 +54,12 @@
         <div class="sidebar-handle"></div>
 
         <div id="right-panel">
-            <div id="htmx-tabbar" class="flex items-stretch bg-tn-bg-dark border-0 border-t border-b border-solid border-tn-border-2 h-[44px] shrink-0" hx-get="/api/tabs" hx-trigger="load, sse:session:changed, sse:notes:changed, session:changed from:body, notes:changed from:body"></div>
+            <!-- P2.D: bare mount. The Workspace owns the tab strip render — it
+                 boots the first load and refetches on SSE session/notes changes
+                 (shell/workspace.js loadTabs). The hx-get/hx-trigger relocated
+                 off this div; the sidebar/prompts/meta divs still register the
+                 SSE EventSource listeners, so sse:* events bubble to document. -->
+            <div id="htmx-tabbar" class="flex items-stretch bg-tn-bg-dark border-0 border-t border-b border-solid border-tn-border-2 h-[44px] shrink-0"></div>
 
             <dialog id="settings-dialog" style="background: transparent; border: none; padding: 0; outline: none;">
                 <div id="settings-dialog-content" style="background: var(--theme-bgDark); width: 75vw; max-width: 1200px; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.6);"></div>
@@ -80,60 +85,12 @@
                 <div id="quickswitcher-dialog-content" style="background: var(--theme-bgDark); width: 600px; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 40px rgba(0,0,0,0.6);"></div>
             </dialog>
 
-            <!-- Main toolbar — visibility and --toolbar-h controlled by #layout-overrides-toolbar style tag -->
-            <div id="editor-toolbar">
-              <!-- Text formatting -->
-              <div class="tb-group">
-                <button class="tb-btn" data-cmd="bold"   data-icon="bold"   title="Bold"></button>
-                <button class="tb-btn" data-cmd="italic" data-icon="italic" title="Italic"></button>
-                <button class="tb-btn" data-cmd="strike" data-icon="strike" title="Strikethrough"></button>
-                <button class="tb-btn" data-cmd="code"   data-icon="code"   title="Inline code"></button>
-              </div>
-              <div class="tb-sep"></div>
-              <!-- Headings -->
-              <div class="tb-group">
-                <button class="tb-btn" data-cmd="h1" data-icon="h1" title="Heading 1"></button>
-                <button class="tb-btn" data-cmd="h2" data-icon="h2" title="Heading 2"></button>
-                <button class="tb-btn" data-cmd="h3" data-icon="h3" title="Heading 3"></button>
-              </div>
-              <div class="tb-sep"></div>
-              <!-- Lists -->
-              <div class="tb-group">
-                <button class="tb-btn" data-cmd="bulletList"  data-icon="bulletList"  title="Bullet list"></button>
-                <button class="tb-btn" data-cmd="orderedList" data-icon="orderedList" title="Ordered list"></button>
-                <button class="tb-btn" data-cmd="taskList"    data-icon="taskList"    title="Task list"></button>
-              </div>
-              <div class="tb-sep"></div>
-              <!-- Block elements -->
-              <div class="tb-group">
-                <button class="tb-btn" data-cmd="blockquote"     data-icon="blockquote"     title="Blockquote"></button>
-                <button class="tb-btn" data-cmd="insertTable"    data-icon="table"          title="Insert 3&#xD7;3 table"></button>
-                <button class="tb-btn" data-cmd="horizontalRule" data-icon="horizontalRule" title="Horizontal rule"></button>
-              </div>
-              <div class="tb-sep"></div>
-              <div class="tb-group">
-                <button class="tb-btn" id="tb-toggle-mode-btn" title="Toggle Editor Mode"></button>
-              </div>
-              <div class="tb-sep"></div>
-              <!-- Insert content: blocks + AI query (left side, both teal and orange) -->
-              <div class="tb-group">
-                <button class="tb-btn" data-insert="code" data-sieve-kind="code" title="Insert code block"></button>
-                <button class="tb-btn" data-insert="diagram" data-sieve-kind="diagram" title="Insert diagram"></button>
-                <button class="tb-btn" id="tb-clip-btn" data-sieve-kind="web-clip" title="Insert web clip"></button>
-                <button class="tb-btn" id="tb-image-btn" data-sieve-kind="smart-image" title="Insert image from file"></button>
-                <input id="tb-image-input" type="file" accept="image/*" style="display:none">
-              </div>
-              <div class="tb-sep"></div>
-              <!-- AI query: Explain + Ask — orange, tier-gated, still on the left -->
-              <div class="tb-group tb-ai-query">
-                <button class="tb-btn" id="tb-explain-btn" data-icon="info" title="Explain"></button>
-                <button class="tb-btn" id="tb-ask-btn" data-icon="sparkle" title="Ask"></button>
-              </div>
-              <!-- Help -->
-              <div class="tb-help">
-                <button class="tb-btn" id="tb-help-btn" data-icon="help" title="Help"></button>
-              </div>
-            </div>
+            <!-- Main toolbar — visibility and --toolbar-h controlled by #layout-overrides-toolbar style tag.
+                 P4.D: the toolbar is EDITOR-owned — NoteEditor's EditorToolbar renders its buttons into
+                 this host on the first present (the inner button DOM was removed). The hidden image-input
+                 stays here (the toolbar image button + the cross-file upload handler both reach it by id). -->
+            <div id="editor-toolbar"></div>
+            <input id="tb-image-input" type="file" accept="image/*" style="display:none">
 
             <!-- Table toolbar — appears below main toolbar when cursor is inside a table -->
             <div id="table-toolbar">
@@ -275,12 +232,11 @@
     <script src="/static/vendor/tiptap.js"></script>
     <script src="/static/vendor/js-yaml.js"></script>
     <script src="/static/base/icons.js"></script>
-    <script src="/static/editor/extensions.js"></script>
-    <script src="/static/ai/ai-target.js"></script>
-    <script src="/static/editor/focus-context.js"></script>
-    <script src="/static/editor/paste-context.js"></script>
-    <script src="/static/editor/block-chrome.js"></script>
-    <script src="/static/ai/ai-target-decoration.js"></script>
+    <script type="module" src="/static/editor/extensions.js"></script>
+    <script type="module" src="/static/ai/ai-target.js"></script>
+    <script type="module" src="/static/editor/paste-context.js"></script>
+    <script type="module" src="/static/editor/block-chrome.js"></script>
+    <script type="module" src="/static/ai/ai-target-decoration.js"></script>
     <script type="module" src="/static/block/block-kinds.js"></script>
     <script type="module" src="/static/editor/interaction-policy.js"></script>
     <script type="module" src="/static/base/action-label.js"></script>
@@ -300,11 +256,20 @@
     <script type="module" src="/static/block/prose-group.js"></script>
     <script type="module" src="/static/base/block-position.js"></script>
     <script type="module" src="/static/base/render-empty.js"></script>
-    <script src="/static/editor/editor.js"></script>
+    <script type="module" src="/static/base/globals.js"></script>
+    <!-- Shell skeleton (P1: Workspace/Tab/Editor component model). Dual-use ES
+         modules: type="module" is MANDATORY — a plain <script> tag fails at
+         parse on `export` silently and takes every dependent path down.
+         Modules execute deferred (after classic scripts parse); editor.js only
+         reads window.sieveWorkspace / window.SieveEditor at runtime (initEditor
+         via DOMContentLoaded/htmx events), never at parse time, so ordering is safe. -->
+    <script type="module" src="/static/editor/editor-shell.js"></script>
+    <script type="module" src="/static/shell/tab.js"></script>
+    <script type="module" src="/static/shell/workspace.js"></script>
     <script src="/static/ai/ai-actions.js"></script>
     <script src="/static/ui/tabbar.js"></script>
     <script src="/static/ui/sidebar.js"></script>
-    <script src="/static/editor/context-menu.js"></script>
+    <script type="module" src="/static/editor/context-menu.js"></script>
     <script src="/static/ui/layout.js"></script>
 
     <script>
@@ -330,30 +295,9 @@
         if (link) link.href = '/theme.css?t=' + new Date().getTime();
     });
 
-    // sieve:meta-dirty — dispatched by editor.js, updates the save-state dot in the path crumb and the status bar save indicator
-    document.addEventListener('sieve:meta-dirty', function(e) {
-        var dirty = e.detail && e.detail.dirty;
-        var dot = document.getElementById('meta-dirty-dot');
-        if (dot) {
-            if (dirty) {
-                dot.classList.remove('bg-tn-green');
-                dot.classList.add('bg-tn-red');
-            } else {
-                dot.classList.remove('bg-tn-red');
-                dot.classList.add('bg-tn-green');
-            }
-        }
-        
-        var saveText = document.querySelector('.status-bar__save');
-        if (!saveText) return;
-        
-        saveText.style.opacity = '1';
-        
-        var dotColor = dirty ? "bg-tn-red" : "bg-tn-green";
-        var label = dirty ? "Unsaved" : "Saved";
-        
-        saveText.innerHTML = '<div class="flex items-center gap-[0.4rem]"><span class="w-2 h-2 rounded-full shrink-0 ' + dotColor + '"></span><span style="color: var(--theme-textDim);">' + label + '</span></div>';
-    });
+    // P4.D: the sieve:meta-dirty consumer (save dot + status-bar save slot) moved
+    // into the Workspace's StatusBar child (shell/status-bar.js). Its producer (the
+    // flush-ack) stays a DOM CustomEvent until P4.E/F.
 
     // Measure real tabbar height and expose as --tabbar-h for the gutter separator.
     // The active-tab -mb-[2px] trick makes the visual bottom slightly lower than
@@ -400,7 +344,7 @@
         });
         document.querySelectorAll('[data-sieve-kind]').forEach(function(el) {
             var kind = el.getAttribute('data-sieve-kind');
-            var icon = window.TipTap && window.TipTap.getSieveIcon && window.TipTap.getSieveIcon(kind);
+            var icon = window.GLOBALS && window.GLOBALS.getSieveIcon(kind);
             if (icon) el.insertAdjacentHTML('afterbegin', icon);
         });
 
@@ -411,7 +355,7 @@
             if (uuid) {
                 mount.dataset.editorInit = 'true';
                 console.log('[index.html] Initializing editor from DOMContentLoaded for:', uuid);
-                window.sieveInitEditor?.(mount, uuid, mode);
+                window.sieveWorkspace?.initEditor(mount, uuid, mode);
             }
         }
     });
@@ -437,10 +381,6 @@
         }
     });
 
-    document.addEventListener('sieve:save', function() {
-        if (window._editorSave) window._editorSave();
-    });
-
     document.addEventListener('editor:saved', function(e) {
         var uuid = e.detail && e.detail.uuid;
         var metaPanel = document.getElementById('htmx-meta-panel');
@@ -462,23 +402,11 @@
     });
 
 
-    document.addEventListener('editor:stats', function(e) {
-        var sbStats = document.querySelector('.status-bar__stats');
-        if (sbStats && e.detail) {
-            sbStats.innerHTML = '<span title="Characters">' + (e.detail.chars || 0) + ' chars</span>' +
-                                '<span class="status-bar__sep" title="Lines">' + (e.detail.lines || 0) + ' lines</span>';
-        }
-    });
-
-    // Block-ID hover readout (dev/debug). Writes ONLY into its own __blockid cell.
-    // detail is { kind, id } over a block, or null to clear. Producer: the
-    // mouseover listener in editor.js. The block's index is read off the gutter.
-    document.addEventListener('editor:blockhover', function(e) {
-        var slot = document.querySelector('.status-bar__blockid');
-        if (!slot) return;
-        // slot.textContent = e.detail ? (e.detail.kind + ' · ' + e.detail.id) : '';
-        slot.textContent = e.detail ? (e.detail.id) : '';
-    });
+    // P4.D: the editor:stats + editor:blockhover consumers (status-bar __stats /
+    // __blockid slots) moved into the Workspace's StatusBar child. The stats
+    // PRODUCER is now the editor's `stats` stream event (the StatusBar subscribes
+    // to the active editor's onEvent); the blockhover producer (editor.js
+    // mouseover) stays a DOM CustomEvent until P4.F.
 
     // Listen for HTMX load to re-init editor if mount changes
     window.__sieveFocusTimer = null;
@@ -535,7 +463,7 @@
             if (uuid) {
                 mount.dataset.editorInit = 'true';
                 console.log('[index.html] Initializing editor from htmx:load for:', uuid);
-                window.sieveInitEditor?.(mount, uuid, mode);
+                window.sieveWorkspace?.initEditor(mount, uuid, mode);
                 window.__sieveArmFocusTracking(uuid);
             }
         }
@@ -546,7 +474,7 @@
         var target = e.detail && e.detail.target;
         if (!target) return;
         if (target.id === 'htmx-sidebar' || (target.closest && target.closest('#htmx-sidebar'))) {
-            window.htmx.ajax('GET', '/api/tabs', { target: '#htmx-tabbar', swap: 'innerHTML' });
+            window.sieveWorkspace.loadTabs();
             var mount = document.getElementById('tiptap-mount');
             var activeUuid = mount ? mount.getAttribute('data-uuid') : null;
             var metaPanel = document.getElementById('htmx-meta-panel');
@@ -573,7 +501,7 @@
       // 2. Refresh all library-specific panels in parallel.
       await Promise.all([
         htmx.ajax('GET', '/api/sidebar',  { target: '#htmx-sidebar',   swap: 'innerHTML' }),
-        htmx.ajax('GET', '/api/tabs',     { target: '#htmx-tabbar',    swap: 'innerHTML' }),
+        window.sieveWorkspace.loadTabs(),
         htmx.ajax('GET', '/api/meta',     { target: '#htmx-meta-panel', swap: 'innerHTML' }),
         htmx.ajax('GET', '/api/prompts',  { target: '#prompts-panel',  swap: 'innerHTML' }),
       ]);
@@ -587,18 +515,18 @@
           mount.setAttribute('data-mode', 'wysiwyg');
           // Claim the mount BEFORE init (not delete) so a late htmx:load — e.g. the
           // redundant /api/tabs reload fired by the sidebar afterSettle handler —
-          // cannot re-enter sieveInitEditor while our async /api/editor/load is in
+          // cannot re-enter initEditor while our async /api/editor/load is in
           // flight. Deleting the flag opened a window for a second editor to mount
           // on top of this one, leaving artefacts from the old document.
           mount.dataset.editorInit = 'true';
-          window.sieveInitEditor?.(mount, newUUID, 'wysiwyg');
+          window.sieveWorkspace?.initEditor(mount, newUUID, 'wysiwyg');
         } else {
           mount.setAttribute('data-uuid', '');
           mount.dataset.editorInit = 'true';
           // Route teardown through initEditor (uuid='') so it closes the previous
           // document's editor WebSocket and resets editor.js module state. Calling
           // __tiptap.destroy() directly skips closeEditorWs() and leaks the socket.
-          window.sieveInitEditor?.(mount, '', 'wysiwyg');
+          window.sieveWorkspace?.initEditor(mount, '', 'wysiwyg');
         }
         // Re-arm focus tracking for the new active doc (or clear it). The htmx:load
         // handler that normally does this is suppressed here by editorInit='true'.
@@ -622,7 +550,7 @@
         }
         check();
       });
-      if (window._editorSave) window._editorSave();
+      window.sieveWorkspace?.flushSave();
       await new Promise(function(r) { setTimeout(r, 300); });
     }
 
@@ -656,78 +584,18 @@
     // Close Handler
     window.addEventListener('DOMContentLoaded', function() {
 
-        // ── Toolbar command dispatch ────────────────────────────────────────────
-        // Single delegated handler covers both main toolbar and table toolbar
-        function handleToolbarClick(e) {
-          var btn = e.target.closest('button,[data-cmd],[data-insert],[data-ai]');
+        // ── Table toolbar command dispatch ──────────────────────────────────────
+        // P4.D: the MAIN toolbar is EDITOR-owned (EditorToolbar — buttons carry
+        // their own click closures, no delegation). The #table-toolbar is left
+        // static this phase, so its delegated command dispatch stays here (table
+        // commands run on window.__tiptap — the icon bus retires in P4.E).
+        function handleTableToolbarClick(e) {
+          var btn = e.target.closest('button,[data-cmd]');
           if (!btn) return;
-
-          // Special buttons by ID
-          if (btn.id === 'tb-help-btn') {
-            htmx.ajax('GET', '/api/help', { target: '#help-dialog-content', swap: 'innerHTML' })
-                .then(function() { document.getElementById('help-dialog').showModal(); });
-            return;
-          }
-          if (btn.id === 'tb-image-btn') {
-            document.dispatchEvent(new CustomEvent('sieve:capture-insert-pos'));
-            document.getElementById('tb-image-input').click();
-            return;
-          }
-          if (btn.id === 'tb-toggle-mode-btn') {
-            document.dispatchEvent(new CustomEvent('sieve:toggle-mode'));
-            return;
-          }
-          
-          if (btn.id === 'tb-clip-btn') {
-            if (window._sieveOpenInternalize) window._sieveOpenInternalize();
-            return;
-          }
-          if (btn.id === 'tb-explain-btn') {
-            document.dispatchEvent(new CustomEvent('sieve:ai-explain'));
-            return;
-          }
-          if (btn.id === 'tb-ask-btn') {
-            document.dispatchEvent(new CustomEvent('sieve:ai-ask'));
-            return;
-          }
-
-          if (btn.id === 'tb-ask-btn') {
-            document.dispatchEvent(new CustomEvent('sieve:ai-ask'));
-            return;
-          }
-
-          // AI filing actions
-          var ai = btn.dataset.ai;
-          if (ai && window.SieveAI) { window.SieveAI[ai](); return; }
-
-          // Block inserts (code, diagram only — clip handled above)
-          var insert = btn.dataset.insert;
-          if (insert) {
-            var editor = window.__tiptap;
-            if (editor) editor.chain().focus().run();
-            document.dispatchEvent(new CustomEvent('sieve:create-block', { detail: { kind: insert } }));
-            return;
-          }
-
-          // TipTap formatting + table commands
           var editor = window.__tiptap;
           if (!editor) return;
           var c = editor.chain().focus();
           switch (btn.dataset.cmd) {
-            case 'bold':           c.toggleBold().run(); break;
-            case 'italic':         c.toggleItalic().run(); break;
-            case 'strike':         c.toggleStrike().run(); break;
-            case 'code':           c.toggleCode().run(); break;
-            case 'h1':             c.toggleHeading({ level: 1 }).run(); break;
-            case 'h2':             c.toggleHeading({ level: 2 }).run(); break;
-            case 'h3':             c.toggleHeading({ level: 3 }).run(); break;
-            case 'bulletList':     c.toggleBulletList().run(); break;
-            case 'orderedList':    c.toggleOrderedList().run(); break;
-            case 'taskList':       c.toggleTaskList().run(); break;
-            case 'blockquote':     c.toggleBlockquote().run(); break;
-            case 'insertTable':    c.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(); break;
-            case 'horizontalRule': c.setHorizontalRule().run(); break;
-            // Table editing
             case 'addColumnBefore': c.addColumnBefore().run(); break;
             case 'addColumnAfter':  c.addColumnAfter().run(); break;
             case 'deleteColumn':    c.deleteColumn().run(); break;
@@ -739,19 +607,12 @@
             case 'deleteTable':     c.deleteTable().run(); break;
           }
         }
-        var editorToolbar = document.getElementById('editor-toolbar');
-        if (editorToolbar) {
-          editorToolbar.addEventListener('mousedown', function(e) {
-            if (e.target.closest('button,[data-cmd],[data-insert],[data-ai]')) e.preventDefault();
-          });
-          editorToolbar.addEventListener('click', handleToolbarClick);
-        }
         var tableToolbar = document.getElementById('table-toolbar');
         if (tableToolbar) {
           tableToolbar.addEventListener('mousedown', function(e) {
             if (e.target.closest('button,[data-cmd]')) e.preventDefault();
           });
-          tableToolbar.addEventListener('click', handleToolbarClick);
+          tableToolbar.addEventListener('click', handleTableToolbarClick);
         }
 
         // ── Toolbar image upload ────────────────────────────────────────────────
@@ -781,7 +642,7 @@
         if (window.runtime && window.runtime.EventsOn) {
             window.runtime.EventsOn('app:closing', function() {
                 console.log('[stash] App closing, vetoed natively to allow flush.');
-                if (window._editorSave) window._editorSave();
+                window.sieveWorkspace?.flushSave();
                 
                 function checkAndQuit() {
                     if (window.__sieveActiveJobs > 0) {

@@ -1,26 +1,22 @@
 // web-clip-renderer.js — Web Clip block renderer.
-// Registers window.TipTap.registerSieveRenderer('web-clip', WebClipRenderer)
+// Registers registerSieveRenderer('web-clip', WebClipRenderer)
 
 import { renderMarkdown, applyHighlighting, isJobStale } from '../base/fenced-block-base.js'
+import { T } from '../base/tiptap-vendor.js'
+import { registerSieveRenderer } from '../block/sieve-block-extension.js'
 
 ;(function () {
   'use strict'
-
-  var T = window.TipTap
 
   function isStale(createdAt, id) {
     return isJobStale(createdAt, id)
   }
 
-  function makeRetryBtn(blkId) {
+  function makeRetryBtn(ctx) {
     var btn = document.createElement('button')
     btn.className = 'web-clip-block__retry'
     btn.textContent = 'Retry'
-    btn.addEventListener('click', function () {
-      document.dispatchEvent(new CustomEvent('sieve:block-retry', {
-        detail: { id: blkId }
-      }))
-    })
+    btn.addEventListener('click', function () { ctx.retry() })
     return btn
   }
 
@@ -104,7 +100,7 @@ import { renderMarkdown, applyHighlighting, isJobStale } from '../base/fenced-bl
       }
     },
 
-    makeNodeView: function (node, editor, getPos) {
+    makeNodeView: function (node, editorPane, getPos, ctx) {
 
       var nodeTypeName = 'sieve-web-clip'
       var dom = document.createElement('div')
@@ -176,7 +172,7 @@ import { renderMarkdown, applyHighlighting, isJobStale } from '../base/fenced-bl
             header.innerHTML = '<span class="web-clip-block__icon web-clip-block__icon--warn">⚠</span>' +
               '<span class="web-clip-block__label">' + modeLabel.replace('ing', '') + ' interrupted — ' + domain + '</span>'
             renderEl.appendChild(header)
-            renderEl.appendChild(makeRetryBtn(attrs.id))
+            renderEl.appendChild(makeRetryBtn(ctx))
           } else {
             header.innerHTML = '<span class="web-clip-block__spinner"></span>' +
               '<span class="web-clip-block__label">' + modeLabel + ' from ' + domain + '…</span>'
@@ -204,14 +200,14 @@ import { renderMarkdown, applyHighlighting, isJobStale } from '../base/fenced-bl
           header.innerHTML = '<span class="web-clip-block__icon web-clip-block__icon--warn">⚠</span>' +
             '<span class="web-clip-block__label">Timed out — ' + domain + '</span>'
           renderEl.appendChild(header)
-          renderEl.appendChild(makeRetryBtn(attrs.id))
+          renderEl.appendChild(makeRetryBtn(ctx))
 
         } else if (status === 'ERROR') {
           var errMsg = (attrs.error || 'Unknown error').trim()
           header.innerHTML = '<span class="web-clip-block__icon web-clip-block__icon--error">✕</span>' +
             '<span class="web-clip-block__label">' + errMsg + '</span>'
           renderEl.appendChild(header)
-          renderEl.appendChild(makeRetryBtn(attrs.id))
+          renderEl.appendChild(makeRetryBtn(ctx))
         }
       }
 
@@ -236,7 +232,7 @@ import { renderMarkdown, applyHighlighting, isJobStale } from '../base/fenced-bl
     // ── Plugins ───────────────────────────────────────────────────────────────
 
     buildPlugins: function(nodeType) {
-      var Plugin = window.TipTap.Plugin
+      var Plugin = T.Plugin
 
       function isInside(state, from, to) {
         var inside = false
@@ -294,5 +290,5 @@ import { renderMarkdown, applyHighlighting, isJobStale } from '../base/fenced-bl
     },
   }
 
-  T.registerSieveRenderer('web-clip', WebClipRenderer)
+  registerSieveRenderer('web-clip', WebClipRenderer)
 })()

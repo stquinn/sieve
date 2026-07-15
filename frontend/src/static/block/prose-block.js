@@ -15,15 +15,23 @@
 //   - save        → prose saves via granular block-op (raw markdown content, no
 //                    markers); Go wraps in <!--s:id--> markers on its side.
 //
-// Depends on window.TipTap (vendor/tiptap.js) for Extension.
+// Depends on the vendor TipTap bundle (vendor/tiptap.js) for Extension.
 
 import { renderProseContent, proseContent } from './block-render.js'
-import { registerBlockKind } from './block-kinds.js'
+import { registerBlockKind, isNativeProseNodeName } from './block-kinds.js'
+import { dedupeActions } from './block-sync.js'
+import { serializeNode } from './sieve-block-extension.js'
+import { T } from '../base/tiptap-vendor.js'
+
+// Cross-file bindings the IIFE below assigns once it runs (the sieve-block-extension
+// `export let` pattern, P4.E): the definitions stay inside the IIFE (it closes over
+// its privates and needs the TipTap runtime); module evaluation order guarantees
+// every importer sees the assigned value.
+export let BlockId
+export let ProseBlock
 
 ;(function () {
   'use strict'
-
-  var T = window.TipTap
 
   // The native top-level node types that are prose blocks. Nested instances
   // (a paragraph inside a list/table/blockquote) carry an empty blockId — only
@@ -48,7 +56,7 @@ import { registerBlockKind } from './block-kinds.js'
   // mints the durable id and the insert-block ack swaps it in (editor.js).
   var mintToken = function () { return 'tok-' + Math.random().toString(16).slice(2, 10) }
 
-  var BlockId = T.Extension.create({
+  BlockId = T.Extension.create({
     name: 'blockId',
     addGlobalAttributes: function () {
       return [{
@@ -108,7 +116,7 @@ import { registerBlockKind } from './block-kinds.js'
           }
           if (!trs.some(function (t) { return t.docChanged })) return null
 
-          var isProse = window.TipTap.isNativeProseNodeName
+          var isProse = isNativeProseNodeName
           // Walk every top-level child once: collect prose nodes for identity stamping,
           // and compute lastContentIdx = the index of the LAST child that is a real
           // content-bearing block (anything that is NOT an empty prose paragraph — a
@@ -133,8 +141,8 @@ import { registerBlockKind } from './block-kinds.js'
           // the frontend invents no durable identity); the cleared half re-acquires a
           // fresh token below → its own create round-trip. First occurrence is kept.
           var clearId = {}, clearTok = {}
-          window.TipTap.dedupeActions(ids).forEach(function (i) { clearId[i] = true })
-          window.TipTap.dedupeActions(tokens).forEach(function (i) { clearTok[i] = true })
+          dedupeActions(ids).forEach(function (i) { clearId[i] = true })
+          dedupeActions(tokens).forEach(function (i) { clearTok[i] = true })
 
           var tr = null
           for (var idx = 0; idx < positions.length; idx++) {
@@ -168,7 +176,7 @@ import { registerBlockKind } from './block-kinds.js'
     },
   })
 
-  var ProseBlock = {
+  ProseBlock = {
     kind: 'prose',
     native: true,
     nodeTypes: PROSE_NODE_TYPES,
@@ -180,7 +188,7 @@ import { registerBlockKind } from './block-kinds.js'
     // (so ProseProcessor claims it server-side and creates a prose block) plus a
     // plain-text view. The content is the node's clean markdown (Go re-parses it).
     asContentEntry: function (node, editor) {
-      var md = (T.serializeNode(editor, node) || '').trim()
+      var md = (serializeNode(editor, node) || '').trim()
       if (!md) return null
       return [
         { mimeType: 'sieve/prose', content: JSON.stringify({ content: md }) },
@@ -191,8 +199,17 @@ import { registerBlockKind } from './block-kinds.js'
     // render it to an SVG and INSERT that image entry (keeping the source). prose.Transform
     // then embeds the image (![](url)) instead of the mermaid fence. Render failure or a
     // non-diagram source → entries unchanged → the normal embed path (fence/markdown/text).
+    // renderMermaidSvgEntry is diagram-renderer.js's — imported DYNAMICALLY (not a static
+    // top-level import) so pulling in prose-block.js never eagerly evaluates a processor
+    // module. Every processor calls registerSieveRenderer at ITS OWN top level (an
+    // unconditional side effect that needs the vendor Node/mergeAttributes already on the
+    // bus); a static import here would run that at prose-block.js's OWN import time — before
+    // a narrow caller (e.g. a unit test importing just prose-block.js) has any vendor stub in
+    // place. This mirrors the original bus read's timing: it only resolved at CALL time.
     resolveEntries: function (sourceNode, entries) {
-      return T.renderMermaidSvgEntry(sourceNode, entries).then(function (svg) {
+      return import('../processors/diagram-renderer.js').then(function (mod) {
+        return mod.renderMermaidSvgEntry(sourceNode, entries)
+      }).then(function (svg) {
         return svg ? (entries || []).concat([svg]) : entries
       }).catch(function () {
         return entries
@@ -201,8 +218,4 @@ import { registerBlockKind } from './block-kinds.js'
   }
 
   registerBlockKind(ProseBlock)
-
-  T.ProseBlock = ProseBlock
-  // Back-compat alias: editor.js adds T.BlockId to the extension list.
-  T.BlockId = BlockId
 })()

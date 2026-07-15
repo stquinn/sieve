@@ -5,8 +5,9 @@
 // top-level blocks that emits create-block / update-block / delete-block ops.
 //
 // SCOPE: the observer owns PROSE block content. Structured (sieve-*) blocks have
-// their own sync channels — content via `sieve:block-update` ({attrs}), insertion
-// via `editor:insert-block` — and their change-signature is a hash of their attrs
+// their own sync channels — content via ctx.updateAttributes (an update-block op
+// built here by updateBlockOp, applied through the held Editor), insertion via the
+// `insert-block` render-back (surface applyServerOp) — and their change-signature is a hash of their attrs
 // (the frontend never serialises them to markdown). So this observer emits no
 // create/update content op for a structured block; it tracks them only for the
 // baseline and for DELETE detection (a delete-block is kind-agnostic).
@@ -48,8 +49,8 @@ export function proseOp(type, b, index) {
 }
 
 // updateBlockOp maps a structured NodeView edit detail ({ id, kind, attrs,
-// aliases? }, dispatched as `sieve:block-update`) to an update-block block-op —
-// the same shape proseOp emits. Both rides converge on ONE wire op, retiring the
+// aliases? }, passed by ctx.updateAttributes) to an update-block block-op — the
+// same shape proseOp emits. Both rides converge on ONE wire op, retiring the
 // bespoke block-update message: every block update, prose or structured, is a
 // block-op {update-block, blockId, kind, attrs, aliases?}.
 export function updateBlockOp(detail) {
@@ -150,7 +151,7 @@ export function computeBlockSync(curr, prev) {
 
   // Creates + updates in document order. PROSE is observed here; STRUCTURED
   // creates/changes emit NOTHING — they sync through their own channels
-  // (`sieve:block-update` for edits, `editor:insert-block` for creation). The
+  // (ctx.updateAttributes for edits, the `insert-block` render-back for creation). The
   // observer tracks structured blocks only for the baseline + delete detection.
   var ops = []
   for (var k = 0; k < curr.length; k++) {
@@ -178,12 +179,4 @@ export function computeBlockSync(curr, prev) {
     }
   }
   return { ops: ops, next: next }
-}
-
-if (typeof window !== 'undefined') {
-  window.TipTap = window.TipTap || {}
-  window.TipTap.computeBlockSync = computeBlockSync
-  window.TipTap.seedBaseline = seedBaseline
-  window.TipTap.dedupeActions = dedupeActions
-  window.TipTap.updateBlockOp = updateBlockOp
 }

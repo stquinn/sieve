@@ -1,22 +1,27 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { buildBlocksHTML } from '../src/static/block/block-render.js'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+
+// buildBlocksHTML (block-render.js) builds a structured block's data-* div via
+// buildSieveBlockHTML, a real ES import from sieve-block-extension.js (P4.E —
+// retired the shared bus read). Mock the module (vi.hoisted survives
+// vi.mock's factory hoisting) so this unit test stays free of the renderer
+// registry — same intent as the old bus stub, real import in its place.
+const mocks = vi.hoisted(() => ({
+  buildSieveBlockHTML: vi.fn((kind, attrs) =>
+    `<div data-type="sieve-${kind}" data-id="${(attrs && attrs.id) || ''}"></div>`
+  ),
+}))
+vi.mock('../src/static/block/sieve-block-extension.js', () => ({
+  buildSieveBlockHTML: mocks.buildSieveBlockHTML,
+}))
+
+const { buildBlocksHTML } = await import('../src/static/block/block-render.js')
 
 // mdRender stub: marks its input so we can assert WHICH text was rendered.
 const md = (t) => `<R>${t}</R>`
 
 describe('buildBlocksHTML', () => {
-  // Structured blocks build their data-* div from attrs via the shared
-  // buildSieveBlockHTML (the same builder the fence rule uses). Stub it so this
-  // unit test stays free of the renderer registry; assert it gets the attrs.
-  let sieveCalls
   beforeEach(() => {
-    sieveCalls = []
-    globalThis.window = globalThis.window || globalThis
-    window.TipTap = window.TipTap || {}
-    window.TipTap.buildSieveBlockHTML = (kind, attrs, sf) => {
-      sieveCalls.push([kind, attrs, sf])
-      return `<div data-type="sieve-${kind}" data-id="${(attrs && attrs.id) || ''}"></div>`
-    }
+    mocks.buildSieveBlockHTML.mockClear()
   })
 
   // 2026-06-19 node-granular: a prose block renders as its NATIVE markdown nodes
@@ -47,9 +52,8 @@ describe('buildBlocksHTML', () => {
       [{ kind: 'code', id: 'co-1', attrs: { id: 'co-1', source: 'x=1' }, serialisedForm: '```code\nid: co-1\n```' }],
       md,
     )
-    expect(sieveCalls).toHaveLength(1)
-    expect(sieveCalls[0][0]).toBe('code')
-    expect(sieveCalls[0][1]).toEqual({ id: 'co-1', source: 'x=1' })
+    expect(mocks.buildSieveBlockHTML).toHaveBeenCalledTimes(1)
+    expect(mocks.buildSieveBlockHTML).toHaveBeenCalledWith('code', { id: 'co-1', source: 'x=1' })
     expect(html).toBe('<div data-type="sieve-code" data-id="co-1"></div>')
     expect(html).not.toContain('sieve-prose')
   })

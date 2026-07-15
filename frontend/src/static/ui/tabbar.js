@@ -12,7 +12,7 @@
   function commitDrop() {
     if (dragFromIdx !== null && dragToPos !== null &&
         dragToPos !== dragFromIdx && dragToPos !== dragFromIdx + 1) {
-      window.htmx && window.htmx.ajax('POST', '/api/tabs/reorder', { target: '#htmx-tabbar', swap: 'innerHTML', values: { from: dragFromIdx, to: dragToPos } });
+      window.sieveWorkspace.reorder(dragFromIdx, dragToPos);
     }
     dragFromIdx = null;
     dragToPos = null;

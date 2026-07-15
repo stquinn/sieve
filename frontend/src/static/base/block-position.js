@@ -83,13 +83,3 @@ export function emptyParagraphAnchor(doc, pos) {
   }
   return null
 }
-
-// Expose on window.TipTap for non-module callers (editor.js IIFE, context-menu.js).
-if (typeof window !== 'undefined') {
-  var T = window.TipTap || (window.TipTap = {})
-  T.blockIndexForInsert = blockIndexForInsert
-  T.docPosForBlockIndex = docPosForBlockIndex
-  T.blockIndexAfter = blockIndexAfter
-  T.enclosingBlockId = enclosingBlockId
-  T.emptyParagraphAnchor = emptyParagraphAnchor
-}

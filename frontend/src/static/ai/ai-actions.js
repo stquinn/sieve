@@ -102,7 +102,7 @@
   });
 
   function saveAndPost(url, id) {
-    var p = window._editorSave ? window._editorSave() : Promise.resolve();
+    var p = window.sieveWorkspace ? window.sieveWorkspace.flushSave() : Promise.resolve();
     p.then(function() {
       if (!id) {
         var mount = document.getElementById('tiptap-mount');

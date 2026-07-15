@@ -1,0 +1,675 @@
+// @ts-check
+// workspace.js — Workspace singleton (P1: zero-behavior skeleton).
+// Workspace is the root of the JS component model. It holds the open Tabs,
+// tracks the active Tab, and owns an empty listener registry (listeners wired
+// in later phases). It is created once at boot (below) and exposed on window
+// as `window.sieveWorkspace` so the browser console can reach it and so
+// editor.js (a classic script sharing the same global) can look it up.
+// Dual-use ES module (block-position.js pattern): `export` for vitest imports,
+// window.* assignment for classic-script access. Loaded in index.html with
+// type="module" — a plain <script> tag would fail at parse on `export`.
+// Modules execute deferred (after classic scripts parse); editor.js only reads
+// window.sieveWorkspace at runtime (initEditor via htmx events), never at parse.
+
+import { SieveTab } from './tab.js'
+import { AskPanel } from './ask-panel.js'
+import { InsertDialogs } from './insert-dialogs.js'
+import { SearchOverlay } from './search-overlay.js'
+import { StatusBar } from './status-bar.js'
+
+export class SieveWorkspace {
+  /** @type {Map<string, SieveTab>} uuid → Tab */
+  #tabs = new Map()
+
+  /** @type {SieveTab|null} */
+  #activeTab = null
+
+  // ── Listener registry (empty in P1; typed registration methods wired in P2) ──
+
+  /** @type {Array<(tab: SieveTab|null) => void>} */
+  #activeTabListeners = []
+
+  /**
+   * Public selection-update registry (P3.B). Mirrors #activeTabListeners: it
+   * republishes the ACTIVE tab's selection stream only (a background tab's push
+   * never reaches here). Consumers arrive in P3.D (the Ask panel); today it has
+   * no production consumer.
+   * @type {Array<(ctx: import('../editor/selection-model.js').SelectionContext|null) => void>}
+   */
+  #selectionListeners = []
+
+  /** @type {(() => void)|null} unsubscribe from the ACTIVE tab's onSelectionUpdate */
+  #unsubActiveSelection = null
+
+  // ── Editor lifecycle state (P4.F — moved from editor.js) ─────────────────────
+
+  /** @type {string} the active editor's uuid ('' when torn down). Load-bearing
+   * staleness guard: initEditor sets this synchronously before the async load and
+   * the load's `.then` re-checks it so a later init supersedes an in-flight load. */
+  #currentUuid = ''
+
+  /** @type {HTMLElement|null} the active editor's mount element. QUIRK PRESERVED
+   * (do NOT "fix"): this is NOT cleared on teardown, matching editor.js. */
+  #currentMountEl = null
+
+  /** @type {string|null} last hovered block key — dedup for editor:blockhover. */
+  #lastHoverKey = null
+
+  constructor() {}
+
+  // ── Tab management ────────────────────────────────────────────────────────────
+
+  /**
+   * Returns the Tab for a uuid if it exists, otherwise null.
+   * @param {string} uuid
+   * @returns {SieveTab|null}
+   */
+  getTab(uuid) {
+    return this.#tabs.get(uuid) ?? null
+  }
+
+  /**
+   * Opens (creates) a Tab for the given uuid if not already tracked, marks it
+   * active, and returns it. Called by editor.js at the start of initEditor.
+   * @param {string} uuid
+   * @returns {SieveTab}
+   */
+  openTab(uuid) {
+    if (!uuid) throw new Error('SieveWorkspace.openTab: uuid is required')
+    let tab = this.#tabs.get(uuid)
+    if (!tab) {
+      tab = new SieveTab(uuid)
+      this.#tabs.set(uuid, tab)
+    }
+    this.#setActiveTab(tab)
+    return tab
+  }
+
+  /**
+   * Closes (removes) the Tab for a uuid if it is tracked. If it was the active
+   * tab, activeTab becomes null. Called by editor.js when the editor tears down.
+   * @param {string} uuid
+   */
+  closeTab(uuid) {
+    const tab = this.#tabs.get(uuid)
+    if (!tab) return
+    this.#tabs.delete(uuid)
+    if (this.#activeTab === tab) {
+      this.#activeTab = null
+      this.#switchSelectionSource(null)
+      this.#notifyActiveTabListeners()
+    }
+  }
+
+  /**
+   * Currently active Tab, or null when no document is open.
+   * @returns {SieveTab|null}
+   */
+  get activeTab() { return this.#activeTab }
+
+  // ── Tab-lifecycle verbs (P2.D — the external API facade) ─────────────────────
+  // These are the ONLY front-end entry points for tab mutation and the tabbar
+  // render. Each is a thin owner over the SAME htmx.ajax call the templates ran
+  // before P2.D (identical swap semantics; the OOB editor mount is preserved).
+  // The INTERNALS still drive the server-rendered HTMX templates (tabbar.html +
+  // OOB editor.html); the self-rendering-JSON version is deferred to tech-debt
+  // V-B. Each guards htmx (mirrors the templates' `window.htmx && …`) and returns
+  // the htmx.ajax promise. See docs/design/specs/2026-07-08-workspace-editor-
+  // component-model.md.
+
+  /**
+   * Opens (or focuses) the document for a uuid: POST /api/note/open/{uuid},
+   * swapping the tabbar. The server re-renders the strip and OOB-mounts the
+   * editor; the OOB re-init drives activateDocument, so no client prune here.
+   * @param {string} uuid
+   * @returns {Promise<any>}
+   */
+  open(uuid) {
+    return this.#ajax('POST', '/api/note/open/' + encodeURIComponent(uuid))
+  }
+
+  /**
+   * Creates a new untitled note and opens it: POST /api/note/new, tabbar swap.
+   * @returns {Promise<any>}
+   */
+  newNote() {
+    return this.#ajax('POST', '/api/note/new')
+  }
+
+  /**
+   * Closes the tab for a uuid: POST /api/tabs/close/{uuid}, tabbar swap. Prunes
+   * the closed identity AFTER the swap + OOB editor mount + htmx:load settle:
+   * by the time `.then` runs, initEditor → activateDocument has already
+   * destroyed/detached the outgoing editor and set the new active, so
+   * closeTab(uuid) just removes the now-defunct entry (uuid is no longer active,
+   * so it won't null #activeTab). Works for both active-tab and background close.
+   * @param {string} uuid
+   * @returns {Promise<any>}
+   */
+  close(uuid) {
+    return this.#ajax('POST', '/api/tabs/close/' + encodeURIComponent(uuid))
+      .then((r) => { this.closeTab(uuid); return r })
+  }
+
+  /**
+   * Closes the currently active tab, or no-ops when nothing is active. Replaces
+   * the native menu's `data-uuid` DOM scrape.
+   * @returns {Promise<any>|void}
+   */
+  closeActiveTab() {
+    if (this.#activeTab) return this.close(this.#activeTab.uuid)
+  }
+
+  /**
+   * Closes every tab: POST /api/tabs/closeAll, tabbar swap. The server wipes the
+   * session and creates one fresh note; the OOB re-init activates it before the
+   * `.then` prune runs, so pruning every tracked tab EXCEPT the new active
+   * collapses the stale entries without touching the fresh note.
+   * @returns {Promise<any>}
+   */
+  closeAll() {
+    return this.#ajax('POST', '/api/tabs/closeAll')
+      .then((r) => {
+        const keep = this.#activeTab
+        for (const uuid of [...this.#tabs.keys()]) {
+          if (!keep || uuid !== keep.uuid) this.closeTab(uuid)
+        }
+        return r
+      })
+  }
+
+  /**
+   * Reorders the tab strip: POST /api/tabs/reorder with from/to indices, tabbar
+   * swap.
+   * @param {number} fromIdx — source tab index
+   * @param {number} toPos — target insertion position
+   * @returns {Promise<any>}
+   */
+  reorder(fromIdx, toPos) {
+    return this.#ajax('POST', '/api/tabs/reorder', { values: { from: fromIdx, to: toPos } })
+  }
+
+  /**
+   * Fetches and renders the tab strip: GET /api/tabs, tabbar swap. The boot +
+   * SSE refetch entry point (P2.D relocated this off the #htmx-tabbar div's
+   * hx-get/hx-trigger).
+   * @returns {Promise<any>}
+   */
+  loadTabs() {
+    return this.#ajax('GET', '/api/tabs')
+  }
+
+  /**
+   * Shared htmx.ajax over the tabbar mount. Guards htmx (mirrors the templates)
+   * and always resolves to a promise so `.then` prunes are safe even without
+   * htmx present (tests, early boot).
+   * @param {'GET'|'POST'} method
+   * @param {string} url
+   * @param {object} [extraOpts] — merged into the swap options (e.g. values)
+   * @returns {Promise<any>}
+   */
+  #ajax(method, url, extraOpts) {
+    if (!window.htmx) return Promise.resolve()
+    const opts = Object.assign({ target: '#htmx-tabbar', swap: 'innerHTML' }, extraOpts)
+    return window.htmx.ajax(method, url, opts)
+  }
+
+  // ── Editor lifecycle (P2.A fix wave: the ONE authoritative teardown path) ────
+
+  /**
+   * Activates the document for a uuid, owning the editor lifecycle end-to-end.
+   * This is the SINGLE place a previous editor is destroyed:
+   *
+   * - Genuine tab SWITCH (uuid differs from the active tab's): the previous
+   *   editor is destroyed (its WS closes) BEFORE the new tab's editor is
+   *   created (its WS opens). That close-before-open ordering is load-bearing
+   *   for the Go WS takeover guard (ws_handler.go pointer-identity unregister)
+   *   and matches the old openEditorWs behavior (closeEditorWs() first).
+   * - TEARDOWN (uuid ''): the active editor is destroyed and its tab closed.
+   * - Same-uuid re-activation (toggleMode, a prompt re-init, and any editor.html
+   *   re-render for the unchanged active note — e.g. re-opening the active note
+   *   from the sidebar, or closing a background tab): the editor instance and
+   *   its live socket are KEPT — destroy is never spurious. (Behavior delta vs
+   *   the pre-P2.A code, which recycled the socket on those note paths; keeping
+   *   it avoids the takeover race entirely.)
+   *
+   * @param {string} uuid — target document uuid, or '' to tear down
+   * @param {object} [options] — passed to the Tab's editor factory
+   *   (surfaceCollaborators, onServerMessage, …)
+   * @returns {SieveTab|null} the activated Tab, or null after a teardown
+   */
+  activateDocument(uuid, options) {
+    const prev = this.#activeTab
+    if (prev && prev.uuid !== uuid) {
+      if (prev.editor) {
+        prev.editor.destroy()
+        prev.detachEditor()
+      }
+      if (!uuid) this.closeTab(prev.uuid)
+    }
+    if (!uuid) return null
+
+    const tab = this.openTab(uuid)
+    if (!tab.editor) {
+      tab.attachEditor(tab.createEditor(uuid, options))
+    }
+    return tab
+  }
+
+  // ── Editor boot/lifecycle (P4.F — moved from editor.js's IIFE) ────────────────
+  // The BOOT/LIFECYCLE half of the retired editor.js island now lives on the
+  // Workspace (the app-root singleton): the derived active-editor accessor, the
+  // initEditor entry point (called from index.html), the mode/error/save
+  // reactions, and the app-level DOM listeners (bootEditorLifecycle). Pass 2
+  // retired the residual window.* facades (_editorSave / _sieveCopyImageToClipboard
+  // / __stashActiveTabUuid) pass 1 had kept — only window.sieveWorkspace survives.
+
+  /**
+   * The live editor instance for the active tab (a NoteEditor or PromptEditor),
+   * or null. Call sites speak the editor's DOMAIN methods (applyBlockOps /
+   * updateText / flushSave / …); a disconnected editor (PromptEditor) no-ops the
+   * transport ops safely, so nothing here probes for it. (Replaces editor.js's
+   * `_activeEditor()`.)
+   * @returns {import('../editor/abstract-editor.js').AbstractEditor|null}
+   */
+  get activeEditor() {
+    return this.#activeTab ? this.#activeTab.editor : null
+  }
+
+  /**
+   * Public entry point called from index.html (DOMContentLoaded / htmx:load /
+   * library switch). Opens/activates the shell Tab + its editor for `uuid`, loads
+   * the document body from the backend, and presents the surface. Falsy
+   * mountEl/uuid tears the active editor down. (Moved verbatim-in-behaviour from
+   * editor.js initEditor.)
+   * @param {HTMLElement|null} mountEl
+   * @param {string} uuid
+   * @param {string} [mode]
+   */
+  initEditor(mountEl, uuid, mode) {
+    // Flush the previous editor's pending edits while it is still attached, so
+    // they go out on ITS socket before any teardown (surface flush + WS flush).
+    const prev = this.activeEditor
+    if (prev && prev.surface) this.flushSave()
+    // initEditor never destroys editors/surfaces directly: the shell editor is
+    // destroyed only in activateDocument (via #syncShell); the previous surface is
+    // unmounted by presentSurface (same-uuid re-init) or editor.destroy() (switch).
+
+    if (!mountEl || !uuid) {
+      // Teardown — #syncShell('') destroys the active editor and closes its tab.
+      this.#syncShell('')
+      this.#currentUuid = ''
+      return
+    }
+
+    // Set the staleness guard SYNCHRONOUSLY before the fetch: the load's `.then`
+    // re-checks `this.#currentUuid !== uuid` so a later init supersedes this load.
+    this.#currentUuid = uuid
+    this.#syncShell(uuid)
+    this.#currentMountEl = mountEl
+    const wantMode = mode || this.#activeTab?.mode || 'wysiwyg'
+
+    fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid))
+      .then((r) => r.json())
+      .then((data) => {
+        if (this.#currentUuid !== uuid) return // a later init superseded this load
+        window.SieveAI?.loadActiveJobs()
+
+        const isMarkdown = wantMode === 'markdown' || data.mode === 'markdown' || uuid.startsWith('prompt:')
+
+        const ed = this.activeEditor
+        if (!ed) return
+        // The editor owns its root (#tiptap-mount); the surface owns the DOM under
+        // it. presentSurface unmounts any previous surface first.
+        ed.presentSurface(
+          isMarkdown ? 'markdown' : 'wysiwyg',
+          mountEl,
+          isMarkdown ? (data.body || '') : { body: data.body || '', blocks: data.blocks }
+        )
+        // Seed the Tab's mode record + body class after the initial present
+        // (mode-changed does not fire on initial mount — only on an actual flip).
+        if (this.#activeTab) this.#activeTab.recordMode(ed.mode)
+        document.body.classList.toggle('markdown-mode', ed.mode === 'markdown')
+      })
+      .catch((err) => { console.error('[editor] load failed', err) })
+  }
+
+  /**
+   * Syncs the shell to a tab-lifecycle transition (moved from editor.js
+   * _syncShell): delegates to activateDocument — the ONE authoritative editor
+   * teardown path — and, ONLY when a NEW editor instance was created
+   * (`tab.editor && !hadEditor`), subscribes its mode-event reaction.
+   * ATTACH-ONCE-PER-EDITOR-INSTANCE: a same-uuid re-init (toggleMode / prompt
+   * revert) reuses the existing editor and must NOT re-subscribe, or mode-changed
+   * would double-fire.
+   * @param {string} uuid — target uuid, or '' to tear down
+   */
+  #syncShell(uuid) {
+    const existing = this.getTab(uuid)
+    const hadEditor = !!(existing && existing.editor)
+    const tab = this.activateDocument(uuid, { onServerMessage: this.routeServerMessage.bind(this) })
+    if (tab && tab.editor && !hadEditor) tab.editor.onEvent(this.onEditorModeEvent.bind(this))
+  }
+
+  /**
+   * Handles the WS messages that are neither protocol nor surface ops nor awaited
+   * mode replies (moved from editor.js): only surfaces a server error. A late
+   * fall-through (e.g. a stray mode reply) is deliberately dropped.
+   * @param {{type?: string, message?: string}} msg
+   */
+  routeServerMessage(msg) {
+    if (msg.type === 'error') {
+      window.alert(msg.message || 'An error occurred.')
+    }
+  }
+
+  /**
+   * The two non-toolbar chrome reactions to a surface mode flip (moved from
+   * editor.js onEditorModeEvent): the body `markdown-mode` class (drives the
+   * ask-panel/table hide CSS) + the tab-strip re-render; and the verbatim
+   * stay-on-failure alert. A newly created editor gets this as its mode reaction
+   * (subscribed once in #syncShell).
+   * @param {{type: string, mode?: string, error?: unknown}} event
+   */
+  onEditorModeEvent(event) {
+    if (event.type === 'mode-changed') {
+      document.body.classList.toggle('markdown-mode', this.activeEditor?.mode === 'markdown')
+      this.loadTabs()
+    } else if (event.type === 'mode-change-failed') {
+      console.error('[editor] mode toggle failed; staying in ' + event.mode, event.error)
+      window.alert('Mode switch failed — staying in ' + event.mode + ' mode.')
+    }
+  }
+
+  /**
+   * Flushes the active editor's pending edits (moved from editor.js flushSave).
+   * NoteEditor: channel flush; PromptEditor: HTTP save override. Returns a
+   * Promise so callers can await the save.
+   * @returns {Promise<any>}
+   */
+  flushSave() {
+    return this.activeEditor ? this.activeEditor.flushSave() : Promise.resolve()
+  }
+
+  /**
+   * Registers the app-level editor DOM listeners (moved from editor.js's IIFE
+   * body in P4.F). Called once at module load next to startTabbar()/bootChrome().
+   * The listeners read the active editor via this.activeEditor. The residual
+   * window.* facades (_editorSave / _sieveCopyImageToClipboard / P4.F pass 1)
+   * were retired in pass 2 — callers now use window.sieveWorkspace.flushSave()
+   * and the ui/copy-image.js util directly.
+   */
+  bootEditorLifecycle() {
+    // External changes to a prompt (revert / background edit) → re-init in place.
+    // The backend emits BOTH prompts:changed and notes:changed on a prompt revert;
+    // regular notes are left alone while typing, so both listeners guard on the
+    // prompt: uuid prefix. NOTE: startTabbar() ALSO listens for notes:changed (its
+    // own tabbar refresh) — this is a SEPARATE, intentionally-additional listener.
+    document.addEventListener('prompts:changed', () => {
+      if (this.#currentUuid?.startsWith('prompt:')) {
+        this.initEditor(this.#currentMountEl, this.#currentUuid, this.activeEditor?.mode)
+      }
+    })
+    document.addEventListener('notes:changed', () => {
+      if (this.#currentUuid?.startsWith('prompt:')) {
+        this.initEditor(this.#currentMountEl, this.#currentUuid, this.activeEditor?.mode)
+      }
+    })
+
+    // Global capture for Ctrl/Cmd+Click on any link in the app → open externally
+    // (capture-phase `true` PRESERVED — it must win before link handlers).
+    document.addEventListener('click', (e) => {
+      if (window.isMod(e)) {
+        const a = e.target.closest ? e.target.closest('a') : null
+        if (a && a.href && a.href.match(/^https?:\/\//)) {
+          e.preventDefault()
+          e.stopPropagation()
+          if (window.runtime && window.runtime.BrowserOpenURL) {
+            window.runtime.BrowserOpenURL(a.href)
+          } else {
+            window.open(a.href, '_blank')
+          }
+        }
+      }
+    }, true)
+
+    // Restore renders the backend's RELOADED block list (ids intact) via
+    // editor.softReload — never a flat setContent re-parse (which re-mints ids).
+    document.body.addEventListener('editor:restore', (e) => {
+      const data = e.detail
+      if (!data || !data.uuid) return
+      this.activeEditor?.softReload()
+    })
+
+    // Suppress the native context menu inside the editor mount (capture).
+    document.addEventListener('contextmenu', (e) => {
+      if (e.target.closest('#tiptap-mount')) e.preventDefault()
+    }, true)
+
+    // Editor context menu: in-mount, not on a sieve block, with an active editor.
+    document.addEventListener('contextmenu', (e) => {
+      if (!e.target.closest('#tiptap-mount')) return
+      if (e.target.closest('.ai-block, .image-block, .web-clip-block, .sieve-block')) return
+      const ed = this.activeEditor
+      if (!ed) return
+      const linkEl = e.target.closest('a[href]')
+      const linkUrl = linkEl ? linkEl.getAttribute('href') : null
+      document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
+        detail: { x: e.clientX, y: e.clientY, context: { type: 'editor', editor: ed.editorPane, linkUrl } }
+      }))
+    })
+
+    // Block-ID hover readout (dev/debug) → editor:blockhover. Pure DOM read; both
+    // prose and Sieve blocks carry data-id (Sieve also data-kind). Fires only when
+    // the hovered block changes (#lastHoverKey dedup).
+    document.addEventListener('mouseover', (e) => {
+      const inMount = e.target.closest && e.target.closest('#tiptap-mount')
+      const el = inMount ? e.target.closest('[data-id]') : null
+      const key = el ? (el.getAttribute('data-kind') || 'prose') + '·' + el.getAttribute('data-id') : null
+      if (key === this.#lastHoverKey) return
+      this.#lastHoverKey = key
+      document.dispatchEvent(new CustomEvent('editor:blockhover', {
+        detail: el ? { id: el.getAttribute('data-id'), kind: el.getAttribute('data-kind') || 'prose' } : null
+      }))
+    })
+  }
+
+  // ── Chrome verbs (P4.D: the provideChrome registry is fully retired) ──────────
+  // Every chrome verb now delegates DIRECTLY to a Workspace-owned child or the
+  // active editor — no registry hop. The search overlay + insert dialogs are P4.C
+  // children; copyDocumentAsMarkdown reaches the active editor's copyAsMarkdown
+  // (P4.D — the editor owns the export). The public verbs ARE the component API
+  // the native menu calls (main.go buildMenu); their external contract is unchanged.
+
+  /** Shows/hides the document search overlay (P4.C child). */
+  toggleSearch() { this.#searchOverlay?.toggle() }
+
+  /**
+   * Opens the Insert Web Clip dialog (P4.C child).
+   * @param {string} [url] optional href prefill (context-menu link flow)
+   */
+  openWebClipDialog(url) { this.#insertDialogs?.openWebClip(url) }
+
+  /**
+   * Opens the Insert URL Card dialog (P4.C child).
+   * @param {string} [url] optional href prefill (context-menu link flow)
+   */
+  openUrlCardDialog(url) { this.#insertDialogs?.openUrlCard(url) }
+
+  /** Copies the active document's clean markdown export to the clipboard (P4.D: editor-owned). */
+  copyDocumentAsMarkdown() { this.#activeTab?.editor?.copyAsMarkdown() }
+
+  // ── Listener registry (P1: registration methods exist, empty — wired P2) ─────
+
+  /**
+   * Register a listener called whenever the active tab changes (including to null).
+   * Returns an unsubscribe function.
+   * @param {(tab: SieveTab|null) => void} fn
+   * @returns {() => void}
+   */
+  onActiveTabChanged(fn) {
+    this.#activeTabListeners.push(fn)
+    return () => {
+      this.#activeTabListeners = this.#activeTabListeners.filter(l => l !== fn)
+    }
+  }
+
+  /**
+   * Register a listener for the ACTIVE tab's selection stream (P3.B). Returns an
+   * unsubscribe. The Workspace republishes only the active tab's contexts; a
+   * background tab's push is not delivered. On an active-tab change the previous
+   * subscription is dropped and the new tab's is taken up, with an immediate
+   * D4-synth republish from the new editor's current context (null-guarded); an
+   * active→null teardown emits a null context so consumers can clear.
+   * @param {(ctx: import('../editor/selection-model.js').SelectionContext|null) => void} fn
+   * @returns {() => void} unsubscribe
+   */
+  onSelectionUpdate(fn) {
+    this.#selectionListeners.push(fn)
+    return () => {
+      this.#selectionListeners = this.#selectionListeners.filter(l => l !== fn)
+    }
+  }
+
+  /**
+   * Pull the active tab's current frozen SelectionContext, or null when no document
+   * is open (P3.E — the read half of the read/write coordinate symmetry). Mirrors
+   * the internal pull `#switchSelectionSource` already performs.
+   * @returns {import('../editor/selection-model.js').SelectionContext|null}
+   */
+  getSelectionContext() {
+    return this.#activeTab && this.#activeTab.editor
+      ? this.#activeTab.editor.getSelectionContext()
+      : null
+  }
+
+  /**
+   * Restore focus/selection on the active tab from a (previously pulled) coordinate
+   * (P3.E — the WRITE half; a VERB on the Workspace, never on the frozen context).
+   * Routes straight to the active editor's applyPosition (Tab holds no position
+   * write). Safe no-op when no document is open or ctx is null.
+   * @param {import('../editor/selection-model.js').SelectionContext|null} ctx
+   */
+  setPosition(ctx) {
+    if (ctx && this.#activeTab && this.#activeTab.editor) {
+      this.#activeTab.editor.applyPosition(ctx)
+    }
+  }
+
+  // ── Private helpers ────────────────────────────────────────────────────────────
+
+  /** @param {SieveTab|null} tab */
+  #setActiveTab(tab) {
+    if (this.#activeTab === tab) return
+    this.#activeTab = tab
+    this.#switchSelectionSource(tab)
+    this.#notifyActiveTabListeners()
+  }
+
+  /**
+   * Re-points the republished selection stream at the new active tab (P3.B):
+   * drops the old tab's subscription, subscribes to the new one's
+   * onSelectionUpdate, and synthesizes an immediate republish (D4 — a tab change
+   * IS a selection change). The synth is null-guarded: when the new tab has no
+   * editor yet (openTab→#setActiveTab can precede attachEditor) or its editor's
+   * context is null, nothing is synthesized — the tab's own forward delivers the
+   * first context once attached. A null active tab (teardown) emits a null
+   * context to clear consumers.
+   * @param {SieveTab|null} tab
+   */
+  #switchSelectionSource(tab) {
+    if (this.#unsubActiveSelection) { this.#unsubActiveSelection(); this.#unsubActiveSelection = null }
+    if (!tab) { this.#notifySelectionListeners(null); return }
+    this.#unsubActiveSelection = tab.onSelectionUpdate((ctx) => this.#notifySelectionListeners(ctx))
+    const synth = tab.editor ? tab.editor.getSelectionContext() : null
+    if (synth) this.#notifySelectionListeners(synth)
+  }
+
+  #notifyActiveTabListeners() {
+    const tab = this.#activeTab
+    for (const fn of this.#activeTabListeners) {
+      try { fn(tab) } catch (e) { console.error('[SieveWorkspace] activeTabChanged listener threw', e) }
+    }
+  }
+
+  /** @param {import('../editor/selection-model.js').SelectionContext|null} ctx */
+  #notifySelectionListeners(ctx) {
+    for (const fn of this.#selectionListeners) {
+      try { fn(ctx) } catch (e) { console.error('[SieveWorkspace] selectionUpdate listener threw', e) }
+    }
+  }
+
+  // ── Workspace-owned chrome children (P4.B: Ask panel; P4.C: dialogs + search) ─
+
+  /** @type {AskPanel|null} the permanent Ask-panel child (constructed once) */
+  #askPanel = null
+
+  /** @type {InsertDialogs|null} the URL insert dialogs child (P4.C) */
+  #insertDialogs = null
+
+  /** @type {SearchOverlay|null} the document search overlay child (P4.C) */
+  #searchOverlay = null
+
+  /** @type {StatusBar|null} the status-bar child (P4.D — stats/dirty/blockid slots) */
+  #statusBar = null
+
+  /**
+   * Constructs the Workspace-owned chrome children (P4.B: the Ask panel; P4.C: the
+   * insert dialogs + search overlay; P4.D: the status bar). Called once at module
+   * load next to startTabbar(). The AskPanel/StatusBar wire their structural DOM
+   * and null-guard its absence (vitest imports the classes headless — the status
+   * bar's slots resolve to null and every write no-ops).
+   */
+  bootChrome() {
+    if (!this.#askPanel) this.#askPanel = new AskPanel(this)
+    if (!this.#insertDialogs) this.#insertDialogs = new InsertDialogs(this)
+    if (!this.#searchOverlay) this.#searchOverlay = new SearchOverlay(this)
+    if (!this.#statusBar) this.#statusBar = new StatusBar(this)
+  }
+
+  /** @returns {AskPanel|null} the permanent Ask-panel child (entry points reach it here) */
+  get askPanel() { return this.#askPanel }
+
+  /** @returns {InsertDialogs|null} the URL insert dialogs child (P4.C) */
+  get insertDialogs() { return this.#insertDialogs }
+
+  /** @returns {SearchOverlay|null} the document search overlay child (P4.C) */
+  get searchOverlay() { return this.#searchOverlay }
+
+  // ── Tabbar boot + SSE ownership (P2.D — relocated off the #htmx-tabbar div) ──
+
+  /**
+   * Boots the tab strip and subscribes to the out-of-band refresh signals the
+   * div's hx-trigger carried before P2.D. The Workspace now OWNS the tabbar
+   * render (loadTabs). MECHANISM: htmx's SSE extension fires `sse:*` as bubbling
+   * CustomEvents on the divs that declare `hx-trigger="sse:…"` (sidebar/prompts/
+   * meta still do), so a document-level listener receives them. The `… from:body`
+   * body events (session:changed / notes:changed) likewise bubble to document.
+   * Idempotent-safe to call once at module load; guards on #htmx-tabbar existing.
+   */
+  startTabbar() {
+    const boot = () => { if (document.getElementById('htmx-tabbar')) this.loadTabs() }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', boot, { once: true })
+    } else {
+      boot()
+    }
+    const refresh = () => this.loadTabs()
+    document.addEventListener('sse:session:changed', refresh)
+    document.addEventListener('sse:notes:changed', refresh)
+    document.addEventListener('session:changed', refresh)
+    document.addEventListener('notes:changed', refresh)
+  }
+}
+
+// ── Singleton ─────────────────────────────────────────────────────────────────
+// Created once at module load time. editor.js looks this up via window.sieveWorkspace.
+// Acceptance criterion: window.sieveWorkspace.activeTab.editor.uuid works from console.
+const workspace = new SieveWorkspace()
+window.sieveWorkspace = workspace
+
+// P2.D: the Workspace owns the tab strip render. Boot it + subscribe to the SSE
+// refresh signals here (module load — this is the deferred module, so the DOM
+// mount exists or DOMContentLoaded is still pending, both handled). Guarded so
+// vitest (which imports the class without a real document tab mount) is unaffected.
+if (typeof document !== 'undefined') { workspace.startTabbar(); workspace.bootChrome(); workspace.bootEditorLifecycle() }

@@ -1,8 +1,10 @@
 // context-menu.js — single source of truth for all context menus.
 // Components fire 'sieve:contextmenu' with { x, y, context } in the detail.
 // context.type must be one of: 'editor' | 'image' | 'aiBlock' | 'note' | 'folder' | 'prompt'
-;(function () {
-  'use strict'
+import { getSieveIcon } from '../block/block-kinds.js'
+import { applyTargetHighlight } from './extensions.js'
+import { extractContentEntryFromEditor, detectAndAppendExtractions, serializeNode } from '../block/sieve-block-extension.js'
+import { enclosingBlockId } from '../base/block-position.js'
 
   // ── Icons ───────────────────────────────────────────────────────────────────
   var IC = window.SieveIcons || {}
@@ -93,10 +95,10 @@
     return [
       { type: 'divider' },
       { icon: IC.close, label: 'Close Tab', action: function () {
-        hx('POST', '/api/tabs/close/' + encodeURIComponent(id), { target: '#htmx-tabbar', swap: 'innerHTML' })
+        window.sieveWorkspace.close(id)
       }},
       { icon: IC.closeAll, label: 'Close All Tabs', action: function () {
-        hx('POST', '/api/tabs/closeAll', { target: '#htmx-tabbar', swap: 'innerHTML' })
+        window.sieveWorkspace.closeAll()
       }},
     ]
   }
@@ -196,19 +198,19 @@
 
     items.push({ type: 'divider' })
     var linkUrl = ctx.linkUrl || null
-    var T = window.TipTap || {}
-    var getIcon = T.getSieveIcon || function() { return '' }
-    items.push({ icon: getIcon('web-clip'), label: linkUrl ? 'Insert Web Clip from Link' : 'Insert Web Clip...', action: function () {
-      window._sieveOpenInternalize && window._sieveOpenInternalize(linkUrl || '')
+    items.push({ icon: getSieveIcon('web-clip'), label: linkUrl ? 'Insert Web Clip from Link' : 'Insert Web Clip...', action: function () {
+      window.sieveWorkspace && window.sieveWorkspace.openWebClipDialog(linkUrl || '')
     }})
-    items.push({ icon: getIcon('smart-card'), label: linkUrl ? 'Insert URL Card from Link' : 'Insert URL Card...', action: function () {
-      window._sieveOpenSmartCard && window._sieveOpenSmartCard(linkUrl || '')
+    items.push({ icon: getSieveIcon('smart-card'), label: linkUrl ? 'Insert URL Card from Link' : 'Insert URL Card...', action: function () {
+      window.sieveWorkspace && window.sieveWorkspace.openUrlCardDialog(linkUrl || '')
     }})
-    items.push({ icon: getIcon('code'), label: 'Insert Code Block', action: function () {
-      document.dispatchEvent(new CustomEvent('sieve:create-block', { detail: { kind: 'code' } }))
+    items.push({ icon: getSieveIcon('code'), label: 'Insert Code Block', action: function () {
+      var ed = window.sieveWorkspace && window.sieveWorkspace.activeTab && window.sieveWorkspace.activeTab.editor
+      ed && ed.createBlock('code', {})
     }})
-    items.push({ icon: getIcon('diagram'), label: 'Insert Diagram', action: function () {
-      document.dispatchEvent(new CustomEvent('sieve:create-block', { detail: { kind: 'diagram' } }))
+    items.push({ icon: getSieveIcon('diagram'), label: 'Insert Diagram', action: function () {
+      var ed = window.sieveWorkspace && window.sieveWorkspace.activeTab && window.sieveWorkspace.activeTab.editor
+      ed && ed.createBlock('diagram', {})
     }})
 
     var isHighlighted = editor.isActive('highlight')
@@ -219,7 +221,10 @@
           editor.chain().extendMarkRange('highlight').unsetMark('highlight').focus().run()
           return
         }
-        window.TipTap.applyTargetHighlight(editor)
+        // D-5: applyTargetHighlight takes an explicit range now. The right-click set
+        // the selection (buildEditorItems), so the current selection extent IS the
+        // target the user is marking — pass it explicitly (no in-function live read).
+        applyTargetHighlight(editor, { from: editor.state.selection.from, to: editor.state.selection.to })
         editor.commands.focus()
       }})
     }
@@ -245,20 +250,21 @@
     // (all processors) decides the conversion targets; we only describe the source.
     var nativeConvertible = { codeBlock: true, image: true }
     if (targetNode && nativeConvertible[targetNode.type.name] && targetPos !== null &&
-        x != null && y != null && window.TipTap && window.TipTap.extractContentEntryFromEditor) {
+        x != null && y != null) {
       var domEl = document.elementFromPoint(x, y)
       if (domEl) {
-        var res = window.TipTap.extractContentEntryFromEditor({ target: domEl }, editor)
+        var res = extractContentEntryFromEditor({ target: domEl }, editor)
         if (res && res.entries) {
-          window.TipTap.detectAndAppendExtractions({
+          detectAndAppendExtractions({
             sourceNode: targetNode,
             sourceKind: targetNode.type.name,
             entries: res.entries,
             blockId: (targetNode.attrs && targetNode.attrs.id)
               ? targetNode.attrs.id
-              : window.TipTap.enclosingBlockId(editor.state.doc, targetPos),
+              : enclosingBlockId(editor.state.doc, targetPos),
             sourcePos: targetPos,
-            extractSourceLabel: res.extractSourceLabel
+            extractSourceLabel: res.extractSourceLabel,
+            editor: editor.sieveHost || null
           })
         }
       }
@@ -289,7 +295,7 @@
     var editor = ctx.editor, getPos = ctx.getPos, n = ctx.node
 
     function yaml() {
-      return '```ai-block\n' + window.TipTap.serializeAiBlockYaml(n.attrs) + '\n```'
+      return serializeNode(editor, n)
     }
 
     function del() {
@@ -303,10 +309,14 @@
 
     return [
       { icon: IC.copy, label: 'Copy', action: function () {
-        navigator.clipboard.writeText(yaml()).catch(console.error)
+        var md = yaml()
+        if (!md) { console.warn('[sieve] ai-block serialize returned empty; copy aborted'); return }
+        navigator.clipboard.writeText(md).catch(console.error)
       }},
       { icon: IC.cut, label: 'Cut', action: function () {
-        navigator.clipboard.writeText(yaml()).then(del).catch(console.error)
+        var md = yaml()
+        if (!md) { console.warn('[sieve] ai-block serialize returned empty; copy aborted'); return }
+        navigator.clipboard.writeText(md).then(del).catch(console.error)
       }},
       { icon: IC.trash, label: 'Delete', action: del },
       { type: 'divider' },
@@ -419,7 +429,7 @@
     if (name) items.push({ type: 'header', label: name })
 
     items.push({ icon: IC.edit, label: 'Edit Prompt', action: function () {
-      hx('POST', '/api/note/open/' + encodeURIComponent(id), { target: '#htmx-tabbar', swap: 'innerHTML' })
+      window.sieveWorkspace.open(id)
     }})
 
     if (!isVirtual) {
@@ -459,4 +469,3 @@
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') closeMenu()
   })
-})()

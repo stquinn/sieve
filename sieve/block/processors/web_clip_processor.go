@@ -167,25 +167,6 @@ func (p *WebClipBlockProcessor) DescribeJob(jctx block.JobContext) *block.Proces
 	}
 }
 
-// ExportMarkdown implements block.ExportRepresenter: for clean "Copy as Markdown"
-// export a web-clip reduces to a plain link to its source. The clipped/summarised
-// content is DERIVED — export keeps only the user-authored seed (the source URL the
-// user pasted, plus the resolved title as link text), so a clip becomes
-// `[title](source)`, or a bare URL when there is no title. Distinct from
-// MarkdownRepresentation (which embeds the full content for AI context) by design.
-func (p *WebClipBlockProcessor) ExportMarkdown(blk block.SieveBlock, _ string) string {
-	source, _ := blk.Attrs["source"].(string)
-	if source == "" {
-		return ""
-	}
-	title, _ := blk.Attrs["title"].(string)
-	title = strings.TrimSpace(title)
-	if title == "" {
-		return source
-	}
-	return "[" + title + "](" + source + ")"
-}
-
 func (p *WebClipBlockProcessor) MarkdownRepresentation(blk block.SieveBlock, _ string) string {
 	content, _ := blk.Attrs["content"].(string)
 	content = strings.TrimSpace(content)

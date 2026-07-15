@@ -19,16 +19,14 @@
 // Discriminator: a top-level node is a Sieve block when its attrs contain
 // node type name starting with 'sieve-' (checked at line 85 via indexOf).
 //
-// Depends on window.TipTap (vendor/tiptap.js) loaded first.
-;(function () {
-  'use strict'
+// Depends on the vendor TipTap bundle (vendor/tiptap.js) loaded first.
+import { T as VENDOR } from '../base/tiptap-vendor.js'
 
-  var T = window.TipTap
-  var Extension = T.Extension
-  var Plugin = T.Plugin
-  var PluginKey = T.PluginKey
-  var Decoration = T.Decoration
-  var DecorationSet = T.DecorationSet
+var Extension = VENDOR.Extension
+var Plugin = VENDOR.Plugin
+var PluginKey = VENDOR.PluginKey
+var Decoration = VENDOR.Decoration
+var DecorationSet = VENDOR.DecorationSet
 
   var blockChromeKey = new PluginKey('blockChrome')
 
@@ -340,7 +338,7 @@
 
   // ── Plugin ─────────────────────────────────────────────────────────────────
 
-  var BlockChrome = Extension.create({
+  export var BlockChrome = Extension.create({
     name: 'blockChrome',
     addProseMirrorPlugins: function () {
       return [
@@ -514,11 +512,8 @@
     },
   })
 
-  T.BlockChrome = BlockChrome
-
   // Authoritative block-selection range for the copy handler (editor.js).
   // Returns { from, to, active, isBlockRange }.  isBlockRange=true means our own
   // multi-block range is set (shift-click / gutter drag); false means we fell back
   // to the live PM selection (caret / single NodeSelection / native prose drag).
-  T.getBlockSelectionRange = function (view) { return effectiveRange(view.state) }
-})()
+  export var getBlockSelectionRange = function (view) { return effectiveRange(view.state) }

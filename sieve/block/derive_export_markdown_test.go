@@ -50,6 +50,44 @@ func (exportAIProc) MarkdownRepresentation(b SieveBlock, _ string) string {
 	return "### " + q + "\n\n" + r
 }
 
+// legacyExportProc carries an ExportMarkdown method whose output diverges from its
+// MarkdownRepresentation — export must IGNORE it. There is no export-specific
+// representation capability: a block has ONE markdown representation, and the only
+// export policy hook is the caller's BlockFilter.
+type legacyExportProc struct{ fakeProc }
+
+func newLegacyExportProc() *legacyExportProc {
+	return &legacyExportProc{fakeProc: *newFakeProc("exp-legacy")}
+}
+
+func (legacyExportProc) MarkdownRepresentation(b SieveBlock, _ string) string {
+	return "THE-ONE-TRUE-REPRESENTATION"
+}
+func (legacyExportProc) ExportMarkdown(b SieveBlock, _ string) string {
+	return "LEGACY-EXPORT-FORM-MUST-NOT-APPEAR"
+}
+
+// A processor exposing a legacy per-kind ExportMarkdown method gets no special
+// treatment: export renders its MarkdownRepresentation like every other survivor.
+func TestDeriveExportMarkdown_IgnoresLegacyExportRepresenter(t *testing.T) {
+	RegisterProcessor(newLegacyExportProc())
+	defer UnregisterProcessor("exp-legacy")
+
+	codec := NewDocumentCodec(GlobalRegistry())
+	doc := DocView{Mode: "wysiwyg", codec: codec, Blocks: []SieveBlock{
+		{ID: "lg-1", Kind: "exp-legacy", Attrs: map[string]interface{}{}},
+	}}
+
+	got := doc.deriveExportMarkdown(nil)
+
+	if !strings.Contains(got, "THE-ONE-TRUE-REPRESENTATION") {
+		t.Fatalf("export must render MarkdownRepresentation, got %q", got)
+	}
+	if strings.Contains(got, "LEGACY-EXPORT-FORM-MUST-NOT-APPEAR") {
+		t.Fatalf("export must ignore a processor's legacy ExportMarkdown method, got %q", got)
+	}
+}
+
 // Clean export filters ai-blocks OUT, then renders each survivor via its
 // MarkdownRepresentation (not the on-disk Serialize): prose keeps no sentinel, code
 // is a plain ```lang fence, and the ai-block is gone.
@@ -69,7 +107,7 @@ func TestDeriveExportMarkdown_FiltersAIBlockAndUsesMarkdownRep(t *testing.T) {
 	}
 	doc := DocView{Mode: "wysiwyg", Blocks: blocks, codec: codec}
 
-	got := doc.deriveExportMarkdown(acceptAllBut{drop: "exp-ai"})
+	got := doc.deriveExportMarkdown(dropKind("exp-ai"))
 
 	// ai-block filtered out entirely.
 	if strings.Contains(got, "stale answer") || strings.Contains(got, "what is x?") {

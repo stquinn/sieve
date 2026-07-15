@@ -16,8 +16,3 @@ export function wrapProseBlock(id, content) {
   if (!id) return content
   return '<!--s:' + id + '-->\n' + content + '\n<!--/s:' + id + '-->'
 }
-
-if (typeof window !== 'undefined') {
-  window.TipTap = window.TipTap || {}
-  window.TipTap.wrapProseBlock = wrapProseBlock
-}
