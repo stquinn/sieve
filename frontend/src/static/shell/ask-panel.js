@@ -34,9 +34,9 @@ export class AskPanel {
   #pinned = false
   /** @type {ReturnType<typeof setTimeout>|null} label debounce */
   #labelTimeout = null
-  /** @type {import('./selection-model.js').SelectionContext|null} focus coordinate pulled on jump-in */
+  /** @type {import('../editor/selection-model.js').SelectionContext|null} focus coordinate pulled on jump-in */
   #focusReturn = null
-  /** @type {import('./selection-model.js').SelectionContext|null} the context whose label is CURRENTLY shown — what send acts on (D-5: send == shown) */
+  /** @type {import('../editor/selection-model.js').SelectionContext|null} the context whose label is CURRENTLY shown — what send acts on (D-5: send == shown) */
   #lastContext = null
 
   /** @param {import('./workspace.js').SieveWorkspace} ws */
@@ -220,7 +220,7 @@ export class AskPanel {
   /**
    * The P3.D boot closure, now OWNED here: on a meaningful selection change,
    * re-render the label when the panel is open. NO glow (dropped in P4.B).
-   * @param {import('./selection-model.js').SelectionContext|null} ctx
+   * @param {import('../editor/selection-model.js').SelectionContext|null} ctx
    */
   #onSelectionUpdate(ctx) {
     if (!ctx) return

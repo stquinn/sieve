@@ -169,7 +169,7 @@ export class AbstractSurface {
    * plain textarea) returns [] → its formatting buttons are ABSENT (not dimmed).
    * Each button's onClick/active closure runs on the surface's OWN live view — no
    * window.__tiptap, no editor hop.
-   * @returns {import('../toolbar-button.js').ButtonGroup[]}
+   * @returns {import('../../shell/toolbar-button.js').ButtonGroup[]}
    */
   toolbarContents() { return [] }
 

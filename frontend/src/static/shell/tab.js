@@ -7,12 +7,12 @@
 // dispatch. Dual-use ES module: `export` for vitest imports, window.* for
 // classic-script access.
 
-import { AbstractEditor } from './abstract-editor.js'
-import { NoteEditor } from './note-editor.js'
-import { PromptEditor } from './prompt-editor.js'
-import { EditorMode } from './editor-mode.js'
+import { AbstractEditor } from '../editor/abstract-editor.js'
+import { NoteEditor } from '../editor/note-editor.js'
+import { PromptEditor } from '../editor/prompt-editor.js'
+import { EditorMode } from '../editor/editor-mode.js'
 
-/** @typedef {import('./editor-mode.js').EditorModeValue} EditorModeValue */
+/** @typedef {import('../editor/editor-mode.js').EditorModeValue} EditorModeValue */
 
 export class SieveTab {
   /** @type {string} */
@@ -43,7 +43,7 @@ export class SieveTab {
    * editor), so its subscribers keep working when a new editor attaches after a
    * mode flip / re-init — attachEditor re-subscribes the forward, the listeners
    * are untouched.
-   * @type {Array<(ctx: import('./selection-model.js').SelectionContext) => void>}
+   * @type {Array<(ctx: import('../editor/selection-model.js').SelectionContext) => void>}
    */
   #selectionListeners = []
 
@@ -122,7 +122,7 @@ export class SieveTab {
    * editor's SelectionModel push, forwarded here). Returns an unsubscribe.
    * Mirrors SieveWorkspace.onActiveTabChanged. Survives editor swaps — the
    * registry lives on the Tab identity, not the editor.
-   * @param {(ctx: import('./selection-model.js').SelectionContext) => void} fn
+   * @param {(ctx: import('../editor/selection-model.js').SelectionContext) => void} fn
    * @returns {() => void} unsubscribe
    */
   onSelectionUpdate(fn) {
@@ -130,7 +130,7 @@ export class SieveTab {
     return () => { this.#selectionListeners = this.#selectionListeners.filter((l) => l !== fn) }
   }
 
-  /** @param {import('./selection-model.js').SelectionContext} ctx */
+  /** @param {import('../editor/selection-model.js').SelectionContext} ctx */
   #notifySelectionListeners(ctx) {
     for (const fn of this.#selectionListeners) {
       try { fn(ctx) } catch (e) { console.error('[SieveTab] selectionUpdate listener threw', e) }

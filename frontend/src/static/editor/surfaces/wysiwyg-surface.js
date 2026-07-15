@@ -28,7 +28,7 @@
 
 import { AbstractSurface, SurfaceEvent } from './abstract-surface.js'
 import { EditorMode } from '../editor-mode.js'
-import { ToolbarButton, ButtonGroup } from '../toolbar-button.js'
+import { ToolbarButton, ButtonGroup } from '../../shell/toolbar-button.js'
 // P4.E: the app helpers the surface used to read off the shared TipTap bus are now
 // direct ES imports from their OWNING modules (the bus is retired). Only genuine
 // VENDOR names (Editor/Node/StarterKit/Table*/Placeholder/Image/Markdown/
@@ -39,10 +39,10 @@ import { T } from '../../base/tiptap-vendor.js'
 import { BlockId } from '../../block/prose-block.js'
 import { ProseGroup, proseBlockNodes } from '../../block/prose-group.js'
 import { copyImageToClipboard } from '../../ui/copy-image.js'
-import { BlockChrome, getBlockSelectionRange } from '../../editor/block-chrome.js'
+import { BlockChrome, getBlockSelectionRange } from '../block-chrome.js'
 import { AiTargetDecoration } from '../../ai/ai-target-decoration.js'
-import { Search, SelectionHighlight, HighlightMark, AiShortcuts } from '../../editor/extensions.js'
-import { policyEnterKeydown, buildInteractionPolicyExtension } from '../../editor/interaction-policy.js'
+import { Search, SelectionHighlight, HighlightMark, AiShortcuts } from '../extensions.js'
+import { policyEnterKeydown, buildInteractionPolicyExtension } from '../interaction-policy.js'
 import {
   getSieveNodes, getSieveBlockLabel, serializeNode, sieveBlockAttrs,
   sieveBlockEntries, rendererFor, domSelectionBlockRange, domSelectionTextInside,
@@ -52,7 +52,7 @@ import { buildBlocksHTML, proseContent } from '../../block/block-render.js'
 import { seedBaseline, computeBlockSync } from '../../block/block-sync.js'
 import { docPosForBlockIndex, blockIndexAfter } from '../../base/block-position.js'
 import { reloadReplacement } from '../../base/render-empty.js'
-import { caretInRawTextBlock } from '../../editor/paste-context.js'
+import { caretInRawTextBlock } from '../paste-context.js'
 
 // The formatting command spec (P4.D): each entry is one ToolbarButton the WYSIWYG
 // surface contributes to the editor toolbar. `icon` is a SieveIcons key; `cmd`

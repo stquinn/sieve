@@ -36,14 +36,14 @@ vi.mock('../src/static/base/block-position.js', () => ({
   enclosingBlockId: vi.fn(),
 }))
 
-import { SieveEditor } from '../src/static/shell/editor-shell.js'
+import { SieveEditor } from '../src/static/editor/editor-shell.js'
 import { SieveTab } from '../src/static/shell/tab.js'
 import { SieveWorkspace } from '../src/static/shell/workspace.js'
-import { AbstractEditor } from '../src/static/shell/abstract-editor.js'
-import { NoteEditor } from '../src/static/shell/note-editor.js'
-import { PromptEditor } from '../src/static/shell/prompt-editor.js'
-import { AbstractSurface } from '../src/static/shell/surfaces/abstract-surface.js'
-import { EditorMode } from '../src/static/shell/editor-mode.js'
+import { AbstractEditor } from '../src/static/editor/abstract-editor.js'
+import { NoteEditor } from '../src/static/editor/note-editor.js'
+import { PromptEditor } from '../src/static/editor/prompt-editor.js'
+import { AbstractSurface } from '../src/static/editor/surfaces/abstract-surface.js'
+import { EditorMode } from '../src/static/editor/editor-mode.js'
 import { blockInsertPos } from '../src/static/ai/ai-target.js'
 import { blockIndexForInsert, emptyParagraphAnchor, blockIndexAfter } from '../src/static/base/block-position.js'
 import { buildAiContext, applyTargetHighlight } from '../src/static/editor/extensions.js'

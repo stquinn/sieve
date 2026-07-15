@@ -6,10 +6,10 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { ToolbarButton, ButtonGroup } from '../src/static/shell/toolbar-button.js'
-import { EditorToolbar } from '../src/static/shell/editor-toolbar.js'
-import { WysiwygSurface } from '../src/static/shell/surfaces/wysiwyg-surface.js'
-import { MarkdownSurface } from '../src/static/shell/surfaces/markdown-surface.js'
-import { AbstractSurface } from '../src/static/shell/surfaces/abstract-surface.js'
+import { EditorToolbar } from '../src/static/editor/editor-toolbar.js'
+import { WysiwygSurface } from '../src/static/editor/surfaces/wysiwyg-surface.js'
+import { MarkdownSurface } from '../src/static/editor/surfaces/markdown-surface.js'
+import { AbstractSurface } from '../src/static/editor/surfaces/abstract-surface.js'
 import { registerBlockKind } from '../src/static/block/block-kinds.js'
 
 // P4.E: wysiwyg-surface imports its app helpers from their owner modules; four of

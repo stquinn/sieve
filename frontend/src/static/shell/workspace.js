@@ -34,7 +34,7 @@ export class SieveWorkspace {
    * republishes the ACTIVE tab's selection stream only (a background tab's push
    * never reaches here). Consumers arrive in P3.D (the Ask panel); today it has
    * no production consumer.
-   * @type {Array<(ctx: import('./selection-model.js').SelectionContext|null) => void>}
+   * @type {Array<(ctx: import('../editor/selection-model.js').SelectionContext|null) => void>}
    */
   #selectionListeners = []
 
@@ -270,7 +270,7 @@ export class SieveWorkspace {
    * updateText / flushSave / …); a disconnected editor (PromptEditor) no-ops the
    * transport ops safely, so nothing here probes for it. (Replaces editor.js's
    * `_activeEditor()`.)
-   * @returns {import('./abstract-editor.js').AbstractEditor|null}
+   * @returns {import('../editor/abstract-editor.js').AbstractEditor|null}
    */
   get activeEditor() {
     return this.#activeTab ? this.#activeTab.editor : null
@@ -521,7 +521,7 @@ export class SieveWorkspace {
    * subscription is dropped and the new tab's is taken up, with an immediate
    * D4-synth republish from the new editor's current context (null-guarded); an
    * active→null teardown emits a null context so consumers can clear.
-   * @param {(ctx: import('./selection-model.js').SelectionContext|null) => void} fn
+   * @param {(ctx: import('../editor/selection-model.js').SelectionContext|null) => void} fn
    * @returns {() => void} unsubscribe
    */
   onSelectionUpdate(fn) {
@@ -535,7 +535,7 @@ export class SieveWorkspace {
    * Pull the active tab's current frozen SelectionContext, or null when no document
    * is open (P3.E — the read half of the read/write coordinate symmetry). Mirrors
    * the internal pull `#switchSelectionSource` already performs.
-   * @returns {import('./selection-model.js').SelectionContext|null}
+   * @returns {import('../editor/selection-model.js').SelectionContext|null}
    */
   getSelectionContext() {
     return this.#activeTab && this.#activeTab.editor
@@ -548,7 +548,7 @@ export class SieveWorkspace {
    * (P3.E — the WRITE half; a VERB on the Workspace, never on the frozen context).
    * Routes straight to the active editor's applyPosition (Tab holds no position
    * write). Safe no-op when no document is open or ctx is null.
-   * @param {import('./selection-model.js').SelectionContext|null} ctx
+   * @param {import('../editor/selection-model.js').SelectionContext|null} ctx
    */
   setPosition(ctx) {
     if (ctx && this.#activeTab && this.#activeTab.editor) {
@@ -592,7 +592,7 @@ export class SieveWorkspace {
     }
   }
 
-  /** @param {import('./selection-model.js').SelectionContext|null} ctx */
+  /** @param {import('../editor/selection-model.js').SelectionContext|null} ctx */
   #notifySelectionListeners(ctx) {
     for (const fn of this.#selectionListeners) {
       try { fn(ctx) } catch (e) { console.error('[SieveWorkspace] selectionUpdate listener threw', e) }

@@ -71,9 +71,9 @@ vi.mock('../src/static/editor/paste-context.js', () => ({
   caretInRawTextBlock: vi.fn(() => false),
 }))
 
-import { AbstractSurface, SurfaceEvent } from '../src/static/shell/surfaces/abstract-surface.js'
-import { MarkdownSurface } from '../src/static/shell/surfaces/markdown-surface.js'
-import { WysiwygSurface } from '../src/static/shell/surfaces/wysiwyg-surface.js'
+import { AbstractSurface, SurfaceEvent } from '../src/static/editor/surfaces/abstract-surface.js'
+import { MarkdownSurface } from '../src/static/editor/surfaces/markdown-surface.js'
+import { WysiwygSurface } from '../src/static/editor/surfaces/wysiwyg-surface.js'
 import { buildBlocksHTML } from '../src/static/block/block-render.js'
 import { getBlockSelectionRange } from '../src/static/editor/block-chrome.js'
 import { domSelectionBlockRange } from '../src/static/block/sieve-block-extension.js'

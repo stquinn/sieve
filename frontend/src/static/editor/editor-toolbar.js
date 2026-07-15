@@ -19,7 +19,7 @@
 // (a distinct bus) still backs #icon.
 // Dual-use ES module: `export` for vitest; imported by note-editor.js.
 
-import { ToolbarButton, ButtonGroup } from './toolbar-button.js'
+import { ToolbarButton, ButtonGroup } from '../shell/toolbar-button.js'
 import { EditorMode } from './editor-mode.js'
 import { getSieveIcon } from '../block/block-kinds.js'
 

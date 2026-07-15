@@ -29,7 +29,7 @@ import { EditorMode } from './editor-mode.js'
 import { SelectionModel } from './selection-model.js'
 import { blockInsertPos } from '../ai/ai-target.js'
 import { blockIndexForInsert, emptyParagraphAnchor, blockIndexAfter } from '../base/block-position.js'
-import { buildAiContext, applyTargetHighlight } from '../editor/extensions.js'
+import { buildAiContext, applyTargetHighlight } from './extensions.js'
 import { resolveEntriesForKind } from '../block/sieve-block-extension.js'
 
 /**
