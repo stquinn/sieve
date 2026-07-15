@@ -405,6 +405,7 @@ export let renderMermaidSvgEntry
     // getExpandContent — hand the lightbox a CLONE of the already-
     // rendered SVG (vector: scales losslessly). Null in edit mode or before a
     // successful render, so the framework offers no expand affordance then.
+    /** @returns {import('../ui/media-lightbox.js').ExpandSpec | null} */
     getExpandContent: function (node, dom) {
       if (!node || (node.attrs && node.attrs.mode) === 'edit') return null
       var svg = dom && dom.querySelector('.diagram-block__render svg')
