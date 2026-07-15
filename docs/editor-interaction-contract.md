@@ -34,6 +34,32 @@ regression pass. Source spec:
   kind with two view modes declares `modEnterTogglesMode: true` and provides
   an `onModEnter` hook. Current users: diagram (edit↔render, preserving the
   long-standing Ctrl+Enter habit), log (raw↔explore).
+- **Mod+Alt+E = expand** (decided 2026-07-14, #35) — for any kind declaring
+  `interactionPolicy.expandable: true` (with a `getExpandContent(node, dom)`
+  renderer callback), open the block in a fit-to-window pan/zoom lightbox
+  overlay. `Mod+Alt` is the appearance/view tier of the app-wide
+  keyboard-shortcut taxonomy (#39) — distinct from `Mod+E` (Explain) and
+  `Mod+Alt+M` (Smart Metadata), no collision. It is editor-owned, NOT a
+  native-menu accelerator. Like every interaction chord, it is
+  **policy-extension-owned** — per-renderer `handleKeyDown` for it is
+  FORBIDDEN, the shared interaction-policy extension resolves the caret/
+  selection's block and dispatches the chord. One documented exception:
+  a render-mode diagram's own raw `keydown` listener also handles it,
+  because in render mode focus sits OUTSIDE ProseMirror so the PM-level
+  policy handler cannot see the key — the same rationale as the existing
+  Ctrl/Mod+Enter render-toggle listener. **Esc** closes the lightbox
+  overlay and restores focus to the editor. Current adopters: diagram
+  (render mode only — `getExpandContent` returns `null` in edit mode) and
+  smart-image (once the asset is resolved).
+- **`expandable` is a declared capability, not just a chord** — a kind that
+  declares `interactionPolicy.expandable: true` and provides
+  `getExpandContent(node, dom)` (returning `{ element, title, mode }`, or
+  `null` when there is nothing to expand right now) gets three
+  framework-provided affordances for free: a header expand button (when the
+  kind also has a `headerProvider`), a gated context-menu "Expand" item, and
+  the Mod+Alt+E chord above. `getExpandContent` returning `null` (diagram in
+  edit mode; image still pending/errored) suppresses all three — the
+  renderer writes zero conditional wiring.
 
 **Smart Home platform note:** the Home column applies to the `Home` key
 (Linux/Windows; fn+Left on Mac) AND to Cmd+Left on macOS — the idiomatic Mac
