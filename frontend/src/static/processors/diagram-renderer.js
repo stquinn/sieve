@@ -402,17 +402,17 @@ export let renderMermaidSvgEntry
 
     headerProvider: new DiagramHeader(),
 
-    // getExpandContent — hand the lightbox a CLONE of the already-
-    // rendered SVG (vector: scales losslessly). Null in edit mode or before a
-    // successful render, so the framework offers no expand affordance then.
-    /** @returns {import('../ui/media-lightbox.js').ExpandSpec | null} */
+    // getExpandContent — PROMOTE the block's LIVE rendered SVG into the lightbox
+    // (moved in on open, restored to the block on close — no clone, no attribute
+    // stripping, no async-timing games). Gating is CAPABILITY-based: a render-mode
+    // diagram is expandable, so we return a spec (affordance shows) even in the
+    // brief window before mermaid finishes — `element` is null then and expandBlock
+    // no-ops. Only edit mode is non-expandable → null.
+    /** @returns {{ element: Element|null, title: string, mode: 'media' } | null} */
     getExpandContent: function (node, dom) {
       if (!node || (node.attrs && node.attrs.mode) === 'edit') return null
       var svg = dom && dom.querySelector('.diagram-block__render svg')
-      if (!svg) return null
-      var clone = /** @type {SVGElement} */ (svg.cloneNode(true))
-      clone.removeAttribute('style'); clone.removeAttribute('width'); clone.removeAttribute('height')
-      return { element: clone, title: (node.attrs.diagramType || 'mermaid') + ' diagram', mode: 'media' }
+      return { element: svg, title: (node.attrs.diagramType || 'mermaid') + ' diagram', mode: 'media' }
     },
 
     // caretStop:'render' — a caret stop only in render mode; edit mode is raw text.
@@ -643,7 +643,7 @@ export let renderMermaidSvgEntry
             e.altKey && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
           e.preventDefault(); e.stopPropagation()
           var spec = DiagramRenderer.getExpandContent(node, dom)
-          if (spec) expandBlock(spec)
+          if (spec && spec.element) expandBlock(spec)
         }
       })
 
