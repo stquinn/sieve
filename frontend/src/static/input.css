@@ -394,3 +394,9 @@
 .media-lightbox__content svg,
 .media-lightbox__content img { max-width: 100%; max-height: 100%;
   height: auto; display: block; }
+
+/* Block header Expand button — injected by the block framework for kinds
+   declaring the `expandable` policy (see sieve-block-extension.js). */
+.sieve-block__expand-btn { font-size: 12px; line-height: 1; color: var(--theme-fg3);
+  background: transparent; border: none; cursor: pointer; padding: 2px 6px; }
+.sieve-block__expand-btn:hover { color: var(--theme-text); }
