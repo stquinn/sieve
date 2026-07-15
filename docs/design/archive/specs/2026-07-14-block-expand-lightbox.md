@@ -1,5 +1,17 @@
 # Block Expand Lightbox — `expandable` as a declared block capability
 
+> **STATUS: DONE** — shipped and merged to `main` (merge `6c08a59`, 2026-07-15);
+> #35 closed. As-built deltas from hands-on Chrome/WebKit validation (recorded on
+> #35): lightbox opens fit-to-window with **free zoom** (panzoom `contain` removed);
+> diagram **promotes its live SVG** (borrow-and-restore) rather than a stripped
+> clone; affordance gating is **capability-based** (render mode), not async-SVG
+> presence; lightbox uses a **solid** `--theme-bg` background; inline diagram is a
+> **fit-to-column overview**. Follow-up beyond this spec: inline **Ctrl+wheel/drag**
+> pan/zoom on the diagram render pane (the spec had rejected inline pan/zoom; the
+> lightbox made a Ctrl-gated in-place version worthwhile) — its WebKit fix is
+> `contain: layout paint` on the render pane (isolates the contentEditable repaint
+> without a `will-change` raster layer). Archived 2026-07-15.
+
 **Status:** Active (unparked 2026-07-15) — epic #31 (workspace/editor
 component model) has landed, so the surfaces this capability wires into now
 exist in their final shape. Seam names below are reconciled to the post-#31
