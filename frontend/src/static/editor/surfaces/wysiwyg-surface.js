@@ -789,8 +789,11 @@ export class WysiwygSurface extends AbstractSurface {
         })
 
         // Smart-paste resolves a block kind server-side (web-clip / smart-image /
-        // smart-card) → capture insert position as a block index for Go to position.
-        var smartPasteIndex = this.#host.insertIndexForBlock()
+        // smart-card) → PEEK the insert position as a block index for Go to position.
+        // Peek is side-effect-free (issue #33): the caret's empty-paragraph anchor is
+        // consumed ONLY once Go confirms a match — a no-match must leave the blank line
+        // and caret intact so the fallback pastes there, not into an adjacent code block.
+        var peek = this.#host.peekInsertIndexForBlock()
         event.preventDefault()
 
         Promise.all(promises).then(function(results) {
@@ -798,27 +801,36 @@ export class WysiwygSurface extends AbstractSurface {
           fetch('/api/editor/smart-paste', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uuid: self.#uuid, entries: validEntries, index: smartPasteIndex }),
+            body: JSON.stringify({ uuid: self.#uuid, entries: validEntries, index: peek.index }),
           })
             .then(function (r) { return r.json() })
             .then(function (result) {
               if (!self.#editorPane) return
               if (result.matched) {
-                // Rendered via insert-block (tracked insert at its server index). Nothing to do.
+                // Rendered via insert-block (tracked insert at its server index). NOW
+                // consume the empty-paragraph anchor (deferred delete, by node id).
+                self.#host.consumeInsertAnchor(peek.anchor)
               } else {
-                // No processor matched — replay original clipboard content locally.
+                // No processor matched — the blank line was never eaten, so replay the
+                // original clipboard content locally at the intact caret.
                 self.#host.clearInsertPos()
                 if (html) {
                   self.#editorPane.commands.insertContent(html)
                 } else if (text) {
                   self.#editorPane.commands.insertContent(text)
                 }
+                // We preventDefault()'d the paste, so PM never ran its native
+                // scroll-to-caret — restore it so the view follows the inserted text.
+                self.#editorPane.commands.scrollIntoView()
               }
             })
             .catch(function (err) {
               console.error('[editor.js] smart-paste fetch failed', err)
               self.#host.clearInsertPos()
-              if (self.#editorPane) self.#editorPane.commands.insertContent(text)
+              if (self.#editorPane) {
+                self.#editorPane.commands.insertContent(text)
+                self.#editorPane.commands.scrollIntoView()
+              }
             })
         })
         return true
@@ -868,7 +880,9 @@ export class WysiwygSurface extends AbstractSurface {
 
       var pos = this.#editorPane.view.posAtCoords({ left: event.clientX, top: event.clientY })
       var insertPos = pos ? pos.pos : this.#editorPane.state.selection.to
-      var dropIndex = this.#host.insertIndexForBlockAt(insertPos)
+      // PEEK (issue #33): drops always match server-side today (images only), but the
+      // eager delete is the same latent hazard — defer the anchor consume to matched.
+      var peek = this.#host.peekInsertIndexAt(insertPos)
 
       event.preventDefault()
 
@@ -878,13 +892,15 @@ export class WysiwygSurface extends AbstractSurface {
         fetch('/api/editor/smart-paste', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ uuid: self.#uuid, entries: validEntries, index: dropIndex }),
+          body: JSON.stringify({ uuid: self.#uuid, entries: validEntries, index: peek.index }),
         })
           .then(function (r) { return r.json() })
           .then(function (result) {
             if (!self.#editorPane) return
             if (result.matched) {
-              // Rendered via insert-block (tracked insert at its server index). Nothing to do.
+              // Rendered via insert-block (tracked insert at its server index). NOW
+              // consume the empty-paragraph anchor (deferred delete, by node id).
+              self.#host.consumeInsertAnchor(peek.anchor)
             }
           })
           .catch(function (err) {

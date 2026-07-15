@@ -2100,6 +2100,129 @@ describe('AbstractEditor insert-position math (P4.A)', () => {
   })
 })
 
+// ── issue #33: deferred empty-paragraph consumption (peek / consume split) ──────
+// The paste/drop path must NOT eat the caret's blank line before the server
+// confirms a block match. commitInsertIndex (dialog/createBlock path) deletes the
+// empty-paragraph anchor EAGERLY — correct there, because that call point IS the
+// confirmation. But a smart-paste commits before knowing the outcome: on no-match
+// (plain text matches no processor) PM remaps the now-orphaned caret into the
+// adjacent code:true block and the fallback insertContent() prepends the text
+// there. peekInsertIndex is the SIDE-EFFECT-FREE half (index + an anchor HANDLE);
+// consumeInsertAnchor defers the delete to matched:true, locating the anchor by
+// IDENTITY (id, or the pre-ack transient token) — never by a captured position,
+// which the insert-block render-back can shift.
+describe('AbstractEditor deferred anchor consume (issue #33)', () => {
+  beforeEach(() => {
+    vi.mocked(blockInsertPos).mockImplementation(() => 42)
+    vi.mocked(blockIndexForInsert).mockReturnValue(3)
+    vi.mocked(emptyParagraphAnchor).mockReturnValue(null)
+  })
+
+  // A top-level prose node: carries id/token identity, its text (emptiness), and
+  // nodeSize (so forEach offsets are real doc positions).
+  function pnode({ id = '', token = '', text = '', size = 2 } = {}) {
+    return { attrs: { id, token }, textContent: text, nodeSize: size, type: { name: 'paragraph' } }
+  }
+  // A richer fake pane than fakeInsertPosEditorPane: its doc supports child(i) and
+  // forEach((node, offset)) so consumeInsertAnchor can locate a node by identity.
+  function fakeAnchorPane(children) {
+    const dispatched = []
+    const makeTr = () => {
+      const meta = {}
+      return {
+        deletedRange: null,
+        delete(from, to) { this.deletedRange = { from, to }; return this },
+        setMeta(k, v) { meta[k] = v; return this },
+        getMeta(k) { return meta[k] },
+      }
+    }
+    let currentTr = makeTr()
+    const doc = {
+      childCount: children.length,
+      child(i) { return children[i] },
+      forEach(fn) { let off = 0; children.forEach((n, i) => { fn(n, off, i); off += n.nodeSize }) },
+    }
+    return { dispatched, state: { doc, get tr() { currentTr = makeTr(); return currentTr } }, view: { dispatch(tr) { dispatched.push(tr) } } }
+  }
+
+  it('peekInsertIndex with NO anchor → plain block index, NO dispatch (side-effect-free)', () => {
+    const pane = fakeAnchorPane([pnode({ text: 'a' }), pnode({ text: 'b' })])
+    const { ed } = insertPosEditor(pane)
+    vi.mocked(emptyParagraphAnchor).mockReturnValue(null)
+    const peek = ed.peekInsertIndex(42)
+    expect(peek.index).toBe(3)
+    expect(peek.anchor).toBeNull()
+    expect(pane.dispatched.length).toBe(0) // THE FIX: no eager delete at peek
+  })
+
+  it('peekInsertIndex with an empty-paragraph anchor → anchor index + id/token handle, NO dispatch', () => {
+    const anchor = pnode({ id: 'p-1', token: 'tok-x' })
+    const pane = fakeAnchorPane([pnode({ text: 'a' }), anchor, pnode({ text: 'code', size: 4 })])
+    const { ed } = insertPosEditor(pane)
+    vi.mocked(emptyParagraphAnchor).mockReturnValue({ from: 2, to: 4, index: 1 })
+    const peek = ed.peekInsertIndex(42)
+    expect(peek.index).toBe(1)
+    expect(peek.anchor).toEqual({ id: 'p-1', token: 'tok-x' })
+    expect(pane.dispatched.length).toBe(0) // deferred — nothing deleted yet
+  })
+
+  it('peekInsertIndex on a sole-block doc yields NO anchor (the blank line is kept)', () => {
+    const pane = fakeAnchorPane([pnode({ id: 'p-1' })])
+    const { ed } = insertPosEditor(pane)
+    vi.mocked(emptyParagraphAnchor).mockReturnValue({ from: 0, to: 2, index: 0 })
+    const peek = ed.peekInsertIndex(42)
+    expect(peek.index).toBe(0)
+    expect(peek.anchor).toBeNull()
+  })
+
+  it('consumeInsertAnchor deletes the anchor located BY ID as a PLAIN TRACKED edit + flushPending', () => {
+    const pane = fakeAnchorPane([pnode({ text: 'a' }), pnode({ id: 'p-1' }), pnode({ text: 'code', size: 4 })])
+    const { ed } = insertPosEditor(pane)
+    ed.consumeInsertAnchor({ id: 'p-1', token: '' })
+    expect(pane.dispatched.length).toBe(1)
+    const tr = pane.dispatched[0]
+    expect(tr.deletedRange).toEqual({ from: 2, to: 4 }) // child[1] starts after child[0] (size 2)
+    expect(tr.getMeta('addToHistory')).toBeUndefined()  // undo sanctity: plain tracked delete
+    expect(ed.surface.flushCount).toBe(1)
+  })
+
+  it('consumeInsertAnchor locates a not-yet-acked anchor BY TOKEN (durable id still empty)', () => {
+    const pane = fakeAnchorPane([pnode({ id: '', token: 'tok-x' }), pnode({ text: 'code', size: 4 })])
+    const { ed } = insertPosEditor(pane)
+    ed.consumeInsertAnchor({ id: '', token: 'tok-x' })
+    expect(pane.dispatched.length).toBe(1)
+    expect(pane.dispatched[0].deletedRange).toEqual({ from: 0, to: 2 })
+  })
+
+  it('consumeInsertAnchor is a no-op when the anchor is null (the no-match / error path)', () => {
+    const pane = fakeAnchorPane([pnode({ id: 'p-1' }), pnode({ text: 'code', size: 4 })])
+    const { ed } = insertPosEditor(pane)
+    ed.consumeInsertAnchor(null)
+    expect(pane.dispatched.length).toBe(0)
+  })
+
+  it('consumeInsertAnchor is a no-op when the id/token is not found', () => {
+    const pane = fakeAnchorPane([pnode({ id: 'other' }), pnode({ text: 'code', size: 4 })])
+    const { ed } = insertPosEditor(pane)
+    ed.consumeInsertAnchor({ id: 'p-1', token: 'tok-x' })
+    expect(pane.dispatched.length).toBe(0)
+  })
+
+  it('consumeInsertAnchor never deletes the doc sole child', () => {
+    const pane = fakeAnchorPane([pnode({ id: 'p-1' })])
+    const { ed } = insertPosEditor(pane)
+    ed.consumeInsertAnchor({ id: 'p-1', token: '' })
+    expect(pane.dispatched.length).toBe(0)
+  })
+
+  it('consumeInsertAnchor skips a node that is no longer empty (user typed into it before the ack)', () => {
+    const pane = fakeAnchorPane([pnode({ text: 'a' }), pnode({ id: 'p-1', text: 'typed' }), pnode({ text: 'code', size: 4 })])
+    const { ed } = insertPosEditor(pane)
+    ed.consumeInsertAnchor({ id: 'p-1', token: '' })
+    expect(pane.dispatched.length).toBe(0)
+  })
+})
+
 describe('AbstractEditor.softReload (P4.A)', () => {
   let prevFetch
   let prevWs

@@ -1070,6 +1070,92 @@ export class AbstractEditor {
    */
   insertIndexForBlockAt(pos) { return this.commitInsertIndex(pos) }
 
+  // ── Deferred empty-paragraph consume (issue #33: the SMART-PASTE / DROP path) ──
+  //
+  // commitInsertIndex above eats the empty-paragraph anchor EAGERLY — right for the
+  // dialog / createBlock path, whose call point IS the confirmation. But smart-paste
+  // commits BEFORE it knows the server matched a block: when Go reports no match
+  // (plain external text claims no processor), the eager delete has already remapped
+  // the orphaned caret into the adjacent code:true block, so the no-match fallback's
+  // insertContent() prepends the text INSIDE that block. Split the composition: peek
+  // the index without touching the doc, send it to Go, and consume the anchor ONLY
+  // once matched:true — on no-match/error the blank line (and the caret) stay put and
+  // the fallback pastes there, exactly like a native paste.
+
+  /**
+   * peekInsertIndex — the SIDE-EFFECT-FREE half of the empty-paragraph placement
+   * rule. Returns the block index Go should create at, plus an anchor HANDLE
+   * ({id, token}) to consume LATER once the server confirms a match — or a null
+   * anchor when there is no empty-paragraph anchor (or the doc's sole child, which
+   * commitInsertIndex also keeps: deleting the only child is schema-invalid). Unlike
+   * commitInsertIndex it dispatches NOTHING.
+   * @param {number|null} pos
+   * @returns {{ index: number, anchor: {id: string, token: string}|null }}
+   */
+  peekInsertIndex(pos) {
+    const ed = /** @type {any} */ (this.editorPane)
+    if (!ed) return { index: -1, anchor: null }
+    const anchor = emptyParagraphAnchor(ed.state.doc, pos)
+    if (!anchor) return { index: this.blockIndexForInsert(pos), anchor: null }
+    if (ed.state.doc.childCount <= 1) return { index: anchor.index, anchor: null }
+    const node = ed.state.doc.child(anchor.index)
+    const attrs = (node && node.attrs) || {}
+    return { index: anchor.index, anchor: { id: attrs.id || '', token: attrs.token || '' } }
+  }
+
+  /**
+   * peekInsertIndexForBlock — the caret-derived peek (smart-paste). The non-consuming
+   * mirror of insertIndexForBlock: capture at the caret as a BLOCK and peek.
+   * @returns {{ index: number, anchor: {id: string, token: string}|null }}
+   */
+  peekInsertIndexForBlock() { return this.peekInsertIndex(this.captureInsertPos()) }
+
+  /**
+   * peekInsertIndexAt(pos) — peek an EXPLICIT position (a drop coordinate). The
+   * non-consuming mirror of insertIndexForBlockAt.
+   * @param {number} pos
+   * @returns {{ index: number, anchor: {id: string, token: string}|null }}
+   */
+  peekInsertIndexAt(pos) { return this.peekInsertIndex(pos) }
+
+  /**
+   * consumeInsertAnchor — the DEFERRED second half: once the server has CONFIRMED
+   * the block-insert (matched:true), delete the empty-paragraph anchor as an
+   * ordinary TRACKED prose edit (block-sync emits the same delete-block op a
+   * backspace would) and flush so Go's shadow drops it. The anchor is located BY
+   * IDENTITY (durable id, or the pre-ack transient token) — NEVER by a captured
+   * position: the insert-block render-back can arrive first and shift positions.
+   * No-op when the anchor is absent (the no-match / error path never calls this),
+   * not found, the doc's sole child, or no longer empty (the user typed into it
+   * before the ack — never destroy content).
+   *
+   * UNDO SANCTITY: a PLAIN TRACKED delete — never addToHistory:false, never a
+   * softReload (mirrors commitInsertIndex's guard).
+   * @param {{id: string, token: string}|null} anchor
+   */
+  consumeInsertAnchor(anchor) {
+    if (!anchor || (!anchor.id && !anchor.token)) return
+    const ed = /** @type {any} */ (this.editorPane)
+    if (!ed || ed.state.doc.childCount <= 1) return
+    let pos = -1
+    let node = null
+    ed.state.doc.forEach((child, offset) => {
+      if (pos >= 0) return
+      const a = (child && child.attrs) || {}
+      if ((anchor.id && a.id === anchor.id) || (anchor.token && a.token === anchor.token)) {
+        pos = offset
+        node = child
+      }
+    })
+    if (pos < 0 || !node) return
+    // Guard: only ever consume a still-empty paragraph. If the user typed into the
+    // blank line between the paste and the ack, leave it — a stray blank line is
+    // benign; losing typed content is not.
+    if ((/** @type {any} */ (node).textContent || '').trim() !== '') return
+    ed.view.dispatch(ed.state.tr.delete(pos, pos + (/** @type {any} */ (node).nodeSize)))
+    if (this.#surface) this.#surface.flushPending()
+  }
+
   // ── Whole-document reload (P4.A: moved off editor.js's softReloadContent) ──────
 
   /**

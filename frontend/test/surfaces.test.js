@@ -277,6 +277,11 @@ function wyHost(overrides = {}) {
     flushSave: vi.fn(),
     insertIndexForBlock: vi.fn(() => 0),
     insertIndexForBlockAt: vi.fn(() => 0),
+    // issue #33: the paste/drop path PEEKS (side-effect-free) and consumes the empty-
+    // paragraph anchor only on a confirmed match. Defaults: no anchor to consume.
+    peekInsertIndexForBlock: vi.fn(() => ({ index: 0, anchor: null })),
+    peekInsertIndexAt: vi.fn(() => ({ index: 0, anchor: null })),
+    consumeInsertAnchor: vi.fn(),
     clearInsertPos: vi.fn(),
     takeInsertPos: vi.fn(() => null),
     onSurfaceEvent: vi.fn(),
@@ -448,7 +453,7 @@ function mountBundle(state) {
       this.schema = state.schema
       this.view = { dom: document.createElement('div'), dispatch: vi.fn() }
       this.storage = { markdown: { parser: { md: { render: (t) => t } } } }
-      this.commands = { insertContentAt: vi.fn(), insertContent: vi.fn(), focus: vi.fn() }
+      this.commands = { insertContentAt: vi.fn(), insertContent: vi.fn(), focus: vi.fn(), scrollIntoView: vi.fn() }
       this.destroyed = false
       this.destroy = () => { this.destroyed = true }
       if (opts.onCreate) opts.onCreate()
@@ -621,36 +626,49 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     expect(ed.commands.insertContent).not.toHaveBeenCalled()
   })
 
-  it('smart-paste pipeline: computes the block index via insertIndexForBlock, POSTs, returns true', async () => {
+  it('smart-paste pipeline: PEEKS the block index (side-effect-free), POSTs it, consumes the anchor on match, returns true', async () => {
     const fetchMock = vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ matched: true }) }))
     stubFetch(fetchMock)
-    const host = wyHost({ insertIndexForBlock: vi.fn(() => 4) })
+    const anchor = { id: 'p-1', token: '' }
+    const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 4, anchor })) })
     const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('hello') }
     const { props } = mountPaste(host, 'doc-1')
     const event = { clipboardData: Object.assign(clip({ text: 'hello', items: [strItem] }), { items: [strItem] }), target: {}, preventDefault: vi.fn() }
     const handled = props.handlePaste({}, event)
     expect(handled).toBe(true)
-    expect(host.insertIndexForBlock).toHaveBeenCalledTimes(1)
+    expect(host.peekInsertIndexForBlock).toHaveBeenCalledTimes(1)
+    expect(host.insertIndexForBlock).not.toHaveBeenCalled() // no EAGER consume
     expect(event.preventDefault).toHaveBeenCalled()
     await new Promise((r) => setTimeout(r, 0))
     expect(fetchMock).toHaveBeenCalledWith('/api/editor/smart-paste', expect.objectContaining({ method: 'POST' }))
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)
     expect(body.index).toBe(4)
+    // matched:true → the blank line is consumed NOW, by the peeked anchor handle.
+    expect(host.consumeInsertAnchor).toHaveBeenCalledWith(anchor)
   })
 
-  it('smart-paste no-match fallback: replays the original clipboard content via TRACKED insertContent', async () => {
+  // issue #33: the regression guard. A no-match smart-paste must NOT consume the
+  // empty-paragraph anchor — the blank line and caret stay intact, so insertContent
+  // replays into the empty paragraph, never into an adjacent code:true block.
+  it('smart-paste no-match fallback: replays clipboard content AND never consumes the anchor (issue #33)', async () => {
     stubFetch(vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ matched: false }) })))
+    const anchor = { id: 'p-1', token: '' }
+    const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 0, anchor })) })
     const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('hello') }
-    const { ed, host, props } = mountPaste(wyHost(), 'doc-1')
+    const { ed, props } = mountPaste(host, 'doc-1')
     const event = { clipboardData: Object.assign(clip({ text: 'hello', items: [strItem] }), { items: [strItem] }), target: {}, preventDefault: vi.fn() }
     props.handlePaste({}, event)
     // Drain the async chain: Promise.all → fetch → r.json() → result handler.
     await new Promise((r) => setTimeout(r, 0))
     expect(host.clearInsertPos).toHaveBeenCalled()   // stale insert pos cleared
     expect(ed.commands.insertContent).toHaveBeenCalledWith('hello')
+    expect(host.consumeInsertAnchor).not.toHaveBeenCalled() // blank line preserved
+    // Our preventDefault()'d smart-paste robbed PM of its native scroll-to-caret —
+    // the local replay must restore it so the view follows the pasted text.
+    expect(ed.commands.scrollIntoView).toHaveBeenCalled()
   })
 
-  it('handleSmartDrop: image file → insertIndexForBlockAt(dropPos), POSTs smart-paste, returns true', async () => {
+  it('handleSmartDrop: image file → PEEKS insertIndexAt(dropPos) (side-effect-free), POSTs, returns true', async () => {
     // happy-dom's FileReader rejects on a non-Blob stub file, leaking an unhandled
     // rejection AFTER this test's synchronous assertions pass. This test asserts only
     // the sync drop path, so stub a no-op reader (its Promise stays pending, never rejects).
@@ -659,7 +677,7 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     try {
     const fetchMock = vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ matched: true }) }))
     stubFetch(fetchMock)
-    const host = wyHost({ insertIndexForBlockAt: vi.fn(() => 9) })
+    const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
     const { ed, props } = mountPaste(host, 'doc-1')
     // The surface reads posAtCoords + selection.to off the live editor.
     ed.view.posAtCoords = () => ({ pos: 12 })
@@ -669,7 +687,8 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     const event = { dataTransfer: dt, clientX: 1, clientY: 1, preventDefault: vi.fn() }
     const handled = props.handleDrop({}, event, null, false)
     expect(handled).toBe(true)
-    expect(host.insertIndexForBlockAt).toHaveBeenCalledWith(12)
+    expect(host.peekInsertIndexAt).toHaveBeenCalledWith(12)
+    expect(host.insertIndexForBlockAt).not.toHaveBeenCalled() // no EAGER consume on drop
     expect(event.preventDefault).toHaveBeenCalled()
     } finally { globalThis.FileReader = OrigFileReader }
   })
