@@ -468,6 +468,7 @@ export let renderMermaidSvgEntry
       var nodeTypeName = node.type.name
       var currentAttrs = Object.assign({}, node.attrs)
       var destroyed    = false
+      var inlinePzCleanup = null   // tears down the inline Ctrl-panzoom instance
 
       // ── DOM shell ─────────────────────────────────────────────────────────────
 
@@ -548,12 +549,96 @@ export let renderMermaidSvgEntry
         }
       }
 
+      // Inline Ctrl-gated pan/zoom on the rendered diagram — a lightweight cousin of
+      // the fullscreen lightbox (no chrome, no Esc, no title). Bare wheel/click pass
+      // straight through (document scroll, block selection); ONLY while Ctrl(=Mod) is
+      // held does the pane become a pan/zoom surface. Implemented as one atomic CSS
+      // transform on a WRAPPER div (NOT @panzoom/panzoom — its canvas/animate/dims
+      // handling fought the flex-centred fit-content wrapper: boxes jumped and the
+      // element eased/collapsed-then-grew each step). Expand still hands the bare SVG
+      // to the lightbox untouched.
+      // Inline Ctrl-gated pan/zoom on the rendered diagram — a lightweight cousin of
+      // the fullscreen lightbox (no chrome, no Esc, no title). Bare wheel/click pass
+      // straight through (document scroll, block selection); ONLY while Ctrl(=Mod) is
+      // held does the pane become a pan/zoom surface. One atomic CSS transform on the
+      // WRAPPER div (NOT @panzoom/panzoom, whose canvas/animate handling was jerky
+      // here). Expand still hands the bare SVG to the lightbox untouched.
+      function setupInlinePanzoom(wrap) {
+        var MIN = 1, MAX = 20
+        var scale = 1, tx = 0, ty = 0
+        wrap.style.transformOrigin = '0 0'
+        function apply() {
+          wrap.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + scale + ')'
+        }
+
+        // Cursor-anchored, closed-form: for s→s', tx' = tx + p·(s − s') where
+        // p = (cursor − rect.topLeft)/s. No animation, so nothing to jump/collapse.
+        function onWheel(e) {
+          if (!(e.ctrlKey || e.metaKey)) return   // bare wheel scrolls the document
+          e.preventDefault()
+          var s2 = Math.min(MAX, Math.max(MIN, scale * (e.deltaY < 0 ? 1.1 : 1 / 1.1)))
+          if (s2 === scale) return
+          var rect = wrap.getBoundingClientRect()
+          tx += ((e.clientX - rect.left) / scale) * (scale - s2)
+          ty += ((e.clientY - rect.top) / scale) * (scale - s2)
+          scale = s2
+          if (scale === MIN) { tx = 0; ty = 0 }   // fit floor re-centres cleanly
+          apply()
+        }
+        renderBody.addEventListener('wheel', onWheel, { passive: false })
+
+        // Ctrl+drag pan (bare drag is left alone so click still selects the block).
+        var panning = false, lastX = 0, lastY = 0
+        function onDown(e) {
+          if (!(e.ctrlKey || e.metaKey)) return
+          panning = true; lastX = e.clientX; lastY = e.clientY
+          try { wrap.setPointerCapture(e.pointerId) } catch (_) {}
+          e.preventDefault(); e.stopPropagation()
+        }
+        function onMove(e) {
+          if (!panning) return
+          tx += e.clientX - lastX; ty += e.clientY - lastY
+          lastX = e.clientX; lastY = e.clientY
+          apply()
+        }
+        function onUp(e) { if (panning) { panning = false; try { wrap.releasePointerCapture(e.pointerId) } catch (_) {} } }
+        wrap.addEventListener('pointerdown', onDown)
+        wrap.addEventListener('pointermove', onMove)
+        wrap.addEventListener('pointerup', onUp)
+        wrap.addEventListener('pointercancel', onUp)
+
+        // Affordance: grab cursor + hint only while Ctrl is held.
+        var armed = false
+        function syncArm(on) {
+          if (on === armed) return
+          armed = on
+          renderBody.classList.toggle('diagram-block__render--pz', on)
+        }
+        function onKeyDown(e) { if (e.key === 'Control' || e.key === 'Meta') syncArm(true) }
+        function onKeyUp(e)   { if (e.key === 'Control' || e.key === 'Meta') syncArm(false) }
+        function onBlur()     { syncArm(false); panning = false }
+        document.addEventListener('keydown', onKeyDown)
+        document.addEventListener('keyup', onKeyUp)
+        window.addEventListener('blur', onBlur)
+
+        inlinePzCleanup = function () {
+          renderBody.removeEventListener('wheel', onWheel)
+          document.removeEventListener('keydown', onKeyDown)
+          document.removeEventListener('keyup', onKeyUp)
+          window.removeEventListener('blur', onBlur)
+          renderBody.classList.remove('diagram-block__render--pz')
+          wrap.style.transform = ''
+        }
+      }
+
       function showRender(attrs, textContent) {
         var comingFromEdit = dom.contains(editBody)
         if (comingFromEdit) dom.removeChild(editBody)
         if (!dom.contains(renderBody)) dom.appendChild(renderBody)
         // Give the render area keyboard focus so Ctrl+Enter can flip back to edit.
         if (comingFromEdit) renderBody.focus()
+        // Any prior inline panzoom belongs to the SVG we're about to replace.
+        if (inlinePzCleanup) { inlinePzCleanup(); inlinePzCleanup = null }
 
         var src = (textContent || '').trim()
 
@@ -571,7 +656,13 @@ export let renderMermaidSvgEntry
           return window.mermaid.render(id, src)
         }).then(function (result) {
           if (destroyed) return
-          renderBody.innerHTML = result.svg
+          if (inlinePzCleanup) { inlinePzCleanup(); inlinePzCleanup = null }
+          var wrap = document.createElement('div')
+          wrap.className = 'diagram-block__panzoom'
+          wrap.innerHTML = result.svg
+          renderBody.innerHTML = ''
+          renderBody.appendChild(wrap)
+          setupInlinePanzoom(wrap)
         }).catch(function (err) {
           if (destroyed) return
           var msg = (err && err.message) ? err.message : String(err)
@@ -676,6 +767,7 @@ export let renderMermaidSvgEntry
 
         destroy: function () {
           destroyed = true
+          if (inlinePzCleanup) { inlinePzCleanup(); inlinePzCleanup = null }
           clearTimeout(updateTimer)
           observer.disconnect()
           activeRenderers = activeRenderers.filter(function (r) { return r !== rerender })
