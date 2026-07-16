@@ -96,6 +96,17 @@ type Facets struct {
 
 // search scans the library, naive-substring-matches the query against
 // title/summary/tags, filters by folder, and caps at limit. Metadata only.
+//
+// V1 SCOPE / KNOWN LIMITATIONS (accepted for now; long-term not ideal):
+//   - METADATA ONLY, never body — search leans entirely on AI-generated
+//     summaries/tags, so a note whose body says the thing but whose metadata
+//     doesn't will not surface. get_note remains the only body-bearing verb.
+//   - FILED NOTES ONLY (LibraryCategory) — buffers are excluded, and they carry
+//     no metadata anyway, so they'd be unfindable by a metadata match even if
+//     included. The AI can still reach the active buffer as direct context and
+//     read buffer files via the library --add-dir grant.
+// The long-term fix for both is a real full-text index (#37): body-aware search
+// that can also span buffers, replacing this metadata-only, notes-only scan.
 func (s *Server) search(_ context.Context, _ *mcpsdk.CallToolRequest, in SearchInput) (*mcpsdk.CallToolResult, SearchResults, error) {
 	limit := in.Limit
 	if limit <= 0 {
