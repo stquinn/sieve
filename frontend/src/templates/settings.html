@@ -12,7 +12,9 @@
   </div>
 
   <!-- Content -->
-  <form id="settings-form" hx-post="/api/settings" hx-target="#settings-dialog-content" style="flex: 1; background: var(--theme-bg); padding: 2rem; overflow-y: auto; display: flex; flex-direction: column; justify-content: space-between;">
+  <form id="settings-form" hx-post="/api/settings" hx-target="#settings-dialog-content" style="flex: 1; min-height: 0; background: var(--theme-bg); display: flex; flex-direction: column; overflow: hidden;">
+    <!-- Scrollable content region; the footer below stays pinned to the dialog bottom -->
+    <div class="settings-scroll" style="flex: 1; min-height: 0; overflow-y: auto; padding: 2rem;">
     <input type="hidden" name="last_settings_panel" id="last-settings-panel-input" value="{{.LastSettingsPanel}}">
     <div class="settings-tab-content" id="settings-tab-ai" style="display: {{if or (eq .LastSettingsPanel "ai") (eq .LastSettingsPanel "")}}block{{else}}none{{end}};">
       <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 1.5rem;">AI Configuration</h3>
@@ -253,9 +255,10 @@
         </div>
       </div>
     </div>
+    </div><!-- /settings-scroll -->
 
-    <!-- Footer -->
-    <div style="display: flex; justify-content: flex-end; gap: 1rem; padding-top: 1.5rem; border-top: 1px solid var(--theme-border); margin-top: auto;">
+    <!-- Footer (pinned to the dialog bottom) -->
+    <div style="display: flex; justify-content: flex-end; gap: 1rem; padding: 1rem 2rem; border-top: 1px solid var(--theme-border); background: var(--theme-bg); flex-shrink: 0;">
       <button type="button" onclick="document.getElementById('settings-dialog').close()" style="padding: 0.5rem 1.5rem; font-size: 0.875rem; font-weight: 500; color: var(--theme-textDim); background: transparent; border: none; cursor: pointer;">Cancel</button>
       <button type="submit" style="padding: 0.5rem 1.5rem; font-size: 0.875rem; font-weight: bold; color: #ffffff; background: var(--theme-accentPrimary); border-radius: 0.5rem; border: none; cursor: pointer;">Save Changes</button>
     </div>
