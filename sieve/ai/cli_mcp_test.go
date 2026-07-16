@@ -152,6 +152,131 @@ func TestBuildArgs_NoMCPFlagsWhenURLEmpty(t *testing.T) {
 	}
 }
 
+// Regression: a user-added stdio MCP server (command/args, no URL) must be
+// injected into --mcp-config, not silently dropped. This was the bug: the old
+// newMCPInjection only collected servers with URL != "", so a stdio server
+// configured in the settings panel was displayed but never actually reached
+// the CLI call.
+func TestBuildArgs_Claude_InjectsUserStdioServer(t *testing.T) {
+	p := domain.DefaultContainmentProfile()
+	p.McpServers = append(p.McpServers, domain.McpGrant{
+		Name:    "forgejo",
+		Command: "forgejo-mcp",
+		Args:    []string{"serve"},
+	})
+
+	args := buildBaseArgs("claude", "", "p", p, libDir)
+
+	cfg := flagValue(args, "--mcp-config")
+	if cfg == "" {
+		t.Fatalf("claude missing --mcp-config for a configured user stdio server; args=%v", args)
+	}
+	var parsed struct {
+		McpServers map[string]struct {
+			Type    string   `json:"type"`
+			Command string   `json:"command"`
+			Args    []string `json:"args"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal([]byte(cfg), &parsed); err != nil {
+		t.Fatalf("--mcp-config is not valid JSON: %v\n%s", err, cfg)
+	}
+	forgejo, ok := parsed.McpServers["forgejo"]
+	if !ok {
+		t.Fatalf("forgejo server missing from --mcp-config: %s", cfg)
+	}
+	if forgejo.Type != "" {
+		t.Errorf("stdio entry should omit \"type\", got %q", forgejo.Type)
+	}
+	if forgejo.Command != "forgejo-mcp" {
+		t.Errorf("forgejo.Command = %q, want forgejo-mcp", forgejo.Command)
+	}
+	if len(forgejo.Args) != 1 || forgejo.Args[0] != "serve" {
+		t.Errorf("forgejo.Args = %v, want [serve]", forgejo.Args)
+	}
+
+	tools := flagValue(args, "--allowedTools")
+	if !strings.Contains(tools, "mcp__forgejo__*") {
+		t.Errorf("--allowedTools missing mcp__forgejo__*: %q", tools)
+	}
+}
+
+// configJSON renders each transport per its own shape: stdio gets
+// command/args/env with no "type"; http/sse get type+url+headers, with the
+// runtime bearer merged on top of any static headers.
+func TestConfigJSON_PerTransportShapes(t *testing.T) {
+	mi := mcpInjection{servers: []domain.McpGrant{
+		{Name: "stdio-srv", Command: "my-mcp", Args: []string{"--flag"}, Env: map[string]string{"FOO": "bar"}},
+		{Name: "http-srv", Transport: "http", URL: "https://example.com/mcp", Headers: map[string]string{"X-Api-Key": "k1"}},
+		{Name: "sse-srv", Transport: "sse", URL: "https://example.com/sse"},
+		{Name: "sieve", Transport: "http", URL: "http://127.0.0.1:34115/mcp", Token: "secret-tok"},
+	}}
+	cfg := mi.configJSON()
+
+	var parsed struct {
+		McpServers map[string]json.RawMessage `json:"mcpServers"`
+	}
+	if err := json.Unmarshal([]byte(cfg), &parsed); err != nil {
+		t.Fatalf("configJSON not valid JSON: %v\n%s", err, cfg)
+	}
+
+	// stdio: command/args/env, no "type" key at all.
+	var stdio map[string]any
+	if err := json.Unmarshal(parsed.McpServers["stdio-srv"], &stdio); err != nil {
+		t.Fatalf("stdio-srv: %v", err)
+	}
+	if _, has := stdio["type"]; has {
+		t.Errorf("stdio-srv should omit \"type\": %v", stdio)
+	}
+	if stdio["command"] != "my-mcp" {
+		t.Errorf("stdio-srv.command = %v, want my-mcp", stdio["command"])
+	}
+	if env, _ := stdio["env"].(map[string]any); env["FOO"] != "bar" {
+		t.Errorf("stdio-srv.env = %v, want FOO=bar", stdio["env"])
+	}
+
+	// http: type=http, url, headers (static header preserved, no bearer since no Token).
+	var httpSrv map[string]any
+	if err := json.Unmarshal(parsed.McpServers["http-srv"], &httpSrv); err != nil {
+		t.Fatalf("http-srv: %v", err)
+	}
+	if httpSrv["type"] != "http" {
+		t.Errorf("http-srv.type = %v, want http", httpSrv["type"])
+	}
+	if httpSrv["url"] != "https://example.com/mcp" {
+		t.Errorf("http-srv.url = %v, want https://example.com/mcp", httpSrv["url"])
+	}
+	headers, _ := httpSrv["headers"].(map[string]any)
+	if headers["X-Api-Key"] != "k1" {
+		t.Errorf("http-srv.headers = %v, want X-Api-Key=k1", headers)
+	}
+	if _, has := headers["Authorization"]; has {
+		t.Errorf("http-srv should have no Authorization header (no Token): %v", headers)
+	}
+
+	// sse: type=sse, url, no headers key when there are none.
+	var sseSrv map[string]any
+	if err := json.Unmarshal(parsed.McpServers["sse-srv"], &sseSrv); err != nil {
+		t.Fatalf("sse-srv: %v", err)
+	}
+	if sseSrv["type"] != "sse" {
+		t.Errorf("sse-srv.type = %v, want sse", sseSrv["type"])
+	}
+	if _, has := sseSrv["headers"]; has {
+		t.Errorf("sse-srv should omit headers when none configured: %v", sseSrv)
+	}
+
+	// builtin sieve: bearer token merged in as Authorization header.
+	var sieveSrv map[string]any
+	if err := json.Unmarshal(parsed.McpServers["sieve"], &sieveSrv); err != nil {
+		t.Fatalf("sieve: %v", err)
+	}
+	sieveHeaders, _ := sieveSrv["headers"].(map[string]any)
+	if sieveHeaders["Authorization"] != "Bearer secret-tok" {
+		t.Errorf("sieve.headers.Authorization = %v, want Bearer secret-tok", sieveHeaders["Authorization"])
+	}
+}
+
 // agy must remain directory-only: no MCP inject flag even when the profile has a
 // live builtin server (agy has no per-call --mcp-config flag).
 func TestBuildArgs_Agy_NeverInjectsMCP(t *testing.T) {

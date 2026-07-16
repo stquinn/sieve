@@ -238,46 +238,72 @@ func (agyBackend) buildArgs(profile domain.ContainmentProfile, libraryDir, model
 	return append(args, "--print", prompt)
 }
 
-// mcpInjection renders a containment profile's live HTTP MCP servers (those with
-// a runtime URL — the builtin Sieve server) to a CLI's inline config flag and its
-// per-server allow entries. Servers without a URL (unstarted, or user-added stdio
-// servers) are not injectable per-call and are skipped, so when nothing is live
-// the backend renders exactly as before (no MCP flags), keeping the no-server
-// path — and existing tests — unchanged.
+// mcpInjection renders a containment profile's *configured* MCP servers — stdio
+// servers with a Command, remote (http/sse) servers with a URL, including the
+// builtin Sieve server once its runtime URL is live — to a CLI's inline config
+// flag and its per-server allow entries. Servers that are not configured (e.g.
+// an unstarted builtin with no runtime URL yet) are skipped, so when nothing is
+// configured the backend renders exactly as before (no MCP flags), keeping the
+// no-server path — and existing tests — unchanged.
 type mcpInjection struct {
 	servers []domain.McpGrant
 }
 
-// newMCPInjection collects the profile's MCP servers that carry a runtime URL.
+// newMCPInjection collects the profile's MCP servers that are configured
+// (IsConfigured) — this includes user-added stdio servers, user-added
+// http/sse servers, and the builtin once it has a runtime URL.
 func newMCPInjection(profile domain.ContainmentProfile) mcpInjection {
-	var live []domain.McpGrant
+	var configured []domain.McpGrant
 	for _, m := range profile.McpServers {
-		if strings.TrimSpace(m.URL) != "" {
-			live = append(live, m)
+		if m.IsConfigured() {
+			configured = append(configured, m)
 		}
 	}
-	return mcpInjection{servers: live}
+	return mcpInjection{servers: configured}
 }
 
 func (mi mcpInjection) present() bool { return len(mi.servers) > 0 }
 
-// mcpHTTPServer is one entry in the inline --mcp-config payload.
-type mcpHTTPServer struct {
-	Type    string            `json:"type"`
-	URL     string            `json:"url"`
+// mcpServerEntry is one entry in the inline --mcp-config payload. Type is
+// omitted for stdio (the CLIs infer stdio from the presence of "command"); it is
+// set explicitly to "http"/"sse" for remote servers.
+type mcpServerEntry struct {
+	Type    string            `json:"type,omitempty"`
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+	URL     string            `json:"url,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
-// configJSON builds the inline JSON for --mcp-config / --additional-mcp-config:
-// {"mcpServers":{"<name>":{"type":"http","url":"…","headers":{"Authorization":"Bearer …"}}}}.
+// configJSON builds the inline JSON for --mcp-config / --additional-mcp-config,
+// rendering each server per its EffectiveTransport:
+//   - stdio: {"command": "...", "args": [...], "env": {...}}
+//   - http:  {"type":"http", "url":"...", "headers": {...}}
+//   - sse:   {"type":"sse",  "url":"...", "headers": {...}}
+//
+// For http/sse, the grant's static Headers are merged with the runtime bearer:
+// if Token is set (the builtin), an "Authorization: Bearer <Token>" header is
+// added on top of any user-configured static headers.
 func (mi mcpInjection) configJSON() string {
-	servers := make(map[string]mcpHTTPServer, len(mi.servers))
+	servers := make(map[string]mcpServerEntry, len(mi.servers))
 	for _, m := range mi.servers {
-		var headers map[string]string
-		if strings.TrimSpace(m.Token) != "" {
-			headers = map[string]string{"Authorization": "Bearer " + m.Token}
+		switch m.EffectiveTransport() {
+		case "http", "sse":
+			headers := make(map[string]string, len(m.Headers)+1)
+			for k, v := range m.Headers {
+				headers[k] = v
+			}
+			if strings.TrimSpace(m.Token) != "" {
+				headers["Authorization"] = "Bearer " + m.Token
+			}
+			if len(headers) == 0 {
+				headers = nil
+			}
+			servers[m.Name] = mcpServerEntry{Type: m.EffectiveTransport(), URL: m.URL, Headers: headers}
+		default: // stdio
+			servers[m.Name] = mcpServerEntry{Command: m.Command, Args: m.Args, Env: m.Env}
 		}
-		servers[m.Name] = mcpHTTPServer{Type: "http", URL: m.URL, Headers: headers}
 	}
 	b, err := json.Marshal(map[string]any{"mcpServers": servers})
 	if err != nil {

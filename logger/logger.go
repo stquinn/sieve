@@ -71,7 +71,7 @@ func Debug(msg string, args ...any) { log.Debug(msg, args...) }
 func Info(msg string, args ...any)  { log.Info(msg, args...) }
 func Warn(msg string, args ...any)  { log.Warn(msg, args...) }
 func Error(msg string, args ...any) { log.Error(msg, args...) }
- 
+
 // LogPrompt logs a multi-line AI prompt efficiently.
 func LogPrompt(prompt string) {
 	logBlock("AI PROMPT", prompt)

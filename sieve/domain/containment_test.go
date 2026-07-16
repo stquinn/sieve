@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -256,5 +257,109 @@ func TestContainmentProfile_RoundTrip_Default(t *testing.T) {
 	}
 	if len(got.McpServers) != len(def.McpServers) {
 		t.Fatalf("round-trip McpServers = %+v, want %+v", got.McpServers, def.McpServers)
+	}
+}
+
+// EffectiveTransport resolves an explicit Transport first, then falls back to
+// "http" when a URL is present, then defaults to "stdio".
+func TestMcpGrant_EffectiveTransport(t *testing.T) {
+	cases := []struct {
+		name string
+		m    McpGrant
+		want string
+	}{
+		{"explicit sse wins even with url", McpGrant{Transport: "sse", URL: "http://x"}, "sse"},
+		{"explicit stdio wins even with url", McpGrant{Transport: "stdio", URL: "http://x"}, "stdio"},
+		{"url implies http when transport unset", McpGrant{URL: "http://x"}, "http"},
+		{"defaults to stdio with neither", McpGrant{Command: "forgejo-mcp"}, "stdio"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.m.EffectiveTransport(); got != c.want {
+				t.Errorf("EffectiveTransport() = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// IsConfigured: http/sse need a URL, stdio needs a Command. An unstarted
+// builtin (no runtime URL yet) is therefore not configured.
+func TestMcpGrant_IsConfigured(t *testing.T) {
+	cases := []struct {
+		name string
+		m    McpGrant
+		want bool
+	}{
+		{"stdio with command", McpGrant{Command: "forgejo-mcp"}, true},
+		{"stdio without command", McpGrant{}, false},
+		{"http with url", McpGrant{Transport: "http", URL: "http://x"}, true},
+		{"http without url", McpGrant{Transport: "http"}, false},
+		{"sse with url", McpGrant{Transport: "sse", URL: "http://x"}, true},
+		{"sse without url", McpGrant{Transport: "sse"}, false},
+		{"unstarted builtin has no url", McpGrant{Name: "sieve", Transport: "http", Builtin: true, Baseline: true}, false},
+		{"live builtin has a runtime url", McpGrant{Name: "sieve", Transport: "http", Builtin: true, Baseline: true, URL: "http://127.0.0.1:9/mcp"}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.m.IsConfigured(); got != c.want {
+				t.Errorf("IsConfigured() = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// A user-added remote (http) server's URL + Headers survive the persistence
+// round-trip (WithoutBaseline -> LoadContainmentProfile); the builtin's runtime
+// URL is never present in the marshalled (WithoutBaseline) form because it is
+// always Baseline:true.
+func TestContainmentProfile_RoundTrip_UserHTTPServer(t *testing.T) {
+	p := DefaultContainmentProfile()
+	// Simulate the builtin acquiring a live runtime URL, as the AI service does
+	// at render time (never at save time, but prove it's stripped regardless).
+	for i := range p.McpServers {
+		if p.McpServers[i].Builtin {
+			p.McpServers[i].URL = "http://127.0.0.1:34115/mcp"
+		}
+	}
+	p.McpServers = append(p.McpServers, McpGrant{
+		Name:      "forgejo",
+		Transport: "http",
+		URL:       "https://git.example.com/mcp",
+		Headers:   map[string]string{"X-Api-Key": "abc123"},
+	})
+
+	persisted := p.WithoutBaseline()
+
+	b, err := json.Marshal(persisted)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(b), "127.0.0.1:34115") {
+		t.Fatalf("builtin runtime URL leaked into persisted JSON: %s", b)
+	}
+	if !strings.Contains(string(b), "git.example.com") {
+		t.Fatalf("user server URL missing from persisted JSON: %s", b)
+	}
+
+	got := LoadContainmentProfile(persisted)
+	var forgejo McpGrant
+	found := false
+	for _, m := range got.McpServers {
+		if m.Name == "forgejo" {
+			forgejo = m
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("McpServers = %+v, want forgejo present after reload", got.McpServers)
+	}
+	if forgejo.URL != "https://git.example.com/mcp" {
+		t.Errorf("forgejo.URL = %q, want https://git.example.com/mcp", forgejo.URL)
+	}
+	if forgejo.Headers["X-Api-Key"] != "abc123" {
+		t.Errorf("forgejo.Headers = %+v, want X-Api-Key=abc123", forgejo.Headers)
+	}
+	if forgejo.EffectiveTransport() != "http" {
+		t.Errorf("forgejo.EffectiveTransport() = %q, want http", forgejo.EffectiveTransport())
 	}
 }

@@ -34,20 +34,50 @@ type DirGrant struct {
 	Baseline bool   `json:"baseline,omitempty"`
 }
 
-// McpGrant permits an MCP server. Builtin marks the internal Sieve server, whose
-// runtime URL + bearer token are generated per-call and never persisted (they
-// would be stale/secret-leaking in a synced library). Command/Args/Env describe
-// a user-added stdio server; URL/Token are populated at render time for the
-// builtin HTTP server only.
+// McpGrant permits an MCP server, over one of three transports: stdio (a
+// spawned command), http, or sse (both remote, addressed by URL). Builtin marks
+// the internal Sieve server, whose runtime URL + bearer token are generated
+// per-call — URL is persisted for user-added remote servers, but the builtin
+// grant is always Baseline:true, so WithoutBaseline (used by Settings.Marshal)
+// strips it before it ever reaches settings.json. Token is always runtime-only
+// (the builtin's per-run bearer) and is never persisted regardless of Baseline.
 type McpGrant struct {
-	Name     string            `json:"name"`
-	Builtin  bool              `json:"builtin,omitempty"`
-	Command  string            `json:"command,omitempty"`
-	Args     []string          `json:"args,omitempty"`
-	Env      map[string]string `json:"env,omitempty"`
-	URL      string            `json:"-"` // runtime-only (builtin sieve server); never persisted
-	Token    string            `json:"-"` // runtime-only per-run bearer; never persisted
-	Baseline bool              `json:"baseline,omitempty"`
+	Name      string            `json:"name"`
+	Transport string            `json:"transport,omitempty"` // "stdio" | "http" | "sse"
+	Builtin   bool              `json:"builtin,omitempty"`
+	Command   string            `json:"command,omitempty"` // stdio
+	Args      []string          `json:"args,omitempty"`    // stdio
+	Env       map[string]string `json:"env,omitempty"`     // stdio
+	URL       string            `json:"url,omitempty"`     // http/sse (builtin's is ephemeral but Baseline, so never persisted)
+	Headers   map[string]string `json:"headers,omitempty"` // http/sse static headers
+	Token     string            `json:"-"`                 // runtime-only per-run bearer (builtin); NEVER persisted
+	Baseline  bool              `json:"baseline,omitempty"`
+}
+
+// EffectiveTransport resolves the grant's transport: the explicit Transport if
+// set, else "http" when a URL is present (a remote server configured without an
+// explicit transport is assumed HTTP), else "stdio" (the historical default).
+func (m McpGrant) EffectiveTransport() string {
+	if t := strings.TrimSpace(m.Transport); t != "" {
+		return t
+	}
+	if strings.TrimSpace(m.URL) != "" {
+		return "http"
+	}
+	return "stdio"
+}
+
+// IsConfigured reports whether the grant carries enough to actually connect:
+// http/sse need a URL, stdio needs a Command. An unstarted builtin server (no
+// runtime URL yet) is therefore not configured, preserving the "no live server
+// ⇒ no MCP injection" behaviour for the default profile.
+func (m McpGrant) IsConfigured() bool {
+	switch m.EffectiveTransport() {
+	case "http", "sse":
+		return strings.TrimSpace(m.URL) != ""
+	default:
+		return strings.TrimSpace(m.Command) != ""
+	}
 }
 
 // DefaultContainmentProfile seeds the baseline capability floor: read-only tools
@@ -67,7 +97,7 @@ func DefaultContainmentProfile() ContainmentProfile {
 			{Kind: "note", Label: "Current note", Baseline: true},
 		},
 		McpServers: []McpGrant{
-			{Name: "sieve", Builtin: true, Baseline: true},
+			{Name: "sieve", Transport: "http", Builtin: true, Baseline: true},
 		},
 	}
 }

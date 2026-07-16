@@ -42,6 +42,35 @@ func (h *SettingsHandler) buildView(settings domain.Settings, lastPanel string) 
 	}
 }
 
+// parseHeaders parses the settings panel's compact MCP header line —
+// "Key=Value,Key2=Value2" (the joinHeaders template func's inverse, see
+// requesthandlers/templates.go) — into a header map. Blank entries and entries
+// without an "=" are skipped; a value may itself contain "=" (only the first
+// one splits key from value).
+func (h *SettingsHandler) parseHeaders(raw string) map[string]string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	headers := map[string]string{}
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(pair, "=")
+		k = strings.TrimSpace(k)
+		if !ok || k == "" {
+			continue
+		}
+		headers[k] = strings.TrimSpace(v)
+	}
+	if len(headers) == 0 {
+		return nil
+	}
+	return headers
+}
+
 func (h *SettingsHandler) RegisterPaths(r chi.Router) {
 	r.Get("/api/settings", h.handleSettings)
 	r.Post("/api/settings", h.handleSettingsSave)
@@ -145,18 +174,35 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	mcpNames := r.PostForm["containment_mcp_name"]
+	mcpTransports := r.PostForm["containment_mcp_transport"]
 	mcpCommands := r.PostForm["containment_mcp_command"]
 	mcpArgs := r.PostForm["containment_mcp_args"]
+	mcpURLs := r.PostForm["containment_mcp_url"]
+	mcpHeaders := r.PostForm["containment_mcp_headers"]
 	for i, name := range mcpNames {
 		if name == "" {
 			continue
 		}
-		grant := domain.McpGrant{Name: name}
-		if i < len(mcpCommands) {
-			grant.Command = mcpCommands[i]
+		transport := "stdio"
+		if i < len(mcpTransports) && mcpTransports[i] != "" {
+			transport = mcpTransports[i]
 		}
-		if i < len(mcpArgs) && mcpArgs[i] != "" {
-			grant.Args = strings.Fields(mcpArgs[i])
+		grant := domain.McpGrant{Name: name, Transport: transport}
+		switch transport {
+		case "http", "sse":
+			if i < len(mcpURLs) {
+				grant.URL = mcpURLs[i]
+			}
+			if i < len(mcpHeaders) {
+				grant.Headers = h.parseHeaders(mcpHeaders[i])
+			}
+		default: // stdio
+			if i < len(mcpCommands) {
+				grant.Command = mcpCommands[i]
+			}
+			if i < len(mcpArgs) && mcpArgs[i] != "" {
+				grant.Args = strings.Fields(mcpArgs[i])
+			}
 		}
 		adds.McpServers = append(adds.McpServers, grant)
 	}

@@ -151,13 +151,26 @@
         <div id="containment-mcp-list" style="display: flex; flex-direction: column; gap: 0.5rem;">
           {{range .AI.Containment.McpServers}}
           {{if not .Baseline}}
-          <div class="containment-mcp-item" style="display: flex; gap: 0.5rem; align-items: flex-start;">
-            <input type="text" name="containment_mcp_name" value="{{.Name}}" placeholder="Name" style="flex: 1; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
-            <input type="text" name="containment_mcp_command" value="{{.Command}}" placeholder="Command (e.g. npx)" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
-            <input type="text" name="containment_mcp_args" value="{{joinArgs .Args}}" placeholder="args (space-separated)" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
-            <button type="button" onclick="this.parentElement.remove()" style="padding: 0.6rem; color: var(--theme-accentRed); background: transparent; border: 1px solid var(--theme-border); border-radius: 0.5rem; cursor: pointer;" title="Remove MCP server">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-            </button>
+          <div class="containment-mcp-item" style="display: flex; flex-direction: column; gap: 0.4rem; padding: 0.6rem; border: 1px solid var(--theme-border); border-radius: 0.5rem;">
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+              <input type="text" name="containment_mcp_name" value="{{.Name}}" placeholder="Name" style="flex: 1; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+              <select name="containment_mcp_transport" onchange="toggleMcpTransportFields(this)" style="background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+                <option value="stdio" {{if eq .EffectiveTransport "stdio"}}selected{{end}}>stdio</option>
+                <option value="http" {{if eq .EffectiveTransport "http"}}selected{{end}}>http</option>
+                <option value="sse" {{if eq .EffectiveTransport "sse"}}selected{{end}}>sse</option>
+              </select>
+              <button type="button" onclick="this.closest('.containment-mcp-item').remove()" style="padding: 0.6rem; color: var(--theme-accentRed); background: transparent; border: 1px solid var(--theme-border); border-radius: 0.5rem; cursor: pointer;" title="Remove MCP server">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+              </button>
+            </div>
+            <div class="mcp-stdio-fields" style="display: {{if eq .EffectiveTransport "stdio"}}flex{{else}}none{{end}}; gap: 0.5rem;">
+              <input type="text" name="containment_mcp_command" value="{{.Command}}" placeholder="Command (e.g. npx)" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+              <input type="text" name="containment_mcp_args" value="{{joinArgs .Args}}" placeholder="args (space-separated)" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+            </div>
+            <div class="mcp-remote-fields" style="display: {{if ne .EffectiveTransport "stdio"}}flex{{else}}none{{end}}; gap: 0.5rem;">
+              <input type="text" name="containment_mcp_url" value="{{.URL}}" placeholder="https://host/mcp" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+              <input type="text" name="containment_mcp_headers" value="{{joinHeaders .Headers}}" placeholder="Key=Value,Key2=Value2" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+            </div>
           </div>
           {{end}}
           {{end}}
@@ -343,17 +356,40 @@ function addContainmentMcp() {
   const container = document.getElementById('containment-mcp-list');
   const div = document.createElement('div');
   div.className = 'containment-mcp-item';
-  div.style.cssText = 'display: flex; gap: 0.5rem; align-items: flex-start;';
+  div.style.cssText = 'display: flex; flex-direction: column; gap: 0.4rem; padding: 0.6rem; border: 1px solid var(--theme-border); border-radius: 0.5rem;';
 
   div.innerHTML = `
-    <input type="text" name="containment_mcp_name" placeholder="Name" style="flex: 1; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
-    <input type="text" name="containment_mcp_command" placeholder="Command (e.g. npx)" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
-    <input type="text" name="containment_mcp_args" placeholder="args (space-separated)" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
-    <button type="button" onclick="this.parentElement.remove()" style="padding: 0.6rem; color: var(--theme-accentRed); background: transparent; border: 1px solid var(--theme-border); border-radius: 0.5rem; cursor: pointer;" title="Remove MCP server">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-    </button>
+    <div style="display: flex; gap: 0.5rem; align-items: center;">
+      <input type="text" name="containment_mcp_name" placeholder="Name" style="flex: 1; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+      <select name="containment_mcp_transport" onchange="toggleMcpTransportFields(this)" style="background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+        <option value="stdio" selected>stdio</option>
+        <option value="http">http</option>
+        <option value="sse">sse</option>
+      </select>
+      <button type="button" onclick="this.closest('.containment-mcp-item').remove()" style="padding: 0.6rem; color: var(--theme-accentRed); background: transparent; border: 1px solid var(--theme-border); border-radius: 0.5rem; cursor: pointer;" title="Remove MCP server">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+      </button>
+    </div>
+    <div class="mcp-stdio-fields" style="display: flex; gap: 0.5rem;">
+      <input type="text" name="containment_mcp_command" placeholder="Command (e.g. npx)" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+      <input type="text" name="containment_mcp_args" placeholder="args (space-separated)" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+    </div>
+    <div class="mcp-remote-fields" style="display: none; gap: 0.5rem;">
+      <input type="text" name="containment_mcp_url" placeholder="https://host/mcp" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+      <input type="text" name="containment_mcp_headers" placeholder="Key=Value,Key2=Value2" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+    </div>
   `;
   container.appendChild(div);
+}
+
+// toggleMcpTransportFields shows the stdio (command/args) or remote (url/headers)
+// field group for an MCP row based on its transport <select>, matching the
+// inline onchange-handler idiom already used across this file.
+function toggleMcpTransportFields(select) {
+  const row = select.closest('.containment-mcp-item');
+  const isStdio = select.value === 'stdio';
+  row.querySelector('.mcp-stdio-fields').style.display = isStdio ? 'flex' : 'none';
+  row.querySelector('.mcp-remote-fields').style.display = isStdio ? 'none' : 'flex';
 }
 </script>
 {{end}}

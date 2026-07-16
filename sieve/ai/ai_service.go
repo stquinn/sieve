@@ -59,7 +59,14 @@ func (s *AIService) SetMCPEndpoint(e MCPEndpoint) { s.mcp = e }
 // an endpoint is wired and reachable. When no endpoint is running the builtin
 // grant keeps its empty URL and the backend renders no MCP flags.
 func (s *AIService) profile() domain.ContainmentProfile {
-	p := domain.DefaultContainmentProfile()
+	// Start from the user's SAVED profile (baseline + their additions), which
+	// ParseSettings reconstitutes as the full in-memory profile — NOT a bare
+	// DefaultContainmentProfile(), which would silently drop every user grant
+	// (added tools/dirs/MCP servers) from the AI call.
+	p := s.state.LoadSettings().AI.Containment
+	if len(p.Tools) == 0 && len(p.Directories) == 0 && len(p.McpServers) == 0 {
+		p = domain.DefaultContainmentProfile() // defensive: never render an empty profile
+	}
 	if s.mcp == nil {
 		return p
 	}
@@ -67,12 +74,18 @@ func (s *AIService) profile() domain.ContainmentProfile {
 	if url == "" {
 		return p
 	}
-	for i := range p.McpServers {
-		if p.McpServers[i].Builtin {
-			p.McpServers[i].URL = url
-			p.McpServers[i].Token = token
+	// LoadSettings returns a cached Settings whose McpServers slice is shared —
+	// copy it before filling the builtin's runtime URL + per-call bearer so the
+	// secret never leaks into the cache (or a later serialisation).
+	servers := make([]domain.McpGrant, len(p.McpServers))
+	copy(servers, p.McpServers)
+	for i := range servers {
+		if servers[i].Builtin {
+			servers[i].URL = url
+			servers[i].Token = token
 		}
 	}
+	p.McpServers = servers
 	return p
 }
 
