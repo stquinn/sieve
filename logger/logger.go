@@ -82,6 +82,15 @@ func LogResponse(response string) {
 	logBlock("AI RESPONSE", response)
 }
 
+// LogBlock writes a labelled, multi-line block to the log in the same visual
+// family as LogPrompt/LogResponse — a bordered `==== LABEL ====` frame around
+// the content. Callers compose the label (e.g. to carry an op name, elapsed
+// time, or byte count) and the content (e.g. a multi-line command/request
+// summary or a response body).
+func LogBlock(label string, content string) {
+	logBlock(label, content)
+}
+
 func logBlock(label string, content string) {
 	const maxLen = 5000
 	display := strings.TrimSpace(content)

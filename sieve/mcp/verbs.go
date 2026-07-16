@@ -123,11 +123,11 @@ func (s *Server) search(_ context.Context, _ *mcpsdk.CallToolRequest, in SearchI
 		}
 		if len(out.Results) >= limit {
 			out.Truncated = true
-			logger.Info("sieve mcp: search truncated", "limit", limit, "query", in.Query)
 			break
 		}
 		out.Results = append(out.Results, s.summaryOf(n))
 	}
+	logger.Info("sieve mcp: search", "query", in.Query, "folder", folder, "results", len(out.Results), "truncated", out.Truncated)
 	return nil, out, nil
 }
 
@@ -135,19 +135,28 @@ func (s *Server) search(_ context.Context, _ *mcpsdk.CallToolRequest, in SearchI
 func (s *Server) getMeta(_ context.Context, _ *mcpsdk.CallToolRequest, in UUIDInput) (*mcpsdk.CallToolResult, NoteMeta, error) {
 	doc, err := s.documents.LoadByUUID(strings.TrimSpace(in.UUID))
 	if err != nil {
+		logger.Warn("sieve mcp: get_meta not found", "uuid", in.UUID, "err", err)
 		return nil, NoteMeta{}, fmt.Errorf("get_meta: %w", err)
 	}
-	return nil, s.metaOf(scannedNote{uuid: doc.UUID(), folder: s.folderOf(doc), doc: doc}), nil
+	meta := s.metaOf(scannedNote{uuid: doc.UUID(), folder: s.folderOf(doc), doc: doc})
+	logger.Info("sieve mcp: get_meta", "uuid", in.UUID, "title", meta.Title)
+	return nil, meta, nil
 }
 
 // getNote returns metadata plus the markdown body — the visible bulk-read verb.
+// Logged at Info so every whole-note read the AI performs is auditable at this
+// single Sieve-owned boundary.
 func (s *Server) getNote(_ context.Context, _ *mcpsdk.CallToolRequest, in UUIDInput) (*mcpsdk.CallToolResult, NoteContent, error) {
 	doc, err := s.documents.LoadByUUID(strings.TrimSpace(in.UUID))
 	if err != nil {
+		logger.Warn("sieve mcp: get_note not found", "uuid", in.UUID, "err", err)
 		return nil, NoteContent{}, fmt.Errorf("get_note: %w", err)
 	}
 	n := scannedNote{uuid: doc.UUID(), folder: s.folderOf(doc), doc: doc}
-	return nil, NoteContent{Meta: s.metaOf(n), Body: string(doc.Body())}, nil
+	body := string(doc.Body())
+	meta := s.metaOf(n)
+	logger.Info("sieve mcp: get_note (body read)", "uuid", in.UUID, "title", meta.Title, "bytes", len(body))
+	return nil, NoteContent{Meta: meta, Body: body}, nil
 }
 
 // listFacets aggregates folders (with note counts) and tags (with counts) — the
@@ -180,6 +189,7 @@ func (s *Server) listFacets(_ context.Context, _ *mcpsdk.CallToolRequest, _ stru
 	}
 	sort.Slice(out.Folders, func(i, j int) bool { return out.Folders[i].Name < out.Folders[j].Name })
 	sort.Slice(out.Tags, func(i, j int) bool { return out.Tags[i].Name < out.Tags[j].Name })
+	logger.Info("sieve mcp: list_facets", "folders", len(out.Folders), "tags", len(out.Tags))
 	return nil, out, nil
 }
 

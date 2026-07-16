@@ -67,6 +67,32 @@ func TestContainmentProfile_AddDirs_UserPath(t *testing.T) {
 	}
 }
 
+// Summary is the one-line log digest: tools, dirs, mcp, and the writes flag.
+func TestContainmentProfile_Summary(t *testing.T) {
+	s := DefaultContainmentProfile().Summary()
+	for _, want := range []string{"tools=[Read Grep Glob WebFetch]", "writes=off", "sieve"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("Summary() = %q, want it to contain %q", s, want)
+		}
+	}
+
+	// A live MCP server is tagged (live); adding a write tool flips writes=on.
+	p := DefaultContainmentProfile()
+	for i := range p.McpServers {
+		if p.McpServers[i].Name == "sieve" {
+			p.McpServers[i].URL = "http://127.0.0.1:9/mcp"
+		}
+	}
+	p.Tools = append(p.Tools, ToolGrant{Name: "Write"})
+	s = p.Summary()
+	if !strings.Contains(s, "sieve(live)") {
+		t.Errorf("Summary() = %q, want sieve(live)", s)
+	}
+	if !strings.Contains(s, "writes=on") {
+		t.Errorf("Summary() = %q, want writes=on after adding Write", s)
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

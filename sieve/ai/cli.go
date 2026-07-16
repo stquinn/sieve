@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
@@ -17,13 +18,21 @@ import (
 // CLIRunner executes an AI CLI invocation. It is the seam AIService depends on
 // so ops-level tests can stub the subprocess (CI has no CLI binaries installed);
 // execCLIRunner is the production implementation that actually spawns the process.
+//
+// op names the AI operation (e.g. "explain", "file", "web-clip-fetch") — it is
+// used only for log correlation so calls are distinguishable at a glance.
 type CLIRunner interface {
-	Run(cli, prompt, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string) (string, error)
+	Run(op, cli, prompt, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string) (string, error)
 }
 
 // execCLIRunner is the real CLIRunner: it renders the containment profile to args
 // and spawns the CLI subprocess.
 type execCLIRunner struct{}
+
+// bearerTokenRe matches the MCP bearer token inside the inline --mcp-config JSON
+// so it can be redacted from the logged command line (the token is a per-run
+// secret; the rest of the command line is safe to log verbatim).
+var bearerTokenRe = regexp.MustCompile(`Bearer [^"\s]+`)
 
 // Run executes the configured CLI using the provided prompt content via STDIN.
 // cwd sets the working directory for the subprocess — pass the note/buffer's
@@ -33,7 +42,7 @@ type execCLIRunner struct{}
 // profile is the containment floor rendered to CLI args (never config files);
 // libraryDir resolves the profile's symbolic "library" directory grant to the
 // concrete --add-dir path. The note directory is the cwd and needs no grant.
-func (execCLIRunner) Run(cli string, prompt string, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string) (string, error) {
+func (execCLIRunner) Run(op, cli, prompt, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
@@ -54,23 +63,92 @@ func (execCLIRunner) Run(cli string, prompt string, model string, timeoutSecs in
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	logger.Debug("cli exec start", "path", cmd.Path, "args", cmd.Args, "model", model, "cwd", cwd)
-	logger.LogPrompt(prompt)
+	// Concise, scannable breakdown of the call: what op, which CLI/model, the
+	// containment policy, the timeout, the exact command line (bearer token
+	// redacted), and the full prompt — all as ONE block so the whole invocation
+	// reads as a single unit when scanning the log.
+	logCwd := cwd
+	if logCwd == "" {
+		logCwd = "(process cwd)"
+	}
+	logModel := model
+	if logModel == "" {
+		logModel = "(default)"
+	}
+	logger.LogBlock(
+		fmt.Sprintf("AI REQUEST ▸ %s", op),
+		requestLogBody(cli, logModel, timeoutSecs, logCwd, profile, args, prompt))
 
+	started := time.Now()
 	err := cmd.Run()
+	elapsedMs := time.Since(started).Milliseconds()
 
 	if ctx.Err() == context.DeadlineExceeded {
-		logger.Error("cli timeout", "timeout_secs", timeoutSecs)
+		logger.Error("ai cli FAILED ▸ "+op, "cli", cli, "timeout_s", timeoutSecs, "elapsed_ms", elapsedMs)
 		return "", fmt.Errorf("cli timeout after %d seconds", timeoutSecs)
 	}
 	if err != nil {
-		logger.Error("cli execution error", "err", err, "stderr", stderr.String())
+		logger.Error("ai cli FAILED ▸ "+op, "cli", cli, "elapsed_ms", elapsedMs, "err", err, "stderr", strings.TrimSpace(stderr.String()))
 		return "", fmt.Errorf("cli execution error: %v (stderr: %s)", err, stderr.String())
 	}
 
 	out := stdout.String()
-	logger.LogResponse(out)
+	logger.LogBlock(
+		fmt.Sprintf("AI RESPONSE ▸ %s (%dms, %d bytes)", op, elapsedMs, len(out)),
+		out)
 	return out, nil
+}
+
+// redactedCommand renders the exact command line that was executed, with the MCP
+// bearer token replaced by *** so it never lands in the logs.
+func redactedCommand(cli string, args []string) string {
+	joined := cli + " " + strings.Join(args, " ")
+	return bearerTokenRe.ReplaceAllString(joined, "Bearer ***")
+}
+
+// requestLogBody composes the full body of the AI REQUEST log block: the
+// resolved cli/model/timeout/cwd, the containment policy summary, the exact
+// command line broken one flag-group per line (see formatCommandBlock), and —
+// after a blank-line gap — the full prompt text, so the whole invocation reads
+// as a single scannable unit.
+func requestLogBody(cli, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, args []string, prompt string) string {
+	// Labels are flush-left (not indented): logBlock trims the block's leading
+	// whitespace, which would otherwise strip only the first line's indent and
+	// leave the fields misaligned.
+	return fmt.Sprintf(
+		"cli       %s   (model: %s)\ntimeout   %ds\ncwd       %s\npolicy    %s\ncommand   %s\n\n%s",
+		cli, model, timeoutSecs, cwd, profile.Summary(), formatCommandBlock(cli, args), prompt)
+}
+
+// formatCommandBlock renders the executed command line as a multi-line,
+// indented block for scannable logging: the binary plus any leading bare
+// boolean flags (e.g. --print, --no-session-persistence) share the first line;
+// every subsequent --flag and its value(s) get their own indented continuation
+// line. The MCP bearer token is redacted (bearerTokenRe) so the per-run secret
+// never lands in the log.
+func formatCommandBlock(cli string, args []string) string {
+	i := 0
+	first := cli
+	for i < len(args) && strings.HasPrefix(args[i], "--") &&
+		(i+1 >= len(args) || strings.HasPrefix(args[i+1], "--")) {
+		first += " " + args[i]
+		i++
+	}
+
+	const continuationIndent = "\n              "
+	lines := []string{first}
+	for i < len(args) {
+		group := args[i]
+		i++
+		for i < len(args) && !strings.HasPrefix(args[i], "--") {
+			group += " " + args[i]
+			i++
+		}
+		lines = append(lines, group)
+	}
+
+	joined := strings.Join(lines, continuationIndent)
+	return bearerTokenRe.ReplaceAllString(joined, "Bearer ***")
 }
 
 // buildBaseArgs selects the per-backend adapter and renders the containment

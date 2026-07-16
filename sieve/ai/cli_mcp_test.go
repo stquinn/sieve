@@ -21,6 +21,59 @@ func profileWithMCP() domain.ContainmentProfile {
 	return p
 }
 
+// The logged command line must never expose the per-run MCP bearer token.
+func TestRedactedCommand_RedactsBearerToken(t *testing.T) {
+	args := buildBaseArgs("claude", "", "p", profileWithMCP(), libDir)
+	cmd := redactedCommand("claude", args)
+
+	if strings.Contains(cmd, "secret-token-abc") {
+		t.Fatalf("bearer token leaked into logged command line: %s", cmd)
+	}
+	if !strings.Contains(cmd, "Bearer ***") {
+		t.Fatalf("expected redacted 'Bearer ***' in logged command, got: %s", cmd)
+	}
+	// The rest of the command line is preserved (url still visible, just not the token).
+	if !strings.Contains(cmd, "--add-dir "+libDir) || !strings.Contains(cmd, "http://127.0.0.1:34115/mcp") {
+		t.Errorf("redaction over-stripped the command line: %s", cmd)
+	}
+}
+
+// The multi-line command block must still never expose the per-run MCP bearer
+// token, and must split the command into one flag-group per continuation line.
+func TestFormatCommandBlock_RedactsAndSplitsPerFlag(t *testing.T) {
+	args := buildBaseArgs("claude", "", "p", profileWithMCP(), libDir)
+	block := formatCommandBlock("claude", args)
+
+	if strings.Contains(block, "secret-token-abc") {
+		t.Fatalf("bearer token leaked into command block: %s", block)
+	}
+	if !strings.Contains(block, "Bearer ***") {
+		t.Fatalf("expected redacted 'Bearer ***' in command block, got: %s", block)
+	}
+
+	lines := strings.Split(block, "\n")
+	if len(lines) < 4 {
+		t.Fatalf("expected multi-line command block (binary + bare flags, then one line per --flag group), got %d lines: %q", len(lines), block)
+	}
+
+	// First line carries the binary plus the leading bare boolean flags.
+	if !strings.HasPrefix(lines[0], "claude --print --no-session-persistence") {
+		t.Errorf("first line should be binary + bare boolean flags, got: %q", lines[0])
+	}
+
+	// Every subsequent line is its own indented --flag group.
+	wantPrefixes := []string{"--add-dir " + libDir, "--mcp-config ", "--allowedTools "}
+	for idx, want := range wantPrefixes {
+		line := strings.TrimSpace(lines[idx+1])
+		if !strings.HasPrefix(line, want) {
+			t.Errorf("line %d: expected prefix %q, got %q", idx+1, want, line)
+		}
+		if lines[idx+1] == line {
+			t.Errorf("line %d: expected indentation, got none: %q", idx+1, lines[idx+1])
+		}
+	}
+}
+
 func TestBuildArgs_Claude_InjectsMCPWhenLive(t *testing.T) {
 	args := buildBaseArgs("claude", "", "p", profileWithMCP(), libDir)
 

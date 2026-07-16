@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"path/filepath"
 	"testing"
 
 	"sieve/sieve/domain"
@@ -8,17 +9,53 @@ import (
 	"sieve/store/filestore"
 )
 
+// noteDir must resolve to the note's OWN folder (which holds its markdown +
+// assets), not the note's parent directory — the CLI cwd and the "note"
+// containment grant scope to this note. Regression: an earlier filepath.Dir
+// over-scoped cwd to the buffers/category root.
+func TestNoteDir_ResolvesNoteOwnFolder(t *testing.T) {
+	root := t.TempDir()
+	fs, err := filestore.NewFileStore(root, "testhost")
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	ds, err := services.NewDocumentService(fs)
+	if err != nil {
+		t.Fatalf("NewDocumentService: %v", err)
+	}
+	doc, err := ds.New()
+	if err != nil {
+		t.Fatalf("New buffer: %v", err)
+	}
+	doc.SetBody([]byte("# note"))
+	doc, err = ds.Save(doc)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	svc := &AIService{documents: ds, storePath: root}
+	got := svc.noteDir(doc.UUID())
+
+	want := filepath.Join(root, doc.Storable().ExternalRef())
+	if got != want {
+		t.Fatalf("noteDir = %q, want the note's own folder %q", got, want)
+	}
+	if got == filepath.Dir(want) {
+		t.Errorf("noteDir over-scoped to the parent directory %q", got)
+	}
+}
+
 // captureRunner is a stub CLIRunner: it records the invocation and returns a
 // canned response instead of spawning a real CLI (CI has none installed).
 type captureRunner struct {
-	cli, prompt, model, cwd, libraryDir string
-	profile                             domain.ContainmentProfile
-	ret                                 string
-	err                                 error
+	op, cli, prompt, model, cwd, libraryDir string
+	profile                                 domain.ContainmentProfile
+	ret                                     string
+	err                                     error
 }
 
-func (c *captureRunner) Run(cli, prompt, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string) (string, error) {
-	c.cli, c.prompt, c.model, c.cwd, c.libraryDir, c.profile = cli, prompt, model, cwd, libraryDir, profile
+func (c *captureRunner) Run(op, cli, prompt, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string) (string, error) {
+	c.op, c.cli, c.prompt, c.model, c.cwd, c.libraryDir, c.profile = op, cli, prompt, model, cwd, libraryDir, profile
 	return c.ret, c.err
 }
 

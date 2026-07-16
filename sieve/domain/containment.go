@@ -1,6 +1,9 @@
 package domain
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // ContainmentProfile is the self-describing capability floor Sieve grants to an
 // AI CLI. It is rendered to CLI *arguments* by sieve/ai (never to config files),
@@ -170,6 +173,41 @@ func LoadContainmentProfile(overrides ContainmentProfile) ContainmentProfile {
 	}
 
 	return p
+}
+
+// Summary is a one-line, human-readable digest of the profile for logs: the
+// granted tools, the directory grants (kind or literal path), the MCP servers
+// (tagged (live) when a runtime URL is present), and whether writes are enabled.
+// It carries no secrets — the MCP bearer token lives only on the rendered args.
+func (p ContainmentProfile) Summary() string {
+	writes := "off"
+	for _, t := range p.Tools {
+		if t.Name == "Write" || t.Name == "Edit" {
+			writes = "on"
+		}
+	}
+	dirs := make([]string, 0, len(p.Directories))
+	for _, d := range p.Directories {
+		switch {
+		case d.Kind != "":
+			dirs = append(dirs, d.Kind)
+		case d.Path != "":
+			dirs = append(dirs, d.Path)
+		}
+	}
+	mcp := make([]string, 0, len(p.McpServers))
+	for _, m := range p.McpServers {
+		tag := m.Name
+		if strings.TrimSpace(m.URL) != "" {
+			tag += "(live)"
+		}
+		mcp = append(mcp, tag)
+	}
+	return fmt.Sprintf("tools=[%s] dirs=[%s] mcp=[%s] writes=%s",
+		strings.Join(p.ToolNames(), " "),
+		strings.Join(dirs, " "),
+		strings.Join(mcp, " "),
+		writes)
 }
 
 // AddDirs resolves directory grants to filesystem paths that must be granted via

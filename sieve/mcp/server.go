@@ -135,6 +135,9 @@ func (s *Server) tokenValid(tok string) bool {
 // the knowledge base.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !s.tokenValid(s.bearerToken(r)) {
+		// A hit on the localhost MCP without a valid per-run token is security-
+		// relevant (only the CLI Sieve launched should reach it) — surface it.
+		logger.Warn("sieve mcp: unauthorized request rejected", "remote", r.RemoteAddr, "path", r.URL.Path)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
