@@ -43,7 +43,7 @@ func TestProfile_RendersSavedUserAdditions(t *testing.T) {
 	settings.AI.Containment = domain.LoadContainmentProfile(domain.ContainmentProfile{
 		Tools:       []domain.ToolGrant{{Name: "Write"}},
 		Directories: []domain.DirGrant{{Path: "/scratch"}},
-		McpServers:  []domain.McpGrant{{Name: "my-server", Command: "npx", Args: []string{"-y", "pkg"}}},
+		McpServers:  []domain.McpGrant{{Name: "myserver", Command: "npx", Args: []string{"-y", "pkg"}}},
 	})
 	if err := state.SaveSettings(settings); err != nil {
 		t.Fatalf("SaveSettings: %v", err)
@@ -60,7 +60,7 @@ func TestProfile_RendersSavedUserAdditions(t *testing.T) {
 	}
 	foundServer := false
 	for _, m := range p.McpServers {
-		if m.Name == "my-server" {
+		if m.Name == "myserver" {
 			foundServer = true
 		}
 	}
@@ -70,10 +70,10 @@ func TestProfile_RendersSavedUserAdditions(t *testing.T) {
 
 	// End-to-end: the saved stdio server reaches the claude --mcp-config and allow list.
 	args := buildBaseArgs("claude", "", "prompt", p, root)
-	if cfg := flagValue(args, "--mcp-config"); !strings.Contains(cfg, "my-server") {
+	if cfg := flagValue(args, "--mcp-config"); !strings.Contains(cfg, "myserver") {
 		t.Errorf("user stdio server not injected into --mcp-config: %s", cfg)
 	}
-	if allow := flagValue(args, "--allowedTools"); !strings.Contains(allow, "mcp__my-server__*") {
+	if allow := flagValue(args, "--allowedTools"); !strings.Contains(allow, "mcp__myserver__*") {
 		t.Errorf("user server allow entry missing from --allowedTools: %s", allow)
 	}
 }

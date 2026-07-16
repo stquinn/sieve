@@ -300,9 +300,9 @@ func (mi mcpInjection) configJSON() string {
 			if len(headers) == 0 {
 				headers = nil
 			}
-			servers[m.Name] = mcpServerEntry{Type: m.EffectiveTransport(), URL: m.URL, Headers: headers}
+			servers[m.NamespaceID()] = mcpServerEntry{Type: m.EffectiveTransport(), URL: m.URL, Headers: headers}
 		default: // stdio
-			servers[m.Name] = mcpServerEntry{Command: m.Command, Args: m.Args, Env: m.Env}
+			servers[m.NamespaceID()] = mcpServerEntry{Command: m.Command, Args: m.Args, Env: m.Env}
 		}
 	}
 	b, err := json.Marshal(map[string]any{"mcpServers": servers})
@@ -313,12 +313,14 @@ func (mi mcpInjection) configJSON() string {
 	return string(b)
 }
 
-// allowEntries returns the per-server wildcard allow tokens (mcp__<name>__*).
-// The fully-wildcard mcp__* form is deliberately not used — CLIs reject it.
+// allowEntries returns the per-server wildcard allow tokens
+// (mcp__<NamespaceID>__*), using the SAME sanitized id as configJSON's config
+// key so the allow rule matches the CLI's tool namespace. The fully-wildcard
+// mcp__* form is deliberately not used — CLIs reject it.
 func (mi mcpInjection) allowEntries() []string {
 	entries := make([]string, 0, len(mi.servers))
 	for _, m := range mi.servers {
-		entries = append(entries, "mcp__"+m.Name+"__*")
+		entries = append(entries, "mcp__"+m.NamespaceID()+"__*")
 	}
 	return entries
 }

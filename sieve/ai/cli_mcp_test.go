@@ -74,6 +74,33 @@ func TestFormatCommandBlock_RedactsAndSplitsPerFlag(t *testing.T) {
 	}
 }
 
+// A server name with a space (or any non-identifier char) must render a sanitized
+// namespace id in BOTH the --mcp-config key and the mcp__<id>__* allow entry, so
+// the allow rule matches the CLI's sanitized tool namespace (a raw space also
+// breaks the CLI's allow-rule parser). Regression for the permission-prompt bug.
+func TestBuildArgs_SanitizesServerNameForNamespace(t *testing.T) {
+	p := domain.DefaultContainmentProfile()
+	p.McpServers = append(p.McpServers, domain.McpGrant{
+		Name: "MCP Server", Transport: "http", URL: "http://localhost:3001/mcp",
+	})
+	args := buildBaseArgs("claude", "", "p", p, libDir)
+
+	cfg := flagValue(args, "--mcp-config")
+	if strings.Contains(cfg, `"MCP Server"`) {
+		t.Errorf("--mcp-config used the raw spaced name as key: %s", cfg)
+	}
+	if !strings.Contains(cfg, `"MCP_Server"`) {
+		t.Errorf("--mcp-config missing sanitized key MCP_Server: %s", cfg)
+	}
+	allow := flagValue(args, "--allowedTools")
+	if strings.Contains(allow, "mcp__MCP Server__*") {
+		t.Errorf("allow entry kept the space (breaks the CLI parser): %s", allow)
+	}
+	if !strings.Contains(allow, "mcp__MCP_Server__*") {
+		t.Errorf("allow entry missing sanitized mcp__MCP_Server__*: %s", allow)
+	}
+}
+
 func TestBuildArgs_Claude_InjectsMCPWhenLive(t *testing.T) {
 	args := buildBaseArgs("claude", "", "p", profileWithMCP(), libDir)
 
@@ -220,10 +247,12 @@ func TestConfigJSON_PerTransportShapes(t *testing.T) {
 		t.Fatalf("configJSON not valid JSON: %v\n%s", err, cfg)
 	}
 
+	// Keys are the sanitized NamespaceID (hyphens → underscores) so they match the
+	// CLI's tool namespace + allow rules.
 	// stdio: command/args/env, no "type" key at all.
 	var stdio map[string]any
-	if err := json.Unmarshal(parsed.McpServers["stdio-srv"], &stdio); err != nil {
-		t.Fatalf("stdio-srv: %v", err)
+	if err := json.Unmarshal(parsed.McpServers["stdio_srv"], &stdio); err != nil {
+		t.Fatalf("stdio_srv: %v", err)
 	}
 	if _, has := stdio["type"]; has {
 		t.Errorf("stdio-srv should omit \"type\": %v", stdio)
@@ -237,8 +266,8 @@ func TestConfigJSON_PerTransportShapes(t *testing.T) {
 
 	// http: type=http, url, headers (static header preserved, no bearer since no Token).
 	var httpSrv map[string]any
-	if err := json.Unmarshal(parsed.McpServers["http-srv"], &httpSrv); err != nil {
-		t.Fatalf("http-srv: %v", err)
+	if err := json.Unmarshal(parsed.McpServers["http_srv"], &httpSrv); err != nil {
+		t.Fatalf("http_srv: %v", err)
 	}
 	if httpSrv["type"] != "http" {
 		t.Errorf("http-srv.type = %v, want http", httpSrv["type"])
@@ -256,8 +285,8 @@ func TestConfigJSON_PerTransportShapes(t *testing.T) {
 
 	// sse: type=sse, url, no headers key when there are none.
 	var sseSrv map[string]any
-	if err := json.Unmarshal(parsed.McpServers["sse-srv"], &sseSrv); err != nil {
-		t.Fatalf("sse-srv: %v", err)
+	if err := json.Unmarshal(parsed.McpServers["sse_srv"], &sseSrv); err != nil {
+		t.Fatalf("sse_srv: %v", err)
 	}
 	if sseSrv["type"] != "sse" {
 		t.Errorf("sse-srv.type = %v, want sse", sseSrv["type"])

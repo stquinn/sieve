@@ -54,6 +54,28 @@ type McpGrant struct {
 	Baseline  bool              `json:"baseline,omitempty"`
 }
 
+// NamespaceID is the server's identity in the MCP tool namespace
+// (mcp__<id>__<tool>). CLIs sanitize a server name to an identifier for that
+// namespace (e.g. "MCP Server" → "MCP_Server"), and a raw space additionally
+// breaks the --allowedTools allow-rule parser (a space splits the CSV token).
+// Emitting THIS sanitized form as both the inline-config key AND the allow entry
+// keeps them in lockstep with the namespace the CLI derives, so the
+// mcp__<id>__* wildcard actually matches. Non-[A-Za-z0-9_] runes become '_';
+// since we control the config key, the CLI has nothing further to sanitize.
+func (m McpGrant) NamespaceID() string {
+	var b strings.Builder
+	b.Grow(len(m.Name))
+	for _, r := range m.Name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	return b.String()
+}
+
 // EffectiveTransport resolves the grant's transport: the explicit Transport if
 // set, else "http" when a URL is present (a remote server configured without an
 // explicit transport is assumed HTTP), else "stdio" (the historical default).
