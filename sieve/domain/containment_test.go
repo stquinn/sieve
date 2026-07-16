@@ -68,29 +68,30 @@ func TestContainmentProfile_AddDirs_UserPath(t *testing.T) {
 	}
 }
 
-// Summary is the one-line log digest: tools, dirs, mcp, and the writes flag.
+// Summary is the one-line log digest: the plain granted facts (tools/dirs/mcp),
+// with no derived writes/exec verdict (that would be an unreliable guess; the
+// authoritative allow-list is in the command line).
 func TestContainmentProfile_Summary(t *testing.T) {
 	s := DefaultContainmentProfile().Summary()
-	for _, want := range []string{"tools=[Read Grep Glob WebFetch]", "writes=off", "sieve"} {
+	for _, want := range []string{"tools=[Read Grep Glob WebFetch]", "sieve"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("Summary() = %q, want it to contain %q", s, want)
 		}
 	}
+	// No guessed capability verdict.
+	if strings.Contains(s, "writes=") || strings.Contains(s, "exec=") {
+		t.Errorf("Summary() = %q, must not include a derived writes=/exec= verdict", s)
+	}
 
-	// A live MCP server is tagged (live); adding a write tool flips writes=on.
+	// A live MCP server is tagged (live).
 	p := DefaultContainmentProfile()
 	for i := range p.McpServers {
 		if p.McpServers[i].Name == "sieve" {
 			p.McpServers[i].URL = "http://127.0.0.1:9/mcp"
 		}
 	}
-	p.Tools = append(p.Tools, ToolGrant{Name: "Write"})
-	s = p.Summary()
-	if !strings.Contains(s, "sieve(live)") {
-		t.Errorf("Summary() = %q, want sieve(live)", s)
-	}
-	if !strings.Contains(s, "writes=on") {
-		t.Errorf("Summary() = %q, want writes=on after adding Write", s)
+	if !strings.Contains(p.Summary(), "sieve(live)") {
+		t.Errorf("Summary() = %q, want sieve(live)", p.Summary())
 	}
 }
 
