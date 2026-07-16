@@ -1,7 +1,17 @@
+> **✅ DONE — #36 closed 2026-07-16.** Phases 1–3 shipped: containment floor
+> (`ContainmentProfile`→per-backend args, skip-permissions removed), the internal
+> read-only Sieve MCP (`/mcp`, token-authed, verbs `search`/`get_meta`/`get_note`/
+> `list_facets`, inline `--mcp-config` injection for claude/copilot), profile
+> persistence (baseline-in-code / additions-in-file), and the "AI Access" settings
+> panel. Commits `d120d12`, `d5da4a4`, `e5dc315`. **Phase 4** (agy metadata/MCP
+> layer via a startup-written `mcp_config.json`) is deferred — optional, agy
+> library access already works via `--add-dir`. Search is an O(n) full-load
+> stopgap until #37's materialized index lands. This spec is archived history.
+
 # AI CLI Containment + the internal Sieve MCP — a user-governed capability profile rendered to CLI args
 
-**Status:** Draft
-**Tracked:** #36 (constrain the CLI). Enables #37 (metadata views share the materialized index the MCP reads).
+**Status:** IMPLEMENTED (Phases 1–3, 2026-07-16); Phase 4 deferred
+**Tracked:** #36 (constrain the CLI) — CLOSED. Enables #37 (metadata views share the materialized index the MCP reads).
 **Date:** 2026-07-16
 **Companion:** `../brainstorm-blocks-all-the-way-up.md` §7 (the MCP is the "right tools" seam for AI-generated blocks and cross-app use).
 
