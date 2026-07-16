@@ -26,6 +26,7 @@ type AIService struct {
 	prompts   *PromptService
 	documents *services.DocumentService
 	storePath string
+	runner    CLIRunner // exec seam; stubbable in tests
 }
 
 func NewAIService(state *services.StateService, prompts *PromptService, documents *services.DocumentService, storePath string) *AIService {
@@ -34,6 +35,7 @@ func NewAIService(state *services.StateService, prompts *PromptService, document
 		prompts:   prompts,
 		documents: documents,
 		storePath: storePath,
+		runner:    execCLIRunner{},
 	}
 }
 
@@ -112,7 +114,7 @@ func (s *AIService) RunExplain(content, history, question, noteUUID string) (str
 	p = strings.ReplaceAll(p, "{history}", history)
 	p = strings.ReplaceAll(p, "{action}", question)
 
-	return RunCLI(settings.CLI, p, settings.Model, s.timeoutFor(settings, "explain"), noteCwd)
+	return s.runner.Run(settings.CLI, p, settings.Model, s.timeoutFor(settings, "explain"), noteCwd, domain.DefaultContainmentProfile(), s.storePath)
 }
 
 // RunAsk asks the AI a question with the given content as context. history may
@@ -132,7 +134,7 @@ func (s *AIService) RunAsk(content, history, question, noteUUID string) (string,
 	p = strings.ReplaceAll(p, "{history}", history)
 	p = strings.ReplaceAll(p, "{action}", question)
 
-	return RunCLI(settings.CLI, p, settings.Model, s.timeoutFor(settings, "ask"), noteCwd)
+	return s.runner.Run(settings.CLI, p, settings.Model, s.timeoutFor(settings, "ask"), noteCwd, domain.DefaultContainmentProfile(), s.storePath)
 }
 
 // DescribeImage sends an image to the configured AI and returns alt text, a
@@ -175,7 +177,7 @@ func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string
 	logger.Info("About to Describe", "path", imagePath)
 	p := strings.ReplaceAll(prompt, "{image_filename}", filepath.Base(imagePath))
 	cwd := filepath.Dir(imagePath)
-	resp, err := RunCLI(settings.CLI, p, settings.Model, s.timeoutFor(settings, "image"), cwd)
+	resp, err := s.runner.Run(settings.CLI, p, settings.Model, s.timeoutFor(settings, "image"), cwd, domain.DefaultContainmentProfile(), s.storePath)
 	if err != nil {
 		return domain.ImageDesc{}, err
 	}
@@ -198,7 +200,7 @@ func (s *AIService) RefineLanguage(content, currentLanguage, detectionMethod str
 	p = strings.ReplaceAll(p, "{current_language}", currentLanguage)
 	p = strings.ReplaceAll(p, "{detection_method}", detectionMethod)
 
-	resp, err := RunCLI(settings.CLI, p, settings.Model, s.timeoutFor(settings, "refine"), "")
+	resp, err := s.runner.Run(settings.CLI, p, settings.Model, s.timeoutFor(settings, "refine"), "", domain.DefaultContainmentProfile(), s.storePath)
 	if err != nil {
 		return "", err
 	}
@@ -324,7 +326,7 @@ func (s *AIService) runEvaluateBuffer(meta domain.DocumentMeta, body []byte, set
 	p = strings.ReplaceAll(p, "{now}", time.Now().Format(time.RFC3339))
 	p = strings.ReplaceAll(p, "{content}", string(body))
 
-	respText, err := RunCLI(settings.CLI, p, settings.Model, s.timeoutFor(settings, "file"), "")
+	respText, err := s.runner.Run(settings.CLI, p, settings.Model, s.timeoutFor(settings, "file"), "", domain.DefaultContainmentProfile(), s.storePath)
 	if err != nil {
 		return nil, err
 	}
@@ -471,7 +473,7 @@ func (s *AIService) RunWebClip(uuid, id, source, mode, docContent string) (title
 		docDir = filepath.Join(s.storePath, doc.Storable().ExternalRef())
 	}
 
-	raw, err := RunCLI(settings.CLI, prompt, settings.Model, s.timeoutFor(settings, promptName), cwd)
+	raw, err := s.runner.Run(settings.CLI, prompt, settings.Model, s.timeoutFor(settings, promptName), cwd, domain.DefaultContainmentProfile(), s.storePath)
 	if err != nil {
 		return "", "", err
 	}
