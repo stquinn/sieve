@@ -173,6 +173,13 @@ func (a *App) startup(ctx context.Context) {
 	a.State = a.ServiceProvider.State
 	a.Prompts = a.ServiceProvider.Prompts
 
+	// Tell the internal Sieve MCP the origin the CLI subprocess reaches the app
+	// on (the localhost listener bound in main, before this startup runs). The
+	// URL feeds the containment profile the AI service injects into CLI calls.
+	if a.ServiceProvider.MCP != nil {
+		a.ServiceProvider.MCP.SetBaseURL(fmt.Sprintf("http://127.0.0.1:%d", a.DevServerPort))
+	}
+
 	if err := fs.RunMigrationIfNeeded([]store.Category{domain.LibraryCategory, domain.WorkingCopy}); err != nil {
 		logger.Error("store migration failed", "err", err)
 	}

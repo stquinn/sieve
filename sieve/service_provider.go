@@ -6,6 +6,7 @@ import (
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
 	"sieve/sieve/editor"
+	"sieve/sieve/mcp"
 	"sieve/sieve/services"
 	"sieve/store"
 	"time"
@@ -23,6 +24,7 @@ type ServiceProvider struct {
 	Jobs        *services.JobTracker
 	Engine      *services.JobEngine
 	LinkPreview *services.LinkPreviewService
+	MCP         *mcp.Server
 }
 
 // BlockServices returns the scoped dependency bag for block processors.
@@ -67,6 +69,12 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 		return
 	}
 	s.AI = ai.NewAIService(s.State, s.Prompts, s.Documents, storePath)
+	// Internal Sieve MCP: read-only knowledge-base surface mounted at /mcp,
+	// injected into contained CLI calls. Its runtime URL (the localhost listener
+	// port) is set from main once the listener binds; the AI service pulls the
+	// URL + a per-call bearer token from it at profile-render time.
+	s.MCP = mcp.NewServer(s.Documents)
+	s.AI.SetMCPEndpoint(s.MCP)
 	s.LinkPreview = services.NewLinkPreviewService()
 	settings := s.State.LoadSettings()
 	s.ApplyRetention(settings.MaxHistoryVersions)

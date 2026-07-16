@@ -3,6 +3,7 @@ package ai
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -98,7 +99,12 @@ func (claudeBackend) buildArgs(profile domain.ContainmentProfile, libraryDir, mo
 	for _, dir := range profile.AddDirs(libraryDir) {
 		args = append(args, "--add-dir", dir)
 	}
-	if tools := profile.ToolNames(); len(tools) > 0 {
+	inj := newMCPInjection(profile)
+	if inj.present() {
+		args = append(args, "--mcp-config", inj.configJSON())
+	}
+	tools := append(profile.ToolNames(), inj.allowEntries()...)
+	if len(tools) > 0 {
 		args = append(args, "--allowedTools", strings.Join(tools, ","))
 	}
 	if model != "" {
@@ -119,7 +125,12 @@ func (copilotBackend) buildArgs(profile domain.ContainmentProfile, libraryDir, m
 		args = append(args, "--add-dir", dir)
 	}
 	args = append(args, "--disallow-temp-dir")
-	if tools := profile.ToolNames(); len(tools) > 0 {
+	inj := newMCPInjection(profile)
+	if inj.present() {
+		args = append(args, "--additional-mcp-config", inj.configJSON())
+	}
+	tools := append(profile.ToolNames(), inj.allowEntries()...)
+	if len(tools) > 0 {
 		args = append(args, "--allow-tool", strings.Join(tools, ","))
 	}
 	args = append(args, "--deny-tool", "shell,write")
@@ -147,4 +158,63 @@ func (agyBackend) buildArgs(profile domain.ContainmentProfile, libraryDir, model
 		args = append(args, "--model", model)
 	}
 	return append(args, "--print", prompt)
+}
+
+// mcpInjection renders a containment profile's live HTTP MCP servers (those with
+// a runtime URL — the builtin Sieve server) to a CLI's inline config flag and its
+// per-server allow entries. Servers without a URL (unstarted, or user-added stdio
+// servers) are not injectable per-call and are skipped, so when nothing is live
+// the backend renders exactly as before (no MCP flags), keeping the no-server
+// path — and existing tests — unchanged.
+type mcpInjection struct {
+	servers []domain.McpGrant
+}
+
+// newMCPInjection collects the profile's MCP servers that carry a runtime URL.
+func newMCPInjection(profile domain.ContainmentProfile) mcpInjection {
+	var live []domain.McpGrant
+	for _, m := range profile.McpServers {
+		if strings.TrimSpace(m.URL) != "" {
+			live = append(live, m)
+		}
+	}
+	return mcpInjection{servers: live}
+}
+
+func (mi mcpInjection) present() bool { return len(mi.servers) > 0 }
+
+// mcpHTTPServer is one entry in the inline --mcp-config payload.
+type mcpHTTPServer struct {
+	Type    string            `json:"type"`
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
+// configJSON builds the inline JSON for --mcp-config / --additional-mcp-config:
+// {"mcpServers":{"<name>":{"type":"http","url":"…","headers":{"Authorization":"Bearer …"}}}}.
+func (mi mcpInjection) configJSON() string {
+	servers := make(map[string]mcpHTTPServer, len(mi.servers))
+	for _, m := range mi.servers {
+		var headers map[string]string
+		if strings.TrimSpace(m.Token) != "" {
+			headers = map[string]string{"Authorization": "Bearer " + m.Token}
+		}
+		servers[m.Name] = mcpHTTPServer{Type: "http", URL: m.URL, Headers: headers}
+	}
+	b, err := json.Marshal(map[string]any{"mcpServers": servers})
+	if err != nil {
+		logger.Error("cli: marshal mcp config", "err", err)
+		return ""
+	}
+	return string(b)
+}
+
+// allowEntries returns the per-server wildcard allow tokens (mcp__<name>__*).
+// The fully-wildcard mcp__* form is deliberately not used — CLIs reject it.
+func (mi mcpInjection) allowEntries() []string {
+	entries := make([]string, 0, len(mi.servers))
+	for _, m := range mi.servers {
+		entries = append(entries, "mcp__"+m.Name+"__*")
+	}
+	return entries
 }

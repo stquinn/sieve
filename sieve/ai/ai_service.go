@@ -19,6 +19,15 @@ import (
 	"golang.org/x/net/html"
 )
 
+// MCPEndpoint resolves the runtime URL + a freshly issued per-call bearer token
+// for the internal Sieve MCP server. It is the seam the AI service uses to fill
+// the builtin MCP grant in the containment profile at render time (URL and token
+// are runtime-only, never persisted). An empty URL means no server is reachable,
+// so the profile renders without MCP flags. The internal MCP server satisfies it.
+type MCPEndpoint interface {
+	Endpoint() (url, token string)
+}
+
 // AIService owns all AI evaluation and filing operations. It resolves prompt
 // templates, settings, and folder lists internally so callers need no boilerplate.
 type AIService struct {
@@ -26,7 +35,8 @@ type AIService struct {
 	prompts   *PromptService
 	documents *services.DocumentService
 	storePath string
-	runner    CLIRunner // exec seam; stubbable in tests
+	runner    CLIRunner   // exec seam; stubbable in tests
+	mcp       MCPEndpoint // internal Sieve MCP endpoint; nil until wired
 }
 
 func NewAIService(state *services.StateService, prompts *PromptService, documents *services.DocumentService, storePath string) *AIService {
@@ -37,6 +47,33 @@ func NewAIService(state *services.StateService, prompts *PromptService, document
 		storePath: storePath,
 		runner:    execCLIRunner{},
 	}
+}
+
+// SetMCPEndpoint wires the internal Sieve MCP endpoint. Once set, every AI call's
+// containment profile carries the live server URL + a fresh per-call bearer token
+// in its builtin MCP grant, so the contained CLI can query the knowledge base.
+func (s *AIService) SetMCPEndpoint(e MCPEndpoint) { s.mcp = e }
+
+// profile returns the containment floor for a CLI call: the default baseline,
+// with the builtin Sieve MCP grant's runtime URL + per-call token filled in when
+// an endpoint is wired and reachable. When no endpoint is running the builtin
+// grant keeps its empty URL and the backend renders no MCP flags.
+func (s *AIService) profile() domain.ContainmentProfile {
+	p := domain.DefaultContainmentProfile()
+	if s.mcp == nil {
+		return p
+	}
+	url, token := s.mcp.Endpoint()
+	if url == "" {
+		return p
+	}
+	for i := range p.McpServers {
+		if p.McpServers[i].Builtin {
+			p.McpServers[i].URL = url
+			p.McpServers[i].Token = token
+		}
+	}
+	return p
 }
 
 // EvaluateAndFileDoc runs the full evaluate-and-file pipeline for the document
@@ -114,7 +151,7 @@ func (s *AIService) RunExplain(content, history, question, noteUUID string) (str
 	p = strings.ReplaceAll(p, "{history}", history)
 	p = strings.ReplaceAll(p, "{action}", question)
 
-	return s.runner.Run(settings.CLI, p, settings.Model, s.timeoutFor(settings, "explain"), noteCwd, domain.DefaultContainmentProfile(), s.storePath)
+	return s.runner.Run(settings.CLI, p, settings.Model, s.timeoutFor(settings, "explain"), noteCwd, s.profile(), s.storePath)
 }
 
 // RunAsk asks the AI a question with the given content as context. history may
@@ -134,7 +171,7 @@ func (s *AIService) RunAsk(content, history, question, noteUUID string) (string,
 	p = strings.ReplaceAll(p, "{history}", history)
 	p = strings.ReplaceAll(p, "{action}", question)
 
-	return s.runner.Run(settings.CLI, p, settings.Model, s.timeoutFor(settings, "ask"), noteCwd, domain.DefaultContainmentProfile(), s.storePath)
+	return s.runner.Run(settings.CLI, p, settings.Model, s.timeoutFor(settings, "ask"), noteCwd, s.profile(), s.storePath)
 }
 
 // DescribeImage sends an image to the configured AI and returns alt text, a
@@ -177,7 +214,7 @@ func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string
 	logger.Info("About to Describe", "path", imagePath)
 	p := strings.ReplaceAll(prompt, "{image_filename}", filepath.Base(imagePath))
 	cwd := filepath.Dir(imagePath)
-	resp, err := s.runner.Run(settings.CLI, p, settings.Model, s.timeoutFor(settings, "image"), cwd, domain.DefaultContainmentProfile(), s.storePath)
+	resp, err := s.runner.Run(settings.CLI, p, settings.Model, s.timeoutFor(settings, "image"), cwd, s.profile(), s.storePath)
 	if err != nil {
 		return domain.ImageDesc{}, err
 	}
@@ -200,7 +237,7 @@ func (s *AIService) RefineLanguage(content, currentLanguage, detectionMethod str
 	p = strings.ReplaceAll(p, "{current_language}", currentLanguage)
 	p = strings.ReplaceAll(p, "{detection_method}", detectionMethod)
 
-	resp, err := s.runner.Run(settings.CLI, p, settings.Model, s.timeoutFor(settings, "refine"), "", domain.DefaultContainmentProfile(), s.storePath)
+	resp, err := s.runner.Run(settings.CLI, p, settings.Model, s.timeoutFor(settings, "refine"), "", s.profile(), s.storePath)
 	if err != nil {
 		return "", err
 	}
@@ -326,7 +363,7 @@ func (s *AIService) runEvaluateBuffer(meta domain.DocumentMeta, body []byte, set
 	p = strings.ReplaceAll(p, "{now}", time.Now().Format(time.RFC3339))
 	p = strings.ReplaceAll(p, "{content}", string(body))
 
-	respText, err := s.runner.Run(settings.CLI, p, settings.Model, s.timeoutFor(settings, "file"), "", domain.DefaultContainmentProfile(), s.storePath)
+	respText, err := s.runner.Run(settings.CLI, p, settings.Model, s.timeoutFor(settings, "file"), "", s.profile(), s.storePath)
 	if err != nil {
 		return nil, err
 	}
@@ -473,7 +510,7 @@ func (s *AIService) RunWebClip(uuid, id, source, mode, docContent string) (title
 		docDir = filepath.Join(s.storePath, doc.Storable().ExternalRef())
 	}
 
-	raw, err := s.runner.Run(settings.CLI, prompt, settings.Model, s.timeoutFor(settings, promptName), cwd, domain.DefaultContainmentProfile(), s.storePath)
+	raw, err := s.runner.Run(settings.CLI, prompt, settings.Model, s.timeoutFor(settings, promptName), cwd, s.profile(), s.storePath)
 	if err != nil {
 		return "", "", err
 	}

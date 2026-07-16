@@ -32,13 +32,19 @@ type DirGrant struct {
 }
 
 // McpGrant permits an MCP server. Builtin marks the internal Sieve server, whose
-// runtime URL + bearer token are generated per-call and never persisted.
+// runtime URL + bearer token are generated per-call and never persisted (they
+// would be stale/secret-leaking in a synced library). Command/Args/Env describe
+// a user-added stdio server; URL/Token are populated at render time for the
+// builtin HTTP server only.
 type McpGrant struct {
-	Name     string   `json:"name"`
-	Builtin  bool     `json:"builtin,omitempty"`
-	Command  string   `json:"command,omitempty"`
-	Args     []string `json:"args,omitempty"`
-	Baseline bool     `json:"baseline,omitempty"`
+	Name     string            `json:"name"`
+	Builtin  bool              `json:"builtin,omitempty"`
+	Command  string            `json:"command,omitempty"`
+	Args     []string          `json:"args,omitempty"`
+	Env      map[string]string `json:"env,omitempty"`
+	URL      string            `json:"-"` // runtime-only (builtin sieve server); never persisted
+	Token    string            `json:"-"` // runtime-only per-run bearer; never persisted
+	Baseline bool              `json:"baseline,omitempty"`
 }
 
 // DefaultContainmentProfile seeds the baseline capability floor: read-only tools
@@ -73,6 +79,97 @@ func (p ContainmentProfile) ToolNames() []string {
 		}
 	}
 	return names
+}
+
+// WithoutBaseline returns a copy of the profile with all Baseline:true entries
+// removed. This is the persisted (settings.json) form: defaults live in code
+// via DefaultContainmentProfile, so only user additions are ever written.
+func (p ContainmentProfile) WithoutBaseline() ContainmentProfile {
+	var out ContainmentProfile
+	for _, t := range p.Tools {
+		if !t.Baseline {
+			out.Tools = append(out.Tools, t)
+		}
+	}
+	for _, d := range p.Directories {
+		if !d.Baseline {
+			out.Directories = append(out.Directories, d)
+		}
+	}
+	for _, m := range p.McpServers {
+		if !m.Baseline {
+			out.McpServers = append(out.McpServers, m)
+		}
+	}
+	return out
+}
+
+// LoadContainmentProfile overlays persisted overrides onto the baseline
+// capability floor: it starts from DefaultContainmentProfile() and appends
+// each override entry, deduped by identity (tool/mcp Name; directory Kind, or
+// Path when Kind is empty). On a collision the baseline entry wins — a user
+// override naming an already-baseline capability never duplicates or
+// downgrades it. This is the inverse of WithoutBaseline and is how settings.json
+// overrides are reconstituted into the full in-memory profile.
+func LoadContainmentProfile(overrides ContainmentProfile) ContainmentProfile {
+	p := DefaultContainmentProfile()
+
+	toolIdx := make(map[string]int, len(p.Tools))
+	for i, t := range p.Tools {
+		toolIdx[t.Name] = i
+	}
+	for _, t := range overrides.Tools {
+		if i, ok := toolIdx[t.Name]; ok {
+			if p.Tools[i].Baseline {
+				continue // baseline wins
+			}
+			p.Tools[i] = t
+			continue
+		}
+		toolIdx[t.Name] = len(p.Tools)
+		p.Tools = append(p.Tools, t)
+	}
+
+	dirKey := func(d DirGrant) string {
+		if d.Kind != "" {
+			return "kind:" + d.Kind
+		}
+		return "path:" + d.Path
+	}
+	dirIdx := make(map[string]int, len(p.Directories))
+	for i, d := range p.Directories {
+		dirIdx[dirKey(d)] = i
+	}
+	for _, d := range overrides.Directories {
+		k := dirKey(d)
+		if i, ok := dirIdx[k]; ok {
+			if p.Directories[i].Baseline {
+				continue // baseline wins
+			}
+			p.Directories[i] = d
+			continue
+		}
+		dirIdx[k] = len(p.Directories)
+		p.Directories = append(p.Directories, d)
+	}
+
+	mcpIdx := make(map[string]int, len(p.McpServers))
+	for i, m := range p.McpServers {
+		mcpIdx[m.Name] = i
+	}
+	for _, m := range overrides.McpServers {
+		if i, ok := mcpIdx[m.Name]; ok {
+			if p.McpServers[i].Baseline {
+				continue // baseline wins
+			}
+			p.McpServers[i] = m
+			continue
+		}
+		mcpIdx[m.Name] = len(p.McpServers)
+		p.McpServers = append(p.McpServers, m)
+	}
+
+	return p
 }
 
 // AddDirs resolves directory grants to filesystem paths that must be granted via

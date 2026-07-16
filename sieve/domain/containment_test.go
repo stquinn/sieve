@@ -87,3 +87,148 @@ func contains(xs []string, want string) bool {
 	}
 	return false
 }
+
+// WithoutBaseline is the serialisation form: baseline entries (Sieve-owned
+// defaults) are dropped so settings.json holds only user additions.
+func TestContainmentProfile_WithoutBaseline_DropsBaselineEntries(t *testing.T) {
+	p := DefaultContainmentProfile()
+	got := p.WithoutBaseline()
+
+	if len(got.Tools) != 0 {
+		t.Errorf("WithoutBaseline().Tools = %+v, want none (all baseline)", got.Tools)
+	}
+	if len(got.Directories) != 0 {
+		t.Errorf("WithoutBaseline().Directories = %+v, want none (all baseline)", got.Directories)
+	}
+	if len(got.McpServers) != 0 {
+		t.Errorf("WithoutBaseline().McpServers = %+v, want none (all baseline)", got.McpServers)
+	}
+}
+
+// WithoutBaseline keeps user (non-baseline) additions.
+func TestContainmentProfile_WithoutBaseline_KeepsUserAdditions(t *testing.T) {
+	p := DefaultContainmentProfile()
+	p.Directories = append(p.Directories, DirGrant{Path: "/x"})
+	p.McpServers = append(p.McpServers, McpGrant{Name: "forgejo", Command: "forgejo-mcp"})
+
+	got := p.WithoutBaseline()
+
+	if len(got.Tools) != 0 {
+		t.Errorf("WithoutBaseline().Tools = %+v, want none", got.Tools)
+	}
+	if len(got.Directories) != 1 || got.Directories[0].Path != "/x" {
+		t.Fatalf("WithoutBaseline().Directories = %+v, want just [{Path: /x}]", got.Directories)
+	}
+	if len(got.McpServers) != 1 || got.McpServers[0].Name != "forgejo" {
+		t.Fatalf("WithoutBaseline().McpServers = %+v, want just [{Name: forgejo}]", got.McpServers)
+	}
+}
+
+// LoadContainmentProfile overlays overrides onto the default: with an empty
+// override profile the result is exactly the default.
+func TestLoadContainmentProfile_EmptyOverrides_YieldsDefault(t *testing.T) {
+	got := LoadContainmentProfile(ContainmentProfile{})
+	want := DefaultContainmentProfile()
+
+	if !equalStrings(got.ToolNames(), want.ToolNames()) {
+		t.Fatalf("ToolNames = %v, want %v", got.ToolNames(), want.ToolNames())
+	}
+	if len(got.Directories) != len(want.Directories) {
+		t.Fatalf("Directories = %+v, want %+v", got.Directories, want.Directories)
+	}
+	if len(got.McpServers) != len(want.McpServers) {
+		t.Fatalf("McpServers = %+v, want %+v", got.McpServers, want.McpServers)
+	}
+}
+
+// LoadContainmentProfile appends user additions on top of the default set.
+func TestLoadContainmentProfile_AppendsUserAdditions(t *testing.T) {
+	overrides := ContainmentProfile{
+		Directories: []DirGrant{{Path: "/x"}},
+		McpServers:  []McpGrant{{Name: "forgejo", Command: "forgejo-mcp", Args: []string{"serve"}}},
+	}
+	got := LoadContainmentProfile(overrides)
+
+	// Baseline tools/dirs/mcp are still present.
+	if !equalStrings(got.ToolNames(), []string{"Read", "Grep", "Glob", "WebFetch"}) {
+		t.Fatalf("ToolNames = %v, want baseline tools preserved", got.ToolNames())
+	}
+	foundLibrary, foundNote, foundX := false, false, false
+	for _, d := range got.Directories {
+		switch {
+		case d.Kind == "library":
+			foundLibrary = true
+		case d.Kind == "note":
+			foundNote = true
+		case d.Path == "/x":
+			foundX = true
+			if d.Baseline {
+				t.Errorf("user directory /x should not be baseline")
+			}
+		}
+	}
+	if !foundLibrary || !foundNote || !foundX {
+		t.Fatalf("Directories = %+v, want library+note+/x", got.Directories)
+	}
+
+	foundSieve, foundForgejo := false, false
+	for _, m := range got.McpServers {
+		switch m.Name {
+		case "sieve":
+			foundSieve = true
+		case "forgejo":
+			foundForgejo = true
+			if m.Baseline {
+				t.Errorf("user mcp server forgejo should not be baseline")
+			}
+			if m.Command != "forgejo-mcp" {
+				t.Errorf("forgejo Command = %q, want forgejo-mcp", m.Command)
+			}
+		}
+	}
+	if !foundSieve || !foundForgejo {
+		t.Fatalf("McpServers = %+v, want sieve+forgejo", got.McpServers)
+	}
+}
+
+// LoadContainmentProfile dedups by name/kind+path: an override naming an
+// existing baseline entry does not duplicate it, and baseline wins (the
+// baseline entry is never downgraded to a user entry of the same name).
+func TestLoadContainmentProfile_DedupBaselineWins(t *testing.T) {
+	overrides := ContainmentProfile{
+		Tools: []ToolGrant{{Name: "Read"}}, // user re-adds an existing baseline tool
+	}
+	got := LoadContainmentProfile(overrides)
+
+	count := 0
+	var readGrant ToolGrant
+	for _, tg := range got.Tools {
+		if tg.Name == "Read" {
+			count++
+			readGrant = tg
+		}
+	}
+	if count != 1 {
+		t.Fatalf("Read tool count = %d, want 1 (deduped)", count)
+	}
+	if !readGrant.Baseline {
+		t.Errorf("Read grant Baseline = false, want true (baseline wins over user override)")
+	}
+}
+
+// Round-trip: default -> WithoutBaseline -> LoadContainmentProfile == default.
+func TestContainmentProfile_RoundTrip_Default(t *testing.T) {
+	def := DefaultContainmentProfile()
+	overrides := def.WithoutBaseline()
+	got := LoadContainmentProfile(overrides)
+
+	if !equalStrings(got.ToolNames(), def.ToolNames()) {
+		t.Fatalf("round-trip ToolNames = %v, want %v", got.ToolNames(), def.ToolNames())
+	}
+	if len(got.Directories) != len(def.Directories) {
+		t.Fatalf("round-trip Directories = %+v, want %+v", got.Directories, def.Directories)
+	}
+	if len(got.McpServers) != len(def.McpServers) {
+		t.Fatalf("round-trip McpServers = %+v, want %+v", got.McpServers, def.McpServers)
+	}
+}

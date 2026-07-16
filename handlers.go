@@ -58,6 +58,17 @@ func newAPIHandler(app *App, hub *sse.Hub, sp *sieve.ServiceProvider) (*apiHandl
 		Jobs:            jobTracker,
 	}.Mount(r)
 	r.Get("/sse", h.hub.ServeHTTP)
+	// Internal Sieve MCP (read-only knowledge base). The server is built at
+	// Init (after this mount), so the route derefs sp.MCP live at request time
+	// — same pattern as the sp-holding request handlers. It authenticates via a
+	// per-run bearer token before delegating to the streamable MCP handler.
+	r.Handle("/mcp", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if sp.MCP == nil {
+			http.Error(w, "sieve mcp unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		sp.MCP.ServeHTTP(w, req)
+	}))
 	r.Handle("/static/*", http.StripPrefix("/static", h.static))
 	r.Get("/", h.handleIndex)
 

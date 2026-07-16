@@ -38,6 +38,16 @@ type Settings struct {
 	// PromptTimeouts overrides the CLI timeout (seconds) per prompt name. A
 	// zero or absent entry falls back to CLITimeoutLong.
 	PromptTimeouts map[string]int `json:"prompt_timeouts,omitempty"`
+	AI             AISettings     `json:"ai,omitempty"`
+}
+
+// AISettings groups AI-subsystem settings under a nested "ai" object.
+type AISettings struct {
+	// Containment is always the FULL profile in memory (defaults + user
+	// additions overlaid — see LoadContainmentProfile); ContainmentProfile.
+	// WithoutBaseline is applied only at serialisation time (Settings.Marshal),
+	// so settings.json holds just the user's additions on top of code defaults.
+	Containment ContainmentProfile `json:"containment"`
 }
 
 // Tier returns the capability tier based on whether the configured CLI is
@@ -121,6 +131,9 @@ func ParseSettings(data []byte) Settings {
 	if len(loaded.PromptTimeouts) > 0 {
 		s.PromptTimeouts = loaded.PromptTimeouts
 	}
+	// Overlay persisted containment overrides onto the default profile so the
+	// in-memory settings always carry the full profile (defaults + additions).
+	s.AI.Containment = LoadContainmentProfile(loaded.AI.Containment)
 
 	if pretty, err := json.MarshalIndent(s, "", "  "); err == nil {
 		logger.Debug("ParseSettings: loaded", "settings", string(pretty))
@@ -129,8 +142,11 @@ func ParseSettings(data []byte) Settings {
 	return s
 }
 
-// Marshal serialises settings to indented JSON.
+// Marshal serialises settings to indented JSON. Baseline containment entries
+// are dropped before writing — settings.json holds only user additions, the
+// baseline capability floor is reconstructed from code on load.
 func (s Settings) Marshal() ([]byte, error) {
+	s.AI.Containment = s.AI.Containment.WithoutBaseline()
 	return json.MarshalIndent(s, "", "  ")
 }
 
@@ -142,6 +158,7 @@ func DefaultSettings() Settings {
 		Theme:              "sublime",
 		MaxHistoryVersions: 200,
 		WorkerPools:        map[string]int{}, // empty ⇒ every category uses the engine's defaultN
+		AI:                 AISettings{Containment: DefaultContainmentProfile()},
 	}
 }
 
