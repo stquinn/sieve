@@ -71,7 +71,7 @@ func Debug(msg string, args ...any) { log.Debug(msg, args...) }
 func Info(msg string, args ...any)  { log.Info(msg, args...) }
 func Warn(msg string, args ...any)  { log.Warn(msg, args...) }
 func Error(msg string, args ...any) { log.Error(msg, args...) }
- 
+
 // LogPrompt logs a multi-line AI prompt efficiently.
 func LogPrompt(prompt string) {
 	logBlock("AI PROMPT", prompt)
@@ -80,6 +80,15 @@ func LogPrompt(prompt string) {
 // LogResponse logs a multi-line AI response efficiently.
 func LogResponse(response string) {
 	logBlock("AI RESPONSE", response)
+}
+
+// LogBlock writes a labelled, multi-line block to the log in the same visual
+// family as LogPrompt/LogResponse — a bordered `==== LABEL ====` frame around
+// the content. Callers compose the label (e.g. to carry an op name, elapsed
+// time, or byte count) and the content (e.g. a multi-line command/request
+// summary or a response body).
+func LogBlock(label string, content string) {
+	logBlock(label, content)
 }
 
 func logBlock(label string, content string) {

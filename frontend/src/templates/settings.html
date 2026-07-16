@@ -5,13 +5,16 @@
     <h2 style="font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem; padding: 0 0.5rem;">Settings</h2>
     
     <button id="settings-tab-btn-ai" class="settings-tab-btn {{if or (eq .LastSettingsPanel "ai") (eq .LastSettingsPanel "")}}active{{end}}" onclick="switchSettingsTab(this, 'ai')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if or (eq .LastSettingsPanel "ai") (eq .LastSettingsPanel "")}}var(--theme-bg){{else}}transparent{{end}}; color: {{if or (eq .LastSettingsPanel "ai") (eq .LastSettingsPanel "")}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">AI Provider</button>
+    <button id="settings-tab-btn-aiaccess" class="settings-tab-btn {{if eq .LastSettingsPanel "aiaccess"}}active{{end}}" onclick="switchSettingsTab(this, 'aiaccess')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "aiaccess"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "aiaccess"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">AI Access</button>
     <button id="settings-tab-btn-appearance" class="settings-tab-btn {{if eq .LastSettingsPanel "appearance"}}active{{end}}" onclick="switchSettingsTab(this, 'appearance')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "appearance"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "appearance"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Appearance</button>
     <button id="settings-tab-btn-editor" class="settings-tab-btn {{if eq .LastSettingsPanel "editor"}}active{{end}}" onclick="switchSettingsTab(this, 'editor')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "editor"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "editor"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Editor</button>
     <button id="settings-tab-btn-logs" class="settings-tab-btn {{if eq .LastSettingsPanel "logs"}}active{{end}}" onclick="switchSettingsTab(this, 'logs')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "logs"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "logs"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Logs</button>
   </div>
 
   <!-- Content -->
-  <form id="settings-form" hx-post="/api/settings" hx-target="#settings-dialog-content" style="flex: 1; background: var(--theme-bg); padding: 2rem; overflow-y: auto; display: flex; flex-direction: column; justify-content: space-between;">
+  <form id="settings-form" hx-post="/api/settings" hx-target="#settings-dialog-content" style="flex: 1; min-height: 0; background: var(--theme-bg); display: flex; flex-direction: column; overflow: hidden;">
+    <!-- Scrollable content region; the footer below stays pinned to the dialog bottom -->
+    <div class="settings-scroll" style="flex: 1; min-height: 0; overflow-y: auto; padding: 2rem;">
     <input type="hidden" name="last_settings_panel" id="last-settings-panel-input" value="{{.LastSettingsPanel}}">
     <div class="settings-tab-content" id="settings-tab-ai" style="display: {{if or (eq .LastSettingsPanel "ai") (eq .LastSettingsPanel "")}}block{{else}}none{{end}};">
       <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 1.5rem;">AI Configuration</h3>
@@ -47,6 +50,135 @@
           </div>
           {{end}}
         </div>
+      </div>
+    </div>
+
+    <div class="settings-tab-content" id="settings-tab-aiaccess" style="display: {{if eq .LastSettingsPanel "aiaccess"}}block{{else}}none{{end}};">
+      <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 0.75rem;">AI Access</h3>
+      <p style="font-size: 0.8rem; color: var(--theme-textDim); margin-bottom: 1.5rem; line-height: 1.5;">
+        Controls what an AI CLI invocation is permitted to read, write, or call. Sieve grants a minimal baseline (locked, shown greyed-out below); anything you add here is a standing grant applied to <strong style="color: var(--theme-text);">every</strong> AI action, not just the one you're thinking of when you add it.
+      </p>
+
+      <!-- Tools -->
+      <div style="margin-bottom: 2rem;">
+        <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Tools</label>
+
+        <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.5rem;">
+          {{range .AI.Containment.Tools}}
+          {{if .Baseline}}
+          <div style="display: flex; gap: 0.5rem; align-items: center; opacity: 0.7;">
+            <input type="text" value="{{.Name}}" disabled style="flex: 1; background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+            <span style="font-size: 0.75rem; padding: 0.35rem 0.7rem; border-radius: 999px; background: var(--theme-bgDark); color: var(--theme-textDim); border: 1px solid var(--theme-border); white-space: nowrap;">locked</span>
+          </div>
+          {{end}}
+          {{end}}
+        </div>
+
+        <div id="containment-tools-list" style="display: flex; flex-direction: column; gap: 0.5rem;">
+          {{range .AI.Containment.Tools}}
+          {{if not .Baseline}}
+          <div class="containment-tool-item" style="display: flex; gap: 0.5rem; align-items: center;">
+            <input type="text" name="containment_tool_name" value="{{.Name}}" placeholder="Tool name (e.g. Write, Edit, Bash)" style="flex: 1; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+            <button type="button" onclick="this.parentElement.remove()" style="padding: 0.6rem; color: var(--theme-accentRed); background: transparent; border: 1px solid var(--theme-border); border-radius: 0.5rem; cursor: pointer;" title="Remove tool grant">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+            </button>
+          </div>
+          {{end}}
+          {{end}}
+        </div>
+
+        <button type="button" onclick="addContainmentTool()" style="margin-top: 0.75rem; padding: 0.5rem 1rem; font-size: 0.875rem; font-weight: 500; color: var(--theme-text); background: var(--theme-bgDark); border: 1px dashed var(--theme-border); border-radius: 0.5rem; cursor: pointer; width: 100%; text-align: center;">
+          + Add Tool
+        </button>
+
+        <p style="font-size: 0.75rem; color: var(--theme-accentOrange); margin-top: 0.75rem; line-height: 1.5;">
+          Warning: granting a write tool (<code>Write</code>, <code>Edit</code>) applies to every AI action Sieve performs — including background actions like web-clip on untrusted pages. Only add write access if you understand that trade-off.
+        </p>
+      </div>
+
+      <!-- Directories -->
+      <div style="margin-bottom: 2rem;">
+        <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Directories</label>
+
+        <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.5rem;">
+          {{range .AI.Containment.Directories}}
+          {{if .Baseline}}
+          <div style="display: flex; gap: 0.5rem; align-items: center; opacity: 0.7;">
+            <input type="text" value="{{.Label}}" disabled style="flex: 1; background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+            <span style="font-size: 0.75rem; padding: 0.35rem 0.7rem; border-radius: 999px; background: var(--theme-bgDark); color: var(--theme-textDim); border: 1px solid var(--theme-border); white-space: nowrap;">locked</span>
+          </div>
+          {{end}}
+          {{end}}
+        </div>
+
+        <div id="containment-dirs-list" style="display: flex; flex-direction: column; gap: 0.5rem;">
+          {{range .AI.Containment.Directories}}
+          {{if not .Baseline}}
+          <div class="containment-dir-item" style="display: flex; gap: 0.5rem; align-items: center;">
+            <input type="text" name="containment_dir_path" value="{{.Path}}" placeholder="/absolute/path/to/directory" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+            <button type="button" onclick="this.parentElement.remove()" style="padding: 0.6rem; color: var(--theme-accentRed); background: transparent; border: 1px solid var(--theme-border); border-radius: 0.5rem; cursor: pointer;" title="Remove directory grant">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+            </button>
+          </div>
+          {{end}}
+          {{end}}
+        </div>
+
+        <button type="button" onclick="addContainmentDir()" style="margin-top: 0.75rem; padding: 0.5rem 1rem; font-size: 0.875rem; font-weight: 500; color: var(--theme-text); background: var(--theme-bgDark); border: 1px dashed var(--theme-border); border-radius: 0.5rem; cursor: pointer; width: 100%; text-align: center;">
+          + Add Directory
+        </button>
+      </div>
+
+      <!-- MCP servers -->
+      <div>
+        <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">MCP Servers</label>
+
+        {{if eq .CLI "agy"}}
+        <p style="font-size: 0.75rem; color: var(--theme-textDim); margin-bottom: 0.75rem; font-style: italic;">MCP servers are not available on agy — it has no per-call MCP inject mechanism. (Directory grants above still apply.)</p>
+        {{end}}
+
+        <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.5rem;">
+          {{range .AI.Containment.McpServers}}
+          {{if .Baseline}}
+          <div style="display: flex; gap: 0.5rem; align-items: center; opacity: 0.7;">
+            <input type="text" value="{{.Name}}{{if .Builtin}} (built-in){{end}}" disabled style="flex: 1; background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+            <span style="font-size: 0.75rem; padding: 0.35rem 0.7rem; border-radius: 999px; background: var(--theme-bgDark); color: var(--theme-textDim); border: 1px solid var(--theme-border); white-space: nowrap;">locked</span>
+          </div>
+          {{end}}
+          {{end}}
+        </div>
+
+        <div id="containment-mcp-list" style="display: flex; flex-direction: column; gap: 0.5rem;">
+          {{range .AI.Containment.McpServers}}
+          {{if not .Baseline}}
+          <div class="containment-mcp-item" style="display: flex; flex-direction: column; gap: 0.4rem; padding: 0.6rem; border: 1px solid var(--theme-border); border-radius: 0.5rem;">
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+              <input type="text" name="containment_mcp_name" value="{{.Name}}" placeholder="Name" style="flex: 1; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+              <select name="containment_mcp_transport" onchange="toggleMcpTransportFields(this)" style="background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+                <option value="stdio" {{if eq .EffectiveTransport "stdio"}}selected{{end}}>stdio</option>
+                <option value="http" {{if eq .EffectiveTransport "http"}}selected{{end}}>http</option>
+                <option value="sse" {{if eq .EffectiveTransport "sse"}}selected{{end}}>sse</option>
+              </select>
+              <button type="button" onclick="this.closest('.containment-mcp-item').remove()" style="padding: 0.6rem; color: var(--theme-accentRed); background: transparent; border: 1px solid var(--theme-border); border-radius: 0.5rem; cursor: pointer;" title="Remove MCP server">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+              </button>
+            </div>
+            <div class="mcp-stdio-fields" style="display: {{if eq .EffectiveTransport "stdio"}}flex{{else}}none{{end}}; gap: 0.5rem;">
+              <input type="text" name="containment_mcp_command" value="{{.Command}}" placeholder="Command (e.g. npx)" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+              <input type="text" name="containment_mcp_args" value="{{joinArgs .Args}}" placeholder="args (space-separated)" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+            </div>
+            <div class="mcp-remote-fields" style="display: {{if ne .EffectiveTransport "stdio"}}flex{{else}}none{{end}}; gap: 0.5rem;">
+              <input type="text" name="containment_mcp_url" value="{{.URL}}" placeholder="https://host/mcp" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+              <input type="text" name="containment_mcp_headers" value="{{joinHeaders .Headers}}" placeholder="Key=Value,Key2=Value2" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+            </div>
+          </div>
+          {{end}}
+          {{end}}
+        </div>
+
+        <button type="button" onclick="addContainmentMcp()" style="margin-top: 0.75rem; padding: 0.5rem 1rem; font-size: 0.875rem; font-weight: 500; color: var(--theme-text); background: var(--theme-bgDark); border: 1px dashed var(--theme-border); border-radius: 0.5rem; cursor: pointer; width: 100%; text-align: center;">
+          + Add MCP Server
+        </button>
       </div>
     </div>
 
@@ -136,9 +268,10 @@
         </div>
       </div>
     </div>
+    </div><!-- /settings-scroll -->
 
-    <!-- Footer -->
-    <div style="display: flex; justify-content: flex-end; gap: 1rem; padding-top: 1.5rem; border-top: 1px solid var(--theme-border); margin-top: auto;">
+    <!-- Footer (pinned to the dialog bottom) -->
+    <div style="display: flex; justify-content: flex-end; gap: 1rem; padding: 1rem 2rem; border-top: 1px solid var(--theme-border); background: var(--theme-bg); flex-shrink: 0;">
       <button type="button" onclick="document.getElementById('settings-dialog').close()" style="padding: 0.5rem 1.5rem; font-size: 0.875rem; font-weight: 500; color: var(--theme-textDim); background: transparent; border: none; cursor: pointer;">Cancel</button>
       <button type="submit" style="padding: 0.5rem 1.5rem; font-size: 0.875rem; font-weight: bold; color: #ffffff; background: var(--theme-accentPrimary); border-radius: 0.5rem; border: none; cursor: pointer;">Save Changes</button>
     </div>
@@ -187,6 +320,76 @@ function addCustomParser() {
     </button>
   `;
   container.appendChild(div);
+}
+
+function addContainmentTool() {
+  const container = document.getElementById('containment-tools-list');
+  const div = document.createElement('div');
+  div.className = 'containment-tool-item';
+  div.style.cssText = 'display: flex; gap: 0.5rem; align-items: center;';
+
+  div.innerHTML = `
+    <input type="text" name="containment_tool_name" placeholder="Tool name (e.g. Write, Edit, Bash)" style="flex: 1; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+    <button type="button" onclick="this.parentElement.remove()" style="padding: 0.6rem; color: var(--theme-accentRed); background: transparent; border: 1px solid var(--theme-border); border-radius: 0.5rem; cursor: pointer;" title="Remove tool grant">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+    </button>
+  `;
+  container.appendChild(div);
+}
+
+function addContainmentDir() {
+  const container = document.getElementById('containment-dirs-list');
+  const div = document.createElement('div');
+  div.className = 'containment-dir-item';
+  div.style.cssText = 'display: flex; gap: 0.5rem; align-items: center;';
+
+  div.innerHTML = `
+    <input type="text" name="containment_dir_path" placeholder="/absolute/path/to/directory" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+    <button type="button" onclick="this.parentElement.remove()" style="padding: 0.6rem; color: var(--theme-accentRed); background: transparent; border: 1px solid var(--theme-border); border-radius: 0.5rem; cursor: pointer;" title="Remove directory grant">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+    </button>
+  `;
+  container.appendChild(div);
+}
+
+function addContainmentMcp() {
+  const container = document.getElementById('containment-mcp-list');
+  const div = document.createElement('div');
+  div.className = 'containment-mcp-item';
+  div.style.cssText = 'display: flex; flex-direction: column; gap: 0.4rem; padding: 0.6rem; border: 1px solid var(--theme-border); border-radius: 0.5rem;';
+
+  div.innerHTML = `
+    <div style="display: flex; gap: 0.5rem; align-items: center;">
+      <input type="text" name="containment_mcp_name" placeholder="Name" style="flex: 1; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+      <select name="containment_mcp_transport" onchange="toggleMcpTransportFields(this)" style="background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+        <option value="stdio" selected>stdio</option>
+        <option value="http">http</option>
+        <option value="sse">sse</option>
+      </select>
+      <button type="button" onclick="this.closest('.containment-mcp-item').remove()" style="padding: 0.6rem; color: var(--theme-accentRed); background: transparent; border: 1px solid var(--theme-border); border-radius: 0.5rem; cursor: pointer;" title="Remove MCP server">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+      </button>
+    </div>
+    <div class="mcp-stdio-fields" style="display: flex; gap: 0.5rem;">
+      <input type="text" name="containment_mcp_command" placeholder="Command (e.g. npx)" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+      <input type="text" name="containment_mcp_args" placeholder="args (space-separated)" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+    </div>
+    <div class="mcp-remote-fields" style="display: none; gap: 0.5rem;">
+      <input type="text" name="containment_mcp_url" placeholder="https://host/mcp" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+      <input type="text" name="containment_mcp_headers" placeholder="Key=Value,Key2=Value2" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+    </div>
+  `;
+  container.appendChild(div);
+}
+
+// toggleMcpTransportFields shows the stdio (command/args) or remote (url/headers)
+// field group for an MCP row based on its transport <select>, matching the
+// inline onchange-handler idiom already used across this file.
+function toggleMcpTransportFields(select) {
+  const row = select.closest('.containment-mcp-item');
+  const isStdio = select.value === 'stdio';
+  row.querySelector('.mcp-stdio-fields').style.display = isStdio ? 'flex' : 'none';
+  row.querySelector('.mcp-remote-fields').style.display = isStdio ? 'none' : 'flex';
 }
 </script>
 {{end}}

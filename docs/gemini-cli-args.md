@@ -1,3 +1,5 @@
+<!-- RETIRED (2026-07-16): the gemini CLI is no longer supported — sign-in fails ("This client is no longer supported for Gemini Code Assist for individuals. Migrate to the Antigravity suite"). Superseded by `agy` (Antigravity); see `agy-cli-args.md`. The ONLY surviving overlap is the config directory `~/.gemini/`, which Antigravity reuses as its (legacy-named) config home. Do NOT rely on the `gemini` binary or `gemini mcp` tooling — gemini cannot authenticate. This file is historical reference for flag shapes only. -->
+
 Usage: gemini [options] [command]
 
 Gemini CLI - Defaults to interactive mode. Use -p/--prompt for non-interactive (headless) mode.

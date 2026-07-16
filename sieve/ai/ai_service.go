@@ -19,6 +19,15 @@ import (
 	"golang.org/x/net/html"
 )
 
+// MCPEndpoint resolves the runtime URL + a freshly issued per-call bearer token
+// for the internal Sieve MCP server. It is the seam the AI service uses to fill
+// the builtin MCP grant in the containment profile at render time (URL and token
+// are runtime-only, never persisted). An empty URL means no server is reachable,
+// so the profile renders without MCP flags. The internal MCP server satisfies it.
+type MCPEndpoint interface {
+	Endpoint() (url, token string)
+}
+
 // AIService owns all AI evaluation and filing operations. It resolves prompt
 // templates, settings, and folder lists internally so callers need no boilerplate.
 type AIService struct {
@@ -26,6 +35,8 @@ type AIService struct {
 	prompts   *PromptService
 	documents *services.DocumentService
 	storePath string
+	runner    CLIRunner   // exec seam; stubbable in tests
+	mcp       MCPEndpoint // internal Sieve MCP endpoint; nil until wired
 }
 
 func NewAIService(state *services.StateService, prompts *PromptService, documents *services.DocumentService, storePath string) *AIService {
@@ -34,7 +45,48 @@ func NewAIService(state *services.StateService, prompts *PromptService, document
 		prompts:   prompts,
 		documents: documents,
 		storePath: storePath,
+		runner:    execCLIRunner{},
 	}
+}
+
+// SetMCPEndpoint wires the internal Sieve MCP endpoint. Once set, every AI call's
+// containment profile carries the live server URL + a fresh per-call bearer token
+// in its builtin MCP grant, so the contained CLI can query the knowledge base.
+func (s *AIService) SetMCPEndpoint(e MCPEndpoint) { s.mcp = e }
+
+// profile returns the containment floor for a CLI call: the default baseline,
+// with the builtin Sieve MCP grant's runtime URL + per-call token filled in when
+// an endpoint is wired and reachable. When no endpoint is running the builtin
+// grant keeps its empty URL and the backend renders no MCP flags.
+func (s *AIService) profile() domain.ContainmentProfile {
+	// Start from the user's SAVED profile (baseline + their additions), which
+	// ParseSettings reconstitutes as the full in-memory profile — NOT a bare
+	// DefaultContainmentProfile(), which would silently drop every user grant
+	// (added tools/dirs/MCP servers) from the AI call.
+	p := s.state.LoadSettings().AI.Containment
+	if len(p.Tools) == 0 && len(p.Directories) == 0 && len(p.McpServers) == 0 {
+		p = domain.DefaultContainmentProfile() // defensive: never render an empty profile
+	}
+	if s.mcp == nil {
+		return p
+	}
+	url, token := s.mcp.Endpoint()
+	if url == "" {
+		return p
+	}
+	// LoadSettings returns a cached Settings whose McpServers slice is shared —
+	// copy it before filling the builtin's runtime URL + per-call bearer so the
+	// secret never leaks into the cache (or a later serialisation).
+	servers := make([]domain.McpGrant, len(p.McpServers))
+	copy(servers, p.McpServers)
+	for i := range servers {
+		if servers[i].Builtin {
+			servers[i].URL = url
+			servers[i].Token = token
+		}
+	}
+	p.McpServers = servers
+	return p
 }
 
 // EvaluateAndFileDoc runs the full evaluate-and-file pipeline for the document
@@ -104,7 +156,7 @@ func (s *AIService) RunExplain(content, history, question, noteUUID string) (str
 		return "", fmt.Errorf("explain not available in dumb mode")
 	}
 	prompt, _ := s.prompts.GetPromptContent("explain")
-	noteCwd := filepath.Dir(s.resolvePath(s.resolveNotePath(noteUUID)))
+	noteCwd := s.noteDir(noteUUID)
 
 	contentType := s.detectContentType(content)
 	p := strings.ReplaceAll(prompt, "{type}", contentType)
@@ -112,7 +164,7 @@ func (s *AIService) RunExplain(content, history, question, noteUUID string) (str
 	p = strings.ReplaceAll(p, "{history}", history)
 	p = strings.ReplaceAll(p, "{action}", question)
 
-	return RunCLI(settings.CLI, p, settings.Model, s.timeoutFor(settings, "explain"), noteCwd)
+	return s.runner.Run("explain", settings.CLI, p, settings.Model, s.timeoutFor(settings, "explain"), noteCwd, s.profile(), s.storePath)
 }
 
 // RunAsk asks the AI a question with the given content as context. history may
@@ -124,7 +176,7 @@ func (s *AIService) RunAsk(content, history, question, noteUUID string) (string,
 		return "", fmt.Errorf("ask not available in dumb mode")
 	}
 	prompt, _ := s.prompts.GetPromptContent("ask")
-	noteCwd := filepath.Dir(s.resolvePath(s.resolveNotePath(noteUUID)))
+	noteCwd := s.noteDir(noteUUID)
 
 	contentType := s.detectContentType(content)
 	p := strings.ReplaceAll(prompt, "{type}", contentType)
@@ -132,7 +184,7 @@ func (s *AIService) RunAsk(content, history, question, noteUUID string) (string,
 	p = strings.ReplaceAll(p, "{history}", history)
 	p = strings.ReplaceAll(p, "{action}", question)
 
-	return RunCLI(settings.CLI, p, settings.Model, s.timeoutFor(settings, "ask"), noteCwd)
+	return s.runner.Run("ask", settings.CLI, p, settings.Model, s.timeoutFor(settings, "ask"), noteCwd, s.profile(), s.storePath)
 }
 
 // DescribeImage sends an image to the configured AI and returns alt text, a
@@ -175,7 +227,7 @@ func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string
 	logger.Info("About to Describe", "path", imagePath)
 	p := strings.ReplaceAll(prompt, "{image_filename}", filepath.Base(imagePath))
 	cwd := filepath.Dir(imagePath)
-	resp, err := RunCLI(settings.CLI, p, settings.Model, s.timeoutFor(settings, "image"), cwd)
+	resp, err := s.runner.Run("image", settings.CLI, p, settings.Model, s.timeoutFor(settings, "image"), cwd, s.profile(), s.storePath)
 	if err != nil {
 		return domain.ImageDesc{}, err
 	}
@@ -198,7 +250,7 @@ func (s *AIService) RefineLanguage(content, currentLanguage, detectionMethod str
 	p = strings.ReplaceAll(p, "{current_language}", currentLanguage)
 	p = strings.ReplaceAll(p, "{detection_method}", detectionMethod)
 
-	resp, err := RunCLI(settings.CLI, p, settings.Model, s.timeoutFor(settings, "refine"), "")
+	resp, err := s.runner.Run("refine", settings.CLI, p, settings.Model, s.timeoutFor(settings, "refine"), "", s.profile(), s.storePath)
 	if err != nil {
 		return "", err
 	}
@@ -324,7 +376,7 @@ func (s *AIService) runEvaluateBuffer(meta domain.DocumentMeta, body []byte, set
 	p = strings.ReplaceAll(p, "{now}", time.Now().Format(time.RFC3339))
 	p = strings.ReplaceAll(p, "{content}", string(body))
 
-	respText, err := RunCLI(settings.CLI, p, settings.Model, s.timeoutFor(settings, "file"), "")
+	respText, err := s.runner.Run("file", settings.CLI, p, settings.Model, s.timeoutFor(settings, "file"), "", s.profile(), s.storePath)
 	if err != nil {
 		return nil, err
 	}
@@ -378,6 +430,16 @@ func (s *AIService) resolveNotePath(uuid string) string {
 		return ""
 	}
 	return doc.Storable().ExternalRef()
+}
+
+// noteDir returns the absolute path of the note's OWN directory — the folder
+// that holds its markdown and assets (ExternalRef is that folder, not its
+// parent). It is the CLI's cwd so relative asset paths in the note resolve and
+// the "note" containment grant scopes to this note. Empty/unknown uuid resolves
+// to the library root. (Do NOT filepath.Dir this — that lands on the category/
+// buffers parent and over-scopes the note grant.)
+func (s *AIService) noteDir(uuid string) string {
+	return s.resolvePath(s.resolveNotePath(uuid))
 }
 
 // FilingOutcome is the result of AIService.EvaluateAndFileDoc.
@@ -467,11 +529,14 @@ func (s *AIService) RunWebClip(uuid, id, source, mode, docContent string) (title
 	cwd := ""
 	docDir := ""
 	if loadErr == nil {
-		cwd = filepath.Join(s.storePath, filepath.Dir(doc.Storable().ExternalRef()))
+		// cwd is the note's OWN folder (== docDir), not its parent — same as the
+		// other AI ops (see noteDir). filepath.Dir here over-scoped to the
+		// category/buffers root.
 		docDir = filepath.Join(s.storePath, doc.Storable().ExternalRef())
+		cwd = docDir
 	}
 
-	raw, err := RunCLI(settings.CLI, prompt, settings.Model, s.timeoutFor(settings, promptName), cwd)
+	raw, err := s.runner.Run(promptName, settings.CLI, prompt, settings.Model, s.timeoutFor(settings, promptName), cwd, s.profile(), s.storePath)
 	if err != nil {
 		return "", "", err
 	}

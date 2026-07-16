@@ -9,6 +9,7 @@ import (
 	"sieve/sieve/ai"
 	"sieve/sieve/domain"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -39,6 +40,35 @@ func (h *SettingsHandler) buildView(settings domain.Settings, lastPanel string) 
 		LastSettingsPanel: lastPanel,
 		Prompts:           prompts,
 	}
+}
+
+// parseHeaders parses the settings panel's compact MCP header line —
+// "Key=Value,Key2=Value2" (the joinHeaders template func's inverse, see
+// requesthandlers/templates.go) — into a header map. Blank entries and entries
+// without an "=" are skipped; a value may itself contain "=" (only the first
+// one splits key from value).
+func (h *SettingsHandler) parseHeaders(raw string) map[string]string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	headers := map[string]string{}
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(pair, "=")
+		k = strings.TrimSpace(k)
+		if !ok || k == "" {
+			continue
+		}
+		headers[k] = strings.TrimSpace(v)
+	}
+	if len(headers) == 0 {
+		return nil
+	}
+	return headers
 }
 
 func (h *SettingsHandler) RegisterPaths(r chi.Router) {
@@ -125,6 +155,58 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	settings.CustomLogParsers = customParsers
+
+	// Containment additions (user-granted tools/dirs/MCP servers on top of the
+	// baseline). Rebuild from the form each save — like custom parsers — so a
+	// removed row disappears; LoadContainmentProfile overlays these onto the
+	// baseline to produce the full in-memory profile, and Marshal drops the
+	// baseline back out at persistence time (WithoutBaseline), so settings.json
+	// only ever holds the user's additions.
+	adds := domain.ContainmentProfile{}
+	for _, name := range r.PostForm["containment_tool_name"] {
+		if name != "" {
+			adds.Tools = append(adds.Tools, domain.ToolGrant{Name: name})
+		}
+	}
+	for _, p := range r.PostForm["containment_dir_path"] {
+		if p != "" {
+			adds.Directories = append(adds.Directories, domain.DirGrant{Path: p})
+		}
+	}
+	mcpNames := r.PostForm["containment_mcp_name"]
+	mcpTransports := r.PostForm["containment_mcp_transport"]
+	mcpCommands := r.PostForm["containment_mcp_command"]
+	mcpArgs := r.PostForm["containment_mcp_args"]
+	mcpURLs := r.PostForm["containment_mcp_url"]
+	mcpHeaders := r.PostForm["containment_mcp_headers"]
+	for i, name := range mcpNames {
+		if name == "" {
+			continue
+		}
+		transport := "stdio"
+		if i < len(mcpTransports) && mcpTransports[i] != "" {
+			transport = mcpTransports[i]
+		}
+		grant := domain.McpGrant{Name: name, Transport: transport}
+		switch transport {
+		case "http", "sse":
+			if i < len(mcpURLs) {
+				grant.URL = mcpURLs[i]
+			}
+			if i < len(mcpHeaders) {
+				grant.Headers = h.parseHeaders(mcpHeaders[i])
+			}
+		default: // stdio
+			if i < len(mcpCommands) {
+				grant.Command = mcpCommands[i]
+			}
+			if i < len(mcpArgs) && mcpArgs[i] != "" {
+				grant.Args = strings.Fields(mcpArgs[i])
+			}
+		}
+		adds.McpServers = append(adds.McpServers, grant)
+	}
+	settings.AI.Containment = domain.LoadContainmentProfile(adds)
 
 	logger.Info("handleSettingsSave: saving settings", "cli", settings.CLI, "theme", settings.Theme, "debug", settings.Debug)
 

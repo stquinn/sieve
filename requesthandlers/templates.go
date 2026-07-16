@@ -5,6 +5,8 @@ import (
 	"html/template"
 	"io/fs"
 	"net/url"
+	"sort"
+	"strings"
 )
 
 // MetaRow is a label/value pair rendered by the meta_row template. The metaRow
@@ -31,6 +33,29 @@ func NewTemplates(fsys fs.FS) (*template.Template, error) {
 			return MetaRow{Label: label, Value: value}
 		},
 		"promptVars": PromptVarDocs{}.For,
+		"joinArgs": func(args []string) string {
+			return strings.Join(args, " ")
+		},
+		// joinHeaders renders an MCP grant's static headers as the settings-panel
+		// form's compact "Key=Value,Key2=Value2" line — the same one-line, simple
+		// idiom as joinArgs (chosen over a multi-line textarea for consistency);
+		// parseHeaders (settings_handler.go) is its inverse on save. Keys are
+		// sorted for a stable, diff-friendly rendering.
+		"joinHeaders": func(headers map[string]string) string {
+			if len(headers) == 0 {
+				return ""
+			}
+			keys := make([]string, 0, len(headers))
+			for k := range headers {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			parts := make([]string, 0, len(keys))
+			for _, k := range keys {
+				parts = append(parts, k+"="+headers[k])
+			}
+			return strings.Join(parts, ",")
+		},
 	})
 	tmpl, err := tmpl.ParseFS(fsys, "frontend/src/templates/*.html")
 	if err != nil {
