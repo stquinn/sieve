@@ -9,6 +9,7 @@ import (
 	"sieve/sieve/ai"
 	"sieve/sieve/domain"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -125,6 +126,41 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	settings.CustomLogParsers = customParsers
+
+	// Containment additions (user-granted tools/dirs/MCP servers on top of the
+	// baseline). Rebuild from the form each save — like custom parsers — so a
+	// removed row disappears; LoadContainmentProfile overlays these onto the
+	// baseline to produce the full in-memory profile, and Marshal drops the
+	// baseline back out at persistence time (WithoutBaseline), so settings.json
+	// only ever holds the user's additions.
+	adds := domain.ContainmentProfile{}
+	for _, name := range r.PostForm["containment_tool_name"] {
+		if name != "" {
+			adds.Tools = append(adds.Tools, domain.ToolGrant{Name: name})
+		}
+	}
+	for _, p := range r.PostForm["containment_dir_path"] {
+		if p != "" {
+			adds.Directories = append(adds.Directories, domain.DirGrant{Path: p})
+		}
+	}
+	mcpNames := r.PostForm["containment_mcp_name"]
+	mcpCommands := r.PostForm["containment_mcp_command"]
+	mcpArgs := r.PostForm["containment_mcp_args"]
+	for i, name := range mcpNames {
+		if name == "" {
+			continue
+		}
+		grant := domain.McpGrant{Name: name}
+		if i < len(mcpCommands) {
+			grant.Command = mcpCommands[i]
+		}
+		if i < len(mcpArgs) && mcpArgs[i] != "" {
+			grant.Args = strings.Fields(mcpArgs[i])
+		}
+		adds.McpServers = append(adds.McpServers, grant)
+	}
+	settings.AI.Containment = domain.LoadContainmentProfile(adds)
 
 	logger.Info("handleSettingsSave: saving settings", "cli", settings.CLI, "theme", settings.Theme, "debug", settings.Debug)
 

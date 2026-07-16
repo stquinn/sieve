@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"io/fs"
 	"net/url"
+	"strings"
 )
 
 // MetaRow is a label/value pair rendered by the meta_row template. The metaRow
@@ -31,6 +32,9 @@ func NewTemplates(fsys fs.FS) (*template.Template, error) {
 			return MetaRow{Label: label, Value: value}
 		},
 		"promptVars": PromptVarDocs{}.For,
+		"joinArgs": func(args []string) string {
+			return strings.Join(args, " ")
+		},
 	})
 	tmpl, err := tmpl.ParseFS(fsys, "frontend/src/templates/*.html")
 	if err != nil {
