@@ -186,6 +186,11 @@ func (a *App) startup(ctx context.Context) {
 
 	settings := a.State.LoadSettings()
 
+	// Apply the persisted debug flag to the logger so it actually gates Debug
+	// output (the level otherwise stays at its Info default). Re-applied on
+	// settings-save so a toggle takes effect live.
+	logger.SetDebug(settings.Debug)
+
 	// Attach the library service to the live store and record this switch.
 	a.library.Attach(a.storePath, fs)
 	a.library.RecordSwitch(a.storePath)

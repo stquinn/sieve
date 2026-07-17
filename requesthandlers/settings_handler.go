@@ -142,6 +142,9 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 	settings.PromptTimeouts = promptTimeouts
 
 	settings.Debug = r.FormValue("debug") == "on"
+	// Apply the debug flag to the logger live, so toggling it takes effect without
+	// an app restart (mirrors the startup application in app.go).
+	logger.SetDebug(settings.Debug)
 
 	var customParsers []domain.CustomLogParser
 	names := r.PostForm["parser_name"]
