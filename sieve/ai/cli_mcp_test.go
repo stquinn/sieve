@@ -23,7 +23,7 @@ func profileWithMCP() domain.ContainmentProfile {
 
 // The logged command line must never expose the per-run MCP bearer token.
 func TestRedactedCommand_RedactsBearerToken(t *testing.T) {
-	args := buildBaseArgs("claude", "", "p", profileWithMCP(), libDir)
+	args := buildBaseArgs("claude", "", "p", profileWithMCP(), "", libDir)
 	cmd := redactedCommand("claude", args)
 
 	if strings.Contains(cmd, "secret-token-abc") {
@@ -41,7 +41,7 @@ func TestRedactedCommand_RedactsBearerToken(t *testing.T) {
 // The multi-line command block must still never expose the per-run MCP bearer
 // token, and must split the command into one flag-group per continuation line.
 func TestFormatCommandBlock_RedactsAndSplitsPerFlag(t *testing.T) {
-	args := buildBaseArgs("claude", "", "p", profileWithMCP(), libDir)
+	args := buildBaseArgs("claude", "", "p", profileWithMCP(), "", libDir)
 	block := formatCommandBlock("claude", args)
 
 	if strings.Contains(block, "secret-token-abc") {
@@ -74,6 +74,45 @@ func TestFormatCommandBlock_RedactsAndSplitsPerFlag(t *testing.T) {
 	}
 }
 
+// With scoped file rules the --allowedTools value is a long comma-joined list;
+// the command block must wrap it ONE RULE PER LINE (not a single 300-char wall),
+// while keeping the MCP config JSON — whose commas are structural — on one line.
+func TestFormatCommandBlock_WrapsAllowListPerRule(t *testing.T) {
+	args := buildBaseArgs("claude", "", "p", profileWithMCP(), "", libDir)
+	block := formatCommandBlock("claude", args)
+
+	// Each baseline scoped rule sits on its own line (a newline immediately
+	// precedes it), not comma-jammed against the previous rule.
+	for _, rule := range []string{"Grep(//vault/library/**)", "Glob(//vault/library/**)", "WebFetch"} {
+		if !strings.Contains(block, "\n") || !strings.Contains(block, rule) {
+			t.Fatalf("block missing rule %q:\n%s", rule, block)
+		}
+		if strings.Contains(block, "),"+rule) {
+			t.Errorf("rule %q is comma-jammed onto the previous rule (not wrapped):\n%s", rule, block)
+		}
+	}
+	// The --allowedTools flag line carries only the FIRST rule inline; the rest
+	// are wrapped below it.
+	var allowLine string
+	for _, ln := range strings.Split(block, "\n") {
+		if strings.Contains(ln, "--allowedTools ") {
+			allowLine = ln
+		}
+	}
+	if allowLine == "" {
+		t.Fatalf("no --allowedTools line in block:\n%s", block)
+	}
+	if strings.Count(allowLine, "(") > 1 {
+		t.Errorf("--allowedTools line should carry only the first scoped rule, got: %q", allowLine)
+	}
+	// The MCP config JSON stays on ONE line — its internal commas are NOT split.
+	for _, ln := range strings.Split(block, "\n") {
+		if strings.Contains(ln, "--mcp-config") && !strings.Contains(ln, "mcpServers") {
+			t.Errorf("--mcp-config JSON was split across lines: %q", ln)
+		}
+	}
+}
+
 // A server name with a space (or any non-identifier char) must render a sanitized
 // namespace id in BOTH the --mcp-config key and the mcp__<id>__* allow entry, so
 // the allow rule matches the CLI's sanitized tool namespace (a raw space also
@@ -83,7 +122,7 @@ func TestBuildArgs_SanitizesServerNameForNamespace(t *testing.T) {
 	p.McpServers = append(p.McpServers, domain.McpGrant{
 		Name: "MCP Server", Transport: "http", URL: "http://localhost:3001/mcp",
 	})
-	args := buildBaseArgs("claude", "", "p", p, libDir)
+	args := buildBaseArgs("claude", "", "p", p, "", libDir)
 
 	cfg := flagValue(args, "--mcp-config")
 	if strings.Contains(cfg, `"MCP Server"`) {
@@ -102,7 +141,7 @@ func TestBuildArgs_SanitizesServerNameForNamespace(t *testing.T) {
 }
 
 func TestBuildArgs_Claude_InjectsMCPWhenLive(t *testing.T) {
-	args := buildBaseArgs("claude", "", "p", profileWithMCP(), libDir)
+	args := buildBaseArgs("claude", "", "p", profileWithMCP(), "", libDir)
 
 	cfg := flagValue(args, "--mcp-config")
 	if cfg == "" {
@@ -134,9 +173,19 @@ func TestBuildArgs_Claude_InjectsMCPWhenLive(t *testing.T) {
 	if !strings.Contains(tools, "mcp__sieve__*") {
 		t.Errorf("--allowedTools missing mcp__sieve__*: %q", tools)
 	}
-	// Baseline read tools remain present alongside the MCP allow entry.
-	if !strings.HasPrefix(tools, "Read,Grep,Glob,WebFetch") {
-		t.Errorf("--allowedTools baseline tools missing: %q", tools)
+	// Baseline capabilities remain present alongside the MCP allow entry — file
+	// grants scoped (never bare), WebFetch bare.
+	for _, want := range []string{"Read(//vault/library/**)", "Grep(//vault/library/**)", "Glob(//vault/library/**)", "WebFetch"} {
+		if !strings.Contains(tools, want) {
+			t.Errorf("--allowedTools missing baseline capability %q: %q", want, tools)
+		}
+	}
+	for _, bare := range []string{"Read", "Grep", "Glob"} {
+		for _, tok := range strings.Split(tools, ",") {
+			if tok == bare {
+				t.Errorf("--allowedTools has bare %s (filesystem-wide): %q", bare, tools)
+			}
+		}
 	}
 	// Never the rejected fully-wildcard form, never strict-mcp-config.
 	if strings.Contains(tools, "mcp__*,") || tools == "mcp__*" {
@@ -148,7 +197,7 @@ func TestBuildArgs_Claude_InjectsMCPWhenLive(t *testing.T) {
 }
 
 func TestBuildArgs_Copilot_InjectsMCPWhenLive(t *testing.T) {
-	args := buildBaseArgs("copilot", "", "p", profileWithMCP(), libDir)
+	args := buildBaseArgs("copilot", "", "p", profileWithMCP(), "", libDir)
 
 	cfg := flagValue(args, "--additional-mcp-config")
 	if cfg == "" {
@@ -166,7 +215,7 @@ func TestBuildArgs_Copilot_InjectsMCPWhenLive(t *testing.T) {
 // rendered — the pre-MCP behaviour, so existing arg tests still hold.
 func TestBuildArgs_NoMCPFlagsWhenURLEmpty(t *testing.T) {
 	for _, cli := range []string{"claude", "copilot"} {
-		args := buildBaseArgs(cli, "", "p", domain.DefaultContainmentProfile(), libDir)
+		args := buildBaseArgs(cli, "", "p", domain.DefaultContainmentProfile(), "", libDir)
 		for _, f := range []string{"--mcp-config", "--additional-mcp-config"} {
 			if hasFlag(args, f) {
 				t.Errorf("%s: rendered %s with no live server; args=%v", cli, f, args)
@@ -192,7 +241,7 @@ func TestBuildArgs_Claude_InjectsUserStdioServer(t *testing.T) {
 		Args:    []string{"serve"},
 	})
 
-	args := buildBaseArgs("claude", "", "p", p, libDir)
+	args := buildBaseArgs("claude", "", "p", p, "", libDir)
 
 	cfg := flagValue(args, "--mcp-config")
 	if cfg == "" {
@@ -309,7 +358,7 @@ func TestConfigJSON_PerTransportShapes(t *testing.T) {
 // agy must remain directory-only: no MCP inject flag even when the profile has a
 // live builtin server (agy has no per-call --mcp-config flag).
 func TestBuildArgs_Agy_NeverInjectsMCP(t *testing.T) {
-	args := buildBaseArgs("agy", "", "the prompt", profileWithMCP(), libDir)
+	args := buildBaseArgs("agy", "", "the prompt", profileWithMCP(), "", libDir)
 	for _, f := range []string{"--mcp-config", "--additional-mcp-config", "--allowedTools", "--allow-tool"} {
 		if hasFlag(args, f) {
 			t.Errorf("agy must not render %s; args=%v", f, args)

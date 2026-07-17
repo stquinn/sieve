@@ -34,10 +34,22 @@ type execCLIRunner struct{}
 // secret; the rest of the command line is safe to log verbatim).
 var bearerTokenRe = regexp.MustCompile(`Bearer [^"\s]+`)
 
+// floorCwd enforces "cwd is never unset": an empty cwd is a caller bug (an AI
+// op always has a note/buffer, or the library). Rather than inherit the process
+// cwd — which on a Finder/Dock-launched macOS app is / — it floors to the
+// library root. When even the library is unknown it returns "" (nothing to floor
+// to); the callers' own fallbacks make that unreachable in practice. #41.
+func floorCwd(cwd, libraryDir string) string {
+	if strings.TrimSpace(cwd) != "" {
+		return cwd
+	}
+	return libraryDir
+}
+
 // Run executes the configured CLI using the provided prompt content via STDIN.
 // cwd sets the working directory for the subprocess — pass the note/buffer's
-// directory so relative asset paths in markdown resolve correctly. Pass "" to
-// inherit the process's working directory.
+// directory so relative asset paths in markdown resolve correctly. An empty cwd
+// is floored to the library (floorCwd); it is never left to the process cwd.
 //
 // profile is the containment floor rendered to CLI args (never config files);
 // libraryDir resolves the profile's symbolic "library" directory grant to the
@@ -46,7 +58,13 @@ func (execCLIRunner) Run(op, cli, prompt, model string, timeoutSecs int, cwd str
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
-	args := buildBaseArgs(cli, model, prompt, profile, libraryDir)
+	// cwd is never unset: an AI op always operates on a note/buffer, or failing
+	// that the library. floorCwd is defence-in-depth — even if a caller forgets
+	// its fallback, the subprocess never inherits the process cwd (which on a
+	// Finder/Dock-launched macOS app is /). #41.
+	cwd = floorCwd(cwd, libraryDir)
+
+	args := buildBaseArgs(cli, model, prompt, profile, cwd, libraryDir)
 
 	cmd := exec.CommandContext(ctx, cli, args...)
 	cmd.Stdin = bytes.NewBufferString(prompt)
@@ -124,8 +142,10 @@ func requestLogBody(cli, model string, timeoutSecs int, cwd string, profile doma
 // indented block for scannable logging: the binary plus any leading bare
 // boolean flags (e.g. --print, --no-session-persistence) share the first line;
 // every subsequent --flag and its value(s) get their own indented continuation
-// line. The MCP bearer token is redacted (bearerTokenRe) so the per-run secret
-// never lands in the log.
+// line. Allow-list flags (--allowedTools etc.), whose single value is now a long
+// comma-joined list of scoped rules, are wrapped ONE RULE PER LINE so the grants
+// stay scannable instead of collapsing into a 300-char wall. The MCP bearer token
+// is redacted (bearerTokenRe) so the per-run secret never lands in the log.
 func formatCommandBlock(cli string, args []string) string {
 	i := 0
 	first := cli
@@ -138,11 +158,17 @@ func formatCommandBlock(cli string, args []string) string {
 	const continuationIndent = "\n              "
 	lines := []string{first}
 	for i < len(args) {
-		group := args[i]
+		flag := args[i]
+		group := flag
 		i++
+		var values []string
 		for i < len(args) && !strings.HasPrefix(args[i], "--") {
+			values = append(values, args[i])
 			group += " " + args[i]
 			i++
+		}
+		if len(values) == 1 && isAllowListFlag(flag) {
+			group = wrapAllowList(flag, values[0], continuationIndent)
 		}
 		lines = append(lines, group)
 	}
@@ -151,20 +177,137 @@ func formatCommandBlock(cli string, args []string) string {
 	return bearerTokenRe.ReplaceAllString(joined, "Bearer ***")
 }
 
+// isAllowListFlag reports whether a flag's value is a comma-joined allow/deny
+// list (of scoped tool rules) worth wrapping one-per-line in the log. The MCP
+// config flags are deliberately excluded — their value is JSON whose internal
+// commas must NOT be split.
+func isAllowListFlag(flag string) bool {
+	switch flag {
+	case "--allowedTools", "--allow-tool", "--deny-tool", "--disallowedTools":
+		return true
+	default:
+		return false
+	}
+}
+
+// wrapAllowList renders "--flag a,b,c" with the first rule on the flag line and
+// each subsequent rule on its own line, indented two spaces past the flag column
+// so the list reads as a sub-block of the flag. The trailing comma is kept on
+// each wrapped line so the value stays an honest picture of the CSV passed.
+func wrapAllowList(flag, csv, continuationIndent string) string {
+	parts := strings.Split(csv, ",")
+	if len(parts) <= 1 {
+		return flag + " " + csv
+	}
+	ruleIndent := continuationIndent + "  "
+	var b strings.Builder
+	b.WriteString(flag + " " + parts[0])
+	for _, p := range parts[1:] {
+		b.WriteString("," + ruleIndent + p)
+	}
+	return b.String()
+}
+
 // buildBaseArgs selects the per-backend adapter and renders the containment
 // profile to that CLI's arguments. Dropping the former --dangerously-skip-
-// permissions / --yolo re-arms each CLI's native path gate, so reads confine to
-// cwd + the --add-dir grants.
-func buildBaseArgs(cli string, model string, prompt string, profile domain.ContainmentProfile, libraryDir string) []string {
+// permissions / --yolo re-arms each CLI's native path gate; the typed tool
+// grants are then rendered per-backend (claude scopes file grants in the allow
+// rule, copilot on the --add-dir path axis), so reads confine to cwd + the
+// --add-dir grants and no bare filesystem-wide allow entry leaks. #41.
+func buildBaseArgs(cli string, model string, prompt string, profile domain.ContainmentProfile, cwd, libraryDir string) []string {
 	switch {
 	case strings.Contains(cli, "claude"):
-		return claudeBackend{}.buildArgs(profile, libraryDir, model, prompt)
+		return claudeBackend{}.buildArgs(profile, cwd, libraryDir, model, prompt)
 	case strings.Contains(cli, "agy"):
-		return agyBackend{}.buildArgs(profile, libraryDir, model, prompt)
+		return agyBackend{}.buildArgs(profile, cwd, libraryDir, model, prompt)
 	case strings.Contains(cli, "copilot"):
-		return copilotBackend{}.buildArgs(profile, libraryDir, model, prompt)
+		return copilotBackend{}.buildArgs(profile, cwd, libraryDir, model, prompt)
 	}
 	return nil
+}
+
+// fileScopeDirs is the set of directories a file-type tool grant is scoped to:
+// the subprocess cwd (the current note/buffer, resolved per-invocation) plus the
+// profile's --add-dir grants (library + user dirs). cwd is included explicitly
+// because AddDirs omits the note dir (it is the cwd, not an --add-dir).
+func fileScopeDirs(profile domain.ContainmentProfile, cwd, libraryDir string) []string {
+	var dirs []string
+	if strings.TrimSpace(cwd) != "" {
+		dirs = append(dirs, cwd)
+	}
+	return append(dirs, profile.AddDirs(libraryDir)...)
+}
+
+// claudeScopedFileRule renders one file-type grant scoped to one directory:
+// verb(//<abs>/**). Claude has no separate path gate, so a bare verb would grant
+// the whole filesystem — the scoping is what confines it. The leading extra '/'
+// (dir already begins with '/') is claude's absolute-path rule sigil, verified
+// live against claude 2.1.207.
+func claudeScopedFileRule(verb, dir string) string {
+	return verb + "(/" + dir + "/**)"
+}
+
+// claudeToolRules renders the profile's tool grants to claude --allowedTools
+// entries by TYPE (never by inferring from the name):
+//   - file    → verb(//dir/**) for each scope dir (redundant-but-harmless for
+//     reads, load-bearing for writes);
+//   - network → verb(domain:…) per constraint domain, or bare verb when empty;
+//   - other   → the constraint verbatim, or bare verb when empty.
+//
+// A grant with no claude name is omitted (fail closed).
+func claudeToolRules(profile domain.ContainmentProfile, cwd, libraryDir string) []string {
+	scopeDirs := fileScopeDirs(profile, cwd, libraryDir)
+	var rules []string
+	for _, t := range profile.Tools {
+		verb := t.NameFor("claude")
+		if verb == "" {
+			continue // fail closed: claude can't express this capability
+		}
+		switch t.Type {
+		case "network":
+			rules = append(rules, networkRules(verb, t.Constraint, func(d string) string {
+				return verb + "(domain:" + d + ")"
+			})...)
+		case "other":
+			if c := strings.TrimSpace(t.Constraint); c != "" {
+				rules = append(rules, c)
+			} else {
+				rules = append(rules, verb)
+			}
+		default: // file
+			for _, dir := range scopeDirs {
+				rules = append(rules, claudeScopedFileRule(verb, dir))
+			}
+		}
+	}
+	return rules
+}
+
+// networkRules splits a comma/space-separated domain constraint and renders one
+// scoped rule per domain via mk; an empty constraint yields a single bare grant.
+func networkRules(bare, constraint string, mk func(domain string) string) []string {
+	domains := splitConstraint(constraint)
+	if len(domains) == 0 {
+		return []string{bare}
+	}
+	rules := make([]string, 0, len(domains))
+	for _, d := range domains {
+		rules = append(rules, mk(d))
+	}
+	return rules
+}
+
+// splitConstraint parses a user constraint line ("a.com, b.com") into trimmed,
+// non-empty entries. Both commas and whitespace separate.
+func splitConstraint(s string) []string {
+	fields := strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' })
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // claudeBackend renders the profile for the claude CLI, which reads the prompt
@@ -172,7 +315,7 @@ func buildBaseArgs(cli string, model string, prompt string, profile domain.Conta
 // mcp-config is deliberately never passed so the user's inherited approvals load.
 type claudeBackend struct{}
 
-func (claudeBackend) buildArgs(profile domain.ContainmentProfile, libraryDir, model, _ string) []string {
+func (claudeBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryDir, model, _ string) []string {
 	args := []string{"--print", "--no-session-persistence"}
 	for _, dir := range profile.AddDirs(libraryDir) {
 		args = append(args, "--add-dir", dir)
@@ -181,7 +324,7 @@ func (claudeBackend) buildArgs(profile domain.ContainmentProfile, libraryDir, mo
 	if inj.present() {
 		args = append(args, "--mcp-config", inj.configJSON())
 	}
-	tools := append(profile.ToolNames(), inj.allowEntries()...)
+	tools := append(claudeToolRules(profile, cwd, libraryDir), inj.allowEntries()...)
 	if len(tools) > 0 {
 		args = append(args, "--allowedTools", strings.Join(tools, ","))
 	}
@@ -192,12 +335,15 @@ func (claudeBackend) buildArgs(profile domain.ContainmentProfile, libraryDir, mo
 }
 
 // copilotBackend renders the profile for the copilot CLI. It reads the prompt
-// from STDIN (--prompt ""). --allow-tool is a denylist-preserving allow (NOT
-// --available-tools, which would whitelist away inherited tools); shell + write
-// are hard-blocked because writes are opt-in.
+// from STDIN (--prompt ""). Copilot has THREE orthogonal containment axes: file
+// access is gated by --add-dir (path verification is on by default), web access
+// by --allow-url / --allow-all-urls (its OWN axis), and tool permission by
+// --allow-tool. So file-type grants render as PLAIN tool names (the path axis
+// confines where), network grants route to the URL axis (never --allow-tool),
+// and --deny-tool shell,write hard-blocks writes (opt-in).
 type copilotBackend struct{}
 
-func (copilotBackend) buildArgs(profile domain.ContainmentProfile, libraryDir, model, _ string) []string {
+func (copilotBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryDir, model, _ string) []string {
 	args := []string{"--prompt", "", "--silent"}
 	for _, dir := range profile.AddDirs(libraryDir) {
 		args = append(args, "--add-dir", dir)
@@ -207,10 +353,13 @@ func (copilotBackend) buildArgs(profile domain.ContainmentProfile, libraryDir, m
 	if inj.present() {
 		args = append(args, "--additional-mcp-config", inj.configJSON())
 	}
-	tools := append(profile.ToolNames(), inj.allowEntries()...)
+
+	toolNames, urlArgs := copilotToolAxes(profile)
+	tools := append(toolNames, inj.allowEntries()...)
 	if len(tools) > 0 {
 		args = append(args, "--allow-tool", strings.Join(tools, ","))
 	}
+	args = append(args, urlArgs...)
 	args = append(args, "--deny-tool", "shell,write")
 	if model != "" {
 		args = append(args, "--model", model)
@@ -218,15 +367,39 @@ func (copilotBackend) buildArgs(profile domain.ContainmentProfile, libraryDir, m
 	return args
 }
 
+// copilotToolAxes splits the profile's tool grants across copilot's two relevant
+// axes: file/other grants become plain --allow-tool names (path-gated by
+// --add-dir), and network grants become URL-axis args (--allow-url <domains> or
+// --allow-all-urls when unrestricted). A grant with no copilot name is omitted
+// from the tool axis (fail closed) — e.g. baseline Fetch, whose copilot column is
+// intentionally empty because it belongs on the URL axis.
+func copilotToolAxes(profile domain.ContainmentProfile) (toolNames, urlArgs []string) {
+	for _, t := range profile.Tools {
+		if t.Type == "network" {
+			if domains := splitConstraint(t.Constraint); len(domains) > 0 {
+				urlArgs = append(urlArgs, "--allow-url", strings.Join(domains, ","))
+			} else {
+				urlArgs = append(urlArgs, "--allow-all-urls")
+			}
+			continue
+		}
+		// file + other: a plain tool name, path-gated by --add-dir.
+		if name := t.NameFor("copilot"); name != "" {
+			toolNames = append(toolNames, name)
+		}
+	}
+	return toolNames, urlArgs
+}
+
 // agyBackend renders the profile for the agy (Antigravity) CLI. agy exposes no
-// per-tool allow/deny flag and no per-call --mcp-config inject flag, so the
-// profile degrades to directories-only under coarse read-only (--mode plan): the
-// library grant is the raw --add-dir read of note files, with no MCP layer. The
-// renderer returns BEFORE any allowlist/MCP logic. agy does NOT read STDIN —
-// --print takes the prompt as its trailing argument.
+// per-tool allow/deny flag and no per-call --mcp-config inject flag, so under the
+// uniform fail-closed rule its column is empty for every tool grant: it emits no
+// tool names and relies on --add-dir + --mode plan. The renderer returns BEFORE
+// any allowlist/MCP logic. agy does NOT read STDIN — --print takes the prompt as
+// its trailing argument.
 type agyBackend struct{}
 
-func (agyBackend) buildArgs(profile domain.ContainmentProfile, libraryDir, model, prompt string) []string {
+func (agyBackend) buildArgs(profile domain.ContainmentProfile, cwd, libraryDir, model, prompt string) []string {
 	var args []string
 	for _, dir := range profile.AddDirs(libraryDir) {
 		args = append(args, "--add-dir", dir)

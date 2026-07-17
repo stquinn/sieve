@@ -54,8 +54,13 @@ Prefer the `language-server` MCP tools over grep/bash for code navigation tasks:
 
 ## Build & Dev
 
+Dev env is a **nix flake** (`nix develop`, or `direnv`/`.envrc` = `use flake`). The
+flake's devShell ships a `wails` wrapper (a real store package, `wailsWrapped`) that
+injects `-tags webkit2_41` into `dev`/`build` transparently — so bare `wails dev`
+works. `shell.nix` is gone; `nix develop` is the sole entry point.
+
 ```bash
-wails dev        # hot-reload; shell.nix adds -tags webkit2_41 transparently
+wails dev        # hot-reload; flake wrapper adds -tags webkit2_41 transparently
 wails build      # production binary
 go build ./...   # compile check — no npm step required
 ```

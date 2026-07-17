@@ -7,6 +7,8 @@ export function GetActiveUUID():Promise<string>;
 
 export function InitVault(arg1:string):Promise<void>;
 
+export function PickDirectory():Promise<string>;
+
 export function Quit():Promise<void>;
 
 export function SelectVault():Promise<string>;

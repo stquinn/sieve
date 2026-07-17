@@ -41,7 +41,9 @@ func TestProfile_RendersSavedUserAdditions(t *testing.T) {
 	settings := domain.DefaultSettings()
 	settings.CLI = "claude"
 	settings.AI.Containment = domain.LoadContainmentProfile(domain.ContainmentProfile{
-		Tools:       []domain.ToolGrant{{Name: "Write"}},
+		// A user-added write grant: claude's write-family permission rule is Edit
+		// (verified live — a Write(...) rule is inert), so the claude name is Edit.
+		Tools:       []domain.ToolGrant{{Type: "file", Label: "Write", Names: map[string]string{"claude": "Edit"}}},
 		Directories: []domain.DirGrant{{Path: "/scratch"}},
 		McpServers:  []domain.McpGrant{{Name: "myserver", Command: "npx", Args: []string{"-y", "pkg"}}},
 	})
@@ -69,7 +71,7 @@ func TestProfile_RendersSavedUserAdditions(t *testing.T) {
 	}
 
 	// End-to-end: the saved stdio server reaches the claude --mcp-config and allow list.
-	args := buildBaseArgs("claude", "", "prompt", p, root)
+	args := buildBaseArgs("claude", "", "prompt", p, "", root)
 	if cfg := flagValue(args, "--mcp-config"); !strings.Contains(cfg, "myserver") {
 		t.Errorf("user stdio server not injected into --mcp-config: %s", cfg)
 	}
@@ -154,6 +156,25 @@ func TestNoteDir_ResolvesNoteOwnFolder(t *testing.T) {
 	}
 }
 
+// floorCwd is defence-in-depth in the runner: an empty cwd is a bug (an AI op
+// always operates on a note/buffer or, failing that, the library). The runner
+// must never let the subprocess inherit the process cwd — on a Finder/Dock-
+// launched macOS app that is /. #41.
+func TestFloorCwd_NeverEmpty(t *testing.T) {
+	if got := floorCwd("", "/vault/library"); got != "/vault/library" {
+		t.Errorf("floorCwd(\"\", lib) = %q, want the library floor /vault/library", got)
+	}
+	if got := floorCwd("/notes/n1", "/vault/library"); got != "/notes/n1" {
+		t.Errorf("floorCwd(note, lib) = %q, want the note dir preserved", got)
+	}
+	// Even the floor can be empty in a degenerate config; then there is nothing to
+	// floor to and we must not fabricate a path — return empty and let exec inherit
+	// (the caller's fallbacks make this unreachable in practice).
+	if got := floorCwd("", ""); got != "" {
+		t.Errorf("floorCwd(\"\", \"\") = %q, want empty (no floor available)", got)
+	}
+}
+
 // captureRunner is a stub CLIRunner: it records the invocation and returns a
 // canned response instead of spawning a real CLI (CI has none installed).
 type captureRunner struct {
@@ -208,15 +229,21 @@ func TestRefineLanguage_ThreadsProfileAndLibraryDir(t *testing.T) {
 	if cap.libraryDir != "/vault/library" {
 		t.Errorf("libraryDir = %q, want /vault/library", cap.libraryDir)
 	}
-	// The runner receives the default containment floor: read-only tools + WebFetch,
-	// no write tools.
-	names := cap.profile.ToolNames()
-	if len(names) != 4 || names[3] != "WebFetch" {
-		t.Errorf("profile tools = %v, want [Read Grep Glob WebFetch]", names)
+	// cwd must NEVER be unset: RefineLanguage has no note context, so it falls
+	// back to the library root rather than the process cwd (which on a Finder/
+	// Dock-launched macOS app is /). #41.
+	if cap.cwd != "/vault/library" {
+		t.Errorf("cwd = %q, want the library root /vault/library (never unset)", cap.cwd)
 	}
-	for _, n := range names {
-		if n == "Write" || n == "Edit" {
-			t.Errorf("default profile must not grant write tool %q", n)
+	// The runner receives the default containment floor as CLI-neutral capability
+	// labels: Read + Search×2 + Fetch, no write tools.
+	names := cap.profile.ToolNames()
+	if len(names) != 4 || names[3] != "Fetch" {
+		t.Errorf("profile tools = %v, want [Read Search Search Fetch]", names)
+	}
+	for _, tg := range cap.profile.Tools {
+		if tg.Label == "Write" || tg.Names["claude"] == "Edit" {
+			t.Errorf("default profile must not grant write tool %q", tg.Label)
 		}
 	}
 	if cap.cli != "claude" {

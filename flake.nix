@@ -22,6 +22,23 @@
         inherit (pkgs) lib;
         isLinux = pkgs.stdenv.isLinux;
 
+        # wails wrapper as a REAL nix-store package (not a runtime mktemp file):
+        # a stable store path survives nix-direnv's cached `nix print-dev-env`,
+        # where a temp-dir wrapper baked into PATH points at an ephemeral dir that
+        # no longer exists — leaving bare `wails dev` to default to webkit2_40 and
+        # fail on the absent webkit2gtk-4.0. Injects -tags webkit2_41 (the 4.1 ABI
+        # the Linux runtime stack provides) into dev/build; other subcommands pass
+        # through untouched. Linux only — macOS uses the native WKWebView.
+        wailsWrapped = pkgs.writeShellScriptBin "wails" ''
+          case "$1" in
+            dev|build)
+              subcmd="$1"; shift
+              exec ${pkgs.wails}/bin/wails "$subcmd" -tags webkit2_41 "$@" ;;
+            *)
+              exec ${pkgs.wails}/bin/wails "$@" ;;
+          esac
+        '';
+
         # GTK/WebKit runtime stack (Linux only — macOS uses the native WKWebView).
         linuxLibs = with pkgs; [
           webkitgtk_4_1
@@ -90,13 +107,15 @@
           # On macOS, don't inherit dependencies from the Linux-specific sieve derivation
           inputsFrom = lib.optionals isLinux [ sieve ];
 
+          # On Linux, ship the -tags webkit2_41 wrapper instead of raw wails so
+          # `wails dev`/`build` target the 4.1 ABI. On macOS use raw wails (native
+          # WKWebView needs no tag).
           packages = with pkgs; [
             go
-            wails
             nodejs_22
             pkg-config
             tea # Gitea/Forgejo CLI
-          ] ++ lib.optionals isLinux [ pkgs.gcc ];
+          ] ++ (if isLinux then [ wailsWrapped pkgs.gcc ] else [ pkgs.wails ]);
 
           shellHook = ''
             export CGO_ENABLED=1
@@ -107,22 +126,6 @@
               export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:$XDG_DATA_DIRS"
               export PKG_CONFIG_PATH="${lib.makeSearchPathOutput "dev" "lib/pkgconfig" linuxLibs}:$PKG_CONFIG_PATH"
               export LD_LIBRARY_PATH="${lib.makeLibraryPath (linuxLibs ++ [ pkgs.glibc ])}:$LD_LIBRARY_PATH"
-
-              # wails wrapper: inject -tags webkit2_41 into dev/build transparently.
-              _wails_dir=$(mktemp -d)
-              cat > "$_wails_dir/wails" << 'EOF'
-            #!/usr/bin/env bash
-            case "$1" in
-              dev|build)
-                subcmd="$1"; shift
-                exec ${pkgs.wails}/bin/wails "$subcmd" -tags webkit2_41 "$@" ;;
-              *)
-                exec ${pkgs.wails}/bin/wails "$@" ;;
-            esac
-            EOF
-              chmod +x "$_wails_dir/wails"
-              export PATH="$_wails_dir:$PATH"
-              unset _wails_dir
             ''}
 
             echo "Stash dev environment ready"

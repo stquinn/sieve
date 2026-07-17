@@ -21,6 +21,23 @@ import (
 var log *slog.Logger
 var out io.Writer
 
+// levelVar is the live minimum log level, shared by every handler built via
+// handlerOpts. It starts at Info; SetDebug (called at startup from settings and
+// again on settings-save) flips it to Debug. Using a slog.LevelVar means the
+// change takes effect on the already-constructed handler with no rebuild.
+var levelVar = new(slog.LevelVar)
+
+// SetDebug turns Debug-level output on or off at runtime. This is what makes the
+// settings.json "debug" flag actually do something: off => Debug suppressed
+// (Info and above only), on => everything. Safe to call repeatedly.
+func SetDebug(on bool) {
+	if on {
+		levelVar.Set(slog.LevelDebug)
+		return
+	}
+	levelVar.Set(slog.LevelInfo)
+}
+
 func init() {
 	var handler slog.Handler
 
@@ -57,7 +74,7 @@ func logDirectory() string {
 
 func handlerOpts() *slog.HandlerOptions {
 	return &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		Level: levelVar,
 		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.MessageKey {
 				a.Value = slog.StringValue("[sieve] " + a.Value.String())

@@ -74,3 +74,6 @@ debug screenshots
 
 # ── Git worktrees ─────────────────────────────────────────────────────────────
 .worktrees/
+
+# ── direnv (nix-direnv cache; per-checkout, never committed) ───────────────────
+.direnv/

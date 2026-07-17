@@ -1,5 +1,5 @@
 {{define "settings.html"}}
-<div class="settings-container" style="display: flex; height: 75vh; min-height: 400px; max-height: 850px;">
+<div class="settings-container" style="display: flex; height: 90vh; min-height: 400px; max-height: 950px;">
   <!-- Sidebar -->
   <div class="settings-sidebar" style="width: 12rem; background: var(--theme-bgDark); border-right: 1px solid var(--theme-border); padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem;">
     <h2 style="font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem; padding: 0 0.5rem;">Settings</h2>
@@ -55,51 +55,19 @@
 
     <div class="settings-tab-content" id="settings-tab-aiaccess" style="display: {{if eq .LastSettingsPanel "aiaccess"}}block{{else}}none{{end}};">
       <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 0.75rem;">AI Access</h3>
-      <p style="font-size: 0.8rem; color: var(--theme-textDim); margin-bottom: 1.5rem; line-height: 1.5;">
-        Controls what an AI CLI invocation is permitted to read, write, or call. Sieve grants a minimal baseline (locked, shown greyed-out below); anything you add here is a standing grant applied to <strong style="color: var(--theme-text);">every</strong> AI action, not just the one you're thinking of when you add it.
+      <p style="font-size: 0.8rem; color: var(--theme-textDim); margin-bottom: 1.25rem; line-height: 1.5;">
+        Controls what an AI CLI invocation is permitted to read, write, or call. Sieve grants a minimal baseline (locked, shown greyed-out below); anything you add here is a standing grant applied to <strong style="color: var(--theme-text);">every</strong> AI action, not just the one you're thinking of when you add it. Named tools follow the <strong style="color: var(--theme-text);">active CLI</strong> ({{.CLI}}); a grant that a different CLI can't express is simply omitted from that call.
       </p>
 
-      <!-- Tools -->
-      <div style="margin-bottom: 2rem;">
-        <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Tools</label>
-
-        <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.5rem;">
-          {{range .AI.Containment.Tools}}
-          {{if .Baseline}}
-          <div style="display: flex; gap: 0.5rem; align-items: center; opacity: 0.7;">
-            <input type="text" value="{{.Name}}" disabled style="flex: 1; background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
-            <span style="font-size: 0.75rem; padding: 0.35rem 0.7rem; border-radius: 999px; background: var(--theme-bgDark); color: var(--theme-textDim); border: 1px solid var(--theme-border); white-space: nowrap;">locked</span>
-          </div>
-          {{end}}
-          {{end}}
-        </div>
-
-        <div id="containment-tools-list" style="display: flex; flex-direction: column; gap: 0.5rem;">
-          {{range .AI.Containment.Tools}}
-          {{if not .Baseline}}
-          <div class="containment-tool-item" style="display: flex; gap: 0.5rem; align-items: center;">
-            <input type="text" name="containment_tool_name" value="{{.Name}}" placeholder="Tool name (e.g. Write, Edit, Bash)" style="flex: 1; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
-            <button type="button" onclick="this.parentElement.remove()" style="padding: 0.6rem; color: var(--theme-accentRed); background: transparent; border: 1px solid var(--theme-border); border-radius: 0.5rem; cursor: pointer;" title="Remove tool grant">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-            </button>
-          </div>
-          {{end}}
-          {{end}}
-        </div>
-
-        <button type="button" onclick="addContainmentTool()" style="margin-top: 0.75rem; padding: 0.5rem 1rem; font-size: 0.875rem; font-weight: 500; color: var(--theme-text); background: var(--theme-bgDark); border: 1px dashed var(--theme-border); border-radius: 0.5rem; cursor: pointer; width: 100%; text-align: center;">
-          + Add Tool
-        </button>
-
-        <p style="font-size: 0.75rem; color: var(--theme-accentOrange); margin-top: 0.75rem; line-height: 1.5;">
-          Warning: granting a write tool (<code>Write</code>, <code>Edit</code>) applies to every AI action Sieve performs — including background actions like web-clip on untrusted pages. Only add write access if you understand that trade-off.
-        </p>
+      <!-- Nested horizontal sub-tabs: three parallel KINDS of grant, one profile. -->
+      <div style="display: flex; gap: 0.25rem; border-bottom: 1px solid var(--theme-border); margin-bottom: 1.25rem;">
+        <button type="button" id="aiaccess-subtab-btn-directories" class="aiaccess-subtab-btn active" onclick="switchAiAccessSubTab(this, 'directories')" style="padding: 0.5rem 1rem; font-size: 0.8rem; font-weight: 600; border: none; border-bottom: 2px solid var(--theme-accentPrimary); background: transparent; color: var(--theme-accentPrimary); cursor: pointer;">Directories</button>
+        <button type="button" id="aiaccess-subtab-btn-tools" class="aiaccess-subtab-btn" onclick="switchAiAccessSubTab(this, 'tools')" style="padding: 0.5rem 1rem; font-size: 0.8rem; font-weight: 600; border: none; border-bottom: 2px solid transparent; background: transparent; color: var(--theme-textDim); cursor: pointer;">Tools</button>
+        <button type="button" id="aiaccess-subtab-btn-mcp" class="aiaccess-subtab-btn" onclick="switchAiAccessSubTab(this, 'mcp')" style="padding: 0.5rem 1rem; font-size: 0.8rem; font-weight: 600; border: none; border-bottom: 2px solid transparent; background: transparent; color: var(--theme-textDim); cursor: pointer;">MCP Servers</button>
       </div>
 
       <!-- Directories -->
-      <div style="margin-bottom: 2rem;">
-        <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Directories</label>
-
+      <div class="aiaccess-subtab-content" id="aiaccess-subtab-directories" style="display: block;">
         <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.5rem;">
           {{range .AI.Containment.Directories}}
           {{if .Baseline}}
@@ -125,16 +93,60 @@
         </div>
 
         <button type="button" onclick="addContainmentDir()" style="margin-top: 0.75rem; padding: 0.5rem 1rem; font-size: 0.875rem; font-weight: 500; color: var(--theme-text); background: var(--theme-bgDark); border: 1px dashed var(--theme-border); border-radius: 0.5rem; cursor: pointer; width: 100%; text-align: center;">
-          + Add Directory
+          + Add Directory…
         </button>
       </div>
 
-      <!-- MCP servers -->
-      <div>
-        <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">MCP Servers</label>
+      <!-- Tools -->
+      <div class="aiaccess-subtab-content" id="aiaccess-subtab-tools" style="display: none;">
+        <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.5rem;">
+          {{range .AI.Containment.Tools}}
+          {{if .Baseline}}
+          <div style="display: flex; gap: 0.5rem; align-items: center; opacity: 0.7;">
+            <input type="text" value="{{.Label}}" disabled style="flex: 1; background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+            {{with index .Names $.CLI}}<span style="font-size: 0.7rem; font-family: monospace; padding: 0.35rem 0.6rem; border-radius: 0.4rem; background: var(--theme-bgDark); color: var(--theme-textDim); border: 1px solid var(--theme-border); white-space: nowrap;">{{.}}</span>{{end}}
+            <span style="font-size: 0.7rem; padding: 0.35rem 0.6rem; border-radius: 0.4rem; background: var(--theme-bgDark); color: var(--theme-textDim); border: 1px solid var(--theme-border); white-space: nowrap;">{{.Type}}</span>
+            <span style="font-size: 0.75rem; padding: 0.35rem 0.7rem; border-radius: 999px; background: var(--theme-bgDark); color: var(--theme-textDim); border: 1px solid var(--theme-border); white-space: nowrap;">locked</span>
+          </div>
+          {{end}}
+          {{end}}
+        </div>
 
+        <div id="containment-tools-list" style="display: flex; flex-direction: column; gap: 0.5rem;">
+          {{range .AI.Containment.Tools}}
+          {{if not .Baseline}}
+          <div class="containment-tool-item" style="display: flex; gap: 0.5rem; align-items: center;">
+            <input type="text" name="containment_tool_name" value="{{.Label}}" placeholder="Tool name (e.g. Edit, Bash)" style="flex: 1; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+            <select name="containment_tool_type" onchange="toggleToolConstraint(this)" style="background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 0.75rem; color: var(--theme-text); outline: none;">
+              <option value="file" {{if eq .Type "file"}}selected{{end}}>file</option>
+              <option value="network" {{if eq .Type "network"}}selected{{end}}>network</option>
+              <option value="other" {{if eq .Type "other"}}selected{{end}}>other</option>
+            </select>
+            <input type="text" name="containment_tool_constraint" value="{{.Constraint}}" data-tool-constraint {{if eq .Type "file"}}readonly placeholder="Scoped to your granted directories (above)"{{else if eq .Type "network"}}placeholder="domains, e.g. api.example.com, docs.rs"{{else}}placeholder="specifier passed to the CLI verbatim"{{end}} style="flex: 2; font-family: monospace; background: {{if eq .Type "file"}}var(--theme-bgDark){{else}}var(--theme-bg){{end}}; border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: {{if eq .Type "file"}}var(--theme-textDim){{else}}var(--theme-text){{end}}; outline: none;">
+            <button type="button" onclick="this.parentElement.remove()" style="padding: 0.6rem; color: var(--theme-accentRed); background: transparent; border: 1px solid var(--theme-border); border-radius: 0.5rem; cursor: pointer;" title="Remove tool grant">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+            </button>
+          </div>
+          {{end}}
+          {{end}}
+        </div>
+
+        <button type="button" onclick="addContainmentTool()" style="margin-top: 0.75rem; padding: 0.5rem 1rem; font-size: 0.875rem; font-weight: 500; color: var(--theme-text); background: var(--theme-bgDark); border: 1px dashed var(--theme-border); border-radius: 0.5rem; cursor: pointer; width: 100%; text-align: center;">
+          + Add Tool
+        </button>
+
+        <p style="font-size: 0.75rem; color: var(--theme-textDim); margin-top: 0.75rem; line-height: 1.5;">
+          <strong style="color: var(--theme-text);">file</strong> tools auto-scope to the directories granted above — you never type a path. <strong style="color: var(--theme-text);">network</strong> tools take a domain list (empty = unrestricted). <strong style="color: var(--theme-text);">other</strong> tools pass their constraint to the CLI verbatim and are not confined by Sieve.
+        </p>
+        <p style="font-size: 0.75rem; color: var(--theme-accentOrange); margin-top: 0.5rem; line-height: 1.5;">
+          Warning: granting a write tool (a <em>file</em> tool named <code>Edit</code> on claude) applies to every AI action Sieve performs — including background actions like web-clip on untrusted pages. Only add write access if you understand that trade-off.
+        </p>
+      </div>
+
+      <!-- MCP servers -->
+      <div class="aiaccess-subtab-content" id="aiaccess-subtab-mcp" style="display: none;">
         {{if eq .CLI "agy"}}
-        <p style="font-size: 0.75rem; color: var(--theme-textDim); margin-bottom: 0.75rem; font-style: italic;">MCP servers are not available on agy — it has no per-call MCP inject mechanism. (Directory grants above still apply.)</p>
+        <p style="font-size: 0.75rem; color: var(--theme-textDim); margin-bottom: 0.75rem; font-style: italic;">MCP servers are not available on agy — it has no per-call MCP inject mechanism. (Directory grants still apply.)</p>
         {{end}}
 
         <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.5rem;">
@@ -322,6 +334,49 @@ function addCustomParser() {
   container.appendChild(div);
 }
 
+// switchAiAccessSubTab toggles the nested horizontal sub-tabs inside the AI
+// Access pane (Directories / Tools / MCP Servers). Local view state only — the
+// three are one containment profile, so there is nothing to persist. Mirrors the
+// switchSettingsTab idiom one tier down.
+function switchAiAccessSubTab(el, name) {
+  document.querySelectorAll('.aiaccess-subtab-content').forEach(function(c) { c.style.display = 'none'; });
+  const target = document.getElementById('aiaccess-subtab-' + name);
+  if (target) target.style.display = 'block';
+  document.querySelectorAll('.aiaccess-subtab-btn').forEach(function(b) {
+    b.style.borderBottomColor = 'transparent';
+    b.style.color = 'var(--theme-textDim)';
+    b.classList.remove('active');
+  });
+  if (el) {
+    el.style.borderBottomColor = 'var(--theme-accentPrimary)';
+    el.style.color = 'var(--theme-accentPrimary)';
+    el.classList.add('active');
+  }
+}
+
+// toggleToolConstraint drives the constraint field from the type <select>: file
+// tools auto-scope to the granted directories (read-only, no literal path shown);
+// network tools take a domain list; other tools pass their specifier verbatim.
+function toggleToolConstraint(select) {
+  const row = select.closest('.containment-tool-item');
+  const input = row.querySelector('[data-tool-constraint]');
+  if (!input) return;
+  if (select.value === 'file') {
+    input.value = '';
+    input.readOnly = true;
+    input.placeholder = 'Scoped to your granted directories (above)';
+    input.style.background = 'var(--theme-bgDark)';
+    input.style.color = 'var(--theme-textDim)';
+  } else {
+    input.readOnly = false;
+    input.placeholder = select.value === 'network'
+      ? 'domains, e.g. api.example.com, docs.rs'
+      : 'specifier passed to the CLI verbatim';
+    input.style.background = 'var(--theme-bg)';
+    input.style.color = 'var(--theme-text)';
+  }
+}
+
 function addContainmentTool() {
   const container = document.getElementById('containment-tools-list');
   const div = document.createElement('div');
@@ -329,7 +384,13 @@ function addContainmentTool() {
   div.style.cssText = 'display: flex; gap: 0.5rem; align-items: center;';
 
   div.innerHTML = `
-    <input type="text" name="containment_tool_name" placeholder="Tool name (e.g. Write, Edit, Bash)" style="flex: 1; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+    <input type="text" name="containment_tool_name" placeholder="Tool name (e.g. Edit, Bash)" style="flex: 1; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+    <select name="containment_tool_type" onchange="toggleToolConstraint(this)" style="background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 0.75rem; color: var(--theme-text); outline: none;">
+      <option value="file" selected>file</option>
+      <option value="network">network</option>
+      <option value="other">other</option>
+    </select>
+    <input type="text" name="containment_tool_constraint" data-tool-constraint readonly placeholder="Scoped to your granted directories (above)" style="flex: 2; font-family: monospace; background: var(--theme-bgDark); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-textDim); outline: none;">
     <button type="button" onclick="this.parentElement.remove()" style="padding: 0.6rem; color: var(--theme-accentRed); background: transparent; border: 1px solid var(--theme-border); border-radius: 0.5rem; cursor: pointer;" title="Remove tool grant">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
     </button>
@@ -337,18 +398,45 @@ function addContainmentTool() {
   container.appendChild(div);
 }
 
-function addContainmentDir() {
+// addContainmentDir launches the native directory picker (the vault-picker's
+// PickDirectory, which returns an absolute path with no side effects) and appends
+// a pre-filled row only if a folder was chosen — picking IS how you add a grant,
+// so a cancel adds nothing. Falls back to an empty editable row when the Wails
+// binding is absent (e.g. the dev-server browser), so the panel stays usable.
+async function addContainmentDir() {
+  let picked = '';
+  const bound = window.go && window.go.main && window.go.main.App && window.go.main.App.PickDirectory;
+  if (bound) {
+    try {
+      picked = (await window.go.main.App.PickDirectory()) || '';
+    } catch (e) {
+      console.error('[sieve] PickDirectory failed', e);
+      return;
+    }
+    if (!picked) return; // cancelled — add nothing
+  }
+
   const container = document.getElementById('containment-dirs-list');
   const div = document.createElement('div');
   div.className = 'containment-dir-item';
   div.style.cssText = 'display: flex; gap: 0.5rem; align-items: center;';
 
-  div.innerHTML = `
-    <input type="text" name="containment_dir_path" placeholder="/absolute/path/to/directory" style="flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
-    <button type="button" onclick="this.parentElement.remove()" style="padding: 0.6rem; color: var(--theme-accentRed); background: transparent; border: 1px solid var(--theme-border); border-radius: 0.5rem; cursor: pointer;" title="Remove directory grant">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-    </button>
-  `;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.name = 'containment_dir_path';
+  input.value = picked;
+  input.placeholder = '/absolute/path/to/directory';
+  input.style.cssText = 'flex: 1; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;';
+
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.onclick = function() { div.remove(); };
+  remove.title = 'Remove directory grant';
+  remove.style.cssText = 'padding: 0.6rem; color: var(--theme-accentRed); background: transparent; border: 1px solid var(--theme-border); border-radius: 0.5rem; cursor: pointer;';
+  remove.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
+
+  div.appendChild(input);
+  div.appendChild(remove);
   container.appendChild(div);
 }
 

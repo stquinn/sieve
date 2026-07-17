@@ -250,7 +250,10 @@ func (s *AIService) RefineLanguage(content, currentLanguage, detectionMethod str
 	p = strings.ReplaceAll(p, "{current_language}", currentLanguage)
 	p = strings.ReplaceAll(p, "{detection_method}", detectionMethod)
 
-	resp, err := s.runner.Run("refine", settings.CLI, p, settings.Model, s.timeoutFor(settings, "refine"), "", s.profile(), s.storePath)
+	// cwd is never unset: refine has no note context, so fall back to the library
+	// root rather than the process cwd (which on a Finder/Dock-launched macOS app
+	// is /). #41.
+	resp, err := s.runner.Run("refine", settings.CLI, p, settings.Model, s.timeoutFor(settings, "refine"), s.storePath, s.profile(), s.storePath)
 	if err != nil {
 		return "", err
 	}
@@ -376,7 +379,10 @@ func (s *AIService) runEvaluateBuffer(meta domain.DocumentMeta, body []byte, set
 	p = strings.ReplaceAll(p, "{now}", time.Now().Format(time.RFC3339))
 	p = strings.ReplaceAll(p, "{content}", string(body))
 
-	respText, err := s.runner.Run("file", settings.CLI, p, settings.Model, s.timeoutFor(settings, "file"), "", s.profile(), s.storePath)
+	// cwd is never unset: the filing evaluation reads no note files, so fall back
+	// to the library root rather than the process cwd (/ on a Finder-launched
+	// macOS app). #41.
+	respText, err := s.runner.Run("file", settings.CLI, p, settings.Model, s.timeoutFor(settings, "file"), s.storePath, s.profile(), s.storePath)
 	if err != nil {
 		return nil, err
 	}

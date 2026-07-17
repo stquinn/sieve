@@ -142,6 +142,9 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 	settings.PromptTimeouts = promptTimeouts
 
 	settings.Debug = r.FormValue("debug") == "on"
+	// Apply the debug flag to the logger live, so toggling it takes effect without
+	// an app restart (mirrors the startup application in app.go).
+	logger.SetDebug(settings.Debug)
 
 	var customParsers []domain.CustomLogParser
 	names := r.PostForm["parser_name"]
@@ -163,10 +166,34 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 	// baseline back out at persistence time (WithoutBaseline), so settings.json
 	// only ever holds the user's additions.
 	adds := domain.ContainmentProfile{}
-	for _, name := range r.PostForm["containment_tool_name"] {
-		if name != "" {
-			adds.Tools = append(adds.Tools, domain.ToolGrant{Name: name})
+	// Typed tool grants (#41): each row carries a verb (the CLI tool name), a type
+	// (file|network|other, drives scoping), and a constraint (network domains /
+	// other verbatim specifier; unused for file). The verb goes into Names for the
+	// ACTIVE CLI only — a named tool follows the CLI it was added under; a different
+	// CLI simply can't resolve it and the grant is omitted (fail closed). The three
+	// arrays align by index (every row submits all three, readonly included).
+	toolNames := r.PostForm["containment_tool_name"]
+	toolTypes := r.PostForm["containment_tool_type"]
+	toolConstraints := r.PostForm["containment_tool_constraint"]
+	for i, name := range toolNames {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
 		}
+		typ := "file"
+		if i < len(toolTypes) && toolTypes[i] != "" {
+			typ = toolTypes[i]
+		}
+		constraint := ""
+		if typ != "file" && i < len(toolConstraints) {
+			constraint = strings.TrimSpace(toolConstraints[i])
+		}
+		adds.Tools = append(adds.Tools, domain.ToolGrant{
+			Type:       typ,
+			Label:      name,
+			Names:      map[string]string{settings.CLI: name},
+			Constraint: constraint,
+		})
 	}
 	for _, p := range r.PostForm["containment_dir_path"] {
 		if p != "" {
