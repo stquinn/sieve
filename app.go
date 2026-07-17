@@ -318,6 +318,20 @@ func (a *App) getStoreInfo() StoreInfo {
 
 // ── Bootstrapping ─────────────────────────────────────────────────────────────
 
+// PickDirectory opens the native directory chooser and returns the selected
+// absolute path ("" if cancelled). Unlike SelectVault it has NO side effects —
+// no validation, no store switch — so it is a reusable path picker for form
+// fields (e.g. a containment directory grant). The frontend awaits it and drops
+// the result straight into the field.
+func (a *App) PickDirectory() (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("app context not initialized")
+	}
+	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select a directory to grant",
+	})
+}
+
 func (a *App) SelectVault() (string, error) {
 	logger.Info("SelectVault: triggered")
 	if a.ctx == nil {

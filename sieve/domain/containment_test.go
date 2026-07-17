@@ -6,25 +6,60 @@ import (
 	"testing"
 )
 
-// DefaultContainmentProfile seeds the baseline capability floor: read-only tools
-// (incl. WebFetch), the library + note directories, and the sieve MCP placeholder.
+// DefaultContainmentProfile seeds the baseline capability floor as CLI-neutral
+// capability verbs: Read (file), Search ×2 (claude Grep + Glob), Fetch (network),
+// plus the library+note dirs and the sieve MCP placeholder. Each grant carries a
+// Type (drives scoping) and a per-CLI Names table (drives the emitted string). #41.
 func TestDefaultContainmentProfile_Baseline(t *testing.T) {
 	p := DefaultContainmentProfile()
 
-	wantTools := []string{"Read", "Grep", "Glob", "WebFetch"}
-	if got := p.ToolNames(); !equalStrings(got, wantTools) {
-		t.Fatalf("baseline tools = %v, want %v", got, wantTools)
+	// Generic capability labels are CLI-neutral; the CLI-specific strings live in
+	// the per-CLI Names table, never in the label.
+	wantLabels := []string{"Read", "Search", "Search", "Fetch"}
+	var gotLabels []string
+	for _, tg := range p.Tools {
+		gotLabels = append(gotLabels, tg.Label)
 	}
+	if !equalStrings(gotLabels, wantLabels) {
+		t.Fatalf("baseline tool labels = %v, want %v", gotLabels, wantLabels)
+	}
+
+	// Types drive scoping: file for read/search, network for fetch.
+	wantTypes := []string{"file", "file", "file", "network"}
+	var gotTypes []string
+	for _, tg := range p.Tools {
+		gotTypes = append(gotTypes, tg.Type)
+	}
+	if !equalStrings(gotTypes, wantTypes) {
+		t.Fatalf("baseline tool types = %v, want %v", gotTypes, wantTypes)
+	}
+
+	// The per-CLI name table maps each capability to that CLI's actual tool name.
+	// Two distinct Search grants (Grep + Glob), single-valued each — never a list.
+	claudeNames := map[string]int{}
+	copilotNames := map[string]int{}
 	for _, tg := range p.Tools {
 		if !tg.Baseline {
-			t.Errorf("tool %q should be baseline", tg.Name)
+			t.Errorf("tool %q should be baseline", tg.Label)
+		}
+		claudeNames[tg.Names["claude"]]++
+		copilotNames[tg.Names["copilot"]]++
+	}
+	for _, want := range []string{"Read", "Grep", "Glob", "WebFetch"} {
+		if claudeNames[want] == 0 {
+			t.Errorf("baseline missing a grant with claude name %q; got %v", want, claudeNames)
+		}
+	}
+	for _, want := range []string{"view", "grep", "glob"} {
+		if copilotNames[want] == 0 {
+			t.Errorf("baseline missing a grant with copilot name %q; got %v", want, copilotNames)
 		}
 	}
 
 	// Neither Write nor Edit is granted by default — writes are opt-in.
 	for _, tg := range p.Tools {
-		if tg.Name == "Write" || tg.Name == "Edit" {
-			t.Errorf("write tool %q must not be a baseline grant", tg.Name)
+		if tg.Label == "Write" || tg.Names["claude"] == "Edit" || tg.Names["claude"] == "Write" {
+			t.Errorf("write tool %q must not be a baseline grant", tg.Label)
 		}
 	}
 
@@ -73,7 +108,7 @@ func TestContainmentProfile_AddDirs_UserPath(t *testing.T) {
 // authoritative allow-list is in the command line).
 func TestContainmentProfile_Summary(t *testing.T) {
 	s := DefaultContainmentProfile().Summary()
-	for _, want := range []string{"tools=[Read Grep Glob WebFetch]", "sieve"} {
+	for _, want := range []string{"tools=[Read Search Search Fetch]", "sieve"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("Summary() = %q, want it to contain %q", s, want)
 		}
@@ -178,7 +213,7 @@ func TestLoadContainmentProfile_AppendsUserAdditions(t *testing.T) {
 	got := LoadContainmentProfile(overrides)
 
 	// Baseline tools/dirs/mcp are still present.
-	if !equalStrings(got.ToolNames(), []string{"Read", "Grep", "Glob", "WebFetch"}) {
+	if !equalStrings(got.ToolNames(), []string{"Read", "Search", "Search", "Fetch"}) {
 		t.Fatalf("ToolNames = %v, want baseline tools preserved", got.ToolNames())
 	}
 	foundLibrary, foundNote, foundX := false, false, false
@@ -219,19 +254,23 @@ func TestLoadContainmentProfile_AppendsUserAdditions(t *testing.T) {
 	}
 }
 
-// LoadContainmentProfile dedups by name/kind+path: an override naming an
-// existing baseline entry does not duplicate it, and baseline wins (the
-// baseline entry is never downgraded to a user entry of the same name).
+// LoadContainmentProfile dedups tools by (label + per-CLI name) identity: an
+// override matching an existing baseline grant does not duplicate it, and
+// baseline wins (never downgraded to a user entry). The two Search grants stay
+// distinct because their claude names (Grep vs Glob) differ. #41.
 func TestLoadContainmentProfile_DedupBaselineWins(t *testing.T) {
 	overrides := ContainmentProfile{
-		Tools: []ToolGrant{{Name: "Read"}}, // user re-adds an existing baseline tool
+		// A persisted override that re-states the read capability verbatim (same
+		// label + per-CLI name table) — e.g. a hand-edited settings.json — must not
+		// duplicate the baseline.
+		Tools: []ToolGrant{{Type: "file", Label: "Read", Names: map[string]string{"claude": "Read", "copilot": "view"}}},
 	}
 	got := LoadContainmentProfile(overrides)
 
 	count := 0
 	var readGrant ToolGrant
 	for _, tg := range got.Tools {
-		if tg.Name == "Read" {
+		if tg.Names["claude"] == "Read" {
 			count++
 			readGrant = tg
 		}
@@ -241,6 +280,17 @@ func TestLoadContainmentProfile_DedupBaselineWins(t *testing.T) {
 	}
 	if !readGrant.Baseline {
 		t.Errorf("Read grant Baseline = false, want true (baseline wins over user override)")
+	}
+
+	// Both Search grants survive — distinct names must not collapse into one.
+	searchCount := 0
+	for _, tg := range got.Tools {
+		if tg.Label == "Search" {
+			searchCount++
+		}
+	}
+	if searchCount != 2 {
+		t.Fatalf("Search grant count = %d, want 2 (Grep + Glob stay distinct)", searchCount)
 	}
 }
 

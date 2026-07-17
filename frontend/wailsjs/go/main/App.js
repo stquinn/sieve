@@ -14,6 +14,10 @@ export function InitVault(arg1) {
   return window['go']['main']['App']['InitVault'](arg1);
 }
 
+export function PickDirectory() {
+  return window['go']['main']['App']['PickDirectory']();
+}
+
 export function Quit() {
   return window['go']['main']['App']['Quit']();
 }

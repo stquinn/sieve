@@ -1,6 +1,18 @@
+> **✅ IMPLEMENTED & CLOSED — #41, 2026-07-17.** Shipped on branch
+> `docs/containment-typed-tool-grants`. Both defects fixed: bare read-tool names
+> dropped from the claude/copilot allow lists (file grants now render scoped —
+> claude `verb(//dir/**)`, copilot plain names path-gated by `--add-dir`, agy
+> omits), and cwd is never unset (RefineLanguage + filing-eval fall back to the
+> library, `execCLIRunner.Run` floors `cwd==""`). Live claude 2.1.207 runs
+> confirmed the escape reproduced then denied, and that claude's write-family
+> permission rule is **`Edit(...)`** (a `Write(...)` rule is inert). Typed
+> `ToolGrant{Type,Label,Names,Constraint}` + per-backend render, add-tool form
+> (verb/type/constraint), AI Access nested sub-tabs, and the 90vh / min(90vw,1200px)
+> modal all landed. No persistence migration. This document is retained as history.
+
 # Containment fix: typed tool grants + cwd never unset
 
-**Status:** PROPOSED
+**Status:** IMPLEMENTED (closed #41, 2026-07-17)
 **Tracked:** #41 — follow-up to #36 (AI CLI containment).
 **Date:** 2026-07-17
 **Supersedes for the tool plane:** the flat `[]ToolGrant{Name}` model in `../archive/specs/2026-07-16-ai-cli-containment-and-sieve-mcp-design.md`.

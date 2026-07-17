@@ -167,6 +167,72 @@ func TestSettingsSaveRoute_PersistsStdioAndHTTPMcpServers(t *testing.T) {
 	}
 }
 
+// End-to-end over the REAL /api/settings save route: a typed tool grant (#41)
+// parses verb + type + constraint into a ToolGrant whose Names table is keyed on
+// the ACTIVE CLI, and renders through to the claude allow list. A file-type write
+// grant becomes a scoped Edit rule; a network grant carries its domain constraint.
+func TestSettingsSaveRoute_ParsesTypedToolGrants(t *testing.T) {
+	h, dir := newTestSettingsHandler(t)
+	r := chi.NewRouter()
+	h.RegisterPaths(r)
+	srv := httptest.NewServer(r)
+	t.Cleanup(srv.Close)
+
+	form := url.Values{
+		"cli":              {"claude"},
+		"cli_timeout_long": {"20"},
+		// Two typed tool rows: a file write (claude verb Edit) and a network fetch
+		// scoped to a domain. The file row's constraint is empty (auto-scoped).
+		"containment_tool_name":       {"Edit", "Curl"},
+		"containment_tool_type":       {"file", "network"},
+		"containment_tool_constraint": {"", "api.example.com, docs.rs"},
+		"last_settings_panel":         {"aiaccess"},
+	}
+
+	resp, err := http.PostForm(srv.URL+"/api/settings", form)
+	if err != nil {
+		t.Fatalf("POST /api/settings: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	saved := h.ServiceProvider.State.LoadSettings()
+	var edit, curl domain.ToolGrant
+	var foundEdit, foundCurl bool
+	for _, g := range saved.AI.Containment.Tools {
+		switch g.Label {
+		case "Edit":
+			edit, foundEdit = g, true
+		case "Curl":
+			curl, foundCurl = g, true
+		}
+	}
+	if !foundEdit || !foundCurl {
+		t.Fatalf("Tools = %+v, want Edit+Curl user grants", saved.AI.Containment.Tools)
+	}
+	if edit.Type != "file" || edit.Names["claude"] != "Edit" {
+		t.Errorf("edit grant = %+v, want type=file names[claude]=Edit", edit)
+	}
+	if edit.Constraint != "" {
+		t.Errorf("file grant constraint = %q, want empty (auto-scoped)", edit.Constraint)
+	}
+	if curl.Type != "network" || curl.Names["claude"] != "Curl" {
+		t.Errorf("curl grant = %+v, want type=network names[claude]=Curl", curl)
+	}
+	if !strings.Contains(curl.Constraint, "api.example.com") {
+		t.Errorf("network grant constraint = %q, want the domains", curl.Constraint)
+	}
+
+	// The persisted form holds only the user additions (baselines stripped).
+	raw := readSettingsJSON(t, dir)
+	if !strings.Contains(raw, `"Edit"`) || !strings.Contains(raw, "api.example.com") {
+		t.Errorf("settings.json missing typed tool grants: %s", raw)
+	}
+}
+
 // readSettingsJSON locates and reads the state category's settings.json under
 // the FileStore root created by newTestSettingsHandler.
 func readSettingsJSON(t *testing.T, root string) string {

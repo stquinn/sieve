@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"strings"
 	"testing"
 
 	"sieve/sieve/domain"
@@ -9,7 +10,7 @@ import (
 const libDir = "/vault/library"
 
 func argsFor(cli string) []string {
-	return buildBaseArgs(cli, "", "the prompt", domain.DefaultContainmentProfile(), libDir)
+	return buildBaseArgs(cli, "", "the prompt", domain.DefaultContainmentProfile(), "", libDir)
 }
 
 func hasFlag(args []string, flag string) bool {
@@ -52,8 +53,29 @@ func TestBuildArgs_Claude(t *testing.T) {
 	if flagValue(args, "--add-dir") != libDir {
 		t.Errorf("claude --add-dir = %q, want %q; args=%v", flagValue(args, "--add-dir"), libDir, args)
 	}
-	if got := flagValue(args, "--allowedTools"); got != "Read,Grep,Glob,WebFetch" {
-		t.Errorf("claude --allowedTools = %q, want Read,Grep,Glob,WebFetch", got)
+	// Bare read-tool names are path-UNSCOPED allow rules in claude's grammar: a
+	// bare "Read" auto-approves reads at ANY path, defeating the workspace gate
+	// (#41). File-type grants must therefore render SCOPED to the granted dirs —
+	// verb(//dir/**), redundant-but-harmless for reads — never as bare names.
+	got := flagValue(args, "--allowedTools")
+	for _, bare := range []string{"Read", "Grep", "Glob"} {
+		for _, tok := range strings.Split(got, ",") {
+			if tok == bare {
+				t.Errorf("claude --allowedTools contains bare %s (filesystem-wide grant): %q", bare, got)
+			}
+		}
+	}
+	// Scoped to the library grant (cwd unset in this helper ⇒ AddDirs = [libDir]).
+	for _, want := range []string{
+		"Read(//vault/library/**)", "Grep(//vault/library/**)", "Glob(//vault/library/**)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("claude --allowedTools missing scoped file rule %q: %q", want, got)
+		}
+	}
+	// WebFetch (network) is bare when no domains are configured.
+	if !strings.Contains(got, "WebFetch") {
+		t.Errorf("claude --allowedTools missing WebFetch: %q", got)
 	}
 	// Inheritance is always on — never lock the config surface.
 	if hasFlag(args, "--strict-mcp-config") {
@@ -70,8 +92,24 @@ func TestBuildArgs_Copilot(t *testing.T) {
 	if flagValue(args, "--add-dir") != libDir {
 		t.Errorf("copilot --add-dir = %q, want %q", flagValue(args, "--add-dir"), libDir)
 	}
-	if got := flagValue(args, "--allow-tool"); got != "Read,Grep,Glob,WebFetch" {
-		t.Errorf("copilot --allow-tool = %q, want Read,Grep,Glob,WebFetch", got)
+	// Copilot uses its OWN tool vocabulary (view/grep/glob), never claude's names,
+	// and file reads are path-gated by --add-dir so read tools are allow-listed
+	// with plain names. Web fetch is the URL axis (--allow-url/--allow-all-urls),
+	// NOT an --allow-tool entry (#41).
+	got := flagValue(args, "--allow-tool")
+	for _, claudeName := range []string{"Read", "Grep", "Glob", "WebFetch"} {
+		for _, tok := range strings.Split(got, ",") {
+			if tok == claudeName {
+				t.Errorf("copilot --allow-tool must not use claude's name %s: %q", claudeName, got)
+			}
+		}
+	}
+	if got != "view,grep,glob" {
+		t.Errorf("copilot --allow-tool = %q, want view,grep,glob (its own read/search names)", got)
+	}
+	// Fetch is granted on the URL axis, unrestricted by default (bare Fetch).
+	if !hasFlag(args, "--allow-all-urls") {
+		t.Errorf("copilot must grant fetch via the URL axis (--allow-all-urls); args=%v", args)
 	}
 	if got := flagValue(args, "--deny-tool"); got != "shell,write" {
 		t.Errorf("copilot --deny-tool = %q, want shell,write", got)
@@ -103,7 +141,7 @@ func TestBuildArgs_Agy(t *testing.T) {
 
 // Model is threaded through when set.
 func TestBuildArgs_Model(t *testing.T) {
-	args := buildBaseArgs("claude", "sonnet", "p", domain.DefaultContainmentProfile(), libDir)
+	args := buildBaseArgs("claude", "sonnet", "p", domain.DefaultContainmentProfile(), "", libDir)
 	if flagValue(args, "--model") != "sonnet" {
 		t.Errorf("claude --model = %q, want sonnet; args=%v", flagValue(args, "--model"), args)
 	}

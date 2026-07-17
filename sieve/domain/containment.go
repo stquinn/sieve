@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -18,10 +19,43 @@ type ContainmentProfile struct {
 	McpServers  []McpGrant  `json:"mcpServers"`
 }
 
-// ToolGrant permits a named tool (e.g. Read, WebFetch, or an MCP verb).
+// ToolGrant is one uniform capability grant. Its semantics are DECLARED, never
+// inferred from a name (the #41 lesson, mirroring McpGrant.Transport):
+//
+//   - Type   — "file" | "network" | "other" — decides how a backend SCOPES it.
+//   - Label  — the CLI-neutral capability verb shown in the UI (Read/Search/
+//     Fetch/Write/…). Baseline grants display this, never the CLI-specific name.
+//   - Names  — per-CLI tool name (single-valued; where a CLI concept needs two
+//     tools we seed two grants, e.g. Search→{claude:Grep} and Search→{claude:Glob}).
+//     Absent CLI ⇒ the grant is omitted for that backend (fail closed).
+//   - Constraint — network: user-supplied domain list; other: verbatim specifier;
+//     file: unused (file grants auto-scope to the profile's directory grants).
+//
+// Baseline vs user-added is not a subtype — same shape, different Names table.
 type ToolGrant struct {
-	Name     string `json:"name"`
-	Baseline bool   `json:"baseline,omitempty"`
+	Type       string            `json:"type,omitempty"`
+	Label      string            `json:"label,omitempty"`
+	Names      map[string]string `json:"names,omitempty"`
+	Constraint string            `json:"constraint,omitempty"`
+	Baseline   bool              `json:"baseline,omitempty"`
+}
+
+// NameFor returns this grant's tool name for the given CLI, or "" when the CLI
+// cannot express the capability (fail-closed omission at render time).
+func (t ToolGrant) NameFor(cli string) string { return t.Names[cli] }
+
+// identity is the dedup key for LoadContainmentProfile/WithoutBaseline: the
+// (label + per-CLI name table) tuple. It keeps the two baseline Search grants
+// distinct (same label, different claude name) while collapsing a user override
+// that names an already-granted capability. Map iteration is sorted so the key
+// is stable regardless of Names insertion order.
+func (t ToolGrant) identity() string {
+	pairs := make([]string, 0, len(t.Names))
+	for cli, name := range t.Names {
+		pairs = append(pairs, cli+"="+name)
+	}
+	sort.Strings(pairs)
+	return t.Label + "|" + strings.Join(pairs, ",")
 }
 
 // DirGrant permits filesystem access to a directory. Baseline grants are
@@ -109,10 +143,13 @@ func (m McpGrant) IsConfigured() bool {
 func DefaultContainmentProfile() ContainmentProfile {
 	return ContainmentProfile{
 		Tools: []ToolGrant{
-			{Name: "Read", Baseline: true},
-			{Name: "Grep", Baseline: true},
-			{Name: "Glob", Baseline: true},
-			{Name: "WebFetch", Baseline: true},
+			{Type: "file", Label: "Read", Names: map[string]string{"claude": "Read", "copilot": "view"}, Baseline: true},
+			{Type: "file", Label: "Search", Names: map[string]string{"claude": "Grep", "copilot": "grep"}, Baseline: true},
+			{Type: "file", Label: "Search", Names: map[string]string{"claude": "Glob", "copilot": "glob"}, Baseline: true},
+			// Fetch is network: claude WebFetch (tool axis); copilot has NO tool
+			// name here — it grants web access on the URL axis (--allow-url), so its
+			// column is intentionally absent and the copilot backend renders it there.
+			{Type: "network", Label: "Fetch", Names: map[string]string{"claude": "WebFetch"}, Baseline: true},
 		},
 		Directories: []DirGrant{
 			{Kind: "library", Label: "Library", Baseline: true},
@@ -124,13 +161,14 @@ func DefaultContainmentProfile() ContainmentProfile {
 	}
 }
 
-// ToolNames returns the granted tool names in profile order — the payload for a
-// backend's allow-list flag (claude --allowedTools, copilot --allow-tool).
+// ToolNames returns the granted CLI-neutral capability labels in profile order.
+// It is the human-facing digest for the log Summary — NOT the rendered allow
+// list (each backend renders its own dialect from Type + Names; see sieve/ai).
 func (p ContainmentProfile) ToolNames() []string {
 	names := make([]string, 0, len(p.Tools))
 	for _, t := range p.Tools {
-		if n := strings.TrimSpace(t.Name); n != "" {
-			names = append(names, n)
+		if l := strings.TrimSpace(t.Label); l != "" {
+			names = append(names, l)
 		}
 	}
 	return names
@@ -161,8 +199,9 @@ func (p ContainmentProfile) WithoutBaseline() ContainmentProfile {
 
 // LoadContainmentProfile overlays persisted overrides onto the baseline
 // capability floor: it starts from DefaultContainmentProfile() and appends
-// each override entry, deduped by identity (tool/mcp Name; directory Kind, or
-// Path when Kind is empty). On a collision the baseline entry wins — a user
+// each override entry, deduped by identity (tool: label + per-CLI name table;
+// mcp Name; directory Kind, or Path when Kind is empty). On a collision the
+// baseline entry wins — a user
 // override naming an already-baseline capability never duplicates or
 // downgrades it. This is the inverse of WithoutBaseline and is how settings.json
 // overrides are reconstituted into the full in-memory profile.
@@ -171,17 +210,18 @@ func LoadContainmentProfile(overrides ContainmentProfile) ContainmentProfile {
 
 	toolIdx := make(map[string]int, len(p.Tools))
 	for i, t := range p.Tools {
-		toolIdx[t.Name] = i
+		toolIdx[t.identity()] = i
 	}
 	for _, t := range overrides.Tools {
-		if i, ok := toolIdx[t.Name]; ok {
+		k := t.identity()
+		if i, ok := toolIdx[k]; ok {
 			if p.Tools[i].Baseline {
 				continue // baseline wins
 			}
 			p.Tools[i] = t
 			continue
 		}
-		toolIdx[t.Name] = len(p.Tools)
+		toolIdx[k] = len(p.Tools)
 		p.Tools = append(p.Tools, t)
 	}
 
