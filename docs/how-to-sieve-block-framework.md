@@ -1,3 +1,10 @@
+> **STALE — DO NOT FOLLOW (2026-07-20).** This document predates both the
+> 2026-06-20 Go package split (`sieve/` → `sieve/block/processors/`, job-engine
+> `BlockProcessor` interface) and the 2026-07-20 renderer/NodeView split
+> (epic #43). For the current contract see `docs/how-to-intelligent-fenced-blocks.md`
+> and `sieve/block/processor_registry.go`. Retained as historical reference;
+> Go-side rewrite is a pending follow-up.
+
 # How to Build a Sieve Block
 
 The Sieve Block Framework is the standard way to embed rich, async-capable blocks into the Sieve editor. A block is a fenced YAML node in the Markdown document, rendered by a custom TipTap NodeView, and optionally backed by a background Go job.

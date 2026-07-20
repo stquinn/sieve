@@ -19,10 +19,13 @@ A fenced block with a named language tag (e.g. ` ```web-clip ` or ` ```ai-block 
 
 ## JS Architecture — the Renderer / NodeView Split (2026-07-20)
 
-**Status:** the seam below shipped in Phase 1 of the block-renderer-extraction
-epic (`docs/design/specs/2026-07-20-block-renderer-extraction.md`, issue #44).
-It is **undriven** until a kind migrates onto it — the diagram block is
-Phase 2's pilot (issue #45). Rules 1–15 below (Go-owned YAML, non-destructive
+**Status:** shipped across the block-renderer-extraction epic (#43: #44 base,
+#45 diagram, #46 ai-block, #47 code/log/web-clip/smart-card/smart-image). Every
+structured kind except `smart-link` (deliberately unmigrated — parked pending
+the links decision, TECH-DEBT X-D) now has a `BlockRenderer` subclass in
+`block/renderers/` held by a thin NodeView adapter in `processors/`. **This is
+the required pattern for any new block kind** — a new kind ships both halves
+in the same change (see "Migration" in the spec).
 parsing, job tracking, SSE completion, …) are unaffected and still apply
 regardless of which half of this split a kind uses; this section only changes
 **how the JS side builds and styles a block's DOM.**
@@ -329,7 +332,7 @@ hub.Broadcast("ai:job-ended",   mustJSON(map[string]string{"jobId": blkID}))
 **JS-side:** `fenced-block-base.js` owns the active-job Set. On module load it fetches `/api/ai/active-jobs` to seed in-flight IDs, then listens to `sse:ai:job-started` / `sse:ai:job-ended` SSE events to keep the set current. It exports `isJobActive(id)` — import and call it in every block extension's `isStale`:
 
 ```js
-import { isStaleByTime, isJobActive } from './fenced-block-base.js'
+import { isStaleByTime, isJobActive } from '../base/fenced-block-base.js'
 
 function isStale(createdAt, id) {
   if (isJobActive(id)) return false
@@ -369,10 +372,10 @@ The old pattern of `window.__sieveActiveWebClips.add/delete` + `SieveAI.trackJob
 
 ## Rule 10 — JS Extension Structure: Import from `fenced-block-base.js`
 
-All fenced block extensions are loaded as `type="module"`. Import shared utilities from `frontend/src/static/fenced-block-base.js` — do not duplicate them:
+All fenced block extensions are loaded as `type="module"`. Import shared utilities from `frontend/src/static/base/fenced-block-base.js` — do not duplicate them:
 
 ```js
-import { esc, renderMarkdown, applyHighlighting, isStaleByTime, isJobActive } from './fenced-block-base.js'
+import { esc, renderMarkdown, applyHighlighting, isStaleByTime, isJobActive } from '../base/fenced-block-base.js'
 ```
 
 | Export | Purpose |
@@ -558,7 +561,7 @@ if (!aiBlockId) {
 - [ ] Chain-active hover: `::after` CSS + `mouseenter`/`mouseleave` toggling class in both directions
 - [ ] AI context: pass clean prose summary, not raw YAML
 
-**Renderer / NodeView split (see "JS Architecture" above) — required for any kind migrating onto it, e.g. the diagram pilot (#45):**
+**Renderer / NodeView split (see "JS Architecture" above) — required for any new kind (all existing kinds but `smart-link` already comply):**
 - [ ] Look-and-feel lives in a `BlockRenderer` subclass: `mount(attrs)`/`update(dom, attrs)`/`destroy(dom)`, zero PM/editor/`window.*` imports
 - [ ] `static styles` carries the kind's CSS, using ONLY `--theme-*` vars for colour; moved out of `input.css` in the SAME change (never a separate pass)
 - [ ] NodeView is a thin adapter: constructs the renderer, calls its lifecycle methods, owns `ignoreMutation`/`selectNode`/`stopEvent`/attr parsing/`buildPlugins` — no look-and-feel logic
