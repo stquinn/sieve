@@ -25,7 +25,7 @@
 // labels — all pure "attrs (+ live source text) in, DOM out".
 
 import { BlockRenderer } from './block-renderer.js'
-import { diagramStyles } from './diagram-renderer.styles.js'
+import { DiagramTheme } from './diagram-renderer.styles.js'
 
 /** @typedef {{ id?: string, source: string, diagramType?: string, mode: 'edit'|'render', cursorPos?: number }} DiagramAttrs */
 
@@ -33,34 +33,8 @@ export class DiagramRenderer extends BlockRenderer {
   // Sheet lives in the sibling diagram-renderer.styles.js — styles-file-geography
   // convention (docs/design/specs/2026-07-20-block-renderer-extraction.md, "Styles
   // file geography"): a renderer file starts with its class, never a CSS wall.
-  static styles = diagramStyles
+  static styles = DiagramTheme.sheet
 
-  // ── mermaid escape hatch (rides with the render output, not the app stylesheet) ──
-  //
-  // Flowchart edge labels (Yes/No on links, and inter-subgraph edges in particular)
-  // share mermaid's `.label` colour with node labels, which the theme below sets dark
-  // for text sitting on light node fills (see #buildMermaidTheme's CONTRAST MODEL
-  // comment). But edge labels float on the dark canvas, so that dark text goes
-  // invisible. Mermaid exposes no separate variable for this, so the patch forces
-  // edge-label text light — appended to mermaid's OWN in-SVG <style> element (added by
-  // mermaid itself in every render) rather than left as an app-stylesheet rule. That
-  // makes the SVG artefact style-complete BY ITSELF: it survives the fullscreen
-  // lightbox's move (media-lightbox.js MediaLightbox#open relocates the live <svg> into
-  // the overlay, and back on close) and any future host — the exact bug (b57fe22) this
-  // epic's spec names as its motivating defect. `.edgeLabel` is a mermaid-only class
-  // (unused elsewhere in the app), so this is safe wherever the SVG ends up. Node labels
-  // use `.nodeLabel` (untouched); only `.edgeLabel` descendants are overridden.
-  static #EDGE_LABEL_PATCH_CSS = `
-    .edgeLabel,
-    .edgeLabel .label,
-    .edgeLabel span,
-    .edgeLabel p,
-    .edgeLabel text,
-    .edgeLabel tspan {
-      color: var(--theme-text) !important;
-      fill: var(--theme-text) !important;
-    }
-  `
 
   /** @param {SVGSVGElement} svg */
   static #patchEdgeLabelStyle(svg) {
@@ -70,7 +44,7 @@ export class DiagramRenderer extends BlockRenderer {
       styleEl = document.createElementNS('http://www.w3.org/2000/svg', 'style')
       svg.insertBefore(styleEl, svg.firstChild)
     }
-    styleEl.appendChild(document.createTextNode(DiagramRenderer.#EDGE_LABEL_PATCH_CSS))
+    styleEl.appendChild(document.createTextNode(DiagramTheme.edgeLabelPatchCss))
   }
 
   // ── mermaid lazy-load + theming ──────────────────────────────────────────────
@@ -105,201 +79,11 @@ export class DiagramRenderer extends BlockRenderer {
     })
   }
 
-  /** @returns {object} mermaid.initialize() config, incl. themeVariables sourced
-   *  entirely from computed --theme-* custom properties on :root. */
-  static #buildMermaidTheme() {
-    const s = getComputedStyle(document.documentElement)
-    /** @param {string} name */
-    const v = (name) => s.getPropertyValue(name).trim()
-    const bgDark    = v('--theme-bgDark')        || '#0e0e0e'
-    const bgAlt     = v('--theme-bgAlt')         || '#1a1a1a'
-    const text      = v('--theme-text')          || '#cccccc'
-    const textDim   = v('--theme-textDim')       || '#888888'
-    const accent    = v('--theme-accentPrimary') || '#7aa2f7'
-    const accentCy  = v('--theme-accentCyan')    || '#7dcfff'
-    const accentGr  = v('--theme-accentGreen')   || '#9ece6a'
-    const accentOr  = v('--theme-accentOrange')  || '#ff9e64'
-    const accentYe  = v('--theme-accentYellow')  || '#e0af68'
-    const accentPu  = v('--theme-accentPurple')  || '#bb9af7'
-    const accentRe  = v('--theme-accentRed')     || '#f7768e'
-    const accentTe  = v('--theme-accentTeal')    || '#73daca'
-    const border2   = v('--theme-border2')       || '#3a3a3a'
-
-    // Rotating series palette for multi-series diagrams (pie slices, gitgraph
-    // branches, journey/mindmap/timeline cScale, flowchart fillType). Distinct
-    // theme accents so adjacent series read apart; assigned via the loop below.
-    const palette = [accent, accentCy, accentGr, accentOr, accentYe, accentPu, accentTe, accentRe]
-
-    // CONTRAST MODEL — mermaid's `base` theme assumes a LIGHT canvas with LIGHT
-    // node fills, so one dark `textColor` reads everywhere. We invert to a DARK
-    // canvas but keep LIGHT accent fills, which breaks that assumption: text on a
-    // light fill needs DARK (bgDark); a label on the dark canvas needs LIGHT
-    // (text). Mermaid derives ~every per-diagram text colour from `textColor`
-    // (which itself defaults to primaryTextColor = bgDark here → dark-on-dark,
-    // the whack-a-mole). So: set textColor LIGHT as the canvas default, then
-    // override each on-a-fill text colour to bgDark per diagram family below.
-    /** @type {Record<string, string>} */
-    const tv = {
-      // ── Typography ──
-      fontFamily:           v('--theme-monoFont') || 'monospace',
-      fontSize:             '12px',
-
-      // ── Roots ──
-      background:           bgDark,
-      textColor:            text,        // master label colour (canvas) — the key fix
-      lineColor:            textDim,
-      arrowheadColor:       textDim,
-      titleColor:           text,
-
-      // ── Flowchart / generic nodes (light accent fills → dark text) ──
-      primaryColor:         accent,
-      primaryBorderColor:   accent,
-      primaryTextColor:     bgDark,
-      secondaryColor:       accentCy,
-      secondaryBorderColor: accentCy,
-      secondaryTextColor:   bgDark,
-      tertiaryColor:        accentGr,
-      tertiaryBorderColor:  accentGr,
-      tertiaryTextColor:    bgDark,
-      mainBkg:              accent,
-      nodeBkg:              accent,
-      nodeBorder:           border2,
-      nodeTextColor:        bgDark,
-      defaultLinkColor:     textDim,
-
-      // ── Edge / generic labels (float on the dark canvas → light) ──
-      // NOT 'transparent': flowchart's .labelBkg does fade(edgeLabelBackground, .5),
-      // and fade('transparent') → semi-opaque BLACK (a black box behind edge
-      // labels like Yes/No). Use the canvas colour so the box blends into the bg.
-      edgeLabelBackground:  bgDark,
-      labelColor:           text,
-      labelTextColor:       text,
-      labelBackgroundColor: bgAlt,
-
-      // ── Subgraphs / clusters ──
-      clusterBkg:           bgAlt,
-      clusterBorder:        border2,
-
-      // ── ER attributes + Class members (boxes are light → dark member text;
-      //    relation labels float on the canvas → light) ──
-      attributeBackgroundColorOdd:  bgAlt,
-      attributeBackgroundColorEven: bgDark,
-      classText:            bgDark,
-      relationColor:        textDim,
-      relationLabelColor:   text,
-      relationLabelBackground: bgAlt,
-
-      // ── State diagrams (state boxes light → dark labels; composites +
-      //    transition labels live on the canvas → light) ──
-      stateBkg:             accent,
-      stateLabelColor:      bgDark,
-      altBackground:        bgAlt,
-      compositeBackground:  bgAlt,
-      compositeBorder:      border2,
-      compositeTitleBackground: bgAlt,
-      innerEndBackground:   bgAlt,
-      specialStateColor:    accentRe,
-      transitionColor:      textDim,
-      transitionLabelColor: text,
-
-      // ── Sequence diagrams (own variable set, ignore the generic labels) ──
-      actorBkg:             accent,
-      actorBorder:          accent,
-      actorTextColor:       bgDark,
-      actorLineColor:       textDim,
-      signalColor:          textDim,   // arrow/lifeline lines
-      signalTextColor:      text,      // message labels above arrows
-      labelBoxBkgColor:     bgAlt,
-      labelBoxBorderColor:  border2,
-      loopTextColor:        text,
-      noteBkgColor:         bgAlt,
-      noteBorderColor:      border2,
-      noteTextColor:        text,
-      activationBkgColor:   bgAlt,
-      activationBorderColor: border2,
-      sequenceNumberColor:  bgDark,
-
-      // ── Gantt (task bars are light accents → dark in-bar text; section bands
-      //    and outside/clickable text live on the canvas → light) ──
-      sectionBkgColor:      bgAlt,
-      sectionBkgColor2:     bgDark,
-      altSectionBkgColor:   bgDark,
-      taskBkgColor:         accent,
-      taskBorderColor:      accent,
-      taskTextColor:        bgDark,
-      taskTextDarkColor:    bgDark,
-      taskTextLightColor:   text,
-      taskTextOutsideColor: text,
-      taskTextClickableColor: accentCy,
-      activeTaskBkgColor:   accentCy,
-      activeTaskBorderColor: accentCy,
-      doneTaskBkgColor:     bgAlt,
-      doneTaskBorderColor:  border2,
-      critBkgColor:         accentRe,
-      critBorderColor:      accentRe,
-      gridColor:            border2,
-      todayLineColor:       accentRe,
-      excludeBkgColor:      bgAlt,
-
-      // ── Pie (slices = palette accents → dark slice text; title + legend on
-      //    the canvas → light) ──
-      pieTitleTextColor:    text,
-      pieSectionTextColor:  bgDark,
-      pieLegendTextColor:   text,
-      pieStrokeColor:       bgDark,
-      pieOuterStrokeColor:  border2,
-
-      // ── Gitgraph (branch colours = palette below; commit/tag labels) ──
-      commitLabelColor:     text,
-      commitLabelBackground: bgAlt,
-      branchLabelColor:     bgDark,
-      tagLabelColor:        bgDark,
-      tagLabelBackground:   accentYe,
-      tagLabelBorder:       border2,
-
-      // ── Quadrant charts (distinct accent per quadrant; on-fill text dark;
-      //    chart title + axis labels on the canvas → light) ──
-      quadrant1Fill: accentOr, quadrant2Fill: accentCy, quadrant3Fill: accentGr, quadrant4Fill: accentYe,
-      quadrant1TextFill: bgDark, quadrant2TextFill: bgDark, quadrant3TextFill: bgDark, quadrant4TextFill: bgDark,
-      quadrantPointFill: bgDark, quadrantPointTextFill: bgDark,
-      quadrantTitleFill: text, quadrantXAxisTextFill: text, quadrantYAxisTextFill: text,
-      quadrantInternalBorderStrokeFill: border2, quadrantExternalBorderStrokeFill: border2,
-
-      // ── Requirement diagrams (light box → dark text) ──
-      requirementBackground: accent,
-      requirementBorderColor: accent,
-      requirementTextColor:  bgDark,
-    }
-
-    // Multi-series scales — cycle the accent palette so adjacent series differ.
-    // cScale 0-11 (journey/mindmap/timeline) and pie 1-12 share one cycle;
-    // git/fillType/gitBranchLabel are 0-7. Branch labels sit on the (light)
-    // branch colour, so their text is dark.
-    for (let i = 0; i < 12; i++) {
-      const c = palette[i % palette.length]
-      tv['cScale' + i] = c
-      tv['pie' + (i + 1)] = c
-      if (i < 8) {
-        tv['fillType' + i] = c
-        tv['git' + i] = c
-        tv['gitBranchLabel' + i] = bgDark
-      }
-    }
-
-    return {
-      startOnLoad: false,
-      theme: 'base',
-      themeVariables: tv,
-      flowchart: { useMaxWidth: false },
-      sequence: { useMaxWidth: false },
-      gantt: { useMaxWidth: false },
-    }
-  }
 
   static #initMermaid() {
     const mermaid = DiagramRenderer.#mermaidGlobal()
     if (!mermaid) return
-    mermaid.initialize(DiagramRenderer.#buildMermaidTheme())
+    mermaid.initialize(DiagramTheme.buildMermaidInit())
   }
 
   /** @returns {Promise<void>} */
