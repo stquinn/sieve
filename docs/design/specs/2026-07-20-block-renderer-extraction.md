@@ -90,7 +90,13 @@ plugins, `stopEvent`) is. `prose-block.js` defines a native PM node and
 migrates surface-ward at X-D time, not in this epic. Sequencing: P1's
 `base/block-renderer.js` + `base/renderer-style-registry.js` move to
 `block/renderers/` in the P1 review commit; from P2 on, renderer classes
-are born there.
+are born there. **Styles file geography (user decision 2026-07-20):** a
+renderer file starts with its class — behaviour first, never a CSS wall.
+Any sheet over ~30 lines lives in a sibling
+`<kind>-renderer.styles.js` module (`export const <kind>Styles =
+/* css */ \`…\``, Lit-style) imported into `static styles`; tiny sheets
+may stay inline. The sibling import is renderer-internal and invisible to
+consumers.
 
 **The sorting test is PM-specificity** (user decision 2026-07-20): if a
 behaviour would work unchanged in a PM-free host (chat lens, embedded
