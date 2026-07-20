@@ -17,6 +17,112 @@ A fenced block with a named language tag (e.g. ` ```web-clip ` or ` ```ai-block 
 
 ---
 
+## JS Architecture — the Renderer / NodeView Split (2026-07-20)
+
+**Status:** the seam below shipped in Phase 1 of the block-renderer-extraction
+epic (`docs/design/specs/2026-07-20-block-renderer-extraction.md`, issue #44).
+It is **undriven** until a kind migrates onto it — the diagram block is
+Phase 2's pilot (issue #45). Rules 1–15 below (Go-owned YAML, non-destructive
+parsing, job tracking, SSE completion, …) are unaffected and still apply
+regardless of which half of this split a kind uses; this section only changes
+**how the JS side builds and styles a block's DOM.**
+
+A block kind's look-and-feel used to be fused to its ProseMirror `NodeView`,
+and its CSS was fused to the global app stylesheet (`input.css`) — which meant
+a block could only render correctly inside the note editor's exact
+environment (see the spec's Problem section — the fullscreen lightbox bug,
+`b57fe22`, is the concrete failure this fixes). The split has two halves,
+**always migrated together, never separately:**
+
+- **Renderer (JS class)** — attrs in, DOM out, sheet carried. A **real ES
+  class hierarchy**: extends `BlockRenderer`, defined in
+  `frontend/src/static/block/renderers/block-renderer.js` (its own `@ts-check`'d module —
+  a class hierarchy, not one of `fenced-block-base.js`'s existing loose
+  per-function helpers) and re-exported from
+  `frontend/src/static/base/fenced-block-base.js` so extensions keep one
+  import point:
+
+  ```js
+  import { BlockRenderer } from '../base/fenced-block-base.js'
+
+  export class DiagramRenderer extends BlockRenderer {
+    // CSS text using ONLY --theme-* variables for colour — the entire
+    // host↔renderer styling contract. No selectors outside this kind's own
+    // classes; no reliance on input.css. registered exactly ONCE per class,
+    // on first construction, by the base class constructor.
+    static styles = `
+      .diagram-block__render { ... color: var(--theme-text); ... }
+    `
+
+    /** @param {object} attrs @returns {HTMLElement} */
+    mount(attrs) { /* build and return the DOM from attrs alone */ }
+
+    /** @param {HTMLElement} dom @param {object} attrs */
+    update(dom, attrs) { /* patch the DOM in place for changed attrs */ }
+
+    destroy(dom) { /* release timers/observers/listeners this renderer owns */ }
+  }
+  ```
+
+  A renderer **never** imports ProseMirror, never receives an `editor`/`view`
+  reference, never touches `window.*` app globals. That is what makes it
+  reusable outside the note editor — a chat-turn bubble, an embedded
+  read-only card, and this doc's bare-page harness all construct and mount
+  the *same* renderer class the NodeView uses. A kind may eventually have
+  several renderers (one per presentation context — brainstorm 5 §6's "ref,
+  costumed" chat chip is the first non-editor example); each carries its own
+  `static styles`.
+
+- **NodeView (thin PM-lifecycle adapter)** — the *only* place that talks to
+  ProseMirror. It relates to the renderer by **composition, never
+  inheritance** — it *holds* a renderer instance as a field, it does not
+  extend `BlockRenderer`: constructs the renderer, calls `mount(attrs)` once
+  for `dom`/`contentDOM`, calls `update(dom, attrs)` from the TipTap
+  `update()` hook, and calls `destroy(dom)` from `destroy()`. Composition is
+  load-bearing here, not a style preference — inheritance would drag PM
+  lifecycle into the one class this seam keeps PM-free. The NodeView owns
+  PM-only concerns the renderer must never see — `ignoreMutation`,
+  `selectNode`, `stopEvent`, attribute parsing off `data-*` HTML attrs, plugin
+  registration (`buildPlugins`) — and stays thin: schema/lifecycle glue, not
+  look-and-feel.
+
+**Style registration mechanism** (`frontend/src/static/block/renderers/renderer-style-registry.js`):
+a `RendererStyleRegistry` registers a class's `static styles` **exactly once
+per class**, the first time an instance is constructed, behind one
+interchangeable strategy contract (`inject(cssText, key)`):
+
+- `AdoptedSheetStrategy` (primary) — `new CSSStyleSheet()` + `replaceSync` +
+  `document.adoptedStyleSheets`. One parse, shared across every mount. This is
+  the live strategy on the app's actual engine: WebKitGTK 2.52.5
+  (`webkit2gtk-4.1`, confirmed via `pkg-config --modversion webkit2gtk-4.1` in
+  the nix dev shell), which comfortably post-dates the Safari 16.4-era engine
+  that shipped constructable stylesheets.
+- `StyleElementStrategy` (fallback) — a single deduplicated
+  `<style data-sieve-renderer="ClassName">` in `<head>`. Kept so the seam
+  never hard-codes an engine assumption (exported artefacts, older engines,
+  non-browser hosts); chosen automatically when `adoptedStyleSheets` isn't
+  present (feature-detected, not hardcoded).
+
+**Definition of done for any renderer:** *renders correctly in a bare page
+providing only `:root` theme vars.* Check this two ways:
+
+1. `frontend/test/renderer-style-carriage.test.js` — vitest coverage of the
+   registration mechanism (idempotency, both strategies, a real var()
+   resolution check against a page with nothing but `:root` vars).
+2. `frontend/test/harness/bare-page-renderer.html` — a static page with only
+   `:root` theme vars and no app stylesheet; serve it (`python3 -m http.server`
+   from the repo root — ES module imports need http, not `file://`) and view
+   the mounted renderer by eye. Point a real renderer's demo at this harness
+   the same way once it migrates.
+
+**Escape hatches ride with the renderer, never `input.css`.** When a
+third-party engine's theming surface has a gap (mermaid's shared
+`.label` colour chain is the diagram pilot's case), the patch belongs in the
+renderer's own output — appended to the engine's in-output `<style>` where
+possible, so the artefact stays portable outside the app.
+
+---
+
 ## Rule 1 — Go Owns All YAML. JS Never Generates It.
 
 **Why:** YAML has many edge cases (quoting, multiline scalars, special characters). Having two generators (Go and JS) guarantees divergence. Go's `gopkg.in/yaml.v3` is the authoritative serialiser.
@@ -419,3 +525,9 @@ if (!aiBlockId) {
 **Visual / UX**
 - [ ] Chain-active hover: `::after` CSS + `mouseenter`/`mouseleave` toggling class in both directions
 - [ ] AI context: pass clean prose summary, not raw YAML
+
+**Renderer / NodeView split (see "JS Architecture" above) — required for any kind migrating onto it, e.g. the diagram pilot (#45):**
+- [ ] Look-and-feel lives in a `BlockRenderer` subclass: `mount(attrs)`/`update(dom, attrs)`/`destroy(dom)`, zero PM/editor/`window.*` imports
+- [ ] `static styles` carries the kind's CSS, using ONLY `--theme-*` vars for colour; moved out of `input.css` in the SAME change (never a separate pass)
+- [ ] NodeView is a thin adapter: constructs the renderer, calls its lifecycle methods, owns `ignoreMutation`/`selectNode`/`stopEvent`/attr parsing/`buildPlugins` — no look-and-feel logic
+- [ ] Renders correctly against `frontend/test/harness/bare-page-renderer.html` (only `:root` theme vars, no app stylesheet)

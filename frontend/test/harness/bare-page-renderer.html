@@ -1,0 +1,108 @@
+<!doctype html>
+<!--
+  bare-page-renderer.html — manual browser harness for the renderer/NodeView
+  style-carriage seam (docs/design/specs/2026-07-20-block-renderer-extraction.md,
+  Phase 1 / issue #44).
+
+  Definition of done this harness checks BY EYE: "a renderer renders correctly
+  in a bare page providing only :root theme vars." The <style> block below is
+  deliberately the ONLY styling on this page — no input.css, no editor.css, no
+  app shell. If a renderer's demo box below is unstyled or mis-coloured, the
+  renderer (not the host) is at fault, per the spec's contract.
+
+  This page also visually proves register-once-per-class: two renderer
+  instances mount, but the "registered stylesheets" counter at the bottom
+  reads 1 — the CSS was injected exactly once despite two mounts.
+
+  HOW TO RUN — this uses real ES module imports against the actual source
+  files, so it must be served over http(s), not opened via file:// (module
+  imports are blocked under file:// in every browser). From the repo root:
+
+      python3 -m http.server 8642
+
+  then open:
+
+      http://localhost:8642/frontend/test/harness/bare-page-renderer.html
+
+  Works in any browser; written to also be opened in the app's real WebKitGTK
+  engine (webkit2gtk-4.1) for a same-engine sanity check.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sieve — bare-page renderer harness</title>
+<style>
+  /* ── ONLY theme vars below. No other CSS on this page. ────────────────── */
+  :root {
+    --theme-bg:            #1a1b26;
+    --theme-bgDark:        #16161e;
+    --theme-bgAlt:         #1e2030;
+    --theme-border:        #2a2b3d;
+    --theme-border2:       #3b4261;
+    --theme-text:          #c0caf5;
+    --theme-textDim:       #a9b1d6;
+    --theme-accentPrimary: #7aa2f7;
+    --theme-accentCyan:    #7dcfff;
+    --theme-accentGreen:   #9ece6a;
+    --theme-monoFont:      "JetBrains Mono", "Fira Code", monospace;
+  }
+  /* Page chrome ONLY (not part of the DoD check — a plain canvas to view the
+     renderer's own boxes against, standing in for "any host"). */
+  body { background: var(--theme-bgDark); color: var(--theme-text); font-family: var(--theme-monoFont); padding: 24px; }
+  h1 { font-size: 14px; font-weight: 600; }
+  #status { white-space: pre; font-size: 12px; color: var(--theme-textDim); border-top: 1px solid var(--theme-border2); margin-top: 16px; padding-top: 16px; }
+</style>
+</head>
+<body>
+<h1>Sieve — bare-page renderer harness (theme vars only, no app stylesheet)</h1>
+<p>Two mounted instances of a demo <code>BlockRenderer</code> subclass appear below. Both must be styled purely from its own <code>static styles</code> — nothing on this page supplies box/colour rules beyond the <code>:root</code> vars.</p>
+<div id="mounts"></div>
+<div id="status"></div>
+
+<script type="module">
+  import { BlockRenderer } from '../../src/static/base/fenced-block-base.js'
+
+  // DemoRenderer — a throwaway renderer demonstrating the contract: attrs in,
+  // DOM out, sheet carried, zero PM/editor/window.* dependencies.
+  class DemoRenderer extends BlockRenderer {
+    static styles = `
+      .demo-renderer {
+        border: 1px solid var(--theme-border2);
+        background: var(--theme-bgAlt);
+        color: var(--theme-accentCyan);
+        border-radius: 6px;
+        padding: 10px 14px;
+        margin: 8px 0;
+        font-size: 13px;
+      }
+      .demo-renderer strong { color: var(--theme-accentGreen); }
+    `
+
+    mount(attrs) {
+      const dom = document.createElement('div')
+      dom.className = 'demo-renderer'
+      this.update(dom, attrs)
+      return dom
+    }
+
+    update(dom, attrs) {
+      dom.innerHTML = '<strong>' + attrs.label + '</strong> — styled entirely by DemoRenderer.styles'
+    }
+  }
+
+  const mounts = document.getElementById('mounts')
+  const a = new DemoRenderer()
+  const b = new DemoRenderer()   // second instance — registration must be idempotent
+  mounts.appendChild(a.mount({ label: 'Instance A' }))
+  mounts.appendChild(b.mount({ label: 'Instance B' }))
+
+  const usingAdopted = document.adoptedStyleSheets.length > 0
+  const styleEls = document.head.querySelectorAll('style[data-sieve-renderer]')
+  document.getElementById('status').textContent =
+    'Strategy live: ' + (usingAdopted ? 'adoptedStyleSheets' : 'style-element fallback') + '\n' +
+    'adoptedStyleSheets registered: ' + document.adoptedStyleSheets.length + '\n' +
+    'data-sieve-renderer <style> elements: ' + styleEls.length + '\n' +
+    'Expected either way: exactly 1 registration for DemoRenderer, despite 2 mounts.'
+</script>
+</body>
+</html>

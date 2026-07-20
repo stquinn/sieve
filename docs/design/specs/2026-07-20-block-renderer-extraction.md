@@ -65,6 +65,22 @@ Ownership after extraction:
   claiming, PM transactions) that *wraps* the renderer for the PM host
   only. Other hosts call the renderer directly.
 
+**Package layout** (user decision 2026-07-20 — the directory tree reflects
+the layers): `block/` is the PM-free framework (mirroring Go `block/`);
+**`block/renderers/`** holds the `BlockRenderer` base, the style registry,
+and one concrete renderer class per kind (mirroring Go
+`block/processors/`); the PM adapter (NodeView factory, block-chrome, PM
+plugins) belongs with the surface that owns PM — `editor/surfaces/` — and
+migrates there as X-D retires. `processors/` dissolves kind-by-kind and is
+gone by end of P4. Per-kind schema *data* (`nodeConfig`, `attrs`,
+`parseAttrs`) stays as declarative statics on the renderer class, consumed
+by the adapter — data is not PM coupling; behavioural PM code (guard
+plugins, `stopEvent`) is. `prose-block.js` defines a native PM node and
+migrates surface-ward at X-D time, not in this epic. Sequencing: P1's
+`base/block-renderer.js` + `base/renderer-style-registry.js` move to
+`block/renderers/` in the P1 review commit; from P2 on, renderer classes
+are born there.
+
 **The sorting test is PM-specificity** (user decision 2026-07-20): if a
 behaviour would work unchanged in a PM-free host (chat lens, embedded
 card), it belongs to the block framework or the renderer — never the
