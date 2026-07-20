@@ -236,10 +236,10 @@ func TestRefineLanguage_ThreadsProfileAndLibraryDir(t *testing.T) {
 		t.Errorf("cwd = %q, want the library root /vault/library (never unset)", cap.cwd)
 	}
 	// The runner receives the default containment floor as CLI-neutral capability
-	// labels: Read + Search×2 + Fetch, no write tools.
+	// labels: Read + Text search + File search + Fetch, no write tools.
 	names := cap.profile.ToolNames()
 	if len(names) != 4 || names[3] != "Fetch" {
-		t.Errorf("profile tools = %v, want [Read Search Search Fetch]", names)
+		t.Errorf("profile tools = %v, want [Read Text search File search Fetch]", names)
 	}
 	for _, tg := range cap.profile.Tools {
 		if tg.Label == "Write" || tg.Names["claude"] == "Edit" {

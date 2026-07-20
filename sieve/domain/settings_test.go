@@ -128,7 +128,7 @@ func TestParseSettings_ContainmentOverlay_UserAdditions(t *testing.T) {
 
 	got := ParseSettings([]byte(payload)).AI.Containment
 
-	if !equalStrings(got.ToolNames(), []string{"Read", "Search", "Search", "Fetch"}) {
+	if !equalStrings(got.ToolNames(), []string{"Read", "Text search", "File search", "Fetch"}) {
 		t.Fatalf("ToolNames = %v, want baseline tools preserved", got.ToolNames())
 	}
 

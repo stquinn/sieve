@@ -23,11 +23,13 @@ type ContainmentProfile struct {
 // inferred from a name (the #41 lesson, mirroring McpGrant.Transport):
 //
 //   - Type   — "file" | "network" | "other" — decides how a backend SCOPES it.
-//   - Label  — the CLI-neutral capability verb shown in the UI (Read/Search/
-//     Fetch/Write/…). Baseline grants display this, never the CLI-specific name.
+//   - Label  — the CLI-neutral capability verb shown in the UI (Read/Text search/
+//     File search/Fetch/Write/…). Baseline grants display this, never the
+//     CLI-specific name.
 //   - Names  — per-CLI tool name (single-valued; where a CLI concept needs two
-//     tools we seed two grants, e.g. Search→{claude:Grep} and Search→{claude:Glob}).
-//     Absent CLI ⇒ the grant is omitted for that backend (fail closed).
+//     tools we seed two grants, e.g. "Text search"→{claude:Grep} and
+//     "File search"→{claude:Glob}). Absent CLI ⇒ the grant is omitted for that
+//     backend (fail closed).
 //   - Constraint — network: user-supplied domain list; other: verbatim specifier;
 //     file: unused (file grants auto-scope to the profile's directory grants).
 //
@@ -45,10 +47,10 @@ type ToolGrant struct {
 func (t ToolGrant) NameFor(cli string) string { return t.Names[cli] }
 
 // identity is the dedup key for LoadContainmentProfile/WithoutBaseline: the
-// (label + per-CLI name table) tuple. It keeps the two baseline Search grants
-// distinct (same label, different claude name) while collapsing a user override
-// that names an already-granted capability. Map iteration is sorted so the key
-// is stable regardless of Names insertion order.
+// (label + per-CLI name table) tuple. It keeps the two baseline search grants
+// (Text search/Grep, File search/Glob) distinct while collapsing a user
+// override that names an already-granted capability. Map iteration is sorted
+// so the key is stable regardless of Names insertion order.
 func (t ToolGrant) identity() string {
 	pairs := make([]string, 0, len(t.Names))
 	for cli, name := range t.Names {
@@ -144,8 +146,8 @@ func DefaultContainmentProfile() ContainmentProfile {
 	return ContainmentProfile{
 		Tools: []ToolGrant{
 			{Type: "file", Label: "Read", Names: map[string]string{"claude": "Read", "copilot": "view"}, Baseline: true},
-			{Type: "file", Label: "Search", Names: map[string]string{"claude": "Grep", "copilot": "grep"}, Baseline: true},
-			{Type: "file", Label: "Search", Names: map[string]string{"claude": "Glob", "copilot": "glob"}, Baseline: true},
+			{Type: "file", Label: "Text search", Names: map[string]string{"claude": "Grep", "copilot": "grep"}, Baseline: true},
+			{Type: "file", Label: "File search", Names: map[string]string{"claude": "Glob", "copilot": "glob"}, Baseline: true},
 			// Fetch is network: claude WebFetch (tool axis); copilot has NO tool
 			// name here — it grants web access on the URL axis (--allow-url), so its
 			// column is intentionally absent and the copilot backend renders it there.
