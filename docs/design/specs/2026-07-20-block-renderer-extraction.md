@@ -55,7 +55,18 @@ Ownership after extraction:
   assembly, block naming/labels, extraction detection, transport encoding
   (`buildSieveBlockHTML`), job staleness. Today this layer exists but is
   physically welded inside `sieve-block-extension.js` next to the PM node
-  factory; it must stand outside PM.
+  factory; it must stand outside PM. **Shape (user decision 2026-07-20): ONE
+  facade, one import — `BlockFramework` (`block/framework.js`), the JS
+  mirror of Go `block.BlockServices`.** A service is justified by state it
+  owns, not a verb category: the facade composes exactly two stateful
+  collaborators — `BlockKindRegistry` (the kind→behaviour/renderer map;
+  `block-kinds.js` classed) and `RendererStyleRegistry` (exists) — and
+  carries the stateless transforms as its own methods (`entriesFor`,
+  `labelFor`, `encode`, `detectExtractions` — fetch/offers half only; menu
+  DOM stays UI). Per-kind variation stays polymorphic on renderer/behaviour
+  classes, never new services. No consumer imports the collaborators
+  directly; renderers keep seeing only what `BlockRenderer` wires
+  internally (the Go processors-see-ports rule).
 - **Renderer (JS class)** — look-and-feel: builds the DOM from attrs and
   carries its stylesheet (`static styles`, registered once on first mount
   via constructable stylesheets / `document.adoptedStyleSheets`, plumbed
