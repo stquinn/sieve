@@ -50,6 +50,8 @@
      renderer's own boxes against, standing in for "any host"). */
   body { background: var(--theme-bgDark); color: var(--theme-text); font-family: var(--theme-monoFont); padding: 24px; }
   h1 { font-size: 14px; font-weight: 600; }
+  h2 { font-size: 12px; font-weight: 600; color: var(--theme-textDim); margin-top: 28px; }
+  .note { font-size: 11px; color: var(--theme-textDim); }
   #status { white-space: pre; font-size: 12px; color: var(--theme-textDim); border-top: 1px solid var(--theme-border2); margin-top: 16px; padding-top: 16px; }
 </style>
 </head>
@@ -57,10 +59,31 @@
 <h1>Sieve — bare-page renderer harness (theme vars only, no app stylesheet)</h1>
 <p>Two mounted instances of a demo <code>BlockRenderer</code> subclass appear below. Both must be styled purely from its own <code>static styles</code> — nothing on this page supplies box/colour rules beyond the <code>:root</code> vars.</p>
 <div id="mounts"></div>
+
+<h2>DiagramRenderer (Phase 2 pilot, issue #45) — edit mode</h2>
+<p class="note">Zero external assets — proves the gutter/code-area box chrome is style-complete from :root vars alone.</p>
+<div id="diagram-edit-mount"></div>
+
+<h2>DiagramRenderer — render mode</h2>
+<p class="note">
+  Needs mermaid's vendored runtime at the ABSOLUTE path <code>/static/vendor/mermaid.min.js</code> (the real
+  app's Go-embed serves <code>frontend/src/static/</code> at <code>/static/</code> — see DiagramRenderer.ensureMermaid()).
+  A plain <code>python3 -m http.server 8642</code> from the repo root (this file's own top-of-file instructions)
+  can't reproduce that mount, so mermaid 404s here and the renderer falls back to its OWN error box — which is
+  itself a valid bare-page render (the error state is theme-var styled too, just not the success path). To see
+  the real SVG, symlink the vendor dir under this harness's own folder once —
+  <code>ln -s ../../../src/static/vendor frontend/test/harness/static-vendor-check</code> — is more trouble than
+  it's worth for a manual check; simplest is to validate the actual mermaid render path via the live Wails app
+  instead (it serves <code>/static/</code> for real) and treat this harness's render-mode box as a DOM/CSS-only
+  smoke check.
+</p>
+<div id="diagram-render-mount"></div>
+
 <div id="status"></div>
 
 <script type="module">
   import { BlockRenderer } from '../../src/static/base/fenced-block-base.js'
+  import { DiagramRenderer } from '../../src/static/block/renderers/diagram-renderer.js'
 
   // DemoRenderer — a throwaway renderer demonstrating the contract: attrs in,
   // DOM out, sheet carried, zero PM/editor/window.* dependencies.
@@ -96,13 +119,28 @@
   mounts.appendChild(a.mount({ label: 'Instance A' }))
   mounts.appendChild(b.mount({ label: 'Instance B' }))
 
+  // DiagramRenderer — the real Phase 2 renderer (not a throwaway demo class).
+  // Edit mode needs no mermaid at all; render mode exercises the mermaid
+  // invocation + the .edgeLabel in-SVG escape hatch (see the class's own
+  // #patchEdgeLabelStyle) if the vendor script resolves — see the note above.
+  const editRenderer = new DiagramRenderer()
+  document.getElementById('diagram-edit-mount').appendChild(
+    editRenderer.mount({ id: 'di-demo-1', source: 'flowchart TD\n  A[Start] --> B{Decision}\n  B -->|Yes| C[Do it]\n  B -->|No| D[Skip it]', diagramType: 'mermaid', mode: 'edit' })
+  )
+
+  const renderRenderer = new DiagramRenderer()
+  document.getElementById('diagram-render-mount').appendChild(
+    renderRenderer.mount({ id: 'di-demo-2', source: 'flowchart TD\n  A[Start] --> B{Decision}\n  B -->|Yes| C[Do it]\n  B -->|No| D[Skip it]', diagramType: 'mermaid', mode: 'render' })
+  )
+
   const usingAdopted = document.adoptedStyleSheets.length > 0
   const styleEls = document.head.querySelectorAll('style[data-sieve-renderer]')
   document.getElementById('status').textContent =
     'Strategy live: ' + (usingAdopted ? 'adoptedStyleSheets' : 'style-element fallback') + '\n' +
     'adoptedStyleSheets registered: ' + document.adoptedStyleSheets.length + '\n' +
     'data-sieve-renderer <style> elements: ' + styleEls.length + '\n' +
-    'Expected either way: exactly 1 registration for DemoRenderer, despite 2 mounts.'
+    'Expected either way: exactly 1 registration per renderer CLASS (DemoRenderer, DiagramRenderer),\n' +
+    'despite 2 DemoRenderer mounts + 2 DiagramRenderer mounts — 2 total registrations here.'
 </script>
 </body>
 </html>

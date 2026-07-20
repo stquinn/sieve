@@ -73,6 +73,16 @@ environment (see the spec's Problem section — the fullscreen lightbox bug,
   costumed" chat chip is the first non-editor example); each carries its own
   `static styles`.
 
+  **Styles file geography** (user decision 2026-07-20): a renderer file
+  starts with its class — behaviour first, never a CSS wall to scroll past.
+  Any sheet over ~30 lines lives in a sibling `<kind>-renderer.styles.js`
+  module (`export const <kind>Styles = /* css */ \`…\``, Lit-style),
+  imported into `static styles` (e.g. `diagram-renderer.js` imports
+  `diagramStyles` from `diagram-renderer.styles.js`); tiny sheets (an
+  escape-hatch patch a few lines long, say) may stay inline. The sibling
+  import is renderer-internal — nothing outside the renderer file imports
+  the styles module directly.
+
 - **NodeView (thin PM-lifecycle adapter)** — the *only* place that talks to
   ProseMirror. It relates to the renderer by **composition, never
   inheritance** — it *holds* a renderer instance as a field, it does not
