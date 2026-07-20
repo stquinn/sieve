@@ -344,17 +344,24 @@
   pointer-events: none;
 }
 
-/* Flowchart edge labels (Yes/No on links) share mermaid's `.label` colour with
-   node labels, which we theme dark for text sitting on light node fills. But
-   edge labels float on the dark canvas, so that dark text is invisible. Mermaid
-   exposes no separate variable, so force edge-label text light here. Node labels
-   use `.nodeLabel` (untouched); only `.edgeLabel` descendants are overridden. */
-.diagram-block__render .edgeLabel,
-.diagram-block__render .edgeLabel .label,
-.diagram-block__render .edgeLabel span,
-.diagram-block__render .edgeLabel p,
-.diagram-block__render .edgeLabel text,
-.diagram-block__render .edgeLabel tspan {
+/* Flowchart edge labels (Yes/No on links, and inter-subgraph edges in
+   particular) share mermaid's `.label` colour with node labels, which we
+   theme dark for text sitting on light node fills. But edge labels float on
+   the dark canvas, so that dark text is invisible. Mermaid exposes no
+   separate variable, so force edge-label text light here. Node labels use
+   `.nodeLabel` (untouched); only `.edgeLabel` descendants are overridden.
+   UNSCOPED (not `.diagram-block__render .edgeLabel`): the rendered <svg> is
+   BORROWED (moved, not cloned) into the fullscreen lightbox on expand
+   (media-lightbox.js MediaLightbox#open) and back out on close, so it is not
+   always a descendant of `.diagram-block__render` — a container-scoped rule
+   went dark in fullscreen. `.edgeLabel` is a mermaid-only class (unused
+   elsewhere in the app), so the unscoped selector is safe. */
+.edgeLabel,
+.edgeLabel .label,
+.edgeLabel span,
+.edgeLabel p,
+.edgeLabel text,
+.edgeLabel tspan {
   color: var(--theme-text) !important;
   fill: var(--theme-text) !important;
 }
