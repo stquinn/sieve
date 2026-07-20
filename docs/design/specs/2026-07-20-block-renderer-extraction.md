@@ -98,6 +98,19 @@ Any sheet over ~30 lines lives in a sibling
 may stay inline. The sibling import is renderer-internal and invisible to
 consumers.
 
+**Markup discipline** (user decision 2026-07-20): mount builds structure
+once; update patches retained slot nodes (`textContent`/`classList`/
+`setAttribute`) — never re-renders skeleton via `innerHTML`. Template
+*variants* are a smell: analyse them into one structure + a state map
+(status → glyph/class/text), the A7-badge shape. Every dynamic slot is
+filled via `textContent` — escape-safe by construction; interpolating
+attr-derived values into `innerHTML` is banned (web-clip's unescaped
+`attrs.error` was a live injection hazard). Geography mirrors styles: a
+reduced structural template usually fits as a `static` on the class; only
+a genuinely large static skeleton (>~30 lines) goes to a sibling
+`<kind>-renderer.templates.js` (structure only, named `data-slot`
+markers, zero interpolation).
+
 **The sorting test is PM-specificity** (user decision 2026-07-20): if a
 behaviour would work unchanged in a PM-free host (chat lens, embedded
 card), it belongs to the block framework or the renderer — never the
