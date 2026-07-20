@@ -1,0 +1,129 @@
+# Block Renderer Extraction — look-and-feel out of the NodeView
+
+**Status:** Accepted
+**Tracked:** #43 (epic) — phases #44 #45 #46 #47
+**Date:** 2026-07-20
+**Context:** Realises the renderer/NodeView split named in
+`brainstorm-ai-protocol-roles-chats-and-document-kinds.md` §8 ("one renderer
+per kind, three hosts") and prerequisite to its buildable sequence (renderer
+split → chat kind → …). Grounded by brainstorm 4's editor-lens model and the
+component-model spec (`2026-07-08-workspace-editor-component-model.md`
+§Design discipline). Motivated concretely by a shipped defect: the fullscreen
+lightbox moved a diagram SVG out of its container and container-scoped CSS
+stopped applying (fixed tactically in `b57fe22`).
+
+## Problem
+
+A block kind's **look-and-feel is fused to its PM NodeView, and its styles
+are fused to the app stylesheet.** Two couplings, one consequence: a block
+can only render correctly inside the note editor's exact environment.
+
+1. **Markup coupling.** Each kind's attrs→DOM logic lives inside its NodeView,
+   so producing the block's DOM requires a PM instance. The lenses the
+   brainstorm series commits to — chat turns (no PM at all), embedded
+   read-only cards, the workbench panels — cannot reuse it.
+2. **Style coupling.** Per-kind CSS lives in global `input.css`, so even
+   extracted markup would render unstyled (or wrongly styled) in any host
+   that doesn't load the editor bundle's cascade. This is not hypothetical:
+   the fullscreen lightbox *moves* the rendered SVG out of
+   `.diagram-block__render`, the container-scoped `.edgeLabel` rule stopped
+   matching, and edge labels went invisible. The lightbox is merely the first
+   non-editor host; every future lens re-runs this failure mode.
+
+The two couplings are halves of one problem: **presentation doesn't travel
+with the block.** Fixing either alone is incomplete — a renderer class whose
+rules still live in `input.css` fails in the chat lens exactly as the SVG
+failed in the lightbox.
+
+## Decision
+
+Extract, per block kind, a plain **renderer class** that owns the kind's
+complete look-and-feel — **markup and styles together** — bound by this
+contract:
+
+> **A renderer's output must be style-complete given only the theme
+> variables on `:root`.** Theme vars are the entire host↔renderer styling
+> protocol; everything else the renderer carries itself.
+
+Ownership after extraction:
+
+- **Processor (Go)** — data, serialization, jobs, protocol roles. Zero
+  presentation. Fully reusable across every lens (this half already holds).
+- **Renderer (JS class)** — look-and-feel: builds the DOM from attrs and
+  carries its stylesheet (`static styles`, registered once on first mount
+  via constructable stylesheets / `document.adoptedStyleSheets`, plumbed
+  through `fenced-block-base.js` so fenced kinds inherit the mechanism).
+- **NodeView** — a thin PM-lifecycle adapter (type registration,
+  `ignoreMutation`, update plumbing) that *wraps* the renderer for the PM
+  host only. Other hosts call the renderer directly.
+
+Corollaries:
+
+- **The renderer is the unit of style ownership — not the kind, not the
+  host.** A kind may have *several* renderers, one per presentation context:
+  the note-lens renderer, a chat-turn bubble (same ai-block data, refs as
+  inline chips — brainstorm 5 §6, "the ref, costumed"), an embedded
+  read-only card. Each carries its own sheet; N renderers per kind is the
+  expected end state, and a shared app stylesheet does not scale to it.
+- **Hosts give theme vars, a slot, and arrangement — never CSS.** Which side
+  of the screen a chat turn sits, alternation, spacing: that is lens
+  grammar, the host's layout. Block internals are the renderer's alone. If a
+  block renders wrong in a host that provides `:root` theme vars, the
+  renderer is at fault, never the host.
+- **Escape hatches ride with the renderer.** When a third-party engine's
+  theming surface has a hole (mermaid exposes no edge-label text variable —
+  node and edge text share one `.label` colour chain), the patch is injected
+  into the renderer's own output (preferred: appended to the engine's
+  in-output `<style>`, making the artefact portable even outside the app) —
+  never parked in the app stylesheet. `input.css` retains only genuinely
+  app-global concerns: shell, typography, theme palette, PM/editor
+  mechanics.
+
+## Migration
+
+One migration per kind, **both halves in the same change** — extracting the
+renderer and moving its CSS are not separate passes (that would touch every
+kind twice for nothing).
+
+- **Effective immediately as policy:** new renderers are born under the
+  contract — the chat lens's turn renderer foremost. Definition of done for
+  any new renderer: *renders correctly in a bare page providing only `:root`
+  theme vars* (trivially checkable in the browser harness).
+- **Pilot: the diagram block.** Its interior is already contract-pure
+  (`themeVariables` baked from `--theme-*` at render). The pilot = extract
+  its renderer class, move the `.sieve-block--diagram` /
+  `.diagram-block__*` rules into the renderer's sheet, and re-home the
+  `.edgeLabel` patch into mermaid's in-SVG `<style>` — retiring the
+  unscoped-global-rule impurity shipped in `b57fe22`. (That re-homing is
+  small enough to land standalone if the pilot slips.)
+- **Remaining kinds** migrate as opportunity allows; the shared mechanism in
+  `fenced-block-base.js` makes each one mostly mechanical.
+
+## Rationale & rejected alternatives
+
+- **Style-portability as its own spec/workstream** (earlier draft of this
+  document): rejected — carrying styles is the second half of the renderer
+  split, not a sibling. A split without style carriage isn't done; style
+  carriage without renderer classes has nowhere to live.
+- **"Load `input.css` everywhere."** Couples every future host to the editor
+  bundle's full cascade — the assumption the lightbox already broke, and a
+  non-starter for PM-free lenses and exported artefacts.
+- **Shadow DOM per block.** Maximum isolation, but PM
+  selection/contentEditable interplay does not survive shadow boundaries
+  cheaply, and theme-var piercing is the only sharing we actually want.
+  Constructable stylesheets give ownership-and-travel without fighting the
+  editor.
+- **Solving mermaid's gap inside `themeVariables`** (light label chips,
+  un-inverting `nodeTextColor`): changes the diagram's aesthetic to dodge an
+  engine limitation; the escape-hatch rule contains the impurity instead.
+
+## Consequences
+
+- The chat lens, embedded cards, and any future lens consume renderers
+  directly — look-and-feel consistency across hosts without PM, as
+  brainstorm 5 §8 requires.
+- The lightbox class of bug (block DOM moved/borrowed into another
+  container) becomes structurally impossible for migrated kinds.
+- NodeViews shrink to adapters, which is the shape the component-model
+  discipline wants; `input.css` shrinks toward shell + theme + PM mechanics,
+  which is the shape the editor-package-cohesion refactor wants.
