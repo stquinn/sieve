@@ -148,6 +148,24 @@ kind twice for nothing).
   small enough to land standalone if the pilot slips.)
 - **Remaining kinds** migrate as opportunity allows; the shared mechanism in
   `fenced-block-base.js` makes each one mostly mechanical.
+- **Prose** (user decision 2026-07-20): stops being a presentation-layer
+  exception. Framework-level it is a block like any other (already true).
+  Per lens: in the PM lens the *surface itself is the adapter* — prose's
+  renderer IS ProseMirror, no fake NodeView; in non-PM hosts (chat turn
+  message, embedded card, export) prose gets a genuine read-only
+  `ProseRenderer extends BlockRenderer` (markdown attrs → `renderMarkdown`
+  DOM + typography sheet), built when its first consumer arrives (the chat
+  lens) — brainstorm 5 §8's read/worked split, realised. Nothing to do in
+  P2–P4; prose has no NodeView to split.
+- **Inline kinds** (opinion recorded 2026-07-20, no commitment): the split
+  removes the *frontend* half of the 2026-06-19 "inline ≠ block" objection —
+  an inline renderer is just a subclass whose `mount()` returns a `<span>`,
+  and the `[!kind]{json}[!kind-end]` inline transport already parses. The
+  remaining gate is purely the Go model (inline block = child of a prose
+  block: tree placement, codec round-trip inside prose, id/job lifecycle) —
+  revisit with the block-children/container work. Until then smart-link's
+  degrade-to-plain-link default stands, and P4 does not delete its renderer
+  hastily.
 
 ## Rationale & rejected alternatives
 
