@@ -49,13 +49,30 @@ Ownership after extraction:
 
 - **Processor (Go)** — data, serialization, jobs, protocol roles. Zero
   presentation. Fully reusable across every lens (this half already holds).
+- **Block framework (JS, PM-free services)** — the JS mirror of the Go
+  `block/` package: registry, block behaviours, and service-shaped classes
+  for the block machinery that is not presentation and not PM — ContentEntry
+  assembly, block naming/labels, extraction detection, transport encoding
+  (`buildSieveBlockHTML`), job staleness. Today this layer exists but is
+  physically welded inside `sieve-block-extension.js` next to the PM node
+  factory; it must stand outside PM.
 - **Renderer (JS class)** — look-and-feel: builds the DOM from attrs and
   carries its stylesheet (`static styles`, registered once on first mount
   via constructable stylesheets / `document.adoptedStyleSheets`, plumbed
   through `fenced-block-base.js` so fenced kinds inherit the mechanism).
-- **NodeView** — a thin PM-lifecycle adapter (type registration,
-  `ignoreMutation`, update plumbing) that *wraps* the renderer for the PM
-  host only. Other hosts call the renderer directly.
+- **NodeView / PM adapter** — a thin PM-lifecycle adapter (type
+  registration, `ignoreMutation`, update plumbing, `stopEvent`, selection
+  claiming, PM transactions) that *wraps* the renderer for the PM host
+  only. Other hosts call the renderer directly.
+
+**The sorting test is PM-specificity** (user decision 2026-07-20): if a
+behaviour would work unchanged in a PM-free host (chat lens, embedded
+card), it belongs to the block framework or the renderer — never the
+adapter, regardless of where it lives today. Only what genuinely speaks
+schema/plugin/transaction/selection stays PM-side. Migrations under this
+epic route what they touch accordingly; the *full* framework-layer
+extraction (registration machinery out of the PM extension file) is X-D
+retirement scope, sequenced with — not inside — these phases.
 
 Corollaries:
 
