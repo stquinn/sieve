@@ -98,6 +98,23 @@ Any sheet over ~30 lines lives in a sibling
 may stay inline. The sibling import is renderer-internal and invisible to
 consumers.
 
+**Content lanes** (user-driven, 2026-07-20): three lanes, three rules.
+(1) Chrome slots (labels, domains, errors) → `textContent`, always.
+(2) Markdown bodies (LLM output IS markdown — this lane is load-bearing) →
+`renderMarkdown` as the sanctioned HTML producer, which MUST run on a
+dedicated `html:false` markdown-it instance — never the editor's
+`html:true` instance (borrowing it is DEFECT SEC-B, #48: remote-content
+titles hit `innerHTML` with raw-HTML passthrough on). The editor's
+`html:true` instance stays confined to PM parse paths, where the schema
+filters. Every non-PM body fill (chat turns, ProseRenderer, embedded
+cards) uses the sanctioned instance. (3) Raw attr interpolation into
+`innerHTML` → banned. Note: the body's PM routing in the note lens is
+about DOCUMENT MEMBERSHIP (selection, targeting, decorations, round-trip),
+not markdown — markdown rendering is editor-independent, so non-PM hosts
+get bodies nearly free: the renderer's default body fill is
+`renderMarkdown`; the PM adapter suppresses it and claims the container
+as `contentDOM` (host-claims-the-slot).
+
 **Markup discipline** (user decision 2026-07-20): mount builds structure
 once; update patches retained slot nodes (`textContent`/`classList`/
 `setAttribute`) — never re-renders skeleton via `innerHTML`. Template
