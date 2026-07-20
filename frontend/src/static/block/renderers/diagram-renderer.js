@@ -1,6 +1,6 @@
 // @ts-check
 // diagram-renderer.js — DiagramRenderer: the renderer half of the diagram
-// kind's renderer/NodeView split (docs/design/specs/2026-07-20-block-renderer-extraction.md,
+// kind's renderer/NodeView split (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
 // Phase 2 / issue #45 — the epic's pilot). Owns look-and-feel ONLY: attrs in,
 // DOM out, the mermaid invocation (including the --theme-* → themeVariables
 // mapping), and this kind's complete stylesheet (`static styles`). Zero
@@ -31,7 +31,7 @@ import { DiagramTheme } from './diagram-renderer.styles.js'
 
 export class DiagramRenderer extends BlockRenderer {
   // Sheet lives in the sibling diagram-renderer.styles.js — styles-file-geography
-  // convention (docs/design/specs/2026-07-20-block-renderer-extraction.md, "Styles
+  // convention (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md, "Styles
   // file geography"): a renderer file starts with its class, never a CSS wall.
   static styles = DiagramTheme.sheet
 

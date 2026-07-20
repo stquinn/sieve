@@ -1,6 +1,6 @@
 // @ts-check
 // code-renderer.styles.js — CodeRenderer's stylesheet, a sibling module per
-// the styles-file-geography convention (docs/design/specs/2026-07-20-block-renderer-extraction.md,
+// the styles-file-geography convention (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
 // "Styles file geography"): a renderer file starts with its class — behaviour
 // first, never a CSS wall — so any sheet over ~30 lines lives in its own
 // `<kind>-renderer.styles.js` sibling module, imported into the class's

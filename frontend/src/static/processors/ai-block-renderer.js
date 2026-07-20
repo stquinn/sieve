@@ -1,5 +1,5 @@
 // ai-block-renderer.js — Sieve NodeView ADAPTER for the 'ai-block' kind (the
-// PM half of the renderer/NodeView split, docs/design/specs/2026-07-20-block-renderer-extraction.md
+// PM half of the renderer/NodeView split, docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
 // Phase 3 / issue #46). Look-and-feel (the block shell, the badge, this
 // kind's stylesheet) lives in AiBlockRenderer
 // (frontend/src/static/block/renderers/ai-block-renderer.js — a DIFFERENT

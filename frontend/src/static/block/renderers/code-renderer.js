@@ -1,6 +1,6 @@
 // @ts-check
 // code-renderer.js — CodeRenderer: the renderer half of the 'code' kind's
-// renderer/NodeView split (docs/design/specs/2026-07-20-block-renderer-extraction.md,
+// renderer/NodeView split (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
 // Phase 4 / issue #47). Owns look-and-feel ONLY: the block shell, the
 // gutter+code-area body chrome, and this kind's complete stylesheet (`static
 // styles`). Zero ProseMirror/editor/window.* app-global dependencies — this

@@ -1,6 +1,6 @@
 // @ts-check
 // ai-block-renderer.test.js — DoD coverage for AiBlockRenderer (the ai-block
-// kind's look-and-feel class, docs/design/specs/2026-07-20-block-renderer-extraction.md
+// kind's look-and-feel class, docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
 // Phase 3 / issue #46). Per the spec's contract, definition of done for any
 // renderer is "renders correctly in a bare page providing only :root theme
 // vars" — this suite mounts the REAL AiBlockRenderer (not a throwaway demo

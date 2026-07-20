@@ -1,6 +1,6 @@
 // @ts-check
 // line-gutter.js — LineGutter: the shared line-number gutter builder (survey
-// item A2, docs/design/specs/2026-07-20-block-renderer-extraction.md, Phase 4
+// item A2, docs/design/archive/specs/2026-07-20-block-renderer-extraction.md, Phase 4
 // / issue #47). 'code' (Phase 4) carried a private per-instance copy of this
 // exact span-per-line builder (mirroring DiagramRenderer's Phase-2 shape);
 // 'log' needs an identical one for its raw-text body, so at log's migration

@@ -2,7 +2,7 @@
 // sanctioned-markdown.test.js — DoD coverage for
 // block/renderers/sanctioned-markdown.js, the dedicated html:false
 // markdown-it instance every renderer fill (title, body) runs on
-// (docs/design/specs/2026-07-20-block-renderer-extraction.md §Content lanes
+// (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md §Content lanes
 // / §Body/title pull-back — DEFECT SEC-B, issue #48). Uses the REAL
 // markdown-it / markdown-it-mark packages (not a mock) so this suite would
 // actually fail if the sanctioned instance ever regressed to html:true or

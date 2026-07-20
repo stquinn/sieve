@@ -1,6 +1,6 @@
 // @ts-check
 // renderer-style-registry.js — register-once-per-class stylesheet carriage for
-// Sieve block renderers (docs/design/specs/2026-07-20-block-renderer-extraction.md,
+// Sieve block renderers (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
 // "Phase 1" — issue #44).
 //
 // A renderer class declares `static styles` (CSS text using ONLY --theme-* vars

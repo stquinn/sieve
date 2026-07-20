@@ -1,7 +1,7 @@
 // @ts-check
 // block-title-seam.test.js — DoD coverage for syncBlockTitle
 // (sieve-block-extension.js), the TITLE slot's fill decision extracted per
-// the body/title pull-back (docs/design/specs/2026-07-20-block-renderer-extraction.md
+// the body/title pull-back (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
 // "Body/title pull-back", DEFECT SEC-B / issue #48). Proves BOTH branches —
 // delegating to a renderer's fillTitle, and the fallback for kinds with no
 // split renderer yet (smart-link, prose) — keep attrs-derived text out of

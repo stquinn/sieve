@@ -7,7 +7,7 @@
 import { renderSanctionedMarkdown } from '../block/renderers/sanctioned-markdown.js'
 
 // BlockRenderer / ContractViolation — the renderer half of the renderer/
-// NodeView split (docs/design/specs/2026-07-20-block-renderer-extraction.md).
+// NodeView split (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md).
 // They LIVE in block/renderers/ (the PM-free renderer package mirroring Go
 // block/processors/ — see the spec's package layout); re-exported here so
 // every fenced block extension can keep importing its shared machinery from
@@ -23,7 +23,7 @@ export { BlockRenderer, ContractViolation } from '../block/renderers/block-rende
 export { getLowlight, hastToHtml, applyHighlighting } from '../block/renderers/highlighting.js'
 
 // renderMarkdown — renders text via the SANCTIONED markdown-it instance
-// (html:false; docs/design/specs/2026-07-20-block-renderer-extraction.md
+// (html:false; docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
 // §Content lanes / §Body/title pull-back — DEFECT SEC-B, issue #48). The
 // `editor` param is kept for call-site compatibility (existing callers still
 // pass the TipTap editor reference) but is no longer consulted: this function

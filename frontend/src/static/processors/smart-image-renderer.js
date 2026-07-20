@@ -1,5 +1,5 @@
 // smart-image-renderer.js — Sieve NodeView ADAPTER for the 'smart-image' kind
-// (the PM half of the renderer/NodeView split, docs/design/specs/2026-07-20-block-renderer-extraction.md
+// (the PM half of the renderer/NodeView split, docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
 // Phase 4 / issue #47). Look-and-feel (the image wrapper, resize handle,
 // status badge, this kind's stylesheet) lives in SmartImageRenderer
 // (frontend/src/static/block/renderers/smart-image-renderer.js — a DIFFERENT

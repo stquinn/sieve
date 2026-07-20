@@ -1,6 +1,6 @@
 // @ts-check
 // status-badge.js — StatusBadge: the shared status × isJobStale → state
-// decision tree (survey item A7, docs/design/specs/2026-07-20-block-renderer-extraction.md,
+// decision tree (survey item A7, docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
 // Phase 4 / issue #47). ai-block's renderer already structured this decision
 // (AiBlockRenderer#update, Phase 3); it is hoisted to a shared class here at
 // the SECOND badge-bearing kind to migrate (code, Phase 4) so every migrated

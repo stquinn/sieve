@@ -1,6 +1,6 @@
 // @ts-check
 // sanctioned-markdown.js — the ONE markdown-it instance every non-PM renderer
-// fill (title, body) runs on (docs/design/specs/2026-07-20-block-renderer-extraction.md
+// fill (title, body) runs on (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
 // §Content lanes / §Body/title pull-back — DEFECT SEC-B, issue #48).
 //
 // html:false — raw HTML embedded in markdown text renders as inert, escaped

@@ -1,6 +1,6 @@
 // @ts-check
 // code-renderer.test.js — DoD coverage for CodeRenderer (the 'code' kind's
-// look-and-feel class, docs/design/specs/2026-07-20-block-renderer-extraction.md
+// look-and-feel class, docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
 // Phase 4 / issue #47). Per the spec's contract, definition of done for any
 // renderer is "renders correctly in a bare page providing only :root theme
 // vars" — this suite mounts the REAL CodeRenderer against a page carrying

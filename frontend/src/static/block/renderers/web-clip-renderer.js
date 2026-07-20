@@ -1,6 +1,6 @@
 // @ts-check
 // web-clip-renderer.js — WebClipRenderer: the renderer half of the 'web-clip'
-// kind's renderer/NodeView split (docs/design/specs/2026-07-20-block-renderer-extraction.md,
+// kind's renderer/NodeView split (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
 // Phase 4 / issue #47). Owns look-and-feel ONLY: the block shell, the status
 // chrome (badge + icon/label/retry, driven by the shared StatusBadge decision
 // tree — survey item A7), and this kind's complete stylesheet (`static

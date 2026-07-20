@@ -1,6 +1,6 @@
 // @ts-check
 // ai-block-renderer.js — AiBlockRenderer: the renderer half of the ai-block
-// kind's renderer/NodeView split (docs/design/specs/2026-07-20-block-renderer-extraction.md,
+// kind's renderer/NodeView split (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
 // Phase 3 / issue #46). Owns look-and-feel ONLY: the block shell, the status
 // badge (attrs → CSS class + text — the "status badge state machine" the
 // migration survey calls A7), and this kind's complete stylesheet (`static
@@ -11,7 +11,7 @@
 // harness, or any future non-PM lens (chat turn, embedded card).
 //
 // What this class deliberately does NOT own, and why — the PM-specificity
-// sorting test (docs/design/specs/2026-07-20-block-renderer-extraction.md,
+// sorting test (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
 // "The sorting test is PM-specificity"):
 //   - The question TITLE and response/status BODY are never built as DOM by
 //     this class. Unlike the diagram pilot (where the renderer owns the whole

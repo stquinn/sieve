@@ -1,6 +1,6 @@
 // @ts-check
 // log-renderer.js — LogRenderer: the renderer half of the 'log' kind's
-// renderer/NodeView split (docs/design/specs/2026-07-20-block-renderer-extraction.md,
+// renderer/NodeView split (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
 // Phase 4 / issue #47). Owns look-and-feel ONLY: the block shell, the raw-text
 // body (gutter + code-area, shared shape with 'code' via LineGutter), the
 // Explore table (parsed-JSON → rows, filter, noise dimming, column

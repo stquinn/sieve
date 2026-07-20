@@ -157,7 +157,7 @@ export function domSelectionBlockRange(domSelection, er, blocks) {
 
 // ── TITLE slot fill decision ─────────────────────────────────────────────────
 // syncBlockTitle — the TITLE slot's fill decision (pure DOM, no PM). Body/title
-// pull-back (docs/design/specs/2026-07-20-block-renderer-extraction.md
+// pull-back (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
 // "Body/title pull-back", DEFECT SEC-B / issue #48): TITLE rendering is
 // renderer-side in every lens, PM included — this seam DELEGATES to the held
 // renderer's fillTitle (a BlockRenderer instance the NodeView adapter exposes

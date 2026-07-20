@@ -1,6 +1,6 @@
 // @ts-check
 // web-clip-renderer.test.js — DoD coverage for WebClipRenderer (the
-// 'web-clip' kind's look-and-feel class, docs/design/specs/2026-07-20-block-renderer-extraction.md
+// 'web-clip' kind's look-and-feel class, docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
 // Phase 4 / issue #47). Per the spec's contract, definition of done for any
 // renderer is "renders correctly in a bare page providing only :root theme
 // vars" — mirrors ai-block-renderer.test.js's SCOPE NOTE: this class's own

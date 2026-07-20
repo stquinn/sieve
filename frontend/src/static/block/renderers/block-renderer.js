@@ -1,6 +1,6 @@
 // @ts-check
 // block-renderer.js — BlockRenderer: the renderer half of the renderer/
-// NodeView split (docs/design/specs/2026-07-20-block-renderer-extraction.md;
+// NodeView split (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md;
 // shape documented in docs/how-to-intelligent-fenced-blocks.md "Renderer /
 // NodeView split"). Re-exported from fenced-block-base.js — every fenced
 // block extension already imports its shared machinery from there.
@@ -27,7 +27,7 @@
 // the exact mount/update signature; this is deliberately the minimal shape
 // the seam needs, not a speculative one.
 //
-// Body/title pull-back (docs/design/specs/2026-07-20-block-renderer-extraction.md
+// Body/title pull-back (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
 // "Body/title pull-back", DEFECT SEC-B / issue #48): fillTitle/fillBody below
 // are the renderer's fill CONTRACT for the two markdown content lanes.
 // markdown-it is to text bodies what mermaid is to diagrams — an engine the

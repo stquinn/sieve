@@ -1,6 +1,6 @@
 // @ts-check
 // diagram-renderer.test.js — DoD coverage for DiagramRenderer (the diagram
-// kind's look-and-feel class, docs/design/specs/2026-07-20-block-renderer-extraction.md
+// kind's look-and-feel class, docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
 // Phase 2 / issue #45, the epic's pilot). Per the spec's contract, definition
 // of done for any renderer is "renders correctly in a bare page providing
 // only :root theme vars" — this suite mounts the REAL DiagramRenderer (not a
@@ -144,7 +144,7 @@ describe('DiagramRenderer (Phase 2 pilot — bare-page DoD)', () => {
     const svg = dom.querySelector('.diagram-block__render svg')
     expect(svg).toBeTruthy()
     // The escape hatch rides IN the SVG's own <style> — portable by construction,
-    // not a rule in any app stylesheet (docs/design/specs/2026-07-20-block-renderer-extraction.md).
+    // not a rule in any app stylesheet (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md).
     const style = svg?.querySelector('style')
     expect(style).toBeTruthy()
     expect(style?.textContent).toContain('.edgeLabel')

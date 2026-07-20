@@ -1,7 +1,7 @@
 # Block Renderer Extraction — look-and-feel out of the NodeView
 
-**Status:** Accepted
-**Tracked:** #43 (epic) — phases #44 #45 #46 #47
+**Status:** ✅ COMPLETE 2026-07-20 — epic #43 shipped (phases #44 #45 #46 #47 + SEC-B #48), all issues closed. Living conventions: `docs/how-to-intelligent-fenced-blocks.md`. Remaining follow-on: X-D retirement (typed registry, BlockFramework facade, PM-package convergence into `editor/surfaces/`) — target layout in §Package layout below.
+**Tracked:** #43 (epic) — phases #44 #45 #46 #47; SEC-B #48
 **Date:** 2026-07-20
 **Context:** Realises the renderer/NodeView split named in
 `brainstorm-ai-protocol-roles-chats-and-document-kinds.md` §8 ("one renderer

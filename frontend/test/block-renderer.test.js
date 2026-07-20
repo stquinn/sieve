@@ -1,7 +1,7 @@
 // @ts-check
 // block-renderer.test.js — DoD coverage for BlockRenderer's default
 // fillTitle/fillBody (the body/title pull-back,
-// docs/design/specs/2026-07-20-block-renderer-extraction.md "Body/title
+// docs/design/archive/specs/2026-07-20-block-renderer-extraction.md "Body/title
 // pull-back", DEFECT SEC-B / issue #48). Exercised against the REAL
 // AiBlockRenderer / WebClipRenderer classes (both inherit these defaults
 // unmodified) rather than a throwaway subclass, so this suite proves the
