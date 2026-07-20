@@ -100,11 +100,9 @@ textarea::selection {
   color: var(--theme-selectionFg);
 }
 
-.web-clip-block__badge::selection,
 .sieve-block__header::selection,
 .sieve-block__badge::selection,
 .sieve-code-block__gutter span::selection,
-.sieve-block__gutter span::selection,
 .code-block__gutter span::selection {
   background: transparent;
   color: inherit;
@@ -172,51 +170,12 @@ textarea::selection {
 .ProseMirror-gapcursor { z-index: 30; }
 .ProseMirror-gapcursor:after { border-top: 2px solid var(--theme-accent, #5b7cff); width: 60%; }
 
-/* Fix ghost selection bars in WebKit around images */
-.node-image,
-.node-image * {
-  user-select: none !important;
-  -webkit-user-select: none !important;
-}
-
-.node-image::selection,
-.node-image *::selection {
-  background: transparent !important;
-}
-
-/* Premium Image Tooltip */
-.node-image {
-  position: relative;
-}
-
-.node-image[data-tooltip]::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%) scale(0.95);
-  background: #000000;
-  color: #ffffff;
-  padding: 10px 16px;
-  border-radius: 8px;
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  max-width: 80%;
-  width: max-content;
-  z-index: 10000;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.15s ease, transform 0.15s ease;
-  border: 1px solid rgba(255,255,255,0.1);
-  box-shadow: 0 10px 30px rgba(0,0,0,0.6);
-  text-align: center;
-}
-
-.node-image[data-tooltip]:hover::after {
-  opacity: 0.9;
-  transform: translate(-50%, -50%) scale(1);
-}
+/* .node-image (ghost-selection fix + premium tooltip) migrated to
+   SmartImageRenderer's stylesheet in the renderer/NodeView split
+   (docs/design/specs/2026-07-20-block-renderer-extraction.md, Phase 4, issue
+   #47) — see frontend/src/static/block/renderers/smart-image-renderer.styles.js.
+   Confirmed exclusive to smart-image before moving (no native TipTap Image
+   extension uses this class — it renders with `editor-image` instead). */
 
 /* ── Syntax highlighting (.hljs-* classes from lowlight/highlight.js) ─── */
 /* lowlight tokenises code and wraps spans in .hljs-<type>. No colours    */
@@ -774,8 +733,10 @@ textarea::selection {
 /* its ref chain toggles `block-ref-active` (ai-block-renderer applyChain), */
 /* fading in the left accent + promoting any ==highlighted== mark.         */
 
+/* .image-block's own copy of this ready-state now lives in
+   smart-image-renderer.styles.js (Phase 4, #47) — only its selector was
+   extracted from this shared list; prose/native-codeblock are unmigrated. */
 .block-node,
-.image-block,
 .code-block-wrapper {
   border-radius: 8px;
   transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
@@ -784,7 +745,6 @@ textarea::selection {
 }
 
 .block-node.block-ref-active,
-.image-block.block-ref-active,
 .code-block-wrapper.block-ref-active {
   background-color: color-mix(in srgb, var(--theme-accentPrimary) 8%, transparent) !important;
   border-left-color: var(--theme-accentPrimary) !important;
@@ -821,52 +781,9 @@ textarea::selection {
   margin-bottom: 0.5em;
 }
 
-div.node-image.ProseMirror-selectednode {
-  outline: none !important;
-  box-shadow: none !important;
-}
-
-.image-block img {
-  border-radius: 4px;
-  box-shadow: 0 0 0 1px var(--theme-aiBlockBorder);
-  transition: box-shadow 0.2s ease;
-}
-
-.image-block:hover img {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--theme-accentPrimary) 60%, var(--theme-aiBlockBorder)),
-              0 4px 20px rgba(0, 0, 0, 0.25);
-}
-
-.image-block.ProseMirror-selectednode img {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-accentPrimary) 25%, transparent),
-              0 0 0 2px var(--theme-accentPrimary),
-              0 8px 30px rgba(0, 0, 0, 0.45) !important;
-}
-
-.image-block {
-  position: relative;
-  line-height: 0;
-}
-
-.image-resizer {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 12px;
-  height: 12px;
-  background: var(--theme-accentPrimary);
-  border: 1px solid var(--theme-bg);
-  border-radius: 2px;
-  cursor: nwse-resize;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-  z-index: 10;
-}
-
-.image-block:hover .image-resizer,
-.image-block.ProseMirror-selectednode .image-resizer {
-  opacity: 1;
-}
+/* div.node-image.ProseMirror-selectednode / .image-block* / .image-resizer
+   migrated to smart-image-renderer.styles.js alongside the rest of this
+   kind's chrome (Phase 4, #47). */
 
 /* ── AI response blocks ──────────────────────────────────────────────── */
 /* AiBlock's own look-and-feel (shell, badge, chain-glow colours, hr/inline-  */
@@ -903,113 +820,10 @@ div.node-image.ProseMirror-selectednode {
 .sieve-block__heading p { white-space: pre-wrap; }
 
 /* ── Web-clip blocks ─────────────────────────────────────────────────── */
-
-.web-clip-block {
-  border: 1px solid var(--theme-aiBlockBorder);
-  border-radius: 8px;
-  background: var(--theme-aiBlockBg);
-  margin-top: 1.5rem;
-  margin-bottom: 2rem;
-  padding: 1.25rem 1.5rem;
-  position: relative;
-  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
-  user-select: text;
-  -webkit-user-select: text;
-}
-
-.web-clip-block:hover {
-  border-color: color-mix(in srgb, var(--theme-accentCyan) 60%, var(--theme-aiBlockBorder));
-  background: color-mix(in srgb, var(--theme-accentCyan) 2%, var(--theme-aiBlockBg));
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
-}
-
-.web-clip-block.ProseMirror-selectednode,
-.web-clip-block.sieve-block--focused {
-  border-color: var(--theme-accentCyan) !important;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-accentCyan) 25%, transparent),
-              0 8px 30px rgba(0, 0, 0, 0.45) !important;
-  background: color-mix(in srgb, var(--theme-accentCyan) 5%, var(--theme-aiBlockBg)) !important;
-  outline: none !important;
-}
-
-.web-clip-block.web-clip-block--chain-active {
-  border-color: color-mix(in srgb, var(--theme-accentCyan) 30%, var(--theme-aiBlockBorder)) !important;
-  background: color-mix(in srgb, var(--theme-accentCyan) 4%, var(--theme-aiBlockBg));
-}
-
-.web-clip-block.web-clip-block--chain-active::after {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: 8px;
-  border-left: 3px solid var(--theme-accentCyan);
-  pointer-events: none;
-  z-index: 5;
-}
-
-.web-clip-block__header {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 10px;
-  font-size: 12px;
-}
-
-.web-clip-block__badge {
-  position: absolute;
-  top: -9px;
-  left: 12px;
-  background: var(--theme-bg);
-  padding: 0 6px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: var(--theme-accentCyan);
-  font-family: var(--theme-monoFont);
-  text-transform: uppercase;
-  border: 1px solid var(--theme-border2);
-  border-radius: 4px;
-  z-index: 10;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.web-clip-block__status {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--theme-accentCyan);
-}
-
-.web-clip-block__source-link {
-  font-size: 11px;
-  color: var(--theme-accentCyan);
-  opacity: 0.75;
-  text-decoration: none;
-  word-break: break-all;
-}
-.web-clip-block__source-link:hover { opacity: 1; text-decoration: underline; }
-
-/* Reset tiptap defaults for the internal web-clip content renderer (it is a real
-   PM-owned contentDOM carrying the .tiptap class — without this it inherits the
-   editor's min-height:100vh + chrome padding and the panel becomes huge). */
-.web-clip-block .tiptap {
-  min-height: 0;
-  padding: 0;
-}
-
-.web-clip-block__content {
-  color: var(--theme-text);
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-.web-clip-block__content p { margin: 0 0 0.6em; }
-.web-clip-block__content p:last-child { margin-bottom: 0; }
-.web-clip-block__content ul, .web-clip-block__content ol { margin: 0.4em 0 0.6em 1.4em; padding: 0; }
-.web-clip-block__content li { margin-bottom: 0.2em; }
-.web-clip-block__content strong { color: var(--theme-text); }
-.web-clip-block__content img { max-width: 100%; height: auto; display: block; }
+/* web-clip's own look-and-feel (shell, status chrome, content typography)
+   migrated to WebClipRenderer's stylesheet in the renderer/NodeView split
+   (docs/design/specs/2026-07-20-block-renderer-extraction.md, Phase 4, issue
+   #47) — see frontend/src/static/block/renderers/web-clip-renderer.styles.js. */
 
 /* ── Shared fenced-block rendered content ────────────────────────────── */
 /* Standard Tiptap Code Blocks (used after promotion) */
@@ -1082,51 +896,17 @@ pre.tiptap-code-block code {
   white-space: pre;
 }
 
-.web-clip-block__label {
-  font-size: 12px;
-  color: var(--theme-textDim);
-}
+/* .web-clip-block__label/__icon/__spinner/__retry + @keyframes wc-spin moved
+   to WebClipRenderer's stylesheet alongside the rest of this kind's chrome
+   (see the "Web-clip blocks" comment above). */
 
-.web-clip-block__icon {
-  font-size: 13px;
-  margin-right: 4px;
-}
-.web-clip-block__icon--warn { color: var(--theme-accentOrange); }
-.web-clip-block__icon--error { color: var(--theme-accentRed); }
-
-.web-clip-block__spinner {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border: 2px solid color-mix(in srgb, var(--theme-accentCyan) 30%, transparent);
-  border-top-color: var(--theme-accentCyan);
-  border-radius: 50%;
-  animation: wc-spin 0.8s linear infinite;
-  margin-right: 6px;
-  vertical-align: middle;
-  flex-shrink: 0;
-}
-
-@keyframes wc-spin {
-  to { transform: rotate(360deg); }
-}
-
-.web-clip-block__retry {
-  display: block;
-  margin-top: 8px;
-  background: none;
-  border: 1px solid var(--theme-border2);
-  border-radius: 4px;
-  color: var(--theme-textDim);
-  cursor: pointer;
-  font-size: 11px;
-  padding: 3px 10px;
-}
-.web-clip-block__retry:hover {
-  border-color: var(--theme-accentCyan);
-  color: var(--theme-accentCyan);
-}
 /* ── Smart-link nodes ────────────────────────────────────────────────── */
+/* FLAGGED — pending the links decision (docs/design/specs/2026-07-20-block-renderer-extraction.md,
+   "Inline kinds"): smart-link is an INLINE kind, explicitly NOT migrated in
+   this epic (P4/#47 migrates code/log/web-clip/smart-image/smart-card only —
+   see that spec's note on inline kinds awaiting the Go block-children/
+   container model). This CSS stays here, unowned by any renderer, until
+   smart-link's own migration. */
 
 .smart-link-node {
   color: var(--theme-accentPrimary);
@@ -1161,14 +941,14 @@ pre.tiptap-code-block code {
   margin-bottom: 2rem;
 }
 
+/* --sieve-focus-accent declarations are FRAMEWORK-owned (feed the shared
+   generic .sieve-block:focus-within / ProseMirror-selectednode rule below,
+   which every kind's shell participates in) — kept here even after a kind's
+   OWN shell CSS (background/border/radius/hover) moves into its renderer's
+   stylesheet (code → block/renderers/code-renderer.styles.js, Phase 4;
+   diagram → block/renderers/diagram-renderer.styles.js, Phase 2). */
 .sieve-block--code {
   --sieve-focus-accent: var(--theme-accentGreen);
-  display: flex;
-  flex-direction: column;
-  background: var(--theme-bgDark);
-  border: 1px solid var(--theme-aiBlockBorder);
-  border-radius: 8px;
-  transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .sieve-block--log {
@@ -1177,11 +957,6 @@ pre.tiptap-code-block code {
 
 .sieve-block--diagram {
   --sieve-focus-accent: var(--theme-accentPurple);
-}
-
-.sieve-block--code:hover {
-  border-color: color-mix(in srgb, var(--sieve-focus-accent) 60%, var(--theme-aiBlockBorder));
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
 }
 
 .sieve-block:focus-within,
@@ -1241,114 +1016,14 @@ pre.tiptap-code-block code {
   color: var(--theme-textDim);
 }
 
-/* Flex row: gutter + pre/code — mirrors .sieve-code-block layout */
-.sieve-block__body {
-  display: flex;
-  overflow: hidden;
-  border-radius: 0 0 8px 8px;
-}
-
-/* Line-number gutter — mirrors .sieve-code-block__gutter */
-.sieve-block__gutter {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  padding: 0.85em 0.6em;
-  background: var(--theme-bgDark);
-  border-right: 1px solid var(--theme-gutterLineColor);
-  color: var(--theme-lineNumberColor);
-  font-family: var(--theme-monoFont);
-  font-size: 0.85em;
-  line-height: 1.6;
-  user-select: none;
-  flex-shrink: 0;
-}
-
-.sieve-block__gutter span {
-  display: block;
-  line-height: 1.6;
-}
-
-/* CSS Grid container — highlight and textarea share the same cell so they
-   auto-size together. The grid drives height; textarea fills it. */
-.sieve-block__code-area {
-  display: grid;
-  flex: 1;
-  min-width: 0;
-}
-
-/* Shared typography — MUST be identical on both layers for text to align */
-.sieve-block__highlight,
-.sieve-block__edit {
-  grid-area: 1 / 1;
-  font-family: var(--theme-monoFont);
-  font-size: 0.85em;
-  line-height: 1.6;
-  padding: 0.85em 1.1em;
-  white-space: pre-wrap;
-  word-break: break-word;
-  tab-size: 2;
-  margin: 0;
-  min-height: 2.5em;
-  box-sizing: border-box;
-}
-
-/* Display layer: syntax-highlighted, sits behind the textarea */
-.sieve-block__highlight {
-  pointer-events: none;
-  background: transparent;
-  border: none;
-  overflow: hidden;
-}
-
-.sieve-block__highlight code,
-.tiptap .sieve-block__edit code {
-  display: block;
-  background: transparent;
-  border: none;
-  padding: 0;
-  font: inherit;
-  white-space: inherit;
-  word-break: inherit;
-  tab-size: inherit;
-  color: inherit;
-  border-radius: 0;
-}
-
-/* Input layer: transparent text so highlights show through the textarea */
-.sieve-block__edit {
-  position: relative;
-  z-index: 1;
-  color: transparent;
-  caret-color: var(--theme-text);
-  background: transparent;
-  border: none;
-  outline: none;
-  resize: none;
-  overflow: hidden;
-  cursor: text;
-}
-
-/* ── Log highlighting (decoration classes) ───────────────────────────────
-   Applied by the log renderer's decoration plugin to the read-only log text.
-   Colours + noise dimming live here so the "Toggle Noise" button is a pure
-   view concern: it flips .log--hide-noise on the block root. */
-.sieve-block--log .log-tok-error  { color: var(--theme-red);    font-weight: bold; }
-.sieve-block--log .log-tok-warn   { color: var(--theme-yellow); }
-.sieve-block--log .log-tok-info   { color: var(--theme-accentCyan); }
-.sieve-block--log .log-tok-level  { font-weight: bold; }
-.sieve-block--log .log-tok-thread { color: var(--theme-magenta); }
-.sieve-block--log .log-tok-logger { color: var(--theme-green); }
-.sieve-block--log .log-tok-bracket { color: var(--theme-textSubtle); font-weight: 500; }
-.sieve-block--log .log-tok-noise  { opacity: 0.6; }
-
-.sieve-block--log .log-line-error { color: var(--theme-red);    font-weight: bold; }
-.sieve-block--log .log-line-warn  { color: var(--theme-yellow); }
-.sieve-block--log .log-line-info  { opacity: 0.85; }
-
-/* Noise hidden: dim timestamps/pid/thread/logger and de-emphasise info lines. */
-.sieve-block--log.log--hide-noise .log-tok-noise { opacity: 0.15; }
-.sieve-block--log.log--hide-noise .log-line-info { opacity: 0.3; }
+/* .sieve-block__body/__gutter/__code-area/__highlight/__edit (generic,
+   unscoped) and .sieve-block--log .log-tok-*/.log-line-*/.log--hide-noise
+   were the shared body-chrome + log-decoration rules every raw-text sieve
+   kind (code/log/diagram) drew from. Now that code (block/renderers/code-renderer.styles.js),
+   log (block/renderers/log-renderer.styles.js), and diagram
+   (block/renderers/diagram-renderer.styles.js) each carry their OWN scoped
+   copy, the generic rules had no consumer left and were removed here as
+   part of the Phase 4 (#47) sweep — docs/design/specs/2026-07-20-block-renderer-extraction.md. */
 
 /* ── Code blocks ─────────────────────────────────────────────────────── */
 

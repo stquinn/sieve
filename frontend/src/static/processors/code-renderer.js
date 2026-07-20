@@ -1,15 +1,24 @@
-// code-renderer.js — Sieve block renderer for the 'code' kind.
-//
-// Editing surface: a ProseMirror contentDOM (pre>code, code:true node) — NOT
-// a textarea (that implementation is long gone). Syntax highlighting is
-// decoration-based (plugin below); the node's text content is authoritative.
-// Keyboard behaviour (Tab/Enter/Home) comes from the shared interaction-policy
-// extension via this renderer's interactionPolicy declaration — do NOT add
-// handleKeyDown here (docs/editor-interaction-contract.md is normative).
+// code-renderer.js — Sieve NodeView ADAPTER for the 'code' kind (the PM half
+// of the renderer/NodeView split, docs/design/specs/2026-07-20-block-renderer-extraction.md
+// Phase 4 / issue #47). Look-and-feel (the block shell, gutter+code-area body
+// chrome, this kind's stylesheet) lives in CodeRenderer
+// (frontend/src/static/block/renderers/code-renderer.js — a DIFFERENT class,
+// deliberately same basename, different directory). This file HOLDS a
+// CodeRenderer instance by COMPOSITION and owns everything that genuinely
+// speaks ProseMirror: contentDOM binding/ignoreMutation, the lowlight
+// decoration plugin (buildPlugins), the MutationObserver that watches
+// contentDOM and persists `source` via ctx.updateAttributes, and the header
+// toolbar (badge: language / detecting… / CODE — a PM-framework
+// headerProvider slot, same as diagram's DiagramHeader). Keyboard behaviour
+// (Tab/Enter/Home) comes from the shared interaction-policy extension via
+// this renderer's interactionPolicy declaration — do NOT add handleKeyDown
+// here (docs/editor-interaction-contract.md is normative).
 
-import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
+import { esc, getLowlight } from '../base/fenced-block-base.js'
 import { T } from '../base/tiptap-vendor.js'
 import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block/sieve-block-extension.js'
+import { CodeRenderer } from '../block/renderers/code-renderer.js'
+import { StatusBadge } from '../block/renderers/status-badge.js'
 
 ;(function () {
   'use strict'
@@ -18,11 +27,13 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
   // Badge only — but stateful: 'detecting…' while the language job runs, the
   // language once known, else 'CODE'. badge() returns a styled Element so the
   // pending/unknown classes and the detection-method tooltip carry over.
+  // The pending/settled split reads off StatusBadge.classify (survey item A7)
+  // — the shared status × isJobStale decision tree, hoisted here at code's
+  // migration as the SECOND badge-bearing kind (after ai-block).
   class CodeHeader extends AdvancedHeaderProvider {
     badge(attrs) {
-      var isPending     = attrs.status === 'PENDING' || attrs.status === 'DISPATCHED'
-      var isStale       = isPending && isJobStale(attrs.createdAt, attrs.id)
-      var showDetecting = isPending && !isStale && (!attrs.language || attrs.language === '')
+      var state         = StatusBadge.classify(attrs.status, attrs.createdAt, attrs.id)
+      var showDetecting = state === 'pending' && (!attrs.language || attrs.language === '')
       var text, cls
       if (showDetecting) { text = 'detecting…'; cls = 'sieve-block__badge--pending' }
       else if (attrs.language && attrs.language !== 'unknown') { text = attrs.language; cls = '' }
@@ -36,9 +47,14 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
     }
   }
 
-  // ── CodeRenderer ─────────────────────────────────────────────────────────────
+  // ── CodeNodeAdapter ────────────────────────────────────────────────────────
+  // The registered descriptor sieve-block-extension.js's duck-typed
+  // registerSieveRenderer() consumes. Named distinctly from the imported
+  // CodeRenderer CLASS above — same word, two different layers (this is the
+  // PM-adapter descriptor object; CodeRenderer is the look-and-feel class it
+  // holds by composition) — to keep the two unambiguous in this file.
 
-  var CodeRenderer = {
+  var CodeNodeAdapter = {
 
     headerProvider: new CodeHeader(),
 
@@ -71,7 +87,6 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
     getFriendlyName: function() { return 'Code' },
     getIcon: function() { return window.SieveIcons && window.SieveIcons.terminal },
 
-
     asContentEntry: function(node) {
       var src = node.textContent || node.attrs.source
       if (!src) return null
@@ -92,75 +107,28 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
       var nodeTypeName = node.type.name
       var currentAttrs = Object.assign({}, node.attrs)
 
-      // ── DOM ──────────────────────────────────────────────────────────────────
+      // The renderer instance this NodeView HOLDS by composition (never
+      // inheritance — see the file header). All look-and-feel (shell, body,
+      // gutter, highlight box chrome) is its job; this adapter only supplies
+      // PM-only concerns around it.
+      var renderer = new CodeRenderer()
 
-      var dom = document.createElement('div')
-      dom.className = 'sieve-block sieve-block--code'
+      // effectiveAttrs — CodeRenderer's mount()/update() take `source` as the
+      // LIVE PM text (node.textContent), never the debounced attrs.source
+      // (the debounce below can lag up to 200ms behind what's actually in the
+      // document) — mirrors DiagramRenderer's identical effectiveAttrs need.
+      function effectiveAttrs(attrs, textContent) {
+        return Object.assign({}, attrs, { source: textContent })
+      }
+
+      var dom = renderer.mount(effectiveAttrs(node.attrs, node.textContent))
       dom.setAttribute('data-id', node.attrs.id || '')
 
-      // Header (badge: language / detecting… / CODE) is declared as
-      // `headerProvider: new CodeHeader()` and rendered by the framework seam,
-      // re-run on attr change so the badge tracks status/language.
+      var contentDOM = renderer.contentDOM
 
-      // Body: flex row — gutter + code-area
-      var body = document.createElement('div')
-      body.className = 'sieve-block__body'
-
-      var gutter = document.createElement('div')
-      gutter.className = 'sieve-block__gutter'
-      gutter.contentEditable = 'false'
-
-      // CSS Grid cell — code area
-      var codeArea = document.createElement('div')
-      codeArea.className = 'sieve-block__code-area'
-
-      var pre = document.createElement('pre')
-      // Re-use the edit class for padding/fonts, but ensure it acts like a block
-      pre.className = 'sieve-block__edit' 
-      pre.style.whiteSpace = 'pre-wrap'
-      pre.style.pointerEvents = 'auto'
-      pre.style.outline = 'none'
-      pre.style.color = 'var(--theme-text)' // Fix transparent text
-      
-      var contentDOM = document.createElement('code')
-      contentDOM.className = 'hljs'
-      
-      pre.appendChild(contentDOM)
-      codeArea.appendChild(pre)
-      body.appendChild(gutter)
-      body.appendChild(codeArea)
-      dom.appendChild(body)
-
-      // ── Helpers ───────────────────────────────────────────────────────────────
-
-      function updateGutter(source) {
-        var lines = (source || '').split('\n')
-        var count = Math.max(lines.length, 1)
-        if (gutter.childElementCount === count) return
-        gutter.innerHTML = ''
-        for (var i = 1; i <= count; i++) {
-          var span = document.createElement('span')
-          span.textContent = String(i)
-          gutter.appendChild(span)
-        }
-      }
-
-      // Syntax highlighting is handled by the ProseMirror plugin below.
-      function applyHighlight(lang) {
-        contentDOM.className = (lang && lang !== 'unknown') ? 'language-' + lang + ' hljs' : 'hljs'
-      }
-
-      // (badge is rendered by CodeHeader from attrs, re-run by the seam on update.)
-
-      // Content updates are now managed by ProseMirror.
-      // We just update the non-content UI (gutter).
-      function render(attrs, textContent) {
-        currentAttrs = attrs
-        applyHighlight(attrs.language || '')
-        updateGutter(textContent || '')
-      }
-
-      render(node.attrs, node.textContent)
+      // ── Header ────────────────────────────────────────────────────────────────
+      // The toolbar (badge: language / detecting… / CODE) is declared as
+      // `headerProvider: new CodeHeader()` and rendered by the framework seam.
 
       var updateTimer = null
       // lastSource is the text we last OBSERVED. Syntax highlighting rewrites the
@@ -175,7 +143,7 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
         var text = contentDOM.textContent
         if (text === lastSource) return   // decoration-only re-render — not an edit
         lastSource = text
-        updateGutter(text)
+        renderer.syncGutterLineCount(text)
         clearTimeout(updateTimer)
         updateTimer = setTimeout(function() {
           if (currentAttrs.id) ctx.updateAttributes({ source: lastSource })
@@ -191,7 +159,8 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
 
         update: function (updatedNode) {
           if (updatedNode.type.name !== nodeTypeName) return false
-          render(updatedNode.attrs, updatedNode.textContent)
+          currentAttrs = updatedNode.attrs
+          renderer.update(dom, effectiveAttrs(updatedNode.attrs, updatedNode.textContent))
           return true
         },
 
@@ -203,23 +172,24 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
         destroy: function () {
           observer.disconnect()
           clearTimeout(updateTimer)
+          renderer.destroy(dom)
         },
       }
     },
 
     // ── Plugins ───────────────────────────────────────────────────────────────
-    
+
     buildPlugins: function(nodeType) {
       var Plugin = T.Plugin
       var Decoration = T.Decoration
       var DecorationSet = T.DecorationSet
-      
+
       function getDecorations(node, pos) {
         var low = getLowlight()
         if (!low) return []
         var lang = node.attrs.language || ''
         if (!lang || lang === 'unknown' || lang === 'text') return []
-        
+
         try {
           var result = low.highlight(lang, node.textContent)
           var decos = []
@@ -276,13 +246,13 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
   }
 
   // Ask AI, Explain, and Delete are injected by sieve-block-extension.js framework.
-  CodeRenderer.buildAiCtx = function (node) {
+  CodeNodeAdapter.buildAiCtx = function (node) {
     var lang = node.attrs.language
     var label = lang && lang !== 'unknown' ? lang + ' block' : 'Code block'
     return { contextLabel: label }
   }
 
-  CodeRenderer.buildContextMenuItems = function ({ node }) {
+  CodeNodeAdapter.buildContextMenuItems = function ({ node }) {
     var lang = node.attrs.language
     var label = lang && lang !== 'unknown' ? lang + ' block' : 'Code block'
     return [
@@ -290,6 +260,6 @@ import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block
     ]
   }
 
-  registerSieveRenderer('code', CodeRenderer)
+  registerSieveRenderer('code', CodeNodeAdapter)
 
 })()

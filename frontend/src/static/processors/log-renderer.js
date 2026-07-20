@@ -1,9 +1,22 @@
-// log-renderer.js — Sieve block renderer for the 'log' kind.
+// log-renderer.js — Sieve NodeView ADAPTER for the 'log' kind (the PM half of
+// the renderer/NodeView split, docs/design/specs/2026-07-20-block-renderer-extraction.md
+// Phase 4 / issue #47). Look-and-feel (the block shell, raw-text body, Explore
+// table, this kind's stylesheet) lives in LogRenderer
+// (frontend/src/static/block/renderers/log-renderer.js — a DIFFERENT class,
+// deliberately same basename, different directory). This file HOLDS a
+// LogRenderer instance by COMPOSITION and owns everything that genuinely
+// speaks ProseMirror: contentDOM binding/ignoreMutation, the log-line
+// decoration plugin (buildPlugins), the read-only guard plugin, and the
+// header toolbar (badge/format/raw-explore toggle/noise/filter/column
+// buttons — a PM-framework headerProvider slot, same as diagram's
+// DiagramHeader and code's CodeHeader). LogHeader reads LogRenderer's static
+// mode/disabledCols helpers rather than re-deriving them.
 
-import { esc, isJobStale, getLowlight, hastToHtml } from '../base/fenced-block-base.js'
+import { esc, getLowlight } from '../base/fenced-block-base.js'
 import { T } from '../base/tiptap-vendor.js'
 import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block/sieve-block-extension.js'
 import { updateBlockOp } from '../block/block-sync.js'
+import { LogRenderer } from '../block/renderers/log-renderer.js'
 
 ;(function () {
   'use strict'
@@ -15,25 +28,12 @@ import { updateBlockOp } from '../block/block-sync.js'
   // The richest toolbar: badge + format + raw/explore toggle + (noise | filter +
   // column toggles), all mode-dependent. State is persisted attrs (mode/filter/
   // disabledCols/hideNoise), written via ctx.updateAttributes. WHICH column buttons
-  // exist is data-driven — the body sets ctx.state.cols (+ ctx.refreshHeader) once
-  // the parsed JSON loads; disabledCols is the pocketed on/off state.
+  // exist is data-driven — LogRenderer publishes them via onColumnsAvailable into
+  // ctx.state.cols + ctx.refreshHeader() once the parsed JSON loads.
   var RAW_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
     '<path d="M1 7.5 L6 2 L8 4 L3 9 L1 9 Z"/><line x1="5" y1="3" x2="7" y2="5"/></svg>'
   var EXPLORE_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
     '<rect x="1" y="1" width="8" height="8" rx="1"/><line x1="1" y1="4" x2="9" y2="4"/><line x1="4" y1="4" x2="4" y2="9"/></svg>'
-
-  function logMode(attrs)  { return attrs.mode || (attrs.parsedAssetRef ? 'explore' : 'edit') }
-  function isExplore(attrs) { return logMode(attrs) === 'explore' }
-  function disabledSet(attrs) {
-    var s = {}
-    ;(attrs.disabledCols || '').split(',').forEach(function (k) { if (k) s[k] = true })
-    return s
-  }
-  function toggleDisabled(attrs, key) {
-    var s = disabledSet(attrs)
-    if (s[key]) delete s[key]; else s[key] = true
-    return Object.keys(s).join(',')
-  }
 
   class LogHeader extends AdvancedHeaderProvider {
     badge() { return 'Log' }
@@ -50,16 +50,16 @@ import { updateBlockOp } from '../block/block-sync.js'
         if (attrs.logFormatRegex) fb.title = 'Regex: ' + attrs.logFormatRegex
         items.push(fb)
       }
-      var explore = isExplore(attrs)
+      var explore = LogRenderer.isExplore(attrs)
       var toggle = document.createElement('div')
-      toggle.className = 'diagram-block__toggle'
+      toggle.className = 'log-block__toggle'
       toggle.style.marginLeft = '8px'
       var rawBtn = document.createElement('button')
-      rawBtn.className = 'diagram-block__toggle-btn' + (!explore ? ' diagram-block__toggle-btn--active-edit' : '')
+      rawBtn.className = 'log-block__toggle-btn' + (!explore ? ' log-block__toggle-btn--active-raw' : '')
       rawBtn.innerHTML = RAW_SVG + ' Raw'
       rawBtn.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); if (explore) ctx.updateAttributes({ mode: 'raw' }) })
       var exploreBtn = document.createElement('button')
-      exploreBtn.className = 'diagram-block__toggle-btn' + (explore ? ' diagram-block__toggle-btn--active-render' : '')
+      exploreBtn.className = 'log-block__toggle-btn' + (explore ? ' log-block__toggle-btn--active-explore' : '')
       exploreBtn.innerHTML = EXPLORE_SVG + ' Explore'
       exploreBtn.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); if (!explore) ctx.updateAttributes({ mode: 'explore' }) })
       toggle.appendChild(rawBtn); toggle.appendChild(exploreBtn)
@@ -77,7 +77,7 @@ import { updateBlockOp } from '../block/block-sync.js'
     }
 
     right(attrs, ctx) {
-      if (!isExplore(attrs)) return []
+      if (!LogRenderer.isExplore(attrs)) return []
       var items = []
       var filter = document.createElement('input')
       filter.type = 'text'
@@ -94,7 +94,7 @@ import { updateBlockOp } from '../block/block-sync.js'
 
       var cols = ctx.state.cols || []
       if (cols.length) {
-        var disabled = disabledSet(attrs)
+        var disabled = LogRenderer.disabledSet(attrs)
         var wrap = document.createElement('div')
         wrap.style.display = 'flex'
         wrap.style.alignItems = 'center'
@@ -106,7 +106,7 @@ import { updateBlockOp } from '../block/block-sync.js'
           btn.style.opacity = disabled[col.key] ? '0.4' : '1'
           btn.style.cursor = 'pointer'
           btn.style.marginLeft = '4px'
-          btn.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); ctx.updateAttributes({ disabledCols: toggleDisabled(attrs, col.key) }) })
+          btn.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); ctx.updateAttributes({ disabledCols: LogRenderer.toggleDisabled(attrs, col.key) }) })
           wrap.appendChild(btn)
         })
         items.push(wrap)
@@ -115,7 +115,13 @@ import { updateBlockOp } from '../block/block-sync.js'
     }
   }
 
-  var LogRenderer = {
+  // ── LogNodeAdapter ────────────────────────────────────────────────────────
+  // The registered descriptor sieve-block-extension.js's duck-typed
+  // registerSieveRenderer() consumes. Named distinctly from the imported
+  // LogRenderer CLASS above — same word, two different layers — to keep the
+  // two unambiguous in this file.
+
+  var LogNodeAdapter = {
     headerProvider: new LogHeader(),
 
     attrs: {
@@ -137,8 +143,7 @@ import { updateBlockOp } from '../block/block-sync.js'
     // Read-only text: caret may enter (select/copy), typing is consumed.
     // Mod+Enter toggles raw↔explore (declared policy override, same
     // mechanism as diagram's edit↔render — see interaction-policy.js).
-    // 
-    interactionPolicy: { caretStop: true, modEnterTogglesMode: true},
+    interactionPolicy: { caretStop: true, modEnterTogglesMode: true },
 
     // onModEnter — policy-extension entry point: flip raw↔explore. `host` is the
     // parent Editor, threaded by the interaction-policy extension.
@@ -164,7 +169,7 @@ import { updateBlockOp } from '../block/block-sync.js'
       }
 
       if (!node || node.type.name !== 'sieve-log' || !node.attrs.id) return false
-      var newMode = logMode(node.attrs) === 'explore' ? 'raw' : 'explore'
+      var newMode = LogRenderer.mode(node.attrs) === 'explore' ? 'raw' : 'explore'
       if (host) host.applyBlockOps([updateBlockOp({ id: node.attrs.id, kind: 'log', attrs: { mode: newMode } })])
       return true
     },
@@ -216,354 +221,53 @@ import { updateBlockOp } from '../block/block-sync.js'
 
     makeNodeView: function (node, editorPane, getPos, ctx) {
       var nodeTypeName = node.type.name
-      var currentAttrs = Object.assign({}, node.attrs)
-      var loadedJson = null
-      var loadingAsset = false       // guards against a double-fetch on first explore render
-      var logObserver = null         // per-instance lazy-scroll observer (was a global → clobbered sibling log blocks)
 
-      var dom = document.createElement('div')
-      dom.className = 'sieve-block sieve-block--code sieve-block--log'
+      // The renderer instance this NodeView HOLDS by composition (never
+      // inheritance — see the file header). All look-and-feel (shell, raw
+      // body, Explore table) is its job; this adapter only supplies PM-only
+      // and framework concerns around it.
+      var renderer = new LogRenderer()
+      renderer.onColumnsAvailable(function (cols) {
+        ctx.state.cols = cols
+        ctx.refreshHeader()
+      })
+
+      // resolveAssetUrl — the parsedAssetRef → fetchable URL resolution needs
+      // the held Editor's document uuid (a PM-framework concern via
+      // ctx.getEditor()), so it stays adapter-side; the RESOLVED url travels
+      // to LogRenderer as a plain attrs field (mirrors DiagramRenderer/
+      // CodeRenderer's effectiveAttrs pattern for injecting the live text).
+      function resolveAssetUrl(ref) {
+        if (!ref) return ''
+        if (ref.startsWith('/')) return ref
+        return '/sieve/' + (ctx && ctx.getEditor() && ctx.getEditor().uuid || '') + '/' + ref.split('/').pop()
+      }
+
+      function effectiveAttrs(attrs, textContent) {
+        return Object.assign({}, attrs, { source: textContent, resolvedAssetUrl: resolveAssetUrl(attrs.parsedAssetRef) })
+      }
+
+      var dom = renderer.mount(effectiveAttrs(node.attrs, node.textContent))
       dom.setAttribute('data-id', node.attrs.id || '')
 
+      var contentDOM = renderer.contentDOM
+
       // Header (badge + format + raw/explore toggle + noise|filter+cols) is declared
-      // as `headerProvider: new LogHeader()` and rendered by the framework seam. The
-      // view settings (mode/filter/disabledCols/hideNoise) are persisted attrs the
-      // header writes via ctx.updateAttributes; this NodeView only reads them.
-
-      var body = document.createElement('div')
-      body.className = 'sieve-block__body'
-
-      var editArea = document.createElement('div')
-      editArea.style.display = 'flex'
-      editArea.style.flexDirection = 'row'
-      editArea.style.width = '100%'
-      editArea.style.maxHeight = '600px'
-      editArea.style.overflowY = 'auto'
-      // Let the gutter + code grid grow to their natural (full) height and have
-      // THIS wrapper scroll. Without this, flex's default align-items:stretch pins
-      // the grid to the 600px container height and the highlight/textarea
-      // (overflow:hidden) clip everything past ~28 lines with nothing to scroll.
-      editArea.style.alignItems = 'flex-start'
-
-      var gutter = document.createElement('div')
-      gutter.className = 'sieve-block__gutter'
-      gutter.contentEditable = 'false'
-
-      var codeArea = document.createElement('div')
-      codeArea.className = 'sieve-block__code-area'
-      codeArea.style.flex = '1'
-
-      // Real PM-owned contentDOM holding the raw log text — read-only via the plugin.
-      // Highlighting is applied as decorations (buildPlugins), not innerHTML overlay.
-      var pre = document.createElement('pre')
-      pre.className = 'sieve-block__edit'
-      pre.style.whiteSpace = 'pre-wrap'
-      pre.style.pointerEvents = 'auto'
-      pre.style.outline = 'none'
-      pre.style.color = 'var(--theme-text)'
-
-      var contentDOM = document.createElement('code')
-      contentDOM.className = 'hljs language-log'
-
-      pre.appendChild(contentDOM)
-      codeArea.appendChild(pre)
-      editArea.appendChild(gutter)
-      editArea.appendChild(codeArea)
-
-      var exploreArea = document.createElement('div')
-      exploreArea.style.display = 'none'
-      exploreArea.style.flexDirection = 'row'
-      exploreArea.style.width = '100%'
-      
-      var tableContainer = document.createElement('div')
-      tableContainer.style.flex = '1'
-      tableContainer.style.overflow = 'auto'
-      tableContainer.style.maxHeight = '600px'
-      tableContainer.style.padding = '12px 16px'
-      tableContainer.style.fontFamily = 'monospace'
-      tableContainer.style.fontSize = '13px'
-      tableContainer.style.lineHeight = '1.5'
-      tableContainer.style.userSelect = 'text'
-      tableContainer.style.webkitUserSelect = 'text'
-      tableContainer.style.cursor = 'text'
-      
-      // Block SELECTION is owned by the framework (click-to-own-selection in
-      // sieve-block-extension.js) — a click anywhere in the block makes it the
-      // caret/selection owner via a NodeSelection, uniformly for every kind. The
-      // only thing local to this text-table block is shielding PM from hijacking
-      // the native text selection users drag to copy log lines: stop mousedown
-      // propagation (except on the framework's own controls) and cancel dragstart.
-      exploreArea.addEventListener('mousedown', function(e) {
-          if (e.target.closest('input, textarea, button, select')) return
-          e.stopPropagation()
-      })
-      exploreArea.addEventListener('dragstart', function(e) {
-          e.preventDefault()
-          e.stopPropagation()
-      })
-
-      exploreArea.appendChild(tableContainer)
-
-      body.appendChild(editArea)
-      body.appendChild(exploreArea)
-      dom.appendChild(body)
-
-      // availableCols scans the loaded JSON for which columns exist, and publishes
-      // them to the header (ctx.state.cols) so LogHeader can render their toggles.
-      // The enabled/disabled state is the pocketed disabledCols attr.
-      function availableCols() {
-          if (!loadedJson || !loadedJson.lines) return [];
-          var out = [];
-          if (loadedJson.lines.some(function(l){ return l.date }))   out.push({ key: 'date',   name: 'Date' });
-          if (loadedJson.lines.some(function(l){ return l.level }))  out.push({ key: 'level',  name: 'Level' });
-          if (loadedJson.lines.some(function(l){ return l.thread })) out.push({ key: 'thread', name: 'Thread' });
-          if (loadedJson.lines.some(function(l){ return l.logger })) out.push({ key: 'logger', name: 'Logger' });
-          return out;
-      }
-
-      function renderTable() {
-          if (!loadedJson || !loadedJson.lines) return;
-          tableContainer.innerHTML = '';
-          var filterText = (currentAttrs.filter || '').toLowerCase();
-          var disabled = disabledSet(currentAttrs);
-
-          var hasDate = loadedJson.lines.some(function(l) { return l.date });
-          var hasLevel = loadedJson.lines.some(function(l) { return l.level });
-          var hasThread = loadedJson.lines.some(function(l) { return l.thread });
-          var hasLogger = loadedJson.lines.some(function(l) { return l.logger });
-
-          var showDate = hasDate && !disabled['date'];
-          var showLevel = hasLevel && !disabled['level'];
-          var showThread = hasThread && !disabled['thread'];
-          var showLogger = hasLogger && !disabled['logger'];
-
-          if (logObserver) {
-              logObserver.disconnect();
-              logObserver = null;
-          }
-
-          var cols = [{key: 'line', width: '40px'}];
-          if (showDate) cols.push({key: 'date', width: '160px'});
-          if (showLevel) cols.push({key: 'level', width: '60px'});
-          if (showThread) cols.push({key: 'thread', width: '120px'});
-          if (showLogger) cols.push({key: 'logger', width: '200px'});
-          cols.push({key: 'message', width: '1fr'});
-          
-          function makeCell(text, width, color, opacity) {
-              var c = document.createElement('div');
-              c.textContent = text || '';
-              c.style.overflow = 'hidden';
-              c.style.textOverflow = 'ellipsis';
-              c.style.whiteSpace = 'nowrap';
-              if (color) c.style.color = color;
-              if (opacity !== undefined) c.style.opacity = opacity;
-              if (width === '1fr') {
-                  c.style.flex = '1';
-              } else {
-                  c.style.width = width;
-                  c.style.flexShrink = '0';
-              }
-              return c;
-          }
-          
-          var headerRow = document.createElement('div');
-          headerRow.style.display = 'flex';
-          headerRow.style.gap = '12px';
-          headerRow.style.position = 'sticky';
-          headerRow.style.top = '0';
-          headerRow.style.background = 'var(--theme-bgDark)';
-          headerRow.style.zIndex = '10';
-          headerRow.style.paddingBottom = '4px';
-          headerRow.style.marginBottom = '4px';
-          headerRow.style.borderBottom = '1px solid var(--theme-border)';
-          headerRow.style.textTransform = 'uppercase';
-          headerRow.style.fontSize = '11px';
-          headerRow.style.letterSpacing = '0.5px';
-          headerRow.style.fontWeight = 'bold';
-          headerRow.style.color = 'var(--theme-textSubtle)';
-          
-          cols.forEach(function(col) {
-             var label = col.key === 'line' ? '#' : col.key;
-             headerRow.appendChild(makeCell(label, col.width));
-          });
-          
-          tableContainer.appendChild(headerRow);
-          
-          var rowsContainer = document.createElement('div');
-          rowsContainer.style.display = 'flex';
-          rowsContainer.style.flexDirection = 'column';
-          tableContainer.appendChild(rowsContainer);
-          
-          var filteredLines = loadedJson.lines.filter(function(l) {
-             if (!filterText) return true;
-             return (l.raw || '').toLowerCase().indexOf(filterText) > -1;
-          });
-          
-          var currentIndex = 0;
-          var chunkSize = 100;
-          
-          function renderChunk() {
-              var chunk = filteredLines.slice(currentIndex, currentIndex + chunkSize);
-              if (chunk.length === 0) return false;
-              
-              chunk.forEach(function(l) {
-                  var row = document.createElement('div');
-                  row.style.display = 'flex';
-                  row.style.gap = '12px';
-                  row.style.marginBottom = '4px';
-                  
-                  var rowColor = '';
-                  if (l.severity === 'error') rowColor = 'var(--theme-red)';
-                  else if (l.severity === 'warn') rowColor = 'var(--theme-yellow)';
-                  else if (l.severity === 'info') rowColor = 'var(--theme-textSubtle)';
-                  
-                  cols.forEach(function(col) {
-                      var cell;
-                      if (col.key === 'line') cell = makeCell(l.lineNumber, col.width, 'var(--theme-textSubtle)', 0.5);
-                      else if (col.key === 'date') cell = makeCell(l.date, col.width, 'var(--theme-textSubtle)', 0.5);
-                      else if (col.key === 'level') {
-                          cell = makeCell(l.level, col.width, rowColor, 1);
-                          cell.style.fontWeight = 'bold';
-                      }
-                      else if (col.key === 'thread') cell = makeCell(l.thread, col.width, 'var(--theme-magenta)', 0.7);
-                      else if (col.key === 'logger') cell = makeCell(l.logger, col.width, 'var(--theme-green)', 0.7);
-                      else if (col.key === 'message') {
-                          cell = makeCell(l.message, col.width, rowColor || 'var(--theme-text)', l.severity === 'info' ? 0.8 : 1);
-                          cell.style.whiteSpace = 'pre-wrap';
-                      }
-                      row.appendChild(cell);
-                  });
-                  rowsContainer.appendChild(row);
-              });
-              
-              currentIndex += chunkSize;
-              return currentIndex < filteredLines.length;
-          }
-          
-          var hasMore = renderChunk();
-          
-          if (hasMore) {
-              var sentinel = document.createElement('div');
-              sentinel.style.height = '1px';
-              tableContainer.appendChild(sentinel);
-              
-              var observer = new IntersectionObserver(function(entries) {
-                  if (entries[0].isIntersecting) {
-                      var more = renderChunk();
-                      if (!more) {
-                          observer.disconnect();
-                          if (sentinel.parentNode) sentinel.parentNode.removeChild(sentinel);
-                      }
-                  }
-              }, { root: tableContainer, rootMargin: '200px' });
-              
-              observer.observe(sentinel);
-              logObserver = observer;
-          }
-          
-      }
-      
-      function loadAsset() {
-          if (!currentAttrs.parsedAssetRef || loadingAsset) return;
-          if (currentAttrs.status === 'PENDING' || currentAttrs.status === 'DISPATCHED') {
-              tableContainer.innerHTML = '<div style="padding: 16px; color: var(--theme-textSubtle);">Processing logs...</div>';
-              return;
-          }
-          var url = currentAttrs.parsedAssetRef;
-          if (!url.startsWith('/')) {
-              url = '/sieve/' + (ctx?.getEditor()?.uuid || '') + '/' + url.split('/').pop();
-          }
-          loadingAsset = true;
-          fetch(url).then(function(res) { return res.json(); }).then(function(data) {
-              loadingAsset = false;
-              loadedJson = data;
-              // Publish which columns the data has so LogHeader can render their
-              // toggles; their disabled state is the pocketed disabledCols attr.
-              if (ctx) { ctx.state.cols = availableCols(); ctx.refreshHeader(); }
-              renderTable();
-          }).catch(function(err) {
-              loadingAsset = false;
-              tableContainer.innerHTML = '<div style="padding: 16px; color: var(--theme-red);">Failed to load parsed logs.</div>';
-          });
-      }
-
-      // updateUI switches ONLY the body (raw/edit text vs explore table). Toolbar
-      // state (toggle active, noise/filter/cols visibility) is the header's job now,
-      // driven by the persisted attrs.
-      function updateUI() {
-          if (isExplore(currentAttrs)) {
-              // Keep editArea in the layout tree but make it visually hidden
-              // so WebKit's caret drawing engine doesn't break for empty sibling blocks.
-              editArea.style.position = 'absolute';
-              editArea.style.opacity = '0';
-              editArea.style.pointerEvents = 'none';
-              editArea.style.height = '0';
-              editArea.style.overflow = 'hidden';
-              exploreArea.style.display = 'flex';
-              if (!loadedJson) loadAsset();
-              else renderTable();
-          } else {
-              // Restore normal styles for raw/edit mode
-              editArea.style.position = '';
-              editArea.style.opacity = '';
-              editArea.style.pointerEvents = '';
-              editArea.style.height = '';
-              editArea.style.overflow = '';
-              editArea.style.display = 'flex';
-              exploreArea.style.display = 'none';
-          }
-      }
-
-      function updateGutter(source) {
-        var lines = (source || '').split('\n')
-        var count = Math.max(lines.length, 1)
-        if (gutter.childElementCount === count) return
-        gutter.innerHTML = ''
-        for (var i = 1; i <= count; i++) {
-          var span = document.createElement('span')
-          span.textContent = String(i)
-          gutter.appendChild(span)
-        }
-      }
-
-      function render(attrs, textContent) {
-        var statusChanged = currentAttrs.status !== attrs.status;
-        var assetChanged = currentAttrs.parsedAssetRef !== attrs.parsedAssetRef;
-        currentAttrs = attrs;
-
-        // Noise dimming is a persisted view setting (hideNoise attr); CSS dims
-        // .log-tok-noise / .log-line-info under .log--hide-noise. (Format badge,
-        // mode toggle, filter and column toggles are all the header's job now.)
-        dom.classList.toggle('log--hide-noise', !!attrs.hideNoise);
-
-        if (statusChanged || assetChanged) {
-            loadAsset();
-        }
-        updateUI();
-
-        updateGutter(textContent || '')
-      }
-
-      render(node.attrs, node.textContent)
-
-      // The log source is a read-only captured input — never edited in-place. The
-      // text lives in the PM document (text* content); highlighting is applied as
-      // decorations, the gutter is driven by render(), and editing is blocked by the
-      // read-only plugin in buildPlugins.
+      // as `headerProvider: new LogHeader()` and rendered by the framework seam.
 
       return {
         dom:        dom,
         contentDOM: contentDOM,
         update: function (updatedNode) {
           if (updatedNode.type.name !== nodeTypeName) return false
-          render(updatedNode.attrs, updatedNode.textContent)
+          renderer.update(dom, effectiveAttrs(updatedNode.attrs, updatedNode.textContent))
           return true
         },
         ignoreMutation: function (mutation) {
           return !contentDOM.contains(mutation.target)
         },
         destroy: function () {
-          if (logObserver) { logObserver.disconnect(); logObserver = null }
+          renderer.destroy(dom)
         },
       }
     },
@@ -584,8 +288,9 @@ import { updateBlockOp } from '../block/block-sync.js'
       }
 
       // ── Log syntax highlighting via decorations ───────────────────────────────
-      // Semantic classes only — colours and noise-dimming live in CSS so the
-      // noise toggle is a pure view concern (a class on the block root).
+      // Semantic classes only — colours and noise-dimming live in CSS
+      // (log-renderer.styles.js) so the noise toggle is a pure view concern
+      // (a class on the block root).
       function decorateLine(line, start, decos) {
         var spring = line.match(SPRING_LINE_RE)
         if (spring) {
@@ -689,16 +394,16 @@ import { updateBlockOp } from '../block/block-sync.js'
     },
   }
 
-  LogRenderer.buildAiCtx = function (node) {
+  LogNodeAdapter.buildAiCtx = function (node) {
     return { contextLabel: 'Log block' }
   }
 
-  LogRenderer.buildContextMenuItems = function ({ node }) {
+  LogNodeAdapter.buildContextMenuItems = function ({ node }) {
     return [
       { type: 'header', label: 'Log' },
     ]
   }
 
-  registerSieveRenderer('log', LogRenderer)
+  registerSieveRenderer('log', LogNodeAdapter)
 
 })()

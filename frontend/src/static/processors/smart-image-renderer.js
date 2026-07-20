@@ -1,134 +1,51 @@
-// smart-image-renderer.js — Renderer for the smart-image Sieve Block.
-// Matches the visual structure of the old ImageWithAttrs NodeView so existing
-// image CSS (.image-block, .node-image, .image-resizer) works unchanged.
+// smart-image-renderer.js — Sieve NodeView ADAPTER for the 'smart-image' kind
+// (the PM half of the renderer/NodeView split, docs/design/specs/2026-07-20-block-renderer-extraction.md
+// Phase 4 / issue #47). Look-and-feel (the image wrapper, resize handle,
+// status badge, this kind's stylesheet) lives in SmartImageRenderer
+// (frontend/src/static/block/renderers/smart-image-renderer.js — a DIFFERENT
+// class, deliberately same basename, different directory). This file HOLDS a
+// SmartImageRenderer instance by COMPOSITION and owns the genuinely
+// PM/framework-side pieces: schema data (nodeConfig/attrs/parseAttrs), the
+// resize-commit write path (ctx.updateAttributes), and resolving `src` +
+// `parsedAssetRef`-shaped asset URLs against the held Editor's document uuid
+// — SmartImageRenderer.resolveSrc itself is a pure (src, uuid) function with
+// no ctx dependency (see that class for why).
 
-import { isJobStale } from '../base/fenced-block-base.js'
 import { registerSieveRenderer } from '../block/sieve-block-extension.js'
 import { renderMermaidSvgEntry } from './diagram-renderer.js'
+import { SmartImageRenderer } from '../block/renderers/smart-image-renderer.js'
 
 ;(function () {
   'use strict'
 
-  function resolveSrc(src, ctx) {
-    if (!src) return ''
-    if (src.startsWith('http://') || src.startsWith('https://')) {
-      return window.location.origin + '/sieve-image-proxy?url=' + encodeURIComponent(src)
-    }
-    if (src.startsWith('data:') || src.startsWith('blob:') || src.startsWith('/')) return src
-    if (src.startsWith('.assets/')) src = src.substring(8)
-    return '/sieve/' + (ctx?.getEditor()?.uuid || '') + '/' + src.split('/').pop()
-  }
-
-  
-
   function makeNodeView(node, editorPane, getPos, ctx) {
-    var currentAttrs = Object.assign({}, node.attrs)
-
-    // dom matches old ImageWithAttrs: inline-block wrapper that owns selection CSS
     var nodeTypeName = 'sieve-smart-image'
-    var dom = document.createElement('div')
-    dom.className = 'image-block node-image'
-    dom.style.display = 'inline-block'
 
-    var img = document.createElement('img')
-    img.style.maxWidth = '100%'
-    img.style.display = 'block'
+    // The renderer instance this NodeView HOLDS by composition (never
+    // inheritance — see the file header). All look-and-feel (wrapper,
+    // resizer, badge) is its job; this adapter only supplies PM-only
+    // concerns (schema data, the resize-commit write, src resolution)
+    // around it.
+    var renderer = new SmartImageRenderer()
+    renderer.onResize(function (dims) { ctx.updateAttributes(dims) })
 
-    var resizer = document.createElement('div')
-    resizer.className = 'image-resizer'
-
-    // Status badge — shows "Processing…" while PENDING, hidden when COMPLETE
-    var badge = document.createElement('span')
-    badge.className = 'smart-image-status'
-    badge.style.cssText = 'position:absolute;top:6px;left:6px;font-size:10px;padding:2px 6px;border-radius:4px;pointer-events:none;display:none'
-
-    dom.appendChild(img)
-    dom.appendChild(resizer)
-    dom.appendChild(badge)
-
-    function applyAttrs(attrs) {
-      currentAttrs = attrs
-      img.src = resolveSrc(attrs.src || '', ctx)
-      img.alt = attrs.alt || ''
-      var w = attrs.width  || ''
-      var h = attrs.height || ''
-      img.style.width  = w ? (String(w).match(/^\d+$/) ? w + 'px' : w) : ''
-      img.style.height = h ? (String(h).match(/^\d+$/) ? h + 'px' : h) : ''
-      if (attrs.summary) dom.setAttribute('data-tooltip', attrs.summary)
-      else dom.removeAttribute('data-tooltip')
-      if (attrs.id) dom.setAttribute('data-id', attrs.id)
-
-      // Badge visibility.
-      // DISPATCHED = job is actively running → always show Processing.
-      // PENDING = waiting to dispatch → stale if createdAt > 15s ago.
-      var status = attrs.status || 'PENDING'
-      var isStale = status === 'PENDING' && isJobStale(attrs.createdAt, attrs.id)
-      if ((status === 'PENDING' || status === 'DISPATCHED') && !isStale) {
-        badge.textContent = 'Processing…'
-        badge.style.display = 'block'
-        badge.style.background = 'rgba(0,0,0,0.55)'
-        badge.style.color = '#fff'
-      } else if (isStale || status === 'ERROR' || status === 'TIMEOUT') {
-        // Surface the framework's specific error text (classifyJobError writes
-        // {status, error}); fall back to a generic label. TIMEOUT mirrors
-        // web-clip-renderer's timeout state.
-        var errText = (attrs.error || '').trim()
-        badge.textContent = errText || (status === 'TIMEOUT' ? 'Timed out' : 'Failed')
-        badge.style.display = 'block'
-        badge.style.background = 'rgba(180,0,0,0.75)'
-        badge.style.color = '#fff'
-        if (errText) dom.setAttribute('data-tooltip', errText)
-      } else {
-        badge.style.display = 'none'
-      }
+    function effectiveAttrs(attrs) {
+      return Object.assign({}, attrs, { src: SmartImageRenderer.resolveSrc(attrs.src || '', ctx && ctx.getEditor() && ctx.getEditor().uuid) })
     }
 
-    applyAttrs(node.attrs)
-
-    // Resize drag — maintains aspect ratio
-    var isResizing = false, startX, startW, startH, ratio
-
-    resizer.addEventListener('mousedown', function (e) {
-      e.preventDefault(); e.stopPropagation()
-      isResizing = true; startX = e.clientX
-      startW = img.clientWidth; startH = img.clientHeight
-      ratio = startH > 0 ? startW / startH : 1
-      document.body.style.cursor = 'nwse-resize'
-
-      function onMove(e) {
-        if (!isResizing) return
-        var w = Math.max(40, startW + (e.clientX - startX))
-        var h = Math.round(w / ratio)
-        img.style.width = w + 'px'; img.style.height = h + 'px'
-      }
-
-      function onUp() {
-        if (!isResizing) return
-        isResizing = false
-        window.removeEventListener('mousemove', onMove)
-        window.removeEventListener('mouseup', onUp)
-        document.body.style.cursor = ''
-        ctx.updateAttributes({
-          width:  String(Math.round(img.offsetWidth)),
-          height: String(Math.round(img.offsetHeight)),
-        })
-      }
-
-      window.addEventListener('mousemove', onMove)
-      window.addEventListener('mouseup', onUp)
-    })
+    var dom = renderer.mount(effectiveAttrs(node.attrs))
 
     return {
       dom: dom,
       update: function (updatedNode) {
         if (updatedNode.type.name !== nodeTypeName) return false
-        applyAttrs(updatedNode.attrs)
+        renderer.update(dom, effectiveAttrs(updatedNode.attrs))
         return true
       },
     }
   }
 
-  var SmartImageRenderer = {
+  var SmartImageNodeAdapter = {
     getIcon: function() { return window.SieveIcons && window.SieveIcons.image },
     getFriendlyName: function() { return 'Image' },
 
@@ -159,7 +76,7 @@ import { renderMermaidSvgEntry } from './diagram-renderer.js'
       if (!node.attrs.src) return null
       return [{ mimeType: 'text/uri-list', content: node.attrs.src }]
     },
-    
+
     makeNodeView: makeNodeView,
 
     buildAiCtx: function(node) {
@@ -173,11 +90,13 @@ import { renderMermaidSvgEntry } from './diagram-renderer.js'
       var status = node.attrs.status || 'PENDING'
       if (status === 'PENDING' || status === 'DISPATCHED' || status === 'ERROR' || status === 'TIMEOUT') return null
       var img = document.createElement('img')
-      // resolveSrc builds /sieve/<uuid>/<file> from ctx.getEditor().uuid. getExpandContent
-      // gets (node, dom) not the block ctx, so reach the active editor the same way other
-      // view-layer code does — window.sieveWorkspace.activeEditor (has .uuid). A document is
-      // only ever open in the single active tab, so activeEditor is THIS block's editor.
-      img.src = resolveSrc(node.attrs.src, { getEditor: function () { return (window.sieveWorkspace && window.sieveWorkspace.activeEditor) || null } })
+      // resolveSrc is pure (src, uuid) — no ctx. getExpandContent gets (node, dom)
+      // not the block ctx, so reach the active editor the same way other
+      // view-layer code does — window.sieveWorkspace.activeEditor (has .uuid). A
+      // document is only ever open in the single active tab, so activeEditor is
+      // THIS block's editor.
+      var activeEditor = window.sieveWorkspace && window.sieveWorkspace.activeEditor
+      img.src = SmartImageRenderer.resolveSrc(node.attrs.src, activeEditor && activeEditor.uuid)
       img.alt = node.attrs.alt || ''
       return { element: img, title: node.attrs.alt || 'Image', mode: 'media' }
     },
@@ -199,7 +118,7 @@ import { renderMermaidSvgEntry } from './diagram-renderer.js'
       return [
         { type: 'header', label: "Image"},
         { icon: window.SieveIcons.copy, label: 'Copy Image', action: function () {
-          var src = resolveSrc(n.attrs.src, ctx)
+          var src = SmartImageRenderer.resolveSrc(n.attrs.src, ctx && ctx.getEditor() && ctx.getEditor().uuid)
           if (!src) return
           fetch(src)
             .then(function (res) { return res.blob() })
@@ -211,7 +130,7 @@ import { renderMermaidSvgEntry } from './diagram-renderer.js'
               }
             }).catch(function (err) { console.error('Failed to copy image', err) })
         }},
-        
+
       ]
     },
     // Extract → Image: render the diagram's mermaid to SVG and REPLACE the entries with
@@ -228,6 +147,6 @@ import { renderMermaidSvgEntry } from './diagram-renderer.js'
     }
   }
 
-  registerSieveRenderer('smart-image', SmartImageRenderer)
+  registerSieveRenderer('smart-image', SmartImageNodeAdapter)
 
 })()

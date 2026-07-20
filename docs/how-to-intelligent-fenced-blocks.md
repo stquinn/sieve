@@ -83,6 +83,28 @@ environment (see the spec's Problem section — the fullscreen lightbox bug,
   import is renderer-internal — nothing outside the renderer file imports
   the styles module directly.
 
+  **Mount-once/patch-on-update, and the escaping rule** (2026-07-20, Phase 4
+  / issue #47): `mount(attrs)` builds a kind's chrome DOM structure exactly
+  once; `update(dom, attrs)` patches that same structure in place —
+  `textContent`, `className`/`classList`, `hidden`, and real property
+  assignments (`.href`, `.src`) — it never rebuilds skeleton via `innerHTML`
+  on every call. This is a correctness rule, not a style preference: attrs
+  frequently carry content from outside the app's control (a fetched page's
+  title/URL, a backend error string, an AI-derived summary), and
+  concatenating that text into an `innerHTML` string is a live injection
+  hazard — a hostile `<img onerror=…>` in a page title would execute inside
+  the editor. A status/badge-style decision (e.g. web-clip's
+  pending/stale/timeout/error chrome) is a **state → `{glyph, modifierClass,
+  label, …}` map** consulted by `update()`, the same shape as the shared
+  `StatusBadge` decision tree (survey item A7) — not a set of near-identical
+  `innerHTML` template strings. Apply this proportionately: a renderer that
+  already mounts once and patches via `textContent` needs no rework merely to
+  match a quota. Only a genuinely large STATIC skeleton (no per-instance
+  interpolation, structure only, named `data-slot` markers) is large enough
+  to warrant a sibling `<kind>-renderer.templates.js` module, set via
+  `element.innerHTML = theTemplate` exactly once at mount and never touched
+  again — the static-literal exception the rule above already carves out.
+
 - **NodeView (thin PM-lifecycle adapter)** — the *only* place that talks to
   ProseMirror. It relates to the renderer by **composition, never
   inheritance** — it *holds* a renderer instance as a field, it does not
@@ -540,4 +562,5 @@ if (!aiBlockId) {
 - [ ] Look-and-feel lives in a `BlockRenderer` subclass: `mount(attrs)`/`update(dom, attrs)`/`destroy(dom)`, zero PM/editor/`window.*` imports
 - [ ] `static styles` carries the kind's CSS, using ONLY `--theme-*` vars for colour; moved out of `input.css` in the SAME change (never a separate pass)
 - [ ] NodeView is a thin adapter: constructs the renderer, calls its lifecycle methods, owns `ignoreMutation`/`selectNode`/`stopEvent`/attr parsing/`buildPlugins` — no look-and-feel logic
+- [ ] `mount()` builds chrome DOM once; `update()` patches via `textContent`/`className`/`hidden`/property assignment — never rebuilds skeleton via `innerHTML`; no attrs-derived text is ever concatenated into an `innerHTML` string (injection hazard — see "Mount-once/patch-on-update" above)
 - [ ] Renders correctly against `frontend/test/harness/bare-page-renderer.html` (only `:root` theme vars, no app stylesheet)

@@ -1,15 +1,28 @@
-// smart-card-renderer.js — Rich Link Card block renderer.
-// Registers registerSieveRenderer('smart-card', SmartCardRenderer)
-// Renders OG metadata as a visual card block. Display-only (no editable content).
+// smart-card-renderer.js — Sieve NodeView ADAPTER for the 'smart-card' kind
+// (the PM half of the renderer/NodeView split, docs/design/specs/2026-07-20-block-renderer-extraction.md
+// Phase 4 / issue #47). Look-and-feel (the card shell, OG-style layout,
+// loading chrome, this kind's stylesheet) lives in SmartCardRenderer
+// (frontend/src/static/block/renderers/smart-card-renderer.js — a DIFFERENT
+// class, deliberately same basename, different directory). This file HOLDS a
+// SmartCardRenderer instance by COMPOSITION and owns everything that
+// genuinely speaks ProseMirror: schema data (nodeConfig/attrs/parseAttrs),
+// chrome-host click shielding, click-to-edit-when-no-href (dispatches
+// `sieve:smart-card-edit` carrying `getPos`), and Mod+Click to open the URL
+// via the Wails runtime — all of which need `getPos()`/the NodeView's
+// closure, so per the PM-specificity sorting test they stay adapter-side.
+//
+// A9 readiness note (migration survey): the edit-popup dialog below stays
+// adapter-side for now, same as its twin smart-link's (unmigrated) —
+// revisit hoisting a shared EditPopup once smart-link migrates.
 
-import { isJobStale } from '../base/fenced-block-base.js'
 import { registerSieveRenderer } from '../block/sieve-block-extension.js'
 import { updateBlockOp } from '../block/block-sync.js'
+import { SmartCardRenderer } from '../block/renderers/smart-card-renderer.js'
 
 ;(function () {
   'use strict'
 
-  var SmartCardRenderer = {
+  var SmartCardNodeAdapter = {
 
     getIcon: function() { return window.SieveIcons && window.SieveIcons.smartFile },
     getFriendlyName: function(node) { return 'Card' },
@@ -57,14 +70,13 @@ import { updateBlockOp } from '../block/block-sync.js'
 
     makeNodeView: function (node, editorPane, getPos) {
       var nodeTypeName = 'sieve-smart-card'
-      var dom = document.createElement('div')
-      dom.className = 'smart-card-card'
-      dom.setAttribute('data-smart-card-id', node.attrs.id || '')
 
-      // renderEl holds all visual content; cleared on each render().
-      var renderEl = document.createElement('div')
-      renderEl.className = 'smart-card-card__render'
-      dom.appendChild(renderEl)
+      // The renderer instance this NodeView HOLDS by composition (never
+      // inheritance — see the file header). All look-and-feel (shell,
+      // OG-style layout, loading chrome) is its job; this adapter only
+      // supplies PM-only click/interaction concerns around it.
+      var renderer = new SmartCardRenderer()
+      var dom = renderer.mount(node.attrs)
 
       // The block-chrome host (gutter line number + drag handle) is injected as the
       // card's first child, so its events bubble here.  Ignore them: a handle click
@@ -95,89 +107,12 @@ import { updateBlockOp } from '../block/block-sync.js'
         }
       })
 
-      function render(n) {
-        renderEl.innerHTML = ''
-        dom.setAttribute('data-smart-card-id', n.attrs.id || '')
-
-        var status = n.attrs.status || 'PENDING'
-        var isPending = status === 'PENDING' || status === 'DISPATCHED'
-        var stale = isPending && isJobStale(n.attrs.createdAt, n.attrs.id)
-
-        dom.classList.toggle('smart-card-card--pending', isPending && !stale)
-
-        // Row 1: link icon + site name
-        var meta = document.createElement('div')
-        meta.className = 'smart-card-card__meta'
-        var icon = document.createElement('span')
-        icon.className = 'smart-card-card__icon'
-        icon.textContent = '🔗'
-        var site = document.createElement('span')
-        site.className = 'smart-card-card__site'
-        site.textContent = isPending ? extractDomain(n.attrs.href || '') : (n.attrs.siteName || extractDomain(n.attrs.href || ''))
-        meta.appendChild(icon)
-        meta.appendChild(site)
-        renderEl.appendChild(meta)
-
-        // Row 2: thumbnail + content
-        var body = document.createElement('div')
-        body.className = 'smart-card-card__body'
-
-        // Thumbnail column
-        var thumb = document.createElement('div')
-        thumb.className = 'smart-card-card__thumb'
-        if (isPending) {
-          thumb.classList.add('smart-card-card__thumb--spinner')
-          var spinner = document.createElement('span')
-          spinner.className = 'smart-card-card__spinner'
-          thumb.appendChild(spinner)
-        } else if (n.attrs.image) {
-          thumb.classList.add('smart-card-card__thumb--placeholder')
-          var img = document.createElement('img')
-          img.src = n.attrs.image
-          img.alt = n.attrs.title || ''
-          img.className = 'smart-card-card__thumb'
-          img.style.cssText = 'width:72px;height:72px;object-fit:cover;border-radius:5px;'
-          // Replace the div with the img
-          body.appendChild(img)
-          thumb = null
-        } else {
-          thumb.classList.add('smart-card-card__thumb--placeholder')
-          thumb.textContent = '🔗'
-        }
-        if (thumb) body.appendChild(thumb)
-
-        // Text content column
-        var content = document.createElement('div')
-        content.className = 'smart-card-card__content'
-
-        var titleEl = document.createElement('div')
-        titleEl.className = 'smart-card-card__title'
-        titleEl.textContent = isPending ? (n.attrs.href || '…') : (n.attrs.title || n.attrs.href || '…')
-        content.appendChild(titleEl)
-
-        if (!isPending && n.attrs.description) {
-          var descEl = document.createElement('div')
-          descEl.className = 'smart-card-card__description'
-          descEl.textContent = n.attrs.description
-          content.appendChild(descEl)
-        }
-
-        var urlEl = document.createElement('div')
-        urlEl.className = 'smart-card-card__url'
-        urlEl.textContent = n.attrs.href || ''
-        content.appendChild(urlEl)
-
-        body.appendChild(content)
-        renderEl.appendChild(body)
-      }
-
-      render(node)
-
       return {
         dom: dom,
         update: function (updatedNode) {
           if (updatedNode.type.name !== nodeTypeName) return false
-          render(updatedNode)
+          node = updatedNode
+          renderer.update(dom, updatedNode.attrs)
           return true
         },
       }
@@ -224,9 +159,9 @@ import { updateBlockOp } from '../block/block-sync.js'
     },
   }
 
-  registerSieveRenderer('smart-card', SmartCardRenderer)
+  registerSieveRenderer('smart-card', SmartCardNodeAdapter)
 
-  // ── Edit dialog ──────────────────────────────────────────────────────────────
+  // ── Edit dialog (A9 — stays adapter-side; see file header) ──────────────
 
   var editDialog = null
 
@@ -303,9 +238,5 @@ import { updateBlockOp } from '../block/block-sync.js'
     dlg.showModal()
     requestAnimationFrame(function () { inputs[0].select() })
   })
-
-  function extractDomain(url) {
-    try { return new URL(url).hostname } catch (_) { return url }
-  }
 
 })()
