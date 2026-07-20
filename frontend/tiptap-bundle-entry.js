@@ -14,6 +14,14 @@ export { Markdown } from 'tiptap-markdown'
 export { default as TaskList } from '@tiptap/extension-task-list'
 export { default as TaskItem } from '@tiptap/extension-task-item'
 export { common, createLowlight } from 'lowlight'
+// MarkdownIt — the raw markdown-it CLASS (not the tiptap-markdown wrapper
+// above), exported so block/renderers/sanctioned-markdown.js can construct a
+// DEDICATED html:false instance that is never the editor's own (html:true)
+// one — see that module's header comment for why the distinction is load-
+// bearing (DEFECT SEC-B, issue #48). markdown-it is already a transitive dep
+// via tiptap-markdown; declared directly in package.json now that app code
+// imports it by name.
+export { default as MarkdownIt } from 'markdown-it'
 export { Table } from '@tiptap/extension-table'
 export { TableRow } from '@tiptap/extension-table-row'
 export { TableHeader } from '@tiptap/extension-table-header'

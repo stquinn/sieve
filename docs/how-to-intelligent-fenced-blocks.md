@@ -108,6 +108,27 @@ environment (see the spec's Problem section — the fullscreen lightbox bug,
   `element.innerHTML = theTemplate` exactly once at mount and never touched
   again — the static-literal exception the rule above already carves out.
 
+  **Body/title fill contract** (2026-07-20, the body/title pull-back, DEFECT
+  SEC-B / issue #48): `BlockRenderer` ships two default methods,
+  `fillTitle(el, text)` and `fillBody(el, markdown)` — both run the
+  SANCTIONED dedicated markdown-it instance (html:false;
+  `block/renderers/sanctioned-markdown.js`) followed by `applyHighlighting`.
+  **Never** the editor's own (html:true) markdown-it instance — that instance
+  stays confined to PM parse paths where the schema filters raw HTML before
+  it reaches the DOM. TITLE rendering is renderer-side in *every* lens
+  (titles are `contentEditable=false` static DOM everywhere, PM included):
+  the NodeView adapter exposes its held renderer instance as
+  `view.renderer`, and `sieve-block-extension.js`'s title seam
+  (`syncBlockTitle`) delegates to `view.renderer.fillTitle` instead of
+  writing `innerHTML` itself — this retires the old
+  `titleEl.innerHTML = renderMarkdown(...)` injection vector
+  architecturally. BODY stays framework/PM-owned in the note lens (document
+  membership is a PM concern, not a markdown concern) — `fillBody` exists so
+  a future non-PM host (chat turn, embedded card) gets a working body
+  renderer for free. Override either method only for a kind whose title/body
+  needs a non-markdown representation; the defaults are correct for every
+  kind today.
+
 - **NodeView (thin PM-lifecycle adapter)** — the *only* place that talks to
   ProseMirror. It relates to the renderer by **composition, never
   inheritance** — it *holds* a renderer instance as a field, it does not
@@ -381,7 +402,7 @@ import { esc, renderMarkdown, applyHighlighting, isStaleByTime, isJobActive } fr
 | Export | Purpose |
 |--------|---------|
 | `esc(str)` | HTML-escape a string for `data-*` attribute values |
-| `renderMarkdown(text, editor)` | Render markdown via the shared markdownit instance; plain-text fallback |
+| `renderMarkdown(text, editor)` | Render markdown via the SANCTIONED dedicated markdown-it instance (html:false — never the editor's own html:true one, DEFECT SEC-B / issue #48); plain-text fallback. `editor` is accepted for call-site compatibility only and is no longer consulted. |
 | `isStaleByTime(createdAt)` | Time-based PENDING staleness — always the final fallback in `isStale` |
 | `isJobActive(id)` | Returns true if the block's job ID is currently in-flight on the server — check this first in `isStale` |
 | `applyHighlighting(container)` | Box styling + line numbers + syntax colours for rendered content (see Rule 11) |

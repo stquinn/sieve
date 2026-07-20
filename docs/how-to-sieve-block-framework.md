@@ -413,7 +413,7 @@ If YAML fails to parse or `id` is missing, the fence hook falls through to `defa
 `JobTracker.Start/End` (called by `EditorService.RunJob`) broadcast `ai:job-started` / `ai:job-ended` SSE. `fenced-block-base.js` maintains the active-job set. Import `isJobStale(createdAt, id)` — it checks the active set before falling back to time-based staleness. Do not manage your own set.
 
 **Rule 8 — `applyHighlighting` after every `innerHTML =`.**
-After `el.innerHTML = renderMarkdown(text, editor)`, always call `applyHighlighting(el)`. It adds the `sieve-rendered-content` class, wraps `<pre><code>` blocks in the gutter layout, and applies syntax colours.
+After `el.innerHTML = renderMarkdown(text, editor)`, always call `applyHighlighting(el)`. It adds the `sieve-rendered-content` class, wraps `<pre><code>` blocks in the gutter layout, and applies syntax colours. `renderMarkdown` always runs on the SANCTIONED dedicated markdown-it instance (html:false), never the editor's own (html:true) one — see `block/renderers/sanctioned-markdown.js` (DEFECT SEC-B, issue #48). A renderer that extends `BlockRenderer` gets this for free via `fillTitle(el, text)` / `fillBody(el, markdown)`, which already call `applyHighlighting` internally.
 
 **Rule 9 — AI context is human-readable prose, not raw YAML.**
 When dispatching `sieve:ai-ask` or `sieve:ai-explain` from `buildContextMenuItems`, pass a `precomputedCtx` with `content` set to a formatted prose summary — title, source, body text. Not the raw YAML fence. See `webClipSummary` in `web-clip-renderer.js` as the canonical pattern.

@@ -155,6 +155,37 @@ export function domSelectionBlockRange(domSelection, er, blocks) {
   return null
 }
 
+// ── TITLE slot fill decision ─────────────────────────────────────────────────
+// syncBlockTitle — the TITLE slot's fill decision (pure DOM, no PM). Body/title
+// pull-back (docs/design/specs/2026-07-20-block-renderer-extraction.md
+// "Body/title pull-back", DEFECT SEC-B / issue #48): TITLE rendering is
+// renderer-side in every lens, PM included — this seam DELEGATES to the held
+// renderer's fillTitle (a BlockRenderer instance the NodeView adapter exposes
+// as `view.renderer`, e.g. processors/ai-block-renderer.js,
+// processors/web-clip-renderer.js) instead of writing innerHTML itself. Kinds
+// with no split renderer yet (smart-link, prose) have no `view.renderer` —
+// the fallback still uses the sanctioned instance (renderMarkdown, html:false)
+// directly, never the editor's html:true one, so every path here is SEC-B-safe
+// regardless of migration state. Exported (top-level, outside the
+// registration IIFE — same pattern as shouldClaimBlockSelection/
+// domSelectionTextInside above) so both the real NodeView seam and unit tests
+// exercise the identical decision.
+export function syncBlockTitle(titleEl, renderer, text) {
+  var h = (text || '').trim()
+  if (!h) {
+    titleEl.innerHTML = ''
+    titleEl.style.display = 'none'   // empty → no region, no divider
+    return
+  }
+  if (renderer && typeof renderer.fillTitle === 'function') {
+    renderer.fillTitle(titleEl, h)
+  } else {
+    titleEl.innerHTML = renderMarkdown(h)
+    applyHighlighting(titleEl)
+  }
+  titleEl.style.display = ''
+}
+
 // Cross-file bindings the registration IIFE below assigns once it runs (module
 // evaluation order guarantees every importer sees the assigned value — the IIFE
 // executes before any other module's top-level code that imports these can run).
@@ -655,10 +686,10 @@ export let rendererFor
             titleEl.contentEditable = 'false'
             view.contentDOM.parentNode.insertBefore(titleEl, view.contentDOM)
             syncTitle = function (h) {
-              h = (h || '').trim()
-              titleEl.innerHTML = h ? renderMarkdown(h, editorPane) : ''
-              titleEl.style.display = h ? '' : 'none'   // empty → no region, no divider
-              if (h) applyHighlighting(titleEl)
+              // Delegates to the held renderer's fillTitle (view.renderer, a
+              // BlockRenderer instance the adapter exposes by composition) —
+              // see syncBlockTitle's header comment for the full rationale.
+              syncBlockTitle(titleEl, view.renderer, h)
             }
           }
 

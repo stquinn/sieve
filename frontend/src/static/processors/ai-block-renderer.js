@@ -159,6 +159,10 @@ import { AiBlockRenderer } from '../block/renderers/ai-block-renderer.js'
       return {
         dom:        dom,
         contentDOM: contentDOM,
+        // Exposed so sieve-block-extension.js's title seam (syncBlockTitle)
+        // can delegate to this renderer's fillTitle instead of writing
+        // innerHTML itself — the body/title pull-back (DEFECT SEC-B, #48).
+        renderer:   renderer,
 
         update: function (updatedNode) {
           if (updatedNode.type.name !== nodeTypeName) return false

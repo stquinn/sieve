@@ -26,8 +26,23 @@
 // Phase 2 (#45, the diagram pilot) is the first real consumer and may correct
 // the exact mount/update signature; this is deliberately the minimal shape
 // the seam needs, not a speculative one.
+//
+// Body/title pull-back (docs/design/specs/2026-07-20-block-renderer-extraction.md
+// "Body/title pull-back", DEFECT SEC-B / issue #48): fillTitle/fillBody below
+// are the renderer's fill CONTRACT for the two markdown content lanes.
+// markdown-it is to text bodies what mermaid is to diagrams — an engine the
+// RENDERER owns, never the framework seam or the editor's own instance.
+// TITLE rendering is renderer-side in EVERY lens (PM included — titles are
+// contentEditable=false static DOM everywhere); this retires the
+// `titleEl.innerHTML = renderMarkdown(...)` SEC-B vector architecturally.
+// BODY stays framework/PM-owned in the note lens (document membership —
+// selection, targeting, decorations, round-trip — is a PM concern, not a
+// markdown concern); fillBody exists for future non-PM hosts (chat turns,
+// embedded cards) that claim no contentDOM at all.
 
 import { rendererStyles } from './renderer-style-registry.js'
+import { renderSanctionedMarkdown } from './sanctioned-markdown.js'
+import { applyHighlighting } from './highlighting.js'
 
 // ContractViolation — thrown when a BlockRenderer subclass omits a required
 // override, or when BlockRenderer itself is instantiated directly
@@ -69,4 +84,36 @@ export class BlockRenderer {
    * @param {HTMLElement} dom
    */
   destroy(dom) {}
+
+  /**
+   * Default TITLE fill: the sanctioned markdown-it instance (html:false) →
+   * innerHTML, then applyHighlighting (the sieve-rendered-content marker +
+   * syntax colours for any fenced code the title happens to contain). PM-free
+   * — runs identically in the note editor's NodeView adapter, a chat turn, an
+   * embedded card, or the bare-page harness. Callers (the framework title
+   * seam, or a future non-PM host) are expected to skip calling this for
+   * empty text and to own show/hide of the containing region themselves —
+   * this method only fills content into an element it's handed.
+   * @param {HTMLElement} el
+   * @param {string} text — non-empty markdown text
+   */
+  fillTitle(el, text) {
+    el.innerHTML = renderSanctionedMarkdown(text)
+    applyHighlighting(el)
+  }
+
+  /**
+   * Default BODY fill for non-PM hosts. The note editor's PM lens suppresses
+   * this and claims contentDOM directly instead (sieve-block-extension.js's
+   * contentProvider seam): document membership — selection, targeting,
+   * decorations, round-trip — is a PM concern, but markdown rendering itself
+   * is editor-independent (§Content lanes), so a future non-PM host gets a
+   * working body renderer for free by simply not suppressing this.
+   * @param {HTMLElement} el
+   * @param {string} markdown
+   */
+  fillBody(el, markdown) {
+    el.innerHTML = markdown ? renderSanctionedMarkdown(markdown) : '<p></p>'
+    applyHighlighting(el)
+  }
 }

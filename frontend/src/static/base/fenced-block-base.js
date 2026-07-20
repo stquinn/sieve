@@ -4,7 +4,7 @@
 // Go pattern: fencedblock.Serialize generates YAML; JS replays rawYaml verbatim (never regenerates).
 // JS pattern: call applyHighlighting(contentEl) after setting innerHTML — gives box styling + syntax colours.
 
-import { T } from './tiptap-vendor.js'
+import { renderSanctionedMarkdown } from '../block/renderers/sanctioned-markdown.js'
 
 // BlockRenderer / ContractViolation — the renderer half of the renderer/
 // NodeView split (docs/design/specs/2026-07-20-block-renderer-extraction.md).
@@ -14,96 +14,25 @@ import { T } from './tiptap-vendor.js'
 // this one file.
 export { BlockRenderer, ContractViolation } from '../block/renderers/block-renderer.js'
 
-// ── Lowlight (lazy) ───────────────────────────────────────────────────────────
+// getLowlight / hastToHtml / applyHighlighting — also LIVE in block/renderers/
+// (highlighting.js), the same "engines a renderer needs" home as
+// sanctioned-markdown.js (BlockRenderer's default fillTitle/fillBody call
+// applyHighlighting after rendering); re-exported here for the existing
+// import site — every fenced block extension keeps importing its shared
+// machinery from this one file.
+export { getLowlight, hastToHtml, applyHighlighting } from '../block/renderers/highlighting.js'
 
-var _lowlight = null
-
-export function getLowlight() {
-  if (!_lowlight) {
-    if (T && T.createLowlight && T.common) _lowlight = T.createLowlight(T.common)
-  }
-  return _lowlight
-}
-
-// Minimal hast-to-HTML serialiser. Only handles the subset lowlight emits:
-// root/element nodes (become <span class="…">) and text nodes.
-export function hastToHtml(nodes) {
-  if (!nodes) return ''
-  return nodes.map(function (n) {
-    if (n.type === 'text') {
-      return n.value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    }
-    if (n.type === 'element') {
-      var cls = (n.properties && n.properties.className || []).join(' ')
-      return '<span' + (cls ? ' class="' + cls + '"' : '') + '>' + hastToHtml(n.children) + '</span>'
-    }
-    return ''
-  }).join('')
-}
-
-// addLineNumbers — wraps a <pre> element in a .sieve-code-block flex container
-// with a line-number gutter, mirroring the TipTap .code-block appearance.
-function addLineNumbers(pre, lineCount) {
-  var wrapper = document.createElement('div')
-  wrapper.className = 'sieve-code-block'
-
-  var gutter = document.createElement('div')
-  gutter.className = 'sieve-code-block__gutter'
-  for (var i = 1; i <= lineCount; i++) {
-    var span = document.createElement('span')
-    span.textContent = String(i)
-    gutter.appendChild(span)
-  }
-
-  pre.parentNode.insertBefore(wrapper, pre)
-  wrapper.appendChild(gutter)
-  wrapper.appendChild(pre)
-}
-
-// ── Exports ───────────────────────────────────────────────────────────────────
-
-// applyHighlighting — walks pre>code elements, applies lowlight syntax colours,
-// wraps each block in a .sieve-code-block gutter layout, and marks the container
-// with 'sieve-rendered-content'. Future fenced blocks: call this once after
-// setting innerHTML on your content div — box, gutter, and colours all apply.
-export function applyHighlighting(container) {
-  container.classList.add('sieve-rendered-content')
-  var low = getLowlight()
-  container.querySelectorAll('pre code').forEach(function (codeEl) {
-    var lang = ''
-    ;(codeEl.className || '').split(' ').forEach(function (cls) {
-      if (cls.indexOf('language-') === 0) lang = cls.slice(9)
-    })
-    var rawCode = codeEl.textContent
-    if (!rawCode) return
-
-    var lines = rawCode.split('\n')
-    var lineCount = (lines[lines.length - 1] === '') ? lines.length - 1 : lines.length
-
-    if (lang && low) {
-      try {
-        codeEl.innerHTML = hastToHtml(low.highlight(lang, rawCode).children)
-      } catch (_) {}
-    }
-    codeEl.classList.add('hljs')
-
-    var pre = codeEl.parentElement
-    if (pre && pre.tagName === 'PRE') addLineNumbers(pre, lineCount)
-  })
-}
-
-// renderMarkdown — renders text using the editor's markdownit instance.
-// Pass the TipTap editor reference so the shared parser/theme is reused.
-export function renderMarkdown(text, editor) {
-  try {
-    var md = editor && editor.storage && editor.storage.markdown
-    if (md && md.parser && md.parser.md) return md.parser.md.render(text.trim())
-  } catch (_) {
-    console.log('Failed to render markdown')
-  }
-  var div = document.createElement('div')
-  div.textContent = text
-  return div.innerHTML
+// renderMarkdown — renders text via the SANCTIONED markdown-it instance
+// (html:false; docs/design/specs/2026-07-20-block-renderer-extraction.md
+// §Content lanes / §Body/title pull-back — DEFECT SEC-B, issue #48). The
+// `editor` param is kept for call-site compatibility (existing callers still
+// pass the TipTap editor reference) but is no longer consulted: this function
+// must NEVER borrow the editor's own (html:true) markdown-it instance for a
+// direct innerHTML write — that instance stays confined to PM parse paths,
+// where the schema filters raw HTML before it reaches the DOM. See
+// block/renderers/sanctioned-markdown.js for the full rationale.
+export function renderMarkdown(text, _editor) {
+  return renderSanctionedMarkdown(text)
 }
 
 // esc — HTML-escape a string for use in attribute values.
