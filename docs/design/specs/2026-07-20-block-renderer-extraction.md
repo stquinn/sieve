@@ -113,7 +113,14 @@ about DOCUMENT MEMBERSHIP (selection, targeting, decorations, round-trip),
 not markdown — markdown rendering is editor-independent, so non-PM hosts
 get bodies nearly free: the renderer's default body fill is
 `renderMarkdown`; the PM adapter suppresses it and claims the container
-as `contentDOM` (host-claims-the-slot).
+as `contentDOM` (host-claims-the-slot). **Body/title pull-back (user
+decision 2026-07-20, lands with #48 after P4):** markdown-it is to text
+bodies what mermaid is to diagrams — an engine the RENDERER owns.
+`BlockRenderer` gains the body/title fill contract; the framework seam
+shrinks to the PM-lens body takeover only; TITLE rendering moves
+renderer-side entirely (titles are `contentEditable=false` static DOM in
+every lens, PM included) — which retires the `titleEl.innerHTML` SEC-B
+vector architecturally rather than patching it.
 
 **Markup discipline** (user decision 2026-07-20): mount builds structure
 once; update patches retained slot nodes (`textContent`/`classList`/
