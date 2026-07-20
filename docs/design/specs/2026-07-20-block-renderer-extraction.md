@@ -166,6 +166,19 @@ kind twice for nothing).
 - **Solving mermaid's gap inside `themeVariables`** (light label chips,
   un-inverting `nodeTextColor`): changes the diagram's aesthetic to dodge an
   engine limitation; the escape-hatch rule contains the impurity instead.
+- **Real `.css` sidecar files loaded by the registry** (considered
+  2026-07-20): native CSS module scripts (`with { type: 'css' }`) are
+  Chromium-led with a shaky WebKit/Firefox matrix; without them, dynamic
+  loading means `fetch`/`<link>` — async (unstyled first paint) and
+  path-coupled, reintroducing the styles-as-separate-deliverable failure
+  this spec exists to kill. Vitest(Vite) also has its own `.css` import
+  semantics while the app serves statics raw — one file, two loaders. The
+  `*.styles.js` sibling keeps styles atomic with the class in app, harness,
+  and tests with zero build step; editing ergonomics come from the
+  `/* css */` pragma / no-op `css` tag (Lit convention). Escape hatch if
+  CSS authoring ever matters enough: a tiny `.css`→`.styles.js` generation
+  step beside the tailwind CLI call. Also rejected: a `styles/` subfolder —
+  sheets colocate with their renderer (organise by kind, not file type).
 
 ## Consequences
 
