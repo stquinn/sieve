@@ -1,12 +1,29 @@
-// ai-block-renderer.js — SieveBlock renderer for the ai-block kind.
+// ai-block-renderer.js — Sieve NodeView ADAPTER for the 'ai-block' kind (the
+// PM half of the renderer/NodeView split, docs/design/specs/2026-07-20-block-renderer-extraction.md
+// Phase 3 / issue #46). Look-and-feel (the block shell, the badge, this
+// kind's stylesheet) lives in AiBlockRenderer
+// (frontend/src/static/block/renderers/ai-block-renderer.js — a DIFFERENT
+// class, deliberately same basename, different directory). This file HOLDS an
+// AiBlockRenderer instance by COMPOSITION and owns everything that genuinely
+// speaks ProseMirror or is cross-block: contentDOM binding/ignoreMutation,
+// the framework schema data (nodeConfig/attrs/parseAttrs/titleProvider/
+// contentProvider — consumed by createSieveNode + sieve-block-extension.js's
+// title/content slot seam, which does the actual question/response
+// rendering into contentDOM as live PM nodes; see AiBlockRenderer's header
+// comment for why that stays out of the renderer), the read-only-container
+// guard plugin (isInsideAiBlock + handleTextInput/KeyDown/Paste/Drop), and
+// chain-glow hover (gatherChain/applyChain) — cross-block DOM querying +
+// a PM decoration for native prose peers, framework-layer material for the
+// future X-D framework extraction, deliberately left untouched here.
+
 import { isJobStale } from '../base/fenced-block-base.js'
 import { T } from '../base/tiptap-vendor.js'
 import { registerSieveRenderer } from '../block/sieve-block-extension.js'
 import { setRefChain, clearRefChain } from '../ai/ai-target-decoration.js'
+import { AiBlockRenderer } from '../block/renderers/ai-block-renderer.js'
 
 ;(function () {
   'use strict'
-  var IC = window.SieveIcons || {}
 
   function gatherChain(startId, refAttr) {
     var ids = new Set()
@@ -24,7 +41,14 @@ import { setRefChain, clearRefChain } from '../ai/ai-target-decoration.js'
     return ids
   }
 
-  var AiBlockRenderer = {
+  // ── AiBlockNodeAdapter ────────────────────────────────────────────────────────
+  // The registered descriptor sieve-block-extension.js's duck-typed
+  // registerSieveRenderer() consumes. Named distinctly from the imported
+  // AiBlockRenderer CLASS above — same word, two different layers (this is the
+  // PM-adapter descriptor object; AiBlockRenderer is the look-and-feel class it
+  // holds by composition) — to keep the two unambiguous in this file.
+
+  var AiBlockNodeAdapter = {
     // Read-only container: arrows treat it as a single caret stop.
     interactionPolicy: { caretStop: true },
 
@@ -86,22 +110,14 @@ import { setRefChain, clearRefChain } from '../ai/ai-target-decoration.js'
 
     makeNodeView: function (node, editorPane, getPos) {
       var nodeTypeName = 'sieve-ai-block'
-      var dom = document.createElement('div')
-      dom.className = 'sieve-ai-block ai-block'
-      dom.setAttribute('data-id', node.attrs.id || '')
-      dom.setAttribute('data-ai-ref', node.attrs.ref || 'doc')
 
-      var badge = document.createElement('span')
-      badge.className = 'ai-block__badge'
-      badge.contentEditable = 'false'
-
-      // contentDOM holds the WHOLE composed body (question + divider + response or
-      // status line) as real PM nodes, filled by the framework markdownProvider seam.
-      var contentDOM = document.createElement('div')
-      contentDOM.className = 'sieve-block__content tiptap' // Use tiptap class for internal styling
-
-      dom.appendChild(badge)
-      dom.appendChild(contentDOM)
+      // The renderer instance this NodeView HOLDS by composition (never
+      // inheritance — see the file header). All look-and-feel (shell,
+      // badge, stylesheet) is its job; this adapter only supplies PM-only
+      // and cross-block concerns around it.
+      var renderer = new AiBlockRenderer()
+      var dom = renderer.mount(node.attrs)
+      var contentDOM = renderer.contentDOM
 
       function applyChain(action) {
         var id = dom.getAttribute('data-id') || ''
@@ -140,34 +156,13 @@ import { setRefChain, clearRefChain } from '../ai/ai-target-decoration.js'
       })
       dom.addEventListener('mouseleave', function () { applyChain('remove') })
 
-      // render maintains only the badge (the visual status indicator) and the
-      // data attributes the chain-glow reads. All textual content — question,
-      // response, AND the thinking/timeout/error line — is the composed body in
-      // contentDOM, owned by the markdownProvider seam.
-      function render(attrs) {
-        dom.setAttribute('data-id', attrs.id || '')
-        dom.setAttribute('data-ai-ref', attrs.ref || 'doc')
-        var status = attrs.status || 'PENDING'
-        var cls = 'ai-block__badge'
-        if (status === 'PENDING' || status === 'DISPATCHED') {
-          cls += isJobStale(attrs.createdAt, attrs.id) ? ' ai-block__badge--error' : ' ai-block__badge--thinking'
-        } else if (status !== 'COMPLETE') {
-          cls += ' ai-block__badge--error'
-        }
-        badge.className = cls
-        badge.textContent = attrs.type === 'EXPLAIN' ? 'EXPLAIN' : 'ASK'
-      }
-
-      render(node.attrs)
-
       return {
         dom:        dom,
         contentDOM: contentDOM,
 
         update: function (updatedNode) {
           if (updatedNode.type.name !== nodeTypeName) return false
-          node = updatedNode
-          render(node.attrs)
+          renderer.update(dom, updatedNode.attrs)
           // Body (attrs.response) is synced into contentDOM by the framework markdown seam.
           return true
         },
@@ -183,7 +178,7 @@ import { setRefChain, clearRefChain } from '../ai/ai-target-decoration.js'
 
     buildPlugins: function(nodeType) {
       var Plugin = T.Plugin
-      
+
       function isInsideAiBlock(state, from, to) {
         var inside = false
         state.doc.nodesBetween(from, to, function(node) {
@@ -260,11 +255,9 @@ import { setRefChain, clearRefChain } from '../ai/ai-target-decoration.js'
       var node = ctx.node
       var items = [{ type: 'header', label: node.attrs.type === 'EXPLAIN' ? 'Explain' : 'Ask AI' }]
 
-
-
       return items
     },
   }
 
-  registerSieveRenderer('ai-block', AiBlockRenderer)
+  registerSieveRenderer('ai-block', AiBlockNodeAdapter)
 })()

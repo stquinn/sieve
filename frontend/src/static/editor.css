@@ -100,7 +100,6 @@ textarea::selection {
   color: var(--theme-selectionFg);
 }
 
-.ai-block__badge::selection,
 .web-clip-block__badge::selection,
 .sieve-block__header::selection,
 .sieve-block__badge::selection,
@@ -870,120 +869,12 @@ div.node-image.ProseMirror-selectednode {
 }
 
 /* ── AI response blocks ──────────────────────────────────────────────── */
-/* AiBlock is a proper ProseMirror node rendered via a React NodeView.   */
-/* The container div owns the border/padding — content renders naturally  */
-/* inside it with no interference to list, code block, or other styles.  */
-
-.hide-ai-blocks .ai-block {
-  display: none !important;
-}
-
-.ai-block {
-  border: 1px solid var(--theme-aiBlockBorder);
-  border-radius: 8px;
-  background: var(--theme-aiBlockBg);
-  margin-top: 1.5rem;
-  margin-bottom: 2rem;
-  padding: 1.25rem 1.5rem;
-  position: relative;
-  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
-}
-
-.ai-block:hover {
-  border-color: color-mix(in srgb, var(--theme-accentPrimary) 60%, var(--theme-aiBlockBorder));
-  background: color-mix(in srgb, var(--theme-accentPrimary) 2%, var(--theme-aiBlockBg));
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
-}
-
-.ai-block.ProseMirror-selectednode,
-.ai-block.sieve-block--focused {
-  border-color: var(--theme-accentPrimary) !important;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-accentPrimary) 25%, transparent), 
-              0 8px 30px rgba(0, 0, 0, 0.45) !important;
-  background: color-mix(in srgb, var(--theme-accentPrimary) 5%, var(--theme-aiBlockBg)) !important;
-  outline: none !important;
-}
-
-.ai-block.ai-block--chain-active {
-  border-color: color-mix(in srgb, var(--theme-accentPrimary) 30%, var(--theme-aiBlockBorder)) !important;
-  background: color-mix(in srgb, var(--theme-accentPrimary) 4%, var(--theme-aiBlockBg));
-}
-
-.ai-block.ai-block--chain-active::after {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: 8px;
-  border-left: 3px solid var(--theme-accentPrimary);
-  pointer-events: none;
-  z-index: 5;
-}
-
-/* Reset tiptap defaults for the internal ai-block AST renderer */
-.ai-block .tiptap {
-  min-height: 0;
-  padding: 0;
-}
-
-/* "AI" badge sits in the top border */
-.ai-block__badge {
-  position: absolute;
-  top: -9px;
-  left: 12px;
-  background: var(--theme-bg);
-  padding: 0 6px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: var(--theme-accentPrimary);
-  font-family: var(--theme-monoFont);
-  border: 1px solid var(--theme-border2);
-  border-radius: 4px;
-  z-index: 10;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.ai-block__badge--thinking {
-  border-color: transparent;
-  background-clip: padding-box;
-  overflow: hidden;
-}
-
-.ai-block__badge--thinking::before {
-  content: '';
-  position: absolute;
-  top: -50%;
-  left: -50%;
-  width: 200%;
-  height: 200%;
-  background: conic-gradient(
-    from 0deg,
-    transparent 0%,
-    var(--theme-accentPrimary) 25%,
-    var(--theme-accentPurple) 50%,
-    transparent 75%
-  );
-  animation: ai-border-trace 2s linear infinite;
-  z-index: -1;
-}
-
-.ai-block__badge--thinking::after {
-  content: 'AI';
-  position: absolute;
-  inset: 1px;
-  background: var(--theme-bg);
-  border-radius: 3px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1;
-}
-
-@keyframes ai-border-trace {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
+/* AiBlock's own look-and-feel (shell, badge, chain-glow colours, hr/inline-  */
+/* code) migrated to AiBlockRenderer's stylesheet in the renderer/NodeView   */
+/* split (docs/design/specs/2026-07-20-block-renderer-extraction.md, Phase 3, */
+/* issue #46) — see frontend/src/static/block/renderers/ai-block-renderer.styles.js. */
+/* Only the FRAMEWORK-owned heading slot below remains here (shared by any   */
+/* kind declaring titleProvider, not ai-block-exclusive).                   */
 
 /* Heading slot (framework): the semantic framing — a block's title / question —
    a static metadata region above the content. Its 2px bottom border IS the
@@ -1010,24 +901,6 @@ div.node-image.ProseMirror-selectednode {
    bug. Storage round-trips every case losslessly.) Scoped to the paragraphs so
    the inter-element newlines markdown-it emits between block tags don't render. */
 .sieve-block__heading p { white-space: pre-wrap; }
-
-/* A literal `---` inside a response is a real markdown hr; render it subtly. */
-.ai-block hr {
-  border: none;
-  border-top: 1px solid color-mix(in srgb, var(--theme-accentPrimary) 30%, transparent);
-  margin: 0.75rem 0;
-}
-
-
-/* Inline code inside AI blocks (excludes block code inside <pre>) */
-.ai-block :not(pre) > code {
-  background: color-mix(in srgb, var(--theme-accentPrimary) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--theme-accentPrimary) 20%, transparent);
-  border-radius: 3px;
-  padding: 0.1em 0.35em;
-  font-size: 0.88em;
-  color: var(--theme-accentCyan);
-}
 
 /* ── Web-clip blocks ─────────────────────────────────────────────────── */
 

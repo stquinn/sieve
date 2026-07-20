@@ -44,6 +44,9 @@
     --theme-accentPrimary: #7aa2f7;
     --theme-accentCyan:    #7dcfff;
     --theme-accentGreen:   #9ece6a;
+    --theme-accentPurple:  #bb9af7;
+    --theme-aiBlockBg:     rgba(122, 162, 247, 0.04);
+    --theme-aiBlockBorder: rgba(122, 162, 247, 0.28);
     --theme-monoFont:      "JetBrains Mono", "Fira Code", monospace;
   }
   /* Page chrome ONLY (not part of the DoD check — a plain canvas to view the
@@ -79,11 +82,23 @@
 </p>
 <div id="diagram-render-mount"></div>
 
+<h2>AiBlockRenderer (Phase 3, issue #46)</h2>
+<p class="note">
+  Shell + badge only — the question/response body is a FRAMEWORK-owned seam
+  (sieve-block-extension.js's titleProvider/contentProvider, live ProseMirror
+  nodes) that needs a real editor instance, so it never runs here. This proves
+  the shell/badge look-and-feel is style-complete from :root vars alone; the
+  empty box below <code>.sieve-block__content.tiptap</code> is expected — it's
+  the container the framework fills in the real app.
+</p>
+<div id="ai-block-mount"></div>
+
 <div id="status"></div>
 
 <script type="module">
   import { BlockRenderer } from '../../src/static/base/fenced-block-base.js'
   import { DiagramRenderer } from '../../src/static/block/renderers/diagram-renderer.js'
+  import { AiBlockRenderer } from '../../src/static/block/renderers/ai-block-renderer.js'
 
   // DemoRenderer — a throwaway renderer demonstrating the contract: attrs in,
   // DOM out, sheet carried, zero PM/editor/window.* dependencies.
@@ -133,14 +148,23 @@
     renderRenderer.mount({ id: 'di-demo-2', source: 'flowchart TD\n  A[Start] --> B{Decision}\n  B -->|Yes| C[Do it]\n  B -->|No| D[Skip it]', diagramType: 'mermaid', mode: 'render' })
   )
 
+  // AiBlockRenderer — the real Phase 3 renderer. mount() builds the shell +
+  // badge only (contentDOM is an empty container the framework's title/
+  // content seam fills in the real app — see the note above).
+  const aiBlockRenderer = new AiBlockRenderer()
+  document.getElementById('ai-block-mount').appendChild(
+    aiBlockRenderer.mount({ id: 'ai-demo-1', ref: 'doc', type: 'ASK', status: 'COMPLETE' })
+  )
+
   const usingAdopted = document.adoptedStyleSheets.length > 0
   const styleEls = document.head.querySelectorAll('style[data-sieve-renderer]')
   document.getElementById('status').textContent =
     'Strategy live: ' + (usingAdopted ? 'adoptedStyleSheets' : 'style-element fallback') + '\n' +
     'adoptedStyleSheets registered: ' + document.adoptedStyleSheets.length + '\n' +
     'data-sieve-renderer <style> elements: ' + styleEls.length + '\n' +
-    'Expected either way: exactly 1 registration per renderer CLASS (DemoRenderer, DiagramRenderer),\n' +
-    'despite 2 DemoRenderer mounts + 2 DiagramRenderer mounts — 2 total registrations here.'
+    'Expected either way: exactly 1 registration per renderer CLASS (DemoRenderer, DiagramRenderer,\n' +
+    'AiBlockRenderer), despite 2 DemoRenderer mounts + 2 DiagramRenderer mounts + 1 AiBlockRenderer mount\n' +
+    '— 3 total registrations here.'
 </script>
 </body>
 </html>
