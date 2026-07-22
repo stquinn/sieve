@@ -8,7 +8,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } 
 import MarkdownIt from 'markdown-it'
 import { WebClipRenderer } from '../src/static/block/renderers/web-clip-renderer.js'
 import { SieveBlock } from '../src/static/block/sieve-block.js'
-import { BlockService } from '../src/static/block/block-service.js'
+import { serviceRig } from './helpers/service-rig.js'
 
 /** @param {object} payload */
 function blk(payload) { return new SieveBlock('web-clip', payload) }
@@ -130,14 +130,13 @@ describe('WebClipRenderer (Phase 4 — bare-page DoD)', () => {
     expect(isVisible(dom.querySelector('.web-clip-block__retry'))).toBe(true)
   })
 
-  it('retry button routes through the BlockService to the registered applier (semantic verb)', () => {
-    const retry = vi.fn()
-    const service = new BlockService()
-    service.registerApplier({ owns: () => true, updateAttributes: () => {}, setContent: () => {}, retry })
+  it('retry button frames the FROZEN retry-block-job through a real BlockService (semantic verb)', () => {
+    const { service, sock } = serviceRig({ blocks: [{ id: 'wc-g7b8', kind: 'web-clip' }] })
     const { dom } = mount({ id: 'wc-g7b8', source: 'example.com', mode: 'fetch', status: 'ERROR', error: 'boom' }, service);
     /** @type {HTMLButtonElement} */ (dom.querySelector('.web-clip-block__retry')).click()
-    expect(retry).toHaveBeenCalledOnce()
-    expect(retry).toHaveBeenCalledWith('wc-g7b8')
+    expect(sock.sentOfType('retry-block-job')).toEqual([
+      { type: 'retry-block-job', uuid: 'doc-1', id: 'wc-g7b8' },
+    ])
   })
 
   it('SECURITY: a hostile error string with an <img onerror> payload renders inert as plain text', () => {

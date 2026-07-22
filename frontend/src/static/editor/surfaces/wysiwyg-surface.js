@@ -103,13 +103,15 @@ export class WysiwygSurface extends AbstractSurface {
 
   /**
    * The parent editor (`host`) — the surface calls its public API directly:
-   * onSurfaceEvent (outbound editor-domain events), applyBlockOps (block-domain
-   * ops → the editor owns the WS enveloping), flushSave (the PM-internal Mod+S —
-   * caret-contextual, runs pre-core in editorProps handleKeyDown per
+   * onSurfaceEvent (outbound editor-domain events), flushSave (the PM-internal
+   * Mod+S — caret-contextual, runs pre-core in editorProps handleKeyDown per
    * docs/editor-interaction-contract.md), takeInsertPos (applyServerOp numeric
    * fallback), and the insert-index math (insertIndexForBlock /
    * insertIndexForBlockAt / clearInsertPos) the surface's OWN #handleSmartPaste/Drop
-   * need. Nothing app-level: no chrome names, no AI concepts.
+   * need. Block-domain ops leave through the SERVICE PAIR reached via the
+   * host's documentService/blockService getters (#submitOps — issue #49 Phase
+   * 1; the service owns the WS enveloping). Nothing app-level: no chrome
+   * names, no AI concepts.
    * @type {AbstractEditor}
    */
   #host
@@ -1333,7 +1335,7 @@ export class WysiwygSurface extends AbstractSurface {
       } else {
         // Deleted while the create was in flight — Go has a block we can't see. Delete it
         // by the authoritative id, then drop the stale token baseline (falsy id sentinel).
-        this.#host.applyBlockOps([{ type: 'delete-block', blockId: msg.id }])
+        this.#submitOps([{ type: 'delete-block', blockId: msg.id }])
         this.#reconcilePendingToken(msg.token, null)
       }
       return
@@ -1626,9 +1628,10 @@ export class WysiwygSurface extends AbstractSurface {
    * syncDocument is the debounced domain submit: granular block-ops only.
    * There is NO whole-document fallback — every WYSIWYG edit becomes a
    * block-domain op (prose via the observer; structured via their own channels
-   * + delete-block here) handed to the editor, which owns the WS enveloping.
-   * Markdown mode keeps its own whole-buffer updateText path, outside here. It
-   * NEVER mutates the document — pure read + submit.
+   * + delete-block here) handed to the service pair, which owns the WS
+   * enveloping (#submitOps). Markdown mode keeps its own whole-buffer
+   * setRawContent path, outside here. It NEVER mutates the document — pure
+   * read + submit.
    * @param {any} ed
    */
   #syncDocument(ed) {
@@ -1636,7 +1639,42 @@ export class WysiwygSurface extends AbstractSurface {
     if (!curr || !computeBlockSync) return
     var r = computeBlockSync(curr, this.#blockContentCache)
     this.#blockContentCache = r.next
-    if (r.ops.length) this.#host.applyBlockOps(r.ops)
+    if (r.ops.length) this.#submitOps(r.ops)
+  }
+
+  /**
+   * #submitOps — the ONE place the observer's op batch decomposes into service
+   * verbs (issue #49 Phase 1; frame shapes frozen, emission order preserved:
+   * every frame leaves synchronously, in sequence, on the same channel —
+   * byte-identical to the retired editor enveloping):
+   *
+   * - create-block → DocumentService.createBlock on the EXPLICIT-INDEX path
+   *   (the observer already computed document order; opts.index bypasses
+   *   resolveInsertIndex, and blockId/token/aliases ride through so the op
+   *   reproduces proseOp's exact wire shape).
+   * - update-block → BlockService.updateAttributes (kind resolves from the
+   *   service's routing index; aliases lift to the op's top level).
+   * - delete-block → DocumentService.deleteBlock (kind-agnostic).
+   *
+   * A host without the service pair (bare test constructions) drops the batch
+   * — socketless parity with the retired editor no-op sends.
+   * @param {any[]} ops
+   */
+  #submitOps(ops) {
+    var ds = this.#host.documentService
+    var bs = this.#host.blockService
+    if (!ds || !bs) return
+    for (var i = 0; i < ops.length; i++) {
+      var op = ops[i]
+      if (op.type === 'create-block') {
+        ds.createBlock(this.#uuid, op.kind, op.attrs, undefined,
+          { index: op.index, token: op.token, aliases: op.aliases, blockId: op.blockId })
+      } else if (op.type === 'update-block') {
+        bs.updateAttributes(op.blockId, op.attrs, { aliases: op.aliases })
+      } else if (op.type === 'delete-block') {
+        ds.deleteBlock(this.#uuid, op.blockId)
+      }
+    }
   }
 
   /**

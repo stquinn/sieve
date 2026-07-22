@@ -8,10 +8,10 @@
 // that genuinely speaks ProseMirror: schema data (nodeConfig/attrs/parseAttrs),
 // chrome-host click shielding, click-to-edit-when-no-href (dispatches
 // `sieve:smart-card-edit`), Mod+Click to open the URL via the Wails runtime,
-// and the v1 BlockService applier (where the renderer's semantic verbs land as
-// tracked PM transactions via ctx.updateAttributes) — all of which need the
+// and Mod+Click to open the URL via the Wails runtime — all of which need the
 // NodeView's closure, so per the PM-specificity sorting test they stay
-// adapter-side.
+// adapter-side. The renderer's semantic verbs (setLink) leave through the
+// BlockService, the wire owner (issue #49 Phase 1 — appliers retired).
 //
 // A9 readiness note (migration survey): the edit-popup dialog below stays
 // adapter-side for now, same as its twin smart-link's (unmigrated) —
@@ -84,19 +84,9 @@ import { SmartCardRenderer } from '../../../block/renderers/smart-card-renderer.
       // inheritance — see the file header). It builds itself from the typed
       // envelope (no live overlay — this kind has no lens-supplied fields);
       // this adapter only supplies PM-only click/interaction concerns around
-      // it, and its semantic verbs (setLink) effect through the BlockService.
+      // it; its semantic verbs (setLink) hit the real wire through the
+      // BlockService.
       var renderer = new SmartCardRenderer(sieveBlockFor(node), ctx.blockService || null)
-
-      // v1 APPLIER — today's PM-transaction behaviour behind the service
-      // boundary: the renderer's verbs arrive here and become tracked attr
-      // transactions via ctx.updateAttributes. A true atom has no content
-      // channel, so setContent is a no-op.
-      var unregisterApplier = ctx.blockService ? ctx.blockService.registerApplier({
-        owns: function (id) { return !!id && id === (currentAttrs.id || '') },
-        updateAttributes: function (_id, patch) { ctx.updateAttributes(patch) },
-        setContent: function () {},
-        retry: function () { ctx.retry() },
-      }) : null
 
       var dom = renderer.render()
       if (currentAttrs.id) liveRenderers[currentAttrs.id] = renderer
@@ -144,7 +134,6 @@ import { SmartCardRenderer } from '../../../block/renderers/smart-card-renderer.
           return true
         },
         destroy: function () {
-          if (unregisterApplier) unregisterApplier()
           if (currentAttrs.id && liveRenderers[currentAttrs.id] === renderer) delete liveRenderers[currentAttrs.id]
           renderer.destroy()
         },
@@ -260,8 +249,8 @@ import { SmartCardRenderer } from '../../../block/renderers/smart-card-renderer.
       if (!newHref) return
       // SAVE = the live renderer's semantic verb. The dialog is a module-level
       // singleton, so it resolves the block's renderer by id (liveRenderers)
-      // and calls setLink — the patch reaches the document as a tracked PM
-      // transaction via the BlockService applier the NodeView registered.
+      // and calls setLink — the patch reaches the document through the
+      // BlockService (an update-block op on the document's channel).
       var r = detail.id && liveRenderers[detail.id]
       if (r) r.setLink(newHref, newTitle)
       dlg.close()

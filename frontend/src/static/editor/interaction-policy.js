@@ -231,7 +231,7 @@ function insertParagraphAfter(view) {
 // native keymaps must win, so it lives in the priority-50 backstop plugin.
 // `host` is the surface's parent Editor (WysiwygSurface passes self.#host), threaded
 // through to a mode-toggling kind's onModEnter so it can reach the Editor's public API
-// (applyBlockOps) instead of firing a global CustomEvent (P4.F Brief C).
+// (the BlockService verbs) instead of firing a global CustomEvent (P4.F Brief C).
 export function policyEnterKeydown(view, event, host) {
   if (event.key !== 'Enter') return false
   return handleEnter(view, event, host)

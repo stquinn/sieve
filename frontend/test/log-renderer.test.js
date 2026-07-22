@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import { LogRenderer } from '../src/static/block/renderers/log-renderer.js'
 import { SieveBlock, MODE } from '../src/static/block/sieve-block.js'
-import { BlockService } from '../src/static/block/block-service.js'
+import { serviceRig } from './helpers/service-rig.js'
 
 /** @param {object} payload */
 function blk(payload) { return new SieveBlock('log', payload) }
@@ -124,28 +124,21 @@ describe('LogRenderer (bare-page DoD)', () => {
     expect(() => renderer.destroy()).not.toThrow()
   })
 
-  it('setMode and toggleColumn map to this kind\'s wire patches through a real BlockService applier', () => {
-    const service = new BlockService()
-    const applier = {
-      owns: (/** @type {string} */ id) => id === 'lg-test',
-      updateAttributes: vi.fn(),
-      setContent: vi.fn(),
-      retry: vi.fn(),
-    }
-    const unregister = service.registerApplier(applier)
+  it('setMode and toggleColumn map to this kind\'s wire patches through a real BlockService', () => {
+    const { service, sock } = serviceRig({ blocks: [{ id: 'lg-test', kind: 'log' }] })
 
     const renderer = new LogRenderer(blk({ id: 'lg-test', source: 'x', mode: 'raw' }), service)
     renderer.render()
 
     renderer.setMode(MODE.EDIT)     // already raw — faithful no-op (old header guard)
-    expect(applier.updateAttributes).not.toHaveBeenCalled()
+    expect(sock.sentOfType('block-op')).toEqual([])
 
     renderer.setMode(MODE.RENDER)   // MODE enum → this kind's wire string, privately
-    expect(applier.updateAttributes).toHaveBeenCalledWith('lg-test', { mode: 'explore' })
-
     renderer.toggleColumn('level')  // disabledCols encoding stays renderer-private
-    expect(applier.updateAttributes).toHaveBeenCalledWith('lg-test', { disabledCols: 'level' })
-    unregister()
+    expect(sock.sentOfType('block-op')).toEqual([
+      { type: 'block-op', uuid: 'doc-1', op: { type: 'update-block', blockId: 'lg-test', kind: 'log', attrs: { mode: 'explore' } } },
+      { type: 'block-op', uuid: 'doc-1', op: { type: 'update-block', blockId: 'lg-test', kind: 'log', attrs: { disabledCols: 'level' } } },
+    ])
   })
 
   // ── Shared attrs-decision helpers (consumed by the header) ──

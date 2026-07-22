@@ -13,9 +13,9 @@
 // contract's core API; docs/design/archive/specs/2026-07-21-block-renderer-contract.md).
 // setMode maps the MODE enum to this kind's wire strings privately via
 // _pushAttrs; caret capture on the render-ward flip is the PM adapter's
-// business (its v1 applier). buildBody() builds both mode surfaces; the
-// editable <code> is exposed as renderer.codeElement for the adapter's
-// contentDOM.
+// business (a NodeView-local variable in its update()). buildBody() builds
+// both mode surfaces; the editable <code> is exposed as renderer.codeElement
+// for the adapter's contentDOM.
 
 import { BlockRenderer } from './block-renderer.js'
 import { MODE } from '../sieve-block.js'
@@ -23,7 +23,7 @@ import { DiagramTheme } from './diagram-renderer.styles.js'
 import { AdvancedHeaderProvider, HeaderBar, expandButton } from './header-bar.js'
 import { expandBlock } from '../../ui/media-lightbox.js'
 
-/** @typedef {{ id?: string, source: string, diagramType?: string, mode: 'edit'|'render', cursorPos?: number }} DiagramAttrs */
+/** @typedef {{ id?: string, source: string, diagramType?: string, mode: 'edit'|'render' }} DiagramAttrs */
 
 // ── Header provider — badge + 'mermaid' label + edit/render toggle. ──
 const EDIT_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
@@ -217,7 +217,7 @@ export class DiagramRenderer extends BlockRenderer {
   /**
    * MODE → this kind's wire strings, privately. DEFAULT = render (the
    * diagram's natural presentation). Caret capture on the render-ward flip is
-   * the PM adapter's business (v1 applier), not knowledge this class holds.
+   * the PM adapter's business (NodeView-local), not knowledge this class holds.
    * @param {string} mode
    */
   setMode(mode) {
@@ -226,6 +226,14 @@ export class DiagramRenderer extends BlockRenderer {
     if (wire === current) return
     this._pushAttrs({ mode: wire })
   }
+
+  /**
+   * Outbound truth report — THIS kind's content attr is `source`, knowledge
+   * that lives here and nowhere else (contract §setContent direction; the
+   * retired v1 applier used to do this mapping adapter-side).
+   * @param {string} text
+   */
+  setContent(text) { this._pushAttrs({ source: text }) }
 
   /**
    * Capability probe + spec builder — non-null only when there is something to

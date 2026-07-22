@@ -35,7 +35,6 @@ func (p *DiagramProcessor) InitAttrs(id string, overrides map[string]interface{}
 		"source":            "",
 		"diagramType":       "mermaid",
 		"mode":              "render",
-		"cursorPos":         0,
 		"supportsEmbedding": true,
 		"createdAt":         time.Now().UTC().Format(time.RFC3339),
 	}

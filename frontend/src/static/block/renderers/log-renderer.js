@@ -270,6 +270,16 @@ export class LogRenderer extends BlockRenderer {
    *  disabledCols wire encoding stays private to this class. @param {string} key */
   toggleColumn(key) { this._pushAttrs({ disabledCols: LogRenderer.toggleDisabled(/** @type {LogAttrs} */ (this.block.payload), key) }) }
 
+  /**
+   * Outbound truth report — THIS kind's content attr is `source`, knowledge
+   * that lives here and nowhere else (contract §setContent direction; the
+   * retired v1 applier used to do this mapping adapter-side). The log body is
+   * read-only in the editor, so no lens drives this today — declared for
+   * contract completeness.
+   * @param {string} text
+   */
+  setContent(text) { this._pushAttrs({ source: text }) }
+
   /** @param {LogAttrs} attrs @param {boolean} assetChanged */
   #syncBody(attrs, assetChanged) {
     const dom = this.root

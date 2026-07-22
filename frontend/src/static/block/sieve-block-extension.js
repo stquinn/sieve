@@ -44,7 +44,6 @@ import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, apply
 import { T } from '../base/tiptap-vendor.js'
 import { registerBlockKind, getBlockBehaviour, containsChildBlocks, getSieveIcon } from './block-kinds.js'
 import { labelForAction } from '../base/action-label.js'
-import { updateBlockOp } from './block-sync.js'
 import { expandBlock } from '../ui/media-lightbox.js'
 import { adoptFocusedControl, restoreFocusedControl } from './renderers/header-bar.js'
 import { SieveBlock } from './sieve-block.js'
@@ -285,8 +284,8 @@ export let rendererFor
           // ctx — the per-block handle, shared by the header seam AND makeNodeView
           // (passed as the 4th arg; other renderers ignore it). Provider instances
           // are stateless/shared, so per-block state lives here. Durable changes →
-          // ctx.updateAttributes (routes through the held Editor's applyBlockOps, P4.F
-          // Brief C — no global CustomEvent); transient view state → ctx.state. attrs
+          // ctx.updateAttributes (routes through the BlockService, the wire owner —
+          // no global CustomEvent); transient view state → ctx.state. attrs
           // is a LIVE read. refreshHeader re-renders the toolbar — for a renderer that
           // must rebuild it after async data lands (e.g. log's column toggles once the
           // parsed JSON loads). getEditor reaches the parent Editor's PUBLIC API through
@@ -314,12 +313,15 @@ export let rendererFor
             // construction; adapters register their v1 appliers with it.
             get blockService() { return editorPane.blockService || null },
             updateAttributes: function (patch) {
-              var ed = blockCtx.getEditor()
-              if (ed) ed.applyBlockOps([updateBlockOp({ id: node.attrs.id, kind: kind, attrs: patch })])
+              var bs = blockCtx.blockService
+              if (bs) bs.updateAttributes(node.attrs.id, patch)
             },
             retry: function () {
-              var ed = blockCtx.getEditor()
-              if (ed) ed.retryBlock(node.attrs.id)
+              // Go's retry handler writes PENDING and render-backs immediately —
+              // the render-back is the paint (the old editor-side optimistic PM
+              // reset died with the editor verb, deliberately).
+              var bs = blockCtx.blockService
+              if (bs) bs.retry(node.attrs.id)
             },
             refreshHeader: function () { if (renderHeaderBar) renderHeaderBar() },
           }

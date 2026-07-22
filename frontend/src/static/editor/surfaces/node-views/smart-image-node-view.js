@@ -5,10 +5,10 @@
 // SmartImageRenderer (frontend/src/static/block/renderers/smart-image-renderer.js
 // — a DIFFERENT class). This
 // file HOLDS a SmartImageRenderer instance by COMPOSITION and owns the
-// genuinely PM/framework-side pieces: schema data (nodeConfig/attrs/parseAttrs),
-// the v1 BlockService applier (where the renderer's semantic verbs land as
-// tracked PM transactions via ctx.updateAttributes), and authoring the
-// envelope's live `src` overlay against the held Editor's document uuid —
+// genuinely PM/framework-side pieces: schema data (nodeConfig/attrs/parseAttrs)
+// and authoring the envelope's live `src` overlay against the held Editor's
+// document uuid (the renderer's semantic verbs — resize — leave through the
+// BlockService, the wire owner) —
 // SmartImageRenderer.resolveSrc itself is a pure (src, uuid) function with no
 // ctx dependency (see that class for why).
 
@@ -33,20 +33,8 @@ import { SmartImageRenderer } from '../../../block/renderers/smart-image-rendere
 
     // The renderer instance this NodeView HOLDS by composition (never
     // inheritance — see the file header). All look-and-feel is its job; its
-    // semantic verbs (resize) effect through the BlockService, whose v1
-    // applier this adapter registers below.
+    // semantic verbs (resize) hit the real wire through the BlockService.
     var renderer = new SmartImageRenderer(envelopeFor(node), ctx.blockService || null)
-
-    // v1 APPLIER — today's PM-transaction behaviour behind the service
-    // boundary: the renderer's verbs arrive here and become tracked attr
-    // transactions via ctx.updateAttributes. A true atom has no content
-    // channel, so setContent is a no-op.
-    var unregisterApplier = ctx.blockService ? ctx.blockService.registerApplier({
-      owns: function (id) { return !!id && id === (currentAttrs.id || '') },
-      updateAttributes: function (_id, patch) { ctx.updateAttributes(patch) },
-      setContent: function () {},
-      retry: function () { ctx.retry() },
-    }) : null
 
     var dom = renderer.render()
 
@@ -60,7 +48,6 @@ import { SmartImageRenderer } from '../../../block/renderers/smart-image-rendere
         return true
       },
       destroy: function () {
-        if (unregisterApplier) unregisterApplier()
         renderer.destroy()
       },
     }

@@ -118,7 +118,8 @@ import { WebClipRenderer } from '../../../block/renderers/web-clip-renderer.js'
       // via the handleBuild interceptor: PM owns the claimed container as its
       // contentDOM while the status chrome + title still render renderer-side;
       // the seam authors body content via fresh scratch instances. Retry is the
-      // renderer's semantic verb, effected through the v1 applier below.
+      // renderer's semantic verb, effected through the BlockService (the
+      // web-clip body is server-written — no outbound content channel).
       var bodyContainer = null
       var handleBuild = function (_r, region, container) {
         if (region !== REGION.BODY) return true
@@ -130,15 +131,6 @@ import { WebClipRenderer } from '../../../block/renderers/web-clip-renderer.js'
 
       var dom = renderer.render()
       var contentDOM = bodyContainer   // the claimed body container PM binds as its contentDOM
-
-      // v1 APPLIER (contract §service pair): today's PM-transaction behaviour
-      // behind the service boundary; unregistered in destroy below.
-      var unregisterApplier = ctx.blockService ? ctx.blockService.registerApplier({
-        owns: function (id) { return !!id && id === (node.attrs.id || '') },
-        updateAttributes: function (_id, patch) { ctx.updateAttributes(patch) },
-        setContent: function () {},   // web-clip body is server-written; no outbound content channel
-        retry: function () { ctx.retry() },
-      }) : null
 
       // Reverse chain highlight: when hovering the web-clip, light up any AI blocks
       // that reference it via data-ai-ref. Forward direction (AI → web-clip) is in
@@ -172,7 +164,6 @@ import { WebClipRenderer } from '../../../block/renderers/web-clip-renderer.js'
           return !contentDOM.contains(mutation.target)
         },
         destroy: function () {
-          if (unregisterApplier) unregisterApplier()
           renderer.destroy()
         },
       }

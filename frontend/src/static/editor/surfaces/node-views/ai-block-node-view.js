@@ -120,15 +120,9 @@ import { AiBlockRenderer } from '../../../block/renderers/ai-block-renderer.js'
       var renderer = new AiBlockRenderer(sieveBlockFor(node), ctx.blockService || null, handleBuild)
       var dom = renderer.render()
       var contentDOM = bodyContainer   // the claimed body container PM binds as its contentDOM
-
-      // v1 APPLIER (contract §service pair): today's PM-transaction behaviour
-      // behind the service boundary; unregistered in destroy below.
-      var unregisterApplier = ctx.blockService ? ctx.blockService.registerApplier({
-        owns: function (id) { return !!id && id === (node.attrs.id || '') },
-        updateAttributes: function (_id, patch) { ctx.updateAttributes(patch) },
-        setContent: function () {},   // ai-block body is server-written; no outbound content channel
-        retry: function () { ctx.retry() },
-      }) : null
+      // The renderer's verbs (retry) leave through the BlockService, the wire
+      // owner (the ai-block body is server-written — no outbound content
+      // channel; issue #49 Phase 1 retired the v1 appliers).
 
       function applyChain(action) {
         var id = dom.getAttribute('data-id') || ''
@@ -187,7 +181,6 @@ import { AiBlockRenderer } from '../../../block/renderers/ai-block-renderer.js'
         },
 
         destroy: function () {
-          if (unregisterApplier) unregisterApplier()
           renderer.destroy()
         },
       }

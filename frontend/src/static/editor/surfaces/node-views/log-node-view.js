@@ -7,10 +7,9 @@
 // deliberately same basename, different directory). This file HOLDS a
 // LogRenderer instance by COMPOSITION and owns everything that genuinely
 // speaks ProseMirror: contentDOM binding/ignoreMutation, the log-line
-// decoration plugin (buildPlugins), the read-only guard plugin, resolving
-// parsedAssetRef → URL against the held Editor's uuid, and the v1 APPLIER
-// registered with the BlockService (where the renderer's outbound verbs
-// become tracked PM transactions).
+// decoration plugin (buildPlugins), the read-only guard plugin, and resolving
+// parsedAssetRef → URL against the held Editor's uuid (the renderer's outbound
+// verbs leave through the BlockService, the wire owner).
 
 import { esc, getLowlight } from '../../../base/fenced-block-base.js'
 import { T } from '../../../base/tiptap-vendor.js'
@@ -57,7 +56,7 @@ import { LogRenderer } from '../../../block/renderers/log-renderer.js'
       logFormatRegex:  { default: '', parseHTML: function (el) { return el.getAttribute('data-log-format-regex') || '' } },
       status:          { default: 'COMPLETE', parseHTML: function (el) { return el.getAttribute('data-status') || 'COMPLETE' } },
       // Persisted view settings — the header controls write these through the
-      // renderer's semantic verbs (via the v1 applier below), so a configured
+      // renderer's semantic verbs (via the BlockService), so a configured
       // log comes back configured.
       mode:            { default: '', parseHTML: function (el) { return el.getAttribute('data-mode') || '' } },
       filter:          { default: '', parseHTML: function (el) { return el.getAttribute('data-filter') || '' } },
@@ -167,20 +166,10 @@ import { LogRenderer } from '../../../block/renderers/log-renderer.js'
       // own header (raw/explore toggle, filter, column buttons — self-refreshing
       // once the parsed-JSON columns load) and the raw/explore bodies; this
       // adapter only supplies PM-only concerns around it. Its semantic verbs
-      // effect through the BlockService, whose v1 applier is registered below.
+      // hit the real wire through the BlockService (issue #49 Phase 1 — the v1
+      // appliers are retired); this kind's content→source mapping lives on
+      // LogRenderer.setContent.
       var renderer = new LogRenderer(envelopeFor(node), ctx.blockService || null)
-
-      // v1 APPLIER — today's PM-transaction behaviour behind the service
-      // boundary: the renderer's outbound verbs land here, where PM knowledge
-      // lives (the content→source mapping, tracked attr transactions via
-      // ctx.updateAttributes — the applier IS the sanctioned PM-side
-      // implementation).
-      var unregisterApplier = ctx.blockService ? ctx.blockService.registerApplier({
-        owns: function (id) { return !!id && id === (currentAttrs.id || '') },
-        updateAttributes: function (_id, patch) { ctx.updateAttributes(patch) },
-        setContent: function (_id, text) { ctx.updateAttributes({ source: text }) },
-        retry: function () { ctx.retry() },
-      }) : null
 
       var dom = renderer.render()
       if (currentAttrs.id) liveRenderers[currentAttrs.id] = renderer
@@ -204,7 +193,6 @@ import { LogRenderer } from '../../../block/renderers/log-renderer.js'
           return !contentDOM.contains(mutation.target)
         },
         destroy: function () {
-          if (unregisterApplier) unregisterApplier()
           if (currentAttrs.id && liveRenderers[currentAttrs.id] === renderer) delete liveRenderers[currentAttrs.id]
           renderer.destroy()
         },

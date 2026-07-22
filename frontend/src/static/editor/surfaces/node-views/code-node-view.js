@@ -7,10 +7,10 @@
 // deliberately same basename, different directory). This file HOLDS a
 // CodeRenderer instance by COMPOSITION and owns everything that genuinely
 // speaks ProseMirror: contentDOM binding/ignoreMutation, the lowlight
-// decoration plugin (buildPlugins), the MutationObserver that watches
+// decoration plugin (buildPlugins), and the MutationObserver that watches
 // contentDOM and reports live text through renderer.setContent (contract
-// §setContent direction), and the v1 APPLIER registered with the BlockService
-// (where the renderer's outbound verbs become tracked PM transactions).
+// §setContent direction — the renderer's outbound verbs leave through the
+// BlockService, the wire owner).
 // Keyboard behaviour (Tab/Enter/Home) comes from the shared
 // interaction-policy extension via this renderer's interactionPolicy
 // declaration — do NOT add handleKeyDown here
@@ -98,19 +98,10 @@ import { CodeRenderer } from '../../../block/renderers/code-renderer.js'
       // inheritance — see the file header). It builds its own shell, header
       // (language badge), gutter and code-area from the envelope handed at
       // construction; this adapter only supplies PM-only concerns around it.
+      // The renderer's outbound verbs hit the real wire through the
+      // BlockService (issue #49 Phase 1 — the v1 appliers are retired); this
+      // kind's content→source mapping lives on CodeRenderer.setContent.
       var renderer = new CodeRenderer(envelopeFor(node), ctx.blockService || null)
-
-      // v1 APPLIER — today's PM-transaction behaviour behind the service
-      // boundary: the renderer's outbound verbs land here, where PM knowledge
-      // lives (the content→source mapping, tracked attr transactions via
-      // ctx.updateAttributes — the applier IS the sanctioned PM-side
-      // implementation).
-      var unregisterApplier = ctx.blockService ? ctx.blockService.registerApplier({
-        owns: function (id) { return !!id && id === (currentAttrs.id || '') },
-        updateAttributes: function (_id, patch) { ctx.updateAttributes(patch) },
-        setContent: function (_id, text) { ctx.updateAttributes({ source: text }) },
-        retry: function () { ctx.retry() },
-      }) : null
 
       var dom = renderer.render()
 
@@ -163,7 +154,6 @@ import { CodeRenderer } from '../../../block/renderers/code-renderer.js'
         destroy: function () {
           observer.disconnect()
           clearTimeout(updateTimer)
-          if (unregisterApplier) unregisterApplier()
           renderer.destroy()
         },
       }

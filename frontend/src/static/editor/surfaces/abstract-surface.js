@@ -13,7 +13,7 @@
 // editor (`host`) via constructor DI (docs/how-to-idiomatic-js.md): the editor
 // constructs its own surfaces (_createSurface owns the mode→surface repertoire),
 // and the surface calls the editor's public API directly (onSurfaceEvent,
-// applyBlockOps/updateText, save, insert-pos, reload) — the P4.F dissolution of
+// the service-pair verbs / setRawContent, save, insert-pos, reload) — the P4.F dissolution of
 // the pre-bound closure bag. State that used to be editor.js module vars
 // (lastSyncedBody, docUpdateTimer, docSyncFlush, currentMarkdownTextarea, the
 // noteServerBlock/reconcilePendingToken seams) is #private surface state.

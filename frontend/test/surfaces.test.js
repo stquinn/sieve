@@ -113,10 +113,10 @@ beforeEach(() => {
 // ── MarkdownSurface ───────────────────────────────────────────────────────────
 
 // A fake host (the parent editor): the markdown surface calls its public API
-// directly (P4.F) — onSurfaceEvent / updateText / takeInsertPos / softReload.
+// directly (P4.F) — onSurfaceEvent / setRawContent / takeInsertPos / softReload.
 function mdHost(overrides = {}) {
   return Object.assign({
-    updateText: vi.fn(),
+    setRawContent: vi.fn(),
     softReload: vi.fn(),
     takeInsertPos: vi.fn(() => null),
     onSurfaceEvent: vi.fn(),
@@ -159,18 +159,18 @@ describe('MarkdownSurface (P2.B)', () => {
     expect(empty.stats()).toEqual({ chars: 0, lines: 0, blockCount: 0 })
   })
 
-  it('input debounces 500ms then submits ONE domain updateText; body updates immediately', () => {
+  it('input debounces 500ms then submits ONE domain setRawContent; body updates immediately', () => {
     vi.useFakeTimers()
     const { s, host, textarea } = mountMd('a')
     typeInto(textarea, 'ab')
     expect(s.body).toBe('ab')            // body tracks the keystroke
-    expect(host.updateText).not.toHaveBeenCalled()
+    expect(host.setRawContent).not.toHaveBeenCalled()
     vi.advanceTimersByTime(499)
-    expect(host.updateText).not.toHaveBeenCalled()
+    expect(host.setRawContent).not.toHaveBeenCalled()
     vi.advanceTimersByTime(1)
-    expect(host.updateText).toHaveBeenCalledTimes(1)
+    expect(host.setRawContent).toHaveBeenCalledTimes(1)
     // Domain-shaped: the raw markdown only — NO wire envelope, NO uuid.
-    expect(host.updateText).toHaveBeenCalledWith('ab')
+    expect(host.setRawContent).toHaveBeenCalledWith('ab')
   })
 
   it('input notifies the producer-named doc-changed event (no consumer knowledge)', () => {
@@ -184,13 +184,13 @@ describe('MarkdownSurface (P2.B)', () => {
     vi.useFakeTimers()
     const { s, host, textarea } = mountMd('a')
     s.flushPending()                      // idle → nothing
-    expect(host.updateText).not.toHaveBeenCalled()
+    expect(host.setRawContent).not.toHaveBeenCalled()
     typeInto(textarea, 'abc')
     s.flushPending()                      // pending → immediate submit
-    expect(host.updateText).toHaveBeenCalledTimes(1)
-    expect(host.updateText).toHaveBeenCalledWith('abc')
+    expect(host.setRawContent).toHaveBeenCalledTimes(1)
+    expect(host.setRawContent).toHaveBeenCalledWith('abc')
     vi.advanceTimersByTime(1000)          // timer cancelled → no double-submit
-    expect(host.updateText).toHaveBeenCalledTimes(1)
+    expect(host.setRawContent).toHaveBeenCalledTimes(1)
   })
 
   it('applyServerOp(insert-block) appends the markdown, clears insert pos, submits the buffer', () => {
@@ -199,7 +199,7 @@ describe('MarkdownSurface (P2.B)', () => {
     expect(host.takeInsertPos).toHaveBeenCalledTimes(1)
     expect(s.body).toBe('hello\n\n```js\ncode\n```\n')
     expect(textarea.value).toBe(s.body)
-    expect(host.updateText).toHaveBeenCalledWith(s.body)
+    expect(host.setRawContent).toHaveBeenCalledWith(s.body)
   })
 
   it('applyServerOp(replace-block) requests a reload; block-attrs-updated is a no-op', () => {
@@ -207,7 +207,7 @@ describe('MarkdownSurface (P2.B)', () => {
     s.applyServerOp({ type: 'replace-block', oldId: 'a', newId: 'b' })
     expect(host.softReload).toHaveBeenCalledTimes(1)
     s.applyServerOp({ type: 'block-attrs-updated', id: 'a', attrs: { status: 'done' } })
-    expect(host.updateText).not.toHaveBeenCalled()
+    expect(host.setRawContent).not.toHaveBeenCalled()
     expect(host.softReload).toHaveBeenCalledTimes(1) // unchanged
   })
 
@@ -218,7 +218,7 @@ describe('MarkdownSurface (P2.B)', () => {
     s.unmount()
     expect(root.children.length).toBe(0)
     vi.advanceTimersByTime(1000)
-    expect(host.updateText).not.toHaveBeenCalled()
+    expect(host.setRawContent).not.toHaveBeenCalled()
   })
 
   it('handles NO app-level chords: Mod+S / Mod+J bubble out untouched', () => {
@@ -267,13 +267,16 @@ const tokSchema = new Schema({
 })
 
 // A fake host (the parent editor): the wysiwyg surface calls its public API
-// directly (P4.F) — onSurfaceEvent / applyBlockOps / flushSave / takeInsertPos and
+// directly (P4.F) — onSurfaceEvent / flushSave / takeInsertPos and
 // the insert-index math (insertIndexForBlock = commitInsertIndex(captureInsertPos()),
-// insertIndexForBlockAt(pos) = commitInsertIndex(pos), plus clearInsertPos). `uuid`
+// insertIndexForBlockAt(pos) = commitInsertIndex(pos), plus clearInsertPos) —
+// and reaches the SERVICE PAIR through documentService/blockService (issue #49
+// Phase 1: the observer's op batch decomposes into service verbs). `uuid`
 // is read by the surface constructor. TestWysiwygSurface overrides uuid per call.
 function wyHost(overrides = {}) {
   return Object.assign({
-    applyBlockOps: vi.fn(),
+    documentService: { createBlock: vi.fn(), deleteBlock: vi.fn() },
+    blockService: { updateAttributes: vi.fn() },
     flushSave: vi.fn(),
     insertIndexForBlock: vi.fn(() => 0),
     insertIndexForBlockAt: vi.fn(() => 0),
@@ -384,8 +387,8 @@ describe('WysiwygSurface.applyServerOp (P2.B call-shape, undo-sacred)', () => {
     const host = wyHost()
     const s = new TestWysiwygSurface('doc-1', host, ed)
     s.applyServerOp({ type: 'insert-block', kind: 'prose', token: 'tok-gone', id: 'real-2' })
-    // Domain-shaped: the delete-block op only — the WS envelope is NoteEditor's.
-    expect(host.applyBlockOps).toHaveBeenCalledWith([{ type: 'delete-block', blockId: 'real-2' }])
+    // Domain-shaped: the delete verb only — the WS envelope is the service's.
+    expect(host.documentService.deleteBlock).toHaveBeenCalledWith('doc-1', 'real-2')
     expect(ed.dispatched.length).toBe(0)
     expect(ed.calls.find((c) => c[0] === 'insertContentAt')).toBeUndefined()
   })
@@ -499,14 +502,49 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     expect(ed.sieveHost).toBe(host)
   })
 
-  it('onUpdate debounces 500ms then submits granular block-domain ops', () => {
-    vi.mocked(computeBlockSync).mockReturnValue({ next: {}, ops: [{ type: 'update-block', blockId: 'b1' }] })
+  it('onUpdate debounces 500ms then submits granular block-domain ops through the service pair', () => {
+    vi.mocked(computeBlockSync).mockReturnValue({ next: {}, ops: [{ type: 'update-block', blockId: 'b1', kind: 'prose', attrs: { content: 'x' } }] })
     const { host, ed } = mountWy()
     ed.options.onUpdate({ editor: ed })
-    expect(host.applyBlockOps).not.toHaveBeenCalled()
+    expect(host.blockService.updateAttributes).not.toHaveBeenCalled()
     vi.advanceTimersByTime(500)
     expect(computeBlockSync).toHaveBeenCalledTimes(1)
-    expect(host.applyBlockOps).toHaveBeenCalledWith([{ type: 'update-block', blockId: 'b1' }])
+    // update-block decomposes to BlockService.updateAttributes (aliases lifted).
+    expect(host.blockService.updateAttributes).toHaveBeenCalledWith('b1', { content: 'x' }, { aliases: undefined })
+  })
+
+  it('#submitOps maps the observer batch IN ORDER: create → explicit-index createBlock, update → updateAttributes, delete → deleteBlock', () => {
+    const order = []
+    const host = wyHost({
+      documentService: {
+        createBlock: vi.fn((...a) => order.push(['create', ...a])),
+        deleteBlock: vi.fn((...a) => order.push(['delete', ...a])),
+      },
+      blockService: { updateAttributes: vi.fn((...a) => order.push(['update', ...a])) },
+    })
+    vi.mocked(computeBlockSync).mockReturnValue({ next: {}, ops: [
+      { type: 'create-block', blockId: '', kind: 'prose', attrs: { content: 'new' }, index: 2, token: 'tok-9', aliases: ['old-1'] },
+      { type: 'update-block', blockId: 'b1', kind: 'prose', attrs: { content: 'x' }, aliases: ['b0'] },
+      { type: 'delete-block', blockId: 'b2' },
+    ] })
+    const doc = fxSchema.nodes.doc.create(null, [build.p('one', 'b1')])
+    const state = EditorState.create({ schema: fxSchema, doc })
+    const bundle = mountBundle(state)
+    seedVendor(bundle.T)
+    const s = new WysiwygSurface(Object.assign(host, { uuid: 'doc-1' }))
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    s.mount(root, { body: '', blocks: [] })
+    const ed = bundle.editor()
+    ed.options.onUpdate({ editor: ed })
+    vi.advanceTimersByTime(500)
+    // Emission order preserved exactly; the create rides the EXPLICIT-INDEX
+    // path (opts.index bypasses resolveInsertIndex) with token/aliases/blockId.
+    expect(order).toEqual([
+      ['create', 'doc-1', 'prose', { content: 'new' }, undefined, { index: 2, token: 'tok-9', aliases: ['old-1'], blockId: '' }],
+      ['update', 'b1', { content: 'x' }, { aliases: ['b0'] }],
+      ['delete', 'doc-1', 'b2'],
+    ])
   })
 
   it('onUpdate notifies doc-changed; selection/transaction/focus emit their events', () => {
@@ -522,14 +560,15 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
   })
 
   it('flushPending fires the pending sync immediately, exactly once', () => {
+    vi.mocked(computeBlockSync).mockReturnValue({ next: {}, ops: [{ type: 'update-block', blockId: 'b1', kind: 'prose', attrs: { content: 'x' } }] })
     const { s, host, ed } = mountWy()
     ed.options.onUpdate({ editor: ed })
     s.flushPending()
-    expect(host.applyBlockOps).toHaveBeenCalledTimes(1)
+    expect(host.blockService.updateAttributes).toHaveBeenCalledTimes(1)
     vi.advanceTimersByTime(1000)
-    expect(host.applyBlockOps).toHaveBeenCalledTimes(1) // timer cancelled — no double sync
+    expect(host.blockService.updateAttributes).toHaveBeenCalledTimes(1) // timer cancelled — no double sync
     s.flushPending()                                      // idle → no-op
-    expect(host.applyBlockOps).toHaveBeenCalledTimes(1)
+    expect(host.blockService.updateAttributes).toHaveBeenCalledTimes(1)
   })
 
   it('unmount destroys the island, clears the root and window.__tiptap, kills the timer', () => {
@@ -541,7 +580,7 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     expect(window.__tiptap).toBeNull()
     expect(s.editorPane).toBeNull()
     vi.advanceTimersByTime(1000)
-    expect(host.applyBlockOps).not.toHaveBeenCalled()
+    expect(host.blockService.updateAttributes).not.toHaveBeenCalled()
   })
 })
 
