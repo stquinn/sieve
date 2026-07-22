@@ -35,6 +35,8 @@ function installBareThemeVars() {
       --theme-textDim: #a9b1d6;
       --theme-fg2: #9aa5ce;
       --theme-fg3: #565f89;
+      --theme-gutterLineColor: #3b4261;
+      --theme-lineNumberColor: #565f89;
       --theme-accent: #7aa2f7;
       --theme-accentPrimary: #7aa2f7;
       --theme-accentGreen: #9ece6a;

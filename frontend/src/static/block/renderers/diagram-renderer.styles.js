@@ -134,24 +134,33 @@ export class DiagramTheme {
     border-radius: 0 0 6px 6px;
   }
 
+  /* Gutter + edit-layer metrics are VERBATIM copies of CodeTheme's rules —
+     the two edit surfaces are the same affordance and must be visually
+     interchangeable. Pinned to literal equality by
+     test/diagram-mermaid-init.test.js; change BOTH sheets or neither. */
   .sieve-block--diagram .sieve-block__gutter {
-    width: 36px;
-    flex-shrink: 0;
-    background: var(--theme-bgDark);
-    border-right: 1px solid var(--theme-border);
-    padding: 10px 8px 10px 0;
     display: flex;
     flex-direction: column;
     align-items: flex-end;
-    gap: 1px;
+    padding: 0.85em 0.6em;
+    background: var(--theme-bgDark);
+    border-right: 1px solid var(--theme-gutterLineColor);
+    color: var(--theme-lineNumberColor);
+    font-family: var(--theme-monoFont);
+    font-size: 0.85em;
+    line-height: 1.6;
+    user-select: none;
+    flex-shrink: 0;
   }
 
   .sieve-block--diagram .sieve-block__gutter span {
-    font-size: 10px;
-    font-family: var(--theme-monoFont);
-    color: var(--theme-fg3);
-    line-height: 18px;
     display: block;
+    line-height: 1.6;
+  }
+
+  .sieve-block--diagram .sieve-block__gutter span::selection {
+    background: transparent;
+    color: inherit;
   }
 
   .sieve-block--diagram .sieve-block__code-area {
@@ -166,14 +175,15 @@ export class DiagramTheme {
   .sieve-block--diagram .sieve-block__edit {
     grid-area: 1 / 1;
     font-family: var(--theme-monoFont);
-    font-size: 12px;
-    line-height: 18px;
-    padding: 10px 12px;
-    white-space: pre;
-    overflow-wrap: normal;
-    overflow-x: auto;
+    font-size: 0.85em;
+    line-height: 1.6;
+    padding: 0.85em 1.1em;
+    white-space: pre-wrap;
+    word-break: break-word;
     tab-size: 2;
-    word-break: normal;
+    margin: 0;
+    min-height: 2.5em;
+    box-sizing: border-box;
   }
 
   /* editor.css's ".tiptap code" styles INLINE code as an accent pill
