@@ -28,7 +28,7 @@ vi.mock('../src/static/block/prose-block.js', () => ({ BlockId: {} }))
 vi.mock('../src/static/ai/ai-target.js', () => ({
   blockInsertPos: vi.fn(() => 42),
 }))
-vi.mock('../src/static/base/block-position.js', () => ({
+vi.mock('../src/static/editor/surfaces/block-position.js', () => ({
   blockIndexForInsert: vi.fn(() => 3),
   emptyParagraphAnchor: vi.fn(() => null),
   docPosForBlockIndex: vi.fn(),
@@ -45,8 +45,24 @@ import { PromptEditor } from '../src/static/editor/prompt-editor.js'
 import { AbstractSurface } from '../src/static/editor/surfaces/abstract-surface.js'
 import { EditorMode } from '../src/static/editor/editor-mode.js'
 import { blockInsertPos } from '../src/static/ai/ai-target.js'
-import { blockIndexForInsert, emptyParagraphAnchor, blockIndexAfter } from '../src/static/base/block-position.js'
+import { blockIndexForInsert, emptyParagraphAnchor, blockIndexAfter } from '../src/static/editor/surfaces/block-position.js'
 import { buildAiContext, applyTargetHighlight } from '../src/static/editor/extensions.js'
+import { BlockService } from '../src/static/block/block-service.js'
+import { DocumentService } from '../src/static/block/document-service.js'
+import { SieveBlock } from '../src/static/block/sieve-block.js'
+
+// issue #49 Phase 2: reply-expecting frames now carry a client-minted opId on the
+// OUTER envelope (wire-additive). Frozen-frame assertions pin its shape without
+// coupling to the monotonic counter's value.
+const OPID = expect.stringMatching(/^op-\d+$/)
+
+// The opId the service minted on its most recent request of `reqType` — tests
+// echo it on the driven reply so the opId-keyed awaiter resolves (the reply/request
+// correlation the wire now enforces).
+function sentOpId(sock, reqType) {
+  const sent = sock.sentOfType(reqType)
+  return sent.length ? sent[sent.length - 1].opId : undefined
+}
 
 // ── Test doubles ─────────────────────────────────────────────────────────────
 
@@ -120,8 +136,8 @@ class FakeSurface extends AbstractSurface {
 // (no-construction-seams rule; tests use the public/protected contract). The
 // override records every surface into `made` and logs lifecycle order into
 // `surfaceLog`. P4.F: the `services` bag is dissolved — the surface calls the
-// editor's public API directly (onSurfaceEvent / applyBlockOps / updateText),
-// which tests drive by calling those editor methods on `ed`.
+// editor's public API directly (onSurfaceEvent / setRawContent), which tests
+// drive by calling those editor methods on `ed`.
 function withFakeSurfaces(Base) {
   return class extends Base {
     surfaceLog = []
@@ -138,17 +154,32 @@ const FakeSurfaceSieveEditor = withFakeSurfaces(SieveEditor) // P1 alias kept ex
 const FakeSurfaceNoteEditor = withFakeSurfaces(NoteEditor)
 const FakeSurfacePromptEditor = withFakeSurfaces(PromptEditor)
 
+// The service pair over FakeSockets — the wire seams live on BlockService's
+// constructor now (issue #49 Phase 1), not on editor options.
+function servicePair() {
+  const bs = new BlockService({
+    socketFactory: (url) => new FakeSocket(url),
+    wsUrlFor: (u) => 'ws://test/api/ws?uuid=' + u,
+  })
+  const ds = new DocumentService(bs)
+  return { bs, ds }
+}
+
+// A service pair whose (unused) socket factory throws — for editors that must
+// never open a channel (bare AbstractEditor constructions, HTTP-path tests).
+function bareServices() {
+  const bs = new BlockService({ socketFactory: () => { throw new Error('no socket expected') } })
+  return { bs, ds: new DocumentService(bs) }
+}
+
 // Builds a NoteEditor wired to fakes. The _createSurface override records every
 // surface it makes into `made` and logs lifecycle order into `log`.
 function noteRig(uuid, options = {}) {
   const onServerMessage = vi.fn()
-  const opts = Object.assign({
-    socketFactory: (url) => new FakeSocket(url),
-    wsUrl: () => 'ws://test/api/ws?uuid=' + uuid,
-    onServerMessage,
-  }, options)
+  const { bs, ds } = servicePair()
+  const opts = Object.assign({ documentService: ds, onServerMessage }, options)
   const ed = new FakeSurfaceNoteEditor(uuid, opts)
-  return { ed, log: ed.surfaceLog, made: ed.made, onServerMessage, sock: () => FakeSocket.instances[FakeSocket.instances.length - 1] }
+  return { ed, bs, ds, log: ed.surfaceLog, made: ed.made, onServerMessage, sock: () => FakeSocket.instances[FakeSocket.instances.length - 1] }
 }
 
 function makeNote(uuid, options = {}) {
@@ -464,10 +495,10 @@ describe('AbstractEditor surface events + domain API (P2.B / P4.F)', () => {
     expect(seen).toEqual(['doc-changed'])
   })
 
-  it('base applyBlockOps/updateText DROP domain output (socketless prompt behavior)', () => {
+  it('base setRawContent/createBlock DROP domain output (disconnected prompt behavior)', () => {
     const { ed } = rig()
-    expect(() => ed.applyBlockOps([{ type: 'update-block', blockId: 'b' }])).not.toThrow()
-    expect(() => ed.updateText('md')).not.toThrow()
+    expect(() => ed.setRawContent('md')).not.toThrow()
+    expect(() => ed.createBlock('code', {})).not.toThrow()
   })
 
   it('onSurfaceEvent for a NON doc-changed event feeds + emits only (no dirty, no meta-dirty)', () => {
@@ -781,39 +812,178 @@ describe('SieveWorkspace.onSelectionUpdate republish (P3.B)', () => {
   })
 })
 
-describe('AbstractEditor domain → wire enveloping (P2.B.2: moved from NoteEditor)', () => {
+describe('service pair → wire enveloping (issue #49 Phase 1: frames FROZEN)', () => {
   beforeEach(() => FakeSocket.reset())
 
-  it('applyBlockOps envelopes each domain op as block-op, in order, with the uuid', () => {
+  it('service verbs envelope block-ops, in order, with the uuid (in-order emission preserved)', () => {
     const rig = noteRig('n')
     rig.sock().driveOpen()
-    rig.ed.applyBlockOps([
-      { type: 'create-block', kind: 'code', index: 1 },
-      { type: 'delete-block', blockId: 'b9' },
-    ])
+    // The observer's explicit-index create + a kind-agnostic delete, in order.
+    rig.ds.createBlock('n', 'prose', { content: 'hi' }, undefined, { index: 1, token: 'tok-1' })
+    rig.ds.deleteBlock('n', 'b9')
     expect(rig.sock().sentOfType('block-op')).toEqual([
-      { type: 'block-op', uuid: 'n', op: { type: 'create-block', kind: 'code', index: 1 } },
-      { type: 'block-op', uuid: 'n', op: { type: 'delete-block', blockId: 'b9' } },
+      { type: 'block-op', uuid: 'n', opId: OPID, op: { type: 'create-block', blockId: '', kind: 'prose', attrs: { content: 'hi' }, index: 1, token: 'tok-1' } },
+      { type: 'block-op', uuid: 'n', opId: OPID, op: { type: 'delete-block', blockId: 'b9' } },
     ])
   })
 
-  it('updateText envelopes the markdown as doc-update with the uuid', () => {
+  it('createBlock explicit-index path lifts aliases top-level and carries a durable blockId', () => {
     const rig = noteRig('n')
     rig.sock().driveOpen()
-    rig.ed.updateText('# body')
+    rig.ds.createBlock('n', 'prose', { content: 'x' }, undefined, { index: 2, aliases: ['old-1'], blockId: 'p-1' })
+    expect(rig.sock().sentOfType('block-op')).toEqual([
+      { type: 'block-op', uuid: 'n', opId: OPID, op: { type: 'create-block', blockId: 'p-1', kind: 'prose', attrs: { content: 'x' }, aliases: ['old-1'], index: 2 } },
+    ])
+  })
+
+  it('setRawContent envelopes the raw body as doc-update with the uuid', () => {
+    const rig = noteRig('n')
+    rig.sock().driveOpen()
+    rig.ds.setRawContent('n', '# body')
     expect(rig.sock().sentOfType('doc-update')).toEqual([
       { type: 'doc-update', uuid: 'n', markdown: '# body' },
     ])
   })
 
-  it('the editor domain API the surface calls routes through the enveloping', () => {
+  it('the editor setRawContent verb the markdown surface calls routes through the service enveloping', () => {
     const rig = noteRig('n')
     rig.sock().driveOpen()
-    rig.ed.presentSurface('wysiwyg', document.createElement('div'), { body: '', blocks: [] })
-    rig.ed.applyBlockOps([{ type: 'update-block', blockId: 'b1' }])
-    expect(rig.sock().sentOfType('block-op')).toEqual([
-      { type: 'block-op', uuid: 'n', op: { type: 'update-block', blockId: 'b1' } },
+    rig.ed.setRawContent('# body')
+    expect(rig.sock().sentOfType('doc-update')).toEqual([
+      { type: 'doc-update', uuid: 'n', markdown: '# body' },
     ])
+  })
+
+  it('updateAttributes frames update-block with the kind from the routing index; aliases lift top-level', () => {
+    const rig = noteRig('n')
+    rig.sock().driveOpen()
+    rig.bs.indexDocument('n', [{ id: 'b1', kind: 'code' }])
+    rig.bs.updateAttributes('b1', { source: 'x' })
+    rig.bs.updateAttributes('b1', { source: 'y' }, { aliases: ['b0'] })
+    expect(rig.sock().sentOfType('block-op')).toEqual([
+      { type: 'block-op', uuid: 'n', opId: OPID, op: { type: 'update-block', blockId: 'b1', kind: 'code', attrs: { source: 'x' } } },
+      { type: 'block-op', uuid: 'n', opId: OPID, op: { type: 'update-block', blockId: 'b1', kind: 'code', attrs: { source: 'y' }, aliases: ['b0'] } },
+    ])
+  })
+
+  it('setContent defaults to a {content} patch (kinds with a different content attr override renderer-side)', () => {
+    const rig = noteRig('n')
+    rig.sock().driveOpen()
+    rig.bs.indexDocument('n', [{ id: 'b1', kind: 'prose' }])
+    rig.bs.setContent('b1', 'plain text')
+    expect(rig.sock().sentOfType('block-op')).toEqual([
+      { type: 'block-op', uuid: 'n', opId: OPID, op: { type: 'update-block', blockId: 'b1', kind: 'prose', attrs: { content: 'plain text' } } },
+    ])
+  })
+
+  it('an unknown blockId warns + drops — fire-and-forget parity, never a throw mid-edit', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const rig = noteRig('n')
+      rig.sock().driveOpen()
+      expect(() => rig.bs.updateAttributes('ghost', { a: 1 })).not.toThrow()
+      expect(() => rig.bs.retry('ghost')).not.toThrow()
+      expect(rig.sock().sent).toEqual([])
+      expect(warn).toHaveBeenCalled()
+    } finally { warn.mockRestore() }
+  })
+})
+
+describe('BlockService channel-per-uuid routing + index seeding (issue #49 Phase 1)', () => {
+  beforeEach(() => FakeSocket.reset())
+
+  function twoChannels() {
+    const { bs, ds } = servicePair()
+    const delegateA = { applyServerOp: vi.fn(), onFlushAck: vi.fn(), onMessage: vi.fn(), resolveInsertIndex: vi.fn(() => -1) }
+    const delegateB = { applyServerOp: vi.fn(), onFlushAck: vi.fn(), onMessage: vi.fn(), resolveInsertIndex: vi.fn(() => -1) }
+    bs.openChannel('doc-a', delegateA)
+    const sockA = FakeSocket.instances[FakeSocket.instances.length - 1]
+    bs.openChannel('doc-b', delegateB)
+    const sockB = FakeSocket.instances[FakeSocket.instances.length - 1]
+    sockA.driveOpen(); sockB.driveOpen()
+    return { bs, ds, delegateA, delegateB, sockA, sockB }
+  }
+
+  it('frames land on the RIGHT document channel (two open channels)', () => {
+    const { bs, ds, sockA, sockB } = twoChannels()
+    bs.indexDocument('doc-a', [{ id: 'a1', kind: 'code' }])
+    bs.indexDocument('doc-b', [{ id: 'b1', kind: 'log' }])
+    bs.updateAttributes('a1', { source: 'x' })
+    bs.retry('b1')
+    ds.deleteBlock('doc-b', 'b1')
+    expect(sockA.sentTypes()).toEqual(['block-op'])
+    expect(JSON.parse(sockA.sent[0]).uuid).toBe('doc-a')
+    expect(sockB.sentTypes()).toEqual(['retry-block-job', 'block-op'])
+    expect(JSON.parse(sockB.sent[1]).op).toEqual({ type: 'delete-block', blockId: 'b1' })
+  })
+
+  it('the index learns from insert-block / replace-block render-backs passing through', () => {
+    const { bs, sockA, delegateA } = twoChannels()
+    sockA.driveMessage({ type: 'insert-block', kind: 'code', id: 'new-1', attrs: {}, index: 0 })
+    sockA.driveMessage({ type: 'replace-block', oldId: 'x', newId: 'new-2', newKind: 'diagram', attrs: {} })
+    expect(delegateA.applyServerOp).toHaveBeenCalledTimes(2) // ops still reach the surface
+    bs.updateAttributes('new-1', { source: 'a' })
+    bs.updateAttributes('new-2', { source: 'b' })
+    const ops = sockA.sentOfType('block-op').map((m) => m.op)
+    expect(ops[0]).toEqual({ type: 'update-block', blockId: 'new-1', kind: 'code', attrs: { source: 'a' } })
+    expect(ops[1]).toEqual({ type: 'update-block', blockId: 'new-2', kind: 'diagram', attrs: { source: 'b' } })
+  })
+
+  it('the index is STICKY: a delete does not purge (undo can resurrect a block that must still route)', () => {
+    const { bs, ds, sockA } = twoChannels()
+    bs.indexDocument('doc-a', [{ id: 'a1', kind: 'code' }])
+    ds.deleteBlock('doc-a', 'a1')
+    bs.updateAttributes('a1', { source: 'back' })   // post-delete update still routes
+    const ops = sockA.sentOfType('block-op').map((m) => m.op)
+    expect(ops[1]).toEqual({ type: 'update-block', blockId: 'a1', kind: 'code', attrs: { source: 'back' } })
+  })
+
+  it('DocumentService.load seeds the index from the typed block list', async () => {
+    const prevFetch = global.fetch
+    global.fetch = vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ body: 'b', blocks: [{ id: 'ld-1', kind: 'code' }] }) }))
+    try {
+      const { bs, ds, sockA } = twoChannels()
+      await ds.load('doc-a')
+      bs.updateAttributes('ld-1', { source: 'x' })
+      expect(sockA.sentOfType('block-op').map((m) => m.op)).toEqual([
+        { type: 'update-block', blockId: 'ld-1', kind: 'code', attrs: { source: 'x' } },
+      ])
+    } finally { global.fetch = prevFetch }
+  })
+
+  it('extract routes via the blockId index entry; falls back to the sole open channel; drops loudly on ambiguity', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { bs, sockA, sockB } = twoChannels()
+      bs.indexDocument('doc-b', [{ id: 'x1', kind: 'code' }])
+      bs.extract({ blockId: 'x1', targetKind: 'diagram', operation: 'extract', entries: [], index: -1 })
+      expect(sockB.sentTypes()).toEqual(['extract'])
+      // Two channels + unindexed block → ambiguous → warn + drop.
+      bs.extract({ blockId: 'ghost', targetKind: 'diagram', operation: 'extract', entries: [], index: -1 })
+      expect(sockA.sentTypes()).toEqual([])
+      expect(warn).toHaveBeenCalled()
+    } finally { warn.mockRestore() }
+  })
+
+  it('delegate routing: SURFACE_OPS → applyServerOp; flush-ack → onFlushAck (+ awaiter); everything else → onMessage', async () => {
+    const { bs, ds, delegateA, sockA } = twoChannels()
+    sockA.driveMessage({ type: 'insert-block', kind: 'code', id: 'i1' })
+    expect(delegateA.applyServerOp).toHaveBeenCalledWith(expect.objectContaining({ type: 'insert-block' }))
+    const flushed = ds.flush('doc-a')
+    sockA.driveMessage({ type: 'flush-ack', uuid: 'doc-a', opId: sentOpId(sockA, 'flush') })
+    await flushed
+    expect(delegateA.onFlushAck).toHaveBeenCalledWith(expect.objectContaining({ type: 'flush-ack' }))
+    sockA.driveMessage({ type: 'error', message: 'boom' })
+    expect(delegateA.onMessage).toHaveBeenCalledWith({ type: 'error', message: 'boom' })
+    // Consumed replies + surface ops never leak to onMessage.
+    expect(delegateA.onMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('an UNAWAITED flush-ack still runs onFlushAck and falls through to onMessage (side-channel notifySaved parity)', () => {
+    const { delegateA, sockA } = twoChannels()
+    sockA.driveMessage({ type: 'flush-ack', uuid: 'doc-a' })
+    expect(delegateA.onFlushAck).toHaveBeenCalledTimes(1)
+    expect(delegateA.onMessage).toHaveBeenCalledWith({ type: 'flush-ack', uuid: 'doc-a' })
   })
 })
 
@@ -846,10 +1016,7 @@ describe('SieveTab.createEditor factory (P2.A)', () => {
 
   it('creates a NoteEditor for a note uuid', () => {
     const tab = new SieveTab('note-1')
-    const ed = tab.createEditor('note-1', {
-      socketFactory: (url) => new FakeSocket(url),
-      wsUrl: () => 'ws://test',
-    })
+    const ed = tab.createEditor('note-1', { documentService: servicePair().ds })
     expect(ed).toBeInstanceOf(NoteEditor)
   })
 
@@ -859,16 +1026,14 @@ describe('SieveTab.createEditor factory (P2.A)', () => {
     expect(ed).toBeInstanceOf(PromptEditor)
   })
 
-  it('a NoteEditor opens a socket; a PromptEditor does not', () => {
+  it('a NoteEditor opens a socket (through the service pair); a PromptEditor does not', () => {
+    const { ds } = servicePair()
     const noteTab = new SieveTab('note-2')
-    noteTab.createEditor('note-2', {
-      socketFactory: (url) => new FakeSocket(url),
-      wsUrl: () => 'ws://test',
-    })
+    noteTab.createEditor('note-2', { documentService: ds })
     expect(FakeSocket.instances.length).toBe(1)
 
     const promptTab = new SieveTab('prompt:x')
-    promptTab.createEditor('prompt:x', {})
+    promptTab.createEditor('prompt:x', { documentService: ds })
     expect(FakeSocket.instances.length).toBe(1) // unchanged
   })
 })
@@ -886,35 +1051,39 @@ describe('NoteEditor WS lifecycle (P2.A)', () => {
   it('queues domain sends before open and flushes on open', () => {
     const ed = makeNote('n')
     const sock = FakeSocket.instances[0]
-    ed.applyBlockOps([{ type: 'create-block', kind: 'code' }]) // CONNECTING → queued
+    ed.createBlock('code') // CONNECTING → queued
     expect(sock.sent.length).toBe(0)
     sock.driveOpen()
     expect(sock.sentTypes()).toContain('block-op')
   })
 
   it('sends directly once the socket is OPEN, with the frozen envelope (C3 pin)', () => {
-    const ed = makeNote('n')
+    const rig = noteRig('n')
     const sock = FakeSocket.instances[0]
     sock.driveOpen()
-    ed.applyBlockOps([{ type: 'update-block', blockId: 'b1' }])
+    rig.bs.indexDocument('n', [{ id: 'b1', kind: 'code' }])
+    rig.bs.updateAttributes('b1', { source: 's' })
     const sent = sock.sent.map((s) => JSON.parse(s)).find((m) => m.type === 'block-op')
-    // The wire envelope is composed ONLY inside AbstractEditor — pinned here.
-    expect(sent).toEqual({ type: 'block-op', uuid: 'n', op: { type: 'update-block', blockId: 'b1' } })
+    // The wire envelope is composed ONLY inside the BlockService — pinned here.
+    expect(sent).toEqual({ type: 'block-op', uuid: 'n', opId: OPID, op: { type: 'update-block', blockId: 'b1', kind: 'code', attrs: { source: 's' } } })
   })
 
-  it('retryBlockJob and extract envelope with the frozen shapes', async () => {
-    const ed = makeNote('n')
+  it('retry and extract envelope with the frozen shapes', async () => {
+    const rig = noteRig('n')
+    const ed = rig.ed
     const sock = FakeSocket.instances[0]
     sock.driveOpen()
-    ed.retryBlockJob('blk-1')
+    rig.bs.indexDocument('n', [{ id: 'blk-1', kind: 'code' }])
+    rig.bs.retry('blk-1')
     // extract now OWNS its index math (P4.F Brief C): a bare editor has no mounted
     // surface / doc, so the anchor resolves to -1 (append). It sends async (after
     // resolveEntriesForKind), so await the returned promise before asserting.
     await ed.extract({ blockId: 'blk-1', targetKind: 'diagram', operation: 'extract', entries: [] })
     const msgs = sock.sent.map((s) => JSON.parse(s))
+    // retry stays fire-and-forget (no opId); extract now carries an opId (extract-ack).
     expect(msgs).toContainEqual({ type: 'retry-block-job', uuid: 'n', id: 'blk-1' })
     // extract carries no uuid — the server resolves the doc from the channel.
-    expect(msgs).toContainEqual({ type: 'extract', blockId: 'blk-1', targetKind: 'diagram', operation: 'extract', entries: [], index: -1 })
+    expect(msgs).toContainEqual({ type: 'extract', blockId: 'blk-1', targetKind: 'diagram', operation: 'extract', entries: [], index: -1, opId: OPID })
   })
 
   it('extract absorbs its prep: clears the insert pos, stamps context onto entries[0], sends async', async () => {
@@ -927,36 +1096,22 @@ describe('NoteEditor WS lifecycle (P2.A)', () => {
     expect(entries[0].context).toEqual({ parentId: 'p' })   // context stamped onto the first entry
     expect(ed.takeInsertPos()).toBeNull()                    // clearInsertPos ran
     const sent = sock.sent.map((s) => JSON.parse(s)).find((m) => m.type === 'extract')
-    expect(sent).toEqual({ type: 'extract', blockId: 'b', targetKind: 'code', operation: 'extract', entries, index: -1 })
+    expect(sent).toEqual({ type: 'extract', blockId: 'b', targetKind: 'code', operation: 'extract', entries, index: -1, opId: OPID })
   })
 
-  it('retryBlock optimistically resets the block to PENDING (tracked) and re-dispatches the job', () => {
-    const ed = makeNote('n')
+  it('retry re-dispatches the backend job WITHOUT touching the PM doc (the optimistic reset is retired)', () => {
+    // Issue #49 Phase 1: the editor-side optimistic PENDING reset died with the
+    // editor verb, deliberately — Go's retry handler writes PENDING and
+    // render-backs immediately; the render-back is the paint.
+    const rig = noteRig('n')
     const sock = FakeSocket.instances[0]
     sock.driveOpen()
-    const surface = ed.presentSurface('wysiwyg', document.createElement('div'), { body: '', blocks: [] })
-    // A minimal PM-shaped pane holding one errored sieve block; retryBlock walks it,
-    // resets the node, and dispatches ONE setNodeMarkup transaction (no addToHistory
-    // suppression — the reset is a normal tracked edit).
-    const node = { type: { name: 'sieve-web-clip' }, attrs: { id: 'blk-1', status: 'ERROR', error: 'boom', content: 'old', title: 't', completedAt: 'ts', response: 'r' } }
-    const markup = []
+    const surface = rig.ed.presentSurface('wysiwyg', document.createElement('div'), { body: '', blocks: [] })
     const dispatched = []
-    surface.editorPaneValue = {
-      state: {
-        doc: { descendants(fn) { fn(node, 5) } },
-        tr: { setNodeMarkup(pos, type, attrs) { markup.push({ pos, type, attrs }); return this } },
-      },
-      view: { dispatch(tr) { dispatched.push(tr) } },
-    }
-    ed.retryBlock('blk-1')
-    expect(dispatched.length).toBe(1)                        // one optimistic reset transaction
-    expect(markup[0].pos).toBe(5)
-    expect(markup[0].attrs.status).toBe('PENDING')
-    expect(markup[0].attrs.error).toBeNull()
-    expect(markup[0].attrs.content).toBeNull()
-    expect(markup[0].attrs.response).toBeNull()
-    expect(typeof markup[0].attrs.createdAt).toBe('string')
-    // Backend re-dispatch always fires.
+    surface.editorPaneValue = { view: { dispatch(tr) { dispatched.push(tr) } } }
+    rig.bs.indexDocument('n', [{ id: 'blk-1', kind: 'web-clip' }])
+    rig.bs.retry('blk-1')
+    expect(dispatched.length).toBe(0)                        // NO local PM mutation
     const msgs = sock.sent.map((s) => JSON.parse(s))
     expect(msgs).toContainEqual({ type: 'retry-block-job', uuid: 'n', id: 'blk-1' })
   })
@@ -1019,30 +1174,136 @@ describe('NoteEditor WS lifecycle (P2.A)', () => {
   })
 })
 
-describe('AbstractEditor.flush() — the awaited save ack (P2.B.2 domain method)', () => {
+describe('DocumentService.flush — the awaited save ack (issue #49: moved off the editor)', () => {
   beforeEach(() => FakeSocket.reset())
   afterEach(() => vi.useRealTimers())
 
   it('sends the frozen flush envelope and resolves with the ack', async () => {
-    const ed = makeNote('n')
+    const rig = noteRig('n')
     const sock = FakeSocket.instances[0]
     sock.driveOpen()
-    const p = ed.flush()
+    const p = rig.ds.flush('n')
     const sent = sock.sent.map((s) => JSON.parse(s)).find((m) => m.type === 'flush')
-    expect(sent).toEqual({ type: 'flush', uuid: 'n' })
-    sock.driveMessage({ type: 'flush-ack', uuid: 'n' })
+    expect(sent).toEqual({ type: 'flush', uuid: 'n', opId: OPID })
+    sock.driveMessage({ type: 'flush-ack', uuid: 'n', opId: sentOpId(sock, 'flush') })
     const msg = await p
     expect(msg.type).toBe('flush-ack')
   })
 
   it('rejects after a 5s timeout', async () => {
     vi.useFakeTimers()
-    const ed = makeNote('n')
+    const rig = noteRig('n')
     FakeSocket.instances[0].driveOpen()
-    const p = ed.flush()
+    const p = rig.ds.flush('n')
     const assertion = expect(p).rejects.toThrow('ws timeout: flush')
     await vi.advanceTimersByTimeAsync(5000)
     await assertion
+  })
+
+  it('a channel-less uuid resolves {} immediately (socketless parity)', async () => {
+    const { ds } = servicePair()
+    await expect(ds.flush('nobody')).resolves.toEqual({})
+  })
+})
+
+// ── issue #49 Phase 2: opId correlation + ack results ───────────────────────────
+
+describe('opId correlation (issue #49 Phase 2)', () => {
+  beforeEach(() => FakeSocket.reset())
+  afterEach(() => vi.useRealTimers())
+
+  function indexedRig() {
+    const rig = noteRig('n')
+    rig.sock().driveOpen()
+    rig.bs.indexDocument('n', [{ id: 'b1', kind: 'code' }])
+    return rig
+  }
+
+  it('a block-op-ack echoing the minted opId resolves the verb promise {ok:true}', async () => {
+    const rig = indexedRig()
+    const p = rig.bs.updateAttributes('b1', { source: 'x' })
+    const opId = sentOpId(rig.sock(), 'block-op')
+    expect(opId).toMatch(/^op-\d+$/)
+    rig.sock().driveMessage({ type: 'block-op-ack', opId: opId, ok: true })
+    await expect(p).resolves.toEqual({ ok: true })
+  })
+
+  it('a block-op-ack with ok:false carries the error through the resolved result', async () => {
+    const rig = indexedRig()
+    const p = rig.bs.updateAttributes('b1', { source: 'x' })
+    rig.sock().driveMessage({ type: 'block-op-ack', opId: sentOpId(rig.sock(), 'block-op'), ok: false, error: 'boom' })
+    await expect(p).resolves.toEqual({ ok: false, error: 'boom' })
+  })
+
+  it('an ack TIMEOUT resolves {ok:false, error} — never an unhandled rejection', async () => {
+    vi.useFakeTimers()
+    const rig = indexedRig()
+    const p = rig.bs.updateAttributes('b1', { source: 'x' }) // promise deliberately ignorable
+    await vi.advanceTimersByTimeAsync(5000)
+    const res = await p
+    expect(res.ok).toBe(false)
+    expect(res.error).toMatch(/ws timeout/)
+  })
+
+  it('a LATE block-op-ack after the timeout is dropped silently (no throw, no double-settle)', async () => {
+    vi.useFakeTimers()
+    const rig = indexedRig()
+    const p = rig.bs.updateAttributes('b1', { source: 'x' })
+    const opId = sentOpId(rig.sock(), 'block-op')
+    await vi.advanceTimersByTimeAsync(5000)
+    expect((await p).ok).toBe(false)
+    expect(() => rig.sock().driveMessage({ type: 'block-op-ack', opId: opId, ok: true })).not.toThrow()
+  })
+
+  it('an unknown-id verb resolves {ok:false} WITHOUT sending, and never rejects', async () => {
+    const rig = indexedRig()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const res = await rig.bs.updateAttributes('ghost', { source: 'x' })
+      expect(res.ok).toBe(false)
+      expect(rig.sock().sentOfType('block-op')).toEqual([])
+      expect(warn).toHaveBeenCalled()
+    } finally { warn.mockRestore() }
+  })
+
+  it('a HANDSHAKE (flush) timeout still REJECTS — stay-on-failure depends on it', async () => {
+    vi.useFakeTimers()
+    const rig = noteRig('n')
+    rig.sock().driveOpen()
+    const p = rig.ds.flush('n')
+    const assertion = expect(p).rejects.toThrow('ws timeout: flush')
+    await vi.advanceTimersByTimeAsync(5000)
+    await assertion
+  })
+
+  it('an unsolicited flush-ack (NO opId) still fires onFlushAck and consumes no awaiter', () => {
+    const { bs } = servicePair()
+    const delegate = { applyServerOp: vi.fn(), onFlushAck: vi.fn(), onMessage: vi.fn(), resolveInsertIndex: vi.fn(() => -1) }
+    bs.openChannel('n', /** @type {any} */ (delegate))
+    const sock = FakeSocket.instances[FakeSocket.instances.length - 1]
+    sock.driveOpen()
+    sock.driveMessage({ type: 'flush-ack', uuid: 'n' })
+    expect(delegate.onFlushAck).toHaveBeenCalledWith(expect.objectContaining({ type: 'flush-ack' }))
+    // No opId → not consumed by any awaiter; falls through to onMessage (parity).
+    expect(delegate.onMessage).toHaveBeenCalledWith({ type: 'flush-ack', uuid: 'n' })
+  })
+
+  // THE motivating test: reply-TYPE keying could not tell two in-flight same-type
+  // handshakes apart. opId keying resolves each to ITS OWN reply, in any order.
+  it('two concurrent same-type handshakes on ONE channel resolve to their own opIds', async () => {
+    const rig = noteRig('n')
+    rig.sock().driveOpen()
+    const p1 = rig.ds.flush('n')
+    const p2 = rig.ds.flush('n')
+    const sent = rig.sock().sentOfType('flush')
+    expect(sent.length).toBe(2)
+    expect(sent[0].opId).not.toBe(sent[1].opId)
+    // Reply to the SECOND request first, then the first — correlation is by opId,
+    // not arrival order. Markers prove each promise got ITS reply.
+    rig.sock().driveMessage({ type: 'flush-ack', uuid: 'n', opId: sent[1].opId, marker: 'second' })
+    rig.sock().driveMessage({ type: 'flush-ack', uuid: 'n', opId: sent[0].opId, marker: 'first' })
+    expect((await p1).marker).toBe('first')
+    expect((await p2).marker).toBe('second')
   })
 })
 
@@ -1070,14 +1331,22 @@ describe('NoteEditor.setMode (P2.B handshake)', () => {
     expect(rig.log[0]).toBe('flush:markdown')
     const sent = rig.sock().sentOfType('enter-wysiwyg')
     expect(sent.length).toBe(1)
-    expect(sent[0]).toEqual({ type: 'enter-wysiwyg', uuid: 'n', markdown: 'LIVE BODY' })
+    expect(sent[0]).toEqual({ type: 'enter-wysiwyg', uuid: 'n', markdown: 'LIVE BODY', opId: OPID })
     // nothing torn down until the reply arrives:
     expect(rig.made[0].unmountCount).toBe(0)
-    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [{ id: 'b1' }] })
+    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [{ id: 'b1' }], opId: sentOpId(rig.sock(), 'enter-wysiwyg') })
     await expect(p).resolves.toBe(true)
     expect(rig.log).toEqual(['flush:markdown', 'unmount:markdown', 'mount:wysiwyg'])
     expect(rig.made[0].unmountCount).toBe(1) // exactly once
-    expect(rig.made[1].mountArgs).toEqual([rig.root, { body: 'LIVE BODY', blocks: [{ id: 'b1' }] }])
+    // save() types the wysiwyg-content reply into SieveBlock envelopes before it
+    // reaches presentSurface (issue #49 Phase 3 — the raw wire map never escapes
+    // the service); the surface mounts from THOSE envelopes.
+    expect(rig.made[1].mountArgs[0]).toBe(rig.root)
+    expect(rig.made[1].mountArgs[1].body).toBe('LIVE BODY')
+    const flippedBlocks = rig.made[1].mountArgs[1].blocks
+    expect(flippedBlocks).toHaveLength(1)
+    expect(flippedBlocks[0]).toBeInstanceOf(SieveBlock)
+    expect(flippedBlocks[0].id).toBe('b1')
     expect(rig.ed.mode).toBe('wysiwyg')
   })
 
@@ -1085,8 +1354,8 @@ describe('NoteEditor.setMode (P2.B handshake)', () => {
     const rig = flipRig('wysiwyg')
     const p = rig.ed.setMode('markdown')
     expect(rig.log[0]).toBe('flush:wysiwyg')
-    expect(rig.sock().sentOfType('enter-markdown')).toEqual([{ type: 'enter-markdown', uuid: 'n' }])
-    rig.sock().driveMessage({ type: 'markdown-content', uuid: 'n', markdown: 'FROM GO' })
+    expect(rig.sock().sentOfType('enter-markdown')).toEqual([{ type: 'enter-markdown', uuid: 'n', opId: OPID }])
+    rig.sock().driveMessage({ type: 'markdown-content', uuid: 'n', markdown: 'FROM GO', opId: sentOpId(rig.sock(), 'enter-markdown') })
     await expect(p).resolves.toBe(true)
     expect(rig.log).toEqual(['flush:wysiwyg', 'unmount:wysiwyg', 'mount:markdown'])
     expect(rig.made[1].mountArgs).toEqual([rig.root, 'FROM GO'])
@@ -1113,7 +1382,7 @@ describe('NoteEditor.setMode (P2.B handshake)', () => {
     const assertion = expect(p).rejects.toThrow('ws timeout')
     await vi.advanceTimersByTimeAsync(5000)
     await assertion
-    expect(() => rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [] })).not.toThrow()
+    expect(() => rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [], opId: sentOpId(rig.sock(), 'enter-wysiwyg') })).not.toThrow()
     expect(rig.made.length).toBe(1)            // still no mount
     expect(rig.ed.mode).toBe('markdown')
   })
@@ -1145,7 +1414,7 @@ describe('NoteEditor.setMode (P2.B handshake)', () => {
     const p2 = rig.ed.setMode('wysiwyg')
     expect(p2).toBe(p1)
     expect(rig.sock().sentOfType('enter-wysiwyg').length).toBe(1) // one handshake only
-    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [] })
+    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [], opId: sentOpId(rig.sock(), 'enter-wysiwyg') })
     await p1
     expect(rig.made.length).toBe(2) // exactly one new surface
   })
@@ -1200,7 +1469,7 @@ describe('NoteEditor server-op routing (P2.B)', () => {
     rig.sock().driveOpen()
     rig.ed.presentSurface('markdown', document.createElement('div'), 'x')
     const p = rig.ed.setMode('wysiwyg')
-    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [] })
+    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [], opId: sentOpId(rig.sock(), 'enter-wysiwyg') })
     await p
     expect(rig.onServerMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'wysiwyg-content' }))
   })
@@ -1236,13 +1505,22 @@ describe('flushSave routing (P2.A → P2.B surfaces)', () => {
     expect(rig.sock().sentTypes()).toEqual(['flush'])
   })
 
-  it('PromptEditor saves the surface body over the injected saveFn (no WS)', async () => {
-    const saveFn = vi.fn(() => Promise.resolve())
-    const ed = new FakeSurfacePromptEditor('prompt:p', { saveFn })
-    const s = ed.presentSurface('markdown', document.createElement('div'), 'seed')
-    s.bodyValue = 'prompt body'
-    await ed.flushSave()
-    expect(saveFn).toHaveBeenCalledWith('prompt:p', 'prompt body', 'markdown')
+  it('PromptEditor saves the surface body over HTTP via DocumentService.save (channel-less → POST, never WS)', async () => {
+    const prevFetch = global.fetch
+    const fetchMock = vi.fn(() => Promise.resolve({ ok: true }))
+    global.fetch = fetchMock
+    try {
+      const { ds } = bareServices() // socket factory throws — proves no WS is touched
+      const ed = new FakeSurfacePromptEditor('prompt:p', { documentService: ds })
+      const s = ed.presentSurface('markdown', document.createElement('div'), 'seed')
+      s.bodyValue = 'prompt body'
+      await ed.flushSave()
+      expect(fetchMock).toHaveBeenCalledWith('/api/editor/save?uuid=' + encodeURIComponent('prompt:p'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: 'prompt body', mode: 'markdown' }),
+      })
+    } finally { global.fetch = prevFetch }
   })
 
   it('PromptEditor mode is markdown by default (fixed)', () => {
@@ -1254,19 +1532,21 @@ describe('flushSave routing (P2.A → P2.B surfaces)', () => {
     // P4.A: suppression is no longer an injected closure — it is
     // AbstractEditor.isSaveSuppressed reading #reloadInProgress, armed by
     // softReload. Hold the reload fetch mid-flight so the guard is active.
-    const saveFn = vi.fn(() => Promise.resolve())
     const prevFetch = global.fetch
     const prevWs = window.sieveWorkspace
     window.sieveWorkspace = { getSelectionContext: () => ({}), setPosition: vi.fn() }
     let resolveJson
-    global.fetch = vi.fn(() => Promise.resolve({ json: () => new Promise((r) => { resolveJson = r }) }))
+    const fetchMock = vi.fn(() => Promise.resolve({ json: () => new Promise((r) => { resolveJson = r }) }))
+    global.fetch = fetchMock
     try {
-      const ed = new FakeSurfacePromptEditor('prompt:p', { saveFn })
+      const { ds } = bareServices()
+      const ed = new FakeSurfacePromptEditor('prompt:p', { documentService: ds })
       ed.presentSurface('markdown', document.createElement('div'), 'seed')
       const reload = ed.softReload()          // arms #reloadInProgress
       expect(ed.isSaveSuppressed()).toBe(true)
       await ed.flushSave()
-      expect(saveFn).not.toHaveBeenCalled()   // save skipped while suppressed
+      // Save skipped while suppressed — the only fetch is the reload's load.
+      expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes('/api/editor/save')).length).toBe(0)
       resolveJson({ body: 'x', blocks: [] })
       await reload
       expect(ed.isSaveSuppressed()).toBe(false)
@@ -1282,10 +1562,11 @@ describe('flushSave routing (P2.A → P2.B surfaces)', () => {
 describe('SieveWorkspace.activateDocument editor lifecycle (P2.A fix wave)', () => {
   beforeEach(() => FakeSocket.reset())
 
-  // Options whose socketFactory records open/close ordering into a shared log.
-  // wsUrl embeds the uuid, so log entries identify the document.
-  function loggingOptions(log, uuid) {
-    return {
+  // A Workspace whose BlockService socketFactory records open/close ordering
+  // into a shared log (the seam moved off editor options onto the wire owner);
+  // wsUrlFor embeds the uuid, so log entries identify the document.
+  function loggingWorkspace(log) {
+    return new SieveWorkspace({
       socketFactory: (url) => {
         const s = new FakeSocket(url)
         log.push('open:' + url)
@@ -1296,17 +1577,17 @@ describe('SieveWorkspace.activateDocument editor lifecycle (P2.A fix wave)', () 
         }
         return s
       },
-      wsUrl: () => 'ws://test/api/ws?uuid=' + uuid,
-      onServerMessage: () => {},
-    }
+      wsUrlFor: (uuid) => 'ws://test/api/ws?uuid=' + uuid,
+    })
   }
+  const edOpts = { onServerMessage: () => {} }
 
   it("tab switch: A's socket closes before B's opens, exactly once", () => {
     const log = []
-    const w = new SieveWorkspace()
-    const tabA = w.activateDocument('doc-a', loggingOptions(log, 'doc-a'))
+    const w = loggingWorkspace(log)
+    const tabA = w.activateDocument('doc-a', edOpts)
     FakeSocket.instances[0].driveOpen()
-    const tabB = w.activateDocument('doc-b', loggingOptions(log, 'doc-b'))
+    const tabB = w.activateDocument('doc-b', edOpts)
 
     expect(log).toEqual([
       'open:ws://test/api/ws?uuid=doc-a',
@@ -1320,12 +1601,12 @@ describe('SieveWorkspace.activateDocument editor lifecycle (P2.A fix wave)', () 
 
   it('same-uuid re-activation keeps the editor instance and its socket', () => {
     const log = []
-    const w = new SieveWorkspace()
-    const tab1 = w.activateDocument('doc-a', loggingOptions(log, 'doc-a'))
+    const w = loggingWorkspace(log)
+    const tab1 = w.activateDocument('doc-a', edOpts)
     const ed1 = tab1.editor
     FakeSocket.instances[0].driveOpen()
 
-    const tab2 = w.activateDocument('doc-a', loggingOptions(log, 'doc-a'))
+    const tab2 = w.activateDocument('doc-a', edOpts)
     expect(tab2).toBe(tab1)
     expect(tab2.editor).toBe(ed1) // same instance — no destroy, no new socket
     expect(log.filter((e) => e.startsWith('close:')).length).toBe(0)
@@ -1334,25 +1615,25 @@ describe('SieveWorkspace.activateDocument editor lifecycle (P2.A fix wave)', () 
 
   it('teardown to empty: single destroy, tab closed, no throw; repeat is a no-op', () => {
     const log = []
-    const w = new SieveWorkspace()
-    w.activateDocument('doc-a', loggingOptions(log, 'doc-a'))
+    const w = loggingWorkspace(log)
+    w.activateDocument('doc-a', edOpts)
     FakeSocket.instances[0].driveOpen()
 
-    expect(() => w.activateDocument('', loggingOptions(log, ''))).not.toThrow()
+    expect(() => w.activateDocument('', edOpts)).not.toThrow()
     expect(log.filter((e) => e.startsWith('close:')).length).toBe(1) // exactly one close
     expect(w.getTab('doc-a')).toBeNull()
     expect(w.activeTab).toBeNull()
 
     // Second teardown with nothing open must not throw or close anything else.
-    expect(() => w.activateDocument('', loggingOptions(log, ''))).not.toThrow()
+    expect(() => w.activateDocument('', edOpts)).not.toThrow()
     expect(log.filter((e) => e.startsWith('close:')).length).toBe(1)
   })
 
   it('prompt tabs participate without ever touching a socket', () => {
     const log = []
-    const w = new SieveWorkspace()
-    w.activateDocument('doc-a', loggingOptions(log, 'doc-a'))
-    const promptTab = w.activateDocument('prompt:p', loggingOptions(log, 'prompt:p'))
+    const w = loggingWorkspace(log)
+    w.activateDocument('doc-a', edOpts)
+    const promptTab = w.activateDocument('prompt:p', edOpts)
 
     expect(promptTab.editor).toBeInstanceOf(PromptEditor)
     expect(log.filter((e) => e.startsWith('close:')).length).toBe(1) // note's socket closed on switch
@@ -1463,7 +1744,7 @@ describe('NoteEditor.destroy idempotence (P2.A fix wave)', () => {
 
   it('double destroy: no throw, socket closed exactly once, timers cleared', () => {
     vi.useFakeTimers()
-    const ed = makeNote('n')
+    const ed = makeNote('n')  // channel closes through DocumentService.close
     const sock = FakeSocket.instances[0]
     sock.driveOpen()
 
@@ -1485,15 +1766,19 @@ describe('NoteEditor.destroy idempotence (P2.A fix wave)', () => {
 describe('transport is invisible in the public contract (P2.B.2)', () => {
   beforeEach(() => FakeSocket.reset())
 
-  it('neither editor type exposes any transport method — the domain methods ARE the protocol surface', () => {
+  it('neither editor type exposes any transport OR wire-op method — the service pair owns the protocol (issue #49)', () => {
     const note = makeNote('n')
     const prompt = new PromptEditor('prompt:p')
     for (const ed of [note, prompt]) {
       for (const name of ['wsSend', 'wsSendAndAwait', '_wsSend', '_wsSendAndAwait', '_awaitReply']) {
         expect(typeof (/** @type {any} */ (ed))[name]).not.toBe('function')
       }
-      // The domain surface is uniform across the hierarchy.
-      for (const name of ['applyBlockOps', 'updateText', 'flush', 'enterMarkdown', 'enterWysiwyg', 'retryBlockJob', 'extract', 'flushSave']) {
+      // The retired editor wire verbs are GONE (deleted API, pinned):
+      for (const name of ['applyBlockOps', 'updateText', 'flush', 'enterMarkdown', 'enterWysiwyg', 'retryBlockJob', 'retryBlock']) {
+        expect(typeof (/** @type {any} */ (ed))[name]).not.toBe('function')
+      }
+      // The surviving editor-domain surface is uniform across the hierarchy.
+      for (const name of ['extract', 'flushSave', 'createBlock', 'setRawContent', 'copyAsMarkdown']) {
         expect(typeof (/** @type {any} */ (ed))[name]).toBe('function')
       }
     }
@@ -1506,35 +1791,45 @@ describe('disconnected editor (PromptEditor — no `connect` declared, P2.B.2)',
   beforeEach(() => FakeSocket.reset())
 
   it('PromptEditor never constructs a socket', () => {
-    new PromptEditor('prompt:x', {
-      socketFactory: (url) => new FakeSocket(url),
-    })
+    new PromptEditor('prompt:x', { documentService: servicePair().ds })
     expect(FakeSocket.instances.length).toBe(0)
   })
 
-  it('applyBlockOps is a silent no-op for a socketless editor', () => {
-    const ed = new PromptEditor('prompt:x')
-    expect(() => ed.applyBlockOps([{ type: 'create-block', kind: 'code', index: 0 }])).not.toThrow()
+  it('createBlock is a silent no-op for a channel-less document', () => {
+    const ed = new PromptEditor('prompt:x', { documentService: servicePair().ds })
+    expect(() => ed.createBlock('code', {})).not.toThrow()
+    expect(FakeSocket.instances.length).toBe(0)
   })
 
-  it('updateText is a silent no-op for a socketless editor', () => {
-    const ed = new PromptEditor('prompt:x')
-    expect(() => ed.updateText('# hello')).not.toThrow()
+  it('setRawContent is a silent no-op for a channel-less document', () => {
+    const ed = new PromptEditor('prompt:x', { documentService: servicePair().ds })
+    expect(() => ed.setRawContent('# hello')).not.toThrow()
   })
 
-  it('flush() resolves immediately for a socketless editor', async () => {
+  it('flushSave resolves for a channel-less document (flush resolves immediately)', async () => {
     const ed = new PromptEditor('prompt:x')
-    await expect(ed.flush()).resolves.toBeDefined()
+    await expect(ed.flushSave()).resolves.toBeUndefined()
   })
 
-  it('enterMarkdown() rejects for a disconnected editor', async () => {
-    const ed = new PromptEditor('prompt:x')
-    await expect(ed.enterMarkdown()).rejects.toThrow('no live channel')
+  it('getRawContent rejects for a channel-less uuid', async () => {
+    const { ds } = servicePair()
+    await expect(ds.getRawContent('prompt:x')).rejects.toThrow('no live channel')
   })
 
-  it('enterWysiwyg() rejects for a disconnected editor', async () => {
-    const ed = new PromptEditor('prompt:x')
-    await expect(ed.enterWysiwyg('# md')).rejects.toThrow('no live channel')
+  it('save routes to HTTP for a channel-less uuid (the WS-vs-HTTP split is service-internal)', async () => {
+    const prevFetch = global.fetch
+    const fetchMock = vi.fn(() => Promise.resolve({ ok: true }))
+    global.fetch = fetchMock
+    try {
+      const { ds } = servicePair()
+      await ds.save('prompt:x', '# md')
+      expect(fetchMock).toHaveBeenCalledWith('/api/editor/save?uuid=' + encodeURIComponent('prompt:x'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: '# md', mode: 'markdown' }),
+      })
+      expect(FakeSocket.instances.length).toBe(0)
+    } finally { global.fetch = prevFetch }
   })
 
   it('setMode is a no-op resolving false for a socketless editor', async () => {
@@ -1571,11 +1866,15 @@ describe('dirty-state transitions (P2.A)', () => {
   })
 
   it('PromptEditor clears dirty after a successful save', async () => {
-    const ed = new FakeSurfacePromptEditor('prompt:p', { saveFn: () => Promise.resolve() })
-    ed.presentSurface('markdown', document.createElement('div'), 'b')
-    ed.markDirty()
-    await ed.flushSave()
-    expect(ed.isDirty).toBe(false)
+    const prevFetch = global.fetch
+    global.fetch = vi.fn(() => Promise.resolve({ ok: true }))
+    try {
+      const ed = new FakeSurfacePromptEditor('prompt:p', { documentService: bareServices().ds })
+      ed.presentSurface('markdown', document.createElement('div'), 'b')
+      ed.markDirty()
+      await ed.flushSave()
+      expect(ed.isDirty).toBe(false)
+    } finally { global.fetch = prevFetch }
   })
 })
 
@@ -1612,7 +1911,7 @@ describe('AbstractEditor.toggleMode (P2.C — binary-flip sugar over setMode)', 
     const rig = modeRig('markdown')
     const p = rig.ed.toggleMode()
     expect(rig.sock().sentOfType('enter-wysiwyg').length).toBe(1)
-    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [] })
+    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [], opId: sentOpId(rig.sock(), 'enter-wysiwyg') })
     await expect(p).resolves.toBe(true)
     expect(rig.ed.mode).toBe(EditorMode.WYSIWYG)
   })
@@ -1620,7 +1919,7 @@ describe('AbstractEditor.toggleMode (P2.C — binary-flip sugar over setMode)', 
   it('emits mode-changed with the NEW mode exactly once on a successful flip', async () => {
     const rig = modeRig('markdown')
     const p = rig.ed.toggleMode()
-    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [] })
+    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [], opId: sentOpId(rig.sock(), 'enter-wysiwyg') })
     await p
     expect(rig.events).toEqual([{ type: 'mode-changed', mode: 'wysiwyg' }])
   })
@@ -1628,7 +1927,7 @@ describe('AbstractEditor.toggleMode (P2.C — binary-flip sugar over setMode)', 
   it('a direct setMode caller also produces the mode-changed emission (producer lives in the flip path)', async () => {
     const rig = modeRig('markdown')
     const p = rig.ed.setMode('wysiwyg')
-    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [] })
+    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [], opId: sentOpId(rig.sock(), 'enter-wysiwyg') })
     await p
     expect(rig.events).toEqual([{ type: 'mode-changed', mode: 'wysiwyg' }])
   })
@@ -1670,7 +1969,7 @@ describe('AbstractEditor.toggleMode (P2.C — binary-flip sugar over setMode)', 
     const p2 = rig.ed.toggleMode()
     expect(p2).toBe(p1)
     expect(rig.sock().sentOfType('enter-wysiwyg').length).toBe(1) // one handshake
-    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [] })
+    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [], opId: sentOpId(rig.sock(), 'enter-wysiwyg') })
     await p1
     expect(rig.events).toEqual([{ type: 'mode-changed', mode: 'wysiwyg' }])
   })
@@ -1742,73 +2041,78 @@ describe('AbstractEditor.toggleAiBlocks (P2.C)', () => {
 // block ID anchor — the editor resolves id→index INTERNALLY (#indexAfterBlock over
 // blockIndexAfter), so no caller touches a document-model position. Markdown mode has
 // no editorPane → insertIndexForBlock() returns -1, so a dialog insert carries index:-1.
-describe('AbstractEditor.createBlock (P4.F — self-sufficient, block-id-anchored)', () => {
+describe('AbstractEditor.createBlock (P4.F — self-sufficient, block-id-anchored; framed by the service)', () => {
+  beforeEach(() => FakeSocket.reset())
+
+  // The editor keeps the PUBLIC signature (kind, attrs, afterBlockId?) and ALL
+  // index math (resolveInsertIndex delegate); the service frames the FROZEN op.
+  // A connected FakeSurface editor over the service pair — assertions read the
+  // socket frames, exactly what leaves the app.
   function wysiwygEd() {
-    const ed = new FakeSurfaceEditor('u')
+    const { ds } = servicePair()
+    const ed = new (withFakeSurfaces(AbstractEditor))('u', { connect: true, documentService: ds })
+    FakeSocket.instances[FakeSocket.instances.length - 1].driveOpen()
     ed.presentSurface('wysiwyg', document.createElement('div'), { body: '', blocks: [] })
     // #indexAfterBlock reads this.editorPane.state.doc; give the fake editorPane a doc.
     ed.surface.editorPaneValue = { state: { doc: { childCount: 5 } } }
-    return ed
+    const sock = () => FakeSocket.instances[FakeSocket.instances.length - 1]
+    return Object.assign(ed, { sockOps: () => sock().sentOfType('block-op') })
   }
 
-  it('no anchor → applies a create-block op at insertIndexForBlock()', () => {
+  it('no anchor → frames a create-block op at insertIndexForBlock()', () => {
     const ed = wysiwygEd()
     const idxSpy = vi.spyOn(ed, 'insertIndexForBlock').mockReturnValue(4)
-    const applyBlockOps = vi.spyOn(ed, 'applyBlockOps')
     ed.createBlock('code', {})
     expect(idxSpy).toHaveBeenCalledTimes(1)
-    expect(applyBlockOps).toHaveBeenCalledWith([{ type: 'create-block', kind: 'code', attrs: {}, index: 4 }])
+    expect(ed.sockOps()).toEqual([{ type: 'block-op', uuid: 'u', opId: OPID, op: { type: 'create-block', kind: 'code', attrs: {}, index: 4 } }])
   })
 
   it('defaults attrs to {} when omitted', () => {
     const ed = wysiwygEd()
     vi.spyOn(ed, 'insertIndexForBlock').mockReturnValue(0)
-    const applyBlockOps = vi.spyOn(ed, 'applyBlockOps')
     ed.createBlock('code')
-    expect(applyBlockOps).toHaveBeenCalledWith([{ type: 'create-block', kind: 'code', attrs: {}, index: 0 }])
+    expect(ed.sockOps()).toEqual([{ type: 'block-op', uuid: 'u', opId: OPID, op: { type: 'create-block', kind: 'code', attrs: {}, index: 0 } }])
   })
 
   it('afterBlockId → resolves to blockIndexAfter(doc, id); insertIndexForBlock is NOT called', () => {
     const ed = wysiwygEd()
     const idxSpy = vi.spyOn(ed, 'insertIndexForBlock')
-    const applyBlockOps = vi.spyOn(ed, 'applyBlockOps')
     vi.mocked(blockIndexAfter).mockClear().mockReturnValue(9)
     ed.createBlock('code', {}, 'b7')
     expect(idxSpy).not.toHaveBeenCalled()
     expect(blockIndexAfter).toHaveBeenCalledWith(ed.surface.editorPaneValue.state.doc, 'b7')
-    expect(applyBlockOps).toHaveBeenCalledWith([{ type: 'create-block', kind: 'code', attrs: {}, index: 9 }])
+    expect(ed.sockOps()).toEqual([{ type: 'block-op', uuid: 'u', opId: OPID, op: { type: 'create-block', kind: 'code', attrs: {}, index: 9 } }])
   })
 
   it('afterBlockId that is stale/missing → append at doc.childCount', () => {
     const ed = wysiwygEd()   // doc.childCount === 5
-    const applyBlockOps = vi.spyOn(ed, 'applyBlockOps')
     vi.mocked(blockIndexAfter).mockClear().mockReturnValue(-1)   // id not found
     ed.createBlock('code', {}, 'gone')
-    expect(applyBlockOps).toHaveBeenCalledWith([{ type: 'create-block', kind: 'code', attrs: {}, index: 5 }])
+    expect(ed.sockOps()).toEqual([{ type: 'block-op', uuid: 'u', opId: OPID, op: { type: 'create-block', kind: 'code', attrs: {}, index: 5 } }])
   })
 
   it('diagram with no source defaults attrs.mode to edit', () => {
     const ed = wysiwygEd()
     vi.spyOn(ed, 'insertIndexForBlock').mockReturnValue(0)
-    const applyBlockOps = vi.spyOn(ed, 'applyBlockOps')
     ed.createBlock('diagram')
-    expect(applyBlockOps).toHaveBeenCalledWith([{ type: 'create-block', kind: 'diagram', attrs: { mode: 'edit' }, index: 0 }])
+    expect(ed.sockOps()).toEqual([{ type: 'block-op', uuid: 'u', opId: OPID, op: { type: 'create-block', kind: 'diagram', attrs: { mode: 'edit' }, index: 0 } }])
   })
 
   it('diagram WITH a source keeps its attrs (no mode override)', () => {
     const ed = wysiwygEd()
     vi.spyOn(ed, 'insertIndexForBlock').mockReturnValue(0)
-    const applyBlockOps = vi.spyOn(ed, 'applyBlockOps')
     ed.createBlock('diagram', { source: 'graph TD' })
-    expect(applyBlockOps).toHaveBeenCalledWith([{ type: 'create-block', kind: 'diagram', attrs: { source: 'graph TD' }, index: 0 }])
+    expect(ed.sockOps()).toEqual([{ type: 'block-op', uuid: 'u', opId: OPID, op: { type: 'create-block', kind: 'diagram', attrs: { source: 'graph TD' }, index: 0 } }])
   })
 
   it('markdown mode (no editorPane): insertIndexForBlock() returns -1 → op carries index:-1 (no throw, no no-op)', () => {
-    const ed = new FakeSurfaceEditor('u')
+    const { ds } = servicePair()
+    const ed = new (withFakeSurfaces(AbstractEditor))('u', { connect: true, documentService: ds })
+    const sock = FakeSocket.instances[FakeSocket.instances.length - 1]
+    sock.driveOpen()
     ed.presentSurface('markdown', document.createElement('div'), 'body')
-    const applyBlockOps = vi.spyOn(ed, 'applyBlockOps')
     expect(() => ed.createBlock('smart-card', { href: 'https://x' })).not.toThrow()
-    expect(applyBlockOps).toHaveBeenCalledWith([{ type: 'create-block', kind: 'smart-card', attrs: { href: 'https://x' }, index: -1 }])
+    expect(sock.sentOfType('block-op')).toEqual([{ type: 'block-op', uuid: 'u', opId: OPID, op: { type: 'create-block', kind: 'smart-card', attrs: { href: 'https://x' }, index: -1 } }])
   })
 })
 
@@ -1827,7 +2131,12 @@ describe('AbstractEditor.askAi (P4.E/D-5 — the single AI-job seam, pure over c
   // applyTargetHighlight are module-mocked (top of file); blockIndexAfter is mocked
   // so the insert-index delegation is asserted via vi.mocked without a real doc.
   function seamRig(mode = 'wysiwyg', target = { kind: 'block', ref: 'co-9', label: 'Code Block' }) {
-    const ed = new FakeSurfaceEditor('u')
+    // Connected over the service pair so createBlock's through-call resolves the
+    // anchor id→index back through the delegate (#indexAfterBlock → blockIndexAfter).
+    // flush resolves immediately (no live server to ack) so flushSave never waits.
+    const { ds } = servicePair()
+    vi.spyOn(ds, 'flush').mockResolvedValue({})
+    const ed = new FakeSurfaceEditor('u', { connect: true, documentService: ds })
     ed.presentSurface(mode, document.createElement('div'), mode === 'markdown' ? 'md body' : 'x')
     if (mode === 'wysiwyg') ed.surface.editorPaneValue = {
       state: { doc: { textContent: 'doc text', childCount: 3 }, selection: { to: 5 } },
@@ -2376,13 +2685,13 @@ describe('AbstractEditor.copyAsMarkdown (P4.D — moved from editor.js)', () => 
     if (prevClip !== undefined) Object.defineProperty(navigator, 'clipboard', { value: prevClip, configurable: true })
   })
 
-  it('fetches the clean export and writes it to the Wails pasteboard (primary)', async () => {
+  it('fetches the clean export (via DocumentService.export) and writes it to the Wails pasteboard (primary)', async () => {
     const md = '# clean export'
     const fetchMock = vi.fn(() => Promise.resolve({ ok: true, text: () => Promise.resolve(md) }))
     global.fetch = fetchMock; window.fetch = fetchMock
     const setText = vi.fn(() => Promise.resolve())
     window.runtime = { ClipboardSetText: setText }
-    const ed = new AbstractEditor('doc-9')
+    const ed = new AbstractEditor('doc-9', { documentService: bareServices().ds })
     ed.copyAsMarkdown()
     await new Promise((r) => setTimeout(r, 0))
     expect(fetchMock).toHaveBeenCalledWith('/api/editor/export?uuid=doc-9&format=markdown')
@@ -2395,7 +2704,7 @@ describe('AbstractEditor.copyAsMarkdown (P4.D — moved from editor.js)', () => 
     window.runtime = undefined
     const writeText = vi.fn(() => Promise.resolve())
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
-    const ed = new AbstractEditor('doc-9')
+    const ed = new AbstractEditor('doc-9', { documentService: bareServices().ds })
     ed.copyAsMarkdown()
     await new Promise((r) => setTimeout(r, 0))
     expect(writeText).toHaveBeenCalledWith('body')
@@ -2407,9 +2716,12 @@ describe('AbstractEditor.copyAsMarkdown (P4.D — moved from editor.js)', () => 
     window.runtime = { ClipboardSetText: () => Promise.resolve() }
     // AbstractEditor requires a uuid (constructor throws on ''); the `if (!uuid)`
     // guard's negative is exercised by the workspace null-editor delegation. Here
-    // we confirm a valid editor DOES fetch (the guard's positive).
-    const ed = new AbstractEditor('u')
+    // we confirm a valid, service-wired editor DOES fetch (the guard's positive) —
+    // and a service-less bare editor safely no-ops.
+    const ed = new AbstractEditor('u', { documentService: bareServices().ds })
     ed.copyAsMarkdown()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(() => new AbstractEditor('bare').copyAsMarkdown()).not.toThrow()
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
@@ -2452,7 +2764,7 @@ describe('NoteEditor toolbar ownership (P4.D)', () => {
   it('mounts the toolbar on the FIRST present; re-renders its surface section on the next', () => {
     const tb = fakeToolbar()
     const ed = new (withFakeSurfaces(NoteEditor))('n', {
-      socketFactory: (url) => new FakeSocket(url), wsUrl: () => 'ws://t', onServerMessage: () => {}, toolbar: tb,
+      documentService: servicePair().ds, onServerMessage: () => {}, toolbar: tb,
     })
     ed.presentSurface('wysiwyg', document.createElement('div'), { body: '', blocks: [] })
     expect(tb.mount).toHaveBeenCalledTimes(1)
@@ -2466,7 +2778,7 @@ describe('NoteEditor toolbar ownership (P4.D)', () => {
   it('destroy tears down the toolbar subscription', () => {
     const tb = fakeToolbar()
     const ed = new (withFakeSurfaces(NoteEditor))('n', {
-      socketFactory: (url) => new FakeSocket(url), wsUrl: () => 'ws://t', onServerMessage: () => {}, toolbar: tb,
+      documentService: servicePair().ds, onServerMessage: () => {}, toolbar: tb,
     })
     ed.presentSurface('markdown', document.createElement('div'), 'x')
     ed.destroy()
@@ -2475,7 +2787,7 @@ describe('NoteEditor toolbar ownership (P4.D)', () => {
 
   it('a null toolbar (injected) is a safe no-op through present + destroy', () => {
     const ed = new (withFakeSurfaces(NoteEditor))('n', {
-      socketFactory: (url) => new FakeSocket(url), wsUrl: () => 'ws://t', onServerMessage: () => {}, toolbar: null,
+      documentService: servicePair().ds, onServerMessage: () => {}, toolbar: null,
     })
     expect(() => { ed.presentSurface('markdown', document.createElement('div'), 'x'); ed.destroy() }).not.toThrow()
   })
@@ -2495,7 +2807,10 @@ describe('SieveWorkspace tab-lifecycle verbs (P2.D facade)', () => {
   let prevFetch
 
   beforeEach(() => {
-    ws = new SieveWorkspace()
+    ws = new SieveWorkspace({
+      socketFactory: (url) => new FakeSocket(url),
+      wsUrlFor: (u) => 'ws://test/api/ws?uuid=' + u,
+    })
     ajaxCalls = []
     fetchCalls = []
     prevHtmx = window.htmx
@@ -2587,11 +2902,7 @@ describe('SieveWorkspace tab-lifecycle verbs (P2.D facade)', () => {
 
   it('close leaks no editor: the pruned tab is the one whose editor was already destroyed', async () => {
     FakeSocket.reset()
-    const opts = {
-      socketFactory: (url) => new FakeSocket(url),
-      wsUrl: () => 'ws://test',
-      onServerMessage: () => {},
-    }
+    const opts = { onServerMessage: () => {} }
     const tabA = ws.activateDocument('doc-a', opts)
     FakeSocket.instances[0].driveOpen()
     // Successor activates (destroys A's editor, detaches it), THEN the prune runs.

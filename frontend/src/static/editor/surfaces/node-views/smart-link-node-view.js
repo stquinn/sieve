@@ -3,9 +3,8 @@
 // Renders as an inline <a> in flowing text. Go's RunJob fetches the page title;
 // the label updates in place when the job completes.
 
-import { isJobStale } from '../../../base/fenced-block-base.js'
+import { isJobStale } from '../../../block/renderers/job-status.js'
 import { registerSieveRenderer } from '../../../block/sieve-block-extension.js'
-import { updateBlockOp } from '../../../block/block-sync.js'
 
 ;(function () {
   'use strict'
@@ -210,10 +209,13 @@ import { updateBlockOp } from '../../../block/block-sync.js'
       var newHref  = hrefEl.value.trim()
       var newLabel = labelEl.value.trim() || newHref
       if (!newHref) return
-      // Singleton edit dialog: reach the held Editor via the block's editorPane
-      // (detail.editor.sieveHost), the pane the surface stamped — never the backend.
-      var host = detail.editor && detail.editor.sieveHost
-      if (host) host.applyBlockOps([updateBlockOp({ id: detail.id, kind: 'smart-link', attrs: { href: newHref, label: newLabel } })])
+      // Singleton edit dialog: reach the BlockService via the block's
+      // editorPane (detail.editor.blockService), the pane the surface stamped
+      // — never the backend directly. The service resolves the link's channel
+      // + kind from its routing index (seeded by the smart-link's own
+      // insert-block render-back when it was extracted).
+      var bs = detail.editor && detail.editor.blockService
+      if (bs) bs.updateAttributes(detail.id, { href: newHref, label: newLabel })
       dlg.close()
     }
 

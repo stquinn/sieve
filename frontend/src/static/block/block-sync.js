@@ -5,9 +5,9 @@
 // top-level blocks that emits create-block / update-block / delete-block ops.
 //
 // SCOPE: the observer owns PROSE block content. Structured (sieve-*) blocks have
-// their own sync channels — content via ctx.updateAttributes (an update-block op
-// built here by updateBlockOp, applied through the held Editor), insertion via the
-// `insert-block` render-back (surface applyServerOp) — and their change-signature is a hash of their attrs
+// their own sync channels — content via BlockService.updateAttributes (an
+// update-block op built here by updateBlockOp, framed by the service), insertion
+// via the `insert-block` render-back (surface applyServerOp) — and their change-signature is a hash of their attrs
 // (the frontend never serialises them to markdown). So this observer emits no
 // create/update content op for a structured block; it tracks them only for the
 // baseline and for DELETE detection (a delete-block is kind-agnostic).
@@ -29,9 +29,12 @@ function blockSig(b) {
 // `attrs` (prose's body at attrs.content, exactly as code's at attrs.source) —
 // there is no kind-special-cased top-level field on the wire. aliases are an
 // optional field; create-block carries its document index. Both the prose
-// observer (proseOp) and structured NodeView edits (updateBlockOp) build through
-// here, so prose and structured updates emit a byte-identical shape.
-function blockOp(type, blockId, kind, attrs, aliases, index) {
+// observer (proseOp) and the service verbs (updateBlockOp inside
+// BlockService.updateAttributes; DocumentService's explicit-index create)
+// build through here, so prose and structured updates emit a byte-identical
+// shape. Exported for DocumentService, which must reproduce proseOp's exact
+// key order for the wysiwyg observer's prose creates.
+export function blockOp(type, blockId, kind, attrs, aliases, index) {
   var op = { type: type, blockId: blockId, kind: kind, attrs: attrs || {} }
   if (aliases && aliases.length) op.aliases = aliases
   if (type === 'create-block') op.index = index
@@ -48,11 +51,12 @@ export function proseOp(type, b, index) {
   return op
 }
 
-// updateBlockOp maps a structured NodeView edit detail ({ id, kind, attrs,
-// aliases? }, passed by ctx.updateAttributes) to an update-block block-op — the
-// same shape proseOp emits. Both rides converge on ONE wire op, retiring the
-// bespoke block-update message: every block update, prose or structured, is a
-// block-op {update-block, blockId, kind, attrs, aliases?}.
+// updateBlockOp maps a structured block edit detail ({ id, kind, attrs,
+// aliases? }, built by BlockService.updateAttributes from its blockId→kind
+// index) to an update-block block-op — the same shape proseOp emits. Both
+// rides converge on ONE wire op, retiring the bespoke block-update message:
+// every block update, prose or structured, is a block-op
+// {update-block, blockId, kind, attrs, aliases?}.
 export function updateBlockOp(detail) {
   return blockOp('update-block', detail.id, detail.kind, detail.attrs, detail.aliases)
 }

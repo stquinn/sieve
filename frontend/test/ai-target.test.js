@@ -30,11 +30,13 @@ vi.mock('../src/static/block/sieve-block-extension.js', () => ({
   sieveBlockAttrs: vi.fn((n) => n.attrs),
   sieveBlockEntries: vi.fn(() => []),
   rendererFor: vi.fn(() => null),
-  domSelectionBlockRange: vi.fn(() => null),
-  domSelectionTextInside: vi.fn(() => null),
+}))
+vi.mock('../src/static/block/block-selection.js', () => ({
+  BlockSelection: { blockRange: vi.fn(() => null), textInside: vi.fn(() => null) },
 }))
 
-import { getSieveBlockLabel, domSelectionBlockRange } from '../src/static/block/sieve-block-extension.js'
+import { getSieveBlockLabel } from '../src/static/block/sieve-block-extension.js'
+import { BlockSelection } from '../src/static/block/block-selection.js'
 import { getBlockSelectionRange } from '../src/static/editor/block-chrome.js'
 
 // P3.C — the AI target is RESOLVED IN THE SURFACE and STORED in the SelectionContext
@@ -74,7 +76,7 @@ beforeEach(() => {
     const sel = view.state.selection
     return { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false, isNodeSelection: !!sel.node }
   })
-  vi.mocked(domSelectionBlockRange).mockReturnValue(null)
+  vi.mocked(BlockSelection.blockRange).mockReturnValue(null)
 })
 
 describe('AI target — selection ref chains (bug-1 fix)', () => {

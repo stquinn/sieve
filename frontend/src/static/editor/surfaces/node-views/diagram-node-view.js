@@ -6,11 +6,13 @@
 // (frontend/src/static/block/renderers/diagram-renderer.js — a DIFFERENT
 // class). This file HOLDS a
 // DiagramRenderer instance by COMPOSITION and owns everything that genuinely
-// speaks ProseMirror: contentDOM binding, cursor restore via editorPane, the
-// lowlight decoration plugin, selection/stopEvent/ignoreMutation, and the
-// mode-flip dispatch through the held Editor. Mode and cursor position are
-// persisted in YAML via the held Editor's applyBlockOps so they survive
-// reloads. Keyboard behaviour (Tab/Enter/Mod+Enter toggle) comes from the
+// speaks ProseMirror: contentDOM binding, caret capture/restore across the
+// mode flip (a NodeView-LOCAL variable since issue #49 Phase 1 — cursorPos
+// left the wire and the schema; caret-restore scope is the NodeView lifetime,
+// intended), the lowlight decoration plugin, selection/stopEvent/
+// ignoreMutation, and the mode-flip dispatch through the live renderer's
+// setMode (whose patch leaves through the BlockService, the wire owner).
+// Keyboard behaviour (Tab/Enter/Mod+Enter toggle) comes from the
 // shared interaction-policy extension via interactionPolicy + onModEnter — do
 // NOT add handleKeyDown here (docs/editor-interaction-contract.md is
 // normative).
@@ -25,8 +27,9 @@
 // descriptor's shape — the contract sieve-block-extension.js's duck-typed
 // registerSieveRenderer() consumes — exactly as that file already expects.
 
-import { esc, getLowlight } from '../../../base/fenced-block-base.js'
-import { T } from '../../../base/tiptap-vendor.js'
+import { esc } from '../../../block/renderers/html-escape.js'
+import { getLowlight } from '../../../block/renderers/highlighting.js'
+import { T } from '../tiptap-vendor.js'
 import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block-extension.js'
 import { MODE } from '../../../block/sieve-block.js'
 import { DiagramRenderer } from '../../../block/renderers/diagram-renderer.js'
@@ -46,10 +49,9 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
 
   // The diagram's HEADER (badge + mermaid label + edit/render toggle + expand
   // button) is built by DiagramRenderer, whose buttons call its OWN semantic
-  // verbs (setMode / expand — contract core API). This adapter registers a
-  // per-NodeView APPLIER with the BlockService (v1 transport): the applier is
-  // where PM knowledge lives — caret capture on the render-ward flip, the
-  // content→source mapping, tracked attr transactions via ctx.updateAttributes.
+  // verbs (setMode / expand — contract core API). The verbs leave through the
+  // BlockService; the PM-side caret capture/restore around the mode flip stays
+  // HERE, keyed off takeModeTransition() in the NodeView's update().
 
   // liveRenderers — id → live DiagramRenderer instance. The behaviour-registry
   // paths (policy Mod+Enter, policy expand chord, context menu) resolve the
@@ -69,7 +71,7 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
     // flipMode — THE mode-flip op (contract: one function, N entry points).
     // Called by onModEnter (policy extension) and the render body's DOM keydown
     // listener. Both land on the live renderer's setMode — the SAME verb the
-    // header toggle calls; caret capture happens in the v1 applier below.
+    // header toggle calls; caret capture happens in the NodeView's update().
     flipMode: function (attrs) {
       if (!attrs || !attrs.id) return false
       var r = liveRenderers[attrs.id]
@@ -139,7 +141,6 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
       source:      { default: '', parseHTML: function (el) { return el.getAttribute('data-source')       || '' } },
       diagramType: { default: 'mermaid', parseHTML: function (el) { return el.getAttribute('data-diagram-type') || 'mermaid' } },
       mode:        { default: 'render', parseHTML: function (el) { return el.getAttribute('data-mode')   || 'render' } },
-      cursorPos:   { default: 0,        parseHTML: function (el) { return parseInt(el.getAttribute('data-cursor-pos'))  || 0 } },
     },
 
     getFriendlyName: function() { return 'Diagram' },
@@ -159,7 +160,6 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
         source:      typeof data.source === 'string' ? data.source : '',
         diagramType: data.diagramType || 'mermaid',
         mode:        data.mode        || 'render',
-        cursorPos:   typeof data.cursorPos === 'number' ? data.cursorPos : 0,
       }
     },
 
@@ -173,34 +173,21 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
       // the document, and a mode-flip right after typing must never render
       // stale mermaid source. The overlay key is this kind's own knowledge.
       function envelopeFor(n) {
-        return sieveBlockFor(n, { source: n.textContent })
+        return sieveBlockFor(n, { source: n.textContent }, ctx && ctx.blockService)
       }
 
       // The renderer instance this NodeView HOLDS by composition (never
       // inheritance — see the file header). All look-and-feel (header, both
       // bodies, mermaid invocation, gutter/highlight box chrome) is its job;
-      // its semantic verbs effect through the BlockService, whose v1 applier
-      // this adapter registers below.
+      // its semantic verbs hit the real wire through the BlockService (issue
+      // #49 Phase 1 — the v1 appliers are retired); this kind's
+      // content→source mapping lives on DiagramRenderer.setContent.
       var renderer = new DiagramRenderer(envelopeFor(node), ctx.blockService || null)
 
-      // v1 APPLIER — today's PM-transaction behaviour behind the service
-      // boundary. This is where PM knowledge lives: caret capture on the
-      // render-ward flip, the content→source mapping,
-      // tracked attr transactions via ctx.updateAttributes.
-      var unregisterApplier = ctx.blockService ? ctx.blockService.registerApplier({
-        owns: function (id) { return !!id && id === (currentAttrs.id || '') },
-        updateAttributes: function (_id, patch) {
-          if (patch && patch.mode === 'render') {
-            var sel = editorPane.view.state.selection
-            if (sel.$from.parent.type.name === 'sieve-diagram' && sel.$from.parent.attrs.id === currentAttrs.id) {
-              patch = Object.assign({}, patch, { cursorPos: sel.$from.parentOffset })
-            }
-          }
-          ctx.updateAttributes(patch)
-        },
-        setContent: function (_id, text) { ctx.updateAttributes({ source: text }) },
-        retry: function () { ctx.retry() },
-      }) : null
+      // NodeView-local caret memory for the edit⇄render round trip (replaces
+      // the retired cursorPos attr — caret position never rides the wire or
+      // the schema; its scope is THIS NodeView's lifetime, intended).
+      var savedCursorPos = 0
 
       var dom = renderer.render()
       if (currentAttrs.id) liveRenderers[currentAttrs.id] = renderer
@@ -272,12 +259,25 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
           renderer.update(envelopeFor(updatedNode))
           var transition = renderer.takeModeTransition()
 
-          // Only a genuine mode TRANSITION into edit needs PM's help: restore the
-          // caret to attrs.cursorPos. DiagramRenderer already focused the render
-          // pane itself on the render-ward transition (a plain DOM focus() call,
-          // no PM needed there).
+          // Render-ward transition: remember where the caret sat in the source
+          // (PM's selection still points into this node's text) so the next
+          // edit-ward flip can put it back. NodeView-local — never the wire.
+          if (transition && transition.modeChangedTo === 'render') {
+            try {
+              var sel = editorPane.view.state.selection
+              if (sel.$from.parent === updatedNode ||
+                  (sel.$from.parent.type.name === 'sieve-diagram' && sel.$from.parent.attrs.id === currentAttrs.id)) {
+                savedCursorPos = sel.$from.parentOffset
+              }
+            } catch (e) {}
+          }
+
+          // Only a genuine mode TRANSITION into edit needs PM's help: restore
+          // the caret remembered on the last render-ward flip. DiagramRenderer
+          // already focused the render pane itself on the render-ward
+          // transition (a plain DOM focus() call, no PM needed there).
           if (transition && transition.modeChangedTo === 'edit') {
-            var pos = typeof updatedNode.attrs.cursorPos === 'number' ? updatedNode.attrs.cursorPos : 0
+            var pos = savedCursorPos
             if (editorPane && editorPane.commands && getPos) {
               setTimeout(function() {
                 try {
@@ -313,7 +313,6 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
         destroy: function () {
           clearTimeout(updateTimer)
           observer.disconnect()
-          if (unregisterApplier) unregisterApplier()
           if (currentAttrs.id && liveRenderers[currentAttrs.id] === renderer) delete liveRenderers[currentAttrs.id]
           renderer.destroy()
         },

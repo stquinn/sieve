@@ -12,7 +12,8 @@ import (
 const DefaultAutosaveDebounce = 30 * time.Second
 
 // ShadowDocument holds the in-memory editor state for one open document.
-// Mode controls how Flush and Remux behave ("wysiwyg" or "markdown").
+// Whether the markdown-mode raw buffer is authoritative (rawAuthoritative)
+// controls how Flush and Remux behave — see rawAuthoritative below.
 type ShadowDocument struct {
 	UUID string
 	// Blocks is the authoritative ordered block tree (spec §2), held DIRECTLY —
@@ -25,8 +26,16 @@ type ShadowDocument struct {
 	// derived on demand (deriveMarkdown) — there is no stored markdown to drift
 	// (the old Markdown field drifted: a prose-only session left it stale).
 	mdModeBuffer string
-	Mode         string // "wysiwyg" (default) or "markdown"
-	codec        *DocumentCodec
+	// rawAuthoritative reports whether the mdModeBuffer is the document's truth
+	// (the old Mode == "markdown"). It IS the format-blind in-flight signal: set
+	// when the user enters markdown mode (EnterMarkdownMode seeds the buffer and
+	// raises it), cleared when they commit back to WYSIWYG (EnterWysiwygMode
+	// reparses the tree from the buffer, then clears BOTH the flag and the buffer
+	// so a stale buffer can never be mistaken for authoritative after a round-trip).
+	// Default false = WYSIWYG, the tree is authoritative. Derived, never persisted:
+	// Mode as a stored string retired in issue #49 Phase 2.
+	rawAuthoritative bool
+	codec            *DocumentCodec
 	debounce     time.Duration
 	closed       bool // set by StopDebounce; prevents re-arming after Close
 	mu           sync.Mutex
@@ -68,7 +77,6 @@ func NewShadow(uuid, body string, codec *DocumentCodec, debounce time.Duration, 
 	s := &ShadowDocument{
 		UUID:     uuid,
 		Blocks:   blocks,
-		Mode:     "wysiwyg",
 		codec:    codec,
 		debounce: debounce,
 		onFlush:  onFlush,
@@ -92,7 +100,7 @@ func (s *ShadowDocument) reparseDoc(md string) {
 // holds s.mu; the transient DocView shares the slice read-only under that lock,
 // so the single derivation logic lives on DocView.
 func (s *ShadowDocument) deriveMarkdown() string {
-	return DocView{UUID: s.UUID, Mode: s.Mode, mdModeBuffer: s.mdModeBuffer, Blocks: s.Blocks, codec: s.codec}.deriveMarkdown()
+	return DocView{UUID: s.UUID, rawAuthoritative: s.rawAuthoritative, mdModeBuffer: s.mdModeBuffer, Blocks: s.Blocks, codec: s.codec}.deriveMarkdown()
 }
 
 // ExportMarkdown derives CLEAN whole-doc markdown for "Copy as Markdown" from the
@@ -103,16 +111,16 @@ func (s *ShadowDocument) deriveMarkdown() string {
 func (s *ShadowDocument) ExportMarkdown(filter BlockFilter) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return DocView{UUID: s.UUID, Mode: s.Mode, mdModeBuffer: s.mdModeBuffer, Blocks: s.Blocks, codec: s.codec}.deriveExportMarkdown(filter)
+	return DocView{UUID: s.UUID, rawAuthoritative: s.rawAuthoritative, mdModeBuffer: s.mdModeBuffer, Blocks: s.Blocks, codec: s.codec}.deriveExportMarkdown(filter)
 }
 
 func (s *ShadowDocument) SetMarkdown(md string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.Mode == "wysiwyg" {
-		s.reparseDoc(md)
-	} else {
+	if s.rawAuthoritative {
 		s.mdModeBuffer = md
+	} else {
+		s.reparseDoc(md)
 	}
 	s.resetDebounce()
 }

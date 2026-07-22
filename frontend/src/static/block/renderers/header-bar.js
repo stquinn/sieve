@@ -142,44 +142,6 @@ export class AdvancedHeaderProvider extends SieveBlockHeader {
 
 const HEADER_FOCUSABLE = 'input, textarea, select, button'
 
-/**
- * Move the live focused control from oldBar into freshBar at the matching slot
- * (same index among focusable descendants, same tag). Returns a snapshot for
- * restoreFocusedControl, or null if nothing in oldBar was focused. Call BEFORE
- * freshBar is mounted; call restoreFocusedControl AFTER (a detached element
- * can't hold focus).
- * @param {HTMLElement} oldBar @param {HTMLElement} freshBar
- * @returns {{ el: HTMLElement, selectionStart: number|null, selectionEnd: number|null }|null}
- */
-export function adoptFocusedControl(oldBar, freshBar) {
-  const active = /** @type {any} */ ((typeof document !== 'undefined') ? document.activeElement : null)
-  if (!oldBar || !freshBar || !active || !oldBar.contains(active)) return null
-  const oldList = Array.prototype.slice.call(oldBar.querySelectorAll(HEADER_FOCUSABLE))
-  const idx = oldList.indexOf(active)
-  if (idx < 0) return null
-  const freshList = Array.prototype.slice.call(freshBar.querySelectorAll(HEADER_FOCUSABLE))
-  const twin = freshList[idx]
-  if (!twin || twin.tagName !== active.tagName || !twin.parentNode) return null
-  const ss = (typeof active.selectionStart === 'number') ? active.selectionStart : null
-  const se = (typeof active.selectionEnd === 'number') ? active.selectionEnd : null
-  twin.parentNode.replaceChild(active, twin)   // fresh tree now holds the LIVE control
-  return { el: active, selectionStart: ss, selectionEnd: se }
-}
-
-/**
- * Re-focus the adopted control (the reparent blurred it) and restore its
- * caret. No-op when adoptFocusedControl returned null.
- * @param {{ el: HTMLElement, selectionStart: number|null, selectionEnd: number|null }|null} snap
- */
-export function restoreFocusedControl(snap) {
-  if (!snap || !snap.el) return
-  if (typeof snap.el.focus === 'function') snap.el.focus()
-  const el = /** @type {any} */ (snap.el)
-  if (snap.selectionStart !== null && typeof el.setSelectionRange === 'function') {
-    try { el.setSelectionRange(snap.selectionStart, snap.selectionEnd) } catch (e) {}
-  }
-}
-
 // ── HeaderBar — the header's build + focus-preserving re-render ─────────────
 // A kind's buildHeader() creates one and returns its bar (via render); the
 // kind's update() calls HeaderBar.update() so active states track live attrs.
@@ -222,9 +184,51 @@ export class HeaderBar {
   update(attrs, ctx) {
     if (!this.#el) return
     const fresh = this.#build(attrs, ctx)
-    const snap = adoptFocusedControl(this.#el, fresh)
+    const snap = HeaderBar.adoptFocusedControl(this.#el, fresh)
     if (this.#el.parentNode) this.#el.parentNode.replaceChild(fresh, this.#el)
     this.#el = fresh
-    restoreFocusedControl(snap)
+    HeaderBar.restoreFocusedControl(snap)
+  }
+
+  // ── Focus survival across a header re-render (static: pure DOM helpers the
+  // re-render owns; also used by the LEGACY headerProvider seam in
+  // sieve-block-extension.js, which drives its own bar swap) ──────────────────
+
+  /**
+   * Move the live focused control from oldBar into freshBar at the matching slot
+   * (same index among focusable descendants, same tag). Returns a snapshot for
+   * restoreFocusedControl, or null if nothing in oldBar was focused. Call BEFORE
+   * freshBar is mounted; call restoreFocusedControl AFTER (a detached element
+   * can't hold focus).
+   * @param {HTMLElement} oldBar @param {HTMLElement} freshBar
+   * @returns {{ el: HTMLElement, selectionStart: number|null, selectionEnd: number|null }|null}
+   */
+  static adoptFocusedControl(oldBar, freshBar) {
+    const active = /** @type {any} */ ((typeof document !== 'undefined') ? document.activeElement : null)
+    if (!oldBar || !freshBar || !active || !oldBar.contains(active)) return null
+    const oldList = Array.prototype.slice.call(oldBar.querySelectorAll(HEADER_FOCUSABLE))
+    const idx = oldList.indexOf(active)
+    if (idx < 0) return null
+    const freshList = Array.prototype.slice.call(freshBar.querySelectorAll(HEADER_FOCUSABLE))
+    const twin = freshList[idx]
+    if (!twin || twin.tagName !== active.tagName || !twin.parentNode) return null
+    const ss = (typeof active.selectionStart === 'number') ? active.selectionStart : null
+    const se = (typeof active.selectionEnd === 'number') ? active.selectionEnd : null
+    twin.parentNode.replaceChild(active, twin)   // fresh tree now holds the LIVE control
+    return { el: active, selectionStart: ss, selectionEnd: se }
+  }
+
+  /**
+   * Re-focus the adopted control (the reparent blurred it) and restore its
+   * caret. No-op when adoptFocusedControl returned null.
+   * @param {{ el: HTMLElement, selectionStart: number|null, selectionEnd: number|null }|null} snap
+   */
+  static restoreFocusedControl(snap) {
+    if (!snap || !snap.el) return
+    if (typeof snap.el.focus === 'function') snap.el.focus()
+    const el = /** @type {any} */ (snap.el)
+    if (snap.selectionStart !== null && typeof el.setSelectionRange === 'function') {
+      try { el.setSelectionRange(snap.selectionStart, snap.selectionEnd) } catch (e) {}
+    }
   }
 }

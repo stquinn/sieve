@@ -1,24 +1,24 @@
 // @ts-check
 // abstract-editor.js — base of the editor component hierarchy (P2.A, P2.B, P2.B.2).
 // AbstractEditor is the stable identity for one open document's editing session:
-// it owns the uuid (identity), dirty state, the save/destroy contract, the
-// document's INPUT SURFACE (a WysiwygSurface or MarkdownSurface), and — since
-// P2.B.2 — the WebSocket transport machinery. Concrete editors know the BLOCK
-// PROTOCOL (domain operations) but not the transport: the WS channel is an
-// AbstractEditor #private detail exposed only through domain methods.
+// it owns the uuid (identity), dirty state, the save/destroy contract, and the
+// document's INPUT SURFACE (a WysiwygSurface or MarkdownSurface).
 //
 // Mode and the TipTap handle are DERIVED from the mounted surface: there is no
 // stored mode to fall out of sync, which is what makes the old torn-down-limbo
 // mode-toggle state unrepresentable.
 //
-// Transport is INVISIBLE outside this class: no public or protected send
-// methods exist anywhere in the hierarchy — the domain methods (applyBlockOps,
-// updateText, flush, enterMarkdown, enterWysiwyg, retryBlockJob, extract) ARE
-// the entire protocol surface. A concrete type that wants a live channel
-// declares it at construction (`connect: true` — NoteEditor); the default is
-// disconnected, so a bare editor (tests, PromptEditor) never touches the
-// network. Domain methods on a disconnected editor are safe no-ops (sends) or
-// immediate resolves/rejects (awaits) — callers never probe for transport.
+// Transport lives in the SERVICE PAIR (issue #49 Phase 1): the editor talks
+// ONLY to DocumentService (uuid-addressed lifecycle + the format-blind
+// raw-content family) and — for extract — BlockService, the wire owner. A
+// concrete type that wants a live channel declares it at construction
+// (`connect: true` — NoteEditor): the constructor opens the document's channel
+// via documentService.open(uuid, delegate), registering THIS editor as the
+// channel's inbound router (applyServerOp / onFlushAck / onMessage) and index
+// resolver (resolveInsertIndex — the ONE sanctioned PM-resolution callback).
+// The default is disconnected, so a bare editor (tests, PromptEditor) never
+// touches the network. Verbs on a disconnected editor are safe no-ops (sends)
+// or immediate resolves/rejects (awaits) — callers never probe for transport.
 //
 // Dual-use ES module (block-position.js pattern): `export` for vitest imports;
 // window.* assignment happens in editor-shell.js (which re-exports this as the
@@ -28,37 +28,31 @@ import { AbstractSurface } from './surfaces/abstract-surface.js'
 import { EditorMode } from './editor-mode.js'
 import { SelectionModel } from './selection-model.js'
 import { blockInsertPos } from '../ai/ai-target.js'
-import { blockIndexForInsert, emptyParagraphAnchor, blockIndexAfter } from '../base/block-position.js'
+import { blockIndexForInsert, emptyParagraphAnchor, blockIndexAfter } from './surfaces/block-position.js'
 import { buildAiContext, applyTargetHighlight } from './extensions.js'
 import { resolveEntriesForKind } from '../block/sieve-block-extension.js'
 
 /**
  * @typedef {import('./surfaces/abstract-surface.js').SurfaceEventMsg} SurfaceEventMsg
  * @typedef {import('./editor-mode.js').EditorModeValue} EditorModeValue
+ * @typedef {import('../block/document-service.js').DocumentService} DocumentService
  */
 
 /**
  * @typedef {object} AbstractEditorOptions
  * @property {boolean} [connect]
  *   — when true, the editor opens its live channel at construction (NoteEditor
- *   declares this). Default false: no socket is ever created; domain methods
- *   are safe no-ops (sends) / immediate resolves or rejects (awaits).
- *   PromptEditor and bare/base editors simply omit it.
- * @property {(url: string) => WebSocket} [socketFactory]
- *   — injected for tests; defaults to `new WebSocket(url)`
- * @property {() => string} [wsUrl]
- *   — injected for tests; defaults to the /api/ws URL for this uuid
+ *   declares this). Default false: no channel is ever opened; verbs are safe
+ *   no-ops (sends) / immediate resolves or rejects (awaits). PromptEditor and
+ *   bare/base editors simply omit it.
+ * @property {DocumentService} [documentService]
+ *   — the uuid-addressed service half (Workspace composition root hands it
+ *   down). Required for a live channel; a bare editor may omit it, in which
+ *   case every service-backed verb is a safe no-op.
  * @property {(msg: object) => void} [onServerMessage]
- *   — routing for messages not consumed here (error, block-extracted, …)
+ *   — routing for messages the channel delegate does not consume (error,
+ *   block-extracted, unawaited mode replies, …)
  */
-
-// WebSocket.readyState OPEN, fixed at 1 by the WHATWG spec. Referenced directly
-// so the class does not depend on a global `WebSocket` (absent in the test env).
-const WS_OPEN = 1
-
-// Server-op render-backs the active surface applies (backend is the document
-// source of truth; the placement semantics live in the surfaces).
-const SURFACE_OPS = Object.freeze(['insert-block', 'replace-block', 'block-attrs-updated'])
 
 export class AbstractEditor {
   // ── Identity + surface state ─────────────────────────────────────────────────
@@ -88,41 +82,15 @@ export class AbstractEditor {
    */
   #selectionModel
 
-  // ── WS transport state (socketless editors keep these null/empty) ─────────────
+  // ── Service boundary (disconnected editors keep these null/false) ────────────
 
-  /** @type {boolean} */
-  /** @type {object|null} the BlockService singleton, handed down from the
-   * Workspace composition root (contract §service pair); surfaces stamp it on
-   * their pane for the NodeView ctx. */
-  #blockService = null
-  #socketless
+  /** @type {DocumentService|null} the uuid-addressed service half, handed down
+   * from the Workspace composition root (contract §service pair). The wire
+   * owner (BlockService) is reached THROUGH it (`documentService.blockService`). */
+  #documentService = null
 
-  /** @type {WebSocket|null} */
-  #ws = null
-
-  /** @type {string[]} JSON strings queued before the socket is OPEN */
-  #pending = []
-
-  /** @type {Record<string, {resolve: (m: object) => void, reject: (e: Error) => void}>} */
-  #awaiters = {}
-
-  /** @type {ReturnType<typeof setTimeout>|null} */
-  #reconnectTimer = null
-
-  /** @type {ReturnType<typeof setInterval>|null} */
-  #pingInterval = null
-
-  /** @type {number} exponential-backoff delay, doubles per attempt, cap 30s */
-  #reconnectDelay = 1000
-
-  /** @type {number} */
-  #lastPong = Date.now()
-
-  /** @type {(url: string) => WebSocket} */
-  #socketFactory
-
-  /** @type {() => string} */
-  #wsUrl
+  /** @type {boolean} whether this editor declared a live channel (connect: true) */
+  #connected = false
 
   /** @type {(msg: object) => void} */
   #onServerMessage
@@ -166,19 +134,29 @@ export class AbstractEditor {
     // spec prescribes. SurfaceEventMsg is {type}-minimum, so the extra `context`
     // field is fine; the model already fires only on a meaningful change.
     this.#selectionModel.onUpdate((ctx) => this.#emitEvent({ type: 'selection-update', context: ctx }))
-    this.#blockService = options.blockService || null
-    this.#socketless = options.connect !== true
+    this.#documentService = options.documentService || null
+    this.#onServerMessage = options.onServerMessage || (() => {})
+    this.#connected = options.connect === true && !!this.#documentService
+    if (options.connect === true && !this.#documentService) {
+      // A connect declaration without the service half is a wiring gap — the
+      // editor stays disconnected (safe no-ops) rather than crashing mid-boot.
+      console.warn('[editor] connect declared without a documentService — staying disconnected')
+    }
 
-    if (!this.#socketless) {
-      this.#socketFactory = options.socketFactory || ((url) => new WebSocket(url))
-      this.#wsUrl = options.wsUrl || (() => AbstractEditor.#defaultUrl(uuid))
-      this.#onServerMessage = options.onServerMessage || (() => {})
-      this.#open()
-    } else {
-      // Provide stubs so the private fields are always initialised.
-      this.#socketFactory = () => { throw new Error('socketless') }
-      this.#wsUrl = () => ''
-      this.#onServerMessage = () => {}
+    if (this.#connected && this.#documentService) {
+      // Open the document's live channel, registering THIS editor as the
+      // channel delegate: server render-back ops route to the active surface
+      // (applyServerOp), flush-ack side effects stay editor-side (#onFlushAck),
+      // everything else goes to the onServerMessage router, and the service's
+      // createBlock resolves indices through resolveInsertIndex (the lens owns
+      // ALL index math; the service only frames).
+      this.#documentService.open(uuid, {
+        applyServerOp: (msg) => this.applyServerOp(msg),
+        onFlushAck: (msg) => this.#onFlushAck(msg),
+        onMessage: (msg) => this.#onServerMessage(msg),
+        resolveInsertIndex: (afterBlockId) =>
+          (afterBlockId != null) ? this.#indexAfterBlock(afterBlockId) : this.insertIndexForBlock(),
+      })
     }
   }
 
@@ -187,8 +165,14 @@ export class AbstractEditor {
   /** @returns {string} The document uuid this editor session is for. */
   get uuid() { return this.#uuid }
 
-  /** The BlockService singleton (null in tests/legacy constructions). */
-  get blockService() { return this.#blockService }
+  /** The DocumentService (uuid-addressed service half), or null in bare
+   * constructions. Surfaces reach the membership verbs through this. */
+  get documentService() { return this.#documentService }
+
+  /** The BlockService singleton — DERIVED from the DocumentService (the
+   * service pair is constructed together in the composition root), so the
+   * surface's pane-stamping is unchanged. Null in bare constructions. */
+  get blockService() { return this.#documentService ? this.#documentService.blockService : null }
 
   /** @returns {AbstractSurface|null} The mounted input surface, or null. */
   get surface() { return this.#surface }
@@ -344,7 +328,7 @@ export class AbstractEditor {
    * lives on the concrete editor types, alongside the channel declaration —
    * nothing outside the editor decides or constructs what lives under its root.
    * The concrete type hands the surface THIS editor (`host`) — the surface calls
-   * the editor's public API directly (onSurfaceEvent / applyBlockOps / updateText /
+   * the editor's public API directly (onSurfaceEvent / setRawContent /
    * takeInsertPos / insertIndexForBlock / flushSave / softReload). No services bag.
    * @protected
    * @param {EditorModeValue} mode
@@ -445,9 +429,8 @@ export class AbstractEditor {
    * non-Wails dev fallback. No toast system → feedback is the OS clipboard.
    */
   copyAsMarkdown() {
-    if (!this.#uuid) return
-    fetch('/api/editor/export?uuid=' + encodeURIComponent(this.#uuid) + '&format=markdown')
-      .then((resp) => (resp.ok ? resp.text() : null))
+    if (!this.#uuid || !this.#documentService) return
+    this.#documentService.export(this.#uuid, 'markdown')
       .then((md) => {
         if (md == null) return
         const rt = /** @type {any} */ (window).runtime
@@ -457,218 +440,31 @@ export class AbstractEditor {
       .catch((err) => { console.warn('export-markdown copy failed', err) })
   }
 
-  // ── WebSocket lifecycle ───────────────────────────────────────────────────────
-
-  /** @param {string} uuid @returns {string} */
-  static #defaultUrl(uuid) {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    let host = location.host
-    if (window.__sieveDevServerPort) host = '127.0.0.1:' + window.__sieveDevServerPort
-    return proto + '//' + host + '/api/ws?uuid=' + encodeURIComponent(uuid)
-  }
-
-  #open() {
-    // Faithful to openEditorWs: start by tearing down any prior socket + timers
-    // and clearing the queues, then connect fresh.
-    this.#closeSocket()
-
-    const ws = this.#socketFactory(this.#wsUrl())
-    this.#ws = ws
-
-    ws.onopen = () => {
-      console.log('[editor] ws connected')
-      this.#reconnectDelay = 1000
-      this.#lastPong = Date.now()
-
-      this.#pending.forEach((m) => ws.send(m))
-      this.#pending = []
-
-      if (this.#pingInterval) clearInterval(this.#pingInterval)
-      this.#pingInterval = setInterval(() => {
-        if (Date.now() - this.#lastPong > 45000) {
-          console.warn('[editor] ws: watchdog timeout, forcing reconnect')
-          if (this.#ws) this.#ws.close()
-          return
-        }
-        if (this.#ws && this.#ws.readyState === WS_OPEN) {
-          this.#ws.send(JSON.stringify({ type: 'ping' }))
-        }
-      }, 15000)
-    }
-
-    ws.onmessage = (event) => this.#handleMessage(event)
-
-    ws.onclose = () => {
-      if (this.#pingInterval) clearInterval(this.#pingInterval)
-      console.warn('[editor] ws closed. Reconnecting in ' + this.#reconnectDelay + 'ms...')
-
-      if (this.#reconnectTimer) clearTimeout(this.#reconnectTimer)
-      this.#reconnectTimer = setTimeout(() => {
-        this.#reconnectDelay = Math.min(this.#reconnectDelay * 2, 30000)
-        this.#open()
-      }, this.#reconnectDelay)
-    }
-
-    ws.onerror = (err) => { console.error('[editor] ws error', err) }
-  }
+  // ── Channel delegate reactions (inbound routing registered at open) ───────────
 
   /**
-   * Closes the socket and cancels timers WITHOUT arming a reconnect (nulls onclose
-   * first, exactly like closeEditorWs). Clears the pending + awaiter queues.
+   * Flush-ack side effects — the dirty-clear + chrome events, moved verbatim
+   * out of the transport (the service resolves any awaiter AND calls this, so
+   * the effects run for EVERY flush-ack: awaited (flushSave) or side-channel
+   * (EditorService's background notifySaved)).
+   * @param {{uuid?: string}} msg
    */
-  #closeSocket() {
-    if (this.#reconnectTimer) { clearTimeout(this.#reconnectTimer); this.#reconnectTimer = null }
-    if (this.#pingInterval) { clearInterval(this.#pingInterval); this.#pingInterval = null }
-    if (this.#ws) {
-      this.#ws.onclose = null
-      this.#ws.close()
-      this.#ws = null
-    }
-    this.#pending = []
-    this.#awaiters = {}
+  #onFlushAck(msg) {
+    this.clearDirty()
+    document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: false } }))
+    document.dispatchEvent(new CustomEvent('editor:saved', { detail: { uuid: msg.uuid } }))
   }
 
-  /** @param {{data?: string}} event */
-  #handleMessage(event) {
-    const msg = JSON.parse(event.data || '{}')
-    if (msg.type === 'pong') {
-      this.#lastPong = Date.now()
-      return
-    }
-    if (msg.type === 'flush-ack') {
-      // Dirty-clear runs for EVERY flush-ack — awaited (flushSave) or
-      // side-channel (EditorService's background notifySaved).
-      this.clearDirty()
-      document.dispatchEvent(new CustomEvent('sieve:meta-dirty', { detail: { dirty: false } }))
-      document.dispatchEvent(new CustomEvent('editor:saved', { detail: { uuid: msg.uuid } }))
-    }
-
-    // A registered awaiter CONSUMES its reply (flush-ack, markdown-content,
-    // wysiwyg-content). A reply arriving after its awaiter timed out falls
-    // through and is dropped below — it must never mount a stale surface.
-    const awaiter = this.#awaiters[msg.type]
-    if (awaiter) {
-      delete this.#awaiters[msg.type]
-      awaiter.resolve(msg)
-      return
-    }
-
-    // Server-op render-backs land on the active surface (the placement logic —
-    // tracked transactions, docPosForBlockIndex, replace-by-id — lives there).
-    if (SURFACE_OPS.indexOf(msg.type) >= 0) {
-      this.applyServerOp(msg)
-      return
-    }
-
-    // Everything else (error, block-extracted, unawaited mode replies) goes to
-    // the registered message router.
-    this.#onServerMessage(msg)
-  }
-
-  // ── Transport primitives (#private — invisible to subclasses and callers) ─────
+  // ── Raw-content command (the markdown surface's outbound channel) ─────────────
 
   /**
-   * Sends a message on the socket, or queues it if the socket is not yet OPEN.
-   * Disconnected editors: silently no-ops (there is no socket to send on).
-   * @param {object} msg
+   * Replaces the document's whole raw buffer, fire-and-forget — a thin delegate
+   * to DocumentService.setRawContent (the frame shape is the service's).
+   * Disconnected editors: no-op.
+   * @param {string} raw
    */
-  #send(msg) {
-    if (this.#socketless) return
-    const data = JSON.stringify(msg)
-    if (this.#ws && this.#ws.readyState === WS_OPEN) {
-      this.#ws.send(data)
-    } else {
-      this.#pending.push(data)
-    }
-  }
-
-  /**
-   * Sends a message and resolves with the reply of an EXPLICIT reply type, or
-   * rejects after 5s. Disconnected editors reject immediately with a clear
-   * error. (The mode-handshake replies are markdown-content / wysiwyg-content —
-   * not `<type>-ack` — hence reply-type keying.)
-   * @param {string} replyType
-   * @param {object} msg
-   * @param {string} [label] — timeout-message label
-   * @returns {Promise<any>}
-   */
-  #awaitReply(replyType, msg, label) {
-    if (this.#socketless) return Promise.reject(new Error('editor has no live channel'))
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        delete this.#awaiters[replyType]
-        reject(new Error('ws timeout: ' + (label || replyType)))
-      }, 5000)
-      this.#awaiters[replyType] = {
-        resolve: (m) => { clearTimeout(timer); resolve(m) },
-        reject: (e) => { clearTimeout(timer); reject(e) },
-      }
-      this.#send(msg)
-    })
-  }
-
-  // ── Domain methods (the block protocol — transport-agnostic public API) ────────
-
-  /**
-   * Envelopes block-domain ops into block-op WS messages, one per op, in order
-   * (shape frozen: {type:'block-op', uuid, op}). Socketless editors: no-op.
-   * @param {object[]} ops
-   */
-  applyBlockOps(ops) {
-    ;(ops || []).forEach((op) => this.#send({ type: 'block-op', uuid: this.uuid, op: op }))
-  }
-
-  /**
-   * Envelopes a whole-buffer markdown update into a doc-update WS message
-   * (shape frozen: {type:'doc-update', uuid, markdown}). Socketless editors: no-op.
-   * @param {string} markdown
-   */
-  updateText(markdown) {
-    this.#send({ type: 'doc-update', uuid: this.uuid, markdown: markdown })
-  }
-
-  /**
-   * Requests a re-run of a block's backend job (shape frozen:
-   * {type:'retry-block-job', uuid, id}). Disconnected editors: no-op.
-   * @param {string} blockId
-   */
-  retryBlockJob(blockId) {
-    this.#send({ type: 'retry-block-job', uuid: this.uuid, id: blockId })
-  }
-
-  /**
-   * Retries a block: the ONE op that folds the local optimistic reset with the
-   * backend re-dispatch (P4.F Brief C — a NodeView never does setNodeMarkup itself;
-   * it calls ctx.retry() → here). Resets the block node to PENDING (fresh createdAt,
-   * clearing content/error/title/completedAt/response when present) as a TRACKED PM
-   * transaction, then asks the server to re-run its job (retryBlockJob). No-op when
-   * no live pane (markdown mode); retryBlockJob still fires so a mode-agnostic retry
-   * reaches the backend. Behaviour-identical to the retired block-retry event handler.
-   * @param {string} blockId
-   */
-  retryBlock(blockId) {
-    const ed = /** @type {any} */ (this.editorPane)
-    if (ed) {
-      const now = new Date().toISOString()
-      let pos = -1
-      let cur = null
-      ed.state.doc.descendants((node, p) => {
-        if (pos >= 0) return false
-        if (node.type.name.startsWith('sieve-') && node.attrs.id === blockId) {
-          pos = p; cur = node; return false
-        }
-      })
-      if (cur) {
-        const clean = Object.assign({}, cur.attrs, { status: 'PENDING', createdAt: now })
-        if ('content' in clean) clean.content = null
-        if ('error' in clean) clean.error = null
-        if ('title' in clean) clean.title = null
-        if ('completedAt' in clean) clean.completedAt = null
-        if ('response' in clean) clean.response = null
-        ed.view.dispatch(ed.state.tr.setNodeMarkup(pos, null, clean))
-      }
-    }
-    this.retryBlockJob(blockId)
+  setRawContent(raw) {
+    if (this.#documentService) this.#documentService.setRawContent(this.uuid, raw)
   }
 
   /**
@@ -677,9 +473,11 @@ export class AbstractEditor {
    * via insert-block at the op's own index), stamps the caller context onto the first
    * entry, resolves the target block index from `blockId` (top-level-only scan; skipped
    * for transform / undo-smart-paste, which mutate in place), and resolves the entries
-   * for the target kind (sync or async) before sending. The wire shape is frozen:
-   * {type:'extract', blockId, targetKind, operation, entries, index} — no uuid; the
-   * server resolves the document from the channel. Disconnected editors: no-op send.
+   * for the target kind (sync or async) before handing the prepared payload to
+   * the BlockService (the wire owner frames + routes it; the shape is frozen:
+   * {type:'extract', blockId, targetKind, operation, entries, index} — no uuid;
+   * the server resolves the document from the channel). Disconnected editors:
+   * no-op send.
    * @param {{blockId: string, targetKind: string, operation: string, sourceNode?: object, entries: object[], context?: object}} payload
    * @returns {Promise<void>}
    */
@@ -697,42 +495,9 @@ export class AbstractEditor {
     }
     const res = resolveEntriesForKind ? resolveEntriesForKind(targetKind, sourceNode, entries) : entries
     return Promise.resolve(res).then((resolved) => {
-      this.#send({ type: 'extract', blockId: blockId, targetKind: targetKind, operation: operation, entries: resolved, index: index })
+      const bs = this.blockService
+      if (bs) bs.extract({ blockId: blockId, targetKind: targetKind, operation: operation, entries: resolved, index: index })
     })
-  }
-
-  /**
-   * Flushes any pending surface edits then awaits the server's flush-ack,
-   * ensuring Go's shadow is current before the caller proceeds. Socketless
-   * editors resolve immediately (no WS to flush).
-   * @returns {Promise<object>}
-   */
-  flush() {
-    if (this.#socketless) return Promise.resolve({})
-    return this.#awaitReply('flush-ack', { type: 'flush', uuid: this.uuid }, 'flush')
-  }
-
-  /**
-   * Sends enter-markdown and awaits the markdown-content reply from Go
-   * (the authoritative markdown serialised from the block tree). Rejects on
-   * timeout or if the editor is socketless.
-   * @returns {Promise<string>} the authoritative markdown payload
-   */
-  enterMarkdown() {
-    return this.#awaitReply('markdown-content', { type: 'enter-markdown', uuid: this.uuid })
-      .then((reply) => reply.markdown)
-  }
-
-  /**
-   * Sends enter-wysiwyg (carrying the current markdown body) and awaits the
-   * wysiwyg-content reply (the server's reparsed block list). Rejects on
-   * timeout or if the editor is socketless.
-   * @param {string} markdown — the surface's current body, sent to Go for reparsing
-   * @returns {Promise<object[]>} the server's reparsed block list
-   */
-  enterWysiwyg(markdown) {
-    return this.#awaitReply('wysiwyg-content', { type: 'enter-wysiwyg', uuid: this.uuid, markdown: markdown })
-      .then((reply) => reply.blocks)
   }
 
   /**
@@ -786,7 +551,7 @@ export class AbstractEditor {
    */
   setMode(target) {
     if (target !== EditorMode.WYSIWYG && target !== EditorMode.MARKDOWN) return Promise.resolve(false)
-    if (this.#socketless) return Promise.resolve(false)
+    if (!this.#connected) return Promise.resolve(false)
     if (!this.#surface || target === this.mode) return Promise.resolve(false)
     if (this.#modeFlip) return this.#modeFlip
     this.#modeFlip = this.#flipTo(target).finally(() => { this.#modeFlip = null })
@@ -822,18 +587,20 @@ export class AbstractEditor {
     // (wysiwyg: pending block-ops; markdown: pending doc-update).
     old.flushPending()
 
+    const ds = /** @type {DocumentService} */ (this.#documentService)
     let payload
     if (target === EditorMode.MARKDOWN) {
-      // Go merges the shadow and replies with the authoritative markdown
+      // Go merges the shadow and replies with the authoritative raw content
       // (ContentForSave over the tree). The frontend never serialises the doc.
-      const markdown = await this.enterMarkdown()
+      const markdown = await ds.getRawContent(this.uuid)
       payload = markdown
     } else {
-      // Hand the current markdown to the server, which reparses the
+      // Hand the current raw body to the server, which reparses the
       // authoritative Doc and returns the blocks — the WYSIWYG surface mounts
-      // from THOSE blocks (so ids from the markers survive).
+      // from THOSE blocks (so ids from the markers survive). save() on a live
+      // channel IS the enter-wysiwyg handshake.
       const body = old.body || ''
-      const blocks = await this.enterWysiwyg(body)
+      const blocks = await ds.save(this.uuid, body)
       payload = { body: body, blocks: blocks }
     }
 
@@ -878,8 +645,9 @@ export class AbstractEditor {
     attrs = attrs || {}
     // diagram default: an empty (source-less) diagram opens straight into edit mode.
     if (kind === 'diagram' && !attrs.source) attrs.mode = 'edit'
-    const idx = (afterBlockId != null) ? this.#indexAfterBlock(afterBlockId) : this.insertIndexForBlock()
-    this.applyBlockOps([{ type: 'create-block', kind: kind, attrs: attrs, index: idx }])
+    // The service frames the op; the index resolves back through THIS editor's
+    // resolveInsertIndex delegate callback (the lens owns all index math).
+    if (this.#documentService) this.#documentService.createBlock(this.uuid, kind, attrs, afterBlockId)
   }
 
   /**
@@ -980,7 +748,7 @@ export class AbstractEditor {
   // dialogs, askAi, extract), which reach a PUBLIC method on the live editor —
   // never a surface #private (the classic/module boundary). So it lives here as
   // public methods (D-1). The position helpers are ES imports from their owning
-  // modules (ai/ai-target.js, base/block-position.js) — the shared TipTap bus is retired.
+  // modules (ai/ai-target.js, editor/surfaces/block-position.js) — the shared TipTap bus is retired.
 
   /**
    * Stashes where the next inserted block goes (a doc pos, a {from,to} range, or
@@ -1023,7 +791,7 @@ export class AbstractEditor {
    * blockIndexForInsert maps a captured insert position (a PM doc position, or
    * null for "append") to the top-level BLOCK index Go's create-block op inserts
    * at — the number of top-level nodes that end at or before the position.
-   * Delegates to the tested blockIndexForInsert import (base/block-position.js).
+   * Delegates to the tested blockIndexForInsert import (editor/surfaces/block-position.js).
    * @param {number|null} pos
    * @returns {number}
    */
@@ -1193,15 +961,28 @@ export class AbstractEditor {
     // across the re-render (TRANSFORM, paste, extract, AI block resolve).
     const fctx = window.sieveWorkspace.getSelectionContext()
     try {
-      const r = await fetch('/api/editor/load?uuid=' + encodeURIComponent(this.uuid))
-      const data = await r.json()
-      const body = data.body || ''
+      // Ride the service boundary when wired (types the wire blocks into
+      // envelopes + seeds the truth-mirror for any restored block ids — e.g. an
+      // editor:restore resurrecting blocks — so their next update routes). The
+      // wysiwyg render pipeline consumes those envelopes. Bare constructions (no
+      // service — degenerate/test only) keep the direct fetch; markdown mode
+      // reads only body, so the untyped blocks never reach the render pipeline.
+      let body, blocks
+      if (this.documentService) {
+        const loaded = await this.documentService.load(this.uuid)
+        body = loaded.body
+        blocks = loaded.blocks
+      } else {
+        const data = await (await fetch('/api/editor/load?uuid=' + encodeURIComponent(this.uuid))).json()
+        body = data.body || ''
+        blocks = data.blocks || []
+      }
       const surface = this.#surface
       if (mode === 'wysiwyg' && this.editorPane && surface) {
         // Wysiwyg renders the backend's AUTHORITATIVE block list (markdown is NOT
         // a wysiwyg render input — a flat re-parse invents ids). reloadFromBlocks
         // wraps a multi-node prose block into ONE container carrying its id.
-        surface.reloadFromBlocks(data.blocks || [], { allowEmpty: true })
+        surface.reloadFromBlocks(blocks, { allowEmpty: true })
         this.#reloadInProgress = false
         window.sieveWorkspace.setPosition(fctx)
       } else if (mode === 'markdown' && surface) {
@@ -1221,22 +1002,24 @@ export class AbstractEditor {
   /**
    * Flushes any pending debounced edit immediately so Go has the latest content
    * (surface-owned: wysiwyg block-sync / markdown doc-update), then awaits the
-   * flush-ack. PromptEditor overrides this with an HTTP POST instead.
+   * service's flush-ack (DocumentService.flush — a channel-less uuid resolves
+   * immediately). PromptEditor overrides this with the service's HTTP save path.
    * @returns {Promise<unknown>}
    */
   flushSave() {
     const s = this.#surface
     if (s) s.flushPending()
-    return this.flush()
+    const flushed = this.#documentService ? this.#documentService.flush(this.uuid) : Promise.resolve({})
+    return flushed
       .catch((err) => { console.warn('[editor] flush timeout, continuing:', err) })
   }
 
   // ── Teardown ─────────────────────────────────────────────────────────────────
 
   /**
-   * Tears the editor session down: unmounts the surface and closes the WS
-   * channel (no reconnect). Subclasses that extend destroy() must call
-   * super.destroy().
+   * Tears the editor session down: unmounts the surface and closes the
+   * document's live channel via the service (no reconnect). Subclasses that
+   * extend destroy() must call super.destroy().
    */
   destroy() {
     if (this.#surface) {
@@ -1244,6 +1027,6 @@ export class AbstractEditor {
       this.#surface = null
     }
     this.#rootEl = null
-    if (!this.#socketless) this.#closeSocket()
+    if (this.#connected && this.#documentService) this.#documentService.close(this.#uuid)
   }
 }

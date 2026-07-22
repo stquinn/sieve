@@ -44,14 +44,12 @@ environment (see the spec's Problem section — the fullscreen lightbox bug,
 
 - **Renderer (JS class)** — attrs in, DOM out, sheet carried. A **real ES
   class hierarchy**: extends `BlockRenderer`, defined in
-  `frontend/src/static/block/renderers/block-renderer.js` (its own `@ts-check`'d module —
-  a class hierarchy, not one of `fenced-block-base.js`'s existing loose
-  per-function helpers) and re-exported from
-  `frontend/src/static/base/fenced-block-base.js` so extensions keep one
-  import point:
+  `frontend/src/static/block/renderers/block-renderer.js` (its own `@ts-check`'d
+  module; imported DIRECTLY — the old `base/fenced-block-base.js` re-export shim
+  was dissolved by #49 P5):
 
   ```js
-  import { BlockRenderer } from '../base/fenced-block-base.js'
+  import { BlockRenderer } from './block-renderer.js'
   import { MODE } from '../sieve-block.js'
 
   export class DiagramRenderer extends BlockRenderer {
@@ -386,10 +384,10 @@ hub.Broadcast("ai:job-ended",   mustJSON(map[string]string{"jobId": blkID}))
 
 `GET /api/ai/active-jobs` is served by `h.JobTracker.ServeActiveJobs` and returns all currently in-flight jobs — used by JS to restore state on tab switch.
 
-**JS-side:** `fenced-block-base.js` owns the active-job Set. On module load it fetches `/api/ai/active-jobs` to seed in-flight IDs, then listens to `sse:ai:job-started` / `sse:ai:job-ended` SSE events to keep the set current. It exports `isJobActive(id)` — import and call it in every block extension's `isStale`:
+**JS-side:** `block/renderers/job-status.js` owns job tracking — a stateful `JobStatusTracker` singleton (seeded from `/api/jobs` on module load, kept current by the `sse:jobs:changed` full-snapshot listener). It exports `isJobActive(id)` / `isJobQueued(id)` / `isJobStale(createdAt, id)` / `isStaleByTime(createdAt)` — import and call them in every block extension's `isStale`:
 
 ```js
-import { isStaleByTime, isJobActive } from '../base/fenced-block-base.js'
+import { isStaleByTime, isJobActive } from '../../../block/renderers/job-status.js'
 
 function isStale(createdAt, id) {
   if (isJobActive(id)) return false
@@ -427,21 +425,24 @@ The old pattern of `window.__sieveActiveWebClips.add/delete` + `SieveAI.trackJob
 
 ---
 
-## Rule 10 — JS Extension Structure: Import from `fenced-block-base.js`
+## Rule 10 — JS Extension Structure: Import Shared Utilities from `block/renderers/`
 
-All fenced block extensions are loaded as `type="module"`. Import shared utilities from `frontend/src/static/base/fenced-block-base.js` — do not duplicate them:
+All fenced block extensions are loaded as `type="module"`. Import shared utilities directly from their owning modules in `frontend/src/static/block/renderers/` (the old `base/fenced-block-base.js` single import point was dissolved by #49 P5) — do not duplicate them:
 
 ```js
-import { esc, renderMarkdown, applyHighlighting, isStaleByTime, isJobActive } from '../base/fenced-block-base.js'
+import { esc } from '../../../block/renderers/html-escape.js'
+import { renderSanctionedMarkdown } from '../../../block/renderers/sanctioned-markdown.js'
+import { applyHighlighting } from '../../../block/renderers/highlighting.js'
+import { isStaleByTime, isJobActive } from '../../../block/renderers/job-status.js'
 ```
 
-| Export | Purpose |
+| Export (module) | Purpose |
 |--------|---------|
-| `esc(str)` | HTML-escape a string for `data-*` attribute values |
-| `renderMarkdown(text, editor)` | Render markdown via the SANCTIONED dedicated markdown-it instance (html:false — never the editor's own html:true one, DEFECT SEC-B / issue #48); plain-text fallback. `editor` is accepted for call-site compatibility only and is no longer consulted. |
-| `isStaleByTime(createdAt)` | Time-based PENDING staleness — always the final fallback in `isStale` |
-| `isJobActive(id)` | Returns true if the block's job ID is currently in-flight on the server — check this first in `isStale` |
-| `applyHighlighting(container)` | Box styling + line numbers + syntax colours for rendered content (see Rule 11) |
+| `esc(str)` (`html-escape.js`) | HTML-escape a string for `data-*` attribute values |
+| `renderSanctionedMarkdown(text)` (`sanctioned-markdown.js`) | Render markdown via the SANCTIONED dedicated markdown-it instance (html:false — never the editor's own html:true one, DEFECT SEC-B / issue #48); plain-text fallback. |
+| `isStaleByTime(createdAt)` (`job-status.js`) | Time-based PENDING staleness — always the final fallback in `isStale` |
+| `isJobActive(id)` (`job-status.js`) | Returns true if the block's job ID is currently in-flight on the server — check this first in `isStale` |
+| `applyHighlighting(container)` (`highlighting.js`) | Box styling + line numbers + syntax colours for rendered content (see Rule 11) |
 
 The IIFE wrapper in extension files is kept for compatibility; the `import` line goes before it.
 
@@ -454,7 +455,7 @@ After rendering a markdown field into a container div, call `applyHighlighting`:
 ```js
 var contentEl = document.createElement('div')
 contentEl.className = 'my-block__content'
-contentEl.innerHTML = renderMarkdown(data.content, editor)
+contentEl.innerHTML = renderSanctionedMarkdown(data.content)
 applyHighlighting(contentEl)          // adds sieve-rendered-content class + processes pre>code
 container.appendChild(contentEl)
 ```
@@ -600,7 +601,7 @@ if (!aiBlockId) {
 - [ ] Background goroutine: calls `h.JobTracker.Start` + `hub.Broadcast("ai:job-started", ...)` at start; `h.JobTracker.End` + `hub.Broadcast("ai:job-ended", ...)` after SSE resolution broadcast
 
 **JS side**
-- [ ] Extension file is `type="module"`; import `{ esc, renderMarkdown, applyHighlighting, isStaleByTime, isJobActive }` from `./fenced-block-base.js`
+- [ ] Extension file is `type="module"`; import shared utilities directly from `block/renderers/` (`esc` ← html-escape.js, `renderSanctionedMarkdown` ← sanctioned-markdown.js, `applyHighlighting` ← highlighting.js, `isStaleByTime`/`isJobActive` ← job-status.js — Rule 10)
 - [ ] `flushSave().then(...)` wraps every `fetch` that causes Go to write the document
 - [ ] TipTap Node extension:
   - [ ] Fence hook replaces ` ```tag ``` ` → `<div data-type="...">` with `data-*` attributes including `data-raw-yaml`
@@ -610,7 +611,7 @@ if (!aiBlockId) {
   - [ ] Markdown serialiser replays `node.attrs.rawYaml` verbatim
 - [ ] After `contentEl.innerHTML = renderMarkdown(...)` → call `applyHighlighting(contentEl)`
 - [ ] Block identity `data-*` (`data-id`/`data-kind`) is stamped by the renderer's own `render()` from the envelope — adapters never write renderer DOM
-- [ ] `isStale(createdAt, id)`: call `isJobActive(id)` first (from `fenced-block-base.js`), then `return isStaleByTime(createdAt)` — no manual Set management needed
+- [ ] `isStale(createdAt, id)`: call `isJobActive(id)` first (from `block/renderers/job-status.js` — or just use its `isJobStale(createdAt, id)`), then `return isStaleByTime(createdAt)` — no manual Set management needed
 - [ ] Context menu dispatches `sieve:contextmenu`; sets node selection before opening
 - [ ] SSE/server completion arrives as a render-back op (insert-block / replace-block / block-attrs-updated) applied as a TRACKED transaction — never `softReloadContent` for an operation (that wipes undo; backend-is-source-of-truth rule)
 

@@ -74,7 +74,7 @@ func TestDeriveExportMarkdown_IgnoresLegacyExportRepresenter(t *testing.T) {
 	defer UnregisterProcessor("exp-legacy")
 
 	codec := NewDocumentCodec(GlobalRegistry())
-	doc := DocView{Mode: "wysiwyg", codec: codec, Blocks: []SieveBlock{
+	doc := DocView{codec: codec, Blocks: []SieveBlock{
 		{ID: "lg-1", Kind: "exp-legacy", Attrs: map[string]interface{}{}},
 	}}
 
@@ -105,7 +105,7 @@ func TestDeriveExportMarkdown_FiltersAIBlockAndUsesMarkdownRep(t *testing.T) {
 		{ID: "co-1", Kind: "exp-code", Attrs: map[string]interface{}{"id": "co-1", "lang": "go", "source": "x := 1"}},
 		{ID: "ab-1", Kind: "exp-ai", Attrs: map[string]interface{}{"id": "ab-1", "question": "what is x?", "response": "stale answer"}},
 	}
-	doc := DocView{Mode: "wysiwyg", Blocks: blocks, codec: codec}
+	doc := DocView{Blocks: blocks, codec: codec}
 
 	got := doc.deriveExportMarkdown(dropKind("exp-ai"))
 
@@ -145,7 +145,7 @@ func TestDeriveExportMarkdown_MarkdownModeReparsesNotPassthrough(t *testing.T) {
 	codec := NewDocumentCodec(GlobalRegistry())
 	// The raw markdown-mode buffer holds the ON-DISK YAML fence form plus gap prose.
 	raw := "intro para\n\n```exp-code\nlang: go\nsource: y := 2\n```"
-	doc := DocView{Mode: "markdown", mdModeBuffer: raw, codec: codec}
+	doc := DocView{rawAuthoritative: true, mdModeBuffer: raw, codec: codec}
 
 	got := doc.deriveExportMarkdown(nil)
 

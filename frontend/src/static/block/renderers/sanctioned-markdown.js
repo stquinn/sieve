@@ -26,7 +26,7 @@
 // rare document that happens to contain it is accepted (stated assumption,
 // issue #48).
 
-import { T } from '../../base/tiptap-vendor.js'
+import { T } from './vendor-libs.js'
 
 /** @type {any} */
 let _md = null

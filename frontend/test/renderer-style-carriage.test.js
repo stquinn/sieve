@@ -14,10 +14,10 @@ import {
   RendererStyleRegistry,
   StyleElementStrategy,
 } from '../src/static/block/renderers/renderer-style-registry.js'
-import { BlockRenderer, ContractViolation } from '../src/static/base/fenced-block-base.js'
+import { BlockRenderer, ContractViolation } from '../src/static/block/renderers/block-renderer.js'
 import { REGION } from '../src/static/block/renderers/block-renderer.js'
 import { SieveBlock } from '../src/static/block/sieve-block.js'
-import { BlockService } from '../src/static/block/block-service.js'
+import { serviceRig } from './helpers/service-rig.js'
 
 /** @param {object} [payload] */
 function blk(payload) { return new SieveBlock('demo', payload || {}) }
@@ -195,18 +195,16 @@ describe('BlockRenderer (the renderer half — APPROVED contract rev 2)', () => 
     expect(() => scratch.setMode('render')).toThrow(ContractViolation)
     expect(() => scratch.expand()).toThrow(ContractViolation)
 
-    // Live instance: base verbs route blockId-addressed calls to the applier.
-    const calls = /** @type {any[]} */ ([])
-    const service = new BlockService()
-    service.registerApplier({
-      owns: () => true,
-      updateAttributes: (id, patch) => calls.push(['attrs', id, patch]),
-      setContent: (id, text) => calls.push(['content', id, text]),
-      retry: (id) => calls.push(['retry', id]),
-    })
+    // Live instance: base verbs frame blockId-addressed FROZEN ops on the
+    // document's channel (issue #49 Phase 1 — appliers are retired; the base
+    // setContent default maps to the `content` attr).
+    const { service, sock } = serviceRig({ blocks: [{ id: 'demo-3', kind: 'demo' }] })
     const live = new DemoRenderer(blk({ id: 'demo-3' }), service)
     live.retry()
     live.setContent('new text')
-    expect(calls).toEqual([['retry', 'demo-3'], ['content', 'demo-3', 'new text']])
+    expect(sock.sent.map((x) => JSON.parse(x))).toEqual([
+      { type: 'retry-block-job', uuid: 'doc-1', id: 'demo-3' },
+      { type: 'block-op', uuid: 'doc-1', opId: expect.stringMatching(/^op-\d+$/), op: { type: 'update-block', blockId: 'demo-3', kind: 'demo', attrs: { content: 'new text' } } },
+    ])
   })
 })

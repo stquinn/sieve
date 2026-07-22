@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 // labelForAction is the small pure map extracted from detectAndAppendExtractions.
-import { labelForAction } from '../src/static/base/action-label.js'
+import { labelForAction } from '../src/static/block/action-label.js'
 
 describe('action menu labels', () => {
   it('labels undo-smart-paste as "Undo Smart Paste"', () => {

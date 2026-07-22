@@ -12,7 +12,6 @@ import (
 func TestDeriveMarkdown_WysiwygReflectsLiveTree(t *testing.T) {
 	shadow := &ShadowDocument{
 		UUID: "u",
-		Mode: "wysiwyg",
 		Blocks: []SieveBlock{
 			{ID: "pr-1", Kind: KindProse, Attrs: map[string]interface{}{"content": "Original prose."}},
 		},
@@ -23,7 +22,7 @@ func TestDeriveMarkdown_WysiwygReflectsLiveTree(t *testing.T) {
 		"id": "ab-1", "response": "fresh answer",
 	}})
 
-	got := BuildContextForID("doc", DocView{Mode: "wysiwyg", Blocks: shadow.Blocks, codec: NewDocumentCodec(GlobalRegistry())}, map[string]bool{}, nil)
+	got := BuildContextForID("doc", DocView{Blocks: shadow.Blocks, codec: NewDocumentCodec(GlobalRegistry())}, map[string]bool{}, nil)
 	if !strings.Contains(got.String(), "Original prose.") {
 		t.Errorf("doc context lost prose: %q", got)
 	}
@@ -36,7 +35,7 @@ func TestDeriveMarkdown_WysiwygReflectsLiveTree(t *testing.T) {
 // verbatim, NOT a re-serialization of the (frozen) tree.
 func TestDeriveMarkdown_MarkdownModeIsRawBuffer(t *testing.T) {
 	raw := "# Heading\n\nuser is mid-typing ```cod"
-	shadow := &ShadowDocument{UUID: "u", Mode: "markdown", mdModeBuffer: raw}
+	shadow := &ShadowDocument{UUID: "u", rawAuthoritative: true, mdModeBuffer: raw}
 	if got := shadow.deriveMarkdown(); got != raw {
 		t.Errorf("markdown mode must return raw buffer verbatim, got %q", got)
 	}

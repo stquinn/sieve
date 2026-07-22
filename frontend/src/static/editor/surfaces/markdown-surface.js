@@ -9,8 +9,9 @@
 // can never fire against a torn-down mount.
 //
 // Markdown mode is the breakglass verbatim buffer: edits flow to the editor
-// as whole-buffer updateText commands (500ms debounce) — the editor owns the
-// wire enveloping (doc-update); an in-place transform render-back
+// as whole-buffer setRawContent commands (500ms debounce) — the editor
+// delegates to DocumentService, which owns the wire enveloping (doc-update);
+// an in-place transform render-back
 // (replace-block) triggers a full reload via the host editor's softReload —
 // acceptable only in this mode (WS shapes frozen; see recon §1).
 //
@@ -27,7 +28,7 @@ import { EditorMode } from '../editor-mode.js'
 export class MarkdownSurface extends AbstractSurface {
   /**
    * The parent editor (`host`) — the surface calls its public API directly
-   * (onSurfaceEvent / updateText / takeInsertPos / softReload). No app-level
+   * (onSurfaceEvent / setRawContent / takeInsertPos / softReload). No app-level
    * chrome, no AI concepts, no chords: app-level chords are owned by the native
    * menu, which calls the editor API directly (P2.C).
    * @type {AbstractEditor}
@@ -110,7 +111,7 @@ export class MarkdownSurface extends AbstractSurface {
       if (this.#timer) clearTimeout(this.#timer)
       this.#timer = setTimeout(() => {
         this.#timer = null
-        this.#host.updateText(val)
+        this.#host.setRawContent(val)
       }, 500)
     })
     // NO app-level chords here: Mod+S / Mod+J bubble from the textarea to the
@@ -137,14 +138,14 @@ export class MarkdownSurface extends AbstractSurface {
   }
 
   /**
-   * Flushes a pending debounced edit as an immediate updateText (the old
+   * Flushes a pending debounced edit as an immediate setRawContent (the old
    * flushSave markdown branch / takePendingMarkdown accessor). Idle → no-op.
    */
   flushPending() {
     if (!this.#timer) return
     clearTimeout(this.#timer)
     this.#timer = null
-    this.#host.updateText(this.#body)
+    this.#host.setRawContent(this.#body)
   }
 
   /**
@@ -209,7 +210,7 @@ export class MarkdownSurface extends AbstractSurface {
       this.#host.takeInsertPos()
       this.#body = this.#body.trim() + '\n\n' + (msg.markdown || '') + '\n'
       if (this.#textarea) this.#textarea.value = this.#body
-      this.#host.updateText(this.#body)
+      this.#host.setRawContent(this.#body)
       return
     }
     if (msg.type === 'replace-block') {

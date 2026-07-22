@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import { CodeRenderer } from '../src/static/block/renderers/code-renderer.js'
 import { SieveBlock } from '../src/static/block/sieve-block.js'
-import { BlockService } from '../src/static/block/block-service.js'
+import { serviceRig } from './helpers/service-rig.js'
 
 /** @param {object} payload */
 function blk(payload) { return new SieveBlock('code', payload) }
@@ -115,22 +115,18 @@ describe('CodeRenderer (bare-page DoD)', () => {
     expect(() => renderer.destroy()).not.toThrow()
   })
 
-  it('setContent (the outbound truth channel) reaches the registered applier through a real BlockService', () => {
-    const service = new BlockService()
-    const applier = {
-      owns: (/** @type {string} */ id) => id === 'cd-test',
-      updateAttributes: vi.fn(),
-      setContent: vi.fn(),
-      retry: vi.fn(),
-    }
-    const unregister = service.registerApplier(applier)
+  it('setContent (the outbound truth channel) frames this kind\'s source patch on the document channel through a real BlockService', () => {
+    // Issue #49 Phase 1: appliers are retired — the verb leaves as the FROZEN
+    // block-op frame; the content→source mapping is CodeRenderer's own.
+    const { service, sock } = serviceRig({ blocks: [{ id: 'cd-test', kind: 'code' }] })
 
     const renderer = new CodeRenderer(blk({ id: 'cd-test', source: 'x', language: 'js' }), service)
     renderer.render()
     renderer.setContent('const y = 2')
 
-    expect(applier.setContent).toHaveBeenCalledWith('cd-test', 'const y = 2')
-    expect(applier.updateAttributes).not.toHaveBeenCalled()
-    unregister()
+    expect(sock.sentOfType('block-op')).toEqual([{
+      type: 'block-op', uuid: 'doc-1', opId: expect.stringMatching(/^op-\d+$/),
+      op: { type: 'update-block', blockId: 'cd-test', kind: 'code', attrs: { source: 'const y = 2' } },
+    }])
   })
 })

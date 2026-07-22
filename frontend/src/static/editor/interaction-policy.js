@@ -9,7 +9,10 @@
 
 import { getBlockBehaviour } from '../block/block-kinds.js'
 import { expandBlock } from '../ui/media-lightbox.js'
-import { SieveBlock, MODE } from '../block/sieve-block.js'
+import { MODE } from '../block/sieve-block.js'
+import { sieveBlockFor } from '../block/sieve-block-extension.js'
+
+/** @typedef {import('../block/sieve-block.js').SieveBlock} SieveBlock */
 
 export var DEFAULT_POLICY = {
   rawText: false,             // literal paste target; Tab indents inside
@@ -119,9 +122,13 @@ export function resolveContext(state, view) {
   var ancestors = []
   var parent = $from.parent
   // Typed envelope read — the policy never indexes raw attr maps (contract
-  // §typed block envelope). MODE.DEFAULT (modeless kinds) normalises to null
-  // so classifyContext's ctx.mode contract is unchanged.
-  var blockMode = SieveBlock.from(sel.node || parent).mode
+  // §typed block envelope). Via sieveBlockFor with NO blockService: the mode
+  // here is the LIVE presentation mode (diagram edit/render, toggled locally by
+  // Mod+Enter), a PM-node concern — never the mirror's Go truth (which would lag
+  // the toggle). It resolves through the resurrect path, reading node attrs.
+  // MODE.DEFAULT (modeless kinds) normalises to null so classifyContext's
+  // ctx.mode contract is unchanged.
+  var blockMode = sieveBlockFor(sel.node || parent).mode
   var mode = blockMode === MODE.DEFAULT ? null : blockMode
 
   // If focus is inside a block sub-element (e.g. log table filter input), resolve that block
@@ -138,7 +145,7 @@ export function resolveContext(state, view) {
           if (resolvedNode) {
             parent = resolvedNode
             ancestors = [resolvedNode.type.name]
-            var rm = SieveBlock.from(resolvedNode).mode
+            var rm = sieveBlockFor(resolvedNode).mode
             mode = rm === MODE.DEFAULT ? null : rm
           }
         }
@@ -231,7 +238,7 @@ function insertParagraphAfter(view) {
 // native keymaps must win, so it lives in the priority-50 backstop plugin.
 // `host` is the surface's parent Editor (WysiwygSurface passes self.#host), threaded
 // through to a mode-toggling kind's onModEnter so it can reach the Editor's public API
-// (applyBlockOps) instead of firing a global CustomEvent (P4.F Brief C).
+// (the BlockService verbs) instead of firing a global CustomEvent (P4.F Brief C).
 export function policyEnterKeydown(view, event, host) {
   if (event.key !== 'Enter') return false
   return handleEnter(view, event, host)
@@ -264,7 +271,7 @@ function handleEnter(view, event, host) {
 
   // Plain Enter on a selected caret-stop block: escape (this is how prose is
   // planted between two adjacent read-only blocks).
-  if (ctx.isNodeSelection && stopActive(ctx.policy, SieveBlock.from(view.state.selection.node))) {
+  if (ctx.isNodeSelection && stopActive(ctx.policy, sieveBlockFor(view.state.selection.node))) {
     event.preventDefault()
     return insertParagraphAfter(view)
   }
@@ -339,7 +346,7 @@ function handleArrowStop(view, down) {
   // A caret-stop block is selected → move past it.
   if (sel.node) {
     var ctx = resolveContext(st, view)
-    if (stopActive(ctx.policy, SieveBlock.from(sel.node))) {
+    if (stopActive(ctx.policy, sieveBlockFor(sel.node))) {
       var target = down ? sel.to : sel.from
       var next = TT.Selection.near(st.doc.resolve(target), down ? 1 : -1)
       view.dispatch(st.tr.setSelection(next).scrollIntoView())
@@ -357,7 +364,7 @@ function handleArrowStop(view, down) {
   var adjacent = down ? $bound.nodeAfter : $bound.nodeBefore
   if (!adjacent || adjacent.type.name.indexOf('sieve-') !== 0) return false
   var kind = adjacent.type.name.slice('sieve-'.length)
-  if (!stopActive(policyFor(kind), SieveBlock.from(adjacent))) return false
+  if (!stopActive(policyFor(kind), sieveBlockFor(adjacent))) return false
   var pos = down ? bound : bound - adjacent.nodeSize
   view.dispatch(st.tr.setSelection(TT.NodeSelection.create(st.doc, pos)).scrollIntoView())
   return true

@@ -5,7 +5,7 @@
 // blockChrome on purpose: it must NOT be suppressed by block-chrome's
 // has-selection rule (the target frequently IS the selection).
 // Depends on the vendor TipTap bundle (vendor/tiptap.js) loaded first.
-import { T as VENDOR } from '../base/tiptap-vendor.js'
+import { T as VENDOR } from '../editor/surfaces/tiptap-vendor.js'
 import { proseChainHits } from '../block/block-kinds.js'
 
 var Extension = VENDOR.Extension

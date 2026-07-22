@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest'
 // the byte-stable round-trip is untouched.
 
 // prose-block.js reads Extension/Plugin/PluginKey off the shared vendor bag
-// (base/tiptap-vendor.js) at import time. Stub the minimum onto the shared bag
+// (editor/surfaces/tiptap-vendor.js) at import time. Stub the minimum onto the shared bag
 // test/setup.js seeded (mutate, never reassign — tiptap-vendor.js already
 // captured a reference to it), then import once (modules are cached) to get the
 // real ProseBlock / BlockId ES exports (the bus is retired).

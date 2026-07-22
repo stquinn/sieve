@@ -101,6 +101,8 @@ writer: the seam), and `NodeView.update` re-resolves the refreshed envelope for
 PM-resurrected nodes (undo restoring a deleted block) — possible because node attrs
 are a faithful wire costume, never the primary direction.
 
+> **Amendment (2026-07-22, #49 P3):** the truth-mirror lives **service-side** (`BlockService`, beside the routing index, advanced only by inbound server truth), not lens-side as worded above — the lens-side premise assumed the surface was the only party seeing truth traffic, which died when the service took wire ownership (#49 P1). Approved deviation; decision of record on #49.
+
 **Frozen tokens** (house style — shared values are `Object.freeze`d; values stay
 strings so DOM attributes and debugging read naturally):
 

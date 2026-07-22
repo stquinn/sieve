@@ -33,7 +33,7 @@
 // module is importable in a bare (vitest) env where TipTap is absent; the pure
 // exports (proseBlockNodes, proseGroupMarkdownSerialize) are always available.
 
-import { T } from '../base/tiptap-vendor.js'
+import { T } from '../editor/surfaces/tiptap-vendor.js'
 
 // Cross-file binding the guarded block below assigns when the TipTap runtime is
 // present (the sieve-block-extension `export let` pattern, P4.E): stays undefined

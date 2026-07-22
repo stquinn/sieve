@@ -3,8 +3,9 @@
 // renderer/NodeView split (Block Renderer Contract,
 // docs/design/archive/specs/2026-07-21-block-renderer-contract.md). Owns look-and-feel
 // ONLY: the block shell, the HEADER (a stateful language badge), the
-// gutter+code-area body chrome, and this kind's stylesheet (`static styles`).
-// Zero ProseMirror/editor/window.* dependencies.
+// gutter+code-area body chrome, this kind's stylesheet (`static styles`), and
+// the content→source outbound mapping (setContent). Zero ProseMirror/editor/
+// window.* dependencies.
 //
 // buildHeader() lays out a CodeHeader via a HeaderBar; buildBody() builds the
 // gutter + code-area + the editable <code>. PM-specific concerns stay
@@ -114,4 +115,12 @@ export class CodeRenderer extends BlockRenderer {
   /** Live-typing gutter sync the adapter's MutationObserver drives (outside the
    *  render/update lifecycle). @param {string} source */
   syncGutterLineCount(source) { if (this.#gutter) LineGutter.sync(this.#gutter, source) }
+
+  /**
+   * Outbound truth report — THIS kind's content attr is `source`, knowledge
+   * that lives here and nowhere else (contract §setContent direction; the
+   * retired v1 applier used to do this mapping adapter-side).
+   * @param {string} text
+   */
+  setContent(text) { this._pushAttrs({ source: text }) }
 }

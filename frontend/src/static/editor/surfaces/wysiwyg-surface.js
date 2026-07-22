@@ -17,7 +17,7 @@
 // skipped, scroll-to-new is universal. No full reload is ever used for an op.
 //
 // Normalization applied during motion (behavior-identical): VENDOR names go
-// through the `T` vendor-bag import (base/tiptap-vendor.js);
+// through the `T` vendor-bag import (editor/surfaces/tiptap-vendor.js);
 // every APP helper is a direct ES import from its owning module (P4.E bus
 // retirement). The module vars the old code wrote (currentEditor, docUpdateTimer,
 // docSyncFlush, blockContentCache seams) are #private state; `window.__tiptap` is
@@ -35,7 +35,7 @@ import { ToolbarButton, ButtonGroup } from '../../shell/toolbar-button.js'
 // Extension/Plugin/Decoration(Set)/ProseMirrorDOMParser/…) still ride `#T` (the
 // injected vendor bundle). The dead legacy ai-block extension entry (never
 // published → always undefined) was removed in P4.E with Stephen's sign-off.
-import { T } from '../../base/tiptap-vendor.js'
+import { T } from './tiptap-vendor.js'
 import { BlockId } from '../../block/prose-block.js'
 import { ProseGroup, proseBlockNodes } from '../../block/prose-group.js'
 import { copyImageToClipboard } from '../../ui/copy-image.js'
@@ -45,13 +45,15 @@ import { Search, SelectionHighlight, HighlightMark, AiShortcuts } from '../exten
 import { policyEnterKeydown, buildInteractionPolicyExtension } from '../interaction-policy.js'
 import {
   getSieveNodes, getSieveBlockLabel, serializeNode, sieveBlockAttrs,
-  sieveBlockEntries, rendererFor, domSelectionBlockRange, domSelectionTextInside,
+  sieveBlockEntries, rendererFor,
 } from '../../block/sieve-block-extension.js'
+import { BlockSelection } from '../../block/block-selection.js'
 import { getBlockKind } from '../../block/block-kinds.js'
+import { SieveBlock } from '../../block/sieve-block.js'
 import { buildBlocksHTML, proseContent } from '../../block/block-render.js'
 import { seedBaseline, computeBlockSync } from '../../block/block-sync.js'
-import { docPosForBlockIndex, blockIndexAfter } from '../../base/block-position.js'
-import { reloadReplacement } from '../../base/render-empty.js'
+import { docPosForBlockIndex, blockIndexAfter } from './block-position.js'
+import { reloadReplacement } from './render-empty.js'
 import { caretInRawTextBlock } from '../paste-context.js'
 
 // The formatting command spec (P4.D): each entry is one ToolbarButton the WYSIWYG
@@ -103,13 +105,15 @@ export class WysiwygSurface extends AbstractSurface {
 
   /**
    * The parent editor (`host`) — the surface calls its public API directly:
-   * onSurfaceEvent (outbound editor-domain events), applyBlockOps (block-domain
-   * ops → the editor owns the WS enveloping), flushSave (the PM-internal Mod+S —
-   * caret-contextual, runs pre-core in editorProps handleKeyDown per
+   * onSurfaceEvent (outbound editor-domain events), flushSave (the PM-internal
+   * Mod+S — caret-contextual, runs pre-core in editorProps handleKeyDown per
    * docs/editor-interaction-contract.md), takeInsertPos (applyServerOp numeric
    * fallback), and the insert-index math (insertIndexForBlock /
    * insertIndexForBlockAt / clearInsertPos) the surface's OWN #handleSmartPaste/Drop
-   * need. Nothing app-level: no chrome names, no AI concepts.
+   * need. Block-domain ops leave through the SERVICE PAIR reached via the
+   * host's documentService/blockService getters (#submitOps — issue #49 Phase
+   * 1; the service owns the WS enveloping). Nothing app-level: no chrome
+   * names, no AI concepts.
    * @type {AbstractEditor}
    */
   #host
@@ -415,7 +419,7 @@ export class WysiwygSurface extends AbstractSurface {
             // Explore table) holds text PM does not own, so a highlight there
             // leaves PM's selection a whole-block NodeSelection — without this the
             // rich copy below would grab the ENTIRE block. text/plain + text/html
-            // follow this highlight per-block (via domSelectionTextInside); the
+            // follow this highlight per-block (via BlockSelection.textInside); the
             // sieve/slice + sieve/<kind> mimes stay whole-block (only-meaningful-whole).
             var domSel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null
             var domSelHtml = ''
@@ -431,7 +435,7 @@ export class WysiwygSurface extends AbstractSurface {
               // contentEditable=false DOM PM cannot track). There PM's selection
               // stays on whatever block last held the caret, so the loop below —
               // driven by `er` — would visit and copy the WRONG (previously
-              // selected) block. domSelectionBlockRange finds the block the user
+              // selected) block. BlockSelection.blockRange finds the block the user
               // actually highlighted and points the loop at it; when PM already
               // owns the highlighted text (er covers it) it returns null and er is
               // left untouched.
@@ -441,7 +445,7 @@ export class WysiwygSurface extends AbstractSurface {
                   blockDescs.push({ from: offset, to: offset + node.nodeSize, dom: view.nodeDOM(offset) })
                 }
               })
-              var retarget = domSelectionBlockRange(domSel, er, blockDescs)
+              var retarget = BlockSelection.blockRange(domSel, er, blockDescs)
               if (retarget) {
                 er = { from: retarget.from, to: retarget.to, active: true, isBlockRange: false, isNodeSelection: false }
               }
@@ -482,7 +486,7 @@ export class WysiwygSurface extends AbstractSurface {
               // Explore table) → text/plain + text/html follow it, even though PM
               // sees the whole block selected. (sliceItems already holds the full
               // block above.)
-              var domInBlock = domSelectionTextInside(domSel, dom)
+              var domInBlock = BlockSelection.textInside(domSel, dom)
               if (domInBlock) {
                 plainParts.push(domInBlock)
                 htmlParts.push(domSelHtml || escHtml(domInBlock))
@@ -750,13 +754,12 @@ export class WysiwygSurface extends AbstractSurface {
         var slice = JSON.parse(sliceData)
         if (Array.isArray(slice) && slice.length > 1) {
           event.preventDefault()
+          var ds = this.#host.documentService
+          if (!ds) return true // disconnected editor: paste suppressed, drop (socketless parity)
           var sliceIndex = this.#host.insertIndexForBlock()
           this.#host.clearInsertPos() // slice render-backs position by op index, not this
-          fetch('/api/editor/paste-slice', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uuid: this.#uuid, slice: slice, index: sliceIndex }),
-          }).catch(function (err) { console.error('[editor.js] paste-slice failed', err) })
+          ds.pasteSlice(this.#uuid, { slice: slice, index: sliceIndex })
+            .catch(function (err) { console.error('[editor.js] paste-slice failed', err) })
           return true
         }
       } catch (e) {
@@ -802,12 +805,9 @@ export class WysiwygSurface extends AbstractSurface {
 
         Promise.all(promises).then(function(results) {
           var validEntries = results.filter(function(r) { return r !== null })
-          fetch('/api/editor/smart-paste', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uuid: self.#uuid, entries: validEntries, index: peek.index }),
-          })
-            .then(function (r) { return r.json() })
+          var ds = self.#host.documentService
+          if (!ds) return // disconnected editor: drop (socketless parity)
+          ds.smartPaste(self.#uuid, { entries: validEntries, index: peek.index })
             .then(function (result) {
               if (!self.#editorPane) return
               if (result.matched) {
@@ -893,12 +893,9 @@ export class WysiwygSurface extends AbstractSurface {
       Promise.all(promises).then(function(results) {
         var validEntries = results.filter(function(r) { return r !== null })
         if (validEntries.length === 0) return
-        fetch('/api/editor/smart-paste', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ uuid: self.#uuid, entries: validEntries, index: peek.index }),
-        })
-          .then(function (r) { return r.json() })
+        var ds = self.#host.documentService
+        if (!ds) return // disconnected editor: drop (socketless parity)
+        ds.smartPaste(self.#uuid, { entries: validEntries, index: peek.index })
           .then(function (result) {
             if (!self.#editorPane) return
             if (result.matched) {
@@ -960,9 +957,9 @@ export class WysiwygSurface extends AbstractSurface {
     // effective range onto the block the highlight actually lives in.
     const domSel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null
     let domSelText = null
-    if (domSel && !domSel.isCollapsed && domSel.toString && domSel.toString().trim() && T && domSelectionBlockRange) {
+    if (domSel && !domSel.isCollapsed && domSel.toString && domSel.toString().trim() && T) {
       const blockDescs = this.#topBlockDescriptors(ed)
-      const retarget = domSelectionBlockRange(domSel, er, blockDescs)
+      const retarget = BlockSelection.blockRange(domSel, er, blockDescs)
       if (retarget) {
         er = { from: retarget.from, to: retarget.to, active: true, isBlockRange: false, isNodeSelection: false }
         domSelText = domSel.toString()
@@ -1333,7 +1330,7 @@ export class WysiwygSurface extends AbstractSurface {
       } else {
         // Deleted while the create was in flight — Go has a block we can't see. Delete it
         // by the authoritative id, then drop the stale token baseline (falsy id sentinel).
-        this.#host.applyBlockOps([{ type: 'delete-block', blockId: msg.id }])
+        this.#submitOps([{ type: 'delete-block', blockId: msg.id }])
         this.#reconcilePendingToken(msg.token, null)
       }
       return
@@ -1362,8 +1359,11 @@ export class WysiwygSurface extends AbstractSurface {
 
     // Prose IS a block: render the server-created block (prose or structured) to its
     // editor node(s) through the SAME path the document load uses (id-stamped) —
-    // never a hand-built node, never a sieve-<kind> assumption.
-    var blk = { id: msg.id || parsed.id, kind: kind, attrs: Object.assign({ id: msg.id || parsed.id }, parsed) }
+    // never a hand-built node, never a sieve-<kind> assumption. The render pipeline
+    // is envelope-native: type the wire message into a SieveBlock (flat payload —
+    // the properties bag + id + kind) before handing it to blockToNodes.
+    var insId = msg.id || parsed.id
+    var blk = new SieveBlock(kind, Object.assign({}, parsed, { id: insId, kind: kind }))
     var content = this.#blockToNodes(ed, blk).map(function (n) { return n.toJSON() })
     if (!content.length) return
 
@@ -1431,7 +1431,7 @@ export class WysiwygSurface extends AbstractSurface {
     })
     if (!range) return
 
-    var blk = { id: newId, kind: kind, attrs: Object.assign({ id: newId }, parsed) }
+    var blk = new SieveBlock(kind, Object.assign({}, parsed, { id: newId, kind: kind }))
     var content = this.#blockToNodes(ed, blk).map(function (n) { return n.toJSON() })
     if (!content.length) return
 
@@ -1483,7 +1483,7 @@ export class WysiwygSurface extends AbstractSurface {
    * Re-renders the whole document from the backend's authoritative block list
    * via ONE non-undoable transaction. ONLY for genuine doc loads (AI resolve /
    * restore / extract re-render) — never for an operation render-back.
-   * @param {Array<object>} blocks
+   * @param {import('../../block/sieve-block.js').SieveBlock[]} blocks
    * @param {{allowEmpty?: boolean}} [opts]
    */
   reloadFromBlocks(blocks, opts) {
@@ -1495,13 +1495,15 @@ export class WysiwygSurface extends AbstractSurface {
   // ── Render pipeline (verbatim blockToNodes / renderBlocksIntoEditor) ───────────
 
   /**
-   * blockToNodes renders ONE block (prose or structured) to its ProseMirror
-   * node(s) via the editor's live markdownit + each node's parseHTML — the single
-   * place that knows how a block becomes editor nodes. Shared by the whole-document
-   * load (renderBlocksIntoEditor) and the per-block render-back (insert-block), so a
-   * server-created block renders identically however it arrives. Parsed in
-   * ISOLATION so a block the schema rejects is logged + skipped, never aborting.
-   * @param {any} editorPane @param {any} b @returns {any[]}
+   * blockToNodes renders ONE SieveBlock envelope (prose or structured) to its
+   * ProseMirror node(s) via the editor's live markdownit + each node's parseHTML —
+   * the single place that knows how a block becomes editor nodes. Shared by the
+   * whole-document load (renderBlocksIntoEditor) and the per-block render-back
+   * (insert-block / replace-block), so a server-created block renders identically
+   * however it arrives; every caller hands it a SieveBlock (the render pipeline is
+   * envelope-native). Parsed in ISOLATION so a block the schema rejects is logged +
+   * skipped, never aborting.
+   * @param {any} editorPane @param {import('../../block/sieve-block.js').SieveBlock} b @returns {any[]}
    */
   #blockToNodes(editorPane, b) {
     var T = this.#T
@@ -1538,7 +1540,7 @@ export class WysiwygSurface extends AbstractSurface {
    * to one empty paragraph instead of keeping stale content. Set only by the
    * known-good reload caller (reloadFromBlocks ← softReloadContent); omit for
    * all other callers.
-   * @param {any} editorPane @param {Array<object>} blocks @param {{allowEmpty?: boolean}} [opts]
+   * @param {any} editorPane @param {import('../../block/sieve-block.js').SieveBlock[]} blocks @param {{allowEmpty?: boolean}} [opts]
    */
   #renderBlocksIntoEditor(editorPane, blocks, opts) {
     var self = this
@@ -1552,6 +1554,13 @@ export class WysiwygSurface extends AbstractSurface {
     tr.replaceWith(0, editorPane.state.doc.content.size, replacement)
     tr.setMeta('addToHistory', false)
     editorPane.view.dispatch(tr)
+    // The whole-doc replace maps the prior selection to the END of the new
+    // content; left there, the next focus scrolls every opened document to its
+    // bottom. A load is not an edit — park the caret at the doc start (TipTap
+    // clamps 0 to the first valid position; selection-only, no history step).
+    // softReload's own caret restore runs AFTER this, so genuine mid-session
+    // reloads still return the caret to where the user had it.
+    try { editorPane.commands.setTextSelection(0) } catch (_) {}
   }
 
   // ── Block-sync cache (verbatim mountWysiwyg internals) ─────────────────────────
@@ -1606,11 +1615,13 @@ export class WysiwygSurface extends AbstractSurface {
     this.#collectTopBlocks(editorPane).forEach(function (t) {
       if (t.kind !== 'prose' && t.id) structuredSig[t.id] = t.content
     })
+    // serverBlocks are SieveBlock envelopes (the render pipeline is envelope-native):
+    // .id/.kind via getters, the prose body via proseContent (payload.content).
     var triples = (serverBlocks || []).map(function (b) {
       return {
         id: b.id,
         kind: b.kind,
-        // Prose body rides in attrs.content (proseContent); structured signs on
+        // Prose body rides in payload.content (proseContent); structured signs on
         // the attrs-hash derived from its rendered node.
         content: b.kind === 'prose' ? proseContent(b) : (structuredSig[b.id] || ''),
       }
@@ -1626,9 +1637,10 @@ export class WysiwygSurface extends AbstractSurface {
    * syncDocument is the debounced domain submit: granular block-ops only.
    * There is NO whole-document fallback — every WYSIWYG edit becomes a
    * block-domain op (prose via the observer; structured via their own channels
-   * + delete-block here) handed to the editor, which owns the WS enveloping.
-   * Markdown mode keeps its own whole-buffer updateText path, outside here. It
-   * NEVER mutates the document — pure read + submit.
+   * + delete-block here) handed to the service pair, which owns the WS
+   * enveloping (#submitOps). Markdown mode keeps its own whole-buffer
+   * setRawContent path, outside here. It NEVER mutates the document — pure
+   * read + submit.
    * @param {any} ed
    */
   #syncDocument(ed) {
@@ -1636,7 +1648,42 @@ export class WysiwygSurface extends AbstractSurface {
     if (!curr || !computeBlockSync) return
     var r = computeBlockSync(curr, this.#blockContentCache)
     this.#blockContentCache = r.next
-    if (r.ops.length) this.#host.applyBlockOps(r.ops)
+    if (r.ops.length) this.#submitOps(r.ops)
+  }
+
+  /**
+   * #submitOps — the ONE place the observer's op batch decomposes into service
+   * verbs (issue #49 Phase 1; frame shapes frozen, emission order preserved:
+   * every frame leaves synchronously, in sequence, on the same channel —
+   * byte-identical to the retired editor enveloping):
+   *
+   * - create-block → DocumentService.createBlock on the EXPLICIT-INDEX path
+   *   (the observer already computed document order; opts.index bypasses
+   *   resolveInsertIndex, and blockId/token/aliases ride through so the op
+   *   reproduces proseOp's exact wire shape).
+   * - update-block → BlockService.updateAttributes (kind resolves from the
+   *   service's routing index; aliases lift to the op's top level).
+   * - delete-block → DocumentService.deleteBlock (kind-agnostic).
+   *
+   * A host without the service pair (bare test constructions) drops the batch
+   * — socketless parity with the retired editor no-op sends.
+   * @param {any[]} ops
+   */
+  #submitOps(ops) {
+    var ds = this.#host.documentService
+    var bs = this.#host.blockService
+    if (!ds || !bs) return
+    for (var i = 0; i < ops.length; i++) {
+      var op = ops[i]
+      if (op.type === 'create-block') {
+        ds.createBlock(this.#uuid, op.kind, op.attrs, undefined,
+          { index: op.index, token: op.token, aliases: op.aliases, blockId: op.blockId })
+      } else if (op.type === 'update-block') {
+        bs.updateAttributes(op.blockId, op.attrs, { aliases: op.aliases })
+      } else if (op.type === 'delete-block') {
+        ds.deleteBlock(this.#uuid, op.blockId)
+      }
+    }
   }
 
   /**
@@ -1680,7 +1727,7 @@ export class WysiwygSurface extends AbstractSurface {
    * docPosForBlockIndex maps a top-level BLOCK index (Go's tree position, echoed
    * on insert-block) to the editor doc position before that node — so a
    * render-back lands where Go put it, even for a batch (a paste slice).
-   * Delegates to the tested docPosForBlockIndex import (base/block-position.js).
+   * Delegates to the tested docPosForBlockIndex import (editor/surfaces/block-position.js).
    * @param {any} editorPane @param {number} idx
    */
   #docPosForBlockIndex(editorPane, idx) {

@@ -12,9 +12,9 @@ import (
 func TestContentForSave_markdownModeIsVerbatim(t *testing.T) {
 	md := "# Hello\n\n```ai-block\nid: ab-1234\nresponse: original\n```"
 	shadow := &ShadowDocument{
-		UUID:         "test-uuid",
-		mdModeBuffer: md,
-		Mode:         "markdown",
+		UUID:             "test-uuid",
+		mdModeBuffer:     md,
+		rawAuthoritative: true,
 	}
 
 	result := shadow.ContentForSave()
@@ -34,7 +34,6 @@ func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
 
 	shadow := &ShadowDocument{
 		UUID:  "test-uuid",
-		Mode:  "wysiwyg",
 		codec: NewDocumentCodec(GlobalRegistry()),
 		Blocks: []SieveBlock{
 			{ID: "fk-1", Kind: "fk", Attrs: map[string]interface{}{"id": "fk-1", "response": "Old answer"}},
@@ -57,7 +56,7 @@ func TestContentForSave_replacesBlockInWysiwyg(t *testing.T) {
 }
 
 func TestShadowDocument_setBlockCreatesEntry(t *testing.T) {
-	shadow := &ShadowDocument{UUID: "test-uuid", Mode: "wysiwyg"}
+	shadow := &ShadowDocument{UUID: "test-uuid"}
 
 	shadow.MergeBlock(SieveBlock{
 		Kind:  "code",
@@ -77,7 +76,6 @@ func TestShadowDocument_setBlockCreatesEntry(t *testing.T) {
 func TestShadowDocument_setBlockMergesAttrs(t *testing.T) {
 	shadow := &ShadowDocument{
 		UUID: "test-uuid",
-		Mode: "wysiwyg",
 		Blocks: []SieveBlock{
 			{ID: "cb-0001", Kind: "code", Attrs: map[string]interface{}{
 				"id": "cb-0001", "source": "old", "language": "unknown",

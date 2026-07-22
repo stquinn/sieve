@@ -27,7 +27,8 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 | Static JS/CSS | `frontend/src/static/` |
 | App entry point (Go template) | `frontend/src/index.html` |
 | TipTap editor component hierarchy | `frontend/src/static/editor/abstract-editor.js` (base) + `note-editor.js`/`prompt-editor.js` (concrete) + `editor-shell.js` (back-compat `window.SieveEditor` alias); mounted at `#tiptap-mount` |
-| **Block renderer classes** (look-and-feel, PM-free) | `frontend/src/static/block/renderers/` — `BlockRenderer` base, `RendererStyleRegistry`, `StatusBadge`, `LineGutter`, one concrete renderer + sibling `*.styles.js` per migrated kind |
+| **Protocol services (wire owner)** | `frontend/src/static/block/block-service.js` (owns the WS wire: channel-per-uuid, opId ack correlation, routing index + id→SieveBlock truth-mirror) + `document-service.js` (load/save/raw-content family, export, paste pipelines). Surfaces/editors are transport-blind — no fetch/WS outside the pair for protocol traffic (#49) |
+| **Block renderer classes** (look-and-feel, PM-free) | `frontend/src/static/block/renderers/` — `BlockRenderer` base, `RendererStyleRegistry`, `StatusBadge`, `LineGutter`, one concrete renderer + sibling `*.styles.js` per migrated kind; shared utilities live here too (`html-escape.js`, `job-status.js`, `sanctioned-markdown.js`, `highlighting.js`, `vendor-libs.js` = bundled non-PM lib seam) |
 | NodeView PM adapters (thin, composition over a renderer) | `frontend/src/static/editor/surfaces/node-views/*-node-view.js` (moved+renamed from `processors/*-renderer.js` 2026-07-21 — they are NodeViews, and PM enters the JS graph only in surfaces) |
 | Custom TipTap extensions (vanilla JS) | `frontend/src/static/editor/extensions.js` |
 | Pre-built TipTap core bundle | `frontend/src/static/vendor/tiptap.js` |
@@ -41,7 +42,7 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 | **How to build a Sieve block** | `docs/how-to-intelligent-fenced-blocks.md` (current) — supersedes `docs/how-to-sieve-block-framework.md` (STALE, banner'd, pending rewrite) |
 | **How to build a fenced block** | `docs/how-to-intelligent-fenced-blocks.md` |
 | **How to write idiomatic JS (NORMATIVE for new JS)** | `docs/how-to-idiomatic-js.md` |
-| Shared fenced block JS base | `frontend/src/static/base/fenced-block-base.js` |
+| TipTap/PM vendor seam (the ONLY PM read point) | `frontend/src/static/editor/surfaces/tiptap-vendor.js` — editor/surfaces/ is THE PM package; `base/` holds only `icons.js`/`globals.js` (X-C quarantine; `fenced-block-base.js` dissolved into `block/renderers/` by #49 P5) |
 
 ---
 

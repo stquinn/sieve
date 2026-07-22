@@ -9,25 +9,21 @@
 // blockId-scoped and see only BlockService). The JS twin of Go's EditorService
 // (live-document session concerns), NOT Go's DocumentService (persistence).
 //
-// V1 (this reconcile): `load` owns its HTTP call and types the reply's block
-// list into SieveBlock envelopes (the service authors the envelope — a
-// repository returns domain objects); membership verbs delegate to the
-// per-document HANDLE the Workspace registers (the live editor). The full
-// machinery migration out of AbstractEditor — WS ownership, extract, flush,
-// the format-blind raw-content family (getRawContent/setRawContent/save),
-// export — is follow-up issue (A). Callers migrate then; the boundary is here.
+// Issue #49 Phase 1: the full document-session machinery lives here — channel
+// lifecycle (open/close, fronting BlockService's channel-per-uuid), flush, the
+// format-blind raw-content family (getRawContent / setRawContent / save),
+// export, and the membership verbs (createBlock / deleteBlock). Editors talk
+// ONLY to DocumentService; the WS-vs-HTTP, note-vs-prompt split is internal
+// routing (save: a live channel → the enter-wysiwyg handshake; channel-less →
+// the HTTP save the prompt path always used). Wire frame shapes are FROZEN.
 
 import { SieveBlock, ContractViolation } from './sieve-block.js'
+import { blockOp } from './block-sync.js'
 
-/**
- * @typedef {object} DocumentHandle  the per-document delegate (v1: the live editor)
- * @property {(kind: string, attrs: Record<string, any>, afterBlockId?: string) => void} createBlock
- * @property {(blockId: string) => void} deleteBlock
- */
+/** @typedef {import('./block-service.js').ChannelDelegate} ChannelDelegate */
 
 export class DocumentService {
   /** @type {import('./block-service.js').BlockService} */ #blockService
-  /** @type {Map<string, DocumentHandle>} */ #handles = new Map()
 
   /** @param {import('./block-service.js').BlockService} blockService */
   constructor(blockService) {
@@ -38,52 +34,237 @@ export class DocumentService {
   /** The existing-block half of the boundary (blockId-addressed verbs). */
   get blockService() { return this.#blockService }
 
+  // ── Channel lifecycle (editors declare connect:true → open at construction) ─
+
   /**
-   * Register the live handle for a document. Returns the unsubscribe function.
-   * @param {string} uuid @param {DocumentHandle} handle
-   * @returns {() => void}
+   * Opens the document's live channel, registering the editor's delegate
+   * (inbound routing + the resolveInsertIndex callback).
+   * @param {string} uuid @param {ChannelDelegate} delegate
    */
-  registerDocument(uuid, handle) {
-    this.#handles.set(uuid, handle)
-    return () => { if (this.#handles.get(uuid) === handle) this.#handles.delete(uuid) }
+  open(uuid, delegate) {
+    this.#blockService.openChannel(uuid, delegate)
+  }
+
+  /** Closes the document's live channel (no reconnect). @param {string} uuid */
+  close(uuid) {
+    this.#blockService.closeChannel(uuid)
+  }
+
+  /**
+   * Subscribe to a document's block-attrs-updated render-backs. The listener
+   * fires AFTER the truth-mirror advance with the refreshed typed SieveBlock; the
+   * returned function unsubscribes. Document-scoped per the contract — renderers
+   * never subscribe (inbound stays update(block) via the lens).
+   * @param {string} uuid @param {(block: SieveBlock) => void} listener
+   * @returns {() => void} unsubscribe
+   */
+  onBlockUpdated(uuid, listener) {
+    return this.#blockService._onBlockUpdated(uuid, listener)
   }
 
   /**
    * Load a document: Go's codec did the splitting server-side (JS never parses
-   * a document); this verb types the wire block list into envelopes.
+   * a document); this verb types the wire block list into envelopes, seeds the
+   * BlockService's truth-mirror (indexDocument), and returns the TYPED shape only
+   * — the untyped `raw` wire bridge is retired (issue #49 Phase 3). The surface
+   * render pipeline consumes the envelopes; payload is the sanctioned wire costume
+   * for PM node materialization.
    * @param {string} uuid
-   * @returns {Promise<{ body: string, blocks: SieveBlock[], raw: any }>}
-   *   body: the raw serialized form (markdown-mode consumers);
-   *   blocks: typed envelopes (block lenses); raw: the untyped wire reply —
-   *   V1 BRIDGE ONLY for the surface render pipeline, retired with issue (A).
+   * @returns {Promise<{ body: string, blocks: SieveBlock[], meta: { mode: string } }>}
+   *   body: the raw serialized form (markdown-mode surface seed);
+   *   blocks: typed envelopes (block lenses + the render pipeline);
+   *   meta.mode: the frontmatter mode the workspace boot path reads.
    */
   load(uuid) {
     return fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid))
       .then((r) => r.json())
-      .then((data) => ({
-        body: data.body || '',
-        blocks: (data.blocks || []).map(
-          /** @param {any} b */ (b) => new SieveBlock(b.kind || 'prose', b)),
-        raw: data,
-      }))
+      .then((data) => {
+        const blocks = this.#toEnvelopes(data.blocks)
+        this.#blockService.indexDocument(uuid, blocks)
+        return { body: data.body || '', blocks: blocks, meta: { mode: data.mode || 'wysiwyg' } }
+      })
   }
 
   /**
-   * MEMBERSHIP: add a block to the document (never targets an existing block —
-   * that is BlockService's half). V1 delegates to the registered handle.
-   * @param {string} uuid @param {string} kind @param {Record<string, any>} attrs @param {string} [afterBlockId]
+   * Types a raw wire block list ({id, kind, attrs}) into SieveBlock envelopes.
+   * The payload is FLATTENED to the properties bag (the attrs map + id + kind),
+   * matching the message-authored envelopes (BlockService.#mirrorFromMessage) and
+   * the PM-resurrect envelopes (SieveBlock.from(node)) — one uniform in-memory
+   * form the mirror and the renderers both read. The 'prose' fallback mirrors the
+   * envelope constructor's kind default.
+   * @param {Array<{id?: string, kind?: string, attrs?: Record<string, any>}>} [rawBlocks]
+   * @returns {SieveBlock[]}
    */
-  createBlock(uuid, kind, attrs, afterBlockId) {
-    const h = this.#handles.get(uuid)
-    if (h) h.createBlock(kind, attrs, afterBlockId)
+  #toEnvelopes(rawBlocks) {
+    return (rawBlocks || []).map(
+      /** @param {any} b */ (b) => new SieveBlock(
+        b.kind || 'prose',
+        Object.assign({}, b.attrs, { id: b.id, kind: b.kind })))
+  }
+
+  // ── Save / raw-content family (format-blind — raw is whatever Go serialises) ─
+
+  /**
+   * Flushes the document to Go's shadow and awaits the flush-ack (frame frozen:
+   * {type:'flush', uuid}). A channel-less uuid resolves {} immediately (the
+   * socketless-parity rule — callers never probe for transport).
+   * @param {string} uuid @returns {Promise<object>}
+   */
+  flush(uuid) {
+    if (!this.#blockService._hasChannel(uuid)) return Promise.resolve({})
+    return this.#blockService._awaitReply(uuid, { type: 'flush', uuid: uuid }, 'flush')
   }
 
   /**
-   * MEMBERSHIP: remove a block from the document. V1 delegates to the handle.
+   * The document's authoritative raw serialized content, from Go (frame frozen:
+   * {type:'enter-markdown', uuid} → markdown-content). Rejects on timeout or a
+   * channel-less uuid.
+   * @param {string} uuid @returns {Promise<string>}
+   */
+  getRawContent(uuid) {
+    return this.#blockService._awaitReply(uuid, { type: 'enter-markdown', uuid: uuid }, 'enter-markdown')
+      .then((reply) => reply.markdown)
+  }
+
+  /**
+   * Replaces the document's whole raw buffer, fire-and-forget (frame frozen:
+   * {type:'doc-update', uuid, markdown}). Channel-less uuids no-op.
+   * @param {string} uuid @param {string} raw
+   */
+  setRawContent(uuid, raw) {
+    this.#blockService._send(uuid, { type: 'doc-update', uuid: uuid, markdown: raw })
+  }
+
+  /**
+   * Saves the document's raw content. WITH a live channel: the enter-wysiwyg
+   * handshake (frame frozen: {type:'enter-wysiwyg', uuid, markdown}), resolving
+   * the server's reparsed block list. CHANNEL-LESS (prompt docs): the HTTP POST
+   * /api/editor/save the prompt path always used (moved verbatim from
+   * prompt-editor.js — a prompt is fixed markdown, hence the mode literal).
+   * @param {string} uuid @param {string} raw
+   * @returns {Promise<SieveBlock[]|Response>} the reparsed TYPED envelopes (channel) / the fetch response (HTTP)
+   */
+  save(uuid, raw) {
+    if (this.#blockService._hasChannel(uuid)) {
+      return this.#blockService._awaitReply(uuid, { type: 'enter-wysiwyg', uuid: uuid, markdown: raw }, 'enter-wysiwyg')
+        .then((reply) => {
+          // Type the raw wysiwyg-content reply into envelopes FIRST (the
+          // anti-corruption boundary — the untyped wire block map never escapes
+          // this service). Go's reparse can MINT ids (e.g. a paragraph split
+          // while in markdown mode); seeding the truth-mirror here means the
+          // observer's first update to such a block routes instead of dropping.
+          // The surface mounts from THESE envelopes (#flipTo → presentSurface).
+          const blocks = this.#toEnvelopes(reply.blocks)
+          this.#blockService.indexDocument(uuid, blocks)
+          return blocks
+        })
+    }
+    return fetch('/api/editor/save?uuid=' + encodeURIComponent(uuid), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: raw, mode: 'markdown' }),
+    })
+  }
+
+  /**
+   * The server's clean whole-document export (ai-blocks filtered, cards/clips
+   * reduced to links). Resolves the export text, or null on a non-OK response
+   * — clipboard handling stays editor-side.
+   * @param {string} uuid @param {string} format
+   * @returns {Promise<string|null>}
+   */
+  export(uuid, format) {
+    return fetch('/api/editor/export?uuid=' + encodeURIComponent(uuid) + '&format=' + format)
+      .then((resp) => (resp.ok ? resp.text() : null))
+  }
+
+  // ── Paste pipelines (document-addressed — create blocks in a doc) ────────────
+
+  /**
+   * Reconstruct a multi-block clipboard slice server-side (POST
+   * /api/editor/paste-slice — wire UNCHANGED): Go runs FirstPasteMatch per item,
+   * minting a block at index+i with a fresh backend id; each created block
+   * render-backs via insert-block. Fire-and-forget — resolves the raw fetch
+   * Response; the surface owns the caret/index prep and its own error log (error
+   * parity). PM-blind: `payload.slice` is already plain JSON off the clipboard.
+   * @param {string} uuid @param {{slice: object[], index: number}} payload
+   * @returns {Promise<Response>}
+   */
+  pasteSlice(uuid, payload) {
+    return fetch('/api/editor/paste-slice', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uuid: uuid, slice: payload.slice, index: payload.index }),
+    })
+  }
+
+  /**
+   * Resolve a clipboard/drop payload to a block kind server-side (POST
+   * /api/editor/smart-paste — wire UNCHANGED): Go runs the smart-paste pipeline
+   * (web-clip / smart-image / smart-card) at `payload.index`, render-backing a
+   * matched block via insert-block. Resolves the {matched} result (the contract's
+   * canonical generic-object shape — preserved exactly). The surface keeps the
+   * clipboard reading, the anchor peek/consume, and the no-match local replay; only
+   * the wire moves. PM-blind: `entries` are already {mimeType, content} plain data.
+   * @param {string} uuid @param {{entries: object[], index: number}} payload
+   * @returns {Promise<{matched?: boolean}>}
+   */
+  smartPaste(uuid, payload) {
+    return fetch('/api/editor/smart-paste', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uuid: uuid, entries: payload.entries, index: payload.index }),
+    }).then(function (r) { return r.json() })
+  }
+
+  // ── Membership verbs (add/remove — never target an existing block's state) ──
+
+  /**
+   * MEMBERSHIP: add a block to the document (frame frozen: {type:'block-op',
+   * uuid, op:{type:'create-block', …}}). Two framing paths, one wire shape
+   * family:
+   *
+   * - DEFAULT (dialogs / createBlock callers): the index is resolved through
+   *   the open delegate's resolveInsertIndex(afterBlockId) — the ONE sanctioned
+   *   PM-resolution callback (the lens resolves indices, the service frames).
+   *   Channel-less / delegate-less uuids drop (socketless parity). The op
+   *   carries NO blockId key — identical to the retired editor createBlock.
+   *
+   * - EXPLICIT INDEX (opts.index — the wysiwyg observer's prose creates, which
+   *   already computed document order): resolveInsertIndex is BYPASSED and the
+   *   op reproduces proseOp's exact shape — blockId ('' while the create rides
+   *   its transient correlation token), aliases lifted top-level, token last.
+   *
+   * Returns the block-op ack RESULT {ok, error?} (resolves, never rejects);
+   * fire-and-forget callers ignore it. Channel-less / delegate-less uuids resolve
+   * {ok:false, error:'dropped: …'} (socketless parity).
+   * @param {string} uuid @param {string} kind @param {Record<string, any>} attrs
+   * @param {string} [afterBlockId]
+   *   — a stable block-id anchor, never an index
+   * @param {{index?: number, token?: string, aliases?: string[], blockId?: string}} [opts]
+   * @returns {Promise<{ok: boolean, error?: string}>}
+   */
+  createBlock(uuid, kind, attrs, afterBlockId, opts) {
+    attrs = attrs || {}
+    if (opts && typeof opts.index === 'number') {
+      const op = /** @type {Record<string, any>} */ (blockOp('create-block', opts.blockId || '', kind, attrs, opts.aliases, opts.index))
+      if (opts.token) op.token = opts.token
+      return this.#blockService._awaitAck(uuid, { type: 'block-op', uuid: uuid, op: op }, 'create-block ' + kind)
+    }
+    const delegate = this.#blockService._delegateFor(uuid)
+    if (!delegate) return Promise.resolve({ ok: false, error: 'dropped: no live channel for ' + uuid }) // channel-less (prompt / bare)
+    const idx = delegate.resolveInsertIndex(afterBlockId)
+    return this.#blockService._awaitAck(uuid, { type: 'block-op', uuid: uuid, op: { type: 'create-block', kind: kind, attrs: attrs, index: idx } }, 'create-block ' + kind)
+  }
+
+  /**
+   * MEMBERSHIP: remove a block from the document (frame frozen: op
+   * {type:'delete-block', blockId} — kind-agnostic, like the observer's).
+   * Returns the block-op ack RESULT {ok, error?} (resolves, never rejects).
    * @param {string} uuid @param {string} blockId
+   * @returns {Promise<{ok: boolean, error?: string}>}
    */
   deleteBlock(uuid, blockId) {
-    const h = this.#handles.get(uuid)
-    if (h) h.deleteBlock(blockId)
+    return this.#blockService._awaitAck(uuid, { type: 'block-op', uuid: uuid, op: { type: 'delete-block', blockId: blockId } }, 'delete-block ' + blockId)
   }
 }

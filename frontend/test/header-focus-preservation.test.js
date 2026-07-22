@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { adoptFocusedControl, restoreFocusedControl } from '../src/static/block/sieve-block-extension.js'
+import { HeaderBar } from '../src/static/block/renderers/header-bar.js'
 
 // The header re-render (renderHeaderBar) rebuilds the whole toolbar so button
 // states track the live attrs. adopt/restoreFocusedControl keep a control the
@@ -35,9 +35,9 @@ describe('header focus preservation', () => {
 
   // renderHeaderBar's swap sequence: adopt (before mount) → mount → restore.
   function swap(fresh) {
-    const snap = adoptFocusedControl(oldBar, fresh)
+    const snap = HeaderBar.adoptFocusedControl(oldBar, fresh)
     mount.replaceChild(fresh, oldBar)
-    restoreFocusedControl(snap)
+    HeaderBar.restoreFocusedControl(snap)
     oldBar = fresh
   }
 
@@ -65,10 +65,10 @@ describe('header focus preservation', () => {
   it('swaps wholesale when nothing in the header is focused', () => {
     document.body.focus?.()
     const fresh = makeBar(true)
-    const snap = adoptFocusedControl(oldBar, fresh)
+    const snap = HeaderBar.adoptFocusedControl(oldBar, fresh)
     expect(snap).toBe(null)
     mount.replaceChild(fresh, oldBar)
-    restoreFocusedControl(snap)
+    HeaderBar.restoreFocusedControl(snap)
     expect(mount.querySelector('.toggle').className).toContain('toggle--active')
   })
 })

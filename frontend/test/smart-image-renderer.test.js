@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import { SmartImageRenderer } from '../src/static/block/renderers/smart-image-renderer.js'
 import { SieveBlock } from '../src/static/block/sieve-block.js'
-import { BlockService } from '../src/static/block/block-service.js'
+import { serviceRig } from './helpers/service-rig.js'
 
 /** @param {object} payload */
 function blk(payload) { return new SieveBlock('smart-image', payload) }
@@ -42,17 +42,15 @@ function mount(payload, service) {
   return { renderer, dom }
 }
 
-/** A real BlockService with one fake applier registered for `id`. */
-function serviceWithApplier(id) {
-  const service = new BlockService()
-  const updateAttributes = vi.fn()
-  service.registerApplier({
-    owns: (blockId) => blockId === id,
-    updateAttributes,
-    setContent: () => {},
-    retry: () => {},
-  })
-  return { service, updateAttributes }
+/** A real, wire-owning BlockService with `id` seeded into its routing index
+ *  (issue #49 Phase 1 — appliers are retired; assertions read the socket). */
+function serviceWithBlock(id) {
+  const { service, sock } = serviceRig({ blocks: [{ id, kind: 'smart-image' }] })
+  /** @param {string} blockId */
+  const patchesFor = (blockId) => sock.sentOfType('block-op')
+    .filter((m) => m.op.type === 'update-block' && m.op.blockId === blockId)
+    .map((m) => m.op.attrs)
+  return { service, sock, patchesFor }
 }
 
 describe('SmartImageRenderer (bare-page DoD)', () => {
@@ -122,7 +120,7 @@ describe('SmartImageRenderer (bare-page DoD)', () => {
   })
 
   it('resize drag commits width/height through the BlockService (drag release self-invokes the resize verb)', () => {
-    const { service, updateAttributes } = serviceWithApplier('im-e5f6')
+    const { service, patchesFor } = serviceWithBlock('im-e5f6')
     const { dom } = mount({ id: 'im-e5f6', src: '/x.png', status: 'COMPLETE' }, service)
     document.body.appendChild(dom)
     const resizer = /** @type {HTMLElement} */ (dom.querySelector('.image-resizer'));
@@ -131,21 +129,22 @@ describe('SmartImageRenderer (bare-page DoD)', () => {
     window.dispatchEvent(new MouseEvent('mousemove', { clientX: 140, bubbles: true }))
     window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
 
-    expect(updateAttributes).toHaveBeenCalledOnce()
-    const [id, dims] = updateAttributes.mock.calls[0]
-    expect(id).toBe('im-e5f6')
-    expect(typeof dims.width).toBe('string')
-    expect(typeof dims.height).toBe('string')
+    const patches = patchesFor('im-e5f6')
+    expect(patches.length).toBe(1)
+    expect(typeof patches[0].width).toBe('string')
+    expect(typeof patches[0].height).toBe('string')
   })
 
-  it('resize(width, height) delivers the expected patch to the registered applier via a real BlockService', () => {
-    const { service, updateAttributes } = serviceWithApplier('im-f6a7')
+  it('resize(width, height) frames the expected FROZEN block-op via a real BlockService', () => {
+    const { service, sock } = serviceWithBlock('im-f6a7')
     const { renderer } = mount({ id: 'im-f6a7', src: '/x.png', status: 'COMPLETE' }, service)
 
     renderer.resize('320', '240')
 
-    expect(updateAttributes).toHaveBeenCalledOnce()
-    expect(updateAttributes).toHaveBeenCalledWith('im-f6a7', { width: '320', height: '240' })
+    expect(sock.sentOfType('block-op')).toEqual([{
+      type: 'block-op', uuid: 'doc-1', opId: expect.stringMatching(/^op-\d+$/),
+      op: { type: 'update-block', blockId: 'im-f6a7', kind: 'smart-image', attrs: { width: '320', height: '240' } },
+    }])
   })
 
   it('destroy() is safe to call and does not throw (base no-op)', () => {

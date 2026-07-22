@@ -15,7 +15,7 @@
 // ai-blocks) — framework-layer material, deliberately left untouched here
 // (same restraint ai-block's applyChain already established).
 
-import { T } from '../../../base/tiptap-vendor.js'
+import { T } from '../tiptap-vendor.js'
 import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block-extension.js'
 import { REGION } from '../../../block/renderers/block-renderer.js'
 import { WebClipRenderer } from '../../../block/renderers/web-clip-renderer.js'
@@ -118,7 +118,8 @@ import { WebClipRenderer } from '../../../block/renderers/web-clip-renderer.js'
       // via the handleBuild interceptor: PM owns the claimed container as its
       // contentDOM while the status chrome + title still render renderer-side;
       // the seam authors body content via fresh scratch instances. Retry is the
-      // renderer's semantic verb, effected through the v1 applier below.
+      // renderer's semantic verb, effected through the BlockService (the
+      // web-clip body is server-written — no outbound content channel).
       var bodyContainer = null
       var handleBuild = function (_r, region, container) {
         if (region !== REGION.BODY) return true
@@ -126,19 +127,10 @@ import { WebClipRenderer } from '../../../block/renderers/web-clip-renderer.js'
         bodyContainer = container
         return false
       }
-      var renderer = new WebClipRenderer(sieveBlockFor(node), ctx.blockService || null, handleBuild)
+      var renderer = new WebClipRenderer(sieveBlockFor(node, undefined, ctx && ctx.blockService), ctx.blockService || null, handleBuild)
 
       var dom = renderer.render()
       var contentDOM = bodyContainer   // the claimed body container PM binds as its contentDOM
-
-      // v1 APPLIER (contract §service pair): today's PM-transaction behaviour
-      // behind the service boundary; unregistered in destroy below.
-      var unregisterApplier = ctx.blockService ? ctx.blockService.registerApplier({
-        owns: function (id) { return !!id && id === (node.attrs.id || '') },
-        updateAttributes: function (_id, patch) { ctx.updateAttributes(patch) },
-        setContent: function () {},   // web-clip body is server-written; no outbound content channel
-        retry: function () { ctx.retry() },
-      }) : null
 
       // Reverse chain highlight: when hovering the web-clip, light up any AI blocks
       // that reference it via data-ai-ref. Forward direction (AI → web-clip) is in
@@ -165,14 +157,13 @@ import { WebClipRenderer } from '../../../block/renderers/web-clip-renderer.js'
         update: function (updatedNode) {
           if (updatedNode.type.name !== nodeTypeName) return false
           node = updatedNode
-          renderer.update(sieveBlockFor(updatedNode))  // chrome + title; body is PM's (claimed region)
+          renderer.update(sieveBlockFor(updatedNode, undefined, ctx && ctx.blockService))  // chrome + title; body is PM's (claimed region)
           return true
         },
         ignoreMutation: function (mutation) {
           return !contentDOM.contains(mutation.target)
         },
         destroy: function () {
-          if (unregisterApplier) unregisterApplier()
           renderer.destroy()
         },
       }

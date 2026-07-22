@@ -57,19 +57,26 @@ export class SieveWorkspace {
   /** @type {string|null} last hovered block key — dedup for editor:blockhover. */
   #lastHoverKey = null
 
-  /** @type {BlockService} the app-wide protocol boundary singleton (contract
-   * §service pair) — constructed HERE, the composition root, and handed down
-   * through editor options → surface → pane. Never window.*. */
-  #blockService = new BlockService()
+  /** @type {BlockService} the app-wide protocol boundary singleton AND wire
+   * owner (contract §service pair; issue #49 Phase 1) — constructed HERE, the
+   * composition root, and handed down through editor options → surface →
+   * pane. Never window.*. */
+  #blockService
 
   /** @type {DocumentService} the uuid-addressed half, composed over the wire
    * owner by constructor injection (contract §service pair). */
-  #documentService = new DocumentService(this.#blockService)
+  #documentService
 
-  /** @type {Map<string, () => void>} per-uuid document-handle unsubscribers. */
-  #docHandleUnsubs = new Map()
-
-  constructor() {}
+  /**
+   * @param {import('../block/block-service.js').BlockServiceOptions} [serviceOptions]
+   *   — the BlockService test seams (socketFactory / wsUrlFor). EMPTY in prod:
+   *   the boot singleton below constructs with real sockets; tests inject
+   *   fakes here (the seam moved off the editors onto the wire owner).
+   */
+  constructor(serviceOptions) {
+    this.#blockService = new BlockService(serviceOptions)
+    this.#documentService = new DocumentService(this.#blockService)
+  }
 
   /** The BlockService singleton (handed down; renderers/adapters consume it). */
   get blockService() { return this.#blockService }
@@ -301,8 +308,6 @@ export class SieveWorkspace {
     const prev = this.#activeTab
     if (prev && prev.uuid !== uuid) {
       if (prev.editor) {
-        const unsub = this.#docHandleUnsubs.get(prev.uuid)
-        if (unsub) { unsub(); this.#docHandleUnsubs.delete(prev.uuid) }
         prev.editor.destroy()
         prev.detachEditor()
       }
@@ -312,14 +317,11 @@ export class SieveWorkspace {
 
     const tab = this.openTab(uuid)
     if (!tab.editor) {
-      tab.attachEditor(tab.createEditor(uuid, Object.assign({ blockService: this.#blockService }, options)))
-      // Register the live editor as the document's HANDLE (v1 membership-verb
-      // delegate; the machinery itself migrates into the service at issue (A)).
-      const ed = tab.editor
-      this.#docHandleUnsubs.set(uuid, this.#documentService.registerDocument(uuid, {
-        createBlock: (kind, attrs, afterBlockId) => ed.createBlock(kind, attrs, afterBlockId),
-        deleteBlock: (blockId) => ed.applyBlockOps([{ type: 'delete-block', blockId: blockId }]),
-      }))
+      // The service pair rides the editor options; a connect-declaring editor
+      // (NoteEditor) opens its channel through documentService at construction,
+      // registering itself as the channel delegate — no separate per-document
+      // handle registration remains (the v1 seam is retired).
+      tab.attachEditor(tab.createEditor(uuid, Object.assign({ documentService: this.#documentService }, options)))
     }
     return tab
   }
@@ -334,10 +336,10 @@ export class SieveWorkspace {
 
   /**
    * The live editor instance for the active tab (a NoteEditor or PromptEditor),
-   * or null. Call sites speak the editor's DOMAIN methods (applyBlockOps /
-   * updateText / flushSave / …); a disconnected editor (PromptEditor) no-ops the
-   * transport ops safely, so nothing here probes for it. (Replaces editor.js's
-   * `_activeEditor()`.)
+   * or null. Call sites speak the editor's DOMAIN methods (createBlock /
+   * flushSave / …); a disconnected editor (PromptEditor) no-ops the
+   * transport-backed ops safely, so nothing here probes for it. (Replaces
+   * editor.js's `_activeEditor()`.)
    * @returns {import('../editor/abstract-editor.js').AbstractEditor|null}
    */
   get activeEditor() {
@@ -378,14 +380,15 @@ export class SieveWorkspace {
     const wantMode = mode || this.#activeTab?.mode || 'wysiwyg'
 
     // Document load rides the service boundary (contract §service pair): the
-    // service owns the HTTP call and types the block list; `raw` is the v1
-    // bridge for the surface render pipeline (retired with issue (A)).
+    // service owns the HTTP call, types the block list into envelopes, and seeds
+    // the truth-mirror. The surface render pipeline consumes the envelopes; the
+    // untyped `raw` wire bridge is retired (issue #49 Phase 3).
     this.#documentService.load(uuid)
-      .then(({ raw: data }) => {
+      .then((data) => {
         if (this.#currentUuid !== uuid) return // a later init superseded this load
         window.SieveAI?.loadActiveJobs()
 
-        const isMarkdown = wantMode === 'markdown' || data.mode === 'markdown' || uuid.startsWith('prompt:')
+        const isMarkdown = wantMode === 'markdown' || data.meta.mode === 'markdown' || uuid.startsWith('prompt:')
 
         const ed = this.activeEditor
         if (!ed) return

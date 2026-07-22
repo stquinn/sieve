@@ -134,24 +134,33 @@ export class DiagramTheme {
     border-radius: 0 0 6px 6px;
   }
 
+  /* Gutter + edit-layer metrics are VERBATIM copies of CodeTheme's rules —
+     the two edit surfaces are the same affordance and must be visually
+     interchangeable. Pinned to literal equality by
+     test/diagram-mermaid-init.test.js; change BOTH sheets or neither. */
   .sieve-block--diagram .sieve-block__gutter {
-    width: 36px;
-    flex-shrink: 0;
-    background: var(--theme-bgDark);
-    border-right: 1px solid var(--theme-border);
-    padding: 10px 8px 10px 0;
     display: flex;
     flex-direction: column;
     align-items: flex-end;
-    gap: 1px;
+    padding: 0.85em 0.6em;
+    background: var(--theme-bgDark);
+    border-right: 1px solid var(--theme-gutterLineColor);
+    color: var(--theme-lineNumberColor);
+    font-family: var(--theme-monoFont);
+    font-size: 0.85em;
+    line-height: 1.6;
+    user-select: none;
+    flex-shrink: 0;
   }
 
   .sieve-block--diagram .sieve-block__gutter span {
-    font-size: 10px;
-    font-family: var(--theme-monoFont);
-    color: var(--theme-fg3);
-    line-height: 18px;
     display: block;
+    line-height: 1.6;
+  }
+
+  .sieve-block--diagram .sieve-block__gutter span::selection {
+    background: transparent;
+    color: inherit;
   }
 
   .sieve-block--diagram .sieve-block__code-area {
@@ -166,14 +175,35 @@ export class DiagramTheme {
   .sieve-block--diagram .sieve-block__edit {
     grid-area: 1 / 1;
     font-family: var(--theme-monoFont);
-    font-size: 12px;
-    line-height: 18px;
-    padding: 10px 12px;
-    white-space: pre;
-    overflow-wrap: normal;
-    overflow-x: auto;
+    font-size: 0.85em;
+    line-height: 1.6;
+    padding: 0.85em 1.1em;
+    white-space: pre-wrap;
+    word-break: break-word;
     tab-size: 2;
-    word-break: normal;
+    margin: 0;
+    min-height: 2.5em;
+    box-sizing: border-box;
+  }
+
+  /* editor.css's ".tiptap code" styles INLINE code as an accent pill
+     (background, padding, radius, 0.85em). The edit surface's inner <code>
+     sits inside .tiptap, so neutralise it on both layers or the pill and its
+     smaller line box land on the source text (background-behind-text + gutter
+     misalignment). Mirrors CodeTheme's identical reset — the two edit
+     surfaces stay visually interchangeable. */
+  .sieve-block--diagram .sieve-block__highlight code,
+  .sieve-block--diagram .sieve-block__edit code {
+    display: block;
+    background: transparent;
+    border: none;
+    padding: 0;
+    font: inherit;
+    white-space: inherit;
+    word-break: inherit;
+    tab-size: inherit;
+    color: inherit;
+    border-radius: 0;
   }
 
   .sieve-block--diagram .sieve-block__highlight {
@@ -507,6 +537,12 @@ export class DiagramTheme {
 
     return {
       startOnLoad: false,
+      // A diagram's source is invalid BY DEFINITION mid-typing. Without this,
+      // mermaid appends its error element straight to document.body on every
+      // failed parse — a layout-breaking banner that survives until app
+      // reload. Errors surface through the renderer's own catch (the in-block
+      // error panel); mermaid must never touch the document.
+      suppressErrorRendering: true,
       theme: 'base',
       themeVariables: tv,
       flowchart: { useMaxWidth: false },
