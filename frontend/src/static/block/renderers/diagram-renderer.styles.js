@@ -507,6 +507,12 @@ export class DiagramTheme {
 
     return {
       startOnLoad: false,
+      // A diagram's source is invalid BY DEFINITION mid-typing. Without this,
+      // mermaid appends its error element straight to document.body on every
+      // failed parse — a layout-breaking banner that survives until app
+      // reload. Errors surface through the renderer's own catch (the in-block
+      // error panel); mermaid must never touch the document.
+      suppressErrorRendering: true,
       theme: 'base',
       themeVariables: tv,
       flowchart: { useMaxWidth: false },
