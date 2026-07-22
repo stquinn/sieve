@@ -48,6 +48,7 @@ import {
   sieveBlockEntries, rendererFor, domSelectionBlockRange, domSelectionTextInside,
 } from '../../block/sieve-block-extension.js'
 import { getBlockKind } from '../../block/block-kinds.js'
+import { SieveBlock } from '../../block/sieve-block.js'
 import { buildBlocksHTML, proseContent } from '../../block/block-render.js'
 import { seedBaseline, computeBlockSync } from '../../block/block-sync.js'
 import { docPosForBlockIndex, blockIndexAfter } from '../../base/block-position.js'
@@ -1364,8 +1365,11 @@ export class WysiwygSurface extends AbstractSurface {
 
     // Prose IS a block: render the server-created block (prose or structured) to its
     // editor node(s) through the SAME path the document load uses (id-stamped) —
-    // never a hand-built node, never a sieve-<kind> assumption.
-    var blk = { id: msg.id || parsed.id, kind: kind, attrs: Object.assign({ id: msg.id || parsed.id }, parsed) }
+    // never a hand-built node, never a sieve-<kind> assumption. The render pipeline
+    // is envelope-native: type the wire message into a SieveBlock (flat payload —
+    // the properties bag + id + kind) before handing it to blockToNodes.
+    var insId = msg.id || parsed.id
+    var blk = new SieveBlock(kind, Object.assign({}, parsed, { id: insId, kind: kind }))
     var content = this.#blockToNodes(ed, blk).map(function (n) { return n.toJSON() })
     if (!content.length) return
 
@@ -1433,7 +1437,7 @@ export class WysiwygSurface extends AbstractSurface {
     })
     if (!range) return
 
-    var blk = { id: newId, kind: kind, attrs: Object.assign({ id: newId }, parsed) }
+    var blk = new SieveBlock(kind, Object.assign({}, parsed, { id: newId, kind: kind }))
     var content = this.#blockToNodes(ed, blk).map(function (n) { return n.toJSON() })
     if (!content.length) return
 
@@ -1485,7 +1489,7 @@ export class WysiwygSurface extends AbstractSurface {
    * Re-renders the whole document from the backend's authoritative block list
    * via ONE non-undoable transaction. ONLY for genuine doc loads (AI resolve /
    * restore / extract re-render) — never for an operation render-back.
-   * @param {Array<object>} blocks
+   * @param {import('../../block/sieve-block.js').SieveBlock[]} blocks
    * @param {{allowEmpty?: boolean}} [opts]
    */
   reloadFromBlocks(blocks, opts) {
@@ -1497,13 +1501,15 @@ export class WysiwygSurface extends AbstractSurface {
   // ── Render pipeline (verbatim blockToNodes / renderBlocksIntoEditor) ───────────
 
   /**
-   * blockToNodes renders ONE block (prose or structured) to its ProseMirror
-   * node(s) via the editor's live markdownit + each node's parseHTML — the single
-   * place that knows how a block becomes editor nodes. Shared by the whole-document
-   * load (renderBlocksIntoEditor) and the per-block render-back (insert-block), so a
-   * server-created block renders identically however it arrives. Parsed in
-   * ISOLATION so a block the schema rejects is logged + skipped, never aborting.
-   * @param {any} editorPane @param {any} b @returns {any[]}
+   * blockToNodes renders ONE SieveBlock envelope (prose or structured) to its
+   * ProseMirror node(s) via the editor's live markdownit + each node's parseHTML —
+   * the single place that knows how a block becomes editor nodes. Shared by the
+   * whole-document load (renderBlocksIntoEditor) and the per-block render-back
+   * (insert-block / replace-block), so a server-created block renders identically
+   * however it arrives; every caller hands it a SieveBlock (the render pipeline is
+   * envelope-native). Parsed in ISOLATION so a block the schema rejects is logged +
+   * skipped, never aborting.
+   * @param {any} editorPane @param {import('../../block/sieve-block.js').SieveBlock} b @returns {any[]}
    */
   #blockToNodes(editorPane, b) {
     var T = this.#T
@@ -1540,7 +1546,7 @@ export class WysiwygSurface extends AbstractSurface {
    * to one empty paragraph instead of keeping stale content. Set only by the
    * known-good reload caller (reloadFromBlocks ← softReloadContent); omit for
    * all other callers.
-   * @param {any} editorPane @param {Array<object>} blocks @param {{allowEmpty?: boolean}} [opts]
+   * @param {any} editorPane @param {import('../../block/sieve-block.js').SieveBlock[]} blocks @param {{allowEmpty?: boolean}} [opts]
    */
   #renderBlocksIntoEditor(editorPane, blocks, opts) {
     var self = this
@@ -1608,11 +1614,13 @@ export class WysiwygSurface extends AbstractSurface {
     this.#collectTopBlocks(editorPane).forEach(function (t) {
       if (t.kind !== 'prose' && t.id) structuredSig[t.id] = t.content
     })
+    // serverBlocks are SieveBlock envelopes (the render pipeline is envelope-native):
+    // .id/.kind via getters, the prose body via proseContent (payload.content).
     var triples = (serverBlocks || []).map(function (b) {
       return {
         id: b.id,
         kind: b.kind,
-        // Prose body rides in attrs.content (proseContent); structured signs on
+        // Prose body rides in payload.content (proseContent); structured signs on
         // the attrs-hash derived from its rendered node.
         content: b.kind === 'prose' ? proseContent(b) : (structuredSig[b.id] || ''),
       }

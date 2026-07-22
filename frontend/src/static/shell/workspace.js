@@ -380,14 +380,15 @@ export class SieveWorkspace {
     const wantMode = mode || this.#activeTab?.mode || 'wysiwyg'
 
     // Document load rides the service boundary (contract §service pair): the
-    // service owns the HTTP call and types the block list; `raw` is the v1
-    // bridge for the surface render pipeline (retired with issue (A)).
+    // service owns the HTTP call, types the block list into envelopes, and seeds
+    // the truth-mirror. The surface render pipeline consumes the envelopes; the
+    // untyped `raw` wire bridge is retired (issue #49 Phase 3).
     this.#documentService.load(uuid)
-      .then(({ raw: data }) => {
+      .then((data) => {
         if (this.#currentUuid !== uuid) return // a later init superseded this load
         window.SieveAI?.loadActiveJobs()
 
-        const isMarkdown = wantMode === 'markdown' || data.mode === 'markdown' || uuid.startsWith('prompt:')
+        const isMarkdown = wantMode === 'markdown' || data.meta.mode === 'markdown' || uuid.startsWith('prompt:')
 
         const ed = this.activeEditor
         if (!ed) return

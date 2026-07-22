@@ -86,7 +86,7 @@ import { SmartCardRenderer } from '../../../block/renderers/smart-card-renderer.
       // this adapter only supplies PM-only click/interaction concerns around
       // it; its semantic verbs (setLink) hit the real wire through the
       // BlockService.
-      var renderer = new SmartCardRenderer(sieveBlockFor(node), ctx.blockService || null)
+      var renderer = new SmartCardRenderer(sieveBlockFor(node, undefined, ctx && ctx.blockService), ctx.blockService || null)
 
       var dom = renderer.render()
       if (currentAttrs.id) liveRenderers[currentAttrs.id] = renderer
@@ -130,7 +130,7 @@ import { SmartCardRenderer } from '../../../block/renderers/smart-card-renderer.
           // Late-id hardening: a block whose id lands via attr update on THIS
           // NodeView still reaches the policy/menu triggers.
           if (currentAttrs.id && !liveRenderers[currentAttrs.id]) liveRenderers[currentAttrs.id] = renderer
-          renderer.update(sieveBlockFor(updatedNode))
+          renderer.update(sieveBlockFor(updatedNode, undefined, ctx && ctx.blockService))
           return true
         },
         destroy: function () {

@@ -172,7 +172,7 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
       // the document, and a mode-flip right after typing must never render
       // stale mermaid source. The overlay key is this kind's own knowledge.
       function envelopeFor(n) {
-        return sieveBlockFor(n, { source: n.textContent })
+        return sieveBlockFor(n, { source: n.textContent }, ctx && ctx.blockService)
       }
 
       // The renderer instance this NodeView HOLDS by composition (never

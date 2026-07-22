@@ -49,16 +49,23 @@ import { adoptFocusedControl, restoreFocusedControl } from './renderers/header-b
 import { SieveBlock } from './sieve-block.js'
 
 // sieveBlockFor — the SEAM's envelope constructor for adapters (envelope-first
-// flow, contract §typed block envelope). v1 builds from the PM node + the
-// kind-owned live overlay; when the surface's block-sync cache becomes the
-// typed truth-mirror, THIS is the single choke point that switches to
-// mirror-first lookup (SieveBlock.from stays the resurrect fallback).
+// flow, contract §typed block envelope). MIRROR-FIRST (issue #49 Phase 3): the
+// node's id resolves the BlockService truth-mirror (what Go holds); on a hit the
+// mirror payload is the base and the kind-owned live overlay is applied on top
+// (overlay wins). On a MISS — no service, no id, or an id the mirror never
+// received server truth for — it falls back to SieveBlock.from(node), the
+// PM-RESURRECT path, which does NOT write the mirror (the next server render-back
+// re-seeds it). Overlay precedence is uniform across both paths: overlay > payload.
 /**
  * @param {{ type: { name: string }, attrs: Record<string, any> }} node
  * @param {Record<string, any>} [overlay]  kind-owned live fields (e.g. {source: textContent})
+ * @param {{ envelopeFor: (id: string) => (SieveBlock|null) }} [blockService]  the wire owner (node-views pass ctx.blockService)
  * @returns {SieveBlock}
  */
-export function sieveBlockFor(node, overlay) {
+export function sieveBlockFor(node, overlay, blockService) {
+  const id = node && node.attrs && node.attrs.id
+  const hit = (blockService && id) ? blockService.envelopeFor(id) : null
+  if (hit) return new SieveBlock(hit.kind, Object.assign({}, hit.payload, overlay || {}))
   return SieveBlock.from(node, overlay)
 }
 
@@ -572,7 +579,7 @@ export let rendererFor
               // service), and is discarded once its bodyMarkdown is extracted.
               var RendererClass = /** @type {any} */ (view.renderer).constructor
               var resolveBodyM = function (n) {
-                return new RendererClass(sieveBlockFor(n)).bodyMarkdown()
+                return new RendererClass(sieveBlockFor(n, undefined, blockCtx.blockService)).bodyMarkdown()
               }
               var lastMdM = resolveBodyM(node)
               if (lastMdM) syncMdInto(lastMdM)

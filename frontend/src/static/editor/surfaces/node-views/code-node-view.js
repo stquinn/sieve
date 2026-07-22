@@ -91,7 +91,7 @@ import { CodeRenderer } from '../../../block/renderers/code-renderer.js'
       // below can lag up to 200ms behind what's actually in the document). The
       // overlay key is this kind's own knowledge.
       function envelopeFor(n) {
-        return sieveBlockFor(n, { source: n.textContent })
+        return sieveBlockFor(n, { source: n.textContent }, ctx && ctx.blockService)
       }
 
       // The renderer instance this NodeView HOLDS by composition (never

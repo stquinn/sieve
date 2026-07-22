@@ -10,11 +10,14 @@
 // ONE instance, constructed in the Workspace composition root and handed down
 // (idiomatic-js §5 — never window.*). Renderers see THIS and only this: a
 // renderer knows its block id, never a uuid — the service routes to the owning
-// document via its blockId→{uuid, kind} index, seeded on document load
+// document via its blockId→{uuid, kind, block} index, seeded on document load
 // (DocumentService.load → indexDocument) and maintained from the
-// insert-block / replace-block render-backs passing through. The index is
-// STICKY — deletes do not purge (undo can resurrect a block that must still
-// route). This is deliberate: it is the skeleton of Phase 3's truth-mirror.
+// insert-block / replace-block / block-attrs-updated render-backs passing
+// through (#mirrorFromMessage). The index is STICKY — deletes do not purge
+// (undo can resurrect a block that must still route). Since issue #49 Phase 3
+// the `block` slot IS the truth-mirror: the last envelope Go authored for the
+// id, advanced ONLY by inbound server truth (indexDocument + #mirrorFromMessage
+// — the one-writer rule), read by the sieveBlockFor seam's mirror-first lookup.
 //
 // The per-channel DELEGATE (registered by the editor via DocumentService.open)
 // receives the inbound routing: server render-back ops → applyServerOp,
@@ -22,7 +25,7 @@
 // resolveInsertIndex is the ONE sanctioned PM-resolution callback (the lens
 // resolves indices, the service frames).
 
-import { ContractViolation } from './sieve-block.js'
+import { SieveBlock, ContractViolation } from './sieve-block.js'
 import { updateBlockOp } from './block-sync.js'
 
 /**
@@ -260,7 +263,8 @@ export class BlockService {
   /** @type {(url: string) => WebSocket} */ #socketFactory
   /** @type {(uuid: string) => string} */ #wsUrlFor
   /** @type {Map<string, BlockChannel>} uuid → live channel */ #channels = new Map()
-  /** @type {Map<string, {uuid: string, kind: string}>} blockId → routing entry (STICKY — never purged on delete) */ #blocks = new Map()
+  /** @type {Map<string, {uuid: string, kind: string, block: SieveBlock|null}>} blockId → routing entry + the TRUTH-MIRROR envelope (STICKY — never purged on delete). `block` is the last envelope Go authored for this id; null when only the routing pair is known (raw-seeded / message-learned-without-mirror). ONE-WRITER RULE: written ONLY by indexDocument + #mirrorFromMessage (inbound server truth) — no outbound verb touches it. */ #blocks = new Map()
+  /** @type {Map<string, Set<(block: SieveBlock) => void>>} uuid → onBlockUpdated listeners (document-scoped; fired after a block-attrs-updated mirror advance) */ #blockUpdateListeners = new Map()
   /** @type {number} monotonic opId source; per-BlockService so ids never collide across channels (correlation is uuid+opId, but a global counter also survives a takeover cleanly) */ #opSeq = 0
 
   /** @param {BlockServiceOptions} [options]
@@ -302,7 +306,7 @@ export class BlockService {
       this.#socketFactory,
       () => this.#wsUrlFor(uuid),
       delegate,
-      (msg) => this.#indexFromMessage(uuid, msg),
+      (msg) => this.#mirrorFromMessage(uuid, msg),
     ))
   }
 
@@ -318,43 +322,92 @@ export class BlockService {
     this.#channels.delete(uuid)
   }
 
-  // ── Routing index ───────────────────────────────────────────────────────────
+  // ── Routing index + truth-mirror (one writer: inbound server truth) ─────────
 
   /**
-   * Seeds the blockId→{uuid, kind} routing index from a document's block list
-   * — typed envelopes (DocumentService.load) or raw wire blocks (the
-   * wysiwyg-content reply in DocumentService.save); both carry .id/.kind. The
-   * 'prose' fallback mirrors the envelope constructor's kind default.
+   * Seeds the blockId→{uuid, kind, block} index + TRUTH-MIRROR from a document's
+   * block list. The mirror stores the typed envelope itself (DocumentService.load
+   * and .save hand SieveBlock[] through, already typed); a raw wire map (legacy
+   * test seeding) records the routing pair with a null envelope — the next server
+   * truth re-seeds it. Both carry .id/.kind (SieveBlock via getters); the 'prose'
+   * fallback mirrors the envelope constructor's kind default.
    * @param {string} uuid
-   * @param {Array<{id?: string, kind?: string}>} blocks
+   * @param {Array<SieveBlock|{id?: string, kind?: string}>} blocks
    */
   indexDocument(uuid, blocks) {
     for (const b of blocks || []) {
-      if (b && b.id) this.#blocks.set(b.id, { uuid: uuid, kind: b.kind || 'prose' })
+      if (!b || !b.id) continue
+      this.#blocks.set(b.id, {
+        uuid: uuid,
+        kind: b.kind || 'prose',
+        block: b instanceof SieveBlock ? b : null,
+      })
     }
   }
 
   /**
-   * Learns identities from insert-block / replace-block render-backs passing
-   * through the channel (block-attrs-updated carries no kind — nothing to learn).
-   * The 'code' fallback mirrors the wysiwyg surface's own kind default.
+   * Advances the truth-mirror from a server render-back passing through the
+   * channel — the SERVICE authors the envelope from the wire message (the
+   * anti-corruption boundary). Runs BEFORE delegate.applyServerOp so the seam's
+   * NodeView.update re-resolves the refreshed envelope. block-attrs-updated MERGES
+   * onto the prior payload and notifies onBlockUpdated listeners; insert/replace
+   * author fresh envelopes. The 'code' fallback mirrors the wysiwyg surface's own
+   * kind default. ONE-WRITER RULE: this + indexDocument are the ONLY mirror writers.
    * @param {string} uuid @param {Record<string, any>} msg
    */
-  #indexFromMessage(uuid, msg) {
+  #mirrorFromMessage(uuid, msg) {
     if (msg.type === 'insert-block' && msg.id) {
-      this.#blocks.set(msg.id, { uuid: uuid, kind: msg.kind || 'code' })
+      const kind = msg.kind || 'code'
+      const block = new SieveBlock(kind, Object.assign({}, msg.attrs, { id: msg.id }))
+      this.#blocks.set(msg.id, { uuid: uuid, kind: kind, block: block })
     } else if (msg.type === 'replace-block' && msg.newId) {
-      this.#blocks.set(msg.newId, { uuid: uuid, kind: msg.newKind || 'code' })
+      const kind = msg.newKind || 'code'
+      const block = new SieveBlock(kind, Object.assign({}, msg.attrs, { id: msg.newId }))
+      // The old id entry stays for routing (undo can resurrect it); the new id
+      // becomes the mirror's authoritative envelope for the replacement.
+      this.#blocks.set(msg.newId, { uuid: uuid, kind: kind, block: block })
+    } else if (msg.type === 'block-attrs-updated' && msg.id) {
+      const entry = this.#blocks.get(msg.id)
+      if (!entry) return // unknown id → nothing to merge onto (no kind to author)
+      const prior = entry.block ? entry.block.payload : {}
+      const block = new SieveBlock(entry.kind, Object.assign({}, prior, msg.attrs, { id: msg.id }))
+      this.#blocks.set(msg.id, { uuid: entry.uuid, kind: entry.kind, block: block })
+      this.#emitBlockUpdated(entry.uuid, block)
     }
+  }
+
+  /**
+   * The current truth-mirror envelope for a block id, or null (unknown id / a
+   * routing-only entry that never received server truth). Consumers: the
+   * sieveBlockFor seam's mirror-first lookup.
+   * @param {string} blockId @returns {SieveBlock|null}
+   */
+  envelopeFor(blockId) {
+    const entry = blockId && this.#blocks.get(blockId)
+    return (entry && entry.block) || null
   }
 
   /**
    * Resolve a block id to its routing entry, or null (unknown id → the caller
    * warns + drops: fire-and-forget parity — never throw mid-edit).
-   * @param {string} blockId @returns {{uuid: string, kind: string}|null}
+   * @param {string} blockId @returns {{uuid: string, kind: string, block: SieveBlock|null}|null}
    */
   #entryFor(blockId) {
     return (blockId && this.#blocks.get(blockId)) || null
+  }
+
+  /**
+   * Notifies a document's onBlockUpdated listeners with the refreshed envelope.
+   * A throwing listener is isolated — it never breaks the mirror advance or the
+   * sibling listeners.
+   * @param {string} uuid @param {SieveBlock} block
+   */
+  #emitBlockUpdated(uuid, block) {
+    const set = this.#blockUpdateListeners.get(uuid)
+    if (!set) return
+    for (const listener of set) {
+      try { listener(block) } catch (e) { console.error('[block-service] onBlockUpdated listener threw', e) }
+    }
   }
 
   // ── Public verbs (blockId-addressed — renderers and lenses end here) ────────
@@ -456,6 +509,25 @@ export class BlockService {
 
   /** @param {string} uuid @returns {boolean} whether a live channel exists */
   _hasChannel(uuid) { return this.#channels.has(uuid) }
+
+  /**
+   * Subscribe to a document's block-attrs-updated mirror advances (DocumentService
+   * fronts this as onBlockUpdated). The listener fires AFTER the mirror update with
+   * the refreshed typed envelope; the returned function unsubscribes. Document-scoped
+   * per the contract — renderers never subscribe (inbound stays update(block) via
+   * the lens).
+   * @param {string} uuid @param {(block: SieveBlock) => void} listener
+   * @returns {() => void} unsubscribe
+   */
+  _onBlockUpdated(uuid, listener) {
+    let set = this.#blockUpdateListeners.get(uuid)
+    if (!set) { set = new Set(); this.#blockUpdateListeners.set(uuid, set) }
+    set.add(listener)
+    return () => {
+      const s = this.#blockUpdateListeners.get(uuid)
+      if (s) { s.delete(listener); if (s.size === 0) this.#blockUpdateListeners.delete(uuid) }
+    }
+  }
 
   /**
    * Send a frame on a document's channel; channel-less uuids no-op (the

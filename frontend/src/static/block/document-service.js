@@ -51,24 +51,55 @@ export class DocumentService {
   }
 
   /**
+   * Subscribe to a document's block-attrs-updated render-backs. The listener
+   * fires AFTER the truth-mirror advance with the refreshed typed SieveBlock; the
+   * returned function unsubscribes. Document-scoped per the contract — renderers
+   * never subscribe (inbound stays update(block) via the lens).
+   * @param {string} uuid @param {(block: SieveBlock) => void} listener
+   * @returns {() => void} unsubscribe
+   */
+  onBlockUpdated(uuid, listener) {
+    return this.#blockService._onBlockUpdated(uuid, listener)
+  }
+
+  /**
    * Load a document: Go's codec did the splitting server-side (JS never parses
-   * a document); this verb types the wire block list into envelopes and seeds
-   * the BlockService's blockId→{uuid, kind} routing index.
+   * a document); this verb types the wire block list into envelopes, seeds the
+   * BlockService's truth-mirror (indexDocument), and returns the TYPED shape only
+   * — the untyped `raw` wire bridge is retired (issue #49 Phase 3). The surface
+   * render pipeline consumes the envelopes; payload is the sanctioned wire costume
+   * for PM node materialization.
    * @param {string} uuid
-   * @returns {Promise<{ body: string, blocks: SieveBlock[], raw: any }>}
-   *   body: the raw serialized form (markdown-mode consumers);
-   *   blocks: typed envelopes (block lenses); raw: the untyped wire reply —
-   *   V1 BRIDGE ONLY for the surface render pipeline, retired with Phase 3.
+   * @returns {Promise<{ body: string, blocks: SieveBlock[], meta: { mode: string } }>}
+   *   body: the raw serialized form (markdown-mode surface seed);
+   *   blocks: typed envelopes (block lenses + the render pipeline);
+   *   meta.mode: the frontmatter mode the workspace boot path reads.
    */
   load(uuid) {
     return fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid))
       .then((r) => r.json())
       .then((data) => {
-        const blocks = (data.blocks || []).map(
-          /** @param {any} b */ (b) => new SieveBlock(b.kind || 'prose', b))
+        const blocks = this.#toEnvelopes(data.blocks)
         this.#blockService.indexDocument(uuid, blocks)
-        return { body: data.body || '', blocks: blocks, raw: data }
+        return { body: data.body || '', blocks: blocks, meta: { mode: data.mode || 'wysiwyg' } }
       })
+  }
+
+  /**
+   * Types a raw wire block list ({id, kind, attrs}) into SieveBlock envelopes.
+   * The payload is FLATTENED to the properties bag (the attrs map + id + kind),
+   * matching the message-authored envelopes (BlockService.#mirrorFromMessage) and
+   * the PM-resurrect envelopes (SieveBlock.from(node)) — one uniform in-memory
+   * form the mirror and the renderers both read. The 'prose' fallback mirrors the
+   * envelope constructor's kind default.
+   * @param {Array<{id?: string, kind?: string, attrs?: Record<string, any>}>} [rawBlocks]
+   * @returns {SieveBlock[]}
+   */
+  #toEnvelopes(rawBlocks) {
+    return (rawBlocks || []).map(
+      /** @param {any} b */ (b) => new SieveBlock(
+        b.kind || 'prose',
+        Object.assign({}, b.attrs, { id: b.id, kind: b.kind })))
   }
 
   // ── Save / raw-content family (format-blind — raw is whatever Go serialises) ─
@@ -111,18 +142,21 @@ export class DocumentService {
    * /api/editor/save the prompt path always used (moved verbatim from
    * prompt-editor.js — a prompt is fixed markdown, hence the mode literal).
    * @param {string} uuid @param {string} raw
-   * @returns {Promise<any>} the reparsed block list (channel) / the fetch response (HTTP)
+   * @returns {Promise<SieveBlock[]|Response>} the reparsed TYPED envelopes (channel) / the fetch response (HTTP)
    */
   save(uuid, raw) {
     if (this.#blockService._hasChannel(uuid)) {
       return this.#blockService._awaitReply(uuid, { type: 'enter-wysiwyg', uuid: uuid, markdown: raw }, 'enter-wysiwyg')
         .then((reply) => {
-          // Go's reparse can MINT ids (e.g. a paragraph split while in
-          // markdown mode) — feed them to the routing index so the observer's
-          // first update to such a block routes instead of dropping.
-          // (indexDocument reads .id/.kind — the raw wire blocks carry both.)
-          this.#blockService.indexDocument(uuid, reply.blocks || [])
-          return reply.blocks
+          // Type the raw wysiwyg-content reply into envelopes FIRST (the
+          // anti-corruption boundary — the untyped wire block map never escapes
+          // this service). Go's reparse can MINT ids (e.g. a paragraph split
+          // while in markdown mode); seeding the truth-mirror here means the
+          // observer's first update to such a block routes instead of dropping.
+          // The surface mounts from THESE envelopes (#flipTo → presentSurface).
+          const blocks = this.#toEnvelopes(reply.blocks)
+          this.#blockService.indexDocument(uuid, blocks)
+          return blocks
         })
     }
     return fetch('/api/editor/save?uuid=' + encodeURIComponent(uuid), {

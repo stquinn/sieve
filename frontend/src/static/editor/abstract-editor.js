@@ -961,19 +961,28 @@ export class AbstractEditor {
     // across the re-render (TRANSFORM, paste, extract, AI block resolve).
     const fctx = window.sieveWorkspace.getSelectionContext()
     try {
-      // Ride the service boundary when wired (indexes any restored block ids —
-      // e.g. an editor:restore resurrecting blocks — so their next update
-      // routes); bare constructions keep the direct fetch.
-      const data = this.documentService
-        ? (await this.documentService.load(this.uuid)).raw
-        : await (await fetch('/api/editor/load?uuid=' + encodeURIComponent(this.uuid))).json()
-      const body = data.body || ''
+      // Ride the service boundary when wired (types the wire blocks into
+      // envelopes + seeds the truth-mirror for any restored block ids — e.g. an
+      // editor:restore resurrecting blocks — so their next update routes). The
+      // wysiwyg render pipeline consumes those envelopes. Bare constructions (no
+      // service — degenerate/test only) keep the direct fetch; markdown mode
+      // reads only body, so the untyped blocks never reach the render pipeline.
+      let body, blocks
+      if (this.documentService) {
+        const loaded = await this.documentService.load(this.uuid)
+        body = loaded.body
+        blocks = loaded.blocks
+      } else {
+        const data = await (await fetch('/api/editor/load?uuid=' + encodeURIComponent(this.uuid))).json()
+        body = data.body || ''
+        blocks = data.blocks || []
+      }
       const surface = this.#surface
       if (mode === 'wysiwyg' && this.editorPane && surface) {
         // Wysiwyg renders the backend's AUTHORITATIVE block list (markdown is NOT
         // a wysiwyg render input — a flat re-parse invents ids). reloadFromBlocks
         // wraps a multi-node prose block into ONE container carrying its id.
-        surface.reloadFromBlocks(data.blocks || [], { allowEmpty: true })
+        surface.reloadFromBlocks(blocks, { allowEmpty: true })
         this.#reloadInProgress = false
         window.sieveWorkspace.setPosition(fctx)
       } else if (mode === 'markdown' && surface) {

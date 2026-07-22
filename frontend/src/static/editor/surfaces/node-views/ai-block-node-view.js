@@ -117,7 +117,7 @@ import { AiBlockRenderer } from '../../../block/renderers/ai-block-renderer.js'
         bodyContainer = container
         return false
       }
-      var renderer = new AiBlockRenderer(sieveBlockFor(node), ctx.blockService || null, handleBuild)
+      var renderer = new AiBlockRenderer(sieveBlockFor(node, undefined, ctx && ctx.blockService), ctx.blockService || null, handleBuild)
       var dom = renderer.render()
       var contentDOM = bodyContainer   // the claimed body container PM binds as its contentDOM
       // The renderer's verbs (retry) leave through the BlockService, the wire
@@ -171,7 +171,7 @@ import { AiBlockRenderer } from '../../../block/renderers/ai-block-renderer.js'
         update: function (updatedNode) {
           if (updatedNode.type.name !== nodeTypeName) return false
           node = updatedNode
-          renderer.update(sieveBlockFor(updatedNode))  // badge + question title; body is PM's (claimed region)
+          renderer.update(sieveBlockFor(updatedNode, undefined, ctx && ctx.blockService))  // badge + question title; body is PM's (claimed region)
           return true
         },
 

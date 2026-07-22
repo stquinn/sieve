@@ -127,7 +127,7 @@ import { WebClipRenderer } from '../../../block/renderers/web-clip-renderer.js'
         bodyContainer = container
         return false
       }
-      var renderer = new WebClipRenderer(sieveBlockFor(node), ctx.blockService || null, handleBuild)
+      var renderer = new WebClipRenderer(sieveBlockFor(node, undefined, ctx && ctx.blockService), ctx.blockService || null, handleBuild)
 
       var dom = renderer.render()
       var contentDOM = bodyContainer   // the claimed body container PM binds as its contentDOM
@@ -157,7 +157,7 @@ import { WebClipRenderer } from '../../../block/renderers/web-clip-renderer.js'
         update: function (updatedNode) {
           if (updatedNode.type.name !== nodeTypeName) return false
           node = updatedNode
-          renderer.update(sieveBlockFor(updatedNode))  // chrome + title; body is PM's (claimed region)
+          renderer.update(sieveBlockFor(updatedNode, undefined, ctx && ctx.blockService))  // chrome + title; body is PM's (claimed region)
           return true
         },
         ignoreMutation: function (mutation) {

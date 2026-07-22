@@ -49,6 +49,7 @@ import { blockIndexForInsert, emptyParagraphAnchor, blockIndexAfter } from '../s
 import { buildAiContext, applyTargetHighlight } from '../src/static/editor/extensions.js'
 import { BlockService } from '../src/static/block/block-service.js'
 import { DocumentService } from '../src/static/block/document-service.js'
+import { SieveBlock } from '../src/static/block/sieve-block.js'
 
 // issue #49 Phase 2: reply-expecting frames now carry a client-minted opId on the
 // OUTER envelope (wire-additive). Frozen-frame assertions pin its shape without
@@ -1337,7 +1338,15 @@ describe('NoteEditor.setMode (P2.B handshake)', () => {
     await expect(p).resolves.toBe(true)
     expect(rig.log).toEqual(['flush:markdown', 'unmount:markdown', 'mount:wysiwyg'])
     expect(rig.made[0].unmountCount).toBe(1) // exactly once
-    expect(rig.made[1].mountArgs).toEqual([rig.root, { body: 'LIVE BODY', blocks: [{ id: 'b1' }] }])
+    // save() types the wysiwyg-content reply into SieveBlock envelopes before it
+    // reaches presentSurface (issue #49 Phase 3 — the raw wire map never escapes
+    // the service); the surface mounts from THOSE envelopes.
+    expect(rig.made[1].mountArgs[0]).toBe(rig.root)
+    expect(rig.made[1].mountArgs[1].body).toBe('LIVE BODY')
+    const flippedBlocks = rig.made[1].mountArgs[1].blocks
+    expect(flippedBlocks).toHaveLength(1)
+    expect(flippedBlocks[0]).toBeInstanceOf(SieveBlock)
+    expect(flippedBlocks[0].id).toBe('b1')
     expect(rig.ed.mode).toBe('wysiwyg')
   })
 

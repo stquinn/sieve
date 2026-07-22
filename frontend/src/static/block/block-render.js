@@ -1,7 +1,7 @@
 // block-render.js — Stage D.2 document-HTML builder.
 //
-// Pure function: turns the flat []FrontendBlock the WYSIWYG load sends into the
-// HTML string the editor parses (via tiptap-markdown's markdownit + each node's
+// Pure function: turns the SieveBlock[] envelope list the WYSIWYG load types into
+// the HTML string the editor parses (via tiptap-markdown's markdownit + each node's
 // existing parseHTML). It does NOT build ProseMirror JSON — that is the whole
 // point of the spine: a prose block travels as its NATIVE markdown (rendered to
 // native nodes — node-granular, 2026-06-19), and structured blocks travel as
@@ -31,26 +31,27 @@ export function renderProseContent(content, mdRender) {
   return inner
 }
 
-// proseContent resolves a block's prose body from the uniform Attrs bag — the
-// same place EVERY kind keeps its payload (code → attrs.source, prose →
-// attrs.content). The wire shape is uniform: a block is {id, kind, attrs}; the
-// renderer branches on kind, not on where the payload lives. Temporary FE
-// shorthand for the prose load sites while they read attrs.content.
+// proseContent resolves a block's prose body from its SieveBlock envelope. The
+// payload is the uniform properties bag — the same place EVERY kind keeps its
+// payload (code → payload.source, prose → payload.content). The render pipeline
+// is envelope-native (issue #49 Phase 3): payload is the sanctioned wire costume
+// for PM node materialization; the renderer branches on kind, not on where the
+// payload lives.
 export function proseContent(b) {
-  return (b && b.attrs && b.attrs.content) || ''
+  return (b && b.payload && b.payload.content) || ''
 }
 
-// Build the HTML for a single block.
+// Build the HTML for a single block (a SieveBlock envelope).
 function blockHTML(b, mdRender) {
   if (b.kind === 'prose') {
     return renderProseContent(proseContent(b), mdRender)
   }
-  // Structured / container: build the node's data-* div straight from the block's
-  // PROPERTIES (attrs), reusing the SAME parseAttrs/data-* builder the markdownit
-  // fence rule uses (buildSieveBlockHTML) — no markdown round-trip, the block
-  // model is properties-in.
+  // Structured / container: build the node's data-* div straight from the
+  // envelope's PROPERTIES (payload), reusing the SAME parseAttrs/data-* builder
+  // the markdownit fence rule uses (buildSieveBlockHTML) — no markdown round-trip,
+  // the block model is properties-in.
   if (typeof buildSieveBlockHTML === 'function') {
-    const built = buildSieveBlockHTML(b.kind, b.attrs || {})
+    const built = buildSieveBlockHTML(b.kind, b.payload || {})
     if (built) return built
   }
   // Defensive (builder unavailable, e.g. a bare unit env): a non-empty placeholder
@@ -58,7 +59,7 @@ function blockHTML(b, mdRender) {
   return '<div data-type="sieve-block" data-kind="' + (b.kind || '') + '"></div>'
 }
 
-// buildBlocksHTML projects the block list into a single document-HTML string,
+// buildBlocksHTML projects the envelope list into a single document-HTML string,
 // blocks joined in order by newlines (block separation; markdownit treats each
 // top-level construct independently).
 export function buildBlocksHTML(blocks, mdRender) {

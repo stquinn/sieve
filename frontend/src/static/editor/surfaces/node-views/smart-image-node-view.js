@@ -28,7 +28,7 @@ import { SmartImageRenderer } from '../../../block/renderers/smart-image-rendere
     // kind's own knowledge; resolution needs the held Editor's uuid, which is
     // why it happens here and not in the (PM-blind, ctx-free) renderer.
     function envelopeFor(n) {
-      return sieveBlockFor(n, { src: SmartImageRenderer.resolveSrc(n.attrs.src || '', ctx && ctx.getEditor() && ctx.getEditor().uuid) })
+      return sieveBlockFor(n, { src: SmartImageRenderer.resolveSrc(n.attrs.src || '', ctx && ctx.getEditor() && ctx.getEditor().uuid) }, ctx && ctx.blockService)
     }
 
     // The renderer instance this NodeView HOLDS by composition (never

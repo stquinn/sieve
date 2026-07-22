@@ -159,7 +159,7 @@ import { LogRenderer } from '../../../block/renderers/log-renderer.js'
 
       // envelopeFor — the typed envelope for this NodeView's renderer.
       function envelopeFor(n) {
-        return sieveBlockFor(n, { source: n.textContent, resolvedAssetUrl: resolveAssetUrl(n.attrs.parsedAssetRef) })
+        return sieveBlockFor(n, { source: n.textContent, resolvedAssetUrl: resolveAssetUrl(n.attrs.parsedAssetRef) }, ctx && ctx.blockService)
       }
 
       // The renderer instance this NodeView HOLDS by composition. It builds its
