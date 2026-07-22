@@ -76,6 +76,7 @@ import { AbstractSurface, SurfaceEvent } from '../src/static/editor/surfaces/abs
 import { MarkdownSurface } from '../src/static/editor/surfaces/markdown-surface.js'
 import { WysiwygSurface } from '../src/static/editor/surfaces/wysiwyg-surface.js'
 import { buildBlocksHTML } from '../src/static/block/block-render.js'
+import { SieveBlock } from '../src/static/block/sieve-block.js'
 import { getBlockSelectionRange } from '../src/static/editor/block-chrome.js'
 import { BlockSelection } from '../src/static/block/block-selection.js'
 import { computeBlockSync } from '../src/static/block/block-sync.js'
@@ -319,6 +320,7 @@ function fakeEditorOver(schema, docNodes) {
     commands: {
       insertContentAt: (pos, content) => { calls.push(['insertContentAt', pos, content]); return true },
       focus: () => { calls.push(['focus']); return true },
+      setTextSelection: (pos) => { calls.push(['setTextSelection', pos]); return true },
       command: (fn) => { const tr = state.tr; fn({ tr, state }); dispatched.push(tr); return true },
     },
     chain: () => {
@@ -1053,5 +1055,29 @@ describe('WysiwygSurface blockCursor capture + applyPosition (P3.E)', () => {
     new TestWysiwygSurface('doc-1', wyHost(), stubEd)
       .applyPosition({ blockId: null, blockCursor: null, range: { from: 99, to: 99 } })
     expect(captured).toEqual({ from: 10, to: 10 })
+  })
+})
+
+describe('WysiwygSurface.reloadFromBlocks — load render parks the caret at the TOP', () => {
+  // A whole-doc replaceWith maps the prior selection to the END of the new
+  // content; left there, the mount/reload focus scrolls every opened document
+  // to its bottom (defect observed 2026-07-22: "documents always open scrolled
+  // to the end"). A load is not an edit — the caret belongs at the doc start.
+  // softReload's own caret restore runs AFTER reloadFromBlocks, so genuine
+  // mid-session reloads still put the caret back where the user had it.
+  beforeEach(() => {
+    vi.useFakeTimers()
+    seedVendor({ ProseMirrorDOMParser: PMDOMParser })
+  })
+
+  it('resets the selection to doc start AFTER the whole-doc replace', () => {
+    const ed = fakeEditorOver(fxSchema, [build.p('old content', 'b1')])
+    const s = new TestWysiwygSurface('doc-1', wyHost(), ed)
+    s.reloadFromBlocks([new SieveBlock('prose', { id: 'p1', content: 'hello' })])
+    const di = ed.calls.findIndex((c) => c[0] === 'dispatch')
+    const si = ed.calls.findIndex((c) => c[0] === 'setTextSelection')
+    expect(di).toBeGreaterThanOrEqual(0)
+    expect(si).toBeGreaterThan(di)   // reset comes after the replace landed
+    expect(ed.calls[si][1]).toBe(0)  // doc start (TipTap clamps to the first valid position)
   })
 })

@@ -1554,6 +1554,13 @@ export class WysiwygSurface extends AbstractSurface {
     tr.replaceWith(0, editorPane.state.doc.content.size, replacement)
     tr.setMeta('addToHistory', false)
     editorPane.view.dispatch(tr)
+    // The whole-doc replace maps the prior selection to the END of the new
+    // content; left there, the next focus scrolls every opened document to its
+    // bottom. A load is not an edit — park the caret at the doc start (TipTap
+    // clamps 0 to the first valid position; selection-only, no history step).
+    // softReload's own caret restore runs AFTER this, so genuine mid-session
+    // reloads still return the caret to where the user had it.
+    try { editorPane.commands.setTextSelection(0) } catch (_) {}
   }
 
   // ── Block-sync cache (verbatim mountWysiwyg internals) ─────────────────────────
