@@ -51,11 +51,14 @@ const SURFACE_OPS = Object.freeze(['insert-block', 'replace-block', 'block-attrs
 
 /**
  * BlockChannel — one document's live wire: the socket, its pending queue,
- * awaiters, timers and reconnect state (moved VERBATIM from AbstractEditor's
- * #open/#closeSocket/#send/#awaitReply/#handleMessage — semantics preserved:
- * null onclose before close in teardown, pending-queue replay on open, 45s
- * pong watchdog, 15s ping interval, 1s→30s exponential backoff, 5s awaitReply
- * timeout, awaiter-consumed replies with late replies dropped).
+ * awaiters, timers and reconnect state (moved from AbstractEditor's
+ * #open/#closeSocket/#send/#awaitReply/#handleMessage — transport semantics
+ * preserved: null onclose before close in teardown, pending-queue replay on
+ * open, 45s pong watchdog, 15s ping interval, 1s→30s exponential backoff, 5s
+ * await timeout, awaiter-consumed replies with late replies dropped). Issue #49
+ * Phase 2 rebuilt the awaiter registry on client-minted opId keys (was reply-type
+ * keys), splitting the timeout policy into awaitReply (rejects — handshakes) and
+ * awaitAck (resolves {ok,error} — block-op / extract).
  * Module-private — BlockService is the only constructor.
  */
 class BlockChannel {
@@ -66,7 +69,7 @@ class BlockChannel {
 
   /** @type {WebSocket|null} */ #ws = null
   /** @type {string[]} JSON strings queued before the socket is OPEN */ #pending = []
-  /** @type {Record<string, {resolve: (m: object) => void, reject: (e: Error) => void}>} */ #awaiters = {}
+  /** @type {Map<string, (msg: Record<string, any>) => void>} opId → the reply settler (issue #49 Phase 2: correlation is by client-minted opId, never reply-type) */ #awaiters = new Map()
   /** @type {ReturnType<typeof setTimeout>|null} */ #reconnectTimer = null
   /** @type {ReturnType<typeof setInterval>|null} */ #pingInterval = null
   /** @type {number} exponential-backoff delay, doubles per attempt, cap 30s */ #reconnectDelay = 1000
@@ -148,7 +151,10 @@ class BlockChannel {
       this.#ws = null
     }
     this.#pending = []
-    this.#awaiters = {}
+    // Clear the awaiter registry but leave the per-awaiter timers running: a flip
+    // in flight when the socket closes still rejects/resolves at 5s (the
+    // destroy-mid-flight semantics), it never hangs.
+    this.#awaiters.clear()
   }
 
   /** @param {{data?: string}} event */
@@ -159,19 +165,25 @@ class BlockChannel {
       return
     }
     if (msg.type === 'flush-ack') {
-      // Flush-ack side effects run for EVERY flush-ack — awaited (flushSave) or
-      // side-channel (EditorService's background notifySaved). The dirty-clear
-      // + chrome events live in the editor's delegate, out of the transport.
+      // Flush-ack side effects run for EVERY flush-ack — request-correlated
+      // (carries opId) or the unsolicited background notifySaved (no opId). The
+      // dirty-clear + chrome events live in the editor's delegate, out of the
+      // transport.
       this.#delegate.onFlushAck(msg)
     }
 
-    // A registered awaiter CONSUMES its reply (flush-ack, markdown-content,
-    // wysiwyg-content). A reply arriving after its awaiter timed out falls
-    // through and is dropped below — it must never mount a stale surface.
-    const awaiter = this.#awaiters[msg.type]
-    if (awaiter) {
-      delete this.#awaiters[msg.type]
-      awaiter.resolve(msg)
+    // opId correlation (issue #49 Phase 2): a reply carrying a live opId awaiter
+    // is CONSUMED by it — the request/reply pairing is by client-minted opId, so
+    // two concurrent same-type handshakes never cross-resolve. A reply whose
+    // awaiter already timed out is DROPPED here: the flush-ack side effect above
+    // already ran, and block-op-ack / extract-ack have none. It must never mount
+    // a stale surface. Unsolicited replies (no opId) route below exactly as today.
+    if (msg.opId !== undefined) {
+      const settle = this.#awaiters.get(msg.opId)
+      if (settle) {
+        this.#awaiters.delete(msg.opId)
+        settle(msg)
+      }
       return
     }
 
@@ -184,8 +196,8 @@ class BlockChannel {
       return
     }
 
-    // Everything else (error, block-extracted, unawaited mode replies) goes to
-    // the registered message router.
+    // Everything else (error, block-extracted, unawaited flush-ack) goes to the
+    // registered message router.
     this.#delegate.onMessage(msg)
   }
 
@@ -203,26 +215,43 @@ class BlockChannel {
   }
 
   /**
-   * Sends a message and resolves with the reply of an EXPLICIT reply type, or
-   * rejects after 5s. (The mode-handshake replies are markdown-content /
-   * wysiwyg-content — not `<type>-ack` — hence reply-type keying.)
-   * @param {string} replyType
-   * @param {object} msg
-   * @param {string} [label]
+   * Sends a message under the given client-minted opId and resolves with the
+   * reply that ECHOES it, or REJECTS after 5s. The HANDSHAKE semantic: flush →
+   * flush-ack, enter-markdown → markdown-content, enter-wysiwyg → wysiwyg-content.
+   * setMode's stay-on-failure depends on the rejection. The opId is stamped onto
+   * the outgoing frame here (wire-additive — Go echoes it back).
+   * @param {string} opId @param {object} msg @param {string} [label]
    *   — timeout-message label
    * @returns {Promise<any>}
    */
-  awaitReply(replyType, msg, label) {
+  awaitReply(opId, msg, label) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        delete this.#awaiters[replyType]
-        reject(new Error('ws timeout: ' + (label || replyType)))
+        this.#awaiters.delete(opId)
+        reject(new Error('ws timeout: ' + (label || opId)))
       }, 5000)
-      this.#awaiters[replyType] = {
-        resolve: (m) => { clearTimeout(timer); resolve(m) },
-        reject: (e) => { clearTimeout(timer); reject(e) },
-      }
-      this.send(msg)
+      this.#awaiters.set(opId, (m) => { clearTimeout(timer); resolve(m) })
+      this.send(Object.assign({}, msg, { opId: opId }))
+    })
+  }
+
+  /**
+   * Sends a message under the given client-minted opId and resolves the ACK
+   * RESULT — {ok, error?} from the echoing `*-ack` reply, or {ok:false,
+   * error:'ws timeout: …'} after 5s. It NEVER rejects: block-op / extract acks
+   * are fire-and-forget for most callers (the wysiwyg observer's op batch), so an
+   * ignored promise must never surface an unhandled rejection.
+   * @param {string} opId @param {object} msg @param {string} [label]
+   * @returns {Promise<{ok: boolean, error?: string}>}
+   */
+  awaitAck(opId, msg, label) {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.#awaiters.delete(opId)
+        resolve({ ok: false, error: 'ws timeout: ' + (label || opId) })
+      }, 5000)
+      this.#awaiters.set(opId, (m) => { clearTimeout(timer); resolve({ ok: m.ok === true, error: m.error }) })
+      this.send(Object.assign({}, msg, { opId: opId }))
     })
   }
 }
@@ -232,6 +261,7 @@ export class BlockService {
   /** @type {(uuid: string) => string} */ #wsUrlFor
   /** @type {Map<string, BlockChannel>} uuid → live channel */ #channels = new Map()
   /** @type {Map<string, {uuid: string, kind: string}>} blockId → routing entry (STICKY — never purged on delete) */ #blocks = new Map()
+  /** @type {number} monotonic opId source; per-BlockService so ids never collide across channels (correlation is uuid+opId, but a global counter also survives a takeover cleanly) */ #opSeq = 0
 
   /** @param {BlockServiceOptions} [options]
    *    the test seams (empty in prod) */
@@ -239,6 +269,11 @@ export class BlockService {
     this.#socketFactory = options.socketFactory || ((url) => new WebSocket(url))
     this.#wsUrlFor = options.wsUrlFor || ((uuid) => BlockService.#defaultUrl(uuid))
   }
+
+  /** Mints the next request-correlation opId (issue #49 Phase 2). Monotonic and
+   *  per-service, so it is unique within any uuid AND across channels.
+   *  @returns {string} */
+  #mintOpId() { return 'op-' + (++this.#opSeq) }
 
   /** @param {string} uuid @returns {string} the production /api/ws URL */
   static #defaultUrl(uuid) {
@@ -332,18 +367,25 @@ export class BlockService {
    * processor for the kind. No consumer ever speaks these keys (contract
    * §semantic-API doctrine / §boundary datatype rule). `opts.aliases` is lifted
    * to the op's top-level aliases field — framing knowledge, service-internal.
-   * Frame frozen: {type:'block-op', uuid, op:{type:'update-block', blockId,
-   * kind, attrs, aliases?}} with kind from the routing index.
+   * Frame frozen (opId added wire-additive on the outer envelope): {type:'block-op',
+   * uuid, op:{type:'update-block', blockId, kind, attrs, aliases?}, opId} with kind
+   * from the routing index. Returns the ack RESULT {ok, error?} (resolves, never
+   * rejects); fire-and-forget callers ignore it — the promise never surfaces an
+   * unhandled rejection. Unknown-id / channel-less drops resolve {ok:false, error}.
    * @param {string} blockId @param {Record<string, any>} patch
    * @param {{aliases?: string[]}} [opts]
+   * @returns {Promise<{ok: boolean, error?: string}>}
    */
   updateAttributes(blockId, patch, opts) {
     const entry = this.#entryFor(blockId)
-    if (!entry) { console.warn('[block-service] updateAttributes: unknown block id, dropped', blockId); return }
+    if (!entry) {
+      console.warn('[block-service] updateAttributes: unknown block id, dropped', blockId)
+      return Promise.resolve({ ok: false, error: 'dropped: unknown block id ' + blockId })
+    }
     const ch = this.#channels.get(entry.uuid)
-    if (!ch) return // channel-less document — no-op send (socketless parity)
+    if (!ch) return Promise.resolve({ ok: false, error: 'dropped: no live channel for ' + entry.uuid })
     const op = updateBlockOp({ id: blockId, kind: entry.kind, attrs: patch, aliases: opts && opts.aliases })
-    ch.send({ type: 'block-op', uuid: entry.uuid, op: op })
+    return ch.awaitAck(this.#mintOpId(), { type: 'block-op', uuid: entry.uuid, op: op }, 'update-block ' + blockId)
   }
 
   /**
@@ -351,10 +393,12 @@ export class BlockService {
    * editor lens's sync closure ends here, never at a socket). The default
    * content attr is `content`; kinds whose content attr differs (code /
    * diagram / log → `source`) override setContent in THEIR renderer subclass.
+   * Returns updateAttributes' ack RESULT {ok, error?}.
    * @param {string} blockId @param {string} text
+   * @returns {Promise<{ok: boolean, error?: string}>}
    */
   setContent(blockId, text) {
-    this.updateAttributes(blockId, { content: text })
+    return this.updateAttributes(blockId, { content: text })
   }
 
   /**
@@ -377,8 +421,11 @@ export class BlockService {
    * targetKind, operation, entries, index} — NO uuid; the server resolves the
    * document from the channel. The channel is resolved via the blockId's index
    * entry, falling back to the sole open channel when the id is absent or
-   * unindexed; ambiguity warns loudly and drops.
+   * unindexed; ambiguity warns loudly and drops. Returns the extract-ack RESULT
+   * {ok, error?} (resolves, never rejects); the additive block-extracted hint
+   * still arrives separately on onMessage. Drops resolve {ok:false, error}.
    * @param {{blockId?: string, targetKind: string, operation: string, entries: object[], index: number}} payload
+   * @returns {Promise<{ok: boolean, error?: string}>}
    */
   extract(payload) {
     const entry = this.#entryFor(payload.blockId || '')
@@ -388,18 +435,18 @@ export class BlockService {
         ch = this.#channels.values().next().value
       } else if (this.#channels.size > 1) {
         console.warn('[block-service] extract: ambiguous channel for block', payload.blockId, '— dropped')
-        return
+        return Promise.resolve({ ok: false, error: 'dropped: ambiguous channel' })
       }
     }
-    if (!ch) return // no open channel — no-op send (socketless parity)
-    ch.send({
+    if (!ch) return Promise.resolve({ ok: false, error: 'dropped: no open channel' })
+    return ch.awaitAck(this.#mintOpId(), {
       type: 'extract',
       blockId: payload.blockId,
       targetKind: payload.targetKind,
       operation: payload.operation,
       entries: payload.entries,
       index: payload.index,
-    })
+    }, 'extract ' + payload.targetKind)
   }
 
   // ── Service-pair internals (@protected by convention — DocumentService only) ─
@@ -421,15 +468,32 @@ export class BlockService {
   }
 
   /**
-   * Send + await a typed reply on a document's channel; channel-less uuids
-   * reject with the socketless error (awaits resolve-or-reject, never hang).
-   * @param {string} uuid @param {string} replyType @param {object} msg @param {string} [label]
+   * Send + await a HANDSHAKE reply on a document's channel, correlated by a freshly
+   * minted opId; channel-less uuids reject with the socketless error (awaits
+   * resolve-or-reject, never hang). REJECTS on 5s timeout — setMode's
+   * stay-on-failure depends on it.
+   * @param {string} uuid @param {object} msg @param {string} [label]
    * @returns {Promise<any>}
    */
-  _awaitReply(uuid, replyType, msg, label) {
+  _awaitReply(uuid, msg, label) {
     const ch = this.#channels.get(uuid)
     if (!ch) return Promise.reject(new Error('editor has no live channel'))
-    return ch.awaitReply(replyType, msg, label)
+    return ch.awaitReply(this.#mintOpId(), msg, label)
+  }
+
+  /**
+   * Send + await an ACK on a document's channel, correlated by a freshly minted
+   * opId. Resolves the ack RESULT {ok, error?} — including on a channel-less uuid
+   * ({ok:false, error:'dropped: …'}) and on timeout — and NEVER rejects, so a
+   * fire-and-forget caller can ignore the promise safely. (createBlock / deleteBlock
+   * route here.)
+   * @param {string} uuid @param {object} msg @param {string} [label]
+   * @returns {Promise<{ok: boolean, error?: string}>}
+   */
+  _awaitAck(uuid, msg, label) {
+    const ch = this.#channels.get(uuid)
+    if (!ch) return Promise.resolve({ ok: false, error: 'dropped: no live channel for ' + uuid })
+    return ch.awaitAck(this.#mintOpId(), msg, label)
   }
 
   /**

@@ -81,7 +81,7 @@ export class DocumentService {
    */
   flush(uuid) {
     if (!this.#blockService._hasChannel(uuid)) return Promise.resolve({})
-    return this.#blockService._awaitReply(uuid, 'flush-ack', { type: 'flush', uuid: uuid }, 'flush')
+    return this.#blockService._awaitReply(uuid, { type: 'flush', uuid: uuid }, 'flush')
   }
 
   /**
@@ -91,7 +91,7 @@ export class DocumentService {
    * @param {string} uuid @returns {Promise<string>}
    */
   getRawContent(uuid) {
-    return this.#blockService._awaitReply(uuid, 'markdown-content', { type: 'enter-markdown', uuid: uuid })
+    return this.#blockService._awaitReply(uuid, { type: 'enter-markdown', uuid: uuid }, 'enter-markdown')
       .then((reply) => reply.markdown)
   }
 
@@ -115,7 +115,7 @@ export class DocumentService {
    */
   save(uuid, raw) {
     if (this.#blockService._hasChannel(uuid)) {
-      return this.#blockService._awaitReply(uuid, 'wysiwyg-content', { type: 'enter-wysiwyg', uuid: uuid, markdown: raw })
+      return this.#blockService._awaitReply(uuid, { type: 'enter-wysiwyg', uuid: uuid, markdown: raw }, 'enter-wysiwyg')
         .then((reply) => {
           // Go's reparse can MINT ids (e.g. a paragraph split while in
           // markdown mode) — feed them to the routing index so the observer's
@@ -162,31 +162,36 @@ export class DocumentService {
    *   op reproduces proseOp's exact shape — blockId ('' while the create rides
    *   its transient correlation token), aliases lifted top-level, token last.
    *
+   * Returns the block-op ack RESULT {ok, error?} (resolves, never rejects);
+   * fire-and-forget callers ignore it. Channel-less / delegate-less uuids resolve
+   * {ok:false, error:'dropped: …'} (socketless parity).
    * @param {string} uuid @param {string} kind @param {Record<string, any>} attrs
    * @param {string} [afterBlockId]
    *   — a stable block-id anchor, never an index
    * @param {{index?: number, token?: string, aliases?: string[], blockId?: string}} [opts]
+   * @returns {Promise<{ok: boolean, error?: string}>}
    */
   createBlock(uuid, kind, attrs, afterBlockId, opts) {
     attrs = attrs || {}
     if (opts && typeof opts.index === 'number') {
       const op = /** @type {Record<string, any>} */ (blockOp('create-block', opts.blockId || '', kind, attrs, opts.aliases, opts.index))
       if (opts.token) op.token = opts.token
-      this.#blockService._send(uuid, { type: 'block-op', uuid: uuid, op: op })
-      return
+      return this.#blockService._awaitAck(uuid, { type: 'block-op', uuid: uuid, op: op }, 'create-block ' + kind)
     }
     const delegate = this.#blockService._delegateFor(uuid)
-    if (!delegate) return // channel-less (prompt / bare) — no-op, socketless parity
+    if (!delegate) return Promise.resolve({ ok: false, error: 'dropped: no live channel for ' + uuid }) // channel-less (prompt / bare)
     const idx = delegate.resolveInsertIndex(afterBlockId)
-    this.#blockService._send(uuid, { type: 'block-op', uuid: uuid, op: { type: 'create-block', kind: kind, attrs: attrs, index: idx } })
+    return this.#blockService._awaitAck(uuid, { type: 'block-op', uuid: uuid, op: { type: 'create-block', kind: kind, attrs: attrs, index: idx } }, 'create-block ' + kind)
   }
 
   /**
    * MEMBERSHIP: remove a block from the document (frame frozen: op
    * {type:'delete-block', blockId} — kind-agnostic, like the observer's).
+   * Returns the block-op ack RESULT {ok, error?} (resolves, never rejects).
    * @param {string} uuid @param {string} blockId
+   * @returns {Promise<{ok: boolean, error?: string}>}
    */
   deleteBlock(uuid, blockId) {
-    this.#blockService._send(uuid, { type: 'block-op', uuid: uuid, op: { type: 'delete-block', blockId: blockId } })
+    return this.#blockService._awaitAck(uuid, { type: 'block-op', uuid: uuid, op: { type: 'delete-block', blockId: blockId } }, 'delete-block ' + blockId)
   }
 }

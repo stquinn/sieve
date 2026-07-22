@@ -25,11 +25,14 @@ import (
 // post-completion decisions through a DocView; if you need live state, look the
 // ShadowDocument up again.
 type DocView struct {
-	UUID         string
-	Mode         string
-	mdModeBuffer string
-	Blocks       []SieveBlock
-	codec        *DocumentCodec
+	UUID string
+	// rawAuthoritative mirrors ShadowDocument.rawAuthoritative at snapshot time:
+	// true means the mdModeBuffer is the document's truth (the retired Mode ==
+	// "markdown"). A DocView is a pure value, so it carries the derived boolean.
+	rawAuthoritative bool
+	mdModeBuffer     string
+	Blocks           []SieveBlock
+	codec            *DocumentCodec
 }
 
 // GetBlock resolves a block by id from the snapshot tree, regardless of kind. It
@@ -52,7 +55,7 @@ func (d DocView) GetBlock(id string) (*SieveBlock, bool) {
 // markdown mode the raw buffer IS the document; in WYSIWYG the tree is serialized
 // fresh, so it can never drift.
 func (d DocView) deriveMarkdown() string {
-	if d.Mode == "markdown" {
+	if d.rawAuthoritative {
 		return d.mdModeBuffer
 	}
 	md, err := d.codec.Serialize(d.Blocks)
@@ -89,7 +92,7 @@ func (d DocView) deriveMarkdownFiltered(f BlockFilter) string {
 	if f == nil {
 		return d.deriveMarkdown()
 	}
-	if d.Mode == "markdown" {
+	if d.rawAuthoritative {
 		return d.mdModeBuffer
 	}
 	kept := make([]SieveBlock, 0, len(d.Blocks))
@@ -121,7 +124,7 @@ func (d DocView) deriveMarkdownFiltered(f BlockFilter) string {
 // raw buffer rather than losing the user's content (breakglass-mode best effort).
 func (d DocView) deriveExportMarkdown(f BlockFilter) string {
 	blocks := d.Blocks
-	if d.Mode == "markdown" {
+	if d.rawAuthoritative {
 		parsed, err := d.codec.Deserialize(d.mdModeBuffer)
 		if err != nil {
 			logger.Warn("editor: export re-parse of markdown buffer failed", "uuid", d.UUID, "err", err)

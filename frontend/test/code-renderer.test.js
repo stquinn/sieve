@@ -125,7 +125,7 @@ describe('CodeRenderer (bare-page DoD)', () => {
     renderer.setContent('const y = 2')
 
     expect(sock.sentOfType('block-op')).toEqual([{
-      type: 'block-op', uuid: 'doc-1',
+      type: 'block-op', uuid: 'doc-1', opId: expect.stringMatching(/^op-\d+$/),
       op: { type: 'update-block', blockId: 'cd-test', kind: 'code', attrs: { source: 'const y = 2' } },
     }])
   })

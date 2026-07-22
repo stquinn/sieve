@@ -155,9 +155,9 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 		case "doc-update":
 			h.handleDocUpdate(uuid, raw)
 		case "flush":
-			h.handleFlush(writeMsg, uuid)
+			h.handleFlush(writeMsg, uuid, raw)
 		case "enter-markdown":
-			h.handleEnterMarkdown(writeMsg, uuid)
+			h.handleEnterMarkdown(writeMsg, uuid, raw)
 		case "enter-wysiwyg":
 			h.handleEnterWysiwyg(uuid, raw, writeMsg)
 		case "retry-block-job":
@@ -174,19 +174,56 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 // to the open document's authoritative block tree.
 func (h *WsHandler) handleBlockOp(uuid string, raw []byte, writeMsg func(interface{})) {
 	var msg struct {
-		Op block.BlockOp `json:"op"`
+		// OpID is the client-minted request correlation handle (issue #49 Phase 2).
+		// It rides the OUTER envelope beside uuid — NOT inside BlockOp, which
+		// describes the mutation, not the request. Absent → no ack (compat).
+		OpID string        `json:"opId"`
+		Op   block.BlockOp `json:"op"`
 	}
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		logger.Warn("ws: block-op decode failed", "uuid", uuid, "err", err)
 		return
 	}
-	if err := h.ServiceProvider.Editor.HandleBlockOp(uuid, msg.Op); err != nil {
+	// Render-backs (insert-block / replace-block / block-attrs-updated) fire
+	// SYNCHRONOUSLY inside HandleBlockOp via the lifecycle listener, so the ack
+	// emitted after this call is strictly AFTER its render-back on the same socket.
+	err := h.ServiceProvider.Editor.HandleBlockOp(uuid, msg.Op)
+	if err != nil {
 		logger.Warn("ws: block-op failed", "uuid", uuid, "op", msg.Op.Type, "block", msg.Op.BlockID, "err", err)
+		// The generic error frame is UNCHANGED (the pre-existing error path); the
+		// ack below carries the opId-correlated outcome.
 		writeMsg(map[string]interface{}{
 			"type":    "error",
 			"message": fmt.Sprintf("block-op %s failed: %v", msg.Op.Type, err),
 		})
 	}
+	if msg.OpID != "" {
+		writeMsg(h.ackFrame("block-op-ack", msg.OpID, err))
+	}
+}
+
+// ackFrame builds a request-correlated ack ({type, opId, ok, error?}). A nil err
+// is ok:true; a non-nil err is ok:false plus its message. The block-op / extract
+// ack contract (issue #49 Phase 2): the ack IS the opId carrier, emitted after
+// the operation (and thus after any synchronous render-back).
+func (h *WsHandler) ackFrame(ackType, opID string, err error) map[string]interface{} {
+	ack := map[string]interface{}{"type": ackType, "opId": opID, "ok": err == nil}
+	if err != nil {
+		ack["error"] = err.Error()
+	}
+	return ack
+}
+
+// requestOpID reads the optional client-minted opId off a request envelope
+// (issue #49 Phase 2). Present only on reply-expecting frames; absent for
+// fire-and-forget frames (doc-update, retry, ping), whose replies carry no opId
+// and behave exactly as before.
+func (h *WsHandler) requestOpID(raw []byte) string {
+	var m struct {
+		OpID string `json:"opId"`
+	}
+	_ = json.Unmarshal(raw, &m)
+	return m.OpID
 }
 
 func (h *WsHandler) handleDocUpdate(uuid string, raw []byte) {
@@ -199,21 +236,33 @@ func (h *WsHandler) handleDocUpdate(uuid string, raw []byte) {
 	h.ServiceProvider.Editor.UpdateMarkdown(uuid, msg.Markdown)
 }
 
-func (h *WsHandler) handleFlush(writeMsg func(interface{}), uuid string) {
+// handleFlush is the REQUEST-correlated flush (echoes the request's opId, when
+// present). The unsolicited background flush-ack (notifySaved) is a separate path
+// with no request and thus no opId — it stays untouched.
+func (h *WsHandler) handleFlush(writeMsg func(interface{}), uuid string, raw []byte) {
 	_ = h.ServiceProvider.Editor.Flush(uuid)
-	writeMsg(map[string]string{"type": "flush-ack", "uuid": uuid})
+	ack := map[string]string{"type": "flush-ack", "uuid": uuid}
+	if opID := h.requestOpID(raw); opID != "" {
+		ack["opId"] = opID
+	}
+	writeMsg(ack)
 }
 
 // handleEnterMarkdown embeds current block state into Markdown, sets mode = markdown,
-// and returns merged content to JS as the seed for the markdown editor.
-func (h *WsHandler) handleEnterMarkdown(writeMsg func(interface{}), uuid string) {
+// and returns merged content to JS as the seed for the markdown editor. Echoes the
+// request's opId on the markdown-content reply when present (issue #49 Phase 2).
+func (h *WsHandler) handleEnterMarkdown(writeMsg func(interface{}), uuid string, raw []byte) {
 	merged := h.ServiceProvider.Editor.EnterMarkdown(uuid)
 	h.persistTabMode(uuid, "markdown")
-	writeMsg(map[string]string{
+	reply := map[string]string{
 		"type":     "markdown-content",
 		"uuid":     uuid,
 		"markdown": merged,
-	})
+	}
+	if opID := h.requestOpID(raw); opID != "" {
+		reply["opId"] = opID
+	}
+	writeMsg(reply)
 }
 
 // handleEnterWysiwyg picks up the latest markdown (the frontend's textarea value,
@@ -234,11 +283,15 @@ func (h *WsHandler) handleEnterWysiwyg(uuid string, raw []byte, writeMsg func(in
 	h.ServiceProvider.Editor.EnterWysiwyg(uuid)
 	h.persistTabMode(uuid, "wysiwyg")
 	if blocks, ok := h.ServiceProvider.Editor.FrontendBlocks(uuid); ok {
-		writeMsg(map[string]interface{}{
+		reply := map[string]interface{}{
 			"type":   "wysiwyg-content",
 			"uuid":   uuid,
 			"blocks": blocks,
-		})
+		}
+		if opID := h.requestOpID(raw); opID != "" {
+			reply["opId"] = opID
+		}
+		writeMsg(reply)
 	}
 }
 
@@ -314,6 +367,9 @@ func (h *WsHandler) OnBlockReplaced(uuid, oldID, newKind, newID string, attrs ma
 
 func (h *WsHandler) handleExtract(uuid string, raw []byte, writeMsg func(interface{})) {
 	var p struct {
+		// OpID rides the OUTER envelope (issue #49 Phase 2), correlating the
+		// request. The transform path had no direct reply before; extract-ack is it.
+		OpID       string               `json:"opId"`
 		BlockID    string               `json:"blockId"`
 		TargetKind string               `json:"targetKind"`
 		Operation  string               `json:"operation"`
@@ -335,10 +391,14 @@ func (h *WsHandler) handleExtract(uuid string, raw []byte, writeMsg func(interfa
 		uuid, p.TargetKind, p.Entries, p.Index, action, p.BlockID)
 	if err != nil {
 		logger.Warn("ws: extract block failed", "err", err)
+		// Generic error frame UNCHANGED; the extract-ack below carries the opId.
 		writeMsg(map[string]interface{}{
 			"type":    "error",
 			"message": fmt.Sprintf("Failed to extract block: %v", err),
 		})
+		if p.OpID != "" {
+			writeMsg(h.ackFrame("extract-ack", p.OpID, err))
+		}
 		return
 	}
 
@@ -353,5 +413,8 @@ func (h *WsHandler) handleExtract(uuid string, raw []byte, writeMsg func(interfa
 			"newKind":    p.TargetKind,
 			"newYaml":    rawYaml,
 		})
+	}
+	if p.OpID != "" {
+		writeMsg(h.ackFrame("extract-ack", p.OpID, nil))
 	}
 }

@@ -136,8 +136,8 @@ describe('LogRenderer (bare-page DoD)', () => {
     renderer.setMode(MODE.RENDER)   // MODE enum → this kind's wire string, privately
     renderer.toggleColumn('level')  // disabledCols encoding stays renderer-private
     expect(sock.sentOfType('block-op')).toEqual([
-      { type: 'block-op', uuid: 'doc-1', op: { type: 'update-block', blockId: 'lg-test', kind: 'log', attrs: { mode: 'explore' } } },
-      { type: 'block-op', uuid: 'doc-1', op: { type: 'update-block', blockId: 'lg-test', kind: 'log', attrs: { disabledCols: 'level' } } },
+      { type: 'block-op', uuid: 'doc-1', opId: expect.stringMatching(/^op-\d+$/), op: { type: 'update-block', blockId: 'lg-test', kind: 'log', attrs: { mode: 'explore' } } },
+      { type: 'block-op', uuid: 'doc-1', opId: expect.stringMatching(/^op-\d+$/), op: { type: 'update-block', blockId: 'lg-test', kind: 'log', attrs: { disabledCols: 'level' } } },
     ])
   })
 

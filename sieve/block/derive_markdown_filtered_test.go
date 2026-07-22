@@ -23,7 +23,7 @@ func TestDeriveMarkdownFiltered_DropsAIBlock(t *testing.T) {
 			"id": "ab-1", "question": "what is x?", "response": "stale answer about x",
 		}},
 	}
-	doc := DocView{Mode: "wysiwyg", Blocks: blocks, codec: codec}
+	doc := DocView{Blocks: blocks, codec: codec}
 
 	// Nil filter == today's full output.
 	full := doc.deriveMarkdownFiltered(nil)
@@ -57,7 +57,7 @@ func TestDeriveMarkdownFiltered_DropsAIBlock(t *testing.T) {
 // returned verbatim regardless of the filter — the documented conscious gap.
 func TestDeriveMarkdownFiltered_MarkdownModeReturnsRawBuffer(t *testing.T) {
 	raw := "# Heading\n\n```ai-block\nid: ab-1\nresponse: still here\n```"
-	doc := DocView{Mode: "markdown", mdModeBuffer: raw}
+	doc := DocView{rawAuthoritative: true, mdModeBuffer: raw}
 	if got := doc.deriveMarkdownFiltered(dropKind("ai-block")); got != raw {
 		t.Fatalf("markdown mode must return raw buffer verbatim even with a filter, got %q", got)
 	}

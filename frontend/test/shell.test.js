@@ -50,6 +50,19 @@ import { buildAiContext, applyTargetHighlight } from '../src/static/editor/exten
 import { BlockService } from '../src/static/block/block-service.js'
 import { DocumentService } from '../src/static/block/document-service.js'
 
+// issue #49 Phase 2: reply-expecting frames now carry a client-minted opId on the
+// OUTER envelope (wire-additive). Frozen-frame assertions pin its shape without
+// coupling to the monotonic counter's value.
+const OPID = expect.stringMatching(/^op-\d+$/)
+
+// The opId the service minted on its most recent request of `reqType` — tests
+// echo it on the driven reply so the opId-keyed awaiter resolves (the reply/request
+// correlation the wire now enforces).
+function sentOpId(sock, reqType) {
+  const sent = sock.sentOfType(reqType)
+  return sent.length ? sent[sent.length - 1].opId : undefined
+}
+
 // ── Test doubles ─────────────────────────────────────────────────────────────
 
 // A fake WebSocket that records sends and lets tests drive open/message/close.
@@ -808,8 +821,8 @@ describe('service pair → wire enveloping (issue #49 Phase 1: frames FROZEN)', 
     rig.ds.createBlock('n', 'prose', { content: 'hi' }, undefined, { index: 1, token: 'tok-1' })
     rig.ds.deleteBlock('n', 'b9')
     expect(rig.sock().sentOfType('block-op')).toEqual([
-      { type: 'block-op', uuid: 'n', op: { type: 'create-block', blockId: '', kind: 'prose', attrs: { content: 'hi' }, index: 1, token: 'tok-1' } },
-      { type: 'block-op', uuid: 'n', op: { type: 'delete-block', blockId: 'b9' } },
+      { type: 'block-op', uuid: 'n', opId: OPID, op: { type: 'create-block', blockId: '', kind: 'prose', attrs: { content: 'hi' }, index: 1, token: 'tok-1' } },
+      { type: 'block-op', uuid: 'n', opId: OPID, op: { type: 'delete-block', blockId: 'b9' } },
     ])
   })
 
@@ -818,7 +831,7 @@ describe('service pair → wire enveloping (issue #49 Phase 1: frames FROZEN)', 
     rig.sock().driveOpen()
     rig.ds.createBlock('n', 'prose', { content: 'x' }, undefined, { index: 2, aliases: ['old-1'], blockId: 'p-1' })
     expect(rig.sock().sentOfType('block-op')).toEqual([
-      { type: 'block-op', uuid: 'n', op: { type: 'create-block', blockId: 'p-1', kind: 'prose', attrs: { content: 'x' }, aliases: ['old-1'], index: 2 } },
+      { type: 'block-op', uuid: 'n', opId: OPID, op: { type: 'create-block', blockId: 'p-1', kind: 'prose', attrs: { content: 'x' }, aliases: ['old-1'], index: 2 } },
     ])
   })
 
@@ -847,8 +860,8 @@ describe('service pair → wire enveloping (issue #49 Phase 1: frames FROZEN)', 
     rig.bs.updateAttributes('b1', { source: 'x' })
     rig.bs.updateAttributes('b1', { source: 'y' }, { aliases: ['b0'] })
     expect(rig.sock().sentOfType('block-op')).toEqual([
-      { type: 'block-op', uuid: 'n', op: { type: 'update-block', blockId: 'b1', kind: 'code', attrs: { source: 'x' } } },
-      { type: 'block-op', uuid: 'n', op: { type: 'update-block', blockId: 'b1', kind: 'code', attrs: { source: 'y' }, aliases: ['b0'] } },
+      { type: 'block-op', uuid: 'n', opId: OPID, op: { type: 'update-block', blockId: 'b1', kind: 'code', attrs: { source: 'x' } } },
+      { type: 'block-op', uuid: 'n', opId: OPID, op: { type: 'update-block', blockId: 'b1', kind: 'code', attrs: { source: 'y' }, aliases: ['b0'] } },
     ])
   })
 
@@ -858,7 +871,7 @@ describe('service pair → wire enveloping (issue #49 Phase 1: frames FROZEN)', 
     rig.bs.indexDocument('n', [{ id: 'b1', kind: 'prose' }])
     rig.bs.setContent('b1', 'plain text')
     expect(rig.sock().sentOfType('block-op')).toEqual([
-      { type: 'block-op', uuid: 'n', op: { type: 'update-block', blockId: 'b1', kind: 'prose', attrs: { content: 'plain text' } } },
+      { type: 'block-op', uuid: 'n', opId: OPID, op: { type: 'update-block', blockId: 'b1', kind: 'prose', attrs: { content: 'plain text' } } },
     ])
   })
 
@@ -956,7 +969,7 @@ describe('BlockService channel-per-uuid routing + index seeding (issue #49 Phase
     sockA.driveMessage({ type: 'insert-block', kind: 'code', id: 'i1' })
     expect(delegateA.applyServerOp).toHaveBeenCalledWith(expect.objectContaining({ type: 'insert-block' }))
     const flushed = ds.flush('doc-a')
-    sockA.driveMessage({ type: 'flush-ack', uuid: 'doc-a' })
+    sockA.driveMessage({ type: 'flush-ack', uuid: 'doc-a', opId: sentOpId(sockA, 'flush') })
     await flushed
     expect(delegateA.onFlushAck).toHaveBeenCalledWith(expect.objectContaining({ type: 'flush-ack' }))
     sockA.driveMessage({ type: 'error', message: 'boom' })
@@ -1051,7 +1064,7 @@ describe('NoteEditor WS lifecycle (P2.A)', () => {
     rig.bs.updateAttributes('b1', { source: 's' })
     const sent = sock.sent.map((s) => JSON.parse(s)).find((m) => m.type === 'block-op')
     // The wire envelope is composed ONLY inside the BlockService — pinned here.
-    expect(sent).toEqual({ type: 'block-op', uuid: 'n', op: { type: 'update-block', blockId: 'b1', kind: 'code', attrs: { source: 's' } } })
+    expect(sent).toEqual({ type: 'block-op', uuid: 'n', opId: OPID, op: { type: 'update-block', blockId: 'b1', kind: 'code', attrs: { source: 's' } } })
   })
 
   it('retry and extract envelope with the frozen shapes', async () => {
@@ -1066,9 +1079,10 @@ describe('NoteEditor WS lifecycle (P2.A)', () => {
     // resolveEntriesForKind), so await the returned promise before asserting.
     await ed.extract({ blockId: 'blk-1', targetKind: 'diagram', operation: 'extract', entries: [] })
     const msgs = sock.sent.map((s) => JSON.parse(s))
+    // retry stays fire-and-forget (no opId); extract now carries an opId (extract-ack).
     expect(msgs).toContainEqual({ type: 'retry-block-job', uuid: 'n', id: 'blk-1' })
     // extract carries no uuid — the server resolves the doc from the channel.
-    expect(msgs).toContainEqual({ type: 'extract', blockId: 'blk-1', targetKind: 'diagram', operation: 'extract', entries: [], index: -1 })
+    expect(msgs).toContainEqual({ type: 'extract', blockId: 'blk-1', targetKind: 'diagram', operation: 'extract', entries: [], index: -1, opId: OPID })
   })
 
   it('extract absorbs its prep: clears the insert pos, stamps context onto entries[0], sends async', async () => {
@@ -1081,7 +1095,7 @@ describe('NoteEditor WS lifecycle (P2.A)', () => {
     expect(entries[0].context).toEqual({ parentId: 'p' })   // context stamped onto the first entry
     expect(ed.takeInsertPos()).toBeNull()                    // clearInsertPos ran
     const sent = sock.sent.map((s) => JSON.parse(s)).find((m) => m.type === 'extract')
-    expect(sent).toEqual({ type: 'extract', blockId: 'b', targetKind: 'code', operation: 'extract', entries, index: -1 })
+    expect(sent).toEqual({ type: 'extract', blockId: 'b', targetKind: 'code', operation: 'extract', entries, index: -1, opId: OPID })
   })
 
   it('retry re-dispatches the backend job WITHOUT touching the PM doc (the optimistic reset is retired)', () => {
@@ -1169,8 +1183,8 @@ describe('DocumentService.flush — the awaited save ack (issue #49: moved off t
     sock.driveOpen()
     const p = rig.ds.flush('n')
     const sent = sock.sent.map((s) => JSON.parse(s)).find((m) => m.type === 'flush')
-    expect(sent).toEqual({ type: 'flush', uuid: 'n' })
-    sock.driveMessage({ type: 'flush-ack', uuid: 'n' })
+    expect(sent).toEqual({ type: 'flush', uuid: 'n', opId: OPID })
+    sock.driveMessage({ type: 'flush-ack', uuid: 'n', opId: sentOpId(sock, 'flush') })
     const msg = await p
     expect(msg.type).toBe('flush-ack')
   })
@@ -1188,6 +1202,107 @@ describe('DocumentService.flush — the awaited save ack (issue #49: moved off t
   it('a channel-less uuid resolves {} immediately (socketless parity)', async () => {
     const { ds } = servicePair()
     await expect(ds.flush('nobody')).resolves.toEqual({})
+  })
+})
+
+// ── issue #49 Phase 2: opId correlation + ack results ───────────────────────────
+
+describe('opId correlation (issue #49 Phase 2)', () => {
+  beforeEach(() => FakeSocket.reset())
+  afterEach(() => vi.useRealTimers())
+
+  function indexedRig() {
+    const rig = noteRig('n')
+    rig.sock().driveOpen()
+    rig.bs.indexDocument('n', [{ id: 'b1', kind: 'code' }])
+    return rig
+  }
+
+  it('a block-op-ack echoing the minted opId resolves the verb promise {ok:true}', async () => {
+    const rig = indexedRig()
+    const p = rig.bs.updateAttributes('b1', { source: 'x' })
+    const opId = sentOpId(rig.sock(), 'block-op')
+    expect(opId).toMatch(/^op-\d+$/)
+    rig.sock().driveMessage({ type: 'block-op-ack', opId: opId, ok: true })
+    await expect(p).resolves.toEqual({ ok: true })
+  })
+
+  it('a block-op-ack with ok:false carries the error through the resolved result', async () => {
+    const rig = indexedRig()
+    const p = rig.bs.updateAttributes('b1', { source: 'x' })
+    rig.sock().driveMessage({ type: 'block-op-ack', opId: sentOpId(rig.sock(), 'block-op'), ok: false, error: 'boom' })
+    await expect(p).resolves.toEqual({ ok: false, error: 'boom' })
+  })
+
+  it('an ack TIMEOUT resolves {ok:false, error} — never an unhandled rejection', async () => {
+    vi.useFakeTimers()
+    const rig = indexedRig()
+    const p = rig.bs.updateAttributes('b1', { source: 'x' }) // promise deliberately ignorable
+    await vi.advanceTimersByTimeAsync(5000)
+    const res = await p
+    expect(res.ok).toBe(false)
+    expect(res.error).toMatch(/ws timeout/)
+  })
+
+  it('a LATE block-op-ack after the timeout is dropped silently (no throw, no double-settle)', async () => {
+    vi.useFakeTimers()
+    const rig = indexedRig()
+    const p = rig.bs.updateAttributes('b1', { source: 'x' })
+    const opId = sentOpId(rig.sock(), 'block-op')
+    await vi.advanceTimersByTimeAsync(5000)
+    expect((await p).ok).toBe(false)
+    expect(() => rig.sock().driveMessage({ type: 'block-op-ack', opId: opId, ok: true })).not.toThrow()
+  })
+
+  it('an unknown-id verb resolves {ok:false} WITHOUT sending, and never rejects', async () => {
+    const rig = indexedRig()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const res = await rig.bs.updateAttributes('ghost', { source: 'x' })
+      expect(res.ok).toBe(false)
+      expect(rig.sock().sentOfType('block-op')).toEqual([])
+      expect(warn).toHaveBeenCalled()
+    } finally { warn.mockRestore() }
+  })
+
+  it('a HANDSHAKE (flush) timeout still REJECTS — stay-on-failure depends on it', async () => {
+    vi.useFakeTimers()
+    const rig = noteRig('n')
+    rig.sock().driveOpen()
+    const p = rig.ds.flush('n')
+    const assertion = expect(p).rejects.toThrow('ws timeout: flush')
+    await vi.advanceTimersByTimeAsync(5000)
+    await assertion
+  })
+
+  it('an unsolicited flush-ack (NO opId) still fires onFlushAck and consumes no awaiter', () => {
+    const { bs } = servicePair()
+    const delegate = { applyServerOp: vi.fn(), onFlushAck: vi.fn(), onMessage: vi.fn(), resolveInsertIndex: vi.fn(() => -1) }
+    bs.openChannel('n', /** @type {any} */ (delegate))
+    const sock = FakeSocket.instances[FakeSocket.instances.length - 1]
+    sock.driveOpen()
+    sock.driveMessage({ type: 'flush-ack', uuid: 'n' })
+    expect(delegate.onFlushAck).toHaveBeenCalledWith(expect.objectContaining({ type: 'flush-ack' }))
+    // No opId → not consumed by any awaiter; falls through to onMessage (parity).
+    expect(delegate.onMessage).toHaveBeenCalledWith({ type: 'flush-ack', uuid: 'n' })
+  })
+
+  // THE motivating test: reply-TYPE keying could not tell two in-flight same-type
+  // handshakes apart. opId keying resolves each to ITS OWN reply, in any order.
+  it('two concurrent same-type handshakes on ONE channel resolve to their own opIds', async () => {
+    const rig = noteRig('n')
+    rig.sock().driveOpen()
+    const p1 = rig.ds.flush('n')
+    const p2 = rig.ds.flush('n')
+    const sent = rig.sock().sentOfType('flush')
+    expect(sent.length).toBe(2)
+    expect(sent[0].opId).not.toBe(sent[1].opId)
+    // Reply to the SECOND request first, then the first — correlation is by opId,
+    // not arrival order. Markers prove each promise got ITS reply.
+    rig.sock().driveMessage({ type: 'flush-ack', uuid: 'n', opId: sent[1].opId, marker: 'second' })
+    rig.sock().driveMessage({ type: 'flush-ack', uuid: 'n', opId: sent[0].opId, marker: 'first' })
+    expect((await p1).marker).toBe('first')
+    expect((await p2).marker).toBe('second')
   })
 })
 
@@ -1215,10 +1330,10 @@ describe('NoteEditor.setMode (P2.B handshake)', () => {
     expect(rig.log[0]).toBe('flush:markdown')
     const sent = rig.sock().sentOfType('enter-wysiwyg')
     expect(sent.length).toBe(1)
-    expect(sent[0]).toEqual({ type: 'enter-wysiwyg', uuid: 'n', markdown: 'LIVE BODY' })
+    expect(sent[0]).toEqual({ type: 'enter-wysiwyg', uuid: 'n', markdown: 'LIVE BODY', opId: OPID })
     // nothing torn down until the reply arrives:
     expect(rig.made[0].unmountCount).toBe(0)
-    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [{ id: 'b1' }] })
+    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [{ id: 'b1' }], opId: sentOpId(rig.sock(), 'enter-wysiwyg') })
     await expect(p).resolves.toBe(true)
     expect(rig.log).toEqual(['flush:markdown', 'unmount:markdown', 'mount:wysiwyg'])
     expect(rig.made[0].unmountCount).toBe(1) // exactly once
@@ -1230,8 +1345,8 @@ describe('NoteEditor.setMode (P2.B handshake)', () => {
     const rig = flipRig('wysiwyg')
     const p = rig.ed.setMode('markdown')
     expect(rig.log[0]).toBe('flush:wysiwyg')
-    expect(rig.sock().sentOfType('enter-markdown')).toEqual([{ type: 'enter-markdown', uuid: 'n' }])
-    rig.sock().driveMessage({ type: 'markdown-content', uuid: 'n', markdown: 'FROM GO' })
+    expect(rig.sock().sentOfType('enter-markdown')).toEqual([{ type: 'enter-markdown', uuid: 'n', opId: OPID }])
+    rig.sock().driveMessage({ type: 'markdown-content', uuid: 'n', markdown: 'FROM GO', opId: sentOpId(rig.sock(), 'enter-markdown') })
     await expect(p).resolves.toBe(true)
     expect(rig.log).toEqual(['flush:wysiwyg', 'unmount:wysiwyg', 'mount:markdown'])
     expect(rig.made[1].mountArgs).toEqual([rig.root, 'FROM GO'])
@@ -1258,7 +1373,7 @@ describe('NoteEditor.setMode (P2.B handshake)', () => {
     const assertion = expect(p).rejects.toThrow('ws timeout')
     await vi.advanceTimersByTimeAsync(5000)
     await assertion
-    expect(() => rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [] })).not.toThrow()
+    expect(() => rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [], opId: sentOpId(rig.sock(), 'enter-wysiwyg') })).not.toThrow()
     expect(rig.made.length).toBe(1)            // still no mount
     expect(rig.ed.mode).toBe('markdown')
   })
@@ -1290,7 +1405,7 @@ describe('NoteEditor.setMode (P2.B handshake)', () => {
     const p2 = rig.ed.setMode('wysiwyg')
     expect(p2).toBe(p1)
     expect(rig.sock().sentOfType('enter-wysiwyg').length).toBe(1) // one handshake only
-    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [] })
+    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [], opId: sentOpId(rig.sock(), 'enter-wysiwyg') })
     await p1
     expect(rig.made.length).toBe(2) // exactly one new surface
   })
@@ -1345,7 +1460,7 @@ describe('NoteEditor server-op routing (P2.B)', () => {
     rig.sock().driveOpen()
     rig.ed.presentSurface('markdown', document.createElement('div'), 'x')
     const p = rig.ed.setMode('wysiwyg')
-    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [] })
+    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [], opId: sentOpId(rig.sock(), 'enter-wysiwyg') })
     await p
     expect(rig.onServerMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'wysiwyg-content' }))
   })
@@ -1787,7 +1902,7 @@ describe('AbstractEditor.toggleMode (P2.C — binary-flip sugar over setMode)', 
     const rig = modeRig('markdown')
     const p = rig.ed.toggleMode()
     expect(rig.sock().sentOfType('enter-wysiwyg').length).toBe(1)
-    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [] })
+    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [], opId: sentOpId(rig.sock(), 'enter-wysiwyg') })
     await expect(p).resolves.toBe(true)
     expect(rig.ed.mode).toBe(EditorMode.WYSIWYG)
   })
@@ -1795,7 +1910,7 @@ describe('AbstractEditor.toggleMode (P2.C — binary-flip sugar over setMode)', 
   it('emits mode-changed with the NEW mode exactly once on a successful flip', async () => {
     const rig = modeRig('markdown')
     const p = rig.ed.toggleMode()
-    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [] })
+    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [], opId: sentOpId(rig.sock(), 'enter-wysiwyg') })
     await p
     expect(rig.events).toEqual([{ type: 'mode-changed', mode: 'wysiwyg' }])
   })
@@ -1803,7 +1918,7 @@ describe('AbstractEditor.toggleMode (P2.C — binary-flip sugar over setMode)', 
   it('a direct setMode caller also produces the mode-changed emission (producer lives in the flip path)', async () => {
     const rig = modeRig('markdown')
     const p = rig.ed.setMode('wysiwyg')
-    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [] })
+    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [], opId: sentOpId(rig.sock(), 'enter-wysiwyg') })
     await p
     expect(rig.events).toEqual([{ type: 'mode-changed', mode: 'wysiwyg' }])
   })
@@ -1845,7 +1960,7 @@ describe('AbstractEditor.toggleMode (P2.C — binary-flip sugar over setMode)', 
     const p2 = rig.ed.toggleMode()
     expect(p2).toBe(p1)
     expect(rig.sock().sentOfType('enter-wysiwyg').length).toBe(1) // one handshake
-    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [] })
+    rig.sock().driveMessage({ type: 'wysiwyg-content', uuid: 'n', blocks: [], opId: sentOpId(rig.sock(), 'enter-wysiwyg') })
     await p1
     expect(rig.events).toEqual([{ type: 'mode-changed', mode: 'wysiwyg' }])
   })
@@ -1940,14 +2055,14 @@ describe('AbstractEditor.createBlock (P4.F — self-sufficient, block-id-anchore
     const idxSpy = vi.spyOn(ed, 'insertIndexForBlock').mockReturnValue(4)
     ed.createBlock('code', {})
     expect(idxSpy).toHaveBeenCalledTimes(1)
-    expect(ed.sockOps()).toEqual([{ type: 'block-op', uuid: 'u', op: { type: 'create-block', kind: 'code', attrs: {}, index: 4 } }])
+    expect(ed.sockOps()).toEqual([{ type: 'block-op', uuid: 'u', opId: OPID, op: { type: 'create-block', kind: 'code', attrs: {}, index: 4 } }])
   })
 
   it('defaults attrs to {} when omitted', () => {
     const ed = wysiwygEd()
     vi.spyOn(ed, 'insertIndexForBlock').mockReturnValue(0)
     ed.createBlock('code')
-    expect(ed.sockOps()).toEqual([{ type: 'block-op', uuid: 'u', op: { type: 'create-block', kind: 'code', attrs: {}, index: 0 } }])
+    expect(ed.sockOps()).toEqual([{ type: 'block-op', uuid: 'u', opId: OPID, op: { type: 'create-block', kind: 'code', attrs: {}, index: 0 } }])
   })
 
   it('afterBlockId → resolves to blockIndexAfter(doc, id); insertIndexForBlock is NOT called', () => {
@@ -1957,28 +2072,28 @@ describe('AbstractEditor.createBlock (P4.F — self-sufficient, block-id-anchore
     ed.createBlock('code', {}, 'b7')
     expect(idxSpy).not.toHaveBeenCalled()
     expect(blockIndexAfter).toHaveBeenCalledWith(ed.surface.editorPaneValue.state.doc, 'b7')
-    expect(ed.sockOps()).toEqual([{ type: 'block-op', uuid: 'u', op: { type: 'create-block', kind: 'code', attrs: {}, index: 9 } }])
+    expect(ed.sockOps()).toEqual([{ type: 'block-op', uuid: 'u', opId: OPID, op: { type: 'create-block', kind: 'code', attrs: {}, index: 9 } }])
   })
 
   it('afterBlockId that is stale/missing → append at doc.childCount', () => {
     const ed = wysiwygEd()   // doc.childCount === 5
     vi.mocked(blockIndexAfter).mockClear().mockReturnValue(-1)   // id not found
     ed.createBlock('code', {}, 'gone')
-    expect(ed.sockOps()).toEqual([{ type: 'block-op', uuid: 'u', op: { type: 'create-block', kind: 'code', attrs: {}, index: 5 } }])
+    expect(ed.sockOps()).toEqual([{ type: 'block-op', uuid: 'u', opId: OPID, op: { type: 'create-block', kind: 'code', attrs: {}, index: 5 } }])
   })
 
   it('diagram with no source defaults attrs.mode to edit', () => {
     const ed = wysiwygEd()
     vi.spyOn(ed, 'insertIndexForBlock').mockReturnValue(0)
     ed.createBlock('diagram')
-    expect(ed.sockOps()).toEqual([{ type: 'block-op', uuid: 'u', op: { type: 'create-block', kind: 'diagram', attrs: { mode: 'edit' }, index: 0 } }])
+    expect(ed.sockOps()).toEqual([{ type: 'block-op', uuid: 'u', opId: OPID, op: { type: 'create-block', kind: 'diagram', attrs: { mode: 'edit' }, index: 0 } }])
   })
 
   it('diagram WITH a source keeps its attrs (no mode override)', () => {
     const ed = wysiwygEd()
     vi.spyOn(ed, 'insertIndexForBlock').mockReturnValue(0)
     ed.createBlock('diagram', { source: 'graph TD' })
-    expect(ed.sockOps()).toEqual([{ type: 'block-op', uuid: 'u', op: { type: 'create-block', kind: 'diagram', attrs: { source: 'graph TD' }, index: 0 } }])
+    expect(ed.sockOps()).toEqual([{ type: 'block-op', uuid: 'u', opId: OPID, op: { type: 'create-block', kind: 'diagram', attrs: { source: 'graph TD' }, index: 0 } }])
   })
 
   it('markdown mode (no editorPane): insertIndexForBlock() returns -1 → op carries index:-1 (no throw, no no-op)', () => {
@@ -1988,7 +2103,7 @@ describe('AbstractEditor.createBlock (P4.F — self-sufficient, block-id-anchore
     sock.driveOpen()
     ed.presentSurface('markdown', document.createElement('div'), 'body')
     expect(() => ed.createBlock('smart-card', { href: 'https://x' })).not.toThrow()
-    expect(sock.sentOfType('block-op')).toEqual([{ type: 'block-op', uuid: 'u', op: { type: 'create-block', kind: 'smart-card', attrs: { href: 'https://x' }, index: -1 } }])
+    expect(sock.sentOfType('block-op')).toEqual([{ type: 'block-op', uuid: 'u', opId: OPID, op: { type: 'create-block', kind: 'smart-card', attrs: { href: 'https://x' }, index: -1 } }])
   })
 })
 

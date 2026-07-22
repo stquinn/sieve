@@ -204,7 +204,7 @@ describe('BlockRenderer (the renderer half — APPROVED contract rev 2)', () => 
     live.setContent('new text')
     expect(sock.sent.map((x) => JSON.parse(x))).toEqual([
       { type: 'retry-block-job', uuid: 'doc-1', id: 'demo-3' },
-      { type: 'block-op', uuid: 'doc-1', op: { type: 'update-block', blockId: 'demo-3', kind: 'demo', attrs: { content: 'new text' } } },
+      { type: 'block-op', uuid: 'doc-1', opId: expect.stringMatching(/^op-\d+$/), op: { type: 'update-block', blockId: 'demo-3', kind: 'demo', attrs: { content: 'new text' } } },
     ])
   })
 })

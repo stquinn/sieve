@@ -57,7 +57,7 @@ func (s *ShadowDocument) SnapshotForJob(blockID string) (SieveBlock, DocView, bo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	blocks := s.Blocks
-	if s.Mode == "markdown" {
+	if s.rawAuthoritative {
 		if reparsed, err := s.codec.Deserialize(s.mdModeBuffer); err == nil {
 			blocks = reparsed
 		} else {
@@ -75,11 +75,11 @@ func (s *ShadowDocument) SnapshotForJob(blockID string) (SieveBlock, DocView, bo
 		return SieveBlock{}, DocView{}, false
 	}
 	doc := DocView{
-		UUID:         s.UUID,
-		Mode:         s.Mode,
-		mdModeBuffer: s.mdModeBuffer,
-		Blocks:       append([]SieveBlock(nil), blocks...),
-		codec:        s.codec,
+		UUID:             s.UUID,
+		rawAuthoritative: s.rawAuthoritative,
+		mdModeBuffer:     s.mdModeBuffer,
+		Blocks:           append([]SieveBlock(nil), blocks...),
+		codec:            s.codec,
 	}
 	return target.cloneDeep(), doc, true
 }
@@ -126,22 +126,28 @@ func (s *ShadowDocument) ResetStuckDispatched(threshold time.Duration) []string 
 	return stuck
 }
 
-// EnterMarkdownMode seeds the markdown-mode raw buffer and flips to markdown mode.
-// The caller derives the seed (via ContentForSave) BEFORE the switch.
+// EnterMarkdownMode seeds the markdown-mode raw buffer and raises the
+// raw-authoritative flag (the buffer becomes the document's truth). The caller
+// derives the seed (via ContentForSave) BEFORE the switch.
 func (s *ShadowDocument) EnterMarkdownMode(buf string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mdModeBuffer = buf
-	s.Mode = "markdown"
+	s.rawAuthoritative = true
 }
 
-// EnterWysiwygMode re-parses the authoritative tree from the markdown-mode buffer
-// (picking up any block YAML edited directly) and flips to WYSIWYG. Returns the
-// resulting top-level block count.
+// EnterWysiwygMode COMMITS the markdown-mode edit: it re-parses the authoritative
+// tree from the raw buffer (picking up any block YAML edited directly), then
+// lowers the raw-authoritative flag AND clears the buffer. Clearing the buffer is
+// load-bearing: the reparse consumed it, and leaving it set would let a stale
+// buffer masquerade as authoritative on the next round-trip (the derivation is by
+// flag now, but a cleared buffer keeps the two in lockstep and holds no dead text).
+// Returns the resulting top-level block count.
 func (s *ShadowDocument) EnterWysiwygMode() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.reparseDoc(s.mdModeBuffer)
-	s.Mode = "wysiwyg"
+	s.rawAuthoritative = false
+	s.mdModeBuffer = ""
 	return len(s.Blocks)
 }

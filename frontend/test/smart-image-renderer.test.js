@@ -142,7 +142,7 @@ describe('SmartImageRenderer (bare-page DoD)', () => {
     renderer.resize('320', '240')
 
     expect(sock.sentOfType('block-op')).toEqual([{
-      type: 'block-op', uuid: 'doc-1',
+      type: 'block-op', uuid: 'doc-1', opId: expect.stringMatching(/^op-\d+$/),
       op: { type: 'update-block', blockId: 'im-f6a7', kind: 'smart-image', attrs: { width: '320', height: '240' } },
     }])
   })

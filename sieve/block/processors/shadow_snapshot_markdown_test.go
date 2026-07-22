@@ -1,6 +1,7 @@
 package processors
 
 import (
+	"strings"
 	"testing"
 
 	"sieve/sieve/block"
@@ -34,5 +35,42 @@ func TestSnapshotForJob_markdownModeDerivesBlocksFromBuffer(t *testing.T) {
 	}
 	if got := blk.StringAttr("response"); got != "FRESH" {
 		t.Errorf("markdown-mode snapshot served stale per-block content: response=%q, want FRESH", got)
+	}
+}
+
+// Issue #49 Phase 2 caveat pin: EnterWysiwygMode COMMITS the markdown edit — it
+// reparses the tree from the buffer, then lowers the raw-authoritative flag AND
+// clears the buffer. After the round-trip the shadow is wysiwyg-authoritative: a
+// subsequent TREE edit must win in ContentForSave, proving the (now cleared)
+// buffer is no longer consulted. The old code left mdModeBuffer set on wysiwyg
+// re-entry — one refactor away from a stale-buffer bug had derivation keyed on
+// buffer non-emptiness instead of the explicit flag.
+func TestEnterWysiwygMode_roundTripLeavesTreeAuthoritative(t *testing.T) {
+	resetRegistry()
+	block.RegisterProcessor(NewAIBlockProcessor(block.BlockServices{}))
+	t.Cleanup(resetRegistry)
+
+	codec := block.NewDocumentCodec(block.GlobalRegistry())
+	shadow := block.NewShadow("u", "```ai-block\nid: ab-1\nresponse: ORIGINAL\n```", codec, 0, nil)
+
+	// Round-trip through markdown mode: the buffer carries an interim edit, then
+	// EnterWysiwygMode commits it back into the tree.
+	shadow.EnterMarkdownMode("```ai-block\nid: ab-1\nresponse: FROM_BUFFER\n```")
+	shadow.EnterWysiwygMode()
+
+	// The commit is visible (tree reparsed from the buffer).
+	if got := shadow.ContentForSave(); !strings.Contains(got, "FROM_BUFFER") {
+		t.Fatalf("expected the committed buffer edit in the tree, got:\n%s", got)
+	}
+
+	// Now edit the TREE. If the shadow were still (wrongly) raw-authoritative on a
+	// leftover buffer, this update would be invisible to save. It must win.
+	shadow.MergeBlock(block.SieveBlock{ID: "ab-1", Kind: "ai-block", Attrs: map[string]interface{}{"response": "FROM_TREE"}})
+	got := shadow.ContentForSave()
+	if !strings.Contains(got, "FROM_TREE") {
+		t.Errorf("post-round-trip tree edit lost — shadow is not wysiwyg-authoritative:\n%s", got)
+	}
+	if strings.Contains(got, "FROM_BUFFER") {
+		t.Errorf("stale markdown buffer leaked after the round-trip:\n%s", got)
 	}
 }
