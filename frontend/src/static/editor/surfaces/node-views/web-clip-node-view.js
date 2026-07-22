@@ -1,24 +1,27 @@
-// web-clip-renderer.js — Web Clip block renderer.
-// Registers registerSieveRenderer('web-clip', WebClipRenderer)
+// web-clip-node-view.js — Sieve NodeView ADAPTER for the 'web-clip' kind (the
+// PM half of the renderer/NodeView split; NORMATIVE contract:
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md
+// Phase 4 / issue #47). Look-and-feel (the block shell, status chrome, this
+// kind's stylesheet) lives in WebClipRenderer
+// (frontend/src/static/block/renderers/web-clip-renderer.js — a DIFFERENT
+// class). This file HOLDS a
+// WebClipRenderer instance by COMPOSITION and owns everything that genuinely
+// speaks ProseMirror or is cross-block: contentDOM binding/ignoreMutation,
+// the framework schema data (nodeConfig/attrs/parseAttrs/titleProvider/
+// contentProvider — the actual title/body rendering is the framework's
+// title/content slot seam, see WebClipRenderer's header comment for why that
+// stays out of the renderer), the read-only-container guard plugin, and
+// reverse chain-glow hover (cross-block DOM querying to light up referencing
+// ai-blocks) — framework-layer material, deliberately left untouched here
+// (same restraint ai-block's applyChain already established).
 
-import { renderMarkdown, applyHighlighting, isJobStale } from '../base/fenced-block-base.js'
-import { T } from '../base/tiptap-vendor.js'
-import { registerSieveRenderer } from '../block/sieve-block-extension.js'
+import { T } from '../../../base/tiptap-vendor.js'
+import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block-extension.js'
+import { REGION } from '../../../block/renderers/block-renderer.js'
+import { WebClipRenderer } from '../../../block/renderers/web-clip-renderer.js'
 
 ;(function () {
   'use strict'
-
-  function isStale(createdAt, id) {
-    return isJobStale(createdAt, id)
-  }
-
-  function makeRetryBtn(ctx) {
-    var btn = document.createElement('button')
-    btn.className = 'web-clip-block__retry'
-    btn.textContent = 'Retry'
-    btn.addEventListener('click', function () { ctx.retry() })
-    return btn
-  }
 
   // Returns a human-readable summary of a web-clip node for AI context (Rule 14).
   function webClipSummary(n) {
@@ -29,15 +32,21 @@ import { registerSieveRenderer } from '../block/sieve-block-extension.js'
     return parts.join('\n\n')
   }
 
-  var WebClipRenderer = {
+  // ── WebClipNodeView ────────────────────────────────────────────────────────
+  // The registered descriptor sieve-block-extension.js's duck-typed
+  // registerSieveRenderer() consumes. Named distinctly from the imported
+  // WebClipRenderer CLASS above — same word, two different layers — to keep
+  // the two unambiguous in this file.
+
+  var WebClipNodeView = {
 
     getIcon: function() { return window.SieveIcons && window.SieveIcons.externalLink },
     getFriendlyName: function(node) { return 'Web Clip' },
 
-    // TITLE (metadata) = the title; CONTENT (data) = the fetched article. The
-    // interactive source link stays as chrome (an <a href> the renderer builds).
-    titleProvider: 'title',
-    contentProvider: 'content',
+    // TITLE (the page title) and BODY (the fetched/summarised article) are
+    // rendered by WebClipRenderer now (title region + bodyMarkdown → attrs.content).
+    // The seam reads bodyMarkdown to project live PM nodes into the body
+    // container (the handleBuild-claimed region). The source link stays header chrome.
 
     getInitialContentHTML: function() { return '<p></p>' },
 
@@ -103,39 +112,39 @@ import { registerSieveRenderer } from '../block/sieve-block-extension.js'
     makeNodeView: function (node, editorPane, getPos, ctx) {
 
       var nodeTypeName = 'sieve-web-clip'
-      var dom = document.createElement('div')
-      dom.className = 'web-clip-block'
-      dom.setAttribute('draggable', 'false')
-      dom.setAttribute('data-id', node.attrs.id || '')
-      dom.style.userSelect = 'text'
 
-      // renderEl holds the chrome (badge, source link, status/spinner/retry) and is
-      // cleared on each render(). It is contentEditable=false — like ai-block's badge
-      // and question — so the caret can never land in it.
-      var renderEl = document.createElement('div')
-      renderEl.className = 'web-clip-block__render'
-      renderEl.contentEditable = 'false'
-      dom.appendChild(renderEl)
+      // The renderer instance this NodeView HOLDS by composition (never
+      // inheritance — see the file header). This lens CLAIMS the BODY region
+      // via the handleBuild interceptor: PM owns the claimed container as its
+      // contentDOM while the status chrome + title still render renderer-side;
+      // the seam authors body content via fresh scratch instances. Retry is the
+      // renderer's semantic verb, effected through the v1 applier below.
+      var bodyContainer = null
+      var handleBuild = function (_r, region, container) {
+        if (region !== REGION.BODY) return true
+        container.className = 'web-clip-block__content tiptap'
+        bodyContainer = container
+        return false
+      }
+      var renderer = new WebClipRenderer(sieveBlockFor(node), ctx.blockService || null, handleBuild)
 
-      // contentDOM is a VISIBLE, ProseMirror-owned region holding the fetched/summarised
-      // markdown as real document nodes — a direct analog of ai-block's response body.
-      // ProseMirror tracks it by reference; it is never removed from dom.
-      var contentDOM = document.createElement('div')
-      contentDOM.className = 'web-clip-block__content tiptap'
-      dom.appendChild(contentDOM)
+      var dom = renderer.render()
+      var contentDOM = bodyContainer   // the claimed body container PM binds as its contentDOM
 
-      dom.addEventListener('dragstart', function (e) { e.preventDefault() })
-      dom.addEventListener('click', function (e) {
-        var a = e.target.closest ? e.target.closest('a') : null
-        if (a && a.href) {
-          // Prevent Wails from navigating the internal webview.
-          // Note: Ctrl+Click is already handled by the global capture in editor.js
-          e.preventDefault()
-        }
-      })
+      // v1 APPLIER (contract §service pair): today's PM-transaction behaviour
+      // behind the service boundary; unregistered in destroy below.
+      var unregisterApplier = ctx.blockService ? ctx.blockService.registerApplier({
+        owns: function (id) { return !!id && id === (node.attrs.id || '') },
+        updateAttributes: function (_id, patch) { ctx.updateAttributes(patch) },
+        setContent: function () {},   // web-clip body is server-written; no outbound content channel
+        retry: function () { ctx.retry() },
+      }) : null
 
       // Reverse chain highlight: when hovering the web-clip, light up any AI blocks
-      // that reference it via data-ai-ref. Forward direction (AI → web-clip) is in ai-block-extension.js.
+      // that reference it via data-ai-ref. Forward direction (AI → web-clip) is in
+      // ai-block-renderer.js. Cross-block DOM querying — framework-layer material,
+      // deliberately left adapter-side (same restraint ai-block's applyChain
+      // already established).
       function applyReverseChain(action) {
         var id = dom.getAttribute('data-id') || ''
         if (!id) return
@@ -147,84 +156,24 @@ import { registerSieveRenderer } from '../block/sieve-block-extension.js'
       dom.addEventListener('mouseenter', function () { applyReverseChain('add') })
       dom.addEventListener('mouseleave', function () { applyReverseChain('remove') })
 
-      function render(n) {
-        // Clear only renderEl — contentDOM stays permanently attached to dom.
-        renderEl.innerHTML = ''
-        dom.setAttribute('data-id', n.attrs.id || '')
-
-        var outerBadge = document.createElement('span')
-        outerBadge.className = 'web-clip-block__badge'
-        outerBadge.textContent = 'WEB CLIP'
-        renderEl.appendChild(outerBadge)
-
-        var attrs = n.attrs
-        var status = attrs.status || 'PENDING'
-        var domain = attrs.source || ''
-        var modeLabel = attrs.mode === 'summarise' ? 'Summarising' : 'Fetching'
-        var completeModeLabel = attrs.mode === 'summarise' ? 'Summarised' : 'Fetched'
-
-        var header = document.createElement('div')
-        header.className = 'web-clip-block__header'
-
-        if (status === 'PENDING' || status === 'DISPATCHED') {
-          var stale = isStale(attrs.createdAt, attrs.id)
-          if (stale) {
-            header.innerHTML = '<span class="web-clip-block__icon web-clip-block__icon--warn">⚠</span>' +
-              '<span class="web-clip-block__label">' + modeLabel.replace('ing', '') + ' interrupted — ' + domain + '</span>'
-            renderEl.appendChild(header)
-            renderEl.appendChild(makeRetryBtn(ctx))
-          } else {
-            header.innerHTML = '<span class="web-clip-block__spinner"></span>' +
-              '<span class="web-clip-block__label">' + modeLabel + ' from ' + domain + '…</span>'
-            renderEl.appendChild(header)
-          }
-
-        } else if (status === 'COMPLETE') {
-          var statusEl = document.createElement('span')
-          statusEl.className = 'web-clip-block__status'
-          statusEl.textContent = completeModeLabel + ' — '
-          header.appendChild(statusEl)
-          var srcLink = document.createElement('a')
-          srcLink.className = 'web-clip-block__source-link'
-          srcLink.href = attrs.source || ''
-          srcLink.textContent = attrs.source || domain
-          srcLink.target = '_blank'
-          srcLink.rel = 'noopener noreferrer'
-          header.appendChild(srcLink)
-          renderEl.appendChild(header)
-          // The title + fetched body are rendered into contentDOM as real PM nodes
-          // via the markdownProvider seam (title folds in as an h1), not here — only
-          // the interactive source link stays as header chrome.
-
-        } else if (status === 'TIMEOUT') {
-          header.innerHTML = '<span class="web-clip-block__icon web-clip-block__icon--warn">⚠</span>' +
-            '<span class="web-clip-block__label">Timed out — ' + domain + '</span>'
-          renderEl.appendChild(header)
-          renderEl.appendChild(makeRetryBtn(ctx))
-
-        } else if (status === 'ERROR') {
-          var errMsg = (attrs.error || 'Unknown error').trim()
-          header.innerHTML = '<span class="web-clip-block__icon web-clip-block__icon--error">✕</span>' +
-            '<span class="web-clip-block__label">' + errMsg + '</span>'
-          renderEl.appendChild(header)
-          renderEl.appendChild(makeRetryBtn(ctx))
-        }
-      }
-
-      render(node)
-
       return {
         dom: dom,
         contentDOM: contentDOM,
+        // Marks this a MIGRATED kind for the seam's branch; the seam authors
+        // the projected body via fresh scratch WebClipRenderer instances.
+        renderer: renderer,
         update: function (updatedNode) {
           if (updatedNode.type.name !== nodeTypeName) return false
           node = updatedNode
-          render(updatedNode)
-          // Body (attrs.content) is synced into contentDOM by the framework markdown seam.
+          renderer.update(sieveBlockFor(updatedNode))  // chrome + title; body is PM's (claimed region)
           return true
         },
         ignoreMutation: function (mutation) {
           return !contentDOM.contains(mutation.target)
+        },
+        destroy: function () {
+          if (unregisterApplier) unregisterApplier()
+          renderer.destroy()
         },
       }
     },
@@ -290,5 +239,5 @@ import { registerSieveRenderer } from '../block/sieve-block-extension.js'
     },
   }
 
-  registerSieveRenderer('web-clip', WebClipRenderer)
+  registerSieveRenderer('web-clip', WebClipNodeView)
 })()

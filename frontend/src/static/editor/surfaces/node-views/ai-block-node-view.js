@@ -1,12 +1,31 @@
-// ai-block-renderer.js — SieveBlock renderer for the ai-block kind.
-import { isJobStale } from '../base/fenced-block-base.js'
-import { T } from '../base/tiptap-vendor.js'
-import { registerSieveRenderer } from '../block/sieve-block-extension.js'
-import { setRefChain, clearRefChain } from '../ai/ai-target-decoration.js'
+// ai-block-node-view.js — Sieve NodeView ADAPTER for the 'ai-block' kind (the
+// PM half of the renderer/NodeView split; NORMATIVE contract:
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md
+// Phase 3 / issue #46). Look-and-feel (the block shell, the badge, this
+// kind's stylesheet) lives in AiBlockRenderer
+// (frontend/src/static/block/renderers/ai-block-renderer.js — a DIFFERENT
+// class). This file HOLDS an
+// AiBlockRenderer instance by COMPOSITION and owns everything that genuinely
+// speaks ProseMirror or is cross-block: contentDOM binding/ignoreMutation,
+// the framework schema data (nodeConfig/attrs/parseAttrs/titleProvider/
+// contentProvider — consumed by createSieveNode + sieve-block-extension.js's
+// title/content slot seam, which does the actual question/response
+// rendering into contentDOM as live PM nodes; see AiBlockRenderer's header
+// comment for why that stays out of the renderer), the read-only-container
+// guard plugin (isInsideAiBlock + handleTextInput/KeyDown/Paste/Drop), and
+// chain-glow hover (gatherChain/applyChain) — cross-block DOM querying +
+// a PM decoration for native prose peers, framework-layer material for the
+// future X-D framework extraction, deliberately left untouched here.
+
+import { isJobStale } from '../../../base/fenced-block-base.js'
+import { T } from '../../../base/tiptap-vendor.js'
+import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block-extension.js'
+import { REGION } from '../../../block/renderers/block-renderer.js'
+import { setRefChain, clearRefChain } from '../../../ai/ai-target-decoration.js'
+import { AiBlockRenderer } from '../../../block/renderers/ai-block-renderer.js'
 
 ;(function () {
   'use strict'
-  var IC = window.SieveIcons || {}
 
   function gatherChain(startId, refAttr) {
     var ids = new Set()
@@ -24,7 +43,14 @@ import { setRefChain, clearRefChain } from '../ai/ai-target-decoration.js'
     return ids
   }
 
-  var AiBlockRenderer = {
+  // ── AiBlockNodeView ────────────────────────────────────────────────────────
+  // The registered descriptor sieve-block-extension.js's duck-typed
+  // registerSieveRenderer() consumes. Named distinctly from the imported
+  // AiBlockRenderer CLASS above — same word, two different layers (this is the
+  // PM-adapter descriptor object; AiBlockRenderer is the look-and-feel class it
+  // holds by composition) — to keep the two unambiguous in this file.
+
+  var AiBlockNodeView = {
     // Read-only container: arrows treat it as a single caret stop.
     interactionPolicy: { caretStop: true },
 
@@ -37,19 +63,10 @@ import { setRefChain, clearRefChain } from '../ai/ai-target-decoration.js'
       content: 'block+'
     },
 
-    // TITLE (metadata) = the question; CONTENT (data) = the response, or a
-    // status line while it is not yet complete. The framework renders the title
-    // as its own region with a divider, hidden when empty (an EXPLAIN has no
-    // question → title collapses, no divider). The badge carries the type.
-    titleProvider: 'question',
-    contentProvider: function (a) {
-      var status = a.status || 'PENDING'
-      if (status === 'COMPLETE') return (a.response || '').trim()
-      if (status === 'PENDING' || status === 'DISPATCHED') {
-        return isJobStale(a.createdAt, a.id) ? 'Request timed out. (Right-click to Retry)' : '*(thinking…)*'
-      }
-      return (a.error || 'Request failed. (Right-click to Retry)').trim()
-    },
+    // TITLE (the question) and BODY (response/status) are rendered by
+    // AiBlockRenderer now — the question via its title region, the body-markdown
+    // decision via its bodyMarkdown(). The seam authors the projected body via
+    // FRESH scratch AiBlockRenderer instances (contract chain of custody).
 
     getInitialContentHTML: function() { return '<p></p>' },
 
@@ -84,24 +101,34 @@ import { setRefChain, clearRefChain } from '../ai/ai-target-decoration.js'
       }
     },
 
-    makeNodeView: function (node, editorPane, getPos) {
+    makeNodeView: function (node, editorPane, getPos, ctx) {
       var nodeTypeName = 'sieve-ai-block'
-      var dom = document.createElement('div')
-      dom.className = 'sieve-ai-block ai-block'
-      dom.setAttribute('data-id', node.attrs.id || '')
-      dom.setAttribute('data-ai-ref', node.attrs.ref || 'doc')
 
-      var badge = document.createElement('span')
-      badge.className = 'ai-block__badge'
-      badge.contentEditable = 'false'
+      // The renderer instance this NodeView HOLDS by composition (never
+      // inheritance — see the file header). This lens CLAIMS the BODY region
+      // via the handleBuild interceptor (contract: decorate · own · default):
+      // PM owns the claimed container as its contentDOM while the badge/title
+      // still render renderer-side; the seam authors body content via fresh
+      // scratch instances. This adapter supplies PM-only/cross-block concerns.
+      var bodyContainer = null
+      var handleBuild = function (_r, region, container) {
+        if (region !== REGION.BODY) return true
+        container.className = 'sieve-block__content tiptap'
+        bodyContainer = container
+        return false
+      }
+      var renderer = new AiBlockRenderer(sieveBlockFor(node), ctx.blockService || null, handleBuild)
+      var dom = renderer.render()
+      var contentDOM = bodyContainer   // the claimed body container PM binds as its contentDOM
 
-      // contentDOM holds the WHOLE composed body (question + divider + response or
-      // status line) as real PM nodes, filled by the framework markdownProvider seam.
-      var contentDOM = document.createElement('div')
-      contentDOM.className = 'sieve-block__content tiptap' // Use tiptap class for internal styling
-
-      dom.appendChild(badge)
-      dom.appendChild(contentDOM)
+      // v1 APPLIER (contract §service pair): today's PM-transaction behaviour
+      // behind the service boundary; unregistered in destroy below.
+      var unregisterApplier = ctx.blockService ? ctx.blockService.registerApplier({
+        owns: function (id) { return !!id && id === (node.attrs.id || '') },
+        updateAttributes: function (_id, patch) { ctx.updateAttributes(patch) },
+        setContent: function () {},   // ai-block body is server-written; no outbound content channel
+        retry: function () { ctx.retry() },
+      }) : null
 
       function applyChain(action) {
         var id = dom.getAttribute('data-id') || ''
@@ -140,41 +167,28 @@ import { setRefChain, clearRefChain } from '../ai/ai-target-decoration.js'
       })
       dom.addEventListener('mouseleave', function () { applyChain('remove') })
 
-      // render maintains only the badge (the visual status indicator) and the
-      // data attributes the chain-glow reads. All textual content — question,
-      // response, AND the thinking/timeout/error line — is the composed body in
-      // contentDOM, owned by the markdownProvider seam.
-      function render(attrs) {
-        dom.setAttribute('data-id', attrs.id || '')
-        dom.setAttribute('data-ai-ref', attrs.ref || 'doc')
-        var status = attrs.status || 'PENDING'
-        var cls = 'ai-block__badge'
-        if (status === 'PENDING' || status === 'DISPATCHED') {
-          cls += isJobStale(attrs.createdAt, attrs.id) ? ' ai-block__badge--error' : ' ai-block__badge--thinking'
-        } else if (status !== 'COMPLETE') {
-          cls += ' ai-block__badge--error'
-        }
-        badge.className = cls
-        badge.textContent = attrs.type === 'EXPLAIN' ? 'EXPLAIN' : 'ASK'
-      }
-
-      render(node.attrs)
-
       return {
         dom:        dom,
         contentDOM: contentDOM,
+        // Marks this a MIGRATED kind for the seam's branch; the seam reads
+        // renderer.bodyMarkdown(attrs) to project live PM nodes into the body.
+        renderer:   renderer,
 
         update: function (updatedNode) {
           if (updatedNode.type.name !== nodeTypeName) return false
           node = updatedNode
-          render(node.attrs)
-          // Body (attrs.response) is synced into contentDOM by the framework markdown seam.
+          renderer.update(sieveBlockFor(updatedNode))  // badge + question title; body is PM's (claimed region)
           return true
         },
 
         ignoreMutation: function (mutation) {
           // Allow PM to handle native content
           return !contentDOM.contains(mutation.target)
+        },
+
+        destroy: function () {
+          if (unregisterApplier) unregisterApplier()
+          renderer.destroy()
         },
       }
     },
@@ -183,7 +197,7 @@ import { setRefChain, clearRefChain } from '../ai/ai-target-decoration.js'
 
     buildPlugins: function(nodeType) {
       var Plugin = T.Plugin
-      
+
       function isInsideAiBlock(state, from, to) {
         var inside = false
         state.doc.nodesBetween(from, to, function(node) {
@@ -260,11 +274,9 @@ import { setRefChain, clearRefChain } from '../ai/ai-target-decoration.js'
       var node = ctx.node
       var items = [{ type: 'header', label: node.attrs.type === 'EXPLAIN' ? 'Explain' : 'Ask AI' }]
 
-
-
       return items
     },
   }
 
-  registerSieveRenderer('ai-block', AiBlockRenderer)
+  registerSieveRenderer('ai-block', AiBlockNodeView)
 })()

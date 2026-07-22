@@ -91,6 +91,10 @@ export class AbstractEditor {
   // ── WS transport state (socketless editors keep these null/empty) ─────────────
 
   /** @type {boolean} */
+  /** @type {object|null} the BlockService singleton, handed down from the
+   * Workspace composition root (contract §service pair); surfaces stamp it on
+   * their pane for the NodeView ctx. */
+  #blockService = null
   #socketless
 
   /** @type {WebSocket|null} */
@@ -162,6 +166,7 @@ export class AbstractEditor {
     // spec prescribes. SurfaceEventMsg is {type}-minimum, so the extra `context`
     // field is fine; the model already fires only on a meaningful change.
     this.#selectionModel.onUpdate((ctx) => this.#emitEvent({ type: 'selection-update', context: ctx }))
+    this.#blockService = options.blockService || null
     this.#socketless = options.connect !== true
 
     if (!this.#socketless) {
@@ -181,6 +186,9 @@ export class AbstractEditor {
 
   /** @returns {string} The document uuid this editor session is for. */
   get uuid() { return this.#uuid }
+
+  /** The BlockService singleton (null in tests/legacy constructions). */
+  get blockService() { return this.#blockService }
 
   /** @returns {AbstractSurface|null} The mounted input surface, or null. */
   get surface() { return this.#surface }

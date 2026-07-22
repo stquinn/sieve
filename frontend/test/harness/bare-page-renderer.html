@@ -1,0 +1,167 @@
+<!doctype html>
+<!--
+  bare-page-renderer.html — manual browser harness for the renderer/NodeView
+  style-carriage seam (docs/design/specs/2026-07-20-block-renderer-extraction.md,
+  Phase 1 / issue #44).
+
+  Definition of done this harness checks BY EYE: "a renderer renders correctly
+  in a bare page providing only :root theme vars." The <style> block below is
+  deliberately the ONLY styling on this page — no input.css, no editor.css, no
+  app shell. If a renderer's demo box below is unstyled or mis-coloured, the
+  renderer (not the host) is at fault, per the spec's contract.
+
+  This page also visually proves register-once-per-class: two renderer
+  instances mount, but the "registered stylesheets" counter at the bottom
+  reads 1 — the CSS was injected exactly once despite two mounts.
+
+  HOW TO RUN — this uses real ES module imports against the actual source
+  files, so it must be served over http(s), not opened via file:// (module
+  imports are blocked under file:// in every browser). From the repo root:
+
+      python3 -m http.server 8642
+
+  then open:
+
+      http://localhost:8642/frontend/test/harness/bare-page-renderer.html
+
+  Works in any browser; written to also be opened in the app's real WebKitGTK
+  engine (webkit2gtk-4.1) for a same-engine sanity check.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sieve — bare-page renderer harness</title>
+<style>
+  /* ── ONLY theme vars below. No other CSS on this page. ────────────────── */
+  :root {
+    --theme-bg:            #1a1b26;
+    --theme-bgDark:        #16161e;
+    --theme-bgAlt:         #1e2030;
+    --theme-border:        #2a2b3d;
+    --theme-border2:       #3b4261;
+    --theme-text:          #c0caf5;
+    --theme-textDim:       #a9b1d6;
+    --theme-accentPrimary: #7aa2f7;
+    --theme-accentCyan:    #7dcfff;
+    --theme-accentGreen:   #9ece6a;
+    --theme-accentPurple:  #bb9af7;
+    --theme-aiBlockBg:     rgba(122, 162, 247, 0.04);
+    --theme-aiBlockBorder: rgba(122, 162, 247, 0.28);
+    --theme-monoFont:      "JetBrains Mono", "Fira Code", monospace;
+  }
+  /* Page chrome ONLY (not part of the DoD check — a plain canvas to view the
+     renderer's own boxes against, standing in for "any host"). */
+  body { background: var(--theme-bgDark); color: var(--theme-text); font-family: var(--theme-monoFont); padding: 24px; }
+  h1 { font-size: 14px; font-weight: 600; }
+  h2 { font-size: 12px; font-weight: 600; color: var(--theme-textDim); margin-top: 28px; }
+  .note { font-size: 11px; color: var(--theme-textDim); }
+  #status { white-space: pre; font-size: 12px; color: var(--theme-textDim); border-top: 1px solid var(--theme-border2); margin-top: 16px; padding-top: 16px; }
+</style>
+</head>
+<body>
+<h1>Sieve — bare-page renderer harness (theme vars only, no app stylesheet)</h1>
+<p>Two mounted instances of a demo <code>BlockRenderer</code> subclass appear below. Both must be styled purely from its own <code>static styles</code> — nothing on this page supplies box/colour rules beyond the <code>:root</code> vars.</p>
+<div id="mounts"></div>
+
+<h2>DiagramRenderer (Phase 2 pilot, issue #45) — edit mode</h2>
+<p class="note">Zero external assets — proves the gutter/code-area box chrome is style-complete from :root vars alone.</p>
+<div id="diagram-edit-mount"></div>
+
+<h2>DiagramRenderer — render mode</h2>
+<p class="note">
+  Needs mermaid's vendored runtime at the ABSOLUTE path <code>/static/vendor/mermaid.min.js</code> (the real
+  app's Go-embed serves <code>frontend/src/static/</code> at <code>/static/</code> — see DiagramRenderer.ensureMermaid()).
+  A plain <code>python3 -m http.server 8642</code> from the repo root (this file's own top-of-file instructions)
+  can't reproduce that mount, so mermaid 404s here and the renderer falls back to its OWN error box — which is
+  itself a valid bare-page render (the error state is theme-var styled too, just not the success path). To see
+  the real SVG, symlink the vendor dir under this harness's own folder once —
+  <code>ln -s ../../../src/static/vendor frontend/test/harness/static-vendor-check</code> — is more trouble than
+  it's worth for a manual check; simplest is to validate the actual mermaid render path via the live Wails app
+  instead (it serves <code>/static/</code> for real) and treat this harness's render-mode box as a DOM/CSS-only
+  smoke check.
+</p>
+<div id="diagram-render-mount"></div>
+
+<h2>AiBlockRenderer (Phase 3, issue #46)</h2>
+<p class="note">
+  Shell + badge only — the question/response body is a FRAMEWORK-owned seam
+  (sieve-block-extension.js's titleProvider/contentProvider, live ProseMirror
+  nodes) that needs a real editor instance, so it never runs here. This proves
+  the shell/badge look-and-feel is style-complete from :root vars alone; the
+  empty box below <code>.sieve-block__content.tiptap</code> is expected — it's
+  the container the framework fills in the real app.
+</p>
+<div id="ai-block-mount"></div>
+
+<div id="status"></div>
+
+<script type="module">
+  import { BlockRenderer } from '../../src/static/base/fenced-block-base.js'
+  import { SieveBlock } from '../../src/static/block/sieve-block.js'
+  import { DiagramRenderer } from '../../src/static/block/renderers/diagram-renderer.js'
+  import { AiBlockRenderer } from '../../src/static/block/renderers/ai-block-renderer.js'
+
+  // DemoRenderer — a throwaway renderer demonstrating the contract:
+  // constructor(block, blockService?, handleBuild?) per the APPROVED contract
+  // (docs/design/archive/specs/2026-07-21-block-renderer-contract.md), render() alone
+  // yields the complete block, sheet carried, zero PM/editor/window.* deps.
+  class DemoRenderer extends BlockRenderer {
+    static styles = `
+      .demo-renderer {
+        border: 1px solid var(--theme-border2);
+        background: var(--theme-bgAlt);
+        color: var(--theme-accentCyan);
+        border-radius: 6px;
+        padding: 10px 14px;
+        margin: 8px 0;
+        font-size: 13px;
+      }
+      .demo-renderer strong { color: var(--theme-accentGreen); }
+    `
+    static rootClass = 'demo-renderer'
+
+    buildBody() {
+      this._body = document.createElement('div')
+      this._body.innerHTML = '<strong>' + this.block.payload.label + '</strong> — styled entirely by DemoRenderer.styles'
+      return this._body
+    }
+
+    update(block) {
+      super.update(block)
+      if (this._body) this._body.innerHTML = '<strong>' + block.payload.label + '</strong> — styled entirely by DemoRenderer.styles'
+    }
+  }
+
+  const mounts = document.getElementById('mounts')
+  const a = new DemoRenderer(new SieveBlock('demo', { label: 'Instance A' }))
+  const b = new DemoRenderer(new SieveBlock('demo', { label: 'Instance B' }))   // registration must be idempotent
+  mounts.appendChild(a.render())
+  mounts.appendChild(b.render())
+
+  // DiagramRenderer — the real Phase 2 renderer (not a throwaway demo class).
+  // render() ALONE yields the complete block; edit mode needs no mermaid, render
+  // mode exercises the mermaid invocation + the .edgeLabel in-SVG escape hatch.
+  const editRenderer = new DiagramRenderer(new SieveBlock('diagram', { id: 'di-demo-1', source: 'flowchart TD\n  A[Start] --> B{Decision}\n  B -->|Yes| C[Do it]\n  B -->|No| D[Skip it]', diagramType: 'mermaid', mode: 'edit' }))
+  document.getElementById('diagram-edit-mount').appendChild(editRenderer.render())
+
+  const renderRenderer = new DiagramRenderer(new SieveBlock('diagram', { id: 'di-demo-2', source: 'flowchart TD\n  A[Start] --> B{Decision}\n  B -->|Yes| C[Do it]\n  B -->|No| D[Skip it]', diagramType: 'mermaid', mode: 'render' }))
+  document.getElementById('diagram-render-mount').appendChild(renderRenderer.render())
+
+  // AiBlockRenderer — the real Phase 3 renderer. render() ALONE builds the shell
+  // + badge + question title + response body (this PURE class fills its own
+  // body; the note-lens variant lets ProseMirror own it — see the how-to).
+  const aiBlockRenderer = new AiBlockRenderer(new SieveBlock('ai-block', { id: 'ai-demo-1', ref: 'doc', type: 'ASK', status: 'COMPLETE', question: 'What is this?', response: 'A **bare-page** demo.' }))
+  document.getElementById('ai-block-mount').appendChild(aiBlockRenderer.render())
+
+  const usingAdopted = document.adoptedStyleSheets.length > 0
+  const styleEls = document.head.querySelectorAll('style[data-sieve-renderer]')
+  document.getElementById('status').textContent =
+    'Strategy live: ' + (usingAdopted ? 'adoptedStyleSheets' : 'style-element fallback') + '\n' +
+    'adoptedStyleSheets registered: ' + document.adoptedStyleSheets.length + '\n' +
+    'data-sieve-renderer <style> elements: ' + styleEls.length + '\n' +
+    'Expected either way: exactly 1 registration per renderer CLASS (DemoRenderer, DiagramRenderer,\n' +
+    'AiBlockRenderer), despite 2 DemoRenderer mounts + 2 DiagramRenderer mounts + 1 AiBlockRenderer mount\n' +
+    '— 3 total registrations here.'
+</script>
+</body>
+</html>

@@ -1,11 +1,11 @@
-// smart-link-renderer.js — Smart Link inline renderer.
+// smart-link-node-view.js — Smart Link inline renderer.
 // Registers registerSieveRenderer('smart-link', SmartLinkRenderer)
 // Renders as an inline <a> in flowing text. Go's RunJob fetches the page title;
 // the label updates in place when the job completes.
 
-import { isJobStale } from '../base/fenced-block-base.js'
-import { registerSieveRenderer } from '../block/sieve-block-extension.js'
-import { updateBlockOp } from '../block/block-sync.js'
+import { isJobStale } from '../../../base/fenced-block-base.js'
+import { registerSieveRenderer } from '../../../block/sieve-block-extension.js'
+import { updateBlockOp } from '../../../block/block-sync.js'
 
 ;(function () {
   'use strict'

@@ -207,7 +207,7 @@ export let ProseBlock
     // a narrow caller (e.g. a unit test importing just prose-block.js) has any vendor stub in
     // place. This mirrors the original bus read's timing: it only resolved at CALL time.
     resolveEntries: function (sourceNode, entries) {
-      return import('../processors/diagram-renderer.js').then(function (mod) {
+      return import('../editor/surfaces/node-views/diagram-node-view.js').then(function (mod) {
         return mod.renderMermaidSvgEntry(sourceNode, entries)
       }).then(function (svg) {
         return svg ? (entries || []).concat([svg]) : entries

@@ -347,6 +347,37 @@ where one lens happens to use PM.**
 
 ---
 
+## 8a. Addendum (same day): @-mentions and the coordinate system
+
+The chat composer needs the equivalent of Claude Code's `@file`: type `@`, autocomplete
+over the library, attach a **reference to a note** (or a Thing, or another chat). This is
+the first attachment kind the composer *requires* — and it forces the first
+**cross-document reference**, which forces the **address scheme**. That scheme is the
+start of the coordinate system blocks-all-the-way-up needs: linking to docs and blocks
+across the whole app.
+
+Constrained by facts already in the codebase — block IDs are only "unique enough within a
+document" — a global address must be document-qualified. The coordinate triple:
+
+```
+sieve:{doc-uuid}              — a document (note, chat, Thing)
+sieve:{doc-uuid}/{block-id}   — a block within it
+…@v{n}                        — optionally pinned to a version
+```
+
+Backlinks, transclusion, the reference graph, "quote that chat in this note" — all of it
+rides these coordinates. The @-mention is their gentlest first user because §6's freeze
+semantics already solved the hard part: attaching a note **materializes** its content
+into the turn at send time (Rule-14 summary or full body — the §9 size discipline
+applies) with `src: sieve:{uuid}@v{n}` pinned as provenance. No watchers, no live
+resolution: the coordinate is *provenance metadata* first, and only becomes a live edge
+in the transclusion era. Resolution is the #37 index's job — `LoadByUUID` is documented
+O(n); the coordinate system is what finally makes that index load-bearing. (This also
+firms up §8's composer note: @-mention autocomplete is the concrete reason the chat
+composer eventually upgrades from a bare textarea to a richer input.)
+
+---
+
 ## 9. Deliberately unresolved
 
 - **Role formalisation shape** — the Go type for protocol roles (template + schema +

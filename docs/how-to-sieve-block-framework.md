@@ -1,3 +1,10 @@
+> **STALE — DO NOT FOLLOW (2026-07-20).** This document predates both the
+> 2026-06-20 Go package split (`sieve/` → `sieve/block/processors/`, job-engine
+> `BlockProcessor` interface) and the 2026-07-20 renderer/NodeView split
+> (epic #43). For the current contract see `docs/how-to-intelligent-fenced-blocks.md`
+> and `sieve/block/processor_registry.go`. Retained as historical reference;
+> Go-side rewrite is a pending follow-up.
+
 # How to Build a Sieve Block
 
 The Sieve Block Framework is the standard way to embed rich, async-capable blocks into the Sieve editor. A block is a fenced YAML node in the Markdown document, rendered by a custom TipTap NodeView, and optionally backed by a background Go job.
@@ -406,7 +413,7 @@ If YAML fails to parse or `id` is missing, the fence hook falls through to `defa
 `JobTracker.Start/End` (called by `EditorService.RunJob`) broadcast `ai:job-started` / `ai:job-ended` SSE. `fenced-block-base.js` maintains the active-job set. Import `isJobStale(createdAt, id)` — it checks the active set before falling back to time-based staleness. Do not manage your own set.
 
 **Rule 8 — `applyHighlighting` after every `innerHTML =`.**
-After `el.innerHTML = renderMarkdown(text, editor)`, always call `applyHighlighting(el)`. It adds the `sieve-rendered-content` class, wraps `<pre><code>` blocks in the gutter layout, and applies syntax colours.
+After `el.innerHTML = renderMarkdown(text, editor)`, always call `applyHighlighting(el)`. It adds the `sieve-rendered-content` class, wraps `<pre><code>` blocks in the gutter layout, and applies syntax colours. `renderMarkdown` always runs on the SANCTIONED dedicated markdown-it instance (html:false), never the editor's own (html:true) one — see `block/renderers/sanctioned-markdown.js` (DEFECT SEC-B, issue #48). A renderer that extends `BlockRenderer` gets this for free via `fillTitle(el, text)` / `fillBody(el, markdown)`, which already call `applyHighlighting` internally.
 
 **Rule 9 — AI context is human-readable prose, not raw YAML.**
 When dispatching `sieve:ai-ask` or `sieve:ai-explain` from `buildContextMenuItems`, pass a `precomputedCtx` with `content` set to a formatted prose summary — title, source, body text. Not the raw YAML fence. See `webClipSummary` in `web-clip-renderer.js` as the canonical pattern.

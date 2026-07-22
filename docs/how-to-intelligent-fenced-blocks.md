@@ -17,6 +17,204 @@ A fenced block with a named language tag (e.g. ` ```web-clip ` or ` ```ai-block 
 
 ---
 
+## JS Architecture — the Renderer / NodeView Split (2026-07-20; contract rev 2 2026-07-21)
+
+**Status:** shipped across the block-renderer-extraction epic (#43: #44 base,
+#45 diagram, #46 ai-block, #47 code/log/web-clip/smart-card/smart-image), then
+reconciled to the APPROVED **Block Renderer Contract rev 2** —
+`docs/design/archive/specs/2026-07-21-block-renderer-contract.md` is NORMATIVE for
+everything in this section. Every structured kind except `smart-link`
+(deliberately unmigrated — parked pending the links decision, TECH-DEBT X-D)
+now has a `BlockRenderer` subclass in `block/renderers/` held by a thin
+NodeView adapter in `editor/surfaces/node-views/` (`<kind>-node-view.js` —
+moved+renamed from `processors/<kind>-renderer.js` 2026-07-21: they are
+NodeViews, the old names clashed with the real renderers, and PM enters the
+JS graph only in surfaces). **This is the required pattern for any new
+block kind** — a new kind ships both halves in the same change.
+parsing, job tracking, SSE completion, …) are unaffected and still apply
+regardless of which half of this split a kind uses; this section only changes
+**how the JS side builds and styles a block's DOM.**
+
+A block kind's look-and-feel used to be fused to its ProseMirror `NodeView`,
+and its CSS was fused to the global app stylesheet (`input.css`) — which meant
+a block could only render correctly inside the note editor's exact
+environment (see the spec's Problem section — the fullscreen lightbox bug,
+`b57fe22`, is the concrete failure this fixes). The split has two halves,
+**always migrated together, never separately:**
+
+- **Renderer (JS class)** — attrs in, DOM out, sheet carried. A **real ES
+  class hierarchy**: extends `BlockRenderer`, defined in
+  `frontend/src/static/block/renderers/block-renderer.js` (its own `@ts-check`'d module —
+  a class hierarchy, not one of `fenced-block-base.js`'s existing loose
+  per-function helpers) and re-exported from
+  `frontend/src/static/base/fenced-block-base.js` so extensions keep one
+  import point:
+
+  ```js
+  import { BlockRenderer } from '../base/fenced-block-base.js'
+  import { MODE } from '../sieve-block.js'
+
+  export class DiagramRenderer extends BlockRenderer {
+    // CSS text using ONLY --theme-* variables for colour — the entire
+    // host↔renderer styling contract. No selectors outside this kind's own
+    // classes; no reliance on input.css. Registered exactly ONCE per class,
+    // on first construction, by the base class constructor.
+    static styles = `
+      .diagram-block__render { ... color: var(--theme-text); ... }
+    `
+
+    // constructor is the base's: (block, blockService?, handleBuild?) —
+    // block is the typed SieveBlock ENVELOPE (never a raw attr map; read
+    // state via this.block.payload — no shadow copies). Scratch/authoring
+    // instances are (block) only.
+
+    // Region hooks — fabricate-and-return; the base render() places them
+    // exactly once in canonical order (Header · Title · Body · Footer):
+    buildHeader() { /* … */ }  buildBody() { /* … */ }
+
+    /** @param {import('../sieve-block.js').SieveBlock} block */
+    update(block) {
+      super.update(block)              // stores the envelope — ALWAYS first
+      /* patch via recorded slot refs from block.payload */
+    }
+
+    // SEMANTIC VERBS — consumers never see an attr name or wire value.
+    // Declared kinds override core verbs (setMode/expand); kind-specific
+    // verbs live on the subclass; ALL map to schema privately:
+    setMode(mode) { this._pushAttrs({ mode: mode === MODE.EDIT ? 'edit' : 'render' }) }
+
+    destroy() { /* release timers/observers/listeners this renderer owns */ }
+  }
+  ```
+
+  Outbound effects flow through the **BlockService** (constructed in the
+  Workspace composition root, handed down — contract §service pair): the
+  base's `retry()`/`setContent()` and the protected `_pushAttrs`/`_pushContent`
+  route `blockId`-addressed calls to the applier the kind's adapter registers.
+  A renderer constructed WITHOUT a service (a scratch/authoring instance) is
+  inert — it authors DOM, never effects.
+
+  A renderer **never** imports ProseMirror, never receives an `editor`/`view`
+  reference, never touches `window.*` app globals. That is what makes it
+  reusable outside the note editor — a chat-turn bubble, an embedded
+  read-only card, and this doc's bare-page harness all construct and mount
+  the *same* renderer class the NodeView uses. A kind may eventually have
+  several renderers (one per presentation context — brainstorm 5 §6's "ref,
+  costumed" chat chip is the first non-editor example); each carries its own
+  `static styles`.
+
+  **Styles file geography** (user decision 2026-07-20): a renderer file
+  starts with its class — behaviour first, never a CSS wall to scroll past.
+  Any sheet over ~30 lines lives in a sibling `<kind>-renderer.styles.js`
+  module (`export const <kind>Styles = /* css */ \`…\``, Lit-style),
+  imported into `static styles` (e.g. `diagram-renderer.js` imports
+  `diagramStyles` from `diagram-renderer.styles.js`); tiny sheets (an
+  escape-hatch patch a few lines long, say) may stay inline. The sibling
+  import is renderer-internal — nothing outside the renderer file imports
+  the styles module directly.
+
+  **Build-once/patch-on-update, and the escaping rule** (2026-07-20, Phase 4
+  / issue #47): the build hooks construct a kind's chrome DOM exactly once
+  (`render()` invokes each exactly once); `update(block)` patches that same
+  structure in place —
+  `textContent`, `className`/`classList`, `hidden`, and real property
+  assignments (`.href`, `.src`) — it never rebuilds skeleton via `innerHTML`
+  on every call. This is a correctness rule, not a style preference: attrs
+  frequently carry content from outside the app's control (a fetched page's
+  title/URL, a backend error string, an AI-derived summary), and
+  concatenating that text into an `innerHTML` string is a live injection
+  hazard — a hostile `<img onerror=…>` in a page title would execute inside
+  the editor. A status/badge-style decision (e.g. web-clip's
+  pending/stale/timeout/error chrome) is a **state → `{glyph, modifierClass,
+  label, …}` map** consulted by `update()`, the same shape as the shared
+  `StatusBadge` decision tree (survey item A7) — not a set of near-identical
+  `innerHTML` template strings. Apply this proportionately: a renderer that
+  already mounts once and patches via `textContent` needs no rework merely to
+  match a quota. Only a genuinely large STATIC skeleton (no per-instance
+  interpolation, structure only, named `data-slot` markers) is large enough
+  to warrant a sibling `<kind>-renderer.templates.js` module, set via
+  `element.innerHTML = theTemplate` exactly once at mount and never touched
+  again — the static-literal exception the rule above already carves out.
+
+  **Body/title fill contract** (2026-07-20, the body/title pull-back, DEFECT
+  SEC-B / issue #48): `BlockRenderer` ships two default methods,
+  `fillTitle(el, text)` and `fillBody(el, markdown)` — both run the
+  SANCTIONED dedicated markdown-it instance (html:false;
+  `block/renderers/sanctioned-markdown.js`) followed by `applyHighlighting`.
+  **Never** the editor's own (html:true) markdown-it instance — that instance
+  stays confined to PM parse paths where the schema filters raw HTML before
+  it reaches the DOM. TITLE rendering is renderer-side in *every* lens
+  (titles are `contentEditable=false` static DOM everywhere, PM included):
+  the NodeView adapter exposes its held renderer instance as
+  `view.renderer`, and `sieve-block-extension.js`'s title seam
+  (`syncBlockTitle`) delegates to `view.renderer.fillTitle` instead of
+  writing `innerHTML` itself — this retires the old
+  `titleEl.innerHTML = renderMarkdown(...)` injection vector
+  architecturally. BODY stays framework/PM-owned in the note lens (document
+  membership is a PM concern, not a markdown concern) — `fillBody` exists so
+  a future non-PM host (chat turn, embedded card) gets a working body
+  renderer for free. Override either method only for a kind whose title/body
+  needs a non-markdown representation; the defaults are correct for every
+  kind today.
+
+- **NodeView (thin PM-lifecycle adapter)** — the *only* place that talks to
+  ProseMirror. It relates to the renderer by **composition, never
+  inheritance** — it *holds* a renderer instance as a field, it does not
+  extend `BlockRenderer`: it constructs the renderer from the typed envelope
+  (`sieveBlockFor(node, overlay)` — the seam's choke point; the overlay is the
+  kind's live-text key), passing `ctx.blockService` and, for kinds whose BODY
+  is live PM content, a `handleBuild` interceptor that CLAIMS the body region
+  (returns `false` for `REGION.BODY` after decorating the container — the
+  base skips the hook, records the claim, and the claimed container is PM's
+  `contentDOM`). It registers the kind's **v1 applier** with the BlockService
+  (`owns`/`updateAttributes`/`setContent`/`retry` — where PM knowledge like
+  render-ward caret capture lives; unregister in `destroy`), calls
+  `renderer.update(sieveBlockFor(updatedNode, …))` from the TipTap `update()`
+  hook, and `renderer.destroy()` from `destroy()`. Composition is
+  load-bearing here, not a style preference — inheritance would drag PM
+  lifecycle into the one class this seam keeps PM-free. The NodeView owns
+  PM-only concerns the renderer must never see — `ignoreMutation`,
+  `selectNode`, `stopEvent`, attribute parsing off `data-*` HTML attrs, plugin
+  registration (`buildPlugins`) — and stays thin: schema/lifecycle glue, not
+  look-and-feel.
+
+**Style registration mechanism** (`frontend/src/static/block/renderers/renderer-style-registry.js`):
+a `RendererStyleRegistry` registers a class's `static styles` **exactly once
+per class**, the first time an instance is constructed, behind one
+interchangeable strategy contract (`inject(cssText, key)`):
+
+- `AdoptedSheetStrategy` (primary) — `new CSSStyleSheet()` + `replaceSync` +
+  `document.adoptedStyleSheets`. One parse, shared across every mount. This is
+  the live strategy on the app's actual engine: WebKitGTK 2.52.5
+  (`webkit2gtk-4.1`, confirmed via `pkg-config --modversion webkit2gtk-4.1` in
+  the nix dev shell), which comfortably post-dates the Safari 16.4-era engine
+  that shipped constructable stylesheets.
+- `StyleElementStrategy` (fallback) — a single deduplicated
+  `<style data-sieve-renderer="ClassName">` in `<head>`. Kept so the seam
+  never hard-codes an engine assumption (exported artefacts, older engines,
+  non-browser hosts); chosen automatically when `adoptedStyleSheets` isn't
+  present (feature-detected, not hardcoded).
+
+**Definition of done for any renderer:** *renders correctly in a bare page
+providing only `:root` theme vars.* Check this two ways:
+
+1. `frontend/test/renderer-style-carriage.test.js` — vitest coverage of the
+   registration mechanism (idempotency, both strategies, a real var()
+   resolution check against a page with nothing but `:root` vars).
+2. `frontend/test/harness/bare-page-renderer.html` — a static page with only
+   `:root` theme vars and no app stylesheet; serve it (`python3 -m http.server`
+   from the repo root — ES module imports need http, not `file://`) and view
+   the mounted renderer by eye. Point a real renderer's demo at this harness
+   the same way once it migrates.
+
+**Escape hatches ride with the renderer, never `input.css`.** When a
+third-party engine's theming surface has a gap (mermaid's shared
+`.label` colour chain is the diagram pilot's case), the patch belongs in the
+renderer's own output — appended to the engine's in-output `<style>` where
+possible, so the artefact stays portable outside the app.
+
+---
+
 ## Rule 1 — Go Owns All YAML. JS Never Generates It.
 
 **Why:** YAML has many edge cases (quoting, multiline scalars, special characters). Having two generators (Go and JS) guarantees divergence. Go's `gopkg.in/yaml.v3` is the authoritative serialiser.
@@ -191,7 +389,7 @@ hub.Broadcast("ai:job-ended",   mustJSON(map[string]string{"jobId": blkID}))
 **JS-side:** `fenced-block-base.js` owns the active-job Set. On module load it fetches `/api/ai/active-jobs` to seed in-flight IDs, then listens to `sse:ai:job-started` / `sse:ai:job-ended` SSE events to keep the set current. It exports `isJobActive(id)` — import and call it in every block extension's `isStale`:
 
 ```js
-import { isStaleByTime, isJobActive } from './fenced-block-base.js'
+import { isStaleByTime, isJobActive } from '../base/fenced-block-base.js'
 
 function isStale(createdAt, id) {
   if (isJobActive(id)) return false
@@ -231,16 +429,16 @@ The old pattern of `window.__sieveActiveWebClips.add/delete` + `SieveAI.trackJob
 
 ## Rule 10 — JS Extension Structure: Import from `fenced-block-base.js`
 
-All fenced block extensions are loaded as `type="module"`. Import shared utilities from `frontend/src/static/fenced-block-base.js` — do not duplicate them:
+All fenced block extensions are loaded as `type="module"`. Import shared utilities from `frontend/src/static/base/fenced-block-base.js` — do not duplicate them:
 
 ```js
-import { esc, renderMarkdown, applyHighlighting, isStaleByTime, isJobActive } from './fenced-block-base.js'
+import { esc, renderMarkdown, applyHighlighting, isStaleByTime, isJobActive } from '../base/fenced-block-base.js'
 ```
 
 | Export | Purpose |
 |--------|---------|
 | `esc(str)` | HTML-escape a string for `data-*` attribute values |
-| `renderMarkdown(text, editor)` | Render markdown via the shared markdownit instance; plain-text fallback |
+| `renderMarkdown(text, editor)` | Render markdown via the SANCTIONED dedicated markdown-it instance (html:false — never the editor's own html:true one, DEFECT SEC-B / issue #48); plain-text fallback. `editor` is accepted for call-site compatibility only and is no longer consulted. |
 | `isStaleByTime(createdAt)` | Time-based PENDING staleness — always the final fallback in `isStale` |
 | `isJobActive(id)` | Returns true if the block's job ID is currently in-flight on the server — check this first in `isStale` |
 | `applyHighlighting(container)` | Box styling + line numbers + syntax colours for rendered content (see Rule 11) |
@@ -411,11 +609,19 @@ if (!aiBlockId) {
   - [ ] `addNodeView()` renders from attrs (never generates YAML)
   - [ ] Markdown serialiser replays `node.attrs.rawYaml` verbatim
 - [ ] After `contentEl.innerHTML = renderMarkdown(...)` → call `applyHighlighting(contentEl)`
-- [ ] Block-id attribute set on NodeView DOM element and re-set in every `render()` call
+- [ ] Block identity `data-*` (`data-id`/`data-kind`) is stamped by the renderer's own `render()` from the envelope — adapters never write renderer DOM
 - [ ] `isStale(createdAt, id)`: call `isJobActive(id)` first (from `fenced-block-base.js`), then `return isStaleByTime(createdAt)` — no manual Set management needed
 - [ ] Context menu dispatches `sieve:contextmenu`; sets node selection before opening
-- [ ] SSE completion: calls `softReloadContent` (no in-place YAML patch for rawYaml-carrying blocks)
+- [ ] SSE/server completion arrives as a render-back op (insert-block / replace-block / block-attrs-updated) applied as a TRACKED transaction — never `softReloadContent` for an operation (that wipes undo; backend-is-source-of-truth rule)
 
 **Visual / UX**
 - [ ] Chain-active hover: `::after` CSS + `mouseenter`/`mouseleave` toggling class in both directions
 - [ ] AI context: pass clean prose summary, not raw YAML
+
+**Renderer / NodeView split (see "JS Architecture" above; NORMATIVE: the Block Renderer Contract rev 2) — required for any new kind (all existing kinds but `smart-link` already comply):**
+- [ ] Look-and-feel lives in a `BlockRenderer` subclass: base constructor `(block, blockService?, handleBuild?)` (typed `SieveBlock` envelope, never a raw attr map), `build*` region hooks + base `render()`, `update(block)` calling `super.update(block)` FIRST, `destroy()`; zero PM/editor/`window.*`-app-bus imports; state read from `this.block.payload` only (no shadow attr caches)
+- [ ] Outbound effects are SEMANTIC VERBS (core `setMode`/`setContent`/`retry`/`expand`, kind verbs on the subclass) mapping to schema privately via `_pushAttrs`/`_pushContent` — consumers never see an attr name
+- [ ] `static styles` carries the kind's CSS, using ONLY `--theme-*` vars for colour; moved out of `input.css` in the SAME change (never a separate pass)
+- [ ] NodeView is a thin adapter in `editor/surfaces/node-views/`: constructs the renderer from `sieveBlockFor(node[, overlay])` + `ctx.blockService`, claims a live-PM body via `handleBuild` where the kind needs one, registers the v1 applier (unregistered in `destroy`), calls `renderer.update(sieveBlockFor(...))`/`renderer.destroy()`; owns `ignoreMutation`/`selectNode`/`stopEvent`/attr parsing/`buildPlugins` — no look-and-feel logic
+- [ ] Build hooks construct chrome DOM once; `update(block)` patches via `textContent`/`className`/`hidden`/property assignment — never rebuilds skeleton via `innerHTML`; no attrs-derived text is ever concatenated into an `innerHTML` string (injection hazard — see "Build-once/patch-on-update" above)
+- [ ] Renders correctly against `frontend/test/harness/bare-page-renderer.html` (only `:root` theme vars, no app stylesheet)

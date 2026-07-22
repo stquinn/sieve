@@ -1,15 +1,36 @@
-// smart-card-renderer.js — Rich Link Card block renderer.
-// Registers registerSieveRenderer('smart-card', SmartCardRenderer)
-// Renders OG metadata as a visual card block. Display-only (no editable content).
+// smart-card-node-view.js — Sieve NodeView ADAPTER for the 'smart-card' kind
+// (the PM half of the renderer/NodeView split; NORMATIVE contract:
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md). Look-and-feel (the
+// card shell, OG-style layout, loading chrome, this kind's stylesheet) lives
+// in SmartCardRenderer (frontend/src/static/block/renderers/smart-card-renderer.js
+// — a DIFFERENT class). This
+// file HOLDS a SmartCardRenderer instance by COMPOSITION and owns everything
+// that genuinely speaks ProseMirror: schema data (nodeConfig/attrs/parseAttrs),
+// chrome-host click shielding, click-to-edit-when-no-href (dispatches
+// `sieve:smart-card-edit`), Mod+Click to open the URL via the Wails runtime,
+// and the v1 BlockService applier (where the renderer's semantic verbs land as
+// tracked PM transactions via ctx.updateAttributes) — all of which need the
+// NodeView's closure, so per the PM-specificity sorting test they stay
+// adapter-side.
+//
+// A9 readiness note (migration survey): the edit-popup dialog below stays
+// adapter-side for now, same as its twin smart-link's (unmigrated) —
+// revisit hoisting a shared EditPopup once smart-link migrates.
 
-import { isJobStale } from '../base/fenced-block-base.js'
-import { registerSieveRenderer } from '../block/sieve-block-extension.js'
-import { updateBlockOp } from '../block/block-sync.js'
+import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block-extension.js'
+import { SmartCardRenderer } from '../../../block/renderers/smart-card-renderer.js'
 
 ;(function () {
   'use strict'
 
-  var SmartCardRenderer = {
+  // liveRenderers — id → live SmartCardRenderer instance. The edit dialog (a
+  // module-level singleton driven by `sieve:smart-card-edit`) resolves the
+  // block's renderer here so its SAVE lands on the renderer's own semantic
+  // verb (setLink) — never on wire ops from this file.
+  /** @type {Record<string, any>} */
+  var liveRenderers = {}
+
+  var SmartCardNodeView = {
 
     getIcon: function() { return window.SieveIcons && window.SieveIcons.smartFile },
     getFriendlyName: function(node) { return 'Card' },
@@ -55,16 +76,30 @@ import { updateBlockOp } from '../block/block-sync.js'
       }
     },
 
-    makeNodeView: function (node, editorPane, getPos) {
+    makeNodeView: function (node, editorPane, getPos, ctx) {
       var nodeTypeName = 'sieve-smart-card'
-      var dom = document.createElement('div')
-      dom.className = 'smart-card-card'
-      dom.setAttribute('data-smart-card-id', node.attrs.id || '')
+      var currentAttrs = Object.assign({}, node.attrs)
 
-      // renderEl holds all visual content; cleared on each render().
-      var renderEl = document.createElement('div')
-      renderEl.className = 'smart-card-card__render'
-      dom.appendChild(renderEl)
+      // The renderer instance this NodeView HOLDS by composition (never
+      // inheritance — see the file header). It builds itself from the typed
+      // envelope (no live overlay — this kind has no lens-supplied fields);
+      // this adapter only supplies PM-only click/interaction concerns around
+      // it, and its semantic verbs (setLink) effect through the BlockService.
+      var renderer = new SmartCardRenderer(sieveBlockFor(node), ctx.blockService || null)
+
+      // v1 APPLIER — today's PM-transaction behaviour behind the service
+      // boundary: the renderer's verbs arrive here and become tracked attr
+      // transactions via ctx.updateAttributes. A true atom has no content
+      // channel, so setContent is a no-op.
+      var unregisterApplier = ctx.blockService ? ctx.blockService.registerApplier({
+        owns: function (id) { return !!id && id === (currentAttrs.id || '') },
+        updateAttributes: function (_id, patch) { ctx.updateAttributes(patch) },
+        setContent: function () {},
+        retry: function () { ctx.retry() },
+      }) : null
+
+      var dom = renderer.render()
+      if (currentAttrs.id) liveRenderers[currentAttrs.id] = renderer
 
       // The block-chrome host (gutter line number + drag handle) is injected as the
       // card's first child, so its events bubble here.  Ignore them: a handle click
@@ -82,7 +117,7 @@ import { updateBlockOp } from '../block/block-sync.js'
         if (!node.attrs.href) {
           if (typeof getPos !== 'function') return
           document.dispatchEvent(new CustomEvent('sieve:smart-card-edit', {
-            detail: { id: node.attrs.id, href: '', title: '', getPos: getPos, editor: editorPane }
+            detail: { id: node.attrs.id, href: '', title: '' }
           }))
           return
         }
@@ -95,98 +130,29 @@ import { updateBlockOp } from '../block/block-sync.js'
         }
       })
 
-      function render(n) {
-        renderEl.innerHTML = ''
-        dom.setAttribute('data-smart-card-id', n.attrs.id || '')
-
-        var status = n.attrs.status || 'PENDING'
-        var isPending = status === 'PENDING' || status === 'DISPATCHED'
-        var stale = isPending && isJobStale(n.attrs.createdAt, n.attrs.id)
-
-        dom.classList.toggle('smart-card-card--pending', isPending && !stale)
-
-        // Row 1: link icon + site name
-        var meta = document.createElement('div')
-        meta.className = 'smart-card-card__meta'
-        var icon = document.createElement('span')
-        icon.className = 'smart-card-card__icon'
-        icon.textContent = '🔗'
-        var site = document.createElement('span')
-        site.className = 'smart-card-card__site'
-        site.textContent = isPending ? extractDomain(n.attrs.href || '') : (n.attrs.siteName || extractDomain(n.attrs.href || ''))
-        meta.appendChild(icon)
-        meta.appendChild(site)
-        renderEl.appendChild(meta)
-
-        // Row 2: thumbnail + content
-        var body = document.createElement('div')
-        body.className = 'smart-card-card__body'
-
-        // Thumbnail column
-        var thumb = document.createElement('div')
-        thumb.className = 'smart-card-card__thumb'
-        if (isPending) {
-          thumb.classList.add('smart-card-card__thumb--spinner')
-          var spinner = document.createElement('span')
-          spinner.className = 'smart-card-card__spinner'
-          thumb.appendChild(spinner)
-        } else if (n.attrs.image) {
-          thumb.classList.add('smart-card-card__thumb--placeholder')
-          var img = document.createElement('img')
-          img.src = n.attrs.image
-          img.alt = n.attrs.title || ''
-          img.className = 'smart-card-card__thumb'
-          img.style.cssText = 'width:72px;height:72px;object-fit:cover;border-radius:5px;'
-          // Replace the div with the img
-          body.appendChild(img)
-          thumb = null
-        } else {
-          thumb.classList.add('smart-card-card__thumb--placeholder')
-          thumb.textContent = '🔗'
-        }
-        if (thumb) body.appendChild(thumb)
-
-        // Text content column
-        var content = document.createElement('div')
-        content.className = 'smart-card-card__content'
-
-        var titleEl = document.createElement('div')
-        titleEl.className = 'smart-card-card__title'
-        titleEl.textContent = isPending ? (n.attrs.href || '…') : (n.attrs.title || n.attrs.href || '…')
-        content.appendChild(titleEl)
-
-        if (!isPending && n.attrs.description) {
-          var descEl = document.createElement('div')
-          descEl.className = 'smart-card-card__description'
-          descEl.textContent = n.attrs.description
-          content.appendChild(descEl)
-        }
-
-        var urlEl = document.createElement('div')
-        urlEl.className = 'smart-card-card__url'
-        urlEl.textContent = n.attrs.href || ''
-        content.appendChild(urlEl)
-
-        body.appendChild(content)
-        renderEl.appendChild(body)
-      }
-
-      render(node)
-
       return {
         dom: dom,
+        renderer: renderer,   // marks this a MIGRATED kind for the seam's branch
         update: function (updatedNode) {
           if (updatedNode.type.name !== nodeTypeName) return false
-          render(updatedNode)
+          node = updatedNode
+          currentAttrs = updatedNode.attrs
+          // Late-id hardening: a block whose id lands via attr update on THIS
+          // NodeView still reaches the policy/menu triggers.
+          if (currentAttrs.id && !liveRenderers[currentAttrs.id]) liveRenderers[currentAttrs.id] = renderer
+          renderer.update(sieveBlockFor(updatedNode))
           return true
+        },
+        destroy: function () {
+          if (unregisterApplier) unregisterApplier()
+          if (currentAttrs.id && liveRenderers[currentAttrs.id] === renderer) delete liveRenderers[currentAttrs.id]
+          renderer.destroy()
         },
       }
     },
 
     buildContextMenuItems: function (opts) {
       var node   = opts.node
-      var editorPane = opts.editorPane
-      var getPos = opts.getPos
       var IC     = window.SieveIcons || {}
       var href   = node.attrs.href  || ''
       var title  = node.attrs.title || href
@@ -209,7 +175,7 @@ import { updateBlockOp } from '../block/block-sync.js'
           label: 'Edit Link…',
           action: function () {
             document.dispatchEvent(new CustomEvent('sieve:smart-card-edit', {
-              detail: { id: id, href: href, title: title, getPos: getPos, editor: editorPane }
+              detail: { id: id, href: href, title: title }
             }))
           },
         },
@@ -224,9 +190,9 @@ import { updateBlockOp } from '../block/block-sync.js'
     },
   }
 
-  registerSieveRenderer('smart-card', SmartCardRenderer)
+  registerSieveRenderer('smart-card', SmartCardNodeView)
 
-  // ── Edit dialog ──────────────────────────────────────────────────────────────
+  // ── Edit dialog (A9 — stays adapter-side; see file header) ──────────────
 
   var editDialog = null
 
@@ -292,20 +258,17 @@ import { updateBlockOp } from '../block/block-sync.js'
       var newHref  = inputs[0].value.trim()
       var newTitle = inputs[1].value.trim() || newHref
       if (!newHref) return
-      // The edit dialog is a module-level singleton driven by an event that threads
-      // the block's editorPane (detail.editor); reach the held Editor through the pane
-      // the surface stamped (editorPane.sieveHost) — never the backend directly.
-      var host = detail.editor && detail.editor.sieveHost
-      if (host) host.applyBlockOps([updateBlockOp({ id: detail.id, kind: 'smart-card', attrs: { href: newHref, title: newTitle } })])
+      // SAVE = the live renderer's semantic verb. The dialog is a module-level
+      // singleton, so it resolves the block's renderer by id (liveRenderers)
+      // and calls setLink — the patch reaches the document as a tracked PM
+      // transaction via the BlockService applier the NodeView registered.
+      var r = detail.id && liveRenderers[detail.id]
+      if (r) r.setLink(newHref, newTitle)
       dlg.close()
     }
 
     dlg.showModal()
     requestAnimationFrame(function () { inputs[0].select() })
   })
-
-  function extractDomain(url) {
-    try { return new URL(url).hostname } catch (_) { return url }
-  }
 
 })()
