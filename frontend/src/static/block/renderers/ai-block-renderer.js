@@ -1,114 +1,109 @@
 // @ts-check
 // ai-block-renderer.js — AiBlockRenderer: the renderer half of the ai-block
 // kind's renderer/NodeView split (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
-// Phase 3 / issue #46). Owns look-and-feel ONLY: the block shell, the status
-// badge (attrs → CSS class + text — the "status badge state machine" the
-// migration survey calls A7), and this kind's complete stylesheet (`static
-// styles`). Zero ProseMirror/editor/window.* app-global dependencies — this
-// class mounts identically in the note editor's NodeView adapter
-// (frontend/src/static/processors/ai-block-renderer.js, which HOLDS an
-// instance of this class by composition, never inheritance), a bare-page
-// harness, or any future non-PM lens (chat turn, embedded card).
+// Phase 3 / issue #46). Owns look-and-feel: the block shell, the status BADGE
+// (its header — the A7 status state machine), the question TITLE, and the
+// response/status BODY, plus this kind's stylesheet (`static styles`). Zero
+// ProseMirror/editor/window.* dependencies — mounts identically in the note
+// editor's NodeView adapter (editor/surfaces/node-views/ai-block-node-view.js, by composition),
+// a chat turn, or the bare-page harness.
 //
-// What this class deliberately does NOT own, and why — the PM-specificity
-// sorting test (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
-// "The sorting test is PM-specificity"):
-//   - The question TITLE and response/status BODY are never built as DOM by
-//     this class. Unlike the diagram pilot (where the renderer owns the whole
-//     visible surface), an ai-block's title/content are rendered as LIVE
-//     ProseMirror nodes inside contentDOM by sieve-block-extension.js's
-//     framework-owned titleProvider/contentProvider seam (PMDOMParser.parseSlice
-//     + a tracked PM transaction) — that is unavoidably PM-coupled (schema,
-//     transactions, selection) and stays adapter/framework-side. The adapter
-//     declares `titleProvider: 'question'` / `contentProvider: fn` on its
-//     registered descriptor; this class only builds the EMPTY contentDOM
-//     container the framework seam fills.
-//   - Chain-glow hover (gatherChain/applyChain, cross-block
-//     `document.querySelectorAll('[data-ai-ref]')` walking, and the PM
-//     decoration for native prose peers via ai-target-decoration.js) is
-//     CROSS-BLOCK behaviour, not this block's own look-and-feel — it stays
-//     adapter-side (framework-layer material for the future X-D framework
-//     extraction), even though the CSS this class carries (`.ai-block--chain-active`)
-//     is what that adapter-side class-toggle makes visible.
-//   - The read-only-container guard plugin (isInsideAiBlock +
-//     handleTextInput/KeyDown/Paste/Drop) speaks PM plugin props directly —
-//     adapter-side, per the sorting test.
-//
-// Restraint (P4 note): the badge state-machine here (attrs.status +
-// isJobStale → CSS class) is survey item A7; it gets a shared home only when
-// a SECOND migrated kind needs the identical mapping — not hoisted into
-// BlockRenderer speculatively now.
+// This class is PURE and lens-blind (NORMATIVE contract:
+// docs/design/specs/2026-07-21-block-renderer-contract.md): buildBody() builds
+// AND FILLS the body from bodyMarkdown() (sanctioned markdown), and update()
+// re-fills it — guarded on the #contentEl ref it recorded. In the editor lens
+// the adapter claims the BODY region via the handleBuild interceptor, so no
+// #contentEl is recorded and the ref-guarded update() naturally leaves the
+// projected body to ProseMirror; the seam authors body content via FRESH
+// scratch instances of this class (chain of custody). The badge + question
+// title still render renderer-side in every lens. Chain-glow hover and the
+// read-only guard plugin stay adapter-side (PM/cross-block).
 
 import { BlockRenderer } from './block-renderer.js'
 import { aiBlockStyles } from './ai-block-renderer.styles.js'
 import { isJobStale } from '../../base/fenced-block-base.js'
 
-// The adapter passes the FULL node.attrs object (not a filtered subset) — the
-// same shape declared on the adapter descriptor's `attrs` (question/response/
-// model/error included), since sieve-block-extension.js's title/content seam
-// reads question/response off the very same attrs this renderer receives.
-// This class only reads id/ref/type/status/createdAt; the rest pass through
-// unused, which is why they are typed optional/unknown rather than omitted.
 /** @typedef {{ id?: string, ref?: string, type?: 'ASK'|'EXPLAIN', status?: string, createdAt?: string, question?: string, response?: string|null, error?: string|null, model?: string|null, supportsEmbedding?: boolean }} AiBlockAttrs */
 
 export class AiBlockRenderer extends BlockRenderer {
-  // Sheet lives in the sibling ai-block-renderer.styles.js — styles-file-geography
-  // convention: a renderer file starts with its class, never a CSS wall.
   static styles = aiBlockStyles
+  static rootClass = 'sieve-ai-block ai-block'
 
   /** @type {HTMLElement|null} */ #badge = null
-  /** @type {HTMLElement|null} */ #contentDOM = null
+  /** @type {HTMLElement|null} */ #titleEl = null
+  /** @type {HTMLElement|null} */ #contentEl = null
 
-  /** The live ProseMirror contentDOM the adapter binds as its NodeView's
-   *  contentDOM — this class builds the empty container; the framework's
-   *  titleProvider/contentProvider seam (sieve-block-extension.js) fills it
-   *  with real PM nodes, never this class. @returns {HTMLElement|null} */
-  get contentDOM() { return this.#contentDOM }
+  /** The status badge — this kind's HEADER region. Also stamps the kind's own
+   *  data-ai-ref on the root (the base stamps data-id). @returns {HTMLElement} */
+  buildHeader() {
+    this.#syncRoot(this.block.payload)
+    this.#badge = document.createElement('span')
+    this.#badge.className = 'ai-block__badge'
+    this.#badge.contentEditable = 'false'
+    this.#renderBadge(this.block.payload)
+    return this.#badge
+  }
 
-  /** @param {AiBlockAttrs} attrs @returns {HTMLElement} */
-  mount(attrs) {
-    const dom = document.createElement('div')
-    dom.className = 'sieve-ai-block ai-block'
+  /** The question TITLE (base stamps sieve-block__heading + hides when empty). @returns {HTMLElement} */
+  buildTitle() {
+    this.#titleEl = document.createElement('div')
+    this.fillTitleSlot(this.#titleEl, /** @type {AiBlockAttrs} */ (this.block.payload).question)
+    return this.#titleEl
+  }
 
-    const badge = document.createElement('span')
-    badge.className = 'ai-block__badge'
-    badge.contentEditable = 'false'
-
-    // contentDOM holds the WHOLE composed body (question heading + divider +
-    // response or status line) as real PM nodes — filled by the framework
-    // seam, never by this class (see file header).
-    const contentDOM = document.createElement('div')
-    contentDOM.className = 'sieve-block__content tiptap' // tiptap class for internal PM styling
-
-    dom.appendChild(badge)
-    dom.appendChild(contentDOM)
-
-    this.#badge = badge
-    this.#contentDOM = contentDOM
-    this.update(dom, attrs)
-    return dom
+  /** The response/status BODY, self-filled. In the editor lens the adapter
+   *  claims this region via handleBuild, so this hook never runs there.
+   *  @returns {HTMLElement} */
+  buildBody() {
+    this.#contentEl = document.createElement('div')
+    this.#contentEl.className = 'sieve-block__content tiptap' // tiptap class for internal PM styling
+    this.fillBody(this.#contentEl, this.bodyMarkdown())
+    return this.#contentEl
   }
 
   /**
-   * Patches the badge visuals and the chain-glow data attributes for changed
-   * attrs. render maintains only the badge (the visual status indicator) and
-   * the data attributes the adapter-side chain-glow reads — the textual
-   * content (question/response/status line) is the framework seam's job.
-   * @param {HTMLElement} dom
-   * @param {AiBlockAttrs} attrs
+   * The markdown the BODY shows — response when complete, else a status line —
+   * derived from THIS instance's envelope. The renderer OWNS this mapping; the
+   * editor-lens seam reads it from a FRESH scratch instance per pass (contract
+   * chain of custody) and parses it into PM.
+   * @returns {string}
    */
-  update(dom, attrs) {
-    dom.setAttribute('data-id', attrs.id || '')
-    dom.setAttribute('data-ai-ref', attrs.ref || 'doc')
+  bodyMarkdown() {
+    const attrs = /** @type {AiBlockAttrs} */ (this.block.payload)
+    const status = attrs.status || 'PENDING'
+    if (status === 'COMPLETE') return (attrs.response || '').trim()
+    if (status === 'PENDING' || status === 'DISPATCHED') {
+      return isJobStale(attrs.createdAt, attrs.id) ? 'Request timed out. (Right-click to Retry)' : '*(thinking…)*'
+    }
+    return (attrs.error || 'Request failed. (Right-click to Retry)').trim()
+  }
 
+  /** @param {import('../sieve-block.js').SieveBlock} block */
+  update(block) {
+    super.update(block)
+    const attrs = /** @type {AiBlockAttrs} */ (block.payload)
+    this.#syncRoot(attrs)
+    this.#renderBadge(attrs)
+    if (this.#titleEl) this.fillTitleSlot(this.#titleEl, attrs.question)
+    // Body patch is REF-GUARDED — a claimed (externally managed) body recorded
+    // no #contentEl, so PM's body is left alone with no update() override needed.
+    if (this.#contentEl) this.fillBody(this.#contentEl, this.bodyMarkdown())
+  }
+
+  /** @param {AiBlockAttrs} attrs */
+  #syncRoot(attrs) {
+    const dom = this.root
+    if (!dom) return
+    dom.setAttribute('data-ai-ref', attrs.ref || 'doc')
+  }
+
+  /** @param {AiBlockAttrs} attrs */
+  #renderBadge(attrs) {
     const badge = this.#badge
     if (!badge) return
     const status = attrs.status || 'PENDING'
     let cls = 'ai-block__badge'
     if (status === 'PENDING' || status === 'DISPATCHED') {
-      // NOTE: the '--error' variant carries no distinct CSS rule, same as
-      // before this split (a pre-existing gap in ai-block-renderer.styles.js,
-      // out of scope here — preserved verbatim, not fixed).
       cls += isJobStale(attrs.createdAt, attrs.id) ? ' ai-block__badge--error' : ' ai-block__badge--thinking'
     } else if (status !== 'COMPLETE') {
       cls += ' ai-block__badge--error'
@@ -117,6 +112,5 @@ export class AiBlockRenderer extends BlockRenderer {
     badge.textContent = attrs.type === 'EXPLAIN' ? 'EXPLAIN' : 'ASK'
   }
 
-  // destroy(dom): base no-op is correct — this class owns no timers,
-  // observers, or listeners (unlike DiagramRenderer's panzoom cleanup).
+  // destroy(): base no-op is correct — this class owns no timers/observers.
 }

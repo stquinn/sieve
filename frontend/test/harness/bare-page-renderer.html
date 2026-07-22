@@ -97,11 +97,14 @@
 
 <script type="module">
   import { BlockRenderer } from '../../src/static/base/fenced-block-base.js'
+  import { SieveBlock } from '../../src/static/block/sieve-block.js'
   import { DiagramRenderer } from '../../src/static/block/renderers/diagram-renderer.js'
   import { AiBlockRenderer } from '../../src/static/block/renderers/ai-block-renderer.js'
 
-  // DemoRenderer — a throwaway renderer demonstrating the contract: attrs in,
-  // DOM out, sheet carried, zero PM/editor/window.* dependencies.
+  // DemoRenderer — a throwaway renderer demonstrating the contract:
+  // constructor(block, blockService?, handleBuild?) per the APPROVED contract
+  // (docs/design/specs/2026-07-21-block-renderer-contract.md), render() alone
+  // yields the complete block, sheet carried, zero PM/editor/window.* deps.
   class DemoRenderer extends BlockRenderer {
     static styles = `
       .demo-renderer {
@@ -115,46 +118,40 @@
       }
       .demo-renderer strong { color: var(--theme-accentGreen); }
     `
+    static rootClass = 'demo-renderer'
 
-    mount(attrs) {
-      const dom = document.createElement('div')
-      dom.className = 'demo-renderer'
-      this.update(dom, attrs)
-      return dom
+    buildBody() {
+      this._body = document.createElement('div')
+      this._body.innerHTML = '<strong>' + this.block.payload.label + '</strong> — styled entirely by DemoRenderer.styles'
+      return this._body
     }
 
-    update(dom, attrs) {
-      dom.innerHTML = '<strong>' + attrs.label + '</strong> — styled entirely by DemoRenderer.styles'
+    update(block) {
+      super.update(block)
+      if (this._body) this._body.innerHTML = '<strong>' + block.payload.label + '</strong> — styled entirely by DemoRenderer.styles'
     }
   }
 
   const mounts = document.getElementById('mounts')
-  const a = new DemoRenderer()
-  const b = new DemoRenderer()   // second instance — registration must be idempotent
-  mounts.appendChild(a.mount({ label: 'Instance A' }))
-  mounts.appendChild(b.mount({ label: 'Instance B' }))
+  const a = new DemoRenderer(new SieveBlock('demo', { label: 'Instance A' }))
+  const b = new DemoRenderer(new SieveBlock('demo', { label: 'Instance B' }))   // registration must be idempotent
+  mounts.appendChild(a.render())
+  mounts.appendChild(b.render())
 
   // DiagramRenderer — the real Phase 2 renderer (not a throwaway demo class).
-  // Edit mode needs no mermaid at all; render mode exercises the mermaid
-  // invocation + the .edgeLabel in-SVG escape hatch (see the class's own
-  // #patchEdgeLabelStyle) if the vendor script resolves — see the note above.
-  const editRenderer = new DiagramRenderer()
-  document.getElementById('diagram-edit-mount').appendChild(
-    editRenderer.mount({ id: 'di-demo-1', source: 'flowchart TD\n  A[Start] --> B{Decision}\n  B -->|Yes| C[Do it]\n  B -->|No| D[Skip it]', diagramType: 'mermaid', mode: 'edit' })
-  )
+  // render() ALONE yields the complete block; edit mode needs no mermaid, render
+  // mode exercises the mermaid invocation + the .edgeLabel in-SVG escape hatch.
+  const editRenderer = new DiagramRenderer(new SieveBlock('diagram', { id: 'di-demo-1', source: 'flowchart TD\n  A[Start] --> B{Decision}\n  B -->|Yes| C[Do it]\n  B -->|No| D[Skip it]', diagramType: 'mermaid', mode: 'edit' }))
+  document.getElementById('diagram-edit-mount').appendChild(editRenderer.render())
 
-  const renderRenderer = new DiagramRenderer()
-  document.getElementById('diagram-render-mount').appendChild(
-    renderRenderer.mount({ id: 'di-demo-2', source: 'flowchart TD\n  A[Start] --> B{Decision}\n  B -->|Yes| C[Do it]\n  B -->|No| D[Skip it]', diagramType: 'mermaid', mode: 'render' })
-  )
+  const renderRenderer = new DiagramRenderer(new SieveBlock('diagram', { id: 'di-demo-2', source: 'flowchart TD\n  A[Start] --> B{Decision}\n  B -->|Yes| C[Do it]\n  B -->|No| D[Skip it]', diagramType: 'mermaid', mode: 'render' }))
+  document.getElementById('diagram-render-mount').appendChild(renderRenderer.render())
 
-  // AiBlockRenderer — the real Phase 3 renderer. mount() builds the shell +
-  // badge only (contentDOM is an empty container the framework's title/
-  // content seam fills in the real app — see the note above).
-  const aiBlockRenderer = new AiBlockRenderer()
-  document.getElementById('ai-block-mount').appendChild(
-    aiBlockRenderer.mount({ id: 'ai-demo-1', ref: 'doc', type: 'ASK', status: 'COMPLETE' })
-  )
+  // AiBlockRenderer — the real Phase 3 renderer. render() ALONE builds the shell
+  // + badge + question title + response body (this PURE class fills its own
+  // body; the note-lens variant lets ProseMirror own it — see the how-to).
+  const aiBlockRenderer = new AiBlockRenderer(new SieveBlock('ai-block', { id: 'ai-demo-1', ref: 'doc', type: 'ASK', status: 'COMPLETE', question: 'What is this?', response: 'A **bare-page** demo.' }))
+  document.getElementById('ai-block-mount').appendChild(aiBlockRenderer.render())
 
   const usingAdopted = document.adoptedStyleSheets.length > 0
   const styleEls = document.head.querySelectorAll('style[data-sieve-renderer]')

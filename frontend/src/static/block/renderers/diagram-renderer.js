@@ -1,40 +1,71 @@
 // @ts-check
 // diagram-renderer.js — DiagramRenderer: the renderer half of the diagram
 // kind's renderer/NodeView split (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
-// Phase 2 / issue #45 — the epic's pilot). Owns look-and-feel ONLY: attrs in,
-// DOM out, the mermaid invocation (including the --theme-* → themeVariables
-// mapping), and this kind's complete stylesheet (`static styles`). Zero
-// ProseMirror/editor/window.* app-global dependencies — this class mounts
-// identically in the note editor's NodeView adapter
-// (frontend/src/static/processors/diagram-renderer.js, which HOLDS an
-// instance of this class by composition, never inheritance), the bare-page
-// harness (frontend/test/harness/bare-page-renderer.html), or any future
-// non-PM lens (chat turn, embedded card).
+// Phase 2 / issue #45 — the epic's pilot). Owns look-and-feel ONLY: the HEADER
+// (badge + mermaid label + edit/render toggle + expand button); the edit-mode
+// chrome (gutter + code-area) and render-mode SVG (incl. the --theme-* →
+// themeVariables mapping and the mermaid escape-hatch CSS patch); and this
+// kind's stylesheet (`static styles`). Zero ProseMirror/editor/window.*
+// dependencies.
 //
-// PM-specific concerns deliberately stay OUT of this file per the spec's
-// PM-specificity sorting test — they live in the adapter instead:
-//   - ProseMirror's contentDOM binding/selection/ignoreMutation/stopEvent
-//   - cursor restore via editorPane.commands + getPos()
-//   - the lowlight DECORATION plugin (buildPlugins) — a ProseMirror concept
-//   - the header toolbar (badge + edit/render toggle), which persists via
-//     ctx.updateAttributes — a PM-framework slot (sieve-block-extension.js)
-//   - the mode-flip dispatch through the held Editor (flipMode/onModEnter)
-//
-// This class DOES own the render-mode SVG, the edit-mode chrome (gutter +
-// code-area box), and the escape-hatch CSS patch mermaid needs for edge
-// labels — all pure "attrs (+ live source text) in, DOM out".
+// buildHeader() lays out a DiagramHeader via a HeaderBar; its toggle and the
+// expand button call this renderer's SEMANTIC VERBS (setMode / expand — the
+// contract's core API; docs/design/specs/2026-07-21-block-renderer-contract.md).
+// setMode maps the MODE enum to this kind's wire strings privately via
+// _pushAttrs; caret capture on the render-ward flip is the PM adapter's
+// business (its v1 applier). buildBody() builds both mode surfaces; the
+// editable <code> is exposed as renderer.codeElement for the adapter's
+// contentDOM.
 
 import { BlockRenderer } from './block-renderer.js'
+import { MODE } from '../sieve-block.js'
 import { DiagramTheme } from './diagram-renderer.styles.js'
+import { AdvancedHeaderProvider, HeaderBar, expandButton } from './header-bar.js'
+import { expandBlock } from '../../ui/media-lightbox.js'
 
 /** @typedef {{ id?: string, source: string, diagramType?: string, mode: 'edit'|'render', cursorPos?: number }} DiagramAttrs */
 
-export class DiagramRenderer extends BlockRenderer {
-  // Sheet lives in the sibling diagram-renderer.styles.js — styles-file-geography
-  // convention (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md, "Styles
-  // file geography"): a renderer file starts with its class, never a CSS wall.
-  static styles = DiagramTheme.sheet
+// ── Header provider — badge + 'mermaid' label + edit/render toggle. ──
+const EDIT_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
+  '<path d="M1 7.5 L6 2 L8 4 L3 9 L1 9 Z"/><line x1="5" y1="3" x2="7" y2="5"/></svg>'
+const RENDER_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
+  '<ellipse cx="5" cy="5" rx="4" ry="2.5"/><circle cx="5" cy="5" r="1.2" fill="currentColor" stroke="none"/></svg>'
 
+/** @param {string} label @param {string} icon @param {boolean} active @param {string} activeCls @param {() => void} onClick @returns {HTMLButtonElement} */
+function toggleBtn(label, icon, active, activeCls, onClick) {
+  const b = document.createElement('button')
+  b.className = 'diagram-block__toggle-btn' + (active ? ' ' + activeCls : '')
+  b.innerHTML = icon + ' ' + label
+  b.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); onClick() })
+  return b
+}
+
+class DiagramHeader extends AdvancedHeaderProvider {
+  badge() { return 'diagram' }
+  left() {
+    const t = document.createElement('span')
+    t.className = 'sieve-block__type-label'
+    t.textContent = 'mermaid'
+    return [t]
+  }
+  /** @param {DiagramAttrs} attrs @param {DiagramRenderer} r — the renderer (semantic verbs) */
+  right(attrs, r) {
+    const mode = attrs.mode || 'render'
+    const toggle = document.createElement('div')
+    toggle.className = 'diagram-block__toggle'
+    toggle.appendChild(toggleBtn('Edit', EDIT_SVG, mode === 'edit', 'diagram-block__toggle-btn--active-edit', () => {
+      r.setMode(MODE.EDIT)
+    }))
+    toggle.appendChild(toggleBtn('Render', RENDER_SVG, mode === 'render', 'diagram-block__toggle-btn--active-render', () => {
+      r.setMode(MODE.RENDER)
+    }))
+    return [toggle]
+  }
+}
+
+export class DiagramRenderer extends BlockRenderer {
+  static styles = DiagramTheme.sheet
+  static rootClass = 'sieve-block sieve-block--diagram'
 
   /** @param {SVGSVGElement} svg */
   static #patchEdgeLabelStyle(svg) {
@@ -47,10 +78,7 @@ export class DiagramRenderer extends BlockRenderer {
     styleEl.appendChild(document.createTextNode(DiagramTheme.edgeLabelPatchCss))
   }
 
-  // ── mermaid lazy-load + theming ──────────────────────────────────────────────
-  // Module-level (class-static) singleton: one mermaid runtime/theme shared by
-  // every DiagramRenderer instance, matching mermaid's own global init() model.
-
+  // ── mermaid lazy-load + theming (class-static singleton) ──────────────────
   /** @type {Promise<void>|null} */
   static #mermaidReady = null
   /** @type {Set<DiagramRenderer>} */
@@ -58,27 +86,18 @@ export class DiagramRenderer extends BlockRenderer {
   static #themeListenerInstalled = false
   static #renderCounter = 0
 
-  // mermaid.js ships no types this codebase consumes elsewhere (loaded as a
-  // vendored global script, /static/vendor/mermaid.min.js — see ensureMermaid
-  // below); this getter is the one cast point, mirroring the established
-  // `/** @type {any} */ (window).X` idiom (media-lightbox.js, editor-toolbar.js)
-  // for untyped window globals under @ts-check.
   /** @returns {any} */
   static #mermaidGlobal() { return /** @type {any} */ (window).mermaid }
 
   static #installThemeListener() {
     if (DiagramRenderer.#themeListenerInstalled) return
     DiagramRenderer.#themeListenerInstalled = true
-    // 'sse:settings:changed' — a documented app-wide SSE event (CLAUDE.md), not an
-    // editor/PM signal; a bare page that never fires it simply never re-themes, which
-    // degrades gracefully (no error, no PM dependency).
     document.addEventListener('sse:settings:changed', () => {
       if (!DiagramRenderer.#mermaidGlobal()) return
       DiagramRenderer.#initMermaid()
       DiagramRenderer.#liveInstances.forEach((instance) => instance.rerenderForThemeChange())
     })
   }
-
 
   static #initMermaid() {
     const mermaid = DiagramRenderer.#mermaidGlobal()
@@ -105,13 +124,9 @@ export class DiagramRenderer extends BlockRenderer {
     return 'mermaid-' + (blockId || 'di') + '-' + (++DiagramRenderer.#renderCounter)
   }
 
-  // renderMermaidSvgEntry — renders a mermaid source, from a diagram node OR an
-  // embedded ```mermaid fence among `entries`, into an image/svg+xml ContentEntry.
-  // Resolves to null when there is no mermaid here; render FAILURES reject so each
-  // caller chooses to alert (smart-image extract) or degrade (prose embed).
-  // Browser-only (window.mermaid). Shared by smart-image's and prose's
-  // resolveEntries via the adapter's re-export — kept static since it needs no
-  // renderer instance (no DOM to mount, no dom/attrs pair to own).
+  // renderMermaidSvgEntry — renders a mermaid source (from a diagram node OR an
+  // embedded ```mermaid fence among `entries`) into an image/svg+xml
+  // ContentEntry. Shared by smart-image's and prose's resolveEntries. Static.
   /** @param {any} sourceNode @param {any[]} entries @returns {Promise<{mimeType:string,content:string}|null>} */
   static renderMermaidSvgEntry(sourceNode, entries) {
     let src = ''
@@ -132,85 +147,124 @@ export class DiagramRenderer extends BlockRenderer {
   }
 
   // ── instance state ────────────────────────────────────────────────────────
-  // Deliberately kept minimal: the elements this renderer built (so update()/
-  // destroy() can find them again even while detached — edit/render bodies are
-  // never both attached at once) and the last attrs applied, so update() can
-  // detect a mode TRANSITION and hand the adapter a signal for its own
-  // PM-specific follow-up (cursor placement) without this class touching PM.
-
+  /** @type {HeaderBar|null} */ #headerBar = null
   /** @type {HTMLElement|null} */ #editBody = null
   /** @type {HTMLElement|null} */ #renderBody = null
   /** @type {HTMLElement|null} */ #gutter = null
   /** @type {HTMLElement|null} */ #codeEl = null
-  /** @type {DiagramAttrs|null} */ #attrs = null
   /** @type {(() => void)|null} */ #panzoomCleanup = null
+  /** @type {{ modeChangedTo: 'edit'|'render' }|null} */ #modeTransition = null
   #destroyed = false
 
-  /** The live ProseMirror contentDOM the adapter binds as its NodeView's
-   *  contentDOM — this class builds it, the adapter (never this class) hands
-   *  it to ProseMirror. @returns {HTMLElement|null} */
-  get contentDOM() { return this.#codeEl }
+  /** The editable <code> the adapter binds as ProseMirror's contentDOM. Stable
+   *  across mode swaps (the edit body detaches in render mode but its <code> is
+   *  retained). A neutral accessor. @returns {HTMLElement|null} */
+  get codeElement() { return this.#codeEl }
 
   /**
-   * @param {DiagramAttrs} attrs — `source` MUST be the LIVE text (the adapter
-   *   passes node.textContent here, not the debounced attrs.source, so a
-   *   mode-flip immediately after typing never renders stale mermaid source).
-   * @returns {HTMLElement}
+   * Consume the last mode transition — non-null only when attrs.mode changed on
+   * the most recent update(). The adapter reads this right after update() to run
+   * its PM-specific caret restore on an edit-ward transition.
+   * @returns {{ modeChangedTo: 'edit'|'render' }|null}
    */
-  mount(attrs) {
-    const dom = document.createElement('div')
-    dom.className = 'sieve-block sieve-block--diagram'
+  takeModeTransition() { const t = this.#modeTransition; this.#modeTransition = null; return t }
 
+  /** @returns {HTMLElement} */
+  buildHeader() {
+    // The header's context IS this renderer — buttons speak the semantic verbs
+    // (setMode / expand), never attr names or injected closures.
+    this.#headerBar = new HeaderBar(new DiagramHeader(), (bar, _attrs, ctx) => {
+      const r = /** @type {DiagramRenderer} */ (ctx)
+      // Expand button — shown only when there is something to expand (render mode).
+      if (r.expandContent()) {
+        bar.appendChild(expandButton('⤢', () => r.expand()))
+      }
+    })
+    return this.#headerBar.render(/** @type {DiagramAttrs} */ (this.block.payload), this)
+  }
+
+  /** Builds BOTH surfaces (so the <code> always exists) and renders the initial
+   *  mode's content; returns the current-mode surface for the base to install.
+   *  @returns {HTMLElement} */
+  buildBody() {
     this.#editBody = this.#buildEditBody()
     this.#renderBody = this.#buildRenderBodyShell()
-
-    this.#attrs = attrs
-    this.#applyMode(dom, attrs)
     DiagramRenderer.#liveInstances.add(this)
     DiagramRenderer.#installThemeListener()
-    return dom
+    const attrs = /** @type {DiagramAttrs} */ (this.block.payload)
+    if (attrs.mode === 'render') {
+      this.#renderMermaidInto(this.#renderBody, attrs)
+      return this.#renderBody
+    }
+    this.syncGutterLineCount(attrs.source || '')
+    return this.#editBody
+  }
+
+  /** @param {import('../sieve-block.js').SieveBlock} block */
+  update(block) {
+    // Previous truth read BEFORE super stores the new envelope (the base's
+    // envelope is the ONE copy of state — no shadow caches, by contract).
+    const prevMode = /** @type {DiagramAttrs} */ (this.block.payload).mode
+    super.update(block)
+    const attrs = /** @type {DiagramAttrs} */ (block.payload)
+    if (this.#headerBar) this.#headerBar.update(attrs, this)
+    if (this.root) this.#applyMode(this.root, attrs)
+    this.#modeTransition = prevMode === attrs.mode ? null : { modeChangedTo: attrs.mode }
+  }
+
+  // ── Semantic verbs (the contract's core API) ──────────────────────────────
+
+  /**
+   * MODE → this kind's wire strings, privately. DEFAULT = render (the
+   * diagram's natural presentation). Caret capture on the render-ward flip is
+   * the PM adapter's business (v1 applier), not knowledge this class holds.
+   * @param {string} mode
+   */
+  setMode(mode) {
+    const wire = mode === MODE.EDIT ? 'edit' : 'render'
+    const current = /** @type {DiagramAttrs} */ (this.block.payload).mode || 'render'
+    if (wire === current) return
+    this._pushAttrs({ mode: wire })
   }
 
   /**
-   * @param {HTMLElement} dom
-   * @param {DiagramAttrs} attrs
-   * @returns {{ modeChangedTo: 'edit'|'render' }|null} non-null only when
-   *   attrs.mode actually changed since the last mount()/update() — the
-   *   adapter's cue to run its own PM-specific follow-up (e.g. restoring the
-   *   caret into contentDOM). null means "redrew in place, no transition".
+   * Capability probe + spec builder — non-null only when there is something to
+   * expand (render mode; edit mode is raw text). Also the behaviour-registry
+   * path's implementation (one capability, every trigger lands here).
+   * @returns {{ element: Element|null, title: string, mode: 'media' }|null}
    */
-  update(dom, attrs) {
-    const prevMode = this.#attrs ? this.#attrs.mode : attrs.mode
-    this.#attrs = attrs
-    this.#applyMode(dom, attrs)
-    return prevMode === attrs.mode ? null : { modeChangedTo: attrs.mode }
+  expandContent() {
+    const attrs = /** @type {DiagramAttrs} */ (this.block.payload)
+    if (attrs.mode === 'edit') return null
+    const svg = this.root ? this.root.querySelector('.diagram-block__render svg') : null
+    return { element: svg, title: (attrs.diagramType || 'mermaid') + ' diagram', mode: 'media' }
   }
 
-  /** @param {HTMLElement} dom */
-  destroy(dom) {
+  /** Expand the rendered SVG into the lightbox (chord / header / menu all land here). */
+  expand() {
+    const spec = this.expandContent()
+    if (spec && spec.element) expandBlock({ element: spec.element, title: spec.title, mode: spec.mode })
+  }
+
+  destroy() {
     this.#destroyed = true
     if (this.#panzoomCleanup) { this.#panzoomCleanup(); this.#panzoomCleanup = null }
     DiagramRenderer.#liveInstances.delete(this)
   }
 
-  // Presentational hook for the adapter's live-typing sync: the gutter's line
-  // count must track every keystroke, which happens via a MutationObserver on
-  // contentDOM OUTSIDE this class's mount()/update() lifecycle (ProseMirror
-  // does not call NodeView.update() for in-place text edits it owns). Kept as
-  // an explicit extra method (not part of the mount/update/destroy contract)
-  // rather than folded into update(), since it fires far more often than attrs
-  // actually change.
+  // Presentational hook for the adapter's live-typing sync (a MutationObserver
+  // on contentDOM, OUTSIDE the render/update lifecycle).
   /** @param {string} source */
   syncGutterLineCount(source) {
     if (this.#gutter) DiagramRenderer.#updateGutter(this.#gutter, source)
   }
 
-  // Re-render the live SVG in place after a theme change (settings changed) —
-  // a no-op unless this instance is currently showing render mode. Invoked by
-  // the static theme-change listener across every live instance.
+  // Re-render the live SVG in place after a theme change — a no-op unless this
+  // instance is currently showing render mode.
   rerenderForThemeChange() {
-    if (this.#destroyed || !this.#renderBody || !this.#attrs || this.#attrs.mode !== 'render') return
-    this.#renderMermaidInto(this.#renderBody, this.#attrs)
+    const attrs = /** @type {DiagramAttrs} */ (this.block.payload)
+    if (this.#destroyed || !this.#renderBody || attrs.mode !== 'render') return
+    this.#renderMermaidInto(this.#renderBody, attrs)
   }
 
   // ── DOM construction (presentational only) ───────────────────────────────
@@ -266,8 +320,6 @@ export class DiagramRenderer extends BlockRenderer {
       const comingFromEdit = dom.contains(editBody)
       if (comingFromEdit) dom.removeChild(editBody)
       if (!dom.contains(renderBody)) dom.appendChild(renderBody)
-      // Give the render area keyboard focus so Ctrl+Enter can flip back to edit —
-      // only on the actual transition, never re-stolen on an in-mode attrs update.
       if (comingFromEdit) renderBody.focus()
       this.#renderMermaidInto(renderBody, attrs)
     } else {
@@ -331,14 +383,9 @@ export class DiagramRenderer extends BlockRenderer {
     })
   }
 
-  // Inline Ctrl-gated pan/zoom on the rendered diagram — a lightweight cousin of
-  // the fullscreen lightbox (no chrome, no Esc, no title). Bare wheel/click pass
-  // straight through (document scroll, block selection); ONLY while Ctrl(=Mod) is
-  // held does the pane become a pan/zoom surface. One atomic CSS transform on the
-  // WRAPPER div (NOT @panzoom/panzoom, whose canvas/animate handling was jerky
-  // here). Expand still hands the bare SVG to the lightbox untouched. Purely a
-  // generic interactive-viewer behaviour — no PM/editor coupling, so it stays
-  // with the renderer (a chat-lens diagram would want the same affordance).
+  // Inline Ctrl-gated pan/zoom on the rendered diagram (one atomic CSS transform
+  // on the wrapper). Purely a generic interactive-viewer behaviour — no PM/editor
+  // coupling, so it stays here.
   /** @param {HTMLElement} renderBody @param {HTMLElement} wrap */
   #setupInlinePanzoom(renderBody, wrap) {
     const MIN = 1, MAX = 20
@@ -348,11 +395,9 @@ export class DiagramRenderer extends BlockRenderer {
       wrap.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + scale + ')'
     }
 
-    // Cursor-anchored, closed-form: for s→s', tx' = tx + p·(s − s') where
-    // p = (cursor − rect.topLeft)/s. No animation, so nothing to jump/collapse.
     /** @param {WheelEvent} e */
     function onWheel(e) {
-      if (!(e.ctrlKey || e.metaKey)) return   // bare wheel scrolls the document
+      if (!(e.ctrlKey || e.metaKey)) return
       e.preventDefault()
       const s2 = Math.min(MAX, Math.max(MIN, scale * (e.deltaY < 0 ? 1.1 : 1 / 1.1)))
       if (s2 === scale) return
@@ -360,12 +405,11 @@ export class DiagramRenderer extends BlockRenderer {
       tx += ((e.clientX - rect.left) / scale) * (scale - s2)
       ty += ((e.clientY - rect.top) / scale) * (scale - s2)
       scale = s2
-      if (scale === MIN) { tx = 0; ty = 0 }   // fit floor re-centres cleanly
+      if (scale === MIN) { tx = 0; ty = 0 }
       apply()
     }
     renderBody.addEventListener('wheel', onWheel, { passive: false })
 
-    // Ctrl+drag pan (bare drag is left alone so click still selects the block).
     let panning = false, lastX = 0, lastY = 0
     /** @param {PointerEvent} e */
     function onDown(e) {
@@ -388,7 +432,6 @@ export class DiagramRenderer extends BlockRenderer {
     wrap.addEventListener('pointerup', onUp)
     wrap.addEventListener('pointercancel', onUp)
 
-    // Affordance: grab cursor + hint only while Ctrl is held.
     let armed = false
     /** @param {boolean} on */
     function syncArm(on) {

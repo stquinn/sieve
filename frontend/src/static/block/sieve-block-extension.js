@@ -35,8 +35,8 @@
 //   → getSieveNodes() includes it automatically — no editor.js changes needed
 //
 // Adding a new block kind:
-//   1. Create processors/<kind>-renderer.js following the interface above
-//   2. Add <script type="module" src="/static/processors/<kind>-renderer.js"> to
+//   1. Create editor/surfaces/node-views/<kind>-node-view.js following the interface above
+//   2. Add <script type="module" src="/static/editor/surfaces/node-views/<kind>-node-view.js"> to
 //      index.html after block/sieve-block-extension.js
 //   That's it.
 
@@ -46,49 +46,31 @@ import { registerBlockKind, getBlockBehaviour, containsChildBlocks, getSieveIcon
 import { labelForAction } from '../base/action-label.js'
 import { updateBlockOp } from './block-sync.js'
 import { expandBlock } from '../ui/media-lightbox.js'
+import { adoptFocusedControl, restoreFocusedControl } from './renderers/header-bar.js'
+import { SieveBlock } from './sieve-block.js'
+
+// sieveBlockFor — the SEAM's envelope constructor for adapters (envelope-first
+// flow, contract §typed block envelope). v1 builds from the PM node + the
+// kind-owned live overlay; when the surface's block-sync cache becomes the
+// typed truth-mirror, THIS is the single choke point that switches to
+// mirror-first lookup (SieveBlock.from stays the resurrect fallback).
+/**
+ * @param {{ type: { name: string }, attrs: Record<string, any> }} node
+ * @param {Record<string, any>} [overlay]  kind-owned live fields (e.g. {source: textContent})
+ * @returns {SieveBlock}
+ */
+export function sieveBlockFor(node, overlay) {
+  return SieveBlock.from(node, overlay)
+}
 
 // ── Header focus preservation ────────────────────────────────────────────────
-// A header re-render (renderHeaderBar) rebuilds the whole toolbar so button
-// states track the live attrs. But a header may hold a control the user is
-// actively in — log's `Filter…` input — and a naive wholesale swap would rob it
-// of focus + caret and reset its value mid-type (which is why the header seam
-// once SKIPPED the re-render entirely while focus was inside the bar, leaving
-// button states stale — the log toolbar "doesn't redraw" bug). Instead we keep
-// the LIVE focused control across the rebuild: move its actual DOM node into the
-// fresh tree at the matching slot (value/caret intact) and re-focus it after the
-// bar is mounted (reparenting blurs it). Uniform — no renderer knowledge; a
-// header with nothing focused just swaps wholesale.
-var HEADER_FOCUSABLE = 'input, textarea, select, button'
-
-// adoptFocusedControl moves the live focused control from oldBar into freshBar at
-// the matching slot (same index among focusable descendants, same tag). Returns a
-// snapshot for restoreFocusedControl, or null if nothing in oldBar was focused.
-// Call BEFORE freshBar is mounted; call restoreFocusedControl AFTER mounting (a
-// detached element can't hold focus).
-export function adoptFocusedControl(oldBar, freshBar) {
-  var active = (typeof document !== 'undefined') ? document.activeElement : null
-  if (!oldBar || !freshBar || !active || !oldBar.contains(active)) return null
-  var oldList = Array.prototype.slice.call(oldBar.querySelectorAll(HEADER_FOCUSABLE))
-  var idx = oldList.indexOf(active)
-  if (idx < 0) return null
-  var freshList = Array.prototype.slice.call(freshBar.querySelectorAll(HEADER_FOCUSABLE))
-  var twin = freshList[idx]
-  if (!twin || twin.tagName !== active.tagName || !twin.parentNode) return null
-  var ss = (typeof active.selectionStart === 'number') ? active.selectionStart : null
-  var se = (typeof active.selectionEnd === 'number') ? active.selectionEnd : null
-  twin.parentNode.replaceChild(active, twin)   // fresh tree now holds the LIVE control
-  return { el: active, selectionStart: ss, selectionEnd: se }
-}
-
-// restoreFocusedControl re-focuses the adopted control (the reparent blurred it)
-// and restores its caret. No-op when adoptFocusedControl returned null.
-export function restoreFocusedControl(snap) {
-  if (!snap || !snap.el) return
-  if (typeof snap.el.focus === 'function') snap.el.focus()
-  if (snap.selectionStart !== null && typeof snap.el.setSelectionRange === 'function') {
-    try { snap.el.setSelectionRange(snap.selectionStart, snap.selectionEnd) } catch (e) {}
-  }
-}
+// Migrated kinds own their own header, so the header machinery — including the
+// focus-survival pair adoptFocusedControl/restoreFocusedControl (log's live
+// Filter… input across a toolbar re-render, the "toolbar doesn't redraw" bug's
+// fix) — now lives in block/renderers/header-bar.js. Re-exported here for the
+// legacy header seam below (any future unmigrated kind still declaring a
+// headerProvider) and for header-focus-preservation.test.js's import.
+export { adoptFocusedControl, restoreFocusedControl } from './renderers/header-bar.js'
 
 // ── Click-to-own-selection ───────────────────────────────────────────────────
 // A click anywhere in a block makes it the caret/selection owner (a NodeSelection
@@ -161,8 +143,8 @@ export function domSelectionBlockRange(domSelection, er, blocks) {
 // "Body/title pull-back", DEFECT SEC-B / issue #48): TITLE rendering is
 // renderer-side in every lens, PM included — this seam DELEGATES to the held
 // renderer's fillTitle (a BlockRenderer instance the NodeView adapter exposes
-// as `view.renderer`, e.g. processors/ai-block-renderer.js,
-// processors/web-clip-renderer.js) instead of writing innerHTML itself. Kinds
+// as `view.renderer`, e.g. editor/surfaces/node-views/ai-block-node-view.js,
+// editor/surfaces/node-views/web-clip-node-view.js) instead of writing innerHTML itself. Kinds
 // with no split renderer yet (smart-link, prose) have no `view.renderer` —
 // the fallback still uses the sanctioned instance (renderMarkdown, html:false)
 // directly, never the editor's html:true one, so every path here is SEC-B-safe
@@ -196,8 +178,6 @@ export function syncBlockTitle(titleEl, renderer, text) {
 // symbol that actually MOVED (it needed no such closure).
 export let registerSieveRenderer
 export let buildSieveBlockHTML
-export let AdvancedHeaderProvider
-export let badgeEl
 export let serializeNode
 export let detectAndAppendExtractions
 export let resolveEntriesForKind
@@ -217,88 +197,15 @@ export let rendererFor
   var Node = T.Node
   var mergeAttributes = T.mergeAttributes
 
-  // ── HEADER slot providers ────────────────────────────────────────────────────
-  // The HEADER slot of the Sieve Block anatomy (Header · Title · Content) lives
-  // here, with the seam that consumes it — one foundation, not a satellite file.
-  // A block declares `headerProvider: <instance>`; the seam calls
-  // provider.render(attrs, ctx) and places the result as the block's top bar.
-  // Behaviour lives on the provider TYPE; instances are stateless and shared, so
-  // per-block state travels in `ctx` (see the seam for the ctx contract):
-  //   ctx = { id, kind, attrs (live), editorPane, getPos, state (transient bag),
-  //           updateAttributes(patch) → persist via the held Editor's applyBlockOps }
-  // Durable state → ctx.updateAttributes(patch). Transient view state → ctx.state.
-  // Exposed on the shared vendor bag (T) so renderers subclass without a separate import.
-
-  function hdrEl(cls, tag) {
-    var e = document.createElement(tag || 'div')
-    if (cls) e.className = cls
-    return e
-  }
-  badgeEl = function (text, extraCls) {
-    var b = hdrEl('sieve-block__badge' + (extraCls ? ' ' + extraCls : ''), 'span')
-    b.textContent = (text == null) ? '' : String(text)
-    return b
-  }
-  function appendAll(parent, nodes) {
-    (nodes || []).forEach(function (n) { if (n) parent.appendChild(n) })
-  }
-  // A badge value is a literal string/number or a function(attrs) — NOT an attr
-  // name (ambiguous with a literal like 'diagram'). For an attr: `a => a.language`.
-  function resolveBadge(badge, attrs) {
-    return (typeof badge === 'function') ? badge(attrs) : badge
-  }
-
-  // Base slot — override render() or subclass AdvancedHeaderProvider.
-  class SieveBlockHeader {
-    render(/* attrs, ctx */) { return hdrEl('sieve-block__header') }
-  }
-
-  // Built-in 1: badge only (the framework default is new BadgeOnlyHeader(kind)).
-  class BadgeOnlyHeader extends SieveBlockHeader {
-    constructor(badge) { super(); this._badge = badge }
-    render(attrs /*, ctx */) {
-      var bar = hdrEl('sieve-block__header')
-      bar.contentEditable = 'false'
-      var text = resolveBadge(this._badge, attrs)
-      if (text != null && text !== '') bar.appendChild(badgeEl(text))
-      return bar
-    }
-  }
-
-  // Built-in 2: the toolbar. render() is the template:
-  //   [badge][...left][...center][spacer][...right]. Subclass + override hooks.
-  AdvancedHeaderProvider = class AdvancedHeaderProvider extends SieveBlockHeader {
-    badge(/* attrs */)       { return null }   // string | number | Element | null
-    left(/* attrs, ctx */)   { return [] }
-    center(/* attrs, ctx */) { return [] }
-    right(/* attrs, ctx */)  { return [] }
-    render(attrs, ctx) {
-      var bar = hdrEl('sieve-block__header')
-      bar.contentEditable = 'false'
-      var b = this.badge(attrs)
-      if (b != null && b !== '') bar.appendChild((b instanceof Element) ? b : badgeEl(b))
-      appendAll(bar, this.left(attrs, ctx))
-      appendAll(bar, this.center(attrs, ctx))
-      var spacer = hdrEl(); spacer.style.flex = '1'; bar.appendChild(spacer)
-      appendAll(bar, this.right(attrs, ctx))
-      return bar
-    }
-  }
-
-  // Shared control: the segmented toggle log (raw/explore) and diagram
-  // (edit/render) both hand-built. onChange(value) is the durable action.
-  //   options: [{ value, label, icon? }]
-  function segmentedToggle(options, activeValue, onChange) {
-    var wrap = hdrEl('sieve-block__toggle')
-    ;(options || []).forEach(function (opt) {
-      var btn = document.createElement('button')
-      btn.className = 'sieve-block__toggle-btn' + (opt.value === activeValue ? ' sieve-block__toggle-btn--active' : '')
-      btn.innerHTML = (opt.icon ? opt.icon + ' ' : '') + opt.label
-      btn.onclick = function (e) { e.preventDefault(); e.stopPropagation(); onChange(opt.value) }
-      wrap.appendChild(btn)
-    })
-    return wrap
-  }
+  // The HEADER slot providers (SieveBlockHeader/BadgeOnlyHeader/
+  // AdvancedHeaderProvider + badgeEl/segmentedToggle) used to live here — they
+  // were a fossil of the era when the framework assembled the block AROUND the
+  // renderer. They moved to block/renderers/header-bar.js when renderers took
+  // ownership of their own headers; each kind's renderer now builds its header
+  // there, using those classes as collaborators. The legacy header seam below
+  // (for any future unmigrated kind still declaring a headerProvider) only calls
+  // provider.render(attrs, ctx) on the instance a kind supplies — it needs none
+  // of the classes itself.
 
   // ── Base attributes shared by every sieve block kind ─────────────────────────
 
@@ -402,6 +309,10 @@ export let rendererFor
             },
             getAttribute: function (name) { return blockCtx.attrs[name] },
             getEditor: function () { return editorPane.sieveHost || null },
+            // The BlockService singleton (contract §service pair), stamped on the
+            // pane by the surface (as sieveHost is). Renderers receive it at
+            // construction; adapters register their v1 appliers with it.
+            get blockService() { return editorPane.blockService || null },
             updateAttributes: function (patch) {
               var ed = blockCtx.getEditor()
               if (ed) ed.applyBlockOps([updateBlockOp({ id: node.attrs.id, kind: kind, attrs: patch })])
@@ -423,11 +334,11 @@ export let rendererFor
             chromeHost.setAttribute('contenteditable', 'false')
             view.dom.insertBefore(chromeHost, view.dom.firstChild)
 
-            // Stamp data-kind on the block root (renderers already set data-id
-            // there, but not the kind). One uniform spot for every sieve flavour —
-            // lets the block-ID hover readout report `kind · id` rather than
-            // defaulting to 'prose'.
-            view.dom.setAttribute('data-kind', kind)
+            // data-kind: migrated renderers stamp their own identity data-* from
+            // the envelope (contract: adapters never write renderer DOM); this
+            // fallback covers only LEGACY kinds (smart-link) whose DOM the
+            // framework still assembles.
+            if (!view.dom.hasAttribute('data-kind')) view.dom.setAttribute('data-kind', kind)
 
             // Explicitly non-editable: prevents the block root from inheriting
             // contentEditable="true" from the ProseMirror root, which would let
@@ -610,35 +521,85 @@ export let rendererFor
             return false
           }
 
-          // ── Framework-level Header · Title · Content slots ───────────────────────
-          // A Sieve Block has slots the framework owns here. CHROME (window
-          // decoration) is still built by the renderer's NodeView; these three are
-          // declared:
-          //   headerProvider  — a SieveBlockHeader instance → the top TOOLBAR bar
-          //                     (badge + controls), via provider.render(attrs, ctx).
-          //   titleProvider   — string-attr | fn → the semantic lead (title/question),
-          //                     a static metadata region above content; its CSS border
-          //                     is the divider; empty → hidden (no region, no divider).
-          //   contentProvider — string-attr | fn → the data, live PM nodes in contentDOM
-          //                     (markdownProvider/markdownAttr are legacy aliases).
+          // ── Block anatomy: Header · Title · Body ─────────────────────────────
+          // MIGRATED kinds (their adapter exposes a BlockRenderer instance as
+          // view.renderer) BUILD THEMSELVES — the renderer owns the header, title
+          // and body chrome via its own render()/update(); the framework does NOT
+          // assemble anything around it. The one remaining framework job for them
+          // is the PM BODY PROJECTION (contract chain of custody,
+          // docs/design/specs/2026-07-21-block-renderer-contract.md): a FRESH
+          // SCRATCH renderer instance per pass authors the body markdown from Go
+          // truth (the live instance's body region is externally managed — PM's),
+          // and this seam parses it into contentDOM as live document nodes via a
+          // tracked transaction (selection/targeting/round-trip is a PM concern).
+          // A renderer without bodyMarkdown (diagram/code/log's raw-text bodies)
+          // needs no projection. Kinds with NO split renderer yet (prose is
+          // native; smart-link) fall to the LEGACY provider seam below.
+
+          // syncMdInto — parse markdown → a tracked PM replace of contentDOM's
+          // content. Shared by the migrated body projection and the legacy
+          // contentProvider seam; getPos can be stale by the time this deferred
+          // sync runs, and doc.nodeAt THROWS for an out-of-range pos, so
+          // bounds-check before touching the doc.
+          var syncMdInto = function (md) {
+            setTimeout(function () {
+              if (!editorPane || !editorPane.view) return
+              var html = renderMarkdown(md || '', editorPane) || '<p></p>'
+              var tmp = document.createElement('div')
+              tmp.innerHTML = html
+              var PMDP = T.ProseMirrorDOMParser || T.DOMParser
+              var slice = PMDP.fromSchema(editorPane.state.schema).parseSlice(tmp)
+              var pos = typeof getPos === 'function' ? getPos() : -1
+              var pmDoc = editorPane.state.doc
+              if (pos == null || pos < 0 || pos >= pmDoc.content.size) return
+              var cur = pmDoc.nodeAt(pos)
+              if (!cur || !cur.type.name.startsWith('sieve-')) return
+              var tr = editorPane.state.tr
+              tr.replace(pos + 1, pos + 1 + cur.content.size, slice)
+              tr.setMeta('sieve-md-sync', true)
+              tr.setMeta('addToHistory', false)
+              editorPane.view.dispatch(tr)
+            }, 0)
+          }
+
+          if (view.renderer) {
+            // ── MIGRATED: the renderer owns its chrome. Only project the body. ──
+            if (view.contentDOM && typeof view.renderer.bodyMarkdown === 'function') {
+              // SCRATCH-INSTANCE AUTHORING: one fresh instance per pass, built
+              // from the node's envelope, guards nothing, fires no effects (no
+              // service), and is discarded once its bodyMarkdown is extracted.
+              var RendererClass = /** @type {any} */ (view.renderer).constructor
+              var resolveBodyM = function (n) {
+                return new RendererClass(sieveBlockFor(n)).bodyMarkdown()
+              }
+              var lastMdM = resolveBodyM(node)
+              if (lastMdM) syncMdInto(lastMdM)
+              var origUpdateM = (typeof view.update === 'function') ? view.update.bind(view) : null
+              view.update = function (updatedNode) {
+                var ok = origUpdateM ? origUpdateM(updatedNode) : true
+                if (!ok) return false
+                var nextMd = resolveBodyM(updatedNode)
+                if (nextMd !== lastMdM) { lastMdM = nextMd; syncMdInto(nextMd) }
+                return true
+              }
+            }
+            return view
+          }
+
+          // ── LEGACY provider seam (unmigrated kinds only) ─────────────────────
+          // headerProvider (→ top toolbar), titleProvider (→ metadata lead),
+          // contentProvider (→ live PM body). Inert for kinds declaring none.
           var resolve = function (p) {
             return (typeof p === 'function') ? p : function (attrs) { return attrs[p] }
           }
 
-          // blockCtx + renderHeaderBar are declared at the top of the NodeView
-          // wrapper (so makeNodeView receives ctx and refreshHeader can reach the
-          // bar). The header seam just assigns the renderer here.
-
-          // HEADER (toolbar) — a SieveBlockHeader instance → the top bar. Placed
-          // right after the gutter chrome host. Re-rendered on attr change so e.g.
-          // a mode toggle reflects the active state.
+          // HEADER (toolbar) — a header provider instance → the top bar, placed
+          // right after the gutter chrome host, re-rendered on attr change.
           var headerProvider = renderer.headerProvider
           var headerBarEl
           if (headerProvider && typeof headerProvider.render === 'function') {
             renderHeaderBar = function () {
               var fresh = headerProvider.render(blockCtx.attrs, blockCtx)
-              // Expand button — appended to the header bar for kinds declaring the
-              // `expandable` policy, shown only when there is something to expand now.
               if (renderer.interactionPolicy && renderer.interactionPolicy.expandable &&
                   typeof renderer.getExpandContent === 'function') {
                 var pos = (typeof getPos === 'function') ? getPos() : -1
@@ -659,9 +620,6 @@ export let rendererFor
                   fresh.appendChild(xb)
                 }
               }
-              // Keep a control the user is actively in (log's filter input) alive
-              // across the rebuild: adopt its live node into the fresh tree, then
-              // re-focus after mounting. See adoptFocusedControl above.
               var focusSnap = headerBarEl ? adoptFocusedControl(headerBarEl, fresh) : null
               if (headerBarEl && headerBarEl.parentNode) {
                 headerBarEl.parentNode.replaceChild(fresh, headerBarEl)
@@ -681,16 +639,10 @@ export let rendererFor
           if (view.contentDOM && titleProvider) {
             resolveTitle = resolve(titleProvider)
             var titleEl = document.createElement('div')
-            // .sieve-block__heading, NOT .sieve-block__header (the chrome badge-bar).
             titleEl.className = 'sieve-block__heading'
             titleEl.contentEditable = 'false'
             view.contentDOM.parentNode.insertBefore(titleEl, view.contentDOM)
-            syncTitle = function (h) {
-              // Delegates to the held renderer's fillTitle (view.renderer, a
-              // BlockRenderer instance the adapter exposes by composition) —
-              // see syncBlockTitle's header comment for the full rationale.
-              syncBlockTitle(titleEl, view.renderer, h)
-            }
+            syncTitle = function (h) { syncBlockTitle(titleEl, view.renderer, h) }
           }
 
           // CONTENT — live PM nodes in contentDOM via the editor schema.
@@ -698,34 +650,9 @@ export let rendererFor
           var resolveBody, lastMd, syncMd
           if (view.contentDOM && contentProvider) {
             resolveBody = resolve(contentProvider)
-            syncMd = function (md) {
-              setTimeout(function () {
-                if (!editorPane || !editorPane.view) return
-                var html = renderMarkdown(md || '', editorPane) || '<p></p>'
-                var tmp = document.createElement('div')
-                tmp.innerHTML = html
-                var PMDP = T.ProseMirrorDOMParser || T.DOMParser
-                var slice = PMDP.fromSchema(editorPane.state.schema).parseSlice(tmp)
-                var pos = typeof getPos === 'function' ? getPos() : -1
-                // getPos can be stale by the time this deferred sync runs (the doc
-                // may have shrunk), and doc.nodeAt THROWS (not returns null) for an
-                // out-of-range pos. Bounds-check before touching the doc.
-                var pmDoc = editorPane.state.doc
-                if (pos == null || pos < 0 || pos >= pmDoc.content.size) return
-                var cur = pmDoc.nodeAt(pos)
-                if (!cur || !cur.type.name.startsWith('sieve-')) return
-                var tr = editorPane.state.tr
-                tr.replace(pos + 1, pos + 1 + cur.content.size, slice)
-                tr.setMeta('sieve-md-sync', true)
-                tr.setMeta('addToHistory', false)
-                editorPane.view.dispatch(tr)
-              }, 0)
-            }
+            syncMd = syncMdInto
           }
 
-          // Initial fill + one shared update wrapper for all slots. Gate on the
-          // sync fns (only defined when view.contentDOM exists), so a title/content
-          // provider on a contentDOM-less atom is simply inert rather than throwing.
           if (syncTitle) { lastTitle = resolveTitle(node.attrs); syncTitle(lastTitle) }
           if (syncMd) { lastMd = resolveBody(node.attrs); if (lastMd) syncMd(lastMd) }
           if (renderHeaderBar || syncTitle || syncMd) {
@@ -733,15 +660,7 @@ export let rendererFor
             view.update = function (updatedNode) {
               var ok = origUpdate ? origUpdate(updatedNode) : true
               if (!ok) return false
-              // Toolbar re-renders on EVERY update so active states (a mode toggle,
-              // a column toggle) track the live attrs. A control the user is
-              // actively in (log's filter input) is preserved across the rebuild
-              // by renderHeaderBar (adoptFocusedControl), so re-rendering no longer
-              // robs it of focus — the old "skip while focus is inside the bar"
-              // guard left button states stale (log toolbar "doesn't redraw") and
-              // is retired.
               if (renderHeaderBar) renderHeaderBar()
-              // Title/content re-sync only when their RESOLVED value changes.
               if (syncTitle) {
                 var nh = resolveTitle(updatedNode.attrs)
                 if (nh !== lastTitle) { lastTitle = nh; syncTitle(nh) }

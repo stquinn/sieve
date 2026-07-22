@@ -1,51 +1,72 @@
-// smart-image-renderer.js — Sieve NodeView ADAPTER for the 'smart-image' kind
-// (the PM half of the renderer/NodeView split, docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
-// Phase 4 / issue #47). Look-and-feel (the image wrapper, resize handle,
-// status badge, this kind's stylesheet) lives in SmartImageRenderer
-// (frontend/src/static/block/renderers/smart-image-renderer.js — a DIFFERENT
-// class, deliberately same basename, different directory). This file HOLDS a
-// SmartImageRenderer instance by COMPOSITION and owns the genuinely
-// PM/framework-side pieces: schema data (nodeConfig/attrs/parseAttrs), the
-// resize-commit write path (ctx.updateAttributes), and resolving `src` +
-// `parsedAssetRef`-shaped asset URLs against the held Editor's document uuid
-// — SmartImageRenderer.resolveSrc itself is a pure (src, uuid) function with
-// no ctx dependency (see that class for why).
+// smart-image-node-view.js — Sieve NodeView ADAPTER for the 'smart-image' kind
+// (the PM half of the renderer/NodeView split; NORMATIVE contract:
+// docs/design/specs/2026-07-21-block-renderer-contract.md). Look-and-feel (the
+// image wrapper, resize handle, status badge, this kind's stylesheet) lives in
+// SmartImageRenderer (frontend/src/static/block/renderers/smart-image-renderer.js
+// — a DIFFERENT class). This
+// file HOLDS a SmartImageRenderer instance by COMPOSITION and owns the
+// genuinely PM/framework-side pieces: schema data (nodeConfig/attrs/parseAttrs),
+// the v1 BlockService applier (where the renderer's semantic verbs land as
+// tracked PM transactions via ctx.updateAttributes), and authoring the
+// envelope's live `src` overlay against the held Editor's document uuid —
+// SmartImageRenderer.resolveSrc itself is a pure (src, uuid) function with no
+// ctx dependency (see that class for why).
 
-import { registerSieveRenderer } from '../block/sieve-block-extension.js'
+import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block-extension.js'
 import { renderMermaidSvgEntry } from './diagram-renderer.js'
-import { SmartImageRenderer } from '../block/renderers/smart-image-renderer.js'
+import { SmartImageRenderer } from '../../../block/renderers/smart-image-renderer.js'
 
 ;(function () {
   'use strict'
 
   function makeNodeView(node, editorPane, getPos, ctx) {
     var nodeTypeName = 'sieve-smart-image'
+    var currentAttrs = Object.assign({}, node.attrs)
 
-    // The renderer instance this NodeView HOLDS by composition (never
-    // inheritance — see the file header). All look-and-feel (wrapper,
-    // resizer, badge) is its job; this adapter only supplies PM-only
-    // concerns (schema data, the resize-commit write, src resolution)
-    // around it.
-    var renderer = new SmartImageRenderer()
-    renderer.onResize(function (dims) { ctx.updateAttributes(dims) })
-
-    function effectiveAttrs(attrs) {
-      return Object.assign({}, attrs, { src: SmartImageRenderer.resolveSrc(attrs.src || '', ctx && ctx.getEditor() && ctx.getEditor().uuid) })
+    // envelopeFor — the typed envelope with `src` overlaid as the RESOLVED
+    // asset URL (proxy / per-document asset path). The overlay key is this
+    // kind's own knowledge; resolution needs the held Editor's uuid, which is
+    // why it happens here and not in the (PM-blind, ctx-free) renderer.
+    function envelopeFor(n) {
+      return sieveBlockFor(n, { src: SmartImageRenderer.resolveSrc(n.attrs.src || '', ctx && ctx.getEditor() && ctx.getEditor().uuid) })
     }
 
-    var dom = renderer.mount(effectiveAttrs(node.attrs))
+    // The renderer instance this NodeView HOLDS by composition (never
+    // inheritance — see the file header). All look-and-feel is its job; its
+    // semantic verbs (resize) effect through the BlockService, whose v1
+    // applier this adapter registers below.
+    var renderer = new SmartImageRenderer(envelopeFor(node), ctx.blockService || null)
+
+    // v1 APPLIER — today's PM-transaction behaviour behind the service
+    // boundary: the renderer's verbs arrive here and become tracked attr
+    // transactions via ctx.updateAttributes. A true atom has no content
+    // channel, so setContent is a no-op.
+    var unregisterApplier = ctx.blockService ? ctx.blockService.registerApplier({
+      owns: function (id) { return !!id && id === (currentAttrs.id || '') },
+      updateAttributes: function (_id, patch) { ctx.updateAttributes(patch) },
+      setContent: function () {},
+      retry: function () { ctx.retry() },
+    }) : null
+
+    var dom = renderer.render()
 
     return {
       dom: dom,
+      renderer: renderer,   // marks this a MIGRATED kind for the seam's branch
       update: function (updatedNode) {
         if (updatedNode.type.name !== nodeTypeName) return false
-        renderer.update(dom, effectiveAttrs(updatedNode.attrs))
+        currentAttrs = updatedNode.attrs
+        renderer.update(envelopeFor(updatedNode))
         return true
+      },
+      destroy: function () {
+        if (unregisterApplier) unregisterApplier()
+        renderer.destroy()
       },
     }
   }
 
-  var SmartImageNodeAdapter = {
+  var SmartImageNodeView = {
     getIcon: function() { return window.SieveIcons && window.SieveIcons.image },
     getFriendlyName: function() { return 'Image' },
 
@@ -147,6 +168,6 @@ import { SmartImageRenderer } from '../block/renderers/smart-image-renderer.js'
     }
   }
 
-  registerSieveRenderer('smart-image', SmartImageNodeAdapter)
+  registerSieveRenderer('smart-image', SmartImageNodeView)
 
 })()

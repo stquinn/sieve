@@ -591,6 +591,10 @@ export class WysiwygSurface extends AbstractSurface {
     // the Editor's PUBLIC API through the held pane — never the backend directly, and
     // never a window global. Read lazily by getEditor at capability-fire time.
     editorPane.sieveHost = this.#host
+    // The BlockService singleton rides the same stamp as sieveHost — the
+    // NodeView ctx reads it (ctx.blockService) for renderer construction +
+    // v1 applier registration (contract §service pair).
+    editorPane.blockService = this.#host.blockService || null
     window.__tiptap = editorPane
 
     // Stage D.2: the block list IS the document model. When the load supplied it,

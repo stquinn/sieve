@@ -1,62 +1,66 @@
 // @ts-check
 // code-renderer.js — CodeRenderer: the renderer half of the 'code' kind's
-// renderer/NodeView split (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
-// Phase 4 / issue #47). Owns look-and-feel ONLY: the block shell, the
-// gutter+code-area body chrome, and this kind's complete stylesheet (`static
-// styles`). Zero ProseMirror/editor/window.* app-global dependencies — this
-// class mounts identically in the note editor's NodeView adapter
-// (frontend/src/static/processors/code-renderer.js, which HOLDS an instance
-// of this class by composition, never inheritance), a bare-page harness, or
-// any future non-PM lens (chat turn, embedded card).
+// renderer/NodeView split (Block Renderer Contract,
+// docs/design/specs/2026-07-21-block-renderer-contract.md). Owns look-and-feel
+// ONLY: the block shell, the HEADER (a stateful language badge), the
+// gutter+code-area body chrome, and this kind's stylesheet (`static styles`).
+// Zero ProseMirror/editor/window.* dependencies.
 //
-// PM-specific concerns deliberately stay OUT of this file per the spec's
-// PM-specificity sorting test — they live in the adapter instead:
-//   - ProseMirror's contentDOM binding/ignoreMutation/stopEvent (this class
-//     builds the <code> element; the adapter binds it as the NodeView's
-//     contentDOM and owns the MutationObserver that watches it)
-//   - the lowlight DECORATION plugin (buildPlugins) — a ProseMirror concept
-//   - the header toolbar (badge: language / detecting… / CODE), a
-//     PM-framework slot (headerProvider, rendered by
-//     sieve-block-extension.js) — stays adapter-side (CodeHeader in
-//     processors/code-renderer.js), same as diagram's DiagramHeader
-//   - persisting the live text via ctx.updateAttributes — a PM/framework
-//     write path
-//
-// syncGutterLineCount delegates to the shared LineGutter class
-// (block/renderers/line-gutter.js) — hoisted there at 'log's migration once
-// both kinds needed an identical span-per-line gutter builder (survey item
-// A2; see that file's header for the full rationale).
+// buildHeader() lays out a CodeHeader via a HeaderBar; buildBody() builds the
+// gutter + code-area + the editable <code>. PM-specific concerns stay
+// adapter-side: the raw text is ProseMirror-owned (the adapter binds the
+// <code>, exposed as renderer.codeElement, as the NodeView's contentDOM), the
+// lowlight DECORATION plugin, and the MutationObserver that watches contentDOM
+// and reports live text through this renderer's setContent (the contract's
+// outbound truth channel).
 
 import { BlockRenderer } from './block-renderer.js'
 import { codeStyles } from './code-renderer.styles.js'
 import { LineGutter } from './line-gutter.js'
+import { AdvancedHeaderProvider, badgeEl, HeaderBar } from './header-bar.js'
+import { StatusBadge } from './status-badge.js'
 
-/** @typedef {{ id?: string, source?: string, language?: string, detectionMethod?: string }} CodeAttrs */
+/** @typedef {{ id?: string, source?: string, language?: string, detectionMethod?: string, status?: string, createdAt?: string|null }} CodeAttrs */
+
+// ── Header provider — badge only, but stateful: 'detecting…' while the language
+// job runs, the language once known, else 'CODE' (pending/settled off
+// StatusBadge.classify — survey item A7). ──
+class CodeHeader extends AdvancedHeaderProvider {
+  /** @param {CodeAttrs} attrs @returns {HTMLElement} */
+  badge(attrs) {
+    const state         = StatusBadge.classify(attrs.status, attrs.createdAt, attrs.id)
+    const showDetecting = state === 'pending' && (!attrs.language || attrs.language === '')
+    let text, cls
+    if (showDetecting) { text = 'detecting…'; cls = 'sieve-block__badge--pending' }
+    else if (attrs.language && attrs.language !== 'unknown') { text = attrs.language; cls = '' }
+    else { text = (attrs.language === 'unknown' ? 'CODE' : attrs.language) || 'CODE'; cls = 'sieve-block__badge--unknown' }
+    const b = badgeEl(text, cls)
+    if (attrs.detectionMethod) {
+      b.setAttribute('data-detection-method', attrs.detectionMethod)
+      b.title = 'Detected via ' + attrs.detectionMethod
+    }
+    return b
+  }
+}
 
 export class CodeRenderer extends BlockRenderer {
-  // Sheet lives in the sibling code-renderer.styles.js — styles-file-geography
-  // convention: a renderer file starts with its class, never a CSS wall.
   static styles = codeStyles
+  static rootClass = 'sieve-block sieve-block--code'
 
+  /** @type {HeaderBar|null} */ #headerBar = null
   /** @type {HTMLElement|null} */ #gutter = null
   /** @type {HTMLElement|null} */ #codeEl = null
 
-  /** The live ProseMirror contentDOM the adapter binds as its NodeView's
-   *  contentDOM — this class builds it, the adapter (never this class) hands
-   *  it to ProseMirror. @returns {HTMLElement|null} */
-  get contentDOM() { return this.#codeEl }
+  /** @returns {HTMLElement} */
+  buildHeader() {
+    // The header's context IS this renderer (contract rule — providers speak
+    // semantic verbs, never injected closures; CodeHeader is read-only today).
+    this.#headerBar = new HeaderBar(new CodeHeader())
+    return this.#headerBar.render(/** @type {CodeAttrs} */ (this.block.payload), this)
+  }
 
-  /**
-   * @param {CodeAttrs} attrs — `source` is the initial text only; live edits
-   *   are tracked by ProseMirror directly in contentDOM. The adapter passes
-   *   the LIVE textContent here on every update() (mirroring
-   *   DiagramRenderer's effectiveAttrs pattern), so the gutter never lags.
-   * @returns {HTMLElement}
-   */
-  mount(attrs) {
-    const dom = document.createElement('div')
-    dom.className = 'sieve-block sieve-block--code'
-
+  /** @returns {HTMLElement} */
+  buildBody() {
     const body = document.createElement('div')
     body.className = 'sieve-block__body'
 
@@ -81,42 +85,33 @@ export class CodeRenderer extends BlockRenderer {
     codeArea.appendChild(pre)
     body.appendChild(gutter)
     body.appendChild(codeArea)
-    dom.appendChild(body)
 
     this.#gutter = gutter
     this.#codeEl = codeEl
-    this.update(dom, attrs)
-    return dom
+    this.#syncBody(/** @type {CodeAttrs} */ (this.block.payload))
+    return body
   }
 
-  /**
-   * Patches the highlight class (attrs.language) and the gutter's line count
-   * (attrs.source, expected to be the LIVE text — see mount's doc).
-   * @param {HTMLElement} dom
-   * @param {CodeAttrs} attrs
-   */
-  update(dom, attrs) {
-    this.#applyHighlightClass(attrs.language || '')
+  /** THE inbound truth channel. @param {import('../sieve-block.js').SieveBlock} block */
+  update(block) {
+    super.update(block)
+    const attrs = /** @type {CodeAttrs} */ (block.payload)
+    if (this.#headerBar) this.#headerBar.update(attrs, this)
+    this.#syncBody(attrs)
+  }
+
+  /** @param {CodeAttrs} attrs */
+  #syncBody(attrs) {
+    const lang = attrs.language || ''
+    if (this.#codeEl) this.#codeEl.className = (lang && lang !== 'unknown') ? 'language-' + lang + ' hljs' : 'hljs'
     this.syncGutterLineCount(attrs.source || '')
   }
 
-  // Presentational hook for the adapter's live-typing sync: the gutter's line
-  // count must track every keystroke via a MutationObserver on contentDOM
-  // OUTSIDE this class's mount()/update() lifecycle (ProseMirror does not
-  // call NodeView.update() for in-place text edits it owns) — same reasoning
-  // as DiagramRenderer.syncGutterLineCount.
-  /** @param {string} source */
-  syncGutterLineCount(source) {
-    if (this.#gutter) LineGutter.sync(this.#gutter, source)
-  }
+  /** The editable <code> the adapter binds as ProseMirror's contentDOM. A
+   *  neutral accessor. @returns {HTMLElement|null} */
+  get codeElement() { return this.#codeEl }
 
-  /** @param {string} lang */
-  #applyHighlightClass(lang) {
-    if (!this.#codeEl) return
-    this.#codeEl.className = (lang && lang !== 'unknown') ? 'language-' + lang + ' hljs' : 'hljs'
-  }
-
-  // destroy(dom): base no-op is correct — this class owns no timers or
-  // observers (the MutationObserver that watches contentDOM is adapter-side,
-  // since it also persists via ctx.updateAttributes — a PM/framework path).
+  /** Live-typing gutter sync the adapter's MutationObserver drives (outside the
+   *  render/update lifecycle). @param {string} source */
+  syncGutterLineCount(source) { if (this.#gutter) LineGutter.sync(this.#gutter, source) }
 }

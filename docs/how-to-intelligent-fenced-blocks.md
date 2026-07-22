@@ -17,15 +17,20 @@ A fenced block with a named language tag (e.g. ` ```web-clip ` or ` ```ai-block 
 
 ---
 
-## JS Architecture — the Renderer / NodeView Split (2026-07-20)
+## JS Architecture — the Renderer / NodeView Split (2026-07-20; contract rev 2 2026-07-21)
 
 **Status:** shipped across the block-renderer-extraction epic (#43: #44 base,
-#45 diagram, #46 ai-block, #47 code/log/web-clip/smart-card/smart-image). Every
-structured kind except `smart-link` (deliberately unmigrated — parked pending
-the links decision, TECH-DEBT X-D) now has a `BlockRenderer` subclass in
-`block/renderers/` held by a thin NodeView adapter in `processors/`. **This is
-the required pattern for any new block kind** — a new kind ships both halves
-in the same change (see "Migration" in the spec).
+#45 diagram, #46 ai-block, #47 code/log/web-clip/smart-card/smart-image), then
+reconciled to the APPROVED **Block Renderer Contract rev 2** —
+`docs/design/specs/2026-07-21-block-renderer-contract.md` is NORMATIVE for
+everything in this section. Every structured kind except `smart-link`
+(deliberately unmigrated — parked pending the links decision, TECH-DEBT X-D)
+now has a `BlockRenderer` subclass in `block/renderers/` held by a thin
+NodeView adapter in `editor/surfaces/node-views/` (`<kind>-node-view.js` —
+moved+renamed from `processors/<kind>-renderer.js` 2026-07-21: they are
+NodeViews, the old names clashed with the real renderers, and PM enters the
+JS graph only in surfaces). **This is the required pattern for any new
+block kind** — a new kind ships both halves in the same change.
 parsing, job tracking, SSE completion, …) are unaffected and still apply
 regardless of which half of this split a kind uses; this section only changes
 **how the JS side builds and styles a block's DOM.**
@@ -47,25 +52,47 @@ environment (see the spec's Problem section — the fullscreen lightbox bug,
 
   ```js
   import { BlockRenderer } from '../base/fenced-block-base.js'
+  import { MODE } from '../sieve-block.js'
 
   export class DiagramRenderer extends BlockRenderer {
     // CSS text using ONLY --theme-* variables for colour — the entire
     // host↔renderer styling contract. No selectors outside this kind's own
-    // classes; no reliance on input.css. registered exactly ONCE per class,
+    // classes; no reliance on input.css. Registered exactly ONCE per class,
     // on first construction, by the base class constructor.
     static styles = `
       .diagram-block__render { ... color: var(--theme-text); ... }
     `
 
-    /** @param {object} attrs @returns {HTMLElement} */
-    mount(attrs) { /* build and return the DOM from attrs alone */ }
+    // constructor is the base's: (block, blockService?, handleBuild?) —
+    // block is the typed SieveBlock ENVELOPE (never a raw attr map; read
+    // state via this.block.payload — no shadow copies). Scratch/authoring
+    // instances are (block) only.
 
-    /** @param {HTMLElement} dom @param {object} attrs */
-    update(dom, attrs) { /* patch the DOM in place for changed attrs */ }
+    // Region hooks — fabricate-and-return; the base render() places them
+    // exactly once in canonical order (Header · Title · Body · Footer):
+    buildHeader() { /* … */ }  buildBody() { /* … */ }
 
-    destroy(dom) { /* release timers/observers/listeners this renderer owns */ }
+    /** @param {import('../sieve-block.js').SieveBlock} block */
+    update(block) {
+      super.update(block)              // stores the envelope — ALWAYS first
+      /* patch via recorded slot refs from block.payload */
+    }
+
+    // SEMANTIC VERBS — consumers never see an attr name or wire value.
+    // Declared kinds override core verbs (setMode/expand); kind-specific
+    // verbs live on the subclass; ALL map to schema privately:
+    setMode(mode) { this._pushAttrs({ mode: mode === MODE.EDIT ? 'edit' : 'render' }) }
+
+    destroy() { /* release timers/observers/listeners this renderer owns */ }
   }
   ```
+
+  Outbound effects flow through the **BlockService** (constructed in the
+  Workspace composition root, handed down — contract §service pair): the
+  base's `retry()`/`setContent()` and the protected `_pushAttrs`/`_pushContent`
+  route `blockId`-addressed calls to the applier the kind's adapter registers.
+  A renderer constructed WITHOUT a service (a scratch/authoring instance) is
+  inert — it authors DOM, never effects.
 
   A renderer **never** imports ProseMirror, never receives an `editor`/`view`
   reference, never touches `window.*` app globals. That is what makes it
@@ -86,9 +113,10 @@ environment (see the spec's Problem section — the fullscreen lightbox bug,
   import is renderer-internal — nothing outside the renderer file imports
   the styles module directly.
 
-  **Mount-once/patch-on-update, and the escaping rule** (2026-07-20, Phase 4
-  / issue #47): `mount(attrs)` builds a kind's chrome DOM structure exactly
-  once; `update(dom, attrs)` patches that same structure in place —
+  **Build-once/patch-on-update, and the escaping rule** (2026-07-20, Phase 4
+  / issue #47): the build hooks construct a kind's chrome DOM exactly once
+  (`render()` invokes each exactly once); `update(block)` patches that same
+  structure in place —
   `textContent`, `className`/`classList`, `hidden`, and real property
   assignments (`.href`, `.src`) — it never rebuilds skeleton via `innerHTML`
   on every call. This is a correctness rule, not a style preference: attrs
@@ -132,9 +160,17 @@ environment (see the spec's Problem section — the fullscreen lightbox bug,
 - **NodeView (thin PM-lifecycle adapter)** — the *only* place that talks to
   ProseMirror. It relates to the renderer by **composition, never
   inheritance** — it *holds* a renderer instance as a field, it does not
-  extend `BlockRenderer`: constructs the renderer, calls `mount(attrs)` once
-  for `dom`/`contentDOM`, calls `update(dom, attrs)` from the TipTap
-  `update()` hook, and calls `destroy(dom)` from `destroy()`. Composition is
+  extend `BlockRenderer`: it constructs the renderer from the typed envelope
+  (`sieveBlockFor(node, overlay)` — the seam's choke point; the overlay is the
+  kind's live-text key), passing `ctx.blockService` and, for kinds whose BODY
+  is live PM content, a `handleBuild` interceptor that CLAIMS the body region
+  (returns `false` for `REGION.BODY` after decorating the container — the
+  base skips the hook, records the claim, and the claimed container is PM's
+  `contentDOM`). It registers the kind's **v1 applier** with the BlockService
+  (`owns`/`updateAttributes`/`setContent`/`retry` — where PM knowledge like
+  render-ward caret capture lives; unregister in `destroy`), calls
+  `renderer.update(sieveBlockFor(updatedNode, …))` from the TipTap `update()`
+  hook, and `renderer.destroy()` from `destroy()`. Composition is
   load-bearing here, not a style preference — inheritance would drag PM
   lifecycle into the one class this seam keeps PM-free. The NodeView owns
   PM-only concerns the renderer must never see — `ignoreMutation`,
@@ -573,18 +609,19 @@ if (!aiBlockId) {
   - [ ] `addNodeView()` renders from attrs (never generates YAML)
   - [ ] Markdown serialiser replays `node.attrs.rawYaml` verbatim
 - [ ] After `contentEl.innerHTML = renderMarkdown(...)` → call `applyHighlighting(contentEl)`
-- [ ] Block-id attribute set on NodeView DOM element and re-set in every `render()` call
+- [ ] Block identity `data-*` (`data-id`/`data-kind`) is stamped by the renderer's own `render()` from the envelope — adapters never write renderer DOM
 - [ ] `isStale(createdAt, id)`: call `isJobActive(id)` first (from `fenced-block-base.js`), then `return isStaleByTime(createdAt)` — no manual Set management needed
 - [ ] Context menu dispatches `sieve:contextmenu`; sets node selection before opening
-- [ ] SSE completion: calls `softReloadContent` (no in-place YAML patch for rawYaml-carrying blocks)
+- [ ] SSE/server completion arrives as a render-back op (insert-block / replace-block / block-attrs-updated) applied as a TRACKED transaction — never `softReloadContent` for an operation (that wipes undo; backend-is-source-of-truth rule)
 
 **Visual / UX**
 - [ ] Chain-active hover: `::after` CSS + `mouseenter`/`mouseleave` toggling class in both directions
 - [ ] AI context: pass clean prose summary, not raw YAML
 
-**Renderer / NodeView split (see "JS Architecture" above) — required for any new kind (all existing kinds but `smart-link` already comply):**
-- [ ] Look-and-feel lives in a `BlockRenderer` subclass: `mount(attrs)`/`update(dom, attrs)`/`destroy(dom)`, zero PM/editor/`window.*` imports
+**Renderer / NodeView split (see "JS Architecture" above; NORMATIVE: the Block Renderer Contract rev 2) — required for any new kind (all existing kinds but `smart-link` already comply):**
+- [ ] Look-and-feel lives in a `BlockRenderer` subclass: base constructor `(block, blockService?, handleBuild?)` (typed `SieveBlock` envelope, never a raw attr map), `build*` region hooks + base `render()`, `update(block)` calling `super.update(block)` FIRST, `destroy()`; zero PM/editor/`window.*`-app-bus imports; state read from `this.block.payload` only (no shadow attr caches)
+- [ ] Outbound effects are SEMANTIC VERBS (core `setMode`/`setContent`/`retry`/`expand`, kind verbs on the subclass) mapping to schema privately via `_pushAttrs`/`_pushContent` — consumers never see an attr name
 - [ ] `static styles` carries the kind's CSS, using ONLY `--theme-*` vars for colour; moved out of `input.css` in the SAME change (never a separate pass)
-- [ ] NodeView is a thin adapter: constructs the renderer, calls its lifecycle methods, owns `ignoreMutation`/`selectNode`/`stopEvent`/attr parsing/`buildPlugins` — no look-and-feel logic
-- [ ] `mount()` builds chrome DOM once; `update()` patches via `textContent`/`className`/`hidden`/property assignment — never rebuilds skeleton via `innerHTML`; no attrs-derived text is ever concatenated into an `innerHTML` string (injection hazard — see "Mount-once/patch-on-update" above)
+- [ ] NodeView is a thin adapter in `editor/surfaces/node-views/`: constructs the renderer from `sieveBlockFor(node[, overlay])` + `ctx.blockService`, claims a live-PM body via `handleBuild` where the kind needs one, registers the v1 applier (unregistered in `destroy`), calls `renderer.update(sieveBlockFor(...))`/`renderer.destroy()`; owns `ignoreMutation`/`selectNode`/`stopEvent`/attr parsing/`buildPlugins` — no look-and-feel logic
+- [ ] Build hooks construct chrome DOM once; `update(block)` patches via `textContent`/`className`/`hidden`/property assignment — never rebuilds skeleton via `innerHTML`; no attrs-derived text is ever concatenated into an `innerHTML` string (injection hazard — see "Build-once/patch-on-update" above)
 - [ ] Renders correctly against `frontend/test/harness/bare-page-renderer.html` (only `:root` theme vars, no app stylesheet)

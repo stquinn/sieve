@@ -28,7 +28,7 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 | App entry point (Go template) | `frontend/src/index.html` |
 | TipTap editor component hierarchy | `frontend/src/static/editor/abstract-editor.js` (base) + `note-editor.js`/`prompt-editor.js` (concrete) + `editor-shell.js` (back-compat `window.SieveEditor` alias); mounted at `#tiptap-mount` |
 | **Block renderer classes** (look-and-feel, PM-free) | `frontend/src/static/block/renderers/` — `BlockRenderer` base, `RendererStyleRegistry`, `StatusBadge`, `LineGutter`, one concrete renderer + sibling `*.styles.js` per migrated kind |
-| NodeView PM adapters (thin, composition over a renderer) | `frontend/src/static/processors/*.js` |
+| NodeView PM adapters (thin, composition over a renderer) | `frontend/src/static/editor/surfaces/node-views/*-node-view.js` (moved+renamed from `processors/*-renderer.js` 2026-07-21 — they are NodeViews, and PM enters the JS graph only in surfaces) |
 | Custom TipTap extensions (vanilla JS) | `frontend/src/static/editor/extensions.js` |
 | Pre-built TipTap core bundle | `frontend/src/static/vendor/tiptap.js` |
 | Store abstraction + FileStore | `store/interfaces.go`, `store/filestore/` |

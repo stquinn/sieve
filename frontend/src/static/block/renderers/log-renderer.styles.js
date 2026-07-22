@@ -29,7 +29,7 @@
 //   - `.log-block__edit-area` / `.log-block__explore-area` / `.log-block__table`
 //     / `.log-block__row` / `.log-block__cell` / `.log-block__table-msg`: the
 //     Explore table's look, previously built as ad-hoc inline `element.style.*`
-//     assignments in the old processors/log-renderer.js NodeView — moved into
+//     assignments in the old NodeView (now editor/surfaces/node-views/log-node-view.js) — moved into
 //     real CSS here (LogRenderer.js's #renderTable now only sets the classes
 //     + the few genuinely PER-CELL values: colour/opacity/whitespace that vary
 //     row-to-row by log severity, which stay inline for the same reason a

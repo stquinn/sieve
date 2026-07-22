@@ -1,22 +1,22 @@
-// log-renderer.js — Sieve NodeView ADAPTER for the 'log' kind (the PM half of
-// the renderer/NodeView split, docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
-// Phase 4 / issue #47). Look-and-feel (the block shell, raw-text body, Explore
-// table, this kind's stylesheet) lives in LogRenderer
+// log-node-view.js — Sieve NodeView ADAPTER for the 'log' kind (the PM half of
+// the renderer/NodeView split, Block Renderer Contract:
+// docs/design/specs/2026-07-21-block-renderer-contract.md). Look-and-feel (the
+// block shell, header toolbar, raw-text body, Explore table, this kind's
+// stylesheet) lives in LogRenderer
 // (frontend/src/static/block/renderers/log-renderer.js — a DIFFERENT class,
 // deliberately same basename, different directory). This file HOLDS a
 // LogRenderer instance by COMPOSITION and owns everything that genuinely
 // speaks ProseMirror: contentDOM binding/ignoreMutation, the log-line
-// decoration plugin (buildPlugins), the read-only guard plugin, and the
-// header toolbar (badge/format/raw-explore toggle/noise/filter/column
-// buttons — a PM-framework headerProvider slot, same as diagram's
-// DiagramHeader and code's CodeHeader). LogHeader reads LogRenderer's static
-// mode/disabledCols helpers rather than re-deriving them.
+// decoration plugin (buildPlugins), the read-only guard plugin, resolving
+// parsedAssetRef → URL against the held Editor's uuid, and the v1 APPLIER
+// registered with the BlockService (where the renderer's outbound verbs
+// become tracked PM transactions).
 
-import { esc, getLowlight } from '../base/fenced-block-base.js'
-import { T } from '../base/tiptap-vendor.js'
-import { registerSieveRenderer, AdvancedHeaderProvider, badgeEl } from '../block/sieve-block-extension.js'
-import { updateBlockOp } from '../block/block-sync.js'
-import { LogRenderer } from '../block/renderers/log-renderer.js'
+import { esc, getLowlight } from '../../../base/fenced-block-base.js'
+import { T } from '../../../base/tiptap-vendor.js'
+import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block-extension.js'
+import { MODE } from '../../../block/sieve-block.js'
+import { LogRenderer } from '../../../block/renderers/log-renderer.js'
 
 ;(function () {
   'use strict'
@@ -24,106 +24,30 @@ import { LogRenderer } from '../block/renderers/log-renderer.js'
   // Spring Boot log line — compiled once (was recompiled per line in applyHighlight).
   var SPRING_LINE_RE = /^(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?)\s+(\w+)\s+(.*?)\s+---\s+\[(.*?)\]\s+(.*?)\s+:\s+(.*)$/
 
-  // ── Header (toolbar) ──────────────────────────────────────────────────────────
-  // The richest toolbar: badge + format + raw/explore toggle + (noise | filter +
-  // column toggles), all mode-dependent. State is persisted attrs (mode/filter/
-  // disabledCols/hideNoise), written via ctx.updateAttributes. WHICH column buttons
-  // exist is data-driven — LogRenderer publishes them via onColumnsAvailable into
-  // ctx.state.cols + ctx.refreshHeader() once the parsed JSON loads.
-  var RAW_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
-    '<path d="M1 7.5 L6 2 L8 4 L3 9 L1 9 Z"/><line x1="5" y1="3" x2="7" y2="5"/></svg>'
-  var EXPLORE_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
-    '<rect x="1" y="1" width="8" height="8" rx="1"/><line x1="1" y1="4" x2="9" y2="4"/><line x1="4" y1="4" x2="4" y2="9"/></svg>'
+  // The header toolbar (badge/format/raw-explore toggle/noise/filter/column
+  // buttons) is built by LogRenderer, whose controls call its OWN semantic
+  // verbs (setMode / setFilter / toggleNoise / toggleColumn). It self-refreshes
+  // once the parsed-JSON columns load.
 
-  class LogHeader extends AdvancedHeaderProvider {
-    badge() { return 'Log' }
+  // liveRenderers — id → live LogRenderer instance. The behaviour-registry
+  // path (policy Mod+Enter) resolves the block's renderer here so every
+  // trigger lands on the SAME verb methods the header toggle calls.
+  /** @type {Record<string, any>} */
+  var liveRenderers = {}
 
-    left(attrs, ctx) {
-      var items = []
-      if (attrs.logFormatName) {
-        var fb = badgeEl('Format: ' + attrs.logFormatName)
-        fb.style.background = 'var(--theme-bg)'
-        fb.style.color = 'var(--theme-textSubtle)'
-        fb.style.border = '1px solid var(--theme-border)'
-        fb.style.fontWeight = 'normal'
-        fb.style.marginLeft = '12px'
-        if (attrs.logFormatRegex) fb.title = 'Regex: ' + attrs.logFormatRegex
-        items.push(fb)
-      }
-      var explore = LogRenderer.isExplore(attrs)
-      var toggle = document.createElement('div')
-      toggle.className = 'log-block__toggle'
-      toggle.style.marginLeft = '8px'
-      var rawBtn = document.createElement('button')
-      rawBtn.className = 'log-block__toggle-btn' + (!explore ? ' log-block__toggle-btn--active-raw' : '')
-      rawBtn.innerHTML = RAW_SVG + ' Raw'
-      rawBtn.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); if (explore) ctx.updateAttributes({ mode: 'raw' }) })
-      var exploreBtn = document.createElement('button')
-      exploreBtn.className = 'log-block__toggle-btn' + (explore ? ' log-block__toggle-btn--active-explore' : '')
-      exploreBtn.innerHTML = EXPLORE_SVG + ' Explore'
-      exploreBtn.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); if (!explore) ctx.updateAttributes({ mode: 'explore' }) })
-      toggle.appendChild(rawBtn); toggle.appendChild(exploreBtn)
-      items.push(toggle)
-      if (!explore) {
-        var noiseBtn = document.createElement('button')
-        noiseBtn.className = 'sieve-block__badge sieve-block__badge--clickable' + (attrs.hideNoise ? ' sieve-block__badge--active' : '')
-        noiseBtn.textContent = attrs.hideNoise ? 'Show Noise' : 'Toggle Noise'
-        noiseBtn.style.cursor = 'pointer'
-        noiseBtn.style.marginLeft = '8px'
-        noiseBtn.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); ctx.updateAttributes({ hideNoise: !attrs.hideNoise }) })
-        items.push(noiseBtn)
-      }
-      return items
-    }
+  // ── LogNodeView ────────────────────────────────────────────────────────
 
-    right(attrs, ctx) {
-      if (!LogRenderer.isExplore(attrs)) return []
-      var items = []
-      var filter = document.createElement('input')
-      filter.type = 'text'
-      filter.placeholder = 'Filter...'
-      filter.className = 'sieve-block__badge'
-      filter.value = attrs.filter || ''
-      filter.style.background = 'transparent'
-      filter.style.border = '1px solid var(--theme-border)'
-      filter.style.color = 'var(--theme-text)'
-      filter.style.outline = 'none'
-      filter.addEventListener('mousedown', function (e) { e.stopPropagation() })
-      filter.addEventListener('input', function (e) { e.stopPropagation(); ctx.updateAttributes({ filter: filter.value }) })
-      items.push(filter)
-
-      var cols = ctx.state.cols || []
-      if (cols.length) {
-        var disabled = LogRenderer.disabledSet(attrs)
-        var wrap = document.createElement('div')
-        wrap.style.display = 'flex'
-        wrap.style.alignItems = 'center'
-        wrap.style.marginLeft = '8px'
-        cols.forEach(function (col) {
-          var btn = document.createElement('div')
-          btn.className = 'sieve-block__badge sieve-block__badge--clickable' + (!disabled[col.key] ? ' sieve-block__badge--active' : '')
-          btn.textContent = col.name
-          btn.style.opacity = disabled[col.key] ? '0.4' : '1'
-          btn.style.cursor = 'pointer'
-          btn.style.marginLeft = '4px'
-          btn.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); ctx.updateAttributes({ disabledCols: LogRenderer.toggleDisabled(attrs, col.key) }) })
-          wrap.appendChild(btn)
-        })
-        items.push(wrap)
-      }
-      return items
-    }
-  }
-
-  // ── LogNodeAdapter ────────────────────────────────────────────────────────
-  // The registered descriptor sieve-block-extension.js's duck-typed
-  // registerSieveRenderer() consumes. Named distinctly from the imported
-  // LogRenderer CLASS above — same word, two different layers — to keep the
-  // two unambiguous in this file.
-
-  var LogNodeAdapter = {
-    headerProvider: new LogHeader(),
-
+  var LogNodeView = {
+    // flipMode — THE mode-flip op (contract: one function, N entry points).
+    // Lands on the live renderer's setMode — the SAME verb the header toggle
+    // calls; the enum→wire mapping stays private to LogRenderer.
+    flipMode: function (attrs) {
+      if (!attrs || !attrs.id) return false
+      var r = liveRenderers[attrs.id]
+      if (!r) return false
+      r.setMode(LogRenderer.mode(attrs) === 'explore' ? MODE.EDIT : MODE.RENDER)
+      return true
+    },
     attrs: {
       source:          { default: '', parseHTML: function (el) { return el.getAttribute('data-source')           || '' } },
       language:        { default: 'log', parseHTML: function (el) { return el.getAttribute('data-language')         || 'log' } },
@@ -132,8 +56,9 @@ import { LogRenderer } from '../block/renderers/log-renderer.js'
       logFormatName:   { default: '', parseHTML: function (el) { return el.getAttribute('data-log-format-name') || '' } },
       logFormatRegex:  { default: '', parseHTML: function (el) { return el.getAttribute('data-log-format-regex') || '' } },
       status:          { default: 'COMPLETE', parseHTML: function (el) { return el.getAttribute('data-status') || 'COMPLETE' } },
-      // Persisted view settings — the header controls write these via
-      // ctx.updateAttributes, so a configured log comes back configured.
+      // Persisted view settings — the header controls write these through the
+      // renderer's semantic verbs (via the v1 applier below), so a configured
+      // log comes back configured.
       mode:            { default: '', parseHTML: function (el) { return el.getAttribute('data-mode') || '' } },
       filter:          { default: '', parseHTML: function (el) { return el.getAttribute('data-filter') || '' } },
       disabledCols:    { default: '', parseHTML: function (el) { return el.getAttribute('data-disabled-cols') || '' } },
@@ -145,9 +70,10 @@ import { LogRenderer } from '../block/renderers/log-renderer.js'
     // mechanism as diagram's edit↔render — see interaction-policy.js).
     interactionPolicy: { caretStop: true, modEnterTogglesMode: true },
 
-    // onModEnter — policy-extension entry point: flip raw↔explore. `host` is the
-    // parent Editor, threaded by the interaction-policy extension.
-    onModEnter: function (view, selection, host) {
+    // onModEnter — policy-extension entry point: flip raw↔explore. `_host` is
+    // the parent Editor, threaded by the interaction-policy extension (unused
+    // — the flip routes through the live renderer's verb).
+    onModEnter: function (view, selection, _host) {
       var node = selection.node || selection.$from.parent
 
       if (document.activeElement && view.dom.contains(document.activeElement)) {
@@ -169,9 +95,7 @@ import { LogRenderer } from '../block/renderers/log-renderer.js'
       }
 
       if (!node || node.type.name !== 'sieve-log' || !node.attrs.id) return false
-      var newMode = LogRenderer.mode(node.attrs) === 'explore' ? 'raw' : 'explore'
-      if (host) host.applyBlockOps([updateBlockOp({ id: node.attrs.id, kind: 'log', attrs: { mode: newMode } })])
-      return true
+      return LogNodeView.flipMode(node.attrs)
     },
 
     // text* + code:true — the raw captured log lines ARE the node's text content,
@@ -221,53 +145,68 @@ import { LogRenderer } from '../block/renderers/log-renderer.js'
 
     makeNodeView: function (node, editorPane, getPos, ctx) {
       var nodeTypeName = node.type.name
-
-      // The renderer instance this NodeView HOLDS by composition (never
-      // inheritance — see the file header). All look-and-feel (shell, raw
-      // body, Explore table) is its job; this adapter only supplies PM-only
-      // and framework concerns around it.
-      var renderer = new LogRenderer()
-      renderer.onColumnsAvailable(function (cols) {
-        ctx.state.cols = cols
-        ctx.refreshHeader()
-      })
+      var currentAttrs = Object.assign({}, node.attrs)
 
       // resolveAssetUrl — the parsedAssetRef → fetchable URL resolution needs
       // the held Editor's document uuid (a PM-framework concern via
-      // ctx.getEditor()), so it stays adapter-side; the RESOLVED url travels
-      // to LogRenderer as a plain attrs field (mirrors DiagramRenderer/
-      // CodeRenderer's effectiveAttrs pattern for injecting the live text).
+      // ctx.getEditor()), so it stays adapter-side; the RESOLVED url travels to
+      // LogRenderer as an envelope overlay field (alongside `source` as the
+      // live PM text — the overlay keys are this kind's own knowledge).
       function resolveAssetUrl(ref) {
         if (!ref) return ''
         if (ref.startsWith('/')) return ref
         return '/sieve/' + (ctx && ctx.getEditor() && ctx.getEditor().uuid || '') + '/' + ref.split('/').pop()
       }
 
-      function effectiveAttrs(attrs, textContent) {
-        return Object.assign({}, attrs, { source: textContent, resolvedAssetUrl: resolveAssetUrl(attrs.parsedAssetRef) })
+      // envelopeFor — the typed envelope for this NodeView's renderer.
+      function envelopeFor(n) {
+        return sieveBlockFor(n, { source: n.textContent, resolvedAssetUrl: resolveAssetUrl(n.attrs.parsedAssetRef) })
       }
 
-      var dom = renderer.mount(effectiveAttrs(node.attrs, node.textContent))
-      dom.setAttribute('data-id', node.attrs.id || '')
+      // The renderer instance this NodeView HOLDS by composition. It builds its
+      // own header (raw/explore toggle, filter, column buttons — self-refreshing
+      // once the parsed-JSON columns load) and the raw/explore bodies; this
+      // adapter only supplies PM-only concerns around it. Its semantic verbs
+      // effect through the BlockService, whose v1 applier is registered below.
+      var renderer = new LogRenderer(envelopeFor(node), ctx.blockService || null)
 
-      var contentDOM = renderer.contentDOM
+      // v1 APPLIER — today's PM-transaction behaviour behind the service
+      // boundary: the renderer's outbound verbs land here, where PM knowledge
+      // lives (the content→source mapping, tracked attr transactions via
+      // ctx.updateAttributes — the applier IS the sanctioned PM-side
+      // implementation).
+      var unregisterApplier = ctx.blockService ? ctx.blockService.registerApplier({
+        owns: function (id) { return !!id && id === (currentAttrs.id || '') },
+        updateAttributes: function (_id, patch) { ctx.updateAttributes(patch) },
+        setContent: function (_id, text) { ctx.updateAttributes({ source: text }) },
+        retry: function () { ctx.retry() },
+      }) : null
 
-      // Header (badge + format + raw/explore toggle + noise|filter+cols) is declared
-      // as `headerProvider: new LogHeader()` and rendered by the framework seam.
+      var dom = renderer.render()
+      if (currentAttrs.id) liveRenderers[currentAttrs.id] = renderer
+
+      var contentDOM = renderer.codeElement
 
       return {
         dom:        dom,
         contentDOM: contentDOM,
+        renderer:   renderer,   // marks this a MIGRATED kind for the seam's branch
         update: function (updatedNode) {
           if (updatedNode.type.name !== nodeTypeName) return false
-          renderer.update(dom, effectiveAttrs(updatedNode.attrs, updatedNode.textContent))
+          currentAttrs = updatedNode.attrs
+          // Late-id hardening: a block whose id lands via attr update on THIS
+          // NodeView still reaches the policy/menu triggers.
+          if (currentAttrs.id && !liveRenderers[currentAttrs.id]) liveRenderers[currentAttrs.id] = renderer
+          renderer.update(envelopeFor(updatedNode))
           return true
         },
         ignoreMutation: function (mutation) {
           return !contentDOM.contains(mutation.target)
         },
         destroy: function () {
-          renderer.destroy(dom)
+          if (unregisterApplier) unregisterApplier()
+          if (currentAttrs.id && liveRenderers[currentAttrs.id] === renderer) delete liveRenderers[currentAttrs.id]
+          renderer.destroy()
         },
       }
     },
@@ -394,16 +333,16 @@ import { LogRenderer } from '../block/renderers/log-renderer.js'
     },
   }
 
-  LogNodeAdapter.buildAiCtx = function (node) {
+  LogNodeView.buildAiCtx = function (node) {
     return { contextLabel: 'Log block' }
   }
 
-  LogNodeAdapter.buildContextMenuItems = function ({ node }) {
+  LogNodeView.buildContextMenuItems = function ({ node }) {
     return [
       { type: 'header', label: 'Log' },
     ]
   }
 
-  registerSieveRenderer('log', LogNodeAdapter)
+  registerSieveRenderer('log', LogNodeView)
 
 })()

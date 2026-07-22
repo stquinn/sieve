@@ -1,9 +1,10 @@
-// ai-block-renderer.js — Sieve NodeView ADAPTER for the 'ai-block' kind (the
-// PM half of the renderer/NodeView split, docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
+// ai-block-node-view.js — Sieve NodeView ADAPTER for the 'ai-block' kind (the
+// PM half of the renderer/NodeView split; NORMATIVE contract:
+// docs/design/specs/2026-07-21-block-renderer-contract.md
 // Phase 3 / issue #46). Look-and-feel (the block shell, the badge, this
 // kind's stylesheet) lives in AiBlockRenderer
 // (frontend/src/static/block/renderers/ai-block-renderer.js — a DIFFERENT
-// class, deliberately same basename, different directory). This file HOLDS an
+// class). This file HOLDS an
 // AiBlockRenderer instance by COMPOSITION and owns everything that genuinely
 // speaks ProseMirror or is cross-block: contentDOM binding/ignoreMutation,
 // the framework schema data (nodeConfig/attrs/parseAttrs/titleProvider/
@@ -16,11 +17,12 @@
 // a PM decoration for native prose peers, framework-layer material for the
 // future X-D framework extraction, deliberately left untouched here.
 
-import { isJobStale } from '../base/fenced-block-base.js'
-import { T } from '../base/tiptap-vendor.js'
-import { registerSieveRenderer } from '../block/sieve-block-extension.js'
-import { setRefChain, clearRefChain } from '../ai/ai-target-decoration.js'
-import { AiBlockRenderer } from '../block/renderers/ai-block-renderer.js'
+import { isJobStale } from '../../../base/fenced-block-base.js'
+import { T } from '../../../base/tiptap-vendor.js'
+import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block-extension.js'
+import { REGION } from '../../../block/renderers/block-renderer.js'
+import { setRefChain, clearRefChain } from '../../../ai/ai-target-decoration.js'
+import { AiBlockRenderer } from '../../../block/renderers/ai-block-renderer.js'
 
 ;(function () {
   'use strict'
@@ -41,14 +43,14 @@ import { AiBlockRenderer } from '../block/renderers/ai-block-renderer.js'
     return ids
   }
 
-  // ── AiBlockNodeAdapter ────────────────────────────────────────────────────────
+  // ── AiBlockNodeView ────────────────────────────────────────────────────────
   // The registered descriptor sieve-block-extension.js's duck-typed
   // registerSieveRenderer() consumes. Named distinctly from the imported
   // AiBlockRenderer CLASS above — same word, two different layers (this is the
   // PM-adapter descriptor object; AiBlockRenderer is the look-and-feel class it
   // holds by composition) — to keep the two unambiguous in this file.
 
-  var AiBlockNodeAdapter = {
+  var AiBlockNodeView = {
     // Read-only container: arrows treat it as a single caret stop.
     interactionPolicy: { caretStop: true },
 
@@ -61,19 +63,10 @@ import { AiBlockRenderer } from '../block/renderers/ai-block-renderer.js'
       content: 'block+'
     },
 
-    // TITLE (metadata) = the question; CONTENT (data) = the response, or a
-    // status line while it is not yet complete. The framework renders the title
-    // as its own region with a divider, hidden when empty (an EXPLAIN has no
-    // question → title collapses, no divider). The badge carries the type.
-    titleProvider: 'question',
-    contentProvider: function (a) {
-      var status = a.status || 'PENDING'
-      if (status === 'COMPLETE') return (a.response || '').trim()
-      if (status === 'PENDING' || status === 'DISPATCHED') {
-        return isJobStale(a.createdAt, a.id) ? 'Request timed out. (Right-click to Retry)' : '*(thinking…)*'
-      }
-      return (a.error || 'Request failed. (Right-click to Retry)').trim()
-    },
+    // TITLE (the question) and BODY (response/status) are rendered by
+    // AiBlockRenderer now — the question via its title region, the body-markdown
+    // decision via its bodyMarkdown(). The seam authors the projected body via
+    // FRESH scratch AiBlockRenderer instances (contract chain of custody).
 
     getInitialContentHTML: function() { return '<p></p>' },
 
@@ -108,16 +101,34 @@ import { AiBlockRenderer } from '../block/renderers/ai-block-renderer.js'
       }
     },
 
-    makeNodeView: function (node, editorPane, getPos) {
+    makeNodeView: function (node, editorPane, getPos, ctx) {
       var nodeTypeName = 'sieve-ai-block'
 
       // The renderer instance this NodeView HOLDS by composition (never
-      // inheritance — see the file header). All look-and-feel (shell,
-      // badge, stylesheet) is its job; this adapter only supplies PM-only
-      // and cross-block concerns around it.
-      var renderer = new AiBlockRenderer()
-      var dom = renderer.mount(node.attrs)
-      var contentDOM = renderer.contentDOM
+      // inheritance — see the file header). This lens CLAIMS the BODY region
+      // via the handleBuild interceptor (contract: decorate · own · default):
+      // PM owns the claimed container as its contentDOM while the badge/title
+      // still render renderer-side; the seam authors body content via fresh
+      // scratch instances. This adapter supplies PM-only/cross-block concerns.
+      var bodyContainer = null
+      var handleBuild = function (_r, region, container) {
+        if (region !== REGION.BODY) return true
+        container.className = 'sieve-block__content tiptap'
+        bodyContainer = container
+        return false
+      }
+      var renderer = new AiBlockRenderer(sieveBlockFor(node), ctx.blockService || null, handleBuild)
+      var dom = renderer.render()
+      var contentDOM = bodyContainer   // the claimed body container PM binds as its contentDOM
+
+      // v1 APPLIER (contract §service pair): today's PM-transaction behaviour
+      // behind the service boundary; unregistered in destroy below.
+      var unregisterApplier = ctx.blockService ? ctx.blockService.registerApplier({
+        owns: function (id) { return !!id && id === (node.attrs.id || '') },
+        updateAttributes: function (_id, patch) { ctx.updateAttributes(patch) },
+        setContent: function () {},   // ai-block body is server-written; no outbound content channel
+        retry: function () { ctx.retry() },
+      }) : null
 
       function applyChain(action) {
         var id = dom.getAttribute('data-id') || ''
@@ -159,21 +170,25 @@ import { AiBlockRenderer } from '../block/renderers/ai-block-renderer.js'
       return {
         dom:        dom,
         contentDOM: contentDOM,
-        // Exposed so sieve-block-extension.js's title seam (syncBlockTitle)
-        // can delegate to this renderer's fillTitle instead of writing
-        // innerHTML itself — the body/title pull-back (DEFECT SEC-B, #48).
+        // Marks this a MIGRATED kind for the seam's branch; the seam reads
+        // renderer.bodyMarkdown(attrs) to project live PM nodes into the body.
         renderer:   renderer,
 
         update: function (updatedNode) {
           if (updatedNode.type.name !== nodeTypeName) return false
-          renderer.update(dom, updatedNode.attrs)
-          // Body (attrs.response) is synced into contentDOM by the framework markdown seam.
+          node = updatedNode
+          renderer.update(sieveBlockFor(updatedNode))  // badge + question title; body is PM's (claimed region)
           return true
         },
 
         ignoreMutation: function (mutation) {
           // Allow PM to handle native content
           return !contentDOM.contains(mutation.target)
+        },
+
+        destroy: function () {
+          if (unregisterApplier) unregisterApplier()
+          renderer.destroy()
         },
       }
     },
@@ -263,5 +278,5 @@ import { AiBlockRenderer } from '../block/renderers/ai-block-renderer.js'
     },
   }
 
-  registerSieveRenderer('ai-block', AiBlockNodeAdapter)
+  registerSieveRenderer('ai-block', AiBlockNodeView)
 })()

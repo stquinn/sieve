@@ -1,12 +1,16 @@
 // @ts-check
 // log-renderer.test.js — DoD coverage for LogRenderer (the 'log' kind's
-// look-and-feel class, docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
-// Phase 4 / issue #47). Per the spec's contract, definition of done for any
-// renderer is "renders correctly in a bare page providing only :root theme
-// vars" — this suite mounts the REAL LogRenderer against a page carrying
-// nothing but a handful of --theme-* vars, mirroring code-renderer.test.js.
+// look-and-feel class, Block Renderer Contract:
+// docs/design/specs/2026-07-21-block-renderer-contract.md). Bare-page protocol:
+// render() alone yields the complete block. Scratch construction: (block) only;
+// the service-wired test below is the one live-instance case.
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import { LogRenderer } from '../src/static/block/renderers/log-renderer.js'
+import { SieveBlock, MODE } from '../src/static/block/sieve-block.js'
+import { BlockService } from '../src/static/block/block-service.js'
+
+/** @param {object} payload */
+function blk(payload) { return new SieveBlock('log', payload) }
 
 function clearInjectedStyles() {
   document.adoptedStyleSheets = []
@@ -32,40 +36,35 @@ function installBareThemeVars() {
   return el
 }
 
-describe('LogRenderer (Phase 4 — bare-page DoD)', () => {
+/** render() alone = the complete block. */
+function mount(attrs) {
+  const renderer = new LogRenderer(blk(attrs))
+  const dom = renderer.render()
+  return { renderer, dom }
+}
+
+describe('LogRenderer (bare-page DoD)', () => {
   /** @type {HTMLStyleElement} */
   let rootVars
 
-  beforeAll(() => {
-    clearInjectedStyles()
-  })
-
-  beforeEach(() => {
-    rootVars = installBareThemeVars()
-  })
-
-  afterEach(() => {
-    rootVars.remove()
-    document.body.innerHTML = ''
-    vi.restoreAllMocks()
-  })
+  beforeAll(() => { clearInjectedStyles() })
+  beforeEach(() => { rootVars = installBareThemeVars() })
+  afterEach(() => { rootVars.remove(); document.body.innerHTML = ''; vi.restoreAllMocks() })
 
   it('registers its static styles exactly once across multiple instances (register-once contract)', () => {
-    new LogRenderer()
-    new LogRenderer()
-    new LogRenderer()
+    new LogRenderer(blk({}))
+    new LogRenderer(blk({}))
+    new LogRenderer(blk({}))
     const matches = document.adoptedStyleSheets.filter((sheet) =>
       Array.from(sheet.cssRules).some((rule) => rule.cssText.indexOf('.sieve-block--log') === 0))
     expect(matches.length).toBe(1)
   })
 
-  it('mounts the shell + raw body chrome (independent of code/diagram classes), styled purely from --theme-* vars', () => {
-    const renderer = new LogRenderer()
-    const dom = renderer.mount({ id: 'lg-test', source: 'line one', mode: 'raw' })
+  it('render() builds the shell + raw body chrome (independent of code/diagram classes)', () => {
+    const { dom } = mount({ id: 'lg-test', source: 'line one', mode: 'raw' })
     document.body.appendChild(dom)
 
     expect(dom.className).toBe('sieve-block sieve-block--log')
-    // Independence from the retired sieve-block--code borrowing.
     expect(dom.classList.contains('sieve-block--code')).toBe(false)
     expect(dom.querySelector('.sieve-block__body')).toBeTruthy()
     expect(dom.querySelector('.sieve-block__gutter')).toBeTruthy()
@@ -75,64 +74,81 @@ describe('LogRenderer (Phase 4 — bare-page DoD)', () => {
     expect(getComputedStyle(/** @type {Element} */ (gutterSpan)).color.toLowerCase()).toBe('#565f89')
   })
 
-  it('exposes contentDOM as the <code> element ProseMirror binds as its NodeView contentDOM', () => {
-    const renderer = new LogRenderer()
-    const dom = renderer.mount({ id: 'lg-test', source: 'x', mode: 'raw' })
-    expect(renderer.contentDOM).toBeTruthy()
-    expect(renderer.contentDOM?.tagName).toBe('CODE')
-    expect(dom.contains(renderer.contentDOM)).toBe(true)
+  it('exposes codeElement as the <code> element the adapter binds as ProseMirror contentDOM', () => {
+    const { renderer, dom } = mount({ id: 'lg-test', source: 'x', mode: 'raw' })
+    expect(renderer.codeElement).toBeTruthy()
+    expect(renderer.codeElement?.tagName).toBe('CODE')
+    expect(dom.contains(renderer.codeElement)).toBe(true)
   })
 
   it('raw mode shows the edit area and hides Explore; explore mode flips visibility', () => {
-    const renderer = new LogRenderer()
-    const dom = renderer.mount({ id: 'lg-test', source: 'x', mode: 'raw' })
+    const { renderer, dom } = mount({ id: 'lg-test', source: 'x', mode: 'raw' })
     const explore = /** @type {HTMLElement} */ (dom.querySelector('.log-block__explore-area'))
     expect(explore.style.display).toBe('none')
 
-    renderer.update(dom, { id: 'lg-test', source: 'x', mode: 'explore' })
+    renderer.update(blk({ id: 'lg-test', source: 'x', mode: 'explore' }))
     expect(explore.style.display).toBe('flex')
   })
 
-  it('syncGutterLineCount keeps the gutter line count current without a full update() call', () => {
-    const renderer = new LogRenderer()
-    const dom = renderer.mount({ id: 'lg-test', source: 'a', mode: 'raw' })
+  it('syncGutterLineCount is driven internally — the gutter tracks the source line count', () => {
+    const { renderer, dom } = mount({ id: 'lg-test', source: 'a', mode: 'raw' })
     const gutter = dom.querySelector('.sieve-block__gutter')
     expect(gutter?.childElementCount).toBe(1)
 
-    renderer.syncGutterLineCount('a\nb\nc')
+    renderer.update(blk({ id: 'lg-test', source: 'a\nb\nc', mode: 'raw' }))
     expect(gutter?.childElementCount).toBe(3)
   })
 
-  it('loads the parsed-JSON asset via the adapter-resolved URL, publishes columns, and renders rows', async () => {
+  it('loads the parsed-JSON asset, then re-renders its OWN header with column buttons and renders rows', async () => {
     const json = { lines: [
       { lineNumber: 1, date: '2026-07-20', level: 'INFO', thread: 't1', logger: 'app', message: 'hello', raw: 'hello', severity: 'info' },
       { lineNumber: 2, date: '2026-07-20', level: 'ERROR', thread: 't1', logger: 'app', message: 'boom', raw: 'boom', severity: 'error' },
     ] }
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ json: () => Promise.resolve(json) })))
 
-    const renderer = new LogRenderer()
-    const cols = []
-    renderer.onColumnsAvailable((c) => cols.push(c))
-    const dom = renderer.mount({ id: 'lg-test', source: 'x', mode: 'explore', parsedAssetRef: 'parsed.json', resolvedAssetUrl: '/sieve/u/parsed.json', status: 'COMPLETE' })
+    const { dom } = mount({ id: 'lg-test', source: 'x', mode: 'explore', parsedAssetRef: 'parsed.json', resolvedAssetUrl: '/sieve/u/parsed.json', status: 'COMPLETE' })
     document.body.appendChild(dom)
 
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(fetch).toHaveBeenCalledWith('/sieve/u/parsed.json')
-    expect(cols.length).toBe(1)
-    expect(cols[0].map((c) => c.key)).toEqual(['date', 'level', 'thread', 'logger'])
-    const rows = dom.querySelectorAll('.log-block__row')
+    // The renderer re-rendered its own header — the column buttons now exist.
+    const colNames = Array.from(dom.querySelectorAll('.sieve-block__badge--clickable')).map((b) => b.textContent)
+    expect(colNames).toEqual(['Date', 'Level', 'Thread', 'Logger'])
     // 1 header row + 2 data rows
-    expect(rows.length).toBe(3)
+    expect(dom.querySelectorAll('.log-block__row').length).toBe(3)
   })
 
   it('destroy() disconnects the Explore lazy-scroll IntersectionObserver without throwing', () => {
-    const renderer = new LogRenderer()
-    const dom = renderer.mount({ id: 'lg-test', source: 'x', mode: 'raw' })
-    expect(() => renderer.destroy(dom)).not.toThrow()
+    const { renderer } = mount({ id: 'lg-test', source: 'x', mode: 'raw' })
+    expect(() => renderer.destroy()).not.toThrow()
   })
 
-  // ── Shared attrs-decision helpers (consumed by the adapter's LogHeader) ──
+  it('setMode and toggleColumn map to this kind\'s wire patches through a real BlockService applier', () => {
+    const service = new BlockService()
+    const applier = {
+      owns: (/** @type {string} */ id) => id === 'lg-test',
+      updateAttributes: vi.fn(),
+      setContent: vi.fn(),
+      retry: vi.fn(),
+    }
+    const unregister = service.registerApplier(applier)
+
+    const renderer = new LogRenderer(blk({ id: 'lg-test', source: 'x', mode: 'raw' }), service)
+    renderer.render()
+
+    renderer.setMode(MODE.EDIT)     // already raw — faithful no-op (old header guard)
+    expect(applier.updateAttributes).not.toHaveBeenCalled()
+
+    renderer.setMode(MODE.RENDER)   // MODE enum → this kind's wire string, privately
+    expect(applier.updateAttributes).toHaveBeenCalledWith('lg-test', { mode: 'explore' })
+
+    renderer.toggleColumn('level')  // disabledCols encoding stays renderer-private
+    expect(applier.updateAttributes).toHaveBeenCalledWith('lg-test', { disabledCols: 'level' })
+    unregister()
+  })
+
+  // ── Shared attrs-decision helpers (consumed by the header) ──
 
   it('LogRenderer.mode / isExplore default to raw unless mode or parsedAssetRef says otherwise', () => {
     expect(LogRenderer.mode({})).toBe('raw')

@@ -1,68 +1,137 @@
 // @ts-check
 // log-renderer.js — LogRenderer: the renderer half of the 'log' kind's
-// renderer/NodeView split (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
-// Phase 4 / issue #47). Owns look-and-feel ONLY: the block shell, the raw-text
-// body (gutter + code-area, shared shape with 'code' via LineGutter), the
-// Explore table (parsed-JSON → rows, filter, noise dimming, column
-// visibility), and this kind's complete stylesheet (`static styles`). Zero
-// ProseMirror/editor/window.* app-global dependencies — this class mounts
-// identically in the note editor's NodeView adapter
-// (frontend/src/static/processors/log-renderer.js, which HOLDS an instance of
-// this class by composition, never inheritance), a bare-page harness, or any
-// future non-PM lens.
+// renderer/NodeView split (Block Renderer Contract,
+// docs/design/specs/2026-07-21-block-renderer-contract.md). Owns look-and-feel
+// ONLY: the block shell, the HEADER (badge + format + raw/explore toggle +
+// noise | filter + column buttons), the raw-text body (gutter + code-area) and
+// the Explore table, and this kind's stylesheet (`static styles`). Zero
+// ProseMirror/editor/window.* dependencies.
 //
-// Independence from 'code' and 'diagram' (fixing a latent cross-kind style
-// coupling found during this migration): log's dom used to carry BOTH
-// `sieve-block--code` and `sieve-block--log` classes purely to BORROW code's
-// shell/body/gutter CSS, and its header toolbar (processors/log-renderer.js
-// LogHeader) built its raw/explore toggle out of diagram's
-// `.diagram-block__toggle*` classes — CSS that, since diagram's Phase-2
-// migration, lives ONLY in diagram-renderer.styles.js's constructable
-// stylesheet, registered lazily the first time a DiagramRenderer is
-// constructed. A document containing log blocks but NO diagram block would
-// therefore never register that stylesheet and render an unstyled toggle —
-// exactly the cross-kind coupling this epic exists to eliminate. This class
-// now owns a complete, independent copy of its shell/body chrome (dom drops
-// the borrowed `sieve-block--code` class — see the adapter) and its own
-// `.log-block__toggle*` pill (log-renderer.styles.js), so it renders
-// correctly with zero other kind present.
+// buildHeader() lays out a LogHeader via a HeaderBar; its controls call this
+// renderer's SEMANTIC VERBS (setMode — core API; setFilter / toggleNoise /
+// toggleColumn — kind-specific verbs under the abstract-consumer rule: the
+// header is this kind's own chrome). setMode maps the MODE enum to this kind's
+// wire strings (raw/explore) privately via _pushAttrs. buildBody() builds the
+// raw/explore surfaces and kicks off the async parsed-JSON table. WHICH columns
+// exist is data-driven: once the asset loads the renderer stores the columns
+// (renderer-owned state, read by the header via renderer.columns) and
+// re-renders its header — the live Filter… input survives that re-render via
+// HeaderBar's adopt/restoreFocusedControl.
 //
-// PM-specific concerns stay OUT of this file per the spec's PM-specificity
-// sorting test — they live in the adapter instead:
-//   - contentDOM binding/ignoreMutation (ProseMirror owns the raw-text node
-//     this class's mount() builds the <code> element FOR)
-//   - the lowlight-style DECORATION plugin (buildPlugins) that highlights
-//     Spring-Boot-style log lines — a ProseMirror concept
-//   - the header toolbar (badge/format/raw-explore toggle/noise/filter/
-//     column buttons) — a PM-framework headerProvider slot, same as
-//     diagram's DiagramHeader and code's CodeHeader — stays adapter-side
-//     (LogHeader in processors/log-renderer.js), reading LogRenderer's
-//     static mode/disabledCols helpers below rather than re-deriving them
-//   - persisting mode/filter/disabledCols/hideNoise via ctx.updateAttributes
+// PM-specific concerns stay adapter-side: the raw text is ProseMirror-owned
+// (the adapter binds the <code>, exposed as renderer.codeElement), the log-line
+// DECORATION plugin, the read-only guard plugin, and resolving parsedAssetRef →
+// URL against the held Editor's uuid (overlaid onto the envelope as
+// resolvedAssetUrl).
 
 import { BlockRenderer } from './block-renderer.js'
+import { MODE } from '../sieve-block.js'
 import { logStyles } from './log-renderer.styles.js'
 import { LineGutter } from './line-gutter.js'
+import { AdvancedHeaderProvider, badgeEl, HeaderBar } from './header-bar.js'
 
 /** @typedef {{ id?: string, source?: string, parsedAssetRef?: string, resolvedAssetUrl?: string, logFormatName?: string, logFormatRegex?: string, status?: string, mode?: string, filter?: string, disabledCols?: string, hideNoise?: boolean }} LogAttrs */
 /** @typedef {{ key: string, name: string }} LogColumn */
 
+const RAW_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
+  '<path d="M1 7.5 L6 2 L8 4 L3 9 L1 9 Z"/><line x1="5" y1="3" x2="7" y2="5"/></svg>'
+const EXPLORE_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
+  '<rect x="1" y="1" width="8" height="8" rx="1"/><line x1="1" y1="4" x2="9" y2="4"/><line x1="4" y1="4" x2="4" y2="9"/></svg>'
+
+// ── Header provider — the richest toolbar. The ctx IS the renderer (contract
+// rule): controls speak its semantic verbs; the available columns are read
+// off renderer.columns. ──
+class LogHeader extends AdvancedHeaderProvider {
+  badge() { return 'Log' }
+
+  /** @param {LogAttrs} attrs @param {LogRenderer} r — the renderer (semantic verbs) */
+  left(attrs, r) {
+    const items = []
+    if (attrs.logFormatName) {
+      const fb = badgeEl('Format: ' + attrs.logFormatName)
+      fb.style.background = 'var(--theme-bg)'
+      fb.style.color = 'var(--theme-textSubtle)'
+      fb.style.border = '1px solid var(--theme-border)'
+      fb.style.fontWeight = 'normal'
+      fb.style.marginLeft = '12px'
+      if (attrs.logFormatRegex) fb.title = 'Regex: ' + attrs.logFormatRegex
+      items.push(fb)
+    }
+    const explore = LogRenderer.isExplore(attrs)
+    const toggle = document.createElement('div')
+    toggle.className = 'log-block__toggle'
+    toggle.style.marginLeft = '8px'
+    const rawBtn = document.createElement('button')
+    rawBtn.className = 'log-block__toggle-btn' + (!explore ? ' log-block__toggle-btn--active-raw' : '')
+    rawBtn.innerHTML = RAW_SVG + ' Raw'
+    rawBtn.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); r.setMode(MODE.EDIT) })
+    const exploreBtn = document.createElement('button')
+    exploreBtn.className = 'log-block__toggle-btn' + (explore ? ' log-block__toggle-btn--active-explore' : '')
+    exploreBtn.innerHTML = EXPLORE_SVG + ' Explore'
+    exploreBtn.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); r.setMode(MODE.RENDER) })
+    toggle.appendChild(rawBtn); toggle.appendChild(exploreBtn)
+    items.push(toggle)
+    if (!explore) {
+      const noiseBtn = document.createElement('button')
+      noiseBtn.className = 'sieve-block__badge sieve-block__badge--clickable' + (attrs.hideNoise ? ' sieve-block__badge--active' : '')
+      noiseBtn.textContent = attrs.hideNoise ? 'Show Noise' : 'Toggle Noise'
+      noiseBtn.style.cursor = 'pointer'
+      noiseBtn.style.marginLeft = '8px'
+      noiseBtn.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); r.toggleNoise() })
+      items.push(noiseBtn)
+    }
+    return items
+  }
+
+  /** @param {LogAttrs} attrs @param {LogRenderer} r — the renderer (semantic verbs) */
+  right(attrs, r) {
+    if (!LogRenderer.isExplore(attrs)) return []
+    const items = []
+    const filter = document.createElement('input')
+    filter.type = 'text'
+    filter.placeholder = 'Filter...'
+    filter.className = 'sieve-block__badge'
+    filter.value = attrs.filter || ''
+    filter.style.background = 'transparent'
+    filter.style.border = '1px solid var(--theme-border)'
+    filter.style.color = 'var(--theme-text)'
+    filter.style.outline = 'none'
+    filter.addEventListener('mousedown', (e) => { e.stopPropagation() })
+    filter.addEventListener('input', (e) => { e.stopPropagation(); r.setFilter(filter.value) })
+    items.push(filter)
+
+    const cols = r.columns
+    if (cols.length) {
+      const disabled = LogRenderer.disabledSet(attrs)
+      const wrap = document.createElement('div')
+      wrap.style.display = 'flex'
+      wrap.style.alignItems = 'center'
+      wrap.style.marginLeft = '8px'
+      cols.forEach((/** @type {LogColumn} */ col) => {
+        const btn = document.createElement('div')
+        btn.className = 'sieve-block__badge sieve-block__badge--clickable' + (!disabled[col.key] ? ' sieve-block__badge--active' : '')
+        btn.textContent = col.name
+        btn.style.opacity = disabled[col.key] ? '0.4' : '1'
+        btn.style.cursor = 'pointer'
+        btn.style.marginLeft = '4px'
+        btn.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); r.toggleColumn(col.key) })
+        wrap.appendChild(btn)
+      })
+      items.push(wrap)
+    }
+    return items
+  }
+}
+
 export class LogRenderer extends BlockRenderer {
-  // Sheet lives in the sibling log-renderer.styles.js — styles-file-geography
-  // convention: a renderer file starts with its class, never a CSS wall.
   static styles = logStyles
+  static rootClass = 'sieve-block sieve-block--log'
 
-  // ── Shared attrs-decision helpers ─────────────────────────────────────────
-  // Pure functions of attrs — consumed by THIS class internally and by the
-  // adapter's LogHeader (processors/log-renderer.js) so both sides read one
-  // definition of "what mode/columns are active" rather than two.
-
+  // ── Shared attrs-decision helpers (consumed by THIS class and LogHeader) ──
   /** @param {LogAttrs} attrs @returns {'raw'|'explore'} */
   static mode(attrs) { return /** @type {'raw'|'explore'} */ (attrs.mode || (attrs.parsedAssetRef ? 'explore' : 'raw')) }
-
   /** @param {LogAttrs} attrs @returns {boolean} */
   static isExplore(attrs) { return LogRenderer.mode(attrs) === 'explore' }
-
   /** @param {LogAttrs} attrs @returns {Record<string, boolean>} */
   static disabledSet(attrs) {
     /** @type {Record<string, boolean>} */
@@ -70,7 +139,6 @@ export class LogRenderer extends BlockRenderer {
     ;(attrs.disabledCols || '').split(',').forEach((k) => { if (k) s[k] = true })
     return s
   }
-
   /** @param {LogAttrs} attrs @param {string} key @returns {string} */
   static toggleDisabled(attrs, key) {
     const s = LogRenderer.disabledSet(attrs)
@@ -78,6 +146,7 @@ export class LogRenderer extends BlockRenderer {
     return Object.keys(s).join(',')
   }
 
+  /** @type {HeaderBar|null} */ #headerBar = null
   /** @type {HTMLElement|null} */ #gutter = null
   /** @type {HTMLElement|null} */ #codeEl = null
   /** @type {HTMLElement|null} */ #editArea = null
@@ -86,33 +155,26 @@ export class LogRenderer extends BlockRenderer {
   /** @type {any} */ #loadedJson = null
   #loadingAsset = false
   /** @type {IntersectionObserver|null} */ #tableObserver = null
-  /** @type {LogAttrs} */ #attrs = { }
-  /** @type {((cols: LogColumn[]) => void)|null} */ #onColumnsAvailable = null
+  /** @type {LogColumn[]} */ #cols = []
 
-  /** The live ProseMirror contentDOM the adapter binds as its NodeView's
-   *  contentDOM — this class builds it, the adapter (never this class) hands
-   *  it to ProseMirror. @returns {HTMLElement|null} */
-  get contentDOM() { return this.#codeEl }
+  /** The columns the loaded parsed-JSON asset made available (renderer-owned
+   *  state; LogHeader reads this to build the column buttons). @returns {LogColumn[]} */
+  get columns() { return this.#cols }
 
-  /**
-   * Registers a callback fired whenever the Explore table's available
-   * columns change (once the parsed-JSON asset loads or reloads) — the
-   * adapter's hook into publishing them to its headerProvider (`ctx.state.cols`
-   * + `ctx.refreshHeader()`), a PM-framework concern this PM-free class never
-   * touches directly.
-   * @param {(cols: LogColumn[]) => void} cb
-   */
-  onColumnsAvailable(cb) { this.#onColumnsAvailable = cb }
+  /** @returns {HTMLElement} */
+  buildHeader() {
+    // The header's context IS this renderer — controls speak the semantic
+    // verbs (setMode / setFilter / toggleNoise / toggleColumn), never attr
+    // names or injected closures.
+    this.#headerBar = new HeaderBar(new LogHeader())
+    return this.#headerBar.render(/** @type {LogAttrs} */ (this.block.payload), this)
+  }
 
-  /** @param {LogAttrs} attrs @returns {HTMLElement} */
-  mount(attrs) {
-    const dom = document.createElement('div')
-    dom.className = 'sieve-block sieve-block--log'
-
+  /** @returns {HTMLElement} */
+  buildBody() {
     const body = document.createElement('div')
     body.className = 'sieve-block__body'
 
-    // ── Raw/edit area: gutter + code-area, same shape as 'code' ──────────────
     const editArea = document.createElement('div')
     editArea.className = 'log-block__edit-area'
 
@@ -138,19 +200,14 @@ export class LogRenderer extends BlockRenderer {
     editArea.appendChild(gutter)
     editArea.appendChild(codeArea)
 
-    // ── Explore area: a scrollable, filterable table over parsed JSON lines ──
     const exploreArea = document.createElement('div')
     exploreArea.className = 'log-block__explore-area'
 
     const tableContainer = document.createElement('div')
     tableContainer.className = 'log-block__table'
 
-    // Block SELECTION is owned by the framework (click-to-own-selection in
-    // sieve-block-extension.js) — a click anywhere in the block makes it the
-    // caret/selection owner uniformly for every kind. The only thing local to
-    // this text-table body is shielding the native text selection users drag
-    // to copy log lines from that framework click-claim: stop mousedown
-    // propagation (except the framework's own controls) and cancel dragstart.
+    // Shield the native drag-select (copy log lines) from the framework's
+    // click-to-own-selection: stop mousedown (except controls), cancel dragstart.
     exploreArea.addEventListener('mousedown', (e) => {
       const t = /** @type {HTMLElement} */ (e.target)
       if (t.closest && t.closest('input, textarea, button, select')) return
@@ -159,59 +216,83 @@ export class LogRenderer extends BlockRenderer {
     exploreArea.addEventListener('dragstart', (e) => { e.preventDefault(); e.stopPropagation() })
 
     exploreArea.appendChild(tableContainer)
-
     body.appendChild(editArea)
     body.appendChild(exploreArea)
-    dom.appendChild(body)
 
     this.#gutter = gutter
     this.#codeEl = codeEl
     this.#editArea = editArea
     this.#exploreArea = exploreArea
     this.#tableContainer = tableContainer
-
-    this.update(dom, attrs)
-    return dom
+    this.#syncBody(/** @type {LogAttrs} */ (this.block.payload), true)
+    return body
   }
 
-  /**
-   * @param {HTMLElement} dom
-   * @param {LogAttrs} attrs — `source` is expected to be the LIVE PM text
-   *   (mirrors CodeRenderer/DiagramRenderer's effectiveAttrs pattern); a
-   *   `resolvedAssetUrl` (adapter-computed from parsedAssetRef + the held
-   *   Editor's uuid — a PM-framework concern) is required to load Explore data.
-   */
-  update(dom, attrs) {
-    const assetChanged = this.#attrs.parsedAssetRef !== attrs.parsedAssetRef || this.#attrs.status !== attrs.status
-    this.#attrs = attrs
+  /** THE inbound truth channel. @param {import('../sieve-block.js').SieveBlock} block */
+  update(block) {
+    // Previous truth read BEFORE super stores the new envelope (the base's
+    // envelope is the ONE copy of state — no shadow caches, by contract).
+    const prev = /** @type {LogAttrs} */ (this.block.payload)
+    super.update(block)
+    const attrs = /** @type {LogAttrs} */ (block.payload)
+    if (this.#headerBar) this.#headerBar.update(attrs, this)
+    const assetChanged = prev.parsedAssetRef !== attrs.parsedAssetRef || prev.status !== attrs.status
+    this.#syncBody(attrs, assetChanged)
+  }
 
-    dom.classList.toggle('log--hide-noise', !!attrs.hideNoise)
-    this.syncGutterLineCount(attrs.source || '')
+  // ── Semantic verbs (core setMode + this kind's own — contract
+  //    §abstract-consumer rule: LogHeader is this kind's own chrome) ──────────
+
+  /**
+   * MODE → this kind's wire strings, privately: EDIT → 'raw' (the editable
+   * text surface), RENDER → 'explore', DEFAULT → the attr's unset default ''
+   * (natural presentation: explore when a parsed asset exists, else raw).
+   * @param {string} mode
+   */
+  setMode(mode) {
+    const attrs = /** @type {LogAttrs} */ (this.block.payload)
+    if (mode === MODE.DEFAULT) {
+      if (attrs.mode) this._pushAttrs({ mode: '' })
+      return
+    }
+    const wire = mode === MODE.EDIT ? 'raw' : 'explore'
+    if (wire === LogRenderer.mode(attrs)) return
+    this._pushAttrs({ mode: wire })
+  }
+
+  /** Set the Explore table's row filter text. @param {string} text */
+  setFilter(text) { this._pushAttrs({ filter: text }) }
+
+  /** Flip the raw view's noise dimming. */
+  toggleNoise() { this._pushAttrs({ hideNoise: !(/** @type {LogAttrs} */ (this.block.payload).hideNoise) }) }
+
+  /** Toggle one Explore column's visibility by key. The comma-joined
+   *  disabledCols wire encoding stays private to this class. @param {string} key */
+  toggleColumn(key) { this._pushAttrs({ disabledCols: LogRenderer.toggleDisabled(/** @type {LogAttrs} */ (this.block.payload), key) }) }
+
+  /** @param {LogAttrs} attrs @param {boolean} assetChanged */
+  #syncBody(attrs, assetChanged) {
+    const dom = this.root
+    if (dom) dom.classList.toggle('log--hide-noise', !!attrs.hideNoise)
+    if (this.#gutter) LineGutter.sync(this.#gutter, attrs.source || '')
     this.#updateVisibility(attrs)
 
     if (assetChanged) this.#loadAsset(attrs)
     else if (this.#loadedJson) this.#renderTable(attrs)
   }
 
-  /** @param {string} source */
-  syncGutterLineCount(source) {
-    if (this.#gutter) LineGutter.sync(this.#gutter, source)
-  }
+  /** The editable <code> the adapter binds as ProseMirror's contentDOM. @returns {HTMLElement|null} */
+  get codeElement() { return this.#codeEl }
 
-  /** @param {HTMLElement} dom */
-  destroy(dom) {
+  destroy() {
     if (this.#tableObserver) { this.#tableObserver.disconnect(); this.#tableObserver = null }
   }
-
-  // ── Body-visibility (raw vs explore) ──────────────────────────────────────
 
   /** @param {LogAttrs} attrs */
   #updateVisibility(attrs) {
     const editArea = this.#editArea, exploreArea = this.#exploreArea
     if (!editArea || !exploreArea) return
     if (LogRenderer.isExplore(attrs)) {
-      // Keep editArea in the layout tree but make it visually hidden so
-      // WebKit's caret drawing engine doesn't break for empty sibling blocks.
       editArea.style.position = 'absolute'
       editArea.style.opacity = '0'
       editArea.style.pointerEvents = 'none'
@@ -229,8 +310,6 @@ export class LogRenderer extends BlockRenderer {
     }
   }
 
-  // ── Explore data loading + table rendering ────────────────────────────────
-
   /** @param {LogAttrs} attrs */
   #loadAsset(attrs) {
     if (!this.#tableContainer) return
@@ -244,8 +323,13 @@ export class LogRenderer extends BlockRenderer {
     fetch(attrs.resolvedAssetUrl).then((res) => res.json()).then((data) => {
       this.#loadingAsset = false
       this.#loadedJson = data
-      if (this.#onColumnsAvailable) this.#onColumnsAvailable(this.#availableColumns())
-      this.#renderTable(attrs)
+      // WHICH columns exist is now known — store them (renderer-owned) and
+      // re-render the header so the column buttons appear. Truth is read live
+      // off the envelope (it may have advanced while the fetch was in flight).
+      const live = /** @type {LogAttrs} */ (this.block.payload)
+      this.#cols = this.#availableColumns()
+      if (this.#headerBar) this.#headerBar.update(live, this)
+      this.#renderTable(live)
     }).catch(() => {
       this.#loadingAsset = false
       if (this.#tableContainer) this.#tableContainer.innerHTML = '<div class="log-block__table-msg log-block__table-msg--error">Failed to load parsed logs.</div>'

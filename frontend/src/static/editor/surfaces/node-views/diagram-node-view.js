@@ -1,9 +1,10 @@
-// diagram-renderer.js — Sieve NodeView ADAPTER for the 'diagram' kind (the PM
-// half of the renderer/NodeView split, docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
+// diagram-node-view.js — Sieve NodeView ADAPTER for the 'diagram' kind (the PM
+// half of the renderer/NodeView split; NORMATIVE contract:
+// docs/design/specs/2026-07-21-block-renderer-contract.md
 // Phase 2 / issue #45). Look-and-feel (attrs in, DOM out, mermaid invocation,
 // the kind's stylesheet) lives in DiagramRenderer
 // (frontend/src/static/block/renderers/diagram-renderer.js — a DIFFERENT
-// class, deliberately same basename, different directory). This file HOLDS a
+// class). This file HOLDS a
 // DiagramRenderer instance by COMPOSITION and owns everything that genuinely
 // speaks ProseMirror: contentDOM binding, cursor restore via editorPane, the
 // lowlight decoration plugin, selection/stopEvent/ignoreMutation, and the
@@ -24,16 +25,15 @@
 // descriptor's shape — the contract sieve-block-extension.js's duck-typed
 // registerSieveRenderer() consumes — exactly as that file already expects.
 
-import { esc, getLowlight } from '../base/fenced-block-base.js'
-import { T } from '../base/tiptap-vendor.js'
-import { registerSieveRenderer, AdvancedHeaderProvider } from '../block/sieve-block-extension.js'
-import { updateBlockOp } from '../block/block-sync.js'
-import { expandBlock } from '../ui/media-lightbox.js'
-import { DiagramRenderer } from '../block/renderers/diagram-renderer.js'
+import { esc, getLowlight } from '../../../base/fenced-block-base.js'
+import { T } from '../../../base/tiptap-vendor.js'
+import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block-extension.js'
+import { MODE } from '../../../block/sieve-block.js'
+import { DiagramRenderer } from '../../../block/renderers/diagram-renderer.js'
 
 // ensureMermaid / renderMermaidSvgEntry — re-exported for the two existing
 // cross-file consumers (smart-image-renderer.js imports statically,
-// prose-block.js imports dynamically via import('../processors/diagram-renderer.js')
+// prose-block.js imports dynamically via import('../editor/surfaces/node-views/diagram-node-view.js')
 // so as never to eagerly evaluate a processor module — see prose-block.js's
 // comment). Both symbols now just delegate to DiagramRenderer's statics; unlike
 // the pre-split version, they no longer depend on this file's registration IIFE
@@ -44,52 +44,20 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
 ;(function () {
   'use strict'
 
-  // ── Header (toolbar) ──────────────────────────────────────────────────────────
-  // Declared header: badge + 'mermaid' label + an edit/render toggle. The framework
-  // seam renders this and re-runs it on attr change, so the active toggle tracks
-  // attrs.mode. Toggle clicks persist via ctx.updateAttributes (the one update path).
-  var EDIT_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
-    '<path d="M1 7.5 L6 2 L8 4 L3 9 L1 9 Z"/><line x1="5" y1="3" x2="7" y2="5"/></svg>'
-  var RENDER_SVG = '<svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5">' +
-    '<ellipse cx="5" cy="5" rx="4" ry="2.5"/><circle cx="5" cy="5" r="1.2" fill="currentColor" stroke="none"/></svg>'
+  // The diagram's HEADER (badge + mermaid label + edit/render toggle + expand
+  // button) is built by DiagramRenderer, whose buttons call its OWN semantic
+  // verbs (setMode / expand — contract core API). This adapter registers a
+  // per-NodeView APPLIER with the BlockService (v1 transport): the applier is
+  // where PM knowledge lives — caret capture on the render-ward flip, the
+  // content→source mapping, tracked attr transactions via ctx.updateAttributes.
 
-  function toggleBtn(label, icon, active, activeCls, onClick) {
-    var b = document.createElement('button')
-    b.className = 'diagram-block__toggle-btn' + (active ? ' ' + activeCls : '')
-    b.innerHTML = icon + ' ' + label
-    b.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); onClick() })
-    return b
-  }
+  // liveRenderers — id → live DiagramRenderer instance. The behaviour-registry
+  // paths (policy Mod+Enter, policy expand chord, context menu) resolve the
+  // block's renderer here so every trigger lands on the SAME verb methods.
+  /** @type {Record<string, any>} */
+  var liveRenderers = {}
 
-  class DiagramHeader extends AdvancedHeaderProvider {
-    badge() { return 'diagram' }
-    left() {
-      var t = document.createElement('span')
-      t.className = 'sieve-block__type-label'
-      t.textContent = 'mermaid'
-      return [t]
-    }
-    right(attrs, ctx) {
-      var mode = attrs.mode || 'render'
-      var toggle = document.createElement('div')
-      toggle.className = 'diagram-block__toggle'
-      toggle.appendChild(toggleBtn('Edit', EDIT_SVG, mode === 'edit', 'diagram-block__toggle-btn--active-edit', function () {
-        if (mode !== 'edit') ctx.updateAttributes({ mode: 'edit' })
-      }))
-      toggle.appendChild(toggleBtn('Render', RENDER_SVG, mode === 'render', 'diagram-block__toggle-btn--active-render', function () {
-        if (mode === 'render') return
-        var patch = { mode: 'render' }
-        var sel = ctx.editorPane.view.state.selection
-        if (sel.$from.parent.type.name === 'sieve-diagram' && sel.$from.parent.attrs.id === ctx.id) {
-          patch.cursorPos = sel.$from.parentOffset
-        }
-        ctx.updateAttributes(patch)
-      }))
-      return [toggle]
-    }
-  }
-
-  // ── DiagramNodeAdapter ────────────────────────────────────────────────────────
+  // ── DiagramNodeView ────────────────────────────────────────────────────────
   // The registered descriptor sieve-block-extension.js's duck-typed
   // registerSieveRenderer() consumes (see that file's header comment for the
   // full "renderer interface"). Named distinctly from the imported
@@ -97,28 +65,23 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
   // PM-adapter descriptor object; DiagramRenderer is the look-and-feel class it
   // holds by composition) — to keep the two unambiguous in this file.
 
-  var DiagramNodeAdapter = {
-    // flipMode — THE mode-flip op (contract: one function, two entry points).
-    // Called by onModEnter (caret/selection inside PM, via the interaction-policy
-    // extension, which threads the Editor `host`) and by the render body's DOM
-    // keydown listener (focus outside PM in render mode, which passes ctx.getEditor()).
-    // Both apply the identical update-block op through the held Editor (P4.F Brief C).
-    flipMode: function (attrs, cursorPos, editor) {
+  var DiagramNodeView = {
+    // flipMode — THE mode-flip op (contract: one function, N entry points).
+    // Called by onModEnter (policy extension) and the render body's DOM keydown
+    // listener. Both land on the live renderer's setMode — the SAME verb the
+    // header toggle calls; caret capture happens in the v1 applier below.
+    flipMode: function (attrs) {
       if (!attrs || !attrs.id) return false
-      var newMode = attrs.mode === 'render' ? 'edit' : 'render'
-      if (editor) {
-        editor.applyBlockOps([updateBlockOp({ id: attrs.id, kind: 'diagram', attrs: { mode: newMode, cursorPos: typeof cursorPos === 'number' ? cursorPos : (attrs.cursorPos || 0) } })])
-      }
+      var r = liveRenderers[attrs.id]
+      if (!r) return false
+      r.setMode(attrs.mode === 'render' ? MODE.EDIT : MODE.RENDER)
       return true
     },
 
     // onModEnter — policy-extension entry point (modEnterTogglesMode). `host` is the
     // parent Editor, threaded by the interaction-policy extension.
-    onModEnter: function (view, selection, host) {
+    onModEnter: function (view, selection, _host) {
       var node = selection.node || selection.$from.parent
-      var cursorPos = selection.node
-        ? (typeof node.attrs.cursorPos === 'number' ? node.attrs.cursorPos : 0)
-        : selection.$from.parentOffset
 
       // If the selection is stale and focus is actually in the diagram block DOM, resolve it
       if (document.activeElement && view.dom.contains(document.activeElement)) {
@@ -133,7 +96,6 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
               var resolvedNode = $pos.node(1)
               if (resolvedNode && resolvedNode.type.name === 'sieve-diagram') {
                 node = resolvedNode
-                cursorPos = typeof node.attrs.cursorPos === 'number' ? node.attrs.cursorPos : 0
               }
             }
           } catch (e) {}
@@ -141,22 +103,16 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
       }
 
       if (!node || node.type.name !== 'sieve-diagram') return false
-      return DiagramNodeAdapter.flipMode(node.attrs, cursorPos, host)
+      return DiagramNodeView.flipMode(node.attrs)
     },
 
-    headerProvider: new DiagramHeader(),
-
-    // getExpandContent — PROMOTE the block's LIVE rendered SVG into the lightbox
-    // (moved in on open, restored to the block on close — no clone, no attribute
-    // stripping, no async-timing games). Gating is CAPABILITY-based: a render-mode
-    // diagram is expandable, so we return a spec (affordance shows) even in the
-    // brief window before mermaid finishes — `element` is null then and expandBlock
-    // no-ops. Only edit mode is non-expandable → null.
+    // getExpandContent — behaviour-registry entry point (policy expand chord /
+    // header / menu: one capability). Delegates to the live renderer's
+    // expandContent() so the spec is built in exactly one place.
     /** @returns {{ element: Element|null, title: string, mode: 'media' } | null} */
-    getExpandContent: function (node, dom) {
-      if (!node || (node.attrs && node.attrs.mode) === 'edit') return null
-      var svg = dom && dom.querySelector('.diagram-block__render svg')
-      return { element: svg, title: (node.attrs.diagramType || 'mermaid') + ' diagram', mode: 'media' }
+    getExpandContent: function (node) {
+      var r = node && node.attrs && liveRenderers[node.attrs.id]
+      return r ? r.expandContent() : null
     },
 
     // caretStop:'render' — a caret stop only in render mode; edit mode is raw text.
@@ -211,31 +167,47 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
       var nodeTypeName = node.type.name
       var currentAttrs = Object.assign({}, node.attrs)
 
-      // The renderer instance this NodeView HOLDS by composition (never
-      // inheritance — see the file header). All look-and-feel (both bodies,
-      // mermaid invocation, gutter/highlight box chrome) is its job; this
-      // adapter only supplies PM-only concerns around it.
-      var renderer = new DiagramRenderer()
-
-      // effectiveAttrs — DiagramRenderer's mount()/update() take `source` as the
-      // LIVE PM text (node.textContent), never the debounced attrs.source: the
-      // debounce (see the MutationObserver below) can lag up to 200ms behind
-      // what's actually in the document, and a mode-flip immediately after
-      // typing must never render stale mermaid source.
-      function effectiveAttrs(attrs, textContent) {
-        return Object.assign({}, attrs, { source: textContent })
+      // envelopeFor — the typed envelope with `source` overlaid as the LIVE PM
+      // text (node.textContent), never the debounced attrs.source: the debounce
+      // (see the MutationObserver below) can lag up to 200ms behind what's in
+      // the document, and a mode-flip right after typing must never render
+      // stale mermaid source. The overlay key is this kind's own knowledge.
+      function envelopeFor(n) {
+        return sieveBlockFor(n, { source: n.textContent })
       }
 
-      var dom = renderer.mount(effectiveAttrs(node.attrs, node.textContent))
-      dom.setAttribute('data-id', node.attrs.id || '')
+      // The renderer instance this NodeView HOLDS by composition (never
+      // inheritance — see the file header). All look-and-feel (header, both
+      // bodies, mermaid invocation, gutter/highlight box chrome) is its job;
+      // its semantic verbs effect through the BlockService, whose v1 applier
+      // this adapter registers below.
+      var renderer = new DiagramRenderer(envelopeFor(node), ctx.blockService || null)
+
+      // v1 APPLIER — today's PM-transaction behaviour behind the service
+      // boundary. This is where PM knowledge lives: caret capture on the
+      // render-ward flip, the content→source mapping,
+      // tracked attr transactions via ctx.updateAttributes.
+      var unregisterApplier = ctx.blockService ? ctx.blockService.registerApplier({
+        owns: function (id) { return !!id && id === (currentAttrs.id || '') },
+        updateAttributes: function (_id, patch) {
+          if (patch && patch.mode === 'render') {
+            var sel = editorPane.view.state.selection
+            if (sel.$from.parent.type.name === 'sieve-diagram' && sel.$from.parent.attrs.id === currentAttrs.id) {
+              patch = Object.assign({}, patch, { cursorPos: sel.$from.parentOffset })
+            }
+          }
+          ctx.updateAttributes(patch)
+        },
+        setContent: function (_id, text) { ctx.updateAttributes({ source: text }) },
+        retry: function () { ctx.retry() },
+      }) : null
+
+      var dom = renderer.render()
+      if (currentAttrs.id) liveRenderers[currentAttrs.id] = renderer
       dom.addEventListener('dragstart', function (e) { e.preventDefault() })
 
-      var contentDOM = renderer.contentDOM
-
-      // ── Header ────────────────────────────────────────────────────────────────
-      // The toolbar (badge + mermaid label + edit/render toggle) is now declared as
-      // `headerProvider: new DiagramHeader()` and rendered by the framework seam.
-      // The toggle persists via ctx.updateAttributes.
+      // The <code> element the renderer built is ProseMirror's contentDOM.
+      var contentDOM = renderer.codeElement
 
       var updateTimer = null
       var observer = new MutationObserver(function() {
@@ -243,7 +215,9 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
         renderer.syncGutterLineCount(text)
         clearTimeout(updateTimer)
         updateTimer = setTimeout(function() {
-          if (currentAttrs.id) ctx.updateAttributes({ source: text })
+          // The sync closure ends at the renderer's outbound verb — never a
+          // socket, never an attr name here (contract §setContent direction).
+          if (currentAttrs.id) renderer.setContent(text)
         }, 200)
       })
       observer.observe(contentDOM, { characterData: true, childList: true, subtree: true })
@@ -263,7 +237,7 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
         if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
           e.preventDefault()
           e.stopPropagation()
-          DiagramNodeAdapter.flipMode(currentAttrs, currentAttrs.cursorPos, ctx.getEditor())
+          DiagramNodeView.flipMode(currentAttrs)
         }
       })
 
@@ -277,8 +251,7 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
         if ((e.key === 'e' || e.key === 'E' || e.code === 'KeyE') &&
             e.altKey && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
           e.preventDefault(); e.stopPropagation()
-          var spec = DiagramNodeAdapter.getExpandContent(node, dom)
-          if (spec && spec.element) expandBlock(spec)
+          renderer.expand()
         }
       })
 
@@ -287,12 +260,17 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
       return {
         dom:        dom,
         contentDOM: contentDOM,
+        renderer:   renderer,   // marks this a MIGRATED kind for the seam's branch
 
         update: function (updatedNode) {
           if (updatedNode.type.name !== nodeTypeName) return false
           node = updatedNode // update ref for keydown handlers above
           currentAttrs = updatedNode.attrs
-          var transition = renderer.update(dom, effectiveAttrs(updatedNode.attrs, updatedNode.textContent))
+          // Late-id hardening: a block whose id lands via attr update on THIS
+          // NodeView still reaches the policy/menu triggers.
+          if (currentAttrs.id && !liveRenderers[currentAttrs.id]) liveRenderers[currentAttrs.id] = renderer
+          renderer.update(envelopeFor(updatedNode))
+          var transition = renderer.takeModeTransition()
 
           // Only a genuine mode TRANSITION into edit needs PM's help: restore the
           // caret to attrs.cursorPos. DiagramRenderer already focused the render
@@ -335,7 +313,9 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
         destroy: function () {
           clearTimeout(updateTimer)
           observer.disconnect()
-          renderer.destroy(dom)
+          if (unregisterApplier) unregisterApplier()
+          if (currentAttrs.id && liveRenderers[currentAttrs.id] === renderer) delete liveRenderers[currentAttrs.id]
+          renderer.destroy()
         },
       }
     },
@@ -409,16 +389,14 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
   // ── Context menu ──────────────────────────────────────────────────────────────
   // Ask AI, Explain, and Delete are injected by sieve-block-extension.js framework.
 
-  DiagramNodeAdapter.buildAiCtx = function () { return { contextLabel: 'Diagram' } }
+  DiagramNodeView.buildAiCtx = function () { return { contextLabel: 'Diagram' } }
 
-  DiagramNodeAdapter.buildContextMenuItems = function (ctx) {
+  DiagramNodeView.buildContextMenuItems = function (ctx) {
     var n = ctx.node, editorPane = ctx.editorPane, getPos = ctx.getPos
     var IC = window.SieveIcons || {}
 
     function toggleMode() {
-      var newMode = n.attrs.mode === 'render' ? 'edit' : 'render'
-      var host = editorPane && editorPane.sieveHost
-      if (host) host.applyBlockOps([updateBlockOp({ id: n.attrs.id, kind: 'diagram', attrs: { mode: newMode } })])
+      DiagramNodeView.flipMode(n.attrs)
     }
 
     function copySource() {
@@ -436,6 +414,6 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
     ]
   }
 
-  registerSieveRenderer('diagram', DiagramNodeAdapter)
+  registerSieveRenderer('diagram', DiagramNodeView)
 
 })()

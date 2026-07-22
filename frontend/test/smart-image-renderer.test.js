@@ -1,11 +1,17 @@
 // @ts-check
 // smart-image-renderer.test.js — DoD coverage for SmartImageRenderer (the
-// 'smart-image' kind's look-and-feel class, docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
-// Phase 4 / issue #47). Per the spec's contract, definition of done for any
-// renderer is "renders correctly in a bare page providing only :root theme
-// vars" — mirrors code-renderer.test.js/web-clip-renderer.test.js.
+// 'smart-image' kind's look-and-feel class; NORMATIVE contract:
+// docs/design/specs/2026-07-21-block-renderer-contract.md). Bare-page
+// protocol: render() alone yields the complete block. Scratch construction is
+// (block) only; the resize tests construct LIVE instances over a real
+// BlockService with a registered fake applier (the v1 transport).
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import { SmartImageRenderer } from '../src/static/block/renderers/smart-image-renderer.js'
+import { SieveBlock } from '../src/static/block/sieve-block.js'
+import { BlockService } from '../src/static/block/block-service.js'
+
+/** @param {object} payload */
+function blk(payload) { return new SieveBlock('smart-image', payload) }
 
 function clearInjectedStyles() {
   document.adoptedStyleSheets = []
@@ -29,35 +35,45 @@ function installBareThemeVars() {
   return el
 }
 
-describe('SmartImageRenderer (Phase 4 — bare-page DoD)', () => {
+/** render() alone = the complete block. Pass a service for LIVE instances. */
+function mount(payload, service) {
+  const renderer = new SmartImageRenderer(blk(payload), service || null)
+  const dom = renderer.render()
+  return { renderer, dom }
+}
+
+/** A real BlockService with one fake applier registered for `id`. */
+function serviceWithApplier(id) {
+  const service = new BlockService()
+  const updateAttributes = vi.fn()
+  service.registerApplier({
+    owns: (blockId) => blockId === id,
+    updateAttributes,
+    setContent: () => {},
+    retry: () => {},
+  })
+  return { service, updateAttributes }
+}
+
+describe('SmartImageRenderer (bare-page DoD)', () => {
   /** @type {HTMLStyleElement} */
   let rootVars
 
-  beforeAll(() => {
-    clearInjectedStyles()
-  })
-
-  beforeEach(() => {
-    rootVars = installBareThemeVars()
-  })
-
-  afterEach(() => {
-    rootVars.remove()
-    document.body.innerHTML = ''
-  })
+  beforeAll(() => { clearInjectedStyles() })
+  beforeEach(() => { rootVars = installBareThemeVars() })
+  afterEach(() => { rootVars.remove(); document.body.innerHTML = '' })
 
   it('registers its static styles exactly once across multiple instances (register-once contract)', () => {
-    new SmartImageRenderer()
-    new SmartImageRenderer()
-    new SmartImageRenderer()
+    new SmartImageRenderer(blk({}))
+    new SmartImageRenderer(blk({}))
+    new SmartImageRenderer(blk({}))
     const matches = document.adoptedStyleSheets.filter((sheet) =>
       Array.from(sheet.cssRules).some((rule) => rule.cssText.indexOf('.node-image') === 0))
     expect(matches.length).toBe(1)
   })
 
-  it('mounts the image wrapper + resizer + hidden badge, styled purely from --theme-* vars', () => {
-    const renderer = new SmartImageRenderer()
-    const dom = renderer.mount({ id: 'im-a1b2', src: '/sieve/u/pic.png', alt: 'a cat', status: 'COMPLETE' })
+  it('render() builds the image wrapper + resizer + hidden badge, styled purely from --theme-* vars', () => {
+    const { dom } = mount({ id: 'im-a1b2', src: '/sieve/u/pic.png', alt: 'a cat', status: 'COMPLETE' })
     document.body.appendChild(dom)
 
     expect(dom.className).toBe('image-block node-image')
@@ -80,39 +96,34 @@ describe('SmartImageRenderer (Phase 4 — bare-page DoD)', () => {
   })
 
   it('badge state: PENDING (fresh) shows "Processing…"', () => {
-    const renderer = new SmartImageRenderer()
-    const dom = renderer.mount({ id: 'im-b2c3', src: '/x.png', status: 'PENDING', createdAt: new Date().toISOString() })
+    const { dom } = mount({ id: 'im-b2c3', src: '/x.png', status: 'PENDING', createdAt: new Date().toISOString() })
     const badge = /** @type {HTMLElement} */ (dom.querySelector('.smart-image-status'));
     expect(badge.textContent).toBe('Processing…')
     expect(badge.className).toContain('smart-image-status--pending')
   })
 
-  it('badge state: a stale DISPATCHED job reports error, not stuck Processing (fixes the pre-split DISPATCHED-staleness gap)', () => {
-    const renderer = new SmartImageRenderer()
+  it('badge state: a stale DISPATCHED job reports error, not stuck Processing', () => {
     const stale = new Date(Date.now() - 10 * 60 * 1000).toISOString()
-    const dom = renderer.mount({ id: 'im-c3d4', src: '/x.png', status: 'DISPATCHED', createdAt: stale })
+    const { dom } = mount({ id: 'im-c3d4', src: '/x.png', status: 'DISPATCHED', createdAt: stale })
     const badge = /** @type {HTMLElement} */ (dom.querySelector('.smart-image-status'));
     expect(badge.className).toContain('smart-image-status--error')
     expect(badge.textContent).toBe('Failed')
   })
 
   it('badge state: ERROR shows the framework error text; COMPLETE hides the badge', () => {
-    const renderer = new SmartImageRenderer()
-    const dom = renderer.mount({ id: 'im-d4e5', src: '/x.png', status: 'ERROR', error: 'decode failed' })
+    const { renderer, dom } = mount({ id: 'im-d4e5', src: '/x.png', status: 'ERROR', error: 'decode failed' })
     document.body.appendChild(dom)
     let badge = /** @type {HTMLElement} */ (dom.querySelector('.smart-image-status'));
     expect(badge.textContent).toBe('decode failed')
 
-    renderer.update(dom, { id: 'im-d4e5', src: '/x.png', status: 'COMPLETE' })
+    renderer.update(blk({ id: 'im-d4e5', src: '/x.png', status: 'COMPLETE' }))
     badge = /** @type {HTMLElement} */ (dom.querySelector('.smart-image-status'));
     expect(getComputedStyle(badge).display).toBe('none')
   })
 
-  it('resize drag commits width/height via the onResize callback', () => {
-    const renderer = new SmartImageRenderer()
-    const onResize = vi.fn()
-    renderer.onResize(onResize)
-    const dom = renderer.mount({ id: 'im-e5f6', src: '/x.png', status: 'COMPLETE' })
+  it('resize drag commits width/height through the BlockService (drag release self-invokes the resize verb)', () => {
+    const { service, updateAttributes } = serviceWithApplier('im-e5f6')
+    const { dom } = mount({ id: 'im-e5f6', src: '/x.png', status: 'COMPLETE' }, service)
     document.body.appendChild(dom)
     const resizer = /** @type {HTMLElement} */ (dom.querySelector('.image-resizer'));
 
@@ -120,15 +131,25 @@ describe('SmartImageRenderer (Phase 4 — bare-page DoD)', () => {
     window.dispatchEvent(new MouseEvent('mousemove', { clientX: 140, bubbles: true }))
     window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
 
-    expect(onResize).toHaveBeenCalledOnce()
-    const dims = onResize.mock.calls[0][0]
+    expect(updateAttributes).toHaveBeenCalledOnce()
+    const [id, dims] = updateAttributes.mock.calls[0]
+    expect(id).toBe('im-e5f6')
     expect(typeof dims.width).toBe('string')
     expect(typeof dims.height).toBe('string')
   })
 
+  it('resize(width, height) delivers the expected patch to the registered applier via a real BlockService', () => {
+    const { service, updateAttributes } = serviceWithApplier('im-f6a7')
+    const { renderer } = mount({ id: 'im-f6a7', src: '/x.png', status: 'COMPLETE' }, service)
+
+    renderer.resize('320', '240')
+
+    expect(updateAttributes).toHaveBeenCalledOnce()
+    expect(updateAttributes).toHaveBeenCalledWith('im-f6a7', { width: '320', height: '240' })
+  })
+
   it('destroy() is safe to call and does not throw (base no-op)', () => {
-    const renderer = new SmartImageRenderer()
-    const dom = renderer.mount({ id: 'im-f6a7', src: '/x.png', status: 'COMPLETE' })
-    expect(() => renderer.destroy(dom)).not.toThrow()
+    const { renderer } = mount({ id: 'im-a7b8', src: '/x.png', status: 'COMPLETE' })
+    expect(() => renderer.destroy()).not.toThrow()
   })
 })

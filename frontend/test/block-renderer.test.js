@@ -10,6 +10,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import MarkdownIt from 'markdown-it'
 import { AiBlockRenderer } from '../src/static/block/renderers/ai-block-renderer.js'
 import { WebClipRenderer } from '../src/static/block/renderers/web-clip-renderer.js'
+import { SieveBlock } from '../src/static/block/sieve-block.js'
 
 function clearInjectedStyles() {
   document.adoptedStyleSheets = []
@@ -27,7 +28,7 @@ describe('BlockRenderer default fillTitle/fillBody', () => {
   beforeEach(() => { clearInjectedStyles() })
 
   it('fillTitle renders markdown (feature parity) and marks the container sieve-rendered-content', () => {
-    const renderer = new AiBlockRenderer()
+    const renderer = new AiBlockRenderer(new SieveBlock('ai-block', {}))
     const el = document.createElement('div')
     renderer.fillTitle(el, 'What does `foo()` do?')
     expect(el.innerHTML).toContain('<code>foo()</code>')
@@ -35,7 +36,7 @@ describe('BlockRenderer default fillTitle/fillBody', () => {
   })
 
   it('SECURITY (DEFECT SEC-B, #48): AiBlockRenderer.fillTitle — a hostile question with <img onerror> stays inert', () => {
-    const renderer = new AiBlockRenderer()
+    const renderer = new AiBlockRenderer(new SieveBlock('ai-block', {}))
     const el = document.createElement('div')
     const hostile = '<img src=x onerror="window.__pwnedTitle = true">'
     renderer.fillTitle(el, hostile)
@@ -45,7 +46,7 @@ describe('BlockRenderer default fillTitle/fillBody', () => {
   })
 
   it('SECURITY (DEFECT SEC-B, #48): WebClipRenderer.fillTitle — a hostile fetched-page title with <script> stays inert', () => {
-    const renderer = new WebClipRenderer()
+    const renderer = new WebClipRenderer(new SieveBlock('web-clip', {}))
     const el = document.createElement('div')
     const hostile = '<script>window.__pwnedTitle2 = true</script>'
     renderer.fillTitle(el, hostile)
@@ -55,7 +56,7 @@ describe('BlockRenderer default fillTitle/fillBody', () => {
   })
 
   it('fillBody (bare page, no PM/editor) renders markdown for a future non-PM host', () => {
-    const renderer = new AiBlockRenderer()
+    const renderer = new AiBlockRenderer(new SieveBlock('ai-block', {}))
     const el = document.createElement('div')
     renderer.fillBody(el, 'A response with **bold** text and a [link](https://example.com).')
     expect(el.innerHTML).toContain('<strong>bold</strong>')
@@ -63,14 +64,14 @@ describe('BlockRenderer default fillTitle/fillBody', () => {
   })
 
   it('fillBody falls back to an empty paragraph for empty markdown', () => {
-    const renderer = new WebClipRenderer()
+    const renderer = new WebClipRenderer(new SieveBlock('web-clip', {}))
     const el = document.createElement('div')
     renderer.fillBody(el, '')
     expect(el.innerHTML).toBe('<p></p>')
   })
 
   it('SECURITY (DEFECT SEC-B, #48): fillBody — hostile markdown body content stays inert', () => {
-    const renderer = new WebClipRenderer()
+    const renderer = new WebClipRenderer(new SieveBlock('web-clip', {}))
     const el = document.createElement('div')
     renderer.fillBody(el, '<img src=x onerror="window.__pwnedBody = true">')
     expect(el.querySelector('img')).toBeNull()

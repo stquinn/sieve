@@ -9,7 +9,7 @@ import { renderSanctionedMarkdown } from '../block/renderers/sanctioned-markdown
 // BlockRenderer / ContractViolation — the renderer half of the renderer/
 // NodeView split (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md).
 // They LIVE in block/renderers/ (the PM-free renderer package mirroring Go
-// block/processors/ — see the spec's package layout); re-exported here so
+// block packages — see the spec's package layout); re-exported here so
 // every fenced block extension can keep importing its shared machinery from
 // this one file.
 export { BlockRenderer, ContractViolation } from '../block/renderers/block-renderer.js'

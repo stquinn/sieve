@@ -1,58 +1,31 @@
 // @ts-check
 // web-clip-renderer.js — WebClipRenderer: the renderer half of the 'web-clip'
 // kind's renderer/NodeView split (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
-// Phase 4 / issue #47). Owns look-and-feel ONLY: the block shell, the status
-// chrome (badge + icon/label/retry, driven by the shared StatusBadge decision
-// tree — survey item A7), and this kind's complete stylesheet (`static
-// styles`). Zero ProseMirror/editor/window.* app-global dependencies — this
-// class mounts identically in the note editor's NodeView adapter
-// (frontend/src/static/processors/web-clip-renderer.js, which HOLDS an
-// instance of this class by composition, never inheritance), a bare-page
-// harness, or any future non-PM lens.
+// Phase 4 / issue #47). Owns look-and-feel: the block shell, the status chrome
+// (its header — the A7 StatusBadge state machine), the page TITLE, and the
+// fetched/summarised BODY, plus this kind's stylesheet. Zero ProseMirror/editor/
+// window.* dependencies.
 //
-// What this class deliberately does NOT own, and why — the PM-specificity
-// sorting test:
-//   - The title and fetched/summarised BODY are never built as DOM by this
-//     class. Like ai-block, web-clip's title/content are rendered as LIVE
-//     ProseMirror nodes inside contentDOM by sieve-block-extension.js's
-//     framework-owned titleProvider/contentProvider seam — unavoidably
-//     PM-coupled, stays adapter/framework-side. This class only builds the
-//     EMPTY contentDOM container the framework seam fills.
-//   - Reverse chain-glow hover (cross-block `document.querySelectorAll('.ai-block')`
-//     walking to light up referencing ai-blocks) is CROSS-BLOCK behaviour,
-//     not this block's own look-and-feel — stays adapter-side, same as
-//     ai-block's applyChain.
-//   - The read-only-container guard plugin speaks PM plugin props directly —
-//     adapter-side, per the sorting test.
+// This class is PURE and lens-blind (NORMATIVE contract:
+// docs/design/specs/2026-07-21-block-renderer-contract.md): buildBody() builds
+// AND FILLS the body from bodyMarkdown() (the envelope's content), and update()
+// re-fills it — guarded on the #contentEl ref. In the editor lens the adapter
+// claims the BODY region via handleBuild (no #contentEl recorded; the seam
+// authors body content via fresh scratch instances). Retry is the base's
+// semantic verb (this.retry() → BlockService). Reverse chain-glow hover stays
+// adapter-side (cross-block).
 //
-// Retry is a user ACTION reaching the held Editor (ctx.retry(), a
-// PM-framework path) — this PM-free class only builds the retry button and
-// invokes whatever callback the adapter registers via onRetry(), mirroring
-// LogRenderer's onColumnsAvailable callback-injection pattern for the same
-// reason (a callback is just a function; it carries no PM coupling).
-//
-// Status-chrome shape (2026-07-20 revision — see docs/how-to-intelligent-fenced-blocks.md
-// "Renderer / NodeView split" § mount-once/patch-on-update): mount() builds
-// the ENTIRE chrome DOM exactly once — badge, [spinner|icon][label], the
-// COMPLETE-only [status][link] pair, and the retry button — and caches
-// element references. update() NEVER touches innerHTML; it only toggles
-// `hidden`/class and writes attrs-derived text via `textContent` (and `href`
-// via a real property assignment, never a string built into markup). This
-// closes an actual injection hazard the pre-revision version had: `domain`
-// (attrs.source, a fetched URL) and `errMsg` (attrs.error, text surfaced from
-// a fetched/summarised page or a backend error) were being concatenated
-// straight into `element.innerHTML` — a hostile page title, source URL, or
-// error string containing markup would have executed as HTML inside the
-// editor. STATE_CHROME below is the same "attrs → {glyph, modifier, label,
-// spinner, retry}" decision-map shape as the shared StatusBadge tree (A7);
-// COMPLETE is handled separately since it swaps to a structurally different
-// pair (status text + link) rather than an indicator+label.
+// Status chrome is mount-once/patch: buildHeader() builds the ENTIRE chrome DOM
+// once (badge, [spinner|icon][label], the COMPLETE-only [status][link] pair, the
+// retry button) and caches refs; update() only toggles hidden/class and writes
+// attrs-derived text via textContent (href via property assignment) — keeping a
+// hostile fetched title/URL/error string inert.
 
 import { BlockRenderer } from './block-renderer.js'
 import { webClipStyles } from './web-clip-renderer.styles.js'
 import { StatusBadge } from './status-badge.js'
 
-/** @typedef {{ id?: string, source?: string, mode?: string, status?: string, createdAt?: string|null, error?: string|null }} WebClipAttrs */
+/** @typedef {{ id?: string, source?: string, mode?: string, status?: string, createdAt?: string|null, error?: string|null, title?: string|null, content?: string|null }} WebClipAttrs */
 
 /** @typedef {{ spinner: boolean, glyph: string, modifierClass: string, retry: boolean, label: (domain: string, modeLabel: string, attrs: WebClipAttrs) => string }} WebClipStateChrome */
 
@@ -77,40 +50,37 @@ const STATE_CHROME = {
 }
 
 export class WebClipRenderer extends BlockRenderer {
-  // Sheet lives in the sibling web-clip-renderer.styles.js — styles-file-geography
-  // convention: a renderer file starts with its class, never a CSS wall.
   static styles = webClipStyles
+  static rootClass = 'web-clip-block'
 
-  /** @type {HTMLElement|null} */ #contentDOM = null
   /** @type {HTMLElement|null} */ #spinnerEl = null
   /** @type {HTMLElement|null} */ #iconEl = null
   /** @type {HTMLElement|null} */ #labelEl = null
   /** @type {HTMLElement|null} */ #statusEl = null
   /** @type {HTMLAnchorElement|null} */ #linkEl = null
   /** @type {HTMLButtonElement|null} */ #retryBtn = null
-  /** @type {(() => void)|null} */ #onRetry = null
+  /** @type {HTMLElement|null} */ #titleEl = null
+  /** @type {HTMLElement|null} */ #contentEl = null
 
-  /** The live ProseMirror contentDOM the adapter binds as its NodeView's
-   *  contentDOM — this class builds the empty container; the framework's
-   *  titleProvider/contentProvider seam fills it with real PM nodes, never
-   *  this class. @returns {HTMLElement|null} */
-  get contentDOM() { return this.#contentDOM }
+  /** The status chrome — this kind's HEADER region — plus root-level drag/
+   *  selection guards (the base stamps data-id). @returns {HTMLElement} */
+  buildHeader() {
+    const dom = this.root
+    if (dom) {
+      dom.setAttribute('draggable', 'false')
+      dom.style.userSelect = 'text'
+      dom.addEventListener('dragstart', (e) => e.preventDefault())
+      dom.addEventListener('click', (e) => {
+        const t = /** @type {HTMLElement} */ (e.target)
+        const a = t.closest ? t.closest('a') : null
+        if (a && /** @type {HTMLAnchorElement} */ (a).href) {
+          // Prevent Wails navigating the internal webview. (Ctrl+Click is
+          // handled by the global capture in editor.js.)
+          e.preventDefault()
+        }
+      })
+    }
 
-  /** Registers the callback the retry button invokes — the adapter's hook
-   *  into ctx.retry() (a PM-framework path this PM-free class never touches
-   *  directly). @param {() => void} cb */
-  onRetry(cb) { this.#onRetry = cb }
-
-  /** @param {WebClipAttrs} attrs @returns {HTMLElement} */
-  mount(attrs) {
-    const dom = document.createElement('div')
-    dom.className = 'web-clip-block'
-    dom.setAttribute('draggable', 'false')
-    dom.style.userSelect = 'text'
-
-    // renderEl holds the chrome (badge, indicator/label, status/link, retry) —
-    // built ONCE here, never rebuilt by update(). contentEditable=false —
-    // like ai-block's badge and question — so the caret can never land in it.
     const renderEl = document.createElement('div')
     renderEl.className = 'web-clip-block__render'
     renderEl.contentEditable = 'false'
@@ -150,53 +120,52 @@ export class WebClipRenderer extends BlockRenderer {
     const retryBtn = document.createElement('button')
     retryBtn.className = 'web-clip-block__retry'
     retryBtn.textContent = 'Retry'
-    retryBtn.addEventListener('click', () => { if (this.#onRetry) this.#onRetry() })
+    retryBtn.addEventListener('click', () => { this.retry() })
     renderEl.appendChild(retryBtn)
 
-    dom.appendChild(renderEl)
-
-    // contentDOM is a VISIBLE, ProseMirror-owned region holding the fetched/
-    // summarised markdown as real document nodes — a direct analog of
-    // ai-block's response body. ProseMirror tracks it by reference; it is
-    // never removed from dom.
-    const contentDOM = document.createElement('div')
-    contentDOM.className = 'web-clip-block__content tiptap'
-    dom.appendChild(contentDOM)
-
-    dom.addEventListener('dragstart', (e) => e.preventDefault())
-    dom.addEventListener('click', (e) => {
-      const a = /** @type {HTMLElement} */ (e.target).closest ? /** @type {HTMLElement} */ (e.target).closest('a') : null
-      if (a && /** @type {HTMLAnchorElement} */ (a).href) {
-        // Prevent Wails from navigating the internal webview. (Ctrl+Click is
-        // handled by the global capture in editor.js.)
-        e.preventDefault()
-      }
-    })
-
-    this.#contentDOM = contentDOM
     this.#spinnerEl = spinnerEl
     this.#iconEl = iconEl
     this.#labelEl = labelEl
     this.#statusEl = statusEl
     this.#linkEl = linkEl
     this.#retryBtn = retryBtn
-
-    this.update(dom, attrs)
-    return dom
+    this.#updateChrome(/** @type {WebClipAttrs} */ (this.block.payload))
+    return renderEl
   }
 
-  /**
-   * Patches the status chrome in place from the shared StatusBadge decision
-   * tree — every dynamic value is written via `textContent`/property
-   * assignment (never `innerHTML`), so attrs-derived text (a fetched page's
-   * domain, a backend error string) can never be interpreted as markup. The
-   * textual title/body content is the framework seam's job, not this
-   * method's.
-   * @param {HTMLElement} dom
-   * @param {WebClipAttrs} attrs
-   */
-  update(dom, attrs) {
-    dom.setAttribute('data-id', attrs.id || '')
+  /** The fetched/summarised page TITLE. @returns {HTMLElement} */
+  buildTitle() {
+    this.#titleEl = document.createElement('div')
+    this.fillTitleSlot(this.#titleEl, /** @type {WebClipAttrs} */ (this.block.payload).title || '')
+    return this.#titleEl
+  }
+
+  /** The fetched/summarised BODY, self-filled. In the editor lens the adapter
+   *  claims this region via handleBuild, so this hook never runs there.
+   *  @returns {HTMLElement} */
+  buildBody() {
+    this.#contentEl = document.createElement('div')
+    this.#contentEl.className = 'web-clip-block__content tiptap'
+    this.fillBody(this.#contentEl, this.bodyMarkdown())
+    return this.#contentEl
+  }
+
+  /** The body markdown, derived from THIS instance's envelope (the editor-lens
+   *  seam reads it from a fresh scratch instance per pass). @returns {string} */
+  bodyMarkdown() { return (/** @type {WebClipAttrs} */ (this.block.payload).content || '').trim() }
+
+  /** @param {import('../sieve-block.js').SieveBlock} block */
+  update(block) {
+    super.update(block)
+    const attrs = /** @type {WebClipAttrs} */ (block.payload)
+    this.#updateChrome(attrs)
+    if (this.#titleEl) this.fillTitleSlot(this.#titleEl, attrs.title || '')
+    // REF-GUARDED — a claimed (externally managed) body recorded no #contentEl.
+    if (this.#contentEl) this.fillBody(this.#contentEl, this.bodyMarkdown())
+  }
+
+  /** @param {WebClipAttrs} attrs */
+  #updateChrome(attrs) {
     const spinnerEl = this.#spinnerEl, iconEl = this.#iconEl, labelEl = this.#labelEl
     const statusEl = this.#statusEl, linkEl = this.#linkEl, retryBtn = this.#retryBtn
     if (!spinnerEl || !iconEl || !labelEl || !statusEl || !linkEl || !retryBtn) return
@@ -209,7 +178,7 @@ export class WebClipRenderer extends BlockRenderer {
     if (state === 'complete') {
       spinnerEl.hidden = true
       iconEl.hidden = true
-      iconEl.className = 'web-clip-block__icon'   // reset any stale modifier class
+      iconEl.className = 'web-clip-block__icon'
       labelEl.hidden = true
       retryBtn.hidden = true
 
@@ -218,10 +187,6 @@ export class WebClipRenderer extends BlockRenderer {
       linkEl.hidden = false
       linkEl.href = attrs.source || ''
       linkEl.textContent = attrs.source || domain
-      // The title + fetched body are rendered into contentDOM as real PM nodes
-      // via the framework's titleProvider/contentProvider seam (title folds in
-      // as an h1), not here — only the interactive source link stays as
-      // header chrome.
       return
     }
 
@@ -238,5 +203,5 @@ export class WebClipRenderer extends BlockRenderer {
     retryBtn.hidden = !chrome.retry
   }
 
-  // destroy(dom): base no-op is correct — this class owns no timers/observers.
+  // destroy(): base no-op is correct — this class owns no timers/observers.
 }

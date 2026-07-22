@@ -12,6 +12,8 @@
 // window.sieveWorkspace at runtime (initEditor via htmx events), never at parse.
 
 import { SieveTab } from './tab.js'
+import { BlockService } from '../block/block-service.js'
+import { DocumentService } from '../block/document-service.js'
 import { AskPanel } from './ask-panel.js'
 import { InsertDialogs } from './insert-dialogs.js'
 import { SearchOverlay } from './search-overlay.js'
@@ -55,7 +57,25 @@ export class SieveWorkspace {
   /** @type {string|null} last hovered block key — dedup for editor:blockhover. */
   #lastHoverKey = null
 
+  /** @type {BlockService} the app-wide protocol boundary singleton (contract
+   * §service pair) — constructed HERE, the composition root, and handed down
+   * through editor options → surface → pane. Never window.*. */
+  #blockService = new BlockService()
+
+  /** @type {DocumentService} the uuid-addressed half, composed over the wire
+   * owner by constructor injection (contract §service pair). */
+  #documentService = new DocumentService(this.#blockService)
+
+  /** @type {Map<string, () => void>} per-uuid document-handle unsubscribers. */
+  #docHandleUnsubs = new Map()
+
   constructor() {}
+
+  /** The BlockService singleton (handed down; renderers/adapters consume it). */
+  get blockService() { return this.#blockService }
+
+  /** The DocumentService singleton (editors/Workspace consume it). */
+  get documentService() { return this.#documentService }
 
   // ── Tab management ────────────────────────────────────────────────────────────
 
@@ -281,6 +301,8 @@ export class SieveWorkspace {
     const prev = this.#activeTab
     if (prev && prev.uuid !== uuid) {
       if (prev.editor) {
+        const unsub = this.#docHandleUnsubs.get(prev.uuid)
+        if (unsub) { unsub(); this.#docHandleUnsubs.delete(prev.uuid) }
         prev.editor.destroy()
         prev.detachEditor()
       }
@@ -290,7 +312,14 @@ export class SieveWorkspace {
 
     const tab = this.openTab(uuid)
     if (!tab.editor) {
-      tab.attachEditor(tab.createEditor(uuid, options))
+      tab.attachEditor(tab.createEditor(uuid, Object.assign({ blockService: this.#blockService }, options)))
+      // Register the live editor as the document's HANDLE (v1 membership-verb
+      // delegate; the machinery itself migrates into the service at issue (A)).
+      const ed = tab.editor
+      this.#docHandleUnsubs.set(uuid, this.#documentService.registerDocument(uuid, {
+        createBlock: (kind, attrs, afterBlockId) => ed.createBlock(kind, attrs, afterBlockId),
+        deleteBlock: (blockId) => ed.applyBlockOps([{ type: 'delete-block', blockId: blockId }]),
+      }))
     }
     return tab
   }
@@ -348,9 +377,11 @@ export class SieveWorkspace {
     this.#currentMountEl = mountEl
     const wantMode = mode || this.#activeTab?.mode || 'wysiwyg'
 
-    fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid))
-      .then((r) => r.json())
-      .then((data) => {
+    // Document load rides the service boundary (contract §service pair): the
+    // service owns the HTTP call and types the block list; `raw` is the v1
+    // bridge for the surface render pipeline (retired with issue (A)).
+    this.#documentService.load(uuid)
+      .then(({ raw: data }) => {
         if (this.#currentUuid !== uuid) return // a later init superseded this load
         window.SieveAI?.loadActiveJobs()
 

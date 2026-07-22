@@ -1,9 +1,10 @@
-// web-clip-renderer.js — Sieve NodeView ADAPTER for the 'web-clip' kind (the
-// PM half of the renderer/NodeView split, docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
+// web-clip-node-view.js — Sieve NodeView ADAPTER for the 'web-clip' kind (the
+// PM half of the renderer/NodeView split; NORMATIVE contract:
+// docs/design/specs/2026-07-21-block-renderer-contract.md
 // Phase 4 / issue #47). Look-and-feel (the block shell, status chrome, this
 // kind's stylesheet) lives in WebClipRenderer
 // (frontend/src/static/block/renderers/web-clip-renderer.js — a DIFFERENT
-// class, deliberately same basename, different directory). This file HOLDS a
+// class). This file HOLDS a
 // WebClipRenderer instance by COMPOSITION and owns everything that genuinely
 // speaks ProseMirror or is cross-block: contentDOM binding/ignoreMutation,
 // the framework schema data (nodeConfig/attrs/parseAttrs/titleProvider/
@@ -14,9 +15,10 @@
 // ai-blocks) — framework-layer material, deliberately left untouched here
 // (same restraint ai-block's applyChain already established).
 
-import { T } from '../base/tiptap-vendor.js'
-import { registerSieveRenderer } from '../block/sieve-block-extension.js'
-import { WebClipRenderer } from '../block/renderers/web-clip-renderer.js'
+import { T } from '../../../base/tiptap-vendor.js'
+import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block-extension.js'
+import { REGION } from '../../../block/renderers/block-renderer.js'
+import { WebClipRenderer } from '../../../block/renderers/web-clip-renderer.js'
 
 ;(function () {
   'use strict'
@@ -30,21 +32,21 @@ import { WebClipRenderer } from '../block/renderers/web-clip-renderer.js'
     return parts.join('\n\n')
   }
 
-  // ── WebClipNodeAdapter ────────────────────────────────────────────────────────
+  // ── WebClipNodeView ────────────────────────────────────────────────────────
   // The registered descriptor sieve-block-extension.js's duck-typed
   // registerSieveRenderer() consumes. Named distinctly from the imported
   // WebClipRenderer CLASS above — same word, two different layers — to keep
   // the two unambiguous in this file.
 
-  var WebClipNodeAdapter = {
+  var WebClipNodeView = {
 
     getIcon: function() { return window.SieveIcons && window.SieveIcons.externalLink },
     getFriendlyName: function(node) { return 'Web Clip' },
 
-    // TITLE (metadata) = the title; CONTENT (data) = the fetched article. The
-    // interactive source link stays as chrome (built by WebClipRenderer).
-    titleProvider: 'title',
-    contentProvider: 'content',
+    // TITLE (the page title) and BODY (the fetched/summarised article) are
+    // rendered by WebClipRenderer now (title region + bodyMarkdown → attrs.content).
+    // The seam reads bodyMarkdown to project live PM nodes into the body
+    // container (the handleBuild-claimed region). The source link stays header chrome.
 
     getInitialContentHTML: function() { return '<p></p>' },
 
@@ -112,14 +114,31 @@ import { WebClipRenderer } from '../block/renderers/web-clip-renderer.js'
       var nodeTypeName = 'sieve-web-clip'
 
       // The renderer instance this NodeView HOLDS by composition (never
-      // inheritance — see the file header). All look-and-feel (shell, status
-      // chrome) is its job; this adapter only supplies PM-only and
-      // cross-block concerns around it.
-      var renderer = new WebClipRenderer()
-      renderer.onRetry(function () { ctx.retry() })
+      // inheritance — see the file header). This lens CLAIMS the BODY region
+      // via the handleBuild interceptor: PM owns the claimed container as its
+      // contentDOM while the status chrome + title still render renderer-side;
+      // the seam authors body content via fresh scratch instances. Retry is the
+      // renderer's semantic verb, effected through the v1 applier below.
+      var bodyContainer = null
+      var handleBuild = function (_r, region, container) {
+        if (region !== REGION.BODY) return true
+        container.className = 'web-clip-block__content tiptap'
+        bodyContainer = container
+        return false
+      }
+      var renderer = new WebClipRenderer(sieveBlockFor(node), ctx.blockService || null, handleBuild)
 
-      var dom = renderer.mount(node.attrs)
-      var contentDOM = renderer.contentDOM
+      var dom = renderer.render()
+      var contentDOM = bodyContainer   // the claimed body container PM binds as its contentDOM
+
+      // v1 APPLIER (contract §service pair): today's PM-transaction behaviour
+      // behind the service boundary; unregistered in destroy below.
+      var unregisterApplier = ctx.blockService ? ctx.blockService.registerApplier({
+        owns: function (id) { return !!id && id === (node.attrs.id || '') },
+        updateAttributes: function (_id, patch) { ctx.updateAttributes(patch) },
+        setContent: function () {},   // web-clip body is server-written; no outbound content channel
+        retry: function () { ctx.retry() },
+      }) : null
 
       // Reverse chain highlight: when hovering the web-clip, light up any AI blocks
       // that reference it via data-ai-ref. Forward direction (AI → web-clip) is in
@@ -140,18 +159,21 @@ import { WebClipRenderer } from '../block/renderers/web-clip-renderer.js'
       return {
         dom: dom,
         contentDOM: contentDOM,
-        // Exposed so sieve-block-extension.js's title seam (syncBlockTitle)
-        // can delegate to this renderer's fillTitle instead of writing
-        // innerHTML itself — the body/title pull-back (DEFECT SEC-B, #48).
+        // Marks this a MIGRATED kind for the seam's branch; the seam authors
+        // the projected body via fresh scratch WebClipRenderer instances.
         renderer: renderer,
         update: function (updatedNode) {
           if (updatedNode.type.name !== nodeTypeName) return false
-          renderer.update(dom, updatedNode.attrs)
-          // Body (attrs.content) is synced into contentDOM by the framework markdown seam.
+          node = updatedNode
+          renderer.update(sieveBlockFor(updatedNode))  // chrome + title; body is PM's (claimed region)
           return true
         },
         ignoreMutation: function (mutation) {
           return !contentDOM.contains(mutation.target)
+        },
+        destroy: function () {
+          if (unregisterApplier) unregisterApplier()
+          renderer.destroy()
         },
       }
     },
@@ -217,5 +239,5 @@ import { WebClipRenderer } from '../block/renderers/web-clip-renderer.js'
     },
   }
 
-  registerSieveRenderer('web-clip', WebClipNodeAdapter)
+  registerSieveRenderer('web-clip', WebClipNodeView)
 })()

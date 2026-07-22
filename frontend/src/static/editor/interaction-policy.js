@@ -9,6 +9,7 @@
 
 import { getBlockBehaviour } from '../block/block-kinds.js'
 import { expandBlock } from '../ui/media-lightbox.js'
+import { SieveBlock, MODE } from '../block/sieve-block.js'
 
 export var DEFAULT_POLICY = {
   rawText: false,             // literal paste target; Tab indents inside
@@ -117,7 +118,11 @@ export function resolveContext(state, view) {
   var $from = sel.$from
   var ancestors = []
   var parent = $from.parent
-  var mode = (sel.node ? sel.node.attrs && sel.node.attrs.mode : parent.attrs && parent.attrs.mode) || null
+  // Typed envelope read — the policy never indexes raw attr maps (contract
+  // §typed block envelope). MODE.DEFAULT (modeless kinds) normalises to null
+  // so classifyContext's ctx.mode contract is unchanged.
+  var blockMode = SieveBlock.from(sel.node || parent).mode
+  var mode = blockMode === MODE.DEFAULT ? null : blockMode
 
   // If focus is inside a block sub-element (e.g. log table filter input), resolve that block
   if (view && document.activeElement && view.dom.contains(document.activeElement)) {
@@ -133,7 +138,8 @@ export function resolveContext(state, view) {
           if (resolvedNode) {
             parent = resolvedNode
             ancestors = [resolvedNode.type.name]
-            mode = resolvedNode.attrs && resolvedNode.attrs.mode
+            var rm = SieveBlock.from(resolvedNode).mode
+            mode = rm === MODE.DEFAULT ? null : rm
           }
         }
       } catch (e) {
@@ -258,7 +264,7 @@ function handleEnter(view, event, host) {
 
   // Plain Enter on a selected caret-stop block: escape (this is how prose is
   // planted between two adjacent read-only blocks).
-  if (ctx.isNodeSelection && stopActive(ctx.policy, view.state.selection.node.attrs)) {
+  if (ctx.isNodeSelection && stopActive(ctx.policy, SieveBlock.from(view.state.selection.node))) {
     event.preventDefault()
     return insertParagraphAfter(view)
   }
@@ -277,9 +283,11 @@ function handleEnter(view, event, host) {
 }
 
 // stopActive — is this kind a caret stop right now? ('render' = only while
-// the block is in render mode; true = always.)
-function stopActive(policy, attrs) {
-  if (policy.caretStop === 'render') return !!(attrs && attrs.mode === 'render')
+// the block is in render mode; true = always.) Reads the TYPED envelope,
+// never a raw attr map (contract §typed block envelope).
+/** @param {object} policy @param {SieveBlock} block */
+function stopActive(policy, block) {
+  if (policy.caretStop === 'render') return block.mode === MODE.RENDER
   return !!policy.caretStop
 }
 
@@ -331,7 +339,7 @@ function handleArrowStop(view, down) {
   // A caret-stop block is selected → move past it.
   if (sel.node) {
     var ctx = resolveContext(st, view)
-    if (stopActive(ctx.policy, sel.node.attrs)) {
+    if (stopActive(ctx.policy, SieveBlock.from(sel.node))) {
       var target = down ? sel.to : sel.from
       var next = TT.Selection.near(st.doc.resolve(target), down ? 1 : -1)
       view.dispatch(st.tr.setSelection(next).scrollIntoView())
@@ -349,7 +357,7 @@ function handleArrowStop(view, down) {
   var adjacent = down ? $bound.nodeAfter : $bound.nodeBefore
   if (!adjacent || adjacent.type.name.indexOf('sieve-') !== 0) return false
   var kind = adjacent.type.name.slice('sieve-'.length)
-  if (!stopActive(policyFor(kind), adjacent.attrs)) return false
+  if (!stopActive(policyFor(kind), SieveBlock.from(adjacent))) return false
   var pos = down ? bound : bound - adjacent.nodeSize
   view.dispatch(st.tr.setSelection(TT.NodeSelection.create(st.doc, pos)).scrollIntoView())
   return true
