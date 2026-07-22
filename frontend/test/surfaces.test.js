@@ -23,7 +23,7 @@ import { DOMParser as PMDOMParser, Schema } from '@tiptap/pm/model'
 // (the live PM selection) so the basic feedSelection tests read the same range
 // they used to; richness tests override it.
 //
-// P4.F: the surfaces IMPORT `T` from base/tiptap-vendor.js (the shared
+// P4.F: the surfaces IMPORT `T` from editor/surfaces/tiptap-vendor.js (the shared
 // globalThis.TipTap bag installed by test/setup.js) instead of taking a host.T
 // seam. Tests seed the fake vendor members onto that bag (the established P4.E
 // pattern — Object.assign(globalThis.TipTap, …), never reassign) and clear them
@@ -56,14 +56,15 @@ vi.mock('../src/static/block/sieve-block-extension.js', () => ({
   sieveBlockAttrs: vi.fn((n) => n.attrs),
   sieveBlockEntries: vi.fn(() => []),
   rendererFor: vi.fn(() => null),
-  domSelectionBlockRange: vi.fn(() => null),
-  domSelectionTextInside: vi.fn(() => null),
+}))
+vi.mock('../src/static/block/block-selection.js', () => ({
+  BlockSelection: { blockRange: vi.fn(() => null), textInside: vi.fn(() => null) },
 }))
 vi.mock('../src/static/block/block-sync.js', () => ({
   seedBaseline: vi.fn((triples) => { const m = {}; triples.forEach((t) => { if (t.id) m[t.id] = t.content }); return m }),
   computeBlockSync: vi.fn(() => ({ next: {}, ops: [] })),
 }))
-vi.mock('../src/static/base/block-position.js', () => ({
+vi.mock('../src/static/editor/surfaces/block-position.js', () => ({
   docPosForBlockIndex: vi.fn(() => 7),
   blockIndexAfter: vi.fn(() => -1),
 }))
@@ -76,9 +77,9 @@ import { MarkdownSurface } from '../src/static/editor/surfaces/markdown-surface.
 import { WysiwygSurface } from '../src/static/editor/surfaces/wysiwyg-surface.js'
 import { buildBlocksHTML } from '../src/static/block/block-render.js'
 import { getBlockSelectionRange } from '../src/static/editor/block-chrome.js'
-import { domSelectionBlockRange } from '../src/static/block/sieve-block-extension.js'
+import { BlockSelection } from '../src/static/block/block-selection.js'
 import { computeBlockSync } from '../src/static/block/block-sync.js'
-import { docPosForBlockIndex, blockIndexAfter } from '../src/static/base/block-position.js'
+import { docPosForBlockIndex, blockIndexAfter } from '../src/static/editor/surfaces/block-position.js'
 import { caretInRawTextBlock } from '../src/static/editor/paste-context.js'
 import { schema as fxSchema, build, docWithCaret, docWithCaretAt, docWithRange, docWithNodeSelection } from './helpers/editor-fixture.js'
 
@@ -86,7 +87,7 @@ import { schema as fxSchema, build, docWithCaret, docWithCaretAt, docWithRange, 
 beforeEach(() => { window.isMod = (e) => !!(e.ctrlKey || e.metaKey) })
 afterEach(() => { vi.useRealTimers() })
 
-// The shared vendor bag (installed by test/setup.js; base/tiptap-vendor.js's `T`
+// The shared vendor bag (installed by test/setup.js; editor/surfaces/tiptap-vendor.js's `T`
 // is the same object). Seed fake vendor members onto it; clear them after each
 // test so a fake TipTap bundle from one test never leaks into the next.
 const VENDOR = /** @type {any} */ (globalThis).TipTap
@@ -103,7 +104,7 @@ beforeEach(() => {
     const sel = view.state.selection
     return { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false, isNodeSelection: !!sel.node }
   })
-  vi.mocked(domSelectionBlockRange).mockReturnValue(null)
+  vi.mocked(BlockSelection.blockRange).mockReturnValue(null)
   vi.mocked(docPosForBlockIndex).mockReturnValue(7)
   vi.mocked(blockIndexAfter).mockReturnValue(-1)
   vi.mocked(computeBlockSync).mockReturnValue({ next: {}, ops: [] })
@@ -825,14 +826,14 @@ describe('WysiwygSurface.feedSelection (P3.A raw descriptor from live PM)', () =
 
 describe('WysiwygSurface.feedSelection richness (P3.B: block-range, dom-fold, multi-block)', () => {
   // P4.E: getBlockSelectionRange (block-chrome's authoritative range) and
-  // domSelectionBlockRange (the read-only-region fold) are ES imports (mocked
+  // BlockSelection.blockRange (the read-only-region fold) are ES imports (mocked
   // above); each test drives them via vi.mocked. The surface reads BOTH, never
   // raw state.selection alone. The global beforeEach re-establishes their defaults.
   function surfaceWith(fixture) {
     return new TestWysiwygSurface('doc-1', wyHost(), fixture.editor)
   }
   const setRange = (range) => vi.mocked(getBlockSelectionRange).mockReturnValue(range)
-  const setFold = (fold) => vi.mocked(domSelectionBlockRange).mockReturnValue(fold)
+  const setFold = (fold) => vi.mocked(BlockSelection.blockRange).mockReturnValue(fold)
 
   it('block-chrome multi-block range (isBlockRange) → range spanning every overlapped blockId', () => {
     // Three prose blocks; block-chrome reports a gutter range covering b1 + b2.
@@ -858,7 +859,7 @@ describe('WysiwygSurface.feedSelection richness (P3.B: block-range, dom-fold, mu
     expect(d.blockIds).toEqual(['ai-1'])
   })
 
-  it('read-only-region DOM highlight (F5): domSelectionBlockRange fold → range on that block', () => {
+  it('read-only-region DOM highlight (F5): BlockSelection.blockRange fold → range on that block', () => {
     // PM selection is a caret in b1, but the user highlighted read-only text in b2.
     const nodes = [build.p('alpha', 'b1'), build.aiBlock('ai-2', 'r2')]
     const fx = docWithCaret(nodes, 0, 0)

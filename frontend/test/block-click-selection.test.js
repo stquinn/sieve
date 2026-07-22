@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { shouldClaimBlockSelection } from '../src/static/block/sieve-block-extension.js'
+import { BlockSelection } from '../src/static/block/block-selection.js'
 
 // A click anywhere in a block makes it the caret/selection owner — EXCEPT on
 // interactive controls / chrome, inside editable text (PM owns the caret there),
@@ -46,41 +46,41 @@ describe('shouldClaimBlockSelection', () => {
   const collapsed = { isCollapsed: true }
 
   it('claims the block for a plain click on a custom region (log Explore cell)', () => {
-    expect(shouldClaimBlockSelection(els.cell, els.block, els.contentDOM, collapsed)).toBe(true)
+    expect(BlockSelection.shouldClaim(els.cell, els.block, els.contentDOM, collapsed)).toBe(true)
   })
 
   it('does NOT claim when clicking an interactive control (button / input)', () => {
-    expect(shouldClaimBlockSelection(els.button, els.block, els.contentDOM, collapsed)).toBe(false)
-    expect(shouldClaimBlockSelection(els.input, els.block, els.contentDOM, collapsed)).toBe(false)
+    expect(BlockSelection.shouldClaim(els.button, els.block, els.contentDOM, collapsed)).toBe(false)
+    expect(BlockSelection.shouldClaim(els.input, els.block, els.contentDOM, collapsed)).toBe(false)
   })
 
   it('does NOT claim when clicking anywhere in the header/chrome (even a non-button control)', () => {
-    expect(shouldClaimBlockSelection(els.headerBtn, els.block, els.contentDOM, collapsed)).toBe(false)
+    expect(BlockSelection.shouldClaim(els.headerBtn, els.block, els.contentDOM, collapsed)).toBe(false)
   })
 
   it('does NOT claim when clicking inside editable text (contentDOM) — PM owns the caret', () => {
-    expect(shouldClaimBlockSelection(els.textNode, els.block, els.contentDOM, collapsed)).toBe(false)
+    expect(BlockSelection.shouldClaim(els.textNode, els.block, els.contentDOM, collapsed)).toBe(false)
   })
 
   it('does NOT claim while a text drag-select sits inside the block (copy)', () => {
     const dragSel = { isCollapsed: false, anchorNode: els.cell }
-    expect(shouldClaimBlockSelection(els.cell, els.block, els.contentDOM, dragSel)).toBe(false)
+    expect(BlockSelection.shouldClaim(els.cell, els.block, els.contentDOM, dragSel)).toBe(false)
   })
 
   it('still claims when a text selection exists but OUTSIDE this block', () => {
     const outside = document.createElement('div')
     document.body.appendChild(outside)
     const otherSel = { isCollapsed: false, anchorNode: outside }
-    expect(shouldClaimBlockSelection(els.cell, els.block, els.contentDOM, otherSel)).toBe(true)
+    expect(BlockSelection.shouldClaim(els.cell, els.block, els.contentDOM, otherSel)).toBe(true)
   })
 
   it('claims for an atom block with no contentDOM', () => {
-    expect(shouldClaimBlockSelection(els.cell, els.block, null, collapsed)).toBe(true)
+    expect(BlockSelection.shouldClaim(els.cell, els.block, null, collapsed)).toBe(true)
   })
 
   it('ignores a target outside the block', () => {
     const stray = document.createElement('div')
     document.body.appendChild(stray)
-    expect(shouldClaimBlockSelection(stray, els.block, els.contentDOM, collapsed)).toBe(false)
+    expect(BlockSelection.shouldClaim(stray, els.block, els.contentDOM, collapsed)).toBe(false)
   })
 })

@@ -14,7 +14,7 @@ import {
   RendererStyleRegistry,
   StyleElementStrategy,
 } from '../src/static/block/renderers/renderer-style-registry.js'
-import { BlockRenderer, ContractViolation } from '../src/static/base/fenced-block-base.js'
+import { BlockRenderer, ContractViolation } from '../src/static/block/renderers/block-renderer.js'
 import { REGION } from '../src/static/block/renderers/block-renderer.js'
 import { SieveBlock } from '../src/static/block/sieve-block.js'
 import { serviceRig } from './helpers/service-rig.js'

@@ -17,8 +17,8 @@
 // a PM decoration for native prose peers, framework-layer material for the
 // future X-D framework extraction, deliberately left untouched here.
 
-import { isJobStale } from '../../../base/fenced-block-base.js'
-import { T } from '../../../base/tiptap-vendor.js'
+import { isJobStale } from '../../../block/renderers/job-status.js'
+import { T } from '../tiptap-vendor.js'
 import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block-extension.js'
 import { REGION } from '../../../block/renderers/block-renderer.js'
 import { setRefChain, clearRefChain } from '../../../ai/ai-target-decoration.js'

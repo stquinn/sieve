@@ -1,14 +1,12 @@
 // @ts-check
 // highlighting.js — lowlight-based syntax highlighting for rendered markdown
-// content. Relocated here (from base/fenced-block-base.js, which re-exports
-// it for the existing import site) as part of the #48 body/title pull-back:
-// this is the same "block/renderers/ owns the engines a renderer's fill
-// contract needs" home as sanctioned-markdown.js — BlockRenderer's default
-// fillTitle/fillBody call applyHighlighting after rendering, and importing it
-// from base/fenced-block-base.js (which itself re-exports BlockRenderer from
-// this directory) would be a circular import.
+// content. Lives here in block/renderers/, the "engines a renderer's fill
+// contract needs" home alongside sanctioned-markdown.js — BlockRenderer's
+// default fillTitle/fillBody call applyHighlighting after rendering. (Callers
+// import getLowlight/applyHighlighting straight from this file; the retired
+// base/fenced-block-base.js grab-bag used to re-export them — issue #49 P5.)
 
-import { T } from '../../base/tiptap-vendor.js'
+import { T } from './vendor-libs.js'
 
 // ── Lowlight (lazy) ───────────────────────────────────────────────────────────
 

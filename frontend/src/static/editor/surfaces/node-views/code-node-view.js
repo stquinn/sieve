@@ -16,8 +16,9 @@
 // declaration — do NOT add handleKeyDown here
 // (docs/editor-interaction-contract.md is normative).
 
-import { esc, getLowlight } from '../../../base/fenced-block-base.js'
-import { T } from '../../../base/tiptap-vendor.js'
+import { esc } from '../../../block/renderers/html-escape.js'
+import { getLowlight } from '../../../block/renderers/highlighting.js'
+import { T } from '../tiptap-vendor.js'
 import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block-extension.js'
 import { CodeRenderer } from '../../../block/renderers/code-renderer.js'
 

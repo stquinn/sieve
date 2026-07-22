@@ -21,7 +21,7 @@ import { renderProseContent, proseContent } from './block-render.js'
 import { registerBlockKind, isNativeProseNodeName } from './block-kinds.js'
 import { dedupeActions } from './block-sync.js'
 import { serializeNode } from './sieve-block-extension.js'
-import { T } from '../base/tiptap-vendor.js'
+import { T } from '../editor/surfaces/tiptap-vendor.js'
 
 // Cross-file bindings the IIFE below assigns once it runs (the sieve-block-extension
 // `export let` pattern, P4.E): the definitions stay inside the IIFE (it closes over

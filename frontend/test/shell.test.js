@@ -28,7 +28,7 @@ vi.mock('../src/static/block/prose-block.js', () => ({ BlockId: {} }))
 vi.mock('../src/static/ai/ai-target.js', () => ({
   blockInsertPos: vi.fn(() => 42),
 }))
-vi.mock('../src/static/base/block-position.js', () => ({
+vi.mock('../src/static/editor/surfaces/block-position.js', () => ({
   blockIndexForInsert: vi.fn(() => 3),
   emptyParagraphAnchor: vi.fn(() => null),
   docPosForBlockIndex: vi.fn(),
@@ -45,7 +45,7 @@ import { PromptEditor } from '../src/static/editor/prompt-editor.js'
 import { AbstractSurface } from '../src/static/editor/surfaces/abstract-surface.js'
 import { EditorMode } from '../src/static/editor/editor-mode.js'
 import { blockInsertPos } from '../src/static/ai/ai-target.js'
-import { blockIndexForInsert, emptyParagraphAnchor, blockIndexAfter } from '../src/static/base/block-position.js'
+import { blockIndexForInsert, emptyParagraphAnchor, blockIndexAfter } from '../src/static/editor/surfaces/block-position.js'
 import { buildAiContext, applyTargetHighlight } from '../src/static/editor/extensions.js'
 import { BlockService } from '../src/static/block/block-service.js'
 import { DocumentService } from '../src/static/block/document-service.js'

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { domSelectionTextInside, domSelectionBlockRange } from '../src/static/block/sieve-block-extension.js'
+import { BlockSelection } from '../src/static/block/block-selection.js'
 
 // On copy, text/plain + text/html must follow a native DOM highlight inside a
 // block's custom region (the log Explore table) — where PM's selection is a
@@ -27,30 +27,30 @@ describe('domSelectionTextInside', () => {
   beforeEach(() => { document.body.innerHTML = ''; els = block() })
 
   it('returns the highlighted text when the selection is inside the block (anchor is a text node)', () => {
-    expect(domSelectionTextInside(sel({ text: 'log line', anchor: els.textNode }), els.b)).toBe('log line')
+    expect(BlockSelection.textInside(sel({ text: 'log line', anchor: els.textNode }), els.b)).toBe('log line')
   })
 
   it('returns the highlighted text when the anchor is an element inside the block', () => {
-    expect(domSelectionTextInside(sel({ text: 'x', anchor: els.cell }), els.b)).toBe('x')
+    expect(BlockSelection.textInside(sel({ text: 'x', anchor: els.cell }), els.b)).toBe('x')
   })
 
   it('returns empty when the selection is outside the block', () => {
     const other = document.createElement('div')
     document.body.appendChild(other)
-    expect(domSelectionTextInside(sel({ text: 'x', anchor: other }), els.b)).toBe('')
+    expect(BlockSelection.textInside(sel({ text: 'x', anchor: other }), els.b)).toBe('')
   })
 
   it('returns empty for a collapsed selection', () => {
-    expect(domSelectionTextInside({ isCollapsed: true, toString: () => '', anchorNode: els.textNode }, els.b)).toBe('')
+    expect(BlockSelection.textInside({ isCollapsed: true, toString: () => '', anchorNode: els.textNode }, els.b)).toBe('')
   })
 
   it('returns empty for a whitespace-only highlight', () => {
-    expect(domSelectionTextInside(sel({ text: '   \n ', anchor: els.textNode }), els.b)).toBe('')
+    expect(BlockSelection.textInside(sel({ text: '   \n ', anchor: els.textNode }), els.b)).toBe('')
   })
 
   it('returns empty for a missing selection or block', () => {
-    expect(domSelectionTextInside(null, els.b)).toBe('')
-    expect(domSelectionTextInside(sel({ text: 'x', anchor: els.textNode }), null)).toBe('')
+    expect(BlockSelection.textInside(null, els.b)).toBe('')
+    expect(BlockSelection.textInside(sel({ text: 'x', anchor: els.textNode }), null)).toBe('')
   })
 })
 
@@ -81,28 +81,28 @@ describe('domSelectionBlockRange (bug 3: copy the highlighted block, not the sta
     // PM selection (er) is a NodeSelection on block A — the reported failure.
     const er = { from: 0, to: 10 }
     const domSel = sel({ text: 'question with    spaces', anchor: tnodeB })
-    expect(domSelectionBlockRange(domSel, er, blocks)).toEqual({ from: 10, to: 20 })
+    expect(BlockSelection.blockRange(domSel, er, blocks)).toEqual({ from: 10, to: 20 })
   })
 
   it('returns null when er already covers the highlighted block (PM owns the text — leave er alone)', () => {
     const { blocks, tnodeB } = twoBlocks()
     const er = { from: 10, to: 20 } // PM selection already on block B (e.g. its PM response body)
     const domSel = sel({ text: 'q', anchor: tnodeB })
-    expect(domSelectionBlockRange(domSel, er, blocks)).toBeNull()
+    expect(BlockSelection.blockRange(domSel, er, blocks)).toBeNull()
   })
 
   it('returns null for a collapsed / whitespace-only / missing selection', () => {
     const { blocks } = twoBlocks()
     const er = { from: 0, to: 10 }
-    expect(domSelectionBlockRange({ isCollapsed: true, toString: () => '' }, er, blocks)).toBeNull()
-    expect(domSelectionBlockRange(sel({ text: '   ', anchor: blocks[1].dom }), er, blocks)).toBeNull()
-    expect(domSelectionBlockRange(null, er, blocks)).toBeNull()
+    expect(BlockSelection.blockRange({ isCollapsed: true, toString: () => '' }, er, blocks)).toBeNull()
+    expect(BlockSelection.blockRange(sel({ text: '   ', anchor: blocks[1].dom }), er, blocks)).toBeNull()
+    expect(BlockSelection.blockRange(null, er, blocks)).toBeNull()
   })
 
   it('returns null when the highlight is in no sieve block', () => {
     const { blocks } = twoBlocks()
     const outside = document.createElement('div'); document.body.appendChild(outside)
     const er = { from: 0, to: 10 }
-    expect(domSelectionBlockRange(sel({ text: 'x', anchor: outside }), er, blocks)).toBeNull()
+    expect(BlockSelection.blockRange(sel({ text: 'x', anchor: outside }), er, blocks)).toBeNull()
   })
 })

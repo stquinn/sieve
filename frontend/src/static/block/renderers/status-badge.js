@@ -15,11 +15,10 @@
 // renderer's own DOM building (block/renderers/*) OR (as most callers here
 // are, since a "badge" is usually part of a PM-framework headerProvider
 // toolbar, not the renderer's own body) an adapter-side header builder that
-// needs the same bucket. isJobStale itself stays in fenced-block-base.js
-// (job-tracking is framework/base, not renderer-owned) — imported, not
-// re-implemented.
+// needs the same bucket. isJobStale itself lives in ./job-status.js (the
+// stateful job-liveness tracker) — imported, not re-implemented.
 
-import { isJobStale } from '../../base/fenced-block-base.js'
+import { isJobStale } from './job-status.js'
 
 /** @typedef {'pending'|'stale'|'complete'|'timeout'|'error'} StatusBadgeState */
 
@@ -29,7 +28,7 @@ export class StatusBadge {
    * migrated kind's badge/state building switches on. 'stale' means "was
    * PENDING/DISPATCHED, but the server has no record of it (job tracker) AND
    * the CLI-timeout threshold has passed" — see isJobStale/isJobActive/
-   * isJobQueued in fenced-block-base.js for the exact liveness check.
+   * isJobQueued in ./job-status.js for the exact liveness check.
    * @param {string} [status]
    * @param {string|null} [createdAt]
    * @param {string} [id]

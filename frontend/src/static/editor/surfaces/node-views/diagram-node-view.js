@@ -27,8 +27,9 @@
 // descriptor's shape — the contract sieve-block-extension.js's duck-typed
 // registerSieveRenderer() consumes — exactly as that file already expects.
 
-import { esc, getLowlight } from '../../../base/fenced-block-base.js'
-import { T } from '../../../base/tiptap-vendor.js'
+import { esc } from '../../../block/renderers/html-escape.js'
+import { getLowlight } from '../../../block/renderers/highlighting.js'
+import { T } from '../tiptap-vendor.js'
 import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block-extension.js'
 import { MODE } from '../../../block/sieve-block.js'
 import { DiagramRenderer } from '../../../block/renderers/diagram-renderer.js'

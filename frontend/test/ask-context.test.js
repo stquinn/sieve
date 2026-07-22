@@ -4,7 +4,8 @@ import { docWithRange, docWithNodeSelection, docWithCaretNear, build } from './h
 import { contextFor } from './helpers/selection-context.js'
 import { WysiwygSurface } from '../src/static/editor/surfaces/wysiwyg-surface.js'
 import { buildAiContext } from '../src/static/editor/extensions.js'
-import { getSieveBlockLabel, domSelectionBlockRange } from '../src/static/block/sieve-block-extension.js'
+import { getSieveBlockLabel } from '../src/static/block/sieve-block-extension.js'
+import { BlockSelection } from '../src/static/block/block-selection.js'
 import { getBlockSelectionRange } from '../src/static/editor/block-chrome.js'
 
 // ask-context.test.js — P3.D (stateless Ask panel, #29 task 5). Harness redone P4.E
@@ -27,7 +28,7 @@ import { getBlockSelectionRange } from '../src/static/editor/block-chrome.js'
 // Harness: buildAiContext is now a genuine `export function` in extensions.js (P4.E),
 // reached the honest way — `import()` the real module and call the export directly. The
 // only wrinkle is extensions.js's OWN vendor dependency: it reads
-// `import { T as VENDOR } from '../base/tiptap-vendor.js'` (a live bag over
+// `import { T as VENDOR } from '../editor/surfaces/tiptap-vendor.js'` (a live bag over
 // globalThis.TipTap, installed once by test/setup.js) and calls VENDOR.Extension.create/
 // .extend and `new VENDOR.PluginKey(...)` at MODULE-EVAL time (Search, SelectionHighlight,
 // HighlightMark, AiShortcuts are built as the module loads, not lazily). Those vendor
@@ -67,8 +68,9 @@ vi.mock('../src/static/block/sieve-block-extension.js', () => ({
   sieveBlockAttrs: vi.fn((n) => n.attrs),
   sieveBlockEntries: vi.fn(() => []),
   rendererFor: vi.fn(() => null),
-  domSelectionBlockRange: vi.fn(() => null),
-  domSelectionTextInside: vi.fn(() => null),
+}))
+vi.mock('../src/static/block/block-selection.js', () => ({
+  BlockSelection: { blockRange: vi.fn(() => null), textInside: vi.fn(() => null) },
 }))
 
 beforeEach(() => {
@@ -90,7 +92,7 @@ beforeEach(() => {
     const sel = view.state.selection
     return { from: sel.from, to: sel.to, active: !sel.empty, isBlockRange: false, isNodeSelection: !!sel.node }
   })
-  vi.mocked(domSelectionBlockRange).mockReturnValue(null)
+  vi.mocked(BlockSelection.blockRange).mockReturnValue(null)
 })
 
 describe('buildAiContext — ai-block follow-up sends the SINGLE block id (D1)', () => {
@@ -172,7 +174,7 @@ describe('read-only-region DOM drag folds into a non-document target (F5)', () =
   //
   // P3.F folded the descriptor core into WysiwygSurface, so this drives the REAL
   // dom-fold path (the surfaces.test.js F5 recipe): a caret in the doc, then a stubbed
-  // window.getSelection + injected T.domSelectionBlockRange retarget the effective range
+  // window.getSelection + injected BlockSelection.blockRange retarget the effective range
   // onto the sieve region and supply the drag text. More faithful than the old
   // hand-built `er` — it runs feedSelection's actual read-only-region fold branch.
 
@@ -197,7 +199,7 @@ describe('read-only-region DOM drag folds into a non-document target (F5)', () =
     const regionFrom = nodes[0].nodeSize             // start of the sieve-code node
     const regionTo = regionFrom + nodes[1].nodeSize  // its end
     vi.mocked(getBlockSelectionRange).mockReturnValue({ from: 1, to: 1, active: false, isBlockRange: false, isNodeSelection: false })
-    vi.mocked(domSelectionBlockRange).mockReturnValue({ from: regionFrom, to: regionTo })
+    vi.mocked(BlockSelection.blockRange).mockReturnValue({ from: regionFrom, to: regionTo })
     const prev = window.getSelection
     window.getSelection = () => ({ isCollapsed: false, toString: () => 'dragged text', rangeCount: 1 })
     try {

@@ -842,7 +842,7 @@ pre.tiptap-code-block code {
   display: block;
 }
 
-/* applyHighlighting() in fenced-block-base.js wraps each pre>code block  */
+/* applyHighlighting() in block/renderers/highlighting.js wraps each pre>code */
 /* in a .sieve-code-block div with a line-number gutter, matching the     */
 /* TipTap .code-block appearance. All colours from the theme.             */
 /* Future blocks: call applyHighlighting(contentEl) after setting innerHTML */

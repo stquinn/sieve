@@ -28,7 +28,7 @@ import { AbstractSurface } from './surfaces/abstract-surface.js'
 import { EditorMode } from './editor-mode.js'
 import { SelectionModel } from './selection-model.js'
 import { blockInsertPos } from '../ai/ai-target.js'
-import { blockIndexForInsert, emptyParagraphAnchor, blockIndexAfter } from '../base/block-position.js'
+import { blockIndexForInsert, emptyParagraphAnchor, blockIndexAfter } from './surfaces/block-position.js'
 import { buildAiContext, applyTargetHighlight } from './extensions.js'
 import { resolveEntriesForKind } from '../block/sieve-block-extension.js'
 
@@ -748,7 +748,7 @@ export class AbstractEditor {
   // dialogs, askAi, extract), which reach a PUBLIC method on the live editor —
   // never a surface #private (the classic/module boundary). So it lives here as
   // public methods (D-1). The position helpers are ES imports from their owning
-  // modules (ai/ai-target.js, base/block-position.js) — the shared TipTap bus is retired.
+  // modules (ai/ai-target.js, editor/surfaces/block-position.js) — the shared TipTap bus is retired.
 
   /**
    * Stashes where the next inserted block goes (a doc pos, a {from,to} range, or
@@ -791,7 +791,7 @@ export class AbstractEditor {
    * blockIndexForInsert maps a captured insert position (a PM doc position, or
    * null for "append") to the top-level BLOCK index Go's create-block op inserts
    * at — the number of top-level nodes that end at or before the position.
-   * Delegates to the tested blockIndexForInsert import (base/block-position.js).
+   * Delegates to the tested blockIndexForInsert import (editor/surfaces/block-position.js).
    * @param {number|null} pos
    * @returns {number}
    */

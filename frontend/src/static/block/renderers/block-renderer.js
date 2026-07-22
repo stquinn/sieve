@@ -63,8 +63,9 @@ import { applyHighlighting } from './highlighting.js'
 import { SieveBlock, ContractViolation } from '../sieve-block.js'
 
 // ContractViolation lives at the leaf (sieve-block.js) so services import it
-// downward; re-exported here for the established import path (incl.
-// fenced-block-base.js's re-export).
+// downward; re-exported here so renderer-side callers import BlockRenderer and
+// ContractViolation from the one file (the path the retired
+// base/fenced-block-base.js grab-bag used to re-export — issue #49 P5).
 export { ContractViolation }
 
 /** The block anatomy's region tokens (frozen, string-valued — DOM/debug legible). */

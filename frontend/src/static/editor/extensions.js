@@ -1,7 +1,7 @@
 // extensions.js — vanilla JS TipTap custom extensions.
 // Depends on the vendor TipTap bundle (ui/static/vendor/tiptap.js) being loaded first.
 
-import { T as VENDOR } from '../base/tiptap-vendor.js'
+import { T as VENDOR } from './surfaces/tiptap-vendor.js'
 
 var Node = VENDOR.Node
 var Extension = VENDOR.Extension
@@ -9,30 +9,6 @@ var Plugin = VENDOR.Plugin
 var PluginKey = VENDOR.PluginKey
 var Decoration = VENDOR.Decoration
 var DecorationSet = VENDOR.DecorationSet
-
-  // ── Helpers ────────────────────────────────────────────────────────────────
-
-  function resolveDisplaySrc(src, uuid) {
-    if (!src) return ''
-    if (src.startsWith('http')) {
-      return window.location.origin + '/sieve-image-proxy?url=' + encodeURIComponent(src)
-    }
-    if (src.startsWith('blob:') || src.startsWith('data:') || src.startsWith('/')) return src
-    
-    // Co-located assets: legacy .assets/ prefix or bare filename -> /sieve/UUID/name.png
-    if (src.startsWith('.assets/')) {
-      return '/sieve/' + uuid + '/' + src.substring(8)
-    }
-    // Bare co-located filename (images saved directly in doc directory)
-    return '/sieve/' + uuid + '/' + src.split('/').pop()
-  }
-
-  function srcToBlockId(src) {
-    if (!src || src.startsWith('http') || src.startsWith('blob:') || src.startsWith('data:')) return ''
-    var filename = src.split('/').pop() || ''
-    var dot = filename.lastIndexOf('.')
-    return dot > 0 ? filename.substring(0, dot) : filename
-  }
 
   // ── Search ─────────────────────────────────────────────────────────────────
 

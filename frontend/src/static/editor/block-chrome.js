@@ -20,7 +20,7 @@
 // node type name starting with 'sieve-' (checked at line 85 via indexOf).
 //
 // Depends on the vendor TipTap bundle (vendor/tiptap.js) loaded first.
-import { T as VENDOR } from '../base/tiptap-vendor.js'
+import { T as VENDOR } from './surfaces/tiptap-vendor.js'
 
 var Extension = VENDOR.Extension
 var Plugin = VENDOR.Plugin

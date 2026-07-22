@@ -15,7 +15,7 @@
 // ai-blocks) — framework-layer material, deliberately left untouched here
 // (same restraint ai-block's applyChain already established).
 
-import { T } from '../../../base/tiptap-vendor.js'
+import { T } from '../tiptap-vendor.js'
 import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block-extension.js'
 import { REGION } from '../../../block/renderers/block-renderer.js'
 import { WebClipRenderer } from '../../../block/renderers/web-clip-renderer.js'

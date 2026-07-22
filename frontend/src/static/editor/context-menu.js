@@ -3,8 +3,8 @@
 // context.type must be one of: 'editor' | 'image' | 'aiBlock' | 'note' | 'folder' | 'prompt'
 import { getSieveIcon } from '../block/block-kinds.js'
 import { applyTargetHighlight } from './extensions.js'
-import { extractContentEntryFromEditor, detectAndAppendExtractions, serializeNode } from '../block/sieve-block-extension.js'
-import { enclosingBlockId } from '../base/block-position.js'
+import { NodeViewRegistry, detectAndAppendExtractions, serializeNode } from '../block/sieve-block-extension.js'
+import { enclosingBlockId } from './surfaces/block-position.js'
 
   // ── Icons ───────────────────────────────────────────────────────────────────
   var IC = window.SieveIcons || {}
@@ -256,7 +256,7 @@ import { enclosingBlockId } from '../base/block-position.js'
         x != null && y != null) {
       var domEl = document.elementFromPoint(x, y)
       if (domEl) {
-        var res = extractContentEntryFromEditor({ target: domEl }, editor)
+        var res = NodeViewRegistry.extractContentEntryFromEditor({ target: domEl }, editor)
         if (res && res.entries) {
           detectAndAppendExtractions({
             sourceNode: targetNode,

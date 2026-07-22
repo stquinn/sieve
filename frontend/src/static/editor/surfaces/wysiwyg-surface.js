@@ -17,7 +17,7 @@
 // skipped, scroll-to-new is universal. No full reload is ever used for an op.
 //
 // Normalization applied during motion (behavior-identical): VENDOR names go
-// through the `T` vendor-bag import (base/tiptap-vendor.js);
+// through the `T` vendor-bag import (editor/surfaces/tiptap-vendor.js);
 // every APP helper is a direct ES import from its owning module (P4.E bus
 // retirement). The module vars the old code wrote (currentEditor, docUpdateTimer,
 // docSyncFlush, blockContentCache seams) are #private state; `window.__tiptap` is
@@ -35,7 +35,7 @@ import { ToolbarButton, ButtonGroup } from '../../shell/toolbar-button.js'
 // Extension/Plugin/Decoration(Set)/ProseMirrorDOMParser/…) still ride `#T` (the
 // injected vendor bundle). The dead legacy ai-block extension entry (never
 // published → always undefined) was removed in P4.E with Stephen's sign-off.
-import { T } from '../../base/tiptap-vendor.js'
+import { T } from './tiptap-vendor.js'
 import { BlockId } from '../../block/prose-block.js'
 import { ProseGroup, proseBlockNodes } from '../../block/prose-group.js'
 import { copyImageToClipboard } from '../../ui/copy-image.js'
@@ -45,14 +45,15 @@ import { Search, SelectionHighlight, HighlightMark, AiShortcuts } from '../exten
 import { policyEnterKeydown, buildInteractionPolicyExtension } from '../interaction-policy.js'
 import {
   getSieveNodes, getSieveBlockLabel, serializeNode, sieveBlockAttrs,
-  sieveBlockEntries, rendererFor, domSelectionBlockRange, domSelectionTextInside,
+  sieveBlockEntries, rendererFor,
 } from '../../block/sieve-block-extension.js'
+import { BlockSelection } from '../../block/block-selection.js'
 import { getBlockKind } from '../../block/block-kinds.js'
 import { SieveBlock } from '../../block/sieve-block.js'
 import { buildBlocksHTML, proseContent } from '../../block/block-render.js'
 import { seedBaseline, computeBlockSync } from '../../block/block-sync.js'
-import { docPosForBlockIndex, blockIndexAfter } from '../../base/block-position.js'
-import { reloadReplacement } from '../../base/render-empty.js'
+import { docPosForBlockIndex, blockIndexAfter } from './block-position.js'
+import { reloadReplacement } from './render-empty.js'
 import { caretInRawTextBlock } from '../paste-context.js'
 
 // The formatting command spec (P4.D): each entry is one ToolbarButton the WYSIWYG
@@ -418,7 +419,7 @@ export class WysiwygSurface extends AbstractSurface {
             // Explore table) holds text PM does not own, so a highlight there
             // leaves PM's selection a whole-block NodeSelection — without this the
             // rich copy below would grab the ENTIRE block. text/plain + text/html
-            // follow this highlight per-block (via domSelectionTextInside); the
+            // follow this highlight per-block (via BlockSelection.textInside); the
             // sieve/slice + sieve/<kind> mimes stay whole-block (only-meaningful-whole).
             var domSel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null
             var domSelHtml = ''
@@ -434,7 +435,7 @@ export class WysiwygSurface extends AbstractSurface {
               // contentEditable=false DOM PM cannot track). There PM's selection
               // stays on whatever block last held the caret, so the loop below —
               // driven by `er` — would visit and copy the WRONG (previously
-              // selected) block. domSelectionBlockRange finds the block the user
+              // selected) block. BlockSelection.blockRange finds the block the user
               // actually highlighted and points the loop at it; when PM already
               // owns the highlighted text (er covers it) it returns null and er is
               // left untouched.
@@ -444,7 +445,7 @@ export class WysiwygSurface extends AbstractSurface {
                   blockDescs.push({ from: offset, to: offset + node.nodeSize, dom: view.nodeDOM(offset) })
                 }
               })
-              var retarget = domSelectionBlockRange(domSel, er, blockDescs)
+              var retarget = BlockSelection.blockRange(domSel, er, blockDescs)
               if (retarget) {
                 er = { from: retarget.from, to: retarget.to, active: true, isBlockRange: false, isNodeSelection: false }
               }
@@ -485,7 +486,7 @@ export class WysiwygSurface extends AbstractSurface {
               // Explore table) → text/plain + text/html follow it, even though PM
               // sees the whole block selected. (sliceItems already holds the full
               // block above.)
-              var domInBlock = domSelectionTextInside(domSel, dom)
+              var domInBlock = BlockSelection.textInside(domSel, dom)
               if (domInBlock) {
                 plainParts.push(domInBlock)
                 htmlParts.push(domSelHtml || escHtml(domInBlock))
@@ -956,9 +957,9 @@ export class WysiwygSurface extends AbstractSurface {
     // effective range onto the block the highlight actually lives in.
     const domSel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null
     let domSelText = null
-    if (domSel && !domSel.isCollapsed && domSel.toString && domSel.toString().trim() && T && domSelectionBlockRange) {
+    if (domSel && !domSel.isCollapsed && domSel.toString && domSel.toString().trim() && T) {
       const blockDescs = this.#topBlockDescriptors(ed)
-      const retarget = domSelectionBlockRange(domSel, er, blockDescs)
+      const retarget = BlockSelection.blockRange(domSel, er, blockDescs)
       if (retarget) {
         er = { from: retarget.from, to: retarget.to, active: true, isBlockRange: false, isNodeSelection: false }
         domSelText = domSel.toString()
@@ -1719,7 +1720,7 @@ export class WysiwygSurface extends AbstractSurface {
    * docPosForBlockIndex maps a top-level BLOCK index (Go's tree position, echoed
    * on insert-block) to the editor doc position before that node — so a
    * render-back lands where Go put it, even for a batch (a paste slice).
-   * Delegates to the tested docPosForBlockIndex import (base/block-position.js).
+   * Delegates to the tested docPosForBlockIndex import (editor/surfaces/block-position.js).
    * @param {any} editorPane @param {number} idx
    */
   #docPosForBlockIndex(editorPane, idx) {

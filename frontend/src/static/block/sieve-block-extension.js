@@ -1,52 +1,73 @@
-// sieve-block-extension.js — Sieve block node factory.
+// sieve-block-extension.js — Sieve block node factory + the node-view registry.
 //
-// Renderer interface (each renderer file must supply these fields):
+// A block KIND is contributed by registering an ADAPTER (historically "renderer")
+// with the registry: `registerSieveRenderer('code', CodeNodeView)` mints a TipTap
+// node named 'sieve-code' from the adapter's schema/attrs and wires its NodeView.
+// getSieveNodes() then includes it automatically — no editor wiring per kind.
 //
-//   nodeConfig   { atom, selectable, draggable, group, inline }
-//       ProseMirror schema overrides. Defaults: atom:true, selectable:true, draggable:true, group:'block', inline:false.
-//       These are schema-level — fixed at editor init time, cannot change at runtime.
-//       Use selectable:false + draggable:false for user-editable blocks (code, diagram).
-//       Use group:'inline', inline:true for nodes that render inside text flow (e.g. smart-link).
+// The adapter contract is the typedef below (supersedes the old prose "Renderer
+// interface" comment): it documents every member the factory actually reads —
+// surveyed from the real call sites, nothing aspirational.
 //
-//   attrs   { [key]: TipTap attr definition }
-//       Kind-specific TipTap attributes. Merged with the five base attrs that every
-//       sieve block shares: kind, id, rawYaml, status, createdAt.
+// @typedef {Object} SieveNodeView
+//   The object an adapter's makeNodeView returns — a TipTap NodeView, plus the
+//   optional `renderer` handle migrated kinds expose.
+// @property {HTMLElement} dom                  block root element (required)
+// @property {HTMLElement} [contentDOM]         editable content host (live PM body)
+// @property {(node: any) => boolean} [update]  TipTap NodeView update hook
+// @property {(event: Event) => boolean} [stopEvent] TipTap NodeView stopEvent hook
+// @property {import('./renderers/block-renderer.js').BlockRenderer} [renderer]
+//   the BlockRenderer instance a MIGRATED kind exposes — enables the framework's
+//   PM body projection (bodyMarkdown) and TITLE fill (fillTitle).
 //
-//   parseAttrs(data) → { key: value }
-//       Called by the fence parser. Receives the parsed YAML object; returns the
-//       extra data-* HTML attributes the renderer needs on initial parse.
-//
-//   makeNodeView(node, editor) → TipTap NodeView
-//       Returns the NodeView object (dom, update, stopEvent, etc.).
-//
-// Optional renderer fields (framework injects these behaviours automatically):
-//
-//   buildContextMenuItems({ node, editor, getPos }) → [ item, ... ]
-//       Block-specific context menu items prepended before the framework items.
-//       The framework always appends: Ask AI, Explain, Delete, Retry/Replay, Promote.
-//
-//   buildAiCtx(node) → { contextLabel, imageIds? }
-//       Customise the "Ask About [X]" popup label and any image IDs to include.
-//       Defaults to a capitalised version of the block kind if omitted.
-//
-// Registration:
-//   registerSieveRenderer('code', CodeRenderer)
-//   → creates a TipTap node named 'sieve-code' with the renderer's config/attrs
-//   → getSieveNodes() includes it automatically — no editor.js changes needed
+// @typedef {Object} SieveBlockAdapter
+//   The kind contract registered via registerSieveRenderer. All members are
+//   optional except makeNodeView; the factory feature-detects each.
+// @property {(node: any, editor: any, getPos: (() => number), ctx: object) => SieveNodeView} makeNodeView
+//   Builds the NodeView (required).
+// @property {{atom?: boolean, selectable?: boolean, draggable?: boolean, group?: string,
+//   inline?: boolean, content?: string, marks?: string, code?: boolean, defining?: boolean}} [nodeConfig]
+//   ProseMirror schema overrides (schema-level, fixed at editor-init time).
+// @property {Record<string, any>} [attrs]      kind-specific TipTap attr defs (merged with BASE_ATTRS).
+// @property {(data: object) => Record<string, any>} [parseAttrs]
+//   Parsed-YAML → the extra data-* attributes the kind needs on initial parse.
+// @property {(type: any) => any[]} [buildPlugins]           per-kind ProseMirror plugins.
+// @property {(node: any) => ({mimeType: string, content: string, context?: object}[]|null)} [asContentEntry]
+//   the kind's own clipboard/text views (code → source, diagram → mermaid, …).
+// @property {(arg: {node: any, editorPane: any, getPos: Function}) => any[]} [buildContextMenuItems]
+//   kind-specific context-menu items, prepended before the framework items.
+// @property {(node: any) => ({contextLabel?: string, imageIds?: string[]})} [buildAiCtx]
+//   customises the "Ask About [X]" label / included image ids.
+// @property {{expandable?: boolean}} [interactionPolicy]    declared interaction policy.
+// @property {(node: any, dom: HTMLElement) => any} [getExpandContent]  lightbox/expand spec, or null.
+// @property {(node?: any) => string} [getFriendlyName]      display name for menus/labels.
+// @property {(data: object) => string} [getInitialContentHTML]  initial inner HTML for a non-atom kind.
+// @property {(sourceNode: any, entries: any[], dispatch: Function, opts: {operation: string}) => any[]} [getExtractionMenuItems]
+//   kind-authored extraction menu items (else the framework builds a default).
+// @property {(state: any, node: any) => void} [markdownSerialize]  markdown-storage serialize override.
+// @property {{render: (attrs: object, ctx: object) => HTMLElement}} [headerProvider]  LEGACY header seam.
+// @property {string|((attrs: object) => any)} [titleProvider]                        LEGACY title seam.
+// @property {string|((attrs: object) => any)} [contentProvider]                      LEGACY content seam.
+// @property {string|((attrs: object) => any)} [markdownProvider]                     LEGACY content seam (alias).
+// @property {string} [markdownAttr]                                                  LEGACY content seam (alias).
 //
 // Adding a new block kind:
-//   1. Create editor/surfaces/node-views/<kind>-node-view.js following the interface above
-//   2. Add <script type="module" src="/static/editor/surfaces/node-views/<kind>-node-view.js"> to
-//      index.html after block/sieve-block-extension.js
-//   That's it.
+//   1. Create editor/surfaces/node-views/<kind>-node-view.js implementing the adapter above.
+//   2. Add <script type="module" src="/static/editor/surfaces/node-views/<kind>-node-view.js">
+//      to index.html AFTER block/sieve-block-extension.js (the node-view registers at
+//      its own top level; the registry must exist first).
 
-import { esc, isJobStale, getLowlight, extractTextFromDOM, renderMarkdown, applyHighlighting } from '../base/fenced-block-base.js'
-import { T } from '../base/tiptap-vendor.js'
-import { registerBlockKind, getBlockBehaviour, containsChildBlocks, getSieveIcon } from './block-kinds.js'
-import { labelForAction } from '../base/action-label.js'
+import { esc } from './renderers/html-escape.js'
+import { isJobStale } from './renderers/job-status.js'
+import { getLowlight, applyHighlighting } from './renderers/highlighting.js'
+import { renderSanctionedMarkdown } from './renderers/sanctioned-markdown.js'
+import { T } from '../editor/surfaces/tiptap-vendor.js'
+import { registerBlockKind, getBlockBehaviour, containsChildBlocks } from './block-kinds.js'
+import { labelForAction } from './action-label.js'
 import { expandBlock } from '../ui/media-lightbox.js'
-import { adoptFocusedControl, restoreFocusedControl } from './renderers/header-bar.js'
+import { HeaderBar } from './renderers/header-bar.js'
 import { SieveBlock } from './sieve-block.js'
+import { BlockSelection } from './block-selection.js'
 
 // sieveBlockFor — the SEAM's envelope constructor for adapters (envelope-first
 // flow, contract §typed block envelope). MIRROR-FIRST (issue #49 Phase 3): the
@@ -69,80 +90,6 @@ export function sieveBlockFor(node, overlay, blockService) {
   return SieveBlock.from(node, overlay)
 }
 
-// ── Header focus preservation ────────────────────────────────────────────────
-// Migrated kinds own their own header, so the header machinery — including the
-// focus-survival pair adoptFocusedControl/restoreFocusedControl (log's live
-// Filter… input across a toolbar re-render, the "toolbar doesn't redraw" bug's
-// fix) — now lives in block/renderers/header-bar.js. Re-exported here for the
-// legacy header seam below (any future unmigrated kind still declaring a
-// headerProvider) and for header-focus-preservation.test.js's import.
-export { adoptFocusedControl, restoreFocusedControl } from './renderers/header-bar.js'
-
-// ── Click-to-own-selection ───────────────────────────────────────────────────
-// A click anywhere in a block makes it the caret/selection owner (a NodeSelection
-// + editor focus), so keyboard chords (Mod+Enter mode toggle, etc.) route to it
-// via the policy extension — uniform for every kind, no per-renderer handling.
-// BLOCK_CLICK_SKIP lists what a click must NOT claim the block: interactive
-// controls + the header/chrome own their own clicks.
-var BLOCK_CLICK_SKIP = 'input, textarea, button, select, option, a[href], ' +
-  '.sieve-block__header, .block-chrome-host, .block-chrome-handle, .drag-handle'
-
-// shouldClaimBlockSelection — the click decision (pure, testable). A plain click
-// claims the whole block UNLESS it lands on an interactive control/chrome, inside
-// the block's editable text (contentDOM — PM places a text caret there, which IS
-// caret ownership), or while a real text selection sits inside the block (a
-// drag-select for copy, e.g. a log table — leave it alone).
-export function shouldClaimBlockSelection(target, blockDom, contentDOM, domSelection) {
-  if (!target || !blockDom || !blockDom.contains(target)) return false
-  if (target.closest && target.closest(BLOCK_CLICK_SKIP)) return false
-  if (contentDOM && contentDOM.contains(target)) return false
-  if (domSelection && !domSelection.isCollapsed && domSelection.anchorNode &&
-      blockDom.contains(domSelection.anchorNode)) return false
-  return true
-}
-
-// domSelectionTextInside — the highlighted text of a native DOM selection IF it
-// sits inside blockDom, else '' (pure, testable). A block's custom region (e.g.
-// the log Explore table) holds text PM does not own, so a highlight there is
-// invisible to PM's position-based selection — on copy PM sees a whole-block
-// NodeSelection and the rich copy would grab the ENTIRE block. The copy handler
-// uses this so text/plain + text/html follow the DOM highlight while sieve/slice
-// + sieve/<kind> still carry the whole block (a block is only meaningful whole).
-export function domSelectionTextInside(domSelection, blockDom) {
-  if (!domSelection || domSelection.isCollapsed || !blockDom) return ''
-  var text = domSelection.toString()
-  if (!text || !text.trim()) return ''
-  var a = domSelection.anchorNode
-  var el = a ? (a.nodeType === 1 ? a : a.parentElement) : null
-  return (el && blockDom.contains(el)) ? text : ''
-}
-
-// domSelectionBlockRange — the {from,to} PM range of the block a visible DOM
-// highlight actually lives in, IF that block is NOT already covered by the PM
-// selection `er` (else null). Pure, testable.
-//
-// A block's READ-ONLY region (the ai-block question title, the log Explore table
-// — contentEditable=false DOM PM does not own) can hold a highlight that PM's
-// position-based selection knows nothing about: PM's selection stays on whatever
-// block last held the caret. Driving the copy off `er` alone would then serialize
-// the WRONG (previously-selected) block. The copy handler calls this to re-target
-// the range it visits onto the block the user actually highlighted. When `er`
-// already covers the matched block, PM owns that text (the block's live PM
-// content, e.g. an ai-block response) — return null and leave `er` alone.
-//   blocks: ordered [{ from, to, dom }] top-level sieve-block descriptors.
-export function domSelectionBlockRange(domSelection, er, blocks) {
-  if (!domSelection || domSelection.isCollapsed) return null
-  var text = domSelection.toString()
-  if (!text || !text.trim()) return null
-  for (var i = 0; i < (blocks || []).length; i++) {
-    var blk = blocks[i]
-    if (!domSelectionTextInside(domSelection, blk.dom)) continue
-    var erCovers = !!(er && er.to > blk.from && er.from < blk.to)
-    return erCovers ? null : { from: blk.from, to: blk.to }
-  }
-  return null
-}
-
 // ── TITLE slot fill decision ─────────────────────────────────────────────────
 // syncBlockTitle — the TITLE slot's fill decision (pure DOM, no PM). Body/title
 // pull-back (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
@@ -150,14 +97,11 @@ export function domSelectionBlockRange(domSelection, er, blocks) {
 // renderer-side in every lens, PM included — this seam DELEGATES to the held
 // renderer's fillTitle (a BlockRenderer instance the NodeView adapter exposes
 // as `view.renderer`, e.g. editor/surfaces/node-views/ai-block-node-view.js,
-// editor/surfaces/node-views/web-clip-node-view.js) instead of writing innerHTML itself. Kinds
-// with no split renderer yet (smart-link, prose) have no `view.renderer` —
-// the fallback still uses the sanctioned instance (renderMarkdown, html:false)
-// directly, never the editor's html:true one, so every path here is SEC-B-safe
-// regardless of migration state. Exported (top-level, outside the
-// registration IIFE — same pattern as shouldClaimBlockSelection/
-// domSelectionTextInside above) so both the real NodeView seam and unit tests
-// exercise the identical decision.
+// editor/surfaces/node-views/web-clip-node-view.js) instead of writing innerHTML
+// itself. Kinds with no split renderer yet (smart-link, prose) have no
+// `view.renderer` — the fallback uses the SANCTIONED instance
+// (renderSanctionedMarkdown, html:false) directly, never the editor's html:true
+// one, so every path here is SEC-B-safe regardless of migration state.
 export function syncBlockTitle(titleEl, renderer, text) {
   var h = (text || '').trim()
   if (!h) {
@@ -168,70 +112,337 @@ export function syncBlockTitle(titleEl, renderer, text) {
   if (renderer && typeof renderer.fillTitle === 'function') {
     renderer.fillTitle(titleEl, h)
   } else {
-    titleEl.innerHTML = renderMarkdown(h)
+    titleEl.innerHTML = renderSanctionedMarkdown(h)
     applyHighlighting(titleEl)
   }
   titleEl.style.display = ''
 }
 
-// Cross-file bindings the registration IIFE below assigns once it runs (module
-// evaluation order guarantees every importer sees the assigned value — the IIFE
-// executes before any other module's top-level code that imports these can run).
-// Declared here (not `export function`/`export class`) because `export` is only
-// valid at module top level and these definitions stay physically inside the
-// IIFE, closing over its private registries (nodeRegistry, renderers, Node,
-// mergeAttributes, …) — the same reason getSieveIcon (P4.E D-2) is the one
-// symbol that actually MOVED (it needed no such closure).
-export let registerSieveRenderer
-export let buildSieveBlockHTML
-export let serializeNode
-export let detectAndAppendExtractions
-export let resolveEntriesForKind
-export let getSieveNodes
-export let getSieveBlockLabel
-export let sieveBlockAttrs
-export let sieveBlockEntries
-export let rendererFor
+// serializeNode turns a single block node into markdown via the editor's OWN
+// markdown serialiser. The serialiser sizes code fences longer than any backtick
+// run in the content, so this is the only safe way to render a node to a fence —
+// never hand-build ```. The node is wrapped in a fresh doc so the serialiser has a
+// valid root. Returns '' on failure (e.g. a node the serialiser can't handle).
+export function serializeNode(editor, node) {
+  try {
+    var wrapper = editor.state.schema.topNodeType.create(null, node)
+    return (editor.storage.markdown.serializer.serialize(wrapper) || '').trim()
+  } catch (err) {
+    console.error('[sieve] serializeNode failed', err)
+    return ''
+  }
+}
 
-;(function () {
-  'use strict'
+// sieveBlockAttrs returns a plain own-property copy of a sieve node's attrs — the
+// canonical serialisable representation of a block. Single source of truth so every
+// wire path (extraction entries, single-block clipboard, sieve/slice) serialises a
+// block identically, and none reaches for the retired serialisedForm.
+export function sieveBlockAttrs(node) {
+  var attrs = {}
+  for (var k in node.attrs) {
+    if (Object.prototype.hasOwnProperty.call(node.attrs, k)) attrs[k] = node.attrs[k]
+  }
+  return attrs
+}
 
-  // Registration machinery needs the TipTap runtime. In unit tests the module is
-  // imported for the exported helpers above with no runtime present — no-op then.
-  if (typeof window === 'undefined' || !T.Node) return
+// sieveFrameworkEntry is the universal "sieve/<kind>" view every block exposes:
+// its attrs as a JSON map. The backend (block.SieveAttrs) keys off the kind and
+// reads the attrs — rebuilding a block or reading fields, its choice.
+function sieveFrameworkEntry(node) {
+  return { mimeType: 'sieve/' + node.attrs.kind, content: JSON.stringify(sieveBlockAttrs(node)) }
+}
 
-  var Node = T.Node
-  var mergeAttributes = T.mergeAttributes
+// sieveBlockEntries is the ContentEntry array describing a sieve block: the
+// renderer's own custom views (asContentEntry, e.g. a diagram's raw source) PLUS
+// the framework's sieve/<kind> view. Both the context-menu extraction push and the
+// clipboard copy path use this, so the backend always receives the same two views.
+export function sieveBlockEntries(node, renderer) {
+  var entries = []
+  if (renderer && typeof renderer.asContentEntry === 'function') {
+    var custom = renderer.asContentEntry(node)
+    if (custom && custom.length) entries = entries.concat(custom)
+  }
+  entries.push(sieveFrameworkEntry(node))
+  return entries
+}
 
-  // The HEADER slot providers (SieveBlockHeader/BadgeOnlyHeader/
-  // AdvancedHeaderProvider + badgeEl/segmentedToggle) used to live here — they
-  // were a fossil of the era when the framework assembled the block AROUND the
-  // renderer. They moved to block/renderers/header-bar.js when renderers took
-  // ownership of their own headers; each kind's renderer now builds its header
-  // there, using those classes as collaborators. The legacy header seam below
-  // (for any future unmigrated kind still declaring a headerProvider) only calls
-  // provider.render(attrs, ctx) on the instance a kind supplies — it needs none
-  // of the classes itself.
+// resolveEntriesForKind looks up the behaviour for ANY block via the uniform
+// block-kind registry — prose (native) resolves identically to structured kinds,
+// no special-case fork.
+export function resolveEntriesForKind(kind, sourceNode, entries) {
+  var h = getBlockBehaviour && getBlockBehaviour(kind)
+  if (h && typeof h.resolveEntries === 'function') {
+    return h.resolveEntries(sourceNode, entries)
+  }
+  return entries
+}
 
-  // ── Base attributes shared by every sieve block kind ─────────────────────────
+// ── Base attributes shared by every sieve block kind ─────────────────────────
 
-  var BASE_ATTRS = {
-    kind:             { default: '',        parseHTML: function (el) { return el.getAttribute('data-kind')        || '' } },
-    id:               { default: '',        parseHTML: function (el) { return el.getAttribute('data-id')          || '' } },
-    status:           { default: 'PENDING', parseHTML: function (el) { return el.getAttribute('data-status')      || 'PENDING' } },
-    createdAt:        { default: null,      parseHTML: function (el) { return el.getAttribute('data-created-at')  || null } },
-    supportsEmbedding: { default: false, parseHTML: function (el) { return el.getAttribute('data-supports-embedding') === 'true' } },
-    smartPaste: { default: false, parseHTML: function (el) { return el.getAttribute('data-smart-paste') === 'true' } },
+var BASE_ATTRS = {
+  kind:             { default: '',        parseHTML: function (el) { return el.getAttribute('data-kind')        || '' } },
+  id:               { default: '',        parseHTML: function (el) { return el.getAttribute('data-id')          || '' } },
+  status:           { default: 'PENDING', parseHTML: function (el) { return el.getAttribute('data-status')      || 'PENDING' } },
+  createdAt:        { default: null,      parseHTML: function (el) { return el.getAttribute('data-created-at')  || null } },
+  supportsEmbedding: { default: false, parseHTML: function (el) { return el.getAttribute('data-supports-embedding') === 'true' } },
+  smartPaste: { default: false, parseHTML: function (el) { return el.getAttribute('data-smart-paste') === 'true' } },
+}
+
+// draggable:false — reordering is done via the custom gutter handle (block-chrome.js),
+// not ProseMirror's native node drag.  Native node-drag on a draggable block stole
+// textarea/text-selection gestures (a drag inside a code textarea moved the whole block).
+var DEFAULT_NODE_CONFIG = { atom: true, selectable: true, draggable: false, group: 'block', inline: false }
+
+// ── NodeViewRegistry ─────────────────────────────────────────────────────────
+// The typed registry that OWNS kind→adapter registration and lookup, plus the
+// node factory that mints each kind's TipTap node. Replaces the former
+// `export let` + registration-IIFE rebinding: registry state is #private, the
+// registration entry point is a real method, and thin named-export delegators
+// below keep every existing import site unchanged. When the TipTap runtime is
+// absent (unit tests importing the pure helpers), #runtime is null and register()
+// is an inert no-op — the exact "nothing registers without a runtime" property
+// the IIFE's early return used to provide.
+class NodeViewRegistry {
+  /** @type {Record<string, any>} kind → minted TipTap node */
+  #nodes = {}
+  /** @type {Record<string, SieveBlockAdapter>} kind → adapter */
+  #adapters = {}
+  /** @type {{Node: any, mergeAttributes: any}|null} */
+  #runtime
+
+  constructor() {
+    this.#runtime = (typeof window !== 'undefined' && T.Node)
+      ? { Node: T.Node, mergeAttributes: T.mergeAttributes }
+      : null
   }
 
-  // draggable:false — reordering is done via the custom gutter handle (block-chrome.js),
-  // not ProseMirror's native node drag.  Native node-drag on a draggable block stole
-  // textarea/text-selection gestures (a drag inside a code textarea moved the whole block).
-  var DEFAULT_NODE_CONFIG = { atom: true, selectable: true, draggable: false, group: 'block', inline: false }
+  /**
+   * Register a kind's adapter: mint its TipTap node, remember the adapter, and
+   * record it in the shared block-kind registry (native:false — a sieve-<kind>
+   * NodeView renders its payload; prose registers native:true in prose-block.js).
+   * No-op without a runtime (unit-test import of the pure helpers).
+   * @param {string} kind @param {SieveBlockAdapter} adapter
+   */
+  register(kind, adapter) {
+    if (!this.#runtime) return
+    this.#nodes[kind] = this.#createSieveNode(kind, adapter)
+    this.#adapters[kind] = adapter
+    if (registerBlockKind) {
+      registerBlockKind({ kind: kind, native: false, renderer: adapter })
+    }
+  }
+
+  /** @param {string} kind @returns {SieveBlockAdapter|undefined} */
+  adapterFor(kind) { return this.#adapters[kind] }
+
+  /**
+   * The minted nodes, sieve-prose FIRST. PM's createAndFill auto-fill grabs the
+   * FIRST instantiable node type in the required group (schema-declaration
+   * order); listing prose first makes every auto-fill (empty doc, trailing/gap
+   * fill) a prose block, not a stray ai-block atom.
+   * @returns {any[]}
+   */
+  nodes() {
+    var reg = this.#nodes
+    var keys = Object.keys(reg).sort(function (a, b) {
+      return a === 'prose' ? -1 : b === 'prose' ? 1 : 0
+    })
+    return keys.map(function (k) { return reg[k] })
+  }
+
+  // Canonical friendly name for a sieve block node — the ONE source the live
+  // label, the context menu, and the commit path share. Reuses each adapter's
+  // optional buildAiCtx(node).contextLabel (e.g. a code block surfacing its
+  // language), falling back to a title-cased kind.
+  /** @param {any} node @returns {string} */
+  blockLabel(node) {
+    var kind = node && node.attrs ? node.attrs.kind : ''
+    var r = this.#adapters[kind]
+    var base = (r && typeof r.buildAiCtx === 'function') ? r.buildAiCtx(node) : null
+    var fallback = kind ? (kind.charAt(0).toUpperCase() + kind.slice(1).replace(/-/g, ' ')) : 'Block'
+    return (base && base.contextLabel) || fallback
+  }
+
+  // buildBlockHTML assembles a structured block's data-* div from its PROPERTIES
+  // map (data) — the single builder shared by the markdownit fence rule
+  // (load-from-markdown) and block-render.js (load-from-attrs), so both emit
+  // byte-identical HTML that each adapter's parseHTML consumes. The block model
+  // is properties-in: block-render passes Go-sent attrs straight in, no fence parse.
+  /** @param {string} kind @param {object} data @returns {string} */
+  buildBlockHTML(kind, data) {
+    var renderer = this.#adapters[kind]
+    if (!renderer || !data || !data.id) return ''
+    var cfg = Object.assign({}, DEFAULT_NODE_CONFIG, renderer.nodeConfig || {})
+    var tag = cfg.inline ? 'span' : 'div'
+    var dataType = 'sieve-' + kind
+
+    var htmlAttrs = [
+      'data-type="'     + dataType + '"',
+      'data-kind="'     + esc(kind) + '"',
+      'data-id="'       + esc(data.id) + '"',
+      'data-status="'   + esc(data.status || 'PENDING') + '"',
+    ]
+    if (renderer.parseAttrs) {
+      var extra = renderer.parseAttrs(data)
+      Object.keys(extra).forEach(function (k) {
+        var kebab = k.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()
+        htmlAttrs.push('data-' + kebab + '="' + esc(String(extra[k] != null ? extra[k] : '')) + '"')
+      })
+    }
+    if (data.createdAt) {
+      htmlAttrs.push('data-created-at="' + esc(data.createdAt) + '"')
+    }
+    if (data.supportsEmbedding) {
+      htmlAttrs.push('data-supports-embedding="true"')
+    }
+    if (data.smartPaste) {
+      htmlAttrs.push('data-smart-paste="true"')
+    }
+
+    var innerHTML = ''
+    if (!cfg.atom && renderer.getInitialContentHTML) {
+      innerHTML = renderer.getInitialContentHTML(data)
+    }
+
+    return '<' + tag + ' ' + htmlAttrs.join(' ') + '>' + innerHTML + '</' + tag + '>\n'
+  }
+
+  // The backend returns [{kind, actions}]. The frontend is a dumb renderer: it
+  // shows each offered (kind, action) and plays back {operation}.
+  detectAndAppendExtractions({ sourceNode, sourceKind, entries, blockId, sourcePos, extractSourceLabel, editor }) {
+    // Capability discovery goes through the service boundary (issue #49 Phase 4):
+    // the BlockService owns the wire; consumers no longer speak fetch/URLs. Reached
+    // via the editor host's blockService getter (the same host whose .extract plays
+    // the chosen offer back). No host/service → nothing to discover (the menu items
+    // would be dead anyway, since dispatch needs the editor).
+    var self = this
+    var bs = editor && editor.blockService
+    if (!bs) return
+    bs.detectExtractions({ sourceKind: sourceKind, entries: entries }).then(function (offers) {
+      if (!offers || offers.length === 0) return
+      if (!window.SieveContextMenu || !window.SieveContextMenu.appendItems) return
+
+      var IC = window.SieveIcons || {}
+      var headerLabel = 'FROM ' + (extractSourceLabel || sourceKind).toUpperCase().replace('-', ' ')
+      var extraItems = [{ type: 'divider' }, { type: 'header', label: headerLabel }]
+
+      var FRIENDLY = { prose: 'Text' }
+      offers.forEach(function (offer) {
+        var icon = IC[offer.kind] || IC.code
+        var r = self.adapterFor(offer.kind)
+        var prettyKind = FRIENDLY[offer.kind]
+          || (r && typeof r.getFriendlyName === 'function'
+            ? r.getFriendlyName()
+            : offer.kind.split('-').map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1) }).join(' '))
+
+        // Menu offers the source-mutating ops (extract/transform/undo-smart-paste); paste is never shown here.
+        ;(offer.actions || []).forEach(function (action) {
+          if (action !== 'extract' && action !== 'transform' && action !== 'undo-smart-paste') return
+
+          var dispatch = function (context) {
+            if (!editor) return
+            editor.extract({
+              blockId: blockId || (sourceNode && sourceNode.attrs ? sourceNode.attrs.id : null),
+              targetKind: offer.kind,
+              operation: action,
+              sourceNode: sourceNode,
+              sourcePos: sourcePos,
+              entries: entries,
+              context: context || {}
+            })
+          }
+
+          if (r && typeof r.getExtractionMenuItems === 'function') {
+            var items = r.getExtractionMenuItems(sourceNode, entries, dispatch, { operation: action })
+            if (items && items.length) { items.forEach(function (it) { extraItems.push(it) }); return }
+          }
+          // Prose's TRANSFORM is the universal "flatten this block into the document"
+          // affordance — it is NOT "convert to a block kind" (an image embeds as a plain
+          // image, code as a fence, etc.), so "Convert to Text" misnames it. Label it
+          // "Embed in Document" (the wording the retired bespoke item used).
+          var isEmbed = offer.kind === 'prose' && action === 'transform'
+          extraItems.push({
+            icon: isEmbed ? (IC.promote || icon) : icon,
+            label: (labelForAction || function (a, k) { return a + ' ' + k })(action, prettyKind, offer, sourceKind),
+            action: function () { dispatch({}) }
+          })
+        })
+      })
+      window.SieveContextMenu.appendItems(extraItems)
+    }).catch(function () {})
+  }
+
+  // extractContentEntryFromEditor inspects whatever DOM element was clicked
+  // (event.target) and, if it sits on something extractable, returns the
+  // ContentEntry array detection needs — the INPUT STAGE of the registry's
+  // context-menu extraction pipeline (detectAndAppendExtractions). Static: it
+  // needs no registry state, only the event + editor. Shared by two callers: the
+  // Sieve-block NodeView (real DOM event) and the editor context menu (a
+  // synthetic { target: elementFromPoint(x,y) } — see context-menu.js). It reads
+  // ONLY event.target; nothing else off the event.
+  static extractContentEntryFromEditor(event, editor) {
+    var entries = null;
+    var extractSourceLabel = "";
+    var view = editor.view;
+
+    //an image would be interesting to extract, and we can get a data-uri for it if needed.
+    var closestImg = event.target.tagName === 'IMG' ? event.target : (event.target.closest ? event.target.closest('img') : null);
+    if (closestImg && closestImg.src && view.dom.contains(closestImg)) {
+      // A native <img> is a NATIVE source → use a NATIVE mime so recognition offers
+      // TRANSFORM (Convert), not EXTRACT. (The old 'sieve/image' mime made it look like
+      // a Sieve-block source.) A data: URI needs an image/* mime; a served asset URL is
+      // matched by smart-image's isImageURL on the content, so any non-sieve mime works.
+      var imgSrc = closestImg.src
+      var imgMime = imgSrc.indexOf('data:') === 0 ? (imgSrc.slice(5).split(/[;,]/)[0] || 'image/png') : 'text/uri-list'
+      entries = [{ mimeType: imgMime, content: imgSrc }];
+      extractSourceLabel = 'image';
+    }
+
+    // Anchor click
+    var closestA = event.target.tagName === 'A' ? event.target : (event.target.closest ? event.target.closest('a') : null);
+    if (!entries && closestA && closestA.href && view.dom.contains(closestA)) {
+      entries = [{ mimeType: 'text/uri-list', content: closestA.href }];
+      extractSourceLabel = 'link';
+    }
+
+    if (!entries) {
+      var closestPre = event.target.closest && event.target.closest('pre');
+      if (closestPre && view.dom.contains(closestPre)) {
+        // Resolve the clicked <pre> back to its ProseMirror codeBlock node so the
+        // markdown serialiser can fence it correctly (nested ``` runs and all). A
+        // Sieve block's rendered <pre> is NodeView DOM, not a real codeBlock node — it
+        // resolves to no codeBlock here and is left to asContentEntry / the sieve/<kind>
+        // entry instead, which is the correct path for those.
+        var codeNode = null;
+        try {
+          var $pos = view.state.doc.resolve(view.posAtDOM(closestPre, 0));
+          for (var d = $pos.depth; d >= 0; d--) {
+            if ($pos.node(d).type.name === 'codeBlock') { codeNode = $pos.node(d); break; }
+          }
+        } catch (err) { /* pre isn't a mappable PM position — fall through */ }
+
+        if (codeNode) {
+          var fenced = serializeNode(editor, codeNode);
+          if (fenced) {
+            entries = [{ mimeType: 'text/plain', content: fenced }];
+            extractSourceLabel = codeNode.attrs.language === 'mermaid' ? 'diagram' : 'code';
+          }
+        }
+      }
+    }
+    return { entries, extractSourceLabel };
+  }
 
   // ── Node factory ─────────────────────────────────────────────────────────────
+  // Mints the TipTap node for a kind from its adapter (`renderer`). Called only
+  // from register(), so the runtime is guaranteed present. `self` closes the
+  // registry over the deep TipTap callbacks (where `this` rebinds to the node).
+  /** @param {string} kind @param {SieveBlockAdapter} renderer */
+  #createSieveNode(kind, renderer) {
+    var self = this
+    var Node = this.#runtime.Node
+    var mergeAttributes = this.#runtime.mergeAttributes
 
-  function createSieveNode(kind, renderer) {
     var cfg      = Object.assign({}, DEFAULT_NODE_CONFIG, renderer.nodeConfig || {})
     var nodeName = 'sieve-' + kind   // e.g. 'sieve-code', 'sieve-diagram'
     var dataType = 'sieve-' + kind   // value of the data-type HTML attribute
@@ -431,8 +642,8 @@ export let rendererFor
                 detail: { x: e.clientX, y: e.clientY, context: { type: 'sieveBlock', items: items } },
               }))
 
-              //now lets see if we clicked on something interesting within the block that we can extract data from. 
-              var { entries, extractSourceLabel } = extractContentEntryFromEditor( e, editorPane);
+              //now lets see if we clicked on something interesting within the block that we can extract data from.
+              var { entries, extractSourceLabel } = NodeViewRegistry.extractContentEntryFromEditor( e, editorPane);
 
               if(entries == undefined || !entries) {
                 //nothign more intersting than the sieve block itself was clicked on,
@@ -465,7 +676,7 @@ export let rendererFor
 
 
               if (entries) {
-                detectAndAppendExtractions({
+                self.detectAndAppendExtractions({
                   sourceNode: n,
                   sourceKind: n.attrs.kind,
                   entries: entries,
@@ -481,13 +692,13 @@ export let rendererFor
             // NodeSelection at the block's position + editor focus, so keyboard
             // chords (Mod+Enter mode toggle, arrows, escape) route through the
             // policy extension uniformly — no per-renderer click/keydown handling.
-            // shouldClaimBlockSelection filters out controls/chrome, editable text
+            // BlockSelection.shouldClaim filters out controls/chrome, editable text
             // (PM's own caret), and a text drag-select (copy). mouseup (not
             // mousedown) so a drag that selects text is left intact.
             view.dom.addEventListener('mouseup', function (event) {
               if (typeof getPos !== 'function') return
               var domSel = (typeof window !== 'undefined' && window.getSelection) ? window.getSelection() : null
-              if (!shouldClaimBlockSelection(event.target, view.dom, view.contentDOM, domSel)) return
+              if (!BlockSelection.shouldClaim(event.target, view.dom, view.contentDOM, domSel)) return
               var pos = getPos()
               if (pos == null || pos < 0 || pos >= editorPane.state.doc.content.size) return
               try {
@@ -553,7 +764,7 @@ export let rendererFor
           var syncMdInto = function (md) {
             setTimeout(function () {
               if (!editorPane || !editorPane.view) return
-              var html = renderMarkdown(md || '', editorPane) || '<p></p>'
+              var html = renderSanctionedMarkdown(md || '') || '<p></p>'
               var tmp = document.createElement('div')
               tmp.innerHTML = html
               var PMDP = T.ProseMirrorDOMParser || T.DOMParser
@@ -629,7 +840,7 @@ export let rendererFor
                   fresh.appendChild(xb)
                 }
               }
-              var focusSnap = headerBarEl ? adoptFocusedControl(headerBarEl, fresh) : null
+              var focusSnap = headerBarEl ? HeaderBar.adoptFocusedControl(headerBarEl, fresh) : null
               if (headerBarEl && headerBarEl.parentNode) {
                 headerBarEl.parentNode.replaceChild(fresh, headerBarEl)
               } else {
@@ -637,7 +848,7 @@ export let rendererFor
                 view.dom.insertBefore(fresh, anchor ? anchor.nextSibling : view.dom.firstChild)
               }
               headerBarEl = fresh
-              restoreFocusedControl(focusSnap)
+              HeaderBar.restoreFocusedControl(focusSnap)
             }
             renderHeaderBar()
           }
@@ -760,29 +971,29 @@ export let rendererFor
 
                 // 2. Block parsing rule for fences
                 var prevFence = markdownit.renderer.rules.fence
-                markdownit.renderer.rules.fence = function (tokens, idx, options, env, self) {
+                markdownit.renderer.rules.fence = function (tokens, idx, options, env, self2) {
                   var token     = tokens[idx]
                   var tokenKind = (token.info || '').trim()
 
                   if (tokenKind !== kind) {
                     return prevFence
-                      ? prevFence(tokens, idx, options, env, self)
-                      : self.renderToken(tokens, idx, options)
+                      ? prevFence(tokens, idx, options, env, self2)
+                      : self2.renderToken(tokens, idx, options)
                   }
 
                   var data
                   try { data = window.jsyaml.load(token.content) } catch (e) { data = null }
                   if (!data || !data.id) {
                     return prevFence
-                      ? prevFence(tokens, idx, options, env, self)
-                      : self.renderToken(tokens, idx, options)
+                      ? prevFence(tokens, idx, options, env, self2)
+                      : self2.renderToken(tokens, idx, options)
                   }
 
                   // The fence reconstructs the properties map (data) by parsing
                   // its YAML; build the data-* div from it via the SAME helper
                   // block-render.js uses with Go-sent attrs — one builder, exact
                   // parity across the load-from-markdown and load-from-attrs paths.
-                  return buildSieveBlockHTML(kind, data)
+                  return self.buildBlockHTML(kind, data)
                 }
               },
             },
@@ -791,323 +1002,74 @@ export let rendererFor
       },
     })
   }
-
-  // ── Registry ─────────────────────────────────────────────────────────────────
-
-  var nodeRegistry = {}
-  var renderers = {}
-
-  registerSieveRenderer = function (kind, renderer) {
-    nodeRegistry[kind] = createSieveNode(kind, renderer)
-    renderers[kind] = renderer
-    // Also record the kind in the shared block-kind registry (model-layer
-    // symmetry): structured kinds are native:false (a sieve-<kind> NodeView
-    // renders their payload). Prose registers itself as native:true in
-    // prose-block.js. registerBlockKind is imported from block-kinds.js;
-    // guard in case load order ever changes.
-    if (registerBlockKind) {
-      registerBlockKind({ kind: kind, native: false, renderer: renderer })
-    }
-  }
-
-  // buildSieveBlockHTML assembles a structured block's data-* div from its
-  // PROPERTIES map (data) — the single builder shared by the markdownit fence
-  // rule (load-from-markdown) and block-render.js (load-from-attrs), so both emit
-  // byte-identical HTML that each renderer's parseHTML consumes. The block model
-  // is properties-in: block-render passes Go-sent attrs straight in, no fence parse.
-  buildSieveBlockHTML = function (kind, data) {
-    var renderer = renderers[kind]
-    if (!renderer || !data || !data.id) return ''
-    var cfg = Object.assign({}, DEFAULT_NODE_CONFIG, renderer.nodeConfig || {})
-    var tag = cfg.inline ? 'span' : 'div'
-    var dataType = 'sieve-' + kind
-
-    var htmlAttrs = [
-      'data-type="'     + dataType + '"',
-      'data-kind="'     + esc(kind) + '"',
-      'data-id="'       + esc(data.id) + '"',
-      'data-status="'   + esc(data.status || 'PENDING') + '"',
-    ]
-    if (renderer.parseAttrs) {
-      var extra = renderer.parseAttrs(data)
-      Object.keys(extra).forEach(function (k) {
-        var kebab = k.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()
-        htmlAttrs.push('data-' + kebab + '="' + esc(String(extra[k] != null ? extra[k] : '')) + '"')
-      })
-    }
-    if (data.createdAt) {
-      htmlAttrs.push('data-created-at="' + esc(data.createdAt) + '"')
-    }
-    if (data.supportsEmbedding) {
-      htmlAttrs.push('data-supports-embedding="true"')
-    }
-    if (data.smartPaste) {
-      htmlAttrs.push('data-smart-paste="true"')
-    }
-
-    var innerHTML = ''
-    if (!cfg.atom && renderer.getInitialContentHTML) {
-      innerHTML = renderer.getInitialContentHTML(data)
-    }
-
-    return '<' + tag + ' ' + htmlAttrs.join(' ') + '>' + innerHTML + '</' + tag + '>\n'
-  }
-
-  // Canonical friendly name for a sieve block node — the ONE source the live
-  // label, the context menu, and the commit path share. Reuses each renderer's
-  // optional buildAiCtx(node).contextLabel (e.g. a code block surfacing its
-  // language), falling back to a title-cased kind.
-  getSieveBlockLabel = function (node) {
-    var kind = node && node.attrs ? node.attrs.kind : ''
-    var r = renderers[kind]
-    var base = (r && typeof r.buildAiCtx === 'function') ? r.buildAiCtx(node) : null
-    var fallback = kind ? (kind.charAt(0).toUpperCase() + kind.slice(1).replace(/-/g, ' ')) : 'Block'
-    return (base && base.contextLabel) || fallback
-  }
-
-  // getSieveIcon moved to block-kinds.js (P4.E D-2) — it only needs the
-  // kind-registry lookup (getBlockBehaviour), not this file's renderers map.
-  // Imported back here so renderers can subclass it without a separate import.
-
-  resolveEntriesForKind = function(kind, sourceNode, entries) {
-    // Look up the behaviour for ANY block via the uniform block-kind registry — prose
-    // (native) resolves identically to structured kinds, no special-case fork.
-    var h = getBlockBehaviour && getBlockBehaviour(kind)
-    if (h && typeof h.resolveEntries === 'function') {
-      return h.resolveEntries(sourceNode, entries)
-    }
-    return entries
-  }
-
-  getSieveNodes = function () {
-    // sieve-prose MUST be declared first among the sieveBlock group: PM's
-    // createAndFill auto-fill is purely structural — it grabs the FIRST
-    // instantiable node type in the required group (schema-declaration order),
-    // with no notion of a default. Listing prose first makes every auto-fill
-    // (empty doc, trailing/gap fill) a prose block, not a stray ai-block atom.
-    var keys = Object.keys(nodeRegistry).sort(function (a, b) {
-      return a === 'prose' ? -1 : b === 'prose' ? 1 : 0
-    })
-    return keys.map(function (k) { return nodeRegistry[k] })
-  }
-
-  // The backend returns [{kind, actions}]. The frontend is a dumb renderer: it shows
-  // each offered (kind, action) and plays back {operation} — no replaceSource heuristic.
-  detectAndAppendExtractions = function ({ sourceNode, sourceKind, entries, blockId, sourcePos, extractSourceLabel, editor }) {
-    // Capability discovery goes through the service boundary (issue #49 Phase 4):
-    // the BlockService owns the wire; consumers no longer speak fetch/URLs. Reached
-    // via the editor host's blockService getter (the same host whose .extract plays
-    // the chosen offer back). No host/service → nothing to discover (the menu items
-    // would be dead anyway, since dispatch needs the editor).
-    var bs = editor && editor.blockService
-    if (!bs) return
-    bs.detectExtractions({ sourceKind: sourceKind, entries: entries }).then(function (offers) {
-      if (!offers || offers.length === 0) return
-      if (!window.SieveContextMenu || !window.SieveContextMenu.appendItems) return
-
-      var IC = window.SieveIcons || {}
-      var headerLabel = 'FROM ' + (extractSourceLabel || sourceKind).toUpperCase().replace('-', ' ')
-      var extraItems = [{ type: 'divider' }, { type: 'header', label: headerLabel }]
-
-      var FRIENDLY = { prose: 'Text' }
-      offers.forEach(function (offer) {
-        var icon = IC[offer.kind] || IC.code
-        var r = renderers[offer.kind]
-        var prettyKind = FRIENDLY[offer.kind]
-          || (r && typeof r.getFriendlyName === 'function'
-            ? r.getFriendlyName()
-            : offer.kind.split('-').map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1) }).join(' '))
-
-        // Menu offers the source-mutating ops (extract/transform/undo-smart-paste); paste is never shown here.
-        ;(offer.actions || []).forEach(function (action) {
-          if (action !== 'extract' && action !== 'transform' && action !== 'undo-smart-paste') return
-
-          var dispatch = function (context) {
-            if (!editor) return
-            editor.extract({
-              blockId: blockId || (sourceNode && sourceNode.attrs ? sourceNode.attrs.id : null),
-              targetKind: offer.kind,
-              operation: action,
-              sourceNode: sourceNode,
-              sourcePos: sourcePos,
-              entries: entries,
-              context: context || {}
-            })
-          }
-
-          if (r && typeof r.getExtractionMenuItems === 'function') {
-            var items = r.getExtractionMenuItems(sourceNode, entries, dispatch, { operation: action })
-            if (items && items.length) { items.forEach(function (it) { extraItems.push(it) }); return }
-          }
-          // Prose's TRANSFORM is the universal "flatten this block into the document"
-          // affordance — it is NOT "convert to a block kind" (an image embeds as a plain
-          // image, code as a fence, etc.), so "Convert to Text" misnames it. Label it
-          // "Embed in Document" (the wording the retired bespoke item used).
-          var isEmbed = offer.kind === 'prose' && action === 'transform'
-          extraItems.push({
-            icon: isEmbed ? (IC.promote || icon) : icon,
-            label: (labelForAction || function (a, k) { return a + ' ' + k })(action, prettyKind, offer, sourceKind),
-            action: function () { dispatch({}) }
-          })
-        })
-      })
-      window.SieveContextMenu.appendItems(extraItems)
-    }).catch(function () {})
-  }
-
-  // ── Native Code Block (syntax highlighting via CodeBlockLowlight) ─────────────
-  // Uses CodeBlockLowlight's decoration system for highlighting. Visual appearance
-  // is handled by the existing .tiptap .code-block CSS + .hljs-* token colours.
-
-  if (T.CodeBlockLowlight) {
-    window.SieveNativeCodeBlock = T.CodeBlockLowlight.extend({
-      // The bundled tiptap-markdown serialiser for code blocks hardcodes a
-      // 3-backtick fence. A code block whose own content contains a ``` run
-      // (e.g. a ````markdown block wrapping ```http) therefore has its fence
-      // collapsed to 3 ticks on save, which corrupts the document on reload.
-      // Override the serialiser to size the fence longer than any backtick run
-      // in the content (standard prosemirror-markdown behaviour). The parse
-      // spec is replicated verbatim from the bundle so loading is unaffected.
-      addStorage() {
-        var parent = (this.parent && this.parent()) || {}
-        var out = {}
-        Object.keys(parent).forEach(function (k) { out[k] = parent[k] })
-        out.markdown = {
-          serialize: function (state, node) {
-            var content = node.textContent || ''
-            var longest = 0
-            var runs = content.match(/`+/g)
-            if (runs) runs.forEach(function (r) { if (r.length > longest) longest = r.length })
-            var fence = new Array(Math.max(3, longest + 1) + 1).join('`')
-            state.write(fence + (node.attrs.language || '') + '\n')
-            state.text(content, false)
-            state.ensureNewLine()
-            state.write(fence)
-            state.closeBlock(node)
-          },
-          parse: {
-            setup: function (markdownit) {
-              markdownit.set({ langPrefix: 'language-' })
-            },
-            updateDOM: function (el) {
-              el.innerHTML = el.innerHTML.replace(/\n<\/code><\/pre>/g, '</code></pre>')
-            },
-          },
-        }
-        return out
-      },
-    }).configure({
-      lowlight: getLowlight(),
-      HTMLAttributes: { class: 'code-block' },
-    })
-  }
-
-  // serializeNode turns a single block node into markdown via the editor's OWN
-  // markdown serialiser. The serialiser sizes code fences longer than any backtick
-  // run in the content, so this is the only safe way to render a node to a fence —
-  // never hand-build ```. The node is wrapped in a fresh doc so the serialiser has a
-  // valid root. Returns '' on failure (e.g. a node the serialiser can't handle).
-  serializeNode = function (editor, node) {
-    try {
-      var wrapper = editor.state.schema.topNodeType.create(null, node)
-      return (editor.storage.markdown.serializer.serialize(wrapper) || '').trim()
-    } catch (err) {
-      console.error('[sieve] serializeNode failed', err)
-      return ''
-    }
-  }
-
-  // sieveBlockAttrs returns a plain own-property copy of a sieve node's attrs — the
-  // canonical serialisable representation of a block. Single source of truth so every
-  // wire path (extraction entries, single-block clipboard, sieve/slice) serialises a
-  // block identically, and none reaches for the retired serialisedForm.
-  sieveBlockAttrs = function (node) {
-    var attrs = {}
-    for (var k in node.attrs) {
-      if (Object.prototype.hasOwnProperty.call(node.attrs, k)) attrs[k] = node.attrs[k]
-    }
-    return attrs
-  }
-
-  // sieveFrameworkEntry is the universal "sieve/<kind>" view every block exposes:
-  // its attrs as a JSON map. The backend (block.SieveAttrs) keys off the kind and
-  // reads the attrs — rebuilding a block or reading fields, its choice.
-  function sieveFrameworkEntry(node) {
-    return { mimeType: 'sieve/' + node.attrs.kind, content: JSON.stringify(sieveBlockAttrs(node)) }
-  }
-
-  // sieveBlockEntries is the ContentEntry array describing a sieve block: the
-  // renderer's own custom views (asContentEntry, e.g. a diagram's raw source) PLUS
-  // the framework's sieve/<kind> view. Both the context-menu extraction push and the
-  // clipboard copy path use this, so the backend always receives the same two views.
-  sieveBlockEntries = function (node, renderer) {
-    var entries = []
-    if (renderer && typeof renderer.asContentEntry === 'function') {
-      var custom = renderer.asContentEntry(node)
-      if (custom && custom.length) entries = entries.concat(custom)
-    }
-    entries.push(sieveFrameworkEntry(node))
-    return entries
-  }
-
-  rendererFor = function (kind) { return renderers[kind] }
-
-})()
-// extractContentEntryFromEditor inspects whatever DOM element was clicked (event.target)
-// and, if it sits on something extractable, returns the ContentEntry array detection
-// needs. It is shared by two callers: the Sieve-block NodeView (real DOM event) and the
-// editor context menu (a synthetic { target: elementFromPoint(x,y) } — see context-menu.js).
-// It therefore reads ONLY event.target; nothing else off the event.
-export function extractContentEntryFromEditor(event, editor) {
-  var entries = null;
-  var extractSourceLabel = "";
-  var view = editor.view;
-
-  //an image would be interesting to extract, and we can get a data-uri for it if needed.
-  var closestImg = event.target.tagName === 'IMG' ? event.target : (event.target.closest ? event.target.closest('img') : null);
-  if (closestImg && closestImg.src && view.dom.contains(closestImg)) {
-    // A native <img> is a NATIVE source → use a NATIVE mime so recognition offers
-    // TRANSFORM (Convert), not EXTRACT. (The old 'sieve/image' mime made it look like
-    // a Sieve-block source.) A data: URI needs an image/* mime; a served asset URL is
-    // matched by smart-image's isImageURL on the content, so any non-sieve mime works.
-    var imgSrc = closestImg.src
-    var imgMime = imgSrc.indexOf('data:') === 0 ? (imgSrc.slice(5).split(/[;,]/)[0] || 'image/png') : 'text/uri-list'
-    entries = [{ mimeType: imgMime, content: imgSrc }];
-    extractSourceLabel = 'image';
-  }
-
-  // Anchor click
-  var closestA = event.target.tagName === 'A' ? event.target : (event.target.closest ? event.target.closest('a') : null);
-  if (!entries && closestA && closestA.href && view.dom.contains(closestA)) {
-    entries = [{ mimeType: 'text/uri-list', content: closestA.href }];
-    extractSourceLabel = 'link';
-  }
-
-  if (!entries) {
-    var closestPre = event.target.closest && event.target.closest('pre');
-    if (closestPre && view.dom.contains(closestPre)) {
-      // Resolve the clicked <pre> back to its ProseMirror codeBlock node so the
-      // markdown serialiser can fence it correctly (nested ``` runs and all). A
-      // Sieve block's rendered <pre> is NodeView DOM, not a real codeBlock node — it
-      // resolves to no codeBlock here and is left to asContentEntry / the sieve/<kind>
-      // entry instead, which is the correct path for those.
-      var codeNode = null;
-      try {
-        var $pos = view.state.doc.resolve(view.posAtDOM(closestPre, 0));
-        for (var d = $pos.depth; d >= 0; d--) {
-          if ($pos.node(d).type.name === 'codeBlock') { codeNode = $pos.node(d); break; }
-        }
-      } catch (err) { /* pre isn't a mappable PM position — fall through */ }
-
-      if (codeNode) {
-        var fenced = serializeNode(editor, codeNode);
-        if (fenced) {
-          entries = [{ mimeType: 'text/plain', content: fenced }];
-          extractSourceLabel = codeNode.attrs.language === 'mermaid' ? 'diagram' : 'code';
-        }
-      }
-    }
-  }
-  return { entries, extractSourceLabel };
 }
 
+// ── The singleton + thin named-export delegators ─────────────────────────────
+// One registry per app. The delegators preserve every existing import site
+// (registerSieveRenderer, buildSieveBlockHTML, getSieveNodes, getSieveBlockLabel,
+// rendererFor, detectAndAppendExtractions) — the machinery moved to a class, the
+// public surface did not.
+
+const registry = new NodeViewRegistry()
+
+/** @param {string} kind @param {SieveBlockAdapter} adapter */
+export function registerSieveRenderer(kind, adapter) { registry.register(kind, adapter) }
+/** @param {string} kind @param {object} data @returns {string} */
+export function buildSieveBlockHTML(kind, data) { return registry.buildBlockHTML(kind, data) }
+/** @returns {any[]} */
+export function getSieveNodes() { return registry.nodes() }
+/** @param {any} node @returns {string} */
+export function getSieveBlockLabel(node) { return registry.blockLabel(node) }
+/** @param {string} kind @returns {SieveBlockAdapter|undefined} */
+export function rendererFor(kind) { return registry.adapterFor(kind) }
+export function detectAndAppendExtractions(spec) { return registry.detectAndAppendExtractions(spec) }
+
+export { NodeViewRegistry }
+
+// ── Native Code Block (syntax highlighting via CodeBlockLowlight) ─────────────
+// Uses CodeBlockLowlight's decoration system for highlighting. Visual appearance
+// is handled by the existing .tiptap .code-block CSS + .hljs-* token colours.
+// Import-time side-effect (guarded on the runtime), same as before — replaces the
+// registration IIFE's equivalent block.
+if (typeof window !== 'undefined' && T.CodeBlockLowlight) {
+  window.SieveNativeCodeBlock = T.CodeBlockLowlight.extend({
+    // The bundled tiptap-markdown serialiser for code blocks hardcodes a
+    // 3-backtick fence. A code block whose own content contains a ``` run
+    // (e.g. a ````markdown block wrapping ```http) therefore has its fence
+    // collapsed to 3 ticks on save, which corrupts the document on reload.
+    // Override the serialiser to size the fence longer than any backtick run
+    // in the content (standard prosemirror-markdown behaviour). The parse
+    // spec is replicated verbatim from the bundle so loading is unaffected.
+    addStorage() {
+      var parent = (this.parent && this.parent()) || {}
+      var out = {}
+      Object.keys(parent).forEach(function (k) { out[k] = parent[k] })
+      out.markdown = {
+        serialize: function (state, node) {
+          var content = node.textContent || ''
+          var longest = 0
+          var runs = content.match(/`+/g)
+          if (runs) runs.forEach(function (r) { if (r.length > longest) longest = r.length })
+          var fence = new Array(Math.max(3, longest + 1) + 1).join('`')
+          state.write(fence + (node.attrs.language || '') + '\n')
+          state.text(content, false)
+          state.ensureNewLine()
+          state.write(fence)
+          state.closeBlock(node)
+        },
+        parse: {
+          setup: function (markdownit) {
+            markdownit.set({ langPrefix: 'language-' })
+          },
+          updateDOM: function (el) {
+            el.innerHTML = el.innerHTML.replace(/\n<\/code><\/pre>/g, '</code></pre>')
+          },
+        },
+      }
+      return out
+    },
+  }).configure({
+    lowlight: getLowlight(),
+    HTMLAttributes: { class: 'code-block' },
+  })
+}

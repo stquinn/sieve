@@ -7,7 +7,7 @@
 // for colour — the host<->renderer styling protocol the spec commits to). This
 // registry injects that CSS into the document exactly once per class, the first
 // time an instance of the class is constructed (see BlockRenderer in
-// fenced-block-base.js, which every renderer extends).
+// block-renderer.js, which every renderer extends).
 //
 // Two injection strategies exist behind one contract — `inject(cssText, key)` —
 // so the mechanism is swappable without touching callers:

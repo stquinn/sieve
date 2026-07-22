@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { docWithCaret, docWithCaretAt, docWithRange, docWithNodeSelection, build } from './helpers/editor-fixture.js'
 import { blockInsertPos } from '../src/static/ai/ai-target.js'
-import { emptyParagraphAnchor } from '../src/static/base/block-position.js'
+import { emptyParagraphAnchor } from '../src/static/editor/surfaces/block-position.js'
 
 // D-r.7 piece 3 — blockInsertPos is the single source for every additive block
 // insert. A block always lands as a NEW SIBLING after the enclosing top-level block
