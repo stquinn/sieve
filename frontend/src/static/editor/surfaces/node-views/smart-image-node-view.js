@@ -13,7 +13,7 @@
 // ctx dependency (see that class for why).
 
 import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block-extension.js'
-import { renderMermaidSvgEntry } from './diagram-renderer.js'
+import { DiagramRenderer } from '../../../block/renderers/diagram-renderer.js'
 import { SmartImageRenderer } from '../../../block/renderers/smart-image-renderer.js'
 
 ;(function () {
@@ -145,7 +145,7 @@ import { SmartImageRenderer } from '../../../block/renderers/smart-image-rendere
     // it, so Transform's saveSVG writes the image. Shared render helper lives in
     // diagram-renderer.js; null = no mermaid here (pass entries through unchanged).
     resolveEntries: function(sourceNode, entries) {
-      return renderMermaidSvgEntry(sourceNode, entries).then(function (svg) {
+      return DiagramRenderer.renderMermaidSvgEntry(sourceNode, entries).then(function (svg) {
         return svg ? [svg] : entries
       }).catch(function (err) {
         console.error('[smart-image] mermaid render failed for extraction', err)
