@@ -894,11 +894,14 @@ export let rendererFor
   // The backend returns [{kind, actions}]. The frontend is a dumb renderer: it shows
   // each offered (kind, action) and plays back {operation} — no replaceSource heuristic.
   detectAndAppendExtractions = function ({ sourceNode, sourceKind, entries, blockId, sourcePos, extractSourceLabel, editor }) {
-    fetch('/api/detect-extractions', {
-      method: 'POST',
-      body: JSON.stringify({ sourceKind: sourceKind, entries: entries }),
-      headers: { 'Content-Type': 'application/json' }
-    }).then(function (res) { return res.json() }).then(function (offers) {
+    // Capability discovery goes through the service boundary (issue #49 Phase 4):
+    // the BlockService owns the wire; consumers no longer speak fetch/URLs. Reached
+    // via the editor host's blockService getter (the same host whose .extract plays
+    // the chosen offer back). No host/service → nothing to discover (the menu items
+    // would be dead anyway, since dispatch needs the editor).
+    var bs = editor && editor.blockService
+    if (!bs) return
+    bs.detectExtractions({ sourceKind: sourceKind, entries: entries }).then(function (offers) {
       if (!offers || offers.length === 0) return
       if (!window.SieveContextMenu || !window.SieveContextMenu.appendItems) return
 

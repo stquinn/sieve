@@ -205,3 +205,75 @@ describe('DocumentService.onBlockUpdated — document-scoped render-back stream'
     expect(seen).toHaveLength(1)
   })
 })
+
+// ── issue #49 Phase 4: the three stray HTTP fetches now leave through the service
+// pair. The wire (URL, method, headers, body shape) is UNCHANGED — these assert the
+// frozen bytes at the service boundary (fetch stubbed; no real network).
+describe('BlockService.detectExtractions — capability discovery (POST /api/detect-extractions)', () => {
+  /** @param {any} body */
+  function stubFetch(body) {
+    const fetchMock = vi.fn(() => /** @type {any} */ (Promise.resolve({ json: () => Promise.resolve(body) })))
+    global.fetch = fetchMock
+    return fetchMock
+  }
+
+  it('POSTs {sourceKind, entries} unchanged and resolves the offers array', async () => {
+    const prevFetch = global.fetch
+    const offers = [{ kind: 'code', actions: ['extract'] }, { kind: 'prose', actions: ['transform'] }]
+    const fetchMock = stubFetch(offers)
+    try {
+      const { service } = serviceRig({ uuid: 'doc-1' })
+      const entries = [{ kind: 'sieve/code', content: 'x=1' }]
+      const res = await service.detectExtractions({ sourceKind: 'log', entries })
+      expect(res).toEqual(offers)
+      expect(fetchMock).toHaveBeenCalledWith('/api/detect-extractions', expect.objectContaining({ method: 'POST' }))
+      const opts = fetchMock.mock.calls[0][1]
+      expect(opts.headers).toEqual({ 'Content-Type': 'application/json' })
+      expect(JSON.parse(opts.body)).toEqual({ sourceKind: 'log', entries })
+    } finally { global.fetch = prevFetch }
+  })
+
+  it('propagates a rejection (network error) so the caller keeps its own catch (error parity)', async () => {
+    const prevFetch = global.fetch
+    global.fetch = /** @type {any} */ (vi.fn(() => Promise.reject(new Error('boom'))))
+    try {
+      const { service } = serviceRig({ uuid: 'doc-1' })
+      await expect(service.detectExtractions({ sourceKind: 'log', entries: [] })).rejects.toThrow('boom')
+    } finally { global.fetch = prevFetch }
+  })
+})
+
+describe('DocumentService paste pipelines (issue #49 Phase 4)', () => {
+  it('pasteSlice POSTs {uuid, slice, index} unchanged and resolves the raw Response', async () => {
+    const prevFetch = global.fetch
+    const response = { ok: true }
+    const fetchMock = /** @type {any} */ (vi.fn(() => Promise.resolve(response)))
+    global.fetch = fetchMock
+    try {
+      const { documentService } = serviceRig({ uuid: 'doc-1' })
+      const slice = [{ kind: 'prose', content: 'a' }, { kind: 'code', content: 'b' }]
+      const res = await documentService.pasteSlice('doc-1', { slice, index: 3 })
+      expect(res).toBe(response) // fire-and-forget: the raw Response, not parsed
+      expect(fetchMock).toHaveBeenCalledWith('/api/editor/paste-slice', expect.objectContaining({ method: 'POST' }))
+      const opts = fetchMock.mock.calls[0][1]
+      expect(opts.headers).toEqual({ 'Content-Type': 'application/json' })
+      expect(JSON.parse(opts.body)).toEqual({ uuid: 'doc-1', slice, index: 3 })
+    } finally { global.fetch = prevFetch }
+  })
+
+  it('smartPaste POSTs {uuid, entries, index} unchanged and resolves the parsed {matched} result', async () => {
+    const prevFetch = global.fetch
+    const fetchMock = /** @type {any} */ (vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ matched: true }) })))
+    global.fetch = fetchMock
+    try {
+      const { documentService } = serviceRig({ uuid: 'doc-1' })
+      const entries = [{ mimeType: 'text/plain', content: 'https://x.test' }]
+      const res = await documentService.smartPaste('doc-1', { entries, index: 4 })
+      expect(res).toEqual({ matched: true }) // the canonical generic-object shape, preserved
+      expect(fetchMock).toHaveBeenCalledWith('/api/editor/smart-paste', expect.objectContaining({ method: 'POST' }))
+      const opts = fetchMock.mock.calls[0][1]
+      expect(opts.headers).toEqual({ 'Content-Type': 'application/json' })
+      expect(JSON.parse(opts.body)).toEqual({ uuid: 'doc-1', entries, index: 4 })
+    } finally { global.fetch = prevFetch }
+  })
+})

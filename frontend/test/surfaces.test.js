@@ -275,7 +275,14 @@ const tokSchema = new Schema({
 // is read by the surface constructor. TestWysiwygSurface overrides uuid per call.
 function wyHost(overrides = {}) {
   return Object.assign({
-    documentService: { createBlock: vi.fn(), deleteBlock: vi.fn() },
+    // pasteSlice / smartPaste front the paste pipelines (issue #49 Phase 4 — the
+    // stray HTTP fetches now leave through DocumentService, not bare fetch()).
+    documentService: {
+      createBlock: vi.fn(),
+      deleteBlock: vi.fn(),
+      pasteSlice: vi.fn(() => Promise.resolve({})),
+      smartPaste: vi.fn(() => Promise.resolve({ matched: false })),
+    },
     blockService: { updateAttributes: vi.fn() },
     flushSave: vi.fn(),
     insertIndexForBlock: vi.fn(() => 0),
@@ -592,12 +599,8 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
 // Undo-sacred: the ai-block reimport insertContent stays a TRACKED command.
 
 describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
-  let prevFetch
-  let prevWinFetch
   let prevJsyaml
   beforeEach(() => {
-    prevFetch = global.fetch
-    prevWinFetch = window.fetch
     prevJsyaml = window.jsyaml
     window.jsyaml = { load: (s) => JSON.parse(s) }
     // The moved code now reads the caretInRawTextBlock ES import (paste-context.js,
@@ -605,14 +608,12 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     vi.mocked(caretInRawTextBlock).mockReturnValue(false)
   })
   afterEach(() => {
-    global.fetch = prevFetch
-    window.fetch = prevWinFetch
     window.jsyaml = prevJsyaml
   })
 
-  // The surface calls bare fetch() — stub BOTH global + window so no test hits
-  // the network (happy-dom binds window.fetch).
-  function stubFetch(fn) { global.fetch = fn; window.fetch = fn }
+  // The surface no longer speaks fetch — the paste pipelines leave through
+  // DocumentService.smartPaste / pasteSlice (issue #49 Phase 4). Tests stub those
+  // verbs on the host's documentService (wyHost defaults; override per-case).
 
   // Mount a real WysiwygSurface via the recording bundle; expose the editorProps
   // handlers (the wiring the editor gives ProseMirror) + the fake editor + host.
@@ -665,11 +666,12 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     expect(ed.commands.insertContent).not.toHaveBeenCalled()
   })
 
-  it('smart-paste pipeline: PEEKS the block index (side-effect-free), POSTs it, consumes the anchor on match, returns true', async () => {
-    const fetchMock = vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ matched: true }) }))
-    stubFetch(fetchMock)
+  it('smart-paste pipeline: PEEKS the block index (side-effect-free), calls the service verb, consumes the anchor on match, returns true', async () => {
+    // The surface no longer speaks fetch — it calls DocumentService.smartPaste
+    // (issue #49 Phase 4). Stub the verb on the host, not global fetch.
     const anchor = { id: 'p-1', token: '' }
     const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 4, anchor })) })
+    host.documentService.smartPaste.mockReturnValue(Promise.resolve({ matched: true }))
     const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('hello') }
     const { props } = mountPaste(host, 'doc-1')
     const event = { clipboardData: Object.assign(clip({ text: 'hello', items: [strItem] }), { items: [strItem] }), target: {}, preventDefault: vi.fn() }
@@ -679,9 +681,7 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     expect(host.insertIndexForBlock).not.toHaveBeenCalled() // no EAGER consume
     expect(event.preventDefault).toHaveBeenCalled()
     await new Promise((r) => setTimeout(r, 0))
-    expect(fetchMock).toHaveBeenCalledWith('/api/editor/smart-paste', expect.objectContaining({ method: 'POST' }))
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
-    expect(body.index).toBe(4)
+    expect(host.documentService.smartPaste).toHaveBeenCalledWith('doc-1', expect.objectContaining({ index: 4 }))
     // matched:true → the blank line is consumed NOW, by the peeked anchor handle.
     expect(host.consumeInsertAnchor).toHaveBeenCalledWith(anchor)
   })
@@ -690,9 +690,9 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
   // empty-paragraph anchor — the blank line and caret stay intact, so insertContent
   // replays into the empty paragraph, never into an adjacent code:true block.
   it('smart-paste no-match fallback: replays clipboard content AND never consumes the anchor (issue #33)', async () => {
-    stubFetch(vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ matched: false }) })))
     const anchor = { id: 'p-1', token: '' }
     const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 0, anchor })) })
+    host.documentService.smartPaste.mockReturnValue(Promise.resolve({ matched: false }))
     const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('hello') }
     const { ed, props } = mountPaste(host, 'doc-1')
     const event = { clipboardData: Object.assign(clip({ text: 'hello', items: [strItem] }), { items: [strItem] }), target: {}, preventDefault: vi.fn() }
@@ -707,6 +707,18 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     expect(ed.commands.scrollIntoView).toHaveBeenCalled()
   })
 
+  it('multi-block slice paste → DocumentService.pasteSlice(uuid, {slice, index}), clears insert pos, returns true', () => {
+    const host = wyHost({ insertIndexForBlock: vi.fn(() => 7) })
+    const { props } = mountPaste(host, 'doc-1')
+    const slice = [{ kind: 'prose', content: 'a' }, { kind: 'code', content: 'b' }]
+    const event = { clipboardData: clip({ slice: JSON.stringify(slice) }), target: {}, preventDefault: vi.fn() }
+    const handled = props.handlePaste({}, event)
+    expect(handled).toBe(true)
+    expect(event.preventDefault).toHaveBeenCalled()
+    expect(host.clearInsertPos).toHaveBeenCalled()
+    expect(host.documentService.pasteSlice).toHaveBeenCalledWith('doc-1', { slice, index: 7 })
+  })
+
   it('handleSmartDrop: image file → PEEKS insertIndexAt(dropPos) (side-effect-free), POSTs, returns true', async () => {
     // happy-dom's FileReader rejects on a non-Blob stub file, leaking an unhandled
     // rejection AFTER this test's synchronous assertions pass. This test asserts only
@@ -714,9 +726,8 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     const OrigFileReader = globalThis.FileReader
     globalThis.FileReader = class { readAsDataURL() {} }
     try {
-    const fetchMock = vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ matched: true }) }))
-    stubFetch(fetchMock)
     const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
+    host.documentService.smartPaste.mockReturnValue(Promise.resolve({ matched: true }))
     const { ed, props } = mountPaste(host, 'doc-1')
     // The surface reads posAtCoords + selection.to off the live editor.
     ed.view.posAtCoords = () => ({ pos: 12 })

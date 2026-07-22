@@ -455,6 +455,25 @@ export class BlockService {
   }
 
   /**
+   * Backend-declared extraction capability discovery: given a source kind and its
+   * content entries, ask Go which (kind, actions) it can extract/transform into.
+   * Blockid-adjacent (the existing-block half of the boundary — capabilities OF a
+   * block's content). The wire (POST /api/detect-extractions) is UNCHANGED; only
+   * the boundary moves — consumers stop speaking fetch/URLs. Resolves the offers
+   * array Go returns ([{kind, actions}]); the caller assembles the menu and owns
+   * its own catch (error parity — the caller's swallow stays where it was).
+   * @param {{sourceKind: string, entries: object[]}} payload
+   * @returns {Promise<Array<{kind: string, actions: string[]}>>}
+   */
+  detectExtractions(payload) {
+    return fetch('/api/detect-extractions', {
+      method: 'POST',
+      body: JSON.stringify({ sourceKind: payload.sourceKind, entries: payload.entries }),
+      headers: { 'Content-Type': 'application/json' },
+    }).then(function (res) { return res.json() })
+  }
+
+  /**
    * Re-run the block's backend job (kind-blind: Go knows what retry means).
    * Frame frozen: {type:'retry-block-job', uuid, id}.
    * @param {string} blockId

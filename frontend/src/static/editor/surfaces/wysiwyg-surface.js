@@ -753,13 +753,12 @@ export class WysiwygSurface extends AbstractSurface {
         var slice = JSON.parse(sliceData)
         if (Array.isArray(slice) && slice.length > 1) {
           event.preventDefault()
+          var ds = this.#host.documentService
+          if (!ds) return true // disconnected editor: paste suppressed, drop (socketless parity)
           var sliceIndex = this.#host.insertIndexForBlock()
           this.#host.clearInsertPos() // slice render-backs position by op index, not this
-          fetch('/api/editor/paste-slice', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uuid: this.#uuid, slice: slice, index: sliceIndex }),
-          }).catch(function (err) { console.error('[editor.js] paste-slice failed', err) })
+          ds.pasteSlice(this.#uuid, { slice: slice, index: sliceIndex })
+            .catch(function (err) { console.error('[editor.js] paste-slice failed', err) })
           return true
         }
       } catch (e) {
@@ -805,12 +804,9 @@ export class WysiwygSurface extends AbstractSurface {
 
         Promise.all(promises).then(function(results) {
           var validEntries = results.filter(function(r) { return r !== null })
-          fetch('/api/editor/smart-paste', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uuid: self.#uuid, entries: validEntries, index: peek.index }),
-          })
-            .then(function (r) { return r.json() })
+          var ds = self.#host.documentService
+          if (!ds) return // disconnected editor: drop (socketless parity)
+          ds.smartPaste(self.#uuid, { entries: validEntries, index: peek.index })
             .then(function (result) {
               if (!self.#editorPane) return
               if (result.matched) {
@@ -896,12 +892,9 @@ export class WysiwygSurface extends AbstractSurface {
       Promise.all(promises).then(function(results) {
         var validEntries = results.filter(function(r) { return r !== null })
         if (validEntries.length === 0) return
-        fetch('/api/editor/smart-paste', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ uuid: self.#uuid, entries: validEntries, index: peek.index }),
-        })
-          .then(function (r) { return r.json() })
+        var ds = self.#host.documentService
+        if (!ds) return // disconnected editor: drop (socketless parity)
+        ds.smartPaste(self.#uuid, { entries: validEntries, index: peek.index })
           .then(function (result) {
             if (!self.#editorPane) return
             if (result.matched) {
