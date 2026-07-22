@@ -1,6 +1,6 @@
 // code-node-view.js — Sieve NodeView ADAPTER for the 'code' kind (the PM half
 // of the renderer/NodeView split, Block Renderer Contract:
-// docs/design/specs/2026-07-21-block-renderer-contract.md). Look-and-feel (the
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md). Look-and-feel (the
 // block shell, header badge, gutter+code-area body chrome, this kind's
 // stylesheet) lives in CodeRenderer
 // (frontend/src/static/block/renderers/code-renderer.js — a DIFFERENT class,

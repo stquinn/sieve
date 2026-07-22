@@ -1,7 +1,7 @@
 // @ts-check
 // log-renderer.test.js — DoD coverage for LogRenderer (the 'log' kind's
 // look-and-feel class, Block Renderer Contract:
-// docs/design/specs/2026-07-21-block-renderer-contract.md). Bare-page protocol:
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md). Bare-page protocol:
 // render() alone yields the complete block. Scratch construction: (block) only;
 // the service-wired test below is the one live-instance case.
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'

@@ -10,7 +10,7 @@
 //
 // buildHeader() lays out a DiagramHeader via a HeaderBar; its toggle and the
 // expand button call this renderer's SEMANTIC VERBS (setMode / expand — the
-// contract's core API; docs/design/specs/2026-07-21-block-renderer-contract.md).
+// contract's core API; docs/design/archive/specs/2026-07-21-block-renderer-contract.md).
 // setMode maps the MODE enum to this kind's wire strings privately via
 // _pushAttrs; caret capture on the render-ward flip is the PM adapter's
 // business (its v1 applier). buildBody() builds both mode surfaces; the

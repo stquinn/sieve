@@ -527,7 +527,7 @@ export let rendererFor
           // and body chrome via its own render()/update(); the framework does NOT
           // assemble anything around it. The one remaining framework job for them
           // is the PM BODY PROJECTION (contract chain of custody,
-          // docs/design/specs/2026-07-21-block-renderer-contract.md): a FRESH
+          // docs/design/archive/specs/2026-07-21-block-renderer-contract.md): a FRESH
           // SCRATCH renderer instance per pass authors the body markdown from Go
           // truth (the live instance's body region is externally managed — PM's),
           // and this seam parses it into contentDOM as live document nodes via a

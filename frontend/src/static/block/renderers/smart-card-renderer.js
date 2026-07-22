@@ -1,7 +1,7 @@
 // @ts-check
 // smart-card-renderer.js — SmartCardRenderer: the renderer half of the
 // 'smart-card' kind's renderer/NodeView split. NORMATIVE contract:
-// docs/design/specs/2026-07-21-block-renderer-contract.md (APPROVED rev 2).
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md (APPROVED rev 2).
 // Owns look-and-feel ONLY: the card shell, the OG-style layout (meta row,
 // thumbnail, title/description/url), the loading/pending chrome (shared
 // StatusBadge decision tree — survey item A7), and this kind's stylesheet

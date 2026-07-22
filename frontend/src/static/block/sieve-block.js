@@ -1,6 +1,6 @@
 // @ts-check
 // sieve-block.js — the typed block envelope (Block Renderer Contract,
-// docs/design/specs/2026-07-21-block-renderer-contract.md §typed block envelope).
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md §typed block envelope).
 //
 // Raw attr maps are the block's WIRE COSTUME; they cross no consumer signature.
 // This is the ONE invariant in-memory form (mirroring Go's single SieveBlock —

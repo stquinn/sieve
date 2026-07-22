@@ -1,7 +1,7 @@
 // @ts-check
 // block-service.js — BlockService: the sieve protocol's anti-corruption layer,
 // existing-block half (Block Renderer Contract,
-// docs/design/specs/2026-07-21-block-renderer-contract.md §service pair).
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md §service pair).
 //
 // ONE instance, constructed in the Workspace composition root and handed down
 // (idiomatic-js §5 — never window.*). Renderers see THIS and only this: a

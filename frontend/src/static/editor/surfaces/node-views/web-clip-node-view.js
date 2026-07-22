@@ -1,6 +1,6 @@
 // web-clip-node-view.js — Sieve NodeView ADAPTER for the 'web-clip' kind (the
 // PM half of the renderer/NodeView split; NORMATIVE contract:
-// docs/design/specs/2026-07-21-block-renderer-contract.md
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md
 // Phase 4 / issue #47). Look-and-feel (the block shell, status chrome, this
 // kind's stylesheet) lives in WebClipRenderer
 // (frontend/src/static/block/renderers/web-clip-renderer.js — a DIFFERENT

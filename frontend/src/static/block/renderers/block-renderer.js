@@ -1,7 +1,7 @@
 // @ts-check
 // block-renderer.js — BlockRenderer: the renderer half of the renderer/
 // NodeView split. NORMATIVE contract:
-// docs/design/specs/2026-07-21-block-renderer-contract.md (APPROVED rev 2).
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md (APPROVED rev 2).
 //
 // A renderer is a LIVE, STATEFUL, LENS-BLIND, PROTOCOL-BLIND object that
 // BUILDS ITSELF and speaks BUSINESS VERBS. Contract:

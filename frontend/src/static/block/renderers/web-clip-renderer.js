@@ -7,7 +7,7 @@
 // window.* dependencies.
 //
 // This class is PURE and lens-blind (NORMATIVE contract:
-// docs/design/specs/2026-07-21-block-renderer-contract.md): buildBody() builds
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md): buildBody() builds
 // AND FILLS the body from bodyMarkdown() (the envelope's content), and update()
 // re-fills it — guarded on the #contentEl ref. In the editor lens the adapter
 // claims the BODY region via handleBuild (no #contentEl recorded; the seam

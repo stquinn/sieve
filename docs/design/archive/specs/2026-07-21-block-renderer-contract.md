@@ -1,6 +1,12 @@
 # The Block Renderer Contract
 
-**Status:** APPROVED (rev 2) — architect approval 2026-07-21. Reconcile in progress on `feature/renderer-extraction-43`.
+> **STATUS: IMPLEMENTED & ARCHIVED (2026-07-22).** The reconcile landed on
+> `feature/renderer-extraction-43` (epic #43, closed; delta recorded in its
+> comments). Follow-up: **#49** (full protocol extraction, with X-D). The #50
+> idea closed as mis-scoped — see Consequences pt 4. This page remains the
+> renderer/service contract of record until a successor supersedes it.
+
+**Status:** APPROVED (rev 2) — architect approval 2026-07-21; implemented same branch.
 **Date:** 2026-07-21 (rev 2 same day — semantic API + BlockService boundary, from the architect's review of rev 1)
 **Supersedes:** the renderer contract portions of `docs/design/archive/specs/2026-07-20-block-renderer-extraction.md` (epic #43). The uncommitted working-tree refactor approximates an earlier revision of this contract and will be reconciled to this page after approval.
 

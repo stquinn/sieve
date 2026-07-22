@@ -9,7 +9,7 @@
 // a chat turn, or the bare-page harness.
 //
 // This class is PURE and lens-blind (NORMATIVE contract:
-// docs/design/specs/2026-07-21-block-renderer-contract.md): buildBody() builds
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md): buildBody() builds
 // AND FILLS the body from bodyMarkdown() (sanctioned markdown), and update()
 // re-fills it — guarded on the #contentEl ref it recorded. In the editor lens
 // the adapter claims the BODY region via the handleBuild interceptor, so no

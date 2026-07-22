@@ -1,6 +1,6 @@
 // smart-card-node-view.js — Sieve NodeView ADAPTER for the 'smart-card' kind
 // (the PM half of the renderer/NodeView split; NORMATIVE contract:
-// docs/design/specs/2026-07-21-block-renderer-contract.md). Look-and-feel (the
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md). Look-and-feel (the
 // card shell, OG-style layout, loading chrome, this kind's stylesheet) lives
 // in SmartCardRenderer (frontend/src/static/block/renderers/smart-card-renderer.js
 // — a DIFFERENT class). This

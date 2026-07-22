@@ -1,7 +1,7 @@
 // @ts-check
 // log-renderer.js — LogRenderer: the renderer half of the 'log' kind's
 // renderer/NodeView split (Block Renderer Contract,
-// docs/design/specs/2026-07-21-block-renderer-contract.md). Owns look-and-feel
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md). Owns look-and-feel
 // ONLY: the block shell, the HEADER (badge + format + raw/explore toggle +
 // noise | filter + column buttons), the raw-text body (gutter + code-area) and
 // the Explore table, and this kind's stylesheet (`static styles`). Zero

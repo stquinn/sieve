@@ -1,7 +1,7 @@
 // @ts-check
 // code-renderer.test.js — DoD coverage for CodeRenderer (the 'code' kind's
 // look-and-feel class, Block Renderer Contract:
-// docs/design/specs/2026-07-21-block-renderer-contract.md). Definition of done
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md). Definition of done
 // for any renderer: "renders correctly in a bare page providing only :root
 // theme vars" — the bare-page protocol is render() alone yields the complete
 // block. Scratch construction: (block) only; the service-wired test below is

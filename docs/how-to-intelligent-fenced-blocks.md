@@ -22,7 +22,7 @@ A fenced block with a named language tag (e.g. ` ```web-clip ` or ` ```ai-block 
 **Status:** shipped across the block-renderer-extraction epic (#43: #44 base,
 #45 diagram, #46 ai-block, #47 code/log/web-clip/smart-card/smart-image), then
 reconciled to the APPROVED **Block Renderer Contract rev 2** —
-`docs/design/specs/2026-07-21-block-renderer-contract.md` is NORMATIVE for
+`docs/design/archive/specs/2026-07-21-block-renderer-contract.md` is NORMATIVE for
 everything in this section. Every structured kind except `smart-link`
 (deliberately unmigrated — parked pending the links decision, TECH-DEBT X-D)
 now has a `BlockRenderer` subclass in `block/renderers/` held by a thin

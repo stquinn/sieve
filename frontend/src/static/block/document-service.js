@@ -1,7 +1,7 @@
 // @ts-check
 // document-service.js — DocumentService: the sieve protocol's anti-corruption
 // layer, uuid-addressed half (Block Renderer Contract,
-// docs/design/specs/2026-07-21-block-renderer-contract.md §service pair).
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md §service pair).
 //
 // ONE instance, constructed beside BlockService in the Workspace composition
 // root (constructor injection — composed over the wire owner) and handed down.

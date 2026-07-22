@@ -71,7 +71,7 @@ export function segmentedToggle(options, activeValue, onChange) {
  * The universal EXPAND affordance button. The icon HTML and the click action
  * are injected by the RENDERER's own buildHeader (its expand() verb — one
  * behaviour, every trigger lands on it; contract
- * docs/design/specs/2026-07-21-block-renderer-contract.md).
+ * docs/design/archive/specs/2026-07-21-block-renderer-contract.md).
  * @param {string} iconHtml @param {() => void} onClick @returns {HTMLButtonElement}
  */
 export function expandButton(iconHtml, onClick) {

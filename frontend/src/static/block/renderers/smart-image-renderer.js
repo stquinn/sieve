@@ -1,7 +1,7 @@
 // @ts-check
 // smart-image-renderer.js — SmartImageRenderer: the renderer half of the
 // 'smart-image' kind's renderer/NodeView split. NORMATIVE contract:
-// docs/design/specs/2026-07-21-block-renderer-contract.md (APPROVED rev 2).
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md (APPROVED rev 2).
 // Owns look-and-feel ONLY: the image wrapper, the resize handle, the status
 // badge (shared StatusBadge decision tree — survey item A7), the premium
 // tooltip, and this kind's stylesheet (`static styles`). Zero

@@ -1,7 +1,7 @@
 // @ts-check
 // smart-image-renderer.test.js — DoD coverage for SmartImageRenderer (the
 // 'smart-image' kind's look-and-feel class; NORMATIVE contract:
-// docs/design/specs/2026-07-21-block-renderer-contract.md). Bare-page
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md). Bare-page
 // protocol: render() alone yields the complete block. Scratch construction is
 // (block) only; the resize tests construct LIVE instances over a real
 // BlockService with a registered fake applier (the v1 transport).

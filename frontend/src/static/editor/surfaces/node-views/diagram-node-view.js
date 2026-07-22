@@ -1,6 +1,6 @@
 // diagram-node-view.js — Sieve NodeView ADAPTER for the 'diagram' kind (the PM
 // half of the renderer/NodeView split; NORMATIVE contract:
-// docs/design/specs/2026-07-21-block-renderer-contract.md
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md
 // Phase 2 / issue #45). Look-and-feel (attrs in, DOM out, mermaid invocation,
 // the kind's stylesheet) lives in DiagramRenderer
 // (frontend/src/static/block/renderers/diagram-renderer.js — a DIFFERENT

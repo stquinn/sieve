@@ -1,6 +1,6 @@
 // log-node-view.js — Sieve NodeView ADAPTER for the 'log' kind (the PM half of
 // the renderer/NodeView split, Block Renderer Contract:
-// docs/design/specs/2026-07-21-block-renderer-contract.md). Look-and-feel (the
+// docs/design/archive/specs/2026-07-21-block-renderer-contract.md). Look-and-feel (the
 // block shell, header toolbar, raw-text body, Explore table, this kind's
 // stylesheet) lives in LogRenderer
 // (frontend/src/static/block/renderers/log-renderer.js — a DIFFERENT class,
