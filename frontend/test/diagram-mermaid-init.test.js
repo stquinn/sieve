@@ -15,6 +15,19 @@ if (typeof globalThis.getComputedStyle === 'undefined') {
   globalThis.getComputedStyle = window.getComputedStyle.bind(window)
 }
 
+describe('DiagramTheme.sheet — edit-mode inline-code neutralisation', () => {
+  // editor.css's `.tiptap code` styles INLINE code as an accent-green pill
+  // (background, padding, radius, 0.85em). The diagram edit surface's inner
+  // <code> sits inside .tiptap, so without this kind-local reset the pill
+  // (and its smaller line box) applies to the source text — the background-
+  // behind-just-the-text + gutter misalignment defect. CodeTheme carries the
+  // same reset; the two edit surfaces must stay visually identical.
+  it('resets the global .tiptap code pill on both edit layers', () => {
+    expect(DiagramTheme.sheet).toContain('.sieve-block--diagram .sieve-block__edit code')
+    expect(DiagramTheme.sheet).toContain('.sieve-block--diagram .sieve-block__highlight code')
+  })
+})
+
 describe('DiagramTheme.buildMermaidInit', () => {
   it('suppresses mermaid body-level error rendering (bad source is tolerated)', () => {
     const init = DiagramTheme.buildMermaidInit()

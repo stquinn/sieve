@@ -176,6 +176,26 @@ export class DiagramTheme {
     word-break: normal;
   }
 
+  /* editor.css's ".tiptap code" styles INLINE code as an accent pill
+     (background, padding, radius, 0.85em). The edit surface's inner <code>
+     sits inside .tiptap, so neutralise it on both layers or the pill and its
+     smaller line box land on the source text (background-behind-text + gutter
+     misalignment). Mirrors CodeTheme's identical reset — the two edit
+     surfaces stay visually interchangeable. */
+  .sieve-block--diagram .sieve-block__highlight code,
+  .sieve-block--diagram .sieve-block__edit code {
+    display: block;
+    background: transparent;
+    border: none;
+    padding: 0;
+    font: inherit;
+    white-space: inherit;
+    word-break: inherit;
+    tab-size: inherit;
+    color: inherit;
+    border-radius: 0;
+  }
+
   .sieve-block--diagram .sieve-block__highlight {
     color: var(--theme-text);
     background: transparent;
