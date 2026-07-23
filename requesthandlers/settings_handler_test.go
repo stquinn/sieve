@@ -233,6 +233,48 @@ func TestSettingsSaveRoute_ParsesTypedToolGrants(t *testing.T) {
 	}
 }
 
+// End-to-end over the REAL /api/settings save route: the diagram settings
+// family (PlantUML server URL + default diagram language) persists like any
+// other flat field — no containment-style overlay/rebuild needed.
+func TestSettingsSaveRoute_PersistsDiagramSettings(t *testing.T) {
+	h, dir := newTestSettingsHandler(t)
+	r := chi.NewRouter()
+	h.RegisterPaths(r)
+	srv := httptest.NewServer(r)
+	t.Cleanup(srv.Close)
+
+	form := url.Values{
+		"cli":                     {"claude"},
+		"cli_timeout_long":        {"20"},
+		"diagram_plantuml_server": {"https://plantuml.example.com"},
+		"diagram_default_type":    {"plantuml"},
+		"last_settings_panel":     {"diagrams"},
+	}
+
+	resp, err := http.PostForm(srv.URL+"/api/settings", form)
+	if err != nil {
+		t.Fatalf("POST /api/settings: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	saved := h.ServiceProvider.State.LoadSettings()
+	if saved.Diagram.PlantumlServer != "https://plantuml.example.com" {
+		t.Errorf("Diagram.PlantumlServer = %q, want https://plantuml.example.com", saved.Diagram.PlantumlServer)
+	}
+	if saved.Diagram.DefaultType != "plantuml" {
+		t.Errorf("Diagram.DefaultType = %q, want plantuml", saved.Diagram.DefaultType)
+	}
+
+	raw := readSettingsJSON(t, dir)
+	if !strings.Contains(raw, "plantuml.example.com") {
+		t.Errorf("settings.json missing persisted diagram server: %s", raw)
+	}
+}
+
 // readSettingsJSON locates and reads the state category's settings.json under
 // the FileStore root created by newTestSettingsHandler.
 func readSettingsJSON(t *testing.T, root string) string {

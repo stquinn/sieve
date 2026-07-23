@@ -114,6 +114,79 @@ func TestParseSettings_ContainmentRoundTrip_Default(t *testing.T) {
 	}
 }
 
+// DefaultSettings carries the out-of-the-box diagram defaults: the public
+// PlantUML server and mermaid as the engine new diagram blocks are born with.
+func TestDefaultSettings_Diagram(t *testing.T) {
+	got := DefaultSettings().Diagram
+	if got.PlantumlServer != "https://www.plantuml.com/plantuml" {
+		t.Errorf("Diagram.PlantumlServer = %q, want https://www.plantuml.com/plantuml", got.PlantumlServer)
+	}
+	if got.DefaultType != "mermaid" {
+		t.Errorf("Diagram.DefaultType = %q, want mermaid", got.DefaultType)
+	}
+}
+
+// ParseSettings overlays loaded diagram values onto the defaults, keeping
+// defaults for absent/empty fields.
+func TestParseSettings_DiagramOverlay(t *testing.T) {
+	loaded := ParseSettings([]byte(`{"diagram":{"plantuml_server":"https://plantuml.example.com","default_type":"plantuml"}}`))
+	if loaded.Diagram.PlantumlServer != "https://plantuml.example.com" {
+		t.Errorf("Diagram.PlantumlServer = %q, want https://plantuml.example.com", loaded.Diagram.PlantumlServer)
+	}
+	if loaded.Diagram.DefaultType != "plantuml" {
+		t.Errorf("Diagram.DefaultType = %q, want plantuml", loaded.Diagram.DefaultType)
+	}
+}
+
+// An absent/empty diagram object keeps both defaults.
+func TestParseSettings_DiagramOverlay_AbsentKeepsDefaults(t *testing.T) {
+	loaded := ParseSettings([]byte(`{}`))
+	want := DefaultSettings().Diagram
+	if loaded.Diagram != want {
+		t.Errorf("Diagram = %+v, want defaults %+v", loaded.Diagram, want)
+	}
+}
+
+// Partial overlay: only one field supplied, the other keeps its default.
+func TestParseSettings_DiagramOverlay_PartialKeepsOtherDefault(t *testing.T) {
+	loaded := ParseSettings([]byte(`{"diagram":{"default_type":"plantuml"}}`))
+	if loaded.Diagram.PlantumlServer != "https://www.plantuml.com/plantuml" {
+		t.Errorf("Diagram.PlantumlServer = %q, want default preserved", loaded.Diagram.PlantumlServer)
+	}
+	if loaded.Diagram.DefaultType != "plantuml" {
+		t.Errorf("Diagram.DefaultType = %q, want plantuml", loaded.Diagram.DefaultType)
+	}
+}
+
+// Corrupt JSON falls back to defaults entirely, including the diagram family.
+func TestParseSettings_DiagramOverlay_CorruptJSONUsesDefaults(t *testing.T) {
+	loaded := ParseSettings([]byte(`{not valid json`))
+	want := DefaultSettings().Diagram
+	if loaded.Diagram != want {
+		t.Errorf("Diagram = %+v, want defaults %+v", loaded.Diagram, want)
+	}
+}
+
+// Round-trip: Marshal -> ParseSettings preserves a customised diagram family.
+func TestParseSettings_DiagramRoundTrip(t *testing.T) {
+	s := DefaultSettings()
+	s.Diagram.PlantumlServer = "https://plantuml.example.com"
+	s.Diagram.DefaultType = "plantuml"
+
+	data, err := s.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal() error: %v", err)
+	}
+
+	got := ParseSettings(data).Diagram
+	if got.PlantumlServer != "https://plantuml.example.com" {
+		t.Errorf("round-trip PlantumlServer = %q, want https://plantuml.example.com", got.PlantumlServer)
+	}
+	if got.DefaultType != "plantuml" {
+		t.Errorf("round-trip DefaultType = %q, want plantuml", got.DefaultType)
+	}
+}
+
 // ParseSettings overlays user-added directory + mcp entries from JSON onto the
 // default profile: the additions are present alongside the untouched defaults.
 func TestParseSettings_ContainmentOverlay_UserAdditions(t *testing.T) {
