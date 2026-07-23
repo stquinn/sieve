@@ -8,7 +8,7 @@
 // window.mermaid is absent, and happy-dom's <script src> handling performs a
 // SYNCHRONOUS fetch that throws when the connection is refused (no dev server
 // here). The stub keeps every assertion about DiagramRenderer's own DOM/CSS.
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import { DiagramRenderer } from '../src/static/block/renderers/diagram-renderer.js'
 import { SieveBlock } from '../src/static/block/sieve-block.js'
 
@@ -151,5 +151,102 @@ describe('DiagramRenderer (Phase 2 pilot — bare-page DoD)', () => {
     installMermaidStub()
     const { renderer } = mount({ id: 'di-test', source: 'graph TD', diagramType: 'mermaid', mode: 'render' })
     expect(() => renderer.destroy()).not.toThrow()
+  })
+
+  it('header exposes an engine <select> reflecting diagramType, with both engines', () => {
+    const { dom } = mount({ id: 'di-test', source: 'graph TD', diagramType: 'plantuml', mode: 'edit' })
+    const select = /** @type {HTMLSelectElement} */ (dom.querySelector('select.diagram-block__engine'))
+    expect(select).toBeTruthy()
+    expect(Array.from(select.options).map((o) => o.value)).toEqual(['mermaid', 'plantuml'])
+    expect(select.value).toBe('plantuml')
+  })
+
+  it('picking an engine pushes diagramType via the block service (no source translation)', () => {
+    /** @type {{id: string, patch: object}[]} */
+    const pushes = []
+    const svc = { updateAttributes: (id, patch) => { pushes.push({ id, patch }) }, envelopeFor: () => null }
+    const renderer = new DiagramRenderer(blk({ id: 'di-x', source: 'A->B', diagramType: 'mermaid', mode: 'edit' }), svc)
+    const dom = renderer.render()
+    const select = /** @type {HTMLSelectElement} */ (dom.querySelector('select.diagram-block__engine'))
+    select.value = 'plantuml'
+    select.dispatchEvent(new Event('change'))
+    expect(pushes).toEqual([{ id: 'di-x', patch: { diagramType: 'plantuml' } }])
+    // Re-picking the current engine is a no-op (no redundant push).
+    const renderer2 = new DiagramRenderer(blk({ id: 'di-y', source: 'A->B', diagramType: 'mermaid', mode: 'edit' }), svc)
+    renderer2.setDiagramType('mermaid')
+    expect(pushes.length).toBe(1)
+  })
+})
+
+describe('DiagramRenderer.renderDiagramSvgEntry — engine-branched acquisition', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    const win = /** @type {any} */ (window)
+    delete win.mermaid
+  })
+
+  /** @param {string} text */
+  function stubFetch(text) {
+    vi.stubGlobal('fetch', () => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(text) }))
+  }
+
+  it('plantuml with svgAsset fetches the same-origin asset and returns an image/svg+xml entry', async () => {
+    stubFetch('<svg id="puml"></svg>')
+    const node = { attrs: { kind: 'diagram', diagramType: 'plantuml', svgAsset: '/sieve/uuid/di-x.svg', source: '@startuml' } }
+    const entry = await DiagramRenderer.renderDiagramSvgEntry(node, [])
+    expect(entry).toEqual({ mimeType: 'image/svg+xml', content: '<svg id="puml"></svg>' })
+  })
+
+  it('plantuml with no svgAsset yields no entry (never rendered → nothing to extract)', async () => {
+    const node = { attrs: { kind: 'diagram', diagramType: 'plantuml', svgAsset: '', source: '@startuml' } }
+    expect(await DiagramRenderer.renderDiagramSvgEntry(node, [])).toBeNull()
+  })
+
+  it('mermaid renders locally via mermaid.render (unchanged path)', async () => {
+    installMermaidStub({ svg: '<svg id="mmd"></svg>' })
+    const node = { attrs: { kind: 'diagram', diagramType: 'mermaid', source: 'graph TD; A-->B' } }
+    const entry = await DiagramRenderer.renderDiagramSvgEntry(node, [])
+    expect(entry).toEqual({ mimeType: 'image/svg+xml', content: '<svg id="mmd"></svg>' })
+  })
+})
+
+describe('DiagramRenderer — plantuml passive display branch', () => {
+  /** @type {HTMLStyleElement} */
+  let rootVars
+  beforeEach(() => { rootVars = installBareThemeVars() })
+  afterEach(() => {
+    rootVars.remove()
+    document.body.innerHTML = ''
+    vi.unstubAllGlobals()
+  })
+  /** @param {string} text */
+  function stubFetch(text) {
+    vi.stubGlobal('fetch', () => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(text) }))
+  }
+  const NOW = () => new Date().toISOString()
+
+  it('PENDING shows the job-status spinner (no fetch, no error card)', () => {
+    const { dom } = mount({ id: 'di-p', source: '@startuml\nA->B\n@enduml', diagramType: 'plantuml', mode: 'render', status: 'PENDING', createdAt: NOW() })
+    document.body.appendChild(dom)
+    expect(dom.querySelector('.diagram-block__spinner')).toBeTruthy()
+    expect(dom.querySelector('.diagram-block__error')).toBeFalsy()
+  })
+
+  it('COMPLETE fetches the svgAsset and inlines it into the panzoom wrap', async () => {
+    stubFetch('<svg id="puml-live"></svg>')
+    const { dom } = mount({ id: 'di-c', source: '@startuml\nA->B\n@enduml', diagramType: 'plantuml', mode: 'render', status: 'COMPLETE', svgAsset: '/sieve/uuid/di-c.svg', createdAt: NOW() })
+    document.body.appendChild(dom)
+    await new Promise((r) => setTimeout(r, 0))
+    const svg = dom.querySelector('.diagram-block__panzoom svg')
+    expect(svg).toBeTruthy()
+    expect(svg?.getAttribute('id')).toBe('puml-live')
+  })
+
+  it('ERROR shows the error card carrying the backend error attr', () => {
+    const { dom } = mount({ id: 'di-e', source: '@startuml\nbad\n@enduml', diagramType: 'plantuml', mode: 'render', status: 'ERROR', error: 'server returned 502', createdAt: NOW() })
+    document.body.appendChild(dom)
+    const msg = dom.querySelector('.diagram-block__error-msg')
+    expect(msg).toBeTruthy()
+    expect(msg?.textContent).toContain('server returned 502')
   })
 })

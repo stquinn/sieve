@@ -141,14 +141,15 @@ import { SmartImageRenderer } from '../../../block/renderers/smart-image-rendere
 
       ]
     },
-    // Extract → Image: render the diagram's mermaid to SVG and REPLACE the entries with
-    // it, so Transform's saveSVG writes the image. Shared render helper lives in
-    // diagram-renderer.js; null = no mermaid here (pass entries through unchanged).
+    // Extract → Image: acquire the diagram's SVG and REPLACE the entries with
+    // it, so Transform's saveSVG writes the image. Shared helper lives in
+    // diagram-renderer.js and branches on the engine (mermaid renders locally,
+    // plantuml fetches its svgAsset); null = nothing to extract (pass through).
     resolveEntries: function(sourceNode, entries) {
-      return DiagramRenderer.renderMermaidSvgEntry(sourceNode, entries).then(function (svg) {
+      return DiagramRenderer.renderDiagramSvgEntry(sourceNode, entries).then(function (svg) {
         return svg ? [svg] : entries
       }).catch(function (err) {
-        console.error('[smart-image] mermaid render failed for extraction', err)
+        console.error('[smart-image] diagram render failed for extraction', err)
         window.alert('Failed to extract diagram: ' + err.message)
         return entries
       })

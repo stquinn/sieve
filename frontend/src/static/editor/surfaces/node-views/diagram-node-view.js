@@ -34,15 +34,16 @@ import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block
 import { MODE } from '../../../block/sieve-block.js'
 import { DiagramRenderer } from '../../../block/renderers/diagram-renderer.js'
 
-// ensureMermaid / renderMermaidSvgEntry — re-exported for the two existing
-// cross-file consumers (smart-image-renderer.js imports statically,
+// ensureMermaid / renderDiagramSvgEntry — re-exported for the two existing
+// cross-file consumers (smart-image-node-view.js imports statically,
 // prose-block.js imports dynamically via import('../editor/surfaces/node-views/diagram-node-view.js')
 // so as never to eagerly evaluate a processor module — see prose-block.js's
 // comment). Both symbols now just delegate to DiagramRenderer's statics; unlike
 // the pre-split version, they no longer depend on this file's registration IIFE
-// having run (a latent gap the split incidentally closes).
+// having run (a latent gap the split incidentally closes). renderDiagramSvgEntry
+// branches on the engine: mermaid renders locally, plantuml fetches its svgAsset.
 export function ensureMermaid() { return DiagramRenderer.ensureMermaid() }
-export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRenderer.renderMermaidSvgEntry(sourceNode, entries) }
+export function renderDiagramSvgEntry(sourceNode, entries) { return DiagramRenderer.renderDiagramSvgEntry(sourceNode, entries) }
 
 ;(function () {
   'use strict'
@@ -137,10 +138,18 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
       return esc(typeof data.source === 'string' ? data.source : '')
     },
 
+    // status/createdAt come from BASE_ATTRS (merged for every sieve node). The
+    // plantuml render job additionally sets svgAsset (the rendered SVG's
+    // same-origin ExternalRef) and error — declared here so those render-backs
+    // land on the PM node and reach DiagramRenderer. renderedHash is the
+    // backend's dispatch gate only (frontend never reads it), so it is not
+    // declared. mermaid blocks leave svgAsset/error empty.
     attrs: {
       source:      { default: '', parseHTML: function (el) { return el.getAttribute('data-source')       || '' } },
       diagramType: { default: 'mermaid', parseHTML: function (el) { return el.getAttribute('data-diagram-type') || 'mermaid' } },
       mode:        { default: 'render', parseHTML: function (el) { return el.getAttribute('data-mode')   || 'render' } },
+      svgAsset:    { default: '',   parseHTML: function (el) { return el.getAttribute('data-svg-asset')  || '' } },
+      error:       { default: null, parseHTML: function (el) { return el.getAttribute('data-error')      || null } },
     },
 
     getFriendlyName: function() { return 'Diagram' },
@@ -160,6 +169,8 @@ export function renderMermaidSvgEntry(sourceNode, entries) { return DiagramRende
         source:      typeof data.source === 'string' ? data.source : '',
         diagramType: data.diagramType || 'mermaid',
         mode:        data.mode        || 'render',
+        svgAsset:    typeof data.svgAsset === 'string' ? data.svgAsset : '',
+        error:       data.error       || null,
       }
     },
 
