@@ -119,7 +119,26 @@ export class MediaLightbox {
       cursor: 'grab', canvas: true,
     })
     this.#panzoom = pz
-    stage.addEventListener('wheel', pz.zoomWithWheel, { passive: false })
+    // Cursor-anchored wheel zoom. panzoom's zoomToPoint/zoomWithWheel measures the
+    // cursor offset from the PARENT's content-box origin and assumes the panzoomed
+    // element sits there. The stage flex-centres `content` (fit-content), so content's
+    // layout box is inset by gap=(stageInner−contentLayout)/2 on each axis — a constant
+    // panzoom cannot see, so its focal is off by exactly that gap and the zoom drifts to
+    // a corner (a known panzoom + flex-centering pitfall). Shift the cursor point back by
+    // the gap before handing it to zoomWithWheel so the focal lands on the true content
+    // point under the cursor. offsetWidth/Height are LAYOUT metrics (transform-immune), so
+    // the gap is stable across pan/zoom. Same correction for <img> (origin 50% 50%) and
+    // inline <svg> (origin 0 0) — both share the identical layout gap.
+    stage.addEventListener('wheel', (e) => {
+      e.preventDefault()
+      const gapX = (stage.clientWidth - content.offsetWidth) / 2
+      const gapY = (stage.clientHeight - content.offsetHeight) / 2
+      pz.zoomWithWheel({
+        preventDefault() {},
+        deltaX: e.deltaX, deltaY: e.deltaY,
+        clientX: e.clientX - gapX, clientY: e.clientY - gapY,
+      })
+    }, { passive: false })
     // Double-click toggles fit(reset) ↔ 2×.
     content.addEventListener('dblclick', () => {
       if (pz.getScale() > 1.05) pz.reset()
