@@ -286,7 +286,7 @@ type StoreInfo struct {
 	Debug              bool            `json:"debug"`
 	AutosaveDebounce   int             `json:"autosaveDebounce"`
 	ThemeName          string          `json:"themeName"`
-	ThemeVars          sieve.ThemeVars `json:"themeVars"`
+	ThemeVars          domain.ThemeVars `json:"themeVars"`
 	MaxHistoryVersions int             `json:"maxHistoryVersions"`
 	CLITimeoutLong     int             `json:"cliTimeoutLong"`
 	ShowPrompts        bool            `json:"showPrompts"`
@@ -296,7 +296,7 @@ func (a *App) getStoreInfo() StoreInfo {
 	if a.storePath == "" || a.State == nil {
 		logger.Warn("getStoreInfo: store not open")
 		return StoreInfo{
-			ThemeVars: sieve.ThemeVars{},
+			ThemeVars: domain.ThemeVars{},
 		}
 	}
 
@@ -314,7 +314,7 @@ func (a *App) getStoreInfo() StoreInfo {
 		Debug:              liveSettings.Debug,
 		AutosaveDebounce:   liveSettings.AutosaveDebounce,
 		ThemeName:          liveSettings.Theme,
-		ThemeVars:          sieve.LoadTheme(liveSettings.Theme, a.loadThemeOverride(liveSettings.Theme), a.themesFS),
+		ThemeVars:          domain.LoadTheme(liveSettings.Theme, a.loadThemeOverride(liveSettings.Theme), a.themesFS),
 		MaxHistoryVersions: liveSettings.MaxHistoryVersions,
 		CLITimeoutLong:     liveSettings.CLITimeoutLong,
 		ShowPrompts:        a.State.LoadSession().ShowPrompts,

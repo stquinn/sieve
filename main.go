@@ -17,6 +17,7 @@ import (
 	"sieve/config"
 	"sieve/logger"
 	"sieve/sieve"
+	"sieve/sieve/domain"
 	"sieve/sieve/services"
 	"sieve/sse"
 
@@ -222,7 +223,7 @@ func (m *muxHandler) serveThemeCSS(w http.ResponseWriter, _ *http.Request) {
 		themeOverride = m.app.loadThemeOverride(themeName)
 	}
 
-	vars := sieve.LoadTheme(themeName, themeOverride, m.app.getThemesFS())
+	vars := domain.LoadTheme(themeName, themeOverride, m.app.getThemesFS())
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("html:root {\n"))

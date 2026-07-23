@@ -1,4 +1,4 @@
-package sieve
+package domain
 
 import (
 	"encoding/json"
