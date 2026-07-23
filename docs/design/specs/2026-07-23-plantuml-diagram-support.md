@@ -63,7 +63,23 @@ default-language dropdown.
     satisfies the dispatch condition. Flip with an unchanged source → hash
     matches → no job → the existing asset displays instantly
     (`renderedHash` is the render cache key).
-  - The job, in strict order: `PlantumlPort.Render` → write SVG via
+  - **Theming — the legibility floor is in scope.** Raw PlantUML output
+    (near-black on transparent) is unreadable in dark themes — a defect,
+    not a nicety. The job composes *effective source* = **theme preamble +
+    user source**: a stock `!theme` / couple of `skinparam` lines
+    (background + font color) mapped from the app theme's light/dark
+    family. Prepend order gives correct precedence for free (user
+    directives later in the file override ours); the preamble is part of
+    the render input and therefore of `renderedHash` — theme switches make
+    blocks honestly stale with zero new invalidation machinery (the
+    existing `sse:settings:changed` hook can nudge visible rendered blocks
+    to re-dispatch). The processor job owns the composition;
+    `PlantumlService` stays dumb transport. Full `--theme-*` fidelity
+    (mermaid's `themeVariables` equivalent) is the follow-up tier; CSS
+    post-patching (inline `fill`/`stroke` attrs, no classes) and
+    `filter: invert()` hacks are rejected.
+  - The job, in strict order: compose effective source →
+    `PlantumlPort.Render` → write SVG via
     `AssetsPort` as **one asset per block** (stable name from the block ID,
     overwritten each render — no GC question) → *then* set
     `{svgAsset, renderedHash, status: COMPLETE}`. The asset exists before the
@@ -149,7 +165,9 @@ default-language dropdown.
 
 ## Out of scope (follow-ups)
 
-- Theming PlantUML output to `--theme-*` (server-rendered; would need skinparam
-  injection).
+- Full `--theme-*` fidelity theming (per-var `skinparam` mapping, the
+  mermaid `themeVariables` equivalent) — the light/dark legibility floor IS
+  in scope (see the job's theme preamble above); only the fidelity tier is
+  deferred.
 - Local-jar rendering backend (`java -jar plantuml.jar -pipe -tsvg`) behind the
   `PlantumlPort.Render` seam.
