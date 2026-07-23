@@ -417,6 +417,7 @@ type BlockServices struct {
 	Assets      AssetsPort
 	LinkPreview LinkPreviewPort
 	State       StatePort
+	Plantuml    PlantumlPort
 }
 
 var (

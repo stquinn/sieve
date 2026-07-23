@@ -24,6 +24,7 @@ type ServiceProvider struct {
 	Jobs        *services.JobTracker
 	Engine      *services.JobEngine
 	LinkPreview *services.LinkPreviewService
+	Plantuml    *services.PlantumlService
 	MCP         *mcp.Server
 }
 
@@ -36,6 +37,7 @@ func (s *ServiceProvider) BlockServices() block.BlockServices {
 		Assets:      s.Assets,
 		LinkPreview: s.LinkPreview,
 		State:       s.State,
+		Plantuml:    s.Plantuml,
 	}
 }
 
@@ -46,6 +48,7 @@ var (
 	_ block.AssetsPort      = (*services.AssetService)(nil)
 	_ block.StatePort       = (*services.StateService)(nil)
 	_ block.LinkPreviewPort = (*services.LinkPreviewService)(nil)
+	_ block.PlantumlPort    = (*services.PlantumlService)(nil)
 )
 
 func (s *ServiceProvider) Init(store store.Store, storePath string) {
@@ -76,6 +79,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 	s.MCP = mcp.NewServer(s.Documents)
 	s.AI.SetMCPEndpoint(s.MCP)
 	s.LinkPreview = services.NewLinkPreviewService()
+	s.Plantuml = services.NewPlantumlService(s.State)
 	settings := s.State.LoadSettings()
 	s.ApplyRetention(settings.MaxHistoryVersions)
 	autosave := time.Duration(settings.AutosaveDebounce) * time.Second

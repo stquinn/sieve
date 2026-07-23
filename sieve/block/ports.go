@@ -33,3 +33,10 @@ type LinkPreviewPort interface {
 	FetchTitle(targetURL string) string
 	FetchFull(targetURL string) domain.LinkPreviewResult
 }
+
+// PlantumlPort is the PlantUML rendering surface processors use. Render takes
+// PlantUML source and returns SVG bytes. v1 backend is an HTTP fetch from the
+// configured server; a local-jar backend can replace it behind this seam.
+type PlantumlPort interface {
+	Render(source string) ([]byte, error)
+}
