@@ -3,6 +3,7 @@ package processors
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -350,6 +351,68 @@ func TestDiagramProcessor_codeBlockLanguagePaths(t *testing.T) {
 		if got["diagramType"] != lang {
 			t.Errorf("code[%s]: diagramType got %v, want %s", lang, got["diagramType"], lang)
 		}
+	}
+}
+
+// TestDiagramProcessor_TransformSieveCopyStripsRenderState proves the paste/
+// duplicate path (e.IsSieveType) never lets a copy inherit the original
+// block's render-job output. Without the strip, a pasted/duplicated plantuml
+// diagram carries the ORIGINAL block's svgAsset + a matching renderedHash —
+// DescribeJob's cache-hit check (prev == hash) then permanently skips
+// rendering the copy, leaving it dependent on the original's asset file
+// forever (dangles if the original document is trashed) and violating the
+// one-asset-per-block invariant.
+func TestDiagramProcessor_TransformSieveCopyStripsRenderState(t *testing.T) {
+	p := NewDiagramProcessor(block.BlockServices{})
+	original := map[string]interface{}{
+		"id":           "di-orig",
+		"diagramType":  "plantuml",
+		"source":       "A -> B",
+		"mode":         "render",
+		"status":       block.BlockStatusComplete,
+		"svgAsset":     "di-orig.svg",
+		"renderedHash": "deadbeefcafe",
+		"error":        "",
+	}
+	raw, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("marshal fixture: %v", err)
+	}
+	entries := []block.ContentEntry{{MIMEType: "sieve/diagram", Content: string(raw)}}
+
+	overrides := p.Transform(entries, "u1", "di-new", block.ActionTransform)
+	if overrides == nil {
+		t.Fatal("Transform must return overrides for a sieve/diagram copy")
+	}
+	for _, k := range []string{"svgAsset", "renderedHash", "status", "error"} {
+		if v, present := overrides[k]; present {
+			t.Errorf("copied overrides must not carry %q; got %v", k, v)
+		}
+	}
+	if overrides["source"] != "A -> B" {
+		t.Errorf("copy must keep the diagram source; got %v", overrides["source"])
+	}
+
+	// Feeding these overrides through InitAttrs must behave exactly like a
+	// newborn plantuml block with a source: PENDING, so DescribeJob dispatches
+	// a fresh render job that gives the copy its own asset.
+	attrs := p.InitAttrs("di-new", overrides)
+	if attrs["status"] != block.BlockStatusPending {
+		t.Fatalf("copy must start PENDING so it renders its own asset; got %v", attrs["status"])
+	}
+
+	assets := &recordingAssets{}
+	pl := &fakePlantuml{svg: []byte("<svg>ok</svg>")}
+	p2 := NewDiagramProcessor(block.BlockServices{
+		State:     darkState(),
+		Plantuml:  pl,
+		Assets:    assets,
+		Documents: &fakeDocuments{},
+	})
+	blk := &block.SieveBlock{ID: "di-new", Kind: "diagram", Attrs: attrs}
+	job := describe(p2, blk)
+	if job == nil {
+		t.Fatal("copy must dispatch its own render job, not reuse the original's cached hash/asset")
 	}
 }
 

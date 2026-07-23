@@ -110,7 +110,7 @@ func (p *DiagramProcessor) IsSupportedContent(entries []block.ContentEntry) bloc
 func (p *DiagramProcessor) Transform(entries []block.ContentEntry, _ string, _ string, action block.Action) map[string]interface{} {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
-			return e.AsAttrsForNewBlock(p)
+			return p.stripRenderState(e.AsAttrsForNewBlock(p))
 		}
 		if m := mermaidFenceRe.FindStringSubmatch(e.Content); m != nil {
 			return map[string]interface{}{"source": strings.TrimSpace(m[1]), "diagramType": "mermaid"}
@@ -127,6 +127,23 @@ func (p *DiagramProcessor) Transform(entries []block.ContentEntry, _ string, _ s
 		}
 	}
 	return nil
+}
+
+// stripRenderState removes the render-job's OUTPUT attrs (svgAsset,
+// renderedHash, error, status) from a copied block's overrides. A pasted or
+// duplicated plantuml diagram (e.IsSieveType path in Transform) otherwise
+// inherits the ORIGINAL block's asset reference and a matching renderedHash —
+// DescribeJob's cache-hit check would then never re-render the copy, leaving
+// it permanently dependent on the original's asset file (dangling if that
+// document is later trashed) and violating the one-asset-per-block invariant.
+// Stripping these attrs makes InitAttrs treat the copy exactly as newborn:
+// plantuml + non-empty source → PENDING → its own render job → its own asset.
+// Mermaid is unaffected (it carries no render-job attrs to strip).
+func (p *DiagramProcessor) stripRenderState(attrs map[string]interface{}) map[string]interface{} {
+	for _, k := range []string{"svgAsset", "renderedHash", "error", "status"} {
+		delete(attrs, k)
+	}
+	return attrs
 }
 
 func (p *DiagramProcessor) OnChange(_ *block.SieveBlock) {}
