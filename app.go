@@ -167,7 +167,7 @@ func (a *App) startup(ctx context.Context) {
 		logger.Error("filestore init failed", "err", err)
 		return
 	}
-	a.ServiceProvider.Init(fs, a.storePath)
+	a.ServiceProvider.Init(fs, a.storePath, a.themesFS)
 	a.Documents = a.ServiceProvider.Documents
 	a.Assets = a.ServiceProvider.Assets
 	a.State = a.ServiceProvider.State

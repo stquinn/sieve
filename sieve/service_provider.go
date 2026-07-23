@@ -1,6 +1,7 @@
 package sieve
 
 import (
+	"io/fs"
 	"sieve/logger"
 	"sieve/sieve/ai"
 	"sieve/sieve/block"
@@ -51,7 +52,7 @@ var (
 	_ block.PlantumlPort    = (*services.PlantumlService)(nil)
 )
 
-func (s *ServiceProvider) Init(store store.Store, storePath string) {
+func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.FS) {
 	s.Store = store
 	var err error
 
@@ -61,7 +62,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string) {
 		return
 	}
 	s.Assets = services.NewAssetService(store)
-	s.State, err = services.NewStateService(store)
+	s.State, err = services.NewStateService(store, storePath, themesFS)
 	if err != nil {
 		logger.Error("state init failed", "err", err)
 		return

@@ -26,6 +26,10 @@ type AssetsPort interface {
 // StatePort is the settings-read surface processors use.
 type StatePort interface {
 	LoadSettings() domain.Settings
+	// ActiveThemeVars returns the resolved variables of the currently configured
+	// theme (store-local override first, then embedded builtins). Processors that
+	// theme their output (e.g. the diagram render job's PlantUML preamble) read it.
+	ActiveThemeVars() domain.ThemeVars
 }
 
 // LinkPreviewPort is the URL-metadata surface processors use.

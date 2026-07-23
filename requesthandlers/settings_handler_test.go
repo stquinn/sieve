@@ -31,7 +31,7 @@ func newTestSettingsHandler(t *testing.T) (*SettingsHandler, string) {
 	if err != nil {
 		t.Fatalf("NewFileStore: %v", err)
 	}
-	state, err := services.NewStateService(fs)
+	state, err := services.NewStateService(fs, "", nil)
 	if err != nil {
 		t.Fatalf("NewStateService: %v", err)
 	}
