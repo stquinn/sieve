@@ -88,6 +88,14 @@ func (p *SmartImageProcessor) IsSupportedContent(entries []block.ContentEntry) b
 					return block.SupportedActions{Kind: p.Kind(), Actions: sieve}
 				}
 			}
+			// plantuml has no client-side renderer: the frontend's acquisition path
+			// (renderDiagramSvgEntry) fetches the already-persisted svgAsset, so
+			// offering extract before a render job has produced one would be a lie.
+			if dt, _ := attrs["diagramType"].(string); dt == "plantuml" {
+				if svg, _ := attrs["svgAsset"].(string); strings.TrimSpace(svg) != "" {
+					return block.SupportedActions{Kind: p.Kind(), Actions: sieve}
+				}
+			}
 		}
 		if e.MIMEType == "text/html" {
 			if src := extractHTMLImageSrc(e.Content); src != "" && isImageURL(src) {

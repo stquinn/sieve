@@ -26,10 +26,21 @@ type AssetsPort interface {
 // StatePort is the settings-read surface processors use.
 type StatePort interface {
 	LoadSettings() domain.Settings
+	// ActiveThemeVars returns the resolved variables of the currently configured
+	// theme (store-local override first, then embedded builtins). Processors that
+	// theme their output (e.g. the diagram render job's PlantUML preamble) read it.
+	ActiveThemeVars() domain.ThemeVars
 }
 
 // LinkPreviewPort is the URL-metadata surface processors use.
 type LinkPreviewPort interface {
 	FetchTitle(targetURL string) string
 	FetchFull(targetURL string) domain.LinkPreviewResult
+}
+
+// PlantumlPort is the PlantUML rendering surface processors use. Render takes
+// PlantUML source and returns SVG bytes. v1 backend is an HTTP fetch from the
+// configured server; a local-jar backend can replace it behind this seam.
+type PlantumlPort interface {
+	Render(source string) ([]byte, error)
 }

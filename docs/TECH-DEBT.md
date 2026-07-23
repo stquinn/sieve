@@ -263,7 +263,9 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 
 **Retires when:** boundary cases are pinned in the contract matrix during a conformance pass and, if confirmed, guarded via a `filterTransaction` on the policy extension (transaction-level, ordering-immune) rather than more key handling.
 
-## W-A: wails devserver panics on external-browser WebSocket upgrades (assetdir mode)
+## W-A: wails devserver panics on external-browser WebSocket upgrades (assetdir mode) — ✅ RETIRED 2026-07-23
+
+**RETIRED** — re-tested during #54 UI validation (same wails v2.12.0): headless Chrome at `:34115` now gets a working `/api/ws` (job render-backs observed live; zero panics across a full dev session's external page loads). Browser-driven testing can exercise WS-dependent editor paths in dev mode. The in-process Go harness (`ws_takeover_test.go`) remains the seam for committed WS tests. Original entry below for history.
 
 **Tracked:** Forgejo #21 documents the constraint.
 

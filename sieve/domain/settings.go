@@ -38,8 +38,9 @@ type Settings struct {
 	WorkerPools        map[string]int    `json:"worker_pools,omitempty"`
 	// PromptTimeouts overrides the CLI timeout (seconds) per prompt name. A
 	// zero or absent entry falls back to CLITimeoutLong.
-	PromptTimeouts map[string]int `json:"prompt_timeouts,omitempty"`
-	AI             AISettings     `json:"ai,omitempty"`
+	PromptTimeouts map[string]int  `json:"prompt_timeouts,omitempty"`
+	AI             AISettings      `json:"ai,omitempty"`
+	Diagram        DiagramSettings `json:"diagram,omitempty"`
 }
 
 // AISettings groups AI-subsystem settings under a nested "ai" object.
@@ -49,6 +50,12 @@ type AISettings struct {
 	// WithoutBaseline is applied only at serialisation time (Settings.Marshal),
 	// so settings.json holds just the user's additions on top of code defaults.
 	Containment ContainmentProfile `json:"containment"`
+}
+
+// DiagramSettings groups diagram-subsystem settings under a nested "diagram" object.
+type DiagramSettings struct {
+	PlantumlServer string `json:"plantuml_server,omitempty"`
+	DefaultType    string `json:"default_type,omitempty"`
 }
 
 // Tier returns the capability tier based on whether the configured CLI is
@@ -118,6 +125,12 @@ func ParseSettings(data []byte) Settings {
 	if len(loaded.PromptTimeouts) > 0 {
 		s.PromptTimeouts = loaded.PromptTimeouts
 	}
+	if loaded.Diagram.PlantumlServer != "" {
+		s.Diagram.PlantumlServer = loaded.Diagram.PlantumlServer
+	}
+	if loaded.Diagram.DefaultType != "" {
+		s.Diagram.DefaultType = loaded.Diagram.DefaultType
+	}
 	// Overlay persisted containment overrides onto the default profile so the
 	// in-memory settings always carry the full profile (defaults + additions).
 	s.AI.Containment = LoadContainmentProfile(loaded.AI.Containment)
@@ -146,6 +159,10 @@ func DefaultSettings() Settings {
 		MaxHistoryVersions: 200,
 		WorkerPools:        map[string]int{}, // empty ⇒ every category uses the engine's defaultN
 		AI:                 AISettings{Containment: DefaultContainmentProfile()},
+		Diagram: DiagramSettings{
+			PlantumlServer: "https://www.plantuml.com/plantuml",
+			DefaultType:    "mermaid",
+		},
 	}
 }
 

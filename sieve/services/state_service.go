@@ -2,7 +2,9 @@ package services
 
 import (
 	"errors"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"sieve/logger"
 	"sieve/sieve/domain"
 	"sieve/store"
@@ -15,6 +17,8 @@ import (
 // Create one with NewStateService — do not construct directly.
 type StateService struct {
 	st             store.Store
+	storePath      string // library root; where store-local theme overrides live
+	themes         fs.FS  // embedded builtin themes (themes/*.json)
 	mu             sync.RWMutex
 	cachedSession  *domain.Session
 	cachedSettings *domain.Settings
@@ -26,11 +30,35 @@ func (ss *StateService) Store() store.Store {
 	return ss.st
 }
 
-func NewStateService(st store.Store) (*StateService, error) {
+// NewStateService creates a StateService backed by st. storePath locates
+// store-local theme overrides ({storePath}/themes/<name>.json) and themes is the
+// embedded builtin theme FS — both feed ActiveThemeVars; either may be empty/nil
+// (theme resolution then falls through to an empty var set).
+func NewStateService(st store.Store, storePath string, themes fs.FS) (*StateService, error) {
 	if err := st.PrepareCategory(domain.State); err != nil {
 		return nil, err
 	}
-	return &StateService{st: st}, nil
+	return &StateService{st: st, storePath: storePath, themes: themes}, nil
+}
+
+// ActiveThemeVars resolves the currently configured theme's variables: a
+// store-local override file wins, then the embedded builtins. Mirrors the
+// resolution the App does for the frontend, so the backend (diagram render job)
+// sees the same theme the user sees.
+func (ss *StateService) ActiveThemeVars() domain.ThemeVars {
+	name := ss.LoadSettings().Theme
+	return domain.LoadTheme(name, ss.loadThemeOverride(name), ss.themes)
+}
+
+// loadThemeOverride reads the store-local theme override file for name, if any.
+// Returns nil when no override exists or the store path is unset. Mirrors
+// App.loadThemeOverride.
+func (ss *StateService) loadThemeOverride(name string) []byte {
+	if ss.storePath == "" || name == "" {
+		return nil
+	}
+	data, _ := os.ReadFile(filepath.Join(ss.storePath, "themes", name+".json"))
+	return data
 }
 
 // LoadSession returns the current session. If no session exists in the Store

@@ -199,7 +199,7 @@ export let ProseBlock
     // render it to an SVG and INSERT that image entry (keeping the source). prose.Transform
     // then embeds the image (![](url)) instead of the mermaid fence. Render failure or a
     // non-diagram source → entries unchanged → the normal embed path (fence/markdown/text).
-    // renderMermaidSvgEntry is diagram-renderer.js's — imported DYNAMICALLY (not a static
+    // renderDiagramSvgEntry is diagram-renderer.js's — imported DYNAMICALLY (not a static
     // top-level import) so pulling in prose-block.js never eagerly evaluates a processor
     // module. Every processor calls registerSieveRenderer at ITS OWN top level (an
     // unconditional side effect that needs the vendor Node/mergeAttributes already on the
@@ -208,7 +208,7 @@ export let ProseBlock
     // place. This mirrors the original bus read's timing: it only resolved at CALL time.
     resolveEntries: function (sourceNode, entries) {
       return import('../editor/surfaces/node-views/diagram-node-view.js').then(function (mod) {
-        return mod.renderMermaidSvgEntry(sourceNode, entries)
+        return mod.renderDiagramSvgEntry(sourceNode, entries)
       }).then(function (svg) {
         return svg ? (entries || []).concat([svg]) : entries
       }).catch(function () {

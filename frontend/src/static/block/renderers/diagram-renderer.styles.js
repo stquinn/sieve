@@ -76,6 +76,61 @@ export class DiagramTheme {
     font-family: var(--theme-monoFont);
   }
 
+  /* Engine picker — a native <select> dressed to read AS the type label, with a
+     chevron that fades in on hover so the affordance stays quiet until sought. */
+  .diagram-block__engine-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .diagram-block__engine-wrap::after {
+    content: "▾";
+    position: absolute;
+    right: 1px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 8px;
+    color: var(--theme-fg3);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+
+  .diagram-block__engine-wrap:hover::after,
+  .diagram-block__engine-wrap:focus-within::after {
+    opacity: 1;
+  }
+
+  .diagram-block__engine {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background: transparent;
+    border: none;
+    border-radius: 3px;
+    margin: 0;
+    padding: 1px 12px 1px 2px;
+    font-family: var(--theme-monoFont);
+    font-size: 10px;
+    line-height: 1.4;
+    color: var(--theme-fg3);
+    cursor: pointer;
+    outline: none;
+    transition: color 0.1s, background-color 0.1s;
+  }
+
+  .diagram-block__engine:hover,
+  .diagram-block__engine:focus {
+    color: var(--theme-fg2);
+    background: var(--theme-bgLight);
+  }
+
+  .diagram-block__engine option {
+    background: var(--theme-bgDark);
+    color: var(--theme-text);
+  }
+
   /* Pill mode toggle */
   .diagram-block__toggle {
     display: flex;

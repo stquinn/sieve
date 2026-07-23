@@ -34,7 +34,7 @@ func TestProfile_RendersSavedUserAdditions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileStore: %v", err)
 	}
-	state, err := services.NewStateService(fs)
+	state, err := services.NewStateService(fs, "", nil)
 	if err != nil {
 		t.Fatalf("NewStateService: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestProfile_DoesNotLeakBearerIntoCachedSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileStore: %v", err)
 	}
-	state, err := services.NewStateService(fs)
+	state, err := services.NewStateService(fs, "", nil)
 	if err != nil {
 		t.Fatalf("NewStateService: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestRefineLanguage_ThreadsProfileAndLibraryDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileStore: %v", err)
 	}
-	state, err := services.NewStateService(fs)
+	state, err := services.NewStateService(fs, "", nil)
 	if err != nil {
 		t.Fatalf("NewStateService: %v", err)
 	}

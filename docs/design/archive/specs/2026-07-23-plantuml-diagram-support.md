@@ -1,3 +1,5 @@
+> **STATUS: DONE** — shipped 2026-07-23 on `feature/plantuml-54` (11 commits, merged v0.21.0); all work items + 4 defect fixes in-branch, lightbox zoom-anchor fix (#35) rode along. Theming Tier 1 follow-up: #56. Archived 2026-07-23.
+
 # PlantUML Diagram Support
 
 *2026-07-23 · Tracked: #54*

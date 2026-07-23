@@ -8,6 +8,7 @@
     <button id="settings-tab-btn-aiaccess" class="settings-tab-btn {{if eq .LastSettingsPanel "aiaccess"}}active{{end}}" onclick="switchSettingsTab(this, 'aiaccess')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "aiaccess"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "aiaccess"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">AI Access</button>
     <button id="settings-tab-btn-appearance" class="settings-tab-btn {{if eq .LastSettingsPanel "appearance"}}active{{end}}" onclick="switchSettingsTab(this, 'appearance')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "appearance"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "appearance"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Appearance</button>
     <button id="settings-tab-btn-editor" class="settings-tab-btn {{if eq .LastSettingsPanel "editor"}}active{{end}}" onclick="switchSettingsTab(this, 'editor')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "editor"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "editor"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Editor</button>
+    <button id="settings-tab-btn-diagrams" class="settings-tab-btn {{if eq .LastSettingsPanel "diagrams"}}active{{end}}" onclick="switchSettingsTab(this, 'diagrams')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "diagrams"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "diagrams"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Diagrams</button>
     <button id="settings-tab-btn-logs" class="settings-tab-btn {{if eq .LastSettingsPanel "logs"}}active{{end}}" onclick="switchSettingsTab(this, 'logs')" style="text-align: left; padding: 0.6rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; background: {{if eq .LastSettingsPanel "logs"}}var(--theme-bg){{else}}transparent{{end}}; color: {{if eq .LastSettingsPanel "logs"}}var(--theme-accentPrimary){{else}}var(--theme-textDim){{end}}; transition: all 0.2s;">Logs</button>
   </div>
 
@@ -233,6 +234,24 @@
       <div style="display: flex; align-items: center; gap: 0.75rem;">
         <input type="checkbox" id="debug-mode" name="debug" {{if .Debug}}checked{{end}} style="width: 1rem; height: 1rem; border-radius: 0.25rem; background: var(--theme-bg); border: 1px solid var(--theme-border);">
         <label for="debug-mode" style="font-size: 0.875rem; color: var(--theme-text);">Enable Debug Mode</label>
+      </div>
+    </div>
+
+    <div class="settings-tab-content" id="settings-tab-diagrams" style="display: {{if eq .LastSettingsPanel "diagrams"}}block{{else}}none{{end}};">
+      <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-bottom: 1.5rem;">Diagrams</h3>
+
+      <div style="margin-bottom: 1.5rem;">
+        <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">PlantUML Server URL</label>
+        <input type="text" name="diagram_plantuml_server" value="{{.Diagram.PlantumlServer}}" placeholder="https://www.plantuml.com/plantuml" style="width: 100%; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+        <p style="font-size: 0.75rem; color: var(--theme-textDim); margin-top: 0.4rem;">Diagram source is sent to this server for rendering.</p>
+      </div>
+
+      <div>
+        <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Default Diagram Language</label>
+        <select name="diagram_default_type" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+          <option value="mermaid" {{if eq .Diagram.DefaultType "mermaid"}}selected{{end}}>Mermaid</option>
+          <option value="plantuml" {{if eq .Diagram.DefaultType "plantuml"}}selected{{end}}>PlantUML</option>
+        </select>
       </div>
     </div>
 
