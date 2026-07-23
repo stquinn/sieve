@@ -146,7 +146,48 @@ func (p *DiagramProcessor) stripRenderState(attrs map[string]interface{}) map[st
 	return attrs
 }
 
-func (p *DiagramProcessor) OnChange(_ *block.SieveBlock) {}
+// OnChange re-arms a block that just became stale outside creation — the engine
+// switch mermaid→plantuml, an edit-mode source edit followed by a flip back to
+// render, or a theme change invalidating the renderedHash — none of which pass
+// through InitAttrs. DescribeJob only ever runs once a job is already dispatched
+// (BlockStatusPending -> DISPATCHED in DispatchJobIfNeeded), so without this hook
+// a post-creation transition into "needs a render" never gets the PENDING status
+// that makes DispatchJobIfNeeded claim it, and the block sits COMPLETE with a
+// stale asset forever. Shares needsRender with DescribeJob so the two conditions
+// can never disagree. Never clobbers a job already PENDING or in flight
+// (DISPATCHED) — this only arms an idle stale block.
+func (p *DiagramProcessor) OnChange(blk *block.SieveBlock) {
+	if !p.needsRender(*blk) {
+		return
+	}
+	switch blk.Status() {
+	case block.BlockStatusPending, block.BlockStatusDispatched:
+		return
+	}
+	blk.Attrs["status"] = block.BlockStatusPending
+	blk.Attrs["createdAt"] = time.Now().UTC().Format(time.RFC3339)
+	blk.Attrs["error"] = ""
+}
+
+// needsRender is the staleness predicate: true when a plantuml block, visible in
+// render mode with non-empty source, has an effective-source hash that no longer
+// matches its last render. Shared by OnChange (which re-arms PENDING) and
+// DescribeJob (which dispatches the job) so they can never disagree about what
+// counts as stale.
+func (p *DiagramProcessor) needsRender(blk block.SieveBlock) bool {
+	if dt, _ := blk.Attrs["diagramType"].(string); dt != "plantuml" {
+		return false // mermaid renders client-side
+	}
+	source, _ := blk.Attrs["source"].(string)
+	if strings.TrimSpace(source) == "" {
+		return false
+	}
+	if mode, _ := blk.Attrs["mode"].(string); mode != "render" {
+		return false // editing syncs source but must not dispatch
+	}
+	prev, _ := blk.Attrs["renderedHash"].(string)
+	return prev != p.renderHash(p.effectiveSource(source))
+}
 
 func (p *DiagramProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, _ map[string]bool) block.AIContext {
 	src, _ := blk.Attrs["source"].(string)
@@ -165,22 +206,13 @@ func (p *DiagramProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, _
 // hits the renderedHash cache → nil → the existing asset displays instantly.
 func (p *DiagramProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJob {
 	blk := jctx.Block
-	if dt, _ := blk.Attrs["diagramType"].(string); dt != "plantuml" {
-		return nil // mermaid renders client-side
-	}
-	source, _ := blk.Attrs["source"].(string)
-	if strings.TrimSpace(source) == "" {
+	if !p.needsRender(*blk) {
 		return nil
 	}
-	if mode, _ := blk.Attrs["mode"].(string); mode != "render" {
-		return nil // editing syncs source but must not dispatch
-	}
 
+	source, _ := blk.Attrs["source"].(string)
 	effective := p.effectiveSource(source)
 	hash := p.renderHash(effective)
-	if prev, _ := blk.Attrs["renderedHash"].(string); prev == hash {
-		return nil // unchanged since last render — existing asset shows
-	}
 
 	uuid, id := jctx.UUID, blk.ID
 	return &block.ProcessorJob{

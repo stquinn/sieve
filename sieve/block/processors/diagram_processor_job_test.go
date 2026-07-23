@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
@@ -437,5 +438,149 @@ func TestDiagramProcessor_BuildContext_plantumlFence(t *testing.T) {
 	blk := block.SieveBlock{ID: "di-1", Attrs: map[string]interface{}{"source": "A -> B", "diagramType": "plantuml"}}
 	if got := p.BuildContext(blk, block.DocView{}, map[string]bool{}).String(); !strings.Contains(got, "```plantuml") {
 		t.Errorf("BuildContext must use the plantuml fence; got %q", got)
+	}
+}
+
+// ── OnChange: re-arming a stale render outside creation ─────────────────────
+//
+// InitAttrs only sets PENDING at birth. DispatchJobIfNeeded (editor_service.go)
+// only claims PENDING blocks. Every post-creation transition into "needs a
+// render" — engine switch mermaid→plantuml, edit-mode source change flipped
+// back to render, a theme change invalidating renderedHash — must therefore
+// re-arm PENDING itself via OnChange, or the block sits COMPLETE with a stale
+// asset and the frontend spins forever waiting for a job that never dispatches.
+
+func TestDiagramProcessor_OnChange_engineSwitchToPlantumlArmsPending(t *testing.T) {
+	p := NewDiagramProcessor(block.BlockServices{State: darkState()})
+	blk := &block.SieveBlock{
+		ID:   "di-0001",
+		Kind: "diagram",
+		Attrs: map[string]interface{}{
+			"diagramType":  "plantuml",
+			"source":       "A -> B",
+			"mode":         "render",
+			"status":       block.BlockStatusComplete,
+			"renderedHash": "",
+			"error":        "",
+		},
+	}
+	p.OnChange(blk)
+	if blk.Status() != block.BlockStatusPending {
+		t.Fatalf("engine switch to plantuml must re-arm PENDING; got %v", blk.Attrs["status"])
+	}
+	if blk.Attrs["error"] != "" {
+		t.Errorf("error must be cleared; got %v", blk.Attrs["error"])
+	}
+	if ts, _ := blk.Attrs["createdAt"].(string); ts == "" {
+		t.Error("createdAt must be stamped fresh so StatusBadge doesn't treat the spinner as stale")
+	} else if _, err := time.Parse(time.RFC3339, ts); err != nil {
+		t.Errorf("createdAt must be RFC3339: %v", err)
+	}
+}
+
+func TestDiagramProcessor_OnChange_editModeNoOp(t *testing.T) {
+	p := NewDiagramProcessor(block.BlockServices{State: darkState()})
+	blk := &block.SieveBlock{
+		ID:   "di-0001",
+		Kind: "diagram",
+		Attrs: map[string]interface{}{
+			"diagramType":  "plantuml",
+			"source":       "A -> B",
+			"mode":         "edit",
+			"status":       block.BlockStatusComplete,
+			"renderedHash": "",
+		},
+	}
+	p.OnChange(blk)
+	if blk.Status() != block.BlockStatusComplete {
+		t.Errorf("edit-mode source change must not re-arm a job; got status=%v", blk.Attrs["status"])
+	}
+}
+
+func TestDiagramProcessor_OnChange_unchangedHashNoOp(t *testing.T) {
+	p := NewDiagramProcessor(block.BlockServices{State: darkState()})
+	hash := p.renderHash(p.effectiveSource("A -> B"))
+	blk := &block.SieveBlock{
+		ID:   "di-0001",
+		Kind: "diagram",
+		Attrs: map[string]interface{}{
+			"diagramType":  "plantuml",
+			"source":       "A -> B",
+			"mode":         "render",
+			"status":       block.BlockStatusComplete,
+			"renderedHash": hash,
+		},
+	}
+	p.OnChange(blk)
+	if blk.Status() != block.BlockStatusComplete {
+		t.Errorf("unchanged renderedHash must not re-arm a job; got status=%v", blk.Attrs["status"])
+	}
+}
+
+func TestDiagramProcessor_OnChange_dispatchedNotClobbered(t *testing.T) {
+	p := NewDiagramProcessor(block.BlockServices{State: darkState()})
+	blk := &block.SieveBlock{
+		ID:   "di-0001",
+		Kind: "diagram",
+		Attrs: map[string]interface{}{
+			"diagramType":  "plantuml",
+			"source":       "A -> B",
+			"mode":         "render",
+			"status":       block.BlockStatusDispatched,
+			"renderedHash": "",
+			"createdAt":    "2020-01-01T00:00:00Z",
+		},
+	}
+	p.OnChange(blk)
+	if blk.Status() != block.BlockStatusDispatched {
+		t.Errorf("an in-flight job must not be clobbered; got status=%v", blk.Attrs["status"])
+	}
+	if blk.Attrs["createdAt"] != "2020-01-01T00:00:00Z" {
+		t.Errorf("createdAt of an in-flight job must not be touched; got %v", blk.Attrs["createdAt"])
+	}
+}
+
+func TestDiagramProcessor_OnChange_mermaidNoOp(t *testing.T) {
+	p := NewDiagramProcessor(block.BlockServices{State: darkState()})
+	blk := &block.SieveBlock{
+		ID:   "di-m",
+		Kind: "diagram",
+		Attrs: map[string]interface{}{
+			"diagramType": "mermaid",
+			"source":      "graph TD\nA-->B",
+			"mode":        "render",
+			"status":      block.BlockStatusComplete,
+		},
+	}
+	p.OnChange(blk)
+	if blk.Status() != block.BlockStatusComplete {
+		t.Errorf("mermaid must never be re-armed by OnChange; got status=%v", blk.Attrs["status"])
+	}
+}
+
+// TestDiagramProcessor_OnChange_thenDescribeJob proves OnChange and DescribeJob
+// share one staleness predicate: once OnChange flips a stale block to PENDING,
+// DescribeJob must dispatch a job for that same block — the engine-switch defect
+// was DescribeJob and the dispatch gate (PENDING-only) disagreeing about what
+// counts as needing a render.
+func TestDiagramProcessor_OnChange_thenDescribeJob(t *testing.T) {
+	p := NewDiagramProcessor(block.BlockServices{State: darkState()})
+	blk := &block.SieveBlock{
+		ID:   "di-0001",
+		Kind: "diagram",
+		Attrs: map[string]interface{}{
+			"diagramType":  "plantuml",
+			"source":       "A -> B",
+			"mode":         "render",
+			"status":       block.BlockStatusComplete,
+			"renderedHash": "",
+		},
+	}
+	p.OnChange(blk)
+	if blk.Status() != block.BlockStatusPending {
+		t.Fatalf("precondition: OnChange must have armed PENDING; got %v", blk.Status())
+	}
+	if job := describe(p, blk); job == nil {
+		t.Error("DescribeJob must dispatch a job for a block OnChange just armed PENDING")
 	}
 }
