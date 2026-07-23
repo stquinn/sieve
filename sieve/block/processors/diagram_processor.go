@@ -153,9 +153,10 @@ func (p *DiagramProcessor) stripRenderState(attrs map[string]interface{}) map[st
 // (BlockStatusPending -> DISPATCHED in DispatchJobIfNeeded), so without this hook
 // a post-creation transition into "needs a render" never gets the PENDING status
 // that makes DispatchJobIfNeeded claim it, and the block sits COMPLETE with a
-// stale asset forever. Shares needsRender with DescribeJob so the two conditions
-// can never disagree. Never clobbers a job already PENDING or in flight
-// (DISPATCHED) — this only arms an idle stale block.
+// stale asset forever. This is the ONLY place the renderedHash cache gates
+// anything — see needsRender and DescribeJob's doc comments. Never clobbers a
+// job already PENDING or in flight (DISPATCHED) — this only arms an idle stale
+// block.
 func (p *DiagramProcessor) OnChange(blk *block.SieveBlock) {
 	if !p.needsRender(*blk) {
 		return
@@ -169,12 +170,11 @@ func (p *DiagramProcessor) OnChange(blk *block.SieveBlock) {
 	blk.Attrs["error"] = ""
 }
 
-// needsRender is the staleness predicate: true when a plantuml block, visible in
-// render mode with non-empty source, has an effective-source hash that no longer
-// matches its last render. Shared by OnChange (which re-arms PENDING) and
-// DescribeJob (which dispatches the job) so they can never disagree about what
-// counts as stale.
-func (p *DiagramProcessor) needsRender(blk block.SieveBlock) bool {
+// isRenderable is the shared eligibility predicate for a plantuml render: the
+// engine is plantuml, there is a non-empty source, and the block is showing the
+// render surface (not mid-edit). It says nothing about staleness — that is
+// needsRender's job, layered on top for the ARMING decision only.
+func (p *DiagramProcessor) isRenderable(blk block.SieveBlock) bool {
 	if dt, _ := blk.Attrs["diagramType"].(string); dt != "plantuml" {
 		return false // mermaid renders client-side
 	}
@@ -182,9 +182,20 @@ func (p *DiagramProcessor) needsRender(blk block.SieveBlock) bool {
 	if strings.TrimSpace(source) == "" {
 		return false
 	}
-	if mode, _ := blk.Attrs["mode"].(string); mode != "render" {
-		return false // editing syncs source but must not dispatch
+	mode, _ := blk.Attrs["mode"].(string)
+	return mode == "render" // editing syncs source but must not dispatch
+}
+
+// needsRender is the ARMING predicate used exclusively by OnChange: true when a
+// renderable plantuml block's effective-source hash no longer matches its last
+// render. This is where the no-redundant-render guarantee lives — nothing arms
+// PENDING for an unchanged hash, so DescribeJob never needs to re-check it (see
+// DescribeJob's doc comment).
+func (p *DiagramProcessor) needsRender(blk block.SieveBlock) bool {
+	if !p.isRenderable(blk) {
+		return false
 	}
+	source, _ := blk.Attrs["source"].(string)
 	prev, _ := blk.Attrs["renderedHash"].(string)
 	return prev != p.renderHash(p.effectiveSource(source))
 }
@@ -198,15 +209,20 @@ func (p *DiagramProcessor) BuildContext(blk block.SieveBlock, _ block.DocView, _
 }
 
 // DescribeJob returns a PlantUML render job, or nil. Mermaid renders client-side
-// and is born COMPLETE — always nil. PlantUML dispatches only when the render
-// surface is visible (mode == "render") AND there is a source AND the effective
-// source (theme preamble + user source) differs from the last render's hash.
-// Editing (mode "edit") syncs source but never dispatches; the flip back to render
-// is the update that satisfies the condition. A flip with an unchanged source
-// hits the renderedHash cache → nil → the existing asset displays instantly.
+// and is born COMPLETE — always nil. PlantUML dispatches whenever the block is
+// renderable (mode == "render" AND non-empty source) — deliberately WITHOUT
+// re-checking the renderedHash cache. DescribeJob only ever runs after an
+// explicit claim (PENDING -> DISPATCHED in DispatchJobIfNeeded), and a claim is
+// always intentional: either OnChange armed a genuinely stale block, or the user
+// hit replay, which means "re-render regardless of the cache". The
+// no-redundant-render guarantee lives entirely in OnChange (nothing arms PENDING
+// when the hash already matches) — if DescribeJob repeated that check here, a
+// claimed hash-matching block (the replay case) would return nil and RunJob's
+// nil-job early-return would leave the block wedged in DISPATCHED forever, since
+// nothing else settles its status.
 func (p *DiagramProcessor) DescribeJob(jctx block.JobContext) *block.ProcessorJob {
 	blk := jctx.Block
-	if !p.needsRender(*blk) {
+	if !p.isRenderable(*blk) {
 		return nil
 	}
 

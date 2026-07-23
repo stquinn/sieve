@@ -151,11 +151,20 @@ func TestDiagramProcessor_DescribeJob_renderNewSourceDispatches(t *testing.T) {
 	}
 }
 
-func TestDiagramProcessor_DescribeJob_hashMatchNoDispatch(t *testing.T) {
+// DescribeJob only ever runs on a block that has already been CLAIMED (PENDING ->
+// DISPATCHED by DispatchJobIfNeeded), and a claim only happens for one of two
+// reasons: OnChange armed a genuinely stale block, or the user hit replay — which
+// means "re-render regardless of the cache". So DescribeJob must NOT re-check the
+// renderedHash itself: a claimed hash-matching block (the replay case) must still
+// dispatch a job, or RunJob's nil-job early-return leaves the block wedged in
+// DISPATCHED forever (no Apply ever flips it back to COMPLETE). The no-redundant-
+// render guarantee lives entirely in OnChange (TestDiagramProcessor_OnChange_
+// unchangedHashNoOp proves it never arms PENDING for an unchanged hash).
+func TestDiagramProcessor_DescribeJob_claimedHashMatchStillDispatches(t *testing.T) {
 	p := NewDiagramProcessor(block.BlockServices{State: darkState()})
 	hash := p.renderHash(p.effectiveSource("A -> B"))
-	if job := describe(p, plantumlBlock("A -> B", "render", hash)); job != nil {
-		t.Error("render with a matching renderedHash must not re-dispatch (cache hit)")
+	if job := describe(p, plantumlBlock("A -> B", "render", hash)); job == nil {
+		t.Error("a claimed (PENDING->DISPATCHED) block must always dispatch a job, even with a matching renderedHash — replay means re-render regardless")
 	}
 }
 
