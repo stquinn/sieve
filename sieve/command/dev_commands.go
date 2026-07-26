@@ -103,12 +103,18 @@ func (c *HashCommand) Build(text string, ctx Context) (Job, error) {
 
 			sum := sha256.Sum256([]byte(content))
 			hexHash := hex.EncodeToString(sum[:])
-			preview := devScopeNote(content, scope)
+
+			var inputLine string
+			if scope == "Document" {
+				inputLine = fmt.Sprintf("*Input: **Document** %s*", devScopeNote(content, scope))
+			} else {
+				inputLine = fmt.Sprintf("*Input (%s): `%s`*", scope, content)
+			}
 
 			resp := strings.Join([]string{
 				"### 🔐 SHA-256 Hash (`/hash`)",
 				"",
-				fmt.Sprintf("*Input: **%s** %s*", scope, preview),
+				inputLine,
 				"",
 				"| | |",
 				"| :--- | :--- |",
@@ -160,8 +166,14 @@ func (c *Base64Command) Build(text string, ctx Context) (Job, error) {
 			}
 
 			trimmed := strings.TrimSpace(content)
-			preview := devScopeNote(content, scope)
 			var resp string
+
+			var inputLine string
+			if scope == "Document" {
+				inputLine = fmt.Sprintf("*Input: **Document** %s*", devScopeNote(content, scope))
+			} else {
+				inputLine = fmt.Sprintf("*Input (%s): `%s`*", scope, content)
+			}
 
 			// If no inline text was given and the content looks like base64, try decode.
 			isLikelyEncoded := strings.TrimSpace(text) == "" &&
@@ -173,7 +185,7 @@ func (c *Base64Command) Build(text string, ctx Context) (Job, error) {
 					resp = strings.Join([]string{
 						"### 📦 Base64 Decoded (`/base64`)",
 						"",
-						fmt.Sprintf("*Input: **%s** %s*", scope, preview),
+						inputLine,
 						"",
 						"**Decoded:**",
 						"```",
@@ -190,7 +202,7 @@ func (c *Base64Command) Build(text string, ctx Context) (Job, error) {
 				resp = strings.Join([]string{
 					"### 📦 Base64 Encoded (`/base64`)",
 					"",
-					fmt.Sprintf("*Input: **%s** %s*", scope, preview),
+					inputLine,
 					"",
 					"**Encoded:**",
 					"```",
