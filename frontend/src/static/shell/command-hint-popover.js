@@ -1,7 +1,7 @@
 // @ts-check
 // command-hint-popover.js — Slash command hint popover for Ask Panel input.
-// Renders autocomplete candidates when typing `/` in the textarea and supports
-// keyboard navigation (ArrowUp, ArrowDown, Tab, Enter, Escape).
+// Positions fixed above the Ask Panel as a visual extension (z-index: 1000)
+// and handles keyboard navigation (ArrowUp, ArrowDown, Tab, Enter, Escape).
 
 export class CommandHintPopover {
   /** @type {HTMLTextAreaElement} */ #textarea
@@ -27,15 +27,24 @@ export class CommandHintPopover {
   #createPopoverDom() {
     const el = document.createElement('div')
     el.className = 'command-hint-popover'
-    el.style.cssText = 'display: none; position: absolute; bottom: 100%; left: 0; right: 0; max-height: 180px; overflow-y: auto; background: var(--theme-bgDark, #1a1b26); border: 1px solid var(--theme-border2, #24283b); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); z-index: 100; margin-bottom: 4px;'
+    el.style.cssText = [
+      'display: none',
+      'position: fixed',
+      'z-index: 1000',
+      'max-height: 200px',
+      'overflow-y: auto',
+      'background: var(--theme-bgAlt, #1f2335)',
+      'border: 1px solid var(--theme-border2, #3b4261)',
+      'border-bottom: 1px solid var(--theme-border, #1a1b26)',
+      'border-top-left-radius: 8px',
+      'border-top-right-radius: 8px',
+      'border-bottom-left-radius: 0',
+      'border-bottom-right-radius: 0',
+      'box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45)',
+      'box-sizing: border-box'
+    ].join('; ') + ';'
 
-    const parent = this.#textarea.parentElement
-    if (parent) {
-      if (getComputedStyle(parent).position === 'static') {
-        parent.style.position = 'relative'
-      }
-      parent.appendChild(el)
-    }
+    document.body.appendChild(el)
     this.#popoverEl = el
   }
 
@@ -120,20 +129,30 @@ export class CommandHintPopover {
     this.#popoverEl.innerHTML = ''
     this.#filtered.forEach((cmd, idx) => {
       const item = document.createElement('div')
-      item.className = 'command-hint-item' + (idx === this.#selectedIndex ? ' is-active' : '')
-      item.style.cssText = 'padding: 6px 12px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--theme-fg, #a9b1d6);'
-      if (idx === this.#selectedIndex) {
-        item.style.background = 'var(--theme-bgHighlight, #292e42)'
-        item.style.color = 'var(--theme-accentCyan, #7dcfff)'
-      }
+      const isActive = idx === this.#selectedIndex
+      item.className = 'command-hint-item' + (isActive ? ' is-active' : '')
+      item.style.cssText = [
+        'padding: 8px 14px',
+        'cursor: pointer',
+        'display: flex',
+        'justify-content: space-between',
+        'align-items: center',
+        'font-size: 13px',
+        'font-family: var(--theme-uiFont, system-ui, sans-serif)',
+        'transition: background 0.1s ease',
+        isActive
+          ? 'background: color-mix(in srgb, var(--theme-accentPrimary, #7aa2f7) 16%, var(--theme-bgAlt, #1f2335)); border-left: 3px solid var(--theme-accentPrimary, #7aa2f7); color: var(--theme-text, #c0caf5);'
+          : 'background: transparent; border-left: 3px solid transparent; color: var(--theme-textDim, #9aa5ce);'
+      ].join('; ')
 
       const nameEl = document.createElement('span')
-      nameEl.style.fontWeight = '600'
+      nameEl.className = 'command-hint__name'
+      nameEl.style.cssText = 'font-family: var(--theme-monoFont, monospace); font-weight: 600; color: var(--theme-accentPrimary, #7aa2f7);'
       nameEl.textContent = '/' + cmd.name
 
       const descEl = document.createElement('span')
-      descEl.style.opacity = '0.7'
-      descEl.style.marginLeft = '8px'
+      descEl.className = 'command-hint__desc'
+      descEl.style.cssText = 'font-size: 12px; opacity: 0.75; margin-left: 12px;'
       descEl.textContent = cmd.description || ''
 
       item.appendChild(nameEl)
@@ -148,8 +167,21 @@ export class CommandHintPopover {
     })
   }
 
+  #position() {
+    if (!this.#popoverEl) return
+    const panel = this.#textarea.closest('#ask-panel') || this.#textarea.parentElement || this.#textarea
+    const rect = panel.getBoundingClientRect()
+
+    this.#popoverEl.style.left = Math.max(0, rect.left) + 'px'
+    this.#popoverEl.style.width = (rect.width || window.innerWidth) + 'px'
+    this.#popoverEl.style.bottom = Math.max(0, window.innerHeight - rect.top) + 'px'
+  }
+
   show() {
-    if (this.#popoverEl) this.#popoverEl.style.display = 'block'
+    if (this.#popoverEl) {
+      this.#position()
+      this.#popoverEl.style.display = 'block'
+    }
   }
 
   hide() {
