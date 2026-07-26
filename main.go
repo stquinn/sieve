@@ -36,6 +36,10 @@ import (
 // workflow with -ldflags "-X main.version=<git tag>".
 var version = "dev"
 
+// aboutMessage is the license/copyright line shared by both About surfaces:
+// the macOS AboutInfo panel and the Linux/Windows Help > About dialog.
+const aboutMessage = "Apache-2.0 · © 2026 Stephen Quinn\ngithub.com/stquinn/sieve\n\nOpen-source credits: Help → Open Source Licenses"
+
 //go:embed all:frontend/src
 var assets embed.FS
 
@@ -335,13 +339,17 @@ func buildMenu(app *App) *menu.Menu {
 
 	help := appMenu.AddSubmenu("Help")
 	help.AddText("Shortcuts", keys.CmdOrCtrl("/"), js("htmx.ajax('GET','/api/help',{target:'#help-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('help-dialog').showModal()})"))
+	// Dedicated licenses dialog (licenses.html into the shared #help-dialog
+	// container) — the native About box is plain text and cannot hold the
+	// license list, so this is the discoverable route to it.
+	help.AddText("Open Source Licenses", nil, js("htmx.ajax('GET','/api/licenses',{target:'#help-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('help-dialog').showModal()})"))
 	if !isMac {
 		// On Linux/Windows: About belongs in Help
 		help.AddText("About", nil, func(_ *menu.CallbackData) {
 			wailsruntime.MessageDialog(app.ctx, wailsruntime.MessageDialogOptions{
 				Type:    wailsruntime.InfoDialog,
 				Title:   "About Sieve",
-				Message: "Sieve " + version,
+				Message: "Sieve " + version + "\n\n" + aboutMessage,
 			})
 		})
 	}
@@ -450,9 +458,13 @@ func main() {
 			WebviewIsTransparent: true,
 			WindowIsTranslucent:  false,
 			ContentProtection:    false,
+			// macOS specifies About differently: no Help > About item; the
+			// "Sieve > About Sieve" entry injected by the AppMenu role renders
+			// this panel. Keep the message in sync with the Linux/Windows
+			// MessageDialog in buildMenu.
 			About: &mac.AboutInfo{
-				Title:   "Sieve",
-				Message: "© 2026 SQ",
+				Title:   "Sieve " + version,
+				Message: aboutMessage,
 				Icon:    icon,
 			},
 		},

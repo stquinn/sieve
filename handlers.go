@@ -56,6 +56,8 @@ func newAPIHandler(app *App, hub *sse.Hub, sp *sieve.ServiceProvider) (*apiHandl
 		Tmpl:            tmpl,
 		Broadcast:       hub.Broadcast,
 		Jobs:            jobTracker,
+		Version:         version,
+		Credits:         thirdPartyLicenses,
 	}.Mount(r)
 	r.Get("/sse", h.hub.ServeHTTP)
 	// Internal Sieve MCP (read-only knowledge base). The server is built at

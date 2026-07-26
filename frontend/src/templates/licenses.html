@@ -1,0 +1,31 @@
+{{define "licenses.html"}}
+<div class="help-modal licenses-modal">
+  <div class="help-modal__header">
+    <span class="help-modal__title">Open Source Licenses</span>
+    <button class="help-modal__close" onclick="document.getElementById('help-dialog').close()" title="Close (Esc)">✕</button>
+  </div>
+
+  <div class="licenses-modal__body">
+    <div class="licenses-modal__about">
+      Sieve {{.Version}} &middot; Apache-2.0 &middot; &copy; 2026 Stephen Quinn &middot; <span class="help-modal__repo">github.com/stquinn/sieve</span>
+    </div>
+    <p class="licenses-modal__intro">
+      Sieve bundles the following open-source components ({{len .Credits}}). Expand an entry for its copyright notice and license text.
+    </p>
+    <div class="licenses-modal__list">
+      {{range .Credits}}
+      <details class="licenses-modal__credit">
+        <summary class="licenses-modal__credit-summary">
+          <span class="licenses-modal__credit-name">{{.Name}}</span>
+          {{if .Version}}<span class="licenses-modal__credit-version">{{.Version}}</span>{{end}}
+          <span class="licenses-modal__credit-license">{{.License}}</span>
+        </summary>
+        {{if .Copyright}}<div class="licenses-modal__credit-copyright">{{.Copyright}}</div>{{end}}
+        {{if .Note}}<div class="licenses-modal__credit-note">{{.Note}}</div>{{end}}
+        {{if .Text}}<pre class="licenses-modal__credit-text">{{.Text}}</pre>{{end}}
+      </details>
+      {{end}}
+    </div>
+  </div>
+</div>
+{{end}}

@@ -19,6 +19,8 @@ type Registry struct {
 	Tmpl            *template.Template
 	Broadcast       func(event, data string)
 	Jobs            *services.JobTracker
+	Version         string // release version (main.version, ldflags-injected)
+	Credits         []byte // embedded third-party-licenses.json (tools/gencredits)
 }
 
 // Mount builds each RequestHandler and registers its paths on r.
@@ -50,7 +52,7 @@ func (reg Registry) Mount(r chi.Router) {
 		},
 		&EditorHandler{ServiceProvider: sp, Tmpl: tmpl, Broadcast: broadcast},
 		&SettingsHandler{ServiceProvider: sp, Tmpl: tmpl},
-		&HelpHandler{Tmpl: tmpl},
+		&HelpHandler{Tmpl: tmpl, Version: reg.Version, Credits: reg.Credits},
 		&SearchHandler{ServiceProvider: sp, Tmpl: tmpl},
 		&AssetHandler{ServiceProvider: sp},
 		&PromptsHandler{ServiceProvider: sp, Tmpl: tmpl},

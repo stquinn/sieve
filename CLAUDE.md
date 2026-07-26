@@ -74,6 +74,15 @@ go build ./...   # compile check — no npm step required
 **TipTap bundle:** rebuild only when TipTap core/deps change: `npm run bundle:tiptap` in `frontend/`.
 Custom extensions live in `extensions.js` (vanilla JS) — they are NOT in the bundle.
 
+**Third-party credits:** `third-party-licenses.json` (repo root, go:embed'ed, rendered by the
+Help → Open Source Licenses dialog) is GENERATED — never hand-edit. Regenerate only when deps change (`go.mod`,
+`frontend/package.json`, bundle entries): `nix develop -c go run ./tools/gencredits`
+(needs network on first run). The tool fails the run if a copyleft license appears in a
+bundled component. Output is deterministic (Go stdlib version comes from go.mod's `go`
+directive, not the local toolchain) — CI's `credits` job regenerates and diffs, failing
+the pipeline if a dep change lands without a regen; releases ship the committed artifact
+and never regenerate. Sieve itself is Apache-2.0 (`LICENSE` + `NOTICE` at root).
+
 **Embeds** (in `embeds.go` — go:embed paths are relative to the declaring file and cannot climb, so these stay at root and are threaded into `newAPIHandler`):
 - `//go:embed frontend/src/templates` → Go templates
 - `//go:embed frontend/src/static` → static files served at `/static/`

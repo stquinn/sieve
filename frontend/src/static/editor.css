@@ -1285,6 +1285,76 @@ pre.tiptap-code-block code {
 
 .help-modal__desc { color: var(--theme-text); opacity: 0.8; padding-left: 0.8rem; }
 
+.help-modal__footer {
+  flex-shrink: 0;
+  padding: 0.6rem 1.2rem;
+  border-top: 1px solid var(--theme-border);
+  background: var(--theme-bgAlt);
+  font-size: 12px;
+  color: var(--theme-muted);
+}
+
+.help-modal__about { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.help-modal__repo { color: var(--theme-text); opacity: 0.75; }
+
+/* Open Source Licenses dialog — its own fragment (licenses.html) rendered
+   into the shared #help-dialog container; reuses help-modal chrome classes
+   for the header. */
+.licenses-modal__body {
+  overflow-y: auto;
+  padding: 1rem 1.2rem 1.4rem;
+  font-size: 12px;
+  color: var(--theme-muted);
+}
+
+.licenses-modal__about { color: var(--theme-text); margin-bottom: 0.3rem; }
+.licenses-modal__intro { margin: 0 0 0.8rem; }
+
+.licenses-modal__list {
+  max-height: 55vh;
+  overflow-y: auto;
+  border: 1px solid var(--theme-border);
+  border-radius: 6px;
+  background: var(--theme-bgDark);
+}
+
+.licenses-modal__credit { border-bottom: 1px solid color-mix(in srgb, var(--theme-border) 50%, transparent); }
+.licenses-modal__credit:last-child { border-bottom: none; }
+
+.licenses-modal__credit-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+  user-select: none;
+}
+.licenses-modal__credit-summary:hover { background: var(--theme-bgAlt); }
+.licenses-modal__credit-name { color: var(--theme-text); }
+.licenses-modal__credit-version { color: var(--theme-muted); }
+.licenses-modal__credit-license { margin-left: auto; color: var(--theme-muted); white-space: nowrap; }
+
+.licenses-modal__credit-copyright,
+.licenses-modal__credit-note {
+  padding: 0.1rem 0.7rem 0.3rem;
+  color: var(--theme-muted);
+  font-style: italic;
+}
+
+.licenses-modal__credit-text {
+  margin: 0 0.7rem 0.6rem;
+  padding: 0.5rem 0.7rem;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 11px;
+  color: var(--theme-text);
+  opacity: 0.85;
+  background: color-mix(in srgb, var(--theme-bgDark) 60%, transparent);
+  border: 1px solid var(--theme-border);
+  border-radius: 4px;
+}
+
 /* ── Store Search Sidebar ──────────────────────────────────────────────────────── */
 
 .store-search {
