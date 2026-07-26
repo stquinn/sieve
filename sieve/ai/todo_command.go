@@ -11,24 +11,24 @@ import (
 )
 
 type TodoCommand struct {
-	ai   *AIService
-	docs *services.DocumentService
+	ai *AIService
+	docMetaReader
 }
 
 func NewTodoCommand(aiSvc *AIService, docs *services.DocumentService) *TodoCommand {
-	return &TodoCommand{ai: aiSvc, docs: docs}
+	return &TodoCommand{ai: aiSvc, docMetaReader: docMetaReader{docs: docs}}
 }
 
 func (c *TodoCommand) Name() string        { return "todo" }
 func (c *TodoCommand) Description() string { return "Extract open action items, TODOs, and decisions as a checklist" }
+func (c *TodoCommand) Family() string      { return command.FamilyAI }
+func (c *TodoCommand) ResultKind() string  { return "ai-block" }
 
 func (c *TodoCommand) Build(text string, ctx command.Context) (command.Job, error) {
 	if c.ai == nil || c.ai.Tier() == domain.TierDumb {
 		return command.Job{}, fmt.Errorf("AI commands are unavailable — configure an AI CLI in Settings")
 	}
-	id := generateAIBlockID()
 	attrs := map[string]interface{}{
-		"id":        id,
 		"status":    "PENDING",
 		"createdAt": time.Now().UTC().Format(time.RFC3339),
 		"question":  "Extracted Action Items (/todo)",
@@ -59,20 +59,4 @@ func (c *TodoCommand) Build(text string, ctx command.Context) (command.Job, erro
 			return command.Block{Kind: "ai-block", Attrs: done}, nil
 		},
 	}, nil
-}
-
-func (c *TodoCommand) docMeta(uuid string) (title, summary string) {
-	if uuid == "" || c.docs == nil {
-		return "", ""
-	}
-	doc, err := c.docs.LoadByUUID(uuid)
-	if err != nil {
-		return "", ""
-	}
-	m := doc.Meta()
-	title = m.DisplayName()
-	if s := m.Summary(); s != nil {
-		summary = *s
-	}
-	return title, summary
 }

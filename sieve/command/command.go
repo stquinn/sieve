@@ -16,6 +16,15 @@ const (
 	StatusError    = "ERROR"
 )
 
+// Command families are the NAMESPACE/DISCOVERY axis of the command plane — which
+// verbs exist and how they are grouped — NEVER a policy axis. Per-command
+// preconditions live in Build; the dispatcher only integrity-checks that the
+// invoked verb's family matches what the caller thought it invoked.
+const (
+	FamilyAI   = "ai"   // AI-CLI-backed commands producing ai-block results
+	FamilyUtil = "util" // deterministic local utilities producing command-result blocks
+)
+
 // Context is the Go-side read of the lens-authored SelectionContext: a typed
 // core + the full tolerant bag. Commands read fields OPPORTUNISTICALLY and
 // never require them; a bad or absent context decodes to the empty floor.
@@ -45,6 +54,20 @@ type Block struct {
 	Attrs map[string]interface{} `json:"attrs"`
 }
 
+// stampIdentity sets the block's "id" attr to the job's correlationID, giving
+// the frontend's stale-detection a stable key that matches the JobEngine's
+// JobID. Commands never invent their own id — identity is a dispatcher concern.
+// No-op on a nil block or empty id.
+func (b *Block) stampIdentity(id string) {
+	if b == nil || id == "" {
+		return
+	}
+	if b.Attrs == nil {
+		b.Attrs = make(map[string]interface{}, 1)
+	}
+	b.Attrs["id"] = id
+}
+
 type Outcome struct { // wire-blind: WsHandler maps this to command-result frames
 	Status string
 	Block  *Block
@@ -54,6 +77,8 @@ type Outcome struct { // wire-blind: WsHandler maps this to command-result frame
 type Info struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	Family      string `json:"family"`
+	ResultKind  string `json:"resultKind"`
 }
 
 // Command is one registered verb. Implementations are STATELESS SINGLETONS:
@@ -64,6 +89,14 @@ type Info struct {
 type Command interface {
 	Name() string
 	Description() string
+	// Family is the command's namespace/discovery bucket (FamilyAI / FamilyUtil).
+	// It is descriptive metadata for grouping + an envelope integrity check —
+	// never a policy gate (policy lives in Build).
+	Family() string
+	// ResultKind advises the block kind the command expects to return (e.g.
+	// "ai-block", "command-result"). The result block's own Kind remains the
+	// runtime truth; this is a hint for discovery/UI, not a contract.
+	ResultKind() string
 	Build(text string, ctx Context) (Job, error)
 }
 
@@ -112,6 +145,8 @@ func (r *Registry) List() []Info {
 			out = append(out, Info{
 				Name:        c.Name(),
 				Description: c.Description(),
+				Family:      c.Family(),
+				ResultKind:  c.ResultKind(),
 			})
 		}
 	}
@@ -125,12 +160,25 @@ func (r *Registry) lookup(name string) Command {
 }
 
 // Dispatch is pure MECHANISM — the spec's "mechanism on the wire, policy in
-// the tool" applied to the dispatcher itself: lookup → Build → PENDING →
-// submit → terminal emit. It knows nothing of AI, tiers, or documents.
-func (r *Registry) Dispatch(cmd, text string, rawCtx json.RawMessage, correlationID string, emit func(Outcome)) {
+// the tool" applied to the dispatcher itself: lookup → family-integrity check →
+// Build → PENDING → submit → terminal emit. It knows nothing of AI, tiers, or
+// documents.
+//
+// expectedFamily is the family the CALLER believes it invoked (off the wire
+// envelope). It is an INTEGRITY check — "you invoked the verb you think you
+// invoked" — not a policy gate: a non-empty value that disagrees with the
+// registered command's Family() short-circuits to ERROR before Build, so the
+// job is never submitted. An empty expectedFamily skips the check (tolerant
+// floor, consistent with the plane's opportunistic-context principle).
+func (r *Registry) Dispatch(cmd, expectedFamily, text string, rawCtx json.RawMessage, correlationID string, emit func(Outcome)) {
 	c := r.lookup(cmd)
 	if c == nil {
 		emit(Outcome{Status: StatusError, Err: "unknown command: /" + cmd})
+		return
+	}
+	if expectedFamily != "" && expectedFamily != c.Family() {
+		emit(Outcome{Status: StatusError, Err: fmt.Sprintf(
+			"family mismatch for /%s: sent %q, registered %q", cmd, expectedFamily, c.Family())})
 		return
 	}
 	job, err := c.Build(text, NewContext(rawCtx))
@@ -138,7 +186,6 @@ func (r *Registry) Dispatch(cmd, text string, rawCtx json.RawMessage, correlatio
 		emit(Outcome{Status: StatusError, Err: err.Error()})
 		return
 	}
-	emit(Outcome{Status: StatusPending, Block: job.Pending})
 
 	r.mu.RLock()
 	eng := r.engine
@@ -149,6 +196,12 @@ func (r *Registry) Dispatch(cmd, text string, rawCtx json.RawMessage, correlatio
 		return
 	}
 
+	// Identity is stamped by the MECHANISM, not the command: attrs.id ==
+	// correlationID == the JobEngine's JobID, so the frontend's stale-detection
+	// can match this block against the server's active/queued job sets.
+	job.Pending.stampIdentity(correlationID)
+	emit(Outcome{Status: StatusPending, Block: job.Pending})
+
 	eng.Submit(services.JobDescriptor{
 		Category: Category,
 		Meta:     services.JobInfo{JobID: correlationID, Label: job.Label},
@@ -156,6 +209,7 @@ func (r *Registry) Dispatch(cmd, text string, rawCtx json.RawMessage, correlatio
 		OnFinished: func(res any) {
 			out := Outcome{Status: StatusComplete}
 			if b, ok := res.(Block); ok && b.Kind != "" {
+				b.stampIdentity(correlationID)
 				out.Block = &b
 			}
 			emit(out)

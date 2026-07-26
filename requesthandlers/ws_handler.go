@@ -558,11 +558,14 @@ func (h *WsHandler) handleCommand(raw []byte) {
 		h.sendTo(sessionChannelKey, frame)
 	}
 	reg := h.ServiceProvider.Commands
-	if env.Family != "ai" || reg == nil {
-		emit(command.Outcome{Status: command.StatusError, Err: "unknown command family: " + env.Family})
+	if reg == nil {
+		emit(command.Outcome{Status: command.StatusError, Err: "commands unavailable"})
 		return
 	}
-	reg.Dispatch(env.Cmd, env.Args.Text, env.Context, env.CorrelationID, emit)
+	// Family is passed as an INTEGRITY expectation, not a policy gate: Dispatch
+	// validates it against the registered command's declared Family() and emits
+	// an ERROR on mismatch. An empty family skips the check (tolerant floor).
+	reg.Dispatch(env.Cmd, env.Family, env.Args.Text, env.Context, env.CorrelationID, emit)
 }
 
 func (h *WsHandler) handleCommandCancel(raw []byte) {

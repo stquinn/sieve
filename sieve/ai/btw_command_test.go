@@ -26,8 +26,10 @@ func TestBtwBuild_DetachedAiBlockShape(t *testing.T) {
 	if job.Pending.Kind != "ai-block" || a["status"] != "PENDING" || a["question"] != "what is SRP" || a["type"] != "BTW" {
 		t.Fatalf("pending envelope wrong: %+v", job.Pending)
 	}
-	if a["id"] == "" || a["id"] == nil {
-		t.Fatal("no block id minted in pending attrs")
+	// Identity is stamped by the dispatcher (attrs.id == correlationID), not by
+	// the command's Build — so Build leaves no "id" here.
+	if _, ok := a["id"]; ok {
+		t.Fatalf("Build must not mint a block id; dispatcher owns identity: %+v", a)
 	}
 
 	done, err := job.Work()

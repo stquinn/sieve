@@ -1,8 +1,6 @@
 package command
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -19,31 +17,22 @@ func NewNowCommand() *NowCommand {
 
 func (c *NowCommand) Name() string        { return "now" }
 func (c *NowCommand) Description() string { return "Display current timestamp & date in all standard formats" }
+func (c *NowCommand) Family() string      { return FamilyUtil }
+func (c *NowCommand) ResultKind() string  { return "command-result" }
 
 func (c *NowCommand) Build(text string, ctx Context) (Job, error) {
 	now := time.Now()
-	id := generateBuiltinBlockID()
-	attrs := map[string]interface{}{
-		"id":        id,
-		"status":    "PENDING",
-		"createdAt": now.UTC().Format(time.RFC3339),
-		"question":  "Current Time & Date (/now)",
-		"type":      "NOW",
-		"ref":       "",
-	}
-	pending := &Block{Kind: "ai-block", Attrs: attrs}
+	createdAt := now.UTC().Format(time.RFC3339)
 
 	return Job{
 		Label:   "/now",
-		Pending: pending,
+		Pending: nil,
 		Work: func() (Block, error) {
 			utc := now.UTC()
 			unixSec := now.Unix()
 			unixMs := now.UnixMilli()
 
 			resp := strings.Join([]string{
-				"### 🕒 Current Date & Time (`/now`)",
-				"",
 				"| Format | Value |",
 				"| :--- | :--- |",
 				fmt.Sprintf("| **UNIX Timestamp (s)** | `%d` |", unixSec),
@@ -56,14 +45,15 @@ func (c *NowCommand) Build(text string, ctx Context) (Job, error) {
 				fmt.Sprintf("| **Time Only (Local)** | `%s` |", now.Format("15:04:05")),
 			}, "\n")
 
-			done := make(map[string]interface{}, len(attrs)+3)
-			for k, v := range attrs {
-				done[k] = v
-			}
-			done["status"] = "COMPLETE"
-			done["response"] = resp
-			done["completedAt"] = time.Now().UTC().Format(time.RFC3339)
-			return Block{Kind: "ai-block", Attrs: done}, nil
+			return Block{Kind: "command-result", Attrs: map[string]interface{}{
+				"cmd":         "now",
+				"status":      "COMPLETE",
+				"title":       "🕒 Current Date & Time",
+				"response":    resp,
+				"primary":     utc.Format(time.RFC3339),
+				"createdAt":   createdAt,
+				"completedAt": time.Now().UTC().Format(time.RFC3339),
+			}}, nil
 		},
 	}, nil
 }
@@ -79,22 +69,15 @@ func NewStatsCommand(docs *services.DocumentService) *StatsCommand {
 
 func (c *StatsCommand) Name() string        { return "stats" }
 func (c *StatsCommand) Description() string { return "Word count, character count, reading time & document metrics" }
+func (c *StatsCommand) Family() string      { return FamilyUtil }
+func (c *StatsCommand) ResultKind() string  { return "command-result" }
 
 func (c *StatsCommand) Build(text string, ctx Context) (Job, error) {
-	id := generateBuiltinBlockID()
-	attrs := map[string]interface{}{
-		"id":        id,
-		"status":    "PENDING",
-		"createdAt": time.Now().UTC().Format(time.RFC3339),
-		"question":  "Document & Selection Stats (/stats)",
-		"type":      "STATS",
-		"ref":       "",
-	}
-	pending := &Block{Kind: "ai-block", Attrs: attrs}
+	createdAt := time.Now().UTC().Format(time.RFC3339)
 
 	return Job{
 		Label:   "/stats",
-		Pending: pending,
+		Pending: nil,
 		Work: func() (Block, error) {
 			var scope string
 			var content string
@@ -126,13 +109,12 @@ func (c *StatsCommand) Build(text string, ctx Context) (Job, error) {
 				readingTimeMin = 1
 			}
 
-			header := "### 📊 Document Metrics (`/stats`)"
+			title := "📊 Document Metrics"
 			if docTitle != "" {
-				header = fmt.Sprintf("### 📊 Metrics for *%s* (`/stats`)", docTitle)
+				title = fmt.Sprintf("📊 Metrics for *%s*", docTitle)
 			}
 
 			resp := strings.Join([]string{
-				header,
 				fmt.Sprintf("*Scope: %s*", scope),
 				"",
 				"| Metric | Count |",
@@ -144,20 +126,16 @@ func (c *StatsCommand) Build(text string, ctx Context) (Job, error) {
 				fmt.Sprintf("| **Est. Reading Time** | `~%d min` |", readingTimeMin),
 			}, "\n")
 
-			done := make(map[string]interface{}, len(attrs)+3)
-			for k, v := range attrs {
-				done[k] = v
-			}
-			done["status"] = "COMPLETE"
-			done["response"] = resp
-			done["completedAt"] = time.Now().UTC().Format(time.RFC3339)
-			return Block{Kind: "ai-block", Attrs: done}, nil
+			// No single "answer" value for /stats — omit primary; the popup's Copy
+			// falls back to the rendered markdown metrics table.
+			return Block{Kind: "command-result", Attrs: map[string]interface{}{
+				"cmd":         "stats",
+				"status":      "COMPLETE",
+				"title":       title,
+				"response":    resp,
+				"createdAt":   createdAt,
+				"completedAt": time.Now().UTC().Format(time.RFC3339),
+			}}, nil
 		},
 	}, nil
-}
-
-func generateBuiltinBlockID() string {
-	b := make([]byte, 2)
-	_, _ = rand.Read(b)
-	return "cmd-" + hex.EncodeToString(b)
 }

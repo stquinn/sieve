@@ -1,8 +1,6 @@
 package ai
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -17,16 +15,18 @@ import (
 // Stateless singleton: immutable deps only; per-request state lives in
 // Build's args and the Job closures.
 type BtwCommand struct {
-	ai   *AIService
-	docs *services.DocumentService
+	ai *AIService
+	docMetaReader
 }
 
 func NewBtwCommand(aiSvc *AIService, docs *services.DocumentService) *BtwCommand {
-	return &BtwCommand{ai: aiSvc, docs: docs}
+	return &BtwCommand{ai: aiSvc, docMetaReader: docMetaReader{docs: docs}}
 }
 
 func (c *BtwCommand) Name() string        { return "btw" }
 func (c *BtwCommand) Description() string { return "Quick answer in a popup — nothing is added to the document" }
+func (c *BtwCommand) Family() string      { return command.FamilyAI }
+func (c *BtwCommand) ResultKind() string  { return "ai-block" }
 
 func (c *BtwCommand) Build(text string, ctx command.Context) (command.Job, error) {
 	// THIS command needs the AI CLI — its precondition, checked here, not by
@@ -37,9 +37,7 @@ func (c *BtwCommand) Build(text string, ctx command.Context) (command.Job, error
 	if strings.TrimSpace(text) == "" {
 		return command.Job{}, fmt.Errorf("usage: /btw <question>")
 	}
-	id := generateAIBlockID()
 	attrs := map[string]interface{}{
-		"id":        id,
 		"status":    "PENDING",
 		"createdAt": time.Now().UTC().Format(time.RFC3339),
 		"question":  text,
@@ -68,34 +66,10 @@ func (c *BtwCommand) Build(text string, ctx command.Context) (command.Job, error
 	}, nil
 }
 
-// docMeta reads title+summary from disk meta ONLY (LoadByUUID resolves buffers
-// too; accepted staleness = the autosave debounce). Every field optional.
-func (c *BtwCommand) docMeta(uuid string) (title, summary string) {
-	if uuid == "" || c.docs == nil {
-		return "", ""
-	}
-	doc, err := c.docs.LoadByUUID(uuid)
-	if err != nil {
-		return "", ""
-	}
-	m := doc.Meta()
-	title = m.DisplayName()
-	if s := m.Summary(); s != nil {
-		summary = *s
-	}
-	return title, summary
-}
-
 func (c *BtwCommand) label(text string) string {
 	r := []rune(text)
 	if len(r) > 40 {
 		return "/btw " + string(r[:40]) + "…"
 	}
 	return "/btw " + text
-}
-
-func generateAIBlockID() string {
-	b := make([]byte, 2)
-	_, _ = rand.Read(b)
-	return "ai-" + hex.EncodeToString(b)
 }

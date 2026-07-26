@@ -10,12 +10,15 @@ import (
 )
 
 type fakeCommand struct {
-	name  string
-	build func(text string, ctx Context) (Job, error)
+	name   string
+	family string
+	build  func(text string, ctx Context) (Job, error)
 }
 
 func (f *fakeCommand) Name() string        { return f.name }
 func (f *fakeCommand) Description() string { return "fake command" }
+func (f *fakeCommand) Family() string      { return f.family }
+func (f *fakeCommand) ResultKind() string  { return "ai-block" }
 func (f *fakeCommand) Build(text string, ctx Context) (Job, error) {
 	if f.build != nil {
 		return f.build(text, ctx)
@@ -51,7 +54,7 @@ func TestDispatch_PendingThenComplete(t *testing.T) {
 	}})
 
 	emit, ch := collector()
-	r.Dispatch("echo", "hi", nil, "c-1", emit)
+	r.Dispatch("echo", "", "hi", nil, "c-1", emit)
 
 	first := <-ch
 	if first.Status != StatusPending || first.Block == nil {
@@ -63,10 +66,44 @@ func TestDispatch_PendingThenComplete(t *testing.T) {
 	}
 }
 
+func TestDispatch_StampsCorrelationIDAsBlockID(t *testing.T) {
+	r := testRegistry(t)
+	// Command invents NO id — the dispatcher owns identity so attrs.id ==
+	// correlationID == the JobEngine's JobID (frontend stale-detection contract).
+	r.Register(&fakeCommand{name: "echo", build: func(text string, _ Context) (Job, error) {
+		return Job{
+			Label:   "/echo",
+			Pending: &Block{Kind: "ai-block", Attrs: map[string]interface{}{"status": "PENDING"}},
+			Work: func() (Block, error) {
+				return Block{Kind: "ai-block", Attrs: map[string]interface{}{"status": "COMPLETE"}}, nil
+			},
+		}, nil
+	}})
+
+	emit, ch := collector()
+	r.Dispatch("echo", "", "hi", nil, "corr-42", emit)
+
+	pending := <-ch
+	if pending.Status != StatusPending || pending.Block == nil {
+		t.Fatalf("want PENDING+block, got %+v", pending)
+	}
+	if pending.Block.Attrs["id"] != "corr-42" {
+		t.Fatalf("pending block id = %v, want correlationID corr-42", pending.Block.Attrs["id"])
+	}
+
+	terminal := <-ch
+	if terminal.Status != StatusComplete || terminal.Block == nil {
+		t.Fatalf("want COMPLETE+block, got %+v", terminal)
+	}
+	if terminal.Block.Attrs["id"] != "corr-42" {
+		t.Fatalf("terminal block id = %v, want correlationID corr-42", terminal.Block.Attrs["id"])
+	}
+}
+
 func TestDispatch_UnknownCommand(t *testing.T) {
 	r := testRegistry(t)
 	emit, ch := collector()
-	r.Dispatch("nope", "text", nil, "c-1", emit)
+	r.Dispatch("nope", "", "text", nil, "c-1", emit)
 
 	out := <-ch
 	if out.Status != StatusError || !strings.Contains(out.Err, "unknown command") {
@@ -81,7 +118,7 @@ func TestDispatch_BuildErrorFailsFast(t *testing.T) {
 	}})
 
 	emit, ch := collector()
-	r.Dispatch("failbuild", "text", nil, "c-1", emit)
+	r.Dispatch("failbuild", "", "text", nil, "c-1", emit)
 
 	out := <-ch
 	if out.Status != StatusError || out.Err != "tier dumb fail fast" {
@@ -107,7 +144,7 @@ func TestDispatch_EffectOnlyCommand(t *testing.T) {
 	}})
 
 	emit, ch := collector()
-	r.Dispatch("sideeffect", "text", nil, "c-1", emit)
+	r.Dispatch("sideeffect", "", "text", nil, "c-1", emit)
 
 	first := <-ch
 	if first.Status != StatusPending || first.Block != nil {
@@ -132,7 +169,7 @@ func TestDispatch_WorkErrorEmitsError(t *testing.T) {
 	}})
 
 	emit, ch := collector()
-	r.Dispatch("workfail", "text", nil, "c-1", emit)
+	r.Dispatch("workfail", "", "text", nil, "c-1", emit)
 
 	first := <-ch
 	if first.Status != StatusPending {
@@ -161,8 +198,8 @@ func TestDispatch_ConcurrentCorrelationsDisjoint(t *testing.T) {
 	emit1, ch1 := collector()
 	emit2, ch2 := collector()
 
-	r.Dispatch("gated", "first", nil, "c-1", emit1)
-	r.Dispatch("gated", "second", nil, "c-2", emit2)
+	r.Dispatch("gated", "", "first", nil, "c-1", emit1)
+	r.Dispatch("gated", "", "second", nil, "c-2", emit2)
 
 	p1 := <-ch1
 	p2 := <-ch2
@@ -198,7 +235,7 @@ func TestCancel_DropsResult(t *testing.T) {
 	}})
 
 	emit, ch := collector()
-	r.Dispatch("gated", "text", nil, "c-1", emit)
+	r.Dispatch("gated", "", "text", nil, "c-1", emit)
 
 	p := <-ch
 	if p.Status != StatusPending {
@@ -244,5 +281,99 @@ func TestRegistry_ListPreservesOrder(t *testing.T) {
 	list := r.List()
 	if len(list) != 2 || list[0].Name != "alpha" || list[1].Name != "beta" {
 		t.Fatalf("List returned unexpected order/content: %+v", list)
+	}
+}
+
+func TestRegistry_ListIncludesFamilyAndResultKind(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&fakeCommand{name: "alpha", family: FamilyUtil})
+	list := r.List()
+	if len(list) != 1 {
+		t.Fatalf("expected one Info, got %d", len(list))
+	}
+	if list[0].Family != FamilyUtil {
+		t.Fatalf("Info.Family = %q, want %q", list[0].Family, FamilyUtil)
+	}
+	// fakeCommand advertises ResultKind "ai-block" — the enrichment must reach Info.
+	if list[0].ResultKind != "ai-block" {
+		t.Fatalf("Info.ResultKind = %q, want ai-block", list[0].ResultKind)
+	}
+}
+
+func TestDispatch_FamilyMatchProceeds(t *testing.T) {
+	r := testRegistry(t)
+	r.Register(&fakeCommand{name: "util-cmd", family: FamilyUtil, build: func(text string, _ Context) (Job, error) {
+		return Job{
+			Label:   "/util-cmd",
+			Pending: &Block{Kind: "command-result", Attrs: map[string]interface{}{"status": "PENDING"}},
+			Work: func() (Block, error) {
+				return Block{Kind: "command-result", Attrs: map[string]interface{}{"status": "COMPLETE"}}, nil
+			},
+		}, nil
+	}})
+
+	emit, ch := collector()
+	r.Dispatch("util-cmd", FamilyUtil, "x", nil, "c-1", emit)
+
+	first := <-ch
+	if first.Status != StatusPending {
+		t.Fatalf("want PENDING (family matched), got %+v", first)
+	}
+	second := <-ch
+	if second.Status != StatusComplete {
+		t.Fatalf("want COMPLETE (family matched), got %+v", second)
+	}
+}
+
+func TestDispatch_FamilyMismatchErrorsBeforeSubmit(t *testing.T) {
+	r := testRegistry(t)
+	built := false
+	r.Register(&fakeCommand{name: "util-cmd", family: FamilyUtil, build: func(text string, _ Context) (Job, error) {
+		built = true // must NEVER run — mismatch short-circuits before Build
+		return Job{Label: "/util-cmd", Pending: &Block{Kind: "command-result"},
+			Work: func() (Block, error) { return Block{Kind: "command-result"}, nil }}, nil
+	}})
+
+	emit, ch := collector()
+	r.Dispatch("util-cmd", FamilyAI, "x", nil, "c-1", emit)
+
+	out := <-ch
+	if out.Status != StatusError || !strings.Contains(out.Err, "family mismatch") {
+		t.Fatalf("want family-mismatch ERROR, got %+v", out)
+	}
+	if built {
+		t.Fatalf("Build ran despite family mismatch — job must never be submitted")
+	}
+	// No PENDING/COMPLETE follows a mismatch.
+	select {
+	case unexpected := <-ch:
+		t.Fatalf("unexpected outcome after mismatch: %+v", unexpected)
+	default:
+	}
+}
+
+func TestDispatch_EmptyFamilyIsTolerant(t *testing.T) {
+	r := testRegistry(t)
+	r.Register(&fakeCommand{name: "util-cmd", family: FamilyUtil, build: func(text string, _ Context) (Job, error) {
+		return Job{
+			Label:   "/util-cmd",
+			Pending: &Block{Kind: "command-result", Attrs: map[string]interface{}{"status": "PENDING"}},
+			Work: func() (Block, error) {
+				return Block{Kind: "command-result", Attrs: map[string]interface{}{"status": "COMPLETE"}}, nil
+			},
+		}, nil
+	}})
+
+	emit, ch := collector()
+	// Empty expectedFamily skips the integrity check even though the command is util.
+	r.Dispatch("util-cmd", "", "x", nil, "c-1", emit)
+
+	first := <-ch
+	if first.Status != StatusPending {
+		t.Fatalf("want PENDING (empty family tolerant), got %+v", first)
+	}
+	second := <-ch
+	if second.Status != StatusComplete {
+		t.Fatalf("want COMPLETE (empty family tolerant), got %+v", second)
 	}
 }

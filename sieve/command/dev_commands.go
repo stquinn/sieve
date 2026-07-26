@@ -15,6 +15,41 @@ import (
 	"sieve/sieve/services"
 )
 
+// devContentResolver resolves the content a dev command operates on and
+// describes its scope, applying the priority rule: inline text > selection >
+// document. It owns the document service the fallback reads from.
+type devContentResolver struct {
+	docs *services.DocumentService
+}
+
+func (r devContentResolver) resolve(text string, ctx Context) (content, scope string) {
+	if t := strings.TrimSpace(text); t != "" {
+		return text, "Inline Text"
+	}
+	if s := strings.TrimSpace(ctx.SelectedText); s != "" {
+		return ctx.SelectedText, "Selected Text"
+	}
+	if ctx.DocUUID != "" && r.docs != nil {
+		if doc, err := r.docs.LoadByUUID(ctx.DocUUID); err == nil {
+			body := string(doc.Body())
+			if strings.TrimSpace(body) != "" {
+				return body, "Document"
+			}
+		}
+	}
+	return "", ""
+}
+
+// scopeNote returns a parenthetical byte/word count for scope clarity.
+func (r devContentResolver) scopeNote(content, scope string) string {
+	n := len([]byte(content))
+	if scope == "Document" {
+		words := len(strings.Fields(content))
+		return fmt.Sprintf("(%d bytes, %d words)", n, words)
+	}
+	return fmt.Sprintf("(%d bytes)", n)
+}
+
 // ─── /uuid ───────────────────────────────────────────────────────────────────
 
 type UUIDCommand struct{}
@@ -23,22 +58,15 @@ func NewUUIDCommand() *UUIDCommand { return &UUIDCommand{} }
 
 func (c *UUIDCommand) Name() string        { return "uuid" }
 func (c *UUIDCommand) Description() string { return "Generate a new random UUID v4" }
+func (c *UUIDCommand) Family() string      { return FamilyUtil }
+func (c *UUIDCommand) ResultKind() string  { return "command-result" }
 
 func (c *UUIDCommand) Build(text string, ctx Context) (Job, error) {
-	id := generateBuiltinBlockID()
-	attrs := map[string]interface{}{
-		"id":        id,
-		"status":    "PENDING",
-		"createdAt": time.Now().UTC().Format(time.RFC3339),
-		"question":  "Generate UUID (/uuid)",
-		"type":      "UUID",
-		"ref":       "",
-	}
-	pending := &Block{Kind: "ai-block", Attrs: attrs}
+	createdAt := time.Now().UTC().Format(time.RFC3339)
 
 	return Job{
 		Label:   "/uuid",
-		Pending: pending,
+		Pending: nil,
 		Work: func() (Block, error) {
 			b := make([]byte, 16)
 			if _, err := rand.Read(b); err != nil {
@@ -51,8 +79,6 @@ func (c *UUIDCommand) Build(text string, ctx Context) (Job, error) {
 				b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 
 			resp := strings.Join([]string{
-				"### 🔑 UUID v4 (`/uuid`)",
-				"",
 				"```",
 				uuid,
 				"```",
@@ -60,11 +86,15 @@ func (c *UUIDCommand) Build(text string, ctx Context) (Job, error) {
 				fmt.Sprintf("*Generated at %s*", time.Now().UTC().Format(time.RFC3339)),
 			}, "\n")
 
-			done := cloneAttrs(attrs)
-			done["status"] = "COMPLETE"
-			done["response"] = resp
-			done["completedAt"] = time.Now().UTC().Format(time.RFC3339)
-			return Block{Kind: "ai-block", Attrs: done}, nil
+			return Block{Kind: "command-result", Attrs: map[string]interface{}{
+				"cmd":         "uuid",
+				"status":      "COMPLETE",
+				"title":       "🔑 UUID v4",
+				"response":    resp,
+				"primary":     uuid,
+				"createdAt":   createdAt,
+				"completedAt": time.Now().UTC().Format(time.RFC3339),
+			}}, nil
 		},
 	}, nil
 }
@@ -72,31 +102,26 @@ func (c *UUIDCommand) Build(text string, ctx Context) (Job, error) {
 // ─── /hash ───────────────────────────────────────────────────────────────────
 
 type HashCommand struct {
-	docs *services.DocumentService
+	content devContentResolver
 }
 
-func NewHashCommand(docs *services.DocumentService) *HashCommand { return &HashCommand{docs: docs} }
+func NewHashCommand(docs *services.DocumentService) *HashCommand {
+	return &HashCommand{content: devContentResolver{docs: docs}}
+}
 
 func (c *HashCommand) Name() string        { return "hash" }
 func (c *HashCommand) Description() string { return "SHA-256 hash of inline text, selection, or document" }
+func (c *HashCommand) Family() string      { return FamilyUtil }
+func (c *HashCommand) ResultKind() string  { return "command-result" }
 
 func (c *HashCommand) Build(text string, ctx Context) (Job, error) {
-	id := generateBuiltinBlockID()
-	attrs := map[string]interface{}{
-		"id":        id,
-		"status":    "PENDING",
-		"createdAt": time.Now().UTC().Format(time.RFC3339),
-		"question":  "SHA-256 Hash (/hash)",
-		"type":      "HASH",
-		"ref":       "",
-	}
-	pending := &Block{Kind: "ai-block", Attrs: attrs}
+	createdAt := time.Now().UTC().Format(time.RFC3339)
 
 	return Job{
 		Label:   "/hash",
-		Pending: pending,
+		Pending: nil,
 		Work: func() (Block, error) {
-			content, scope := resolveDevContent(text, ctx, c.docs)
+			content, scope := c.content.resolve(text, ctx)
 			if content == "" {
 				return Block{}, fmt.Errorf("/hash: no content to hash — provide text, make a selection, or open a document")
 			}
@@ -106,14 +131,12 @@ func (c *HashCommand) Build(text string, ctx Context) (Job, error) {
 
 			var inputLine string
 			if scope == "Document" {
-				inputLine = fmt.Sprintf("*Input: **Document** %s*", devScopeNote(content, scope))
+				inputLine = fmt.Sprintf("*Input: **Document** %s*", c.content.scopeNote(content, scope))
 			} else {
 				inputLine = fmt.Sprintf("*Input (%s): `%s`*", scope, content)
 			}
 
 			resp := strings.Join([]string{
-				"### 🔐 SHA-256 Hash (`/hash`)",
-				"",
 				inputLine,
 				"",
 				"| | |",
@@ -122,11 +145,15 @@ func (c *HashCommand) Build(text string, ctx Context) (Job, error) {
 				fmt.Sprintf("| **Bytes hashed** | `%d` |", len([]byte(content))),
 			}, "\n")
 
-			done := cloneAttrs(attrs)
-			done["status"] = "COMPLETE"
-			done["response"] = resp
-			done["completedAt"] = time.Now().UTC().Format(time.RFC3339)
-			return Block{Kind: "ai-block", Attrs: done}, nil
+			return Block{Kind: "command-result", Attrs: map[string]interface{}{
+				"cmd":         "hash",
+				"status":      "COMPLETE",
+				"title":       "🔐 SHA-256 Hash",
+				"response":    resp,
+				"primary":     hexHash,
+				"createdAt":   createdAt,
+				"completedAt": time.Now().UTC().Format(time.RFC3339),
+			}}, nil
 		},
 	}, nil
 }
@@ -134,43 +161,36 @@ func (c *HashCommand) Build(text string, ctx Context) (Job, error) {
 // ─── /base64 ─────────────────────────────────────────────────────────────────
 
 type Base64Command struct {
-	docs *services.DocumentService
+	content devContentResolver
 }
 
 func NewBase64Command(docs *services.DocumentService) *Base64Command {
-	return &Base64Command{docs: docs}
+	return &Base64Command{content: devContentResolver{docs: docs}}
 }
 
 func (c *Base64Command) Name() string        { return "base64" }
 func (c *Base64Command) Description() string { return "Base64 encode/decode inline text, selection, or document" }
+func (c *Base64Command) Family() string      { return FamilyUtil }
+func (c *Base64Command) ResultKind() string  { return "command-result" }
 
 func (c *Base64Command) Build(text string, ctx Context) (Job, error) {
-	id := generateBuiltinBlockID()
-	attrs := map[string]interface{}{
-		"id":        id,
-		"status":    "PENDING",
-		"createdAt": time.Now().UTC().Format(time.RFC3339),
-		"question":  "Base64 Encode/Decode (/base64)",
-		"type":      "BASE64",
-		"ref":       "",
-	}
-	pending := &Block{Kind: "ai-block", Attrs: attrs}
+	createdAt := time.Now().UTC().Format(time.RFC3339)
 
 	return Job{
 		Label:   "/base64",
-		Pending: pending,
+		Pending: nil,
 		Work: func() (Block, error) {
-			content, scope := resolveDevContent(text, ctx, c.docs)
+			content, scope := c.content.resolve(text, ctx)
 			if content == "" {
 				return Block{}, fmt.Errorf("/base64: no content — provide text, make a selection, or open a document")
 			}
 
 			trimmed := strings.TrimSpace(content)
-			var resp string
+			var title, resp, primary string
 
 			var inputLine string
 			if scope == "Document" {
-				inputLine = fmt.Sprintf("*Input: **Document** %s*", devScopeNote(content, scope))
+				inputLine = fmt.Sprintf("*Input: **Document** %s*", c.content.scopeNote(content, scope))
 			} else {
 				inputLine = fmt.Sprintf("*Input (%s): `%s`*", scope, content)
 			}
@@ -182,9 +202,9 @@ func (c *Base64Command) Build(text string, ctx Context) (Job, error) {
 
 			if isLikelyEncoded {
 				if decoded, err := base64.StdEncoding.DecodeString(trimmed); err == nil {
+					title = "📦 Base64 Decoded"
+					primary = string(decoded)
 					resp = strings.Join([]string{
-						"### 📦 Base64 Decoded (`/base64`)",
-						"",
 						inputLine,
 						"",
 						"**Decoded:**",
@@ -199,9 +219,9 @@ func (c *Base64Command) Build(text string, ctx Context) (Job, error) {
 			// Default: encode
 			if resp == "" {
 				encoded := base64.StdEncoding.EncodeToString([]byte(content))
+				title = "📦 Base64 Encoded"
+				primary = encoded
 				resp = strings.Join([]string{
-					"### 📦 Base64 Encoded (`/base64`)",
-					"",
 					inputLine,
 					"",
 					"**Encoded:**",
@@ -212,11 +232,15 @@ func (c *Base64Command) Build(text string, ctx Context) (Job, error) {
 				}, "\n")
 			}
 
-			done := cloneAttrs(attrs)
-			done["status"] = "COMPLETE"
-			done["response"] = resp
-			done["completedAt"] = time.Now().UTC().Format(time.RFC3339)
-			return Block{Kind: "ai-block", Attrs: done}, nil
+			return Block{Kind: "command-result", Attrs: map[string]interface{}{
+				"cmd":         "base64",
+				"status":      "COMPLETE",
+				"title":       title,
+				"response":    resp,
+				"primary":     primary,
+				"createdAt":   createdAt,
+				"completedAt": time.Now().UTC().Format(time.RFC3339),
+			}}, nil
 		},
 	}, nil
 }
@@ -229,29 +253,20 @@ func NewEnvCommand() *EnvCommand { return &EnvCommand{} }
 
 func (c *EnvCommand) Name() string        { return "env" }
 func (c *EnvCommand) Description() string { return "Go runtime info: OS, arch, CPUs, goroutines, memory" }
+func (c *EnvCommand) Family() string      { return FamilyUtil }
+func (c *EnvCommand) ResultKind() string  { return "command-result" }
 
 func (c *EnvCommand) Build(text string, ctx Context) (Job, error) {
-	id := generateBuiltinBlockID()
-	attrs := map[string]interface{}{
-		"id":        id,
-		"status":    "PENDING",
-		"createdAt": time.Now().UTC().Format(time.RFC3339),
-		"question":  "Runtime Environment (/env)",
-		"type":      "ENV",
-		"ref":       "",
-	}
-	pending := &Block{Kind: "ai-block", Attrs: attrs}
+	createdAt := time.Now().UTC().Format(time.RFC3339)
 
 	return Job{
 		Label:   "/env",
-		Pending: pending,
+		Pending: nil,
 		Work: func() (Block, error) {
 			var ms runtime.MemStats
 			runtime.ReadMemStats(&ms)
 
 			resp := strings.Join([]string{
-				"### 🖥️ Runtime Environment (`/env`)",
-				"",
 				"| Key | Value |",
 				"| :--- | :--- |",
 				fmt.Sprintf("| **Go Version** | `%s` |", runtime.Version()),
@@ -259,18 +274,37 @@ func (c *EnvCommand) Build(text string, ctx Context) (Job, error) {
 				fmt.Sprintf("| **Arch** | `%s` |", runtime.GOARCH),
 				fmt.Sprintf("| **CPUs** | `%d` |", runtime.NumCPU()),
 				fmt.Sprintf("| **Goroutines** | `%d` |", runtime.NumGoroutine()),
-				fmt.Sprintf("| **Heap Alloc** | `%s` |", formatDevBytes(ms.HeapAlloc)),
-				fmt.Sprintf("| **Heap Sys** | `%s` |", formatDevBytes(ms.HeapSys)),
+				fmt.Sprintf("| **Heap Alloc** | `%s` |", c.formatBytes(ms.HeapAlloc)),
+				fmt.Sprintf("| **Heap Sys** | `%s` |", c.formatBytes(ms.HeapSys)),
 				fmt.Sprintf("| **GC Cycles** | `%d` |", ms.NumGC),
 			}, "\n")
 
-			done := cloneAttrs(attrs)
-			done["status"] = "COMPLETE"
-			done["response"] = resp
-			done["completedAt"] = time.Now().UTC().Format(time.RFC3339)
-			return Block{Kind: "ai-block", Attrs: done}, nil
+			// No single "answer" value for /env — omit primary; the popup's Copy
+			// falls back to the rendered markdown table.
+			return Block{Kind: "command-result", Attrs: map[string]interface{}{
+				"cmd":         "env",
+				"status":      "COMPLETE",
+				"title":       "🖥️ Runtime Environment",
+				"response":    resp,
+				"createdAt":   createdAt,
+				"completedAt": time.Now().UTC().Format(time.RFC3339),
+			}}, nil
 		},
 	}, nil
+}
+
+// formatBytes renders a byte count in the nearest binary (KiB/MiB/…) unit.
+func (c *EnvCommand) formatBytes(b uint64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := uint64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
 // ─── /jwt ────────────────────────────────────────────────────────────────────
@@ -281,18 +315,11 @@ func NewJWTCommand() *JWTCommand { return &JWTCommand{} }
 
 func (c *JWTCommand) Name() string        { return "jwt" }
 func (c *JWTCommand) Description() string { return "Decode & inspect a JWT header + payload (no signature verification)" }
+func (c *JWTCommand) Family() string      { return FamilyUtil }
+func (c *JWTCommand) ResultKind() string  { return "command-result" }
 
 func (c *JWTCommand) Build(text string, ctx Context) (Job, error) {
-	id := generateBuiltinBlockID()
-	attrs := map[string]interface{}{
-		"id":        id,
-		"status":    "PENDING",
-		"createdAt": time.Now().UTC().Format(time.RFC3339),
-		"question":  "JWT Decode (/jwt)",
-		"type":      "JWT",
-		"ref":       "",
-	}
-	pending := &Block{Kind: "ai-block", Attrs: attrs}
+	createdAt := time.Now().UTC().Format(time.RFC3339)
 
 	// Capture token at Build time: inline text > selection
 	token := strings.TrimSpace(text)
@@ -302,7 +329,7 @@ func (c *JWTCommand) Build(text string, ctx Context) (Job, error) {
 
 	return Job{
 		Label:   "/jwt",
-		Pending: pending,
+		Pending: nil,
 		Work: func() (Block, error) {
 			if token == "" {
 				return Block{}, fmt.Errorf("/jwt: provide a token as inline text or select one first")
@@ -312,18 +339,16 @@ func (c *JWTCommand) Build(text string, ctx Context) (Job, error) {
 				return Block{}, fmt.Errorf("/jwt: expected 3 dot-separated parts, got %d", len(parts))
 			}
 
-			headerJSON, err := jwtDecodeSegment(parts[0])
+			headerJSON, err := c.decodeSegment(parts[0])
 			if err != nil {
 				return Block{}, fmt.Errorf("/jwt: invalid header: %w", err)
 			}
-			payloadJSON, err := jwtDecodeSegment(parts[1])
+			payloadJSON, err := c.decodeSegment(parts[1])
 			if err != nil {
 				return Block{}, fmt.Errorf("/jwt: invalid payload: %w", err)
 			}
 
 			resp := strings.Join([]string{
-				"### 🔑 JWT Decoded (`/jwt`)",
-				"",
 				"> ⚠️ **Signature NOT verified** — header & payload only",
 				"",
 				"**Header:**",
@@ -337,69 +362,22 @@ func (c *JWTCommand) Build(text string, ctx Context) (Job, error) {
 				"```",
 			}, "\n")
 
-			done := cloneAttrs(attrs)
-			done["status"] = "COMPLETE"
-			done["response"] = resp
-			done["completedAt"] = time.Now().UTC().Format(time.RFC3339)
-			return Block{Kind: "ai-block", Attrs: done}, nil
+			return Block{Kind: "command-result", Attrs: map[string]interface{}{
+				"cmd":         "jwt",
+				"status":      "COMPLETE",
+				"title":       "🔑 JWT Decoded",
+				"response":    resp,
+				"primary":     payloadJSON,
+				"createdAt":   createdAt,
+				"completedAt": time.Now().UTC().Format(time.RFC3339),
+			}}, nil
 		},
 	}, nil
 }
 
-// ─── shared helpers ───────────────────────────────────────────────────────────
-
-// resolveDevContent applies the priority rule: inline text > selection > document.
-func resolveDevContent(text string, ctx Context, docs *services.DocumentService) (string, string) {
-	if t := strings.TrimSpace(text); t != "" {
-		return text, "Inline Text"
-	}
-	if s := strings.TrimSpace(ctx.SelectedText); s != "" {
-		return ctx.SelectedText, "Selected Text"
-	}
-	if ctx.DocUUID != "" && docs != nil {
-		if doc, err := docs.LoadByUUID(ctx.DocUUID); err == nil {
-			body := string(doc.Body())
-			if strings.TrimSpace(body) != "" {
-				return body, "Document"
-			}
-		}
-	}
-	return "", ""
-}
-
-// devScopeNote returns a parenthetical byte/word count for scope clarity.
-func devScopeNote(content, scope string) string {
-	n := len([]byte(content))
-	if scope == "Document" {
-		words := len(strings.Fields(content))
-		return fmt.Sprintf("(%d bytes, %d words)", n, words)
-	}
-	return fmt.Sprintf("(%d bytes)", n)
-}
-
-// cloneAttrs shallow-copies an attrs map so Work closures don't race on writes.
-func cloneAttrs(src map[string]interface{}) map[string]interface{} {
-	dst := make(map[string]interface{}, len(src)+3)
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
-}
-
-func formatDevBytes(b uint64) string {
-	const unit = 1024
-	if b < unit {
-		return fmt.Sprintf("%d B", b)
-	}
-	div, exp := uint64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
-}
-
-func jwtDecodeSegment(seg string) (string, error) {
+// decodeSegment base64url-decodes one JWT segment (padding restored) and
+// pretty-prints it as JSON, falling back to the raw bytes when it is not JSON.
+func (c *JWTCommand) decodeSegment(seg string) (string, error) {
 	// JWT uses base64url without padding — restore padding before decoding.
 	padded := seg
 	switch len(padded) % 4 {

@@ -11,24 +11,24 @@ import (
 )
 
 type SummaryCommand struct {
-	ai   *AIService
-	docs *services.DocumentService
+	ai *AIService
+	docMetaReader
 }
 
 func NewSummaryCommand(aiSvc *AIService, docs *services.DocumentService) *SummaryCommand {
-	return &SummaryCommand{ai: aiSvc, docs: docs}
+	return &SummaryCommand{ai: aiSvc, docMetaReader: docMetaReader{docs: docs}}
 }
 
 func (c *SummaryCommand) Name() string        { return "summary" }
 func (c *SummaryCommand) Description() string { return "3-bullet summary of document or selection" }
+func (c *SummaryCommand) Family() string      { return command.FamilyAI }
+func (c *SummaryCommand) ResultKind() string  { return "ai-block" }
 
 func (c *SummaryCommand) Build(text string, ctx command.Context) (command.Job, error) {
 	if c.ai == nil || c.ai.Tier() == domain.TierDumb {
 		return command.Job{}, fmt.Errorf("AI commands are unavailable — configure an AI CLI in Settings")
 	}
-	id := generateAIBlockID()
 	attrs := map[string]interface{}{
-		"id":        id,
 		"status":    "PENDING",
 		"createdAt": time.Now().UTC().Format(time.RFC3339),
 		"question":  "Document Summary (/summary)",
@@ -59,20 +59,4 @@ func (c *SummaryCommand) Build(text string, ctx command.Context) (command.Job, e
 			return command.Block{Kind: "ai-block", Attrs: done}, nil
 		},
 	}, nil
-}
-
-func (c *SummaryCommand) docMeta(uuid string) (title, summary string) {
-	if uuid == "" || c.docs == nil {
-		return "", ""
-	}
-	doc, err := c.docs.LoadByUUID(uuid)
-	if err != nil {
-		return "", ""
-	}
-	m := doc.Meta()
-	title = m.DisplayName()
-	if s := m.Summary(); s != nil {
-		summary = *s
-	}
-	return title, summary
 }

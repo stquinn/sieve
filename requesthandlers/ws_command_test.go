@@ -18,6 +18,8 @@ type fakeCmd struct {
 
 func (f *fakeCmd) Name() string        { return f.name }
 func (f *fakeCmd) Description() string { return "fake command for ws test" }
+func (f *fakeCmd) Family() string      { return command.FamilyAI }
+func (f *fakeCmd) ResultKind() string  { return "ai-block" }
 func (f *fakeCmd) Build(text string, ctx command.Context) (command.Job, error) {
 	if f.build != nil {
 		return f.build(text, ctx)
