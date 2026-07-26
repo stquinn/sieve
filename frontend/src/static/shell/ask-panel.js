@@ -232,12 +232,11 @@ export class AskPanel {
         const resolved = cs.resolve(val)
         if (resolved) {
           const context = this.#lastContext || (this.#ws ? this.#ws.getSelectionContext() : null)
-          const handle = cs.dispatch(resolved.cmd.name, resolved.args, context, (res) => {
-            const ed = this.#activeEditor()
-            if (ed && typeof ed.handleCommandResult === 'function') {
-              ed.handleCommandResult(res)
-            }
-          })
+          // No onResult here: the CommandBadge wires its own listener off the
+          // handle (handle.onResult) and owns the answer lifecycle. There is no
+          // editor.handleCommandResult seam — command results land in the badge/
+          // popup, never back in the editor doc.
+          const handle = cs.dispatch(resolved.cmd.name, resolved.args, context)
           const badges = this.#badges || (this.#ws && /** @type {any} */ (this.#ws).commandBadges)
           if (badges) {
             badges.track(handle, { cmd: resolved.cmd.name, text: resolved.args })

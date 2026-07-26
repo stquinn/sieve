@@ -1,22 +1,46 @@
 // @ts-check
-// command-popup.js — the detached-answer popup (#55): the THIRD host of
-// AiBlockRenderer (note lens / bare harness / here). An appearance, not an
+// command-popup.js — the detached-answer popup (#55): a host for command-result
+// block renderers (note lens / bare harness / here). An appearance, not an
 // interruption: never steals focus. Hide parks the answer on its badge;
 // Delete (via onDelete) removes it from existence.
 //
 // The pending state is KIND-AGNOSTIC: when block is null the popup renders a
-// generic spinner + command name. Only when a real block arrives (status
-// COMPLETE/ERROR) does the popup use AiBlockRenderer for the body content.
+// generic spinner + command name (or, on a block-less terminal error, a generic
+// error view). Only when a real block arrives does the popup resolve the kind's
+// renderer (COMMAND_RENDERERS) and mount it for the body content.
+//
+// Envelope contract: the popup reads the block's TYPED getters (block.kind /
+// block.status) — the opaque payload is the kind renderer's business, so the
+// Copy button pulls its answer text from the renderer (copyText), never by
+// reaching into payload.
 
 import { AiBlockRenderer } from '../block/renderers/ai-block-renderer.js'
+import { CommandResultRenderer } from '../block/renderers/command-result-renderer.js'
+
+/** @typedef {{ cmd: string, text: string, error?: string }} CommandMeta */
+
+/**
+ * Kind → renderer resolution for command-result blocks. Frozen and small; a new
+ * command result kind adds one entry here (its PM-free renderer). NOT the
+ * PM-coupled NodeViewRegistry — this popup stays out of ProseMirror. AI
+ * commands (/btw, /summary, /todo) resolve to AiBlockRenderer; non-AI developer
+ * utilities (/uuid, /hash, …) to the honest CommandResultRenderer.
+ * @type {Readonly<Record<string, typeof AiBlockRenderer | typeof CommandResultRenderer>>}
+ */
+const COMMAND_RENDERERS = Object.freeze({ 'ai-block': AiBlockRenderer, 'command-result': CommandResultRenderer })
 
 export class CommandPopup {
+  // One command popup visible at a time: opening hides any other, and Escape
+  // closes only the top-of-stack. A static registry (not a window.* bus).
+  /** @type {CommandPopup[]} */ static #openStack = []
+  static #top() { return CommandPopup.#openStack[CommandPopup.#openStack.length - 1] || null }
+
   /** @type {HTMLElement} */ #anchor
   /** @type {() => void} */ #onDelete
   /** @type {HTMLElement|null} */ #root = null
-  /** @type {AiBlockRenderer|null} */ #renderer = null
+  /** @type {import('../block/renderers/block-renderer.js').BlockRenderer|null} */ #renderer = null
   /** @type {import('../block/sieve-block.js').SieveBlock|null} */ #block = null
-  /** @type {{cmd: string, text: string}} */ #meta = { cmd: '', text: '' }
+  /** @type {CommandMeta} */ #meta = { cmd: '', text: '' }
   /** @type {HTMLElement|null} */ #bodyEl = null
   /** @type {HTMLElement|null} */ #titleEl = null
   /** @type {Array<() => void>} */ #unlisten = []
@@ -33,7 +57,7 @@ export class CommandPopup {
 
   /**
    * @param {import('../block/sieve-block.js').SieveBlock|null} block
-   * @param {{cmd: string, text: string}} [meta]
+   * @param {CommandMeta} [meta]
    */
   show(block, meta) {
     this.#block = block
@@ -42,43 +66,27 @@ export class CommandPopup {
       this.update(block, meta)
       return
     }
+    // One visible at a time — park any other open command popup on its badge.
+    CommandPopup.#openStack.slice().forEach((p) => { if (p !== this) p.hide() })
+
     const root = document.createElement('div')
     this.#root = root
     root.className = 'command-popup'
-    root.style.cssText = [
-      'position: fixed',
-      'z-index: 1000',
-      'top: 50%',
-      'left: 50%',
-      'transform: translate(-50%, -50%)',
-      'width: min(90vw, 920px)',
-      'height: min(80vh, 640px)',
-      'background: var(--theme-bgAlt, #1f2335)',
-      'border: 1px solid var(--theme-border2, #3b4261)',
-      'border-radius: 12px',
-      'box-shadow: 0 20px 60px rgba(0, 0, 0, 0.65)',
-      'display: flex',
-      'flex-direction: column',
-      'overflow: hidden',
-      'backdrop-filter: blur(16px)'
-    ].join('; ') + ';'
 
     const bar = document.createElement('div')
     bar.className = 'command-popup__bar'
-    bar.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; background: var(--theme-bgDark, #1a1b26); border-bottom: 1px solid var(--theme-border2, #24283b);'
 
     this.#titleEl = document.createElement('span')
     this.#titleEl.className = 'command-popup__title'
-    this.#titleEl.style.cssText = 'font-size: 13px; font-weight: 700; color: var(--theme-accentCyan, #7dcfff); text-transform: uppercase; letter-spacing: 0.08em;'
     this.#renderTitle()
 
     const actionsEl = document.createElement('div')
-    actionsEl.style.cssText = 'display: flex; align-items: center; gap: 10px;'
+    actionsEl.className = 'command-popup__actions'
 
     actionsEl.append(
       this.#barButton('copy', 'Copy answer', 'Copy', () => {
-        const text = String((this.#block && this.#block.payload && this.#block.payload.response) || '')
-        if (navigator.clipboard) navigator.clipboard.writeText(text)
+        const text = this.#answerText()
+        if (text && navigator.clipboard) navigator.clipboard.writeText(text)
       }),
       this.#barButton('hide', 'Hide (answer stays on the badge)', 'Hide', () => this.hide()),
       this.#barButton('delete', 'Delete', 'Dismiss', () => this.#onDelete())
@@ -88,19 +96,21 @@ export class CommandPopup {
 
     this.#bodyEl = document.createElement('div')
     this.#bodyEl.className = 'command-popup__body'
-    this.#bodyEl.style.cssText = 'flex: 1; min-height: 0; overflow-y: auto; padding: 24px 28px; user-select: text; font-size: 15px; line-height: 1.65;'
 
     this.#renderBody()
 
     root.append(bar, this.#bodyEl)
     document.body.appendChild(root)
+    CommandPopup.#openStack.push(this)
 
     /** @param {KeyboardEvent} e */
     const onKey = (e) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation()
-        this.hide()
-      }
+      if (e.key !== 'Escape') return
+      // Only the most-recently-shown popup responds; stop siblings' listeners.
+      if (CommandPopup.#top() !== this) return
+      e.stopImmediatePropagation()
+      e.stopPropagation()
+      this.hide()
     }
     /** @param {MouseEvent} e */
     const onClick = (e) => {
@@ -110,17 +120,23 @@ export class CommandPopup {
       }
     }
 
-    document.addEventListener('keydown', onKey)
+    // CAPTURE phase (third arg true): document-level capture runs BEFORE any
+    // target-phase handler, so when a popup is on top of the stack, Escape is
+    // consumed here (stopImmediatePropagation) before the Ask-panel textarea's
+    // own keydown handler can fire #dismiss() and silently unpin the panel.
+    // Precedent: command-hint-popover.js. removeEventListener MUST pass the same
+    // capture flag or it silently no-ops.
+    document.addEventListener('keydown', onKey, true)
     document.addEventListener('click', onClick)
     this.#unlisten = [
-      () => document.removeEventListener('keydown', onKey),
+      () => document.removeEventListener('keydown', onKey, true),
       () => document.removeEventListener('click', onClick)
     ]
   }
 
   /**
    * @param {import('../block/sieve-block.js').SieveBlock|null} block
-   * @param {{cmd: string, text: string}} [meta]
+   * @param {CommandMeta} [meta]
    */
   update(block, meta) {
     this.#block = block
@@ -132,53 +148,97 @@ export class CommandPopup {
   #renderTitle() {
     if (!this.#titleEl) return
     const cmdName = this.#meta.cmd || 'command'
-    const isPending = !this.#block || (this.#block.payload && this.#block.payload.status === 'PENDING')
-    this.#titleEl.textContent = '/' + cmdName + (isPending ? ' …' : ' answer')
+    let suffix
+    if (this.#block ? this.#block.status === 'ERROR' : this.#meta.error) suffix = ' failed'
+    else if (!this.#block || this.#block.status === 'PENDING') suffix = ' …'
+    else suffix = ' answer'
+    this.#titleEl.textContent = '/' + cmdName + suffix
   }
 
   #renderBody() {
     if (!this.#bodyEl) return
-    const isPending = !this.#block
 
-    if (isPending) {
-      // Generic pending view: spinner + command name + prompt
+    // No envelope yet: a block-less terminal error → generic error view; else the
+    // generic pending view (spinner + command name).
+    if (!this.#block) {
       this.#renderer = null
-      this.#bodyEl.innerHTML = ''
-      const wrap = document.createElement('div')
-      wrap.style.cssText = 'display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 16px; color: var(--theme-textDim, #565f89);'
-
-      const spinner = document.createElement('div')
-      spinner.className = 'status-bar__spinner'
-      spinner.style.cssText = 'width: 20px; height: 20px; border-width: 2px;'
-
-      const label = document.createElement('div')
-      label.style.cssText = 'font-size: 14px; font-weight: 500; letter-spacing: 0.04em;'
-      label.textContent = '/' + this.#meta.cmd + ' is working…'
-
-      const prompt = document.createElement('div')
-      prompt.style.cssText = 'font-size: 12px; max-width: 400px; text-align: center; opacity: 0.6;'
-      prompt.textContent = this.#meta.text || ''
-
-      wrap.append(spinner, label)
-      if (this.#meta.text) wrap.appendChild(prompt)
-      this.#bodyEl.appendChild(wrap)
+      if (this.#meta.error) this.#renderStatus(true, '⚠', 'Command failed', this.#meta.error)
+      else this.#renderStatus(false, null, '/' + this.#meta.cmd + ' is working…', this.#meta.text)
       return
     }
 
-    // We have a real block — render it with AiBlockRenderer
-    if (this.#renderer) {
+    // Resolve the kind's renderer; an unknown kind gets a safe generic view.
+    const RendererClass = COMMAND_RENDERERS[this.#block.kind]
+    if (!RendererClass) {
+      this.#renderer = null
+      this.#renderStatus(true, '⚠', 'Unsupported result kind', this.#block.kind)
+      return
+    }
+
+    if (this.#renderer instanceof RendererClass) {
       this.#renderer.update(this.#block)
     } else {
       this.#bodyEl.innerHTML = ''
-      this.#renderer = new AiBlockRenderer(this.#block)
+      this.#renderer = new RendererClass(this.#block)
       const rendered = this.#renderer.render()
       if (rendered) this.#bodyEl.appendChild(rendered)
     }
   }
 
+  /**
+   * Generic status view (pending spinner OR terminal error/unsupported): a
+   * centred icon-or-spinner + a label + an optional detail line.
+   * @param {boolean} isError @param {string|null} icon @param {string} label @param {string} [detail]
+   */
+  #renderStatus(isError, icon, label, detail) {
+    if (!this.#bodyEl) return
+    this.#bodyEl.innerHTML = ''
+    const wrap = document.createElement('div')
+    wrap.className = 'command-popup__status' + (isError ? ' command-popup__status--error' : '')
+
+    if (icon) {
+      const iconEl = document.createElement('div')
+      iconEl.className = 'command-popup__status-icon'
+      iconEl.textContent = icon
+      wrap.appendChild(iconEl)
+    } else {
+      const spinner = document.createElement('div')
+      spinner.className = 'status-bar__spinner command-popup__spinner'
+      wrap.appendChild(spinner)
+    }
+
+    const labelEl = document.createElement('div')
+    labelEl.className = 'command-popup__status-label'
+    labelEl.textContent = label
+    wrap.appendChild(labelEl)
+
+    if (detail) {
+      const detailEl = document.createElement('div')
+      detailEl.className = 'command-popup__status-detail'
+      detailEl.textContent = detail
+      wrap.appendChild(detailEl)
+    }
+
+    this.#bodyEl.appendChild(wrap)
+  }
+
+  /**
+   * The answer text to copy — pulled from the kind renderer's copyText()
+   * accessor (a command result yields its raw `primary` value; other kinds fall
+   * back to their markdown body). Empty when no renderer is mounted (pending /
+   * generic view).
+   * @returns {string}
+   */
+  #answerText() {
+    const r = /** @type {any} */ (this.#renderer)
+    return r && typeof r.copyText === 'function' ? String(r.copyText() || '') : ''
+  }
+
   hide() {
     this.#unlisten.forEach((u) => u())
     this.#unlisten = []
+    const i = CommandPopup.#openStack.indexOf(this)
+    if (i >= 0) CommandPopup.#openStack.splice(i, 1)
     if (this.#root) {
       this.#root.remove()
       this.#root = null
@@ -205,11 +265,6 @@ export class CommandPopup {
     b.setAttribute('aria-label', title)
     b.title = title
     b.textContent = text
-    b.style.cssText = 'background: transparent; border: 1px solid var(--theme-border2, #24283b); color: var(--theme-textDim, #9aa5ce); cursor: pointer; padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 500; transition: all 0.15s ease;'
-    if (kind === 'delete') {
-      b.style.color = 'var(--theme-danger, #f7768e)'
-      b.style.borderColor = 'color-mix(in srgb, var(--theme-danger, #f7768e) 40%, transparent)'
-    }
     b.addEventListener('click', (e) => {
       e.stopPropagation()
       onClick()

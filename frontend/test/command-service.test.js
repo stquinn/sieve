@@ -41,7 +41,8 @@ describe('CommandService', () => {
   let service
 
   const commands = [
-    { name: 'btw', description: 'Ask by the way' }
+    { name: 'btw', description: 'Ask by the way', family: 'ai', resultKind: 'ai-block' },
+    { name: 'uuid', description: 'Generate a UUID', family: 'util', resultKind: 'command-result' }
   ]
 
   beforeEach(() => {
@@ -164,5 +165,43 @@ describe('CommandService', () => {
       block: { kind: 'ai-block', attrs: { status: 'COMPLETE' } }
     })
     expect(results.length).toBe(0)
+  })
+
+  it('dispatch sends the resolved descriptor family (util vs ai)', async () => {
+    service.openChannel({
+      applyServerOp: () => {},
+      onFlushAck: () => {},
+      onMessage: () => {},
+      resolveInsertIndex: () => 0
+    })
+    await new Promise(r => setTimeout(r, 10))
+
+    service.dispatch('uuid', '', {})
+    expect(fakeWs.sent[0].family).toBe('util')
+    expect(fakeWs.sent[0].cmd).toBe('uuid')
+
+    service.dispatch('btw', 'hello', {})
+    expect(fakeWs.sent[1].family).toBe('ai')
+  })
+
+  it('dispatch sends the tolerant floor when the descriptor lacks a family', async () => {
+    const svc = new CommandService({
+      socketFactory: (url) => { fakeWs = new FakeWebSocket(url); return /** @type {any} */ (fakeWs) },
+      wsUrl: () => 'ws://test/api/ws?session=1',
+      // Legacy-shaped descriptor: no family field at all.
+      commands: [{ name: 'legacy', description: 'no family' }]
+    })
+    svc.openChannel({
+      applyServerOp: () => {},
+      onFlushAck: () => {},
+      onMessage: () => {},
+      resolveInsertIndex: () => 0
+    })
+    await new Promise(r => setTimeout(r, 10))
+
+    svc.dispatch('legacy', 'x', {})
+    // Empty family = Go's tolerant floor; nothing throws on the missing field.
+    expect(fakeWs.sent[0].family).toBe('')
+    expect(fakeWs.sent[0].cmd).toBe('legacy')
   })
 })

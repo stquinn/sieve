@@ -339,7 +339,8 @@ describe('AskPanel — Slash command routing (#55)', () => {
     const mockCs = {
       resolve: vi.fn((input) => input.startsWith('/btw') ? { cmd: { name: 'btw', description: 'Ask btw' }, args: 'what is X' } : null),
       openChannel: vi.fn(),
-      dispatch: vi.fn((name, args, ctx, cb) => { cb({ status: 'COMPLETE' }) })
+      // Returns a dispatch handle; the badge (not the panel) wires onResult.
+      dispatch: vi.fn(() => ({ correlationId: 'c-x', onResult: vi.fn(), cancel: vi.fn() }))
     }
     const panel = new AskPanel(ws, mockCs)
     const ta = el.querySelector('.ask-popup__input')
@@ -347,9 +348,28 @@ describe('AskPanel — Slash command routing (#55)', () => {
     el.querySelector('.ask-popup__send').click()
 
     expect(mockCs.resolve).toHaveBeenCalledWith('/btw what is X')
-    expect(mockCs.openChannel).toHaveBeenCalled()
-    expect(mockCs.dispatch).toHaveBeenCalledWith('btw', 'what is X', expect.anything(), expect.any(Function))
+    // Dispatched with NO onResult callback — the dead editor.handleCommandResult
+    // seam was removed; the badge owns the result lifecycle via handle.onResult.
+    expect(mockCs.dispatch).toHaveBeenCalledWith('btw', 'what is X', expect.anything())
     expect(editor.askAi).not.toHaveBeenCalled()
     expect(ta.value).toBe('')
+  })
+
+  it('a command send while pinned keeps the panel open (no dismiss-on-send)', () => {
+    window.initAskPanelPinned = true
+    const el = mountPanelDom({ open: true })
+    const ws = fakeWorkspace(fakeEditor())
+    const mockCs = {
+      resolve: vi.fn(() => ({ cmd: { name: 'btw', description: 'Ask btw' }, args: 'x' })),
+      dispatch: vi.fn(() => ({ correlationId: 'c-x', onResult: vi.fn(), cancel: vi.fn() }))
+    }
+    const panel = new AskPanel(ws, mockCs)
+    const ta = el.querySelector('.ask-popup__input')
+    ta.value = '/btw x'
+    el.querySelector('.ask-popup__send').click()
+
+    expect(mockCs.dispatch).toHaveBeenCalled()
+    expect(ta.value).toBe('')
+    expect(el.classList.contains('is-open')).toBe(true)   // pinned → send never unpins
   })
 })

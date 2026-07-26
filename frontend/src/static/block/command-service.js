@@ -9,6 +9,10 @@ import { BlockChannel } from './block-channel.js'
  * @typedef {object} CommandDescriptor
  * @property {string} name
  * @property {string} description
+ * @property {string} [family] Namespace/discovery bucket ('ai' | 'util'). Optional:
+ *   older enumerations without it resolve fine and dispatch on the tolerant floor.
+ * @property {string} [resultKind] Advisory block kind the command expects to return
+ *   ('ai-block' | 'command-result'). Carried through only; no UI behaviour yet.
  */
 
 /**
@@ -33,13 +37,22 @@ import { BlockChannel } from './block-channel.js'
  * @property {CommandDescriptor[]} [commands]
  */
 
+/**
+ * The handle returned by dispatch(): a correlation id, a listener-subscribe
+ * verb, and a cancel verb. The badge lifecycle (command-badges.js) tracks a
+ * dispatch by this handle, NOT by a CommandResult.
+ * @typedef {object} DispatchHandle
+ * @property {string} correlationId
+ * @property {(fn: (res: CommandResult) => void) => void} onResult
+ * @property {() => void} cancel
+ */
+
 export class CommandService {
   /** @type {(url: string) => WebSocket} */ #socketFactory
   /** @type {() => string} */ #wsUrl
   /** @type {CommandDescriptor[]} */ #commands
   /** @type {BlockChannel|null} */ #channel = null
   /** @type {Map<string, (res: CommandResult) => void>} correlationId -> onResult */ #correlations = new Map()
-  /** @type {number} */ #seq = 0
 
   /**
    * @param {CommandServiceOptions} [options]
@@ -48,6 +61,20 @@ export class CommandService {
     this.#socketFactory = options.socketFactory || ((url) => new WebSocket(url))
     this.#wsUrl = options.wsUrl || (() => CommandService.#defaultUrl())
     this.#commands = options.commands || (typeof window !== 'undefined' && /** @type {any} */ (window).__sieveCommands) || []
+  }
+
+  // Collision-resistant correlation id. `c-` + a UUID so an id minted in one
+  // page session can never collide with one from a PRIOR session — the Go
+  // JobEngine may still hold a queued job keyed by an old id after a reload, and
+  // a resetting counter ('c-1', 'c-2', …) would let Cancel/result correlation
+  // land on the wrong job. crypto.randomUUID is the primary; the Math.random
+  // fallback keeps the non-secure/test env working (uniqueness, not crypto
+  // strength, is what the correlation needs).
+  static #newCid() {
+    const c = typeof crypto !== 'undefined' ? crypto : null
+    if (c && typeof c.randomUUID === 'function') return 'c-' + c.randomUUID()
+    const rand = () => Math.floor(Math.random() * 0x100000000).toString(16).padStart(8, '0')
+    return 'c-' + rand() + rand() + '-' + Date.now().toString(16)
   }
 
   static #defaultUrl() {
@@ -146,19 +173,30 @@ export class CommandService {
    * @param {string} commandName
    * @param {string} text
    * @param {Record<string, any>} context
-   * @param {(res: CommandResult) => void} onResult
-   * @returns {{ cancel: () => void }}
+   * @param {(res: CommandResult) => void} [onResult]
+   * @returns {DispatchHandle}
    */
   dispatch(commandName, text, context, onResult) {
     if (!this.#channel) {
       this.openChannel()
     }
-    const cid = 'c-' + (++this.#seq)
-    this.#correlations.set(cid, onResult)
+    const cid = CommandService.#newCid()
 
+    /** @type {Set<(res: CommandResult) => void>} */
+    const listeners = new Set()
+    if (onResult) listeners.add(onResult)
+
+    this.#correlations.set(cid, (res) => {
+      listeners.forEach((fn) => fn(res))
+    })
+
+    // Family is the descriptor's own namespace declaration, not a hardcoded
+    // assumption: look it up and send it so Go can integrity-check the invocation.
+    // Missing descriptor / no family → omit it (empty), matching Go's tolerant floor.
+    const descriptor = this.#commands.find((c) => c.name.toLowerCase() === commandName.toLowerCase())
     const frame = {
       type: 'command',
-      family: 'ai',
+      family: (descriptor && descriptor.family) || '',
       cmd: commandName,
       args: { text: text },
       correlationId: cid,
@@ -170,8 +208,13 @@ export class CommandService {
     }
 
     return {
+      correlationId: cid,
+      onResult: (fn) => {
+        listeners.add(fn)
+      },
       cancel: () => {
         this.#correlations.delete(cid)
+        listeners.clear()
         if (this.#channel) {
           this.#channel.send({ type: 'command-cancel', correlationId: cid })
         }

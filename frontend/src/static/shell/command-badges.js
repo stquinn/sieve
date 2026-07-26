@@ -10,9 +10,19 @@
 import { SieveBlock } from '../block/sieve-block.js'
 import { CommandPopup } from './command-popup.js'
 
+/**
+ * @typedef {object} BadgeEntry
+ * @property {HTMLElement} el
+ * @property {import('../block/command-service.js').DispatchHandle} handle
+ * @property {string} state
+ * @property {{cmd: string, text: string, error?: string}} meta
+ * @property {SieveBlock|null} block
+ * @property {CommandPopup|null} popup
+ */
+
 export class CommandBadges {
   /** @type {HTMLElement|null} */ #slot
-  /** @type {Map<string, {el: HTMLElement, handle: any, state: string, meta: {cmd: string, text: string}, block: SieveBlock|null, popup: CommandPopup|null}>} */ #entries = new Map()
+  /** @type {Map<string, BadgeEntry>} */ #entries = new Map()
 
   /** @param {HTMLElement|null} [slot] the .status-bar__command-badges element */
   constructor(slot) {
@@ -20,7 +30,7 @@ export class CommandBadges {
   }
 
   /**
-   * @param {import('../block/command-service.js').CommandResult & any} handle
+   * @param {import('../block/command-service.js').DispatchHandle} handle
    * @param {{cmd: string, text: string}} meta
    */
   track(handle, meta) {
@@ -31,9 +41,9 @@ export class CommandBadges {
     el.title = '/' + meta.cmd + (meta.text ? ' ' + meta.text : '')
     el.setAttribute('aria-label', el.title)
     el.textContent = '/' + meta.cmd
-    el.style.cssText = 'background: var(--theme-bgHighlight, #292e42); color: var(--theme-accentCyan, #7dcfff); border: 1px solid var(--theme-border2, #24283b); border-radius: 4px; padding: 2px 8px; margin-right: 6px; font-size: 11px; cursor: pointer;'
     this.#slot.appendChild(el)
 
+    /** @type {BadgeEntry} */
     const entry = {
       el,
       handle,
@@ -49,28 +59,33 @@ export class CommandBadges {
     }
   }
 
+  /** @param {BadgeEntry} entry @param {import('../block/command-service.js').CommandResult} r */
   #onResult(entry, r) {
     if (r.block) {
       entry.block = new SieveBlock(r.block.kind, r.block.attrs)
     } else if (r.status === 'ERROR') {
-      const prev = entry.block ? entry.block.payload : {}
-      entry.block = new SieveBlock('ai-block', Object.assign({}, prev, { status: 'ERROR', error: r.error || '' }))
+      if (entry.block) {
+        // A prior block exists — merge the error into a FRESH envelope of the
+        // SAME kind (never a hardcoded 'ai-block'); the block keeps its identity.
+        entry.block = new SieveBlock(entry.block.kind, Object.assign({}, entry.block.payload, { status: 'ERROR', error: r.error || '' }))
+      } else {
+        // No block ever arrived — do NOT fabricate an ai-block envelope (the
+        // "assumed ai-block" 8808c0a removed). Carry the error on the meta so the
+        // popup renders a generic, kind-less error view.
+        entry.meta = Object.assign({}, entry.meta, { error: r.error || 'Command failed.' })
+      }
     }
 
     if (r.status === 'COMPLETE' || r.status === 'ERROR') {
       entry.state = 'holding'
       entry.el.className = 'command-badge command-badge--holding' + (r.status === 'ERROR' ? ' command-badge--error' : '')
-      if (r.status === 'ERROR') {
-        entry.el.style.color = 'var(--theme-danger, #f7768e)'
-      } else {
-        entry.el.style.color = 'var(--theme-accentGreen, #9ece6a)'
-      }
       this.#summon(entry)
     } else if (entry.popup && entry.popup.visible) {
       entry.popup.update(entry.block, entry.meta)
     }
   }
 
+  /** @param {BadgeEntry} entry */
   #toggle(entry) {
     if (entry.popup && entry.popup.visible) {
       entry.popup.hide()
@@ -79,6 +94,7 @@ export class CommandBadges {
     }
   }
 
+  /** @param {BadgeEntry} entry */
   #summon(entry) {
     if (!entry.popup) {
       entry.popup = new CommandPopup({ anchor: entry.el, onDelete: () => this.#delete(entry) })
@@ -86,6 +102,7 @@ export class CommandBadges {
     entry.popup.show(entry.block, entry.meta)
   }
 
+  /** @param {BadgeEntry} entry */
   #delete(entry) {
     if (entry.state === 'pending' && entry.handle && typeof entry.handle.cancel === 'function') {
       entry.handle.cancel()

@@ -7,7 +7,9 @@
 
 import { describe, it, expect } from 'vitest'
 
-// Mirror of the pure map-building logic inside applyJobsSnapshot.
+// Mirror of the pure map-building logic inside applyJobsSnapshot. EVERY
+// JobEngine job paints uniformly — commands included (their CommandBadge is an
+// additional affordance; #55 decision #5's filter was reversed 2026-07-26).
 function buildActiveJobsMap(active) {
   var map = {}
   ;(active || []).forEach(function (j) {
@@ -68,5 +70,24 @@ describe('applyJobsSnapshot pure logic (mirrors ai-actions.js)', () => {
   it('defaults docId to empty string when absent', () => {
     var map = buildActiveJobsMap([{ jobId: 'j1' }])
     expect(map['j1'].docId).toBe('')
+  })
+
+  it('paints commands-category jobs in the active map like every other job', () => {
+    var map = buildActiveJobsMap([
+      { jobId: 'cmd-1', category: 'commands', label: '/btw' },
+      { jobId: 'j2', category: 'ai', label: 'Filing...' },
+    ])
+    expect(map['cmd-1']).toEqual({ label: '/btw', docId: '', spinTab: false })
+    expect(map['j2']).toBeDefined()
+    expect(Object.keys(map)).toHaveLength(2)
+  })
+
+  it('keeps commands-category jobs in the queued list like every other job', () => {
+    var list = buildQueuedList([
+      { jobId: 'cmd-1', category: 'commands' },
+      { jobId: 'j2', category: 'ai' },
+      { jobId: 'j3' },
+    ])
+    expect(list.map(function (j) { return j.jobId })).toEqual(['cmd-1', 'j2', 'j3'])
   })
 })

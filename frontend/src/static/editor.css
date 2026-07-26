@@ -1752,15 +1752,26 @@ pre.tiptap-code-block code {
   to { transform: rotate(360deg); }
 }
 
-/* Job status area: an Active cell (spinner + task, +N more) and a Queued cell,
-   using the same cell/divider language as the right-group status-bar cells. */
 .status-bar__jobs {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  min-width: 0;
+  width: 15ch; /* fixed width, reserve space */
+  flex: 0 0 auto;
   overflow: hidden;
 }
+
+/* Show placeholder when no active jobs */
+.status-bar__jobs:empty::after {
+  content: "No Active Jobs";
+  color: var(--theme-muted);
+  display: inline-block;
+  min-width: 15ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .status-bar__job-active {
   display: flex;
   align-items: center;
@@ -1808,6 +1819,117 @@ pre.tiptap-code-block code {
 .status-bar__command-badges:empty {
   display: none;
 }
+
+/* ── Command badge (#55): one pill per correlated command job ─────────── */
+.command-badge {
+  background: var(--theme-bgAlt);
+  color: var(--theme-accentCyan);
+  border: 1px solid var(--theme-border2);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+/* State accents — class-driven, no inline colour. Pending keeps the base cyan;
+   running progress is the status-bar jobs spinner (commands paint there
+   uniformly like every JobEngine job), NOT a second spinner on the badge. */
+.command-badge--holding { color: var(--theme-accentGreen); }
+.command-badge--error { color: var(--theme-accentRed); }
+
+/* ── Command answer popup: the detached-answer host (#55) ─────────────── */
+.command-popup {
+  position: fixed;
+  z-index: 1000;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(90vw, 920px);
+  height: min(80vh, 640px);
+  background: var(--theme-bgAlt);
+  border: 1px solid var(--theme-border2);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px color-mix(in srgb, var(--theme-bgDark) 65%, transparent);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  backdrop-filter: blur(16px);
+}
+.command-popup__bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  background: var(--theme-bgDark);
+  border-bottom: 1px solid var(--theme-border2);
+}
+.command-popup__title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--theme-accentCyan);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.command-popup__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.command-popup__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px 28px;
+  user-select: text;
+  font-size: 15px;
+  line-height: 1.65;
+}
+.command-popup__btn {
+  background: transparent;
+  border: 1px solid var(--theme-border2);
+  color: var(--theme-textDim);
+  cursor: pointer;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.15s ease;
+}
+.command-popup__btn--delete {
+  color: var(--theme-accentRed);
+  border-color: color-mix(in srgb, var(--theme-accentRed) 40%, transparent);
+}
+/* Generic status view (pending / error) — centred spinner-or-icon + labels. */
+.command-popup__status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 16px;
+  color: var(--theme-textDim);
+}
+/* Reuses .status-bar__spinner (border + ai-spin keyframes); just resizes it. */
+.command-popup__spinner {
+  width: 20px;
+  height: 20px;
+  border-width: 2px;
+}
+.command-popup__status-icon {
+  font-size: 28px;
+  line-height: 1;
+}
+.command-popup__status-label {
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+.command-popup__status-detail {
+  font-size: 12px;
+  max-width: 400px;
+  text-align: center;
+  opacity: 0.6;
+}
+.command-popup__status--error { color: var(--theme-accentRed); }
 
 /* ── Pending-close blocking dialog ──────────────────────────────────── */
 

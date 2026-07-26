@@ -23,7 +23,7 @@ import { BlockRenderer } from './block-renderer.js'
 import { aiBlockStyles } from './ai-block-renderer.styles.js'
 import { isJobStale } from './job-status.js'
 
-/** @typedef {{ id?: string, ref?: string, type?: 'ASK'|'EXPLAIN', status?: string, createdAt?: string, question?: string, response?: string|null, error?: string|null, model?: string|null, supportsEmbedding?: boolean }} AiBlockAttrs */
+/** @typedef {{ id?: string, ref?: string, type?: 'ASK'|'EXPLAIN'|'BTW', status?: string, createdAt?: string, question?: string, response?: string|null, error?: string|null, model?: string|null, supportsEmbedding?: boolean }} AiBlockAttrs */
 
 export class AiBlockRenderer extends BlockRenderer {
   static styles = aiBlockStyles
