@@ -24,6 +24,8 @@
 export class AskPanel {
   /** @type {import('./workspace.js').SieveWorkspace} */
   #ws
+  /** @type {import('../block/command-service.js').CommandService|null} */
+  #commandService = null
   /** @type {HTMLElement|null} the structural #ask-panel (null → all methods no-op) */
   #panel = null
   /** @type {HTMLTextAreaElement|null} */
@@ -39,9 +41,13 @@ export class AskPanel {
   /** @type {import('../editor/selection-model.js').SelectionContext|null} the context whose label is CURRENTLY shown — what send acts on (D-5: send == shown) */
   #lastContext = null
 
-  /** @param {import('./workspace.js').SieveWorkspace} ws */
-  constructor(ws) {
+  /**
+   * @param {import('./workspace.js').SieveWorkspace} ws
+   * @param {import('../block/command-service.js').CommandService} [commandService]
+   */
+  constructor(ws, commandService) {
     this.#ws = ws
+    this.#commandService = commandService || (ws && /** @type {any} */ (ws).commandService) || null
     this.#panel = document.getElementById('ask-panel')
     this.#pinned = !!window.initAskPanelPinned
     if (!this.#panel) return
@@ -208,6 +214,28 @@ export class AskPanel {
     if (!this.#textarea) return
     const val = this.#textarea.value.trim()
     if (!val) return
+
+    if (val.startsWith('/')) {
+      const cs = this.#commandService || (this.#ws && /** @type {any} */ (this.#ws).commandService)
+      if (cs) {
+        const resolved = cs.resolve(val)
+        if (resolved) {
+          const context = this.#lastContext || (this.#ws ? this.#ws.getSelectionContext() : null)
+          cs.openChannel()
+          cs.dispatch(resolved.cmd.name, resolved.args, context, (res) => {
+            const ed = this.#activeEditor()
+            if (ed && typeof ed.handleCommandResult === 'function') {
+              ed.handleCommandResult(res)
+            }
+          })
+          this.#textarea.value = ''
+          if (this.#panel && !this.#pinned) this.#panel.classList.remove('is-open')
+          this.#focusReturn = null
+          return
+        }
+      }
+    }
+
     const ed = this.#activeEditor()
     if (!ed) return
     const context = this.#lastContext || ed.getSelectionContext()

@@ -14,6 +14,7 @@
 import { SieveTab } from './tab.js'
 import { BlockService } from '../block/block-service.js'
 import { DocumentService } from '../block/document-service.js'
+import { CommandService } from '../block/command-service.js'
 import { AskPanel } from './ask-panel.js'
 import { InsertDialogs } from './insert-dialogs.js'
 import { SearchOverlay } from './search-overlay.js'
@@ -67,6 +68,9 @@ export class SieveWorkspace {
    * owner by constructor injection (contract §service pair). */
   #documentService
 
+  /** @type {CommandService} the workspace command plane protocol peer. */
+  #commandService
+
   /**
    * @param {import('../block/block-service.js').BlockServiceOptions} [serviceOptions]
    *   — the BlockService test seams (socketFactory / wsUrlFor). EMPTY in prod:
@@ -76,6 +80,10 @@ export class SieveWorkspace {
   constructor(serviceOptions) {
     this.#blockService = new BlockService(serviceOptions)
     this.#documentService = new DocumentService(this.#blockService)
+    this.#commandService = new CommandService({
+      commands: typeof window !== 'undefined' ? /** @type {any} */ (window).__sieveCommands || [] : [],
+      socketFactory: serviceOptions?.socketFactory,
+    })
   }
 
   /** The BlockService singleton (handed down; renderers/adapters consume it). */
@@ -83,6 +91,9 @@ export class SieveWorkspace {
 
   /** The DocumentService singleton (editors/Workspace consume it). */
   get documentService() { return this.#documentService }
+
+  /** The CommandService singleton (workspace slash-command protocol peer). */
+  get commandService() { return this.#commandService }
 
   // ── Tab management ────────────────────────────────────────────────────────────
 
@@ -694,7 +705,7 @@ export class SieveWorkspace {
    * bar's slots resolve to null and every write no-ops).
    */
   bootChrome() {
-    if (!this.#askPanel) this.#askPanel = new AskPanel(this)
+    if (!this.#askPanel) this.#askPanel = new AskPanel(this, this.#commandService)
     if (!this.#insertDialogs) this.#insertDialogs = new InsertDialogs(this)
     if (!this.#searchOverlay) this.#searchOverlay = new SearchOverlay(this)
     if (!this.#statusBar) this.#statusBar = new StatusBar(this)

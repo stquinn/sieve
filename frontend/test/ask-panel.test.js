@@ -330,3 +330,26 @@ describe('AskPanel — GLOW DROPPED (P4.B)', () => {
     expect(setAiTargetGlow).not.toHaveBeenCalled()
   })
 })
+
+describe('AskPanel — Slash command routing (#55)', () => {
+  it('dispatches valid slash command via commandService and clears box', () => {
+    const el = mountPanelDom({ open: true })
+    const editor = fakeEditor()
+    const ws = fakeWorkspace(editor)
+    const mockCs = {
+      resolve: vi.fn((input) => input.startsWith('/btw') ? { cmd: { name: 'btw', description: 'Ask btw' }, args: 'what is X' } : null),
+      openChannel: vi.fn(),
+      dispatch: vi.fn((name, args, ctx, cb) => { cb({ status: 'COMPLETE' }) })
+    }
+    const panel = new AskPanel(ws, mockCs)
+    const ta = el.querySelector('.ask-popup__input')
+    ta.value = '/btw what is X'
+    el.querySelector('.ask-popup__send').click()
+
+    expect(mockCs.resolve).toHaveBeenCalledWith('/btw what is X')
+    expect(mockCs.openChannel).toHaveBeenCalled()
+    expect(mockCs.dispatch).toHaveBeenCalledWith('btw', 'what is X', expect.anything(), expect.any(Function))
+    expect(editor.askAi).not.toHaveBeenCalled()
+    expect(ta.value).toBe('')
+  })
+})
