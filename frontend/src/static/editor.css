@@ -1966,6 +1966,29 @@ pre.tiptap-code-block code {
 }
 .command-popup__status--error { color: var(--theme-accentRed); }
 
+/* ── Popup-hosted block chrome suppression ─────────────────────────────
+   In a document a block's shell (border/background) and kind/status badge
+   announce its identity among siblings. In the popup the DIALOG is the frame
+   and its title bar already names the command — so the shell double-frames
+   and the badge/chip duplicates. The host suppresses that chrome here; the
+   question/title and body stay (a re-summoned badge needs "what did I ask").
+   Document rendering is untouched — this is host-scoped presentation only. */
+.command-popup__body .sieve-ai-block,
+.command-popup__body .sieve-ai-block:hover,
+.command-popup__body .sieve-command-result,
+.command-popup__body .sieve-command-result:hover {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  box-shadow: none;
+}
+.command-popup__body .ai-block__badge,
+.command-popup__body .command-result__chip,
+.command-popup__body .command-result__badge {
+  display: none;
+}
+
 /* ── Pending-close blocking dialog ──────────────────────────────────── */
 
 .pending-close-backdrop {
