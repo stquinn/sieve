@@ -5,6 +5,53 @@ import (
 	"testing"
 )
 
+// ResolveCLI splits the CLI setting into the executable to spawn (binary) and the
+// argument dialect to render. The provider dropdown drives the dialect; CLIPath,
+// when set, overrides only the binary.
+func TestResolveCLI(t *testing.T) {
+	cases := []struct {
+		name        string
+		cli         string
+		cliPath     string
+		wantBinary  string
+		wantDialect string
+	}{
+		{"enum claude passthrough", "claude", "", "claude", "claude"},
+		{"enum agy passthrough", "agy", "", "agy", "agy"},
+		{"enum copilot passthrough", "copilot", "", "copilot", "copilot"},
+		{"legacy path infers claude dialect + is the binary", "~/x/claude-query.sh", "", "~/x/claude-query.sh", "claude"},
+		{"legacy path infers copilot dialect", "/opt/bin/copilot-wrap", "", "/opt/bin/copilot-wrap", "copilot"},
+		{"CLIPath overrides binary, enum keeps claude dialect", "claude", "/x/claude-query.sh", "/x/claude-query.sh", "claude"},
+		{"CLIPath overrides binary, copilot dialect", "copilot", "/x/wrap.sh", "/x/wrap.sh", "copilot"},
+		{"CLIPath overrides binary, agy dialect", "agy", "/x/wrap.sh", "/x/wrap.sh", "agy"},
+		{"CLIPath is trimmed before overriding", "claude", "  /x/wrap.sh  ", "/x/wrap.sh", "claude"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := Settings{CLI: c.cli, CLIPath: c.cliPath}
+			gotBinary, gotDialect := s.ResolveCLI()
+			if gotBinary != c.wantBinary {
+				t.Errorf("binary = %q, want %q", gotBinary, c.wantBinary)
+			}
+			if gotDialect != c.wantDialect {
+				t.Errorf("dialect = %q, want %q", gotDialect, c.wantDialect)
+			}
+		})
+	}
+}
+
+// ParseSettings overlays a loaded cli_path onto the defaults (which carry none).
+func TestParseSettings_CLIPathOverlay(t *testing.T) {
+	loaded := ParseSettings([]byte(`{"cli":"claude","cli_path":"/x/claude-query.sh"}`))
+	if loaded.CLIPath != "/x/claude-query.sh" {
+		t.Errorf("CLIPath = %q, want /x/claude-query.sh", loaded.CLIPath)
+	}
+	// Absent cli_path keeps the default (empty).
+	if got := ParseSettings([]byte(`{"cli":"claude"}`)).CLIPath; got != "" {
+		t.Errorf("CLIPath = %q, want empty when absent", got)
+	}
+}
+
 func TestParseSettings_WorkerPoolsOverlay(t *testing.T) {
 	base := DefaultSettings()
 	if base.WorkerPools == nil {

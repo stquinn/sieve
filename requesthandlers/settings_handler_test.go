@@ -275,6 +275,52 @@ func TestSettingsSaveRoute_PersistsDiagramSettings(t *testing.T) {
 	}
 }
 
+// End-to-end over the REAL /api/settings save route: cli_path persists (trimmed)
+// as a flat field alongside the provider enum, so a custom wrapper path survives
+// to disk while the cli dropdown keeps driving the dialect.
+func TestSettingsSaveRoute_PersistsCLIPath(t *testing.T) {
+	h, dir := newTestSettingsHandler(t)
+	r := chi.NewRouter()
+	h.RegisterPaths(r)
+	srv := httptest.NewServer(r)
+	t.Cleanup(srv.Close)
+
+	form := url.Values{
+		"cli":                 {"claude"},
+		"cli_path":            {"  /opt/bin/claude-query.sh  "},
+		"cli_timeout_long":    {"20"},
+		"last_settings_panel": {"ai"},
+	}
+
+	resp, err := http.PostForm(srv.URL+"/api/settings", form)
+	if err != nil {
+		t.Fatalf("POST /api/settings: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	saved := h.ServiceProvider.State.LoadSettings()
+	if saved.CLIPath != "/opt/bin/claude-query.sh" {
+		t.Errorf("CLIPath = %q, want trimmed /opt/bin/claude-query.sh", saved.CLIPath)
+	}
+	if saved.CLI != "claude" {
+		t.Errorf("CLI = %q, want claude (dropdown still drives the dialect)", saved.CLI)
+	}
+	// The resolved pair proves the wrapper is the executable while claude stays the dialect.
+	binary, dialect := saved.ResolveCLI()
+	if binary != "/opt/bin/claude-query.sh" || dialect != "claude" {
+		t.Errorf("ResolveCLI = %q/%q, want /opt/bin/claude-query.sh/claude", binary, dialect)
+	}
+
+	raw := readSettingsJSON(t, dir)
+	if !strings.Contains(raw, "claude-query.sh") {
+		t.Errorf("settings.json missing persisted cli_path: %s", raw)
+	}
+}
+
 // readSettingsJSON locates and reads the state category's settings.json under
 // the FileStore root created by newTestSettingsHandler.
 func readSettingsJSON(t *testing.T, root string) string {

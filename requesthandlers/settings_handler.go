@@ -107,6 +107,7 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 
 	settings := h.ServiceProvider.State.LoadSettings()
 	settings.CLI = r.FormValue("cli")
+	settings.CLIPath = strings.TrimSpace(r.FormValue("cli_path"))
 	settings.Model = r.FormValue("model")
 	settings.Diagram.PlantumlServer = r.FormValue("diagram_plantuml_server")
 	settings.Diagram.DefaultType = r.FormValue("diagram_default_type")

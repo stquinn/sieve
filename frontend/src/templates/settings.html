@@ -30,6 +30,12 @@
       </div>
 
       <div style="margin-bottom: 1.5rem;">
+        <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Custom CLI Path (Optional)</label>
+        <input type="text" name="cli_path" value="{{.CLIPath}}" placeholder="/absolute/path/to/wrapper.sh" style="width: 100%; font-family: monospace; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+        <p style="font-size: 0.75rem; color: var(--theme-textDim); margin-top: 0.4rem;">Absolute path to a script/binary invoked instead of the provider's default command. Arguments for the selected provider are passed through unchanged.</p>
+      </div>
+
+      <div style="margin-bottom: 1.5rem;">
         <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Model Override (Optional)</label>
         <input type="text" name="model" value="{{.Model}}" placeholder="e.g. claude-3-5-sonnet" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
       </div>

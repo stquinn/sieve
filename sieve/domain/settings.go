@@ -28,6 +28,7 @@ type CustomLogParser struct {
 // All fields are optional — missing keys fall back to defaults.
 type Settings struct {
 	CLI                string            `json:"cli,omitempty"`
+	CLIPath            string            `json:"cli_path,omitempty"`
 	Model              string            `json:"model,omitempty"`
 	CLITimeoutLong     int               `json:"cli_timeout_long,omitempty"`
 	AutosaveDebounce   int               `json:"autosave_debounce,omitempty"`
@@ -58,10 +59,49 @@ type DiagramSettings struct {
 	DefaultType    string `json:"default_type,omitempty"`
 }
 
+// ResolveCLI resolves the two things the CLI setting actually drives, which are
+// no longer the same value: the executable to spawn (binary) and the argument
+// dialect to render (dialect).
+//
+//   - dialect: when CLI is exactly one of the provider enum values
+//     ("claude"/"agy"/"copilot"), that IS the dialect. Otherwise CLI is a legacy
+//     hand-edited path (e.g. "~/x/claude-query.sh") and the dialect is inferred by
+//     substring — exactly as the arg renderer (buildBaseArgs) does — so behaviour
+//     is unchanged for such configs.
+//   - binary: CLIPath wins when set (a wrapper script that stages auth then execs
+//     the real CLI); otherwise the CLI value itself is the binary, resolved on
+//     PATH as before.
+func (s Settings) ResolveCLI() (binary, dialect string) {
+	switch s.CLI {
+	case "claude", "agy", "copilot":
+		dialect = s.CLI
+	default:
+		switch {
+		case strings.Contains(s.CLI, "claude"):
+			dialect = "claude"
+		case strings.Contains(s.CLI, "agy"):
+			dialect = "agy"
+		case strings.Contains(s.CLI, "copilot"):
+			dialect = "copilot"
+		default:
+			dialect = s.CLI
+		}
+	}
+
+	binary = s.CLI
+	if p := strings.TrimSpace(s.CLIPath); p != "" {
+		binary = p
+	}
+	return binary, dialect
+}
+
 // Tier returns the capability tier based on whether the configured CLI is
-// reachable on PATH. Failing to find it degrades silently to Tier 1.
+// reachable on PATH. Failing to find it degrades silently to Tier 1. The resolved
+// binary (CLIPath override, else CLI) is what gets probed — a custom wrapper path
+// determines availability just like a bare provider name does.
 func (s Settings) Tier() Tier {
-	if s.CLI == "" {
+	binary, _ := s.ResolveCLI()
+	if binary == "" {
 		return TierDumb
 	}
 
@@ -74,9 +114,9 @@ func (s Settings) Tier() Tier {
 		return TierDumb
 	}
 
-	if _, err := exec.LookPath(s.CLI); err != nil {
+	if _, err := exec.LookPath(binary); err != nil {
 		logger.Warn("tier check: CLI not found on resolved PATH",
-			"cli", s.CLI, "err", err, "resolved_path", resolved)
+			"cli", binary, "err", err, "resolved_path", resolved)
 		return TierDumb
 	}
 	return TierSmart
@@ -99,6 +139,9 @@ func ParseSettings(data []byte) Settings {
 	// Overlay loaded values, keeping defaults for zero values.
 	if loaded.CLI != "" {
 		s.CLI = loaded.CLI
+	}
+	if loaded.CLIPath != "" {
+		s.CLIPath = loaded.CLIPath
 	}
 	if loaded.Model != "" {
 		s.Model = loaded.Model

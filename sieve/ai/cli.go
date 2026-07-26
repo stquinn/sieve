@@ -21,8 +21,13 @@ import (
 //
 // op names the AI operation (e.g. "explain", "file", "web-clip-fetch") — it is
 // used only for log correlation so calls are distinguishable at a glance.
+//
+// binary is the executable spawned; dialect selects the per-backend argument
+// renderer (buildBaseArgs). They are usually equal (a bare provider name), but a
+// user-configured CLIPath wrapper makes binary a script path while dialect keeps
+// following the provider dropdown — see Settings.ResolveCLI.
 type CLIRunner interface {
-	Run(op, cli, prompt, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string) (string, error)
+	Run(op, binary, dialect, prompt, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string) (string, error)
 }
 
 // execCLIRunner is the real CLIRunner: it renders the containment profile to args
@@ -54,7 +59,7 @@ func floorCwd(cwd, libraryDir string) string {
 // profile is the containment floor rendered to CLI args (never config files);
 // libraryDir resolves the profile's symbolic "library" directory grant to the
 // concrete --add-dir path. The note directory is the cwd and needs no grant.
-func (execCLIRunner) Run(op, cli, prompt, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string) (string, error) {
+func (execCLIRunner) Run(op, binary, dialect, prompt, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
@@ -64,9 +69,11 @@ func (execCLIRunner) Run(op, cli, prompt, model string, timeoutSecs int, cwd str
 	// Finder/Dock-launched macOS app is /). #41.
 	cwd = floorCwd(cwd, libraryDir)
 
-	args := buildBaseArgs(cli, model, prompt, profile, cwd, libraryDir)
+	// dialect selects the arg renderer; binary is what we actually spawn (they
+	// differ only when a CLIPath wrapper is configured).
+	args := buildBaseArgs(dialect, model, prompt, profile, cwd, libraryDir)
 
-	cmd := exec.CommandContext(ctx, cli, args...)
+	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Stdin = bytes.NewBufferString(prompt)
 	if cwd != "" {
 		cmd.Dir = cwd
@@ -95,18 +102,18 @@ func (execCLIRunner) Run(op, cli, prompt, model string, timeoutSecs int, cwd str
 	}
 	logger.LogBlock(
 		fmt.Sprintf("AI REQUEST ▸ %s", op),
-		requestLogBody(cli, logModel, timeoutSecs, logCwd, profile, args, prompt))
+		requestLogBody(binary, logModel, timeoutSecs, logCwd, profile, args, prompt))
 
 	started := time.Now()
 	err := cmd.Run()
 	elapsedMs := time.Since(started).Milliseconds()
 
 	if ctx.Err() == context.DeadlineExceeded {
-		logger.Error("ai cli FAILED ▸ "+op, "cli", cli, "timeout_s", timeoutSecs, "elapsed_ms", elapsedMs)
+		logger.Error("ai cli FAILED ▸ "+op, "cli", binary, "timeout_s", timeoutSecs, "elapsed_ms", elapsedMs)
 		return "", fmt.Errorf("cli timeout after %d seconds", timeoutSecs)
 	}
 	if err != nil {
-		logger.Error("ai cli FAILED ▸ "+op, "cli", cli, "elapsed_ms", elapsedMs, "err", err, "stderr", strings.TrimSpace(stderr.String()))
+		logger.Error("ai cli FAILED ▸ "+op, "cli", binary, "elapsed_ms", elapsedMs, "err", err, "stderr", strings.TrimSpace(stderr.String()))
 		return "", fmt.Errorf("cli execution error: %v (stderr: %s)", err, stderr.String())
 	}
 
@@ -214,13 +221,13 @@ func wrapAllowList(flag, csv, continuationIndent string) string {
 // grants are then rendered per-backend (claude scopes file grants in the allow
 // rule, copilot on the --add-dir path axis), so reads confine to cwd + the
 // --add-dir grants and no bare filesystem-wide allow entry leaks. #41.
-func buildBaseArgs(cli string, model string, prompt string, profile domain.ContainmentProfile, cwd, libraryDir string) []string {
+func buildBaseArgs(dialect string, model string, prompt string, profile domain.ContainmentProfile, cwd, libraryDir string) []string {
 	switch {
-	case strings.Contains(cli, "claude"):
+	case strings.Contains(dialect, "claude"):
 		return claudeBackend{}.buildArgs(profile, cwd, libraryDir, model, prompt)
-	case strings.Contains(cli, "agy"):
+	case strings.Contains(dialect, "agy"):
 		return agyBackend{}.buildArgs(profile, cwd, libraryDir, model, prompt)
-	case strings.Contains(cli, "copilot"):
+	case strings.Contains(dialect, "copilot"):
 		return copilotBackend{}.buildArgs(profile, cwd, libraryDir, model, prompt)
 	}
 	return nil

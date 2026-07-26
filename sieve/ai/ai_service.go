@@ -164,7 +164,8 @@ func (s *AIService) RunExplain(content, history, question, noteUUID string) (str
 	p = strings.ReplaceAll(p, "{history}", history)
 	p = strings.ReplaceAll(p, "{action}", question)
 
-	return s.runner.Run("explain", settings.CLI, p, settings.Model, s.timeoutFor(settings, "explain"), noteCwd, s.profile(), s.storePath)
+	binary, dialect := settings.ResolveCLI()
+	return s.runner.Run("explain", binary, dialect, p, settings.Model, s.timeoutFor(settings, "explain"), noteCwd, s.profile(), s.storePath)
 }
 
 // RunAsk asks the AI a question with the given content as context. history may
@@ -184,7 +185,8 @@ func (s *AIService) RunAsk(content, history, question, noteUUID string) (string,
 	p = strings.ReplaceAll(p, "{history}", history)
 	p = strings.ReplaceAll(p, "{action}", question)
 
-	return s.runner.Run("ask", settings.CLI, p, settings.Model, s.timeoutFor(settings, "ask"), noteCwd, s.profile(), s.storePath)
+	binary, dialect := settings.ResolveCLI()
+	return s.runner.Run("ask", binary, dialect, p, settings.Model, s.timeoutFor(settings, "ask"), noteCwd, s.profile(), s.storePath)
 }
 
 // DescribeImage sends an image to the configured AI and returns alt text, a
@@ -227,7 +229,8 @@ func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string
 	logger.Info("About to Describe", "path", imagePath)
 	p := strings.ReplaceAll(prompt, "{image_filename}", filepath.Base(imagePath))
 	cwd := filepath.Dir(imagePath)
-	resp, err := s.runner.Run("image", settings.CLI, p, settings.Model, s.timeoutFor(settings, "image"), cwd, s.profile(), s.storePath)
+	binary, dialect := settings.ResolveCLI()
+	resp, err := s.runner.Run("image", binary, dialect, p, settings.Model, s.timeoutFor(settings, "image"), cwd, s.profile(), s.storePath)
 	if err != nil {
 		return domain.ImageDesc{}, err
 	}
@@ -253,7 +256,8 @@ func (s *AIService) RefineLanguage(content, currentLanguage, detectionMethod str
 	// cwd is never unset: refine has no note context, so fall back to the library
 	// root rather than the process cwd (which on a Finder/Dock-launched macOS app
 	// is /). #41.
-	resp, err := s.runner.Run("refine", settings.CLI, p, settings.Model, s.timeoutFor(settings, "refine"), s.storePath, s.profile(), s.storePath)
+	binary, dialect := settings.ResolveCLI()
+	resp, err := s.runner.Run("refine", binary, dialect, p, settings.Model, s.timeoutFor(settings, "refine"), s.storePath, s.profile(), s.storePath)
 	if err != nil {
 		return "", err
 	}
@@ -382,7 +386,8 @@ func (s *AIService) runEvaluateBuffer(meta domain.DocumentMeta, body []byte, set
 	// cwd is never unset: the filing evaluation reads no note files, so fall back
 	// to the library root rather than the process cwd (/ on a Finder-launched
 	// macOS app). #41.
-	respText, err := s.runner.Run("file", settings.CLI, p, settings.Model, s.timeoutFor(settings, "file"), s.storePath, s.profile(), s.storePath)
+	binary, dialect := settings.ResolveCLI()
+	respText, err := s.runner.Run("file", binary, dialect, p, settings.Model, s.timeoutFor(settings, "file"), s.storePath, s.profile(), s.storePath)
 	if err != nil {
 		return nil, err
 	}
@@ -542,7 +547,8 @@ func (s *AIService) RunWebClip(uuid, id, source, mode, docContent string) (title
 		cwd = docDir
 	}
 
-	raw, err := s.runner.Run(promptName, settings.CLI, prompt, settings.Model, s.timeoutFor(settings, promptName), cwd, s.profile(), s.storePath)
+	binary, dialect := settings.ResolveCLI()
+	raw, err := s.runner.Run(promptName, binary, dialect, prompt, settings.Model, s.timeoutFor(settings, promptName), cwd, s.profile(), s.storePath)
 	if err != nil {
 		return "", "", err
 	}

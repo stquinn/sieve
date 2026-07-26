@@ -178,14 +178,14 @@ func TestFloorCwd_NeverEmpty(t *testing.T) {
 // captureRunner is a stub CLIRunner: it records the invocation and returns a
 // canned response instead of spawning a real CLI (CI has none installed).
 type captureRunner struct {
-	op, cli, prompt, model, cwd, libraryDir string
-	profile                                 domain.ContainmentProfile
-	ret                                     string
-	err                                     error
+	op, binary, dialect, prompt, model, cwd, libraryDir string
+	profile                                             domain.ContainmentProfile
+	ret                                                 string
+	err                                                 error
 }
 
-func (c *captureRunner) Run(op, cli, prompt, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string) (string, error) {
-	c.op, c.cli, c.prompt, c.model, c.cwd, c.libraryDir, c.profile = op, cli, prompt, model, cwd, libraryDir, profile
+func (c *captureRunner) Run(op, binary, dialect, prompt, model string, timeoutSecs int, cwd string, profile domain.ContainmentProfile, libraryDir string) (string, error) {
+	c.op, c.binary, c.dialect, c.prompt, c.model, c.cwd, c.libraryDir, c.profile = op, binary, dialect, prompt, model, cwd, libraryDir, profile
 	return c.ret, c.err
 }
 
@@ -246,7 +246,46 @@ func TestRefineLanguage_ThreadsProfileAndLibraryDir(t *testing.T) {
 			t.Errorf("default profile must not grant write tool %q", tg.Label)
 		}
 	}
-	if cap.cli != "claude" {
-		t.Errorf("cli = %q, want claude", cap.cli)
+	if cap.binary != "claude" || cap.dialect != "claude" {
+		t.Errorf("binary/dialect = %q/%q, want claude/claude", cap.binary, cap.dialect)
+	}
+}
+
+// A configured CLIPath makes the runner spawn the wrapper script while the arg
+// dialect keeps following the provider dropdown — the whole point of the setting.
+func TestRefineLanguage_CLIPathOverridesBinaryNotDialect(t *testing.T) {
+	fs, err := filestore.NewFileStore(t.TempDir(), "testhost")
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	state, err := services.NewStateService(fs, "", nil)
+	if err != nil {
+		t.Fatalf("NewStateService: %v", err)
+	}
+	prompts, err := NewPromptService(fs)
+	if err != nil {
+		t.Fatalf("NewPromptService: %v", err)
+	}
+	settings := domain.DefaultSettings()
+	settings.CLI = "claude"
+	settings.CLIPath = "/opt/bin/claude-query.sh"
+	if err := state.SaveSettings(settings); err != nil {
+		t.Fatalf("SaveSettings: %v", err)
+	}
+	if _, err := fs.CreateText(domain.Prompts, "refine.txt", []byte("Language of: {content}")); err != nil {
+		t.Fatalf("write refine prompt: %v", err)
+	}
+
+	cap := &captureRunner{ret: "go"}
+	svc := &AIService{state: state, prompts: prompts, storePath: "/vault/library", runner: cap}
+
+	if _, err := svc.RefineLanguage("func main() {}", "", ""); err != nil {
+		t.Fatalf("RefineLanguage: %v", err)
+	}
+	if cap.binary != "/opt/bin/claude-query.sh" {
+		t.Errorf("binary = %q, want the wrapper path", cap.binary)
+	}
+	if cap.dialect != "claude" {
+		t.Errorf("dialect = %q, want claude (dropdown drives the dialect)", cap.dialect)
 	}
 }
