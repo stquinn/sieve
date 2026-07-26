@@ -3,6 +3,10 @@
 // AiBlockRenderer (note lens / bare harness / here). An appearance, not an
 // interruption: never steals focus. Hide parks the answer on its badge;
 // Delete (via onDelete) removes it from existence.
+//
+// The pending state is KIND-AGNOSTIC: when block is null the popup renders a
+// generic spinner + command name. Only when a real block arrives (status
+// COMPLETE/ERROR) does the popup use AiBlockRenderer for the body content.
 
 import { AiBlockRenderer } from '../block/renderers/ai-block-renderer.js'
 
@@ -12,6 +16,9 @@ export class CommandPopup {
   /** @type {HTMLElement|null} */ #root = null
   /** @type {AiBlockRenderer|null} */ #renderer = null
   /** @type {import('../block/sieve-block.js').SieveBlock|null} */ #block = null
+  /** @type {{cmd: string, text: string}} */ #meta = { cmd: '', text: '' }
+  /** @type {HTMLElement|null} */ #bodyEl = null
+  /** @type {HTMLElement|null} */ #titleEl = null
   /** @type {Array<() => void>} */ #unlisten = []
 
   /**
@@ -25,12 +32,14 @@ export class CommandPopup {
   get visible() { return !!this.#root }
 
   /**
-   * @param {import('../block/sieve-block.js').SieveBlock} block
+   * @param {import('../block/sieve-block.js').SieveBlock|null} block
+   * @param {{cmd: string, text: string}} [meta]
    */
-  show(block) {
+  show(block, meta) {
     this.#block = block
+    if (meta) this.#meta = meta
     if (this.#root) {
-      this.update(block)
+      this.update(block, meta)
       return
     }
     const root = document.createElement('div')
@@ -58,11 +67,10 @@ export class CommandPopup {
     bar.className = 'command-popup__bar'
     bar.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; background: var(--theme-bgDark, #1a1b26); border-bottom: 1px solid var(--theme-border2, #24283b);'
 
-    const titleEl = document.createElement('span')
-    titleEl.className = 'command-popup__title'
-    titleEl.style.cssText = 'font-size: 13px; font-weight: 700; color: var(--theme-accentCyan, #7dcfff); text-transform: uppercase; letter-spacing: 0.08em;'
-    const cmdName = (block && block.payload && block.payload.type) ? String(block.payload.type) : 'BTW'
-    titleEl.textContent = '/' + cmdName.toLowerCase() + ' answer'
+    this.#titleEl = document.createElement('span')
+    this.#titleEl.className = 'command-popup__title'
+    this.#titleEl.style.cssText = 'font-size: 13px; font-weight: 700; color: var(--theme-accentCyan, #7dcfff); text-transform: uppercase; letter-spacing: 0.08em;'
+    this.#renderTitle()
 
     const actionsEl = document.createElement('div')
     actionsEl.style.cssText = 'display: flex; align-items: center; gap: 10px;'
@@ -76,17 +84,15 @@ export class CommandPopup {
       this.#barButton('delete', 'Delete', 'Dismiss', () => this.#onDelete())
     )
 
-    bar.append(titleEl, actionsEl)
+    bar.append(this.#titleEl, actionsEl)
 
-    const body = document.createElement('div')
-    body.className = 'command-popup__body'
-    body.style.cssText = 'flex: 1; min-height: 0; overflow-y: auto; padding: 24px 28px; user-select: text; font-size: 15px; line-height: 1.65;'
+    this.#bodyEl = document.createElement('div')
+    this.#bodyEl.className = 'command-popup__body'
+    this.#bodyEl.style.cssText = 'flex: 1; min-height: 0; overflow-y: auto; padding: 24px 28px; user-select: text; font-size: 15px; line-height: 1.65;'
 
-    this.#renderer = new AiBlockRenderer(block)
-    const rendered = this.#renderer.render()
-    if (rendered) body.appendChild(rendered)
+    this.#renderBody()
 
-    root.append(bar, body)
+    root.append(bar, this.#bodyEl)
     document.body.appendChild(root)
 
     /** @param {KeyboardEvent} e */
@@ -113,14 +119,60 @@ export class CommandPopup {
   }
 
   /**
-   * @param {import('../block/sieve-block.js').SieveBlock} block
+   * @param {import('../block/sieve-block.js').SieveBlock|null} block
+   * @param {{cmd: string, text: string}} [meta]
    */
-  update(block) {
+  update(block, meta) {
     this.#block = block
+    if (meta) this.#meta = meta
+    this.#renderTitle()
+    this.#renderBody()
+  }
+
+  #renderTitle() {
+    if (!this.#titleEl) return
+    const cmdName = this.#meta.cmd || 'command'
+    const isPending = !this.#block || (this.#block.payload && this.#block.payload.status === 'PENDING')
+    this.#titleEl.textContent = '/' + cmdName + (isPending ? ' …' : ' answer')
+  }
+
+  #renderBody() {
+    if (!this.#bodyEl) return
+    const isPending = !this.#block
+
+    if (isPending) {
+      // Generic pending view: spinner + command name + prompt
+      this.#renderer = null
+      this.#bodyEl.innerHTML = ''
+      const wrap = document.createElement('div')
+      wrap.style.cssText = 'display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 16px; color: var(--theme-textDim, #565f89);'
+
+      const spinner = document.createElement('div')
+      spinner.className = 'status-bar__spinner'
+      spinner.style.cssText = 'width: 20px; height: 20px; border-width: 2px;'
+
+      const label = document.createElement('div')
+      label.style.cssText = 'font-size: 14px; font-weight: 500; letter-spacing: 0.04em;'
+      label.textContent = '/' + this.#meta.cmd + ' is working…'
+
+      const prompt = document.createElement('div')
+      prompt.style.cssText = 'font-size: 12px; max-width: 400px; text-align: center; opacity: 0.6;'
+      prompt.textContent = this.#meta.text || ''
+
+      wrap.append(spinner, label)
+      if (this.#meta.text) wrap.appendChild(prompt)
+      this.#bodyEl.appendChild(wrap)
+      return
+    }
+
+    // We have a real block — render it with AiBlockRenderer
     if (this.#renderer) {
-      this.#renderer.update(block)
+      this.#renderer.update(this.#block)
     } else {
-      this.show(block)
+      this.#bodyEl.innerHTML = ''
+      this.#renderer = new AiBlockRenderer(this.#block)
+      const rendered = this.#renderer.render()
+      if (rendered) this.#bodyEl.appendChild(rendered)
     }
   }
 
@@ -132,6 +184,8 @@ export class CommandPopup {
       this.#root = null
     }
     this.#renderer = null
+    this.#bodyEl = null
+    this.#titleEl = null
   }
 
   destroy() {

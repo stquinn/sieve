@@ -84,11 +84,11 @@
     // Rebuild from snapshot, filtering out commands category jobs (handled by CommandBadges)
     activeJobs = {};
     (payload.active || []).forEach(function(j) {
-      if (!j.jobId || j.category === 'commands') return;
+      if (!j.jobId) return;
       activeJobs[j.jobId] = { label: j.label || 'Working...', docId: j.docId || '', spinTab: !!j.spinTab };
       if (j.spinTab && j.docId) setEvaluating(j.docId, true);
     });
-    queuedJobs = (payload.queued || []).filter(function(j) { return j.category !== 'commands'; });
+    queuedJobs = payload.queued || [];
     window.__sieveActiveJobs = Object.keys(activeJobs).length;
     updateStatusBar();
   }

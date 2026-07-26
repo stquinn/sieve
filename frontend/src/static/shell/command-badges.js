@@ -2,13 +2,17 @@
 // command-badges.js — status-bar badge lifecycle for correlated command jobs
 // (#55): one badge per correlationId (spinner → holding → dismissed); the badge
 // IS the re-summon affordance and, later, the Job Engine Viewer's summon seed.
+//
+// The pending state is KIND-AGNOSTIC: `block` starts as null, and the popup
+// shows a generic spinner + command name. Only when the server result arrives
+// does the block become a real SieveBlock with its final kind (ai-block, etc.).
 
 import { SieveBlock } from '../block/sieve-block.js'
 import { CommandPopup } from './command-popup.js'
 
 export class CommandBadges {
   /** @type {HTMLElement|null} */ #slot
-  /** @type {Map<string, {el: HTMLElement, handle: any, state: string, block: SieveBlock, popup: CommandPopup|null}>} */ #entries = new Map()
+  /** @type {Map<string, {el: HTMLElement, handle: any, state: string, meta: {cmd: string, text: string}, block: SieveBlock|null, popup: CommandPopup|null}>} */ #entries = new Map()
 
   /** @param {HTMLElement|null} [slot] the .status-bar__command-badges element */
   constructor(slot) {
@@ -34,8 +38,9 @@ export class CommandBadges {
       el,
       handle,
       state: 'pending',
+      meta,
       popup: /** @type {CommandPopup|null} */ (null),
-      block: new SieveBlock('ai-block', { question: meta.text, type: 'BTW', status: 'PENDING', createdAt: new Date().toISOString() }),
+      block: /** @type {SieveBlock|null} */ (null),
     }
     this.#entries.set(handle.correlationId, entry)
     el.addEventListener('click', () => this.#toggle(entry))
@@ -48,7 +53,8 @@ export class CommandBadges {
     if (r.block) {
       entry.block = new SieveBlock(r.block.kind, r.block.attrs)
     } else if (r.status === 'ERROR') {
-      entry.block = new SieveBlock('ai-block', Object.assign({}, entry.block.payload, { status: 'ERROR', error: r.error || '' }))
+      const prev = entry.block ? entry.block.payload : {}
+      entry.block = new SieveBlock('ai-block', Object.assign({}, prev, { status: 'ERROR', error: r.error || '' }))
     }
 
     if (r.status === 'COMPLETE' || r.status === 'ERROR') {
@@ -61,7 +67,7 @@ export class CommandBadges {
       }
       this.#summon(entry)
     } else if (entry.popup && entry.popup.visible) {
-      entry.popup.update(entry.block)
+      entry.popup.update(entry.block, entry.meta)
     }
   }
 
@@ -77,7 +83,7 @@ export class CommandBadges {
     if (!entry.popup) {
       entry.popup = new CommandPopup({ anchor: entry.el, onDelete: () => this.#delete(entry) })
     }
-    entry.popup.show(entry.block)
+    entry.popup.show(entry.block, entry.meta)
   }
 
   #delete(entry) {

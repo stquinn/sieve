@@ -17,10 +17,34 @@ describe('CommandPopup', () => {
     document.body.innerHTML = ''
   })
 
-  it('show() mounts AiBlockRenderer output without focusing anything', () => {
+  it('show(null, meta) renders a generic pending spinner without AiBlockRenderer', () => {
+    popup = new CommandPopup({ anchor, onDelete: vi.fn() })
+    popup.show(null, { cmd: 'btw', text: 'what is DRY' })
+
+    expect(popup.visible).toBe(true)
+    const el = document.querySelector('.command-popup')
+    expect(el).not.toBeNull()
+    // No AiBlockRenderer mounted — generic pending view
+    expect(el.querySelector('.sieve-ai-block')).toBeNull()
+    expect(el.textContent).toContain('/btw is working')
+  })
+
+  it('update(block) replaces the generic pending view with AiBlockRenderer', () => {
+    popup = new CommandPopup({ anchor, onDelete: vi.fn() })
+    popup.show(null, { cmd: 'summary', text: '' })
+
+    const block = new SieveBlock('ai-block', { question: 'summary', response: 'Answer text', status: 'COMPLETE' })
+    popup.update(block, { cmd: 'summary', text: '' })
+
+    const el = document.querySelector('.command-popup')
+    expect(el.querySelector('.sieve-ai-block')).not.toBeNull()
+    expect(el.textContent).toContain('Answer text')
+  })
+
+  it('show(block) mounts AiBlockRenderer output when block provided', () => {
     popup = new CommandPopup({ anchor, onDelete: vi.fn() })
     const block = new SieveBlock('ai-block', { question: 'what is X', response: 'X is KISS', status: 'COMPLETE' })
-    popup.show(block)
+    popup.show(block, { cmd: 'btw', text: 'what is X' })
 
     expect(popup.visible).toBe(true)
     const el = document.querySelector('.command-popup')
@@ -28,22 +52,10 @@ describe('CommandPopup', () => {
     expect(el.querySelector('.sieve-ai-block')).not.toBeNull()
   })
 
-  it('update() repaints in place', () => {
-    popup = new CommandPopup({ anchor, onDelete: vi.fn() })
-    const block1 = new SieveBlock('ai-block', { question: 'what is X', status: 'PENDING' })
-    popup.show(block1)
-
-    const block2 = new SieveBlock('ai-block', { question: 'what is X', response: 'Answer text', status: 'COMPLETE' })
-    popup.update(block2)
-
-    const el = document.querySelector('.command-popup')
-    expect(el.textContent).toContain('Answer text')
-  })
-
   it('Escape key hides popup', () => {
     popup = new CommandPopup({ anchor, onDelete: vi.fn() })
     const block = new SieveBlock('ai-block', { question: 'q', response: 'ans', status: 'COMPLETE' })
-    popup.show(block)
+    popup.show(block, { cmd: 'btw', text: 'q' })
 
     document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     expect(popup.visible).toBe(false)

@@ -1798,10 +1798,10 @@ pre.tiptap-code-block code {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-left: 1rem;
-  padding-left: 1rem;
   border-left: 1px solid var(--theme-border2);
+  padding-left: 0.75rem;
   height: 16px;
+  box-sizing: border-box;
 }
 .status-bar__command-badges:empty {
   display: none;
