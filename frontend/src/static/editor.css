@@ -1771,6 +1771,8 @@ pre.tiptap-code-block code {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 15ch;
+  flex-shrink: 1;
 }
 .status-bar__job-more {
   color: var(--theme-muted);
