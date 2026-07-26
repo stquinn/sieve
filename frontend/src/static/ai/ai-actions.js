@@ -81,14 +81,14 @@
       var job = activeJobs[id];
       if (job.spinTab && job.docId) setEvaluating(job.docId, false);
     });
-    // Rebuild from snapshot.
+    // Rebuild from snapshot, filtering out commands category jobs (handled by CommandBadges)
     activeJobs = {};
     (payload.active || []).forEach(function(j) {
-      if (!j.jobId) return;
+      if (!j.jobId || j.category === 'commands') return;
       activeJobs[j.jobId] = { label: j.label || 'Working...', docId: j.docId || '', spinTab: !!j.spinTab };
       if (j.spinTab && j.docId) setEvaluating(j.docId, true);
     });
-    queuedJobs = payload.queued || [];
+    queuedJobs = (payload.queued || []).filter(function(j) { return j.category !== 'commands'; });
     window.__sieveActiveJobs = Object.keys(activeJobs).length;
     updateStatusBar();
   }

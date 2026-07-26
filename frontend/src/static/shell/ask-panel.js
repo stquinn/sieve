@@ -28,6 +28,8 @@ export class AskPanel {
   #ws
   /** @type {import('../block/command-service.js').CommandService|null} */
   #commandService = null
+  /** @type {import('./command-badges.js').CommandBadges|null} */
+  #badges = null
   /** @type {CommandHintPopover|null} */
   #hintPopover = null
   /** @type {HTMLElement|null} the structural #ask-panel (null → all methods no-op) */
@@ -48,10 +50,12 @@ export class AskPanel {
   /**
    * @param {import('./workspace.js').SieveWorkspace} ws
    * @param {import('../block/command-service.js').CommandService} [commandService]
+   * @param {import('./command-badges.js').CommandBadges} [badges]
    */
-  constructor(ws, commandService) {
+  constructor(ws, commandService, badges) {
     this.#ws = ws
     this.#commandService = commandService || (ws && /** @type {any} */ (ws).commandService) || null
+    this.#badges = badges || (ws && /** @type {any} */ (ws).commandBadges) || null
     this.#panel = document.getElementById('ask-panel')
     this.#pinned = !!window.initAskPanelPinned
     if (!this.#panel) return
@@ -229,12 +233,16 @@ export class AskPanel {
         if (resolved) {
           const context = this.#lastContext || (this.#ws ? this.#ws.getSelectionContext() : null)
           cs.openChannel()
-          cs.dispatch(resolved.cmd.name, resolved.args, context, (res) => {
+          const handle = cs.dispatch(resolved.cmd.name, resolved.args, context, (res) => {
             const ed = this.#activeEditor()
             if (ed && typeof ed.handleCommandResult === 'function') {
               ed.handleCommandResult(res)
             }
           })
+          const badges = this.#badges || (this.#ws && /** @type {any} */ (this.#ws).commandBadges)
+          if (badges) {
+            badges.track(handle, { cmd: resolved.cmd.name, text: resolved.args })
+          }
           this.#textarea.value = ''
           if (this.#panel && !this.#pinned) this.#panel.classList.remove('is-open')
           this.#focusReturn = null

@@ -15,6 +15,7 @@ import { SieveTab } from './tab.js'
 import { BlockService } from '../block/block-service.js'
 import { DocumentService } from '../block/document-service.js'
 import { CommandService } from '../block/command-service.js'
+import { CommandBadges } from './command-badges.js'
 import { AskPanel } from './ask-panel.js'
 import { InsertDialogs } from './insert-dialogs.js'
 import { SearchOverlay } from './search-overlay.js'
@@ -694,6 +695,9 @@ export class SieveWorkspace {
   /** @type {SearchOverlay|null} the document search overlay child (P4.C) */
   #searchOverlay = null
 
+  /** @type {CommandBadges|null} the command badges child */
+  #commandBadges = null
+
   /** @type {StatusBar|null} the status-bar child (P4.D — stats/dirty/blockid slots) */
   #statusBar = null
 
@@ -705,11 +709,15 @@ export class SieveWorkspace {
    * bar's slots resolve to null and every write no-ops).
    */
   bootChrome() {
-    if (!this.#askPanel) this.#askPanel = new AskPanel(this, this.#commandService)
+    if (!this.#commandBadges) this.#commandBadges = new CommandBadges()
+    if (!this.#askPanel) this.#askPanel = new AskPanel(this, this.#commandService, this.#commandBadges)
     if (!this.#insertDialogs) this.#insertDialogs = new InsertDialogs(this)
     if (!this.#searchOverlay) this.#searchOverlay = new SearchOverlay(this)
     if (!this.#statusBar) this.#statusBar = new StatusBar(this)
   }
+
+  /** @returns {CommandBadges|null} */
+  get commandBadges() { return this.#commandBadges }
 
   /** @returns {AskPanel|null} the permanent Ask-panel child (entry points reach it here) */
   get askPanel() { return this.#askPanel }
