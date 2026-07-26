@@ -22,7 +22,7 @@ import (
 // and returns the server plus a seeded document uuid. No wails devserver in
 // the middle (its nil wsHandler panics on external WS upgrades — see
 // TECH-DEBT), so this exercises exactly what the app's webview exercises.
-func newWsTestServer(t *testing.T) (*httptest.Server, *sieve.ServiceProvider, string) {
+func newWsTestServer(t *testing.T) (*httptest.Server, *sieve.ServiceProvider, *WsHandler, string) {
 	t.Helper()
 	fs, err := filestore.NewFileStore(t.TempDir(), "testhost")
 	if err != nil {
@@ -51,7 +51,7 @@ func newWsTestServer(t *testing.T) (*httptest.Server, *sieve.ServiceProvider, st
 	if err != nil {
 		t.Fatalf("Save doc: %v", err)
 	}
-	return srv, sp, doc.UUID()
+	return srv, sp, h, doc.UUID()
 }
 
 // closeAndSettle closes a conn and waits for its server-side teardown
@@ -89,10 +89,26 @@ func expectMessage(t *testing.T, c *websocket.Conn, needle string, timeout time.
 	}
 }
 
+// expectNoMessage asserts needle does NOT arrive on c within the window. Other
+// traffic (e.g. a correlated pong) is drained and ignored; only needle fails it.
+func expectNoMessage(t *testing.T, c *websocket.Conn, needle string, within time.Duration) {
+	t.Helper()
+	_ = c.SetReadDeadline(time.Now().Add(within))
+	for {
+		_, raw, err := c.ReadMessage()
+		if err != nil {
+			return // read deadline / close: needle never arrived — good
+		}
+		if strings.Contains(string(raw), needle) {
+			t.Fatalf("expected NO %q on this conn, but it arrived: %s", needle, string(raw))
+		}
+	}
+}
+
 // Control: a single connection creating a block MUST receive the insert-block
 // render-back. Validates the harness before the race assertion means anything.
 func TestWS_SingleConnReceivesInsertBlock(t *testing.T) {
-	srv, _, uuid := newWsTestServer(t)
+	srv, _, _, uuid := newWsTestServer(t)
 	c := dialWS(t, srv, uuid)
 
 	if err := c.WriteMessage(websocket.TextMessage, []byte(createProseOp(uuid, "tok-ctl"))); err != nil {
@@ -106,7 +122,7 @@ func TestWS_SingleConnReceivesInsertBlock(t *testing.T) {
 // AFTER its successor registered. The stale defer must NOT evict the
 // successor's channel — render-backs must keep flowing to the live conn.
 func TestWS_StaleTeardownMustNotEvictSuccessorChannel(t *testing.T) {
-	srv, _, uuid := newWsTestServer(t)
+	srv, _, _, uuid := newWsTestServer(t)
 
 	a := dialWS(t, srv, uuid) // will become stale
 	b := dialWS(t, srv, uuid) // takeover: the live connection
@@ -124,7 +140,7 @@ func TestWS_StaleTeardownMustNotEvictSuccessorChannel(t *testing.T) {
 // the successor is using — a doc-update + flush through the live conn must
 // reach disk ("lost updates" in the user report).
 func TestWS_StaleTeardownMustNotCloseSuccessorShadow(t *testing.T) {
-	srv, sp, uuid := newWsTestServer(t)
+	srv, sp, _, uuid := newWsTestServer(t)
 
 	a := dialWS(t, srv, uuid)
 	b := dialWS(t, srv, uuid)
@@ -151,5 +167,98 @@ func TestWS_StaleTeardownMustNotCloseSuccessorShadow(t *testing.T) {
 	}
 	if !strings.Contains(string(doc.Body()), "survived-the-race") {
 		t.Fatalf("update lost — stale teardown closed the successor's shadow; body: %q", string(doc.Body()))
+	}
+}
+
+// CLAIM-ON-WRITE (user-reported, dev-server tab + app window on one uuid): the
+// LATER registrant (A) owns the channel, but a mutating op arrives on the OTHER
+// live socket (B). B must re-claim ownership so the op's synchronous render-back
+// lands on B — the acting window — not on the co-claimant A. B is dialled FIRST
+// so A is the registered owner at the moment B writes; that is the exact race.
+func TestWS_MutatingFrameClaimsListener(t *testing.T) {
+	srv, _, h, uuid := newWsTestServer(t)
+
+	b := dialWS(t, srv, uuid) // acting window (registers first)
+	a := dialWS(t, srv, uuid) // co-claimant, ends up the registered owner
+
+	// Sanity: A is the registered owner before B writes.
+	if err := b.WriteMessage(websocket.TextMessage, []byte(createProseOp(uuid, "tok-claim"))); err != nil {
+		t.Fatalf("write block-op: %v", err)
+	}
+	// B must receive its own render-back (proves the claim); A must not.
+	expectMessage(t, b, `"insert-block"`, 2*time.Second)
+	expectNoMessage(t, a, `"insert-block"`, 500*time.Millisecond)
+
+	// And subsequent unsolicited sendTo(uuid) render-backs now route to B.
+	h.sendTo(uuid, map[string]string{"type": "probe-owner-b"})
+	expectMessage(t, b, "probe-owner-b", 2*time.Second)
+	expectNoMessage(t, a, "probe-owner-b", 500*time.Millisecond)
+
+	closeAndSettle(a)
+	closeAndSettle(b)
+}
+
+// A NON-mutating frame (ping heartbeat) from the non-registered socket must NOT
+// steal ownership — a backgrounded stale tab proving liveness is not a human
+// edit. A stays the listener; its render-backs keep flowing to A, not B.
+func TestWS_NonMutatingFrameDoesNotClaim(t *testing.T) {
+	srv, _, h, uuid := newWsTestServer(t)
+
+	b := dialWS(t, srv, uuid) // registers first
+	a := dialWS(t, srv, uuid) // registered owner
+
+	if err := b.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
+		t.Fatalf("write ping: %v", err)
+	}
+	expectMessage(t, b, `"pong"`, 2*time.Second) // correlated reply, not a claim
+
+	// Ownership unchanged: an unsolicited render-back still routes to A.
+	h.sendTo(uuid, map[string]string{"type": "probe-owner-a"})
+	expectMessage(t, a, "probe-owner-a", 2*time.Second)
+	expectNoMessage(t, b, "probe-owner-a", 500*time.Millisecond)
+
+	closeAndSettle(a)
+	closeAndSettle(b)
+}
+
+// Compose claim-on-write with the 6e2ccfc ownership guard: after B claims via a
+// mutating frame, the DEPOSED A dying must NOT unregister B or close B's shadow.
+// Mirrors TestWS_StaleTeardownMustNot* but with B taking ownership by WRITE
+// rather than by being the later registrant.
+func TestWS_ClaimComposesWithStaleTeardownGuard(t *testing.T) {
+	srv, sp, h, uuid := newWsTestServer(t)
+
+	b := dialWS(t, srv, uuid) // acting window (registers first)
+	a := dialWS(t, srv, uuid) // registered owner, about to be deposed
+
+	if err := b.WriteMessage(websocket.TextMessage, []byte(createProseOp(uuid, "tok-compose"))); err != nil {
+		t.Fatalf("write block-op: %v", err)
+	}
+	expectMessage(t, b, `"insert-block"`, 2*time.Second) // B claimed
+
+	closeAndSettle(a) // deposed A's teardown must be a no-op for B's ownership
+
+	// B is still the listener (channel not evicted).
+	h.sendTo(uuid, map[string]string{"type": "probe-after-deposed-death"})
+	expectMessage(t, b, "probe-after-deposed-death", 2*time.Second)
+
+	// B's shadow is still open — a doc-update + flush through B reaches disk.
+	update := `{"type":"doc-update","uuid":"` + uuid + `","markdown":"claimed-and-survived"}`
+	if err := b.WriteMessage(websocket.TextMessage, []byte(update)); err != nil {
+		t.Fatalf("write doc-update: %v", err)
+	}
+	if err := b.WriteMessage(websocket.TextMessage, []byte(`{"type":"flush","uuid":"`+uuid+`"}`)); err != nil {
+		t.Fatalf("write flush: %v", err)
+	}
+	expectMessage(t, b, `"flush-ack"`, 2*time.Second)
+
+	closeAndSettle(b)
+
+	doc, err := sp.Documents.LoadByUUID(uuid)
+	if err != nil {
+		t.Fatalf("load after flush: %v", err)
+	}
+	if !strings.Contains(string(doc.Body()), "claimed-and-survived") {
+		t.Fatalf("update lost — deposed teardown closed the claimant's shadow; body: %q", string(doc.Body()))
 	}
 }

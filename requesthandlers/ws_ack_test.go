@@ -55,7 +55,7 @@ func createProseOpWithOpID(uuid, token, opID string) string {
 // and land AFTER the insert-block render-back on the same socket (the ordering the
 // JS correlation relies on).
 func TestWS_BlockOpAck_SuccessArrivesAfterRenderBack(t *testing.T) {
-	srv, _, uuid := newWsTestServer(t)
+	srv, _, _, uuid := newWsTestServer(t)
 	c := dialWS(t, srv, uuid)
 
 	if err := c.WriteMessage(websocket.TextMessage, []byte(createProseOpWithOpID(uuid, "tok-ok", "op-7"))); err != nil {
@@ -86,7 +86,7 @@ func TestWS_BlockOpAck_SuccessArrivesAfterRenderBack(t *testing.T) {
 // A failing block-op (delete of a ghost block on an open doc) MUST still produce a
 // block-op-ack with ok:false + an error message, alongside the unchanged error frame.
 func TestWS_BlockOpAck_FailureCarriesError(t *testing.T) {
-	srv, _, uuid := newWsTestServer(t)
+	srv, _, _, uuid := newWsTestServer(t)
 	c := dialWS(t, srv, uuid)
 
 	badOp := `{"type":"block-op","opId":"op-9","uuid":"` + uuid +
@@ -117,7 +117,7 @@ func TestWS_BlockOpAck_FailureCarriesError(t *testing.T) {
 // A block-op WITHOUT an opId gets its replies without opId — the compatibility
 // pin: an unadorned frame behaves exactly as before (no ack, render-back only).
 func TestWS_BlockOp_NoOpIDGetsNoAck(t *testing.T) {
-	srv, _, uuid := newWsTestServer(t)
+	srv, _, _, uuid := newWsTestServer(t)
 	c := dialWS(t, srv, uuid)
 
 	if err := c.WriteMessage(websocket.TextMessage, []byte(createProseOp(uuid, "tok-plain"))); err != nil {
@@ -142,7 +142,7 @@ func TestWS_BlockOp_NoOpIDGetsNoAck(t *testing.T) {
 // flush ALSO fires the unsolicited background flush-ack (notifySaved) with NO opId
 // — the two paths coexist, and correlation keys on the opId one.
 func TestWS_FlushAck_EchoesOpID(t *testing.T) {
-	srv, _, uuid := newWsTestServer(t)
+	srv, _, _, uuid := newWsTestServer(t)
 	c := dialWS(t, srv, uuid)
 
 	flush := `{"type":"flush","opId":"op-42","uuid":"` + uuid + `"}`
@@ -199,7 +199,7 @@ func TestWS_FlushAck_EchoesOpID(t *testing.T) {
 // extract-ack covers the TRANSFORM path, which emits NO block-extracted hint: the
 // ack is the only correlated reply, and it must arrive with the echoed opId.
 func TestWS_ExtractAck_TransformHasNoHintButAcks(t *testing.T) {
-	srv, _, uuid := newWsTestServer(t)
+	srv, _, _, uuid := newWsTestServer(t)
 	c := dialWS(t, srv, uuid)
 
 	// Seed a prose block to transform.

@@ -51,6 +51,42 @@ func (h *WsHandler) register(uuid string, c *wsConn) {
 	h.channelsMu.Unlock()
 }
 
+// isMutating reports whether an incoming frame type changes the open document
+// (or its mode) and therefore fires a synchronous render-back that MUST reach
+// the acting connection. Such a frame re-claims listener ownership before it is
+// processed (claim-on-write). enter-markdown/enter-wysiwyg count as mutating:
+// they flip doc mode and expect follow-up render traffic on the acting socket.
+// Reads (ping heartbeats, flush persistence) are excluded — a backgrounded
+// stale tab proving liveness or syncing to disk is not evidence a human edits
+// there, so it must not steal ownership from the real editor. transform rides
+// inside "extract" (via its Operation/Action), so it needs no separate case.
+func (h *WsHandler) isMutating(frameType string) bool {
+	switch frameType {
+	case "doc-update", "block-op", "extract", "retry-block-job", "enter-markdown", "enter-wysiwyg":
+		return true
+	default:
+		return false
+	}
+}
+
+// claimOnWrite makes c the registered listener for uuid before a mutating op is
+// processed, so the op's synchronous render-back (fired inside the handler,
+// before the ack) flows to the acting connection rather than to a co-claimant
+// (dev-server tab + app window, reconnect/re-init races). It reuses register()'s
+// single map + lock — no second registry. It composes with the ownership-guarded
+// unregister (commit 6e2ccfc): once c is installed here, a deposed connection's
+// later death sees h.channels[uuid] != itself and touches neither the channel nor
+// the shadow. No-op — and silent — when c already owns uuid.
+func (h *WsHandler) claimOnWrite(uuid string, c *wsConn) {
+	h.channelsMu.Lock()
+	deposed := h.channels[uuid] != nil && h.channels[uuid] != c
+	h.channels[uuid] = c
+	h.channelsMu.Unlock()
+	if deposed {
+		logger.Info("ws: claim-on-write takeover — mutating frame from non-registered conn", "uuid", uuid, "conn", fmt.Sprintf("%p", c))
+	}
+}
+
 // unregister removes uuid's channel ONLY if c still owns it. Returns true when
 // c was the owner — the caller then also owns shadow teardown. A stale
 // connection (owner == a successor) must touch nothing.
@@ -147,6 +183,14 @@ func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := json.Unmarshal(raw, &msg); err != nil {
 			continue
+		}
+
+		// Claim-on-write: a mutating frame is evidence THIS connection is the one a
+		// human is editing through, so it re-registers as uuid's listener BEFORE the
+		// op runs — the op's synchronous render-back then lands here, not on a
+		// co-claimant that happened to register last. Reads/heartbeats never claim.
+		if h.isMutating(msg.Type) {
+			h.claimOnWrite(uuid, ch)
 		}
 
 		switch msg.Type {
