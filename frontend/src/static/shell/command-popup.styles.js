@@ -161,4 +161,24 @@ export const commandPopupStyles = `
   .command-popup__body .command-result__badge {
     display: none;
   }
+
+  /* Tables re-contrasted for THIS surface. The document's .tiptap table rules
+     assume the page background (--theme-bg): cell borders in --theme-border2
+     and header cells in --theme-bgAlt — but the popup's surface IS bgAlt, so
+     in here the header melts into the dialog and the borders sit within a
+     shade of the background. Extra .tiptap class in the selectors out-ranks
+     the editor.css rules deterministically (not just by sheet order). */
+  .command-popup__body .tiptap table {
+    border: 1px solid var(--theme-border);
+  }
+  .command-popup__body .tiptap table th,
+  .command-popup__body .tiptap table td {
+    border: 1px solid var(--theme-border);
+  }
+  .command-popup__body .tiptap table th {
+    background: var(--theme-bgDark);
+  }
+  .command-popup__body .tiptap table tr:nth-child(even) td {
+    background: color-mix(in srgb, var(--theme-bgDark) 55%, transparent);
+  }
 `
