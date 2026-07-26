@@ -54,7 +54,7 @@ export class CommandHintPopover {
     this.#onBlur = this.#handleBlur.bind(this)
 
     this.#textarea.addEventListener('input', this.#onInput)
-    this.#textarea.addEventListener('keydown', this.#onKeyDown)
+    this.#textarea.addEventListener('keydown', this.#onKeyDown, true)
     this.#textarea.addEventListener('blur', this.#onBlur)
   }
 
@@ -93,20 +93,27 @@ export class CommandHintPopover {
 
     if (e.key === 'ArrowDown') {
       e.preventDefault()
+      e.stopPropagation()
+      e.stopImmediatePropagation()
       this.#selectedIndex = (this.#selectedIndex + 1) % this.#filtered.length
       this.#render()
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
+      e.stopPropagation()
+      e.stopImmediatePropagation()
       this.#selectedIndex = (this.#selectedIndex - 1 + this.#filtered.length) % this.#filtered.length
       this.#render()
     } else if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
       if (this.#filtered.length > 0 && this.#selectedIndex >= 0 && this.#selectedIndex < this.#filtered.length) {
         e.preventDefault()
         e.stopPropagation()
+        e.stopImmediatePropagation()
         this.#acceptCandidate(this.#filtered[this.#selectedIndex])
       }
     } else if (e.key === 'Escape') {
       e.preventDefault()
+      e.stopPropagation()
+      e.stopImmediatePropagation()
       this.hide()
     }
   }
@@ -193,7 +200,7 @@ export class CommandHintPopover {
 
   destroy() {
     this.#textarea.removeEventListener('input', this.#onInput)
-    this.#textarea.removeEventListener('keydown', this.#onKeyDown)
+    this.#textarea.removeEventListener('keydown', this.#onKeyDown, true)
     this.#textarea.removeEventListener('blur', this.#onBlur)
     if (this.#popoverEl && this.#popoverEl.parentElement) {
       this.#popoverEl.parentElement.removeChild(this.#popoverEl)
