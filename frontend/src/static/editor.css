@@ -1017,8 +1017,8 @@ pre.tiptap-code-block code {
 }
 
 /* .sieve-block__body/__gutter/__code-area/__highlight/__edit (generic,
-   unscoped) and .sieve-block--log .log-tok-*/.log-line-*/.log--hide-noise
-   were the shared body-chrome + log-decoration rules every raw-text sieve
+   unscoped) and the .sieve-block--log .log-tok- / .log-line- / .log--hide-noise
+   families were the shared body-chrome + log-decoration rules every raw-text sieve
    kind (code/log/diagram) drew from. Now that code (block/renderers/code-renderer.styles.js),
    log (block/renderers/log-renderer.styles.js), and diagram
    (block/renderers/diagram-renderer.styles.js) each carry their OWN scoped
