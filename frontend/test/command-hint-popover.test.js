@@ -79,6 +79,8 @@ describe('CommandHintPopover', () => {
     textarea.dispatchEvent(event)
 
     expect(textarea.value).toBe('/btw ')
+    expect(textarea.selectionStart).toBe('/btw '.length)
+    expect(textarea.selectionEnd).toBe('/btw '.length)
     const el = document.querySelector('.command-hint-popover')
     expect(el.style.display).toBe('none')
   })

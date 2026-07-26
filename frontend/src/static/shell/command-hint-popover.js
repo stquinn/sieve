@@ -119,8 +119,11 @@ export class CommandHintPopover {
    * @param {{name: string, description: string}} candidate
    */
   #acceptCandidate(candidate) {
-    this.#textarea.value = '/' + candidate.name + ' '
+    const text = '/' + candidate.name + ' '
+    this.#textarea.value = text
     this.#textarea.focus()
+    this.#textarea.setSelectionRange(text.length, text.length)
+    this.#textarea.dispatchEvent(new window.Event('input', { bubbles: true }))
     this.hide()
   }
 
