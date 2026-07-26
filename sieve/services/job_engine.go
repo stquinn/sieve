@@ -23,11 +23,12 @@ type JobDescriptor struct {
 // JobEngine is the one communal producer/consumer engine: a bounded worker pool
 // per Category, all pools identical, differing only by configured worker count.
 type JobEngine struct {
-	tracker  *JobTracker
-	defaultN int
-	sizes    map[string]int
-	mu       sync.Mutex
-	pools    map[string]*workerPool
+	tracker   *JobTracker
+	defaultN  int
+	sizes     map[string]int
+	mu        sync.Mutex
+	pools     map[string]*workerPool
+	cancelled sync.Map
 }
 
 func NewJobEngine(sizes map[string]int, defaultN int, tracker *JobTracker) *JobEngine {
@@ -38,6 +39,19 @@ func NewJobEngine(sizes map[string]int, defaultN int, tracker *JobTracker) *JobE
 		sizes = map[string]int{}
 	}
 	return &JobEngine{tracker: tracker, defaultN: defaultN, sizes: sizes, pools: map[string]*workerPool{}}
+}
+
+// Cancel marks jobID cancelled, best-effort: a still-queued job never runs
+// (skipped at drain, removed from the tracker); an active job completes its
+// Work — an in-flight CLI process is NOT interrupted, it runs to its own
+// timeout — but its OnFinished/OnError are suppressed and the result dropped.
+func (e *JobEngine) Cancel(jobID string) {
+	e.cancelled.Store(jobID, struct{}{})
+}
+
+func (e *JobEngine) takeCancelled(jobID string) bool {
+	_, ok := e.cancelled.LoadAndDelete(jobID)
+	return ok
 }
 
 func (e *JobEngine) Submit(d JobDescriptor) {
@@ -65,12 +79,21 @@ func (e *JobEngine) poolFor(category string) *workerPool {
 }
 
 func (e *JobEngine) run(d JobDescriptor) {
+	if e.takeCancelled(d.Meta.JobID) { // cancelled while queued: never run
+		if e.tracker != nil {
+			e.tracker.Finish(d.Meta.JobID)
+		}
+		return
+	}
 	if e.tracker != nil {
 		e.tracker.Activate(d.Meta.JobID)
 	}
 	result, err := e.safeWork(d.Work)
 	if e.tracker != nil {
 		e.tracker.Finish(d.Meta.JobID)
+	}
+	if e.takeCancelled(d.Meta.JobID) { // cancelled while active: drop the result
+		return
 	}
 	if err != nil {
 		if d.OnError != nil {
