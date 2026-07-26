@@ -189,6 +189,33 @@ func (s *AIService) RunAsk(content, history, question, noteUUID string) (string,
 	return s.runner.Run("ask", binary, dialect, p, settings.Model, s.timeoutFor(settings, "ask"), noteCwd, s.profile(), s.storePath)
 }
 
+// RunBtw answers a quick /btw side-question. The document is pointer context
+// only (meta strings — this path never touches the ShadowDoc); empty docUUID
+// is the floor (no open tab) and falls back to the store root as cwd.
+func (s *AIService) RunBtw(question, selection, docTitle, docSummary, docUUID string) (string, error) {
+	settings := s.state.LoadSettings()
+	if settings.Tier() == domain.TierDumb {
+		return "", fmt.Errorf("btw not available in dumb mode")
+	}
+	prompt, _ := s.prompts.GetPromptContent("btw")
+	cwd := s.storePath
+	if docUUID != "" {
+		cwd = s.noteDir(docUUID)
+	}
+	p := strings.ReplaceAll(prompt, "{question}", question)
+	p = strings.ReplaceAll(p, "{selection}", selection)
+	p = strings.ReplaceAll(p, "{doc_title}", docTitle)
+	p = strings.ReplaceAll(p, "{doc_summary}", docSummary)
+	p = strings.ReplaceAll(p, "{doc_uuid}", docUUID)
+	binary, dialect := settings.ResolveCLI()
+	return s.runner.Run("btw", binary, dialect, p, settings.Model, s.timeoutFor(settings, "btw"), cwd, s.profile(), s.storePath)
+}
+
+// Tier exposes the current capability tier so AI-backed commands can fail
+// fast in Build (policy in the tool, never the dispatcher). RunBtw keeps its
+// own guard as defence in depth.
+func (s *AIService) Tier() domain.Tier { return s.state.LoadSettings().Tier() }
+
 // DescribeImage sends an image to the configured AI and returns alt text, a
 // summary, and a suggested filename. storeRelPath is relative to the store root.
 func (s *AIService) DescribeImage(uuid string, storeRelPath string, blkId string) (domain.ImageDesc, error) {
