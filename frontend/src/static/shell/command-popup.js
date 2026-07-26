@@ -36,24 +36,49 @@ export class CommandPopup {
     const root = document.createElement('div')
     this.#root = root
     root.className = 'command-popup'
-    root.style.cssText = 'position: fixed; z-index: 1000; width: 480px; max-width: 90vw; max-height: 400px; background: var(--theme-bgDark, #1a1b26); border: 1px solid var(--theme-border2, #24283b); border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); display: flex; flex-direction: column; overflow: hidden;'
+    root.style.cssText = [
+      'position: fixed',
+      'z-index: 1000',
+      'width: 480px',
+      'max-width: 90vw',
+      'max-height: 420px',
+      'background: var(--theme-bgAlt, #1f2335)',
+      'border: 1px solid var(--theme-border2, #3b4261)',
+      'border-radius: 8px',
+      'box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5)',
+      'display: flex',
+      'flex-direction: column',
+      'overflow: hidden',
+      'backdrop-filter: blur(12px)'
+    ].join('; ') + ';'
 
     const bar = document.createElement('div')
     bar.className = 'command-popup__bar'
-    bar.style.cssText = 'display: flex; justify-content: flex-end; gap: 6px; padding: 6px 10px; background: var(--theme-bg, #1a1b26); border-bottom: 1px solid var(--theme-border2, #24283b); font-size: 12px;'
-    
-    bar.append(
-      this.#barButton('copy', 'Copy answer', () => {
+    bar.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: var(--theme-bgDark, #1a1b26); border-bottom: 1px solid var(--theme-border2, #24283b); font-size: 12px;'
+
+    const titleEl = document.createElement('span')
+    titleEl.className = 'command-popup__title'
+    titleEl.style.cssText = 'font-size: 11px; font-weight: 700; color: var(--theme-accentCyan, #7dcfff); text-transform: uppercase; letter-spacing: 0.06em;'
+    const cmdName = (block && block.payload && block.payload.type) ? String(block.payload.type) : 'BTW'
+    titleEl.textContent = '/' + cmdName.toLowerCase() + ' answer'
+
+    const actionsEl = document.createElement('div')
+    actionsEl.style.cssText = 'display: flex; align-items: center; gap: 8px;'
+
+    actionsEl.append(
+      this.#barButton('copy', 'Copy answer', 'Copy', () => {
         const text = String((this.#block && this.#block.payload && this.#block.payload.response) || '')
         if (navigator.clipboard) navigator.clipboard.writeText(text)
       }),
-      this.#barButton('hide', 'Hide (answer stays on the badge)', () => this.hide()),
-      this.#barButton('delete', 'Delete', () => this.#onDelete())
+      this.#barButton('hide', 'Hide (answer stays on the badge)', 'Hide', () => this.hide()),
+      this.#barButton('delete', 'Delete', 'Dismiss', () => this.#onDelete())
     )
+
+    bar.append(titleEl, actionsEl)
 
     const body = document.createElement('div')
     body.className = 'command-popup__body'
-    body.style.cssText = 'flex: 1; min-height: 0; overflow-y: auto; padding: 12px; user-select: text;'
+    body.style.cssText = 'flex: 1; min-height: 0; overflow-y: auto; padding: 14px; user-select: text;'
 
     this.#renderer = new AiBlockRenderer(block)
     const rendered = this.#renderer.render()
@@ -114,18 +139,22 @@ export class CommandPopup {
 
   /**
    * @param {string} kind
-   * @param {string} label
+   * @param {string} title
+   * @param {string} text
    * @param {() => void} onClick
    */
-  #barButton(kind, label, onClick) {
+  #barButton(kind, title, text, onClick) {
     const b = document.createElement('button')
     b.type = 'button'
     b.className = 'command-popup__btn command-popup__btn--' + kind
-    b.setAttribute('aria-label', label)
-    b.title = label
-    b.textContent = kind === 'copy' ? '📋' : kind === 'hide' ? '─' : '✕'
-    b.style.cssText = 'background: transparent; border: none; color: var(--theme-muted, #565f89); cursor: pointer; padding: 2px 6px; border-radius: 4px; font-size: 12px;'
-    if (kind === 'delete') b.style.color = 'var(--theme-danger, #f7768e)'
+    b.setAttribute('aria-label', title)
+    b.title = title
+    b.textContent = text
+    b.style.cssText = 'background: transparent; border: 1px solid var(--theme-border2, #24283b); color: var(--theme-textDim, #9aa5ce); cursor: pointer; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500;'
+    if (kind === 'delete') {
+      b.style.color = 'var(--theme-danger, #f7768e)'
+      b.style.borderColor = 'color-mix(in srgb, var(--theme-danger, #f7768e) 40%, transparent)'
+    }
     b.addEventListener('click', (e) => {
       e.stopPropagation()
       onClick()
@@ -139,7 +168,9 @@ export class CommandPopup {
   #position(root) {
     const r = this.#anchor.getBoundingClientRect()
     root.style.position = 'fixed'
-    root.style.bottom = Math.max(8, window.innerHeight - r.top + 8) + 'px'
-    root.style.right = Math.max(8, window.innerWidth - r.right) + 'px'
+    root.style.bottom = Math.max(40, window.innerHeight - r.top + 6) + 'px'
+    const left = Math.max(12, Math.min(r.left, window.innerWidth - 500))
+    root.style.left = left + 'px'
+    root.style.right = 'auto'
   }
 }

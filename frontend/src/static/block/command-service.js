@@ -150,6 +150,9 @@ export class CommandService {
    * @returns {{ cancel: () => void }}
    */
   dispatch(commandName, text, context, onResult) {
+    if (!this.#channel) {
+      this.openChannel()
+    }
     const cid = 'c-' + (++this.#seq)
     this.#correlations.set(cid, onResult)
 

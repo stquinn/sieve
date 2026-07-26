@@ -232,7 +232,6 @@ export class AskPanel {
         const resolved = cs.resolve(val)
         if (resolved) {
           const context = this.#lastContext || (this.#ws ? this.#ws.getSelectionContext() : null)
-          cs.openChannel()
           const handle = cs.dispatch(resolved.cmd.name, resolved.args, context, (res) => {
             const ed = this.#activeEditor()
             if (ed && typeof ed.handleCommandResult === 'function') {
