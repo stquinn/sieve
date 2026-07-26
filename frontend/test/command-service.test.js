@@ -51,7 +51,7 @@ describe('CommandService', () => {
         fakeWs = new FakeWebSocket(url)
         return /** @type {any} */ (fakeWs)
       },
-      wsUrl: () => 'ws://test/api/ws?session=true',
+      wsUrl: () => 'ws://test/api/ws?session=1',
       commands: commands
     })
   })

@@ -56,7 +56,7 @@ export class CommandService {
     if (typeof window !== 'undefined' && /** @type {any} */ (window).__sieveDevServerPort) {
       host = '127.0.0.1:' + /** @type {any} */ (window).__sieveDevServerPort
     }
-    return proto + '//' + host + '/api/ws?session=true'
+    return proto + '//' + host + '/api/ws?session=1'
   }
 
   /**

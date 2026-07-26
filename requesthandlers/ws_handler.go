@@ -123,7 +123,8 @@ func (h *WsHandler) RegisterPaths(r chi.Router) {
 }
 
 func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("session") == "1" {
+	sess := r.URL.Query().Get("session")
+	if sess == "1" || sess == "true" {
 		h.handleSessionWS(w, r)
 		return
 	}
