@@ -110,11 +110,23 @@ func (h *WsHandler) sendTo(uuid string, v interface{}) {
 	}
 }
 
+// sessionChannelKey is the reserved workspace channel — the session command
+// plane's seed (#55). It lives in the SAME channels map as the per-uuid doc
+// channels so sendTo() is the one render-back path; the sentinel can never
+// collide with a real uuid. No shadow, no claim-on-write: commands are
+// workspace traffic, not doc mutations.
+const sessionChannelKey = "__session__"
+
 func (h *WsHandler) RegisterPaths(r chi.Router) {
 	r.Get("/api/ws", h.handleWS)
 }
 
 func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("session") == "1" {
+		h.handleSessionWS(w, r)
+		return
+	}
+
 	uuid := r.URL.Query().Get("uuid")
 	if uuid == "" {
 		http.Error(w, "uuid required", http.StatusBadRequest)
@@ -462,3 +474,64 @@ func (h *WsHandler) handleExtract(uuid string, raw []byte, writeMsg func(interfa
 		writeMsg(h.ackFrame("extract-ack", p.OpID, nil))
 	}
 }
+
+func (h *WsHandler) handleSessionWS(w http.ResponseWriter, r *http.Request) {
+	conn, err := h.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		logger.Warn("ws: session upgrade failed", "err", err)
+		return
+	}
+	defer conn.Close()
+
+	var writeMu sync.Mutex
+	writeMsg := func(v interface{}) {
+		data, err := json.Marshal(v)
+		if err != nil {
+			return
+		}
+		writeMu.Lock()
+		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			logger.Debug("ws: session write failed", "err", err)
+		}
+		writeMu.Unlock()
+	}
+
+	logger.Info("ws: session channel connected")
+
+	ch := &wsConn{write: writeMsg}
+	h.register(sessionChannelKey, ch)
+	defer func() {
+		h.unregister(sessionChannelKey, ch)
+		logger.Info("ws: session channel closed")
+	}()
+
+	for {
+		_, raw, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
+		var msg struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			continue
+		}
+		switch msg.Type {
+		case "ping":
+			writeMsg(map[string]string{"type": "pong"})
+		case "command":
+			h.handleCommand(raw)
+		case "command-cancel":
+			h.handleCommandCancel(raw)
+		}
+	}
+}
+
+func (h *WsHandler) handleCommand(raw []byte) {
+	// Stub; implemented in Task 5
+}
+
+func (h *WsHandler) handleCommandCancel(raw []byte) {
+	// Stub; implemented in Task 5
+}
+
