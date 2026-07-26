@@ -15,6 +15,8 @@
 // reaching into payload.
 
 import { AiBlockRenderer } from '../block/renderers/ai-block-renderer.js'
+import { rendererStyles } from '../block/renderers/renderer-style-registry.js'
+import { commandPopupStyles } from './command-popup.styles.js'
 import { CommandResultRenderer } from '../block/renderers/command-result-renderer.js'
 
 /** @typedef {{ cmd: string, text: string, error?: string }} CommandMeta */
@@ -30,6 +32,10 @@ import { CommandResultRenderer } from '../block/renderers/command-result-rendere
 const COMMAND_RENDERERS = Object.freeze({ 'ai-block': AiBlockRenderer, 'command-result': CommandResultRenderer })
 
 export class CommandPopup {
+  // Sibling stylesheet carriage — the component-owns-its-styles pattern the
+  // block renderers established, via the same register-once registry.
+  static styles = commandPopupStyles
+
   // One command popup visible at a time: opening hides any other, and Escape
   // closes only the top-of-stack. A static registry (not a window.* bus).
   /** @type {CommandPopup[]} */ static #openStack = []
@@ -49,6 +55,7 @@ export class CommandPopup {
    * @param {{ anchor: HTMLElement, onDelete: () => void }} options
    */
   constructor({ anchor, onDelete }) {
+    rendererStyles.register(CommandPopup)
     this.#anchor = anchor
     this.#onDelete = onDelete
   }

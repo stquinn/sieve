@@ -1,13 +1,16 @@
 // @ts-check
-// renderer-style-registry.js — register-once-per-class stylesheet carriage for
-// Sieve block renderers (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
-// "Phase 1" — issue #44).
+// renderer-style-registry.js — register-once-per-class stylesheet carriage,
+// born for Sieve block renderers (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md,
+// "Phase 1" — issue #44) and since adopted as THE component-owns-its-styles
+// pattern for any style-carrying component class (shell chrome like
+// CommandPopup/CommandBadges registers here too — #55).
 //
-// A renderer class declares `static styles` (CSS text using ONLY --theme-* vars
-// for colour — the host<->renderer styling protocol the spec commits to). This
-// registry injects that CSS into the document exactly once per class, the first
-// time an instance of the class is constructed (see BlockRenderer in
-// block-renderer.js, which every renderer extends).
+// A class declares `static styles` (CSS text using ONLY --theme-* vars for
+// colour — the host<->renderer styling protocol the spec commits to). This
+// registry injects that CSS into the document exactly once per class, the
+// first time an instance of the class is constructed (BlockRenderer does it in
+// its base constructor for every renderer; non-renderer components call
+// rendererStyles.register(TheClass) in their own constructors).
 //
 // Two injection strategies exist behind one contract — `inject(cssText, key)` —
 // so the mechanism is swappable without touching callers:

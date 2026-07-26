@@ -1,6 +1,6 @@
 // @ts-check
 // command-badges.js — status-bar badge lifecycle for correlated command jobs
-// (#55): one badge per correlationId (spinner → holding → dismissed); the badge
+// (#55): one badge per correlationId (pending → holding → dismissed); the badge
 // IS the re-summon affordance and, later, the Job Engine Viewer's summon seed.
 //
 // The pending state is KIND-AGNOSTIC: `block` starts as null, and the popup
@@ -9,6 +9,8 @@
 
 import { SieveBlock } from '../block/sieve-block.js'
 import { CommandPopup } from './command-popup.js'
+import { rendererStyles } from '../block/renderers/renderer-style-registry.js'
+import { commandBadgesStyles } from './command-badges.styles.js'
 
 /**
  * @typedef {object} BadgeEntry
@@ -21,11 +23,18 @@ import { CommandPopup } from './command-popup.js'
  */
 
 export class CommandBadges {
+  // Sibling stylesheet carriage — the component-owns-its-styles pattern the
+  // block renderers established, via the same register-once registry. The
+  // slot rules ride here too: the status bar donates the mount point, but
+  // this component owns the region.
+  static styles = commandBadgesStyles
+
   /** @type {HTMLElement|null} */ #slot
   /** @type {Map<string, BadgeEntry>} */ #entries = new Map()
 
   /** @param {HTMLElement|null} [slot] the .status-bar__command-badges element */
   constructor(slot) {
+    rendererStyles.register(CommandBadges)
     this.#slot = slot || (typeof document !== 'undefined' ? document.querySelector('.status-bar__command-badges') : null)
   }
 
