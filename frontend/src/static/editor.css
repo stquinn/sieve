@@ -876,6 +876,13 @@ pre.tiptap-code-block code {
   line-height: 1.6;
 }
 
+/* Pseudo-content line numbers (data-ln, set by applyHighlighting) — WebKit
+   ignores user-select inside a contenteditable host, so real gutter text
+   leaks line numbers into copied selections. */
+.sieve-code-block__gutter span::before {
+  content: attr(data-ln);
+}
+
 .sieve-code-block pre {
   flex: 1;
   min-width: 0;

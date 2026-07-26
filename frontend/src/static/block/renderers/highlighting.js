@@ -45,7 +45,9 @@ function addLineNumbers(pre, lineCount) {
   gutter.className = 'sieve-code-block__gutter'
   for (var i = 1; i <= lineCount; i++) {
     var span = document.createElement('span')
-    span.textContent = String(i)
+    // Pseudo-content number (data-ln), never a text node — see LineGutter.sync
+    // for the WebKit copy-leak rationale.
+    span.dataset.ln = String(i)
     gutter.appendChild(span)
   }
 

@@ -81,9 +81,10 @@ export const logStyles = /* css */ `
     line-height: 1.6;
   }
 
-  .sieve-block--log .sieve-block__gutter span::selection {
-    background: transparent;
-    color: inherit;
+  /* Pseudo-content line numbers (data-ln) — see code-renderer.styles.js for
+     the WebKit copy-leak rationale. */
+  .sieve-block--log .sieve-block__gutter span::before {
+    content: attr(data-ln);
   }
 
   .sieve-block--log .sieve-block__code-area {

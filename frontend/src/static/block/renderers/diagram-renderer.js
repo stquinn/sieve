@@ -433,7 +433,9 @@ export class DiagramRenderer extends BlockRenderer {
     gutter.innerHTML = ''
     for (let i = 1; i <= count; i++) {
       const span = document.createElement('span')
-      span.textContent = String(i)
+      // Pseudo-content number (data-ln), never a text node — see LineGutter.sync
+      // for the WebKit copy-leak rationale.
+      span.dataset.ln = String(i)
       gutter.appendChild(span)
     }
   }

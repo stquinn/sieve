@@ -74,9 +74,11 @@ export const codeStyles = /* css */ `
     line-height: 1.6;
   }
 
-  .sieve-block--code .sieve-block__gutter span::selection {
-    background: transparent;
-    color: inherit;
+  /* The number lives in pseudo-content (LineGutter sets data-ln, no text
+     node): WebKit ignores user-select inside a contenteditable host, so real
+     gutter text leaks line numbers into copied selections. */
+  .sieve-block--code .sieve-block__gutter span::before {
+    content: attr(data-ln);
   }
 
   .sieve-block--code .sieve-block__code-area {

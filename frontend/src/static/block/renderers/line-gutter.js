@@ -28,7 +28,10 @@ export class LineGutter {
     gutterEl.innerHTML = ''
     for (let i = 1; i <= count; i++) {
       const span = document.createElement('span')
-      span.textContent = String(i)
+      // The number is CSS pseudo-content (span::before { content: attr(data-ln) }),
+      // never a text node: WebKit ignores user-select inside a contenteditable
+      // host, so real text here leaks line numbers into copied selections.
+      span.dataset.ln = String(i)
       gutterEl.appendChild(span)
     }
   }

@@ -213,9 +213,10 @@ export class DiagramTheme {
     line-height: 1.6;
   }
 
-  .sieve-block--diagram .sieve-block__gutter span::selection {
-    background: transparent;
-    color: inherit;
+  /* Pseudo-content line numbers (data-ln) — see code-renderer.styles.js for
+     the WebKit copy-leak rationale. */
+  .sieve-block--diagram .sieve-block__gutter span::before {
+    content: attr(data-ln);
   }
 
   .sieve-block--diagram .sieve-block__code-area {
