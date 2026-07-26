@@ -10,6 +10,7 @@ import (
 	"sieve/logger"
 	"sieve/sieve"
 	"sieve/sieve/block"
+	"sieve/sieve/command"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -527,11 +528,51 @@ func (h *WsHandler) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type commandEnvelope struct {
+	Family        string          `json:"family"`
+	Cmd           string          `json:"cmd"`
+	Args          struct{ Text string `json:"text"` } `json:"args"`
+	CorrelationID string          `json:"correlationId"`
+	Context       json.RawMessage `json:"context"`
+}
+
 func (h *WsHandler) handleCommand(raw []byte) {
-	// Stub; implemented in Task 5
+	var env commandEnvelope
+	if err := json.Unmarshal(raw, &env); err != nil || env.CorrelationID == "" {
+		return
+	}
+	emit := func(o command.Outcome) {
+		frame := map[string]interface{}{
+			"type":          "command-result",
+			"correlationId": env.CorrelationID,
+			"cmd":           env.Cmd,
+			"status":        o.Status,
+		}
+		if o.Block != nil {
+			frame["block"] = map[string]interface{}{"kind": o.Block.Kind, "attrs": o.Block.Attrs}
+		}
+		if o.Err != "" {
+			frame["error"] = o.Err
+		}
+		h.sendTo(sessionChannelKey, frame)
+	}
+	reg := h.ServiceProvider.Commands
+	if env.Family != "ai" || reg == nil {
+		emit(command.Outcome{Status: command.StatusError, Err: "unknown command family: " + env.Family})
+		return
+	}
+	reg.Dispatch(env.Cmd, env.Args.Text, env.Context, env.CorrelationID, emit)
 }
 
 func (h *WsHandler) handleCommandCancel(raw []byte) {
-	// Stub; implemented in Task 5
+	var msg struct {
+		CorrelationID string `json:"correlationId"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil || msg.CorrelationID == "" {
+		return
+	}
+	if h.ServiceProvider.Commands != nil {
+		h.ServiceProvider.Commands.Cancel(msg.CorrelationID)
+	}
 }
 
