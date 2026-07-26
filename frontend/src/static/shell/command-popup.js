@@ -39,12 +39,15 @@ export class CommandPopup {
     root.style.cssText = [
       'position: fixed',
       'z-index: 1000',
-      'width: min(85vw, 680px)',
-      'max-height: min(75vh, 520px)',
+      'top: 50%',
+      'left: 50%',
+      'transform: translate(-50%, -50%)',
+      'width: min(90vw, 920px)',
+      'height: min(80vh, 640px)',
       'background: var(--theme-bgAlt, #1f2335)',
       'border: 1px solid var(--theme-border2, #3b4261)',
-      'border-radius: 10px',
-      'box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6)',
+      'border-radius: 12px',
+      'box-shadow: 0 20px 60px rgba(0, 0, 0, 0.65)',
       'display: flex',
       'flex-direction: column',
       'overflow: hidden',
@@ -53,16 +56,16 @@ export class CommandPopup {
 
     const bar = document.createElement('div')
     bar.className = 'command-popup__bar'
-    bar.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; background: var(--theme-bgDark, #1a1b26); border-bottom: 1px solid var(--theme-border2, #24283b);'
+    bar.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; background: var(--theme-bgDark, #1a1b26); border-bottom: 1px solid var(--theme-border2, #24283b);'
 
     const titleEl = document.createElement('span')
     titleEl.className = 'command-popup__title'
-    titleEl.style.cssText = 'font-size: 12px; font-weight: 700; color: var(--theme-accentCyan, #7dcfff); text-transform: uppercase; letter-spacing: 0.08em;'
+    titleEl.style.cssText = 'font-size: 13px; font-weight: 700; color: var(--theme-accentCyan, #7dcfff); text-transform: uppercase; letter-spacing: 0.08em;'
     const cmdName = (block && block.payload && block.payload.type) ? String(block.payload.type) : 'BTW'
     titleEl.textContent = '/' + cmdName.toLowerCase() + ' answer'
 
     const actionsEl = document.createElement('div')
-    actionsEl.style.cssText = 'display: flex; align-items: center; gap: 8px;'
+    actionsEl.style.cssText = 'display: flex; align-items: center; gap: 10px;'
 
     actionsEl.append(
       this.#barButton('copy', 'Copy answer', 'Copy', () => {
@@ -77,7 +80,7 @@ export class CommandPopup {
 
     const body = document.createElement('div')
     body.className = 'command-popup__body'
-    body.style.cssText = 'flex: 1; min-height: 0; overflow-y: auto; padding: 18px 20px; user-select: text;'
+    body.style.cssText = 'flex: 1; min-height: 0; overflow-y: auto; padding: 24px 28px; user-select: text; font-size: 15px; line-height: 1.65;'
 
     this.#renderer = new AiBlockRenderer(block)
     const rendered = this.#renderer.render()
@@ -85,7 +88,6 @@ export class CommandPopup {
 
     root.append(bar, body)
     document.body.appendChild(root)
-    this.#position(root)
 
     /** @param {KeyboardEvent} e */
     const onKey = (e) => {
@@ -149,7 +151,7 @@ export class CommandPopup {
     b.setAttribute('aria-label', title)
     b.title = title
     b.textContent = text
-    b.style.cssText = 'background: transparent; border: 1px solid var(--theme-border2, #24283b); color: var(--theme-textDim, #9aa5ce); cursor: pointer; padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: 500; transition: background 0.15s ease;'
+    b.style.cssText = 'background: transparent; border: 1px solid var(--theme-border2, #24283b); color: var(--theme-textDim, #9aa5ce); cursor: pointer; padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 500; transition: all 0.15s ease;'
     if (kind === 'delete') {
       b.style.color = 'var(--theme-danger, #f7768e)'
       b.style.borderColor = 'color-mix(in srgb, var(--theme-danger, #f7768e) 40%, transparent)'
@@ -159,17 +161,5 @@ export class CommandPopup {
       onClick()
     })
     return b
-  }
-
-  /**
-   * @param {HTMLElement} root
-   */
-  #position(root) {
-    const r = this.#anchor.getBoundingClientRect()
-    root.style.position = 'fixed'
-    root.style.bottom = Math.max(40, window.innerHeight - r.top + 6) + 'px'
-    const left = Math.max(16, Math.min(r.left, window.innerWidth - 700))
-    root.style.left = left + 'px'
-    root.style.right = 'auto'
   }
 }
