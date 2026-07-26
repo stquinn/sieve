@@ -84,9 +84,12 @@ export class CommandPopup {
     actionsEl.className = 'command-popup__actions'
 
     actionsEl.append(
-      this.#barButton('copy', 'Copy answer', 'Copy', () => {
+      this.#barButton('copy', 'Copy answer', 'Copy', (btn) => {
         const text = this.#answerText()
-        if (text && navigator.clipboard) navigator.clipboard.writeText(text)
+        if (text && navigator.clipboard) {
+          navigator.clipboard.writeText(text)
+          this.#flashCopied(btn)
+        }
       }),
       this.#barButton('hide', 'Hide (answer stays on the badge)', 'Hide', () => this.hide()),
       this.#barButton('delete', 'Delete', 'Dismiss', () => this.#onDelete())
@@ -253,10 +256,27 @@ export class CommandPopup {
   }
 
   /**
+   * Copy micro-feedback: flashes the button green + "Copied ✓" for 1.2s, then
+   * restores it. The scrimless popup has no toast channel, so the button is
+   * the confirmation surface.
+   * @param {HTMLButtonElement} btn
+   */
+  #flashCopied(btn) {
+    if (btn.classList.contains('command-popup__btn--copied')) return
+    const label = btn.textContent
+    btn.classList.add('command-popup__btn--copied')
+    btn.textContent = 'Copied ✓'
+    setTimeout(() => {
+      btn.classList.remove('command-popup__btn--copied')
+      btn.textContent = label
+    }, 1200)
+  }
+
+  /**
    * @param {string} kind
    * @param {string} title
    * @param {string} text
-   * @param {() => void} onClick
+   * @param {(btn: HTMLButtonElement) => void} onClick
    */
   #barButton(kind, title, text, onClick) {
     const b = document.createElement('button')
@@ -267,7 +287,7 @@ export class CommandPopup {
     b.textContent = text
     b.addEventListener('click', (e) => {
       e.stopPropagation()
-      onClick()
+      onClick(b)
     })
     return b
   }

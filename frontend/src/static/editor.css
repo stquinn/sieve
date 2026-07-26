@@ -1852,7 +1852,16 @@ pre.tiptap-code-block code {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  backdrop-filter: blur(16px);
+  /* Same entrance as the app's other dialogs (ask-popup, internalize) — the
+     popup stays scrimless/non-focus-stealing by design, but it should ARRIVE
+     speaking the shared visual language. */
+  animation: command-popup-in 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+/* modal-scale-in resolves its transform against translateX(-50%) dialogs; this
+   popup is centred with translate(-50%,-50%), so it needs its own keyframes. */
+@keyframes command-popup-in {
+  from { transform: translate(-50%, calc(-50% - 10px)) scale(0.95); opacity: 0; }
+  to   { transform: translate(-50%, -50%) scale(1); opacity: 1; }
 }
 .command-popup__bar {
   display: flex;
@@ -1894,9 +1903,35 @@ pre.tiptap-code-block code {
   font-weight: 500;
   transition: all 0.15s ease;
 }
+.command-popup__btn:hover {
+  color: var(--theme-text);
+  background: var(--theme-border);
+  border-color: var(--theme-accentPrimary);
+}
+.command-popup__btn:active {
+  transform: translateY(1px);
+  background: var(--theme-bgDark);
+}
+.command-popup__btn:focus-visible {
+  outline: 2px solid var(--theme-accentPrimary);
+  outline-offset: 1px;
+}
 .command-popup__btn--delete {
   color: var(--theme-accentRed);
   border-color: color-mix(in srgb, var(--theme-accentRed) 40%, transparent);
+}
+.command-popup__btn--delete:hover {
+  color: var(--theme-accentRed);
+  background: color-mix(in srgb, var(--theme-accentRed) 15%, transparent);
+  border-color: var(--theme-accentRed);
+}
+/* Copy micro-feedback: the button announces success itself (flash class set by
+   CommandPopup for ~1.2s), since the scrimless popup has no toast channel. */
+.command-popup__btn--copied,
+.command-popup__btn--copied:hover {
+  color: var(--theme-accentGreen);
+  border-color: var(--theme-accentGreen);
+  background: color-mix(in srgb, var(--theme-accentGreen) 12%, transparent);
 }
 /* Generic status view (pending / error) — centred spinner-or-icon + labels. */
 .command-popup__status {
