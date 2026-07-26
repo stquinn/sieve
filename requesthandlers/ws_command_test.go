@@ -212,3 +212,49 @@ func TestWS_CommandCancel_SuppressesResult(t *testing.T) {
 		}
 	}
 }
+
+// TestWS_Command_ResultRoutesToRequester_NotChannelOwner pins the 2026-07-26
+// stolen-/btw incident: a second session socket (dev-server tab beside the app
+// window) registers __session__ mid-job and deposes the requester as owner.
+// Command results are requester-affine — the answer must reach the socket the
+// command arrived on, not the current key owner; the thief hears nothing.
+func TestWS_Command_ResultRoutesToRequester_NotChannelOwner(t *testing.T) {
+	srv, _, _, _, gate := newWsTestServerWithCommands(t)
+	requester := dialSessionWS(t, srv)
+	defer requester.Close()
+
+	cmdMsg := map[string]interface{}{"type": "command", "family": "ai", "cmd": "fake", "args": map[string]string{"text": "mine"}, "correlationId": "c-steal"}
+	if err := requester.WriteJSON(cmdMsg); err != nil {
+		t.Fatal(err)
+	}
+	pending := readFrame(t, requester, 2*time.Second)
+	if pending["status"] != "PENDING" {
+		t.Fatalf("expected PENDING on requester, got %+v", pending)
+	}
+
+	// A second session socket connects mid-job and takes over __session__.
+	thief := dialSessionWS(t, srv)
+	defer thief.Close()
+	// ping/pong round-trip guarantees the thief's register has run server-side.
+	if err := thief.WriteJSON(map[string]string{"type": "ping"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = readUntil(t, thief, "pong", 2*time.Second)
+
+	close(gate)
+
+	complete := readFrame(t, requester, 2*time.Second)
+	if complete["correlationId"] != "c-steal" || complete["status"] != "COMPLETE" {
+		t.Fatalf("expected COMPLETE on the requesting socket, got %+v", complete)
+	}
+
+	// The deposing socket must NOT receive the correlated result.
+	_ = thief.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+	if _, raw, err := thief.ReadMessage(); err == nil {
+		var m map[string]interface{}
+		_ = json.Unmarshal(raw, &m)
+		if m["correlationId"] == "c-steal" {
+			t.Fatalf("result leaked to the deposing socket: %s", string(raw))
+		}
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"sieve/logger"
@@ -32,6 +33,12 @@ type WsHandler struct {
 // render-backs and lost updates on reconnect overlap; ws_takeover_test.go).
 type wsConn struct {
 	write func(interface{})
+	// closed marks the conn's reader as torn down. Command emits check it to
+	// stay requester-affine (reply to the socket the command arrived on) while
+	// still falling back to the current session owner once the requester dies —
+	// without it, a co-claimant session socket (dev-server tab + app window)
+	// that re-registers __session__ mid-job silently swallows the reply.
+	closed atomic.Bool
 }
 
 func NewWsHandler(sp *sieve.ServiceProvider) *WsHandler {
@@ -503,6 +510,7 @@ func (h *WsHandler) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 	ch := &wsConn{write: writeMsg}
 	h.register(sessionChannelKey, ch)
 	defer func() {
+		ch.closed.Store(true)
 		h.unregister(sessionChannelKey, ch)
 		logger.Info("ws: session channel closed")
 	}()
@@ -522,7 +530,7 @@ func (h *WsHandler) handleSessionWS(w http.ResponseWriter, r *http.Request) {
 		case "ping":
 			writeMsg(map[string]string{"type": "pong"})
 		case "command":
-			h.handleCommand(raw)
+			h.handleCommand(ch, raw)
 		case "command-cancel":
 			h.handleCommandCancel(raw)
 		}
@@ -537,7 +545,14 @@ type commandEnvelope struct {
 	Context       json.RawMessage `json:"context"`
 }
 
-func (h *WsHandler) handleCommand(raw []byte) {
+// handleCommand dispatches a command frame. Results are REQUESTER-AFFINE per
+// the ownership rule (acks→requester, render-backs→registered owner): a
+// correlated command-result is ack-shaped, so emit replies on the socket the
+// command arrived on — the registered __session__ owner may have changed
+// mid-job (a dev-server tab registering beside the app window silently deposes
+// it; that stole two live /btw answers on 2026-07-26). Only when the requester
+// is gone (reconnect) does emit fall back to the current session owner.
+func (h *WsHandler) handleCommand(requester *wsConn, raw []byte) {
 	var env commandEnvelope
 	if err := json.Unmarshal(raw, &env); err != nil || env.CorrelationID == "" {
 		return
@@ -554,6 +569,10 @@ func (h *WsHandler) handleCommand(raw []byte) {
 		}
 		if o.Err != "" {
 			frame["error"] = o.Err
+		}
+		if requester != nil && !requester.closed.Load() {
+			requester.write(frame)
+			return
 		}
 		h.sendTo(sessionChannelKey, frame)
 	}
