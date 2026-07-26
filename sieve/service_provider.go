@@ -6,6 +6,7 @@ import (
 	"sieve/sieve/ai"
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
+	"sieve/sieve/command"
 	"sieve/sieve/editor"
 	"sieve/sieve/mcp"
 	"sieve/sieve/services"
@@ -24,6 +25,7 @@ type ServiceProvider struct {
 	Editor      *editor.EditorService
 	Jobs        *services.JobTracker
 	Engine      *services.JobEngine
+	Commands    *command.Registry
 	LinkPreview *services.LinkPreviewService
 	Plantuml    *services.PlantumlService
 	MCP         *mcp.Server
@@ -79,6 +81,7 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	// URL + a per-call bearer token from it at profile-render time.
 	s.MCP = mcp.NewServer(s.Documents)
 	s.AI.SetMCPEndpoint(s.MCP)
+	s.Commands = command.NewRegistry()
 	s.LinkPreview = services.NewLinkPreviewService()
 	s.Plantuml = services.NewPlantumlService(s.State)
 	settings := s.State.LoadSettings()
@@ -92,13 +95,27 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	// "ai" pool defaults to 3 (spec Global Constraint); explicit worker_pools config
 	// wins; other unconfigured categories fall to defaultWorkers.
 	const defaultWorkers = 4
-	poolSizes := map[string]int{block.CategoryAI: 3}
+	poolSizes := map[string]int{
+		block.CategoryAI: 3,
+		command.Category: 2,
+	}
 	for k, v := range settings.WorkerPools {
 		poolSizes[k] = v
 	}
 	s.Engine = services.NewJobEngine(poolSizes, defaultWorkers, s.Jobs)
 	s.Editor.SetEngine(s.Engine)
 	s.Editor.SetAI(s.AI)
+	s.Commands.SetEngine(s.Engine)
+	s.Commands.Register(ai.NewBtwCommand(s.AI, s.Documents))
+	s.Commands.Register(command.NewNowCommand())
+	s.Commands.Register(command.NewStatsCommand(s.Documents))
+	s.Commands.Register(command.NewUUIDCommand())
+	s.Commands.Register(command.NewHashCommand(s.Documents))
+	s.Commands.Register(command.NewBase64Command(s.Documents))
+	s.Commands.Register(command.NewEnvCommand())
+	s.Commands.Register(command.NewJWTCommand())
+	s.Commands.Register(ai.NewSummaryCommand(s.AI, s.Documents))
+	s.Commands.Register(ai.NewTodoCommand(s.AI, s.Documents))
 	svc := s.BlockServices()
 	block.RegisterProcessor(processors.NewDiagramProcessor(svc))
 	block.RegisterProcessor(processors.NewSmartImageProcessor(svc))

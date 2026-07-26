@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"sieve/logger"
 	"sieve/sieve"
 	"sieve/sieve/block"
+	"sieve/sieve/command"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
@@ -31,6 +33,12 @@ type WsHandler struct {
 // render-backs and lost updates on reconnect overlap; ws_takeover_test.go).
 type wsConn struct {
 	write func(interface{})
+	// closed marks the conn's reader as torn down. Command emits check it to
+	// stay requester-affine (reply to the socket the command arrived on) while
+	// still falling back to the current session owner once the requester dies —
+	// without it, a co-claimant session socket (dev-server tab + app window)
+	// that re-registers __session__ mid-job silently swallows the reply.
+	closed atomic.Bool
 }
 
 func NewWsHandler(sp *sieve.ServiceProvider) *WsHandler {
@@ -110,11 +118,24 @@ func (h *WsHandler) sendTo(uuid string, v interface{}) {
 	}
 }
 
+// sessionChannelKey is the reserved workspace channel — the session command
+// plane's seed (#55). It lives in the SAME channels map as the per-uuid doc
+// channels so sendTo() is the one render-back path; the sentinel can never
+// collide with a real uuid. No shadow, no claim-on-write: commands are
+// workspace traffic, not doc mutations.
+const sessionChannelKey = "__session__"
+
 func (h *WsHandler) RegisterPaths(r chi.Router) {
 	r.Get("/api/ws", h.handleWS)
 }
 
 func (h *WsHandler) handleWS(w http.ResponseWriter, r *http.Request) {
+	sess := r.URL.Query().Get("session")
+	if sess == "1" || sess == "true" {
+		h.handleSessionWS(w, r)
+		return
+	}
+
 	uuid := r.URL.Query().Get("uuid")
 	if uuid == "" {
 		http.Error(w, "uuid required", http.StatusBadRequest)
@@ -462,3 +483,119 @@ func (h *WsHandler) handleExtract(uuid string, raw []byte, writeMsg func(interfa
 		writeMsg(h.ackFrame("extract-ack", p.OpID, nil))
 	}
 }
+
+func (h *WsHandler) handleSessionWS(w http.ResponseWriter, r *http.Request) {
+	conn, err := h.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		logger.Warn("ws: session upgrade failed", "err", err)
+		return
+	}
+	defer conn.Close()
+
+	var writeMu sync.Mutex
+	writeMsg := func(v interface{}) {
+		data, err := json.Marshal(v)
+		if err != nil {
+			return
+		}
+		writeMu.Lock()
+		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			logger.Debug("ws: session write failed", "err", err)
+		}
+		writeMu.Unlock()
+	}
+
+	logger.Info("ws: session channel connected")
+
+	ch := &wsConn{write: writeMsg}
+	h.register(sessionChannelKey, ch)
+	defer func() {
+		ch.closed.Store(true)
+		h.unregister(sessionChannelKey, ch)
+		logger.Info("ws: session channel closed")
+	}()
+
+	for {
+		_, raw, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
+		var msg struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			continue
+		}
+		switch msg.Type {
+		case "ping":
+			writeMsg(map[string]string{"type": "pong"})
+		case "command":
+			h.handleCommand(ch, raw)
+		case "command-cancel":
+			h.handleCommandCancel(raw)
+		}
+	}
+}
+
+type commandEnvelope struct {
+	Family        string          `json:"family"`
+	Cmd           string          `json:"cmd"`
+	Args          struct{ Text string `json:"text"` } `json:"args"`
+	CorrelationID string          `json:"correlationId"`
+	Context       json.RawMessage `json:"context"`
+}
+
+// handleCommand dispatches a command frame. Results are REQUESTER-AFFINE per
+// the ownership rule (acks→requester, render-backs→registered owner): a
+// correlated command-result is ack-shaped, so emit replies on the socket the
+// command arrived on — the registered __session__ owner may have changed
+// mid-job (a dev-server tab registering beside the app window silently deposes
+// it; that stole two live /btw answers on 2026-07-26). Only when the requester
+// is gone (reconnect) does emit fall back to the current session owner.
+func (h *WsHandler) handleCommand(requester *wsConn, raw []byte) {
+	var env commandEnvelope
+	if err := json.Unmarshal(raw, &env); err != nil || env.CorrelationID == "" {
+		return
+	}
+	emit := func(o command.Outcome) {
+		frame := map[string]interface{}{
+			"type":          "command-result",
+			"correlationId": env.CorrelationID,
+			"cmd":           env.Cmd,
+			"status":        o.Status,
+		}
+		if o.Block != nil {
+			frame["block"] = map[string]interface{}{"kind": o.Block.Kind, "attrs": o.Block.Attrs}
+		}
+		if o.Err != "" {
+			frame["error"] = o.Err
+		}
+		if requester != nil && !requester.closed.Load() {
+			requester.write(frame)
+			return
+		}
+		h.sendTo(sessionChannelKey, frame)
+	}
+	reg := h.ServiceProvider.Commands
+	if reg == nil {
+		emit(command.Outcome{Status: command.StatusError, Err: "commands unavailable"})
+		return
+	}
+	// Family is passed as an INTEGRITY expectation, not a policy gate: Dispatch
+	// validates it against the registered command's declared Family() and emits
+	// an ERROR on mismatch. An empty family skips the check (tolerant floor).
+	reg.Dispatch(env.Cmd, env.Family, env.Args.Text, env.Context, env.CorrelationID, emit)
+}
+
+func (h *WsHandler) handleCommandCancel(raw []byte) {
+	var msg struct {
+		CorrelationID string `json:"correlationId"`
+	}
+	if err := json.Unmarshal(raw, &msg); err != nil || msg.CorrelationID == "" {
+		return
+	}
+	if h.ServiceProvider.Commands != nil {
+		h.ServiceProvider.Commands.Cancel(msg.CorrelationID)
+	}
+}
+

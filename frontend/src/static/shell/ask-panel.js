@@ -21,9 +21,17 @@
 // Dual-use ES module: imported by workspace.js (which constructs it). No window.*
 // export — the singleton is reached via window.sieveWorkspace.askPanel.
 
+import { CommandHintPopover } from './command-hint-popover.js'
+
 export class AskPanel {
   /** @type {import('./workspace.js').SieveWorkspace} */
   #ws
+  /** @type {import('../block/command-service.js').CommandService|null} */
+  #commandService = null
+  /** @type {import('./command-badges.js').CommandBadges|null} */
+  #badges = null
+  /** @type {CommandHintPopover|null} */
+  #hintPopover = null
   /** @type {HTMLElement|null} the structural #ask-panel (null → all methods no-op) */
   #panel = null
   /** @type {HTMLTextAreaElement|null} */
@@ -39,14 +47,23 @@ export class AskPanel {
   /** @type {import('../editor/selection-model.js').SelectionContext|null} the context whose label is CURRENTLY shown — what send acts on (D-5: send == shown) */
   #lastContext = null
 
-  /** @param {import('./workspace.js').SieveWorkspace} ws */
-  constructor(ws) {
+  /**
+   * @param {import('./workspace.js').SieveWorkspace} ws
+   * @param {import('../block/command-service.js').CommandService} [commandService]
+   * @param {import('./command-badges.js').CommandBadges} [badges]
+   */
+  constructor(ws, commandService, badges) {
     this.#ws = ws
+    this.#commandService = commandService || (ws && /** @type {any} */ (ws).commandService) || null
+    this.#badges = badges || (ws && /** @type {any} */ (ws).commandBadges) || null
     this.#panel = document.getElementById('ask-panel')
     this.#pinned = !!window.initAskPanelPinned
     if (!this.#panel) return
     this.#textarea = this.#panel.querySelector('.ask-popup__input')
     this.#label = this.#panel.querySelector('.ask-popup__label')
+    if (this.#textarea && this.#commandService) {
+      this.#hintPopover = new CommandHintPopover(this.#textarea, this.#commandService)
+    }
     this.#wireDom()
     this.#wirePinToggle()
     this.#wireGlobalHotkey()
@@ -208,6 +225,30 @@ export class AskPanel {
     if (!this.#textarea) return
     const val = this.#textarea.value.trim()
     if (!val) return
+
+    if (val.startsWith('/')) {
+      const cs = this.#commandService || (this.#ws && /** @type {any} */ (this.#ws).commandService)
+      if (cs) {
+        const resolved = cs.resolve(val)
+        if (resolved) {
+          const context = this.#lastContext || (this.#ws ? this.#ws.getSelectionContext() : null)
+          // No onResult here: the CommandBadge wires its own listener off the
+          // handle (handle.onResult) and owns the answer lifecycle. There is no
+          // editor.handleCommandResult seam — command results land in the badge/
+          // popup, never back in the editor doc.
+          const handle = cs.dispatch(resolved.cmd.name, resolved.args, context)
+          const badges = this.#badges || (this.#ws && /** @type {any} */ (this.#ws).commandBadges)
+          if (badges) {
+            badges.track(handle, { cmd: resolved.cmd.name, text: resolved.args })
+          }
+          this.#textarea.value = ''
+          if (this.#panel && !this.#pinned) this.#panel.classList.remove('is-open')
+          this.#focusReturn = null
+          return
+        }
+      }
+    }
+
     const ed = this.#activeEditor()
     if (!ed) return
     const context = this.#lastContext || ed.getSelectionContext()

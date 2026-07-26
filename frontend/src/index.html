@@ -161,6 +161,7 @@
                 <div class="status-bar__left">
                   <div class="status-bar__lib" hx-get="/api/library/current" hx-trigger="load" hx-swap="innerHTML"></div>
                   <div class="status-bar__jobs"></div>
+                  <div class="status-bar__command-badges"></div>
                 </div>
                 <div class="status-bar__right flex items-center">
                   <div class="status-bar__save" style="margin-right: 8px; color: var(--theme-muted); transition: opacity 0.5s; opacity: 0;"></div>
@@ -367,6 +368,8 @@
     };
 
     window.__sieveCliTimeoutLong = {{.CLITimeoutLong}};
+
+    window.__sieveCommands = {{.Commands}};
 
     window.__metaActiveTab = 'meta';
 

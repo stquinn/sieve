@@ -1,3 +1,5 @@
+> **STATUS: DONE** — shipped 2026-07-26 on `feat/ask-panel-slash-commands-btw` (36 commits): command registry + session channel + /btw + CommandService/badges/popup per spec, plus in-branch evolution — honest `command-result` kind (title/response/primary), Family()/ResultKind() metadata with integrity-checked gate, dispatcher-stamped correlation identity, requester-affine result routing, component .styles.js carriage. Full code review + live-app validation in-branch. Decision #5 (jobs-cell filter) REVERSED on live review — command jobs paint uniformly; badge is additive. Archived 2026-07-26.
+
 # Ask Panel Slash Commands & `/btw`
 
 *2026-07-23 · Tracked: #55*

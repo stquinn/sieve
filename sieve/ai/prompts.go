@@ -44,6 +44,8 @@ func (ps *PromptService) GetPromptContent(name string) (string, error) {
 		return DefaultExplainPrompt, nil
 	case "ask":
 		return DefaultAskPrompt, nil
+	case "btw":
+		return DefaultBtwPrompt, nil
 	case "image":
 		return DefaultImagePrompt, nil
 	case "refine":
@@ -74,11 +76,12 @@ func (ps *PromptService) DeletePrompt(name string) error {
 
 // ListPrompts returns all standard prompts with their virtualization status.
 func (ps *PromptService) ListPrompts() []PromptEntry {
-	names := []string{"file", "explain", "ask", "refine", "image", "web-clip-fetch", "web-clip-summarise"}
+	names := []string{"file", "explain", "ask", "btw", "refine", "image", "web-clip-fetch", "web-clip-summarise"}
 	displayNames := map[string]string{
 		"file":               "Smart Filing",
 		"explain":            "Explain Content",
 		"ask":                "In-context Chat",
+		"btw":                "Quick Answer (/btw)",
 		"refine":             "Language Detection",
 		"image":              "Describe Image",
 		"web-clip-fetch":     "Web Clip — Fetch",
@@ -314,3 +317,21 @@ const DefaultWebClipSummarisePrompt = `Please retrieve the content at the follow
   Current document context:
   {document}
   `
+
+const DefaultBtwPrompt = `You are answering a quick side-question a writer asked ("/btw") while working on a document. Answer the question concisely and directly, in markdown.
+
+QUESTION:
+{question}
+
+SELECTED TEXT (may be empty; if present, the question is likely about it):
+{selection}
+
+BACKGROUND — ambient context for disambiguation only. Do not analyze the document, do not suggest edits, and do not mention it unless the question requires it:
+- Document title: {doc_title}
+- Document summary: {doc_summary}
+- Document uuid: {doc_uuid}
+
+If, and only if, the question genuinely requires the document's actual content, call the Sieve MCP tool get_note with the uuid above to read it. Prefer answering directly without it.
+
+Keep the answer short: a few sentences, or a compact list or snippet when clearer. No preamble, no closing questions.`
+

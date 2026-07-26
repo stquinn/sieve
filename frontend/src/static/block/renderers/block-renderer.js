@@ -226,6 +226,19 @@ export class BlockRenderer {
   /** Release timers/observers/listeners this renderer owns. Base is a no-op. */
   destroy() {}
 
+  /**
+   * The plain text a consumer copies for this block (the command popup's Copy
+   * button). Base default = the kind's own bodyMarkdown() when it exposes one,
+   * else '' — so the popup stays payload-blind and kind-agnostic (it calls this
+   * ONE accessor). Kinds with a cleaner raw value (a command result's `primary`)
+   * override this.
+   * @returns {string}
+   */
+  copyText() {
+    const self = /** @type {any} */ (this)
+    return typeof self.bodyMarkdown === 'function' ? String(self.bodyMarkdown() || '') : ''
+  }
+
   // ── Core semantic API ─────────────────────────────────────────────────────
 
   /**

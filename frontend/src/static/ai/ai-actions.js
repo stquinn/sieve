@@ -81,14 +81,16 @@
       var job = activeJobs[id];
       if (job.spinTab && job.docId) setEvaluating(job.docId, false);
     });
-    // Rebuild from snapshot.
+    // Rebuild from snapshot. EVERY JobEngine job paints here uniformly —
+    // commands included (their CommandBadge is an additional affordance, not a
+    // replacement; #55 decision #5's filter was reversed 2026-07-26).
     activeJobs = {};
     (payload.active || []).forEach(function(j) {
       if (!j.jobId) return;
       activeJobs[j.jobId] = { label: j.label || 'Working...', docId: j.docId || '', spinTab: !!j.spinTab };
       if (j.spinTab && j.docId) setEvaluating(j.docId, true);
     });
-    queuedJobs = payload.queued || [];
+    queuedJobs = (payload.queued || []).filter(function(j) { return !!j.jobId; });
     window.__sieveActiveJobs = Object.keys(activeJobs).length;
     updateStatusBar();
   }

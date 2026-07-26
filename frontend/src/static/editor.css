@@ -1752,15 +1752,26 @@ pre.tiptap-code-block code {
   to { transform: rotate(360deg); }
 }
 
-/* Job status area: an Active cell (spinner + task, +N more) and a Queued cell,
-   using the same cell/divider language as the right-group status-bar cells. */
 .status-bar__jobs {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  min-width: 0;
+  width: 15ch; /* fixed width, reserve space */
+  flex: 0 0 auto;
   overflow: hidden;
 }
+
+/* Show placeholder when no active jobs */
+.status-bar__jobs:empty::after {
+  content: "No Active Jobs";
+  color: var(--theme-muted);
+  display: inline-block;
+  min-width: 15ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .status-bar__job-active {
   display: flex;
   align-items: center;
@@ -1771,6 +1782,8 @@ pre.tiptap-code-block code {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 15ch;
+  flex-shrink: 1;
 }
 .status-bar__job-more {
   color: var(--theme-muted);
@@ -1793,6 +1806,11 @@ pre.tiptap-code-block code {
   height: 16px;
   box-sizing: border-box;
 }
+
+/* Command plane (badges slot + pills, answer popup): styled via component
+   sibling carriage — shell/command-badges.styles.js and
+   shell/command-popup.styles.js (RendererStyleRegistry, register-once).
+   Nothing command-plane lives in this file. */
 
 /* ── Pending-close blocking dialog ──────────────────────────────────── */
 

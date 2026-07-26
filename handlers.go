@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"html/template"
 	"io/fs"
 	"net/http"
@@ -110,6 +111,13 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		tierStr = "smart"
 	}
 
+	commandsJSON := []byte("[]")
+	if h.app.ServiceProvider != nil && h.app.ServiceProvider.Commands != nil {
+		if b, err := json.Marshal(h.app.ServiceProvider.Commands.List()); err == nil {
+			commandsJSON = b
+		}
+	}
+
 	data := struct {
 		StoreRoot        string
 		ThemeName        string
@@ -128,6 +136,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		AutosaveDebounce int
 		CLITimeoutLong   int
 		DevServerPort    int
+		Commands         template.JS
 	}{
 		StoreRoot:        info.Root,
 		ThemeName:        info.ThemeName,
@@ -146,6 +155,7 @@ func (h *apiHandler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		AutosaveDebounce: info.AutosaveDebounce,
 		CLITimeoutLong:   info.CLITimeoutLong,
 		DevServerPort:    h.app.DevServerPort,
+		Commands:         template.JS(commandsJSON),
 	}
 
 	if data.ThemeName == "" {
