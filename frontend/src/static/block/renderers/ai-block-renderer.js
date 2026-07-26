@@ -109,7 +109,7 @@ export class AiBlockRenderer extends BlockRenderer {
       cls += ' ai-block__badge--error'
     }
     badge.className = cls
-    badge.textContent = (attrs.type === 'EXPLAIN' || attrs.type === 'BTW') ? attrs.type : 'ASK'
+    badge.textContent = attrs.type ? String(attrs.type) : 'ASK'
   }
 
   // destroy(): base no-op is correct — this class owns no timers/observers.
