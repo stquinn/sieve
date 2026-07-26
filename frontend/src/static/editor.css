@@ -1794,6 +1794,19 @@ pre.tiptap-code-block code {
   box-sizing: border-box;
 }
 
+.status-bar__command-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 1rem;
+  padding-left: 1rem;
+  border-left: 1px solid var(--theme-border2);
+  height: 16px;
+}
+.status-bar__command-badges:empty {
+  display: none;
+}
+
 /* ── Pending-close blocking dialog ──────────────────────────────────── */
 
 .pending-close-backdrop {
