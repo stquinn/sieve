@@ -21,11 +21,15 @@
 // Dual-use ES module: imported by workspace.js (which constructs it). No window.*
 // export — the singleton is reached via window.sieveWorkspace.askPanel.
 
+import { CommandHintPopover } from './command-hint-popover.js'
+
 export class AskPanel {
   /** @type {import('./workspace.js').SieveWorkspace} */
   #ws
   /** @type {import('../block/command-service.js').CommandService|null} */
   #commandService = null
+  /** @type {CommandHintPopover|null} */
+  #hintPopover = null
   /** @type {HTMLElement|null} the structural #ask-panel (null → all methods no-op) */
   #panel = null
   /** @type {HTMLTextAreaElement|null} */
@@ -53,6 +57,9 @@ export class AskPanel {
     if (!this.#panel) return
     this.#textarea = this.#panel.querySelector('.ask-popup__input')
     this.#label = this.#panel.querySelector('.ask-popup__label')
+    if (this.#textarea && this.#commandService) {
+      this.#hintPopover = new CommandHintPopover(this.#textarea, this.#commandService)
+    }
     this.#wireDom()
     this.#wirePinToggle()
     this.#wireGlobalHotkey()
