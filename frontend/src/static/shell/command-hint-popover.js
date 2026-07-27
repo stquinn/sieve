@@ -175,6 +175,17 @@ export class CommandHintPopover {
 
       this.#popoverEl.appendChild(item)
     })
+
+    // Keyboard navigation has to carry the viewport with it (#63). Two things
+    // conspire without this: #render() clears innerHTML, which resets the
+    // container's scrollTop to 0, and nothing ever scrolls the active row into
+    // view — so arrowing past the visible rows left the selection below the fold,
+    // appearing to slide under the ask panel (the popover is anchored bottom-up
+    // against the panel's top edge). The wheel worked only because it doesn't
+    // re-render. 'nearest' scrolls the minimum needed, so it stays still while
+    // the selection is already visible instead of recentring on every keypress.
+    const activeEl = this.#popoverEl.querySelector('.command-hint-item.is-active')
+    if (activeEl) activeEl.scrollIntoView({ block: 'nearest' })
   }
 
   #position() {
