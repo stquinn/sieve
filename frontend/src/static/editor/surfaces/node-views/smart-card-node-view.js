@@ -13,12 +13,16 @@
 // adapter-side. The renderer's semantic verbs (setLink) leave through the
 // BlockService, the wire owner (issue #49 Phase 1 — appliers retired).
 //
-// A9 readiness note (migration survey): the edit-popup dialog below stays
-// adapter-side for now, same as its twin smart-link's (unmigrated) —
-// revisit hoisting a shared EditPopup once smart-link migrates.
+// The edit dialog is NOT here any more. Restoring prose links (#67) gave the
+// "URL + display title" popup a second consumer that shares nothing with this
+// kind, so it was hoisted whole into ui/link-edit-dialog.js (LinkEditDialog —
+// the shared surface both call). What stays adapter-side is the PM-bound half:
+// resolving the block id to its live renderer and landing the save on the
+// renderer's own semantic verb (setLink).
 
 import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block-extension.js'
 import { SmartCardRenderer } from '../../../block/renderers/smart-card-renderer.js'
+import { openLinkEditor } from '../../../ui/link-edit-dialog.js'
 
 ;(function () {
   'use strict'
@@ -47,9 +51,7 @@ import { SmartCardRenderer } from '../../../block/renderers/smart-card-renderer.
     nodeConfig: {
       atom: true,
       selectable: true,
-      draggable: false,
-      group: 'block',
-      inline: false
+      draggable: false
     },
 
     attrs: {
@@ -181,83 +183,23 @@ import { SmartCardRenderer } from '../../../block/renderers/smart-card-renderer.
 
   registerSieveRenderer('smart-card', SmartCardNodeView)
 
-  // ── Edit dialog (A9 — stays adapter-side; see file header) ──────────────
-
-  var editDialog = null
-
-  function getEditDialog() {
-    if (editDialog) return editDialog
-
-    var dlg = document.createElement('dialog')
-    dlg.className = 'ask-popup smart-card-edit-popup'
-
-    var header = document.createElement('div')
-    header.className = 'ask-popup__header'
-    var titleLabel = document.createElement('span')
-    titleLabel.className = 'ask-popup__label'
-    titleLabel.textContent = 'Edit Link'
-    var closeBtn = document.createElement('button')
-    closeBtn.className = 'ask-popup__close'
-    closeBtn.textContent = '✕'
-    closeBtn.addEventListener('click', function () { dlg.close() })
-    header.appendChild(titleLabel)
-    header.appendChild(closeBtn)
-
-    var hrefInput = document.createElement('input')
-    hrefInput.type = 'url'
-    hrefInput.className = 'smart-link-edit-popup__input'
-    hrefInput.placeholder = 'URL (https://…)'
-
-    var labelInput = document.createElement('input')
-    labelInput.type = 'text'
-    labelInput.className = 'smart-link-edit-popup__input'
-    labelInput.placeholder = 'Display title'
-
-    var footer = document.createElement('div')
-    footer.className = 'ask-popup__footer'
-    var saveBtn = document.createElement('button')
-    saveBtn.className = 'ask-popup__send'
-    saveBtn.textContent = 'Save'
-    footer.appendChild(saveBtn)
-
-    dlg.appendChild(header)
-    dlg.appendChild(hrefInput)
-    dlg.appendChild(labelInput)
-    dlg.appendChild(footer)
-    document.body.appendChild(dlg)
-
-    dlg.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') { e.preventDefault(); dlg.close() }
-      if (e.key === 'Enter')  { e.preventDefault(); dlg._save() }
-    })
-    saveBtn.addEventListener('click', function () { dlg._save() })
-
-    editDialog = dlg
-    return dlg
-  }
-
+  // ── Edit dialog binding (the DIALOG itself is ui/link-edit-dialog.js) ────
+  //
+  // SAVE = the live renderer's semantic verb. The shared dialog is a singleton
+  // and knows nothing about blocks, so this binding resolves the block's
+  // renderer by id (liveRenderers) and calls setLink — the patch reaches the
+  // document through the BlockService (an update-block op on the document's
+  // channel), never a wire op from this file.
   document.addEventListener('sieve:smart-card-edit', function (e) {
-    var detail = e.detail
-    var dlg = getEditDialog()
-    var inputs = dlg.querySelectorAll('.smart-link-edit-popup__input')
-    inputs[0].value = detail.href  || ''
-    inputs[1].value = detail.title || ''
-
-    dlg._save = function () {
-      var newHref  = inputs[0].value.trim()
-      var newTitle = inputs[1].value.trim() || newHref
-      if (!newHref) return
-      // SAVE = the live renderer's semantic verb. The dialog is a module-level
-      // singleton, so it resolves the block's renderer by id (liveRenderers)
-      // and calls setLink — the patch reaches the document through the
-      // BlockService (an update-block op on the document's channel).
-      var r = detail.id && liveRenderers[detail.id]
-      if (r) r.setLink(newHref, newTitle)
-      dlg.close()
-    }
-
-    dlg.showModal()
-    requestAnimationFrame(function () { inputs[0].select() })
+    var detail = e.detail || {}
+    openLinkEditor({
+      href: detail.href || '',
+      label: detail.title || '',
+      onSave: function (href, label) {
+        var r = detail.id && liveRenderers[detail.id]
+        if (r) r.setLink(href, label)
+      },
+    })
   })
 
 })()

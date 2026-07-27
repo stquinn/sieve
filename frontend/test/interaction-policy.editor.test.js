@@ -429,3 +429,98 @@ describe('Trailing node (contract clause 1: no dead-ends)', () => {
     expect(json.content[json.content.length - 1].type).toBe('paragraph')
   })
 })
+
+// ── Mod+K: the link chord (contract, #67) ───────────────────────────────────
+// Owned by the policy extension like every other chord (per-renderer key
+// handlers are FORBIDDEN). Two behaviours in one chord: a caret inside a link
+// EDITS it; a non-empty selection CREATES one — the only link-creation path in
+// WYSIWYG. Driven end-to-end through the shared dialog so the wiring, not a
+// mocked seam, is what passes.
+describe('Mod+K link chord', () => {
+  // The dialog is a lazily-built SINGLETON: once opened it stays in the DOM,
+  // so "not shown" is `open === false`, never absence.
+  function linkDialog() { return document.querySelector('dialog.link-edit-popup') }
+  function dialogShown() { return !!linkDialog()?.open }
+  function dialogInputs() { return linkDialog().querySelectorAll('.block-edit-popup__input') }
+  function save() { linkDialog().querySelector('.ask-popup__send').click() }
+
+  afterEach(() => { linkDialog()?.close() })
+
+  it('with the caret inside a link, opens the editor prefilled with that link', () => {
+    makeEditor({ type: 'doc', content: [{ type: 'paragraph', content: [
+      { type: 'text', text: 'go ' },
+      { type: 'text', text: 'here', marks: [{ type: 'link', attrs: { href: 'https://old.example.com' } }] },
+      { type: 'text', text: ' now' },
+    ] }] })
+    caretAt(6)
+    expect(press('k', { ctrlKey: true }).handled).toBe(true)
+    expect(dialogInputs()[0].value).toBe('https://old.example.com')
+    expect(dialogInputs()[1].value).toBe('here')
+  })
+
+  it('saving rewrites the href in the document (an ordinary tracked prose edit)', () => {
+    makeEditor({ type: 'doc', content: [{ type: 'paragraph', content: [
+      { type: 'text', text: 'here', marks: [{ type: 'link', attrs: { href: 'https://old.example.com' } }] },
+    ] }] })
+    caretAt(3)
+    press('k', { ctrlKey: true })
+    dialogInputs()[0].value = 'https://new.example.com'
+    save()
+    let href = null
+    editor.state.doc.descendants((n) => {
+      const m = (n.marks || []).find((mk) => mk.type.name === 'link')
+      if (m) href = m.attrs.href
+    })
+    expect(href).toBe('https://new.example.com')
+  })
+
+  it('with text SELECTED and no link, creates one over the selection', () => {
+    makeEditor({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'read the docs' }] }] })
+    editor.commands.setTextSelection({ from: 6, to: 14 })
+    expect(press('k', { ctrlKey: true }).handled).toBe(true)
+    expect(dialogInputs()[0].value).toBe('')        // no URL yet
+    expect(dialogInputs()[1].value).toBe('the docs') // the selected text is the label
+    dialogInputs()[0].value = 'https://example.com/docs'
+    save()
+    let mark = null
+    editor.state.doc.descendants((n) => {
+      const m = (n.marks || []).find((mk) => mk.type.name === 'link')
+      if (m) mark = m
+    })
+    expect(mark?.attrs.href).toBe('https://example.com/docs')
+    expect(docText()).toBe('read the docs')
+  })
+
+  it('a bare caret in unlinked prose is NATIVE — nothing to edit, nothing to create', () => {
+    makeEditor({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'plain' }] }] })
+    caretAt(3)
+    expect(press('k', { ctrlKey: true }).handled).toBe(false)
+    expect(dialogShown()).toBe(false)
+  })
+
+  it('is NATIVE inside a raw-text sieve block (no marks there — links are prose)', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-code', content: [{ type: 'text', text: 'code' }] },
+      { type: 'paragraph' },
+    ] })
+    caretAt(3)
+    expect(press('k', { ctrlKey: true }).handled).toBe(false)
+  })
+
+  it('is NATIVE in a paragraph INSIDE a sieve container (Go authors that body)', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-clip', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'clipped' }] }] },
+      { type: 'paragraph' },
+    ] })
+    editor.commands.setTextSelection({ from: 3, to: 8 })
+    expect(press('k', { ctrlKey: true }).handled).toBe(false)
+  })
+
+  it('Mod+Shift+K and Mod+Alt+K are left alone (the chord is bare Mod+K)', () => {
+    makeEditor({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'read the docs' }] }] })
+    editor.commands.setTextSelection({ from: 6, to: 14 })
+    expect(press('k', { ctrlKey: true, shiftKey: true }).handled).toBe(false)
+    expect(press('k', { ctrlKey: true, altKey: true }).handled).toBe(false)
+    expect(dialogShown()).toBe(false)
+  })
+})

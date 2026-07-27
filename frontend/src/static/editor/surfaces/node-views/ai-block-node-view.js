@@ -58,8 +58,6 @@ import { AiBlockRenderer } from '../../../block/renderers/ai-block-renderer.js'
       atom: false,
       selectable: true,
       draggable: false,
-      group: 'block',
-      inline: false,
       content: 'block+'
     },
 

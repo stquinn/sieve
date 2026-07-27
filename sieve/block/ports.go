@@ -1,6 +1,8 @@
 package block
 
 import (
+	"time"
+
 	"sieve/sieve/domain"
 	"sieve/store"
 )
@@ -32,9 +34,11 @@ type StatePort interface {
 	ActiveThemeVars() domain.ThemeVars
 }
 
-// LinkPreviewPort is the URL-metadata surface processors use.
+// LinkPreviewPort is the URL-metadata surface processors use. FetchTitle's deadline
+// is the caller's to set because its callers differ in kind: a background job can
+// afford to wait for a slow site, a paste blocking in front of the caret cannot.
 type LinkPreviewPort interface {
-	FetchTitle(targetURL string) string
+	FetchTitle(targetURL string, timeout time.Duration) string
 	FetchFull(targetURL string) domain.LinkPreviewResult
 }
 

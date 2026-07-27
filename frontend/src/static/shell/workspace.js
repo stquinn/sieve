@@ -559,10 +559,13 @@ export class SieveWorkspace {
       if (e.target.closest('.ai-block, .image-block, .web-clip-block, .sieve-block')) return
       const ed = this.activeEditor
       if (!ed) return
-      const linkEl = e.target.closest('a[href]')
-      const linkUrl = linkEl ? linkEl.getAttribute('href') : null
+      // No link scraped off the DOM here: the menu resolves the link from the
+      // DOCUMENT (ProseLink.forSelection over the snapped selection), which is the
+      // only view that carries the mark's range for the Convert offers. The old
+      // `linkUrl` detail existed solely to prefill the Insert dialogs, and those
+      // no longer vary with it (#67).
       document.dispatchEvent(new CustomEvent('sieve:contextmenu', {
-        detail: { x: e.clientX, y: e.clientY, context: { type: 'editor', editor: ed.editorPane, linkUrl } }
+        detail: { x: e.clientX, y: e.clientY, context: { type: 'editor', editor: ed.editorPane } }
       }))
     })
 
@@ -598,14 +601,15 @@ export class SieveWorkspace {
   searchPrev() { this.#searchOverlay?.prev() }
 
   /**
-   * Opens the Insert Web Clip dialog (P4.C child).
-   * @param {string} [url] optional href prefill (context-menu link flow)
+   * Opens the Insert from URL dialog — the web-clip entry point (P4.C child).
+   * @param {string} [url] optional href prefill (no caller supplies one today:
+   *   every entry point is a plain "insert something new")
    */
   openWebClipDialog(url) { this.#insertDialogs?.openWebClip(url) }
 
   /**
-   * Opens the Insert URL Card dialog (P4.C child).
-   * @param {string} [url] optional href prefill (context-menu link flow)
+   * Opens the Insert Link Card dialog (P4.C child).
+   * @param {string} [url] optional href prefill (see openWebClipDialog)
    */
   openUrlCardDialog(url) { this.#insertDialogs?.openUrlCard(url) }
 

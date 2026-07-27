@@ -126,8 +126,6 @@ export function renderDiagramSvgEntry(sourceNode, entries) { return DiagramRende
       atom: false,
       selectable: true,
       draggable: false,  // reorder via custom gutter handle; native node-drag fights it (see sieve-block-extension.js DEFAULT_NODE_CONFIG)
-      group: 'block',
-      inline: false,
       content: 'text*',
       marks: '',
       code: true,

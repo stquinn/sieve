@@ -23,8 +23,9 @@ A fenced block with a named language tag (e.g. ` ```web-clip ` or ` ```ai-block 
 #45 diagram, #46 ai-block, #47 code/log/web-clip/smart-card/smart-image), then
 reconciled to the APPROVED **Block Renderer Contract rev 2** —
 `docs/design/archive/specs/2026-07-21-block-renderer-contract.md` is NORMATIVE for
-everything in this section. Every structured kind except `smart-link`
-(deliberately unmigrated — parked pending the links decision, TECH-DEBT X-D)
+everything in this section. EVERY structured kind (7 of 7 — the eighth,
+`smart-link`, was deleted by #67 along with the inline block mode itself:
+`docs/design/specs/2026-07-27-inline-block-removal-links-decision.md`)
 now has a `BlockRenderer` subclass in `block/renderers/` held by a thin
 NodeView adapter in `editor/surfaces/node-views/` (`<kind>-node-view.js` —
 moved+renamed from `processors/<kind>-renderer.js` 2026-07-21: they are
@@ -619,7 +620,7 @@ if (!aiBlockId) {
 - [ ] Chain-active hover: `::after` CSS + `mouseenter`/`mouseleave` toggling class in both directions
 - [ ] AI context: pass clean prose summary, not raw YAML
 
-**Renderer / NodeView split (see "JS Architecture" above; NORMATIVE: the Block Renderer Contract rev 2) — required for any new kind (all existing kinds but `smart-link` already comply):**
+**Renderer / NodeView split (see "JS Architecture" above; NORMATIVE: the Block Renderer Contract rev 2) — required for any new kind (every existing kind complies):**
 - [ ] Look-and-feel lives in a `BlockRenderer` subclass: base constructor `(block, blockService?, handleBuild?)` (typed `SieveBlock` envelope, never a raw attr map), `build*` region hooks + base `render()`, `update(block)` calling `super.update(block)` FIRST, `destroy()`; zero PM/editor/`window.*`-app-bus imports; state read from `this.block.payload` only (no shadow attr caches)
 - [ ] Outbound effects are SEMANTIC VERBS (core `setMode`/`setContent`/`retry`/`expand`, kind verbs on the subclass) mapping to schema privately via `_pushAttrs`/`_pushContent` — consumers never see an attr name
 - [ ] `static styles` carries the kind's CSS, using ONLY `--theme-*` vars for colour; moved out of `input.css` in the SAME change (never a separate pass)

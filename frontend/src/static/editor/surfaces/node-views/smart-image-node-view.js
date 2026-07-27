@@ -65,9 +65,7 @@ import { SmartImageRenderer } from '../../../block/renderers/smart-image-rendere
     nodeConfig: {
       atom: true,
       selectable: true,
-      draggable: false,
-      group: 'block',
-      inline: false
+      draggable: false
     },
 
     attrs: {

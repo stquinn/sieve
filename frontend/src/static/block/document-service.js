@@ -201,15 +201,24 @@ export class DocumentService {
   }
 
   /**
-   * Resolve a clipboard/drop payload to a block kind server-side (POST
-   * /api/editor/smart-paste — wire UNCHANGED): Go runs the smart-paste pipeline
-   * (web-clip / smart-image / smart-card) at `payload.index`, render-backing a
-   * matched block via insert-block. Resolves the {matched} result (the contract's
-   * canonical generic-object shape — preserved exactly). The surface keeps the
-   * clipboard reading, the anchor peek/consume, and the no-match local replay; only
-   * the wire moves. PM-blind: `entries` are already {mimeType, content} plain data.
+   * Resolve a clipboard/drop payload server-side (POST /api/editor/smart-paste): Go
+   * runs the smart-paste pipeline (web-clip / smart-image / smart-card) at
+   * `payload.index`, render-backing a matched block via insert-block.
+   *
+   * Resolves Go's `block.PasteResult` — a DISCRIMINATED UNION, not a flag bag
+   * (#67). `outcome` is always present and is the only field the caller switches on:
+   *   `block`   a block was created; it arrives over the insert-block render-back,
+   *             and {kind,id,rawYaml} merely identify it.
+   *   `content` Go composed an HTML fragment for the caret (a link whose title it
+   *             fetched). No block, no render-back — the caller inserts `html`.
+   *   `none`    not a Sieve concern; the caller replays the raw clipboard locally.
+   * (`matched` was this shape's predecessor and is GONE.)
+   *
+   * The surface keeps the clipboard reading, the anchor peek/consume, and the local
+   * replay; only the wire lives here. PM-blind: `entries` are already
+   * {mimeType, content} plain data.
    * @param {string} uuid @param {{entries: object[], index: number}} payload
-   * @returns {Promise<{matched?: boolean}>}
+   * @returns {Promise<{outcome?: string, kind?: string, id?: string, rawYaml?: string, html?: string}>}
    */
   smartPaste(uuid, payload) {
     return fetch('/api/editor/smart-paste', {

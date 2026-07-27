@@ -25,13 +25,13 @@ func TestHandlePaste_stampsSmartPaste_onDetectionOnly(t *testing.T) {
 	t.Cleanup(func() { waitJobs(t, es, uuid) })
 
 	// Pass-2 detection: fenced code text (no sieve view) → tagged.
-	_, id, _, ok := es.HandlePaste(uuid, []block.ContentEntry{
+	res := es.HandlePaste(uuid, []block.ContentEntry{
 		{MIMEType: "text/plain", Content: "```python\nx = 1\ny = 2\n```"},
 	}, -1)
-	if !ok {
-		t.Fatal("expected detection paste to match")
+	if !res.IsBlock() {
+		t.Fatalf("expected detection paste to create a block, got %q", res.Outcome)
 	}
-	blk, found := es.shadows[uuid].SnapshotBlock(id)
+	blk, found := es.shadows[uuid].SnapshotBlock(res.ID)
 	if !found {
 		t.Fatal("block not found in shadow")
 	}
@@ -40,13 +40,13 @@ func TestHandlePaste_stampsSmartPaste_onDetectionOnly(t *testing.T) {
 	}
 
 	// Pass-1 round-trip: a copied code block's own sieve view → NOT tagged.
-	_, id2, _, ok2 := es.HandlePaste(uuid, []block.ContentEntry{
+	res2 := es.HandlePaste(uuid, []block.ContentEntry{
 		{MIMEType: "sieve/code", Content: `{"source":"x = 1\ny = 2","language":"python"}`},
 	}, -1)
-	if !ok2 {
-		t.Fatal("expected round-trip paste to match")
+	if !res2.IsBlock() {
+		t.Fatalf("expected round-trip paste to create a block, got %q", res2.Outcome)
 	}
-	blk2, found2 := es.shadows[uuid].SnapshotBlock(id2)
+	blk2, found2 := es.shadows[uuid].SnapshotBlock(res2.ID)
 	if !found2 {
 		t.Fatal("block2 not found in shadow")
 	}

@@ -681,12 +681,16 @@ func (es *EditorService) HandlePasteSlice(uuid string, slice [][]block.ContentEn
 	for i, entries := range slice {
 		// Each created block renders back via insert-block (tracked insert at its index),
 		// so the frontend renders the whole batch positionally without a full reload.
-		kind, id, _, ok := es.HandlePaste(uuid, entries, index+i)
-		if !ok {
-			logger.Warn("paste-slice: create failed", "uuid", uuid, "kind", kind)
+		// Only a block outcome has something to render back. An item that claims no
+		// kind (or that is nothing but a link, which paste turns into inline content
+		// with nowhere to go in a block batch) is skipped, as the no-match case
+		// always was.
+		res := es.HandlePaste(uuid, entries, index+i)
+		if !res.IsBlock() {
+			logger.Warn("paste-slice: item produced no block", "uuid", uuid, "outcome", res.Outcome)
 			continue
 		}
-		if blk, found := shadow.SnapshotBlock(id); found {
+		if blk, found := shadow.SnapshotBlock(res.ID); found {
 			created = append(created, block.FrontendBlock{ID: blk.ID, Kind: blk.Kind, Attrs: blk.Attrs, Aliases: blk.Aliases})
 		}
 	}
@@ -697,10 +701,17 @@ func (es *EditorService) HandlePasteSlice(uuid string, slice [][]block.ContentEn
 // The created block renders back via insert-block (tracked insert at its index) —
 // no separate softReloadContent needed. It is the secondary creation path; prefer
 // CreateBlock directly for UI-triggered creation.
-func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry, index int) (kind, id, rawYaml string, matched bool) {
+//
+// The result says what the paste DID, not merely whether a matcher fired: a block
+// was created, Go composed content for the caret, or Sieve did nothing and the
+// frontend replays the clipboard itself.
+func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry, index int) block.PasteResult {
 	matchKind, processor, fromDetection, ok := block.FirstPasteMatch(entries)
 	if !ok {
-		return "", "", "", false
+		// No kind claims it. Views that are nothing but a hyperlink still get the one
+		// smart a link keeps — its title — as ordinary content (#67); everything else
+		// is not a Sieve concern.
+		return block.NewLinkPaste(es.services.LinkPreview).Result(entries)
 	}
 	blockID := block.GenerateBlockIDFor(matchKind)
 	overrides := processor.Transform(entries, uuid, blockID, block.ActionPaste)
@@ -712,9 +723,10 @@ func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry, 
 	}
 	id, raw, err := es.createBlockWithID(uuid, matchKind, blockID, overrides, nil, index)
 	if err != nil {
-		return "", "", "", false
+		logger.Warn("paste: create failed", "uuid", uuid, "kind", matchKind, "error", err)
+		return block.PasteNothing()
 	}
-	return matchKind, id, raw, true
+	return block.PasteBlock(matchKind, id, raw)
 }
 
 // CreateBlockFromEntries applies a recognised action. PASTE/EXTRACT create a new block;

@@ -41,22 +41,30 @@ export function blockIndexAfter(doc, blockId) {
   return -1
 }
 
-// enclosingBlockId(doc, pos): the id of the TOP-LEVEL block containing doc
-// position `pos`. Iterates direct children to find the one whose range
-// [offset, offset+nodeSize) contains pos, then returns its attrs.id.
-// Works for both atom nodes (leaf, no interior positions) and containers.
-// Returns '' when no top-level block owns the position or when the node has no id.
-export function enclosingBlockId(doc, pos) {
+// blockIndexAt(doc, pos): the index of the TOP-LEVEL block whose range
+// [offset, offset+nodeSize) contains doc position `pos`; -1 when none does.
+// Position-native counterpart of blockIndexAfter (which is id-native) — needed
+// where the source is a RANGE inside a block rather than a block with an id
+// (a prose link, #67), and the anchor must be derived from the position.
+export function blockIndexAt(doc, pos) {
   var offset = 0
   for (var i = 0; i < doc.childCount; i++) {
-    var child = doc.child(i)
-    var end = offset + child.nodeSize
-    if (pos >= offset && pos < end) {
-      return (child.attrs && child.attrs.id) ? child.attrs.id : ''
-    }
+    var end = offset + doc.child(i).nodeSize
+    if (pos >= offset && pos < end) return i
     offset = end
   }
-  return ''
+  return -1
+}
+
+// enclosingBlockId(doc, pos): the id of the TOP-LEVEL block containing doc
+// position `pos`. Works for both atom nodes (leaf, no interior positions) and
+// containers. Returns '' when no top-level block owns the position or when the
+// node has no id.
+export function enclosingBlockId(doc, pos) {
+  var i = blockIndexAt(doc, pos)
+  if (i < 0) return ''
+  var child = doc.child(i)
+  return (child.attrs && child.attrs.id) ? child.attrs.id : ''
 }
 
 // emptyParagraphAnchor(doc, pos): the top-level node that anchors insert

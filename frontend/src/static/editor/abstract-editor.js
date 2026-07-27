@@ -28,7 +28,7 @@ import { AbstractSurface } from './surfaces/abstract-surface.js'
 import { EditorMode } from './editor-mode.js'
 import { SelectionModel } from './selection-model.js'
 import { blockInsertPos } from '../ai/ai-target.js'
-import { blockIndexForInsert, emptyParagraphAnchor, blockIndexAfter } from './surfaces/block-position.js'
+import { blockIndexForInsert, emptyParagraphAnchor, blockIndexAfter, blockIndexAt, docPosForBlockIndex } from './surfaces/block-position.js'
 import { buildAiContext, applyTargetHighlight } from './extensions.js'
 import { resolveEntriesForKind } from '../block/sieve-block-extension.js'
 
@@ -482,17 +482,33 @@ export class AbstractEditor {
    * {type:'extract', blockId, targetKind, operation, entries, index} — no uuid;
    * the server resolves the document from the channel). Disconnected editors:
    * no-op send.
-   * @param {{blockId: string, targetKind: string, operation: string, sourceNode?: object, entries: object[], context?: object}} payload
+   *
+   * RANGE SOURCES (`sourceRange`, #67). A prose link is not a block: it is a mark
+   * over a text range, so there is nothing for an in-place TRANSFORM to replace —
+   * the enclosing block is the whole paragraph, and replacing THAT would destroy
+   * the surrounding sentence. Its playback is instead the one the owner decided
+   * on: consume the link's range, create the block after the paragraph, drop the
+   * paragraph if the delete emptied it (#consumeSourceRange). That is the
+   * existing additive create plus an ordinary prose edit — so the wire verb
+   * becomes `extract` with the freed index, with NO new server operation. The
+   * MENU keeps the user-facing verb it was offered ("Convert to …"); which wire
+   * op carries it is not the user's concern. Frontend twin of Go's own
+   * SupportedActions.asAdditive demotion for a source nested inside a composite.
+   * @param {{blockId: string, targetKind: string, operation: string, sourceNode?: object, entries: object[], context?: object, sourceRange?: {from: number, to: number}}} payload
    * @returns {Promise<void>}
    */
-  extract({ blockId, targetKind, operation, sourceNode, entries, context }) {
+  extract({ blockId, targetKind, operation, sourceNode, entries, context, sourceRange }) {
     entries = entries || []
     this.clearInsertPos()
     if (entries.length > 0 && context && Object.keys(context).length > 0) {
       entries[0].context = context
     }
     let index = -1
-    if (operation !== 'transform' && operation !== 'undo-smart-paste' && blockId && this.editorPane) {
+    let wireOp = operation
+    if (sourceRange) {
+      wireOp = 'extract'
+      index = this.#consumeSourceRange(sourceRange)
+    } else if (operation !== 'transform' && operation !== 'undo-smart-paste' && blockId && this.editorPane) {
       // Top-level-only scan (blockIndexAfter) — descendants() could match a nested
       // node's id and compute an index relative to that nested position.
       index = blockIndexAfter(/** @type {any} */ (this.editorPane).state.doc, blockId)
@@ -500,8 +516,51 @@ export class AbstractEditor {
     const res = resolveEntriesForKind ? resolveEntriesForKind(targetKind, sourceNode, entries) : entries
     return Promise.resolve(res).then((resolved) => {
       const bs = this.blockService
-      if (bs) bs.extract({ blockId: blockId, targetKind: targetKind, operation: operation, entries: resolved, index: index })
+      if (bs) bs.extract({ blockId: blockId, targetKind: targetKind, operation: wireOp, entries: resolved, index: index })
     })
+  }
+
+  /**
+   * Consumes a RANGE SOURCE and returns the block index its replacement is
+   * created at. Two ordinary TRACKED prose edits (never addToHistory:false —
+   * converting a link must be one undoable step, the same UNDO SANCTITY rule
+   * commitInsertIndex carries):
+   *
+   *   1. delete the range — the link leaves the sentence, the sentence survives;
+   *   2. if that left the enclosing paragraph empty, delete the paragraph too and
+   *      let the new block take its slot (so a link alone in its own paragraph —
+   *      the common case after a URL paste — behaves exactly like the in-place
+   *      Transform it replaces, with no blank line left behind). Never the doc's
+   *      sole child: deleting that is schema-invalid.
+   *
+   * Then flush the block-sync so Go's shadow applies BOTH deletes before the
+   * create arrives on the same socket — the ordering commitInsertIndex relies on.
+   * The anchor is derived from the RANGE, not from a block id: a freshly typed
+   * paragraph may not have been minted one yet.
+   * @param {{from: number, to: number}} range
+   * @returns {number} the block index to create at (-1: no document)
+   */
+  #consumeSourceRange(range) {
+    const ed = /** @type {any} */ (this.editorPane)
+    if (!ed) return -1
+    // Stale range (the doc moved under a slow offer round-trip) → create after the
+    // caret's block and touch nothing. tr.delete THROWS out of range, and a throw
+    // here would take the whole conversion with it.
+    if (range.to > ed.state.doc.content.size || range.from < 0) return this.insertIndexForBlock()
+    const paraIdx = blockIndexAt(ed.state.doc, range.from)
+    if (paraIdx < 0) return -1
+    let index = paraIdx + 1
+    if (range.to > range.from) ed.view.dispatch(ed.state.tr.delete(range.from, range.to))
+
+    const doc = ed.state.doc
+    const para = paraIdx < doc.childCount ? doc.child(paraIdx) : null
+    if (para && doc.childCount > 1 && para.type.name === 'paragraph' && para.textContent.trim() === '') {
+      const from = docPosForBlockIndex(doc, paraIdx)
+      ed.view.dispatch(ed.state.tr.delete(from, from + para.nodeSize))
+      index = paraIdx
+    }
+    if (this.#surface) this.#surface.flushPending()
+    return index
   }
 
   /**
@@ -671,6 +730,21 @@ export class AbstractEditor {
     // The service frames the op; the index resolves back through THIS editor's
     // resolveInsertIndex delegate callback (the lens owns all index math).
     if (this.#documentService) this.#documentService.createBlock(this.uuid, kind, attrs, afterBlockId)
+  }
+
+  /**
+   * Inserts `url` at the caret as a titled hyperlink — the INLINE sibling of
+   * createBlock, and the reason it is a separate verb: a link is a mark over text,
+   * not a member of the document list, so there is no block to create (#67). The
+   * work is the surface's (it owns the paste round-trip that fetches the title and
+   * the PM insertion); this is the host-level entry point dialogs and menus call,
+   * exactly as they call createBlock.
+   * @param {string} url
+   * @returns {Promise<boolean>} whether a link was inserted (false in a surface
+   *   with no inline marks — see AbstractSurface.insertLink)
+   */
+  insertLink(url) {
+    return this.#surface ? this.#surface.insertLink(url) : Promise.resolve(false)
   }
 
   /**
@@ -878,8 +952,9 @@ export class AbstractEditor {
   // the orphaned caret into the adjacent code:true block, so the no-match fallback's
   // insertContent() prepends the text INSIDE that block. Split the composition: peek
   // the index without touching the doc, send it to Go, and consume the anchor ONLY
-  // once matched:true — on no-match/error the blank line (and the caret) stay put and
-  // the fallback pastes there, exactly like a native paste.
+  // on the `block` outcome — on any other outcome (a `content` fragment for the
+  // caret, `none`, or an error) the blank line and caret stay put and the insert
+  // lands there, exactly like a native paste.
 
   /**
    * peekInsertIndex — the SIDE-EFFECT-FREE half of the empty-paragraph placement
@@ -919,7 +994,7 @@ export class AbstractEditor {
 
   /**
    * consumeInsertAnchor — the DEFERRED second half: once the server has CONFIRMED
-   * the block-insert (matched:true), delete the empty-paragraph anchor as an
+   * the block-insert (the `block` paste outcome), delete the empty-paragraph anchor as an
    * ordinary TRACKED prose edit (block-sync emits the same delete-block op a
    * backspace would) and flush so Go's shadow drops it. The anchor is located BY
    * IDENTITY (durable id, or the pre-ack transient token) — NEVER by a captured

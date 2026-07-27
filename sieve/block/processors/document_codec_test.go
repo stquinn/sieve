@@ -147,14 +147,6 @@ func TestFencedDeserializer_DeserializeBuildsOneBlock(t *testing.T) {
 	}
 }
 
-func TestInlineDeserializer_NeverClaimsDuringDocParse(t *testing.T) {
-	// inline != block: inline flavours are not recognised from disk this pass.
-	var d block.InlineDeserializer
-	if d.Accepts(block.Region{Kind: "smart-link", Body: "{}"}) {
-		t.Error("inline deserializer must never accept a document region")
-	}
-}
-
 func TestDocumentCodec_AllProse(t *testing.T) {
 	c := block.NewDocumentCodec(newFakeRegistry())
 	md := "just a paragraph\n\nand another"

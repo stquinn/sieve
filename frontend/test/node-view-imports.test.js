@@ -28,9 +28,13 @@ const KINDS = [
   'log',
   'smart-card',
   'smart-image',
-  'smart-link',
   'web-clip',
 ]
+
+// smart-link is GONE (#67 — inline blocks were removed from the framework;
+// docs/design/specs/2026-07-27-inline-block-removal-links-decision.md). Pinned
+// here so a resurrected module doesn't slip back in unnoticed.
+const REMOVED_KINDS = ['smart-link']
 
 describe('node-view module graph resolves', () => {
   for (const kind of KINDS) {
@@ -38,6 +42,14 @@ describe('node-view module graph resolves', () => {
       await expect(
         import(`../src/static/editor/surfaces/node-views/${kind}-node-view.js`),
       ).resolves.toBeTruthy()
+    })
+  }
+
+  for (const kind of REMOVED_KINDS) {
+    it(`${kind}-node-view.js no longer exists`, async () => {
+      await expect(
+        import(`../src/static/editor/surfaces/node-views/${kind}-node-view.js`),
+      ).rejects.toThrow()
     })
   }
 })

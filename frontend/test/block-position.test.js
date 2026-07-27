@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Schema } from '@tiptap/pm/model'
-import { blockIndexForInsert, docPosForBlockIndex, blockIndexAfter, enclosingBlockId } from '../src/static/editor/surfaces/block-position.js'
+import { blockIndexForInsert, docPosForBlockIndex, blockIndexAfter, blockIndexAt, enclosingBlockId } from '../src/static/editor/surfaces/block-position.js'
 
 // Schema with doc that accepts both block-group nodes (paragraph/heading/codeBlock)
 // and sieveBlock-group nodes (sieve-diagram, sieve-prose).
@@ -200,5 +200,37 @@ describe('enclosingBlockId', () => {
     const doc = n.doc.create(null, [p('X'), p('Y')])
     // paragraph has no id attr
     expect(enclosingBlockId(doc, 1)).toBe('')
+  })
+})
+
+// ── blockIndexAt ─────────────────────────────────────────────────────────────
+// The POSITION-native anchor lookup (#67): where a range source lives, there is
+// no block id to resolve — a prose link's paragraph may not even have been
+// minted one yet.
+
+describe('blockIndexAt', () => {
+  it('returns the index of the top-level block containing the position', () => {
+    const doc = n.doc.create(null, [p('one'), p('two'), p('three')])
+    expect(blockIndexAt(doc, 0)).toBe(0)
+    expect(blockIndexAt(doc, 2)).toBe(0)   // inside 'one'
+    expect(blockIndexAt(doc, 5)).toBe(1)   // inside 'two'  (starts at 5)
+    expect(blockIndexAt(doc, 11)).toBe(2)  // inside 'three'(starts at 10)
+  })
+
+  it('returns -1 for a position past the end of the document', () => {
+    const doc = n.doc.create(null, [p('one')])
+    expect(blockIndexAt(doc, doc.content.size)).toBe(-1)
+  })
+
+  it('resolves an atom block by its own single position', () => {
+    const doc = n.doc.create(null, [diag('di-1'), p('after')])
+    expect(blockIndexAt(doc, 0)).toBe(0)
+    expect(blockIndexAt(doc, 1)).toBe(1)
+  })
+
+  it('is the walk enclosingBlockId is built on (same block, same answer)', () => {
+    const doc = n.doc.create(null, [p('one'), diag('di-2')])
+    expect(blockIndexAt(doc, 5)).toBe(1)
+    expect(enclosingBlockId(doc, 5)).toBe('di-2')
   })
 })

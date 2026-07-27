@@ -261,15 +261,18 @@ describe('DocumentService paste pipelines (issue #49 Phase 4)', () => {
     } finally { global.fetch = prevFetch }
   })
 
-  it('smartPaste POSTs {uuid, entries, index} unchanged and resolves the parsed {matched} result', async () => {
+  it('smartPaste POSTs {uuid, entries, index} unchanged and resolves the parsed PasteResult', async () => {
     const prevFetch = global.fetch
-    const fetchMock = /** @type {any} */ (vi.fn(() => Promise.resolve({ json: () => Promise.resolve({ matched: true }) })))
+    // Go answers a DISCRIMINATED UNION (#67): {outcome, …}. The service is a pure
+    // wire — it hands the parsed body through untouched, discriminator and all.
+    const body = { outcome: 'content', html: '<a href="https://x.test">X</a>' }
+    const fetchMock = /** @type {any} */ (vi.fn(() => Promise.resolve({ json: () => Promise.resolve(body) })))
     global.fetch = fetchMock
     try {
       const { documentService } = serviceRig({ uuid: 'doc-1' })
       const entries = [{ mimeType: 'text/plain', content: 'https://x.test' }]
       const res = await documentService.smartPaste('doc-1', { entries, index: 4 })
-      expect(res).toEqual({ matched: true }) // the canonical generic-object shape, preserved
+      expect(res).toEqual(body) // preserved exactly — no reshaping in the service
       expect(fetchMock).toHaveBeenCalledWith('/api/editor/smart-paste', expect.objectContaining({ method: 'POST' }))
       const opts = fetchMock.mock.calls[0][1]
       expect(opts.headers).toEqual({ 'Content-Type': 'application/json' })

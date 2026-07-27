@@ -85,6 +85,38 @@ const FORMATTING_GROUPS = Object.freeze([
   ]),
 ])
 
+// LINK_OPTIONS — the StarterKit `link` configuration (issue #67). A link is
+// ORDINARY MARKDOWN, not a Sieve block (see
+// docs/design/specs/2026-07-27-inline-block-removal-links-decision.md), so the
+// `link` MARK must exist in the schema: without it PM drops <a> on parse and the
+// href is destroyed on the first load — the "links disappear" symptom #67
+// reports. Every flag below is load-bearing:
+//   openOnClick:false — this is a Wails WebKit webview; letting an anchor
+//     navigate replaces the running application. Opening is EXPLICIT: Mod+Click,
+//     owned APP-GLOBALLY by shell/workspace.js's document capture listener (NOT by
+//     this surface — see the note at handleDOMEvents), which hands the href to
+//     window.runtime.BrowserOpenURL.
+//   linkOnPaste:false / autolink:false — GO owns paste (the smart-paste
+//     round-trip resolves a URL to `[Title](url)` server-side). TipTap must not
+//     race it by minting its own marks from pasted or typed text.
+//   HTMLAttributes — these seed the MARK's attribute defaults (Link's
+//     addAttributes reads options.HTMLAttributes), so nulling target/rel drops
+//     the extension's default target="_blank" rel="noopener…": a new-window
+//     request is meaningless-to-hazardous in a webview, and opening is Mod+Click's
+//     job. `class` is what editor.css styles; scoping the CSS to it keeps a block
+//     renderer's own anchors out of prose-link styling. NOTE there is deliberately
+//     no `title` hint here — `title` is a genuine Link mark ATTRIBUTE (markdown's
+//     `[text](url "title")`), so a value set here is overwritten by the mark's own
+//     null on every render. The affordance is the colour/underline/pointer cursor.
+// File-private frozen DATA (docs/how-to-idiomatic-js.md §3); exported so the
+// round-trip test pins the SHIPPING config, not a copy of it.
+export const LINK_OPTIONS = Object.freeze({
+  openOnClick: false,
+  linkOnPaste: false,
+  autolink: false,
+  HTMLAttributes: Object.freeze({ class: 'prose-link', target: null, rel: null }),
+})
+
 // Human labels for native unit node types, so the Ask panel header ("Ask About
 // <label>") reads naturally (not "Ask About BulletList"). File-private frozen
 // DATA (docs/how-to-idiomatic-js.md — a shared value, not behaviour), read by
@@ -305,7 +337,7 @@ export class WysiwygSurface extends AbstractSurface {
         // paragraph is guaranteed after a final structured block. The earlier
         // Gapcursor-only bet failed for non-atom read-only containers
         // (web-clip/ai-block) — see docs/editor-interaction-contract.md.
-        T.StarterKit.configure({ document: false, link: false, codeBlock: false, trailingNode: true, history: { depth: 10000, newGroupDelay: 500 } }),
+        T.StarterKit.configure({ document: false, link: LINK_OPTIONS, codeBlock: false, trailingNode: true, history: { depth: 10000, newGroupDelay: 500 } }),
         T.Placeholder.configure({ placeholder: function (p) { return p.editor.isEmpty ? 'Start writing…' : '' } }),
         BlockChrome,
         AiTargetDecoration,
@@ -356,7 +388,14 @@ export class WysiwygSurface extends AbstractSurface {
        .concat(getSieveNodes()).concat([
         T.TaskList,
         T.TaskItem.configure({ nested: true }),
-        T.Markdown.configure({ html: true, transformPastedText: true, link: { openOnClick: false } }),
+        // NOTE: no `link` option here — tiptap-markdown has none (its addOptions
+        // is html/tightLists/bulletListMarker/linkify/breaks/transform*), so the
+        // one that used to sit here was inert. Link behaviour is LINK_OPTIONS on
+        // StarterKit above. tiptap-markdown's own `link` MARK extension supplies
+        // the serializer, so a link mark round-trips to `[text](url)` unaided;
+        // `linkify` stays at its default false so a bare URL in markdown is NOT
+        // silently turned into a link on load (Go decides what becomes a link).
+        T.Markdown.configure({ html: true, transformPastedText: true }),
         AiShortcuts.configure({
           // EXPLAIN (Mod+E) stays a caret-contextual editor chord; it fires the
           // transitional event the Ask panel consumes. ASK (Mod+Shift+A) LEFT the
@@ -537,22 +576,22 @@ export class WysiwygSurface extends AbstractSurface {
             }
             return true
           },
-          click: function (view, event) {
-            if (!window.isMod(event)) return false
-            var pos = view.posAtCoords({ left: event.clientX, top: event.clientY })
-            if (pos) {
-              var marks = view.state.doc.resolve(pos.pos).marks()
-              for (var i = 0; i < marks.length; i++) {
-                if (marks[i].type.name === 'link') {
-                  var href = marks[i].attrs.href
-                  setTimeout(function () { window.runtime && window.runtime.BrowserOpenURL(href) }, 50)
-                  event.preventDefault()
-                  return true
-                }
-              }
-            }
-            return false
-          },
+          // NOTE — there is deliberately NO `click` handler for Mod+Click link
+          // opening here. Link activation is APP-GLOBAL and lives in
+          // `shell/workspace.js` bootEditorLifecycle(): a document-level
+          // CAPTURE-phase listener that matches any `a[href^=http]` anywhere in the
+          // app and calls preventDefault + stopPropagation + BrowserOpenURL.
+          //
+          // A PM-level handler cannot fire for Mod+Click and is not needed. Verified
+          // in the running app (2026-07-27, #67), CDP-instrumented Ctrl+Click:
+          //   prose link            → BrowserOpenURL fired; this handler ran 0 times
+          //   link inside a NodeView→ BrowserOpenURL fired; this handler ran 0 times
+          //   plain click, contrast → handler ran 1 time (so the probe was live)
+          // The capture runs on `document` before anything on `view.dom`, and its
+          // stopPropagation() means the event never descends to ProseMirror's own
+          // listener. (`stopEvent`'s `a[href]` shield inside NodeViews is a SEPARATE,
+          // still-correct mechanism — it gates PM's processing, not the capture,
+          // which has already run.) See docs/editor-interaction-contract.md.
         },
         handlePaste: function (_view, event) { return self.#handleSmartPaste(event) },
         handleDrop: function (_view, event, slice, moved) { return self.#handleSmartDrop(event) },
@@ -747,6 +786,109 @@ export class WysiwygSurface extends AbstractSurface {
   // a separate global, out of scope for the TipTap-bus retirement).
 
   /**
+   * The smart-paste round-trip's DISCRIMINATOR, read defensively. Go answers a
+   * discriminated union (`block.PasteResult`): `outcome` is the only field either
+   * handler switches on, and the rest of the payload is meaningless without it.
+   *
+   * Everything this build does not recognise degrades to `none` — including a
+   * `content` outcome carrying no fragment. A future Go outcome must fall back to
+   * "replay the clipboard", NEVER to a silently swallowed paste, and that rule
+   * lives here once rather than in each handler's switch.
+   *
+   * @param {{outcome?: string, html?: string}|null|undefined} result
+   * @returns {'block'|'content'|'none'}
+   */
+  #pasteOutcome(result) {
+    if (!result) return 'none'
+    if (result.outcome === 'block') return 'block'
+    if (result.outcome === 'content' && result.html) return 'content'
+    return 'none'
+  }
+
+  /**
+   * Plays ONE smart-paste round-trip result into the document — the SINGLE place
+   * the union is consumed. Its three callers (paste, drop, and the Insert-from-URL
+   * dialog's Link rung via `insertLink`) differ only in WHERE content lands and
+   * what a `none` outcome replays locally, so those are PARAMETERS rather than
+   * three copies of the same switch drifting apart.
+   *
+   *   block   — the block arrives over the insert-block render-back at its own
+   *             server index; all that is left here is consuming the empty-paragraph
+   *             anchor that was holding its place (deferred delete, by node id).
+   *   content — Go composed a fragment for the caret (#67: a link whose title it
+   *             fetched). The anchor is deliberately NOT consumed: it was minted to
+   *             hold a BLOCK's place, and this is an inline insert INSIDE it.
+   *   none    — Sieve did nothing; the blank line was never eaten, so `replay`
+   *             (when the caller has something to replay) lands at the intact caret.
+   *             We preventDefault()'d the original gesture, so PM never ran its
+   *             native scroll-to-caret — restore it explicitly.
+   *
+   * @param {{outcome?: string, html?: string}|null|undefined} result
+   * @param {{anchor: {id: string, token: string}|null, at?: number, replay?: string|null}} placement
+   *   `at` — an explicit document position (a DROP coordinate); omitted = the live
+   *   caret. `replay` — the local content for `none`; omitted = nothing to replay
+   *   (a drop's payload is not the clipboard).
+   * @returns {'block'|'content'|'none'} the outcome that was applied
+   */
+  #applyPasteResult(result, placement) {
+    const ed = this.#editorPane
+    if (!ed) return 'none'
+    const outcome = this.#pasteOutcome(result)
+    if (outcome === 'block') {
+      this.#host.consumeInsertAnchor(placement.anchor)
+      return outcome
+    }
+    this.#host.clearInsertPos()
+    // `outcome === 'content'` already implies a non-null result with a fragment
+    // (#pasteOutcome demands both) — the guard is for the type-checker's benefit.
+    const content = outcome === 'content' ? (result && result.html) : placement.replay
+    if (!content) return outcome
+    if (placement.at != null) ed.commands.insertContentAt(placement.at, content)
+    else ed.commands.insertContent(content)
+    ed.commands.scrollIntoView()
+    return outcome
+  }
+
+  /**
+   * Inserts `url` at the caret as a hyperlink, THROUGH THE SAME Go round-trip a
+   * paste of that URL takes: Go fetches the page title (og:title first, bounded —
+   * `sieve/block/paste_link.go`) and composes the anchor, and the answer is played
+   * back by `#applyPasteResult` like any other paste. The Insert-from-URL dialog's
+   * "Link" rung is a CALLER of the paste path, not a second mechanism — there is
+   * deliberately no local "just make an <a>" fallback, because one that cannot
+   * fetch a title is exactly the dumber path this exists to avoid.
+   *
+   * The asymmetry with the dialog's other three rungs is real, not a shortcut:
+   * they call `editor.createBlock` because they MAKE BLOCKS; a link is an inline
+   * mark at the caret and has no block to create. (A URL the pipeline claims for a
+   * kind — an image URL — still becomes that BLOCK here, exactly as pasting it
+   * would. The pipeline decides; this rung does not second-guess it.)
+   * @param {string} url
+   * @returns {Promise<boolean>} true when Go's content (or block) landed
+   */
+  insertLink(url) {
+    if (!url || !this.#editorPane || !this.#uuid || this.#uuid.startsWith('prompt:')) {
+      return Promise.resolve(false)
+    }
+    const ds = this.#host.documentService
+    if (!ds) return Promise.resolve(false)   // disconnected editor (socketless parity)
+    // Same peek/consume contract as paste: side-effect-free until Go answers.
+    const peek = this.#host.peekInsertIndexForBlock()
+    return ds.smartPaste(this.#uuid, {
+      entries: [{ mimeType: 'text/plain', content: url }],
+      index: peek.index,
+    })
+      // `none` replays the bare URL — the degraded outcome a paste of it would give.
+      // Not reachable while Go composes an anchor for every http(s) URL, and the
+      // dialog's gate admits nothing else.
+      .then((result) => this.#applyPasteResult(result, { anchor: peek.anchor, replay: url }) !== 'none')
+      .catch((err) => {
+        console.error('[wysiwyg-surface] insert link failed', err)
+        return false
+      })
+  }
+
+  /**
    * @param {ClipboardEvent} event
    * @returns {boolean} true when handled (native paste suppressed)
    */
@@ -870,24 +1012,9 @@ export class WysiwygSurface extends AbstractSurface {
           if (!ds) return // disconnected editor: drop (socketless parity)
           ds.smartPaste(self.#uuid, { entries: validEntries, index: peek.index })
             .then(function (result) {
-              if (!self.#editorPane) return
-              if (result.matched) {
-                // Rendered via insert-block (tracked insert at its server index). NOW
-                // consume the empty-paragraph anchor (deferred delete, by node id).
-                self.#host.consumeInsertAnchor(peek.anchor)
-              } else {
-                // No processor matched — the blank line was never eaten, so replay the
-                // original clipboard content locally at the intact caret.
-                self.#host.clearInsertPos()
-                if (html) {
-                  self.#editorPane.commands.insertContent(html)
-                } else if (text) {
-                  self.#editorPane.commands.insertContent(text)
-                }
-                // We preventDefault()'d the paste, so PM never ran its native
-                // scroll-to-caret — restore it so the view follows the inserted text.
-                self.#editorPane.commands.scrollIntoView()
-              }
+              // A paste replays the original clipboard at the intact caret when Sieve
+              // did nothing with it; content lands at that same caret.
+              self.#applyPasteResult(result, { anchor: peek.anchor, replay: html || text })
             })
             .catch(function (err) {
               console.error('[editor.js] smart-paste fetch failed', err)
@@ -958,12 +1085,17 @@ export class WysiwygSurface extends AbstractSurface {
         if (!ds) return // disconnected editor: drop (socketless parity)
         ds.smartPaste(self.#uuid, { entries: validEntries, index: peek.index })
           .then(function (result) {
-            if (!self.#editorPane) return
-            if (result.matched) {
-              // Rendered via insert-block (tracked insert at its server index). NOW
-              // consume the empty-paragraph anchor (deferred delete, by node id).
-              self.#host.consumeInsertAnchor(peek.anchor)
-            }
+            // A drop carries its own coordinate, so Go's content lands at the DROP
+            // position, not the caret (the caret is wherever the user last typed).
+            // No `replay`: a drop's payload is not the clipboard, so a `none` outcome
+            // has nothing to put back — PM already declined it natively.
+            //
+            // The content outcome is not reachable TODAY: the `!hasFiles` guard above
+            // means only dropped IMAGE FILES reach the round-trip (a dragged URL
+            // returns false and PM drops it natively), and an image always claims
+            // smart-image. Drop reads the union the same way paste does rather than
+            // silently discarding an outcome if that guard ever widens.
+            self.#applyPasteResult(result, { anchor: peek.anchor, at: insertPos })
           })
           .catch(function (err) {
             console.error('[editor.js] smart-drop fetch failed', err)

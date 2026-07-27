@@ -6,11 +6,31 @@
 // Layered: pure helpers (top section, vitest-tested) + the TipTap extension
 // (browser-only, added by editor.js at priority 50 so native keymaps —
 // list indent, table cell nav — always run first: defer first, consume last).
+//
+// Links split cleanly along that line: the Mod+K CHORD (edit the link at the
+// caret / make one from the selection) IS owned here like every other chord —
+// the mark mechanics live on ProseLink, this module only routes. Mod+CLICK is
+// not, for the reason below.
+//
+// NOT OWNED HERE — Mod+Click on a link (open externally). It is the one
+// interaction that is deliberately APP-GLOBAL rather than editor-scoped: links
+// appear outside the editor too (chrome, dialogs, block renderers), and in a Wails
+// webview an anchor that navigates replaces the running application, so the
+// suppression has to be unconditional. The owner is `shell/workspace.js`
+// bootEditorLifecycle() — a document-level CAPTURE-phase click listener. Because
+// capture on `document` runs before anything on `view.dom` and it calls
+// stopPropagation(), no editor- or renderer-level click handler can see a
+// Mod+Click; one added here would be dead code (a PM-level handler was verified
+// unreachable and deleted, #67, 2026-07-27). This is an exception to "no
+// per-renderer handlers" only in WHERE it lives — it is still exactly ONE shared
+// mechanism, just one scoped to the app instead of the editor.
+// Normative row: docs/editor-interaction-contract.md.
 
 import { getBlockBehaviour } from '../block/block-kinds.js'
 import { expandBlock } from '../ui/media-lightbox.js'
 import { MODE } from '../block/sieve-block.js'
 import { sieveBlockFor } from '../block/sieve-block-extension.js'
+import { ProseLink } from './surfaces/prose-link.js'
 
 /** @typedef {import('../block/sieve-block.js').SieveBlock} SieveBlock */
 
@@ -389,6 +409,23 @@ function handleExpand(view) {
   return expandBlock(spec)
 }
 
+// handleLinkEdit — the Mod+K chord (contract): the caret inside a `link` mark
+// edits that link; a non-empty text selection becomes a new one. PROSE ONLY —
+// a link is ordinary markdown, and the raw-text/read-only kinds carry no marks;
+// a paragraph INSIDE a sieve container (a web-clip's projected body) is excluded
+// too, since that body is Go's to author, not the user's. Returns false (native)
+// wherever there is nothing to edit and nothing to create, so the chord stays
+// free for anything else that wants it there. ProseLink owns every mark
+// mechanic; this is only the routing.
+function handleLinkEdit(view) {
+  var ctx = resolveContext(view.state, view)
+  if (ctx.kind !== 'prose' || ctx.isNodeSelection) return false
+  var $from = view.state.selection.$from
+  if ($from.depth >= 1 && String($from.node(1).type.name).indexOf('sieve-') === 0) return false
+  var link = ProseLink.forSelection(view)
+  return link ? link.edit() : false
+}
+
 export function buildInteractionPolicyExtension(T) {
   TT = T
   return T.Extension.create({
@@ -406,6 +443,16 @@ export function buildInteractionPolicyExtension(T) {
               if ((event.key === 'e' || event.key === 'E' || event.code === 'KeyE') &&
                   event.altKey && (event.metaKey || event.ctrlKey) && !event.shiftKey) {
                 if (handleExpand(view)) { event.preventDefault(); return true }
+                return false
+              }
+              // Mod+K — edit the link at the caret, or make one out of the
+              // selected text (contract; the ONE link CHORD, and the only way to
+              // link text already in the document — the Insert-from-URL dialog's
+              // Link rung covers a URL that is not in it yet).
+              // Editor-owned and unclaimed by the native menu.
+              if ((event.key === 'k' || event.key === 'K' || event.code === 'KeyK') &&
+                  (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey) {
+                if (handleLinkEdit(view)) { event.preventDefault(); return true }
                 return false
               }
               if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') &&

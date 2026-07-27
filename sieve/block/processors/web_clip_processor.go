@@ -44,14 +44,17 @@ func (p *WebClipBlockProcessor) InitAttrs(id string, overrides map[string]interf
 	return attrs
 }
 
+// IsSupportedContent claims a copied clip (round-trip: paste + extract) and any
+// view carrying an ordinary link — bare URL, markdown link, or rendered <a> — as a
+// TRANSFORM only. A pasted URL is NOT claimed for paste: it stays an ordinary
+// markdown link, and the clip is reached by an explicit Transform (#67).
 func (p *WebClipBlockProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
 			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionExtract}}
 		}
-		trimmed := strings.TrimSpace(e.Content)
-		if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
-			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionTransform}}
+		if l := e.Link(); !l.IsZero() {
+			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionTransform}}
 		}
 	}
 	return block.SupportedActions{Kind: p.Kind()}
@@ -66,19 +69,25 @@ func (p *WebClipBlockProcessor) Transform(entries []block.ContentEntry, uuid, bl
 		if e.IsSieveType(p) {
 			return e.AsAttrsForNewBlock(p)
 		}
-		trimmed := strings.TrimSpace(e.Content)
-		if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
-			mode := "fetch" // default
-			if e.Context != nil {
-				if m, ok := e.Context["mode"].(string); ok && m != "" {
-					mode = m
-				}
-			}
-			return map[string]interface{}{
-				"source": trimmed,
-				"mode":   mode,
+		l := e.Link()
+		if l.IsZero() {
+			continue
+		}
+		mode := "fetch" // default
+		if e.Context != nil {
+			if m, ok := e.Context["mode"].(string); ok && m != "" {
+				mode = m
 			}
 		}
+		overrides := map[string]interface{}{
+			"source": l.Href,
+			"mode":   mode,
+		}
+		if l.Label != "" {
+			// The link's own text is the best title we have until the clip lands.
+			overrides["title"] = l.Label
+		}
+		return overrides
 	}
 	return nil
 }
@@ -159,7 +168,9 @@ func (p *WebClipBlockProcessor) DescribeJob(jctx block.JobContext) *block.Proces
 		Apply: func(result any, b *block.SieveBlock) {
 			tc := result.([]string)
 			b.Attrs["status"] = block.BlockStatusComplete
-			b.Attrs["title"] = tc[0]
+			if tc[0] != "" {
+				b.Attrs["title"] = tc[0] // else keep the link's own text
+			}
 			b.Attrs["content"] = tc[1]
 			b.Attrs["completedAt"] = time.Now().UTC().Format(time.RFC3339)
 			b.Attrs["model"] = p.svc.State.LoadSettings().Model

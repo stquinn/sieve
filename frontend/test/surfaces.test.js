@@ -283,7 +283,7 @@ function wyHost(overrides = {}) {
       createBlock: vi.fn(),
       deleteBlock: vi.fn(),
       pasteSlice: vi.fn(() => Promise.resolve({})),
-      smartPaste: vi.fn(() => Promise.resolve({ matched: false })),
+      smartPaste: vi.fn(() => Promise.resolve({ outcome: 'none' })),
     },
     blockService: { updateAttributes: vi.fn() },
     flushSave: vi.fn(),
@@ -505,6 +505,17 @@ describe('WysiwygSurface mount lifecycle (P2.B, recording bundle)', () => {
     expect(s.mode).toBe('wysiwyg')
   })
 
+  // #67, 2026-07-27: link activation (Mod+Click → BrowserOpenURL) is APP-GLOBAL —
+  // a document-level CAPTURE listener in shell/workspace.js bootEditorLifecycle().
+  // Capture on `document` runs before anything on view.dom AND calls
+  // stopPropagation(), so a PM-level click handler here can never see a Mod+Click.
+  // One existed and was measured at 0 invocations in the running app; this pins the
+  // deletion so it is not "helpfully" restored (docs/editor-interaction-contract.md).
+  it('declares NO editorProps click handler — link activation is owned app-globally', () => {
+    const { ed } = mountWy()
+    expect(ed.options.editorProps.handleDOMEvents.click).toBeUndefined()
+  })
+
   it('mount stamps the parent Editor onto the pane as sieveHost (the NodeView→Editor handle)', () => {
     // P4.F Brief C: a block capability (ctx.getEditor) reaches the Editor through
     // editorPane.sieveHost — the pane the surface built, stamped with its host.
@@ -669,14 +680,14 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     expect(ed.commands.insertContent).not.toHaveBeenCalled()
   })
 
-  it('smart-paste pipeline: PEEKS the block index (side-effect-free), calls the service verb, consumes the anchor on match, returns true', async () => {
+  it('smart-paste pipeline: PEEKS the block index (side-effect-free), calls the service verb, consumes the anchor on outcome:block, returns true', async () => {
     // The surface no longer speaks fetch — it calls DocumentService.smartPaste
     // (issue #49 Phase 4). Stub the verb on the host, not global fetch.
     const anchor = { id: 'p-1', token: '' }
     const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 4, anchor })) })
-    host.documentService.smartPaste.mockReturnValue(Promise.resolve({ matched: true }))
+    host.documentService.smartPaste.mockReturnValue(Promise.resolve({ outcome: 'block', kind: 'code', id: 'co-1' }))
     const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('hello') }
-    const { props } = mountPaste(host, 'doc-1')
+    const { ed, props } = mountPaste(host, 'doc-1')
     const event = { clipboardData: Object.assign(clip({ text: 'hello', items: [strItem] }), { items: [strItem] }), target: {}, preventDefault: vi.fn() }
     const handled = props.handlePaste({}, event)
     expect(handled).toBe(true)
@@ -685,17 +696,21 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     expect(event.preventDefault).toHaveBeenCalled()
     await new Promise((r) => setTimeout(r, 0))
     expect(host.documentService.smartPaste).toHaveBeenCalledWith('doc-1', expect.objectContaining({ index: 4 }))
-    // matched:true → the blank line is consumed NOW, by the peeked anchor handle.
+    // outcome:block → the blank line is consumed NOW, by the peeked anchor handle.
     expect(host.consumeInsertAnchor).toHaveBeenCalledWith(anchor)
+    // The block arrives over the insert-block render-back — the surface must NOT
+    // also replay the clipboard locally (the #67 double-paste regression: with the
+    // `matched` flag gone, a stale reader saw undefined and took the replay branch).
+    expect(ed.commands.insertContent).not.toHaveBeenCalled()
   })
 
   // issue #33: the regression guard. A no-match smart-paste must NOT consume the
   // empty-paragraph anchor — the blank line and caret stay intact, so insertContent
   // replays into the empty paragraph, never into an adjacent code:true block.
-  it('smart-paste no-match fallback: replays clipboard content AND never consumes the anchor (issue #33)', async () => {
+  it('smart-paste outcome:none → replays clipboard content AND never consumes the anchor (issue #33)', async () => {
     const anchor = { id: 'p-1', token: '' }
     const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 0, anchor })) })
-    host.documentService.smartPaste.mockReturnValue(Promise.resolve({ matched: false }))
+    host.documentService.smartPaste.mockReturnValue(Promise.resolve({ outcome: 'none' }))
     const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('hello') }
     const { ed, props } = mountPaste(host, 'doc-1')
     const event = { clipboardData: Object.assign(clip({ text: 'hello', items: [strItem] }), { items: [strItem] }), target: {}, preventDefault: vi.fn() }
@@ -708,6 +723,60 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     // Our preventDefault()'d smart-paste robbed PM of its native scroll-to-caret —
     // the local replay must restore it so the view follows the pasted text.
     expect(ed.commands.scrollIntoView).toHaveBeenCalled()
+  })
+
+  // ── outcome:content — the #67 link paste ────────────────────────────────────
+  // Go composed an anchor for the caret (a link whose <title> it fetched). There is
+  // no block and no render-back: the surface inserts Go's fragment INSTEAD of the
+  // clipboard, and leaves the empty-paragraph anchor alone (it was minted to hold a
+  // BLOCK's place; this is an inline insert into that very paragraph).
+  it('smart-paste outcome:content → inserts GO\'s fragment, not the clipboard, and never consumes the anchor', async () => {
+    const anchor = { id: 'p-1', token: '' }
+    const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 0, anchor })) })
+    const frag = '<a href="https://example.com">Example Domain</a>'
+    host.documentService.smartPaste.mockReturnValue(Promise.resolve({ outcome: 'content', html: frag }))
+    const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('https://example.com') }
+    const { ed, props } = mountPaste(host, 'doc-1')
+    const event = { clipboardData: Object.assign(clip({ text: 'https://example.com', items: [strItem] }), { items: [strItem] }), target: {}, preventDefault: vi.fn() }
+    expect(props.handlePaste({}, event)).toBe(true)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(host.clearInsertPos).toHaveBeenCalled()
+    expect(ed.commands.insertContent).toHaveBeenCalledTimes(1)
+    expect(ed.commands.insertContent).toHaveBeenCalledWith(frag)
+    expect(host.consumeInsertAnchor).not.toHaveBeenCalled()
+    expect(ed.commands.scrollIntoView).toHaveBeenCalled()
+  })
+
+  // The union must FAIL SAFE. A build that meets an outcome it does not know (Go
+  // grows one) has to replay the clipboard — the one behaviour that never loses the
+  // user's paste. Silently dropping it is the failure mode this pins shut.
+  it.each([
+    ['an unknown outcome', { outcome: 'quantum-block' }],
+    ['a missing outcome', {}],
+    ['content with no fragment', { outcome: 'content', html: '' }],
+    ['a null body', null],
+  ])('smart-paste degrades %s to the local replay (never a swallowed paste)', async (_label, result) => {
+    const anchor = { id: 'p-1', token: '' }
+    const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 0, anchor })) })
+    host.documentService.smartPaste.mockReturnValue(Promise.resolve(result))
+    const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('hello') }
+    const { ed, props } = mountPaste(host, 'doc-1')
+    const event = { clipboardData: Object.assign(clip({ text: 'hello', items: [strItem] }), { items: [strItem] }), target: {}, preventDefault: vi.fn() }
+    props.handlePaste({}, event)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(ed.commands.insertContent).toHaveBeenCalledWith('hello')
+    expect(host.consumeInsertAnchor).not.toHaveBeenCalled()
+  })
+
+  it('smart-paste outcome:none prefers the text/html clipboard view when there is one', async () => {
+    const host = wyHost()
+    host.documentService.smartPaste.mockReturnValue(Promise.resolve({ outcome: 'none' }))
+    const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('hello') }
+    const { ed, props } = mountPaste(host, 'doc-1')
+    const event = { clipboardData: Object.assign(clip({ text: 'hello', html: '<p><b>hello</b></p>', items: [strItem] }), { items: [strItem] }), target: {}, preventDefault: vi.fn() }
+    props.handlePaste({}, event)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(ed.commands.insertContent).toHaveBeenCalledWith('<p><b>hello</b></p>')
   })
 
   it('multi-block slice paste → DocumentService.pasteSlice(uuid, {slice, index}), clears insert pos, returns true', () => {
@@ -730,7 +799,7 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     globalThis.FileReader = class { readAsDataURL() {} }
     try {
     const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: null })) })
-    host.documentService.smartPaste.mockReturnValue(Promise.resolve({ matched: true }))
+    host.documentService.smartPaste.mockReturnValue(Promise.resolve({ outcome: 'block', kind: 'smart-image', id: 'si-1' }))
     const { ed, props } = mountPaste(host, 'doc-1')
     // The surface reads posAtCoords + selection.to off the live editor.
     ed.view.posAtCoords = () => ({ pos: 12 })
@@ -746,6 +815,62 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     } finally { globalThis.FileReader = OrigFileReader }
   })
 
+  // The drop handler reads the SAME union as paste, so its branch selection is
+  // pinned the same way. A resolving FileReader stub is needed here (unlike the
+  // sync-path test above) because these assertions live past the await.
+  describe('handleSmartDrop consumes the paste union', () => {
+    let OrigFileReader
+    beforeEach(() => {
+      OrigFileReader = globalThis.FileReader
+      globalThis.FileReader = class {
+        readAsDataURL() { setTimeout(() => this.onload({ target: { result: 'data:image/png;base64,AA==' } }), 0) }
+      }
+    })
+    afterEach(() => { globalThis.FileReader = OrigFileReader })
+
+    function drop(host, result) {
+      host.documentService.smartPaste.mockReturnValue(Promise.resolve(result))
+      const { ed, props } = mountPaste(host, 'doc-1')
+      ed.view.posAtCoords = () => ({ pos: 12 })
+      ed.state.selection = { to: 0 }
+      const fileItem = { kind: 'file', getAsFile: () => ({ type: 'image/png', name: 'x.png' }) }
+      const event = { dataTransfer: { items: [fileItem] }, clientX: 1, clientY: 1, preventDefault: vi.fn() }
+      expect(props.handleDrop({}, event, null, false)).toBe(true)
+      return ed
+    }
+
+    it('outcome:block → consumes the anchor, inserts nothing locally', async () => {
+      const anchor = { id: 'p-1', token: '' }
+      const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor })) })
+      const ed = drop(host, { outcome: 'block', kind: 'smart-image', id: 'si-1' })
+      await new Promise((r) => setTimeout(r, 0))
+      expect(host.consumeInsertAnchor).toHaveBeenCalledWith(anchor)
+      expect(ed.commands.insertContentAt).not.toHaveBeenCalled()
+    })
+
+    it("outcome:content → inserts Go's fragment AT THE DROP POSITION, keeping the anchor", async () => {
+      const anchor = { id: 'p-1', token: '' }
+      const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor })) })
+      const frag = '<a href="https://example.com">Example Domain</a>'
+      const ed = drop(host, { outcome: 'content', html: frag })
+      await new Promise((r) => setTimeout(r, 0))
+      expect(host.clearInsertPos).toHaveBeenCalled()
+      // 12 is posAtCoords — the DROP coordinate, never the caret.
+      expect(ed.commands.insertContentAt).toHaveBeenCalledWith(12, frag)
+      expect(host.consumeInsertAnchor).not.toHaveBeenCalled()
+      expect(ed.commands.scrollIntoView).toHaveBeenCalled()
+    })
+
+    it('outcome:none → never touches the document (a drop has no clipboard to replay)', async () => {
+      const host = wyHost({ peekInsertIndexAt: vi.fn(() => ({ index: 9, anchor: { id: 'p-1', token: '' } })) })
+      const ed = drop(host, { outcome: 'none' })
+      await new Promise((r) => setTimeout(r, 0))
+      expect(ed.commands.insertContentAt).not.toHaveBeenCalled()
+      expect(ed.commands.insertContent).not.toHaveBeenCalled()
+      expect(host.consumeInsertAnchor).not.toHaveBeenCalled()
+    })
+  })
+
   it('handleSmartDrop with no files → returns false (native drop)', () => {
     const { props } = mountPaste(wyHost(), 'doc-1')
     const strItem = { kind: 'string', type: 'text/plain', getAsString: (cb) => cb('t') }
@@ -757,6 +882,76 @@ describe('WysiwygSurface #handleSmartPaste / #handleSmartDrop (P4.A)', () => {
     const { props } = mountPaste(wyHost(), 'prompt:p')
     const event = { clipboardData: clip({ text: 'plain', items: [] }), target: {}, preventDefault: vi.fn() }
     expect(props.handlePaste({}, event)).toBe(false)
+  })
+
+  // ── insertLink — the Insert-from-URL ladder's "Link" rung (#67) ──────────────
+  // It is a CALLER of the paste path, not a second link-inserting mechanism: the
+  // same DocumentService.smartPaste round-trip (which is what fetches the title in
+  // Go), the same peek/consume anchor contract, the same union reader. These pin
+  // that reuse — a hand-rolled local `<a>` build would fail every one of them.
+  describe('WysiwygSurface.insertLink (Link rung reuses the paste round-trip)', () => {
+    it("sends the URL as a text/plain entry at the PEEKED index, and inserts GO's anchor at the caret", async () => {
+      const anchor = { id: 'p-1', token: '' }
+      const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 3, anchor })) })
+      const frag = '<a href="https://example.com">Example Domain</a>'
+      host.documentService.smartPaste.mockReturnValue(Promise.resolve({ outcome: 'content', html: frag }))
+      const { s, ed } = mountPaste(host, 'doc-1')
+
+      await expect(s.insertLink('https://example.com')).resolves.toBe(true)
+
+      expect(host.documentService.smartPaste).toHaveBeenCalledWith('doc-1', {
+        entries: [{ mimeType: 'text/plain', content: 'https://example.com' }],
+        index: 3,
+      })
+      expect(ed.commands.insertContent).toHaveBeenCalledWith(frag)
+      // Inline insert into the caret's own paragraph — the block anchor is untouched.
+      expect(host.consumeInsertAnchor).not.toHaveBeenCalled()
+      expect(ed.commands.scrollIntoView).toHaveBeenCalled()
+    })
+
+    it('an outcome:block URL (an image) becomes that BLOCK — the pipeline decides, this rung does not second-guess it', async () => {
+      const anchor = { id: 'p-1', token: '' }
+      const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 3, anchor })) })
+      host.documentService.smartPaste.mockReturnValue(Promise.resolve({ outcome: 'block', kind: 'smart-image', id: 'si-1' }))
+      const { s, ed } = mountPaste(host, 'doc-1')
+
+      await expect(s.insertLink('https://example.com/cat.png')).resolves.toBe(true)
+      expect(host.consumeInsertAnchor).toHaveBeenCalledWith(anchor)
+      expect(ed.commands.insertContent).not.toHaveBeenCalled()
+    })
+
+    it('outcome:none replays the bare URL (the degraded outcome a paste of it gives)', async () => {
+      const host = wyHost({ peekInsertIndexForBlock: vi.fn(() => ({ index: 0, anchor: null })) })
+      host.documentService.smartPaste.mockReturnValue(Promise.resolve({ outcome: 'none' }))
+      const { s, ed } = mountPaste(host, 'doc-1')
+
+      await expect(s.insertLink('https://example.com')).resolves.toBe(false)
+      expect(ed.commands.insertContent).toHaveBeenCalledWith('https://example.com')
+    })
+
+    it('a failed round-trip resolves false and inserts NOTHING (no title-less fallback anchor)', async () => {
+      const host = wyHost()
+      host.documentService.smartPaste.mockReturnValue(Promise.reject(new Error('offline')))
+      const { s, ed } = mountPaste(host, 'doc-1')
+      const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      await expect(s.insertLink('https://example.com')).resolves.toBe(false)
+      expect(ed.commands.insertContent).not.toHaveBeenCalled()
+      err.mockRestore()
+    })
+
+    it('no url, and a prompt buffer, are inert (no round trip)', async () => {
+      const host = wyHost()
+      const { s } = mountPaste(host, 'doc-1')
+      await expect(s.insertLink('')).resolves.toBe(false)
+
+      const promptHost = wyHost()
+      const p = mountPaste(promptHost, 'prompt:p')
+      await expect(p.s.insertLink('https://example.com')).resolves.toBe(false)
+
+      expect(host.documentService.smartPaste).not.toHaveBeenCalled()
+      expect(promptHost.documentService.smartPaste).not.toHaveBeenCalled()
+    })
   })
 })
 

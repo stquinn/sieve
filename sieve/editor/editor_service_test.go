@@ -4,6 +4,7 @@ import (
 	"context"
 	"sieve/sieve/block"
 	"sieve/sieve/block/processors"
+	"sieve/sieve/domain"
 	"strings"
 	"sync"
 	"testing"
@@ -480,22 +481,22 @@ func TestEditorService_HandlePaste_delegatesToCreateBlock(t *testing.T) {
 	_ = es.Open(uuid, nil)
 	defer waitJobs(t, es, uuid)
 
-	kind, id, rawYaml, matched := es.HandlePaste(uuid, []block.ContentEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\n```"}}, -1)
-	if !matched {
-		t.Fatal("expected match")
+	res := es.HandlePaste(uuid, []block.ContentEntry{{MIMEType: "text/plain", Content: "```python\nprint('hello')\n```"}}, -1)
+	if !res.IsBlock() {
+		t.Fatalf("expected a block outcome, got %q", res.Outcome)
 	}
-	if kind != "code" {
-		t.Errorf("expected kind=code, got %q", kind)
+	if res.Kind != "code" {
+		t.Errorf("expected kind=code, got %q", res.Kind)
 	}
-	if len(id) < 5 {
-		t.Errorf("expected valid id, got %q", id)
+	if len(res.ID) < 5 {
+		t.Errorf("expected valid id, got %q", res.ID)
 	}
 	// rawYaml must contain the complete initial state, not just paste-extracted values
-	if !strings.Contains(rawYaml, "status: PENDING") {
-		t.Errorf("expected complete state in rawYaml, got:\n%s", rawYaml)
+	if !strings.Contains(res.RawYaml, "status: PENDING") {
+		t.Errorf("expected complete state in rawYaml, got:\n%s", res.RawYaml)
 	}
-	if !strings.Contains(rawYaml, "print") {
-		t.Errorf("expected source in rawYaml, got:\n%s", rawYaml)
+	if !strings.Contains(res.RawYaml, "print") {
+		t.Errorf("expected source in rawYaml, got:\n%s", res.RawYaml)
 	}
 }
 
@@ -510,10 +511,43 @@ func TestEditorService_HandlePaste_noMatch(t *testing.T) {
 	doc, _ = ds.Save(doc)
 	_ = es.Open(doc.UUID(), nil)
 
-	_, _, _, matched := es.HandlePaste(doc.UUID(), []block.ContentEntry{{MIMEType: "text/plain", Content: "just plain text"}}, -1)
-	if matched {
-		t.Fatal("expected no match for plain text")
+	res := es.HandlePaste(doc.UUID(), []block.ContentEntry{{MIMEType: "text/plain", Content: "just plain text"}}, -1)
+	if res.Outcome != block.OutcomeNothing {
+		t.Fatalf("plain text must produce the nothing outcome, got %q (%+v)", res.Outcome, res)
 	}
+}
+
+// A pasted URL claims no kind since #67 — it becomes ordinary content, composed in
+// Go with the title the preview port supplied. The frontend inserts it at the caret.
+func TestEditorService_HandlePaste_urlBecomesContent(t *testing.T) {
+	resetRegistry()
+
+	ds, _ := newTestDocumentService(t)
+	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
+	es.SetServices(block.BlockServices{LinkPreview: fakeLinkPreview{title: "Example Domain"}})
+	doc, _ := ds.New()
+	doc, _ = ds.Save(doc)
+	_ = es.Open(doc.UUID(), nil)
+
+	res := es.HandlePaste(doc.UUID(), []block.ContentEntry{{MIMEType: "text/plain", Content: "https://example.com"}}, -1)
+	if res.Outcome != block.OutcomeContent {
+		t.Fatalf("a pasted URL must produce content, got %q (%+v)", res.Outcome, res)
+	}
+	if want := `<a href="https://example.com">Example Domain</a>`; res.HTML != want {
+		t.Errorf("HTML: got %q, want %q", res.HTML, want)
+	}
+	if res.ID != "" || res.Kind != "" {
+		t.Errorf("content outcome must carry no block identity, got %+v", res)
+	}
+}
+
+// fakeLinkPreview stands in for the network on the paste path; committed tests never
+// reach out.
+type fakeLinkPreview struct{ title string }
+
+func (f fakeLinkPreview) FetchTitle(string, time.Duration) string { return f.title }
+func (f fakeLinkPreview) FetchFull(string) domain.LinkPreviewResult {
+	return domain.LinkPreviewResult{}
 }
 
 type mockLifecycleListener struct {

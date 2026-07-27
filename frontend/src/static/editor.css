@@ -960,15 +960,19 @@ pre.tiptap-code-block code {
    to WebClipRenderer's stylesheet alongside the rest of this kind's chrome
    (see the "Web-clip blocks" comment above). */
 
-/* ── Smart-link nodes ────────────────────────────────────────────────── */
-/* FLAGGED — pending the links decision (docs/design/specs/2026-07-20-block-renderer-extraction.md,
-   "Inline kinds"): smart-link is an INLINE kind, explicitly NOT migrated in
-   this epic (P4/#47 migrates code/log/web-clip/smart-image/smart-card only —
-   see that spec's note on inline kinds awaiting the Go block-children/
-   container model). This CSS stays here, unowned by any renderer, until
-   smart-link's own migration. */
+/* ── Prose links (the `link` mark) ───────────────────────────────────── */
+/* A link is ORDINARY MARKDOWN, not a Sieve block (#67 —
+   docs/design/specs/2026-07-27-inline-block-removal-links-decision.md): the
+   retired inline `smart-link` NodeView is replaced by TipTap's `link` mark,
+   configured in editor/surfaces/wysiwyg-surface.js with openOnClick:false (a
+   navigating webview would destroy the running Wails app). The class comes from
+   that extension's HTMLAttributes, so ONLY prose anchors match — an <a> inside a
+   block renderer's own DOM keeps its renderer's styling. Mod+Click opens it
+   externally (wysiwyg-surface's editorProps.click handler); the accent colour,
+   the underline and the pointer cursor ARE the affordance — a `title` tooltip is
+   not available (see LINK_OPTIONS: `title` is a real Link mark attribute). */
 
-.smart-link-node {
+.prose-link {
   color: var(--theme-accentPrimary);
   text-decoration: none;
   border-bottom: 1px solid color-mix(in srgb, var(--theme-accentPrimary) 40%, transparent);
@@ -977,20 +981,10 @@ pre.tiptap-code-block code {
   transition: border-color 0.15s ease, color 0.15s ease;
 }
 
-.smart-link-node:hover {
-  color: color-mix(in srgb, var(--theme-accentPrimary) 85%, white);
+.prose-link:hover {
+  color: color-mix(in srgb, var(--theme-accentPrimary) 85%, var(--theme-text));
   border-bottom-color: var(--theme-accentPrimary);
 }
-
-.smart-link-node.ProseMirror-selectednode {
-  outline: 2px solid color-mix(in srgb, var(--theme-accentPrimary) 50%, transparent);
-  border-radius: 2px;
-}
-
-.smart-link-node[data-pending] { color: var(--theme-muted); font-style: italic; }
-.smart-link-node[data-error]   { color: var(--theme-accentOrange); }
-
-/* Smart-link edit dialog styles have been unified with other modal dialogs at the bottom of the file */
 
 /* ── Sieve Blocks ────────────────────────────────────────────────────── */
 
@@ -1991,8 +1985,8 @@ pre.tiptap-code-block code {
 .ask-panel .ask-popup__send:hover { background: color-mix(in srgb, var(--theme-accentPrimary) 85%, white); }
 
 /* ── Shared inner-element styles for the modal dialogs (internalize / edit) ── */
-/* These BEM names are still used by internalize-popup, smart-link-edit-popup  */
-/* and smart-card-edit-popup which are real <dialog> elements.                 */
+/* These BEM names are still used by internalize-popup and link-edit-popup */
+/* which are real <dialog> elements.                                            */
 
 .ask-popup__header {
   display: flex;
@@ -2050,8 +2044,8 @@ pre.tiptap-code-block code {
 
 
 /* ── Base visual frame for modal dialogs using .ask-popup class ─────── */
-/* internalize-popup, smart-link-edit-popup, smart-card-edit-popup all   */
-/* carry this class to inherit background, shadow and display toggling.  */
+/* internalize-popup and link-edit-popup both carry this class to  */
+/* inherit background, shadow and display toggling.                      */
 
 .ask-popup {
   background: var(--theme-bgAlt);
@@ -2072,8 +2066,7 @@ pre.tiptap-code-block code {
 /* ── Internalize URL dialog — position + input/btn overrides ──────────── */
 
 .internalize-popup,
-.smart-link-edit-popup,
-.smart-card-edit-popup {
+.link-edit-popup {
   position: fixed;
   top: 30%;
   bottom: auto;
@@ -2085,8 +2078,7 @@ pre.tiptap-code-block code {
 }
 
 .internalize-popup[open],
-.smart-link-edit-popup[open],
-.smart-card-edit-popup[open] {
+.link-edit-popup[open] {
   display: flex;
   animation: modal-scale-in 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
@@ -2103,14 +2095,13 @@ pre.tiptap-code-block code {
 }
 
 .internalize-popup .ask-popup__footer,
-.smart-link-edit-popup .ask-popup__footer,
-.smart-card-edit-popup .ask-popup__footer {
+.link-edit-popup .ask-popup__footer {
   justify-content: flex-end;
   gap: 8px;
 }
 
 .internalize-popup__input,
-.smart-link-edit-popup__input {
+.block-edit-popup__input {
   width: calc(100% - 32px);
   margin: 12px 16px 0;
   background: var(--theme-bg);
@@ -2124,17 +2115,17 @@ pre.tiptap-code-block code {
 }
 
 .internalize-popup__input:last-of-type,
-.smart-link-edit-popup__input:last-of-type {
+.block-edit-popup__input:last-of-type {
   margin-bottom: 12px;
 }
 
 .internalize-popup__input:focus,
-.smart-link-edit-popup__input:focus {
+.block-edit-popup__input:focus {
   border-color: var(--theme-accentPrimary);
 }
 
 .internalize-popup__input::placeholder,
-.smart-link-edit-popup__input::placeholder {
+.block-edit-popup__input::placeholder {
   color: var(--theme-textDim);
   opacity: 0.6;
 }

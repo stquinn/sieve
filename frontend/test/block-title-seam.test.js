@@ -4,8 +4,10 @@
 // the body/title pull-back (docs/design/archive/specs/2026-07-20-block-renderer-extraction.md
 // "Body/title pull-back", DEFECT SEC-B / issue #48). Proves BOTH branches —
 // delegating to a renderer's fillTitle, and the fallback for kinds with no
-// split renderer yet (smart-link, prose) — keep attrs-derived text out of
-// live DOM. This is the "seam path" half of the hostile-title coverage;
+// split renderer (prose — native, so it has no NodeView and no renderer at
+// all; smart-link, the other former inhabitant of this branch, was removed by
+// #67) — keep attrs-derived text out of live DOM.
+// This is the "seam path" half of the hostile-title coverage;
 // block-renderer.test.js covers the "renderer.fillTitle" half directly
 // against the real AiBlockRenderer/WebClipRenderer classes.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
@@ -41,7 +43,7 @@ describe('syncBlockTitle (framework title seam)', () => {
     expect(el.style.display).toBe('')
   })
 
-  it('falls back to the sanctioned instance directly for kinds with no split renderer (e.g. smart-link, prose)', () => {
+  it('falls back to the sanctioned instance directly for kinds with no split renderer (prose)', () => {
     const el = makeTitleEl()
     syncBlockTitle(el, null, '*hi*')
     expect(el.innerHTML).toContain('<em>hi</em>')

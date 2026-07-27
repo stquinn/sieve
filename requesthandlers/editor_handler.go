@@ -229,20 +229,10 @@ func (h *EditorHandler) handleSmartPaste(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	kind, id, rawYaml, matched := h.ServiceProvider.Editor.HandlePaste(req.UUID, req.Entries, req.Index)
-
+	// block.PasteResult IS the wire contract — the handler adds no shape of its own,
+	// so moving paste onto the command channel later is a transport swap.
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(struct {
-		Matched bool   `json:"matched"`
-		Kind    string `json:"kind,omitempty"`
-		ID      string `json:"id,omitempty"`
-		RawYaml string `json:"rawYaml,omitempty"`
-	}{
-		Matched: matched,
-		Kind:    kind,
-		ID:      id,
-		RawYaml: rawYaml,
-	})
+	_ = json.NewEncoder(w).Encode(h.ServiceProvider.Editor.HandlePaste(req.UUID, req.Entries, req.Index))
 }
 
 // handlePasteSlice reconstructs a copied multi-block selection server-side. The

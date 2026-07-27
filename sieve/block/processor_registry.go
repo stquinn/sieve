@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"sync"
 
@@ -17,14 +16,15 @@ import (
 // "angle brackets" that bound its on-disk regions. It rides with the SerDes
 // (the code that writes <!--s:…--> is the code that finds it), so it is supplied
 // for free by the embedded FencedDeserializer / ProseProcessor. A zero value
-// (empty Head) means "I have no document region" — inline flavours.
+// (empty Head) means "I have no document region" — every registered flavour
+// declares one, so it is only produced by a kind-less (partially built) mock.
 type RegionShape struct {
 	Kind string // the kind a matched region is tagged with (e.g. "diagram", "prose")
 	Head string // opening token, kind-qualified (e.g. "```diagram", "<!--s:")
 	Tail string // closing token (e.g. "```", "<!--/s:")
 }
 
-// IsZero reports that the processor declares no document region (inline flavours).
+// IsZero reports that the processor declares no document region.
 func (s RegionShape) IsZero() bool { return s.Head == "" }
 
 // ContentEntry is one item from the browser clipboard DataTransfer.
@@ -108,9 +108,8 @@ const (
 type BlockMode string
 
 const (
-	BlockModeBlock  BlockMode = "block"
-	BlockModeInline BlockMode = "inline"
-	BlockModeProse  BlockMode = "prose" // content + <!--s:ID--> markers, owned by ProseProcessor
+	BlockModeBlock BlockMode = "block"
+	BlockModeProse BlockMode = "prose" // content + <!--s:ID--> markers, owned by ProseProcessor
 )
 
 // Action is an operation a processor can perform on a set of ContentEntry views.
@@ -278,7 +277,7 @@ type BlockProcessor interface {
 	// OnChange reacts synchronously to a user edit of this block (e.g. re-run
 	// heuristics). Setting status to PENDING schedules a follow-up RunJob.
 	OnChange(block *SieveBlock)
-	// Mode reports how this kind renders and persists: block, inline, or prose.
+	// Mode reports how this kind renders and persists: block or prose.
 	Mode() BlockMode
 	// BuildContext produces this block's contribution to AI context. seen guards
 	// against ref cycles when a block pulls in others.
@@ -297,13 +296,12 @@ type BlockProcessor interface {
 	// Accepts reports whether this flavour claims a parsed region (the recognition
 	// half of deserialization). Deserialize then builds the block(s) — the inverse
 	// of Serialize. Structured kinds share one impl (FencedDeserializer, embedded);
-	// inline flavours never claim a document region (InlineDeserializer); prose is
-	// the terminal mop-up (ProseProcessor). No kind-switch in the codec.
+	// prose is the terminal mop-up (ProseProcessor). No kind-switch in the codec.
 	Accepts(region Region) bool
 	Deserialize(region Region) ([]SieveBlock, error)
 	// Shape returns the kind-qualified delimiter pair this flavour's regions use
 	// on disk — the segmentation half of recognition. Supplied for free by the
-	// embedded FencedDeserializer (from Kind); inline flavours return a zero shape.
+	// embedded FencedDeserializer (from Kind).
 	Shape() RegionShape
 }
 
@@ -321,21 +319,6 @@ func (FencedSerializer) Serialize(block SieveBlock) (string, error) {
 		return "", err
 	}
 	return "```" + block.Kind + "\n" + body + "\n```", nil
-}
-
-// InlineSerializer is the shared serialization for INLINE flavours — `[!kind]
-// {json} [!kind-end]`, the form the inline parser reads back. Inline-mode
-// processors embed it instead of FencedSerializer.
-type InlineSerializer struct{}
-
-// Serialize renders an inline-mode block as [!kind] {json} [!kind-end] — the
-// form sieve-block-extension.js reads back on the frontend.
-func (InlineSerializer) Serialize(block SieveBlock) (string, error) {
-	b, err := json.Marshal(block.Attrs)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("[!%s] %s [!%s-end]", block.Kind, string(b), block.Kind), nil
 }
 
 // FencedDeserializer is the ONE shared deserialization for YAML/fenced flavours —
@@ -394,18 +377,6 @@ func (d FencedDeserializer) Shape() RegionShape {
 	}
 	return RegionShape{Kind: d.Kind, Head: "```" + d.Kind, Tail: "```"}
 }
-
-// InlineDeserializer is embedded by inline flavours. Inline things are NOT Sieve
-// blocks (project_inline_not_a_block): they are never recognised from disk during
-// document parse, so Accepts is always false and Deserialize is a no-op. The pair
-// exists only to satisfy the BlockProcessor interface uniformly.
-type InlineDeserializer struct{}
-
-func (InlineDeserializer) Accepts(Region) bool                      { return false }
-func (InlineDeserializer) Deserialize(Region) ([]SieveBlock, error) { return nil, nil }
-
-// Shape: inline things are never document regions (Accepts is already false).
-func (InlineDeserializer) Shape() RegionShape { return RegionShape{} }
 
 type BlockServices struct {
 	// AI is the concrete AI business service. block core deliberately imports ai

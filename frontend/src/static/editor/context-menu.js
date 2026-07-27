@@ -5,6 +5,7 @@ import { getSieveIcon } from '../block/block-kinds.js'
 import { applyTargetHighlight } from './extensions.js'
 import { NodeViewRegistry, detectAndAppendExtractions, serializeNode } from '../block/sieve-block-extension.js'
 import { enclosingBlockId } from './surfaces/block-position.js'
+import { ProseLink } from './surfaces/prose-link.js'
 
   // ── Icons ───────────────────────────────────────────────────────────────────
   var IC = window.SieveIcons || {}
@@ -91,6 +92,15 @@ import { enclosingBlockId } from './surfaces/block-position.js'
     if (menu) menu.remove()
   }
 
+  // Middle-truncate a URL so a long one stays readable in a menu header without
+  // dragging the menu across the window.
+  function ellipsise(text, max) {
+    var s = String(text || '')
+    if (s.length <= max) return s
+    var head = Math.ceil((max - 1) / 2)
+    return s.slice(0, head) + '…' + s.slice(s.length - (max - 1 - head))
+  }
+
   function tabItems(id) {
     return [
       { type: 'divider' },
@@ -124,6 +134,13 @@ import { enclosingBlockId } from './surfaces/block-position.js'
     var state = editor.state
     var sel = state.selection
     var hasSelection = !sel.empty
+
+    // The link the (snapped) selection is about, if any. ONE resolution, three
+    // consumers below: the URL readout, the Edit/Copy verbs, and the Convert
+    // offers. `isNew` (a selection with no mark yet) is Mod+K's creation path,
+    // not a menu affordance — the menu only speaks about links that exist.
+    var proseLink = ProseLink.forSelection(editor.view)
+    if (proseLink && proseLink.isNew) proseLink = null
 
     var targetNode = null
     var targetPos = null
@@ -199,13 +216,31 @@ import { enclosingBlockId } from './surfaces/block-position.js'
       editor.commands.selectAll()
     }})
 
+    // ── Link section ────────────────────────────────────────────────────────
+    // In WYSIWYG a link renders as its label alone, so the href is invisible
+    // without markdown mode; the header IS the cheapest visibility win (#67).
+    // Both verbs delegate to ProseLink — the same object Mod+K drives.
+    if (proseLink) {
+      items.push({ type: 'divider' })
+      items.push({ type: 'header', label: ellipsise(proseLink.href, 52) })
+      items.push({ icon: IC.edit, label: 'Edit Link…', action: function () { proseLink.edit() }})
+      items.push({ icon: IC.copy, label: 'Copy Link', action: function () { proseLink.copy() }})
+    }
+
+    // INSERT items are genuine inserts: they open their dialog and create a NEW
+    // block, consuming nothing. They deliberately do NOT vary with the link under
+    // the cursor — the "Insert … from Link" variants they used to grow were a
+    // hand-built substitute for the extraction pipeline, from back when the offer
+    // gate excluded prose. Converting a link is a Convert offer now (see
+    // describeSource below), which is the framework's own path: right verb, right
+    // menu group, the kind's own Fetch/Summarise choice, and no re-asking for a URL
+    // the app already has. (#67)
     items.push({ type: 'divider' })
-    var linkUrl = ctx.linkUrl || null
-    items.push({ icon: getSieveIcon('web-clip'), label: linkUrl ? 'Insert Web Clip from Link' : 'Insert Web Clip...', action: function () {
-      window.sieveWorkspace && window.sieveWorkspace.openWebClipDialog(linkUrl || '')
+    items.push({ icon: getSieveIcon('web-clip'), label: 'Insert Web Clip...', action: function () {
+      window.sieveWorkspace && window.sieveWorkspace.openWebClipDialog()
     }})
-    items.push({ icon: getSieveIcon('smart-card'), label: linkUrl ? 'Insert URL Card from Link' : 'Insert URL Card...', action: function () {
-      window.sieveWorkspace && window.sieveWorkspace.openUrlCardDialog(linkUrl || '')
+    items.push({ icon: getSieveIcon('smart-card'), label: 'Insert URL Card...', action: function () {
+      window.sieveWorkspace && window.sieveWorkspace.openUrlCardDialog()
     }})
     items.push({ icon: getSieveIcon('code'), label: 'Insert Code Block', action: function () {
       var ed = window.sieveWorkspace && window.sieveWorkspace.activeTab && window.sieveWorkspace.activeTab.editor
@@ -244,33 +279,59 @@ import { enclosingBlockId } from './surfaces/block-position.js'
       document.dispatchEvent(new CustomEvent('sieve:ai-explain'))
     }})
 
-    // Native node → Sieve block conversion (in-place UPGRADE). A native node IS its
-    // own content, so converting is an in-place TRANSFORM — the backend decides additive-vs-replace.
-    // We reuse the exact extraction path the Sieve-block NodeView uses: extractContentEntryFromEditor
-    // reads whatever DOM element was clicked. The context menu has no DOM event, but it has the
-    // click coords, so we reconstruct the same target with elementFromPoint and pass a
-    // synthetic { target } — the function reads nothing else off the event. Detection
-    // (all processors) decides the conversion targets; we only describe the source.
-    var nativeConvertible = { codeBlock: true, image: true }
-    if (targetNode && nativeConvertible[targetNode.type.name] && targetPos !== null &&
-        x != null && y != null) {
-      var domEl = document.elementFromPoint(x, y)
-      if (domEl) {
+    // Native source → Sieve block conversion. A native node IS its own content, so
+    // converting it is an in-place TRANSFORM — the backend decides additive-vs-replace.
+    // We reuse the exact extraction path the Sieve-block NodeView uses:
+    // extractContentEntryFromEditor reads whatever DOM element was clicked. The context
+    // menu has no DOM event, but it has the click coords, so we reconstruct the same
+    // target with elementFromPoint and pass a synthetic { target } — the function reads
+    // nothing else off the event. Detection (all processors) decides the conversion
+    // targets; we only describe the source.
+    //
+    // ONE discovery call, ONE offer-rendering path — describeSource just says WHICH
+    // source, so a prose link's offers arrive in the menu exactly like every other
+    // source's (#67). A link is the one source that is a RANGE inside a block rather
+    // than a block: it has no id, so it carries `sourceRange` and the editor plays the
+    // offer back by consuming that range (AbstractEditor.extract).
+    function describeSource() {
+      var nativeConvertible = { codeBlock: true, image: true }
+      if (targetNode && nativeConvertible[targetNode.type.name] && targetPos !== null &&
+          x != null && y != null) {
+        var domEl = document.elementFromPoint(x, y)
+        if (!domEl) return null
         var res = NodeViewRegistry.extractContentEntryFromEditor({ target: domEl }, editor)
-        if (res && res.entries) {
-          detectAndAppendExtractions({
-            sourceNode: targetNode,
-            sourceKind: targetNode.type.name,
-            entries: res.entries,
-            blockId: (targetNode.attrs && targetNode.attrs.id)
-              ? targetNode.attrs.id
-              : enclosingBlockId(editor.state.doc, targetPos),
-            sourcePos: targetPos,
-            extractSourceLabel: res.extractSourceLabel,
-            editor: editor.sieveHost || null
-          })
+        if (!res || !res.entries) return null
+        return {
+          sourceNode: targetNode,
+          sourceKind: targetNode.type.name,
+          entries: res.entries,
+          blockId: (targetNode.attrs && targetNode.attrs.id)
+            ? targetNode.attrs.id
+            : enclosingBlockId(editor.state.doc, targetPos),
+          sourcePos: targetPos,
+          extractSourceLabel: res.extractSourceLabel,
         }
       }
+      if (proseLink && proseLink.href) {
+        return {
+          sourceNode: null,
+          // 'prose' excludes the prose processor from its own offers (Go's
+          // DetectExtractions skips pm.Kind === sourceKind) — "Embed in Document"
+          // is meaningless for something already embedded in the document.
+          sourceKind: 'prose',
+          entries: proseLink.contentEntries(),
+          blockId: enclosingBlockId(editor.state.doc, proseLink.from),
+          sourceRange: proseLink.range,
+          extractSourceLabel: 'link',
+        }
+      }
+      return null
+    }
+
+    var source = describeSource()
+    if (source) {
+      source.editor = editor.sieveHost || null
+      detectAndAppendExtractions(source)
     }
 
     // Delete — only for block-level native nodes (codeBlock, table).

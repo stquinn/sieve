@@ -1,7 +1,7 @@
 // @ts-check
 // job-status.js — the shared job-lifecycle tracker for block renderers/badges.
 //
-// A block whose work runs as a server JOB (ai-block, web-clip, smart-link, …)
+// A block whose work runs as a server JOB (ai-block, web-clip, smart-card, …)
 // shows PENDING/DISPATCHED until the job lands. "Stale" (timed out) must be
 // distinguished from "still queued on a bounded worker pool" — so the truth of
 // which jobs are ACTIVE vs QUEUED lives server-side and is mirrored here.

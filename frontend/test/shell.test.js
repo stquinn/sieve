@@ -33,6 +33,7 @@ vi.mock('../src/static/editor/surfaces/block-position.js', () => ({
   emptyParagraphAnchor: vi.fn(() => null),
   docPosForBlockIndex: vi.fn(),
   blockIndexAfter: vi.fn(),
+  blockIndexAt: vi.fn(() => -1),
   enclosingBlockId: vi.fn(),
 }))
 
@@ -2287,7 +2288,10 @@ function fakeInsertPosEditorPane(childCount = 2) {
       get tr() { currentTr = makeTr(); return currentTr },
     },
     view: { dispatch(tr) { dispatched.push(tr) } },
-    schema: { nodes: { 'sieve-smart-link': { isInline: true }, 'sieve-code': { isInline: false } } },
+    // Every registered kind is a top-level document-list node — there are no
+    // inline sieve nodes any more (#67 removed the mode with smart-link,
+    // docs/design/specs/2026-07-27-inline-block-removal-links-decision.md).
+    schema: { nodes: { 'sieve-code': {}, 'sieve-smart-card': {} } },
   }
 }
 

@@ -12,8 +12,9 @@ func TestFencedDeserializer_Shape(t *testing.T) {
 	}
 }
 
-func TestInlineDeserializer_Shape_isZero(t *testing.T) {
-	if !(InlineDeserializer{}).Shape().IsZero() {
-		t.Fatal("inline must declare no shape")
+// A kind-less (partially built) deserializer must not present a catch-all shape.
+func TestFencedDeserializer_Shape_kindlessIsZero(t *testing.T) {
+	if !(FencedDeserializer{}).Shape().IsZero() {
+		t.Fatal("a kind-less deserializer must declare no shape")
 	}
 }

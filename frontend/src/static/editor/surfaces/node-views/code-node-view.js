@@ -46,8 +46,6 @@ import { CodeRenderer } from '../../../block/renderers/code-renderer.js'
       atom: false,
       selectable: true,
       draggable: false,
-      group: 'block',
-      inline: false,
       content: 'text*',
       marks: '',
       code: true,

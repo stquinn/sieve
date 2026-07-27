@@ -17,6 +17,7 @@
 
 import { T } from '../tiptap-vendor.js'
 import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block-extension.js'
+import { labelForAction } from '../../../block/action-label.js'
 import { REGION } from '../../../block/renderers/block-renderer.js'
 import { WebClipRenderer } from '../../../block/renderers/web-clip-renderer.js'
 
@@ -55,24 +56,29 @@ import { WebClipRenderer } from '../../../block/renderers/web-clip-renderer.js'
       return [{ mimeType: 'text/uri-list', content: node.attrs.source }]
     },
 
+    // web-clip is the ONE kind that supplies its own extraction items, because it is
+    // the one kind that offers a CHOICE of how much of the page to bring in. That
+    // choice — the "(Fetch)" / "(Summarise)" suffix — is all this kind owns.
+    //
+    // The VERB is the framework's and is DERIVED, never restated: labelForAction
+    // (block/action-label.js) is the single verb map, and the friendly kind name is
+    // the same getFriendlyName the generic offer path reads. Restating them is how
+    // this kind drifted into a private "Upgrade to" while every other kind said
+    // "Convert to" — removed under #67, and derivation is what stops it recurring.
     getExtractionMenuItems: function(sourceNode, entries, defaultAction, opts) {
       var IC = window.SieveIcons || {}
-      // "Upgrade" only when REPLACING a native source in place. Extracting a link out
-      // of an existing sieve block is additive — the source block survives — so it must
-      // read "Extract", matching the framework's verb for every other target kind.
-      var verb = (opts && opts.operation === 'transform') ? 'Upgrade to' : 'Extract as'
-      return [
-        {
+      var action = (opts && opts.operation) || 'extract'
+      // sourceKind is deliberately not passed: labelForAction's source-sensitive
+      // cases are all prose-TARGET ones, and the target here is always web-clip.
+      var verb = labelForAction(action, WebClipNodeView.getFriendlyName(), { kind: 'web-clip' })
+      var item = function (mode, modeLabel) {
+        return {
           icon: IC['web-clip'] || IC.code,
-          label: verb + ' Web Clip (Fetch)',
-          action: function() { defaultAction({ mode: 'fetch' }) }
-        },
-        {
-          icon: IC['web-clip'] || IC.code,
-          label: verb + ' Web Clip (Summarise)',
-          action: function() { defaultAction({ mode: 'summarise' }) }
+          label: verb + ' (' + modeLabel + ')',
+          action: function() { defaultAction({ mode: mode }) }
         }
-      ]
+      }
+      return [item('fetch', 'Fetch'), item('summarise', 'Summarise')]
     },
 
     // Read-only container: arrows treat it as a single caret stop.
@@ -82,8 +88,6 @@ import { WebClipRenderer } from '../../../block/renderers/web-clip-renderer.js'
       atom: false,
       selectable: true,
       draggable: false,
-      group: 'block',
-      inline: false,
       content: 'block+'
     },
 

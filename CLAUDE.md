@@ -15,8 +15,8 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 |------|-------|
 | Wails App struct + lifecycle | `app.go` |
 | Composition root (DI: wires ports, registers processors) | `sieve/service_provider.go` (package `sieve`, root) |
-| **Block model + codec + registry + ports** | `sieve/block/` (SieveBlock, DocumentCodec, RegionScanner, ShadowDocument, ports.go, processor_registry.go, markdown_parser.go) |
-| **Block processors** (9 concrete flavours) | `sieve/block/processors/` (code, diagram, log, prose, smart-image/link/card, web-clip, ai-block) |
+| **Block model + codec + registry + ports** | `sieve/block/` (SieveBlock, DocumentCodec, RegionScanner, ShadowDocument, ports.go, processor_registry.go) |
+| **Block processors** (8 concrete flavours) | `sieve/block/processors/` (code, diagram, log, prose, smart-image/card, web-clip, ai-block) |
 | **Domain leaf types** (persistent) | `sieve/domain/` (Document, Buffer, Note, Session, Settings, Categories, ImageAsset, FilingRecommendation, ImageDesc, LinkPreviewResult) |
 | **Services** (persistence + editor) | `sieve/services/` (DocumentService, AssetService, StateService, JobTracker, LinkPreviewService, LibraryService, EditorService) |
 | **AI subsystem** | `sieve/ai/` (AIService, cli.go=RunCLI [future API-backend swap point], prompts, eval helpers, image_localise) |

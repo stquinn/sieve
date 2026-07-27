@@ -25,9 +25,12 @@
 //   optional except makeNodeView; the factory feature-detects each.
 // @property {(node: any, editor: any, getPos: (() => number), ctx: object) => SieveNodeView} makeNodeView
 //   Builds the NodeView (required).
-// @property {{atom?: boolean, selectable?: boolean, draggable?: boolean, group?: string,
-//   inline?: boolean, content?: string, marks?: string, code?: boolean, defining?: boolean}} [nodeConfig]
-//   ProseMirror schema overrides (schema-level, fixed at editor-init time).
+// @property {{atom?: boolean, selectable?: boolean, draggable?: boolean,
+//   content?: string, marks?: string, code?: boolean, defining?: boolean}} [nodeConfig]
+//   ProseMirror schema overrides (schema-level, fixed at editor-init time). There
+//   is no `group`/`inline` knob: EVERY registered kind is a top-level member of
+//   the document list (group 'sieveBlock', a <div>). Inline blocks were removed
+//   with smart-link — docs/design/specs/2026-07-27-inline-block-removal-links-decision.md.
 // @property {Record<string, any>} [attrs]      kind-specific TipTap attr defs (merged with BASE_ATTRS).
 // @property {(data: object) => Record<string, any>} [parseAttrs]
 //   Parsed-YAML → the extra data-* attributes the kind needs on initial parse.
@@ -44,6 +47,11 @@
 // @property {(data: object) => string} [getInitialContentHTML]  initial inner HTML for a non-atom kind.
 // @property {(sourceNode: any, entries: any[], dispatch: Function, opts: {operation: string}) => any[]} [getExtractionMenuItems]
 //   kind-authored extraction menu items (else the framework builds a default).
+//   A kind implements this to offer a CHOICE the framework cannot know about
+//   (web-clip's Fetch/Summarise) — never to reword the action. The VERB must be
+//   DERIVED from labelForAction (block/action-label.js), which is the one verb map
+//   and the one regression gate; restating it is how web-clip drifted into a
+//   private "Upgrade to" (#67).
 // @property {(state: any, node: any) => void} [markdownSerialize]  markdown-storage serialize override.
 // @property {{render: (attrs: object, ctx: object) => HTMLElement}} [headerProvider]  LEGACY header seam.
 // @property {string|((attrs: object) => any)} [titleProvider]                        LEGACY title seam.
@@ -98,7 +106,7 @@ export function sieveBlockFor(node, overlay, blockService) {
 // renderer's fillTitle (a BlockRenderer instance the NodeView adapter exposes
 // as `view.renderer`, e.g. editor/surfaces/node-views/ai-block-node-view.js,
 // editor/surfaces/node-views/web-clip-node-view.js) instead of writing innerHTML
-// itself. Kinds with no split renderer yet (smart-link, prose) have no
+// itself. Kinds with no split renderer (prose — native, no NodeView) have no
 // `view.renderer` — the fallback uses the SANCTIONED instance
 // (renderSanctionedMarkdown, html:false) directly, never the editor's html:true
 // one, so every path here is SEC-B-safe regardless of migration state.
@@ -191,7 +199,7 @@ var BASE_ATTRS = {
 // draggable:false — reordering is done via the custom gutter handle (block-chrome.js),
 // not ProseMirror's native node drag.  Native node-drag on a draggable block stole
 // textarea/text-selection gestures (a drag inside a code textarea moved the whole block).
-var DEFAULT_NODE_CONFIG = { atom: true, selectable: true, draggable: false, group: 'block', inline: false }
+var DEFAULT_NODE_CONFIG = { atom: true, selectable: true, draggable: false }
 
 // ── NodeViewRegistry ─────────────────────────────────────────────────────────
 // The typed registry that OWNS kind→adapter registration and lookup, plus the
@@ -273,7 +281,6 @@ class NodeViewRegistry {
     var renderer = this.#adapters[kind]
     if (!renderer || !data || !data.id) return ''
     var cfg = Object.assign({}, DEFAULT_NODE_CONFIG, renderer.nodeConfig || {})
-    var tag = cfg.inline ? 'span' : 'div'
     var dataType = 'sieve-' + kind
 
     var htmlAttrs = [
@@ -304,12 +311,17 @@ class NodeViewRegistry {
       innerHTML = renderer.getInitialContentHTML(data)
     }
 
-    return '<' + tag + ' ' + htmlAttrs.join(' ') + '>' + innerHTML + '</' + tag + '>\n'
+    return '<div ' + htmlAttrs.join(' ') + '>' + innerHTML + '</div>\n'
   }
 
   // The backend returns [{kind, actions}]. The frontend is a dumb renderer: it
   // shows each offered (kind, action) and plays back {operation}.
-  detectAndAppendExtractions({ sourceNode, sourceKind, entries, blockId, sourcePos, extractSourceLabel, editor }) {
+  //
+  // sourceRange ({from,to}, optional) says the source is a RANGE INSIDE a block
+  // rather than the block itself — a prose link, which has no block id of its
+  // own (#67). It is carried, untouched, to editor.extract, which owns the
+  // playback difference; nothing here branches on it.
+  detectAndAppendExtractions({ sourceNode, sourceKind, entries, blockId, sourcePos, sourceRange, extractSourceLabel, editor }) {
     // Capability discovery goes through the service boundary (issue #49 Phase 4):
     // the BlockService owns the wire; consumers no longer speak fetch/URLs. Reached
     // via the editor host's blockService getter (the same host whose .extract plays
@@ -347,6 +359,7 @@ class NodeViewRegistry {
               operation: action,
               sourceNode: sourceNode,
               sourcePos: sourcePos,
+              sourceRange: sourceRange,
               entries: entries,
               context: context || {}
             })
@@ -447,17 +460,15 @@ class NodeViewRegistry {
     var nodeName = 'sieve-' + kind   // e.g. 'sieve-code', 'sieve-diagram'
     var dataType = 'sieve-' + kind   // value of the data-type HTML attribute
 
-    var tag = cfg.inline ? 'span' : 'div'
-
     return Node.create({
       name:       nodeName,
-      // Step 5: block-mode sieve blocks form the "sieveBlock" group — the ONLY
-      // thing the doc top level allows. That keeps the top level all-blocks
+      // Step 5: sieve blocks form the "sieveBlock" group — the ONLY thing the doc
+      // top level allows besides native prose. That keeps the top level all-blocks
       // (no bare paragraphs) and, because prose content is the "block" group,
-      // excludes sieve blocks from inside prose (kind-homogeneity). Inline sieve
-      // nodes keep their own group.
-      group:      cfg.inline ? cfg.group : 'sieveBlock',
-      inline:     cfg.inline,
+      // excludes sieve blocks from inside prose (kind-homogeneity). EVERY kind is
+      // a document-list member: there is no inline mode (removed with smart-link,
+      // docs/design/specs/2026-07-27-inline-block-removal-links-decision.md).
+      group:      'sieveBlock',
       atom:       cfg.atom,
       selectable: cfg.selectable,
       draggable:  cfg.draggable,
@@ -475,11 +486,11 @@ class NodeViewRegistry {
       },
 
       parseHTML() {
-        return [{ tag: tag + '[data-type="' + dataType + '"]' }]
+        return [{ tag: 'div[data-type="' + dataType + '"]' }]
       },
 
       renderHTML({ HTMLAttributes }) {
-        return [tag, mergeAttributes({ 'data-type': dataType }, HTMLAttributes)]
+        return ['div', mergeAttributes({ 'data-type': dataType }, HTMLAttributes)]
       },
 
       renderText({ node }) {
@@ -556,8 +567,8 @@ class NodeViewRegistry {
 
             // data-kind: migrated renderers stamp their own identity data-* from
             // the envelope (contract: adapters never write renderer DOM); this
-            // fallback covers only LEGACY kinds (smart-link) whose DOM the
-            // framework still assembles.
+            // fallback covers any kind whose DOM the framework still assembles
+            // via the LEGACY provider seam below.
             if (!view.dom.hasAttribute('data-kind')) view.dom.setAttribute('data-kind', kind)
 
             // Explicitly non-editable: prevents the block root from inheriting
@@ -753,8 +764,8 @@ class NodeViewRegistry {
           // and this seam parses it into contentDOM as live document nodes via a
           // tracked transaction (selection/targeting/round-trip is a PM concern).
           // A renderer without bodyMarkdown (diagram/code/log's raw-text bodies)
-          // needs no projection. Kinds with NO split renderer yet (prose is
-          // native; smart-link) fall to the LEGACY provider seam below.
+          // needs no projection. Kinds with NO split renderer yet fall to the
+          // LEGACY provider seam below.
 
           // syncMdInto — parse markdown → a tracked PM replace of contentDOM's
           // content. Shared by the migrated body projection and the legacy
@@ -909,67 +920,18 @@ class NodeViewRegistry {
             // markdownSerialize override: a TRANSPARENT node (e.g. sieve-prose) owns
             // real prose children and must serialise them; it takes full control here.
             serialize: renderer.markdownSerialize ? renderer.markdownSerialize : function (state, node) {
-              if (!cfg.inline) state.closeBlock(node)
+              state.closeBlock(node)
             },
 
             parse: {
               // Wrap the markdownit fence rule. Only intercepts fences whose info
               // string matches this kind AND whose YAML body contains an id field.
               // All other fences fall through to the previous handler in the chain.
+              //
+              // A FENCE is the only shape a block loads from: the inline
+              // `[!kind]{json}[!kind-end]` ruler was removed with smart-link (see
+              // the header) — residual inline markers now read as literal prose.
               setup: function (markdownit) {
-                // 1. Inline parsing rule for `[!kind] {json} [!kind-end]`
-                markdownit.inline.ruler.before('link', 'sieve_inline_' + kind, function(state, silent) {
-                  var start = state.pos
-                  if (state.src.charCodeAt(start) !== 0x5B /* [ */) return false
-                  if (state.src.charCodeAt(start + 1) !== 0x21 /* ! */) return false
-
-                  var regex = new RegExp('^\\\[!' + kind + '\\\]\\s*(\\\{.*?\\\})\\s*\\\[!' + kind + '-end\\\]')
-                  var match = regex.exec(state.src.slice(start))
-                  if (!match) return false
-
-                  if (!silent) {
-                    var jsonStr = match[1]
-                    var data = null
-                    try { data = JSON.parse(jsonStr) } catch (e) {}
-
-                    if (data && data.id) {
-                      var token = state.push('sieve_inline_' + kind, tag, 0)
-                      var htmlAttrs = [
-                        ['data-type', dataType],
-                        ['data-kind', kind],
-                        ['data-id', data.id],
-                        ['data-status', data.status || 'PENDING']
-                      ]
-                      if (renderer.parseAttrs) {
-                        var extra = renderer.parseAttrs(data)
-                        Object.keys(extra).forEach(function (k) {
-                          var kebab = k.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()
-                          htmlAttrs.push(['data-' + kebab, String(extra[k] != null ? extra[k] : '')])
-                        })
-                      }
-                      if (data.createdAt) {
-                        htmlAttrs.push(['data-created-at', data.createdAt])
-                      }
-                      if (data.supportsEmbedding) {
-                        htmlAttrs.push(['data-supports-embedding', 'true'])
-                      }
-                      token.attrs = htmlAttrs
-                    } else {
-                      state.pos += match[0].length
-                      return false
-                    }
-                  }
-                  state.pos += match[0].length
-                  return true
-                })
-
-                markdownit.renderer.rules['sieve_inline_' + kind] = function(tokens, idx) {
-                  var token = tokens[idx]
-                  var attrsStr = token.attrs.map(function(a) { return a[0] + '="' + esc(a[1]) + '"' }).join(' ')
-                  return '<' + tag + ' ' + attrsStr + '></' + tag + '>'
-                }
-
-                // 2. Block parsing rule for fences
                 var prevFence = markdownit.renderer.rules.fence
                 markdownit.renderer.rules.fence = function (tokens, idx, options, env, self2) {
                   var token     = tokens[idx]

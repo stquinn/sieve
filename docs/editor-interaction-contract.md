@@ -68,6 +68,64 @@ regression pass. Source spec:
   policy extension owns keys, not pointer/wheel), scoped to a static render
   surface. The pane uses `contain: layout paint` so the zoom transform does
   not repaint the surrounding contentEditable document in WebKit.
+- **Mod+K = edit / create a link** (#67, 2026-07-27) — the ONE link chord, and
+  the only way to make a link out of text ALREADY IN the document (a bare click
+  never navigates). It is not the only way a link ENTERS one: pasting a URL is
+  Go's doing, and the "Insert from URL" dialog's **Link** rung inserts a URL you
+  do not have in the document yet. Both of those go through the same Go
+  round-trip and are the same insertion in the end — Mod+K owns the caret-
+  contextual case, and no chord competes with it. Two behaviours, one chord,
+  chosen by what the selection is:
+  - caret **inside** a `link` mark → open the link editor prefilled with that
+    link's URL and label; saving rewrites the mark.
+  - **non-empty text selection** with no link → open the editor with the
+    selected text as the label and a blank URL; saving marks the selection.
+  - anything else (bare caret in unlinked prose, a raw-text/read-only sieve
+    block, a paragraph inside a sieve container whose body Go authors, a
+    NodeSelection) → **native** (unhandled), so the chord stays free there.
+
+  **Policy-extension-owned**, like every key chord —
+  `editor/interaction-policy.js` resolves the context and dispatches; a
+  per-renderer `handleKeyDown` for it is FORBIDDEN. It is editor-owned and
+  caret-contextual, NOT a native-menu accelerator (the menu claims no `Mod+K`),
+  and it is bare `Mod+K` only: `Mod+Shift+K` / `Mod+Alt+K` pass through. The
+  mark mechanics (range resolution, apply) live on `ProseLink`
+  (`editor/surfaces/prose-link.js`); the dialog is the shared
+  `ui/link-edit-dialog.js`, the same one the smart-card block's "Edit Link…"
+  opens. Editing a link is an ORDINARY TRACKED prose edit — it rides the
+  existing prose→Go block-sync, has no wire verb of its own, and undoes in one
+  step. The same verbs appear on the editor context menu over a link ("Edit
+  Link…", "Copy Link", plus the URL itself as a header — the cheapest fix for a
+  link rendering as its label alone). A hover/caret link bubble is deliberately
+  NOT part of this (deferred by the owner).
+
+- **Mod+Click on ANY link = open externally** (#67, 2026-07-27) — a link is
+  ordinary markdown, not a Sieve block
+  (`docs/design/specs/2026-07-27-inline-block-removal-links-decision.md`), and
+  in prose it carries the TipTap `link` mark. A BARE click never navigates: the
+  mark is configured `openOnClick: false` because a navigating WebKit webview
+  would replace the running Wails app, so a plain click is just a caret
+  placement. Mod+Click hands the href to `window.runtime.BrowserOpenURL`.
+
+  **Owner: `shell/workspace.js` `bootEditorLifecycle()`** — a document-level
+  CAPTURE-phase `click` listener matching `a[href^=https?://]`. It is the ONE
+  mechanism, and it is deliberately APP-GLOBAL rather than editor-scoped:
+  links appear in chrome, dialogs and block renderers as well as in prose, and
+  the navigate-suppression has to be unconditional in a webview.
+
+  Consequences, all verified in the running app with CDP-instrumented
+  Ctrl+Click (2026-07-27):
+  - Anchors inside a sieve block body (an ai-block response, a web-clip)
+    open exactly like prose links — the capture matches them too. `stopEvent`'s
+    `a[href]` shield gates *ProseMirror's* processing of the click; it cannot
+    stop a document-capture listener that has already run.
+  - No editor- or renderer-level click handler can ever see a Mod+Click: the
+    capture runs before anything on `view.dom` and calls `stopPropagation()`.
+    A PM-level `editorProps.handleDOMEvents.click` that duplicated this was
+    measured at 0 invocations under Mod+Click (1 under a plain click, proving
+    the probe live) and was DELETED. Do not add one back.
+  - A pointer gesture, not a key chord, so it is not the policy extension's;
+    `editor/interaction-policy.js` carries a pointer to this row.
 
 **Smart Home platform note:** the Home column applies to the `Home` key
 (Linux/Windows; fn+Left on Mac) AND to Cmd+Left on macOS — the idiomatic Mac
@@ -122,6 +180,38 @@ applies the delete first, then sends create-block at the freed index — two
 existing primitives, ordered on one socket. Capture-time never consumes: a
 cancelled dialog must not eat the blank line (known gap: the async image-upload
 dialog path commits outside the editor and does not consume — acceptable).
+
+## Converting a prose link (decided 2026-07-27, #67)
+
+A link is ordinary markdown, so it is a **mark over a text range**, not a block:
+it has no id, and its enclosing block is the whole paragraph. Right-clicking one
+offers the same Convert items every other source gets (smart-card, web-clip —
+one discovery path, `detectAndAppendExtractions`), but the in-place block
+TRANSFORM those offers normally mean would replace the paragraph and destroy the
+sentence around the link. The playback for a **range source** is instead, uniform
+for every target kind:
+
+> Remove the link's own range from the prose, place the new block **after** that
+> paragraph, and drop the paragraph if the delete left it empty.
+
+- Link alone in its paragraph (the common case after a URL paste) → behaviourally
+  identical to the block Transform: the paragraph goes, the block takes its slot,
+  no blank line left behind.
+- Link mid-sentence → the link is consumed, the block lands below, the sentence
+  survives with a gap where the link was.
+
+Mechanism — **no new server operation**: the two deletes are ordinary TRACKED
+prose edits (the same undo sanctity as the empty-paragraph consume above), the
+block-sync is flushed so Go's shadow applies them before the create arrives on
+the same socket, and the create is the existing additive `extract` at the freed
+index. `AbstractEditor.extract` owns it (`sourceRange` ⇒ `#consumeSourceRange`);
+the MENU keeps the user-facing verb it was offered ("Convert to …") — which wire
+op carries it is not the user's concern. This is the frontend twin of Go's
+`SupportedActions.asAdditive` demotion for a source nested inside a composite.
+
+The link's ContentEntry views MUST include `text/html` (`<a href>`): a rendered
+link's plain text is the label alone, so a text/plain-only entry set carries no
+URL and every processor declines — zero offers, silently.
 
 ## Copy matrix
 
@@ -212,9 +302,10 @@ Consequences:
 | Mod+Shift+D | Tools › Insert Diagram | `window.sieveWorkspace?.activeTab?.editor?.createBlock('diagram', {})` |
 | Mod+/ | Help › Shortcuts | open help dialog |
 
-Editor-owned caret chords (NOT in the menu, bound in `extensions.js`):
-`Mod+E` = Explain block. (`Mod+Shift+A` Ask is NOT editor-bound — the AskPanel's
-document-level listener owns it; see "Consequences" above.)
+Editor-owned caret chords (NOT in the menu): `Mod+E` = Explain block (bound in
+`extensions.js`); `Mod+K` = edit/create a link (owned by the interaction-policy
+extension — see its row above). (`Mod+Shift+A` Ask is NOT editor-bound — the
+AskPanel's document-level listener owns it; see "Consequences" above.)
 
 **Why find sits with the editing verbs, and why its home differs per platform.**
 Find/Replace is an editing concern, not a View one (View is for what you look at,

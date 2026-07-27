@@ -104,8 +104,6 @@ import { LogRenderer } from '../../../block/renderers/log-renderer.js'
       atom: false,
       selectable: true,
       draggable: false,
-      group: 'block',
-      inline: false,
       content: 'text*',
       marks: '',
       code: true,

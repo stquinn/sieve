@@ -58,10 +58,109 @@ func TestSmartCardProcessor_Mode(t *testing.T) {
 	}
 }
 
-func TestSmartCardProcessor_IsBlock_neverMatches(t *testing.T) {
+// A URL is reached by an explicit Transform, never by paste: a pasted URL stays an
+// ordinary markdown link (#67). Only a copied card round-trips via paste.
+func TestSmartCardProcessor_IsSupportedContent(t *testing.T) {
 	p := NewSmartCardProcessor(block.BlockServices{})
-	if !p.IsSupportedContent([]block.ContentEntry{{MIMEType: "text/plain", Content: "https://example.com"}}).Has(block.ActionPaste) {
-		t.Error("IsSupportedContent must offer paste for a URL — URLs can become SmartLinks and Cards")
+	cases := []struct {
+		name    string
+		entries []block.ContentEntry
+		want    []block.Action
+	}{
+		{
+			name:    "bare url",
+			entries: []block.ContentEntry{{MIMEType: "text/plain", Content: "https://example.com"}},
+			want:    []block.Action{block.ActionTransform},
+		},
+		{
+			name:    "markdown link",
+			entries: []block.ContentEntry{{MIMEType: "text/plain", Content: "[Example](https://example.com)"}},
+			want:    []block.Action{block.ActionTransform},
+		},
+		{
+			name: "rendered link — href only in the html view",
+			entries: []block.ContentEntry{
+				{MIMEType: "text/plain", Content: "Example"},
+				{MIMEType: "text/html", Content: `<p>see <a href="https://example.com">Example</a></p>`},
+			},
+			want: []block.Action{block.ActionTransform},
+		},
+		{
+			name:    "image url belongs to smart-image",
+			entries: []block.ContentEntry{{MIMEType: "text/plain", Content: "https://example.com/pic.png"}},
+			want:    nil,
+		},
+		{
+			name:    "plain prose",
+			entries: []block.ContentEntry{{MIMEType: "text/plain", Content: "no link here"}},
+			want:    nil,
+		},
+		{
+			name:    "copied card round-trips",
+			entries: []block.ContentEntry{{MIMEType: "sieve/smart-card", Content: `{"href":"https://example.com"}`}},
+			want:    []block.Action{block.ActionPaste, block.ActionExtract},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := p.IsSupportedContent(tc.entries)
+			for _, a := range []block.Action{block.ActionPaste, block.ActionExtract, block.ActionTransform} {
+				want := false
+				for _, w := range tc.want {
+					want = want || w == a
+				}
+				if got.Has(a) != want {
+					t.Errorf("action %q: got %v, want %v (offer %+v)", a, got.Has(a), want, got.Actions)
+				}
+			}
+		})
+	}
+}
+
+// Transform recovers the href from every link form and seeds the card title from
+// the link's own text until the OG fetch lands.
+func TestSmartCardProcessor_Transform_linkForms(t *testing.T) {
+	p := NewSmartCardProcessor(block.BlockServices{})
+	cases := []struct {
+		name      string
+		entries   []block.ContentEntry
+		wantHref  string
+		wantTitle interface{}
+	}{
+		{
+			name:     "bare url has no title to seed",
+			entries:  []block.ContentEntry{{MIMEType: "text/plain", Content: "https://example.com"}},
+			wantHref: "https://example.com",
+		},
+		{
+			name:      "markdown link seeds the title",
+			entries:   []block.ContentEntry{{MIMEType: "text/plain", Content: "[Example Title](https://example.com)"}},
+			wantHref:  "https://example.com",
+			wantTitle: "Example Title",
+		},
+		{
+			name: "rendered link seeds the title from the anchor",
+			entries: []block.ContentEntry{
+				{MIMEType: "text/plain", Content: "Example Title"},
+				{MIMEType: "text/html", Content: `<a href="https://example.com">Example Title</a>`},
+			},
+			wantHref:  "https://example.com",
+			wantTitle: "Example Title",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			overrides := p.Transform(tc.entries, "u", "crd-1", block.ActionTransform)
+			if overrides == nil {
+				t.Fatal("Transform declined a link")
+			}
+			if overrides["href"] != tc.wantHref {
+				t.Errorf("href: got %v, want %q", overrides["href"], tc.wantHref)
+			}
+			if overrides["title"] != tc.wantTitle {
+				t.Errorf("title: got %v, want %v", overrides["title"], tc.wantTitle)
+			}
+		})
 	}
 }
 

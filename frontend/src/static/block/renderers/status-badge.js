@@ -5,11 +5,10 @@
 // (AiBlockRenderer#update, Phase 3); it is hoisted to a shared class here at
 // the SECOND badge-bearing kind to migrate (code, Phase 4) so every migrated
 // kind reads status off ONE decision tree instead of re-deriving it — fixing
-// the known drift deliberately: an unmigrated kind (smart-link) collapses
-// TIMEOUT into its generic "else → error" bucket; every MIGRATED kind gets
-// the full five-way split below (see status-badge.test.js for the
-// regression coverage of that fix, exercised through each consuming
-// renderer's own badge/state build).
+// the drift where a hand-rolled badge collapses TIMEOUT into its generic
+// "else → error" bucket. Every MIGRATED kind gets the full five-way split
+// below (see status-badge.test.js for the regression coverage of that fix,
+// exercised through each consuming renderer's own badge/state build).
 //
 // PM-free: a pure function of (status, createdAt, id) — usable by a
 // renderer's own DOM building (block/renderers/*) OR (as most callers here

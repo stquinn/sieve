@@ -87,7 +87,7 @@ remaining processor is a genuine member of the document list.
 ### 2. Paste of a URL → an ordinary markdown link, title fetched in Go
 
 Paste is already a Go round-trip. The URL branch resolves the title through
-`LinkPreview.FetchTitle` (timeout-bounded) and inserts `[Title](url)`, falling
+`LinkPreview.FetchTitle` (timeout-bounded) and inserts `<a href="url">Title</a>`, falling
 back to the bare URL on timeout or failure.
 
 **The fetch is synchronous** — one shot on the round-trip Go already performs. No

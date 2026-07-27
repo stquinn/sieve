@@ -170,6 +170,17 @@ export class AbstractSurface {
   }
 
   /**
+   * Inserts `url` at the caret as a hyperlink, via the Go paste round-trip that
+   * fetches its title (#67). NOT abstract — a surface with no inline marks has
+   * nothing to insert into and honestly reports that it did not act: in the
+   * markdown SOURCE surface the document is raw text, where writing `[x](url)` is
+   * the native affordance, so there is nothing worth a second mechanism.
+   * @param {string} url
+   * @returns {Promise<boolean>} whether a link was inserted
+   */
+  insertLink(url) { return Promise.resolve(false) }
+
+  /**
    * The surface's OWN formatting button groups for the editor toolbar (P4.D). The
    * editor composes these AFTER its persistent editor-level groups and re-renders
    * ONLY this section on a mode flip. A surface with no rich commands (markdown's

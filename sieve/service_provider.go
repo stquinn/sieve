@@ -119,8 +119,6 @@ func (s *ServiceProvider) Init(store store.Store, storePath string, themesFS fs.
 	svc := s.BlockServices()
 	block.RegisterProcessor(processors.NewDiagramProcessor(svc))
 	block.RegisterProcessor(processors.NewSmartImageProcessor(svc))
-
-	block.RegisterProcessor(processors.NewSmartLinkProcessor(svc))
 	block.RegisterProcessor(processors.NewSmartCardProcessor(svc))
 	block.RegisterProcessor(processors.NewWebClipBlockProcessor(svc))
 	block.RegisterProcessor(processors.NewLogProcessor(svc))

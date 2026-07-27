@@ -58,22 +58,19 @@ func (p *SmartCardProcessor) InitAttrs(id string, overrides map[string]interface
 	return attrs
 }
 
+// IsSupportedContent claims a copied card (round-trip: paste + extract) and any
+// view carrying an ordinary link — bare URL, markdown link, or rendered <a> — as a
+// TRANSFORM only. A pasted URL is NOT claimed for paste: it stays an ordinary
+// markdown link, and the card is reached by an explicit Transform (#67). Image URLs
+// belong to smart-image.
 func (p *SmartCardProcessor) IsSupportedContent(entries []block.ContentEntry) block.SupportedActions {
 	for _, e := range entries {
 		if e.IsSieveType(p) {
 			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionExtract}}
 		}
-		trimmed := strings.TrimSpace(e.Content)
-		if trimmed == "" || strings.ContainsAny(trimmed, " \t\n\r") {
-			continue
+		if l := e.Link(); !l.IsZero() && !isImageURL(l.Href) {
+			return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionTransform}}
 		}
-		if !strings.HasPrefix(trimmed, "http://") && !strings.HasPrefix(trimmed, "https://") {
-			continue
-		}
-		if isImageURL(trimmed) {
-			continue
-		}
-		return block.SupportedActions{Kind: p.Kind(), Actions: []block.Action{block.ActionPaste, block.ActionTransform}}
 	}
 	return block.SupportedActions{Kind: p.Kind()}
 }
@@ -83,10 +80,16 @@ func (p *SmartCardProcessor) Transform(entries []block.ContentEntry, uuid, block
 		if e.IsSieveType(p) {
 			return e.AsAttrsForNewBlock(p)
 		}
-		trimmed := strings.TrimSpace(e.Content)
-		if trimmed != "" && (strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://")) && !strings.ContainsAny(trimmed, " \t\n\r") {
-			return map[string]interface{}{"href": trimmed}
+		l := e.Link()
+		if l.IsZero() || isImageURL(l.Href) {
+			continue
 		}
+		overrides := map[string]interface{}{"href": l.Href}
+		if l.Label != "" {
+			// The link's own text is the best title we have until the OG fetch lands.
+			overrides["title"] = l.Label
+		}
+		return overrides
 	}
 	return nil
 }
@@ -163,7 +166,9 @@ func (p *SmartCardProcessor) DescribeJob(jctx block.JobContext) *block.Processor
 		Apply: func(result any, b *block.SieveBlock) {
 			f := result.(smartCardFetch)
 			now := time.Now().UTC().Format(time.RFC3339)
-			b.Attrs["title"] = f.preview.Title
+			if f.preview.Title != "" {
+				b.Attrs["title"] = f.preview.Title // else keep the link's own text
+			}
 			b.Attrs["description"] = f.preview.Description
 			b.Attrs["siteName"] = f.preview.SiteName
 			if f.imageRef != "" {
