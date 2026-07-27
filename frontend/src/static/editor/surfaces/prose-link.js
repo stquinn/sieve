@@ -2,7 +2,7 @@
 // prose-link.js — ONE hyperlink in the document, and every verb that owns it.
 //
 // A link is ORDINARY MARKDOWN, not a Sieve block
-// (docs/design/specs/2026-07-27-inline-block-removal-links-decision.md), so in the
+// (docs/design/archive/specs/2026-07-27-inline-block-removal-links-decision.md), so in the
 // WYSIWYG surface it is a TipTap `link` MARK over a text range — it has no block
 // id, no NodeView, no processor. That makes it the one document thing with no
 // owning type, which is exactly how the knowledge of it ended up smeared across a

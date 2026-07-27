@@ -101,7 +101,7 @@ regression pass. Source spec:
 
 - **Mod+Click on ANY link = open externally** (#67, 2026-07-27) — a link is
   ordinary markdown, not a Sieve block
-  (`docs/design/specs/2026-07-27-inline-block-removal-links-decision.md`), and
+  (`docs/design/archive/specs/2026-07-27-inline-block-removal-links-decision.md`), and
   in prose it carries the TipTap `link` mark. A BARE click never navigates: the
   mark is configured `openOnClick: false` because a navigating WebKit webview
   would replace the running Wails app, so a plain click is just a caret

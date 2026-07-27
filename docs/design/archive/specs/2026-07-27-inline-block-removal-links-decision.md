@@ -1,7 +1,18 @@
 # Inline block removal — links are special, but not Sieve blocks
 
-**Status:** Designed
-**Tracked:** #67
+> **STATUS: IMPLEMENTED & ARCHIVED (2026-07-28).** Landed on
+> `fix/67-remove-inline-smart-link`, merged to `main` as `d53d44d` (#67 closed;
+> full delta in the issue comments). Three corrections to the design as written:
+> (1) the editor had **no link mark at all** — `StarterKit.configure({link:false})`
+> stripped every `<a href>` on parse, so this decision was inert until the mark was
+> restored; the spec does not mention it. (2) §2's `[Title](url)` is emitted as an
+> **HTML anchor** via a discriminated `PasteResult`, not as markdown text. (3) §3's
+> scope was short by two: `WebClipBlockProcessor` needed the same `ActionPaste`
+> removal as `SmartCardProcessor`, and the context menu's extraction gate excluded
+> prose entirely, leaving the link-aware matching unreachable until fixed.
+
+**Status:** IMPLEMENTED (2026-07-28)
+**Tracked:** #67 (closed)
 **Date:** 2026-07-27
 
 ## Problem

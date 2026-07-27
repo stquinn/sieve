@@ -30,7 +30,7 @@
 //   ProseMirror schema overrides (schema-level, fixed at editor-init time). There
 //   is no `group`/`inline` knob: EVERY registered kind is a top-level member of
 //   the document list (group 'sieveBlock', a <div>). Inline blocks were removed
-//   with smart-link — docs/design/specs/2026-07-27-inline-block-removal-links-decision.md.
+//   with smart-link — docs/design/archive/specs/2026-07-27-inline-block-removal-links-decision.md.
 // @property {Record<string, any>} [attrs]      kind-specific TipTap attr defs (merged with BASE_ATTRS).
 // @property {(data: object) => Record<string, any>} [parseAttrs]
 //   Parsed-YAML → the extra data-* attributes the kind needs on initial parse.
@@ -467,7 +467,7 @@ class NodeViewRegistry {
       // (no bare paragraphs) and, because prose content is the "block" group,
       // excludes sieve blocks from inside prose (kind-homogeneity). EVERY kind is
       // a document-list member: there is no inline mode (removed with smart-link,
-      // docs/design/specs/2026-07-27-inline-block-removal-links-decision.md).
+      // docs/design/archive/specs/2026-07-27-inline-block-removal-links-decision.md).
       group:      'sieveBlock',
       atom:       cfg.atom,
       selectable: cfg.selectable,

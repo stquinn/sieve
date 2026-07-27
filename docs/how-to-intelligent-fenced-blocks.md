@@ -25,7 +25,7 @@ reconciled to the APPROVED **Block Renderer Contract rev 2** —
 `docs/design/archive/specs/2026-07-21-block-renderer-contract.md` is NORMATIVE for
 everything in this section. EVERY structured kind (7 of 7 — the eighth,
 `smart-link`, was deleted by #67 along with the inline block mode itself:
-`docs/design/specs/2026-07-27-inline-block-removal-links-decision.md`)
+`docs/design/archive/specs/2026-07-27-inline-block-removal-links-decision.md`)
 now has a `BlockRenderer` subclass in `block/renderers/` held by a thin
 NodeView adapter in `editor/surfaces/node-views/` (`<kind>-node-view.js` —
 moved+renamed from `processors/<kind>-renderer.js` 2026-07-21: they are

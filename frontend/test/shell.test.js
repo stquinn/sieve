@@ -2290,7 +2290,7 @@ function fakeInsertPosEditorPane(childCount = 2) {
     view: { dispatch(tr) { dispatched.push(tr) } },
     // Every registered kind is a top-level document-list node — there are no
     // inline sieve nodes any more (#67 removed the mode with smart-link,
-    // docs/design/specs/2026-07-27-inline-block-removal-links-decision.md).
+    // docs/design/archive/specs/2026-07-27-inline-block-removal-links-decision.md).
     schema: { nodes: { 'sieve-code': {}, 'sieve-smart-card': {} } },
   }
 }

@@ -32,7 +32,7 @@ const KINDS = [
 ]
 
 // smart-link is GONE (#67 — inline blocks were removed from the framework;
-// docs/design/specs/2026-07-27-inline-block-removal-links-decision.md). Pinned
+// docs/design/archive/specs/2026-07-27-inline-block-removal-links-decision.md). Pinned
 // here so a resurrected module doesn't slip back in unnoticed.
 const REMOVED_KINDS = ['smart-link']
 

@@ -87,7 +87,7 @@ const FORMATTING_GROUPS = Object.freeze([
 
 // LINK_OPTIONS — the StarterKit `link` configuration (issue #67). A link is
 // ORDINARY MARKDOWN, not a Sieve block (see
-// docs/design/specs/2026-07-27-inline-block-removal-links-decision.md), so the
+// docs/design/archive/specs/2026-07-27-inline-block-removal-links-decision.md), so the
 // `link` MARK must exist in the schema: without it PM drops <a> on parse and the
 // href is destroyed on the first load — the "links disappear" symptom #67
 // reports. Every flag below is load-bearing:

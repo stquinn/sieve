@@ -2,7 +2,7 @@
 // the markdown round-trip (issue #67).
 //
 // WHY THIS EXISTS. Links are ordinary markdown, not Sieve blocks
-// (docs/design/specs/2026-07-27-inline-block-removal-links-decision.md). That
+// (docs/design/archive/specs/2026-07-27-inline-block-removal-links-decision.md). That
 // decision is a silent no-op unless the editor SCHEMA carries a `link` mark:
 // StarterKit used to be configured `link: false`, so ProseMirror parsed
 // `<p><a href="…">T</a></p>` down to `<p>T</p>` and the href was destroyed on the
