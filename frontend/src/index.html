@@ -4,9 +4,11 @@
     <meta charset="UTF-8"/>
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
     <title>Sieve</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+    <!-- Self-hosted fonts, first so faces are declared before any stylesheet
+         asks for them. Replaces a Google Fonts fetch of Inter that never
+         resolved here (no TLS backend in WebKitGTK) and was referenced by
+         nothing. See fonts.css. -->
+    <link rel="stylesheet" href="/static/fonts.css">
     <link rel="stylesheet" href="/static/tailwind.css">
     <link rel="stylesheet" href="/theme.css">
     <link rel="stylesheet" href="/static/sidebar.css">

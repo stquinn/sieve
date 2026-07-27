@@ -356,7 +356,12 @@ func (g *Generator) fixedEntries() ([]Entry, error) {
 		return nil, err
 	}
 
-	return []Entry{
+	fontEntries, err := g.bundledFontEntries()
+	if err != nil {
+		return nil, err
+	}
+
+	return append([]Entry{
 		{
 			Name:      "Go standard library & runtime",
 			Version:   goDirective,
@@ -378,7 +383,62 @@ func (g *Generator) fixedEntries() ([]Entry, error) {
 			Source:  "system",
 			Note:    "bundled themes are original palettes inspired by Catppuccin, Gruvbox, Monokai, Darcula, and Tokyo Night; no third-party code is included",
 		},
-	}, nil
+	}, fontEntries...), nil
+}
+
+// bundledFontEntries credits the self-hosted webfaces in frontend/src/static/fonts.
+// Each license text is read from the copy that SHIPS with the font rather than
+// embedded here, so the credited text and the distributed text cannot drift —
+// the OFL requires the license to travel with the font, so that copy has to
+// exist regardless.
+//
+// Versions track the nixpkgs packages the woff2 files were converted from
+// (woff2_compress); bump them here when the committed files are refreshed.
+func (g *Generator) bundledFontEntries() ([]Entry, error) {
+	fonts := []struct{ name, version, copyright, note, license string }{
+		{
+			name: "JetBrains Mono", version: "2.304",
+			copyright: "Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)",
+			note:      "variable webfont (roman + italic); editor and mono face for 12 of the 13 bundled themes",
+			license:   "JetBrainsMono-OFL.txt",
+		},
+		{
+			name: "Cascadia Code", version: "2407.24",
+			copyright: "Copyright (c) 2019 - Present, Microsoft Corporation",
+			note:      "four static faces (regular/bold/italic/bold-italic; upstream publishes no variable build); first choice of the default theme",
+			license:   "CascadiaCode-OFL.txt",
+		},
+		{
+			name: "Fira Code", version: "6.2",
+			copyright: "Copyright (c) 2014, The Fira Code Project Authors (https://github.com/tonsky/FiraCode)",
+			note:      "variable webfont; the second mono fallback every bundled theme names",
+			license:   "FiraCode-OFL.txt",
+		},
+		{
+			name: "Inter", version: "4.1",
+			copyright: "Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)",
+			note:      "variable webfont (roman + italic); self-hosted in place of the former Google Fonts fetch",
+			license:   "Inter-OFL.txt",
+		},
+	}
+
+	entries := make([]Entry, 0, len(fonts))
+	for _, f := range fonts {
+		raw, err := os.ReadFile(filepath.Join(g.repoRoot, "frontend", "src", "static", "fonts", f.license))
+		if err != nil {
+			return nil, fmt.Errorf("reading bundled font license %s: %w", f.license, err)
+		}
+		entries = append(entries, Entry{
+			Name:      f.name,
+			Version:   f.version,
+			License:   "OFL-1.1",
+			Copyright: f.copyright,
+			Source:    "bundled",
+			Note:      f.note + "; embedded in the binary and served from /static/fonts, license shipped alongside at static/fonts/" + f.license,
+			Text:      string(raw),
+		})
+	}
+	return entries, nil
 }
 
 // goModDirective returns the `go` directive from the repo's go.mod (e.g.
