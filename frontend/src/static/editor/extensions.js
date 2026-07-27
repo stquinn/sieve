@@ -118,7 +118,40 @@ var DecorationSet = VENDOR.DecorationSet
                      state.searchTerm !== (oldState && oldState.searchTerm))) {
                   var current = state.results[state.currentIndex]
                   if (current) {
-                    var dom = view.nodeDOM(current.from)
+                    // view.nodeDOM(pos) only resolves when pos sits exactly on a
+                    // child's start boundary (docView.descAt) — a substring match
+                    // almost always starts strictly inside a text node, so it
+                    // bottoms out on a leaf TextViewDesc and returns null; in the
+                    // rare boundary-aligned case it returns a raw DOM Text node,
+                    // which has no .scrollIntoView (only Element does). Either way
+                    // the scroll never fired. domAtPos(pos) resolves an arbitrary
+                    // position; walk up from whatever it returns (often a Text
+                    // node) to the nearest Element and let the browser's own
+                    // scroll-container resolution do the rest.
+                    var located = view.domAtPos(current.from)
+                    var dom = located && located.node
+                    while (dom && dom.nodeType !== 1) dom = dom.parentNode
+                    // A match can resolve to an element that is DETACHED from the
+                    // document: a diagram in render mode leaves its <code>
+                    // contentDOM orphaned (the NodeView still points at it, so
+                    // domAtPos happily returns it), and a detached subtree has no
+                    // geometry anywhere up its chain — climbing the DOM finds
+                    // nothing to scroll to. The doc scan is right to FIND those
+                    // matches (the source really is in the document), so instead
+                    // of dropping them, fall back through the DOC: take the
+                    // top-level block containing the match and scroll its NodeView
+                    // wrapper, which is attached and visible. Navigation then lands
+                    // on the block holding the match rather than silently
+                    // consuming a next-press.
+                    var box = dom && dom.getBoundingClientRect()
+                    var attached = dom && document.contains(dom) && (box.width || box.height)
+                    if (!attached) {
+                      var $pos = view.state.doc.resolve(current.from)
+                      if ($pos.depth >= 1) {
+                        var blockDom = view.nodeDOM($pos.before(1))
+                        if (blockDom && blockDom.nodeType === 1) dom = blockDom
+                      }
+                    }
                     if (dom && dom.scrollIntoView) {
                       dom.scrollIntoView({ behavior: 'smooth', block: 'center' })
                     }
