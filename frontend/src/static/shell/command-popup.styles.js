@@ -162,6 +162,20 @@ export const commandPopupStyles = `
     display: none;
   }
 
+  /* Editor gutter rule suppression (#59). AiBlockRenderer/CommandResultRenderer
+     tag their content wrapper with the bare .tiptap class to inherit the
+     document's markdown typography (tables, headings, code) — but editor.css's
+     .tiptap::before is the MAIN editor's line-gutter separator: a fixed-
+     viewport 1px rule positioned from --sidebar-w/--chrome-w/--editor-top, with
+     no awareness of the popup at all. Reusing the class name pulls that rule in
+     for free, so a second, mispositioned gutter line was bleeding straight down
+     through the dialog. It carries no identity here (there is no gutter to
+     separate), so the host drops it outright, same as the badge/chip chrome.
+     Extra class of specificity out-ranks editor.css deterministically. */
+  .command-popup__body .tiptap::before {
+    display: none;
+  }
+
   /* Tables re-contrasted for THIS surface. The document's .tiptap table rules
      assume the page background (--theme-bg): cell borders in --theme-border2
      and header cells in --theme-bgAlt — but the popup's surface IS bgAlt, so
