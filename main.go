@@ -299,9 +299,45 @@ func buildMenu(app *App) *menu.Menu {
 		})
 	}
 
+	// Find/Replace belongs with the editing verbs, not with View (View is for what
+	// you look at, not what you operate on). Where the Find submenu hangs is forced
+	// by a Wails v2 limitation, so it differs per platform:
+	//
+	//   - menu.EditMenu() is a bare *role marker* with a nil SubMenu — the native
+	//     backend expands it, so nothing can be appended to it.
+	//   - The individual role helpers (Undo/Cut/Copy/Paste/SelectAll) and their
+	//     Role constants are COMMENTED OUT in v2.12.0's pkg/menu/menuroles.go, and
+	//     no backend reads Role at all — so a hand-built Edit menu cannot supply
+	//     native editing items either.
+	//
+	// macOS therefore keeps the role Edit menu (native Undo/Cut/Copy/Paste) and
+	// gets Find as its own top-level menu — a normal idiom for Mac text editors
+	// (Sublime Text, BBEdit). Linux/Windows have no role Edit menu at all today,
+	// so they get the conventional Edit ▸ Find.
+	var find *menu.Menu
 	if isMac {
 		appMenu.Append(menu.EditMenu())
+		find = appMenu.AddSubmenu("Find")
+	} else {
+		find = appMenu.AddSubmenu("Edit").AddSubmenu("Find")
 	}
+	// One accelerator per row, chosen by platform, rather than parallel rows for
+	// both conventions: F3/Shift+F3 is the Windows/Linux idiom, Mod+G/Mod+Shift+G
+	// the macOS one, and on Windows/Linux Ctrl+G conventionally means "go to line".
+	// (A MenuItem carries exactly one Accelerator, and Hidden=true short-circuits
+	// before accelerator registration on every backend — so a hidden duplicate row
+	// would silently never bind its chord.)
+	find.AddText("Find…", keys.CmdOrCtrl("f"), js("window.sieveWorkspace?.toggleSearch()"))
+	if isMac {
+		find.AddText("Find Next", keys.CmdOrCtrl("g"), js("window.sieveWorkspace?.searchNext()"))
+		find.AddText("Find Previous", keys.Combo("g", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveWorkspace?.searchPrev()"))
+	} else {
+		find.AddText("Find Next", keys.Key("f3"), js("window.sieveWorkspace?.searchNext()"))
+		find.AddText("Find Previous", keys.Shift("f3"), js("window.sieveWorkspace?.searchPrev()"))
+	}
+	// Replace… slots in here when #61 lands.
+	find.AddSeparator()
+	find.AddText("Find in Notes…", keys.Combo("f", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveSidebarSearch?.()"))
 
 	view := appMenu.AddSubmenu("View")
 	view.AddText("Toggle Sidebar", keys.CmdOrCtrl("\\"), js("htmx.ajax('POST','/api/session/sidebar/toggle',{swap:'none'})"))
@@ -311,8 +347,6 @@ func buildMenu(app *App) *menu.Menu {
 	view.AddText("Toggle Line Numbers", nil, js("htmx.ajax('POST','/api/session/linenumbers/toggle',{swap:'none'})"))
 	view.AddText("Toggle Editor Mode", keys.Combo("m", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveWorkspace?.activeTab?.editor?.toggleMode()"))
 	view.AddSeparator()
-	view.AddText("Toggle Search", keys.CmdOrCtrl("f"), js("window.sieveWorkspace?.toggleSearch()"))
-	view.AddText("Sidebar Search", keys.Combo("f", keys.CmdOrCtrlKey, keys.ShiftKey), js("window.sieveSidebarSearch?.()"))
 	view.AddText("Toggle AI Blocks", keys.CmdOrCtrl("j"), js("window.sieveWorkspace?.activeTab?.editor?.toggleAiBlocks()"))
 	view.AddText("Quick Switcher", keys.CmdOrCtrl("p"), js("htmx.ajax('GET','/api/search-prompt',{target:'#quickswitcher-dialog-content',swap:'innerHTML'}).then(function(){document.getElementById('quickswitcher-dialog').showModal()})"))
 	view.AddSeparator()

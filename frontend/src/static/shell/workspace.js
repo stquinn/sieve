@@ -569,6 +569,12 @@ export class SieveWorkspace {
   /** Shows/hides the document search overlay (P4.C child). */
   toggleSearch() { this.#searchOverlay?.toggle() }
 
+  /** Advances to the next search match (F3 / Mod+G) — opens the overlay first if closed. */
+  searchNext() { this.#searchOverlay?.next() }
+
+  /** Advances to the previous search match (Shift+F3 / Mod+Shift+G) — opens the overlay first if closed. */
+  searchPrev() { this.#searchOverlay?.prev() }
+
   /**
    * Opens the Insert Web Clip dialog (P4.C child).
    * @param {string} [url] optional href prefill (context-menu link flow)
