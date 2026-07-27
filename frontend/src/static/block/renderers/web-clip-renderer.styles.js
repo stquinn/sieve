@@ -91,7 +91,8 @@ export const webClipStyles = /* css */ `
     flex-wrap: wrap;
     gap: 4px;
     margin-bottom: 10px;
-    font-size: 12px;
+    /* Secondary/meta tier (see editor.css's .tiptap comment) — was 12px. */
+    font-size: calc(var(--doc-size) * 0.75);
   }
 
   .web-clip-block__badge {
@@ -100,7 +101,8 @@ export const webClipStyles = /* css */ `
     left: 12px;
     background: var(--theme-bg);
     padding: 0 6px;
-    font-size: 10px;
+    /* Smallest chrome tier (badges/chips) — was 10px. */
+    font-size: calc(var(--doc-size) * 0.7);
     font-weight: 700;
     letter-spacing: 0.08em;
     color: var(--theme-accentCyan);
@@ -119,13 +121,15 @@ export const webClipStyles = /* css */ `
   }
 
   .web-clip-block__status {
-    font-size: 12px;
+    /* Secondary/meta tier — was 12px. */
+    font-size: calc(var(--doc-size) * 0.75);
     font-weight: 600;
     color: var(--theme-accentCyan);
   }
 
   .web-clip-block__source-link {
-    font-size: 11px;
+    /* Smallest chrome tier — was 11px. */
+    font-size: calc(var(--doc-size) * 0.7);
     color: var(--theme-accentCyan);
     opacity: 0.75;
     text-decoration: none;
@@ -134,12 +138,14 @@ export const webClipStyles = /* css */ `
   .web-clip-block__source-link:hover { opacity: 1; text-decoration: underline; }
 
   .web-clip-block__label {
-    font-size: 12px;
+    /* Secondary/meta tier — was 12px. */
+    font-size: calc(var(--doc-size) * 0.75);
     color: var(--theme-textDim);
   }
 
   .web-clip-block__icon {
-    font-size: 13px;
+    /* Code tier (see .tiptap comment) — was 13px. */
+    font-size: calc(var(--doc-size) * 0.85);
     margin-right: 4px;
   }
   .web-clip-block__icon--warn { color: var(--theme-accentOrange); }
@@ -170,7 +176,8 @@ export const webClipStyles = /* css */ `
     border-radius: 4px;
     color: var(--theme-textDim);
     cursor: pointer;
-    font-size: 11px;
+    /* Smallest chrome tier — was 11px. */
+    font-size: calc(var(--doc-size) * 0.7);
     padding: 3px 10px;
   }
   .web-clip-block__retry:hover {
@@ -189,7 +196,11 @@ export const webClipStyles = /* css */ `
 
   .web-clip-block__content {
     color: var(--theme-text);
-    font-size: 14px;
+    /* Code tier (see .tiptap comment) — was a fixed 14px that never scaled.
+       Not the body/prose tier: this is clipped-page content rendered inside
+       a chrome card, not the primary document text the byte-identical-at-
+       scale-1.0 rule protects. */
+    font-size: calc(var(--doc-size) * 0.85);
     line-height: 1.6;
   }
 

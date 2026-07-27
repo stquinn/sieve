@@ -103,7 +103,9 @@ export const aiBlockStyles = /* css */ `
     left: 12px;
     background: var(--theme-bg);
     padding: 0 6px;
-    font-size: 10px;
+    /* Smallest chrome tier (badges/chips — see editor.css's .tiptap comment)
+       — was a fixed 10px. */
+    font-size: calc(var(--doc-size) * 0.7);
     font-weight: 700;
     letter-spacing: 0.08em;
     color: var(--theme-accentPrimary);
@@ -174,7 +176,9 @@ export const aiBlockStyles = /* css */ `
     border: 1px solid color-mix(in srgb, var(--theme-accentPrimary) 20%, transparent);
     border-radius: 3px;
     padding: 0.1em 0.35em;
-    font-size: 0.88em;
+    /* Normalized onto the code tier (0.85, see .tiptap comment) — was 0.88em,
+       a ~0.4px shift at the default 16px base. */
+    font-size: calc(var(--doc-size) * 0.85);
     color: var(--theme-accentCyan);
   }
 `

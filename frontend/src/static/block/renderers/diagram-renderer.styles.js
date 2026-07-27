@@ -60,7 +60,8 @@ export class DiagramTheme {
   }
 
   .sieve-block--diagram .sieve-block__badge {
-    font-size: 10px;
+    /* Smallest chrome tier (badges/chips — see .tiptap comment) — was 10px. */
+    font-size: calc(var(--doc-size) * 0.7);
     font-family: var(--theme-monoFont);
     color: var(--theme-fg2);
     background: var(--theme-bgLight);
@@ -71,7 +72,7 @@ export class DiagramTheme {
   }
 
   .sieve-block--diagram .sieve-block__type-label {
-    font-size: 10px;
+    font-size: calc(var(--doc-size) * 0.7);
     color: var(--theme-fg3);
     font-family: var(--theme-monoFont);
   }
@@ -84,6 +85,9 @@ export class DiagramTheme {
     align-items: center;
   }
 
+  /* Decorative chevron glyph, not read text — left as a fixed size like
+     .block-chrome-handle's drag icon (editor.css); the font-size scale sweep
+     covers text content, not icon-glyph affordances. */
   .diagram-block__engine-wrap::after {
     content: "▾";
     position: absolute;
@@ -112,7 +116,7 @@ export class DiagramTheme {
     margin: 0;
     padding: 1px 12px 1px 2px;
     font-family: var(--theme-monoFont);
-    font-size: 10px;
+    font-size: calc(var(--doc-size) * 0.7);
     line-height: 1.4;
     color: var(--theme-fg3);
     cursor: pointer;
@@ -143,7 +147,7 @@ export class DiagramTheme {
   }
 
   .diagram-block__toggle-btn {
-    font-size: 10px;
+    font-size: calc(var(--doc-size) * 0.7);
     padding: 0 9px;
     height: 100%;
     display: flex;
@@ -202,7 +206,7 @@ export class DiagramTheme {
     border-right: 1px solid var(--theme-gutterLineColor);
     color: var(--theme-lineNumberColor);
     font-family: var(--theme-monoFont);
-    font-size: 0.85em;
+    font-size: calc(var(--doc-size) * 0.85);
     line-height: 1.6;
     user-select: none;
     flex-shrink: 0;
@@ -227,11 +231,18 @@ export class DiagramTheme {
     min-height: 80px;
   }
 
+  /* Code tier — must equal .sieve-block__gutter above (row-alignment) and
+     CodeTheme's copy (test-pinned, see this file's header). Comment sits
+     outside the declaration block, not before font-size: the parity test
+     parses raw prop/value pairs with no comment-stripping, so a comment
+     placed inside (and differing in wording from CodeTheme's copy) would
+     perturb the property key it compares against — see code-renderer.styles.js's
+     identical gutter/edit comments for the same reason. */
   .sieve-block--diagram .sieve-block__highlight,
   .sieve-block--diagram .sieve-block__edit {
     grid-area: 1 / 1;
     font-family: var(--theme-monoFont);
-    font-size: 0.85em;
+    font-size: calc(var(--doc-size) * 0.85);
     line-height: 1.6;
     padding: 0.85em 1.1em;
     white-space: pre-wrap;
@@ -322,7 +333,8 @@ export class DiagramTheme {
     top: 6px;
     right: 8px;
     font-family: var(--theme-monoFont);
-    font-size: 10px;
+    /* Smallest chrome tier (see editor.css's .tiptap comment) — was 10px. */
+    font-size: calc(var(--doc-size) * 0.7);
     color: var(--theme-fg3);
     background: color-mix(in srgb, var(--theme-bgDark) 85%, transparent);
     border: 1px solid var(--theme-border);
@@ -341,13 +353,15 @@ export class DiagramTheme {
 
   .diagram-block__error-icon {
     color: var(--theme-accentRed);
-    font-size: 14px;
+    /* Code tier (see .tiptap comment) — was 14px. */
+    font-size: calc(var(--doc-size) * 0.85);
     flex-shrink: 0;
     margin-top: 1px;
   }
 
   .diagram-block__error-title {
-    font-size: 12px;
+    /* Secondary/meta tier — was 12px. */
+    font-size: calc(var(--doc-size) * 0.75);
     color: var(--theme-accentRed);
     font-weight: 500;
     margin-bottom: 4px;
@@ -355,7 +369,8 @@ export class DiagramTheme {
 
   .diagram-block__error-msg {
     font-family: var(--theme-monoFont);
-    font-size: 11px;
+    /* Smallest chrome tier — was 11px. */
+    font-size: calc(var(--doc-size) * 0.7);
     color: var(--theme-fg2);
     line-height: 1.5;
     margin-bottom: 10px;
@@ -368,7 +383,8 @@ export class DiagramTheme {
     justify-content: center;
     min-height: 80px;
     color: var(--theme-fg3);
-    font-size: 12px;
+    /* Secondary/meta tier (see .tiptap comment) — was 12px. */
+    font-size: calc(var(--doc-size) * 0.75);
     gap: 8px;
   }
 

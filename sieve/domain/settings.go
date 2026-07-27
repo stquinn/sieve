@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -42,6 +44,7 @@ type Settings struct {
 	PromptTimeouts map[string]int  `json:"prompt_timeouts,omitempty"`
 	AI             AISettings      `json:"ai,omitempty"`
 	Diagram        DiagramSettings `json:"diagram,omitempty"`
+	LookAndFeel    LookAndFeel     `json:"look_and_feel"`
 }
 
 // AISettings groups AI-subsystem settings under a nested "ai" object.
@@ -57,6 +60,140 @@ type AISettings struct {
 type DiagramSettings struct {
 	PlantumlServer string `json:"plantuml_server,omitempty"`
 	DefaultType    string `json:"default_type,omitempty"`
+}
+
+// LookAndFeel overrides theme-supplied presentation values. Every field is
+// three-state: empty means follow the theme. Field names deliberately match
+// the theme-JSON/--theme-<key> variable names they override — Overrides()
+// is a map overlay, not a per-field mapping, so a future key needs only a
+// struct field plus one line in Overrides(), nothing else in the pipeline.
+type LookAndFeel struct {
+	EditorFont       string `json:"editor_font,omitempty"`        // prose
+	MonoFont         string `json:"mono_font,omitempty"`          // code
+	UIFont           string `json:"ui_font,omitempty"`            // chrome
+	EditorScale      string `json:"editor_scale,omitempty"`       // "1.25" — unitless multiplier
+	EditorLineHeight string `json:"editor_line_height,omitempty"` // "1.75"
+	EditorMeasure    string `json:"editor_measure,omitempty"`     // "72ch"
+}
+
+// EditorScaleSteps is the closed set of allowed editor-scale multipliers, in
+// ascending order. Users think in steps ("a bit bigger"), not px — this
+// mirrors macOS Display settings / browser zoom / VS Code. A closed set
+// (rather than a range) also means a hand-edited settings.json cannot
+// persist an illegal intermediate value. 1.0 is the implicit default when
+// EditorScale is unset (follow theme).
+var EditorScaleSteps = []string{"0.85", "0.9", "1.0", "1.1", "1.25", "1.5", "1.75", "2.0"}
+
+// Validation patterns for LookAndFeel fields. These values are written
+// verbatim into a served stylesheet (main.go serveThemeCSS), and settings.json
+// is hand-editable, so Overrides() (not just the settings-save path) must
+// reject anything that could break out of a CSS custom-property value.
+var (
+	lookAndFeelFontPattern       = regexp.MustCompile(`^[A-Za-z0-9 ,"'\-]+$`)
+	lookAndFeelLineHeightPattern = regexp.MustCompile(`^[12](\.[0-9]{1,2})?$`)
+	lookAndFeelMeasurePattern    = regexp.MustCompile(`^(4[89]|[5-9][0-9]|1[0-3][0-9]|140)ch$`)
+)
+
+const lookAndFeelFontMaxLen = 120
+
+// validFont reports whether a font-stack value is safe to emit verbatim into
+// CSS and within the length budget.
+func (l LookAndFeel) validFont(v string) bool {
+	return v != "" && len(v) <= lookAndFeelFontMaxLen && lookAndFeelFontPattern.MatchString(v)
+}
+
+// validScale reports whether v is one of EditorScaleSteps exactly — a closed
+// set, not a range: no intermediate value is legal.
+func (l LookAndFeel) validScale(v string) bool {
+	for _, step := range EditorScaleSteps {
+		if v == step {
+			return true
+		}
+	}
+	return false
+}
+
+// validLineHeight reports whether a unitless line-height is well-formed AND
+// numerically within the sane 1.2-2.4 range (the regex alone admits values
+// like "1.0" or "2.9" that are syntactically fine but outside the range).
+func (l LookAndFeel) validLineHeight(v string) bool {
+	if !lookAndFeelLineHeightPattern.MatchString(v) {
+		return false
+	}
+	n, err := strconv.ParseFloat(v, 64)
+	return err == nil && n >= 1.2 && n <= 2.4
+}
+
+// validMeasure reports whether a measure value ("48ch"-"140ch") is well-formed.
+func (l LookAndFeel) validMeasure(v string) bool {
+	return lookAndFeelMeasurePattern.MatchString(v)
+}
+
+// Overrides returns theme-var name -> value for every field that is set and
+// passes validation. Invalid or unset fields are omitted so the caller's map
+// overlay leaves the theme's own value in place. Validating here (not only on
+// save) means a hand-edited settings.json can never inject arbitrary CSS via
+// the served stylesheet.
+func (l LookAndFeel) Overrides() map[string]string {
+	overrides := make(map[string]string, 6)
+	if l.EditorFont != "" && l.validFont(l.EditorFont) {
+		overrides["editorFont"] = l.EditorFont
+	}
+	if l.MonoFont != "" && l.validFont(l.MonoFont) {
+		overrides["monoFont"] = l.MonoFont
+	}
+	if l.UIFont != "" && l.validFont(l.UIFont) {
+		overrides["uiFont"] = l.UIFont
+	}
+	if l.EditorScale != "" && l.validScale(l.EditorScale) {
+		overrides["editorScale"] = l.EditorScale
+	}
+	if l.EditorLineHeight != "" && l.validLineHeight(l.EditorLineHeight) {
+		overrides["editorLineHeight"] = l.EditorLineHeight
+	}
+	if l.EditorMeasure != "" && l.validMeasure(l.EditorMeasure) {
+		overrides["editorMeasure"] = l.EditorMeasure
+	}
+	return overrides
+}
+
+// StepEditorScale returns a copy of l with EditorScale moved one step through
+// EditorScaleSteps in the given direction, for the "Increase/Decrease/Reset
+// Editor Font" menu accelerators. An unset or invalid EditorScale is treated
+// as sitting at the "1.0" step (the implicit default) before stepping.
+// Stepping clamps at the ends of the set rather than wrapping. dir "reset"
+// (or anything other than "up"/"down") clears the override back to empty
+// (follow theme), regardless of the current value.
+func (l LookAndFeel) StepEditorScale(dir string) LookAndFeel {
+	if dir != "up" && dir != "down" {
+		l.EditorScale = ""
+		return l
+	}
+
+	idx := -1
+	for i, step := range EditorScaleSteps {
+		if l.EditorScale == step {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		// Unset/invalid: anchor at "1.0".
+		for i, step := range EditorScaleSteps {
+			if step == "1.0" {
+				idx = i
+				break
+			}
+		}
+	}
+
+	if dir == "up" && idx < len(EditorScaleSteps)-1 {
+		idx++
+	} else if dir == "down" && idx > 0 {
+		idx--
+	}
+	l.EditorScale = EditorScaleSteps[idx]
+	return l
 }
 
 // ResolveCLI resolves the two things the CLI setting actually drives, which are
@@ -174,6 +311,9 @@ func ParseSettings(data []byte) Settings {
 	if loaded.Diagram.DefaultType != "" {
 		s.Diagram.DefaultType = loaded.Diagram.DefaultType
 	}
+	// LookAndFeel has no non-empty defaults (zero value = follow theme), so the
+	// loaded struct can be assigned wholesale rather than field-by-field.
+	s.LookAndFeel = loaded.LookAndFeel
 	// Overlay persisted containment overrides onto the default profile so the
 	// in-memory settings always carry the full profile (defaults + additions).
 	s.AI.Containment = LoadContainmentProfile(loaded.AI.Containment)

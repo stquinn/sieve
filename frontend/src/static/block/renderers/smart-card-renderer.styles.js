@@ -56,11 +56,13 @@ export const smartCardStyles = /* css */ `
     justify-content: center;
     color: var(--theme-fg3);
     flex-shrink: 0;
-    font-size: 10px;
+    /* Smallest chrome tier (see editor.css's .tiptap comment) — was 10px. */
+    font-size: calc(var(--doc-size) * 0.7);
   }
 
   .smart-card-card__site {
-    font-size: 11px;
+    /* Smallest chrome tier — was 11px. */
+    font-size: calc(var(--doc-size) * 0.7);
     color: var(--theme-fg3);
     font-weight: 500;
     letter-spacing: 0.02em;
@@ -88,7 +90,7 @@ export const smartCardStyles = /* css */ `
     align-items: center;
     justify-content: center;
     color: var(--theme-fg3);
-    font-size: 11px;
+    font-size: calc(var(--doc-size) * 0.7);
   }
 
   .smart-card-card__thumb--spinner {
@@ -114,7 +116,7 @@ export const smartCardStyles = /* css */ `
   }
 
   .smart-card-card__description {
-    font-size: 11px;
+    font-size: calc(var(--doc-size) * 0.7);
     color: var(--theme-fg2);
     line-height: 1.4;
     margin-bottom: 5px;
@@ -125,7 +127,7 @@ export const smartCardStyles = /* css */ `
   }
 
   .smart-card-card__url {
-    font-size: 10px;
+    font-size: calc(var(--doc-size) * 0.7);
     color: var(--theme-fg3);
     white-space: nowrap;
     overflow: hidden;

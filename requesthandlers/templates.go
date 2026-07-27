@@ -32,6 +32,14 @@ func NewTemplates(fsys fs.FS) (*template.Template, error) {
 		"metaRow": func(label, value string) MetaRow {
 			return MetaRow{Label: label, Value: value}
 		},
+		// trimUnit strips a CSS unit suffix so a stored value can populate a bare
+		// <input type="number">. LookAndFeel persists CSS-ready strings ("72ch"),
+		// which is what keeps the theme-var merge a plain map overlay — but a
+		// number input rejects anything non-numeric, so the unit comes off for
+		// display and the save handler puts it back.
+		"trimUnit": func(v string) string {
+			return strings.TrimRight(v, "abcdefghijklmnopqrstuvwxyz%")
+		},
 		"promptVars": PromptVarDocs{}.For,
 		"joinArgs": func(args []string) string {
 			return strings.Join(args, " ")

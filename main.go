@@ -220,14 +220,21 @@ func (m *muxHandler) serveThemeCSS(w http.ResponseWriter, _ *http.Request) {
 
 	themeName := "tokyo-night"
 	var themeOverride []byte
+	var lookAndFeel domain.LookAndFeel
 
 	if m.app.ServiceProvider.State != nil {
 		settings := m.app.ServiceProvider.State.LoadSettings()
 		themeName = settings.Theme
 		themeOverride = m.app.loadThemeOverride(themeName)
+		lookAndFeel = settings.LookAndFeel
 	}
 
 	vars := domain.LoadTheme(themeName, themeOverride, m.app.getThemesFS())
+	// User overrides win over the theme's own values — see LookAndFeel doc
+	// comment for the three-layer precedence model (CSS default < theme < user).
+	for k, v := range lookAndFeel.Overrides() {
+		vars[k] = v
+	}
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("html:root {\n"))
@@ -352,6 +359,21 @@ func buildMenu(app *App) *menu.Menu {
 	view.AddSeparator()
 	view.AddText("Show Toolbar", keys.Combo("t", keys.CmdOrCtrlKey, keys.ShiftKey),
 		js("htmx.ajax('POST','/api/session/toolbar/toggle',{swap:'none'})"))
+	view.AddSeparator()
+	// Editor-scale stepping (LookAndFeel.EditorScaleSteps). This is a settings
+	// mutation, not a transient zoom: the endpoint persists via SaveSettings so
+	// the size survives a restart, then fires the same HX-Trigger:settings:changed
+	// the settings-panel save uses, which busts the /theme.css cache-buster link
+	// (see index.html's settings:changed listener) so the change is visible
+	// immediately. A MenuItem carries exactly one Accelerator (see the Find
+	// comment above), so "Mod+=" is the sole chord for increase — the same key
+	// browsers use for zoom-in, chosen so Shift isn't required on a US layout.
+	view.AddText("Increase Editor Font", keys.CmdOrCtrl("="),
+		js("htmx.ajax('POST','/api/settings/editor-scale/step?dir=up',{swap:'none'})"))
+	view.AddText("Decrease Editor Font", keys.CmdOrCtrl("-"),
+		js("htmx.ajax('POST','/api/settings/editor-scale/step?dir=down',{swap:'none'})"))
+	view.AddText("Reset Editor Font", keys.CmdOrCtrl("0"),
+		js("htmx.ajax('POST','/api/settings/editor-scale/step?dir=reset',{swap:'none'})"))
 
 	tools := appMenu.AddSubmenu("Tools")
 	tools.AddText("Smart Metadata", keys.Combo("m", keys.CmdOrCtrlKey, keys.OptionOrAltKey),

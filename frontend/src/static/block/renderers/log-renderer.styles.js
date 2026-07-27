@@ -70,7 +70,11 @@ export const logStyles = /* css */ `
     border-right: 1px solid var(--theme-gutterLineColor);
     color: var(--theme-lineNumberColor);
     font-family: var(--theme-monoFont);
-    font-size: 0.85em;
+    /* Code tier of the editor's four-tier scale (see editor.css's .tiptap
+       comment) — MUST stay numerically equal to .sieve-block__highlight/
+       __edit below for row-alignment (see code-renderer.styles.js's
+       identical gutter comment; this is log's copy of the same shape). */
+    font-size: calc(var(--doc-size) * 0.85);
     line-height: 1.6;
     user-select: none;
     flex-shrink: 0;
@@ -101,7 +105,8 @@ export const logStyles = /* css */ `
   .sieve-block--log .sieve-block__edit {
     grid-area: 1 / 1;
     font-family: var(--theme-monoFont);
-    font-size: 0.85em;
+    /* Code tier — must match .sieve-block__gutter above (row-alignment). */
+    font-size: calc(var(--doc-size) * 0.85);
     line-height: 1.6;
     padding: 0.85em 1.1em;
     white-space: pre-wrap;
@@ -194,7 +199,8 @@ export const logStyles = /* css */ `
     max-height: 600px;
     padding: 12px 16px;
     font-family: var(--theme-monoFont);
-    font-size: 13px;
+    /* Code tier (see .tiptap comment) — was a fixed 13px that never scaled. */
+    font-size: calc(var(--doc-size) * 0.85);
     line-height: 1.5;
     user-select: text;
     -webkit-user-select: text;
@@ -230,7 +236,8 @@ export const logStyles = /* css */ `
     margin-bottom: 4px;
     border-bottom: 1px solid var(--theme-border);
     text-transform: uppercase;
-    font-size: 11px;
+    /* Smallest chrome tier (see .tiptap comment) — was a fixed 11px. */
+    font-size: calc(var(--doc-size) * 0.7);
     letter-spacing: 0.5px;
     font-weight: bold;
     color: var(--theme-textSubtle);
@@ -256,7 +263,8 @@ export const logStyles = /* css */ `
   }
 
   .log-block__toggle-btn {
-    font-size: 10px;
+    /* Smallest chrome tier (see .tiptap comment) — was a fixed 10px. */
+    font-size: calc(var(--doc-size) * 0.7);
     padding: 0 9px;
     height: 100%;
     display: flex;

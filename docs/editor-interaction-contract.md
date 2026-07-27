@@ -201,6 +201,9 @@ Consequences:
 | Mod+J | View › Toggle AI Blocks | `window.sieveWorkspace?.activeTab?.editor?.toggleAiBlocks()` |
 | Mod+P | View › Quick Switcher | open quick-switcher dialog |
 | Mod+Shift+T | View › Show Toolbar | `htmx.ajax` POST `/api/session/toolbar/toggle` |
+| Mod+= | View › Increase Editor Font | `htmx.ajax` POST `/api/settings/editor-scale/step?dir=up` |
+| Mod+- | View › Decrease Editor Font | `htmx.ajax` POST `/api/settings/editor-scale/step?dir=down` |
+| Mod+0 | View › Reset Editor Font | `htmx.ajax` POST `/api/settings/editor-scale/step?dir=reset` |
 | Mod+Alt+M | Tools › Smart Metadata | `window.SieveAI.smartMetadata()` |
 | Mod+Shift+E | Tools › Smart File | `window.SieveAI.smartFile()` |
 | Mod+Shift+Return | Tools › Keep & Smart File | `window.SieveAI.keepAndSmartFile()` |

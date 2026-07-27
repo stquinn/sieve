@@ -33,7 +33,8 @@ export const commandResultStyles = /* css */ `
 
   .command-result__chip {
     font-family: var(--theme-monoFont);
-    font-size: 12px;
+    /* Secondary/meta tier (see editor.css's .tiptap comment) — was 12px. */
+    font-size: calc(var(--doc-size) * 0.75);
     font-weight: 700;
     letter-spacing: 0.04em;
     color: var(--theme-accentPrimary);
@@ -45,7 +46,8 @@ export const commandResultStyles = /* css */ `
 
   .command-result__badge {
     font-family: var(--theme-monoFont);
-    font-size: 10px;
+    /* Smallest chrome tier (badges/chips) — was 10px. */
+    font-size: calc(var(--doc-size) * 0.7);
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -91,7 +93,8 @@ export const commandResultStyles = /* css */ `
     border: 1px solid color-mix(in srgb, var(--theme-accentPrimary) 20%, transparent);
     border-radius: 3px;
     padding: 0.1em 0.35em;
-    font-size: 0.88em;
+    /* Normalized onto the code tier (0.85) — was 0.88em, ~0.4px shift. */
+    font-size: calc(var(--doc-size) * 0.85);
     color: var(--theme-accentCyan);
   }
 `
