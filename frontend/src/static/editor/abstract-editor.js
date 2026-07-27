@@ -298,6 +298,10 @@ export class AbstractEditor {
     if (t === 'selection-changed' || t === 'transaction' || t === 'focus-changed') {
       const raw = s.feedSelection()
       if (raw) this.#selectionModel.ingest(raw)
+    } else if (t === 'scroll-changed') {
+      // issue #51: its OWN channel — never through ingest (a raw selection
+      // descriptor carries no scroll field and must not be able to reset it).
+      this.#selectionModel.setScroll(s.feedScroll())
     }
     if (t === 'focus-changed') {
       this.#selectionModel.setFocusZone(this.#deriveFocusZone())
@@ -518,7 +522,26 @@ export class AbstractEditor {
    * @param {import('./selection-model.js').SelectionContext} ctx
    */
   applyPosition(ctx) {
-    if (this.#surface) this.#surface.applyPosition(ctx)
+    if (!this.#surface) return
+    this.#surface.applyPosition(ctx)
+    // issue #51: a same-session reload (softReload) preserves scroll the same
+    // way it preserves the caret — ctx is the PRE-reload pulled context, so a
+    // null scroll (never reported yet) is correctly a no-op (applyScroll's
+    // null-guard), not a forced park.
+    this.#surface.applyScroll(ctx && ctx.scroll)
+  }
+
+  /**
+   * Restores (or parks) the document's scroller position on a FRESH load — the
+   * cross-session counterpart to applyPosition's reload-time preserve (issue
+   * #51). Called once, right after the surface presents its content, with the
+   * scroll offset the session had persisted for this document (0 for a
+   * never-scrolled / never-seen tab, which is exactly the park-at-top floor).
+   * Safe no-op when no surface is mounted.
+   * @param {number} value
+   */
+  restoreScroll(value) {
+    if (this.#surface) this.#surface.applyScroll(value)
   }
 
   // ── Mode flip (P2.B: the awaited in-place surface swap) ──────────────────────

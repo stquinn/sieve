@@ -59,6 +59,9 @@ export class SieveWorkspace {
   /** @type {string|null} last hovered block key — dedup for editor:blockhover. */
   #lastHoverKey = null
 
+  /** @type {ReturnType<typeof setTimeout>|null} issue #51 lazy scroll-persist debounce (the active tab only — a background tab has no live editor to report from) */
+  #scrollPersistTimer = null
+
   /** @type {BlockService} the app-wide protocol boundary singleton AND wire
    * owner (contract §service pair; issue #49 Phase 1) — constructed HERE, the
    * composition root, and handed down through editor options → surface →
@@ -320,6 +323,12 @@ export class SieveWorkspace {
     const prev = this.#activeTab
     if (prev && prev.uuid !== uuid) {
       if (prev.editor) {
+        // issue #51: the ONE place a tab's editor goes away (switch OR
+        // teardown) — pull its scroll coordinate and flush it to session.json
+        // BEFORE the SelectionModel that holds it is destroyed. The lazy
+        // debounce (see #syncShell) covers the crash-loss window; this call is
+        // the guaranteed flush for the ordinary switch/close path.
+        this.#persistScroll(prev)
         prev.editor.destroy()
         prev.detachEditor()
       }
@@ -415,6 +424,10 @@ export class SieveWorkspace {
         // (mode-changed does not fire on initial mount — only on an actual flip).
         if (this.#activeTab) this.#activeTab.recordMode(ed.mode)
         document.body.classList.toggle('markdown-mode', ed.mode === 'markdown')
+        // issue #51: restore the session's saved scroll (0 for a never-seen /
+        // never-scrolled tab — the same value the park-at-top floor uses, so
+        // one call serves both).
+        ed.restoreScroll(data.scroll || 0)
       })
       .catch((err) => { console.error('[editor] load failed', err) })
   }
@@ -433,7 +446,16 @@ export class SieveWorkspace {
     const existing = this.getTab(uuid)
     const hadEditor = !!(existing && existing.editor)
     const tab = this.activateDocument(uuid, { onServerMessage: this.routeServerMessage.bind(this) })
-    if (tab && tab.editor && !hadEditor) tab.editor.onEvent(this.onEditorModeEvent.bind(this))
+    if (tab && tab.editor && !hadEditor) {
+      tab.editor.onEvent(this.onEditorModeEvent.bind(this))
+      // issue #51: the lazy crash-safety flush — a debounced persist on top of
+      // the guaranteed one in activateDocument (switch/teardown), so a crash
+      // mid-session loses at most a few seconds of scrolling, not the whole
+      // session. scroll-changed never fires the meaningful selection-update
+      // broadcast (SelectionModel excludes it); this is a SEPARATE listener on
+      // the SAME editor event stream doc-changed/transaction already use.
+      tab.editor.onEvent((e) => { if (e.type === 'scroll-changed') this.#scheduleScrollPersist(tab) })
+    }
   }
 
   /**
@@ -688,6 +710,45 @@ export class SieveWorkspace {
     for (const fn of this.#selectionListeners) {
       try { fn(ctx) } catch (e) { console.error('[SieveWorkspace] selectionUpdate listener threw', e) }
     }
+  }
+
+  /**
+   * Debounces a lazy scroll-persist for the ACTIVE tab (issue #51 crash-safety
+   * floor — "so a crash loses at most a few seconds"). One timer suffices:
+   * only the active tab ever has a live editor to report scroll-changed from
+   * (activateDocument destroys the previous one before a new one attaches).
+   * @param {SieveTab} tab
+   */
+  #scheduleScrollPersist(tab) {
+    if (this.#scrollPersistTimer) clearTimeout(this.#scrollPersistTimer)
+    this.#scrollPersistTimer = setTimeout(() => {
+      this.#scrollPersistTimer = null
+      this.#persistScroll(tab)
+    }, 3000)
+  }
+
+  /**
+   * Pulls a tab's current scroll coordinate (via its editor's SelectionContext
+   * — a PULL, never a push, per the issue #51 design) and persists it to
+   * session.json: POST /api/session/scroll, the existing session-endpoint
+   * pattern (ui/layout.js's /api/session/layout). Fire-and-forget — scroll is
+   * caret-class state, not worth a save-suppression or a swap response.
+   * No-op when the tab has no editor or never reported a scroll (ctx.scroll
+   * null — nothing pulled yet, e.g. the user never scrolled this session).
+   * @param {SieveTab} tab
+   */
+  #persistScroll(tab) {
+    if (this.#scrollPersistTimer) { clearTimeout(this.#scrollPersistTimer); this.#scrollPersistTimer = null }
+    const ctx = tab.editor ? tab.editor.getSelectionContext() : null
+    if (!ctx || ctx.scroll == null) return
+    const params = new URLSearchParams()
+    params.append('id', tab.uuid)
+    params.append('scroll', String(ctx.scroll))
+    fetch('/api/session/scroll', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+    }).catch(() => {})
   }
 
   // ── Workspace-owned chrome children (P4.B: Ask panel; P4.C: dialogs + search) ─

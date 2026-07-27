@@ -9,7 +9,7 @@
 // with a recording fake bundle (the extension list is config, not behavior).
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { EditorState } from '@tiptap/pm/state'
+import { EditorState, TextSelection } from '@tiptap/pm/state'
 import { DOMParser as PMDOMParser, Schema } from '@tiptap/pm/model'
 
 // P4.E: WysiwygSurface now imports its app helpers from their OWNING modules (the
@@ -1058,26 +1058,37 @@ describe('WysiwygSurface blockCursor capture + applyPosition (P3.E)', () => {
   })
 })
 
-describe('WysiwygSurface.reloadFromBlocks — load render parks the caret at the TOP', () => {
+describe('WysiwygSurface.reloadFromBlocks — load render parks the caret+scroll at the TOP (issue #51)', () => {
   // A whole-doc replaceWith maps the prior selection to the END of the new
   // content; left there, the mount/reload focus scrolls every opened document
   // to its bottom (defect observed 2026-07-22: "documents always open scrolled
   // to the end"). A load is not an edit — the caret belongs at the doc start.
-  // softReload's own caret restore runs AFTER reloadFromBlocks, so genuine
-  // mid-session reloads still put the caret back where the user had it.
+  //
+  // issue #51 root-caused the SCROLL half of this: a captured WebKitGTK stack
+  // trace showed ProseMirror's own updateStateInner PRESERVING the scroller's
+  // prior offset across the replace (its default for what looks like an
+  // ordinary edit) unless the transaction's scrollToSelection counter
+  // advanced. The fix folds the caret reset AND `tr.scrollIntoView()` into the
+  // SAME transaction as the replace — no separate post-dispatch
+  // commands.setTextSelection call (that would be a second, later transaction
+  // PM has no reason to scroll for). softReload's own caret/scroll restore
+  // runs AFTER reloadFromBlocks, so genuine mid-session reloads still put the
+  // user back where they had been.
   beforeEach(() => {
     vi.useFakeTimers()
-    seedVendor({ ProseMirrorDOMParser: PMDOMParser })
+    seedVendor({ ProseMirrorDOMParser: PMDOMParser, TextSelection })
   })
 
-  it('resets the selection to doc start AFTER the whole-doc replace', () => {
+  it('the dispatched transaction carries the doc-start selection AND requests scrollIntoView', () => {
     const ed = fakeEditorOver(fxSchema, [build.p('old content', 'b1')])
     const s = new TestWysiwygSurface('doc-1', wyHost(), ed)
     s.reloadFromBlocks([new SieveBlock('prose', { id: 'p1', content: 'hello' })])
-    const di = ed.calls.findIndex((c) => c[0] === 'dispatch')
-    const si = ed.calls.findIndex((c) => c[0] === 'setTextSelection')
-    expect(di).toBeGreaterThanOrEqual(0)
-    expect(si).toBeGreaterThan(di)   // reset comes after the replace landed
-    expect(ed.calls[si][1]).toBe(0)  // doc start (TipTap clamps to the first valid position)
+    expect(ed.dispatched).toHaveLength(1)
+    const tr = ed.dispatched[0]
+    expect(tr.scrolledIntoView).toBe(true) // PM itself takes the "scroll to selection" branch
+    expect(tr.selection.from).toBe(TextSelection.atStart(tr.doc).from) // doc start, not the replace's default end-of-content
+    // The old two-dispatch mechanism (a separate commands.setTextSelection(0)
+    // AFTER the replace landed) is retired — everything rides one transaction.
+    expect(ed.calls.some((c) => c[0] === 'setTextSelection')).toBe(false)
   })
 })

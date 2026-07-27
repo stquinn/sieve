@@ -23,6 +23,7 @@ func (h *SessionHandler) RegisterPaths(r chi.Router) {
 	r.Post("/api/session/linenumbers/toggle", h.handleLineNumbersToggle)
 	r.Post("/api/session/askpanel/toggle", h.handleAskPanelToggle)
 	r.Post("/api/session/layout", h.handleSessionLayout)
+	r.Post("/api/session/scroll", h.handleSessionScroll)
 	r.Post("/api/session/refresh", h.handleSessionRefresh)
 	r.Get("/api/library/switch-layout", h.handleSwitchLayout)
 }
@@ -99,6 +100,32 @@ func (h *SessionHandler) handleSessionLayout(w http.ResponseWriter, r *http.Requ
 	}
 
 	_ = h.ServiceProvider.State.SaveSession(session)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleSessionScroll persists one tab's scroll offset (Tab.Scroll) — the
+// per-user VIEW coordinate a surface debounces up while the user scrolls, plus
+// the Workspace's pull at tab-deactivation/teardown (see selection-model.js's
+// scroll field + workspace.js #persistScroll). Silent: no broadcast, no swap
+// body — this is caret-class state, not a shared UI change. A tab id that no
+// longer exists in the session (closed mid-flight) is a harmless no-op.
+func (h *SessionHandler) handleSessionScroll(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("id")
+	scroll, err := strconv.Atoi(r.FormValue("scroll"))
+	if id == "" || err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	session := h.ServiceProvider.State.LoadSession()
+	for i, t := range session.Tabs {
+		if t.ID == id {
+			session.Tabs[i].Scroll = scroll
+			_ = h.ServiceProvider.State.SaveSession(session)
+			break
+		}
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 

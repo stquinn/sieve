@@ -148,6 +148,21 @@ export class WysiwygSurface extends AbstractSurface {
   #onDocSelectionChange = null
 
   /**
+   * The scrollable ancestor #htmx-editor — the shell's persistent editor
+   * scroller (CLAUDE.md verified fact, issue #51), NOT this surface's own root
+   * (#tiptap-mount is a flex child with no overflow of its own). Resolved at
+   * mount time; null once unmounted.
+   * @type {HTMLElement|null}
+   */
+  #scroller = null
+
+  /** @type {(() => void)|null} the scroller's debounced 'scroll' handler — stored so unmount removes it */
+  #onScroll = null
+
+  /** @type {ReturnType<typeof setTimeout>|null} scroll-report debounce (issue #51) */
+  #scrollTimer = null
+
+  /**
    * @param {AbstractEditor} host — the parent editor (supplies uuid + the public API)
    */
   constructor(host) {
@@ -637,6 +652,23 @@ export class WysiwygSurface extends AbstractSurface {
     // added (revisit only if the smoke shows churn).
     this.#onDocSelectionChange = function () { self.#host.onSurfaceEvent(SurfaceEvent.SELECTION_CHANGED) }
     document.addEventListener('selectionchange', this.#onDocSelectionChange)
+
+    // issue #51: debounce-report the shell scroller's position into the
+    // SelectionModel (silent — see SurfaceEvent.SCROLL_CHANGED). #htmx-editor
+    // is the PERSISTENT scroll ancestor (CLAUDE.md verified fact); rootEl
+    // (#tiptap-mount) never scrolls itself. Absent in a bare/test mount — the
+    // surface simply never reports (feedScroll/applyScroll stay no-ops).
+    this.#scroller = document.getElementById('htmx-editor')
+    if (this.#scroller) {
+      this.#onScroll = function () {
+        if (self.#scrollTimer) clearTimeout(self.#scrollTimer)
+        self.#scrollTimer = setTimeout(function () {
+          self.#scrollTimer = null
+          self.#host.onSurfaceEvent(SurfaceEvent.SCROLL_CHANGED)
+        }, 300)
+      }
+      this.#scroller.addEventListener('scroll', this.#onScroll, { passive: true })
+    }
   }
 
   /**
@@ -650,6 +682,10 @@ export class WysiwygSurface extends AbstractSurface {
       document.removeEventListener('selectionchange', this.#onDocSelectionChange)
       this.#onDocSelectionChange = null
     }
+    if (this.#scrollTimer) { clearTimeout(this.#scrollTimer); this.#scrollTimer = null }
+    if (this.#scroller && this.#onScroll) this.#scroller.removeEventListener('scroll', this.#onScroll)
+    this.#scroller = null
+    this.#onScroll = null
     if (this.#editorPane) {
       this.#editorPane.destroy()
       this.#editorPane = null
@@ -658,6 +694,31 @@ export class WysiwygSurface extends AbstractSurface {
     this.#rootEl = null
     this.#blockContentCache = null
     window.__tiptap = null
+  }
+
+  /**
+   * @override — the shell scroller's current position, or null when absent
+   * (unmounted / bare test mount). issue #51.
+   * @returns {number|null}
+   */
+  feedScroll() { return this.#scroller ? this.#scroller.scrollTop : null }
+
+  /**
+   * @override — restores (or parks) the shell scroller's position. Deferred
+   * two animation frames: the surface's content is synchronously rendered by
+   * mount()/reloadFromBlocks BEFORE this runs, but the browser has not yet laid
+   * it out — an immediate scrollTop assignment silently clamps to 0 against a
+   * not-yet-tall scrollHeight (issue #51). null/undefined ⇒ nothing to
+   * restore (leave the natural scroll alone); 0 is a real park-at-top value.
+   * @param {number|null|undefined} value
+   */
+  applyScroll(value) {
+    if (value == null) return
+    const scroller = this.#scroller
+    if (!scroller) return
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { scroller.scrollTop = value })
+    })
   }
 
   /**
@@ -1544,6 +1605,7 @@ export class WysiwygSurface extends AbstractSurface {
    */
   #renderBlocksIntoEditor(editorPane, blocks, opts) {
     var self = this
+    var T = this.#T
     var nodes = []
     ;(blocks || []).forEach(function (b) {
       self.#blockToNodes(editorPane, b).forEach(function (n) { nodes.push(n) })
@@ -1553,14 +1615,31 @@ export class WysiwygSurface extends AbstractSurface {
     var tr = editorPane.state.tr
     tr.replaceWith(0, editorPane.state.doc.content.size, replacement)
     tr.setMeta('addToHistory', false)
-    editorPane.view.dispatch(tr)
     // The whole-doc replace maps the prior selection to the END of the new
-    // content; left there, the next focus scrolls every opened document to its
-    // bottom. A load is not an edit — park the caret at the doc start (TipTap
-    // clamps 0 to the first valid position; selection-only, no history step).
-    // softReload's own caret restore runs AFTER this, so genuine mid-session
-    // reloads still return the caret to where the user had it.
-    try { editorPane.commands.setTextSelection(0) } catch (_) {}
+    // content; a load is not an edit — park the caret at the doc start (TipTap
+    // clamps 0 to the first valid position) IN THE SAME transaction.
+    //
+    // issue #51 root cause (confirmed via a captured WebKitGTK stack trace
+    // through tiptap.js's dispatchTransaction → updateStateInner): PM's view
+    // DEFAULTS to PRESERVING the scroller's prior offset across a state update
+    // (the ordinary-edit assumption) UNLESS the transaction's scrollToSelection
+    // counter advanced — so an unadorned replace silently carried the PREVIOUS
+    // document's scroll position into this one (why the symptom was "no
+    // consistency": different previous doc → different landing spot, not
+    // literally "always the bottom"). `scrollIntoView()` bumps that counter, so
+    // updateStateInner takes its "scroll to selection" branch and moves the
+    // viewport ITSELF, inside this SAME dispatch — never assign scrollTop
+    // after the fact; that would race PM's own restore rather than replacing
+    // it. softReload's own caret/scroll restore (applyPosition/applyScroll)
+    // runs AFTER this, so a genuine mid-session reload still returns the user
+    // to their prior spot; a fresh document LOAD instead restores from the
+    // session's saved Tab.Scroll (workspace.js initEditor → editor.restoreScroll),
+    // deferred past PM's own scroll via the surface's double-rAF applyScroll.
+    try {
+      tr.setSelection(T.TextSelection.atStart(tr.doc))
+      tr.scrollIntoView()
+    } catch (_) {}
+    editorPane.view.dispatch(tr)
   }
 
   // ── Block-sync cache (verbatim mountWysiwyg internals) ─────────────────────────
