@@ -11,6 +11,15 @@
         "GOCACHE": "/home/stephen/.cache/go-build",
         "GOMODCACHE": "/home/stephen/go/pkg/mod"
       }
+    },
+    "chrome-devtools": {
+      "command": "npx",
+      "args": [
+        "chrome-devtools-mcp@1.6.0",
+        "--executablePath=/home/stephen/.nix-profile/bin/google-chrome-stable",
+        "--headless",
+        "--isolated"
+      ]
     }
   }
 }
