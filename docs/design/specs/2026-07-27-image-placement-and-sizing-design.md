@@ -1,8 +1,9 @@
 # Image placement and sizing — natural size, assets-tab drop, resize handles
 
 **Status:** Designed
-**Tracked:** #53 (sizing), #34 (convert). The drag-drop and resize sections
-need a feature issue filed at pickup.
+**Tracked:** #53 (section 1 — ingest sizing + renderer floor), #68 (sections 3
+and 4 — assets-tab drag-drop + two-axis resize), #34 (convert path; may be two
+separate defects — see that issue).
 **Date:** 2026-07-27
 
 ## Problem
