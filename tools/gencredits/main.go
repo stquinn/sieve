@@ -420,6 +420,54 @@ func (g *Generator) bundledFontEntries() ([]Entry, error) {
 			note:      "variable webfont (roman + italic); self-hosted in place of the former Google Fonts fetch",
 			license:   "Inter-OFL.txt",
 		},
+		{
+			name: "Source Code Pro", version: "2.042",
+			copyright: "© 2023 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'. All Rights Reserved. Source is a trademark of Adobe in the United States and/or other countries.",
+			note:      "four static faces (regular/bold/italic/bold-italic; upstream publishes no variable build); monospace option in the font settings",
+			license:   "SourceCodePro-OFL.txt",
+		},
+		{
+			name: "IBM Plex Mono", version: "2.005",
+			copyright: `Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"`,
+			note:      "four static faces (regular/bold/italic/bold-italic; upstream publishes no variable build); monospace option in the font settings",
+			license:   "IBMPlexMono-OFL.txt",
+		},
+		{
+			name: "Inconsolata", version: "3.001",
+			copyright: "Copyright 2006 The Inconsolata Project Authors (https://github.com/cyrealtype/Inconsolata)",
+			note:      "variable webfont, normal style only (upstream ships no italic); monospace option in the font settings",
+			license:   "Inconsolata-OFL.txt",
+		},
+		{
+			name: "IBM Plex Sans", version: "3.000",
+			copyright: `Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"`,
+			note:      "variable webfont (roman + italic); sans option in the font settings",
+			license:   "IBMPlexSans-OFL.txt",
+		},
+		{
+			name: "Source Sans 3", version: "3.052",
+			copyright: "Copyright 2010-2024 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'. All Rights Reserved. Source is a trademark of Adobe in the United States and/or other countries.",
+			note:      "variable webfont (roman + italic); sans option in the font settings",
+			license:   "SourceSans3-OFL.txt",
+		},
+		{
+			name: "IBM Plex Serif", version: "1.000",
+			copyright: `Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"`,
+			note:      "variable webfont (roman + italic); serif option in the font settings",
+			license:   "IBMPlexSerif-OFL.txt",
+		},
+		{
+			name: "Source Serif Pro", version: "3.001",
+			copyright: "Copyright 2014 - 2023 Adobe (http://www.adobe.com/), with Reserved Font Name ‘Source’. All Rights Reserved. Source is a trademark of Adobe in the United States and/or other countries.",
+			note:      "variable webfont (roman + italic); serif option in the font settings. nixpkgs's source-serif-pro tops out at 3.001, the last release before the project's 4.x rebrand to \"Source Serif 4\"",
+			license:   "SourceSerifPro-OFL.txt",
+		},
+		{
+			name: "Merriweather", version: "2.200",
+			copyright: `Copyright 2016 The Merriweather Project Authors (https://github.com/EbenSorkin/Merriweather), with Reserved Font Name "Merriweather".`,
+			note:      "variable webfont (roman + italic; 3-axis build: optical size + width + weight); serif option in the font settings",
+			license:   "Merriweather-OFL.txt",
+		},
 	}
 
 	entries := make([]Entry, 0, len(fonts))

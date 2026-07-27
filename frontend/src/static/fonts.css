@@ -10,20 +10,24 @@
  * machine, unless the user happened to install them by hand.
  *
  * Every family a theme can name is now bundled, so a theme's declared typography
- * is what you actually get.
+ * is what you actually get. The settings dialog's three font dropdowns (editor,
+ * mono, ui) additionally offer a wider set of monospace/sans/serif families for
+ * personal preference, self-hosted the same way.
  *
  * VARIABLE where upstream publishes one: a single file then covers the whole
  * weight axis, and `font-weight: <min> <max>` on the @font-face is what tells the
- * engine to synthesise any weight in that range from it. Cascadia Code has no
- * variable build in nixpkgs, so it ships as four static faces instead.
+ * engine to synthesise any weight in that range from it. Where upstream ships no
+ * variable build (Cascadia Code, Source Code Pro, IBM Plex Mono), the family
+ * ships as four static faces instead (regular/bold/italic/bold-italic).
  *
  * Converted from the nixpkgs font packages with woff2_compress. To refresh, see
  * the note in tools/gencredits (versions are credited there and must be kept in
  * step with what is committed here).
  *
- * Licensing: all four are SIL OFL 1.1. The OFL requires the license to travel
- * with the font, so each ships its own text alongside (fonts/<Family>-OFL.txt)
- * and each is credited in third-party-licenses.json via tools/gencredits.
+ * Licensing: every bundled family is SIL OFL 1.1. The OFL requires the license
+ * to travel with the font, so each ships its own text alongside
+ * (fonts/<Family>-OFL.txt) and each is credited in third-party-licenses.json via
+ * tools/gencredits.
  */
 
 /* ---- JetBrains Mono — editor + mono face in 12 of 13 themes ---- */
@@ -81,6 +85,78 @@
   font-display: swap;
 }
 
+/* ---- Source Code Pro — Adobe's monospace; upstream ships no variable build,
+   so four static faces (regular/bold/italic/bold-italic), matching Cascadia
+   Code's treatment. ---- */
+@font-face {
+  font-family: 'Source Code Pro';
+  src: url('/static/fonts/SourceCodePro-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Source Code Pro';
+  src: url('/static/fonts/SourceCodePro-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Source Code Pro';
+  src: url('/static/fonts/SourceCodePro-Italic.woff2') format('woff2');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Source Code Pro';
+  src: url('/static/fonts/SourceCodePro-BoldItalic.woff2') format('woff2');
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* ---- IBM Plex Mono — no variable build upstream, four static faces ---- */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('/static/fonts/IBMPlexMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('/static/fonts/IBMPlexMono-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('/static/fonts/IBMPlexMono-Italic.woff2') format('woff2');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  src: url('/static/fonts/IBMPlexMono-BoldItalic.woff2') format('woff2');
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* ---- Inconsolata — variable webfont; upstream ships no italic (browsers
+   synthesise an oblique if one is requested), so one @font-face only. ---- */
+@font-face {
+  font-family: 'Inconsolata';
+  src: url('/static/fonts/Inconsolata-Variable.woff2') format('woff2');
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* ---- Inter — the face the old Google Fonts link was fetching. Declared so it
    is available to theme uiFont stacks; no theme names it yet, so nothing loads
    these files until one does (font-display/lazy fetch means an unreferenced
@@ -96,6 +172,91 @@
   font-family: 'Inter';
   src: url('/static/fonts/Inter-Italic-Variable.woff2') format('woff2');
   font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* ---- IBM Plex Sans — variable webfont (roman + italic); UI/prose sans ---- */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  src: url('/static/fonts/IBMPlexSans-Variable.woff2') format('woff2');
+  font-weight: 100 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'IBM Plex Sans';
+  src: url('/static/fonts/IBMPlexSans-Italic-Variable.woff2') format('woff2');
+  font-weight: 100 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* ---- Source Sans 3 — variable webfont (roman + italic); UI/prose sans ---- */
+@font-face {
+  font-family: 'Source Sans 3';
+  src: url('/static/fonts/SourceSans3-Variable.woff2') format('woff2');
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Source Sans 3';
+  src: url('/static/fonts/SourceSans3-Italic-Variable.woff2') format('woff2');
+  font-weight: 200 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* ---- IBM Plex Serif — variable webfont (roman + italic); prose serif ---- */
+@font-face {
+  font-family: 'IBM Plex Serif';
+  src: url('/static/fonts/IBMPlexSerif-Variable.woff2') format('woff2');
+  font-weight: 100 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'IBM Plex Serif';
+  src: url('/static/fonts/IBMPlexSerif-Italic-Variable.woff2') format('woff2');
+  font-weight: 100 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* ---- Source Serif Pro — variable webfont (roman + italic); prose serif.
+   Adobe's nixpkgs packaging (source-serif-pro) tops out at 3.001, the last
+   release before the project's 4.x rebrand to "Source Serif 4" — shipped
+   under its actual upstream name rather than the newer one it predates. ---- */
+@font-face {
+  font-family: 'Source Serif Pro';
+  src: url('/static/fonts/SourceSerifPro-Variable.woff2') format('woff2');
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Source Serif Pro';
+  src: url('/static/fonts/SourceSerifPro-Italic-Variable.woff2') format('woff2');
+  font-weight: 200 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* ---- Merriweather — variable webfont (roman + italic); prose serif. Ships
+   a 3-axis build (optical size + width + weight upstream), so its files run
+   larger than the other variable faces here. ---- */
+@font-face {
+  font-family: 'Merriweather';
+  src: url('/static/fonts/Merriweather-Variable.woff2') format('woff2');
+  font-weight: 300 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Merriweather';
+  src: url('/static/fonts/Merriweather-Italic-Variable.woff2') format('woff2');
+  font-weight: 300 900;
   font-style: italic;
   font-display: swap;
 }
