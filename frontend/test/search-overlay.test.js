@@ -171,6 +171,101 @@ describe('SearchOverlay — find / next / prev / clear via surface commands', ()
   })
 })
 
+describe('SearchOverlay — accessible names on the glyph buttons (#61)', () => {
+  it('↑ / ↓ / ✕ carry aria-label + title', () => {
+    const ws = fakeWorkspace()
+    const overlay = new SearchOverlay(ws)
+    overlay.toggle(); overlay.toggle() // show
+    const el = overlayEl()
+    const prevBtn = [...el.querySelectorAll('.editor-search__btn')].find((b) => b.textContent === '↑')
+    const nextBtn = [...el.querySelectorAll('.editor-search__btn')].find((b) => b.textContent === '↓')
+    const closeBtn = el.querySelector('.editor-search__close')
+    expect(prevBtn.getAttribute('aria-label')).toBe('Find previous')
+    expect(prevBtn.title).toBe('Find previous')
+    expect(nextBtn.getAttribute('aria-label')).toBe('Find next')
+    expect(nextBtn.title).toBe('Find next')
+    expect(closeBtn.getAttribute('aria-label')).toBe('Close search')
+    expect(closeBtn.title).toBe('Close search')
+  })
+})
+
+describe('SearchOverlay — public next()/prev() verbs (F3 / Mod+G accelerators, #61)', () => {
+  it('next() opens a CLOSED overlay instead of searching blind', () => {
+    const ws = fakeWorkspace()
+    const overlay = new SearchOverlay(ws)
+    overlay.next()
+    const el = overlayEl()
+    expect(el).toBeTruthy()
+    expect(el.style.display).toBe('flex')
+    expect(document.activeElement).toBe(el.querySelector('input'))
+    // No search was actually driven — just opened.
+    expect(ws._editor.searchNext).not.toHaveBeenCalled()
+  })
+
+  it('prev() opens a CLOSED overlay instead of searching blind', () => {
+    const ws = fakeWorkspace()
+    const overlay = new SearchOverlay(ws)
+    overlay.prev()
+    const el = overlayEl()
+    expect(el.style.display).toBe('flex')
+    expect(ws._editor.searchPrev).not.toHaveBeenCalled()
+  })
+
+  it('next() on an OPEN overlay advances the match and refreshes the n/N stats', () => {
+    const ws = fakeWorkspace()
+    const overlay = new SearchOverlay(ws)
+    overlay.toggle(); overlay.toggle() // show
+    overlay.next()
+    expect(ws._editor.searchNext).toHaveBeenCalled()
+    expect(ws._editorPane.commands.nextSearchResult).toHaveBeenCalled()
+    expect(overlayEl().querySelector('.editor-search__stats').textContent).toBe('2/3')
+  })
+
+  it('prev() on an OPEN overlay advances the match and refreshes the n/N stats', () => {
+    const ws = fakeWorkspace()
+    const overlay = new SearchOverlay(ws)
+    overlay.toggle(); overlay.toggle() // show
+    overlay.prev()
+    expect(ws._editor.searchPrev).toHaveBeenCalled()
+    expect(ws._editorPane.commands.prevSearchResult).toHaveBeenCalled()
+    expect(overlayEl().querySelector('.editor-search__stats').textContent).toBe('2/3')
+  })
+
+  it('next()/prev() null-guard a missing active editor once opened', () => {
+    const ws = fakeWorkspace({ editor: false })
+    const overlay = new SearchOverlay(ws)
+    overlay.next() // opens (no editor to search)
+    expect(overlayEl().style.display).toBe('flex')
+    expect(() => overlay.next()).not.toThrow()
+    expect(() => overlay.prev()).not.toThrow()
+  })
+})
+
+describe('SearchOverlay — open()/close() public verbs', () => {
+  it('open() shows the overlay and focuses the input directly (no toggle needed)', () => {
+    const overlay = new SearchOverlay(fakeWorkspace())
+    overlay.open()
+    const el = overlayEl()
+    expect(el.style.display).toBe('flex')
+    expect(document.activeElement).toBe(el.querySelector('input'))
+  })
+
+  it('close() hides the overlay and clears the search', () => {
+    const ws = fakeWorkspace()
+    const overlay = new SearchOverlay(ws)
+    overlay.open()
+    overlay.close()
+    expect(overlayEl().style.display).toBe('none')
+    expect(ws._editor.clearSearch).toHaveBeenCalled()
+  })
+
+  it('close() on a never-opened overlay is a no-op (no DOM yet)', () => {
+    const overlay = new SearchOverlay(fakeWorkspace())
+    expect(() => overlay.close()).not.toThrow()
+    expect(overlayEl()).toBeNull()
+  })
+})
+
 describe('SearchOverlay — markdown mode is a stub (no surface commands)', () => {
   it('typing in markdown mode does NOT reach the surface search commands', () => {
     const editorPane = fakeEditorPane()

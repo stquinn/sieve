@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -89,6 +90,232 @@ func TestParseSettings_IgnoresRemovedCLITimeout(t *testing.T) {
 func TestDefaultSettings_CLITimeoutLong(t *testing.T) {
 	if got := DefaultSettings().CLITimeoutLong; got != 60 {
 		t.Errorf("DefaultSettings().CLITimeoutLong = %d, want 60", got)
+	}
+}
+
+// LookAndFeel.Overrides() is a map overlay onto theme vars: only set, valid
+// fields appear; an empty struct (the default, "follow the theme" for every
+// field) yields an empty map.
+func TestLookAndFeel_Overrides_Empty(t *testing.T) {
+	got := LookAndFeel{}.Overrides()
+	if len(got) != 0 {
+		t.Errorf("Overrides() on zero value = %v, want empty map", got)
+	}
+}
+
+func TestLookAndFeel_Overrides_SetFields(t *testing.T) {
+	l := LookAndFeel{
+		EditorFont:       `"JetBrains Mono", monospace`,
+		MonoFont:         `"Fira Code", monospace`,
+		UIFont:           "ui-sans-serif, system-ui, sans-serif",
+		EditorScale:      "1.25",
+		EditorLineHeight: "1.6",
+		EditorMeasure:    "72ch",
+	}
+	got := l.Overrides()
+	want := map[string]string{
+		"editorFont":       `"JetBrains Mono", monospace`,
+		"monoFont":         `"Fira Code", monospace`,
+		"uiFont":           "ui-sans-serif, system-ui, sans-serif",
+		"editorScale":      "1.25",
+		"editorLineHeight": "1.6",
+		"editorMeasure":    "72ch",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("Overrides() = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("Overrides()[%q] = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
+// Overrides() must drop each field independently, not fail the whole map, so
+// one bad hand-edited key degrades only itself to the theme value.
+func TestLookAndFeel_Overrides_PartiallySet(t *testing.T) {
+	l := LookAndFeel{EditorScale: "1.5"}
+	got := l.Overrides()
+	if len(got) != 1 || got["editorScale"] != "1.5" {
+		t.Errorf("Overrides() = %v, want only editorScale=1.5", got)
+	}
+}
+
+func TestLookAndFeel_ValidFont(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{"simple family", "Inter", true},
+		{"quoted stack", `"JetBrains Mono", monospace`, true},
+		{"apostrophe quoted", "'Fira Code', monospace", true},
+		{"hyphenated", "ui-sans-serif, system-ui, sans-serif", true},
+		{"empty", "", false},
+		{"semicolon injection", `Inter"; } body { display:none`, false},
+		{"brace injection", "16px; } body { display:none", false},
+		{"angle bracket", "<script>alert(1)</script>", false},
+		{"parens", "Inter(evil)", false},
+		{"too long", strings.Repeat("a", 121), false},
+		{"exactly max len", strings.Repeat("a", 120), true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			l := LookAndFeel{EditorFont: c.value}
+			_, ok := l.Overrides()["editorFont"]
+			if ok != c.want {
+				t.Errorf("validFont(%q) accepted=%v, want %v", c.value, ok, c.want)
+			}
+		})
+	}
+}
+
+func TestLookAndFeel_ValidScale(t *testing.T) {
+	cases := []struct {
+		value string
+		want  bool
+	}{
+		{"0.85", true}, {"0.9", true}, {"1.0", true}, {"1.1", true},
+		{"1.25", true}, {"1.5", true}, {"1.75", true}, {"2.0", true},
+		{"1", false},     // not a member of the closed set (must be "1.0")
+		{"1.3", false},   // illegal intermediate value
+		{"0.5", false},   // below range
+		{"3.0", false},   // above range
+		{"", false},      // unset — Overrides() should omit, not include ""
+		{"1.0; }", false}, // injection attempt
+	}
+	for _, c := range cases {
+		t.Run(c.value, func(t *testing.T) {
+			l := LookAndFeel{EditorScale: c.value}
+			_, ok := l.Overrides()["editorScale"]
+			if ok != c.want {
+				t.Errorf("validScale(%q) accepted=%v, want %v", c.value, ok, c.want)
+			}
+		})
+	}
+}
+
+func TestLookAndFeel_ValidLineHeight(t *testing.T) {
+	cases := []struct {
+		value string
+		want  bool
+	}{
+		{"1.2", true}, {"1.75", true}, {"2.4", true}, {"2", true},
+		{"1", false},      // regex-shaped ("[12]") but 1.0 < the 1.2 floor
+		{"1.19", false},   // just below range
+		{"2.41", false},   // just above range
+		{"1.0", false},    // out of the 1.2-2.4 range even though regex-shaped
+		{"", false},
+		{"1.5;}", false},
+		{`1.5"; body{display:none}`, false},
+	}
+	for _, c := range cases {
+		t.Run(c.value, func(t *testing.T) {
+			l := LookAndFeel{EditorLineHeight: c.value}
+			_, ok := l.Overrides()["editorLineHeight"]
+			if ok != c.want {
+				t.Errorf("validLineHeight(%q) accepted=%v, want %v", c.value, ok, c.want)
+			}
+		})
+	}
+}
+
+func TestLookAndFeel_ValidMeasure(t *testing.T) {
+	cases := []struct {
+		value string
+		want  bool
+	}{
+		{"48ch", true}, {"72ch", true}, {"140ch", true},
+		{"47ch", false},  // below range
+		{"141ch", false}, // above range
+		{"", false},
+		{"72ch; } body { display:none", false},
+		{`72ch"}body{display:none`, false},
+	}
+	for _, c := range cases {
+		t.Run(c.value, func(t *testing.T) {
+			l := LookAndFeel{EditorMeasure: c.value}
+			_, ok := l.Overrides()["editorMeasure"]
+			if ok != c.want {
+				t.Errorf("validMeasure(%q) accepted=%v, want %v", c.value, ok, c.want)
+			}
+		})
+	}
+}
+
+// The three named injection probes from the design brief, run against every
+// field family in one place so the security property is easy to audit.
+func TestLookAndFeel_Overrides_RejectsInjectionAttempts(t *testing.T) {
+	longFont := strings.Repeat("a", 121)
+	l := LookAndFeel{
+		EditorFont:       "16px; } body { display:none",
+		MonoFont:         `"a";}`,
+		UIFont:           longFont,
+		EditorScale:      "1.0; } body { display:none",
+		EditorLineHeight: `1.5"; } body { display:none`,
+		EditorMeasure:    "72ch; } body { display:none",
+	}
+	got := l.Overrides()
+	if len(got) != 0 {
+		t.Errorf("Overrides() with injection payloads in every field = %v, want empty map", got)
+	}
+}
+
+func TestLookAndFeel_StepEditorScale(t *testing.T) {
+	cases := []struct {
+		name string
+		from string
+		dir  string
+		want string
+	}{
+		{"unset steps up from implicit 1.0", "", "up", "1.1"},
+		{"unset steps down from implicit 1.0", "", "down", "0.9"},
+		{"steps up through the set", "1.1", "up", "1.25"},
+		{"steps down through the set", "1.25", "down", "1.1"},
+		{"clamps at top", "2.0", "up", "2.0"},
+		{"clamps at bottom", "0.85", "down", "0.9" /* placeholder overwritten below */},
+		{"reset clears to empty", "1.5", "reset", ""},
+		{"unrecognised dir clears to empty", "1.5", "bogus", ""},
+	}
+	// Fix the accidental placeholder above explicitly (0.85 is the first/lowest
+	// step, so "down" from it must clamp AT 0.85, not move).
+	cases[5].want = "0.85"
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			l := LookAndFeel{EditorScale: c.from}
+			got := l.StepEditorScale(c.dir).EditorScale
+			if got != c.want {
+				t.Errorf("StepEditorScale(%q) from %q = %q, want %q", c.dir, c.from, got, c.want)
+			}
+		})
+	}
+}
+
+// ParseSettings round-trips look_and_feel, and a settings.json predating this
+// feature (no look_and_feel key at all) must still parse to the zero value —
+// backwards compatibility for existing settings files.
+func TestParseSettings_LookAndFeelRoundTrip(t *testing.T) {
+	loaded := ParseSettings([]byte(`{"look_and_feel":{"editor_scale":"1.25","editor_measure":"72ch"}}`))
+	if loaded.LookAndFeel.EditorScale != "1.25" {
+		t.Errorf("LookAndFeel.EditorScale = %q, want 1.25", loaded.LookAndFeel.EditorScale)
+	}
+	if loaded.LookAndFeel.EditorMeasure != "72ch" {
+		t.Errorf("LookAndFeel.EditorMeasure = %q, want 72ch", loaded.LookAndFeel.EditorMeasure)
+	}
+}
+
+func TestParseSettings_LookAndFeelAbsentIsZeroValue(t *testing.T) {
+	loaded := ParseSettings([]byte(`{"theme":"nord"}`))
+	if loaded.LookAndFeel != (LookAndFeel{}) {
+		t.Errorf("LookAndFeel = %+v, want zero value when look_and_feel key is absent", loaded.LookAndFeel)
+	}
+}
+
+func TestParseSettings_LookAndFeelEmptyDataIsZeroValue(t *testing.T) {
+	loaded := ParseSettings(nil)
+	if loaded.LookAndFeel != (LookAndFeel{}) {
+		t.Errorf("LookAndFeel = %+v, want zero value for nil/empty settings data", loaded.LookAndFeel)
 	}
 }
 

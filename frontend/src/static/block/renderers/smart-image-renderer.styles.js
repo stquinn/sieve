@@ -66,7 +66,8 @@ export const smartImageStyles = /* css */ `
     color: var(--theme-text);
     padding: 10px 16px;
     border-radius: 8px;
-    font-size: 11px;
+    /* Smallest chrome tier (see editor.css's .tiptap comment) — was 11px. */
+    font-size: calc(var(--doc-size) * 0.7);
     line-height: 1.5;
     white-space: pre-wrap;
     max-width: 80%;
@@ -145,7 +146,8 @@ export const smartImageStyles = /* css */ `
     position: absolute;
     top: 6px;
     left: 6px;
-    font-size: 10px;
+    /* Smallest chrome tier — was 10px. */
+    font-size: calc(var(--doc-size) * 0.7);
     padding: 2px 6px;
     border-radius: 4px;
     pointer-events: none;

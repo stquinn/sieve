@@ -54,6 +54,17 @@ export const codeStyles = /* css */ `
     border-radius: 0 0 8px 8px;
   }
 
+  /* Gutter font-size is the code tier of the editor's four-tier scale (1 /
+     0.85 / 0.75 / 0.7 of --doc-size — see editor.css's .tiptap comment) and
+     MUST stay numerically equal to .sieve-block__highlight/__edit below:
+     this gutter is a separate column of line-number rows kept aligned with
+     the code rows purely by matching row height (line-height * font-size) —
+     any divergence would drift the numbers off their lines. Comment lives
+     OUTSIDE the declaration block (not before font-size) so it can't perturb
+     diagram-mermaid-init.test.js's naive prop/value rule-body parser (no
+     comment-stripping — a comment inside the block folds into whichever
+     property key follows it, which would break the property-key match
+     against diagram's identical copy). */
   .sieve-block--code .sieve-block__gutter {
     display: flex;
     flex-direction: column;
@@ -63,7 +74,7 @@ export const codeStyles = /* css */ `
     border-right: 1px solid var(--theme-gutterLineColor);
     color: var(--theme-lineNumberColor);
     font-family: var(--theme-monoFont);
-    font-size: 0.85em;
+    font-size: calc(var(--doc-size) * 0.85);
     line-height: 1.6;
     user-select: none;
     flex-shrink: 0;
@@ -87,11 +98,14 @@ export const codeStyles = /* css */ `
     min-width: 0;
   }
 
+  /* Code tier — must match .sieve-block__gutter above (row-alignment); see
+     that rule's comment for why (and why this comment sits outside the
+     declaration block). */
   .sieve-block--code .sieve-block__highlight,
   .sieve-block--code .sieve-block__edit {
     grid-area: 1 / 1;
     font-family: var(--theme-monoFont);
-    font-size: 0.85em;
+    font-size: calc(var(--doc-size) * 0.85);
     line-height: 1.6;
     padding: 0.85em 1.1em;
     white-space: pre-wrap;

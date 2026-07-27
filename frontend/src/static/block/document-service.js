@@ -70,10 +70,12 @@ export class DocumentService {
    * render pipeline consumes the envelopes; payload is the sanctioned wire costume
    * for PM node materialization.
    * @param {string} uuid
-   * @returns {Promise<{ body: string, blocks: SieveBlock[], meta: { mode: string } }>}
+   * @returns {Promise<{ body: string, blocks: SieveBlock[], meta: { mode: string }, scroll: number }>}
    *   body: the raw serialized form (markdown-mode surface seed);
    *   blocks: typed envelopes (block lenses + the render pipeline);
-   *   meta.mode: the frontmatter mode the workspace boot path reads.
+   *   meta.mode: the frontmatter mode the workspace boot path reads;
+   *   scroll: the session's saved scroll offset for this tab (issue #51; 0 for
+   *     a never-scrolled/never-seen tab — the load-path restore floor).
    */
   load(uuid) {
     return fetch('/api/editor/load?uuid=' + encodeURIComponent(uuid))
@@ -81,7 +83,7 @@ export class DocumentService {
       .then((data) => {
         const blocks = this.#toEnvelopes(data.blocks)
         this.#blockService.indexDocument(uuid, blocks)
-        return { body: data.body || '', blocks: blocks, meta: { mode: data.mode || 'wysiwyg' } }
+        return { body: data.body || '', blocks: blocks, meta: { mode: data.mode || 'wysiwyg' }, scroll: data.scroll || 0 }
       })
   }
 

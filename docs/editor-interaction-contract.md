@@ -192,11 +192,18 @@ Consequences:
 | Mod+Shift+P | View › Toggle Prompts | `htmx.ajax` POST `/api/session/prompts/toggle` |
 | (menu-click only) | View › Toggle Line Numbers | `htmx.ajax` POST `/api/session/linenumbers/toggle` |
 | Mod+Shift+M | View › Toggle Editor Mode | `window.sieveWorkspace?.activeTab?.editor?.toggleMode()` |
-| Mod+F | View › Toggle Search | `window.sieveWorkspace?.toggleSearch()` |
-| Mod+Shift+F | View › Sidebar Search | `window.sieveSidebarSearch()` |
+| Mod+F | Edit › Find › Find… (mac: Find › Find…) | `window.sieveWorkspace?.toggleSearch()` |
+| F3 (non-mac) | Edit › Find › Find Next | `window.sieveWorkspace?.searchNext()` |
+| Mod+G (mac) | Find › Find Next | `window.sieveWorkspace?.searchNext()` |
+| Shift+F3 (non-mac) | Edit › Find › Find Previous | `window.sieveWorkspace?.searchPrev()` |
+| Mod+Shift+G (mac) | Find › Find Previous | `window.sieveWorkspace?.searchPrev()` |
+| Mod+Shift+F | Edit › Find › Find in Notes… (mac: Find › …) | `window.sieveSidebarSearch()` |
 | Mod+J | View › Toggle AI Blocks | `window.sieveWorkspace?.activeTab?.editor?.toggleAiBlocks()` |
 | Mod+P | View › Quick Switcher | open quick-switcher dialog |
 | Mod+Shift+T | View › Show Toolbar | `htmx.ajax` POST `/api/session/toolbar/toggle` |
+| Mod+= | View › Increase Editor Font | `htmx.ajax` POST `/api/settings/editor-scale/step?dir=up` |
+| Mod+- | View › Decrease Editor Font | `htmx.ajax` POST `/api/settings/editor-scale/step?dir=down` |
+| Mod+0 | View › Reset Editor Font | `htmx.ajax` POST `/api/settings/editor-scale/step?dir=reset` |
 | Mod+Alt+M | Tools › Smart Metadata | `window.SieveAI.smartMetadata()` |
 | Mod+Shift+E | Tools › Smart File | `window.SieveAI.smartFile()` |
 | Mod+Shift+Return | Tools › Keep & Smart File | `window.SieveAI.keepAndSmartFile()` |
@@ -208,6 +215,38 @@ Consequences:
 Editor-owned caret chords (NOT in the menu, bound in `extensions.js`):
 `Mod+E` = Explain block. (`Mod+Shift+A` Ask is NOT editor-bound — the AskPanel's
 document-level listener owns it; see "Consequences" above.)
+
+**Why find sits with the editing verbs, and why its home differs per platform.**
+Find/Replace is an editing concern, not a View one (View is for what you look at,
+not what you operate on). Where the Find submenu hangs is forced by a Wails
+v2.12.0 limitation:
+
+- `menu.EditMenu()` is a bare *role marker* with a nil `SubMenu` — the native
+  backend expands it, so nothing can be appended to it.
+- The individual role helpers (`Undo()`/`Cut()`/`Copy()`/`Paste()`/`SelectAll()`)
+  **and their `Role` constants** are commented out in `pkg/menu/menuroles.go`, and
+  no platform backend reads `Role` at all — so a hand-built Edit menu cannot
+  supply native editing items either.
+
+So macOS keeps the role Edit menu (native Undo/Cut/Copy/Paste) and gets **Find as
+its own top-level menu** — a normal Mac text-editor idiom (Sublime Text, BBEdit).
+Linux/Windows have no role Edit menu today, so they get the conventional
+**Edit ▸ Find**. If a future Wails release un-comments the role items, collapse
+macOS onto Edit ▸ Find too.
+
+Each verb gets ONE row with ONE platform-appropriate accelerator: F3/Shift+F3 on
+Windows/Linux, Mod+G/Mod+Shift+G on macOS (where Ctrl+G conventionally means
+"go to line" on the former, so binding it there would be actively wrong). Do NOT
+"restore" the other platform's chord as a second hidden row: `menu.MenuItem`
+carries exactly one `Accelerator`, and `Hidden: true` short-circuits *before*
+accelerator registration on all three backends (confirmed in the Wails v2
+source), so a hidden duplicate silently never binds.
+
+`SearchOverlay` exposes the real verbs (`next()`/`prev()`, mirroring the ↓/↑
+buttons including the n/N stats refresh) via
+`window.sieveWorkspace.searchNext()`/`searchPrev()` — when the overlay is closed
+these OPEN it (conventional "start searching") rather than silently advancing a
+hidden search. Replace… slots into the same Find submenu when #61 lands.
 
 ## Deferred (recorded, not shipped)
 

@@ -47,17 +47,55 @@ export class SearchOverlay {
   toggle() {
     const overlay = this.#ensure()
     if (!overlay) return
-    if (overlay.style.display === 'none') {
-      overlay.style.display = 'flex'
-      if (this.#input) { this.#input.focus(); this.#input.select() }
-    } else {
-      overlay.style.display = 'none'
-      const ed = this.#activeEditor()
-      if (ed) ed.clearSearch()
-    }
+    if (overlay.style.display === 'none') this.open()
+    else this.close()
+  }
+
+  /** Shows the overlay and focuses/selects the input. Idempotent. */
+  open() {
+    const overlay = this.#ensure()
+    if (!overlay) return
+    overlay.style.display = 'flex'
+    if (this.#input) { this.#input.focus(); this.#input.select() }
+  }
+
+  /** Hides the overlay and clears the active editor's search state. Idempotent. */
+  close() {
+    if (!this.#overlay) return
+    this.#overlay.style.display = 'none'
+    const ed = this.#activeEditor()
+    if (ed) ed.clearSearch()
+  }
+
+  /**
+   * Advances to the next match (F3 / Mod+G accelerator verb, mirrors the ↓
+   * button). When the overlay is CLOSED, opens it instead of searching — F3 on a
+   * closed search is conventionally "start searching", not "search blind".
+   */
+  next() {
+    if (!this.#isOpen()) { this.open(); return }
+    if (this.#mode() === 'markdown') { this.#renderStats(null); return }
+    const ed = this.#activeEditor()
+    if (ed) this.#renderStats(ed.searchNext())
+  }
+
+  /**
+   * Advances to the previous match (Shift+F3 / Mod+Shift+G accelerator verb,
+   * mirrors the ↑ button). Same closed-overlay judgement call as next().
+   */
+  prev() {
+    if (!this.#isOpen()) { this.open(); return }
+    if (this.#mode() === 'markdown') { this.#renderStats(null); return }
+    const ed = this.#activeEditor()
+    if (ed) this.#renderStats(ed.searchPrev())
   }
 
   // ── Private ─────────────────────────────────────────────────────────────────────
+
+  /** @returns {boolean} whether the overlay is currently shown. */
+  #isOpen() {
+    return !!this.#overlay && this.#overlay.style.display === 'flex'
+  }
 
   /** @returns {any} the workspace's active editor, or null. */
   #activeEditor() {
@@ -97,21 +135,9 @@ export class SearchOverlay {
     const bottomRow = document.createElement('div')
     bottomRow.className = 'editor-search__bottom-row'
 
-    const btnPrev = this.#makeBtn('editor-search__btn', '↑', () => {
-      if (this.#mode() === 'markdown') { this.#renderStats(null) }
-      else { const ed = this.#activeEditor(); if (ed) this.#renderStats(ed.searchPrev()) }
-    })
-
-    const btnNext = this.#makeBtn('editor-search__btn', '↓', () => {
-      if (this.#mode() === 'markdown') { this.#renderStats(null) }
-      else { const ed = this.#activeEditor(); if (ed) this.#renderStats(ed.searchNext()) }
-    })
-
-    const btnClose = this.#makeBtn('editor-search__close', '✕', () => {
-      overlay.style.display = 'none'
-      const ed = this.#activeEditor()
-      if (ed) ed.clearSearch()
-    })
+    const btnPrev = this.#makeBtn('editor-search__btn', '↑', 'Find previous', () => this.prev())
+    const btnNext = this.#makeBtn('editor-search__btn', '↓', 'Find next', () => this.next())
+    const btnClose = this.#makeBtn('editor-search__close', '✕', 'Close search', () => this.close())
 
     bottomRow.appendChild(btnPrev); bottomRow.appendChild(btnNext); bottomRow.appendChild(btnClose)
     overlay.appendChild(topRow); overlay.appendChild(bottomRow)
@@ -129,18 +155,11 @@ export class SearchOverlay {
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault()
-        const ed = this.#activeEditor()
-        if (e.shiftKey) {
-          if (ed) this.#renderStats(ed.searchPrev())
-        } else {
-          if (ed) this.#renderStats(ed.searchNext())
-        }
+        if (e.shiftKey) this.prev(); else this.next()
       }
       if (e.key === 'Escape') {
         e.preventDefault()
-        overlay.style.display = 'none'
-        const ed = this.#activeEditor()
-        if (ed) ed.clearSearch()
+        this.close()
       }
     })
 
@@ -171,12 +190,16 @@ export class SearchOverlay {
   /**
    * @param {string} cls
    * @param {string} text
+   * @param {string} label accessible name — sets aria-label + title (command-popup tone: plain, active-voice, sentence case)
    * @param {(e: Event) => void} onClick
    * @returns {HTMLButtonElement}
    */
-  #makeBtn(cls, text, onClick) {
+  #makeBtn(cls, text, label, onClick) {
     const btn = document.createElement('button')
+    btn.type = 'button'
     btn.className = cls; btn.textContent = text
+    btn.setAttribute('aria-label', label)
+    btn.title = label
     btn.addEventListener('click', onClick)
     return btn
   }

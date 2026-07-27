@@ -49,6 +49,8 @@ describe('SelectionModel — initial context (P3.A)', () => {
       blockCursor: null,
       // P3.C: 'none'/initial ⇒ the document target (label ALWAYS present).
       target: { kind: 'document', ref: 'doc', range: null, label: 'Document' },
+      // issue #51: no scroll report has arrived yet.
+      scroll: null,
     })
   })
 
@@ -236,6 +238,59 @@ describe('SelectionModel — focus zone (P3.A)', () => {
     m.setFocusZone('ask')
     m.ingest(raw({ blockId: 'b1' }))
     expect(m.getContext().focusZone).toBe('ask')
+  })
+})
+
+describe('SelectionModel — scroll (issue #51: caret-class, pullable not pushed)', () => {
+  it('setScroll updates the pullable context but does NOT emit — the constraint most likely to regress', () => {
+    const m = new SelectionModel(UUID)
+    m.ingest(raw()) // establish a baseline selection
+    const fn = vi.fn()
+    m.onUpdate(fn)
+    m.setScroll(842)
+    expect(fn).not.toHaveBeenCalled()
+    expect(m.getContext().scroll).toBe(842)
+  })
+
+  it('a subsequent scroll value keeps updating silently', () => {
+    const m = new SelectionModel(UUID)
+    m.setScroll(100)
+    const fn = vi.fn()
+    m.onUpdate(fn)
+    m.setScroll(250)
+    expect(fn).not.toHaveBeenCalled()
+    expect(m.getContext().scroll).toBe(250)
+  })
+
+  it('the same scroll value is a no-op (no redundant commit)', () => {
+    const m = new SelectionModel(UUID)
+    m.setScroll(100)
+    const fn = vi.fn()
+    m.onUpdate(fn)
+    m.setScroll(100)
+    expect(fn).not.toHaveBeenCalled()
+    expect(m.getContext().scroll).toBe(100)
+  })
+
+  it('a null value is ignored (no report yet ≠ a report of null)', () => {
+    const m = new SelectionModel(UUID)
+    m.setScroll(100)
+    m.setScroll(null)
+    expect(m.getContext().scroll).toBe(100)
+  })
+
+  it('an unrelated selection ingest does NOT reset scroll (it is not on the descriptor)', () => {
+    const m = new SelectionModel(UUID)
+    m.setScroll(842)
+    m.ingest(raw({ blockId: 'other-block' })) // a real caret move (emits, unrelated to scroll)
+    expect(m.getContext().scroll).toBe(842)
+  })
+
+  it('setFocusZone carries scroll through unchanged', () => {
+    const m = new SelectionModel(UUID)
+    m.setScroll(500)
+    m.setFocusZone('ask')
+    expect(m.getContext().scroll).toBe(500)
   })
 })
 

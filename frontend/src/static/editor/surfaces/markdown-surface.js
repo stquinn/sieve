@@ -53,6 +53,9 @@ export class MarkdownSurface extends AbstractSurface {
   /** @type {ReturnType<typeof setTimeout>|null} 500ms doc-update debounce (formerly module docUpdateTimer) */
   #timer = null
 
+  /** @type {ReturnType<typeof setTimeout>|null} scroll-report debounce (issue #51) */
+  #scrollTimer = null
+
   /**
    * No uuid: this surface holds no content that needs the document identity —
    * transport identity is the EDITOR's concern (host rule, P2.B correction 3).
@@ -85,7 +88,13 @@ export class MarkdownSurface extends AbstractSurface {
 
     const gutter = document.createElement('div')
     gutter.className = 'markdown-gutter'
-    gutter.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;flex-shrink:0;padding:40px 0.6rem 0.85em;background-color:var(--theme-bgDark);border-right:1px solid var(--theme-border);color:var(--theme-muted);font-family:var(--theme-monoFont);font-size:14px;line-height:1.75;overflow:hidden'
+    // font-size MUST match .markdown-raw's (editor.css, code tier =
+    // calc(--doc-size)*0.85) exactly: the gutter is a separate scrolling
+    // column of one div per line, kept visually aligned with the textarea's
+    // rows purely by scrollTop sync (below) plus identical row heights
+    // (line-height * font-size). Any divergence between the two would drift
+    // the numbers off their lines as soon as editorScale != 1.
+    gutter.style.cssText = 'display:flex;flex-direction:column;align-items:flex-end;flex-shrink:0;padding:40px 0.6rem 0.85em;background-color:var(--theme-bgDark);border-right:1px solid var(--theme-border);color:var(--theme-muted);font-family:var(--theme-monoFont);font-size:calc(var(--doc-size) * 0.85);line-height:1.75;overflow:hidden'
 
     const textarea = document.createElement('textarea')
     this.#textarea = textarea
@@ -117,7 +126,17 @@ export class MarkdownSurface extends AbstractSurface {
     // NO app-level chords here: Mod+S / Mod+J bubble from the textarea to the
     // transitional document-level listener in editor.js (P2.C owns the proper
     // chord transport migration).
-    textarea.addEventListener('scroll', () => { gutter.scrollTop = textarea.scrollTop })
+    textarea.addEventListener('scroll', () => {
+      gutter.scrollTop = textarea.scrollTop
+      // issue #51: markdown's own scroller is the textarea itself (no shell
+      // ancestor involved) — debounce-report it the same way the wysiwyg
+      // surface reports #htmx-editor.
+      if (this.#scrollTimer) clearTimeout(this.#scrollTimer)
+      this.#scrollTimer = setTimeout(() => {
+        this.#scrollTimer = null
+        this.#host.onSurfaceEvent(SurfaceEvent.SCROLL_CHANGED)
+      }, 300)
+    })
 
     wrapper.appendChild(gutter)
     wrapper.appendChild(textarea)
@@ -127,9 +146,10 @@ export class MarkdownSurface extends AbstractSurface {
     requestAnimationFrame(() => { textarea.focus() })
   }
 
-  /** Removes the surface's DOM and kills the pending debounce. */
+  /** Removes the surface's DOM and kills the pending debounces. */
   unmount() {
     if (this.#timer) { clearTimeout(this.#timer); this.#timer = null }
+    if (this.#scrollTimer) { clearTimeout(this.#scrollTimer); this.#scrollTimer = null }
     if (this.#wrapper) this.#wrapper.remove()
     this.#wrapper = null
     this.#gutter = null
@@ -196,6 +216,32 @@ export class MarkdownSurface extends AbstractSurface {
     const from = Math.min((ctx && ctx.caret != null) ? ctx.caret : 0, len)
     const to = Math.min((ctx && ctx.range) ? ctx.range.to : from, len)
     try { ta.selectionStart = from; ta.selectionEnd = to } catch (_) {}
+  }
+
+  /**
+   * @override — the textarea's own scrollTop (its scroller, unlike wysiwyg's
+   * shell ancestor). null when unmounted. issue #51.
+   * @returns {number|null}
+   */
+  feedScroll() { return this.#textarea ? this.#textarea.scrollTop : null }
+
+  /**
+   * @override — restores (or parks) the textarea's scroll position, syncing the
+   * gutter to match. null/undefined ⇒ nothing to restore; 0 is a real
+   * park-at-top value. issue #51.
+   * @param {number|null|undefined} value
+   */
+  applyScroll(value) {
+    if (value == null) return
+    const ta = this.#textarea
+    const gutter = this.#gutter
+    if (!ta) return
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        ta.scrollTop = value
+        if (gutter) gutter.scrollTop = ta.scrollTop
+      })
+    })
   }
 
   /**

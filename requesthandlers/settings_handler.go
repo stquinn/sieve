@@ -75,6 +75,29 @@ func (h *SettingsHandler) RegisterPaths(r chi.Router) {
 	r.Get("/api/settings", h.handleSettings)
 	r.Post("/api/settings", h.handleSettingsSave)
 	r.Post("/api/settings/panel", h.handleSettingsPanel)
+	r.Post("/api/settings/editor-scale/step", h.handleEditorScaleStep)
+}
+
+// handleEditorScaleStep backs the "Increase/Decrease/Reset Editor Font" native
+// menu accelerators (main.go buildMenu, View menu). It persists through the
+// normal settings path (LookAndFeel.StepEditorScale + SaveSettings) so the
+// change survives a restart — it is not a transient client-side zoom — and
+// reuses the same HX-Trigger:settings:changed the settings-panel save uses to
+// bust the /theme.css cache, so the new scale is visible immediately.
+func (h *SettingsHandler) handleEditorScaleStep(w http.ResponseWriter, r *http.Request) {
+	dir := r.URL.Query().Get("dir")
+
+	settings := h.ServiceProvider.State.LoadSettings()
+	settings.LookAndFeel = settings.LookAndFeel.StepEditorScale(dir)
+
+	if err := h.ServiceProvider.State.SaveSettings(settings); err != nil {
+		logger.Error("handleEditorScaleStep: save failed", "err", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("HX-Trigger", "settings:changed")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *SettingsHandler) handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -118,6 +141,24 @@ func (h *SettingsHandler) handleSettingsSave(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	settings.Theme = r.FormValue("theme")
+
+	// LookAndFeel: every field is three-state (empty = follow theme), so an
+	// empty form value must persist as empty, never a copied theme value.
+	// Number inputs arrive bare ("16") and are stored with their CSS unit;
+	// line-height is stored unitless. Overrides() (domain/settings.go)
+	// re-validates on the way OUT of settings.json, so a value that fails
+	// validation here is merely inert rather than a security boundary.
+	settings.LookAndFeel.EditorFont = r.FormValue("look_and_feel_editor_font")
+	settings.LookAndFeel.MonoFont = r.FormValue("look_and_feel_mono_font")
+	settings.LookAndFeel.UIFont = r.FormValue("look_and_feel_ui_font")
+	// Select of a closed step set (see LookAndFeel.EditorScaleSteps) — the
+	// value is the unitless multiplier itself, stored verbatim.
+	settings.LookAndFeel.EditorScale = r.FormValue("look_and_feel_editor_scale")
+	settings.LookAndFeel.EditorLineHeight = strings.TrimSpace(r.FormValue("look_and_feel_editor_line_height"))
+	settings.LookAndFeel.EditorMeasure = ""
+	if v := strings.TrimSpace(r.FormValue("look_and_feel_editor_measure")); v != "" {
+		settings.LookAndFeel.EditorMeasure = v + "ch"
+	}
 	if maxHistStr := r.FormValue("max_history_versions"); maxHistStr != "" {
 		if val, err := strconv.Atoi(maxHistStr); err == nil {
 			settings.MaxHistoryVersions = val

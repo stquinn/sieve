@@ -385,7 +385,19 @@ textarea::selection {
 /* ── Editor ──────────────────────────────────────────────────────────── */
 
 /* Block chrome (Stage 1.5 — full gutter ownership) */
-.editor-panel { --chrome-w: 54px; }
+.editor-panel {
+  --chrome-w: 54px;
+  /* --doc-size lives here (the #tiptap-mount root), not on .tiptap itself:
+     markdown mode (MarkdownSurface) swaps .tiptap out for a sibling
+     .markdown-raw textarea inside this SAME root rather than nesting inside
+     .tiptap, so a definition scoped to .tiptap would not inherit into raw
+     mode and editorScale would silently stop applying there. Defining it on
+     the shared ancestor means every editor-internal font-size — WYSIWYG or
+     raw — resolves against the same root, non-compounding, regardless of
+     which surface is mounted. See the .tiptap rule below for the full
+     rationale on the multiplier and the four-tier scale. */
+  --doc-size: calc(var(--theme-editorBaseSize, 16px) * var(--theme-editorScale, 1));
+}
 
 /* Strategy A (prose nodes): widget is a DOM sibling BEFORE the block inside
    .ProseMirror (position:relative). top:auto uses the CSS static-position
@@ -428,7 +440,13 @@ textarea::selection {
 .block-chrome-handle { pointer-events: auto; }
 
 .block-chrome-linenum {
-  font-size: 13px;
+  /* Gutter numbers scale with the document — they must stay legible relative
+     to the lines they number, at any editorScale — but sit at the smallest
+     of the editor's four size tiers (1 / 0.85 / 0.75 / 0.7 of --doc-size; see
+     editor.css's .tiptap comment). Referencing --doc-size directly (not an
+     em relative to a parent) means this never compounds regardless of where
+     BlockChrome mounts the host in the DOM. */
+  font-size: calc(var(--doc-size) * 0.7);
   line-height: 1.5;
   color: var(--theme-textDim);
   min-width: 20px;
@@ -488,8 +506,24 @@ textarea::selection {
   margin: 0;
   min-height: 100vh;
   outline: none;
-  font-size: 16px;
-  line-height: 1.75;
+  /* --doc-size (defined on .editor-panel, the shared #tiptap-mount ancestor —
+     see that rule for why) is the editor's own root size: rem-like semantics
+     scoped to the editor rather than to <html> (html is not the thing being
+     scaled). editorScale is a unitless multiplier (a closed stepped set —
+     see LookAndFeel.EditorScaleSteps), not an absolute size, so it composes
+     correctly with ch-based measure below (line width in characters tracks
+     the scale automatically) and with unitless line-height (already
+     scale-free, no change needed).
+     Block-internal chrome (code/log/diagram/ai-block renderers, see
+     block/renderers/*.styles.js) expresses its font-sizes as
+     calc(var(--doc-size) * <step>) AGAINST THIS SAME PROPERTY at any nesting
+     depth — never against a parent's computed em — so sizes never compound.
+     --theme-editorBaseSize is a hook for a future theme-level base and is
+     never set by LookAndFeel; it always falls back to 16px today, so
+     scale=1 (the unset default) is byte-identical to the pre-scale 16px
+     fixed value. */
+  font-size: var(--doc-size);
+  line-height: var(--theme-editorLineHeight, 1.75);
   color: var(--theme-text);
   font-family: var(--theme-editorFont, inherit);
   position: relative;
@@ -498,6 +532,17 @@ textarea::selection {
      No more counter-based line numbers; BlockChrome renders them via JS. */
   padding-left: calc(var(--chrome-w, 40px) + 1rem);
   padding-right: 1rem;
+
+  /* Line width ("measure"). Off by default (none = full width, unchanged
+     behaviour). .tiptap is content-box (no box-sizing override, and Tailwind
+     preflight is disabled project-wide) and a flex item of #tiptap-mount
+     (display:flex; flex-direction:column) with the default cross-axis
+     align-items:stretch — so max-width caps the CONTENT box only (the rail
+     padding is unaffected) and the capped box naturally lands at the start
+     (left) of the cross axis rather than centering. That is exactly the
+     "stays aligned with the chrome rail, doesn't centre" behaviour the
+     measure setting wants — no extra margin/alignment rule required. */
+  max-width: var(--theme-editorMeasure, none);
 }
 
 /* Gutter separator — a fixed vertical rule at the right edge of the chrome rail.
@@ -590,7 +635,11 @@ textarea::selection {
   padding: 0.1em 0.35em;
   border-radius: 3px;
   font-family: var(--theme-monoFont);
-  font-size: 0.85em;
+  /* Code tier of the four-tier editor scale (see .tiptap comment) — value
+     unchanged from the previous 0.85em (this is a single level under .tiptap
+     so em never compounded here; this is purely the calc(--doc-size) form
+     for consistency with the rest of the code/log/diagram sweep). */
+  font-size: calc(var(--doc-size) * 0.85);
 }
 
 /* ── Blockquote ──────────────────────────────────────────────────────── */
@@ -838,7 +887,10 @@ pre.tiptap-code-block {
 pre.tiptap-code-block code {
   color: var(--theme-text);
   font-family: var(--theme-monoFont);
-  font-size: 0.9em;
+  /* Normalized onto the code tier (0.85 of --doc-size, see .tiptap comment) —
+     was 0.9em; ~1px shift at the default 16px base, within the tolerance for
+     block-internal (non-prose-body) content, and now non-compounding. */
+  font-size: calc(var(--doc-size) * 0.85);
   display: block;
 }
 
@@ -855,7 +907,8 @@ pre.tiptap-code-block code {
   margin: 0.5em 0;
   overflow: hidden;
   font-family: var(--theme-monoFont);
-  font-size: 0.85em;
+  /* Code tier (see .tiptap comment) — value unchanged from 0.85em. */
+  font-size: calc(var(--doc-size) * 0.85);
   line-height: 1.6;
 }
 
@@ -1004,7 +1057,11 @@ pre.tiptap-code-block code {
 }
 
 .sieve-block__badge {
-  font-size: 10px;
+  /* Smallest chrome tier (badges/chips, see .tiptap comment) — was a fixed
+     10px that never scaled with editorScale at all; now calc(--doc-size *
+     0.7) = 11.2px at the default 16px base, ~1.2px larger, within tolerance
+     for block-internal chrome. */
+  font-size: calc(var(--doc-size) * 0.7);
   font-weight: 700;
   letter-spacing: 0.08em;
   color: var(--theme-accentGreen);
@@ -1042,7 +1099,8 @@ pre.tiptap-code-block code {
   margin-top: 0.5em;
   overflow: hidden;
   font-family: var(--theme-monoFont);
-  font-size: 0.85em;
+  /* Code tier (see .tiptap comment) — value unchanged from 0.85em. */
+  font-size: calc(var(--doc-size) * 0.85);
   line-height: 1.6;
   transition: background 0.2s ease, border-color 0.2s ease;
 }
@@ -1154,7 +1212,13 @@ pre.tiptap-code-block code {
   background: #1a1b26;
   color: #a9b1d6;
   font-family: var(--theme-editorFont, 'JetBrains Mono', 'Fira Code', monospace);
-  font-size: 14px;
+  /* Code tier — this is a verbatim monospace view of the document (the
+     "breakglass" raw buffer), same role as fenced code content. Was a fixed
+     14px that never scaled with editorScale; --doc-size is defined on
+     .editor-panel (the shared ancestor of both this textarea and .tiptap —
+     the two are siblings inside #tiptap-mount, never nested), so it
+     resolves here too. */
+  font-size: calc(var(--doc-size) * 0.85);
   line-height: 1.75;
   border: none;
   outline: none;
@@ -1582,59 +1646,13 @@ pre.tiptap-code-block code {
 /* ── Search UI ───────────────────────────────────────────────────────── */
 
 .search-result {
-  background: rgba(122, 162, 247, 0.4);
+  background: color-mix(in srgb, var(--theme-accentPrimary) 40%, transparent);
   border-radius: 2px;
 }
 .search-result-current {
-  background: rgba(255, 158, 100, 0.6);
-  color: #1a1b26;
+  background: color-mix(in srgb, var(--theme-accentOrange) 60%, transparent);
+  color: var(--theme-bg);
 }
-
-.search-bar {
-  position: absolute;
-  top: 1rem;
-  right: 1.5rem;
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  background: #24283b;
-  border: 1px solid #3b4261;
-  border-radius: 4px;
-  padding: 0.35rem 0.5rem;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-  z-index: 50;
-}
-.search-bar__input {
-  background: #1a1b26;
-  border: 1px solid #3b4261;
-  border-radius: 3px;
-  color: #c0caf5;
-  font-size: 13px;
-  padding: 0.25rem 0.5rem;
-  width: 200px;
-  outline: none;
-}
-.search-bar__input:focus { border-color: #7aa2f7; }
-.search-bar__count {
-  font-size: 12px;
-  color: #7a839c;
-  min-width: 40px;
-  text-align: center;
-  user-select: none;
-}
-.search-bar__btn {
-  background: #3b4261;
-  border: none;
-  border-radius: 3px;
-  color: #c0caf5;
-  cursor: pointer;
-  padding: 0.25rem 0.35rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.search-bar__btn:hover { background: #414868; }
-.search-bar__btn svg { width: 14px; height: 14px; }
 
 /* ── Status Bar ──────────────────────────────────────────────────────── */
 
@@ -2277,21 +2295,39 @@ pre.tiptap-code-block code {
   width: 100vw;
 }
 
-/* ── Editor Search Overlay ─────────────────────────────────────────── */
+/* ── Editor Search Overlay ─────────────────────────────────────────────
+   Token language adopted from command-popup.styles.js (#61 UI pass): same
+   elevation formula, radius ratio (12px container : 6px controls), control
+   states (transition/active/focus-visible) and --theme-textDim secondary-text
+   token — scaled down for a persistent top-right HUD, not a modal. No header
+   bar: unlike the command popup, this surface has no title-worthy content
+   (no command name to announce), so a bgDark chrome strip would just be
+   decorative weight on a 280px utility — stays one plane on --theme-bgAlt,
+   with a hairline border-top separating the button row instead. ───────── */
 .editor-search-overlay {
   position: fixed;
   top: 60px;
   right: 40px;
   background: var(--theme-bgAlt);
-  border: 1px solid var(--theme-border);
-  border-radius: 6px;
-  padding: 8px;
+  border: 1px solid var(--theme-border2);
+  border-radius: 12px;
+  padding: 12px;
   display: none;
   z-index: 1000;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   width: 280px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--theme-bgDark) 55%, transparent);
+  animation: editor-search-in 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes editor-search-in {
+  from { transform: translateY(-6px) scale(0.97); opacity: 0; }
+  to   { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-search-overlay { animation: none; }
 }
 
 .editor-search__top-row {
@@ -2303,17 +2339,31 @@ pre.tiptap-code-block code {
 .editor-search__input {
   flex: 1;
   background: var(--theme-bg);
-  border: 1px solid var(--theme-border);
-  border-radius: 4px;
-  padding: 4px 8px;
+  border: 1px solid var(--theme-border2);
+  border-radius: 6px;
+  padding: 6px 10px;
   color: var(--theme-text);
   outline: none;
   font-size: 13px;
+  transition: border-color 0.15s ease;
 }
 
+.editor-search__input:focus {
+  border-color: var(--theme-accentPrimary);
+}
+
+.editor-search__input:focus-visible {
+  outline: 2px solid var(--theme-accentPrimary);
+  outline-offset: 1px;
+}
+
+/* Full-strength text, not a dim token: the n/N counter is the primary feedback
+   of the whole find interaction — the thing you read while stepping through
+   matches — so it is content, not chrome. Dimming it made it hard to read. */
 .editor-search__stats {
   font-size: 12px;
-  color: var(--theme-muted);
+  color: var(--theme-text);
+  font-variant-numeric: tabular-nums;
   min-width: 30px;
   text-align: right;
 }
@@ -2322,35 +2372,65 @@ pre.tiptap-code-block code {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 4px;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--theme-border2);
 }
 
 .editor-search__btn {
-  padding: 2px 8px;
+  padding: 4px 10px;
   font-size: 14px;
-  background: var(--theme-bg);
-  border: 1px solid var(--theme-border);
-  border-radius: 4px;
+  background: transparent;
+  border: 1px solid var(--theme-border2);
+  border-radius: 6px;
   color: var(--theme-text);
   cursor: pointer;
+  transition: all 0.15s ease;
 }
 
 .editor-search__btn:hover {
-  background: var(--theme-bgAlt);
+  color: var(--theme-text);
+  background: var(--theme-border);
   border-color: var(--theme-accentPrimary);
 }
 
+.editor-search__btn:active {
+  transform: translateY(1px);
+  background: var(--theme-bgDark);
+}
+
+.editor-search__btn:focus-visible {
+  outline: 2px solid var(--theme-accentPrimary);
+  outline-offset: 1px;
+}
+
+/* Full-strength at rest. A dim, borderless glyph reads as decoration rather
+   than a control; the hover background (below) carries the affordance instead
+   of a colour change from dim to legible. */
 .editor-search__close {
-  padding: 2px 8px;
+  padding: 4px 8px;
   font-size: 14px;
   background: transparent;
-  border: none;
-  color: var(--theme-muted);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--theme-text);
   cursor: pointer;
+  transition: all 0.15s ease;
 }
 
 .editor-search__close:hover {
   color: var(--theme-text);
+  background: var(--theme-border);
+}
+
+.editor-search__close:active {
+  transform: translateY(1px);
+  background: var(--theme-bgDark);
+}
+
+.editor-search__close:focus-visible {
+  outline: 2px solid var(--theme-accentPrimary);
+  outline-offset: 1px;
 }
 
 /* Ephemeral AI-target glow — same gutter/rail language as block chrome,

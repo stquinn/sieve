@@ -60,6 +60,7 @@ const DOCUMENT_TARGET = Object.freeze({ kind: 'document', ref: 'doc', range: nul
  * @property {'editor'|'block-inner'|'ask'|'markdown'|'outside'} focusZone   doc selection persists across 'ask'
  * @property {object|null} blockCursor                            FORWARD SEAM (P3.E): the caret inside a block whose editor is NOT ProseMirror. NO current block populates it — every Sieve edit pane is a PM contentDOM, so its inner caret is already `caret`/`range`. `null` in practice; kept as the documented extension point for a future non-PM inner editor. OPAQUE + CARET-LIKE (excluded from the meaningful diff). See the module CONVENTION.
  * @property {AiTarget} target                                    resolved AI target + its friendly label (P3.C; ALWAYS present)
+ * @property {number|null} scroll                                 the surface's scroller position (issue #51): CARET-CLASS like blockCursor — excluded from the meaningful diff, updated SILENTLY via `setScroll` (never through `ingest`, so an unrelated caret move can't stomp it). Pullable (Workspace persists it to session.json at tab-deactivation/teardown), never pushed — pure scrolling must never broadcast a selection-update. `null` until the surface's first debounced report.
  */
 
 /**
@@ -116,6 +117,7 @@ export class SelectionModel {
       focusZone: 'editor',
       blockCursor: null,
       target: DOCUMENT_TARGET,
+      scroll: null,
     })
   }
 
@@ -161,6 +163,38 @@ export class SelectionModel {
       focusZone: zone,
       blockCursor: c.blockCursor,
       target: c.target,
+      scroll: c.scroll,
+    })
+    this.#commit(next)
+  }
+
+  /**
+   * Silently updates the scroll coordinate (issue #51): rebuilds #current with
+   * every OTHER field carried through unchanged (mirrors setFocusZone's shape),
+   * so this is the only way scroll ever changes — `ingest` never touches it (a
+   * caret-only move must not stomp the last-known scroll). Same value: no-op.
+   * Routes through #commit like every other write, but scroll is NOT a
+   * MEANINGFUL_KEYS member, so #commit's diff never sees it and never emits —
+   * pullable, not pushed, exactly the P3.A blockCursor pattern.
+   * @param {number|null} value
+   */
+  setScroll(value) {
+    if (value == null || value === this.#current.scroll) return
+    const c = this.#current
+    const next = SelectionModel.#freeze({
+      docUuid: this.#docUuid,
+      selectionType: c.selectionType,
+      caret: c.caret,
+      range: c.range,
+      selectedText: c.selectedText,
+      blockId: c.blockId,
+      blockIds: c.blockIds,
+      blockKind: c.blockKind,
+      ref: c.ref,
+      focusZone: c.focusZone,
+      blockCursor: c.blockCursor,
+      target: c.target,
+      scroll: value,
     })
     this.#commit(next)
   }
@@ -233,6 +267,10 @@ export class SelectionModel {
         range: raw.target.range ? { from: raw.target.range.from, to: raw.target.range.to } : null,
         label: raw.target.label,
       } : DOCUMENT_TARGET,
+      // scroll is NEVER carried on a selection descriptor — it rides its OWN
+      // channel (setScroll). Always carry the CURRENT value through so an
+      // unrelated caret/selection ingest can't stomp the last-known scroll.
+      scroll: this.#current.scroll,
     })
   }
 

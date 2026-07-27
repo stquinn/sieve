@@ -44,6 +44,13 @@ export const SurfaceEvent = Object.freeze({
   TRANSACTION: Object.freeze({ type: 'transaction' }),
   /** Focus moved within the surface (e.g. into a block's inner form control). */
   FOCUS_CHANGED: Object.freeze({ type: 'focus-changed' }),
+  /**
+   * The surface's OWN scroller moved (issue #51), debounced by the surface
+   * before it fires. Routes to the SelectionModel's setScroll (silent — never
+   * a meaningful-diff emit) via AbstractEditor#feedSelectionModel; NOT the same
+   * path as SELECTION_CHANGED (which re-derives the whole descriptor).
+   */
+  SCROLL_CHANGED: Object.freeze({ type: 'scroll-changed' }),
 })
 
 export class AbstractSurface {
@@ -188,6 +195,25 @@ export class AbstractSurface {
    * @param {import('../selection-model.js').SelectionContext} ctx
    */
   applyPosition(ctx) { /* base: nothing to focus */ }
+
+  /**
+   * The surface's own scroller position (issue #51) — the SCROLL_CHANGED feed
+   * hook, mirroring feedSelection. `null` when the surface has no live scroller
+   * yet (unmounted / not found); the model treats null as "nothing to report".
+   * @returns {number|null}
+   */
+  feedScroll() { return null }
+
+  /**
+   * Restores (or parks) the surface's scroller position — the symmetric WRITE
+   * side of feedScroll. Called both on a fresh document load (park at top /
+   * restore the session's saved offset) and via applyPosition (preserve scroll
+   * across a same-session softReload). `null`/`undefined` is "leave it alone"
+   * (no report to restore); 0 is a real, valid park-at-top value. Base surfaces
+   * have no live scroller; the default is a no-op.
+   * @param {number|null|undefined} value
+   */
+  applyScroll(value) { /* base: nothing to scroll */ }
 
   /**
    * Quote + truncate a snippet on a word boundary near 20 chars — the ONE

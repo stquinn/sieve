@@ -55,13 +55,21 @@ func (h *EditorHandler) handleEditorLoad(w http.ResponseWriter, r *http.Request)
 		Body   string                `json:"body"`
 		Mode   string                `json:"mode"`
 		UUID   string                `json:"uuid"`
+		Scroll int                   `json:"scroll"`
 		Blocks []block.FrontendBlock `json:"blocks,omitempty"`
 	}
+
+	// Scroll is a per-user VIEW property (CLAUDE.md: not document metadata), so
+	// it rides the session's Tab list (Tab.Scroll), keyed by uuid — the SAME id
+	// space a prompt tab uses ("prompt:name"). Zero for a tab never scrolled or
+	// never opened; the frontend treats 0 as "park at top", so no distinction is
+	// needed between the two.
+	scroll := h.tabScroll(uuid)
 
 	if strings.HasPrefix(uuid, "prompt:") {
 		name := strings.TrimPrefix(uuid, "prompt:")
 		if body, err := h.ServiceProvider.Prompts.GetPromptContent(name); err == nil {
-			json.NewEncoder(w).Encode(loadResponse{Body: body, Mode: "markdown", UUID: uuid})
+			json.NewEncoder(w).Encode(loadResponse{Body: body, Mode: "markdown", UUID: uuid, Scroll: scroll})
 			return
 		}
 		http.Error(w, "not found", http.StatusNotFound)
@@ -74,7 +82,7 @@ func (h *EditorHandler) handleEditorLoad(w http.ResponseWriter, r *http.Request)
 			mode = "wysiwyg"
 		}
 		body := string(b.Body())
-		resp := loadResponse{Body: body, Mode: mode, UUID: b.UUID()}
+		resp := loadResponse{Body: body, Mode: mode, UUID: b.UUID(), Scroll: scroll}
 		// WYSIWYG renders from the block list (Stage D.2). Load THROUGH the shadow
 		// (identity step): ensure the shadow is open — minting prose handles — and
 		// return its blocks, so the editor and shadow share identity (anchors get a
@@ -91,6 +99,19 @@ func (h *EditorHandler) handleEditorLoad(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	json.NewEncoder(w).Encode(loadResponse{Body: "", Mode: "wysiwyg", UUID: ""})
+}
+
+// tabScroll looks up the saved scroll offset for a tab id in the current
+// session, or 0 when the tab has none (never opened / never scrolled — the
+// frontend treats both identically: park at top).
+func (h *EditorHandler) tabScroll(uuid string) int {
+	session := h.ServiceProvider.State.LoadSession()
+	for _, t := range session.Tabs {
+		if t.ID == uuid {
+			return t.Scroll
+		}
+	}
+	return 0
 }
 
 // handleEditorExport serves CLEAN whole-doc markdown for "Copy as Markdown":

@@ -222,6 +222,172 @@
           <option value="synthwave" {{if eq .Theme "synthwave"}}selected{{end}}>SynthWave '84</option>
         </select>
       </div>
+
+      <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--theme-text); margin-top: 2rem; margin-bottom: 0.5rem;">Typography</h3>
+      <p style="font-size: 0.75rem; color: var(--theme-textDim); margin-bottom: 1.25rem;">Overrides the active theme's fonts and sizing. Leave a field on "Use theme default" (or blank) to let the theme decide.</p>
+
+      <!-- Two columns: controls left, preview right and STICKY. The dialog is wide
+           enough that a single full-width stack pushed the preview below the fold
+           on a 1440px-tall screen — which defeated its purpose, since the whole
+           reason it exists is to show the effect of the control you are touching. -->
+      <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.75rem; align-items: start;">
+      <div><!-- ── controls column ── -->
+
+      <div style="margin-bottom: 1.5rem;">
+        <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Prose font</label>
+        <select name="look_and_feel_editor_font" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+          <option value="" {{if eq .LookAndFeel.EditorFont ""}}selected{{end}}>Use theme default</option>
+          <optgroup label="Monospace">
+          <option style='font-family: "JetBrains Mono", monospace' value='"JetBrains Mono", monospace' {{if eq .LookAndFeel.EditorFont "\"JetBrains Mono\", monospace"}}selected{{end}}>JetBrains Mono</option>
+          <option style='font-family: "Cascadia Code", monospace' value='"Cascadia Code", monospace' {{if eq .LookAndFeel.EditorFont "\"Cascadia Code\", monospace"}}selected{{end}}>Cascadia Code</option>
+          <option style='font-family: "Fira Code", monospace' value='"Fira Code", monospace' {{if eq .LookAndFeel.EditorFont "\"Fira Code\", monospace"}}selected{{end}}>Fira Code</option>
+          <option style='font-family: "Source Code Pro", monospace' value='"Source Code Pro", monospace' {{if eq .LookAndFeel.EditorFont "\"Source Code Pro\", monospace"}}selected{{end}}>Source Code Pro</option>
+          <option style='font-family: "IBM Plex Mono", monospace' value='"IBM Plex Mono", monospace' {{if eq .LookAndFeel.EditorFont "\"IBM Plex Mono\", monospace"}}selected{{end}}>IBM Plex Mono</option>
+          <option style='font-family: "Inconsolata", monospace' value='"Inconsolata", monospace' {{if eq .LookAndFeel.EditorFont "\"Inconsolata\", monospace"}}selected{{end}}>Inconsolata</option>
+          <option style='font-family: ui-monospace, monospace' value='ui-monospace, monospace' {{if eq .LookAndFeel.EditorFont "ui-monospace, monospace"}}selected{{end}}>System Mono</option>
+          </optgroup>
+          <optgroup label="Sans">
+          <option style='font-family: "Inter", ui-sans-serif, system-ui, sans-serif' value='"Inter", ui-sans-serif, system-ui, sans-serif' {{if eq .LookAndFeel.EditorFont "\"Inter\", ui-sans-serif, system-ui, sans-serif"}}selected{{end}}>Inter</option>
+          <option style='font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif' value='"IBM Plex Sans", ui-sans-serif, system-ui, sans-serif' {{if eq .LookAndFeel.EditorFont "\"IBM Plex Sans\", ui-sans-serif, system-ui, sans-serif"}}selected{{end}}>IBM Plex Sans</option>
+          <option style='font-family: "Source Sans 3", ui-sans-serif, system-ui, sans-serif' value='"Source Sans 3", ui-sans-serif, system-ui, sans-serif' {{if eq .LookAndFeel.EditorFont "\"Source Sans 3\", ui-sans-serif, system-ui, sans-serif"}}selected{{end}}>Source Sans 3</option>
+          <option style='font-family: ui-sans-serif, system-ui, sans-serif' value='ui-sans-serif, system-ui, sans-serif' {{if eq .LookAndFeel.EditorFont "ui-sans-serif, system-ui, sans-serif"}}selected{{end}}>System UI</option>
+          </optgroup>
+          <optgroup label="Serif">
+          <option style='font-family: "IBM Plex Serif", ui-serif, serif' value='"IBM Plex Serif", ui-serif, serif' {{if eq .LookAndFeel.EditorFont "\"IBM Plex Serif\", ui-serif, serif"}}selected{{end}}>IBM Plex Serif</option>
+          <option style='font-family: "Source Serif Pro", ui-serif, serif' value='"Source Serif Pro", ui-serif, serif' {{if eq .LookAndFeel.EditorFont "\"Source Serif Pro\", ui-serif, serif"}}selected{{end}}>Source Serif Pro</option>
+          <option style='font-family: "Merriweather", ui-serif, serif' value='"Merriweather", ui-serif, serif' {{if eq .LookAndFeel.EditorFont "\"Merriweather\", ui-serif, serif"}}selected{{end}}>Merriweather</option>
+          </optgroup>
+        </select>
+      </div>
+
+      <div style="margin-bottom: 1.5rem;">
+        <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Code font</label>
+        <select name="look_and_feel_mono_font" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+          <option value="" {{if eq .LookAndFeel.MonoFont ""}}selected{{end}}>Use theme default</option>
+          <optgroup label="Monospace">
+          <option style='font-family: "JetBrains Mono", monospace' value='"JetBrains Mono", monospace' {{if eq .LookAndFeel.MonoFont "\"JetBrains Mono\", monospace"}}selected{{end}}>JetBrains Mono</option>
+          <option style='font-family: "Cascadia Code", monospace' value='"Cascadia Code", monospace' {{if eq .LookAndFeel.MonoFont "\"Cascadia Code\", monospace"}}selected{{end}}>Cascadia Code</option>
+          <option style='font-family: "Fira Code", monospace' value='"Fira Code", monospace' {{if eq .LookAndFeel.MonoFont "\"Fira Code\", monospace"}}selected{{end}}>Fira Code</option>
+          <option style='font-family: "Source Code Pro", monospace' value='"Source Code Pro", monospace' {{if eq .LookAndFeel.MonoFont "\"Source Code Pro\", monospace"}}selected{{end}}>Source Code Pro</option>
+          <option style='font-family: "IBM Plex Mono", monospace' value='"IBM Plex Mono", monospace' {{if eq .LookAndFeel.MonoFont "\"IBM Plex Mono\", monospace"}}selected{{end}}>IBM Plex Mono</option>
+          <option style='font-family: "Inconsolata", monospace' value='"Inconsolata", monospace' {{if eq .LookAndFeel.MonoFont "\"Inconsolata\", monospace"}}selected{{end}}>Inconsolata</option>
+          <option style='font-family: ui-monospace, monospace' value='ui-monospace, monospace' {{if eq .LookAndFeel.MonoFont "ui-monospace, monospace"}}selected{{end}}>System Mono</option>
+          </optgroup>
+          <optgroup label="Sans">
+          <option style='font-family: "Inter", ui-sans-serif, system-ui, sans-serif' value='"Inter", ui-sans-serif, system-ui, sans-serif' {{if eq .LookAndFeel.MonoFont "\"Inter\", ui-sans-serif, system-ui, sans-serif"}}selected{{end}}>Inter</option>
+          <option style='font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif' value='"IBM Plex Sans", ui-sans-serif, system-ui, sans-serif' {{if eq .LookAndFeel.MonoFont "\"IBM Plex Sans\", ui-sans-serif, system-ui, sans-serif"}}selected{{end}}>IBM Plex Sans</option>
+          <option style='font-family: "Source Sans 3", ui-sans-serif, system-ui, sans-serif' value='"Source Sans 3", ui-sans-serif, system-ui, sans-serif' {{if eq .LookAndFeel.MonoFont "\"Source Sans 3\", ui-sans-serif, system-ui, sans-serif"}}selected{{end}}>Source Sans 3</option>
+          <option style='font-family: ui-sans-serif, system-ui, sans-serif' value='ui-sans-serif, system-ui, sans-serif' {{if eq .LookAndFeel.MonoFont "ui-sans-serif, system-ui, sans-serif"}}selected{{end}}>System UI</option>
+          </optgroup>
+          <optgroup label="Serif">
+          <option style='font-family: "IBM Plex Serif", ui-serif, serif' value='"IBM Plex Serif", ui-serif, serif' {{if eq .LookAndFeel.MonoFont "\"IBM Plex Serif\", ui-serif, serif"}}selected{{end}}>IBM Plex Serif</option>
+          <option style='font-family: "Source Serif Pro", ui-serif, serif' value='"Source Serif Pro", ui-serif, serif' {{if eq .LookAndFeel.MonoFont "\"Source Serif Pro\", ui-serif, serif"}}selected{{end}}>Source Serif Pro</option>
+          <option style='font-family: "Merriweather", ui-serif, serif' value='"Merriweather", ui-serif, serif' {{if eq .LookAndFeel.MonoFont "\"Merriweather\", ui-serif, serif"}}selected{{end}}>Merriweather</option>
+          </optgroup>
+        </select>
+      </div>
+
+      <div style="margin-bottom: 1.5rem;">
+        <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Interface font</label>
+        <select name="look_and_feel_ui_font" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+          <option value="" {{if eq .LookAndFeel.UIFont ""}}selected{{end}}>Use theme default</option>
+          <optgroup label="Monospace">
+          <option style='font-family: "JetBrains Mono", monospace' value='"JetBrains Mono", monospace' {{if eq .LookAndFeel.UIFont "\"JetBrains Mono\", monospace"}}selected{{end}}>JetBrains Mono</option>
+          <option style='font-family: "Cascadia Code", monospace' value='"Cascadia Code", monospace' {{if eq .LookAndFeel.UIFont "\"Cascadia Code\", monospace"}}selected{{end}}>Cascadia Code</option>
+          <option style='font-family: "Fira Code", monospace' value='"Fira Code", monospace' {{if eq .LookAndFeel.UIFont "\"Fira Code\", monospace"}}selected{{end}}>Fira Code</option>
+          <option style='font-family: "Source Code Pro", monospace' value='"Source Code Pro", monospace' {{if eq .LookAndFeel.UIFont "\"Source Code Pro\", monospace"}}selected{{end}}>Source Code Pro</option>
+          <option style='font-family: "IBM Plex Mono", monospace' value='"IBM Plex Mono", monospace' {{if eq .LookAndFeel.UIFont "\"IBM Plex Mono\", monospace"}}selected{{end}}>IBM Plex Mono</option>
+          <option style='font-family: "Inconsolata", monospace' value='"Inconsolata", monospace' {{if eq .LookAndFeel.UIFont "\"Inconsolata\", monospace"}}selected{{end}}>Inconsolata</option>
+          <option style='font-family: ui-monospace, monospace' value='ui-monospace, monospace' {{if eq .LookAndFeel.UIFont "ui-monospace, monospace"}}selected{{end}}>System Mono</option>
+          </optgroup>
+          <optgroup label="Sans">
+          <option style='font-family: "Inter", ui-sans-serif, system-ui, sans-serif' value='"Inter", ui-sans-serif, system-ui, sans-serif' {{if eq .LookAndFeel.UIFont "\"Inter\", ui-sans-serif, system-ui, sans-serif"}}selected{{end}}>Inter</option>
+          <option style='font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif' value='"IBM Plex Sans", ui-sans-serif, system-ui, sans-serif' {{if eq .LookAndFeel.UIFont "\"IBM Plex Sans\", ui-sans-serif, system-ui, sans-serif"}}selected{{end}}>IBM Plex Sans</option>
+          <option style='font-family: "Source Sans 3", ui-sans-serif, system-ui, sans-serif' value='"Source Sans 3", ui-sans-serif, system-ui, sans-serif' {{if eq .LookAndFeel.UIFont "\"Source Sans 3\", ui-sans-serif, system-ui, sans-serif"}}selected{{end}}>Source Sans 3</option>
+          <option style='font-family: ui-sans-serif, system-ui, sans-serif' value='ui-sans-serif, system-ui, sans-serif' {{if eq .LookAndFeel.UIFont "ui-sans-serif, system-ui, sans-serif"}}selected{{end}}>System UI</option>
+          </optgroup>
+          <optgroup label="Serif">
+          <option style='font-family: "IBM Plex Serif", ui-serif, serif' value='"IBM Plex Serif", ui-serif, serif' {{if eq .LookAndFeel.UIFont "\"IBM Plex Serif\", ui-serif, serif"}}selected{{end}}>IBM Plex Serif</option>
+          <option style='font-family: "Source Serif Pro", ui-serif, serif' value='"Source Serif Pro", ui-serif, serif' {{if eq .LookAndFeel.UIFont "\"Source Serif Pro\", ui-serif, serif"}}selected{{end}}>Source Serif Pro</option>
+          <option style='font-family: "Merriweather", ui-serif, serif' value='"Merriweather", ui-serif, serif' {{if eq .LookAndFeel.UIFont "\"Merriweather\", ui-serif, serif"}}selected{{end}}>Merriweather</option>
+          </optgroup>
+        </select>
+      </div>
+
+      <div style="margin-bottom: 1.5rem;">
+        <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Text size</label>
+        <!-- A stepped slider rather than a numeric field: the value is a
+             proportional multiplier, and dragging until it looks right is how
+             people actually choose a text size. The end glyphs carry the meaning,
+             so the percentage is confirmation rather than the interface. The
+             hidden input is what the form posts — the slider is pure UI, which
+             keeps "unset" (follow the theme) reachable without contorting the
+             track to hold a non-numeric stop. -->
+        <input type="hidden" name="look_and_feel_editor_scale" id="editor-scale-value" value="{{.LookAndFeel.EditorScale}}">
+        <div style="display: flex; align-items: center; gap: 0.85rem;">
+          <span aria-hidden="true" style="font-size: 0.8rem; color: var(--theme-textDim); line-height: 1;">A</span>
+          <div style="flex: 1;">
+            <input type="range" id="editor-scale-slider" min="0" max="7" step="1"
+                   aria-label="Text size"
+                   style="width: 100%; display: block; accent-color: var(--theme-accentPrimary); background: transparent; cursor: pointer;">
+            <!-- Explicit tick marks. A <datalist> is the standards-blessed way to
+                 mark a stepped range, but WebKit renders it almost invisibly and
+                 gives no styling hook — so the stops are drawn here instead. The
+                 100% stop is taller and accented: it is the one people look for.
+                 Inset by half a thumb-width each side so marks line up with where
+                 the thumb actually centres rather than with the track's edges. -->
+            <div aria-hidden="true" style="display: flex; justify-content: space-between; margin: 0.15rem 0.5rem 0;">
+              <span style="width: 1px; height: 7px; background: var(--theme-muted);"></span>
+              <span style="width: 1px; height: 7px; background: var(--theme-muted);"></span>
+              <span style="width: 2px; height: 11px; background: var(--theme-accentPrimary); border-radius: 1px;"></span>
+              <span style="width: 1px; height: 7px; background: var(--theme-muted);"></span>
+              <span style="width: 1px; height: 7px; background: var(--theme-muted);"></span>
+              <span style="width: 1px; height: 7px; background: var(--theme-muted);"></span>
+              <span style="width: 1px; height: 7px; background: var(--theme-muted);"></span>
+              <span style="width: 1px; height: 7px; background: var(--theme-muted);"></span>
+            </div>
+          </div>
+          <span aria-hidden="true" style="font-size: 1.5rem; color: var(--theme-textDim); line-height: 1;">A</span>
+          <span id="editor-scale-readout" style="min-width: 3.4rem; text-align: right; font-size: 0.8rem; color: var(--theme-text); font-variant-numeric: tabular-nums;"></span>
+        </div>
+        <p style="font-size: 0.75rem; color: var(--theme-textDim); margin-top: 0.4rem;">
+          Scales the whole document proportionally, like zoom — not just one font. Also steppable via View ▸ Increase/Decrease/Reset Editor Font.
+          <button type="button" id="editor-scale-reset" style="background: none; border: none; padding: 0; margin-left: 0.25rem; color: var(--theme-accentPrimary); cursor: pointer; font-size: 0.75rem; text-decoration: underline;">Use theme default</button>
+        </p>
+      </div>
+
+      <!-- Paired: two short numeric fields each took a full row plus a help line,
+           which is most of why this panel scrolled. -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem;">
+        <div>
+          <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Line height</label>
+          <input type="number" name="look_and_feel_editor_line_height" min="1.2" max="2.4" step="0.05" placeholder="1.75" value="{{.LookAndFeel.EditorLineHeight}}" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+          <p style="font-size: 0.75rem; color: var(--theme-textDim); margin-top: 0.4rem;">1.2-2.4. Blank = theme (1.75).</p>
+        </div>
+        <div>
+          <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Line width</label>
+          <input type="number" name="look_and_feel_editor_measure" min="48" max="140" step="1" placeholder="Full width" value="{{trimUnit .LookAndFeel.EditorMeasure}}" style="width: 100%; background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 0.6rem 1rem; color: var(--theme-text); outline: none;">
+          <p style="font-size: 0.75rem; color: var(--theme-textDim); margin-top: 0.4rem;">48-140 chars. Blank = full width.</p>
+        </div>
+      </div>
+
+      </div><!-- ── /controls column ── -->
+
+      <!-- Live preview. The controls above write the same --theme-* custom
+           properties the editor reads, so this box reflects a choice the moment
+           it is made — no save, no reopen. That immediacy is the point: it makes
+           a proportional scale self-explanatory in a way a number never is. -->
+      <div style="position: sticky; top: 0;"><!-- ── preview column ── -->
+        <label style="display: block; font-size: 0.75rem; font-weight: bold; color: var(--theme-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Preview</label>
+        <div id="typography-preview" style="background: var(--theme-bg); border: 1px solid var(--theme-border); border-radius: 0.5rem; padding: 1rem; overflow-x: auto;">
+          <p style="font-family: var(--theme-editorFont); font-size: var(--doc-size, 16px); line-height: var(--theme-editorLineHeight, 1.75); color: var(--theme-text); margin: 0 0 0.75rem 0;">The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs.</p>
+          <code style="display: block; font-family: var(--theme-monoFont); font-size: calc(var(--doc-size, 16px) * 0.85); line-height: 1.5; color: var(--theme-textDim); white-space: pre;">const answer = 42 // Il1 O0
+if (x &lt;= y) return "ok";</code>
+        </div>
+        <p style="font-size: 0.75rem; color: var(--theme-textDim); margin-top: 0.5rem;">Updates as you choose. Save to apply.</p>
+      </div><!-- ── /preview column ── -->
+
+      </div><!-- ── /typography grid ── -->
     </div>
 
     <div class="settings-tab-content" id="settings-tab-editor" style="display: {{if eq .LastSettingsPanel "editor"}}block{{else}}none{{end}};">
@@ -504,5 +670,107 @@ function toggleMcpTransportFields(select) {
   row.querySelector('.mcp-stdio-fields').style.display = isStdio ? 'flex' : 'none';
   row.querySelector('.mcp-remote-fields').style.display = isStdio ? 'none' : 'flex';
 }
+
+// Typography live preview. The form fields carry the SAME names as the theme
+// custom properties they override (that mirroring is what makes the Go-side
+// merge a plain map overlay), so a change can be reflected instantly by writing
+// the matching --theme-* onto documentElement. Save still owns persistence —
+// this is preview only, and reopening the dialog re-renders from the server.
+//
+// Why bother: a scale multiplier is only intuitive if you can SEE it. Choosing
+// "125%" and watching the sample resize needs no explanation of what it scales;
+// a number alone would.
+(function () {
+  var FIELD_TO_VAR = {
+    look_and_feel_editor_font:       ['--theme-editorFont', ''],
+    look_and_feel_mono_font:         ['--theme-monoFont', ''],
+    look_and_feel_ui_font:           ['--theme-uiFont', ''],
+    look_and_feel_editor_scale:      ['--theme-editorScale', ''],
+    look_and_feel_editor_line_height:['--theme-editorLineHeight', ''],
+    look_and_feel_editor_measure:    ['--theme-editorMeasure', 'ch'],
+  };
+
+  function apply(el) {
+    var spec = FIELD_TO_VAR[el.name];
+    if (!spec) return;
+    var root = document.documentElement;
+    var raw = (el.value || '').trim();
+    // Empty means "follow the theme" — REMOVE the override rather than writing a
+    // blank, so theme.css's html:root value shows through again.
+    if (raw === '') root.style.removeProperty(spec[0]);
+    else root.style.setProperty(spec[0], raw + spec[1]);
+    refreshPreview();
+  }
+
+  // --doc-size lives on .editor-panel, which the settings dialog is not inside,
+  // so the preview computes its own from the same base x scale.
+  function refreshPreview() {
+    var box = document.getElementById('typography-preview');
+    if (!box) return;
+    var sel = document.querySelector('[name="look_and_feel_editor_scale"]');
+    // Unset previews at 1.0, NOT at the computed --theme-editorScale: the served
+    // stylesheet already bakes in the currently-SAVED override, so reading it back
+    // would show the value you just cleared. No theme ships a scale, so the honest
+    // "follow the theme" preview is 1.0.
+    var scale = (sel && sel.value.trim()) || '1';
+    box.style.setProperty('--doc-size', 'calc(16px * ' + scale + ')');
+  }
+
+  document.addEventListener('change', function (e) {
+    if (e.target && e.target.name in FIELD_TO_VAR) apply(e.target);
+  });
+  // number inputs should track as you type, not only on blur
+  document.addEventListener('input', function (e) {
+    if (e.target && e.target.tagName === 'INPUT' && e.target.name in FIELD_TO_VAR) apply(e.target);
+  });
+
+  // ── Text-size slider ────────────────────────────────────────────────────────
+  // The closed step set lives in Go (LookAndFeel validation) and is mirrored here
+  // as slider positions. Keep the two in step: an index the server rejects would
+  // silently fall back to the theme value.
+  var STEPS = ['0.85', '0.9', '1.0', '1.1', '1.25', '1.5', '1.75', '2.0'];
+  var DEFAULT_IDX = 2; // 1.0 — where an unset slider rests, without being "set"
+
+  function wireScaleSlider() {
+    var slider = document.getElementById('editor-scale-slider');
+    var hidden = document.getElementById('editor-scale-value');
+    var readout = document.getElementById('editor-scale-readout');
+    var reset = document.getElementById('editor-scale-reset');
+    if (!slider || !hidden || !readout) return;
+
+    function paint() {
+      var v = (hidden.value || '').trim();
+      var idx = STEPS.indexOf(v);
+      // Unset rests at 100% but is NOT the same as choosing 100% — the readout
+      // says so, and the hidden value stays empty so the theme keeps ownership.
+      slider.value = String(idx < 0 ? DEFAULT_IDX : idx);
+      readout.textContent = idx < 0 ? 'Theme' : Math.round(parseFloat(v) * 100) + '%';
+      readout.style.color = idx < 0 ? 'var(--theme-textDim)' : 'var(--theme-text)';
+    }
+
+    slider.addEventListener('input', function () {
+      hidden.value = STEPS[parseInt(slider.value, 10)] || '1.0';
+      paint();
+      // Route through the same delegated handler the other fields use, so live
+      // preview has exactly one code path.
+      hidden.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    if (reset) {
+      reset.addEventListener('click', function () {
+        hidden.value = '';
+        paint();
+        hidden.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    }
+    paint();
+  }
+
+  wireScaleSlider();
+  // The settings panel is swapped in by htmx, so re-wire after a swap.
+  document.body.addEventListener('htmx:afterSwap', wireScaleSlider);
+
+  refreshPreview();
+})();
 </script>
 {{end}}

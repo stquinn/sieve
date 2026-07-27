@@ -31,6 +31,27 @@ func TestParseSession_ShowLineNumbers(t *testing.T) {
 	}
 }
 
+func TestTab_ScrollRoundTrip(t *testing.T) {
+	// A saved scroll offset survives Marshal → ParseSession (store/{hostname}/
+	// session.json persistence — issue #51).
+	s := Session{Tabs: []Tab{{ID: "doc-1", Scroll: 842}}}
+	data, err := s.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	round := ParseSession(data)
+	if len(round.Tabs) != 1 || round.Tabs[0].Scroll != 842 {
+		t.Fatalf("expected Scroll=842 to round-trip, got %+v", round.Tabs)
+	}
+
+	// A session.json predating the field (no "scroll" key) yields 0 — backwards
+	// compatible, and indistinguishable from "never scrolled" by design.
+	legacy := ParseSession([]byte(`{"activeIdx": 0, "tabs": [{"id": "doc-2"}]}`))
+	if len(legacy.Tabs) != 1 || legacy.Tabs[0].Scroll != 0 {
+		t.Fatalf("expected Scroll=0 for a tab without the field, got %+v", legacy.Tabs)
+	}
+}
+
 func TestParseSession_AskPanelHeight(t *testing.T) {
 	// Defaults to 220 for a fresh session and one predating the field.
 	if h := ParseSession(nil).AskPanelHeight; h != 220 {
