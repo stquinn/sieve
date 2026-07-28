@@ -329,7 +329,7 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 3. **`ActionPaste` on a bare URL** (smart-card, web-clip) made the new paste path dead code — `FirstPasteMatch` fell through and a pasted URL silently became the wrong kind.
 4. **One kind escaping the verb map.** `web-clip-node-view.js` said `Upgrade to` where `action-label.js` says `Convert to` — and `action-label.js` exists specifically so "the verb wording has a regression gate". The one kind that supplies its own labels was the one kind outside the gate.
 
-The ancestor of all four is `smart-link` itself: an inline exemption accepted in 2026-06-19 as "special, revisit when containers land", which rotted for a year and was ultimately fixed by deletion (#67).
+The ancestor of all four is `smart-link` itself: introduced 2026-05-02 (`e391458` "Add Rich Links", which also set `link:false` — the inline node *replaced* the mark), formally accepted 2026-06-19 as "special, not really a block, revisit when containers land", and deleted 2026-07-27 (#67). That is **under three months from introduction to deletion, in a repo whose first commit is 2026-04-12** — the exemption was live for most of the project's existence and rotted well inside it. Bypasses do not need years to cost real work.
 
 **Why deferred:** #67 fixed the four instances; the class remains.
 
