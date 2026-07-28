@@ -316,3 +316,39 @@ Each entry records what the debt is, why it was deferred, and what retires it.
 **Why deferred:** the fix rides the role formalisation (the workbench evaluator is the planned first formal role — same brainstorm §10 sequence); ripping out prompt-override before roles exist would remove the only personalisation mechanism users have.
 
 **Retires when:** the role/addenda model lands: role templates in Go, a typed profile/style settings tab feeding the prompt generator, PromptEditor's template-override retired (its successor is the typed-form settings surface), and per-job prompt inspection available. Verify: no store-resident text can alter a job's instructions or response contract.
+
+## E-A: Framework bypasses are undetectable — the seams exist, nothing enforces them
+
+**Tracked:** register only (raised 2026-07-28 after #67; user: "it's really important that we don't break the framework again").
+
+**What:** The block framework has real seams — the processor registry, the pure-and-tested verb map (`block/action-label.js`), the shared interaction policy (per-renderer key handlers FORBIDDEN), the service trio that owns the wire (#49), the `getExtractionMenuItems` adapter hook. Every one of them can be routed around silently. Nothing detects a bypass, nothing surfaces one to a reader, and a bypass reads as design to whoever arrives next — which is strictly worse than a missing feature, because a gap announces itself and a workaround does not.
+
+**Evidence, all four found during #67 and all invisible until walked into:**
+1. **A silent allow-list gate.** `context-menu.js`'s `nativeConvertible = { codeBlock: true, image: true }` excluded prose from extraction discovery entirely, so Go's link-aware `IsSupportedContent` was unreachable from a link. No error, no failing test — the menu simply never asked. Someone had already worked around it by hand-building "Insert Web Clip from Link" / "Insert URL Card from Link": an *Insert* action doing a *Transform*'s job, wrong verb, wrong menu group, losing the kind's own Fetch/Summarise choice. That is a bypass fossilised into apparent design.
+2. **`StarterKit.configure({ link: false })`** — the schema had no link mark at all, so every `<a href>` was stripped on parse. Nothing declared this; it was found by dumping `editor.schema.marks`. It made the entire #67 decision inert.
+3. **`ActionPaste` on a bare URL** (smart-card, web-clip) made the new paste path dead code — `FirstPasteMatch` fell through and a pasted URL silently became the wrong kind.
+4. **One kind escaping the verb map.** `web-clip-node-view.js` said `Upgrade to` where `action-label.js` says `Convert to` — and `action-label.js` exists specifically so "the verb wording has a regression gate". The one kind that supplies its own labels was the one kind outside the gate.
+
+The ancestor of all four is `smart-link` itself: an inline exemption accepted in 2026-06-19 as "special, revisit when containers land", which rotted for a year and was ultimately fixed by deletion (#67).
+
+**Why deferred:** #67 fixed the four instances; the class remains.
+
+**Retires when:** violations fail CI rather than waiting to be noticed. The cheap version is grep-based architecture tests — one of #67's agents ran exactly these by hand and they worked: no conversion verb outside `action-label.js`; no `handleKeyDown` in a renderer (contract-forbidden); no `fetch`/WebSocket outside the service trio; no new `window.Sieve*`. Plus the shape rule that produced instance 1: **an allow-list that silently excludes is forbidden** — ask the framework and let the backend answer "nothing", so a gap shows as an empty menu instead of absent code. Related: [[X-C]] (#22), and the standing rule — if something doesn't fit, fix the framework or circumvent *consciously and visibly*, never quietly.
+
+## E-B: `extractContentEntryFromEditor`'s anchor branch describes a link without its label
+
+**Tracked:** register only (found during the #67 audit, 2026-07-28; deliberately not fixed there).
+
+**What:** `NodeViewRegistry.extractContentEntryFromEditor` ("Anchor click" branch) emits `[{mimeType:'text/uri-list', content: href}]` — no `text/html` view, therefore no label. `ProseLink.contentEntries()` (added by #67) emits both, which is why converting a prose link seeds the new card/clip's title from the link text. So the same user gesture on a link *inside a web-clip body* produces a worse result than on a link in prose: same framework path, two descriptions of the same noun.
+
+**Why deferred:** it is not a bypass (it routes through the framework correctly), and the playback for a link inside a Go-authored body is not #67's range-consume path — fixing it blind would have been guessing.
+
+**Retires when:** that branch resolves a `ProseLink` too, so one type describes a link everywhere. Verify: right-clicking a link inside a web-clip body offers the same conversions, with the title seeded, as the same link in prose.
+
+## E-C: `@ts-check` is normative but `tsc` is not wired
+
+**Tracked:** register only (memory `project_tsc_not_wired`, restated 2026-07-28).
+
+**What:** `docs/how-to-idiomatic-js.md` makes JSDoc types checkable via `tsc --noEmit` NORMATIVE for new JS, but there is no `typescript` dependency, no `tsconfig`, and no CI step. #67's new files (`prose-link.js`, `link-edit-dialog.js`) were verified with an ephemeral `npm i --no-save typescript` and a single-file run — a manual ritual that only happens when someone remembers.
+
+**Retires when:** typescript is a devDependency with a checked-in `tsconfig` (checkJs, noEmit) and a CI job, so the normative rule is enforced rather than aspirational. User approved wiring it into the flake + CI as a separate follow-up.
