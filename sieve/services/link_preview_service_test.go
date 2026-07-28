@@ -3,6 +3,7 @@ package services
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sieve/sieve/domain"
@@ -319,47 +320,70 @@ func TestFetchTitle_StopsAtBodyStartTag(t *testing.T) {
 	}
 }
 
+// countingReader reports how many bytes a consumer actually pulled.
+type countingReader struct {
+	r    io.Reader
+	read int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.read += int64(n)
+	return n, err
+}
+
 // Same stop, measured the other way: an enormous body must not be pulled down to
 // read a title that was already in hand.
-func TestFetchTitle_DoesNotReadEnormousBody(t *testing.T) {
-	const (
-		head      = `<!DOCTYPE html><html><head><title>Cheap Title</title></head><body>`
-		chunkSize = 64 << 10
-		chunks    = 128 // 8 MiB of body
-	)
+//
+// This asserts on scan() directly rather than through an httptest server. The
+// earlier version counted bytes the HANDLER managed to write, which is a function
+// of kernel socket buffers and net/http's write buffering — it passed locally and
+// failed in CI at 2.69 MiB against a 2 MiB ceiling. Nothing about the bound under
+// test is network-shaped: scan reads from an io.Reader, so the reader is where the
+// truth is, and the count is exact everywhere.
+func TestHeadScan_DoesNotReadEnormousBody(t *testing.T) {
+	head := `<!DOCTYPE html><html><head><title>Cheap Title</title></head><body>`
+	src := &countingReader{r: io.MultiReader(
+		strings.NewReader(head),
+		bytes.NewReader(bytes.Repeat([]byte("x"), 8<<20)), // 8 MiB of body
+	)}
 
-	var written int64
+	var meta headMeta
+	meta.scan(src)
+
+	if got := meta.bestTitle(); got != "Cheap Title" {
+		t.Errorf("bestTitle: got %q, want %q", got, "Cheap Title")
+	}
+	// The tokeniser reads in chunks, so it will pull a little past <body> — but
+	// "a little" is bounded and deterministic, unlike a socket. 64 KiB is ~1000x
+	// under the 8 MiB body and still far above any plausible chunk.
+	if limit := int64(64 << 10); src.read > limit {
+		t.Errorf("scan pulled %d bytes (ceiling %d) — it is reading the body", src.read, limit)
+	}
+}
+
+// The same bound, end to end over HTTP: correctness only, no byte counting.
+func TestFetchTitle_EnormousBodyStillReturnsTheTitle(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		n, _ := w.Write([]byte(head))
-		atomic.AddInt64(&written, int64(n))
+		w.Write([]byte(`<!DOCTYPE html><html><head><title>Cheap Title</title></head><body>`))
 		w.(http.Flusher).Flush()
-
-		chunk := bytes.Repeat([]byte("x"), chunkSize)
-		for i := 0; i < chunks; i++ {
+		chunk := bytes.Repeat([]byte("x"), 64<<10)
+		for i := 0; i < 128; i++ { // 8 MiB
 			select {
 			case <-r.Context().Done():
 				return
 			default:
 			}
-			n, err := w.Write(chunk)
-			atomic.AddInt64(&written, int64(n))
-			if err != nil {
+			if _, err := w.Write(chunk); err != nil {
 				return
 			}
 		}
 	}))
+	defer srv.Close()
 
-	got := NewLinkPreviewService().FetchTitle(srv.URL, 30*time.Second)
-	srv.Close() // blocks until the handler returns, so `written` is final
-
-	if got != "Cheap Title" {
+	if got := NewLinkPreviewService().FetchTitle(srv.URL, 30*time.Second); got != "Cheap Title" {
 		t.Errorf("FetchTitle: got %q, want %q", got, "Cheap Title")
-	}
-	// Generous ceiling: socket and bufio buffers absorb some of the body after the
-	// client stops reading. The point is that 8 MiB did not get pulled down.
-	if limit := int64(2 << 20); atomic.LoadInt64(&written) > limit {
-		t.Errorf("handler drained %d bytes (ceiling %d) — the body was being read", written, limit)
 	}
 }
 

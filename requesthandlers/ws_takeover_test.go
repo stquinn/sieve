@@ -207,14 +207,26 @@ func TestWS_NonMutatingFrameDoesNotClaim(t *testing.T) {
 	b := dialWS(t, srv, uuid) // registers first
 	a := dialWS(t, srv, uuid) // registered owner
 
+	// dialWS returns when the HTTP upgrade completes, which is BEFORE the handler
+	// reaches h.register (ws_handler.go: register, then the read loop). Without
+	// this round-trip, h.sendTo below can run while B is still the registered
+	// owner, and A's read times out — passes locally, fails on a loaded runner.
+	// A ping proves A's read loop is running, which is strictly after register.
+	// It is also non-mutating, so it cannot itself claim: exactly what this test
+	// asserts about B's ping.
+	if err := a.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
+		t.Fatalf("write registration-barrier ping: %v", err)
+	}
+	expectMessage(t, a, `"pong"`, 5*time.Second)
+
 	if err := b.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
 		t.Fatalf("write ping: %v", err)
 	}
-	expectMessage(t, b, `"pong"`, 2*time.Second) // correlated reply, not a claim
+	expectMessage(t, b, `"pong"`, 5*time.Second) // correlated reply, not a claim
 
 	// Ownership unchanged: an unsolicited render-back still routes to A.
 	h.sendTo(uuid, map[string]string{"type": "probe-owner-a"})
-	expectMessage(t, a, "probe-owner-a", 2*time.Second)
+	expectMessage(t, a, "probe-owner-a", 5*time.Second)
 	expectNoMessage(t, b, "probe-owner-a", 500*time.Millisecond)
 
 	closeAndSettle(a)

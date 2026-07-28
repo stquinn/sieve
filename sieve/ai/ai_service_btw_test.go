@@ -1,6 +1,8 @@
 package ai
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -25,7 +27,19 @@ func newSmartTestService(t *testing.T, cap *captureRunner) *AIService {
 		t.Fatalf("NewPromptService: %v", err)
 	}
 	settings := domain.DefaultSettings()
-	settings.CLI = "claude"
+	settings.CLI = "claude" // dialect only — arg rendering is unaffected by CLIPath
+	// Tier() probes the RESOLVED binary with exec.LookPath, so a bare "claude"
+	// makes the tier depend on the machine having an AI CLI installed: smart
+	// locally, dumb in CI, and every test below fails there with "not available
+	// in dumb mode". Point the probe at a stub inside the test's temp dir. The
+	// path is absolute, so LookPath never consults PATH — which matters because
+	// Tier() overwrites PATH with the login shell's. The runner is stubbed, so
+	// this file is never executed; it only has to exist and be executable.
+	stub := filepath.Join(t.TempDir(), "stub-ai-cli")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write stub CLI: %v", err)
+	}
+	settings.CLIPath = stub
 	if err := state.SaveSettings(settings); err != nil {
 		t.Fatalf("SaveSettings: %v", err)
 	}
