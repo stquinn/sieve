@@ -78,8 +78,14 @@ Custom extensions live in `extensions.js` (vanilla JS) — they are NOT in the b
 Help → Open Source Licenses dialog) is GENERATED — never hand-edit. Regenerate only when deps change (`go.mod`,
 `frontend/package.json`, bundle entries): `nix develop -c go run ./tools/gencredits`
 (needs network on first run). The tool fails the run if a copyleft license appears in a
-bundled component. Output is deterministic (Go stdlib version comes from go.mod's `go`
-directive, not the local toolchain) — CI's `credits` job regenerates and diffs, failing
+bundled component. Output must be deterministic across toolchains, and BOTH halves of the
+Go stdlib entry are pinned to make it so: the **version** comes from go.mod's `go`
+directive (not `go env GOVERSION`), and the **license text** comes from `$GOROOT/LICENSE`
+only — never a walk of GOROOT, which holds ~20 vendored licenses whose shallowest is
+BoringSSL's (nix omits the top-level LICENSE, so a walk shipped OpenSSL's text as the Go
+stdlib's; fixed `b7e8967`, pinned by `tools/gencredits/go_license_test.go`, with
+`tools/gencredits/go-license.txt` as the fallback for toolchains that omit the file) —
+CI's `credits` job regenerates and diffs, failing
 the pipeline if a dep change lands without a regen; releases ship the committed artifact
 and never regenerate. Sieve itself is Apache-2.0 (`LICENSE` + `NOTICE` at root).
 

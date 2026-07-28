@@ -18,6 +18,7 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -346,7 +347,10 @@ func (g *Generator) fixedEntries() ([]Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	goLicense := readLicenseFile(strings.TrimSpace(string(gorootOut)))
+	goLicense, err := goStdlibLicense(strings.TrimSpace(string(gorootOut)))
+	if err != nil {
+		return nil, err
+	}
 	// Version from go.mod's `go` directive, NOT the local toolchain
 	// (go env GOVERSION): the artifact must be byte-identical wherever it is
 	// regenerated — the CI staleness gate diffs a fresh regen against the
@@ -505,8 +509,45 @@ func (g *Generator) goModDirective() (string, error) {
 
 // ---- shared helpers ----
 
+//go:embed go-license.txt
+var vendoredGoLicense string
+
+// goStdlibLicense returns the Go standard library's license text.
+//
+// It reads $GOROOT/LICENSE and NOTHING ELSE. It must never fall back to walking
+// GOROOT: the tree contains ~20 other LICENSE files belonging to vendored
+// dependencies, and the shallowest of them is
+// src/crypto/internal/boring/LICENSE — BoringSSL's, which is largely OpenSSL's.
+// That is exactly the bug this replaced: the nix Go package strips the
+// top-level $GOROOT/LICENSE, so a walk picked BoringSSL and the shipped credits
+// dialog told users the Go runtime was under OpenSSL terms. CI, using the
+// official tarball, produced the correct text — so the two disagreed and the
+// staleness gate failed, which is the gate working as designed.
+//
+// When $GOROOT/LICENSE is absent (nix), fall back to the vendored copy so the
+// generator still runs in the project's own dev shell. When it IS present, the
+// two must agree — a mismatch means Go relicensed or the vendored copy drifted,
+// and silently preferring either would be wrong.
+func goStdlibLicense(goroot string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(goroot, "LICENSE"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return vendoredGoLicense, nil // nix and friends: no top-level LICENSE
+		}
+		return "", fmt.Errorf("read $GOROOT/LICENSE: %w", err)
+	}
+	if got := string(raw); got != vendoredGoLicense {
+		return "", fmt.Errorf("$GOROOT/LICENSE does not match tools/gencredits/go-license.txt — "+
+			"Go may have relicensed, or the vendored copy has drifted; reconcile them by hand "+
+			"(goroot=%s, %d bytes vs %d)", goroot, len(got), len(vendoredGoLicense))
+	}
+	return string(raw), nil
+}
+
 // readLicenseFile finds the first LICENSE/LICENCE/COPYING file under dir
 // (walking subdirectories, shallowest match first) and returns its contents.
+// Used for MODULE directories, where a nested license is the module's own.
+// Deliberately NOT used for GOROOT — see goStdlibLicense.
 func readLicenseFile(dir string) string {
 	nameRe := regexp.MustCompile(`(?i)^([a-z-]*licen[cs]e[a-z._-]*|copying([._-].*)?)$`)
 	var candidates []string
