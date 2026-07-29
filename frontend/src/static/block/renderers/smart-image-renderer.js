@@ -20,7 +20,7 @@ import { BlockRenderer } from './block-renderer.js'
 import { smartImageStyles } from './smart-image-renderer.styles.js'
 import { StatusBadge } from './status-badge.js'
 
-/** @typedef {{ id?: string, src?: string, alt?: string, summary?: string, width?: string, height?: string, status?: string, createdAt?: string|null, error?: string }} SmartImagePayload */
+/** @typedef {{ id?: string, src?: string, alt?: string, summary?: string, width?: string, height?: string, status?: string, createdAt?: string|null, error?: string, showSummary?: boolean }} SmartImagePayload */
 
 export class SmartImageRenderer extends BlockRenderer {
   static styles = smartImageStyles
@@ -43,6 +43,7 @@ export class SmartImageRenderer extends BlockRenderer {
 
   /** @type {HTMLImageElement|null} */ #img = null
   /** @type {HTMLElement|null} */ #badge = null
+  /** @type {HTMLElement|null} */ #summary = null
 
   /** @returns {DocumentFragment} */
   buildBody() {
@@ -51,9 +52,9 @@ export class SmartImageRenderer extends BlockRenderer {
     const img = document.createElement('img')
     img.style.maxWidth = '100%'
     img.style.display = 'block'
-    // The floor is MEASURED, so it can only be decided once the image has decoded
-    // and been laid out. Registered once, for the element's life: `src` changes
-    // across updates, and each new source has to be re-judged on its own merits.
+    // Decided once the image has decoded, from its own intrinsic size. Registered
+    // once, for the element's life: `src` changes across updates, and each new
+    // source has to be re-judged on its own merits.
     img.addEventListener('load', () => this.#fillIfSizeless())
 
     const resizer = document.createElement('div')
@@ -62,14 +63,42 @@ export class SmartImageRenderer extends BlockRenderer {
     const badge = document.createElement('span')
     badge.className = 'smart-image-status'
 
-    frag.appendChild(img)
-    frag.appendChild(resizer)
-    frag.appendChild(badge)
+    // The image and its overlay chrome live in a frame that hugs the image, so
+    // the resize handle and badge anchor to the IMAGE rather than to the
+    // full-width block root.
+    const frame = document.createElement('div')
+    frame.className = 'smart-image-frame'
+    frame.appendChild(img)
+    frame.appendChild(resizer)
+    frame.appendChild(badge)
+
+    // The description strap. Deliberately styled as CHROME, not prose: form has
+    // to signal behaviour, and text typeset like a paragraph invites a caret an
+    // atom NodeView can never provide. Read-only but SELECTABLE — text you can
+    // read and not copy is the part that feels broken.
+    const summary = document.createElement('div')
+    summary.className = 'smart-image-summary'
+
+    frag.appendChild(frame)
+    frag.appendChild(summary)
 
     this.#img = img
     this.#badge = badge
+    this.#summary = summary
 
-    if (this.root) this.root.style.display = 'inline-block'
+    // BLOCK, full width. An image block is a block like any other and owns its
+    // own line: as inline-block, two consecutive images shared a line, and since
+    // .block-chrome-host is absolutely positioned at
+    // left: calc(-1 * var(--chrome-w)) — always to the left of its OWN root —
+    // the second image's line number landed on top of the first image. Side-by-
+    // side layout is the column container's job, not a side effect of an inline
+    // display mode.
+    //
+    // The root must NOT be shrink-to-fit (fit-content/max-content): the image
+    // carries max-width:100%, and a percentage against an indefinite container
+    // resolves circularly — an unsized image collapsed to zero and a filled one
+    // ballooned. Shrink-to-fit belongs on `frame`, which holds no percentages.
+    if (this.root) this.root.style.display = 'block'
     this.#setupResize(img, resizer)
     this.#renderState(/** @type {SmartImagePayload} */ (this.block.payload))
     return frag
@@ -113,8 +142,13 @@ export class SmartImageRenderer extends BlockRenderer {
     img.style.aspectRatio = (w && h) ? `${parseFloat(String(w))} / ${parseFloat(String(h))}` : ''
     // An already-decoded image fires no further `load`, so judge it here too.
     if (img.complete) this.#fillIfSizeless()
-    if (payload.summary) dom.setAttribute('data-tooltip', payload.summary)
-    else dom.removeAttribute('data-tooltip')
+
+    // showSummary is a PERSISTED attribute, so a block re-opens as it was left.
+    const summaryText = (payload.summary || '').trim()
+    if (this.#summary) {
+      this.#summary.textContent = summaryText
+      this.#summary.classList.toggle('smart-image-summary--shown', !!(payload.showSummary && summaryText))
+    }
 
     const state = StatusBadge.classify(payload.status, payload.createdAt, payload.id)
     if (state === 'pending') {
@@ -123,8 +157,9 @@ export class SmartImageRenderer extends BlockRenderer {
     } else if (state === 'stale' || state === 'timeout' || state === 'error') {
       const errText = (payload.error || '').trim()
       badge.textContent = errText || (state === 'timeout' ? 'Timed out' : 'Failed')
+      // The badge is the sole home for failure text — it used to ALSO write the
+      // occluding centre tooltip, which is exactly what #73 removed.
       badge.className = 'smart-image-status smart-image-status--error'
-      if (errText) dom.setAttribute('data-tooltip', errText)
     } else {
       badge.textContent = ''
       badge.className = 'smart-image-status'
@@ -137,12 +172,12 @@ export class SmartImageRenderer extends BlockRenderer {
    * (#53). Such an image fills the available width instead — the responsive
    * default, which needs no invented number and re-adapts on every window resize.
    *
-   * The trigger is MEASURED — "this image actually laid out at zero", not "this
-   * payload has no width" — and that distinction is the whole design. A raster
-   * always has an intrinsic size, so it lays out at its natural width and is left
-   * untouched. That matters because the unsized blocks already on disk are mostly
-   * PNGs rendering correctly today, and filling the pane blindly would inflate
-   * them past their real size (and blow small icons up into blurry banners).
+   * The trigger is the IMAGE's intrinsic size, not a layout observation. A raster
+   * always reports a natural size, so it lays out at its natural width and is
+   * left untouched — which matters, because the unsized blocks already on disk
+   * are mostly PNGs rendering correctly today, and filling the pane blindly
+   * would inflate them past their real size (and blow small icons up into blurry
+   * banners). Only an SVG with no width/height and no viewBox reports 0.
    *
    * DISPLAY-only: never pushed back to schema, so it cannot rewrite a document the
    * user never chose to resize.
@@ -152,13 +187,17 @@ export class SmartImageRenderer extends BlockRenderer {
     if (!img || !img.complete || !img.getAttribute('src') || !img.isConnected) return
 
     const payload = /** @type {SmartImagePayload} */ (this.block.payload)
-    if (payload.width) return       // the document sizes it — respect that
-    if (img.clientWidth > 0) return // it lays out fine on its own
+    if (payload.width) return   // the document sizes it — respect that
+    // naturalWidth, NOT clientWidth: clientWidth reads 0 while the box is still
+    // being resolved (inside a shrink-to-fit frame, notably), so keying off it
+    // fired on ordinary PNGs — one collapsed to zero, another stretched to the
+    // full pane.
+    if (img.naturalWidth > 0) return
 
     img.style.width = '100%'
-    // No intrinsic ratio either (an SVG with neither size nor viewBox): a width
-    // alone still leaves the box flat, so give it a plain 4:3 one.
-    if (img.clientHeight === 0) img.style.aspectRatio = '4 / 3'
+    // No intrinsic ratio either: a width alone still leaves the box flat, so
+    // give it a plain 4:3 one.
+    if (img.naturalHeight === 0) img.style.aspectRatio = '4 / 3'
   }
 
   /** @param {HTMLImageElement} img @param {HTMLElement} resizer */

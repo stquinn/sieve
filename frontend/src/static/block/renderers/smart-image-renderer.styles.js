@@ -50,41 +50,59 @@ export const smartImageStyles = /* css */ `
     position: relative;
   }
 
+  /* Hugs the image, and is what the absolutely-positioned overlay chrome (resize
+     handle, status badge) anchors to — so they sit on the IMAGE's corner rather
+     than out at the edge of the full-width block root. Shrink-to-fit lives here,
+     not on the root: the root must stay a normal full-width block so the image's
+     own max-width:100% has a definite container to resolve against. */
+  .smart-image-frame {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+  }
+
   div.node-image.ProseMirror-selectednode {
     outline: none !important;
     box-shadow: none !important;
   }
 
-  /* Premium image tooltip (data-tooltip attribute set by SmartImageRenderer#update) */
-  .node-image[data-tooltip]::after {
-    content: attr(data-tooltip);
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%) scale(0.95);
-    background: color-mix(in srgb, var(--theme-bgDark) 92%, transparent);
-    color: var(--theme-text);
-    padding: 10px 16px;
-    border-radius: 8px;
-    /* Smallest chrome tier (see editor.css's .tiptap comment) — was 11px. */
-    font-size: calc(var(--doc-size) * 0.7);
+  /* ── Description strap (#73) ─────────────────────────────────────────────
+     Muted, small, tracked, behind a left rule — CHROME, never prose, so nothing
+     about it invites a caret the atom NodeView cannot give it. Shown only when
+     the persisted showSummary attribute is set. */
+  .smart-image-summary {
+    display: none;
+    margin-top: 6px;
+    padding-left: 10px;
+    max-width: 46rem;
+    border-left: 2px solid color-mix(in srgb, var(--theme-text) 18%, transparent);
+    color: color-mix(in srgb, var(--theme-text) 62%, transparent);
+    font-size: calc(var(--doc-size) * 0.8);
     line-height: 1.5;
-    white-space: pre-wrap;
-    max-width: 80%;
-    width: max-content;
-    z-index: 10000;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.15s ease, transform 0.15s ease;
-    border: 1px solid color-mix(in srgb, var(--theme-text) 10%, transparent);
-    box-shadow: 0 10px 30px color-mix(in srgb, var(--theme-bgDark) 60%, transparent);
-    text-align: center;
+    font-style: italic;
   }
 
-  .node-image[data-tooltip]:hover::after {
-    opacity: 0.9;
-    transform: translate(-50%, -50%) scale(1);
+  .smart-image-summary--shown { display: block; }
+
+  /* SELECTABLE, unlike the rest of this block. The blanket rule at the top of
+     this sheet kills selection across .node-image * to stop WebKit painting
+     ghost selection bars around images — but the strap is text a reader will
+     want to copy. Scoping the exception HERE, in the SAME sheet as the blanket
+     rule, is what makes it deterministic: two classes deep out-specifies it and
+     there is no cross-stylesheet injection order to lose to. */
+  .node-image .smart-image-summary {
+    user-select: text !important;
+    -webkit-user-select: text !important;
   }
+
+  .node-image .smart-image-summary::selection {
+    background: color-mix(in srgb, var(--theme-accentPrimary) 40%, transparent) !important;
+  }
+
+  /* The hover description tooltip that used to live here was REMOVED by #73: it
+     rendered dead-centre over the image at 80% width and ~90% opacity with no
+     delay, so reaching for the image blotted out the thing it described. Failure
+     text now lives only on the status badge. */
 
   /* This kind's own copy of the "block target node" ready-state (shared with
      prose's .block-node and the native-codeblock's .code-block-wrapper in

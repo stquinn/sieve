@@ -231,3 +231,29 @@ func TestSmartImageProcessor_pastedSvgDataURIIsMeasured(t *testing.T) {
 		t.Errorf("pasted SVG data URI measured (%d, %d, %v), want (400, 300, true) — the paste path used to stamp nothing (#53)", w, h, ok)
 	}
 }
+
+// showSummary is a persisted RENDERING attribute (#73): the AI description is
+// useful for some images and noise for most, so the choice is per-block and
+// remembered — but it must never default to on, or every image in a document
+// sprouts auto-generated text nobody asked for.
+func TestSmartImageProcessor_InitAttrs_showSummaryDefaultsOff(t *testing.T) {
+	p := NewSmartImageProcessor(block.BlockServices{})
+
+	attrs := p.InitAttrs("im-1", nil)
+	got, present := attrs["showSummary"]
+	if !present {
+		t.Fatal("InitAttrs: showSummary missing — it must be a real persisted attribute, not an absent key")
+	}
+	if got != false {
+		t.Errorf("InitAttrs: showSummary = %v, want false (never show generated text unasked)", got)
+	}
+}
+
+func TestSmartImageProcessor_InitAttrs_showSummaryOverrideSurvives(t *testing.T) {
+	p := NewSmartImageProcessor(block.BlockServices{})
+
+	attrs := p.InitAttrs("im-1", map[string]interface{}{"showSummary": true})
+	if attrs["showSummary"] != true {
+		t.Errorf("InitAttrs: showSummary = %v with override true, want true (the user's choice must persist)", attrs["showSummary"])
+	}
+}

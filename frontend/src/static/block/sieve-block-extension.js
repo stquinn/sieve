@@ -37,7 +37,7 @@
 // @property {(type: any) => any[]} [buildPlugins]           per-kind ProseMirror plugins.
 // @property {(node: any) => ({mimeType: string, content: string, context?: object}[]|null)} [asContentEntry]
 //   the kind's own clipboard/text views (code → source, diagram → mermaid, …).
-// @property {(arg: {node: any, editorPane: any, getPos: Function}) => any[]} [buildContextMenuItems]
+// @property {(arg: {node: any, editorPane: any, getPos: Function, blockService: any}) => any[]} [buildContextMenuItems]
 //   kind-specific context-menu items, prepended before the framework items.
 // @property {(node: any) => ({contextLabel?: string, imageIds?: string[]})} [buildAiCtx]
 //   customises the "Ask About [X]" label / included image ids.
@@ -590,8 +590,15 @@ class NodeViewRegistry {
               var n = currentNode || node
               var IC = window.SieveIcons || {}
 
+              // blockService is passed so a menu item can COMMIT a change (e.g.
+              // toggling a persisted rendering attribute) through the wire owner,
+              // instead of reaching for a window.* global the way view-layer code
+              // without ctx has had to (X-B debt).
               var items = renderer.buildContextMenuItems
-                ? renderer.buildContextMenuItems({ node: n, editorPane: editorPane, getPos: getPos })
+                ? renderer.buildContextMenuItems({
+                    node: n, editorPane: editorPane, getPos: getPos,
+                    blockService: blockCtx.blockService,
+                  })
                 : []
 
               // Expand — universal for kinds declaring the `expandable` policy,
