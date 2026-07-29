@@ -3,14 +3,19 @@ package processors
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/xml"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"math"
 	"net/http"
+	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +23,11 @@ import (
 	"sieve/sieve/block"
 	"sieve/sieve/domain"
 )
+
+// errEntryNotImage marks a content entry this processor does not ingest, so the
+// Transform loop moves on to the next entry. Any OTHER error means the entry WAS
+// claimed and its ingest failed — that aborts the whole transform.
+var errEntryNotImage = errors.New("entry is not an image this processor ingests")
 
 // SmartImageProcessor handles the 'smart-image' Kind.
 // PasteMatch saves the image file synchronously so the block is created with
@@ -106,66 +116,204 @@ func (p *SmartImageProcessor) IsSupportedContent(entries []block.ContentEntry) b
 	return block.SupportedActions{Kind: p.Kind()}
 }
 
+// Transform is ONE shape for every ingest path — clipboard paste (raster or SVG
+// data URI), locally-rendered SVG (the diagram→image convert), URL download, HTML
+// <img>, and an already-stored sieve asset. Each path only ACQUIRES the image;
+// persistence and, crucially, sizing happen in a SINGLE place afterwards. Before
+// #53 every branch hand-built its own attr map and only the raw-SVG one carried a
+// dimension, so paste and convert landed unsized (an SVG has no intrinsic pixel
+// size, so unsized means zero — a bare resize handle).
 func (p *SmartImageProcessor) Transform(entries []block.ContentEntry, uuid string, blockID string, action block.Action) map[string]interface{} {
 	for _, e := range entries {
-		// Base64 data URI (paste from clipboard)
-		if strings.HasPrefix(e.MIMEType, "image/") && strings.HasPrefix(e.Content, "data:image/") {
-			filename, err := p.saveBase64(uuid, e.Content, blockID)
-			if err != nil {
-				logger.Warn("smart-image: transform base64 save failed", "block", blockID, "err", err)
-				return nil
-			}
-			return map[string]interface{}{"src": filename}
+		data, ref, err := p.acquire(e, blockID)
+		if errors.Is(err, errEntryNotImage) {
+			continue
 		}
-		// Raw SVG rendered locally by the JS frontend via resolveEntries
-		if e.MIMEType == "image/svg+xml" {
-			filename, err := p.saveSVG(uuid, e.Content, blockID)
-			if err != nil {
-				logger.Warn("smart-image: transform svg save failed", "block", blockID, "err", err)
-				return nil
-			}
-			// SVG has no intrinsic pixel size; set a default so it is visible immediately.
-			return map[string]interface{}{"src": filename, "width": "400"}
-		}
-		// Image URL (paste or extract from HTML)
-		s := strings.TrimSpace(e.Content)
-		if isImageURL(s) {
-			// If it's already a local sieve asset, just use the filename
-			if strings.HasPrefix(s, "/sieve/") || strings.Contains(s, "/sieve/") {
-				parts := strings.Split(s, "/")
-				filename := parts[len(parts)-1]
-				// Remove query params if any
-				if idx := strings.Index(filename, "?"); idx != -1 {
-					filename = filename[:idx]
-				}
-				return map[string]interface{}{"src": filename}
-			}
-
-			filename, err := p.downloadImage(uuid, s, blockID)
-			if err != nil {
-				logger.Warn("smart-image: transform download failed", "block", blockID, "url", s, "err", err)
-				return nil
-			}
-			return map[string]interface{}{"src": filename}
-		}
-		if e.MIMEType == "text/html" {
-			if src := extractHTMLImageSrc(e.Content); src != "" && isImageURL(src) {
-				filename, err := p.downloadImage(uuid, src, blockID)
-				if err != nil {
-					logger.Warn("smart-image: transform html-img download failed", "block", blockID, "url", src, "err", err)
-					return nil
-				}
-				return map[string]interface{}{"src": filename}
-			}
-		}
-		// Mermaid source arriving without JS pre-processing — cannot render server-side.
-		// resolveEntries in SmartImageRenderer must convert mermaid to SVG before this is called.
-		if block.MermaidFenceRe.MatchString(e.Content) {
-			logger.Warn("smart-image: mermaid source reached Transform unresolved; resolveEntries must render SVG locally", "block", blockID)
+		if err != nil {
+			logger.Warn("smart-image: transform failed", "block", blockID, "err", err)
 			return nil
 		}
+
+		// A pre-stored asset is a pure REFERENCE: there are no bytes to persist and
+		// none to measure, so it is the one path that stamps no size (the renderer
+		// lays an unsized image out responsively).
+		src, width, height := ref, 0, 0
+		if src == "" {
+			var ok bool
+			if width, height, ok = p.measure(data); !ok {
+				logger.Warn("smart-image: entry is not a usable image", "block", blockID, "bytes", len(data))
+				return nil
+			}
+			if src, err = p.saveAsset(uuid, blockID, data); err != nil {
+				logger.Warn("smart-image: transform save failed", "block", blockID, "err", err)
+				return nil
+			}
+		}
+
+		attrs := map[string]interface{}{"src": src}
+		if width > 0 {
+			attrs["width"] = strconv.Itoa(width)
+		}
+		if height > 0 {
+			attrs["height"] = strconv.Itoa(height)
+		}
+		return attrs
 	}
 	return nil
+}
+
+// acquire resolves ONE content entry to the image it denotes. Exactly one result is
+// meaningful: `data` is freshly ingested bytes the caller must persist, `ref` is an
+// asset already stored under this document. errEntryNotImage means the entry is not
+// this processor's to take (try the next one); any other error aborts the transform.
+func (p *SmartImageProcessor) acquire(e block.ContentEntry, blockID string) (data []byte, ref string, err error) {
+	// Data URI (paste from clipboard) — raster OR svg; naturalSize sniffs which.
+	if strings.HasPrefix(e.MIMEType, "image/") && strings.HasPrefix(e.Content, "data:image/") {
+		raw, err := p.decodeDataURI(e.Content)
+		if err != nil {
+			return nil, "", fmt.Errorf("data URI decode: %w", err)
+		}
+		return raw, "", nil
+	}
+	// Raw SVG rendered locally by the JS frontend via resolveEntries
+	if e.MIMEType == "image/svg+xml" {
+		return []byte(e.Content), "", nil
+	}
+	// Image URL (paste or extract from HTML)
+	s := strings.TrimSpace(e.Content)
+	if isImageURL(s) {
+		// Already a local sieve asset: reference the filename, ingest nothing.
+		if strings.Contains(s, "/sieve/") {
+			filename := s[strings.LastIndex(s, "/")+1:]
+			if idx := strings.Index(filename, "?"); idx != -1 {
+				filename = filename[:idx]
+			}
+			return nil, filename, nil
+		}
+		raw, err := p.downloadImage(s, blockID)
+		if err != nil {
+			return nil, "", fmt.Errorf("download %s: %w", s, err)
+		}
+		return raw, "", nil
+	}
+	if e.MIMEType == "text/html" {
+		if src := extractHTMLImageSrc(e.Content); src != "" && isImageURL(src) {
+			raw, err := p.downloadImage(src, blockID)
+			if err != nil {
+				return nil, "", fmt.Errorf("download html <img> %s: %w", src, err)
+			}
+			return raw, "", nil
+		}
+	}
+	// Mermaid source arriving without JS pre-processing — cannot render server-side.
+	// resolveEntries in SmartImageRenderer must convert mermaid to SVG before this is called.
+	if block.MermaidFenceRe.MatchString(e.Content) {
+		return nil, "", errors.New("mermaid source reached Transform unresolved; resolveEntries must render SVG locally")
+	}
+	return nil, "", errEntryNotImage
+}
+
+// measure is THE sizing rule, and it reports the image's OWN dimensions — never a
+// layout decision. Raster reads the decoded config bounds; SVG reads the root
+// element's absolute width/height, else its viewBox extent (mermaid emits one).
+// `ok` reports whether the bytes are an image this processor can store at all — the
+// only validity check ingest needs.
+//
+// A recognised image whose size is genuinely undeclarable (an SVG with neither a
+// size nor a viewBox) measures (0, 0, true): stored unsized, DELIBERATELY. No
+// default is invented here, because a stored number is frozen into the document
+// while the renderer's unsized case fills the available width and re-adapts on every
+// resize. #53 was caused by inventing sizes per-branch; the fix is to stop.
+func (p *SmartImageProcessor) measure(data []byte) (width, height int, ok bool) {
+	if p.looksLikeSVG(data) {
+		w, h := p.svgDeclaredSize(data)
+		if w <= 0 || h <= 0 {
+			return 0, 0, true
+		}
+		return int(math.Round(w)), int(math.Round(h)), true
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return 0, 0, false
+	}
+	return cfg.Width, cfg.Height, true
+}
+
+// looksLikeSVG recognises an SVG document, optionally behind an XML prolog or a
+// doctype. image.DecodeConfig only knows raster formats, so SVG has to be spotted
+// by its markup.
+func (p *SmartImageProcessor) looksLikeSVG(data []byte) bool {
+	head := bytes.TrimSpace(data)
+	if len(head) > 1024 {
+		head = head[:1024]
+	}
+	if bytes.HasPrefix(head, []byte("<svg")) {
+		return true
+	}
+	return (bytes.HasPrefix(head, []byte("<?xml")) || bytes.HasPrefix(head, []byte("<!"))) &&
+		bytes.Contains(head, []byte("<svg"))
+}
+
+// svgDeclaredSize reads the size an SVG document declares on its root element:
+// absolute width/height attributes when BOTH are present and unitless/px, else the
+// viewBox extent. (0, 0) when it declares neither, or when the markup will not parse
+// far enough to tell.
+func (p *SmartImageProcessor) svgDeclaredSize(data []byte) (width, height float64) {
+	dec := xml.NewDecoder(bytes.NewReader(data))
+	dec.Strict = false
+	var root xml.StartElement
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return 0, 0
+		}
+		if se, ok := tok.(xml.StartElement); ok {
+			root = se
+			break
+		}
+	}
+	if root.Name.Local != "svg" {
+		return 0, 0
+	}
+
+	var viewBox string
+	for _, a := range root.Attr {
+		switch a.Name.Local {
+		case "width":
+			width = p.parseCSSLength(a.Value)
+		case "height":
+			height = p.parseCSSLength(a.Value)
+		case "viewBox":
+			viewBox = a.Value
+		}
+	}
+	if width > 0 && height > 0 {
+		return width, height
+	}
+	// viewBox is "min-x min-y width height" — its extent IS the natural size when
+	// the root declares no absolute one (mermaid emits exactly this shape).
+	fields := strings.FieldsFunc(viewBox, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r' })
+	if len(fields) != 4 {
+		return 0, 0
+	}
+	w, errW := strconv.ParseFloat(fields[2], 64)
+	h, errH := strconv.ParseFloat(fields[3], 64)
+	if errW != nil || errH != nil || w <= 0 || h <= 0 {
+		return 0, 0
+	}
+	return w, h
+}
+
+// parseCSSLength reads an SVG length that maps directly to CSS pixels — a bare
+// number or a px value. Anything relative (%, em, …) is NOT a pixel size, so it
+// yields 0 and the caller falls through to the viewBox.
+func (p *SmartImageProcessor) parseCSSLength(s string) float64 {
+	s = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "px"))
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || v <= 0 {
+		return 0
+	}
+	return v
 }
 
 func (p *SmartImageProcessor) OnChange(_ *block.SieveBlock) {}
@@ -263,69 +411,54 @@ func extractHTMLImageSrc(html string) string {
 	return rest[:end]
 }
 
-func (p *SmartImageProcessor) saveBase64(uuid, dataUrl, blockID string) (string, error) {
-	parts := strings.SplitN(dataUrl, ",", 2)
-	if len(parts) != 2 {
-		return "", fmt.Errorf("invalid data URL format (no comma separator)")
+// decodeDataURI reads the bytes carried by a `data:` URI. The metadata half declares
+// the payload encoding, so both shapes a clipboard produces are honoured: `;base64`
+// (raster paste, and most SVG sources) and a percent-encoded text payload (the shape
+// an SVG data URI takes when it is not base64'd). It ACQUIRES only — the bytes are
+// validated by naturalSize and stored by saveAsset, both in Transform.
+func (p *SmartImageProcessor) decodeDataURI(dataURI string) ([]byte, error) {
+	meta, payload, ok := strings.Cut(dataURI, ",")
+	if !ok {
+		return nil, errors.New("invalid data URI: no comma separator")
 	}
 
-	b64 := strings.NewReplacer("\n", "", "\r", "", " ", "").Replace(parts[1])
-
-	raw, err := base64.StdEncoding.DecodeString(b64)
-	if err != nil {
-		raw, err = base64.URLEncoding.DecodeString(b64)
+	if !strings.Contains(meta, ";base64") {
+		text, err := url.PathUnescape(payload)
 		if err != nil {
-			logger.Warn("smart-image: base64 decode failed", "block", blockID, "b64_len", len(b64), "err", err)
-			return "", fmt.Errorf("base64 decode: %w", err)
+			return nil, fmt.Errorf("percent-decode: %w", err)
 		}
+		return []byte(text), nil
 	}
 
-	_, format, err := image.DecodeConfig(bytes.NewReader(raw))
-	if err != nil {
-		logger.Warn("smart-image: not a valid image", "block", blockID, "raw_len", len(raw), "err", err)
-		return "", fmt.Errorf("invalid image data: %v", err)
+	// Clipboard sources wrap the payload; whitespace is not part of the alphabet.
+	b64 := strings.NewReplacer("\n", "", "\r", "", "\t", "", " ", "").Replace(payload)
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err == nil {
+		return raw, nil
 	}
-	logger.Info("smart-image: decoded image", "block", blockID, "format", format, "bytes", len(raw))
-
-	return p.saveAsset(uuid, blockID, raw)
+	if urlAlphabet, urlErr := base64.URLEncoding.DecodeString(b64); urlErr == nil {
+		return urlAlphabet, nil
+	}
+	return nil, fmt.Errorf("base64 decode (%d chars): %w", len(b64), err)
 }
 
-// saveSVG saves raw SVG content (locally rendered — never from an external server).
-// Returns the asset filename. Callers should set a default display width since SVG
-// has no intrinsic pixel size the browser can use before layout.
-func (p *SmartImageProcessor) saveSVG(uuid, svgContent, blockID string) (string, error) {
-	return p.saveAsset(uuid, blockID, []byte(svgContent))
-}
-
-func (p *SmartImageProcessor) downloadImage(uuid, url, blockID string) (string, error) {
-	logger.Info("smart-image: downloading", "block", blockID, "url", url)
-	resp, err := http.Get(url)
+// downloadImage fetches the bytes at imageURL. Like every other acquisition path it
+// only ACQUIRES: it does not decide validity (naturalSize does) and does not persist
+// (saveAsset does), so a downloaded image is measured and stored by exactly the same
+// rule as a pasted one. The timeout and size limit mirror SmartCardProcessor's fetch.
+func (p *SmartImageProcessor) downloadImage(imageURL, blockID string) ([]byte, error) {
+	logger.Info("smart-image: downloading", "block", blockID, "url", imageURL)
+	client := &http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Get(imageURL)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("download failed, status %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download failed, status %d", resp.StatusCode)
 	}
-
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	// SVG is XML text — image.DecodeConfig only handles raster formats.
-	trimmed := bytes.TrimSpace(raw)
-	if bytes.HasPrefix(trimmed, []byte("<svg")) || bytes.HasPrefix(trimmed, []byte("<?xml")) {
-		return p.saveAsset(uuid, blockID, raw)
-	}
-
-	_, _, err = image.DecodeConfig(bytes.NewReader(raw))
-	if err != nil {
-		return "", fmt.Errorf("invalid image data: %v", err)
-	}
-
-	return p.saveAsset(uuid, blockID, raw)
+	return io.ReadAll(io.LimitReader(resp.Body, 5*1024*1024))
 }
 
 func (p *SmartImageProcessor) saveAsset(uuid, blockID string, data []byte) (string, error) {
