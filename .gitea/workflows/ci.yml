@@ -1,8 +1,7 @@
 name: CI
 
 # Basic continuous-build: run the Go + frontend test suites on every PR and on
-# pushes to main, so a regression turns the pipeline red. Mirrors the env the
-# release build uses (ubuntu + webkit/gtk + -tags webkit2_41).
+# pushes to main, so a regression turns the pipeline red.
 
 on:
   push:
@@ -10,7 +9,8 @@ on:
   pull_request:
 
 jobs:
-  go:
+  test-go:
+    name: Go Tests (CGO disabled)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,21 +18,34 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: go vet
+        run: CGO_ENABLED=0 go vet ./...
+
+      - name: go test
+        run: CGO_ENABLED=0 go test ./...
+
+  build-go:
+    name: Go Build (Wails / GTK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: go.sum
 
       # The repo-root package (main.go/app.go) is a Wails app → CGO + WebKitGTK at
       # compile time. Same system deps the release build installs.
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
-      - name: go vet
-        run: go vet -tags webkit2_41 ./...
-
-      # Skip T-A only (docs/TECH-DEBT.md): TestHandleBlockUpdate_notifySendsSnapshotUnderLock
-      # has a flaky TempDir teardown race (a watcher still holding the buffers dir at
-      # cleanup) — NOT a logic failure. Skipping it keeps CI a true regression signal;
-      # remove the -skip once T-A is fixed.
-      - name: go test
-        run: go test -tags webkit2_41 -skip 'TestHandleBlockUpdate_notifySendsSnapshotUnderLock' ./...
+      - name: go build
+        run: go build -tags webkit2_41 ./...
 
   frontend:
     runs-on: ubuntu-latest
@@ -42,6 +55,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         working-directory: frontend
@@ -62,26 +77,50 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            credits:
+              - 'go.mod'
+              - 'go.sum'
+              - 'frontend/package-lock.json'
+              - 'frontend/package.json'
+              - 'frontend/tiptap-bundle-entry.js'
+              - 'tools/gencredits/**'
+              - 'third-party-licenses.json'
+
       - uses: actions/setup-go@v5
+        if: steps.changes.outputs.credits == 'true'
         with:
           go-version: '1.25'
+          cache: true
+          cache-dependency-path: go.sum
 
       - uses: actions/setup-node@v4
+        if: steps.changes.outputs.credits == 'true'
         with:
           node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
 
       # gencredits disables CGO for its go-licenses subprocess, but the gtk/
       # webkit headers keep the package-load environment identical to the other
       # jobs if that ever changes.
       - name: Install system dependencies
+        if: steps.changes.outputs.credits == 'true'
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
       - name: Install frontend dependencies
+        if: steps.changes.outputs.credits == 'true'
         working-directory: frontend
         run: npm ci
 
       - name: Regenerate credits
+        if: steps.changes.outputs.credits == 'true'
         run: go run ./tools/gencredits
 
       - name: Fail if committed artifact is stale
+        if: steps.changes.outputs.credits == 'true'
         run: git diff --exit-code third-party-licenses.json
+
