@@ -15,21 +15,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Nix
-        uses: https://github.com/DeterminateSystems/nix-installer-action@main
-
-      - name: Cache Nix store
-        uses: https://github.com/nix-community/cache-nix-action@v5
+      - uses: actions/setup-go@v5
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix') }}
-          restore-keys: |
-            nix-${{ runner.os }}-
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: go.sum
 
       - name: go vet
-        run: nix develop --command env CGO_ENABLED=0 go vet ./...
+        run: CGO_ENABLED=0 go vet ./...
 
       - name: go test
-        run: nix develop --command env CGO_ENABLED=0 go test ./...
+        run: CGO_ENABLED=0 go test ./...
 
   build-go:
     name: Go Build (Wails / GTK)
@@ -37,41 +33,46 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Nix
-        uses: https://github.com/DeterminateSystems/nix-installer-action@main
-
-      - name: Cache Nix store
-        uses: https://github.com/nix-community/cache-nix-action@v5
+      - uses: actions/setup-go@v5
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix') }}
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: ${{ runner.os }}-apt-gtk-webkit
           restore-keys: |
-            nix-${{ runner.os }}-
+            ${{ runner.os }}-apt-gtk-
+
+      # The repo-root package (main.go/app.go) is a Wails app → CGO + WebKitGTK at
+      # compile time. Same system deps the release build installs.
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
       - name: go build
-        run: nix develop --command go build -tags webkit2_41 ./...
+        run: go build -tags webkit2_41 ./...
 
   frontend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Nix
-        uses: https://github.com/DeterminateSystems/nix-installer-action@main
-
-      - name: Cache Nix store
-        uses: https://github.com/nix-community/cache-nix-action@v5
+      - uses: actions/setup-node@v4
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix') }}
-          restore-keys: |
-            nix-${{ runner.os }}-
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         working-directory: frontend
-        run: nix develop --command npm ci
+        run: npm ci
 
       - name: vitest
         working-directory: frontend
-        run: nix develop --command npm test
+        run: npm test
 
   # Third-party credits staleness gate. third-party-licenses.json is generated
   # (tools/gencredits) and go:embed'ed; the release pipeline ships whatever is
@@ -108,27 +109,47 @@ jobs:
             echo "credits=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Install Nix
+      - uses: actions/setup-go@v5
         if: steps.filter.outputs.credits == 'true'
-        uses: https://github.com/DeterminateSystems/nix-installer-action@main
-
-      - name: Cache Nix store
-        if: steps.filter.outputs.credits == 'true'
-        uses: https://github.com/nix-community/cache-nix-action@v5
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix') }}
+          go-version: '1.25'
+          cache: true
+          cache-dependency-path: go.sum
+
+      - uses: actions/setup-node@v4
+        if: steps.filter.outputs.credits == 'true'
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Cache apt packages
+        if: steps.filter.outputs.credits == 'true'
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: ${{ runner.os }}-apt-gtk-webkit
           restore-keys: |
-            nix-${{ runner.os }}-
+            ${{ runner.os }}-apt-gtk-
+
+      # gencredits disables CGO for its go-licenses subprocess, but the gtk/
+      # webkit headers keep the package-load environment identical to the other
+      # jobs if that ever changes.
+      - name: Install system dependencies
+        if: steps.filter.outputs.credits == 'true'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
       - name: Install frontend dependencies
         if: steps.filter.outputs.credits == 'true'
         working-directory: frontend
-        run: nix develop --command npm ci
+        run: npm ci
 
       - name: Regenerate credits
         if: steps.filter.outputs.credits == 'true'
-        run: nix develop --command go run ./tools/gencredits
+        run: go run ./tools/gencredits
 
       - name: Fail if committed artifact is stale
         if: steps.filter.outputs.credits == 'true'
         run: git diff --exit-code third-party-licenses.json
+
+
