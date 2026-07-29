@@ -15,8 +15,8 @@ regression pass. Source spec:
 | Plain paragraph | consume ∅ | consume ∅ | native (split para) | native (soft break) | native | native | native | native |
 | List item | native (indent) | native (outdent) | native | native (soft break) | native | native | native | native |
 | Table cell | native (next cell; last cell appends row — adopted TipTap default) | native (prev cell; consume ∅ in first cell) | native | native (soft break) | native | native | native | native |
-| Code block (sieve `code` AND native `codeBlock` — one policy for both) | indent 2 (multi-line: indent each selected line) | de-indent ≤2 per line | newline + auto-indent (copy previous line's leading whitespace) | **escape: insert ¶ after block** | native (core exitCode — same effect as escape; undocumented alias) | exit to next block, content unchanged | exit to previous block | 1st press: first non-ws char; 2nd: column 0 |
-| Diagram (edit) | indent 2 (as code) | de-indent ≤2 (as code) | newline + auto-indent | **escape: insert ¶ after block** | **toggle to render mode** (cursor position preserved) | exit to next block | exit to previous block | as code |
+| Code block (sieve `code` AND native `codeBlock` — one policy for both) | indent 2 (multi-line: indent each selected line) | de-indent ≤2 per line | between an empty pair: expand to a block (see Pair characters); else newline + auto-indent (copy previous line's leading whitespace) | **escape: insert ¶ after block** | native (core exitCode — same effect as escape; undocumented alias) | exit to next block, content unchanged | exit to previous block | 1st press: first non-ws char; 2nd: column 0 |
+| Diagram (edit) | indent 2 (as code) | de-indent ≤2 (as code) | as code (pair expansion, else newline + auto-indent) | **escape: insert ¶ after block** | **toggle to render mode** (cursor position preserved) | exit to next block | exit to previous block | as code |
 | Diagram (render) | consume ∅ | consume ∅ | insert ¶ after (block is a caret stop) | **escape: insert ¶ after block** | **toggle to edit mode** (block selected OR render body focused — one function, two entry points) | pass to next block | pass to previous block | n/a |
 | Log block | consume ∅ | consume ∅ | consume ∅ (read-only text) | **escape: insert ¶ after block** | **toggle raw↔explore** | exit to next block | exit to previous block | native |
 | ai-block | consume ∅ | consume ∅ | insert ¶ after (caret stop) | **escape: insert ¶ after block** | native ∅ | pass | pass | n/a |
@@ -131,6 +131,96 @@ regression pass. Source spec:
 (Linux/Windows; fn+Left on Mac) AND to Cmd+Left on macOS — the idiomatic Mac
 line-start gesture (VS Code parity). Shift-selection variants stay native.
 
+## Policy declaration (revised 2026-07-29)
+
+A kind opts into behaviour **by name**. `DEFAULT_POLICY`
+(`editor/interaction-policy.js`) is the complete list of flags; a kind declares
+a `Partial` of it as `interactionPolicy`, and `policyFor` merges the two.
+
+| Flag | Behaviour |
+|---|---|
+| `tabIndents` + `indentWidth` | Tab/Shift+Tab indent/de-indent each touched line |
+| `smartHome` | Home column above (1st press → first non-ws char, 2nd → column 0) |
+| `enterInsertsNewline` / `autoIndentOnEnter` | Enter column above |
+| `modEnterTogglesMode` | Mod+Enter routes to the kind's `onModEnter` |
+| `readOnlyText` | caret may enter, typing/Backspace/Delete consumed |
+| `caretStop` (`true` \| `'render'`) | block is a single caret stop for arrows |
+| `expandable` | Mod+Alt+E / header button / context-menu item |
+| `surroundSelection` | typing a pair character over a selection wraps it |
+| `autoClosePairs` | typing an opener inserts the pair (+ type-over, + Backspace-deletes-pair) |
+| `expandPairOnEnter` | Enter inside an empty pair expands to a block |
+| `blockTextSubstitution` | cancel OS text substitution (macOS smart dashes/quotes) |
+| `literalGlyphs` | no ligature shaping — every character renders as itself |
+
+**`CODE_TEXT_POLICY` is a declaration-time preset, not a genre.** Kinds whose
+content is literal source text spread it (`{ ...CODE_TEXT_POLICY }`) and
+override individual keys after it — `code` takes it whole, `diagram` adds
+`modEnterTogglesMode`/`caretStop: 'render'`/`expandable`. There is deliberately
+**no** `genre`/`textType` field: a category would be a second declaration
+mechanism beside the flags, and it lies as soon as one kind wants code-style
+autoclose with prose-style Enter. The preset gives the "yep, this is code"
+ergonomics while `policyFor` still only ever sees plain flags.
+
+**Flags are born with their reader.** Never add a flag here before something
+consumes it, and never leave one whose declarers have gone. `readOnlyText` sat
+in `DEFAULT_POLICY` with a live branch that no shipped kind switched on — log's
+declaration had lost it while both its comment and its guard plugin claimed
+otherwise — so log's Backspace/Delete were unguarded and only a test FakeBlock
+exercised the branch. Fixed 2026-07-29; the same commit split the old `rawText`
+flag (which meant three things and implemented one) into `tabIndents` +
+`smartHome`.
+
+## Pair characters (decided 2026-07-29)
+
+The pair table is shared and frozen: `"` `'` `` ` `` `(` `[` `{`. Markdown
+emphasis (`*` `_`) is deliberately excluded — Mod+B/Mod+I own bold/italic and a
+literal asterisk is common enough that surrounding it would fight the user.
+
+| Behaviour | Flag | Rule |
+|---|---|---|
+| Surround | `surroundSelection` | Typing a pair character over a NON-EMPTY selection wraps it instead of replacing it. The selection is preserved inside the pair, so the gesture nests. Implemented as two INSERTIONS, never a replacement — a prose range carries marks, and rewriting it would flatten bold/links. |
+| Autoclose | `autoClosePairs` | Typing an opener at a collapsed caret inserts the pair. NOT when the next character is a word character (it would strand the closer); for symmetric pairs, also not when the PREVIOUS character is one (`don` + `'`). |
+| Type-over | `autoClosePairs` | Typing a closer already sitting at the caret moves past it. Checked BEFORE autoclose, since `"`/`'`/`` ` `` are their own closers. |
+| Backspace-deletes-pair | `autoClosePairs` | Backspace between an empty pair removes both halves. Not optional — autoclose without it strands orphaned closers and is worse than no autoclose. |
+| Enter expansion | `expandPairOnEnter` | Enter between an empty pair expands to opener line / indented blank line with the caret / closer line at the original indent. This is where a brace style like `if x {` ⏎ lives; it subsumes auto-indent for that keystroke. |
+
+**Who declares what.** `code` and `diagram` take all five via `CODE_TEXT_POLICY`.
+`prose` declares `surroundSelection` ONLY: auto-pairing a `(` mid-sentence is the
+first thing anyone disables, and `'` would fight every apostrophe. The markdown
+breakglass textarea declares surround + guard + glyphs, but NOT autoclose — it
+holds the whole document, prose and fences together, and cannot tell which the
+caret is in. Autoclose stays where the policy can be sure.
+
+**Both surfaces, one rule.** The transforms are pure functions over
+`(text, from, to, char, policy)` returning positional ops; the PM surface applies
+them as a transaction, the markdown textarea via `applyTextEdit` + `execCommand`
+(so each surface's native undo stack records one step). Two call sites, one rule
+— a divergence would be a keyboard behaviour that silently stops working when you
+switch to markdown mode.
+
+## OS text substitution + ligatures (decided 2026-07-29)
+
+Two different problems that both make `--` stop being `--`, with two different
+fixes. Kinds declaring `blockTextSubstitution` cancel `beforeinput` events whose
+`inputType` is `insertReplacementText` — the type reserved for
+spellcheck/autocorrect/substitution, so ordinary typing (`insertText`) and
+deliberate pastes (`insertFromPaste`, including a genuine em dash) are untouched.
+This matters because macOS WebKit rewrites `--` + space to `–` inside
+contentEditable AND textareas; it is a real character mutation that corrupts a
+PlantUML or mermaid fence. WebKitGTK does not do it. Confirmed on macOS
+2026-07-29, in markdown mode.
+
+Kinds declaring `literalGlyphs` get `font-variant-ligatures: none`, applied as a
+ProseMirror **Decoration** (`.sieve-literal-glyphs`) by the policy extension —
+one read site, and the sanctioned way to style native PM nodes, which revert a
+directly-set class. The bundled mono families all ligate `--` into a single long
+dash, making `--`, `---` and `----` visually identical when PlantUML treats them
+as three different things.
+
+**The dividing line: the policy owns input events, renderer styles own glyphs.**
+`literalGlyphs` is declared in the policy but realised in CSS; that is the one
+place appearance reads the policy, deliberately kept to a single site.
+
 ## Caret contract
 
 1. No dead-ends: every position reachable by arrows alone; a trailing
@@ -228,7 +318,7 @@ URL and every processor declines — zero offers, silently.
 |---|---|---|
 | Prose | URL / HTML / image / matchable | silent smart conversion (Go FirstPasteMatch) — by design |
 | Prose | plain text (no match) | local insert |
-| Raw-text block (code/diagram-edit) | anything | literal text (policy `rawText`) |
+| Raw-text block (code/diagram-edit) | anything | literal text (PM `code: true` on the node — NOT a policy read; the old `rawText` flag claimed this and never implemented it) |
 | Anywhere | `sieve/slice` (>1) | Go paste-slice reconstructs blocks |
 | Anywhere | ```` ```ai-block ```` fence | ai-block re-import |
 | Log block | anything | consumed (read-only) |

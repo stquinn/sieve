@@ -68,7 +68,14 @@ import { LogRenderer } from '../../../block/renderers/log-renderer.js'
     // Read-only text: caret may enter (select/copy), typing is consumed.
     // Mod+Enter toggles raw↔explore (declared policy override, same
     // mechanism as diagram's edit↔render — see interaction-policy.js).
-    interactionPolicy: { caretStop: true, modEnterTogglesMode: true },
+    //
+    // readOnlyText was MISSING here until 2026-07-29 while the comment above
+    // and the guard plugin below both claimed it was declared. The node is
+    // `atom: false` with `content: 'text*'` and a real contentDOM, so the
+    // handleTextInput guard below stopped typing but nothing stopped Backspace
+    // or Delete — the policy's isEditingKey branch (which covers both) was
+    // switched on by no real kind at all, only by a test FakeBlock.
+    interactionPolicy: { caretStop: true, modEnterTogglesMode: true, readOnlyText: true },
 
     // onModEnter — policy-extension entry point: flip raw↔explore. `_host` is
     // the parent Editor, threaded by the interaction-policy extension (unused
@@ -303,9 +310,10 @@ import { LogRenderer } from '../../../block/renderers/log-renderer.js'
               return isInside(view.state, from, to)
             },
             // Keyboard read-only enforcement lives in the interaction-policy
-            // extension (interactionPolicy.readOnlyText above) — contract
-            // rule: no per-renderer key handling. handleTextInput/Paste/Drop
-            // stay here: they guard input paths, not keys.
+            // extension (interactionPolicy.readOnlyText above — genuinely
+            // declared since 2026-07-29) — contract rule: no per-renderer key
+            // handling. handleTextInput/Paste/Drop stay here: they guard input
+            // paths, not keys.
             handlePaste: function(view, event, slice) {
               return isInside(view.state, view.state.selection.from, view.state.selection.to)
             },

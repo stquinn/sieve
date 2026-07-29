@@ -12,14 +12,19 @@ import { Editor, Node, Extension } from '@tiptap/core'
 import { StarterKit } from '@tiptap/starter-kit'
 import { Table, TableRow, TableCell, TableHeader } from '@tiptap/extension-table'
 import { Plugin, Selection, TextSelection, NodeSelection } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { registerBlockKind } from '../src/static/block/block-kinds.js'
-import { buildInteractionPolicyExtension, policyEnterKeydown } from '../src/static/editor/interaction-policy.js'
+import { buildInteractionPolicyExtension, policyEnterKeydown, CODE_TEXT_POLICY } from '../src/static/editor/interaction-policy.js'
 
+// These take the SAME preset the real code-node-view.js / diagram-node-view.js
+// declarations do, so the fakes cannot drift from what ships. (diagram's real
+// caretStop:'render' + expandable are omitted here on purpose — these cases
+// exercise its edit-mode keys.)
 registerBlockKind({
   kind: 'code',
   native: false,
   renderer: {
-    interactionPolicy: { rawText: true, indentWidth: 2, enterInsertsNewline: true, autoIndentOnEnter: true },
+    interactionPolicy: { ...CODE_TEXT_POLICY },
   },
 })
 
@@ -29,7 +34,7 @@ registerBlockKind({
   kind: 'diagram',
   native: false,
   renderer: {
-    interactionPolicy: { rawText: true, indentWidth: 2, enterInsertsNewline: true, modEnterTogglesMode: true },
+    interactionPolicy: { ...CODE_TEXT_POLICY, modEnterTogglesMode: true },
     onModEnter() { modEnterCalls++; return true },
   },
 })
@@ -40,6 +45,15 @@ registerBlockKind({
   renderer: {
     interactionPolicy: { readOnlyText: true },
   },
+})
+
+// Prose is a block like any other and DECLARES its policy — mirrors the real
+// declaration in block/prose-block.js (surround only, no autoclose). A native
+// def is its own behaviour holder, so the policy sits on the def itself.
+registerBlockKind({
+  kind: 'prose',
+  native: true,
+  interactionPolicy: { surroundSelection: true },
 })
 
 const SieveCode = Node.create({
@@ -109,7 +123,7 @@ function makeEditor(contentJSON) {
       Table.configure({ resizable: false }),
       TableRow, TableHeader, TableCell,
       SieveCode, SieveDiagram, SieveLog, SieveClip,
-      buildInteractionPolicyExtension({ Extension, Plugin, Selection, TextSelection, NodeSelection }),
+      buildInteractionPolicyExtension({ Extension, Plugin, Selection, TextSelection, NodeSelection, Decoration, DecorationSet }),
     ],
     content: contentJSON,
   })
@@ -522,5 +536,147 @@ describe('Mod+K link chord', () => {
     expect(press('k', { ctrlKey: true, shiftKey: true }).handled).toBe(false)
     expect(press('k', { ctrlKey: true, altKey: true }).handled).toBe(false)
     expect(dialogShown()).toBe(false)
+  })
+})
+
+// ── Pair behaviours through the REAL PM chain ──────────────────────────────
+// textInput goes through view.someProp('handleTextInput', …) — the same walk
+// ProseMirror does for a typed character — so a `true` here means the shipped
+// editor produced this text, not a unit-level restatement of the transform.
+function type(ch) {
+  const { from, to } = editor.state.selection
+  const handled = editor.view.someProp('handleTextInput', (f) => f(editor.view, from, to, ch))
+  return !!handled
+}
+
+describe('surround selection (contract: pair characters wrap a selection)', () => {
+  it('wraps a code-block selection and leaves it selected', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-code', content: [{ type: 'text', text: 'hello world' }] },
+    ] })
+    editor.commands.setTextSelection({ from: 1, to: 6 })
+    expect(type('"')).toBe(true)
+    expect(docText()).toBe('"hello" world')
+    expect(editor.state.selection.from).toBe(2)
+    expect(editor.state.selection.to).toBe(7) // still on `hello`, now inside the quotes
+  })
+
+  it('wraps a PROSE selection without flattening its marks', () => {
+    makeEditor({ type: 'doc', content: [{ type: 'paragraph', content: [
+      { type: 'text', text: 'plain ' },
+      { type: 'text', text: 'bold', marks: [{ type: 'bold' }] },
+    ] }] })
+    editor.commands.setTextSelection({ from: 7, to: 11 })
+    expect(type('(')).toBe(true)
+    expect(docText()).toBe('plain (bold)')
+    // The wrapped run must STILL be bold — surround inserts around content,
+    // it never rewrites it (that is why the edit is two ops, not a replace).
+    const marksOnBold = editor.state.doc.resolve(9).marks().map((m) => m.type.name)
+    expect(marksOnBold).toContain('bold')
+  })
+
+  it('a plain paragraph does NOT autoclose (prose declares surround only)', () => {
+    makeEditor({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hi' }] }] })
+    caretAt(3)
+    expect(type('(')).toBe(false) // native: a lone `(` is inserted by PM
+  })
+})
+
+describe('autoclose + pair expansion in code (contract)', () => {
+  it('typing an opener inserts the pair and puts the caret inside', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-code', content: [{ type: 'text', text: 'x = ' }] },
+    ] })
+    caretAt(5)
+    expect(type('[')).toBe(true)
+    expect(docText()).toBe('x = []')
+    expect(editor.state.selection.from).toBe(6)
+  })
+
+  it('typing the closer types OVER it rather than doubling', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-code', content: [{ type: 'text', text: 'f()' }] },
+    ] })
+    caretAt(3)
+    expect(type(')')).toBe(true)
+    expect(docText()).toBe('f()')
+    expect(editor.state.selection.from).toBe(4)
+  })
+
+  it('Backspace between an empty pair removes both halves', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-code', content: [{ type: 'text', text: 'f()' }] },
+    ] })
+    caretAt(3)
+    expect(press('Backspace').handled).toBe(true)
+    expect(docText()).toBe('f')
+  })
+
+  it('Backspace elsewhere stays native', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-code', content: [{ type: 'text', text: 'abc' }] },
+    ] })
+    caretAt(3)
+    expect(press('Backspace').handled).toBe(false)
+  })
+
+  it('Enter between an empty pair expands to a block at the line indent', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-code', content: [{ type: 'text', text: '  if x {}' }] },
+    ] })
+    caretAt(9) // between { and }
+    expect(press('Enter').handled).toBe(true)
+    expect(docText()).toBe('  if x {\n    \n  }')
+  })
+
+  it('Enter NOT between a pair keeps the plain auto-indent behaviour', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-code', content: [{ type: 'text', text: '  if x {' }] },
+    ] })
+    caretAt(9)
+    expect(press('Enter').handled).toBe(true)
+    expect(docText()).toBe('  if x {\n  ')
+  })
+
+  it('a read-only kind takes none of it', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'sieve-log', content: [{ type: 'text', text: 'log line' }] },
+    ] })
+    caretAt(3)
+    expect(type('(')).toBe(false)
+    expect(press('Backspace').handled).toBe(true) // consumed by readOnlyText, not by pair-delete
+    expect(docText()).toBe('log line')
+  })
+})
+
+describe('literalGlyphs decoration', () => {
+  it('decorates code and diagram blocks but not prose', () => {
+    makeEditor({ type: 'doc', content: [
+      { type: 'paragraph', content: [{ type: 'text', text: 'prose' }] },
+      { type: 'sieve-code', content: [{ type: 'text', text: 'code' }] },
+      { type: 'sieve-diagram', content: [{ type: 'text', text: 'uml' }] },
+    ] })
+    const decorated = []
+    editor.view.someProp('decorations', (f) => {
+      const set = f.call(
+        editor.view.state.plugins.find((p) => p.props && p.props.decorations && p.getState),
+        editor.state,
+      )
+      return set
+    })
+    // Walk every plugin's decorations and collect the literal-glyph ones.
+    editor.state.plugins.forEach((p) => {
+      if (!p.props || !p.props.decorations) return
+      const set = p.props.decorations.call(p, editor.state)
+      if (!set || !set.find) return
+      set.find().forEach((d) => {
+        if (d.type && d.type.attrs && d.type.attrs.class === 'sieve-literal-glyphs') {
+          decorated.push(editor.state.doc.nodeAt(d.from).type.name)
+        }
+      })
+    })
+    expect(decorated).toContain('sieve-code')
+    expect(decorated).toContain('sieve-diagram')
+    expect(decorated).not.toContain('paragraph')
   })
 })

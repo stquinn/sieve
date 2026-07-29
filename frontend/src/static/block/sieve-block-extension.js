@@ -41,7 +41,11 @@
 //   kind-specific context-menu items, prepended before the framework items.
 // @property {(node: any) => ({contextLabel?: string, imageIds?: string[]})} [buildAiCtx]
 //   customises the "Ask About [X]" label / included image ids.
-// @property {{expandable?: boolean}} [interactionPolicy]    declared interaction policy.
+// @property {Partial<import('../editor/interaction-policy.js').InteractionPolicy>} [interactionPolicy]
+//   declared interaction policy — the behaviours this kind opts into, by name.
+//   Typed against the real DEFAULT_POLICY shape (it read `{expandable?: boolean}`
+//   until 2026-07-29, so every other flag a kind declared went unchecked and a
+//   typo'd name silently fell back to the default).
 // @property {(node: any, dom: HTMLElement) => any} [getExpandContent]  lightbox/expand spec, or null.
 // @property {(node?: any) => string} [getFriendlyName]      display name for menus/labels.
 // @property {(data: object) => string} [getInitialContentHTML]  initial inner HTML for a non-atom kind.

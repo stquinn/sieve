@@ -1223,6 +1223,25 @@ pre.tiptap-code-block code {
   overflow-x: auto;
 }
 
+/* ── Literal glyphs ──────────────────────────────────────────────────────
+   Ligature shaping OFF wherever content is literal source text. The bundled
+   mono families (JetBrains Mono, Fira Code, Cascadia Code) all ligate `--`
+   into a single long dash and `-->` into an arrow, which makes `--`, `---`
+   and `----` visually identical — and in PlantUML those are three different
+   things. You cannot count dashes you cannot see.
+
+   `.sieve-literal-glyphs` is applied as a ProseMirror Decoration by the
+   interaction-policy extension to every top-level node whose kind declares
+   `literalGlyphs` (covers sieve code/diagram AND native code blocks). The
+   markdown textarea carries it by nature: the whole breakglass buffer is
+   verbatim source. `font-variant-ligatures` is inherited, so one declaration
+   on the block root reaches the highlighted spans inside it. */
+.sieve-literal-glyphs,
+.markdown-editor.markdown-raw {
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "clig" 0, "calt" 0;
+}
+
 /* ── Help modal ──────────────────────────────────────────────────────── */
 
 .help-modal-backdrop {

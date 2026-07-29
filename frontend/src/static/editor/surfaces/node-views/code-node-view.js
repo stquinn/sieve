@@ -20,6 +20,7 @@ import { esc } from '../../../block/renderers/html-escape.js'
 import { getLowlight } from '../../../block/renderers/highlighting.js'
 import { T } from '../tiptap-vendor.js'
 import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block-extension.js'
+import { CODE_TEXT_POLICY } from '../../interaction-policy.js'
 import { CodeRenderer } from '../../../block/renderers/code-renderer.js'
 
 ;(function () {
@@ -40,7 +41,10 @@ import { CodeRenderer } from '../../../block/renderers/code-renderer.js'
 
     // Keyboard behaviour is DECLARED here and applied by the shared
     // interaction-policy extension (docs/editor-interaction-contract.md).
-    interactionPolicy: { rawText: true, indentWidth: 2, enterInsertsNewline: true, autoIndentOnEnter: true },
+    // Code is the canonical literal-source-text kind, so it takes the preset
+    // whole and adds nothing — spread (not referenced) so policyFor still sees
+    // plain flags and any single line stays overridable here.
+    interactionPolicy: { ...CODE_TEXT_POLICY },
 
     nodeConfig: {
       atom: false,

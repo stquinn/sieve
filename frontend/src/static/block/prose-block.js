@@ -182,6 +182,13 @@ export let ProseBlock
     nodeTypes: PROSE_NODE_TYPES,
     identityAttr: 'id',
     identityExtension: BlockId,
+    // Prose is a block like any other, so it DECLARES what it opts into rather
+    // than inheriting behaviour by being "the default". Surround-selection only:
+    // autoclose belongs to literal source text (typing `(` mid-sentence and
+    // getting `()` is the first thing anyone turns off), and `'` would fight
+    // every apostrophe. Surround never indexes the block text, so it is safe
+    // over marked-up ranges — it inserts around them, preserving bold/links.
+    interactionPolicy: { surroundSelection: true },
     // load: a block's verbatim markdown → native HTML.
     fromBlock: function (b, mdRender) { return renderProseContent(proseContent(b), mdRender) },
     // copy: a prose block's ContentEntry views for a slice — a `sieve/prose` view

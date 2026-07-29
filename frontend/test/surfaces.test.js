@@ -45,7 +45,12 @@ vi.mock('../src/static/block/prose-group.js', () => ({
   ProseGroup: {},
   proseBlockNodes: vi.fn((content) => { const out = []; content.forEach((n) => out.push(n)); return out }),
 }))
-vi.mock('../src/static/editor/interaction-policy.js', () => ({
+// Only the two PM-bound entry points are stubbed; the pure half (DEFAULT_POLICY,
+// textInputEdit, applyTextEdit, handleSubstitutionGuard — which the markdown
+// surface uses for its pair/substitution rules) comes through REAL, so these
+// tests exercise the shipped transforms rather than a fake of them.
+vi.mock('../src/static/editor/interaction-policy.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   policyEnterKeydown: vi.fn(() => false),
   buildInteractionPolicyExtension: vi.fn(() => ({})),
 }))

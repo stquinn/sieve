@@ -20,6 +20,26 @@
 
 import { AbstractSurface, SurfaceEvent } from './abstract-surface.js'
 import { EditorMode } from '../editor-mode.js'
+import {
+  DEFAULT_POLICY, textInputEdit, applyTextEdit, handleSubstitutionGuard,
+} from '../interaction-policy.js'
+
+// MARKDOWN_POLICY — the breakglass buffer's own declaration. It is one
+// <textarea> holding the WHOLE document, prose and fences together, so it
+// cannot know whether the caret is in a sentence or in a code fence:
+//   - surroundSelection: safe either way, and the gesture users expect.
+//   - blockTextSubstitution: macOS smart dashes corrupt fences, and this
+//     surface is where the corruption was actually observed.
+//   - literalGlyphs: it is a verbatim view; `--` must not paint as `–`.
+//   - autoClosePairs/expandPairOnEnter: DELIBERATELY OFF. Auto-pairing a `(`
+//     mid-sentence is the first thing anyone disables, and there is no way to
+//     tell prose from code here. Autoclose stays where the policy can be sure.
+const MARKDOWN_POLICY = Object.freeze({
+  ...DEFAULT_POLICY,
+  surroundSelection: true,
+  blockTextSubstitution: true,
+  literalGlyphs: true,
+})
 
 /**
  * @typedef {import('../abstract-editor.js').AbstractEditor} AbstractEditor
@@ -109,6 +129,23 @@ export class MarkdownSurface extends AbstractSurface {
 
     this.#updateGutter(body)
 
+    // The breakglass buffer is verbatim source text, so it takes the same
+    // policy every literal-text BLOCK does — the SAME pure transforms the PM
+    // surface uses, applied to the textarea value. Two call sites, one rule:
+    // a divergence here would be a keyboard behaviour that silently stops
+    // working the moment you switch to markdown mode.
+    textarea.addEventListener('beforeinput', (e) => {
+      // macOS smart-dash/quote substitution corrupts source; see
+      // handleSubstitutionGuard. Confirmed reproducing in THIS surface.
+      if (handleSubstitutionGuard(e, MARKDOWN_POLICY)) return
+      if (e.inputType !== 'insertText' || typeof e.data !== 'string') return
+      const edit = textInputEdit(
+        textarea.value, textarea.selectionStart, textarea.selectionEnd, e.data, MARKDOWN_POLICY)
+      if (!edit) return
+      e.preventDefault()
+      this.#applyTextEdit(edit)
+    })
+
     textarea.addEventListener('input', () => {
       const val = textarea.value
       if (val === this.#body) return
@@ -144,6 +181,31 @@ export class MarkdownSurface extends AbstractSurface {
     this.#wrapper = wrapper
 
     requestAnimationFrame(() => { textarea.focus() })
+  }
+
+  /**
+   * Applies a policy TextEdit to the textarea. Goes through execCommand where
+   * available so the browser's own undo stack records the change — setting
+   * `.value` directly would make Mod+Z blow away everything typed since the
+   * last native entry, which is exactly the undo-history damage the
+   * backend-is-source-of-truth rule guards against on the PM side.
+   * @param {import('../interaction-policy.js').TextEdit} edit
+   */
+  #applyTextEdit(edit) {
+    const ta = this.#textarea
+    if (!ta) return
+    const next = applyTextEdit(ta.value, edit)
+    let inserted = false
+    // Ops are descending, so replacing each range in order stays valid.
+    if (document.execCommand) {
+      inserted = edit.ops.every((op) => {
+        ta.setSelectionRange(op.from, op.to)
+        return document.execCommand('insertText', false, op.insert)
+      })
+    }
+    if (!inserted) ta.value = next.text
+    ta.setSelectionRange(next.caret, next.head)
+    ta.dispatchEvent(new Event('input', { bubbles: true }))
   }
 
   /** Removes the surface's DOM and kills the pending debounces. */

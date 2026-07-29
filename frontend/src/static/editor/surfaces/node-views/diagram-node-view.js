@@ -31,6 +31,7 @@ import { esc } from '../../../block/renderers/html-escape.js'
 import { getLowlight } from '../../../block/renderers/highlighting.js'
 import { T } from '../tiptap-vendor.js'
 import { registerSieveRenderer, sieveBlockFor } from '../../../block/sieve-block-extension.js'
+import { CODE_TEXT_POLICY } from '../../interaction-policy.js'
 import { MODE } from '../../../block/sieve-block.js'
 import { DiagramRenderer } from '../../../block/renderers/diagram-renderer.js'
 
@@ -118,9 +119,11 @@ export function renderDiagramSvgEntry(sourceNode, entries) { return DiagramRende
       return r ? r.expandContent() : null
     },
 
+    // Edit mode IS literal source text, so the code preset applies wholesale;
+    // the three keys after the spread are this kind's own additions.
     // caretStop:'render' — a caret stop only in render mode; edit mode is raw text.
     // Mod+Enter is this kind's declared override: mode toggle, not escape.
-    interactionPolicy: { rawText: true, indentWidth: 2, enterInsertsNewline: true, autoIndentOnEnter: true, modEnterTogglesMode: true, caretStop: 'render', expandable: true },
+    interactionPolicy: { ...CODE_TEXT_POLICY, modEnterTogglesMode: true, caretStop: 'render', expandable: true },
 
     nodeConfig: {
       atom: false,
