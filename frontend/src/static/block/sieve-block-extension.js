@@ -37,7 +37,7 @@
 // @property {(type: any) => any[]} [buildPlugins]           per-kind ProseMirror plugins.
 // @property {(node: any) => ({mimeType: string, content: string, context?: object}[]|null)} [asContentEntry]
 //   the kind's own clipboard/text views (code → source, diagram → mermaid, …).
-// @property {(arg: {node: any, editorPane: any, getPos: Function, blockService: any}) => any[]} [buildContextMenuItems]
+// @property {(arg: {node: any, editorPane: any, getPos: Function, blockService: any, getEditor: Function}) => any[]} [buildContextMenuItems]
 //   kind-specific context-menu items, prepended before the framework items.
 // @property {(node: any) => ({contextLabel?: string, imageIds?: string[]})} [buildAiCtx]
 //   customises the "Ask About [X]" label / included image ids.
@@ -594,10 +594,16 @@ class NodeViewRegistry {
               // toggling a persisted rendering attribute) through the wire owner,
               // instead of reaching for a window.* global the way view-layer code
               // without ctx has had to (X-B debt).
+              // getEditor is passed for the same reason as blockService: items that
+              // need the document uuid (smart-image's Copy Image, to resolve an
+              // asset URL) were already CALLING ctx.getEditor() and throwing
+              // "ctx.getEditor is not a function" on their first line, because this
+              // ctx is assembled here and never carried it.
               var items = renderer.buildContextMenuItems
                 ? renderer.buildContextMenuItems({
                     node: n, editorPane: editorPane, getPos: getPos,
                     blockService: blockCtx.blockService,
+                    getEditor: blockCtx.getEditor,
                   })
                 : []
 
