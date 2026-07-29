@@ -181,6 +181,14 @@ func TestWS_MutatingFrameClaimsListener(t *testing.T) {
 	b := dialWS(t, srv, uuid) // acting window (registers first)
 	a := dialWS(t, srv, uuid) // co-claimant, ends up the registered owner
 
+	// Registration barrier: dialWS returns when the HTTP upgrade completes,
+	// which is before the handler reaches h.register. Prove A's read loop is
+	// running (and thus registered as owner) before B writes to claim.
+	if err := a.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
+		t.Fatalf("write registration-barrier ping: %v", err)
+	}
+	expectMessage(t, a, `"pong"`, 5*time.Second)
+
 	// Sanity: A is the registered owner before B writes.
 	if err := b.WriteMessage(websocket.TextMessage, []byte(createProseOp(uuid, "tok-claim"))); err != nil {
 		t.Fatalf("write block-op: %v", err)
@@ -242,6 +250,12 @@ func TestWS_ClaimComposesWithStaleTeardownGuard(t *testing.T) {
 
 	b := dialWS(t, srv, uuid) // acting window (registers first)
 	a := dialWS(t, srv, uuid) // registered owner, about to be deposed
+
+	// Registration barrier: ensure A has registered as owner before B claims.
+	if err := a.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
+		t.Fatalf("write registration-barrier ping: %v", err)
+	}
+	expectMessage(t, a, `"pong"`, 5*time.Second)
 
 	if err := b.WriteMessage(websocket.TextMessage, []byte(createProseOp(uuid, "tok-compose"))); err != nil {
 		t.Fatalf("write block-op: %v", err)
