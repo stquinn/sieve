@@ -125,7 +125,16 @@ func TestWS_StaleTeardownMustNotEvictSuccessorChannel(t *testing.T) {
 	srv, _, _, uuid := newWsTestServer(t)
 
 	a := dialWS(t, srv, uuid) // will become stale
+	if err := a.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
+		t.Fatalf("write barrier A: %v", err)
+	}
+	expectMessage(t, a, `"pong"`, 5*time.Second)
+
 	b := dialWS(t, srv, uuid) // takeover: the live connection
+	if err := b.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
+		t.Fatalf("write barrier B: %v", err)
+	}
+	expectMessage(t, b, `"pong"`, 5*time.Second)
 
 	closeAndSettle(a) // let A's server goroutine run its (stale) defers
 
@@ -143,7 +152,16 @@ func TestWS_StaleTeardownMustNotCloseSuccessorShadow(t *testing.T) {
 	srv, sp, _, uuid := newWsTestServer(t)
 
 	a := dialWS(t, srv, uuid)
+	if err := a.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
+		t.Fatalf("write barrier A: %v", err)
+	}
+	expectMessage(t, a, `"pong"`, 5*time.Second)
+
 	b := dialWS(t, srv, uuid)
+	if err := b.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
+		t.Fatalf("write barrier B: %v", err)
+	}
+	expectMessage(t, b, `"pong"`, 5*time.Second)
 
 	closeAndSettle(a)
 
@@ -179,13 +197,14 @@ func TestWS_MutatingFrameClaimsListener(t *testing.T) {
 	srv, _, h, uuid := newWsTestServer(t)
 
 	b := dialWS(t, srv, uuid) // acting window (registers first)
-	a := dialWS(t, srv, uuid) // co-claimant, ends up the registered owner
+	if err := b.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
+		t.Fatalf("write barrier B: %v", err)
+	}
+	expectMessage(t, b, `"pong"`, 5*time.Second)
 
-	// Registration barrier: dialWS returns when the HTTP upgrade completes,
-	// which is before the handler reaches h.register. Prove A's read loop is
-	// running (and thus registered as owner) before B writes to claim.
+	a := dialWS(t, srv, uuid) // co-claimant, ends up the registered owner
 	if err := a.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
-		t.Fatalf("write registration-barrier ping: %v", err)
+		t.Fatalf("write barrier A: %v", err)
 	}
 	expectMessage(t, a, `"pong"`, 5*time.Second)
 
@@ -213,17 +232,14 @@ func TestWS_NonMutatingFrameDoesNotClaim(t *testing.T) {
 	srv, _, h, uuid := newWsTestServer(t)
 
 	b := dialWS(t, srv, uuid) // registers first
-	a := dialWS(t, srv, uuid) // registered owner
+	if err := b.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
+		t.Fatalf("write barrier B: %v", err)
+	}
+	expectMessage(t, b, `"pong"`, 5*time.Second)
 
-	// dialWS returns when the HTTP upgrade completes, which is BEFORE the handler
-	// reaches h.register (ws_handler.go: register, then the read loop). Without
-	// this round-trip, h.sendTo below can run while B is still the registered
-	// owner, and A's read times out — passes locally, fails on a loaded runner.
-	// A ping proves A's read loop is running, which is strictly after register.
-	// It is also non-mutating, so it cannot itself claim: exactly what this test
-	// asserts about B's ping.
+	a := dialWS(t, srv, uuid) // registered owner
 	if err := a.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
-		t.Fatalf("write registration-barrier ping: %v", err)
+		t.Fatalf("write barrier A: %v", err)
 	}
 	expectMessage(t, a, `"pong"`, 5*time.Second)
 
@@ -249,11 +265,14 @@ func TestWS_ClaimComposesWithStaleTeardownGuard(t *testing.T) {
 	srv, sp, h, uuid := newWsTestServer(t)
 
 	b := dialWS(t, srv, uuid) // acting window (registers first)
-	a := dialWS(t, srv, uuid) // registered owner, about to be deposed
+	if err := b.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
+		t.Fatalf("write barrier B: %v", err)
+	}
+	expectMessage(t, b, `"pong"`, 5*time.Second)
 
-	// Registration barrier: ensure A has registered as owner before B claims.
+	a := dialWS(t, srv, uuid) // registered owner, about to be deposed
 	if err := a.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping","uuid":"`+uuid+`"}`)); err != nil {
-		t.Fatalf("write registration-barrier ping: %v", err)
+		t.Fatalf("write barrier A: %v", err)
 	}
 	expectMessage(t, a, `"pong"`, 5*time.Second)
 
