@@ -115,7 +115,6 @@ func TestWS_SingleConnReceivesInsertBlock(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	expectMessage(t, c, `"insert-block"`, 2*time.Second)
-	closeAndSettle(c)
 }
 
 // THE RACE (user-reported, wails dev): a stale connection's teardown runs
@@ -142,7 +141,6 @@ func TestWS_StaleTeardownMustNotEvictSuccessorChannel(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	expectMessage(t, b, `"insert-block"`, 2*time.Second)
-	closeAndSettle(b)
 }
 
 // Same race, second blast radius: the stale defer must NOT close the shadow
@@ -175,9 +173,9 @@ func TestWS_StaleTeardownMustNotCloseSuccessorShadow(t *testing.T) {
 	}
 	expectMessage(t, b, `"flush-ack"`, 2*time.Second)
 
-	// Sequence teardown BEFORE reading the store: B's owner-close flush must
-	// finish so the disk read below doesn't race it (shared storable buffer).
-	closeAndSettle(b)
+	// Sequence teardown BEFORE reading the store: close the shadow explicitly
+	// so the disk flush finishes synchronously and the read below doesn't race it.
+	sp.Editor.Close(uuid)
 
 	doc, err := sp.Documents.LoadByUUID(uuid)
 	if err != nil {
@@ -222,7 +220,6 @@ func TestWS_MutatingFrameClaimsListener(t *testing.T) {
 	expectNoMessage(t, a, "probe-owner-b", 500*time.Millisecond)
 
 	closeAndSettle(a)
-	closeAndSettle(b)
 }
 
 // A NON-mutating frame (ping heartbeat) from the non-registered socket must NOT
@@ -254,7 +251,6 @@ func TestWS_NonMutatingFrameDoesNotClaim(t *testing.T) {
 	expectNoMessage(t, b, "probe-owner-a", 500*time.Millisecond)
 
 	closeAndSettle(a)
-	closeAndSettle(b)
 }
 
 // Compose claim-on-write with the 6e2ccfc ownership guard: after B claims via a
@@ -297,7 +293,7 @@ func TestWS_ClaimComposesWithStaleTeardownGuard(t *testing.T) {
 	}
 	expectMessage(t, b, `"flush-ack"`, 2*time.Second)
 
-	closeAndSettle(b)
+	sp.Editor.Close(uuid)
 
 	doc, err := sp.Documents.LoadByUUID(uuid)
 	if err != nil {
