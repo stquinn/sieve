@@ -76,6 +76,9 @@ import { SmartImageRenderer } from '../../../block/renderers/smart-image-rendere
       width:   { default: '', parseHTML: function (el) { return el.getAttribute('data-width')   || '' } },
       height:  { default: '', parseHTML: function (el) { return el.getAttribute('data-height')  || '' } },
       error:   { default: '', parseHTML: function (el) { return el.getAttribute('data-error')   || '' } },
+      // Persisted RENDERING attribute (same family as a block's mode) — see the
+      // Go processor's InitAttrs for why it defaults off.
+      showSummary: { default: false, parseHTML: function (el) { return el.getAttribute('data-show-summary') === 'true' } },
     },
 
     asContentEntry: function(node) {
@@ -117,6 +120,7 @@ import { SmartImageRenderer } from '../../../block/renderers/smart-image-rendere
         width:   String(data.width  || ''),
         height:  String(data.height || ''),
         error:   data.error   || '',
+        showSummary: data.showSummary === true || data.showSummary === 'true',
       }
     },
     buildContextMenuItems: function(ctx) {
@@ -136,8 +140,19 @@ import { SmartImageRenderer } from '../../../block/renderers/smart-image-rendere
               }
             }).catch(function (err) { console.error('Failed to copy image', err) })
         }},
-
-      ]
+        // Offered ONLY when there is a description — an item that reveals nothing
+        // is a lie. The toggle writes the persisted showSummary attribute through
+        // the wire owner, so the choice survives reopening the document.
+        n.attrs.summary ? {
+          icon: window.SieveIcons.info,
+          label: n.attrs.showSummary ? 'Hide Description' : 'Show Description',
+          action: function () {
+            if (ctx && ctx.blockService) {
+              ctx.blockService.updateAttributes(n.attrs.id, { showSummary: !n.attrs.showSummary })
+            }
+          }
+        } : null,
+      ].filter(Boolean)
     },
     // Extract → Image: acquire the diagram's SVG and REPLACE the entries with
     // it, so Transform's saveSVG writes the image. Shared helper lives in

@@ -49,13 +49,18 @@ func (p *SmartImageProcessor) IDPrefix() string      { return "img" }
 
 func (p *SmartImageProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{
-		"id":                id,
-		"src":               "",
-		"alt":               "",
-		"summary":           "",
-		"detect":            "",
-		"width":             "",
-		"height":            "",
+		"id":      id,
+		"src":     "",
+		"alt":     "",
+		"summary": "",
+		"detect":  "",
+		"width":   "",
+		"height":  "",
+		// showSummary is a persisted RENDERING attribute (same family as a block's
+		// mode), not derived data: some images earn their AI description a place
+		// under them and most do not, so the choice is per-block and remembered.
+		// Default off — an auto-generated line is never shown unasked (#73).
+		"showSummary":       false,
 		"status":            block.BlockStatusComplete,
 		"supportsEmbedding": true,
 	}
