@@ -2,6 +2,14 @@ name: CI
 
 # Basic continuous-build: run the Go + frontend test suites on every PR and on
 # pushes to main, so a regression turns the pipeline red.
+#
+# .gitea/workflows/ci.yml and .github/workflows/ci.yml are maintained as
+# BYTE-IDENTICAL copies — Forgejo and the GitHub mirror each read their own. They
+# silently diverged once during an abandoned Nix experiment; edit both and diff.
+#
+# Toolchain versions track the repo rather than hardcoded strings: go-version-file
+# reads go.mod's `go` directive (the same source tools/gencredits pins the stdlib
+# version from), and node matches the flake devShell's nodejs_22.
 
 on:
   push:
@@ -17,7 +25,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version-file: go.mod
           cache: true
           cache-dependency-path: go.sum
 
@@ -35,7 +43,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version-file: go.mod
           cache: true
           cache-dependency-path: go.sum
 
@@ -62,7 +70,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
@@ -112,14 +120,14 @@ jobs:
       - uses: actions/setup-go@v5
         if: steps.filter.outputs.credits == 'true'
         with:
-          go-version: '1.25'
+          go-version-file: go.mod
           cache: true
           cache-dependency-path: go.sum
 
       - uses: actions/setup-node@v4
         if: steps.filter.outputs.credits == 'true'
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
