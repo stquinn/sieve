@@ -29,7 +29,16 @@
         # fail on the absent webkit2gtk-4.0. Injects -tags webkit2_41 (the 4.1 ABI
         # the Linux runtime stack provides) into dev/build; other subcommands pass
         # through untouched. Linux only — macOS uses the native WKWebView.
+        #
+        # LD_LIBRARY_PATH is scoped HERE, not in the devShell's shellHook. Only the
+        # Wails app needs the GTK/WebKit stack at runtime; exporting it shell-wide
+        # leaks nix libraries into every other process in the shell. That is what
+        # broke CI: with nix's glibc on LD_LIBRARY_PATH, Ubuntu-glibc binaries in
+        # the runner container (git, and npm's prebuilt esbuild/rollup natives)
+        # loaded nix's libc.so.6 and took SIGSEGV. glibc must never be listed here
+        # either — the loader picks the right libc from each binary's own INTERP.
         wailsWrapped = pkgs.writeShellScriptBin "wails" ''
+          export LD_LIBRARY_PATH="${lib.makeLibraryPath linuxLibs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           case "$1" in
             dev|build)
               subcmd="$1"; shift
@@ -125,7 +134,9 @@
               export GSETTINGS_SCHEMA_DIR="${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}/glib-2.0/schemas:${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}/glib-2.0/schemas"
               export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}:$XDG_DATA_DIRS"
               export PKG_CONFIG_PATH="${lib.makeSearchPathOutput "dev" "lib/pkgconfig" linuxLibs}:$PKG_CONFIG_PATH"
-              export LD_LIBRARY_PATH="${lib.makeLibraryPath (linuxLibs ++ [ pkgs.glibc ])}:$LD_LIBRARY_PATH"
+              # NO LD_LIBRARY_PATH here — see wailsWrapped. Compile-time linking is
+              # driven by PKG_CONFIG_PATH; only the running app needs the runtime
+              # stack, and the wrapper scopes it to that one process tree.
             ''}
 
             echo "Stash dev environment ready"
