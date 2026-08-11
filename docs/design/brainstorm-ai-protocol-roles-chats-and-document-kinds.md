@@ -378,6 +378,242 @@ composer eventually upgrades from a bare textarea to a richer input.)
 
 ---
 
+## 8b. Addendum (2026-08-11): the ai-block is the AI *turn*, not the turn
+
+Written while designing `@`-mention attachments (#74). It revises §3, §6 and §8, and
+resolves part of §9's turn-grammar question.
+
+### The correction
+
+§3 landed on *"the atom is the turn; the chat is a list"* and left an ambiguity §6 then
+inherited: is a turn **one exchange** (question and answer together, the shape today's
+ai-block already has) or **one speaker's move**? §6's grammar says moves —
+`UserTurn | AiTurn` — but its `Turn = UserTurn { message, attachments: List<Block> }`
+still reads as though the ai-block were the turn.
+
+The distinction that settles it is about the ai-block's nature:
+
+> **An ai-block is a pointer-thing, not an owner-thing.** It has never owned content — it
+> points at neighbours and comments on them. A turn *owns* what it says.
+
+So the ai-block cannot be the turn; it is **the AI's move**, exactly as §6's `AiTurn`
+already had it. The human's move is the other half, and it is an **array of blocks** —
+prose the user typed, plus anything minted alongside it (a pasted code block, a web-clip
+from a URL).
+
+This keeps the ai-block's identity stable across both worlds. It is always an answer
+pointing at what it is about; only the neighbourhood changes — sibling blocks in a note,
+the human half of the turn in a chat.
+
+### Why the turn is a real container
+
+A container is needed exactly when content has no other home:
+
+| Relationship | Content lives | Needs a container? | In the prompt |
+|---|---|---|---|
+| **Referenced** | elsewhere, already addressed | no — a pure edge | manifest, fetched on demand |
+| **Frozen** | copied here | yes — the copy needs a home | inlined |
+| **Minted** | born here, no other home | **yes, structurally** | inlined |
+
+§6 justified the container by **freeze**, which is a policy choice and therefore arguable.
+**Minting** is the structural case §6 did not consider, and it is not arguable: composing a
+message *is* minting, and a first-class chat wants it — paste a URL, get a web-clip; paste
+code, get a code block. A block born in a turn has nowhere else to exist.
+
+The obvious objection is the leaf rule: `sieve/block/sieve_block.go` says *"there is no
+Children field: a block is a LEAF"*, with containers deferred to Stage E. **That constraint
+does not reach here.** It belongs to `ShadowDocument` and the markdown codec, and §7 already
+exempted chats from both — *"the chat lens needs no DocumentCodec, no fence hooks, no
+RegionScanner, no markdown round-trip."* A chat is native YAML with its own schema, so
+nesting a block list inside a turn is just YAML. Blocks stay leaves; the turn is a container
+Node, which is precisely brainstorm 6 §7's *"containers and blocks are distinct, unified
+behind `Node`."*
+
+The second reason is referenceability. §8a's coordinate addresses whatever has an id, so if
+the exchange is not a thing, it cannot be cited — only its members can. Making the turn real
+gives the exchange an identity:
+
+```yaml
+TURN:
+  id: turn-1234
+  refs: turn-1233                 # the chain, at turn granularity
+  human: [ <blocks — prose, minted code, web-clips> ]
+  answer:
+    kind: ai-block
+    id: ai-9876
+    question: { turn: turn-1234 }
+    refs: []                      # what the answer is ABOUT
+    attachments: [ sieve:9f2b-… ]
+    answer: "…"
+```
+
+Two smaller consequences of the container: an **unanswered turn is structural** (a turn
+with no answer yet) rather than inferred from a block nothing points at; and the chain moves
+to **turn granularity**, which is cleaner than chaining ai-blocks to one another, because a
+thread is a sequence of exchanges and always was.
+
+### `question` becomes a union, and stays backward compatible
+
+If the human turn is an array of blocks, the text the user typed is a **prose block** in
+that array, beside the code block they pasted. Storing that text in a `question` string
+while the pasted code is a block would special-case prose, which the codebase refuses to do.
+But in a note there is no turn — the ask text is authored in a dialog and, per brainstorm 6
+§6a (*"the conversation leaves the document"*), should not be materialised as a prose block
+in the document.
+
+Two legal sources for the question, then — which must not be expressed as two nullable
+fields, because a type whose validity depends on where it lives cannot be validated. It is
+one **tagged union**:
+
+```yaml
+question: "what is a defect?"     # legacy scalar — still valid, sugar for {text: …}
+
+question:
+  text: "what is a defect?"       # note mode: no turn to point at
+
+question:
+  turn: turn-1234                 # chat mode: the human half of the exchange
+```
+
+The scalar form is why this costs no migration: every ai-block already on disk is valid
+unchanged, with no dual-read window and no rewrite-on-save churn through FileStore history.
+
+It is deliberately **not** called `prompt` — #42 introduces a prompt framework whose
+*prompt generator* assembles the full text sent to the model, and that word is spoken for.
+
+Enforcement has an obvious home: deserialization is a processor concern, and §4 already
+says *"the codec can verify it."* `AIBlockProcessor.Deserialize` requires `question` and
+requires exactly one arm; neither or both is a parse error. One gate covers disk, paste and
+the wire.
+
+### `question.turn` does not step on `ref` — they are different layers
+
+Both hold addresses, so they look alike. They are not:
+
+- **`ref` is the SieveBlock-level graph edge.** Every kind has it; `outgoingRefs()`,
+  `answersTo()` and `gcRefs()` are methods on `SieveBlock`, and web-clip chains use the same
+  mechanism. It participates in the graph, is garbage-collected, and paints chain-hover.
+- **`question` is ai-block payload**, one arm of which happens to carry an address. Addresses
+  in payload are already ordinary — `attachments` does it, web-clip's `source` URL does it.
+
+With the union in place, `ref` means one thing in every host — *what this answer is about* —
+and may legitimately be empty in either. Empty-because-nothing-to-point-at is a real state;
+empty-because-the-other-mode-uses-a-different-field was the contract hole.
+
+### No forward pointers
+
+The tempting shape is a `next:` on the human half naming the answer that arrived. Do not
+store it. The rule is about **who owns the declaration**:
+
+| | Owner | Verdict |
+|---|---|---|
+| `refs` on the ai-block | the block declares **its own** edge | **store** — brainstorm 2 §3, *"a block declares its references"* |
+| `answer: ai-9876` on the human half | the inverse of someone else's declaration | **compute** — brainstorm 6 §7, *"backlinks are computed, never stored"* |
+
+A forward pointer also needs a second write at a second time (the answer does not exist when
+the question is asked), which is the case that most favours computing. "Which answer replies
+to this?" is a local scan — an answer always lives in the same container as its question. If
+a global version is ever wanted, that is the #37 index's job: derived and rebuildable.
+
+### The block keeps its own edges even when containment implies them
+
+Inside the turn, `question: {turn: turn-1234}` is redundant with containment. Keep it anyway.
+A block must be **complete in isolation**: extraction is not hypothetical — §5's *"the chat is
+the ore, the note is the metal"* is exactly the flow that lifts an answer out of a chat and
+into a note. Containment supplies meaning only while the block is inside; refs supply it
+everywhere. It is the same discipline brainstorm 6 §3 applies to renderers — a thing that must
+know where it is in order to make sense is host-aware, and host-awareness is the bug.
+
+> **Containment arranges. Refs describe.** The turn says *these things form one exchange*; the
+> ai-block says *this is what I answered*. Remove containment and the exchange has no identity;
+> remove refs and the block cannot leave home.
+
+The honest cost: a bare `turn-1234` is only unique within its container, so **extraction
+re-addresses** — lifting an answer into a note rewrites its reference to
+`sieve:{chat-uuid}/turn-1234`. That is not incidental; it is the same fact that made block ids
+document-scoped, and the same address-space move that separates minting from pointing.
+
+### Attachments are a field, not a chain hop
+
+§6 called an attachment *"the ref, costumed."* Two roles were being conflated. `ref` is a
+**traversal** edge — the chain walker follows it and renders each hop as a turn. Attachments
+are a **property of each turn**, and every turn in a chain carries its own, so a chain entry
+renders:
+
+```
+NODE ID:
+QUESTION:
+ATTACHMENTS: [ {kind, title, uuid, summary}, … ]
+ANSWER:
+```
+
+One field cannot be both without kind-checking every hop to decide whether to descend into it
+or render it as context. So attachments are their own list of coordinates and `ref` is
+untouched. (#74 carries the detail.)
+
+This also removes the size objection to per-turn attachments. Inlining bodies would cost
+O(turns × documents) — a five-turn chain each carrying a large document is unaffordable before
+it is useful. A manifest costs a few lines per turn and the model fetches only what it needs
+through the MCP. Retrieval removes a tradeoff inlining would have forced between per-turn
+fidelity and prompt size.
+
+### What it buys: citation, and branching
+
+**Citing an exchange.** §8a's coordinate addresses a block, and now a turn, so a conversation's
+individual moves become citable:
+
+> *"Based on the answer @'what's a defect' we need a unit test — what would you suggest here?"*
+
+That resolves to one turn in another document, and the manifest hands the model its question and
+answer together. §5 said a chat is *"the ore"* and a note *"the metal"*; this is how the metal
+cites the seam. It needs one thing #74 does not build — block-granular addressing on both ends:
+a picker that can search *within* documents for turns, and an MCP verb returning a single block
+or turn rather than a whole note. Both are additive; the address already anticipates them.
+
+**Branching a chat.** Because the chain edge is an address, a new chat whose first turn refs a
+turn in another chat inherits that conversation's entire history without copying a byte:
+
+```yaml
+TURN:
+  id: turn-0001
+  refs: sieve:{other-chat-uuid}/turn-1234@v7
+  human: [ "ok, but what if the input is null?" ]
+```
+
+Nothing special-cases it — **a branch is a chain edge that happens to cross a document
+boundary**, and the walk is the same walk, with the Router resolving globally at that one hop
+(brainstorm 6 §7, *"the Router hides which"*). Three notes:
+
+- This is **not** brainstorm 6 §8's *Fork*, which is reserved for *copy, new identity, new
+  lifecycle*. This has new identity and new lifecycle but **no copy** — closer to a git branch
+  naming a commit. It deserves its own row in §8's verb table rather than overloading a word.
+- **Pin the branch point.** This is the first place bare-vs-pinned has a visible user
+  consequence: §8 sanctions editing a turn's message as curation, so a bare coordinate lets
+  someone retroactively change what a branch inherited. §6's *"refs in turns freeze"* already
+  says an utterance is historical.
+- **"What branched from here" is computed**, per §7 — so branching never writes to what it
+  branched from.
+
+It needs exactly one new capability, and it is one #74 needs anyway: `resolveChain` walks
+`jctx.Doc` only, so crossing a document boundary means routing the hop.
+
+### Costs, stated
+
+- **Rendering differs by host, correctly.** In a chat the ai-block renders only its answer,
+  because the question is already on screen as the human half above it; in a note it renders
+  both, because the question has nowhere else to appear. Driven by which arm of `question` is
+  populated, not by the block knowing where it is.
+- **The question becomes mutable in a chat.** Today `question` is a frozen string on the
+  ai-block, so what was asked cannot drift. Pointing at a live turn means editing the human half
+  retroactively changes what the answer replied to. §8 wants that — *"edit message (swap that one
+  back into a textarea)"* is listed as legitimate curation — but an answer can now go stale
+  against its own question, the same staleness the annotation state machine in §1 already models.
+- **`List<Turn>` keeps its teeth, but they are unbitten.** The container makes the element
+  constraint expressible; §9's *"keep the grammar loose until a second chat-shaped kind exists"*
+  still says not to enforce alternation yet.
+
+---
+
 ## 9. Deliberately unresolved
 
 - **Role formalisation shape** — the Go type for protocol roles (template + schema +
