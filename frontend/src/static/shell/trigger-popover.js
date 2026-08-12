@@ -14,9 +14,18 @@
 //
 // ONE MECHANISM, NOT TWO CATEGORIES. The scan does not branch on "commands
 // start the line, mentions appear mid-text": it walks back from the caret to the
-// nearest trigger character and asks THAT provider whether its boundary rule is
-// satisfied. `/`'s rule is "index 0"; `@`'s is "start of text or after
-// whitespace". Same code path, different predicate.
+// nearest trigger character and asks THAT provider two predicates — one about
+// each side of the trigger. `acceptsBoundary` judges what precedes it (`/`'s
+// rule is "index 0"; `@`'s is "start of text or after whitespace");
+// `acceptsPrefix` judges how far the token runs past it (`/` ends at the first
+// whitespace; `@` spans words, because a document title is several). Same code
+// path, different predicates.
+//
+// THE TOKEN CAN BE ABANDONED (#74 P5). A sticky token needs a way to stop, or an
+// `@` typed in an ordinary sentence would query on every keystroke and ambush
+// the typist with a picker that swallows Enter. Going dry, Escape and acceptance
+// all abandon the token under the caret; typing FORWARD from an abandoned prefix
+// stays closed, backspacing to a shorter one re-arms it.
 
 import { ContractViolation } from '../block/sieve-block.js'
 import { TriggerProvider } from './trigger-providers.js'
@@ -30,6 +39,12 @@ export class TriggerPopover {
   /** @type {import('./trigger-providers.js').TriggerToken|null} the token the listed candidates answer */ #token = null
   /** @type {number} monotonic query counter — an async answer that is not the
    *  newest is DROPPED (a slow round-trip must never overwrite a newer list) */ #seq = 0
+  /** @type {{start: number, prefix: string}|null} the token the user walked away
+   *  from — dry, dismissed or completed. Keyed by where it started and what had
+   *  been typed at the time, so a LONGER continuation of it stays abandoned and
+   *  a shorter one re-arms. */ #abandoned = null
+  /** @type {boolean} true while an accepted completion is being written back —
+   *  the `input` that write fires is OUR edit, not the user's. */ #completing = false
   /** @type {any} */ #onInput
   /** @type {any} */ #onKeyDown
   /** @type {any} */ #onBlur
@@ -58,9 +73,13 @@ export class TriggerPopover {
 
   /**
    * The token the caret currently sits in, or null. Walks BACK from the caret to
-   * the first trigger character, stopping at whitespace — so a completed mention
-   * ("@Auth Design ") no longer matches, and the NEAREST `@` wins when a message
-   * carries several.
+   * the NEAREST trigger character and asks the provider claiming it whether both
+   * sides hold: `acceptsBoundary` for what precedes the trigger,
+   * `acceptsPrefix` for how far the token may run past it.
+   *
+   * THE NEAREST TRIGGER CLAIMS THE SCAN. Whichever way it answers, the walk
+   * stops there: a `/` in the middle of a word is a rejected token, never an
+   * invitation to keep looking for an earlier `@` that would then swallow it.
    *
    * Static and public because it is the piece worth pinning in tests directly;
    * the popover is its only production caller.
@@ -72,13 +91,13 @@ export class TriggerPopover {
     const text = value || ''
     const end = Math.max(0, Math.min(caret == null ? text.length : caret, text.length))
     for (let i = end - 1; i >= 0; i--) {
-      const ch = text.charAt(i)
-      if (/\s/.test(ch)) return null
-      const provider = providers.get(ch)
+      const provider = providers.get(text.charAt(i))
       if (!provider) continue
       const before = i > 0 ? text.charAt(i - 1) : ''
       if (!provider.acceptsBoundary(before, i)) return null
-      return Object.freeze({ provider: provider, start: i, end: end, prefix: text.slice(i + 1, end) })
+      const prefix = text.slice(i + 1, end)
+      if (!provider.acceptsPrefix(prefix)) return null
+      return Object.freeze({ provider: provider, start: i, end: end, prefix: prefix })
     }
     return null
   }
@@ -120,9 +139,9 @@ export class TriggerPopover {
   }
 
   #handleInput() {
-    const caret = this.#textarea.selectionStart
-    const token = TriggerPopover.scanToken(this.#textarea.value, caret, this.#providers)
-    if (!token) {
+    if (this.#completing) return   // our own write-back echo; see #acceptCandidate
+    const token = this.#tokenAtCaret()
+    if (!token || this.#isAbandoned(token)) {
       this.#token = null
       this.hide()
       return
@@ -142,11 +161,18 @@ export class TriggerPopover {
     this.#present(/** @type {any[]} */ (answer) || [])
   }
 
-  /** Lists `items`, or hides when there is nothing to offer. @param {any[]} items */
+  /**
+   * Lists `items`, or — when the query came back with nothing to offer — DRIES
+   * UP: the picker closes and the token is abandoned, so typing on writes plain
+   * prose instead of asking again. Nothing is lost by it: both providers narrow
+   * monotonically (a startsWith filter, a substring query), so a prefix that
+   * matched nothing cannot match more once it grows.
+   * @param {any[]} items
+   */
   #present(items) {
     this.#items = items || []
     if (this.#items.length === 0) {
-      this.hide()
+      this.#abandon(this.#token)
       return
     }
     this.#selectedIndex = 0
@@ -183,24 +209,75 @@ export class TriggerPopover {
       e.preventDefault()
       e.stopPropagation()
       e.stopImmediatePropagation()
-      this.hide()
+      // Escape ABANDONS, it does not merely hide: dismissing a picker the user
+      // did not want and having it reappear on the next keystroke is the same
+      // ambush by a slower route.
+      this.#abandon(this.#token)
     }
   }
 
   #handleBlur() {
+    // Hide only. Leaving and returning to the composer is not a decision about
+    // the token — the caret comes back to it and the picker with it.
     setTimeout(() => this.hide(), 150)
   }
 
   /**
    * Hands an accepted candidate back to the provider that offered it, together
-   * with the token it answers — the popover never knows what a completion means.
+   * with the token it answers — the popover never knows what a completion means
+   * — and then abandons whatever token the write-back left under the caret.
+   *
+   * That last step is not bookkeeping: a completed `@Sprite Sheet Analysis ` is
+   * still a legal sticky token, and it matches the very candidate just accepted,
+   * so without abandoning it the picker would re-open on top of its own result.
+   * The `#completing` flag suppresses the write-back's `input` echo entirely, so
+   * the round-trip is never even asked for.
    * @param {any} candidate
    */
   #acceptCandidate(candidate) {
     const token = this.#token
     if (!token) return
-    token.provider.accept(candidate, token, this.#textarea)
+    this.#completing = true
+    try {
+      token.provider.accept(candidate, token, this.#textarea)
+    } finally {
+      this.#completing = false
+    }
+    this.#abandon(this.#tokenAtCaret())
+  }
+
+  // ── Abandonment ────────────────────────────────────────────────────────────
+
+  /** The token under the caret right now, ignoring abandonment.
+   *  @returns {import('./trigger-providers.js').TriggerToken|null} */
+  #tokenAtCaret() {
+    return TriggerPopover.scanToken(this.#textarea.value, this.#textarea.selectionStart, this.#providers)
+  }
+
+  /**
+   * Closes the picker and remembers `token` as walked away from. A blank prefix
+   * is NOT recorded: nothing has been asked yet, so there is nothing to be dry
+   * about — and a record of `''` would abandon every token that trigger ever
+   * opens.
+   * @param {import('./trigger-providers.js').TriggerToken|null} token
+   */
+  #abandon(token) {
+    this.#seq++            // any answer still in flight for this token is now moot
+    this.#token = null
+    if (token && token.prefix) this.#abandoned = Object.freeze({ start: token.start, prefix: token.prefix })
     this.hide()
+  }
+
+  /**
+   * Is `token` the abandoned one, or a continuation of it? Typing FORWARD keeps
+   * it abandoned (the picker must not reappear mid-sentence because a longer
+   * phrase happened to match); backspacing to a shorter prefix re-arms it, so a
+   * typo is always recoverable.
+   * @param {import('./trigger-providers.js').TriggerToken} token @returns {boolean}
+   */
+  #isAbandoned(token) {
+    const dry = this.#abandoned
+    return !!dry && token.start === dry.start && token.prefix.startsWith(dry.prefix)
   }
 
   #render() {

@@ -7,17 +7,22 @@
 //
 //   trigger            the character that opens it
 //   acceptsBoundary()  what must sit BEFORE the trigger for it to count
+//   acceptsPrefix()    how far PAST the trigger its token may run
 //   search(prefix)     candidates — an array (synchronous) or a promise of one
 //   render(item)       the row's content
 //   accept(item, …)    what accepting DOES
 //
-// `@` differs from `/` in exactly two ways, and this shape absorbs both:
-//   • it CANNOT ENUMERATE AT BOOT — the library is unbounded, so search() is a
-//     debounced round-trip and returns a promise, where the command list is a
-//     boot-shipped array returned synchronously;
-//   • it APPEARS MID-TEXT — so `acceptsBoundary` is a per-provider predicate
-//     over the character before the trigger, not a `value.startsWith()` test
-//     baked into the popover.
+// THE TWO PREDICATES ARE ONE PER SIDE OF THE TRIGGER, and each trigger overrides
+// exactly one of them — that symmetry is why the scanner has no if-branch in it:
+//   • `/` overrides the BOUNDARY rule (a command is a whole-line verb, so only
+//     position 0 counts) and keeps the default span (a token ends at whitespace);
+//   • `@` keeps the default boundary (start of text or after whitespace, so
+//     `me@example` is an address) and overrides the SPAN, because a document
+//     title is several words: `@sprite sheet an` is still one token.
+//
+// `@` also CANNOT ENUMERATE AT BOOT — the library is unbounded, so search() is a
+// debounced round-trip returning a promise, where the command list is a
+// boot-shipped array returned synchronously.
 //
 // Nothing here speaks transport: MentionProvider holds a MentionService (the
 // session-plane tenant) and calls one verb on it (#49 — the UI stays
@@ -53,6 +58,17 @@ export class TriggerProvider {
    * @returns {boolean}
    */
   acceptsBoundary(before, _start) { return before === '' || /\s/.test(before) }
+
+  /**
+   * Is `prefix` — everything typed since the trigger — still part of this
+   * provider's token? This is TOKEN STICKINESS, and it is a trait rather than a
+   * rule in the scanner: the DEFAULT is that a token ends at the first
+   * whitespace (one word, which is what a command name is), and a provider whose
+   * candidates are named in several words overrides it.
+   * @param {string} prefix  the text between the trigger and the caret
+   * @returns {boolean}
+   */
+  acceptsPrefix(prefix) { return !/\s/.test(prefix) }
 
   /**
    * The candidates for `prefix` — an ARRAY for a provider that can enumerate
@@ -190,6 +206,16 @@ export class SlashCommandProvider extends TriggerProvider {
 /** Long enough to skip the middle of a word, short enough to feel live. */
 const DEFAULT_DEBOUNCE_MS = 120
 
+/**
+ * The runaway backstop. A sticky token stops itself the moment a query comes
+ * back dry (the popover abandons it), so these bounds only ever bite the token
+ * that KEEPS matching — a common word in a long sentence. They are what
+ * guarantees an unaccepted `@` cannot query for ever, independently of what the
+ * library happens to contain.
+ */
+const MAX_TOKEN_WORDS = 4
+const MAX_TOKEN_CHARS = 60
+
 export class MentionProvider extends TriggerProvider {
   /** @type {CandidateSource} */ #source
   /** @type {(c: import('../block/mention-service.js').MentionCandidate) => void} */ #onAccept
@@ -220,15 +246,33 @@ export class MentionProvider extends TriggerProvider {
   get trigger() { return '@' }
 
   /**
+   * A MENTION TOKEN SURVIVES SPACES, because a document is named in words:
+   * `@sprite sheet an` is one token narrowing towards "Sprite Sheet Analysis",
+   * where `/btw hello` is a command plus an argument. What stops it is the
+   * popover's dry stop (no candidates ⇒ the token is abandoned) with these
+   * bounds as the backstop for a token that never goes dry.
+   *
+   * A NEWLINE still terminates it: Shift+Enter starts a new line of the message,
+   * and a token that spanned it would keep a picker open across the break.
+   * @param {string} prefix @returns {boolean}
+   */
+  acceptsPrefix(prefix) {
+    if (prefix.length > MAX_TOKEN_CHARS) return false
+    if (/[\n\r]/.test(prefix)) return false
+    return (prefix.match(/\s+/g) || []).length < MAX_TOKEN_WORDS
+  }
+
+  /**
    * The library is unbounded, so this is a DEBOUNCED ROUND-TRIP rather than a
-   * local filter. A bare `@` never queries: Go answers an empty query with
+   * local filter. A BLANK prefix never queries: Go answers an empty query with
    * nothing (NotesSource.Search floors on a blank query), so the frame would buy
-   * an empty list at the cost of a socket write on every `@` keystroke.
+   * an empty list at the cost of a socket write on every `@` keystroke — and
+   * since the token is sticky, "@ " is blank too.
    * @param {string} prefix @returns {Promise<any[]>}
    */
   search(prefix) {
     this.#cancelPending()
-    if (!prefix) return Promise.resolve([])
+    if (!prefix || !prefix.trim()) return Promise.resolve([])
     return new Promise((resolve) => {
       this.#superseded = resolve
       this.#timer = setTimeout(() => {

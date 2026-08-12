@@ -429,7 +429,7 @@ buttons including the n/N stats refresh) via
 these OPEN it (conventional "start searching") rather than silently advancing a
 hidden search. Replace… slots into the same Find submenu when #61 lands.
 
-## Composer trigger picker (revised 2026-08-12, #74 P4)
+## Composer trigger picker (revised 2026-08-12, #74 P4/P5)
 
 The Ask panel's textarea is chrome, not an editor surface — none of the key
 matrix above applies to it. It has exactly one interception, and `TriggerPopover`
@@ -444,7 +444,7 @@ Enter-sends / Escape-dismisses handler, unchanged.
 | Tab | accept the selected candidate |
 | Enter (no Shift) | accept the selected candidate — the panel's send is **not** reached |
 | Shift+Enter | falls through (newline), picker stays open |
-| Escape | dismiss the picker only — the panel stays open |
+| Escape | **abandon the token** — the picker closes and does not reopen as you type on; the panel stays open |
 
 Accept and dismiss both `stopImmediatePropagation`, which is what keeps a
 completion from also sending the message.
@@ -452,18 +452,43 @@ completion from also sending the message.
 **Two triggers, one picker.** `/` (slash commands) and `@` (document mentions)
 are PROVIDERS on the one popover, not two popovers: the keyboard model, the
 positioning and the dismissal are written once. A provider contributes only its
-trigger character, its boundary rule, its candidate search and what accepting
-does. There is no key handling in a provider.
+trigger character, its two token predicates, its candidate search and what
+accepting does. There is no key handling in a provider.
 
-**Boundary rules** (the only place the two triggers differ, and the reason the
-scan is a token-under-caret walk rather than a `value.startsWith()` test):
+**The token predicates** — one per side of the trigger, and the reason the scan
+is a token-under-caret walk rather than a `value.startsWith()` test. Each trigger
+overrides exactly one; neither is an if-branch in the scanner.
 
-- `/` opens only at **position 0** — a command is a whole-line verb.
-- `@` opens at the start of the text **or after whitespace**, anywhere in the
-  message, so `me@example` is an address and never a mention.
+| | `acceptsBoundary` — what precedes the trigger | `acceptsPrefix` — how far the token runs past it |
+|---|---|---|
+| `/` | **position 0 only** — a command is a whole-line verb | *(default)* ends at the first whitespace |
+| `@` | *(default)* start of text or after whitespace, so `me@example` is an address and never a mention | **spans up to 4 words / 60 chars**, never a newline |
 
-Both close as soon as whitespace separates the caret from the trigger, which is
-why an accepted `@Auth Design` does not immediately re-open the picker.
+`@` is sticky because a document is named in words: `@sprite sheet an` is still
+one token narrowing towards "Sprite Sheet Analysis". `/btw hello` is a command
+plus an argument, so the picker closes at the space — but moving the caret back
+inside the command name (`/bt|w hello`) re-offers it, which is the one
+intentional difference from the pre-#74 popover.
+
+**Abandoning a token.** A sticky token must be able to stop, or an `@` typed in
+an ordinary sentence would query on every keystroke and ambush the typist with a
+picker that swallows Enter. Three things abandon the token under the caret:
+
+- **it goes dry** — a query returns zero candidates. Nothing is lost: both
+  providers narrow monotonically, so a prefix that matched nothing cannot match
+  more once it grows;
+- **Escape**;
+- **acceptance** — otherwise the completed `@Sprite Sheet Analysis ` is itself a
+  legal token that matches the candidate just accepted, and the picker reopens on
+  top of its own result.
+
+Abandonment is keyed to **(trigger index, the prefix at which it stopped)**.
+Typing forward stays abandoned; backspacing to a shorter prefix re-arms it, so a
+typo is recoverable. A blank prefix is never recorded — a bare `@` has asked
+nothing.
+
+**An attachment exists only if a candidate is ACCEPTED.** `@` followed by prose
+that matches nothing stays plain text: no chip, no best guess, no auto-attach.
 
 ## Deferred (recorded, not shipped)
 

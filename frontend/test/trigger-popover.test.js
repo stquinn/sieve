@@ -119,6 +119,23 @@ describe('TriggerPopover — slash trigger (behaviour unchanged)', () => {
     type(textarea, 'and/or')
     expect(/** @type {HTMLElement} */ (popoverEl()).style.display).toBe('none')
   })
+
+  it('a slash after a sentence never opens the picker, at any caret position', () => {
+    const text = 'what about /btw'
+    for (let caret = 0; caret <= text.length; caret++) {
+      type(textarea, text, caret)
+      expect(/** @type {HTMLElement} */ (popoverEl()).style.display).toBe('none')
+    }
+  })
+
+  it('a completed command with an argument closes, but editing the NAME reopens', () => {
+    type(textarea, '/btw hello')
+    expect(/** @type {HTMLElement} */ (popoverEl()).style.display).toBe('none')
+
+    type(textarea, '/btw hello', 3)   // caret back inside "/bt"
+    expect(/** @type {HTMLElement} */ (popoverEl()).style.display).not.toBe('none')
+    expect(items().map((i) => i.textContent)).toEqual([expect.stringContaining('/btw')])
+  })
 })
 
 // ── The provider registry ────────────────────────────────────────────────────
@@ -213,14 +230,77 @@ describe('TriggerPopover.scanToken — the token under the caret', () => {
     expect(TriggerPopover.scanToken('me@example', 10, providers())).toBeNull()
   })
 
-  it('returns null once a space separates the caret from the trigger', () => {
-    expect(TriggerPopover.scanToken('@Auth Design ', 13, providers())).toBeNull()
-    expect(TriggerPopover.scanToken('/btw ', 5, providers())).toBeNull()
-  })
-
   it('returns null when there is no trigger at all', () => {
     expect(TriggerPopover.scanToken('plain words', 11, providers())).toBeNull()
     expect(TriggerPopover.scanToken('', 0, providers())).toBeNull()
+  })
+})
+
+// ── Token span: stickiness is a PROVIDER TRAIT, not a scanner special case ────
+//
+// The scan asks the claiming provider TWO questions, one about each side of the
+// trigger: acceptsBoundary() about the character before it, acceptsPrefix()
+// about the text typed since. `/` overrides the first, `@` overrides the second
+// — neither is an if-branch in the scanner.
+
+describe('TriggerPopover.scanToken — token span (a provider trait)', () => {
+  const providers = () => new Map([
+    ['/', new SlashCommandProvider({ list: () => [] })],
+    ['@', new MentionProvider({ search: () => [] })],
+  ])
+
+  it('a mention token SURVIVES spaces — a title is several words', () => {
+    expect(TriggerPopover.scanToken('@sprite sheet', 13, providers())?.prefix).toBe('sprite sheet')
+    const token = TriggerPopover.scanToken('ask @sprite sheet an', 20, providers())
+    expect(token?.prefix).toBe('sprite sheet an')
+    expect(token?.start).toBe(4)
+  })
+
+  it('a mention token still stops at a NEWLINE — a token never crosses a line', () => {
+    expect(TriggerPopover.scanToken('@sprite\nsheet', 13, providers())).toBeNull()
+  })
+
+  it('a mention token stops after four words (the runaway backstop)', () => {
+    expect(TriggerPopover.scanToken('@one two three four', 19, providers())?.prefix).toBe('one two three four')
+    expect(TriggerPopover.scanToken('@one two three four five', 24, providers())).toBeNull()
+  })
+
+  it('a mention token stops after sixty characters (the runaway backstop)', () => {
+    const sixty = 'x'.repeat(60)
+    expect(TriggerPopover.scanToken('@' + sixty, 61, providers())?.prefix).toBe(sixty)
+    expect(TriggerPopover.scanToken('@' + sixty + 'x', 62, providers())).toBeNull()
+  })
+
+  it('a slash token still TERMINATES at whitespace (byte-identical to before)', () => {
+    expect(TriggerPopover.scanToken('/btw ', 5, providers())).toBeNull()
+    expect(TriggerPopover.scanToken('/btw hello', 10, providers())).toBeNull()
+  })
+
+  // ── The `/` start-of-line invariant (#74 P5) ───────────────────────────────
+  //
+  // acceptsBoundary === (start === 0) is now the ONLY thing keeping a slash after
+  // a sentence from opening a command picker — a shape the command protocol has
+  // no room for. The old popover enforced it crudely (value.startsWith('/') plus
+  // "any space anywhere hides it"); nothing pinned it after the token scan
+  // replaced that.
+
+  it('a mid-sentence slash never triggers, at ANY caret position', () => {
+    const text = 'what about /btw'
+    for (let caret = 0; caret <= text.length; caret++) {
+      expect(TriggerPopover.scanToken(text, caret, providers())).toBeNull()
+    }
+  })
+
+  it('but the caret moved back INSIDE the command name still completes it', () => {
+    // The one intentional difference from the old popover: editing the command
+    // name re-offers the picker, because the token under the caret is the command.
+    expect(TriggerPopover.scanToken('/btw hello', 3, providers())?.prefix).toBe('bt')
+  })
+
+  it('the start-of-line rule does NOT leak onto @, which is a mid-text trigger', () => {
+    const text = 'what about @btw'
+    expect(TriggerPopover.scanToken(text, text.length, providers())?.prefix).toBe('btw')
+    expect(TriggerPopover.scanToken('what about @btw docs', 20, providers())?.prefix).toBe('btw docs')
   })
 })
 
@@ -309,6 +389,173 @@ describe('MentionProvider — the debounced, mid-text trigger', () => {
     await vi.advanceTimersByTimeAsync(1)
 
     expect(items().map((i) => i.textContent)).toEqual([expect.stringContaining('@Bee')])
+    popover.destroy()
+  })
+})
+
+// ── The dry stop and token abandonment ───────────────────────────────────────
+//
+// A sticky token has to be able to STOP, or an `@` typed in an ordinary sentence
+// would query for ever and ambush the typist with a picker that swallows Enter.
+// Three things stop it: a query that comes back empty (dry), Escape, and
+// acceptance. All three ABANDON the token — typing forward from there stays
+// closed, backspacing to a shorter prefix re-arms it.
+
+describe('TriggerPopover — the dry stop', () => {
+  afterEach(() => { document.body.innerHTML = ''; vi.useRealTimers() })
+
+  /** A library that answers what CONTAINS the query — Go's substring rule. */
+  function library(titles) {
+    return vi.fn((q) => Promise.resolve(
+      titles
+        .filter((t) => t.toLowerCase().includes(String(q).toLowerCase()))
+        .map((t) => ({ uri: 'container:' + t.toLowerCase().replace(/\s+/g, '-'), title: t }))
+    ))
+  }
+
+  const TITLES = ['Sprite Sheet Analysis', 'Sprite Atlas', 'Sprite Packing', 'Sprites 101', 'Sprite Notes']
+
+  function mount(titles, onAccept) {
+    vi.useFakeTimers()
+    const { textarea } = mountDom()
+    const search = library(titles)
+    const popover = new TriggerPopover(textarea, [
+      new MentionProvider({ search }, onAccept, { debounceMs: 1 }),
+    ])
+    return { textarea, search, popover }
+  }
+
+  const visible = () => /** @type {HTMLElement} */ (popoverEl()).style.display !== 'none'
+
+  it('narrows across spaces and accepts the whole multi-word title', async () => {
+    const { textarea, popover } = mount(TITLES)
+
+    type(textarea, '@sprite')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(items().length).toBe(5)
+
+    type(textarea, '@sprite sheet')            // the space no longer closes it
+    await vi.advanceTimersByTimeAsync(10)
+    expect(visible()).toBe(true)
+    expect(items().map((i) => i.textContent)).toEqual([expect.stringContaining('@Sprite Sheet Analysis')])
+
+    type(textarea, '@sprite sheet an')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(items().length).toBe(1)
+
+    textarea.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    expect(textarea.value).toBe('@Sprite Sheet Analysis ')
+    expect(visible()).toBe(false)
+    popover.destroy()
+  })
+
+  it('a completed mention never re-opens on its own trailing space', async () => {
+    const { textarea, search, popover } = mount(TITLES)
+
+    type(textarea, '@sprite sheet')
+    await vi.advanceTimersByTimeAsync(10)
+    const queriesBeforeAccept = search.mock.calls.length
+
+    textarea.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    await vi.advanceTimersByTimeAsync(50)
+
+    // The write-back's own input echo is OUR edit, not the user's: no round-trip,
+    // no picker. ("@Sprite Sheet Analysis " would otherwise match itself.)
+    expect(search.mock.calls.length).toBe(queriesBeforeAccept)
+    expect(visible()).toBe(false)
+    popover.destroy()
+  })
+
+  it('a query with no candidates closes the picker AND abandons the token', async () => {
+    const attached = []
+    const { textarea, search, popover } = mount(['Auth Design', 'Author Notes'], (c) => attached.push(c))
+
+    type(textarea, '@auth')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(items().length).toBe(2)
+
+    type(textarea, '@auth handles')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(visible()).toBe(false)
+
+    const queriesWhenDry = search.mock.calls.length
+    type(textarea, '@auth handles this')
+    type(textarea, '@auth handles this?')
+    await vi.advanceTimersByTimeAsync(50)
+
+    // Typing FORWARD from a dry token asks nothing and shows nothing: extending a
+    // query that matched nothing cannot match more.
+    expect(search.mock.calls.length).toBe(queriesWhenDry)
+    expect(visible()).toBe(false)
+    // And nothing was attached: an attachment exists only if a candidate is ACCEPTED.
+    expect(attached).toEqual([])
+    popover.destroy()
+  })
+
+  it('backspacing to a SHORTER prefix re-arms the abandoned token', async () => {
+    const { textarea, search, popover } = mount(['Auth Design', 'Author Notes'])
+
+    type(textarea, '@auth handles')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(visible()).toBe(false)
+
+    search.mockClear()
+    type(textarea, '@auth')                     // backspaced back into the title
+    await vi.advanceTimersByTimeAsync(10)
+    expect(search).toHaveBeenCalledWith('auth', undefined)
+    expect(visible()).toBe(true)
+    expect(items().length).toBe(2)
+    popover.destroy()
+  })
+
+  it('Escape abandons the token, not just the popover', async () => {
+    const { textarea, search, popover } = mount(TITLES)
+
+    type(textarea, '@sprite')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(visible()).toBe(true)
+
+    textarea.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    expect(visible()).toBe(false)
+
+    search.mockClear()
+    type(textarea, '@sprite s')
+    type(textarea, '@sprite sheet')
+    await vi.advanceTimersByTimeAsync(50)
+    expect(search).not.toHaveBeenCalled()
+    expect(visible()).toBe(false)
+    popover.destroy()
+  })
+
+  it('the runaway backstop stops querying past four words even while matching', async () => {
+    // Every prefix here matches (the library answers a substring of itself), so
+    // only the cap can stop it.
+    const { textarea, search, popover } = mount(['one two three four five six'])
+
+    type(textarea, '@one two three four')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(visible()).toBe(true)
+
+    search.mockClear()
+    type(textarea, '@one two three four five')
+    await vi.advanceTimersByTimeAsync(50)
+    expect(search).not.toHaveBeenCalled()
+    expect(visible()).toBe(false)
+    popover.destroy()
+  })
+
+  it('a bare @ is not a dry token — typing on still queries', async () => {
+    const { textarea, search, popover } = mount(TITLES)
+
+    type(textarea, 'ask @')                     // never queried: Go floors a blank query
+    await vi.advanceTimersByTimeAsync(10)
+    expect(search).not.toHaveBeenCalled()
+    expect(visible()).toBe(false)
+
+    type(textarea, 'ask @sprite')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(search).toHaveBeenCalledTimes(1)
+    expect(visible()).toBe(true)
     popover.destroy()
   })
 })
