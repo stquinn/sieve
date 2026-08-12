@@ -9,7 +9,9 @@ Scratchpad-first thinking tool. Users write freely in untitled buffers; filing/k
 
 ## Key File Locations
 
-> **Go package layout (S-A decomposition, 2026-06-20).** `sieve/` is no longer a flat package — it is 6 cohesive packages with an acyclic DAG: `domain ← block ← {block/processors, services} ← ai ← root`. The cycle is broken by **port interfaces owned by `block/`** (`AIPort`/`DocumentsPort`/`AssetsPort`/`StatePort`/`LinkPreviewPort`); concrete services implement them, the root wires them. `block/` imports no service. See `docs/design/archive/specs/2026-06-20-flat-package-decomposition-design.md`.
+> **Go package layout (S-A decomposition, 2026-06-20; DAG corrected 2026-08-12).** `sieve/` is no longer a flat package — it is 6 cohesive packages with an acyclic DAG. The **real** import direction is `domain ← services ← ai ← block ← block/processors`, with the root wiring everything. Read it that way round: `services/` imports nothing from `block/`, and it **cannot** — `block/` holds a concrete `*ai.AIService` (`processor_registry.go`) and `ai/` imports `services/`, so a `services → block` edge would close a cycle. **Put a type shared by a service and a block in `domain/`**, never in `block/`.
+>
+> The remaining **port interfaces owned by `block/`** (`DocumentsPort`/`NodesPort`/`AssetsPort`/`StatePort`/`LinkPreviewPort`/`PlantumlPort`) keep *processors* off concrete services and make them stubbable in tests — they are not breaking a cycle. `AIPort` was **deleted**: it inverted an edge that never needed inverting (see the note in `processor_registry.go`), which is why `BlockServices.AI` is concrete while its siblings are ports. See `docs/design/archive/specs/2026-06-20-flat-package-decomposition-design.md` for the original split (its DAG predates the `AIPort` removal).
 
 | What | Where |
 |------|-------|
