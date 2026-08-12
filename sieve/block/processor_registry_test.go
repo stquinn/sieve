@@ -2,6 +2,8 @@ package block
 
 import (
 	"testing"
+
+	"sieve/ident"
 )
 
 type mockProcessor struct {
@@ -241,16 +243,25 @@ func TestDetectExtractions_nestedSourceNeverOffersTransform(t *testing.T) {
 	}
 }
 
-func TestGenerateBlockID_formatAndUniqueness(t *testing.T) {
-	id1 := GenerateBlockID("code")
-	id2 := GenerateBlockID("code")
-	if len(id1) < 5 {
-		t.Errorf("expected ID length >= 5, got %q", id1)
+// Ids are opaque UUIDs and carry no kind — the kind-prefix scheme minted 2 random
+// bytes per prefix (65,536 values, no collision check) and is gone (#75). What
+// still matters is that NewSieveBlock mints on BOTH sides of the id invariant.
+func TestNewSieveBlock_MintsUUID(t *testing.T) {
+	b := NewSieveBlock(KindProse, "", map[string]interface{}{"content": "hi"})
+	if !ident.Valid(b.ID) {
+		t.Fatalf("minted id %q is not a uuid", b.ID)
 	}
-	if id1 == id2 {
-		t.Errorf("expected unique IDs, got %q twice", id1)
+	if b.Attrs["id"] != b.ID {
+		t.Fatalf("two-sided invariant broken: ID=%q Attrs[id]=%v", b.ID, b.Attrs["id"])
 	}
-	if id1[:2] != "co" {
-		t.Errorf("expected prefix 'co', got %q", id1[:2])
+	if other := NewSieveBlock(KindProse, "", nil); other.ID == b.ID {
+		t.Fatalf("expected unique ids, got %q twice", b.ID)
+	}
+}
+
+func TestNewSieveBlock_KeepsGivenID(t *testing.T) {
+	b := NewSieveBlock(KindProse, "pr-3f2a", nil)
+	if b.ID != "pr-3f2a" || b.Attrs["id"] != "pr-3f2a" {
+		t.Fatalf("given id not preserved on both sides: ID=%q Attrs[id]=%v", b.ID, b.Attrs["id"])
 	}
 }

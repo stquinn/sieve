@@ -161,8 +161,6 @@ type logParseResult struct {
 	formatRe   string
 }
 
-func (p *LogProcessor) IDPrefix() string { return "log" }
-
 func (p *LogProcessor) Kind() string { return p.FencedDeserializer.Kind }
 
 func (p *LogProcessor) Mode() block.BlockMode {

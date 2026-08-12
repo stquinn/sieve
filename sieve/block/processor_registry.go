@@ -2,8 +2,6 @@ package block
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -232,7 +230,7 @@ type BlockLifecycleListener interface {
 //     • entries — the same views handed to IsSupportedContent.
 //     • uuid    — the document/tab this block is being created in (asset scope).
 //     • blockID — the *pre-allocated id of the new block*. It is minted by
-//     GenerateBlockIDFor(kind) BEFORE Transform precisely so Transform can key
+//     ident.New() BEFORE Transform precisely so Transform can key
 //     side effects to it — e.g. smart-image writes the SVG/asset file under this
 //     id, so the asset filename and the block share identity. The framework then
 //     creates the block with this exact id and these overrides.
@@ -450,29 +448,11 @@ func GetProcessor(kind string) BlockProcessor {
 	return processorRegistry[kind]
 }
 
-// GenerateBlockID returns "XX-YYYY" where XX = first two chars of kind.
-func GenerateBlockID(kind string) string {
-	b := make([]byte, 2)
-	_, _ = rand.Read(b)
-	prefix := kind
-	if len(prefix) > 2 {
-		prefix = prefix[:2]
-	}
-	return prefix + "-" + hex.EncodeToString(b)
-}
-
-// GenerateBlockIDFor generates an ID for kind, using the processor's IDPrefix()
-// method if available (e.g. SmartImageProcessor returns "img").
-func GenerateBlockIDFor(kind string) string {
-	registryMu.RLock()
-	p := processorRegistry[kind]
-	registryMu.RUnlock()
-	type hasPrefix interface{ IDPrefix() string }
-	if hp, ok := p.(hasPrefix); ok {
-		return GenerateBlockID(hp.IDPrefix())
-	}
-	return GenerateBlockID(kind)
-}
+// Block ids are minted by ident.New — opaque UUIDv7, carrying no kind. The
+// kind-prefix scheme that lived here ("XX-YYYY", 2 random bytes behind a 2-3 char
+// prefix) gave 65,536 values per prefix with no collision check anywhere, which
+// put a 300-paragraph note at a ~50% chance of a duplicate prose id (#75).
+// Nothing ever inferred kind from an id prefix, so nothing replaces it.
 
 type SelfExtractable interface {
 	AllowSelfExtraction() bool

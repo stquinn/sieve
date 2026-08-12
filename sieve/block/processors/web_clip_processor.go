@@ -127,8 +127,6 @@ func (p *WebClipBlockProcessor) webClipLabel(blk *block.SieveBlock) string {
 	return "Fetching " + host
 }
 
-func (p *WebClipBlockProcessor) IDPrefix() string { return "web" }
-
 func (p *WebClipBlockProcessor) Mode() block.BlockMode {
 	return block.BlockModeBlock
 }

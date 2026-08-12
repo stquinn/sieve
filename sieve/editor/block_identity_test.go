@@ -1,8 +1,8 @@
 package editor
 
 import (
+	"sieve/ident"
 	"sieve/sieve/block"
-	"strings"
 	"testing"
 )
 
@@ -24,8 +24,8 @@ func TestOpen_MintsHandlelessProseIntoShadow(t *testing.T) {
 	if shadow == nil || len(shadow.Blocks) != 1 {
 		t.Fatalf("unexpected shadow doc: %+v", shadow)
 	}
-	if !strings.HasPrefix(shadow.Blocks[0].ID, "pr-") {
-		t.Fatalf("Open did not mint a prose handle: %q", shadow.Blocks[0].ID)
+	if !ident.Valid(shadow.Blocks[0].ID) {
+		t.Fatalf("Open did not mint a durable handle: %q", shadow.Blocks[0].ID)
 	}
 }
 
@@ -106,7 +106,7 @@ func TestFrontendBlocks_ReturnsShadowMintedIDs(t *testing.T) {
 	if !ok || len(blocks) != 1 {
 		t.Fatalf("FrontendBlocks: ok=%v blocks=%+v", ok, blocks)
 	}
-	if blocks[0].Kind != block.KindProse || !strings.HasPrefix(blocks[0].ID, "pr-") {
+	if blocks[0].Kind != block.KindProse || !ident.Valid(blocks[0].ID) {
 		t.Fatalf("expected minted prose block, got %+v", blocks[0])
 	}
 	if blocks[0].Attrs["content"] != "Prose needing a handle." {

@@ -45,7 +45,6 @@ func NewSmartImageProcessor(svc block.BlockServices) *SmartImageProcessor {
 func (p *SmartImageProcessor) Kind() string { return p.FencedDeserializer.Kind }
 
 func (p *SmartImageProcessor) Mode() block.BlockMode { return block.BlockModeBlock }
-func (p *SmartImageProcessor) IDPrefix() string      { return "img" }
 
 func (p *SmartImageProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {
 	attrs := map[string]interface{}{

@@ -38,8 +38,6 @@ func NewDiagramProcessor(svc block.BlockServices) *DiagramProcessor {
 
 func (p *DiagramProcessor) Kind() string { return p.FencedDeserializer.Kind }
 
-func (p *DiagramProcessor) IDPrefix() string { return "dia" }
-
 func (p *DiagramProcessor) Mode() block.BlockMode { return block.BlockModeBlock }
 
 func (p *DiagramProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {

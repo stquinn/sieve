@@ -25,9 +25,6 @@ func init() { block.RegisterProcessor(&ProseProcessor{}) }
 // no service dependencies.
 func NewProseProcessor(_ block.BlockServices) *ProseProcessor { return &ProseProcessor{} }
 
-// IDPrefix mints "pr-…" handles for prose.
-func (p *ProseProcessor) IDPrefix() string { return "pr" }
-
 // Mode marks prose as its own serialization shape (content + markers), distinct
 // from fenced YAML / inline.
 func (p *ProseProcessor) Mode() block.BlockMode { return block.BlockModeProse }
