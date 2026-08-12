@@ -93,6 +93,20 @@ correlation/ack story; the S3/server future talks one protocol.
 commands (HTTP retries are free, WS ones are not); the session channel needs
 the doc channels' ownership guard (the 6e2ccfc lesson).
 
+*Update 2026-08-12 (#74 P1): that guard cost is already paid, and by a
+different mechanism than the doc channels'. `handleSessionWS` registers
+`__session__` through the same identity-guarded `unregister` (a stale session
+socket's teardown cannot evict its successor —
+`TestWS_SessionChannel_SuccessorOwnsChannel`), and correlated results do not
+use the owner lookup at all: `handleCommand` is **requester-affine**, replying
+on the socket the command arrived on and falling back to the current owner only
+once the requester is gone (`TestWS_Command_ResultRoutesToRequester_NotChannelOwner`,
+the 2026-07-26 stolen-/btw incident). Claim-on-write exists to steer a
+**synchronous render-back** to the acting socket; session traffic is
+request/reply, so requester-affinity subsumes it. The JS half of the invariant
+is `WorkspaceService`: one socket, many tenants — the second socket that the
+guard defends against is now impossible to open by accident.*
+
 ## The plane's lens: the command palette
 
 Straw-manned during #55: a Ctrl+Shift+Space centered palette is a *second

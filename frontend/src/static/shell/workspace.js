@@ -14,6 +14,7 @@
 import { SieveTab } from './tab.js'
 import { BlockService } from '../block/block-service.js'
 import { DocumentService } from '../block/document-service.js'
+import { WorkspaceService } from '../block/workspace-service.js'
 import { CommandService } from '../block/command-service.js'
 import { CommandBadges } from './command-badges.js'
 import { AskPanel } from './ask-panel.js'
@@ -72,7 +73,12 @@ export class SieveWorkspace {
    * owner by constructor injection (contract §service pair). */
   #documentService
 
-  /** @type {CommandService} the workspace command plane protocol peer. */
+  /** @type {WorkspaceService} the session-channel wire owner — the workspace
+   * command plane's transport, shared by every tenant that speaks it (#74 P1).
+   * Sibling of #blockService, which owns the per-uuid document channels. */
+  #workspaceService
+
+  /** @type {CommandService} the workspace command plane's slash-command tenant. */
   #commandService
 
   /**
@@ -84,9 +90,9 @@ export class SieveWorkspace {
   constructor(serviceOptions) {
     this.#blockService = new BlockService(serviceOptions)
     this.#documentService = new DocumentService(this.#blockService)
-    this.#commandService = new CommandService({
+    this.#workspaceService = new WorkspaceService({ socketFactory: serviceOptions?.socketFactory })
+    this.#commandService = new CommandService(this.#workspaceService, {
       commands: typeof window !== 'undefined' ? /** @type {any} */ (window).__sieveCommands || [] : [],
-      socketFactory: serviceOptions?.socketFactory,
     })
   }
 
@@ -95,6 +101,10 @@ export class SieveWorkspace {
 
   /** The DocumentService singleton (editors/Workspace consume it). */
   get documentService() { return this.#documentService }
+
+  /** The WorkspaceService singleton (session-channel wire owner; tenants
+   *  register on it — the plane, not a feature). */
+  get workspaceService() { return this.#workspaceService }
 
   /** The CommandService singleton (workspace slash-command protocol peer). */
   get commandService() { return this.#commandService }

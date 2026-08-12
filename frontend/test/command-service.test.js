@@ -1,6 +1,7 @@
 // @ts-check
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { CommandService } from '../src/static/block/command-service.js'
+import { WorkspaceService } from '../src/static/block/workspace-service.js'
 
 class FakeWebSocket {
   /** @type {any} */
@@ -37,6 +38,8 @@ class FakeWebSocket {
 describe('CommandService', () => {
   /** @type {FakeWebSocket|null} */
   let fakeWs = null
+  /** @type {WorkspaceService} */
+  let workspace
   /** @type {CommandService} */
   let service
 
@@ -45,20 +48,35 @@ describe('CommandService', () => {
     { name: 'uuid', description: 'Generate a UUID', family: 'util', resultKind: 'command-result' }
   ]
 
-  beforeEach(() => {
-    fakeWs = null
-    service = new CommandService({
+  /**
+   * Builds the plane + its command tenant, the way the composition root does
+   * (#74 P1: CommandService no longer owns a socket — it joins one).
+   * @param {any[]} cmds
+   */
+  const buildPlane = (cmds) => {
+    const ws = new WorkspaceService({
       socketFactory: (url) => {
         fakeWs = new FakeWebSocket(url)
         return /** @type {any} */ (fakeWs)
       },
-      wsUrl: () => 'ws://test/api/ws?session=1',
-      commands: commands
+      wsUrl: () => 'ws://test/api/ws?session=1'
     })
+    return { workspace: ws, service: new CommandService(ws, { commands: cmds }) }
+  }
+
+  beforeEach(() => {
+    fakeWs = null
+    const plane = buildPlane(commands)
+    workspace = plane.workspace
+    service = plane.service
   })
 
   it('lists registered commands', () => {
     expect(service.list()).toEqual(commands)
+  })
+
+  it('claims only the command-result frame vocabulary on the plane', () => {
+    expect(service.frameTypes).toEqual(['command-result'])
   })
 
   it('resolves slash commands correctly', () => {
@@ -74,18 +92,13 @@ describe('CommandService', () => {
     expect(service.resolve('not a command')).toBeNull()
   })
 
-  it('dispatches command over channel and handles PENDING and COMPLETE results', async () => {
-    service.openChannel({
-      applyServerOp: () => {},
-      onFlushAck: () => {},
-      onMessage: () => {},
-      resolveInsertIndex: () => 0
-    })
+  it('dispatches command over the plane and handles PENDING and COMPLETE results', async () => {
+    workspace.open()
 
     await new Promise(r => setTimeout(r, 10)) // wait for ws.onopen
 
     const results = []
-    const handle = service.dispatch('btw', 'hello', { docId: 'doc-1' }, (res) => {
+    service.dispatch('btw', 'hello', { docId: 'doc-1' }, (res) => {
       results.push(res)
     })
 
@@ -133,13 +146,33 @@ describe('CommandService', () => {
     expect(results.length).toBe(2)
   })
 
+  it('dispatching without an already-open plane opens it lazily', async () => {
+    const results = []
+    service.dispatch('btw', 'hello', {}, (res) => { results.push(res) })
+    await new Promise(r => setTimeout(r, 10))
+
+    expect(fakeWs).not.toBeNull()
+    expect(fakeWs.sent.length).toBe(1)
+    expect(fakeWs.sent[0].cmd).toBe('btw')
+
+    fakeWs.receive({ type: 'command-result', correlationId: fakeWs.sent[0].correlationId, cmd: 'btw', status: 'COMPLETE' })
+    expect(results.length).toBe(1)
+  })
+
+  it('ignores a command-result whose correlationId it never dispatched', async () => {
+    workspace.open()
+    await new Promise(r => setTimeout(r, 10))
+
+    expect(() => fakeWs.receive({
+      type: 'command-result',
+      correlationId: 'c-never-mine',
+      cmd: 'btw',
+      status: 'COMPLETE'
+    })).not.toThrow()
+  })
+
   it('allows cancelling a pending command dispatch', async () => {
-    service.openChannel({
-      applyServerOp: () => {},
-      onFlushAck: () => {},
-      onMessage: () => {},
-      resolveInsertIndex: () => 0
-    })
+    workspace.open()
     await new Promise(r => setTimeout(r, 10))
 
     const results = []
@@ -168,12 +201,7 @@ describe('CommandService', () => {
   })
 
   it('dispatch sends the resolved descriptor family (util vs ai)', async () => {
-    service.openChannel({
-      applyServerOp: () => {},
-      onFlushAck: () => {},
-      onMessage: () => {},
-      resolveInsertIndex: () => 0
-    })
+    workspace.open()
     await new Promise(r => setTimeout(r, 10))
 
     service.dispatch('uuid', '', {})
@@ -185,21 +213,12 @@ describe('CommandService', () => {
   })
 
   it('dispatch sends the tolerant floor when the descriptor lacks a family', async () => {
-    const svc = new CommandService({
-      socketFactory: (url) => { fakeWs = new FakeWebSocket(url); return /** @type {any} */ (fakeWs) },
-      wsUrl: () => 'ws://test/api/ws?session=1',
-      // Legacy-shaped descriptor: no family field at all.
-      commands: [{ name: 'legacy', description: 'no family' }]
-    })
-    svc.openChannel({
-      applyServerOp: () => {},
-      onFlushAck: () => {},
-      onMessage: () => {},
-      resolveInsertIndex: () => 0
-    })
+    // Legacy-shaped descriptor: no family field at all.
+    const plane = buildPlane([{ name: 'legacy', description: 'no family' }])
+    plane.workspace.open()
     await new Promise(r => setTimeout(r, 10))
 
-    svc.dispatch('legacy', 'x', {})
+    plane.service.dispatch('legacy', 'x', {})
     // Empty family = Go's tolerant floor; nothing throws on the missing field.
     expect(fakeWs.sent[0].family).toBe('')
     expect(fakeWs.sent[0].cmd).toBe('legacy')

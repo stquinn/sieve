@@ -338,7 +338,6 @@ describe('AskPanel — Slash command routing (#55)', () => {
     const ws = fakeWorkspace(editor)
     const mockCs = {
       resolve: vi.fn((input) => input.startsWith('/btw') ? { cmd: { name: 'btw', description: 'Ask btw' }, args: 'what is X' } : null),
-      openChannel: vi.fn(),
       // Returns a dispatch handle; the badge (not the panel) wires onResult.
       dispatch: vi.fn(() => ({ correlationId: 'c-x', onResult: vi.fn(), cancel: vi.fn() }))
     }

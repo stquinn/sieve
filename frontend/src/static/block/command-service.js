@@ -1,9 +1,16 @@
 // @ts-check
-// command-service.js — CommandService: JS protocol peer for workspace commands.
-// Wraps session-channel WebSocket transport for slash-command discovery,
-// resolution, dispatch, and cancellation.
+// command-service.js — CommandService: JS protocol peer for workspace commands
+// — slash-command discovery, resolution, dispatch, and cancellation.
+//
+// A TENANT of the session channel, not its owner (issue #74 P1): the socket
+// belongs to WorkspaceService, which this class joins at construction by
+// claiming the `command-result` frame word. Everything below the vocabulary
+// line — correlation-id → callback tracking, the terminal-status sweep, the
+// command/command-cancel envelopes — stays here; everything at or below the
+// wire (URL, socket, reconnect, inbound demux) is the plane's. See
+// workspace-service.js's header for why ownership had to move.
 
-import { BlockChannel } from './block-channel.js'
+import { ContractViolation } from './sieve-block.js'
 
 /**
  * @typedef {object} CommandDescriptor
@@ -32,8 +39,6 @@ import { BlockChannel } from './block-channel.js'
 
 /**
  * @typedef {object} CommandServiceOptions
- * @property {(url: string) => WebSocket} [socketFactory]
- * @property {() => string} [wsUrl]
  * @property {CommandDescriptor[]} [commands]
  */
 
@@ -47,20 +52,62 @@ import { BlockChannel } from './block-channel.js'
  * @property {() => void} cancel
  */
 
+/** The inbound frame vocabulary this tenant claims on the plane (frozen: it is
+ *  handed out by the frameTypes getter). */
+const COMMAND_FRAMES = Object.freeze(['command-result'])
+
 export class CommandService {
-  /** @type {(url: string) => WebSocket} */ #socketFactory
-  /** @type {() => string} */ #wsUrl
+  /** @type {import('./workspace-service.js').WorkspaceService} the session-channel wire owner */ #workspace
   /** @type {CommandDescriptor[]} */ #commands
-  /** @type {BlockChannel|null} */ #channel = null
   /** @type {Map<string, (res: CommandResult) => void>} correlationId -> onResult */ #correlations = new Map()
 
   /**
+   * @param {import('./workspace-service.js').WorkspaceService} workspace
+   *   — the session-channel wire owner (injected by the composition root).
    * @param {CommandServiceOptions} [options]
    */
-  constructor(options = {}) {
-    this.#socketFactory = options.socketFactory || ((url) => new WebSocket(url))
-    this.#wsUrl = options.wsUrl || (() => CommandService.#defaultUrl())
+  constructor(workspace, options = {}) {
+    if (!workspace || typeof workspace.send !== 'function' || typeof workspace.registerTenant !== 'function') {
+      throw new ContractViolation('CommandService requires a WorkspaceService')
+    }
+    this.#workspace = workspace
     this.#commands = options.commands || (typeof window !== 'undefined' && /** @type {any} */ (window).__sieveCommands) || []
+    // Join the plane at construction: a tenant that dispatches before it can
+    // hear the answer is the silent-dead-UI shape this refactor exists to
+    // prevent. Registration is plane-level, so it outlives socket churn.
+    this.#workspace.registerTenant(this)
+  }
+
+  // ── WorkspaceTenant contract (the plane calls these; nothing else does) ─────
+
+  /** @returns {readonly string[]} */
+  get frameTypes() { return COMMAND_FRAMES }
+
+  /**
+   * Inbound `command-result` delivery from the plane. Fans the frame out to the
+   * dispatch handle's listeners and sweeps the correlation on a terminal status.
+   * Unknown correlation ids are dropped (a result for a cancelled or
+   * prior-session dispatch).
+   * @param {Record<string, any>} msg
+   */
+  onFrame(msg) {
+    const cid = msg && msg.correlationId
+    const cb = cid ? this.#correlations.get(cid) : null
+    if (!cb) return
+
+    const res = /** @type {CommandResult} */ ({
+      correlationId: cid,
+      cmd: msg.cmd,
+      status: msg.status,
+      block: msg.block,
+      error: msg.error
+    })
+
+    cb(res)
+
+    if (res.status === 'COMPLETE' || res.status === 'ERROR') {
+      this.#correlations.delete(cid)
+    }
   }
 
   // Collision-resistant correlation id. `c-` + a UUID so an id minted in one
@@ -75,15 +122,6 @@ export class CommandService {
     if (c && typeof c.randomUUID === 'function') return 'c-' + c.randomUUID()
     const rand = () => Math.floor(Math.random() * 0x100000000).toString(16).padStart(8, '0')
     return 'c-' + rand() + rand() + '-' + Date.now().toString(16)
-  }
-
-  static #defaultUrl() {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    let host = location.host
-    if (typeof window !== 'undefined' && /** @type {any} */ (window).__sieveDevServerPort) {
-      host = '127.0.0.1:' + /** @type {any} */ (window).__sieveDevServerPort
-    }
-    return proto + '//' + host + '/api/ws?session=1'
   }
 
   /**
@@ -113,63 +151,8 @@ export class CommandService {
   }
 
   /**
-   * Opens the session channel for command dispatch & result listening.
-   * @param {import('./block-channel.js').ChannelDelegate} [delegate]
-   */
-  openChannel(delegate) {
-    if (this.#channel) this.#channel.close()
-
-    const channelDelegate = delegate || {
-      applyServerOp: () => {},
-      onFlushAck: () => {},
-      onMessage: () => {},
-      resolveInsertIndex: () => 0
-    }
-
-    this.#channel = new BlockChannel(
-      this.#socketFactory,
-      this.#wsUrl,
-      {
-        applyServerOp: (msg) => channelDelegate.applyServerOp(msg),
-        onFlushAck: (msg) => channelDelegate.onFlushAck(msg),
-        onMessage: (msg) => {
-          if (msg.type === 'command-result' && msg.correlationId) {
-            this.#handleResult(msg)
-            return
-          }
-          channelDelegate.onMessage(msg)
-        },
-        resolveInsertIndex: (id) => channelDelegate.resolveInsertIndex(id)
-      },
-      () => {}
-    )
-  }
-
-  /**
-   * @param {Record<string, any>} msg
-   */
-  #handleResult(msg) {
-    const cid = msg.correlationId
-    const cb = this.#correlations.get(cid)
-    if (!cb) return
-
-    const res = /** @type {CommandResult} */ ({
-      correlationId: cid,
-      cmd: msg.cmd,
-      status: msg.status,
-      block: msg.block,
-      error: msg.error
-    })
-
-    cb(res)
-
-    if (res.status === 'COMPLETE' || res.status === 'ERROR') {
-      this.#correlations.delete(cid)
-    }
-  }
-
-  /**
-   * Dispatches a command over the session channel.
+   * Dispatches a command over the session channel. The plane opens the wire
+   * lazily on the first send.
    * @param {string} commandName
    * @param {string} text
    * @param {Record<string, any>} context
@@ -177,9 +160,6 @@ export class CommandService {
    * @returns {DispatchHandle}
    */
   dispatch(commandName, text, context, onResult) {
-    if (!this.#channel) {
-      this.openChannel()
-    }
     const cid = CommandService.#newCid()
 
     /** @type {Set<(res: CommandResult) => void>} */
@@ -203,9 +183,7 @@ export class CommandService {
       context: context || {}
     }
 
-    if (this.#channel) {
-      this.#channel.send(frame)
-    }
+    this.#workspace.send(frame)
 
     return {
       correlationId: cid,
@@ -215,21 +193,8 @@ export class CommandService {
       cancel: () => {
         this.#correlations.delete(cid)
         listeners.clear()
-        if (this.#channel) {
-          this.#channel.send({ type: 'command-cancel', correlationId: cid })
-        }
+        this.#workspace.send({ type: 'command-cancel', correlationId: cid })
       }
     }
-  }
-
-  /**
-   * Closes the session channel.
-   */
-  closeChannel() {
-    if (this.#channel) {
-      this.#channel.close()
-      this.#channel = null
-    }
-    this.#correlations.clear()
   }
 }
