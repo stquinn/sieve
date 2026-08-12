@@ -8,6 +8,15 @@ import (
 	"sieve/sieve/domain"
 )
 
+// Addresses are uuid-strict since #75, so router tests need real ones: a short
+// stand-in like "container:9f2b" no longer parses and would fail these tests for
+// the wrong reason.
+const (
+	testContainerUUID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+	testMissingUUID   = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a77"
+	testBlockUUID     = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a99"
+)
+
 // fakeSource is a NodeSource stand-in: the Router's own behaviour (scheme
 // refusal, federation order, dangling classification, limit) is what these tests
 // exercise, so the source behind it is deliberately inert.
@@ -42,13 +51,14 @@ func (f *fakeSource) Resolve(uri string) (domain.Node, error) {
 }
 
 func TestRouter_ResolvesThroughTheFirstSourceThatAnswers(t *testing.T) {
+	uri := "container:" + testContainerUUID
 	empty := &fakeSource{name: "empty"}
 	notes := &fakeSource{name: "notes", nodes: map[string]domain.Node{
-		"container:9f2b": {URI: "container:9f2b", UUID: "9f2b", Kind: "note", Title: "Auth Design"},
+		uri: {URI: uri, UUID: testContainerUUID, Kind: "note", Title: "Auth Design"},
 	}}
 	r := NewRouter(empty, notes)
 
-	node, err := r.Resolve("container:9f2b")
+	node, err := r.Resolve(uri)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -60,38 +70,55 @@ func TestRouter_ResolvesThroughTheFirstSourceThatAnswers(t *testing.T) {
 	}
 }
 
-// Dangling is a normal state, not a panic: the address had a shape, no source
-// held it.
+// Dangling is a normal state, not a panic: the address was a real coordinate, no
+// source held it.
 func TestRouter_DanglingAddressIsATypedError(t *testing.T) {
 	r := NewRouter(&fakeSource{name: "notes"})
 
-	_, err := r.Resolve("container:deleted-uuid")
+	_, err := r.Resolve("container:" + testMissingUUID)
 	if !errors.Is(err, domain.ErrNodeNotFound) {
 		t.Fatalf("err = %v, want ErrNodeNotFound", err)
 	}
 }
 
-func TestRouter_UnknownSchemeIsRefusedBeforeAnySourceIsAsked(t *testing.T) {
+// Not-an-address is the GRAMMAR's refusal, and it happens before the router has
+// an opinion — no source is asked and the error is domain's, not the router's.
+func TestRouter_MalformedAddressIsRefusedByTheGrammar(t *testing.T) {
 	notes := &fakeSource{name: "notes"}
 	r := NewRouter(notes)
 
-	_, err := r.Resolve("block:9f2b/co-1")
-	if !errors.Is(err, domain.ErrUnknownScheme) {
-		t.Fatalf("err = %v, want ErrUnknownScheme", err)
+	_, err := r.Resolve("container:not-a-uuid")
+	if !errors.Is(err, domain.ErrBadAddress) {
+		t.Fatalf("err = %v, want ErrBadAddress", err)
+	}
+	if len(notes.resolved) != 0 {
+		t.Errorf("no source may be asked about a non-address, calls = %v", notes.resolved)
+	}
+}
+
+// block: is a legal coordinate the grammar accepts — refusing it is this
+// router's POLICY (no source answers that space yet), not a parse failure.
+func TestRouter_UnsupportedSchemeIsRefusedBeforeAnySourceIsAsked(t *testing.T) {
+	notes := &fakeSource{name: "notes"}
+	r := NewRouter(notes)
+
+	_, err := r.Resolve("block:" + testContainerUUID + "/" + testBlockUUID)
+	if !errors.Is(err, ErrSchemeUnsupported) {
+		t.Fatalf("err = %v, want ErrSchemeUnsupported", err)
 	}
 	if len(notes.resolved) != 0 {
 		t.Errorf("no source may be asked about an unresolvable scheme, calls = %v", notes.resolved)
 	}
 }
 
-// The pin is reserved grammar, not implemented behaviour: resolving it live
+// The pin is expressible grammar, not implemented behaviour: resolving it live
 // while claiming it is a snapshot would be a lie, so it is refused.
 func TestRouter_PinnedAddressIsRefused(t *testing.T) {
 	notes := &fakeSource{name: "notes"}
 	r := NewRouter(notes)
 
-	_, err := r.Resolve("container:9f2b@v3")
-	if !errors.Is(err, domain.ErrVersionPinUnsupported) {
+	_, err := r.Resolve("container:" + testContainerUUID + "@v3")
+	if !errors.Is(err, ErrVersionPinUnsupported) {
 		t.Fatalf("err = %v, want ErrVersionPinUnsupported", err)
 	}
 	if len(notes.resolved) != 0 {
@@ -105,7 +132,7 @@ func TestRouter_SourceFailureIsNotSilentlyDangling(t *testing.T) {
 	boom := errors.New("store unreadable")
 	r := NewRouter(&fakeSource{name: "notes", failWith: boom})
 
-	_, err := r.Resolve("container:9f2b")
+	_, err := r.Resolve("container:" + testContainerUUID)
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want the source's own error", err)
 	}

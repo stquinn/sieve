@@ -5,69 +5,141 @@ import (
 	"testing"
 )
 
-func TestParseAddress_BareContainerIsALiveEdge(t *testing.T) {
-	addr, err := ParseAddress("container:9f2b3c4d-1a2b-4c5d-8e9f-a1b2c3d4e5f6")
+const (
+	cUUID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+	bUUID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a99"
+)
+
+func TestParseAddress_RoundTrip(t *testing.T) {
+	for _, s := range []string{
+		"container:" + cUUID,
+		"container:" + cUUID + "@v7",
+		"block:" + bUUID,
+		"block:" + cUUID + "/" + bUUID,
+		"block:" + cUUID + "@v7/" + bUUID,
+		"block:" + cUUID + "/the-retry-loop",
+		"block:" + cUUID + "@v3/the-retry-loop",
+	} {
+		t.Run(s, func(t *testing.T) {
+			a, err := ParseAddress(s)
+			if err != nil {
+				t.Fatalf("ParseAddress(%q): %v", s, err)
+			}
+			if got := a.String(); got != s {
+				t.Fatalf("round trip: %q -> %q", s, got)
+			}
+		})
+	}
+}
+
+func TestParseAddress_Fields(t *testing.T) {
+	a, err := ParseAddress("block:" + cUUID + "@v7/the-retry-loop")
 	if err != nil {
-		t.Fatalf("ParseAddress: %v", err)
+		t.Fatal(err)
 	}
-	if addr.Scheme != SchemeContainer {
-		t.Errorf("scheme = %q, want %q", addr.Scheme, SchemeContainer)
+	if a.Scheme != SchemeBlock || a.Container != cUUID || a.Block != "the-retry-loop" || a.Version != 7 {
+		t.Fatalf("fields: %+v", a)
 	}
-	if addr.Opaque != "9f2b3c4d-1a2b-4c5d-8e9f-a1b2c3d4e5f6" {
-		t.Errorf("opaque = %q", addr.Opaque)
+	if !a.IsPinned() {
+		t.Fatal("IsPinned() false for @v7")
 	}
-	if addr.IsPinned() {
-		t.Error("a bare address must not be pinned — it is a live edge")
-	}
-	if addr.URI() != "container:9f2b3c4d-1a2b-4c5d-8e9f-a1b2c3d4e5f6" {
-		t.Errorf("URI() = %q, want the input back", addr.URI())
+	if !a.IsAlias() {
+		t.Fatal("IsAlias() false for a non-uuid handle")
 	}
 }
 
-// The @v{n} pin is #75's RESERVED form. Parsing recognises it purely so a pinned
-// address can be refused honestly rather than silently resolved live.
-func TestParseAddress_RecognisesTheReservedVersionPin(t *testing.T) {
-	addr, err := ParseAddress("container:9f2b@v3")
+func TestParseAddress_LiveBlockIsNotPinnedAndIsNotAnAlias(t *testing.T) {
+	a, err := ParseAddress("block:" + bUUID)
 	if err != nil {
-		t.Fatalf("ParseAddress: %v", err)
+		t.Fatal(err)
 	}
-	if addr.Opaque != "9f2b" || addr.Version != "v3" {
-		t.Fatalf("opaque/version = %q/%q, want 9f2b/v3", addr.Opaque, addr.Version)
+	if a.IsPinned() {
+		t.Fatal("bare block address reported as pinned")
 	}
-	if !addr.IsPinned() {
-		t.Error("a @v-suffixed address must report as pinned")
+	if a.IsAlias() {
+		t.Fatal("uuid handle reported as an alias")
 	}
-	if addr.URI() != "container:9f2b@v3" {
-		t.Errorf("URI() = %q, want the input back", addr.URI())
-	}
-}
-
-func TestParseAddress_MalformedIsATypedError(t *testing.T) {
-	for _, uri := range []string{"", "   ", "9f2b", ":9f2b", "container:"} {
-		if _, err := ParseAddress(uri); !errors.Is(err, ErrMalformedAddress) {
-			t.Errorf("ParseAddress(%q) err = %v, want ErrMalformedAddress", uri, err)
-		}
+	if a.Container != "" {
+		t.Fatalf("bare block address invented a container: %q", a.Container)
 	}
 }
 
-// An unknown scheme parses fine — shape is the grammar's business, resolvability
-// is the Router's.
-func TestParseAddress_UnknownSchemeParsesButIsNotContainer(t *testing.T) {
-	addr, err := ParseAddress("block:9f2b/co-1")
-	if err != nil {
-		t.Fatalf("ParseAddress: %v", err)
-	}
-	if addr.Scheme == SchemeContainer {
-		t.Errorf("scheme = %q, want a non-container scheme", addr.Scheme)
-	}
-	if addr.Opaque != "9f2b/co-1" {
-		t.Errorf("opaque = %q, want the whole scheme-owned part", addr.Opaque)
+func TestParseAddress_Rejects(t *testing.T) {
+	for _, s := range []string{
+		"",
+		"block:",
+		"container:",
+		"block:the-retry-loop",             // bare alias — an alias may never leave its container
+		"block:" + bUUID + "@v7",           // versions belong to containers, not blocks
+		"container:" + cUUID + "/" + bUUID, // a container address names no block
+		"container:not-a-uuid",
+		"block:not-a-uuid/x",
+		"thing:" + cUUID, // the scheme names shape, not service
+		"https://example.com",
+		"block:" + cUUID + "@v0/" + bUUID, // versions are 1-based
+		"block:" + cUUID + "@vx/" + bUUID,
+		"block:" + cUUID + "@7/" + bUUID, // missing the v
+		"block:" + cUUID + "/a/b",
+		"block:" + cUUID + "/",
+		"container:" + cUUID + "@v-1",
+	} {
+		t.Run(s, func(t *testing.T) {
+			a, err := ParseAddress(s)
+			if err == nil {
+				t.Fatalf("ParseAddress(%q) accepted: %+v", s, a)
+			}
+			// Every refusal is the one typed sentinel: a caller distinguishing
+			// "this is not an address" from a store failure must not parse strings.
+			if !errors.Is(err, ErrBadAddress) {
+				t.Fatalf("ParseAddress(%q) err = %v, want it to wrap ErrBadAddress", s, err)
+			}
+		})
 	}
 }
 
-func TestNewContainerAddress_EmitsTheBareForm(t *testing.T) {
-	got := NewContainerAddress("9f2b").URI()
-	if got != "container:9f2b" {
-		t.Errorf("URI() = %q, want container:9f2b", got)
+func TestNewContainerAddress_EmitsTheLiveContainerForm(t *testing.T) {
+	got := NewContainerAddress("  " + cUUID + "  ").String()
+	if got != "container:"+cUUID {
+		t.Fatalf("String() = %q, want the bare container form", got)
+	}
+	if _, err := ParseAddress(got); err != nil {
+		t.Fatalf("the constructor emitted something the grammar rejects: %v", err)
+	}
+}
+
+func TestAddress_Equal(t *testing.T) {
+	live, _ := ParseAddress("block:" + bUUID)
+	qualified, _ := ParseAddress("block:" + cUUID + "/" + bUUID)
+	frozen, _ := ParseAddress("block:" + cUUID + "@v7/" + bUUID)
+	otherFrozen, _ := ParseAddress("block:" + cUUID + "@v3/" + bUUID)
+	aliased, _ := ParseAddress("block:" + cUUID + "/the-retry-loop")
+
+	if !live.Equal(qualified) {
+		t.Fatal("same uuid, both live — want equal (the container segment is a locator hint)")
+	}
+	if live.Equal(frozen) {
+		t.Fatal("live and frozen must not be equal")
+	}
+	if frozen.Equal(otherFrozen) {
+		t.Fatal("different pins must not be equal")
+	}
+	if aliased.Equal(aliased) {
+		t.Fatal("an unresolved alias cannot be compared — want false")
+	}
+	if live.Equal(aliased) || aliased.Equal(live) {
+		t.Fatal("comparison against an unresolved alias must be false in both directions")
+	}
+}
+
+func TestAddress_EqualAcrossSchemes(t *testing.T) {
+	container, _ := ParseAddress("container:" + cUUID)
+	blk, _ := ParseAddress("block:" + cUUID)
+	if container.Equal(blk) {
+		t.Fatal("a container and a block with the same uuid are not the same thing")
+	}
+
+	same, _ := ParseAddress("container:" + cUUID)
+	if !container.Equal(same) {
+		t.Fatal("identical container addresses must be equal")
 	}
 }

@@ -35,7 +35,10 @@ type ShadowDocument struct {
 	// Default false = WYSIWYG, the tree is authoritative. Derived, never persisted:
 	// Mode as a stored string retired in issue #49 Phase 2.
 	rawAuthoritative bool
-	codec            *DocumentCodec
+	// migratedOnLoad records that BlockIdentityMigrator changed an id while parsing
+	// this document, so the opener knows the tree owes disk a rewrite (#75).
+	migratedOnLoad bool
+	codec          *DocumentCodec
 	debounce     time.Duration
 	closed       bool // set by StopDebounce; prevents re-arming after Close
 	mu           sync.Mutex
@@ -74,6 +77,11 @@ func NewShadow(uuid, body string, codec *DocumentCodec, debounce time.Duration, 
 	if err != nil {
 		logger.Warn("editor: parse block doc failed", "uuid", uuid, "err", err)
 	}
+	// Lazy identity migration (#75): legacy short handles become UUIDs the first
+	// time a document is opened, and in-document refs follow. This is the load
+	// path — the one place minting can be followed by a save — which is why the
+	// migrator is not inside Deserialize.
+	blocks, migrated := BlockIdentityMigrator{}.Migrate(blocks)
 	s := &ShadowDocument{
 		UUID:     uuid,
 		Blocks:   blocks,
@@ -81,7 +89,28 @@ func NewShadow(uuid, body string, codec *DocumentCodec, debounce time.Duration, 
 		debounce: debounce,
 		onFlush:  onFlush,
 	}
+	if migrated {
+		// The upgrade MUST reach disk, or a legacy document would mint different
+		// ids on every open and any address taken from it would die — including a
+		// block id captured by a dispatched job, whose result would then be applied
+		// to a block that no longer exists. EditorService.open flushes synchronously
+		// on MigratedOnLoad; arming the debounce here is the fallback for callers
+		// that construct a shadow directly. Safe unlocked: nothing else holds s yet.
+		logger.Info("migrate: document identities upgraded", "uuid", uuid, "blocks", len(blocks))
+		s.migratedOnLoad = true
+		s.resetDebounce()
+	}
 	return s
+}
+
+// MigratedOnLoad reports that parsing this document upgraded at least one block
+// id (or repaired a duplicate). The opener uses it to force the rewrite to disk
+// immediately, so ids are stable from the first open rather than from whenever
+// the autosave next fires.
+func (s *ShadowDocument) MigratedOnLoad() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.migratedOnLoad
 }
 
 // reparseDoc replaces the block tree from the given markdown (WYSIWYG only).
@@ -249,7 +278,7 @@ type BlockOp struct {
 	Index    int                    `json:"index"`
 	ParentID string                 `json:"parentId,omitempty"`
 	// Token is a TRANSIENT frontend correlation handle (tok-…) for a prose create —
-	// NOT a durable id. Go mints the durable id (GenerateBlockIDFor) and echoes the
+	// NOT a durable id. Go mints the durable id (ident.New) and echoes the
 	// token back on insert-block so the client can swap its pending node's token for
 	// the authoritative id. Never persisted.
 	Token string `json:"token,omitempty"`

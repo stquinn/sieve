@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"sieve/ident"
 	"sieve/logger"
 	"sieve/sieve/ai"
 	"sieve/sieve/block"
@@ -167,6 +168,16 @@ func (es *EditorService) open(uuid string, notifySaved func(), recoverStuck bool
 	es.shadows[uuid] = shadow
 	es.mu.Unlock()
 
+	// A document whose block ids were just upgraded (#75) owes disk a rewrite NOW,
+	// not whenever the autosave next fires: until it lands, a reopen would mint
+	// different ids, so any address taken from this document — including a block id
+	// captured by a dispatched job — would stop resolving.
+	if shadow.MigratedOnLoad() {
+		if err := es.flushShadow(shadow, "identity-migration"); err != nil {
+			logger.Warn("editor: identity migration failed to persist", "uuid", uuid, "err", err)
+		}
+	}
+
 	// Reset any DISPATCHED blocks that pre-date this session — they are stuck
 	// (server crash or restart). Re-queue them so they run again on reconnect.
 	// Skipped for transient background opens (recoverStuck=false): they must not
@@ -255,7 +266,7 @@ func (es *EditorService) HandleBlockOp(uuid string, op block.BlockOp) error {
 		if op.Kind != "" {
 			id := op.BlockID
 			if id == "" {
-				id = block.GenerateBlockIDFor(op.Kind)
+				id = ident.New()
 			}
 			_, _, err := es.createBlock(uuid, op.Kind, id, op.Attrs, op.Aliases, op.Index, true, op.Token)
 			return err
@@ -606,7 +617,7 @@ func (es *EditorService) SetServices(svc block.BlockServices) {
 // CreateBlock is the canonical block creation path for UI-triggered creation
 // (keyboard shortcut, toolbar button). Generates a fresh block ID.
 func (es *EditorService) CreateBlock(uuid, kind string, overrides map[string]interface{}, index int) (id string, rawYaml string, err error) {
-	return es.createBlockWithID(uuid, kind, block.GenerateBlockIDFor(kind), overrides, nil, index)
+	return es.createBlockWithID(uuid, kind, ident.New(), overrides, nil, index)
 }
 
 // createBlockWithID creates a block using a caller-supplied ID at a caller-supplied
@@ -713,7 +724,7 @@ func (es *EditorService) HandlePaste(uuid string, entries []block.ContentEntry, 
 		// is not a Sieve concern.
 		return block.NewLinkPaste(es.services.LinkPreview).Result(entries)
 	}
-	blockID := block.GenerateBlockIDFor(matchKind)
+	blockID := ident.New()
 	overrides := processor.Transform(entries, uuid, blockID, block.ActionPaste)
 	if fromDetection {
 		if overrides == nil {
@@ -743,7 +754,7 @@ func (es *EditorService) CreateBlockFromEntries(uuid, kind string, entries []blo
 		return es.transformInPlace(uuid, kind, processor, entries, sourceID, action)
 	}
 
-	blockID := block.GenerateBlockIDFor(kind)
+	blockID := ident.New()
 	overrides := processor.Transform(entries, uuid, blockID, action)
 	if overrides == nil {
 		return "", "", fmt.Errorf("%s: processor %q could not transform entries into a block", action, kind)

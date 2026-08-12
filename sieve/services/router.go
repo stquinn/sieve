@@ -37,6 +37,22 @@ type Router struct {
 	sources []NodeSource
 }
 
+// The two refusals below are ROUTER POLICY, not grammar. domain.ParseAddress
+// happily produces both forms — they are legal coordinates — but this router has
+// nothing to resolve them with yet, and answering anyway would be a lie rather
+// than a limitation.
+var (
+	// ErrSchemeUnsupported is a resolvability failure: the address is well formed
+	// and its scheme is real, but no registered source answers that address space.
+	// v1 registers container: only — a block: address needs a source that can
+	// reach into a document, which is the next epic's work.
+	ErrSchemeUnsupported = errors.New("router: no source answers for that scheme")
+	// ErrVersionPinUnsupported refuses @v{n}. Versioned storables do not exist
+	// yet, so the only thing the router could return for a pinned address is
+	// current content — a snapshot that isn't one.
+	ErrVersionPinUnsupported = errors.New("router: version pinning is not implemented")
+)
+
 // NewRouter builds the registry over its sources, in offer order.
 func NewRouter(sources ...NodeSource) *Router {
 	return &Router{sources: sources}
@@ -53,11 +69,12 @@ func (r *Router) Register(source NodeSource) {
 // Resolve turns an address into the Node it points at, asking each source in
 // registration order.
 //
-// Three refusals happen before any source is asked, because they are properties
-// of the address rather than of any store: a malformed uri, a scheme no source
-// answers for (only container: is resolvable in v1), and the reserved @v{n} pin,
-// which is refused rather than resolved live — returning current content for a
-// pinned address would be a snapshot that isn't one.
+// Three refusals happen before any source is asked. The first belongs to the
+// grammar — domain.ParseAddress rejects anything that is not a coordinate, so a
+// malformed uri never reaches a store. The other two are this router's own
+// policy over an address that parsed perfectly well: a scheme no source answers
+// for (only container: is resolvable in v1), and a @v{n} pin, which is refused
+// rather than resolved live.
 //
 // A target no source holds is domain.ErrNodeNotFound: dangling is normal. A
 // source failing for any OTHER reason (an unreadable store) surfaces as-is, so a
@@ -68,10 +85,10 @@ func (r *Router) Resolve(uri string) (domain.Node, error) {
 		return domain.Node{}, err
 	}
 	if addr.Scheme != domain.SchemeContainer {
-		return domain.Node{}, fmt.Errorf("%w: %q", domain.ErrUnknownScheme, addr.Scheme)
+		return domain.Node{}, fmt.Errorf("%w: %q", ErrSchemeUnsupported, addr.Scheme)
 	}
 	if addr.IsPinned() {
-		return domain.Node{}, fmt.Errorf("%w: %s", domain.ErrVersionPinUnsupported, uri)
+		return domain.Node{}, fmt.Errorf("%w: %s", ErrVersionPinUnsupported, uri)
 	}
 	for _, source := range r.sources {
 		node, err := source.Resolve(uri)

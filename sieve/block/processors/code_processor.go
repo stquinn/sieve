@@ -223,8 +223,6 @@ func (p *CodeBlockProcessor) BuildContext(blk block.SieveBlock, _ block.DocView,
 	return ctx
 }
 
-func (p *CodeBlockProcessor) IDPrefix() string { return "cod" }
-
 func (p *CodeBlockProcessor) Mode() block.BlockMode {
 	return block.BlockModeBlock
 }

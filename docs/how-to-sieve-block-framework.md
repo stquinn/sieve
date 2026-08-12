@@ -4,6 +4,12 @@
 > (epic #43). For the current contract see `docs/how-to-intelligent-fenced-blocks.md`
 > and `sieve/block/processor_registry.go`. Retained as historical reference;
 > Go-side rewrite is a pending follow-up.
+>
+> Specifically WRONG since #75 (2026-08-12): this document's advice on block ids
+> ("`GenerateBlockID("web-clip")` → `"we-a3f9"`… Do not use longer IDs"). Block
+> ids are now UUIDv7, minted by `ident.New`; `GenerateBlockID` and the per-kind
+> `IDPrefix` methods no longer exist. See
+> `docs/design/archive/specs/2026-08-12-block-ids-become-uuids-design.md`.
 
 # How to Build a Sieve Block
 

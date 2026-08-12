@@ -103,3 +103,70 @@ func TestProseProcessor_Transform_ExtractsEntriesToContent(t *testing.T) {
 		t.Fatalf("extract to prose content failed: %+v", attrs)
 	}
 }
+
+// Aliases live on the SieveBlock struct, not in Attrs — so the fenced serializer
+// (which writes Attrs as YAML) dropped them on every save. Only prose survived,
+// via its <!--s:ID a1 a2--> marker. Nothing writes aliases today, so this guards
+// the gap rather than a live loss: the alias UI must not inherit a silent
+// drop-on-save.
+func TestFencedBlock_AliasesRoundTrip(t *testing.T) {
+	const id = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+	original := block.SieveBlock{
+		ID:      id,
+		Kind:    "code",
+		Attrs:   map[string]interface{}{"id": id, "source": "x := 1"},
+		Aliases: []string{"cd-1a2b", "the-retry-loop"},
+	}
+
+	md, err := block.FencedSerializer{}.Serialize(original)
+	if err != nil {
+		t.Fatalf("serialize: %v", err)
+	}
+	if !strings.Contains(md, "aliases:") {
+		t.Fatalf("serialized fence carries no aliases key:\n%s", md)
+	}
+
+	got, err := block.FencedDeserializer{Kind: "code"}.Deserialize(
+		block.Region{Kind: "code", Raw: md, Body: md})
+	if err != nil {
+		t.Fatalf("deserialize: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 block, got %d", len(got))
+	}
+	if strings.Join(got[0].Aliases, ",") != "cd-1a2b,the-retry-loop" {
+		t.Fatalf("aliases lost: %v", got[0].Aliases)
+	}
+	if _, leaked := got[0].Attrs["aliases"]; leaked {
+		t.Fatal("aliases leaked into Attrs — Merge replaces Aliases, so a mirrored copy goes stale")
+	}
+}
+
+func TestFencedBlock_NoAliasesEmitsNoKey(t *testing.T) {
+	const id = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+	md, err := block.FencedSerializer{}.Serialize(block.SieveBlock{
+		ID: id, Kind: "code", Attrs: map[string]interface{}{"id": id},
+	})
+	if err != nil {
+		t.Fatalf("serialize: %v", err)
+	}
+	if strings.Contains(md, "aliases") {
+		t.Fatalf("alias-free block emitted an aliases key:\n%s", md)
+	}
+}
+
+// The serializer must not mutate the caller's live Attrs map — processors build
+// throwaway blocks over live maps.
+func TestFencedBlock_SerializeDoesNotMutateCallerAttrs(t *testing.T) {
+	const id = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"
+	attrs := map[string]interface{}{"id": id}
+	_, err := block.FencedSerializer{}.Serialize(block.SieveBlock{
+		ID: id, Kind: "code", Attrs: attrs, Aliases: []string{"cd-1a2b"},
+	})
+	if err != nil {
+		t.Fatalf("serialize: %v", err)
+	}
+	if _, mutated := attrs["aliases"]; mutated {
+		t.Fatal("Serialize wrote aliases into the caller's live Attrs map")
+	}
+}

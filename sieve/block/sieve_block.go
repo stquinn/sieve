@@ -1,6 +1,10 @@
 package block
 
-import "strings"
+import (
+	"strings"
+
+	"sieve/ident"
+)
 
 // sieve_block.go — the SieveBlock data model: type, constructor, and value
 // methods. No serialization, no parsing, and no per-kind names — the data model is
@@ -31,13 +35,13 @@ type SieveBlock struct {
 // block is GIVEN an id or it GENERATES one — it never exists id-less. Every
 // construction site (the parser, ApplyOp create, split) routes through here, so
 // the rule lives in ONE place instead of being swept after the fact. Pass id=""
-// to mint (GenerateBlockIDFor honors a registered processor's prefix); pass a
+// to mint (ident.New mints a UUIDv7 — ids are opaque and carry no kind); pass a
 // known id (a marker's handle, a frontend-minted blockId) to keep it. The
 // serialize-time guard in DocumentCodec.Serialize is the runtime backstop
 // for any future code path that bypasses this factory with a raw literal.
 func NewSieveBlock(kind, id string, attrs map[string]interface{}) SieveBlock {
 	if id == "" {
-		id = GenerateBlockIDFor(kind)
+		id = ident.New()
 	}
 	// The invariant is TWO-SIDED: mirror the id into Attrs["id"] too. Both the WYSIWYG
 	// wire (buildSieveBlockHTML reads Attrs["id"] — a missing one drops the block on
@@ -143,6 +147,27 @@ func (b SieveBlock) cloneDeep() SieveBlock {
 	if len(b.Aliases) > 0 {
 		cp.Aliases = append([]string(nil), b.Aliases...)
 	}
+	return cp
+}
+
+// reidentify returns a copy of b carrying newID on BOTH sides of the id
+// invariant — the ID field AND Attrs["id"]. Writing only one side reintroduces
+// the id-less-block bug: the WYSIWYG wire (buildSieveBlockHTML) and the fenced
+// serializer (SerializeYaml(Attrs)) both read the id out of Attrs, never off ID,
+// so a half-written id drops the block on load and on save. Aliases ride along.
+func (b SieveBlock) reidentify(newID string) SieveBlock {
+	cp := b.cloneDeep()
+	cp.ID = newID
+	cp.Attrs["id"] = newID
+	return cp
+}
+
+// withRefs returns a copy of b whose outgoing ref list is refs, in the
+// comma-separated Attrs["ref"] form outgoingRefs tokenizes. Mirrors outgoingRefs
+// for the write direction.
+func (b SieveBlock) withRefs(refs []string) SieveBlock {
+	cp := b.cloneDeep()
+	cp.Attrs["ref"] = strings.Join(refs, ",")
 	return cp
 }
 

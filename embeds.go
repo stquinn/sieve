@@ -12,6 +12,12 @@ var uiTemplates embed.FS
 //go:embed frontend/src/static
 var uiStatic embed.FS
 
+// DEV GOTCHA: unlike frontend/src/static (which `wails dev` serves live from
+// disk, so a JS/CSS edit needs only a page reload), the app shell is served from
+// THIS embedded copy. Editing index.html during `wails dev` therefore shows no
+// change until the Go binary is rebuilt — and `touch`ing a .go file is not
+// enough, since the watcher wants a content write. Make a real edit or restart.
+//
 //go:embed frontend/src/index.html
 var uiIndexHTML string
 

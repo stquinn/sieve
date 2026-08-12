@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"sieve/ident"
 	"sieve/logger"
 	"sieve/sieve/domain"
 )
@@ -48,8 +49,8 @@ func (s *NotesSource) Search(query string, limit int) []domain.Candidate {
 		if len(out) >= limit {
 			break
 		}
-		if strings.TrimSpace(r.ID) == "" {
-			continue // no uuid = no address = not offerable
+		if !ident.Valid(r.ID) {
+			continue // no uuid = no address that parses = not offerable
 		}
 		out = append(out, s.candidateOf(r))
 	}
@@ -67,7 +68,7 @@ func (s *NotesSource) Resolve(uri string) (domain.Node, error) {
 	if addr.Scheme != domain.SchemeContainer {
 		return domain.Node{}, fmt.Errorf("%w: notes does not answer scheme %q", domain.ErrNodeNotFound, addr.Scheme)
 	}
-	doc, err := s.documents.LoadByUUID(addr.Opaque)
+	doc, err := s.documents.LoadByUUID(addr.Container)
 	if err != nil {
 		return domain.Node{}, fmt.Errorf("%w: %s", domain.ErrNodeNotFound, uri)
 	}
@@ -85,7 +86,7 @@ func (s *NotesSource) nodeOf(addr domain.Address, doc domain.Document) domain.No
 		summary = *sm
 	}
 	return domain.Node{
-		URI:     addr.URI(),
+		URI:     addr.String(),
 		UUID:    doc.UUID(),
 		Kind:    string(domain.KindNote),
 		Title:   meta.DisplayName(),
@@ -97,7 +98,7 @@ func (s *NotesSource) nodeOf(addr domain.Address, doc domain.Document) domain.No
 // candidateOf projects a search hit into an offer.
 func (s *NotesSource) candidateOf(r SearchResult) domain.Candidate {
 	return domain.Candidate{
-		URI:    domain.NewContainerAddress(r.ID).URI(),
+		URI:    domain.NewContainerAddress(r.ID).String(),
 		Title:  r.Name,
 		Kind:   string(domain.KindNote),
 		Detail: s.detailOf(r),

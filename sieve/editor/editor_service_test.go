@@ -53,8 +53,14 @@ func TestHandleBlockOp_structuredCreateInsertsAtIndex(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
 
+	// Seed real uuids (#75): this test names the flanking blocks after a load, and
+	// NewShadow upgrades any non-uuid handle it parses.
+	const (
+		firstID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a21"
+		lastID  = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a22"
+	)
 	doc, _ := ds.New()
-	doc.SetBody([]byte("```code\nid: co-1\nsource: a\nstatus: COMPLETE\n```\n\n```code\nid: co-2\nsource: b\nstatus: COMPLETE\n```"))
+	doc.SetBody([]byte("```code\nid: " + firstID + "\nsource: a\nstatus: COMPLETE\n```\n\n```code\nid: " + lastID + "\nsource: b\nstatus: COMPLETE\n```"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
 	if err := es.Open(uuid, nil); err != nil {
@@ -65,7 +71,7 @@ func TestHandleBlockOp_structuredCreateInsertsAtIndex(t *testing.T) {
 	// ("directory not empty"). Matches the sibling CreateBlock/HandlePaste tests.
 	defer waitJobs(t, es, uuid)
 
-	// Insert a new code block at index 1 — between co-1 and co-2, NOT appended.
+	// Insert a new code block at index 1 — between the two seeds, NOT appended.
 	if err := es.HandleBlockOp(uuid, block.BlockOp{
 		Type:  "create-block",
 		Kind:  "code",
@@ -80,10 +86,10 @@ func TestHandleBlockOp_structuredCreateInsertsAtIndex(t *testing.T) {
 		t.Fatalf("expected 3 blocks, got %d (ok=%v)", len(blocks), ok)
 	}
 	order := []string{blocks[0].ID, blocks[1].ID, blocks[2].ID}
-	if blocks[0].ID != "co-1" || blocks[2].ID != "co-2" {
+	if blocks[0].ID != firstID || blocks[2].ID != lastID {
 		t.Fatalf("flanking blocks moved — not positioned at index 1: %v", order)
 	}
-	if blocks[1].ID == "co-1" || blocks[1].ID == "co-2" {
+	if blocks[1].ID == firstID || blocks[1].ID == lastID {
 		t.Fatalf("new block was not inserted at index 1: %v", order)
 	}
 }
@@ -883,7 +889,11 @@ func TestApplyJobUpdate_closedDoc(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	createdAt := time.Now().Format(time.RFC3339)
-	body := "# Job Update Test\n\n```code\nid: cb-closed\nstatus: DISPATCHED\ncreatedAt: " + createdAt + "\nsource: old source\n```"
+	// A real block id is a UUID (#75), and it matters on this path specifically:
+	// applyJobUpdate transiently REOPENS the closed document, and the job carries
+	// the id it was dispatched with — so the id on disk must be the one it holds.
+	const closedID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a31"
+	body := "# Job Update Test\n\n```code\nid: " + closedID + "\nstatus: DISPATCHED\ncreatedAt: " + createdAt + "\nsource: old source\n```"
 	doc.SetBody([]byte(body))
 	doc, err = ds.Save(doc)
 	if err != nil {
@@ -900,7 +910,7 @@ func TestApplyJobUpdate_closedDoc(t *testing.T) {
 	}
 
 	// Apply a job update to the closed document.
-	es.applyJobUpdate(uuid, "cb-closed", "code",
+	es.applyJobUpdate(uuid, closedID, "code",
 		map[string]interface{}{"status": block.BlockStatusComplete, "source": "new source"},
 		nil, // no deletes
 		"",  // no explicit flush reason; Close will flush

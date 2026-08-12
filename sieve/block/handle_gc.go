@@ -1,16 +1,18 @@
 package block
 
-// Stage B.4 — handle / ref garbage collection (spec §7).
+// Handle / ref resolution helpers.
 //
-// Refs are best-effort pointers: resolution, not referential integrity. On save
-// the GC enforces two rules from spec §7:
-//   - dangling outgoing refs are stripped (a ref to a handle nothing answers to)
-//   - alias handles nothing points to are dropped (a block stops answering to a
-//     handle once no ref targets it; its primary ID always persists as identity)
+// Refs are best-effort pointers: resolution, not referential integrity. A
+// dangling outgoing ref — one naming a handle nothing answers to — may be
+// stripped on save; that is gcRefs. These are pure transforms; the live
+// ref-producer that supplies the "resolvable" set is not wired yet.
 //
-// These are pure transforms. The live ref-producer that supplies the
-// "resolvable" / "referenced" sets is wired in later stages (E/F); the Stage E/F
-// orchestrator will be a ShadowDocument method that chains these.
+// There is deliberately NO alias GC. Aliases are durable by intent: one is only
+// ever GIVEN to a block by a deliberate act (a declared name, a domain-meaningful
+// handle), never accumulated — the prose-merge path that once accumulated them
+// was cut 2026-06-19, and identity migration creates none (#75). A declared name
+// has no referrers BY DEFINITION — that is the point of it — so collecting
+// unreferenced aliases would drop exactly the ones worth keeping.
 
 // collectHandles builds the resolution index over this document's blocks: every
 // block's primary ID plus its aliases. A ref resolves iff its target is here.
@@ -20,27 +22,6 @@ func (s *ShadowDocument) collectHandles() map[string]bool {
 		for _, h := range b.answersTo() {
 			out[h] = true
 		}
-	}
-	return out
-}
-
-// gcAliases returns a copy of this document's block tree with each block's alias
-// handles filtered to those still referenced. Primary IDs are never dropped. The
-// live tree is not mutated, so undo can restore the prior assignment.
-func (s *ShadowDocument) gcAliases(referenced map[string]bool) []SieveBlock {
-	if s.Blocks == nil {
-		return nil
-	}
-	out := make([]SieveBlock, len(s.Blocks))
-	for i, b := range s.Blocks {
-		var kept []string
-		for _, a := range b.Aliases {
-			if referenced[a] {
-				kept = append(kept, a)
-			}
-		}
-		b.Aliases = kept
-		out[i] = b
 	}
 	return out
 }

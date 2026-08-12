@@ -329,6 +329,33 @@ func (ds *DocumentService) List() ([]NoteEntry, error) {
 	return buildNoteTree(storables), nil
 }
 
+// AllUUIDs returns the uuid of every document the store holds — WorkingCopy
+// buffers as well as filed Library notes, folders flattened away.
+//
+// List covers only the Library, which is right for the sidebar but wrong for any
+// operation that must touch EVERY document: Sieve is scratchpad-first, so most
+// documents at any moment are unfiled buffers. Mirrors the category pair the
+// asset service and the store migration already sweep.
+func (ds *DocumentService) AllUUIDs() ([]string, error) {
+	var out []string
+	seen := make(map[string]bool)
+	for _, cat := range []store.Category{domain.WorkingCopy, domain.LibraryCategory} {
+		storables, err := ds.store.List(cat, "")
+		if err != nil {
+			return nil, fmt.Errorf("document: list %s: %w", cat.Key, err)
+		}
+		for _, doc := range flattenDocs(storables) {
+			uuid := metaString(doc.Meta(), "uuid")
+			if uuid == "" || seen[uuid] {
+				continue
+			}
+			seen[uuid] = true
+			out = append(out, uuid)
+		}
+	}
+	return out, nil
+}
+
 // Move relocates a note to a different folder within the LibraryCategory. folder is
 // the target folder path (e.g. "ai-stuff" or "projects/go"). An empty folder
 // moves the note to the LibraryCategory root. The filename is preserved.

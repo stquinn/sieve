@@ -49,7 +49,7 @@ func TestNotesSource_ResolvesALiveAddress(t *testing.T) {
 	note := seedFiledNote(t, ds, "Auth Design", "design", []string{"auth"},
 		"Token exchange and refresh rules.", "# Auth Design\n\nBearer tokens.")
 
-	uri := domain.NewContainerAddress(note.UUID()).URI()
+	uri := domain.NewContainerAddress(note.UUID()).String()
 	node, err := src.Resolve(uri)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
@@ -79,7 +79,7 @@ func TestNotesSource_ResolvesALiveAddress(t *testing.T) {
 func TestNotesSource_DeletedAddressDangles(t *testing.T) {
 	src, ds := newTestNotesSource(t)
 	note := seedFiledNote(t, ds, "Doomed", "", nil, "", "gone soon")
-	uri := domain.NewContainerAddress(note.UUID()).URI()
+	uri := domain.NewContainerAddress(note.UUID()).String()
 
 	if err := ds.Delete(note); err != nil {
 		t.Fatalf("Delete: %v", err)
@@ -109,7 +109,7 @@ func TestNotesSource_RefusesBuffers(t *testing.T) {
 		t.Fatalf("precondition: buffer should be loadable: %v", err)
 	}
 
-	uri := domain.NewContainerAddress(buf.UUID()).URI()
+	uri := domain.NewContainerAddress(buf.UUID()).String()
 	if _, err := src.Resolve(uri); !errors.Is(err, domain.ErrNodeNotFound) {
 		t.Fatalf("Resolve(buffer) err = %v, want ErrNodeNotFound", err)
 	}
@@ -120,9 +120,13 @@ func TestNotesSource_RefusesBuffers(t *testing.T) {
 	}
 }
 
+// A block: address is perfectly well formed — the notes source simply does not
+// answer that address space, which the Router must read as "ask the next source"
+// rather than as a failure.
 func TestNotesSource_DoesNotAnswerForeignSchemes(t *testing.T) {
 	src, _ := newTestNotesSource(t)
-	if _, err := src.Resolve("block:9f2b/co-1"); !errors.Is(err, domain.ErrNodeNotFound) {
+	blockURI := "block:" + testContainerUUID + "/" + testBlockUUID
+	if _, err := src.Resolve(blockURI); !errors.Is(err, domain.ErrNodeNotFound) {
 		t.Fatalf("err = %v, want ErrNodeNotFound (this source does not answer block:)", err)
 	}
 }
@@ -139,7 +143,7 @@ func TestNotesSource_SearchOffersTitleSummaryAndTagMatches(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("title query returned %+v, want the Auth note", got)
 	}
-	want := domain.NewContainerAddress(auth.UUID()).URI()
+	want := domain.NewContainerAddress(auth.UUID()).String()
 	if got[0].URI != want {
 		t.Errorf("uri = %q, want %q", got[0].URI, want)
 	}

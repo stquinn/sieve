@@ -56,10 +56,14 @@ func TestShadowDocument_ContentForSave_SerializesDoc(t *testing.T) {
 	md := "Hello.\n\n```code\nid: co-1\nsource: x = 1\n```"
 	shadow := block.NewShadow("u", md, block.NewDocumentCodec(block.GlobalRegistry()), 0, nil)
 
+	// The legacy "co-1" handle is upgraded to a UUID on load (#75), so address the
+	// block by the id it actually carries.
+	codeID := blockIDOfKind(t, shadow, "code")
+
 	// Mutate ONLY the Doc (not Markdown / Blocks): ContentForSave must reflect it.
 	if err := shadow.ApplyOp(block.BlockOp{
-		Type: "update-block", BlockID: "co-1", Kind: "code",
-		Attrs: map[string]interface{}{"id": "co-1", "source": "y = 2"},
+		Type: "update-block", BlockID: codeID, Kind: "code",
+		Attrs: map[string]interface{}{"id": codeID, "source": "y = 2"},
 	}); err != nil {
 		t.Fatalf("ApplyOp: %v", err)
 	}
@@ -229,16 +233,19 @@ func TestShadowDocument_ApplyOp_UpdatesTree(t *testing.T) {
 	md := "Hello.\n\n```code\nid: co-1\nsource: x = 1\n```"
 	shadow := block.NewShadow("u", md, block.NewDocumentCodec(block.GlobalRegistry()), 0, nil)
 
+	// "co-1" is upgraded to a UUID on load (#75) — address the block by its real id.
+	codeID := blockIDOfKind(t, shadow, "code")
+
 	if err := shadow.ApplyOp(block.BlockOp{
-		Type: "update-block", BlockID: "co-1", Kind: "code",
-		Attrs: map[string]interface{}{"id": "co-1", "source": "z = 99"},
+		Type: "update-block", BlockID: codeID, Kind: "code",
+		Attrs: map[string]interface{}{"id": codeID, "source": "z = 99"},
 	}); err != nil {
 		t.Fatalf("shadow.ApplyOp: %v", err)
 	}
 
-	blk, ok := shadow.SnapshotBlock("co-1")
+	blk, ok := shadow.SnapshotBlock(codeID)
 	if !ok {
-		t.Fatal("block co-1 not found after ApplyOp")
+		t.Fatalf("block %s not found after ApplyOp", codeID)
 	}
 	got, _ := blk.Attrs["source"].(string)
 

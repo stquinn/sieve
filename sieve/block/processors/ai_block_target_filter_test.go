@@ -24,17 +24,26 @@ func TestAIBlock_DocTarget_ExcludesPriorAnswerButThreadKeepsIt(t *testing.T) {
 	const proseText = "the grass is green"
 	const priorAnswer = "PRIOR-ANSWER-the-sky-is-blue"
 
+	// Ids are UUIDs since #75, and NewShadow migrates any that are not — so the
+	// fixture seeds real uuids rather than readable handles, keeping the ids stable
+	// across the markdown -> shadow -> snapshot round trip this test relies on.
+	const (
+		proseID  = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a01"
+		priorID  = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a02"
+		followID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a03"
+	)
+
 	codec := block.NewDocumentCodec(block.GlobalRegistry())
 	seedBlocks := []block.SieveBlock{
-		block.NewSieveBlock(block.KindProse, "pr-1", map[string]interface{}{"content": proseText}),
+		block.NewSieveBlock(block.KindProse, proseID, map[string]interface{}{"content": proseText}),
 		// Completed prior ask, asked about the whole doc.
-		block.NewSieveBlock("ai-block", "ab-1", map[string]interface{}{
-			"id": "ab-1", "ref": "doc", "type": "ASK", "status": block.BlockStatusComplete,
+		block.NewSieveBlock("ai-block", priorID, map[string]interface{}{
+			"id": priorID, "ref": "doc", "type": "ASK", "status": block.BlockStatusComplete,
 			"question": "what colour is the sky?", "response": priorAnswer,
 		}),
-		// The follow-up (ACTION) block: threads off ab-1.
-		block.NewSieveBlock("ai-block", "ab-2", map[string]interface{}{
-			"id": "ab-2", "ref": "ab-1", "type": "ASK", "status": block.BlockStatusPending,
+		// The follow-up (ACTION) block: threads off the prior ask.
+		block.NewSieveBlock("ai-block", followID, map[string]interface{}{
+			"id": followID, "ref": priorID, "type": "ASK", "status": block.BlockStatusPending,
 			"question": "expand on that",
 		}),
 	}
@@ -43,17 +52,17 @@ func TestAIBlock_DocTarget_ExcludesPriorAnswerButThreadKeepsIt(t *testing.T) {
 		t.Fatalf("seed serialize: %v", err)
 	}
 	shadow := block.NewShadow("u", body, codec, 0, nil)
-	_, doc, ok := shadow.SnapshotForJob("ab-2")
+	_, doc, ok := shadow.SnapshotForJob(followID)
 	if !ok {
-		t.Fatalf("SnapshotForJob(ab-2) not found; body was:\n%s", body)
+		t.Fatalf("SnapshotForJob(%s) not found; body was:\n%s", followID, body)
 	}
 
-	targets, threadIDs := p.resolveChain("ab-2", "ab-1", doc)
+	targets, threadIDs := p.resolveChain(followID, priorID, doc)
 	if len(targets) != 1 || targets[0] != "doc" {
 		t.Fatalf("expected targets=[doc], got %v", targets)
 	}
-	if len(threadIDs) != 1 || threadIDs[0] != "ab-1" {
-		t.Fatalf("expected thread=[ab-1], got %v", threadIDs)
+	if len(threadIDs) != 1 || threadIDs[0] != priorID {
+		t.Fatalf("expected thread=[%s], got %v", priorID, threadIDs)
 	}
 
 	// TARGET: filtered whole-doc content.
@@ -70,7 +79,7 @@ func TestAIBlock_DocTarget_ExcludesPriorAnswerButThreadKeepsIt(t *testing.T) {
 
 	// THREAD: the prior answer must survive so follow-ups can build on it.
 	var history []string
-	seen := map[string]bool{"ab-2": true}
+	seen := map[string]bool{followID: true}
 	for _, id := range threadIDs {
 		if c := block.BuildContextForID(id, doc, seen, nil); !c.IsEmpty() {
 			history = append(history, c.String())

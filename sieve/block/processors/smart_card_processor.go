@@ -25,8 +25,6 @@ func NewSmartCardProcessor(svc block.BlockServices) *SmartCardProcessor {
 }
 func (p *SmartCardProcessor) Kind() string { return p.FencedDeserializer.Kind }
 
-func (p *SmartCardProcessor) IDPrefix() string { return "crd" }
-
 func (p *SmartCardProcessor) Mode() block.BlockMode { return block.BlockModeBlock }
 
 func (p *SmartCardProcessor) InitAttrs(id string, overrides map[string]interface{}) map[string]interface{} {

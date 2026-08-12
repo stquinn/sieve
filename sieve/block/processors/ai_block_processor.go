@@ -17,8 +17,6 @@ func NewAIBlockProcessor(svc block.BlockServices) *AIBlockProcessor {
 	return &AIBlockProcessor{svc: svc, FencedDeserializer: block.FencedDeserializer{Kind: "ai-block"}}
 }
 
-func (p *AIBlockProcessor) IDPrefix() string { return "ai" }
-
 func (p *AIBlockProcessor) Kind() string { return p.FencedDeserializer.Kind }
 
 func (p *AIBlockProcessor) Mode() block.BlockMode { return block.BlockModeBlock }

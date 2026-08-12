@@ -69,10 +69,15 @@ func TestAIBlock_ThreeTurnChain_EachTurnRendersItsOwnManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed serialize: %v", err)
 	}
+	// NewShadow upgrades the fixture's readable handles to UUIDs on load (#75) —
+	// and rewrites the chain's refs to match — so the action turn is asked for by
+	// position (it is the last block) rather than by the name it was seeded with.
 	shadow := block.NewShadow("u", body, codec, 0, nil)
-	action, doc, ok := shadow.SnapshotForJob("ab-3")
+	loaded := shadow.SnapshotBlocks()
+	actionID := loaded[len(loaded)-1].ID
+	action, doc, ok := shadow.SnapshotForJob(actionID)
 	if !ok {
-		t.Fatalf("SnapshotForJob(ab-3) not found; body was:\n%s", body)
+		t.Fatalf("SnapshotForJob(%s) not found; body was:\n%s", actionID, body)
 	}
 
 	content, history, question := p.buildPrompt(&action, doc)

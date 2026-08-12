@@ -2,8 +2,6 @@ package block
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -232,7 +230,7 @@ type BlockLifecycleListener interface {
 //     • entries — the same views handed to IsSupportedContent.
 //     • uuid    — the document/tab this block is being created in (asset scope).
 //     • blockID — the *pre-allocated id of the new block*. It is minted by
-//     GenerateBlockIDFor(kind) BEFORE Transform precisely so Transform can key
+//     ident.New() BEFORE Transform precisely so Transform can key
 //     side effects to it — e.g. smart-image writes the SVG/asset file under this
 //     id, so the asset filename and the block share identity. The framework then
 //     creates the block with this exact id and these overrides.
@@ -314,7 +312,20 @@ type FencedSerializer struct{}
 // literal-style machinery — registry-free, so it serializes code, diagram, etc.
 // uniformly without needing a BlockProcessor.
 func (FencedSerializer) Serialize(block SieveBlock) (string, error) {
-	body, err := fencedblock.SerializeYaml(block.Attrs)
+	attrs := block.Attrs
+	// Aliases live on the STRUCT, not in Attrs — deliberately, unlike id: Merge
+	// never changes ID but it does REPLACE Aliases, so a mirrored copy in Attrs
+	// would go stale. They are therefore injected at the persistence boundary
+	// only, over a copy — processors build throwaway blocks over live Attrs maps,
+	// so the caller's map must never be written.
+	if len(block.Aliases) > 0 {
+		attrs = make(map[string]interface{}, len(block.Attrs)+1)
+		for k, v := range block.Attrs {
+			attrs[k] = v
+		}
+		attrs["aliases"] = append([]string(nil), block.Aliases...)
+	}
+	body, err := fencedblock.SerializeYaml(attrs)
 	if err != nil {
 		return "", err
 	}
@@ -343,7 +354,37 @@ func (d FencedDeserializer) Deserialize(region Region) ([]SieveBlock, error) {
 		return nil, err
 	}
 	id, _ := attrs["id"].(string)
-	return []SieveBlock{NewSieveBlock(d.Kind, id, attrs)}, nil
+	// Lift aliases BEFORE NewSieveBlock: it may clone attrs when the id differs,
+	// and the delete must land on the map that gets cloned.
+	aliases := d.liftAliases(attrs)
+	blk := NewSieveBlock(d.Kind, id, attrs)
+	blk.Aliases = aliases
+	return []SieveBlock{blk}, nil
+}
+
+// liftAliases REMOVES the persisted aliases key from attrs and returns it as the
+// struct-side slice. Deleting is the point: Attrs must not keep a second copy
+// that Merge (which replaces Aliases wholesale) would leave stale.
+func (d FencedDeserializer) liftAliases(attrs map[string]interface{}) []string {
+	raw, ok := attrs["aliases"]
+	if !ok {
+		return nil
+	}
+	delete(attrs, "aliases")
+	items, ok := raw.([]interface{})
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		if s, ok := it.(string); ok && s != "" {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // fencedBody strips the opening and closing fence delimiter lines from the raw
@@ -451,29 +492,11 @@ func GetProcessor(kind string) BlockProcessor {
 	return processorRegistry[kind]
 }
 
-// GenerateBlockID returns "XX-YYYY" where XX = first two chars of kind.
-func GenerateBlockID(kind string) string {
-	b := make([]byte, 2)
-	_, _ = rand.Read(b)
-	prefix := kind
-	if len(prefix) > 2 {
-		prefix = prefix[:2]
-	}
-	return prefix + "-" + hex.EncodeToString(b)
-}
-
-// GenerateBlockIDFor generates an ID for kind, using the processor's IDPrefix()
-// method if available (e.g. SmartImageProcessor returns "img").
-func GenerateBlockIDFor(kind string) string {
-	registryMu.RLock()
-	p := processorRegistry[kind]
-	registryMu.RUnlock()
-	type hasPrefix interface{ IDPrefix() string }
-	if hp, ok := p.(hasPrefix); ok {
-		return GenerateBlockID(hp.IDPrefix())
-	}
-	return GenerateBlockID(kind)
-}
+// Block ids are minted by ident.New — opaque UUIDv7, carrying no kind. The
+// kind-prefix scheme that lived here ("XX-YYYY", 2 random bytes behind a 2-3 char
+// prefix) gave 65,536 values per prefix with no collision check anywhere, which
+// put a 300-paragraph note at a ~50% chance of a duplicate prose id (#75).
+// Nothing ever inferred kind from an id prefix, so nothing replaces it.
 
 type SelfExtractable interface {
 	AllowSelfExtraction() bool

@@ -47,6 +47,25 @@ func frontendBlockByID(t *testing.T, es *EditorService, uuid, id string) block.F
 	return block.FrontendBlock{}
 }
 
+// blockIDOfKind returns the id of the first block of kind in the open document.
+// Fixture bodies are written with readable legacy handles ("pb-1", "co-1"), which
+// NewShadow upgrades to UUIDs on load (#75), so a test that needs to address a
+// fixture block asks for its real id instead of naming one.
+func blockIDOfKind(t *testing.T, es *EditorService, uuid, kind string) string {
+	t.Helper()
+	blocks, ok := es.FrontendBlocks(uuid)
+	if !ok {
+		t.Fatalf("FrontendBlocks: no shadow for %q", uuid)
+	}
+	for _, b := range blocks {
+		if b.Kind == kind {
+			return b.ID
+		}
+	}
+	t.Fatalf("no %q block among %d", kind, len(blocks))
+	return ""
+}
+
 // The converged update-block op runs the FULL uniform pipeline for a structured
 // block: MERGE the partial patch (keep existing keys, not replace), run
 // processor.OnChange, and notify the client with the merged result — the behaviour
@@ -80,9 +99,11 @@ func TestHandleBlockOp_structuredUpdateMergesRunsOnChangeAndNotifies(t *testing.
 		t.Fatalf("Open: %v", err)
 	}
 
+	probeID := blockIDOfKind(t, es, uuid, "probe")
+
 	// Partial patch — only `add`. `keep` must survive (merge, not replace).
 	if err := es.HandleBlockOp(uuid, block.BlockOp{
-		Type: "update-block", BlockID: "pb-1", Kind: "probe",
+		Type: "update-block", BlockID: probeID, Kind: "probe",
 		Attrs: map[string]interface{}{"add": "new"},
 	}); err != nil {
 		t.Fatalf("HandleBlockOp update: %v", err)
@@ -94,7 +115,7 @@ func TestHandleBlockOp_structuredUpdateMergesRunsOnChangeAndNotifies(t *testing.
 		t.Fatal("update-block did not notify the client")
 	}
 
-	blk := frontendBlockByID(t, es, uuid, "pb-1")
+	blk := frontendBlockByID(t, es, uuid, probeID)
 	if got, _ := blk.Attrs["keep"].(string); got != "original" {
 		t.Errorf("merge dropped existing attr: keep=%q (want \"original\")", got)
 	}
@@ -230,9 +251,10 @@ func TestEditorService_HandleBlockOp_UpdatesAndPersists(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 
+	codeID := blockIDOfKind(t, es, uuid, "code")
 	err := es.HandleBlockOp(uuid, block.BlockOp{
-		Type: "update-block", BlockID: "co-1", Kind: "code",
-		Attrs: map[string]interface{}{"id": "co-1", "source": "y = 2"},
+		Type: "update-block", BlockID: codeID, Kind: "code",
+		Attrs: map[string]interface{}{"id": codeID, "source": "y = 2"},
 	})
 	if err != nil {
 		t.Fatalf("HandleBlockOp: %v", err)
@@ -266,12 +288,16 @@ func TestApplyJobUpdate_NoShadow_WritesViaSpine(t *testing.T) {
 	ds, _ := newTestDocumentService(t)
 	es := NewEditorService(ds, block.NewDocumentCodec(block.GlobalRegistry()), 0)
 	doc, _ := ds.New()
-	doc.SetBody([]byte("```ai-block\nid: ab-1\nresponse: old\nstatus: PENDING\n```"))
+	// A real ai-block id is a UUID (#75). It matters here specifically: this path
+	// transiently REOPENS the document, and a job carries the block id it was
+	// dispatched with — so the id on disk must be the one the job holds.
+	const abID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a11"
+	doc.SetBody([]byte("```ai-block\nid: " + abID + "\nresponse: old\nstatus: PENDING\n```"))
 	doc, _ = ds.Save(doc)
 	uuid := doc.UUID()
 
 	// No Open → no shadow → disk-direct branch.
-	es.applyJobUpdate(uuid, "ab-1", "ai-block",
+	es.applyJobUpdate(uuid, abID, "ai-block",
 		map[string]interface{}{"response": "new", "status": "COMPLETE"}, nil, "test")
 
 	reloaded, err := ds.LoadByUUID(uuid)
