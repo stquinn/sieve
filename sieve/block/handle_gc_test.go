@@ -30,36 +30,7 @@ func TestGCRefs_DropsDangling(t *testing.T) {
 	}
 }
 
-func TestGCAliases_DropsUnreferenced(t *testing.T) {
-	doc := []SieveBlock{
-		{ID: "pr-a", Kind: KindProse, Aliases: []string{"pr-x", "pr-y"}},
-	}
-	referenced := map[string]bool{"pr-x": true} // nothing points at pr-y
-	sd := ShadowDocument{Blocks: doc}
-	got := sd.gcAliases(referenced)
-
-	b := got[0]
-	if b.ID != "pr-a" {
-		t.Fatalf("primary id must never be GC'd, got %q", b.ID)
-	}
-	if strings.Join(b.Aliases, ",") != "pr-x" {
-		t.Fatalf("aliases: want [pr-x], got %v", b.Aliases)
-	}
-}
-
-func TestGCAliases_IsPure(t *testing.T) {
-	doc := []SieveBlock{
-		{ID: "pr-b", Kind: KindProse, Aliases: []string{"pr-stale"}},
-	}
-	sd := ShadowDocument{Blocks: doc}
-	_ = sd.gcAliases(map[string]bool{}) // nothing referenced
-
-	// Input must be untouched (purity).
-	if len(doc[0].Aliases) != 1 {
-		t.Fatalf("gcAliases mutated input: %+v", doc[0].Aliases)
-	}
-	got := sd.gcAliases(map[string]bool{})
-	if len(got[0].Aliases) != 0 {
-		t.Fatalf("stale alias not GC'd: %+v", got[0].Aliases)
-	}
-}
+// There is no alias GC by design (#75) — an alias is durable by intent, and a
+// declared name has no referrers by definition, so collecting unreferenced ones
+// would drop exactly the handles worth keeping. What must hold is that an alias
+// stays resolvable: collectHandles indexes it, which TestCollectHandles covers.
